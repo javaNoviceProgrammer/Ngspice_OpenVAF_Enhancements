@@ -178,22 +178,31 @@ jobs:
 
       # ---- openvaf-r via native MSVC toolchain + LLVM 18 (experimental;
       #      continue-on-error so its failure still lets ngspice.exe be staged) --
-      - name: Install LLVM 18 (Chocolatey)
+      - name: Install LLVM 18 dev tarball (official GitHub release)
         shell: pwsh
         continue-on-error: true
         run: |
-          # The runner ships a newer LLVM (20.x); force the downgrade to 18.
-          choco install llvm --version=18.1.8 --allow-downgrade --force --no-progress -y
-          $prefix = "C:\Program Files\LLVM"
+          # The Chocolatey LLVM package omits the static .lib files that
+          # llvm-sys-181 needs to link (~100 LLVM*.lib).  The official
+          # clang+llvm tarball from the LLVM GitHub release page includes
+          # everything: headers, llvm-config.exe, and all static libs.
+          $url    = "https://github.com/llvm/llvm-project/releases/download/llvmorg-18.1.8/clang+llvm-18.1.8-x86_64-pc-windows-msvc.tar.xz"
+          $out    = "$env:RUNNER_TEMP\llvm18.tar.xz"
+          $prefix = "C:\llvm18"
+          Write-Host "Downloading LLVM 18.1.8 dev tarball (~700 MB)..."
+          Invoke-WebRequest -Uri $url -OutFile $out -UseBasicParsing
+          Write-Host "Extracting..."
+          # tar on Windows 10+ (bsdtar) understands .tar.xz natively
+          New-Item -ItemType Directory -Force -Path $prefix | Out-Null
+          tar -xf $out -C $prefix --strip-components=1
           "LLVM_SYS_181_PREFIX=$prefix" | Out-File -FilePath $env:GITHUB_ENV -Append
-          "$prefix\bin" | Out-File -FilePath $env:GITHUB_PATH -Append
-          # Diagnostics (must not fail the step): llvm-sys needs either
-          # llvm-config or the static LLVM*.lib archives under lib/.
-          if (Test-Path "$prefix\bin\llvm-config.exe") { Write-Host "llvm-config:"; & "$prefix\bin\llvm-config.exe" --version }
-          else { Write-Host "NO llvm-config.exe present" }
-          $libs = (Get-ChildItem "$prefix\lib\*.lib" -ErrorAction SilentlyContinue | Measure-Object).Count
-          Write-Host "static .lib files in lib/: $libs"
-          if (Test-Path "$prefix\bin\clang.exe") { & "$prefix\bin\clang.exe" --version }
+          "$prefix\bin"                 | Out-File -FilePath $env:GITHUB_PATH -Append
+          # Diagnostics
+          if (Test-Path "$prefix\bin\llvm-config.exe") {
+            Write-Host "llvm-config version: $(& "$prefix\bin\llvm-config.exe" --version)"
+          } else { Write-Host "WARNING: llvm-config.exe not found" }
+          $libs = (Get-ChildItem "$prefix\lib\LLVM*.lib" -ErrorAction SilentlyContinue | Measure-Object).Count
+          Write-Host "LLVM*.lib files in lib/: $libs"
 
       - name: Rust toolchain (MSVC)
         uses: dtolnay/rust-toolchain@stable
@@ -203,7 +212,7 @@ jobs:
       - name: Build openvaf-r (MSVC + LLVM 18)
         shell: pwsh
         working-directory: ${{ env.OPENVAF_DIR }}
-        continue-on-error: true   # known to fail: official Windows LLVM lacks llvm-sys dev libs
+        continue-on-error: true   # keep best-effort in case something unexpected fails
         env:
           CARGO_NET_GIT_FETCH_WITH_CLI: "true"
         run: |
