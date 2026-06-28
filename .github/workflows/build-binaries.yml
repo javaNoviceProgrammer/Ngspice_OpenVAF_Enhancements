@@ -1,0 +1,188 @@
+name: Build binaries
+
+# Builds ngspice and openvaf-r natively on each platform and drops the
+# resulting binaries into bin/<os>/<arch>/.  Native runners are used per
+# target so each build links against its own LLVM 18 — no cross-compilation.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'bin/**'        # binary commits made by this workflow must not retrigger it
+      - '**/*.md'
+
+permissions:
+  contents: write       # the collect job commits binaries back into bin/
+
+env:
+  OPENVAF_DIR: OpenVAF-master-20260610
+  NGSPICE_DIR: ngspice-46
+
+jobs:
+  # ------------------------------------------------------------------ Unix
+  build-unix:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: linux-intel,         os: ubuntu-latest,    bin: linux/intel }
+          - { name: linux-arm,           os: ubuntu-24.04-arm, bin: linux/arm }
+          - { name: macos-intel,         os: macos-13,         bin: macos/intel }
+          - { name: macos-apple-silicon, os: macos-14,         bin: macos/apple-silicon }
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build deps (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential automake autoconf libtool bison flex pkg-config \
+            wget lsb-release software-properties-common gnupg \
+            zlib1g-dev libzstd-dev libtinfo-dev libxml2-dev
+          wget -q https://apt.llvm.org/llvm.sh
+          chmod +x llvm.sh
+          sudo ./llvm.sh 18
+          sudo apt-get install -y llvm-18-dev libclang-18-dev clang-18 libpolly-18-dev
+          echo "LLVM_SYS_181_PREFIX=$(llvm-config-18 --prefix)" >> "$GITHUB_ENV"
+
+      - name: Install build deps (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew update
+          brew install llvm@18 automake autoconf libtool bison flex
+          echo "LLVM_SYS_181_PREFIX=$(brew --prefix llvm@18)" >> "$GITHUB_ENV"
+          echo "$(brew --prefix bison)/bin" >> "$GITHUB_PATH"
+          echo "$(brew --prefix flex)/bin" >> "$GITHUB_PATH"
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo + target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ${{ env.OPENVAF_DIR }}/target
+          key: cargo-${{ matrix.name }}-${{ hashFiles(format('{0}/Cargo.lock', env.OPENVAF_DIR)) }}
+          restore-keys: cargo-${{ matrix.name }}-
+
+      - name: Build openvaf-r
+        working-directory: ${{ env.OPENVAF_DIR }}
+        run: cargo build --release --features llvm18 --bin openvaf-r
+
+      - name: Build ngspice
+        working-directory: ${{ env.NGSPICE_DIR }}
+        run: |
+          ./autogen.sh
+          mkdir -p ci-build && cd ci-build
+          ../configure --disable-debug --enable-klu --with-readline=no --without-x
+          make -j"$(getconf _NPROCESSORS_ONLN)"
+
+      - name: Stage binaries
+        run: |
+          mkdir -p "out/bin/${{ matrix.bin }}"
+          cp "$OPENVAF_DIR/target/release/openvaf-r" "out/bin/${{ matrix.bin }}/"
+          cp "$NGSPICE_DIR/ci-build/src/ngspice"     "out/bin/${{ matrix.bin }}/"
+          chmod +x "out/bin/${{ matrix.bin }}/"*
+          ls -l "out/bin/${{ matrix.bin }}/"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: bin-${{ matrix.name }}
+          path: out/
+          if-no-files-found: error
+
+  # --------------------------------------------------------------- Windows
+  # Best-effort: ngspice via MSYS2/MinGW; openvaf-r needs LLVM 18 on Windows
+  # which is historically fragile, so this job is allowed to fail.
+  build-windows:
+    name: windows-intel (best-effort)
+    runs-on: windows-latest
+    continue-on-error: true
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            base-devel git autoconf automake libtool bison flex
+            mingw-w64-x86_64-toolchain
+            mingw-w64-x86_64-llvm
+            mingw-w64-x86_64-rust
+
+      - name: Build ngspice (MSYS2/MinGW)
+        working-directory: ${{ env.NGSPICE_DIR }}
+        run: |
+          ./autogen.sh
+          mkdir -p ci-build && cd ci-build
+          ../configure --disable-debug --enable-klu --with-readline=no --without-x
+          make -j"$(nproc)"
+
+      - name: Build openvaf-r (best-effort)
+        working-directory: ${{ env.OPENVAF_DIR }}
+        run: |
+          export LLVM_SYS_181_PREFIX="$MINGW_PREFIX"
+          cargo build --release --features llvm18 --bin openvaf-r
+
+      - name: Stage binaries
+        run: |
+          mkdir -p out/bin/windows/intel
+          cp "$OPENVAF_DIR/target/release/openvaf-r.exe" out/bin/windows/intel/ 2>/dev/null || true
+          cp "$NGSPICE_DIR/ci-build/src/ngspice.exe"     out/bin/windows/intel/ 2>/dev/null || true
+          ls -l out/bin/windows/intel/ || true
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: bin-windows-intel
+          path: out/
+          if-no-files-found: warn
+
+  # ---------------------------------------------------------------- Collect
+  # Download every platform's artifact and commit the binaries into bin/.
+  collect:
+    name: Commit binaries to bin/
+    needs: [build-unix, build-windows]
+    if: ${{ always() && (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: _artifacts
+
+      - name: Merge binaries into bin/
+        run: |
+          shopt -s nullglob
+          for d in _artifacts/*/bin; do
+            echo "merging $d"
+            cp -R "$d/." bin/
+          done
+          git status --porcelain bin/ || true
+
+      - name: Commit & push
+        run: |
+          if [ -z "$(git status --porcelain bin/)" ]; then
+            echo "No binary changes to commit."
+            exit 0
+          fi
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add bin/
+          git commit -m "ci: update prebuilt binaries [skip ci]"
+          git pull --rebase --autostash origin main
+          git push origin main
