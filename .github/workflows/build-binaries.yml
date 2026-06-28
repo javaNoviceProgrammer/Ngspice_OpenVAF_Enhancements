@@ -151,7 +151,8 @@ jobs:
       - name: Install LLVM 18 (Chocolatey)
         shell: pwsh
         run: |
-          choco install llvm --version=18.1.8 --no-progress -y
+          # The runner ships a newer LLVM (20.x); force the downgrade to 18.
+          choco install llvm --version=18.1.8 --allow-downgrade --force --no-progress -y
           $prefix = "C:\Program Files\LLVM"
           "LLVM_SYS_181_PREFIX=$prefix" | Out-File -FilePath $env:GITHUB_ENV -Append
           "$prefix\bin" | Out-File -FilePath $env:GITHUB_PATH -Append
