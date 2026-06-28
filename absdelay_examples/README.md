@@ -12,6 +12,25 @@ The solver is selected per-run by adding `.options klu` to the netlist
 (KLU) or leaving it out (Sparse 1.3 default). Both produce identical results;
 they differ only in speed.
 
+## Example results — both solvers agree
+
+DC / AC / transient waveforms for the 5-stage delay line, with KLU (lines) and
+Sparse 1.3 (markers) overlaid. The curves lie exactly on top of each other:
+DC out tracks in, AC is 0 dB flat with linear (unwrapped) phase = the delay, and
+the transient output is the input delayed by 10 ns.
+
+![Example DC/AC/transient results, KLU vs SPARSE](examples/example_results.png)
+
+Numeric agreement: DC and transient are bit-identical (max |KLU − SPARSE| =
+0); AC differs only by floating-point roundoff (~2e-15).
+
+## Benchmark results — KLU is faster, and the gap grows with size
+
+Wall-clock runtime (left, log scale) and KLU speedup over Sparse 1.3 (right) on
+the absdelay-driven 2-D mesh, for DC, AC and transient:
+
+![KLU vs SPARSE benchmark — runtime and speedup vs circuit size](benchmark/results/benchmark.png)
+
 ## Layout
 
 ```
