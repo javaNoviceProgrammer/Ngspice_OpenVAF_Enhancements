@@ -153,10 +153,32 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # ---- openvaf-r via native MSVC toolchain + LLVM 18 (run first: it is the
-      #      experimental part, and the MSYS2 ngspice build below is slow) ----
+      # ---- ngspice via MSYS2 / MinGW (build FIRST so it always succeeds and is
+      #      staged, regardless of the experimental openvaf-r build below) ----
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            base-devel git autoconf automake libtool bison flex
+            mingw-w64-x86_64-toolchain
+            mingw-w64-x86_64-readline
+
+      - name: Build ngspice (MSYS2/MinGW)
+        shell: msys2 {0}
+        working-directory: ${{ env.NGSPICE_DIR }}
+        run: |
+          ./autogen.sh
+          mkdir -p ci-build && cd ci-build
+          # Native Windows ngspice uses its own GUI, not X11, so --without-x.
+          ../configure --disable-debug --enable-klu --disable-openmp --with-readline=yes --without-x
+          make -j"$(nproc)"
+
+      # ---- openvaf-r via native MSVC toolchain + LLVM 18 (experimental;
+      #      continue-on-error so its failure still lets ngspice.exe be staged) --
       - name: Install LLVM 18 (Chocolatey)
         shell: pwsh
+        continue-on-error: true
         run: |
           # The runner ships a newer LLVM (20.x); force the downgrade to 18.
           choco install llvm --version=18.1.8 --allow-downgrade --force --no-progress -y
@@ -179,31 +201,12 @@ jobs:
       - name: Build openvaf-r (MSVC + LLVM 18)
         shell: pwsh
         working-directory: ${{ env.OPENVAF_DIR }}
+        continue-on-error: true   # known to fail: official Windows LLVM lacks llvm-sys dev libs
         env:
           CARGO_NET_GIT_FETCH_WITH_CLI: "true"
         run: |
           clang --version
           cargo build --release --features llvm18 --bin openvaf-r
-
-      # ---- ngspice via MSYS2 / MinGW ----
-      - uses: msys2/setup-msys2@v2
-        with:
-          msystem: MINGW64
-          update: true
-          install: >-
-            base-devel git autoconf automake libtool bison flex
-            mingw-w64-x86_64-toolchain
-            mingw-w64-x86_64-readline
-
-      - name: Build ngspice (MSYS2/MinGW)
-        shell: msys2 {0}
-        working-directory: ${{ env.NGSPICE_DIR }}
-        run: |
-          ./autogen.sh
-          mkdir -p ci-build && cd ci-build
-          # Native Windows ngspice uses its own GUI, not X11, so --without-x.
-          ../configure --disable-debug --enable-klu --disable-openmp --with-readline=yes --without-x
-          make -j"$(nproc)"
 
       - name: Stage binaries
         shell: pwsh
