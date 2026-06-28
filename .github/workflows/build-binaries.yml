@@ -60,7 +60,7 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           brew update
-          brew install llvm@18 automake autoconf libtool bison flex readline
+          brew install llvm@18 automake autoconf libtool bison flex readline ncurses
           # XQuartz provides the X11 headers/libs at /opt/X11 for --with-x.
           brew install --cask xquartz
           PREFIX="$(brew --prefix llvm@18)"
@@ -70,9 +70,14 @@ jobs:
           echo "$PREFIX/bin" >> "$GITHUB_PATH"
           echo "$(brew --prefix bison)/bin" >> "$GITHUB_PATH"
           echo "$(brew --prefix flex)/bin" >> "$GITHUB_PATH"
-          # Build ngspice with X (XQuartz at /opt/X11) and readline (keg-only).
-          RL="$(brew --prefix readline)"
-          echo "NGSPICE_XREADLINE=--with-x --x-includes=/opt/X11/include --x-libraries=/opt/X11/lib --with-readline=yes CPPFLAGS=-I$RL/include LDFLAGS=-L$RL/lib" >> "$GITHUB_ENV"
+          # Build ngspice with X (XQuartz at /opt/X11) and readline. readline is
+          # keg-only and needs a terminfo provider (ncurses, also keg-only), so
+          # expose both via CPPFLAGS/LDFLAGS env vars (these tolerate the spaces
+          # that a configure-arg word-split would not).
+          RL="$(brew --prefix readline)"; NC="$(brew --prefix ncurses)"
+          echo "NGSPICE_XREADLINE=--with-x --x-includes=/opt/X11/include --x-libraries=/opt/X11/lib --with-readline=yes" >> "$GITHUB_ENV"
+          echo "CPPFLAGS=-I$RL/include -I$NC/include" >> "$GITHUB_ENV"
+          echo "LDFLAGS=-L$RL/lib -L$NC/lib" >> "$GITHUB_ENV"
 
       - name: Rust toolchain
         uses: dtolnay/rust-toolchain@stable
