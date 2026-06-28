@@ -108,7 +108,10 @@ jobs:
           mkdir -p ci-build && cd ci-build
           # $NGSPICE_XREADLINE carries --with-x / --with-readline (per platform);
           # $NGSPICE_CC pins the compiler on macOS (empty on Linux).
-          ../configure --disable-debug --enable-klu --disable-openmp $NGSPICE_CC $NGSPICE_XREADLINE
+          ../configure --disable-debug --enable-klu --disable-openmp $NGSPICE_CC $NGSPICE_XREADLINE \
+            || { echo "===== config.log: termcap/readline detection ====="; \
+                 grep -iE 'tputs|tgetent|termcap|terminfo|ncurses|readline' config.log | tail -60; \
+                 echo "===== config.log (tail) ====="; tail -60 config.log; exit 1; }
           make -j"$(getconf _NPROCESSORS_ONLN)"
 
       - name: Stage binaries
