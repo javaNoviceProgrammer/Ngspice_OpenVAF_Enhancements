@@ -78,6 +78,11 @@ jobs:
           echo "NGSPICE_XREADLINE=--with-x --x-includes=/opt/X11/include --x-libraries=/opt/X11/lib --with-readline=yes" >> "$GITHUB_ENV"
           echo "CPPFLAGS=-I$RL/include -I$NC/include" >> "$GITHUB_ENV"
           echo "LDFLAGS=-L$RL/lib -L$NC/lib" >> "$GITHUB_ENV"
+          # Build ngspice with Apple's clang (full macOS SDK + system libs such
+          # as ncurses/termcap); the Homebrew LLVM clang on PATH (used by
+          # openvaf) does not resolve the SDK system-library stubs, which breaks
+          # readline's tgetent/terminfo link check.
+          echo "NGSPICE_CC=CC=/usr/bin/clang CXX=/usr/bin/clang++" >> "$GITHUB_ENV"
 
       - name: Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -101,9 +106,9 @@ jobs:
         run: |
           ./autogen.sh
           mkdir -p ci-build && cd ci-build
-          # $NGSPICE_XREADLINE is set per-platform in the deps step and carries
-          # the --with-x / --with-readline flags (+ paths on macOS).
-          ../configure --disable-debug --enable-klu --disable-openmp $NGSPICE_XREADLINE
+          # $NGSPICE_XREADLINE carries --with-x / --with-readline (per platform);
+          # $NGSPICE_CC pins the compiler on macOS (empty on Linux).
+          ../configure --disable-debug --enable-klu --disable-openmp $NGSPICE_CC $NGSPICE_XREADLINE
           make -j"$(getconf _NPROCESSORS_ONLN)"
 
       - name: Stage binaries
