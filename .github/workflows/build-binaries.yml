@@ -153,7 +153,13 @@ jobs:
       - name: Build openvaf-r (best-effort)
         working-directory: ${{ env.OPENVAF_DIR }}
         run: |
+          # Diagnostic: llvm-sys-181 requires LLVM 18.x; show what MinGW ships.
+          echo "MinGW LLVM version: $(llvm-config --version 2>/dev/null || echo '?')"
           export LLVM_SYS_181_PREFIX="$MINGW_PREFIX"
+          # Fetch git deps (the pascalkuthe/salsa fork) with the system git so
+          # the locked revision is found — cargo's built-in shallow fetch fails
+          # to resolve it on the Windows runner.
+          export CARGO_NET_GIT_FETCH_WITH_CLI=true
           cargo build --release --features llvm18 --bin openvaf-r
 
       - name: Stage binaries
