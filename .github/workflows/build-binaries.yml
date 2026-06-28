@@ -37,8 +37,10 @@ jobs:
         include:
           - { name: linux-intel,         os: ubuntu-latest,    bin: linux/intel }
           - { name: linux-arm,           os: ubuntu-24.04-arm, bin: linux/arm }
-          - { name: macos-intel,         os: macos-13,         bin: macos/intel }
           - { name: macos-apple-silicon, os: macos-14,         bin: macos/apple-silicon }
+          # macos-intel (macos-13) is intentionally omitted: GitHub's Intel-macOS
+          # runners are scarce/deprecated and the job never gets scheduled, which
+          # stalls the whole matrix. Build bin/macos/intel locally if needed.
     steps:
       - uses: actions/checkout@v4
 
