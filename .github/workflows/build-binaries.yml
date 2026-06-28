@@ -136,18 +136,17 @@ jobs:
           if-no-files-found: error
 
   # --------------------------------------------------------------- Windows
-  # Best-effort: ngspice via MSYS2/MinGW; openvaf-r needs LLVM 18 on Windows
-  # which is historically fragile, so this job is allowed to fail.
+  # ngspice builds via MSYS2/MinGW. openvaf-r builds with the NATIVE MSVC
+  # toolchain against a real LLVM 18 (Chocolatey), because llvm-sys-181 needs
+  # LLVM 18 specifically and MSYS2 only ships the current LLVM. Best-effort.
   build-windows:
     name: windows-intel (best-effort)
     runs-on: windows-latest
     continue-on-error: true
-    defaults:
-      run:
-        shell: msys2 {0}
     steps:
       - uses: actions/checkout@v4
 
+      # ---- ngspice via MSYS2 / MinGW ----
       - uses: msys2/setup-msys2@v2
         with:
           msystem: MINGW64
@@ -155,38 +154,51 @@ jobs:
           install: >-
             base-devel git autoconf automake libtool bison flex
             mingw-w64-x86_64-toolchain
-            mingw-w64-x86_64-llvm
-            mingw-w64-x86_64-rust
             mingw-w64-x86_64-readline
 
       - name: Build ngspice (MSYS2/MinGW)
+        shell: msys2 {0}
         working-directory: ${{ env.NGSPICE_DIR }}
         run: |
           ./autogen.sh
           mkdir -p ci-build && cd ci-build
-          # Native Windows ngspice uses its own GUI, not X11, so --without-x;
-          # readline is enabled (mingw-w64-x86_64-readline).
+          # Native Windows ngspice uses its own GUI, not X11, so --without-x.
           ../configure --disable-debug --enable-klu --disable-openmp --with-readline=yes --without-x
           make -j"$(nproc)"
 
-      - name: Build openvaf-r (best-effort)
-        working-directory: ${{ env.OPENVAF_DIR }}
+      # ---- openvaf-r via native MSVC toolchain + LLVM 18 ----
+      - name: Install LLVM 18 (Chocolatey)
+        shell: pwsh
         run: |
-          # Diagnostic: llvm-sys-181 requires LLVM 18.x; show what MinGW ships.
-          echo "MinGW LLVM version: $(llvm-config --version 2>/dev/null || echo '?')"
-          export LLVM_SYS_181_PREFIX="$MINGW_PREFIX"
-          # Fetch git deps (the pascalkuthe/salsa fork) with the system git so
-          # the locked revision is found — cargo's built-in shallow fetch fails
-          # to resolve it on the Windows runner.
-          export CARGO_NET_GIT_FETCH_WITH_CLI=true
+          choco install llvm --version=18.1.8 --no-progress -y
+          $prefix = "C:\Program Files\LLVM"
+          "LLVM_SYS_181_PREFIX=$prefix" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "$prefix\bin" | Out-File -FilePath $env:GITHUB_PATH -Append
+          Write-Host "llvm-config version:"; & "$prefix\bin\llvm-config.exe" --version
+          $libs = (Get-ChildItem "$prefix\lib\*.lib" -ErrorAction SilentlyContinue | Measure-Object).Count
+          Write-Host "static .lib files in $prefix\lib : $libs"
+
+      - name: Rust toolchain (MSVC)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Build openvaf-r (MSVC + LLVM 18)
+        shell: pwsh
+        working-directory: ${{ env.OPENVAF_DIR }}
+        env:
+          CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+        run: |
+          clang --version
           cargo build --release --features llvm18 --bin openvaf-r
 
       - name: Stage binaries
+        shell: pwsh
         run: |
-          mkdir -p out/bin/windows/intel
-          cp "$OPENVAF_DIR/target/release/openvaf-r.exe" out/bin/windows/intel/ 2>/dev/null || true
-          cp "$NGSPICE_DIR/ci-build/src/ngspice.exe"     out/bin/windows/intel/ 2>/dev/null || true
-          ls -l out/bin/windows/intel/ || true
+          New-Item -ItemType Directory -Force -Path out/bin/windows/intel | Out-Null
+          Copy-Item "$env:OPENVAF_DIR\target\release\openvaf-r.exe" out\bin\windows\intel\ -ErrorAction SilentlyContinue
+          Copy-Item "$env:NGSPICE_DIR\ci-build\src\ngspice.exe"     out\bin\windows\intel\ -ErrorAction SilentlyContinue
+          Get-ChildItem out\bin\windows\intel\
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
