@@ -204,6 +204,20 @@ jobs:
           $libs = (Get-ChildItem "$prefix\lib\LLVM*.lib" -ErrorAction SilentlyContinue | Measure-Object).Count
           Write-Host "LLVM*.lib files in lib/: $libs"
 
+      - name: Install libxml2 static (vcpkg, required by LLVM 18 linker)
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          # LLVM 18's llvm-config --system-libs emits libxml2s.lib on Windows.
+          # vcpkg (pre-installed on GitHub runners) provides this via its
+          # x64-windows-static triplet, which names the static output libxml2s.lib.
+          vcpkg install libxml2:x64-windows-static
+          $lib = "C:\vcpkg\installed\x64-windows-static\lib"
+          Write-Host "vcpkg lib contents:"
+          Get-ChildItem $lib -Filter "*xml*" -ErrorAction SilentlyContinue
+          # Expose to both the compiler and the Rust linker via the LIB search path
+          "LIB=$env:LIB;$lib" | Out-File -FilePath $env:GITHUB_ENV -Append
+
       - name: Rust toolchain (MSVC)
         uses: dtolnay/rust-toolchain@stable
         with:
