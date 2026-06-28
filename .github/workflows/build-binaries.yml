@@ -46,18 +46,23 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             build-essential automake autoconf libtool bison flex pkg-config \
             llvm-18 llvm-18-dev libclang-18-dev clang-18 libpolly-18-dev \
-            zlib1g-dev libzstd-dev libtinfo-dev libxml2-dev
+            zlib1g-dev libzstd-dev libtinfo-dev libxml2-dev \
+            libreadline-dev libx11-dev libxaw7-dev libxft-dev libxext-dev libxmu-dev libxt-dev
           PREFIX="$(llvm-config-18 --prefix)"
           echo "LLVM_SYS_181_PREFIX=$PREFIX" >> "$GITHUB_ENV"
           # The openvaf 'target' crate build.rs invokes clang + llvm-lib, so the
           # LLVM bin dir must be on PATH (mirrors what build.sh does locally).
           echo "$PREFIX/bin" >> "$GITHUB_PATH"
+          # Build ngspice with X (Xaw plotting) and readline support.
+          echo "NGSPICE_XREADLINE=--with-x --with-readline=yes" >> "$GITHUB_ENV"
 
       - name: Install build deps (macOS)
         if: runner.os == 'macOS'
         run: |
           brew update
-          brew install llvm@18 automake autoconf libtool bison flex
+          brew install llvm@18 automake autoconf libtool bison flex readline
+          # XQuartz provides the X11 headers/libs at /opt/X11 for --with-x.
+          brew install --cask xquartz
           PREFIX="$(brew --prefix llvm@18)"
           echo "LLVM_SYS_181_PREFIX=$PREFIX" >> "$GITHUB_ENV"
           # LLVM bin first on PATH so 'clang'/'llvm-lib' resolve to LLVM 18
@@ -65,6 +70,9 @@ jobs:
           echo "$PREFIX/bin" >> "$GITHUB_PATH"
           echo "$(brew --prefix bison)/bin" >> "$GITHUB_PATH"
           echo "$(brew --prefix flex)/bin" >> "$GITHUB_PATH"
+          # Build ngspice with X (XQuartz at /opt/X11) and readline (keg-only).
+          RL="$(brew --prefix readline)"
+          echo "NGSPICE_XREADLINE=--with-x --x-includes=/opt/X11/include --x-libraries=/opt/X11/lib --with-readline=yes CPPFLAGS=-I$RL/include LDFLAGS=-L$RL/lib" >> "$GITHUB_ENV"
 
       - name: Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -88,7 +96,9 @@ jobs:
         run: |
           ./autogen.sh
           mkdir -p ci-build && cd ci-build
-          ../configure --disable-debug --enable-klu --with-readline=no --without-x --disable-openmp
+          # $NGSPICE_XREADLINE is set per-platform in the deps step and carries
+          # the --with-x / --with-readline flags (+ paths on macOS).
+          ../configure --disable-debug --enable-klu --disable-openmp $NGSPICE_XREADLINE
           make -j"$(getconf _NPROCESSORS_ONLN)"
 
       - name: Stage binaries
@@ -128,13 +138,16 @@ jobs:
             mingw-w64-x86_64-toolchain
             mingw-w64-x86_64-llvm
             mingw-w64-x86_64-rust
+            mingw-w64-x86_64-readline
 
       - name: Build ngspice (MSYS2/MinGW)
         working-directory: ${{ env.NGSPICE_DIR }}
         run: |
           ./autogen.sh
           mkdir -p ci-build && cd ci-build
-          ../configure --disable-debug --enable-klu --with-readline=no --without-x --disable-openmp
+          # Native Windows ngspice uses its own GUI, not X11, so --without-x;
+          # readline is enabled (mingw-w64-x86_64-readline).
+          ../configure --disable-debug --enable-klu --disable-openmp --with-readline=yes --without-x
           make -j"$(nproc)"
 
       - name: Build openvaf-r (best-effort)
