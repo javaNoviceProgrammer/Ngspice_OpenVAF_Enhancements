@@ -23,6 +23,7 @@ absdelay_examples/
     ac_sim.cir           flat 0 dB magnitude, linear phase (= delay)
     tran_sim.cir         pulse delayed by 10 ns
     run_examples.sh      runs each with BOTH solvers and checks they agree
+    example_results.png  DC / AC / transient waveforms, KLU vs SPARSE overlaid
   benchmark/
     gen_bench.py         generates L x L absdelay-driven resistor-mesh netlists
     run_benchmark.sh     times KLU vs SPARSE for dc/ac/tran across sizes
