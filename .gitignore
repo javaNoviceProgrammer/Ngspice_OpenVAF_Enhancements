@@ -77,3 +77,9 @@ ngspice-46/tests/**/*.out
 ngspice-46/src/ngspice
 ngspice-46/ngspice.pc
 ngspice-46/ltmain.sh
+
+# absdelay scripts: per-platform compiled model + temp netlists
+absdelay_examples/.build/
+absdelay_examples/**/.k.cir
+absdelay_examples/**/.s.cir
+absdelay_examples/benchmark/cir/

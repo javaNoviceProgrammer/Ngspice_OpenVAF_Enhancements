@@ -10,8 +10,12 @@ between KLU (AMD/BTF ordering, symbolic reuse) and the default Sparse 1.3
 n = L*L nodes.  Same circuit is emitted for dc / ac / tran.
 """
 import os, sys
-OSDI = "/Users/meisam/software-builds/version2/absdelay_examples/absdelay.osdi"
 HERE = os.path.dirname(os.path.abspath(__file__))
+# Path to the compiled absdelay model. run_benchmark.sh exports ABSDELAY_OSDI
+# (a platform-specific build); fall back to the in-tree .build copy.
+OSDI = os.path.abspath(
+    os.environ.get("ABSDELAY_OSDI", os.path.join(HERE, "..", ".build", "absdelay.osdi"))
+)
 
 def make(L, analysis):
     out = [f"* absdelay {L}x{L} mesh benchmark ({analysis}) — {L*L} nodes",

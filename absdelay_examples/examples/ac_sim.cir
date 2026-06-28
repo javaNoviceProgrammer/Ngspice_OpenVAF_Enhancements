@@ -9,7 +9,7 @@ Ndly5 n4    out  dly
 Vin in 0 AC 1
 .ac dec 50 1MEG 500MEG
 .control
-  pre_osdi /Users/meisam/software-builds/version2/absdelay_examples/absdelay.osdi
+  pre_osdi OSDIFILE
   run
   wrdata RESULTFILE vdb(out) vp(out)
 .endc

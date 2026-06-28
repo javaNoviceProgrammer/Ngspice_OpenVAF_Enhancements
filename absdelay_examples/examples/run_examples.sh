@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
-# Run each absdelay example with both KLU and SPARSE solvers (version2 ngspice)
-# and confirm the two solvers produce identical results.
+# Run each absdelay example with both KLU and SPARSE solvers and confirm the two
+# solvers produce identical results. Works on macOS and Linux: the ngspice /
+# openvaf-r binaries are picked from bin/<os>/<arch>/ for the current machine,
+# and the model is recompiled for this platform (see ../_setup.sh).
 set -e
-NG=../../bin/macos/apple-silicon/ngspice
 DIR="$(cd "$(dirname "$0")" && pwd)"
+. "$DIR/../_setup.sh"        # sets NG, VAF, OSDI for this platform
 cd "$DIR"
 
 for sim in dc ac tran; do
@@ -11,15 +13,14 @@ for sim in dc ac tran; do
   for solver in klu sparse; do
     out="${DIR}/${sim}_${solver}.txt"
     work="${DIR}/.${sim}_${solver}.cir"
-    # substitute result path
-    sed "s|RESULTFILE|${out}|" "$base" > "$work"
+    # substitute the result-file and osdi-model placeholders
+    sed -e "s|RESULTFILE|${out}|" -e "s|OSDIFILE|${OSDI}|" "$base" > "$work"
     if [ "$solver" = "klu" ]; then
-      # insert .options klu right after the title line
-      sed -i '' '1a\
-.options klu
-' "$work"
+      # insert ".options klu" after the title line (portable across BSD/GNU sed)
+      sed '1a\
+.options klu' "$work" > "$work.tmp" && mv "$work.tmp" "$work"
     fi
-    $NG --batch "$work" >/dev/null 2>&1
+    "$NG" --batch "$work" >/dev/null 2>&1
     rm -f "$work"
   done
   # compare the two solver outputs

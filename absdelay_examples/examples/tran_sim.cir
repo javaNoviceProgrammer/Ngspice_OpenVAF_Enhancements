@@ -9,7 +9,7 @@ Ndly5 n4    out  dly
 Vin in 0 PULSE(0 1 0 0.5n 0.5n 9.5n 40n)
 .tran 0.1n 80n uic
 .control
-  pre_osdi /Users/meisam/software-builds/version2/absdelay_examples/absdelay.osdi
+  pre_osdi OSDIFILE
   run
   wrdata RESULTFILE v(in) v(out)
 .endc
