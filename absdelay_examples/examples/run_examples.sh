@@ -2,7 +2,7 @@
 # Run each absdelay example with both KLU and SPARSE solvers (version2 ngspice)
 # and confirm the two solvers produce identical results.
 set -e
-NG=/Users/meisam/software-builds/version2/bin/ngspice
+NG=../../bin/macos/apple-silicon/ngspice
 DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$DIR"
 

@@ -3,7 +3,7 @@
 # Runs every generated mesh_<L>_<analysis>.cir with both solvers, times each
 # (best of 2 runs), and writes results/timings.csv.
 set -e
-NG=/Users/meisam/software-builds/version2/bin/ngspice
+NG=../../bin/macos/apple-silicon/ngspice
 DIR="$(cd "$(dirname "$0")" && pwd)"
 SIZES="${1:-20,30,40,50,60,70}"
 cd "$DIR"
