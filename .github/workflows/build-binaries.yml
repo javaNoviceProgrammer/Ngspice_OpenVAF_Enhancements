@@ -80,7 +80,9 @@ jobs:
           # -lfreetype/-lfontconfig (which live in /opt/X11/lib) to LIBS, and
           # without that -L the readline tgetent/termcap link check fails to
           # link at all -> "Found neither ncurses/terminfo or termcap".
-          echo "CPPFLAGS=-I$RL/include -I$NC/include -I/opt/X11/include" >> "$GITHUB_ENV"
+          # -I/opt/X11/include/freetype2 is needed because the X11 plotting code
+          # includes <X11/Xft/Xft.h>, which pulls in freetype's <ft2build.h>.
+          echo "CPPFLAGS=-I$RL/include -I$NC/include -I/opt/X11/include -I/opt/X11/include/freetype2" >> "$GITHUB_ENV"
           echo "LDFLAGS=-L$RL/lib -L$NC/lib -L/opt/X11/lib" >> "$GITHUB_ENV"
           # Build ngspice with Apple's clang (full macOS SDK + system libs such
           # as ncurses/termcap); the Homebrew LLVM clang on PATH (used by
