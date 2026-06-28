@@ -42,7 +42,7 @@ jobs:
           # runners are scarce/deprecated and the job never gets scheduled, which
           # stalls the whole matrix. Build bin/macos/intel locally if needed.
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install build deps (Linux)
         if: runner.os == 'Linux'
@@ -103,7 +103,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache cargo + target
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/.cargo/registry
@@ -138,7 +138,7 @@ jobs:
           ls -l "out/bin/${{ matrix.bin }}/"
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: bin-${{ matrix.name }}
           path: out/
@@ -153,7 +153,7 @@ jobs:
     runs-on: windows-latest
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # ---- ngspice via MSYS2 / MinGW (build FIRST so it always succeeds and is
       #      staged, regardless of the experimental openvaf-r build below) ----
@@ -219,7 +219,7 @@ jobs:
           Get-ChildItem out\bin\windows\intel\
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: bin-windows-intel
           path: out/
@@ -233,7 +233,7 @@ jobs:
     if: ${{ always() && (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main') }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           ref: main
 
@@ -242,7 +242,7 @@ jobs:
       # exactly the set of platforms that built — partial runs are fine.
       # merge-multiple combines each platform's bin/<os>/<arch> tree into one.
       - name: Download successful platform artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           path: _artifacts
           merge-multiple: true
