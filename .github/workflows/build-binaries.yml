@@ -15,6 +15,13 @@ on:
 permissions:
   contents: write       # the collect job commits binaries back into bin/
 
+# Only one build per branch at a time: a new push cancels the older,
+# now-superseded run. Without this, rapid pushes pile up runs that each queue a
+# scarce macos-13 (Intel) runner, so those jobs never get scheduled.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   OPENVAF_DIR: OpenVAF-master-20260610
   NGSPICE_DIR: ngspice-46
