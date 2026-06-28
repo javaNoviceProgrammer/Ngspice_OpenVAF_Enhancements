@@ -156,9 +156,13 @@ jobs:
           $prefix = "C:\Program Files\LLVM"
           "LLVM_SYS_181_PREFIX=$prefix" | Out-File -FilePath $env:GITHUB_ENV -Append
           "$prefix\bin" | Out-File -FilePath $env:GITHUB_PATH -Append
-          Write-Host "llvm-config version:"; & "$prefix\bin\llvm-config.exe" --version
+          # Diagnostics (must not fail the step): llvm-sys needs either
+          # llvm-config or the static LLVM*.lib archives under lib/.
+          if (Test-Path "$prefix\bin\llvm-config.exe") { Write-Host "llvm-config:"; & "$prefix\bin\llvm-config.exe" --version }
+          else { Write-Host "NO llvm-config.exe present" }
           $libs = (Get-ChildItem "$prefix\lib\*.lib" -ErrorAction SilentlyContinue | Measure-Object).Count
-          Write-Host "static .lib files in $prefix\lib : $libs"
+          Write-Host "static .lib files in lib/: $libs"
+          if (Test-Path "$prefix\bin\clang.exe") { & "$prefix\bin\clang.exe" --version }
 
       - name: Rust toolchain (MSVC)
         uses: dtolnay/rust-toolchain@stable
