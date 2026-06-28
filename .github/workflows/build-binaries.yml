@@ -76,8 +76,12 @@ jobs:
           # that a configure-arg word-split would not).
           RL="$(brew --prefix readline)"; NC="$(brew --prefix ncurses)"
           echo "NGSPICE_XREADLINE=--with-x --x-includes=/opt/X11/include --x-libraries=/opt/X11/lib --with-readline=yes" >> "$GITHUB_ENV"
-          echo "CPPFLAGS=-I$RL/include -I$NC/include" >> "$GITHUB_ENV"
-          echo "LDFLAGS=-L$RL/lib -L$NC/lib" >> "$GITHUB_ENV"
+          # /opt/X11 must be on the general CPPFLAGS/LDFLAGS too: --with-x adds
+          # -lfreetype/-lfontconfig (which live in /opt/X11/lib) to LIBS, and
+          # without that -L the readline tgetent/termcap link check fails to
+          # link at all -> "Found neither ncurses/terminfo or termcap".
+          echo "CPPFLAGS=-I$RL/include -I$NC/include -I/opt/X11/include" >> "$GITHUB_ENV"
+          echo "LDFLAGS=-L$RL/lib -L$NC/lib -L/opt/X11/lib" >> "$GITHUB_ENV"
           # Build ngspice with Apple's clang (full macOS SDK + system libs such
           # as ncurses/termcap); the Homebrew LLVM clang on PATH (used by
           # openvaf) does not resolve the SDK system-library stubs, which breaks
