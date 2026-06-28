@@ -1,0 +1,16 @@
+* absdelay transient example (5-stage delay line, total delay = 10 ns)
+* A pulse on the input appears at the output shifted right by 10 ns.
+.model dly absdelay_dly (delay=2n)
+Ndly1 in    n1   dly
+Ndly2 n1    n2   dly
+Ndly3 n2    n3   dly
+Ndly4 n3    n4   dly
+Ndly5 n4    out  dly
+Vin in 0 PULSE(0 1 0 0.5n 0.5n 9.5n 40n)
+.tran 0.1n 80n uic
+.control
+  pre_osdi /Users/meisam/software-builds/version2/absdelay_examples/absdelay.osdi
+  run
+  wrdata RESULTFILE v(in) v(out)
+.endc
+.end

@@ -1,0 +1,16 @@
+`include "disciplines.vams"
+`include "constants.vams"
+
+// absdelay_dly: delays the input signal by `delay` seconds.
+// Implemented via the synthetic-node DAE approach in OpenVAF + ngspice.
+// The output node z satisfies:  V(out) = absdelay(V(in), delay)
+module absdelay_dly(in, out);
+    inout in, out;
+    electrical in, out;
+
+    parameter real delay = 10e-9 from (0:inf);
+
+    analog begin
+        V(out) <+ absdelay(V(in), delay);
+    end
+endmodule

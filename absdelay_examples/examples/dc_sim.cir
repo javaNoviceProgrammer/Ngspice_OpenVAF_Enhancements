@@ -1,0 +1,17 @@
+* absdelay DC example (5-stage delay line)
+* In steady state each stage is a pass-through, so V(out) == V(in).
+* Solver (KLU/SPARSE) is selected by the run script via .options klu.
+.model dly absdelay_dly (delay=2n)
+Ndly1 in    n1   dly
+Ndly2 n1    n2   dly
+Ndly3 n2    n3   dly
+Ndly4 n3    n4   dly
+Ndly5 n4    out  dly
+Vin in 0 DC 1.0
+.dc Vin -2 2 0.25
+.control
+  pre_osdi /Users/meisam/software-builds/version2/absdelay_examples/absdelay.osdi
+  run
+  wrdata RESULTFILE v(in) v(out)
+.endc
+.end

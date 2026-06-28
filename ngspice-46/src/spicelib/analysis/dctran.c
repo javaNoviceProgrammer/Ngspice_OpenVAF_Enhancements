@@ -1,0 +1,990 @@
+/**********
+Copyright 1990 Regents of the University of California.  All rights reserved.
+Author: 1985 Thomas L. Quarles
+Modified: 2000  AlansFixes
+Modified: 2023 XSPICE breakpoint fix for shared ngspice by Vyacheslav Shevchuk
+**********/
+
+/* subroutine to do DC TRANSIENT analysis */
+
+
+/* line   goto label:
+   373    nextTime
+   515    resume
+   786    past_breakpoint
+   985    chkStep */
+
+#include "ngspice/ngspice.h"
+#include "ngspice/cktdefs.h"
+#include "cktaccept.h"
+#include "ngspice/trandefs.h"
+#include "ngspice/sperror.h"
+#include "ngspice/fteext.h"
+#include "ngspice/missing_math.h"
+
+/* for setting breakpoints required by dbs data base */
+extern struct dbcomm *dbs;
+#include "ngspice/ftedebug.h"
+
+#ifdef XSPICE
+#include "ngspice/miftypes.h"
+#include "ngspice/evt.h"
+#include "ngspice/enh.h"
+#include "ngspice/mif.h"
+#include "ngspice/evtproto.h"
+#include "ngspice/ipctiein.h"
+#endif
+
+#ifdef SHARED_MODULE
+extern int add_bkpt(void);
+extern int sharedsync(double*, double*, double, double, double, int, int*, int);
+extern int ng_ident;      /* for debugging */
+#endif
+
+#define INIT_STATS() \
+do { \
+    startTime = SPfrontEnd->IFseconds();        \
+    startIters = ckt->CKTstat->STATnumIter;     \
+    startdTime = ckt->CKTstat->STATdecompTime;  \
+    startsTime = ckt->CKTstat->STATsolveTime;   \
+    startlTime = ckt->CKTstat->STATloadTime;    \
+    startkTime = ckt->CKTstat->STATsyncTime;    \
+} while(0)
+
+#define UPDATE_STATS(analysis) \
+do { \
+    ckt->CKTcurrentAnalysis = analysis; \
+    ckt->CKTstat->STATtranTime += SPfrontEnd->IFseconds() - startTime; \
+    ckt->CKTstat->STATtranIter += ckt->CKTstat->STATnumIter - startIters; \
+    ckt->CKTstat->STATtranDecompTime += ckt->CKTstat->STATdecompTime - startdTime; \
+    ckt->CKTstat->STATtranSolveTime += ckt->CKTstat->STATsolveTime - startsTime; \
+    ckt->CKTstat->STATtranLoadTime += ckt->CKTstat->STATloadTime - startlTime; \
+    ckt->CKTstat->STATtranSyncTime += ckt->CKTstat->STATsyncTime - startkTime; \
+} while(0)
+
+
+int
+DCtran(CKTcircuit *ckt,
+       int restart)   /* forced restart flag */
+{
+    TRANan *job = (TRANan *) ckt->CKTcurJob;
+
+    int i;
+    double olddelta;
+    double delta;
+    double newdelta;
+    double *temp;
+    double startdTime;
+    double startsTime;
+    double startlTime;
+    double startkTime;
+    double startTime;
+    int startIters;
+    int converged;
+    int firsttime;
+    int error;
+#ifdef WANT_SENSE2
+    int save, save2, size;
+    long save1;
+#endif
+    int save_order;
+    long save_mode;
+    IFuid timeUid;
+    IFuid *nameList;
+    int numNames;
+    double maxstepsize = 0.0;
+
+    bool have_autostop = FALSE, flag_autostop = FALSE;
+
+    int ltra_num;
+    CKTnode *node;
+#ifdef XSPICE
+    /* xspice_breakpoints_processed 0:
+       XSPICE models didn't have breakpoints in [last_accepted_time, CKTtime].
+       xspice_breakpoints_processed 1:
+       convergence criteria are satisfied but XSPICE breakpoint(s) is in the
+       time interval [last_accepted_time, CKTtime]. */
+    int xspice_breakpoints_processed = 0;
+
+#ifdef SHARED_MODULE
+    double olddelta_for_shared_sync = 0.0;
+#endif
+#endif
+#if defined SHARED_MODULE
+    int redostep;
+#endif
+    if(restart || ckt->CKTtime == 0) {
+        /* dctran() is entered here upon starting transient simulation
+           with time 0 and restart 1.
+           ckt->CKTstep, CKTfinalTime, CKTinitTime, CKTmaxStep have been
+           set already in fcn TRANinit() of traninit.c according to
+           TSTEP TSTOP TSTART TMAX given on the .tran line. TMAX is set to TSTEP,
+           if 'set nostepsizelimit' is not given in .spiceinit.*/
+
+        /* Set the first delta (step) time, typically depending on TSTEP */
+        delta=MIN(ckt->CKTfinalTime/100,ckt->CKTstep)/10;
+
+#ifdef STEPDEBUG
+        printf("delta = %g    finalTime/100: %g    CKTstep: %g\n",delta,ckt->CKTfinalTime/100,ckt->CKTstep);
+#endif
+        /* begin LTRA code addition */
+        if (ckt->CKTtimePoints != NULL)
+            FREE(ckt->CKTtimePoints);
+
+        if (ckt->CKTstep >= ckt->CKTmaxStep)
+            maxstepsize = ckt->CKTstep;
+        else
+            maxstepsize = ckt->CKTmaxStep;
+
+        ckt->CKTsizeIncr = 100;
+        ckt->CKTtimeIndex = -1; /* before the DC soln has been stored */
+        ckt->CKTtimeListSize = (int) ceil( ckt->CKTfinalTime / maxstepsize );
+        ltra_num = CKTtypelook("LTRA");
+        if (ltra_num >= 0 && ckt->CKThead[ltra_num] != NULL)
+            ckt->CKTtimePoints = TMALLOC(double, ckt->CKTtimeListSize);
+        /* end LTRA code addition */
+
+        /* Reset the breakpoint list.
+           Add breakpoints at 0 time and TSTOP (final) time */
+        if(ckt->CKTbreaks) FREE(ckt->CKTbreaks);
+        ckt->CKTbreaks = TMALLOC(double, 2);
+        if(ckt->CKTbreaks == NULL) return(E_NOMEM);
+        ckt->CKTbreaks[0] = 0;
+        ckt->CKTbreaks[1] = ckt->CKTfinalTime;
+        ckt->CKTbreakSize = 2;
+
+#ifdef SHARED_MODULE
+        add_bkpt();
+#endif
+
+#ifdef XSPICE
+        /* Modify setting of CKTminBreak
+           Set to 10 times delmin (minimum delta step time). */
+        if(ckt->CKTminBreak == 0)
+            ckt->CKTminBreak = 10.0 * ckt->CKTdelmin;
+
+#else
+        if(ckt->CKTminBreak == 0)
+            ckt->CKTminBreak = ckt->CKTmaxStep * 5e-5;
+#endif
+
+#ifdef XSPICE
+        /* set anal_init and anal_type */
+        /* Tell the code models what mode we're in */
+        g_mif_info.circuit.anal_type = MIF_DC;
+        g_mif_info.circuit.anal_init = MIF_TRUE;
+#endif
+        /* Scan ckt->CKTnodes and create list of node names */
+        error = CKTnames(ckt,&numNames,&nameList);
+        if(error) return(error);
+        SPfrontEnd->IFnewUid (ckt, &timeUid, NULL, "time", UID_OTHER, NULL);
+        error = SPfrontEnd->OUTpBeginPlot (ckt, ckt->CKTcurJob,
+                                           ckt->CKTcurJob->JOBname,
+                                           timeUid, IF_REAL,
+                                           numNames, nameList, IF_REAL,
+                                           &(job->TRANplot));
+        tfree(nameList);
+        if(error) return(error);
+
+        /* initialize CKTsoaCheck 'warn' counters */
+        if (ckt->CKTsoaCheck)
+            error = CKTsoaInit();
+
+        ckt->CKTtime = 0;
+        ckt->CKTdelta = 0;
+        ckt->CKTbreak = 1;
+        firsttime = 1;
+        save_mode = (ckt->CKTmode&MODEUIC) | MODETRANOP | MODEINITJCT;
+        save_order = ckt->CKTorder;
+
+        have_autostop = cp_getvar("autostop", CP_BOOL, NULL, 0);
+
+/* Add breakpoints here which have been requested by the user setting the
+   stop command as 'stop when time = xx'.
+   Get data from the global dbs data base.
+*/
+        if (dbs) {
+            struct dbcomm *d;
+            for (d = dbs; d; d = d->db_next)
+                if ((d->db_type == DB_STOPWHEN) && cieq(d->db_nodename1,"time")
+                    && (d->db_value2 > 0)) {
+                    CKTsetBreak(ckt, d->db_value2);
+                    if (ft_ngdebug)
+                        printf("breakpoint set to time = %g\n", d->db_value2);
+                }
+        }
+
+#ifdef XSPICE
+        /* set a breakpoint at end of supply ramping time.
+           Must do this after CKTtime is set to 0 above */
+        if(ckt->enh->ramp.ramptime > 0.0)
+            CKTsetBreak(ckt, ckt->enh->ramp.ramptime);
+
+        /* Call EVTop if event-driven instances exist */
+        if(ckt->evt->counts.num_insts != 0) {
+            /* use new DCOP algorithm */
+            converged = EVTop(ckt,
+                        (ckt->CKTmode & MODEUIC) | MODETRANOP | MODEINITJCT,
+                        (ckt->CKTmode & MODEUIC) | MODETRANOP | MODEINITFLOAT,
+                        ckt->CKTdcMaxIter,
+                        MIF_TRUE);
+            EVTdump(ckt, IPC_ANAL_DCOP, 0.0);
+
+            EVTop_save(ckt, MIF_FALSE, 0.0);
+        } else
+#endif
+            /* Get operating point for analogue circuit */
+            converged = CKTop(ckt,
+                (ckt->CKTmode & MODEUIC) | MODETRANOP | MODEINITJCT,
+                (ckt->CKTmode & MODEUIC) | MODETRANOP | MODEINITFLOAT,
+                ckt->CKTdcMaxIter);
+
+        if(converged != 0) {
+            fprintf(stderr,"\nError: Finding the operating point for transient simulation failed \n");
+            CKTncDump(ckt);
+            fprintf(stderr,"\n");
+            fflush(stderr);
+        } else if (ckt->CKTmode & MODEUIC && !ft_ngdebug) {
+            fprintf(stdout,"Operating point simulation skipped by 'uic',\n");
+            fprintf(stdout,"  now using transient initial conditions.\n");
+            fflush(stdout);
+        } else if (!ft_noacctprint && !ft_noinitprint) {
+            fprintf(stdout,"\nInitial Transient Solution\n");
+            fprintf(stdout,"--------------------------\n\n");
+            fprintf(stdout,"%-30s %15s\n", "Node", "Voltage");
+            fprintf(stdout,"%-30s %15s\n", "----", "-------");
+            for(node=ckt->CKTnodes->next;node;node=node->next) {
+                if (strstr(node->name, "#branch") || !strchr(node->name, '#'))
+                    fprintf(stdout,"%-30s %15g\n", node->name,
+                                              ckt->CKTrhsOld[node->number]);
+            }
+            fprintf(stdout,"\n");
+            fflush(stdout);
+        }
+
+        /* return upon failure to converge during op */
+        if (converged != 0) {
+            SPfrontEnd->OUTendPlot(job->TRANplot);
+            return(converged);
+        }
+#ifdef XSPICE
+        /* set anal_init and anal_type */
+        g_mif_info.circuit.anal_init = MIF_TRUE;
+
+        /* Tell the code models what mode we're in */
+        g_mif_info.circuit.anal_type = MIF_TRAN;
+
+        /* Breakpoint stuff */
+        /* Initialize the temporary breakpoint variables to infinity */
+        g_mif_info.breakpoint.current = 1.0e30;
+        g_mif_info.breakpoint.last    = 1.0e30;
+#endif
+        ckt->CKTstat->STATtimePts ++;
+        ckt->CKTorder = 1;
+        /* Initialze CKTdeltaOld with maximum value */
+        for(i=0;i<7;i++) {
+            ckt->CKTdeltaOld[i]=ckt->CKTmaxStep;
+        }
+        ckt->CKTdelta = delta; /* delta set in line 130 */
+#ifdef STEPDEBUG
+        (void)printf("delta initialized to %g\n",ckt->CKTdelta);
+#endif
+        ckt->CKTsaveDelta = ckt->CKTfinalTime/50;
+
+#ifdef WANT_SENSE2
+        if(ckt->CKTsenInfo && (ckt->CKTsenInfo->SENmode & TRANSEN)){
+#ifdef SENSDEBUG
+            printf("\nTransient Sensitivity Results\n\n");
+            CKTsenPrint(ckt);
+#endif /* SENSDEBUG */
+            save = ckt->CKTsenInfo->SENmode;
+            ckt->CKTsenInfo->SENmode = TRANSEN;
+            save1 = ckt->CKTmode;
+            save2 = ckt->CKTorder;
+            ckt->CKTmode = save_mode;
+            ckt->CKTorder = save_order;
+            error = CKTsenDCtran(ckt);
+            if (error)
+                return(error);
+
+            ckt->CKTmode = save1;
+            ckt->CKTorder = save2;
+        }
+#endif
+        /* modeinittran set here */
+        ckt->CKTmode = (ckt->CKTmode&MODEUIC) | MODETRAN | MODEINITTRAN;
+        /* Reset the gear variable coefficient matrix. */
+        ckt->CKTag[0]=ckt->CKTag[1]=0;
+        if (ckt->CKTstate1 && ckt->CKTstate0) {
+            memcpy(ckt->CKTstate1, ckt->CKTstate0,
+                  (size_t) ckt->CKTnumStates * sizeof(double));
+        }
+
+#ifdef WANT_SENSE2
+        if(ckt->CKTsenInfo && (ckt->CKTsenInfo->SENmode & TRANSEN)){
+            size = SMPmatSize(ckt->CKTmatrix);
+            for(i = 1; i<=size ; i++)
+                ckt->CKTrhsOp[i] = ckt->CKTrhsOld[i];
+        }
+#endif
+
+        INIT_STATS();
+
+    /* End of (restart || ckt->CKTtime == 0) */
+    } else {
+        /* traninit resets CKTmode */
+        ckt->CKTmode = (ckt->CKTmode&MODEUIC) | MODETRAN | MODEINITPRED;
+
+        INIT_STATS();
+        if(ckt->CKTminBreak == 0)
+            ckt->CKTminBreak = ckt->CKTmaxStep * 5e-5;
+        firsttime=0;
+        /* To get rawfile working */
+        error = SPfrontEnd->OUTpBeginPlot (NULL, NULL,
+                                           NULL,
+                                           NULL, 0,
+                                           666, NULL, 666,
+                                           &(job->TRANplot));
+        if(error) {
+            fprintf(stderr, "Couldn't relink rawfile\n");
+            return error;
+        }
+        goto resume; /* line 515 */
+    }
+
+    nextTime:
+
+    /* begin LTRA code addition */
+    if (ckt->CKTtimePoints) {
+    ckt->CKTtimeIndex++;
+        if (ckt->CKTtimeIndex >= ckt->CKTtimeListSize) {
+            /* need more space */
+            int need;
+            need = (int) ceil( (ckt->CKTfinalTime - ckt->CKTtime) / maxstepsize );
+            if (need < ckt->CKTsizeIncr)
+                need = ckt->CKTsizeIncr;
+            ckt->CKTtimeListSize += need;
+            ckt->CKTtimePoints = TREALLOC(double, ckt->CKTtimePoints, ckt->CKTtimeListSize);
+            ckt->CKTsizeIncr = (int) ceil(1.4 * ckt->CKTsizeIncr);
+        }
+        ckt->CKTtimePoints[ckt->CKTtimeIndex] = ckt->CKTtime;
+    }
+    /* end LTRA code addition */
+
+    error = CKTaccept(ckt);
+    /* check if current breakpoint is outdated; if so, clear */
+    if (ckt->CKTtime > ckt->CKTbreaks[0])
+        CKTclrBreak(ckt);
+
+    if (ckt->CKTsoaCheck)
+        error = CKTsoaCheck(ckt);
+
+    /*
+ * Breakpoint handling scheme:
+ * When a timepoint t is accepted (by CKTaccept), clear all previous
+ * breakpoints, because they will never be needed again.
+ *
+ * t may itself be a breakpoint, or indistinguishably close. DON'T
+ * clear t itself; recognise it as a breakpoint and act accordingly
+ *
+ * if t is not a breakpoint, limit the timestep so that the next
+ * breakpoint is not crossed
+ */
+
+#ifdef STEPDEBUG
+    printf("Delta %g accepted at time %g (finaltime: %g)\n",ckt->CKTdelta,ckt->CKTtime,ckt->CKTfinalTime);
+    fflush(stdout);
+#endif /* STEPDEBUG */
+    ckt->CKTstat->STATaccepted ++;
+    ckt->CKTbreak = 0;
+    /* XXX Error will cause single process to bail. */
+    if(error)  {
+        UPDATE_STATS(DOING_TRAN);
+        return(error);
+    }
+
+#ifdef XSPICE
+    /*  Send evt data stuff in shared library */
+    if (wantevtdata) {
+        /* Send event-driven results */
+        EVTdump(ckt, IPC_ANAL_TRAN, 0.0);
+        /* Then follow with analog results... */
+    }
+#endif
+
+    /* Output the data of the current accepted time point */
+    if ((ckt->CKTmode & MODEUIC && ckt->CKTtime > 0 && ckt->CKTtime >= ckt->CKTinitTime)
+        || (!(ckt->CKTmode & MODEUIC) && ckt->CKTtime >= ckt->CKTinitTime)) {
+        CKTdump(ckt, ckt->CKTtime, job->TRANplot);
+    }
+#ifdef XSPICE
+    /* Update event queues/data for accepted timepoint */
+    /* Note: this must be done AFTER sending results to SI so it can't
+       go next to CKTaccept() above */
+    if(ckt->evt->counts.num_insts > 0)
+        EVTaccept(ckt, ckt->CKTtime);
+#endif
+    ckt->CKTstat->STAToldIter = ckt->CKTstat->STATnumIter;
+    /* Check for the end of the tran simulation, either by stop time given,
+       or final time has been reached. */
+    if (have_autostop)
+    /* time consuming autostop check only, when variable 'autostop' has been set
+       before tran is started.*/
+        flag_autostop = check_autostop("tran");
+    /* If CKTtime and CKTfinalTime are almost equal, then finish */
+    if (flag_autostop || AlmostEqualUlps(ckt->CKTtime, ckt->CKTfinalTime, 100)) {
+#ifdef STEPDEBUG
+        printf(" done:  time is %g, final time is %g, and tol is %g\n",
+        ckt->CKTtime, ckt->CKTfinalTime, ckt->CKTminBreak);
+#endif
+        SPfrontEnd->OUTendPlot (job->TRANplot);
+        job->TRANplot = NULL;
+        UPDATE_STATS(0);
+#ifdef WANT_SENSE2
+        if(ckt->CKTsenInfo && (ckt->CKTsenInfo->SENmode & TRANSEN)){
+            ckt->CKTsenInfo->SENmode = save;
+        }
+#endif
+        if (flag_autostop)
+            fprintf(stdout, "\nNote: Autostop after %e s, all measurement conditions are fulfilled.\n", ckt->CKTtime);
+
+        /* Final return from tran upon success */
+        return(OK);
+    }
+    if(SPfrontEnd->IFpauseTest()) {
+        /* user requested pause... */
+        UPDATE_STATS(DOING_TRAN);
+        return(E_PAUSE);
+    }
+resume:
+#ifdef STEPDEBUG
+    if( (ckt->CKTdelta <= ckt->CKTfinalTime/50) &&
+        (ckt->CKTdelta <= ckt->CKTmaxStep)) {
+        ;
+    } else {
+        if(ckt->CKTfinalTime/50<ckt->CKTmaxStep) {
+            (void)printf("limited by Tstop/50\n");
+        } else {
+            (void)printf("limited by Tmax == %g\n",ckt->CKTmaxStep);
+        }
+    }
+#endif
+#ifdef HAS_PROGREP
+    if (ckt->CKTtime == 0.)
+        SetAnalyse( "tran init", 0);
+    else
+        SetAnalyse( "tran", (int)((ckt->CKTtime * 1000.) / ckt->CKTfinalTime + 0.5));
+#endif
+
+    ckt->CKTdelta = MIN(ckt->CKTdelta,ckt->CKTmaxStep);
+
+#ifdef XSPICE
+    /* Cut integration order if first timepoint after breakpoint */
+    if ( AlmostEqualUlps( ckt->CKTtime, g_mif_info.breakpoint.last, 100 ) )
+        ckt->CKTorder = 1;
+#endif
+
+    /* Are we at a breakpoint, or indistinguishably close? */
+    if ( AlmostEqualUlps( ckt->CKTtime, ckt->CKTbreaks[0], 100 ) ||
+         ckt->CKTbreaks[0] - ckt->CKTtime <= ckt->CKTdelmin) {
+        /* First timepoint after a breakpoint: cut integration order
+           and limit timestep to .1 times minimum of time to next breakpoint,
+           and previous timestep. */
+        ckt->CKTorder = 1;
+#ifdef STEPDEBUG
+        if( (ckt->CKTdelta > .1*ckt->CKTsaveDelta) ||
+            (ckt->CKTdelta > .1*(ckt->CKTbreaks[1] - ckt->CKTbreaks[0])) ) {
+            if(ckt->CKTsaveDelta < (ckt->CKTbreaks[1] - ckt->CKTbreaks[0]))  {
+                (void)printf("limited by pre-breakpoint delta (saveDelta: %g, nxt_breakpt: %g, curr_breakpt: %g\n",
+                  ckt->CKTsaveDelta, ckt->CKTbreaks[1], ckt->CKTbreaks[0]);
+            } else {
+                (void)printf("limited by next breakpoint\n");
+            }
+        }
+#endif
+
+        ckt->CKTdelta = MIN(ckt->CKTdelta, .1 * MIN(ckt->CKTsaveDelta,
+            ckt->CKTbreaks[1] - ckt->CKTbreaks[0]));
+
+        if(firsttime) {
+            /* set a breakpoint to reduce ringing of current in devices */
+            if (ckt->CKTmode & MODEUIC)
+                CKTsetBreak(ckt, ckt->CKTstep);
+
+            ckt->CKTdelta /= 10;
+#ifdef STEPDEBUG
+            (void)printf("delta cut for initial timepoint\n");
+#endif
+        }
+
+#ifndef XSPICE
+        /* don't want to get below delmin for no reason */
+        ckt->CKTdelta = MAX(ckt->CKTdelta, ckt->CKTdelmin*2.0);
+#endif
+
+    }
+
+#ifndef XSPICE
+    /* Force the breakpoint if appropriate */
+    else if(ckt->CKTtime + ckt->CKTdelta >= ckt->CKTbreaks[0]) {
+        ckt->CKTsaveDelta = ckt->CKTdelta;
+        ckt->CKTdelta = ckt->CKTbreaks[0] - ckt->CKTtime;
+#ifdef STEPDEBUG
+        (void)printf("delta cut to %g to hit breakpoint\n",ckt->CKTdelta);
+        fflush(stdout);
+#endif
+        ckt->CKTbreak = 1; /* why? the current pt. is not a bkpt. */
+    }
+    /* Try to equalise the last two time steps before the breakpoint,
+       if the second step would be smaller than CKTdelta otherwise.*/
+    else if (ckt->CKTtime + 1.9 * ckt->CKTdelta > ckt->CKTbreaks[0]) {
+        ckt->CKTsaveDelta = ckt->CKTdelta;
+        ckt->CKTdelta = (ckt->CKTbreaks[0] - ckt->CKTtime) / 2.;
+#ifdef STEPDEBUG
+        fprintf(stdout, "Delta equalising step at time %e with delta %e\n", ckt->CKTtime, ckt->CKTdelta);
+#endif
+    }
+#endif /* !XSPICE */
+
+
+#ifdef XSPICE
+    /* More Breakpoint stuff */
+    if(ckt->CKTtime + ckt->CKTdelta >= g_mif_info.breakpoint.current) {
+        /* If next time > temporary breakpoint, force it to the breakpoint,
+           and mark that timestep was set by temporary breakpoint */
+        ckt->CKTsaveDelta = ckt->CKTdelta;
+        ckt->CKTdelta = g_mif_info.breakpoint.current - ckt->CKTtime;
+        g_mif_info.breakpoint.last = ckt->CKTtime + ckt->CKTdelta;
+    } else {
+        /* Else, mark that timestep was not set by temporary breakpoint */
+        g_mif_info.breakpoint.last = 1.0e30;
+    }
+
+    /* Throw out any permanent breakpoint with time <= current time or in the
+       very near future, unless it is the final stop break. */
+#ifdef STEPDEBUG
+    printf("    brk_pt: %g    ckt_time: %g    ckt_min_break: %g\n",
+           ckt->CKTbreaks[0], ckt->CKTtime, ckt->CKTminBreak);
+#endif
+    while ((ckt->CKTbreaks[0] <= ckt->CKTtime + ckt->CKTminBreak ||
+            AlmostEqualUlps(ckt->CKTbreaks[0], ckt->CKTtime, 100)) &&
+           ckt->CKTbreaks[0] < ckt->CKTfinalTime) {
+#ifdef STEPDEBUG
+        printf("throwing out permanent breakpoint times <= current time "
+               "(brk pt: %g)\n",
+               ckt->CKTbreaks[0]);
+        printf("    ckt_time: %g    ckt_min_break: %g\n",
+               ckt->CKTtime, ckt->CKTminBreak);
+#endif
+        CKTclrBreak(ckt);
+    }
+    /* Force the breakpoint if appropriate */
+    if(ckt->CKTtime + ckt->CKTdelta > ckt->CKTbreaks[0]) {
+        ckt->CKTbreak = 1;
+        ckt->CKTsaveDelta = ckt->CKTdelta;
+        ckt->CKTdelta = ckt->CKTbreaks[0] - ckt->CKTtime;
+    }
+    /* Try to equalise the last two time steps before the breakpoint,
+       if the second step would be smaller than CKTdelta otherwise.*/
+    else if (ckt->CKTtime + 1.9 * ckt->CKTdelta > ckt->CKTbreaks[0]) {
+        ckt->CKTsaveDelta = ckt->CKTdelta;
+        ckt->CKTdelta = (ckt->CKTbreaks[0] - ckt->CKTtime) / 2.;
+#ifdef STEPDEBUG
+        fprintf(stdout, "Delta equalising step at time %e with delta %e\n", ckt->CKTtime, ckt->CKTdelta);
+#endif
+    }
+
+#ifdef SHARED_MODULE
+        /* Either directly go to next time step, or modify ckt->CKTdelta depending on
+           synchronization requirements. sharedsync() returns 0. */
+    sharedsync(&ckt->CKTtime, &ckt->CKTdelta, 0, ckt->CKTfinalTime,
+        ckt->CKTdelmin, 0, &ckt->CKTstat->STATrejected, 0);
+#endif
+
+    /* Do event solution */
+    if(ckt->evt->counts.num_insts > 0) {
+
+        /* If time = 0 and op_alternate was specified as false during
+           dcop analysis, call any changed instances to let them
+           post their outputs with their associated delays */
+        if((ckt->CKTtime == 0.0) && (! ckt->evt->options.op_alternate))
+            EVTiter(ckt);
+
+        /* While there are events on the queue with event time <= next */
+        /* projected analog time, process them */
+        while((g_mif_info.circuit.evt_step = EVTnext_time(ckt))
+               <= (ckt->CKTtime + ckt->CKTdelta)) {
+
+            /* Initialize temp analog bkpt to infinity */
+            g_mif_info.breakpoint.current = 1e30;
+
+            /* Pull items off queue and process them */
+            EVTdequeue(ckt, g_mif_info.circuit.evt_step);
+            EVTiter(ckt);
+
+            /* If any instances have forced an earlier
+               next analog time, cut the delta */
+            if(ckt->CKTbreaks[0] < g_mif_info.breakpoint.current)
+                if(ckt->CKTbreaks[0] > ckt->CKTtime + ckt->CKTminBreak)
+                    g_mif_info.breakpoint.current = ckt->CKTbreaks[0];
+            if(g_mif_info.breakpoint.current < ckt->CKTtime + ckt->CKTdelta) {
+                /* Breakpoint must be > last accepted timepoint
+                   and >= current event time */
+                if(g_mif_info.breakpoint.current >  ckt->CKTtime + ckt->CKTminBreak  &&
+                   g_mif_info.breakpoint.current >= g_mif_info.circuit.evt_step) {
+                    ckt->CKTsaveDelta = ckt->CKTdelta;
+                    ckt->CKTdelta = g_mif_info.breakpoint.current - ckt->CKTtime;
+                    g_mif_info.breakpoint.last = ckt->CKTtime + ckt->CKTdelta;
+                }
+            }
+
+        } /* end while next event time <= next analog time */
+    } /* end if there are event instances */
+
+#else /* no XSPICE */
+
+#ifdef SHARED_MODULE
+    /* Either directly go to next time step, or modify ckt->CKTdelta depending on
+       synchronization requirements. sharedsync() returns 0.
+    */
+    sharedsync(&ckt->CKTtime, &ckt->CKTdelta, 0, ckt->CKTfinalTime,
+        ckt->CKTdelmin, 0, &ckt->CKTstat->STATrejected, 0);
+#endif
+
+#endif  /* no XSPICE */
+    for(i=5; i>=0; i--)
+        ckt->CKTdeltaOld[i+1] = ckt->CKTdeltaOld[i];
+    ckt->CKTdeltaOld[0] = ckt->CKTdelta;
+
+    temp = ckt->CKTstates[ckt->CKTmaxOrder+1];
+    for(i=ckt->CKTmaxOrder;i>=0;i--) {
+        ckt->CKTstates[i+1] = ckt->CKTstates[i];
+    }
+    ckt->CKTstates[0] = temp;
+
+/* 600 */
+    for (;;) {
+#if defined SHARED_MODULE
+        redostep = 1;
+#endif
+#ifdef XSPICE
+/* This is needed here to allow CAPask to output currents
+   during Transient analysis. */
+        ckt->CKTcurrentAnalysis = DOING_TRAN;
+
+        xspice_breakpoints_processed = 0;
+#endif
+        olddelta=ckt->CKTdelta;
+        /* time abort? */
+        ckt->CKTtime += ckt->CKTdelta;
+        ckt->CKTdeltaOld[0]=ckt->CKTdelta;
+        NIcomCof(ckt);
+#ifdef PREDICTOR
+        error = NIpred(ckt);
+#endif /* PREDICTOR */
+        save_mode = ckt->CKTmode;
+        save_order = ckt->CKTorder;
+#ifdef XSPICE
+
+        /* Initialize temporary breakpoint to infinity */
+        g_mif_info.breakpoint.current = 1.0e30;
+
+        /* Add convergence problem reporting flags */
+        /* delta is forced to equal delmin on last attempt near line 650 */
+        if(ckt->CKTdelta <= ckt->CKTdelmin)
+            ckt->enh->conv_debug.last_NIiter_call = MIF_TRUE;
+        else
+            ckt->enh->conv_debug.last_NIiter_call = MIF_FALSE;
+
+/* Call all hybrids */
+
+        /* Set evt_step */
+        if(ckt->evt->counts.num_insts > 0) {
+            g_mif_info.circuit.evt_step = ckt->CKTtime;
+        }
+#endif
+        /* Central solver step */
+        converged = NIiter(ckt,ckt->CKTtranMaxIter);
+
+        ckt->CKTstat->STATtimePts ++;
+        ckt->CKTmode = (ckt->CKTmode&MODEUIC)|MODETRAN | MODEINITPRED;
+        if(firsttime && ckt->CKTstate1 && ckt->CKTstate2 && ckt->CKTstate3) {
+            memcpy(ckt->CKTstate2, ckt->CKTstate1,
+                   (size_t) ckt->CKTnumStates * sizeof(double));
+            memcpy(ckt->CKTstate3, ckt->CKTstate1,
+                   (size_t) ckt->CKTnumStates * sizeof(double));
+        }
+        /* txl, cpl addition */
+        if (converged == 1111) {
+                return(converged);
+        }
+
+        /* If no convergence in Central solver step */
+        if(converged != 0) {
+
+#ifndef SHARED_MODULE
+            ckt->CKTtime = ckt->CKTtime -ckt->CKTdelta;
+            ckt->CKTstat->STATrejected ++;
+#else
+            redostep = 1;
+#endif
+            ckt->CKTdelta = ckt->CKTdelta/8;
+#ifdef STEPDEBUG
+            (void)printf("delta cut to %g for non-convergence\n",ckt->CKTdelta);
+            fflush(stdout);
+#endif
+            if(firsttime) {
+                ckt->CKTmode = (ckt->CKTmode&MODEUIC) | MODETRAN | MODEINITTRAN;
+            }
+            ckt->CKTorder = 1;
+
+#ifdef XSPICE
+        /* Add Breakpoint stuff */
+        } else if(g_mif_info.breakpoint.current < ckt->CKTtime) {
+            /* Force backup if temporary breakpoint is < current time:
+               - save old delta
+               - retract time by old delta
+               - new delta by difference between by retracted time and breakpoint */
+
+        past_breakpoint:
+            ckt->CKTsaveDelta = ckt->CKTdelta;
+            ckt->CKTtime -= ckt->CKTdelta;
+            ckt->CKTdelta = g_mif_info.breakpoint.current - ckt->CKTtime;
+            g_mif_info.breakpoint.last = ckt->CKTtime + ckt->CKTdelta;
+            xspice_breakpoints_processed = 1;
+
+            if(firsttime) {
+                ckt->CKTmode = (ckt->CKTmode&MODEUIC)|MODETRAN | MODEINITTRAN;
+            }
+            ckt->CKTorder = 1;
+#endif
+
+        } else {
+            /* If converged:
+               - go to next time step if this was the first time.
+               - If not the first time step, don not accept, but check the truncation errors,
+                 and reduce delta accordingly, thenm redo the step, to bound the error. */
+            if (firsttime) {
+#ifdef WANT_SENSE2
+                if(ckt->CKTsenInfo && (ckt->CKTsenInfo->SENmode & TRANSEN)){
+                    save1 = ckt->CKTmode;
+                    save2 = ckt->CKTorder;
+                    ckt->CKTmode = save_mode;
+                    ckt->CKTorder = save_order;
+                    error = CKTsenDCtran (ckt);
+                    if (error)
+                        return(error);
+
+                    ckt->CKTmode = save1;
+                    ckt->CKTorder = save2;
+                }
+#endif
+                firsttime = 0;
+#if !defined SHARED_MODULE
+                /* no check on first time point */
+                goto nextTime; /* line 373 */
+#else
+                redostep = 0;
+                goto chkStep; /* line 987 */
+#endif
+            }
+            newdelta = ckt->CKTdelta;
+            /* Scan through all devices, estimate the truncation error,
+               and reduce the time step, if necessary.*/
+            error = CKTtrunc(ckt,&newdelta);
+            if(error) {
+                UPDATE_STATS(DOING_TRAN);
+                return(error);
+            }
+            if (newdelta > .9 * ckt->CKTdelta) {
+#if defined(XSPICE)
+                /* The timestep has succeeded.  XSPICE instances with
+                 * both analog and event ports ("hybrids") and others
+                 * that have called cm_irreversible() receive an EVENT
+                 * call here that allows them to capture their final
+                 * port values and advance co-simulations.  As this is an EVENT
+                 * call, they are not expected to do any integrations,
+                 * so there is no need for a further convergence test.
+                 */
+
+                if (ckt->evt->counts.num_hybrids > 0) {
+                    g_mif_info.circuit.evt_step = ckt->CKTtime;
+                    EVTcall_hybrids(ckt);
+                    if (g_mif_info.breakpoint.current < ckt->CKTtime) {
+                        /* A hybrid requested a breakpoint in the past. */
+                        goto past_breakpoint; /* line 786 */
+                    }
+                }
+#endif
+                /* don't raise the order for backward Euler */
+                if ((ckt->CKTorder == 1) && (ckt->CKTmaxOrder > 1)) {
+                    newdelta = ckt->CKTdelta;
+                    ckt->CKTorder = 2;
+                    error = CKTtrunc(ckt, &newdelta);
+                    if (error) {
+                        UPDATE_STATS(DOING_TRAN);
+                        return(error);
+                    }
+                    if (newdelta <= 1.05 * ckt->CKTdelta) {
+                        ckt->CKTorder = 1;
+                    }
+                }
+                /* time point OK  - 630 */
+                ckt->CKTdelta = newdelta;
+
+#ifdef NDEV
+                if (!ft_norefprint) {
+                    /* show a time process indicator, by Gong Ding, gdiso@ustc.edu */
+                    if (ckt->CKTtime / ckt->CKTfinalTime * 100 < 10.0)
+                        printf("%%%3.2lf\b\b\b\b\b", ckt->CKTtime / ckt->CKTfinalTime * 100);
+                    else  if (ckt->CKTtime / ckt->CKTfinalTime * 100 < 100.0)
+                        printf("%%%4.2lf\b\b\b\b\b\b", ckt->CKTtime / ckt->CKTfinalTime * 100);
+                    else
+                        printf("%%%5.2lf\b\b\b\b\b\b\b", ckt->CKTtime / ckt->CKTfinalTime * 100);
+                    fflush(stdout);
+                }
+#endif
+
+#ifdef STEPDEBUG
+                (void)printf(
+                  "delta set to truncation error result: %g. Point accepted at CKTtime: %g\n",
+                  ckt->CKTdelta,ckt->CKTtime);
+                fflush(stdout);
+#endif
+
+#ifdef WANT_SENSE2
+                if(ckt->CKTsenInfo && (ckt->CKTsenInfo->SENmode & TRANSEN)){
+                    save1 = ckt->CKTmode;
+                    save2 = ckt->CKTorder;
+                    ckt->CKTmode = save_mode;
+                    ckt->CKTorder = save_order;
+                    error = CKTsenDCtran(ckt);
+                    if (error)
+                        return (error);
+
+                    ckt->CKTmode = save1;
+                    ckt->CKTorder = save2;
+                }
+#endif
+
+#if !defined SHARED_MODULE
+                /* trapezoidal */
+                goto nextTime;  /* line 373 */
+#else
+                redostep = 0;
+                goto chkStep;  /* line 987 */
+#endif
+            } else {
+                /* not (newdelta > .9 * ckt->CKTdelta): reject the step
+                - redo the time
+                - apply the new (reduced) delta */
+#ifndef SHARED_MODULE
+                ckt->CKTtime = ckt->CKTtime -ckt->CKTdelta;
+                ckt->CKTstat->STATrejected ++;
+#else
+                redostep = 1;
+#endif
+                ckt->CKTdelta = newdelta;
+#ifdef STEPDEBUG
+                (void)printf(
+                    "delta set to truncation error result: point rejected\n");
+#endif
+            }
+        }
+        /* Set the new delta to delmin (minimum delta allowed). However:
+           If the new delta has been less than the minimum delta
+           for the second time, bail out with 'Timestep too small'. */
+        if (ckt->CKTdelta <= ckt->CKTdelmin) {
+            if (olddelta > ckt->CKTdelmin) {
+                ckt->CKTdelta = ckt->CKTdelmin;
+#ifdef STEPDEBUG
+                (void)printf("delta at delmin\n");
+#endif
+            } else {
+                UPDATE_STATS(DOING_TRAN);
+                errMsg = CKTtrouble(ckt, "Timestep too small");
+                SPfrontEnd->OUTendPlot(job->TRANplot);
+                job->TRANplot = NULL;
+                UPDATE_STATS(0);
+                /* return upon convergence failure */
+                return(E_TIMESTEP);
+            }
+        }
+#ifdef XSPICE
+        /* Do event backup */
+        if(ckt->evt->counts.num_insts > 0) {
+#ifdef SHARED_MODULE
+            double discard_start_time = ckt->CKTtime + ckt->CKTdelta;
+            /* ngspice in executable mode subtracts olddelta from the time
+               before new delta calculation, but it keeps delta in CKTtime and
+               postpones subtraction in library mode. Delayed subtraction leads
+               to incorrect points dropping because ckt->CKTdelta is almost always
+               less than olddelta if there are convergence issues, and EVTbackup
+               may drop valid events that need to be processed within
+               [last_accepted_time, last_accepted_time + ckt->CKTdelta] range
+               after delta adjustment. */
+            if (redostep && xspice_breakpoints_processed == 0)
+                discard_start_time -= olddelta;
+            EVTbackup(ckt, discard_start_time);
+#else
+            EVTbackup(ckt, ckt->CKTtime + ckt->CKTdelta);
+#endif
+        }
+
+#endif
+
+#ifdef SHARED_MODULE
+        /* redostep == 0:
+           Either directly go to next time step, or modify ckt->CKTdelta depending on
+           synchronization requirements. sharedsync() returns 0.
+           redostep == 1:
+           No convergence, or too large truncation error.
+           Redo the last time step by subtracting olddelta, and modify ckt->CKTdelta
+           depending on synchronization requirements. sharedsync() returns 1.
+           User-supplied redo request:
+           sharedsync() may return 1 if the user has decided to do so in the callback
+           function.
+        */
+chkStep:
+#ifdef XSPICE
+       // There is no need to subtract olddelta from ckt->CKTtime one more time
+       // if it has been subtracted during XSPICE breakpoint processing.
+       // olddelta will be reinitialized on
+       // the new iteration, so it reassigning here should be safe. It can't be
+       // zeroed during breakpoint processing because it takes part in the
+       // "timestep too small" check.
+        olddelta_for_shared_sync = olddelta;
+        if (xspice_breakpoints_processed)
+                 olddelta_for_shared_sync = 0.0;
+        if(sharedsync(&ckt->CKTtime, &ckt->CKTdelta, olddelta_for_shared_sync, ckt->CKTfinalTime,
+                 ckt->CKTdelmin, redostep, &ckt->CKTstat->STATrejected, 1) == 0)
+            goto nextTime; /* line 373 */
+#else
+        if(sharedsync(&ckt->CKTtime, &ckt->CKTdelta, olddelta, ckt->CKTfinalTime,
+                 ckt->CKTdelmin, redostep, &ckt->CKTstat->STATrejected, 1) == 0)
+            goto nextTime; /* line 373 */
+#endif // XSPICE
+#endif // SHARED_MODULE
+
+    }
+    /* NOTREACHED */
+}
+
+
+/* If we have a 'step' command, and then 'quit' before reaching the final time,
+   remove the run plot memory. */
+int
+DCtran_step_quit(CKTcircuit* ckt) {
+    if (!ckt || !ckt->CKTcurJob) /* nothing to delete */
+        return 0;
+    if (ckt->CKTcurJob->JOBtype != 4) /* only tran sim */
+        return 0;
+    if (!ft_stepcheck()) /* only after 'step' */
+        return 0;
+    TRANan* job = (TRANan*)ckt->CKTcurJob;
+    if (!job->TRANplot) /* already done */
+        return 0;
+    SPfrontEnd->OUTendPlot(job->TRANplot);
+    job->TRANplot = NULL;
+    return(OK);
+}

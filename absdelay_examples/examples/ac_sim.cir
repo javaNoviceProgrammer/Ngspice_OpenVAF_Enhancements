@@ -1,0 +1,16 @@
+* absdelay AC example (5-stage delay line, total delay = 10 ns)
+* Magnitude is flat (0 dB, lossless delay); phase is linear: -360*f*10ns deg.
+.model dly absdelay_dly (delay=2n)
+Ndly1 in    n1   dly
+Ndly2 n1    n2   dly
+Ndly3 n2    n3   dly
+Ndly4 n3    n4   dly
+Ndly5 n4    out  dly
+Vin in 0 AC 1
+.ac dec 50 1MEG 500MEG
+.control
+  pre_osdi /Users/meisam/software-builds/version2/absdelay_examples/absdelay.osdi
+  run
+  wrdata RESULTFILE vdb(out) vp(out)
+.endc
+.end

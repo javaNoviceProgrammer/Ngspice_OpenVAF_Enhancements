@@ -1,0 +1,10 @@
+{
+    "rust-analyzer.cargo.features": ["llvm18"],
+    // "rust-analyzer.cargo.extraEnv": {
+    //     "LLVM_SYS_181_PREFIX": "/usr/local",
+    //     "LIBCLANG_PATH": "/usr/lib/llvm-18/lib",
+    //     "BINDGEN_EXTRA_CLANG_ARGS": "-I/usr/lib/llvm-18/include -I/usr/local/include"
+    // },
+    // "rust-analyzer.cargo.extraArgs": ["--features", "llvm18"],
+    // "rust-analyzer.check.extraArgs": ["--features", "llvm18"]
+}

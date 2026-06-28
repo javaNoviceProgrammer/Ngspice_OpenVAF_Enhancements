@@ -1,0 +1,10 @@
+Simulation of a switched-capacitor SAR ADC with Verilator and d_cosim
+
+* Model line for the digital control implemented by Verilator.
+
+.model dut d_cosim simulation="./adc"
+
+* The bulk of the circuit is in a shared file.
+
+.include adc.shared
+.end

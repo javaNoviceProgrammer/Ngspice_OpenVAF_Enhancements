@@ -1,0 +1,7 @@
+ngspice input files using optran
+
+HiPass3opamps_optran.cir
+Just a check with three different OpAmps
+
+TLV6001-test.cir, TLV9002-test.cir
+These OpAmp currently allow op calculation only with optran
