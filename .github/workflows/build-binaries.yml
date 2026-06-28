@@ -182,28 +182,38 @@ jobs:
         with:
           ref: main
 
-      - uses: actions/download-artifact@v4
+      # Pull artifacts from EVERY build job that succeeded this run. Only the
+      # jobs that finished green uploaded an artifact, so whatever lands here is
+      # exactly the set of platforms that built — partial runs are fine.
+      # merge-multiple combines each platform's bin/<os>/<arch> tree into one.
+      - name: Download successful platform artifacts
+        uses: actions/download-artifact@v4
         with:
           path: _artifacts
+          merge-multiple: true
+        continue-on-error: true   # don't fail if a run produced zero artifacts
 
-      - name: Merge binaries into bin/
+      - name: Stage binaries from successful platforms
         run: |
-          shopt -s nullglob
-          for d in _artifacts/*/bin; do
-            echo "merging $d"
-            cp -R "$d/." bin/
-          done
-          git status --porcelain bin/ || true
+          if [ ! -d _artifacts/bin ]; then
+            echo "No platform produced binaries this run — nothing to commit."
+            exit 0
+          fi
+          cp -R _artifacts/bin/. bin/
+          echo "Binaries provided by the platforms that built successfully:"
+          find _artifacts/bin -type f | sed 's#_artifacts/##; s/^/  /'
 
       - name: Commit & push
         run: |
           if [ -z "$(git status --porcelain bin/)" ]; then
-            echo "No binary changes to commit."
+            echo "No binary changes to commit (successful platforms already up to date)."
             exit 0
           fi
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add bin/
           git commit -m "ci: update prebuilt binaries [skip ci]"
+          # rebase on any concurrent change, then push the successful binaries
           git pull --rebase --autostash origin main
           git push origin main
+          echo "Pushed updated binaries for the platforms that built."
