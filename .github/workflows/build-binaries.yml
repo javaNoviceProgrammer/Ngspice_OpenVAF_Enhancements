@@ -215,6 +215,13 @@ jobs:
           $lib = "C:\vcpkg\installed\x64-windows-static\lib"
           Write-Host "vcpkg lib contents:"
           Get-ChildItem $lib -Filter "*xml*" -ErrorAction SilentlyContinue
+          # vcpkg names it libxml2.lib; LLVM 18's llvm-config --system-libs asks
+          # for libxml2s.lib (the 's' = static convention used by LLVM's CMake).
+          # Copy it under the expected name so the Rust linker finds it.
+          if (Test-Path "$lib\libxml2.lib") {
+            Copy-Item "$lib\libxml2.lib" "$lib\libxml2s.lib"
+            Write-Host "Created libxml2s.lib alias"
+          }
           # Expose to both the compiler and the Rust linker via the LIB search path
           "LIB=$env:LIB;$lib" | Out-File -FilePath $env:GITHUB_ENV -Append
 
