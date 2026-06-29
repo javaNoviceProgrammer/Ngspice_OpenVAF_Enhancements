@@ -172,12 +172,23 @@ jobs:
         run: |
           ./autogen.sh
           mkdir -p ci-build && cd ci-build
-          # LDFLAGS=-static: statically link all MinGW runtime libs (libstdc++,
-          # libreadline, libtermcap, libwinpthread) into the .exe so the binary
-          # runs on plain Windows without any MSYS2/MinGW DLLs installed.
-          LDFLAGS="-static -static-libgcc -static-libstdc++" \
           ../configure --disable-debug --enable-klu --disable-openmp --with-readline=yes --without-x
           make -j"$(nproc)"
+
+      - name: Bundle ngspice + MinGW DLLs
+        shell: msys2 {0}
+        run: |
+          mkdir -p out/bin/windows/intel
+          cp "$NGSPICE_DIR/ci-build/src/ngspice.exe" out/bin/windows/intel/
+          # libtool does not honour -static for executables reliably on MinGW.
+          # Instead, find every non-Windows DLL dependency with ldd and copy
+          # them alongside the .exe so the binary runs without MSYS2 installed.
+          ldd "out/bin/windows/intel/ngspice.exe" \
+            | grep -iv '/c/windows\|/C/Windows\|not found' \
+            | awk '{print $3}' | grep -v '^$' \
+            | xargs -I{} cp -n {} out/bin/windows/intel/ 2>/dev/null || true
+          echo "=== Bundled files ==="
+          ls -lh out/bin/windows/intel/
 
       # ---- openvaf-r via native MSVC toolchain + LLVM 18 (experimental;
       #      continue-on-error so its failure still lets ngspice.exe be staged) --
@@ -243,12 +254,13 @@ jobs:
           clang --version
           cargo build --release --features llvm18 --bin openvaf-r
 
-      - name: Stage binaries
+      - name: Stage openvaf-r.exe
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path out/bin/windows/intel | Out-Null
+          # ngspice.exe + its DLLs were already staged by the MSYS2 bundle step.
+          # Add openvaf-r.exe if the build succeeded.
           Copy-Item "$env:OPENVAF_DIR\target\release\openvaf-r.exe" out\bin\windows\intel\ -ErrorAction SilentlyContinue
-          Copy-Item "$env:NGSPICE_DIR\ci-build\src\ngspice.exe"     out\bin\windows\intel\ -ErrorAction SilentlyContinue
+          Write-Host "=== Final bin/windows/intel contents ==="
           Get-ChildItem out\bin\windows\intel\
 
       - name: Upload artifact

@@ -84,9 +84,9 @@ chmod +x bin/macos/intel/ngspice
 
 ### Running on Windows
 
-The Windows binaries are **fully self-contained** — all runtime libraries (readline, termcap, winpthread, libstdc++) are statically linked into the `.exe`. No MSYS2, MinGW, or other runtime installation is required.
+The Windows binaries come **bundled with all required MinGW runtime DLLs** (`libreadline8.dll`, `libtermcap-0.dll`, `libstdc++-6.dll`, `libwinpthread-1.dll`, etc.) in the same directory. No MSYS2, MinGW, or other runtime installation is required — just keep all files in `bin\windows\intel\` together.
 
-Simply download and run:
+Simply run from that directory:
 ```
 bin\windows\intel\ngspice.exe
 bin\windows\intel\openvaf-r.exe
