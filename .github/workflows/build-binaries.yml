@@ -146,17 +146,13 @@ jobs:
 
   # --------------------------------------------------------------- Windows
   # ngspice builds via MSYS2/MinGW. openvaf-r builds with the NATIVE MSVC
-  # toolchain against a real LLVM 18 (Chocolatey), because llvm-sys-181 needs
-  # LLVM 18 specifically and MSYS2 only ships the current LLVM. Best-effort.
+  # toolchain against LLVM 18 (official GitHub release tarball).
   build-windows:
     name: windows-intel
     runs-on: windows-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v5
 
-      # ---- ngspice via MSYS2 / MinGW (build FIRST so it always succeeds and is
-      #      staged, regardless of the experimental openvaf-r build below) ----
       - uses: msys2/setup-msys2@v2
         with:
           msystem: MINGW64
@@ -190,11 +186,8 @@ jobs:
           echo "=== Bundled files ==="
           ls -lh out/bin/windows/intel/
 
-      # ---- openvaf-r via native MSVC toolchain + LLVM 18 (experimental;
-      #      continue-on-error so its failure still lets ngspice.exe be staged) --
       - name: Install LLVM 18 dev tarball (official GitHub release)
         shell: pwsh
-        continue-on-error: true
         run: |
           # The Chocolatey LLVM package omits the static .lib files that
           # llvm-sys-181 needs to link (~100 LLVM*.lib).  The official
@@ -220,7 +213,6 @@ jobs:
 
       - name: Install libxml2 static (vcpkg, required by LLVM 18 linker)
         shell: pwsh
-        continue-on-error: true
         run: |
           # LLVM 18's llvm-config --system-libs emits libxml2s.lib on Windows.
           # vcpkg (pre-installed on GitHub runners) provides this via its
@@ -247,7 +239,6 @@ jobs:
       - name: Build openvaf-r (MSVC + LLVM 18)
         shell: pwsh
         working-directory: ${{ env.OPENVAF_DIR }}
-        continue-on-error: true   # keep best-effort in case something unexpected fails
         env:
           CARGO_NET_GIT_FETCH_WITH_CLI: "true"
         run: |
