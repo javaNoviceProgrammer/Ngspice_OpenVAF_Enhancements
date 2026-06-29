@@ -149,7 +149,7 @@ jobs:
   # toolchain against a real LLVM 18 (Chocolatey), because llvm-sys-181 needs
   # LLVM 18 specifically and MSYS2 only ships the current LLVM. Best-effort.
   build-windows:
-    name: windows-intel (best-effort)
+    name: windows-intel
     runs-on: windows-latest
     continue-on-error: true
     steps:
