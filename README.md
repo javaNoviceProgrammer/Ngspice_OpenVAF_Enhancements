@@ -20,6 +20,22 @@ Using Claude Code AI to enhance the ngspice and openvaf frameworks.
 
 ---
 
+## Enhancement 2: Indirect branch assignment for Verilog-AMS
+
+*June 2026* — Implements the Verilog-AMS **indirect branch assignment** construct (`<lhs> : <rhs> == <expr>;`) in OpenVAF, enabling ideal/abstract behavioral models such as the LRM's ideal op-amp. One new DAE unknown + implicit equation is added per statement, fully reusing the existing branch-contribution and residual machinery — no ngspice/OSDI changes were needed.
+
+- Verified for DC, AC, and Transient analysis (unity-gain buffer built from the ideal op-amp)
+- Verified for no regressions against the Enhancement-1 `absdelay` examples
+- Details: [Enhancement-2.md](Enhancement-2.md)
+
+**DC / AC / Transient results** for the ideal op-amp unity-gain buffer:
+
+![DC sweep](./indirect_assignment_examples/dc.png)
+![AC response](./indirect_assignment_examples/ac.png)
+![Transient response](./indirect_assignment_examples/tran.png)
+
+---
+
 ## Prebuilt Binaries
 
 Binaries are built by CI and committed to `bin/`:
