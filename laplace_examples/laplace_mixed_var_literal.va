@@ -1,0 +1,17 @@
+`include "disciplines.vams"
+
+// Mixes an array-variable num/zero argument with an array-literal den
+// argument in a single laplace_zd call, exercising Enhancement-4 Part 3.
+// H(s) = (s+2e6) / (s^2 + 4e6 s + 3e12); H(0) = 2e6/3e12 = 6.667e-7
+module laplace_mixed_var_literal(in, out);
+    input in;
+    output out;
+    electrical in, out;
+
+    real [0:0] zero_coeffs;
+
+    analog begin
+        zero_coeffs[0] = -2e6;
+        V(out) <+ laplace_zd(V(in), zero_coeffs, '{3e12, 4e6, 1.0});
+    end
+endmodule

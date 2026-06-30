@@ -1,0 +1,13 @@
+* laplace_mixed_var_literal DC test: array-variable zero argument mixed
+* with an array-literal den argument in a single laplace_zd call.
+* H(s) = (s+2e6) / (s^2 + 4e6 s + 3e12); H(0) = 2e6/3e12 = 6.667e-7
+.model m1 laplace_mixed_var_literal
+Ndut in out m1
+Vin in 0 DC 1.0
+.dc Vin -2 2 0.5
+.control
+  pre_osdi OSDIFILE_MIXED
+  run
+  wrdata RESULTFILE v(in) v(out)
+.endc
+.end

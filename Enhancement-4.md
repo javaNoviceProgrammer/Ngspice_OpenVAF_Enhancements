@@ -9,6 +9,9 @@ net declarations), to implement:
 2. **Array-variable declarations** (`real [msb:lsb] x;`), added as a
    follow-up once it became clear `laplace_*`'s array-literal *arguments*
    (`'{...}'`) were a different feature from array *variables* — see §9.
+3. **Array variables as `laplace_*` `num`/`den` arguments** — letting a
+   bare array-variable reference (`coeffs`) stand in for an array literal
+   in a `laplace_*` call, so Parts 1 and 2 compose — see §17.
 
 ## Part 1: Laplace transform filter operators
 
@@ -309,7 +312,7 @@ residuals with no special-casing artifacts anywhere in the dump.
 ## 6. Build
 
 ```bash
-cd OpenVAF-master-20260610
+cd version5/OpenVAF-master
 cargo test -p sourcegen                       # regenerate is_unsupported() from hir_builtins.rs
 LLVM_SYS_181_PREFIX=/opt/homebrew/opt/llvm@18 \
   cargo build --release --bin openvaf-r --features openvaf-driver/llvm18
@@ -331,7 +334,7 @@ existing construct.
 
 ### 7.2 End-to-end compile
 
-`laplace_examples/`:
+`version5/laplace_examples/`:
 
 - `laplace_lpf.va` — `laplace_nd(V(in), '{1.0}, '{1.0, tau})`, a
   first-order RC-style low-pass filter (single bus-free port pair).
@@ -351,11 +354,12 @@ second-order filter (`openvaf-r --dump-mir laplace_zd_only.va` shows
 
 ### 7.3 ngspice simulation — new feature
 
-`laplace_examples/` (`dc_sim.cir`, `ac_sim.cir`, `tran_sim.cir` for the
-primary `laplace_lpf` model, plus `dc_variants.cir`/`dc_zd_only.cir` for
-the four-forms cross-check), simulated via `bash run_examples.sh`. Raw
-results saved in `dc.txt`/`ac.txt`/`tran.txt`, plotted via
-`plot_results.py` (matplotlib) into `dc.png`/`ac.png`/`tran.png`:
+`version5/laplace_examples/` (`dc_sim.cir`, `ac_sim.cir`, `tran_sim.cir`
+for the primary `laplace_lpf` model, plus `dc_variants.cir`/
+`dc_zd_only.cir` for the four-forms cross-check), simulated with
+`version5/bin/.../ngspice`. Raw results saved in `dc.txt`/`ac.txt`/
+`tran.txt`, plotted via `plot_results.py` (matplotlib) into
+`dc.png`/`ac.png`/`tran.png`:
 
 - **DC** (`dc.txt`/`dc.png`), `laplace_lpf` (first-order, `tau=1e-6`):
   `out` tracks `in` exactly 1:1 across a -2V..2V sweep — correct, since
@@ -603,8 +607,8 @@ No changes to `openvaf/hir`, `openvaf/hir_lower`, `openvaf/mir*`,
 
 ### 15. Testing & verification
 
-`array_var_examples/array_var_fir.va` — a 5-tap weighted-sum model
-exercising declaration, indexed write, and indexed read end-to-end:
+`version5/array_var_examples/array_var_fir.va` — a 5-tap weighted-sum
+model exercising declaration, indexed write, and indexed read end-to-end:
 
 ```verilog
 module array_var_fir(in, out);
@@ -658,3 +662,178 @@ bare-reference message in §12.5). All Part 1 (Laplace), Enhancement-3
   well-defined per-bit meaning for a single scalar initializer on an
   array declaration; a diagnostic rejecting the combination outright
   would be the natural follow-up.
+
+---
+
+## Part 3: Array variables as `laplace_*` `num`/`den` arguments
+
+### 17. Motivation
+
+Parts 1 and 2 were built independently and didn't initially compose: a
+`laplace_*` `num`/`den` argument had to be a literal `'{...}'`/`{...}'`
+array, and a bare reference to an array *variable* (`coeffs` for
+`real [0:n] coeffs;`) was rejected by the `BareBusReference` diagnostic
+(§3.5's array-literal-only `array_elems` never saw anything else). So
+
+```verilog
+real [0:1] coeffs;
+analog begin
+    coeffs[0] = -2e6;
+    coeffs[1] = 0.0;
+    V(out) <+ laplace_zd(V(in), coeffs, '{3e12, 4e6, 1.0});
+end
+```
+
+failed to compile with `'coeffs' requires a bit-select [i]` — correct
+per the rules as they stood, but an unnecessary restriction: there's
+nothing about the state-space realization that requires `num`/`den`'s
+*structure* (element count) to come from literal syntax specifically, as
+opposed to a previously-declared array variable of fixed size. Only the
+*element count* needs to be known at compile time (to size the
+realization) — the element *values* were already lowered as ordinary
+runtime `Value`s either way (see §2.2/§2.3), so an array-variable element
+written to at runtime is no harder to support than an array-literal
+element referencing a parameter.
+
+### 18. Design: treat a bare array-variable reference as an implicit array literal
+
+A bare `coeffs` in a `laplace_*` `num`/`den` position is now accepted as
+exactly equivalent to writing out `'{coeffs[0], coeffs[1], ...,
+coeffs[n]}'` by hand (ascending declared-index order) — no new syntax,
+no new MIR concept, just one more shape `infere_laplace_array_arg`
+recognizes for that specific argument position. A *part-select*-style
+mid-array variable (`coeffs[1:3]`) is **not** supported — only a bare
+reference to the *whole* declared array, matching the scope already
+established for everything else in this enhancement (no part-select
+anywhere, per Enhancement-3's original scope).
+
+### 19. Why this needed real (if contained) plumbing, unlike Part 2
+
+Part 2 needed almost no new machinery because `infere_bit_select`
+resolving to `Ty::Var` flowed transparently through every existing
+generic mechanism (ordinary reads, ordinary assignment-destination
+resolution). This case is different: the *bare* `coeffs` (no bit-select
+at all) was, by design, deliberately rejected everywhere via the
+`BareBusReference` check inside `infere_expr`'s generic `Expr::Path`
+arm — and that check is unconditional, with no way to make it
+context-sensitive (e.g. "unless this is a laplace argument") from
+inside `infere_expr` itself. Three changes were needed:
+
+1. **`openvaf/hir_ty/src/inference.rs` — bypass generic argument
+   inference for `laplace_*`'s `num`/`den` positions.**
+   `infere_builtin` gained a `laplace_nd | laplace_np | laplace_zd |
+   laplace_zp` arm that short-circuits to a new `infere_laplace`
+   function — mirroring the pre-existing `ddx` special case (`ddx`'s
+   second argument is also not an ordinary value-typed expression, and
+   already bypasses the shared `resolve_function_args` machinery the
+   same way). `resolve_function_args` (used by every other builtin/
+   function call) unconditionally calls `infere_expr` on each argument,
+   which would hit the bare-reference check before a laplace-specific
+   override could intervene — so `laplace_*` needed its own argument
+   loop instead of reusing it.
+
+   `infere_laplace` type-checks `args[0]` (input, must be `Real`)
+   normally, dispatches `args[1]`/`args[2]` through the new
+   `infere_laplace_array_arg` helper, and type-checks an optional
+   `args[3]` (tolerance/nature) normally — picking the matching
+   `LAPLACE_NO_TOL`/`LAPALCE_TOL`/`LAPLACE_NATURE_TOL` signature
+   constant (their identity isn't otherwise load-bearing anywhere in the
+   codebase — confirmed by grep — so this is purely for diagnostic/
+   tooling accuracy).
+
+   `infere_laplace_array_arg(stmt, arg)`:
+   - if `arg` is `Expr::Array(elems)` (the pre-existing literal-array
+     case): delegates to the existing `infere_array` exactly as before.
+   - if `arg` is a bare `Expr::Path` whose name matches a known
+     `find_var_array` entry: resolves each `coeffs[bit]` (`lo..=hi`, via
+     the same `Path::new_ident(bus.bit_name(bit))` + `resolve_path`
+     pattern `infere_bit_select` already uses) to a `VarId`, records the
+     ordered list in a new `InferenceResult::array_var_refs:
+     AHashMap<ExprId, Vec<VarId>>` field, and assigns the argument
+     `Ty::Val(Type::Array{ty: Real, len})` directly — **never** calling
+     `infere_expr`/triggering `BareBusReference` for this one expression.
+   - anything else: falls back to ordinary `infere_expr`, so a genuine
+     scalar argument or typo still gets its normal diagnostic (the usual
+     "expected array" type mismatch).
+
+2. **`openvaf/hir_ty/src/validation/body.rs` — stop forcing `num`/`den`
+   into `BodyCtx::Const`.** The pre-existing laplace validation arm
+   forced every argument past the input signal into a constant-expression
+   context (`validate_const_expr`, which sets `BodyCtx::Const` and
+   rejects ordinary variable references via `allow_var_ref`). This was
+   already stricter than what Part 1's lowering actually needs — each
+   array element was always lowered as an ordinary `lower_expr` value
+   (supporting e.g. parameter references), never literally
+   constant-folded — so it was leftover-strict scaffolding rather than a
+   real requirement. The laplace arm was split off from `zi_*` (which
+   keeps the original behavior, unaffected since it's still
+   `is_unsupported` and never reaches this code in practice) and changed
+   to only force-const the *optional trailing* tolerance/nature argument,
+   validating `args[0..3]` (input, num, den) normally — which is what
+   allows an ordinary (non-const) array-variable reference, and its
+   `coeffs[i]` element reads, to pass body validation at all.
+
+3. **`openvaf/hir/src/body.rs` + `openvaf/hir_lower/src/expr.rs` — surface
+   the resolved `VarId`s to the lowering pass.** `BodyRef` gained
+   `array_var_ref(&self, expr) -> Option<Vec<Variable>>`, projecting
+   `InferenceResult::array_var_refs` into the hir crate's public
+   `Variable` wrapper type (the lowest layer that already has one, since
+   `hir_ty` doesn't depend on it). `lower_laplace_array_arg` (renamed
+   from the old array-literal-only `array_elems`) checks this first: if
+   present, each element is read directly via the existing
+   `ctx.read_variable(var)` (the same primitive an ordinary `coeffs[i]`
+   read anywhere else in the model already uses) — no `ExprId`s, no
+   `lower_expr` call, since there's no array-literal syntax node to walk
+   for this case at all. Otherwise it falls back to the original
+   array-literal-element path unchanged.
+
+No changes were needed in `openvaf/hir_def` (item-tree/body lowering),
+`openvaf/mir*`, `openvaf/sim_back`, or `openvaf/osdi` — once the elements
+are `Value`s, `laplace_roots_to_poly`/`laplace_state_space` (§3.5) don't
+care whether they came from a literal or a variable.
+
+### 20. Testing & verification
+
+The motivating example from §17 now compiles and simulates correctly.
+Two variants were checked:
+
+- The exact mixed declaration above (`coeffs[0]=-2e6, coeffs[1]=0.0`,
+  `laplace_zd(V(in), coeffs, '{3e12, 4e6, 1.0})`) compiles with zero
+  errors and simulates to `V(out) ≈ 0` at DC — correct, *given the
+  literal contents written*: `coeffs` has **two** elements, so it's a
+  **two**-root zero list (`(s - (-2e6))·(s - 0) = s² + 2e6·s`, which is
+  zero at `s=0`), not the single zero `(s+2e6)` an inline comment in the
+  source suggested. This is a property of what the model actually
+  declares (an authoring mismatch between a 2-element array and a
+  1-root-numerator comment), not a compiler bug — confirmed by checking
+  the equivalent literal-only form `laplace_zd(V(in), '{-2e6, 0.0},
+  ...)`, which produces the identical (correct, for *that* input) result.
+- A corrected one-element version (`real [0:0] zero_coeffs;
+  zero_coeffs[0] = -2e6;`, i.e. an actual single zero at `s=-2e6`) gives
+  `V(out) = 1.3333e-6` at `V(in) = 2.0` — exactly `2.0 · 2e6/3e12 =
+  2.0 · 6.667e-7`, matching the originally-intended `H(s) = (s+2e6)/
+  ((s+1e6)(s+3e6))`, `H(0) = 6.667e-7`.
+
+Regression: `cargo test -p syntax -p hir_def -p hir_ty -p hir -p
+hir_lower` passes unchanged (0 failures, no snapshot updates needed this
+time). All Part 1/Part 2 fixtures (`laplace_lpf.va`, `laplace_variants.va`,
+`laplace_zd_only.va`, `array_var_fir.va`) and the bare-reference
+diagnostic *outside* a laplace call (`V(out) <+ coeffs * V(in);`, still
+correctly rejected) recompile/re-diagnose identically to before this
+addition.
+
+### 21. Known limitations (additive to §16)
+
+- **Only a bare, whole-array reference is accepted** as a `laplace_*`
+  argument — `coeffs[1:3]` (part-select) or any expression more complex
+  than a single identifier naming a known array variable is not
+  recognized as the "array variable" shape and falls through to ordinary
+  scalar inference (producing the standard "expected array" type
+  mismatch rather than a tailored diagnostic).
+- **Mixing is still one-or-the-other per argument**, not per-element —
+  you can write `laplace_zd(in, coeffs, '{...}')` (one arg a variable,
+  the other a literal, as in §17/§20) but not splice a variable element
+  into the middle of a literal's element list directly; for that, index
+  the variable explicitly inside the literal instead (`'{coeffs[0],
+  1.5, coeffs[2]}'` — already supported, since each literal element is
+  just an ordinary expression, see §2.3).

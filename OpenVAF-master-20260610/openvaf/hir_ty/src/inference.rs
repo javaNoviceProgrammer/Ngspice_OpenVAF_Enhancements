@@ -21,8 +21,9 @@ use syntax::{TextRange, TextSize};
 use typed_index_collections::{TiSlice, TiVec};
 
 use crate::builtin::{
-    DDX_FLOW, DDX_POT, DDX_POT_DIFF, DDX_TEMP, LIMIT_BUILTIN_FUNCTION, LIMIT_USER_FUNCTION,
-    NATURE_ACCESS_BRANCH, NATURE_ACCESS_NODES, NATURE_ACCESS_NODE_GND, NATURE_ACCESS_PORT_FLOW,
+    DDX_FLOW, DDX_POT, DDX_POT_DIFF, DDX_TEMP, LAPALCE_TOL, LAPLACE_NATURE_TOL, LAPLACE_NO_TOL,
+    LIMIT_BUILTIN_FUNCTION, LIMIT_USER_FUNCTION, NATURE_ACCESS_BRANCH, NATURE_ACCESS_NODES,
+    NATURE_ACCESS_NODE_GND, NATURE_ACCESS_PORT_FLOW,
 };
 use crate::db::{Alias, HirTyDB};
 use crate::diagnostics::{ArrayTypeMismatch, SignatureMismatch, TypeMismatch};
@@ -76,6 +77,11 @@ pub struct InferenceResult {
     /// decomposed `(lhs, rhs)` operands of the required `lhs == rhs` constraint expression.
     pub indirect_branch_constraints: AHashMap<StmtId, (ExprId, ExprId)>,
     pub casts: AHashMap<ExprId, Type>,
+    /// For a `laplace_*` `num`/`den` (or `zero`/`pole`) argument that is a bare reference to a
+    /// module-body array variable (`coeffs` for `real [0:n] coeffs;`) rather than an array
+    /// literal: the variable's expanded scalar `VarId`s, in ascending declared-index order
+    /// (`coeffs[0]`, `coeffs[1]`, ...). See `infere_laplace_array_arg`.
+    pub array_var_refs: AHashMap<ExprId, Vec<VarId>>,
     pub diagnostics: Vec<InferenceDiagnostic>,
 }
 
@@ -680,6 +686,11 @@ impl Ctx<'_> {
                 return (Some(Ty::Val(Type::Real)), true);
             }
 
+            BuiltIn::laplace_nd | BuiltIn::laplace_np | BuiltIn::laplace_zd
+            | BuiltIn::laplace_zp => {
+                return self.infere_laplace(stmt, expr, args);
+            }
+
             BuiltIn::limit => {
                 if args.len() >= 2 {
                     infere_args = &args[0..2];
@@ -988,6 +999,108 @@ impl Ctx<'_> {
 
             self.result.resolved_signatures.insert(expr, signature);
         }
+    }
+
+    /// Type-checks a `laplace_*(in, num, den[, tol|nature])` call. `num`/`den` are handled by
+    /// `infere_laplace_array_arg` (array literal *or* bare array-variable reference, see there);
+    /// this can't go through the generic `resolve_function_args` machinery (used by every other
+    /// builtin) because that always calls `infere_expr` on every argument, which would reject a
+    /// bare array-variable reference with `BareBusReference` before `infere_laplace_array_arg`
+    /// gets a chance to special-case it.
+    fn infere_laplace(&mut self, stmt: StmtId, expr: ExprId, args: &[ExprId]) -> (Option<Ty>, bool) {
+        let mut valid = true;
+
+        if let Some(ty) = self.infere_expr(stmt, args[0]) {
+            self.expect::<false>(args[0], None, ty, Cow::Borrowed(&[TyRequirement::Val(Type::Real)]));
+        } else {
+            valid = false;
+        }
+
+        for &arg in &args[1..3] {
+            if self.infere_laplace_array_arg(stmt, arg).is_none() {
+                valid = false;
+            }
+        }
+
+        // optional trailing tolerance (real) or nature argument; still required to be a
+        // constant expression (validated separately in hir_ty::validation::body), since unlike
+        // num/den it isn't used by the state-space realization at all (see Enhancement-4.md §1.3)
+        let signature = if let Some(&tol_or_nature) = args.get(3) {
+            match self.infere_expr(stmt, tol_or_nature) {
+                Some(ty @ Ty::Nature(_)) => {
+                    self.result.expr_types[tol_or_nature] = ty;
+                    LAPLACE_NATURE_TOL
+                }
+                Some(ty) => {
+                    self.expect::<false>(
+                        tol_or_nature,
+                        None,
+                        ty,
+                        Cow::Borrowed(&[TyRequirement::Val(Type::Real), TyRequirement::Nature]),
+                    );
+                    LAPALCE_TOL
+                }
+                None => {
+                    valid = false;
+                    LAPALCE_TOL
+                }
+            }
+        } else {
+            LAPLACE_NO_TOL
+        };
+        self.result.resolved_signatures.insert(expr, signature);
+
+        (Some(Ty::Val(Type::Real)), valid)
+    }
+
+    /// Type-checks a single `num`/`den` (or `zero`/`pole`) argument of a `laplace_*` call.
+    /// Accepts two shapes:
+    /// - an array-literal expression (`'{...}'`/`{...}`), handled exactly as before via
+    ///   `infere_array`;
+    /// - a bare reference to a module-body array variable (`coeffs` for `real [0:n] coeffs;`,
+    ///   declared via Enhancement-4's array-variable support) — equivalent to writing out
+    ///   `'{coeffs[0], coeffs[1], ..., coeffs[n]}'` by hand. The expanded `VarId`s (ascending
+    ///   declared-index order) are recorded in `InferenceResult::array_var_refs` for
+    ///   `hir_lower` to read directly via `coeffs[i]`-equivalent variable reads, with no MIR
+    ///   array-value representation needed (mirroring how literal-array elements are lowered).
+    ///
+    /// Anything else falls back to ordinary `infere_expr`, preserving the normal
+    /// "expected array" diagnostic from signature mismatch (e.g. a plain scalar argument, or a
+    /// genuine typo that doesn't name a known array variable).
+    fn infere_laplace_array_arg(&mut self, stmt: StmtId, arg: ExprId) -> Option<Ty> {
+        if let Expr::Array(ref elems) = self.body.exprs[arg] {
+            let elems = elems.clone();
+            let ty = if elems.is_empty() {
+                Ty::Val(Type::EmptyArray)
+            } else {
+                self.infere_array(stmt, &elems)?
+            };
+            self.result.expr_types[arg] = ty.clone();
+            return Some(ty);
+        }
+
+        if let Expr::Path { ref path, port: false } = self.body.exprs[arg] {
+            if let Some(name) = path.as_ident() {
+                if let Some(arr) = self.find_var_array(&name) {
+                    let (lo, hi) = arr.min_max();
+                    let mut vars = Vec::with_capacity((hi - lo + 1) as usize);
+                    for bit in lo..=hi {
+                        let synth_path = Path::new_ident(arr.bit_name(bit));
+                        match self.resolve_path(stmt, arg, &synth_path)? {
+                            ScopeDefItem::VarId(var) => vars.push(var),
+                            _ => return None,
+                        }
+                    }
+                    let len = vars.len() as u32;
+                    self.result.array_var_refs.insert(arg, vars);
+                    let ty = Ty::Val(Type::Array { ty: Box::new(Type::Real), len });
+                    self.result.expr_types[arg] = ty.clone();
+                    return Some(ty);
+                }
+            }
+        }
+
+        self.infere_expr(stmt, arg)
     }
 
     fn infere_array(&mut self, stmt: StmtId, args: &[ExprId]) -> Option<Ty> {

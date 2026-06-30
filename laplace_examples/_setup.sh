@@ -1,9 +1,9 @@
 # Shared setup for the laplace_examples scripts. Sourced, not run.
 #
 # Selects the right prebuilt binaries from bin/<os>/<arch>/ for the current
-# machine and (re)compiles the laplace_lpf/laplace_variants/laplace_zd_only
-# models for this platform, because a .osdi is a native shared library and is
-# therefore architecture-specific.
+# machine and (re)compiles the laplace_lpf/laplace_variants/laplace_zd_only/
+# laplace_mixed_var_literal models for this platform, because a .osdi is a
+# native shared library and is therefore architecture-specific.
 #
 # After sourcing, the following are set:
 #   NG            absolute path to the ngspice binary for this platform
@@ -11,6 +11,7 @@
 #   OSDI          absolute path to a freshly compiled laplace_lpf.osdi (in .build/)
 #   OSDI_VARIANTS absolute path to a freshly compiled laplace_variants.osdi
 #   OSDI_ZD       absolute path to a freshly compiled laplace_zd_only.osdi
+#   OSDI_MIXED    absolute path to a freshly compiled laplace_mixed_var_literal.osdi
 
 # Directory containing this file (= laplace_examples/)
 _SETUP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
@@ -47,6 +48,7 @@ mkdir -p "$_BUILD_DIR"
 OSDI="$_BUILD_DIR/laplace_lpf.osdi"
 OSDI_VARIANTS="$_BUILD_DIR/laplace_variants.osdi"
 OSDI_ZD="$_BUILD_DIR/laplace_zd_only.osdi"
+OSDI_MIXED="$_BUILD_DIR/laplace_mixed_var_literal.osdi"
 
 _compile() {
   local src="$1" out="$2"
@@ -60,8 +62,9 @@ _compile() {
 _compile laplace_lpf.va "$OSDI"
 _compile laplace_variants.va "$OSDI_VARIANTS"
 _compile laplace_zd_only.va "$OSDI_ZD"
+_compile laplace_mixed_var_literal.va "$OSDI_MIXED"
 
 echo "platform : $_os/$_arch"
 echo "  ngspice  : $NG"
 echo "  openvaf-r: $VAF"
-echo "  models   : $OSDI, $OSDI_VARIANTS, $OSDI_ZD (compiled for this platform)"
+echo "  models   : $OSDI, $OSDI_VARIANTS, $OSDI_ZD, $OSDI_MIXED (compiled for this platform)"

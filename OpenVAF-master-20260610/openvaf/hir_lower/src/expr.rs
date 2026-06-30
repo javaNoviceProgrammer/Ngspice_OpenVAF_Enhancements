@@ -747,10 +747,8 @@ impl BodyLoweringCtx<'_, '_, '_> {
         let num_is_roots = matches!(kind, BuiltIn::laplace_zd | BuiltIn::laplace_zp);
         let den_is_roots = matches!(kind, BuiltIn::laplace_np | BuiltIn::laplace_zp);
 
-        let num_ids = self.array_elems(args[1]);
-        let den_ids = self.array_elems(args[2]);
-        let num: Vec<Value> = num_ids.iter().map(|&e| self.lower_expr(e)).collect();
-        let den: Vec<Value> = den_ids.iter().map(|&e| self.lower_expr(e)).collect();
+        let num = self.lower_laplace_array_arg(args[1]);
+        let den = self.lower_laplace_array_arg(args[2]);
 
         let num = if num_is_roots { self.laplace_roots_to_poly(&num) } else { num };
         let den = if den_is_roots { self.laplace_roots_to_poly(&den) } else { den };
@@ -758,14 +756,24 @@ impl BodyLoweringCtx<'_, '_, '_> {
         self.laplace_state_space(input, &num, &den)
     }
 
-    /// Returns the element `ExprId`s of an array-literal argument (`{a, b, c}`), or a
-    /// single-element fallback if the argument wasn't lowered as a literal array (e.g. a lone
-    /// constant where a one-element array is implied).
-    fn array_elems(&self, expr: ExprId) -> Vec<ExprId> {
-        match self.body.get_expr(expr) {
+    /// Lowers a `num`/`den` (or `zero`/`pole`) argument of a `laplace_*` call to its element
+    /// `Value`s, in ascending order. Two shapes are accepted (see `hir_ty::inference::
+    /// infere_laplace_array_arg`): a bare reference to a module-body array variable, read
+    /// directly via `ctx.read_variable` per element (no array-literal `ExprId`s exist for this
+    /// case at all); or an ordinary array-literal expression (`'{a, b, c}'`/`{a, b, c}`), whose
+    /// elements are lowered individually via `lower_expr` (falling back to treating the whole
+    /// expression as a single-element array if it's neither — defensive, not expected to
+    /// trigger given the type-level `ArrayAnyLength` requirement).
+    fn lower_laplace_array_arg(&mut self, expr: ExprId) -> Vec<Value> {
+        if let Some(vars) = self.body.array_var_ref(expr) {
+            return vars.iter().map(|&var| self.ctx.read_variable(var)).collect();
+        }
+
+        let elem_ids: Vec<ExprId> = match self.body.get_expr(expr) {
             Expr::Array(elems) => elems.to_vec(),
             _ => vec![expr],
-        }
+        };
+        elem_ids.iter().map(|&e| self.lower_expr(e)).collect()
     }
 
     /// Expands a list of roots `[r0, r1, ...]` into ascending-power polynomial coefficients of

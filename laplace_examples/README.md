@@ -55,6 +55,24 @@ V(out_zp) <+ laplace_zp(V(in), '{-2e6}, '{-1e6, -3e6});            // same 2nd-o
 `laplace_zd_only.va` is a single-call isolation fixture used to
 cross-check `laplace_variants.va`'s `out_zd` result column-by-column.
 
+`laplace_mixed_var_literal.va` exercises mixing an **array-variable**
+argument with an **array-literal** argument in the same `laplace_zd`
+call — a bare reference to a module-body array variable (`zero_coeffs`,
+declared `real [0:0] zero_coeffs;`) stands in for the zero-list array
+literal, while the denominator is still given as an ordinary `'{...}'`
+literal:
+
+```verilog
+real [0:0] zero_coeffs;
+analog begin
+    zero_coeffs[0] = -2e6;
+    V(out) <+ laplace_zd(V(in), zero_coeffs, '{3e12, 4e6, 1.0});
+end
+```
+
+See `../Enhancement-4.md` Part 3 (§17-21) for why this needed dedicated
+(if contained) compiler support beyond Parts 1 and 2 individually.
+
 ## The test circuit
 
 All three `.cir` files for the primary model instantiate `laplace_lpf`
@@ -86,6 +104,10 @@ The four-forms cross-check (`dc_variants.cir`) confirms `laplace_nd` and
 agree exactly on the second-order system's `H(0) = 2e6/3e12 ≈ 6.667e-7`
 (`out_zd = out_zp = 1.3333e-6` at `V(in)=2.0`).
 
+`dc_mixed.cir` confirms the array-variable/array-literal mixed-argument
+form agrees too: `V(out) = 1.3333e-6` at `V(in) = 2.0`, exactly
+`2.0 · 6.667e-7`.
+
 ## Diagnostics (not included as `.cir`/CI fixtures, verified by hand — see Enhancement-4.md §15)
 
 - Improper transfer functions, `zi_*` (z-domain) filters, and a handful of
@@ -102,26 +124,30 @@ laplace_examples/
   laplace_variants.osdi  compiled with version5 openvaf-r (macOS/Apple Silicon snapshot)
   laplace_zd_only.va     isolated laplace_zd fixture (cross-check helper)
   laplace_zd_only.osdi   compiled with version5 openvaf-r (macOS/Apple Silicon snapshot)
+  laplace_mixed_var_literal.va   array-variable + array-literal argument mix
+  laplace_mixed_var_literal.osdi compiled with version5 openvaf-r (macOS/Apple Silicon snapshot)
   dc_sim.cir             DC sweep of V(in), laplace_lpf
   ac_sim.cir             AC sweep 1kHz-1GHz, laplace_lpf
   tran_sim.cir           step response, laplace_lpf
   dc_variants.cir        DC sweep, all four laplace_* forms
   dc_zd_only.cir         DC sweep, isolated laplace_zd
+  dc_mixed.cir           DC sweep, array-variable + array-literal mix
   _setup.sh              picks the right bin/<os>/<arch> binaries and recompiles
-                         all three models for this platform (sourced by run_examples.sh)
-  run_examples.sh         runs dc/ac/tran/dc_variants/dc_zd_only with ngspice and
-                         writes dc/ac/tran/dc_variants/dc_zd_only.txt
+                         all four models for this platform (sourced by run_examples.sh)
+  run_examples.sh         runs dc/ac/tran/dc_variants/dc_zd_only/dc_mixed with
+                         ngspice and writes the corresponding .txt files
   plot_results.py        plots dc/ac/tran.txt (laplace_lpf) to dc/ac/tran.png
   dc.txt, ac.txt, tran.txt        raw wrdata output from the last laplace_lpf run
-  dc_variants.txt, dc_zd_only.txt raw wrdata output from the cross-check runs
+  dc_variants.txt, dc_zd_only.txt,
+  dc_mixed.txt                    raw wrdata output from the cross-check runs
   dc.png, ac.png, tran.png        plotted laplace_lpf results (see above)
 ```
 
 `dc_sim.cir`/`ac_sim.cir`/`tran_sim.cir`/`dc_variants.cir`/
-`dc_zd_only.cir` reference `OSDIFILE`/`OSDIFILE_VARIANTS`/`OSDIFILE_ZD`/
-`RESULTFILE` placeholders rather than hardcoded paths — `run_examples.sh`
-substitutes them at run time, so the checked-in netlists stay portable
-across machines and OS/architectures.
+`dc_zd_only.cir`/`dc_mixed.cir` reference `OSDIFILE`/`OSDIFILE_VARIANTS`/
+`OSDIFILE_ZD`/`OSDIFILE_MIXED`/`RESULTFILE` placeholders rather than
+hardcoded paths — `run_examples.sh` substitutes them at run time, so the
+checked-in netlists stay portable across machines and OS/architectures.
 
 ## Reproduce
 
