@@ -30,9 +30,11 @@ Using Claude Code AI to enhance the ngspice and openvaf frameworks.
 
 **DC / AC / Transient results** for the ideal op-amp unity-gain buffer:
 
-![DC sweep](./indirect_assignment_examples/dc.png)
-![AC response](./indirect_assignment_examples/ac.png)
-![Transient response](./indirect_assignment_examples/tran.png)
+<p align="center">
+  <img src="./indirect_assignment_examples/dc.png" width="32%" alt="DC sweep">
+  <img src="./indirect_assignment_examples/ac.png" width="32%" alt="AC response">
+  <img src="./indirect_assignment_examples/tran.png" width="32%" alt="Transient response">
+</p>
 
 ---
 
