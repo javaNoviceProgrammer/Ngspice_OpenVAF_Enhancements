@@ -1,0 +1,11 @@
+* array_var_fir DC sweep: coeffs sum to 1.0 -> out should equal in exactly.
+.model fir1 array_var_fir
+Ndut in out fir1
+Vin in 0 DC 1.0
+.dc Vin -2 2 0.5
+.control
+  pre_osdi OSDIFILE
+  run
+  wrdata RESULTFILE v(in) v(out)
+.endc
+.end

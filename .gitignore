@@ -91,3 +91,11 @@ indirect_assignment_examples/.*.cir
 # bus_examples scripts: per-platform compiled model + temp netlists
 bus_examples/.build/
 bus_examples/.*.cir
+
+# laplace_examples scripts: per-platform compiled model + temp netlists
+laplace_examples/.build/
+laplace_examples/.*.cir
+
+# array_var_examples scripts: per-platform compiled model + temp netlists
+array_var_examples/.build/
+array_var_examples/.*.cir

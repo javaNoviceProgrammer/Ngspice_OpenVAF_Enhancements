@@ -1,0 +1,12 @@
+* laplace_lpf DC example: H(s) = 1/(1+tau*s) is purely algebraic at DC,
+* so out should track in exactly (DC gain = 1).
+.model lpf1 laplace_lpf (tau=1e-6)
+Ndut in out lpf1
+Vin in 0 DC 1.0
+.dc Vin -2 2 0.5
+.control
+  pre_osdi OSDIFILE
+  run
+  wrdata RESULTFILE v(in) v(out)
+.endc
+.end

@@ -1,0 +1,11 @@
+* laplace_lpf step response: tau=1e-6s, expect ~63% rise at t=tau, ~95% at 3*tau
+.model lpf1 laplace_lpf (tau=1e-6)
+Ndut in out lpf1
+Vin in 0 PULSE(0 1 0 1n 1n 1 2)
+.tran 1n 5u
+.control
+  pre_osdi OSDIFILE
+  run
+  wrdata RESULTFILE v(in) v(out)
+.endc
+.end

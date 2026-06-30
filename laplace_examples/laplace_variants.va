@@ -1,0 +1,27 @@
+`include "disciplines.vams"
+
+// Exercises all four laplace_* forms with equivalent (or related) transfer
+// functions, to cross-check the polynomial/root conversions against the
+// laplace_nd baseline.
+module laplace_variants(in, out_nd, out_np, out_zd, out_zp);
+    input in;
+    output out_nd, out_np, out_zd, out_zp;
+    electrical in, out_nd, out_np, out_zd, out_zp;
+
+    parameter real tau = 1e-6 from (0:inf);
+
+    analog begin
+        // H(s) = 1 / (1 + tau*s)
+        V(out_nd) <+ laplace_nd(V(in), '{1.0}, '{1.0, tau});
+
+        // Same H(s), pole form: 1/(1+tau*s) = (1/tau) / (s + 1/tau)
+        V(out_np) <+ laplace_np(V(in), '{1.0/tau}, '{-1.0/tau});
+
+        // Second-order: H(s) = (s - z0) / ((s-p0)*(s-p1)), z0=-2e6, p0=-1e6, p1=-3e6
+        // zero form (den as polynomial): den(s) = (s+1e6)(s+3e6) = s^2 + 4e6 s + 3e12
+        V(out_zd) <+ laplace_zd(V(in), '{-2e6}, '{3e12, 4e6, 1.0});
+
+        // same second-order system, fully pole/zero form
+        V(out_zp) <+ laplace_zp(V(in), '{-2e6}, '{-1e6, -3e6});
+    end
+endmodule

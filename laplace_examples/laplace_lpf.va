@@ -1,0 +1,15 @@
+`include "disciplines.vams"
+
+// First-order RC-like low-pass filter realized purely algebraically via
+// laplace_nd: H(s) = 1 / (1 + tau*s), tau = 1us.
+module laplace_lpf(in, out);
+    input in;
+    output out;
+    electrical in, out;
+
+    parameter real tau = 1e-6 from (0:inf);
+
+    analog begin
+        V(out) <+ laplace_nd(V(in), '{1.0}, '{1.0, tau});
+    end
+endmodule

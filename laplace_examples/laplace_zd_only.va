@@ -1,0 +1,12 @@
+`include "disciplines.vams"
+
+module laplace_zd_only(in, out);
+    input in;
+    output out;
+    electrical in, out;
+
+    analog begin
+        // H(s) = (s+2e6) / (s^2 + 4e6 s + 3e12); H(0) = 2e6/3e12 = 6.667e-7
+        V(out) <+ laplace_zd(V(in), '{-2e6}, '{3e12, 4e6, 1.0});
+    end
+endmodule

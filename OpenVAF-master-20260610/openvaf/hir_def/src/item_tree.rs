@@ -63,6 +63,12 @@ pub enum ItemTreeDiagnostic {
     /// A `branch` declaration used a bit-select index that is out of the
     /// bus's declared `[msb:lsb]` range.
     BranchBitSelectOutOfRange { ast_id: ErasedAstId, bus_name: Name, index: i32, msb: i32, lsb: i32 },
+    /// A `[msb:lsb]` array-variable declaration (`real [0:4] x;`) appeared
+    /// inside an `analog function` or a nested `begin..end` block, where
+    /// array-variable bit-select resolution isn't supported (only module
+    /// body scope is); the width clause was dropped and the declaration
+    /// was treated as a single ordinary scalar variable.
+    ArrayVarUnsupportedScope { ast_id: ErasedAstId },
 }
 
 impl Default for ItemTree {
@@ -269,9 +275,20 @@ pub struct Module {
     /// bit-select expressions (`bus[i]`) and to diagnose bare references to
     /// a bus without a bit-select.
     pub buses: Vec<BusDecl>,
+    /// Array-variable declarations (`real [msb:lsb] x;`) at module body
+    /// scope, used to resolve bit-select expressions (`x[i]`) the same way
+    /// `buses` does for nets/ports. Kept as a separate list from `buses`
+    /// (rather than merged in) purely so the two declaration kinds stay
+    /// distinguishable in diagnostics/debugging, even though `BusDecl`
+    /// itself is reused verbatim — see `Enhancement-4.md` §3.
+    pub var_arrays: Vec<BusDecl>,
 }
 
-/// A vectored net/port declaration, e.g. `electrical [3:0] bus;`.
+/// A vectored net/port declaration (e.g. `electrical [3:0] bus;`), or an
+/// array-variable declaration (e.g. `real [0:4] x;`) — both share the same
+/// shape (a base name plus an `[msb:lsb]` range expanding into independent
+/// scalar entries), so the same record type is reused for both; see
+/// `Module::buses` / `Module::var_arrays`.
 #[derive(Debug, Eq, PartialEq, Clone)]
 pub struct BusDecl {
     pub base_name: Name,

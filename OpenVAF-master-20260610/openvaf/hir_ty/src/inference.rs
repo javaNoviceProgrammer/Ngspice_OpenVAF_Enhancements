@@ -356,7 +356,7 @@ impl Ctx<'_> {
 
             Expr::Path { ref path, port: false } => {
                 if let Some(name) = path.as_ident() {
-                    if self.find_bus(&name).is_some() {
+                    if self.find_bus(&name).is_some() || self.find_var_array(&name).is_some() {
                         self.result
                             .diagnostics
                             .push(InferenceDiagnostic::BareBusReference { expr, name });
@@ -1050,7 +1050,7 @@ impl Ctx<'_> {
             }
         }
 
-        Some(Ty::Val(ty))
+        Some(Ty::Val(Type::Array { ty: Box::new(ty), len: args.len() as u32 }))
     }
 
     fn infere_bin_op(
@@ -1272,6 +1272,15 @@ impl Ctx<'_> {
         tree[loc.id].buses.iter().find(|bus| &bus.base_name == name).cloned()
     }
 
+    /// Same as `find_bus`, but for module-body-scope array-variable declarations
+    /// (`real [msb:lsb] x;`) instead of vectored nets/ports.
+    fn find_var_array(&self, name: &Name) -> Option<BusDecl> {
+        let DefWithBodyId::ModuleId { module, .. } = self.owner else { return None };
+        let loc = module.lookup(self.db.upcast());
+        let tree = loc.item_tree(self.db.upcast());
+        tree[loc.id].var_arrays.iter().find(|arr| &arr.base_name == name).cloned()
+    }
+
     fn infere_bit_select(
         &mut self,
         stmt: StmtId,
@@ -1284,8 +1293,9 @@ impl Ctx<'_> {
             return None;
         };
 
-        let Some(bus) = self.find_bus(&base_name) else {
-            // Not a known bus: resolve normally so an ordinary "unresolved identifier"
+        let bus = self.find_bus(&base_name).or_else(|| self.find_var_array(&base_name));
+        let Some(bus) = bus else {
+            // Not a known bus/array: resolve normally so an ordinary "unresolved identifier"
             // diagnostic is produced (e.g. for a genuine typo), rather than a bus-specific one.
             self.resolve_path(stmt, expr, base)?;
             return None;
@@ -1324,6 +1334,7 @@ impl Ctx<'_> {
         let synth_path = Path::new_ident(bus.bit_name(idx));
         match self.resolve_path(stmt, expr, &synth_path)? {
             ScopeDefItem::NodeId(node) => Some(Ty::Node(node)),
+            ScopeDefItem::VarId(var) => Some(Ty::Var(self.db.var_data(var).ty.clone(), var)),
             _ => None,
         }
     }

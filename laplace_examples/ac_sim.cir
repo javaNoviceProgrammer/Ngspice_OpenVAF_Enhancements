@@ -1,0 +1,14 @@
+* laplace_lpf AC example: H(s) = 1/(1+tau*s), tau=1e-6s -> pole at
+* f_p = 1/(2*pi*tau) ~= 159.15 kHz. Expect flat 0 dB / 0 deg well below
+* f_p, -3 dB / -45 deg at f_p, and a -20 dB/decade rolloff with phase
+* approaching -90 deg well above f_p.
+.model lpf1 laplace_lpf (tau=1e-6)
+Ndut in out lpf1
+Vin in 0 DC 0 AC 1
+.ac dec 20 1k 1G
+.control
+  pre_osdi OSDIFILE
+  run
+  wrdata RESULTFILE vdb(out) vp(out)
+.endc
+.end

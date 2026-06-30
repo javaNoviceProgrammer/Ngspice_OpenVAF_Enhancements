@@ -1,0 +1,12 @@
+* laplace_zd_only DC test: isolated laplace_zd cross-check, same 2nd-order
+* system as laplace_variants' out_zd/out_zp (H(0) = 2e6/3e12 = 6.667e-7).
+.model zd1 laplace_zd_only
+Ndut in out zd1
+Vin in 0 DC 1.0
+.dc Vin -2 2 0.5
+.control
+  pre_osdi OSDIFILE_ZD
+  run
+  wrdata RESULTFILE v(in) v(out)
+.endc
+.end

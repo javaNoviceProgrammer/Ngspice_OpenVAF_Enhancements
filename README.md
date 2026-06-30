@@ -60,6 +60,26 @@ Main goals:
 
 ---
 
+## Enhancement 4: Laplace transform filter operators, and array-variable declarations, for Verilog-A
+
+*June 2026* — Implements Verilog-A's four **Laplace transform filter** analog operators (`laplace_nd`/`laplace_np`/`laplace_zd`/`laplace_zp`) by converting a transfer function `H(s) = num(s)/den(s)` into an exact controllable-canonical-form state-space realization at compile time, reusing the same implicit-equation/residual machinery `idt()` already uses — no new DAE primitive, and no `sim_back`/`osdi` changes were needed. Along the way, two latent front-end gaps were found and fixed: array-literal expressions (`'{...}'`/`{...}`) were fully scaffolded but never actually parsed, and the array-literal type-checker had a bug that made every array literal type-check as a bare scalar. As a follow-up, **array-variable declarations** (`real [msb:lsb] x;`) were also added, reusing Enhancement-3's bit-select machinery almost unchanged.
+
+- Verified for DC, AC, and Transient analysis (a first-order RC-style low-pass filter, `H(s) = 1/(1+tau*s)`, realized with no actual resistor/capacitor in the model) — exact `-3dB`/`-45°` at the corner frequency, `-20dB`/decade rolloff, and `63.2%` step response at `t=tau`
+- Verified all four `laplace_*` forms (coefficient and pole/zero) agree exactly on two equivalent transfer functions
+- Verified array-variable declare/write/read end-to-end with a 5-tap weighted-sum model
+- Verified for no regressions against the Enhancement-1/2/3 examples
+- Details: [Enhancement-4.md](Enhancement-4.md)
+
+**DC / AC / Transient results** for the Laplace low-pass filter:
+
+<p align="center">
+  <img src="./laplace_examples/dc.png" width="32%" alt="DC sweep">
+  <img src="./laplace_examples/ac.png" width="32%" alt="AC response">
+  <img src="./laplace_examples/tran.png" width="32%" alt="Transient response">
+</p>
+
+---
+
 ## Prebuilt Binaries
 
 Binaries are built by CI and committed to `bin/`:

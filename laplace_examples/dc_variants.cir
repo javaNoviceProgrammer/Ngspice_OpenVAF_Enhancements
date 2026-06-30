@@ -1,0 +1,14 @@
+* laplace_variants DC comparison: all four laplace_* forms side by side.
+* laplace_nd/laplace_np both realize H(s)=1/(1+tau*s) (H(0)=1); laplace_zd/
+* laplace_zp both realize a 2nd-order H(s)=(s+2e6)/((s+1e6)(s+3e6))
+* (H(0)=2e6/3e12=6.667e-7) -- the two forms of each pair should agree exactly.
+.model var1 laplace_variants (tau=1e-6)
+Ndut in out_nd out_np out_zd out_zp var1
+Vin in 0 DC 1.0
+.dc Vin -2 2 0.5
+.control
+  pre_osdi OSDIFILE_VARIANTS
+  run
+  wrdata RESULTFILE v(in) v(out_nd) v(out_np) v(out_zd) v(out_zp)
+.endc
+.end
