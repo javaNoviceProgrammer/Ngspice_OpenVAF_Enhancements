@@ -1,0 +1,13 @@
+* bus_buffer transient example: 1kHz sine in, four taps should track
+* gain*i/4 * v(in) with zero phase/amplitude error (resistive taps, no
+* reactive elements).
+.model buf4 bus_buffer (gain=1.0)
+Nbuf1 in out0 out1 out2 out3 buf4
+Vin in 0 SIN(0 1 1k)
+.tran 50u 2m
+.control
+  pre_osdi OSDIFILE
+  run
+  wrdata RESULTFILE v(in) v(out0) v(out1) v(out2) v(out3)
+.endc
+.end

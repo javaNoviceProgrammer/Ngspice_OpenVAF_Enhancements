@@ -1,0 +1,21 @@
+`include "disciplines.vams"
+
+// 4-tap fractional voltage buffer driven by a single input, demonstrating
+// a vectored ("bus") port: `output [0:3] out;` expands into four scalar
+// OSDI terminals (out[0]..out[3]), each driven independently via bit-select
+// branch contributions `V(out[i]) <+ ...`.
+module bus_buffer(in, out);
+    input in;
+    output [0:3] out;
+    electrical in;
+    electrical [0:3] out;
+
+    parameter real gain = 1.0 from (0:inf);
+
+    analog begin
+        V(out[0]) <+ 0.25 * gain * V(in);
+        V(out[1]) <+ 0.50 * gain * V(in);
+        V(out[2]) <+ 0.75 * gain * V(in);
+        V(out[3]) <+ 1.00 * gain * V(in);
+    end
+endmodule

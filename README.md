@@ -38,6 +38,24 @@ Using Claude Code AI to enhance the ngspice and openvaf frameworks.
 
 ---
 
+## Enhancement 3: Vectored/bus-style net declarations for Verilog-A
+
+*June 2026* — Implements Verilog-AMS **vectored net declarations** (bus syntax) in OpenVAF: `<discipline> [msb:lsb] name;` for nets and ports, with bit-select access (`bus[i]`) in branch declarations and `V()`/`I()` branch-access calls. A bus expands into independent scalar nodes at name-resolution time, so the feature is purely a front-end (parser/HIR) concern — no DAE, MIR, or OSDI changes were needed.
+
+- Verified for DC, AC, and Transient analysis (a 4-tap fractional buffer driven through a `[0:3]` bus output port)
+- Verified for no regressions against the Enhancement-1 `absdelay` and Enhancement-2 indirect-branch-assignment examples
+- Details: [Enhancement-3.md](Enhancement-3.md)
+
+**DC / AC / Transient results** for the 4-tap bus-output buffer:
+
+<p align="center">
+  <img src="./bus_examples/dc.png" width="32%" alt="DC sweep">
+  <img src="./bus_examples/ac.png" width="32%" alt="AC response">
+  <img src="./bus_examples/tran.png" width="32%" alt="Transient response">
+</p>
+
+---
+
 ## Prebuilt Binaries
 
 Binaries are built by CI and committed to `bin/`:

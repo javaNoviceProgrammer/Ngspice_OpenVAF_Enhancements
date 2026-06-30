@@ -87,3 +87,7 @@ absdelay_examples/benchmark/cir/
 # indirect_assignment_examples scripts: per-platform compiled model + temp netlists
 indirect_assignment_examples/.build/
 indirect_assignment_examples/.*.cir
+
+# bus_examples scripts: per-platform compiled model + temp netlists
+bus_examples/.build/
+bus_examples/.*.cir

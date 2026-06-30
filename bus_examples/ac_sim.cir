@@ -1,0 +1,13 @@
+* bus_buffer AC example: each tap is a purely resistive (algebraic) gain
+* stage, so all four taps should show flat gain (20*log10(tap fraction))
+* and 0 deg phase across all frequencies.
+.model buf4 bus_buffer (gain=1.0)
+Nbuf1 in out0 out1 out2 out3 buf4
+Vin in 0 DC 0 AC 1
+.ac dec 20 1k 1G
+.control
+  pre_osdi OSDIFILE
+  run
+  wrdata RESULTFILE vdb(out0) vp(out0) vdb(out1) vp(out1) vdb(out2) vp(out2) vdb(out3) vp(out3)
+.endc
+.end
