@@ -1,0 +1,15 @@
+* Indirect branch assignment example: ideal op-amp unity-gain buffer (DC)
+* opamp: V(out):V(pin,nin) == 0  ->  ideal voltage source on out, solved so
+* that V(pin,nin) = 0. With nin tied to out (negative feedback), this forces
+* V(out) == V(pin), i.e. a unity-gain buffer.
+.model amp opamp()
+Namp1 out pin out amp
+RL out 0 1k
+Vin pin 0 DC 1.0
+.dc Vin -2 2 0.25
+.control
+  pre_osdi OSDIFILE
+  run
+  wrdata RESULTFILE v(pin) v(out)
+.endc
+.end

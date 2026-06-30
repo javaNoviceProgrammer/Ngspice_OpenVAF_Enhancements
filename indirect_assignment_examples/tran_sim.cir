@@ -1,0 +1,13 @@
+* Indirect branch assignment example: ideal op-amp unity-gain buffer (transient)
+* Expected: V(out) tracks V(pin) instantaneously (ideal, no delay/slew limit).
+.model amp opamp()
+Namp1 out pin out amp
+RL out 0 1k
+Vin pin 0 SIN(0 1 1MEG)
+.tran 1n 2u
+.control
+  pre_osdi OSDIFILE
+  run
+  wrdata RESULTFILE v(pin) v(out)
+.endc
+.end
