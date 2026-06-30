@@ -2,11 +2,11 @@
 
 Using Claude Code AI to enhance the ngspice and openvaf frameworks.
 
+[![Build binaries](https://github.com/javaNoviceProgrammer/Ngspice_OpenVAF_Enhancements/actions/workflows/build-binaries.yml/badge.svg)](https://github.com/javaNoviceProgrammer/Ngspice_OpenVAF_Enhancements/actions/workflows/build-binaries.yml)
+
 Main goals:
 - turn ngspice into the most powerful spice simulator
 - turn openvaf-r into the most powerful verilog-a compiler
-
-[![Build binaries](https://github.com/javaNoviceProgrammer/Ngspice_OpenVAF_Enhancements/actions/workflows/build-binaries.yml/badge.svg)](https://github.com/javaNoviceProgrammer/Ngspice_OpenVAF_Enhancements/actions/workflows/build-binaries.yml)
 
 ---
 
