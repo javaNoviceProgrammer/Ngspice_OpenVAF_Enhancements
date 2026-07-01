@@ -99,3 +99,8 @@ laplace_examples/.*.cir
 # array_var_examples scripts: per-platform compiled model + temp netlists
 array_var_examples/.build/
 array_var_examples/.*.cir
+
+# bessel_filter_examples scripts: per-platform compiled model + temp netlists
+bessel_filter_examples/.build/
+bessel_filter_examples/.*.cir
+bessel_filter_examples/__pycache__/

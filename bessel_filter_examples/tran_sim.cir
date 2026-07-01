@@ -1,0 +1,11 @@
+* bessel5 step response: 5th-order analog Bessel low-pass filter, fc = 1kHz
+.model bes5 bessel5
+Ndut in out bes5
+Vin in 0 PULSE(0 1 0 1n 1n 1 2)
+.tran 2u 5m
+.control
+  pre_osdi OSDIFILE
+  run
+  wrdata RESULTFILE v(in) v(out)
+.endc
+.end

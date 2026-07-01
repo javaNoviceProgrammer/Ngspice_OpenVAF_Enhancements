@@ -68,6 +68,7 @@ Main goals:
 - Verified all four `laplace_*` forms (coefficient and pole/zero) agree exactly on two equivalent transfer functions
 - Verified array-variable declare/write/read end-to-end with a 5-tap weighted-sum model
 - Verified for no regressions against the Enhancement-1/2/3 examples
+- Verified against a **real 5th-order analog Bessel low-pass filter**, cross-checked against the identical transfer function's analytical response computed independently in Python (`scipy.signal`) — numerical-noise-level agreement (max AC gain error 5.6e-7 dB, max phase error 7.2e-7°, max step-response error 6.6e-6 V). This also surfaced (and fixed) a compiler crash on large bare-integer-shaped literals.
 - Details: [Enhancement-4.md](Enhancement-4.md)
 
 **DC / AC / Transient results** for the Laplace low-pass filter:
@@ -76,6 +77,13 @@ Main goals:
   <img src="./laplace_examples/dc.png" width="32%" alt="DC sweep">
   <img src="./laplace_examples/ac.png" width="32%" alt="AC response">
   <img src="./laplace_examples/tran.png" width="32%" alt="Transient response">
+</p>
+
+**Simulated vs. analytical** results for the 5th-order Bessel filter:
+
+<p align="center">
+  <img src="./bessel_filter_examples/ac_compare.png" width="48%" alt="AC response comparison">
+  <img src="./bessel_filter_examples/tran_compare.png" width="48%" alt="Step response comparison">
 </p>
 
 ---

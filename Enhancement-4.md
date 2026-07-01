@@ -12,6 +12,9 @@ net declarations), to implement:
 3. **Array variables as `laplace_*` `num`/`den` arguments** — letting a
    bare array-variable reference (`coeffs`) stand in for an array literal
    in a `laplace_*` call, so Parts 1 and 2 compose — see §17.
+4. **A large-integer-literal crash fix**, found and fixed while building a
+   real 5th-order Bessel filter example whose coefficients include large
+   bare-integer-shaped literals — see §22.
 
 ## Part 1: Laplace transform filter operators
 
@@ -837,3 +840,117 @@ addition.
   the variable explicitly inside the literal instead (`'{coeffs[0],
   1.5, coeffs[2]}'` — already supported, since each literal element is
   just an ordinary expression, see §2.3).
+
+---
+
+## Part 4: Fixed a large-integer-literal crash, verified with a real 5th-order Bessel filter
+
+### 22. Motivation
+
+To exercise `laplace_nd` with a non-toy example, a genuine 5th-order analog
+Bessel low-pass filter was built: `scipy.signal.bessel(N=5, ...)` designs
+the filter, and the *exact same* coefficients (not hand-derived, avoiding
+any transcription mismatch) are written into a `laplace_nd` call, so the
+ngspice/OpenVAF simulation can be cross-checked against an independent
+analytical computation of the identical transfer function.
+
+Some of a 5th-order Bessel filter's coefficients are large (e.g.
+`6134876650875544`) and, written as bare digit strings with no `.`/exponent,
+crashed the compiler outright:
+
+```
+Panic occurred in file 'openvaf/syntax/src/ast/expr_ext.rs' at line 340
+called `Result::unwrap()` on an `Err` value: ParseIntError { kind: PosOverflow }
+```
+
+### 23. Root cause and fix
+
+`ast::IntNumber::value()` parsed the literal's text directly as `i32` and
+`.unwrap()`ed the result — Verilog-A's `integer` type is 32-bit in this
+compiler (`hir_def::expr::Literal::Int(i32)`, used consistently across
+~10 call sites: bit-select indices, bus/array widths, MIR's `iconst`), so
+that part is by design. The bug is that **any** bare integer-shaped
+literal exceeding i32 range crashed the whole compiler, even when used in
+a `Real`-typed context (like a `laplace_nd` coefficient) where it isn't
+semantically an `integer` at all — it's just a real number the user
+didn't bother giving a decimal point.
+
+Two designs were considered:
+
+- **Promote to i64.** Rejected: `Literal::Int` is `i32` everywhere
+  downstream (bit-select indices, bus width folding, MIR's `iconst`), so
+  this would only move the crash threshold from ~2.1e9 to ~9.2e18 — and
+  the Bessel filter's own leading coefficient (`9.79e18`) already exceeds
+  i64::MAX, so it would still crash. Widening `Literal::Int` itself to
+  i64 to fully fix it would ripple through all ~10 call sites for a
+  problem that isn't really about integer width at all.
+- **Fall back to a float literal on overflow (chosen).** A bare digit
+  string is always valid `f64` syntax too, and f64's range (~1e308)
+  covers any realistic literal. This fixes the crash for literals of any
+  size, not just those between i32 and i64::MAX.
+
+Implemented at two call sites:
+
+- `openvaf/syntax/src/ast/expr_ext.rs`: `IntNumber::value()` now returns
+  `Option<i32>` (`None` on overflow, instead of panicking); new
+  `IntNumber::value_as_f64()` is the fallback parse.
+- `openvaf/hir_def/src/body/lower.rs` (`Literal::new`, the actual panic
+  site): on `None`, produces `Literal::Float` instead of `Literal::Int`.
+- The same `IntNumber::value()` call inside `expr_ext.rs`'s
+  `as_constexprval` (used by bus-width/parameter-constraint constant
+  folding) was fixed the same way, falling back to
+  `ConstExprValue::Float`.
+
+Because every consumer that actually needs integer semantics (bit-select
+index, bus/array width) already only matches `Literal::Int`/
+`ConstExprValue::Int` specifically, a `Literal::Float` for an oversized
+literal used in one of those positions **automatically** falls through to
+the existing "not a constant integer" diagnostics (`NonConstantBitSelectIndex`,
+`NonConstantBusWidth`) — no new diagnostic code was needed, and it's
+arguably the *correct* diagnosis anyway (nothing has 6×10^15 bits).
+
+### 24. Testing & verification
+
+- The exact literals that crashed before now compile and simulate
+  correctly (verified with a standalone fixture reproducing the crash
+  case, giving the expected DC gain).
+- A huge literal used where an integer is actually required still
+  degrades gracefully to the pre-existing diagnostics, confirmed for both
+  a bit-select index and a bus/array width — no panic, no behavior change
+  from before this fix in the cases that were already erroring cleanly.
+- New regression fixture `test_data/ui/huge_int_literal.va`/`.log`.
+- `cargo test -p syntax -p hir_def -p hir_ty -p hir -p hir_lower` passes
+  unchanged (10/10 `ui` tests, up from 9, with the new fixture).
+
+### 25. The Bessel filter example
+
+`bessel_filter_examples/`:
+
+- `design_bessel.py` designs a 5th-order analog Bessel low-pass filter
+  (`fc = 1 kHz`) with `scipy.signal.bessel(N=5, Wn=2*pi*1000, analog=True,
+  norm='phase')` and writes the exact coefficients into `bessel5.va`'s
+  `laplace_nd(V(in), num, den)` call (confirmed via `--dump-mir`: exactly
+  5 `LaplaceState` implicit equations, matching the filter order).
+- `compare_bessel.py` computes `H(jw)` (AC) and the step response
+  (transient) directly from the *same* `b, a` via `scipy.signal.freqs`/
+  `scipy.signal.step`, and overlays them against the ngspice/OpenVAF
+  simulation (`ac_sim.cir`/`tran_sim.cir`).
+
+Result: **numerical-noise-level agreement** — max AC gain error 5.6e-7 dB,
+max AC phase error 7.2e-7°, max step-response error 6.6e-6 V. The AC plot
+shows the classic Bessel shape (gentle magnitude rolloff, near-linear
+phase out to -450° across 5 poles); the step response shows the
+characteristic small (~1%), non-ringing overshoot Bessel filters are
+chosen for.
+
+### 26. Diff summary (additive to Parts 1-3's tables)
+
+| File | Kind of change |
+|---|---|
+| `openvaf/syntax/src/ast/expr_ext.rs` | `IntNumber::value()` returns `Option<i32>` instead of panicking; new `value_as_f64()`; `as_constexprval` falls back to `ConstExprValue::Float` |
+| `openvaf/hir_def/src/body/lower.rs` | `Literal::new` falls back to `Literal::Float` on i32 overflow instead of panicking |
+| `openvaf/test_data/ui/huge_int_literal.va`/`.log` | new regression fixture |
+
+No changes to `openvaf/hir_ty`, `openvaf/hir_lower`, `openvaf/mir*`,
+`openvaf/sim_back`, or `openvaf/osdi` — this was purely a parsing/lowering
+robustness fix, unrelated to the Laplace realization itself.

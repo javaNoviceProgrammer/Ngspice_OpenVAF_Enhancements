@@ -1,0 +1,11 @@
+* bessel5 AC sweep: 5th-order analog Bessel low-pass filter, fc = 1kHz
+.model bes5 bessel5
+Ndut in out bes5
+Vin in 0 DC 0 AC 1
+.ac dec 50 1 1meg
+.control
+  pre_osdi OSDIFILE
+  run
+  wrdata RESULTFILE vdb(out) vp(out)
+.endc
+.end
