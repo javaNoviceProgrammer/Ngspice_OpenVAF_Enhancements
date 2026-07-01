@@ -17,7 +17,7 @@ permissions:
 
 # Only one build per branch at a time: a new push cancels the older,
 # now-superseded run. Without this, rapid pushes pile up runs that each queue a
-# scarce macos-13 (Intel) runner, so those jobs never get scheduled.
+# macOS runner, so those jobs never get scheduled.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -38,9 +38,12 @@ jobs:
           - { name: linux-intel,         os: ubuntu-latest,    bin: linux/intel }
           - { name: linux-arm,           os: ubuntu-24.04-arm, bin: linux/arm }
           - { name: macos-apple-silicon, os: macos-14,         bin: macos/apple-silicon }
-          # macos-intel (macos-13) is intentionally omitted: GitHub's Intel-macOS
-          # runners are scarce/deprecated and the job never gets scheduled, which
-          # stalls the whole matrix. Build bin/macos/intel locally if needed.
+          # macos-13 (the old Intel-macOS image) was scarce/deprecated and never
+          # got scheduled, which used to stall the whole matrix. macos-26-intel
+          # (macOS 26 "Tahoe" on Intel, still in beta as of writing) is the
+          # current standard-tier Intel macOS image, so Intel is back in the
+          # matrix -- see https://github.com/actions/runner-images/issues/13637.
+          - { name: macos-intel,         os: macos-26-intel,   bin: macos/intel }
     steps:
       - uses: actions/checkout@v5
 

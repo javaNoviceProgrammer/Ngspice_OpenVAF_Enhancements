@@ -89,7 +89,7 @@ Binaries are built by CI and committed to `bin/`:
 | Linux x86-64 | `bin/linux/intel/` | `ngspice`, `openvaf-r` |
 | Linux ARM64 | `bin/linux/arm/` | `ngspice`, `openvaf-r` |
 | macOS Apple Silicon (M1/M2/M3) | `bin/macos/apple-silicon/` | `ngspice`, `openvaf-r` |
-| macOS Intel | `bin/macos/intel/` | `ngspice` |
+| macOS Intel | `bin/macos/intel/` | `ngspice`, `openvaf-r` |
 | Windows x86-64 | `bin/windows/intel/` | `ngspice.exe`, `openvaf-r.exe` |
 
 ### Running on Linux
@@ -132,7 +132,7 @@ chmod +x bin/macos/apple-silicon/ngspice bin/macos/apple-silicon/openvaf-r
 ./bin/macos/apple-silicon/ngspice
 
 # Intel Mac
-chmod +x bin/macos/intel/ngspice
+chmod +x bin/macos/intel/ngspice bin/macos/intel/openvaf-r
 ./bin/macos/intel/ngspice
 ```
 
@@ -167,6 +167,7 @@ Builds run on push to `main` (source changes only; binary commits are skipped) o
 | `ubuntu-latest` | `bin/linux/intel/` | LLVM 18 from apt |
 | `ubuntu-24.04-arm` | `bin/linux/arm/` | LLVM 18 from apt |
 | `macos-14` | `bin/macos/apple-silicon/` | LLVM 18 via Homebrew, XQuartz |
+| `macos-26-intel` | `bin/macos/intel/` | LLVM 18 via Homebrew, XQuartz; macOS 26 "Tahoe" image, currently in beta |
 | `windows-latest` | `bin/windows/intel/` | LLVM 18 official tarball, ngspice via MSYS2/MinGW (static) |
 
 See [`.github/workflows/build-binaries.yml`](.github/workflows/build-binaries.yml) for the full workflow.
