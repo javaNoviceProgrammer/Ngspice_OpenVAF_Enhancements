@@ -1,0 +1,15 @@
+* module-instantiation resistor-divider DC sweep
+.model dividermodel divider
+
+Vin in 0 DC 1.0
+Ndut in out 0 dividermodel
+
+.dc Vin -2 2 0.5
+
+.control
+pre_osdi resistor_divider.osdi
+run
+wrdata dc.txt v(in) v(out)
+quit
+.endc
+.end

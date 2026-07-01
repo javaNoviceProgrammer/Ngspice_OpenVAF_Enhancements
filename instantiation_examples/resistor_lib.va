@@ -1,0 +1,18 @@
+// Shared building-block modules, meant to be `included` by other .va
+// files that instantiate them -- see resistor_divider_include.va.
+`include "disciplines.vams"
+
+module resistor(p, n);
+    inout p, n;
+    electrical p, n;
+    parameter real r = 1000;
+    analog begin
+        I(p, n) <+ V(p, n) / r;
+    end
+endmodule
+
+module buffer(in, out);
+    inout in, out;
+    electrical in, out;
+    resistor #(.r(1)) rb(in, out);
+endmodule

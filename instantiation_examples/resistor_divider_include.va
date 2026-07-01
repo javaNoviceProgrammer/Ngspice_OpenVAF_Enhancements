@@ -1,0 +1,14 @@
+// Same network as resistor_divider.va, but `resistor`/`buffer` are
+// defined in a separate file (resistor_lib.va) and pulled in via
+// `include -- confirming module instantiation works across an `include
+// boundary, not just for modules declared in the same file.
+`include "resistor_lib.va"
+
+module divider(in, out, gnd);
+    inout in, out, gnd;
+    electrical in, out, gnd;
+    buffer b1(in, out);
+    resistor #(.r(1e3)) r1(in, out);
+    resistor #(2e3) r2(.p(out), .n(gnd));
+    resistor rarr[0:1](out, gnd);
+endmodule

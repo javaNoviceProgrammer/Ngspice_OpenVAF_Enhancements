@@ -1,0 +1,15 @@
+* module-instantiation resistor-divider transient (sine input)
+.model dividermodel divider
+
+Vin in 0 DC 0 SIN(0 2 1k)
+Ndut in out 0 dividermodel
+
+.tran 10u 3m
+
+.control
+pre_osdi resistor_divider.osdi
+run
+wrdata tran.txt v(in) v(out)
+quit
+.endc
+.end

@@ -1,0 +1,35 @@
+`include "disciplines.vams"
+
+module resistor(p, n);
+    inout p, n;
+    electrical p, n;
+    parameter real r = 1000;
+    analog begin
+        I(p, n) <+ V(p, n) / r;
+    end
+endmodule
+
+module buffer(in, out);
+    inout in, out;
+    electrical in, out;
+    resistor #(.r(1)) rb(in, out);
+endmodule
+
+// Same network as resistor_divider.va, but `divider` also has its own
+// analog block (a direct resistor from `in` to `gnd`, in parallel with
+// the whole in->out->gnd instantiated network) -- exercising a module
+// that mixes instantiation statements with ordinary analog behavior.
+module divider(in, out, gnd);
+    inout in, out, gnd;
+    electrical in, out, gnd;
+    parameter real r_direct = 5e3;
+
+    buffer b1(in, out);
+    resistor #(.r(1e3)) r1(in, out);
+    resistor #(2e3) r2(.p(out), .n(gnd));
+    resistor rarr[0:1](out, gnd);
+
+    analog begin
+        I(in, gnd) <+ V(in, gnd) / r_direct;
+    end
+endmodule

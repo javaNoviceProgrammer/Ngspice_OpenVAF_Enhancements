@@ -1,5 +1,4 @@
 # Ngspice + OpenVAF Enhancements
-
 Using Claude Code AI to enhance the ngspice and openvaf frameworks.
 
 [![Build binaries](https://github.com/javaNoviceProgrammer/Ngspice_OpenVAF_Enhancements/actions/workflows/build-binaries.yml/badge.svg)](https://github.com/javaNoviceProgrammer/Ngspice_OpenVAF_Enhancements/actions/workflows/build-binaries.yml)
@@ -84,6 +83,28 @@ Main goals:
 <p align="center">
   <img src="./bessel_filter_examples/ac_compare.png" width="48%" alt="AC response comparison">
   <img src="./bessel_filter_examples/tran_compare.png" width="48%" alt="Step response comparison">
+</p>
+
+---
+
+## Enhancement 5: Module instantiation for Verilog-A
+
+*July 2026* — Implements Verilog-A **module instantiation** (one module placing other modules as sub-circuit elements on its own nets), which had zero support anywhere in the compiler beforehand. Every layer downstream of the parser (name resolution, type inference, MIR lowering, the DAE builder, OSDI codegen) is architected around exactly one flat module per compiled artifact, so hierarchy is resolved as a **compile-time text-flattening elaboration pass**: instantiated modules are recursively inlined — alpha-renamed per instance, with ports bound to the caller's nets and parameters bound to the caller's overrides — into an ordinary, hand-written-looking flat module *before* the rest of the pipeline ever runs, requiring **zero changes** to `hir_ty`/`hir_lower`/`mir*`/`sim_back`/`osdi`.
+
+- Full feature set: named (`.p(net)`) and positional (`(net)`) port connections, including open/unconnected ports; named (`.r(1e3)`) and positional (`#(1e3)`) parameter overrides; instance arrays (`resistor rarr[0:3](...)`); arbitrary nesting depth; cyclic instantiation is a clean compile error, not a stack overflow
+- Bus-typed ports and per-element instance-array slicing: a matching-width bus in the caller's scope is sliced bit-by-bit / element-by-element onto a target bus port or array instantiation, falling back to plain broadcast otherwise
+- Works across an `` `include `` boundary with no special-casing — a module can instantiate a target declared in a different file, since `` `include `` is resolved by the preprocessor before the elaboration pass ever inspects the parse tree
+- Verified for DC, AC, and Transient analysis on a hierarchical resistor network (nested instantiation, both override forms, an instance array) — matches an independent analytical resistor-network computation to ~1e-9 (solver precision)
+- Verified a module that both instantiates sub-modules *and* has its own directly-written `analog` block — the inlined instance equations and the module's own contribution combine correctly under all three analyses
+- Verified for no regressions against the Enhancement-1/2/3/4 examples
+- Details: [Enhancement-5.md](Enhancement-5.md)
+
+**DC / AC / Transient results** for the hierarchical resistor-divider network:
+
+<p align="center">
+  <img src="./instantiation_examples/dc.png" width="32%" alt="DC sweep">
+  <img src="./instantiation_examples/ac.png" width="32%" alt="AC response">
+  <img src="./instantiation_examples/tran.png" width="32%" alt="Transient response">
 </p>
 
 ---

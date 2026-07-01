@@ -69,6 +69,11 @@ pub enum ItemTreeDiagnostic {
     /// body scope is); the width clause was dropped and the declaration
     /// was treated as a single ordinary scalar variable.
     ArrayVarUnsupportedScope { ast_id: ErasedAstId },
+    /// A `[msb:lsb]` instance-array range on a module instantiation
+    /// (`resistor r[0:3](...)`) did not constant-fold to two integer
+    /// literals; the instantiation was treated as a single (non-arrayed)
+    /// instance instead.
+    NonConstantInstanceArrayWidth { ast_id: ErasedAstId },
 }
 
 impl Default for ItemTree {
@@ -105,6 +110,7 @@ impl ItemTree {
             ports,
             branches,
             functions,
+            instantiations,
         } = &mut self.data;
         modules.shrink_to_fit();
         disciplines.shrink_to_fit();
@@ -117,6 +123,7 @@ impl ItemTree {
         ports.shrink_to_fit();
         branches.shrink_to_fit();
         functions.shrink_to_fit();
+        instantiations.shrink_to_fit();
         nature_attrs.shrink_to_fit();
         discipline_attrs.shrink_to_fit();
     }
@@ -141,6 +148,7 @@ pub struct ItemTreeData {
     pub ports: Arena<Port>,
     pub branches: Arena<Branch>,
     pub functions: Arena<Function>,
+    pub instantiations: Arena<Instantiation>,
 }
 
 /// Trait implemented by all item nodes in the item tree.
@@ -262,6 +270,7 @@ item_tree_nodes! {
     Function in functions -> ast::Function,
     NatureAttr in nature_attrs -> ast::NatureAttr,
     DisciplineAttr in discipline_attrs -> ast::DisciplineAttr,
+    Instantiation in instantiations -> ast::Instantiation,
 }
 
 #[derive(Debug, Eq, PartialEq, Clone)]
@@ -331,6 +340,7 @@ pub enum ModuleItem {
     Branch(ItemTreeId<Branch>),
     Node(LocalNodeId),
     Function(ItemTreeId<Function>),
+    Instantiation(ItemTreeId<Instantiation>),
 }
 
 impl_from_typed! (
@@ -340,8 +350,33 @@ impl_from_typed! (
     Variable(ItemTreeId<Var>),
     Branch(ItemTreeId<Branch>),
     Node(LocalNodeId),
-    Function(ItemTreeId<Function>) for ModuleItem
+    Function(ItemTreeId<Function>),
+    Instantiation(ItemTreeId<Instantiation>) for ModuleItem
 );
+
+/// A single instantiated unit of a sub-module (`Instantiation` AST item may
+/// declare several comma-separated instances, or expand into several via an
+/// instance-array range — one `Instantiation` item-tree entry is created per
+/// unit, mirroring how `Net`/`Var`/`Param` handle comma-separated
+/// declarations: all units from the same source statement share one
+/// `ast_id` and are disambiguated by `name_idx`/`array_index`).
+#[derive(Debug, Eq, PartialEq, Clone)]
+pub struct Instantiation {
+    /// The instance name. For an arrayed instance (`resistor r[0:3](...)`)
+    /// this is the per-element synthesized name (`"r[2]"`, mirroring
+    /// `bus_bit_name`); the base name and declared range are kept in
+    /// `array` for diagnostics.
+    pub name: Name,
+    /// Index of this unit among the comma-separated `InstanceUnit`s of the
+    /// same `Instantiation` statement (i.e. which `InstanceUnit` this is).
+    pub unit_idx: usize,
+    /// `Some(index)` if this entry is one element of an instance array,
+    /// giving its position (not bounded to msb/lsb order).
+    pub array_index: Option<i32>,
+    /// The (unresolved) name of the module being instantiated.
+    pub module: Name,
+    pub ast_id: AstId<ast::Instantiation>,
+}
 
 #[derive(Debug, Eq, PartialEq, Clone)]
 pub struct Port {

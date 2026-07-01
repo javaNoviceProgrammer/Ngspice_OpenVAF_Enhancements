@@ -1,0 +1,15 @@
+* module-instantiation + own-analog-block resistor-divider AC sweep
+.model dividermodel2 divider
+
+Vin in 0 DC 1.0 AC 1
+Ndut in out 0 dividermodel2
+
+.ac dec 20 1 1meg
+
+.control
+pre_osdi resistor_divider_v2.osdi
+run
+wrdata ac_v2.txt vdb(out) vp(out)
+quit
+.endc
+.end

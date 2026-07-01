@@ -1,0 +1,16 @@
+* module-instantiation resistor-divider DC sweep, with resistor/buffer
+* pulled in from resistor_lib.va via `include (see resistor_divider_include.va)
+.model dividermodel_inc divider
+
+Vin in 0 DC 1.0
+Ndut in out 0 dividermodel_inc
+
+.dc Vin -2 2 0.5
+
+.control
+pre_osdi resistor_divider_include.osdi
+run
+wrdata dc_include.txt v(in) v(out)
+quit
+.endc
+.end

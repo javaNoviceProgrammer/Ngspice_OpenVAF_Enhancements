@@ -1,0 +1,15 @@
+* module-instantiation + own-analog-block resistor-divider transient (sine input)
+.model dividermodel2 divider
+
+Vin in 0 DC 0 SIN(0 2 1k)
+Ndut in out 0 dividermodel2
+
+.tran 10u 3m
+
+.control
+pre_osdi resistor_divider_v2.osdi
+run
+wrdata tran_v2.txt v(in) v(out)
+quit
+.endc
+.end
