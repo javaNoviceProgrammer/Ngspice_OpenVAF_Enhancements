@@ -43,6 +43,9 @@ jobs:
           # (macOS 26 "Tahoe" on Intel, still in beta as of writing) is the
           # current standard-tier Intel macOS image, so Intel is back in the
           # matrix -- see https://github.com/actions/runner-images/issues/13637.
+          # NOTE: GitHub has signaled Intel macOS runners will be retired
+          # entirely in 2027 (Apple Silicon-only after that) -- this leg will
+          # need to be dropped again around then, this time for good.
           - { name: macos-intel,         os: macos-26-intel,   bin: macos/intel }
     steps:
       - uses: actions/checkout@v5
