@@ -504,14 +504,52 @@ New fixtures:
 | `openvaf/hir_def/src/db.rs` | New `intern_instantiation` salsa query |
 | `openvaf/hir_def/src/nameres.rs` | `ScopeDefItem::InstantiationId` variant + all exhaustive-match sites |
 | `openvaf/hir_def/src/nameres/collect.rs` | Two-pass module collection (predeclare, then collect items); instantiation resolution + 5 new diagnostics |
-| `openvaf/hir_def/src/nameres/diagnostics.rs` | 5 new `DefDiagnostic` variants + `Report` rendering |
+| `openvaf/hir_def/src/nameres/diagnostics.rs` | 5 new `DefDiagnostic` variants + `Report` rendering, plus `ReservedModuleName` (§12) |
 | `openvaf/hir_ty/src/inference.rs` | `ScopeDefItem::InstantiationId` treated as `Ty::Scope` (matches `ModuleId`/`BlockId`) |
 | `openvaf/hir/src/lib.rs` | `ScopeDefItem::InstantiationId` in the "implementation detail" bucket of `declarations()` |
 | `openvaf/hir/src/db.rs` | `pub(crate) fn set_root_file`; calls `elaborate::elaborate_instantiations` at the end of `CompilationDB::new` |
 | `openvaf/hir/src/elaborate.rs` | **New** — the text-flattening elaboration pass (§7-8) |
 | `openvaf/hir/Cargo.toml` | Adds `lexer`/`tokens` path dependencies (for token-level rename) |
-| `openvaf/test_data/item_tree/instantiation.*`, `openvaf/test_data/ui/instantiation_*.*` | New regression fixtures |
-| `instantiation_examples/` | New end-to-end example + ngspice cross-check (§9) |
+| `openvaf/basedb/src/lints.rs` | New `reserved_module_name` lint (§12) |
+| `openvaf/test_data/item_tree/instantiation.*`, `openvaf/test_data/ui/instantiation_*.*`, `openvaf/test_data/ui/reserved_module_name.*` | New regression fixtures |
+| `openvaf/test_data/ui/{ddx,formatting,function}.log` | Updated (`UPDATE_EXPECT=1`) — pre-existing fixtures name their module `diode`, now correctly flagged by §12's new lint |
+| `instantiation_examples/` | New end-to-end examples + ngspice cross-checks (§9, §11) |
 
 No changes to `openvaf/mir*`, `openvaf/sim_back`, `openvaf/osdi`, or
 `openvaf/mir_llvm` — by design, per §1.1/§7.
+
+## 12. `reserved_module_name` lint
+
+The `resistor`/ngspice-built-in collision found while building §11's
+multi-model example turned out to be worth catching at *compile time*, not
+just documenting: a new lint, `reserved_module_name`
+(`openvaf/basedb/src/lints.rs`, doc id 18, **warn by default**), fires when
+a top-level module's name matches — case-insensitively — one of ngspice's
+built-in native SPICE device names (`RESERVED_NGSPICE_DEVICE_NAMES` in
+`openvaf/hir_def/src/nameres/collect.rs`, collected from every `.name =
+"..."` in `ngspice-46/src/spicelib/devices/*/*.c`; ~55 names — `Resistor`,
+`Capacitor`, `Diode`, `BSIM4`, `Mos1`, etc.). This was a natural fit for
+OpenVAF's existing lint framework (`basedb::lints`, same machinery
+`port_without_direction`/`trivial_probe` already use): fully suppressible
+(`-A reserved_module_name`) and promotable to a hard error (`-E
+reserved_module_name`) via the standard CLI flags, with no special-casing
+needed beyond registering the lint and implementing `Diagnostic::lint()`
+on the new `DefDiagnostic::ReservedModuleName` variant
+(`openvaf/hir_def/src/nameres/diagnostics.rs`) to return it.
+
+The check runs once per module in `predeclare_module`
+(`openvaf/hir_def/src/nameres/collect.rs`) — the same place module names
+are first registered into the root scope — so it needs nothing beyond the
+name already available there, and fires for every top-level module
+regardless of whether it's ever `instantiate`d.
+
+Verified: `.model resmodel resistor (r=500)` in ngspice is empirically
+confirmed to silently fail to bind to the OSDI `resistor` module (falls
+through to ngspice's own built-in resistor parsing instead, producing an
+"unrecognized parameter" warning and wrong circuit behavior) — this isn't
+a hypothetical. Running the lint against the existing test suite surfaced
+the same collision in three *pre-existing*, unrelated fixtures that
+happened to name their module `diode` (`openvaf/test_data/ui/{ddx,
+formatting,function}.va`) and in this enhancement's own `resistor`-named
+examples — all expected `.log` snapshots were updated to include the new
+warning (`UPDATE_EXPECT=1`), zero other regressions.

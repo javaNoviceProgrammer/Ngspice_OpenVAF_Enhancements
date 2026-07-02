@@ -1,6 +1,7 @@
 use std::ops::Deref;
 
 use basedb::diagnostics::{Diagnostic, Label, LabelStyle, Report};
+use basedb::lints::{self, Lint, LintSrc};
 use basedb::{AstIdMap, BaseDB, ErasedAstId, FileId};
 use stdx::{impl_display, pretty};
 use syntax::name::Name;
@@ -73,6 +74,15 @@ pub enum DefDiagnostic {
     /// instantiates itself), which isn't a physically meaningful circuit
     /// and can't be flattened.
     CyclicInstantiation { ast_id: ErasedAstId, module: Name },
+    /// A top-level module's name collides with one of ngspice's built-in
+    /// native SPICE device type names (e.g. `resistor`, case-insensitive).
+    /// `.model <name> <this module>` then silently binds to ngspice's
+    /// built-in device instead of the OSDI one -- a real, easy-to-hit
+    /// footgun once a module is meant to be `.model`-able directly (rather
+    /// than only reached through `instantiate`), so it's a lint
+    /// (`reserved_module_name`, warn by default) rather than a hard error:
+    /// nothing is actually wrong with the Verilog-A itself.
+    ReservedModuleName { ast_id: ErasedAstId, module: Name, builtin: &'static str },
 }
 
 pub struct DefDiagnosticWrapped<'a> {
@@ -200,6 +210,35 @@ impl Diagnostic for DefDiagnosticWrapped<'_> {
                             .to_owned(),
                     ])
             }
+            DefDiagnostic::ReservedModuleName { ast_id, module, builtin } => {
+                let range = self.ast_id_map.get_syntax(*ast_id).range();
+                let span = self.parse.to_file_span(range, self.sm);
+                Report::warning()
+                    .with_message(format!(
+                        "module name '{module}' collides with ngspice's built-in '{builtin}' device"
+                    ))
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: span.file,
+                        range: span.range.into(),
+                        message: format!("'{module}' matches a built-in ngspice device name"),
+                    }])
+                    .with_notes(vec![format!(
+                        "help: `.model <name> {module}` in a SPICE netlist may silently bind to \
+                         ngspice's built-in '{builtin}' device instead of this OSDI module; \
+                         rename '{module}' to something that doesn't collide, or only ever \
+                         reach it via Verilog-A `instantiate`, never `.model` directly"
+                    )])
+            }
+        }
+    }
+
+    fn lint(&self, _root_file: FileId, _db: &dyn BaseDB) -> Option<(Lint, LintSrc)> {
+        match *self.diag {
+            DefDiagnostic::ReservedModuleName { ast_id, .. } => {
+                Some((lints::builtin::reserved_module_name, LintSrc::item(ast_id)))
+            }
+            _ => None,
         }
     }
 }

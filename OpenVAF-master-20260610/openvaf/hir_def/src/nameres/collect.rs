@@ -20,6 +20,24 @@ use crate::{
     Lookup, ModuleId, ModuleLoc, NatureAttrLoc, NatureLoc, NodeLoc, ScopeId,
 };
 
+/// The public `.name` every built-in ngspice device (`SPICEdev::DEVpublic`)
+/// registers itself under -- i.e. exactly the set of strings that make a
+/// same-named (case-insensitive) OSDI module's `.model` line ambiguous.
+/// Collected from `.name = "..."` in every `src/spicelib/devices/*/*.c` in
+/// this repo's `ngspice-46/` (see `check_reserved_module_name`); XSPICE
+/// code-model names aren't included since those are opt-in and namespaced
+/// differently. Deliberately best-effort, not derived at build time from
+/// the actual ngspice source -- a missed/renamed entry just means no
+/// warning for that one name, not a false positive.
+const RESERVED_NGSPICE_DEVICE_NAMES: &[&str] = &[
+    "ASRC", "B3SOIDD", "B3SOIFD", "B3SOIPD", "B4SOI", "BJT", "BSIM1", "BSIM2", "BSIM3", "BSIM3v0",
+    "BSIM3v1", "BSIM3v32", "BSIM4", "BSIM4v5", "BSIM4v6", "BSIM4v7", "CCCS", "CCVS", "Capacitor",
+    "CplLines", "CSwitch", "Diode", "HFET1", "HFET2", "HiSIM2", "HiSIMHV1", "HiSIMHV2", "Inductor",
+    "Isource", "JFET", "JFET2", "LTRA", "MES", "MESA", "Mos1", "Mos2", "Mos3", "Mos6", "Mos9",
+    "NBJT", "NBJT2", "NDEV", "NUMD", "NUMD2", "NUMOS", "Resistor", "SOI3", "Switch", "Tranline",
+    "TransLine", "URC", "VBIC", "VCCS", "VCVS", "VDMOS", "Vsource", "hicum2", "mutual",
+];
+
 pub fn collect_root_def_map(db: &dyn HirDefDB, root_file: FileId) -> Arc<DefMap> {
     let tree = &db.item_tree(root_file);
     let scope_cnt = tree.data.natures.len() + tree.data.disciplines.len() + tree.data.modules.len();
@@ -278,7 +296,28 @@ impl DefCollector<'_> {
         let module = &self.tree[item_tree];
         self.insert_scope(parent_scope, scope, module.name.clone(), module_id);
         insert_module_builtin_scope(&mut self.map.scopes[scope].declarations);
+        self.check_reserved_module_name(module);
         (module_id, scope)
+    }
+
+    /// Warns (via the `reserved_module_name` lint, on by default) when a
+    /// module's name collides case-insensitively with one of ngspice's
+    /// built-in native SPICE device type names -- `.model <name>
+    /// <this module>` in a netlist then silently binds to ngspice's
+    /// built-in device instead of the OSDI one, a real (and otherwise
+    /// silent) footgun. See `RESERVED_NGSPICE_DEVICE_NAMES`'s doc comment
+    /// for how this list was derived.
+    fn check_reserved_module_name(&mut self, module: &Module) {
+        let name = module.name.to_string();
+        if let Some(&builtin) =
+            RESERVED_NGSPICE_DEVICE_NAMES.iter().find(|b| b.eq_ignore_ascii_case(&name))
+        {
+            self.map.diagnostics.push(DefDiagnostic::ReservedModuleName {
+                ast_id: module.ast_id.into(),
+                module: module.name.clone(),
+                builtin,
+            });
+        }
     }
 
     /// DFS over the file's module-instantiation graph, diagnosing any cycle

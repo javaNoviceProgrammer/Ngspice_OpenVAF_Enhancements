@@ -268,6 +268,17 @@ binds to ngspice's built-in model instead of the OSDI one — a naming
 collision to watch for, not an OpenVAF/OSDI limitation. `buffer` and
 `divider` have no such collision.
 
+This is exactly the collision the `reserved_module_name` lint (added
+after finding it here — see `Enhancement-5.md` §12) now catches at
+*compile time*: `openvaf-r resistor_divider.va` prints a warning the
+moment `resistor` is declared, without needing to get as far as ngspice.
+It's a warning, not an error, so the build still succeeds — the intent is
+to flag the footgun early, not block modules that are only ever reached
+through Verilog-A `instantiate` (where the collision never matters, since
+`.model` is never invoked on them directly). Suppress with `-A
+reserved_module_name`, or promote to a hard error with `-E
+reserved_module_name`.
+
 ```sh
 ngspice -b dc_sim_multi_model.cir     # writes dc_multi_model.txt
 python3 compare_multi_model.py           # verifies, writes dc_multi_model.png
