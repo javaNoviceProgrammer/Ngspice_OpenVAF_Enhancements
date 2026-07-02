@@ -1,4 +1,6 @@
 # Ngspice + OpenVAF Enhancements
+**Owner: Meisam Bahadori**
+
 Using Claude Code AI to enhance the ngspice and openvaf frameworks.
 
 [![Build binaries](https://github.com/javaNoviceProgrammer/Ngspice_OpenVAF_Enhancements/actions/workflows/build-binaries.yml/badge.svg)](https://github.com/javaNoviceProgrammer/Ngspice_OpenVAF_Enhancements/actions/workflows/build-binaries.yml)
