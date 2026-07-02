@@ -1,5 +1,5 @@
 # Ngspice + OpenVAF Enhancements
-**Owner: Meisam Bahadori**
+**Owner: Dr. Meisam Bahadori**
 
 Using Claude Code AI to enhance the ngspice and openvaf frameworks.
 
