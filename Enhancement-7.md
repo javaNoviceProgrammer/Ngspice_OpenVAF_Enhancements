@@ -1,15 +1,15 @@
-# Enhancement-7 — Progress Notes (in-progress, version8)
+# Enhancement-7 — `@(initial_step)` event gating and variable persistence (version8)
 
-Enhancement-7 was scoped as two features, in sequence: **`cross()`/`above()`/
-`timer()` event operators**, then **`generate`/`genvar` blocks**. Neither is
-implemented yet. Instead, this session found and fixed a foundational,
-pre-existing gap that `cross`/`above`/`timer` depend on (all three are only
-valid inside `@(...)` event-control statements, per the LRM) — documented
-here so the next session can pick up cleanly.
+While scoping `cross()`/`above()`/`timer()` (all three are only valid
+inside `@(...)` event-control statements, per the LRM), this enhancement
+found and fixed a foundational, pre-existing gap those operators — and a
+large fraction of real-world Verilog-A models — depend on: **event-control
+statements didn't gate anything, and ordinary analog-block variables didn't
+persist their value across evaluations at all.** `cross()`/`above()`/
+`timer()` and `generate`/`genvar` blocks are deferred to **Enhancement-8**
+(see §5) now that this foundation is in place.
 
-## What's done and verified
-
-### 1. `@(initial_step)` / `@(final_step)` didn't gate execution at all
+## 1. `@(initial_step)` / `@(final_step)` didn't gate execution at all
 
 **Root cause**: `openvaf/hir_lower/src/stmt.rs`'s `Stmt::EventControl`
 lowering discarded the `event` field entirely and unconditionally lowered
@@ -25,7 +25,7 @@ timepoint).
   (`openvaf/hir_lower/src/stmt.rs`, using the same `make_cond` machinery
   `Stmt::If` already uses). `@(final_step)` fails safe (never fires) rather
   than firing every evaluation — true "about to finish" detection needs a
-  dedicated simulator-lifecycle hook not built yet (see §3).
+  dedicated simulator-lifecycle hook not built yet (see §5).
 - ngspice-46 side: new `EVAL_FLAG_IS_INITIAL_STEP` bit (`osdidefs.h`), a
   per-instance `has_evaluated` flag (`OsdiExtraInstData`), set once in
   `osdiload.c`'s sequential (non-OMP) eval loop, reset at instance
@@ -36,7 +36,7 @@ timepoint).
   dead code) and a real ngspice run showing the flag set exactly once per
   instance.
 
-### 2. Ordinary `real`/`integer` variables didn't persist across evaluations at all (bigger, separate finding)
+## 2. Ordinary `real`/`integer` variables didn't persist across evaluations at all
 
 Testing item 1 above surfaced a much deeper, pre-existing issue: **an
 ordinary analog-block variable's value was reset to its declared default on
@@ -51,8 +51,8 @@ end
 **Root cause, in two parts**:
 - `openvaf/osdi/src/inst_data.rs`/`eval.rs` had two `todo!("hidden state")`
   panics and one `unreachable!()` on the read side — genuinely unimplemented
-  scaffolding predating this session (the `HiddenState(Variable)` parameter
-  kind existed but nothing backed it with real storage).
+  scaffolding predating this enhancement (the `HiddenState(Variable)`
+  parameter kind existed but nothing backed it with real storage).
 - `openvaf/hir_lower/src/state.rs`'s `insert_var_init` **unconditionally**
   replaced every use of a variable's `HiddenState` parameter with its
   declared initializer expression — meaning even if the storage problem
@@ -93,12 +93,12 @@ passes with zero regressions; the real 277-device photonic chip regression
 (`chip_0_0`, DC/AC/transient) remains bit-exact / floating-point-noise-level
 identical to the pre-Enhancement-7 baseline.
 
-### Known limitation found (not fixed): explicit `@(initial_step)` statements that write to a variable can crash the compiler
+## 3. Known limitation: explicit `@(initial_step)` statements that write to a variable can crash the compiler
 
 Two related crashes, both involving an *explicit* `@(initial_step)`
 statement writing to a variable (as opposed to relying on the variable's
 plain declared initializer, `real x = 5.0;`, which is unaffected — see
-`initial_step_examples/` below, built entirely around the safe form):
+`initial_step_examples/`, built entirely around the safe form):
 
 1. **Self-referential + explicit double-init**: a variable both explicitly
    written inside `@(initial_step)` *and* separately self-referentially read
@@ -115,8 +115,8 @@ plain declared initializer, `real x = 5.0;`, which is unaffected — see
    end
    ```
 2. **Any explicit `@(initial_step)` write, even without self-reference**:
-   found while building this session's examples — crashes with a *different*
-   panic, `Option::unwrap()` on `None` in
+   found while building this enhancement's examples — crashes with a
+   *different* panic, `Option::unwrap()` on `None` in
    `mir_opt/src/dead_code_aggressive.rs:105`, reached via
    `sim_back::init::Builder::build_init_cache` — a separate init/operating-
    point-cache-building pass with its own similar keep-alive-predicate
@@ -136,17 +136,17 @@ first evaluation — no explicit `@(initial_step)` reset is needed for the
 common case anymore), so this is a narrow edge case, not a blocker for
 typical models using plain declared initializers. Root-causing and fixing
 the `FunctionBuilder::edit` interaction (crash 1) and extending the
-two-pass keep-alive fix to `sim_back::init` as well (crash 2) are the right
-next steps before shipping this as a finished enhancement — flagged here
-rather than silently left for someone to rediscover via a crash.
+two-pass keep-alive fix to `sim_back::init` as well (crash 2) are noted here
+as follow-up work rather than silently left for someone to rediscover via a
+crash.
 
-## Examples
+## 4. Examples
 
 Two example folders (`.va`, `.osdi`, DC/AC/transient `.cir`, raw `wrdata`
 results, and PNG plots — all run against `version8`'s own `openvaf-r` and
 `ngspice-46` binaries, not system-wide ones) demonstrate the fixes above.
 Both deliberately use the *safe* (plain declared-initializer) form, per the
-known limitation just above:
+known limitation in §3:
 
 - **`initial_step_examples/`** (`initial_step_demo.va`): `real accum =
   seed;` (a parameter), then `accum = accum + 1.0;`. DC/AC confirm
@@ -165,7 +165,7 @@ known limitation just above:
   negative result" spirit as `last_crossing_examples/`'s DC/AC plots in
   Enhancement-6.
 
-## What's NOT done yet (the actual Enhancement-7 ask)
+## 5. Deferred to Enhancement-8
 
 - **`cross()`/`above()`/`timer()`**: not started. These need new `@(...)`
   event-control grammar (currently only `@(initial_step)`/`@(final_step)`
@@ -173,7 +173,7 @@ known limitation just above:
   production) plus OSDI/ngspice breakpoint-scheduling support (predicting
   and forcing a timestep at the exact crossing time) analogous to but
   distinct from `last_crossing`'s history-based detection from
-  Enhancement-6. The event-gating foundation built this session
+  Enhancement-6. The event-gating foundation built in this enhancement
   (`ParamKind::IsInitialStep`, the `make_cond`-based conditional lowering
   pattern, the `EVAL_FLAG_*` convention for simulator-to-model flags) is
   directly reusable for wiring up whatever new event kinds `cross`/`above`/
@@ -182,7 +182,7 @@ known limitation just above:
   `openvaf/parser/src/grammar/`. Comparable in scope to Enhancement-5's
   module-instantiation work (likely another compile-time elaboration pass).
 
-## Diff summary (this session)
+## 6. Diff summary
 
 | File | Kind of change |
 |---|---|
@@ -197,9 +197,8 @@ known limitation just above:
 | `ngspice-46/src/osdi/osdiload.c` | Sets the flag once per instance in the sequential eval loop |
 | `ngspice-46/src/osdi/osdisetup.c` | Resets `has_evaluated` at instance setup/temperature update |
 
-No OSDI ABI struct/header extension was needed for this session's work
-(unlike Enhancement-6's `last_crossing`) — the `IsInitialStep` mechanism
-reuses the existing eval-flags convention, and `hidden_state` reuses
-Enhancement-6's `eval_outputs` infrastructure. `cross`/`above`/`timer` will
-very likely need a real ABI extension, following the `osdi_0_4_enhancementN.h`
-convention.
+No OSDI ABI struct/header extension was needed for this enhancement (unlike
+Enhancement-6's `last_crossing`) — the `IsInitialStep` mechanism reuses the
+existing eval-flags convention, and `hidden_state` reuses Enhancement-6's
+`eval_outputs` infrastructure. `cross`/`above`/`timer` will very likely need
+a real ABI extension, following the `osdi_0_4_enhancementN.h` convention.

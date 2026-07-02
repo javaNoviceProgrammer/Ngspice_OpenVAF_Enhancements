@@ -139,6 +139,26 @@ Main goals:
 
 ---
 
+## Enhancement 7: `@(initial_step)` event gating and variable persistence
+
+*July 2026* — While scoping `cross()`/`above()`/`timer()` (deferred from Enhancement 6), found and fixed a foundational, pre-existing gap those operators — and a large fraction of real-world Verilog-A models — depend on: `@(initial_step)`/`@(final_step)` event-control statements didn't gate anything at all (the guarded statement ran on *every* evaluation, forever), and ordinary `real`/`integer` analog-block variables didn't persist their value across evaluations either, with zero event-control involved. Fixed both: a new `ParamKind::IsInitialStep` simulator-provided flag with real conditional lowering for event-control statements, and genuine per-instance storage (`hidden_state`) for variable values across evaluations, backed by a two-pass MIR build to correctly identify which variables need it without regressing dead-code elimination.
+
+- Both fixes verified against real ngspice DC/AC/Transient simulation — see `initial_step_examples/`, `variable_persistence_examples/`
+- `@(initial_step)`: verified via `--dump-mir` (a real conditional branch, not dead code) and a real ngspice run showing the gating flag set exactly once per instance
+- Variable persistence: a self-referential accumulator (`accum = accum + 1.0;`) now genuinely accumulates across transient timepoints instead of resetting to its default every evaluation
+- Verified for no regressions against the full existing test suite and against a real 277-device photonic chip simulation (`chip_0_0`) — bit-exact/floating-point-noise-level unchanged DC, AC, and transient results
+- Known limitation (documented, not fixed): an *explicit* `@(initial_step)` statement that writes to a variable can crash the compiler — narrow edge case, redundant now that plain declared initializers get correct once-only gating automatically
+- Deferred to Enhancement 8: `cross()`/`above()`/`timer()` event operators and `generate`/`genvar` blocks — both remain fully unimplemented
+- Details: [Enhancement-7.md](Enhancement-7.md)
+
+**Transient result** for the variable-persistence fix — a self-referential accumulator with genuine, sustained persistence across timepoints:
+
+<p align="center">
+  <img src="./variable_persistence_examples/tran_plot.png" width="60%" alt="variable persistence transient result">
+</p>
+
+---
+
 ## Prebuilt Binaries
 
 Binaries are built by CI and committed to `bin/`:
