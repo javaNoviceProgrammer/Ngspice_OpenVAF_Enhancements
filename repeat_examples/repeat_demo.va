@@ -1,0 +1,28 @@
+// repeat_demo.va -- `repeat` loop demo (Enhancement-9)
+//
+// `repeat (count) statement` executes `statement` `count` times. `count` is
+// evaluated once and converted to an integer using the standard Verilog-AMS
+// real->integer rule (round to nearest, half away from zero).
+//
+// Here a `repeat` loop sums `count` copies of `Rbase` to build a series
+// resistance `Rtot = round(count) * Rbase`. The device is that resistance
+// between its two terminals.
+`include "disciplines.vams"
+
+module repeat_demo(a, b);
+    inout a, b;
+    electrical a, b;
+
+    parameter real    count = 4.0;              // number of series resistors
+    parameter real    Rbase = 1000.0 from (0:inf);
+
+    real Rtot;
+    analog begin
+        Rtot = 0.0;
+        repeat (count)
+            Rtot = Rtot + Rbase;                // executed round(count) times
+        // add a tiny leakage so Rtot == 0 (count == 0) stays solvable
+        I(a, b) <+ V(a, b) / (Rtot + 1.0e12);
+        I(a, b) <+ V(a, b) * (Rtot > 0.5 ? 1.0 / Rtot : 0.0);
+    end
+endmodule

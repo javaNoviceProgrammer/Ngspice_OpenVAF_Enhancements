@@ -221,12 +221,12 @@ impl BodyValidator<'_> {
                 self.ctx = old;
                 return;
             }
-            Stmt::Block { ref body } => {
+            Stmt::Block { ref body, .. } => {
                 body.iter().for_each(|stmt| self.validate_stmt(*stmt));
                 return;
             }
 
-            Stmt::Missing | Stmt::Empty => return,
+            Stmt::Missing | Stmt::Empty | Stmt::Disable { .. } => return,
 
             Stmt::Expr(e) => {
                 self.validate_expr(e, stmt);
@@ -236,6 +236,7 @@ impl BodyValidator<'_> {
             Stmt::If { cond, .. }
             | Stmt::ForLoop { cond, .. }
             | Stmt::WhileLoop { cond, .. }
+            | Stmt::Repeat { count: cond, .. }
             | Stmt::Case { discr: cond, .. } => cond,
         };
 

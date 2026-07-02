@@ -210,7 +210,11 @@ pub struct NoiseTable {
 }
 
 impl NoiseTable {
-    // TODO: read from disk
+    // `vals` are the raw `(frequency, power)` pairs already gathered by the
+    // caller from an inline array or a data file (see
+    // `BodyLoweringCtx::noise_table_data` in `expr.rs`). For `log == false`
+    // the frequency column is `log10`-ed here so that, in both the linear and
+    // `_log` cases, `vals` ends up keyed by `log10(frequency)`.
     pub fn new(
         vals: impl IntoIterator<Item = (f64, f64)>,
         log: bool,

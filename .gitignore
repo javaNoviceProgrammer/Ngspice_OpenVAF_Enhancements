@@ -104,3 +104,11 @@ array_var_examples/.*.cir
 bessel_filter_examples/.build/
 bessel_filter_examples/.*.cir
 bessel_filter_examples/__pycache__/
+
+# Enhancement-9 example scripts: temp netlists written by verify_*.py
+noise_examples/_*.cir
+localparam_examples/_*.cir
+ground_examples/_*.cir
+vartype_examples/_*.cir
+repeat_examples/_*.cir
+disable_examples/_*.cir

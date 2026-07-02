@@ -1,0 +1,34 @@
+// break_demo.va -- `disable` as a loop `break` (Enhancement-9)
+//
+// Verilog-A has no `break`; `disable <named_block>;` terminates the named block
+// and continues after it. Wrapping a loop in a named block and disabling that
+// block breaks the loop while letting the code after the block still run.
+//
+// Here the loop accumulates `Rbase` into `Rtot` and `disable loop_blk` breaks
+// out once `STOP` iterations have run, so `Rtot = STOP * Rbase`. The `<+`
+// contribution after the block still executes.
+`include "disciplines.vams"
+
+module break_demo(a, b);
+    inout a, b;
+    electrical a, b;
+
+    parameter real    Rbase = 1000.0 from (0:inf);
+    parameter integer STOP  = 4 from [0:inf);
+
+    real    Rtot;
+    integer i;
+    analog begin
+        Rtot = 0.0;
+        i = 0;
+        begin : loop_blk
+            while (i < 1000) begin
+                Rtot = Rtot + Rbase;
+                i = i + 1;
+                if (i >= STOP)
+                    disable loop_blk;        // break out of the loop
+            end
+        end
+        I(a, b) <+ V(a, b) / Rtot;           // still runs; Rdev = STOP * Rbase
+    end
+endmodule

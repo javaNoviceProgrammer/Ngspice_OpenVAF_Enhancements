@@ -1,5 +1,5 @@
 use ahash::AHashSet;
-use hir::{CompilationDB, Node, Type, Variable};
+use hir::{CompilationDB, Name, Node, Type, Variable};
 use mir::builder::{InsertBuilder, InstBuilder};
 use mir::{
     Block, DataFlowGraph, FuncRef, Inst, Opcode, SourceLoc, Value, FALSE, F_ZERO, INFINITY, TRUE,
@@ -25,6 +25,12 @@ pub struct LoweringCtx<'a, 'c> {
     /// but necessary to avoid accidental correlation/opimization.
     /// For example white_noise(x) - white_noise(x) is not zero.
     pub num_noise_sources: u32,
+    /// Stack of enclosing *named* blocks and the MIR block that each one's
+    /// execution jumps to when it finishes. `disable <name>;` looks a name up
+    /// here and branches to the matching exit (Verilog-AMS early-exit / loop
+    /// `break`). Pushed when a named `begin : name ... end` is entered, popped
+    /// when it is left.
+    pub disable_scopes: Vec<(Name, Block)>,
 }
 
 impl<'a, 'c> LoweringCtx<'a, 'c> {
@@ -43,6 +49,7 @@ impl<'a, 'c> LoweringCtx<'a, 'c> {
             inside_lim: false,
             intern,
             num_noise_sources: 0,
+            disable_scopes: Vec::new(),
         }
     }
 

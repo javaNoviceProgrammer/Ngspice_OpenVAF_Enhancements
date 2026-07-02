@@ -47,6 +47,7 @@ EmptyStmt
 | ExprStmt
 | IfStmt
 | WhileStmt
+| RepeatStmt
 | ForStmt
 | CaseStmt
 | EventStmt
@@ -70,6 +71,10 @@ IfStmt =
 
 WhileStmt =
   AttrList* 'while' '(' condition:Expr ')'
+  body: Stmt
+
+RepeatStmt =
+  AttrList* 'repeat' '(' count:Expr ')'
   body: Stmt
 
 ForStmt =

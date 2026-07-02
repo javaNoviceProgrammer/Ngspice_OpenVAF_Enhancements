@@ -1,0 +1,21 @@
+// table_noise_log.va — noise_table_log() from a data file (Enhancement-9)
+//
+// `noise_table_log("file")` is identical to `noise_table()` except that the
+// frequency column of the data file is already given as log10(frequency)
+// rather than linear frequency. The interpolation domain (log10-frequency) and
+// the returned quantity (linear power spectral density) are the same, so a
+// `_log` table whose first column holds log10(f) yields exactly the same noise
+// spectrum as the equivalent linear-frequency `noise_table()`.
+`include "disciplines.vams"
+
+module table_noise_log(p, n);
+    inout p, n;
+    electrical p, n;
+
+    parameter real G = 1.0e-9 from (0:inf);
+
+    analog begin
+        I(p, n) <+ G * V(p, n);
+        I(p, n) <+ noise_table_log("noise_table_log.txt", "measured_log");
+    end
+endmodule

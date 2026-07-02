@@ -1,0 +1,17 @@
+* thermal.cir -- white_noise() thermal-resistor divider, .noise analysis
+* V(in) --[ r1 = 1k ]-- V(out) --[ n1 = thermal_noise R=10k ]-- gnd
+* Output-noise density is white (frequency independent).
+.temp 26.85            $ 300.00 K, matches the model's Temp=300 so r1 and n1 agree
+vin in 0 dc 0 ac 1
+r1  in out 1k
+n1  out 0 rmod
+.model rmod thermal_noise(R=10k Temp=300)
+.control
+pre_osdi thermal_noise.osdi
+noise v(out) vin dec 20 1 1meg
+setplot noise1
+wrdata thermal_onoise.txt onoise_spectrum
+setplot noise2
+print all
+.endc
+.end

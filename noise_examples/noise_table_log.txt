@@ -1,0 +1,7 @@
+# Same measured spectrum as noise_table.txt, but the frequency column is
+# expressed as log10(frequency) for use with noise_table_log().
+#   column 1: log10(frequency)  [log10 Hz]
+#   column 2: noise PSD S_i(f)   [A^2/Hz]
+0        1e-12
+2        1e-12
+4        1e-16

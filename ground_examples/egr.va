@@ -1,0 +1,7 @@
+`include "disciplines.vams"
+module egr(a);
+    inout a; electrical a;
+    electrical ground gnd;
+    parameter real R = 1000.0 from (0:inf);
+    analog I(a, gnd) <+ V(a, gnd) / R;
+endmodule

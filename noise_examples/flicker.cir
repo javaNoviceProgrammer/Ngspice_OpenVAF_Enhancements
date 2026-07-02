@@ -1,0 +1,15 @@
+* flicker.cir -- flicker_noise() 1/f + white floor, .noise analysis
+* Output-noise density falls as 1/f at low frequency, flattening to the
+* white thermal floor above the ~kHz flicker corner.
+.temp 26.85
+vin in 0 dc 0 ac 1
+r1  in out 1k
+n1  out 0 fmod
+.model fmod flicker_demo(R=10k Temp=300 Ibias=1m KF=1e-12 AF=2 EF=1)
+.control
+pre_osdi flicker_noise.osdi
+noise v(out) vin dec 20 1 1meg
+setplot noise1
+wrdata flicker_onoise.txt onoise_spectrum
+.endc
+.end

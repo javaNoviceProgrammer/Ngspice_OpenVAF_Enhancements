@@ -1,0 +1,15 @@
+* table_log.cir -- noise_table_log() file-based (log10-frequency column)
+* Identical spectrum to table.cir, demonstrating that a _log table whose
+* frequency column holds log10(f) reproduces the linear-frequency table.
+.temp 26.85
+vin in 0 dc 0 ac 1
+r1  in out 1k
+n1  out 0 tmodl
+.model tmodl table_noise_log(G=1e-9)
+.control
+pre_osdi table_noise_log.osdi
+noise v(out) vin dec 20 0.1 100k
+setplot noise1
+wrdata table_log_onoise.txt onoise_spectrum
+.endc
+.end

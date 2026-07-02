@@ -1,0 +1,29 @@
+// continue_demo.va -- `disable` as a loop `continue` (Enhancement-9)
+//
+// Naming the *loop body* block and disabling it skips the rest of the current
+// iteration and continues with the next one (Verilog-A's `continue`).
+//
+// Here `Rbase` is accumulated only on every other iteration (`disable body`
+// skips the odd ones), so over 8 iterations exactly 4 add: `Rtot = 4 * Rbase`.
+`include "disciplines.vams"
+
+module continue_demo(a, b);
+    inout a, b;
+    electrical a, b;
+
+    parameter real Rbase = 1000.0 from (0:inf);
+
+    real    Rtot;
+    integer i, odd;
+    analog begin
+        Rtot = 0.0;
+        odd  = 0;
+        for (i = 0; i < 8; i = i + 1) begin : body
+            odd = 1 - odd;                    // 1,0,1,0,... for i = 0,1,2,3,...
+            if (odd == 0)
+                disable body;                 // continue: skip the add
+            Rtot = Rtot + Rbase;              // runs for i = 0,2,4,6 -> 4 adds
+        end
+        I(a, b) <+ V(a, b) / Rtot;            // Rdev = 4 * Rbase
+    end
+endmodule

@@ -136,13 +136,21 @@ impl VarData {
 pub struct ParamData {
     pub name: Name,
     pub ty: Option<Type>,
+    /// `true` for `localparam` declarations, `false` for `parameter`. A
+    /// `localparam` is a compile-time/setup constant that the LRM forbids from
+    /// being overridden externally (via the model card or instance parameters).
+    pub is_local: bool,
 }
 
 impl ParamData {
     pub fn param_data_query(db: &dyn HirDefDB, id: ParamId) -> Arc<ParamData> {
         let loc = id.lookup(db);
         let param = &loc.item_tree(db)[loc.id];
-        Arc::new(ParamData { name: param.name.clone(), ty: param.ty.clone() })
+        Arc::new(ParamData {
+            name: param.name.clone(),
+            ty: param.ty.clone(),
+            is_local: param.is_local,
+        })
     }
 }
 

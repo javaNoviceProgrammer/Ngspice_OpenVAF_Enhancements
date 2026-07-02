@@ -3,6 +3,7 @@ use hir::{
     Type,
 };
 use mir::builder::InstBuilder;
+use mir::cursor::{Cursor, FuncCursor};
 use mir::{Opcode, Value, FALSE, F_ZERO, INFINITY, TRUE};
 
 use crate::body::BodyLoweringCtx;
@@ -52,9 +53,41 @@ impl BodyLoweringCtx<'_, '_, '_> {
                 )
             }
 
-            Stmt::Block { body } => {
-                for stmt in body {
-                    self.lower_stmt(*stmt)
+            Stmt::Block { name, body } => match name {
+                // A *named* block gets an explicit exit block that `disable
+                // <name>` can branch to; execution continues there once the
+                // block finishes (whether by falling off the end or by a
+                // `disable`).
+                Some(name) => {
+                    let exit = self.ctx.create_block();
+                    self.ctx.disable_scopes.push((name.clone(), exit));
+                    for stmt in body {
+                        self.lower_stmt(*stmt);
+                    }
+                    self.ctx.disable_scopes.pop();
+                    self.ctx.ins().jump(exit);
+                    self.ctx.seal_block(exit);
+                    self.ctx.switch_to_block(exit);
+                }
+                None => {
+                    for stmt in body {
+                        self.lower_stmt(*stmt);
+                    }
+                }
+            },
+            Stmt::Disable { name } => {
+                // Branch to the exit of the nearest enclosing named block with
+                // this name. The rest of the current block is unreachable (it
+                // has no incoming edges and is removed from the MIR). An
+                // unresolved name degrades to a no-op (soft, like other
+                // lowering-level degradations in this crate).
+                if let Some(&(_, exit)) =
+                    self.ctx.disable_scopes.iter().rev().find(|(n, _)| n == name)
+                {
+                    self.ctx.ins().jump(exit);
+                    let unreachable_bb = self.ctx.create_block();
+                    self.ctx.switch_to_block(unreachable_bb);
+                    self.ctx.seal_block(unreachable_bb);
                 }
             }
             Stmt::If { cond, then_branch, else_branch } => {
@@ -73,6 +106,7 @@ impl BodyLoweringCtx<'_, '_, '_> {
                 });
             }
             Stmt::WhileLoop { cond, body } => self.lower_loop(cond, |s| s.lower_stmt(body)),
+            Stmt::Repeat { count, body } => self.lower_repeat(count, body),
             Stmt::Case { discr, case_arms } => self.lower_case(discr, case_arms),
         }
     }
@@ -302,6 +336,61 @@ impl BodyLoweringCtx<'_, '_, '_> {
         self.ctx.ins().jump(loop_cond_head);
 
         self.ctx.seal_block(loop_cond_head);
+
+        self.ctx.switch_to_block(loop_end);
+    }
+
+    /// Lowers `repeat (count) body`. `count` is evaluated once (truncated to an
+    /// integer, per the LRM) and `body` is executed that many times. Built as a
+    /// counted loop with an integer counter carried by a header phi:
+    ///
+    /// ```text
+    ///   entry:      n = int(count); jump cond_head
+    ///   cond_head:  counter = phi [n (entry)], [dec (body_tail)]
+    ///               br_loop counter > 0, body_head, loop_end
+    ///   body_head:  <body>; dec = counter - 1; jump cond_head
+    ///   loop_end:   ...
+    /// ```
+    fn lower_repeat(&mut self, count: ExprId, body: StmtId) {
+        // Evaluate the count once, coerced to an integer (repeat truncates).
+        let count_ty = self.body.expr_type(count);
+        let mut n = self.lower_expr(count);
+        if count_ty == Type::Real {
+            n = self.ctx.insert_cast(n, &Type::Real, &Type::Integer);
+        }
+        let entry = self.ctx.current_block();
+
+        let cond_head = self.ctx.create_block();
+        let body_head = self.ctx.create_block();
+        let loop_end = self.ctx.create_block();
+
+        self.ctx.ins().jump(cond_head);
+        self.ctx.switch_to_block(cond_head);
+
+        // Header phi placeholder for the counter; its definition is spliced in
+        // at the top of `cond_head` once the back-edge value is known.
+        let counter = self.ctx.func.make_param(0u32.into());
+        let zero = self.ctx.iconst(0);
+        let cond = self.ctx.ins().binary1(Opcode::Igt, counter, zero);
+        self.ctx.ins().br_loop(cond, body_head, loop_end);
+        self.ctx.seal_block(body_head);
+        self.ctx.seal_block(loop_end);
+
+        self.ctx.switch_to_block(body_head);
+        self.lower_stmt(body);
+        let one = self.ctx.iconst(1);
+        let dec = self.ctx.ins().binary1(Opcode::Isub, counter, one);
+        let body_tail = self.ctx.current_block();
+        self.ctx.ins().jump(cond_head);
+        self.ctx.seal_block(cond_head);
+
+        // counter = phi [ (entry, n), (body_tail, dec) ], inserted at the top of
+        // the loop header so it dominates the `counter > 0` test above.
+        FuncCursor::new(&mut self.ctx.func.func)
+            .at_first_inst(cond_head)
+            .ins()
+            .with_result(counter)
+            .phi(&[(entry, n), (body_tail, dec)]);
 
         self.ctx.switch_to_block(loop_end);
     }

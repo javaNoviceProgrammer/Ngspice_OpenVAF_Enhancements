@@ -1,0 +1,27 @@
+// rdiv.va -- localparam conformance demo (Enhancement-9)
+//
+// Demonstrates the corrected `localparam` semantics:
+//   * `R`   is a `parameter`   -> externally overridable (model card / instance).
+//   * `G`   is a `localparam`  -> derived from `R`; NOT overridable, but it
+//                                 correctly tracks `R` when `R` is overridden.
+//   * `GAIN` is a `localparam` -> a literal constant; NOT overridable.
+//
+// The device is a linear conductance `GAIN*G = GAIN/R` between its two
+// terminals. Any attempt to override `G` or `GAIN` from the `.model` card is
+// ignored (the declared/derived value is always used), while overriding `R`
+// takes effect and flows through to `G`.
+`include "disciplines.vams"
+
+module rdiv(p, n);
+    inout p, n;
+    electrical p, n;
+
+    parameter  real R    = 1000.0 from (0:inf);   // overridable
+    localparam real G    = 1.0 / R;               // derived, non-overridable
+    localparam real GAIN = 2.0;                   // literal, non-overridable
+
+    analog begin
+        // effective conductance = GAIN/R
+        I(p, n) <+ GAIN * G * V(p, n);
+    end
+endmodule

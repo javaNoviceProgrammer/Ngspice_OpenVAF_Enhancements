@@ -1,0 +1,27 @@
+// rgnd.va -- `ground` node declaration demo (Enhancement-9)
+//
+// A one-terminal device: a resistor from its single terminal `a` to an
+// internal **ground** node `gnd`. A `ground` net is collapsed by OpenVAF to
+// the global reference node (V = 0), so this behaves as a resistor to ground.
+//
+// The `ground` net-type is declared here as `electrical ground gnd;`
+// (discipline before net-type). Enhancement-9 fixed the parser so this
+// ordering is accepted; all four natural orderings now work identically:
+//
+//     ground electrical gnd;        // net-type first
+//     electrical ground gnd;        // discipline first   (fixed in Enh-9)
+//     electrical gnd; ground gnd;   // two-step
+//     ground gnd; electrical gnd;   // two-step, reversed
+`include "disciplines.vams"
+
+module rgnd(a);
+    inout a;
+    electrical a;
+    electrical ground gnd;                 // internal global-reference node
+
+    parameter real R = 1000.0 from (0:inf);
+
+    analog begin
+        I(a, gnd) <+ V(a, gnd) / R;        // resistor from a to ground
+    end
+endmodule

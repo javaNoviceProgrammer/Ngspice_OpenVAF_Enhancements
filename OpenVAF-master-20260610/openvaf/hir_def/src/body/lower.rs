@@ -146,6 +146,11 @@ impl LowerCtx<'_> {
                 let body = self.collect_opt_stmt(stmt.body());
                 Stmt::WhileLoop { cond, body }
             }
+            ast::Stmt::RepeatStmt(stmt) => {
+                let count = self.collect_opt_expr(stmt.count());
+                let body = self.collect_opt_stmt(stmt.body());
+                Stmt::Repeat { count, body }
+            }
             ast::Stmt::ForStmt(stmt) => {
                 let cond = self.collect_opt_expr(stmt.condition());
                 let init = self.collect_opt_stmt(stmt.init());
@@ -153,6 +158,10 @@ impl LowerCtx<'_> {
                 let body = self.collect_opt_stmt(stmt.for_body());
                 Stmt::ForLoop { init, cond, incr, body }
             }
+            ast::Stmt::DisableStmt(stmt) => match stmt.name() {
+                Some(name) => Stmt::Disable { name: name.as_name() },
+                None => Stmt::Missing,
+            },
             ast::Stmt::CaseStmt(stmt) => self.collect_case_stmt(stmt),
             ast::Stmt::EventStmt(stmt) => return self.collect_event_stmt(stmt),
             ast::Stmt::BlockStmt(stmt) => self.collect_block(stmt),
@@ -279,7 +288,8 @@ impl LowerCtx<'_> {
         let body = block.body().map(|stmt| self.collect_stmt(stmt)).collect();
 
         self.curr_scope = parent_scope;
-        Stmt::Block { body }
+        let name = block.block_scope().and_then(|scope| scope.name()).map(|name| name.as_name());
+        Stmt::Block { name, body }
     }
 
     fn alloc_expr(&mut self, expr: Expr, ptr: AstPtr<ast::Expr>) -> ExprId {

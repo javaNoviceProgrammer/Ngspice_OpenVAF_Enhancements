@@ -1,0 +1,15 @@
+* table.cir -- noise_table() file-based measured spectrum, .noise analysis
+* Device n1 injects the tabulated current-noise PSD; r1 sets the ~1k
+* transresistance from that current noise to V(out).
+.temp 26.85
+vin in 0 dc 0 ac 1
+r1  in out 1k
+n1  out 0 tmod
+.model tmod table_noise(G=1e-9)
+.control
+pre_osdi table_noise.osdi
+noise v(out) vin dec 20 0.1 100k
+setplot noise1
+wrdata table_onoise.txt onoise_spectrum
+.endc
+.end

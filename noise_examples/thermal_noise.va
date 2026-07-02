@@ -1,0 +1,31 @@
+// thermal_noise.va — white_noise() demo (Enhancement-9)
+//
+// A linear resistor whose thermal noise is modelled explicitly with the
+// Verilog-A `white_noise()` analog operator. The thermal-noise current
+// spectral density of a resistor R is the frequency-independent (white)
+//
+//     S_i = 4 * k * T / R      [A^2 / Hz]
+//
+// injected as a current noise source in parallel with the resistor branch.
+// `white_noise(pwr)` takes the *power* spectral density directly, so we pass
+// `4*k*T*G` with `G = 1/R`.
+`include "disciplines.vams"
+
+module thermal_noise(p, n);
+    inout p, n;
+    electrical p, n;
+
+    parameter real R    = 1.0e3 from (0:inf);   // resistance [ohm]
+    parameter real Temp = 300.0 from (0:inf);   // noise temperature [K]
+
+    localparam real KB = 1.380649e-23;           // Boltzmann constant [J/K]
+
+    real g;
+    analog begin
+        g = 1.0 / R;
+        // resistive branch
+        I(p, n) <+ g * V(p, n);
+        // thermal (white) noise current: S_i = 4kT/R
+        I(p, n) <+ white_noise(4.0 * KB * Temp * g, "thermal");
+    end
+endmodule

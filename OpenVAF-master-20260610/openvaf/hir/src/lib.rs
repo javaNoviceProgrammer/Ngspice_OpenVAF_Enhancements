@@ -483,6 +483,12 @@ impl Parameter {
         db.param_ty(self.id)
     }
 
+    /// `true` if this was declared with `localparam` (not `parameter`).
+    /// A `localparam` is never externally overridable.
+    pub fn is_local(self, db: &CompilationDB) -> bool {
+        db.param_data(self.id).is_local
+    }
+
     pub fn get_attr(&self, db: &CompilationDB, ast: &AstCache, name: &str) -> Option<ast::Attr> {
         ast.resolve_attribute(name, self.id.lookup(db).ast_id(db).erased())
     }

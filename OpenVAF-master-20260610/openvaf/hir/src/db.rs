@@ -68,6 +68,13 @@ impl CompilationDB {
         CompilationUnit { root_file: self.root_file }
     }
 
+    /// Filesystem directory containing the compilation root file, if the root
+    /// lives on disk (as opposed to a virtual/in-memory file). Used to resolve
+    /// relative paths referenced from source, e.g. a `noise_table` data file.
+    pub fn root_file_dir(&self) -> Option<VfsPath> {
+        self.file_path(self.root_file).parent()
+    }
+
     /// Redirects this database's root file, used by the module-instantiation
     /// elaboration pass (`crate::elaborate`) to point everything downstream
     /// at a synthesized, already-flattened file instead of the file the

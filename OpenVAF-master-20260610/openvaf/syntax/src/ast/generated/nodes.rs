@@ -109,6 +109,27 @@ impl WhileStmt {
     pub fn body(&self) -> Option<Stmt> { support::child(&self.syntax) }
 }
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct RepeatStmt {
+    pub(crate) syntax: SyntaxNode,
+}
+impl ast::AttrsOwner for RepeatStmt {}
+impl RepeatStmt {
+    pub fn repeat_token(&self) -> Option<SyntaxToken> { support::token(&self.syntax, T![repeat]) }
+    pub fn l_paren_token(&self) -> Option<SyntaxToken> { support::token(&self.syntax, T!['(']) }
+    pub fn count(&self) -> Option<Expr> { support::child(&self.syntax) }
+    pub fn r_paren_token(&self) -> Option<SyntaxToken> { support::token(&self.syntax, T![')']) }
+    pub fn body(&self) -> Option<Stmt> { support::child(&self.syntax) }
+}
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct DisableStmt {
+    pub(crate) syntax: SyntaxNode,
+}
+impl ast::AttrsOwner for DisableStmt {}
+impl DisableStmt {
+    pub fn disable_token(&self) -> Option<SyntaxToken> { support::token(&self.syntax, T![disable]) }
+    pub fn name(&self) -> Option<Name> { support::child(&self.syntax) }
+}
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ForStmt {
     pub(crate) syntax: SyntaxNode,
 }
@@ -670,6 +691,8 @@ pub enum Stmt {
     ExprStmt(ExprStmt),
     IfStmt(IfStmt),
     WhileStmt(WhileStmt),
+    RepeatStmt(RepeatStmt),
+    DisableStmt(DisableStmt),
     ForStmt(ForStmt),
     CaseStmt(CaseStmt),
     EventStmt(EventStmt),
@@ -839,6 +862,28 @@ impl AstNode for IfStmt {
 }
 impl AstNode for WhileStmt {
     fn can_cast(kind: SyntaxKind) -> bool { kind == WHILE_STMT }
+    fn cast(syntax: SyntaxNode) -> Option<Self> {
+        if Self::can_cast(syntax.kind()) {
+            Some(Self { syntax })
+        } else {
+            None
+        }
+    }
+    fn syntax(&self) -> &SyntaxNode { &self.syntax }
+}
+impl AstNode for RepeatStmt {
+    fn can_cast(kind: SyntaxKind) -> bool { kind == REPEAT_STMT }
+    fn cast(syntax: SyntaxNode) -> Option<Self> {
+        if Self::can_cast(syntax.kind()) {
+            Some(Self { syntax })
+        } else {
+            None
+        }
+    }
+    fn syntax(&self) -> &SyntaxNode { &self.syntax }
+}
+impl AstNode for DisableStmt {
+    fn can_cast(kind: SyntaxKind) -> bool { kind == DISABLE_STMT }
     fn cast(syntax: SyntaxNode) -> Option<Self> {
         if Self::can_cast(syntax.kind()) {
             Some(Self { syntax })
@@ -1492,6 +1537,12 @@ impl From<IfStmt> for Stmt {
 impl From<WhileStmt> for Stmt {
     fn from(node: WhileStmt) -> Stmt { Stmt::WhileStmt(node) }
 }
+impl From<RepeatStmt> for Stmt {
+    fn from(node: RepeatStmt) -> Stmt { Stmt::RepeatStmt(node) }
+}
+impl From<DisableStmt> for Stmt {
+    fn from(node: DisableStmt) -> Stmt { Stmt::DisableStmt(node) }
+}
 impl From<ForStmt> for Stmt {
     fn from(node: ForStmt) -> Stmt { Stmt::ForStmt(node) }
 }
@@ -1507,8 +1558,8 @@ impl From<BlockStmt> for Stmt {
 impl AstNode for Stmt {
     fn can_cast(kind: SyntaxKind) -> bool {
         match kind {
-            EMPTY_STMT | ASSIGN_STMT | EXPR_STMT | IF_STMT | WHILE_STMT | FOR_STMT | CASE_STMT
-            | EVENT_STMT | BLOCK_STMT => true,
+            EMPTY_STMT | ASSIGN_STMT | EXPR_STMT | IF_STMT | WHILE_STMT | REPEAT_STMT
+            | DISABLE_STMT | FOR_STMT | CASE_STMT | EVENT_STMT | BLOCK_STMT => true,
             _ => false,
         }
     }
@@ -1519,6 +1570,8 @@ impl AstNode for Stmt {
             EXPR_STMT => Stmt::ExprStmt(ExprStmt { syntax }),
             IF_STMT => Stmt::IfStmt(IfStmt { syntax }),
             WHILE_STMT => Stmt::WhileStmt(WhileStmt { syntax }),
+            REPEAT_STMT => Stmt::RepeatStmt(RepeatStmt { syntax }),
+            DISABLE_STMT => Stmt::DisableStmt(DisableStmt { syntax }),
             FOR_STMT => Stmt::ForStmt(ForStmt { syntax }),
             CASE_STMT => Stmt::CaseStmt(CaseStmt { syntax }),
             EVENT_STMT => Stmt::EventStmt(EventStmt { syntax }),
@@ -1534,6 +1587,8 @@ impl AstNode for Stmt {
             Stmt::ExprStmt(it) => &it.syntax,
             Stmt::IfStmt(it) => &it.syntax,
             Stmt::WhileStmt(it) => &it.syntax,
+            Stmt::RepeatStmt(it) => &it.syntax,
+            Stmt::DisableStmt(it) => &it.syntax,
             Stmt::ForStmt(it) => &it.syntax,
             Stmt::CaseStmt(it) => &it.syntax,
             Stmt::EventStmt(it) => &it.syntax,
@@ -1897,6 +1952,16 @@ impl std::fmt::Display for IfStmt {
     }
 }
 impl std::fmt::Display for WhileStmt {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(self.syntax(), f)
+    }
+}
+impl std::fmt::Display for RepeatStmt {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(self.syntax(), f)
+    }
+}
+impl std::fmt::Display for DisableStmt {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         std::fmt::Display::fmt(self.syntax(), f)
     }

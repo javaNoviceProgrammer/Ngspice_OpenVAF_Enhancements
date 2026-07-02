@@ -1,0 +1,22 @@
+// table_noise.va — noise_table() from a data file (Enhancement-9)
+//
+// `noise_table("file")` reads a two-column `<frequency> <power>` table from a
+// file (resolved relative to this source file) and produces a current-noise
+// power spectral density obtained by piecewise-linear interpolation of the
+// tabulated power over log10(frequency), clamped to the endpoints outside the
+// tabulated range. This is the natural way to model a *measured* device-noise
+// spectrum that does not follow a simple white/flicker law.
+`include "disciplines.vams"
+
+module table_noise(p, n);
+    inout p, n;
+    electrical p, n;
+
+    parameter real G = 1.0e-9 from (0:inf);   // small branch conductance (defines the node)
+
+    analog begin
+        I(p, n) <+ G * V(p, n);
+        // tabulated current-noise PSD [A^2/Hz] vs frequency [Hz]
+        I(p, n) <+ noise_table("noise_table.txt", "measured");
+    end
+endmodule

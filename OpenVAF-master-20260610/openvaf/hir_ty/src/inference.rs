@@ -145,6 +145,9 @@ impl Ctx<'_> {
             Stmt::ForLoop { cond, .. } | Stmt::If { cond, .. } | Stmt::WhileLoop { cond, .. } => {
                 self.infere_cond(stmt, cond)
             }
+            Stmt::Repeat { count, .. } => {
+                self.infere_expr(stmt, count);
+            }
 
             Stmt::EventControl { ref event, .. } => self.infere_event_control(stmt, event),
 

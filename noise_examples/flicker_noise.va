@@ -1,0 +1,38 @@
+// flicker_noise.va — flicker_noise() (1/f) demo (Enhancement-9)
+//
+// A two-terminal element carrying a fixed DC bias current `Ibias` whose noise
+// has both a white (thermal) floor and a 1/f^EF flicker component:
+//
+//     S_i(f) = 4kT*G                      (white floor)
+//            + KF * |Ibias|^AF / f^EF     (flicker)
+//
+// `flicker_noise(pwr, exp)` produces `pwr / f^exp`, i.e. it supplies the
+// per-frequency 1/f^exp shaping internally — `pwr` is the numerator power
+// spectral density and `exp` is the frequency exponent.
+`include "disciplines.vams"
+
+module flicker_demo(p, n);
+    inout p, n;
+    electrical p, n;
+
+    parameter real R     = 1.0e3 from (0:inf);  // series conductance 1/R defines the branch
+    parameter real Temp  = 300.0 from (0:inf);  // temperature [K]
+    parameter real Ibias = 1.0e-3;              // bias current setting the flicker level [A]
+    parameter real KF    = 1.0e-12;             // flicker coefficient
+    parameter real AF    = 2.0;                 // flicker current exponent
+    parameter real EF    = 1.0;                 // flicker frequency exponent (1 => pure 1/f)
+
+    localparam real KB = 1.380649e-23;
+
+    real g;
+    analog begin
+        g = 1.0 / R;
+        I(p, n) <+ g * V(p, n);
+        // white thermal floor
+        I(p, n) <+ white_noise(4.0 * KB * Temp * g, "thermal");
+        // flicker 1/f^EF noise
+        I(p, n) <+ flicker_noise(KF * pow(abs(Ibias), AF), EF, "flicker");
+    end
+endmodule
+// (module named `flicker_demo`, not `flicker_noise`, because the latter is a
+//  reserved analog-operator keyword and cannot be used as an identifier)

@@ -135,6 +135,10 @@ impl Body {
                     let default_val = match db.var_data(var).ty {
                         Type::Real => Literal::Float(Ieee64::with_float(0.0)),
                         Type::Integer => Literal::Int(0),
+                        // A `string` variable declared without an initializer
+                        // defaults to the empty string (Verilog-AMS LRM), rather
+                        // than crashing the compiler.
+                        Type::String => Literal::String("".into()),
                         _ => unreachable!("invalid var type (TODO arrays)"),
                     };
                     ctx.alloc_expr_desugared(Expr::Literal(default_val))

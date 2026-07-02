@@ -8,6 +8,7 @@ use hir_ty::db::HirTyDB;
 use hir_ty::inference;
 use hir_ty::types::{Signature, Ty};
 pub use syntax::ast::{BinaryOp, UnaryOp};
+pub use syntax::name::Name;
 
 use crate::{
     Branch, BranchWrite, CompilationDB, Function, FunctionArg, NatureAttribute, Node, Parameter,
@@ -244,7 +245,10 @@ impl<'a> BodyRef<'a> {
                 };
                 Some(stmt)
             }
-            hir_def::Stmt::Block { ref body } => Some(Stmt::Block { body }),
+            hir_def::Stmt::Block { ref name, ref body } => {
+                Some(Stmt::Block { name: name.as_ref(), body })
+            }
+            hir_def::Stmt::Disable { ref name } => Some(Stmt::Disable { name }),
             hir_def::Stmt::If { cond, then_branch, else_branch } => {
                 Some(Stmt::If { cond, then_branch, else_branch })
             }
@@ -252,6 +256,7 @@ impl<'a> BodyRef<'a> {
                 Some(Stmt::ForLoop { init, cond, incr, body })
             }
             hir_def::Stmt::WhileLoop { cond, body } => Some(Stmt::WhileLoop { cond, body }),
+            hir_def::Stmt::Repeat { count, body } => Some(Stmt::Repeat { count, body }),
             hir_def::Stmt::Case { discr, ref case_arms } => Some(Stmt::Case { discr, case_arms }),
         }
     }
@@ -282,10 +287,12 @@ pub enum Stmt<'a> {
         constraint_rhs: ExprId,
     },
     Assignment { lhs: AssignmentLhs, rhs: ExprId },
-    Block { body: &'a [StmtId] },
+    Block { name: Option<&'a Name>, body: &'a [StmtId] },
+    Disable { name: &'a Name },
     If { cond: ExprId, then_branch: StmtId, else_branch: StmtId },
     ForLoop { init: StmtId, cond: ExprId, incr: StmtId, body: StmtId },
     WhileLoop { cond: ExprId, body: StmtId },
+    Repeat { count: ExprId, body: StmtId },
     Case { discr: ExprId, case_arms: &'a [Case] }, // TODO lint on unreachable
 }
 impl Stmt<'_> {

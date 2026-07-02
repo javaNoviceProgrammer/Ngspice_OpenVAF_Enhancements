@@ -174,18 +174,18 @@ impl BuiltIn {
     #[allow(clippy::match_like_matches_macro)]
     pub fn is_unsupported(self) -> bool {
         match self {
+            // NOTE: `zi_nd`/`zi_np`/`zi_zd`/`zi_zp`, `last_crossing`, `slew` and
+            // `transition` are intentionally NOT listed here. They were
+            // implemented in Enhancement-6 (their `is_unsupported` gate removed,
+            // lowering + ngspice `last_crossing` runtime added). Enhancement-8's
+            // regeneration of this file re-added the gate and silently shadowed
+            // that working implementation; Enhancement-9 removes it again. Keep
+            // them out of this list.
             BuiltIn::simprobe
             | BuiltIn::analog_node_alias
             | BuiltIn::analog_port_alias
             | BuiltIn::test_plusargs
             | BuiltIn::value_plusargs
-            | BuiltIn::zi_nd
-            | BuiltIn::zi_np
-            | BuiltIn::zi_zd
-            | BuiltIn::zi_zp
-            | BuiltIn::last_crossing
-            | BuiltIn::slew
-            | BuiltIn::transition
             | BuiltIn::fclose
             | BuiltIn::fopen
             | BuiltIn::fdisplay

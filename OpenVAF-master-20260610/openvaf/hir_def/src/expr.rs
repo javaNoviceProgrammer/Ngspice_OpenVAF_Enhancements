@@ -16,6 +16,7 @@ use std::fmt::Debug;
 use arena::Idx;
 use stdx::{impl_debug, Ieee64};
 use syntax::ast::{self, BinaryOp, UnaryOp};
+use syntax::name::Name;
 
 use crate::Path;
 
@@ -132,10 +133,16 @@ pub enum Stmt {
     Expr(ExprId),
     EventControl { event: Event, body: StmtId },
     Assignment { dst: ExprId, val: ExprId, assignment_kind: ast::AssignOp },
-    Block { /*scope: Option<BlockId>,*/ body: Vec<StmtId> },
+    Block { name: Option<Name>, body: Vec<StmtId> },
+    /// `disable <named_block>;` -- terminates execution of the enclosing named
+    /// block `name` (Verilog-AMS's early-exit / loop-`break` mechanism).
+    Disable { name: Name },
     If { cond: ExprId, then_branch: StmtId, else_branch: StmtId },
     ForLoop { init: StmtId, cond: ExprId, incr: StmtId, body: StmtId },
     WhileLoop { cond: ExprId, body: StmtId },
+    /// `repeat (count) body` -- executes `body` `count` (truncated to integer)
+    /// times. Lowered to a counted loop in `hir_lower`.
+    Repeat { count: ExprId, body: StmtId },
     Case { discr: ExprId, case_arms: Vec<Case> }, // TODO lint on unreachable
 }
 
@@ -200,11 +207,12 @@ impl Stmt {
     #[inline]
     pub fn walk_child_exprs(&self, mut f: impl FnMut(ExprId)) {
         match *self {
-            Stmt::Empty | Stmt::Missing | Stmt::Block { .. } => (),
+            Stmt::Empty | Stmt::Missing | Stmt::Block { .. } | Stmt::Disable { .. } => (),
             Stmt::EventControl { ref event, .. } => event.walk_child_exprs(&mut f),
             Stmt::If { cond: expr, .. }
             | Stmt::ForLoop { cond: expr, .. }
             | Stmt::WhileLoop { cond: expr, .. }
+            | Stmt::Repeat { count: expr, .. }
             | Stmt::Expr(expr) => f(expr),
             Stmt::Assignment { dst, val, .. } => {
                 f(dst);
@@ -226,8 +234,14 @@ impl Stmt {
     #[inline]
     pub fn walk_child_stmts(&self, mut f: impl FnMut(StmtId)) {
         match *self {
-            Stmt::Expr(_) | Stmt::Assignment { .. } | Stmt::Missing | Stmt::Empty => (),
-            Stmt::WhileLoop { body, .. } | Stmt::EventControl { body, .. } => f(body),
+            Stmt::Expr(_)
+            | Stmt::Assignment { .. }
+            | Stmt::Missing
+            | Stmt::Empty
+            | Stmt::Disable { .. } => (),
+            Stmt::WhileLoop { body, .. }
+            | Stmt::Repeat { body, .. }
+            | Stmt::EventControl { body, .. } => f(body),
             Stmt::If { then_branch: true_stmt, else_branch: false_stmt, .. } => {
                 f(true_stmt);
                 f(false_stmt);

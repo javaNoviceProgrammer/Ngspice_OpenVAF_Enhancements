@@ -74,7 +74,10 @@ impl Printer<'_> {
                 self.pretty_print_expr(val);
                 wln!(self, ";");
             }
-            Stmt::Block { ref body } => {
+            Stmt::Disable { ref name } => {
+                wln!(self, "disable {};", name);
+            }
+            Stmt::Block { ref body, .. } => {
                 w!(self, "begin");
                 if let Some(first) = body.iter().next() {
                     if let DefMapSource::Block(block) = self.body.stmt_scopes[*first].src {
@@ -115,6 +118,12 @@ impl Printer<'_> {
             Stmt::WhileLoop { cond, body } => {
                 w!(self, "while(");
                 self.pretty_print_expr(cond);
+                wln!(self, ")");
+                self.indented(|sel| sel.pretty_print_stmt(body))
+            }
+            Stmt::Repeat { count, body } => {
+                w!(self, "repeat(");
+                self.pretty_print_expr(count);
                 wln!(self, ")");
                 self.indented(|sel| sel.pretty_print_stmt(body))
             }

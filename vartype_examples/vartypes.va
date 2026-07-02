@@ -1,0 +1,33 @@
+// vartypes.va -- real / integer / string analog-block variables (Enhancement-9)
+//
+// Exercises all three variable types, including an **uninitialized** `string`
+// variable. Before Enhancement-9 an uninitialized `string s;` crashed the
+// compiler (only `real` and `integer` had a type-based default; `string` hit an
+// `unreachable!`). It now defaults to the empty string `""`, per the LRM.
+//
+// The device is a linear conductance whose value is chosen at eval time from
+// the three variables: `count` (integer) resistors, each `Rbase` (real) ohms,
+// combined in `mode` (string, defaulting to "series").
+`include "disciplines.vams"
+
+module vartypes(a, b);
+    inout a, b;
+    electrical a, b;
+
+    parameter real Rbase = 1000.0 from (0:inf);
+
+    real    Rtot;        // real variable
+    integer count;       // integer variable
+    string  mode;        // string variable, declared WITHOUT an initializer
+
+    analog begin
+        count = 2;                       // integer assignment
+        if (mode == "")                  // empty-string default comparison
+            mode = "series";             // string (re)assignment
+        if (mode == "series")
+            Rtot = Rbase * count;        // real arithmetic with an integer
+        else
+            Rtot = Rbase / count;
+        I(a, b) <+ V(a, b) / Rtot;
+    end
+endmodule
