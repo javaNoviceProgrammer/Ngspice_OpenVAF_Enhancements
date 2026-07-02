@@ -227,3 +227,59 @@ matches it exactly:
   <img src="ac_include.png" width="32%">
   <img src="tran_include.png" width="32%">
 </p>
+
+---
+
+## dc_sim_multi_model.cir: every module in a `.va` file is independently usable, from one `.osdi`
+
+This one isn't about Verilog-A-level `instantiate` at all — it demonstrates
+a separate, complementary capability that already existed in OpenVAF/OSDI
+before Enhancement-5 (and needed no changes for this feature to build on
+top of it): `resistor_divider.va` declares **three** top-level modules
+(`resistor`, `buffer`, `divider`), and `openvaf-r` compiles *all three*
+into the *same* `resistor_divider.osdi` file (one `OsdiDescriptor` each).
+ngspice's `pre_osdi` loads that whole array at once, so a single
+`pre_osdi resistor_divider.osdi` makes every one of them independently
+`.model`-able in the *same* netlist — not just the one file's "top"
+module. Concretely, this lets a netlist compose two *separately compiled*
+OSDI descriptors from one file as ordinary SPICE devices, alongside (and
+distinct from) the compile-time Verilog-A-level inlining Enhancement-5
+adds:
+
+```
+.model buffermodel buffer
+.model dividermodel divider
+
+Vin in 0 DC 1.0
+Nbuf1 in mid buffermodel     * standalone `buffer` instance
+Ndiv1 mid out 0 dividermodel * standalone `divider` instance, chained after it
+```
+
+`buffer` (1 ohm) is placed in series, at the *netlist* level, ahead of
+`divider`'s own internal in→out→gnd network (which presents a fixed input
+resistance, `R_A + R_B`, looking in from `divider`'s `in` pin) — an
+ordinary two-resistor voltage divider one level up from the one inside
+`resistor_divider.va` itself.
+
+**One gotcha worth knowing:** `resistor` is deliberately *not* used by
+name in this netlist. `.model something resistor (...)` collides with
+ngspice's own built-in native resistor `.model` keyword, so it silently
+binds to ngspice's built-in model instead of the OSDI one — a naming
+collision to watch for, not an OpenVAF/OSDI limitation. `buffer` and
+`divider` have no such collision.
+
+```sh
+ngspice -b dc_sim_multi_model.cir     # writes dc_multi_model.txt
+python3 compare_multi_model.py           # verifies, writes dc_multi_model.png
+```
+
+### Results
+
+| Signal | Expected | Observed |
+|---|---|---|
+| `V(mid)` | `Vin * R_divider_input / (R_buffer + R_divider_input)` | max err `3.3e-9` |
+| `V(out)` | `V(mid) * ratio` (divider's own internal in→out ratio) | max err `3.3e-9` |
+
+<p>
+  <img src="dc_multi_model.png" width="80%">
+</p>

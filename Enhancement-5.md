@@ -476,7 +476,19 @@ New fixtures:
 - A module that is instantiated by another **also continues to be
   compiled as its own standalone top-level OSDI descriptor** if it appears
   at the top level of the file, unchanged from today's `collect_modules`
-  behavior (every top-level module is always compiled).
+  behavior (every top-level module is always compiled). This is a real,
+  useful capability worth calling out explicitly: a single `.osdi` file
+  already exposes *every* top-level module in the source `.va` file as an
+  independently `.model`-able SPICE device, so a netlist can compose two
+  *separately compiled* OSDI descriptors from the same file (ordinary
+  SPICE-level hierarchy) alongside Verilog-A-level `instantiate`
+  (compile-time inlining within one descriptor) — two complementary
+  mechanisms, not competing ones. See
+  `instantiation_examples/dc_sim_multi_model.cir` for a worked example
+  (chaining standalone `buffer` and `divider` instances from
+  `resistor_divider.osdi` in one netlist) — including a naming-collision
+  gotcha (`resistor` collides with ngspice's own built-in resistor
+  `.model` keyword, unrelated to OpenVAF/OSDI).
 
 ## 11. Diff summary
 

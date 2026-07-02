@@ -1,0 +1,33 @@
+* Demonstrates that ONE .osdi file (compiled from resistor_divider.va,
+* which declares THREE top-level modules: resistor, buffer, divider)
+* exposes every one of them as an independently instantiable SPICE
+* .model -- not just "divider". This is a second, complementary form of
+* hierarchy alongside Enhancement-5's Verilog-A-level `instantiate`
+* (compile-time inlining inside one module): here, two *separately*
+* compiled OSDI descriptors from the same file are composed at the
+* netlist level instead.
+*
+* Circuit: Vin -> [buffer, standalone SPICE instance] -> mid
+*              -> [divider, standalone SPICE instance] -> out (-> gnd=0)
+*
+* NOTE: `resistor` itself is deliberately NOT instantiated by name in this
+* netlist -- `resistor` collides with ngspice's own built-in native
+* resistor .model keyword, so `.model something resistor (...)` silently
+* binds to ngspice's built-in model instead of the OSDI one. `buffer` and
+* `divider` have no such collision.
+.model buffermodel buffer
+.model dividermodel divider
+
+Vin in 0 DC 1.0
+Nbuf1 in mid buffermodel
+Ndiv1 mid out 0 dividermodel
+
+.dc Vin -2 2 0.5
+
+.control
+pre_osdi resistor_divider.osdi
+run
+wrdata dc_multi_model.txt v(in) v(mid) v(out)
+quit
+.endc
+.end
