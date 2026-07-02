@@ -1,0 +1,18 @@
+* persist_demo DC sweep: V(out) does not depend on V(in) at all -- it
+* counts simulator evaluations, so a DC sweep shows a roughly monotonic
+* staircase driven purely by Newton-iteration count per sweep point, not
+* a real function of V(in). Included for completeness/honesty about what
+* this operator does and does not do, same spirit as documenting
+* last_crossing's DC behavior in Enhancement-6.
+.model pm persist_demo()
+vin in 0 dc 0
+n1 in out pm
+rload out 0 1k
+
+.dc vin -1 1 0.02
+.control
+pre_osdi persist_demo.osdi
+run
+wrdata dc_result.txt v(in) v(out)
+.endc
+.end

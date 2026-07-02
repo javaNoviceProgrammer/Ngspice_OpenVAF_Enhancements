@@ -26,6 +26,16 @@ use crate::metadata::osdi_0_4::{
 use crate::metadata::OsdiLimFunction;
 use crate::OsdiLimId;
 
+/// Enhancement-7: extra bit in the eval() `flags` input, set by the simulator
+/// (ngspice's OSDIload, `EVAL_FLAG_IS_INITIAL_STEP` in osdidefs.h) only on an
+/// instance's very first evaluation, gating Verilog-A `@(initial_step)`.
+/// Chosen well above the highest flag defined in osdi_0_4.h
+/// (`ANALYSIS_NODESET = 1<<16`) to avoid colliding with the core ABI's flag
+/// space; not part of the generated `metadata::osdi_0_4` module since it is
+/// not declared in `osdi_0_4.h` itself (an additive, hand-written extension,
+/// same convention as the `OsdiLastCrossingInfo` extension).
+const EVAL_FLAG_IS_INITIAL_STEP: u32 = 1 << 20;
+
 /*
 // Inline callback example
 struct AbortCallback;
@@ -247,7 +257,13 @@ impl<'ll> OsdiCompilationUnit<'_, '_, 'll> {
                                 builder.llbuilder,
                             )
                             .unwrap(),
-                        ParamKind::HiddenState(_) => unreachable!(), // TODO  hidden state
+                        ParamKind::HiddenState(var) => inst_data
+                            .read_hidden_state(var, instance, builder.llbuilder)
+                            .unwrap_or_else(|| cx.const_real(0.0)),
+                        ParamKind::IsInitialStep => {
+                            let flags_val = flags.read(builder.llbuilder);
+                            is_flag_set(cx, EVAL_FLAG_IS_INITIAL_STEP, flags_val, builder.llbuilder)
+                        }
                         ParamKind::EnableIntegration => {
                             let flags = flags.read(builder.llbuilder);
                             let is_not_dc =
@@ -432,6 +448,7 @@ impl<'ll> OsdiCompilationUnit<'_, '_, 'll> {
             inst_data.store_bound_step(instance, &builder);
             inst_data.store_delay_times(instance, &builder);
             inst_data.store_last_crossing_dirs(instance, &builder);
+            inst_data.store_hidden_state(instance, &builder);
 
             builder.ret();
         }

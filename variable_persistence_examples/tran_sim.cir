@@ -1,0 +1,16 @@
+* persist_demo transient: the key demo -- accum genuinely increments across
+* many distinct accepted timepoints instead of resetting to 0+1=1 every
+* time (the pre-Enhancement-7 bug), producing a sustained, roughly linear
+* ramp over the whole transient.
+.model pm persist_demo()
+vin in 0 dc 1
+n1 in out pm
+rload out 0 1k
+
+.tran 1u 100u
+.control
+pre_osdi persist_demo.osdi
+run
+wrdata tran_result.txt v(in) v(out)
+.endc
+.end

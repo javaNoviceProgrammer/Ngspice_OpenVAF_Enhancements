@@ -1,0 +1,21 @@
+`include "disciplines.vams"
+
+// Demonstrates the Enhancement-7 fix: ordinary real/integer analog-block
+// variables now genuinely persist their value across evaluations. Before
+// the fix, `accum` would reset to 0.0 on *every* evaluation (a pre-existing
+// bug unrelated to any event-control statement), so V(out) would stay
+// flat at exactly 1.0 forever no matter how long the transient runs.
+// With the fix, accum accumulates: this is purely a diagnostic counter (it
+// increments once per simulator evaluation, not once per physical
+// timepoint, so it is *not* a meaningful function of V(in) -- see the
+// DC/AC notes below), useful only to prove that state genuinely survives
+// between calls.
+module persist_demo(in, out);
+    inout in, out;
+    electrical in, out;
+    real accum;
+    analog begin
+        accum = accum + 1.0;
+        V(out) <+ accum;
+    end
+endmodule

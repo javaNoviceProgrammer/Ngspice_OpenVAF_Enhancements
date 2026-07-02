@@ -1,0 +1,16 @@
+* initial_step_demo transient: V(out) tracks V(in) (slope 1) riding on a
+* slowly-rising baseline (accum increments once per evaluation) -- the
+* baseline starts near seed=100 (set exactly once) rather than resetting
+* to 100 at every timepoint, which is the behavior this enhancement fixed.
+.model ism initial_step_demo(seed=100.0)
+vin in 0 sin(0 1 100k)
+n1 in out ism
+rload out 0 1k
+
+.tran 0.5u 20u
+.control
+pre_osdi initial_step_demo.osdi
+run
+wrdata tran_result.txt v(in) v(out)
+.endc
+.end

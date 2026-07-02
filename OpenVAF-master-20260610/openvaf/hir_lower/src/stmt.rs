@@ -1,4 +1,7 @@
-use hir::{BranchWrite, Case, CaseCond, ContributeKind, ExprId, Node, Stmt, StmtId, Type};
+use hir::{
+    BranchWrite, Case, CaseCond, ContributeKind, Event, ExprId, GlobalEvent, Node, Stmt, StmtId,
+    Type,
+};
 use mir::builder::InstBuilder;
 use mir::{Opcode, Value, F_ZERO};
 
@@ -17,10 +20,7 @@ impl BodyLoweringCtx<'_, '_, '_> {
             Stmt::Expr(expr) => {
                 self.lower_expr(expr);
             }
-            Stmt::EventControl { body, .. } => {
-                // TODO handle porperly
-                self.lower_stmt(body);
-            }
+            Stmt::EventControl { event, body } => self.lower_event_control(event, body),
             Stmt::Assignment { lhs, rhs } => {
                 let val_ = self.lower_expr(rhs);
                 self.ctx.def_place(lhs.into(), val_);
@@ -59,6 +59,34 @@ impl BodyLoweringCtx<'_, '_, '_> {
             }
             Stmt::WhileLoop { cond, body } => self.lower_loop(cond, |s| s.lower_stmt(body)),
             Stmt::Case { discr, case_arms } => self.lower_case(discr, case_arms),
+        }
+    }
+
+    /// Lowers `@(event) body;`. `@(initial_step)` gates `body` on
+    /// `ParamKind::IsInitialStep`, a simulator-provided flag that is true only
+    /// on an instance's first evaluation (see `openvaf/osdi/src/eval.rs` and
+    /// `ngspice-46/src/osdi/osdiload.c` -- a one-shot, per-instance
+    /// approximation of the LRM's "fires once per analysis" semantics).
+    /// `@(final_step)` fails safe: rather than firing on every evaluation
+    /// (the pre-Enhancement-7 bug, since the event was previously discarded
+    /// entirely), it does not fire at all until genuine simulator-lifecycle
+    /// "about to finish" detection is implemented -- a documented limitation,
+    /// not a silent wrong answer.
+    fn lower_event_control(&mut self, event: &Event, body: StmtId) {
+        let Event::Global { kind, .. } = event else { return };
+        match kind {
+            GlobalEvent::InitialStep => {
+                let cond = self.ctx.use_param(ParamKind::IsInitialStep);
+                self.ctx.make_cond(cond, |ctx, branch| {
+                    if branch {
+                        BodyLoweringCtx { ctx, body: self.body, path: self.path }
+                            .lower_stmt(body);
+                    }
+                });
+            }
+            GlobalEvent::FinalStep => {
+                // Not fired -- see doc comment above.
+            }
         }
     }
 

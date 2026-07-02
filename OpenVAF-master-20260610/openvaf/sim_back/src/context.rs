@@ -1,6 +1,8 @@
+use std::collections::HashSet;
+
 use bitset::{BitSet, SparseBitMatrix};
-use hir::CompilationDB;
-use hir_lower::{HirInterner, MirBuilder, PlaceKind};
+use hir::{CompilationDB, Variable};
+use hir_lower::{HirInterner, MirBuilder, ParamKind, PlaceKind};
 use lasso::Rodeo;
 use mir::{Block, ControlFlowGraph, DominatorTree, Function, Inst, InstructionData, Value};
 use mir_opt::{
@@ -33,26 +35,59 @@ pub enum OptimiziationStage {
 
 impl<'a> Context<'a> {
     pub fn new(db: &'a CompilationDB, literals: &mut Rodeo, module: &'a ModuleInfo) -> Self {
+        let base_keep = |module: &ModuleInfo, kind: &PlaceKind| match *kind {
+            PlaceKind::Contribute { .. }
+            | PlaceKind::ImplicitResidual { .. }
+            | PlaceKind::CollapseImplicitEquation(_)
+            | PlaceKind::IsVoltageSrc(_)
+            | PlaceKind::BoundStep
+            | PlaceKind::AbsDelayTime(_)
+            | PlaceKind::LastCrossingDirection(_) => true,
+            PlaceKind::Var(var) => module.op_vars.contains_key(&var),
+            _ => false,
+        };
+
+        // Enhancement-7: a first, throwaway build (with the baseline predicate above,
+        // matching pre-Enhancement-7 behavior) to discover which `Variable`s are
+        // genuinely self-referentially read (i.e. their `ParamKind::HiddenState`
+        // parameter is actually live, not eliminated as dead) -- this can only be
+        // known after the whole body has been lowered once, so it can't be decided
+        // by a predicate closure run *during* construction. Rebuilding below with an
+        // expanded predicate that also keeps exactly these variables' outputs alive
+        // (not *every* variable unconditionally -- that broke
+        // `aggressive_dead_code_elimination`'s assumptions for genuinely-dead ones,
+        // caught by the existing dae/topology/init test suites) gives real
+        // cross-evaluation persistence without regressing anything else.
+        let needs_hidden_state: HashSet<Variable> = {
+            let (probe_func, probe_intern) =
+                MirBuilder::new(db, module.module, &|kind| base_keep(module, &kind), &mut module.op_vars.keys().copied())
+                    .with_equations()
+                    .with_tagged_writes()
+                    .build(literals);
+            probe_intern
+                .params
+                .iter()
+                .filter_map(|(kind, val)| match *kind {
+                    ParamKind::HiddenState(var) if !probe_func.dfg.value_dead(*val) => Some(var),
+                    _ => None,
+                })
+                .collect()
+        };
+
         let (mut func, mut intern) = MirBuilder::new(
             db,
             module.module,
             &|kind| match kind {
-                PlaceKind::Contribute { .. }
-                | PlaceKind::ImplicitResidual { .. }
-                | PlaceKind::CollapseImplicitEquation(_)
-                | PlaceKind::IsVoltageSrc(_)
-                | PlaceKind::BoundStep
-                | PlaceKind::AbsDelayTime(_)
-                | PlaceKind::LastCrossingDirection(_) => true,
-                PlaceKind::Var(var) => module.op_vars.contains_key(&var),
-                _ => false,
+                PlaceKind::Var(var) => {
+                    module.op_vars.contains_key(&var) || needs_hidden_state.contains(&var)
+                }
+                _ => base_keep(module, &kind),
             },
             &mut module.op_vars.keys().copied(),
         )
         .with_equations()
         .with_tagged_writes()
         .build(literals);
-        // TODO hidden state
         intern.insert_var_init(db, &mut func, literals);
 
         Context {
@@ -117,7 +152,10 @@ impl<'a> Context<'a> {
                 .extend(self.intern.outputs.values().copied().filter_map(PackedOption::expand));
         } else {
             for (kind, val) in self.intern.outputs.iter() {
-                if matches!(kind, PlaceKind::Var(var) if self.module.op_vars.contains_key(var))
+                if val.is_none() {
+                    continue;
+                }
+                if matches!(kind, PlaceKind::Var(_))
                     || matches!(kind, PlaceKind::CollapseImplicitEquation(_) | PlaceKind::BoundStep | PlaceKind::AbsDelayTime(_) | PlaceKind::LastCrossingDirection(_))
                 {
                     self.output_values.insert(val.unwrap_unchecked());

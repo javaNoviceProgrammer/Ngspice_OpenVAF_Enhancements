@@ -226,6 +226,14 @@ pub struct OsdiInstanceData<'ll> {
     pub delay_times: Vec<EvalOutputSlot>,
     /// One eval-output slot per last_crossing slot, storing the current `dir` value.
     pub last_crossing_dirs: Vec<EvalOutputSlot>,
+    /// Enhancement-7: one persistent eval-output slot per analog-block `Variable`,
+    /// storing its value across evaluations. Read (via `load_eval_output_slot`) at
+    /// the start of eval() to satisfy `ParamKind::HiddenState(var)`, then
+    /// overwritten with the variable's new final value at the end of the same
+    /// call -- the slot's storage is reused as both "previous" input and "new"
+    /// output, exactly like a plain persistent memory cell, since OSDI instance
+    /// memory is never reallocated between an instance's evaluations.
+    pub hidden_state: Vec<(Variable, EvalOutputSlot)>,
 }
 
 impl<'ll> OsdiInstanceData<'ll> {
@@ -305,6 +313,22 @@ impl<'ll> OsdiInstanceData<'ll> {
             })
             .collect();
 
+        let hidden_state: Vec<(Variable, EvalOutputSlot)> = module
+            .intern
+            .params
+            .iter()
+            .filter_map(|(kind, _)| match *kind {
+                ParamKind::HiddenState(var) => Some(var),
+                _ => None,
+            })
+            .filter_map(|var| {
+                let val = module.intern.outputs.get(&PlaceKind::Var(var))?;
+                let mut val = val.expand()?;
+                val = strip_optbarrier(module.eval, val);
+                Some((var, eval_outputs.insert_full(val, ty_f64).0))
+            })
+            .collect();
+
         let param_given = bitfield::arr_ty(params.len() as u32, cx);
         let jacobian_ptr = cx.ty_array(cx.ty_ptr(), module.dae_system.jacobian.len() as u32);
         let jacobian_ptr_react = cx.ty_array(cx.ty_ptr(), num_react);
@@ -357,6 +381,7 @@ impl<'ll> OsdiInstanceData<'ll> {
             bound_step,
             delay_times,
             last_crossing_dirs,
+            hidden_state,
         }
     }
 
@@ -415,6 +440,34 @@ impl<'ll> OsdiInstanceData<'ll> {
             LLVMOffsetOfElement(*target_data, NonNull::from(self.ty).as_ptr(), elem)
         } as u32;
         Some(off)
+    }
+
+    /// Enhancement-7: stores the final value of every persistent analog-block
+    /// `Variable` at the end of eval(), matching `store_delay_times`/
+    /// `store_last_crossing_dirs`.
+    pub unsafe fn store_hidden_state(
+        &self,
+        ptr: &'ll llvm_sys::LLVMValue,
+        builder: &mir_llvm::Builder<'_, '_, 'll>,
+    ) {
+        for &(_, slot) in &self.hidden_state {
+            self.store_eval_output_slot(slot, ptr, builder);
+        }
+    }
+
+    /// Enhancement-7: reads the value stored by the *previous* evaluation for
+    /// `var` (or its zero-initialized default on the very first evaluation --
+    /// OSDI instance memory is zero-allocated at setup), satisfying
+    /// `ParamKind::HiddenState(var)`. Must be called before `store_hidden_state`
+    /// overwrites the same slot later in the same eval() call.
+    pub unsafe fn read_hidden_state(
+        &self,
+        var: Variable,
+        ptr: &'ll llvm_sys::LLVMValue,
+        llbuilder: &llvm_sys::LLVMBuilder,
+    ) -> Option<&'ll llvm_sys::LLVMValue> {
+        let (_, slot) = self.hidden_state.iter().find(|(v, _)| *v == var)?;
+        Some(self.load_eval_output_slot(llbuilder, ptr, *slot))
     }
 
     pub unsafe fn param_ptr(
@@ -1269,6 +1322,7 @@ impl<'ll> OsdiCompilationUnit<'_, '_, 'll> {
                     | ParamKind::Abstime
                     | ParamKind::EnableIntegration
                     | ParamKind::EnableLim
+                    | ParamKind::IsInitialStep
                     | ParamKind::PrevState(_)
                     | ParamKind::NewState(_)
                     | ParamKind::ImplicitUnknown(_) => unreachable!(),
@@ -1352,6 +1406,7 @@ impl<'ll> OsdiCompilationUnit<'_, '_, 'll> {
                     | ParamKind::EnableIntegration { .. }
                     | ParamKind::Abstime
                     | ParamKind::EnableLim
+                    | ParamKind::IsInitialStep
                     | ParamKind::PrevState(_)
                     | ParamKind::NewState(_)
                     | ParamKind::ImplicitUnknown(_) => unreachable!(),

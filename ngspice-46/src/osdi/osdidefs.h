@@ -123,7 +123,21 @@ typedef struct OsdiExtraInstData {
   double **crossing_jac_z_csc;
   double **crossing_jac_z_cx;
 
+  /* Enhancement-7: true once this instance's eval() has been called at
+   * least once. Used by OSDIload to set EVAL_FLAG_IS_INITIAL_STEP on
+   * exactly the first call, gating Verilog-A `@(initial_step)` blocks.
+   * A per-instance, one-shot approximation of the LRM's "fires once per
+   * analysis" semantics -- see openvaf/osdi/src/eval.rs. */
+  bool has_evaluated;
+
 } ALIGN(MAX_ALIGN) OsdiExtraInstData;
+
+/* Enhancement-7: extra bit in the eval() `flags` input (see
+ * OsdiSimInfo.flags / eval_flags convention in osdi_0_4.h), set by
+ * OSDIload only on an instance's very first evaluation. Chosen well above
+ * the highest flag defined in osdi_0_4.h (ANALYSIS_NODESET = 1<<16) to
+ * avoid collision with the core ABI's flag space. */
+#define EVAL_FLAG_IS_INITIAL_STEP (1u << 20)
 
 typedef struct OsdiModelData {
   GENmodel gen;

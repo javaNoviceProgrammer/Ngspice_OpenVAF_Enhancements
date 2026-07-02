@@ -1,0 +1,28 @@
+`include "disciplines.vams"
+
+// Demonstrates the Enhancement-7 fix: a variable's declared initializer is
+// now applied exactly once (gated by the new ParamKind::IsInitialStep,
+// true only on an instance's first-ever evaluation), not reset on every
+// single evaluation as it was before the fix. `accum` starts at `seed`
+// (a parameter, so its effect is directly observable/tunable) and then
+// accumulates: if the pre-Enhancement-7 bug were still present, `accum`
+// would be reset to `seed` on every evaluation and V(out) would track
+// `seed + 1 + V(in)` flat forever, never accumulating.
+//
+// This uses an *implicit* (declared) initializer rather than an explicit
+// `@(initial_step) accum = seed;` statement -- a separate, deeper bug was
+// found in the sim_back::init cache-building pass that currently crashes
+// the compiler when an explicit @(initial_step)/@(final_step) statement
+// writes to a variable (tracked as a known limitation in Enhancement-7.md,
+// not yet fixed). The implicit path exercises the exact same underlying
+// IsInitialStep gating machinery without hitting that separate bug.
+module initial_step_demo(in, out);
+    inout in, out;
+    electrical in, out;
+    parameter real seed = 100.0 from [0:inf);
+    real accum = seed;
+    analog begin
+        accum = accum + 1.0;
+        V(out) <+ accum + V(in);
+    end
+endmodule

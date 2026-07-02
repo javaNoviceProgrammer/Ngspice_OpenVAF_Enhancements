@@ -1,0 +1,16 @@
+* initial_step_demo DC sweep: V(out) = accum + V(in), slope 1 in V(in),
+* offset dominated by the seed=100 value applied exactly once at the
+* start (plus small growth from Newton-iteration increments of accum
+* during the sweep itself).
+.model ism initial_step_demo(seed=100.0)
+vin in 0 dc 0
+n1 in out ism
+rload out 0 1k
+
+.dc vin -1 1 0.02
+.control
+pre_osdi initial_step_demo.osdi
+run
+wrdata dc_result.txt v(in) v(out)
+.endc
+.end

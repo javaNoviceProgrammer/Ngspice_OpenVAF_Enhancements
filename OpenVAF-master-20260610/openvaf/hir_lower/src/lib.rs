@@ -113,6 +113,10 @@ pub enum ParamKind {
     ParamSysFun(ParamSysFun),
     HiddenState(Variable),
     ImplicitUnknown(ImplicitEquation),
+    /// True only on the very first `eval()` call of this instance's lifetime (gates
+    /// `@(initial_step)`). A one-shot, monotonic approximation of the LRM's
+    /// "fires once per analysis" semantics -- see `Stmt::EventControl` lowering.
+    IsInitialStep,
 }
 
 impl ParamKind {
@@ -135,6 +139,7 @@ impl ParamKind {
                 | ParamKind::PrevState(_)
                 | ParamKind::NewState(_)
                 | ParamKind::EnableLim
+                | ParamKind::IsInitialStep
         )
     }
 }

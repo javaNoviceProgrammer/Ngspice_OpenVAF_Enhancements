@@ -234,6 +234,7 @@ int OSDIsetup(SMPmatrix *matrix, GENmodel *inModel, CKTcircuit *ckt,
       if (extra_inst_data->dt_given) {
         temp += extra_inst_data->dt;
       }
+      extra_inst_data->has_evaluated = false;
 
       /* find number of connected ports to allow evaluation of $port_connected
        * and to handle node collapsing correctly later
@@ -401,6 +402,7 @@ extern int OSDItemp(GENmodel *inModel, CKTcircuit *ckt) {
       if (extra_inst_data->dt_given) {
         temp += extra_inst_data->dt;
       }
+      extra_inst_data->has_evaluated = false;
 
       handle = (OsdiNgspiceHandle){.kind = 2, .name = gen_inst->GENname};
       /* find number of connected ports to allow evaluation of $port_connected

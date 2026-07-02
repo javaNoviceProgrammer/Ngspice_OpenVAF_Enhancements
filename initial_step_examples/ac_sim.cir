@@ -1,0 +1,15 @@
+* initial_step_demo AC response: d(out)/d(in) = 1 exactly (accum has zero
+* small-signal sensitivity to the input), so expect flat unity gain (0dB)
+* and 0 degrees phase across all frequencies.
+.model ism initial_step_demo(seed=100.0)
+vin in 0 dc 0 ac 1
+n1 in out ism
+rload out 0 1k
+
+.ac dec 10 1 100meg
+.control
+pre_osdi initial_step_demo.osdi
+run
+wrdata ac_result.txt v(in) v(out)
+.endc
+.end

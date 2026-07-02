@@ -1,0 +1,17 @@
+* persist_demo AC response: d(accum)/d(in) = 0 exactly (accum's recurrence
+* has zero dependence on V(in)), so expect ~zero small-signal gain --
+* confirms accum is a pure evaluation counter, not a signal-dependent
+* function, same documented-negative-result spirit as shift_examples/
+* transition_examples's off-threshold AC checks.
+.model pm persist_demo()
+vin in 0 dc 0 ac 1
+n1 in out pm
+rload out 0 1k
+
+.ac dec 10 1 100meg
+.control
+pre_osdi persist_demo.osdi
+run
+wrdata ac_result.txt v(in) v(out)
+.endc
+.end

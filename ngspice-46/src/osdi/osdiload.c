@@ -497,7 +497,19 @@ extern int OSDIload(GENmodel *inModel, CKTcircuit *ckt) {
 
       OsdiExtraInstData *extra_inst_data =
           osdi_extra_instance_data(entry, gen_inst);
-      eval(descr, gen_inst, inst, extra_inst_data, model, &sim_info);
+
+      /* Enhancement-7: set EVAL_FLAG_IS_INITIAL_STEP on exactly this
+       * instance's first evaluation, gating `@(initial_step)`. sim_info is
+       * shared across all instances in this sequential (non-OMP) loop, so
+       * the bit is added just for this call and cleared right after. */
+      if (!extra_inst_data->has_evaluated) {
+        sim_info.flags |= EVAL_FLAG_IS_INITIAL_STEP;
+        eval(descr, gen_inst, inst, extra_inst_data, model, &sim_info);
+        sim_info.flags &= ~EVAL_FLAG_IS_INITIAL_STEP;
+        extra_inst_data->has_evaluated = true;
+      } else {
+        eval(descr, gen_inst, inst, extra_inst_data, model, &sim_info);
+      }
 
       /* init small signal analysis does not require loading values into
        * matrix/rhs*/

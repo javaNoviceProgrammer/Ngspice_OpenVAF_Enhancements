@@ -38,8 +38,10 @@ pub use syntax::name::Name;
 
 pub use crate::attributes::AstCache;
 pub use crate::body::{
-    AssignmentLhs, Body, BodyRef, ContributeKind, Expr, ExprId, Ref, ResolvedFun, Stmt, StmtId,
+    AssignmentLhs, Body, BodyRef, ContributeKind, Event, Expr, ExprId, Ref, ResolvedFun, Stmt,
+    StmtId,
 };
+pub use hir_def::expr::GlobalEvent;
 pub use crate::db::CompilationDB;
 
 mod attributes;
