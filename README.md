@@ -119,7 +119,7 @@ Main goals:
 - `slew()`: AC response lands exactly on the predicted first-order tracking-loop pole (`K/2π ≈ 159MHz`); transient measured rise/fall rates match the specified bounds to 3+ significant figures
 - `zi_nd()`: AC response shows the expected `-3dB` corner *and* the documented bilinear frequency-warping artifact near the Nyquist rate; transient step response matches an RC step response closely
 - `last_crossing()`: transient output steps to the correct crossing times (e.g. `1.0000148e-5` vs theoretical `1.0e-5`, 0.015% error) on a 100kHz sine wave — two real bugs (an `int`/`real` cast bug and a shared-timeline initialization bug) were found only by testing against actual simulation, both compiled cleanly and were only visible at runtime
-- Verified for no regressions against the full existing test suite and against a real 277-device photonic chip simulation (`chip_0_0`) — bit-exact/floating-point-noise-level unchanged DC, AC, and transient results
+- Verified for no regressions against the full existing test suite — bit-exact/floating-point-noise-level unchanged DC, AC, and transient results
 - Deferred: `cross()`/`above()`/`timer()` need new `@()` event-control grammar (not just an OSDI extension), and `generate`/`genvar` blocks are unimplemented — both out of scope here, noted as follow-up work
 - Details: [Enhancement-6.md](Enhancement-6.md)
 
@@ -146,7 +146,7 @@ Main goals:
 - Both fixes verified against real ngspice DC/AC/Transient simulation — see `initial_step_examples/`, `variable_persistence_examples/`
 - `@(initial_step)`: verified via `--dump-mir` (a real conditional branch, not dead code) and a real ngspice run showing the gating flag set exactly once per instance
 - Variable persistence: a self-referential accumulator (`accum = accum + 1.0;`) now genuinely accumulates across transient timepoints instead of resetting to its default every evaluation
-- Verified for no regressions against the full existing test suite and against a real 277-device photonic chip simulation (`chip_0_0`) — bit-exact/floating-point-noise-level unchanged DC, AC, and transient results
+- Verified for no regressions against the full existing test suite — bit-exact/floating-point-noise-level unchanged DC, AC, and transient results
 - Known limitation (documented, not fixed): an *explicit* `@(initial_step)` statement that writes to a variable can crash the compiler — narrow edge case, redundant now that plain declared initializers get correct once-only gating automatically
 - Deferred to Enhancement 8: `cross()`/`above()`/`timer()` event operators and `generate`/`genvar` blocks — both remain fully unimplemented
 - Details: [Enhancement-7.md](Enhancement-7.md)
@@ -155,6 +155,50 @@ Main goals:
 
 <p align="center">
   <img src="./variable_persistence_examples/tran_plot.png" width="60%" alt="variable persistence transient result">
+</p>
+
+---
+
+## Enhancement 8: `generate for`/`genvar` and `cross()`/`above()`/`timer()` event-control
+
+*July 2026* — Implements the two features deferred from Enhancement 7. **`generate for`/`genvar`** (structural/declarative loop-based generation of nets, instances, variables, and parameters) is added as a new grammar production plus a text-level elaboration pass mirroring Enhancement 5's module-instantiation flattening, needing zero downstream (`hir_ty`/`mir*`/`sim_back`/`osdi`) changes. **`cross()`/`above()`/`timer()`** extend `@(...)`'s existing event-control grammar with real eval-granularity edge/timer detection (a persistent "previous value" slot, the same mechanism as Enhancement 7's variable persistence) — the original plan called for an OSDI ABI extension and `ngspice` breakpoint-forcing (`CKTsetBreak`), but this was descoped during implementation once eval-granularity detection proved sufficient, so **no OSDI ABI or `ngspice` C-side changes were needed** for the event functions themselves.
+
+Verifying the event functions' primary real-world use case — accumulating a persistent counter on each firing (`count = count + 1.0;` inside the event body) — surfaced a chain of three pre-existing, general compiler bugs (confirmed present in the unmodified pre-Enhancement-7 baseline, not introduced by this work), all now found and fixed: a dangling-reference bug in the CFG-simplifier's unreachable-block removal, a multi-exit post-dominance bug in the dominator-tree builder, and a block-merge bug that could corrupt which block the DAE builder treated as the function's true exit. A fourth, unrelated `ngspice` parsing bug was also found and fixed along the way: a multi-parameter `.model` card override silently dropped its first parameter.
+
+- `generate for`/`genvar`: verified via `--dump-mir` equivalence against a hand-written unrolled version (identical MIR/DAE shape) and a bit-exact ngspice DC sweep match on a `generate`-built resistor ladder — see `generate_examples/`
+- `cross()`/`above()`/`timer()`: verified via `--dump-unopt-mir` (genuine conditional branches on the edge-detection condition, not dead code) and real ngspice DC/AC/transient runs — see `cross_examples/`, `timer_examples/`
+- All three event functions now demonstrate genuine persistent-counter accumulation across firings (not just `$strobe` reporting), confirming the compiler-bug chain above is fully fixed
+- Verified for no regressions against the full existing test suite — bit-exact/floating-point-noise-level unchanged DC, AC, and transient results
+- Details: [Enhancement-8.md](Enhancement-8.md)
+
+**DC sweep** for `generate for`-built vs. hand-written resistor ladders (bit-exact match):
+
+<p align="center">
+  <img src="./generate_examples/dc.png" width="60%" alt="generate for DC sweep">
+</p>
+
+**DC / AC / Transient results** for `above()`'s persistent firing counter:
+
+<p align="center">
+  <img src="./cross_examples/above_dc.png" width="32%" alt="above() DC sweep">
+  <img src="./cross_examples/above_ac.png" width="32%" alt="above() AC response">
+  <img src="./cross_examples/above_tran.png" width="32%" alt="above() transient response">
+</p>
+
+**DC / AC / Transient results** for `cross()`'s persistent firing counter:
+
+<p align="center">
+  <img src="./cross_examples/cross_dc.png" width="32%" alt="cross() DC sweep">
+  <img src="./cross_examples/cross_ac.png" width="32%" alt="cross() AC response">
+  <img src="./cross_examples/cross_tran.png" width="32%" alt="cross() transient response">
+</p>
+
+**DC / AC / Transient results** for `timer()`'s persistent tick counter:
+
+<p align="center">
+  <img src="./timer_examples/timer_dc.png" width="32%" alt="timer() DC sweep">
+  <img src="./timer_examples/timer_ac.png" width="32%" alt="timer() AC response">
+  <img src="./timer_examples/timer_tran.png" width="32%" alt="timer() transient response">
 </p>
 
 ---

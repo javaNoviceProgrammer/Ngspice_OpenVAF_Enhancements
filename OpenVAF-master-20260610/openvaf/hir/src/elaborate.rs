@@ -48,7 +48,7 @@ use std::ops::Range;
 
 use basedb::{AstId, AstIdMap, BaseDB, VfsStorage};
 use hir_def::db::HirDefDB;
-use hir_def::item_tree::{bus_bit_name, BusDecl, ItemTree, Module as TreeModule, ModuleItem, Node};
+use hir_def::item_tree::{bus_bit_name, BusDecl, ItemTree, Module as TreeModule, ModuleItem};
 use hir_def::nameres::diagnostics::DefDiagnostic;
 use hir_def::ItemTreeId;
 use syntax::name::{AsName, Name};
@@ -56,6 +56,357 @@ use syntax::{ast, AstNode, ConstExprValue, Parse, SourceFile, TextRange, TextSiz
 use tokens::lexer::TokenKind;
 
 use crate::db::CompilationDB;
+
+/// Entry point for `generate for`/`genvar` elaboration, called once from
+/// [`CompilationDB::new`] *before* [`elaborate_instantiations`] -- so that
+/// any instantiation statements written inside a `generate for` body have
+/// already been unrolled into concrete text by the time instantiation
+/// elaboration runs its own (separate) pass over the file.
+///
+/// Unlike instantiation elaboration, this pass needs no semantic
+/// information at all (no target-module lookup, no port/parameter
+/// resolution) -- a `generate for` loop only ever repeats its own body
+/// verbatim, substituting one identifier (the genvar) with a per-iteration
+/// integer literal, so it operates purely on `db.parse(root_file)` (parsing
+/// has no `hir_def` dependency), without ever touching `item_tree`/
+/// `def_map`. This keeps `generate` elaboration independent of -- and
+/// strictly prior to -- any name-resolution machinery.
+///
+/// Scope (per Verilog-A LRM and this enhancement's design): `generate for`
+/// may only produce structural/declarative module items (net/instance/
+/// variable/parameter declarations) -- never an `analog` block. Only
+/// `generate for` is supported; `generate if`/`generate case` are out of
+/// scope (see module docs / Enhancement-8 writeup).
+pub(crate) fn elaborate_generates(db: &mut CompilationDB) -> anyhow::Result<()> {
+    let root_file = db.compilation_unit().root_file();
+    let parse = db.parse(root_file);
+
+    let has_any_generate = parse.tree().items().any(|item| {
+        matches!(&item, ast::Item::ModuleDecl(m) if m.module_items().any(|it| {
+            matches!(it, ast::ModuleItem::GenerateFor(_) | ast::ModuleItem::GenvarDecl(_))
+        }))
+    });
+    if !has_any_generate {
+        return Ok(());
+    }
+
+    let mut out = String::new();
+    for item in parse.tree().items() {
+        match item {
+            ast::Item::ModuleDecl(module_ast) => {
+                out.push_str(&render_module_with_generates(&module_ast)?);
+            }
+            other => out.push_str(&other.syntax().text().to_string()),
+        }
+        out.push('\n');
+    }
+
+    let synth_name = format!("{}__generated.va", db.vfs().read().file_path(root_file));
+    let file_id = db.vfs().write().add_virt_file(&synth_name, out.into());
+
+    let include_dirs = db.include_dirs(root_file);
+    db.set_include_dirs(file_id, include_dirs);
+    let macro_flags = db.macro_flags(root_file);
+    db.set_macro_flags(file_id, macro_flags);
+    let overwrites = db.global_lint_overwrites(root_file);
+    db.set_global_lint_overwrites(file_id, overwrites);
+
+    db.set_root_file(file_id);
+    Ok(())
+}
+
+/// Renders one top-level module, expanding any `generate for` bodies (and
+/// dropping any `genvar` declarations) it directly contains; a module with
+/// neither is returned verbatim, byte-for-byte, keeping this pass a no-op
+/// for the overwhelming majority of modules.
+fn render_module_with_generates(module_ast: &ast::ModuleDecl) -> anyhow::Result<String> {
+    let has_generate = module_ast.module_items().any(|it| {
+        matches!(it, ast::ModuleItem::GenerateFor(_) | ast::ModuleItem::GenvarDecl(_))
+    });
+    if !has_generate {
+        return Ok(module_ast.syntax().text().to_string());
+    }
+
+    let mut out = String::new();
+    for item in module_ast.module_items() {
+        match item {
+            ast::ModuleItem::GenvarDecl(_) => {
+                // Compile-time-only; dropped entirely, never reaches `hir_def`.
+            }
+            ast::ModuleItem::GenerateFor(gen_for) => {
+                out.push_str(&render_generate_for(&gen_for)?);
+            }
+            other => out.push_str(&other.syntax().text().to_string()),
+        }
+        out.push('\n');
+    }
+
+    let items: Vec<_> = module_ast.module_items().collect();
+    let base = module_ast.syntax().text_range().start();
+    let full = module_ast.syntax().text().to_string();
+    let rel_start = rel_range(base, items.first().unwrap().syntax().text_range()).start;
+    let rel_end = rel_range(base, items.last().unwrap().syntax().text_range()).end;
+    Ok(format!("{}{}{}", &full[..rel_start], out, &full[rel_end..]))
+}
+
+/// Constant-folds one side of a `generate for` header (loop bound,
+/// initializer, or step) via `ast::Expr::as_constexprval`, the same
+/// literal-only evaluator `hir_def::item_tree::lower::fold_width_range`
+/// uses for `[msb:lsb]` instance-array ranges. Only integer literals (and
+/// `+`/`-`-prefixed integer literals) fold; a parameter reference or other
+/// non-trivial expression does not, and is reported as a hard compile
+/// error by `render_generate_for`'s caller (there is no per-module
+/// `hir_def`/`ItemTree` diagnostic channel available yet at this point in
+/// the pipeline -- see this module's `elaborate_generates` doc comment).
+fn fold_int(expr: &ast::Expr) -> Option<i32> {
+    match expr.as_constexprval()? {
+        ConstExprValue::Int(i) => Some(i),
+        _ => None,
+    }
+}
+
+/// A tiny integer-only constant-expression evaluator used to fold bit-select
+/// indices (`node[i+1]`) once the genvar has a known per-iteration value:
+/// integer literals (via `as_constexprval`), `+`/`-`-prefixed literals,
+/// `+ - * /` binary combinations thereof, and a single bare identifier
+/// looked up in `env` (the current genvar -> value binding). This is
+/// intentionally much smaller than a general compile-time interpreter --
+/// just enough to fold `i`, `i+1`, `i-1`, `2*i`, etc. inside a bit-select or
+/// instance-array-range position.
+fn eval_int_expr(expr: &ast::Expr, env: &HashMap<String, i32>) -> Option<i32> {
+    if let Some(v) = fold_int(expr) {
+        return Some(v);
+    }
+    match expr {
+        ast::Expr::PathExpr(p) => {
+            let ident = p.path()?.as_raw_ident()?;
+            env.get(ident.text()).copied()
+        }
+        ast::Expr::ParenExpr(p) => eval_int_expr(&p.expr()?, env),
+        ast::Expr::PrefixExpr(p) => {
+            let v = eval_int_expr(&p.expr()?, env)?;
+            match p.op_kind()? {
+                ast::UnaryOp::Neg => Some(-v),
+                ast::UnaryOp::Identity => Some(v),
+                _ => None,
+            }
+        }
+        ast::Expr::BinExpr(b) => {
+            let lhs = eval_int_expr(&b.lhs()?, env)?;
+            let rhs = eval_int_expr(&b.rhs()?, env)?;
+            match b.op_kind()? {
+                ast::BinaryOp::Addition => Some(lhs + rhs),
+                ast::BinaryOp::Subtraction => Some(lhs - rhs),
+                ast::BinaryOp::Multiplication => Some(lhs * rhs),
+                ast::BinaryOp::Division if rhs != 0 => Some(lhs / rhs),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Scans `body` (the *original*, already-parsed `generate for` body AST --
+/// not re-parsed text) for every `BitSelectExpr` (`ident[index]`, e.g.
+/// `node[i+1]`) whose `index` constant-folds against `env` (mapping the
+/// genvar's name to its current-iteration value), and returns one hole
+/// (relative to `base`, so directly usable against `body_text`'s coordinate
+/// space -- see `render_generate_for`) per match, replacing just the index
+/// sub-expression's byte range with its folded literal value -- e.g.
+/// `node[i+1]` becomes a hole turning `i+1` into `1`, so the *subsequent*
+/// whole-identifier genvar substitution pass (`apply_rename`) only ever has
+/// to rename bare `node`/`i` tokens outside of holes, never reason about
+/// arithmetic itself (which `render_with_holes`'s token-level substitution
+/// cannot do).
+fn fold_bit_select_indices(
+    body: &ast::GenerateBlock,
+    base: TextSize,
+    env: &HashMap<String, i32>,
+) -> Vec<(Range<usize>, String)> {
+    let mut holes = Vec::new();
+    for node in body.syntax().descendants() {
+        if let Some(sel) = ast::BitSelectExpr::cast(node) {
+            if let Some(index) = sel.index() {
+                if let Some(v) = eval_int_expr(&index, env) {
+                    holes.push((rel_range(base, index.syntax().text_range()), v.to_string()));
+                }
+            }
+        }
+    }
+    holes
+}
+
+/// Unrolls one `generate for (init; condition; incr) begin : label ... end`
+/// loop into `N` concatenated, genvar-substituted copies of its body.
+/// Supports the common ascending-loop shape required by the task scope:
+/// `genvar = <const-int>; genvar <op> <const-int>; genvar = genvar + <const-int>`
+/// (`<op>` is `<` or `<=`) -- i.e. a compile-time-constant-foldable
+/// iteration count, evaluated up front, not a general compile-time
+/// interpreter. Anything else is a hard elaboration error.
+fn render_generate_for(gen_for: &ast::GenerateFor) -> anyhow::Result<String> {
+    let init = gen_for
+        .init()
+        .ok_or_else(|| anyhow::anyhow!("generate for: missing loop-variable initializer"))?;
+    let incr = gen_for
+        .incr()
+        .ok_or_else(|| anyhow::anyhow!("generate for: missing loop increment"))?;
+    let condition = gen_for
+        .condition()
+        .ok_or_else(|| anyhow::anyhow!("generate for: missing loop condition"))?;
+    let body = gen_for
+        .body()
+        .ok_or_else(|| anyhow::anyhow!("generate for: missing 'begin : label ... end' body"))?;
+    let label = body
+        .label()
+        .ok_or_else(|| anyhow::anyhow!("generate for: body must be labelled ('begin : label ... end')"))?;
+
+    let genvar_name = init.lval().map(|e| e.syntax().text().to_string().trim().to_owned());
+    let genvar_name = genvar_name
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| anyhow::anyhow!("generate for: loop-variable initializer must assign a plain genvar identifier"))?;
+
+    let start = init
+        .rval()
+        .as_ref()
+        .and_then(fold_int)
+        .ok_or_else(|| anyhow::anyhow!(
+            "generate for: loop-variable initial value ('{genvar_name} = ...') must be a compile-time-constant integer -- NonConstantGenerateBound"
+        ))?;
+
+    // condition: `genvar < N` or `genvar <= N` (only the genvar-on-the-left
+    // shape is supported -- see doc comment).
+    let ast::Expr::BinExpr(cond_bin) = &condition else {
+        anyhow::bail!("generate for: condition must be a simple 'genvar < N' or 'genvar <= N' comparison");
+    };
+    let op = cond_bin.op_kind().ok_or_else(|| anyhow::anyhow!("generate for: unsupported condition operator"))?;
+    let inclusive = match op {
+        ast::BinaryOp::LesserTest => false,
+        ast::BinaryOp::LesserEqualTest => true,
+        _ => anyhow::bail!("generate for: only '<' and '<=' loop conditions are supported"),
+    };
+    let bound = cond_bin
+        .rhs()
+        .as_ref()
+        .and_then(fold_int)
+        .ok_or_else(|| anyhow::anyhow!(
+            "generate for: loop bound must be a compile-time-constant integer -- NonConstantGenerateBound"
+        ))?;
+
+    // incr: `genvar = genvar + step` (step constant-folds).
+    let incr_rval = incr
+        .rval()
+        .ok_or_else(|| anyhow::anyhow!("generate for: increment must assign a value to the genvar"))?;
+    let ast::Expr::BinExpr(incr_bin) = &incr_rval else {
+        anyhow::bail!("generate for: only the 'genvar = genvar + step' increment shape is supported");
+    };
+    if !matches!(incr_bin.op_kind(), Some(ast::BinaryOp::Addition)) {
+        anyhow::bail!("generate for: only an ascending ('+') increment is supported");
+    }
+    let step = incr_bin
+        .rhs()
+        .as_ref()
+        .and_then(fold_int)
+        .ok_or_else(|| anyhow::anyhow!(
+            "generate for: loop step must be a compile-time-constant integer -- NonConstantGenerateBound"
+        ))?;
+    if step <= 0 {
+        anyhow::bail!("generate for: loop step must be a positive integer (only ascending loops are supported)");
+    }
+
+    let mut count = 0u32;
+    let mut i = start;
+    while if inclusive { i <= bound } else { i < bound } {
+        i += step;
+        count += 1;
+        if count > 1_000_000 {
+            anyhow::bail!("generate for: loop bound too large (>1,000,000 iterations) -- refusing to unroll");
+        }
+    }
+
+    // Every name declared directly inside the block (instance names, net
+    // names, variable/parameter names) is disambiguated per iteration by
+    // suffixing it with the iteration's genvar value, exactly like an
+    // instance-array element's synthesized name (`r[2]`) in
+    // `hir_def::item_tree::Instantiation`/Enhancement-5 -- except using
+    // `_<value>` (a valid Verilog-A identifier suffix) since these names
+    // must remain ordinary top-level identifiers, not bus-bit-select
+    // syntax.
+    let declared_names = collect_declared_names(&body);
+
+    let body_base = body.syntax().text_range().start();
+    let item_ranges: Vec<Range<usize>> =
+        body.items().map(|it| rel_range(body_base, it.syntax().text_range())).collect();
+    let full_body = body.syntax().text().to_string();
+    let (body_text, text_base) = match (item_ranges.first(), item_ranges.last()) {
+        (Some(first), Some(last)) => {
+            (full_body[first.start..last.end].to_string(), body_base + TextSize::try_from(first.start).unwrap())
+        }
+        _ => (String::new(), body_base),
+    };
+
+    let mut out = String::new();
+    let mut value = start;
+    for _ in 0..count {
+        let mut scope = Scope::default();
+        scope.subst.insert(genvar_name.clone(), value.to_string());
+        for name in &declared_names {
+            scope.subst.insert(name.clone(), format!("{name}_{value}"));
+        }
+        let mut env = HashMap::new();
+        env.insert(genvar_name.clone(), value);
+        // Holes are computed relative to `text_base` (the start of
+        // `body_text` itself, i.e. the first body item), matching
+        // `body_text`'s own coordinate space -- not `body_base` (the start
+        // of the whole `begin : label ... end` block, which includes the
+        // label header `body_text` has already had stripped off).
+        let holes = fold_bit_select_indices(&body, text_base, &env);
+
+        out.push_str(&format!("// generate for {label}[{value}]\n"));
+        out.push_str(&render_with_holes(&body_text, &holes, &scope));
+        out.push('\n');
+        value += step;
+    }
+    Ok(out)
+}
+
+/// Collects the base names of everything declared directly inside a
+/// `generate for` body (net/port names, instance names, variable names,
+/// parameter names) -- these are exactly the identifiers that need a
+/// per-iteration disambiguating suffix (see `render_generate_for`); genvar
+/// substitution and references to *outer*-scope names (ordinary module
+/// nets/parameters used, but not declared, inside the block) are left
+/// alone.
+fn collect_declared_names(body: &ast::GenerateBlock) -> Vec<String> {
+    let mut names = Vec::new();
+    for item in body.items() {
+        match item {
+            ast::ModuleItem::NetDecl(decl) => {
+                names.extend(decl.names().map(|n| n.syntax().text().to_string()))
+            }
+            ast::ModuleItem::VarDecl(decl) => {
+                names.extend(decl.vars().filter_map(|v| v.name()).map(|n| n.syntax().text().to_string()))
+            }
+            ast::ModuleItem::ParamDecl(decl) => {
+                names.extend(decl.paras().filter_map(|p| p.name()).map(|n| n.syntax().text().to_string()))
+            }
+            ast::ModuleItem::Instantiation(inst) => {
+                names.extend(
+                    inst.instance_units().filter_map(|u| u.name()).map(|n| n.syntax().text().to_string()),
+                )
+            }
+            ast::ModuleItem::BranchDecl(decl) => {
+                names.extend(decl.names().map(|n| n.syntax().text().to_string()))
+            }
+            ast::ModuleItem::AliasParam(decl) => {
+                if let Some(n) = decl.name() {
+                    names.push(n.syntax().text().to_string());
+                }
+            }
+            _ => {}
+        }
+    }
+    names
+}
 
 /// Entry point, called once from [`CompilationDB::new`]. No-op (and cheap:
 /// one `item_tree` lookup) for the overwhelming majority of files, which

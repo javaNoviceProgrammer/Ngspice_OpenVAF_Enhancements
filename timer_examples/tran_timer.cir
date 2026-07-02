@@ -1,0 +1,15 @@
+* timer() transient demo -- fires every period=1ms, first firing at t0=2ms.
+.model timermodel timer_demo(t0=2m period=1m)
+
+Ndut out timermodel
+Rload out 0 1meg
+
+.tran 10u 7m
+
+.control
+pre_osdi timer_demo.osdi
+run
+wrdata tran_timer.txt v(out)
+quit
+.endc
+.end

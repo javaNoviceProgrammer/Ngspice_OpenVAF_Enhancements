@@ -117,6 +117,13 @@ pub enum ParamKind {
     /// `@(initial_step)`). A one-shot, monotonic approximation of the LRM's
     /// "fires once per analysis" semantics -- see `Stmt::EventControl` lowering.
     IsInitialStep,
+    /// Enhancement-8: persistent real storage slot `i`, read at the start of `eval()` --
+    /// same read-at-start/store-at-end-of-eval() persistence as `HiddenState(Variable)`,
+    /// but for compiler-synthesized per-call-site state (`cross`/`above`/`timer` edge
+    /// detection) that has no source-level `Variable` to key off of. See
+    /// `PlaceKind::EventState` (the write side) and `openvaf/osdi/src/inst_data.rs`'s
+    /// `event_state`/`read_event_state`/`store_event_state`.
+    EventState(u32),
 }
 
 impl ParamKind {
@@ -140,6 +147,7 @@ impl ParamKind {
                 | ParamKind::NewState(_)
                 | ParamKind::EnableLim
                 | ParamKind::IsInitialStep
+                | ParamKind::EventState(_)
         )
     }
 }
@@ -204,6 +212,9 @@ pub enum PlaceKind {
     AbsDelayTime(u32),
     /// Stores the current value of `dir` for last_crossing slot `i` into instance data.
     LastCrossingDirection(u32),
+    /// Enhancement-8: stores the new value of `cross`/`above`/`timer` edge-detection
+    /// state slot `i` (the read side is `ParamKind::EventState(i)`) at the end of `eval()`.
+    EventState(u32),
 }
 
 impl PlaceKind {
@@ -217,7 +228,8 @@ impl PlaceKind {
             | PlaceKind::Contribute { .. }
             | PlaceKind::BoundStep
             | PlaceKind::AbsDelayTime(_)
-            | PlaceKind::LastCrossingDirection(_) => Type::Real,
+            | PlaceKind::LastCrossingDirection(_)
+            | PlaceKind::EventState(_) => Type::Real,
             PlaceKind::ParamMin(param) | PlaceKind::ParamMax(param) | PlaceKind::Param(param) => {
                 param.ty(db)
             }
@@ -271,6 +283,12 @@ pub struct HirInterner {
     pub last_crossing_equations: Vec<(ImplicitEquation, ImplicitEquation)>,
     /// Per indirect branch assignment slot: the free unknown's implicit equation.
     pub indirect_branch_equations: Vec<ImplicitEquation>,
+    /// Enhancement-8: number of `ParamKind::EventState`/`PlaceKind::EventState` slots
+    /// allocated so far -- one per `cross`/`above`/`timer` call site, handed out by
+    /// `hir_lower::stmt::lower_event_control`. No per-slot metadata is needed (unlike
+    /// `last_crossing_equations`): `openvaf/osdi/src/inst_data.rs` derives the live set of
+    /// `EventState` slots directly by scanning `intern.params`, exactly like `hidden_state`.
+    pub event_state_count: u32,
 }
 
 pub type LiveParams<'a> = FilterMap<
@@ -291,6 +309,7 @@ impl Default for HirInterner {
             absdelay_equations: Vec::default(),
             last_crossing_equations: Vec::default(),
             indirect_branch_equations: Vec::default(),
+            event_state_count: 0,
         }
     }
 }

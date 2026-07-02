@@ -234,6 +234,14 @@ pub struct OsdiInstanceData<'ll> {
     /// output, exactly like a plain persistent memory cell, since OSDI instance
     /// memory is never reallocated between an instance's evaluations.
     pub hidden_state: Vec<(Variable, EvalOutputSlot)>,
+    /// Enhancement-8: one persistent eval-output slot per live `cross`/`above`/`timer`
+    /// call-site edge-detection state (`ParamKind::EventState(i)`/`PlaceKind::EventState(i)`)
+    /// -- same read-at-start/store-at-end-of-eval() persistence as `hidden_state`, keyed by
+    /// the compiler-assigned slot index `i` (rather than a `Variable`) since these have no
+    /// source-level declaration. Indexed by a `Vec` rather than directly by `i` because dead
+    /// slots (optimized away, e.g. an unused `cross()` result) are skipped, same as
+    /// `hidden_state`/`delay_times`/`last_crossing_dirs`.
+    pub event_state: Vec<(u32, EvalOutputSlot)>,
 }
 
 impl<'ll> OsdiInstanceData<'ll> {
@@ -329,6 +337,15 @@ impl<'ll> OsdiInstanceData<'ll> {
             })
             .collect();
 
+        let event_state: Vec<(u32, EvalOutputSlot)> = (0..module.intern.event_state_count)
+            .filter_map(|i| {
+                let val = module.intern.outputs.get(&PlaceKind::EventState(i))?;
+                let mut val = val.expand()?;
+                val = strip_optbarrier(module.eval, val);
+                Some((i, eval_outputs.insert_full(val, ty_f64).0))
+            })
+            .collect();
+
         let param_given = bitfield::arr_ty(params.len() as u32, cx);
         let jacobian_ptr = cx.ty_array(cx.ty_ptr(), module.dae_system.jacobian.len() as u32);
         let jacobian_ptr_react = cx.ty_array(cx.ty_ptr(), num_react);
@@ -382,6 +399,7 @@ impl<'ll> OsdiInstanceData<'ll> {
             delay_times,
             last_crossing_dirs,
             hidden_state,
+            event_state,
         }
     }
 
@@ -467,6 +485,32 @@ impl<'ll> OsdiInstanceData<'ll> {
         llbuilder: &llvm_sys::LLVMBuilder,
     ) -> Option<&'ll llvm_sys::LLVMValue> {
         let (_, slot) = self.hidden_state.iter().find(|(v, _)| *v == var)?;
+        Some(self.load_eval_output_slot(llbuilder, ptr, *slot))
+    }
+
+    /// Enhancement-8: stores the new value of every live `cross`/`above`/`timer`
+    /// edge-detection state slot at the end of eval(), matching `store_hidden_state`.
+    pub unsafe fn store_event_state(
+        &self,
+        ptr: &'ll llvm_sys::LLVMValue,
+        builder: &mir_llvm::Builder<'_, '_, 'll>,
+    ) {
+        for &(_, slot) in &self.event_state {
+            self.store_eval_output_slot(slot, ptr, builder);
+        }
+    }
+
+    /// Enhancement-8: reads the value stored by the *previous* evaluation for
+    /// `cross`/`above`/`timer` state slot `idx` (or its zero-initialized default on the
+    /// very first evaluation), satisfying `ParamKind::EventState(idx)`. Must be called
+    /// before `store_event_state` overwrites the same slot later in the same eval() call.
+    pub unsafe fn read_event_state(
+        &self,
+        idx: u32,
+        ptr: &'ll llvm_sys::LLVMValue,
+        llbuilder: &llvm_sys::LLVMBuilder,
+    ) -> Option<&'ll llvm_sys::LLVMValue> {
+        let (_, slot) = self.event_state.iter().find(|(i, _)| *i == idx)?;
         Some(self.load_eval_output_slot(llbuilder, ptr, *slot))
     }
 
@@ -1313,7 +1357,7 @@ impl<'ll> OsdiCompilationUnit<'_, '_, 'll> {
                         .param_ptr(OsdiInstanceParam::Builtin(func), inst_ptr, llbuilder)
                         .unwrap(),
 
-                    ParamKind::HiddenState(_) => todo!("hidden state"),
+                    ParamKind::HiddenState(_) | ParamKind::EventState(_) => todo!("hidden state/event state"),
 
                     ParamKind::Voltage { .. }
                     | ParamKind::Current(_)
@@ -1397,7 +1441,7 @@ impl<'ll> OsdiCompilationUnit<'_, '_, 'll> {
                         .param_ptr(OsdiInstanceParam::Builtin(func), inst_ptr, llbuilder)
                         .unwrap(),
 
-                    ParamKind::HiddenState(_) => todo!("hidden state"),
+                    ParamKind::HiddenState(_) | ParamKind::EventState(_) => todo!("hidden state/event state"),
 
                     ParamKind::Voltage { .. }
                     | ParamKind::Current(_)

@@ -3,10 +3,25 @@ use hir::{
     Type,
 };
 use mir::builder::InstBuilder;
-use mir::{Opcode, Value, F_ZERO};
+use mir::{Opcode, Value, FALSE, F_ZERO, INFINITY, TRUE};
 
 use crate::body::BodyLoweringCtx;
+use crate::ctx::LoweringCtx;
 use crate::{CallBackKind, CurrentKind, ParamKind, PlaceKind};
+
+/// `a && b` built from already-lowered `Value`s (as opposed to
+/// `BodyLoweringCtx::lower_bin_op`'s `BooleanAnd`, which lowers an as-yet
+/// unlowered `ExprId` inside the branch) -- used by `lower_event_control`'s
+/// `cross`/`above`/`timer` edge-detection logic, which combines several
+/// already-computed boolean `Value`s rather than source-level expressions.
+fn bool_and(ctx: &mut LoweringCtx, a: Value, b: Value) -> Value {
+    ctx.make_select(a, |_, branch| if branch { b } else { FALSE })
+}
+
+/// `a || b`, see `bool_and`.
+fn bool_or(ctx: &mut LoweringCtx, a: Value, b: Value) -> Value {
+    ctx.make_select(a, |_, branch| if branch { TRUE } else { b })
+}
 
 impl BodyLoweringCtx<'_, '_, '_> {
     pub(super) fn lower_stmt(&mut self, stmnt: StmtId) {
@@ -73,21 +88,135 @@ impl BodyLoweringCtx<'_, '_, '_> {
     /// "about to finish" detection is implemented -- a documented limitation,
     /// not a silent wrong answer.
     fn lower_event_control(&mut self, event: &Event, body: StmtId) {
-        let Event::Global { kind, .. } = event else { return };
-        match kind {
-            GlobalEvent::InitialStep => {
-                let cond = self.ctx.use_param(ParamKind::IsInitialStep);
-                self.ctx.make_cond(cond, |ctx, branch| {
-                    if branch {
-                        BodyLoweringCtx { ctx, body: self.body, path: self.path }
-                            .lower_stmt(body);
-                    }
-                });
+        let fired = match event {
+            Event::Global { kind: GlobalEvent::InitialStep, .. } => {
+                self.ctx.use_param(ParamKind::IsInitialStep)
             }
-            GlobalEvent::FinalStep => {
+            Event::Global { kind: GlobalEvent::FinalStep, .. } => {
                 // Not fired -- see doc comment above.
+                return;
             }
-        }
+            Event::Cross { expr, dir } => self.lower_cross(*expr, *dir),
+            Event::Above { expr } => self.lower_above(*expr),
+            Event::Timer { t0, period } => self.lower_timer(*t0, *period),
+            // `Event` is `#[non_exhaustive]` (hir_def/src/expr.rs) for forward-compatibility
+            // with unimplemented LRM event kinds; every variant that actually exists today is
+            // handled above.
+            _ => unreachable!("all Event variants are handled above"),
+        };
+
+        self.ctx.make_cond(fired, |ctx, branch| {
+            if branch {
+                BodyLoweringCtx { ctx, body: self.body, path: self.path }.lower_stmt(body);
+            }
+        });
+    }
+
+    /// Allocates a fresh `ParamKind::EventState(i)`/`PlaceKind::EventState(i)` persistent
+    /// storage slot (see their doc comments) and returns `(raw_prev, idx)`, where `raw_prev`
+    /// is the *unconditional* read of the slot -- garbage/zero-initialized on an instance's
+    /// true first evaluation, since OSDI instance memory starts zeroed and `EventState` has
+    /// no source-level initializer to select on the way `HiddenState(var)` does (see
+    /// `state::insert_var_init`). Callers must combine `raw_prev` with
+    /// `ParamKind::IsInitialStep` themselves to get a *meaningful* "previous" value (e.g.
+    /// seeding it with the current value on the first evaluation, so no spurious edge fires) --
+    /// there's no single sensible default across `cross`/`above`/`timer`, so it isn't baked
+    /// in here.
+    fn new_event_state(&mut self) -> (Value, u32) {
+        let idx = self.ctx.intern.event_state_count;
+        self.ctx.intern.event_state_count += 1;
+        (self.ctx.use_param(ParamKind::EventState(idx)), idx)
+    }
+
+    /// Lowers `@(above(expr))`: fires on the evaluation where `expr` transitions from `<= 0`
+    /// to `> 0`, relative to the *previous evaluation's* value (not the previous accepted
+    /// timepoint -- same per-`eval()`-call persistence granularity Enhancement-7 established
+    /// for ordinary variable persistence; see `hir_lower/src/state.rs`). The first evaluation
+    /// never fires (there is no real "previous" sample yet): `raw_prev` is seeded with the
+    /// current value itself on `IsInitialStep`, making the first "transition" trivially a
+    /// non-transition.
+    fn lower_above(&mut self, expr: ExprId) -> Value {
+        let current = self.lower_expr(expr);
+        let (raw_prev, idx) = self.new_event_state();
+        let is_initial = self.ctx.use_param(ParamKind::IsInitialStep);
+        let prev = self.ctx.make_select(is_initial, |_, branch| if branch { current } else { raw_prev });
+
+        let was_below = self.ctx.ins().fle(prev, F_ZERO);
+        let is_above = self.ctx.ins().fgt(current, F_ZERO);
+        let fired = bool_and(self.ctx, was_below, is_above);
+
+        self.ctx.def_place(PlaceKind::EventState(idx), current);
+        fired
+    }
+
+    /// Lowers `@(cross(expr, dir))`: fires on any evaluation-to-evaluation zero-crossing of
+    /// `expr` (same persistence granularity as `lower_above`), filtered by `dir` (`< 0`:
+    /// falling only, `> 0`: rising only, `== 0`/absent: either -- `dir` is read as an
+    /// ordinary runtime `Value`, not assumed constant, mirroring how `last_crossing`'s own
+    /// `dir` argument is handled in `hir_lower::expr::lower_last_crossing`).
+    fn lower_cross(&mut self, expr: ExprId, dir: Option<ExprId>) -> Value {
+        let current = self.lower_expr(expr);
+        let (raw_prev, idx) = self.new_event_state();
+        let is_initial = self.ctx.use_param(ParamKind::IsInitialStep);
+        let prev = self.ctx.make_select(is_initial, |_, branch| if branch { current } else { raw_prev });
+
+        let prev_le = self.ctx.ins().fle(prev, F_ZERO);
+        let cur_gt = self.ctx.ins().fgt(current, F_ZERO);
+        let rising = bool_and(self.ctx, prev_le, cur_gt);
+
+        let prev_ge = self.ctx.ins().fge(prev, F_ZERO);
+        let cur_lt = self.ctx.ins().flt(current, F_ZERO);
+        let falling = bool_and(self.ctx, prev_ge, cur_lt);
+
+        let either = bool_or(self.ctx, rising, falling);
+
+        let fired = if let Some(dir) = dir {
+            let dir = self.lower_expr(dir);
+            let dir_pos = self.ctx.ins().fgt(dir, F_ZERO);
+            let dir_neg = self.ctx.ins().flt(dir, F_ZERO);
+            let fired_pos = bool_and(self.ctx, dir_pos, rising);
+            let fired_neg = bool_and(self.ctx, dir_neg, falling);
+            let dir_le = self.ctx.ins().fle(dir, F_ZERO);
+            let dir_ge = self.ctx.ins().fge(dir, F_ZERO);
+            let dir_is_zero = bool_and(self.ctx, dir_le, dir_ge);
+            let fired_either = bool_and(self.ctx, dir_is_zero, either);
+            let fired_pos_or_neg = bool_or(self.ctx, fired_pos, fired_neg);
+            bool_or(self.ctx, fired_pos_or_neg, fired_either)
+        } else {
+            either
+        };
+
+        self.ctx.def_place(PlaceKind::EventState(idx), current);
+        fired
+    }
+
+    /// Lowers `@(timer(t0, period))`: fires on the first evaluation whose `Abstime >=` the
+    /// next scheduled fire time (initially `t0`); a periodic timer (`period` present)
+    /// reschedules by one `period` each time it fires, a one-shot timer (`period` absent)
+    /// reschedules to `INFINITY` (never fires again). Like `above`/`cross`, detection happens
+    /// at `eval()`-call granularity -- the simulator's own (adaptive) timestep, not an
+    /// exact forced breakpoint; see `Enhancement-8.md`'s known limitations for why exact
+    /// breakpoint-forcing (`CKTsetBreak`) was descoped in favor of this simpler, still-real
+    /// mechanism.
+    fn lower_timer(&mut self, t0: ExprId, period: Option<ExprId>) -> Value {
+        let t0 = self.lower_expr(t0);
+        let (raw_next, idx) = self.new_event_state();
+        let is_initial = self.ctx.use_param(ParamKind::IsInitialStep);
+        let next = self.ctx.make_select(is_initial, |_, branch| if branch { t0 } else { raw_next });
+
+        let abstime = self.ctx.use_param(ParamKind::Abstime);
+        let fired = self.ctx.ins().fge(abstime, next);
+
+        let rescheduled = if let Some(period) = period {
+            let period = self.lower_expr(period);
+            self.ctx.ins().fadd(next, period)
+        } else {
+            INFINITY
+        };
+        let new_next = self.ctx.make_select(fired, |_, branch| if branch { rescheduled } else { next });
+
+        self.ctx.def_place(PlaceKind::EventState(idx), new_next);
+        fired
     }
 
     fn lower_case(&mut self, discr: ExprId, case_arms: &[Case]) {

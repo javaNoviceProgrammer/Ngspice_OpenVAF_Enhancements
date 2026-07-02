@@ -1,0 +1,15 @@
+* cross() transient demo -- V(in) = 2*sin(2*pi*1k*t), thresh = 0, dir = 0 (either).
+.model crossmodel cross_demo(thresh=0.0 dir=0.0)
+
+Vin in 0 DC 0 SIN(0 2 1k)
+Ndut in out crossmodel
+
+.tran 1u 3m
+
+.control
+pre_osdi cross_demo.osdi
+run
+wrdata tran_cross.txt v(in) v(out)
+quit
+.endc
+.end

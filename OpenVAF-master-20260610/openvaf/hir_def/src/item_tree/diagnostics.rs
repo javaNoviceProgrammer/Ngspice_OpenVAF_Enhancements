@@ -108,6 +108,25 @@ impl Diagnostic for ItemTreeDiagnosticWrapped<'_> {
                             .to_owned(),
                     ])
             }
+            ItemTreeDiagnostic::UnelaboratedGenerate { ast_id } => {
+                let range = self.ast_id_map.get_syntax(*ast_id).range();
+                let span = self.parse.to_file_span(range, self.sm);
+                Report::error()
+                    .with_message("`generate`/`genvar` construct could not be elaborated")
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: span.file,
+                        range: span.range.into(),
+                        message: "loop bounds must constant-fold to integers at compile time"
+                            .to_owned(),
+                    }])
+                    .with_notes(vec![
+                        "help: `generate for` requires a genvar loop of the form \
+                         `for (i = <const>; i <op> <const>; i = i +/- <const>)`, with only \
+                         structural items (nets, instances, vars, params) in its body"
+                            .to_owned(),
+                    ])
+            }
             ItemTreeDiagnostic::ArrayVarUnsupportedScope { ast_id } => {
                 let range = self.ast_id_map.get_syntax(*ast_id).range();
                 let span = self.parse.to_file_span(range, self.sm);

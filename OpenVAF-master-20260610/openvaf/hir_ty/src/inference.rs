@@ -6,7 +6,7 @@ use ahash::AHashMap;
 use arena::ArenaMap;
 use hir_def::body::Body;
 use hir_def::db::HirDefDB;
-use hir_def::expr::{CaseCond, Literal};
+use hir_def::expr::{CaseCond, Event, Literal};
 use hir_def::nameres::diagnostics::PathResolveError;
 use hir_def::nameres::{NatureAccess, ResolvedPath, ScopeDefItem, ScopeDefItemKind};
 use hir_def::{
@@ -145,6 +145,8 @@ impl Ctx<'_> {
             Stmt::ForLoop { cond, .. } | Stmt::If { cond, .. } | Stmt::WhileLoop { cond, .. } => {
                 self.infere_cond(stmt, cond)
             }
+
+            Stmt::EventControl { ref event, .. } => self.infere_event_control(stmt, event),
 
             Stmt::Case { discr, ref case_arms } => {
                 if let Some(ty) = self.infere_expr(stmt, discr) {
@@ -349,6 +351,23 @@ impl Ctx<'_> {
     fn infere_cond(&mut self, stmt: StmtId, expr: ExprId) {
         if let Some(ty) = self.infere_expr(stmt, expr) {
             self.expect::<false>(expr, None, ty, Cow::Borrowed(&[TyRequirement::Condition]));
+        }
+    }
+
+    /// Type-checks the arguments of `@(cross(...))`/`@(above(...))`/
+    /// `@(timer(...))` -- all real-valued (a watched signal expression, an
+    /// optional constant direction, a time, an optional constant period) --
+    /// the same self-referential `infere_expr` + `expect` pattern used for
+    /// e.g. `laplace`'s numerator/denominator arguments
+    /// (`infere_laplace_array_arg`). `Event::Global` carries no exprs and is
+    /// a no-op here.
+    fn infere_event_control(&mut self, stmt: StmtId, event: &Event) {
+        let mut exprs = Vec::new();
+        event.walk_child_exprs(|e| exprs.push(e));
+        for expr in exprs {
+            if let Some(ty) = self.infere_expr(stmt, expr) {
+                self.expect::<false>(expr, None, ty, Cow::Borrowed(&[TyRequirement::Val(Type::Real)]));
+            }
         }
     }
 

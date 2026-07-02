@@ -165,6 +165,8 @@ impl LowerCtx<'_> {
             GlobalEvent::InitialStep
         } else if event_stmt.final_step_token().is_some() {
             GlobalEvent::FinalStep
+        } else if let Some(condition) = event_stmt.condition() {
+            return self.collect_cross_above_timer(event_stmt, &condition);
         } else {
             return self.collect_opt_stmt(event_stmt.stmt());
         };
@@ -173,6 +175,64 @@ impl LowerCtx<'_> {
         let event = Event::Global { kind, phases };
         let stmt = Stmt::EventControl { event, body: self.collect_opt_stmt(event_stmt.stmt()) };
 
+        self.alloc_stmt(stmt, AstPtr::new(event_stmt).cast().unwrap(), event_stmt.attrs())
+    }
+
+    /// Recognizes `@(cross(expr, dir))` / `@(above(expr))` /
+    /// `@(timer(t0, period))` -- the only expressions ever legal in this
+    /// grammar position (see `EventStmt` in `veriloga.ungram`) -- by bare
+    /// function name, without going through general path resolution or
+    /// builtin-function dispatch: there is no general `cross`/`above`/
+    /// `timer` *value*-producing builtin, these three names only mean
+    /// anything as an `@(...)` event-control predicate.
+    ///
+    /// A malformed/unrecognized condition here degrades to the event being
+    /// dropped (body always fires unconditionally) rather than a hard
+    /// lowering error -- consistent with this module's existing "no
+    /// lowering-level diagnostic channel; malformed input degrades safely
+    /// rather than panicking" convention (parser-level diagnostics already
+    /// caught genuine syntax errors upstream; `hir_ty::validation` is the
+    /// right layer for a real "not a valid event-control expression"
+    /// diagnostic, not yet wired up here -- see `Enhancement-8.md` known
+    /// limitations).
+    fn collect_cross_above_timer(
+        &mut self,
+        event_stmt: &ast::EventStmt,
+        condition: &ast::Expr,
+    ) -> StmtId {
+        let fallback = |this: &mut Self| this.collect_opt_stmt(event_stmt.stmt());
+
+        let ast::Expr::Call(call) = condition else {
+            return fallback(self);
+        };
+        let name = call.function_ref().and_then(|fun| match fun {
+            FunctionRef::Path(path) => path.as_raw_ident().map(|t| t.text().to_owned()),
+            FunctionRef::SysFun(_) => None,
+        });
+        let mut args = call.arg_list().map(|list| list.args()).into_iter().flatten();
+
+        let event = match name.as_deref() {
+            Some("cross") => {
+                let Some(expr) = args.next() else { return fallback(self) };
+                let expr = self.collect_expr(expr);
+                let dir = args.next().map(|e| self.collect_expr(e));
+                Event::Cross { expr, dir }
+            }
+            Some("above") => {
+                let Some(expr) = args.next() else { return fallback(self) };
+                let expr = self.collect_expr(expr);
+                Event::Above { expr }
+            }
+            Some("timer") => {
+                let Some(t0) = args.next() else { return fallback(self) };
+                let t0 = self.collect_expr(t0);
+                let period = args.next().map(|e| self.collect_expr(e));
+                Event::Timer { t0, period }
+            }
+            _ => return fallback(self),
+        };
+
+        let stmt = Stmt::EventControl { event, body: self.collect_opt_stmt(event_stmt.stmt()) };
         self.alloc_stmt(stmt, AstPtr::new(event_stmt).cast().unwrap(), event_stmt.attrs())
     }
 

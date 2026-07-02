@@ -148,6 +148,7 @@ impl EventStmt {
         support::token(&self.syntax, T![final_step])
     }
     pub fn r_paren_token(&self) -> Option<SyntaxToken> { support::token(&self.syntax, T![')']) }
+    pub fn condition(&self) -> Option<Expr> { support::child(&self.syntax) }
     pub fn stmt(&self) -> Option<Stmt> { support::child(&self.syntax) }
 }
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -482,6 +483,35 @@ impl Instantiation {
     pub fn semicolon_token(&self) -> Option<SyntaxToken> { support::token(&self.syntax, T![;]) }
 }
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct GenvarDecl {
+    pub(crate) syntax: SyntaxNode,
+}
+impl ast::AttrsOwner for GenvarDecl {}
+impl GenvarDecl {
+    pub fn genvar_token(&self) -> Option<SyntaxToken> { support::token(&self.syntax, T![genvar]) }
+    pub fn names(&self) -> AstChildren<Name> { support::children(&self.syntax) }
+    pub fn semicolon_token(&self) -> Option<SyntaxToken> { support::token(&self.syntax, T![;]) }
+}
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct GenerateFor {
+    pub(crate) syntax: SyntaxNode,
+}
+impl ast::AttrsOwner for GenerateFor {}
+impl GenerateFor {
+    pub fn generate_token(&self) -> Option<SyntaxToken> {
+        support::token(&self.syntax, T![generate])
+    }
+    pub fn for_token(&self) -> Option<SyntaxToken> { support::token(&self.syntax, T![for]) }
+    pub fn l_paren_token(&self) -> Option<SyntaxToken> { support::token(&self.syntax, T!['(']) }
+    pub fn semicolon_token(&self) -> Option<SyntaxToken> { support::token(&self.syntax, T![;]) }
+    pub fn condition(&self) -> Option<Expr> { support::child(&self.syntax) }
+    pub fn r_paren_token(&self) -> Option<SyntaxToken> { support::token(&self.syntax, T![')']) }
+    pub fn body(&self) -> Option<GenerateBlock> { support::child(&self.syntax) }
+    pub fn endgenerate_token(&self) -> Option<SyntaxToken> {
+        support::token(&self.syntax, T![endgenerate])
+    }
+}
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ModulePort {
     pub(crate) syntax: SyntaxNode,
 }
@@ -610,6 +640,17 @@ impl PortConn {
     pub fn r_paren_token(&self) -> Option<SyntaxToken> { support::token(&self.syntax, T![')']) }
 }
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct GenerateBlock {
+    pub(crate) syntax: SyntaxNode,
+}
+impl GenerateBlock {
+    pub fn begin_token(&self) -> Option<SyntaxToken> { support::token(&self.syntax, T![begin]) }
+    pub fn colon_token(&self) -> Option<SyntaxToken> { support::token(&self.syntax, T![:]) }
+    pub fn label(&self) -> Option<Name> { support::child(&self.syntax) }
+    pub fn items(&self) -> AstChildren<ModuleItem> { support::children(&self.syntax) }
+    pub fn end_token(&self) -> Option<SyntaxToken> { support::token(&self.syntax, T![end]) }
+}
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Expr {
     PrefixExpr(PrefixExpr),
     BinExpr(BinExpr),
@@ -665,6 +706,8 @@ pub enum ModuleItem {
     ParamDecl(ParamDecl),
     AliasParam(AliasParam),
     Instantiation(Instantiation),
+    GenvarDecl(GenvarDecl),
+    GenerateFor(GenerateFor),
 }
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ModulePortKind {
@@ -1190,6 +1233,28 @@ impl AstNode for Instantiation {
     }
     fn syntax(&self) -> &SyntaxNode { &self.syntax }
 }
+impl AstNode for GenvarDecl {
+    fn can_cast(kind: SyntaxKind) -> bool { kind == GENVAR_DECL }
+    fn cast(syntax: SyntaxNode) -> Option<Self> {
+        if Self::can_cast(syntax.kind()) {
+            Some(Self { syntax })
+        } else {
+            None
+        }
+    }
+    fn syntax(&self) -> &SyntaxNode { &self.syntax }
+}
+impl AstNode for GenerateFor {
+    fn can_cast(kind: SyntaxKind) -> bool { kind == GENERATE_FOR }
+    fn cast(syntax: SyntaxNode) -> Option<Self> {
+        if Self::can_cast(syntax.kind()) {
+            Some(Self { syntax })
+        } else {
+            None
+        }
+    }
+    fn syntax(&self) -> &SyntaxNode { &self.syntax }
+}
 impl AstNode for ModulePort {
     fn can_cast(kind: SyntaxKind) -> bool { kind == MODULE_PORT }
     fn cast(syntax: SyntaxNode) -> Option<Self> {
@@ -1324,6 +1389,17 @@ impl AstNode for PortConns {
 }
 impl AstNode for PortConn {
     fn can_cast(kind: SyntaxKind) -> bool { kind == PORT_CONN }
+    fn cast(syntax: SyntaxNode) -> Option<Self> {
+        if Self::can_cast(syntax.kind()) {
+            Some(Self { syntax })
+        } else {
+            None
+        }
+    }
+    fn syntax(&self) -> &SyntaxNode { &self.syntax }
+}
+impl AstNode for GenerateBlock {
+    fn can_cast(kind: SyntaxKind) -> bool { kind == GENERATE_BLOCK }
     fn cast(syntax: SyntaxNode) -> Option<Self> {
         if Self::can_cast(syntax.kind()) {
             Some(Self { syntax })
@@ -1585,11 +1661,17 @@ impl From<AliasParam> for ModuleItem {
 impl From<Instantiation> for ModuleItem {
     fn from(node: Instantiation) -> ModuleItem { ModuleItem::Instantiation(node) }
 }
+impl From<GenvarDecl> for ModuleItem {
+    fn from(node: GenvarDecl) -> ModuleItem { ModuleItem::GenvarDecl(node) }
+}
+impl From<GenerateFor> for ModuleItem {
+    fn from(node: GenerateFor) -> ModuleItem { ModuleItem::GenerateFor(node) }
+}
 impl AstNode for ModuleItem {
     fn can_cast(kind: SyntaxKind) -> bool {
         match kind {
             BODY_PORT_DECL | NET_DECL | ANALOG_BEHAVIOUR | FUNCTION | BRANCH_DECL | VAR_DECL
-            | PARAM_DECL | ALIAS_PARAM | INSTANTIATION => true,
+            | PARAM_DECL | ALIAS_PARAM | INSTANTIATION | GENVAR_DECL | GENERATE_FOR => true,
             _ => false,
         }
     }
@@ -1604,6 +1686,8 @@ impl AstNode for ModuleItem {
             PARAM_DECL => ModuleItem::ParamDecl(ParamDecl { syntax }),
             ALIAS_PARAM => ModuleItem::AliasParam(AliasParam { syntax }),
             INSTANTIATION => ModuleItem::Instantiation(Instantiation { syntax }),
+            GENVAR_DECL => ModuleItem::GenvarDecl(GenvarDecl { syntax }),
+            GENERATE_FOR => ModuleItem::GenerateFor(GenerateFor { syntax }),
             _ => return None,
         };
         Some(res)
@@ -1619,6 +1703,8 @@ impl AstNode for ModuleItem {
             ModuleItem::ParamDecl(it) => &it.syntax,
             ModuleItem::AliasParam(it) => &it.syntax,
             ModuleItem::Instantiation(it) => &it.syntax,
+            ModuleItem::GenvarDecl(it) => &it.syntax,
+            ModuleItem::GenerateFor(it) => &it.syntax,
         }
     }
 }
@@ -1990,6 +2076,16 @@ impl std::fmt::Display for Instantiation {
         std::fmt::Display::fmt(self.syntax(), f)
     }
 }
+impl std::fmt::Display for GenvarDecl {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(self.syntax(), f)
+    }
+}
+impl std::fmt::Display for GenerateFor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(self.syntax(), f)
+    }
+}
 impl std::fmt::Display for ModulePort {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         std::fmt::Display::fmt(self.syntax(), f)
@@ -2051,6 +2147,11 @@ impl std::fmt::Display for PortConns {
     }
 }
 impl std::fmt::Display for PortConn {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(self.syntax(), f)
+    }
+}
+impl std::fmt::Display for GenerateBlock {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         std::fmt::Display::fmt(self.syntax(), f)
     }

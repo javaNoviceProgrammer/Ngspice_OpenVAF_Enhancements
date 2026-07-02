@@ -60,21 +60,28 @@ fn assign_or_expr(p: &mut Parser) -> bool {
 fn event_stmt(p: &mut Parser, m: Marker) {
     p.bump(T![@]);
     p.expect(T!['(']);
-    p.expect_ts_r(
-        TokenSet::new(&[INITIAL_STEP_KW, FINAL_STEP_KW]),
-        TokenSet::new(&[T![')'], T!['(']]),
-    );
-    if p.eat(T!['(']) {
-        while !p.at_ts(TokenSet::new(&[T![')'], T![begin], ENDMODULE_KW])) {
-            let mut succ = p.expect(STR_LIT);
-            if !p.at(T![')']) {
-                succ |= p.expect_with(T![,], &[T![')'], T![,]]);
-                if !succ {
-                    p.bump_any()
+    // `@(initial_step)`/`@(final_step)` (optionally analysis-phase-filtered)
+    // keep their original bare-keyword parse. Anything else -- in practice
+    // always a `cross(...)`/`above(...)`/`timer(...)` call, per the LRM's
+    // restriction on what's legal in this position -- falls through to an
+    // ordinary `Expr` parse (Enhancement-8; see `EventStmt` in
+    // `veriloga.ungram`).
+    if p.at_ts(TokenSet::new(&[INITIAL_STEP_KW, FINAL_STEP_KW])) {
+        p.bump_any();
+        if p.eat(T!['(']) {
+            while !p.at_ts(TokenSet::new(&[T![')'], T![begin], ENDMODULE_KW])) {
+                let mut succ = p.expect(STR_LIT);
+                if !p.at(T![')']) {
+                    succ |= p.expect_with(T![,], &[T![')'], T![,]]);
+                    if !succ {
+                        p.bump_any()
+                    }
                 }
             }
+            p.eat(T![')']);
         }
-        p.eat(T![')']);
+    } else {
+        expr(p);
     }
     p.expect(T![')']);
     stmt_with_attrs(p);

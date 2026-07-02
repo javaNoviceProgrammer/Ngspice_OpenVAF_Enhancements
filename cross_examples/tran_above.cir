@@ -1,0 +1,15 @@
+* above() transient demo -- V(in) = 2*sin(2*pi*1k*t), thresh = 1.0.
+.model abovemodel above_demo(thresh=1.0)
+
+Vin in 0 DC 0 SIN(0 2 1k)
+Ndut in out abovemodel
+
+.tran 1u 3m
+
+.control
+pre_osdi above_demo.osdi
+run
+wrdata tran_above.txt v(in) v(out)
+quit
+.endc
+.end

@@ -87,8 +87,15 @@ Case =
 
 
 
+// `@(initial_step)`/`@(final_step)` (optionally with an analysis-phase
+// filter, e.g. `@(initial_step("dc", "ac"))`), or -- new in Enhancement-8 --
+// `@(cross(expr, dir))`/`@(above(expr))`/`@(timer(t0, period))`, an ordinary
+// `Expr` (always a `Call`, per the LRM, since `cross`/`above`/`timer` are
+// only ever legal in this exact position -- see
+// `hir_def::body::lower::collect_event_stmt`, which recognizes them by name
+// rather than materializing them as a general builtin/function call).
 EventStmt =
-  AttrList* '@' '(' ('initial_step' | 'final_step') ('(' sim_phases: ('str_lit' (',' 'str_lit')*) ')')? ')' Stmt
+  AttrList* '@' '(' (('initial_step' | 'final_step') ('(' sim_phases: ('str_lit' (',' 'str_lit')*) ')')? | condition: Expr) ')' Stmt
 
 
 BlockStmt =
@@ -198,6 +205,8 @@ ModuleItem =
 | ParamDecl
 | AliasParam
 | Instantiation
+| GenvarDecl
+| GenerateFor
 
 ModulePorts = '('ports: (ModulePort (',' ModulePort)*)? ')'
 ModulePort = kind: ModulePortKind
@@ -283,3 +292,33 @@ PortConns =
 // empty (an open/unconnected port, e.g. the middle slot in `inst(a, , c)`).
 PortConn =
   ('.' name:Name '(' net:Expr ')') | net:Expr
+
+// `genvar i, j;` -- declares one or more compile-time-only loop variables,
+// only ever legal as the loop variable of a `GenerateFor`. Dropped entirely
+// by elaboration (see `openvaf/hir/src/elaborate.rs`); never reaches
+// `hir_def`.
+GenvarDecl =
+  AttrList* 'genvar' (Name (',' Name)*) ';'
+
+// `generate for (i = 0; i < N; i = i + 1) begin : label ... end endgenerate`
+// -- structural/declarative-only generation (LRM: no `analog` blocks may
+// appear inside). `init`/`incr` reuse the ordinary `Assign` statement grammar
+// (`i = 0`, `i = i + 1`); the loop bound (`N`, or any expression on either
+// side of `condition`) must constant-fold to an integer at compile time --
+// see `NonConstantGenerateBound` in `hir_def::item_tree`.
+GenerateFor =
+  AttrList* 'generate'
+    'for' '(' init: Assign ';' condition: Expr ';' incr: Assign ')'
+    body: GenerateBlock
+  'endgenerate'
+
+// The `begin : label ... end` body of a `generate for` loop. Unlike an
+// ordinary `BlockStmt`, its items are `ModuleItem`s (structural/declarative
+// only -- nets, instances, vars, params), not statements; a named label is
+// required (LRM) so per-iteration instance/net names can be disambiguated
+// (`r` -> `r_0`, `r_1`, ...) the same way an instance-array element already
+// is (see `Enhancement-5.md`).
+GenerateBlock =
+  'begin' ':' label:Name
+    items: ModuleItem*
+  'end'

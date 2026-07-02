@@ -1,0 +1,18 @@
+* cross() AC sweep -- pure pass-through V(out) <+ V(in), so this is a
+* "documented non-behavior" check: expect flat 0dB / 0deg (unity gain,
+* frequency-independent), since cross()'s edge detection has zero
+* small-signal sensitivity (it only gates a $strobe side effect).
+.model crossmodel cross_demo(thresh=0.0 dir=0.0)
+
+Vin in 0 DC 0 AC 1
+Ndut in out crossmodel
+
+.ac dec 20 1 1meg
+
+.control
+pre_osdi cross_demo.osdi
+run
+wrdata ac_cross.txt vdb(out) vp(out)
+quit
+.endc
+.end

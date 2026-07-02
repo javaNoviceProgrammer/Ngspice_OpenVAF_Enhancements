@@ -1,0 +1,22 @@
+* timer() AC sweep -- timer_demo has no voltage input, so this measures the
+* model's own small-signal output impedance: an AC current is injected
+* directly into the "out" node, and V(out)'s AC response is measured.
+* V(out) <+ 1.0 is a stiff (zero-impedance) contribution, so the injected
+* current should produce an AC response pinned at (numerically) zero across
+* the whole sweep -- a documented non-behavior check, same convention as
+* above()/cross()'s AC sims.
+.model timermodel timer_demo(t0=2m period=1m)
+
+Ndut out timermodel
+Rload out 0 1meg
+Iprobe 0 out DC 0 AC 1
+
+.ac dec 20 1 1meg
+
+.control
+pre_osdi timer_demo.osdi
+run
+wrdata ac_timer.txt vm(out) vp(out)
+quit
+.endc
+.end

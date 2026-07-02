@@ -1,0 +1,30 @@
+// Resistor ladder built with `generate for` / `genvar`: 4 series resistors
+// connecting node[0] (= "in") through node[4] (= "out"), each of value r.
+`include "disciplines.vams"
+
+module resistor(p, n);
+    inout p, n;
+    electrical p, n;
+    parameter real r = 1000;
+    analog begin
+        I(p, n) <+ V(p, n) / r;
+    end
+endmodule
+
+module ladder_generate(in, out);
+    inout in, out;
+    electrical in, out;
+    electrical [0:4] node;
+    genvar i;
+
+    // Bind the ladder's own ports to the ends of the internal node array.
+    resistor #(.r(1e3)) rin(in, node[0]);
+
+    generate
+        for (i = 0; i < 4; i = i + 1) begin : gen_block
+            resistor #(.r(1e3)) r(node[i], node[i+1]);
+        end
+    endgenerate
+
+    resistor #(.r(1e3)) rout(node[4], out);
+endmodule

@@ -1,0 +1,21 @@
+// Demonstrates `@(timer(t0, period))`: fires periodically, once per
+// `period` seconds starting at `t0`. Each firing increments a persistent
+// tick counter (`count`), which is exposed on V(out) -- see
+// Enhancement-8.md's "Known limitations" §1 for the fix that makes this
+// real-world use case possible.
+`include "disciplines.vams"
+
+module timer_demo(out);
+    inout out;
+    electrical out;
+    parameter real t0 = 1u;
+    parameter real period = 1u;
+    real count;
+    analog begin
+        @(timer(t0, period)) begin
+            count = count + 1.0;
+            $strobe("timer fired at t=%g count=%g", $abstime, count);
+        end
+        V(out) <+ count;
+    end
+endmodule

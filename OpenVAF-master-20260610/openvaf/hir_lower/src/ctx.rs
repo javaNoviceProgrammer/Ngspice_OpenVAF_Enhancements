@@ -85,6 +85,7 @@ impl<'a, 'c> LoweringCtx<'a, 'c> {
                 PlaceKind::IsVoltageSrc(_) => FALSE,
                 PlaceKind::BoundStep => INFINITY,
                 PlaceKind::AbsDelayTime(_) | PlaceKind::LastCrossingDirection(_) => F_ZERO,
+                PlaceKind::EventState(i) => self.use_param(ParamKind::EventState(i)),
             };
             let entry = self.func.func.layout.entry_block().unwrap();
             self.func.def_var_at(place, init, entry);

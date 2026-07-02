@@ -74,6 +74,13 @@ pub enum ItemTreeDiagnostic {
     /// literals; the instantiation was treated as a single (non-arrayed)
     /// instance instead.
     NonConstantInstanceArrayWidth { ast_id: ErasedAstId },
+    /// A `generate for`/`genvar` construct reached the item tree without
+    /// being fully elaborated away by `hir::elaborate::elaborate_generates`
+    /// (see that module) -- normally impossible (elaboration always strips
+    /// every such construct from the text before this stage runs), but kept
+    /// as a defensive fallback, e.g. for a loop bound/step that failed to
+    /// constant-fold. The construct is dropped (contributes no items).
+    UnelaboratedGenerate { ast_id: ErasedAstId },
 }
 
 impl Default for ItemTree {

@@ -1,0 +1,19 @@
+* timer() "DC sweep" -- timer_demo has no voltage input port (it's a purely
+* time-triggered generator: V(out) <+ 1.0 unconditionally, gated firing only
+* drives $strobe side effects), so there's no natural node to sweep. Sweep
+* TEMP instead, to confirm timer()'s scheduling/output has zero DC/bias
+* dependence -- V(out) must stay exactly 1.0 across the whole sweep.
+.model timermodel timer_demo(t0=2m period=1m)
+
+Ndut out timermodel
+Rload out 0 1meg
+
+.dc TEMP -40 125 5
+
+.control
+pre_osdi timer_demo.osdi
+run
+wrdata dc_timer.txt v(out)
+quit
+.endc
+.end

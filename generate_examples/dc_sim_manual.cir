@@ -1,0 +1,16 @@
+* hand-written resistor-ladder DC sweep (generate-for ground truth)
+.model laddermodel ladder_manual
+
+Vin in 0 DC 1.0
+Ndut in out laddermodel
+Rload out 0 1meg
+
+.dc Vin -2 2 0.5
+
+.control
+pre_osdi resistor_ladder_manual.osdi
+run
+wrdata dc_manual.txt v(in) v(out)
+quit
+.endc
+.end

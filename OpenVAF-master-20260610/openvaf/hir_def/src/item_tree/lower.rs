@@ -336,6 +336,19 @@ impl Ctx {
                 ast::ModuleItem::BranchDecl(branch) => self.lower_branch(branch, dst),
                 ast::ModuleItem::AliasParam(alias) => self.lower_alias_param(alias, dst),
                 ast::ModuleItem::Instantiation(inst) => self.lower_instantiation(inst, dst),
+                // `genvar`/`generate for` are always fully elaborated away
+                // (text-level, before this stage runs) by
+                // `hir::elaborate::elaborate_generates` -- see that module.
+                // Reaching here means elaboration bailed out (e.g. a loop
+                // bound that didn't constant-fold); drop the construct and
+                // leave a diagnostic rather than silently miscompiling.
+                ast::ModuleItem::GenvarDecl(_) => {}
+                ast::ModuleItem::GenerateFor(gen) => {
+                    let ast_id = self.source_ast_id_map.ast_id(&gen);
+                    self.tree
+                        .diagnostics
+                        .push(ItemTreeDiagnostic::UnelaboratedGenerate { ast_id: ast_id.into() });
+                }
             };
         }
     }

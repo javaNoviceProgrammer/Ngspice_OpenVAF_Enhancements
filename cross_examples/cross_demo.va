@@ -1,0 +1,22 @@
+// Demonstrates `@(cross(expr, dir))`: fires on a zero-crossing of
+// V(in) - thresh, filtered by `dir` (1 = rising only, -1 = falling only,
+// 0 = either). Each firing increments a persistent counter (`count`),
+// which is exposed on V(out) -- see Enhancement-8.md's "Known
+// limitations" §1 for the fix that makes this real-world use case
+// possible.
+`include "disciplines.vams"
+
+module cross_demo(in, out);
+    inout in, out;
+    electrical in, out;
+    parameter real thresh = 0.0;
+    parameter real dir = 1.0;
+    real count;
+    analog begin
+        @(cross(V(in) - thresh, dir)) begin
+            count = count + 1.0;
+            $strobe("cross fired at t=%g in=%g count=%g", $abstime, V(in), count);
+        end
+        V(out) <+ count;
+    end
+endmodule

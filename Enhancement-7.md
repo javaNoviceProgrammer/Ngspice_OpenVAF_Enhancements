@@ -89,9 +89,7 @@ end
 **Verified**: the accumulator model above now genuinely accumulates across
 timepoints (`1074, 1076, 1078, ...`, incrementing correctly once per Newton
 iteration/evaluation as expected); full existing workspace test suite
-passes with zero regressions; the real 277-device photonic chip regression
-(`chip_0_0`, DC/AC/transient) remains bit-exact / floating-point-noise-level
-identical to the pre-Enhancement-7 baseline.
+passes with zero regressions.
 
 ## 3. Known limitation: explicit `@(initial_step)` statements that write to a variable can crash the compiler
 

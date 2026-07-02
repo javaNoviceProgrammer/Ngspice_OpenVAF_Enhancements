@@ -1,0 +1,27 @@
+// Hand-written equivalent of resistor_ladder_generate.va's `ladder_generate`
+// module, without `generate for` -- 6 explicit resistor instantiations
+// (rin, r_0..r_3, rout) wired identically, used as the ground-truth
+// reference for the generate_examples/compare_ladder.py numeric check.
+`include "disciplines.vams"
+
+module resistor(p, n);
+    inout p, n;
+    electrical p, n;
+    parameter real r = 1000;
+    analog begin
+        I(p, n) <+ V(p, n) / r;
+    end
+endmodule
+
+module ladder_manual(in, out);
+    inout in, out;
+    electrical in, out;
+    electrical [0:4] node;
+
+    resistor #(.r(1e3)) rin(in, node[0]);
+    resistor #(.r(1e3)) r_0(node[0], node[1]);
+    resistor #(.r(1e3)) r_1(node[1], node[2]);
+    resistor #(.r(1e3)) r_2(node[2], node[3]);
+    resistor #(.r(1e3)) r_3(node[3], node[4]);
+    resistor #(.r(1e3)) rout(node[4], out);
+endmodule

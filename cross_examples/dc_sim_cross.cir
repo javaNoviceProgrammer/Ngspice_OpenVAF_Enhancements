@@ -1,0 +1,18 @@
+* cross() DC sweep -- V(out) <+ V(in) is a pure pass-through, so this is a
+* "documented non-behavior" check: cross()'s edge detection has no
+* observable effect on V(out) (it only gates a $strobe side effect), so DC
+* sweep must show an exact unity-gain line.
+.model crossmodel cross_demo(thresh=0.0 dir=0.0)
+
+Vin in 0 DC 0
+Ndut in out crossmodel
+
+.dc Vin -2 2 0.25
+
+.control
+pre_osdi cross_demo.osdi
+run
+wrdata dc_cross.txt v(in) v(out)
+quit
+.endc
+.end

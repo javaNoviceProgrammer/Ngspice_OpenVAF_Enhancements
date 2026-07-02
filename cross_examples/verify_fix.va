@@ -1,0 +1,12 @@
+`include "disciplines.vams"
+
+module verify_fix(in, out);
+    inout in, out;
+    electrical in, out;
+    real count;
+    analog begin
+        if (V(in) > 0.0)
+            count = 1.0;
+        V(out) <+ count;
+    end
+endmodule

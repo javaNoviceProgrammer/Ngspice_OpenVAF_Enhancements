@@ -260,6 +260,9 @@ impl<'ll> OsdiCompilationUnit<'_, '_, 'll> {
                         ParamKind::HiddenState(var) => inst_data
                             .read_hidden_state(var, instance, builder.llbuilder)
                             .unwrap_or_else(|| cx.const_real(0.0)),
+                        ParamKind::EventState(idx) => inst_data
+                            .read_event_state(idx, instance, builder.llbuilder)
+                            .unwrap_or_else(|| cx.const_real(0.0)),
                         ParamKind::IsInitialStep => {
                             let flags_val = flags.read(builder.llbuilder);
                             is_flag_set(cx, EVAL_FLAG_IS_INITIAL_STEP, flags_val, builder.llbuilder)
@@ -449,6 +452,7 @@ impl<'ll> OsdiCompilationUnit<'_, '_, 'll> {
             inst_data.store_delay_times(instance, &builder);
             inst_data.store_last_crossing_dirs(instance, &builder);
             inst_data.store_hidden_state(instance, &builder);
+            inst_data.store_event_state(instance, &builder);
 
             builder.ret();
         }

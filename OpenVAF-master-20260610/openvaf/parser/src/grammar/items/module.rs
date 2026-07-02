@@ -11,6 +11,8 @@ const MODULE_ITEM_RECOVERY: TokenSet = DIRECTION_TS.union(TokenSet::new(&[
     INTEGER_KW,
     PARAMETER_KW,
     LOCALPARAM_KW,
+    GENVAR_KW,
+    GENERATE_KW,
     ENDMODULE_KW,
     EOF,
 ]));
@@ -136,6 +138,12 @@ fn module_items(p: &mut Parser) {
             }
             BRANCH_KW => {
                 branch_decl(p, m);
+            }
+            GENVAR_KW => {
+                genvar_decl(p, m);
+            }
+            GENERATE_KW => {
+                generate_for(p, m);
             }
             INTEGER_KW | REAL_KW | STRING_KW => var_decl(p, m),
             INPUT_KW | OUTPUT_KW | INOUT_KW => port_decl::<false>(p, m),
@@ -334,4 +342,84 @@ fn port_conn(p: &mut Parser) {
         expr(p);
     }
     m.complete(p, PORT_CONN);
+}
+
+/// `genvar i, j;` -- one or more compile-time-only loop variables, only
+/// ever legal as the loop variable of a `generate for`.
+fn genvar_decl(p: &mut Parser, m: Marker) {
+    p.bump(GENVAR_KW);
+    decl_list(p, T![;], decl_name, MODULE_ITEM_OR_ATTR_RECOVERY);
+    p.eat(T![;]);
+    m.complete(p, GENVAR_DECL);
+}
+
+/// `i = 0` / `i = i + 1` -- a bare assignment (no trailing `;` consumed
+/// here; the caller controls the separator), reused for the `init`/`incr`
+/// clauses of a `generate for` header, mirroring `stmts::assign_or_expr`.
+fn generate_assign(p: &mut Parser) {
+    let m = p.start();
+    expr(p);
+    p.expect(T![=]);
+    expr(p);
+    m.complete(p, ASSIGN);
+}
+
+/// `generate for (i = 0; i < N; i = i + 1) begin : label ... end endgenerate`
+fn generate_for(p: &mut Parser, m: Marker) {
+    p.bump(GENERATE_KW);
+    p.expect(FOR_KW);
+    p.expect(T!['(']);
+    generate_assign(p);
+    p.expect(T![;]);
+    expr(p);
+    p.expect(T![;]);
+    generate_assign(p);
+    p.expect(T![')']);
+
+    generate_block(p);
+
+    p.expect(ENDGENERATE_KW);
+    m.complete(p, GENERATE_FOR);
+}
+
+const GENERATE_BLOCK_RECOVER: TokenSet = TokenSet::new(&[END_KW, EOF, ENDMODULE_KW, ENDGENERATE_KW]);
+
+/// The `begin : label ... end` body of a `generate for` loop. Its items are
+/// ordinary `ModuleItem`s (structural/declarative only), not statements.
+fn generate_block(p: &mut Parser) {
+    let m = p.start();
+    p.expect(BEGIN_KW);
+    p.expect(T![:]);
+    name(p);
+
+    while !p.at_ts(GENERATE_BLOCK_RECOVER) {
+        let m = p.start();
+        attrs(p, MODULE_ITEM_RECOVERY);
+        match p.current() {
+            IDENT if is_instantiation(p) => {
+                instantiation(p, m);
+            }
+            IDENT => {
+                net_decl::<false>(p, m);
+            }
+            NET_TYPE => {
+                net_decl::<true>(p, m);
+            }
+            PARAMETER_KW | LOCALPARAM_KW => {
+                parameter_decl(p, m);
+            }
+            INTEGER_KW | REAL_KW | STRING_KW => var_decl(p, m),
+            _ => {
+                m.abandon(p);
+                let err = p.unexpected_tokens_msg(vec![NET_DECL, INSTANTIATION, VAR_DECL]);
+                p.error(err);
+                p.bump_any();
+                while !p.at_ts(MODULE_ITEM_RECOVERY.union(GENERATE_BLOCK_RECOVER)) {
+                    p.bump_any();
+                }
+            }
+        }
+    }
+    p.expect(END_KW);
+    m.complete(p, GENERATE_BLOCK);
 }

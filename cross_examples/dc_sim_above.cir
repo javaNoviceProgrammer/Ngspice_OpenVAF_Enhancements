@@ -1,0 +1,19 @@
+* above() DC sweep -- V(out) <+ V(in) is a pure pass-through, so this is a
+* "documented non-behavior" check (like last_crossing_examples/
+* variable_persistence_examples in Enhancement-6/7): above()'s edge
+* detection has no observable effect on V(out) at all (it only gates a
+* $strobe side effect), so DC sweep must show an exact unity-gain line.
+.model abovemodel above_demo(thresh=1.0)
+
+Vin in 0 DC 0
+Ndut in out abovemodel
+
+.dc Vin -2 2 0.25
+
+.control
+pre_osdi above_demo.osdi
+run
+wrdata dc_above.txt v(in) v(out)
+quit
+.endc
+.end

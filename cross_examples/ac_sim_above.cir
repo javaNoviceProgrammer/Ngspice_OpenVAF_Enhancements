@@ -1,0 +1,18 @@
+* above() AC sweep -- pure pass-through V(out) <+ V(in), so this is a
+* "documented non-behavior" check: expect flat 0dB / 0deg (unity gain,
+* frequency-independent), since above()'s edge detection has zero
+* small-signal sensitivity (it only gates a $strobe side effect).
+.model abovemodel above_demo(thresh=1.0)
+
+Vin in 0 DC 0 AC 1
+Ndut in out abovemodel
+
+.ac dec 20 1 1meg
+
+.control
+pre_osdi above_demo.osdi
+run
+wrdata ac_above.txt vdb(out) vp(out)
+quit
+.endc
+.end

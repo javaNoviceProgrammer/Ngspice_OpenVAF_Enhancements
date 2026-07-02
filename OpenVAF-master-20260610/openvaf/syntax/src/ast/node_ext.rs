@@ -7,7 +7,7 @@ use stdx::impl_debug;
 
 use super::{
     AnalogBehaviour, ArgListOwner, Assign, AstChildTokens, AstChildren, Constraint, EventStmt,
-    Expr, ForStmt, Function, ModulePortKind, Path, PortFlow, Range, Stmt, StrLit,
+    Expr, ForStmt, Function, GenerateFor, ModulePortKind, Path, PortFlow, Range, Stmt, StrLit,
 };
 use crate::ast::{self, support, AstNode};
 use crate::SyntaxKind::{IDENT, ROOT_KW};
@@ -245,6 +245,18 @@ impl ForStmt {
 impl EventStmt {
     pub fn sim_phases(&self) -> AstChildTokens<StrLit> {
         support::child_token(self.syntax())
+    }
+}
+
+impl GenerateFor {
+    /// `i = 0` (the loop-variable initializer).
+    pub fn init(&self) -> Option<Assign> {
+        support::child(self.syntax())
+    }
+
+    /// `i = i + 1` (the per-iteration increment).
+    pub fn incr(&self) -> Option<Assign> {
+        support::children(self.syntax()).nth(1)
     }
 }
 

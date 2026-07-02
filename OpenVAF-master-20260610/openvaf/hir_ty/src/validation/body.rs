@@ -214,7 +214,8 @@ impl BodyValidator<'_> {
 
                 return;
             }
-            Stmt::EventControl { body, .. } => {
+            Stmt::EventControl { ref event, body } => {
+                event.walk_child_exprs(|e| self.validate_expr(e, stmt));
                 let old = replace(&mut self.ctx, BodyCtx::EventControl);
                 self.validate_stmt(body);
                 self.ctx = old;

@@ -150,6 +150,38 @@ pub enum GlobalEvent {
 #[non_exhaustive]
 pub enum Event {
     Global { kind: GlobalEvent, phases: Vec<String> },
+    /// `@(cross(expr, dir))` -- `dir` (`-1`/`0`/`1`, defaulting to `0` =
+    /// either direction) is a constant, but represented as an `ExprId` like
+    /// any other argument (constant-ness is checked, not assumed, by
+    /// `hir_ty::validation`, consistent with how e.g. `laplace`'s
+    /// tolerance/nature argument is handled).
+    Cross { expr: ExprId, dir: Option<ExprId> },
+    /// `@(above(expr))`.
+    Above { expr: ExprId },
+    /// `@(timer(t0, period))` -- `period` absent means a one-shot timer.
+    Timer { t0: ExprId, period: Option<ExprId> },
+}
+
+impl Event {
+    #[inline]
+    pub fn walk_child_exprs(&self, mut f: impl FnMut(ExprId)) {
+        match *self {
+            Event::Global { .. } => {}
+            Event::Cross { expr, dir } => {
+                f(expr);
+                if let Some(dir) = dir {
+                    f(dir);
+                }
+            }
+            Event::Above { expr } => f(expr),
+            Event::Timer { t0, period } => {
+                f(t0);
+                if let Some(period) = period {
+                    f(period);
+                }
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -168,7 +200,8 @@ impl Stmt {
     #[inline]
     pub fn walk_child_exprs(&self, mut f: impl FnMut(ExprId)) {
         match *self {
-            Stmt::Empty | Stmt::Missing | Stmt::Block { .. } | Stmt::EventControl { .. } => (),
+            Stmt::Empty | Stmt::Missing | Stmt::Block { .. } => (),
+            Stmt::EventControl { ref event, .. } => event.walk_child_exprs(&mut f),
             Stmt::If { cond: expr, .. }
             | Stmt::ForLoop { cond: expr, .. }
             | Stmt::WhileLoop { cond: expr, .. }

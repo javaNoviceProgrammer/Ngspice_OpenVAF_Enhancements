@@ -52,6 +52,7 @@ impl HirInterner {
         }
 
         ctx.ensured_sealed();
-        ctx.func.func.layout.append_inst_to_bb(term, ctx.current_block())
+        let final_block = ctx.current_block();
+        ctx.func.func.layout.append_inst_to_bb(term, final_block);
     }
 }

@@ -1,0 +1,21 @@
+// Demonstrates `@(above(expr))`: fires (edge-triggered, once per
+// false->true transition) each time V(in) rises above `thresh`. Each
+// firing increments a persistent counter (`count`), which is exposed on
+// V(out) -- this is the real-world use case, now possible after the
+// Enhancement-8 fix to `mir_opt::simplify_cfg::merge_block_into_predecessor`
+// (see Enhancement-8.md's "Known limitations" §1).
+`include "disciplines.vams"
+
+module above_demo(in, out);
+    inout in, out;
+    electrical in, out;
+    parameter real thresh = 1.0;
+    real count;
+    analog begin
+        @(above(V(in) - thresh)) begin
+            count = count + 1.0;
+            $strobe("above fired at t=%g in=%g count=%g", $abstime, V(in), count);
+        end
+        V(out) <+ count;
+    end
+endmodule
