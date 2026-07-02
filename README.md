@@ -111,6 +111,34 @@ Main goals:
 
 ---
 
+## Enhancement 6: Missing basic Verilog-A features
+
+*July 2026* — A systematic gap analysis against the Verilog-A/AMS LRM across operators, scale factors, keywords, math functions, and compiler directives, followed by implementing everything found tractable in one pass: ten **compiler directives** (`` `default_discipline ``, `` `celldefine ``/`` `endcelldefine ``, `` `unconnected_drive ``/`` `nounconnected_drive ``, `` `timescale ``, `` `line ``, `` `pragma ``, `` `undefineall ``, `` `default_nettype ``) that previously hard-failed compilation as undefined macro calls; the `<<<`/`>>>` **arithmetic shift** operators (plus a real pre-existing lexer bug fix); `slew()`/`transition()`, realized as a saturating rate-limited tracking loop needing no simulator changes; `zi_nd/np/zd/zp()`, realized via a **bilinear (Tustin) transform** to an equivalent continuous transfer function reusing the existing `laplace_*` machinery; and `last_crossing()`, which genuinely needed simulator history — an additive, backward-compatible **OSDI ABI extension** (following the `absdelay()` extension's precedent) plus a matching `ngspice-46` runtime patch (waveform history, crossing detection/interpolation, matrix stamping).
+
+- All five features verified against real ngspice DC/AC/Transient simulation, not just compile checks — see `directive_examples/`, `shift_examples/`, `slew_examples/`, `transition_examples/`, `zi_examples/`, `last_crossing_examples/`
+- `slew()`: AC response lands exactly on the predicted first-order tracking-loop pole (`K/2π ≈ 159MHz`); transient measured rise/fall rates match the specified bounds to 3+ significant figures
+- `zi_nd()`: AC response shows the expected `-3dB` corner *and* the documented bilinear frequency-warping artifact near the Nyquist rate; transient step response matches an RC step response closely
+- `last_crossing()`: transient output steps to the correct crossing times (e.g. `1.0000148e-5` vs theoretical `1.0e-5`, 0.015% error) on a 100kHz sine wave — two real bugs (an `int`/`real` cast bug and a shared-timeline initialization bug) were found only by testing against actual simulation, both compiled cleanly and were only visible at runtime
+- Verified for no regressions against the full existing test suite and against a real 277-device photonic chip simulation (`chip_0_0`) — bit-exact/floating-point-noise-level unchanged DC, AC, and transient results
+- Deferred: `cross()`/`above()`/`timer()` need new `@()` event-control grammar (not just an OSDI extension), and `generate`/`genvar` blocks are unimplemented — both out of scope here, noted as follow-up work
+- Details: [Enhancement-6.md](Enhancement-6.md)
+
+**AC response** for the `zi_nd()` z-domain lowpass filter (bilinear-transform realization):
+
+<p align="center">
+  <img src="./zi_examples/dc_plot.png" width="32%" alt="DC sweep">
+  <img src="./zi_examples/ac_plot.png" width="32%" alt="AC response">
+  <img src="./zi_examples/tran_plot.png" width="32%" alt="Transient response">
+</p>
+
+**Transient result** for `last_crossing()` tracking rising zero-crossings of a 100kHz sine wave:
+
+<p align="center">
+  <img src="./last_crossing_examples/tran_plot.png" width="60%" alt="last_crossing transient result">
+</p>
+
+---
+
 ## Prebuilt Binaries
 
 Binaries are built by CI and committed to `bin/`:
