@@ -84,7 +84,7 @@ impl<'a, 'c> LoweringCtx<'a, 'c> {
                 PlaceKind::CollapseImplicitEquation(_) => TRUE,
                 PlaceKind::IsVoltageSrc(_) => FALSE,
                 PlaceKind::BoundStep => INFINITY,
-                PlaceKind::AbsDelayTime(_) => F_ZERO,
+                PlaceKind::AbsDelayTime(_) | PlaceKind::LastCrossingDirection(_) => F_ZERO,
             };
             let entry = self.func.func.layout.entry_block().unwrap();
             self.func.def_var_at(place, init, entry);

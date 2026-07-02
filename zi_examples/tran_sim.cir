@@ -1,0 +1,13 @@
+* zi_lpf transient: step response, ~63% rise expected near t=tau=10us
+.model zm zi_lpf(tau=10e-6 tstep=1e-6)
+vin in 0 pulse(0 1 1u 1n 1n 100u 200u)
+n1 in out zm
+rload out 0 1k
+
+.tran 0.1u 60u
+.control
+pre_osdi zi_lpf.osdi
+run
+wrdata tran_result.txt v(in) v(out)
+.endc
+.end

@@ -1192,6 +1192,8 @@ impl Ctx<'_> {
 
             BinaryOp::LeftShift
             | BinaryOp::RightShift
+            | BinaryOp::ArithmeticLeftShift
+            | BinaryOp::ArithmeticRightShift
             | BinaryOp::BitwiseXor
             | BinaryOp::BitwiseEq
             | BinaryOp::BitwiseOr

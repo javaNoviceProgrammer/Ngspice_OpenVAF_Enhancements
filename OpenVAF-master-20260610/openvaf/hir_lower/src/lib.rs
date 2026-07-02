@@ -55,6 +55,19 @@ pub enum ImplicitEquationKind {
     /// State variable `i` of a `laplace_*` transfer-function realization (controllable
     /// canonical form); its reactive/resistive residuals encode `dx_i/dt = ...`.
     LaplaceState(u32),
+    /// Output state `i` of a `slew()` call; its reactive/resistive residuals encode a
+    /// rate-limited tracking loop that follows the input while bounding `dy/dt`.
+    Slew(u32),
+    /// Output state `i` of a `transition()` call; same rate-limited tracking loop as
+    /// `Slew`, applied to the (optionally delayed) input.
+    Transition(u32),
+    /// Synthetic input node y_synth for last_crossing slot `i`; enforces
+    /// `V(y_synth) = watched_expr`.
+    LastCrossingInput(u32),
+    /// Output node z for last_crossing slot `i`; its equation row is stamped by the
+    /// simulator with the time of the most recent qualifying zero-crossing of
+    /// `V(y_synth)`'s history.
+    LastCrossingOutput(u32),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -184,6 +197,8 @@ pub enum PlaceKind {
     BoundStep,
     /// Stores the current value of `td` for absdelay slot `i` into instance data.
     AbsDelayTime(u32),
+    /// Stores the current value of `dir` for last_crossing slot `i` into instance data.
+    LastCrossingDirection(u32),
 }
 
 impl PlaceKind {
@@ -196,7 +211,8 @@ impl PlaceKind {
             PlaceKind::ImplicitResidual { .. }
             | PlaceKind::Contribute { .. }
             | PlaceKind::BoundStep
-            | PlaceKind::AbsDelayTime(_) => Type::Real,
+            | PlaceKind::AbsDelayTime(_)
+            | PlaceKind::LastCrossingDirection(_) => Type::Real,
             PlaceKind::ParamMin(param) | PlaceKind::ParamMax(param) | PlaceKind::Param(param) => {
                 param.ty(db)
             }
@@ -246,6 +262,8 @@ pub struct HirInterner {
     pub lim_state: TiMap<LimitState, Value, Vec<(Value, bool)>>,
     /// Per absdelay slot: (eq_y = synthetic input node, eq_z = output node).
     pub absdelay_equations: Vec<(ImplicitEquation, ImplicitEquation)>,
+    /// Per last_crossing slot: (eq_y = synthetic input node, eq_z = output node).
+    pub last_crossing_equations: Vec<(ImplicitEquation, ImplicitEquation)>,
     /// Per indirect branch assignment slot: the free unknown's implicit equation.
     pub indirect_branch_equations: Vec<ImplicitEquation>,
 }
@@ -266,6 +284,7 @@ impl Default for HirInterner {
             implicit_equations: TiVec::default(),
             lim_state: TiMap::default(),
             absdelay_equations: Vec::default(),
+            last_crossing_equations: Vec::default(),
             indirect_branch_equations: Vec::default(),
         }
     }

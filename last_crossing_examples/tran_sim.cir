@@ -1,0 +1,14 @@
+* last_crossing_demo transient: 100kHz sine (period 10us); V(out) should
+* jump to ~10us at the first rising crossing, then ~20us, ~30us, ...
+.model lcm last_crossing_demo(dir=1)
+vin in 0 sin(0 1 100k)
+n1 in out lcm
+rload out 0 1k
+
+.tran 0.05u 40u
+.control
+pre_osdi last_crossing_demo.osdi
+run
+wrdata tran_result.txt v(in) v(out)
+.endc
+.end

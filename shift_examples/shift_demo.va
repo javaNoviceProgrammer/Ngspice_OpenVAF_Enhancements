@@ -1,0 +1,22 @@
+`include "disciplines.vams"
+
+// Demonstrates the Enhancement-6 <<< (arithmetic left shift) and >>>
+// (arithmetic, sign-extending right shift) operators. V(in) is quantized
+// into a signed integer "code" via floor(), then both shifted; the
+// difference is written out as a voltage, producing a visible staircase
+// transfer curve driven purely by integer bit manipulation.
+module shift_demo(in, out);
+    inout in, out;
+    electrical in, out;
+    parameter integer shift_amount = 2 from [0:8];
+    integer code, shifted_up, shifted_down;
+    real out_val;
+
+    analog begin
+        code = floor(V(in) * 16);        // quantize -16..16 -> integer code
+        shifted_up = code <<< shift_amount;    // arithmetic left shift (== <<)
+        shifted_down = code >>> shift_amount;  // arithmetic right shift (sign-extending)
+        out_val = shifted_up - shifted_down;
+        V(out) <+ out_val;
+    end
+endmodule

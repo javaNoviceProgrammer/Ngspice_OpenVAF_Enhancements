@@ -65,6 +65,14 @@ typedef struct OsdiAbsDelayInfo {
     uint32_t td_offset;   /* byte offset into OSDI instance data for td value  */
 } OsdiAbsDelayInfo;
 
+/* Per-last_crossing slot descriptor read from the .osdi binary at load time.
+ * See openvaf/osdi/header/osdi_0_4_enhancement2.h for the full ABI writeup. */
+typedef struct OsdiLastCrossingInfo {
+    uint32_t y_node;      /* OSDI node index for the synthetic input y_synth  */
+    uint32_t z_node;      /* OSDI node index for the crossing-time output z   */
+    uint32_t dir_offset;  /* byte offset into OSDI instance data for dir value */
+} OsdiLastCrossingInfo;
+
 typedef struct OsdiExtraInstData {
   double dt;
   double temp;
@@ -93,6 +101,27 @@ typedef struct OsdiExtraInstData {
   double **delay_jac_z_csc;
   double **delay_jac_y_cx;
   double **delay_jac_z_cx;
+
+  /* Waveform history for last_crossing — one row per slot, indexed by
+   * timepoint, reusing the same CKTtimePoints/CKTtimeIndex timeline as
+   * absdelay's delay_hist. */
+  double **crossing_hist;       /* [num_last_crossings][capacity] */
+  uint32_t crossing_hist_cap;   /* allocated timepoints in each row */
+
+  /* Cached last-known crossing time per slot; persists across accept()
+   * calls, only updated when a new qualifying crossing is found. Initialized
+   * to 0.0 (== "no crossing observed yet"). */
+  double *crossing_time;        /* [num_last_crossings] */
+
+  /* Pre-allocated KLU/sparse matrix pointer for each slot's z-row diagonal
+   * entry J[z_node, z_node] (no y-coupling entry is needed — the crossing
+   * time has zero Jacobian sensitivity to V(y_synth) almost everywhere). */
+  double **crossing_jac_z;
+
+  /* KLU only: saved real/complex CSC pointers, mirrored from delay_jac_z_csc/
+   * cx's pattern. NULL under SPARSE. */
+  double **crossing_jac_z_csc;
+  double **crossing_jac_z_cx;
 
 } ALIGN(MAX_ALIGN) OsdiExtraInstData;
 

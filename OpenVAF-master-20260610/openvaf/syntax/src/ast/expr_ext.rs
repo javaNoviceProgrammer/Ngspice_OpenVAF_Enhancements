@@ -160,6 +160,10 @@ pub enum BinaryOp {
     LeftShift,
     /// The `>>` operator for right shift
     RightShift,
+    /// The `<<<` operator for arithmetic (sign-extending) left shift
+    ArithmeticLeftShift,
+    /// The `>>>` operator for arithmetic (sign-extending) right shift
+    ArithmeticRightShift,
     /// The `^` operator for bitwise XOR
     BitwiseXor,
     /// The `~^`/`^~` operator for bitwise XOR
@@ -191,6 +195,8 @@ impl ast::BinExpr {
                 T![%] => BinaryOp::Remainder,
                 T![<<] => BinaryOp::LeftShift,
                 T![>>] => BinaryOp::RightShift,
+                T![<<<] => BinaryOp::ArithmeticLeftShift,
+                T![>>>] => BinaryOp::ArithmeticRightShift,
                 T![^] => BinaryOp::BitwiseXor,
                 T![|] => BinaryOp::BitwiseOr,
                 T![&] => BinaryOp::BitwiseAnd,
@@ -243,6 +249,8 @@ impl_display! {
         BinaryOp::Remainder => "%";
         BinaryOp::LeftShift => "<<";
         BinaryOp::RightShift => ">>";
+        BinaryOp::ArithmeticLeftShift => "<<<";
+        BinaryOp::ArithmeticRightShift => ">>>";
         BinaryOp::BitwiseXor => "^";
         BinaryOp::BitwiseEq => "~^";
         BinaryOp::BitwiseOr => "|";

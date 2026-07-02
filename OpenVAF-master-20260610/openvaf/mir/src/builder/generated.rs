@@ -238,6 +238,10 @@ pub trait InstBuilder<'f>: InstBuilderBase<'f> {
         let (inst, dfg) = self.binary(Opcode::Ishr, arg0, arg1);
         dfg.first_result(inst)
     }
+    fn iashr(self, arg0: Value, arg1: Value) -> Value {
+        let (inst, dfg) = self.binary(Opcode::Iashr, arg0, arg1);
+        dfg.first_result(inst)
+    }
     fn ixor(self, arg0: Value, arg1: Value) -> Value {
         let (inst, dfg) = self.binary(Opcode::Ixor, arg0, arg1);
         dfg.first_result(inst)

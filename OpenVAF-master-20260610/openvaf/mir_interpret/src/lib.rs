@@ -156,6 +156,8 @@ impl<'a> Interpreter<'a> {
             mir::Opcode::Irem => (args(0).i32() % args(1).i32()).into(),
             mir::Opcode::Ishl => (args(0).i32() << args(1).i32()).into(),
             mir::Opcode::Ishr => (args(0).i32() >> args(1).i32()).into(),
+            // Rust's `>>` on a signed i32 is already an arithmetic (sign-extending) shift.
+            mir::Opcode::Iashr => (args(0).i32() >> args(1).i32()).into(),
             mir::Opcode::Ixor => (args(0).i32() ^ args(1).i32()).into(),
             mir::Opcode::Iand => (args(0).i32() & args(1).i32()).into(),
             mir::Opcode::Ior => (args(0).i32() | args(1).i32()).into(),

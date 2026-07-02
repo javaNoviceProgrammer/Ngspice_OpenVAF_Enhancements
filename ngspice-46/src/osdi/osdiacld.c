@@ -80,6 +80,17 @@ int OSDIacLoad(GENmodel *inModel, CKTcircuit *ckt) {
           /* imaginary part stays zero */
         }
       }
+
+      /* AC stamping for last_crossing slots: no well-defined small-signal
+       * sensitivity (the crossing time is a function of the whole past
+       * trajectory, not the AC-linearized instantaneous value), so this just
+       * pins the row diagonal: (z_row, z_col) = -1, no y-coupling term. */
+      if (entry->num_last_crossings > 0) {
+        OsdiExtraInstData *extra = osdi_extra_instance_data(entry, gen_inst);
+        for (uint32_t k = 0; k < entry->num_last_crossings; k++) {
+          *(extra->crossing_jac_z[k]) += -1.0;
+        }
+      }
     }
   }
   return (OK);

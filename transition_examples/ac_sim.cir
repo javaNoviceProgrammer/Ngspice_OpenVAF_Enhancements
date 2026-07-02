@@ -1,0 +1,17 @@
+* transition_demo AC response: biased at V(in)=0.3 (below the 0.5V threshold,
+* cmp held at 0 locally), so the comparator's local derivative is zero and
+* there is no small-signal path from in to out -- expected flat ~zero gain,
+* confirming transition()'s digital-edge-shaping has no meaningful AC
+* transfer function away from the threshold.
+.model tm transition_demo(td=1n trise=2n tfall=3n)
+vin in 0 dc 0.3 ac 1
+n1 in out tm
+rload out 0 1k
+
+.ac dec 10 1k 10g
+.control
+pre_osdi transition_demo.osdi
+run
+wrdata ac_result.txt v(in) v(out)
+.endc
+.end

@@ -1,0 +1,16 @@
+* slew_demo AC response: the tracking-loop gain K=1e9 (1/s) makes this a
+* first-order lowpass with -3dB corner near K/(2*pi) ~ 159 MHz -- unity
+* gain/zero phase well below the slew rate's linear-tracking regime,
+* rolling off at high frequency.
+.model sm slew_demo(rise=1e6 fall=2e6)
+vin in 0 dc 0 ac 1
+n1 in out sm
+rload out 0 1k
+
+.ac dec 10 1k 10g
+.control
+pre_osdi slew_demo.osdi
+run
+wrdata ac_result.txt v(in) v(out)
+.endc
+.end

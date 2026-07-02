@@ -1,0 +1,14 @@
+* transition_demo transient: pulse crossing the 0.5V threshold shows the
+* td delay followed by the asymmetric rise/fall shaping.
+.model tm transition_demo(td=1n trise=2n tfall=3n)
+vin in 0 pulse(0 1 2n 0.1n 0.1n 8n 20n)
+n1 in out tm
+rload out 0 1k
+
+.tran 10p 40n
+.control
+pre_osdi transition_demo.osdi
+run
+wrdata tran_result.txt v(in) v(out)
+.endc
+.end

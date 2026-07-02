@@ -1,0 +1,17 @@
+* last_crossing_demo AC response: by design V(z) has zero Jacobian coupling
+* to V(y_synth) (the crossing time is locally constant in time between
+* crossings, not a smooth function of the instantaneous input), so the
+* small-signal AC gain from in to out is exactly zero -- confirms the
+* "no y-coupling" design point documented in osdi_0_4_enhancement2.h.
+.model lcm last_crossing_demo(dir=1)
+vin in 0 dc 0 ac 1
+n1 in out lcm
+rload out 0 1k
+
+.ac dec 10 1k 100meg
+.control
+pre_osdi last_crossing_demo.osdi
+run
+wrdata ac_result.txt v(in) v(out)
+.endc
+.end

@@ -13,6 +13,8 @@ pub fn eval_binary(func: &mut Function, op: Opcode, lhs: Const, rhs: Const) -> V
 
             Opcode::Ishl => func.dfg.iconst(lhs << rhs),
             Opcode::Ishr => func.dfg.iconst(lhs >> rhs),
+            // `>>` on a signed value is already an arithmetic (sign-extending) shift.
+            Opcode::Iashr => func.dfg.iconst(lhs >> rhs),
             Opcode::Ixor => func.dfg.iconst(lhs ^ rhs),
             Opcode::Iand => func.dfg.iconst(lhs & rhs),
             Opcode::Ior => func.dfg.iconst(lhs | rhs),

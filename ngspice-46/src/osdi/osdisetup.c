@@ -317,6 +317,35 @@ int OSDIsetup(SMPmatrix *matrix, GENmodel *inModel, CKTcircuit *ckt,
         }
       }
 
+      /* Allocate extra matrix entry and waveform history for last_crossing */
+      if (entry->num_last_crossings > 0) {
+        uint32_t *node_mapping =
+            (uint32_t *)(((char *)inst) + descr->node_mapping_offset);
+        OsdiExtraInstData *extra =
+            osdi_extra_instance_data(entry, gen_inst);
+        uint32_t n = entry->num_last_crossings;
+        const OsdiLastCrossingInfo *infos =
+            (const OsdiLastCrossingInfo *)entry->last_crossing_infos;
+
+        extra->crossing_jac_z = TMALLOC(double *, n);
+        extra->crossing_jac_z_csc = TMALLOC(double *, n);
+        extra->crossing_jac_z_cx = TMALLOC(double *, n);
+        extra->crossing_hist = TMALLOC(double *, n);
+        extra->crossing_hist_cap = 0;
+        extra->crossing_time = TMALLOC(double, n);
+
+        for (uint32_t k = 0; k < n; k++) {
+          int z_spice = (int)node_mapping[infos[k].z_node];
+          extra->crossing_jac_z[k] = SMPmakeElt(matrix, z_spice, z_spice);
+          extra->crossing_jac_z_csc[k] = NULL;
+          extra->crossing_jac_z_cx[k] = NULL;
+          extra->crossing_hist[k] = NULL;
+          extra->crossing_time[k] = 0.0;
+          if (!extra->crossing_jac_z[k])
+            return E_NOMEM;
+        }
+      }
+
       /* reserve space in the state vector*/
       gen_inst->GENstate = *states;
       write_state_ids(descr, inst, (uint32_t)*states);
@@ -560,6 +589,25 @@ int OSDIbindCSC(GENmodel *inModel, CKTcircuit *ckt) {
           }
         }
       }
+
+      /* Same rebinding for last_crossing's single z-row diagonal entry. */
+      if (entry->num_last_crossings > 0) {
+        OsdiExtraInstData *extra = osdi_extra_instance_data(entry, gen_inst);
+        BindElement tmp;
+        for (uint32_t k = 0; k < entry->num_last_crossings; k++) {
+          if (extra->crossing_jac_z[k]) {
+            tmp.COO = extra->crossing_jac_z[k];
+            BindElement *m = (BindElement *)bsearch(&tmp, bindings, nz,
+                                                    sizeof(BindElement),
+                                                    BindCompare);
+            if (m) {
+              extra->crossing_jac_z_csc[k] = m->CSC;
+              extra->crossing_jac_z_cx[k]  = m->CSC_Complex;
+              extra->crossing_jac_z[k]     = m->CSC;
+            }
+          }
+        }
+      }
     }
   }
 
@@ -601,6 +649,15 @@ int OSDIupdateCSC(GENmodel *inModel, CKTcircuit *ckt, bool complex) {
           if (extra->delay_jac_z_csc[k])
             extra->delay_jac_z[k] =
                 complex ? extra->delay_jac_z_cx[k] : extra->delay_jac_z_csc[k];
+        }
+      }
+
+      if (entry->num_last_crossings > 0) {
+        OsdiExtraInstData *extra = osdi_extra_instance_data(entry, gen_inst);
+        for (uint32_t k = 0; k < entry->num_last_crossings; k++) {
+          if (extra->crossing_jac_z_csc[k])
+            extra->crossing_jac_z[k] =
+                complex ? extra->crossing_jac_z_cx[k] : extra->crossing_jac_z_csc[k];
         }
       }
     }

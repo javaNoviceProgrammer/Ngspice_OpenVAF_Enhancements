@@ -1,0 +1,13 @@
+* directive_demo transient: sine input, scaled sine output
+.model dm directive_demo(gain=0.5)
+vin in 0 sin(0 1 10k)
+n1 in out dm
+rload out 0 1k
+
+.tran 1u 200u
+.control
+pre_osdi directive_demo.osdi
+run
+wrdata tran_result.txt v(in) v(out)
+.endc
+.end

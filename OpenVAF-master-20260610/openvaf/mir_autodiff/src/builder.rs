@@ -784,6 +784,7 @@ impl<'a, 'u> DerivativeBuilder<'a, 'u> {
             | Opcode::Idiv
             | Opcode::Ishl
             | Opcode::Ishr
+            | Opcode::Iashr
             | Opcode::IFcast
             | Opcode::BIcast
             | Opcode::IBcast

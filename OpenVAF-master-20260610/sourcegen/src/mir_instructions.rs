@@ -105,6 +105,7 @@ opcodes! {
 
         Ishl
         Ishr
+        Iashr
         Ixor
         Iand
         Ior

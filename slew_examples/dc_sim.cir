@@ -1,0 +1,13 @@
+* slew_demo DC sweep: steady-state tracking, V(out) = V(in) (unclamped at DC)
+.model sm slew_demo(rise=1e6 fall=2e6)
+vin in 0 dc 0
+n1 in out sm
+rload out 0 1k
+
+.dc vin -1 1 0.02
+.control
+pre_osdi slew_demo.osdi
+run
+wrdata dc_result.txt v(in) v(out)
+.endc
+.end

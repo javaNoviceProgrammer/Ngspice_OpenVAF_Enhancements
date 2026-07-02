@@ -42,7 +42,8 @@ impl<'a> Context<'a> {
                 | PlaceKind::CollapseImplicitEquation(_)
                 | PlaceKind::IsVoltageSrc(_)
                 | PlaceKind::BoundStep
-                | PlaceKind::AbsDelayTime(_) => true,
+                | PlaceKind::AbsDelayTime(_)
+                | PlaceKind::LastCrossingDirection(_) => true,
                 PlaceKind::Var(var) => module.op_vars.contains_key(&var),
                 _ => false,
             },
@@ -117,7 +118,7 @@ impl<'a> Context<'a> {
         } else {
             for (kind, val) in self.intern.outputs.iter() {
                 if matches!(kind, PlaceKind::Var(var) if self.module.op_vars.contains_key(var))
-                    || matches!(kind, PlaceKind::CollapseImplicitEquation(_) | PlaceKind::BoundStep | PlaceKind::AbsDelayTime(_))
+                    || matches!(kind, PlaceKind::CollapseImplicitEquation(_) | PlaceKind::BoundStep | PlaceKind::AbsDelayTime(_) | PlaceKind::LastCrossingDirection(_))
                 {
                     self.output_values.insert(val.unwrap_unchecked());
                 }

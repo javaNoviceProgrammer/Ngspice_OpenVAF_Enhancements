@@ -1,0 +1,14 @@
+* shift_demo transient: slow ramp/triangle through the quantizer to show the
+* staircase output evolving over time.
+.model sm shift_demo(shift_amount=2)
+vin in 0 pulse(-1 1 0 50u 50u 0 100u)
+n1 in out sm
+rload out 0 1k
+
+.tran 0.2u 200u
+.control
+pre_osdi shift_demo.osdi
+run
+wrdata tran_result.txt v(in) v(out)
+.endc
+.end

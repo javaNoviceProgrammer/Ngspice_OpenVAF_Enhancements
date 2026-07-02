@@ -25,6 +25,11 @@ pub(crate) struct Processor<'a> {
     arena: &'a ScopedTextArea,
     macros: AHashMap<&'a str, Macro<'a>>,
     include_dirs: Arc<[VfsPath]>,
+    /// Name given to the most recently seen `` `default_discipline `` directive, if any.
+    /// Not currently consumed downstream (net declarations still require an explicit
+    /// discipline), but recording it means the directive is at least recognized instead
+    /// of being misparsed as an undefined macro call.
+    pub(crate) default_discipline: Option<&'a str>,
 }
 
 impl<'a> Processor<'a> {
@@ -51,6 +56,7 @@ impl<'a> Processor<'a> {
             arena: storage,
             sources,
             include_dirs: sources.include_dirs(root_file),
+            default_discipline: None,
         };
         Ok(res)
     }
@@ -267,6 +273,44 @@ impl<'a> Processor<'a> {
                         span: p.current_span(),
                     });
                     p.bump();
+                }
+                CompilerDirective::UndefineAll => {
+                    p.bump();
+                    self.macros.clear();
+                }
+                CompilerDirective::CellDefine | CompilerDirective::EndCellDefine => {
+                    // Purely a documentation boundary marker for external tools; no
+                    // semantic effect on Verilog-A compilation.
+                    p.bump();
+                }
+                CompilerDirective::NoUnconnectedDrive => {
+                    // No arguments; restores default (error-on-floating-port) behavior.
+                    p.bump();
+                }
+                CompilerDirective::UnconnectedDrive => {
+                    // Takes a single `pull0`/`pull1`/`highz` argument. OpenVAF-r has no
+                    // unconnected-port drive model to apply this to, so it's parsed and
+                    // discarded rather than left to hard-fail as an unknown macro call.
+                    p.skip_rest_of_line(err);
+                }
+                CompilerDirective::DefaultNetType => {
+                    // Takes a single net-type argument (`wire`, `tri`, `none`, ...).
+                    // OpenVAF-r requires an explicit discipline on every net, so there is
+                    // no implicit net type to default; parsed and discarded.
+                    p.skip_rest_of_line(err);
+                }
+                CompilerDirective::DefaultDiscipline => {
+                    self.default_discipline = p.bump_directive_and_capture_ident(err);
+                    p.skip_rest_of_line(err);
+                }
+                CompilerDirective::TimeScale | CompilerDirective::Line => {
+                    p.skip_rest_of_line(err);
+                }
+                CompilerDirective::Pragma => {
+                    // Tool-specific hints (e.g. `protect`/`endprotect` encryption pragmas
+                    // in some vendor files) are not implemented; unrecognized pragmas are
+                    // ignorable per the LRM.
+                    p.skip_rest_of_line(err);
                 }
                 CompilerDirective::Macro => {
                     let (call, range) =

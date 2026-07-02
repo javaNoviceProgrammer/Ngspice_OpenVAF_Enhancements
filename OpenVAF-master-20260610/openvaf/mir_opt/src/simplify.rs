@@ -200,6 +200,7 @@ impl<'a, FP: Arithmetic, M: Fn(Value, &Function) -> Value> SimplifyCtx<'a, FP, M
             | Opcode::Frem
             | Opcode::Ishl
             | Opcode::Ishr
+            | Opcode::Iashr
             | Opcode::Ixor
             | Opcode::Iand
             | Opcode::Hypot

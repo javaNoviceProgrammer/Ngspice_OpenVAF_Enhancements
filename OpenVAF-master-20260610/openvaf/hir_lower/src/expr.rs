@@ -5,9 +5,12 @@ use hir::signatures::{
     ABSDELAY_MAX, ABS_INT, ABS_REAL, BOOL_EQ, DDX_POT, IDTMOD_IC, IDTMOD_IC_MODULUS,
     IDTMOD_IC_MODULUS_OFFSET, IDTMOD_IC_MODULUS_OFFSET_NATURE, IDTMOD_IC_MODULUS_OFFSET_TOL,
     IDTMOD_NO_IC, IDT_IC, IDT_IC_ASSERT, IDT_IC_ASSERT_NATURE, IDT_IC_ASSERT_TOL, IDT_NO_IC,
-    INT_EQ, INT_OP, LIMIT_BUILTIN_FUNCTION, MAX_INT, MAX_REAL, NATURE_ACCESS_BRANCH,
+    INT_EQ, INT_OP, LAST_CROSSING_DIRECTION, LAST_CROSSING_NO_DIRECTION, LIMIT_BUILTIN_FUNCTION,
+    MAX_INT, MAX_REAL, NATURE_ACCESS_BRANCH,
     NATURE_ACCESS_NODES, NATURE_ACCESS_NODE_GND, NATURE_ACCESS_PORT_FLOW, REAL_EQ, REAL_OP,
-    SIMPARAM_DEFAULT, SIMPARAM_NO_DEFAULT, STR_EQ,
+    SIMPARAM_DEFAULT, SIMPARAM_NO_DEFAULT, SLEW_NEG_MAX, SLEW_NO_MAX, SLEW_POS_MAX, STR_EQ,
+    TRANSITION_DELAY, TRANSITION_DELAY_RISET, TRANSITION_DELAY_RISET_FALLT,
+    TRANSITION_DELAY_RISET_FALLT_TOL, TRANSITION_NO_ARGS,
 };
 use hir::{Body, BuiltIn, Expr, ExprId, Literal, /*ParamSysFun,*/ Ref, ResolvedFun, Type};
 use mir::builder::InstBuilder;
@@ -162,6 +165,11 @@ impl BodyLoweringCtx<'_, '_, '_> {
 
             BinaryOp::LeftShift => Opcode::Ishl,
             BinaryOp::RightShift => Opcode::Ishr,
+            // `<<<` behaves exactly like `<<` per the LRM (left shift always zero-fills);
+            // only right shift distinguishes logical (`>>`, zero-fill) from arithmetic
+            // (`>>>`, sign-extending) fill of vacated bits.
+            BinaryOp::ArithmeticLeftShift => Opcode::Ishl,
+            BinaryOp::ArithmeticRightShift => Opcode::Iashr,
 
             BinaryOp::BitwiseXor => Opcode::Ixor,
             BinaryOp::BitwiseEq => {
@@ -697,36 +705,191 @@ impl BodyLoweringCtx<'_, '_, '_> {
                     let use_td = self.ctx.ins().fle(td, tdmax);
                     td = self.lower_select_with(use_td, |_| td, |_| tdmax);
                 }
-                let delay_idx = self.ctx.intern.absdelay_equations.len() as u32;
-
-                // Synthetic input node: equation V(y_synth) = y_expr
-                let (eq_y, y_val) =
-                    self.ctx.implicit_equation(ImplicitEquationKind::AbsDelayInput(delay_idx));
-                // Output node: equation stamped entirely by the simulator (history lookup)
-                let (eq_z, z_val) =
-                    self.ctx.implicit_equation(ImplicitEquationKind::AbsDelayOutput(delay_idx));
-
-                self.ctx.intern.absdelay_equations.push((eq_y, eq_z));
-
-                // Resistive residual for eq_y: y_expr - V(y_synth) = 0
-                let resist_y = self.ctx.ins().fsub(y_expr, y_val);
-                self.ctx.def_resist_residual(resist_y, eq_y);
-
-                // Store td so the simulator can read it during matrix stamping
-                self.ctx.def_place(PlaceKind::AbsDelayTime(delay_idx), td);
-
-                // The absdelay result is V(z); eq_z's equation is handled by the simulator
-                z_val
+                self.lower_delay(y_expr, td)
             }
-            BuiltIn::slew | BuiltIn::transition | BuiltIn::limit => {
-                self.lower_expr(args[0])
-            }
+            BuiltIn::limit => self.lower_expr(args[0]),
+
+            BuiltIn::slew => self.lower_slew(args, signature),
+            BuiltIn::transition => self.lower_transition(args, signature),
 
             BuiltIn::laplace_nd | BuiltIn::laplace_np | BuiltIn::laplace_zd
             | BuiltIn::laplace_zp => self.lower_laplace(builtin, args),
 
+            BuiltIn::zi_nd | BuiltIn::zi_np | BuiltIn::zi_zd | BuiltIn::zi_zp => {
+                self.lower_zi(builtin, args)
+            }
+
+            BuiltIn::last_crossing => self.lower_last_crossing(args, signature),
+
             _ => unreachable!(),
         }
+    }
+
+    /// Lowers `last_crossing(expr[, dir])`: returns the simulation time of the most recent
+    /// zero-crossing of `expr`'s value (`dir < 0`: falling only, `dir > 0`: rising only,
+    /// `dir == 0`/omitted: either direction).
+    ///
+    /// Like `absdelay`, this needs the simulator's own accepted-timepoint history (the crossing
+    /// time is a function of the entire past trajectory of `expr`, not something derivable from
+    /// its instantaneous value) -- so the pattern mirrors `absdelay` exactly: a synthetic input
+    /// node `y_synth` whose resistive residual enforces `V(y_synth) = expr` (so the simulator can
+    /// read `expr`'s converged value at each accepted timepoint via the OSDI node mapping), and
+    /// an output node `z` whose row is left entirely unstamped here -- the simulator fills it in
+    /// (`OsdiLastCrossingInfo`, mirroring `OsdiAbsDelayInfo`). Unlike `absdelay`'s output, `z`'s
+    /// value has zero sensitivity to `y_synth` almost everywhere (the crossing time is locally
+    /// constant in time between crossings), so -- unlike absdelay -- the simulator never needs to
+    /// stamp a `J[z, y]` coupling term, only `J[z, z] = -1` and the crossing-time RHS.
+    fn lower_last_crossing(&mut self, args: &[ExprId], signature: hir::Signature) -> Value {
+        let watched = self.lower_expr(args[0]);
+        let dir = if signature == LAST_CROSSING_DIRECTION {
+            // `dir` is `Val(Integer)` per the signature; the storage place is
+            // `Real`-typed (like all other simulator-read instance-data fields),
+            // so it needs an explicit int->real cast here.
+            let dir_int = self.lower_expr(args[1]);
+            self.ctx.ins().ifcast(dir_int)
+        } else {
+            debug_assert_eq!(signature, LAST_CROSSING_NO_DIRECTION);
+            F_ZERO
+        };
+
+        let idx = self.ctx.intern.last_crossing_equations.len() as u32;
+        let (eq_y, y_val) =
+            self.ctx.implicit_equation(ImplicitEquationKind::LastCrossingInput(idx));
+        let (eq_z, z_val) =
+            self.ctx.implicit_equation(ImplicitEquationKind::LastCrossingOutput(idx));
+        self.ctx.intern.last_crossing_equations.push((eq_y, eq_z));
+
+        let resist_y = self.ctx.ins().fsub(watched, y_val);
+        self.ctx.def_resist_residual(resist_y, eq_y);
+
+        self.ctx.def_place(PlaceKind::LastCrossingDirection(idx), dir);
+
+        z_val
+    }
+
+    /// Lowers the shared `absdelay`-style pure delay: a synthetic input node enforcing
+    /// `V(y_synth) = y_expr`, and an output node whose equation row is stamped entirely by
+    /// the simulator via history lookup at `now - td`. Shared by `absdelay()` directly and by
+    /// `transition()`'s delay stage.
+    fn lower_delay(&mut self, y_expr: Value, td: Value) -> Value {
+        let delay_idx = self.ctx.intern.absdelay_equations.len() as u32;
+
+        // Synthetic input node: equation V(y_synth) = y_expr
+        let (eq_y, y_val) =
+            self.ctx.implicit_equation(ImplicitEquationKind::AbsDelayInput(delay_idx));
+        // Output node: equation stamped entirely by the simulator (history lookup)
+        let (eq_z, z_val) =
+            self.ctx.implicit_equation(ImplicitEquationKind::AbsDelayOutput(delay_idx));
+
+        self.ctx.intern.absdelay_equations.push((eq_y, eq_z));
+
+        // Resistive residual for eq_y: y_expr - V(y_synth) = 0
+        let resist_y = self.ctx.ins().fsub(y_expr, y_val);
+        self.ctx.def_resist_residual(resist_y, eq_y);
+
+        // Store td so the simulator can read it during matrix stamping
+        self.ctx.def_place(PlaceKind::AbsDelayTime(delay_idx), td);
+
+        // The delay result is V(z); eq_z's equation is handled by the simulator
+        z_val
+    }
+
+    /// Lowers `slew(x[, max_pos_rate[, max_neg_rate]])`.
+    ///
+    /// Verilog-AMS defines `slew` as an ideal rate limiter: the output tracks `x` exactly
+    /// whenever the required rate of change is within bounds, and otherwise ramps at the
+    /// bound. That ideal (non-smooth, "bang-bang") behavior is not directly expressible as a
+    /// well-posed continuous residual (the DC operating point would be left undetermined by a
+    /// pure `dy/dt = clamp(...)` formulation, since any `y` satisfies `dy/dt = 0` at DC).
+    /// Instead this uses the standard modeling trick of a saturating tracking loop:
+    /// `dy/dt = clamp(K*(x - y), -max_neg_rate, max_pos_rate)` for a large gain `K`. This is
+    /// well-posed at DC (`y = x` uniquely, since `K` is large) and reproduces the rate-limited
+    /// ramp whenever `x` moves faster than the bound allows, converging to the ideal limiter as
+    /// `K -> infinity`.
+    fn lower_slew(&mut self, args: &[ExprId], signature: hir::Signature) -> Value {
+        let x = self.lower_expr(args[0]);
+        if signature == SLEW_NO_MAX {
+            return x;
+        }
+        let (pos_max, neg_max) = if signature == SLEW_POS_MAX {
+            let rate = self.lower_expr(args[1]);
+            (rate, rate)
+        } else {
+            debug_assert_eq!(signature, SLEW_NEG_MAX);
+            (self.lower_expr(args[1]), self.lower_expr(args[2]))
+        };
+        let idx = self.ctx.intern.implicit_equations.len() as u32;
+        self.lower_rate_limited_track(x, pos_max, neg_max, ImplicitEquationKind::Slew(idx))
+    }
+
+    /// Lowers `transition(x[, td[, trise[, tfall[, tol]]]])` as a delayed
+    /// (`` `lower_delay ``), rate-limited (`` `lower_rate_limited_track ``) tracking loop:
+    /// `slew(absdelay(x, td), 1/trise, 1/tfall)`. `trise`/`tfall` are transition *times* in the
+    /// LRM (time to ramp across a full-scale change), so they are converted to rates by
+    /// assuming a unit-amplitude transition (`rate = 1/t`) -- exact for the common case of a
+    /// comparator-style 0/1 input, an approximation for arbitrary-amplitude inputs. `tol`, when
+    /// present, is accepted for signature compatibility but has no numerical effect (same
+    /// convention as `laplace_*`'s trailing tolerance argument).
+    fn lower_transition(&mut self, args: &[ExprId], signature: hir::Signature) -> Value {
+        let x_int = self.lower_expr(args[0]);
+        let x = self.ctx.ins().ifcast(x_int);
+        if signature == TRANSITION_NO_ARGS {
+            return x;
+        }
+
+        let td = self.lower_expr(args[1]);
+        let delayed = self.lower_delay(x, td);
+        if signature == TRANSITION_DELAY {
+            return delayed;
+        }
+
+        let trise = self.lower_expr(args[2]);
+        let tfall = if signature == TRANSITION_DELAY_RISET {
+            trise
+        } else {
+            debug_assert!(
+                signature == TRANSITION_DELAY_RISET_FALLT
+                    || signature == TRANSITION_DELAY_RISET_FALLT_TOL
+            );
+            self.lower_expr(args[3])
+        };
+        let f_one = self.ctx.fconst(1.0);
+        let pos_max = self.ctx.ins().fdiv(f_one, trise);
+        let neg_max = self.ctx.ins().fdiv(f_one, tfall);
+
+        let idx = self.ctx.intern.implicit_equations.len() as u32;
+        self.lower_rate_limited_track(delayed, pos_max, neg_max, ImplicitEquationKind::Transition(idx))
+    }
+
+    /// Shared saturating tracking-loop realization for `slew`/`transition`: a single implicit
+    /// state `y` with `dy/dt = clamp(K*(x - y), -neg_max, pos_max)`. See `lower_slew` for the
+    /// numerical rationale.
+    fn lower_rate_limited_track(
+        &mut self,
+        x: Value,
+        pos_max: Value,
+        neg_max: Value,
+        kind: ImplicitEquationKind,
+    ) -> Value {
+        // Large but finite tracking gain (1/s); see `lower_slew` doc comment.
+        const TRACK_GAIN: f64 = 1.0e9;
+
+        let (eq, y) = self.ctx.implicit_equation(kind);
+        let gain = self.ctx.fconst(TRACK_GAIN);
+        let diff = self.ctx.ins().fsub(x, y);
+        let rate = self.ctx.ins().fmul(gain, diff);
+
+        let neg_max = self.ctx.ins().fneg(neg_max);
+        let too_low = self.ctx.ins().flt(rate, neg_max);
+        let rate = self.lower_select_with(too_low, |_| neg_max, |_| rate);
+        let too_high = self.ctx.ins().fgt(rate, pos_max);
+        let rate = self.lower_select_with(too_high, |_| pos_max, |_| rate);
+
+        let resist = self.ctx.ins().fneg(rate);
+        self.ctx.def_resist_residual(resist, eq);
+        self.ctx.def_react_residual(y, eq);
+
+        y
     }
 
     /// Lowers `laplace_nd`/`laplace_np`/`laplace_zd`/`laplace_zp(in, num_or_zero, den_or_pole
@@ -874,6 +1037,79 @@ impl BodyLoweringCtx<'_, '_, '_> {
         self.ctx.ins().fadd(y, du)
     }
 
+    /// Lowers `zi_nd`/`zi_np`/`zi_zd`/`zi_zp(in, num_or_zero, den_or_pole, T[, tol[, nature]])`.
+    ///
+    /// Unlike `laplace_*`, a z-domain filter is inherently a *sampled-data* system: exact
+    /// semantics require the simulator to hold the output between samples taken every `T`
+    /// seconds, which needs dedicated per-timestep/breakpoint support in the simulator runtime
+    /// (OSDI + the underlying SPICE engine) that does not exist in this codebase. Implementing
+    /// that is out of scope here (tracked as follow-up work); instead this applies the standard
+    /// bilinear (Tustin) transform `z^-1 = (1 - sT/2)/(1 + sT/2)` to convert the z-domain
+    /// transfer function into an equivalent *continuous* s-domain transfer function at
+    /// MIR-generation time (the coefficient arithmetic itself runs at simulation time, since the
+    /// z-domain coefficients/`T` may be arbitrary runtime expressions, not just literals), then
+    /// reuses the exact same `laplace_state_space` continuous-time state-space realization as
+    /// `laplace_*`. This exactly preserves the filter's pole/zero mapping and low-frequency
+    /// (DC/near-DC) behavior, at the cost of not reproducing true zero-order-hold/aliasing
+    /// behavior near the Nyquist rate (`1/T`) -- a documented approximation, not full LRM
+    /// fidelity.
+    fn lower_zi(&mut self, kind: BuiltIn, args: &[ExprId]) -> Value {
+        let input = self.lower_expr(args[0]);
+
+        let num_is_roots = matches!(kind, BuiltIn::zi_zd | BuiltIn::zi_zp);
+        let den_is_roots = matches!(kind, BuiltIn::zi_np | BuiltIn::zi_zp);
+
+        let num = self.lower_laplace_array_arg(args[1]);
+        let den = self.lower_laplace_array_arg(args[2]);
+
+        let num = if num_is_roots { self.laplace_roots_to_poly(&num) } else { num };
+        let den = if den_is_roots { self.laplace_roots_to_poly(&den) } else { den };
+
+        let t = self.lower_expr(args[3]);
+        let f_half = self.ctx.fconst(0.5);
+        let half_t = self.ctx.ins().fmul(t, f_half);
+
+        let n = (den.len() - 1).max(num.len().saturating_sub(1));
+        let num_s = self.bilinear_transform(&num, n, half_t);
+        let den_s = self.bilinear_transform(&den, n, half_t);
+
+        self.laplace_state_space(input, &num_s, &den_s)
+    }
+
+    /// Converts the coefficients (ascending powers of `w = z^-1`, LRM order) of a degree-`n`
+    /// z-domain polynomial `P(w)` into the coefficients (ascending powers of `s`) of the
+    /// equivalent s-domain polynomial under the bilinear substitution `w = (1 - x)/(1 + x)`,
+    /// `x = s * half_t` (`half_t = T/2`).
+    ///
+    /// `P(w) * (1+x)^n = sum_k p_k * (1-x)^k * (1+x)^(n-k) =: Q(x)`, a degree-`n` polynomial in
+    /// `x` whose coefficients are themselves fixed (compile-time-known) integer linear
+    /// combinations of the `p_k` -- the `(1-x)^k*(1+x)^(n-k)` binomial expansions depend only on
+    /// `n`/`k`/`i`, not on any runtime value, so those combination weights are plain `f64`
+    /// constants baked into the generated arithmetic. `Q(x)`'s coefficient of `x^i` is then
+    /// converted to a coefficient of `s^i` via `x^i = half_t^i * s^i`.
+    fn bilinear_transform(&mut self, poly: &[Value], n: usize, half_t: Value) -> Vec<Value> {
+        let mut half_t_pow = vec![F_ONE];
+        for _ in 0..n {
+            half_t_pow.push(self.ctx.ins().fmul(*half_t_pow.last().unwrap(), half_t));
+        }
+
+        (0..=n)
+            .map(|i| {
+                let mut q_i = F_ZERO;
+                for k in 0..=n {
+                    let Some(&p_k) = poly.get(k) else { continue };
+                    let weight = binomial_bilinear_weight(n, k, i);
+                    if weight != 0.0 {
+                        let c = self.ctx.fconst(weight);
+                        let term = self.ctx.ins().fmul(p_k, c);
+                        q_i = self.ctx.ins().fadd(q_i, term);
+                    }
+                }
+                self.ctx.ins().fmul(q_i, half_t_pow[i])
+            })
+            .collect()
+    }
+
     fn lower_integral(&mut self, kind: IdtKind, args: &[ExprId]) -> Value {
         let (equation, val) = self.ctx.implicit_equation(ImplicitEquationKind::Idt(kind));
 
@@ -947,4 +1183,33 @@ impl BodyLoweringCtx<'_, '_, '_> {
         let expr = body.borrow().get_entry_expr(i);
         BodyLoweringCtx { ctx: self.ctx, body: body.borrow(), path: self.path }.lower_expr(expr)
     }
+}
+
+/// `C(n, k)`, computed via the multiplicative formula to avoid factorial overflow for the
+/// small `n` (filter order) expected here.
+fn binomial(n: usize, k: usize) -> f64 {
+    if k > n {
+        return 0.0;
+    }
+    let k = k.min(n - k);
+    let mut result = 1.0f64;
+    for i in 0..k {
+        result = result * (n - i) as f64 / (i + 1) as f64;
+    }
+    result
+}
+
+/// Coefficient of `x^i` in `(1-x)^k * (1+x)^(n-k)`, used by `bilinear_transform` to build the
+/// compile-time-known combination weights for the Tustin substitution.
+fn binomial_bilinear_weight(n: usize, k: usize, i: usize) -> f64 {
+    let n_k = n - k;
+    let a_lo = i.saturating_sub(n_k);
+    let a_hi = k.min(i);
+    let mut sum = 0.0f64;
+    for a in a_lo..=a_hi {
+        let b = i - a;
+        let sign = if a % 2 == 0 { 1.0 } else { -1.0 };
+        sum += sign * binomial(k, a) * binomial(n_k, b);
+    }
+    sum
 }

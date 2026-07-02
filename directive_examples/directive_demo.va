@@ -1,0 +1,26 @@
+`default_discipline electrical
+`default_nettype none
+`celldefine
+`timescale 1ns/1ps
+`unconnected_drive pull1
+`include "disciplines.vams"
+
+// Demonstrates that the compiler directives added in Enhancement-6
+// (`default_discipline`, `default_nettype`, `celldefine`/`endcelldefine`,
+// `timescale`, `unconnected_drive`) no longer break compilation -- they are
+// all parsed and correctly discarded/no-op'd instead of hard-failing with
+// MacroNotFound. The actual model is a simple gain buffer.
+module directive_demo(in, out);
+    inout in, out;
+    electrical in, out;
+    parameter real gain = 0.5 from (0:inf);
+    analog begin
+        V(out) <+ gain * V(in);
+    end
+endmodule
+
+`nounconnected_drive
+`endcelldefine
+`pragma protect begin
+`pragma protect end
+`undefineall

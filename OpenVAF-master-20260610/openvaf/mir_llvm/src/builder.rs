@@ -803,6 +803,11 @@ impl<'ll> Builder<'_, '_, 'll> {
                 let rhs = NonNull::from(self.values[args[1]].get(self)).as_ptr();
                 llvm_sys::core::LLVMBuildLShr(self.llbuilder, lhs, rhs, UNNAMED)
             }
+            Opcode::Iashr => {
+                let lhs = NonNull::from(self.values[args[0]].get(self)).as_ptr();
+                let rhs = NonNull::from(self.values[args[1]].get(self)).as_ptr();
+                llvm_sys::core::LLVMBuildAShr(self.llbuilder, lhs, rhs, UNNAMED)
+            }
             Opcode::Ixor => {
                 let lhs = NonNull::from(self.values[args[0]].get(self)).as_ptr();
                 let rhs = NonNull::from(self.values[args[1]].get(self)).as_ptr();

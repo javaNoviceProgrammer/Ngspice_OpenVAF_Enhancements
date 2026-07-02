@@ -1,0 +1,13 @@
+* slew_demo transient: pulse input shows asymmetric rate-limited rise/fall
+.model sm slew_demo(rise=1e6 fall=2e6)
+vin in 0 pulse(0 1 1u 1n 1n 10u 20u)
+n1 in out sm
+rload out 0 1k
+
+.tran 10n 20u
+.control
+pre_osdi slew_demo.osdi
+run
+wrdata tran_result.txt v(in) v(out)
+.endc
+.end

@@ -167,6 +167,28 @@ fn condition_disabled() {
 }
 
 #[test]
+fn misc_directives() {
+    check_prepocessor_single_file(
+        r#"
+`celldefine
+`default_discipline electrical
+`default_nettype wire
+`unconnected_drive pull1
+`nounconnected_drive
+`timescale 1ns/1ps
+`line 42 "foo.va" 0
+`pragma protect begin
+`undefineall
+`endcelldefine
+
+module test();
+endmodule
+"#,
+        "misc_directives",
+    )
+}
+
+#[test]
 fn source_map_triple_replacement() {
     check_prepocessor_single_file(
         r#"

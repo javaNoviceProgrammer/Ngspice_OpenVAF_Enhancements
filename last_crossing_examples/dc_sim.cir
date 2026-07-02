@@ -1,0 +1,16 @@
+* last_crossing_demo DC sweep: a static DC sweep has no accepted transient
+* timepoint history, so no crossing can ever be observed -- V(out) is flat
+* at 0.0 across the whole sweep, which is the CORRECT/expected result
+* (this operator is only meaningful under transient analysis).
+.model lcm last_crossing_demo(dir=1)
+vin in 0 dc 0
+n1 in out lcm
+rload out 0 1k
+
+.dc vin -1 1 0.05
+.control
+pre_osdi last_crossing_demo.osdi
+run
+wrdata dc_result.txt v(in) v(out)
+.endc
+.end

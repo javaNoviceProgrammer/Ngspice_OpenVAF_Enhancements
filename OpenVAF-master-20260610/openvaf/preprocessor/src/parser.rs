@@ -306,7 +306,50 @@ impl<'a, 'd> Parser<'a, 'd> {
             "`endif" => CompilerDirective::EndIf,
             "`undef" => CompilerDirective::Undef,
             "`resetall" => CompilerDirective::ResetAll,
+            "`undefineall" => CompilerDirective::UndefineAll,
+            "`celldefine" => CompilerDirective::CellDefine,
+            "`endcelldefine" => CompilerDirective::EndCellDefine,
+            "`default_discipline" => CompilerDirective::DefaultDiscipline,
+            "`default_nettype" => CompilerDirective::DefaultNetType,
+            "`unconnected_drive" => CompilerDirective::UnconnectedDrive,
+            "`nounconnected_drive" => CompilerDirective::NoUnconnectedDrive,
+            "`timescale" => CompilerDirective::TimeScale,
+            "`line" => CompilerDirective::Line,
+            "`pragma" => CompilerDirective::Pragma,
             _ => CompilerDirective::Macro,
+        }
+    }
+
+    /// Skips (without emitting into the output token stream) every token that
+    /// starts before the end of the current source line. Used for compiler
+    /// directives whose argument grammar we don't need to parse precisely
+    /// (`` `timescale ``, `` `line ``, `` `pragma ``, ...): such directives are
+    /// always terminated by the end of the line they appear on, per the
+    /// Verilog/Verilog-AMS LRM, so this reliably consumes exactly their
+    /// arguments without needing a dedicated per-directive grammar.
+    pub(crate) fn skip_rest_of_line(&mut self, err: &mut Vec<PreprocessorDiagnostic>) {
+        let line_end = self.src[usize::from(self.offset)..]
+            .find('\n')
+            .map(|i| self.offset + TextSize::from(i as u32))
+            .unwrap_or_else(|| TextSize::of(self.src));
+        while self.token != PreprocessorToken::Eof && self.offset < line_end {
+            self.do_bump(false, err);
+        }
+    }
+
+    /// Bumps the current (directive) token, then returns the text of the next
+    /// token if it is a simple identifier (without consuming the rest of the
+    /// line) -- used for directives that take a single identifier argument
+    /// (`` `default_discipline foo ``, `` `unconnected_drive pull1 ``, ...).
+    pub(crate) fn bump_directive_and_capture_ident(
+        &mut self,
+        err: &mut Vec<PreprocessorDiagnostic>,
+    ) -> Option<&'a str> {
+        self.do_bump(false, err);
+        if self.token == PreprocessorToken::SimpleIdent {
+            Some(self.current_text())
+        } else {
+            None
         }
     }
 }
@@ -334,5 +377,15 @@ pub enum CompilerDirective {
     EndIf,
     Undef,
     ResetAll,
+    UndefineAll,
+    CellDefine,
+    EndCellDefine,
+    DefaultDiscipline,
+    DefaultNetType,
+    UnconnectedDrive,
+    NoUnconnectedDrive,
+    TimeScale,
+    Line,
+    Pragma,
     Macro,
 }

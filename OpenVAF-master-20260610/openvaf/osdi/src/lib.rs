@@ -278,6 +278,15 @@ pub fn compile<'a>(
         let mut absdelay_counts: Vec<u32> = Vec::new();
         let mut absdelay_infos_ll: Vec<&llvm_sys::LLVMValue> = Vec::new();
 
+        // { y_node: u32, z_node: u32, dir_offset: u32 }
+        let last_crossing_info_ty = cx.ty_struct(
+            "OsdiLastCrossingInfo",
+            &[cx.ty_int(), cx.ty_int(), cx.ty_int()],
+        );
+
+        let mut last_crossing_counts: Vec<u32> = Vec::new();
+        let mut last_crossing_infos_ll: Vec<&llvm_sys::LLVMValue> = Vec::new();
+
         let descriptors: Vec<_> = osdi_modules
             .iter()
             .map(|module| {
@@ -311,6 +320,36 @@ pub fn compile<'a>(
                         ],
                     );
                     absdelay_infos_ll.push(info);
+                }
+
+                // Collect last_crossing metadata for this module
+                let n_lc = module.intern.last_crossing_equations.len() as u32;
+                last_crossing_counts.push(n_lc);
+                for (i, &(eq_y, eq_z)) in
+                    module.intern.last_crossing_equations.iter().enumerate()
+                {
+                    let find_node = |eq: ImplicitEquation| -> u32 {
+                        module
+                            .dae_system
+                            .unknowns
+                            .index(&SimUnknownKind::Implicit(eq))
+                            .map_or(u32::MAX, |u| u32::from(u))
+                    };
+                    let y_node = find_node(eq_y);
+                    let z_node = find_node(eq_z);
+                    let dir_off = cguint
+                        .inst_data
+                        .last_crossing_dir_offset(i, &td_ptr)
+                        .unwrap_or(u32::MAX);
+                    let info = cx.const_struct(
+                        last_crossing_info_ty,
+                        &[
+                            cx.const_unsigned_int(y_node),
+                            cx.const_unsigned_int(z_node),
+                            cx.const_unsigned_int(dir_off),
+                        ],
+                    );
+                    last_crossing_infos_ll.push(info);
                 }
 
                 descriptor.to_ll_val(&cx, &tys)
@@ -358,6 +397,23 @@ pub fn compile<'a>(
                     "OSDI_ABSDELAY_INFOS",
                     absdelay_info_ty,
                     &absdelay_infos_ll,
+                    true,
+                    false,
+                );
+            }
+        }
+
+        // Export last_crossing descriptor info (only if any module uses last_crossing)
+        let has_last_crossing = last_crossing_counts.iter().any(|&n| n > 0);
+        if has_last_crossing {
+            let counts_ll: Vec<_> =
+                last_crossing_counts.iter().map(|&n| cx.const_unsigned_int(n)).collect();
+            cx.export_array("OSDI_LAST_CROSSING_COUNTS", cx.ty_int(), &counts_ll, true, false);
+            if !last_crossing_infos_ll.is_empty() {
+                cx.export_array(
+                    "OSDI_LAST_CROSSING_INFOS",
+                    last_crossing_info_ty,
+                    &last_crossing_infos_ll,
                     true,
                     false,
                 );

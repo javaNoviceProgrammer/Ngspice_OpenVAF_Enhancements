@@ -1,0 +1,16 @@
+* zi_lpf AC response: first-order lowpass, -3dB near 1/(2*pi*tau) ~ 15.9kHz.
+* The bilinear-transform realization is exact at DC and tracks the ideal RC
+* lowpass well below the Nyquist rate 1/(2*tstep) = 500kHz, with the
+* expected/documented frequency-warping deviation as it approaches Nyquist.
+.model zm zi_lpf(tau=10e-6 tstep=1e-6)
+vin in 0 dc 0 ac 1
+n1 in out zm
+rload out 0 1k
+
+.ac dec 20 100 1meg
+.control
+pre_osdi zi_lpf.osdi
+run
+wrdata ac_result.txt v(in) v(out)
+.endc
+.end

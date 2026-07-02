@@ -32,6 +32,11 @@ typedef struct OsdiRegistryEntry {
   uint32_t num_absdelays;
   const void *absdelay_infos;  /* points into the loaded .osdi's OSDI_ABSDELAY_INFOS */
 
+  /* last_crossing support: filled at .osdi load time from
+   * OSDI_LAST_CROSSING_* symbols */
+  uint32_t num_last_crossings;
+  const void *last_crossing_infos;  /* points into the loaded .osdi's OSDI_LAST_CROSSING_INFOS */
+
 } OsdiRegistryEntry;
 
 typedef struct OsdiObjectFile {

@@ -1,0 +1,13 @@
+* shift_demo DC sweep: staircase transfer curve from <<< / >>> on a quantized code
+.model sm shift_demo(shift_amount=2)
+vin in 0 dc 0
+n1 in out sm
+rload out 0 1k
+
+.dc vin -1 1 0.01
+.control
+pre_osdi shift_demo.osdi
+run
+wrdata dc_result.txt v(in) v(out)
+.endc
+.end

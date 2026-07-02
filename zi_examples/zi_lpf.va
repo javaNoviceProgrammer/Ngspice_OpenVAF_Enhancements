@@ -1,0 +1,19 @@
+`include "disciplines.vams"
+
+// Demonstrates the Enhancement-6 zi_nd() operator: a discrete first-order
+// z-domain lowpass filter H(z) = b0/(1-a1*z^-1), sampled at period T,
+// matched to a continuous-time RC lowpass with time constant tau via
+// a1 = exp(-T/tau), b0 = 1-a1 (so the DC gain is exactly unity).
+// zi_nd is realized internally via a bilinear (Tustin) transform to an
+// equivalent continuous state-space system (see hir_lower::lower_zi).
+module zi_lpf(in, out);
+    inout in, out;
+    electrical in, out;
+    parameter real tau = 10e-6 from (0:inf);
+    parameter real tstep = 1e-6 from (0:inf);
+    parameter real a1 = exp(-tstep / tau);
+    parameter real b0 = 1.0 - a1;
+    analog begin
+        V(out) <+ zi_nd(V(in), '{b0}, '{1.0, -a1}, tstep);
+    end
+endmodule

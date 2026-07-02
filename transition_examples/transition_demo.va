@@ -1,0 +1,18 @@
+`include "disciplines.vams"
+
+// Demonstrates the Enhancement-6 transition() operator: a comparator-style
+// digital signal (cmp, 0/1) is delayed by td and then shaped with
+// independent rise/fall transition times, via
+// transition(x,td,trise,tfall) = slew(absdelay(x,td), 1/trise, 1/tfall).
+module transition_demo(in, out);
+    inout in, out;
+    electrical in, out;
+    parameter real td = 1n from [0:inf);
+    parameter real trise = 2n from (0:inf);
+    parameter real tfall = 3n from (0:inf);
+    integer cmp;
+    analog begin
+        cmp = V(in) > 0.5 ? 1 : 0;
+        V(out) <+ transition(cmp, td, trise, tfall);
+    end
+endmodule

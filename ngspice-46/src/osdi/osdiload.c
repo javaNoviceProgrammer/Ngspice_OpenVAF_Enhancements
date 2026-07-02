@@ -237,6 +237,46 @@ static void absdelay_stamp_tran(CKTcircuit *ckt, GENinstance *gen_inst,
   }
 }
 
+/*
+ * Stamp residual and Jacobian for all last_crossing slots of one instance.
+ * Valid in both DC/OP and TRAN modes -- unlike absdelay, no distinction is
+ * needed since the crossing-time output has no y-coupling: it is just
+ * `V(z) = crossing_time[k]`, an ordinary Dirichlet-style row seeded by
+ * whatever last_crossing_accept() has cached (0.0 until the first qualifying
+ * crossing is observed).  Called after the standard OSDI load() for each
+ * evaluation, mirroring absdelay_stamp_dc/absdelay_stamp_tran.
+ */
+static void last_crossing_stamp(void *inst, OsdiExtraInstData *extra,
+                                 const OsdiRegistryEntry *entry,
+                                 const OsdiDescriptor *descr,
+                                 CKTcircuit *ckt, bool is_tran) {
+  uint32_t n = entry->num_last_crossings;
+  if (n == 0)
+    return;
+
+  /* Unlike absdelay, last_crossing needs no per-instance history seeding on
+   * the first transient call -- but if NO absdelay is also present in this
+   * circuit, ckt->CKTtimePoints/CKTtimeIndex (the shared accepted-timepoint
+   * timeline consumed by OSDIaccept) would otherwise never get initialized,
+   * since that only happens inside absdelay_stamp_tran. Ensure it here too;
+   * this call is idempotent (see absdelay_ensure_timepoints). */
+  if (is_tran) {
+    absdelay_ensure_timepoints(ckt);
+  }
+
+  const OsdiLastCrossingInfo *infos =
+      (const OsdiLastCrossingInfo *)entry->last_crossing_infos;
+  uint32_t *node_mapping =
+      (uint32_t *)(((char *)inst) + descr->node_mapping_offset);
+
+  for (uint32_t k = 0; k < n; k++) {
+    uint32_t z_mapped = node_mapping[infos[k].z_node];
+    /* V(z) - crossing_time = 0  ->  jac[z,z] += -1, rhs[z] += -crossing_time */
+    *(extra->crossing_jac_z[k]) += -1.0;
+    ckt->CKTrhs[z_mapped] += -extra->crossing_time[k];
+  }
+}
+
 #define NUM_SIM_PARAMS 10
 char *sim_params[NUM_SIM_PARAMS + 1] = {
     "iniLim", "gmin", "gdev", "tnom", 
@@ -443,6 +483,7 @@ extern int OSDIload(GENmodel *inModel, CKTcircuit *ckt) {
       } else if (entry->num_absdelays > 0) {
         absdelay_stamp_dc(inst, extra_inst_data, entry, descr);
       }
+      last_crossing_stamp(inst, extra_inst_data, entry, descr, ckt, is_tran);
       eval_flags |= extra_inst_data->eval_flags;
     }
   }
@@ -469,6 +510,7 @@ extern int OSDIload(GENmodel *inModel, CKTcircuit *ckt) {
         } else if (entry->num_absdelays > 0) {
           absdelay_stamp_dc(inst, extra_inst_data, entry, descr);
         }
+        last_crossing_stamp(inst, extra_inst_data, entry, descr, ckt, is_tran);
         eval_flags |= extra_inst_data->eval_flags;
       }
     }

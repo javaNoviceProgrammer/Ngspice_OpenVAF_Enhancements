@@ -1,0 +1,14 @@
+`include "disciplines.vams"
+
+// Demonstrates the Enhancement-6 slew() operator: y tracks V(in) subject to
+// bounded rate of change (rise=1e6 V/s, fall=2e6 V/s), implemented as a
+// saturating tracking loop dy/dt = clamp(K*(x-y), -fall, rise).
+module slew_demo(in, out);
+    inout in, out;
+    electrical in, out;
+    parameter real rise = 1e6 from (0:inf);
+    parameter real fall = 2e6 from (0:inf);
+    analog begin
+        V(out) <+ slew(V(in), rise, fall);
+    end
+endmodule

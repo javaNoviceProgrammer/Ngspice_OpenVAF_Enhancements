@@ -1,0 +1,13 @@
+* directive_demo AC response: flat gain=0.5, zero phase (pure resistive gain block)
+.model dm directive_demo(gain=0.5)
+vin in 0 dc 0 ac 1
+n1 in out dm
+rload out 0 1k
+
+.ac dec 10 1 100meg
+.control
+pre_osdi directive_demo.osdi
+run
+wrdata ac_result.txt v(in) v(out)
+.endc
+.end

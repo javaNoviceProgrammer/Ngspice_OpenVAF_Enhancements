@@ -1,0 +1,13 @@
+* zi_lpf DC sweep: exact unity DC gain by construction (b0 = 1-a1)
+.model zm zi_lpf(tau=10e-6 tstep=1e-6)
+vin in 0 dc 0
+n1 in out zm
+rload out 0 1k
+
+.dc vin -1 1 0.02
+.control
+pre_osdi zi_lpf.osdi
+run
+wrdata dc_result.txt v(in) v(out)
+.endc
+.end

@@ -451,12 +451,24 @@ extern OsdiObjectFile load_object_file(const char *input) {
   sym = GET_SYM(handle, "OSDI_ABSDELAY_INFOS");
   const void *absdelay_infos_base = sym;
 
+  /* Optional: last_crossing descriptor arrays */
+  sym = GET_SYM(handle, "OSDI_LAST_CROSSING_COUNTS");
+  const uint32_t *last_crossing_counts = (const uint32_t *)sym;
+
+  sym = GET_SYM(handle, "OSDI_LAST_CROSSING_INFOS");
+  const void *last_crossing_infos_base = sym;
+
   OsdiRegistryEntry *dst = TMALLOC(OsdiRegistryEntry, OSDI_NUM_DESCRIPTORS);
 
   /* Size of one OsdiAbsDelayInfo struct as exported from OpenVAF:
    * { y_node: u32, z_node: u32, td_offset: u32 } = 12 bytes */
   const size_t absdelay_info_size = 12;
   uint32_t absdelay_info_offset = 0;
+
+  /* Size of one OsdiLastCrossingInfo struct as exported from OpenVAF:
+   * { y_node: u32, z_node: u32, dir_offset: u32 } = 12 bytes */
+  const size_t last_crossing_info_size = 12;
+  uint32_t last_crossing_info_offset = 0;
 
   char* desc_ptr = (char*)OSDI_DESCRIPTORS;
   for (uint32_t i = 0; i < OSDI_NUM_DESCRIPTORS; i++) {
@@ -496,6 +508,17 @@ extern OsdiObjectFile load_object_file(const char *input) {
       }
     }
 
+    uint32_t n_crossings = 0;
+    const void *crossings_ptr = NULL;
+    if (last_crossing_counts) {
+      n_crossings = last_crossing_counts[i];
+      if (n_crossings > 0 && last_crossing_infos_base) {
+        crossings_ptr = (const char *)last_crossing_infos_base +
+                        last_crossing_info_offset * last_crossing_info_size;
+        last_crossing_info_offset += n_crossings;
+      }
+    }
+
     size_t inst_off = calc_osdi_instance_data_off(descr);
     size_t noise_off = calc_osdi_noise_off(descr);
     dst[i] = (OsdiRegistryEntry){
@@ -512,6 +535,9 @@ extern OsdiObjectFile load_object_file(const char *input) {
 
         .num_absdelays = n_delays,
         .absdelay_infos = delays_ptr,
+
+        .num_last_crossings = n_crossings,
+        .last_crossing_infos = crossings_ptr,
     };
   }
 

@@ -1,0 +1,14 @@
+* transition_demo DC sweep: comparator threshold at V(in)=0.5V; transition()
+* shapes the *time-domain* edge only -- the DC steady-state is a hard step.
+.model tm transition_demo(td=1n trise=2n tfall=3n)
+vin in 0 dc 0
+n1 in out tm
+rload out 0 1k
+
+.dc vin 0 1 0.005
+.control
+pre_osdi transition_demo.osdi
+run
+wrdata dc_result.txt v(in) v(out)
+.endc
+.end
