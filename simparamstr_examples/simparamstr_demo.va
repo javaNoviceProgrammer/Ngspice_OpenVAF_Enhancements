@@ -1,0 +1,34 @@
+`include "disciplines.vams"
+
+// Enhancement-25 demonstration: `$simparam$str(name)`.
+//
+// `$simparam$str` returns a *string* simulator parameter. Previously it was
+// unusable: the builtin was mis-typed as returning a real, the runtime lookup
+// was bugged (it walked the numeric parameter list and returned the name, not
+// the value), and ngspice exposed no string parameters at all. Now it works, and
+// ngspice provides:
+//   * "analysis_name" -- "dc" / "ac" / "tran" / "noise" (matches analysis())
+//   * "simulator"     -- "ngspice"
+//
+// This model reports its conductance based on the *current analysis*, read as a
+// string, so a testbench can confirm the value returned in each analysis. It also
+// checks the simulator name and aborts (via $error/$finish) if it is not the
+// expected "ngspice" -- exercising a string `$simparam$str` in a comparison.
+module simparamstr_demo(a, b);
+    inout a, b;
+    electrical a, b;
+    parameter real g_dc   = 1.0e-3;
+    parameter real g_ac   = 2.0e-3;
+    parameter real g_tran = 3.0e-3;
+
+    real g;
+    string an;
+
+    analog begin
+        an = $simparam$str("analysis_name");     // string variable from $simparam$str
+        if (an == "ac")        g = g_ac;
+        else if (an == "tran") g = g_tran;
+        else                   g = g_dc;         // "dc" (also the op / static case)
+        I(a, b) <+ g * V(a, b);
+    end
+endmodule

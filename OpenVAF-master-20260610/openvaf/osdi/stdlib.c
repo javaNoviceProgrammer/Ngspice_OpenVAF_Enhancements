@@ -105,13 +105,19 @@ extern int strcmp(const char *__s1, const char *__s2);
 
 char *simparam_str(void *params_, void *handle, uint32_t *flags, char *name) {
   OsdiSimParas *params = params_;
-  for (int i = 0; params->names[i]; i++) {
-    char *p1, *p2;
-    int eq;
-    SCMP(p1, p2, params->names_str[i], name, eq);
-    // if (strcmp(params->names_str[i], name) == 0) {
-    if (eq) {
-      return params->names_str[i];
+  // Enhancement-25: walk the *string* parameter list (`names_str`, NULL-terminated)
+  // and return the matching *value* (`vals_str`). Previously this loop was bugged --
+  // it iterated the numeric `names` array and returned the name instead of the value,
+  // so `$simparam$str` never worked (and read out of bounds once the string list is
+  // shorter than the numeric one).
+  if (params->names_str) {
+    for (int i = 0; params->names_str[i]; i++) {
+      char *p1, *p2;
+      int eq;
+      SCMP(p1, p2, params->names_str[i], name, eq);
+      if (eq) {
+        return params->vals_str[i];
+      }
     }
   }
   *flags |= EVAL_RET_FLAG_FATAL;

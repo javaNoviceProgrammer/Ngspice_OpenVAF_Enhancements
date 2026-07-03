@@ -283,7 +283,11 @@ char *sim_params[NUM_SIM_PARAMS + 1] = {
     "simulatorVersion", "sourceScaleFactor", 
     "epsmin", "reltol", "vntol", "abstol", 
     NULL};
-char *sim_params_str[1] = {NULL};
+/* Enhancement-25: string simulator parameters returned by $simparam$str.
+ * "analysis_name" mirrors the analysis() naming ("dc"/"ac"/"tran"/"noise");
+ * "simulator" is constant. The values array is filled per call in get_simparams. */
+char *sim_params_str[3] = {"analysis_name", "simulator", NULL};
+char *sim_param_vals_str[2] = {"dc", "ngspice"};
 
 double sim_param_vals[NUM_SIM_PARAMS] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
 
@@ -301,10 +305,24 @@ OsdiSimParas get_simparams(const CKTcircuit *ckt) {
       initializeLimiting, gmin, gdev, ckt->CKTnomTemp-CONSTCtoK, simulatorVersion, sourceScaleFactor, 
       ckt->CKTepsmin, ckt->CKTreltol, ckt->CKTvoltTol, ckt->CKTabstol };
   memcpy(&sim_param_vals, &sim_param_vals_, sizeof(double) * NUM_SIM_PARAMS);
+
+  /* Enhancement-25: current analysis name for $simparam$str("analysis_name"),
+   * derived from CKTmode with the same convention as analysis(). */
+  const char *analysis_name;
+  if (ckt->CKTmode & MODEACNOISE)
+    analysis_name = "noise";
+  else if (ckt->CKTmode & (MODEAC | MODEINITSMSIG))
+    analysis_name = "ac";
+  else if (ckt->CKTmode & (MODETRAN | MODETRANOP | MODEINITTRAN))
+    analysis_name = "tran";
+  else
+    analysis_name = "dc";
+  sim_param_vals_str[0] = (char *)analysis_name;
+
   OsdiSimParas sim_params_ = {.names = sim_params,
                               .vals = (double *)&sim_param_vals,
                               .names_str = sim_params_str,
-                              .vals_str = NULL};
+                              .vals_str = sim_param_vals_str};
   return sim_params_;
 }
 

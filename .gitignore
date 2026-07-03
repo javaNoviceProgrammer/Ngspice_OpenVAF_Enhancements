@@ -164,5 +164,9 @@ arrayret_examples/*.txt
 discontinuity_examples/_*.cir
 discontinuity_examples/*.txt
 
+# Enhancement 25 $simparam$str example scripts: temp netlists + outputs
+simparamstr_examples/_*.cir
+simparamstr_examples/*.txt
+
 # Python bytecode cache (e.g. from importing _setup.py)
 __pycache__/
