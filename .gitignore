@@ -168,5 +168,9 @@ discontinuity_examples/*.txt
 simparamstr_examples/_*.cir
 simparamstr_examples/*.txt
 
+# Enhancement 26 ac_stim example scripts: temp netlists + outputs
+acstim_examples/_*.cir
+acstim_examples/*.txt
+
 # Python bytecode cache (e.g. from importing _setup.py)
 __pycache__/

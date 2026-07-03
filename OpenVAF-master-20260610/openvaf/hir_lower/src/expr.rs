@@ -1186,6 +1186,13 @@ impl BodyLoweringCtx<'_, '_, '_> {
                 F_ZERO
             }
 
+            // `ac_stim([name][, mag][, phase])` (Enhancement-26): a small-signal AC stimulus
+            // source. Per the LRM it evaluates to 0 in the large-signal (DC/transient) domain and
+            // injects `mag∠phase` only during small-signal (AC) analysis. The large-signal value is
+            // 0 (handled here); the AC-domain injection is a separate small-signal-RHS mechanism.
+            // (Previously this fell through to `unreachable!()` and crashed the compiler.)
+            BuiltIn::ac_stim => F_ZERO,
+
             BuiltIn::white_noise => {
                 // we create a dedicated callback for each noise source
                 // by giving every source a unique index. Kind of ineffcient

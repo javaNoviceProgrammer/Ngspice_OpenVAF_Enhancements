@@ -1,0 +1,35 @@
+`include "disciplines.vams"
+
+// Enhancement-26 demonstration: `ac_stim(...)`.
+//
+// `ac_stim([name][, mag][, phase])` is the Verilog-AMS small-signal AC stimulus
+// source. Per the LRM it evaluates to 0 in the large-signal (DC/transient)
+// domain and injects `mag∠phase` only during small-signal (AC) analysis.
+//
+// Previously `ac_stim` type-checked but any contributing use hit an
+// `unreachable!()` and CRASHED the compiler. Enhancement-26 fixes that: it now
+// lowers to its correct large-signal value (0), so a model using `ac_stim`
+// compiles and simulates. (The AC-domain small-signal injection is a separate,
+// larger follow-up -- see Enhancement-26.md.)
+//
+// This model exercises all four `ac_stim` signature forms and a `use_stim`
+// switch; because every `ac_stim` form is 0 in DC/transient, the terminal
+// current is `g*V(a,b)` regardless of whether the stimuli are included -- which
+// is exactly the point being verified.
+module acstim_demo(a, b);
+    inout a, b;
+    electrical a, b;
+    parameter real g = 1.0e-3;
+    parameter integer use_stim = 1;   // include the ac_stim terms
+
+    analog begin
+        I(a, b) <+ g * V(a, b);
+        if (use_stim) begin
+            // all four LRM forms compile and contribute 0 in DC/transient
+            I(a, b) <+ ac_stim();
+            I(a, b) <+ ac_stim("ac");
+            I(a, b) <+ ac_stim("ac", 1.0);
+            I(a, b) <+ ac_stim("ac", 1.0, 0.0);
+        end
+    end
+endmodule

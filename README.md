@@ -379,6 +379,16 @@ Several unrelated language gaps found along the way are also fixed. **`localpara
 
 ---
 
+## Enhancement 26: `ac_stim(...)` baseline (crash fix + correct large-signal semantics)
+
+*July 2026* — Baseline support for **`ac_stim([name][, mag][, phase])`**, the Verilog-AMS small-signal AC stimulus source. `ac_stim` type-checked but any **contributing** use (`I(a,b) <+ ... + ac_stim(...)`) fell through to an `unreachable!()` in the lowering and **crashed the compiler**. This adds the missing lowering arm: per the LRM, `ac_stim` evaluates to **0 in the large-signal (DC/transient) domain** and injects `mag∠phase` only during small-signal AC analysis, so returning `0` is the correct large-signal value and stops the crash — a model using `ac_stim` (in any of its four signature forms) now compiles and simulates. One-line change; no OSDI ABI change and no ngspice change.
+
+- Verified end-to-end through ngspice — the model compiles (it previously crashed `openvaf-r`), and DC/transient currents equal `g·V(a,b)` and are identical with the `ac_stim` terms included vs excluded, i.e. `ac_stim` correctly contributes 0 in the large-signal domain — see `acstim_examples/`
+- **Scope:** this is the baseline (crash fix + correct large-signal value). The actual small-signal **AC injection** (`ac_stim` contributing `mag∠phase` to the AC right-hand side) is a separate, ABI-touching subsystem — parallel to the noise path (new OSDI AC-RHS mechanism + ngspice complex-RHS stamping) — deferred to a dedicated follow-up
+- Details: [Enhancement-26.md](Enhancement-26.md)
+
+---
+
 ## Prebuilt Binaries
 
 Binaries are built by CI and committed to `bin/`:
