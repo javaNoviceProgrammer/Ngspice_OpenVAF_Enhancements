@@ -319,6 +319,16 @@ Several unrelated language gaps found along the way are also fixed. **`localpara
 
 ---
 
+## Enhancement 20: array `output`/`inout` function arguments
+
+*July 2026* — Completed Enhancement 18's array-argument support, which was **input-only**: a whole array could be passed *into* an `analog function` but the function could not write one back. Array **`output`** and **`inout`** arguments now write their results into the caller's array on return — previously such an argument compiled but silently did nothing (a correctness gap). Enhancement 18 already bound the callee's element variables from the caller at entry and recorded the caller's array elements for *any* array argument; the only missing piece was the **exit writeback**, so this is a focused one-function change in `hir_lower` that copies each callee element variable back to the caller's array element after the (inlined) body runs. `inout` gets both the entry bind and the exit writeback; `input` is unaffected. No OSDI ABI change and no ngspice change.
+
+- Verified end-to-end through ngspice — `make_taps` fills a geometric tap array via an **output** array argument and `normalize` scales it in place via an **inout** array argument; the gain is the sum of the normalized taps, which is `1` for any `ratio` (swept, overridden per `.model`), so `V(out) = V(in)` — a value that holds only if *both* writebacks reach the caller's array — see `arrayout_examples/`
+- The array passed to an `output`/`inout` argument must be a writable array **variable**; array **return values** (a function whose return type is an array) remain future work
+- Details: [Enhancement-20.md](Enhancement-20.md)
+
+---
+
 ## Prebuilt Binaries
 
 Binaries are built by CI and committed to `bin/`:

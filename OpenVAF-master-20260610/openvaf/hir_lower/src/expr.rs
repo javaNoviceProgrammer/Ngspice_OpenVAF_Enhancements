@@ -334,18 +334,29 @@ impl BodyLoweringCtx<'_, '_, '_> {
         let body = fun.body(self.ctx.db);
         BodyLoweringCtx { body: body.borrow(), path: self.path, ctx: self.ctx }.lower_entry_stmts();
 
-        // write outputs back to original (including possibly required cast); array arguments are
-        // input-only (Enhancement-18), so they are skipped here.
+        // write outputs back to the caller (including any required cast).
         for (arg, &expr) in args {
-            if arg.is_output(self.ctx.db) && !matches!(arg.ty(self.ctx.db), Type::Array { .. }) {
-                let mut val = self.ctx.use_place(PlaceKind::FunctionArg(arg));
-                // casting in reverse here since we write back
-                if let Some((dst, src)) = self.body.needs_cast(expr) {
-                    val = self.ctx.insert_cast(val, src, &dst)
-                }
-                let dst = self.body.get_expr(expr).as_assignment_lhs();
-                self.ctx.def_place(dst.into(), val);
+            if !arg.is_output(self.ctx.db) {
+                continue;
             }
+            if matches!(arg.ty(self.ctx.db), Type::Array { .. }) {
+                // Whole-array output/inout argument (Enhancement-20): copy the function's element
+                // variables back to the caller's array elements after the body has run.
+                let func_elems = arg.array_elems(self.ctx.db);
+                let caller_elems = self.body.array_var_ref(expr).unwrap_or_default();
+                for (&p_i, &c_i) in func_elems.iter().zip(&caller_elems) {
+                    let val = self.ctx.read_variable(p_i);
+                    self.ctx.def_place(PlaceKind::Var(c_i), val);
+                }
+                continue;
+            }
+            let mut val = self.ctx.use_place(PlaceKind::FunctionArg(arg));
+            // casting in reverse here since we write back
+            if let Some((dst, src)) = self.body.needs_cast(expr) {
+                val = self.ctx.insert_cast(val, src, &dst)
+            }
+            let dst = self.body.get_expr(expr).as_assignment_lhs();
+            self.ctx.def_place(dst.into(), val);
         }
 
         self.ctx.use_place(PlaceKind::FunctionReturn(fun))

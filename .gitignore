@@ -143,5 +143,9 @@ funcarray_examples/*.txt
 dowhile_examples/_*.cir
 dowhile_examples/*.txt
 
+# Enhancement 20 array output/inout arg example scripts: temp netlists + outputs
+arrayout_examples/_*.cir
+arrayout_examples/*.txt
+
 # Python bytecode cache (e.g. from importing _setup.py)
 __pycache__/
