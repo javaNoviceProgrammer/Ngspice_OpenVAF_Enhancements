@@ -222,6 +222,24 @@ impl Body {
             registry: &registry,
         };
 
+        // A `paramset`-bound target parameter (Enhancement-21) takes its value from the paramset's
+        // `.<param> = <expr>;` override expression instead of its own declared default. The
+        // override lives in the `paramset` declaration (a `ParamsetOverride` node) and is lowered
+        // here in the twin module's scope, so it resolves the paramset's own parameters. Such a
+        // parameter has no constraints of its own (it is an internal localparam now).
+        if let Some(ov_ast_id) = tree[item_tree].override_expr {
+            let file = db.parse(root_file).tree();
+            let ov = ast_id_map.get(ov_ast_id).to_node(file.syntax());
+            let default = ctx.collect_opt_expr(ov.val());
+            let entry_stmts = vec![ctx.alloc_stmt_desugared(Stmt::Expr(default))];
+            body.entry_stmts = entry_stmts.into_boxed_slice();
+            return (
+                Arc::new(body),
+                Arc::new(source_map),
+                ParamExprs { default, bounds: Vec::new().into() },
+            );
+        }
+
         // An element of an array-valued parameter takes its default from the corresponding leaf of
         // the shared `'{...}` array literal (flat declaration-order position `array_index`). The
         // literal is nested for a multi-dimensional parameter (`'{'{..},'{..}}`), so it is

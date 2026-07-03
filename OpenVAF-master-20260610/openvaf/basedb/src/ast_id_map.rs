@@ -102,6 +102,7 @@ pub(crate) fn has_id_map_entry(kind: SyntaxKind) -> bool {
             || ast::ModuleItem::can_cast(kind)
             || ast::ModulePort::can_cast(kind)
             || ast::AnalogBehaviour::can_cast(kind)
+            || ast::ParamsetOverride::can_cast(kind)
     }
 }
 

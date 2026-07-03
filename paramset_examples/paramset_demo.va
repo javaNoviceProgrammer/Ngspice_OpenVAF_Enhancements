@@ -1,0 +1,48 @@
+`include "disciplines.vams"
+
+// Enhancement-21 demonstration: Verilog-AMS `paramset` blocks.
+//
+// A `paramset <name> <target>;` defines an instantiable model `<name>` that
+// behaves exactly like the target module but with selected target parameters
+// *bound* to expressions (which may reference the paramset's own parameters).
+// It is the Verilog-AMS way of shipping a "model library": one behavioural
+// module plus several named, pre-configured variants.
+//
+// Here the target is a simple linear conductance `g0*(1 + k*V)` (so the model
+// is mildly nonlinear and has a non-trivial AC conductance, exercising the
+// autodiff Jacobian through the paramset). Three paramsets specialise it:
+//
+//   * res_1k     -- a fixed 1 kOhm resistor (bind r via a constant; k = 0)
+//   * res_kohm   -- resistance set in kOhm through a card parameter `kohm`
+//   * varistor   -- keeps g0 settable (pass-through) and binds only k
+
+module conductor(p, n);
+    inout p, n;
+    electrical p, n;
+    parameter real g0 = 1e-3 from (0:inf);   // linear conductance [S]
+    parameter real k  = 0.0;                  // 1st-order voltage coefficient [1/V]
+    analog
+        I(p, n) <+ g0 * (1.0 + k * V(p, n)) * V(p, n);
+endmodule
+
+// Fixed 1 kOhm linear resistor: bind both parameters to constants.
+paramset res_1k conductor;
+    .g0 = 1.0e-3;
+    .k  = 0.0;
+endparamset
+
+// Resistance specified in kOhm via the paramset's own card parameter `kohm`;
+// the binding expression `1/(kohm*1000)` computes the conductance. `k` is
+// pinned to 0 (a pure linear resistor).
+paramset res_kohm conductor;
+    parameter real kohm = 1.0 from (0:inf);   // resistance in kOhm
+    .g0 = 1.0 / (kohm * 1000.0);
+    .k  = 0.0;
+endparamset
+
+// A voltage-dependent resistor: bind only `k` (from a card parameter), and
+// leave `g0` unbound so it stays settable from the model card (pass-through).
+paramset varistor conductor;
+    parameter real kv = 0.5;                  // voltage coefficient [1/V]
+    .k = kv;
+endparamset

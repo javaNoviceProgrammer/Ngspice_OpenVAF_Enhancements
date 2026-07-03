@@ -81,6 +81,9 @@ pub enum ItemTreeDiagnostic {
     /// as a defensive fallback, e.g. for a loop bound/step that failed to
     /// constant-fold. The construct is dropped (contributes no items).
     UnelaboratedGenerate { ast_id: ErasedAstId },
+    /// A `paramset` (Enhancement-21) named a target module that does not exist
+    /// in this file. The paramset is dropped (contributes no OSDI module).
+    UnknownParamsetTarget { ast_id: ErasedAstId, target: Name },
 }
 
 impl Default for ItemTree {
@@ -484,6 +487,11 @@ pub struct Param {
     /// this element's position in the array literal (declaration order, msb→lsb), used to pick
     /// its per-element default. `None` for an ordinary scalar parameter. See `lower_param`.
     pub array_index: Option<u32>,
+    /// For a target-module parameter that a `paramset` binds (Enhancement-21), the paramset's
+    /// `.<param> = <expr>;` override node. When set, this (synthetic, twin-module) parameter is
+    /// treated as a `localparam` whose value is `<expr>` instead of its own declared default, so
+    /// it is no longer settable from the model card. `None` for every ordinary parameter.
+    pub override_expr: Option<AstId<ast::ParamsetOverride>>,
 }
 
 #[derive(Debug, Eq, PartialEq, Clone, Hash)]

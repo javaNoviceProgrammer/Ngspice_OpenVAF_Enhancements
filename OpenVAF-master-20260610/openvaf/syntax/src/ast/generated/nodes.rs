@@ -404,6 +404,35 @@ impl ModuleDecl {
     }
 }
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ParamsetDecl {
+    pub(crate) syntax: SyntaxNode,
+}
+impl ast::AttrsOwner for ParamsetDecl {}
+impl ParamsetDecl {
+    pub fn paramset_token(&self) -> Option<SyntaxToken> {
+        support::token(&self.syntax, T![paramset])
+    }
+    pub fn name(&self) -> Option<Name> { support::child(&self.syntax) }
+    /// The target module this paramset specialises (a `NameRef`).
+    pub fn target(&self) -> Option<NameRef> { support::child(&self.syntax) }
+    pub fn param_decls(&self) -> AstChildren<ParamDecl> { support::children(&self.syntax) }
+    pub fn overrides(&self) -> AstChildren<ParamsetOverride> { support::children(&self.syntax) }
+    pub fn endparamset_token(&self) -> Option<SyntaxToken> {
+        support::token(&self.syntax, T![endparamset])
+    }
+}
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ParamsetOverride {
+    pub(crate) syntax: SyntaxNode,
+}
+impl ParamsetOverride {
+    /// The name of the target-module parameter being bound.
+    pub fn name(&self) -> Option<NameRef> { support::child(&self.syntax) }
+    pub fn eq_token(&self) -> Option<SyntaxToken> { support::token(&self.syntax, T![=]) }
+    pub fn val(&self) -> Option<Expr> { support::child(&self.syntax) }
+    pub fn semicolon_token(&self) -> Option<SyntaxToken> { support::token(&self.syntax, T![;]) }
+}
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct DisciplineAttr {
     pub(crate) syntax: SyntaxNode,
 }
@@ -733,6 +762,7 @@ pub enum Item {
     DisciplineDecl(DisciplineDecl),
     NatureDecl(NatureDecl),
     ModuleDecl(ModuleDecl),
+    ParamsetDecl(ParamsetDecl),
 }
 impl ast::AttrsOwner for Item {}
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -1187,6 +1217,28 @@ impl AstNode for NatureDecl {
 }
 impl AstNode for ModuleDecl {
     fn can_cast(kind: SyntaxKind) -> bool { kind == MODULE_DECL }
+    fn cast(syntax: SyntaxNode) -> Option<Self> {
+        if Self::can_cast(syntax.kind()) {
+            Some(Self { syntax })
+        } else {
+            None
+        }
+    }
+    fn syntax(&self) -> &SyntaxNode { &self.syntax }
+}
+impl AstNode for ParamsetDecl {
+    fn can_cast(kind: SyntaxKind) -> bool { kind == PARAMSET_DECL }
+    fn cast(syntax: SyntaxNode) -> Option<Self> {
+        if Self::can_cast(syntax.kind()) {
+            Some(Self { syntax })
+        } else {
+            None
+        }
+    }
+    fn syntax(&self) -> &SyntaxNode { &self.syntax }
+}
+impl AstNode for ParamsetOverride {
+    fn can_cast(kind: SyntaxKind) -> bool { kind == PARAMSET_OVERRIDE }
     fn cast(syntax: SyntaxNode) -> Option<Self> {
         if Self::can_cast(syntax.kind()) {
             Some(Self { syntax })
@@ -1701,7 +1753,7 @@ impl From<ModuleDecl> for Item {
 impl AstNode for Item {
     fn can_cast(kind: SyntaxKind) -> bool {
         match kind {
-            DISCIPLINE_DECL | NATURE_DECL | MODULE_DECL => true,
+            DISCIPLINE_DECL | NATURE_DECL | MODULE_DECL | PARAMSET_DECL => true,
             _ => false,
         }
     }
@@ -1710,6 +1762,7 @@ impl AstNode for Item {
             DISCIPLINE_DECL => Item::DisciplineDecl(DisciplineDecl { syntax }),
             NATURE_DECL => Item::NatureDecl(NatureDecl { syntax }),
             MODULE_DECL => Item::ModuleDecl(ModuleDecl { syntax }),
+            PARAMSET_DECL => Item::ParamsetDecl(ParamsetDecl { syntax }),
             _ => return None,
         };
         Some(res)
@@ -1719,6 +1772,7 @@ impl AstNode for Item {
             Item::DisciplineDecl(it) => &it.syntax,
             Item::NatureDecl(it) => &it.syntax,
             Item::ModuleDecl(it) => &it.syntax,
+            Item::ParamsetDecl(it) => &it.syntax,
         }
     }
 }

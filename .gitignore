@@ -147,5 +147,9 @@ dowhile_examples/*.txt
 arrayout_examples/_*.cir
 arrayout_examples/*.txt
 
+# Enhancement 21 paramset example scripts: temp netlists + outputs
+paramset_examples/_*.cir
+paramset_examples/*.txt
+
 # Python bytecode cache (e.g. from importing _setup.py)
 __pycache__/

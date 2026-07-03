@@ -5,7 +5,7 @@ pub(super) use module::module;
 use module::MODULE_ITEM_OR_ATTR_RECOVERY;
 
 pub(super) const ITEM_RECOVERY_SET: TokenSet =
-    TokenSet::new(&[DISCIPLINE_KW, NATURE_KW, MODULE_KW, EOF]);
+    TokenSet::new(&[DISCIPLINE_KW, NATURE_KW, MODULE_KW, PARAMSET_KW, EOF]);
 
 const DISCIPLINE_RECOVERY_SET: TokenSet =
     ITEM_RECOVERY_SET.union(TokenSet::unique(ENDDISCIPLINE_KW));
@@ -27,6 +27,53 @@ pub(super) fn discipline(p: &mut Parser, m: Marker) {
     }
     p.expect(ENDDISCIPLINE_KW);
     m.complete(p, DISCIPLINE_DECL);
+}
+
+const PARAMSET_RECOVERY_SET: TokenSet = ITEM_RECOVERY_SET.union(TokenSet::unique(ENDPARAMSET_KW));
+
+/// Parses a Verilog-AMS `paramset` (Enhancement-21):
+///
+/// ```verilog
+/// paramset <name> <target_module>;
+///     parameter real <p> = <default>;      // paramset's own (card) parameters
+///     .<target_param> = <expr>;            // bind a target-module parameter
+/// endparamset
+/// ```
+///
+/// A paramset defines an instantiable model `<name>` that behaves like
+/// `<target_module>` with the listed target parameters bound to the given
+/// expressions (which may reference the paramset's own parameters).
+pub(super) fn paramset(p: &mut Parser, m: Marker) {
+    p.bump(T![paramset]);
+    // paramset name
+    name_r(p, TokenSet::new(&[T![;], IDENT]));
+    // target module name
+    name_ref_r(p, TokenSet::new(&[T![;]]));
+    p.eat(T![;]);
+    while !p.at_ts(PARAMSET_RECOVERY_SET) {
+        let m = p.start();
+        match p.current() {
+            PARAMETER_KW | LOCALPARAM_KW => parameter_decl(p, m),
+            T![.] => paramset_override(p, m),
+            _ => {
+                let err = p.unexpected_tokens_msg(vec![PARAMETER_KW, LOCALPARAM_KW, T![.]]);
+                m.abandon(p);
+                p.err_recover(err, PARAMSET_RECOVERY_SET.union(TokenSet::new(&[PARAMETER_KW, LOCALPARAM_KW, T![.]])));
+            }
+        }
+    }
+    p.expect(ENDPARAMSET_KW);
+    m.complete(p, PARAMSET_DECL);
+}
+
+/// Parses a single paramset override `.<target_param> = <expr>;`.
+fn paramset_override(p: &mut Parser, m: Marker) {
+    p.bump(T![.]);
+    name_ref_r(p, TokenSet::new(&[T![=], T![;]]));
+    p.expect(T![=]);
+    expr(p);
+    p.eat(T![;]);
+    m.complete(p, PARAMSET_OVERRIDE);
 }
 
 const NATURE_RECOVERY_SET: TokenSet = ITEM_RECOVERY_SET.union(TokenSet::unique(ENDNATURE_KW));

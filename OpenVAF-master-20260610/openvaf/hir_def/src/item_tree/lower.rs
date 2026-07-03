@@ -83,8 +83,93 @@ impl Ctx {
             ast::Item::DisciplineDecl(discipline) => self.lower_discipline(discipline)?.into(),
             ast::Item::NatureDecl(nature) => self.lower_nature(nature)?.into(),
             ast::Item::ModuleDecl(module) => self.lower_module(module)?.into(),
+            ast::Item::ParamsetDecl(paramset) => self.lower_paramset(paramset)?.into(),
         };
         Some(item)
+    }
+
+    /// Lowers a Verilog-AMS `paramset` (Enhancement-21) into a synthetic "twin" module.
+    ///
+    /// A `paramset <name> <target>;` defines an instantiable model `<name>` that behaves exactly
+    /// like `<target>` (same terminals, same analog behaviour) but with the listed target
+    /// parameters bound to the paramset's `.<param> = <expr>;` expressions. The twin module reuses
+    /// the target's ports/body/branches/functions verbatim by *sharing the target's `ast_id`*,
+    /// under the paramset's name; the paramset's own parameters are added as the twin's (card)
+    /// parameters, and each bound target parameter is replaced by a fresh `localparam` whose value
+    /// is the override expression (so it is no longer settable from the model card). Everything
+    /// downstream (name resolution, body lowering, OSDI descriptor emission) then treats the twin
+    /// as an ordinary module.
+    fn lower_paramset(&mut self, decl: ast::ParamsetDecl) -> Option<ItemTreeId<Module>> {
+        let name = decl.name()?.as_name();
+        let ast_id = self.source_ast_id_map.ast_id(&decl);
+        let target_name = decl.target()?.as_name();
+
+        // The target module must already be lowered (declared earlier in the file).
+        let target_id = self
+            .tree
+            .data
+            .modules
+            .iter_enumerated()
+            .find(|(_, m)| m.name == target_name)
+            .map(|(id, _)| id);
+        let Some(target_id) = target_id else {
+            self.tree.diagnostics.push(ItemTreeDiagnostic::UnknownParamsetTarget {
+                ast_id: ast_id.into(),
+                target: target_name,
+            });
+            return None;
+        };
+
+        // Collect the override map: target-parameter name -> `.<param> = <expr>;` node.
+        let overrides: Vec<(Name, AstId<ast::ParamsetOverride>)> = decl
+            .overrides()
+            .filter_map(|ov| Some((ov.name()?.as_name(), self.source_ast_id_map.ast_id(&ov))))
+            .collect();
+
+        // Lower the paramset's own parameters (the twin's card parameters) first, so their item-
+        // tree ids precede the target's items -- a bound target parameter (now a localparam) may
+        // reference them in its override expression.
+        let mut items: Vec<ModuleItem> = Vec::new();
+        let mut param_arrays: Vec<BusDecl> = Vec::new();
+        for pd in decl.param_decls() {
+            self.lower_param(pd, &mut items, Some(&mut param_arrays));
+        }
+
+        // Append the target's items, rebinding any overridden parameter to a fresh localparam.
+        let target = self.tree.data.modules[target_id].clone();
+        for &item in &target.items {
+            match item {
+                ModuleItem::Parameter(pid) => {
+                    let param_name = self.tree.data.parameters[pid].name.clone();
+                    if let Some(&(_, ov)) = overrides.iter().find(|(n, _)| *n == param_name) {
+                        let mut bound = self.tree.data.parameters[pid].clone();
+                        bound.is_local = true;
+                        bound.override_expr = Some(ov);
+                        let new_id = self.tree.data.parameters.push_and_get_key(bound);
+                        items.push(ModuleItem::Parameter(new_id));
+                    } else {
+                        items.push(ModuleItem::Parameter(pid));
+                    }
+                }
+                other => items.push(other),
+            }
+        }
+
+        param_arrays.extend(target.param_arrays.iter().cloned());
+
+        let twin = Module {
+            name,
+            nodes: target.nodes.clone(),
+            num_ports: target.num_ports,
+            items,
+            // Share the target's declaration AST: the twin's ports and analog body are the
+            // target's, resolved through the twin's own scope.
+            ast_id: target.ast_id,
+            buses: target.buses.clone(),
+            var_arrays: target.var_arrays.clone(),
+            param_arrays,
+        };
+        Some(self.tree.data.modules.push_and_get_key(twin))
     }
 
     fn lower_discipline(&mut self, decl: ast::DisciplineDecl) -> Option<ItemTreeId<Discipline>> {
@@ -956,6 +1041,7 @@ impl Ctx {
                     ty: ty.clone(),
                     ast_id,
                     array_index: None,
+                    override_expr: None,
                 };
                 let id = this.tree.data.parameters.push_and_get_key(param);
                 dst.push(id.into());
@@ -982,6 +1068,7 @@ impl Ctx {
                             ty: ty.clone(),
                             ast_id,
                             array_index: Some(pos as u32),
+                            override_expr: None,
                         };
                         let id = self.tree.data.parameters.push_and_get_key(param);
                         dst.push(id.into());

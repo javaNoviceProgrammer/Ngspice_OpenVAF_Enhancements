@@ -147,6 +147,23 @@ impl Diagnostic for ItemTreeDiagnosticWrapped<'_> {
                             .to_owned(),
                     ])
             }
+            ItemTreeDiagnostic::UnknownParamsetTarget { ast_id, target } => {
+                let range = self.ast_id_map.get_syntax(*ast_id).range();
+                let span = self.parse.to_file_span(range, self.sm);
+                Report::error()
+                    .with_message(format!("unknown paramset target module '{target}'"))
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: span.file,
+                        range: span.range.into(),
+                        message: format!("no module named '{target}' is declared in this file"),
+                    }])
+                    .with_notes(vec![
+                        "help: a `paramset <name> <module>;` must name a module declared in the \
+                         same file; the paramset was dropped"
+                            .to_owned(),
+                    ])
+            }
         }
     }
 }

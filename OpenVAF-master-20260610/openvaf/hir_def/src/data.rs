@@ -149,7 +149,9 @@ impl ParamData {
         Arc::new(ParamData {
             name: param.name.clone(),
             ty: param.ty.clone(),
-            is_local: param.is_local,
+            // A `paramset`-bound target parameter (Enhancement-21) is treated as a `localparam`:
+            // its value is the override expression and it is not settable from the model card.
+            is_local: param.is_local || param.override_expr.is_some(),
         })
     }
 }

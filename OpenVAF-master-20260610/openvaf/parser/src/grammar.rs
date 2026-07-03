@@ -51,6 +51,10 @@ pub(crate) fn source_file(p: &mut Parser) {
                 error_range.take();
                 items::module(p, m)
             }
+            PARAMSET_KW => {
+                error_range.take();
+                items::paramset(p, m)
+            }
             _ => {
                 error_range = if let Some(error_range) = error_range {
                     m.abandon(p);
