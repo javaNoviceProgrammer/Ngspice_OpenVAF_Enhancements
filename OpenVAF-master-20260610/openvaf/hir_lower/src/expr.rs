@@ -2058,8 +2058,15 @@ impl BodyLoweringCtx<'_, '_, '_> {
                     let arg = ctx.lower_expr(args[0]);
                     [ctx.ctx.ins().fneg(arg), val]
                 } else {
+                    // Enhancement-28: during the IC / DC-operating-point phase the reactive residual
+                    // (the integrator's stored charge) must be `ic`, not zero. The resistive term
+                    // (`val - ic`) pins `val = ic` at DC, but if the charge is left at 0 then when
+                    // transient integration turns on the integrator restarts from 0 -- so the initial
+                    // condition was applied at DC but silently lost in transient (the ramp started from
+                    // 0 instead of `ic`). Storing charge = `ic` makes the transient continue from `ic`
+                    // (and an `assert` reset likewise restores the integrator to `ic`).
                     let ic = ctx.lower_expr(args[1]);
-                    [ctx.ctx.ins().fsub(val, ic), F_ZERO]
+                    [ctx.ctx.ins().fsub(val, ic), ic]
                 }
             })
         } else {

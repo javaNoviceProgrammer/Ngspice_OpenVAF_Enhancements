@@ -1,0 +1,24 @@
+`include "disciplines.vams"
+
+// Enhancement-28 demonstration: `idt(...)` initial condition in transient.
+//
+// `idt(expr, ic)` is an ideal integrator whose value is `ic` at t=0 and then
+// integrates `expr`. Previously the initial condition was applied at the DC
+// operating point (`.op` returned `ic`) but was silently LOST in transient: the
+// integrator restarted from 0, so `idt(rate, ic)` gave `rate*t` instead of
+// `ic + rate*t`, and `idt(0, ic)` drifted away from `ic` to 0.
+//
+// The cause was that the reactive residual (the integrator's stored charge) was
+// zeroed during the IC/DC phase, so the transient integrator started from 0
+// charge. Enhancement-28 stores charge = `ic`, so the transient continues from
+// `ic`.
+//
+// This model is an ideal integrator `v(t) = ic + rate*t`.
+module idtic_demo(a, b);
+    inout a, b;
+    electrical a, b;
+    parameter real rate = 1.0;
+    parameter real ic   = 3.0;
+    analog
+        V(a, b) <+ idt(rate, ic);   // ic at t=0, then integrate `rate`
+endmodule

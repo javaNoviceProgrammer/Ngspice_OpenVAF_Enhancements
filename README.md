@@ -399,6 +399,16 @@ Several unrelated language gaps found along the way are also fixed. **`localpara
 
 ---
 
+## Enhancement 28: `idt(...)` initial-condition fix
+
+*July 2026* — Fixed the **initial condition of `idt(expr, ic)`** in transient analysis. `idt` integrated correctly and its IC was honoured at the DC operating point (`.op` returned `ic`), but the IC was **silently lost in transient**: the integrator restarted from 0, so `idt(rate, ic)` gave `rate·t` instead of `ic + rate·t`, and `idt(0, ic)` drifted from `ic` to 0 (the LRM says the IC *"is used as the starting value for transient analysis"*). Root cause: `idt` lowers to an implicit DAE `resist + d/dt(react) = 0` whose reactive residual is the integrator's stored charge; during the IC/DC phase the old lowering used `[val − ic, 0]` — the resistive term pinned `val = ic` but the stored charge was **0**, so when transient integration turned on (`react = val`) it continued from 0 charge. The fix stores the charge as `ic` (`[val − ic, ic]`), so the DC point has `val = ic` *and* charge `= ic` and the transient continues from `ic` (the state is continuous because `val = ic` at the boundary). One-value change in `hir_lower`; no OSDI ABI change and no ngspice change.
+
+- Verified end-to-end through ngspice — an ideal integrator `v = ic + rate·t`: the DC operating point equals `ic`, the transient ramp `idt(1, 3)` gives `3 + t` (~1e-4, used to give `t`), and with `rate = 0` the integrator holds at `ic` (`idt(0, 7)` stays at 7, used to drift to 0) — see `examples/idtic_examples/`
+- `ddt` (all three forms) was confirmed already correct; the mid-transient `idt(x, ic, assert)` **reset** form (a runtime reset to `ic`) is a separate state-jump discontinuity (like the raw `idtmod` wrap) and remains unaddressed; `idt(x)` with no IC still has an unconstrained DC point
+- Details: [Enhancement-28.md](enhancements_doc/Enhancement-28.md)
+
+---
+
 ## Prebuilt Binaries
 
 Binaries are built by CI and committed to `bin/`:
