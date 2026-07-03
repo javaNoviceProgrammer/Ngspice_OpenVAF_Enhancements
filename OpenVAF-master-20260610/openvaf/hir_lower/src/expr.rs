@@ -28,6 +28,92 @@ use crate::{
     PlaceKind, PrintDst, RetFlag, RngFun, ScanKind,
 };
 
+/// Builds the natural-cubic-spline "moment matrix" `L` (n×n) for an ascending `grid`, such that the
+/// vector of second derivatives (moments) `M = L · y` for any data vector `y` sampled on the grid.
+///
+/// A natural cubic spline pins `M[0] = M[n-1] = 0` and solves a tridiagonal system for the interior
+/// moments; because that system is linear in `y` and depends only on the grid spacings, `M` is a
+/// fixed linear operator on `y`. Precomputing `L` at compile time (here) lets the runtime evaluation
+/// express each moment as a constant-weighted sum of the (possibly runtime) grid values — so the
+/// whole spline lowers to differentiable MIR with no runtime linear solve. Returns an all-zero
+/// matrix for `n < 3` (callers fall back to linear interpolation there).
+fn natural_cubic_spline_moment_matrix(grid: &[f64]) -> Vec<Vec<f64>> {
+    let n = grid.len();
+    let mut l = vec![vec![0.0f64; n]; n];
+    if n < 3 {
+        return l;
+    }
+    let h: Vec<f64> = (0..n - 1).map(|i| grid[i + 1] - grid[i]).collect();
+    let m = n - 2; // number of interior unknowns M[1..=n-2]
+
+    // Interior tridiagonal system  T · m_interior = R · y.
+    let mut t = vec![vec![0.0f64; m]; m];
+    let mut r = vec![vec![0.0f64; n]; m];
+    for row in 0..m {
+        let k = row + 1; // full-grid index of this interior moment
+        t[row][row] = 2.0 * (h[k - 1] + h[k]);
+        if row >= 1 {
+            t[row][row - 1] = h[k - 1];
+        }
+        if row + 1 < m {
+            t[row][row + 1] = h[k];
+        }
+        r[row][k - 1] += 6.0 / h[k - 1];
+        r[row][k] += -6.0 * (1.0 / h[k - 1] + 1.0 / h[k]);
+        r[row][k + 1] += 6.0 / h[k];
+    }
+
+    // Invert T (small, dense) via Gauss–Jordan, then L_interior = T⁻¹ · R.
+    let mut a = t;
+    let mut inv = vec![vec![0.0f64; m]; m];
+    for i in 0..m {
+        inv[i][i] = 1.0;
+    }
+    for col in 0..m {
+        // partial pivot
+        let mut piv = col;
+        for row in col + 1..m {
+            if a[row][col].abs() > a[piv][col].abs() {
+                piv = row;
+            }
+        }
+        a.swap(col, piv);
+        inv.swap(col, piv);
+        let d = a[col][col];
+        if d == 0.0 {
+            return vec![vec![0.0f64; n]; n]; // singular (degenerate grid) -> caller falls back
+        }
+        for j in 0..m {
+            a[col][j] /= d;
+            inv[col][j] /= d;
+        }
+        for row in 0..m {
+            if row == col {
+                continue;
+            }
+            let f = a[row][col];
+            if f == 0.0 {
+                continue;
+            }
+            for j in 0..m {
+                a[row][j] -= f * a[col][j];
+                inv[row][j] -= f * inv[col][j];
+            }
+        }
+    }
+    // L rows 1..=n-2 = (T⁻¹ · R); rows 0 and n-1 stay zero (natural boundary).
+    for row in 0..m {
+        for col in 0..n {
+            let mut s = 0.0;
+            for kk in 0..m {
+                s += inv[row][kk] * r[kk][col];
+            }
+            l[row + 1][col] = s;
+        }
+    }
+    l
+}
+
 impl BodyLoweringCtx<'_, '_, '_> {
     pub fn lower_expr(&mut self, expr: ExprId) -> Value {
         let old_loc = self.ctx.get_srcloc();
@@ -533,20 +619,161 @@ impl BodyLoweringCtx<'_, '_, '_> {
         result
     }
 
-    /// N-dimensional multilinear interpolation as recursive 1-D interpolation: peel the outermost
-    /// axis, interpolate each of its slices over the remaining axes (giving one runtime value per
-    /// grid line), then interpolate those along the outermost axis. `tensor` is row-major
-    /// (outermost axis slowest). Differentiable in every coordinate.
+    /// Weighted sum `Σ_j w[j]·vals[j]` (compile-time weights, runtime values), skipping zero
+    /// weights. Used to express a natural-spline moment `M_i = Σ_j L[i][j]·vals[j]` in MIR.
+    fn weighted_sum(&mut self, w: &[f64], vals: &[Value]) -> Value {
+        let mut acc: Option<Value> = None;
+        for (j, &wj) in w.iter().enumerate() {
+            if wj == 0.0 {
+                continue;
+            }
+            let c = self.ctx.fconst(wj);
+            let term = self.ctx.ins().fmul(c, vals[j]);
+            acc = Some(match acc {
+                Some(a) => self.ctx.ins().fadd(a, term),
+                None => term,
+            });
+        }
+        acc.unwrap_or(F_ZERO)
+    }
+
+    /// One-dimensional **natural cubic spline** interpolation of runtime `vals` at `x`, built as a
+    /// select chain over the grid intervals so it is differentiable (and C¹ — the smooth-derivative
+    /// point of splines: `gm`/`gds` are continuous, unlike piecewise-linear). The per-point second
+    /// derivatives (moments) are `M = L·vals` with `L` precomputed from the (compile-time) grid, so
+    /// each moment is a constant-weighted sum of the runtime `vals` — no runtime linear solve.
+    /// Degenerates to `interp_1d_values` (linear) for fewer than 3 points. Extrapolation mirrors the
+    /// linear kernel: clamp to the endpoint value, or (with `linear_extrap`) continue the spline's
+    /// end tangent.
+    fn interp_1d_spline(
+        &mut self,
+        x: Value,
+        grid: &[f64],
+        vals: &[Value],
+        linear_extrap: bool,
+    ) -> Value {
+        let n = grid.len();
+        if n < 3 {
+            return self.interp_1d_values(x, grid, vals, linear_extrap);
+        }
+        let l = natural_cubic_spline_moment_matrix(grid);
+        // moments M[i] (M[0] = M[n-1] = 0 for a natural spline)
+        let moments: Vec<Value> =
+            (0..n).map(|i| self.weighted_sum(&l[i], vals)).collect();
+
+        // cubic on interval i:  with a = grid[i+1]-x, b = x-grid[i], h = grid[i+1]-grid[i]:
+        //   S = M[i]·a³/(6h) + M[i+1]·b³/(6h) + (vals[i]/h - M[i]·h/6)·a + (vals[i+1]/h - M[i+1]·h/6)·b
+        let mut seg = Vec::with_capacity(n - 1);
+        for i in 0..n - 1 {
+            let h = grid[i + 1] - grid[i];
+            let inv6h = self.ctx.fconst(1.0 / (6.0 * h));
+            let invh = self.ctx.fconst(1.0 / h);
+            let h6 = self.ctx.fconst(h / 6.0);
+            let xi1 = self.ctx.fconst(grid[i + 1]);
+            let xi = self.ctx.fconst(grid[i]);
+            let a = self.ctx.ins().fsub(xi1, x);
+            let b = self.ctx.ins().fsub(x, xi);
+            let a2 = self.ctx.ins().fmul(a, a);
+            let a3 = self.ctx.ins().fmul(a2, a);
+            let b2 = self.ctx.ins().fmul(b, b);
+            let b3 = self.ctx.ins().fmul(b2, b);
+
+            let mi_a3 = self.ctx.ins().fmul(moments[i], a3);
+            let t1 = self.ctx.ins().fmul(mi_a3, inv6h);
+            let mi1_b3 = self.ctx.ins().fmul(moments[i + 1], b3);
+            let t2 = self.ctx.ins().fmul(mi1_b3, inv6h);
+
+            let vih = self.ctx.ins().fmul(vals[i], invh);
+            let mih6 = self.ctx.ins().fmul(moments[i], h6);
+            let c3 = self.ctx.ins().fsub(vih, mih6);
+            let t3 = self.ctx.ins().fmul(c3, a);
+
+            let vi1h = self.ctx.ins().fmul(vals[i + 1], invh);
+            let mi1h6 = self.ctx.ins().fmul(moments[i + 1], h6);
+            let c4 = self.ctx.ins().fsub(vi1h, mi1h6);
+            let t4 = self.ctx.ins().fmul(c4, b);
+
+            let s12 = self.ctx.ins().fadd(t1, t2);
+            let s34 = self.ctx.ins().fadd(t3, t4);
+            seg.push(self.ctx.ins().fadd(s12, s34));
+        }
+
+        // segment i applies once x >= grid[i]; segment 0 is the default (covers below the grid).
+        let mut result = seg[0];
+        for i in 1..n - 1 {
+            let gi = self.ctx.fconst(grid[i]);
+            let ge = self.ctx.ins().fge(x, gi);
+            let seg_i = seg[i];
+            result = self.ctx.make_select(ge, move |_c, b| if b { seg_i } else { result });
+        }
+
+        // Extrapolation outside [grid[0], grid[n-1]].
+        let h0 = grid[1] - grid[0];
+        let hl = grid[n - 1] - grid[n - 2];
+        if linear_extrap {
+            // continue the spline's end tangent:
+            //   S'(grid[0])   = (v1-v0)/h0 - h0/6 · M[1]
+            //   S'(grid[n-1]) = (v_{n-1}-v_{n-2})/h_l + h_l/6 · M[n-2]
+            let g0 = self.ctx.fconst(grid[0]);
+            let h0c = self.ctx.fconst(h0);
+            let h06 = self.ctx.fconst(h0 / 6.0);
+            let dv0 = self.ctx.ins().fsub(vals[1], vals[0]);
+            let dv0h = self.ctx.ins().fdiv(dv0, h0c);
+            let m1term = self.ctx.ins().fmul(moments[1], h06);
+            let slope0 = self.ctx.ins().fsub(dv0h, m1term);
+            let dx0 = self.ctx.ins().fsub(x, g0);
+            let ext0 = self.ctx.ins().fmul(dx0, slope0);
+            let low = self.ctx.ins().fadd(vals[0], ext0);
+            let below = self.ctx.ins().flt(x, g0);
+            result = self.ctx.make_select(below, move |_c, b| if b { low } else { result });
+
+            let gl = self.ctx.fconst(grid[n - 1]);
+            let hlc = self.ctx.fconst(hl);
+            let hl6 = self.ctx.fconst(hl / 6.0);
+            let dvl = self.ctx.ins().fsub(vals[n - 1], vals[n - 2]);
+            let dvlh = self.ctx.ins().fdiv(dvl, hlc);
+            let mlterm = self.ctx.ins().fmul(moments[n - 2], hl6);
+            let slopel = self.ctx.ins().fadd(dvlh, mlterm);
+            let dxl = self.ctx.ins().fsub(x, gl);
+            let extl = self.ctx.ins().fmul(dxl, slopel);
+            let high = self.ctx.ins().fadd(vals[n - 1], extl);
+            let above = self.ctx.ins().fgt(x, gl);
+            result = self.ctx.make_select(above, move |_c, b| if b { high } else { result });
+        } else {
+            // clamp to the endpoint value (constant extrapolation)
+            let g0 = self.ctx.fconst(grid[0]);
+            let v0 = vals[0];
+            let below = self.ctx.ins().flt(x, g0);
+            result = self.ctx.make_select(below, move |_c, b| if b { v0 } else { result });
+            let gl = self.ctx.fconst(grid[n - 1]);
+            let vl = vals[n - 1];
+            let above = self.ctx.ins().fgt(x, gl);
+            result = self.ctx.make_select(above, move |_c, b| if b { vl } else { result });
+        }
+        result
+    }
+
+    /// N-dimensional interpolation as recursive 1-D interpolation: peel the outermost axis,
+    /// interpolate each of its slices over the remaining axes (giving one runtime value per grid
+    /// line), then interpolate those along the outermost axis. `tensor` is row-major (outermost axis
+    /// slowest). With `cubic`, each 1-D step is a natural cubic spline (giving the exact
+    /// tensor-product natural spline — recursive-1D natural spline equals the tensor-product one);
+    /// otherwise multilinear. Differentiable in every coordinate.
     fn interp_nd(
         &mut self,
         coords: &[Value],
         axes: &[Vec<f64>],
         tensor: &[f64],
         linear_extrap: bool,
+        cubic: bool,
     ) -> Value {
         if coords.len() == 1 {
             let vals: Vec<Value> = tensor.iter().map(|&v| self.ctx.fconst(v)).collect();
-            return self.interp_1d_values(coords[0], &axes[0], &vals, linear_extrap);
+            return if cubic {
+                self.interp_1d_spline(coords[0], &axes[0], &vals, linear_extrap)
+            } else {
+                self.interp_1d_values(coords[0], &axes[0], &vals, linear_extrap)
+            };
         }
         let n0 = axes[0].len();
         if n0 == 0 || tensor.is_empty() {
@@ -560,10 +787,15 @@ impl BodyLoweringCtx<'_, '_, '_> {
                 &axes[1..],
                 &tensor[i * sub..(i + 1) * sub],
                 linear_extrap,
+                cubic,
             );
             rows.push(row);
         }
-        self.interp_1d_values(coords[0], &axes[0], &rows, linear_extrap)
+        if cubic {
+            self.interp_1d_spline(coords[0], &axes[0], &rows, linear_extrap)
+        } else {
+            self.interp_1d_values(coords[0], &axes[0], &rows, linear_extrap)
+        }
     }
 
     /// Lowers `$table_model(x1[, x2, x3], <data>[, "ctrl"])` to differentiable MIR: reads the
@@ -583,11 +815,14 @@ impl BodyLoweringCtx<'_, '_, '_> {
             _ => (1, false, false),
         };
 
-        let linear_extrap = if has_ctrl {
+        // The control string selects extrapolation ('L' -> linear, else clamp) and interpolation
+        // degree ('3' -> natural cubic spline, else multilinear). Following Enhancement-16/17's
+        // simplification, a code found anywhere applies to all axes (per-axis codes are future work).
+        let (linear_extrap, cubic) = if has_ctrl {
             let ctrl = self.body.as_literal(args[ndim + 1]).unwrap().unwrap_str();
-            ctrl.contains('L') || ctrl.contains('l')
+            (ctrl.contains('L') || ctrl.contains('l'), ctrl.contains('3'))
         } else {
-            false
+            (false, false)
         };
 
         // read the grid into per-axis coordinate vectors + a row-major value tensor
@@ -625,7 +860,7 @@ impl BodyLoweringCtx<'_, '_, '_> {
         for i in 0..ndim {
             coords.push(self.lower_expr(args[i]));
         }
-        self.interp_nd(&coords, &axes, &tensor, linear_extrap)
+        self.interp_nd(&coords, &axes, &tensor, linear_extrap, cubic)
     }
 
     fn lower_builtin(&mut self, expr: ExprId, builtin: BuiltIn, args: &[ExprId]) -> Value {

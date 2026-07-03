@@ -339,6 +339,16 @@ Several unrelated language gaps found along the way are also fixed. **`localpara
 
 ---
 
+## Enhancement 22: natural cubic-spline `$table_model`
+
+*July 2026* — Extended `$table_model` with **natural cubic-spline** interpolation (control code `"3"`), complementing the piecewise-linear (Enhancement 16, 1-D) and multilinear (Enhancement 17, 2-D/3-D) interpolation. A cubic spline is **C¹** — its derivative is continuous — so a table-based compact model's `gm`/`gds` are **smooth**, instead of the staircase derivative that piecewise-linear interpolation produces. The interpolation degree is chosen entirely by the control string, so this is a lowering-only change: no new builtin signature, no OSDI ABI change, and no ngspice change. The elegant part is that a natural spline's per-point second derivatives (the "moments") solve a tridiagonal system that is **linear in the grid values and fixed by the grid alone** — so the moment vector is a compile-time-precomputed linear operator, each moment becomes a constant-weighted sum of the (possibly runtime) grid values, and the whole spline lowers to ordinary differentiable MIR with no runtime solve. `mir_autodiff` then supplies the exact, continuous Jacobian for free, and the same recursive-1-D scheme as Enhancement 17 yields the exact tensor-product natural spline for N-D.
+
+- Verified end-to-end through ngspice, each check contrasting cubic with linear on the same data: cubic tracks `sin(V)` ~46× better than linear at off-grid points; across a grid node the cubic `gm` matches `|cos(V)|` on both sides (continuous) while the linear `gm` **jumps** ~10× more (a direct test that the autodiff Jacobian through the cubic MIR is continuous); a natural spline reproduces straight-line data exactly; and a 2-D tensor-product cubic reproduces `sin(x)·cos(y)` accurately — see `cubic_table_examples/`
+- Natural boundary conditions only; a control code applies cubic to all axes (per-axis interpolation degree, and other end conditions, remain future work); the existing linear tables are unchanged
+- Details: [Enhancement-22.md](Enhancement-22.md)
+
+---
+
 ## Prebuilt Binaries
 
 Binaries are built by CI and committed to `bin/`:

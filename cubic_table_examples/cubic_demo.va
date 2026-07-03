@@ -1,0 +1,34 @@
+`include "disciplines.vams"
+
+// Enhancement-22 demonstration: natural CUBIC SPLINE interpolation in
+// $table_model (control code "3"), extending the piecewise-LINEAR (E-16) and
+// multilinear (E-17) interpolation. A cubic spline is C1 -- its derivative is
+// *continuous* -- so a table-based device's gm/gds are smooth, unlike the
+// staircase derivative of linear interpolation. The spline is lowered to
+// differentiable MIR (its per-point second-derivative "moments" are a
+// compile-time-fixed linear operator on the grid values), so mir_autodiff
+// supplies the exact, continuous Jacobian for free.
+
+// I(p,n) = sin(V(p,n)) sampled on a coarse grid, CUBIC-interpolated.
+module sin_cubic(p, n);
+    inout p, n; electrical p, n;
+    analog I(p, n) <+ $table_model(V(p, n), '{0,0.000000, 0.4,0.389418, 0.8,0.717356, 1.2,0.932039, 1.6,0.999574, 2,0.909297, 2.4,0.675463, 2.8,0.334988, 3.2,-0.058374}, "3");
+endmodule
+
+// Same data, piecewise-LINEAR (for the accuracy / smoothness comparison).
+module sin_linear(p, n);
+    inout p, n; electrical p, n;
+    analog I(p, n) <+ $table_model(V(p, n), '{0,0.000000, 0.4,0.389418, 0.8,0.717356, 1.2,0.932039, 1.6,0.999574, 2,0.909297, 2.4,0.675463, 2.8,0.334988, 3.2,-0.058374}, "1");
+endmodule
+
+// Natural cubic spline reproduces straight-line data EXACTLY (all moments 0).
+module line_cubic(p, n);
+    inout p, n; electrical p, n;
+    analog I(p, n) <+ $table_model(V(p, n), '{0,1, 0.4,1.8, 0.8,2.6, 1.2,3.4, 1.6,4.2, 2,5, 2.4,5.8, 2.8,6.6, 3.2,7.4}, "3");
+endmodule
+
+// 2-D tensor-product cubic spline of f(x,y) = sin(x)*cos(y) from a grid file.
+module surf_cubic(p, n);
+    inout p, n; electrical p, n;
+    analog I(p, n) <+ $table_model(V(p), V(n), "surf.grid", "3,3");
+endmodule

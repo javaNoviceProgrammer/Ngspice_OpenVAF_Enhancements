@@ -151,5 +151,10 @@ arrayout_examples/*.txt
 paramset_examples/_*.cir
 paramset_examples/*.txt
 
+# Enhancement 22 cubic-spline table example scripts: temp netlists + outputs + generated grid
+cubic_table_examples/_*.cir
+cubic_table_examples/*.txt
+cubic_table_examples/surf.grid
+
 # Python bytecode cache (e.g. from importing _setup.py)
 __pycache__/
