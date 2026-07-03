@@ -1,6 +1,7 @@
 use hir::builtin::{
     FLICKER_NOISE_NAME, NOISE_TABLE_FILE, NOISE_TABLE_FILE_NAME, NOISE_TABLE_INLINE,
-    NOISE_TABLE_INLINE_NAME, WHITE_NOISE_NAME,
+    NOISE_TABLE_INLINE_NAME, TABLE_MODEL_1D_ARR, TABLE_MODEL_1D_ARR_CTRL, TABLE_MODEL_1D_FILE,
+    TABLE_MODEL_1D_FILE_CTRL, WHITE_NOISE_NAME,
 };
 use hir::signatures::{
     ABSDELAY_MAX, ABS_INT, ABS_REAL, BOOL_EQ, DDX_POT, IDTMOD_IC, IDTMOD_IC_MODULUS,
@@ -408,6 +409,95 @@ impl BodyLoweringCtx<'_, '_, '_> {
         }
     }
 
+    /// Gather the sorted `(x, y)` points backing a 1-D `$table_model` call, from an inline real
+    /// array `{x0,y0, x1,y1, ...}` (`args[1]`) or a two-column data file. Points are sorted by `x`
+    /// and duplicate abscissae dropped so the piecewise-linear segments are well-formed.
+    fn table_model_data(&self, signature: hir::Signature, args: &[ExprId]) -> Vec<(f64, f64)> {
+        let mut pts = match signature {
+            TABLE_MODEL_1D_ARR | TABLE_MODEL_1D_ARR_CTRL => {
+                let elems = match self.body.get_expr(args[1]) {
+                    Expr::Array(vals) => vals,
+                    _ => return Vec::new(),
+                };
+                let nums: Vec<f64> =
+                    elems.iter().map(|&e| self.eval_const_real(e).unwrap_or(0.0)).collect();
+                nums.chunks_exact(2).map(|c| (c[0], c[1])).collect()
+            }
+            TABLE_MODEL_1D_FILE | TABLE_MODEL_1D_FILE_CTRL => {
+                let fname = self.body.as_literal(args[1]).unwrap().unwrap_str();
+                self.read_noise_table_file(fname)
+            }
+            _ => Vec::new(),
+        };
+        pts.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+        pts.dedup_by(|a, b| a.0 == b.0);
+        pts
+    }
+
+    /// Lowers a 1-D `$table_model(x, <data>[, "ctrl"])` to differentiable MIR: a piecewise-linear
+    /// interpolation over the compile-time grid, built as a select chain so `mir_autodiff` yields
+    /// the per-segment slope as the Jacobian entry. Outside the grid it clamps to the endpoint
+    /// values (constant extrapolation, the default) unless the control string requests linear (`L`),
+    /// in which case the end segments' slopes continue.
+    fn lower_table_model(&mut self, signature: hir::Signature, args: &[ExprId]) -> Value {
+        let pts = self.table_model_data(signature, args);
+        let linear_extrap = match signature {
+            TABLE_MODEL_1D_ARR_CTRL | TABLE_MODEL_1D_FILE_CTRL => {
+                let ctrl = self.body.as_literal(args[2]).unwrap().unwrap_str();
+                ctrl.contains('L') || ctrl.contains('l')
+            }
+            _ => false,
+        };
+
+        let x = self.lower_expr(args[0]);
+        if pts.is_empty() {
+            return F_ZERO;
+        }
+        if pts.len() == 1 {
+            return self.ctx.fconst(pts[0].1);
+        }
+
+        let n = pts.len();
+        // Each segment i's linear value  y_i + (x - x_i) * slope_i  (slope folded at compile time).
+        let mut seg = Vec::with_capacity(n - 1);
+        for i in 0..n - 1 {
+            let (xi, yi) = pts[i];
+            let (xj, yj) = pts[i + 1];
+            let slope = (yj - yi) / (xj - xi);
+            let xi_c = self.ctx.fconst(xi);
+            let dx = self.ctx.ins().fsub(x, xi_c);
+            let sl = self.ctx.fconst(slope);
+            let scaled = self.ctx.ins().fmul(dx, sl);
+            let yi_c = self.ctx.fconst(yi);
+            seg.push(self.ctx.ins().fadd(yi_c, scaled));
+        }
+
+        // Select the active segment: segment i applies once x >= x_i (segment 0 is the default,
+        // also covering x below the grid; the last segment covers x above it).
+        let mut result = seg[0];
+        for i in 1..n - 1 {
+            let xi = self.ctx.fconst(pts[i].0);
+            let ge = self.ctx.ins().fge(x, xi);
+            let seg_i = seg[i];
+            result = self.ctx.make_select(ge, move |_c, b| if b { seg_i } else { result });
+        }
+
+        if !linear_extrap {
+            // constant extrapolation: clamp to the endpoint values outside the grid
+            let x0 = self.ctx.fconst(pts[0].0);
+            let y0 = self.ctx.fconst(pts[0].1);
+            let below = self.ctx.ins().flt(x, x0);
+            result = self.ctx.make_select(below, move |_c, b| if b { y0 } else { result });
+
+            let xl = self.ctx.fconst(pts[n - 1].0);
+            let yl = self.ctx.fconst(pts[n - 1].1);
+            let above = self.ctx.ins().fgt(x, xl);
+            result = self.ctx.make_select(above, move |_c, b| if b { yl } else { result });
+        }
+
+        result
+    }
+
     fn lower_builtin(&mut self, expr: ExprId, builtin: BuiltIn, args: &[ExprId]) -> Value {
         let signature = self.body.get_call_signature(expr);
         match builtin {
@@ -779,6 +869,8 @@ impl BodyLoweringCtx<'_, '_, '_> {
                 let noise_table = NoiseTable::new(table_vals, log, name, idx);
                 self.ctx.call1(CallBackKind::NoiseTable(Box::new(noise_table)), &[])
             }
+
+            BuiltIn::table_model => self.lower_table_model(signature, args),
 
             BuiltIn::abstime => self.ctx.use_param(ParamKind::Abstime),
 

@@ -1,0 +1,18 @@
+`include "disciplines.vams"
+
+// Enhancement-16: a nonlinear resistor whose I-V curve is a lookup table read
+// from a data file, using `$table_model`. The interpolation is differentiable,
+// so its slope dI/dV becomes the device conductance in the Jacobian and the
+// nonlinear DC operating point converges correctly.
+//
+//   I(p,n) = table( V(p,n) )      from diode_iv.tbl
+//
+// "1L" selects linear extrapolation above the last tabulated point (so the
+// conductance never goes to zero outside the grid).
+module table_res(p, n);
+    inout p, n;
+    electrical p, n;
+
+    analog
+        I(p, n) <+ $table_model(V(p, n), "diode_iv.tbl", "1L");
+endmodule

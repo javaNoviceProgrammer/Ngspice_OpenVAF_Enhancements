@@ -1,0 +1,17 @@
+`include "disciplines.vams"
+
+// Enhancement-16: a transfer function V(out) = table(V(in)) using an INLINE
+// `$table_model` data array of flat {x0,y0, x1,y1, ...} pairs. No control string
+// => constant extrapolation (the output clamps to the endpoint values outside
+// the tabulated input range).
+//
+// Table points: (0,0) (1,1) (2,4) (3,9)  -- so V(out) is the piecewise-linear
+// interpolant (e.g. V(out)=2.5 at V(in)=1.5), clamped to 0 below 0 and 9 above 3.
+module table_xfer(in, out);
+    input in;
+    output out;
+    electrical in, out;
+
+    analog
+        V(out) <+ $table_model(V(in), '{0,0, 1,1, 2,4, 3,9});
+endmodule

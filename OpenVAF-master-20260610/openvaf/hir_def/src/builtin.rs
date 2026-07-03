@@ -123,6 +123,7 @@ pub enum BuiltIn {
     last_crossing = 108u8,
     slew = 109u8,
     transition = 110u8,
+    table_model = 111u8,
 }
 #[derive(Eq, PartialEq, Copy, Clone, Hash, Debug)]
 #[allow(nonstandard_style, unreachable_pub)]
@@ -311,6 +312,7 @@ pub fn insert_builtin_scope(dst: &mut IndexMap<Name, ScopeDefItem, BuildHasherDe
     dst.insert(sysfun::simparam, BuiltIn::simparam.into());
     dst.insert(sysfun::simparam_str, BuiltIn::simparam_str.into());
     dst.insert(sysfun::simprobe, BuiltIn::simprobe.into());
+    dst.insert(sysfun::table_model, BuiltIn::table_model.into());
     dst.insert(sysfun::discontinuity, BuiltIn::discontinuity.into());
     dst.insert(sysfun::param_given, BuiltIn::param_given.into());
     dst.insert(sysfun::port_connected, BuiltIn::port_connected.into());

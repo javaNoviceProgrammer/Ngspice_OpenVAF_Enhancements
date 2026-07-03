@@ -127,5 +127,9 @@ array_examples/_*.txt
 mdarray_examples/_*.cir
 mdarray_examples/_*.txt
 
+# Enhancement 16 table_model example scripts: temp netlists + wrdata outputs
+table_model_examples/_*.cir
+table_model_examples/*.txt
+
 # Python bytecode cache (e.g. from importing _setup.py)
 __pycache__/

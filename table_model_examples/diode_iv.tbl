@@ -1,0 +1,10 @@
+# Table-model I-V data for a soft-knee (diode-like) nonlinear conductance.
+# Two whitespace-separated columns:  V[volts]   I[amps]
+# Blank lines and #/// /* comment lines are ignored.
+0.0   0.0
+0.2   1.0e-5
+0.4   5.0e-5
+0.6   2.0e-4
+0.8   6.0e-4
+1.0   1.5e-3
+1.2   3.0e-3
