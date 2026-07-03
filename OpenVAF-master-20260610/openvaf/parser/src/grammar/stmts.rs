@@ -1,12 +1,13 @@
 use super::*;
 
 pub(super) const STMT_TS: TokenSet = TokenSet::new(&[
-    IF_KW, WHILE_KW, REPEAT_KW, DISABLE_KW, FOR_KW, CASE_KW, BEGIN_KW, T![;], IDENT, SYSFUN, T![@],
+    IF_KW, WHILE_KW, REPEAT_KW, DO_KW, DISABLE_KW, FOR_KW, CASE_KW, BEGIN_KW, T![;], IDENT, SYSFUN,
+    T![@],
 ]);
 pub(super) const STMT_RECOVER: TokenSet = TokenSet::new(&[EOF, ENDMODULE_KW, T![;]]);
 
 pub(super) const STMT_ATTR_RECOVER: TokenSet =
-    TokenSet::new(&[IF_KW, WHILE_KW, REPEAT_KW, DISABLE_KW, FOR_KW, CASE_KW, BEGIN_KW, T![;]])
+    TokenSet::new(&[IF_KW, WHILE_KW, REPEAT_KW, DO_KW, DISABLE_KW, FOR_KW, CASE_KW, BEGIN_KW, T![;]])
         .union(STMT_RECOVER);
 
 pub(super) fn stmt_with_attrs(p: &mut Parser) {
@@ -20,6 +21,7 @@ pub(super) fn stmt(p: &mut Parser, m: Marker, expected: TokenSet, recover: Token
         IF_KW => if_stmt(p, m),
         WHILE_KW => while_stmt(p, m),
         REPEAT_KW => repeat_stmt(p, m),
+        DO_KW => do_stmt(p, m),
         DISABLE_KW => disable_stmt(p, m),
         FOR_KW => for_stmt(p, m),
         CASE_KW => case_stmt(p, m),
@@ -120,6 +122,19 @@ fn repeat_stmt(p: &mut Parser, m: Marker) {
     p.expect(T![')']);
     stmt_with_attrs(p);
     m.complete(p, REPEAT_STMT);
+}
+
+// `do <statement> while (<condition>);` (Enhancement-19) -- the body runs once
+// before the condition is first tested.
+fn do_stmt(p: &mut Parser, m: Marker) {
+    p.bump(DO_KW);
+    stmt_with_attrs(p);
+    p.expect(WHILE_KW);
+    p.expect(T!['(']);
+    expr(p);
+    p.expect(T![')']);
+    p.expect(T![;]);
+    m.complete(p, DO_WHILE_STMT);
 }
 
 fn disable_stmt(p: &mut Parser, m: Marker) {

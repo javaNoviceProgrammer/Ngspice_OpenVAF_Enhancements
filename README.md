@@ -310,6 +310,15 @@ Several unrelated language gaps found along the way are also fixed. **`localpara
 
 ---
 
+## Enhancement 19: `do ... while` loop
+
+*July 2026* — Implemented the Verilog-AMS **`do <statement> while (condition);`** loop, previously a parse error (`do` was lexed as an identifier). It is a **post-test** loop — the body runs once *before* the condition is first tested, so it always executes at least once — and completes OpenVAF's loop constructs (`for`, `while`, and `repeat` already worked). A new `do` keyword and `do-while` statement kind are threaded through the whole front-end (tokens → parser → AST → HIR → lowering); the lowering enters the body block unconditionally and tests the condition at the end of each iteration.
+
+- Verified end-to-end through ngspice — a `do` loop reports its iteration count as a gain; across the loop count `n` (overridden per `.model`) the count equals `max(n, 1)`, and in particular **`n = 0` still runs the body once**, the defining behaviour that distinguishes `do-while` from `while` — see `dowhile_examples/`
+- Details: [Enhancement-19.md](Enhancement-19.md)
+
+---
+
 ## Prebuilt Binaries
 
 Binaries are built by CI and committed to `bin/`:

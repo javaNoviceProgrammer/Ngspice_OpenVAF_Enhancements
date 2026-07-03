@@ -121,6 +121,13 @@ impl Printer<'_> {
                 wln!(self, ")");
                 self.indented(|sel| sel.pretty_print_stmt(body))
             }
+            Stmt::DoWhile { cond, body } => {
+                wln!(self, "do");
+                self.indented(|sel| sel.pretty_print_stmt(body));
+                w!(self, "while(");
+                self.pretty_print_expr(cond);
+                wln!(self, ");")
+            }
             Stmt::Repeat { count, body } => {
                 w!(self, "repeat(");
                 self.pretty_print_expr(count);

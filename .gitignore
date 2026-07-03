@@ -139,5 +139,9 @@ mdtable_examples/_*.txt
 funcarray_examples/_*.cir
 funcarray_examples/*.txt
 
+# Enhancement 19 do-while example scripts: temp netlists + outputs
+dowhile_examples/_*.cir
+dowhile_examples/*.txt
+
 # Python bytecode cache (e.g. from importing _setup.py)
 __pycache__/

@@ -146,6 +146,11 @@ impl LowerCtx<'_> {
                 let body = self.collect_opt_stmt(stmt.body());
                 Stmt::WhileLoop { cond, body }
             }
+            ast::Stmt::DoWhileStmt(stmt) => {
+                let cond = self.collect_opt_expr(stmt.condition());
+                let body = self.collect_opt_stmt(stmt.body());
+                Stmt::DoWhile { cond, body }
+            }
             ast::Stmt::RepeatStmt(stmt) => {
                 let count = self.collect_opt_expr(stmt.count());
                 let body = self.collect_opt_stmt(stmt.body());

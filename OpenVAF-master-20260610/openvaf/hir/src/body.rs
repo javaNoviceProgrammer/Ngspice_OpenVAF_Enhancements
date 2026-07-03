@@ -302,6 +302,7 @@ impl<'a> BodyRef<'a> {
                 Some(Stmt::ForLoop { init, cond, incr, body })
             }
             hir_def::Stmt::WhileLoop { cond, body } => Some(Stmt::WhileLoop { cond, body }),
+            hir_def::Stmt::DoWhile { cond, body } => Some(Stmt::DoWhile { cond, body }),
             hir_def::Stmt::Repeat { count, body } => Some(Stmt::Repeat { count, body }),
             hir_def::Stmt::Case { discr, ref case_arms } => Some(Stmt::Case { discr, case_arms }),
         }
@@ -356,6 +357,7 @@ pub enum Stmt<'a> {
     If { cond: ExprId, then_branch: StmtId, else_branch: StmtId },
     ForLoop { init: StmtId, cond: ExprId, incr: StmtId, body: StmtId },
     WhileLoop { cond: ExprId, body: StmtId },
+    DoWhile { cond: ExprId, body: StmtId },
     Repeat { count: ExprId, body: StmtId },
     Case { discr: ExprId, case_arms: &'a [Case] }, // TODO lint on unreachable
 }

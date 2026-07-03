@@ -141,6 +141,9 @@ pub enum Stmt {
     If { cond: ExprId, then_branch: StmtId, else_branch: StmtId },
     ForLoop { init: StmtId, cond: ExprId, incr: StmtId, body: StmtId },
     WhileLoop { cond: ExprId, body: StmtId },
+    /// `do body while (cond);` -- like `WhileLoop` but `body` runs once before
+    /// the first `cond` test (Enhancement-19).
+    DoWhile { cond: ExprId, body: StmtId },
     /// `repeat (count) body` -- executes `body` `count` (truncated to integer)
     /// times. Lowered to a counted loop in `hir_lower`.
     Repeat { count: ExprId, body: StmtId },
@@ -213,6 +216,7 @@ impl Stmt {
             Stmt::If { cond: expr, .. }
             | Stmt::ForLoop { cond: expr, .. }
             | Stmt::WhileLoop { cond: expr, .. }
+            | Stmt::DoWhile { cond: expr, .. }
             | Stmt::Repeat { count: expr, .. }
             | Stmt::Expr(expr) => f(expr),
             Stmt::Assignment { dst, val, .. } => {
@@ -241,6 +245,7 @@ impl Stmt {
             | Stmt::Empty
             | Stmt::Disable { .. } => (),
             Stmt::WhileLoop { body, .. }
+            | Stmt::DoWhile { body, .. }
             | Stmt::Repeat { body, .. }
             | Stmt::EventControl { body, .. } => f(body),
             Stmt::If { then_branch: true_stmt, else_branch: false_stmt, .. } => {

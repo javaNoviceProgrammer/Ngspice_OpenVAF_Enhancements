@@ -136,6 +136,7 @@ impl BodyLoweringCtx<'_, '_, '_> {
                 });
             }
             Stmt::WhileLoop { cond, body } => self.lower_loop(cond, |s| s.lower_stmt(body)),
+            Stmt::DoWhile { cond, body } => self.lower_do_while(cond, |s| s.lower_stmt(body)),
             Stmt::Repeat { count, body } => self.lower_repeat(count, body),
             Stmt::Case { discr, case_arms } => self.lower_case(discr, case_arms),
         }
@@ -366,6 +367,31 @@ impl BodyLoweringCtx<'_, '_, '_> {
         self.ctx.ins().jump(loop_cond_head);
 
         self.ctx.seal_block(loop_cond_head);
+
+        self.ctx.switch_to_block(loop_end);
+    }
+
+    /// Lowers `do body while (cond);` (Enhancement-19): like `lower_loop`, but the body runs once
+    /// before the first condition test. The body block is the loop header (it has both the entry
+    /// edge and the back-edge from the condition), so it is sealed last.
+    fn lower_do_while(&mut self, cond: ExprId, lower_body: impl FnOnce(&mut Self)) {
+        let loop_body_head = self.ctx.create_block();
+        let loop_cond_head = self.ctx.create_block();
+        let loop_end = self.ctx.create_block();
+
+        // enter the body unconditionally
+        self.ctx.ins().jump(loop_body_head);
+        self.ctx.switch_to_block(loop_body_head);
+        lower_body(self);
+        self.ctx.ins().jump(loop_cond_head);
+
+        // then test the condition and loop back to the body if true
+        self.ctx.switch_to_block(loop_cond_head);
+        self.ctx.seal_block(loop_cond_head);
+        let cond = self.lower_expr(cond);
+        self.ctx.ins().br_loop(cond, loop_body_head, loop_end);
+        self.ctx.seal_block(loop_body_head);
+        self.ctx.seal_block(loop_end);
 
         self.ctx.switch_to_block(loop_end);
     }

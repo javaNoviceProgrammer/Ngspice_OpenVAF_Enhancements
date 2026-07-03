@@ -109,6 +109,17 @@ impl WhileStmt {
     pub fn body(&self) -> Option<Stmt> { support::child(&self.syntax) }
 }
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct DoWhileStmt {
+    pub(crate) syntax: SyntaxNode,
+}
+impl ast::AttrsOwner for DoWhileStmt {}
+impl DoWhileStmt {
+    pub fn do_token(&self) -> Option<SyntaxToken> { support::token(&self.syntax, T![do]) }
+    pub fn body(&self) -> Option<Stmt> { support::child(&self.syntax) }
+    pub fn while_token(&self) -> Option<SyntaxToken> { support::token(&self.syntax, T![while]) }
+    pub fn condition(&self) -> Option<Expr> { support::child(&self.syntax) }
+}
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct RepeatStmt {
     pub(crate) syntax: SyntaxNode,
 }
@@ -696,6 +707,7 @@ pub enum Stmt {
     ExprStmt(ExprStmt),
     IfStmt(IfStmt),
     WhileStmt(WhileStmt),
+    DoWhileStmt(DoWhileStmt),
     RepeatStmt(RepeatStmt),
     DisableStmt(DisableStmt),
     ForStmt(ForStmt),
@@ -867,6 +879,17 @@ impl AstNode for IfStmt {
 }
 impl AstNode for WhileStmt {
     fn can_cast(kind: SyntaxKind) -> bool { kind == WHILE_STMT }
+    fn cast(syntax: SyntaxNode) -> Option<Self> {
+        if Self::can_cast(syntax.kind()) {
+            Some(Self { syntax })
+        } else {
+            None
+        }
+    }
+    fn syntax(&self) -> &SyntaxNode { &self.syntax }
+}
+impl AstNode for DoWhileStmt {
+    fn can_cast(kind: SyntaxKind) -> bool { kind == DO_WHILE_STMT }
     fn cast(syntax: SyntaxNode) -> Option<Self> {
         if Self::can_cast(syntax.kind()) {
             Some(Self { syntax })
@@ -1542,6 +1565,9 @@ impl From<IfStmt> for Stmt {
 impl From<WhileStmt> for Stmt {
     fn from(node: WhileStmt) -> Stmt { Stmt::WhileStmt(node) }
 }
+impl From<DoWhileStmt> for Stmt {
+    fn from(node: DoWhileStmt) -> Stmt { Stmt::DoWhileStmt(node) }
+}
 impl From<RepeatStmt> for Stmt {
     fn from(node: RepeatStmt) -> Stmt { Stmt::RepeatStmt(node) }
 }
@@ -1563,8 +1589,8 @@ impl From<BlockStmt> for Stmt {
 impl AstNode for Stmt {
     fn can_cast(kind: SyntaxKind) -> bool {
         match kind {
-            EMPTY_STMT | ASSIGN_STMT | EXPR_STMT | IF_STMT | WHILE_STMT | REPEAT_STMT
-            | DISABLE_STMT | FOR_STMT | CASE_STMT | EVENT_STMT | BLOCK_STMT => true,
+            EMPTY_STMT | ASSIGN_STMT | EXPR_STMT | IF_STMT | WHILE_STMT | DO_WHILE_STMT
+            | REPEAT_STMT | DISABLE_STMT | FOR_STMT | CASE_STMT | EVENT_STMT | BLOCK_STMT => true,
             _ => false,
         }
     }
@@ -1575,6 +1601,7 @@ impl AstNode for Stmt {
             EXPR_STMT => Stmt::ExprStmt(ExprStmt { syntax }),
             IF_STMT => Stmt::IfStmt(IfStmt { syntax }),
             WHILE_STMT => Stmt::WhileStmt(WhileStmt { syntax }),
+            DO_WHILE_STMT => Stmt::DoWhileStmt(DoWhileStmt { syntax }),
             REPEAT_STMT => Stmt::RepeatStmt(RepeatStmt { syntax }),
             DISABLE_STMT => Stmt::DisableStmt(DisableStmt { syntax }),
             FOR_STMT => Stmt::ForStmt(ForStmt { syntax }),
@@ -1592,6 +1619,7 @@ impl AstNode for Stmt {
             Stmt::ExprStmt(it) => &it.syntax,
             Stmt::IfStmt(it) => &it.syntax,
             Stmt::WhileStmt(it) => &it.syntax,
+            Stmt::DoWhileStmt(it) => &it.syntax,
             Stmt::RepeatStmt(it) => &it.syntax,
             Stmt::DisableStmt(it) => &it.syntax,
             Stmt::ForStmt(it) => &it.syntax,

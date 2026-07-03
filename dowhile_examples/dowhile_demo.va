@@ -1,0 +1,29 @@
+`include "disciplines.vams"
+
+// Enhancement-19 demonstration: the `do ... while` loop.
+//
+// A `do` loop always executes its body once before the condition is first
+// tested, so `count` ends up = max(n, 1). The gain reports the iteration count:
+// V(out) = count * 1e-3 * V(in). With n = 0 the body still runs once (count = 1),
+// which is exactly what distinguishes `do-while` from `while` (which would run
+// the body zero times). `n` is overridable from SPICE.
+module dowhile_demo(in, out);
+    input in;
+    output out;
+    electrical in, out;
+
+    parameter integer n = 3 from [0:inf);
+
+    integer i;
+    real count;
+
+    analog begin
+        count = 0.0;
+        i = 0;
+        do begin
+            count = count + 1.0;
+            i = i + 1;
+        end while (i < n);
+        V(out) <+ count * 1e-3 * V(in);   // gain = count / 1000
+    end
+endmodule

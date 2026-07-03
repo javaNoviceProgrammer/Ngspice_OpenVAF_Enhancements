@@ -236,6 +236,7 @@ impl BodyValidator<'_> {
             Stmt::If { cond, .. }
             | Stmt::ForLoop { cond, .. }
             | Stmt::WhileLoop { cond, .. }
+            | Stmt::DoWhile { cond, .. }
             | Stmt::Repeat { count: cond, .. }
             | Stmt::Case { discr: cond, .. } => cond,
         };

@@ -184,7 +184,10 @@ impl Ctx<'_> {
                     self.infere_assignment(stmt, val, dst_ty);
                 }
             }
-            Stmt::ForLoop { cond, .. } | Stmt::If { cond, .. } | Stmt::WhileLoop { cond, .. } => {
+            Stmt::ForLoop { cond, .. }
+            | Stmt::If { cond, .. }
+            | Stmt::WhileLoop { cond, .. }
+            | Stmt::DoWhile { cond, .. } => {
                 self.infere_cond(stmt, cond)
             }
             Stmt::Repeat { count, .. } => {
