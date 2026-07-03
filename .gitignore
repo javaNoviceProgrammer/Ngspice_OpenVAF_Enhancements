@@ -131,5 +131,9 @@ mdarray_examples/_*.txt
 table_model_examples/_*.cir
 table_model_examples/*.txt
 
+# Enhancement 17 multi-dim table_model example scripts: temp netlists + outputs
+mdtable_examples/_*.cir
+mdtable_examples/_*.txt
+
 # Python bytecode cache (e.g. from importing _setup.py)
 __pycache__/

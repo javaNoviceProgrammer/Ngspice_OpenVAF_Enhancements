@@ -217,11 +217,18 @@ bultins! {
     // interpolation (Enhancement-16). `<data>` is either an inline real array of
     // flat `{x0,y0, x1,y1, ...}` pairs or a two-column data-file name; the
     // optional control string selects the extrapolation mode.
+    // 1-D takes an inline array or a data file; multi-dimensional (2-D/3-D,
+    // Enhancement-17) take one coordinate per dimension and a self-describing
+    // grid data file. The optional trailing string is the extrapolation control.
     TABLE_MODEL = const {
         fn TABLE_MODEL_1D_ARR(Val(Real), ArrayAnyLength{ty: Real}) -> Real;
         fn TABLE_MODEL_1D_ARR_CTRL(Val(Real), ArrayAnyLength{ty: Real}, Literal(String)) -> Real;
         fn TABLE_MODEL_1D_FILE(Val(Real), Literal(String)) -> Real;
         fn TABLE_MODEL_1D_FILE_CTRL(Val(Real), Literal(String), Literal(String)) -> Real;
+        fn TABLE_MODEL_2D_FILE(Val(Real), Val(Real), Literal(String)) -> Real;
+        fn TABLE_MODEL_2D_FILE_CTRL(Val(Real), Val(Real), Literal(String), Literal(String)) -> Real;
+        fn TABLE_MODEL_3D_FILE(Val(Real), Val(Real), Val(Real), Literal(String)) -> Real;
+        fn TABLE_MODEL_3D_FILE_CTRL(Val(Real), Val(Real), Val(Real), Literal(String), Literal(String)) -> Real;
     }
 
     DDT = const {

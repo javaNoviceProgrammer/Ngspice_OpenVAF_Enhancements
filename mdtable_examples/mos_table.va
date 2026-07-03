@@ -1,0 +1,14 @@
+`include "disciplines.vams"
+
+// Enhancement-17: a table-based MOSFET. The drain current is a 2-D lookup table
+// I(Vgs, Vds) read from a self-describing grid data file, interpolated
+// bilinearly by $table_model. The interpolation is differentiable, so its two
+// partial derivatives become the transconductance gm = dId/dVgs and the output
+// conductance gds = dId/dVds in the Jacobian.
+module mos_table(g, d, s);
+    inout g, d, s;
+    electrical g, d, s;
+
+    analog
+        I(d, s) <+ $table_model(V(g, s), V(d, s), "mos_iv.tbl", "1L");
+endmodule

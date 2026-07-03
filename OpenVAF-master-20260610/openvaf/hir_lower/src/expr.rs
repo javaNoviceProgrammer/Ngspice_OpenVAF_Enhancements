@@ -1,7 +1,8 @@
 use hir::builtin::{
     FLICKER_NOISE_NAME, NOISE_TABLE_FILE, NOISE_TABLE_FILE_NAME, NOISE_TABLE_INLINE,
     NOISE_TABLE_INLINE_NAME, TABLE_MODEL_1D_ARR, TABLE_MODEL_1D_ARR_CTRL, TABLE_MODEL_1D_FILE,
-    TABLE_MODEL_1D_FILE_CTRL, WHITE_NOISE_NAME,
+    TABLE_MODEL_1D_FILE_CTRL, TABLE_MODEL_2D_FILE, TABLE_MODEL_2D_FILE_CTRL, TABLE_MODEL_3D_FILE,
+    TABLE_MODEL_3D_FILE_CTRL, WHITE_NOISE_NAME,
 };
 use hir::signatures::{
     ABSDELAY_MAX, ABS_INT, ABS_REAL, BOOL_EQ, DDX_POT, IDTMOD_IC, IDTMOD_IC_MODULUS,
@@ -409,93 +410,199 @@ impl BodyLoweringCtx<'_, '_, '_> {
         }
     }
 
-    /// Gather the sorted `(x, y)` points backing a 1-D `$table_model` call, from an inline real
-    /// array `{x0,y0, x1,y1, ...}` (`args[1]`) or a two-column data file. Points are sorted by `x`
-    /// and duplicate abscissae dropped so the piecewise-linear segments are well-formed.
-    fn table_model_data(&self, signature: hir::Signature, args: &[ExprId]) -> Vec<(f64, f64)> {
-        let mut pts = match signature {
-            TABLE_MODEL_1D_ARR | TABLE_MODEL_1D_ARR_CTRL => {
-                let elems = match self.body.get_expr(args[1]) {
-                    Expr::Array(vals) => vals,
-                    _ => return Vec::new(),
-                };
-                let nums: Vec<f64> =
-                    elems.iter().map(|&e| self.eval_const_real(e).unwrap_or(0.0)).collect();
-                nums.chunks_exact(2).map(|c| (c[0], c[1])).collect()
+    /// Reads all whitespace-separated numeric tokens from a table data file (blank lines and
+    /// `#`/`//`/`*` comment lines skipped), resolved relative to the compilation root directory.
+    fn read_table_tokens(&self, fname: &str) -> Vec<f64> {
+        let Some(dir) = self.ctx.db.root_file_dir() else { return Vec::new() };
+        let Some(path) = dir.join(fname) else { return Vec::new() };
+        let Some(abs) = path.as_path() else { return Vec::new() };
+        let Ok(content) = std::fs::read_to_string(abs) else { return Vec::new() };
+        let mut out = Vec::new();
+        for line in content.lines() {
+            let line = line.trim();
+            if line.is_empty()
+                || line.starts_with('#')
+                || line.starts_with("//")
+                || line.starts_with('*')
+            {
+                continue;
             }
-            TABLE_MODEL_1D_FILE | TABLE_MODEL_1D_FILE_CTRL => {
-                let fname = self.body.as_literal(args[1]).unwrap().unwrap_str();
-                self.read_noise_table_file(fname)
+            for tok in line.split_whitespace() {
+                if let Ok(v) = tok.parse::<f64>() {
+                    out.push(v);
+                }
             }
-            _ => Vec::new(),
-        };
-        pts.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
-        pts.dedup_by(|a, b| a.0 == b.0);
-        pts
+        }
+        out
     }
 
-    /// Lowers a 1-D `$table_model(x, <data>[, "ctrl"])` to differentiable MIR: a piecewise-linear
-    /// interpolation over the compile-time grid, built as a select chain so `mir_autodiff` yields
-    /// the per-segment slope as the Jacobian entry. Outside the grid it clamps to the endpoint
-    /// values (constant extrapolation, the default) unless the control string requests linear (`L`),
-    /// in which case the end segments' slopes continue.
-    fn lower_table_model(&mut self, signature: hir::Signature, args: &[ExprId]) -> Value {
-        let pts = self.table_model_data(signature, args);
-        let linear_extrap = match signature {
-            TABLE_MODEL_1D_ARR_CTRL | TABLE_MODEL_1D_FILE_CTRL => {
-                let ctrl = self.body.as_literal(args[2]).unwrap().unwrap_str();
-                ctrl.contains('L') || ctrl.contains('l')
-            }
-            _ => false,
-        };
+    /// Reads a self-describing multi-dimensional grid file into per-axis coordinate vectors and a
+    /// row-major value tensor (outermost axis slowest). Format (whitespace-separated, comments
+    /// ignored): `ndim`, then `ndim` axis sizes, then each axis's ascending coordinates, then
+    /// `prod(sizes)` values. Returns `None` on a dimensionality mismatch or a truncated file.
+    fn read_table_grid_nd(&self, fname: &str, ndim: usize) -> Option<(Vec<Vec<f64>>, Vec<f64>)> {
+        let mut it = self.read_table_tokens(fname).into_iter();
+        if it.next()? as usize != ndim {
+            return None;
+        }
+        let sizes: Vec<usize> =
+            (0..ndim).map(|_| it.next().map(|v| v as usize)).collect::<Option<_>>()?;
+        if sizes.iter().any(|&s| s == 0) {
+            return None;
+        }
+        let mut axes = Vec::with_capacity(ndim);
+        for &sz in &sizes {
+            axes.push((0..sz).map(|_| it.next()).collect::<Option<Vec<f64>>>()?);
+        }
+        let total: usize = sizes.iter().product();
+        let tensor = (0..total).map(|_| it.next()).collect::<Option<Vec<f64>>>()?;
+        Some((axes, tensor))
+    }
 
-        let x = self.lower_expr(args[0]);
-        if pts.is_empty() {
+    /// One-dimensional piecewise-linear interpolation of runtime `vals` (one per `grid` point) at
+    /// `x`, built as a select chain so it is differentiable. `grid` is ascending; outside it the
+    /// result is clamped to the endpoint value (constant extrapolation) unless `linear_extrap`, in
+    /// which case the end segments' slopes continue. This is the shared kernel for every dimension.
+    fn interp_1d_values(
+        &mut self,
+        x: Value,
+        grid: &[f64],
+        vals: &[Value],
+        linear_extrap: bool,
+    ) -> Value {
+        let n = grid.len();
+        if n == 0 {
             return F_ZERO;
         }
-        if pts.len() == 1 {
-            return self.ctx.fconst(pts[0].1);
+        if n == 1 {
+            return vals[0];
         }
-
-        let n = pts.len();
-        // Each segment i's linear value  y_i + (x - x_i) * slope_i  (slope folded at compile time).
+        // segment i:  vals[i] + (x - grid[i]) * (vals[i+1]-vals[i]) / (grid[i+1]-grid[i])
         let mut seg = Vec::with_capacity(n - 1);
         for i in 0..n - 1 {
-            let (xi, yi) = pts[i];
-            let (xj, yj) = pts[i + 1];
-            let slope = (yj - yi) / (xj - xi);
-            let xi_c = self.ctx.fconst(xi);
-            let dx = self.ctx.ins().fsub(x, xi_c);
-            let sl = self.ctx.fconst(slope);
-            let scaled = self.ctx.ins().fmul(dx, sl);
-            let yi_c = self.ctx.fconst(yi);
-            seg.push(self.ctx.ins().fadd(yi_c, scaled));
+            let dv = self.ctx.ins().fsub(vals[i + 1], vals[i]);
+            let dgrid = self.ctx.fconst(grid[i + 1] - grid[i]);
+            let slope = self.ctx.ins().fdiv(dv, dgrid);
+            let xi = self.ctx.fconst(grid[i]);
+            let dx = self.ctx.ins().fsub(x, xi);
+            let term = self.ctx.ins().fmul(dx, slope);
+            seg.push(self.ctx.ins().fadd(vals[i], term));
         }
-
-        // Select the active segment: segment i applies once x >= x_i (segment 0 is the default,
-        // also covering x below the grid; the last segment covers x above it).
+        // segment i applies once x >= grid[i] (segment 0 is the default and covers below the grid;
+        // the last segment covers above it -- i.e. linear extrapolation from the end slopes).
         let mut result = seg[0];
         for i in 1..n - 1 {
-            let xi = self.ctx.fconst(pts[i].0);
-            let ge = self.ctx.ins().fge(x, xi);
+            let gi = self.ctx.fconst(grid[i]);
+            let ge = self.ctx.ins().fge(x, gi);
             let seg_i = seg[i];
             result = self.ctx.make_select(ge, move |_c, b| if b { seg_i } else { result });
         }
-
         if !linear_extrap {
-            // constant extrapolation: clamp to the endpoint values outside the grid
-            let x0 = self.ctx.fconst(pts[0].0);
-            let y0 = self.ctx.fconst(pts[0].1);
-            let below = self.ctx.ins().flt(x, x0);
-            result = self.ctx.make_select(below, move |_c, b| if b { y0 } else { result });
+            let g0 = self.ctx.fconst(grid[0]);
+            let v0 = vals[0];
+            let below = self.ctx.ins().flt(x, g0);
+            result = self.ctx.make_select(below, move |_c, b| if b { v0 } else { result });
+            let gl = self.ctx.fconst(grid[n - 1]);
+            let vl = vals[n - 1];
+            let above = self.ctx.ins().fgt(x, gl);
+            result = self.ctx.make_select(above, move |_c, b| if b { vl } else { result });
+        }
+        result
+    }
 
-            let xl = self.ctx.fconst(pts[n - 1].0);
-            let yl = self.ctx.fconst(pts[n - 1].1);
-            let above = self.ctx.ins().fgt(x, xl);
-            result = self.ctx.make_select(above, move |_c, b| if b { yl } else { result });
+    /// N-dimensional multilinear interpolation as recursive 1-D interpolation: peel the outermost
+    /// axis, interpolate each of its slices over the remaining axes (giving one runtime value per
+    /// grid line), then interpolate those along the outermost axis. `tensor` is row-major
+    /// (outermost axis slowest). Differentiable in every coordinate.
+    fn interp_nd(
+        &mut self,
+        coords: &[Value],
+        axes: &[Vec<f64>],
+        tensor: &[f64],
+        linear_extrap: bool,
+    ) -> Value {
+        if coords.len() == 1 {
+            let vals: Vec<Value> = tensor.iter().map(|&v| self.ctx.fconst(v)).collect();
+            return self.interp_1d_values(coords[0], &axes[0], &vals, linear_extrap);
+        }
+        let n0 = axes[0].len();
+        if n0 == 0 || tensor.is_empty() {
+            return F_ZERO;
+        }
+        let sub = tensor.len() / n0;
+        let mut rows = Vec::with_capacity(n0);
+        for i in 0..n0 {
+            let row = self.interp_nd(
+                &coords[1..],
+                &axes[1..],
+                &tensor[i * sub..(i + 1) * sub],
+                linear_extrap,
+            );
+            rows.push(row);
+        }
+        self.interp_1d_values(coords[0], &axes[0], &rows, linear_extrap)
+    }
+
+    /// Lowers `$table_model(x1[, x2, x3], <data>[, "ctrl"])` to differentiable MIR: reads the
+    /// compile-time grid (inline array or data file), lowers each coordinate, and multilinearly
+    /// interpolates via `interp_nd`, so `mir_autodiff` supplies the per-axis slope as the Jacobian.
+    fn lower_table_model(&mut self, signature: hir::Signature, args: &[ExprId]) -> Value {
+        // (ndim, is_file, has_ctrl) for each declared signature variant
+        let (ndim, is_file, has_ctrl) = match signature {
+            TABLE_MODEL_1D_ARR => (1, false, false),
+            TABLE_MODEL_1D_ARR_CTRL => (1, false, true),
+            TABLE_MODEL_1D_FILE => (1, true, false),
+            TABLE_MODEL_1D_FILE_CTRL => (1, true, true),
+            TABLE_MODEL_2D_FILE => (2, true, false),
+            TABLE_MODEL_2D_FILE_CTRL => (2, true, true),
+            TABLE_MODEL_3D_FILE => (3, true, false),
+            TABLE_MODEL_3D_FILE_CTRL => (3, true, true),
+            _ => (1, false, false),
+        };
+
+        let linear_extrap = if has_ctrl {
+            let ctrl = self.body.as_literal(args[ndim + 1]).unwrap().unwrap_str();
+            ctrl.contains('L') || ctrl.contains('l')
+        } else {
+            false
+        };
+
+        // read the grid into per-axis coordinate vectors + a row-major value tensor
+        let (axes, tensor) = if is_file && ndim >= 2 {
+            let fname = self.body.as_literal(args[ndim]).unwrap().unwrap_str();
+            match self.read_table_grid_nd(fname, ndim) {
+                Some(g) => g,
+                None => return F_ZERO,
+            }
+        } else {
+            // 1-D: inline `{x0,y0,...}` pairs or a two-column data file
+            let mut pts: Vec<(f64, f64)> = if is_file {
+                let fname = self.body.as_literal(args[1]).unwrap().unwrap_str();
+                self.read_noise_table_file(fname)
+            } else {
+                match self.body.get_expr(args[1]) {
+                    Expr::Array(vals) => {
+                        let nums: Vec<f64> =
+                            vals.iter().map(|&e| self.eval_const_real(e).unwrap_or(0.0)).collect();
+                        nums.chunks_exact(2).map(|c| (c[0], c[1])).collect()
+                    }
+                    _ => Vec::new(),
+                }
+            };
+            pts.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+            pts.dedup_by(|a, b| a.0 == b.0);
+            (vec![pts.iter().map(|p| p.0).collect()], pts.iter().map(|p| p.1).collect())
+        };
+
+        if axes.iter().any(|a| a.is_empty()) {
+            return F_ZERO;
         }
 
-        result
+        let mut coords = Vec::with_capacity(ndim);
+        for i in 0..ndim {
+            coords.push(self.lower_expr(args[i]));
+        }
+        self.interp_nd(&coords, &axes, &tensor, linear_extrap)
     }
 
     fn lower_builtin(&mut self, expr: ExprId, builtin: BuiltIn, args: &[ExprId]) -> Value {
