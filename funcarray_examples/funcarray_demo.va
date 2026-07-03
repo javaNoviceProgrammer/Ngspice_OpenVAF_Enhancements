@@ -1,0 +1,39 @@
+`include "disciplines.vams"
+
+// Enhancement-18 demonstration: standard array declaration syntax + array
+// support in analog functions.
+//
+//   * `real coeffs[0:3];`  -- the LRM name-then-range array declaration (Part 1)
+//   * `analog function real polyeval; ... input a; real a[0:3]; ...`
+//     -- an analog function taking an ARRAY argument (Part 2); it evaluates the
+//     polynomial a[0] + a[1]*x + a[2]*x^2 + a[3]*x^3 by Horner's rule, indexing
+//     the array argument `a[i]` with a loop variable (dynamic index).
+//
+// The whole array `coeffs` is passed by name to the function. The interpolation
+// is ordinary differentiable code, so dV(out)/dV(in) = poly'(V(in)) flows through
+// the function into the Jacobian.
+module funcarray_demo(in, out);
+    input in;
+    output out;
+    electrical in, out;
+
+    // name-then-range array declaration (Enhancement-18 Part 1)
+    real coeffs[0:3];
+
+    // analog function with a scalar input and an ARRAY argument (Enhancement-18 Part 2)
+    analog function real polyeval;
+        input x;    real x;
+        input a;    real a[0:3];
+        integer i;
+        begin
+            polyeval = 0.0;
+            for (i = 3; i >= 0; i = i - 1)
+                polyeval = polyeval * x + a[i];   // dynamic index of the array argument
+        end
+    endfunction
+
+    analog begin
+        coeffs = '{0.0, 0.5, 0.3, 0.0};           // poly(x) = 0.5*x + 0.3*x^2
+        V(out) <+ polyeval(V(in), coeffs);        // pass the whole array by name
+    end
+endmodule

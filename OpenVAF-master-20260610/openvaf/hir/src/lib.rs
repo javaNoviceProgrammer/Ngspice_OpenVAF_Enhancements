@@ -26,6 +26,7 @@ use hir_def::{
     VarId,
 };
 pub use hir_def::{BuiltIn, Case, Literal, ParamSysFun, Path, Type};
+use stdx::Upcast;
 pub use hir_ty::builtin;
 use hir_ty::db::HirTyDB as HirDatabase;
 use hir_ty::inference;
@@ -268,6 +269,17 @@ impl FunctionArg {
 
     pub fn is_output(self, db: &CompilationDB) -> bool {
         db.function_data(self.fun_id).args[self.arg_id].is_output
+    }
+
+    /// For an array-typed argument (Enhancement-18): the function's element variables it expanded
+    /// into (`v[0]`, `v[1]`, ...), in declaration order — used to bind a whole-array call argument
+    /// element-by-element. Empty for a scalar argument.
+    pub fn array_elems(self, db: &CompilationDB) -> Vec<Variable> {
+        let base = db.function_data(self.fun_id).args[self.arg_id].name.clone();
+        hir_def::function_array_arg_vars(db.upcast(), self.fun_id, &base)
+            .into_iter()
+            .map(|id| Variable { id })
+            .collect()
     }
 }
 

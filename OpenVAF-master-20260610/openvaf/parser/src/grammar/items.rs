@@ -91,7 +91,13 @@ pub(super) fn var_decl(p: &mut Parser, m: Marker) {
 
 fn var(p: &mut Parser) -> bool {
     let m = p.start();
-    name_r(p, TokenSet::new(&[T![,], T![=], T![;]]));
+    name_r(p, TokenSet::new(&[T!['['], T![,], T![=], T![;]]));
+    // Optional name-then-range array dimensions: `x[0:n]`, or multi-dimensional
+    // `m[0:1][0:2]` (Enhancement-18) -- the standard Verilog-AMS unpacked-array
+    // form, complementing the range-then-name form (`real [0:n] x;`).
+    while p.at(T!['[']) {
+        width_range(p);
+    }
     if p.eat(T![=]) {
         expr(p);
     }

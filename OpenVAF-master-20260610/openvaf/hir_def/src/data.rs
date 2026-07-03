@@ -231,7 +231,33 @@ impl FunctionData {
         let loc = id.lookup(db);
         let item_tree = loc.item_tree(db);
         let fun = &item_tree[loc.id];
-        let args = fun.args.iter().map(|arg| FunctionArg::new(arg, &item_tree)).collect();
+        let args = fun
+            .args
+            .iter()
+            .map(|arg| {
+                let mut fa = FunctionArg::new(arg, &item_tree);
+                // An array-typed argument (Enhancement-18): its declaration expanded into element
+                // variables (no single scalar declaration), so derive its type from the function's
+                // `var_arrays` -- element type × total length.
+                if let Some(arr) = fun.var_arrays.iter().find(|a| a.base_name == arg.name) {
+                    let elem_name = arr.elem_name(&arr.index_tuples()[0]);
+                    let elem_ty = fun
+                        .items
+                        .iter()
+                        .find_map(|it| match it {
+                            item_tree::FunctionItem::Variable(v)
+                                if item_tree[*v].name == elem_name =>
+                            {
+                                Some(item_tree[*v].ty.clone())
+                            }
+                            _ => None,
+                        })
+                        .unwrap_or(Type::Real);
+                    fa.ty = Type::Array { ty: Box::new(elem_ty), len: arr.elem_count() as u32 };
+                }
+                fa
+            })
+            .collect();
         Arc::new(FunctionData {
             name: fun.name.clone(),
             return_ty: item_tree[loc.id].ty.clone(),

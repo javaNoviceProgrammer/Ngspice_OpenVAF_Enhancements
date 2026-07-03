@@ -425,6 +425,12 @@ impl Ctx<'_> {
             }
 
             Expr::Path { ref path, port: false } => {
+                // A whole-array reference pre-resolved as a function-call array argument
+                // (Enhancement-18): return its already-recorded array type instead of the
+                // bare-array error.
+                if self.result.array_var_refs.contains_key(&expr) {
+                    return Some(self.result.expr_types[expr].clone());
+                }
                 if let Some(name) = path.as_ident() {
                     if self.find_bus(&name).is_some()
                         || self.find_var_array(&name).is_some()
@@ -633,12 +639,21 @@ impl Ctx<'_> {
             return Some(Ty::Val(fun_info.return_ty.clone()));
         }
 
+        // Pre-resolve whole-array arguments (Enhancement-18): a bare array reference passed to an
+        // array-typed formal is resolved to its element variables so the generic argument matching
+        // accepts it as an array value (rather than emitting the "requires a bit-select" error).
+        for (arg_info, &actual) in fun_info.args.iter().zip(args) {
+            if let Type::Array { ref ty, len } = arg_info.ty {
+                self.pre_resolve_array_call_arg(stmt, actual, ty, len);
+            }
+        }
+
         let signature = fun_info
             .args
             .iter()
             .map(|arg| {
-                if arg.is_output {
-                    // Output arguments must be variables
+                if arg.is_output && !matches!(arg.ty, Type::Array { .. }) {
+                    // Output arguments must be variables (array outputs are not yet supported).
                     TyRequirement::Var(arg.ty.clone())
                 } else {
                     TyRequirement::Val(arg.ty.clone())
@@ -657,6 +672,25 @@ impl Ctx<'_> {
             Some(func),
         )
         .0
+    }
+
+    /// Resolves a bare array reference passed as a whole-array function argument to its element
+    /// `VarId`s (recorded in `array_var_refs`) and types the argument expression as an array, so it
+    /// satisfies an array-typed formal. Leaves the expression untouched (to be diagnosed normally)
+    /// if it isn't a caller array of the expected length.
+    fn pre_resolve_array_call_arg(&mut self, stmt: StmtId, actual: ExprId, elem_ty: &Type, len: u32) {
+        let name = match &self.body.exprs[actual] {
+            Expr::Path { path, port: false } => path.as_ident(),
+            _ => return,
+        };
+        let Some(arr) = name.and_then(|n| self.find_var_array(&n)) else { return };
+        let Some(elems) = self.array_elem_vars_flat(stmt, actual, &arr) else { return };
+        if elems.len() as u32 != len {
+            return;
+        }
+        self.result.array_var_refs.insert(actual, elems);
+        self.result.expr_types[actual] =
+            Ty::Val(Type::Array { ty: Box::new(elem_ty.clone()), len });
     }
 
     fn infere_nature_access(
@@ -1701,10 +1735,21 @@ impl Ctx<'_> {
     }
 
     fn find_var_array(&self, name: &Name) -> Option<BusDecl> {
-        let DefWithBodyId::ModuleId { module, .. } = self.owner else { return None };
-        let loc = module.lookup(self.db.upcast());
-        let tree = loc.item_tree(self.db.upcast());
-        tree[loc.id].var_arrays.iter().find(|arr| &arr.base_name == name).cloned()
+        // Array variables live at module body scope and, since Enhancement-18, inside `analog
+        // function` bodies (locals and array-typed arguments).
+        match self.owner {
+            DefWithBodyId::ModuleId { module, .. } => {
+                let loc = module.lookup(self.db.upcast());
+                let tree = loc.item_tree(self.db.upcast());
+                tree[loc.id].var_arrays.iter().find(|arr| &arr.base_name == name).cloned()
+            }
+            DefWithBodyId::FunctionId(function) => {
+                let loc = function.lookup(self.db.upcast());
+                let tree = loc.item_tree(self.db.upcast());
+                tree[loc.id].var_arrays.iter().find(|arr| &arr.base_name == name).cloned()
+            }
+            _ => None,
+        }
     }
 
     /// Like `find_var_array`, but for array-valued *parameters* (`parameter real [msb:lsb] c`).

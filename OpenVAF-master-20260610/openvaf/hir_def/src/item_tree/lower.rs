@@ -435,10 +435,15 @@ impl Ctx {
     fn lower_fun(&mut self, fun: ast::Function, dst: &mut Vec<ModuleItem>) {
         let mut items = Vec::new();
         let mut args: TiVec<LocalFunctionArgId, FunctionArg> = TiVec::new();
+        // Array-variable declarations local to this function (Enhancement-18): array locals and
+        // array-typed arguments expand into element vars here, exactly like `Module::var_arrays`.
+        let mut var_arrays = Vec::new();
         for item in fun.function_items() {
             match item {
                 ast::FunctionItem::ParamDecl(decl) => self.lower_param(decl, &mut items, None),
-                ast::FunctionItem::VarDecl(decl) => self.lower_var(decl, &mut items, None),
+                ast::FunctionItem::VarDecl(decl) => {
+                    self.lower_var(decl, &mut items, Some(&mut var_arrays))
+                }
                 ast::FunctionItem::FunctionArg(arg) => {
                     let ast_id = self.source_ast_id_map.ast_id(&arg);
                     let is_input = is_input(&arg.direction());
@@ -482,6 +487,7 @@ impl Ctx {
                 args,
                 items,
                 ast_id: self.source_ast_id_map.ast_id(&fun),
+                var_arrays,
             };
             let fun = self.tree.data.functions.push_and_get_key(fun);
             dst.push(fun.into())
@@ -854,13 +860,19 @@ impl Ctx {
         mut var_arrays: Option<&mut Vec<BusDecl>>,
     ) {
         let ty = decl.ty().as_type();
-        // One `[msb:lsb]` clause per dimension (Enhancement-15); empty for a scalar variable.
-        let widths: Vec<ast::Range> = decl.widths().collect();
+        // Array dimensions may be written *before* the name and shared by the whole declaration
+        // (`real [0:n] x, y;`, Enhancement-15) or *after* each name (`real x[0:n], m[0:1][0:2];`,
+        // the standard Verilog-AMS form, Enhancement-18). Each `[msb:lsb]` clause is one dimension.
+        let decl_widths: Vec<ast::Range> = decl.widths().collect();
 
         for var in decl.vars() {
             let Some(name) = var.name() else { continue };
             let base_name = name.as_name();
             let ast_id = self.source_ast_id_map.ast_id(&var);
+
+            // per-variable dimensions take precedence; otherwise the shared declaration-level ones
+            let var_widths: Vec<ast::Range> = var.widths().collect();
+            let widths = if var_widths.is_empty() { &decl_widths } else { &var_widths };
 
             let mut push_scalar = |this: &mut Self| {
                 let var = Var { name: base_name.clone(), ast_id, ty: ty.clone() };

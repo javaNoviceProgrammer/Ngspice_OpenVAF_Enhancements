@@ -224,7 +224,7 @@ VarDecl =
   AttrList* Type width:Range* (Var (',' Var)*) ';'
 
 Var =
-  Name ('=' default:Expr)?
+  Name width:Range* ('=' default:Expr)?
 
 
 

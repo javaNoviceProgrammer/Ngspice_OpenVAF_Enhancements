@@ -588,6 +588,10 @@ pub struct Function {
     pub args: TiVec<LocalFunctionArgId, FunctionArg>,
     pub items: Vec<FunctionItem>,
     pub ast_id: AstId<ast::Function>,
+    /// Array-variable declarations local to this `analog function` (locals and array-typed
+    /// arguments), used to resolve `x[i]` bit-selects inside the function body — the function-scope
+    /// analogue of `Module::var_arrays` (Enhancement-18).
+    pub var_arrays: Vec<BusDecl>,
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]

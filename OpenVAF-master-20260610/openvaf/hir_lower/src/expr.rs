@@ -300,6 +300,17 @@ impl BodyLoweringCtx<'_, '_, '_> {
             args.next();
         }
         for (arg, expr) in args.clone() {
+            if let Type::Array { .. } = arg.ty(self.ctx.db) {
+                // Whole-array argument (Enhancement-18): bind the function's element variables
+                // (`v[i]`) from the caller's array elements (input semantics).
+                let func_elems = arg.array_elems(self.ctx.db);
+                let caller_elems = self.body.array_var_ref(*expr).unwrap_or_default();
+                for (&p_i, &c_i) in func_elems.iter().zip(&caller_elems) {
+                    let val = self.ctx.read_variable(c_i);
+                    self.ctx.def_place(PlaceKind::Var(p_i), val);
+                }
+                continue;
+            }
             let init = if arg.is_input(self.ctx.db) {
                 self.lower_expr(*expr)
             } else {
@@ -323,9 +334,10 @@ impl BodyLoweringCtx<'_, '_, '_> {
         let body = fun.body(self.ctx.db);
         BodyLoweringCtx { body: body.borrow(), path: self.path, ctx: self.ctx }.lower_entry_stmts();
 
-        // write outputs back to original (including possibly required cast)
+        // write outputs back to original (including possibly required cast); array arguments are
+        // input-only (Enhancement-18), so they are skipped here.
         for (arg, &expr) in args {
-            if arg.is_output(self.ctx.db) {
+            if arg.is_output(self.ctx.db) && !matches!(arg.ty(self.ctx.db), Type::Array { .. }) {
                 let mut val = self.ctx.use_place(PlaceKind::FunctionArg(arg));
                 // casting in reverse here since we write back
                 if let Some((dst, src)) = self.body.needs_cast(expr) {

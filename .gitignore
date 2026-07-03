@@ -135,5 +135,9 @@ table_model_examples/*.txt
 mdtable_examples/_*.cir
 mdtable_examples/_*.txt
 
+# Enhancement 18 funcarray example scripts: temp netlists + outputs
+funcarray_examples/_*.cir
+funcarray_examples/*.txt
+
 # Python bytecode cache (e.g. from importing _setup.py)
 __pycache__/

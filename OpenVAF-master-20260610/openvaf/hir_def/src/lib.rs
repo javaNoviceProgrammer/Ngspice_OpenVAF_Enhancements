@@ -121,6 +121,34 @@ impl ScopeId {
     }
 }
 
+/// The element `VarId`s of an array-typed `analog function` argument, in declaration order
+/// (Enhancement-18). The argument's `real [msb:lsb] v;` declaration expanded into element variables
+/// `v[i]` in the function's body scope; this resolves them so a whole-array call argument can be
+/// bound element-by-element. Empty if `base_name` isn't an array in this function.
+pub fn function_array_arg_vars(
+    db: &dyn db::HirDefDB,
+    func: FunctionId,
+    base_name: &Name,
+) -> Vec<VarId> {
+    let loc = func.lookup(db);
+    let tree = loc.item_tree(db);
+    let Some(arr) = tree[loc.id].var_arrays.iter().find(|a| &a.base_name == base_name).cloned()
+    else {
+        return Vec::new();
+    };
+    let scope = ScopeId {
+        root_file: loc.scope.root_file,
+        local_scope: db.function_def_map(func).entry(),
+        src: DefMapSource::Function(func),
+    };
+    arr.index_tuples()
+        .iter()
+        .filter_map(|idx| {
+            scope.resolve_item_path::<VarId>(db, &Path::new_ident(arr.elem_name(idx))).ok()
+        })
+        .collect()
+}
+
 #[derive(Debug)]
 pub struct ItemLoc<N: ItemTreeNode> {
     pub scope: ScopeId,
