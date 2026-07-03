@@ -1,0 +1,28 @@
+`include "disciplines.vams"
+
+// Enhancement-24 demonstration: `$discontinuity(n)`.
+//
+// `$discontinuity(n)` (n >= 0) announces a discontinuity of degree n in the
+// branch constitutive relations at the current point, so the simulator limits
+// the transient timestep instead of extrapolating a large step across the event.
+// Previously it compiled but was a no-op (except the internal `$discontinuity(-1)`
+// used by limiting).
+//
+// This model is a conductance switch: g jumps between two values at V(a,b) = vth,
+// so the current I = g*V(a,b) is discontinuous there. While the device sits in
+// the switched (V < vth) region we announce the discontinuity; the simulator then
+// keeps the timestep fine there (resolving the switching behaviour) instead of
+// coasting with large extrapolated steps. Set `announce = 0` to disable the
+// announcement and see the coarse stepping the discontinuity control avoids.
+module disc_demo(a, b);
+    inout a, b;
+    electrical a, b;
+    parameter integer announce = 1;      // 1: call $discontinuity, 0: don't
+    parameter real vth = 0.5;
+    real g;
+    analog begin
+        if (V(a, b) < vth) g = 2e-3; else g = 5e-4;   // conductance switch
+        if (announce && V(a, b) < vth) $discontinuity(0);
+        I(a, b) <+ g * V(a, b);
+    end
+endmodule

@@ -160,5 +160,9 @@ cubic_table_examples/surf.grid
 arrayret_examples/_*.cir
 arrayret_examples/*.txt
 
+# Enhancement 24 discontinuity example scripts: temp netlists + outputs
+discontinuity_examples/_*.cir
+discontinuity_examples/*.txt
+
 # Python bytecode cache (e.g. from importing _setup.py)
 __pycache__/

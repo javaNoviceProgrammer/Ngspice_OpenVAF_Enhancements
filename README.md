@@ -359,6 +359,16 @@ Several unrelated language gaps found along the way are also fixed. **`localpara
 
 ---
 
+## Enhancement 24: `$discontinuity(n)` simulator support
+
+*July 2026* — Gave real effect to **`$discontinuity(n)`** (n ≥ 0), previously a no-op (only the internal `$discontinuity(-1)` used by device limiting did anything). `$discontinuity(n)` announces a discontinuity of degree *n* in the branch constitutive relations at the current point, so the transient simulator **limits the timestep** there instead of extrapolating a large step across the event — affecting *only* timestep control, never the computed solution. The natural vehicle, an OSDI eval **return flag** (like `$finish`/`$stop`), turned out not to be honoured by ngspice's timestep control, so this is implemented over the proven **`bound_step`** eval output that ngspice's `OSDItrunc` already reads: `$discontinuity(n)` writes a **negative sentinel** to the `bound_step` slot, and `OSDItrunc` interprets it (rather than as a literal step bound) as "a discontinuity occurred here" and clamps the next timestep to the last accepted step. **This is the first enhancement that also modifies the ngspice source** (`src/osdi/osditrunc.c`); no OSDI ABI change.
+
+- Verified end-to-end through ngspice — a conductance switch (`I = g·V(a,b)`, `g` jumps at `V(a,b)=vth`) announces `$discontinuity(0)` while in the switched region: the same transient produces far more (finer) timepoints with the announcement on than off — i.e. the discontinuity actually limits the timestep — while the DC operating point is identical either way — see `discontinuity_examples/` (with a timestep-refinement plot)
+- The degree `n` is treated uniformly (any n ≥ 0 ⇒ "limit the step here"); `$discontinuity` and `$bound_step` share the `bound_step` slot (a negative value is the discontinuity sentinel, a positive value an explicit bound); requires the accompanying ngspice build
+- Details: [Enhancement-24.md](Enhancement-24.md)
+
+---
+
 ## Prebuilt Binaries
 
 Binaries are built by CI and committed to `bin/`:

@@ -1392,10 +1392,18 @@ impl BodyLoweringCtx<'_, '_, '_> {
             BuiltIn::discontinuity => {
                 // AB: Negative literals are represented as UnaryOp::Neg(Literal)
                 //     We have a function for that now.
-                if self.ctx.inside_lim && Some(-1) == self.body.as_literalsignedint(&args[0]) {
+                let degree = self.body.as_literalsignedint(&args[0]);
+                if self.ctx.inside_lim && Some(-1) == degree {
                     self.ctx.call(CallBackKind::LimDiscontinuity, &[]);
-                } else {
-                    // TODO implement support for discontinuity?
+                } else if degree != Some(-1) {
+                    // `$discontinuity(n)` for n >= 0 (Enhancement-24): announce a discontinuity of
+                    // degree `n` so the simulator limits the transient timestep rather than
+                    // extrapolating across the event. Implemented via the (proven) `bound_step`
+                    // eval output: writing a negative sentinel signals ngspice's `OSDItrunc` to
+                    // clamp the next timestep to the last accepted step. (The eval-return-flag path
+                    // used by `$finish`/`$stop` is not honoured by ngspice's timestep control.)
+                    let sentinel = self.ctx.fconst(-1.0);
+                    self.ctx.def_place(PlaceKind::BoundStep, sentinel);
                 }
                 GRAVESTONE
             }

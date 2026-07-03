@@ -25,7 +25,17 @@ int OSDItrunc(GENmodel *in_model, CKTcircuit *ckt, double *timestep) {
 
       if (has_boundstep) {
         double *del = (double *)(((char *)inst) + offset);
-        if (*del < *timestep) {
+        if (*del < 0.0) {
+          /* Enhancement-24: a negative bound_step is the sentinel written by
+           * $discontinuity(n) (n >= 0). Rather than a literal step bound, it means
+           * "a discontinuity occurred here": don't let the next timestep grow past
+           * the last accepted step, so the event is resolved rather than
+           * extrapolated across. CKTdeltaOld[0] is the most recent accepted delta. */
+          double last = ckt->CKTdeltaOld[0];
+          if (last > 0.0 && last < *timestep) {
+            *timestep = last;
+          }
+        } else if (*del < *timestep) {
           *timestep = *del;
         }
       }
