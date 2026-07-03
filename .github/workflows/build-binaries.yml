@@ -268,6 +268,20 @@ jobs:
           Write-Host "=== Final bin/windows/intel contents ==="
           Get-ChildItem out\bin\windows\intel\
 
+      - name: Strip Windows binaries
+        shell: msys2 {0}
+        run: |
+          # Strip debug/symbol data for consistency with the other platforms.
+          # openvaf-r.exe is MSVC-built but PE/COFF, which GNU strip (via MSYS2)
+          # understands; ngspice.exe + the bundled MinGW DLLs are MinGW-built.
+          # Windows keeps debug info in a separate .pdb so this mainly trims the
+          # COFF symbol table, but it costs nothing and keeps the .exe lean.
+          for f in out/bin/windows/intel/*.exe out/bin/windows/intel/*.dll; do
+            [ -f "$f" ] && strip --strip-all "$f" 2>/dev/null || true
+          done
+          echo "=== stripped bin/windows/intel ==="
+          ls -lh out/bin/windows/intel/
+
       - name: Upload artifact
         uses: actions/upload-artifact@v5
         with:
