@@ -10,7 +10,7 @@ scope"*.
 grid. Unlike the E-9 `noise_table` (which feeds only the noise PSD path),
 `$table_model` is used in the **main device equations**, so the interpolation
 must be **differentiable** — its slope becomes the Jacobian entry. It is verified
-end-to-end through ngspice (see `table_model_examples/`).
+end-to-end through ngspice (see `examples/table_model_examples/`).
 
 All work is in `version11/`; verification uses `version11/ngspice-46`'s own
 binary and `version11/OpenVAF-master`'s own `openvaf-r`. **No OSDI ABI change and
@@ -65,7 +65,7 @@ region — hence prefer `L` where the operating point may leave the grid).
 
 ## Verification
 
-- `table_model_examples/verify_table.py` exercises the value **and its derivative**
+- `examples/table_model_examples/verify_table.py` exercises the value **and its derivative**
   across **DC, AC and transient**:
   - **DC** — an inline-array transfer function `V(out) = $table_model(V(in), '{...})`
     matches a reference piecewise-linear interpolation **bit-exactly**; and a

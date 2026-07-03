@@ -311,7 +311,7 @@ have no default LLVM version feature, see their `Cargo.toml`.)
 no `-I` needed) compiles to a working `.osdi` with zero errors/warnings.
 
 ### 7.3 ngspice simulation — new feature
-`version3/indirect_assignment_examples/` — a unity-gain buffer built from the
+`version3/examples/indirect_assignment_examples/` — a unity-gain buffer built from the
 op-amp (`nin` tied to `out`), simulated with `version3/bin/.../ngspice`:
 - **DC** sweep −2V…2V: `V(out) == V(pin)` exactly.
 - **AC** 1kHz…1GHz: flat 0 dB gain, 0° phase (ideal, infinite bandwidth).
@@ -320,7 +320,7 @@ op-amp (`nin` tied to `out`), simulated with `version3/bin/.../ngspice`:
 PNG plots of all three are in that folder (`dc.png`, `ac.png`, `tran.png`).
 
 ### 7.4 Regression — Enhancement-1 (`absdelay`)
-`version3/absdelay_examples/` recompiled (`absdelay.va` → `.osdi` with the
+`version3/examples/absdelay_examples/` recompiled (`absdelay.va` → `.osdi` with the
 new `openvaf-r`) and re-run (DC/AC/transient, KLU vs SPARSE):
 DC and transient bit-identical between solvers, AC differs only by ~2e-15
 (floating-point roundoff) — matching the documented Enhancement-1 baseline.

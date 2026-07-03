@@ -96,7 +96,7 @@ guarded against concurrent access, so I/O should stay in these setup contexts.)
    Fixed by marking the table `volatile` (forcing real runtime loads/stores) and
    the entry points `noinline`.
 
-## 4. Verification (`fileio_examples/`)
+## 4. Verification (`examples/fileio_examples/`)
 
 `fileio_demo.va` is a resistor that also exports a characterization report --
 its parameters and a computed `I = V/R` table -- to `fileio_out.txt` at
@@ -157,7 +157,7 @@ mapped to `FDISPLAY_FUN` (leading `Val(Integer)`, return `Void`) -- wrong for
 (`Val(String)` + `Integer` return) and `FSCANF_FUN` (`Val(Integer)` + `Integer`
 return).
 
-### 6.3 Verification (`stringio_examples/`)
+### 6.3 Verification (`examples/stringio_examples/`)
 
 `stringio_demo.va` formats strings (`$sformat`/`$swrite`), parses a literal
 (`$sscanf`), round-trips a file read (`$fgets` and `$fscanf` over a file the
@@ -176,7 +176,7 @@ functions (§1.3) applies.
 | `openvaf/hir_lower/src/expr.rs` | Lowering for `$fopen`/`$fclose`/`$fdisplay`/`$fwrite`/`$fstrobe`/`$fmonitor`/`$fdebug`/`$fflush`/`$ftell`/`$fseek`/`$rewind`/`$feof`; `lower_file_op` helper (§2) |
 | `openvaf/osdi/src/compilation_unit.rs` | `print_callback` file-routing path (`to_file`, descriptor captured up front) + `general_callbacks` arms for `Fopen`/`FileOp` (§2, §3) |
 | `openvaf/osdi/stdlib.c` | Runtime descriptor table + `osdi_f*` functions + `extern` libc decls; `volatile` table + `noinline` to defeat IPO mis-specialisation (§1.1, §3) |
-| `fileio_examples/` | New verified example suite (`fileio_demo.va`, `fileio_seek.va`, `verify_fileio.py`, `README.md`) (§4) |
+| `examples/fileio_examples/` | New verified example suite (`fileio_demo.va`, `fileio_seek.va`, `verify_fileio.py`, `README.md`) (§4) |
 | **§6 additions:** | **string-formatting / reading functions** |
 | `openvaf/hir_ty/src/types.rs` | `Ty::unwrap_var()` accessor (§6) |
 | `openvaf/hir/src/body.rs` | `into_variable(expr)` -- recover a `Variable` from a `Var(..)` argument (§6) |
@@ -188,4 +188,4 @@ functions (§1.3) applies.
 | `openvaf/hir_def/src/builtin.rs` | Ungated the 6 string/reading functions (only `$simprobe`/`$*_alias`/plusargs remain) |
 | `openvaf/osdi/src/compilation_unit.rs` | `print_callback` `PrintDst::String` return path; `general_callbacks` arms for the scan/read helpers (§6) |
 | `openvaf/osdi/stdlib.c` | `osdi_fgets`/`osdi_strlen`/`osdi_ferror_*` + the `volatile`-cursor scanner (`osdi_scanf_begin`/`osdi_scan_*`/`osdi_scanf_count`) + `extern` libc decls (§6.2) |
-| `stringio_examples/` | New verified example suite (`stringio_demo.va`, `verify_stringio.py`, `README.md`) (§6.3) |
+| `examples/stringio_examples/` | New verified example suite (`stringio_demo.va`, `verify_stringio.py`, `README.md`) (§6.3) |

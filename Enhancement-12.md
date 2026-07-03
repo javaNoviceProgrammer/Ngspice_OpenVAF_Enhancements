@@ -60,7 +60,7 @@ Naming note: the plusarg functions use the IEEE `$`-separated spelling
 `$test$plusargs` / `$value$plusargs` in Verilog-A source (registered that way in
 `syntax/src/name.rs`), not underscores.
 
-## 3. Verification (`alias_examples/`)
+## 3. Verification (`examples/alias_examples/`)
 
 `alias_demo.va` calls all five (with and without a `$simprobe` default) and
 writes the results to `alias_out.txt`; `verify_alias.py` runs a `.op` and checks
@@ -88,4 +88,4 @@ Enhancement-10 `verify_rng.py` 24/24, Enhancement-11 `verify_fileio.py` 9/9 and
 |---|---|
 | `openvaf/hir_def/src/builtin.rs` | Ungated the last five functions; `is_unsupported()` is now unconditionally `false` (§2) |
 | `openvaf/hir_lower/src/expr.rs` | Constant lowering for `$test$plusargs`/`$value$plusargs` (→ `FALSE`), `$analog_node_alias`/`$analog_port_alias` (→ `0`), `$simprobe` (→ default or `0.0`) (§2) |
-| `alias_examples/` | New verified example suite (`alias_demo.va`, `verify_alias.py`, `README.md`) (§3) |
+| `examples/alias_examples/` | New verified example suite (`alias_demo.va`, `verify_alias.py`, `README.md`) (§3) |

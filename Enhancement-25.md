@@ -48,7 +48,7 @@ returning a string pointer) already existed and is unchanged.
 
 ## Verification
 
-`simparamstr_examples/verify_simparamstr.py` (`ALL PASS`) — a model that sets its
+`examples/simparamstr_examples/verify_simparamstr.py` (`ALL PASS`) — a model that sets its
 conductance from `$simparam$str("analysis_name")` (read into a `string` variable
 and compared): `g_dc` in dc/op, `g_ac` in ac, `g_tran` in tran. Running each
 analysis and checking the terminal current confirms the correct string is returned

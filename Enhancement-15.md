@@ -5,7 +5,7 @@ This document describes the source-code changes made to **OpenVAF-r** in the
 **multi-dimensional arrays** (`real [0:1][0:2] m; ... m[i][j]`). It covers array
 variables and array-valued parameters, constant and dynamic (runtime) indexing,
 and nested aggregate literals — verified end-to-end through ngspice (see
-`mdarray_examples/`).
+`examples/mdarray_examples/`).
 
 All work is in `version11/`; verification uses `version11/ngspice-46`'s own
 binary and `version11/OpenVAF-master`'s own `openvaf-r`. **No OSDI ABI change and
@@ -94,7 +94,7 @@ error); copy a parameter into a variable array to index it dynamically.
 
 ## Verification
 
-- `mdarray_examples/verify_mdarray.py` — 2-D array parameter defaults, per-element
+- `examples/mdarray_examples/verify_mdarray.py` — 2-D array parameter defaults, per-element
   2-D override (`w[1][1]=0.9`), nested-literal aggregate assignment, and dynamic
   2-D read/write all match their closed-form gains through ngspice (`ALL PASS`).
 - The `hir_def`/`hir_ty`/`hir`/`hir_lower`/`parser`/`syntax` unit-test suites pass

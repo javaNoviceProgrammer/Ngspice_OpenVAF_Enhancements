@@ -36,7 +36,7 @@ This was verified empirically before writing any code:
 Enhancement-9 therefore **implements `noise_table`/`noise_table_log`
 end-to-end** (the genuinely-missing noise source) and ships an
 **analytically-verified example suite covering all four operators**
-(`noise_examples/`), including `white_noise`/`flicker_noise` as verified
+(`examples/noise_examples/`), including `white_noise`/`flicker_noise` as verified
 reference examples. No changes to `white_noise`/`flicker_noise` were needed or
 made; a regression run confirms their output is byte-identical before and after
 (see §4).
@@ -190,8 +190,8 @@ prebuilt `version10/ngspice-46/build/src/ngspice`. No OSDI ABI header change
 
 ## 4. Verification
 
-All verification lives in `noise_examples/` and is automated by
-`noise_examples/verify_noise.py`, which compiles each model with version10's
+All verification lives in `examples/noise_examples/` and is automated by
+`examples/noise_examples/verify_noise.py`, which compiles each model with version10's
 `openvaf-r`, runs the matching `.noise` deck through version10's `ngspice`,
 reads back the `onoise_spectrum` (output-noise voltage density, `V/√Hz`), and
 compares it point-by-point against an independent closed-form computation.
@@ -221,7 +221,7 @@ table_log vs table: max |diff| = 0.0         PASS   (bit-identical)
   `7.071414e-4`. End-of-range clamping is confirmed by sweeping down to 0.1 Hz
   (below the first node) and up to 10 kHz — both flatten to the endpoint values.
 
-See `noise_examples/README.md` and `noise_examples/noise_spectra.png` for the
+See `examples/noise_examples/README.md` and `examples/noise_examples/noise_spectra.png` for the
 full write-up and plots.
 
 ### Regression
@@ -278,9 +278,9 @@ context where the dependency `R` resolves. Forcing the *runtime given input*
 false at the OSDI/LLVM boundary keeps the MIR pristine — so `1/R` still resolves
 correctly — while guaranteeing the default is always stored.
 
-### Verified behaviour (`localparam_examples/`)
+### Verified behaviour (`examples/localparam_examples/`)
 
-`localparam_examples/verify_localparam.py` (a `GAIN*G = GAIN/R` conductance in a
+`examples/localparam_examples/verify_localparam.py` (a `GAIN*G = GAIN/R` conductance in a
 divider) exercises every case end-to-end through ngspice:
 
 ```
@@ -310,7 +310,7 @@ position.
 `net_decl` (`openvaf/parser/src/grammar/items/module.rs`) now eats an optional
 `NET_TYPE` token after the discipline in the discipline-first branch — a
 one-line mirror of what `port_decl` does. All four natural orderings now parse to
-an identical device (`ground_examples/verify_ground.py`, all end-to-end through
+an identical device (`examples/ground_examples/verify_ground.py`, all end-to-end through
 ngspice):
 
 ```
@@ -349,10 +349,10 @@ change was needed — the lowering and `last_crossing` ngspice runtime from
 Enhancement-6 are intact. All four example folders now compile **and simulate**:
 
 ```
-  slew_examples/slew_demo.va                 compiles + tran OK
-  transition_examples/transition_demo.va     compiles + tran OK
-  last_crossing_examples/last_crossing_demo.va  compiles + DC/AC/tran OK
-  zi_examples/zi_lpf.va                      compiles + tran OK
+  examples/slew_examples/slew_demo.va                 compiles + tran OK
+  examples/transition_examples/transition_demo.va     compiles + tran OK
+  examples/last_crossing_examples/last_crossing_demo.va  compiles + DC/AC/tran OK
+  examples/zi_examples/zi_lpf.va                      compiles + tran OK
 ```
 
 After this fix, **39/39** example models across all folders compile, and the
@@ -378,7 +378,7 @@ let default_val = match db.var_data(var).ty {
 
 Enhancement-9 gives `string` variables the LRM-correct empty-string (`""`)
 default. `string s;` now behaves like the other types — verified end-to-end
-(`vartype_examples/`): an uninitialized `string mode` defaults to `""`, the
+(`examples/vartype_examples/`): an uninitialized `string mode` defaults to `""`, the
 `mode == ""` test then assigns `"series"`, and the string-selected branch drives
 the output correctly (`V(b) = 2000/3000`), alongside `real` and `integer`
 variables in the same model.
@@ -406,7 +406,7 @@ parse. Enhancement-9 implements it across the full pipeline:
   top of the loop-condition block (`FuncCursor::at_first_inst`), so no new
   `PlaceKind`/persistent-state surface was needed.
 
-### Verified behaviour (`repeat_examples/`)
+### Verified behaviour (`examples/repeat_examples/`)
 
 ```
   count=0     -> 0 iters   V(b)=1.00000  (body never runs)
@@ -441,7 +441,7 @@ it:
   lowering in a fresh (dead) block, exactly like the existing `$fatal`
   early-termination idiom. Unnamed blocks are still lowered inline (no overhead).
 
-### Idioms and verification (`disable_examples/`)
+### Idioms and verification (`examples/disable_examples/`)
 
 Both loop-control idioms are built from `disable` and verified end-to-end:
 
@@ -466,25 +466,25 @@ models compile.
 | `openvaf/hir_lower/src/callbacks.rs` | Replaced the stale `// TODO: read from disk` with a doc comment describing the now-populated `NoiseTable::new` contract |
 | `openvaf/sim_back/src/topology/lineralize.rs` | **Crash fix**: read `arg0` defensively so zero-argument noise operators (`noise_table`) no longer panic (§1, item 2) |
 | `openvaf/osdi/src/load.rs` | **Codegen**: `build_noise_table_interp` emits `log10`-domain piecewise-linear, endpoint-clamped interpolation for `load_noise`; `load_noise_params` returns a documented zero fallback for tables (§2.3) |
-| `noise_examples/` | New analytically-verified example suite for all four noise operators (`.va` models, `.noise` decks, data files, `verify_noise.py`, `README.md`, plot) |
+| `examples/noise_examples/` | New analytically-verified example suite for all four noise operators (`.va` models, `.noise` decks, data files, `verify_noise.py`, `README.md`, plot) |
 | `openvaf/hir_def/src/data.rs` | **localparam fix**: `ParamData` now carries `is_local`, populated from the item tree (§5) |
 | `openvaf/hir/src/lib.rs` | **localparam fix**: new `Parameter::is_local()` accessor (§5) |
 | `openvaf/osdi/src/setup.rs` | **localparam fix**: force the "given" flag to constant `false` for `localparam`s in `setup_model`/`setup_instance`, so they are never externally overridable (§5) |
-| `localparam_examples/` | New end-to-end verification of `localparam` non-overridability, incl. derived-localparam tracking (`rdiv.va`, `verify_localparam.py`, `README.md`) |
+| `examples/localparam_examples/` | New end-to-end verification of `localparam` non-overridability, incl. derived-localparam tracking (`rdiv.va`, `verify_localparam.py`, `README.md`) |
 | `openvaf/parser/src/grammar/items/module.rs` | **ground fix**: `net_decl` now accepts an optional net-type after the discipline, so `electrical ground gnd;` parses like the other three orderings (§6) |
-| `ground_examples/` | New end-to-end verification of the `ground` net-type across all four declaration orderings (`rgnd.va`, `verify_ground.py`, `README.md`) |
+| `examples/ground_examples/` | New end-to-end verification of the `ground` net-type across all four declaration orderings (`rgnd.va`, `verify_ground.py`, `README.md`) |
 | `openvaf/hir_def/src/builtin.rs` | **regression fix**: removed the `is_unsupported()` entries for `slew`/`transition`/`last_crossing`/`zi_*` that Enhancement-8's `builtin.rs` regeneration erroneously re-added, shadowing their Enhancement-6 implementation (§7) |
 | `openvaf/hir_def/src/body.rs` | **string-variable fix**: an uninitialized `string` variable now defaults to `""` instead of hitting `unreachable!` and crashing (§8) |
-| `vartype_examples/` | New end-to-end verification of `real`/`integer`/`string` analog-block variables, incl. an uninitialized `string` (`vartypes.va`, `verify_vartypes.py`, `README.md`) |
+| `examples/vartype_examples/` | New end-to-end verification of `real`/`integer`/`string` analog-block variables, incl. an uninitialized `string` (`vartypes.va`, `verify_vartypes.py`, `README.md`) |
 | `openvaf/tokens/src/parser/generated.rs`, `openvaf/syntax/veriloga.ungram`, `openvaf/syntax/src/ast/generated/nodes.rs` | **`repeat` loop**: `REPEAT_KW`/`REPEAT_STMT` tokens + `RepeatStmt` AST node (§9) |
 | `openvaf/parser/src/grammar/stmts.rs` | **`repeat` loop**: `repeat_stmt` parser production (§9) |
 | `openvaf/hir_def/src/expr.rs`, `body/lower.rs`, `body/pretty.rs`, `openvaf/hir/src/body.rs`, `openvaf/hir_ty/src/inference.rs`, `validation/body.rs` | **`repeat` loop**: `Stmt::Repeat` through the HIR + type-check/validate (§9) |
 | `openvaf/hir_lower/src/stmt.rs` | **`repeat` loop**: `lower_repeat` builds the counted loop with a header-phi integer counter (§9) |
-| `repeat_examples/` | New end-to-end verification of the `repeat` loop (`repeat_demo.va`, `verify_repeat.py`, `README.md`) |
+| `examples/repeat_examples/` | New end-to-end verification of the `repeat` loop (`repeat_demo.va`, `verify_repeat.py`, `README.md`) |
 | `openvaf/tokens/src/parser/generated.rs`, `openvaf/syntax/src/ast/generated/nodes.rs`, `openvaf/parser/src/grammar/stmts.rs` | **`disable`**: `DISABLE_STMT` token + `DisableStmt` AST node + `disable_stmt` parser (§10) |
 | `openvaf/hir_def/src/expr.rs`, `body/lower.rs`, `body/pretty.rs`, `openvaf/hir/src/body.rs`, `openvaf/hir_ty/src/validation/body.rs` | **`disable`**: `Stmt::Disable` + block-label recording on `Stmt::Block` through the HIR (§10) |
 | `openvaf/hir_lower/src/ctx.rs`, `stmt.rs` | **`disable`**: `LoweringCtx::disable_scopes` named-block-exit stack; branch to the matching exit on `disable` (§10) |
-| `disable_examples/` | New end-to-end verification of `disable` as break/continue (`break_demo.va`, `continue_demo.va`, `verify_disable.py`, `README.md`) |
+| `examples/disable_examples/` | New end-to-end verification of `disable` as break/continue (`break_demo.va`, `continue_demo.va`, `verify_disable.py`, `README.md`) |
 
 No OSDI ABI header extension and **no `ngspice-46` C-side changes** were needed
 — see §3.

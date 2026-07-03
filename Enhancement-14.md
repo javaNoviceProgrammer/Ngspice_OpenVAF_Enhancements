@@ -8,7 +8,7 @@ on top of Enhancement-13. Before this, arrays existed only as Enhancement-3/4
 not be a parameter, and a non-constant index was rejected.
 
 Enhancement-14 adds three capabilities (all verified end-to-end through
-ngspice — see `array_examples/`):
+ngspice — see `examples/array_examples/`):
 
 - **A. Whole-array aggregate assignment** — `c = '{v0, v1, ...};` (and the
   brace-only `{...}` form) and array-to-array copy `c = d;`.
@@ -103,7 +103,7 @@ A non-constant index can't resolve to one element, so it lowers to a runtime
 select over the elements. This applies to array **variables** (mutable state);
 array parameters are constant tables read by a constant index (a parameter table
 is indexed dynamically by first copying it into an array variable — see
-`array_examples/array_demo.va`).
+`examples/array_examples/array_demo.va`).
 
 - **`hir_ty::inference`** — `infere_bit_select`, on a non-constant index of a
   variable array, records `dynamic_index_refs[expr] = DynArrayIndex { elems,
@@ -123,7 +123,7 @@ is indexed dynamically by first copying it into an array variable — see
 
 ## Verification
 
-- `array_examples/verify_array.py` — array-parameter defaults, full and partial
+- `examples/array_examples/verify_array.py` — array-parameter defaults, full and partial
   per-element override, aggregate assignment, array copy, and dynamic read/write
   all match their closed-form gains through ngspice (`ALL PASS`).
 - The `hir_def`/`hir_ty`/`hir`/`hir_lower`/`parser`/`syntax` unit-test suites pass

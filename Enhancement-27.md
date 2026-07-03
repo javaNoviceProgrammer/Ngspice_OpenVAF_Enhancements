@@ -41,7 +41,7 @@ change.
 
 ## Verification
 
-`idtmod_examples/verify_idtmod.py` (`ALL PASS`):
+`examples/idtmod_examples/verify_idtmod.py` (`ALL PASS`):
 
 - **VCO** — a modulo-1 phase drives `sin(2π·phase)`; the output tracks
   `sin(2π·freq·t)` to ~1e-4 across three periods (it used to freeze after one);

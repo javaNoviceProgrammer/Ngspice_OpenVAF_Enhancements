@@ -25,7 +25,7 @@ now compiles and simulates. One-line change; no OSDI ABI change, no ngspice chan
 
 ## Verification
 
-`acstim_examples/verify_acstim.py` (`ALL PASS`):
+`examples/acstim_examples/verify_acstim.py` (`ALL PASS`):
 
 - the model **compiles** (it previously crashed `openvaf-r`);
 - DC and transient currents equal `g*V(a,b)` and are **identical** with the

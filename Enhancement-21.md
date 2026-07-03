@@ -73,7 +73,7 @@ initialization, the OSDI ABI, or ngspice was required.
 
 ## Verification
 
-`paramset_examples/verify_paramset.py` — one module `conductor` = `g0*(1+k*V)`
+`examples/paramset_examples/verify_paramset.py` — one module `conductor` = `g0*(1+k*V)`
 and three paramsets (`res_1k`, `res_kohm`, `varistor`). `ALL PASS`:
 
 - constant bindings take effect (`res_1k` = 1 kΩ);

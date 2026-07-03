@@ -59,7 +59,7 @@ recursive-1-D natural spline equals the exact **tensor-product** natural spline.
 
 ## Verification
 
-`cubic_table_examples/verify_cubic_table.py` (`ALL PASS`), each check contrasting
+`examples/cubic_table_examples/verify_cubic_table.py` (`ALL PASS`), each check contrasting
 cubic with linear on the same data:
 
 - **accuracy** — cubic tracks `sin(V)` ~46× better than linear at off-grid points;

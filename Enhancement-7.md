@@ -96,7 +96,7 @@ passes with zero regressions.
 Two related crashes, both involving an *explicit* `@(initial_step)`
 statement writing to a variable (as opposed to relying on the variable's
 plain declared initializer, `real x = 5.0;`, which is unaffected — see
-`initial_step_examples/`, built entirely around the safe form):
+`examples/initial_step_examples/`, built entirely around the safe form):
 
 1. **Self-referential + explicit double-init**: a variable both explicitly
    written inside `@(initial_step)` *and* separately self-referentially read
@@ -146,13 +146,13 @@ results, and PNG plots — all run against `version8`'s own `openvaf-r` and
 Both deliberately use the *safe* (plain declared-initializer) form, per the
 known limitation in §3:
 
-- **`initial_step_examples/`** (`initial_step_demo.va`): `real accum =
+- **`examples/initial_step_examples/`** (`initial_step_demo.va`): `real accum =
   seed;` (a parameter), then `accum = accum + 1.0;`. DC/AC confirm
   `V(out) = accum + V(in)` has slope 1 and unity/0dB/0deg AC gain (accum
   itself has zero small-signal sensitivity to the input); transient shows
   the sine input riding on a slowly-rising, *persistent* baseline that
   starts near `seed` rather than resetting to `seed` every evaluation.
-- **`variable_persistence_examples/`** (`persist_demo.va`): the minimal
+- **`examples/variable_persistence_examples/`** (`persist_demo.va`): the minimal
   case, `real accum; accum = accum + 1.0;`, no parameters, no event-control
   at all. Transient is the key plot — a clean, sustained linear ramp over
   100µs, proving `accum` is never silently reset. DC/AC are included for
@@ -160,7 +160,7 @@ known limitation in §3:
   counts evaluations, not a real function of `V(in)`, so DC produces a
   roughly-monotonic curve driven by Newton-iteration count rather than a
   real transfer function, and AC gain is ~zero — the same "documented
-  negative result" spirit as `last_crossing_examples/`'s DC/AC plots in
+  negative result" spirit as `examples/last_crossing_examples/`'s DC/AC plots in
   Enhancement-6.
 
 ## 5. Deferred to Enhancement-8

@@ -6,11 +6,11 @@ two toolchain binaries for the current machine using the committed, CI-built
 prefers a locally-built binary (`OpenVAF-master-20260610/target/release/…`,
 `ngspice-46/build/src/…`) if one exists, and otherwise falls back to `bin/`.
 
-Usage from an example script in a sub-folder:
+Usage from an example script (which lives in `examples/<name>_examples/`):
 
     import os, sys
     HERE = os.path.dirname(os.path.abspath(__file__))
-    sys.path.insert(0, os.path.dirname(HERE))          # repo root
+    sys.path.insert(0, os.path.dirname(HERE))          # the examples/ dir (holds this file)
     from _setup import VAF as OPENVAF, NG as NGSPICE
 
 Exposes module-level `VAF` (openvaf-r) and `NG` (ngspice) absolute paths.
@@ -18,8 +18,9 @@ Exposes module-level `VAF` (openvaf-r) and `NG` (ngspice) absolute paths.
 import os
 import platform
 
-# Repo root = the directory this file lives in.
-_ROOT = os.path.dirname(os.path.abspath(__file__))
+# This file lives in `examples/`; the repo root (which holds
+# `OpenVAF-master-20260610/`, `ngspice-46/`, and `bin/`) is one level up.
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _EXE = ".exe" if platform.system() == "Windows" else ""
 
 

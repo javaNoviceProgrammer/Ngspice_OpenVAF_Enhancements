@@ -10,7 +10,7 @@ Before this, an array `output`/`inout` argument **compiled but silently did
 nothing** on return — the function computed into its element variables, but they
 were never copied back to the caller's array (a correctness gap). Now the
 writeback happens, so `fill(r)` and `scale_in_place(r)` actually update `r`.
-Verified end-to-end through ngspice — see `arrayout_examples/`.
+Verified end-to-end through ngspice — see `examples/arrayout_examples/`.
 
 ## The change
 
@@ -39,7 +39,7 @@ arguments get both the entry bind (from Enhancement-18) and this exit writeback;
 
 ## Verification
 
-- `arrayout_examples/verify_arrayout.py` — `make_taps` fills a geometric tap array
+- `examples/arrayout_examples/verify_arrayout.py` — `make_taps` fills a geometric tap array
   via an **output** array argument, `normalize` scales it in place via an
   **inout** array argument, and the gain is the sum of the normalized taps. That
   sum is 1 for any `ratio` (swept, overridden per `.model`), so `V(out) = V(in)`

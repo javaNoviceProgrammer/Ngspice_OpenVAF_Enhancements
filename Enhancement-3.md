@@ -373,7 +373,7 @@ constant`), verified by hand against the generated `.log` files.
 
 ### 7.2 End-to-end compile
 
-`version4/bus_examples/bus_buffer.va` — a 4-tap fractional voltage buffer
+`version4/examples/bus_examples/bus_buffer.va` — a 4-tap fractional voltage buffer
 using a vectored **port**, declared non-ANSI style (bare names in the
 module header, direction/width given in the body — see §2.7):
 
@@ -400,7 +400,7 @@ like any other multi-terminal device.
 
 ### 7.3 ngspice simulation — new feature
 
-`version4/bus_examples/` (`dc_sim.cir`, `ac_sim.cir`, `tran_sim.cir`),
+`version4/examples/bus_examples/` (`dc_sim.cir`, `ac_sim.cir`, `tran_sim.cir`),
 simulated with `version4/bin/.../ngspice`:
 
 - **DC** sweep −2V…2V: each tap tracks its exact fraction of the input
@@ -416,19 +416,19 @@ simulated with `version4/bin/.../ngspice`:
 
 Raw results saved in `dc.txt`/`ac.txt`/`tran.txt`, plotted in
 `dc.png`/`ac.png`/`tran.png`, in that directory (see
-`bus_examples/README.md`).
+`examples/bus_examples/README.md`).
 
 ### 7.4 Regression — absdelay (Enhancement-1) and indirect branch assignment (Enhancement-2)
 
-Both `version4/absdelay_examples/absdelay.va` and
-`version4/indirect_assignment_examples/opamp.va` were recompiled with the
+Both `version4/examples/absdelay_examples/absdelay.va` and
+`version4/examples/indirect_assignment_examples/opamp.va` were recompiled with the
 new `openvaf-r` and re-simulated (DC) against the documented Enhancement-2
 baselines:
 
 - `absdelay` 5-stage delay line DC sweep: **bit-identical** to
-  `absdelay_examples/examples/dc_sparse.txt`.
+  `examples/absdelay_examples/examples/dc_sparse.txt`.
 - `opamp` indirect-branch-assignment unity-gain buffer DC sweep:
-  **bit-identical** to `indirect_assignment_examples/dc.txt`.
+  **bit-identical** to `examples/indirect_assignment_examples/dc.txt`.
 
 This confirms vectored net declaration support introduced no regressions
 in either prior enhancement or the broader OSDI/ngspice pipeline.

@@ -46,7 +46,7 @@ few lines in each of OpenVAF and ngspice.
 
 ## Verification
 
-`discontinuity_examples/verify_discontinuity.py` (`ALL PASS`) — a conductance
+`examples/discontinuity_examples/verify_discontinuity.py` (`ALL PASS`) — a conductance
 switch (`I = g·V(a,b)`, `g` jumps at `V(a,b)=vth`) that announces
 `$discontinuity(0)` while in the switched region:
 

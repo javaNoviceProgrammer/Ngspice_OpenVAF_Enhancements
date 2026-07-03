@@ -10,7 +10,7 @@ the `version11/` directory:
    **array arguments**, previously rejected with *"array-variable declarations
    are only supported at module body scope"*.
 
-Both are verified end-to-end through ngspice — see `funcarray_examples/`. All work
+Both are verified end-to-end through ngspice — see `examples/funcarray_examples/`. All work
 is in `version11/`; **no OSDI ABI change and no ngspice change were needed**.
 
 ## Part 1 — `real x[0:n]` declaration syntax
@@ -58,7 +58,7 @@ array return values are not supported.
 
 ## Verification
 
-- `funcarray_examples/verify_funcarray.py` — a polynomial stage
+- `examples/funcarray_examples/verify_funcarray.py` — a polynomial stage
   `V(out) = 0.5·V(in) + 0.3·V(in)²` evaluated inside an array-argument function
   `polyeval(x, a)` (Horner's rule, indexing the array argument with a loop
   variable), with `coeffs` declared `real coeffs[0:3];` and passed by name:

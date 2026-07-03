@@ -79,102 +79,102 @@ ngspice-46/ngspice.pc
 ngspice-46/ltmain.sh
 
 # absdelay scripts: per-platform compiled model + temp netlists
-absdelay_examples/.build/
-absdelay_examples/**/.k.cir
-absdelay_examples/**/.s.cir
-absdelay_examples/benchmark/cir/
+examples/absdelay_examples/.build/
+examples/absdelay_examples/**/.k.cir
+examples/absdelay_examples/**/.s.cir
+examples/absdelay_examples/benchmark/cir/
 
 # indirect_assignment_examples scripts: per-platform compiled model + temp netlists
-indirect_assignment_examples/.build/
-indirect_assignment_examples/.*.cir
+examples/indirect_assignment_examples/.build/
+examples/indirect_assignment_examples/.*.cir
 
 # bus_examples scripts: per-platform compiled model + temp netlists
-bus_examples/.build/
-bus_examples/.*.cir
+examples/bus_examples/.build/
+examples/bus_examples/.*.cir
 
 # laplace_examples scripts: per-platform compiled model + temp netlists
-laplace_examples/.build/
-laplace_examples/.*.cir
+examples/laplace_examples/.build/
+examples/laplace_examples/.*.cir
 
 # array_var_examples scripts: per-platform compiled model + temp netlists
-array_var_examples/.build/
-array_var_examples/.*.cir
+examples/array_var_examples/.build/
+examples/array_var_examples/.*.cir
 
 # bessel_filter_examples scripts: per-platform compiled model + temp netlists
-bessel_filter_examples/.build/
-bessel_filter_examples/.*.cir
-bessel_filter_examples/__pycache__/
+examples/bessel_filter_examples/.build/
+examples/bessel_filter_examples/.*.cir
+examples/bessel_filter_examples/__pycache__/
 
 # Enhancement-9 example scripts: temp netlists written by verify_*.py
-noise_examples/_*.cir
-localparam_examples/_*.cir
-ground_examples/_*.cir
-vartype_examples/_*.cir
-repeat_examples/_*.cir
-disable_examples/_*.cir
+examples/noise_examples/_*.cir
+examples/localparam_examples/_*.cir
+examples/ground_examples/_*.cir
+examples/vartype_examples/_*.cir
+examples/repeat_examples/_*.cir
+examples/disable_examples/_*.cir
 
 # Enhancement 10-13 example scripts: temp netlists written by verify/plot scripts
-rng_examples/_*.cir
-rng_examples/mc.cir
-fileio_examples/_*.cir
-stringio_examples/_*.cir
-alias_examples/_*.cir
-ddx_examples/_*.cir
+examples/rng_examples/_*.cir
+examples/rng_examples/mc.cir
+examples/fileio_examples/_*.cir
+examples/stringio_examples/_*.cir
+examples/alias_examples/_*.cir
+examples/ddx_examples/_*.cir
 
 # Enhancement 14-15 array example scripts: temp netlists/outputs written by verify scripts
-array_examples/_*.cir
-array_examples/_*.txt
-mdarray_examples/_*.cir
-mdarray_examples/_*.txt
+examples/array_examples/_*.cir
+examples/array_examples/_*.txt
+examples/mdarray_examples/_*.cir
+examples/mdarray_examples/_*.txt
 
 # Enhancement 16 table_model example scripts: temp netlists + wrdata outputs
-table_model_examples/_*.cir
-table_model_examples/*.txt
+examples/table_model_examples/_*.cir
+examples/table_model_examples/*.txt
 
 # Enhancement 17 multi-dim table_model example scripts: temp netlists + outputs
-mdtable_examples/_*.cir
-mdtable_examples/_*.txt
+examples/mdtable_examples/_*.cir
+examples/mdtable_examples/_*.txt
 
 # Enhancement 18 funcarray example scripts: temp netlists + outputs
-funcarray_examples/_*.cir
-funcarray_examples/*.txt
+examples/funcarray_examples/_*.cir
+examples/funcarray_examples/*.txt
 
 # Enhancement 19 do-while example scripts: temp netlists + outputs
-dowhile_examples/_*.cir
-dowhile_examples/*.txt
+examples/dowhile_examples/_*.cir
+examples/dowhile_examples/*.txt
 
 # Enhancement 20 array output/inout arg example scripts: temp netlists + outputs
-arrayout_examples/_*.cir
-arrayout_examples/*.txt
+examples/arrayout_examples/_*.cir
+examples/arrayout_examples/*.txt
 
 # Enhancement 21 paramset example scripts: temp netlists + outputs
-paramset_examples/_*.cir
-paramset_examples/*.txt
+examples/paramset_examples/_*.cir
+examples/paramset_examples/*.txt
 
 # Enhancement 22 cubic-spline table example scripts: temp netlists + outputs + generated grid
-cubic_table_examples/_*.cir
-cubic_table_examples/*.txt
-cubic_table_examples/surf.grid
+examples/cubic_table_examples/_*.cir
+examples/cubic_table_examples/*.txt
+examples/cubic_table_examples/surf.grid
 
 # Enhancement 23 array-return example scripts: temp netlists + outputs
-arrayret_examples/_*.cir
-arrayret_examples/*.txt
+examples/arrayret_examples/_*.cir
+examples/arrayret_examples/*.txt
 
 # Enhancement 24 discontinuity example scripts: temp netlists + outputs
-discontinuity_examples/_*.cir
-discontinuity_examples/*.txt
+examples/discontinuity_examples/_*.cir
+examples/discontinuity_examples/*.txt
 
 # Enhancement 25 $simparam$str example scripts: temp netlists + outputs
-simparamstr_examples/_*.cir
-simparamstr_examples/*.txt
+examples/simparamstr_examples/_*.cir
+examples/simparamstr_examples/*.txt
 
 # Enhancement 26 ac_stim example scripts: temp netlists + outputs
-acstim_examples/_*.cir
-acstim_examples/*.txt
+examples/acstim_examples/_*.cir
+examples/acstim_examples/*.txt
 
 # Enhancement 27 idtmod example scripts: temp netlists + outputs
-idtmod_examples/_*.cir
-idtmod_examples/*.txt
+examples/idtmod_examples/_*.cir
+examples/idtmod_examples/*.txt
 
 # Python bytecode cache (e.g. from importing _setup.py)
 __pycache__/

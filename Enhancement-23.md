@@ -73,7 +73,7 @@ ngspice change.
 
 ## Verification
 
-`arrayret_examples/verify_arrayret.py` (`ALL PASS`) — a cubic polynomial device
+`examples/arrayret_examples/verify_arrayret.py` (`ALL PASS`) — a cubic polynomial device
 `I = c0 + c1·V + c2·V² + c3·V³` built two ways: `polyret` (a function returns the
 power array `{1,V,V²,V³}`, summed at the call site) and `polyret_arg` (the returned
 array is fed straight into an array-**argument** function, composing E-23 with

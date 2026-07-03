@@ -21,7 +21,7 @@ Main goals:
 
 **KLU vs SPARSE benchmark** (DC / AC / Transient across circuit sizes):
 
-![Benchmark](./absdelay_examples/benchmark/results/benchmark.png)
+![Benchmark](./examples/absdelay_examples/benchmark/results/benchmark.png)
 
 ---
 
@@ -36,9 +36,9 @@ Main goals:
 **DC / AC / Transient results** for the ideal op-amp unity-gain buffer:
 
 <p align="center">
-  <img src="./indirect_assignment_examples/dc.png" width="32%" alt="DC sweep">
-  <img src="./indirect_assignment_examples/ac.png" width="32%" alt="AC response">
-  <img src="./indirect_assignment_examples/tran.png" width="32%" alt="Transient response">
+  <img src="./examples/indirect_assignment_examples/dc.png" width="32%" alt="DC sweep">
+  <img src="./examples/indirect_assignment_examples/ac.png" width="32%" alt="AC response">
+  <img src="./examples/indirect_assignment_examples/tran.png" width="32%" alt="Transient response">
 </p>
 
 ---
@@ -54,9 +54,9 @@ Main goals:
 **DC / AC / Transient results** for the 4-tap bus-output buffer:
 
 <p align="center">
-  <img src="./bus_examples/dc.png" width="32%" alt="DC sweep">
-  <img src="./bus_examples/ac.png" width="32%" alt="AC response">
-  <img src="./bus_examples/tran.png" width="32%" alt="Transient response">
+  <img src="./examples/bus_examples/dc.png" width="32%" alt="DC sweep">
+  <img src="./examples/bus_examples/ac.png" width="32%" alt="AC response">
+  <img src="./examples/bus_examples/tran.png" width="32%" alt="Transient response">
 </p>
 
 ---
@@ -75,16 +75,16 @@ Main goals:
 **DC / AC / Transient results** for the Laplace low-pass filter:
 
 <p align="center">
-  <img src="./laplace_examples/dc.png" width="32%" alt="DC sweep">
-  <img src="./laplace_examples/ac.png" width="32%" alt="AC response">
-  <img src="./laplace_examples/tran.png" width="32%" alt="Transient response">
+  <img src="./examples/laplace_examples/dc.png" width="32%" alt="DC sweep">
+  <img src="./examples/laplace_examples/ac.png" width="32%" alt="AC response">
+  <img src="./examples/laplace_examples/tran.png" width="32%" alt="Transient response">
 </p>
 
 **Simulated vs. analytical** results for the 5th-order Bessel filter:
 
 <p align="center">
-  <img src="./bessel_filter_examples/ac_compare.png" width="48%" alt="AC response comparison">
-  <img src="./bessel_filter_examples/tran_compare.png" width="48%" alt="Step response comparison">
+  <img src="./examples/bessel_filter_examples/ac_compare.png" width="48%" alt="AC response comparison">
+  <img src="./examples/bessel_filter_examples/tran_compare.png" width="48%" alt="Step response comparison">
 </p>
 
 ---
@@ -104,9 +104,9 @@ Main goals:
 **DC / AC / Transient results** for the hierarchical resistor-divider network:
 
 <p align="center">
-  <img src="./instantiation_examples/dc.png" width="32%" alt="DC sweep">
-  <img src="./instantiation_examples/ac.png" width="32%" alt="AC response">
-  <img src="./instantiation_examples/tran.png" width="32%" alt="Transient response">
+  <img src="./examples/instantiation_examples/dc.png" width="32%" alt="DC sweep">
+  <img src="./examples/instantiation_examples/ac.png" width="32%" alt="AC response">
+  <img src="./examples/instantiation_examples/tran.png" width="32%" alt="Transient response">
 </p>
 
 ---
@@ -115,7 +115,7 @@ Main goals:
 
 *July 2026* — A systematic gap analysis against the Verilog-A/AMS LRM across operators, scale factors, keywords, math functions, and compiler directives, followed by implementing everything found tractable in one pass: ten **compiler directives** (`` `default_discipline ``, `` `celldefine ``/`` `endcelldefine ``, `` `unconnected_drive ``/`` `nounconnected_drive ``, `` `timescale ``, `` `line ``, `` `pragma ``, `` `undefineall ``, `` `default_nettype ``) that previously hard-failed compilation as undefined macro calls; the `<<<`/`>>>` **arithmetic shift** operators (plus a real pre-existing lexer bug fix); `slew()`/`transition()`, realized as a saturating rate-limited tracking loop needing no simulator changes; `zi_nd/np/zd/zp()`, realized via a **bilinear (Tustin) transform** to an equivalent continuous transfer function reusing the existing `laplace_*` machinery; and `last_crossing()`, which genuinely needed simulator history — an additive, backward-compatible **OSDI ABI extension** (following the `absdelay()` extension's precedent) plus a matching `ngspice-46` runtime patch (waveform history, crossing detection/interpolation, matrix stamping).
 
-- All five features verified against real ngspice DC/AC/Transient simulation, not just compile checks — see `directive_examples/`, `shift_examples/`, `slew_examples/`, `transition_examples/`, `zi_examples/`, `last_crossing_examples/`
+- All five features verified against real ngspice DC/AC/Transient simulation, not just compile checks — see `examples/directive_examples/`, `examples/shift_examples/`, `examples/slew_examples/`, `examples/transition_examples/`, `examples/zi_examples/`, `examples/last_crossing_examples/`
 - `slew()`: AC response lands exactly on the predicted first-order tracking-loop pole (`K/2π ≈ 159MHz`); transient measured rise/fall rates match the specified bounds to 3+ significant figures
 - `zi_nd()`: AC response shows the expected `-3dB` corner *and* the documented bilinear frequency-warping artifact near the Nyquist rate; transient step response matches an RC step response closely
 - `last_crossing()`: transient output steps to the correct crossing times (e.g. `1.0000148e-5` vs theoretical `1.0e-5`, 0.015% error) on a 100kHz sine wave — two real bugs (an `int`/`real` cast bug and a shared-timeline initialization bug) were found only by testing against actual simulation, both compiled cleanly and were only visible at runtime
@@ -126,15 +126,15 @@ Main goals:
 **AC response** for the `zi_nd()` z-domain lowpass filter (bilinear-transform realization):
 
 <p align="center">
-  <img src="./zi_examples/dc_plot.png" width="32%" alt="DC sweep">
-  <img src="./zi_examples/ac_plot.png" width="32%" alt="AC response">
-  <img src="./zi_examples/tran_plot.png" width="32%" alt="Transient response">
+  <img src="./examples/zi_examples/dc_plot.png" width="32%" alt="DC sweep">
+  <img src="./examples/zi_examples/ac_plot.png" width="32%" alt="AC response">
+  <img src="./examples/zi_examples/tran_plot.png" width="32%" alt="Transient response">
 </p>
 
 **Transient result** for `last_crossing()` tracking rising zero-crossings of a 100kHz sine wave:
 
 <p align="center">
-  <img src="./last_crossing_examples/tran_plot.png" width="60%" alt="last_crossing transient result">
+  <img src="./examples/last_crossing_examples/tran_plot.png" width="60%" alt="last_crossing transient result">
 </p>
 
 ---
@@ -143,7 +143,7 @@ Main goals:
 
 *July 2026* — While scoping `cross()`/`above()`/`timer()` (deferred from Enhancement 6), found and fixed a foundational, pre-existing gap those operators — and a large fraction of real-world Verilog-A models — depend on: `@(initial_step)`/`@(final_step)` event-control statements didn't gate anything at all (the guarded statement ran on *every* evaluation, forever), and ordinary `real`/`integer` analog-block variables didn't persist their value across evaluations either, with zero event-control involved. Fixed both: a new `ParamKind::IsInitialStep` simulator-provided flag with real conditional lowering for event-control statements, and genuine per-instance storage (`hidden_state`) for variable values across evaluations, backed by a two-pass MIR build to correctly identify which variables need it without regressing dead-code elimination.
 
-- Both fixes verified against real ngspice DC/AC/Transient simulation — see `initial_step_examples/`, `variable_persistence_examples/`
+- Both fixes verified against real ngspice DC/AC/Transient simulation — see `examples/initial_step_examples/`, `examples/variable_persistence_examples/`
 - `@(initial_step)`: verified via `--dump-mir` (a real conditional branch, not dead code) and a real ngspice run showing the gating flag set exactly once per instance
 - Variable persistence: a self-referential accumulator (`accum = accum + 1.0;`) now genuinely accumulates across transient timepoints instead of resetting to its default every evaluation
 - Verified for no regressions against the full existing test suite — bit-exact/floating-point-noise-level unchanged DC, AC, and transient results
@@ -154,7 +154,7 @@ Main goals:
 **Transient result** for the variable-persistence fix — a self-referential accumulator with genuine, sustained persistence across timepoints:
 
 <p align="center">
-  <img src="./variable_persistence_examples/tran_plot.png" width="60%" alt="variable persistence transient result">
+  <img src="./examples/variable_persistence_examples/tran_plot.png" width="60%" alt="variable persistence transient result">
 </p>
 
 ---
@@ -165,8 +165,8 @@ Main goals:
 
 Verifying the event functions' primary real-world use case — accumulating a persistent counter on each firing (`count = count + 1.0;` inside the event body) — surfaced a chain of three pre-existing, general compiler bugs (confirmed present in the unmodified pre-Enhancement-7 baseline, not introduced by this work), all now found and fixed: a dangling-reference bug in the CFG-simplifier's unreachable-block removal, a multi-exit post-dominance bug in the dominator-tree builder, and a block-merge bug that could corrupt which block the DAE builder treated as the function's true exit. A fourth, unrelated `ngspice` parsing bug was also found and fixed along the way: a multi-parameter `.model` card override silently dropped its first parameter.
 
-- `generate for`/`genvar`: verified via `--dump-mir` equivalence against a hand-written unrolled version (identical MIR/DAE shape) and a bit-exact ngspice DC sweep match on a `generate`-built resistor ladder — see `generate_examples/`
-- `cross()`/`above()`/`timer()`: verified via `--dump-unopt-mir` (genuine conditional branches on the edge-detection condition, not dead code) and real ngspice DC/AC/transient runs — see `cross_examples/`, `timer_examples/`
+- `generate for`/`genvar`: verified via `--dump-mir` equivalence against a hand-written unrolled version (identical MIR/DAE shape) and a bit-exact ngspice DC sweep match on a `generate`-built resistor ladder — see `examples/generate_examples/`
+- `cross()`/`above()`/`timer()`: verified via `--dump-unopt-mir` (genuine conditional branches on the edge-detection condition, not dead code) and real ngspice DC/AC/transient runs — see `examples/cross_examples/`, `examples/timer_examples/`
 - All three event functions now demonstrate genuine persistent-counter accumulation across firings (not just `$strobe` reporting), confirming the compiler-bug chain above is fully fixed
 - Verified for no regressions against the full existing test suite — bit-exact/floating-point-noise-level unchanged DC, AC, and transient results
 - Details: [Enhancement-8.md](Enhancement-8.md)
@@ -174,31 +174,31 @@ Verifying the event functions' primary real-world use case — accumulating a pe
 **DC sweep** for `generate for`-built vs. hand-written resistor ladders (bit-exact match):
 
 <p align="center">
-  <img src="./generate_examples/dc.png" width="60%" alt="generate for DC sweep">
+  <img src="./examples/generate_examples/dc.png" width="60%" alt="generate for DC sweep">
 </p>
 
 **DC / AC / Transient results** for `above()`'s persistent firing counter:
 
 <p align="center">
-  <img src="./cross_examples/above_dc.png" width="32%" alt="above() DC sweep">
-  <img src="./cross_examples/above_ac.png" width="32%" alt="above() AC response">
-  <img src="./cross_examples/above_tran.png" width="32%" alt="above() transient response">
+  <img src="./examples/cross_examples/above_dc.png" width="32%" alt="above() DC sweep">
+  <img src="./examples/cross_examples/above_ac.png" width="32%" alt="above() AC response">
+  <img src="./examples/cross_examples/above_tran.png" width="32%" alt="above() transient response">
 </p>
 
 **DC / AC / Transient results** for `cross()`'s persistent firing counter:
 
 <p align="center">
-  <img src="./cross_examples/cross_dc.png" width="32%" alt="cross() DC sweep">
-  <img src="./cross_examples/cross_ac.png" width="32%" alt="cross() AC response">
-  <img src="./cross_examples/cross_tran.png" width="32%" alt="cross() transient response">
+  <img src="./examples/cross_examples/cross_dc.png" width="32%" alt="cross() DC sweep">
+  <img src="./examples/cross_examples/cross_ac.png" width="32%" alt="cross() AC response">
+  <img src="./examples/cross_examples/cross_tran.png" width="32%" alt="cross() transient response">
 </p>
 
 **DC / AC / Transient results** for `timer()`'s persistent tick counter:
 
 <p align="center">
-  <img src="./timer_examples/timer_dc.png" width="32%" alt="timer() DC sweep">
-  <img src="./timer_examples/timer_ac.png" width="32%" alt="timer() AC response">
-  <img src="./timer_examples/timer_tran.png" width="32%" alt="timer() transient response">
+  <img src="./examples/timer_examples/timer_dc.png" width="32%" alt="timer() DC sweep">
+  <img src="./examples/timer_examples/timer_ac.png" width="32%" alt="timer() AC response">
+  <img src="./examples/timer_examples/timer_tran.png" width="32%" alt="timer() transient response">
 </p>
 
 ---
@@ -209,15 +209,15 @@ Verifying the event functions' primary real-world use case — accumulating a pe
 
 Several unrelated language gaps found along the way are also fixed. **`localparam`** is now non-overridable per the LRM (it previously behaved exactly like `parameter`), while derived localparams (`localparam G = 1/R`) still correctly track their inputs; the **`electrical ground gnd;`** net-declaration ordering now parses (only `ground electrical gnd;` did before); **`slew`/`transition`/`last_crossing`/`zi_*`** — implemented back in Enhancement 6 — were re-enabled after Enhancement 8's `builtin.rs` regeneration had silently re-added their "unsupported" gate; and an **uninitialized `string` variable** now defaults to `""` instead of crashing the compiler. Two new statements are added: the **`repeat (count)`** loop, and **`disable <named_block>;`** — Verilog-A's early-exit mechanism, from which both loop `break` and `continue` are built (the language has no `break`/`continue` keywords).
 
-- `noise_table`/`noise_table_log`: verified against closed-form analytics through ngspice `.noise` analysis (interpolated power spectral density matches to floating-point-noise level), alongside `white_noise`/`flicker_noise` — see `noise_examples/`
-- `localparam`, `ground`, `string` variables, `repeat`, `disable`: each verified end-to-end through ngspice — see `localparam_examples/`, `ground_examples/`, `vartype_examples/`, `repeat_examples/`, `disable_examples/`
+- `noise_table`/`noise_table_log`: verified against closed-form analytics through ngspice `.noise` analysis (interpolated power spectral density matches to floating-point-noise level), alongside `white_noise`/`flicker_noise` — see `examples/noise_examples/`
+- `localparam`, `ground`, `string` variables, `repeat`, `disable`: each verified end-to-end through ngspice — see `examples/localparam_examples/`, `examples/ground_examples/`, `examples/vartype_examples/`, `examples/repeat_examples/`, `examples/disable_examples/`
 - Verified for no regressions against the full existing test suite and every prior example folder (clean release build of `openvaf-r` + `ngspice`, compile + simulate, with bit-exact reproduction of committed results)
 - Details: [Enhancement-9.md](Enhancement-9.md)
 
 **Noise spectral densities** for `white_noise`, `flicker_noise`, `noise_table`, and `noise_table_log`, each vs. its closed-form analytical prediction:
 
 <p align="center">
-  <img src="./noise_examples/noise_spectra.png" width="70%" alt="noise source spectra vs analytics">
+  <img src="./examples/noise_examples/noise_spectra.png" width="70%" alt="noise source spectra vs analytics">
 </p>
 
 ---
@@ -226,7 +226,7 @@ Several unrelated language gaps found along the way are also fixed. **`localpara
 
 *July 2026* — Implements the full random/statistical system-function family: **`$random`/`$arandom`** and every **`$dist_*`/`$rdist_*`** distribution (uniform, normal, exponential, poisson, chi-square, student-t, erlang), via MIR lowering to pure `osdi_rng_*` runtime functions (a splitmix64 core) — **no `ngspice` changes**. Each draw is a deterministic function of `(seed, per-call-site salt)` with *no* in-place seed advance: reproducible, stable across the nonlinear solve (an advancing seed would change every Newton iteration and break DC/transient convergence), and giving independent per-instance variation — the right semantics for statistical device modelling.
 
-- Every distribution verified against its closed-form moments (mean/variance) over thousands of instances, plus reproducibility, stream independence, and `$random` integrality — see `rng_examples/` (`verify_rng.py`, 24/24)
+- Every distribution verified against its closed-form moments (mean/variance) over thousands of instances, plus reproducibility, stream independence, and `$random` integrality — see `examples/rng_examples/` (`verify_rng.py`, 24/24)
 - DC/AC/transient Monte-Carlo demo: an RC filter whose gain/R/C are perturbed by `$rdist_normal`, with plots
 - Details: [Enhancement-10.md](Enhancement-10.md)
 
@@ -236,8 +236,8 @@ Several unrelated language gaps found along the way are also fixed. **`localpara
 
 *July 2026* — Implements the Verilog-AMS **file I/O** functions — **`$fopen`/`$fclose`/`$fdisplay`/`$fwrite`/`$fstrobe`/`$fmonitor`/`$fdebug`/`$fflush`/`$ftell`/`$fseek`/`$rewind`/`$feof`** — and the **string/reading** functions — **`$swrite`/`$sformat`/`$sscanf`/`$fgets`/`$fscanf`/`$ferror`**. File output reuses the existing `$display` `snprintf` machinery (generalised with a `PrintDst` sink) backed by a small module-global descriptor table in the OSDI stdlib; `$swrite`/`$sformat` format into a string variable, and `$sscanf`/`$fscanf` parse whitespace-delimited fields by target-variable type — **no `ngspice` changes**. (Two codegen traps fixed along the way: a shadowed-`fun` bug in the print callback, and an LLVM IPO mis-specialisation of the descriptor table, cured with a `volatile` table.)
 
-- File output verified end-to-end — a parameter/`I=V/R`-table export exercising `%g`/`%d`/`%h`/`%s`, newline-less `$fwrite`, `$ftell`, and a `$rewind`/`$fseek` overwrite — see `fileio_examples/` (9/9)
-- String/reading verified — `$sformat`/`$swrite`, `$sscanf`, file round-trips via `$fgets`/`$fscanf`, and `$ferror` — see `stringio_examples/` (6/6)
+- File output verified end-to-end — a parameter/`I=V/R`-table export exercising `%g`/`%d`/`%h`/`%s`, newline-less `$fwrite`, `$ftell`, and a `$rewind`/`$fseek` overwrite — see `examples/fileio_examples/` (9/9)
+- String/reading verified — `$sformat`/`$swrite`, `$sscanf`, file round-trips via `$fgets`/`$fscanf`, and `$ferror` — see `examples/stringio_examples/` (6/6)
 - Details: [Enhancement-11.md](Enhancement-11.md)
 
 ---
@@ -246,7 +246,7 @@ Several unrelated language gaps found along the way are also fixed. **`localpara
 
 *July 2026* — Implements the **last** previously-unsupported system functions — **`$simprobe`**, **`$analog_node_alias`/`$analog_port_alias`**, and **`$test$plusargs`/`$value$plusargs`** — so `hir_def::is_unsupported()` is now empty (every Verilog-AMS system function compiles). None of these has an underlying mechanism in the OSDI/ngspice target (no command-line plusargs, no generic simulator probe, no runtime hierarchical node aliasing), so each lowers to its LRM "mechanism-unavailable" fallback as a compile-time constant (`false` / `0` / the supplied default). A model that uses them now compiles and runs predictably instead of being rejected — with **no runtime callback and no `ngspice` change**.
 
-- Each function verified to return its documented fallback (including `$simprobe` returning a supplied default) — see `alias_examples/` (6/6)
+- Each function verified to return its documented fallback (including `$simprobe` returning a supplied default) — see `examples/alias_examples/` (6/6)
 - Details: [Enhancement-12.md](Enhancement-12.md)
 
 ---
@@ -255,7 +255,7 @@ Several unrelated language gaps found along the way are also fixed. **`localpara
 
 *July 2026* — Investigated the `limexp()` limited exponential. The existing **stateless** implementation — `exp(x)` below `ln(1e30)`, continued along its tangent above to bound the derivative and prevent overflow — is exact and correct in every analysis, and is **kept, unchanged**. A stateful prev-iteration step-limiting version was implemented and then **reverted**: it produces wrong DC values, because keeping the converged value correct *while* limiting requires SPICE's limiting-RHS correction, and OpenVAF only applies that to circuit *unknowns* — not to `limexp`'s derived argument (e.g. `V/Vt`). This enhancement documents the decision (with the failing evidence) so it isn't re-attempted.
 
-- Along the way, the already-supported **`ddx()`** symbolic-derivative operator was demonstrated across DC/AC/transient: a nonlinear resistor exports its `ddx`-computed conductance, which matches the closed-form derivative exactly and governs the small-signal AC response — see `ddx_examples/`
+- Along the way, the already-supported **`ddx()`** symbolic-derivative operator was demonstrated across DC/AC/transient: a nonlinear resistor exports its `ddx`-computed conductance, which matches the closed-form derivative exactly and governs the small-signal AC response — see `examples/ddx_examples/`
 - Details: [Enhancement-13.md](Enhancement-13.md)
 
 ---
@@ -265,7 +265,7 @@ Several unrelated language gaps found along the way are also fixed. **`localpara
 *July 2026* — Completed Verilog-A **array** support beyond element-at-a-time access. Adds **whole-array aggregate assignment** (`c = '{v0, v1, v2};` and array-to-array copy `c = d;`), **array-valued parameters** (`parameter real [0:3] w = '{...};`) that expand into one scalar OSDI parameter per element — each with its own default and **individually overridable from SPICE** (`.model m dev(w[2]=0.9)`) — and **dynamic (non-constant) indexing** `c[i]` for array variables, lowered to a runtime select over the element variables.
 
 - Fixed a pre-existing infinite-loop bug in `Type::base_type` (it looped on `self` instead of the cursor) that hung the compiler on any array type check — e.g. assigning an array literal to a scalar; such mismatches now report a clean diagnostic
-- Verified end-to-end through ngspice — array-parameter defaults, full and partial per-element override, aggregate assignment, copy, and dynamic read/write all match their closed-form values — see `array_examples/`
+- Verified end-to-end through ngspice — array-parameter defaults, full and partial per-element override, aggregate assignment, copy, and dynamic read/write all match their closed-form values — see `examples/array_examples/`
 - Details: [Enhancement-14.md](Enhancement-14.md)
 
 ---
@@ -275,7 +275,7 @@ Several unrelated language gaps found along the way are also fixed. **`localpara
 *July 2026* — Generalised the (1-D) arrays of Enhancement 14 to **any number of dimensions**: N-D declaration for variables and parameters (`real [0:1][0:2] m;`), **constant and dynamic indexing** `m[i][j]`, **nested aggregate literals** (`acc = '{'{a, b}, '{c, d}};`), and N-D array parameters whose elements (`w[0][0]`, `w[0][1]`, …) each carry a default and are **individually overridable from SPICE** (`.model m dev(w[1][1]=0.9)`). Kept the whole-array-expanded-to-scalars model, so no OSDI ABI change and no ngspice change were needed; a dynamic index lowers to a runtime flat-position select over the elements.
 
 - The bit-select representation became multi-index (`m[i][j]` carries all its `[..]` clauses) and array declarations carry a per-dimension size list, while all existing 1-D net/array code stayed unchanged
-- Verified end-to-end through ngspice — 2-D parameter defaults, per-element 2-D override, nested-literal aggregate assignment, and dynamic 2-D read/write — see `mdarray_examples/`; every prior example (including 1-D arrays, vectored nets, and `generate`) still passes
+- Verified end-to-end through ngspice — 2-D parameter defaults, per-element 2-D override, nested-literal aggregate assignment, and dynamic 2-D read/write — see `examples/mdarray_examples/`; every prior example (including 1-D arrays, vectored nets, and `generate`) still passes
 - Details: [Enhancement-15.md](Enhancement-15.md)
 
 ---
@@ -284,7 +284,7 @@ Several unrelated language gaps found along the way are also fixed. **`localpara
 
 *July 2026* — Implemented the Verilog-AMS **`$table_model`** system function (1-D), which previously carried an explicit `// TODO TABLE_MODEL`. `$table_model(x, <data>[, "control"])` interpolates a value from a tabulated grid — the data coming from an inline `'{x0,y0, x1,y1, ...}` array or a two-column data file — with piecewise-**linear** interpolation and **constant** (clamp) or **linear** extrapolation. Unlike `noise_table` (which only feeds the noise PSD), `$table_model` is used in the **main device equations**, so it is lowered to plain **differentiable MIR arithmetic**: `mir_autodiff` then yields the per-segment slope as the Jacobian entry for free — no OSDI ABI change and no ngspice change needed.
 
-- Verified end-to-end across **DC, AC and transient**: a transfer table interpolates bit-exactly; a file-based nonlinear resistor converges to the analytic nonlinear DC operating point (~5e-10 V); its AC small-signal conductance equals the analytic table slope (~1e-18 S); and its transient output tracks the table instantaneously — see `table_model_examples/` (with DC/AC/transient PNG plots)
+- Verified end-to-end across **DC, AC and transient**: a transfer table interpolates bit-exactly; a file-based nonlinear resistor converges to the analytic nonlinear DC operating point (~5e-10 V); its AC small-signal conductance equals the analytic table slope (~1e-18 S); and its transient output tracks the table instantaneously — see `examples/table_model_examples/` (with DC/AC/transient PNG plots)
 - Scope is 1-D linear interpolation; multi-dimensional tables and higher-degree (spline) interpolation are the natural follow-up (as 1-D arrays in Enhancement 14 were extended to N-D in Enhancement 15)
 - Details: [Enhancement-16.md](Enhancement-16.md)
 
@@ -294,7 +294,7 @@ Several unrelated language gaps found along the way are also fixed. **`localpara
 
 *July 2026* — Generalised the (1-D) `$table_model` of Enhancement 16 to **2-D and 3-D** tables: `$table_model(x1, x2[, x3], "grid_file"[, "control"])` interpolates a value from an N-dimensional grid by **multilinear** (bilinear / trilinear) interpolation. The elegant part is that N-D interpolation is built as **recursive 1-D interpolation** — peel the outermost axis, interpolate each of its slices over the remaining axes, then interpolate those results — so one routine handles any N and, being ordinary differentiable MIR, `mir_autodiff` supplies **all** the partial derivatives (e.g. a table-based MOSFET's `gm` *and* `gds`) with no special support. No OSDI ABI change and no ngspice change.
 
-- Verified end-to-end through ngspice with a **table-based MOSFET** `I(Vgs, Vds)`: the drain current matches a bilinear reference to machine precision (~1e-19 A), and both `gm = dId/dVgs` and `gds = dId/dVds` match the surface partials (~1e-16 S) — so the 2-D Jacobian is exact. Bilinear reproduces `x·y` and trilinear reproduces `x·y·z` exactly; the 1-D case is unchanged — see `mdtable_examples/` (with an I-V surface plot)
+- Verified end-to-end through ngspice with a **table-based MOSFET** `I(Vgs, Vds)`: the drain current matches a bilinear reference to machine precision (~1e-19 A), and both `gm = dId/dVgs` and `gds = dId/dVds` match the surface partials (~1e-16 S) — so the 2-D Jacobian is exact. Bilinear reproduces `x·y` and trilinear reproduces `x·y·z` exactly; the 1-D case is unchanged — see `examples/mdtable_examples/` (with an I-V surface plot)
 - Multi-dimensional data comes from a self-describing grid file (`ndim`, axis sizes, axis coordinates, row-major values); supported dimensionality is 1-D/2-D/3-D, with higher-degree (spline) interpolation as future work
 - Details: [Enhancement-17.md](Enhancement-17.md)
 
@@ -304,7 +304,7 @@ Several unrelated language gaps found along the way are also fixed. **`localpara
 
 *July 2026* — Two related array-usability features. **(1) Standard declaration syntax:** the LRM *name-then-range* form `real x[0:n];` (and multi-dimensional `real m[0:1][0:2];`, per-variable) is now accepted alongside the existing *range-then-name* `real [0:n] x;` — real-world models written for other simulators use the former. **(2) Arrays in `analog function`s:** array **local variables** and whole **array arguments** are now supported inside analog functions (previously rejected as *"array-variable declarations are only supported at module body scope"*). A whole array is passed by name (`dot(coeffs, taps)`); the callee's element variables are bound from the caller's, and because the callee body is lowered inline as ordinary MIR, the Jacobian flows through the function automatically. No OSDI ABI change and no ngspice change.
 
-- Verified end-to-end through ngspice — a polynomial stage `V(out) = 0.5·V(in) + 0.3·V(in)²` evaluated inside an array-argument function (Horner's rule, indexing the array argument with a loop variable): DC matches the closed form (~1e-16) and the AC gain matches `poly'(bias)` (~1e-16), i.e. the derivative flows through the array-argument function — see `funcarray_examples/`
+- Verified end-to-end through ngspice — a polynomial stage `V(out) = 0.5·V(in) + 0.3·V(in)²` evaluated inside an array-argument function (Horner's rule, indexing the array argument with a loop variable): DC matches the closed form (~1e-16) and the AC gain matches `poly'(bias)` (~1e-16), i.e. the derivative flows through the array-argument function — see `examples/funcarray_examples/`
 - Array arguments are input-only (element pass-by-value); array `output` writeback and array return values remain future work
 - Details: [Enhancement-18.md](Enhancement-18.md)
 
@@ -314,7 +314,7 @@ Several unrelated language gaps found along the way are also fixed. **`localpara
 
 *July 2026* — Implemented the Verilog-AMS **`do <statement> while (condition);`** loop, previously a parse error (`do` was lexed as an identifier). It is a **post-test** loop — the body runs once *before* the condition is first tested, so it always executes at least once — and completes OpenVAF's loop constructs (`for`, `while`, and `repeat` already worked). A new `do` keyword and `do-while` statement kind are threaded through the whole front-end (tokens → parser → AST → HIR → lowering); the lowering enters the body block unconditionally and tests the condition at the end of each iteration.
 
-- Verified end-to-end through ngspice — a `do` loop reports its iteration count as a gain; across the loop count `n` (overridden per `.model`) the count equals `max(n, 1)`, and in particular **`n = 0` still runs the body once**, the defining behaviour that distinguishes `do-while` from `while` — see `dowhile_examples/`
+- Verified end-to-end through ngspice — a `do` loop reports its iteration count as a gain; across the loop count `n` (overridden per `.model`) the count equals `max(n, 1)`, and in particular **`n = 0` still runs the body once**, the defining behaviour that distinguishes `do-while` from `while` — see `examples/dowhile_examples/`
 - Details: [Enhancement-19.md](Enhancement-19.md)
 
 ---
@@ -323,7 +323,7 @@ Several unrelated language gaps found along the way are also fixed. **`localpara
 
 *July 2026* — Completed Enhancement 18's array-argument support, which was **input-only**: a whole array could be passed *into* an `analog function` but the function could not write one back. Array **`output`** and **`inout`** arguments now write their results into the caller's array on return — previously such an argument compiled but silently did nothing (a correctness gap). Enhancement 18 already bound the callee's element variables from the caller at entry and recorded the caller's array elements for *any* array argument; the only missing piece was the **exit writeback**, so this is a focused one-function change in `hir_lower` that copies each callee element variable back to the caller's array element after the (inlined) body runs. `inout` gets both the entry bind and the exit writeback; `input` is unaffected. No OSDI ABI change and no ngspice change.
 
-- Verified end-to-end through ngspice — `make_taps` fills a geometric tap array via an **output** array argument and `normalize` scales it in place via an **inout** array argument; the gain is the sum of the normalized taps, which is `1` for any `ratio` (swept, overridden per `.model`), so `V(out) = V(in)` — a value that holds only if *both* writebacks reach the caller's array — see `arrayout_examples/`
+- Verified end-to-end through ngspice — `make_taps` fills a geometric tap array via an **output** array argument and `normalize` scales it in place via an **inout** array argument; the gain is the sum of the normalized taps, which is `1` for any `ratio` (swept, overridden per `.model`), so `V(out) = V(in)` — a value that holds only if *both* writebacks reach the caller's array — see `examples/arrayout_examples/`
 - The array passed to an `output`/`inout` argument must be a writable array **variable**; array **return values** (a function whose return type is an array) remain future work
 - Details: [Enhancement-20.md](Enhancement-20.md)
 
@@ -333,7 +333,7 @@ Several unrelated language gaps found along the way are also fixed. **`localpara
 
 *July 2026* — Implemented Verilog-AMS **`paramset`** blocks, previously a hard parse error. A `paramset <name> <target_module>;` defines a named, instantiable model (`.model foo <name>`) that has the same terminals and analog behaviour as the target module but with selected parameters **bound** to expressions — the Verilog-AMS way of shipping a *model library* (one behavioural module, several named pre-configured variants), able to *compute* the bound values from the paramset's own card parameters. The elegant part is the lowering: a paramset becomes a synthetic **twin module** that *shares the target's declaration AST* (so its ports and body are the target's, resolved through the twin's own scope), adds the paramset's own parameters, and rewrites each bound parameter into a `localparam` whose value is the override expression. Because item identity is `(scope, index)`, the twin re-interns the shared items as fresh ids under its own scope — a fully independent module that reuses the target's behaviour — so type inference, autodiff, and OSDI emission all treat it as ordinary. No OSDI ABI change and no ngspice change.
 
-- Verified end-to-end through ngspice — one behavioural module `conductor = g0·(1 + k·V)` and three paramsets (`res_1k`, `res_kohm`, `varistor`): constant bindings and card-parameter-driven binding expressions take effect, an unbound parameter stays settable while a bound one is driven by the paramset, a **bound** parameter is **not** settable from the card, the derivative flows through the paramset (AC `gm = g0·(1+2·k·V)` is exact — the autodiff Jacobian runs on the shared body), and the base module still works independently — see `paramset_examples/`
+- Verified end-to-end through ngspice — one behavioural module `conductor = g0·(1 + k·V)` and three paramsets (`res_1k`, `res_kohm`, `varistor`): constant bindings and card-parameter-driven binding expressions take effect, an unbound parameter stays settable while a bound one is driven by the paramset, a **bound** parameter is **not** settable from the card, the derivative flows through the paramset (AC `gm = g0·(1+2·k·V)` is exact — the autodiff Jacobian runs on the shared body), and the base module still works independently — see `examples/paramset_examples/`
 - The target module must be declared in the same file; multiple same-named paramsets with instance-based *selection* (and `aliasparam`/statement selection) remain future work — each paramset maps to exactly one model
 - Details: [Enhancement-21.md](Enhancement-21.md)
 
@@ -343,7 +343,7 @@ Several unrelated language gaps found along the way are also fixed. **`localpara
 
 *July 2026* — Extended `$table_model` with **natural cubic-spline** interpolation (control code `"3"`), complementing the piecewise-linear (Enhancement 16, 1-D) and multilinear (Enhancement 17, 2-D/3-D) interpolation. A cubic spline is **C¹** — its derivative is continuous — so a table-based compact model's `gm`/`gds` are **smooth**, instead of the staircase derivative that piecewise-linear interpolation produces. The interpolation degree is chosen entirely by the control string, so this is a lowering-only change: no new builtin signature, no OSDI ABI change, and no ngspice change. The elegant part is that a natural spline's per-point second derivatives (the "moments") solve a tridiagonal system that is **linear in the grid values and fixed by the grid alone** — so the moment vector is a compile-time-precomputed linear operator, each moment becomes a constant-weighted sum of the (possibly runtime) grid values, and the whole spline lowers to ordinary differentiable MIR with no runtime solve. `mir_autodiff` then supplies the exact, continuous Jacobian for free, and the same recursive-1-D scheme as Enhancement 17 yields the exact tensor-product natural spline for N-D.
 
-- Verified end-to-end through ngspice, each check contrasting cubic with linear on the same data: cubic tracks `sin(V)` ~46× better than linear at off-grid points; across a grid node the cubic `gm` matches `|cos(V)|` on both sides (continuous) while the linear `gm` **jumps** ~10× more (a direct test that the autodiff Jacobian through the cubic MIR is continuous); a natural spline reproduces straight-line data exactly; and a 2-D tensor-product cubic reproduces `sin(x)·cos(y)` accurately — see `cubic_table_examples/`
+- Verified end-to-end through ngspice, each check contrasting cubic with linear on the same data: cubic tracks `sin(V)` ~46× better than linear at off-grid points; across a grid node the cubic `gm` matches `|cos(V)|` on both sides (continuous) while the linear `gm` **jumps** ~10× more (a direct test that the autodiff Jacobian through the cubic MIR is continuous); a natural spline reproduces straight-line data exactly; and a 2-D tensor-product cubic reproduces `sin(x)·cos(y)` accurately — see `examples/cubic_table_examples/`
 - Natural boundary conditions only; a control code applies cubic to all axes (per-axis interpolation degree, and other end conditions, remain future work); the existing linear tables are unchanged
 - Details: [Enhancement-22.md](Enhancement-22.md)
 
@@ -353,7 +353,7 @@ Several unrelated language gaps found along the way are also fixed. **`localpara
 
 *July 2026* — Added **array return values** to `analog function`s (`analog function real[0:n] f;`, with `c = f(...)` copying the whole returned array into the destination), completing the array-in-functions arc: Enhancement 18 (array **arguments**, input) → Enhancement 20 (array **output/inout** arguments) → Enhancement 23 (array **return values**). Previously `analog function real[0:n] f;` was a parse/resolve error. The design reuses the earlier array machinery: the return array is modelled as a function-scoped array variable named after the function, so its element variables `f[i]` register in the function's `var_arrays` (exactly like an array argument's) and the body's `f[i] = …` resolves via the existing bit-select paths. At the call site `c = f(...)`, inference records the array-returning call and lowering **inlines the function body** (writing the return elements) then copies them into the destination — so, as for every user function, the body is ordinary MIR and the autodiff Jacobian flows through the return automatically. No OSDI ABI change and no ngspice change.
 
-- Verified end-to-end through ngspice — a cubic polynomial device `I = c0 + c1·V + c2·V² + c3·V³` built two ways: `polyret` (a function returns the power array `{1,V,V²,V³}`, summed at the call site) and `polyret_arg` (the returned array is fed straight into an array-**argument** function, composing E-23 with E-18). For both, across a bias sweep, the DC current matches the closed form (~1e-9) and the AC conductance matches the exact derivative `gm = c1 + 2·c2·V + 3·c3·V²` (~1e-9) — the Jacobian flows through the array return — see `arrayret_examples/`
+- Verified end-to-end through ngspice — a cubic polynomial device `I = c0 + c1·V + c2·V² + c3·V³` built two ways: `polyret` (a function returns the power array `{1,V,V²,V³}`, summed at the call site) and `polyret_arg` (the returned array is fed straight into an array-**argument** function, composing E-23 with E-18). For both, across a bias sweep, the DC current matches the closed form (~1e-9) and the AC conductance matches the exact derivative `gm = c1 + 2·c2·V + 3·c3·V²` (~1e-9) — the Jacobian flows through the array return — see `examples/arrayret_examples/`
 - An array-returning call is only valid as the whole right-hand side of an array assignment (not a sub-expression); a length mismatch is a clean compile-time type error
 - Details: [Enhancement-23.md](Enhancement-23.md)
 
@@ -363,7 +363,7 @@ Several unrelated language gaps found along the way are also fixed. **`localpara
 
 *July 2026* — Gave real effect to **`$discontinuity(n)`** (n ≥ 0), previously a no-op (only the internal `$discontinuity(-1)` used by device limiting did anything). `$discontinuity(n)` announces a discontinuity of degree *n* in the branch constitutive relations at the current point, so the transient simulator **limits the timestep** there instead of extrapolating a large step across the event — affecting *only* timestep control, never the computed solution. The natural vehicle, an OSDI eval **return flag** (like `$finish`/`$stop`), turned out not to be honoured by ngspice's timestep control, so this is implemented over the proven **`bound_step`** eval output that ngspice's `OSDItrunc` already reads: `$discontinuity(n)` writes a **negative sentinel** to the `bound_step` slot, and `OSDItrunc` interprets it (rather than as a literal step bound) as "a discontinuity occurred here" and clamps the next timestep to the last accepted step. **This is the first enhancement that also modifies the ngspice source** (`src/osdi/osditrunc.c`); no OSDI ABI change.
 
-- Verified end-to-end through ngspice — a conductance switch (`I = g·V(a,b)`, `g` jumps at `V(a,b)=vth`) announces `$discontinuity(0)` while in the switched region: the same transient produces far more (finer) timepoints with the announcement on than off — i.e. the discontinuity actually limits the timestep — while the DC operating point is identical either way — see `discontinuity_examples/` (with a timestep-refinement plot)
+- Verified end-to-end through ngspice — a conductance switch (`I = g·V(a,b)`, `g` jumps at `V(a,b)=vth`) announces `$discontinuity(0)` while in the switched region: the same transient produces far more (finer) timepoints with the announcement on than off — i.e. the discontinuity actually limits the timestep — while the DC operating point is identical either way — see `examples/discontinuity_examples/` (with a timestep-refinement plot)
 - The degree `n` is treated uniformly (any n ≥ 0 ⇒ "limit the step here"); `$discontinuity` and `$bound_step` share the `bound_step` slot (a negative value is the discontinuity sentinel, a positive value an explicit bound); requires the accompanying ngspice build
 - Details: [Enhancement-24.md](Enhancement-24.md)
 
@@ -373,7 +373,7 @@ Several unrelated language gaps found along the way are also fixed. **`localpara
 
 *July 2026* — Made **`$simparam$str(name)`** (the string counterpart of the numeric `$simparam`) actually work; it was previously unusable due to **three independent defects**, two in OpenVAF and one in ngspice. (1) The builtin was **mis-typed** as returning a real, so any string use — assigning to a `string` variable, comparing to a string literal, `%s` in `$strobe` — was a type error; fixed to return a string. (2) The runtime lookup in `stdlib.c` was **bugged**: it iterated the *numeric* parameter list and returned the *name* instead of the value (reading past the end of the string list); fixed to walk the string list and return its value. (3) ngspice's OSDI layer exposed **no** string parameters at all; `get_simparams` now provides `"analysis_name"` (`"dc"`/`"ac"`/`"tran"`/`"noise"`, matching the `analysis()` convention) and `"simulator"` (`"ngspice"`). This is the second enhancement to also modify the ngspice source (`src/osdi/osdiload.c`); no OSDI ABI change. The numeric `$simparam(name[, default])` was already supported and is unchanged.
 
-- Verified end-to-end through ngspice — a model that sets its conductance from `$simparam$str("analysis_name")` (read into a `string` variable and compared): `g_dc` in dc/op, `g_ac` in ac, `g_tran` in tran; running each analysis and checking the terminal current confirms the correct string is returned in each case (which never worked before) — see `simparamstr_examples/`
+- Verified end-to-end through ngspice — a model that sets its conductance from `$simparam$str("analysis_name")` (read into a `string` variable and compared): `g_dc` in dc/op, `g_ac` in ac, `g_tran` in tran; running each analysis and checking the terminal current confirms the correct string is returned in each case (which never worked before) — see `examples/simparamstr_examples/`
 - Provides `"analysis_name"` and `"simulator"` (other string params such as `"cwd"` remain future work); an unknown name raises a fatal "unknown $simparam_str"; requires the accompanying ngspice build
 - Details: [Enhancement-25.md](Enhancement-25.md)
 
@@ -383,7 +383,7 @@ Several unrelated language gaps found along the way are also fixed. **`localpara
 
 *July 2026* — Baseline support for **`ac_stim([name][, mag][, phase])`**, the Verilog-AMS small-signal AC stimulus source. `ac_stim` type-checked but any **contributing** use (`I(a,b) <+ ... + ac_stim(...)`) fell through to an `unreachable!()` in the lowering and **crashed the compiler**. This adds the missing lowering arm: per the LRM, `ac_stim` evaluates to **0 in the large-signal (DC/transient) domain** and injects `mag∠phase` only during small-signal AC analysis, so returning `0` is the correct large-signal value and stops the crash — a model using `ac_stim` (in any of its four signature forms) now compiles and simulates. One-line change; no OSDI ABI change and no ngspice change.
 
-- Verified end-to-end through ngspice — the model compiles (it previously crashed `openvaf-r`), and DC/transient currents equal `g·V(a,b)` and are identical with the `ac_stim` terms included vs excluded, i.e. `ac_stim` correctly contributes 0 in the large-signal domain — see `acstim_examples/`
+- Verified end-to-end through ngspice — the model compiles (it previously crashed `openvaf-r`), and DC/transient currents equal `g·V(a,b)` and are identical with the `ac_stim` terms included vs excluded, i.e. `ac_stim` correctly contributes 0 in the large-signal domain — see `examples/acstim_examples/`
 - **Scope:** this is the baseline (crash fix + correct large-signal value). The actual small-signal **AC injection** (`ac_stim` contributing `mag∠phase` to the AC right-hand side) is a separate, ABI-touching subsystem — parallel to the noise path (new OSDI AC-RHS mechanism + ngspice complex-RHS stamping) — deferred to a dedicated follow-up
 - Details: [Enhancement-26.md](Enhancement-26.md)
 
@@ -393,7 +393,7 @@ Several unrelated language gaps found along the way are also fixed. **`localpara
 
 *July 2026* — Fixed **`idtmod(expr, ic, modulus[, offset])`**, the Verilog-AMS modulo time-integrator (the standard VCO/PLL phase integrator). It compiled and integrated correctly for the *first period*, but the modulo **wrap** was broken by two bugs. **(1)** At the wrap the old lowering forced the state to `min` *and zeroed the reactive (state) residual* — but the transient integrator derives the branch current from that residual's history, so at the wrap it saw `≈ (0 − q_{n-1})/dt` with `q_{n-1} ≈ modulus`, an enormous term that drove the state to `~q/dt`; the result **got stuck** (a VCO froze at ~0.297) or **diverged** (a sawtooth shot to ~−799). **(2)** The offset form read `args[2]` (the *modulus*) as the offset instead of `args[3]`. The fix integrates the DAE **state unbounded** (plain integration, like `idt`, with no discontinuity for the integrator to trip over) and wraps only the **returned value** — `offset + floor_mod(∫expr − offset, modulus)` — and reads the offset from the right argument. `hir_lower`-only; no OSDI ABI change and no ngspice change.
 
-- Verified end-to-end through ngspice — a VCO (a modulo-1 phase driving `sin(2π·phase)`) tracks `sin(2π·freq·t)` to ~1e-4 across three periods (it used to freeze after one), and a sawtooth `idtmod(1, 0, 2, off)` wraps correctly into `[off, off+2)` for both `off=0` and `off=5` (~1e-16), exercising the fixed offset argument — see `idtmod_examples/`
+- Verified end-to-end through ngspice — a VCO (a modulo-1 phase driving `sin(2π·phase)`) tracks `sin(2π·freq·t)` to ~1e-4 across three periods (it used to freeze after one), and a sawtooth `idtmod(1, 0, 2, off)` wraps correctly into `[off, off+2)` for both `off=0` and `off=5` (~1e-16), exercising the fixed offset argument — see `examples/idtmod_examples/`
 - Plain `idt` (no modulus) is unchanged and still exact; the DAE state integrates unbounded, so over very long runs (many millions of wraps) the wrapped output loses a little floating-point resolution — a bounded-state modulo integrator would need simulator-side breakpoint support OSDI does not expose, but the unbounded-state form is correct and no longer diverges
 - Details: [Enhancement-27.md](Enhancement-27.md)
 

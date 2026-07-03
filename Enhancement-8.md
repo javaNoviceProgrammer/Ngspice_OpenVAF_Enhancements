@@ -60,14 +60,14 @@ convention as prior enhancements deferring sub-scope).
 
 ### Verification
 
-- **`--dump-mir` equivalence**: `generate_examples/resistor_ladder_generate.va`
+- **`--dump-mir` equivalence**: `examples/generate_examples/resistor_ladder_generate.va`
   (a 4-element `generate for` resistor chain) vs.
   `resistor_ladder_manual.va` (the same chain, hand-written as 4 explicit
   instantiations) produce structurally identical "Optimized model setup MIR"
   — same block/branch/phi shape (`br v20, block4, block3`, ...), differing
   only in SSA value numbers from the different intermediate filenames.
 - **ngspice DC sweep**: both compiled with version9's own `openvaf-r` and run
-  through version9's own `ngspice`; `generate_examples/compare_ladder.py`
+  through version9's own `ngspice`; `examples/generate_examples/compare_ladder.py`
   cross-checks the two — **bit-exact** match (`max |generate - manual| =
   0.0`) at every swept point, and both match an independent analytical
   resistor-divider computation to `2.068e-09` (floating-point noise level).
@@ -75,7 +75,7 @@ convention as prior enhancements deferring sub-scope).
   `bus_examples`, etc.) still compile unchanged through the patched
   pipeline. Full `cargo test` suite (see §3) unaffected.
 
-See `generate_examples/README.md` for the full example writeup.
+See `examples/generate_examples/README.md` for the full example writeup.
 
 ## 2. `cross()` / `above()` / `timer()`
 
@@ -156,18 +156,18 @@ shows `v21 = fge v20, v19` (fired) and `v22 = fadd v19, v16` (reschedule).
 
 ### ngspice verification
 
-`cross_examples/tran_above.cir`: `V(in) = 2·sin(2π·1kHz·t)`, `thresh = 1.0`
+`examples/cross_examples/tran_above.cir`: `V(in) = 2·sin(2π·1kHz·t)`, `thresh = 1.0`
 — `above` fires once per cycle, exactly every ~1ms, at `in ≈ thresh`:
 ```
 above fired at t=8.428e-05 in=1.01028
 above fired at t=0.00108428 in=1.01028
 above fired at t=0.00208428 in=1.01028
 ```
-`cross_examples/tran_cross.cir`: same sine, `thresh = 0.0`, `dir = 0.0`
+`examples/cross_examples/tran_cross.cir`: same sine, `thresh = 0.0`, `dir = 0.0`
 (either direction) — `cross` fires twice per cycle (rising and falling),
 alternating sign, exactly every ~0.5ms.
 
-`timer_examples/tran_timer.cir`: `t0 = 2ms`, `period = 1ms` — first firing
+`examples/timer_examples/tran_timer.cir`: `t0 = 2ms`, `period = 1ms` — first firing
 at exactly `t0`, then every `period` after:
 ```
 timer fired at t=0.0020028
@@ -260,7 +260,7 @@ timer fired at t=0.0060028
      `last_block()` continues to mean "the function's true exit" for every
      downstream consumer (`goto_exit()` included) without those consumers
      needing to change.
-   - **Verified fixed**: `verify_fix.va` (`cross_examples/`) — a plain
+   - **Verified fixed**: `verify_fix.va` (`examples/cross_examples/`) — a plain
      `if (V(in) > 0.0) count = 1.0; V(out) <+ count;` — now compiles and
      simulates correctly (ngspice transient run: `count`/`V(out)` latches to
      `1.0` the instant `V(in) > 0` and stays there even after `V(in)` falls
@@ -269,7 +269,7 @@ timer fired at t=0.0060028
      upgraded from `$strobe`-only reporting to real persistent-counter
      accumulation (`count = count + 1.0;` on every firing, exposed on
      `V(out)`) — see the updated DC/AC/transient plots and READMEs in
-     `cross_examples/`/`timer_examples/`. Full regression re-verified after
+     `examples/cross_examples/`/`examples/timer_examples/`. Full regression re-verified after
      the fix: all unit tests in the touched crates (`mir`, `mir_opt`,
      `mir_autodiff`, `mir_build`, `hir_lower`, `sim_back`) pass; every
      existing example folder (`cross_examples`, `timer_examples`,

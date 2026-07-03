@@ -363,7 +363,7 @@ ordinary scalar net still connects every array element to the same
 
 ### 9. End-to-end result
 
-`instantiation_examples/resistor_divider.va` exercises the full feature
+`examples/instantiation_examples/resistor_divider.va` exercises the full feature
 set in one file: nested instantiation (`divider` → `buffer` → `resistor`),
 named and positional ports, named and positional parameter overrides, and
 an instance array.
@@ -377,9 +377,9 @@ an instance array.
 - **Real OSDI + ngspice DC sweep**: `openvaf-r resistor_divider.va -o
   resistor_divider.osdi` (built with `--features llvm18` against a
   Homebrew LLVM 18 toolchain) produces a working `.osdi` shared library;
-  loaded into ngspice (`instantiation_examples/dc_sim.cir`), a `.dc Vin -2
+  loaded into ngspice (`examples/instantiation_examples/dc_sim.cir`), a `.dc Vin -2
   2 0.5` sweep is cross-checked in
-  `instantiation_examples/compare_divider.py` against the analytically
+  `examples/instantiation_examples/compare_divider.py` against the analytically
   combined resistor network (`buffer` ‖ `r1` between `in`/`out`; `r2` ‖
   `rarr[0]` ‖ `rarr[1]` between `out`/`gnd`) — **matches to ~1e-9**, i.e.
   solver precision.
@@ -407,7 +407,7 @@ an instance array.
   quirk in `sourcegen`'s `osdi::gen_osdi_structs` — neither touched by this
   enhancement) passes with zero new failures.
 
-- **Cross-`` `include `` instantiation** (`instantiation_examples/
+- **Cross-`` `include `` instantiation** (`examples/instantiation_examples/
   resistor_divider_include.va` + `resistor_lib.va`): a module can
   instantiate a target declared in a *different* file, pulled in via
   `` `include ``, with no special-casing anywhere in the elaboration code.
@@ -484,7 +484,7 @@ New fixtures:
   SPICE-level hierarchy) alongside Verilog-A-level `instantiate`
   (compile-time inlining within one descriptor) — two complementary
   mechanisms, not competing ones. See
-  `instantiation_examples/dc_sim_multi_model.cir` for a worked example
+  `examples/instantiation_examples/dc_sim_multi_model.cir` for a worked example
   (chaining standalone `buffer` and `divider` instances from
   `resistor_divider.osdi` in one netlist) — including a naming-collision
   gotcha (`resistor` collides with ngspice's own built-in resistor
@@ -513,7 +513,7 @@ New fixtures:
 | `openvaf/basedb/src/lints.rs` | New `reserved_module_name` lint (§12) |
 | `openvaf/test_data/item_tree/instantiation.*`, `openvaf/test_data/ui/instantiation_*.*`, `openvaf/test_data/ui/reserved_module_name.*` | New regression fixtures |
 | `openvaf/test_data/ui/{ddx,formatting,function}.log` | Updated (`UPDATE_EXPECT=1`) — pre-existing fixtures name their module `diode`, now correctly flagged by §12's new lint |
-| `instantiation_examples/` | New end-to-end examples + ngspice cross-checks (§9, §11) |
+| `examples/instantiation_examples/` | New end-to-end examples + ngspice cross-checks (§9, §11) |
 
 No changes to `openvaf/mir*`, `openvaf/sim_back`, `openvaf/osdi`, or
 `openvaf/mir_llvm` — by design, per §1.1/§7.

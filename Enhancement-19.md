@@ -7,7 +7,7 @@ construct OpenVAF didn't support — `for`, `while`, and `repeat` already worked
 
 `do <statement> while (<condition>);` executes its body **once before** the
 condition is first tested (a post-test loop), so the body always runs at least
-once. Verified end-to-end through ngspice — see `dowhile_examples/`.
+once. Verified end-to-end through ngspice — see `examples/dowhile_examples/`.
 
 ## Changes
 
@@ -35,7 +35,7 @@ The feature threads a new statement kind through the whole front-end, mirroring
 
 ## Verification
 
-- `dowhile_examples/verify_dowhile.py` — a `do` loop reports its iteration count
+- `examples/dowhile_examples/verify_dowhile.py` — a `do` loop reports its iteration count
   as a gain; across the loop count `n` (overridden per `.model`) the count equals
   `max(n, 1)`, and in particular **`n = 0` still runs the body once** (count = 1),
   the defining post-test behaviour. `ALL PASS`.

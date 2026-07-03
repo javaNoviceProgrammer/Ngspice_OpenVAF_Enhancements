@@ -353,7 +353,7 @@ the system-wide ngspice) transient simulation: a 100kHz sine wave (period
 Result: `V(a)` correctly stays `0.0` until the first rising crossing at
 `t=10µs`, then jumps to `1.0000148e-5` (0.015% from the theoretical 1.0e-5)
 and holds constant until the next rising crossing at `t=20µs`, where it
-updates to `2.0000148e-5`. Also re-ran the pre-existing `absdelay_examples/
+updates to `2.0000148e-5`. Also re-ran the pre-existing `examples/absdelay_examples/
 absdelay.va` 5-stage delay-line example through the patched simulator to
 confirm no regression in the shared C code paths (`osdiload.c`/`osdisetup.c`/
 `osdiaccept.c`/`osdiacld.c`/`osdiregistry.c` all touched by this change) —

@@ -304,7 +304,7 @@ so it needs no special handling at all — it flows into the branch
 contribution exactly like any other expression.
 
 This was confirmed via `--dump-unopt-mir`/`--dump-mir` on the test
-fixtures in `laplace_examples/`: the `Implicit equations:` section of the
+fixtures in `examples/laplace_examples/`: the `Implicit equations:` section of the
 HIR interner dump lists one `LaplaceState(i)` entry per state (one for a
 first-order `laplace_nd`/`laplace_np` filter, two for a second-order
 `laplace_zd`/`laplace_zp` filter), feeding ordinary reactive/resistive
@@ -337,7 +337,7 @@ existing construct.
 
 ### 7.2 End-to-end compile
 
-`version5/laplace_examples/`:
+`version5/examples/laplace_examples/`:
 
 - `laplace_lpf.va` — `laplace_nd(V(in), '{1.0}, '{1.0, tau})`, a
   first-order RC-style low-pass filter (single bus-free port pair).
@@ -357,7 +357,7 @@ second-order filter (`openvaf-r --dump-mir laplace_zd_only.va` shows
 
 ### 7.3 ngspice simulation — new feature
 
-`version5/laplace_examples/` (`dc_sim.cir`, `ac_sim.cir`, `tran_sim.cir`
+`version5/examples/laplace_examples/` (`dc_sim.cir`, `ac_sim.cir`, `tran_sim.cir`
 for the primary `laplace_lpf` model, plus `dc_variants.cir`/
 `dc_zd_only.cir` for the four-forms cross-check), simulated with
 `version5/bin/.../ngspice`. Raw results saved in `dc.txt`/`ac.txt`/
@@ -390,8 +390,8 @@ for the primary `laplace_lpf` model, plus `dc_variants.cir`/
 
 ### 7.4 Regression — bus nets (Enhancement-3), absdelay (Enhancement-1), indirect branch assignment (Enhancement-2)
 
-`bus_examples/bus_buffer.va`, `absdelay_examples/absdelay.va`, and
-`indirect_assignment_examples/opamp.va` all recompile cleanly with the
+`examples/bus_examples/bus_buffer.va`, `examples/absdelay_examples/absdelay.va`, and
+`examples/indirect_assignment_examples/opamp.va` all recompile cleanly with the
 new `openvaf-r` (zero errors/warnings), and their corresponding `hir_lower`
 MIR snapshot tests (`mir::bus_basic.va`, plus the full
 `-p hir_lower` suite) pass unchanged — confirming the parser/type-checker
@@ -610,7 +610,7 @@ No changes to `openvaf/hir`, `openvaf/hir_lower`, `openvaf/mir*`,
 
 ### 15. Testing & verification
 
-`version5/array_var_examples/array_var_fir.va` — a 5-tap weighted-sum
+`version5/examples/array_var_examples/array_var_fir.va` — a 5-tap weighted-sum
 model exercising declaration, indexed write, and indexed read end-to-end:
 
 ```verilog
@@ -631,7 +631,7 @@ endmodule
 ```
 
 (coefficients sum to 1.0, so `V(out)` should track `V(in)` exactly — a
-closed-form expected result, same spirit as `bus_examples/bus_buffer.va`).
+closed-form expected result, same spirit as `examples/bus_examples/bus_buffer.va`).
 Compiles with zero errors/warnings; `dc_sim.cir` DC sweep (`dc.txt`)
 confirms `V(out) = V(in)` exactly across a -2V..2V sweep.
 
@@ -924,7 +924,7 @@ arguably the *correct* diagnosis anyway (nothing has 6×10^15 bits).
 
 ### 25. The Bessel filter example
 
-`bessel_filter_examples/`:
+`examples/bessel_filter_examples/`:
 
 - `design_bessel.py` designs a 5th-order analog Bessel low-pass filter
   (`fc = 1 kHz`) with `scipy.signal.bessel(N=5, Wn=2*pi*1000, analog=True,

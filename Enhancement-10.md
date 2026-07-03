@@ -149,7 +149,7 @@ per-invocation `CARGO_MANIFEST_DIR` env var instead — it always points at the
 crate being built. This is a general robustness fix for the copy-the-target
 workflow, not specific to this feature.
 
-## 6. Verification (`rng_examples/`)
+## 6. Verification (`examples/rng_examples/`)
 
 `rng_demo.va` fixes `V(p,n)` to a single draw selected by a `dist` model
 parameter and stream-selected by `seed`. Since each draw is a stable,
@@ -197,4 +197,4 @@ property §1 is built around.
 | `openvaf/osdi/src/compilation_unit.rs` | `general_callbacks` resolves `CallBackKind::Rng(fun)` to the `osdi_rng_*` runtime function with the right LLVM type (§4) |
 | `openvaf/osdi/stdlib.c` | Nine deterministic `osdi_rng_*` runtime functions (splitmix64 core, Box-Muller / Knuth / sums) + `extern sqrt/exp/cos` (§4) |
 | `openvaf/osdi/build.rs` | Locate `stdlib.c` via the per-invocation `CARGO_MANIFEST_DIR` instead of `stdx::project_root()`, so a copied `target/` cannot make the build read another checkout's `stdlib.c` (§5) |
-| `rng_examples/` | New analytically-verified example suite: `rng_demo.va` + `verify_rng.py` (all 16 functions, 24/24 moment/integrality checks) and `rc_mc.va` + `plot_mc.py` (DC/AC/transient Monte-Carlo → `mc_dc.png`/`mc_ac.png`/`mc_tran.png`), `README.md` (§6) |
+| `examples/rng_examples/` | New analytically-verified example suite: `rng_demo.va` + `verify_rng.py` (all 16 functions, 24/24 moment/integrality checks) and `rc_mc.va` + `plot_mc.py` (DC/AC/transient Monte-Carlo → `mc_dc.png`/`mc_ac.png`/`mc_tran.png`), `README.md` (§6) |

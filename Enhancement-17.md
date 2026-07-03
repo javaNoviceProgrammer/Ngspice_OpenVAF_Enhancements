@@ -7,7 +7,7 @@ This document describes the source-code changes made to **OpenVAF-r** in the
 
 Like the 1-D case, the interpolation must be **differentiable** (it is used in the
 main device equations, so every partial derivative becomes a Jacobian entry). It
-is verified end-to-end through ngspice — see `mdtable_examples/`.
+is verified end-to-end through ngspice — see `examples/mdtable_examples/`.
 
 All work is in `version11/`; verification uses `version11/ngspice-46`'s own
 binary and `version11/OpenVAF-master`'s own `openvaf-r`. **No OSDI ABI change and
@@ -61,7 +61,7 @@ identically in DC, AC and transient.
 
 ## Verification
 
-- `mdtable_examples/verify_mdtable.py` — a table-based MOSFET `I(Vgs, Vds)`:
+- `examples/mdtable_examples/verify_mdtable.py` — a table-based MOSFET `I(Vgs, Vds)`:
   - **DC** — the drain current over a `(Vgs, Vds)` scan matches a reference
     bilinear interpolation of the same grid to machine precision (~1e-19 A);
   - **AC** — both partial derivatives, `gm = dId/dVgs` and `gds = dId/dVds`, match
