@@ -117,7 +117,12 @@ impl Body {
                 let VarLoc { scope, id: item_tree } = var.lookup(db);
 
                 let ast_id = tree[item_tree].ast_id();
-                let ast = ast_id_map.get(ast_id).to_node(ast.syntax());
+                // A synthetic array-return element variable (Enhancement-23) has no `ast::Var` node
+                // — its `ast_id` points at the function declaration purely as a placeholder. It is
+                // always written by the body before being read, so its default is never actually
+                // needed; fall back to the type's zero default rather than dereferencing the AST.
+                let var_ast = ast::Var::can_cast(ast_id_map.get_syntax(ast_id.erased()).syntax_kind())
+                    .then(|| ast_id_map.get(ast_id).to_node(ast.syntax()));
 
                 let curr_scope = (scope, ast_id.into());
                 let mut ctx = LowerCtx {
@@ -129,7 +134,7 @@ impl Body {
                     registry: &registry,
                 };
 
-                let expr = if let Some(expr) = ast.default() {
+                let expr = if let Some(expr) = var_ast.as_ref().and_then(|ast| ast.default()) {
                     ctx.collect_expr(expr)
                 } else {
                     let default_val = match db.var_data(var).ty {

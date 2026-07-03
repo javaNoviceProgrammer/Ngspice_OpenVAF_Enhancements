@@ -566,13 +566,61 @@ impl Ctx {
         });
 
         if let Some(name) = fun.name() {
+            let base_name = name.as_name();
+            let ty = fun.ty().map_or(Type::Real, |ty| ty.as_type());
+
+            // Array return `analog function real[0:n] f;` (Enhancement-23): expand the return into
+            // element variables `f[i]` (a var_array named after the function, so its elements
+            // resolve exactly like an array argument's), and record the return dimensions.
+            let ret_widths: Vec<ast::Range> = fun.widths().collect();
+            let ret_dims = if ret_widths.is_empty() {
+                None
+            } else {
+                match fold_width_ranges(ret_widths.iter().cloned()) {
+                    Some(dims) => {
+                        let fun_ast_id = self.source_ast_id_map.ast_id(&fun);
+                        let arr = BusDecl {
+                            base_name: base_name.clone(),
+                            msb: dims[0].0,
+                            lsb: dims[0].1,
+                            dims: dims.clone(),
+                            ast_id: fun_ast_id.into(),
+                        };
+                        // The return element variables have no `ast::Var` declaration node; they
+                        // carry the function's id purely as a placeholder (they are always written
+                        // by the body before being read, so their default is never lowered — and
+                        // `var_body`/nameres fall back gracefully when the node isn't an `ast::Var`).
+                        let var_ast_id = AstId::<ast::Var>::from_erased(fun_ast_id.erased());
+                        for indices in arr.index_tuples() {
+                            let var = Var {
+                                name: arr.elem_name(&indices),
+                                ast_id: var_ast_id,
+                                ty: ty.clone(),
+                            };
+                            let id = self.tree.data.variables.push_and_get_key(var);
+                            items.push(id.into());
+                        }
+                        var_arrays.push(arr);
+                        Some(dims.into_boxed_slice())
+                    }
+                    None => {
+                        let ast_id = self.source_ast_id_map.ast_id(&fun);
+                        self.tree
+                            .diagnostics
+                            .push(ItemTreeDiagnostic::NonConstantBusWidth { ast_id: ast_id.into() });
+                        None
+                    }
+                }
+            };
+
             let fun = Function {
-                name: name.as_name(),
-                ty: fun.ty().map_or(Type::Real, |ty| ty.as_type()),
+                name: base_name,
+                ty,
                 args,
                 items,
                 ast_id: self.source_ast_id_map.ast_id(&fun),
                 var_arrays,
+                ret_dims,
             };
             let fun = self.tree.data.functions.push_and_get_key(fun);
             dst.push(fun.into())

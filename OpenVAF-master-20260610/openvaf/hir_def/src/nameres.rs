@@ -154,7 +154,11 @@ impl ScopeDefItem {
                 .name()?
                 .syntax()
                 .text_range(),
-            ScopeDefItem::VarId(var) => ast_id_map.get(var.lookup(db).ast_id(db)).range(),
+            // `get_syntax` (by erased id) rather than `get::<ast::Var>` so a synthetic array-return
+            // element variable (Enhancement-23), whose id points at the function node, doesn't panic.
+            ScopeDefItem::VarId(var) => {
+                ast_id_map.get_syntax(var.lookup(db).ast_id(db).erased()).range()
+            }
 
             ScopeDefItem::ParamId(param) => ast_id_map.get(param.lookup(db).ast_id(db)).range(),
             ScopeDefItem::BranchId(branch) => {

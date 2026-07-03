@@ -10,8 +10,9 @@ use hir_def::expr::{CaseCond, Event, Literal};
 use hir_def::nameres::diagnostics::PathResolveError;
 use hir_def::nameres::{NatureAccess, ResolvedPath, ScopeDefItem, ScopeDefItemKind};
 use hir_def::{
-    BranchId, BuiltIn, BusDecl, DefWithBodyId, Expr, ExprId, FunctionArgLoc, FunctionId,
-    LocalFunctionArgId, Lookup, NatureId, NodeId, ParamSysFun, Path, Stmt, StmtId, Type, VarId,
+    function_array_arg_vars, BranchId, BuiltIn, BusDecl, DefWithBodyId, Expr, ExprId,
+    FunctionArgLoc, FunctionId, LocalFunctionArgId, Lookup, NatureId, NodeId, ParamSysFun, Path,
+    Stmt, StmtId, Type, VarId,
 };
 use stdx::impl_from;
 use stdx::iter::zip;
@@ -58,6 +59,10 @@ pub enum AssignDst {
 pub enum ArrayAssign {
     Literal(Vec<(VarId, ExprId)>),
     Copy(Vec<(VarId, VarId)>),
+    /// `c = f(...)` where `f` is an array-returning `analog function` (Enhancement-23): the call
+    /// expression (inlined at lowering, writing the function's return element variables) and the
+    /// per-element `(destination VarId, function return-element VarId)` pairs to copy afterwards.
+    ReturnCall { call: ExprId, pairs: Vec<(VarId, VarId)> },
 }
 
 /// A dynamic (non-constant-index) array element access `c[i]` / `m[i][j]` (Enhancement-14/15).
@@ -1723,7 +1728,40 @@ impl Ctx<'_> {
             return true;
         }
 
-        // Case 3: RHS is neither an array literal nor an array variable → type mismatch.
+        // Case 3 (Enhancement-23): RHS is a call to an array-returning `analog function`
+        // (`c = f(...)`). Infer the call normally (types/resolves its arguments), then bind the
+        // destination elements to the function's return-array element variables.
+        if matches!(self.body.exprs[val], Expr::Call { .. }) {
+            self.infere_expr(stmt, val);
+            if let Some(ResolvedFun::User { func, .. }) = self.result.resolved_calls.get(&val).copied()
+            {
+                let name = self.db.function_data(func).name.clone();
+                if self.db.function_data(func).ret_len.is_some() {
+                    let ret_vars = function_array_arg_vars(self.db.upcast(), func, &name);
+                    if ret_vars.len() as u32 != dst_len {
+                        self.result.diagnostics.push(
+                            TypeMismatch {
+                                expected: Cow::Owned(vec![TyRequirement::Val(dst_array_ty())]),
+                                found_ty: Ty::Val(Type::Array {
+                                    ty: Box::new(elem_ty),
+                                    len: ret_vars.len() as u32,
+                                }),
+                                expr: val,
+                            }
+                            .into(),
+                        );
+                        return true;
+                    }
+                    let pairs = dst_vars.into_iter().zip(ret_vars).collect();
+                    self.result.array_assignments.insert(stmt, ArrayAssign::ReturnCall { call: val, pairs });
+                    return true;
+                }
+            }
+            return true;
+        }
+
+        // Case 4: RHS is neither an array literal, an array variable, nor an array-returning call
+        // → type mismatch.
         if let Some(ty) = self.infere_expr(stmt, val) {
             self.result.diagnostics.push(
                 TypeMismatch {

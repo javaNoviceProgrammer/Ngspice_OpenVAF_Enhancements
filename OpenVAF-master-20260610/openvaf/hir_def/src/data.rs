@@ -226,6 +226,10 @@ pub struct FunctionData {
     pub name: Name,
     pub return_ty: Type,
     pub args: Box<TiSlice<LocalFunctionArgId, FunctionArg>>,
+    /// For an array-returning function (Enhancement-23), the number of return-array elements;
+    /// `None` for a scalar return. The return element variables (`f[i]`) live in the function's
+    /// `var_arrays` under the function name.
+    pub ret_len: Option<u32>,
 }
 
 impl FunctionData {
@@ -260,10 +264,14 @@ impl FunctionData {
                 fa
             })
             .collect();
+        let ret_len = fun.ret_dims.as_ref().map(|dims| {
+            dims.iter().map(|&(msb, lsb)| (msb - lsb).unsigned_abs() + 1).product::<u32>()
+        });
         Arc::new(FunctionData {
             name: fun.name.clone(),
             return_ty: item_tree[loc.id].ty.clone(),
             args,
+            ret_len,
         })
     }
 }

@@ -349,6 +349,16 @@ Several unrelated language gaps found along the way are also fixed. **`localpara
 
 ---
 
+## Enhancement 23: array return values from analog functions
+
+*July 2026* — Added **array return values** to `analog function`s (`analog function real[0:n] f;`, with `c = f(...)` copying the whole returned array into the destination), completing the array-in-functions arc: Enhancement 18 (array **arguments**, input) → Enhancement 20 (array **output/inout** arguments) → Enhancement 23 (array **return values**). Previously `analog function real[0:n] f;` was a parse/resolve error. The design reuses the earlier array machinery: the return array is modelled as a function-scoped array variable named after the function, so its element variables `f[i]` register in the function's `var_arrays` (exactly like an array argument's) and the body's `f[i] = …` resolves via the existing bit-select paths. At the call site `c = f(...)`, inference records the array-returning call and lowering **inlines the function body** (writing the return elements) then copies them into the destination — so, as for every user function, the body is ordinary MIR and the autodiff Jacobian flows through the return automatically. No OSDI ABI change and no ngspice change.
+
+- Verified end-to-end through ngspice — a cubic polynomial device `I = c0 + c1·V + c2·V² + c3·V³` built two ways: `polyret` (a function returns the power array `{1,V,V²,V³}`, summed at the call site) and `polyret_arg` (the returned array is fed straight into an array-**argument** function, composing E-23 with E-18). For both, across a bias sweep, the DC current matches the closed form (~1e-9) and the AC conductance matches the exact derivative `gm = c1 + 2·c2·V + 3·c3·V²` (~1e-9) — the Jacobian flows through the array return — see `arrayret_examples/`
+- An array-returning call is only valid as the whole right-hand side of an array assignment (not a sub-expression); a length mismatch is a clean compile-time type error
+- Details: [Enhancement-23.md](Enhancement-23.md)
+
+---
+
 ## Prebuilt Binaries
 
 Binaries are built by CI and committed to `bin/`:

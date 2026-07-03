@@ -156,5 +156,9 @@ cubic_table_examples/_*.cir
 cubic_table_examples/*.txt
 cubic_table_examples/surf.grid
 
+# Enhancement 23 array-return example scripts: temp netlists + outputs
+arrayret_examples/_*.cir
+arrayret_examples/*.txt
+
 # Python bytecode cache (e.g. from importing _setup.py)
 __pycache__/

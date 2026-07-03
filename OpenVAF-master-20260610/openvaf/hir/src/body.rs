@@ -217,23 +217,40 @@ impl<'a> BodyRef<'a> {
             }
             hir_def::Stmt::Assignment { val, .. } => {
                 if let Some(arr) = self.infere.array_assignments.get(&stmnt) {
-                    let assigns = match arr {
-                        inference::ArrayAssign::Literal(pairs) => pairs
-                            .iter()
-                            .map(|&(dst, val)| ArrayAssignElem::Val {
-                                dst: Variable { id: dst },
-                                val,
-                            })
-                            .collect(),
-                        inference::ArrayAssign::Copy(pairs) => pairs
-                            .iter()
-                            .map(|&(dst, src)| ArrayAssignElem::Copy {
-                                dst: Variable { id: dst },
-                                src: Variable { id: src },
-                            })
-                            .collect(),
-                    };
-                    return Some(Stmt::ArrayAssignment { assigns });
+                    match arr {
+                        inference::ArrayAssign::Literal(pairs) => {
+                            let assigns = pairs
+                                .iter()
+                                .map(|&(dst, val)| ArrayAssignElem::Val {
+                                    dst: Variable { id: dst },
+                                    val,
+                                })
+                                .collect();
+                            return Some(Stmt::ArrayAssignment { assigns });
+                        }
+                        inference::ArrayAssign::Copy(pairs) => {
+                            let assigns = pairs
+                                .iter()
+                                .map(|&(dst, src)| ArrayAssignElem::Copy {
+                                    dst: Variable { id: dst },
+                                    src: Variable { id: src },
+                                })
+                                .collect();
+                            return Some(Stmt::ArrayAssignment { assigns });
+                        }
+                        // `c = f(...)` for an array-returning function (Enhancement-23): the call is
+                        // inlined at lowering (writing the return element vars), then copied out.
+                        inference::ArrayAssign::ReturnCall { call, pairs } => {
+                            let assigns = pairs
+                                .iter()
+                                .map(|&(dst, src)| ArrayAssignElem::Copy {
+                                    dst: Variable { id: dst },
+                                    src: Variable { id: src },
+                                })
+                                .collect();
+                            return Some(Stmt::ArrayReturnAssignment { call: *call, assigns });
+                        }
+                    }
                 }
                 if let Some(dyn_assign) = self.infere.dynamic_index_assignments.get(&stmnt) {
                     let elems =
@@ -343,6 +360,10 @@ pub enum Stmt<'a> {
     },
     Assignment { lhs: AssignmentLhs, rhs: ExprId },
     ArrayAssignment { assigns: Vec<ArrayAssignElem> },
+    /// `c = f(...)` for an array-returning `analog function` (Enhancement-23): `call` is the call
+    /// expression (inlined during lowering, which writes the function's return element variables),
+    /// and `assigns` copies each return element into the destination array element.
+    ArrayReturnAssignment { call: ExprId, assigns: Vec<ArrayAssignElem> },
     /// A dynamic-index array write `c[i] = value` / `m[i][j] = value` (non-constant indices): the
     /// element variables (declaration order), per-dimension `(msb, lsb)` bounds, one index
     /// expression per dimension, and the value expression.

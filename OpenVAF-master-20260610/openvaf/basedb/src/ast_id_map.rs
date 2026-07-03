@@ -28,6 +28,14 @@ impl<N: AstNode> AstId<N> {
     pub fn erased(&self) -> ErasedAstId {
         self.raw
     }
+
+    /// Builds an `AstId<N>` from a raw `ErasedAstId`. The caller asserts the id refers to a node of
+    /// type `N` — unless the id is used only as an opaque handle (e.g. a synthetic variable that has
+    /// no real `ast::Var` node and never resolves its default via the AST; see Enhancement-23's
+    /// array-return element variables, which carry the function's id purely as a placeholder).
+    pub fn from_erased(raw: ErasedAstId) -> AstId<N> {
+        AstId { raw, _ty: PhantomData }
+    }
 }
 
 impl<N: AstNode> From<AstId<N>> for ErasedAstId {

@@ -505,6 +505,9 @@ impl Function {
     }
     pub fn ty(&self) -> Option<Type> { support::child(&self.syntax) }
     pub fn name(&self) -> Option<Name> { support::child(&self.syntax) }
+    /// Array return dimensions `analog function real[0:n] f;` (Enhancement-23): the `[msb:lsb]`
+    /// clauses that appear directly under the function (before the name), one per dimension.
+    pub fn widths(&self) -> AstChildren<Range> { support::children(&self.syntax) }
     pub fn semicolon_token(&self) -> Option<SyntaxToken> { support::token(&self.syntax, T![;]) }
     pub fn function_items(&self) -> AstChildren<FunctionItem> { support::children(&self.syntax) }
     pub fn endfunction_token(&self) -> Option<SyntaxToken> {

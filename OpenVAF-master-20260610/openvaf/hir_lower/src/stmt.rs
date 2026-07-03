@@ -57,6 +57,18 @@ impl BodyLoweringCtx<'_, '_, '_> {
                     }
                 }
             }
+            Stmt::ArrayReturnAssignment { call, assigns } => {
+                // `c = f(...)` for an array-returning function (Enhancement-23): lower the call
+                // (which inlines the body and writes the function's return element variables),
+                // then copy each return element into the destination array element.
+                let _ = self.lower_expr(call);
+                for elem in assigns {
+                    if let ArrayAssignElem::Copy { dst, src } = elem {
+                        let v = self.ctx.read_variable(src);
+                        self.ctx.def_place(PlaceKind::Var(dst), v);
+                    }
+                }
+            }
             Stmt::DynArrayAssignment { elems, dims, indices, value } => {
                 // A dynamic-index write `c[i] = v` / `m[i][j] = v` updates each element
                 // conditionally: element `elems[k]` becomes `v` when the flat runtime position

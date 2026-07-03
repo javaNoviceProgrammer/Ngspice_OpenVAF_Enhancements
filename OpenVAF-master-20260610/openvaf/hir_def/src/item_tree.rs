@@ -600,6 +600,11 @@ pub struct Function {
     /// arguments), used to resolve `x[i]` bit-selects inside the function body — the function-scope
     /// analogue of `Module::var_arrays` (Enhancement-18).
     pub var_arrays: Vec<BusDecl>,
+    /// For an array-returning function `analog function real[msb:lsb] f;` (Enhancement-23), the
+    /// return array's per-dimension `(msb, lsb)` bounds. `None` for an ordinary scalar return. The
+    /// return array's element variables (`f[i]`) are registered in `var_arrays` under the function
+    /// name, so `function_array_arg_vars(_, f, f.name)` resolves them.
+    pub ret_dims: Option<Box<[(i32, i32)]>>,
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]

@@ -213,6 +213,12 @@ fn func_decl(p: &mut Parser, m: Marker) {
     p.bump(T![analog]);
     p.bump(T![function]);
     eat_ty(p);
+    // Optional array return dimensions `analog function real[0:n] f;` (Enhancement-23): one
+    // `[msb:lsb]` clause per dimension, before the function name, mirroring an array variable's
+    // range-then-name form. The function then returns a whole array.
+    while p.at(T!['[']) {
+        width_range(p);
+    }
     name_r(p, TokenSet::unique(T![;]));
     p.expect(T![;]);
 

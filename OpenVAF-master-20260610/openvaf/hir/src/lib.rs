@@ -242,6 +242,23 @@ impl Function {
     pub fn body(&self, db: &CompilationDB) -> Body {
         Body::new(self.id.into(), db)
     }
+
+    /// `true` if this function returns a whole array (`analog function real[0:n] f;`,
+    /// Enhancement-23).
+    pub fn returns_array(self, db: &CompilationDB) -> bool {
+        db.function_data(self.id).ret_len.is_some()
+    }
+
+    /// For an array-returning function (Enhancement-23): the return array's element variables
+    /// (`f[0]`, `f[1]`, ...) in declaration order — the body writes these, and the caller copies
+    /// them into the destination array. Empty for a scalar-returning function.
+    pub fn return_array_elems(self, db: &CompilationDB) -> Vec<Variable> {
+        let base = db.function_data(self.id).name.clone();
+        hir_def::function_array_arg_vars(db.upcast(), self.id, &base)
+            .into_iter()
+            .map(|id| Variable { id })
+            .collect()
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
