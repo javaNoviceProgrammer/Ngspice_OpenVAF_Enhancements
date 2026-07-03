@@ -140,8 +140,16 @@ jobs:
           mkdir -p "out/bin/${{ matrix.bin }}"
           cp "$OPENVAF_DIR/target/release/openvaf-r" "out/bin/${{ matrix.bin }}/"
           cp "$NGSPICE_DIR/ci-build/src/ngspice"     "out/bin/${{ matrix.bin }}/"
+          # Strip debug symbols before committing. Unstripped, openvaf-r carries
+          # ~90 MB of embedded DWARF on Linux (~100 MB total), which exceeds
+          # GitHub's 100 MB hard file-size limit and gets the whole binary-commit
+          # push rejected by the pre-receive hook. Stripped it is ~10-15 MB.
+          # (macOS needs -x to strip an executable's local symbols in place.)
+          if [ "${{ runner.os }}" = "macOS" ]; then STRIP_ARGS="-x"; else STRIP_ARGS=""; fi
+          strip $STRIP_ARGS "out/bin/${{ matrix.bin }}/openvaf-r" || true
+          strip $STRIP_ARGS "out/bin/${{ matrix.bin }}/ngspice"   || true
           chmod +x "out/bin/${{ matrix.bin }}/"*
-          ls -l "out/bin/${{ matrix.bin }}/"
+          ls -lh "out/bin/${{ matrix.bin }}/"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v5
