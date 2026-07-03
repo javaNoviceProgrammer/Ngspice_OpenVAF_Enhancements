@@ -17,7 +17,7 @@ Main goals:
 
 - Verified for DC, AC, and Transient analysis
 - Verified for both SPARSE and KLU solvers
-- Details: [Enhancement-1.md](Enhancement-1.md)
+- Details: [Enhancement-1.md](enhancements_doc/Enhancement-1.md)
 
 **KLU vs SPARSE benchmark** (DC / AC / Transient across circuit sizes):
 
@@ -31,7 +31,7 @@ Main goals:
 
 - Verified for DC, AC, and Transient analysis (unity-gain buffer built from the ideal op-amp)
 - Verified for no regressions against the Enhancement-1 `absdelay` examples
-- Details: [Enhancement-2.md](Enhancement-2.md)
+- Details: [Enhancement-2.md](enhancements_doc/Enhancement-2.md)
 
 **DC / AC / Transient results** for the ideal op-amp unity-gain buffer:
 
@@ -49,7 +49,7 @@ Main goals:
 
 - Verified for DC, AC, and Transient analysis (a 4-tap fractional buffer driven through a `[0:3]` bus output port)
 - Verified for no regressions against the Enhancement-1 `absdelay` and Enhancement-2 indirect-branch-assignment examples
-- Details: [Enhancement-3.md](Enhancement-3.md)
+- Details: [Enhancement-3.md](enhancements_doc/Enhancement-3.md)
 
 **DC / AC / Transient results** for the 4-tap bus-output buffer:
 
@@ -70,7 +70,7 @@ Main goals:
 - Verified array-variable declare/write/read end-to-end with a 5-tap weighted-sum model
 - Verified for no regressions against the Enhancement-1/2/3 examples
 - Verified against a **real 5th-order analog Bessel low-pass filter**, cross-checked against the identical transfer function's analytical response computed independently in Python (`scipy.signal`) — numerical-noise-level agreement (max AC gain error 5.6e-7 dB, max phase error 7.2e-7°, max step-response error 6.6e-6 V). This also surfaced (and fixed) a compiler crash on large bare-integer-shaped literals.
-- Details: [Enhancement-4.md](Enhancement-4.md)
+- Details: [Enhancement-4.md](enhancements_doc/Enhancement-4.md)
 
 **DC / AC / Transient results** for the Laplace low-pass filter:
 
@@ -99,7 +99,7 @@ Main goals:
 - Verified for DC, AC, and Transient analysis on a hierarchical resistor network (nested instantiation, both override forms, an instance array) — matches an independent analytical resistor-network computation to ~1e-9 (solver precision)
 - Verified a module that both instantiates sub-modules *and* has its own directly-written `analog` block — the inlined instance equations and the module's own contribution combine correctly under all three analyses
 - Verified for no regressions against the Enhancement-1/2/3/4 examples
-- Details: [Enhancement-5.md](Enhancement-5.md)
+- Details: [Enhancement-5.md](enhancements_doc/Enhancement-5.md)
 
 **DC / AC / Transient results** for the hierarchical resistor-divider network:
 
@@ -121,7 +121,7 @@ Main goals:
 - `last_crossing()`: transient output steps to the correct crossing times (e.g. `1.0000148e-5` vs theoretical `1.0e-5`, 0.015% error) on a 100kHz sine wave — two real bugs (an `int`/`real` cast bug and a shared-timeline initialization bug) were found only by testing against actual simulation, both compiled cleanly and were only visible at runtime
 - Verified for no regressions against the full existing test suite — bit-exact/floating-point-noise-level unchanged DC, AC, and transient results
 - Deferred: `cross()`/`above()`/`timer()` need new `@()` event-control grammar (not just an OSDI extension), and `generate`/`genvar` blocks are unimplemented — both out of scope here, noted as follow-up work
-- Details: [Enhancement-6.md](Enhancement-6.md)
+- Details: [Enhancement-6.md](enhancements_doc/Enhancement-6.md)
 
 **AC response** for the `zi_nd()` z-domain lowpass filter (bilinear-transform realization):
 
@@ -149,7 +149,7 @@ Main goals:
 - Verified for no regressions against the full existing test suite — bit-exact/floating-point-noise-level unchanged DC, AC, and transient results
 - Known limitation (documented, not fixed): an *explicit* `@(initial_step)` statement that writes to a variable can crash the compiler — narrow edge case, redundant now that plain declared initializers get correct once-only gating automatically
 - Deferred to Enhancement 8: `cross()`/`above()`/`timer()` event operators and `generate`/`genvar` blocks — both remain fully unimplemented
-- Details: [Enhancement-7.md](Enhancement-7.md)
+- Details: [Enhancement-7.md](enhancements_doc/Enhancement-7.md)
 
 **Transient result** for the variable-persistence fix — a self-referential accumulator with genuine, sustained persistence across timepoints:
 
@@ -169,7 +169,7 @@ Verifying the event functions' primary real-world use case — accumulating a pe
 - `cross()`/`above()`/`timer()`: verified via `--dump-unopt-mir` (genuine conditional branches on the edge-detection condition, not dead code) and real ngspice DC/AC/transient runs — see `examples/cross_examples/`, `examples/timer_examples/`
 - All three event functions now demonstrate genuine persistent-counter accumulation across firings (not just `$strobe` reporting), confirming the compiler-bug chain above is fully fixed
 - Verified for no regressions against the full existing test suite — bit-exact/floating-point-noise-level unchanged DC, AC, and transient results
-- Details: [Enhancement-8.md](Enhancement-8.md)
+- Details: [Enhancement-8.md](enhancements_doc/Enhancement-8.md)
 
 **DC sweep** for `generate for`-built vs. hand-written resistor ladders (bit-exact match):
 
@@ -212,7 +212,7 @@ Several unrelated language gaps found along the way are also fixed. **`localpara
 - `noise_table`/`noise_table_log`: verified against closed-form analytics through ngspice `.noise` analysis (interpolated power spectral density matches to floating-point-noise level), alongside `white_noise`/`flicker_noise` — see `examples/noise_examples/`
 - `localparam`, `ground`, `string` variables, `repeat`, `disable`: each verified end-to-end through ngspice — see `examples/localparam_examples/`, `examples/ground_examples/`, `examples/vartype_examples/`, `examples/repeat_examples/`, `examples/disable_examples/`
 - Verified for no regressions against the full existing test suite and every prior example folder (clean release build of `openvaf-r` + `ngspice`, compile + simulate, with bit-exact reproduction of committed results)
-- Details: [Enhancement-9.md](Enhancement-9.md)
+- Details: [Enhancement-9.md](enhancements_doc/Enhancement-9.md)
 
 **Noise spectral densities** for `white_noise`, `flicker_noise`, `noise_table`, and `noise_table_log`, each vs. its closed-form analytical prediction:
 
@@ -228,7 +228,7 @@ Several unrelated language gaps found along the way are also fixed. **`localpara
 
 - Every distribution verified against its closed-form moments (mean/variance) over thousands of instances, plus reproducibility, stream independence, and `$random` integrality — see `examples/rng_examples/` (`verify_rng.py`, 24/24)
 - DC/AC/transient Monte-Carlo demo: an RC filter whose gain/R/C are perturbed by `$rdist_normal`, with plots
-- Details: [Enhancement-10.md](Enhancement-10.md)
+- Details: [Enhancement-10.md](enhancements_doc/Enhancement-10.md)
 
 ---
 
@@ -238,7 +238,7 @@ Several unrelated language gaps found along the way are also fixed. **`localpara
 
 - File output verified end-to-end — a parameter/`I=V/R`-table export exercising `%g`/`%d`/`%h`/`%s`, newline-less `$fwrite`, `$ftell`, and a `$rewind`/`$fseek` overwrite — see `examples/fileio_examples/` (9/9)
 - String/reading verified — `$sformat`/`$swrite`, `$sscanf`, file round-trips via `$fgets`/`$fscanf`, and `$ferror` — see `examples/stringio_examples/` (6/6)
-- Details: [Enhancement-11.md](Enhancement-11.md)
+- Details: [Enhancement-11.md](enhancements_doc/Enhancement-11.md)
 
 ---
 
@@ -247,7 +247,7 @@ Several unrelated language gaps found along the way are also fixed. **`localpara
 *July 2026* — Implements the **last** previously-unsupported system functions — **`$simprobe`**, **`$analog_node_alias`/`$analog_port_alias`**, and **`$test$plusargs`/`$value$plusargs`** — so `hir_def::is_unsupported()` is now empty (every Verilog-AMS system function compiles). None of these has an underlying mechanism in the OSDI/ngspice target (no command-line plusargs, no generic simulator probe, no runtime hierarchical node aliasing), so each lowers to its LRM "mechanism-unavailable" fallback as a compile-time constant (`false` / `0` / the supplied default). A model that uses them now compiles and runs predictably instead of being rejected — with **no runtime callback and no `ngspice` change**.
 
 - Each function verified to return its documented fallback (including `$simprobe` returning a supplied default) — see `examples/alias_examples/` (6/6)
-- Details: [Enhancement-12.md](Enhancement-12.md)
+- Details: [Enhancement-12.md](enhancements_doc/Enhancement-12.md)
 
 ---
 
@@ -256,7 +256,7 @@ Several unrelated language gaps found along the way are also fixed. **`localpara
 *July 2026* — Investigated the `limexp()` limited exponential. The existing **stateless** implementation — `exp(x)` below `ln(1e30)`, continued along its tangent above to bound the derivative and prevent overflow — is exact and correct in every analysis, and is **kept, unchanged**. A stateful prev-iteration step-limiting version was implemented and then **reverted**: it produces wrong DC values, because keeping the converged value correct *while* limiting requires SPICE's limiting-RHS correction, and OpenVAF only applies that to circuit *unknowns* — not to `limexp`'s derived argument (e.g. `V/Vt`). This enhancement documents the decision (with the failing evidence) so it isn't re-attempted.
 
 - Along the way, the already-supported **`ddx()`** symbolic-derivative operator was demonstrated across DC/AC/transient: a nonlinear resistor exports its `ddx`-computed conductance, which matches the closed-form derivative exactly and governs the small-signal AC response — see `examples/ddx_examples/`
-- Details: [Enhancement-13.md](Enhancement-13.md)
+- Details: [Enhancement-13.md](enhancements_doc/Enhancement-13.md)
 
 ---
 
@@ -266,7 +266,7 @@ Several unrelated language gaps found along the way are also fixed. **`localpara
 
 - Fixed a pre-existing infinite-loop bug in `Type::base_type` (it looped on `self` instead of the cursor) that hung the compiler on any array type check — e.g. assigning an array literal to a scalar; such mismatches now report a clean diagnostic
 - Verified end-to-end through ngspice — array-parameter defaults, full and partial per-element override, aggregate assignment, copy, and dynamic read/write all match their closed-form values — see `examples/array_examples/`
-- Details: [Enhancement-14.md](Enhancement-14.md)
+- Details: [Enhancement-14.md](enhancements_doc/Enhancement-14.md)
 
 ---
 
@@ -276,7 +276,7 @@ Several unrelated language gaps found along the way are also fixed. **`localpara
 
 - The bit-select representation became multi-index (`m[i][j]` carries all its `[..]` clauses) and array declarations carry a per-dimension size list, while all existing 1-D net/array code stayed unchanged
 - Verified end-to-end through ngspice — 2-D parameter defaults, per-element 2-D override, nested-literal aggregate assignment, and dynamic 2-D read/write — see `examples/mdarray_examples/`; every prior example (including 1-D arrays, vectored nets, and `generate`) still passes
-- Details: [Enhancement-15.md](Enhancement-15.md)
+- Details: [Enhancement-15.md](enhancements_doc/Enhancement-15.md)
 
 ---
 
@@ -286,7 +286,7 @@ Several unrelated language gaps found along the way are also fixed. **`localpara
 
 - Verified end-to-end across **DC, AC and transient**: a transfer table interpolates bit-exactly; a file-based nonlinear resistor converges to the analytic nonlinear DC operating point (~5e-10 V); its AC small-signal conductance equals the analytic table slope (~1e-18 S); and its transient output tracks the table instantaneously — see `examples/table_model_examples/` (with DC/AC/transient PNG plots)
 - Scope is 1-D linear interpolation; multi-dimensional tables and higher-degree (spline) interpolation are the natural follow-up (as 1-D arrays in Enhancement 14 were extended to N-D in Enhancement 15)
-- Details: [Enhancement-16.md](Enhancement-16.md)
+- Details: [Enhancement-16.md](enhancements_doc/Enhancement-16.md)
 
 ---
 
@@ -296,7 +296,7 @@ Several unrelated language gaps found along the way are also fixed. **`localpara
 
 - Verified end-to-end through ngspice with a **table-based MOSFET** `I(Vgs, Vds)`: the drain current matches a bilinear reference to machine precision (~1e-19 A), and both `gm = dId/dVgs` and `gds = dId/dVds` match the surface partials (~1e-16 S) — so the 2-D Jacobian is exact. Bilinear reproduces `x·y` and trilinear reproduces `x·y·z` exactly; the 1-D case is unchanged — see `examples/mdtable_examples/` (with an I-V surface plot)
 - Multi-dimensional data comes from a self-describing grid file (`ndim`, axis sizes, axis coordinates, row-major values); supported dimensionality is 1-D/2-D/3-D, with higher-degree (spline) interpolation as future work
-- Details: [Enhancement-17.md](Enhancement-17.md)
+- Details: [Enhancement-17.md](enhancements_doc/Enhancement-17.md)
 
 ---
 
@@ -306,7 +306,7 @@ Several unrelated language gaps found along the way are also fixed. **`localpara
 
 - Verified end-to-end through ngspice — a polynomial stage `V(out) = 0.5·V(in) + 0.3·V(in)²` evaluated inside an array-argument function (Horner's rule, indexing the array argument with a loop variable): DC matches the closed form (~1e-16) and the AC gain matches `poly'(bias)` (~1e-16), i.e. the derivative flows through the array-argument function — see `examples/funcarray_examples/`
 - Array arguments are input-only (element pass-by-value); array `output` writeback and array return values remain future work
-- Details: [Enhancement-18.md](Enhancement-18.md)
+- Details: [Enhancement-18.md](enhancements_doc/Enhancement-18.md)
 
 ---
 
@@ -315,7 +315,7 @@ Several unrelated language gaps found along the way are also fixed. **`localpara
 *July 2026* — Implemented the Verilog-AMS **`do <statement> while (condition);`** loop, previously a parse error (`do` was lexed as an identifier). It is a **post-test** loop — the body runs once *before* the condition is first tested, so it always executes at least once — and completes OpenVAF's loop constructs (`for`, `while`, and `repeat` already worked). A new `do` keyword and `do-while` statement kind are threaded through the whole front-end (tokens → parser → AST → HIR → lowering); the lowering enters the body block unconditionally and tests the condition at the end of each iteration.
 
 - Verified end-to-end through ngspice — a `do` loop reports its iteration count as a gain; across the loop count `n` (overridden per `.model`) the count equals `max(n, 1)`, and in particular **`n = 0` still runs the body once**, the defining behaviour that distinguishes `do-while` from `while` — see `examples/dowhile_examples/`
-- Details: [Enhancement-19.md](Enhancement-19.md)
+- Details: [Enhancement-19.md](enhancements_doc/Enhancement-19.md)
 
 ---
 
@@ -325,7 +325,7 @@ Several unrelated language gaps found along the way are also fixed. **`localpara
 
 - Verified end-to-end through ngspice — `make_taps` fills a geometric tap array via an **output** array argument and `normalize` scales it in place via an **inout** array argument; the gain is the sum of the normalized taps, which is `1` for any `ratio` (swept, overridden per `.model`), so `V(out) = V(in)` — a value that holds only if *both* writebacks reach the caller's array — see `examples/arrayout_examples/`
 - The array passed to an `output`/`inout` argument must be a writable array **variable**; array **return values** (a function whose return type is an array) remain future work
-- Details: [Enhancement-20.md](Enhancement-20.md)
+- Details: [Enhancement-20.md](enhancements_doc/Enhancement-20.md)
 
 ---
 
@@ -335,7 +335,7 @@ Several unrelated language gaps found along the way are also fixed. **`localpara
 
 - Verified end-to-end through ngspice — one behavioural module `conductor = g0·(1 + k·V)` and three paramsets (`res_1k`, `res_kohm`, `varistor`): constant bindings and card-parameter-driven binding expressions take effect, an unbound parameter stays settable while a bound one is driven by the paramset, a **bound** parameter is **not** settable from the card, the derivative flows through the paramset (AC `gm = g0·(1+2·k·V)` is exact — the autodiff Jacobian runs on the shared body), and the base module still works independently — see `examples/paramset_examples/`
 - The target module must be declared in the same file; multiple same-named paramsets with instance-based *selection* (and `aliasparam`/statement selection) remain future work — each paramset maps to exactly one model
-- Details: [Enhancement-21.md](Enhancement-21.md)
+- Details: [Enhancement-21.md](enhancements_doc/Enhancement-21.md)
 
 ---
 
@@ -345,7 +345,7 @@ Several unrelated language gaps found along the way are also fixed. **`localpara
 
 - Verified end-to-end through ngspice, each check contrasting cubic with linear on the same data: cubic tracks `sin(V)` ~46× better than linear at off-grid points; across a grid node the cubic `gm` matches `|cos(V)|` on both sides (continuous) while the linear `gm` **jumps** ~10× more (a direct test that the autodiff Jacobian through the cubic MIR is continuous); a natural spline reproduces straight-line data exactly; and a 2-D tensor-product cubic reproduces `sin(x)·cos(y)` accurately — see `examples/cubic_table_examples/`
 - Natural boundary conditions only; a control code applies cubic to all axes (per-axis interpolation degree, and other end conditions, remain future work); the existing linear tables are unchanged
-- Details: [Enhancement-22.md](Enhancement-22.md)
+- Details: [Enhancement-22.md](enhancements_doc/Enhancement-22.md)
 
 ---
 
@@ -355,7 +355,7 @@ Several unrelated language gaps found along the way are also fixed. **`localpara
 
 - Verified end-to-end through ngspice — a cubic polynomial device `I = c0 + c1·V + c2·V² + c3·V³` built two ways: `polyret` (a function returns the power array `{1,V,V²,V³}`, summed at the call site) and `polyret_arg` (the returned array is fed straight into an array-**argument** function, composing E-23 with E-18). For both, across a bias sweep, the DC current matches the closed form (~1e-9) and the AC conductance matches the exact derivative `gm = c1 + 2·c2·V + 3·c3·V²` (~1e-9) — the Jacobian flows through the array return — see `examples/arrayret_examples/`
 - An array-returning call is only valid as the whole right-hand side of an array assignment (not a sub-expression); a length mismatch is a clean compile-time type error
-- Details: [Enhancement-23.md](Enhancement-23.md)
+- Details: [Enhancement-23.md](enhancements_doc/Enhancement-23.md)
 
 ---
 
@@ -365,7 +365,7 @@ Several unrelated language gaps found along the way are also fixed. **`localpara
 
 - Verified end-to-end through ngspice — a conductance switch (`I = g·V(a,b)`, `g` jumps at `V(a,b)=vth`) announces `$discontinuity(0)` while in the switched region: the same transient produces far more (finer) timepoints with the announcement on than off — i.e. the discontinuity actually limits the timestep — while the DC operating point is identical either way — see `examples/discontinuity_examples/` (with a timestep-refinement plot)
 - The degree `n` is treated uniformly (any n ≥ 0 ⇒ "limit the step here"); `$discontinuity` and `$bound_step` share the `bound_step` slot (a negative value is the discontinuity sentinel, a positive value an explicit bound); requires the accompanying ngspice build
-- Details: [Enhancement-24.md](Enhancement-24.md)
+- Details: [Enhancement-24.md](enhancements_doc/Enhancement-24.md)
 
 ---
 
@@ -375,7 +375,7 @@ Several unrelated language gaps found along the way are also fixed. **`localpara
 
 - Verified end-to-end through ngspice — a model that sets its conductance from `$simparam$str("analysis_name")` (read into a `string` variable and compared): `g_dc` in dc/op, `g_ac` in ac, `g_tran` in tran; running each analysis and checking the terminal current confirms the correct string is returned in each case (which never worked before) — see `examples/simparamstr_examples/`
 - Provides `"analysis_name"` and `"simulator"` (other string params such as `"cwd"` remain future work); an unknown name raises a fatal "unknown $simparam_str"; requires the accompanying ngspice build
-- Details: [Enhancement-25.md](Enhancement-25.md)
+- Details: [Enhancement-25.md](enhancements_doc/Enhancement-25.md)
 
 ---
 
@@ -385,7 +385,7 @@ Several unrelated language gaps found along the way are also fixed. **`localpara
 
 - Verified end-to-end through ngspice — the model compiles (it previously crashed `openvaf-r`), and DC/transient currents equal `g·V(a,b)` and are identical with the `ac_stim` terms included vs excluded, i.e. `ac_stim` correctly contributes 0 in the large-signal domain — see `examples/acstim_examples/`
 - **Scope:** this is the baseline (crash fix + correct large-signal value). The actual small-signal **AC injection** (`ac_stim` contributing `mag∠phase` to the AC right-hand side) is a separate, ABI-touching subsystem — parallel to the noise path (new OSDI AC-RHS mechanism + ngspice complex-RHS stamping) — deferred to a dedicated follow-up
-- Details: [Enhancement-26.md](Enhancement-26.md)
+- Details: [Enhancement-26.md](enhancements_doc/Enhancement-26.md)
 
 ---
 
@@ -395,7 +395,7 @@ Several unrelated language gaps found along the way are also fixed. **`localpara
 
 - Verified end-to-end through ngspice — a VCO (a modulo-1 phase driving `sin(2π·phase)`) tracks `sin(2π·freq·t)` to ~1e-4 across three periods (it used to freeze after one), and a sawtooth `idtmod(1, 0, 2, off)` wraps correctly into `[off, off+2)` for both `off=0` and `off=5` (~1e-16), exercising the fixed offset argument — see `examples/idtmod_examples/`
 - Plain `idt` (no modulus) is unchanged and still exact; the DAE state integrates unbounded, so over very long runs (many millions of wraps) the wrapped output loses a little floating-point resolution — a bounded-state modulo integrator would need simulator-side breakpoint support OSDI does not expose, but the unbounded-state form is correct and no longer diverges
-- Details: [Enhancement-27.md](Enhancement-27.md)
+- Details: [Enhancement-27.md](enhancements_doc/Enhancement-27.md)
 
 ---
 
