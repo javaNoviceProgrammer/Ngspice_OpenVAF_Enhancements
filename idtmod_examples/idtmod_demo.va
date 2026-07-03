@@ -1,0 +1,37 @@
+`include "disciplines.vams"
+
+// Enhancement-27 demonstration: `idtmod(...)` (modulo time-integration).
+//
+// `idtmod(expr, ic, modulus[, offset])` integrates `expr` and returns the result
+// wrapped into `[offset, offset+modulus)` -- the standard VCO/PLL phase integrator.
+//
+// Previously the modulo wrap was broken: the integral tracked correctly for the
+// first period, but at the first wrap the DAE integrator's reactive residual was
+// forced to zero (while its previous value was ~modulus), so the trapezoidal d/dt
+// term exploded -- the state got stuck (VCO froze at ~0.297) or diverged (sawtooth
+// shot to ~-799). The offset form was also broken (it read the modulus as the
+// offset). Enhancement-27 integrates the DAE state *unbounded* (smooth, no
+// discontinuity) and wraps only the returned value, and fixes the offset argument.
+
+// A voltage-controlled oscillator: a modulo-1 phase drives a sine.
+module vco(out, gnd);
+    inout out, gnd;
+    electrical out, gnd;
+    parameter real freq = 1.0;
+    real phase;
+    analog begin
+        phase = idtmod(freq, 0.0, 1.0);            // phase in [0, 1)
+        V(out, gnd) <+ sin(6.283185307179586 * phase);   // -> sin(2*pi*freq*t)
+    end
+endmodule
+
+// A raw sawtooth with an offset, to check the wrapped range directly.
+module saw(out, gnd);
+    inout out, gnd;
+    electrical out, gnd;
+    parameter real rate = 1.0;
+    parameter real modu = 2.0;
+    parameter real off  = 0.0;
+    analog
+        V(out, gnd) <+ idtmod(rate, 0.0, modu, off);     // sawtooth in [off, off+modu)
+endmodule

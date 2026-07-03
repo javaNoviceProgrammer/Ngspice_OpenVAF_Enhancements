@@ -172,5 +172,9 @@ simparamstr_examples/*.txt
 acstim_examples/_*.cir
 acstim_examples/*.txt
 
+# Enhancement 27 idtmod example scripts: temp netlists + outputs
+idtmod_examples/_*.cir
+idtmod_examples/*.txt
+
 # Python bytecode cache (e.g. from importing _setup.py)
 __pycache__/

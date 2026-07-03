@@ -2049,34 +2049,14 @@ impl BodyLoweringCtx<'_, '_, '_> {
 
             self.lower_multi_select(enable_integral, |mut ctx, branch| {
                 if branch {
-                    if kind.has_modulus() {
-                        let modulus = ctx.lower_expr(args[2]);
-                        let (min, max) = if kind.has_offset() {
-                            let offset = ctx.lower_expr(args[2]);
-                            (offset, ctx.ctx.ins().fadd(offset, modulus))
-                        } else {
-                            (F_ZERO, modulus)
-                        };
-                        let too_large = ctx.ctx.ins().fgt(val, max);
-                        ctx.lower_multi_select(too_large, |mut ctx, too_large| {
-                            if too_large {
-                                [ctx.ctx.ins().fsub(val, min), F_ZERO]
-                            } else {
-                                let too_small = ctx.ctx.ins().flt(val, min);
-                                ctx.lower_multi_select(too_small, |mut ctx, too_small| {
-                                    if too_small {
-                                        [ctx.ctx.ins().fsub(val, min), F_ZERO]
-                                    } else {
-                                        let arg = ctx.lower_expr(args[0]);
-                                        [ctx.ctx.ins().fneg(arg), val]
-                                    }
-                                })
-                            }
-                        })
-                    } else {
-                        let arg = ctx.lower_expr(args[0]);
-                        [ctx.ctx.ins().fneg(arg), val]
-                    }
+                    // Enhancement-27: always integrate the DAE state UNBOUNDED here. For `idtmod`
+                    // the modulo wrap is applied to the *returned value* (below), not to the state.
+                    // Wrapping the state inside the residual makes the reactive residual jump by
+                    // `modulus` at each wrap, so the transient integrator's d/dt term (which uses the
+                    // previous reactive residual, ~modulus) blows up -- the wrap diverged before this
+                    // fix (integrator got stuck / shot to ~q/dt).
+                    let arg = ctx.lower_expr(args[0]);
+                    [ctx.ctx.ins().fneg(arg), val]
                 } else {
                     let ic = ctx.lower_expr(args[1]);
                     [ctx.ctx.ins().fsub(val, ic), F_ZERO]
@@ -2090,7 +2070,23 @@ impl BodyLoweringCtx<'_, '_, '_> {
         self.ctx.def_resist_residual(residual[0], equation);
         self.ctx.def_react_residual(residual[1], equation);
 
-        val
+        // Enhancement-27: `idtmod` returns the (unbounded) integral wrapped into
+        // `[offset, offset+modulus)`:  offset + floor_mod(val - offset, modulus), where
+        // floor_mod(x, m) = x - m*floor(x/m) stays in `[0, m)` even for negative x. The DAE
+        // *state* keeps integrating smoothly (above); only this returned value wraps. Also fixes
+        // the offset argument, which previously read `args[2]` (the modulus) instead of `args[3]`.
+        if kind.has_modulus() {
+            let modulus = self.lower_expr(args[2]);
+            let offset = if kind.has_offset() { self.lower_expr(args[3]) } else { F_ZERO };
+            let shifted = self.ctx.ins().fsub(val, offset);
+            let quot = self.ctx.ins().fdiv(shifted, modulus);
+            let whole = self.ctx.ins().floor(quot);
+            let whole_mod = self.ctx.ins().fmul(whole, modulus);
+            let rem = self.ctx.ins().fsub(shifted, whole_mod);
+            self.ctx.ins().fadd(rem, offset)
+        } else {
+            val
+        }
     }
 
     pub fn resolved_ty(&self, expr: ExprId) -> Type {
