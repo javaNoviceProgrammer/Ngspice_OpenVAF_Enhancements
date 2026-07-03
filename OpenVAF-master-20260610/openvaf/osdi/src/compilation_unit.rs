@@ -3,7 +3,7 @@ use std::ptr::NonNull;
 
 use hir::CompilationDB;
 use hir_lower::fmt::{DisplayKind, FmtArg, FmtArgKind};
-use hir_lower::{CallBackKind, HirInterner, RetFlag};
+use hir_lower::{CallBackKind, HirInterner, PrintDst, RetFlag};
 use lasso::Rodeo;
 use llvm_sys::core::{
     LLVMAddIncoming, LLVMAppendBasicBlockInContext, LLVMBuildAdd, LLVMBuildArrayMalloc,
@@ -254,8 +254,8 @@ pub fn general_callbacks<'ll>(
                 | CallBackKind::FlickerNoise { .. }
                 | CallBackKind::TimeDerivative => return None,
 
-                CallBackKind::Print { kind, arg_tys } => {
-                    let (fun, fun_ty) = print_callback(builder.cx, *kind, arg_tys);
+                CallBackKind::Print { kind, arg_tys, dst } => {
+                    let (fun, fun_ty) = print_callback(builder.cx, *kind, arg_tys, *dst);
                     CallbackFun::Prebuilt(BuiltCallbackFun {
                         fun_ty,
                         fun,
@@ -290,6 +290,105 @@ pub fn general_callbacks<'ll>(
                         fun_ty,
                         fun,
                         state: Box::new([ret_flags]),
+                        num_state: 0,
+                    })
+                }
+                // Enhancement-11: `$fopen(name, mode) -> int` via the runtime
+                // descriptor table. Both string arguments are pointers.
+                CallBackKind::Fopen => {
+                    let fun = builder
+                        .cx
+                        .get_func_by_name("osdi_fopen")
+                        .expect("stdlib function osdi_fopen is missing");
+                    let fun_ty = builder.cx.ty_func(&[ptr_ty, ptr_ty], builder.cx.ty_int());
+                    CallbackFun::Prebuilt(BuiltCallbackFun {
+                        fun_ty,
+                        fun,
+                        state: Box::new([]),
+                        num_state: 0,
+                    })
+                }
+                // Enhancement-11: `$fclose`/`$feof`/`$ftell`/`$rewind`/`$fseek`/
+                // `$fflush`. Integer args in, integer status/result out.
+                CallBackKind::FileOp(op) => {
+                    let name = op.stdlib_name();
+                    let fun = builder
+                        .cx
+                        .get_func_by_name(name)
+                        .unwrap_or_else(|| panic!("stdlib function {name} is missing"));
+                    let arg_tys: Vec<_> =
+                        iter::repeat(builder.cx.ty_int()).take(op.num_args() as usize).collect();
+                    let fun_ty = builder.cx.ty_func(&arg_tys, builder.cx.ty_int());
+                    CallbackFun::Prebuilt(BuiltCallbackFun {
+                        fun_ty,
+                        fun,
+                        state: Box::new([]),
+                        num_state: 0,
+                    })
+                }
+                // Enhancement-11: string-formatting / file-reading runtime
+                // helpers. Each is a plain `osdi_*` stdlib function with no
+                // prepended state; only the argument/return types differ.
+                CallBackKind::ScanBegin
+                | CallBackKind::Scan(_)
+                | CallBackKind::ScanCount
+                | CallBackKind::Fgets
+                | CallBackKind::StrLen
+                | CallBackKind::FerrorMsg
+                | CallBackKind::FerrorCode => {
+                    let cx = builder.cx;
+                    let int = cx.ty_int();
+                    let dbl = cx.ty_double();
+                    let (name, arg_tys, ret): (&str, Vec<_>, _) = match call {
+                        CallBackKind::ScanBegin => ("osdi_scanf_begin", vec![ptr_ty], cx.ty_void()),
+                        CallBackKind::Scan(hir_lower::ScanKind::Int) => {
+                            ("osdi_scan_int", vec![], int)
+                        }
+                        CallBackKind::Scan(hir_lower::ScanKind::Real) => {
+                            ("osdi_scan_real", vec![], dbl)
+                        }
+                        CallBackKind::Scan(hir_lower::ScanKind::Str) => {
+                            ("osdi_scan_str", vec![], ptr_ty)
+                        }
+                        CallBackKind::ScanCount => ("osdi_scanf_count", vec![], int),
+                        CallBackKind::Fgets => ("osdi_fgets", vec![int], ptr_ty),
+                        CallBackKind::StrLen => ("osdi_strlen", vec![ptr_ty], int),
+                        CallBackKind::FerrorMsg => ("osdi_ferror_msg", vec![int], ptr_ty),
+                        CallBackKind::FerrorCode => ("osdi_ferror_code", vec![int], int),
+                        _ => unreachable!(),
+                    };
+                    let fun = cx
+                        .get_func_by_name(name)
+                        .unwrap_or_else(|| panic!("stdlib function {name} is missing"));
+                    let fun_ty = cx.ty_func(&arg_tys, ret);
+                    CallbackFun::Prebuilt(BuiltCallbackFun {
+                        fun_ty,
+                        fun,
+                        state: Box::new([]),
+                        num_state: 0,
+                    })
+                }
+                // Enhancement-10: `$random`/`$dist_*`/`$rdist_*`. Each `RngFun`
+                // resolves to a pure `osdi_rng_*` runtime function taking
+                // `(int seed, int salt, double params...)` and returning a
+                // `double`. No prepended state -- the salt is passed as a normal
+                // call argument by the lowering.
+                CallBackKind::Rng(rng_fun) => {
+                    let name = rng_fun.stdlib_name();
+                    let fun = builder
+                        .cx
+                        .get_func_by_name(name)
+                        .unwrap_or_else(|| panic!("stdlib function {name} is missing"));
+                    let mut arg_tys = vec![builder.cx.ty_int(), builder.cx.ty_int()];
+                    arg_tys.extend(
+                        iter::repeat(builder.cx.ty_double())
+                            .take(rng_fun.num_real_params() as usize),
+                    );
+                    let fun_ty = builder.cx.ty_func(&arg_tys, builder.cx.ty_double());
+                    CallbackFun::Prebuilt(BuiltCallbackFun {
+                        fun_ty,
+                        fun,
+                        state: Box::new([]),
                         num_state: 0,
                     })
                 }
@@ -334,10 +433,24 @@ fn print_callback<'ll>(
     cx: &CodegenCx<'_, 'll>,
     kind: hir_lower::fmt::DisplayKind,
     arg_tys: &[FmtArg],
+    dst: PrintDst,
 ) -> (&'ll llvm_sys::LLVMValue, &'ll llvm_sys::LLVMType) {
+    // Parameters: (handle, fmt_string, [fd if File], formatted args...). The
+    // file variant carries the integer descriptor right after the format string
+    // (Enhancement-11); the formatting body is otherwise identical to the
+    // console `$display` path -- only the final sink differs: `osdi_log`
+    // (Console), `osdi_fputs` (File), or returning the formatted `char*`
+    // (String, for `$swrite`/`$sformat`).
+    let to_file = dst == PrintDst::File;
     let mut args = vec![cx.ty_ptr(), cx.ty_ptr()];
+    if to_file {
+        args.push(cx.ty_int());
+    }
     args.extend(arg_tys.iter().map(|arg| lltype(&arg.ty, cx)));
-    let fun_ty = cx.ty_func(&args, cx.ty_void());
+    // Index of the first formatted-value parameter (after handle, fmt[, fd]).
+    let arg_base: u32 = if to_file { 3 } else { 2 };
+    let ret_ty = if dst == PrintDst::String { cx.ty_ptr() } else { cx.ty_void() };
+    let fun_ty = cx.ty_func(&args, ret_ty);
     let name = cx.local_callback_name();
     let fun = cx.declare_int_fn(&name, fun_ty);
 
@@ -375,6 +488,11 @@ fn print_callback<'ll>(
         LLVMPositionBuilderAtEnd(llbuilder, entry_bb);
         let handle = LLVMGetParam(NonNull::from(fun).as_ptr(), 0);
         let fmt_lit = LLVMGetParam(NonNull::from(fun).as_ptr(), 1);
+        // Capture the file descriptor (param 2) now, while `fun` still refers to
+        // this callback function -- further down `fun` is rebound to the
+        // `snprintf` intrinsic, so extracting it later would read snprintf's
+        // parameter instead. Only meaningful when `to_file`.
+        let file_fd = to_file.then(|| LLVMGetParam(NonNull::from(fun).as_ptr(), 2));
         let mut args = vec![
             cx.const_null_ptr(),
             cx.const_usize(0),
@@ -394,7 +512,7 @@ fn print_callback<'ll>(
         let mut free = Vec::new();
 
         for (i, arg) in arg_tys.iter().enumerate() {
-            let val = LLVMGetParam(NonNull::from(fun).as_ptr(), i as u32 + 2);
+            let val = LLVMGetParam(NonNull::from(fun).as_ptr(), i as u32 + arg_base);
             match arg.kind {
                 FmtArgKind::Binary => {
                     let mut val_array = [val];
@@ -565,26 +683,54 @@ fn print_callback<'ll>(
         let mut incoming_blocks = [write_bb, err_bb];
         LLVMAddIncoming(msg, incoming_values.as_mut_ptr(), incoming_blocks.as_mut_ptr(), 2);
 
-        let fun_ptr = cx.get_declared_value("osdi_log").expect("symbol osdi_log is missing");
-        let fun_ty = cx.ty_func(&[cx.ty_ptr(), cx.ty_ptr(), cx.ty_int()], cx.ty_void());
-        let fun = LLVMBuildLoad2(
-            llbuilder,
-            NonNull::from(cx.ty_ptr()).as_ptr(),
-            NonNull::from(fun_ptr).as_ptr(),
-            UNNAMED,
-        );
-
-        // Fix for LLVMBuildCall2
-        let mut args = [handle, msg, flags];
-        LLVMBuildCall2(
-            llbuilder,
-            NonNull::from(fun_ty).as_ptr(),
-            fun,
-            args.as_mut_ptr(),
-            3,
-            UNNAMED,
-        );
-        llvm_sys::core::LLVMBuildRetVoid(llbuilder);
+        match dst {
+            PrintDst::File => {
+                // Enhancement-11: route the formatted text to the descriptor
+                // (captured above) through the runtime file table.
+                let fd = file_fd.unwrap();
+                let fputs = cx
+                    .get_func_by_name("osdi_fputs")
+                    .expect("stdlib function osdi_fputs is missing");
+                let fputs_ty = cx.ty_func(&[cx.ty_int(), cx.ty_ptr()], cx.ty_void());
+                let mut args = [fd, msg];
+                LLVMBuildCall2(
+                    llbuilder,
+                    NonNull::from(fputs_ty).as_ptr(),
+                    NonNull::from(fputs).as_ptr(),
+                    args.as_mut_ptr(),
+                    2,
+                    UNNAMED,
+                );
+                llvm_sys::core::LLVMBuildRetVoid(llbuilder);
+            }
+            PrintDst::Console => {
+                let fun_ptr =
+                    cx.get_declared_value("osdi_log").expect("symbol osdi_log is missing");
+                let fun_ty = cx.ty_func(&[cx.ty_ptr(), cx.ty_ptr(), cx.ty_int()], cx.ty_void());
+                let fun = LLVMBuildLoad2(
+                    llbuilder,
+                    NonNull::from(cx.ty_ptr()).as_ptr(),
+                    NonNull::from(fun_ptr).as_ptr(),
+                    UNNAMED,
+                );
+                let mut args = [handle, msg, flags];
+                LLVMBuildCall2(
+                    llbuilder,
+                    NonNull::from(fun_ty).as_ptr(),
+                    fun,
+                    args.as_mut_ptr(),
+                    3,
+                    UNNAMED,
+                );
+                llvm_sys::core::LLVMBuildRetVoid(llbuilder);
+            }
+            PrintDst::String => {
+                // Enhancement-11 ($swrite/$sformat): return the freshly
+                // formatted string; the caller stores it into the destination
+                // string variable.
+                llvm_sys::core::LLVMBuildRet(llbuilder, msg);
+            }
+        }
         llvm_sys::core::LLVMDisposeBuilder(llbuilder);
     }
 

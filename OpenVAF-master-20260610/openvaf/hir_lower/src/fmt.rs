@@ -1,8 +1,8 @@
 use hir::{ExprId, Literal, Type};
-use mir::GRAVESTONE;
+use mir::{Value, GRAVESTONE};
 
 use crate::body::BodyLoweringCtx;
-use crate::callbacks::CallBackKind;
+use crate::callbacks::{CallBackKind, PrintDst};
 
 #[derive(Debug, Clone, Hash, Eq, PartialEq, Copy)]
 pub enum DisplayKind {
@@ -35,9 +35,30 @@ pub struct FmtArg {
 }
 
 impl BodyLoweringCtx<'_, '_, '_> {
-    pub fn ins_display(&mut self, kind: DisplayKind, newline: bool, args: &[ExprId]) {
+    /// Lowers a `$display`-family call. `dst` selects the sink:
+    /// - `Console`: prints to the simulator log (`fd` must be `None`).
+    /// - `File`: `$fdisplay`/`$fwrite`/... -- `fd` (`Some`) is passed as the
+    ///   second call argument (right after the format string).
+    /// - `String`: `$swrite`/`$sformat` -- the callback returns the freshly
+    ///   formatted string, which is returned here as `Some(value)` for the
+    ///   caller to store into the destination string variable.
+    ///
+    /// Returns the formatted string only for `PrintDst::String`.
+    pub fn ins_display(
+        &mut self,
+        kind: DisplayKind,
+        newline: bool,
+        args: &[ExprId],
+        dst: PrintDst,
+        fd: Option<Value>,
+    ) -> Option<Value> {
         let mut fmt_lit = String::new();
+        // call_args[0] is the format string (filled in at the end). For file
+        // variants call_args[1] is the descriptor; the formatted values follow.
         let mut call_args = vec![GRAVESTONE];
+        if let Some(fd) = fd {
+            call_args.push(fd);
+        }
         let mut arg_tys = Vec::new();
 
         let mut i = 0;
@@ -154,7 +175,13 @@ impl BodyLoweringCtx<'_, '_, '_> {
         }
 
         call_args[0] = self.ctx.sconst(&fmt_lit);
-        self.ctx
-            .call(CallBackKind::Print { kind, arg_tys: arg_tys.into_boxed_slice() }, &call_args);
+        let cb = CallBackKind::Print { kind, arg_tys: arg_tys.into_boxed_slice(), dst };
+        if dst == PrintDst::String {
+            // The callback returns the formatted string.
+            Some(self.ctx.call1(cb, &call_args))
+        } else {
+            self.ctx.call(cb, &call_args);
+            None
+        }
     }
 }

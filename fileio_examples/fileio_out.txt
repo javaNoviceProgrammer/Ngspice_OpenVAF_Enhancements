@@ -1,0 +1,12 @@
+# fileio_demo characterization report
+R = 1000 ohm
+G = 0.001 S
+npts=5  npts_hex=5  label=IV
+# V[V]	I[A]
+0	0
+0.5	0.0005
+1	0.001
+1.5	0.0015
+2	0.002
+checksum=5000
+bytes_before_this_line=160

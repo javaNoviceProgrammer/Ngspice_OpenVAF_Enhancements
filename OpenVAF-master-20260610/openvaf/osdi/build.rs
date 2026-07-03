@@ -1,7 +1,7 @@
 use std::env;
 use std::ffi::{OsStr, OsString};
 use std::fmt::Display;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use target::spec::get_targets;
 use xshell::{cmd, Shell};
@@ -19,7 +19,15 @@ fn main() {
     // populate dummies
     let no_gen = tracked_env_var_os("RUST_CHECK").is_some();
     let sh = Shell::new().unwrap();
-    let osdi_dir = stdx::project_root().join("openvaf").join("osdi");
+    // Use cargo's runtime `CARGO_MANIFEST_DIR` (this crate's directory) rather
+    // than `stdx::project_root()`: the latter bakes `CARGO_MANIFEST_DIR` at
+    // compile time of `stdx`, so a `target/` directory copied from another
+    // checkout (as the versionN workflow does) makes the build script read a
+    // *different* checkout's `stdlib.c`. `CARGO_MANIFEST_DIR` is set fresh per
+    // build-script invocation and always points at the crate being built.
+    let osdi_dir = PathBuf::from(
+        env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set by cargo"),
+    );
     let src_file = osdi_dir.join("stdlib.c");
 
     // Use clang from LLVM prefix environment variables (check newest first)

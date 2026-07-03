@@ -14,8 +14,9 @@ import subprocess
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-OPENVAF = os.path.join(HERE, "..", "OpenVAF-master", "target", "release", "openvaf-r")
-NGSPICE = os.path.join(HERE, "..", "ngspice-46", "build", "src", "ngspice")
+import sys
+sys.path.insert(0, os.path.dirname(HERE))  # repo root, for _setup.py
+from _setup import VAF as OPENVAF, NG as NGSPICE
 
 # The four accepted ground-declaration orderings (module name -> ground decl).
 FORMS = {

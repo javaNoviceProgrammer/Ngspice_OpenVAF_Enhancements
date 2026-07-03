@@ -181,45 +181,20 @@ impl BuiltIn {
             // regeneration of this file re-added the gate and silently shadowed
             // that working implementation; Enhancement-9 removes it again. Keep
             // them out of this list.
-            BuiltIn::simprobe
-            | BuiltIn::analog_node_alias
-            | BuiltIn::analog_port_alias
-            | BuiltIn::test_plusargs
-            | BuiltIn::value_plusargs
-            | BuiltIn::fclose
-            | BuiltIn::fopen
-            | BuiltIn::fdisplay
-            | BuiltIn::fwrite
-            | BuiltIn::fstrobe
-            | BuiltIn::fmonitor
-            | BuiltIn::fgets
-            | BuiltIn::fscanf
-            | BuiltIn::swrite
-            | BuiltIn::sformat
-            | BuiltIn::sscanf
-            | BuiltIn::rewind
-            | BuiltIn::fseek
-            | BuiltIn::ftell
-            | BuiltIn::fflush
-            | BuiltIn::ferror
-            | BuiltIn::feof
-            | BuiltIn::fdebug
-            | BuiltIn::dist_chi_square
-            | BuiltIn::dist_exponential
-            | BuiltIn::dist_poisson
-            | BuiltIn::dist_uniform
-            | BuiltIn::dist_erlang
-            | BuiltIn::dist_normal
-            | BuiltIn::dist_t
-            | BuiltIn::random
-            | BuiltIn::arandom
-            | BuiltIn::rdist_chi_square
-            | BuiltIn::rdist_exponential
-            | BuiltIn::rdist_poisson
-            | BuiltIn::rdist_uniform
-            | BuiltIn::rdist_erlang
-            | BuiltIn::rdist_normal
-            | BuiltIn::rdist_t => true,
+            // Enhancement-11 implements the file I/O and string-formatting
+            // functions ($fopen/.../$fscanf), so they are not listed here.
+            //
+            // Enhancement-12 handles the last group -- $simprobe, $analog_node_alias
+            // /$analog_port_alias and $test_plusargs/$value_plusargs -- as their
+            // LRM "mechanism-unavailable" fallbacks: the OSDI/ngspice target has
+            // no command-line plusargs, no generic simulator probe and no runtime
+            // hierarchical node aliasing, so these lower to well-defined
+            // constants (false / 0 / the supplied default) rather than erroring.
+            // See Enhancement-12.md. NOTE: the random/statistical-distribution
+            // functions ($random/$arandom/$dist_*/$rdist_*, Enhancement-10) are
+            // likewise not gated here.
+            //
+            // Nothing is currently gated as unsupported.
             _ => false,
         }
     }

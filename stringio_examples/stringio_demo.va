@@ -1,0 +1,68 @@
+// stringio_demo.va -- Enhancement-11 demo of the Verilog-AMS string-formatting
+// and file-reading system functions: $swrite, $sformat, $sscanf, $fgets,
+// $fscanf, $ferror (the counterparts to the Enhancement-11 file-output set).
+//
+// The module exercises each function and writes a report of the results to
+// `stringio_out.txt` (using the already-verified file-output path), which
+// `verify_stringio.py` checks. As with the file-output demo, everything here is
+// parameter/constant-derived so it runs once in the model's initialization
+// code. See Enhancement-11.md.
+//
+//   $sformat(dst, fmt, args)  -> format `args` by `fmt` into string `dst`
+//   $swrite(dst, args)        -> like $write, concatenated into string `dst`
+//   $sscanf(str, fmt, vars)   -> parse fields of `str` into `vars`; returns count
+//   $fgets(str, fd)           -> read a line into `str`; returns its length
+//   $fscanf(fd, fmt, vars)    -> parse a line from `fd` into `vars`; returns count
+//   $ferror(fd, str)          -> fill `str` with the error message; returns code
+`include "disciplines.vams"
+
+module stringio_demo(p, n);
+    inout p, n;
+    electrical p, n;
+
+    parameter real R = 1000.0 from (0:inf);
+
+    integer f, rf, iv, glen, iv2, nscan, nfscan, ecode;
+    real    rv, rv2;
+    string  smsg, wmsg, sv, line, emsg;
+
+    analog begin
+        I(p, n) <+ V(p, n) / R;
+
+        // --- $sformat / $swrite: format into a string variable -------------
+        $sformat(smsg, "R=%g G=%g", R, 1.0 / R);
+        $swrite(wmsg, "n=", 5, " ok");           // like $write -> "n= 5 ok"
+
+        // --- $sscanf: parse fields of a literal by target-variable type ----
+        nscan = $sscanf("42 3.14 hello", "%d %g %s", iv, rv, sv);
+
+        // --- $fgets round-trip: write a line, reopen for read, read it back -
+        rf = $fopen("rt.txt", "w");
+        $fwrite(rf, "line seven 7\n");
+        $fclose(rf);
+        rf   = $fopen("rt.txt", "r");
+        glen = $fgets(line, rf);                 // length incl. newline
+        $fclose(rf);
+
+        // --- $fscanf round-trip + $ferror ----------------------------------
+        rf = $fopen("rt2.txt", "w");
+        $fdisplay(rf, "99 2.5");
+        $fclose(rf);
+        rf     = $fopen("rt2.txt", "r");
+        nfscan = $fscanf(rf, "%d %g", iv2, rv2);
+        ecode  = $ferror(rf, emsg);              // no error -> 0, emsg = ""
+        $fclose(rf);
+
+        // --- Report (one fact per line for easy checking) ------------------
+        // `line` itself contains a trailing newline (as C fgets returns), so we
+        // report its length rather than embedding it.
+        f = $fopen("stringio_out.txt", "w");
+        $fdisplay(f, "sformat=[%s]", smsg);
+        $fdisplay(f, "swrite=[%s]", wmsg);
+        $fdisplay(f, "sscanf=%d %d %g [%s]", nscan, iv, rv, sv);
+        $fdisplay(f, "fgets=%d", glen);
+        $fdisplay(f, "fscanf=%d %d %g", nfscan, iv2, rv2);
+        $fdisplay(f, "ferror=%d [%s]", ecode, emsg);
+        $fclose(f);
+    end
+endmodule

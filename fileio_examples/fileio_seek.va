@@ -1,0 +1,23 @@
+// fileio_seek.va -- Enhancement-11 check of the file-positioning functions
+// $rewind and $fseek (whence 0 = SEEK_SET). Writes "0123456789", rewinds to
+// the start and overwrites "XY", then seeks to offset 5 and overwrites "**",
+// leaving "XY234**789".
+`include "disciplines.vams"
+
+module fileio_seek(p, n);
+    inout p, n;
+    electrical p, n;
+    parameter real R = 1000.0 from (0:inf);
+    integer f, rc;
+
+    analog begin
+        I(p, n) <+ V(p, n) / R;
+        f  = $fopen("seek_out.txt", "w");
+        $fwrite(f, "0123456789");
+        rc = $rewind(f);          // back to byte 0
+        $fwrite(f, "XY");         // -> XY23456789
+        rc = $fseek(f, 5, 0);     // SEEK_SET to byte 5
+        $fwrite(f, "**");         // -> XY234**789
+        $fclose(f);
+    end
+endmodule

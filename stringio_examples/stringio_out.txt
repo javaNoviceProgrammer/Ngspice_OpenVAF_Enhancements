@@ -1,0 +1,6 @@
+sformat=[R=1000 G=0.001]
+swrite=[n= 5 ok]
+sscanf=3 42 3.14 [hello]
+fgets=13
+fscanf=2 99 2.5
+ferror=0 []

@@ -1,0 +1,66 @@
+// rng_demo.va -- Enhancement-10 demo of the Verilog-AMS statistical /
+// random-number system functions ($random, $dist_*, $rdist_*).
+//
+// The module fixes V(p,n) to a single random draw whose distribution is
+// selected by the `dist` instance parameter. Because the draw is a pure,
+// deterministic function of the (seed, call-site) pair (see Enhancement-10.md),
+// each instance with a distinct `seed` produces an independent sample, and the
+// value is stable across the solver's iterations -- so a `.op` over many
+// instances yields one i.i.d. sample per instance, which `verify_rng.py`
+// checks against the closed-form distribution moments.
+//
+//   dist = 0 : $rdist_uniform(seed, p1, p2)        -- uniform on [p1, p2)
+//   dist = 1 : $rdist_normal(seed, p1, p2)         -- normal(mean=p1, sd=p2)
+//   dist = 2 : $rdist_exponential(seed, p1)        -- exponential(mean=p1)
+//   dist = 3 : $rdist_poisson(seed, p1)            -- poisson(mean=p1)
+//   dist = 4 : $rdist_chi_square(seed, k)          -- chi-square(dof=k)
+//   dist = 5 : $rdist_t(seed, k)                   -- student-t(dof=k)
+//   dist = 6 : $rdist_erlang(seed, k, p1)          -- erlang(shape=k, mean=p1)
+//   dist = 7 : $random(seed)                       -- signed 32-bit integer
+//   dist = 8 : $dist_uniform(seed, 0, k)   (int)   -- integer uniform [0, k]
+//   dist = 9 : $dist_normal(seed, k, 2)    (int)   -- integer-rounded normal
+`include "disciplines.vams"
+
+module rng_demo(p, n);
+    inout p, n;
+    electrical p, n;
+
+    parameter integer seed = 1;
+    parameter integer dist = 1;
+    parameter real    p1   = 0.0;
+    parameter real    p2   = 1.0;
+    parameter integer k    = 2;
+
+    integer s;
+    real    draw;
+
+    analog begin
+        // Copy the seed parameter into an integer variable so the call matches
+        // the `Var(Integer)` seed form uniformly across every distribution
+        // (notably `$random`, which has no const-seed signature).
+        s = seed;
+
+        if (dist == 0)
+            draw = $rdist_uniform(s, p1, p2);
+        else if (dist == 1)
+            draw = $rdist_normal(s, p1, p2);
+        else if (dist == 2)
+            draw = $rdist_exponential(s, p1);
+        else if (dist == 3)
+            draw = $rdist_poisson(s, p1);
+        else if (dist == 4)
+            draw = $rdist_chi_square(s, k);
+        else if (dist == 5)
+            draw = $rdist_t(s, k);
+        else if (dist == 6)
+            draw = $rdist_erlang(s, k, p1);
+        else if (dist == 7)
+            draw = $random(s);
+        else if (dist == 8)
+            draw = $dist_uniform(s, 0, k);
+        else
+            draw = $dist_normal(s, k, 2);
+
+        V(p, n) <+ draw;
+    end
+endmodule

@@ -1,0 +1,64 @@
+// fileio_demo.va -- Enhancement-11 demo of the Verilog-AMS file-output system
+// functions: $fopen, $fdisplay, $fwrite, $fstrobe, $ftell, $fflush, $fclose.
+//
+// The module is an ordinary linear resistor between (p, n) that also exports a
+// small *characterization report* -- its parameters and a computed I = V/R
+// table -- to a text file. Everything written depends only on parameters and
+// constants, so the whole file-I/O sequence is placed in the model's
+// initialization code and runs exactly ONCE per instance (see the note below),
+// producing a clean, deterministic file that `verify_fileio.py` checks against
+// the closed-form values.
+//
+// IMPORTANT -- what file I/O is for here: writes that depend only on parameters
+// / constants run once at initialization (ideal for dumping model tables and
+// parameters). Writes that depend on node voltages / the operating point are a
+// different matter: OpenVAF splits node-dependent code into the per-iteration
+// eval path, which would both run every Newton iteration and separate the
+// writes from this $fopen/$fclose pair -- so this demo deliberately exports
+// only parameter-derived data. See Enhancement-11.md.
+`include "disciplines.vams"
+
+module fileio_demo(p, n);
+    inout p, n;
+    electrical p, n;
+
+    parameter real    R      = 1000.0 from (0:inf);
+    parameter integer npts   = 5 from [1:inf);   // rows in the I-V table
+    parameter real    vmax   = 2.0;              // table sweeps V in [0, vmax]
+
+    integer f, k, nbytes;
+    real    vv;
+
+    analog begin
+        // The device itself: a plain resistor.
+        I(p, n) <+ V(p, n) / R;
+
+        // --- Characterization report -------------------------------------
+        f = $fopen("fileio_out.txt", "w");
+
+        // Header + parameters. Exercises %g (real), %d (int), %h (hex), %s.
+        $fdisplay(f, "# fileio_demo characterization report");
+        $fdisplay(f, "R = %g ohm", R);
+        $fdisplay(f, "G = %g S", 1.0 / R);
+        $fdisplay(f, "npts=%d  npts_hex=%h  label=%s", npts, npts, "IV");
+
+        // Computed I = V/R table (parameter-derived, so it stays in init).
+        $fdisplay(f, "# V[V]\tI[A]");
+        for (k = 0; k < npts; k = k + 1) begin
+            vv = (vmax * k) / (npts - 1);
+            $fdisplay(f, "%g\t%g", vv, vv / R);
+        end
+
+        // $fwrite writes with NO trailing newline: the two fragments join.
+        $fwrite(f, "checksum=");
+        $fwrite(f, "%g\n", R * npts);
+
+        // $ftell reports the current byte offset; $fstrobe behaves like
+        // $fdisplay. Flushing before close is optional (close flushes too).
+        nbytes = $ftell(f);
+        $fstrobe(f, "bytes_before_this_line=%d", nbytes);
+
+        $fflush(f);
+        $fclose(f);
+    end
+endmodule

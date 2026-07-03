@@ -1,0 +1,47 @@
+// ddx_demo.va -- demonstrate the ddx() symbolic-derivative operator across DC,
+// AC and transient analyses.
+//
+// The element is a nonlinear resistor between (p, n),
+//     id = Gbase*V(p,n) + Isat*tanh(V(p,n)/Vo),
+// in parallel with a linear capacitor Cpar. Its exact small-signal conductance
+// is the analytic derivative
+//     g(V) = d(id)/dV = Gbase + (Isat/Vo) * (1 - tanh(V/Vo)^2),
+// a conductance "bump" that peaks at V=0 (Gbase+Isat/Vo) and relaxes to the
+// well-conditioned floor Gbase as the tanh saturates.
+//
+// ddx() computes that conductance symbolically and exports it (scaled to
+// milli-siemens) as the voltage on the extra terminal `g`:
+//     V(g) [mS] = 1000 * ddx(id, V(p,n))
+//
+// plot_ddx.py then checks this against the closed form in DC (vs bias) and
+// transient (vs the instantaneous operating point), and shows it is exactly the
+// conductance governing the small-signal AC admittance (nonlinear R || C).
+//
+// NOTE: the ddx argument must be a genuine circuit unknown -- V(p,n) is driven
+// through a series resistor here, never a bare ideal source (which would fix it
+// and make the derivative w.r.t. a constant, i.e. 0). V(p,n) is the
+// potential-difference form (fully supported, flagged non-standard for
+// portability; the lint is allowed below).
+`include "disciplines.vams"
+
+(* openvaf_allow="non_standard_code" *)
+module ddx_demo(p, n, g);
+    inout p, n, g;
+    electrical p, n, g;
+
+    parameter real Gbase = 1.0e-3 from (0:inf);  // conductance floor [S]
+    parameter real Isat  = 1.0e-3 from (0:inf);  // tanh current scale [A]
+    parameter real Vo    = 1.0    from (0:inf);  // voltage scale [V]
+    parameter real Cpar  = 1.0e-6 from [0:inf);  // parallel capacitance [F]
+
+    real id;
+
+    analog begin
+        id = Gbase * V(p,n) + Isat * tanh(V(p,n) / Vo);
+        I(p,n) <+ id;                       // nonlinear resistor
+        I(p,n) <+ Cpar * ddt(V(p,n));       // parallel capacitor (matters for AC/tran)
+
+        // Export g = d(id)/dV(p,n) in mS as V(g) (1-ohm to ground + current src).
+        I(g) <+ V(g)/1.0 - 1000.0 * ddx(id, V(p,n));
+    end
+endmodule

@@ -1,0 +1,43 @@
+// rc_mc.va -- Enhancement-10 demo: a first-order RC low-pass with per-instance
+// process variation drawn from the new $rdist_normal(). Each instance's gain,
+// resistance and capacitance are randomized about their nominal values by an
+// independent gaussian, keyed by the `seed` parameter -- a textbook Monte-Carlo
+// device. Because each draw is a stable, reproducible function of (seed, call
+// site) (see Enhancement-10.md), the randomized element values are constant
+// throughout every analysis, so the *same* instance behaves consistently across
+// DC, AC and transient -- exactly what process/mismatch modelling needs.
+//
+//   mid = gain * V(in)                 (ideal gain stage)
+//   out : first-order RC low-pass from mid, cutoff 1/(2*pi*Reff*Ceff)
+//
+// DC : out = gain*in                       -> family of lines, random slopes
+// AC : |out/in| = gain / |1 + j w Reff Ceff| -> spread of Bode curves
+// TR : step response gain*(1 - exp(-t/Reff Ceff)) -> spread of settling curves
+`include "disciplines.vams"
+
+module rc_mc(in, out);
+    inout in, out;
+    electrical in, out;
+    electrical mid;                 // internal gain-stage output
+
+    parameter real    R0    = 1.0e3;    // nominal resistance [ohm]
+    parameter real    C0    = 1.0e-6;   // nominal capacitance [F]
+    parameter real    sigma = 0.15;     // fractional 1-sigma mismatch
+    parameter integer seed  = 1;        // Monte-Carlo stream selector
+
+    real Reff, Ceff, gain;
+
+    analog begin
+        // Three calls with the SAME seed draw three INDEPENDENT standard
+        // normals, thanks to the per-call-site salt (Enhancement-10). `max()`
+        // floors the element factors so a rare large draw can't make R/C
+        // non-positive.
+        gain = 1.0 + sigma * $rdist_normal(seed, 0.0, 1.0);
+        Reff = R0 * max(0.25, 1.0 + sigma * $rdist_normal(seed, 0.0, 1.0));
+        Ceff = C0 * max(0.25, 1.0 + sigma * $rdist_normal(seed, 0.0, 1.0));
+
+        V(mid)      <+ gain * V(in);                 // ideal gain stage
+        I(mid, out) <+ (V(mid) - V(out)) / Reff;     // series resistor
+        I(out)      <+ Ceff * ddt(V(out));           // capacitor to ground
+    end
+endmodule

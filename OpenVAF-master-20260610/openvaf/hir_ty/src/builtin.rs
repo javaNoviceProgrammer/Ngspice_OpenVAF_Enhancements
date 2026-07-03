@@ -407,6 +407,19 @@ const SFORMAT: BuiltinInfo = BuiltinInfo::varargs(
     &[SignatureData { args: Cow::Borrowed(&[Var(String), Val(String)]), return_ty: Type::Void }],
     true,
 );
+// Enhancement-11: `$fscanf(fd, fmt, args...)` and `$sscanf(str, fmt, args...)`
+// both RETURN the number of matched conversions (Integer, not the Void that the
+// shared FDISPLAY_FUN gave). `$fscanf`'s first arg is the integer descriptor;
+// `$sscanf`'s is the input string. The trailing in-out target arguments are
+// unconstrained varargs (they keep their `Var(..)` type for the lowering).
+const FSCANF_FUN: BuiltinInfo = BuiltinInfo::varargs(
+    &[SignatureData { args: Cow::Borrowed(&[Val(Integer)]), return_ty: Type::Integer }],
+    true,
+);
+const SSCANF_FUN: BuiltinInfo = BuiltinInfo::varargs(
+    &[SignatureData { args: Cow::Borrowed(&[Val(String)]), return_ty: Type::Integer }],
+    true,
+);
 const FATAL: BuiltinInfo = BuiltinInfo::varargs(
     &[SignatureData { args: Cow::Borrowed(&[Val(Integer)]), return_ty: Type::Void }],
     true,
@@ -474,8 +487,8 @@ copied_builtins! {
     FMONITOR = FDISPLAY_FUN
     FWRITE = FDISPLAY_FUN
     FDEBUG = FDISPLAY_FUN
-    SSCANF = FDISPLAY_FUN
-    FSCANF = FDISPLAY_FUN
+    SSCANF = SSCANF_FUN
+    FSCANF = FSCANF_FUN
 
     REWIND = BASIC_IO
     FEOF = BASIC_IO

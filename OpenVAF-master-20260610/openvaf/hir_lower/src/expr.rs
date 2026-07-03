@@ -22,8 +22,8 @@ use syntax::ast::{BinaryOp, UnaryOp};
 use crate::body::BodyLoweringCtx;
 use crate::fmt::DisplayKind;
 use crate::{
-    CallBackKind, CurrentKind, IdtKind, ImplicitEquationKind, NoiseTable, ParamKind, PlaceKind,
-    RetFlag,
+    CallBackKind, CurrentKind, FileOp, IdtKind, ImplicitEquationKind, NoiseTable, ParamKind,
+    PlaceKind, PrintDst, RetFlag, RngFun, ScanKind,
 };
 
 impl BodyLoweringCtx<'_, '_, '_> {
@@ -398,19 +398,31 @@ impl BodyLoweringCtx<'_, '_, '_> {
                 let arg0 = self.lower_expr(args[0]);
                 self.ctx.ins().cosh(arg0)
             }
-            // TODO implement limexp properly
             BuiltIn::exp => {
                 let arg0 = self.lower_expr(args[0]);
                 self.ctx.ins().exp(arg0)
             }
 
+            // `limexp` is implemented as a stateless cutoff-linearised exponential:
+            // exp(x) below `ln(1e30)`, continued along its tangent line above it so
+            // the value and derivative stay finite. This bounds the derivative and
+            // prevents overflow (the practical benefit of `limexp`) while keeping
+            // the value an exact function of the current argument.
+            //
+            // A *stateful* prev-iteration step-limiting version (pnjlim-style) was
+            // deliberately NOT adopted: to keep the converged value correct it needs
+            // SPICE's limiting-RHS correction (`lim_rhs = J(x_lim)(x_lim - x)`), and
+            // OpenVAF's `lim_rhs` (see `sim_back/dae/builder.rs`) only applies to
+            // values that are circuit *unknowns* -- `limexp`'s argument is a derived
+            // quantity (e.g. `V/Vt`), so the correction is skipped and the DC value
+            // comes out wrong (verified: a diode I-V sweep was incorrect at many
+            // bias points). Doing it correctly would require extending `lim_rhs` to
+            // limit derived arguments via the chain rule to the underlying unknowns.
             BuiltIn::limexp => {
                 let arg0 = self.lower_expr(args[0]);
-                // let (state, store) = self.stateful_callback(CallBackKind::StoreState);
                 let cut_off = self.ctx.fconst(1e30f64.ln());
                 let off = self.ctx.fconst(1e30f64);
 
-                // let change = self.ctx.ins().fsub(arg0, state);
                 let linearize = self.ctx.ins().fgt(arg0, cut_off);
                 self.ctx.make_select(linearize, |func, linearize| {
                     if linearize {
@@ -489,33 +501,139 @@ impl BodyLoweringCtx<'_, '_, '_> {
             }
 
             BuiltIn::write => {
-                self.ins_display(DisplayKind::Display, false, args);
+                self.ins_display(DisplayKind::Display, false, args, PrintDst::Console, None);
                 GRAVESTONE
             }
             BuiltIn::display | BuiltIn::strobe | BuiltIn::monitor => {
-                self.ins_display(DisplayKind::Display, true, args);
+                self.ins_display(DisplayKind::Display, true, args, PrintDst::Console, None);
                 GRAVESTONE
             }
             BuiltIn::debug => {
-                self.ins_display(DisplayKind::Debug, true, args);
+                self.ins_display(DisplayKind::Debug, true, args, PrintDst::Console, None);
                 GRAVESTONE
             }
 
             BuiltIn::warning => {
-                self.ins_display(DisplayKind::Warn, true, args);
+                self.ins_display(DisplayKind::Warn, true, args, PrintDst::Console, None);
                 GRAVESTONE
             }
             BuiltIn::error => {
-                self.ins_display(DisplayKind::Error, true, args);
+                self.ins_display(DisplayKind::Error, true, args, PrintDst::Console, None);
                 GRAVESTONE
             }
             BuiltIn::info => {
-                self.ins_display(DisplayKind::Info, true, args);
+                self.ins_display(DisplayKind::Info, true, args, PrintDst::Console, None);
                 GRAVESTONE
             }
 
+            // Enhancement-11: file-output system functions. Each takes the file
+            // descriptor as its first argument (`args[0]`) and formats the rest
+            // exactly like the matching console `$display`-family function, but
+            // routes the text to the descriptor. `$fwrite` omits the trailing
+            // newline; `$fstrobe`/`$fmonitor` are treated as `$fdisplay` (a
+            // single write per evaluation -- see Enhancement-11.md).
+            BuiltIn::fwrite => {
+                let fd = self.lower_expr(args[0]);
+                self.ins_display(DisplayKind::Display, false, &args[1..], PrintDst::File, Some(fd));
+                GRAVESTONE
+            }
+            BuiltIn::fdisplay | BuiltIn::fstrobe | BuiltIn::fmonitor => {
+                let fd = self.lower_expr(args[0]);
+                self.ins_display(DisplayKind::Display, true, &args[1..], PrintDst::File, Some(fd));
+                GRAVESTONE
+            }
+            BuiltIn::fdebug => {
+                let fd = self.lower_expr(args[0]);
+                self.ins_display(DisplayKind::Debug, true, &args[1..], PrintDst::File, Some(fd));
+                GRAVESTONE
+            }
+
+            // Enhancement-11: string-formatting and file-reading functions.
+            // `$swrite`/`$sformat` format into the destination string variable
+            // (`args[0]`); the rest format exactly like `$write` (`$sformat`'s
+            // format string is simply its first value argument). `$fgets` reads a
+            // line into the destination string and returns its length. `$sscanf`/
+            // `$fscanf` parse whitespace-delimited fields into their argument
+            // variables. See Enhancement-11.md.
+            BuiltIn::swrite | BuiltIn::sformat => {
+                let dst_var = self.body.into_variable(args[0]);
+                let s = self
+                    .ins_display(DisplayKind::Display, false, &args[1..], PrintDst::String, None)
+                    .unwrap();
+                self.ctx.def_place(PlaceKind::Var(dst_var), s);
+                GRAVESTONE
+            }
+            BuiltIn::fgets => {
+                // $fgets(str, fd): read a line into `str`, return its length.
+                let dst_var = self.body.into_variable(args[0]);
+                let fd = self.lower_expr(args[1]);
+                let line = self.ctx.call1(CallBackKind::Fgets, &[fd]);
+                self.ctx.def_place(PlaceKind::Var(dst_var), line);
+                self.ctx.call1(CallBackKind::StrLen, &[line])
+            }
+            BuiltIn::ferror => {
+                // $ferror(fd, str): fill `str` with the error message, return the
+                // error code.
+                let fd = self.lower_expr(args[0]);
+                let dst_var = self.body.into_variable(args[1]);
+                let msg = self.ctx.call1(CallBackKind::FerrorMsg, &[fd]);
+                self.ctx.def_place(PlaceKind::Var(dst_var), msg);
+                self.ctx.call1(CallBackKind::FerrorCode, &[fd])
+            }
+            BuiltIn::sscanf => {
+                let input = self.lower_expr(args[0]);
+                self.lower_scanf(input, &args[2..])
+            }
+            BuiltIn::fscanf => {
+                // Read one line from the descriptor, then scan it like $sscanf.
+                let fd = self.lower_expr(args[0]);
+                let input = self.ctx.call1(CallBackKind::Fgets, &[fd]);
+                self.lower_scanf(input, &args[2..])
+            }
+
+            // Enhancement-12: connectivity-aliasing and plusarg functions. The
+            // OSDI/ngspice target has no command-line plusargs, no generic
+            // simulator probe and no runtime hierarchical node aliasing, so each
+            // lowers to its LRM "mechanism-unavailable" result: a constant, with
+            // no runtime callback or ngspice change. See Enhancement-12.md.
+            //
+            // `$test_plusargs`/`$value_plusargs` -> false (no plusarg is present).
+            BuiltIn::test_plusargs | BuiltIn::value_plusargs => FALSE,
+            // `$analog_node_alias`/`$analog_port_alias` -> 0 (no alias created).
+            BuiltIn::analog_node_alias | BuiltIn::analog_port_alias => ZERO,
+            // `$simprobe(inst, quantity [, default])` -> the supplied default, or
+            // 0.0 when the probe is unavailable and no default was given.
+            BuiltIn::simprobe => {
+                if args.len() >= 3 {
+                    self.lower_expr(args[2])
+                } else {
+                    F_ZERO
+                }
+            }
+            BuiltIn::fopen => {
+                // $fopen(name) / $fopen(name, mode). A missing mode defaults to
+                // "w" so the runtime always receives a (name, mode) pair.
+                let name = self.lower_expr(args[0]);
+                let mode = if args.len() > 1 {
+                    self.lower_expr(args[1])
+                } else {
+                    self.ctx.sconst("w")
+                };
+                self.ctx.call1(CallBackKind::Fopen, &[name, mode])
+            }
+            BuiltIn::fclose => self.lower_file_op(FileOp::Close, args),
+            BuiltIn::feof => self.lower_file_op(FileOp::Eof, args),
+            BuiltIn::ftell => self.lower_file_op(FileOp::Tell, args),
+            BuiltIn::rewind => self.lower_file_op(FileOp::Rewind, args),
+            BuiltIn::fseek => self.lower_file_op(FileOp::Seek, args),
+            BuiltIn::fflush => {
+                // $fflush() flushes all descriptors; $fflush(fd) flushes one.
+                let op = if args.is_empty() { FileOp::FlushAll } else { FileOp::Flush };
+                self.lower_file_op(op, args)
+            }
+
             BuiltIn::fatal => {
-                self.ins_display(DisplayKind::Fatal, true, args);
+                self.ins_display(DisplayKind::Fatal, true, args, PrintDst::Console, None);
                 // Fatal code is 0 (used for translation MIR->IR)
                 let call_args = vec![];
                 self.ctx.call(CallBackKind::SetRetFlag(RetFlag::Abort), &call_args);
@@ -794,8 +912,198 @@ impl BodyLoweringCtx<'_, '_, '_> {
 
             BuiltIn::last_crossing => self.lower_last_crossing(args, signature),
 
+            // Enhancement-10: `$random`/`$arandom` and the `$dist_*`/`$rdist_*`
+            // statistical-distribution system functions. Each lowers to a pure
+            // `osdi_rng_*` runtime callback (see `RngFun`).
+            //
+            // Return types follow OpenVAF's builtin signature table: `$random`
+            // and `$arandom` are `Integer` (the real callback result is cast to
+            // int with `ficast`), while *every* `$dist_*`/`$rdist_*` function is
+            // typed `Real`. The LRM nonetheless specifies the `$dist_*` (as
+            // opposed to `$rdist_*`) forms as integer-valued, so those round the
+            // real draw to the nearest integer while keeping it a real value
+            // (`rng_round_real`). The `$dist_*` integer parameters are coerced to
+            // real for the shared real-argument callbacks via `lower_num_as_real`.
+            BuiltIn::random | BuiltIn::arandom => {
+                let seed = self.lower_rng_seed(args);
+                let r = self.lower_rng(expr, RngFun::Random, seed, &[]);
+                self.ctx.ins().ficast(r)
+            }
+            BuiltIn::rdist_uniform => {
+                let seed = self.lower_expr(args[0]);
+                let a = self.lower_expr(args[1]);
+                let b = self.lower_expr(args[2]);
+                self.lower_rng(expr, RngFun::Uniform, seed, &[a, b])
+            }
+            BuiltIn::dist_uniform => {
+                let seed = self.lower_expr(args[0]);
+                let a = self.lower_num_as_real(args[1]);
+                let b = self.lower_num_as_real(args[2]);
+                // `UniformInt` already returns an integral (but real) value.
+                self.lower_rng(expr, RngFun::UniformInt, seed, &[a, b])
+            }
+            BuiltIn::rdist_normal => {
+                let seed = self.lower_expr(args[0]);
+                let mean = self.lower_expr(args[1]);
+                let sdev = self.lower_expr(args[2]);
+                self.lower_rng(expr, RngFun::Normal, seed, &[mean, sdev])
+            }
+            BuiltIn::dist_normal => {
+                let seed = self.lower_expr(args[0]);
+                let mean = self.lower_num_as_real(args[1]);
+                let sdev = self.lower_num_as_real(args[2]);
+                let r = self.lower_rng(expr, RngFun::Normal, seed, &[mean, sdev]);
+                self.rng_round_real(r)
+            }
+            BuiltIn::rdist_exponential => {
+                let seed = self.lower_expr(args[0]);
+                let mean = self.lower_expr(args[1]);
+                self.lower_rng(expr, RngFun::Exponential, seed, &[mean])
+            }
+            BuiltIn::dist_exponential => {
+                let seed = self.lower_expr(args[0]);
+                let mean = self.lower_num_as_real(args[1]);
+                let r = self.lower_rng(expr, RngFun::Exponential, seed, &[mean]);
+                self.rng_round_real(r)
+            }
+            BuiltIn::rdist_poisson => {
+                let seed = self.lower_expr(args[0]);
+                let mean = self.lower_expr(args[1]);
+                self.lower_rng(expr, RngFun::Poisson, seed, &[mean])
+            }
+            BuiltIn::dist_poisson => {
+                let seed = self.lower_expr(args[0]);
+                let mean = self.lower_num_as_real(args[1]);
+                // `Poisson` already returns an integral (but real) count.
+                self.lower_rng(expr, RngFun::Poisson, seed, &[mean])
+            }
+            BuiltIn::rdist_chi_square => {
+                let seed = self.lower_expr(args[0]);
+                let dof = self.lower_expr(args[1]);
+                self.lower_rng(expr, RngFun::ChiSquare, seed, &[dof])
+            }
+            BuiltIn::dist_chi_square => {
+                let seed = self.lower_expr(args[0]);
+                let dof = self.lower_num_as_real(args[1]);
+                let r = self.lower_rng(expr, RngFun::ChiSquare, seed, &[dof]);
+                self.rng_round_real(r)
+            }
+            BuiltIn::rdist_t => {
+                let seed = self.lower_expr(args[0]);
+                let dof = self.lower_expr(args[1]);
+                self.lower_rng(expr, RngFun::StudentT, seed, &[dof])
+            }
+            BuiltIn::dist_t => {
+                let seed = self.lower_expr(args[0]);
+                let dof = self.lower_num_as_real(args[1]);
+                let r = self.lower_rng(expr, RngFun::StudentT, seed, &[dof]);
+                self.rng_round_real(r)
+            }
+            BuiltIn::rdist_erlang => {
+                let seed = self.lower_expr(args[0]);
+                let k = self.lower_expr(args[1]);
+                let mean = self.lower_expr(args[2]);
+                self.lower_rng(expr, RngFun::Erlang, seed, &[k, mean])
+            }
+            BuiltIn::dist_erlang => {
+                let seed = self.lower_expr(args[0]);
+                let k = self.lower_num_as_real(args[1]);
+                let mean = self.lower_num_as_real(args[2]);
+                let r = self.lower_rng(expr, RngFun::Erlang, seed, &[k, mean]);
+                self.rng_round_real(r)
+            }
+
             _ => unreachable!(),
         }
+    }
+
+    /// Lowers a file-descriptor operation (`$fclose`/`$feof`/`$ftell`/`$rewind`/
+    /// `$fseek`/`$fflush`, Enhancement-11): every argument is an integer, and the
+    /// runtime callback returns an integer status/result.
+    fn lower_file_op(&mut self, op: FileOp, args: &[ExprId]) -> Value {
+        let call_args: Vec<Value> = args.iter().map(|&a| self.lower_expr(a)).collect();
+        self.ctx.call1(CallBackKind::FileOp(op), &call_args)
+    }
+
+    /// Lowers the field-parsing shared by `$sscanf`/`$fscanf` (Enhancement-11):
+    /// begins a parse over `input`, then pulls one whitespace-delimited field per
+    /// target variable (the runtime parses each token by the variable's type, not
+    /// by the format string) and stores it. Returns the number of successful
+    /// conversions. `var_args` are the destination variable references.
+    fn lower_scanf(&mut self, input: Value, var_args: &[ExprId]) -> Value {
+        self.ctx.call(CallBackKind::ScanBegin, &[input]);
+        for &arg in var_args {
+            let var = self.body.into_variable(arg);
+            let kind = match self.body.expr_type(arg) {
+                Type::Integer => ScanKind::Int,
+                Type::Real => ScanKind::Real,
+                Type::String => ScanKind::Str,
+                ty => unreachable!("invalid $sscanf target type {ty:?}"),
+            };
+            let val = self.ctx.call1(CallBackKind::Scan(kind), &[]);
+            self.ctx.def_place(PlaceKind::Var(var), val);
+        }
+        self.ctx.call1(CallBackKind::ScanCount, &[])
+    }
+
+    /// Lowers the (optional) seed argument shared by `$random`/`$arandom`: the
+    /// seedless forms have no argument and default to `0` (the per-call-site salt
+    /// added in `lower_rng` still decorrelates distinct call sites). The seeded
+    /// and const-seed forms both carry the seed as `args[0]`.
+    fn lower_rng_seed(&mut self, args: &[ExprId]) -> Value {
+        if args.is_empty() {
+            self.ctx.iconst(0)
+        } else {
+            self.lower_expr(args[0])
+        }
+    }
+
+    /// Lowers a numeric distribution parameter and guarantees a real (`double`)
+    /// value for the `osdi_rng_*` callback. Whether `lower_expr` yields an integer
+    /// or a real depends on the matched signature's argument requirement (the
+    /// `$dist_*` forms are nominally integer, but at least one upstream const-seed
+    /// signature mixes in a `Val(Real)`), so the coercion is driven by the actual
+    /// post-lowering type rather than the builtin family.
+    fn lower_num_as_real(&mut self, arg: ExprId) -> Value {
+        let is_int = match self.body.needs_cast(arg) {
+            Some((_, dst)) => matches!(dst, Type::Integer),
+            None => matches!(self.body.expr_type(arg), Type::Integer),
+        };
+        let val = self.lower_expr(arg);
+        if is_int {
+            self.ctx.ins().ifcast(val)
+        } else {
+            val
+        }
+    }
+
+    /// Emits the `osdi_rng_*` callback for `fun`. The call arguments are
+    /// `(seed, salt, real_params...)` where `salt` is the call `ExprId` (a stable,
+    /// unique per-call-site constant that decorrelates independent draws). Returns
+    /// the raw real result; integer-returning builtins cast/round it themselves.
+    fn lower_rng(
+        &mut self,
+        expr: ExprId,
+        fun: RngFun,
+        seed: Value,
+        real_params: &[Value],
+    ) -> Value {
+        let salt = self.ctx.iconst(u32::from(expr) as i32);
+        let mut cb_args = Vec::with_capacity(2 + real_params.len());
+        cb_args.push(seed);
+        cb_args.push(salt);
+        cb_args.extend_from_slice(real_params);
+        self.ctx.call1(CallBackKind::Rng(fun), &cb_args)
+    }
+
+    /// Rounds a real random draw to the nearest integer (round half up) for the
+    /// integer-valued `$dist_*` forms. The result stays a *real* value because
+    /// OpenVAF types every `$dist_*` function as `Real` (see the lowering block
+    /// above) -- only the numeric value is quantised to an integer.
+    fn rng_round_real(&mut self, val: Value) -> Value {
+        let half = self.ctx.fconst(0.5);
+        let shifted = self.ctx.ins().fadd(val, half);
+        self.ctx.ins().floor(shifted)
     }
 
     /// Lowers `last_crossing(expr[, dir])`: returns the simulation time of the most recent

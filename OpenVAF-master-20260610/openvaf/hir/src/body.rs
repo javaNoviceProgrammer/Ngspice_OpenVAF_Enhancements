@@ -144,6 +144,14 @@ impl<'a> BodyRef<'a> {
         Parameter { id }
     }
 
+    /// The variable referenced by a `Var(..)` builtin argument (e.g. the
+    /// destination string of `$swrite`/`$sformat`/`$fgets`, an inout `$sscanf`
+    /// target, or `$ferror`'s message string).
+    pub fn into_variable(&self, expr: ExprId) -> Variable {
+        let id = self.infere.expr_types[expr].unwrap_var();
+        Variable { id }
+    }
+
     pub fn into_branch(&self, expr: ExprId) -> Branch {
         let id = self.infere.expr_types[expr].unwrap_branch();
         Branch { id }

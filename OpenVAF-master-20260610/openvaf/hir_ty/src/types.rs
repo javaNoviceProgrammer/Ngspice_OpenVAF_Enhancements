@@ -143,6 +143,14 @@ impl Ty {
         }
     }
 
+    pub fn unwrap_var(&self) -> VarId {
+        if let Ty::Var(_, id) = *self {
+            id
+        } else {
+            unreachable!("expected variable reference found {:?}", self)
+        }
+    }
+
     pub fn satisfies_semantic(&self, requirement: &TyRequirement) -> bool {
         self.satisfies(requirement, TyEquivalence::Semantic)
     }

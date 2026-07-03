@@ -112,3 +112,14 @@ ground_examples/_*.cir
 vartype_examples/_*.cir
 repeat_examples/_*.cir
 disable_examples/_*.cir
+
+# Enhancement 10-13 example scripts: temp netlists written by verify/plot scripts
+rng_examples/_*.cir
+rng_examples/mc.cir
+fileio_examples/_*.cir
+stringio_examples/_*.cir
+alias_examples/_*.cir
+ddx_examples/_*.cir
+
+# Python bytecode cache (e.g. from importing _setup.py)
+__pycache__/

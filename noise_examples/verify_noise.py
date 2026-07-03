@@ -26,8 +26,9 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-OPENVAF = os.path.join(HERE, "..", "OpenVAF-master", "target", "release", "openvaf-r")
-NGSPICE = os.path.join(HERE, "..", "ngspice-46", "build", "src", "ngspice")
+import sys
+sys.path.insert(0, os.path.dirname(HERE))  # repo root, for _setup.py
+from _setup import VAF as OPENVAF, NG as NGSPICE
 
 KB = 1.380649e-23
 T = 300.0            # K, matches the models' Temp=300 and the decks' .temp 26.85
