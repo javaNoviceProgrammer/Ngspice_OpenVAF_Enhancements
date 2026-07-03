@@ -1172,8 +1172,21 @@ impl BodyLoweringCtx<'_, '_, '_> {
                 GRAVESTONE
             }
             BuiltIn::analysis => {
-                let arg = self.lower_expr(args[0]);
-                self.ctx.call1(CallBackKind::Analysis, &[arg])
+                // Enhancement-30: `analysis(arg1, arg2, ...)` is true if the current
+                // analysis matches ANY listed name. OR the per-argument results together
+                // (bitwise OR, not a sum: several flags can be set at once -- e.g. both
+                // "static" and "dc" hold at an operating point -- so a sum could exceed 1).
+                let mut acc: Option<Value> = None;
+                for &arg in args {
+                    let name = self.lower_expr(arg);
+                    let hit = self.ctx.call1(CallBackKind::Analysis, &[name]);
+                    acc = Some(match acc {
+                        None => hit,
+                        Some(prev) => self.ctx.ins().ior(prev, hit),
+                    });
+                }
+                // `min_args == 1` guarantees at least one argument.
+                acc.unwrap()
             }
 
             BuiltIn::noise_table

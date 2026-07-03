@@ -184,5 +184,11 @@ examples/idtic_examples/*.txt
 examples/portflow_examples/_*.cir
 examples/portflow_examples/*.txt
 
+# Enhancement 30 analysis() example scripts: temp netlists/outputs + generated model
+examples/analysis_examples/_*.cir
+examples/analysis_examples/_*.txt
+examples/analysis_examples/_*.va
+examples/analysis_examples/_*.osdi
+
 # Python bytecode cache (e.g. from importing _setup.py)
 __pycache__/

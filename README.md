@@ -419,6 +419,15 @@ Several unrelated language gaps found along the way are also fixed. **`localpara
 
 ---
 
+## Enhancement 30: variadic `analysis(...)`
+
+*July 2026* — Added the **multi-argument list form** of the Verilog-AMS `analysis()` system function (LRM 4.7.1). `analysis()` returns true if the current analysis matches **any** name in a list — e.g. `analysis("ic", "dc")` or `analysis("ac", "noise")` (recognised names: `ac`, `dc`, `tran`, `ic`, `static`, `noise`, `nodeset`). The single-argument form already worked end-to-end (the stdlib `analysis()` reads `sim_info->flags`, which ngspice sets correctly for op/dc/ac/tran/noise), but the builtin was declared with exactly one signature, so the list form was rejected at compile time (`invalid argument count: expected 1 arguments but found 2`) — you had to chain `analysis("ac") || analysis("tran")` by hand. The fix makes `analysis` a **varargs** builtin in `hir_ty` (one mandatory string, no upper bound, like `$display`/`$limit`) and, in `hir_lower`, emits the analysis callback for **each** argument and **bitwise-OR**s the results. OR (not a sum) matters: at an operating point both `"static"` and `"dc"` return 1, so a sum would exceed 1 — the OR clamps the result to a proper 0/1. Pure front-end change; no OSDI ABI change and no ngspice change.
+
+- Verified end-to-end through ngspice — a conductance that is `g_static` at the DC operating point and `g_dynamic` for the dynamic analyses, selected by one list-form call `if (analysis("ac","tran","noise")) g = g_dynamic;`: the list form now compiles, DC gives `g_static`, AC and tran give `g_dynamic`, and `analysis("static","dc","ic")` at `.op` returns exactly 1 (OR, not a sum). Single-argument `analysis()` is unchanged and regression-checked — see `examples/analysis_examples/`
+- Details: [Enhancement-30.md](enhancements_doc/Enhancement-30.md)
+
+---
+
 ## Prebuilt Binaries
 
 Binaries are built by CI and committed to `bin/`:

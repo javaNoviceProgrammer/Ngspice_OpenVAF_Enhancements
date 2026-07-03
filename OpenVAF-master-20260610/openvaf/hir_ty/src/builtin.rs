@@ -173,10 +173,6 @@ bultins! {
         fn ABS_REAL(Val(Real)) -> Real;
     }
 
-    ANALYSIS = const {
-        fn ANALYSIS_SIG(Val(String)) -> Integer;
-    }
-
     AC_STIM = const {
         fn AC_STIM_UNIT() -> Real;
         fn AC_STIMT_NAME(Val(String)) -> Real;
@@ -397,6 +393,16 @@ pub const DDX_FLOW: Signature = Signature(3);
 const DISPLAY_FUN: BuiltinInfo = BuiltinInfo::varargs(
     &[SignatureData { args: Cow::Borrowed(&[]), return_ty: Type::Void }],
     true,
+);
+
+// Enhancement-30: `analysis(arg1, arg2, ...)` accepts a *list* of analysis-name
+// strings (LRM 4.7.1) and returns true if the current analysis matches ANY of them.
+// It was previously fixed at one argument, so `analysis("ic", "dc")` failed to
+// compile. Varargs: at least one string; extra args accepted (typed AnyVal by the
+// generic vararg resize). Pure/read-only, so `has_side_effects = false`.
+const ANALYSIS: BuiltinInfo = BuiltinInfo::varargs(
+    &[SignatureData { args: Cow::Borrowed(&[Val(String)]), return_ty: Type::Integer }],
+    false,
 );
 
 pub const LIMIT_BUILTIN_FUNCTION: Signature = Signature(0);

@@ -1,0 +1,36 @@
+// analysis_demo.va -- Enhancement-30: variadic `analysis(arg1, arg2, ...)`
+//
+// The Verilog-AMS `analysis()` system function (LRM 4.7.1) takes a LIST of
+// analysis-name strings and returns true if the current analysis matches ANY of
+// them, e.g. `analysis("ic", "dc")` or `analysis("ac", "noise")`. Recognised names
+// are "ac", "dc", "tran", "ic", "static", "noise", "nodeset".
+//
+// OpenVAF previously fixed `analysis()` at exactly ONE argument, so the list form
+// failed to compile ("expected 1 arguments but found 2"). Enhancement-30 makes it
+// variadic: the per-argument matches are OR'd together (bitwise, so overlapping
+// flags -- e.g. "static" and "dc" both hold at an operating point -- still yield 1).
+//
+// This model is a linear conductance that is `g_static` for the DC operating point
+// and `g_dynamic` for the small/large-signal *dynamic* analyses (ac, tran, noise),
+// selected with a single list-form `analysis()` call:
+//
+//     if (analysis("ac", "tran", "noise")) g = g_dynamic;
+
+`include "disciplines.vams"
+
+module analysis_demo(a, b);
+    inout a, b;
+    electrical a, b;
+
+    parameter real g_static  = 1e-3 from (0:inf);   // DC / operating-point conductance
+    parameter real g_dynamic = 4e-3 from (0:inf);   // ac / tran / noise conductance
+
+    real g;
+
+    analog begin
+        g = g_static;
+        if (analysis("ac", "tran", "noise"))
+            g = g_dynamic;
+        I(a, b) <+ g * V(a, b);
+    end
+endmodule
