@@ -121,5 +121,11 @@ stringio_examples/_*.cir
 alias_examples/_*.cir
 ddx_examples/_*.cir
 
+# Enhancement 14-15 array example scripts: temp netlists/outputs written by verify scripts
+array_examples/_*.cir
+array_examples/_*.txt
+mdarray_examples/_*.cir
+mdarray_examples/_*.txt
+
 # Python bytecode cache (e.g. from importing _setup.py)
 __pycache__/

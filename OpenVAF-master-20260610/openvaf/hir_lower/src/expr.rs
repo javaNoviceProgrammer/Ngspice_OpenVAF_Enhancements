@@ -31,6 +31,17 @@ impl BodyLoweringCtx<'_, '_, '_> {
         let old_loc = self.ctx.get_srcloc();
         self.ctx.set_srcloc(mir::SourceLoc::new(u32::from(expr) as i32 + 1));
 
+        // A dynamic-index array read `c[i]` / `m[i][j]` (non-constant indices) has no single
+        // backing variable; it lowers to a runtime select over the array's element variables.
+        if let Some((elems, dims, indices)) = self.body.dynamic_index(expr) {
+            let mut res = self.lower_dynamic_index_read(&elems, &dims, &indices);
+            if let Some((src, dst)) = self.body.needs_cast(expr) {
+                res = self.ctx.insert_cast(res, &src, dst);
+            }
+            self.ctx.set_srcloc(old_loc);
+            return res;
+        }
+
         let mut res = match self.body.get_expr(expr) {
             Expr::Read(Ref::Variable(var)) => self.ctx.read_variable(var),
             Expr::Read(Ref::ParamSysFun(param)) => {
@@ -107,6 +118,63 @@ impl BodyLoweringCtx<'_, '_, '_> {
 
     fn lower_array(&mut self, _expr: ExprId, _args: &[ExprId]) -> Value {
         todo!("arrays")
+    }
+
+    /// Computes the runtime *flat* element position of a dynamic array access from its per-dimension
+    /// indices, matching `BusDecl::index_tuples` ordering: `flat = Σ_k pos_k · stride_k`, where
+    /// `pos_k` is the declaration-order position within dimension `k` (`idx-msb` ascending,
+    /// `msb-idx` descending) and `stride_k` is the product of the sizes of the later dimensions.
+    pub(crate) fn lower_flat_array_index(&mut self, dims: &[(i32, i32)], indices: &[ExprId]) -> Value {
+        let n = dims.len();
+        let sizes: Vec<i32> = dims.iter().map(|&(m, l)| (m - l).abs() + 1).collect();
+        let mut strides = vec![1i32; n];
+        for k in (0..n.saturating_sub(1)).rev() {
+            strides[k] = strides[k + 1] * sizes[k + 1];
+        }
+        let mut flat: Option<Value> = None;
+        for k in 0..n {
+            let (msb, lsb) = dims[k];
+            let idx = self.lower_expr(indices[k]);
+            // pos_k: steps from msb toward lsb
+            let pos = if msb <= lsb {
+                let m = self.ctx.iconst(msb);
+                self.ctx.ins().binary1(Opcode::Isub, idx, m)
+            } else {
+                let m = self.ctx.iconst(msb);
+                self.ctx.ins().binary1(Opcode::Isub, m, idx)
+            };
+            let term = if strides[k] == 1 {
+                pos
+            } else {
+                let s = self.ctx.iconst(strides[k]);
+                self.ctx.ins().binary1(Opcode::Imul, pos, s)
+            };
+            flat = Some(match flat {
+                None => term,
+                Some(acc) => self.ctx.ins().binary1(Opcode::Iadd, acc, term),
+            });
+        }
+        flat.unwrap_or_else(|| self.ctx.iconst(0))
+    }
+
+    /// Lowers a dynamic-index array read `c[i]` / `m[i][j]` to a runtime select chain over the
+    /// element variables: `elems[0]` is the default and each `elems[k]` is chosen when the flat
+    /// runtime position equals `k`.
+    fn lower_dynamic_index_read(
+        &mut self,
+        elems: &[hir::Variable],
+        dims: &[(i32, i32)],
+        indices: &[ExprId],
+    ) -> Value {
+        let flat = self.lower_flat_array_index(dims, indices);
+        let mut res = self.ctx.read_variable(elems[0]);
+        for (k, &var) in elems.iter().enumerate().skip(1) {
+            let target = self.ctx.iconst(k as i32);
+            let is_k = self.ctx.ins().binary1(Opcode::Ieq, flat, target);
+            let elem_val = self.ctx.read_variable(var);
+            res = self.ctx.make_select(is_k, move |_ctx, branch| if branch { elem_val } else { res });
+        }
+        res
     }
     fn lower_bin_op(&mut self, expr: ExprId, lhs: ExprId, rhs: ExprId, op: BinaryOp) -> Value {
         let signature = self.body.get_call_signature(expr);

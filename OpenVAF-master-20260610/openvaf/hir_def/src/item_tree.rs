@@ -298,6 +298,10 @@ pub struct Module {
     /// distinguishable in diagnostics/debugging, even though `BusDecl`
     /// itself is reused verbatim — see `Enhancement-4.md` §3.
     pub var_arrays: Vec<BusDecl>,
+    /// Array-valued parameter declarations (`parameter real [msb:lsb] c = '{...};`), used to
+    /// resolve bit-select expressions (`c[i]`) into the expanded per-element parameters, exactly
+    /// as `var_arrays` does for array variables. See Enhancement-14.
+    pub param_arrays: Vec<BusDecl>,
 }
 
 /// A vectored net/port declaration (e.g. `electrical [3:0] bus;`), or an
@@ -308,8 +312,14 @@ pub struct Module {
 #[derive(Debug, Eq, PartialEq, Clone)]
 pub struct BusDecl {
     pub base_name: Name,
+    /// First-dimension `msb`/`lsb` (== `dims[0]`). Kept as dedicated fields so all the existing
+    /// 1-D net/array code (`min_max`, `contains_bit`, `bit_name`) is unchanged.
     pub msb: i32,
     pub lsb: i32,
+    /// One `(msb, lsb)` pair per dimension, outermost first. A vectored net and a 1-D array have
+    /// a single dimension; a multi-dimensional array variable/parameter (`real [0:1][0:2] m;`,
+    /// Enhancement-15) has several. Always non-empty, with `dims[0] == (msb, lsb)`.
+    pub dims: Vec<(i32, i32)>,
     pub ast_id: ErasedAstId,
 }
 
@@ -335,6 +345,56 @@ impl BusDecl {
 
     pub fn bit_name(&self, bit: i32) -> Name {
         Name::resolve(&format!("{}[{}]", self.base_name, bit))
+    }
+
+    /// Number of dimensions (`1` for a vectored net or a 1-D array).
+    pub fn ndim(&self) -> usize {
+        self.dims.len()
+    }
+
+    /// Total number of scalar elements = product of the dimension sizes.
+    pub fn elem_count(&self) -> usize {
+        self.dims.iter().map(|&(msb, lsb)| (msb - lsb).unsigned_abs() as usize + 1).product()
+    }
+
+    /// Whether a full index tuple (one index per dimension) is within range.
+    pub fn contains(&self, indices: &[i32]) -> bool {
+        indices.len() == self.dims.len()
+            && indices.iter().zip(&self.dims).all(|(&i, &(msb, lsb))| {
+                let (lo, hi) = if msb >= lsb { (lsb, msb) } else { (msb, lsb) };
+                i >= lo && i <= hi
+            })
+    }
+
+    /// The scalar element name for a full index tuple, e.g. `m[1][0]` (multi-dim) or `m[2]` (1-D).
+    pub fn elem_name(&self, indices: &[i32]) -> Name {
+        let mut s = self.base_name.to_string();
+        for &i in indices {
+            s.push_str(&format!("[{i}]"));
+        }
+        Name::resolve(&s)
+    }
+
+    /// Every index tuple in *declaration order*: each dimension iterated `msb`→`lsb`, the
+    /// outermost dimension varying slowest — the order a (nested) array literal `'{...}` fills.
+    pub fn index_tuples(&self) -> Vec<Vec<i32>> {
+        let mut out: Vec<Vec<i32>> = vec![vec![]];
+        for &(msb, lsb) in &self.dims {
+            let step: i32 = if msb <= lsb { 1 } else { -1 };
+            let n = (msb - lsb).unsigned_abs() as usize + 1;
+            let mut next = Vec::with_capacity(out.len() * n);
+            for prefix in &out {
+                let mut idx = msb;
+                for _ in 0..n {
+                    let mut t = prefix.clone();
+                    t.push(idx);
+                    next.push(t);
+                    idx += step;
+                }
+            }
+            out = next;
+        }
+        out
     }
 }
 
@@ -420,6 +480,10 @@ pub struct Param {
     pub ty: Option<Type>,
     pub is_local: bool,
     pub ast_id: AstId<ast::Param>,
+    /// For an element of an array-valued parameter (`parameter real [msb:lsb] c = '{...};`),
+    /// this element's position in the array literal (declaration order, msb→lsb), used to pick
+    /// its per-element default. `None` for an ordinary scalar parameter. See `lower_param`.
+    pub array_index: Option<u32>,
 }
 
 #[derive(Debug, Eq, PartialEq, Clone, Hash)]

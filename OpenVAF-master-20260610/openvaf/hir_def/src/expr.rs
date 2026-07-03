@@ -64,10 +64,11 @@ pub enum Expr {
         path: Path,
         port: bool,
     },
-    /// A vectored-net bit-select, e.g. `bus[2]`.
+    /// A vectored-net bit-select `bus[2]`, or an array element access — possibly
+    /// multi-dimensional, e.g. `m[i][j]` carries `indices = [i, j]` (Enhancement-15).
     BitSelect {
         base: Path,
-        index: ExprId,
+        indices: Vec<ExprId>,
     },
     BinaryOp {
         lhs: ExprId,
@@ -96,7 +97,7 @@ impl Expr {
     pub fn walk_child_exprs(&self, mut f: impl FnMut(ExprId)) {
         match *self {
             Expr::Missing | Expr::Path { .. } | Expr::Literal(_) => {}
-            Expr::BitSelect { index, .. } => f(index),
+            Expr::BitSelect { ref indices, .. } => indices.iter().copied().for_each(f),
             Expr::BinaryOp { lhs, rhs, .. } => {
                 f(lhs);
                 f(rhs);

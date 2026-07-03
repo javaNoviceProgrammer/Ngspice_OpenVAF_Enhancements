@@ -1,0 +1,22 @@
+`include "disciplines.vams"
+
+// Enhancement-14: whole-array copy and integer->real element promotion.
+//
+//   a = '{1, 2, 3};   // aggregate assignment; integer literals promote to real
+//   b = a;            // whole-array copy (element-wise)
+//
+// Gain = (b[0]+b[1]+b[2]) * 0.1 = 0.6, so V(out) = 0.6 * V(in).
+module array_copy(in, out);
+    input in;
+    output out;
+    electrical in, out;
+
+    real [0:2] a;
+    real [0:2] b;
+
+    analog begin
+        a = '{1, 2, 3};   // int -> real aggregate
+        b = a;            // whole-array copy
+        V(out) <+ (b[0] + b[1] + b[2]) * 0.1 * V(in);
+    end
+endmodule

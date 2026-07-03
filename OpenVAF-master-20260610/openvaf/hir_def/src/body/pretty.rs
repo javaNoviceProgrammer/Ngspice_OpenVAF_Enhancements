@@ -154,11 +154,13 @@ impl Printer<'_> {
             Expr::Missing => w!(self, "<missing>"),
             Expr::Path { ref path, port: false } => w!(self, "{:?}", path),
             Expr::Path { ref path, port: true } => w!(self, "<{:?}>", path),
-            Expr::BitSelect { ref base, index } => {
+            Expr::BitSelect { ref base, ref indices } => {
                 w!(self, "{:?}", base);
-                w!(self, "[");
-                self.pretty_print_expr(index);
-                w!(self, "]");
+                for &index in indices {
+                    w!(self, "[");
+                    self.pretty_print_expr(index);
+                    w!(self, "]");
+                }
             }
             Expr::BinaryOp { lhs, rhs, op } => {
                 self.pretty_print_expr(lhs);

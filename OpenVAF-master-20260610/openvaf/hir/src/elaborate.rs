@@ -226,7 +226,7 @@ fn fold_bit_select_indices(
     let mut holes = Vec::new();
     for node in body.syntax().descendants() {
         if let Some(sel) = ast::BitSelectExpr::cast(node) {
-            if let Some(index) = sel.index() {
+            for index in sel.indices() {
                 if let Some(v) = eval_int_expr(&index, env) {
                     holes.push((rel_range(base, index.syntax().text_range()), v.to_string()));
                 }

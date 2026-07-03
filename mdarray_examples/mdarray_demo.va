@@ -1,0 +1,48 @@
+`include "disciplines.vams"
+
+// Enhancement-15 demonstration: multi-dimensional arrays.
+//
+// A 2x2 weighted-gain buffer whose gain is the sum of a 2-D weight matrix. It
+// exercises every Enhancement-15 capability at once:
+//
+//   * multi-dimensional array PARAMETER `parameter real [0:1][0:1] w = '{...}`
+//     with a nested-literal default -- each element (`w[0][0]`, `w[0][1]`, ...)
+//     carries its own default and is individually overridable from SPICE;
+//   * multi-dimensional array VARIABLES `real [0:1][0:1] acc, tr;`
+//   * NESTED-literal aggregate assignment `acc = '{'{..},'{..}}`;
+//   * DYNAMIC (runtime) multi-index read/write `tr[j][i] = acc[i][j]` in nested
+//     `for` loops -- a runtime select over the flattened element variables.
+//
+// The gain g = sum of all w[i][j]. With the defaults (0.1+0.2+0.3+0.4 = 1.0)
+// V(out) tracks V(in); overriding any weight element rescales it.
+module mdarray_demo(in, out);
+    input in;
+    output out;
+    electrical in, out;
+
+    // 2-D array parameter: nested-literal default, per-element SPICE override
+    parameter real [0:1][0:1] w = '{'{0.1, 0.2}, '{0.3, 0.4}};
+
+    real [0:1][0:1] acc;   // working matrix
+    real [0:1][0:1] tr;    // transpose
+    integer i, j;
+    real g;
+
+    analog begin
+        // nested-literal aggregate assignment, built from the parameter's elements
+        acc = '{'{w[0][0], w[0][1]}, '{w[1][0], w[1][1]}};
+
+        // dynamic multi-index write + read: transpose acc into tr
+        for (i = 0; i < 2; i = i + 1)
+            for (j = 0; j < 2; j = j + 1)
+                tr[j][i] = acc[i][j];
+
+        // dynamic multi-index read: sum the transpose (= sum of all weights)
+        g = 0.0;
+        for (i = 0; i < 2; i = i + 1)
+            for (j = 0; j < 2; j = j + 1)
+                g = g + tr[i][j];
+
+        V(out) <+ g * V(in);
+    end
+endmodule

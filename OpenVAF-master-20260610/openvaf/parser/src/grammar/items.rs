@@ -79,7 +79,9 @@ pub(super) fn decl_name(p: &mut Parser) -> bool {
 
 pub(super) fn var_decl(p: &mut Parser, m: Marker) {
     ty(p);
-    if p.at(T!['[']) {
+    // One or more `[msb:lsb]` clauses: a 1-D array `real [0:n] x;` or a
+    // multi-dimensional array `real [0:1][0:2] x;` (Enhancement-15).
+    while p.at(T!['[']) {
         width_range(p);
     }
     decl_list(p, T![;], var, MODULE_ITEM_OR_ATTR_RECOVERY);
@@ -100,6 +102,12 @@ fn var(p: &mut Parser) -> bool {
 pub(super) fn parameter_decl(p: &mut Parser, m: Marker) {
     p.bump_any();
     eat_ty(p);
+    // Array-valued parameter: `parameter real [msb:lsb] c = '{...};` (Enhancement-14), or a
+    // multi-dimensional one `parameter real [0:1][0:2] c = '{...};` (Enhancement-15). The
+    // `[msb:lsb]` width clauses after the type mirror array-variable declarations (`var_decl`).
+    while p.at(T!['[']) {
+        width_range(p);
+    }
     decl_list(p, T![;], parameter, MODULE_ITEM_OR_ATTR_RECOVERY);
     p.eat(T![;]);
     m.complete(p, PARAM_DECL);

@@ -128,7 +128,7 @@ Expr =
 
 
 PathExpr = Path // Required to allow
-BitSelectExpr = base: Path '[' index: Expr ']'
+BitSelectExpr = base: Path ('[' index: Expr ']')*
 PortFlow = '<' port: Path '>'
 
 SelectExpr =
@@ -221,7 +221,7 @@ AnalogBehaviour =
   AttrList* 'analog' 'initial'? Stmt
 
 VarDecl =
-  AttrList* Type width:Range? (Var (',' Var)*) ';'
+  AttrList* Type width:Range* (Var (',' Var)*) ';'
 
 Var =
   Name ('=' default:Expr)?
@@ -229,7 +229,7 @@ Var =
 
 
 ParamDecl =
-  AttrList* ('parameter'|'localparam') Type? paras:(Param (',' Param)*) ';'
+  AttrList* ('parameter'|'localparam') Type? width:Range* paras:(Param (',' Param)*) ';'
 
 AliasParam =
   AttrList* 'aliasparam' name: Name '=' src: ParamRef ';'

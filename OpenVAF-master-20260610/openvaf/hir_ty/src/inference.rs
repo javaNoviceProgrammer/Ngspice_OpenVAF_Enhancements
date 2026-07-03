@@ -49,6 +49,36 @@ pub enum AssignDst {
     Potential(BranchWrite),
 }
 
+/// A *whole-array* assignment (`c = '{...}` or `c = d`, where `c` is a `real/integer [msb:lsb] c;`
+/// array variable), decomposed into per-element assignments in declaration order (msb→lsb, the
+/// order array literals fill). The destination element `VarId`s come from the bus/array expansion
+/// (Enhancement-3/4); the source is either the literal's element value `ExprId`s or, for an
+/// array-to-array copy, the source array's element `VarId`s. See `try_infere_array_assignment`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ArrayAssign {
+    Literal(Vec<(VarId, ExprId)>),
+    Copy(Vec<(VarId, VarId)>),
+}
+
+/// A dynamic (non-constant-index) array element access `c[i]` / `m[i][j]` (Enhancement-14/15).
+/// Because the indices aren't known at compile time, the access can't resolve to a single element
+/// `VarId`; instead we record every element `VarId` (flattened in declaration order, matching
+/// `BusDecl::index_tuples`), the per-dimension `(msb, lsb)` bounds, and one index expression per
+/// dimension. HIR lowering computes the flat element position at runtime and selects. Only
+/// *variable* arrays support this — a vectored net/port cannot be dynamically selected.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DynArrayIndex {
+    pub elems: Vec<VarId>,
+    pub dims: Vec<(i32, i32)>,
+    pub indices: Vec<ExprId>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DynArrayIndexAssign {
+    pub target: DynArrayIndex,
+    pub value: ExprId,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Copy, Hash)]
 pub enum BranchWrite {
     Named(BranchId),
@@ -82,6 +112,14 @@ pub struct InferenceResult {
     /// literal: the variable's expanded scalar `VarId`s, in ascending declared-index order
     /// (`coeffs[0]`, `coeffs[1]`, ...). See `infere_laplace_array_arg`.
     pub array_var_refs: AHashMap<ExprId, Vec<VarId>>,
+    /// For a whole-array assignment statement (`c = '{...}` or `c = d`): the decomposed
+    /// per-element assignments. When present, this statement is a `Stmt::ArrayAssignment` in the
+    /// HIR (and `assignment_destination` carries no entry for it). See `try_infere_array_assignment`.
+    pub array_assignments: AHashMap<StmtId, ArrayAssign>,
+    /// Dynamic array-element *reads* `c[i]` (non-constant `i`). See `DynArrayIndex`.
+    pub dynamic_index_refs: AHashMap<ExprId, DynArrayIndex>,
+    /// Dynamic array-element *writes* `c[i] = v` (non-constant `i`). See `DynArrayIndexAssign`.
+    pub dynamic_index_assignments: AHashMap<StmtId, DynArrayIndexAssign>,
     pub diagnostics: Vec<InferenceDiagnostic>,
 }
 
@@ -139,8 +177,12 @@ impl Ctx<'_> {
                 self.infere_indirect_branch_constraint(stmt, val, dst_ty);
             }
             Stmt::Assignment { dst, val, assignment_kind } => {
-                let dst_ty = self.infere_assignment_dst(stmt, dst, assignment_kind);
-                self.infere_assignment(stmt, val, dst_ty);
+                if !self.try_infere_array_assignment(stmt, dst, val)
+                    && !self.try_infere_dynamic_index_assignment(stmt, dst, val)
+                {
+                    let dst_ty = self.infere_assignment_dst(stmt, dst, assignment_kind);
+                    self.infere_assignment(stmt, val, dst_ty);
+                }
             }
             Stmt::ForLoop { cond, .. } | Stmt::If { cond, .. } | Stmt::WhileLoop { cond, .. } => {
                 self.infere_cond(stmt, cond)
@@ -384,7 +426,10 @@ impl Ctx<'_> {
 
             Expr::Path { ref path, port: false } => {
                 if let Some(name) = path.as_ident() {
-                    if self.find_bus(&name).is_some() || self.find_var_array(&name).is_some() {
+                    if self.find_bus(&name).is_some()
+                        || self.find_var_array(&name).is_some()
+                        || self.find_param_array(&name).is_some()
+                    {
                         self.result
                             .diagnostics
                             .push(InferenceDiagnostic::BareBusReference { expr, name });
@@ -432,7 +477,9 @@ impl Ctx<'_> {
                 }
             }
 
-            Expr::BitSelect { ref base, index } => self.infere_bit_select(stmt, expr, base, index)?,
+            Expr::BitSelect { ref base, ref indices } => {
+                self.infere_bit_select(stmt, expr, base, indices)?
+            }
 
             Expr::BinaryOp { op: None, lhs, rhs } => {
                 self.infere_expr(stmt, lhs);
@@ -1413,6 +1460,246 @@ impl Ctx<'_> {
 
     /// Same as `find_bus`, but for module-body-scope array-variable declarations
     /// (`real [msb:lsb] x;`) instead of vectored nets/ports.
+    /// Whether a bit-select index is written as a (possibly negated) *literal*. Such an index is a
+    /// compile-time-constant attempt — even if it doesn't fold to a valid `i32` (e.g. an oversized
+    /// literal) — so it must be diagnosed as a bad constant index rather than treated as a genuine
+    /// runtime (dynamic) index.
+    fn is_literal_index(&self, index: ExprId) -> bool {
+        match self.body.exprs[index] {
+            Expr::Literal(_) => true,
+            Expr::UnaryOp { expr: inner, op: UnaryOp::Neg } => {
+                matches!(self.body.exprs[inner], Expr::Literal(_))
+            }
+            _ => false,
+        }
+    }
+
+    /// A bit-select index that constant-folds to an integer literal (optionally negated), or `None`.
+    fn const_int_index(&self, index: ExprId) -> Option<i32> {
+        match self.body.exprs[index] {
+            Expr::Literal(Literal::Int(i)) => Some(i),
+            Expr::UnaryOp { expr: inner, op: UnaryOp::Neg } => match self.body.exprs[inner] {
+                Expr::Literal(Literal::Int(i)) => Some(-i),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// Handles a dynamic-index array *write* `c[i] = v` / `m[i][j] = v` (at least one non-constant
+    /// index, `c`/`m` a variable array). Returns `true` if recognised (recorded in
+    /// `dynamic_index_assignments`); `false` if the destination isn't a non-constant bit-select of a
+    /// variable array (all-constant writes and non-array targets fall through to the normal path).
+    fn try_infere_dynamic_index_assignment(&mut self, stmt: StmtId, dst: ExprId, val: ExprId) -> bool {
+        let (arr, indices) = match &self.body.exprs[dst] {
+            Expr::BitSelect { base, indices } => {
+                match base.as_ident().and_then(|n| self.find_var_array(&n)) {
+                    Some(arr) => (arr, indices.clone()),
+                    None => return false,
+                }
+            }
+            _ => return false,
+        };
+        // Wrong number of indices, or all-constant / bad-literal indices: let the normal read path
+        // (`infere_bit_select`) resolve or diagnose it.
+        if indices.len() != arr.ndim() {
+            return false;
+        }
+        let all_const = indices.iter().all(|&i| self.const_int_index(i).is_some());
+        let has_bad_literal = indices
+            .iter()
+            .any(|&i| self.const_int_index(i).is_none() && self.is_literal_index(i));
+        if all_const || has_bad_literal {
+            return false;
+        }
+
+        let Some(elems) = self.array_elem_vars_flat(stmt, dst, &arr) else { return true };
+        if elems.is_empty() {
+            return true;
+        }
+        let elem_ty = self.db.var_data(elems[0]).ty.clone();
+        // Type-check and coerce every index to an integer.
+        for &index in &indices {
+            if let Some(idx_ty) = self.infere_expr(stmt, index).and_then(|t| t.to_value()) {
+                if idx_ty != Type::Integer {
+                    self.result.casts.insert(index, Type::Integer);
+                }
+            }
+        }
+        // The assigned value is type-checked against the element type.
+        if let Some(vty) = self.infere_expr(stmt, val).and_then(|t| t.to_value()) {
+            if elem_ty.is_assignable_to(&vty) {
+                if elem_ty != vty {
+                    self.result.casts.insert(val, elem_ty.clone());
+                }
+            } else {
+                self.result.diagnostics.push(
+                    TypeMismatch {
+                        expected: Cow::Owned(vec![TyRequirement::Val(elem_ty.clone())]),
+                        found_ty: self.result.expr_types[val].clone(),
+                        expr: val,
+                    }
+                    .into(),
+                );
+            }
+        }
+        self.result.expr_types[dst] = Ty::Val(elem_ty);
+        self.result.dynamic_index_assignments.insert(
+            stmt,
+            DynArrayIndexAssign {
+                target: DynArrayIndex { elems, dims: arr.dims.clone(), indices },
+                value: val,
+            },
+        );
+        true
+    }
+
+    /// Flattens an array literal to its leaf value expressions in row-major order, descending into
+    /// nested literals: `'{a, b}` → `[a, b]`, `'{'{a, b}, '{c, d}}` → `[a, b, c, d]`.
+    fn flatten_array_literal(&self, expr: ExprId) -> Vec<ExprId> {
+        match &self.body.exprs[expr] {
+            Expr::Array(elems) => {
+                elems.iter().flat_map(|&e| self.flatten_array_literal(e)).collect()
+            }
+            _ => vec![expr],
+        }
+    }
+
+    /// Resolves an array's scalar element `VarId`s, flattened in *declaration order* (each
+    /// dimension `msb`→`lsb`, outermost slowest — `BusDecl::index_tuples`), the order a (nested)
+    /// array literal `'{...}` fills. Works for 1-D and multi-dimensional arrays.
+    fn array_elem_vars_flat(
+        &mut self,
+        stmt: StmtId,
+        ref_expr: ExprId,
+        arr: &BusDecl,
+    ) -> Option<Vec<VarId>> {
+        let mut vars = Vec::with_capacity(arr.elem_count());
+        for indices in arr.index_tuples() {
+            let synth = Path::new_ident(arr.elem_name(&indices));
+            match self.resolve_path(stmt, ref_expr, &synth)? {
+                ScopeDefItem::VarId(var) => vars.push(var),
+                _ => return None,
+            }
+        }
+        Some(vars)
+    }
+
+    /// Handles a *whole-array* assignment (`c = '{...}` or `c = d`), where the destination `dst`
+    /// is a bare reference to a `real/integer [msb:lsb] c;` array variable. Returns `true` if the
+    /// statement was recognised as such (and thus fully type-checked and recorded in
+    /// `array_assignments`); `false` if `dst` is not an array variable and the caller should fall
+    /// back to ordinary scalar-assignment inference.
+    fn try_infere_array_assignment(&mut self, stmt: StmtId, dst: ExprId, val: ExprId) -> bool {
+        // The destination must be a bare reference to a module-body array variable.
+        let arr = match &self.body.exprs[dst] {
+            Expr::Path { path, port: false } => path.as_ident().and_then(|n| self.find_var_array(&n)),
+            _ => None,
+        };
+        let Some(arr) = arr else { return false };
+
+        // From here on this *is* an array assignment, so we own its diagnostics.
+        let Some(dst_vars) = self.array_elem_vars_flat(stmt, dst, &arr) else { return true };
+        if dst_vars.is_empty() {
+            return true;
+        }
+        let elem_ty = self.db.var_data(dst_vars[0]).ty.clone();
+        let dst_len = dst_vars.len() as u32;
+        let dst_array_ty =
+            || Type::Array { ty: Box::new(elem_ty.clone()), len: dst_len };
+        // Record the destination as an array-typed value so downstream passes don't treat the
+        // bare array reference as an error (we deliberately bypass `infere_expr` on `dst`).
+        self.result.expr_types[dst] = Ty::Val(dst_array_ty());
+
+        // Case 1: RHS is an array literal — flat `'{e0, e1, ...}` or nested `'{'{..},'{..}}` for a
+        // multi-dimensional array. It is flattened (declaration order) to one leaf value per element.
+        if matches!(self.body.exprs[val], Expr::Array(_)) {
+            let elems = self.flatten_array_literal(val);
+            for &elem in &elems {
+                if let Some(ty) = self.infere_expr(stmt, elem) {
+                    if let Some(vty) = ty.to_value() {
+                        if elem_ty.is_assignable_to(&vty) {
+                            if elem_ty != vty {
+                                self.result.casts.insert(elem, elem_ty.clone());
+                            }
+                        } else {
+                            self.result.diagnostics.push(
+                                TypeMismatch {
+                                    expected: Cow::Owned(vec![TyRequirement::Val(elem_ty.clone())]),
+                                    found_ty: ty,
+                                    expr: elem,
+                                }
+                                .into(),
+                            );
+                        }
+                    }
+                }
+            }
+            self.result.expr_types[val] =
+                Ty::Val(Type::Array { ty: Box::new(elem_ty.clone()), len: elems.len() as u32 });
+            if elems.len() as u32 != dst_len {
+                self.result.diagnostics.push(
+                    TypeMismatch {
+                        expected: Cow::Owned(vec![TyRequirement::Val(dst_array_ty())]),
+                        found_ty: Ty::Val(Type::Array {
+                            ty: Box::new(elem_ty),
+                            len: elems.len() as u32,
+                        }),
+                        expr: val,
+                    }
+                    .into(),
+                );
+                return true;
+            }
+            let pairs = dst_vars.into_iter().zip(elems).collect();
+            self.result.array_assignments.insert(stmt, ArrayAssign::Literal(pairs));
+            return true;
+        }
+
+        // Case 2: RHS is a bare reference to another array variable (`c = d`).
+        let rhs_array_name = match &self.body.exprs[val] {
+            Expr::Path { path, port: false } => path.as_ident(),
+            _ => None,
+        };
+        if let Some(src_arr) = rhs_array_name.and_then(|n| self.find_var_array(&n)) {
+            let Some(src_vars) = self.array_elem_vars_flat(stmt, val, &src_arr) else { return true };
+            let src_elem_ty =
+                src_vars.first().map(|&v| self.db.var_data(v).ty.clone()).unwrap_or(Type::Err);
+            self.result.expr_types[val] =
+                Ty::Val(Type::Array { ty: Box::new(src_elem_ty.clone()), len: src_vars.len() as u32 });
+            if src_vars.len() as u32 != dst_len || src_elem_ty != elem_ty {
+                self.result.diagnostics.push(
+                    TypeMismatch {
+                        expected: Cow::Owned(vec![TyRequirement::Val(dst_array_ty())]),
+                        found_ty: Ty::Val(Type::Array {
+                            ty: Box::new(src_elem_ty),
+                            len: src_vars.len() as u32,
+                        }),
+                        expr: val,
+                    }
+                    .into(),
+                );
+                return true;
+            }
+            let pairs = dst_vars.into_iter().zip(src_vars).collect();
+            self.result.array_assignments.insert(stmt, ArrayAssign::Copy(pairs));
+            return true;
+        }
+
+        // Case 3: RHS is neither an array literal nor an array variable → type mismatch.
+        if let Some(ty) = self.infere_expr(stmt, val) {
+            self.result.diagnostics.push(
+                TypeMismatch {
+                    expected: Cow::Owned(vec![TyRequirement::Val(dst_array_ty())]),
+                    found_ty: ty,
+                    expr: val,
+                }
+                .into(),
+            );
+        }
+        true
+    }
+
     fn find_var_array(&self, name: &Name) -> Option<BusDecl> {
         let DefWithBodyId::ModuleId { module, .. } = self.owner else { return None };
         let loc = module.lookup(self.db.upcast());
@@ -1420,19 +1707,31 @@ impl Ctx<'_> {
         tree[loc.id].var_arrays.iter().find(|arr| &arr.base_name == name).cloned()
     }
 
+    /// Like `find_var_array`, but for array-valued *parameters* (`parameter real [msb:lsb] c`).
+    fn find_param_array(&self, name: &Name) -> Option<BusDecl> {
+        let DefWithBodyId::ModuleId { module, .. } = self.owner else { return None };
+        let loc = module.lookup(self.db.upcast());
+        let tree = loc.item_tree(self.db.upcast());
+        tree[loc.id].param_arrays.iter().find(|arr| &arr.base_name == name).cloned()
+    }
+
     fn infere_bit_select(
         &mut self,
         stmt: StmtId,
         expr: ExprId,
         base: &Path,
-        index: ExprId,
+        indices: &[ExprId],
     ) -> Option<Ty> {
         let Some(base_name) = base.as_ident() else {
             self.result.diagnostics.push(InferenceDiagnostic::InvalidBusReference { expr });
             return None;
         };
 
-        let bus = self.find_bus(&base_name).or_else(|| self.find_var_array(&base_name));
+        let is_net = self.find_bus(&base_name).is_some();
+        let bus = self
+            .find_bus(&base_name)
+            .or_else(|| self.find_var_array(&base_name))
+            .or_else(|| self.find_param_array(&base_name));
         let Some(bus) = bus else {
             // Not a known bus/array: resolve normally so an ordinary "unresolved identifier"
             // diagnostic is produced (e.g. for a genuine typo), rather than a bus-specific one.
@@ -1440,42 +1739,93 @@ impl Ctx<'_> {
             return None;
         };
 
-        // The index is type-checked like any other expression (e.g. so a bad sub-expression
-        // still gets ordinary diagnostics), but it must also constant-fold to an integer.
-        self.infere_expr(stmt, index);
-        let idx = match self.body.exprs[index] {
-            Expr::Literal(Literal::Int(i)) => i,
-            Expr::UnaryOp { expr: inner, op: UnaryOp::Neg } => match self.body.exprs[inner] {
-                Expr::Literal(Literal::Int(i)) => -i,
-                _ => {
-                    self.result
-                        .diagnostics
-                        .push(InferenceDiagnostic::NonConstantBitSelectIndex { expr });
-                    return None;
-                }
-            },
-            _ => {
-                self.result.diagnostics.push(InferenceDiagnostic::NonConstantBitSelectIndex { expr });
-                return None;
-            }
-        };
+        // Type-check every index expression (so bad sub-expressions still get ordinary diagnostics).
+        for &index in indices {
+            self.infere_expr(stmt, index);
+        }
 
-        if !bus.contains_bit(idx) {
-            self.result.diagnostics.push(InferenceDiagnostic::BitSelectOutOfRange {
+        // The number of `[..]` clauses must match the array's dimensionality.
+        if indices.len() != bus.ndim() {
+            self.result.diagnostics.push(InferenceDiagnostic::WrongArrayDimensions {
                 expr,
-                index: idx,
-                msb: bus.msb,
-                lsb: bus.lsb,
+                expected: bus.ndim(),
+                found: indices.len(),
             });
             return None;
         }
 
-        let synth_path = Path::new_ident(bus.bit_name(idx));
+        // Try to constant-fold every index.
+        let const_idxs: Option<Vec<i32>> =
+            indices.iter().map(|&i| self.const_int_index(i)).collect();
+
+        let Some(idxs) = const_idxs else {
+            // At least one index is non-constant. Runtime (dynamic) indexing is supported for
+            // *variable* arrays (Enhancement-14/15); a vectored net/port needs constant indices
+            // (its bits map to distinct simulator unknowns), and a non-constant *literal* (e.g. an
+            // oversized integer) is a bad constant rather than a runtime index.
+            let has_bad_literal = indices
+                .iter()
+                .any(|&i| self.const_int_index(i).is_none() && self.is_literal_index(i));
+            if is_net || has_bad_literal || self.find_var_array(&base_name).is_none() {
+                self.result
+                    .diagnostics
+                    .push(InferenceDiagnostic::NonConstantBitSelectIndex { expr });
+                return None;
+            }
+            return self.infere_dynamic_bit_select(stmt, expr, &bus, indices);
+        };
+
+        if !bus.contains(&idxs) {
+            // Report the first out-of-range index against its dimension.
+            let (bad_idx, (msb, lsb)) = idxs
+                .iter()
+                .zip(&bus.dims)
+                .find(|(&i, &(msb, lsb))| {
+                    let (lo, hi) = if msb >= lsb { (lsb, msb) } else { (msb, lsb) };
+                    i < lo || i > hi
+                })
+                .map(|(&i, &d)| (i, d))
+                .unwrap_or((idxs[0], bus.dims[0]));
+            self.result.diagnostics.push(InferenceDiagnostic::BitSelectOutOfRange {
+                expr,
+                index: bad_idx,
+                msb,
+                lsb,
+            });
+            return None;
+        }
+
+        let synth_path = Path::new_ident(bus.elem_name(&idxs));
         match self.resolve_path(stmt, expr, &synth_path)? {
             ScopeDefItem::NodeId(node) => Some(Ty::Node(node)),
             ScopeDefItem::VarId(var) => Some(Ty::Var(self.db.var_data(var).ty.clone(), var)),
+            ScopeDefItem::ParamId(param) => Some(Ty::Param(self.db.param_ty(param), param)),
             _ => None,
         }
+    }
+
+    /// A dynamic-index array *read* `c[i]` (non-constant `i`, `c` a variable array): records the
+    /// element `VarId`s + index in `dynamic_index_refs` for the runtime select chain built by HIR
+    /// lowering, and types the access as the element type. The index is coerced to an integer.
+    fn infere_dynamic_bit_select(
+        &mut self,
+        stmt: StmtId,
+        expr: ExprId,
+        arr: &BusDecl,
+        indices: &[ExprId],
+    ) -> Option<Ty> {
+        let elems = self.array_elem_vars_flat(stmt, expr, arr)?;
+        let elem_ty = self.db.var_data(elems[0]).ty.clone();
+        for &index in indices {
+            if self.result.expr_types[index].to_value() != Some(Type::Integer) {
+                self.result.casts.insert(index, Type::Integer);
+            }
+        }
+        self.result.dynamic_index_refs.insert(
+            expr,
+            DynArrayIndex { elems, dims: arr.dims.clone(), indices: indices.to_vec() },
+        );
+        Some(Ty::Val(elem_ty))
     }
 
     fn resolve_item_path<T: ScopeDefItemKind>(
@@ -1540,6 +1890,14 @@ pub enum InferenceDiagnostic {
         index: i32,
         msb: i32,
         lsb: i32,
+    },
+
+    /// An array/bus was indexed with the wrong number of `[...]` clauses for its dimensionality
+    /// (e.g. `m[i]` on a 2-D array, or `bus[i][j]` on a 1-D net).
+    WrongArrayDimensions {
+        expr: ExprId,
+        expected: usize,
+        found: usize,
     },
 
     /// A vectored net/port was referenced by its base name without a bit-select.

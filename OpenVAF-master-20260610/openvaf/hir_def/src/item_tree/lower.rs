@@ -34,6 +34,12 @@ fn fold_width_range(range: &ast::Range) -> Option<(i32, i32)> {
     }
 }
 
+/// Folds every `[msb:lsb]` width clause of an array declaration into a per-dimension
+/// `(msb, lsb)` list (outermost dimension first). `None` if any bound isn't a constant integer.
+fn fold_width_ranges<'a>(widths: impl Iterator<Item = ast::Range>) -> Option<Vec<(i32, i32)>> {
+    widths.map(|r| fold_width_range(&r)).collect()
+}
+
 /// Parses a synthesized bus-bit name like `"bus[3]"` back into `("bus", 3)`.
 /// Used only for diagnosing out-of-range branch-endpoint bit-selects after the
 /// fact (the index was already validated to be a constant integer at the
@@ -288,16 +294,25 @@ impl Ctx {
         let mut items = Vec::new();
         let mut buses = Vec::new();
         let mut var_arrays = Vec::new();
+        let mut param_arrays = Vec::new();
         if let Some(ports) = decl.module_ports() {
             self.lower_module_ports(ports, &mut nodes, &mut items, &mut buses);
         }
 
         let num_ports = nodes.len() as u32;
-        self.lower_module_items(decl.module_items(), &mut nodes, &mut items, &mut buses, &mut var_arrays);
+        self.lower_module_items(
+            decl.module_items(),
+            &mut nodes,
+            &mut items,
+            &mut buses,
+            &mut var_arrays,
+            &mut param_arrays,
+        );
 
         self.check_branch_bus_refs(&items, &buses);
 
-        let res = Module { name, nodes, items, ast_id, num_ports, buses, var_arrays };
+        let res =
+            Module { name, nodes, items, ast_id, num_ports, buses, var_arrays, param_arrays };
         Some(self.tree.data.modules.push_and_get_key(res))
     }
 
@@ -308,6 +323,7 @@ impl Ctx {
         dst: &mut Vec<ModuleItem>,
         buses: &mut Vec<BusDecl>,
         var_arrays: &mut Vec<BusDecl>,
+        param_arrays: &mut Vec<BusDecl>,
     ) {
         for item in items {
             match item {
@@ -328,7 +344,7 @@ impl Ctx {
                     self.lower_var(var, dst, Some(var_arrays));
                 }
                 ast::ModuleItem::ParamDecl(param) => {
-                    self.lower_param(param, dst);
+                    self.lower_param(param, dst, Some(param_arrays));
                 }
                 ast::ModuleItem::Function(fun) => {
                     self.lower_fun(fun, dst);
@@ -421,7 +437,7 @@ impl Ctx {
         let mut args: TiVec<LocalFunctionArgId, FunctionArg> = TiVec::new();
         for item in fun.function_items() {
             match item {
-                ast::FunctionItem::ParamDecl(decl) => self.lower_param(decl, &mut items),
+                ast::FunctionItem::ParamDecl(decl) => self.lower_param(decl, &mut items, None),
                 ast::FunctionItem::VarDecl(decl) => self.lower_var(decl, &mut items, None),
                 ast::FunctionItem::FunctionArg(arg) => {
                     let ast_id = self.source_ast_id_map.ast_id(&arg);
@@ -636,7 +652,13 @@ impl Ctx {
             let base_name = name.as_name();
             match fold_width_range(&width) {
                 Some((msb, lsb)) => {
-                    buses.push(BusDecl { base_name: base_name.clone(), msb, lsb, ast_id });
+                    buses.push(BusDecl {
+                        base_name: base_name.clone(),
+                        msb,
+                        lsb,
+                        dims: vec![(msb, lsb)],
+                        ast_id,
+                    });
                     let (lo, hi) = if msb >= lsb { (lsb, msb) } else { (msb, lsb) };
                     // declare from lsb to msb (ascending), matching natural bit order;
                     // direction of the original [msb:lsb] only affects range checks
@@ -797,9 +819,9 @@ impl Ctx {
                               match block_stack.last() {
                                     Some(block) => {
                                         let block = blocks.get_mut(block).unwrap();
-                                        self.lower_param(param, &mut block.scope_items)
+                                        self.lower_param(param, &mut block.scope_items, None)
                                     }
-                                 None => self.lower_param(param, parent_scope),
+                                 None => self.lower_param(param, parent_scope, None),
                                 }
                             },
                             _ => ()
@@ -832,54 +854,53 @@ impl Ctx {
         mut var_arrays: Option<&mut Vec<BusDecl>>,
     ) {
         let ty = decl.ty().as_type();
-        let width = decl.width();
+        // One `[msb:lsb]` clause per dimension (Enhancement-15); empty for a scalar variable.
+        let widths: Vec<ast::Range> = decl.widths().collect();
 
         for var in decl.vars() {
             let Some(name) = var.name() else { continue };
             let base_name = name.as_name();
             let ast_id = self.source_ast_id_map.ast_id(&var);
 
-            let Some(width) = width.clone() else {
-                // ordinary (non-array) variable declaration
-                let var = Var { name: base_name, ast_id, ty: ty.clone() };
-                let id = self.tree.data.variables.push_and_get_key(var);
+            let mut push_scalar = |this: &mut Self| {
+                let var = Var { name: base_name.clone(), ast_id, ty: ty.clone() };
+                let id = this.tree.data.variables.push_and_get_key(var);
                 dst.push(id.into());
-                continue;
             };
+
+            if widths.is_empty() {
+                // ordinary (non-array) variable declaration
+                push_scalar(self);
+                continue;
+            }
 
             let Some(var_arrays) = var_arrays.as_deref_mut() else {
                 // a width clause outside module body scope: diagnose and degrade to scalar
                 self.tree
                     .diagnostics
                     .push(ItemTreeDiagnostic::ArrayVarUnsupportedScope { ast_id: ast_id.into() });
-                let var = Var { name: base_name, ast_id, ty: ty.clone() };
-                let id = self.tree.data.variables.push_and_get_key(var);
-                dst.push(id.into());
+                push_scalar(self);
                 continue;
             };
 
-            match fold_width_range(&width) {
-                Some((msb, lsb)) => {
-                    var_arrays.push(BusDecl {
+            match fold_width_ranges(widths.iter().cloned()) {
+                Some(dims) => {
+                    let arr = BusDecl {
                         base_name: base_name.clone(),
-                        msb,
-                        lsb,
+                        msb: dims[0].0,
+                        lsb: dims[0].1,
+                        dims,
                         ast_id: ast_id.into(),
-                    });
-                    let (lo, hi) = if msb >= lsb { (lsb, msb) } else { (msb, lsb) };
-                    // declare from lsb to msb (ascending), matching bus net/port expansion;
-                    // direction of the original [msb:lsb] only affects range checks
-                    for bit in lo..=hi {
-                        let var = Var {
-                            name: super::bus_bit_name(&base_name, bit),
-                            ast_id,
-                            ty: ty.clone(),
-                        };
+                    };
+                    // one scalar element per index tuple, named `x[i]` / `x[i][j]` / ...
+                    for indices in arr.index_tuples() {
+                        let var = Var { name: arr.elem_name(&indices), ast_id, ty: ty.clone() };
                         let id = self.tree.data.variables.push_and_get_key(var);
                         dst.push(id.into());
                     }
+                    var_arrays.push(arr);
                     // Note: a default initializer (`real [0:4] x = ...;`) isn't meaningful
-                    // per-bit and is silently ignored for array variables — see
+                    // per-element and is silently ignored for array variables — see
                     // Enhancement-4.md known limitations.
                 }
                 None => {
@@ -887,27 +908,95 @@ impl Ctx {
                         .diagnostics
                         .push(ItemTreeDiagnostic::NonConstantBusWidth { ast_id: ast_id.into() });
                     // fall back to a scalar declaration so compilation proceeds
-                    let var = Var { name: base_name, ast_id, ty: ty.clone() };
-                    let id = self.tree.data.variables.push_and_get_key(var);
-                    dst.push(id.into());
+                    push_scalar(self);
                 }
             }
         }
     }
 
-    fn lower_param<T: From<ItemTreeId<Param>>>(&mut self, decl: ast::ParamDecl, dst: &mut Vec<T>) {
+    /// Lowers a `ParamDecl`. `param_arrays` is `Some` only at module body scope (like `var_arrays`
+    /// for `lower_var`): an array-valued parameter (`parameter real [msb:lsb] c = '{...};`) is
+    /// registered there and expanded into one scalar parameter per element (`c[lo]`..`c[hi]`), each
+    /// carrying its `array_index` (declaration-order position) so it can pick its per-element
+    /// default from the `'{...}` literal. A width clause outside module scope, or a non-constant
+    /// width, degrades to an ordinary scalar parameter.
+    fn lower_param<T: From<ItemTreeId<Param>>>(
+        &mut self,
+        decl: ast::ParamDecl,
+        dst: &mut Vec<T>,
+        param_arrays: Option<&mut Vec<BusDecl>>,
+    ) {
         let ty = decl.ty().map(|ty| ty.as_type());
+        let is_local = decl.localparam_token().is_some();
+        // One `[msb:lsb]` clause per dimension (Enhancement-15); empty for a scalar parameter.
+        let widths: Vec<ast::Range> = decl.widths().collect();
+        let dims = if widths.is_empty() { None } else { fold_width_ranges(widths.iter().cloned()) };
+
         for param in decl.paras() {
-            if let Some(name) = param.name() {
-                let ast_id = self.source_ast_id_map.ast_id(&param);
+            let Some(name) = param.name() else { continue };
+            let base_name = name.as_name();
+            let ast_id = self.source_ast_id_map.ast_id(&param);
+
+            let push_scalar = |this: &mut Self, dst: &mut Vec<T>| {
                 let param = Param {
-                    name: name.as_name(),
-                    is_local: decl.localparam_token().is_some(),
+                    name: base_name.clone(),
+                    is_local,
                     ty: ty.clone(),
                     ast_id,
+                    array_index: None,
                 };
-                let id = self.tree.data.parameters.push_and_get_key(param);
-                dst.push(id.into())
+                let id = this.tree.data.parameters.push_and_get_key(param);
+                dst.push(id.into());
+            };
+
+            match (widths.is_empty(), param_arrays.is_some(), &dims) {
+                // ordinary scalar parameter
+                (true, _, _) => push_scalar(self, dst),
+                // array-valued parameter at module scope with constant widths
+                (false, true, Some(dims)) => {
+                    let arr = BusDecl {
+                        base_name: base_name.clone(),
+                        msb: dims[0].0,
+                        lsb: dims[0].1,
+                        dims: dims.clone(),
+                        ast_id: ast_id.into(),
+                    };
+                    // one scalar element parameter per index tuple; `array_index` is its flat
+                    // declaration-order position, used to pick its default from the (nested) literal
+                    for (pos, indices) in arr.index_tuples().iter().enumerate() {
+                        let param = Param {
+                            name: arr.elem_name(indices),
+                            is_local,
+                            ty: ty.clone(),
+                            ast_id,
+                            array_index: Some(pos as u32),
+                        };
+                        let id = self.tree.data.parameters.push_and_get_key(param);
+                        dst.push(id.into());
+                    }
+                }
+                // width clause but non-constant range or wrong scope: diagnose, degrade to scalar
+                (false, _, _) => {
+                    self.tree
+                        .diagnostics
+                        .push(ItemTreeDiagnostic::NonConstantBusWidth { ast_id: ast_id.into() });
+                    push_scalar(self, dst);
+                }
+            }
+        }
+
+        // Register the parameter array so `c[i]`/`c[i][j]` bit-selects resolve to the elements.
+        if let (Some(param_arrays), Some(dims)) = (param_arrays, &dims) {
+            for param in decl.paras() {
+                if let Some(name) = param.name() {
+                    param_arrays.push(BusDecl {
+                        base_name: name.as_name(),
+                        msb: dims[0].0,
+                        lsb: dims[0].1,
+                        dims: dims.clone(),
+                        ast_id: self.source_ast_id_map.ast_id(&param).into(),
+                    });
+                }
             }
         }
     }

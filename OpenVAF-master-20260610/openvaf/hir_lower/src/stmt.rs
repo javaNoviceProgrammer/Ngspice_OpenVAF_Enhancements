@@ -1,6 +1,6 @@
 use hir::{
-    BranchWrite, Case, CaseCond, ContributeKind, Event, ExprId, GlobalEvent, Node, Stmt, StmtId,
-    Type,
+    ArrayAssignElem, BranchWrite, Case, CaseCond, ContributeKind, Event, ExprId, GlobalEvent, Node,
+    Stmt, StmtId, Type,
 };
 use mir::builder::InstBuilder;
 use mir::cursor::{Cursor, FuncCursor};
@@ -40,6 +40,36 @@ impl BodyLoweringCtx<'_, '_, '_> {
             Stmt::Assignment { lhs, rhs } => {
                 let val_ = self.lower_expr(rhs);
                 self.ctx.def_place(lhs.into(), val_);
+            }
+            Stmt::ArrayAssignment { assigns } => {
+                // A whole-array assignment (`c = '{...}` / `c = d`) is lowered as its
+                // decomposed per-element scalar assignments, in declaration order.
+                for elem in assigns {
+                    match elem {
+                        ArrayAssignElem::Val { dst, val } => {
+                            let v = self.lower_expr(val);
+                            self.ctx.def_place(PlaceKind::Var(dst), v);
+                        }
+                        ArrayAssignElem::Copy { dst, src } => {
+                            let v = self.ctx.read_variable(src);
+                            self.ctx.def_place(PlaceKind::Var(dst), v);
+                        }
+                    }
+                }
+            }
+            Stmt::DynArrayAssignment { elems, dims, indices, value } => {
+                // A dynamic-index write `c[i] = v` / `m[i][j] = v` updates each element
+                // conditionally: element `elems[k]` becomes `v` when the flat runtime position
+                // equals `k`, else keeps its value.
+                let v = self.lower_expr(value);
+                let flat = self.lower_flat_array_index(&dims, &indices);
+                for (k, var) in elems.into_iter().enumerate() {
+                    let target = self.ctx.iconst(k as i32);
+                    let is_k = self.ctx.ins().binary1(Opcode::Ieq, flat, target);
+                    let cur = self.ctx.read_variable(var);
+                    let new = self.ctx.make_select(is_k, move |_ctx, branch| if branch { v } else { cur });
+                    self.ctx.def_place(PlaceKind::Var(var), new);
+                }
             }
             Stmt::Contribute { kind, branch, rhs } => {
                 self.contribute(kind == ContributeKind::Potential, branch, rhs)

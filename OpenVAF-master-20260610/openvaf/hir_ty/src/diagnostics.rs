@@ -386,6 +386,23 @@ impl Diagnostic for InferenceDiagnosticWrapped<'_> {
                     .with_message("bus bit-select index out of range")
                     .with_notes(vec![format!("help: this bus was declared with width [{msb}:{lsb}]")])
             }
+            InferenceDiagnostic::WrongArrayDimensions { expr, expected, found } => {
+                let src = self
+                    .parse
+                    .to_file_span(self.body_sm.expr_map_back[expr].as_ref().unwrap().range(), self.sm);
+
+                Report::error()
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: src.file,
+                        range: src.range.into(),
+                        message: format!("expected {expected} index/indices, found {found}"),
+                    }])
+                    .with_message("wrong number of array indices")
+                    .with_notes(vec![format!(
+                        "help: this array has {expected} dimension(s); index it with {expected} `[..]` clause(s)"
+                    )])
+            }
             InferenceDiagnostic::BareBusReference { expr, ref name } => {
                 let src = self
                     .parse

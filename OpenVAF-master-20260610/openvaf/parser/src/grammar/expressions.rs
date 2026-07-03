@@ -115,10 +115,15 @@ fn atom_expr(p: &mut Parser) -> Option<CompletedMarker> {
             if p.at(T!('(')) {
                 call(p, m)
             } else if p.at(T!['[']) {
+                // One or more `[index]` clauses: `m[i]`, or a multi-dimensional
+                // access `m[i][j]...` (Enhancement-15). All index expressions are
+                // collected as children of a single BIT_SELECT_EXPR node.
                 let m = m.precede(p);
-                p.bump(T!['[']);
-                expr(p);
-                p.expect(T![']']);
+                while p.at(T!['[']) {
+                    p.bump(T!['[']);
+                    expr(p);
+                    p.expect(T![']']);
+                }
                 m.complete(p, BIT_SELECT_EXPR)
             } else {
                 let m = m.precede(p);

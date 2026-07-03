@@ -214,6 +214,7 @@ impl ast::AttrsOwner for VarDecl {}
 impl VarDecl {
     pub fn ty(&self) -> Option<Type> { support::child(&self.syntax) }
     pub fn width(&self) -> Option<Range> { support::child(&self.syntax) }
+    pub fn widths(&self) -> AstChildren<Range> { support::children(&self.syntax) }
     pub fn vars(&self) -> AstChildren<Var> { support::children(&self.syntax) }
     pub fn semicolon_token(&self) -> Option<SyntaxToken> { support::token(&self.syntax, T![;]) }
 }
@@ -230,6 +231,8 @@ impl ParamDecl {
         support::token(&self.syntax, T![localparam])
     }
     pub fn ty(&self) -> Option<Type> { support::child(&self.syntax) }
+    pub fn width(&self) -> Option<Range> { support::child(&self.syntax) }
+    pub fn widths(&self) -> AstChildren<Range> { support::children(&self.syntax) }
     pub fn paras(&self) -> AstChildren<Param> { support::children(&self.syntax) }
     pub fn semicolon_token(&self) -> Option<SyntaxToken> { support::token(&self.syntax, T![;]) }
 }
@@ -298,6 +301,7 @@ impl BitSelectExpr {
     pub fn base(&self) -> Option<Path> { support::child(&self.syntax) }
     pub fn l_brack_token(&self) -> Option<SyntaxToken> { support::token(&self.syntax, T!['[']) }
     pub fn index(&self) -> Option<Expr> { support::child(&self.syntax) }
+    pub fn indices(&self) -> AstChildren<Expr> { support::children(&self.syntax) }
     pub fn r_brack_token(&self) -> Option<SyntaxToken> { support::token(&self.syntax, T![']']) }
 }
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

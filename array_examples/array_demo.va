@@ -1,0 +1,46 @@
+`include "disciplines.vams"
+
+// Enhancement-14 demonstration: array literals / aggregates.
+//
+// A 4-tap programmable-gain buffer whose gain is the sum of four tap weights.
+// It exercises all three Enhancement-14 capabilities at once:
+//
+//   (B) array-valued PARAMETER  `parameter real [0:3] w = '{...}` -- the tap
+//       weights, each element carrying its own default and each individually
+//       overridable from SPICE as `w[0]`, `w[1]`, ...
+//   (A) whole-array AGGREGATE assignment `acc = '{w[0], w[1], w[2], w[3]}` and
+//       array-to-array copy `rev = acc`.
+//   (C) DYNAMIC (non-constant) indexing `rev[i]` / `acc[3-i]` inside `for`
+//       loops -- a runtime element select over the array variables.
+//
+// The gain g = w[0]+w[1]+w[2]+w[3]. With the defaults (0.1+0.2+0.3+0.4 = 1.0)
+// V(out) tracks V(in) exactly; overriding the weights rescales it.
+module array_demo(in, out);
+    input in;
+    output out;
+    electrical in, out;
+
+    // (B) array-valued parameter -- per-element defaults, per-element override
+    parameter real [0:3] w = '{0.1, 0.2, 0.3, 0.4};
+
+    real [0:3] acc;      // working accumulator (array variable)
+    real [0:3] rev;      // reversed copy
+    integer i;
+    real g;
+
+    analog begin
+        // (A) aggregate assignment: build the accumulator from the param taps
+        acc = '{w[0], w[1], w[2], w[3]};
+
+        // (C) dynamic write + dynamic read with a computed index: reverse acc
+        for (i = 0; i < 4; i = i + 1)
+            rev[i] = acc[3 - i];
+
+        // (C) dynamic read: sum the reversed accumulator
+        g = 0.0;
+        for (i = 0; i < 4; i = i + 1)
+            g = g + rev[i];
+
+        V(out) <+ g * V(in);
+    end
+endmodule

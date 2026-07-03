@@ -63,6 +63,15 @@ impl<'a> BodyRef<'a> {
         Some(ids.iter().map(|&id| Variable { id }).collect())
     }
 
+    /// For a dynamic-index array *read* `c[i]` / `m[i][j]` (non-constant indices): the element
+    /// variables flattened in declaration order, the per-dimension `(msb, lsb)` bounds, and one
+    /// index expression per dimension. HIR lowering computes the flat position at runtime.
+    pub fn dynamic_index(&self, expr: ExprId) -> Option<(Vec<Variable>, Vec<(i32, i32)>, Vec<ExprId>)> {
+        let d = self.infere.dynamic_index_refs.get(&expr)?;
+        let elems = d.elems.iter().map(|&id| Variable { id }).collect();
+        Some((elems, d.dims.clone(), d.indices.clone()))
+    }
+
     fn resolve_path(&self, expr: ExprId) -> Ref {
         match self.infere.expr_types[expr] {
             Ty::Var(_, id) => Ref::Variable(Variable { id }),
@@ -207,6 +216,35 @@ impl<'a> BodyRef<'a> {
                 Some(Stmt::EventControl { event, body })
             }
             hir_def::Stmt::Assignment { val, .. } => {
+                if let Some(arr) = self.infere.array_assignments.get(&stmnt) {
+                    let assigns = match arr {
+                        inference::ArrayAssign::Literal(pairs) => pairs
+                            .iter()
+                            .map(|&(dst, val)| ArrayAssignElem::Val {
+                                dst: Variable { id: dst },
+                                val,
+                            })
+                            .collect(),
+                        inference::ArrayAssign::Copy(pairs) => pairs
+                            .iter()
+                            .map(|&(dst, src)| ArrayAssignElem::Copy {
+                                dst: Variable { id: dst },
+                                src: Variable { id: src },
+                            })
+                            .collect(),
+                    };
+                    return Some(Stmt::ArrayAssignment { assigns });
+                }
+                if let Some(dyn_assign) = self.infere.dynamic_index_assignments.get(&stmnt) {
+                    let elems =
+                        dyn_assign.target.elems.iter().map(|&id| Variable { id }).collect();
+                    return Some(Stmt::DynArrayAssignment {
+                        elems,
+                        dims: dyn_assign.target.dims.clone(),
+                        indices: dyn_assign.target.indices.clone(),
+                        value: dyn_assign.value,
+                    });
+                }
                 if let Some(&(constraint_lhs, constraint_rhs)) =
                     self.infere.indirect_branch_constraints.get(&stmnt)
                 {
@@ -277,6 +315,14 @@ pub enum AssignmentLhs {
     FunctionArg(FunctionArg),
 }
 
+/// One element of a whole-array assignment (`c = '{...}` / `c = d`): the destination element
+/// variable and its source, either a literal value expression or another array's element variable.
+#[derive(Debug, Clone, PartialEq, Eq, Copy)]
+pub enum ArrayAssignElem {
+    Val { dst: Variable, val: ExprId },
+    Copy { dst: Variable, src: Variable },
+}
+
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum ContributeKind {
     Flow,
@@ -295,6 +341,16 @@ pub enum Stmt<'a> {
         constraint_rhs: ExprId,
     },
     Assignment { lhs: AssignmentLhs, rhs: ExprId },
+    ArrayAssignment { assigns: Vec<ArrayAssignElem> },
+    /// A dynamic-index array write `c[i] = value` / `m[i][j] = value` (non-constant indices): the
+    /// element variables (declaration order), per-dimension `(msb, lsb)` bounds, one index
+    /// expression per dimension, and the value expression.
+    DynArrayAssignment {
+        elems: Vec<Variable>,
+        dims: Vec<(i32, i32)>,
+        indices: Vec<ExprId>,
+        value: ExprId,
+    },
     Block { name: Option<&'a Name>, body: &'a [StmtId] },
     Disable { name: &'a Name },
     If { cond: ExprId, then_branch: StmtId, else_branch: StmtId },

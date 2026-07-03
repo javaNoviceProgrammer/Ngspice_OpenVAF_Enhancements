@@ -222,7 +222,24 @@ impl Body {
             registry: &registry,
         };
 
-        let default = ctx.collect_opt_expr(ast.default());
+        // An element of an array-valued parameter takes its default from the corresponding leaf of
+        // the shared `'{...}` array literal (flat declaration-order position `array_index`). The
+        // literal is nested for a multi-dimensional parameter (`'{'{..},'{..}}`), so it is
+        // flattened row-major before indexing.
+        let default = match tree[item_tree].array_index {
+            Some(pos) => {
+                fn flatten(expr: ast::Expr) -> Vec<ast::Expr> {
+                    match expr {
+                        ast::Expr::ArrayExpr(arr) => arr.exprs().flat_map(flatten).collect(),
+                        other => vec![other],
+                    }
+                }
+                let elem =
+                    ast.default().map(flatten).and_then(|f| f.into_iter().nth(pos as usize));
+                ctx.collect_opt_expr(elem)
+            }
+            None => ctx.collect_opt_expr(ast.default()),
+        };
         let mut entry_stmts = vec![ctx.alloc_stmt_desugared(Stmt::Expr(default))];
 
         let bounds = ast

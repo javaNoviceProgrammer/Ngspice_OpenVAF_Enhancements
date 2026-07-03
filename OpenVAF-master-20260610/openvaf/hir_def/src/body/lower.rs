@@ -97,8 +97,8 @@ impl LowerCtx<'_> {
 
             ast::Expr::BitSelectExpr(bit_select) => {
                 if let Some(base) = bit_select.base().and_then(Path::resolve) {
-                    let index = self.collect_opt_expr(bit_select.index());
-                    Expr::BitSelect { base, index }
+                    let indices = bit_select.indices().map(|e| self.collect_expr(e)).collect();
+                    Expr::BitSelect { base, indices }
                 } else {
                     return self.missing_expr();
                 }
