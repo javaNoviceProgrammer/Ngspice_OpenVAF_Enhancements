@@ -409,6 +409,16 @@ Several unrelated language gaps found along the way are also fixed. **`localpara
 
 ---
 
+## Enhancement 29: port-branch flow access `I(<port>)`
+
+*July 2026* — Made the **port-branch flow probe `I(<port>)`** functional. `I(<p>)` is the current flowing **into** the module through terminal `p` — used to build current-controlled sources (CCCS/CCVS) and to monitor terminal currents. The front-end already parsed, type-checked and lowered it (`ParamKind::Current(CurrentKind::Port)`), so models *compiled*, but the value was **always 0 at run time**: it was an unfinished stub (`CurrentKind::Port => { // TODO? }` in `sim_back`, and a hard-coded `const_real(0.0)` in the OSDI eval), so `I(out) <+ 10·I(<in>)` produced `i(out) = 0`. The fix gives port flow a **real DAE unknown with a defining equation**, reusing the machinery that already backs named/unnamed branch-current probes: a new `build_port_flow_equations()` (called first in `finish()`) synthesises, for each probed port, `residual[Current(Port(p))] = residual[KCL(p)] − I(<p>)` — i.e. by Kirchhoff's law the current into port `p` equals the net device current out of node `p`. It **mirrors node p's resistive *and* reactive residual**, so the solved value includes displacement (capacitive) current for free. The `CurrentKind::Port` special-cases are then dropped from `build_input_unknown_pairs` (it registers as an ordinary model input) and from the OSDI eval (it reads its solved value like any current). Pure `sim_back` + `osdi` change; the OSDI descriptor already named the unknown `flow(<node>)`.
+
+- Verified end-to-end through ngspice — a CCCS `I(out,com) = k·I(<in>)` with an `rin‖cin` input load: resistive DC gives `i(vout) = −k·vin/rin` (−20 mA for k=10, vin=2, rin=1k; was **0** before the fix), the gain scales (`i(vout)/i(vin) = k` for k ∈ {1, 5, 25, 100}), and in AC the port flow carries both the in-phase (`1/rin`) and quadrature (`ω·cin`) parts with `|i(vout)| = k·|i(<in>)|` — proving displacement current flows through the probe. Resistive, reactive and mixed loads all work — see `examples/portflow_examples/`
+- Gotcha (ngspice, not OpenVAF): do **not** name a module `cccs`, `vccs` or `vcvs` — those collide with ngspice's built-in controlled-source device types and crash `.model` setup; just use a different module name (the demo uses `portflow_cccs`)
+- Details: [Enhancement-29.md](enhancements_doc/Enhancement-29.md)
+
+---
+
 ## Prebuilt Binaries
 
 Binaries are built by CI and committed to `bin/`:

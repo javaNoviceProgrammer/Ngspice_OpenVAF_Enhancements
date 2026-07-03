@@ -92,6 +92,10 @@ impl<'a> Builder<'a> {
     }
 
     pub(super) fn finish(mut self) -> DaeSystem {
+        // Give every probed port flow `I(<p>)` a defining equation + unknown before we
+        // compute derivatives/jacobian, so it participates like any branch current.
+        self.build_port_flow_equations();
+
         let sim_unknown_reads = self.sim_unknown_reads();
         let derivative_info = self.intern.unknowns(&self.cursor, true);
         let extra_derivatives = self
@@ -178,16 +182,12 @@ impl<'a> Builder<'a> {
                     }
                 }
                 ParamKind::Current(cur_kind) => {
-                    match cur_kind {
-                        CurrentKind::Port(_) => {
-                            // TODO?
-                        }
-                        _ => {
-                            let u = SimUnknownKind::Current(cur_kind);
-                            if let Some(u) = self.system.unknowns.index(&u) {
-                                self.system.model_inputs.push((u32::from(u), std::u32::MAX));
-                            }
-                        }
+                    // Port flows I(<p>) are wired just like branch/unnamed currents:
+                    // build_port_flow_equations() gives each one a defining equation and a
+                    // Current unknown, so they participate as ordinary model inputs.
+                    let u = SimUnknownKind::Current(cur_kind);
+                    if let Some(u) = self.system.unknowns.index(&u) {
+                        self.system.model_inputs.push((u32::from(u), std::u32::MAX));
                     }
                 }
                 ParamKind::ImplicitUnknown(ieq_kind) => {
@@ -516,6 +516,60 @@ impl<'a> Builder<'a> {
                 }
             }
         };
+    }
+
+    /// Give every probed port flow `I(<p>)` a defining equation and DAE unknown.
+    ///
+    /// A port branch has no `branch(...)` object, so unlike a named/unnamed branch
+    /// current it never passes through `build_branch`/`add_source_equation`. Instead we
+    /// synthesise its equation here, once all Kirchhoff residuals are populated. By KCL
+    /// the current entering the module through port `p` equals the net device current
+    /// flowing out of node `p`, which is exactly `residual[KCL(p)]`:
+    ///
+    ///   `Iport(p) = residual[KCL(p)]`   (resistive + reactive)
+    ///
+    /// We mirror node `p`'s resistive and reactive residual into the port-current row and
+    /// subtract the unknown, so the solved value includes displacement (reactive) current
+    /// for free. `Iport` is the very same param the model reads via `I(<p>)`, so
+    /// current-controlled sources built on top of it see the correct value.
+    fn build_port_flow_equations(&mut self) {
+        // Collect the (deduplicated) set of ports whose flow is actually probed.
+        let mut ports: Vec<Node> = Vec::new();
+        for (_, &kind, _) in self.intern.live_params(&self.cursor.func.dfg) {
+            if let ParamKind::Current(CurrentKind::Port(node)) = kind {
+                if !ports.contains(&node) {
+                    ports.push(node);
+                }
+            }
+        }
+
+        for node in ports {
+            // `Iport` — the same input param the model reads as `I(<p>)`.
+            let iport = self
+                .intern
+                .ensure_param(&mut self.cursor, ParamKind::Current(CurrentKind::Port(node)));
+
+            // Snapshot node p's Kirchhoff residual (net device current out of p).
+            let kcl = self.ensure_unknown(SimUnknownKind::KirchoffLaw(node));
+            let (resist, react) = {
+                let r = &self.system.residual[kcl];
+                (r.resist, r.react)
+            };
+            let contrib = Contribution {
+                unknown: None,
+                resist,
+                react,
+                resist_small_signal: F_ZERO,
+                react_small_signal: F_ZERO,
+                noise: Vec::new(),
+            };
+
+            // residual[Iport] = residual[KCL(p)] - Iport   =>   Iport = current into p
+            let residual = get_residual!(self, SimUnknownKind::Current(CurrentKind::Port(node)));
+            residual.add_contribution(&contrib, &mut self.cursor, false);
+            residual.add(&mut self.cursor, true, iport);
+            residual.nature_kind = ResidualNatureKind::Flow;
+        }
     }
 
     pub(super) fn build_implicit_equation(&mut self, eq: ImplicitEquation, contrib: &Contribution) {

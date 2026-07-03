@@ -1,0 +1,37 @@
+// portflow_demo.va -- Enhancement-29: port-branch flow access  I(<port>)
+//
+// `I(<p>)` (the "port branch" / port-flow probe) reads the current flowing INTO
+// the module through terminal `p`.  Before Enhancement-29 it silently returned 0
+// (`CurrentKind::Port` was a TODO stub in sim_back's DAE builder and was hard-coded
+// to 0.0 in the OSDI eval).  It is now given a real DAE unknown whose defining
+// equation mirrors node p's Kirchhoff residual -- resistive AND reactive -- so it
+// reports the true port current, including displacement (capacitive) current:
+//
+//     I(<p>) = (net device current flowing out of node p) = residual[KCL(p)]
+//
+// This model is a current-controlled current source (CCCS).  The input terminal is
+// loaded internally by a resistor `rin` in parallel with a capacitor `cin`, so the
+// sensed port current is
+//
+//     I(<in>) = V(in,com)/rin + cin * d/dt V(in,com)
+//
+// and the output mirrors it with gain k:   I(out,com) = k * I(<in>).
+//
+// NOTE (ngspice): do NOT name a module `cccs`, `vccs`, or `vcvs` -- those collide
+// with ngspice's built-in controlled-source device types and crash `.model` setup.
+
+`include "disciplines.vams"
+
+module portflow_cccs(in, out, com);
+    inout in, out, com;
+    electrical in, out, com;
+
+    parameter real k   = 10.0  from (-inf:inf);   // current gain
+    parameter real rin = 1e3   from (0:inf);      // resistive input load
+    parameter real cin = 0.0   from [0:inf);      // capacitive input load (reactive path)
+
+    analog begin
+        I(in, com)  <+ V(in, com) / rin  +  cin * ddt(V(in, com));
+        I(out, com) <+ k * I(<in>);
+    end
+endmodule

@@ -180,5 +180,9 @@ examples/idtmod_examples/*.txt
 examples/idtic_examples/_*.cir
 examples/idtic_examples/*.txt
 
+# Enhancement 29 port-flow example scripts: temp netlists + outputs
+examples/portflow_examples/_*.cir
+examples/portflow_examples/*.txt
+
 # Python bytecode cache (e.g. from importing _setup.py)
 __pycache__/

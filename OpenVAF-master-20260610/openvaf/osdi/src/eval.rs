@@ -199,7 +199,6 @@ impl<'ll> OsdiCompilationUnit<'_, '_, 'll> {
                                 hi
                             }
                         }
-                        ParamKind::Current(CurrentKind::Port(_)) => cx.const_real(0.0),
                         ParamKind::Abstime => {
                             let loc = MemLoc::struct_gep(
                                 sim_info,
