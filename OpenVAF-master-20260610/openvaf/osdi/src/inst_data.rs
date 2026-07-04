@@ -333,7 +333,16 @@ impl<'ll> OsdiInstanceData<'ll> {
                 let val = module.intern.outputs.get(&PlaceKind::Var(var))?;
                 let mut val = val.expand()?;
                 val = strip_optbarrier(module.eval, val);
-                Some((var, eval_outputs.insert_full(val, ty_f64).0))
+                // Enhancement-32: the slot must use the variable's own type, not f64.
+                // The slot type drives both the end-of-eval store and the start-of-eval
+                // `read_hidden_state` load; hardcoding f64 made an *integer* persistent
+                // variable read back as a double, feeding integer MIR ops with f64
+                // operands (LLVM ISel abort `Cannot select: f64 = add`). It also
+                // clobbered the correctly-typed entry the opvar path may have already
+                // inserted for the same value (`insert_full` overwrites on duplicate
+                // keys).
+                let ty = lltype(&var.ty(db), cx);
+                Some((var, eval_outputs.insert_full(val, ty).0))
             })
             .collect();
 
@@ -1357,7 +1366,27 @@ impl<'ll> OsdiCompilationUnit<'_, '_, 'll> {
                         .param_ptr(OsdiInstanceParam::Builtin(func), inst_ptr, llbuilder)
                         .unwrap(),
 
-                    ParamKind::HiddenState(_) | ParamKind::EventState(_) => todo!("hidden state/event state"),
+                    // Enhancement-32: an output that *is* a persistent-state parameter
+                    // (a variable/event slot whose value passes through eval unchanged)
+                    // reads straight from its persistent eval-output slot. Not currently
+                    // produced by `EvalOutput::new` (state-typed params get a Calculated
+                    // slot instead), but resolvable — so resolve it rather than todo!().
+                    ParamKind::HiddenState(var) => {
+                        let (_, slot) = inst_data
+                            .hidden_state
+                            .iter()
+                            .find(|(v, _)| *v == var)
+                            .expect("hidden-state param without a persistent slot");
+                        inst_data.eval_output_slot_ptr(llbuilder, inst_ptr, *slot)
+                    }
+                    ParamKind::EventState(idx) => {
+                        let (_, slot) = inst_data
+                            .event_state
+                            .iter()
+                            .find(|(i, _)| *i == idx)
+                            .expect("event-state param without a persistent slot");
+                        inst_data.eval_output_slot_ptr(llbuilder, inst_ptr, *slot)
+                    }
 
                     ParamKind::Voltage { .. }
                     | ParamKind::Current(_)
@@ -1441,7 +1470,24 @@ impl<'ll> OsdiCompilationUnit<'_, '_, 'll> {
                         .param_ptr(OsdiInstanceParam::Builtin(func), inst_ptr, llbuilder)
                         .unwrap(),
 
-                    ParamKind::HiddenState(_) | ParamKind::EventState(_) => todo!("hidden state/event state"),
+                    // Enhancement-32: see `load_eval_output` — resolve persistent-state
+                    // params to their eval-output slot instead of todo!().
+                    ParamKind::HiddenState(var) => {
+                        let (_, slot) = inst_data
+                            .hidden_state
+                            .iter()
+                            .find(|(v, _)| *v == var)
+                            .expect("hidden-state opvar without a persistent slot");
+                        inst_data.eval_output_slot_ptr(llbuilder, inst_ptr, *slot)
+                    }
+                    ParamKind::EventState(idx) => {
+                        let (_, slot) = inst_data
+                            .event_state
+                            .iter()
+                            .find(|(i, _)| *i == idx)
+                            .expect("event-state opvar without a persistent slot");
+                        inst_data.eval_output_slot_ptr(llbuilder, inst_ptr, *slot)
+                    }
 
                     ParamKind::Voltage { .. }
                     | ParamKind::Current(_)

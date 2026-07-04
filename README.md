@@ -453,6 +453,16 @@ Several unrelated language gaps found along the way are also fixed. **`localpara
 
 ---
 
+## Enhancement 32: integer persistent/event-state variables
+
+*July 2026* — Fixed a **compiler crash on integer persistent state**. A variable holds persistent state when its value must survive from one evaluation to the next — read-before-write (`if (V(a,c) > 1.0) m = m + 1;`) or updated inside an event block (`@(cross)`, `@(initial_step)`, ...). Enhancement-7/8 implemented this via per-variable persistent slots in the OSDI instance data, but the slot type was **hardcoded `f64`**: an **integer** persistent variable was stored and read back as a double, feeding integer MIR ops with f64 operands — `LLVM ERROR: Cannot select: f64 = add` (or a segfault). Real-typed persistent variables were unaffected, which is why this survived so long; it was found in a deep-dive TODO sweep, sitting right under the two `todo!("hidden state/event state")` stubs in `osdi/src/inst_data.rs`. The fix types the hidden-state slot from the variable itself (`lltype(var.ty)`, exactly like the opvar path — which the hardcoded `f64` could previously even *clobber*, since the slot map overwrites on duplicate keys), and replaces the two `todo!()` stubs with real state-slot resolution. A companion **ngspice** fix (`src/frontend/outitf.c`) lets integer opvars be **recorded per-timepoint**: `getSpecial()` masked `IF_INTEGER` out of the vector type (every `save @n1[n]` timestep printed `OUTpData: unsupported data type`), so the mask now keeps `IF_INTEGER` and both per-point writers record integer values as reals, like every other plot vector.
+
+- Verified end-to-end through ngspice — an **integer `@(cross)` edge counter** exposed as an opvar: compiles (used to abort the compiler), counts exactly 5 upward 1 V crossings of a 2 V/1 kHz sine over 5 cycles, and its recorded waveform is a clean `0..5` staircase stepping at the analytic crossing times `asin(vth/A)/2πf + k/f` (max error < 10 µs = one timestep); an integer `@(initial_step)` flag reads 1; mixed integer+real initialization inside one `@(initial_step)` block feeds the device equations exactly — see `examples/intstate_examples/`
+- Regression-checked: the real-typed running-peak opvar (Enhancement-7 behaviour) and the E-7/E-8 example decks (`variable_persistence`/`cross`/`timer`) are unchanged
+- Details: [Enhancement-32.md](enhancements_doc/Enhancement-32.md)
+
+---
+
 ## Prebuilt Binaries
 
 Binaries are built by CI and committed to `bin/`:

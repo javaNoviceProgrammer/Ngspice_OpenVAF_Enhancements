@@ -1,0 +1,46 @@
+// intstate_demo.va -- Enhancement-32: INTEGER persistent/event-state variables
+// (and their exposure as operating-point variables).
+//
+// Before Enhancement-32 any *integer* variable holding persistent state -- a value
+// carried from one evaluation to the next (read-before-write, or updated inside an
+// event block) -- CRASHED the compiler: the OSDI persistent-state slot type was
+// hardcoded to f64, so the start-of-eval state load came back as a double and fed
+// integer MIR ops ("LLVM ERROR: Cannot select: f64 = add", or a segfault).
+// Real-typed persistent variables (Enhancement-7) were unaffected.
+//
+// This model packs the three cases that used to crash, plus a real-typed control:
+//
+//   * n       -- integer edge counter, incremented in @(cross), exposed as an opvar;
+//   * started -- integer flag set once at @(initial_step), exposed as an opvar;
+//   * vpeak   -- REAL running-peak detector (Enhancement-7 behaviour, regression
+//                control: must keep working exactly as before).
+//
+// The companion ngspice patch records integer instance params/opvars in output
+// vectors (they were masked out and reported "OUTpData: unsupported data type").
+
+`include "disciplines.vams"
+
+module intstate_demo(a, c);
+    inout a, c;
+    electrical a, c;
+
+    parameter real vth = 1.0;              // counting threshold
+    parameter real g   = 1e-3 from (0:inf);
+
+    (*desc="upward threshold crossings", units=""*)  integer n;
+    (*desc="first-eval flag", units=""*)             integer started;
+    (*desc="running peak voltage", units="V"*)       real    vpeak;
+
+    analog begin
+        @(initial_step)
+            started = 1;
+
+        @(cross(V(a,c) - vth, +1))
+            n = n + 1;                     // integer persistent state (used to crash)
+
+        if (V(a,c) > vpeak)
+            vpeak = V(a,c);                // real persistent state (regression control)
+
+        I(a,c) <+ g * V(a,c);
+    end
+endmodule

@@ -194,5 +194,9 @@ examples/analysis_examples/_*.osdi
 examples/complexpole_examples/_*.cir
 examples/complexpole_examples/_*.txt
 
+# Enhancement 32 integer-state example scripts: temp netlists + outputs
+examples/intstate_examples/_*.cir
+examples/intstate_examples/_*.txt
+
 # Python bytecode cache (e.g. from importing _setup.py)
 __pycache__/

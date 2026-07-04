@@ -611,6 +611,10 @@ OUTpD_memory(runDesc *run, IFvalue *refValue, IFvalue *valuePtr)
                 plotAddRealValue(d, val.rValue);
             else if (d->type == IF_COMPLEX)
                 plotAddComplexValue(d, val.cValue);
+            else if (d->type == IF_INTEGER)
+                /* Enhancement-32: integer instance params/opvars (e.g. OSDI event
+                   counters) are recorded as reals, like every other plot vector */
+                plotAddRealValue(d, (double) val.iValue);
             else
                 fprintf(stderr, "OUTpData: unsupported data type\n");
         }
@@ -748,6 +752,10 @@ OUTpData(runDesc *plotPtr, IFvalue *refValue, IFvalue *valuePtr)
                     fileAddRealValue(run->fp, run->binary, val.rValue);
                 else if (run->data[i].type == IF_COMPLEX)
                     fileAddComplexValue(run->fp, run->binary, val.cValue);
+                else if (run->data[i].type == IF_INTEGER)
+                    /* Enhancement-32: integer instance params/opvars are written
+                       as reals, like every other rawfile vector */
+                    fileAddRealValue(run->fp, run->binary, (double) val.iValue);
                 else
                     fprintf(stderr, "OUTpData: unsupported data type\n");
             }
@@ -1343,7 +1351,9 @@ getSpecial(dataDesc *desc, runDesc *run, IFvalue *val)
     if (INPaName(desc->specParamName, val, run->circuit, &desc->specType,
                  desc->specName, &desc->specFast, ft_sim, &desc->type,
                  &selector) == OK) {
-        desc->type &= (IF_REAL | IF_COMPLEX);   /* mask out other bits */
+        /* Enhancement-32: keep IF_INTEGER too — integer instance params/opvars
+           (e.g. OSDI event counters) are recorded as reals downstream */
+        desc->type &= (IF_REAL | IF_COMPLEX | IF_INTEGER);   /* mask out other bits */
         return TRUE;
     }
 
