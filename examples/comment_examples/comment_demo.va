@@ -1,0 +1,40 @@
+// comment_demo.va -- Enhancement-35: comment handling, and the lexer hang on a
+// `//` comment at end-of-file.
+//
+// Both Verilog-A comment forms were already supported -- `//` line comments and
+// `/* ... */` block comments, in every position. But a `//` comment as the LAST
+// LINE of a file with NO trailing newline hung the compiler forever: the lexer's
+// line-comment scan loop broke only on '\n', and at end of input the cursor's
+// `first()` returns the EOF sentinel forever while `bump()` no-ops -- an infinite
+// spin. (Its sibling `block_comment` drives on `while let Some(c) = bump()`,
+// which is why an unterminated `/*` was always a clean "unexpected EOF" error.)
+// Enhancement-35 adds the missing end-of-file break.
+//
+// This model exercises every comment form; the companion verify script also
+// generates a file whose final bytes are exactly `// comment` with no newline
+// (the hang reproducer) and compiles it under a watchdog timeout.
+
+`include "disciplines.vams"   // trailing comment after a compiler directive
+/* block comment on one line */
+/*
+ * multi-line block comment spanning several lines, containing code-like text:
+ *   I(a,c) <+ 999.0;  $display("%s");  {1,2}  '{3,4}  // inner line marker
+ */
+module comment_demo(a, c); // trailing comment after code
+    inout a, c;
+    electrical a, c;
+
+    parameter real g0 = /* inline block comment mid-expression */ 1e-3;
+
+    real g;
+
+    analog begin
+        g = g0 /* mid-expression */ * 2.0; // trailing
+        /* a block comment containing what looks like a contribution:
+           I(a,c) <+ 999.0;
+           -- must be ignored entirely */
+        I(a,c) <+ g * V(a,c);  // I = 2e-3 * V
+    end
+endmodule
+// comment at the very end of the file (with a newline -- the no-newline variant
+// is generated and compiled by verify_comment.py under a timeout watchdog)

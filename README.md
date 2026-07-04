@@ -483,6 +483,16 @@ Several unrelated language gaps found along the way are also fixed. **`localpara
 
 ---
 
+## Enhancement 35: lexer hang on `//` comment at end-of-file
+
+*July 2026* — Fixed a **compiler infinite loop**: a `//` line comment as the last line of a file with **no trailing newline** hung `openvaf-r` forever at 100 % CPU — no diagnostic, stalling any build/CI pipeline that invokes the compiler (files without trailing newlines are extremely common). Both comment forms were otherwise fully supported and torture-tested (line/block/multi-line/mid-expression/trailing comments, code-like text inside comments). Root cause: the lexer's `line_comment` scan loop broke only on `'\n'`, but at end of input the cursor's `first()` returns the `EOF_CHAR` sentinel **forever** while `bump()` no-ops. The fix is a single added arm — `_ if self.is_eof() => break`. An audit of every other scan loop in the lexer (whitespace, identifiers, digits, strings, block comments, `eat_while`) confirmed `line_comment` was the *only* EOF-unsafe loop — which is why an unterminated `/*` was always a clean `unexpected EOF` error rather than a hang. The bug was pre-existing (reproduced with the CI-built binary); found while answering "are one-line and multi-line comments supported?".
+
+- Verified end-to-end through ngspice — the exact-bytes hang reproducer (a file ending in `// eof comment` with no newline) compiles instantly; the comment-torture model simulates with the exact expected current (a commented-out `I(a,c) <+ 999.0;` is ignored); an unterminated `/*` stays a clean error; the backslash-at-EOF corner also terminates. Every compile in the verify suite runs under a 20 s watchdog, so a regression fails fast instead of hanging CI — see `examples/comment_examples/`
+- Regression-checked: lexer unit tests 8/8, all 73 example models recompile, spot verify suites unchanged
+- Details: [Enhancement-35.md](enhancements_doc/Enhancement-35.md)
+
+---
+
 ## Prebuilt Binaries
 
 Binaries are built by CI and committed to `bin/`:

@@ -210,5 +210,11 @@ examples/concat_examples/_*.txt
 examples/concat_examples/_*.va
 examples/concat_examples/_*.osdi
 
+# Enhancement 35 comment example scripts: temp netlists/outputs + generated models
+examples/comment_examples/_*.cir
+examples/comment_examples/_*.txt
+examples/comment_examples/_*.va
+examples/comment_examples/_*.osdi
+
 # Python bytecode cache (e.g. from importing _setup.py)
 __pycache__/

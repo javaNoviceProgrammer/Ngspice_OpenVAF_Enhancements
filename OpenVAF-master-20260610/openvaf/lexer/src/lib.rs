@@ -265,7 +265,15 @@ impl Cursor<'_> {
             match self.first() {
                 '\n' => break,
                 '\\' if self.second() == '\n' => break,
-                _ => self.bump(),
+                // Enhancement-35: a `//` comment terminated by end-of-file rather than a
+                // newline must end the token too. `first()` returns `EOF_CHAR` forever at
+                // the end of input while `bump()` no-ops, so without this the loop never
+                // exits — a `// comment` as the last line of a file with no trailing
+                // newline hung the compiler forever.
+                _ if self.is_eof() => break,
+                _ => {
+                    self.bump();
+                }
             };
         }
         debug_assert!(!(self.prev() == '\\' && self.first() == '\n'));
