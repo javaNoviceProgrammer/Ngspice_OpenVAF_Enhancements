@@ -67,9 +67,19 @@ pub(super) fn paramset(p: &mut Parser, m: Marker) {
 }
 
 /// Parses a single paramset override `.<target_param> = <expr>;`.
+///
+/// Enhancement-44: the overridden name may also be a hierarchical system
+/// parameter (`.$mfactor = 8;`, LRM 6.4) — a SYSFUN token, wrapped in the
+/// same NAME_REF node so downstream accessors see one shape.
 fn paramset_override(p: &mut Parser, m: Marker) {
     p.bump(T![.]);
-    name_ref_r(p, TokenSet::new(&[T![=], T![;]]));
+    if p.at(SYSFUN) {
+        let name = p.start();
+        p.bump(SYSFUN);
+        name.complete(p, NAME_REF);
+    } else {
+        name_ref_r(p, TokenSet::new(&[T![=], T![;]]));
+    }
     p.expect(T![=]);
     expr(p);
     p.eat(T![;]);

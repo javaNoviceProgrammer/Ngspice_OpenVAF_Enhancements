@@ -348,3 +348,12 @@ impl Function {
         support::children(self.syntax())
     }
 }
+
+impl ast::NameRef {
+    /// Enhancement-44: a paramset override may bind a hierarchical system
+    /// parameter (`.$mfactor = 8;`), in which case the NAME_REF wraps a
+    /// SYSFUN token instead of an IDENT.
+    pub fn sysfun_token(&self) -> Option<SyntaxToken> {
+        support::token(&self.syntax, crate::SyntaxKind::SYSFUN)
+    }
+}

@@ -574,6 +574,16 @@ Several unrelated language gaps found along the way are also fixed. **`localpara
 
 ---
 
+## Enhancement 44: paramset hierarchical system parameters
+
+*July 2026* — Implemented **hierarchical system parameters in paramsets** (`.$mfactor = 8;`, LRM 6.4 — the canonical "quad device" idiom; previously a parse error, "unexpected token system function identifier"). The probe first established that the six hierarchical system parameters were already fully working at the *instance* level: readable in expressions with exact LRM defaults, settable per-instance in ngspice (`m=` for `$mfactor` via the OSDI layer's standard alias, `_xposition=` … for the rest — ngspice rewrites the `$` prefix to `_` since `$` starts a netlist comment), and `$mfactor` semantics exact (flow contributions ×m, potential contributions invariant, noise PSD ×m, correct across flattened sub-instances). What was missing was the paramset side. E-44 parses the form (a SYSFUN token in the override's NAME_REF), stores each override as a hidden **real localparam named `$paramset$<name>`** in the Enhancement-21 twin module — deliberately *not* `$mfactor`, which would hijack ngspice's `m=` alias since localparams appear in the OSDI descriptor — evaluated by the ordinary override machinery, so expressions over the paramset's own card parameters work (`.$mfactor = nf;` tracks `nf` from the model card). A new `sim_back` pass, modeled on the hidden-state use-rewrite and running **after the DAE build** (so the automatic mfactor flow/noise scaling and the derivative code exist and get rewritten), replaces every use of the system parameter with the **composed** value, following the LRM hierarchy rules: multiplicative for `$mfactor`/`$hflip`/`$vflip`, additive for `$xposition`/`$yposition`/`$angle` — `m=3` on a `.$mfactor = 8` paramset yields an effective 24. Unknown system functions (`.$vt = 1;`) get a named diagnostic. Supporting fix: the pass creates new MIR values, so the output-values bitset is re-grown (its `contains` check in the init-cache dead-code pass indexes by value and paniced otherwise).
+
+- Verified end-to-end through ngspice with exact analytic checks: the quad idiom reads 250 Ω effective (2 kΩ / 8); netlist `m=3` composes to 24× (−12 mA); all six parameters read composed values with instance overrides composing on top (× m, + positions, × flips: 24755.09 exactly); `.$mfactor = nf` tracks a model-card `nf=2`; noise through a `.$mfactor = 4` paramset measures identical to netlist `m=4` (5e-4); `.$vt` rejected cleanly — see `examples/paramsethsp_examples/`
+- Regression-checked: all 40 example verify suites ALL PASS; `sim_back`/`hir_def`/`hir_lower`/`parser`/`syntax` crate tests pass (the `sim_back` MIR snapshots, stale since ~E-36 and failing identically on the committed pre-E-44 sources, were refreshed against the behavior verified bit-identical by E-42's 72-output golden replay)
+- Details: [Enhancement-44.md](enhancements_doc/Enhancement-44.md)
+
+---
+
 ## Prebuilt Binaries
 
 Binaries are built by CI and committed to `bin/`:

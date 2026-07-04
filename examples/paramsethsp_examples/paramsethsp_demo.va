@@ -1,0 +1,65 @@
+// paramsethsp_demo.va -- Enhancement-44: paramset hierarchical system parameters
+//
+// Per LRM 6.4 a paramset may set hierarchical system parameters ($mfactor,
+// $xposition, $yposition, $angle, $hflip, $vflip) alongside target-module
+// parameter bindings -- the canonical "quad device" idiom. The paramset value
+// COMPOSES with the instance-level value from the netlist: multiplicatively
+// for $mfactor/$hflip/$vflip (multiplicities and flips multiply down the
+// hierarchy), additively for $xposition/$yposition/$angle. So `m=3` on an
+// instance of a `.$mfactor = 8;` paramset yields an effective 24 -- covering
+// explicit $mfactor reads, the automatic flow scaling, and noise.
+`include "disciplines.vams"
+
+// linear resistor target: flows scale with the effective multiplicity
+module rbase(a, c);
+  inout a, c;
+  electrical a, c;
+  parameter real r = 1e3;
+  analog I(a,c) <+ V(a,c)/r;
+endmodule
+
+// the LRM's quad-device idiom: bound parameter + multiplicity in one card
+paramset quad rbase;
+  .r = 2e3;
+  .$mfactor = 8;
+endparamset
+
+// reads all six HSPs so every composition rule is observable
+module hspread(a, c);
+  inout a, c;
+  electrical a, c;
+  analog V(a,c) <+ 1000.0*$mfactor + 100.0*$xposition + 10.0*$yposition
+                 + $angle + 0.1*$hflip + 0.01*$vflip;
+endmodule
+
+paramset hspset hspread;
+  .$mfactor = 8;
+  .$xposition = 2.0;
+  .$yposition = 1.0;
+  .$angle = 45.0;
+  .$hflip = -1;
+  .$vflip = -1;
+endparamset
+
+// the override expression may reference the paramset's own card parameters
+module scaled(a, c);
+  inout a, c;
+  electrical a, c;
+  analog I(a,c) <+ V(a,c)/1e3;
+endmodule
+
+paramset byfingers scaled;
+  parameter integer nf = 5 from [1:100];
+  .$mfactor = nf;
+endparamset
+
+// noise scales with the composed multiplicity exactly like netlist m=
+module nresb(a, c);
+  inout a, c;
+  electrical a, c;
+  analog I(a,c) <+ V(a,c)/1e3 + white_noise(1e-12, "th");
+endmodule
+
+paramset nquad nresb;
+  .$mfactor = 4;
+endparamset

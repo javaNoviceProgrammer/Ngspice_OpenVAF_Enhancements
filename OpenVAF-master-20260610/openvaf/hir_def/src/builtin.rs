@@ -140,6 +140,27 @@ impl ParamSysFun {
         [Self::mfactor, Self::xposition, Self::yposition, Self::angle, Self::hflip, Self::vflip]
             .into_iter()
     }
+
+    /// Resolves the `$`-spelled source text of a hierarchical system parameter
+    /// (`"$mfactor"` -> `mfactor`). Used by paramset overrides (Enhancement-44).
+    pub fn from_sysfun_text(text: &str) -> Option<Self> {
+        match text {
+            "$mfactor" => Some(Self::mfactor),
+            "$xposition" => Some(Self::xposition),
+            "$yposition" => Some(Self::yposition),
+            "$angle" => Some(Self::angle),
+            "$hflip" => Some(Self::hflip),
+            "$vflip" => Some(Self::vflip),
+            _ => None,
+        }
+    }
+
+    /// `true` for the multiplicative hierarchical system parameters (`$mfactor`,
+    /// `$hflip`, `$vflip` -- multiplicities and flips multiply down the hierarchy);
+    /// `false` for the additive ones (`$xposition`, `$yposition`, `$angle`).
+    pub fn composes_multiplicatively(self) -> bool {
+        matches!(self, Self::mfactor | Self::hflip | Self::vflip)
+    }
 }
 impl BuiltIn {
     #[allow(clippy::match_like_matches_macro)]

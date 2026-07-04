@@ -235,7 +235,6 @@ impl Body {
 
         let ParamLoc { id: item_tree, scope } = id.lookup(db);
         let ast_id = tree[item_tree].ast_id();
-        let ast = ast_id_map.get(ast_id).to_node(ast.syntax());
 
         let registry = db.lint_registry();
         let mut ctx = LowerCtx {
@@ -252,6 +251,10 @@ impl Body {
         // override lives in the `paramset` declaration (a `ParamsetOverride` node) and is lowered
         // here in the twin module's scope, so it resolves the paramset's own parameters. Such a
         // parameter has no constraints of its own (it is an internal localparam now).
+        // NOTE: resolved before touching the `ast::Param` node -- a paramset
+        // hierarchical-system-parameter localparam (Enhancement-44) has a
+        // placeholder `ast_id` (it points at the `ParamsetOverride` node, not
+        // an `ast::Param`), so the cast below must not run for it.
         if let Some(ov_ast_id) = tree[item_tree].override_expr {
             let file = db.parse(root_file).tree();
             let ov = ast_id_map.get(ov_ast_id).to_node(file.syntax());
@@ -264,6 +267,8 @@ impl Body {
                 ParamExprs { default, bounds: Vec::new().into() },
             );
         }
+
+        let ast = ast_id_map.get(ast_id).to_node(ast.syntax());
 
         // An element of an array-valued parameter takes its default from the corresponding leaf of
         // the shared `'{...}` array literal (flat declaration-order position `array_index`). The

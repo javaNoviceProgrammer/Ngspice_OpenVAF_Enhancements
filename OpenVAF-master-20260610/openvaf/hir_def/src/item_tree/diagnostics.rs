@@ -168,6 +168,27 @@ impl Diagnostic for ItemTreeDiagnosticWrapped<'_> {
                             .to_owned(),
                     ])
             }
+            ItemTreeDiagnostic::InvalidParamsetSysParam { ast_id, name } => {
+                let range = self.ast_id_map.get_syntax(*ast_id).range();
+                let span = self.parse.to_file_span(range, self.sm);
+                Report::error()
+                    .with_message(format!(
+                        "'{name}' is not a hierarchical system parameter"
+                    ))
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: span.file,
+                        range: span.range.into(),
+                        message: "only hierarchical system parameters can be set by a paramset"
+                            .to_owned(),
+                    }])
+                    .with_notes(vec![
+                        "help: a paramset can bind target-module parameters (`.r = 2k;`) and the \
+                         hierarchical system parameters $mfactor, $xposition, $yposition, \
+                         $angle, $hflip and $vflip"
+                            .to_owned(),
+                    ])
+            }
             ItemTreeDiagnostic::UnknownParamsetTarget { ast_id, target } => {
                 let range = self.ast_id_map.get_syntax(*ast_id).range();
                 let span = self.parse.to_file_span(range, self.sm);

@@ -1,4 +1,4 @@
-use hir::{BranchWrite, CompilationDB, Node};
+use hir::{BranchWrite, CompilationDB, Node, ParamSysFun};
 use hir_lower::{CurrentKind, HirInterner, ImplicitEquation, ParamKind};
 use lasso::Rodeo;
 use mir::Function;
@@ -178,6 +178,27 @@ impl<'a> CompiledModule<'a> {
         let topology = Topology::new(&mut cx);
         debug_assert!(cx.func.validate());
         let mut dae_system = DaeSystem::new(&mut cx, topology);
+
+        // Enhancement-44: compose paramset hierarchical system parameter overrides
+        // (hidden `$paramset$<name>` localparams, see `lower_paramset`) with the
+        // instance-level values. Must run after the DAE build so the automatic
+        // mfactor flow/noise scaling and the derivative code are rewritten too.
+        let hsp_overrides: Vec<_> = module
+            .params
+            .keys()
+            .filter_map(|&param| {
+                let name = param.name(db);
+                let sys = name.strip_prefix("$paramset")?;
+                ParamSysFun::iter()
+                    .find(|s| format!("${s:?}") == sys)
+                    .map(|sys| (sys, param))
+            })
+            .collect();
+        cx.intern.insert_paramset_sys_fun_overrides(db, &mut cx.func, literals, &hsp_overrides);
+        // the composition pass creates new values; grow the output bitset so later
+        // dead-code predicates (`output_values.contains`) stay in bounds
+        cx.output_values.ensure(cx.func.dfg.num_values() + 1);
+        debug_assert!(cx.func.validate());
 
         if dump_unopt_mir {
             println!("Partially optimized MIR (with DAE) of {}", module.module.name(db));

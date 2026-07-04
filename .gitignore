@@ -257,5 +257,10 @@ examples/varinit_examples/_*.cir
 examples/varinit_examples/_*.va
 examples/varinit_examples/_*.osdi
 
+# Enhancement 44 paramset-HSP example scripts: temp netlists + models
+examples/paramsethsp_examples/_*.cir
+examples/paramsethsp_examples/_*.va
+examples/paramsethsp_examples/_*.osdi
+
 # Python bytecode cache (e.g. from importing _setup.py)
 __pycache__/

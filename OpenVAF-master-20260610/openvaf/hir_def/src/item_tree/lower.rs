@@ -132,10 +132,29 @@ impl Ctx {
         };
 
         // Collect the override map: target-parameter name -> `.<param> = <expr>;` node.
-        let overrides: Vec<(Name, AstId<ast::ParamsetOverride>)> = decl
-            .overrides()
-            .filter_map(|ov| Some((ov.name()?.as_name(), self.source_ast_id_map.ast_id(&ov))))
-            .collect();
+        // A `.$mfactor = <expr>;` (hierarchical system parameter, Enhancement-44) is kept
+        // separately: it binds no target parameter, but becomes a hidden localparam whose
+        // value composes with the instance-level system parameter in `sim_back`.
+        let mut overrides: Vec<(Name, AstId<ast::ParamsetOverride>)> = Vec::new();
+        let mut hsp_overrides: Vec<(crate::builtin::ParamSysFun, AstId<ast::ParamsetOverride>)> =
+            Vec::new();
+        for ov in decl.overrides() {
+            let Some(name_ref) = ov.name() else { continue };
+            let ov_id = self.source_ast_id_map.ast_id(&ov);
+            if let Some(tok) = name_ref.sysfun_token() {
+                match crate::builtin::ParamSysFun::from_sysfun_text(tok.text()) {
+                    Some(sys) => hsp_overrides.push((sys, ov_id)),
+                    None => self.tree.diagnostics.push(
+                        ItemTreeDiagnostic::InvalidParamsetSysParam {
+                            ast_id: ov_id.into(),
+                            name: tok.text().to_owned(),
+                        },
+                    ),
+                }
+                continue;
+            }
+            overrides.push((name_ref.as_name(), ov_id));
+        }
 
         // Lower the paramset's own parameters (the twin's card parameters) first, so their item-
         // tree ids precede the target's items -- a bound target parameter (now a localparam) may
@@ -144,6 +163,29 @@ impl Ctx {
         let mut param_arrays: Vec<BusDecl> = Vec::new();
         for pd in decl.param_decls() {
             self.lower_param(pd, &mut items, Some(&mut param_arrays));
+        }
+
+        // Each hierarchical system parameter override becomes a hidden real localparam named
+        // `$paramset$<name>` (Enhancement-44). The `$`-spelling can collide with no user
+        // identifier, deliberately differs from the OSDI built-in instance parameter
+        // `$mfactor` (so ngspice's `m=` alias keeps pointing at the instance value), and is
+        // recognised by name in `sim_back`, which composes it with the instance-level value
+        // (multiplicatively for $mfactor/$hflip/$vflip, additively for positions/$angle).
+        // Its value is the override expression, lowered through the ordinary E-21
+        // localparam-with-override machinery, so it may reference the card parameters above.
+        // The `ast_id` is a placeholder (there is no `ast::Param` node behind it); the
+        // override-expression branch of `param_body_with_sourcemap` never dereferences it.
+        for &(sys, ov) in &hsp_overrides {
+            let param = Param {
+                name: Name::resolve(&format!("$paramset${sys:?}")),
+                ty: Some(Type::Real),
+                is_local: true,
+                ast_id: AstId::<ast::Param>::from_erased(ov.erased()),
+                array_index: None,
+                override_expr: Some(ov),
+            };
+            let id = self.tree.data.parameters.push_and_get_key(param);
+            items.push(ModuleItem::Parameter(id));
         }
 
         // Append the target's items, rebinding any overridden parameter to a fresh localparam.

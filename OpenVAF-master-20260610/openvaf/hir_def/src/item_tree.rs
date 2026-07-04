@@ -79,6 +79,10 @@ pub enum ItemTreeDiagnostic {
     /// (Enhancement-43). Previously a too-short literal crashed the compiler
     /// (the missing elements lowered as `Expr::Missing`, "invalid HIR").
     ArrayInitializerLengthMismatch { ast_id: ErasedAstId, name: Name, expected: u32, found: u32 },
+    /// A paramset override bound a system function that is not a hierarchical
+    /// system parameter (`.$vt = ...;`) — only $mfactor/$xposition/$yposition/
+    /// $angle/$hflip/$vflip can be set by a paramset (Enhancement-44).
+    InvalidParamsetSysParam { ast_id: ErasedAstId, name: String },
     /// A `generate for`/`genvar` construct reached the item tree without
     /// being fully elaborated away by `hir::elaborate::elaborate_generates`
     /// (see that module) -- normally impossible (elaboration always strips
