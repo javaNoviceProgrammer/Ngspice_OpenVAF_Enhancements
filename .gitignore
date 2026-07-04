@@ -242,5 +242,11 @@ examples/ndtable_examples/_*.txt
 examples/ndtable_examples/_*.va
 examples/ndtable_examples/_*.osdi
 
+# Enhancement 41 implicit-net example scripts: temp netlists/outputs + generated models
+examples/implicitnet_examples/_*.cir
+examples/implicitnet_examples/_*.txt
+examples/implicitnet_examples/_*.va
+examples/implicitnet_examples/_*.osdi
+
 # Python bytecode cache (e.g. from importing _setup.py)
 __pycache__/

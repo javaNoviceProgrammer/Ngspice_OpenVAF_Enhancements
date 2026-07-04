@@ -543,6 +543,16 @@ Several unrelated language gaps found along the way are also fixed. **`localpara
 
 ---
 
+## Enhancement 41: implicit nets in instance connections
+
+*July 2026* — Implemented **implicit nets**: a plain identifier used in a module-instance port connection that names nothing declared in the enclosing module is implicitly declared as a scalar net — the idiom every netlist-style module relies on (`res2 r1(in, mid); res2 r2(mid, out);` previously errored `'mid' was not found in the current scope`, forcing every internal wiring node to be declared manually). The Verilog-A subtlety, worked out against the LRM appendix: full Verilog-AMS gives implicit nets their discipline via the `` `default_discipline`` directive, which the **Verilog-A appendix excludes** — but implicit nets themselves remain part of Verilog-A, their discipline coming from discipline resolution. Enhancement-41 implements exactly that reconciliation: the implicit net's discipline is **derived from the connected port** (what resolution yields for compatible ports; fallback `electrical`), the directive stays ignored per the appendix, two connections implying **conflicting** disciplines are a hard error (`implicit net 'mid' is connected to ports of conflicting disciplines 'electrical' and 'thermal' — declare it explicitly`), and implicit declaration remains **structural-only** (an undeclared identifier inside `V()`/`I()` access is still a clean scope error). Implemented in the Enhancement-5 module-instantiation elaboration pass: the implicit net becomes a **local of the module its instantiation appears in**, so it takes that module's instance prefix like every other local — the subtle correctness point being that two flattened instances of the same submodule keep their internal implicit nets **distinct** (no accidental cross-instance shorts); declarations are synthesised once and prepended to the module's rendered body. Both positional and named (`.n(mid)`) connection forms work. One-file change (`hir/src/elaborate.rs`); no OSDI/ngspice change.
+
+- Verified end-to-end through ngspice — two `ser2k` submodules, each with its **own implicit internal net `w`**, chained through an implicit top-level `mid` (mixing positional and named forms): the DC resistance reads exactly **4 kΩ**, proving `mid` joined the instances *and* the nested `w` nets stayed distinct after flattening (a cross-instance short would read 2 kΩ); conflicting-discipline connections rejected with a clear message; `V(ghost, c)` still a clean scope error — see `examples/implicitnet_examples/`
+- Regression-checked: all 37 example verify suites ALL PASS, all 79 example models recompile, and the `instantiation`/`generate` decks (the heavy users of the elaboration pass) run unchanged
+- Details: [Enhancement-41.md](enhancements_doc/Enhancement-41.md)
+
+---
+
 ## Prebuilt Binaries
 
 Binaries are built by CI and committed to `bin/`:

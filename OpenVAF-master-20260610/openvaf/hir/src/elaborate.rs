@@ -438,7 +438,14 @@ pub(crate) fn elaborate_instantiations(db: &mut CompilationDB) -> anyhow::Result
     let by_name: HashMap<Name, ItemTreeId<TreeModule>> =
         tree.data.modules.iter_enumerated().map(|(id, m)| (m.name.clone(), id)).collect();
 
-    let mut ctx = ElabCtx { tree: &tree, ast_id_map: &ast_id_map, parse: &parse, by_name };
+    let mut ctx = ElabCtx {
+        tree: &tree,
+        ast_id_map: &ast_id_map,
+        parse: &parse,
+        by_name,
+        implicit_nets: HashMap::new(),
+        implicit_conflicts: Vec::new(),
+    };
 
     let mut out = String::new();
     for item in parse.tree().items() {
@@ -451,6 +458,10 @@ pub(crate) fn elaborate_instantiations(db: &mut CompilationDB) -> anyhow::Result
             other => out.push_str(&other.syntax().text().to_string()),
         }
         out.push('\n');
+    }
+
+    if !ctx.implicit_conflicts.is_empty() {
+        anyhow::bail!("{}", ctx.implicit_conflicts.join("\n"));
     }
 
     let synth_name = format!("{}__elaborated.va", db.vfs().read().file_path(root_file));
@@ -472,6 +483,68 @@ struct ElabCtx<'a> {
     ast_id_map: &'a AstIdMap,
     parse: &'a Parse<SourceFile>,
     by_name: HashMap<Name, ItemTreeId<TreeModule>>,
+    /// Enhancement-41: implicit nets synthesised so far, keyed by their final
+    /// (prefix-qualified) name, holding the discipline each was declared with —
+    /// used both to emit each declaration exactly once and to diagnose two
+    /// connections implying conflicting disciplines for the same net.
+    implicit_nets: HashMap<String, String>,
+    implicit_conflicts: Vec<String>,
+}
+
+/// Enhancement-41: returns the trimmed text if it is a plain scalar identifier
+/// (a candidate for an implicit net) — letters/digits/`_`/`$`, not starting
+/// with a digit. Anything else (bit-selects, expressions, literals) is not.
+fn as_plain_ident(text: &str) -> Option<&str> {
+    let t = text.trim();
+    let mut chars = t.chars();
+    let first = chars.next()?;
+    if !(first.is_ascii_alphabetic() || first == '_') {
+        return None;
+    }
+    if !chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$') {
+        return None;
+    }
+    Some(t)
+}
+
+/// Enhancement-41: every identifier the module itself declares (net/port base
+/// names, bus/array base names, parameters, variables, branches, functions,
+/// instance names) — a plain-identifier port connection naming NONE of these
+/// is an implicit net.
+fn declared_names(module: &TreeModule, tree: &ItemTree) -> HashSet<String> {
+    let base = |name: &Name| {
+        let s = name.to_string();
+        match s.find('[') {
+            Some(i) => s[..i].to_string(),
+            None => s,
+        }
+    };
+    let mut names: HashSet<String> = module.nodes.iter().map(|n| base(&n.name)).collect();
+    names.extend(module.buses.iter().chain(module.var_arrays.iter()).map(|b| b.base_name.to_string()));
+    for item in &module.items {
+        match *item {
+            ModuleItem::Parameter(id) => {
+                names.insert(tree[id].name.to_string());
+            }
+            ModuleItem::AliasParameter(id) => {
+                names.insert(tree[id].name.to_string());
+            }
+            ModuleItem::Variable(id) => {
+                names.insert(tree[id].name.to_string());
+            }
+            ModuleItem::Branch(id) => {
+                names.insert(tree[id].name.to_string());
+            }
+            ModuleItem::Function(id) => {
+                names.insert(tree[id].name.to_string());
+            }
+            ModuleItem::Instantiation(id) => {
+                names.insert(base(&tree[id].name));
+            }
+            ModuleItem::Scope(_) | ModuleItem::Node(_) => (),
+        }
+    }
+    names
 }
 
 /// A binding for one syntactic port: either a single resolved net
@@ -801,6 +874,10 @@ impl ElabCtx<'_> {
     ) -> String {
         let target_ast = self.module_ast(self.tree[target_id].ast_id);
         let mut out = String::new();
+        // Enhancement-41: net declarations synthesised for implicit nets found in
+        // this module's instantiation connections, prepended to the rendered body
+        // so they precede every use.
+        let mut implicit_decls = Vec::new();
 
         for item in target_ast.module_items() {
             match item {
@@ -811,7 +888,13 @@ impl ElabCtx<'_> {
                 // collide with that outer declaration -- drop entirely.
                 ast::ModuleItem::BodyPortDecl(_) if !port_names.is_empty() => continue,
                 ast::ModuleItem::Instantiation(nested) => {
-                    out.push_str(&self.expand_instantiation(target_id, &nested, scope, prefix));
+                    out.push_str(&self.expand_instantiation(
+                        target_id,
+                        &nested,
+                        scope,
+                        prefix,
+                        &mut implicit_decls,
+                    ));
                 }
                 ast::ModuleItem::ParamDecl(decl) => {
                     let base = decl.syntax().text_range().start();
@@ -865,7 +948,11 @@ impl ElabCtx<'_> {
             }
             out.push('\n');
         }
-        out
+        if implicit_decls.is_empty() {
+            out
+        } else {
+            format!("{}\n{}", implicit_decls.join("\n"), out)
+        }
     }
 
     /// Expands one instantiation statement (all of its comma-separated
@@ -882,6 +969,7 @@ impl ElabCtx<'_> {
         inst: &ast::Instantiation,
         scope: &Scope,
         prefix: &str,
+        implicit_decls: &mut Vec<String>,
     ) -> String {
         let Some(module_name) = inst.module().map(|n| n.as_name()) else { return String::new() };
         let Some(&target_id) = self.by_name.get(&module_name) else { return String::new() };
@@ -898,7 +986,50 @@ impl ElabCtx<'_> {
             let Some(unit_name) = unit.name() else { continue };
             let base_name = unit_name.as_name();
 
-            let port_raw = self.raw_port_bindings(&parent, &target, &target_ast, &unit);
+            let mut port_raw = self.raw_port_bindings(&parent, &target, &target_ast, &unit);
+
+            // Enhancement-41: IMPLICIT NETS. A plain-identifier connection that names
+            // nothing declared in the parent module is implicitly declared as a scalar
+            // net (LRM structural-connection semantics; Verilog-A derives the
+            // discipline from the connected port rather than `default_discipline`,
+            // which the Verilog-A appendix excludes). The net is a local of the
+            // *parent*, so it takes the parent's instance prefix (keeping separate
+            // flattened instances of the same parent from accidentally sharing one
+            // net), its declaration is emitted once into the parent's rendered body,
+            // and two connections implying different disciplines are a hard error.
+            let parent_decls = declared_names(&parent, self.tree);
+            for (port_name, binding) in port_raw.iter_mut() {
+                let PortBinding::Scalar(text) = binding else { continue };
+                let Some(ident) = as_plain_ident(text) else { continue };
+                if parent_decls.contains(ident) {
+                    continue;
+                }
+                let discipline = target
+                    .nodes
+                    .iter()
+                    .find(|n| &n.name == port_name)
+                    .and_then(|n| n.discipline(self.tree).clone())
+                    .map(|d| d.to_string())
+                    .unwrap_or_else(|| "electrical".to_owned());
+                let final_name = format!("{prefix}{ident}");
+                match self.implicit_nets.get(&final_name) {
+                    None => {
+                        implicit_decls.push(format!(
+                            "{discipline} {final_name}; // implicit net (Enhancement-41)"
+                        ));
+                        self.implicit_nets.insert(final_name.clone(), discipline);
+                    }
+                    Some(existing) if existing != &discipline => {
+                        self.implicit_conflicts.push(format!(
+                            "implicit net '{ident}' is connected to ports of conflicting \
+                             disciplines '{existing}' and '{discipline}' -- declare it \
+                             explicitly",
+                        ));
+                    }
+                    Some(_) => (),
+                }
+                *text = final_name;
+            }
 
             let indices: Vec<Option<i32>> = match unit.width().and_then(|r| fold_width_range(&r)) {
                 Some((msb, lsb)) => {

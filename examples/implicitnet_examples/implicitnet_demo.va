@@ -1,0 +1,47 @@
+// implicitnet_demo.va -- Enhancement-41: implicit nets in instance connections.
+//
+// Per the LRM's structural-connection semantics, a plain identifier used in a
+// module-instance port connection that names nothing declared in the enclosing
+// module is IMPLICITLY declared as a scalar net. In the Verilog-A subset the
+// `default_discipline directive is excluded (AMS LRM appendix), so the implicit
+// net's discipline is derived from the CONNECTED PORT instead -- exactly what
+// discipline resolution produces for the common case of joining compatible
+// ports. Two connections implying conflicting disciplines for the same implicit
+// net are a hard error ("declare it explicitly").
+//
+// Before Enhancement-41 every internal wiring node had to be declared manually
+// ("'mid' was not found in the current scope"). Implicit nets are synthesized in
+// the module-instantiation elaboration pass (Enhancement-5): each one becomes a
+// local net of the module its instantiation appears in -- so nested implicit
+// nets are alpha-renamed per instance like every other local, and two flattened
+// instances of the same submodule never accidentally share one net.
+//
+// Undeclared identifiers ANYWHERE ELSE (e.g. inside V()/I() access functions)
+// remain errors: implicit declaration is a structural-connection mechanism only.
+
+`include "disciplines.vams"
+
+module r1k(p, n);
+    inout p, n;
+    electrical p, n;
+    parameter real r = 1e3 from (0:inf);
+    analog I(p, n) <+ V(p, n) / r;
+endmodule
+
+// submodule with its OWN implicit internal net `w` (two 1k in series = 2k)
+module ser2k(p, n);
+    inout p, n;
+    electrical p, n;
+    r1k a1(p, w);          // `w` implicit
+    r1k a2(w, n);
+endmodule
+
+// top: implicit `mid` joins two ser2k instances (4k total). Each instance's
+// internal `w` must remain DISTINCT after flattening -- a cross-instance short
+// would halve the resistance.
+module implicitnet_demo(in, out);
+    inout in, out;
+    electrical in, out;
+    ser2k s1(in, mid);     // `mid` implicit (positional form)
+    ser2k s2(.p(mid), .n(out));   // named form on the same implicit net
+endmodule
