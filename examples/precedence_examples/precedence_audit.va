@@ -1,0 +1,67 @@
+// precedence_audit.va -- Enhancement-38: operator-precedence audit + fixes.
+//
+// One self-checking module covering every adjacent level pair of the
+// Verilog-AMS precedence table (LRM Table 4-2), associativity (all binary
+// operators left-to-right, the conditional right-to-left), and the
+// unary-above-`**` corner (`-2**2 == (-2)**2 == 4`). Each failing check adds a
+// distinct power of two to a score emitted on a signal-flow output, so
+// v(out) == 0 means every check passes and any nonzero value is a bitmask
+// pinpointing exactly which check failed.
+//
+// The audit found (and Enhancement-38 fixed) one observable defect and one
+// harmless deviation in the parser's binding-power table:
+//   * `%` bound TIGHTER than `*` and `/` -- the LRM puts all three on one
+//     level, left-associative -- so `6*7%4` parsed as `6*(7%4)` and evaluated
+//     to 18 instead of the LRM's `(6*7)%4 = 2`;
+//   * `~^`/`^~` bound tighter than `^` (LRM: one level) -- provably
+//     unobservable for xor/xnor chains (each xnor contributes one global
+//     inversion regardless of grouping), fixed for LRM exactness.
+// Everything else -- the full level ordering, left-associativity (including
+// `2**3**2 == (2**3)**2 == 64` per LRM 4.1.3), ternary right-associativity,
+// and unary binding above `**` -- checked out correct.
+
+`include "disciplines.vams"
+module prec_audit(out);
+  output out; voltage out;
+  integer s; integer a, b, c;
+  analog begin
+    s = 0; a = 12; b = 10; c = 6;
+    // --- * / % one level, left-assoc (THE fixed bug) ---
+    if (!(6*7%4 == 2))          s = s + 1;        // (6*7)%4
+    if (!(42/5%3 == 2))         s = s + 2;        // (42/5)%3 = 8%3
+    if (!(7%3*2 == 2))          s = s + 4;        // (7%3)*2
+    if (!(7%4/2 == 1))          s = s + 8;        // (7%4)/2 = 3/2
+    if (!(10-4/2 == 8))         s = s + 16;       // / over -
+    if (!(6%4-1 == 1))          s = s + 32;       // (6%4)-1
+    // --- ** above * ; unary above ** ; ** left-assoc (LRM 4.1.3) ---
+    if (!(2*3**2 == 18))        s = s + 64;       // 2*(3**2)
+    if (!(-2**2 == 4))          s = s + 128;      // (-2)**2 : unary binds ABOVE **
+    if (!(2**3**2 == 64))       s = s + 256;      // (2**3)**2 : left-assoc
+    if (!(48/2**4 == 3))        s = s + 512;      // 48/(2**4)
+    // --- shifts below + - ---
+    if (!(1+2<<3 == 24))        s = s + 1024;     // (1+2)<<3
+    if (!(16>>1+1 == 4))        s = s + 2048;     // 16>>(1+1)
+    if (!(32>>>2+1 == 4))       s = s + 4096;     // 32>>>(3)
+    // --- relational below shifts; == below relational ---
+    if (!((1<<3 > 7) == 1))     s = s + 8192;     // (1<<3)>7
+    if (!((2 < 3 == 1) == 1))   s = s + 16384;    // (2<3)==1
+    // --- & below == ; ^ below & ; | below ^ ---
+    if (!((5==5 & 0) == 0))     s = s + 32768;    // (5==5)&0
+    if (!((1|2^3&2) == 1))      s = s + 65536;    // 1|(2^(3&2)) = 1|(2^2) = 1|0
+    if (!((a^b&c) == (a^(b&c)))) s = s + 131072;  // & over ^
+    if (!((a|b^c) == (a|(b^c)))) s = s + 262144;  // ^ over |
+    // --- xor/xnor same level (chain identity holds regardless) ---
+    if (!((a^b~^c) == ((a^b)~^c))) s = s + 524288;
+    // --- && below | ; || below && ; ?: lowest, right-assoc ---
+    if (!((1|1 && 0) == 0))     s = s + 1048576;  // (1|1)&&0
+    if (!((0&&1 || 1) == 1))    s = s + 2097152;  // (0&&1)||1
+    if (!((1||0 ? 5 : 6) == 5)) s = s + 4194304;  // (1||0)?5:6
+    if (!((1?2:0?3:4) == 2))    s = s + 8388608;  // right-assoc: 1?2:(0?3:4)
+    if (!((0?2:1?3:4) == 3))    s = s + 16777216;
+    // --- unary binds tightest ---
+    if (!(!0+1 == 2))           s = s + 33554432; // (!0)+1
+    if (!(~0+1 == 0))           s = s + 67108864; // (~0)+1 = -1+1
+    if (!(-3-1 == -4))          s = s + 134217728;
+    V(out) <+ s;
+  end
+endmodule

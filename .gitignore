@@ -226,5 +226,11 @@ examples/operator_examples/_*.txt
 examples/operator_examples/_*.va
 examples/operator_examples/_*.osdi
 
+# Enhancement 38 precedence example scripts: temp netlists/outputs + generated models
+examples/precedence_examples/_*.cir
+examples/precedence_examples/_*.txt
+examples/precedence_examples/_*.va
+examples/precedence_examples/_*.osdi
+
 # Python bytecode cache (e.g. from importing _setup.py)
 __pycache__/

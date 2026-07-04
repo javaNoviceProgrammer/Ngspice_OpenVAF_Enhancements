@@ -513,6 +513,16 @@ Several unrelated language gaps found along the way are also fixed. **`localpara
 
 ---
 
+## Enhancement 38: operator-precedence audit + fixes
+
+*July 2026* — A systematic **operator-precedence audit** against the Verilog-AMS precedence table (LRM Table 4-2): the parser's Pratt binding-power table reviewed entry-by-entry, associativity verified structurally, and all of it locked down empirically with **28 bitmask checks covering every adjacent level pair**. One observable defect found and fixed: **`%` bound tighter than `*` and `/`** — the LRM puts all three on one left-associative level, so `6*7%4` parsed as `6*(7%4)` and evaluated to **18** instead of the LRM's `(6*7)%4 = 2` (and `42/5%3` gave 21 instead of 2) — silent wrong answers in any model mixing `*`/`/` with `%`. Subtle detail: `a%b*c` was accidentally correct (only `*`-then-`%` orderings misgrouped), which is why the Enhancement-37 operator audit missed it. Also fixed: `~^`/`^~` were split from `^` (LRM: one level) — provably unobservable for xor/xnor chains (each xnor contributes exactly one global inversion regardless of grouping), corrected for LRM exactness. Confirmed already correct: **left associativity** for every binary operator (including `2**3**2 == (2**3)**2 == 64` per LRM 4.1.3, which mandates left-to-right for everything except the conditional), **ternary right-associativity** (`a?b:c?d:e == a?b:(c?d:e)`), **unary binding above `**`** (`-2**2 == (-2)**2 == 4` — the classic Verilog difference from C/Python), and the full level ladder `unary > ** > */% > +- > shifts > relational > ==/!= > & > ^/~^ > | > && > || > ?:`. One-file parser change; no other pipeline stage touched.
+
+- Verified end-to-end through ngspice — all 28 precedence/associativity checks read exactly 0 (any failure names itself in the bitmask), and the marquee fix case is asserted directly (`6*7%4 == 2`, was 18) — see `examples/precedence_examples/`
+- Behaviour-change audit: no example in either tree contains an affected `*`/`/`-then-`%` grouping (grep-verified), and all 34 example verify suites ALL PASS — with the Enhancement-37 operator audit doubling as a semantics regression lock
+- Details: [Enhancement-38.md](enhancements_doc/Enhancement-38.md)
+
+---
+
 ## Prebuilt Binaries
 
 Binaries are built by CI and committed to `bin/`:

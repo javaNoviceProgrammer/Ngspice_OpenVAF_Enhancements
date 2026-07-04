@@ -23,10 +23,13 @@ fn current_op(p: &Parser) -> (u8, SyntaxKind) {
         
         T![|]   => (4,   T![|]),
         
+        // Enhancement-38: `^`, `~^` and `^~` share ONE precedence level per the LRM
+        // (Table 4-2). `~^`/`^~` previously bound tighter than `^` — provably
+        // unobservable for xor/xnor chains (each xnor contributes one global
+        // inversion regardless of grouping), but fixed for LRM exactness.
         T![^]   => (5,   T![^]),
-        
-        T![~^]  => (6,   T![~^]),
-        T![^~]  => (6,   T![^~]),
+        T![~^]  => (5,   T![~^]),
+        T![^~]  => (5,   T![^~]),
         
         T![&]   => (7,   T![&]),
         
@@ -46,10 +49,13 @@ fn current_op(p: &Parser) -> (u8, SyntaxKind) {
         T![+]    => (11,  T![+]),
         T![-]    => (11,  T![-]),
         
+        // Enhancement-38: `*`, `/` and `%` share ONE precedence level per the LRM
+        // (Table 4-2), associating left to right. `%` previously bound tighter,
+        // which mis-parsed `a * b % c` as `a * (b % c)` — e.g. `6*7%4` evaluated
+        // to 18 instead of the LRM's `(6*7)%4 = 2`.
         T![*]    => (12,  T![*]),
         T![/]    => (12,  T![/]),
-
-        T![%]    => (13, T![%]),
+        T![%]    => (12,  T![%]),
 
         T![**]   => (14, T![**]),
 
