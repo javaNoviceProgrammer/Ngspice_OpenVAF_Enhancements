@@ -843,6 +843,40 @@ impl Ctx<'_> {
                 Cow::Borrowed(TiSlice::from_ref(info.signatures))
             }
 
+            // Enhancement-40: `$table_model` is variadic so tables of ANY dimension
+            // work. This arm owns EVERY table_model call (the generic varargs
+            // fallthrough below would resize-and-truncate the listed signatures,
+            // making 2-arg calls ambiguous): the 1-D inline-array form and the small
+            // file forms resolve against the listed signatures unchanged; N-D file
+            // forms (>= 4 non-array arguments — note a 5-argument call is ambiguous
+            // by arity alone: 3-D+file+ctrl vs 4-D+file) get the exact signature
+            // `[Real x ndim, Literal(String)(, Literal(String))]` synthesised from
+            // the argument SHAPES, where the trailing string literals are the
+            // data-file name and the optional control string.
+            BuiltIn::table_model => {
+                let is_arr =
+                    args.len() >= 2 && matches!(self.body.exprs[args[1]], Expr::Array(_));
+                if is_arr || args.len() < 4 {
+                    Cow::Borrowed(TiSlice::from_ref(info.signatures))
+                } else {
+                    let is_str = |e: ExprId| {
+                        matches!(self.body.exprs[e], Expr::Literal(Literal::String(_)))
+                    };
+                    let last = args.len() - 1;
+                    let n_str = if is_str(args[last]) && is_str(args[last - 1]) { 2 } else { 1 };
+                    let ndim = args.len() - n_str;
+                    let mut sig_args = vec![TyRequirement::Val(Type::Real); ndim];
+                    sig_args.push(TyRequirement::Literal(Type::String));
+                    if n_str == 2 {
+                        sig_args.push(TyRequirement::Literal(Type::String));
+                    }
+                    Cow::Owned(TiVec::from(vec![SignatureData {
+                        args: Cow::Owned(sig_args),
+                        return_ty: Type::Real,
+                    }]))
+                }
+            }
+
             _ if info.max_args.is_none() => {
                 let mut signatures = Vec::from(info.signatures);
                 for sig in &mut signatures {

@@ -1,0 +1,34 @@
+// ndtable_demo.va -- Enhancement-40: N-dimensional $table_model (the 3-D cap lifted).
+//
+// $table_model interpolation was hard-capped at 3 dimensions by its declared
+// signature list ("expected at most 2 arguments but found 6" for a 4-D call),
+// even though the grid reader and the recursive multilinear interpolation were
+// fully dimension-general (Enhancement-17). Enhancement-40 makes the builtin
+// variadic: for higher dimensions the exact [Real x n, "file"(, "ctrl")]
+// signature is synthesised from the argument shapes, and the lowering derives
+// the dimension by scanning for the data-file argument -- which also resolves
+// the 5-argument arity ambiguity (3-D+file+ctrl vs 4-D+file) by SHAPE.
+//
+// The grid file stays self-describing (ndim, sizes, axis coords, row-major
+// values, first axis slowest), and every partial derivative still flows through
+// mir_autodiff into the Jacobian.
+//
+// This model looks up a 4-D multilinear function f(x,y,z,w) = 2 + x + 2y + 3z +
+// 4w + xyzw; multilinear interpolation reproduces such a function EXACTLY at
+// any off-grid point, so the verify script can assert analytic equality.
+
+`include "disciplines.vams"
+
+module ndtable_demo(a, c);
+    inout a, c;
+    electrical a, c;
+    parameter real x = 1.5;
+    parameter real y = 0.25;
+    parameter real z = 0.75;
+    parameter real w = 0.4;
+    real val;
+    analog begin
+        val = $table_model(x, y, z, w, "grid4.tbl", "1L");
+        I(a,c) <+ 1e-3 * val * V(a,c);
+    end
+endmodule

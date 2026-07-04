@@ -533,6 +533,16 @@ Several unrelated language gaps found along the way are also fixed. **`localpara
 
 ---
 
+## Enhancement 40: N-dimensional `$table_model`
+
+*July 2026* — Lifted `$table_model`'s **3-dimension cap**: lookup tables of **any dimension** now work. The probe "are multi-dimensional tables supported?" verified 1-D (linear + cubic, inline + file), 2-D (bilinear + bicubic) and 3-D (trilinear) as exact — but a 4-D call failed at the *signature* level (`expected at most 2 arguments but found 6`), even though the self-describing grid-file reader and the recursive multilinear interpolation (Enhancement-17) were **already fully dimension-general**; only the hard-coded 1/2/3-D signature list and the signature-matched dispatch capped it (the LRM sets no bound). The fix makes `$table_model` **variadic**: a dedicated inference arm owns *every* call — the 1-D inline-array and small file forms resolve against the listed signatures unchanged, while N-D file forms get the exact `[Real × ndim, Literal(String)(, Literal(String))]` signature **synthesised from the argument shapes** (trailing string literals = data file + optional control string). Owning all argument counts matters twice: the generic varargs fallthrough *resizes* listed signatures to the call's arity, which **truncates** longer signatures and made plain 2-argument inline calls ambiguous (caught by the full regression sweep mid-implementation); and a 5-argument call is ambiguous *by arity alone* — 3-D + file + ctrl vs 4-D + file — which the shape scan disambiguates. The lowering now dispatches on argument shapes rather than the resolved signature; the grid-file format is unchanged and all partial derivatives still flow through autodiff into the Jacobian. Pure `hir_ty` + `hir_lower` change.
+
+- Verified end-to-end through ngspice — the demo grids hold **multilinear** functions, which multilinear interpolation reproduces *exactly* at any off-grid point, so every check asserts **analytic equality**: 4-D exact at two off-grid points (`f4(1.5,0.25,0.75,0.4) = 7.9625`), 4-D *without* a control string (the ambiguous 5-argument arity) exact, **5-D exact** (`6.5625`), and the 1-D inline form regression-locked — see `examples/ndtable_examples/`
+- Regression-checked: all 36 example verify suites ALL PASS — including `table_model`/`mdtable`/`cubic_table`, which lock the 1–3-D behaviour now re-routed through the new shape-based dispatch
+- Details: [Enhancement-40.md](enhancements_doc/Enhancement-40.md)
+
+---
+
 ## Prebuilt Binaries
 
 Binaries are built by CI and committed to `bin/`:

@@ -236,5 +236,11 @@ examples/precedence_examples/_*.osdi
 examples/derivednature_examples/_*.cir
 examples/derivednature_examples/_*.txt
 
+# Enhancement 40 N-D table example scripts: temp netlists/outputs + generated models
+examples/ndtable_examples/_*.cir
+examples/ndtable_examples/_*.txt
+examples/ndtable_examples/_*.va
+examples/ndtable_examples/_*.osdi
+
 # Python bytecode cache (e.g. from importing _setup.py)
 __pycache__/

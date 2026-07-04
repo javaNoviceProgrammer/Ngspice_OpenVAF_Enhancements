@@ -1,8 +1,6 @@
 use hir::builtin::{
     FLICKER_NOISE_NAME, NOISE_TABLE_FILE, NOISE_TABLE_FILE_NAME, NOISE_TABLE_INLINE,
-    NOISE_TABLE_INLINE_NAME, TABLE_MODEL_1D_ARR, TABLE_MODEL_1D_ARR_CTRL, TABLE_MODEL_1D_FILE,
-    TABLE_MODEL_1D_FILE_CTRL, TABLE_MODEL_2D_FILE, TABLE_MODEL_2D_FILE_CTRL, TABLE_MODEL_3D_FILE,
-    TABLE_MODEL_3D_FILE_CTRL, WHITE_NOISE_NAME,
+    NOISE_TABLE_INLINE_NAME, WHITE_NOISE_NAME,
 };
 use hir::signatures::{
     ABSDELAY_MAX, ABS_INT, ABS_REAL, BOOL_EQ, DDX_POT, IDTMOD_IC, IDTMOD_IC_MODULUS,
@@ -817,21 +815,26 @@ impl BodyLoweringCtx<'_, '_, '_> {
         }
     }
 
-    /// Lowers `$table_model(x1[, x2, x3], <data>[, "ctrl"])` to differentiable MIR: reads the
+    /// Lowers `$table_model(x1, ..., xn, <data>[, "ctrl"])` to differentiable MIR: reads the
     /// compile-time grid (inline array or data file), lowers each coordinate, and multilinearly
     /// interpolates via `interp_nd`, so `mir_autodiff` supplies the per-axis slope as the Jacobian.
-    fn lower_table_model(&mut self, signature: hir::Signature, args: &[ExprId]) -> Value {
-        // (ndim, is_file, has_ctrl) for each declared signature variant
-        let (ndim, is_file, has_ctrl) = match signature {
-            TABLE_MODEL_1D_ARR => (1, false, false),
-            TABLE_MODEL_1D_ARR_CTRL => (1, false, true),
-            TABLE_MODEL_1D_FILE => (1, true, false),
-            TABLE_MODEL_1D_FILE_CTRL => (1, true, true),
-            TABLE_MODEL_2D_FILE => (2, true, false),
-            TABLE_MODEL_2D_FILE_CTRL => (2, true, true),
-            TABLE_MODEL_3D_FILE => (3, true, false),
-            TABLE_MODEL_3D_FILE_CTRL => (3, true, true),
-            _ => (1, false, false),
+    ///
+    /// Enhancement-40: the dimension is derived from the argument SHAPES rather than the
+    /// resolved signature, so tables of any dimension work (1-3D were previously hard-coded):
+    /// an array as the second argument means the 1-D inline form; otherwise every argument up
+    /// to the first string literal is a coordinate, the string literal is the data-file name,
+    /// and one further trailing string literal is the control string.
+    fn lower_table_model(&mut self, args: &[ExprId]) -> Value {
+        let is_str =
+            |sel: &Self, e: ExprId| matches!(sel.body.as_literal(e), Some(Literal::String(_)));
+        let (ndim, is_file, has_ctrl) = if matches!(self.body.get_expr(args[1]), Expr::Array(_)) {
+            (1, false, args.len() > 2)
+        } else {
+            match (1..args.len()).find(|&i| is_str(self, args[i])) {
+                Some(k) => (k, true, args.len() > k + 1),
+                // defensive: no data argument at all (inference already diagnosed it)
+                None => (1, false, false),
+            }
         };
 
         // The control string selects extrapolation ('L' -> linear, else clamp) and interpolation
@@ -1274,7 +1277,7 @@ impl BodyLoweringCtx<'_, '_, '_> {
                 self.ctx.call1(CallBackKind::NoiseTable(Box::new(noise_table)), &[])
             }
 
-            BuiltIn::table_model => self.lower_table_model(signature, args),
+            BuiltIn::table_model => self.lower_table_model(args),
 
             BuiltIn::abstime => self.ctx.use_param(ParamKind::Abstime),
 
