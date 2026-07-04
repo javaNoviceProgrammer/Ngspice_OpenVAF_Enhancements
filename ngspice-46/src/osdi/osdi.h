@@ -131,6 +131,9 @@ typedef struct OsdiNode {
   uint32_t react_residual_off;
   uint32_t resist_limit_rhs_off;
   uint32_t react_limit_rhs_off;
+  /* nodeset (initial-guess) value for the node's potential from a net
+   * initializer (`electrical a = 5.0;`, Enhancement-45); NAN if none */
+  double nodeset;
   bool is_flow;
 }OsdiNode;
 

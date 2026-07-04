@@ -233,12 +233,21 @@ impl<'ll> OsdiCompilationUnit<'_, '_, 'll> {
                     inst_data.lim_rhs_off(id, false, target_data).unwrap_or(u32::MAX);
                 let react_limit_rhs_off =
                     inst_data.lim_rhs_off(id, true, target_data).unwrap_or(u32::MAX);
+                // nodeset initializer (Enhancement-45): only KCL (potential)
+                // unknowns of nets that declared one; NAN = none
+                let nodeset = match *unknown {
+                    SimUnknownKind::KirchoffLaw(node) => {
+                        node.nodeset(db).unwrap_or(f64::NAN)
+                    }
+                    _ => f64::NAN,
+                };
                 OsdiNode {
                     name,
                     units,
                     residual_units,
                     resist_residual_off,
                     react_residual_off,
+                    nodeset,
                     is_flow,
                     resist_limit_rhs_off,
                     react_limit_rhs_off,

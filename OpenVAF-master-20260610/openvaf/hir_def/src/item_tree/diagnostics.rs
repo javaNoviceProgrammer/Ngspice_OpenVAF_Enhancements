@@ -168,6 +168,23 @@ impl Diagnostic for ItemTreeDiagnosticWrapped<'_> {
                             .to_owned(),
                     ])
             }
+            ItemTreeDiagnostic::NonConstantNodeset { ast_id } => {
+                let range = self.ast_id_map.get_syntax(*ast_id).range();
+                let span = self.parse.to_file_span(range, self.sm);
+                Report::error()
+                    .with_message("net nodeset initializer is not a constant")
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: span.file,
+                        range: span.range.into(),
+                        message: "expected a numeric literal (optionally negated)".to_owned(),
+                    }])
+                    .with_notes(vec![
+                        "help: a net initializer (`electrical a = 5.0;`) is used as a nodeset \
+                         value for the net's potential and must be a numeric constant here"
+                            .to_owned(),
+                    ])
+            }
             ItemTreeDiagnostic::InvalidParamsetSysParam { ast_id, name } => {
                 let range = self.ast_id_map.get_syntax(*ast_id).range();
                 let span = self.parse.to_file_span(range, self.sm);

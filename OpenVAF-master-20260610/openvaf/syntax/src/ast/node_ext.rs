@@ -357,3 +357,24 @@ impl ast::NameRef {
         support::token(&self.syntax, crate::SyntaxKind::SYSFUN)
     }
 }
+
+impl ast::NetDecl {
+    /// Enhancement-45: pairs each declared net name with its optional nodeset
+    /// initializer (`electrical a = 5.0, b;`, LRM 3.6.3.2). The initializer
+    /// expression is a direct NET_DECL child following its NAME node; the
+    /// discipline (a NameRef) and width (a Range) are different node kinds and
+    /// never match the casts below.
+    pub fn declarators(&self) -> Vec<(ast::Name, Option<Expr>)> {
+        let mut out: Vec<(ast::Name, Option<Expr>)> = Vec::new();
+        for child in self.syntax().children() {
+            if let Some(name) = ast::Name::cast(child.clone()) {
+                out.push((name, None));
+            } else if let Some(expr) = Expr::cast(child) {
+                if let Some(last) = out.last_mut() {
+                    last.1 = Some(expr);
+                }
+            }
+        }
+        out
+    }
+}

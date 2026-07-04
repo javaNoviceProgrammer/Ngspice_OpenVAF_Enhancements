@@ -941,14 +941,52 @@ impl Ctx {
         let ast_id = self.source_ast_id_map.ast_id(&decl);
 
         let is_gnd = decl.net_type_token().map_or(false, |it| it.text() == kw::raw::ground);
+
+        // Nodeset initializers (`electrical a = 5.0;` / `electrical [0:4] b =
+        // '{...};`, LRM 3.6.3.2, Enhancement-45): fold each declarator's
+        // constant initializer; for a bus, flatten the `'{...}` literal into
+        // per-bit leaves in ascending bit order (matching the expansion order
+        // below). A non-constant initializer is diagnosed and dropped.
+        let declarators = decl.declarators();
+        let fold_leaf = |this: &mut Self, e: &ast::Expr| -> Option<f64> {
+            match e.as_constexprval() {
+                Some(ConstExprValue::Int(i)) => Some(f64::from(i)),
+                Some(ConstExprValue::Float(f)) => Some(f.into_inner()),
+                _ => {
+                    this.tree.diagnostics.push(ItemTreeDiagnostic::NonConstantNodeset {
+                        ast_id: ast_id.into(),
+                    });
+                    None
+                }
+            }
+        };
+        let mut init_leaves: Vec<Option<Vec<Option<f64>>>> = Vec::new();
+        for (_, init) in &declarators {
+            let leaves = init.as_ref().map(|init| match init {
+                ast::Expr::ArrayExpr(arr) => {
+                    arr.exprs().map(|e| fold_leaf(self, &e)).collect()
+                }
+                other => vec![fold_leaf(self, other)],
+            });
+            init_leaves.push(leaves);
+        }
+        let mut bit_pos: Vec<usize> = vec![0; init_leaves.len()];
+
         let names = self.expand_bus_names(decl.width(), decl.names(), ast_id.into(), buses);
         for (name, name_idx, merge_base) in names {
+            let nodeset = init_leaves.get(name_idx).and_then(|leaves| {
+                let leaves = leaves.as_ref()?;
+                let pos = bit_pos[name_idx];
+                bit_pos[name_idx] += 1;
+                leaves.get(pos).copied().flatten()
+            });
             let id = self.tree.data.nets.push_and_get_key(Net {
                 name: name.clone(),
                 discipline: discipline.clone(),
                 ast_id,
                 is_gnd,
                 name_idx,
+                nodeset: nodeset.map(OrderedFloat),
             });
 
             match Self::find_node_for_decl(nodes, &name, &merge_base) {

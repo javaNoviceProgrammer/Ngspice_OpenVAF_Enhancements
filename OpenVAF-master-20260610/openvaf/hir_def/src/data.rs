@@ -163,6 +163,9 @@ pub struct NodeData {
     pub is_input: bool,
     pub is_output: bool,
     pub is_gnd: bool,
+    /// Constant nodeset initializer from the node's net declaration
+    /// (`electrical a = 5.0;`, Enhancement-45), if any.
+    pub nodeset: Option<ordered_float::OrderedFloat<f64>>,
 }
 
 impl NodeData {
@@ -173,12 +176,18 @@ impl NodeData {
         let node = &tree[module.id].nodes[loc.id];
         let (is_input, is_output) = node.direction(&tree);
 
+        let nodeset = node.decls.iter().find_map(|decl| match decl {
+            crate::item_tree::NodeTypeDecl::Net(net) => tree[*net].nodeset,
+            _ => None,
+        });
+
         Arc::new(NodeData {
             name: node.name.clone(),
             discipline: node.discipline(&tree),
             is_input,
             is_output,
             is_gnd: node.is_gnd(&tree),
+            nodeset,
         })
     }
 

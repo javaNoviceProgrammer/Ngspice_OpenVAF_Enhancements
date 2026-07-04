@@ -920,15 +920,23 @@ impl ElabCtx<'_> {
                 // `[msb:lsb]` declaration would just redeclare an identity
                 // that already belongs to an outer/bound net).
                 ast::ModuleItem::NetDecl(decl) if !port_names.is_empty() => {
+                    // keep each surviving net's nodeset initializer
+                    // (`electrical m = -1.0;`, Enhancement-45) -- initializers
+                    // are numeric constants, so no renaming applies inside them
                     let kept: Vec<String> = decl
-                        .names()
-                        .filter_map(|n| {
+                        .declarators()
+                        .into_iter()
+                        .filter_map(|(n, init)| {
                             let name = n.as_name();
                             if port_names.contains(&name) {
                                 None
                             } else {
                                 let key = name.to_string();
-                                Some(scope.subst.get(&key).cloned().unwrap_or(key))
+                                let renamed = scope.subst.get(&key).cloned().unwrap_or(key);
+                                Some(match init {
+                                    Some(e) => format!("{renamed} = {}", e.syntax().text()),
+                                    None => renamed,
+                                })
                             }
                         })
                         .collect();

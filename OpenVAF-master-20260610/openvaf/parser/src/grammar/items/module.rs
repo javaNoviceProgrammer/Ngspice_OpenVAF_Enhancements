@@ -199,7 +199,18 @@ fn net_decl<const NET_TYPE_FIRST: bool>(p: &mut Parser, m: Marker) {
 }
 
 fn net_dec_list(p: &mut Parser) {
-    decl_list(p, T![;], decl_name, NET_RECOVERY);
+    decl_list(p, T![;], net_decl_name, NET_RECOVERY);
+}
+
+/// A single net declarator: a name with an optional nodeset initializer
+/// (`electrical a = 5.0;`, LRM 3.6.3.2, Enhancement-45). The initializer
+/// expression becomes a direct NET_DECL child following its NAME node.
+fn net_decl_name(p: &mut Parser) -> bool {
+    name_r(p, TokenSet::new(&[T![,], T![=], T![;]]));
+    if p.eat(T![=]) {
+        expr(p);
+    }
+    true
 }
 
 const FUNCTION_RECOVER: TokenSet = TokenSet::new(&[EOF, ENDMODULE_KW, ENDFUNCTION_KW]);

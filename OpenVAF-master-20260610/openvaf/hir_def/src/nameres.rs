@@ -439,6 +439,39 @@ impl DefMap {
                 }
             },
 
+            // Net/branch attribute access `net.potential.<attr>` / `br.flow.<attr>`
+            // (LRM 5.5.3, Enhancement-45). The equivalent arms in `resolve_names_in`
+            // were unreachable from module bodies -- this entry point rejected the
+            // non-scope qualifier first.
+            ScopeDefItem::NodeId(node)
+                if path[1] == kw::potential || path[1] == kw::flow =>
+            {
+                return match &path[1..] {
+                    [nat, attr] if *nat == kw::potential => {
+                        Ok(ResolvedPath::NetPotentialAttribute { node, name: attr.clone() })
+                    }
+                    [_, attr] => Ok(ResolvedPath::NetFlowAttribute { node, name: attr.clone() }),
+                    rem => Err(PathResolveError::ExpectedNatureAttributeIdent {
+                        found: rem.to_vec().into_boxed_slice(),
+                    }),
+                };
+            }
+            ScopeDefItem::BranchId(branch)
+                if path[1] == kw::potential || path[1] == kw::flow =>
+            {
+                return match &path[1..] {
+                    [nat, attr] if *nat == kw::potential => {
+                        Ok(ResolvedPath::PotentialAttribute { branch, name: attr.clone() })
+                    }
+                    [_, attr] => {
+                        Ok(ResolvedPath::FlowAttriubte { branch, name: attr.clone() })
+                    }
+                    rem => Err(PathResolveError::ExpectedNatureAttributeIdent {
+                        found: rem.to_vec().into_boxed_slice(),
+                    }),
+                };
+            }
+
             _ => return Err(PathResolveError::ExpectedScope { name: name.clone(), found: decl }),
         };
 
@@ -564,6 +597,11 @@ impl DefMap {
 pub enum ResolvedPath {
     FlowAttriubte { branch: BranchId, name: Name },
     PotentialAttribute { branch: BranchId, name: Name },
+    /// Net attribute access `net.flow.<attr>` (LRM 5.5.3, Enhancement-45): the
+    /// attribute of the flow nature of the net's discipline.
+    NetFlowAttribute { node: NodeId, name: Name },
+    /// Net attribute access `net.potential.<attr>` (LRM 5.5.3, Enhancement-45).
+    NetPotentialAttribute { node: NodeId, name: Name },
     ScopeDefItem(ScopeDefItem),
 }
 
@@ -571,6 +609,8 @@ impl_display! {
     match ResolvedPath{
         ResolvedPath::FlowAttriubte{..}  => "nature attribute";
         ResolvedPath::PotentialAttribute{..} => "nature attribute";
+        ResolvedPath::NetFlowAttribute{..}  => "nature attribute";
+        ResolvedPath::NetPotentialAttribute{..} => "nature attribute";
         ResolvedPath::ScopeDefItem(item) => "{}", item.item_kind();
     }
 }

@@ -32,7 +32,10 @@ pub fn stdlib_bitcode(target: &target::spec::Target) -> &'static [u8] {
     }
 }
 pub const OSDI_VERSION_MAJOR_CURR: u32 = 0;
-pub const OSDI_VERSION_MINOR_CURR: u32 = 4;
+// Enhancement-45 bumped the minor version to 5: `OsdiNode` gained a `nodeset`
+// field, changing the node-array stride -- a simulator compiled against the
+// old layout would misread the array, so loaders must gate on >= 0.5.
+pub const OSDI_VERSION_MINOR_CURR: u32 = 5;
 pub const PARA_TY_MASK: u32 = 3;
 pub const PARA_TY_REAL: u32 = 0;
 pub const PARA_TY_INT: u32 = 1;
@@ -244,6 +247,9 @@ pub struct OsdiNode {
     pub react_residual_off: u32,
     pub resist_limit_rhs_off: u32,
     pub react_limit_rhs_off: u32,
+    /// Nodeset (initial-guess) value for the node's potential from a net
+    /// initializer (`electrical a = 5.0;`, Enhancement-45); NAN if none.
+    pub nodeset: f64,
     pub is_flow: bool,
 }
 impl OsdiNode {
@@ -260,6 +266,7 @@ impl OsdiNode {
             ctx.const_unsigned_int(self.react_residual_off),
             ctx.const_unsigned_int(self.resist_limit_rhs_off),
             ctx.const_unsigned_int(self.react_limit_rhs_off),
+            ctx.const_real(self.nodeset),
             ctx.const_c_bool(self.is_flow),
         ];
         let ty = tys.osdi_node;
@@ -277,6 +284,7 @@ impl OsdiTyBuilder<'_, '_, '_> {
             ctx.ty_int(),
             ctx.ty_int(),
             ctx.ty_int(),
+            ctx.ty_double(),
             ctx.ty_c_bool(),
         ];
         let ty = ctx.ty_struct("OsdiNode", &fields);

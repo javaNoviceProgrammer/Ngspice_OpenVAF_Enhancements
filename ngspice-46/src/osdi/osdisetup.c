@@ -18,6 +18,7 @@
 #include "osdi.h"
 #include "osdidefs.h"
 
+#include <math.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -264,6 +265,18 @@ int OSDIsetup(SMPmatrix *matrix, GENmodel *inModel, CKTcircuit *ckt,
       uint32_t num_nodes = collapse_nodes(descr, inst, connected_terminals);
       /* copy terminals */
       memcpy(node_ids, gen_inst + 1, sizeof(int) * connected_terminals);
+      /* Enhancement-45: a terminal net with a nodeset initializer
+       * (`electrical a = 5.0;`) nodesets the connected circuit node --
+       * unless the netlist already gave one (.nodeset wins). */
+      for (uint32_t i = 0; i < connected_terminals; i++) {
+        if (!isnan(descr->nodes[i].nodeset)) {
+          CKTnode *term = CKTnum2nod(ckt, (int)node_ids[i]);
+          if (term && term->number != 0 && !term->nsGiven) {
+            term->nodeset = descr->nodes[i].nodeset;
+            term->nsGiven = 1;
+          }
+        }
+      }
       /* create internal nodes as required */
       for (uint32_t i = connected_terminals; i < num_nodes; i++) {
         // TODO handle currents  correctly
@@ -275,7 +288,12 @@ int OSDIsetup(SMPmatrix *matrix, GENmodel *inModel, CKTcircuit *ckt,
         if (error)
           return (error);
         node_ids[i] = (uint32_t)tmp->number;
-        // TODO nodeset?
+        /* Enhancement-45: apply the net's nodeset initializer as the
+         * internal node's .nodeset-equivalent initial guess */
+        if (!isnan(descr->nodes[i].nodeset) && !descr->nodes[i].is_flow) {
+          tmp->nodeset = descr->nodes[i].nodeset;
+          tmp->nsGiven = 1;
+        }
       }
       write_node_mapping(descr, inst, node_ids);
 

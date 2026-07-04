@@ -49,7 +49,8 @@ mod ndatable;
 mod noise;
 mod setup;
 
-const OSDI_VERSION: (u32, u32) = (0, 4);
+// 0.5: Enhancement-45 added `nodeset` to `OsdiNode` (node-array stride change)
+const OSDI_VERSION: (u32, u32) = (0, 5);
 
 use std::sync::Once;
 

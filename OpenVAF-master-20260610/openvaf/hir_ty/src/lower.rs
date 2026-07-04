@@ -302,3 +302,25 @@ impl BranchTy {
         }
     }
 }
+
+/// Net attribute access `net.flow.<attr>` / `net.potential.<attr>` (LRM 5.5.3,
+/// Enhancement-45): resolves through the net's discipline to the attribute of
+/// its flow/potential nature -- the node twin of `BranchTy::{flow,potential}_attr`.
+pub fn net_nature_attr(
+    db: &dyn HirTyDB,
+    node: NodeId,
+    name: &Name,
+    potential: bool,
+) -> Option<Result<NatureAttrId, PathResolveError>> {
+    let discipline = db.node_discipline(node)?;
+    let info = db.discipline_info(discipline);
+    let (nature, kind) =
+        if potential { (info.potential, kw::potential) } else { (info.flow, kw::flow) };
+    match nature {
+        Some(nature) => Some(NatureTy::lookup_attr(db, nature, name)),
+        None => Some(Err(PathResolveError::NotFoundIn {
+            name: kind,
+            scope: db.discipline_data(discipline).name.clone(),
+        })),
+    }
+}

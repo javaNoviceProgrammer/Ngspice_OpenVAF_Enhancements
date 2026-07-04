@@ -584,6 +584,16 @@ Several unrelated language gaps found along the way are also fixed. **`localpara
 
 ---
 
+## Enhancement 45: net initialization (nodesets) + net attribute access
+
+*July 2026* — Implemented two LRM features that were both completely missing. **(1) Net attribute access** (LRM 5.5.3): `net.potential.abstol` / `net.flow.abstol` / `branch.potential.abstol` — every spelling failed with "expected a scope but found node/branch". The scaffolded-but-unwired pattern struck a third time: nameres had branch-attribute arms, but only in the cross-scope resolver — the module-body entry rejected non-scope qualifiers first, so even the branch form was unreachable from where models use it. The fix adds `NodeId`/`BranchId` arms at that entry with two new `ResolvedPath` variants and a net → discipline → nature → attribute lookup through Enhancement-39's inheritance-aware machinery; lowering needed nothing (`NatureAttr` reads already lower to the attribute's constant). The LRM's own `twocap` example (`I(a,b) <+ c*ddt(V(a,b), a.potential.abstol);`) compiles verbatim. **(2) Net nodeset initializers** (LRM 3.6.3.2): `electrical a = 5.0;` (and the bus form `electrical [0:2] b = '{0.5,-1.0,2.0};`) — the constant initializer is a **nodeset** value for the net's potential, an initial Newton-Raphson guess. The value travels net declaration → item tree → a new `double nodeset` field in the OSDI node descriptor (NAN = none) → ngspice, which applies it at instance setup (landing on a pre-existing `// TODO nodeset?` marker) for internal nodes and connected terminals — an explicit netlist `.nodeset` wins. The Enhancement-5 flattening now preserves initializers on submodule nets (its re-renderer dropped them). Non-constant initializers get a named diagnostic. **Breaking ABI note**: the `OsdiNode` array stride changed, which `OSDI_DESCRIPTOR_SIZE` cannot detect, so the **OSDI version is bumped to 0.5** and ngspice's loader requires it — stale `.osdi` files are rejected with "Recompile the model with the matching openvaf-r" instead of being misread; every committed example `.osdi` in this repo was regenerated.
+
+- Verified end-to-end through ngspice with a bistable `x = tanh(5x)` node (solutions 0, ±0.999909): no initializer → 0; `= 1.0`/`= -1.0` internal-net initializers select the ± branch; a **port** initializer nodesets the connected terminal and netlist `.nodeset` overrides it; bus leaves apply per bit (weighted sum 90.99); an initializer inside a flattened submodule survives; attribute access reads exactly (1e6·`q.potential.abstol` + 1e12·`q.flow.abstol` + 1e6·`br.potential.abstol` = 3.0); non-constant initializers and unknown attributes are clean diagnostics — see `examples/netinit_examples/`
+- Regression-checked: all 41 example verify suites ALL PASS; crate tests (`hir_def`/`hir`/`hir_ty`/`hir_lower`/`sim_back`/`osdi`/`parser`/`syntax`) 57/57
+- Details: [Enhancement-45.md](enhancements_doc/Enhancement-45.md)
+
+---
+
 ## Prebuilt Binaries
 
 Binaries are built by CI and committed to `bin/`:

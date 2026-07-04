@@ -430,6 +430,13 @@ impl Node {
         db.node_data(self.id).name.clone().into()
     }
 
+    /// Constant nodeset initializer from the node's net declaration
+    /// (`electrical a = 5.0;`, LRM 3.6.3.2, Enhancement-45), if any.
+    #[inline]
+    pub fn nodeset(self, db: &CompilationDB) -> Option<f64> {
+        db.node_data(self.id).nodeset.map(|v| v.into_inner())
+    }
+
     #[inline]
     pub fn discipline(self, db: &CompilationDB) -> Discipline {
         let id = db.node_discipline(self.id).unwrap();

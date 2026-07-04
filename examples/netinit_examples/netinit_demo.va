@@ -1,0 +1,86 @@
+// netinit_demo.va -- Enhancement-45: net initialization (nodeset values) and
+// net/branch attribute access
+//
+// LRM 3.6.3.2: a net of a continuous discipline may carry an initializer,
+// `electrical a = 5.0;` -- a constant used by the analog solver as a NODESET
+// (initial-guess) value for the net's potential. It steers Newton-Raphson
+// toward an operating point without constraining the converged solution.
+//
+// LRM 5.5.3: the attributes of a net's (or branch's) discipline natures are
+// accessed with the hierarchical operator: net.potential.abstol etc.
+`include "disciplines.vams"
+
+// x = tanh(5x) has solutions 0 and +-0.999909: the internal net's nodeset
+// initializer selects which one Newton converges to
+module bist_pos(q);
+  inout q;
+  electrical q;
+  electrical m = 1.0;
+  analog begin
+    I(m) <+ (V(m) - tanh(5.0*V(m)))/1e3;
+    V(q) <+ V(m);
+  end
+endmodule
+
+module bist_neg(q);
+  inout q;
+  electrical q;
+  electrical m = -1.0;
+  analog begin
+    I(m) <+ (V(m) - tanh(5.0*V(m)))/1e3;
+    V(q) <+ V(m);
+  end
+endmodule
+
+module bist_none(q);
+  inout q;
+  electrical q;
+  electrical m;
+  analog begin
+    I(m) <+ (V(m) - tanh(5.0*V(m)))/1e3;
+    V(q) <+ V(m);
+  end
+endmodule
+
+// a PORT net initializer nodesets the connected circuit node (netlist
+// .nodeset still wins)
+module bist_port(q);
+  inout q;
+  electrical q = 1.0;
+  analog I(q) <+ (V(q) - tanh(5.0*V(q)))/1e3;
+endmodule
+
+// bus form: per-bit leaves of the '{...} literal (ascending bit order)
+module bist_bus(q);
+  inout q;
+  electrical q;
+  electrical [0:2] b = '{0.5, -1.0, 2.0};
+  analog begin
+    I(b[0]) <+ (V(b[0]) - tanh(5.0*V(b[0])))/1e3;
+    I(b[1]) <+ (V(b[1]) - tanh(5.0*V(b[1])))/1e3;
+    I(b[2]) <+ (V(b[2]) - tanh(5.0*V(b[2])))/1e3;
+    V(q) <+ V(b[0]) + 10.0*V(b[1]) + 100.0*V(b[2]);
+  end
+endmodule
+
+// nets with initializers inside flattened submodule instances keep them
+module bwrap(q);
+  inout q;
+  electrical q;
+  bist_neg u1(q);
+endmodule
+
+// net & branch attribute access (LRM 5.5.3), incl. the LRM's twocap idiom:
+// for electrical, potential (Voltage) abstol = 1e-6, flow (Current) = 1e-12
+module attrs(q, s);
+  inout q, s;
+  electrical q, s;
+  branch (q) br;
+  parameter real c = 1p;
+  analog begin
+    I(q) <+ c*ddt(V(q), q.potential.abstol);
+    // 1e6*1e-6 + 1e12*1e-12 + 1e6*1e-6 = 3
+    V(s) <+ 1e6*q.potential.abstol + 1e12*q.flow.abstol
+          + 1e6*br.potential.abstol;
+  end
+endmodule

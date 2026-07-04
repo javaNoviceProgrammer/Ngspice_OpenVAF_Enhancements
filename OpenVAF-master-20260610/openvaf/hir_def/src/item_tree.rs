@@ -79,6 +79,10 @@ pub enum ItemTreeDiagnostic {
     /// (Enhancement-43). Previously a too-short literal crashed the compiler
     /// (the missing elements lowered as `Expr::Missing`, "invalid HIR").
     ArrayInitializerLengthMismatch { ast_id: ErasedAstId, name: Name, expected: u32, found: u32 },
+    /// A net declaration's nodeset initializer (`electrical a = <expr>;`,
+    /// Enhancement-45) did not fold to a numeric constant; the initializer
+    /// was dropped (no nodeset for that net).
+    NonConstantNodeset { ast_id: ErasedAstId },
     /// A paramset override bound a system function that is not a hierarchical
     /// system parameter (`.$vt = ...;`) — only $mfactor/$xposition/$yposition/
     /// $angle/$hflip/$vflip can be set by a paramset (Enhancement-44).
@@ -477,6 +481,11 @@ pub struct Net {
 
     pub name_idx: usize,
     pub ast_id: AstId<ast::NetDecl>,
+    /// Constant nodeset initializer from the net declaration
+    /// (`electrical a = 5.0;`, LRM 3.6.3.2, Enhancement-45) -- used by the
+    /// analog solver as an initial-guess (nodeset) value for the net's
+    /// potential. For a bus, each bit net carries its own literal leaf.
+    pub nodeset: Option<OrderedFloat<f64>>,
 }
 
 #[derive(Debug, Eq, PartialEq, Clone)]

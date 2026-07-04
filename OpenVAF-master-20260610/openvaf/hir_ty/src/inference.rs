@@ -1736,6 +1736,14 @@ impl Ctx<'_> {
                 BranchTy::potential_attr(self.db, branch, name)?
             }
 
+            // Net attribute access (LRM 5.5.3, Enhancement-45)
+            ResolvedPath::NetFlowAttribute { node, ref name } => {
+                crate::lower::net_nature_attr(self.db, node, name, false)?
+            }
+            ResolvedPath::NetPotentialAttribute { node, ref name } => {
+                crate::lower::net_nature_attr(self.db, node, name, true)?
+            }
+
             ResolvedPath::ScopeDefItem(def) => return Some(def),
         };
 
