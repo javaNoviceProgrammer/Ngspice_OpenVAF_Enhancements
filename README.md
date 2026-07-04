@@ -564,6 +564,16 @@ Several unrelated language gaps found along the way are also fixed. **`localpara
 
 ---
 
+## Enhancement 43: variable initializers, completed
+
+*July 2026* — Completed **declaration initializers** (`real x = 2.5;`, evaluated once at simulation start per the LRM). Scalar initializers already worked — including constant expressions over parameters that re-evaluate against model-card overrides, and correct **init-once** semantics (an unwritten variable read becomes a hidden-state input seeded from the initializer gated on the initial step, so `integer cnt = 10;` with an `@(cross)` increment starts at 10 and *counts*, never re-initializing per evaluation). Three defects fixed, all in `hir_def`. **(1) Array declaration initializers were rejected**: an array variable expands into per-element scalar variables, and each element's body collected the *whole* `'{...}` aggregate — hence "expected real value but found real[0:3] value" repeated once per element. `Var` now carries its flat row-major `array_index` (mirroring `Param::array_index`) and each element's body takes just its own literal leaf — which makes **1-D, 2-D, and N-D initializers** (`real m[0:1][0:2] = '{'{...},'{...}};`) work, with integer-leaf casts, parameter-dependent leaves tracking overrides, and function-local arrays covered by the same path. **(2) An analog-function argument without a type declaration crashed the compiler**: `input v;` with no `real v;` yielded `Type::Err`, which hit `unreachable!("unknown cast found Real -> Err")` at the first cast (this masqueraded as a "function-local initializer crash" during probing — the initializer was innocent). Untyped arguments now default to `real`, matching the untyped-return default. **(3) Wrong-arity initializers crashed the compiler — array *parameters* included** (a pre-existing E-14 latent bug): the uncovered elements lowered as `Expr::Missing` and died with "invalid HIR: Missing". Both expansion sites now count the literal's leaves and emit a named diagnostic — `array initializer for 'x' has 2 elements but the array has 3` — covering too-few, too-many, and scalar-on-array forms for variables and parameters alike.
+
+- Verified end-to-end through ngspice with exact analytic checks: scalar/param-dependent/string initializers (`y = 2*p+1` tracks `p=10`), the init-once counter (10 → 14 across four rising crossings), 1-D real + integer / 2-D / 3-D arrays with parameter-dependent leaves (66 + 4·s, tracking `s`), an array element initialized to 100 and event-updated from there, function-local scalar + array initializers with an untyped argument (7.25, used to ICE), and four wrong-arity forms rejected cleanly — see `examples/varinit_examples/`
+- Regression-checked: all 39 example verify suites ALL PASS; `hir_def`/`hir_ty`/`hir_lower`/`hir`/`syntax`/`parser` crate tests pass
+- Details: [Enhancement-43.md](enhancements_doc/Enhancement-43.md)
+
+---
+
 ## Prebuilt Binaries
 
 Binaries are built by CI and committed to `bin/`:

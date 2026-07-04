@@ -36,6 +36,17 @@ fn fold_width_range(range: &ast::Range) -> Option<(i32, i32)> {
 
 /// Folds every `[msb:lsb]` width clause of an array declaration into a per-dimension
 /// `(msb, lsb)` list (outermost dimension first). `None` if any bound isn't a constant integer.
+/// Counts the leaf elements of a (possibly nested) `'{...}` array literal; any
+/// non-aggregate expression counts as one leaf. Used to check an array
+/// variable/parameter initializer against the declared element count
+/// (Enhancement-43) before the per-element bodies index into it.
+fn count_literal_leaves(expr: &ast::Expr) -> u32 {
+    match expr {
+        ast::Expr::ArrayExpr(arr) => arr.exprs().map(|e| count_literal_leaves(&e)).sum(),
+        _ => 1,
+    }
+}
+
 fn fold_width_ranges<'a>(widths: impl Iterator<Item = ast::Range>) -> Option<Vec<(i32, i32)>> {
     widths.map(|r| fold_width_range(&r)).collect()
 }
@@ -596,6 +607,9 @@ impl Ctx {
                                 name: arr.elem_name(&indices),
                                 ast_id: var_ast_id,
                                 ty: ty.clone(),
+                                // no `ast::Var` node behind it, so there is no initializer
+                                // literal to index into
+                                array_index: None,
                             };
                             let id = self.tree.data.variables.push_and_get_key(var);
                             items.push(id.into());
@@ -1008,7 +1022,8 @@ impl Ctx {
             let widths = if var_widths.is_empty() { &decl_widths } else { &var_widths };
 
             let mut push_scalar = |this: &mut Self| {
-                let var = Var { name: base_name.clone(), ast_id, ty: ty.clone() };
+                let var =
+                    Var { name: base_name.clone(), ast_id, ty: ty.clone(), array_index: None };
                 let id = this.tree.data.variables.push_and_get_key(var);
                 dst.push(id.into());
             };
@@ -1037,16 +1052,36 @@ impl Ctx {
                         dims,
                         ast_id: ast_id.into(),
                     };
-                    // one scalar element per index tuple, named `x[i]` / `x[i][j]` / ...
-                    for indices in arr.index_tuples() {
-                        let var = Var { name: arr.elem_name(&indices), ast_id, ty: ty.clone() };
+                    // an initializer must supply exactly one leaf per element -- a mismatch
+                    // used to crash the compiler once the missing leaves reached lowering
+                    if let Some(default) = var.default() {
+                        let expected = arr.index_tuples().len() as u32;
+                        let found = count_literal_leaves(&default);
+                        if found != expected {
+                            self.tree.diagnostics.push(
+                                ItemTreeDiagnostic::ArrayInitializerLengthMismatch {
+                                    ast_id: ast_id.into(),
+                                    name: base_name.clone(),
+                                    expected,
+                                    found,
+                                },
+                            );
+                        }
+                    }
+                    // one scalar element per index tuple, named `x[i]` / `x[i][j]` / ...; each
+                    // carries its flat position so a shared `'{...}` initializer can be split
+                    // into per-element leaves, exactly like array parameters (Enhancement-43)
+                    for (pos, indices) in arr.index_tuples().iter().enumerate() {
+                        let var = Var {
+                            name: arr.elem_name(indices),
+                            ast_id,
+                            ty: ty.clone(),
+                            array_index: Some(pos as u32),
+                        };
                         let id = self.tree.data.variables.push_and_get_key(var);
                         dst.push(id.into());
                     }
                     var_arrays.push(arr);
-                    // Note: a default initializer (`real [0:4] x = ...;`) isn't meaningful
-                    // per-element and is silently ignored for array variables — see
-                    // Enhancement-4.md known limitations.
                 }
                 None => {
                     self.tree
@@ -1107,6 +1142,23 @@ impl Ctx {
                         dims: dims.clone(),
                         ast_id: ast_id.into(),
                     };
+                    // an initializer must supply exactly one leaf per element -- a mismatch
+                    // used to crash the compiler once the missing leaves reached lowering
+                    // (Enhancement-43; params and vars share the split-literal machinery)
+                    if let Some(default) = param.default() {
+                        let expected = arr.index_tuples().len() as u32;
+                        let found = count_literal_leaves(&default);
+                        if found != expected {
+                            self.tree.diagnostics.push(
+                                ItemTreeDiagnostic::ArrayInitializerLengthMismatch {
+                                    ast_id: ast_id.into(),
+                                    name: base_name.clone(),
+                                    expected,
+                                    found,
+                                },
+                            );
+                        }
+                    }
                     // one scalar element parameter per index tuple; `array_index` is its flat
                     // declaration-order position, used to pick its default from the (nested) literal
                     for (pos, indices) in arr.index_tuples().iter().enumerate() {

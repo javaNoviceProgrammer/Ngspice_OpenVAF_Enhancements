@@ -74,6 +74,11 @@ pub enum ItemTreeDiagnostic {
     /// literals; the instantiation was treated as a single (non-arrayed)
     /// instance instead.
     NonConstantInstanceArrayWidth { ast_id: ErasedAstId },
+    /// The `'{...}` initializer of an array variable or array parameter has a
+    /// different number of leaf elements than the array's declared size
+    /// (Enhancement-43). Previously a too-short literal crashed the compiler
+    /// (the missing elements lowered as `Expr::Missing`, "invalid HIR").
+    ArrayInitializerLengthMismatch { ast_id: ErasedAstId, name: Name, expected: u32, found: u32 },
     /// A `generate for`/`genvar` construct reached the item tree without
     /// being fully elaborated away by `hir::elaborate::elaborate_generates`
     /// (see that module) -- normally impossible (elaboration always strips
@@ -475,6 +480,11 @@ pub struct Var {
     pub name: Name,
     pub ty: Type,
     pub ast_id: AstId<ast::Var>,
+    /// For an element of an array variable (`real x[0:2] = '{...};`), this element's flat
+    /// position in the array literal (declaration order, row-major), used to pick its
+    /// per-element initializer leaf. `None` for an ordinary scalar variable — mirrors
+    /// `Param::array_index` (Enhancement-43).
+    pub array_index: Option<u32>,
 }
 
 #[derive(Debug, Eq, PartialEq, Clone)]
@@ -634,7 +644,11 @@ pub struct FunctionArg {
 
 impl FunctionArg {
     pub fn ty(&self, tree: &ItemTree) -> Type {
-        self.declarations.first().map_or(Type::Err, |decl| tree[*decl].ty.clone())
+        // An argument without an explicit type declaration defaults to `real`, matching the
+        // return-type default (`analog function f;` is a real function per the LRM). It used
+        // to yield `Type::Err`, which crashed the compiler at the first cast involving the
+        // argument (Enhancement-43).
+        self.declarations.first().map_or(Type::Real, |decl| tree[*decl].ty.clone())
     }
 }
 

@@ -252,5 +252,10 @@ examples/implicitnet_examples/_*.osdi
 examples/noisecorr_examples/_*.cir
 examples/noisecorr_examples/_*.txt
 
+# Enhancement 43 variable-initializer example scripts: temp netlists + models
+examples/varinit_examples/_*.cir
+examples/varinit_examples/_*.va
+examples/varinit_examples/_*.osdi
+
 # Python bytecode cache (e.g. from importing _setup.py)
 __pycache__/

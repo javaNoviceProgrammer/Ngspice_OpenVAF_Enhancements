@@ -1,0 +1,90 @@
+// varinit_demo.va -- Enhancement-43: variable initializers, completed
+//
+// Declaration initializers (`real x = 2.5;`) are evaluated once at the start
+// of the simulation (LRM semantics): a variable that is never written reads
+// its initializer, and event-updated state STARTS from it without being
+// re-initialized per evaluation. E-43 completes the feature:
+//   * array declaration initializers, 1-D and multi-dimensional
+//     (`real m[0:1][0:2] = '{'{...},'{...}};`, row-major leaves) -- previously
+//     a type error ("expected real value but found real[0:3] value", 3x);
+//   * analog-function arguments without a type declaration default to `real`
+//     like the return type -- previously Type::Err crashed the compiler at
+//     the first cast ("unknown cast found Real -> Err");
+//   * an initializer with the wrong number of leaves is a clean diagnostic --
+//     previously an "invalid HIR: Missing" compiler crash (params too).
+`include "disciplines.vams"
+
+// scalar + param-dependent + string initializers (already worked; regression)
+module vscalar(a, c);
+  inout a, c;
+  electrical a, c;
+  parameter real p = 4.0;
+  real x = 2.5;
+  integer n = 3;
+  real y = 2.0*p + 1.0;          // constant expression over parameters
+  string s = "hi";
+  // x + n + y + 100 = 2.5 + 3 + (2p+1) + 100
+  analog V(a,c) <+ x + n + y + (s == "hi" ? 100.0 : 0.0);
+endmodule
+
+// init-once semantics: the counter STARTS at 10 and each rising crossing
+// increments it -- a per-evaluation re-initialization would pin it at 10/11
+module vpersist(a, c);
+  inout a, c;
+  electrical a, c;
+  integer cnt = 10;
+  analog begin
+    @(cross(V(a) - 0.0, 1))
+      cnt = cnt + 1;
+    V(c) <+ cnt;
+  end
+endmodule
+
+// array initializers: 1-D real/integer, 2-D, 3-D (integer leaves cast to
+// real), and parameter-dependent leaves that track model-card overrides
+module varray(a, c);
+  inout a, c;
+  electrical a, c;
+  parameter real s = 2.0;
+  real v1[0:2] = '{1.0, 2.0, 4.0};
+  integer iv[0:1] = '{8, 16};
+  real m[0:1][0:2] = '{'{1.0, 2.0, 3.0}, '{10.0, 20.0, 30.0}};
+  real t[0:1][0:1][0:1] = '{'{'{1,2},'{3,4}}, '{'{5,6},'{7,8}}};
+  real pd[0:1] = '{s, 3*s};
+  analog begin
+    V(a,c) <+ v1[0] + v1[1] + v1[2]            //  7
+            + iv[0] + iv[1]                    // 24
+            + m[0][0] + m[0][2] + m[1][1]      // 1 + 3 + 20
+            + t[0][1][0] + t[1][1][1]          // 3 + 8
+            + pd[0] + pd[1];                   // s + 3s
+    // total = 66 + 4*s
+  end
+endmodule
+
+// array element initialized AND event-updated: starts at 100, then counts
+module varraypersist(a, c);
+  inout a, c;
+  electrical a, c;
+  real acc[0:1] = '{100.0, 0.0};
+  analog begin
+    @(cross(V(a) - 0.0, 1))
+      acc[0] = acc[0] + 1.0;
+    V(c) <+ acc[0];
+  end
+endmodule
+
+// function-local initializers (scalar + array) and an UNTYPED argument
+// (`input v;` with no `real v;` declaration -- defaults to real, used to ICE)
+module vfunc(a, c);
+  inout a, c;
+  electrical a, c;
+  analog function real f;
+    input v;                          // no type declaration: defaults to real
+    real acc = 0.25;
+    real w[0:2] = '{0.5, 0.25, 0.125};
+    begin
+      f = acc + (w[0] + w[1] + w[2])*v;   // 0.25 + 0.875*v
+    end
+  endfunction
+  analog V(a,c) <+ f(8.0);   // 0.25 + 7 = 7.25
+endmodule

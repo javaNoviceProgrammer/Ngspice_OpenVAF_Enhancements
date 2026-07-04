@@ -108,6 +108,27 @@ impl Diagnostic for ItemTreeDiagnosticWrapped<'_> {
                             .to_owned(),
                     ])
             }
+            ItemTreeDiagnostic::ArrayInitializerLengthMismatch { ast_id, name, expected, found } => {
+                let range = self.ast_id_map.get_syntax(*ast_id).range();
+                let span = self.parse.to_file_span(range, self.sm);
+                Report::error()
+                    .with_message(format!(
+                        "array initializer for '{name}' has {found} element{} but the array \
+                         has {expected}",
+                        if *found == 1 { "" } else { "s" }
+                    ))
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: span.file,
+                        range: span.range.into(),
+                        message: format!("expected {expected} leaf elements, found {found}"),
+                    }])
+                    .with_notes(vec![
+                        "help: the `'{...}` literal must supply exactly one value per array \
+                         element (row-major for multi-dimensional arrays)"
+                            .to_owned(),
+                    ])
+            }
             ItemTreeDiagnostic::UnelaboratedGenerate { ast_id } => {
                 let range = self.ast_id_map.get_syntax(*ast_id).range();
                 let span = self.parse.to_file_span(range, self.sm);

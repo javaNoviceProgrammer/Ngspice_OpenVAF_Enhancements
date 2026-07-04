@@ -135,7 +135,27 @@ impl Body {
                 };
 
                 let expr = if let Some(expr) = var_ast.as_ref().and_then(|ast| ast.default()) {
-                    ctx.collect_expr(expr)
+                    // An element of an array variable (`real x[0:2] = '{...};`) takes its
+                    // initializer from the corresponding leaf of the shared `'{...}` literal
+                    // (flat position `array_index`, row-major for multi-dimensional arrays),
+                    // exactly like array parameters (Enhancement-43). A missing leaf lowers as
+                    // a missing expression, surfacing a proper diagnostic instead of checking
+                    // the whole aggregate against the element's scalar type once per element.
+                    match tree[item_tree].array_index {
+                        Some(pos) => {
+                            fn flatten(expr: ast::Expr) -> Vec<ast::Expr> {
+                                match expr {
+                                    ast::Expr::ArrayExpr(arr) => {
+                                        arr.exprs().flat_map(flatten).collect()
+                                    }
+                                    other => vec![other],
+                                }
+                            }
+                            let elem = flatten(expr).into_iter().nth(pos as usize);
+                            ctx.collect_opt_expr(elem)
+                        }
+                        None => ctx.collect_expr(expr),
+                    }
                 } else {
                     let default_val = match db.var_data(var).ty {
                         Type::Real => Literal::Float(Ieee64::with_float(0.0)),
