@@ -310,6 +310,7 @@ impl<'a, 'd> Parser<'a, 'd> {
             "`celldefine" => CompilerDirective::CellDefine,
             "`endcelldefine" => CompilerDirective::EndCellDefine,
             "`default_discipline" => CompilerDirective::DefaultDiscipline,
+            "`default_transition" => CompilerDirective::DefaultTransition,
             "`default_nettype" => CompilerDirective::DefaultNetType,
             "`unconnected_drive" => CompilerDirective::UnconnectedDrive,
             "`nounconnected_drive" => CompilerDirective::NoUnconnectedDrive,
@@ -352,6 +353,23 @@ impl<'a, 'd> Parser<'a, 'd> {
             None
         }
     }
+
+    /// Bumps the current (directive) token, then returns the text of the next
+    /// token if it looks like a number (a literal classifies as `Other` here) --
+    /// used for `` `default_transition 1u `` (Enhancement-47).
+    pub(crate) fn bump_directive_and_capture_number(
+        &mut self,
+        err: &mut Vec<PreprocessorDiagnostic>,
+    ) -> Option<&'a str> {
+        self.do_bump(false, err);
+        if self.token == PreprocessorToken::Other
+            && self.current_text().starts_with(|c: char| c.is_ascii_digit() || c == '.')
+        {
+            Some(self.current_text())
+        } else {
+            None
+        }
+    }
 }
 
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
@@ -381,6 +399,7 @@ pub enum CompilerDirective {
     CellDefine,
     EndCellDefine,
     DefaultDiscipline,
+    DefaultTransition,
     DefaultNetType,
     UnconnectedDrive,
     NoUnconnectedDrive,

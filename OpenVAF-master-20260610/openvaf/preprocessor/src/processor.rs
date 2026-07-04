@@ -30,6 +30,10 @@ pub(crate) struct Processor<'a> {
     /// discipline), but recording it means the directive is at least recognized instead
     /// of being misparsed as an undefined macro call.
     pub(crate) default_discipline: Option<&'a str>,
+    /// Value of the most recently seen `` `default_transition `` directive
+    /// (Enhancement-47): the default rise/fall time for `transition()` filters
+    /// that omit those arguments. `None` = 0 (instantaneous, the LRM default).
+    pub(crate) default_transition: Option<ordered_float::OrderedFloat<f64>>,
 }
 
 impl<'a> Processor<'a> {
@@ -57,6 +61,7 @@ impl<'a> Processor<'a> {
             sources,
             include_dirs: sources.include_dirs(root_file),
             default_discipline: None,
+            default_transition: None,
         };
         Ok(res)
     }
@@ -303,6 +308,18 @@ impl<'a> Processor<'a> {
                     self.default_discipline = p.bump_directive_and_capture_ident(err);
                     p.skip_rest_of_line(err);
                 }
+                CompilerDirective::DefaultTransition => {
+                    // `` `default_transition <time> `` (Enhancement-47): the default
+                    // rise/fall time for `transition()` filters that omit those
+                    // arguments. The last directive seen wins (file-level
+                    // granularity; real models declare at most one).
+                    if let Some(text) =
+                        p.bump_directive_and_capture_number(err).and_then(parse_si_number)
+                    {
+                        self.default_transition = Some(ordered_float::OrderedFloat(text));
+                    }
+                    p.skip_rest_of_line(err);
+                }
                 CompilerDirective::TimeScale | CompilerDirective::Line => {
                     p.skip_rest_of_line(err);
                 }
@@ -374,4 +391,24 @@ impl Macro<'_> {
 pub(crate) struct MacroCall<'s> {
     pub name: &'s str,
     pub arg_bindings: MacroArgs<'s>,
+}
+
+/// Parses a number with an optional SI scale suffix (`1u`, `10n`, `1e-6`,
+/// `0.5m`, with `_` separators allowed), as used by `` `default_transition ``.
+fn parse_si_number(text: &str) -> Option<f64> {
+    let text: String = text.chars().filter(|&c| c != '_').collect();
+    let (num, exp) = match text.chars().last()? {
+        'T' => (&text[..text.len() - 1], 12),
+        'G' => (&text[..text.len() - 1], 9),
+        'M' => (&text[..text.len() - 1], 6),
+        'K' | 'k' => (&text[..text.len() - 1], 3),
+        'm' => (&text[..text.len() - 1], -3),
+        'u' => (&text[..text.len() - 1], -6),
+        'n' => (&text[..text.len() - 1], -9),
+        'p' => (&text[..text.len() - 1], -12),
+        'f' => (&text[..text.len() - 1], -15),
+        'a' => (&text[..text.len() - 1], -18),
+        _ => (text.as_str(), 0),
+    };
+    num.parse::<f64>().ok().map(|v| v * 10f64.powi(exp))
 }

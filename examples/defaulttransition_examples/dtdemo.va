@@ -1,0 +1,55 @@
+// dtdemo.va -- Enhancement-47: `default_transition (+ transition() signature fix)
+//
+// LRM: `` `default_transition <time> `` sets the default rise/fall time used
+// by transition() filters that omit those arguments; without a directive the
+// default is 0 (instantaneous). Previously the directive was a hard error
+// ("macro '`default_transition' has not been declared").
+//
+// Also fixed along the way (pre-existing):
+//   * the TRANSITION signature table was one argument short per entry -- a
+//     3-argument call `transition(s, td, trise)` CRASHED the compiler
+//     (args[3] out of bounds), and 4-argument calls only worked by accident;
+//   * the slew/transition tracking loop had a zero DC Jacobian diagonal when
+//     its clamp saturated, making the operating point singular whenever the
+//     input started a full swing away from the state -- in DC the filter is
+//     now the LRM's static identity (y = x), gated on integration enable.
+`include "disciplines.vams"
+`default_transition 1u
+
+// bare transition(): rise/fall = the directive's 1u
+module dt_bare(a, c);
+  inout a, c;
+  electrical a, c;
+  integer s;
+  analog begin
+    @(timer(0, 4u)) s = 1 - s;
+    V(a,c) <+ transition(s);
+  end
+endmodule
+
+// delay-only transition(): delayed 0.2u, then ramped with the 1u default.
+// (the timer starts at 1u -- a flip at t=0 exercises the absdelay history's
+// startup value instead of the ramp, which is not what this check is about)
+module dt_delay(a, c);
+  inout a, c;
+  electrical a, c;
+  integer s;
+  analog begin
+    @(timer(1u, 4u)) s = 1 - s;
+    V(a,c) <+ transition(s, 0.2u);
+  end
+endmodule
+
+// explicit arguments win over the directive; all arities incl. the
+// previously-crashing 3-argument form and the 5-argument tol form
+module dt_forms(a, c);
+  inout a, c;
+  electrical a, c;
+  integer s;
+  analog begin
+    @(timer(0, 4u)) s = 1 - s;
+    V(a,c) <+ 0.125*transition(s, 0, 2u)
+            + 0.25*transition(s, 0, 2u, 3u)
+            + 0.5*transition(s, 0, 2u, 3u, 1e-4);
+  end
+endmodule

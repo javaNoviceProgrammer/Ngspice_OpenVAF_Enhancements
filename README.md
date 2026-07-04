@@ -604,6 +604,16 @@ Several unrelated language gaps found along the way are also fixed. **`localpara
 
 ---
 
+## Enhancement 47: `default_transition + transition() fixes
+
+*July 2026* — Implemented the **`` `default_transition``** compiler directive (LRM: the default rise/fall time for `transition()` filters that omit those arguments; 0 = instantaneous without a directive). It was the only directive from a nine-directive probe that didn't work — `` `define``/`` `undef``/`` `ifdef``/`` `ifndef``/`` `else``/`` `elsif``/`` `endif``/`` `include`` all verified exact — and it hard-errored as an undeclared macro, unlike `` `default_discipline`` which the preprocessor deliberately captures. The preprocessor now recognizes it, parses the value (SI suffixes and `_` separators), and carries it on the `Preprocess` result (last directive wins, file-level granularity; a directive inside a false `` `ifdef`` is never processed, so conditional guards work for free) to a `CompilationDB` accessor consumed by the `transition()` lowering for the no-args and delay-only forms; explicit rise/fall arguments always win. **Two pre-existing defects fixed along the way.** (1) The TRANSITION signature table was one argument short per entry — a 3-argument `transition(s, td, trise)` resolved to the wrong signature and **crashed the compiler** reading `args[3]` out of bounds (confirmed on the released binary); 4-argument calls only worked by accident through the tol signature; the true 5-argument tol form did not resolve at all. (2) The slew/transition tracking loop's clamp has a zero derivative when saturated, so the DC Jacobian diagonal vanished — a **singular operating point** (garbage transient without `uic`) whenever the input started a full swing away from the filter state, e.g. a timer-driven comparator high at t=0. Per the LRM the filter is a static identity in DC, so the residual now selects on the integration-enable parameter: `y − x` in DC (never singular, exact semantics), rate-limited tracking in transient — with a bonus exact-unity AC transfer instead of a spurious pole at 10⁹ rad/s.
+
+- Verified end-to-end through ngspice: bare `transition(s)` under `` `default_transition 1u`` ramps over exactly 1 µs (half-cross at 0.5 µs) with a clean DC operating point (no `uic`, no singular matrix); the delay-only form stacks delay + default ramp; explicit rise times win; all five arities compile and run (weighted plateau 0.875 exact, including the previously-crashing 3-argument form); without the directive the bare form stays instantaneous; a directive inside a false `` `ifdef`` is ignored — see `examples/defaulttransition_examples/`
+- Regression-checked: all 43 example verify suites ALL PASS; 71/71 crate tests (`preprocessor`/`hir_def`/`hir`/`hir_ty`/`hir_lower`/`sim_back`/`lexer`/`syntax`/`parser`)
+- Details: [Enhancement-47.md](enhancements_doc/Enhancement-47.md)
+
+---
+
 ## Prebuilt Binaries
 
 Binaries are built by CI and committed to `bin/`:

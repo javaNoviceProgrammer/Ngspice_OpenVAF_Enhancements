@@ -1789,14 +1789,38 @@ impl BodyLoweringCtx<'_, '_, '_> {
     fn lower_transition(&mut self, args: &[ExprId], signature: hir::Signature) -> Value {
         let x_int = self.lower_expr(args[0]);
         let x = self.ctx.ins().ifcast(x_int);
+        // `` `default_transition `` (Enhancement-47): when the rise/fall
+        // arguments are omitted, ramp with the directive's time instead of
+        // switching instantaneously (0, the LRM default without a directive).
+        let t_default = self.ctx.db.default_transition();
         if signature == TRANSITION_NO_ARGS {
-            return x;
+            if t_default <= 0.0 {
+                return x;
+            }
+            let rate = self.ctx.fconst(1.0 / t_default);
+            let idx = self.ctx.intern.implicit_equations.len() as u32;
+            return self.lower_rate_limited_track(
+                x,
+                rate,
+                rate,
+                ImplicitEquationKind::Transition(idx),
+            );
         }
 
         let td = self.lower_expr(args[1]);
         let delayed = self.lower_delay(x, td);
         if signature == TRANSITION_DELAY {
-            return delayed;
+            if t_default <= 0.0 {
+                return delayed;
+            }
+            let rate = self.ctx.fconst(1.0 / t_default);
+            let idx = self.ctx.intern.implicit_equations.len() as u32;
+            return self.lower_rate_limited_track(
+                delayed,
+                rate,
+                rate,
+                ImplicitEquationKind::Transition(idx),
+            );
         }
 
         let trise = self.lower_expr(args[2]);
@@ -1841,9 +1865,18 @@ impl BodyLoweringCtx<'_, '_, '_> {
         let too_high = self.ctx.ins().fgt(rate, pos_max);
         let rate = self.lower_select_with(too_high, |_| pos_max, |_| rate);
 
-        let resist = self.ctx.ins().fneg(rate);
+        // In DC the filter is an identity (`y = x`, the LRM's static behavior);
+        // the rate-limited form must not be used there -- a saturated clamp has
+        // a zero derivative w.r.t. `y`, so the DC Jacobian diagonal vanished
+        // and the operating point was singular whenever the input started a
+        // full swing away from `y` (Enhancement-47).
+        let enable_integration = self.ctx.use_param(ParamKind::EnableIntegration);
+        let track = self.ctx.ins().fneg(rate);
+        let identity = self.ctx.ins().fsub(y, x);
+        let resist = self.lower_select_with(enable_integration, |_| track, |_| identity);
         self.ctx.def_resist_residual(resist, eq);
-        self.ctx.def_react_residual(y, eq);
+        let react = self.lower_select_with(enable_integration, |cx| y, |cx| cx.ctx.fconst(0.0));
+        self.ctx.def_react_residual(react, eq);
 
         y
     }

@@ -10,6 +10,7 @@ license="GPL-3.0"
 doctest = false
 
 [dependencies]
+ordered-float = "4"
 
 typed-index-collections = "3.1"
 text-size = "1.1"

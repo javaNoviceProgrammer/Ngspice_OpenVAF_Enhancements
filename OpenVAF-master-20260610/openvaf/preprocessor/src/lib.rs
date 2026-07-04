@@ -27,6 +27,10 @@ pub struct Preprocess {
     pub ts: Arc<Vec<Token>>,
     pub sm: Arc<SourceMap>,
     pub diagnostics: Arc<Diagnostics>,
+    /// `` `default_transition `` value (Enhancement-47), if the compilation
+    /// declared one: the default rise/fall time for `transition()` filters
+    /// that omit those arguments.
+    pub default_transition: Option<ordered_float::OrderedFloat<f64>>,
 }
 
 /// # Panics
@@ -36,32 +40,40 @@ pub fn preprocess(sources: &dyn SourceProvider, file: FileId) -> Preprocess {
     // let _scope = span.enter();
 
     let storage = ScopedTextArea::new();
-    let (ts, diagnostics, sm) = match Processor::new(&storage, file, sources) {
-        Ok(mut processor) => {
-            let (ts, diagnostics) = processor.run(file);
-            (ts, diagnostics, processor.source_map)
-        }
-        Err(FileReadError::Io(error)) => (
-            vec![],
-            vec![PreprocessorDiagnostic::FileNotFound {
-                file: sources.file_path(file).to_string(),
-                error,
-                span: None,
-            }],
-            SourceMap::new(file, 0.into()),
-        ),
-        Err(FileReadError::InvalidTextFormat(err)) => (
-            vec![],
-            vec![PreprocessorDiagnostic::InvalidTextFormat {
-                file: sources.file_path(file),
-                span: None,
-                err,
-            }],
-            SourceMap::new(file, 0.into()),
-        ),
-    };
+    let (ts, diagnostics, sm, default_transition) =
+        match Processor::new(&storage, file, sources) {
+            Ok(mut processor) => {
+                let (ts, diagnostics) = processor.run(file);
+                (ts, diagnostics, processor.source_map, processor.default_transition)
+            }
+            Err(FileReadError::Io(error)) => (
+                vec![],
+                vec![PreprocessorDiagnostic::FileNotFound {
+                    file: sources.file_path(file).to_string(),
+                    error,
+                    span: None,
+                }],
+                SourceMap::new(file, 0.into()),
+                None,
+            ),
+            Err(FileReadError::InvalidTextFormat(err)) => (
+                vec![],
+                vec![PreprocessorDiagnostic::InvalidTextFormat {
+                    file: sources.file_path(file),
+                    span: None,
+                    err,
+                }],
+                SourceMap::new(file, 0.into()),
+                None,
+            ),
+        };
 
-    Preprocess { ts: Arc::new(ts), diagnostics: Arc::new(diagnostics), sm: Arc::new(sm) }
+    Preprocess {
+        ts: Arc::new(ts),
+        diagnostics: Arc::new(diagnostics),
+        sm: Arc::new(sm),
+        default_transition,
+    }
 }
 
 pub trait SourceProvider {

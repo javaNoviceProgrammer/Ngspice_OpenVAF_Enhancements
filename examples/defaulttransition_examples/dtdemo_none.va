@@ -1,0 +1,12 @@
+// dtdemo_none.va -- same bare transition() WITHOUT the directive:
+// the default stays 0 (instantaneous), per the LRM
+`include "disciplines.vams"
+module dt_none(a, c);
+  inout a, c;
+  electrical a, c;
+  integer s;
+  analog begin
+    @(timer(0, 4u)) s = 1 - s;
+    V(a,c) <+ transition(s);
+  end
+endmodule

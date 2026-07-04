@@ -1173,6 +1173,7 @@ dependencies = [
  "ahash 0.8.12",
  "expect-test",
  "lexer",
+ "ordered-float",
  "stdx",
  "text-size",
  "tokens",

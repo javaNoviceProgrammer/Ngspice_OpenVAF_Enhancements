@@ -259,11 +259,15 @@ bultins! {
 
 
     TRANSITION = const {
+        // Enhancement-47: each signature was one argument SHORT (RISET claimed
+        // 2 args, FALLT 3, TOL 4) -- a 3-argument call resolved to FALLT and
+        // the lowering read args[3] out of bounds (compiler crash); 4-argument
+        // calls only worked by accident through TOL.
         fn TRANSITION_NO_ARGS(Val(Integer)) -> Real;
         fn TRANSITION_DELAY(Val(Integer),Val(Real)) -> Real;
-        fn TRANSITION_DELAY_RISET(Val(Integer),Val(Real)) -> Real;
-        fn TRANSITION_DELAY_RISET_FALLT(Val(Integer),Val(Real),Val(Real)) -> Real;
-        fn TRANSITION_DELAY_RISET_FALLT_TOL(Val(Integer),Val(Real),Val(Real), Val(Real)) -> Real;
+        fn TRANSITION_DELAY_RISET(Val(Integer),Val(Real),Val(Real)) -> Real;
+        fn TRANSITION_DELAY_RISET_FALLT(Val(Integer),Val(Real),Val(Real),Val(Real)) -> Real;
+        fn TRANSITION_DELAY_RISET_FALLT_TOL(Val(Integer),Val(Real),Val(Real),Val(Real),Val(Real)) -> Real;
     }
 
 

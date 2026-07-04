@@ -272,5 +272,10 @@ examples/escid_examples/_*.cir
 examples/escid_examples/_*.va
 examples/escid_examples/_*.osdi
 
+# Enhancement 47 default_transition example scripts: temp netlists + models
+examples/defaulttransition_examples/_*.cir
+examples/defaulttransition_examples/_*.va
+examples/defaulttransition_examples/_*.osdi
+
 # Python bytecode cache (e.g. from importing _setup.py)
 __pycache__/

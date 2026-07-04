@@ -36,6 +36,13 @@ impl Upcast<dyn BaseDB> for CompilationDB {
 }
 
 impl CompilationDB {
+    /// The compilation's `` `default_transition `` value (Enhancement-47): the
+    /// default rise/fall time for `transition()` filters that omit those
+    /// arguments; 0 (instantaneous) when no directive was given, per the LRM.
+    pub fn default_transition(&self) -> f64 {
+        self.preprocess(self.root_file).default_transition.map_or(0.0, |v| v.into_inner())
+    }
+
     pub fn new_fs(
         root_file: AbsPathBuf,
         include_dirs: &[AbsPathBuf],
