@@ -377,7 +377,16 @@ fn check_nature_path(path: &ast::Path, errors: &mut Vec<SyntaxError>) {
     if let Some(segment) = path.segment_token() {
         match path.qualifiers().count() {
             0 => (),
-            1 if matches!(segment.text(), "ddt_nature" | "idt_nature") => (),
+            // Enhancement-39: a nature may also be referenced through a discipline --
+            // `discipline.potential` / `discipline.flow` -- both as the parent of a
+            // derived nature (`nature X : electrical.flow;`) and in
+            // `ddt_nature`/`idt_nature` attribute values. The item-tree lowering
+            // (`lower_nature_path`) has always supported these forms; the validation
+            // just didn't whitelist them.
+            1 if matches!(
+                segment.text(),
+                "ddt_nature" | "idt_nature" | "potential" | "flow"
+            ) => (),
             _ => errors.push(SyntaxError::IllegalNatureIdent { range: path.syntax().text_range() }),
         }
     }

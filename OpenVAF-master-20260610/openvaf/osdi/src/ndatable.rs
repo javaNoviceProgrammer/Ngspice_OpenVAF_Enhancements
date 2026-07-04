@@ -92,6 +92,43 @@ fn resolve_nature_ref(nature_ref: Option<&NatureRef>, nda_table: &NDATable) -> (
     }
 }
 
+/// Enhancement-39: resolves a `ddt_nature`/`idt_nature` reference to a concrete
+/// nature INDEX. The `OsdiNature` descriptor encodes `ddt`/`idt` as a bare nature
+/// index (unlike `parent`, which carries a type tag), so a discipline-qualified
+/// reference (`ddt_nature = electrical.potential;`) must be resolved through the
+/// discipline to its underlying nature here — previously it hard-panicked
+/// ("Nature's ddt must be a nature reference").
+fn resolve_nature_index(
+    nature_ref: Option<&NatureRef>,
+    nda_table: &NDATable,
+    it_data: &ItemTreeData,
+) -> u32 {
+    let Some(natref) = nature_ref else { return u32::MAX };
+    let lookup = |name: &str| {
+        nda_table.nature_name_map.get(name).map(|it| it.into_raw()).unwrap_or(u32::MAX)
+    };
+    match natref.kind {
+        NatureRefKind::Nature => lookup(&natref.name.to_string()),
+        NatureRefKind::DisciplineFlow | NatureRefKind::DisciplinePotential => {
+            let disc = it_data.disciplines.iter().find(|disc| disc.name == natref.name);
+            let nature = disc.and_then(|disc| {
+                let slot = if natref.kind == NatureRefKind::DisciplineFlow {
+                    &disc.flow
+                } else {
+                    &disc.potential
+                };
+                slot.as_ref().map(|(nature, _)| nature)
+            });
+            match nature {
+                Some(nature) if nature.kind == NatureRefKind::Nature => {
+                    lookup(&nature.name.to_string())
+                }
+                _ => u32::MAX,
+            }
+        }
+    }
+}
+
 // Collect disciplie attributes
 fn collect_discipline_attrs(
     discipline: &Discipline,
@@ -142,15 +179,19 @@ pub fn nda_arrays(
         }
         let i2 = attr_vec.len() + 1;
         let (pt, pi) = resolve_nature_ref(nature.parent.as_ref(), &nda_table);
-        // Parent type is always a nature for ddt and idt
-        let (dt, dni) = resolve_nature_ref(nature.ddt_nature.as_ref().map(|(x, _)| x), &nda_table);
-        if dt != NATREF_NATURE && dt != NATREF_NONE {
-            panic!("Nature's ddt must be a nature reference.")
-        }
-        let (it, ini) = resolve_nature_ref(nature.idt_nature.as_ref().map(|(x, _)| x), &nda_table);
-        if it != NATREF_NATURE && it != NATREF_NONE {
-            panic!("Nature's idt must be a nature reference.")
-        }
+        // Enhancement-39: `ddt_nature`/`idt_nature` are encoded as bare nature
+        // indices, so discipline-qualified references are resolved to their
+        // underlying nature instead of panicking.
+        let dni = resolve_nature_index(
+            nature.ddt_nature.as_ref().map(|(x, _)| x),
+            &nda_table,
+            &item_tree.data,
+        );
+        let ini = resolve_nature_index(
+            nature.idt_nature.as_ref().map(|(x, _)| x),
+            &nda_table,
+            &item_tree.data,
+        );
 
         // Intern strings
         literals.get_or_intern(nature.name.to_string());

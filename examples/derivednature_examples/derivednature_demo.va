@@ -1,0 +1,104 @@
+// derivednature_demo.va -- Enhancement-39: derived natures & deriving natures
+// from disciplines.
+//
+// Verilog-AMS lets a nature DERIVE from a parent -- either another nature
+// (`nature X : Current;`) or a discipline's nature (`nature X : electrical.flow;`)
+// -- inheriting every attribute (units, access, abstol, ddt/idt_nature) that it
+// does not override (LRM 3.4.1.3).
+//
+// Before Enhancement-39 the entire inheritance machinery (parent chains,
+// units/ddt/idt resolution, attribute lookup, access-function compatibility --
+// all fully implemented in `hir_ty::NatureTy`) was UNREACHABLE: the parser
+// emitted a NAME_REF node for the `: parent` clause while the AST accessor
+// looked for a `Path` child, so the parent was silently always `None`. A derived
+// nature without its own `access`/`units` therefore rejected the inherited
+// access function ("illegal access of branch"), and the discipline-qualified
+// form did not even parse ("unexpected token '.'"; plus a validation gate and a
+// hard panic in the OSDI nature-descriptor builder behind it).
+//
+// This file exercises the full feature matrix:
+
+`include "disciplines.vams"
+
+// A: derive from a NATURE -- override abstol, inherit units ("A") + access (I)
+nature TightCurrent : Current;
+  abstol = 1e-15;
+endnature
+discipline tight_elec;
+  potential Voltage;
+  flow TightCurrent;
+enddiscipline
+module dn_nature(a, c);
+  inout a, c;
+  tight_elec a, c;
+  parameter real g = 1e-3;
+  analog I(a,c) <+ g * V(a,c);          // inherited access function
+endmodule
+
+// B: derive from a DISCIPLINE's natures (electrical.flow / electrical.potential)
+nature SenseI : electrical.flow;
+  abstol = 1e-18;
+endnature
+nature SenseV : electrical.potential;
+  abstol = 1e-9;
+endnature
+discipline sense_elec;
+  potential SenseV;
+  flow SenseI;
+enddiscipline
+module dn_discipline(a, c);
+  inout a, c;
+  sense_elec a, c;
+  parameter real g = 2e-3;
+  analog I(a,c) <+ g * V(a,c);
+endmodule
+
+// C: derived nature with its OWN access name
+nature Current2 : Current;
+  access = I2;
+endnature
+discipline elec2;
+  potential Voltage;
+  flow Current2;
+enddiscipline
+module dn_access(a, c);
+  inout a, c;
+  elec2 a, c;
+  parameter real g = 5e-3;
+  analog I2(a,c) <+ g * V(a,c);         // the derived access name
+endmodule
+
+// D: multi-level derivation chain (FineCurrent : MidCurrent : Current)
+nature MidCurrent : Current;
+  abstol = 1e-13;
+endnature
+nature FineCurrent : MidCurrent;
+  abstol = 1e-16;
+endnature
+discipline fine_elec;
+  potential Voltage;
+  flow FineCurrent;
+enddiscipline
+module dn_chain(a, c);
+  inout a, c;
+  fine_elec a, c;
+  parameter real g = 3e-3;
+  analog I(a,c) <+ g * V(a,c);          // access inherited through TWO levels
+endmodule
+
+// E: discipline-qualified ddt_nature/idt_nature attribute values
+// (used to hard-panic the OSDI nature-descriptor builder)
+nature FluxLike;
+  units = "Wb";
+  access = FLX;
+  abstol = 1e-9;
+  ddt_nature = electrical.potential;
+endnature
+discipline fluxd;
+  potential FluxLike;
+enddiscipline
+module dn_attr(a, c);
+  inout a, c;
+  fluxd a, c;
+  analog FLX(a,c) <+ 1e-3;
+endmodule

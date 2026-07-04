@@ -82,7 +82,20 @@ pub(super) fn nature(p: &mut Parser, m: Marker) {
     p.bump(T![nature]);
     name_r(p, TokenSet::new(&[T![;], T![:]]));
     if p.eat(T![:]) {
-        name_ref_r(p, TokenSet::unique(T![;]));
+        // Enhancement-39: the parent of a derived nature is a PATH — either a plain
+        // base nature (`nature X : Current;`) or a discipline's nature
+        // (`nature X : electrical.flow;` / `: electrical.potential`). This previously
+        // emitted a NAME_REF node, but the AST accessor (`NatureDecl::parent()`) looks
+        // for a `Path` child — so the parent was silently always `None`, leaving the
+        // fully-implemented inheritance machinery (units/ddt/idt/attribute lookup/
+        // access compatibility via `NatureTy`) unreachable, and the
+        // discipline-qualified form unparseable ("unexpected token '.'").
+        if p.at_ts(crate::grammar::paths::PATH_SEGMENT_TS) {
+            path(p);
+        } else {
+            let err = p.unexpected_token_msg(IDENT);
+            p.err_recover(err, TokenSet::unique(T![;]));
+        }
     }
     p.eat(T![;]);
     while !p.at_ts(NATURE_RECOVERY_SET) {

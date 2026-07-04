@@ -523,6 +523,16 @@ Several unrelated language gaps found along the way are also fixed. **`localpara
 
 ---
 
+## Enhancement 39: derived natures & deriving natures from disciplines
+
+*July 2026* — Made **derived natures** — `nature X : Parent;` and `nature X : electrical.flow / electrical.potential;` (LRM 3.4.1.3) — actually work. A derived nature inherits every attribute (units, access, abstol, `ddt_nature`/`idt_nature`) it does not override, and the **complete inheritance machinery has existed in `hir_ty::NatureTy` all along** (parent chains, base-nature resolution, units/ddt/idt inheritance, attribute lookup through parents, access-function compatibility by units) — but it was **entirely unreachable**, blocked by three small boundary bugs: (1) the parser emitted a `NAME_REF` node for the `: parent` clause while the AST accessor (`NatureDecl::parent()`) looks for a `Path` child, so **the parent link was silently always `None`** — the canonical `nature TightCurrent : Current; abstol = 1e-15;` tolerance-tightening pattern rejected the inherited access function ("illegal access of branch"); (2) `nature X : electrical.flow;` **did not parse at all** ("unexpected token '.'"), with a second gate behind it — the syntax validation whitelisted only `ddt_nature`/`idt_nature` as qualified nature-path segments; (3) a discipline-qualified `ddt_nature`/`idt_nature` attribute value **hard-panicked the OSDI nature-descriptor builder** ("Nature's ddt must be a nature reference"). The fixes: parse the parent as a **path** (one grammar line lights up the whole dormant subsystem), whitelist `potential`/`flow` in the nature-path validation, and resolve discipline-qualified `ddt_nature`/`idt_nature` references through the discipline to the underlying nature's descriptor index instead of panicking. This continues a recurring OpenVAF pattern the feature probes keep exposing: *scaffolded-but-unwired at a node-kind boundary* (port flows E-29, array `case` E-33, probe-only branches E-36, nature parents now).
+
+- Verified end-to-end through ngspice — a 5-module matrix with **exact runtime conductances** proving inherited access functions genuinely resolve: inherited `I` via `: Current` (1 mS), natures derived from `electrical.flow`/`electrical.potential` (2 mS), a derived nature with its **own** access name `I2` (5 mS), a **two-level** derivation chain `FineCurrent : MidCurrent : Current` (3 mS), and a `ddt_nature = electrical.potential` module whose OSDI descriptor builds and loads (used to panic) — see `examples/derivednature_examples/`
+- Regression-checked: all 35 example verify suites ALL PASS and all 77 example models recompile (the parser change makes every file reparse)
+- Details: [Enhancement-39.md](enhancements_doc/Enhancement-39.md)
+
+---
+
 ## Prebuilt Binaries
 
 Binaries are built by CI and committed to `bin/`:

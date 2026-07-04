@@ -232,5 +232,9 @@ examples/precedence_examples/_*.txt
 examples/precedence_examples/_*.va
 examples/precedence_examples/_*.osdi
 
+# Enhancement 39 derived-nature example scripts: temp netlists + outputs
+examples/derivednature_examples/_*.cir
+examples/derivednature_examples/_*.txt
+
 # Python bytecode cache (e.g. from importing _setup.py)
 __pycache__/
