@@ -463,6 +463,16 @@ Several unrelated language gaps found along the way are also fixed. **`localpara
 
 ---
 
+## Enhancement 33: array `case` statements + array-literal function arguments
+
+*July 2026* — Retired the compiler's **last `todo!()` hard-panic stubs** (`lower_case`'s array arm and `lower_array` in `hir_lower`) and fixed the four array-expression defects found underneath them by probing what type inference accepts but lowering couldn't handle: a **`case` over an array crashed the compiler** (`not yet implemented` panic — inference happily accepted an array discriminant and demanded array-typed items); an **integer**-array discriminant additionally died with `invalid int operation feq` (whole-array variable references were typed `real` regardless of their true element type); an **array literal passed as a whole-array function input argument compiled but silently bound nothing** — `sum2('{1.0, 2.0})` returned 0 instead of 3, a silent wrong answer; and an array literal passed to an array **output** argument was silently accepted with the writeback skipped, while scalar outputs were always properly rejected. The fix makes array `case` compare **element-wise** (an arm matches iff *all* elements are equal — per-element `feq`/`ieq`/`beq`/`seq` AND-combined into the branch condition; the scalar path is unchanged as the one-element case), for array literals *and* whole-array variables (`case (x)` on an array variable used to be rejected with "requires a bit-select"), real and integer. The laplace-specific array helpers were the general mechanism all along, so they're renamed and shared (`lower_array_elems` / `infere_array_arg`); function inputs accept array literals through the same helper; whole-array variables carry their true element type; array output arguments require a caller variable. Pure front-end change (`hir_ty` + `hir_lower`); no OSDI/ngspice change.
+
+- Verified end-to-end through ngspice — a 2-bit **integer** state-vector `case` (`case (st) '{0,0}: … '{1,0}: … '{1,1}: …`) selects the correct conductance in all three regions of a DC sweep, scaled by a helper summing an array-literal argument (`sum2('{0.25, 0.75}) == 1.0`, was silently 0); a real-array `case` matches exactly; an array literal to an array output argument is rejected with a proper type error — see `examples/arraycase_examples/`
+- Regression-checked: every array-consuming feature re-verified (`funcarray` E-18, `arrayout` E-20, `arrayret` E-23, `array`/`mdarray` E-14/15, `cubic_table`/`table_model` E-16/22, `complexpole` E-31 — all ALL PASS), plus `zi_lpf` and scalar `case` behaviour unchanged. With this, the OpenVAF tree contains **no `todo!()`/`unimplemented!()` stubs** in non-test code
+- Details: [Enhancement-33.md](enhancements_doc/Enhancement-33.md)
+
+---
+
 ## Prebuilt Binaries
 
 Binaries are built by CI and committed to `bin/`:

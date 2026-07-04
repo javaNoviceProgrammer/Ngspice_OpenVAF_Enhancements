@@ -205,7 +205,14 @@ impl BodyLoweringCtx<'_, '_, '_> {
     }
 
     fn lower_array(&mut self, _expr: ExprId, _args: &[ExprId]) -> Value {
-        todo!("arrays")
+        // Enhancement-33: array expressions never reach the generic scalar lowering path.
+        // Every context that accepts an array value consumes its *elements* directly —
+        // aggregate assignment (E-14), `laplace_*`/`zi_*` coefficient args (E-4/E-31),
+        // `$table_model` data (E-16), whole-array function args (E-18/E-33) and `case`
+        // discriminants/items (E-33) all go through `lower_array_elems` or their own
+        // element-wise lowering, and type inference rejects array values everywhere else
+        // (there is no first-class array `Value` in the MIR).
+        unreachable!("array expression in scalar value position (rejected by inference)")
     }
 
     /// Computes the runtime *flat* element position of a dynamic array access from its per-dimension
@@ -389,10 +396,13 @@ impl BodyLoweringCtx<'_, '_, '_> {
             if let Type::Array { .. } = arg.ty(self.ctx.db) {
                 // Whole-array argument (Enhancement-18): bind the function's element variables
                 // (`v[i]`) from the caller's array elements (input semantics).
+                // Enhancement-33: `lower_array_elems` accepts array *literals* as well as
+                // whole-array variable references. Previously a literal argument bound
+                // nothing (`array_var_ref` is only populated for variable references), so
+                // `f('{1.0, 2.0})` silently left every element at 0.
                 let func_elems = arg.array_elems(self.ctx.db);
-                let caller_elems = self.body.array_var_ref(*expr).unwrap_or_default();
-                for (&p_i, &c_i) in func_elems.iter().zip(&caller_elems) {
-                    let val = self.ctx.read_variable(c_i);
+                let caller_vals = self.lower_array_elems(*expr);
+                for (&p_i, val) in func_elems.iter().zip(caller_vals) {
                     self.ctx.def_place(PlaceKind::Var(p_i), val);
                 }
                 continue;
@@ -1844,8 +1854,8 @@ impl BodyLoweringCtx<'_, '_, '_> {
         let num_is_roots = matches!(kind, BuiltIn::laplace_zd | BuiltIn::laplace_zp);
         let den_is_roots = matches!(kind, BuiltIn::laplace_np | BuiltIn::laplace_zp);
 
-        let num = self.lower_laplace_array_arg(args[1]);
-        let den = self.lower_laplace_array_arg(args[2]);
+        let num = self.lower_array_elems(args[1]);
+        let den = self.lower_array_elems(args[2]);
 
         let num = if num_is_roots { self.laplace_roots_to_poly(&num) } else { num };
         let den = if den_is_roots { self.laplace_roots_to_poly(&den) } else { den };
@@ -1853,15 +1863,17 @@ impl BodyLoweringCtx<'_, '_, '_> {
         self.laplace_state_space(input, &num, &den)
     }
 
-    /// Lowers a `num`/`den` (or `zero`/`pole`) argument of a `laplace_*` call to its element
-    /// `Value`s, in ascending order. Two shapes are accepted (see `hir_ty::inference::
-    /// infere_laplace_array_arg`): a bare reference to a module-body array variable, read
-    /// directly via `ctx.read_variable` per element (no array-literal `ExprId`s exist for this
-    /// case at all); or an ordinary array-literal expression (`'{a, b, c}'`/`{a, b, c}`), whose
+    /// Lowers an array-valued expression to its element `Value`s, in ascending order. Used by
+    /// every context that consumes a whole array as a value: `laplace_*`/`zi_*` coefficient
+    /// arguments, whole-array function arguments, and (Enhancement-33) `case` discriminants
+    /// and case items. Two shapes are accepted (see `hir_ty::inference::infere_array_arg`):
+    /// a bare reference to a module-body array variable, read directly via
+    /// `ctx.read_variable` per element (no array-literal `ExprId`s exist for this case at
+    /// all); or an ordinary array-literal expression (`'{a, b, c}'`/`{a, b, c}`), whose
     /// elements are lowered individually via `lower_expr` (falling back to treating the whole
     /// expression as a single-element array if it's neither — defensive, not expected to
-    /// trigger given the type-level `ArrayAnyLength` requirement).
-    fn lower_laplace_array_arg(&mut self, expr: ExprId) -> Vec<Value> {
+    /// trigger given the type-level requirements).
+    pub(crate) fn lower_array_elems(&mut self, expr: ExprId) -> Vec<Value> {
         if let Some(vars) = self.body.array_var_ref(expr) {
             return vars.iter().map(|&var| self.ctx.read_variable(var)).collect();
         }
@@ -2015,8 +2027,8 @@ impl BodyLoweringCtx<'_, '_, '_> {
         let num_is_roots = matches!(kind, BuiltIn::zi_zd | BuiltIn::zi_zp);
         let den_is_roots = matches!(kind, BuiltIn::zi_np | BuiltIn::zi_zp);
 
-        let num = self.lower_laplace_array_arg(args[1]);
-        let den = self.lower_laplace_array_arg(args[2]);
+        let num = self.lower_array_elems(args[1]);
+        let den = self.lower_array_elems(args[2]);
 
         let num = if num_is_roots { self.laplace_roots_to_poly(&num) } else { num };
         let den = if den_is_roots { self.laplace_roots_to_poly(&den) } else { den };

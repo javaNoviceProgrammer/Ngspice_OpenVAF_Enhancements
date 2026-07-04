@@ -115,7 +115,7 @@ pub struct InferenceResult {
     /// For a `laplace_*` `num`/`den` (or `zero`/`pole`) argument that is a bare reference to a
     /// module-body array variable (`coeffs` for `real [0:n] coeffs;`) rather than an array
     /// literal: the variable's expanded scalar `VarId`s, in ascending declared-index order
-    /// (`coeffs[0]`, `coeffs[1]`, ...). See `infere_laplace_array_arg`.
+    /// (`coeffs[0]`, `coeffs[1]`, ...). See `infere_array_arg`.
     pub array_var_refs: AHashMap<ExprId, Vec<VarId>>,
     /// For a whole-array assignment statement (`c = '{...}` or `c = d`): the decomposed
     /// per-element assignments. When present, this statement is a `Stmt::ArrayAssignment` in the
@@ -202,12 +202,18 @@ impl Ctx<'_> {
             Stmt::EventControl { ref event, .. } => self.infere_event_control(stmt, event),
 
             Stmt::Case { discr, ref case_arms } => {
-                if let Some(ty) = self.infere_expr(stmt, discr) {
+                // Enhancement-33: infer the discriminant and case items with the
+                // array-aware helper, so whole-array variable references are accepted
+                // (and registered in `array_var_refs`) alongside array literals and
+                // ordinary scalars — enabling the element-wise array `case` in
+                // `hir_lower::stmt::lower_case`. Scalars take the same path as before
+                // (the helper falls through to `infere_expr`).
+                if let Some(ty) = self.infere_array_arg(stmt, discr) {
                     let req = ty.to_value().map_or(TyRequirement::AnyVal, TyRequirement::Val);
                     for case in case_arms {
                         if let CaseCond::Vals(vals) = &case.cond {
                             for val in vals {
-                                if let Some(val_ty) = self.infere_expr(stmt, *val) {
+                                if let Some(val_ty) = self.infere_array_arg(stmt, *val) {
                                     self.expect::<false>(
                                         *val,
                                         None,
@@ -412,7 +418,7 @@ impl Ctx<'_> {
     /// optional constant direction, a time, an optional constant period) --
     /// the same self-referential `infere_expr` + `expect` pattern used for
     /// e.g. `laplace`'s numerator/denominator arguments
-    /// (`infere_laplace_array_arg`). `Event::Global` carries no exprs and is
+    /// (`infere_array_arg`). `Event::Global` carries no exprs and is
     /// a no-op here.
     fn infere_event_control(&mut self, stmt: StmtId, event: &Event) {
         let mut exprs = Vec::new();
@@ -659,9 +665,22 @@ impl Ctx<'_> {
         let signature = fun_info
             .args
             .iter()
-            .map(|arg| {
+            .enumerate()
+            .map(|(i, arg)| {
                 if arg.is_output && !matches!(arg.ty, Type::Array { .. }) {
-                    // Output arguments must be variables (array outputs are not yet supported).
+                    // Output arguments must be variables.
+                    TyRequirement::Var(arg.ty.clone())
+                } else if arg.is_output
+                    && args.get(i).map_or(true, |a| {
+                        !self.result.array_var_refs.contains_key(a)
+                    })
+                {
+                    // Enhancement-33: an array output/inout formal needs a caller
+                    // *variable* array to write back into. Pre-resolved whole-array
+                    // references are typed `Val(Array)` (so a `Var` requirement can't
+                    // see them and they take the branch below); anything else — e.g.
+                    // an array literal, which has no storage — must be rejected here
+                    // instead of silently skipping the writeback.
                     TyRequirement::Var(arg.ty.clone())
                 } else {
                     TyRequirement::Val(arg.ty.clone())
@@ -1115,10 +1134,10 @@ impl Ctx<'_> {
     }
 
     /// Type-checks a `laplace_*(in, num, den[, tol|nature])` call. `num`/`den` are handled by
-    /// `infere_laplace_array_arg` (array literal *or* bare array-variable reference, see there);
+    /// `infere_array_arg` (array literal *or* bare array-variable reference, see there);
     /// this can't go through the generic `resolve_function_args` machinery (used by every other
     /// builtin) because that always calls `infere_expr` on every argument, which would reject a
-    /// bare array-variable reference with `BareBusReference` before `infere_laplace_array_arg`
+    /// bare array-variable reference with `BareBusReference` before `infere_array_arg`
     /// gets a chance to special-case it.
     fn infere_laplace(&mut self, stmt: StmtId, expr: ExprId, args: &[ExprId]) -> (Option<Ty>, bool) {
         let mut valid = true;
@@ -1130,7 +1149,7 @@ impl Ctx<'_> {
         }
 
         for &arg in &args[1..3] {
-            if self.infere_laplace_array_arg(stmt, arg).is_none() {
+            if self.infere_array_arg(stmt, arg).is_none() {
                 valid = false;
             }
         }
@@ -1180,7 +1199,7 @@ impl Ctx<'_> {
     /// Anything else falls back to ordinary `infere_expr`, preserving the normal
     /// "expected array" diagnostic from signature mismatch (e.g. a plain scalar argument, or a
     /// genuine typo that doesn't name a known array variable).
-    fn infere_laplace_array_arg(&mut self, stmt: StmtId, arg: ExprId) -> Option<Ty> {
+    fn infere_array_arg(&mut self, stmt: StmtId, arg: ExprId) -> Option<Ty> {
         if let Expr::Array(ref elems) = self.body.exprs[arg] {
             let elems = elems.clone();
             let ty = if elems.is_empty() {
@@ -1205,8 +1224,14 @@ impl Ctx<'_> {
                         }
                     }
                     let len = vars.len() as u32;
+                    // Enhancement-33: type the array from its actual element variables.
+                    // The element type was hardcoded `Real`, which let an *integer*
+                    // array reach lowering typed as real — an integer-array `case`
+                    // discriminant then compared its i32 elements with `feq`
+                    // ("invalid int operation feq" panic in const-eval).
+                    let elem_ty = self.db.var_data(vars[0]).ty.clone();
                     self.result.array_var_refs.insert(arg, vars);
-                    let ty = Ty::Val(Type::Array { ty: Box::new(Type::Real), len });
+                    let ty = Ty::Val(Type::Array { ty: Box::new(elem_ty), len });
                     self.result.expr_types[arg] = ty.clone();
                     return Some(ty);
                 }

@@ -297,15 +297,27 @@ impl BodyLoweringCtx<'_, '_, '_> {
     }
 
     fn lower_case(&mut self, discr: ExprId, case_arms: &[Case]) {
-        let discr_op = match self.body.expr_type(discr) {
+        // Enhancement-33: a `case` over an array (literal or whole-array variable — type
+        // inference guarantees every case item has the identical array type) compares
+        // ELEMENT-WISE: the arm matches iff all elements are equal. The discriminant and
+        // each item are lowered to their element `Value`s and the per-element equalities
+        // are AND-combined into the single branch condition; everything else (block
+        // structure, default handling) is shared with the scalar path, which is just the
+        // one-element case. Previously an array discriminant hit `todo!()` and crashed.
+        let discr_ty = self.body.expr_type(discr);
+        let is_array = matches!(discr_ty, Type::Array { .. });
+        let discr_op = match discr_ty.base_type() {
             Type::Real => Opcode::Feq,
             Type::Integer => Opcode::Ieq,
             Type::Bool => Opcode::Beq,
             Type::String => Opcode::Seq,
-            Type::Array { .. } => todo!(),
             ty => unreachable!("Invalid type {}", ty),
         };
-        let discr = self.lower_expr(discr);
+        let discr_vals = if is_array {
+            self.lower_array_elems(discr)
+        } else {
+            vec![self.lower_expr(discr)]
+        };
         let end = self.ctx.create_block();
 
         for Case { cond, body } in case_arms {
@@ -323,12 +335,25 @@ impl BodyLoweringCtx<'_, '_, '_> {
             for val in vals {
                 self.ctx.ensured_sealed();
 
-                // Lower the condition (val == discriminant)
-                let val_ = self.lower_expr(*val);
+                // Lower the condition (val == discriminant); for arrays, all elements equal
+                let val_elems = if is_array {
+                    self.lower_array_elems(*val)
+                } else {
+                    vec![self.lower_expr(*val)]
+                };
+                debug_assert_eq!(val_elems.len(), discr_vals.len());
 
                 let old_loc = self.ctx.get_srcloc();
                 self.ctx.set_srcloc(mir::SourceLoc::new(u32::from(*val) as i32 + 1));
-                let cond = self.ctx.ins().binary1(discr_op, val_, discr);
+                let mut cond = None;
+                for (&val_, &discr_) in val_elems.iter().zip(&discr_vals) {
+                    let eq = self.ctx.ins().binary1(discr_op, val_, discr_);
+                    cond = Some(match cond {
+                        None => eq,
+                        Some(acc) => bool_and(self.ctx, acc, eq),
+                    });
+                }
+                let cond = cond.expect("case item with no elements");
                 self.ctx.set_srcloc(old_loc);
 
                 // Create the next block

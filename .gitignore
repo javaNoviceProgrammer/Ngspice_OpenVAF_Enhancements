@@ -198,5 +198,11 @@ examples/complexpole_examples/_*.txt
 examples/intstate_examples/_*.cir
 examples/intstate_examples/_*.txt
 
+# Enhancement 33 array-case example scripts: temp netlists/outputs + generated models
+examples/arraycase_examples/_*.cir
+examples/arraycase_examples/_*.txt
+examples/arraycase_examples/_*.va
+examples/arraycase_examples/_*.osdi
+
 # Python bytecode cache (e.g. from importing _setup.py)
 __pycache__/

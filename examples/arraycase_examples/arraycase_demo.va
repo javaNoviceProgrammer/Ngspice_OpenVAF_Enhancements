@@ -1,0 +1,62 @@
+// arraycase_demo.va -- Enhancement-33: array `case` statements and array-literal
+// function arguments (the last todo!() stubs in the compiler).
+//
+// Before Enhancement-33:
+//   * a `case` whose discriminant is an ARRAY crashed the compiler with a
+//     `not yet implemented` panic (and an integer-array case that got past that
+//     died with "invalid int operation feq" -- the array element type was
+//     hardcoded real);
+//   * an array LITERAL passed as a whole-array function argument compiled but
+//     silently bound NOTHING -- every element read as 0 inside the function
+//     (`sum2('{1.0, 2.0})` returned 0 instead of 3);
+//   * an array literal passed to an array OUTPUT argument was silently accepted
+//     and the writeback skipped (scalars were properly rejected).
+//
+// Now `case` over an array (literal or whole-array variable, real or integer)
+// compares ELEMENT-WISE -- an arm matches iff all elements are equal -- and
+// array literals work as function input arguments (output args require a
+// variable, like scalars always did).
+//
+// This model classifies the input voltage into a 2-bit integer state vector and
+// selects the conductance with one array `case`; a helper function summing an
+// array-literal argument scales the result, exercising both fixes at once.
+
+`include "disciplines.vams"
+
+module arraycase_demo(a, c);
+    inout a, c;
+    electrical a, c;
+
+    parameter real vth1 = 1.0;
+    parameter real vth2 = 2.0;
+
+    analog function real sum2;
+        input v;
+        real v[0:1];
+        sum2 = v[0] + v[1];
+    endfunction
+
+    integer st[0:1];
+    real g, scale;
+
+    analog begin
+        // 2-bit state vector: {V>vth1, V>vth2}
+        st[0] = V(a,c) > vth1 ? 1 : 0;
+        st[1] = V(a,c) > vth2 ? 1 : 0;
+
+        // Enhancement-33: element-wise array case (integer array variable
+        // discriminant, array-literal items)
+        case (st)
+            '{0, 0}: g = 1e-3;     // below both thresholds
+            '{1, 0}: g = 2e-3;     // between vth1 and vth2
+            '{1, 1}: g = 3e-3;     // above both
+            default: g = 9e-3;     // unreachable ({0,1} impossible)
+        endcase
+
+        // Enhancement-33: array LITERAL as a whole-array function argument
+        // (used to silently bind nothing and return 0)
+        scale = sum2('{0.25, 0.75});   // = 1.0, so it must NOT change the result
+
+        I(a,c) <+ scale * g * V(a,c);
+    end
+endmodule
