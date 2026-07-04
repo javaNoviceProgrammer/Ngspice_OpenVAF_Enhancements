@@ -184,4 +184,35 @@ impl BodyLoweringCtx<'_, '_, '_> {
             None
         }
     }
+
+    /// Enhancement-34: lowers a *string* `{...}` concatenation / `{n{...}}` replication
+    /// to a runtime string value, reusing the `$swrite`/`$sformat` machinery: the
+    /// operands are passed as `%s` arguments to a `PrintDst::String` print callback
+    /// (which returns the freshly formatted string). Every operand is a *value* — it is
+    /// never interpreted as a format string, so `%` characters in the data are safe.
+    pub fn lower_string_concat(&mut self, rep: Option<ExprId>, elems: &[ExprId]) -> Value {
+        let rep_cnt = rep
+            .and_then(|r| match self.body.as_literal(r) {
+                Some(Literal::Int(n)) => Some(*n as usize),
+                _ => None,
+            })
+            .unwrap_or(1);
+
+        let unit: Vec<Value> = elems.iter().map(|&e| self.lower_expr(e)).collect();
+        let n = unit.len() * rep_cnt;
+
+        let mut call_args = Vec::with_capacity(n + 1);
+        call_args.push(self.ctx.sconst(&"%s".repeat(n)));
+        for _ in 0..rep_cnt {
+            call_args.extend(unit.iter().copied());
+        }
+        let arg_tys = vec![FmtArg { ty: Type::String, kind: FmtArgKind::Other }; n];
+
+        let cb = CallBackKind::Print {
+            kind: DisplayKind::Display,
+            arg_tys: arg_tys.into_boxed_slice(),
+            dst: PrintDst::String,
+        };
+        self.ctx.call1(cb, &call_args)
+    }
 }

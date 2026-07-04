@@ -1,0 +1,63 @@
+// concat_demo.va -- Enhancement-34: the `{...}` concatenation and `{n{...}}`
+// replication operators.
+//
+// Verilog-AMS distinguishes two brace constructs:
+//   * `'{...}`  -- the array-AGGREGATE literal (assignment patterns; Enhancement-4/14/15,
+//                  including nested `'{'{..},'{..}}` for multi-dimensional arrays);
+//   * `{...}`   -- the CONCATENATION operator, and `{n{...}}` its replication form.
+//
+// Before Enhancement-34, OpenVAF parsed `{...}` as just another spelling of the
+// aggregate literal: whole arrays could not appear inside it, `{n{...}}` did not
+// parse at all, and string operands made a (useless) string array instead of a
+// concatenated string. Now `{...}` is the real concat operator:
+//
+//   * numeric concat flattens its operands in order -- scalars, whole arrays,
+//     nested concatenations -- into one flat array value;
+//   * `{n{...}}` repeats the flattened list `n` times (`n` a positive integer
+//     literal);
+//   * string operands concatenate into a STRING at runtime (reusing the
+//     `$swrite`/`$sformat` machinery), e.g. `{"volt","age"} == "voltage"`;
+//   * works everywhere an array value is consumed: array assignment, whole-array
+//     function arguments, laplace/zi coefficient vectors, case discriminants/items.
+//
+// This model builds a 6-tap weighted sum whose coefficient vector is assembled by
+// concatenation and replication from two halves, feeds a concat-built vector to an
+// averaging function, and tags the result via a runtime-concatenated string.
+
+`include "disciplines.vams"
+
+module concat_demo(a, c);
+    inout a, c;
+    electrical a, c;
+
+    analog function real avg4;
+        input v;
+        real v[0:3];
+        avg4 = 0.25 * (v[0] + v[1] + v[2] + v[3]);
+    endfunction
+
+    parameter real k1 = 1e-3 from (0:inf);
+    parameter real k2 = 2e-3 from (0:inf);
+
+    real half1[0:1];
+    real w[0:5];
+    real scale;
+    string tag;
+
+    analog begin
+        half1 = '{k1, 2.0*k1};              // aggregate literal (unchanged, E-4/14)
+
+        // concatenation + replication: w = {k1, 2k1, k2, k2, k2, 3k2}
+        w = {half1, {3{k2}}, 3.0*k2};
+
+        // concat as a whole-array function argument (integer scalars are cast)
+        scale = avg4({1, 3, 2.0, 2.0});     // = 2.0
+
+        // string concatenation selects the tag branch at runtime
+        tag = {"con", "cat"};
+        if (tag == "concat")
+            I(a,c) <+ scale * (w[0]+w[1]+w[2]+w[3]+w[4]+w[5]) * V(a,c);
+        else
+            I(a,c) <+ 1.0 * V(a,c);         // wrong branch: obviously different
+    end
+endmodule

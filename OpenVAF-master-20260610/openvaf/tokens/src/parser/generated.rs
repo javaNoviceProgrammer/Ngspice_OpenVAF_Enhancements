@@ -111,6 +111,8 @@ pub enum SyntaxKind {
     ARG,
     ARG_LIST,
     ARRAY_EXPR,
+    CONCAT_EXPR,
+    REPLICATION_EXPR,
     ASSIGN,
     ASSIGN_STMT,
     ASSIGN_OR_EXPR,

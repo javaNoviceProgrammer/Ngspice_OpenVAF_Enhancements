@@ -195,6 +195,7 @@ impl<'a> BodyRef<'a> {
                 Expr::Call { fun, args }
             }
             hir_def::Expr::Array(ref args) => Expr::Array(args),
+            hir_def::Expr::Concat { rep, ref elems } => Expr::Concat { rep, elems },
             hir_def::Expr::Literal(ref literal) => Expr::Literal(literal),
             _ => panic!("invalid HIR: {:?}", self.body.exprs[expr]),
         }
@@ -224,6 +225,25 @@ impl<'a> BodyRef<'a> {
                                 .map(|&(dst, val)| ArrayAssignElem::Val {
                                     dst: Variable { id: dst },
                                     val,
+                                })
+                                .collect();
+                            return Some(Stmt::ArrayAssignment { assigns });
+                        }
+                        // `c = {a, p, ...}` concatenation RHS (Enhancement-34): each
+                        // destination element is either assigned a scalar expression or
+                        // copied from a source array element.
+                        inference::ArrayAssign::Concat(pairs) => {
+                            let assigns = pairs
+                                .iter()
+                                .map(|&(dst, src)| match src {
+                                    inference::ConcatSrc::Expr(val) => ArrayAssignElem::Val {
+                                        dst: Variable { id: dst },
+                                        val,
+                                    },
+                                    inference::ConcatSrc::Var(src) => ArrayAssignElem::Copy {
+                                        dst: Variable { id: dst },
+                                        src: Variable { id: src },
+                                    },
                                 })
                                 .collect();
                             return Some(Stmt::ArrayAssignment { assigns });
@@ -401,6 +421,9 @@ pub enum Expr<'a> {
     Select { cond: ExprId, then_val: ExprId, else_val: ExprId },
     Call { fun: ResolvedFun, args: &'a [ExprId] },
     Array(&'a [ExprId]),
+    /// Enhancement-34: `{...}` concatenation / `{n{...}}` replication (`rep` = the
+    /// constant repetition-count expression of the replication form).
+    Concat { rep: Option<ExprId>, elems: &'a [ExprId] },
     Literal(&'a Literal),
 }
 impl Expr<'_> {

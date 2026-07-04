@@ -55,6 +55,17 @@ impl LowerCtx<'_> {
                 Expr::Array(vals)
             }
 
+            // Enhancement-34: `{...}` concatenation / `{n{...}}` replication
+            ast::Expr::ConcatExpr(e) => {
+                let elems = e.exprs().map(|expr| self.collect_expr(expr)).collect();
+                Expr::Concat { rep: None, elems }
+            }
+            ast::Expr::ReplicationExpr(e) => {
+                let rep = self.collect_opt_expr(e.count());
+                let elems = e.elems().map(|expr| self.collect_expr(expr)).collect();
+                Expr::Concat { rep: Some(rep), elems }
+            }
+
             ast::Expr::Call(call) => {
                 let fun = call.function_ref().and_then(|fun| match fun {
                     FunctionRef::Path(path) => Path::resolve(path),

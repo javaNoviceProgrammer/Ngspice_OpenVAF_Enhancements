@@ -207,6 +207,20 @@ impl Printer<'_> {
                 }
                 w!(self, "}}");
             }
+            Expr::Concat { rep, ref elems } => {
+                w!(self, "{{");
+                if let Some(rep) = rep {
+                    self.pretty_print_expr(rep);
+                    w!(self, "{{");
+                }
+                for elem in elems {
+                    self.pretty_print_expr(*elem)
+                }
+                if rep.is_some() {
+                    w!(self, "}}");
+                }
+                w!(self, "}}");
+            }
             Expr::Literal(ref lit) => w!(self, "{:?}", lit),
         }
     }

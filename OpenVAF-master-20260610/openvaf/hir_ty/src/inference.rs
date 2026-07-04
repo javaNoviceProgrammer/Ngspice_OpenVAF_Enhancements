@@ -59,10 +59,21 @@ pub enum AssignDst {
 pub enum ArrayAssign {
     Literal(Vec<(VarId, ExprId)>),
     Copy(Vec<(VarId, VarId)>),
+    /// `c = {a, p, 2.0, ...}` where the RHS is a `{...}` concatenation (Enhancement-34):
+    /// one source per destination element, each either a scalar expression (lowered and
+    /// assigned) or a source array-element variable (copied).
+    Concat(Vec<(VarId, ConcatSrc)>),
     /// `c = f(...)` where `f` is an array-returning `analog function` (Enhancement-23): the call
     /// expression (inlined at lowering, writing the function's return element variables) and the
     /// per-element `(destination VarId, function return-element VarId)` pairs to copy afterwards.
     ReturnCall { call: ExprId, pairs: Vec<(VarId, VarId)> },
+}
+
+/// One flattened element source of a `{...}` concatenation RHS (Enhancement-34).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConcatSrc {
+    Expr(ExprId),
+    Var(VarId),
 }
 
 /// A dynamic (non-constant-index) array element access `c[i]` / `m[i][j]` (Enhancement-14/15).
@@ -571,6 +582,8 @@ impl Ctx<'_> {
             }
             Expr::Array(ref args) if args.is_empty() => Ty::Val(Type::EmptyArray),
             Expr::Array(ref args) => self.infere_array(stmt, args)?,
+            // Enhancement-34: `{...}` concatenation / `{n{...}}` replication
+            Expr::Concat { .. } => self.infere_concat(stmt, expr)?,
             Expr::Literal(Literal::Float(_)) => Ty::Literal(Type::Real),
             Expr::Literal(Literal::Int(_)) => Ty::Literal(Type::Integer),
             // +/- inf can only appear in param bounds.
@@ -1241,6 +1254,191 @@ impl Ctx<'_> {
         self.infere_expr(stmt, arg)
     }
 
+    /// Enhancement-34: evaluates a `{n{...}}` replication count. Must be a positive
+    /// compile-time integer literal; `None` (no replication) counts as 1.
+    fn concat_rep_count(&mut self, rep: Option<ExprId>) -> Option<u32> {
+        let Some(rep) = rep else { return Some(1) };
+        if let Expr::Literal(Literal::Int(n)) = self.body.exprs[rep] {
+            if n >= 1 {
+                self.result.expr_types[rep] = Ty::Val(Type::Integer);
+                return Some(n as u32);
+            }
+        }
+        self.result.diagnostics.push(InferenceDiagnostic::InvalidReplicationCount { expr: rep });
+        None
+    }
+
+    /// Enhancement-34: types a `{...}` concatenation / `{n{...}}` replication.
+    ///
+    /// String mode: if any operand is a string, all operands must be strings and the
+    /// result is a `String` (the runtime concatenation of the operands, repeated `n`
+    /// times). Otherwise the result is a flat 1-D array: scalar operands contribute one
+    /// element, array operands (literals, whole-array variables — registered in
+    /// `array_var_refs` by `infere_array_arg` — or nested concatenations) contribute
+    /// their elements in order. The element type is `real` if any operand is real
+    /// (integer *scalars* are cast; an integer *array* mixed into a real concatenation
+    /// is a type error, since array elements have no per-element cast machinery).
+    fn infere_concat(&mut self, stmt: StmtId, expr: ExprId) -> Option<Ty> {
+        let (rep, elems) = match self.body.exprs[expr] {
+            Expr::Concat { rep, ref elems } => (rep, elems.clone()),
+            _ => unreachable!("infere_concat on a non-concat expression"),
+        };
+        if elems.is_empty() {
+            self.result.diagnostics.push(InferenceDiagnostic::EmptyConcat { expr });
+            return None;
+        }
+        let rep_cnt = self.concat_rep_count(rep)?;
+
+        let mut tys: Vec<Option<Ty>> = Vec::with_capacity(elems.len());
+        for &e in &elems {
+            tys.push(self.infere_array_arg(stmt, e));
+        }
+
+        // string concatenation?
+        if tys.iter().any(|t| t.as_ref().and_then(|t| t.to_value()) == Some(Type::String)) {
+            for (&e, ty) in elems.iter().zip(&tys) {
+                if let Some(ty) = ty {
+                    if ty.to_value() != Some(Type::String) {
+                        self.result.diagnostics.push(
+                            TypeMismatch {
+                                expected: Cow::Owned(vec![TyRequirement::Val(Type::String)]),
+                                found_ty: ty.clone(),
+                                expr: e,
+                            }
+                            .into(),
+                        );
+                    }
+                }
+            }
+            return Some(Ty::Val(Type::String));
+        }
+
+        // numeric: flatten scalars + arrays
+        let mut any_real = false;
+        let mut total: u32 = 0;
+        for (&e, ty) in elems.iter().zip(&tys) {
+            match ty.as_ref().and_then(|t| t.to_value()) {
+                Some(Type::Real) => {
+                    any_real = true;
+                    total += 1;
+                }
+                Some(Type::Integer) => total += 1,
+                Some(Type::Array { ty: ref ety, len }) => {
+                    if **ety == Type::Real {
+                        any_real = true;
+                    }
+                    total += len;
+                }
+                _ => {
+                    if let Some(ty) = ty {
+                        self.result.diagnostics.push(
+                            TypeMismatch {
+                                expected: Cow::Borrowed(&[TyRequirement::AnyVal]),
+                                found_ty: ty.clone(),
+                                expr: e,
+                            }
+                            .into(),
+                        );
+                    }
+                    return None;
+                }
+            }
+        }
+
+        let elem = if any_real { Type::Real } else { Type::Integer };
+        for (&e, ty) in elems.iter().zip(&tys) {
+            match ty.as_ref().and_then(|t| t.to_value()) {
+                // integer scalar promoted into a real concatenation: ordinary cast
+                Some(Type::Integer) if elem == Type::Real => {
+                    self.result.casts.insert(e, Type::Real);
+                }
+                // integer array mixed into a real concatenation: no per-element casts
+                Some(Type::Array { ty: ref ety, len }) if **ety != elem => {
+                    self.result.diagnostics.push(
+                        TypeMismatch {
+                            expected: Cow::Owned(vec![TyRequirement::Val(Type::Array {
+                                ty: Box::new(elem.clone()),
+                                len,
+                            })]),
+                            found_ty: ty.clone().unwrap(),
+                            expr: e,
+                        }
+                        .into(),
+                    );
+                    return None;
+                }
+                _ => (),
+            }
+        }
+
+        Some(Ty::Val(Type::Array { ty: Box::new(elem), len: total * rep_cnt }))
+    }
+
+    /// Enhancement-34: expands a (typed) `{...}` concatenation into one source per
+    /// flattened element for an array assignment — `ConcatSrc::Var` for the elements of
+    /// whole-array variable operands (copied), `ConcatSrc::Expr` for scalar operands and
+    /// aggregate-literal leaves (lowered and assigned; integer scalars are cast when the
+    /// destination is real). Returns `false` (with a diagnostic) on an element-type
+    /// conflict with the destination.
+    fn concat_sources(&mut self, val: ExprId, want: &Type, out: &mut Vec<ConcatSrc>) -> bool {
+        let (rep, elems) = match self.body.exprs[val] {
+            Expr::Concat { rep, ref elems } => (rep, elems.clone()),
+            _ => unreachable!("concat_sources on a non-concat expression"),
+        };
+        let rep_cnt = self.concat_rep_count(rep).unwrap_or(1);
+
+        let mut unit: Vec<ConcatSrc> = Vec::new();
+        for &e in &elems {
+            if let Some(vars) = self.result.array_var_refs.get(&e).cloned() {
+                let ety = vars
+                    .first()
+                    .map(|&v| self.db.var_data(v).ty.clone())
+                    .unwrap_or(Type::Err);
+                if &ety != want {
+                    self.result.diagnostics.push(
+                        TypeMismatch {
+                            expected: Cow::Owned(vec![TyRequirement::Val(Type::Array {
+                                ty: Box::new(want.clone()),
+                                len: vars.len() as u32,
+                            })]),
+                            found_ty: self.result.expr_types[e].clone(),
+                            expr: e,
+                        }
+                        .into(),
+                    );
+                    return false;
+                }
+                unit.extend(vars.into_iter().map(ConcatSrc::Var));
+            } else if matches!(self.body.exprs[e], Expr::Concat { .. }) {
+                if !self.concat_sources(e, want, &mut unit) {
+                    return false;
+                }
+            } else if matches!(self.body.exprs[e], Expr::Array(_)) {
+                for leaf in self.flatten_array_literal(e) {
+                    self.cast_scalar_concat_leaf(leaf, want);
+                    unit.push(ConcatSrc::Expr(leaf));
+                }
+            } else {
+                self.cast_scalar_concat_leaf(e, want);
+                unit.push(ConcatSrc::Expr(e));
+            }
+        }
+        for _ in 0..rep_cnt {
+            out.extend(unit.iter().copied());
+        }
+        true
+    }
+
+    /// Records an `integer -> real` cast for a scalar concatenation leaf when the
+    /// destination element type is real (mirrors the aggregate-literal Case 1 casts).
+    fn cast_scalar_concat_leaf(&mut self, e: ExprId, want: &Type) {
+        if *want == Type::Real
+            && self.result.expr_types[e].to_value() == Some(Type::Integer)
+        {
+            self.result.casts.insert(e, Type::Real);
+        }
+    }
+
     fn infere_array(&mut self, stmt: StmtId, args: &[ExprId]) -> Option<Ty> {
         let infere_value_ty = |sel: &mut Self, arg| -> Option<Type> {
             sel.infere_expr(stmt, arg).and_then(|ty| {
@@ -1723,6 +1921,48 @@ impl Ctx<'_> {
             return true;
         }
 
+        // Case 1.5 (Enhancement-34): RHS is a `{...}` concatenation / `{n{...}}`
+        // replication. Type it as a whole, check the flattened shape against the
+        // destination, then expand into one source (scalar expression or source
+        // element variable) per destination element.
+        if matches!(self.body.exprs[val], Expr::Concat { .. }) {
+            let Some(ty) = self.infere_concat(stmt, val) else { return true };
+            self.result.expr_types[val] = ty.clone();
+            let len = match ty {
+                Ty::Val(Type::Array { len, .. }) => len,
+                _ => {
+                    self.result.diagnostics.push(
+                        TypeMismatch {
+                            expected: Cow::Owned(vec![TyRequirement::Val(dst_array_ty())]),
+                            found_ty: ty,
+                            expr: val,
+                        }
+                        .into(),
+                    );
+                    return true;
+                }
+            };
+            if len != dst_len {
+                self.result.diagnostics.push(
+                    TypeMismatch {
+                        expected: Cow::Owned(vec![TyRequirement::Val(dst_array_ty())]),
+                        found_ty: Ty::Val(Type::Array { ty: Box::new(elem_ty), len }),
+                        expr: val,
+                    }
+                    .into(),
+                );
+                return true;
+            }
+            let mut srcs = Vec::with_capacity(dst_len as usize);
+            if !self.concat_sources(val, &elem_ty, &mut srcs) {
+                return true;
+            }
+            debug_assert_eq!(srcs.len() as u32, dst_len);
+            let pairs = dst_vars.into_iter().zip(srcs).collect();
+            self.result.array_assignments.insert(stmt, ArrayAssign::Concat(pairs));
+            return true;
+        }
+
         // Case 2: RHS is a bare reference to another array variable (`c = d`).
         let rhs_array_name = match &self.body.exprs[val] {
             Expr::Path { path, port: false } => path.as_ident(),
@@ -2009,6 +2249,17 @@ pub enum InferenceDiagnostic {
         expr: ExprId,
         expected: usize,
         found: usize,
+    },
+
+    /// Enhancement-34: a `{n{...}}` replication count that isn't a positive
+    /// compile-time integer literal.
+    InvalidReplicationCount {
+        expr: ExprId,
+    },
+
+    /// Enhancement-34: an empty `{}` concatenation.
+    EmptyConcat {
+        expr: ExprId,
     },
 
     /// A vectored net/port was referenced by its base name without a bit-select.

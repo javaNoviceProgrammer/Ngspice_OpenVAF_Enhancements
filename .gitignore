@@ -204,5 +204,11 @@ examples/arraycase_examples/_*.txt
 examples/arraycase_examples/_*.va
 examples/arraycase_examples/_*.osdi
 
+# Enhancement 34 concat example scripts: temp netlists/outputs + generated models
+examples/concat_examples/_*.cir
+examples/concat_examples/_*.txt
+examples/concat_examples/_*.va
+examples/concat_examples/_*.osdi
+
 # Python bytecode cache (e.g. from importing _setup.py)
 __pycache__/

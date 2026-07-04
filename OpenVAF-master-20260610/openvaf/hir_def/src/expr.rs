@@ -89,6 +89,12 @@ pub enum Expr {
         args: Vec<ExprId>,
     },
     Array(Vec<ExprId>),
+    /// Enhancement-34: the `{...}` concatenation / `{n{...}}` replication operator
+    /// (distinct from the `'{...}` array-aggregate literal above). `rep` is the
+    /// constant repetition count of the replication form (`None` for plain
+    /// concatenation); `elems` are the concatenated operands (scalars, strings or
+    /// whole arrays, flattened during lowering).
+    Concat { rep: Option<ExprId>, elems: Vec<ExprId> },
     Literal(Literal),
 }
 
@@ -110,6 +116,14 @@ impl Expr {
             }
             Expr::Call { args: ref exprs, .. } | Expr::Array(ref exprs) => {
                 for e in exprs {
+                    f(*e)
+                }
+            }
+            Expr::Concat { rep, ref elems } => {
+                if let Some(rep) = rep {
+                    f(rep);
+                }
+                for e in elems {
                     f(*e)
                 }
             }

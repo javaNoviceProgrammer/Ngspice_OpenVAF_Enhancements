@@ -103,7 +103,8 @@ fn atom_expr(p: &mut Parser) -> Option<CompletedMarker> {
 
     let done = match p.current() {
         T!['('] => paren_expr(p),
-        T!["'{"] | T!['{'] => array_expr(p),
+        T!["'{"] => array_expr(p),
+        T!['{'] => concat_expr(p),
         T![~] | T![!] | T![-] | T![+] => {
             let m = p.start();
             p.bump_ts(TokenSet::new(&[T![~], T![!], T![-], T![+]]));
@@ -174,7 +175,7 @@ fn paren_expr(p: &mut Parser) -> CompletedMarker {
 
 fn array_expr(p: &mut Parser) -> CompletedMarker {
     let m = p.start();
-    p.bump_ts(TokenSet::new(&[T!["'{"], T!['{']]));
+    p.bump(T!["'{"]);
     while !p.at(EOF) && !p.at(T!['}']) {
         if expr(p).is_none() {
             break;
@@ -187,4 +188,48 @@ fn array_expr(p: &mut Parser) -> CompletedMarker {
     p.expect(T!['}']);
 
     m.complete(p, ARRAY_EXPR)
+}
+
+/// Enhancement-34: `{...}` is the Verilog-AMS *concatenation* operator, distinct from the
+/// `'{...}` array-aggregate literal (`array_expr` above):
+///
+///   concatenation          ::= { expression { , expression } }            -> CONCAT_EXPR
+///   multiple_concatenation ::= { expression { expression { , ... } } }    -> REPLICATION_EXPR
+///
+/// In the replication form the first expression is the (constant) repetition count and the
+/// inner brace list holds the replicated elements; the node's children are therefore
+/// `[count, elem0, elem1, ...]` (the inner braces produce no node of their own).
+fn concat_expr(p: &mut Parser) -> CompletedMarker {
+    let m = p.start();
+    p.bump(T!['{']);
+    if expr(p).is_none() {
+        p.expect(T!['}']);
+        return m.complete(p, CONCAT_EXPR);
+    }
+
+    if p.at(T!['{']) {
+        // multiple_concatenation: `{ count { e0, e1, ... } }`
+        p.bump(T!['{']);
+        while !p.at(EOF) && !p.at(T!['}']) {
+            if expr(p).is_none() {
+                break;
+            }
+            if !p.at(T!['}']) && !p.expect(T![,]) {
+                break;
+            }
+        }
+        p.expect(T!['}']);
+        p.expect(T!['}']);
+        return m.complete(p, REPLICATION_EXPR);
+    }
+
+    while p.at(T![,]) {
+        p.bump(T![,]);
+        if expr(p).is_none() {
+            break;
+        }
+    }
+    p.expect(T!['}']);
+
+    m.complete(p, CONCAT_EXPR)
 }

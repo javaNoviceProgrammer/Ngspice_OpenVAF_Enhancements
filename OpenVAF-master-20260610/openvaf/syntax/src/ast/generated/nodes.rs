@@ -288,6 +288,29 @@ impl ArrayExpr {
     pub fn r_curly_token(&self) -> Option<SyntaxToken> { support::token(&self.syntax, T!['}']) }
 }
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ConcatExpr {
+    pub(crate) syntax: SyntaxNode,
+}
+impl ConcatExpr {
+    pub fn l_curly_token(&self) -> Option<SyntaxToken> { support::token(&self.syntax, T!['{']) }
+    pub fn exprs(&self) -> AstChildren<Expr> { support::children(&self.syntax) }
+    pub fn r_curly_token(&self) -> Option<SyntaxToken> { support::token(&self.syntax, T!['}']) }
+}
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ReplicationExpr {
+    pub(crate) syntax: SyntaxNode,
+}
+impl ReplicationExpr {
+    pub fn l_curly_token(&self) -> Option<SyntaxToken> { support::token(&self.syntax, T!['{']) }
+    /// The (constant) repetition count -- the node's first child expression.
+    pub fn count(&self) -> Option<Expr> { support::children(&self.syntax).next() }
+    /// The replicated elements -- every child expression after the count.
+    pub fn elems(&self) -> impl Iterator<Item = Expr> {
+        support::children::<Expr>(&self.syntax).skip(1)
+    }
+    pub fn r_curly_token(&self) -> Option<SyntaxToken> { support::token(&self.syntax, T!['}']) }
+}
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Call {
     pub(crate) syntax: SyntaxNode,
 }
@@ -725,6 +748,8 @@ pub enum Expr {
     BinExpr(BinExpr),
     ParenExpr(ParenExpr),
     ArrayExpr(ArrayExpr),
+    ConcatExpr(ConcatExpr),
+    ReplicationExpr(ReplicationExpr),
     Call(Call),
     SelectExpr(SelectExpr),
     BitSelectExpr(BitSelectExpr),
@@ -1099,6 +1124,28 @@ impl AstNode for ParenExpr {
 }
 impl AstNode for ArrayExpr {
     fn can_cast(kind: SyntaxKind) -> bool { kind == ARRAY_EXPR }
+    fn cast(syntax: SyntaxNode) -> Option<Self> {
+        if Self::can_cast(syntax.kind()) {
+            Some(Self { syntax })
+        } else {
+            None
+        }
+    }
+    fn syntax(&self) -> &SyntaxNode { &self.syntax }
+}
+impl AstNode for ConcatExpr {
+    fn can_cast(kind: SyntaxKind) -> bool { kind == CONCAT_EXPR }
+    fn cast(syntax: SyntaxNode) -> Option<Self> {
+        if Self::can_cast(syntax.kind()) {
+            Some(Self { syntax })
+        } else {
+            None
+        }
+    }
+    fn syntax(&self) -> &SyntaxNode { &self.syntax }
+}
+impl AstNode for ReplicationExpr {
+    fn can_cast(kind: SyntaxKind) -> bool { kind == REPLICATION_EXPR }
     fn cast(syntax: SyntaxNode) -> Option<Self> {
         if Self::can_cast(syntax.kind()) {
             Some(Self { syntax })
@@ -1549,6 +1596,12 @@ impl From<ParenExpr> for Expr {
 impl From<ArrayExpr> for Expr {
     fn from(node: ArrayExpr) -> Expr { Expr::ArrayExpr(node) }
 }
+impl From<ConcatExpr> for Expr {
+    fn from(node: ConcatExpr) -> Expr { Expr::ConcatExpr(node) }
+}
+impl From<ReplicationExpr> for Expr {
+    fn from(node: ReplicationExpr) -> Expr { Expr::ReplicationExpr(node) }
+}
 impl From<Call> for Expr {
     fn from(node: Call) -> Expr { Expr::Call(node) }
 }
@@ -1570,8 +1623,9 @@ impl From<Literal> for Expr {
 impl AstNode for Expr {
     fn can_cast(kind: SyntaxKind) -> bool {
         match kind {
-            PREFIX_EXPR | BIN_EXPR | PAREN_EXPR | ARRAY_EXPR | CALL | SELECT_EXPR
-            | BIT_SELECT_EXPR | PATH_EXPR | PORT_FLOW => true,
+            PREFIX_EXPR | BIN_EXPR | PAREN_EXPR | ARRAY_EXPR | CONCAT_EXPR
+            | REPLICATION_EXPR | CALL | SELECT_EXPR | BIT_SELECT_EXPR | PATH_EXPR
+            | PORT_FLOW => true,
             _ => Literal::can_cast(kind),
         }
     }
@@ -1581,6 +1635,8 @@ impl AstNode for Expr {
             BIN_EXPR => Expr::BinExpr(BinExpr { syntax }),
             PAREN_EXPR => Expr::ParenExpr(ParenExpr { syntax }),
             ARRAY_EXPR => Expr::ArrayExpr(ArrayExpr { syntax }),
+            CONCAT_EXPR => Expr::ConcatExpr(ConcatExpr { syntax }),
+            REPLICATION_EXPR => Expr::ReplicationExpr(ReplicationExpr { syntax }),
             CALL => Expr::Call(Call { syntax }),
             SELECT_EXPR => Expr::SelectExpr(SelectExpr { syntax }),
             BIT_SELECT_EXPR => Expr::BitSelectExpr(BitSelectExpr { syntax }),
@@ -1596,6 +1652,8 @@ impl AstNode for Expr {
             Expr::BinExpr(it) => &it.syntax,
             Expr::ParenExpr(it) => &it.syntax,
             Expr::ArrayExpr(it) => &it.syntax,
+            Expr::ConcatExpr(it) => &it.syntax,
+            Expr::ReplicationExpr(it) => &it.syntax,
             Expr::Call(it) => &it.syntax,
             Expr::SelectExpr(it) => &it.syntax,
             Expr::BitSelectExpr(it) => &it.syntax,

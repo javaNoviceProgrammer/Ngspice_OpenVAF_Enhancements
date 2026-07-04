@@ -157,6 +157,13 @@ impl BodyLoweringCtx<'_, '_, '_> {
                 ResolvedFun::BuiltIn(builtin) => self.lower_builtin(expr, builtin, args),
             },
             Expr::Array(vals) => self.lower_array(expr, vals),
+            // Enhancement-34: a `{...}` concatenation in scalar position is a STRING
+            // concatenation (numeric concats are array-valued and consumed element-wise
+            // by their contexts via `lower_array_elems`, never reaching this path).
+            Expr::Concat { rep, elems } => {
+                debug_assert!(matches!(self.body.expr_type(expr), Type::String));
+                self.lower_string_concat(rep, elems)
+            }
             Expr::Literal(lit) => match *lit {
                 Literal::String(ref str) => self.ctx.sconst(str),
                 Literal::Int(val) => self.ctx.iconst(val),
@@ -1876,6 +1883,37 @@ impl BodyLoweringCtx<'_, '_, '_> {
     pub(crate) fn lower_array_elems(&mut self, expr: ExprId) -> Vec<Value> {
         if let Some(vars) = self.body.array_var_ref(expr) {
             return vars.iter().map(|&var| self.ctx.read_variable(var)).collect();
+        }
+
+        // Enhancement-34: a `{...}` concatenation / `{n{...}}` replication flattens its
+        // operands in order — whole-array variables contribute element reads, nested
+        // concatenations/aggregates recurse, scalars lower to a single value — and the
+        // flattened list is repeated `n` times (the count is a validated integer literal).
+        if let Expr::Concat { rep, elems } = self.body.get_expr(expr) {
+            let elems = elems.to_vec();
+            let mut unit = Vec::with_capacity(elems.len());
+            for e in elems {
+                if self.body.array_var_ref(e).is_some()
+                    || matches!(self.body.get_expr(e), Expr::Concat { .. } | Expr::Array(_))
+                {
+                    unit.extend(self.lower_array_elems(e));
+                } else {
+                    unit.push(self.lower_expr(e));
+                }
+            }
+            let rep_cnt = rep
+                .and_then(|r| match self.body.as_literal(r) {
+                    Some(Literal::Int(n)) => Some(*n as usize),
+                    _ => None,
+                })
+                .unwrap_or(1);
+            if rep_cnt > 1 {
+                let base = unit.clone();
+                for _ in 1..rep_cnt {
+                    unit.extend(base.iter().copied());
+                }
+            }
+            return unit;
         }
 
         let elem_ids: Vec<ExprId> = match self.body.get_expr(expr) {

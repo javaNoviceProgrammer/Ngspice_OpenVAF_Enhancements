@@ -418,6 +418,39 @@ impl Diagnostic for InferenceDiagnosticWrapped<'_> {
                     .with_message(format!("'{name}' requires a bit-select [i]"))
                     .with_notes(vec![format!("help: use `{name}[i]` to select a single element")])
             }
+            InferenceDiagnostic::InvalidReplicationCount { expr } => {
+                let src = self
+                    .parse
+                    .to_file_span(self.body_sm.expr_map_back[expr].as_ref().unwrap().range(), self.sm);
+
+                Report::error()
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: src.file,
+                        range: src.range.into(),
+                        message: "not a positive integer literal".to_owned(),
+                    }])
+                    .with_message("replication count must be a positive integer literal")
+                    .with_notes(vec![
+                        "help: the count of a `{n{...}}` replication must be a compile-time \
+                         positive integer literal"
+                            .to_owned(),
+                    ])
+            }
+            InferenceDiagnostic::EmptyConcat { expr } => {
+                let src = self
+                    .parse
+                    .to_file_span(self.body_sm.expr_map_back[expr].as_ref().unwrap().range(), self.sm);
+
+                Report::error()
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: src.file,
+                        range: src.range.into(),
+                        message: "empty concatenation".to_owned(),
+                    }])
+                    .with_message("empty concatenation `{}` is not allowed")
+            }
             InferenceDiagnostic::InvalidLimitFunction {
                 expr,
                 func,

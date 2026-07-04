@@ -473,6 +473,16 @@ Several unrelated language gaps found along the way are also fixed. **`localpara
 
 ---
 
+## Enhancement 34: `{...}` concatenation & `{n{...}}` replication operators
+
+*July 2026* — Implemented the Verilog-AMS **concatenation** and **replication** operators properly. OpenVAF had conflated the two brace constructs: `{...}` was parsed as just another spelling of the `'{...}` array-**aggregate** literal, so whole arrays could not appear inside braces (`{p, q}` → "requires a bit-select"), the replication form `{n{...}}` did not parse at all, and string operands produced a useless *string array* instead of the LRM's concatenated string. Now `'{...}` remains the aggregate literal (Enhancements 4/14/15, untouched — including nested `'{'{..},..}` for N-D arrays) and `{...}` is the real **concatenation operator**: numeric concats flatten their operands in order — scalars, whole-array variables, aggregate literals, nested concatenations — into one flat array value (`w = {half1, {3{k2}}, 3.0*k2};`); `{n{...}}` repeats the flattened list `n` times (`n` a positive compile-time integer literal, cleanly diagnosed otherwise); and **string operands concatenate into a runtime string** (`{"volt","age"} == "voltage"`, `{2{"ab"}} == "abab"`), lowered through the proven `$swrite`/`$sformat` machinery with the operands passed as `%s` *values* (never format-interpreted). Concats work everywhere an array value is consumed — array assignment, whole-array function arguments, `laplace_*`/`zi_*` coefficient vectors, `case` discriminants/items — because the shared element-flattening helper from Enhancement-33 (`lower_array_elems`) grew one concat arm; the array-assignment path expands into the existing mixed assign/copy element machinery unchanged. Integer *scalars* are cast into real concats like aggregate elements; an integer *array* mixed into a real concat is a type error. Pure front-end change threaded through the whole pipeline (new `CONCAT_EXPR`/`REPLICATION_EXPR` syntax nodes → `Expr::Concat` → typing → lowering); no OSDI/ngspice change.
+
+- Verified end-to-end through ngspice — a 6-tap coefficient vector assembled by concatenation + replication (`w = {half1, {3{k2}}, 3.0*k2}`) gives a DC conductance of exactly `2·(3·k1 + 6·k2)` for two parameter sets (proving flattening, replication, integer casts and a runtime string-concat gate simultaneously); concat as a whole-array function argument, as `laplace_nd` coefficient vectors and as a `case` discriminant; replication of a mixed scalar/array list; `{0{...}}`/non-literal counts are clean diagnostics — see `examples/concat_examples/`
+- Behaviour change: nested bare-brace literals (`{{1,2},{3,4}}`) now *flatten* (concatenation semantics); multi-dimensional aggregates use the LRM `'{'{..},'{..}}` form, as every shipped example already did. Audited **both trees**: no other example uses bare braces; all 73+70 example models recompile and **31/31 + 30/30 verify suites pass** with the new compiler
+- Details: [Enhancement-34.md](enhancements_doc/Enhancement-34.md)
+
+---
+
 ## Prebuilt Binaries
 
 Binaries are built by CI and committed to `bin/`:
