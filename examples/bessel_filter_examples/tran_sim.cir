@@ -4,8 +4,8 @@ Ndut in out bes5
 Vin in 0 PULSE(0 1 0 1n 1n 1 2)
 .tran 2u 5m
 .control
-  pre_osdi OSDIFILE
+  pre_osdi bessel5.osdi
   run
-  wrdata RESULTFILE v(in) v(out)
+  wrdata tran.txt v(in) v(out)
 .endc
 .end

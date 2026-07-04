@@ -4,8 +4,8 @@ Ndut in out bes5
 Vin in 0 DC 0 AC 1
 .ac dec 50 1 1meg
 .control
-  pre_osdi OSDIFILE
+  pre_osdi bessel5.osdi
   run
-  wrdata RESULTFILE vdb(out) vp(out)
+  wrdata ac.txt vdb(out) vp(out)
 .endc
 .end
