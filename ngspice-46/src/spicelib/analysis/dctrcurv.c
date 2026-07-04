@@ -25,6 +25,10 @@ Modified: 1999 Paolo Nenzi
 
 #include "ngspice/devdefs.h"
 
+#ifdef OSDI
+#include "ngspice/osdiitf.h"   /* Enhancement-53: OSDIfinalStep */
+#endif
+
 #ifdef HAS_PROGREP
 static double actval, actdiff;
 #endif
@@ -502,6 +506,11 @@ DCtrCurv(CKTcircuit *ckt, int restart)
             CKTtemp(ckt);
         }
 
+#ifdef OSDI
+    /* Enhancement-53: fire `@(final_step)` blocks at the last sweep point
+       (results are not loaded into the matrix). */
+    OSDIfinalStep(ckt);
+#endif
     SPfrontEnd->OUTendPlot (plot);
 
     return(OK);

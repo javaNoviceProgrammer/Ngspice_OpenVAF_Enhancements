@@ -33,6 +33,10 @@ Modified: 2001 AlansFixes
 
 #ifdef KLU
 #include "ngspice/devdefs.h"
+
+#ifdef OSDI
+#include "ngspice/osdiitf.h"   /* Enhancement-53: OSDIfinalStep */
+#endif
 #endif
 
 // fixme
@@ -543,6 +547,11 @@ NOISEan(CKTcircuit* ckt, int restart)
         if (error) return(error);
     }
 
+#ifdef OSDI
+    /* Enhancement-53: fire `@(final_step)` blocks once the noise sweep
+       completes (results are not loaded into the matrix). */
+    OSDIfinalStep(ckt);
+#endif
     FREE(data);
     return(OK);
 }

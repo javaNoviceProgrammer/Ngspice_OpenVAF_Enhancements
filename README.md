@@ -670,6 +670,16 @@ Several unrelated language gaps found along the way are also fixed. **`localpara
 
 ---
 
+## Enhancement 53: `@(final_step)` and analysis-phase lists on step events
+
+*July 2026* — Implemented the **`@(final_step)` event** and **analysis-phase lists** on both step events (`@(initial_step("tran","ac"))`, LRM 5.10.2) — the last visibly missing Verilog-A (LRM Annex C) feature. `@(final_step)` had been Enhancement-7's documented fail-safe no-op (firing needs "the analysis is over" knowledge the per-iteration eval loop doesn't have), and the parsed phase lists were silently dropped, so `@(initial_step("ac"))` fired during a transient run. Three fixes: **(1)** a new `ParamKind::IsFinalStep` gates the body on `EVAL_FLAG_IS_FINAL_STEP` (bit 1<<21 — an additive flag like E-7's, **not** an OSDI ABI change), and a new `OSDIfinalStep()` in ngspice issues one dedicated `eval()` per OSDI instance at the converged final solution — without loading the results into the matrix — from the successful end of every analysis (`dctran.c`, `dcop.c`, `dctrcurv.c`, `acan.c`, `noisean.c`); **(2)** phase lists now AND the step flag with the same per-name `analysis()` matcher Enhancement-30 built, OR-ed across names; **(3)** an AC/noise job's operating-point phase now carries its analysis *name* flag (ngspice consults the running job's type — `CKTmode` alone can't distinguish an AC job's op from a standalone op; only the name bit is added, not the reactive `CALC_*` bits, which would wrongly enable integration at an op), so `@(initial_step("ac"))` fires in AC runs and `analysis("ac")` holds through the whole AC analysis per LRM 4.6.1. An op fires **both** events (a single point is first and last); failed or interrupted analyses never fire `final_step`.
+
+- Verified end-to-end through ngspice with 23 exact checks across all five analysis types: `final` fires exactly once at t = tstop seeing the converged solution; a dc sweep's `final` sees the last sweep point (V = 2.0 exact); the full phase-filter matrix (incl. a multi-name list); and the LRM's classic use case — a peak tracked across the whole transient, reported exactly once at the end — see `examples/finalstep_examples/`
+- Regression-checked: all 49 example verify suites ALL PASS; 28/28 crate tests
+- Details: [Enhancement-53.md](enhancements_doc/Enhancement-53.md)
+
+---
+
 ## Prebuilt Binaries
 
 Binaries are built by CI and committed to `bin/`:

@@ -48,3 +48,10 @@ extern OsdiObjectFile load_object_file(const char *path);
 extern SPICEdev *osdi_create_spicedev(const OsdiRegistryEntry *entry);
 
 extern char *inputdir;
+
+/* Enhancement-53: fire Verilog-A `@(final_step)` blocks. Called by the
+ * analyses (tran/op/dc/ac) once they complete successfully; issues one
+ * dedicated eval() per OSDI instance with EVAL_FLAG_IS_FINAL_STEP set at the
+ * converged final solution. Results are not loaded into the matrix/RHS.
+ * Defined in src/osdi/osdiload.c. */
+extern int OSDIfinalStep(CKTcircuit *ckt);

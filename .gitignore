@@ -297,5 +297,10 @@ examples/idtassert_examples/_*.cir
 examples/idtassert_examples/_*.va
 examples/idtassert_examples/_*.osdi
 
+# Enhancement 53 final-step example scripts: temp netlists + models
+examples/finalstep_examples/_*.cir
+examples/finalstep_examples/_*.va
+examples/finalstep_examples/_*.osdi
+
 # Python bytecode cache (e.g. from importing _setup.py)
 __pycache__/

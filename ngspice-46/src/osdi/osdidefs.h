@@ -139,6 +139,12 @@ typedef struct OsdiExtraInstData {
  * avoid collision with the core ABI's flag space. */
 #define EVAL_FLAG_IS_INITIAL_STEP (1u << 20)
 
+/* Enhancement-53: sibling of EVAL_FLAG_IS_INITIAL_STEP, set by OSDIfinalStep
+ * (osdiload.c) on the one dedicated post-analysis evaluation issued after an
+ * analysis completes successfully; its results are not loaded into the
+ * matrix/RHS. Gates Verilog-A `@(final_step)` blocks. */
+#define EVAL_FLAG_IS_FINAL_STEP (1u << 21)
+
 typedef struct OsdiModelData {
   GENmodel gen;
   max_align_t data;

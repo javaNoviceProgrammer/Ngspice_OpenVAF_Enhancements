@@ -18,6 +18,10 @@ Modified: 2000  AlansFixes
 /* gtri - end - wbk */
 #endif
 
+#ifdef OSDI
+#include "ngspice/osdiitf.h"   /* Enhancement-53: OSDIfinalStep */
+#endif
+
 int
 DCop(CKTcircuit *ckt, int notused)
 {
@@ -116,6 +120,11 @@ DCop(CKTcircuit *ckt, int notused)
         CKTdump(ckt, 0.0, plot);
         if (ckt->CKTsoaCheck)
             error = CKTsoaCheck(ckt);
+#ifdef OSDI
+        /* Enhancement-53: an operating point is both the first and the last
+           point of its analysis -- fire `@(final_step)` blocks. */
+        OSDIfinalStep(ckt);
+#endif
     } else {
          fprintf(stderr,"error: circuit reload failed.\n");
     }

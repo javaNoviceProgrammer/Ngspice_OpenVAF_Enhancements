@@ -41,6 +41,10 @@ extern int sharedsync(double*, double*, double, double, double, int, int*, int);
 extern int ng_ident;      /* for debugging */
 #endif
 
+#ifdef OSDI
+#include "ngspice/osdiitf.h"   /* Enhancement-53: OSDIfinalStep */
+#endif
+
 #define INIT_STATS() \
 do { \
     startTime = SPfrontEnd->IFseconds();        \
@@ -448,6 +452,11 @@ DCtran(CKTcircuit *ckt,
         if (flag_autostop)
             fprintf(stdout, "\nNote: Autostop after %e s, all measurement conditions are fulfilled.\n", ckt->CKTtime);
 
+#ifdef OSDI
+        /* Enhancement-53: fire `@(final_step)` blocks at the last accepted
+           transient point (results are not loaded into the matrix). */
+        OSDIfinalStep(ckt);
+#endif
         /* Final return from tran upon success */
         return(OK);
     }

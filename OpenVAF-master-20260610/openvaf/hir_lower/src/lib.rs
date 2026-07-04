@@ -119,6 +119,12 @@ pub enum ParamKind {
     /// `@(initial_step)`). A one-shot, monotonic approximation of the LRM's
     /// "fires once per analysis" semantics -- see `Stmt::EventControl` lowering.
     IsInitialStep,
+    /// Enhancement-53: true only on the dedicated post-analysis `eval()` call the
+    /// simulator issues once an analysis has completed (gates `@(final_step)`);
+    /// that call's results are not loaded into the matrix/RHS. See
+    /// `Stmt::EventControl` lowering, `EVAL_FLAG_IS_FINAL_STEP` in
+    /// `openvaf/osdi/src/eval.rs`, and ngspice's `OSDIfinalStep`.
+    IsFinalStep,
     /// Enhancement-8: persistent real storage slot `i`, read at the start of `eval()` --
     /// same read-at-start/store-at-end-of-eval() persistence as `HiddenState(Variable)`,
     /// but for compiler-synthesized per-call-site state (`cross`/`above`/`timer` edge
@@ -149,6 +155,7 @@ impl ParamKind {
                 | ParamKind::NewState(_)
                 | ParamKind::EnableLim
                 | ParamKind::IsInitialStep
+                | ParamKind::IsFinalStep
                 | ParamKind::EventState(_)
         )
     }

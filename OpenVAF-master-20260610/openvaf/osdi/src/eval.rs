@@ -36,6 +36,12 @@ use crate::OsdiLimId;
 /// same convention as the `OsdiLastCrossingInfo` extension).
 const EVAL_FLAG_IS_INITIAL_STEP: u32 = 1 << 20;
 
+/// Enhancement-53: sibling of `EVAL_FLAG_IS_INITIAL_STEP`, set by the simulator
+/// (ngspice's `OSDIfinalStep`, `EVAL_FLAG_IS_FINAL_STEP` in osdidefs.h) on the
+/// one dedicated post-analysis evaluation issued after an analysis completes
+/// (its results are not loaded into the matrix/RHS), gating `@(final_step)`.
+const EVAL_FLAG_IS_FINAL_STEP: u32 = 1 << 21;
+
 /*
 // Inline callback example
 struct AbortCallback;
@@ -265,6 +271,10 @@ impl<'ll> OsdiCompilationUnit<'_, '_, 'll> {
                         ParamKind::IsInitialStep => {
                             let flags_val = flags.read(builder.llbuilder);
                             is_flag_set(cx, EVAL_FLAG_IS_INITIAL_STEP, flags_val, builder.llbuilder)
+                        }
+                        ParamKind::IsFinalStep => {
+                            let flags_val = flags.read(builder.llbuilder);
+                            is_flag_set(cx, EVAL_FLAG_IS_FINAL_STEP, flags_val, builder.llbuilder)
                         }
                         ParamKind::EnableIntegration => {
                             let flags = flags.read(builder.llbuilder);

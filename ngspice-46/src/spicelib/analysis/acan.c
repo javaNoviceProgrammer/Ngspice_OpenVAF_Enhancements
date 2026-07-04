@@ -20,6 +20,10 @@ Modified 2001: AlansFixes
 /* gtri - end - wbk */
 #endif
 
+#ifdef OSDI
+#include "ngspice/osdiitf.h"   /* Enhancement-53: OSDIfinalStep */
+#endif
+
 
 #define INIT_STATS() \
 do { \
@@ -386,6 +390,12 @@ ACan(CKTcircuit* ckt, int restart)
 
     }
 endsweep:
+#ifdef OSDI
+    /* Enhancement-53: fire `@(final_step)` blocks once the frequency sweep
+       completes (evaluated at the small-signal operating point; results are
+       not loaded into the matrix). */
+    OSDIfinalStep(ckt);
+#endif
     SPfrontEnd->OUTendPlot(acPlot);
     acPlot = NULL;
     UPDATE_STATS(0);

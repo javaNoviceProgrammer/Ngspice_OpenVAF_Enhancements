@@ -1,0 +1,42 @@
+// finalstep_demo.va -- Enhancement-53: @(final_step) + analysis-phase lists
+//
+// LRM 5.10.2: `initial_step`/`final_step` are active during the solution of
+// the first/last point of an analysis; an optional list of quoted analysis
+// names restricts the event to matching analyses (same names as analysis()).
+// Before E-53, final_step never fired (E-7's documented fail-safe) and the
+// parsed phase list was silently dropped.
+`include "disciplines.vams"
+
+// event logger: every step-event flavor, tagged for the verify script
+module fslog(p, n);
+  inout p, n;
+  electrical p, n;
+  analog begin
+    @(initial_step)         $strobe("FS_LOG initial       t=%g", $abstime);
+    @(initial_step("tran")) $strobe("FS_LOG initial_tran  t=%g", $abstime);
+    @(initial_step("ac"))   $strobe("FS_LOG initial_ac    t=%g", $abstime);
+    @(initial_step("dc"))   $strobe("FS_LOG initial_dc    t=%g", $abstime);
+    @(final_step)           $strobe("FS_LOG final         t=%g V=%g", $abstime, V(p, n));
+    @(final_step("tran"))   $strobe("FS_LOG final_tran    t=%g", $abstime);
+    @(final_step("ac"))     $strobe("FS_LOG final_ac      t=%g", $abstime);
+    @(final_step("dc"))     $strobe("FS_LOG final_dc      t=%g", $abstime);
+    // multi-phase list: fires in either analysis
+    @(initial_step("ac", "tran")) $strobe("FS_LOG initial_actran t=%g", $abstime);
+    I(p, n) <+ V(p, n) / 1e3;
+  end
+endmodule
+
+// the LRM's classic final_step use case: accumulate during the analysis,
+// report a summary exactly once at the end
+module fspeak(p, n);
+  inout p, n;
+  electrical p, n;
+  real vpeak;
+  analog begin
+    @(initial_step) vpeak = V(p, n);
+    if (V(p, n) > vpeak)
+      vpeak = V(p, n);
+    @(final_step) $strobe("FS_PEAK vpeak=%g", vpeak);
+    I(p, n) <+ V(p, n) / 1e3;
+  end
+endmodule

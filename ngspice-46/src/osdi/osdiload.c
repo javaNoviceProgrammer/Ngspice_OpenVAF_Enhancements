@@ -451,6 +451,24 @@ extern int OSDIload(GENmodel *inModel, CKTcircuit *ckt) {
   }
   sim_info.flags |= CALC_NOISE;
 
+  /* Enhancement-53: the initial operating point of an AC/noise job belongs
+   * to that analysis (LRM 4.6.1: analysis("ac") holds through the whole AC
+   * analysis, mirroring the existing MODETRANOP -> ANALYSIS_TRAN mapping
+   * above). CKTmode alone cannot distinguish an AC job's op phase from a
+   * standalone op, so consult the running job's type. Only the ANALYSIS_*
+   * name bit is added -- NOT the reactive CALC_* bits is_ac carries, which
+   * would wrongly enable ddt/integration during the op. This makes
+   * `@(initial_step("ac"))` (whose one-shot fires at the op's first eval)
+   * and `analysis("ac")` behave per the LRM in AC/noise runs. */
+  if (is_dc && ckt->CKTcurJob && ft_sim->analyses[ckt->CKTcurJob->JOBtype]) {
+    const char *job_name = ft_sim->analyses[ckt->CKTcurJob->JOBtype]->name;
+    if (strcmp(job_name, "AC") == 0) {
+      sim_info.flags |= ANALYSIS_AC;
+    } else if (strcmp(job_name, "NOISE") == 0) {
+      sim_info.flags |= ANALYSIS_NOISE;
+    }
+  }
+
   OsdiRegistryEntry *entry = osdi_reg_entry_model(inModel);
   const OsdiDescriptor *descr = entry->descriptor;
   uint32_t eval_flags = 0;
@@ -559,6 +577,70 @@ extern int OSDIload(GENmodel *inModel, CKTcircuit *ckt) {
 
   if (eval_flags & EVAL_RET_FLAG_STOP) {
     return E_PAUSE;
+  }
+
+  return OK;
+}
+
+/* Enhancement-53: fire Verilog-A `@(final_step)` blocks (LRM 5.10.2: the
+ * event is active during the solution of the last point of an analysis).
+ *
+ * Called by the analyses (dctran.c, dcop.c, dctrcurv.c, acan.c) once they
+ * complete successfully. Issues one dedicated eval() per OSDI instance with
+ * EVAL_FLAG_IS_FINAL_STEP set, computed at the converged final solution
+ * (CKTrhsOld). The results are deliberately NOT loaded into the matrix/RHS --
+ * the analysis is over; the call exists so that `@(final_step)` bodies
+ * ($strobe/$fdisplay logging, cleanup assignments, ...) run exactly once,
+ * the symmetric counterpart of OSDIload's one-shot
+ * EVAL_FLAG_IS_INITIAL_STEP. The ANALYSIS_* flags are set from CKTmode with
+ * OSDIload's mapping so that phase-qualified events
+ * (`@(final_step("tran"))`) match via the stdlib analysis() callback. */
+int OSDIfinalStep(CKTcircuit *ckt) {
+  bool is_tran = ckt->CKTmode & MODETRAN;
+
+  OsdiSimInfo sim_info = {
+      .paras = get_simparams(ckt),
+      .abstime = is_tran ? ckt->CKTtime : 0.0,
+      .prev_solve = ckt->CKTrhsOld,
+      .prev_state = ckt->CKTstates[0],
+      .next_state = ckt->CKTstates[0],
+      .flags = CALC_OP | EVAL_FLAG_IS_FINAL_STEP,
+  };
+
+  if (ckt->CKTmode & (MODEDCOP | MODEDCTRANCURVE)) {
+    sim_info.flags |= ANALYSIS_DC | ANALYSIS_STATIC;
+  }
+  if (is_tran) {
+    sim_info.flags |= ANALYSIS_TRAN;
+  }
+  if (ckt->CKTmode & MODEAC) {
+    sim_info.flags |= ANALYSIS_AC;
+  }
+  if (ckt->CKTmode & MODEACNOISE) {
+    sim_info.flags |= ANALYSIS_NOISE;
+  }
+
+  for (int type = 0; type < ft_sim->numDevices; type++) {
+    if (!ft_sim->devices[type] || !ft_sim->devices[type]->registry_entry ||
+        !ckt->CKThead[type]) {
+      continue;
+    }
+
+    OsdiRegistryEntry *entry = osdi_reg_entry_model(ckt->CKThead[type]);
+    const OsdiDescriptor *descr = entry->descriptor;
+
+    for (GENmodel *gen_model = ckt->CKThead[type]; gen_model;
+         gen_model = gen_model->GENnextModel) {
+      void *model = osdi_model_data(gen_model);
+
+      for (GENinstance *gen_inst = gen_model->GENinstances; gen_inst;
+           gen_inst = gen_inst->GENnextInstance) {
+        void *inst = osdi_instance_data(entry, gen_inst);
+        OsdiExtraInstData *extra_inst_data =
+            osdi_extra_instance_data(entry, gen_inst);
+        eval(descr, gen_inst, inst, extra_inst_data, model, &sim_info);
+      }
+    }
   }
 
   return OK;

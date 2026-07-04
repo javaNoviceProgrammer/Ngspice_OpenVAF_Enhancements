@@ -159,19 +159,29 @@ impl BodyLoweringCtx<'_, '_, '_> {
     /// on an instance's first evaluation (see `openvaf/osdi/src/eval.rs` and
     /// `ngspice-46/src/osdi/osdiload.c` -- a one-shot, per-instance
     /// approximation of the LRM's "fires once per analysis" semantics).
-    /// `@(final_step)` fails safe: rather than firing on every evaluation
-    /// (the pre-Enhancement-7 bug, since the event was previously discarded
-    /// entirely), it does not fire at all until genuine simulator-lifecycle
-    /// "about to finish" detection is implemented -- a documented limitation,
-    /// not a silent wrong answer.
+    /// `@(final_step)` (Enhancement-53) gates on `ParamKind::IsFinalStep`, set by
+    /// the simulator on a dedicated post-analysis evaluation whose results are not
+    /// loaded into the matrix/RHS (ngspice's `OSDIfinalStep`, called at the
+    /// successful end of tran/op/dc/ac). Before E-53 it never fired -- E-7's
+    /// documented fail-safe.
+    ///
+    /// Analysis-phase lists (`@(initial_step("tran","ac"))`, LRM 5.10.2) AND the
+    /// step flag with the same per-name `CallBackKind::Analysis` matcher that
+    /// `analysis()` uses (Enhancement-30), OR-ed across the listed names. An empty
+    /// list fires in every analysis. Before E-53 the parsed list was silently
+    /// dropped (the "scaffolded-but-unwired" pattern: `Event::Global` always
+    /// carried `phases`, this match ignored them).
     fn lower_event_control(&mut self, event: &Event, body: StmtId) {
         let fired = match event {
-            Event::Global { kind: GlobalEvent::InitialStep, .. } => {
-                self.ctx.use_param(ParamKind::IsInitialStep)
-            }
-            Event::Global { kind: GlobalEvent::FinalStep, .. } => {
-                // Not fired -- see doc comment above.
-                return;
+            Event::Global { kind, phases } => {
+                let step = match kind {
+                    GlobalEvent::InitialStep => self.ctx.use_param(ParamKind::IsInitialStep),
+                    GlobalEvent::FinalStep => self.ctx.use_param(ParamKind::IsFinalStep),
+                };
+                match self.lower_phase_filter(phases) {
+                    Some(phase_hit) => self.ctx.ins().iand(step, phase_hit),
+                    None => step,
+                }
             }
             Event::Cross { expr, dir } => self.lower_cross(*expr, *dir),
             Event::Above { expr } => self.lower_above(*expr),
@@ -187,6 +197,25 @@ impl BodyLoweringCtx<'_, '_, '_> {
                 BodyLoweringCtx { ctx, body: self.body, path: self.path }.lower_stmt(body);
             }
         });
+    }
+
+    /// Lowers a step event's analysis-phase list to a bool that is true iff the
+    /// running analysis matches any listed name (`None` for an empty list = no
+    /// filter). Same OR-of-`CallBackKind::Analysis` shape as `analysis(a, b, ...)`
+    /// in expr lowering (Enhancement-30); the callback returns an integer, so the
+    /// accumulated hit is converted with `!= 0` before feeding the `iand` gate.
+    fn lower_phase_filter(&mut self, phases: &[String]) -> Option<Value> {
+        let mut acc: Option<Value> = None;
+        for phase in phases {
+            let name = self.ctx.sconst(phase);
+            let hit = self.ctx.call1(CallBackKind::Analysis, &[name]);
+            acc = Some(match acc {
+                None => hit,
+                Some(prev) => self.ctx.ins().ior(prev, hit),
+            });
+        }
+        let zero = self.ctx.iconst(0);
+        acc.map(|hits| self.ctx.ins().ine(hits, zero))
     }
 
     /// Allocates a fresh `ParamKind::EventState(i)`/`PlaceKind::EventState(i)` persistent
