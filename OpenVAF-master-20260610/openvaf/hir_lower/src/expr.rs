@@ -1873,30 +1873,52 @@ impl BodyLoweringCtx<'_, '_, '_> {
         elem_ids.iter().map(|&e| self.lower_expr(e)).collect()
     }
 
-    /// Expands a list of roots `[r0, r1, ...]` into ascending-power polynomial coefficients of
-    /// `(s - r0)(s - r1)...`, i.e. `poly[i]` is the coefficient of `s^i`.
+    /// Expands a list of **complex** roots into ascending-power *real* polynomial coefficients
+    /// of `Π_k (s - r_k)`, i.e. `poly[i]` is the coefficient of `s^i`.
+    ///
+    /// Enhancement-31: per the Verilog-AMS LRM the pole/zero vectors of the `*_zp`/`*_np`/`*_zd`
+    /// forms hold **(real, imaginary) pairs** -- element `2k` is the real part and `2k+1` the
+    /// imaginary part of root `k`. The product is formed with full complex arithmetic (each
+    /// coefficient carried as a `(re, im)` pair of `Value`s) and only the **real** coefficients
+    /// are returned. For a physical (real-coefficient) transfer function the roots come in
+    /// conjugate pairs, so the imaginary parts of the product cancel to zero -- taking the real
+    /// part both realises that and harmlessly drops floating round-off. A trailing unpaired
+    /// element (odd-length vector) is treated as a purely real root, so a lone real root may
+    /// still be written `'{r}` as well as `'{r, 0}`.
     fn laplace_roots_to_poly(&mut self, roots: &[Value]) -> Vec<Value> {
-        let mut poly = vec![F_ONE];
-        for &root in roots {
-            let n = poly.len();
-            let mut next = Vec::with_capacity(n + 1);
-            for i in 0..=n {
-                let rp = if i < n {
-                    Some(self.ctx.ins().fmul(root, poly[i]))
-                } else {
-                    None
-                };
-                let term = match (i >= 1 && i - 1 < n, rp) {
-                    (true, Some(rp)) => self.ctx.ins().fsub(poly[i - 1], rp),
-                    (true, None) => poly[i - 1],
-                    (false, Some(rp)) => self.ctx.ins().fneg(rp),
-                    (false, None) => F_ZERO,
-                };
-                next.push(term);
+        // Coefficients as (real, imaginary) `Value`s, ascending powers; start at `1 + 0j`.
+        let mut re = vec![F_ONE];
+        let mut im = vec![F_ZERO];
+        let mut k = 0;
+        while k < roots.len() {
+            let rr = roots[k];
+            let ri = if k + 1 < roots.len() { roots[k + 1] } else { F_ZERO };
+            k += 2;
+
+            let n = re.len();
+            // s * P (shift up one degree) initialised into the new coefficient vectors.
+            let mut nre = vec![F_ZERO; n + 1];
+            let mut nim = vec![F_ZERO; n + 1];
+            for i in 0..n {
+                nre[i + 1] = re[i];
+                nim[i + 1] = im[i];
             }
-            poly = next;
+            // subtract (rr + j*ri) * P from the shifted polynomial
+            for i in 0..n {
+                // (rr + j*ri) * (re[i] + j*im[i])
+                let rr_re = self.ctx.ins().fmul(rr, re[i]);
+                let ri_im = self.ctx.ins().fmul(ri, im[i]);
+                let prod_re = self.ctx.ins().fsub(rr_re, ri_im);
+                let rr_im = self.ctx.ins().fmul(rr, im[i]);
+                let ri_re = self.ctx.ins().fmul(ri, re[i]);
+                let prod_im = self.ctx.ins().fadd(rr_im, ri_re);
+                nre[i] = self.ctx.ins().fsub(nre[i], prod_re);
+                nim[i] = self.ctx.ins().fsub(nim[i], prod_im);
+            }
+            re = nre;
+            im = nim;
         }
-        poly
+        re
     }
 
     /// Builds a controllable-canonical-form state-space realization of `H(s) = num(s)/den(s)`

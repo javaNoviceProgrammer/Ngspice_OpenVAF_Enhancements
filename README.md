@@ -428,6 +428,16 @@ Several unrelated language gaps found along the way are also fixed. **`localpara
 
 ---
 
+## Enhancement 31: complex poles/zeros in laplace/zi root forms
+
+*July 2026* — Added **complex conjugate poles and zeros** to the root-based Laplace / z-domain filter forms — `laplace_np`, `laplace_zd`, `laplace_zp` and the `zi_*` counterparts. Per the Verilog-AMS LRM the pole/zero vectors of these forms hold **(real, imaginary) pairs** (element `2k` is the real part and `2k+1` the imaginary part of root `k`), so a complex conjugate pair is `'{re, +im, re, -im}` and a real root is `'{re, 0}`. OpenVAF expanded the vector as a list of **individual real roots**, so complex poles/zeros — i.e. every resonant / underdamped second-order section — were impossible: a Q=5 resonant low-pass built with `laplace_np` and the correct complex pole pair produced **−242 dB of garbage** (the imaginary parts were read as extra real roots, one in the right-half-plane). The fix rewrites the single shared helper `laplace_roots_to_poly` to consume the vector as `(re, im)` pairs and form `Π_k (s − (re_k + j·im_k))` with full complex arithmetic (each coefficient carried as a `(re, im)` pair of MIR values), returning the real coefficients — the imaginary parts cancel for physical, conjugate-paired inputs. A lone trailing element is still treated as a real root, so single-real-root models keep working. One helper is shared by all six root forms (`laplace_*` and `zi_*`), so this covers every one of them; pure `hir_lower` change, no OSDI/ngspice change.
+
+- Verified end-to-end through ngspice — a resonant low-pass via `laplace_np` (complex conjugate poles) matches the `laplace_nd` polynomial baseline to `0.00 dB` and shows a real resonant peak of **+18.06 dB at exactly 1 MHz** (= 20·log₁₀(Q=8), impossible with real-only roots); a notch via `laplace_zd` (imaginary-axis complex zeros ±j·ω₀) matches `laplace_nd` to `0.00 dB` with a −290 dB null; `laplace_zp` and `zi_np` (complex) were spot-checked too — see `examples/complexpole_examples/`
+- Behaviour change: an even-length vector now means half as many roots — `'{-1e6, -3e6}` was two real poles, now one complex pole `−1e6−3e6j`. `examples/laplace_examples/laplace_variants.va` was updated to the paired form (single-real args like `'{-2e6}` are unaffected)
+- Details: [Enhancement-31.md](enhancements_doc/Enhancement-31.md)
+
+---
+
 ## Prebuilt Binaries
 
 Binaries are built by CI and committed to `bin/`:

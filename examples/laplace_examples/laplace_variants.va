@@ -3,6 +3,10 @@
 // Exercises all four laplace_* forms with equivalent (or related) transfer
 // functions, to cross-check the polynomial/root conversions against the
 // laplace_nd baseline.
+//
+// Enhancement-31: pole/zero vectors of the *_np/*_zd/*_zp forms are (real,imag)
+// PAIRS, so each real pole/zero is written `{re, 0.0}` and a complex conjugate
+// pair is `{re, +im, re, -im}`. (A lone trailing real element is also accepted.)
 module laplace_variants(in, out_nd, out_np, out_zd, out_zp);
     input in;
     output out_nd, out_np, out_zd, out_zp;
@@ -15,13 +19,15 @@ module laplace_variants(in, out_nd, out_np, out_zd, out_zp);
         V(out_nd) <+ laplace_nd(V(in), '{1.0}, '{1.0, tau});
 
         // Same H(s), pole form: 1/(1+tau*s) = (1/tau) / (s + 1/tau)
-        V(out_np) <+ laplace_np(V(in), '{1.0/tau}, '{-1.0/tau});
+        // one real pole at -1/tau, written as the pair (-1/tau, 0)
+        V(out_np) <+ laplace_np(V(in), '{1.0/tau}, '{-1.0/tau, 0.0});
 
         // Second-order: H(s) = (s - z0) / ((s-p0)*(s-p1)), z0=-2e6, p0=-1e6, p1=-3e6
         // zero form (den as polynomial): den(s) = (s+1e6)(s+3e6) = s^2 + 4e6 s + 3e12
-        V(out_zd) <+ laplace_zd(V(in), '{-2e6}, '{3e12, 4e6, 1.0});
+        // one real zero at -2e6, written as the pair (-2e6, 0)
+        V(out_zd) <+ laplace_zd(V(in), '{-2e6, 0.0}, '{3e12, 4e6, 1.0});
 
-        // same second-order system, fully pole/zero form
-        V(out_zp) <+ laplace_zp(V(in), '{-2e6}, '{-1e6, -3e6});
+        // same second-order system, fully pole/zero form: two real poles as pairs
+        V(out_zp) <+ laplace_zp(V(in), '{-2e6, 0.0}, '{-1e6, 0.0, -3e6, 0.0});
     end
 endmodule

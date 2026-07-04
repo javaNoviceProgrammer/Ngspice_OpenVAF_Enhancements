@@ -1,0 +1,48 @@
+// complexpole_demo.va -- Enhancement-31: complex conjugate poles/zeros in the
+// laplace/zi ROOT forms (`*_np`, `*_zd`, `*_zp`).
+//
+// Per the Verilog-AMS LRM the pole/zero vectors of the pole/zero forms hold
+// (real, imaginary) PAIRS: element 2k is the real part and 2k+1 the imaginary part
+// of root k. A complex conjugate pair is written `{re, +im, re, -im}`; a real root
+// is `{re, 0}` (a lone trailing real element is also accepted). Previously OpenVAF
+// read the vector as individual REAL roots, so complex poles/zeros -- i.e. every
+// resonant / underdamped section -- were impossible.
+//
+// This model builds two classic 2nd-order sections that REQUIRE complex roots and
+// cross-checks the root forms against the equivalent `laplace_nd` polynomial form:
+//
+//   * a resonant low-pass  H(s) = w0^2 / (s^2 + (w0/Q) s + w0^2)
+//       poles = -w0/(2Q) +/- j*w0*sqrt(1 - 1/(4Q^2))   (complex conjugate pair)
+//       -> laplace_np with a complex pole pair, vs laplace_nd baseline
+//
+//   * a notch / band-stop  H(s) = (s^2 + w0^2) / (s^2 + (w0/Q) s + w0^2)
+//       zeros = +/- j*w0                                (imaginary-axis pair)
+//       -> laplace_zd with a complex zero pair, vs laplace_nd baseline
+
+`include "disciplines.vams"
+
+module complexpole_demo(in, lp_nd, lp_np, notch_nd, notch_zd);
+    input in;
+    output lp_nd, lp_np, notch_nd, notch_zd;
+    electrical in, lp_nd, lp_np, notch_nd, notch_zd;
+
+    parameter real w0 = 6.283185307e6 from (0:inf);   // 2*pi*1e6  (f0 = 1 MHz)
+    parameter real Q  = 8.0           from (0:inf);   // quality factor
+
+    real w02, wnQ, sig, wd;
+
+    analog begin
+        w02 = w0 * w0;
+        wnQ = w0 / Q;
+        sig = -w0 / (2.0 * Q);                       // pole real part
+        wd  = w0 * sqrt(1.0 - 1.0 / (4.0 * Q * Q));  // pole imaginary part
+
+        // Resonant low-pass -- complex conjugate POLES
+        V(lp_nd) <+ laplace_nd(V(in), '{w02},          '{w02, wnQ, 1.0});
+        V(lp_np) <+ laplace_np(V(in), '{w02},          '{sig, wd, sig, -wd});
+
+        // Notch -- complex ZEROS on the imaginary axis at +/- j*w0
+        V(notch_nd) <+ laplace_nd(V(in), '{w02, 0.0, 1.0}, '{w02, wnQ, 1.0});
+        V(notch_zd) <+ laplace_zd(V(in), '{0.0, w0, 0.0, -w0}, '{w02, wnQ, 1.0});
+    end
+endmodule
