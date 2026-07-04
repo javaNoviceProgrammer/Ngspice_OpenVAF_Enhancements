@@ -1,0 +1,46 @@
+// idtassert_demo.va -- Enhancement-52: idt() assert/reset forms
+//
+// LRM: idt(expr, ic, assert[, tol|nature]) -- while `assert` is nonzero the
+// output is reset to `ic` and held; integration resumes from `ic` on release.
+// The old formulation pinned the output algebraically while the integrator's
+// stored charge JUMPED at the reset onset -- the transient d/dt term saw the
+// jump as an impulse (the E-27 idtmod failure mode), so self-referential
+// resets rang and ran away (a 1 V/s ramp with a `V(out) > 1` reset reached
+// 400 V). E-52 keeps the charge smooth (reactive residual = the output,
+// always) and makes reset a first-order decay to `ic` (tau = 10 us) with a
+// conditional bound_step keeping the integrator in the decay's stability
+// region -- released once settled, so long holds simulate at full speed.
+`include "disciplines.vams"
+
+// externally-reset integrator: 1 V/s from ic = 0.5, reset while V(rst) > 0.5
+module idtreset(rst, out);
+  inout rst, out;
+  electrical rst, out;
+  analog V(out) <+ idt(1.0, 0.5, V(rst) > 0.5);
+endmodule
+
+// op-dependent integrand, reset active AT the operating point, tol form
+module idtreset2(rst, in, out);
+  inout rst, in, out;
+  electrical rst, in, out;
+  analog V(out) <+ idt(V(in), 0.25, V(rst) > 0.5, 1e-9);
+endmodule
+
+// self-referential reset: must stay BOUNDED at the threshold (used to run away)
+module idtselfreset(out);
+  inout out;
+  electrical out;
+  analog V(out) <+ idt(1.0, 0.0, V(out) > 1.0);
+endmodule
+
+// the classic payoff: a relaxation oscillator from idt + hysteretic reset
+module idtosc(out);
+  inout out;
+  electrical out;
+  integer rst;
+  analog begin
+    @(cross(V(out) - 1.0, 1)) rst = 1;
+    @(cross(V(out) - 0.1, -1)) rst = 0;
+    V(out) <+ idt(1.0, 0.0, rst);
+  end
+endmodule

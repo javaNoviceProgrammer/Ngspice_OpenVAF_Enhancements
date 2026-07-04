@@ -2180,17 +2180,77 @@ impl BodyLoweringCtx<'_, '_, '_> {
     fn lower_integral(&mut self, kind: IdtKind, args: &[ExprId]) -> Value {
         let (equation, val) = self.ctx.implicit_equation(ImplicitEquationKind::Idt(kind));
 
-        let mut enable_integral = self.ctx.use_param(ParamKind::EnableIntegration);
+        let enable_integral = self.ctx.use_param(ParamKind::EnableIntegration);
         let residual = if kind.has_ic() {
             if kind.has_assert() {
-                enable_integral = self.lower_select_with(
+                // Enhancement-52: the previous formulation pinned `val = ic`
+                // algebraically during reset with the reactive residual jumping
+                // from the integrated charge to `ic` -- the transient
+                // integrator's d/dt term saw that jump as an impulse
+                // (exactly the E-27 idtmod failure mode), which made
+                // self-resetting integrators (`idt(1, 0, V(out) > 1)`) ring
+                // and run away. Keep the charge SMOOTH instead: the reactive
+                // residual is always `val`, and reset is a stiff first-order
+                // decay toward `ic` (`dval/dt = -K*(val - ic)`, K = 1e9 --
+                // the slew/transition tracking gain), so both the reset onset
+                // and the release are continuous in the stored charge.
+                // Decay gain: tau = 1/K = 10us reset time constant. The
+                // conditional bound_step below keeps the transient integrator
+                // inside the decay's stability region (lambda*h ~ 2, where the
+                // trapezoidal method is deadbeat rather than ringing); once the
+                // output has settled at `ic` the bound is released, so long
+                // holds simulate at full speed.
+                const RESET_GAIN: f64 = 1.0e5;
+                let resist = self.lower_select_with(
                     enable_integral,
                     |mut s| {
                         let assert = s.lower_expr(args[2]);
-                        s.ctx.ins().feq(assert, F_ZERO)
+                        let in_reset = s.ctx.ins().fne(assert, F_ZERO);
+                        s.lower_select_with(
+                            in_reset,
+                            |mut r| {
+                                let ic = r.lower_expr(args[1]);
+                                let dev = r.ctx.ins().fsub(val, ic);
+                                let gain = r.ctx.fconst(RESET_GAIN);
+                                let resist = r.ctx.ins().fmul(gain, dev);
+
+                                // bound the step while the decay is active
+                                // (|dev| via neg/lt/select -- MIR has no fabs)
+                                let neg_dev = r.ctx.ins().fneg(dev);
+                                let dev_neg = r.ctx.ins().flt(dev, F_ZERO);
+                                let abs_dev =
+                                    r.lower_select_with(dev_neg, |_| neg_dev, |_| dev);
+                                let neg_ic = r.ctx.ins().fneg(ic);
+                                let ic_neg = r.ctx.ins().flt(ic, F_ZERO);
+                                let abs_ic = r.lower_select_with(ic_neg, |_| neg_ic, |_| ic);
+                                let one = r.ctx.fconst(1.0);
+                                let scale = r.ctx.ins().fadd(one, abs_ic);
+                                let tol = r.ctx.fconst(1.0e-6);
+                                let thresh = r.ctx.ins().fmul(tol, scale);
+                                let active = r.ctx.ins().fgt(abs_dev, thresh);
+                                let bound = r.ctx.fconst(2.0 / RESET_GAIN);
+                                let inf = r.ctx.fconst(f64::INFINITY);
+                                let step = r.lower_select_with(active, |_| bound, |_| inf);
+                                r.ctx.def_place(PlaceKind::BoundStep, step);
+
+                                resist
+                            },
+                            |mut i| {
+                                let arg = i.lower_expr(args[0]);
+                                i.ctx.ins().fneg(arg)
+                            },
+                        )
                     },
-                    |_| FALSE,
-                )
+                    |mut d| {
+                        // DC / IC phase: pin `val = ic` (react is ignored here,
+                        // and charge = val = ic hands over continuously)
+                        let ic = d.lower_expr(args[1]);
+                        d.ctx.ins().fsub(val, ic)
+                    },
+                );
+                self.ctx.def_resist_residual(resist, equation);
+                self.ctx.def_react_residual(val, equation);
+                return val;
             }
 
             self.lower_multi_select(enable_integral, |mut ctx, branch| {

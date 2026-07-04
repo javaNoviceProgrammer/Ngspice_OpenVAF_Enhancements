@@ -654,6 +654,16 @@ Several unrelated language gaps found along the way are also fixed. **`localpara
 
 ---
 
+## Enhancement 52: idt() assert/reset forms
+
+*July 2026* — Fixed the **`idt(expr, ic, assert[, tol|nature])` reset forms** — the Enhancement-28 leftover, completing the integrator family (E-27 `idtmod`, E-28 initial conditions, E-52 reset). Per the LRM, while `assert` is nonzero the integral is reset to `ic` and held, resuming from `ic` on release. The probe found externally-driven resets already working (E-28's ic-seeding had quietly helped), but a **self-referential reset** (`idt(1.0, 0.0, V(out) > 1.0)`) rang chaotically and ran away to ~400 V on a 1 V/s ramp: the previous lowering's reactive residual (the integrator's stored charge) **jumped** from the integrated value to `ic` at the reset onset — the exact impulse failure mode E-27 documented for `idtmod`'s state wrap — feeding back into its own reset condition. The fix keeps the charge **smooth** (reactive residual = the output, always — continuous at onset and release), implements reset as a stiff first-order decay to `ic` (τ = 10 µs), and emits a **conditional `bound_step`** only while the decay is active, holding the trapezoidal method in its deadbeat region so the stiff mode cannot ring — then releases it once settled, so an assert held for seconds simulates at full speed. (An unbounded τ = 1 ns decay was tried first: trap's ±1 stiff-mode amplification produced −0.25 undershoot and a 40% period error in the oscillator test.) DC/IC-phase pinning and the E-28 charge handoff are preserved; a non-hysteretic self-reset correctly settles at the threshold (a sliding equilibrium — oscillation requires hysteresis).
+
+- Verified end-to-end through ngspice with exact checks: the externally-reset integrator ramps 0.5→1.5, holds at 0.5, resumes to 1.5; an op-dependent integrand with the reset active at the operating point (and the tol form) holds 0.25 then ramps at 2 V/s; the self-referential reset stays **bounded at exactly the threshold** (was ~400 V); and a **relaxation oscillator** built from `idt` + hysteretic cross-event reset runs at peaks 1.0, valleys at `ic`, no undershoot, period exactly 1 s — see `examples/idtassert_examples/`
+- Regression-checked: all 47 example verify suites ALL PASS; 28/28 crate tests
+- Details: [Enhancement-52.md](enhancements_doc/Enhancement-52.md)
+
+---
+
 ## Prebuilt Binaries
 
 Binaries are built by CI and committed to `bin/`:

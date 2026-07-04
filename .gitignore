@@ -292,5 +292,10 @@ examples/domainbind_examples/_*.cir
 examples/domainbind_examples/_*.va
 examples/domainbind_examples/_*.osdi
 
+# Enhancement 52 idt-assert example scripts: temp netlists + models
+examples/idtassert_examples/_*.cir
+examples/idtassert_examples/_*.va
+examples/idtassert_examples/_*.osdi
+
 # Python bytecode cache (e.g. from importing _setup.py)
 __pycache__/
