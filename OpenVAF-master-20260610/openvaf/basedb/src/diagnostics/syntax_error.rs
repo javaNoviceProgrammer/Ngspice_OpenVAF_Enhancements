@@ -400,6 +400,30 @@ impl Diagnostic for SyntaxError {
                             .to_owned(),
                     ])
             }
+            SyntaxError::DiscreteDomainWithNatures { domain_range, nature_range } => {
+                let domain = parse.to_file_span(domain_range, &sm);
+                let nature = parse.to_file_span(nature_range, &sm);
+                Report::error()
+                    .with_labels(vec![
+                        Label {
+                            style: LabelStyle::Primary,
+                            file_id: domain.file,
+                            range: domain.range.into(),
+                            message: "the domain is bound discrete here".to_owned(),
+                        },
+                        Label {
+                            style: LabelStyle::Secondary,
+                            file_id: nature.file,
+                            range: nature.range.into(),
+                            message: "... but a nature is bound here".to_owned(),
+                        },
+                    ])
+                    .with_notes(vec![
+                        "help: per LRM 3.6.2.2 nature bindings imply the continuous domain; \
+                         drop the natures (for a digital discipline) or bind `domain continuous`"
+                            .to_owned(),
+                    ])
+            }
             SyntaxError::IllegalAttriubte { expected, range, .. } => {
                 let FileSpan { range, file: file_id } = parse.to_file_span(range, &sm);
                 Report::error().with_labels(vec![Label {

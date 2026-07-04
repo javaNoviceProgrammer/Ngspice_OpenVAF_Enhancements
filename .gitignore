@@ -287,5 +287,10 @@ examples/hiername_examples/_*.cir
 examples/hiername_examples/_*.va
 examples/hiername_examples/_*.osdi
 
+# Enhancement 50 domain-binding example scripts: temp netlists + models
+examples/domainbind_examples/_*.cir
+examples/domainbind_examples/_*.va
+examples/domainbind_examples/_*.osdi
+
 # Python bytecode cache (e.g. from importing _setup.py)
 __pycache__/

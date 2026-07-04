@@ -73,6 +73,13 @@ pub enum SyntaxError {
         expected: &'static str,
     },
 
+    /// LRM 3.6.2.2: a discipline with nature bindings must not bind
+    /// `domain discrete` (Enhancement-50).
+    DiscreteDomainWithNatures {
+        domain_range: TextRange,
+        nature_range: TextRange,
+    },
+
     ReservedIdentifier {
         src: SyntaxNodePtr,
         compat: bool,
@@ -130,6 +137,7 @@ impl_display! {
         IllegalDisciplineAttrIdent{..} => "illegal discipline attribute identifier!";
         IllegalNatureIdent{..} => "illegal nature identifier";
         IllegalAttriubte{attr,..} => "illegal value provided for {} attribute", attr;
+        DiscreteDomainWithNatures{..} => "a discipline with nature bindings cannot have a discrete domain";
         ReservedIdentifier{name,..} => "reserved keyword '{}' was used as an identifier",name;
         DuplicatePort{name,..} => "port '{}' was declared multiple times!",name;
         MixedModuleHead{..} => "module header contains mix of port references and port declarations";

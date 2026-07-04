@@ -403,6 +403,11 @@ fn check_nature_ref_attr(val: &Expr, errors: &mut Vec<SyntaxError>) {
 }
 
 fn validate_discipline_decl(discipline: ast::DisciplineDecl, errors: &mut Vec<SyntaxError>) {
+    // LRM 3.6.2.2 (Enhancement-50): nature bindings imply the continuous
+    // domain -- a `domain discrete` binding alongside a `potential`/`flow`
+    // nature binding is an error.
+    let mut discrete_range = None;
+    let mut nature_range = None;
     for attr in discipline.discipline_attrs() {
         if let Some(name) = attr.name() {
             let is_overwrite = match name.qualifier() {
@@ -445,13 +450,21 @@ fn validate_discipline_decl(discipline: ast::DisciplineDecl, errors: &mut Vec<Sy
 
             if let Some(val) = attr.val() {
                 match &*name_text {
-                    "potential" | "flow" => check_nature_ref_attr(&val, errors),
+                    "potential" | "flow" => {
+                        if !is_overwrite && nature_range.is_none() {
+                            nature_range = Some(attr.syntax().text_range());
+                        }
+                        check_nature_ref_attr(&val, errors)
+                    }
                     "idt_nature" | "ddt_nature" if is_overwrite => {
                         check_nature_ref_attr(&val, errors)
                     }
 
                     "domain" => {
                         let src = val.syntax().text();
+                        if src == "discrete" {
+                            discrete_range = Some(attr.syntax().text_range());
+                        }
                         if src != "continuous" && src != "discrete" {
                             errors.push(SyntaxError::IllegalAttriubte {
                                 attr: "domain",
@@ -465,5 +478,9 @@ fn validate_discipline_decl(discipline: ast::DisciplineDecl, errors: &mut Vec<Sy
                 }
             }
         }
+    }
+
+    if let (Some(domain_range), Some(nature_range)) = (discrete_range, nature_range) {
+        errors.push(SyntaxError::DiscreteDomainWithNatures { domain_range, nature_range });
     }
 }

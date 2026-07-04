@@ -634,6 +634,16 @@ Several unrelated language gaps found along the way are also fixed. **`localpara
 
 ---
 
+## Enhancement 50: domain binding validation
+
+*July 2026* — Enforced the one missing rule of **discipline domain bindings** (LRM 3.6.2.2). The probe found `domain` substantially implemented: `domain continuous;`/`domain discrete;` parse and are stored on the discipline (the std header's own `ddiscrete`/`logic` disciplines exercise `domain discrete` in every compilation), nature-bound disciplines default to the continuous domain, the domain participates in discipline-compatibility checks (domainless treated permissively per LRM 3.6.2.3), discrete-domain nets are rejected in analog accesses, and a custom continuous discipline with natures compiles and simulates exactly. The gap: *"It is an error for a discipline to have a domain binding of discrete if it has nature bindings"* was accepted silently. `validate_discipline_decl` now tracks the `domain discrete` binding and the first unqualified `potential`/`flow` nature binding (qualified attribute overwrites like `potential.abstol = …` correctly don't count) and emits a two-label error — "the domain is bound discrete here" / "… but a nature is bound here" — with a help note citing the rule and both remedies.
+
+- Verified end-to-end through ngspice: a custom `domain continuous` discipline with natures simulates exactly (−1 mA through its 1k contribution); a natureless `domain discrete` discipline stays accepted; the discrete-plus-natures case is rejected with the named diagnostic (was silent); a discrete net in an analog access stays a clean error — see `examples/domainbind_examples/`
+- Regression-checked: all 47 example verify suites ALL PASS; `syntax`/`basedb`/`hir_def`/`hir_ty` crate tests 24/24
+- Details: [Enhancement-50.md](enhancements_doc/Enhancement-50.md)
+
+---
+
 ## Prebuilt Binaries
 
 Binaries are built by CI and committed to `bin/`:

@@ -1,0 +1,29 @@
+// domainbind_demo.va -- Enhancement-50: domain binding statements
+//
+// LRM 3.6.2.2: a discipline binds `domain continuous;` or `domain discrete;`.
+// The domain is optional and defaults to continuous when natures are bound;
+// nature bindings imply the continuous domain, so `domain discrete` alongside
+// a nature binding is an LRM error (previously accepted silently -- the one
+// gap found; everything else was already implemented, including the std
+// header's own natureless discrete disciplines and domain-aware
+// discipline compatibility).
+`include "disciplines.vams"
+
+// explicit continuous domain with natures: fully usable in analog
+discipline elec2
+  domain continuous;
+  potential Voltage;
+  flow Current;
+enddiscipline
+
+// natureless discrete discipline: declarable (like ddiscrete/logic in the
+// std header); its nets are not accessible from analog behavior
+discipline dig
+  domain discrete;
+enddiscipline
+
+module domainbind(a, c);
+  inout a, c;
+  elec2 a, c;
+  analog I(a,c) <+ V(a,c)/1e3;
+endmodule
