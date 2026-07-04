@@ -36,6 +36,11 @@ extern CMat *iNoise;
 
 static double *noise_dens = NULL;
 static double *noise_dens_ln = NULL;
+/* Enhancement-42: per-source complex transfer + grouping flags for coherent
+   summation of same-named (perfectly correlated, LRM 4.6.4) noise sources */
+static double *noise_re = NULL;
+static double *noise_im = NULL;
+static char *noise_grouped = NULL;
 static uint32_t noise_dense_len = 0;
 
 #define nVar(i, j) noise_vals[i * descr->num_noise_src + j]
@@ -72,6 +77,9 @@ int OSDInoise(int mode, int operation, GENmodel *inModel, CKTcircuit *ckt,
     noise_dens = realloc(noise_dens, descr->num_noise_src * sizeof(double));
     noise_dens_ln =
         realloc(noise_dens_ln, descr->num_noise_src * sizeof(double));
+    noise_re = realloc(noise_re, descr->num_noise_src * sizeof(double));
+    noise_im = realloc(noise_im, descr->num_noise_src * sizeof(double));
+    noise_grouped = realloc(noise_grouped, descr->num_noise_src * sizeof(char));
   }
 
   for (gen_model = inModel; gen_model; gen_model = gen_model->GENnextModel) {
@@ -123,8 +131,23 @@ int OSDInoise(int mode, int operation, GENmodel *inModel, CKTcircuit *ckt,
           descr->load_noise(inst, model, data->freq, noise_dens);
           node_mapping =
               (uint32_t *)(((char *)inst) + descr->node_mapping_offset);
+          /* Enhancement-42: gather each source's complex transfer to the
+             output first. The loaded power may be SIGNED (OpenVAF folds the
+             contribution factor as fac*|fac|), carrying the sign of the
+             contribution for coherent summation below. */
           for (i = 0; i < descr->num_noise_src; i++) {
-            noise_dens[i] = fabs(noise_dens[i]);
+            src = descr->noise_sources[i];
+            node1 = node_mapping[src.nodes.node_1];
+            if (src.nodes.node_2 == UINT32_MAX) {
+              node2 = 0;
+            } else {
+              node2 = node_mapping[src.nodes.node_2];
+            };
+            noise_re[i] = ckt->CKTrhs[node1] - ckt->CKTrhs[node2];
+            noise_im[i] = ckt->CKTirhs[node1] - ckt->CKTirhs[node2];
+            noise_grouped[i] = 0;
+          }
+          for (i = 0; i < descr->num_noise_src; i++) {
             src = descr->noise_sources[i];
             node1 = node_mapping[src.nodes.node_1];
             if (src.nodes.node_2 == UINT32_MAX) {
@@ -134,7 +157,7 @@ int OSDInoise(int mode, int operation, GENmodel *inModel, CKTcircuit *ckt,
             };
 #ifdef RFSPICE
             if (ckt->CKTcurrentAnalysis & DOING_SP) {
-              inoise = sqrt(noise_dens[i]);
+              inoise = sqrt(fabs(noise_dens[i]));
               // Calculate input equivalent noise current source (we have port
               // impedance attached)
               for (int s = 0; s < ckt->CKTportCount; s++)
@@ -167,10 +190,40 @@ int OSDInoise(int mode, int operation, GENmodel *inModel, CKTcircuit *ckt,
             }
 
 #endif
-            realVal = ckt->CKTrhs[node1] - ckt->CKTrhs[node2];
-            imagVal = ckt->CKTirhs[node1] - ckt->CKTirhs[node2];
-            gain = (realVal * realVal) + (imagVal * imagVal);
-            noise_dens[i] *= gain;
+            if (noise_grouped[i]) {
+              /* member of an earlier group: its whole group's power was
+                 assigned to the group's first source */
+              noise_dens[i] = 0.0;
+              noise_dens_ln[i] = log(MAX(noise_dens[i], N_MINLOG));
+              continue;
+            }
+            /* Enhancement-42: same-named noise sources within one instance are
+               the SAME source (perfectly correlated, LRM 4.6.4): their
+               contributions sum coherently as signed AMPLITUDES,
+               |sum_k s_k*sqrt(|pwr_k|)*T_k|^2, rather than as powers. A source
+               with a unique name reduces exactly to the classic
+               |pwr| * |T|^2. The group's power is reported on its first
+               source; the members report 0. */
+            {
+              double amp_re = 0.0, amp_im = 0.0;
+              uint32_t j;
+              for (j = i; j < descr->num_noise_src; j++) {
+                double a;
+                if (j > i) {
+                  if (noise_grouped[j] ||
+                      strcmp(descr->noise_sources[i].name,
+                             descr->noise_sources[j].name) != 0)
+                    continue;
+                  noise_grouped[j] = 1;
+                }
+                a = sqrt(fabs(noise_dens[j]));
+                if (noise_dens[j] < 0.0)
+                  a = -a;
+                amp_re += a * noise_re[j];
+                amp_im += a * noise_im[j];
+              }
+              noise_dens[i] = amp_re * amp_re + amp_im * amp_im;
+            }
             noise_dens_ln[i] = log(MAX(noise_dens[i], N_MINLOG));
             totalNoise += noise_dens[i];
           }

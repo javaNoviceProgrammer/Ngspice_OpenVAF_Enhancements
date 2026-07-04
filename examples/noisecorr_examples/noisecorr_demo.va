@@ -1,0 +1,63 @@
+// noisecorr_demo.va -- Enhancement-42: correlated (same-named) noise sources
+//
+// Per Verilog-AMS LRM 4.6.4, noise functions that carry the SAME name argument
+// model the SAME physical noise source: their contributions are perfectly
+// correlated and must sum as AMPLITUDES at the output, not as powers.
+// Sources with distinct (or absent) names stay statistically independent.
+//
+// Each module below drives its noise through a series a--m--c chain so both
+// contributions see a unity transfer to the output.
+`include "disciplines.vams"
+
+// same name twice: PSDs 1e-12 each -> coherent amplitude sum
+// onoise = |1e-6 + 1e-6| = 2e-6 V/sqrt(Hz) (power-summing reads 1.414e-6)
+module ncorr(a, c);
+  inout a, c;
+  electrical a, c, m;
+  analog begin
+    V(a,m) <+ white_noise(1e-12, "src1");
+    V(m,c) <+ white_noise(1e-12, "src1");
+  end
+endmodule
+
+// distinct names: independent -> onoise = sqrt(2e-12) = 1.414e-6 (unchanged)
+module nuncorr(a, c);
+  inout a, c;
+  electrical a, c, m;
+  analog begin
+    V(a,m) <+ white_noise(1e-12, "srcA");
+    V(m,c) <+ white_noise(1e-12, "srcB");
+  end
+endmodule
+
+// same name, one contribution negated: anti-phase amplitudes CANCEL -> 0
+module nanti(a, c);
+  inout a, c;
+  electrical a, c, m;
+  analog begin
+    V(a,m) <+ white_noise(1e-12, "src1");
+    V(m,c) <+ -white_noise(1e-12, "src1");
+  end
+endmodule
+
+// scaled contribution factor: amplitudes weight linearly -> |2 + 1|*1e-6 = 3e-6
+// (power-summing would read sqrt(5)*1e-6 = 2.236e-6)
+module nscale(a, c);
+  inout a, c;
+  electrical a, c, m;
+  analog begin
+    V(a,m) <+ 2.0*white_noise(1e-12, "src1");
+    V(m,c) <+ white_noise(1e-12, "src1");
+  end
+endmodule
+
+// correlation is name-based across noise KINDS too: white + flicker under one
+// name group coherently (flicker PSD = 1e-12 at f = 1 Hz -> 2e-6 there)
+module nmix(a, c);
+  inout a, c;
+  electrical a, c, m;
+  analog begin
+    V(a,m) <+ white_noise(1e-12, "n1");
+    V(m,c) <+ flicker_noise(1e-12, 1.0, "n1");
+  end
+endmodule

@@ -248,5 +248,9 @@ examples/implicitnet_examples/_*.txt
 examples/implicitnet_examples/_*.va
 examples/implicitnet_examples/_*.osdi
 
+# Enhancement 42 correlated-noise example scripts: temp netlists + outputs
+examples/noisecorr_examples/_*.cir
+examples/noisecorr_examples/_*.txt
+
 # Python bytecode cache (e.g. from importing _setup.py)
 __pycache__/

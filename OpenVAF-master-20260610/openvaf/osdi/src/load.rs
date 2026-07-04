@@ -224,8 +224,30 @@ impl<'ll> OsdiCompilationUnit<'_, '_, 'll> {
                     }
                 };
 
-                // Multiply with squared factor because factor is in terms of signal, but
-                // we are computing the power, which is scaled by factor**2.
+                // Multiply with the squared factor because the factor is in terms of the
+                // signal while we are computing the power, which scales by factor**2.
+                //
+                // Enhancement-42: fold it as `fac * |fac|` rather than `fac * fac`, so the
+                // loaded power CARRIES THE FACTOR'S SIGN (its magnitude is identical).
+                // ngspice's noise analysis takes `fabs()` of each source's power before
+                // using it, so nothing changes for independent sources -- but the sign is
+                // what lets same-named (perfectly correlated, LRM 4.6.4) sources sum
+                // coherently as amplitudes in `osdinoise.c`, including cancellation
+                // between anti-phase contributions (`... <+ -white_noise(S, "n")`).
+                let (fabs_ty, fabs_fn) = self
+                    .cx
+                    .intrinsic("llvm.fabs.f64")
+                    .unwrap_or_else(|| unreachable!("intrinsic llvm.fabs.f64 not found"));
+                let mut fabs_args: [llvm_sys::prelude::LLVMValueRef; 1] =
+                    [fac as *const llvm_sys::LLVMValue as *mut _];
+                let fac_abs = LLVMBuildCall2(
+                    llbuilder,
+                    NonNull::from(fabs_ty).as_ptr(),
+                    NonNull::from(fabs_fn).as_ptr(),
+                    fabs_args.as_mut_ptr(),
+                    1,
+                    UNNAMED,
+                );
                 pwr = &*LLVMBuildFMul(
                     llbuilder,
                     NonNull::from(pwr).as_ptr(),
@@ -237,7 +259,7 @@ impl<'ll> OsdiCompilationUnit<'_, '_, 'll> {
                 pwr = &*LLVMBuildFMul(
                     llbuilder,
                     NonNull::from(pwr).as_ptr(),
-                    NonNull::from(fac).as_ptr(),
+                    fac_abs,
                     UNNAMED,
                 );
                 llvm_sys::core::LLVMSetFastMathFlags(NonNull::from(pwr).as_ptr(), fast_math_flags);

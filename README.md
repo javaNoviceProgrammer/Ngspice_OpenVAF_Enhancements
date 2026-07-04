@@ -553,6 +553,17 @@ Several unrelated language gaps found along the way are also fixed. **`localpara
 
 ---
 
+## Enhancement 42: correlated (same-named) noise sources
+
+*July 2026* — Implemented **noise-source correlation by name**: per Verilog-AMS LRM 4.6.4, noise functions carrying the same name argument model the **same physical source** — perfectly correlated — so their contributions to the noise output must sum as complex **amplitudes**, `|Σ f_k·√pwr_k·T_k|²`, not as powers `Σ f_k²·pwr_k·|T_k|²`. Previously the name only *labelled* the per-source output vectors and every source was independent: a same-named pair read `√2`× instead of `2`×, and even a **negated** contribution of the same source (`<+ -white_noise(S,"n")`, anti-phase, must cancel) *added* power. (The investigation also retired the three stale `// TODO noise` markers in the OSDI crate — the code below them was already complete; correlation was the real leftover.) The fix is two-sided. **OpenVAF** (`osdi/src/load.rs`): the contribution factor is now folded into the loaded noise power as `fac·|fac|` instead of `fac²` — identical magnitude, but the power **carries the factor's sign** (supporting fix: `llvm.fabs.f64` was never registered in `mir_llvm`'s intrinsic table). **ngspice** (`src/osdi/osdinoise.c`): the noise loop records each source's complex transfer `T_k` (adjoint solution) first, then groups same-named sources **within the instance** and sums signed amplitudes `sign(pwr)·√|pwr|·T_k` coherently before squaring. A uniquely-named source reduces *exactly* to the classic `|pwr|·|T|²` — independent sources are bit-identical to before — and grouping is per-instance by construction, so identical names in different instances stay uncorrelated, as they must. The group total is reported on the group's first `onoise_<inst>_<name>` vector (members read 0). Unnamed noise functions keep their compiler-synthesised unique names and can never group accidentally; partial correlation composes naturally from shared + private named sources.
+
+- Verified end-to-end through ngspice with exact analytic checks (PSD 1e-12 sources on unity-transfer chains): same-named pair **2e-6** (was 1.414e-6), distinct names 1.414e-6 (unchanged), anti-phase same-named pair **0** (cancellation), scaled factors `|2+1|`·1e-6 = **3e-6**, same name across two *instances* independent (2.828e-6), `white_noise`+`flicker_noise` under one name group across kinds (2e-6 at 1 Hz), per-source vectors report the group total on the group's first source — see `examples/noisecorr_examples/`
+- Regression-checked two ways: all 39 example verify suites ALL PASS (including the Enhancement-9 `noise_table` suite), **and** a golden-reference replay of all 20 deck-based example folders — every model recompiled, ~70 DC/AC/transient decks rerun, **72 stored outputs bit-identical** (max diff 0.0)
+- Also in this release: two stale-example fixes surfaced by that replay — the `cross_examples` AC decks/references were internally inconsistent (the demo modules were rewritten to expose the event counter on `V(out)`, whose small-signal response is exactly 0, but the decks still took `db()` of it and the references still held the old pass-through's unity-gain data; decks now record raw `v(out)` and the references are regenerated), and the `bessel_filter_examples` decks' hardcoded absolute paths are now relative
+- Details: [Enhancement-42.md](enhancements_doc/Enhancement-42.md)
+
+---
+
 ## Prebuilt Binaries
 
 Binaries are built by CI and committed to `bin/`:
