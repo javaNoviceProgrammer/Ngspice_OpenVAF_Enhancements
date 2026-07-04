@@ -98,6 +98,7 @@ impl DaeSystem {
                     pwr != F_ZERO
                 }
                 NoiseSourceKind::NoiseTable { .. } => true,
+                NoiseSourceKind::AcStim { mag, .. } => mag != F_ZERO,
             }
         });
 

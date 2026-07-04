@@ -373,6 +373,33 @@ impl OsdiTyBuilder<'_, '_, '_> {
         self.osdi_nature_ref = Some(ty);
     }
 }
+/// `ac_stim` small-signal stimulus source (Enhancement-51): `analysis` is the
+/// analysis name the stimulus is active in (LRM default "ac"); `nodes` mirror
+/// `OsdiNoiseSource` (node_2 == u32::MAX means ground).
+pub struct OsdiAcStimSource {
+    pub analysis: String,
+    pub nodes: OsdiNodePair,
+}
+impl OsdiAcStimSource {
+    pub fn to_ll_val<'ll>(
+        &self,
+        ctx: &CodegenCx<'_, 'll>,
+        tys: &'ll OsdiTys,
+    ) -> &'ll llvm_sys::LLVMValue {
+        let fields = [ctx.const_str_uninterned(&self.analysis), self.nodes.to_ll_val(ctx, tys)];
+        let ty = tys.osdi_ac_stim_source;
+        ctx.const_struct(ty, &fields)
+    }
+}
+impl OsdiTyBuilder<'_, '_, '_> {
+    fn osdi_ac_stim_source(&mut self) {
+        let ctx = self.ctx;
+        let fields = [ctx.ty_ptr(), self.osdi_node_pair.unwrap()];
+        let ty = ctx.ty_struct("OsdiAcStimSource", &fields);
+        self.osdi_ac_stim_source = Some(ty);
+    }
+}
+
 pub struct OsdiDescriptor<'ll> {
     pub name: String,
     pub num_nodes: u32,
@@ -425,6 +452,11 @@ pub struct OsdiDescriptor<'ll> {
     pub noise_source_type: Vec<u32>,
     pub load_noise_params: &'ll llvm_sys::LLVMValue,
     pub module_flags: u32,
+    /// Enhancement-51: `ac_stim` small-signal stimulus sources -- appended at
+    /// the end of the descriptor (OSDI 0.6).
+    pub num_ac_stim_src: u32,
+    pub ac_stim_sources: Vec<OsdiAcStimSource>,
+    pub load_ac_stim: &'ll llvm_sys::LLVMValue,
 }
 impl<'ll> OsdiDescriptor<'ll> {
     pub fn to_ll_val(
@@ -442,6 +474,8 @@ impl<'ll> OsdiDescriptor<'ll> {
         let arr_47: Vec<_> = self.residual_nature.iter().map(|it| it.to_ll_val(ctx, tys)).collect();
         let arr_48: Vec<_> =
             self.noise_source_type.iter().map(|it| ctx.const_unsigned_int(*it)).collect();
+        let arr_ac_stim: Vec<_> =
+            self.ac_stim_sources.iter().map(|it| it.to_ll_val(ctx, tys)).collect();
         let fields = [
             ctx.const_str_uninterned(&self.name),
             ctx.const_unsigned_int(self.num_nodes),
@@ -494,6 +528,9 @@ impl<'ll> OsdiDescriptor<'ll> {
             ctx.const_arr_ptr(ctx.ty_int(), &arr_48),
             self.load_noise_params,
             ctx.const_unsigned_int(self.module_flags),
+            ctx.const_unsigned_int(self.num_ac_stim_src),
+            ctx.const_arr_ptr(tys.osdi_ac_stim_source, &arr_ac_stim),
+            self.load_ac_stim,
         ];
         let ty = tys.osdi_descriptor;
         ctx.const_struct(ty, &fields)
@@ -554,6 +591,10 @@ impl OsdiTyBuilder<'_, '_, '_> {
             ctx.ty_ptr(),
             ctx.ty_ptr(),
             ctx.ty_int(),
+            // Enhancement-51: num_ac_stim_src, ac_stim_sources, load_ac_stim
+            ctx.ty_int(),
+            ctx.ty_ptr(),
+            ctx.ty_ptr(),
         ];
         let ty = ctx.ty_struct("OsdiDescriptor", &fields);
         self.osdi_descriptor = Some(ty);
@@ -741,6 +782,7 @@ pub struct OsdiTys<'ll> {
     pub osdi_node: &'ll llvm_sys::LLVMType,
     pub osdi_param_opvar: &'ll llvm_sys::LLVMType,
     pub osdi_noise_source: &'ll llvm_sys::LLVMType,
+    pub osdi_ac_stim_source: &'ll llvm_sys::LLVMType,
     pub osdi_nature_ref: &'ll llvm_sys::LLVMType,
     pub osdi_descriptor: &'ll llvm_sys::LLVMType,
     pub osdi_nature: &'ll llvm_sys::LLVMType,
@@ -764,6 +806,7 @@ impl<'ll> OsdiTys<'ll> {
             osdi_node: None,
             osdi_param_opvar: None,
             osdi_noise_source: None,
+            osdi_ac_stim_source: None,
             osdi_nature_ref: None,
             osdi_descriptor: None,
             osdi_nature: None,
@@ -782,6 +825,7 @@ impl<'ll> OsdiTys<'ll> {
         builder.osdi_node();
         builder.osdi_param_opvar();
         builder.osdi_noise_source();
+        builder.osdi_ac_stim_source();
         builder.osdi_nature_ref();
         builder.osdi_descriptor();
         builder.osdi_nature();
@@ -805,6 +849,7 @@ struct OsdiTyBuilder<'a, 'b, 'll> {
     osdi_node: Option<&'ll llvm_sys::LLVMType>,
     osdi_param_opvar: Option<&'ll llvm_sys::LLVMType>,
     osdi_noise_source: Option<&'ll llvm_sys::LLVMType>,
+    osdi_ac_stim_source: Option<&'ll llvm_sys::LLVMType>,
     osdi_nature_ref: Option<&'ll llvm_sys::LLVMType>,
     osdi_descriptor: Option<&'ll llvm_sys::LLVMType>,
     osdi_nature: Option<&'ll llvm_sys::LLVMType>,
@@ -826,6 +871,7 @@ impl<'ll> OsdiTyBuilder<'_, '_, 'll> {
             osdi_node: self.osdi_node.unwrap(),
             osdi_param_opvar: self.osdi_param_opvar.unwrap(),
             osdi_noise_source: self.osdi_noise_source.unwrap(),
+            osdi_ac_stim_source: self.osdi_ac_stim_source.unwrap(),
             osdi_nature_ref: self.osdi_nature_ref.unwrap(),
             osdi_descriptor: self.osdi_descriptor.unwrap(),
             osdi_nature: self.osdi_nature.unwrap(),

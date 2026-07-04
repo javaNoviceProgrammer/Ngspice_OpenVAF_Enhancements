@@ -29,7 +29,8 @@ use crate::inst_data::{
 };
 use crate::load::JacobianLoadType;
 use crate::metadata::osdi_0_4::{
-    OsdiDescriptor, OsdiJacobianEntry, OsdiNatureRef, OsdiNode, OsdiNodePair, OsdiNoiseSource,
+    OsdiAcStimSource, OsdiDescriptor, OsdiJacobianEntry, OsdiNatureRef, OsdiNode, OsdiNodePair,
+    OsdiNoiseSource,
     OsdiParamOpvar, OsdiTys, JACOBIAN_ENTRY_REACT, JACOBIAN_ENTRY_REACT_CONST,
     JACOBIAN_ENTRY_RESIST, JACOBIAN_ENTRY_RESIST_CONST, MODULEFLAG_ABSTIME, NATREF_DISCIPLINE_FLOW,
     NATREF_DISCIPLINE_POTENTIAL, NATREF_NONE, NOISE_TYPE_FLICKER, NOISE_TYPE_TABLE,
@@ -388,10 +389,15 @@ impl<'ll> OsdiCompilationUnit<'_, '_, 'll> {
             let model_size =
                 LLVMABISizeOfType(*target_data, NonNull::from(model_data.ty).as_ptr()) as u32;
 
+            // Enhancement-51: `ac_stim` sources ride the shared noise pipeline but
+            // are PARTITIONED here -- the noise descriptor arrays (and load_noise's
+            // output slots) hold only genuine noise sources, in matching order,
+            // while ac_stim sources get their own array + load_ac_stim function.
             let noise_sources: Vec<_> = module
                 .dae_system
                 .noise_sources
                 .iter()
+                .filter(|source| !matches!(source.kind, NoiseSourceKind::AcStim { .. }))
                 .map(|source| {
                     let node_1: u32 = source.hi.into();
                     let node_2: u32 = source.lo.map_or(u32::MAX, u32::from);
@@ -400,12 +406,26 @@ impl<'ll> OsdiCompilationUnit<'_, '_, 'll> {
                 })
                 .collect();
 
+            let ac_stim_sources: Vec<_> = module
+                .dae_system
+                .noise_sources
+                .iter()
+                .filter(|source| matches!(source.kind, NoiseSourceKind::AcStim { .. }))
+                .map(|source| {
+                    let node_1: u32 = source.hi.into();
+                    let node_2: u32 = source.lo.map_or(u32::MAX, u32::from);
+                    let analysis = cx.literals.resolve(&source.name).to_owned();
+                    OsdiAcStimSource { analysis, nodes: OsdiNodePair { node_1, node_2 } }
+                })
+                .collect();
+
             let noise_source_type: Vec<_> =
                 zip(&module.dae_system.noise_sources, &self.inst_data.noise)
-                    .map(|(src, eval_outputs)| match src.kind {
-                        NoiseSourceKind::WhiteNoise { .. } => NOISE_TYPE_WHITE,
-                        NoiseSourceKind::FlickerNoise { .. } => NOISE_TYPE_FLICKER,
-                        NoiseSourceKind::NoiseTable { .. } => NOISE_TYPE_TABLE,
+                    .filter_map(|(src, eval_outputs)| match src.kind {
+                        NoiseSourceKind::WhiteNoise { .. } => Some(NOISE_TYPE_WHITE),
+                        NoiseSourceKind::FlickerNoise { .. } => Some(NOISE_TYPE_FLICKER),
+                        NoiseSourceKind::NoiseTable { .. } => Some(NOISE_TYPE_TABLE),
+                        NoiseSourceKind::AcStim { .. } => None,
                     })
                     .collect();
 
@@ -430,9 +450,13 @@ impl<'ll> OsdiCompilationUnit<'_, '_, 'll> {
                 collapsed_offset,
                 bound_step_offset,
 
-                // TODO noise
                 num_noise_src: noise_sources.len() as u32,
                 noise_sources,
+
+                // Enhancement-51: ac_stim small-signal stimulus sources
+                num_ac_stim_src: ac_stim_sources.len() as u32,
+                ac_stim_sources,
+                load_ac_stim: self.load_ac_stim(),
 
                 num_params: model_data.params.len() as u32 + inst_data.params.len() as u32,
                 num_instance_params: inst_data.params.len() as u32,

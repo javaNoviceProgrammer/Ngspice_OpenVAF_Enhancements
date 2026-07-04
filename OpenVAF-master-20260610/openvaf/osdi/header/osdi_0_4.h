@@ -163,6 +163,14 @@ typedef struct OsdiNatureRef {
   uint32_t index; 
 }OsdiNatureRef;
 
+/* Enhancement-51: `ac_stim` small-signal stimulus source. `analysis` is the
+ * analysis name the stimulus is active in (LRM default "ac"); node_2 ==
+ * UINT32_MAX means ground. */
+typedef struct OsdiAcStimSource {
+  char *analysis;
+  OsdiNodePair nodes;
+}OsdiAcStimSource;
+
 typedef struct OsdiDescriptor {
   char *name;
 
@@ -232,6 +240,13 @@ typedef struct OsdiDescriptor {
   uint32_t *noise_source_type;
   void (*load_noise_params)(void *inst, void *model, double *power, double *exponent);
   uint32_t module_flags;
+  /* Enhancement-51 (OSDI 0.6): ac_stim small-signal stimulus sources.
+   * load_ac_stim fills dst with [re, im] PAIRS (factor*mag*cos/sin(phase)),
+   * one per source; the simulator adds them into its complex AC RHS at the
+   * mapped nodes (+ node_1, - node_2) when the analysis name matches. */
+  uint32_t num_ac_stim_src;
+  OsdiAcStimSource *ac_stim_sources;
+  void (*load_ac_stim)(void *inst, void *model, double *dst);
 }OsdiDescriptor;
 
 typedef struct OsdiNature {

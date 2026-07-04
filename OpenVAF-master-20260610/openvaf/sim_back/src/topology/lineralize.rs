@@ -184,7 +184,8 @@ impl<'a> super::Builder<'a> {
                 }
                 CallBackKind::WhiteNoise { .. }
                 | CallBackKind::FlickerNoise { .. }
-                | CallBackKind::NoiseTable(_) => {
+                | CallBackKind::NoiseTable(_)
+                | CallBackKind::AcStim { .. } => {
                     for inst in take(uses) {
                         analog_operators.push((
                             inst,

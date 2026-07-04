@@ -151,6 +151,19 @@ typedef struct OsdiNoiseSource {
   OsdiNodePair nodes;
 }OsdiNoiseSource;
 
+typedef struct OsdiNatureRef {
+  uint32_t ref_type;
+  uint32_t index;
+}OsdiNatureRef;
+
+/* Enhancement-51: `ac_stim` small-signal stimulus source. `analysis` is the
+ * analysis name the stimulus is active in (LRM default "ac"); node_2 ==
+ * UINT32_MAX means ground. */
+typedef struct OsdiAcStimSource {
+  char *analysis;
+  OsdiNodePair nodes;
+}OsdiAcStimSource;
+
 typedef struct OsdiDescriptor {
   char *name;
 
@@ -205,6 +218,31 @@ typedef struct OsdiDescriptor {
   void (*load_jacobian_resist)(void *inst, void* model);
   void (*load_jacobian_react)(void *inst, void* model, double alpha);
   void (*load_jacobian_tran)(void *inst, void* model, double alpha);
+  /* --- fields below were previously not declared in ngspice's prefix view of
+   * the descriptor; they are required to reach the ac_stim fields appended at
+   * the end (Enhancement-51). Layout matches openvaf's osdi_0_4.h exactly. */
+  uint32_t (*given_flag_model)(void *model, uint32_t id);
+  uint32_t (*given_flag_instance)(void *inst, uint32_t id);
+  uint32_t num_resistive_jacobian_entries;
+  uint32_t num_reactive_jacobian_entries;
+  void (*write_jacobian_array_resist)(void *inst, void* model, double* destination);
+  void (*write_jacobian_array_react)(void *inst, void* model, double* destination);
+  uint32_t num_inputs;
+  OsdiNodePair* inputs;
+  void (*load_jacobian_with_offset_resist)(void *inst, void* model, size_t offset);
+  void (*load_jacobian_with_offset_react)(void *inst, void* model, size_t offset);
+  OsdiNatureRef* unknown_nature;
+  OsdiNatureRef* residual_nature;
+  uint32_t *noise_source_type;
+  void (*load_noise_params)(void *inst, void *model, double *power, double *exponent);
+  uint32_t module_flags;
+  /* Enhancement-51 (OSDI 0.6): ac_stim small-signal stimulus sources.
+   * load_ac_stim fills dst with [re, im] PAIRS (factor*mag*cos/sin(phase)),
+   * one per source; the simulator adds them into its complex AC RHS at the
+   * mapped nodes (+ node_1, - node_2) when the analysis name matches. */
+  uint32_t num_ac_stim_src;
+  OsdiAcStimSource *ac_stim_sources;
+  void (*load_ac_stim)(void *inst, void *model, double *dst);
 }OsdiDescriptor;
 
 

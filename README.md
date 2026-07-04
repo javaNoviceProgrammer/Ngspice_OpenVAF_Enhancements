@@ -644,6 +644,16 @@ Several unrelated language gaps found along the way are also fixed. **`localpara
 
 ---
 
+## Enhancement 51: full ac_stim AC injection
+
+*July 2026* — Completed **`ac_stim`** (LRM 4.6.3), the small-signal AC stimulus source deferred since Enhancement-26 (which fixed the compiler crash and the correct large-signal 0 but injected nothing). `ac_stim([name][, mag[, phase]])` now injects `mag∠phase` (phase in **radians**) into the AC solve when the analysis name matches (default `"ac"`), staying exactly 0 in DC/transient and under non-matching names. The implementation rides the **noise-source pipeline** end to end: a dedicated callback per call site flows through the existing small-signal-network extraction (branch + factor exist for AC while the large-signal residual stays 0) into the shared source records, then **partitions** at the OSDI level — the noise descriptor arrays keep only genuine noise sources (their load functions use filtered indexing, leaving noise analysis untouched) while ac_stim sources get appended descriptor fields (`num_ac_stim_src`/`ac_stim_sources`/`load_ac_stim`, the latter filling `factor·mag·e^{jφ}` pairs from eval-cached values, so operating-point-dependent magnitudes work). ngspice's AC load injects them into the complex RHS with the residual-convention sign (`(G+jωC)x = −residual_stim`, calibrated so `V(out) <+ ac_stim()` reads exactly +1∠0). `mfactor` follows deterministic-signal laws — current stimuli scale linearly, voltage stimuli are invariant — unlike noise's sqrt(m). **Breaking ABI note**: the descriptor grew appended fields, so the **OSDI version is bumped to 0.6** and ngspice's loader requires it (stale `.osdi` files get the recompile message); ngspice's `osdi.h` had only ever declared a *prefix* of the descriptor and gained the full field tail. All committed example `.osdi` binaries were regenerated.
+
+- Verified end-to-end through ngspice with exact analytic checks: `V(out) <+ ac_stim()` = **1∠0**; `ac_stim("ac", 2, π/2)` = **j2**; `ac_stim("sp")` inactive in AC; a current stimulus into 1k reads **−1000** (contribution sign); an internal stimulus driving an RC lowpass reads exactly **0.5−0.5j at the pole** (0.7071∠−45°) and 0.01 at 100·fc — the classic embedded AC test bench; DC/transient invariance (the E-26 checks) unchanged; `m=3` scales a current stimulus ×3 linearly — see `examples/acstim_examples/`
+- Regression-checked: all 47 example verify suites ALL PASS (the noise and correlated-noise suites confirm the noise/ac_stim partition is airtight); 28/28 crate tests
+- Details: [Enhancement-51.md](enhancements_doc/Enhancement-51.md)
+
+---
+
 ## Prebuilt Binaries
 
 Binaries are built by CI and committed to `bin/`:

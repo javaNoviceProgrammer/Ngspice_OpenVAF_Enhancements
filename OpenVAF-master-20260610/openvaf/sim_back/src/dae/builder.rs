@@ -18,7 +18,7 @@ use typed_index_collections::TiVec;
 
 use crate::context::Context;
 use crate::dae::{DaeSystem, MatrixEntry, Residual, ResidualNatureKind, SimUnknown};
-use crate::noise::NoiseSource;
+use crate::noise::{NoiseSource, NoiseSourceKind};
 use crate::topology::{BranchInfo, Contribution};
 use crate::util::{add, is_op_dependent, update_optbarrier};
 use crate::SimUnknownKind;
@@ -677,6 +677,17 @@ impl<'a> Builder<'a> {
         }
     }
 
+    /// Multiplies a deterministic small-signal source factor by the full
+    /// mfactor (`ac_stim`, Enhancement-51) -- unlike noise, whose SIGNAL
+    /// scales with sqrt(mfactor) because its POWER scales with mfactor.
+    fn mfactor_multiply_linear(&mut self, mfactor: Value, srcfactor: Value) -> Value {
+        match (mfactor, srcfactor) {
+            (F_ONE, fac) => fac,
+            (mfactor, F_ONE) => mfactor,
+            (mfactor, srcfactor) => self.cursor.ins().fmul(srcfactor, mfactor),
+        }
+    }
+
     fn mfactor_divide(&mut self, mfactor: Value, srcfactor: Value) -> Value {
         match (mfactor, srcfactor) {
             // Leave srcfactor unchanged if mfactor is 1
@@ -699,7 +710,14 @@ impl<'a> Builder<'a> {
         let mut noise = Vec::with_capacity(current_src.noise.len());
         let current_noise = current_src.noise.iter().map(|src| {
             let mut src = src.clone();
-            src.factor = self.mfactor_multiply(mfactor, src.factor);
+            // noise powers scale with mfactor (signal by sqrt); an `ac_stim`
+            // stimulus is a deterministic signal and scales linearly
+            // (m parallel copies sum their currents) -- Enhancement-51
+            src.factor = if matches!(src.kind, NoiseSourceKind::AcStim { .. }) {
+                self.mfactor_multiply_linear(mfactor, src.factor)
+            } else {
+                self.mfactor_multiply(mfactor, src.factor)
+            };
             src
         });
         noise.extend(current_noise);
@@ -721,7 +739,12 @@ impl<'a> Builder<'a> {
         let mut noise = Vec::with_capacity(voltage_src.noise.len());
         let voltage_noise = voltage_src.noise.iter().map(|src| {
             let mut src = src.clone();
-            src.factor = self.mfactor_divide(mfactor, src.factor);
+            // a deterministic `ac_stim` voltage stimulus is mfactor-invariant
+            // (m parallel copies of the same source hold the same voltage);
+            // voltage NOISE divides by sqrt(mfactor) -- Enhancement-51
+            if !matches!(src.kind, NoiseSourceKind::AcStim { .. }) {
+                src.factor = self.mfactor_divide(mfactor, src.factor);
+            }
             src
         });
         noise.extend(voltage_noise);
@@ -788,9 +811,16 @@ impl<'a> Builder<'a> {
             .intern
             .ensure_param(&mut self.cursor, ParamKind::ParamSysFun(ParamSysFun::mfactor));
         for ii in 0..voltage_src.noise.len() + current_src.noise.len() {
+            let is_ac_stim = matches!(noise[ii].kind, NoiseSourceKind::AcStim { .. });
             if ii < voltage_src.noise.len() {
-                // Voltage noise
-                noise[ii].factor = self.mfactor_divide(mfactor, noise[ii].factor);
+                // Voltage noise divides by sqrt(mfactor); a deterministic
+                // ac_stim voltage stimulus is mfactor-invariant (Enhancement-51)
+                if !is_ac_stim {
+                    noise[ii].factor = self.mfactor_divide(mfactor, noise[ii].factor);
+                }
+            } else if is_ac_stim {
+                // deterministic current stimulus: linear in mfactor
+                noise[ii].factor = self.mfactor_multiply_linear(mfactor, noise[ii].factor);
             } else {
                 // Current noise
                 noise[ii].factor = self.mfactor_multiply(mfactor, noise[ii].factor);

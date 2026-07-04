@@ -191,6 +191,8 @@ impl NoiseSource {
             dae::NoiseSourceKind::WhiteNoise { pwr } => [get_output(pwr), EvalOutput::NONE],
             dae::NoiseSourceKind::FlickerNoise { pwr, exp } => [get_output(pwr), get_output(exp)],
             dae::NoiseSourceKind::NoiseTable { .. } => [EvalOutput::NONE; 2],
+            // Enhancement-51: mag and phase are computed in eval and cached
+            dae::NoiseSourceKind::AcStim { mag, phase } => [get_output(mag), get_output(phase)],
         };
         NoiseSource { args, factor: get_output(source.factor) }
     }

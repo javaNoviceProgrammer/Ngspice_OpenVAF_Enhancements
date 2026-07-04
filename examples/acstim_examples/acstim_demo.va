@@ -33,3 +33,48 @@ module acstim_demo(a, b);
         end
     end
 endmodule
+
+// ---------------------------------------------------------------------------
+// Enhancement-51: the AC-domain injection itself (completing the E-26 stub).
+// ---------------------------------------------------------------------------
+
+// voltage-source stimulus: AC v(out) = 1∠0 exactly
+module acstim_v(out);
+    inout out;
+    electrical out;
+    analog V(out) <+ ac_stim();
+endmodule
+
+// magnitude and phase (radians): 2∠90° = j2
+module acstim_mp(out);
+    inout out;
+    electrical out;
+    analog V(out) <+ ac_stim("ac", 2.0, 1.5707963267948966);
+endmodule
+
+// a stimulus bound to another analysis name stays inactive in AC
+module acstim_other(out);
+    inout out;
+    electrical out;
+    analog V(out) <+ ac_stim("sp");
+endmodule
+
+// current-source stimulus: I(out) <+ 1∠0 into a load
+module acstim_i(out);
+    inout out;
+    electrical out;
+    analog I(out) <+ ac_stim();
+endmodule
+
+// the classic embedded test bench: an internal stimulus driving an RC lowpass
+// (fc = 1 kHz), so the model's OWN transfer function is measured in AC
+module acstim_rc(out);
+    inout out;
+    electrical out;
+    electrical s;
+    analog begin
+        V(s) <+ ac_stim();
+        I(s, out) <+ V(s, out)/1e3;
+        I(out) <+ ddt(159.15494e-9 * V(out));
+    end
+endmodule

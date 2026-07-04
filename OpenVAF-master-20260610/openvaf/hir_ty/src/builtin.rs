@@ -174,10 +174,13 @@ bultins! {
     }
 
     AC_STIM = const {
+        // Enhancement-51: the analysis name is a string LITERAL per the LRM BNF
+        // (`ac_stim ( [ "analysis_identifier" ...`), letting the lowering read
+        // it at compile time like the noise-source names
         fn AC_STIM_UNIT() -> Real;
-        fn AC_STIMT_NAME(Val(String)) -> Real;
-        fn AC_STIM_NAME_MAG(Val(String),Val(Real)) -> Real;
-        fn AC_STIM_NAME_MAG_PHASE(Val(String),Val(Real),Val(Real)) -> Real;
+        fn AC_STIMT_NAME(Literal(String)) -> Real;
+        fn AC_STIM_NAME_MAG(Literal(String),Val(Real)) -> Real;
+        fn AC_STIM_NAME_MAG_PHASE(Literal(String),Val(Real),Val(Real)) -> Real;
     }
 
     const fn REAL_INFO() -> Real;

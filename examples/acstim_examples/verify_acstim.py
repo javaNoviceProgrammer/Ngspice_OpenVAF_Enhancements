@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 verify_acstim.py -- verifies Enhancement-26 `ac_stim(...)` (baseline: crash-fix +
-correct large-signal semantics), end-to-end through version11's own openvaf-r +
+correct large-signal semantics), end-to-end through the committed openvaf-r +
 ngspice.
 
 `ac_stim` previously crashed the compiler (`unreachable!()`) on any contributing
@@ -24,7 +24,7 @@ import subprocess
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.dirname(HERE))          # repo root
+sys.path.insert(0, os.path.dirname(HERE))
 from _setup import VAF as OPENVAF, NG as NGSPICE
 
 G = 1.0e-3
@@ -78,6 +78,49 @@ def main():
         check(f"{analysis}: I == g*V and unchanged by ac_stim",
               abs(i_on - expect) < 1e-12 and abs(i_on - i_off) < 1e-15,
               f"with={i_on:.6g}  without={i_off:.6g}  expect={expect:.6g}")
+
+    # ------------------------------------------------------------------
+    # Enhancement-51: the AC injection itself
+    # ------------------------------------------------------------------
+    def ac_point(model, load, freq="1k"):
+        deck = (f"* E-51 {model}\nNDUT out nm\n{load}\n.model nm {model}\n"
+                f".control\npre_osdi acstim_demo.osdi\nac lin 1 {freq} {freq}\n"
+                "print v(out)\n.endc\n.end\n")
+        with open(os.path.join(HERE, "_a.cir"), "w") as fh:
+            fh.write(deck)
+        out = subprocess.run([NGSPICE, "-b", "_a.cir"], cwd=HERE,
+                             capture_output=True, text=True, timeout=120).stdout
+        for line in out.splitlines():
+            st = line.strip().lower()
+            if st.startswith("v(out) "):
+                re_s, im_s = line.split("=", 1)[1].split(",")
+                return complex(float(re_s), float(im_s))
+        return None
+
+    print("[3] AC injection: voltage stimulus = 1∠0 exactly")
+    v = ac_point("acstim_v", "R1 out 0 1G")
+    check("v(out) == 1+0j", v is not None and abs(v - 1) < 1e-9, f"got {v}")
+
+    print("[4] magnitude + phase (radians): 2∠90° = j2")
+    v = ac_point("acstim_mp", "R1 out 0 1G")
+    check("v(out) == 0+2j", v is not None and abs(v - 2j) < 1e-9, f"got {v}")
+
+    print("[5] non-matching analysis name stays inactive")
+    v = ac_point("acstim_other", "R1 out 0 1G")
+    check("v(out) == 0", v is not None and abs(v) < 1e-12, f"got {v}")
+
+    print("[6] current stimulus into 1k: -1000 (contribution sign)")
+    v = ac_point("acstim_i", "R1 out 0 1k")
+    check("v(out) == -1000", v is not None and abs(v + 1000) < 1e-6, f"got {v}")
+
+    print("[7] embedded RC test bench: 1-pole transfer")
+    v = ac_point("acstim_rc", "R1 out 0 1G")
+    check("|H(fc)| = 0.7071 at -45 deg",
+          v is not None and abs(abs(v) - 0.7071068) < 1e-4
+          and abs(v.imag / v.real + 1.0) < 1e-3, f"got {v}")
+    v = ac_point("acstim_rc", "R1 out 0 1G", freq="100k")
+    check("|H(100 fc)| ~ 0.01",
+          v is not None and abs(abs(v) - 0.0099995) < 1e-5, f"got {abs(v)}")
 
     print("\nALL PASS" if ok else "\nSOME FAILED")
     sys.exit(0 if ok else 1)

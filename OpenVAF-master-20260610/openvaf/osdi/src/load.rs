@@ -161,9 +161,18 @@ impl<'ll> OsdiCompilationUnit<'_, '_, 'll> {
             let freq = &*LLVMGetParam(NonNull::from(llfunc).as_ptr(), 2);
             let dst = LLVMGetParam(NonNull::from(llfunc).as_ptr(), 3);
 
-            for (i, (src, eval_outputs)) in
-                zip(&module.dae_system.noise_sources, &self.inst_data.noise).enumerate()
+            // Enhancement-51: ac_stim sources share the eval-output slots but are
+            // excluded from the noise descriptor arrays; `slot` tracks the position
+            // in the FILTERED array so `dst` stays aligned with `noise_sources`.
+            let mut slot = 0u32;
+            for (src, eval_outputs) in
+                zip(&module.dae_system.noise_sources, &self.inst_data.noise)
             {
+                if matches!(src.kind, NoiseSourceKind::AcStim { .. }) {
+                    continue;
+                }
+                let i = slot;
+                slot += 1;
                 let fac = self.load_eval_output(eval_outputs.factor, &*inst, &*model, &*llbuilder);
                 let mut pwr = match src.kind {
                     NoiseSourceKind::WhiteNoise { .. } => {
@@ -222,6 +231,7 @@ impl<'ll> OsdiCompilationUnit<'_, '_, 'll> {
                         let freq_ptr = freq as *const llvm_sys::LLVMValue as *mut _;
                         self.build_noise_table_interp(llbuilder, freq_ptr, vals)
                     }
+                    NoiseSourceKind::AcStim { .. } => unreachable!("filtered above"),
                 };
 
                 // Multiply with the squared factor because the factor is in terms of the
@@ -264,7 +274,7 @@ impl<'ll> OsdiCompilationUnit<'_, '_, 'll> {
                 );
                 llvm_sys::core::LLVMSetFastMathFlags(NonNull::from(pwr).as_ptr(), fast_math_flags);
                 let index_val =
-                    cx.const_unsigned_int(i as u32) as *const llvm_sys::LLVMValue as *mut _;
+                    cx.const_unsigned_int(i) as *const llvm_sys::LLVMValue as *mut _;
                 let mut gep_indices: [llvm_sys::prelude::LLVMValueRef; 1] = [index_val];
                 let gep_ptr = gep_indices.as_mut_ptr();
 
@@ -280,6 +290,108 @@ impl<'ll> OsdiCompilationUnit<'_, '_, 'll> {
             }
 
             // TODO noise
+            LLVMBuildRetVoid(llbuilder);
+            LLVMDisposeBuilder(llbuilder);
+        }
+
+        llfunc
+    }
+
+    /// Enhancement-51: `void load_ac_stim(void* inst, void* model, double* dst)`
+    /// -- fills `dst` with `[re, im]` PAIRS, one per `ac_stim_sources` entry (in
+    /// descriptor order): `factor * mag * cos(phase)` / `factor * mag * sin(phase)`.
+    /// The simulator adds each pair into its complex AC RHS at the source's
+    /// mapped nodes (+ at node_1, - at node_2) when the analysis name matches.
+    pub fn load_ac_stim(&self) -> &'ll llvm_sys::LLVMValue {
+        let OsdiCompilationUnit { cx, module, .. } = self;
+        let void_ptr = cx.ty_ptr();
+        let f64_ptr_ty = cx.ty_ptr();
+        let fun_ty = cx.ty_func(&[void_ptr, void_ptr, f64_ptr_ty], cx.ty_void());
+        let name = &format!("load_ac_stim_{}", module.sym);
+        let llfunc = cx.declare_int_c_fn(name, fun_ty);
+
+        unsafe {
+            let entry = LLVMAppendBasicBlockInContext(
+                NonNull::from(cx.llcx).as_ptr(),
+                NonNull::from(llfunc).as_ptr(),
+                UNNAMED,
+            );
+            let llbuilder = LLVMCreateBuilderInContext(NonNull::from(cx.llcx).as_ptr());
+            LLVMPositionBuilderAtEnd(llbuilder, entry);
+            let inst = LLVMGetParam(NonNull::from(llfunc).as_ptr(), 0);
+            let model = LLVMGetParam(NonNull::from(llfunc).as_ptr(), 1);
+            let dst = LLVMGetParam(NonNull::from(llfunc).as_ptr(), 2);
+
+            let mut slot = 0u32;
+            for (src, eval_outputs) in
+                zip(&module.dae_system.noise_sources, &self.inst_data.noise)
+            {
+                if !matches!(src.kind, NoiseSourceKind::AcStim { .. }) {
+                    continue;
+                }
+                let fac = self.load_eval_output(eval_outputs.factor, &*inst, &*model, &*llbuilder);
+                let mag = self.load_eval_output(eval_outputs.args[0], &*inst, &*model, &*llbuilder);
+                let phase =
+                    self.load_eval_output(eval_outputs.args[1], &*inst, &*model, &*llbuilder);
+
+                let amp = &*LLVMBuildFMul(
+                    llbuilder,
+                    NonNull::from(fac).as_ptr(),
+                    NonNull::from(mag).as_ptr(),
+                    UNNAMED,
+                );
+
+                let mut trig = |intrinsic: &'static str| {
+                    let (ty, fun) = self
+                        .cx
+                        .intrinsic(intrinsic)
+                        .unwrap_or_else(|| unreachable!("intrinsic {intrinsic} not found"));
+                    let mut call_args: [llvm_sys::prelude::LLVMValueRef; 1] =
+                        [phase as *const llvm_sys::LLVMValue as *mut _];
+                    &*LLVMBuildCall2(
+                        llbuilder,
+                        NonNull::from(ty).as_ptr(),
+                        NonNull::from(fun).as_ptr(),
+                        call_args.as_mut_ptr(),
+                        1,
+                        UNNAMED,
+                    )
+                };
+                let cos_p = trig("llvm.cos.f64");
+                let sin_p = trig("llvm.sin.f64");
+
+                let re = LLVMBuildFMul(
+                    llbuilder,
+                    NonNull::from(amp).as_ptr(),
+                    NonNull::from(cos_p).as_ptr(),
+                    UNNAMED,
+                );
+                let im = LLVMBuildFMul(
+                    llbuilder,
+                    NonNull::from(amp).as_ptr(),
+                    NonNull::from(sin_p).as_ptr(),
+                    UNNAMED,
+                );
+
+                let mut store = |val: llvm_sys::prelude::LLVMValueRef, idx: u32| {
+                    let index_val =
+                        cx.const_unsigned_int(idx) as *const llvm_sys::LLVMValue as *mut _;
+                    let mut gep_indices: [llvm_sys::prelude::LLVMValueRef; 1] = [index_val];
+                    let slot_ptr = LLVMBuildGEP2(
+                        llbuilder,
+                        NonNull::from(cx.ty_double()).as_ptr(),
+                        dst,
+                        gep_indices.as_mut_ptr(),
+                        1,
+                        UNNAMED,
+                    );
+                    LLVMBuildStore(llbuilder, val, slot_ptr);
+                };
+                store(re, 2 * slot);
+                store(im, 2 * slot + 1);
+                slot += 1;
+            }
+
             LLVMBuildRetVoid(llbuilder);
             LLVMDisposeBuilder(llbuilder);
         }
@@ -308,9 +420,16 @@ impl<'ll> OsdiCompilationUnit<'_, '_, 'll> {
             let dst_dens = LLVMGetParam(NonNull::from(llfunc).as_ptr(), 2);
             let dst_exp = LLVMGetParam(NonNull::from(llfunc).as_ptr(), 3);
 
-            for (i, (src, eval_outputs)) in
-                zip(&module.dae_system.noise_sources, &self.inst_data.noise).enumerate()
+            // Enhancement-51: skip ac_stim entries; `slot` = filtered index
+            let mut slot = 0u32;
+            for (src, eval_outputs) in
+                zip(&module.dae_system.noise_sources, &self.inst_data.noise)
             {
+                if matches!(src.kind, NoiseSourceKind::AcStim { .. }) {
+                    continue;
+                }
+                let i = slot;
+                slot += 1;
                 // Factor and power
                 let fac = self.load_eval_output(eval_outputs.factor, &*inst, &*model, &*llbuilder);
                 let mut pwr = match src.kind {
@@ -324,6 +443,7 @@ impl<'ll> OsdiCompilationUnit<'_, '_, 'll> {
                     // per-frequency `load_noise` entry point is the real evaluator
                     // (this ABI slot is unused by ngspice's OSDI noise path).
                     NoiseSourceKind::NoiseTable { .. } => cx.const_real(0.0),
+                    NoiseSourceKind::AcStim { .. } => unreachable!("filtered above"),
                 };
 
                 // Multiply with squared factor because factor is in terms of signal, but
@@ -351,11 +471,12 @@ impl<'ll> OsdiCompilationUnit<'_, '_, 'll> {
                         self.load_eval_output(eval_outputs.args[1], &*inst, &*model, &*llbuilder)
                     }
                     NoiseSourceKind::NoiseTable { .. } => cx.const_real(0.0),
+                    NoiseSourceKind::AcStim { .. } => unreachable!("filtered above"),
                 };
 
                 // Store power
                 let index_val =
-                    cx.const_unsigned_int(i as u32) as *const llvm_sys::LLVMValue as *mut _;
+                    cx.const_unsigned_int(i) as *const llvm_sys::LLVMValue as *mut _;
                 let mut gep_indices: [llvm_sys::prelude::LLVMValueRef; 1] = [index_val];
                 let gep_ptr = gep_indices.as_mut_ptr();
 
@@ -371,7 +492,7 @@ impl<'ll> OsdiCompilationUnit<'_, '_, 'll> {
 
                 // Store exponent
                 let index_val =
-                    cx.const_unsigned_int(i as u32) as *const llvm_sys::LLVMValue as *mut _;
+                    cx.const_unsigned_int(i) as *const llvm_sys::LLVMValue as *mut _;
                 let mut gep_indices: [llvm_sys::prelude::LLVMValueRef; 1] = [index_val];
                 let gep_ptr = gep_indices.as_mut_ptr();
 

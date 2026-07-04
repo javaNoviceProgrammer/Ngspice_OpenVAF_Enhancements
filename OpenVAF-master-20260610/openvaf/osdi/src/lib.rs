@@ -50,7 +50,8 @@ mod noise;
 mod setup;
 
 // 0.5: Enhancement-45 added `nodeset` to `OsdiNode` (node-array stride change)
-const OSDI_VERSION: (u32, u32) = (0, 5);
+// 0.6: Enhancement-51 appended ac_stim fields to `OsdiDescriptor`
+const OSDI_VERSION: (u32, u32) = (0, 6);
 
 use std::sync::Once;
 

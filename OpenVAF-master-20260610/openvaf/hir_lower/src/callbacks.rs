@@ -221,6 +221,11 @@ pub enum CallBackKind {
     WhiteNoise { name: Spur, idx: u32 },
     FlickerNoise { name: Spur, idx: u32 },
     NoiseTable(Box<NoiseTable>),
+    /// `ac_stim([name][, mag][, phase])` (Enhancement-51): a small-signal AC
+    /// stimulus source. `name` is the ANALYSIS name (default "ac"); args are
+    /// [mag, phase]. Rides the noise extraction pipeline (same branch/factor
+    /// machinery), partitioned into its own descriptor array at the OSDI level.
+    AcStim { name: Spur, idx: u32 },
     SetRetFlag(RetFlag),
     /// A `$random`/`$dist_*`/`$rdist_*` draw (Enhancement-10). Resolved to the
     /// matching `osdi_rng_*` runtime function in `general_callbacks`. The call's
@@ -381,6 +386,12 @@ impl CallBackKind {
                 returns: 1,
                 has_sideeffects: false,
             },
+            CallBackKind::AcStim { name, .. } => FunctionSignature {
+                name: format!("ac_stim({name:?})"),
+                params: 2,
+                returns: 1,
+                has_sideeffects: false,
+            },
             CallBackKind::NoiseTable(table) => FunctionSignature {
                 name: format!(
                     "table_noise{}({:?}, {:?})",
@@ -414,6 +425,7 @@ impl CallBackKind {
             CallBackKind::WhiteNoise { .. }
                 | CallBackKind::FlickerNoise { .. }
                 | CallBackKind::NoiseTable(_)
+                | CallBackKind::AcStim { .. }
         )
     }
 

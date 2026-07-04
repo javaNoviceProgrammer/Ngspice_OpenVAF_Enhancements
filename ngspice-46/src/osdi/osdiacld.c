@@ -21,6 +21,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 int OSDIacLoad(GENmodel *inModel, CKTcircuit *ckt) {
 
@@ -39,6 +40,37 @@ int OSDIacLoad(GENmodel *inModel, CKTcircuit *ckt) {
        * operating-point iterations.                                         */
       descr->load_jacobian_resist(inst, model);
       descr->load_jacobian_react(inst, model, ckt->CKTomega);
+
+      /* Enhancement-51: inject ac_stim small-signal stimulus sources into the
+       * complex AC RHS. load_ac_stim fills [re, im] pairs (factor*mag*e^{j*phase},
+       * phase in radians per the LRM); each active source (analysis name "ac" --
+       * the name of THIS analysis) adds +s at node_1 and -s at node_2. Sources
+       * bound to other analysis names stay inactive, per LRM 4.6.3. */
+      if (descr->num_ac_stim_src > 0) {
+        uint32_t n = descr->num_ac_stim_src;
+        double *stim = TMALLOC(double, 2 * n);
+        uint32_t *node_mapping =
+            (uint32_t *)(((char *)inst) + descr->node_mapping_offset);
+        descr->load_ac_stim(inst, model, stim);
+        for (uint32_t k = 0; k < n; k++) {
+          const OsdiAcStimSource *src = &descr->ac_stim_sources[k];
+          if (strcmp(src->analysis, "ac") != 0)
+            continue;
+          uint32_t n1 = node_mapping[src->nodes.node_1];
+          double re = stim[2 * k];
+          double im = stim[2 * k + 1];
+          /* the stimulus enters the extracted residual with a positive sign,
+           * and the AC system solves (G + jwC)x = -residual_stim */
+          ckt->CKTrhs[n1] -= re;
+          ckt->CKTirhs[n1] -= im;
+          if (src->nodes.node_2 != UINT32_MAX) {
+            uint32_t n2 = node_mapping[src->nodes.node_2];
+            ckt->CKTrhs[n2] += re;
+            ckt->CKTirhs[n2] += im;
+          }
+        }
+        txfree(stim);
+      }
 
       /* AC stamping for absdelay slots.
        *

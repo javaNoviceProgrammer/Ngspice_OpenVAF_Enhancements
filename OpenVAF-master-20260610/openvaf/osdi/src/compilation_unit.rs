@@ -252,6 +252,7 @@ pub fn general_callbacks<'ll>(
                 | CallBackKind::NoiseTable(_)
                 | CallBackKind::WhiteNoise { .. }
                 | CallBackKind::FlickerNoise { .. }
+                | CallBackKind::AcStim { .. }
                 | CallBackKind::TimeDerivative => return None,
 
                 CallBackKind::Print { kind, arg_tys, dst } => {

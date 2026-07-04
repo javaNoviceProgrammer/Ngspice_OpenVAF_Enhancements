@@ -140,6 +140,17 @@ impl Noise {
                 NoiseSourceKind::NoiseTable { log: table.log, vals: table.vals.clone() },
                 table.name,
             ),
+            CallBackKind::AcStim { name, .. } => {
+                let mag = func.dfg.instr_args(inst)[0];
+                let phase = func.dfg.instr_args(inst)[1];
+                (
+                    NoiseSourceKind::AcStim {
+                        mag: ssa_builder.define_at_exit(func, F_ZERO, mag, inst),
+                        phase: ssa_builder.define_at_exit(func, F_ZERO, phase, inst),
+                    },
+                    name,
+                )
+            }
             _ => unreachable!(),
         };
         Noise { name, kind, factor }

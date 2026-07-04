@@ -1,6 +1,7 @@
 use hir::builtin::{
-    FLICKER_NOISE_NAME, NOISE_TABLE_FILE, NOISE_TABLE_FILE_NAME, NOISE_TABLE_INLINE,
-    NOISE_TABLE_INLINE_NAME, WHITE_NOISE_NAME,
+    AC_STIMT_NAME, AC_STIM_NAME_MAG, AC_STIM_NAME_MAG_PHASE, AC_STIM_UNIT, FLICKER_NOISE_NAME,
+    NOISE_TABLE_FILE, NOISE_TABLE_FILE_NAME, NOISE_TABLE_INLINE, NOISE_TABLE_INLINE_NAME,
+    WHITE_NOISE_NAME,
 };
 use hir::signatures::{
     ABSDELAY_MAX, ABS_INT, ABS_REAL, BOOL_EQ, DDX_POT, IDTMOD_IC, IDTMOD_IC_MODULUS,
@@ -1221,12 +1222,33 @@ impl BodyLoweringCtx<'_, '_, '_> {
                 F_ZERO
             }
 
-            // `ac_stim([name][, mag][, phase])` (Enhancement-26): a small-signal AC stimulus
-            // source. Per the LRM it evaluates to 0 in the large-signal (DC/transient) domain and
-            // injects `mag∠phase` only during small-signal (AC) analysis. The large-signal value is
-            // 0 (handled here); the AC-domain injection is a separate small-signal-RHS mechanism.
-            // (Previously this fell through to `unreachable!()` and crashed the compiler.)
-            BuiltIn::ac_stim => F_ZERO,
+            // `ac_stim([name][, mag][, phase])` (Enhancement-51, completing the E-26
+            // deferral): a small-signal AC stimulus source. Zero in the large-signal
+            // domain; injects `mag∠phase` (phase in radians, defaults 1∠0) into the AC
+            // RHS when the small-signal analysis matches `name` (default "ac"). Rides
+            // the noise-source extraction pipeline via a dedicated callback per call
+            // site, exactly like `white_noise`.
+            BuiltIn::ac_stim => {
+                let idx = self.ctx.num_noise_sources;
+                self.ctx.num_noise_sources += 1;
+                let name = if signature == AC_STIM_UNIT {
+                    self.ctx.func.interner.get_or_intern("ac")
+                } else {
+                    let name = self.body.as_literal(args[0]).unwrap().unwrap_str();
+                    self.ctx.func.interner.get_or_intern(name)
+                };
+                let mag = if signature == AC_STIM_UNIT || signature == AC_STIMT_NAME {
+                    F_ONE
+                } else {
+                    self.lower_expr(args[1])
+                };
+                let phase = if signature == AC_STIM_NAME_MAG_PHASE {
+                    self.lower_expr(args[2])
+                } else {
+                    F_ZERO
+                };
+                self.ctx.call1(CallBackKind::AcStim { name, idx }, &[mag, phase])
+            }
 
             BuiltIn::white_noise => {
                 // we create a dedicated callback for each noise source

@@ -9,6 +9,10 @@ pub enum NoiseSourceKind {
     WhiteNoise { pwr: Value },
     FlickerNoise { pwr: Value, exp: Value },
     NoiseTable { log: bool, vals: Box<[(Ieee64, Ieee64)]> },
+    /// `ac_stim` small-signal stimulus (Enhancement-51): rides the noise
+    /// extraction pipeline (same branch/factor machinery) and is partitioned
+    /// into its own OSDI descriptor array. `name` here is the ANALYSIS name.
+    AcStim { mag: Value, phase: Value },
 }
 
 #[derive(Debug)]
@@ -30,6 +34,10 @@ impl NoiseSource {
                 *exp = f(*exp);
             }
             NoiseSourceKind::NoiseTable { .. } => (),
+            NoiseSourceKind::AcStim { mag, phase } => {
+                *mag = f(*mag);
+                *phase = f(*phase);
+            }
         }
     }
 }
