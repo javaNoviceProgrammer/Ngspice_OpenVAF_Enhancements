@@ -5,9 +5,8 @@ openvaf-r and regenerate compile_report.md.
 The corpus is the public VA-Models collection (VA-Models-main/): the
 industry-standard compact models (BSIM4/6/BULK/CMG/IMG/SOI, PSP 102/103/104,
 PSP-HV, HiCUM L0/L2, MEXTRAM 504/505, VBIC, EKV 2.6/3, ASM-HEMT, EPFL-HEMT,
-Angelov, MVSG, diode_cmc, r2/r3_cmc, L-UTSOI, MOSVAR, IGBT, ...) plus the
-playground examples. All standalone models are expected to compile (exit 1
-if any fails).
+Angelov, MVSG, diode_cmc, r2/r3_cmc, L-UTSOI, MOSVAR, IGBT, ...).
+All standalone models are expected to compile (exit 1 if any fails).
 
 Files that are `include`d by another .va file in the tree are include
 FRAGMENTS (macro bodies, parameter lists, module-body pieces) -- they are not
