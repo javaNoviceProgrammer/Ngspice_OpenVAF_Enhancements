@@ -9,6 +9,21 @@ Main goals:
 - turn ngspice into the most powerful spice simulator
 - turn openvaf-r into the most powerful verilog-a compiler
 
+
+## Precursors
+
+Original OpenVAF git repository by Pascal Kuthe:
+
+https://github.com/pascalkuthe/OpenVAF
+
+OpenVAF-Reloaded git repository by Árpád Bűrmen:
+
+https://github.com/arpadbuermen/OpenVAF
+
+Ngspice Homepage:
+
+https://ngspice.sourceforge.io/
+
 ---
 
 ## Enhancement 1: `absdelay()` support for Verilog-A / OSDI
