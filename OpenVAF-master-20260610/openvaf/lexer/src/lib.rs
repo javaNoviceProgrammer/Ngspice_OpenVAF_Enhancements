@@ -25,6 +25,17 @@ pub fn tokenize(input: &str) -> Vec<Token> {
 /// Technically the the VAMS standard only considers ASCII.
 /// For better compatibility unicode is also allowed here (same whitespace definition as rust is
 /// used)
+/// A based-integer-literal base character (LRM A.8.7): d/h/o/b, either case.
+fn is_base_char(c: char) -> bool {
+    matches!(c, 'd' | 'D' | 'h' | 'H' | 'o' | 'O' | 'b' | 'B')
+}
+
+/// A character that can start the digit run of a based integer literal --
+/// the hex superset; per-base validity is enforced while eating the digits.
+fn is_based_digit(c: char) -> bool {
+    c.is_ascii_hexdigit() || c == '_'
+}
+
 pub fn is_whitespace(c: char) -> bool {
     // This is Pattern_White_Space.
     //
@@ -140,6 +151,19 @@ impl Cursor<'_> {
             '\'' if self.first() == '{' => {
                 self.bump();
                 ArrStart
+            }
+            // Unsized based integer literal `'d42` / `'sh1F` (LRM A.8.7,
+            // Enhancement-46). The sized form (`8'hFF`) is handled in
+            // `number()`, whose token began with the size digits. A digit is
+            // required after the base so a bare `'h` never becomes a (silently
+            // zero-valued) literal token.
+            '\'' if (is_base_char(self.first()) && is_based_digit(self.second()))
+                || (matches!(self.first(), 's' | 'S')
+                    && is_base_char(self.second())
+                    && is_based_digit(self.third())) =>
+            {
+                self.based_literal_body();
+                TokenKind::Literal { kind: LiteralKind::Int }
             }
             '=' if self.first() == '=' => {
                 self.bump();
@@ -385,7 +409,52 @@ impl Cursor<'_> {
                 self.eat_float_exponent();
                 Float { has_scale_char: false }
             }
+            // Sized based integer literal `8'hFF` (LRM A.8.7, Enhancement-46):
+            // the digits eaten so far are the size prefix. A digit is required
+            // after the base (see the unsized arm above).
+            '\'' if (is_base_char(self.second()) && is_based_digit(self.third()))
+                || (matches!(self.second(), 's' | 'S')
+                    && is_base_char(self.third())
+                    && is_based_digit(self.fourth())) =>
+            {
+                self.bump();
+                self.based_literal_body();
+                Int
+            }
             _ => Int,
+        }
+    }
+
+    /// Eats the `[s]<base><digits>` body of a based integer literal, after the
+    /// `'` has been consumed. Only digits valid for the base (plus `_`
+    /// separators) are eaten, so an invalid digit ends the token and surfaces
+    /// as an ordinary parse error. `x`/`z` digits are not meaningful in the
+    /// analog subset and are likewise not consumed.
+    fn based_literal_body(&mut self) {
+        if matches!(self.first(), 's' | 'S') && is_base_char(self.second()) {
+            self.bump();
+        }
+        if !is_base_char(self.first()) {
+            // malformed (`8'squark`): stop after the quote; the rest lexes as
+            // ordinary tokens and surfaces as a parse error
+            return;
+        }
+        let base = self.first();
+        self.bump();
+        loop {
+            let ok = match base {
+                'b' | 'B' => matches!(self.first(), '0' | '1' | '_'),
+                'o' | 'O' => matches!(self.first(), '0'..='7' | '_'),
+                'd' | 'D' => matches!(self.first(), '0'..='9' | '_'),
+                'h' | 'H' => {
+                    matches!(self.first(), '0'..='9' | 'a'..='f' | 'A'..='F' | '_')
+                }
+                _ => false,
+            };
+            if !ok {
+                break;
+            }
+            self.bump();
         }
     }
     /// Eats double-quoted string and returns true

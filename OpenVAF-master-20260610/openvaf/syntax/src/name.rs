@@ -24,7 +24,12 @@ impl Name {
     /// Resolve a name from the text of token.
     pub fn resolve(raw_text: &str) -> Name {
         if raw_text.starts_with('\\') {
-            Name(SmolStr::new(&raw_text[1..raw_text.len() - 1]))
+            // An escaped identifier (`\foo!`, LRM A.9.3): the token covers the
+            // backslash through the last non-whitespace character, so only the
+            // backslash is stripped -- `\foo` names the same thing as `foo`.
+            // (This used to strip the LAST character too, so escaped and plain
+            // spellings of the same name never matched; Enhancement-46.)
+            Name(SmolStr::new(&raw_text[1..]))
         } else {
             Name(raw_text.into())
         }

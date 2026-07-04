@@ -156,7 +156,7 @@ nature Angular_Force
     attr59: units
     attr60: access
     attr61: abstol
-discipline logi
+discipline logic
 
     potential = None
     flow = None

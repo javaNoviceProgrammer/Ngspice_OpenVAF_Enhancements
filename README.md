@@ -594,6 +594,16 @@ Several unrelated language gaps found along the way are also fixed. **`localpara
 
 ---
 
+## Enhancement 46: escaped identifiers + integer literal bases
+
+*July 2026* — Implemented **integer literal bases** (LRM A.8.7) and completed **escaped identifiers** (LRM A.9.3). Front-end only. **(1) Based literals were entirely missing**: `'h1F`, `'o17`, `'b1010`, `'d42`, sized `8'hFF`, signed `8'shFF` were all "encountered unexpected token" — the lexer contained only a commented-out sketch of based-number tokenization — and the LRM-legal underscore separator (`1_000_00`) **crashed the compiler** (the lexer ate `_` into the token; value parsing didn't strip it). The lexer now tokenizes `[size]'[s]<base><digits>` with digits validated per base while lexing (an invalid digit or a bare `'h` is an ordinary parse error, never a silently-zero literal), value parsing masks to the declared size (clamped 1..=32), sign-extends from the size's MSB under `s`, wraps to the 32-bit `integer` type (`'hFFFFFFFF` = −1), and `_` separators are stripped in every number form including reals. **(2) Escaped identifiers were half-wired**: the lexer already emitted `EscapedIdent` tokens, but `Name::resolve` stripped the identifier's *last character* along with the backslash — `\foo` never named the same thing as plain `foo`, and the compiler's own `std.va` def-map snapshot had quietly baked in `logi` for the escaped `\logic` discipline, hiding the bug (snapshots refreshed). The Enhancement-5 flattening also re-rendered instance-prefixed names unescaped, breaking any escaped net inside a submodule ("unexpected token '-'"); a `render_name` helper now re-escapes substitution values that aren't plain identifiers, and the renderer gained the `EscapedIdent` substitution arm. Keyword spellings (`\module`) work as names.
+
+- Verified end-to-end through ngspice: one module using every literal form sums to **0.1443252345 V exactly** (hex/octal/binary/decimal, size mask + sign extension, 32-bit wrap, separators in ints/based digits/reals); escaped nets/variables/parameters with specials (`\2wire`, `\value#`, `\r+val`); `\mid` ≡ `mid` as one net; an escaped net inside a flattened submodule re-escapes correctly (2k series exact); `\module` as a net name; four malformed literal forms rejected cleanly — see `examples/escid_examples/`
+- Regression-checked: all 42 example verify suites ALL PASS; 65/65 crate tests (`lexer`/`tokens`/`syntax`/`parser`/`hir_def`/`hir`/`hir_ty`/`hir_lower`/`sim_back`)
+- Details: [Enhancement-46.md](enhancements_doc/Enhancement-46.md)
+
+---
+
 ## Prebuilt Binaries
 
 Binaries are built by CI and committed to `bin/`:

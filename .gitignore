@@ -267,5 +267,10 @@ examples/netinit_examples/_*.cir
 examples/netinit_examples/_*.va
 examples/netinit_examples/_*.osdi
 
+# Enhancement 46 escaped-id/literal example scripts: temp netlists + models
+examples/escid_examples/_*.cir
+examples/escid_examples/_*.va
+examples/escid_examples/_*.osdi
+
 # Python bytecode cache (e.g. from importing _setup.py)
 __pycache__/

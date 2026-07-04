@@ -1,0 +1,82 @@
+// escid_demo.va -- Enhancement-46: escaped identifiers + integer literal bases
+//
+// LRM A.9.3: an escaped identifier starts with `\` and runs to the next
+// whitespace; it may contain any printable character, and `\foo` names the
+// same object as plain `foo`. LRM A.8.7: integer literals come in decimal,
+// hex, octal and binary bases -- `[size]'[s]<base><digits>` -- with `_`
+// separators legal in any number.
+`include "disciplines.vams"
+
+// every integer literal form, checked against a hand-computed sum
+module literals(a, c);
+  inout a, c;
+  electrical a, c;
+  integer h  = 'h1F;        //  31 (hex, unsized)
+  integer o  = 'o17;        //  15 (octal)
+  integer b  = 'b1010;      //  10 (binary)
+  integer d  = 'd42;        //  42 (explicit decimal)
+  integer sz = 8'hFF;       // 255 (sized: 8 bits, unsigned)
+  integer sg = 8'shFF;      //  -1 (signed: sign-extended from bit 7)
+  integer s4 = 4'sb1000;    //  -8
+  integer un = 1_000_00;    // 100000 (underscore separators)
+  integer hx = 16'hAB_CD;   // 43981 (separators inside based digits)
+  integer wr = 'hFFFFFFFF;  //  -1 (32-bit wrap)
+  real    ru = 1_234.5;     // separators in reals
+  analog V(a,c) <+ 1e-6*(h + o + b + d + sz + sg + s4 + un + hx + wr) + 1e-9*ru;
+  // = 1e-6*144324 + 1e-9*1234.5 = 0.1443252345 V
+endmodule
+
+// escaped identifiers on nets, variables and parameters -- including a
+// digit-leading name and characters no plain identifier could hold
+module escids(a, c);
+  inout a, c;
+  electrical a, c;
+  electrical \2wire ;
+  real \value# ;
+  parameter real \r+val = 2.0;
+  analog begin
+    \value# = 3.0;
+    I(a, \2wire ) <+ V(a, \2wire )/1e3;
+    I(\2wire , c) <+ V(\2wire , c)/(1e3*\r+val ) - \value# /1e7;
+  end
+endmodule
+
+// `\mid` and plain `mid` are the SAME net (LRM equivalence)
+module escsame(a, c);
+  inout a, c;
+  electrical a, c;
+  electrical \mid ;
+  analog begin
+    I(a, mid) <+ V(a, mid)/1e3;
+    I(mid, c) <+ V(mid, c)/1e3;
+  end
+endmodule
+
+// an escaped net inside a flattened submodule instance: the E-5 elaboration
+// re-escapes the instance-prefixed name when it re-renders the child's text
+module rcell(a, c);
+  inout a, c;
+  electrical a, c;
+  electrical \n-1 ;
+  analog begin
+    I(a, \n-1 ) <+ V(a, \n-1 )/1e3;
+    I(\n-1 , c) <+ V(\n-1 , c)/1e3;
+  end
+endmodule
+
+module escnest(a, c);
+  inout a, c;
+  electrical a, c;
+  rcell u1(a, c);
+endmodule
+
+// a keyword spelling used as an ordinary name via escaping
+module esckw(a, c);
+  inout a, c;
+  electrical a, c;
+  electrical \module ;
+  analog begin
+    I(a, \module ) <+ V(a, \module )/1e3;
+    I(\module , c) <+ V(\module , c)/1e3;
+  end
+endmodule

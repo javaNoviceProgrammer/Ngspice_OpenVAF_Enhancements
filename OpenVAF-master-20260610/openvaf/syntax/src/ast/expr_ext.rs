@@ -322,16 +322,64 @@ impl ast::Literal {
     }
 }
 
+/// Strips `_` digit separators (LRM: legal in any number, Enhancement-46).
+fn strip_separators(src: &str) -> std::borrow::Cow<'_, str> {
+    if src.contains('_') {
+        std::borrow::Cow::Owned(src.chars().filter(|&c| c != '_').collect())
+    } else {
+        std::borrow::Cow::Borrowed(src)
+    }
+}
+
+/// Parses a based integer literal `[size]'[s]<base><digits>` (LRM A.8.7,
+/// Enhancement-46) to its 32-bit `integer` value: the digits are taken in the
+/// given radix, masked to `size` bits when a size is given (clamped to 1..=32),
+/// and sign-extended from the size's MSB under the `s` qualifier.
+fn parse_based_int(text: &str) -> Option<i32> {
+    let quote = text.find('\'')?;
+    let (size_s, rest) = text.split_at(quote);
+    let mut rest = &rest[1..];
+    let signed = matches!(rest.as_bytes().first(), Some(b's' | b'S'));
+    if signed {
+        rest = &rest[1..];
+    }
+    let radix = match rest.as_bytes().first()? {
+        b'd' | b'D' => 10,
+        b'h' | b'H' => 16,
+        b'o' | b'O' => 8,
+        b'b' | b'B' => 2,
+        _ => return None,
+    };
+    let digits = &rest[1..];
+    if digits.is_empty() {
+        return None;
+    }
+    let mut val = u128::from_str_radix(digits, radix).ok()?;
+    let size: u32 = if size_s.is_empty() {
+        32
+    } else {
+        size_s.parse::<u32>().ok()?.clamp(1, 32)
+    };
+    if size < 32 {
+        let mask = (1u128 << size) - 1;
+        val &= mask;
+        if signed && (val >> (size - 1)) & 1 == 1 {
+            val |= !mask;
+        }
+    }
+    Some(val as u32 as i32)
+}
+
 impl ast::StdRealNumber {
     pub fn value(&self) -> f64 {
-        let src = self.syntax.text();
+        let src = strip_separators(self.syntax.text());
         src.parse().unwrap()
     }
 }
 
 impl ast::SiRealNumber {
     pub fn value(&self) -> f64 {
-        let src = self.syntax.text();
+        let src = strip_separators(self.syntax.text());
         let (src, scale_char) = src.split_at(src.len() - 1);
         let exp = match scale_char {
             "T" => 12,
@@ -357,7 +405,11 @@ impl ast::IntNumber {
     /// it as an error, since a bare digit-string with no `.`/exponent is still a perfectly
     /// valid (if unusually spelled) real-number literal wherever a `real` is expected.
     pub fn value(&self) -> Option<i32> {
-        self.syntax.text().parse().ok()
+        let src = strip_separators(self.syntax.text());
+        if src.contains('\'') {
+            return parse_based_int(&src);
+        }
+        src.parse().ok()
     }
 
     /// Parses this integer literal's text as an `f64`. Always succeeds for any token the
@@ -365,7 +417,13 @@ impl ast::IntNumber {
     /// and never exceeds f64's much larger range) -- the fallback for `value()` returning
     /// `None`.
     pub fn value_as_f64(&self) -> f64 {
-        self.syntax.text().parse().expect("IntNumber token must be valid float syntax too")
+        let src = strip_separators(self.syntax.text());
+        if src.contains('\'') {
+            // a based literal always fits `i32` after masking; a malformed one
+            // (already a parse error elsewhere) degrades to 0 rather than panicking
+            return parse_based_int(&src).unwrap_or(0) as f64;
+        }
+        src.parse().expect("IntNumber token must be valid float syntax too")
     }
 }
 

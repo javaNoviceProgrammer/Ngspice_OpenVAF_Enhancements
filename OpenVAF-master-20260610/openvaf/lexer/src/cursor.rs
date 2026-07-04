@@ -63,6 +63,16 @@ impl<'a> Cursor<'a> {
         self.nth_char(1)
     }
 
+    /// Peeks the third symbol from the input stream without consuming it.
+    pub(crate) fn third(&self) -> char {
+        self.nth_char(2)
+    }
+
+    /// Peeks the fourth symbol from the input stream without consuming it.
+    pub(crate) fn fourth(&self) -> char {
+        self.nth_char(3)
+    }
+
     /// Checks if there is nothing more to consume.
     pub(crate) fn is_eof(&self) -> bool {
         self.chars.as_str().is_empty()

@@ -653,6 +653,22 @@ fn find_bus_port_holes(text: &str, bus_ports: &HashMap<Name, BTreeMap<i32, Strin
 /// renamed scopes (an already-flattened nested instance's text, or a
 /// parent-scope override expression) correct: opaque foreign text is never
 /// accidentally re-renamed using the wrong scope's `subst`.
+/// Renders a resolved name back into source text: a plain identifier verbatim,
+/// anything else as an escaped identifier (`\name `, whitespace-terminated) --
+/// needed when a substitution value (e.g. an instance-prefixed child local that
+/// was declared escaped, `\n-1` -> `u1_n-1`) contains characters a plain
+/// identifier cannot (Enhancement-46).
+fn render_name(name: &str) -> String {
+    let mut chars = name.chars();
+    let plain = matches!(chars.next(), Some(c) if c.is_ascii_alphabetic() || c == '_')
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$');
+    if plain {
+        name.to_owned()
+    } else {
+        format!("\\{name} ")
+    }
+}
+
 fn render_with_holes(text: &str, holes: &[(Range<usize>, String)], scope: &Scope) -> String {
     let mut all_holes = find_bus_port_holes(text, &scope.bus_ports);
     all_holes.extend(holes.iter().cloned());
@@ -683,7 +699,14 @@ fn render_with_holes(text: &str, holes: &[(Range<usize>, String)], scope: &Scope
         let raw = &text[start..end];
         if tok.kind == TokenKind::SimpleIdent {
             if let Some(replacement) = scope.subst.get(raw) {
-                out.push_str(replacement);
+                out.push_str(&render_name(replacement));
+                continue;
+            }
+        } else if tok.kind == TokenKind::EscapedIdent {
+            // an escaped identifier's resolved name drops the backslash
+            // (Enhancement-46); the substituted value is re-escaped if needed
+            if let Some(replacement) = scope.subst.get(&raw[1..]) {
+                out.push_str(&render_name(replacement));
                 continue;
             }
         }
@@ -932,7 +955,8 @@ impl ElabCtx<'_> {
                                 None
                             } else {
                                 let key = name.to_string();
-                                let renamed = scope.subst.get(&key).cloned().unwrap_or(key);
+                                let renamed =
+                                    render_name(&scope.subst.get(&key).cloned().unwrap_or(key));
                                 Some(match init {
                                     Some(e) => format!("{renamed} = {}", e.syntax().text()),
                                     None => renamed,
