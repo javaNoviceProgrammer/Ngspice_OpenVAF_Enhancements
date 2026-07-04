@@ -1,0 +1,69 @@
+// signalflow_demo.va -- Enhancement-36: probe-only branches (ideal ammeter) and
+// flow-only signal-flow systems.
+//
+// The DAE only materialised branches that are CONTRIBUTED to; a branch that was
+// merely PROBED -- `x = I(p,n);`, or a declared `branch (p,n) sense;` used only
+// inside `I(sense)` -- read 0 *and* conducted nothing (an open circuit). Per the
+// LRM, a flow-probed branch with no contribution must behave as a SHORT (a 0V
+// potential source) whose current is the probed value: the ideal-ammeter idiom,
+// and the mechanism that flow-only (`current` discipline) signal-flow nets ride
+// on. Enhancement-36 synthesises that 0V-source equation in the DAE builder
+// (`residual[I(br)] = -V(hi,lo)`, KCL(hi) += I(br), KCL(lo) -= I(br)), the same
+// pattern Enhancement-29 used for port flows.
+//
+// Conservative systems (electrical) and potential-only signal-flow disciplines
+// (voltage) already worked; this file exercises all four system styles.
+
+`include "disciplines.vams"
+
+// 1. CONSERVATIVE + probe-only branch: ideal ammeter with a transimpedance
+//    readout. The `sense` branch is never contributed to -- it must short p->n
+//    and read the through-current.
+module ammeter_tz(p, n, out);
+    inout p, n; output out;
+    electrical p, n;
+    voltage out;                          // potential-only signal-flow output
+    parameter real rtz = 1e3 from (0:inf);
+    branch (p, n) sense;
+    analog V(out) <+ rtz * I(sense);      // probe-only named branch
+endmodule
+
+// 2. CCCS current mirror on a probe-only sense branch (classic idiom)
+module cmirror(inp, onp, com);
+    inout inp, onp, com;
+    electrical inp, onp, com;
+    parameter real k = 2.0;
+    branch (inp, com) sense;
+    analog I(onp, com) <+ k * I(sense);
+endmodule
+
+// 3. SIGNAL-FLOW, potential-only (voltage discipline): gain block
+module sfgain(in, out);
+    input in; output out;
+    voltage in, out;
+    parameter real k = 3.0;
+    analog V(out) <+ k * V(in);
+endmodule
+
+// 4. SIGNAL-FLOW, flow-only (current discipline): source, gain, and
+//    current-to-voltage converter -- the input probes are probe-only branches
+//    to ground, so this entire style depended on Enhancement-36.
+module isrc(out);
+    output out; current out;
+    parameter real i0 = 1e-3;
+    analog I(out) <+ i0;
+endmodule
+
+module igain(in, out);
+    input in; output out;
+    current in, out;
+    parameter real k = 5.0;
+    analog I(out) <+ k * I(in);
+endmodule
+
+module i2v(in, p, n);
+    input in; inout p, n;
+    current in; electrical p, n;
+    parameter real rtz = 1e3 from (0:inf);
+    analog V(p, n) <+ rtz * I(in);
+endmodule

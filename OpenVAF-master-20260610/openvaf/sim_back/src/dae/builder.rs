@@ -95,6 +95,9 @@ impl<'a> Builder<'a> {
         // Give every probed port flow `I(<p>)` a defining equation + unknown before we
         // compute derivatives/jacobian, so it participates like any branch current.
         self.build_port_flow_equations();
+        // ... and every PROBE-ONLY branch its 0V-source (ideal ammeter) equation
+        // (Enhancement-36), for the same reason.
+        self.build_probe_only_branches();
 
         let sim_unknown_reads = self.sim_unknown_reads();
         let derivative_info = self.intern.unknowns(&self.cursor, true);
@@ -569,6 +572,79 @@ impl<'a> Builder<'a> {
             residual.add_contribution(&contrib, &mut self.cursor, false);
             residual.add(&mut self.cursor, true, iport);
             residual.nature_kind = ResidualNatureKind::Flow;
+        }
+    }
+
+    /// Enhancement-36: gives every PROBE-ONLY branch its 0V-source (ideal ammeter)
+    /// equation and DAE unknown.
+    ///
+    /// The topology only materialises branches that are *contributed* to (it is keyed
+    /// off the `IsVoltageSrc` outputs, which only exist for contributions), so a branch
+    /// that is merely probed — `x = I(p, n);`, or a declared `branch (p,n) sense;` that
+    /// only ever appears inside `I(sense)` — never reached the DAE: its current param
+    /// fell back to the "always zero" eval path AND the branch conducted nothing (an
+    /// open circuit). Per the LRM a flow-probed branch with no contribution behaves as
+    /// a **short** (a potential source of 0) whose current is the probed value — the
+    /// ideal-ammeter idiom, and the mechanism flow-only (`current` discipline)
+    /// signal-flow nets ride on.
+    ///
+    /// The synthesised system mirrors `add_source_equation` for a voltage branch with
+    /// source expression 0:
+    ///
+    ///   `residual[Current(br)] = -V(hi,lo)`  (nature Potential; equation V(hi,lo) = 0)
+    ///   `residual[KCL(hi)] += I(br)` , `residual[KCL(lo)] -= I(br)`
+    ///
+    /// Port flows are excluded — they get their own defining equation in
+    /// `build_port_flow_equations` above. Note that paralleling several probe-only
+    /// branches across the *same* node pair is degenerate (parallel ideal 0V sources),
+    /// exactly as paralleling ideal voltage sources is.
+    fn build_probe_only_branches(&mut self) {
+        // Collect the (deduplicated) set of probed branch currents that the
+        // contribution-driven `build_branch` pass did not materialise.
+        let mut todo: Vec<CurrentKind> = Vec::new();
+        for (_, &kind, _) in self.intern.live_params(&self.cursor.func.dfg) {
+            if let ParamKind::Current(cur) = kind {
+                if matches!(cur, CurrentKind::Port(_)) {
+                    continue;
+                }
+                if self.system.unknowns.index(&SimUnknownKind::Current(cur)).is_none()
+                    && !todo.contains(&cur)
+                {
+                    todo.push(cur);
+                }
+            }
+        }
+
+        for cur in todo {
+            let (hi, lo) = BranchWrite::try_from(cur)
+                .expect("port flows are filtered above")
+                .nodes(self.db);
+
+            // `I(br)` — the same input param the model reads; its value is injected
+            // into the Kirchhoff rows of the branch's nodes.
+            let i_br = self.intern.ensure_param(&mut self.cursor, ParamKind::Current(cur));
+            // V(hi,lo) — the branch voltage the source equation pins to zero.
+            let v = self.intern.ensure_param(&mut self.cursor, ParamKind::Voltage { hi, lo });
+
+            // residual[Current(br)] = 0 - V(hi,lo)   (same shape as add_source_equation
+            // with a zero source expression)
+            let residual = get_residual!(self, SimUnknownKind::Current(cur));
+            residual.add(&mut self.cursor, true, v);
+            residual.nature_kind = ResidualNatureKind::Potential;
+
+            // Kirchhoff rows: positive branch current flows from `hi` to `lo`.
+            get_residual!(self, SimUnknownKind::KirchoffLaw(hi)).add(
+                &mut self.cursor,
+                false,
+                i_br,
+            );
+            if let Some(lo) = lo {
+                get_residual!(self, SimUnknownKind::KirchoffLaw(lo)).add(
+                    &mut self.cursor,
+                    true,
+                    i_br,
+                );
+            }
         }
     }
 

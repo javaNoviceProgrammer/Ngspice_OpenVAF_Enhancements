@@ -493,6 +493,16 @@ Several unrelated language gaps found along the way are also fixed. **`localpara
 
 ---
 
+## Enhancement 36: probe-only branches (ideal ammeter) & flow-only signal-flow systems
+
+*July 2026* — Implemented the LRM's **0V-source (ideal ammeter) semantics for probe-only branches**, which simultaneously completes support for **flow-only signal-flow disciplines**. A branch that is *probed* but never *contributed* to — `x = I(p,n);`, or a declared `branch (p,n) sense;` used only inside `I(sense)` — read **0 and conducted nothing**: the "ammeter" was an open circuit, silently breaking its series path. Per the LRM such a branch must behave as a **short** (a potential source of 0 V) whose current is the probed value — the ideal-ammeter idiom, the basis of CCCS-on-a-sense-branch current mirrors, and the mechanism flow-only (`current` discipline) signal-flow nets ride on (an input port only *probes* its net's flow, so entire current-signal chains produced 0). Root cause: the topology only materialises branches from *contributions* (it is keyed off the `IsVoltageSrc` outputs), so probe-only branches never reached the DAE — the same failure family as Enhancement-29's port-flow stub. The fix is a new `build_probe_only_branches()` pass in the DAE builder (E-29's port-flow pass is its direct template) that synthesises, for every probed-but-unmaterialised branch current, exactly the system a zero-valued voltage source gets: `residual[I(br)] = −V(hi,lo)` (nature Potential, i.e. `V(hi,lo) = 0`) with `I(br)` injected into the Kirchhoff rows of both nodes. It runs before the derivative machinery, so the Jacobian comes out of the ordinary autodiff path. Pure `sim_back` change; no OSDI/ngspice change. (Inherent caveat: paralleling several probe-only branches across the *same* node pair is degenerate — parallel ideal 0 V sources — exactly as paralleling ideal voltage sources is.)
+
+- Verified end-to-end through ngspice across all four system styles: the **ammeter shorts and reads** (a series 2 V/1 kΩ loop conducts its full 2 mA — it used to be open — with a transimpedance readout of exactly 2 V); it reads **displacement current** in AC (series 1 nF at ω=10⁶ → exactly `j·1 V`); a **CCCS current mirror** on a probe-only sense branch (3 mA → 6 mA); the potential-only (`voltage` discipline) signal-flow gain chain (`1.5 × 3 × 2 = 9 V`, already worked, now regression-locked); and the flow-only (`current` discipline) chain `1 mA → ×5 → 1 kΩ = 5 V` exactly (used to be 0), with the probed signal net at exactly 0 V — textbook signal-flow semantics — see `examples/signalflow_examples/`
+- Regression-checked: all 32 example verify suites ALL PASS; `sim_back` snapshot tests unchanged at their pre-existing baseline
+- Details: [Enhancement-36.md](enhancements_doc/Enhancement-36.md)
+
+---
+
 ## Prebuilt Binaries
 
 Binaries are built by CI and committed to `bin/`:

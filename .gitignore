@@ -216,5 +216,9 @@ examples/comment_examples/_*.txt
 examples/comment_examples/_*.va
 examples/comment_examples/_*.osdi
 
+# Enhancement 36 signal-flow example scripts: temp netlists + outputs
+examples/signalflow_examples/_*.cir
+examples/signalflow_examples/_*.txt
+
 # Python bytecode cache (e.g. from importing _setup.py)
 __pycache__/
