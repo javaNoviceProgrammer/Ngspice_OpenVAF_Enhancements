@@ -1,0 +1,89 @@
+// *********************************************************************************************
+// ****                                                                                     ****
+// ****                                    L-UTSOI Model                                    ****
+// ****                                   Version 102.7.0                                   ****
+// ****                                                                                     ****
+// ****                      Ultra Thin Fully Depleted SOI MOSFET Model                     ****
+// ****                                                                                     ****
+// ****                                   Verilog-A code                                    ****
+// ****      Authors: S. Martinie, T. Bedecarrats, O. Rozeau, T. Poiroux, M.A. Jaud         ****
+// ****                                                                                     ****
+// *********************************************************************************************
+//
+// *********************************************************************************************
+// ****                                                                                     ****
+// ****                                License information                                  ****
+// ****                                                                                     ****
+// ****   Copyright 2013-2022 CEA-Leti                                                      ****
+// ****                                                                                     ****
+// ****   Licensed under Educational Community License, Version 2.0 (the "License"); you    ****
+// ****   may not use this file except in compliance with the License. You may obtain a     ****
+// ****   copy of the license at http://opensource.org/licenses/ECL-2.0                     ****
+// ****                                                                                     ****
+// ****   Unless required by applicable law or agreed to in writing, software distributed   ****
+// ****   under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR       ****
+// ****   CONDITIONS OF ANY KIND, either express or implied. See the License for the        ****
+// ****   specific language governing permissions and limitations under the License.        ****
+// ****                                                                                     ****
+// *********************************************************************************************
+//
+// *********************************************************************************************
+// ****                                                                                     ****
+// ****   Notice:                                                                           ****
+// ****   The L-UTSOI standard has been supported by the members of Silicon Integration     ****
+// ****   Initiative's Compact Model Coalition. A link to the most recent version of this   ****
+// ****   standard can be found at: http://www.si2.org/cmc                                  ****
+// ****   CMC Release Date:  December 15th, 2022                                            ****
+// ****   Public Release Date:  June 15th, 2024                                             ****
+// ****                                                                                     ****
+// ****                                                                                     ****
+// ****   This model is suitable for undoped ultrathin film SOI MOSFET                      ****
+// ****   The core of the model (drain current and intrinsic charges) is valid also         ****
+// ****   for independent double gate MOSFET, since it accounts for back interface          ****
+// ****   conduction                                                                        ****
+// ****                                                                                     ****
+// ****   Includes:                                                                         ****
+// ****       - specific surface potential calculations for FDSOI, valid also for IDG       ****
+// ****       - specific drain current expression for FDSOI, valid also for IDG             ****
+// ****       - specific intrinsic charges model, valid also for IDG                        ****
+// ****       - field-dependent mobility including remote coulomb scattering                ****
+// ****       - quantum confinement effect                                                  ****
+// ****       - velocity saturation                                                         ****
+// ****       - channel length modulation                                                   ****
+// ****       - series-resistance with gate voltage dependence                              ****
+// ****       - short-channel effects                                                       ****
+// ****       - overlap capacitances (SP-based)                                             ****
+// ****       - gate leakage current                                                        ****
+// ****       - gate-induced drain/source leakage (GIDL, GISL)                              ****
+// ****       - self heating effect                                                         ****
+// ****       - narrow-width effects                                                        ****
+// ****       - stress model                                                                ****
+// ****       - noise (1/f, thermal, induced gate and shot noise)                           ****
+// ****       - source/drain junctions asymmetry                                            ****
+// ****       - Non-quasi-static effects (using RTA approximation)                          ****
+// ****       - global and local scale levels                                               ****
+// ****                                                                                     ****
+// *********************************************************************************************
+
+`include "discipline.h"
+
+// Flag for .OP calculations. Commenting this line cancels OP-related variables definition and OP calculations
+`define OP_CALC
+
+`define NQSmodel
+
+`include "L_UTSOI_102_macrodef.include"
+
+// *************************************************************************************************************************
+// Model Calculation
+// *************************************************************************************************************************
+
+`ifdef __XYCE__
+module l_utsoi_va(d,g,s,b,Tnode);
+`else
+module l_utsoi(d,g,s,b,Tnode);
+`endif
+
+`include "L_UTSOI_102_module.include"
+
+endmodule

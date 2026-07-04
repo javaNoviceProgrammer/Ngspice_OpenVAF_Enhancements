@@ -1,0 +1,32 @@
+# NOTE! Please use 'git ls-files -i --exclude-standard'
+# command after changing this file, to see if there are
+# any tracked files which get ignored after the change.
+#
+# (compile "git ls-files -i --exclude-standard")
+
+admslibs
+admslibs/*.*
+osdilibs
+osdilibs/*.*
+*.vlog
+*.osdi
+code/*/*/.libs
+*.dat
+*.prn
+*.mt*
+*.res
+*.raw
+*.ngspice
+*.xyce
+*.ma*
+*.log
+*.so
+*.la
+*.o
+*.lo
+*.C
+*.h
+*.xml
+*.adms
+.headerstring*
+.registerstring*

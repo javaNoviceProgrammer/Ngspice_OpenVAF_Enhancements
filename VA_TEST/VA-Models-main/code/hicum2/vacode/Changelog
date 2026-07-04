@@ -1,0 +1,21 @@
+Update version 3.1.0
+Use Gmin macro instead gmin from init section
+Xyce:
+Skip only OP variables IC, IB, IS, IAVL, BETADC
+
+Improve convergence by adding Gmin to branches bpsi and sici.
+Add version 3.0.0
+Use discipline.h
+
+Xyce:
+Skip DC OP analysis.
+Use alternative code block for shorting thermal branch.
+Change module name to prevent name conflict with built-in model.
+
+Use alternative ngspice/Xyce specific limit functions for inner base-emitter and base-collector junctions
+
+Use disciplines.vams
+Use constants.vams
+
+Origin of the model version 2.4.0:
+https://www.iee.et.tu-dresden.de/iee/eb/hic_new/hic_source.html#hicumL0

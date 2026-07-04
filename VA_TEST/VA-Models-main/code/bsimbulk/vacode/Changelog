@@ -1,0 +1,12 @@
+Update to version 107.2.1
+Limit parameter XJ and NDEPEDGE > 0 against problems with sqrt()
+
+Xyce: 
+Use specific attributes to activate certain parameter as model and instance parameter.
+Setting op output GDS = 0 for vds < 0 because adms can't mapply-unary
+Introduce @(initial_instance) to allow node colapsing
+
+Prevent division by 0 for parameters: MJS, MJD, MJSWS, MJSWD, MJSWGS, MJSWGD and NDR
+
+Origin of the model version 107.0.0:
+http://bsim.berkeley.edu/models/bsimbulk/
