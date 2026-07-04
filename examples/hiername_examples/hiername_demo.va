@@ -1,0 +1,64 @@
+// hiername_demo.va -- Enhancement-49: $root + hierarchical names, the
+// transition() real-input fix, and the builtin argument-type audit
+//
+// LRM 6.6/9.x: objects are referenceable through the design hierarchy --
+// downward into instances (u1.m, u1.u2.r), through named blocks
+// (outer.inner.w), and anchored at $root. After the E-5 flattening,
+// instance-qualified references rewrite to the flattened prefixed names.
+`include "disciplines.vams"
+
+// deep hierarchy: divider cell inside a wrapper inside the top
+module hn_cell(a, c);
+  inout a, c;
+  electrical a, c;
+  electrical m;
+  parameter real r = 2e3;
+  analog begin
+    I(a, m) <+ V(a, m)/r;
+    I(m, c) <+ V(m, c)/r;
+  end
+endmodule
+
+module hn_mid(a, c);
+  inout a, c;
+  electrical a, c;
+  hn_cell u2(a, c);
+endmodule
+
+module hier(a, c, s);
+  inout a, c, s;
+  electrical a, c, s;
+  hn_mid u1(a, c);
+  analog V(s) <+ 1e-3*u1.u2.r              // hierarchical parameter: 2
+             + 10.0*V(u1.u2.m)             // deep net probe
+             + 100.0*V($root.hier.u1.u2.m) // $root-anchored spelling
+             + 1000.0*V(hier.u1.u2.m);     // top-qualified spelling
+endmodule
+
+// named blocks: single level, nested, and $root-anchored forms
+module blocks(a, c);
+  inout a, c;
+  electrical a, c;
+  analog begin : outer
+    begin : inner
+      real w;
+      w = 1.25;
+    end
+  end
+  analog V(a,c) <+ outer.inner.w                       // nested (was broken)
+                 + 2.0*$root.blocks.outer.inner.w;     // $root form: total 3.75
+endmodule
+
+// the LRM comparator idiom: transition() with a REAL input (was a type error)
+module comparator(cout, inp, inm);
+  output cout;
+  input inp, inm;
+  electrical cout, inp, inm;
+  parameter real td = 1n, tr = 1n, tf = 1n;
+  real vcout;
+  analog begin
+    @(cross(V(inp) - V(inm), 0))
+      vcout = ((V(inp) > V(inm)) ? 1 : 0);
+    V(cout) <+ transition(vcout, td, tr, tf);
+  end
+endmodule

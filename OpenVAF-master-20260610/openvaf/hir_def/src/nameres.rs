@@ -584,7 +584,12 @@ impl DefMap {
             scope_name = segment;
         }
 
-        match self.scopes[scope].declarations.get(name) {
+        // NOTE: `current_map`, not `self` -- the traversal above may have
+        // redirected into a nested block's own def map, and the final name
+        // lives there. Using `self` made every multi-segment block path
+        // (`outer.inner.w`) fail with "not found in 'inner'" while probing the
+        // *outer* map's scope instead (Enhancement-49).
+        match current_map.scopes[scope].declarations.get(name) {
             Some(res) => Ok(ResolvedPath::ScopeDefItem(*res)),
             None => {
                 Err(PathResolveError::NotFoundIn { name: name.clone(), scope: scope_name.clone() })

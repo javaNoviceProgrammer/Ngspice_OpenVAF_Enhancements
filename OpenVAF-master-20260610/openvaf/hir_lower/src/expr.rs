@@ -1787,8 +1787,9 @@ impl BodyLoweringCtx<'_, '_, '_> {
     /// present, is accepted for signature compatibility but has no numerical effect (same
     /// convention as `laplace_*`'s trailing tolerance argument).
     fn lower_transition(&mut self, args: &[ExprId], signature: hir::Signature) -> Value {
-        let x_int = self.lower_expr(args[0]);
-        let x = self.ctx.ins().ifcast(x_int);
+        // the input is Real-typed since Enhancement-49 (integer inputs arrive
+        // through the standard implicit promotion) -- no manual cast
+        let x = self.lower_expr(args[0]);
         // `` `default_transition `` (Enhancement-47): when the rise/fall
         // arguments are omitted, ramp with the directive's time instead of
         // switching instantaneously (0, the LRM default without a directive).

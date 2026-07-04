@@ -282,5 +282,10 @@ examples/stresc_examples/_*.cir
 examples/stresc_examples/_*.va
 examples/stresc_examples/_*.osdi
 
+# Enhancement 49 hierarchical-name example scripts: temp netlists + models
+examples/hiername_examples/_*.cir
+examples/hiername_examples/_*.va
+examples/hiername_examples/_*.osdi
+
 # Python bytecode cache (e.g. from importing _setup.py)
 __pycache__/

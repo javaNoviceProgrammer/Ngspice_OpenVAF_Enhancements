@@ -624,6 +624,16 @@ Several unrelated language gaps found along the way are also fixed. **`localpara
 
 ---
 
+## Enhancement 49: $root + hierarchical names, transition() input
+
+*July 2026* — Implemented **hierarchical names** (LRM 6.6) and fixed a user-reported `transition()` defect. The probe found `$root`-anchored paths and single-level block paths already working, plus three defects. **(1) References into flattened instances didn't resolve**: after the Enhancement-5 elaboration flattens `rdiv u1(a, c);` into prefixed locals (`u1__m`), parent-side references (`V(u1.m)`, `u1.r`) failed with "'u1' was not found in the current scope". Every rendering scope now carries an **instance-chain map** (all reachable chains — `u1`, `u1.u2`, `u1[2]` — mapped to their composed flattening prefixes), and a token-level scanner rewrites `chain.member` occurrences to the flattened names: deep chains compose, instance-array elements are disambiguated from bus selects by chain lookup, bus selects after the member stay in place, escaped names re-escape, and the top scope's alias entries plus `$root.` stripping make `$root.<top>.u1.u2.m`, `<top>.u1.u2.m` and `u1.u2.m` resolve identically. **(2) Nested named-block paths failed** (`outer.inner.w` — "'w' was not found in 'inner'"): after the resolver redirected into a nested block's def map, the *final* name lookup still probed the original map (`self.scopes` instead of `current_map.scopes` — a one-token aliasing bug that only multi-segment paths hit). **(3) `transition()` typed its input Integer**, rejecting the LRM's canonical comparator (`real vcout; ... transition(vcout, td, tr, tf)`); per LRM 4.5.7 the input is Real (integers still promote implicitly). The accompanying audit of **every** builtin signature table caught one more defect — `DIST_2_ARG_CONST_SEED` typed its middle argument Real while its three siblings say Integer — making signature tables a three-time defect class (E-40 varargs truncation, E-47 arity shortfall, E-49 argument types), now fully audited.
+
+- Verified end-to-end through ngspice with exact checks: a two-level hierarchy read through plain, `$root`-anchored and top-qualified spellings (hierarchical parameter + deep net probes sum to **557 exactly**); nested named-block paths (**3.75 exactly**, previously an error); and the LRM comparator compiling and switching (+1/0 on the sine halves) — see `examples/hiername_examples/`
+- Regression-checked: all 45 example verify suites ALL PASS; 57/57 crate tests
+- Details: [Enhancement-49.md](enhancements_doc/Enhancement-49.md)
+
+---
+
 ## Prebuilt Binaries
 
 Binaries are built by CI and committed to `bin/`:

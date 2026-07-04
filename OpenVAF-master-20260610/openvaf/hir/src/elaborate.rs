@@ -564,6 +564,11 @@ enum PortBinding {
 struct Scope {
     subst: HashMap<String, String>,
     bus_ports: HashMap<Name, BTreeMap<i32, String>>,
+    /// Enhancement-49: every reachable instance chain from this scope
+    /// (`"u1"`, `"u1.u2"`, `"u1[2]"`, ...) mapped to the composed flattening
+    /// prefix of that instance's locals -- used to rewrite hierarchical
+    /// references (`V(u1.m)`, `u1.r`) to the flattened names (`u1__m`).
+    inst_prefixes: HashMap<String, String>,
 }
 
 /// Tries to constant-fold a `[msb:lsb]` instance-array range, mirroring
@@ -590,6 +595,160 @@ fn is_trivia(kind: TokenKind) -> bool {
 /// (degrading to a plain, unresolved identifier -- the same graceful
 /// "downstream diagnostic instead of a crash" fallback used elsewhere in
 /// this pass).
+/// Enhancement-49: finds hierarchical instance-path references (`u1.m`,
+/// `u1.u2.x`, `u1[2].m`, optionally behind `$root.<top>.` / `<top>.`) in raw
+/// module text and produces holes replacing them with the flattened
+/// (prefix-composed) names. The longest matching instance chain wins; exactly
+/// one member identifier is taken after the chain (a member followed by
+/// another `.` -- e.g. a block inside the child -- is left untouched for
+/// name resolution to diagnose). Bus selects after the member stay in place
+/// (`u1.b[2]` -> `u1__b[2]`).
+fn find_instance_path_holes(
+    text: &str,
+    inst_prefixes: &HashMap<String, String>,
+) -> Vec<(Range<usize>, String)> {
+    if inst_prefixes.is_empty() {
+        return Vec::new();
+    }
+    let mut spans = Vec::new();
+    let mut pos = 0usize;
+    for tok in lexer::tokenize(text) {
+        let start = pos;
+        let end = pos + usize::from(tok.len);
+        pos = end;
+        spans.push((start, end, tok.kind));
+    }
+    let next_sig = |mut j: usize| {
+        while j < spans.len() && is_trivia(spans[j].2) {
+            j += 1;
+        }
+        j
+    };
+    // reads one path segment at spans[i]: `ident` or `ident [ int ]`;
+    // returns (segment text, index just past it)
+    let read_segment = |i: usize| -> Option<(String, usize)> {
+        let (start, end, kind) = *spans.get(i)?;
+        if kind != TokenKind::SimpleIdent {
+            return None;
+        }
+        let mut seg = text[start..end].to_owned();
+        let j = next_sig(i + 1);
+        if spans.get(j).map(|s| s.2) == Some(TokenKind::OpenBracket) {
+            let k = next_sig(j + 1);
+            if let Some(&(ls, le, TokenKind::Literal { .. })) = spans.get(k) {
+                if let Ok(idx) = text[ls..le].parse::<i32>() {
+                    let m = next_sig(k + 1);
+                    if spans.get(m).map(|s| s.2) == Some(TokenKind::CloseBracket) {
+                        // only treat `[int]` as part of the segment when the
+                        // combined name is a known instance chain element
+                        // (otherwise it is an ordinary bus select)
+                        let candidate = format!("{seg}[{idx}]");
+                        if inst_prefixes.keys().any(|c| {
+                            c == &candidate || c.starts_with(&format!("{candidate}."))
+                        }) {
+                            seg = candidate;
+                            return Some((seg, m + 1));
+                        }
+                    }
+                }
+            }
+        }
+        Some((seg, i + 1))
+    };
+
+    let mut holes: Vec<(Range<usize>, String)> = Vec::new();
+    let mut i = 0usize;
+    while i < spans.len() {
+        let (start, _end, kind) = spans[i];
+        // optional `$root .` opener (the top-module alias entry in
+        // `inst_prefixes` then absorbs the following `<top> .` segment)
+        let (chain_start_idx, root_skipped) = if kind == TokenKind::SystemCallIdent
+            && &text[spans[i].0..spans[i].1] == "$root"
+        {
+            let j = next_sig(i + 1);
+            if spans.get(j).map(|s| s.2) == Some(TokenKind::Dot) {
+                (next_sig(j + 1), true)
+            } else {
+                i += 1;
+                continue;
+            }
+        } else {
+            (i, false)
+        };
+
+        let Some((first_seg, after_first)) = read_segment(chain_start_idx) else {
+            i += 1;
+            continue;
+        };
+        if !inst_prefixes.contains_key(&first_seg)
+            && !inst_prefixes.keys().any(|c| c.starts_with(&format!("{first_seg}.")))
+        {
+            i += 1;
+            continue;
+        }
+
+        // extend the chain greedily while `. <segment>` still names a chain
+        let mut chain = first_seg;
+        let mut cursor = after_first;
+        loop {
+            let j = next_sig(cursor);
+            if spans.get(j).map(|s| s.2) != Some(TokenKind::Dot) {
+                break;
+            }
+            let k = next_sig(j + 1);
+            let Some((seg, after_seg)) = read_segment(k) else { break };
+            let candidate = format!("{chain}.{seg}");
+            if inst_prefixes.contains_key(&candidate)
+                || inst_prefixes.keys().any(|c| c.starts_with(&format!("{candidate}.")))
+            {
+                chain = candidate;
+                cursor = after_seg;
+            } else {
+                break;
+            }
+        }
+
+        let Some(prefix) = inst_prefixes.get(&chain) else {
+            i += 1;
+            continue;
+        };
+
+        // exactly one member identifier after the chain
+        let j = next_sig(cursor);
+        if spans.get(j).map(|s| s.2) != Some(TokenKind::Dot) {
+            i += 1;
+            continue;
+        }
+        let k = next_sig(j + 1);
+        let Some(&(ms, me, mkind)) = spans.get(k) else {
+            i += 1;
+            continue;
+        };
+        if !matches!(mkind, TokenKind::SimpleIdent | TokenKind::EscapedIdent) {
+            i += 1;
+            continue;
+        }
+        // a member followed by a further `.` (block/child scopes inside the
+        // instance) is out of scope for the rewrite -- leave it untouched
+        let m = next_sig(k + 1);
+        if spans.get(m).map(|s| s.2) == Some(TokenKind::Dot) {
+            i = m;
+            continue;
+        }
+        let member = if mkind == TokenKind::EscapedIdent {
+            text[ms + 1..me].to_owned()
+        } else {
+            text[ms..me].to_owned()
+        };
+        // a top-alias chain composes to an empty prefix, meaning the member
+        // is the top module's own item -- rewrite drops the qualification
+        let hole_start = if root_skipped { start } else { spans[chain_start_idx].0 };
+        holes.push((hole_start..me, render_name(&format!("{prefix}{member}"))));
+        i = k + 1;
+    }
+    holes
+}
+
 fn find_bus_port_holes(text: &str, bus_ports: &HashMap<Name, BTreeMap<i32, String>>) -> Vec<(Range<usize>, String)> {
     if bus_ports.is_empty() {
         return Vec::new();
@@ -671,6 +830,7 @@ fn render_name(name: &str) -> String {
 
 fn render_with_holes(text: &str, holes: &[(Range<usize>, String)], scope: &Scope) -> String {
     let mut all_holes = find_bus_port_holes(text, &scope.bus_ports);
+    all_holes.extend(find_instance_path_holes(text, &scope.inst_prefixes));
     all_holes.extend(holes.iter().cloned());
     all_holes.sort_by_key(|(r, _)| r.start);
 
@@ -887,6 +1047,38 @@ impl ElabCtx<'_> {
     /// overridden -- everything just passes through) and inlined instances
     /// (`scope` maps every locally-declared name to its prefixed/bound
     /// form).
+    /// Enhancement-49: recursively collects every instance chain reachable
+    /// from `module_id` (`"u1"`, `"u1.u2"`, `"u1[2]"`, ...) mapped to the
+    /// composed flattening prefix of that instance's locals, rooted at
+    /// `outer_prefix`. Drives the hierarchical-reference rewrite in
+    /// `find_instance_path_holes`.
+    fn collect_inst_prefixes(
+        &self,
+        module_id: ItemTreeId<TreeModule>,
+        outer_prefix: &str,
+        chain: &str,
+        out: &mut HashMap<String, String>,
+    ) {
+        for item in &self.tree[module_id].items {
+            let ModuleItem::Instantiation(id) = item else { continue };
+            let inst = &self.tree[*id];
+            let Some(&target) = self.by_name.get(&inst.module) else { continue };
+            let name = inst.name.to_string();
+            let base = match name.find('[') {
+                Some(i) => name[..i].to_owned(),
+                None => name.clone(),
+            };
+            let pfx = match inst.array_index {
+                Some(i) => format!("{outer_prefix}{base}_{i}__"),
+                None => format!("{outer_prefix}{base}__"),
+            };
+            let chain_key =
+                if chain.is_empty() { name.clone() } else { format!("{chain}.{name}") };
+            out.insert(chain_key.clone(), pfx.clone());
+            self.collect_inst_prefixes(target, &pfx, &chain_key, out);
+        }
+    }
+
     fn render_items(
         &mut self,
         target_id: ItemTreeId<TreeModule>,
@@ -1124,6 +1316,9 @@ impl ElabCtx<'_> {
     ) -> String {
         let target = self.tree[target_id].clone();
         let mut scope = Scope::default();
+        // Enhancement-49: the child's own hierarchical references into ITS
+        // sub-instances rewrite through the composed prefixes
+        self.collect_inst_prefixes(target_id, prefix, "", &mut scope.inst_prefixes);
         let mut extra_decls = Vec::new();
         // NOTE: a vectored port's bits beyond the first are appended to
         // `nodes` wherever their `[msb:lsb]` clause is declared in the
@@ -1263,7 +1458,22 @@ impl ElabCtx<'_> {
         let rel_start = rel_range(base, items.first().unwrap().syntax().text_range()).start;
         let rel_end = rel_range(base, items.last().unwrap().syntax().text_range()).end;
 
-        let body = self.render_items(module_id, &Scope::default(), &HashMap::new(), &Default::default(), "");
+        // Enhancement-49: hierarchical references (`u1.m`, `$root.<top>.u1.m`,
+        // `<top>.x`) rewrite to the flattened names via the instance-chain map;
+        // the `<top>` alias entries make `$root.`-anchored and top-qualified
+        // spellings resolve identically to the unqualified ones.
+        let mut scope = Scope::default();
+        self.collect_inst_prefixes(module_id, "", "", &mut scope.inst_prefixes);
+        let top_name = self.tree[module_id].name.to_string();
+        let alias: Vec<(String, String)> = scope
+            .inst_prefixes
+            .iter()
+            .map(|(k, v)| (format!("{top_name}.{k}"), v.clone()))
+            .collect();
+        scope.inst_prefixes.extend(alias);
+        scope.inst_prefixes.insert(top_name, String::new());
+
+        let body = self.render_items(module_id, &scope, &HashMap::new(), &Default::default(), "");
         format!("{}{}{}", &full[..rel_start], body, &full[rel_end..])
     }
 }

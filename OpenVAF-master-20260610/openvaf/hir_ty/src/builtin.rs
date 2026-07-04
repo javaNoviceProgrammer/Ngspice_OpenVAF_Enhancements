@@ -263,11 +263,16 @@ bultins! {
         // 2 args, FALLT 3, TOL 4) -- a 3-argument call resolved to FALLT and
         // the lowering read args[3] out of bounds (compiler crash); 4-argument
         // calls only worked by accident through TOL.
-        fn TRANSITION_NO_ARGS(Val(Integer)) -> Real;
-        fn TRANSITION_DELAY(Val(Integer),Val(Real)) -> Real;
-        fn TRANSITION_DELAY_RISET(Val(Integer),Val(Real),Val(Real)) -> Real;
-        fn TRANSITION_DELAY_RISET_FALLT(Val(Integer),Val(Real),Val(Real),Val(Real)) -> Real;
-        fn TRANSITION_DELAY_RISET_FALLT_TOL(Val(Integer),Val(Real),Val(Real),Val(Real),Val(Real)) -> Real;
+        // Enhancement-49: the input is a REAL expression per LRM 4.5.7 (the
+        // filter smooths piecewise-constant real waveforms -- the canonical
+        // comparator writes `real vcout; ... transition(vcout, td, tr, tf)`);
+        // it was typed Integer, rejecting every real-valued input. Integer
+        // inputs still work through the standard implicit promotion.
+        fn TRANSITION_NO_ARGS(Val(Real)) -> Real;
+        fn TRANSITION_DELAY(Val(Real),Val(Real)) -> Real;
+        fn TRANSITION_DELAY_RISET(Val(Real),Val(Real),Val(Real)) -> Real;
+        fn TRANSITION_DELAY_RISET_FALLT(Val(Real),Val(Real),Val(Real),Val(Real)) -> Real;
+        fn TRANSITION_DELAY_RISET_FALLT_TOL(Val(Real),Val(Real),Val(Real),Val(Real),Val(Real)) -> Real;
     }
 
 
@@ -343,7 +348,10 @@ bultins! {
 
     DIST_2_ARG = const {
         fn DIST_2_ARG_SEED(Var(Integer),Val(Integer),Val(Integer)) -> Real;
-        fn DIST_2_ARG_CONST_SEED(Param(Integer),Val(Real),Val(Integer)) -> Real;
+        // Enhancement-49 audit: the middle argument said Val(Real) while every
+        // sibling signature says Val(Integer) -- the integer-distribution
+        // $dist_* functions take integer parameters per the LRM
+        fn DIST_2_ARG_CONST_SEED(Param(Integer),Val(Integer),Val(Integer)) -> Real;
         fn DIST_2_ARG_CONST_NAME(Var(Integer),Val(Integer),Val(Integer),Literal(String)) -> Real;
         fn DIST_2_ARG_CONST_SEED_NAME(Param(Integer),Val(Integer),Val(Integer),Literal(String)) -> Real;
     }
