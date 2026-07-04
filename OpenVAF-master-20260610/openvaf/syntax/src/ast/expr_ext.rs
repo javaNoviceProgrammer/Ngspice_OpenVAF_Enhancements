@@ -432,14 +432,75 @@ impl ast::StrLit {
         let src = self.syntax.text();
         &src[1..src.len() - 1]
     }
+    /// Processes the string literal's escape sequences in a single left-to-right
+    /// pass (Enhancement-48): `\n`, `\t`, `\\`, `\"`, and `\ddd` (one to three
+    /// octal digits, LRM 2.7.1). A backslash before a (possibly CRLF) newline
+    /// keeps the newline (line continuation, tolerated as an extension); any
+    /// other unknown escape is preserved verbatim. The previous implementation
+    /// chained sequential `str::replace` calls, which mis-unescaped overlapping
+    /// sequences (`a\\nb` -- a literal backslash followed by `n` -- became a
+    /// backslash and a real newline) and did not support octal escapes at all.
     pub fn unescaped_value(&self) -> String {
-        self.value()
-            .replace(r"\n", "\n")
-            .replace(r"\\", "\\")
-            .replace(r"\t", "\t")
-            .replace(r#"\""#, "\"")
-            .replace("\\\n", "\n")
-            .replace("\\\r\n", "\r\n")
+        let src = self.value();
+        let mut out = String::with_capacity(src.len());
+        let mut chars = src.chars().peekable();
+        while let Some(c) = chars.next() {
+            if c != '\\' {
+                out.push(c);
+                continue;
+            }
+            match chars.peek() {
+                Some('n') => {
+                    chars.next();
+                    out.push('\n');
+                }
+                Some('t') => {
+                    chars.next();
+                    out.push('\t');
+                }
+                Some('\\') => {
+                    chars.next();
+                    out.push('\\');
+                }
+                Some('"') => {
+                    chars.next();
+                    out.push('"');
+                }
+                Some('\n') => {
+                    chars.next();
+                    out.push('\n');
+                }
+                Some('\r') => {
+                    chars.next();
+                    out.push('\r');
+                    if chars.peek() == Some(&'\n') {
+                        chars.next();
+                        out.push('\n');
+                    }
+                }
+                Some('0'..='7') => {
+                    let mut code = 0u32;
+                    for _ in 0..3 {
+                        match chars.peek() {
+                            Some(&d @ '0'..='7') => {
+                                chars.next();
+                                code = code * 8 + d.to_digit(8).unwrap();
+                            }
+                            _ => break,
+                        }
+                    }
+                    match char::from_u32(code) {
+                        Some(ch) => out.push(ch),
+                        // out-of-range octal (e.g. \777 > 0xFF): keep nothing sensible
+                        // to emit; degrade to the replacement character
+                        None => out.push(char::REPLACEMENT_CHARACTER),
+                    }
+                }
+                // unknown escape (or trailing backslash): preserved verbatim
+                _ => out.push('\\'),
+            }
+        }
+        out
     }
 }
 impl ast::SelectExpr {

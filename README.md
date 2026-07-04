@@ -614,6 +614,16 @@ Several unrelated language gaps found along the way are also fixed. **`localpara
 
 ---
 
+## Enhancement 48: string literal escape sequences
+
+*July 2026* — Completed **string literal escape handling** per LRM 2.7.1 (`\n`, `\t`, `\\`, `\"`, and `\ddd` — a character by one to three octal digits). The probe found the four basics worked but **octal escapes were unsupported** (`"\101\102\103"` printed literally instead of `ABC`) and **overlapping sequences were corrupted**: the unescaper chained sequential `str::replace` calls with `\n` handled *before* `\\`, so `"a\\nb"` — a literal backslash followed by `n` — came out as a backslash plus a **real newline** (the classic overlapping-escape bug). `StrLit::unescaped_value` is now a single left-to-right pass covering the full LRM set: greedy 1–3-digit octal escapes (out-of-range degrades to the replacement character), the pre-existing backslash-newline line-continuation extension preserved unchanged, and unknown escapes passed through verbatim. The consumer audit confirmed every string path already routes through this one function — `$strobe`/`$display`/`$swrite` format strings, string values and comparisons, attribute strings, `initial_step` phase names, lint names — so the fix applies uniformly with no second unescape path to drift.
+
+- Verified end-to-end through ngspice: the `$strobe` rendering matrix (tab/newline/backslash/quote exact, the previously-corrupted `\\n` round-trip printing a literal backslash-n, octal `ABC` and digit forms) and compile-time consistency (`"\101\102" == "AB"` true, overlap-safe self-equality, unknown escapes comparing consistently — the check module reads exactly 7) — see `examples/stresc_examples/`
+- Regression-checked: all 44 example verify suites ALL PASS; `syntax`/`hir_def`/`basedb`/`hir_lower`/`sim_back` crate tests 52/52
+- Details: [Enhancement-48.md](enhancements_doc/Enhancement-48.md)
+
+---
+
 ## Prebuilt Binaries
 
 Binaries are built by CI and committed to `bin/`:

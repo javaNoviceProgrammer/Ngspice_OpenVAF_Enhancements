@@ -277,5 +277,10 @@ examples/defaulttransition_examples/_*.cir
 examples/defaulttransition_examples/_*.va
 examples/defaulttransition_examples/_*.osdi
 
+# Enhancement 48 string-escape example scripts: temp netlists + models
+examples/stresc_examples/_*.cir
+examples/stresc_examples/_*.va
+examples/stresc_examples/_*.osdi
+
 # Python bytecode cache (e.g. from importing _setup.py)
 __pycache__/

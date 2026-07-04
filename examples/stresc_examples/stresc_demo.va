@@ -1,0 +1,33 @@
+// stresc_demo.va -- Enhancement-48: string literal escape sequences
+//
+// LRM 2.7.1 defines the escape set for string literals: \n (newline),
+// \t (tab), \\ (backslash), \" (double quote), and \ddd (a character by
+// one to three octal digits). Previously \ddd was unsupported (printed
+// literally) and the unescaper's chained str::replace calls mis-handled
+// overlapping sequences: "a\\nb" -- a literal backslash followed by 'n' --
+// came out as a backslash and a real newline.
+`include "disciplines.vams"
+
+// every escape observable through $strobe (checked textually by the verify
+// script) plus string comparisons proving compile-time consistency
+module strescape(a, c);
+  inout a, c;
+  electrical a, c;
+  string s;
+  analog begin
+    @(initial_step) begin
+      $strobe("E1:[a\tb]");                 // tab
+      $strobe("E2:[l1\nl2]");               // newline
+      $strobe("E3:[back\\slash]");          // literal backslash
+      $strobe("E4:[quote\"q]");             // quote
+      $strobe("E5:[a\\nb]");                // backslash THEN n (the old bug)
+      $strobe("E6:[\101\102\103]");         // octal ABC
+      $strobe("E7:[\060\61]");              // octal digits, 3- and 2-digit forms
+    end
+    s = "\101\102";
+    V(a,c) <+ (s == "AB" ? 1.0 : 0.0)              // octal == plain spelling
+            + ("x\\ny" == "x\\ny" ? 2.0 : 0.0)     // overlap-safe self-equality
+            + ("a\qb" == "a\qb" ? 4.0 : 0.0);      // unknown escape preserved
+    // total 7
+  end
+endmodule
