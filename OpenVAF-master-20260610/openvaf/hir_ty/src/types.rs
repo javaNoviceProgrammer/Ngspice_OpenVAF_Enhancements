@@ -315,8 +315,20 @@ impl SignatureData {
         SignatureData::STR_COMPARISON,
     ];
 
-    pub const SELECT: &'static [SignatureData] =
-        &[SignatureData::BOOL_BIN_OP, SignatureData::REAL_BIN_OP, SignatureData::INT_BIN_OP];
+    /// Enhancement-37: a string-valued binary signature so the ternary operator
+    /// accepts string branches (`cond ? "a" : "b"`). Appended LAST to keep the
+    /// existing SELECT signature indices stable.
+    pub const STR_BIN_OP: SignatureData = SignatureData {
+        args: Cow::Borrowed(&[TyRequirement::Val(Type::String), TyRequirement::Val(Type::String)]),
+        return_ty: Type::String,
+    };
+
+    pub const SELECT: &'static [SignatureData] = &[
+        SignatureData::BOOL_BIN_OP,
+        SignatureData::REAL_BIN_OP,
+        SignatureData::INT_BIN_OP,
+        SignatureData::STR_BIN_OP,
+    ];
 }
 
 pub const BOOL_EQ: Signature = Signature(0);

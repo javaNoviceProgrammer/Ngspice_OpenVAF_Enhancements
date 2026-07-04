@@ -220,5 +220,11 @@ examples/comment_examples/_*.osdi
 examples/signalflow_examples/_*.cir
 examples/signalflow_examples/_*.txt
 
+# Enhancement 37 operator-audit example scripts: temp netlists/outputs + generated models
+examples/operator_examples/_*.cir
+examples/operator_examples/_*.txt
+examples/operator_examples/_*.va
+examples/operator_examples/_*.osdi
+
 # Python bytecode cache (e.g. from importing _setup.py)
 __pycache__/

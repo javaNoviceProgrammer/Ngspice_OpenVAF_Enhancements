@@ -1,0 +1,136 @@
+// operator_audit.va -- Enhancement-37: operator-correctness audit + fixes.
+//
+// Five self-checking modules, one per operator family. Each check that FAILS
+// adds a distinct power of two to the module's score, which is emitted on a
+// signal-flow output -- so v(out) == 0 means every check in that family passes,
+// and any nonzero value is a bitmask pinpointing exactly which check failed.
+//
+// The audit found (and Enhancement-37 fixed) three real defects:
+//   * `~x` (bitwise NOT) was lowered as arithmetic negation: ~12 gave -12, not -13;
+//   * constant folding of `>>` sign-extended (arithmetic >>> semantics):
+//     -16 >> 2 gave -4 instead of the zero-filled 1073741820;
+//   * the ternary operator rejected string operands (`c ? "a" : "b"` was a
+//     type error).
+// Everything else -- integer/real arithmetic incl. %, **, truncation and sign
+// rules, all relational/logical operators, &, |, ^, ~^, shifts, precedence,
+// nested ternaries, concat/replication -- checked out correct.
+
+`include "disciplines.vams"
+
+// ============ 1. integer arithmetic ============
+module op_arith_int(out);
+  output out; voltage out;
+  integer s; integer a, b;
+  analog begin
+    s = 0; a = 7; b = 3;
+    if (!(a + b == 10))        s = s + 1;
+    if (!(a - b == 4))         s = s + 2;
+    if (!(a * b == 21))        s = s + 4;
+    if (!(a / b == 2))         s = s + 8;      // integer division truncates
+    if (!(-a / b == -2))       s = s + 16;     // truncation toward zero
+    if (!(a % b == 1))         s = s + 32;     // modulus
+    if (!(-a % b == -1))       s = s + 64;     // sign of first operand
+    if (!(a % -b == 1))        s = s + 128;
+    if (!(2 ** 10 == 1024))    s = s + 256;    // integer power
+    if (!(-a == 0 - 7))        s = s + 512;    // unary minus
+    if (!(2 + 3 * 4 == 14))    s = s + 1024;   // precedence * over +
+    if (!((2 + 3) * 4 == 20))  s = s + 2048;   // parens
+    V(out) <+ s;
+  end
+endmodule
+
+// ============ 2. real arithmetic ============
+module op_arith_real(out);
+  output out; voltage out;
+  integer s; real x, y;
+  analog begin
+    s = 0; x = 7.5; y = 2.0;
+    if (!(x + y == 9.5))            s = s + 1;
+    if (!(x - y == 5.5))            s = s + 2;
+    if (!(x * y == 15.0))           s = s + 4;
+    if (!(x / y == 3.75))           s = s + 8;
+    if (!(x % y == 1.5))            s = s + 16;    // real modulus (fmod)
+    if (!(-x % y == -1.5))          s = s + 32;    // sign of first operand
+    if (!(y ** 3.0 == 8.0))         s = s + 64;    // real power
+    if (!(y ** -2.0 == 0.25))       s = s + 128;   // negative exponent
+    if (!((-y) ** 3.0 == -8.0))     s = s + 256;   // negative base, odd int exp
+    if (!(abs(-x + y) == 5.5))      s = s + 512;
+    if (!(1.0 + 2.0 * 3.0 == 7.0))  s = s + 1024;  // precedence
+    V(out) <+ s;
+  end
+endmodule
+
+// ============ 3. relational + logical ============
+module op_rel(out);
+  output out; voltage out;
+  integer s; integer a, b; real x, y;
+  analog begin
+    s = 0; a = 5; b = 3; x = 2.5; y = 2.5;
+    if (!(a > b))              s = s + 1;
+    if (!(b < a))              s = s + 2;
+    if (!(a >= 5))             s = s + 4;
+    if (!(b <= 3))             s = s + 8;
+    if (!(x == y))             s = s + 16;
+    if (!(a != b))             s = s + 32;
+    if (a < b)                 s = s + 64;     // false stays false
+    if (x != y)                s = s + 128;
+    if (!((a > b) == 1))       s = s + 256;    // relational result is 0/1
+    if (!((a < b) == 0))       s = s + 512;
+    if (!(1 && 1))             s = s + 1024;   // logical and
+    if (1 && 0)                s = s + 2048;
+    if (!(1 || 0))             s = s + 4096;   // logical or
+    if (0 || 0)                s = s + 8192;
+    if (!(!0))                 s = s + 16384;  // logical not
+    if (!0 == 0)               s = s + 32768;
+    if (!(a > b && x == y))    s = s + 65536;  // mixed
+    V(out) <+ s;
+  end
+endmodule
+
+// ============ 4. bitwise + shifts ============
+module op_bit(out);
+  output out; voltage out;
+  integer s; integer a, b;
+  analog begin
+    s = 0; a = 12; b = 10;
+    if (!((a & b) == 8))            s = s + 1;      // 1100 & 1010 = 1000
+    if (!((a | b) == 14))           s = s + 2;      // 1110
+    if (!((a ^ b) == 6))            s = s + 4;      // 0110
+    if (!((a ~^ b) == -7))          s = s + 8;      // xnor = ~6 (32-bit)
+    if (!((a ^~ b) == -7))          s = s + 16;     // alt spelling
+    if (!((~a) == -13))             s = s + 32;     // bitwise not
+    if (!((1 << 4) == 16))          s = s + 64;     // shift left
+    if (!((256 >> 3) == 32))        s = s + 128;    // shift right
+    if (!((1 <<< 4) == 16))         s = s + 256;    // arithmetic shl == shl
+    if (!((-16 >>> 2) == -4))       s = s + 512;    // ARITHMETIC shr: sign-extend
+    if (!((-16 >> 2) == 1073741820)) s = s + 1024;  // LOGICAL shr: zero-fill 32-bit
+    if (!((a & b | 1) == 9))        s = s + 2048;   // precedence & over |
+    if (!((a | b & 1) == 12))       s = s + 4096;   // 12 | (10&1=0) = 12
+    if (!((~0) == -1))              s = s + 8192;   // ~0 = all ones
+    if (!((~(~a)) == a))            s = s + 16384;  // involution
+    if (!((64 >> 2) == (64 >>> 2))) s = s + 32768;  // positive: >> == >>>
+    if (!((-16 >>> 0) == -16))      s = s + 65536;  // shift by 0
+    V(out) <+ s;
+  end
+endmodule
+
+// ============ 5. ternary + concat ============
+module op_tern(out);
+  output out; voltage out;
+  integer s; integer k; real x[0:2]; real r; string t;
+  analog begin
+    s = 0; k = 2;
+    if (!((k > 1 ? 10 : 20) == 10))            s = s + 1;
+    if (!((k > 5 ? 10 : 20) == 20))            s = s + 2;
+    r = k > 1 ? 1.5 : 2.5;                     // real ternary
+    if (!(r == 1.5))                           s = s + 4;
+    if (!((k > 1 ? (k > 5 ? 1 : 2) : 3) == 2)) s = s + 8;   // nested
+    x = {1.0, {2{3.0}}};                       // concat + replication
+    if (!(x[0] == 1.0 && x[1] == 3.0 && x[2] == 3.0)) s = s + 16;
+    t = {"a", (k > 1 ? "b" : "c")};            // ternary over STRINGS (E-37)
+    if (!(t == "ab"))                          s = s + 32;
+    if (!((k > 5 ? "x" : "yy") == "yy"))       s = s + 128; // string ternary, else branch
+    if (!((k == 2) ? 1 : 0))                   s = s + 64;  // eq inside ternary cond
+    V(out) <+ s;
+  end
+endmodule

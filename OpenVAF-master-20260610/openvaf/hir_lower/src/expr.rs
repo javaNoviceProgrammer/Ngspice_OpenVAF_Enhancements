@@ -190,7 +190,9 @@ impl BodyLoweringCtx<'_, '_, '_> {
         let is_inf = self.body.as_literal(arg) == Some(&Literal::Inf);
         let arg_ = self.lower_expr(arg);
         match op {
-            UnaryOp::BitNegate => self.ctx.ins().ineg(arg_),
+            // Enhancement-37: `~x` is BITWISE not (`-x - 1`), not arithmetic negation.
+            // It was lowered as `ineg` (`-x`), so `~12` gave -12 instead of -13.
+            UnaryOp::BitNegate => self.ctx.ins().inot(arg_),
             UnaryOp::Not => self.ctx.ins().bnot(arg_),
             UnaryOp::Neg => {
                 // Special case INFINITY

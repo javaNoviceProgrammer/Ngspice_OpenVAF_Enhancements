@@ -12,7 +12,11 @@ pub fn eval_binary(func: &mut Function, op: Opcode, lhs: Const, rhs: Const) -> V
             Opcode::Irem => func.dfg.iconst(lhs % rhs),
 
             Opcode::Ishl => func.dfg.iconst(lhs << rhs),
-            Opcode::Ishr => func.dfg.iconst(lhs >> rhs),
+            // Enhancement-37: `Ishr` is the LOGICAL (zero-fill) right shift (`>>`);
+            // Rust's `>>` on a signed i32 sign-extends, which is `Iashr`'s (`>>>`)
+            // semantics -- fold through u32 so the vacated bits are zero-filled
+            // (matches the LLVMBuildLShr the runtime path emits).
+            Opcode::Ishr => func.dfg.iconst(((lhs as u32) >> rhs) as i32),
             // `>>` on a signed value is already an arithmetic (sign-extending) shift.
             Opcode::Iashr => func.dfg.iconst(lhs >> rhs),
             Opcode::Ixor => func.dfg.iconst(lhs ^ rhs),

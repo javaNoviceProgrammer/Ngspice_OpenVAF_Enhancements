@@ -503,6 +503,16 @@ Several unrelated language gaps found along the way are also fixed. **`localpara
 
 ---
 
+## Enhancement 37: operator-correctness audit + fixes
+
+*July 2026* — A systematic **operator-correctness audit** covering the arithmetic, relational, logical, bitwise/shift, ternary and concatenation operator families — 60+ individual checks in five self-checking modules, each failing check contributing a distinct power of two to a score emitted on a signal-flow output, so `v(out) == 0` means every check passes and any nonzero value is a **bitmask pinpointing exactly which check failed**. The audit found (and this enhancement fixes) three real defects: **`~x` (bitwise NOT) was lowered as arithmetic negation** — `~12` evaluated to −12 instead of −13, silent wrong answers in any bit-manipulating model (fixed to the `inot` opcode, whose constant-fold was already correct); **constant folding of `>>` sign-extended** — the MIR and the LLVM runtime path correctly distinguish logical `Ishr`/`LShr` from arithmetic `Iashr`/`AShr`, but the constant folder computed both with Rust's signed `>>`, so `-16 >> 2` folded to −4 instead of the zero-filled `1073741820` and a *constant* `>>` disagreed with the identical *runtime* expression (fixed by folding through `u32`); and **the ternary operator rejected string operands** — `cond ? "a" : "b"` was a type error (fixed by appending a `(String, String) → String` signature to the SELECT list; the existing `phi` lowering handled strings unchanged). Everything else checked out exactly correct: integer truncation-toward-zero and `%` sign rules, real fmod and `**` with negative exponents/bases, all relationals with 0/1 results, `&& || !`, `& | ^ ~^ ^~`, shift edge cases, precedence, nested ternaries, concat/replication. Pure `hir_lower`/`mir_opt`/`hir_ty` change; no OSDI/ngspice change.
+
+- Verified end-to-end through ngspice — the audit compiles (string ternaries used to error), all five operator-family scores read exactly 0, and the three formerly-broken cases are asserted directly (`~12 == -13`, `-16 >> 2 == 1073741820`, `(1>0) ? "yes" : "no" == "yes"`) — see `examples/operator_examples/`
+- Regression-checked: all 33 example verify suites ALL PASS and all 75 example models recompile (the fixes touch shared lowering and constant-evaluation paths, so the full sweep matters)
+- Details: [Enhancement-37.md](enhancements_doc/Enhancement-37.md)
+
+---
+
 ## Prebuilt Binaries
 
 Binaries are built by CI and committed to `bin/`:
