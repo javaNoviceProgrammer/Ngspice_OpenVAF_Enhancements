@@ -1,0 +1,25 @@
+* alter / altermod -- interactive parameter changes on OSDI devices
+* Order of precedence: instance value (r=2k on the N1 line, or alter
+* @n1[r]) beats the model card (altermod @mm[r]). Watch i(V1) change:
+*   start:            r=2k (instance line)  -> 0.5 mA
+*   alter @n1[r]=4k:                        -> 0.25 mA
+*   altermod @mm[r]=8k: instance value still wins -> 0.25 mA (unchanged)
+.control
+pre_osdi analyses_blocks.osdi
+.endc
+V1 a 0 DC 1
+N1 a 0 mm r=2k
+.model mm ires
+.control
+op
+set numdgt=10
+print i(V1)
+print @n1[r]
+alter @n1[r] = 4k
+op
+print i(V1)
+altermod @mm[r] = 8k
+op
+print i(V1)
+.endc
+.end

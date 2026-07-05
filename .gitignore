@@ -342,5 +342,9 @@ examples/multianalog_examples/_dup_named.osdi
 examples/opargs_examples/_*.cir
 examples/opargs_examples/_*.txt
 
+# Enhancement 62 analyses example scripts: temp netlists + wrdata dumps
+examples/analyses_examples/_*.cir
+examples/analyses_examples/_*.txt
+
 # Python bytecode cache (e.g. from importing _setup.py)
 __pycache__/

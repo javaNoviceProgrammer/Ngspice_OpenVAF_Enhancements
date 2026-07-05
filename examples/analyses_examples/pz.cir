@@ -1,0 +1,20 @@
+* .pz -- pole-zero analysis of an OSDI RC lowpass
+* R = 1k (OSDI), C = 1n (OSDI): single pole at -1/(RC) = -1e6 rad/s.
+* Swap in the commented built-in pair to confirm the result is identical.
+.control
+pre_osdi analyses_blocks.osdi
+.endc
+V1 in 0 DC 0 AC 1
+N1 in out mmr
+.model mmr ores r=1k
+N2 out 0 mmc
+.model mmc ocap cap=1n
+*R1 in out 1k
+*C1 out 0 1n
+.pz in 0 out 0 vol pol
+.control
+run
+set numdgt=10
+print all
+.endc
+.end

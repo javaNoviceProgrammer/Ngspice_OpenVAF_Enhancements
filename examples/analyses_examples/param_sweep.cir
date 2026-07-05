@@ -1,0 +1,18 @@
+* .dc @inst[param] -- sweep an OSDI instance parameter directly (NEW)
+* The `ires` module declares  (* type="instance" *) parameter real r,
+* which exposes r at the instance level. Enhancement-62 lets .dc sweep it:
+* the x axis is the parameter value itself and i(V1) = 1V / r exactly.
+* Before this, .dc only accepted V/I sources, resistors, and temp.
+.control
+pre_osdi analyses_blocks.osdi
+.endc
+V1 a 0 DC 1
+N1 a 0 mm
+.model mm ires
+.dc @n1[r] 500 4k 50
+.control
+run
+set numdgt=10
+wrdata _param_sweep.txt i(V1)
+.endc
+.end

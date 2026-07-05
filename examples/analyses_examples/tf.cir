@@ -1,0 +1,23 @@
+* .tf -- DC transfer function with Verilog-A (OSDI) devices
+* Two identical 1k/3k dividers hang on node in: one built from OSDI
+* resistors (N1/N2), one from built-in resistors (R1/R2). Expect:
+*   transfer_function          = 3k/(1k+3k) = 0.75
+*   output_impedance_at_v(mid) = 1k || 3k   = 750 ohm
+*   v1#input_impedance         = 4k || 4k   = 2k   (both dividers load V1)
+.control
+pre_osdi analyses_blocks.osdi
+.endc
+V1 in 0 DC 1
+N1 in mid mm1
+.model mm1 ores r=1k
+N2 mid 0 mm2
+.model mm2 ores r=3k
+R1 in mid2 1k
+R2 mid2 0 3k
+.tf v(mid) V1
+.control
+run
+set numdgt=10
+print all
+.endc
+.end

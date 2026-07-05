@@ -1,0 +1,20 @@
+* .disto -- distortion analysis limitation with OSDI devices (warns, NEW)
+* The distortion kernel needs per-device Taylor coefficients that the
+* OSDI ABI cannot provide (first derivatives only), so a Verilog-A
+* diode's nonlinearity is INVISIBLE to .disto. Enhancement-62 makes
+* ngspice say so loudly instead of silently reporting zero:
+*   Warning: Verilog-A (OSDI) device type 'odio' has no distortion model;
+*            .disto results will NOT include its nonlinearities.
+.control
+pre_osdi analyses_dio.osdi
+.endc
+V1 in 0 DC 0.7 AC 1 DISTOF1 0.01
+R1 in a 100
+N1 a 0 mm
+.model mm odio
+.disto dec 3 1k 1meg
+.control
+run
+print length(v(a))
+.endc
+.end

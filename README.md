@@ -762,6 +762,16 @@ Several unrelated language gaps found along the way are also fixed. **`localpara
 
 ---
 
+## Enhancement 62: ngspice analysis coverage — `.dc @inst[param]` sweeps + `.disto` warning
+
+*July 2026* — An **analysis-coverage probe** of OSDI (Verilog-A) devices across every ngspice analysis beyond op/dc/ac/tran/noise, comparing against built-in twins. Already exact and now pinned: **`.tf`** (transfer function 0.75, output impedance 750 Ω, input impedance 2 kΩ on an OSDI divider), **`.pz`** (the OSDI RC pole at −1/(RC) is bit-identical to the built-in RC; the *nonlinear* pz failure hits built-in diode circuits identically — an ngspice quirk, not an OSDI gap), **`.sens`** DC (dV/dR matches the analytic divider derivatives) and AC (dV/dacmag = H at the pole frequency), **`.dc temp`** sweeps (`$temperature` per point, °C→K exact), and the **`alter`/`altermod`/instance-line/`print @n1[r]`** machinery via `(* type="instance" *)`. **Two real gaps found and fixed in ngspice: (1) `.dc @inst[param]` sweeps** — the sweep code hardcoded Vsource/Isource/Resistor/temp, so sweeping any device parameter was a fatal error; a new generic sweep type resolves `@inst[param]` through the device's own `DEVparam`/`DEVask` tables and refreshes per point via `DEVtemperature` (for OSDI exactly the `alter` path), working for OSDI instance-kind parameters, built-in devices, and **nested** with other sweep variables, with the original value restored afterwards. **(2) `.disto` silently reported zero distortion for OSDI devices** — the distortion kernel needs per-device Taylor coefficients the OSDI ABI cannot provide (first derivatives only), and ngspice skipped such devices without a word: an OSDI diode measured exactly 0.0 where the identical built-in diode measured 1.8e-6; ngspice now prints a prominent warning naming each affected OSDI device type. The example folder doubles as a **tutorial**: nine standalone commented decks (one per analysis, each stating its expected numbers), a walk-through README, and `plot_analyses.py` rendering the sweep results to committed PNGs (parameter sweep and temp sweep vs analytic 1/R, the nested-sweep I = V/r curve family, and an RC Bode plot with the `.pz` pole and `.sens ac` point marked).
+
+- Verified with 19 end-to-end checks (exact `.tf`/`.pz`/`.sens`/temp values, the new sweeps incl. nesting and built-in parity, alter precedence, the disto warning) — see `examples/analyses_examples/`
+- Regression-checked: all 58 example verify suites ALL PASS with the rebuilt ngspice; no compiler change
+- Details: [Enhancement-62.md](enhancements_doc/Enhancement-62.md)
+
+---
+
 ## Prebuilt Binaries
 
 Binaries are built by CI and committed to `bin/`:

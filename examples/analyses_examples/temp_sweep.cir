@@ -1,0 +1,16 @@
+* .dc temp -- temperature sweep of a $temperature-dependent OSDI resistor
+* R(T) = r0*(1 + tc*(T_K - 300)), so at every sweep point (temp in degC,
+* T_K = temp + 273.15) the current is exactly 1V / R(T).
+.control
+pre_osdi analyses_blocks.osdi
+.endc
+V1 a 0 DC 1
+N1 a 0 mm
+.model mm otres r0=1k tc=0.01
+.dc temp -25 125 5
+.control
+run
+set numdgt=10
+wrdata _temp_sweep.txt i(V1)
+.endc
+.end

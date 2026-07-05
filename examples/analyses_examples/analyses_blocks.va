@@ -1,0 +1,26 @@
+// Enhancement-62: OSDI building blocks for the ngspice-analysis validation
+// suite -- a resistor, a capacitor, a temperature-dependent resistor, and
+// an instance-parameter resistor ((*type="instance"*) exposes `r` at the
+// instance level: N1 a 0 mm r=2k, alter @n1[r], .dc @n1[r] ...).
+`include "disciplines.vams"
+
+module ores(a,c); inout a,c; electrical a,c;
+  parameter real r = 1e3;
+  analog I(a,c) <+ V(a,c)/r;
+endmodule
+
+module ocap(a,c); inout a,c; electrical a,c;
+  parameter real cap = 1e-9;
+  analog I(a,c) <+ ddt(cap*V(a,c));
+endmodule
+
+module otres(a,c); inout a,c; electrical a,c;
+  parameter real r0 = 1e3;
+  parameter real tc = 0.01;
+  analog I(a,c) <+ V(a,c)/(r0*(1.0 + tc*($temperature - 300.0)));
+endmodule
+
+module ires(a,c); inout a,c; electrical a,c;
+  (* type="instance" *) parameter real r = 1e3;
+  analog I(a,c) <+ V(a,c)/r;
+endmodule

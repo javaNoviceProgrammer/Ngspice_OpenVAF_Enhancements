@@ -1,0 +1,6 @@
+// Nonlinear OSDI device for the .disto behavior check.
+`include "disciplines.vams"
+module odio(a,c); inout a,c; electrical a,c;
+  parameter real is_ = 1e-15;
+  analog I(a,c) <+ is_*(exp($limit(V(a,c), "pnjlim", 0.026, 0.7)/0.026) - 1) + 1e-12*V(a,c);
+endmodule

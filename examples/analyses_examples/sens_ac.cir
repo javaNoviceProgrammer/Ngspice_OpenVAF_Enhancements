@@ -1,0 +1,18 @@
+* .sens ... ac -- AC sensitivity of the OSDI RC lowpass output
+* At the pole frequency f = 1/(2*pi*RC) = 159.155 kHz the transfer
+* function is H = 1/(1+j) = 0.5 - 0.5j, and the sensitivity of v(out)
+* to the source magnitude (v1_acmag) equals H exactly.
+.control
+pre_osdi analyses_blocks.osdi
+.endc
+V1 in 0 DC 0 AC 1
+N1 in out mmr
+.model mmr ores r=1k
+N2 out 0 mmc
+.model mmc ocap cap=1n
+.sens v(out) ac lin 1 159155 159155
+.control
+run
+print all
+.endc
+.end

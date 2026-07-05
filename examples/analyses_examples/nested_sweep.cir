@@ -1,0 +1,17 @@
+* nested .dc -- an @inst[param] sweep nested with a source sweep (NEW)
+* Inner: @n1[r] from 500 to 4k; outer: V1 = 1, 2, 3 V.
+* Produces a family of I = V/r curves; the inner level resets correctly
+* at each outer step.
+.control
+pre_osdi analyses_blocks.osdi
+.endc
+V1 a 0 DC 1
+N1 a 0 mm
+.model mm ires
+.dc @n1[r] 500 4k 50 V1 1 3 1
+.control
+run
+set numdgt=10
+wrdata _nested_sweep.txt i(V1)
+.endc
+.end

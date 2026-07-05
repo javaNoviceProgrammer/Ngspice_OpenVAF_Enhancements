@@ -1,0 +1,20 @@
+* .sens -- DC sensitivity of the divider output to every circuit parameter
+* V(mid) = r2/(r1+r2) = 0.75. Analytic derivatives:
+*   dV/dr1 = -r2/(r1+r2)^2 = -1.875e-4   (printed as n1:r)
+*   dV/dr2 = +r1/(r1+r2)^2 = +6.25e-5    (printed as n2:r)
+* ngspice computes these by numeric perturbation through the OSDI
+* parameter interface -- no code in the model is needed.
+.control
+pre_osdi analyses_blocks.osdi
+.endc
+V1 in 0 DC 1
+N1 in mid mm1
+.model mm1 ores r=1k
+N2 mid 0 mm2
+.model mm2 ores r=3k
+.sens v(mid)
+.control
+run
+print all
+.endc
+.end
