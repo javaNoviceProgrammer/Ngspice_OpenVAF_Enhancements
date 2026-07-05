@@ -1,0 +1,16 @@
+// Enhancement-61: full-argument event forms -- cross(expr, dir, time_tol,
+// expr_tol), above(expr, time_tol, expr_tol), timer(start, PERIOD, time_tol).
+// The timer period makes it fire repeatedly: 0.1, 0.3, 0.5, 0.7, 0.9 us.
+`include "disciplines.vams"
+
+module evargs(a, c);
+  inout a, c; electrical a, c;
+  integer nc, na, nt;
+  analog begin
+    @(cross(V(a,c) - 0.3, 1, 1n, 1u)) nc = nc + 1;
+    @(above(V(a,c) - 0.7, 1n, 1u))    na = na + 1;
+    @(timer(0.1u, 0.2u, 1n))          nt = nt + 1;
+    I(a,c) <+ V(a,c)/1e3;
+    @(final_step) $strobe("EVARGS nc=%d na=%d nt=%d", nc, na, nt);
+  end
+endmodule

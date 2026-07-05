@@ -338,5 +338,9 @@ examples/lrmcorner_examples/_pc_bad.osdi
 examples/multianalog_examples/_*.cir
 examples/multianalog_examples/_dup_named.osdi
 
+# Enhancement 61 operator-args example scripts: temp netlists + wrdata dumps
+examples/opargs_examples/_*.cir
+examples/opargs_examples/_*.txt
+
 # Python bytecode cache (e.g. from importing _setup.py)
 __pycache__/

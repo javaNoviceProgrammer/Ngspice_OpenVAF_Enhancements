@@ -1,0 +1,24 @@
+// Enhancement-61: $limit() -- both the built-in "pnjlim" string form and a
+// user-defined limiting function (with an extra argument). The stiff
+// exponential diode (5 V through 1 ohm) is the classic case where raw
+// Newton fails: exp(5/0.026) overflows, and ngspice must fall back to gmin
+// stepping. With $limit engaged it converges directly.
+`include "disciplines.vams"
+
+module limpnj(a, c);
+  inout a, c; electrical a, c;
+  analog I(a,c) <+ 1e-15*(exp($limit(V(a,c), "pnjlim", 0.026, 0.7)/0.026) - 1) + 1e-12*V(a,c);
+endmodule
+
+module limuser(a, c);
+  inout a, c; electrical a, c;
+  analog function real steplim;
+    input vnew; input vold; input step; real vnew, vold, step;
+    begin
+      steplim = vnew;
+      if (vnew > vold + step) steplim = vold + step;
+      else if (vnew < vold - step) steplim = vold - step;
+    end
+  endfunction
+  analog I(a,c) <+ 1e-15*(exp($limit(V(a,c), steplim, 0.052)/0.026) - 1) + 1e-12*V(a,c);
+endmodule

@@ -1,0 +1,9 @@
+// Enhancement-61: ac_stim("ac", mag, phase) -- magnitude AND phase args.
+// I(a,c) <+ 2 * exp(j*pi/2) injected against 1k||1k gives V(c) = j1000
+// exactly at any AC frequency.
+`include "disciplines.vams"
+
+module acstimargs(a, c);
+  inout a, c; electrical a, c;
+  analog I(a,c) <+ V(a,c)/1e3 + ac_stim("ac", 2.0, 1.5707963267948966);
+endmodule

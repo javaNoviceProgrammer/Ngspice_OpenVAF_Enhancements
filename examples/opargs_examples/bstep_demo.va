@@ -1,0 +1,16 @@
+// Enhancement-61: $bound_step(max_step) -- the solver must not take
+// timesteps larger than the bound. Compared via eval counts with the
+// bound on vs off (a linear circuit otherwise coasts at tmax/50).
+`include "disciplines.vams"
+
+module bstepdemo(a, c);
+  inout a, c; electrical a, c;
+  parameter integer useb = 0;
+  integer ne;
+  analog begin
+    if (useb) $bound_step(5n);
+    ne = ne + 1;
+    I(a,c) <+ V(a,c)/1e3;
+    @(final_step) $strobe("BSTEP evals=%d", ne);
+  end
+endmodule

@@ -1,0 +1,13 @@
+// Enhancement-61: slew() with the LRM sign convention -- max_pos_slew_rate
+// positive, max_neg_slew_rate NEGATIVE (slew(x, 1e6, -0.25e6)). Before the
+// fix, the negative third argument was double-negated into a POSITIVE lower
+// clamp bound, turning the tracking loop into a runaway ramp that ignored
+// the input entirely (out = t * rate, sailing past the target forever).
+`include "disciplines.vams"
+
+module slewdemo(in, out);
+  inout in, out; electrical in, out;
+  parameter real rpos = 1e6;        // V/s
+  parameter real rneg = -0.25e6;    // V/s, negative per LRM 4.5.15
+  analog V(out) <+ slew(V(in), rpos, rneg);
+endmodule

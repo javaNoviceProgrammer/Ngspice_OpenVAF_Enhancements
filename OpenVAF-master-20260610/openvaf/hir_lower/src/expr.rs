@@ -1795,6 +1795,14 @@ impl BodyLoweringCtx<'_, '_, '_> {
         if signature == SLEW_NO_MAX {
             return x;
         }
+        // LRM sign convention: `max_pos_slew_rate` shall be positive and
+        // `max_neg_slew_rate` NEGATIVE (`slew(V(in), 1e6, -1e6)`), and with a
+        // single rate its absolute value bounds both directions. Taking |.| of
+        // each argument (Enhancement-61) is exact for conformant inputs and
+        // also tolerates the positive-magnitude spelling: before this, an
+        // LRM-conformant negative third argument was negated into a POSITIVE
+        // lower clamp bound, turning the tracking loop into a `+max_neg_rate`
+        // runaway ramp that ignored the input entirely.
         let (pos_max, neg_max) = if signature == SLEW_POS_MAX {
             let rate = self.lower_expr(args[1]);
             (rate, rate)
@@ -1802,8 +1810,17 @@ impl BodyLoweringCtx<'_, '_, '_> {
             debug_assert_eq!(signature, SLEW_NEG_MAX);
             (self.lower_expr(args[1]), self.lower_expr(args[2]))
         };
+        let pos_max = self.lower_fabs(pos_max);
+        let neg_max = self.lower_fabs(neg_max);
         let idx = self.ctx.intern.implicit_equations.len() as u32;
         self.lower_rate_limited_track(x, pos_max, neg_max, ImplicitEquationKind::Slew(idx))
+    }
+
+    /// |x| via neg/lt/select (MIR has no fabs instruction).
+    fn lower_fabs(&mut self, x: Value) -> Value {
+        let neg = self.ctx.ins().fneg(x);
+        let is_neg = self.ctx.ins().flt(x, F_ZERO);
+        self.lower_select_with(is_neg, |_| neg, |_| x)
     }
 
     /// Lowers `transition(x[, td[, trise[, tfall[, tol]]]])` as a delayed

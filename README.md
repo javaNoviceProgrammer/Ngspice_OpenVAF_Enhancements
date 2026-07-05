@@ -752,6 +752,16 @@ Several unrelated language gaps found along the way are also fixed. **`localpara
 
 ---
 
+## Enhancement 61: operator-argument audit — `slew` sign-convention fix
+
+*July 2026* — A **full-argument-form audit** of the analog operators (LRM 4.5) and events (LRM 5.10): 22 probe forms covering every optional-argument spelling — `cross`/`above` with `time_tol`/`expr_tol`, `timer` with period and tolerance, `absdelay` with `maxdelay`, `transition` 4/5-arg, `slew` 2/3-arg, the trailing tolerance args of `ddt`/`idt`/`idtmod`/`laplace_*`/`zi_*`, `$bound_step`, `$limit` (built-in `"pnjlim"`, user functions, user functions with extra arguments), and `ac_stim` with magnitude and phase — each verified **at runtime**, since compiling proves nothing about whether a trailing argument is honored. **One real defect found and fixed: `slew` ignored its input entirely.** The LRM (4.5.15) defines `max_neg_slew_rate` as a *negative* number; the lowering negated it assuming a positive magnitude, so the LRM-conformant `slew(x, 1e6, -1e6)` produced a **positive lower clamp bound** — the tracking loop `dy/dt = clamp(K·(x−y), lo, hi)` was forced to +1e6 unconditionally and the output ramped unboundedly past any target (`transition` shares the loop but converts rise/fall *times* to always-positive rates, which is why it worked). Fixed with sign-robust `|max_pos|` / `−|max_neg|` bounds — exact for conformant inputs, tolerant of the legacy positive-magnitude spelling. Everything else verified working with quantitative evidence: `timer`'s **period** fires exactly 5× in 1 µs; `$bound_step` genuinely bounds the solver (120 → 416 evals); `$limit` is **genuinely engaged** — the stiff 5 V/1 Ω exponential diode converges directly where the raw model needs gmin stepping, for both `"pnjlim"` and user limiting functions; `ac_stim` magnitude *and* phase are exact (j1000); the integrator/filter tolerance args are numerically exact hints. Bonus: the `slew`/`transition`/`absdelay` operator family gets its **first runtime verification ever** (the old example folders had no verify scripts).
+
+- Verified with 16 end-to-end checks — the fixed `slew` step response (holds, rate-limits both edges asymmetrically, stops at the target), toleranced events, `$limit` convergence, `$bound_step`, `ac_stim`, exact AC values for `ddt`/`idt`/`idtmod`, and the `transition` ramp — see `examples/opargs_examples/`
+- Regression-checked: all 57 example verify suites ALL PASS; crate tests pass; the VA_TEST corpus compiles 92/92
+- Details: [Enhancement-61.md](enhancements_doc/Enhancement-61.md)
+
+---
+
 ## Prebuilt Binaries
 
 Binaries are built by CI and committed to `bin/`:

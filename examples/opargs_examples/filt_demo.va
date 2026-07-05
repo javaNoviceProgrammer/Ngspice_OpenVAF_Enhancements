@@ -1,0 +1,19 @@
+// Enhancement-61: trailing tolerance/extra args of the dynamic operators --
+// ddt(x, abstol), idt(x, ic, assert, abstol), idtmod(x, ic, mod, off, abstol),
+// absdelay(x, td, maxdelay), transition(x, td, tr, tf, tol), laplace/zi eps.
+// The tolerances are hints (no numerical effect); values must stay EXACT.
+`include "disciplines.vams"
+
+module filtargs(a, c);
+  inout a, c; electrical a, c;
+  parameter integer mode = 0;
+  analog begin
+    case (mode)
+      0: I(a,c) <+ ddt(1e-9*V(a,c), 1e-12);
+      1: I(a,c) <+ 1e-3*idt(V(a,c), 0.0, 0, 1e-9);
+      2: I(a,c) <+ 1e-3*idtmod(V(a,c), 0.0, 1e6, 0.0, 1e-9);
+      3: V(a,c) <+ absdelay(I(a,c)*1e3, 1u, 2u);
+      4: V(a,c) <+ laplace_zp(I(a,c)*1e3, {1.0, 0.0}, {-1e6, 0.0}, 1e-6);
+    endcase
+  end
+endmodule

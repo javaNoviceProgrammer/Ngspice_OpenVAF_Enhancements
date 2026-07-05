@@ -1,0 +1,8 @@
+// Enhancement-61 pin: transition() 4-arg ramp semantics (rise time 0.4u:
+// a comparator step becomes a linear ramp, midpoint at half the rise time).
+`include "disciplines.vams"
+
+module transdemo(in, out);
+  inout in, out; electrical in, out;
+  analog V(out) <+ transition(V(in) > 0.5 ? 1.0 : 0.0, 0, 0.4u, 0.4u);
+endmodule
