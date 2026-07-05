@@ -1,0 +1,50 @@
+// Enhancement-65: preprocessor feature tour, self-checking -- every macro
+// path below must contribute so the total conductance is EXACTLY 8 mS.
+`include "disciplines.vams"
+
+// simple define + use
+`define G1 1e-3
+
+// one- and multi-argument macros, nested parens in actuals
+`define DBL(x)      ((x)*2.0)
+`define MADD(a,b,c) ((a)*(b)+(c))
+
+// a macro using another macro, and a macro call as another macro's argument
+`define HALF 0.5e-3
+`define QUAD(x) (`DBL(`DBL(x)))
+
+// conditionals: ifdef/else, ifndef, elsif chain, nesting
+`define MODE2
+`ifdef MODE1
+  `define GSEL 9e-3
+`elsif MODE2
+  `define GSEL 1e-3
+`else
+  `define GSEL 9e-3
+`endif
+
+// undef + redefine
+`define GTMP 9e-3
+`undef GTMP
+`define GTMP 1e-3
+
+// multi-line definition (backslash continuation) with a trailing comment
+`define GML 0.5e-3 + \
+             0.5e-3   // adds up to 1 mS
+
+module preproc(a, c);
+  inout a, c; electrical a, c;
+  analog begin
+    I(a,c) <+ V(a,c)*(`G1);                          // 1 mS
+    I(a,c) <+ V(a,c)*(`DBL(0.5e-3));                 // 1 mS
+    I(a,c) <+ V(a,c)*(`MADD(0.5e-3,(1.0+1.0),0.0));  // 1 mS
+    I(a,c) <+ V(a,c)*(`DBL(`HALF));                  // 1 mS
+    I(a,c) <+ V(a,c)*(`QUAD(0.25e-3));               // 1 mS
+    I(a,c) <+ V(a,c)*(`GSEL);                        // 1 mS
+    I(a,c) <+ V(a,c)*(`GTMP);                        // 1 mS
+    I(a,c) <+ V(a,c)*(`GML);                         // 1 mS
+`ifdef NOT_DEFINED
+    I(a,c) <+ V(a,c)*1e2;                            // must NOT appear
+`endif
+  end
+endmodule

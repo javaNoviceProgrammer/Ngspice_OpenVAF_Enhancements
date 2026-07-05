@@ -1,0 +1,6 @@
+// nested `include chain: this file -> _inc_mid.vams -> _inc_leaf.vams
+`include "disciplines.vams"
+`include "_inc_mid.vams"
+module pinc(a,c); inout a,c; electrical a,c;
+analog I(a,c) <+ V(a,c)*(`GINC);
+endmodule

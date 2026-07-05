@@ -30,6 +30,12 @@ pub(crate) struct Processor<'a> {
     /// discipline), but recording it means the directive is at least recognized instead
     /// of being misparsed as an undefined macro call.
     pub(crate) default_discipline: Option<&'a str>,
+    /// Enhancement-65: macros currently being expanded, outermost first.
+    /// A macro whose expansion (directly or through other macros) reaches
+    /// itself again is reported as `MacroRecursion` instead of overflowing
+    /// the compiler stack (the diagnostic existed but was never emitted --
+    /// `call_macro`'s "TODO track recursion").
+    expansion_stack: Vec<&'a str>,
     /// Value of the most recently seen `` `default_transition `` directive
     /// (Enhancement-47): the default rise/fall time for `transition()` filters
     /// that omit those arguments. `None` = 0 (instantaneous, the LRM default).
@@ -60,6 +66,7 @@ impl<'a> Processor<'a> {
             arena: storage,
             sources,
             include_dirs: sources.include_dirs(root_file),
+            expansion_stack: Vec::new(),
             default_discipline: None,
             default_transition: None,
         };
@@ -160,8 +167,21 @@ impl<'a> Processor<'a> {
         dst: &mut Vec<Token>,
         errors: &mut Diagnostics,
     ) {
-        // TODO track recursion
-        //
+        // Enhancement-65: a macro reached again while its BODY is still being
+        // expanded (directly or through other macros) is infinite recursion --
+        // report it instead of blowing the compiler stack. The name is pushed
+        // only around the body expansion below: a nested call of the same
+        // macro inside an ARGUMENT (`QUAD(x)` defined as `TWICE(`TWICE(x))`)
+        // is finite and legal, and argument tokens belong to the caller's
+        // expansion, not to this macro's own.
+        if self.expansion_stack.iter().any(|&n| n == call.name) {
+            errors.push(PreprocessorDiagnostic::MacroRecursion {
+                name: call.name.to_owned(),
+                span,
+            });
+            return;
+        }
+
         let parent_ctx_span = self.source_map.ctx_data(span.ctx).decl.range.start();
         if let Some(def) = self.macros.get(&call.name).cloned() {
             let new_args: TiVec<_, _> = call
@@ -180,10 +200,12 @@ impl<'a> Processor<'a> {
 
             if new_args.len() == def.arg_cnt || def.arg_cnt == 0 {
                 let ctx = self.source_map.add_ctx(def.span.to_file_span(&self.source_map), span);
+                self.expansion_stack.push(call.name);
                 for ParsedToken { kind, range } in &def.body {
                     let span = CtxSpan { range: range - def.span.range.start(), ctx };
                     self.process_macro_token(kind, span, &new_args, dst, errors)
                 }
+                self.expansion_stack.pop();
                 if new_args.len() > def.arg_cnt {
                     // macro definition has no arguments, but some were parsed as part of the call
                     // so put the arguments back

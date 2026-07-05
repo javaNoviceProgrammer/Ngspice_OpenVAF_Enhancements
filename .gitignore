@@ -353,5 +353,10 @@ examples/rfanalyses_examples/_*.cir
 examples/touchstone_examples/_*.cir
 examples/touchstone_examples/_*.s?p
 
+# Enhancement 65 preprocessor example scripts: temp netlists + probe artifacts
+examples/preproc_examples/_*.cir
+examples/preproc_examples/_*.osdi
+examples/preproc_examples/_argnest.va
+
 # Python bytecode cache (e.g. from importing _setup.py)
 __pycache__/

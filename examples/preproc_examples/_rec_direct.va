@@ -1,0 +1,5 @@
+`include "disciplines.vams"
+`define LOOP (`LOOP + 1)
+module p(a,c); inout a,c; electrical a,c;
+analog I(a,c) <+ V(a,c)*(`LOOP);
+endmodule

@@ -1,0 +1,6 @@
+`include "disciplines.vams"
+`define A (`B + 1)
+`define B (`A + 1)
+module p(a,c); inout a,c; electrical a,c;
+analog I(a,c) <+ V(a,c)*(`A);
+endmodule

@@ -51,7 +51,21 @@ impl Diagnostic for PreprocessorDiagnostic {
                     message: "macro not defined here".to_owned(),
                 }])
             }
-            PreprocessorDiagnostic::MacroRecursion { .. } => todo!(),
+            PreprocessorDiagnostic::MacroRecursion { span, .. } => {
+                let span = span.to_file_span(&sm);
+
+                Report::error()
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: span.file,
+                        range: span.range.into(),
+                        message: "recursive expansion here".to_owned(),
+                    }])
+                    .with_notes(vec![
+                        "help: a macro must not expand itself, directly or through other macros"
+                            .to_owned(),
+                    ])
+            }
             PreprocessorDiagnostic::UnsupportedCompDir { span, .. } => {
                 let span = span.to_file_span(&sm);
 

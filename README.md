@@ -792,6 +792,16 @@ Several unrelated language gaps found along the way are also fixed. **`localpara
 
 ---
 
+## Enhancement 65: preprocessor audit — macro-recursion guard
+
+*July 2026* — A systematic **audit of the Verilog-A compiler directives** — the preprocessor predates every enhancement in this series and had never been probed. 22 probe forms, with every compiling probe verified **numerically exact at runtime** (compiling proves nothing about correct expansion): `define` with arguments, macros-using-macros, macro calls as macro *arguments*, `ifdef`/`ifndef`/`elsif` chains and nesting (including inside module bodies), `undef` + redefinition, `resetall`, backslash-continued definitions, trailing comments, multi-line macro calls, nested `include` chains, plus clean located errors for undefined macros and unbalanced `ifdef`. **One defect: recursive macro expansion crashed the compiler** with a stack overflow — both the direct form (`` `define LOOP (`LOOP + 1) ``) and the mutual form (`` `A `` uses `` `B `` uses `` `A ``). This was the project's fifth "scaffolded-but-unwired" find: the `MacroRecursion` diagnostic *already existed* in the preprocessor's enum with a rendered message, but nothing ever emitted it (`call_macro` carried a literal `// TODO track recursion`), and its report builder was a literal `todo!()` that panicked the moment the diagnostic was first created. The fix pushes an expansion stack **around the macro body expansion only, after arguments are built** — the crucial subtlety being that a nested call of the same macro inside an *argument* (`` `define QUAD(x) (`TWICE(`TWICE(x))) ``) is finite and legal (argument tokens belong to the caller's expansion), and a naive entry-scoped guard rejects exactly that. Both recursion forms are now clean, source-located errors; the legitimate `QUAD` nesting compiles and evaluates exactly.
+
+- Verified with 5 end-to-end checks — an 8-way self-checking macro tour landing at exactly 8 mS (with a dead `ifdef` branch that would add 100 S if it leaked), a two-deep `include` chain, both recursion errors, and the `QUAD` false-positive regression pin — see `examples/preproc_examples/`
+- Regression-checked: all 61 example verify suites ALL PASS; crate tests pass; the VA_TEST corpus compiles 92/92
+- Details: [Enhancement-65.md](enhancements_doc/Enhancement-65.md)
+
+---
+
 ## Prebuilt Binaries
 
 Binaries are built by CI and committed to `bin/`:
