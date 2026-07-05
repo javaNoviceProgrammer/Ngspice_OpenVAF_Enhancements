@@ -1,9 +1,13 @@
 use ahash::AHashMap;
 use bitset::BitSet;
 use hir::CompilationDB;
+use hir_lower::CallBackKind;
 use mir::builder::InstBuilder;
 use mir::cursor::{Cursor, FuncCursor};
-use mir::{Block, ControlFlowGraph, Function, Inst, InstructionData, Opcode, Value, F_ZERO};
+use mir::{
+    Block, ControlFlowGraph, FuncRef, Function, Inst, InstructionData, Opcode, Value, F_ZERO,
+};
+use typed_indexmap::TiSet;
 
 use crate::topology::Topology;
 
@@ -16,6 +20,10 @@ pub(super) struct Builder<'a> {
     pub(super) scratch_buf: BitSet<Inst>,
     pub(super) postorder: Vec<Inst>,
     pub(super) val_map: AHashMap<Value, Value>,
+    /// Enhancement-54: parallel replay map for the j*omega component a noise
+    /// wave picks up by passing through ddt(); populated only when
+    /// `create_dimension` runs with callback information (noise chains).
+    pub(super) val_map_react: AHashMap<Value, Value>,
     pub(super) edges: Vec<(Block, Value)>,
     pub(super) phis: Vec<Inst>,
     pub(super) op_dependent_insts: &'a BitSet<Inst>,
@@ -27,8 +35,21 @@ impl<'a> Builder<'a> {
     /// That means that `val` gets replaced with 0 (although not handled in this function yet)
     /// and all dependent calculations will use `dim_val` multiplied with the same value
     /// as `val`.
-    pub(super) fn create_dimension(&mut self, dim_val: Value, val: Value) {
+    ///
+    /// Enhancement-54: when `callbacks` is provided (noise chains), a
+    /// `ddt()` call in the chain moves the replayed value into a parallel
+    /// "react" dimension (`val_map_react`) -- the factor becomes
+    /// `val_map[x] + j*omega * val_map_react[x]`. `determine_evaluation`
+    /// guarantees at most one ddt per path and no post-ddt phis, so the react
+    /// side never needs phi construction.
+    pub(super) fn create_dimension(
+        &mut self,
+        dim_val: Value,
+        val: Value,
+        callbacks: Option<&TiSet<FuncRef, CallBackKind>>,
+    ) {
         self.val_map.clear();
+        self.val_map_react.clear();
         self.val_map.insert(val, dim_val);
         for &inst in self.postorder.iter().rev() {
             macro_rules! ins {
@@ -36,61 +57,111 @@ impl<'a> Builder<'a> {
                     FuncCursor::new(self.func).after_inst(inst).ins()
                 };
             }
-
-            let res = match self.func.dfg.insts[inst] {
+            // per-component (resist, react) replay; `None` = the component does
+            // not depend on the dimension through this instruction
+            let mut res: Option<Value> = None;
+            let mut res_react: Option<Value> = None;
+            match self.func.dfg.insts[inst] {
                 InstructionData::Binary { opcode: Opcode::Fadd, args } => {
-                    match (&self.val_map.get(&args[0]), &self.val_map.get(&args[1])) {
-                        (None, None) => continue,
-                        (None, Some(&arg)) | (Some(&arg), None) => arg,
-                        (Some(&lhs), Some(&rhs)) => ins!().fadd(lhs, rhs),
+                    for (map, out) in [
+                        (&self.val_map, &mut res),
+                        (&self.val_map_react, &mut res_react),
+                    ] {
+                        *out = match (map.get(&args[0]), map.get(&args[1])) {
+                            (None, None) => None,
+                            (None, Some(&arg)) | (Some(&arg), None) => Some(arg),
+                            (Some(&lhs), Some(&rhs)) => Some(ins!().fadd(lhs, rhs)),
+                        };
                     }
                 }
                 InstructionData::Binary { opcode: Opcode::Fsub, args } => {
-                    match (&self.val_map.get(&args[0]), &self.val_map.get(&args[1])) {
-                        (None, None) => continue,
-                        (None, Some(&arg)) => ins!().fneg(arg),
-                        (Some(&arg), None) => arg,
-                        (Some(&lhs), Some(&rhs)) => ins!().fsub(lhs, rhs),
+                    for (map, out) in [
+                        (&self.val_map, &mut res),
+                        (&self.val_map_react, &mut res_react),
+                    ] {
+                        *out = match (map.get(&args[0]), map.get(&args[1])) {
+                            (None, None) => None,
+                            (None, Some(&arg)) => Some(ins!().fneg(arg)),
+                            (Some(&arg), None) => Some(arg),
+                            (Some(&lhs), Some(&rhs)) => Some(ins!().fsub(lhs, rhs)),
+                        };
                     }
                 }
                 InstructionData::Unary { opcode: Opcode::Fneg, arg } => {
                     if let Some(&arg) = self.val_map.get(&arg) {
-                        ins!().fneg(arg)
-                    } else {
-                        continue;
+                        res = Some(ins!().fneg(arg));
+                    }
+                    if let Some(&arg) = self.val_map_react.get(&arg) {
+                        res_react = Some(ins!().fneg(arg));
                     }
                 }
                 InstructionData::Binary { opcode: Opcode::Fmul, args: [lhs, rhs] } => {
-                    match (&self.val_map.get(&lhs), &self.val_map.get(&rhs)) {
-                        (None, None) | (Some(_), Some(_)) => continue,
-                        (None, Some(&rhs)) => ins!().fmul(lhs, rhs),
-                        (Some(&lhs), None) => ins!().fmul(lhs, rhs),
+                    let lhs_mapped =
+                        self.val_map.contains_key(&lhs) || self.val_map_react.contains_key(&lhs);
+                    let rhs_mapped =
+                        self.val_map.contains_key(&rhs) || self.val_map_react.contains_key(&rhs);
+                    match (lhs_mapped, rhs_mapped) {
+                        (false, false) | (true, true) => (),
+                        (false, true) => {
+                            if let Some(&arg) = self.val_map.get(&rhs) {
+                                res = Some(ins!().fmul(lhs, arg));
+                            }
+                            if let Some(&arg) = self.val_map_react.get(&rhs) {
+                                res_react = Some(ins!().fmul(lhs, arg));
+                            }
+                        }
+                        (true, false) => {
+                            if let Some(&arg) = self.val_map.get(&lhs) {
+                                res = Some(ins!().fmul(arg, rhs));
+                            }
+                            if let Some(&arg) = self.val_map_react.get(&lhs) {
+                                res_react = Some(ins!().fmul(arg, rhs));
+                            }
+                        }
                     }
                 }
                 InstructionData::Binary { opcode: Opcode::Fdiv, args: [num, denom] } => {
                     if let Some(&num) = self.val_map.get(&num) {
-                        ins!().fdiv(num, denom)
-                    } else {
-                        continue;
+                        res = Some(ins!().fdiv(num, denom));
+                    }
+                    if let Some(&num) = self.val_map_react.get(&num) {
+                        res_react = Some(ins!().fdiv(num, denom));
                     }
                 }
                 InstructionData::PhiNode(_) => {
                     self.phis.push(inst);
                     // delay phi construction as there could be loops in the DFG
-                    self.func.dfg.make_invalid_value()
+                    res = Some(self.func.dfg.make_invalid_value());
                 }
                 InstructionData::Unary { opcode: Opcode::OptBarrier, arg } => {
-                    if let Some(&arg) = self.val_map.get(&arg) {
-                        arg
-                    } else {
-                        continue;
-                    }
+                    res = self.val_map.get(&arg).copied();
+                    res_react = self.val_map_react.get(&arg).copied();
                 }
-                _ => {
-                    continue;
+                InstructionData::Call { func_ref, .. }
+                    if callbacks
+                        .map_or(false, |cbs| cbs[func_ref] == CallBackKind::TimeDerivative) =>
+                {
+                    // Enhancement-54: ddt(x) multiplies the wave's transfer by
+                    // j*omega -- the replayed resist component of the argument
+                    // becomes the react component of the result. A react
+                    // component on the argument (nested ddt) was rejected by
+                    // `determine_evaluation`.
+                    let arg = self.func.dfg.instr_args(inst)[0];
+                    debug_assert!(!self.val_map_react.contains_key(&arg));
+                    res_react = self.val_map.get(&arg).copied();
                 }
+                _ => (),
             };
-            self.val_map.insert(self.func.dfg.first_result(inst), res);
+            if res.is_none() && res_react.is_none() {
+                continue;
+            }
+            let result = self.func.dfg.first_result(inst);
+            if let Some(res) = res {
+                self.val_map.insert(result, res);
+            }
+            if let Some(res_react) = res_react {
+                self.val_map_react.insert(result, res_react);
+            }
         }
         // now that all values have been built we can popluate the phis
         for inst in self.phis.drain(..) {

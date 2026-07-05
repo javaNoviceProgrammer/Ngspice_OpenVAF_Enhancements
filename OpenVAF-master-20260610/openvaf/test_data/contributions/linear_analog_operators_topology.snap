@@ -20,16 +20,17 @@ Topology {
                 current_src: Contribution {
                     unknown: None,
                     resist: v30,
-                    react: v33,
+                    react: v35,
                     resist_small_signal: v3,
                     react_small_signal: v3,
                     noise: [
                         Noise {
                             name: Spur(1),
                             kind: WhiteNoise {
-                                pwr: v35,
+                                pwr: v34,
                             },
-                            factor: v34,
+                            factor: v33,
+                            factor_react: v3,
                         },
                     ],
                 },

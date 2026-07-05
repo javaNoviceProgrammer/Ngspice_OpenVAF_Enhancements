@@ -386,14 +386,16 @@ extern OsdiObjectFile load_object_file(const char *input) {
 
   if (OSDI_DESCRIPTOR_SIZE) {
     // This must be openvaf-reloaded
-    // Must be version>=0.6: Enhancement-45 changed the OsdiNode stride and
+    // Must be version>=0.7: Enhancement-54 changed load_noise to fill
+    // [flat, j*omega] power pairs (stride 2). Enhancement-45 changed the
+    // OsdiNode stride and
     // Enhancement-51 appended the ac_stim descriptor fields, so older .osdi
     // files would be misread -- recompile with the matching openvaf-r.
     if (!(
-      (OSDI_VERSION_MAJOR == 0 && OSDI_VERSION_MINOR >= 6) ||
+      (OSDI_VERSION_MAJOR == 0 && OSDI_VERSION_MINOR >= 7) ||
       OSDI_VERSION_MAJOR >= 1
     )) {
-      printf("NGSPICE supports OpenVAF-reloaded OSDI version >= 0.6 but \"%s\" uses v%d.%d!\n"
+      printf("NGSPICE supports OpenVAF-reloaded OSDI version >= 0.7 but \"%s\" uses v%d.%d!\n"
              "       Recompile the model with the matching openvaf-r.\n",
         path, OSDI_VERSION_MAJOR, OSDI_VERSION_MINOR);
       txfree(path); 

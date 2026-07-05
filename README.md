@@ -680,6 +680,17 @@ Several unrelated language gaps found along the way are also fixed. **`localpara
 
 ---
 
+## Enhancement 54: correct and node-free noise factors
+
+*July 2026* — What began as the old "noise extra-node optimization" TODO turned into a **correctness fix**: the probe showed that every noise source routed through the extra-unknown path — an op-dependent factor (`gm * white_noise(...)`), a noise wave through `ddt()` (the induced-gate-noise idiom), or one wave shared by two branches (a correlation network) — produced an extra internal node **and no noise output at all** (the spectrum equaled exactly the surrounding resistors' floor). Two silent-loss defects were fixed: `build_implicit_equation` never attached its contribution's noise to the DAE (the source never reached the OSDI descriptor), and the react optbarrier created when `ddt()` moves to the reactive dimension was never registered, so the small-signal pruning dropped the wave's coupling — a hole in the Jacobian (the refreshed PSP103 snapshot shows real `react_small_signal` couplings restored on a flagship model). On top of the now-correct baseline, the optimization: op-dependent factors and one `ddt()` per noise chain stay **linear — no extra matrix unknown**. The factor generalizes to `re + jω·im`; `load_noise()` fills `[flat, react]` signed power pairs per source and ngspice's grouping sums complex amplitudes `(a + jω·b)·T` — exact for single sources and coherent same-named groups (LRM 4.6.4), including anti-phase cancellation. An operator-ordering hazard (a shared ddt evaluated between two noise operators silently dropped the second source) was also fixed — all noise operators now process before any ddt.
+
+- **OSDI ABI 0.6 → 0.7** (`load_noise` dst stride 1 → 2): ngspice's registry now requires >= 0.7 — older `.osdi` files must be recompiled; all 88 committed `.osdi` artifacts in this repo were regenerated
+- Verified end-to-end through ngspice with 18 exact closed-form checks (resistor floors measured via noiseless twin modules): node-free `gm`-factored and ω²-shaped induced noise, `ω²·kf/f^ef` flicker composition, coherent flat+jω mixing `(x² + ω²τ²)`, exact anti-phase cancellation, the formerly-lost cross-branch correlation network, and `m=4` mfactor scaling — see `examples/noisejw_examples/`
+- Regression-checked: all 50 example verify suites ALL PASS; 28/28 crate tests (topology/dae snapshots refreshed)
+- Details: [Enhancement-54.md](enhancements_doc/Enhancement-54.md)
+
+---
+
 ## Prebuilt Binaries
 
 Binaries are built by CI and committed to `bin/`:

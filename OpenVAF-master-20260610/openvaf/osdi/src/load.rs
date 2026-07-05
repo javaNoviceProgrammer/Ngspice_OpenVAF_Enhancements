@@ -244,52 +244,63 @@ impl<'ll> OsdiCompilationUnit<'_, '_, 'll> {
                 // what lets same-named (perfectly correlated, LRM 4.6.4) sources sum
                 // coherently as amplitudes in `osdinoise.c`, including cancellation
                 // between anti-phase contributions (`... <+ -white_noise(S, "n")`).
+                //
+                // Enhancement-54: `dst` holds PAIRS per source: dst[2i] is the flat
+                // signed power (fac * |fac| * pwr) and dst[2i+1] the j*omega
+                // component's signed power (fac_react * |fac_react| * pwr) for a
+                // noise wave routed through ddt(); the simulator combines them as
+                // the complex amplitude (a + j*omega*b) * T per source.
                 let (fabs_ty, fabs_fn) = self
                     .cx
                     .intrinsic("llvm.fabs.f64")
                     .unwrap_or_else(|| unreachable!("intrinsic llvm.fabs.f64 not found"));
-                let mut fabs_args: [llvm_sys::prelude::LLVMValueRef; 1] =
-                    [fac as *const llvm_sys::LLVMValue as *mut _];
-                let fac_abs = LLVMBuildCall2(
-                    llbuilder,
-                    NonNull::from(fabs_ty).as_ptr(),
-                    NonNull::from(fabs_fn).as_ptr(),
-                    fabs_args.as_mut_ptr(),
-                    1,
-                    UNNAMED,
-                );
-                pwr = &*LLVMBuildFMul(
-                    llbuilder,
-                    NonNull::from(pwr).as_ptr(),
-                    NonNull::from(fac).as_ptr(),
-                    UNNAMED,
-                );
                 let fast_math_flags: c_uint = 0x1F; // This represents all flags set
-                llvm_sys::core::LLVMSetFastMathFlags(NonNull::from(pwr).as_ptr(), fast_math_flags);
-                pwr = &*LLVMBuildFMul(
-                    llbuilder,
-                    NonNull::from(pwr).as_ptr(),
-                    fac_abs,
-                    UNNAMED,
-                );
-                llvm_sys::core::LLVMSetFastMathFlags(NonNull::from(pwr).as_ptr(), fast_math_flags);
-                let index_val =
-                    cx.const_unsigned_int(i) as *const llvm_sys::LLVMValue as *mut _;
-                let mut gep_indices: [llvm_sys::prelude::LLVMValueRef; 1] = [index_val];
-                let gep_ptr = gep_indices.as_mut_ptr();
+                let base_pwr = pwr;
+                let mut store_folded = |fac: &'ll llvm_sys::LLVMValue, index: u32| {
+                    let mut fabs_args: [llvm_sys::prelude::LLVMValueRef; 1] =
+                        [fac as *const llvm_sys::LLVMValue as *mut _];
+                    let fac_abs = LLVMBuildCall2(
+                        llbuilder,
+                        NonNull::from(fabs_ty).as_ptr(),
+                        NonNull::from(fabs_fn).as_ptr(),
+                        fabs_args.as_mut_ptr(),
+                        1,
+                        UNNAMED,
+                    );
+                    let mut pwr = LLVMBuildFMul(
+                        llbuilder,
+                        NonNull::from(base_pwr).as_ptr(),
+                        NonNull::from(fac).as_ptr(),
+                        UNNAMED,
+                    );
+                    llvm_sys::core::LLVMSetFastMathFlags(pwr, fast_math_flags);
+                    pwr = LLVMBuildFMul(llbuilder, pwr, fac_abs, UNNAMED);
+                    llvm_sys::core::LLVMSetFastMathFlags(pwr, fast_math_flags);
+                    let index_val =
+                        cx.const_unsigned_int(index) as *const llvm_sys::LLVMValue as *mut _;
+                    let mut gep_indices: [llvm_sys::prelude::LLVMValueRef; 1] = [index_val];
+                    let gep_ptr = gep_indices.as_mut_ptr();
 
-                let dst = LLVMBuildGEP2(
-                    llbuilder,
-                    NonNull::from(cx.ty_double()).as_ptr(),
-                    dst,
-                    gep_ptr,
-                    1,
-                    UNNAMED,
+                    let dst = LLVMBuildGEP2(
+                        llbuilder,
+                        NonNull::from(cx.ty_double()).as_ptr(),
+                        dst,
+                        gep_ptr,
+                        1,
+                        UNNAMED,
+                    );
+                    LLVMBuildStore(llbuilder, pwr, dst);
+                };
+                store_folded(fac, 2 * i);
+                let fac_react = self.load_eval_output(
+                    eval_outputs.factor_react,
+                    &*inst,
+                    &*model,
+                    &*llbuilder,
                 );
-                LLVMBuildStore(llbuilder, NonNull::from(pwr).as_ptr(), dst);
+                store_folded(fac_react, 2 * i + 1);
             }
 
-            // TODO noise
             LLVMBuildRetVoid(llbuilder);
             LLVMDisposeBuilder(llbuilder);
         }

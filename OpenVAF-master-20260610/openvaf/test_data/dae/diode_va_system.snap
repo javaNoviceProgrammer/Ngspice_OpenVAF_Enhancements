@@ -134,7 +134,7 @@ DaeSystem {
         NoiseSource {
             name: Spur(2),
             kind: FlickerNoise {
-                pwr: v368,
+                pwr: v367,
                 exp: v6,
             },
             hi: sim_node0,
@@ -142,17 +142,19 @@ DaeSystem {
                 sim_node3,
             ),
             factor: v602,
+            factor_react: v3,
         },
         NoiseSource {
             name: Spur(3),
             kind: WhiteNoise {
-                pwr: v396,
+                pwr: v395,
             },
             hi: sim_node3,
             lo: Some(
                 sim_node1,
             ),
             factor: v603,
+            factor_react: v3,
         },
     ],
     model_inputs: [

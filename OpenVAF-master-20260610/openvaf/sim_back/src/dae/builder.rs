@@ -654,6 +654,12 @@ impl<'a> Builder<'a> {
             &mut self.cursor,
             false,
         );
+        // Enhancement-54: noise attached to an implicit-equation contribution (the
+        // `Evaluation::Equation` path: NoiseSrc unknowns and ddt correlation
+        // networks) was silently dropped here -- every other add_contribution site
+        // pairs with add_noise. Without this the source never reaches the OSDI
+        // descriptor and the simulator reports no noise for it at all.
+        self.add_noise(contrib, SimUnknownKind::Implicit(eq), None);
     }
 
     fn mfactor_multiply(&mut self, mfactor: Value, srcfactor: Value) -> Value {
@@ -718,6 +724,11 @@ impl<'a> Builder<'a> {
             } else {
                 self.mfactor_multiply(mfactor, src.factor)
             };
+            // Enhancement-54: the j*omega component scales identically (it
+            // multiplies the same wave); ac_stim never carries one
+            if src.factor_react != F_ZERO {
+                src.factor_react = self.mfactor_multiply(mfactor, src.factor_react);
+            }
             src
         });
         noise.extend(current_noise);
@@ -744,6 +755,9 @@ impl<'a> Builder<'a> {
             // voltage NOISE divides by sqrt(mfactor) -- Enhancement-51
             if !matches!(src.kind, NoiseSourceKind::AcStim { .. }) {
                 src.factor = self.mfactor_divide(mfactor, src.factor);
+                if src.factor_react != F_ZERO {
+                    src.factor_react = self.mfactor_divide(mfactor, src.factor_react);
+                }
             }
             src
         });
@@ -787,6 +801,9 @@ impl<'a> Builder<'a> {
         let voltage_noise = voltage_src.noise.iter().map(|src| {
             let mut src = src.clone();
             src.factor = select(src.factor, F_ZERO);
+            if src.factor_react != F_ZERO {
+                src.factor_react = select(src.factor_react, F_ZERO);
+            }
             src
         });
         noise.extend(voltage_noise);
@@ -795,6 +812,9 @@ impl<'a> Builder<'a> {
         let current_noise = current_src.noise.iter().map(|src| {
             let mut src = src.clone();
             src.factor = select(F_ZERO, src.factor);
+            if src.factor_react != F_ZERO {
+                src.factor_react = select(F_ZERO, src.factor_react);
+            }
             src
         });
         noise.extend(current_noise);
@@ -817,6 +837,10 @@ impl<'a> Builder<'a> {
                 // ac_stim voltage stimulus is mfactor-invariant (Enhancement-51)
                 if !is_ac_stim {
                     noise[ii].factor = self.mfactor_divide(mfactor, noise[ii].factor);
+                    if noise[ii].factor_react != F_ZERO {
+                        noise[ii].factor_react =
+                            self.mfactor_divide(mfactor, noise[ii].factor_react);
+                    }
                 }
             } else if is_ac_stim {
                 // deterministic current stimulus: linear in mfactor
@@ -824,6 +848,10 @@ impl<'a> Builder<'a> {
             } else {
                 // Current noise
                 noise[ii].factor = self.mfactor_multiply(mfactor, noise[ii].factor);
+                if noise[ii].factor_react != F_ZERO {
+                    noise[ii].factor_react =
+                        self.mfactor_multiply(mfactor, noise[ii].factor_react);
+                }
             }
         }
 
@@ -855,7 +883,8 @@ impl<'a> Builder<'a> {
         let lo = lo.map(|lo| self.ensure_unknown(lo));
         self.system.noise_sources.extend(contrib.noise.iter().map(|src| {
             let factor = src.factor;
-            NoiseSource { name: src.name, kind: src.kind.clone(), hi, lo, factor }
+            let factor_react = src.factor_react;
+            NoiseSource { name: src.name, kind: src.kind.clone(), hi, lo, factor, factor_react }
         }))
     }
 

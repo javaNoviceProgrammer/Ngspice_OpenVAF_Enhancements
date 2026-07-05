@@ -219,7 +219,7 @@ function %(v16, v17, v19, v20, v22, v28, v29, v30, v33, v35, v40, v47, v48, v50,
 @00a8                               jmp block13
 
                                 block13:
-                                    v381 = phi [v172, block11], [v3, block12]
+                                    v380 = phi [v172, block11], [v3, block12]
                                     v339 = phi [v159, block11], [v3, block12]
                                     v529 = phi [v525, block11], [v3, block12]
                                     v530 = phi [v526, block11], [v3, block12]
@@ -278,11 +278,11 @@ function %(v16, v17, v19, v20, v22, v28, v29, v30, v33, v35, v40, v47, v48, v50,
                                     v558 = phi [v3, block15], [v555, block19]
                                     v559 = phi [v3, block15], [v533, block19]
                                     v560 = phi [v3, block15], [v549, block19]
-                                    v378 = optbarrier v357
+                                    v377 = optbarrier v357
                                     v351 = optbarrier v515
                                     v352 = optbarrier v466
-                                    v368 = optbarrier v132
-                                    v396 = optbarrier v381
+                                    v367 = optbarrier v132
+                                    v395 = optbarrier v380
                                     v398 = sqrt v397
                                     v592 = fmul v397, v129
                                     v399 = optbarrier v592
@@ -294,7 +294,7 @@ function %(v16, v17, v19, v20, v22, v28, v29, v30, v33, v35, v40, v47, v48, v50,
                                     v402 = fneg v121
                                     v563 = fneg v514
                                     v564 = fneg v515
-                                    v404 = fmul v378, v398
+                                    v404 = fmul v377, v398
                                     v405 = fadd v401, v339
                                     v565 = fadd v561, v529
                                     v406 = fneg v339

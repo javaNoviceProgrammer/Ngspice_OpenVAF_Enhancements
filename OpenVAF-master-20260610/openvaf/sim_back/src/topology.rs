@@ -109,6 +109,9 @@ pub struct Noise {
     pub name: Spur,
     pub kind: NoiseSourceKind,
     pub factor: Value,
+    /// Enhancement-54: coefficient of the j*omega component of the factor
+    /// (a noise wave routed through one ddt()); F_ZERO for plain sources.
+    pub factor_react: Value,
 }
 
 impl Noise {
@@ -116,6 +119,7 @@ impl Noise {
         inst: Inst,
         cb: &CallBackKind,
         factor: Value,
+        factor_react: Value,
         ssa_builder: &mut SSAVariableBuilder,
         func: &mut Function,
     ) -> Noise {
@@ -153,7 +157,7 @@ impl Noise {
             }
             _ => unreachable!(),
         };
-        Noise { name, kind, factor }
+        Noise { name, kind, factor, factor_react }
     }
 }
 
@@ -319,6 +323,7 @@ impl Topology {
             scratch_buf: BitSet::new_empty(num_insts),
             postorder: Vec::with_capacity(128),
             val_map: AHashMap::with_capacity(128),
+            val_map_react: AHashMap::with_capacity(128),
             edges: Vec::with_capacity(128),
             phis: Vec::with_capacity(128),
             op_dependent_insts: &ctx.op_dependent_insts,

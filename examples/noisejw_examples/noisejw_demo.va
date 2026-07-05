@@ -1,0 +1,111 @@
+// noisejw_demo.va -- Enhancement-54: correct + node-free noise factors
+//
+// Three defects/limitations fixed:
+//  * noise attached to implicit-equation contributions was silently DROPPED
+//    (never reached the OSDI descriptor -- the simulator reported no noise
+//    at all for the source);
+//  * the react optbarrier created when ddt() moves to the reactive dimension
+//    was never registered, so a noise wave coupling through it lost its
+//    Jacobian entries (zero transferred noise);
+//  * op-dependent noise factors (`gm * white_noise(...)`) and a noise wave
+//    routed through ddt() forced an extra internal unknown per source -- now
+//    both stay linear: the factor is evaluated at the operating point, and
+//    one ddt() becomes the j*omega component of a complex factor
+//    (fac = re + j*omega*im), folded into the loaded power per frequency.
+`include "disciplines.vams"
+`define KB 1.380649e-23
+
+// noiseless twin: measures the simulator's own resistor-noise floor
+module njw_nonoise(a, c);
+  inout a, c; electrical a, c;
+  parameter real r = 1e3;
+  analog I(a, c) <+ V(a, c)/r;
+endmodule
+
+// noiseless 3-terminal twin of njw_twobranch (same conductances)
+module njw_twobranch_nn(a, b, c);
+  inout a, b, c; electrical a, b, c;
+  parameter real r = 1e3;
+  analog begin
+    I(a, c) <+ V(a, c)/r;
+    I(b, c) <+ V(b, c)/r;
+  end
+endmodule
+
+// control: plain thermal noise (always worked, still exact)
+module njw_plain(a, c);
+  inout a, c; electrical a, c;
+  parameter real r = 1e3;
+  analog begin
+    I(a, c) <+ V(a, c)/r;
+    I(a, c) <+ white_noise(4*`KB*300/r, "thermal");
+  end
+endmodule
+
+// op-dependent factor: node-free since E-54 (was an extra internal unknown)
+module njw_gmfac(a, c);
+  inout a, c; electrical a, c;
+  parameter real r = 1e3;
+  real gm;
+  analog begin
+    gm = 1.0/r + 0.1*V(a,c)/r;
+    I(a, c) <+ V(a, c)/r;
+    I(a, c) <+ gm * white_noise(4*`KB*300*r, "gmfac");
+  end
+endmodule
+
+// induced-gate-noise idiom: ddt of a noise wave -> j*omega factor, node-free
+module njw_induced(a, c);
+  inout a, c; electrical a, c;
+  parameter real r = 1e3, cc = 1e-9;
+  analog begin
+    I(a, c) <+ V(a, c)/r;
+    I(a, c) <+ ddt(cc * white_noise(4*`KB*300*r, "induced"));
+  end
+endmodule
+
+// flicker noise through ddt: the frequency shaping composes (w^2 * kf/f^ef)
+module njw_flind(a, c);
+  inout a, c; electrical a, c;
+  parameter real r = 1e3, k = 1e-7, kf = 1e-12, ef = 1.2;
+  analog begin
+    I(a, c) <+ V(a, c)/r;
+    I(a, c) <+ ddt(k * flicker_noise(kf, ef, "flddt"));
+  end
+endmodule
+
+// same-named flat + ddt parts: perfectly correlated (LRM 4.6.4), the complex
+// amplitudes sum: S = (x^2 + w^2 tau^2) * pwr
+module njw_mix(a, c);
+  inout a, c; electrical a, c;
+  parameter real r = 1e3, tau = 1e-7, x = 0.5;
+  analog begin
+    I(a, c) <+ V(a, c)/r;
+    I(a, c) <+ x * white_noise(4*`KB*300/r, "corr");
+    I(a, c) <+ ddt(tau * white_noise(4*`KB*300/r, "corr"));
+  end
+endmodule
+
+// anti-phase cancellation including the j*omega parts: exact zero
+module njw_cancel(a, c);
+  inout a, c; electrical a, c;
+  parameter real r = 1e3, tau = 1e-7, x = 0.5;
+  analog begin
+    I(a, c) <+ V(a, c)/r;
+    I(a, c) <+ x * white_noise(4*`KB*300/r, "z") + ddt(tau * white_noise(4*`KB*300/r, "z"));
+    I(a, c) <+ -x * white_noise(4*`KB*300/r, "z") - ddt(tau * white_noise(4*`KB*300/r, "z"));
+  end
+endmodule
+
+// one wave into TWO branches (correlation network -- the Equation path whose
+// noise was silently dropped before E-54): coherent cross-branch sum
+module njw_twobranch(a, b, c);
+  inout a, b, c; electrical a, b, c;
+  parameter real r = 1e3;
+  real n;
+  analog begin
+    n = white_noise(4*`KB*300/r, "shared");
+    I(a, c) <+ V(a, c)/r + n;
+    I(b, c) <+ V(b, c)/r + 0.5*n;
+  end
+endmodule

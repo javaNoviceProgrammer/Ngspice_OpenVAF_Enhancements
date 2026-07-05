@@ -51,7 +51,9 @@ mod setup;
 
 // 0.5: Enhancement-45 added `nodeset` to `OsdiNode` (node-array stride change)
 // 0.6: Enhancement-51 appended ac_stim fields to `OsdiDescriptor`
-const OSDI_VERSION: (u32, u32) = (0, 6);
+// 0.7: Enhancement-54 `load_noise` fills [flat, j*omega] power PAIRS per
+//      source (dst stride 2; was one power per source)
+const OSDI_VERSION: (u32, u32) = (0, 7);
 
 use std::sync::Once;
 

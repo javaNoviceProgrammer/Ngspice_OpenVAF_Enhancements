@@ -172,6 +172,10 @@ impl MatrixEntry {
 #[derive(Debug)]
 pub struct NoiseSource {
     pub factor: EvalOutput,
+    /// Enhancement-54: coefficient of the j*omega component of the factor (a
+    /// noise wave routed through ddt()); `EvalOutput::NONE`-like zero for
+    /// plain sources.
+    pub factor_react: EvalOutput,
     /// content of values depend on kind of noise source
     pub args: [EvalOutput; 2],
 }
@@ -194,11 +198,15 @@ impl NoiseSource {
             // Enhancement-51: mag and phase are computed in eval and cached
             dae::NoiseSourceKind::AcStim { mag, phase } => [get_output(mag), get_output(phase)],
         };
-        NoiseSource { args, factor: get_output(source.factor) }
+        NoiseSource {
+            args,
+            factor: get_output(source.factor),
+            factor_react: get_output(source.factor_react),
+        }
     }
 
-    pub fn eval_outputs(&self) -> [EvalOutput; 3] {
-        [self.factor, self.args[0], self.args[1]]
+    pub fn eval_outputs(&self) -> [EvalOutput; 4] {
+        [self.factor, self.factor_react, self.args[0], self.args[1]]
     }
 }
 

@@ -25,9 +25,11 @@ pub(super) enum Evaluation {
     /// without the need for an additional unknown
     Linear {
         /// The contribute that this linear equation writes to
-        /// Contains a painr of the original contribution and
-        /// the separate dimension it was mapped to
-        contributes: Box<[(Value, Value)]>,
+        /// Contains a triple of the original contribution, the separate
+        /// dimension it was mapped to, and (Enhancement-54) the j*omega
+        /// dimension picked up by routing a noise wave through ddt()
+        /// (`F_ZERO` when the chain contains no ddt).
+        contributes: Box<[(Value, Value, Value)]>,
     },
     /// This operator is not used and can be ignored
     Dead,
@@ -59,25 +61,35 @@ impl<'a> super::Builder<'a> {
                 Evaluation::Linear { contributes } => {
                     cov_mark::hit!(linear_operator);
                     let cb = &intern.callbacks[cb];
-                    for (contribute, mut dimension) in &*contributes {
+                    for (contribute, mut dimension, mut dimension_react) in &*contributes {
                         let resistive_contribute = *contribute;
                         let inst = self.func.dfg.value_def(resistive_contribute).inst().unwrap();
-                        let contribute = self.topology.as_contribution(*contribute).unwrap();
-                        let contribute = self.topology.get_mut(contribute);
+                        let kind = self.topology.as_contribution(*contribute).unwrap();
+                        let contribute = self.topology.get_mut(kind);
                         if is_noise {
                             dimension = FuncCursor::new(self.func)
                                 .after_inst(inst)
                                 .ins()
                                 .ensure_optbarrier(dimension);
+                            if dimension_react != F_ZERO {
+                                dimension_react = FuncCursor::new(self.func)
+                                    .after_inst(inst)
+                                    .ins()
+                                    .ensure_optbarrier(dimension_react);
+                            }
                             let noise = Noise::new(
                                 operator_inst,
                                 cb,
                                 dimension,
+                                dimension_react,
                                 &mut ssa_builder,
                                 self.func,
                             );
                             contribute.noise.push(noise)
                         } else {
+                            // ddt chains never contain a nested ddt, so no
+                            // j*omega dimension can appear here
+                            debug_assert_eq!(dimension_react, F_ZERO);
                             update_optbarrier(
                                 self.func,
                                 &mut contribute.react,
@@ -86,6 +98,31 @@ impl<'a> super::Builder<'a> {
                                     val
                                 },
                             );
+                            // Enhancement-54: the react optbarrier this move creates
+                            // (or rewrites) was never registered in `contributes`, so
+                            // `prune_small_signal` could not find it via
+                            // `as_contribution` -- a noise wave reaching a branch
+                            // through ddt() lost its coupling entirely (the
+                            // small-signal dimension twin was built and then dropped,
+                            // leaving a hole in the Jacobian and zero transferred
+                            // noise). Register it under the reactive twin of `kind`.
+                            let react_val = contribute.react;
+                            let react_kind = match kind {
+                                super::ContributeKind::Branch { id, is_voltage_src, .. } => {
+                                    super::ContributeKind::Branch {
+                                        id,
+                                        is_voltage_src,
+                                        is_reactive: true,
+                                    }
+                                }
+                                super::ContributeKind::ImplicitEquation { equation, .. } => {
+                                    super::ContributeKind::ImplicitEquation {
+                                        equation,
+                                        is_reactive: true,
+                                    }
+                                }
+                            };
+                            self.topology.contributes.insert(react_val, react_kind);
                         }
                     }
                 }
@@ -120,6 +157,7 @@ impl<'a> super::Builder<'a> {
                                 operator_inst,
                                 &intern.callbacks[cb],
                                 F_ONE,
+                                F_ZERO,
                                 &mut ssa_builder,
                                 self.func,
                             )],
@@ -152,53 +190,65 @@ impl<'a> super::Builder<'a> {
     ) -> Vec<(Inst, Evaluation)> {
         let mut analog_operators = Vec::new();
 
-        // first iterate all analog operators and determining if they can
-        // be lineraized/turned into dimensions. This step does not modify the
-        // function yet as otherwise the detection may return incorrect results
-        for (cb, uses) in intern.callback_uses.iter_mut_enumerated() {
-            match intern.callbacks[cb] {
-                CallBackKind::TimeDerivative => {
-                    for inst in take(uses) {
-                        if self.func.layout.inst_block(inst).is_none() {
-                            continue;
-                        }
-                        if self.func.dfg.instr_safe_to_remove(inst)
-                            || !self.op_dependent_insts.contains(inst)
-                        {
-                            let result = self.func.dfg.first_result(inst);
-                            self.func.dfg.replace_uses(result, F_ZERO);
-                            self.func.dfg.zap_inst(inst);
-                            self.func.layout.remove_inst(inst);
-                            continue;
-                        }
-                        analog_operators.push((
-                            inst,
-                            self.determine_evaluation(
-                                false,
+        // Iterate all analog operators, determining if they can be
+        // lineraized/turned into dimensions. Note that `determine_evaluation`
+        // DOES mutate the function for Linear results (the dimension replay
+        // runs inside it, and it detaches the operator's result), so ordering
+        // matters. Enhancement-54: all NOISE operators are processed before
+        // any ddt operator -- callbacks used to be visited in registration
+        // order, and a shared-`FuncRef` ddt evaluated between two noise calls
+        // detached the second wave's path to its contribution mid-flight,
+        // misclassifying it as Dead (the source was silently lost). Noise
+        // replays only zero the waves, which is exactly what the subsequent
+        // ddt pass should see (the wave's coupling lives in the noise factor).
+        for noise_pass in [true, false] {
+            for (cb, uses) in intern.callback_uses.iter_mut_enumerated() {
+                match intern.callbacks[cb] {
+                    CallBackKind::TimeDerivative if !noise_pass => {
+                        for inst in take(uses) {
+                            if self.func.layout.inst_block(inst).is_none() {
+                                continue;
+                            }
+                            if self.func.dfg.instr_safe_to_remove(inst)
+                                || !self.op_dependent_insts.contains(inst)
+                            {
+                                let result = self.func.dfg.first_result(inst);
+                                self.func.dfg.replace_uses(result, F_ZERO);
+                                self.func.dfg.zap_inst(inst);
+                                self.func.layout.remove_inst(inst);
+                                continue;
+                            }
+                            analog_operators.push((
                                 inst,
-                                postdom_frontiers,
-                                &intern.callbacks,
-                            ),
-                        ));
+                                self.determine_evaluation(
+                                    false,
+                                    inst,
+                                    postdom_frontiers,
+                                    &intern.callbacks,
+                                ),
+                            ));
+                        }
                     }
-                }
-                CallBackKind::WhiteNoise { .. }
-                | CallBackKind::FlickerNoise { .. }
-                | CallBackKind::NoiseTable(_)
-                | CallBackKind::AcStim { .. } => {
-                    for inst in take(uses) {
-                        analog_operators.push((
-                            inst,
-                            self.determine_evaluation(
-                                true,
+                    CallBackKind::WhiteNoise { .. }
+                    | CallBackKind::FlickerNoise { .. }
+                    | CallBackKind::NoiseTable(_)
+                    | CallBackKind::AcStim { .. }
+                        if noise_pass =>
+                    {
+                        for inst in take(uses) {
+                            analog_operators.push((
                                 inst,
-                                postdom_frontiers,
-                                &intern.callbacks,
-                            ),
-                        ));
+                                self.determine_evaluation(
+                                    true,
+                                    inst,
+                                    postdom_frontiers,
+                                    &intern.callbacks,
+                                ),
+                            ));
+                        }
                     }
+                    _ => continue,
                 }
-                _ => continue,
             }
         }
         analog_operators
@@ -231,6 +281,58 @@ impl<'a> super::Builder<'a> {
 
         let val_visisted =
             |val| func.dfg.value_def(val).inst().map_or(false, |inst| visisted.contains(inst));
+
+        // Enhancement-54: a noise wave may pass through at most ONE ddt() --
+        // its factor becomes `re + j*omega*im`, which the simulator folds into
+        // the power per frequency. `ac_stim` is excluded (complex RHS, not a
+        // power). Nested ddt ((j*omega)^2 needs an omega^2 real part) and a
+        // post-ddt value feeding a phi (the replay would need react-aware phi
+        // construction) fall back to the extra-unknown Equation path.
+        let this_cb = func.dfg.func_ref(inst).unwrap();
+        let allow_ddt =
+            noise && !matches!(callbacks[this_cb], CallBackKind::AcStim { .. });
+        if noise {
+            let has_ddt = postorder.iter().any(|&inst| {
+                matches!(func.dfg.insts[inst], InstructionData::Call { func_ref, .. }
+                    if callbacks[func_ref] == CallBackKind::TimeDerivative)
+            });
+            if has_ddt {
+                if !allow_ddt {
+                    return Evaluation::Equation;
+                }
+                let mut post_ddt: ahash::AHashSet<Value> = ahash::AHashSet::new();
+                for &inst in postorder.iter().rev() {
+                    let any_arg_post = func
+                        .dfg
+                        .instr_args(inst)
+                        .iter()
+                        .any(|arg| post_ddt.contains(arg));
+                    match func.dfg.insts[inst] {
+                        InstructionData::Call { func_ref, .. }
+                            if callbacks[func_ref] == CallBackKind::TimeDerivative =>
+                        {
+                            if any_arg_post {
+                                // nested ddt: (j*omega)^2 is not representable
+                                return Evaluation::Equation;
+                            }
+                            post_ddt.insert(func.dfg.first_result(inst));
+                        }
+                        InstructionData::PhiNode(ref phi) => {
+                            if func.dfg.phi_edges(phi).any(|(_, val)| post_ddt.contains(&val)) {
+                                return Evaluation::Equation;
+                            }
+                        }
+                        InstructionData::Binary { .. }
+                        | InstructionData::Unary { .. } => {
+                            if any_arg_post {
+                                post_ddt.insert(func.dfg.first_result(inst));
+                            }
+                        }
+                        _ => (),
+                    }
+                }
+            }
+        }
         let mut contributes = Vec::new();
         for &inst in postorder.iter() {
             match func.dfg.insts[inst] {
@@ -249,16 +351,38 @@ impl<'a> super::Builder<'a> {
                 } if noise => (),
                 InstructionData::Unary { opcode: Opcode::Fneg, .. } => {}
                 // noise is always zero when these are evaluated
-                // TODO: complex noise power (would allow us to avoid creating an extra node here)
                 InstructionData::Call { func_ref, .. }
                     if noise && callbacks[func_ref] != CallBackKind::TimeDerivative => {}
+                // Enhancement-54 (the old "complex noise power" TODO): ONE ddt() in a
+                // noise chain is representable as a j*omega component of the factor
+                // (validated below); `ac_stim` keeps the Equation fallback since its
+                // injection is a complex RHS pair, not a power.
+                InstructionData::Call { func_ref, .. }
+                    if allow_ddt && callbacks[func_ref] == CallBackKind::TimeDerivative => {}
                 InstructionData::Binary { opcode: Opcode::Fmul, args } => {
-                    if is_op_dependent(args[0]) && is_op_dependent(args[1]) {
+                    if noise {
+                        // Enhancement-54: for a NOISE wave the factor may be
+                        // op-dependent -- it is replayed into a per-instance value
+                        // evaluated at the operating point (`gm * white_noise(..)`
+                        // stays linear, no extra unknown). Only a product of two
+                        // wave-derived values is nonlinear in the wave.
+                        if val_visisted(args[0]) && val_visisted(args[1]) {
+                            return Evaluation::Equation;
+                        }
+                    } else if is_op_dependent(args[0]) && is_op_dependent(args[1]) {
+                        // for ddt the op-dependence check must stay:
+                        // g(v)*ddt(q) != ddt(g(v)*q)
                         return Evaluation::Equation;
                     }
                 }
                 InstructionData::Binary { opcode: Opcode::Fdiv, args } => {
-                    if is_op_dependent(args[1]) {
+                    if noise {
+                        // dividing BY the wave is nonlinear; an op-dependent divisor
+                        // is just a factor (see Fmul above)
+                        if val_visisted(args[1]) {
+                            return Evaluation::Equation;
+                        }
+                    } else if is_op_dependent(args[1]) {
                         return Evaluation::Equation;
                     }
                 }
@@ -344,7 +468,7 @@ impl<'a> super::Builder<'a> {
                             .as_contribution(val)
                             .map_or(false, |it| !it.is_reactive())
                         {
-                            contributes.push((val, F_ZERO))
+                            contributes.push((val, F_ZERO, F_ZERO))
                         } else {
                             return Evaluation::Equation;
                         }
@@ -362,9 +486,11 @@ impl<'a> super::Builder<'a> {
         self.create_dimension(
             if noise { F_ONE } else { self.func.dfg.instr_args(inst)[0] },
             self.func.dfg.first_result(inst),
+            Some(callbacks),
         );
-        for (contrib, dim) in &mut contributes {
-            *dim = self.val_map[&*contrib];
+        for (contrib, dim, dim_react) in &mut contributes {
+            *dim = self.val_map.get(&*contrib).copied().unwrap_or(F_ZERO);
+            *dim_react = self.val_map_react.get(&*contrib).copied().unwrap_or(F_ZERO);
         }
         Evaluation::Linear { contributes: contributes.into_boxed_slice() }
     }

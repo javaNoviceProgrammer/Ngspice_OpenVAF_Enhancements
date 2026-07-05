@@ -210,7 +210,7 @@ function %(v16, v17, v19, v20, v22, v28, v29, v30, v33, v35, v40, v47, v48, v50,
                                     jmp block13
 
                                 block13:
-                                    v381 = phi [v3, block10], [v172, block11]
+                                    v380 = phi [v3, block10], [v172, block11]
                                     v339 = phi [v3, block10], [v159, block11]
                                     v529 = phi [v3, block10], [v525, block11]
                                     v530 = phi [v3, block10], [v526, block11]
@@ -266,8 +266,8 @@ function %(v16, v17, v19, v20, v22, v28, v29, v30, v33, v35, v40, v47, v48, v50,
                                     v560 = phi [v3, block13], [v549, block19]
                                     v351 = optbarrier v515
                                     v352 = optbarrier v466
-                                    v368 = optbarrier v132
-                                    v396 = optbarrier v381
+                                    v367 = optbarrier v132
+                                    v395 = optbarrier v380
                                     v592 = fmul v397, v129
                                     v399 = optbarrier v592
                                     v593 = fmul v397, v121

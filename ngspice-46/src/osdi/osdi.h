@@ -206,6 +206,9 @@ typedef struct OsdiDescriptor {
                                      OsdiSimParas *sim_params, OsdiInitInfo *res);
 
   uint32_t (*eval)(void *handle, void *inst, const void *model, const OsdiSimInfo *info);
+  /* Enhancement-54 (OSDI 0.7): fills [flat, j*omega] signed power PAIRS per
+   * noise source (stride 2): dst[2i] = fac*|fac|*pwr(f), dst[2i+1] =
+   * fac_react*|fac_react|*pwr(f) for a noise wave routed through ddt(). */
   void (*load_noise)(void *inst, void *model, double freq, double *noise_dens);
   void (*load_residual_resist)(void *inst, void* model, double *dst);
   void (*load_residual_react)(void *inst, void* model, double *dst);

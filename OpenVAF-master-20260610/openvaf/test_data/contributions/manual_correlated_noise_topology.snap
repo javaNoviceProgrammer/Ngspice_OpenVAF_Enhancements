@@ -30,6 +30,7 @@ Topology {
                                 pwr: v31,
                             },
                             factor: v30,
+                            factor_react: v3,
                         },
                     ],
                 },

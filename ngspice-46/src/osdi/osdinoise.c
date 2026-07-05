@@ -36,6 +36,9 @@ extern CMat *iNoise;
 
 static double *noise_dens = NULL;
 static double *noise_dens_ln = NULL;
+/* Enhancement-54: load_noise fills [flat, j*omega] signed power PAIRS per
+   source (stride 2); per-source PSDs are then computed into noise_dens */
+static double *noise_dens2 = NULL;
 /* Enhancement-42: per-source complex transfer + grouping flags for coherent
    summation of same-named (perfectly correlated, LRM 4.6.4) noise sources */
 static double *noise_re = NULL;
@@ -77,6 +80,8 @@ int OSDInoise(int mode, int operation, GENmodel *inModel, CKTcircuit *ckt,
     noise_dens = realloc(noise_dens, descr->num_noise_src * sizeof(double));
     noise_dens_ln =
         realloc(noise_dens_ln, descr->num_noise_src * sizeof(double));
+    noise_dens2 =
+        realloc(noise_dens2, 2 * descr->num_noise_src * sizeof(double));
     noise_re = realloc(noise_re, descr->num_noise_src * sizeof(double));
     noise_im = realloc(noise_im, descr->num_noise_src * sizeof(double));
     noise_grouped = realloc(noise_grouped, descr->num_noise_src * sizeof(char));
@@ -128,7 +133,7 @@ int OSDInoise(int mode, int operation, GENmodel *inModel, CKTcircuit *ckt,
         switch (mode) {
 
         case N_DENS:
-          descr->load_noise(inst, model, data->freq, noise_dens);
+          descr->load_noise(inst, model, data->freq, noise_dens2);
           node_mapping =
               (uint32_t *)(((char *)inst) + descr->node_mapping_offset);
           /* Enhancement-42: gather each source's complex transfer to the
@@ -146,6 +151,13 @@ int OSDInoise(int mode, int operation, GENmodel *inModel, CKTcircuit *ckt,
             noise_re[i] = ckt->CKTrhs[node1] - ckt->CKTrhs[node2];
             noise_im[i] = ckt->CKTirhs[node1] - ckt->CKTirhs[node2];
             noise_grouped[i] = 0;
+            if (getenv("OSDI_NOISE_DEBUG"))
+              fprintf(stderr,
+                      "NDBG src=%s raw_n1=%u raw_n2=%u n1=%d n2=%d dens=%.6e "
+                      "dens_react=%.6e T=(%.6e,%.6e)\n",
+                      src.name, src.nodes.node_1, src.nodes.node_2, node1,
+                      node2, noise_dens2[2 * i], noise_dens2[2 * i + 1],
+                      noise_re[i], noise_im[i]);
           }
           for (i = 0; i < descr->num_noise_src; i++) {
             src = descr->noise_sources[i];
@@ -157,7 +169,11 @@ int OSDInoise(int mode, int operation, GENmodel *inModel, CKTcircuit *ckt,
             };
 #ifdef RFSPICE
             if (ckt->CKTcurrentAnalysis & DOING_SP) {
-              inoise = sqrt(fabs(noise_dens[i]));
+              /* Enhancement-54: |a + j*omega*b|^2 = a^2 + omega^2 b^2 (the two
+                 components of one source are in quadrature) */
+              double omega_sp = 2.0 * M_PI * data->freq;
+              inoise = sqrt(fabs(noise_dens2[2 * i]) +
+                            omega_sp * omega_sp * fabs(noise_dens2[2 * i + 1]));
               // Calculate input equivalent noise current source (we have port
               // impedance attached)
               for (int s = 0; s < ckt->CKTportCount; s++)
@@ -205,10 +221,17 @@ int OSDInoise(int mode, int operation, GENmodel *inModel, CKTcircuit *ckt,
                |pwr| * |T|^2. The group's power is reported on its first
                source; the members report 0. */
             {
+              /* Enhancement-54: each source's signal factor is complex,
+                 `a + j*omega*b` (b comes from a noise wave routed through
+                 ddt()); its amplitude contribution through the complex
+                 transfer T is (a + j*omega*b) * T. Exact for a single source
+                 (the two parts are in quadrature: a^2|T|^2 + w^2 b^2|T|^2)
+                 and for coherent same-named groups (full complex sum). */
               double amp_re = 0.0, amp_im = 0.0;
+              double omega = 2.0 * M_PI * data->freq;
               uint32_t j;
               for (j = i; j < descr->num_noise_src; j++) {
-                double a;
+                double a, b;
                 if (j > i) {
                   if (noise_grouped[j] ||
                       strcmp(descr->noise_sources[i].name,
@@ -216,11 +239,14 @@ int OSDInoise(int mode, int operation, GENmodel *inModel, CKTcircuit *ckt,
                     continue;
                   noise_grouped[j] = 1;
                 }
-                a = sqrt(fabs(noise_dens[j]));
-                if (noise_dens[j] < 0.0)
+                a = sqrt(fabs(noise_dens2[2 * j]));
+                if (noise_dens2[2 * j] < 0.0)
                   a = -a;
-                amp_re += a * noise_re[j];
-                amp_im += a * noise_im[j];
+                b = sqrt(fabs(noise_dens2[2 * j + 1]));
+                if (noise_dens2[2 * j + 1] < 0.0)
+                  b = -b;
+                amp_re += a * noise_re[j] - omega * b * noise_im[j];
+                amp_im += a * noise_im[j] + omega * b * noise_re[j];
               }
               noise_dens[i] = amp_re * amp_re + amp_im * amp_im;
             }

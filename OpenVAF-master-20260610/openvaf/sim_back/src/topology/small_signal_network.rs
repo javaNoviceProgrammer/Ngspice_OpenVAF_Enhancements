@@ -283,7 +283,7 @@ impl Builder<'_> {
                 // create placeholder since all uses of val will be replaced with 0
                 // but we obviously still need it
                 let placeholder = self.func.dfg.make_invalid_value();
-                self.create_dimension(placeholder, val);
+                self.create_dimension(placeholder, val, None);
                 for contribute in contributes {
                     let dimension = self.val_map[&contribute];
                     let contribute = self.topology.as_contribution(contribute).unwrap();

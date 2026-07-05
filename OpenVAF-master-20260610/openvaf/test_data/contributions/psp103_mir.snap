@@ -37,10 +37,13 @@ function %(v16, v17, v20, v22, v25, v33, v40, v41, v44, v46, v48, v49, v52) {
                                     v62 = optbarrier v32
                                     v63 = optbarrier v57
                                     v65 = optbarrier v18
-                                    v66 = optbarrier v23
-                                    v67 = optbarrier v64
+                                    v66 = optbarrier v55
+                                    v67 = optbarrier v23
                                     v68 = optbarrier v64
-                                    v69 = optbarrier v55
+                                    v69 = optbarrier v64
                                     v72 = optbarrier v71
                                     v78 = optbarrier v77
+                                    v79 = optbarrier v76
+                                    v80 = optbarrier v75
+                                    v81 = optbarrier v75
 }

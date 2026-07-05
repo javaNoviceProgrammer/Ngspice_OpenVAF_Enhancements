@@ -65,7 +65,24 @@ impl DaeSystem {
         for (eq, contributions) in contributions.implicit_equations.iter_enumerated() {
             builder.build_implicit_equation(eq, contributions)
         }
-        builder.finish()
+        if std::env::var("OPENVAF_DAE_DEBUG").is_ok() {
+            for (eq, contributions) in contributions.implicit_equations.iter_enumerated() {
+                eprintln!("DAEDBG implicit {eq:?}: {contributions:?}");
+            }
+        }
+        let sys = builder.finish();
+        if std::env::var("OPENVAF_DAE_DEBUG").is_ok() {
+            for (u, r) in sys.unknowns.iter_enumerated().zip(&sys.residual).map(|((u, k), r)| ((u, k), r)) {
+                eprintln!("DAEDBG unknown {:?} kind {:?} resist {:?} react {:?} resist_ss {:?} react_ss {:?}", u.0, u.1, r.resist, r.react, r.resist_small_signal, r.react_small_signal);
+            }
+            for e in &sys.jacobian {
+                eprintln!("DAEDBG jac ({:?},{:?}) resist {:?} react {:?}", e.row, e.col, e.resist, e.react);
+            }
+            for n in &sys.noise_sources {
+                eprintln!("DAEDBG noise hi={:?} lo={:?} factor={:?} factor_react={:?} kind={:?}", n.hi, n.lo, n.factor, n.factor_react, n.kind);
+            }
+        }
+        sys
     }
 
     pub(super) fn sparsify(&mut self, ctx: &mut Context) {
@@ -90,7 +107,7 @@ impl DaeSystem {
 
         self.noise_sources.retain_mut(|noise_src| {
             noise_src.map_vals(&mut sparsify);
-            if noise_src.factor == F_ZERO {
+            if noise_src.factor == F_ZERO && noise_src.factor_react == F_ZERO {
                 return false;
             }
             match noise_src.kind {
