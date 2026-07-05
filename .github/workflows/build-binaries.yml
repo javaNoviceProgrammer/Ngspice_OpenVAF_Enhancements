@@ -76,14 +76,20 @@ jobs:
         run: |
           # Silence two CI warnings from the runner image: it ships an
           # untrusted third-party tap (aws/tap) that brew now warns about,
-          # and llvm@15 pre-linked, which makes the llvm@18 install print a
-          # "not linked" warning. Neither is used by this build -- openvaf
-          # gets LLVM 18 via LLVM_SYS_181_PREFIX + PATH below, never via the
-          # brew link, and ngspice builds with Apple's /usr/bin/clang.
+          # and a pre-installed llvm@15, which makes the llvm@18 install
+          # print a "not linked because llvm@15 is already installed"
+          # warning (brew's check is on INSTALLED versions, so a mere
+          # unlink is not enough -- remove it). Neither is used by this
+          # build: openvaf gets LLVM 18 via LLVM_SYS_181_PREFIX + PATH
+          # below, and ngspice builds with Apple's /usr/bin/clang.
           brew untap aws/tap 2>/dev/null || true
-          brew unlink llvm@15 2>/dev/null || true
+          brew uninstall --ignore-dependencies llvm@15 2>/dev/null || true
           brew update
           brew install llvm@18 automake autoconf libtool bison flex readline ncurses
+          # belt-and-braces: make llvm@18 the linked default too (the build
+          # does not depend on the link, but this keeps any brew-installed
+          # tool that looks for a linked llvm consistent with what we use)
+          brew link --overwrite llvm@18 2>/dev/null || true
           # XQuartz provides the X11 headers/libs at /opt/X11 for --with-x.
           brew install --cask xquartz
           PREFIX="$(brew --prefix llvm@18)"
