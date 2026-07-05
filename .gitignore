@@ -358,5 +358,8 @@ examples/preproc_examples/_*.cir
 examples/preproc_examples/_*.osdi
 examples/preproc_examples/_argnest.va
 
+# Enhancement 66 monte-carlo example scripts: temp netlists
+examples/montecarlo_examples/_*.cir
+
 # Python bytecode cache (e.g. from importing _setup.py)
 __pycache__/

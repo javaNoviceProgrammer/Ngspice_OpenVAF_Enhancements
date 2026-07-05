@@ -1,0 +1,19 @@
+// Enhancement-66: OSDI building blocks for the Monte Carlo suite --
+// a model-card resistor, an instance-parameter resistor, and a diode
+// (nonlinear MC target).
+`include "disciplines.vams"
+
+module ores(a,c); inout a,c; electrical a,c;
+  parameter real r = 1e3;
+  analog I(a,c) <+ V(a,c)/r;
+endmodule
+
+module ires(a,c); inout a,c; electrical a,c;
+  (* type="instance" *) parameter real r = 1e3;
+  analog I(a,c) <+ V(a,c)/r;
+endmodule
+
+module odio(a,c); inout a,c; electrical a,c;
+  parameter real is_ = 1e-15;
+  analog I(a,c) <+ is_*(exp($limit(V(a,c), "pnjlim", 0.026, 0.7)/0.026) - 1) + 1e-12*V(a,c);
+endmodule

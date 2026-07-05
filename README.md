@@ -802,6 +802,16 @@ Several unrelated language gaps found along the way are also fixed. **`localpara
 
 ---
 
+## Enhancement 66: Monte Carlo with OSDI devices — validation
+
+*July 2026* — Probed **Monte Carlo (statistical) simulation over OSDI parameters** — the remaining workflow gap after parameter sweeps (E-62) and `alter` — and found ngspice's statistical machinery **fully reaches OSDI parameters**; like Enhancements 57 and 60, the deliverable is the validation itself. Both standard MC idioms work: the **`reset` idiom** (`.param rr = agauss(1k, 100, 3)` feeding a `.model` card or an instance line, with each `reset` re-throwing the dice and re-running the OSDI setup) and the **`alter` loop** (control-language `sgauss(0)`/`sunif(0)` vectors assigned per run — no re-parse, and `setseed` makes whole ensembles **bit-reproducible**). Verified against analytic statistics over 100–200-run ensembles: parameter readback mean/σ (agauss draws with σ = avar/sig), ±5σ bounds, output-current spread = σ_R/R², `aunif` bounds with uniform spread, and a **nonlinear diode MC** whose op-point spread matches the analytic sensitivity σ_V ≈ v_t·σ_Is/Is. Three gotchas pinned for posterity: every textual occurrence of a random-valued `{param}` **draws independently** (matched devices need the `alter` idiom); ngspice's `sunif(0)` is uniform on **[−1, 1]**, not [0, 1]; and `wrdata` is unusable for control-created vectors (it pairs them with the current plot's length-1 scale — parse `print`'s indexed table instead). The example folder includes `plot_mc.py`, rendering 500-run gaussian and uniform MC histograms sitting on the **analytic transformed densities** of I = 1V/R. *(This release also carries a repository-wide chore: all 44 openvaf-r compilation warnings fixed — zero-warning builds across every crate — including removal of a 64-line abandoned unsafe experiment in the OSDI backend; no functional change, fully regression-checked.)*
+
+- Verified with 10 end-to-end checks — see `examples/montecarlo_examples/`
+- **No functional compiler or ngspice source changes**; regression: all 62 example verify suites ALL PASS, 21 crate test targets pass, the VA_TEST corpus compiles 92/92 (with the warning-free compiler)
+- Details: [Enhancement-66.md](enhancements_doc/Enhancement-66.md)
+
+---
+
 ## Prebuilt Binaries
 
 Binaries are built by CI and committed to `bin/`:
