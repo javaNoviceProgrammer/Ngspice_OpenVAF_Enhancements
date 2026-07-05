@@ -253,7 +253,7 @@ impl DfgValues {
         !self.uses[use_].attached
     }
 
-    pub fn uses(&self, value: Value) -> UseIter {
+    pub fn uses(&self, value: Value) -> UseIter<'_> {
         self.uses_head_cursor(value).into_iter(self)
     }
 
@@ -330,7 +330,7 @@ impl DataFlowGraph {
     }
 
     // Returns an iterator to instruction's uses
-    pub fn inst_uses(&self, inst: Inst) -> InstUseIter {
+    pub fn inst_uses(&self, inst: Inst) -> InstUseIter<'_> {
         let mut vals = self.inst_results(inst).iter();
         let cursor = vals.next().map(|res| self.uses_head_cursor(*res)).unwrap_or_default();
         InstUseIter { cursor, vals, dfg: &self.values }

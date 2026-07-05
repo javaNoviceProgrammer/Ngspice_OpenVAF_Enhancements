@@ -18,10 +18,6 @@ use termcolor::{Color, ColorChoice, ColorSpec, StandardStream, WriteColor};
 pub fn handle_dump(panic_info: &PanicHookInfo) -> Option<PathBuf> {
     let mut expl = String::new();
 
-    #[cfg(feature = "nightly")]
-    let message = panic_info.message().map(|m| format!("{}", m));
-
-    #[cfg(not(feature = "nightly"))]
     let message = match (
         panic_info.payload().downcast_ref::<&str>(),
         panic_info.payload().downcast_ref::<String>(),

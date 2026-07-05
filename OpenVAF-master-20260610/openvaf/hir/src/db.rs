@@ -1,4 +1,4 @@
-use std::intrinsics::transmute;
+use std::mem::transmute;
 use std::iter::{self, once};
 use std::ops::Deref;
 use std::sync::Arc;

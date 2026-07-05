@@ -1,5 +1,5 @@
 use hir::builtin::{
-    AC_STIMT_NAME, AC_STIM_NAME_MAG, AC_STIM_NAME_MAG_PHASE, AC_STIM_UNIT, FLICKER_NOISE_NAME,
+    AC_STIMT_NAME, AC_STIM_NAME_MAG_PHASE, AC_STIM_UNIT, FLICKER_NOISE_NAME,
     NOISE_TABLE_FILE, NOISE_TABLE_FILE_NAME, NOISE_TABLE_INLINE, NOISE_TABLE_INLINE_NAME,
     WHITE_NOISE_NAME,
 };
@@ -1616,7 +1616,6 @@ impl BodyLoweringCtx<'_, '_, '_> {
                 self.rng_round_real(r)
             }
 
-            _ => unreachable!(),
         }
     }
 
@@ -1921,7 +1920,7 @@ impl BodyLoweringCtx<'_, '_, '_> {
         let identity = self.ctx.ins().fsub(y, x);
         let resist = self.lower_select_with(enable_integration, |_| track, |_| identity);
         self.ctx.def_resist_residual(resist, eq);
-        let react = self.lower_select_with(enable_integration, |cx| y, |cx| cx.ctx.fconst(0.0));
+        let react = self.lower_select_with(enable_integration, |_cx| y, |cx| cx.ctx.fconst(0.0));
         self.ctx.def_react_residual(react, eq);
 
         y

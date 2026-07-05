@@ -3,7 +3,6 @@ use std::iter::once;
 
 use hir::{CompilationDB, ParamSysFun, Type};
 use hir_def::db::HirDefDB;
-use hir_def::ndatable::NDATable;
 use hir_lower::{CurrentKind, ParamKind};
 use lasso::{Rodeo, Spur};
 use llvm_sys::core::{
@@ -115,7 +114,6 @@ impl osdi_0_4::OsdiAttributeValue {
                     // Fill initializer array
                     elems[0] = entry;
                 }
-                _ => panic!("Unknown attribute value union member type."),
             }
             // Construct array
             &*LLVMConstArray2(elem_ty, elems.as_mut_ptr(), len)
@@ -421,7 +419,7 @@ impl<'ll> OsdiCompilationUnit<'_, '_, 'll> {
 
             let noise_source_type: Vec<_> =
                 zip(&module.dae_system.noise_sources, &self.inst_data.noise)
-                    .filter_map(|(src, eval_outputs)| match src.kind {
+                    .filter_map(|(src, _eval_outputs)| match src.kind {
                         NoiseSourceKind::WhiteNoise { .. } => Some(NOISE_TYPE_WHITE),
                         NoiseSourceKind::FlickerNoise { .. } => Some(NOISE_TYPE_FLICKER),
                         NoiseSourceKind::NoiseTable { .. } => Some(NOISE_TYPE_TABLE),

@@ -174,7 +174,7 @@ impl<'ll> OsdiCompilationUnit<'_, '_, 'll> {
                 let i = slot;
                 slot += 1;
                 let fac = self.load_eval_output(eval_outputs.factor, &*inst, &*model, &*llbuilder);
-                let mut pwr = match src.kind {
+                let pwr = match src.kind {
                     NoiseSourceKind::WhiteNoise { .. } => {
                         self.load_eval_output(eval_outputs.args[0], &*inst, &*model, &*llbuilder)
                     }
@@ -256,7 +256,7 @@ impl<'ll> OsdiCompilationUnit<'_, '_, 'll> {
                     .unwrap_or_else(|| unreachable!("intrinsic llvm.fabs.f64 not found"));
                 let fast_math_flags: c_uint = 0x1F; // This represents all flags set
                 let base_pwr = pwr;
-                let mut store_folded = |fac: &'ll llvm_sys::LLVMValue, index: u32| {
+                let store_folded = |fac: &'ll llvm_sys::LLVMValue, index: u32| {
                     let mut fabs_args: [llvm_sys::prelude::LLVMValueRef; 1] =
                         [fac as *const llvm_sys::LLVMValue as *mut _];
                     let fac_abs = LLVMBuildCall2(
@@ -352,7 +352,7 @@ impl<'ll> OsdiCompilationUnit<'_, '_, 'll> {
                     UNNAMED,
                 );
 
-                let mut trig = |intrinsic: &'static str| {
+                let trig = |intrinsic: &'static str| {
                     let (ty, fun) = self
                         .cx
                         .intrinsic(intrinsic)
@@ -384,7 +384,7 @@ impl<'ll> OsdiCompilationUnit<'_, '_, 'll> {
                     UNNAMED,
                 );
 
-                let mut store = |val: llvm_sys::prelude::LLVMValueRef, idx: u32| {
+                let store = |val: llvm_sys::prelude::LLVMValueRef, idx: u32| {
                     let index_val =
                         cx.const_unsigned_int(idx) as *const llvm_sys::LLVMValue as *mut _;
                     let mut gep_indices: [llvm_sys::prelude::LLVMValueRef; 1] = [index_val];

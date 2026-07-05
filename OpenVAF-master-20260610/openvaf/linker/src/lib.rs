@@ -11,16 +11,6 @@ use camino::{Utf8Path, Utf8PathBuf};
 use cc::windows_registry;
 use target::spec::{LinkerFlavor, Target};
 
-/// Get the LLVM prefix from environment variables.
-/// Checks in order: LLVM 21.1, 20.1, 19.1, 18.1 (newest first).
-fn get_llvm_prefix() -> Option<String> {
-    env::var("LLVM_SYS_211_PREFIX")
-        .or_else(|_| env::var("LLVM_SYS_201_PREFIX"))
-        .or_else(|_| env::var("LLVM_SYS_191_PREFIX"))
-        .or_else(|_| env::var("LLVM_SYS_181_PREFIX"))
-        .ok()
-}
-
 pub fn link(
     path: Option<Utf8PathBuf>,
     target: &Target,

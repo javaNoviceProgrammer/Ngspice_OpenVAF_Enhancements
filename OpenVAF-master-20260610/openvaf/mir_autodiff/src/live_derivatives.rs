@@ -262,6 +262,9 @@ pub struct LiveDerivatives {
 }
 
 impl LiveDerivatives {
+    /// Debugging aid (dumps the derivative matrix); not called from any
+    /// shipping path but worth keeping for autodiff investigations.
+    #[allow(dead_code)]
     fn print_d_matrix(builder: &LiveDerivativeBuilder, mat: &SparseBitMatrix<Inst, Derivative>) {
         for inst in mat.rows() {
             print!("{:?} -> {:?} : ", inst, builder.func.dfg.inst_results(inst));
