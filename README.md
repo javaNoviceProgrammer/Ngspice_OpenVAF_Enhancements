@@ -772,6 +772,16 @@ Several unrelated language gaps found along the way are also fixed. **`localpara
 
 ---
 
+## Enhancement 63: RF analyses — S-parameters, transient noise, PSS + `span.c` NaN fix
+
+*July 2026* — Round 2 of the analysis-coverage work: the RF-flavored ngspice analyses probed with OSDI devices against built-in twins. **`.sp` S-parameters are exact**: a series OSDI resistor gives the textbook S11 = S21 = 0.5, a frequency-dependent OSDI RC two-port is *bit-identical* to the built-in twin over three decades, and the analysis is **fully N-port** (a 3-port junction reproduces Sii = −1/3 / Sij = +2/3; 3-/4-port OSDI resistor stars give the analytic 1/3 and 1/4 exactly — only the `donoise` NF/SOpt block, an inherently two-port concept, requires exactly 2 ports). **`.sp donoise` exposed a stock ngspice defect via parity testing**: the OSDI noisy resistor gives NF = 10·log₁₀(1 + R/Z0) = 4.7712 dB exactly, but the identical built-in circuit returned **NaN** — `span.c`'s noise-parameter extraction takes `sqrt(Ycor² + Gu/Rn)` where the uncorrelated noise conductance `Gu` is analytically *zero* for fully-correlated single-source topologies, and floating-point rounding could land the argument at −1e-18. Clamped to the physical range: the built-in now reads 10·log₁₀(3) to eight digits and multi-source circuits are unchanged. **Transient noise** (`TRNOISE` sources) propagates through OSDI devices correctly — device-*internal* noise doesn't enter `.tran` for built-ins either (parity, documented). **PSS** (`.pss`, experimental, compile-time `--enable-pss`): OSDI devices are **full citizens** — the linear OSDI RC converges to the analytic fundamental 1/√(1+(ωRC)²) matching the built-in twin to 7 digits, and a mildly-driven OSDI diode converges in 2 shooting iterations (the built-in twin wanders longer); strongly nonlinear rectifiers defeat the shooting method for built-ins and OSDI alike. The verify suite auto-detects PSS support and SKIPs cleanly on binaries built without it (the README shows the build recipe).
+
+- Verified with 15 end-to-end checks (12 + 3 PSS) — see `examples/rfanalyses_examples/`
+- Regression-checked: all 59 example verify suites ALL PASS with the rebuilt ngspice; no compiler change
+- Details: [Enhancement-63.md](enhancements_doc/Enhancement-63.md)
+
+---
+
 ## Prebuilt Binaries
 
 Binaries are built by CI and committed to `bin/`:

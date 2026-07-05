@@ -142,7 +142,18 @@ CKTspnoise(CKTcircuit* ckt, int mode, int operation, Ndata* data, NOISEAN* noise
 
             double Gu = tempCy->d[0][0].re - Rn * Y11_Ycor;
 
-            cplx Ysopt; Ysopt.re = sqrt(SQR(Ycor.re) + Gu / Rn); Ysopt.im = -Ycor.im;
+            /* Enhancement-63: the uncorrelated noise conductance Gu (and
+               with it the sqrt argument below) is physically >= 0, but for
+               a fully-correlated noise topology (e.g. a single series
+               resistor as the only noise source) it is analytically ZERO
+               and floating-point rounding can land it at -1e-18 --
+               sqrt(negative) then poisons NF/SOpt/NFmin/Rn with NaN.
+               Clamp to the physical range. */
+            double YsoptArg = SQR(Ycor.re) + Gu / Rn;
+            if (YsoptArg < 0.0)
+                YsoptArg = 0.0;
+
+            cplx Ysopt; Ysopt.re = sqrt(YsoptArg); Ysopt.im = -Ycor.im;
             cplx Y0; Y0.re = refPortY0; Y0.im = 0.0;
             Sopt = cdivco(csubco(Y0, Ysopt),
                 caddco(Y0, Ysopt));

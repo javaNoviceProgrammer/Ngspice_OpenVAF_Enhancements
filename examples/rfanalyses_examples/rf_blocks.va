@@ -1,0 +1,28 @@
+// Enhancement-63: OSDI building blocks for the RF-analysis suite --
+// a resistor, a capacitor, a NOISY resistor (explicit thermal white_noise,
+// unlike built-in R whose noise is implicit), and an exponential diode.
+`include "disciplines.vams"
+`include "constants.vams"
+
+module ores(a,c); inout a,c; electrical a,c;
+  parameter real r = 1e3;
+  analog I(a,c) <+ V(a,c)/r;
+endmodule
+
+module ocap(a,c); inout a,c; electrical a,c;
+  parameter real cap = 1e-9;
+  analog I(a,c) <+ ddt(cap*V(a,c));
+endmodule
+
+module rnoisy(a,c); inout a,c; electrical a,c;
+  parameter real r = 100.0;
+  analog begin
+    I(a,c) <+ V(a,c)/r;
+    I(a,c) <+ white_noise(4.0*`P_K*$temperature/r, "thermal");
+  end
+endmodule
+
+module odio(a,c); inout a,c; electrical a,c;
+  parameter real is_ = 1e-15;
+  analog I(a,c) <+ is_*(exp($limit(V(a,c), "pnjlim", 0.026, 0.7)/0.026) - 1) + 1e-12*V(a,c);
+endmodule

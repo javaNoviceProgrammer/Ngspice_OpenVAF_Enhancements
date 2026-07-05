@@ -346,5 +346,8 @@ examples/opargs_examples/_*.txt
 examples/analyses_examples/_*.cir
 examples/analyses_examples/_*.txt
 
+# Enhancement 63 rf-analyses example scripts: temp netlists
+examples/rfanalyses_examples/_*.cir
+
 # Python bytecode cache (e.g. from importing _setup.py)
 __pycache__/
