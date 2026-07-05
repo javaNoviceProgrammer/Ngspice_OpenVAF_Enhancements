@@ -32,15 +32,21 @@ impl ParserState {
             ],
             ParserState::FixedFmtLit => &[
                 '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '.', 'e', 'E', 'f', 'F', 'g',
-                'G', 'r', 'R',
+                'G', 'r', 'R', 'd', 'D', 'h', 'H', 'o', 'O', 'b', 'B', 'c', 'C', 's', 'S',
             ],
-            ParserState::DynamicFmtLit => &['.', 'e', 'E', 'f', 'F', 'g', 'G', 'r', 'R'],
+            ParserState::DynamicFmtLit => &[
+                '.', 'e', 'E', 'f', 'F', 'g', 'G', 'r', 'R', 'd', 'D', 'h', 'H', 'o', 'O', 'b',
+                'B', 'c', 'C', 's', 'S',
+            ],
             ParserState::AnyPrecision => &['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '*'],
             ParserState::FixedPrecision => &[
                 '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'e', 'E', 'f', 'F', 'g', 'G',
-                'r', 'R',
+                'r', 'R', 'd', 'D', 'h', 'H', 'o', 'O', 'b', 'B', 'c', 'C', 's', 'S',
             ],
-            ParserState::DynamicPrecsion => &['e', 'E', 'f', 'F', 'g', 'G', 'r', 'R'],
+            ParserState::DynamicPrecsion => &[
+                'e', 'E', 'f', 'F', 'g', 'G', 'r', 'R', 'd', 'D', 'h', 'H', 'o', 'O', 'b', 'B',
+                'c', 'C', 's', 'S',
+            ],
         }
     }
 }
@@ -49,9 +55,14 @@ pub struct ParseResult {
     pub dynamic_args: Vec<TextSize>,
     pub err: Option<InferenceDiagnostic>,
     pub end: TextSize,
+    /// Enhancement-71: the conversion character that terminated the
+    /// specifier (`d`, `s`, `g`, ...) -- flags/width/precision are legal
+    /// for EVERY conversion, not just the real ones, so the caller maps
+    /// this to the expected argument type. `\0` when `err` is set.
+    pub conversion: char,
 }
 
-pub fn parse_real_fmt_spec(
+pub fn parse_fmt_spec(
     start: u32,
     fmt_expr: ExprId,
     mut pos: Option<(usize, char)>,
@@ -61,6 +72,7 @@ pub fn parse_real_fmt_spec(
     let mut end = start + 1;
     let mut dynamic_args = Vec::new();
     let mut err = None;
+    let mut conversion = '\0';
     loop {
         if let Some((off, c)) = pos {
             end = (off + c.len_utf8()) as u32;
@@ -86,7 +98,14 @@ pub fn parse_real_fmt_spec(
                     state = ParserState::FixedPrecision
                 }
                 '0'..='9' if state.eat_number() => (),
-                'e'..='g' | 'E'..='G' | 'r' | 'R' if state != ParserState::AnyPrecision => {
+                // Enhancement-71: every conversion terminates a specifier
+                // (integer d/h/o/b/c, string s, real e/f/g/r) -- flags,
+                // width and precision are legal for all of them.
+                'e'..='g' | 'E'..='G' | 'r' | 'R' | 'd' | 'D' | 'h' | 'H' | 'o' | 'O' | 'b'
+                | 'B' | 'c' | 'C' | 's' | 'S'
+                    if state != ParserState::AnyPrecision =>
+                {
+                    conversion = c;
                     break;
                 }
                 _ => {
@@ -110,5 +129,5 @@ pub fn parse_real_fmt_spec(
         }
     }
 
-    ParseResult { dynamic_args, err, end: end.into() }
+    ParseResult { dynamic_args, err, end: end.into(), conversion }
 }

@@ -852,6 +852,16 @@ Several unrelated language gaps found along the way are also fixed. **`localpara
 
 ---
 
+## Enhancement 71: display-task audit — format flags/width everywhere + the `%b` segfault
+
+*July 2026* — A systematic audit of the display tasks (`$strobe`, `$display`, `$write`, `$monitor`, `$debug`) and the **full format-specifier surface**, with every check verified against the exact printf output. **Two defects found and fixed.** **(1) Flags and width were rejected for every non-real conversion**: `%5d`, `%-8d`, `%+d`, `%08d`, `% d`, `%#o` — all standard display syntax — failed with *"unexpected character"*, because the inference-side format parser only *terminated* on real conversions (`e/f/g/r`) and the code-generation translator shared the assumption. Both layers now parse the general `[flags][width][.precision][conversion]` form for every conversion — the argument type follows the conversion character, the prefix is preserved in the generated C format (`%h`→`%x`, `%b`→pre-formatted binary string, `%r`→engineering notation), and dynamic `%*d` widths consume their extra integer argument in the right order. **(2) `%b` crashed the simulator** — a pre-existing, latent defect: the OSDI print codegen built the binary-formatted string and remembered it *for `free()`* but **never passed it to `snprintf`**; the matching `%s` read a garbage pointer and any model printing `%b` segfaulted ngspice. One line. Verified printf-exact across 18 checks: all flags, fixed and dynamic widths, precision, all conversions, `%%`, `%m` (module path), escapes, bare-argument defaults, and all five display kinds.
+
+- Verified with 18 end-to-end checks, each against the exact expected output string — see `examples/display_examples/`
+- Regression-checked: all 65 example verify suites ALL PASS, the integration suite 28/28, crate tests pass, the VA_TEST corpus compiles 92/92
+- Details: [Enhancement-71.md](enhancements_doc/Enhancement-71.md)
+
+---
+
 ## Prebuilt Binaries
 
 Binaries are built by CI and committed to `bin/`:

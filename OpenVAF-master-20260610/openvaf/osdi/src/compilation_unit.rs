@@ -531,6 +531,11 @@ fn print_callback<'ll>(
                         1,
                         UNNAMED,
                     );
+                    // Enhancement-71: the formatted binary string was
+                    // remembered for free() but NEVER PASSED to snprintf --
+                    // the matching %s read a garbage pointer and any model
+                    // using %b crashed the simulator.
+                    args.push(&*formatted_str);
                     free.push(formatted_str);
                 }
                 FmtArgKind::EngineerReal => {

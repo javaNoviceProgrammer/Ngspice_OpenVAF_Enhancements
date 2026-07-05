@@ -1,0 +1,16 @@
+`include "disciplines.vams"
+module dispkinds(a, c);
+  inout a, c; electrical a, c;
+  analog begin
+    I(a,c) <+ V(a,c)/1e3;
+    @(initial_step) begin
+      $strobe("M1 mod=%m");
+      $strobe("M2 tab[\t]nl-end");
+      $write("M3a-write ");
+      $write("M3b-joined\n");
+      $display("M4 display %g", 2.5);
+      $monitor("M5 monitor v=%g", V(a,c));
+      $debug("M6 debug v=%g", V(a,c));
+    end
+  end
+endmodule

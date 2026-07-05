@@ -1,0 +1,23 @@
+`include "disciplines.vams"
+module dispfmt(a, c);
+  inout a, c; electrical a, c;
+  parameter string tag = "hi";
+  analog begin
+    I(a,c) <+ V(a,c)/1e3;
+    @(initial_step) begin
+      $strobe("F1[%5d]", 42);
+      $strobe("F2[%-5d]end", 42);
+      $strobe("F3[%05d]", 42);
+      $strobe("F4[%+d]", 42);
+      $strobe("F5[%8s]end", tag);
+      $strobe("F6[%-8s]end", tag);
+      $strobe("F7[%4h]", 255);
+      $strobe("F8[%8b]end", 5);
+      $strobe("F9[%*d]", 6, 42);
+      $strobe("FA[%10.3e]", 1234.5678);
+      $strobe("FB[%#o]", 8);
+      $strobe("FC hex=%h HEX=%H oct=%o bin=%b chr=%c", 255, 255, 8, 5, 65);
+      $strobe("FD %d %g %s dflt:", -7, 2.5, tag, 99);
+    end
+  end
+endmodule

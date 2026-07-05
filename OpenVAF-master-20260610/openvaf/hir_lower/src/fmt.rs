@@ -75,7 +75,8 @@ impl BodyLoweringCtx<'_, '_, '_> {
                 while let Some(mut c) = chars.next() {
                     if c == '%' {
                         c = chars.next().unwrap();
-                        let ty = match c {
+                        // escape / no-argument specifiers
+                        match c {
                             '%' => {
                                 fmt_lit.push_str("%%");
                                 continue;
@@ -89,56 +90,64 @@ impl BodyLoweringCtx<'_, '_, '_> {
                                 fmt_lit.push_str("__.__");
                                 continue;
                             }
+                            _ => {}
+                        }
+                        // Enhancement-71: a general `[flags][width][.prec]`
+                        // prefix is legal for EVERY conversion (inference
+                        // validated it); collect it verbatim, consuming one
+                        // extra integer argument per dynamic `*`, then
+                        // translate the conversion character to its C
+                        // equivalent with the prefix preserved.
+                        let mut prefix = String::new();
+                        while matches!(c, '-' | '+' | ' ' | '#' | '0'..='9' | '.' | '*') {
+                            if c == '*' {
+                                arg_tys.push(Type::Integer.into());
+                                call_args.push(self.lower_expr(args[i]));
+                                i += 1;
+                            }
+                            prefix.push(c);
+                            c = chars.next().unwrap()
+                        }
+                        fmt_lit.push('%');
+                        fmt_lit.push_str(&prefix);
+                        let ty = match c {
                             'h' => {
-                                fmt_lit.push_str("%x");
+                                fmt_lit.push('x');
                                 Type::Integer.into()
                             }
                             'H' => {
-                                fmt_lit.push_str("%X");
+                                fmt_lit.push('X');
                                 Type::Integer.into()
                             }
                             'b' | 'B' => {
-                                fmt_lit.push_str("%s");
+                                // rendered via a pre-formatted binary string
+                                fmt_lit.push('s');
                                 FmtArg { ty: Type::Integer, kind: FmtArgKind::Binary }
                             }
                             'd' | 'D' => {
-                                fmt_lit.push_str("%d");
+                                fmt_lit.push('d');
                                 Type::Integer.into()
                             }
                             'o' | 'O' => {
-                                fmt_lit.push_str("%o");
+                                fmt_lit.push('o');
                                 Type::Integer.into()
                             }
                             'c' | 'C' => {
-                                fmt_lit.push_str("%c");
+                                fmt_lit.push('c');
                                 Type::Integer.into()
                             }
                             's' | 'S' => {
-                                fmt_lit.push_str("%s");
+                                fmt_lit.push('s');
                                 Type::String.into()
                             }
+                            'r' | 'R' => {
+                                fmt_lit.push_str("f%c");
+                                FmtArg { ty: Type::Real, kind: FmtArgKind::EngineerReal }
+                            }
                             _ => {
-                                fmt_lit.push('%');
-                                // real fmt specifiers may contain cmplx prefixes
-                                // we validatet these
-                                while !matches!(c, 'e'..='g'|'E'..='G'|'r'|'R') {
-                                    if c == '*' {
-                                        arg_tys.push(Type::Integer.into());
-                                        call_args.push(self.lower_expr(args[i]));
-                                        i += 1;
-                                    }
-                                    fmt_lit.push(c);
-                                    c = chars.next().unwrap()
-                                }
-                                let kind = if matches!(c, 'r' | 'R') {
-                                    fmt_lit.push_str("f%c");
-                                    FmtArgKind::EngineerReal
-                                } else {
-                                    fmt_lit.push(c);
-                                    FmtArgKind::Other
-                                };
-
-                                FmtArg { ty: Type::Real, kind }
+                                // e/E/f/F/g/G (validated by inference)
+                                fmt_lit.push(c);
+                                FmtArg { ty: Type::Real, kind: FmtArgKind::Other }
                             }
                         };
 

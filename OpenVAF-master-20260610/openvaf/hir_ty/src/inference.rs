@@ -28,7 +28,7 @@ use crate::builtin::{
 };
 use crate::db::{Alias, HirTyDB};
 use crate::diagnostics::{ArrayTypeMismatch, SignatureMismatch, TypeMismatch};
-use crate::inference::fmt_parser::parse_real_fmt_spec;
+use crate::inference::fmt_parser::parse_fmt_spec;
 use crate::lower::{BranchTy, DisciplineAccess};
 use crate::types::{default_return_ty, BuiltinInfo, Signature, SignatureData, Ty, TyRequirement};
 
@@ -1025,8 +1025,7 @@ impl Ctx<'_> {
                             }
                             Some('s' | 'S') => Type::String,
                             _ => {
-                                let res =
-                                    parse_real_fmt_spec(start as u32, *fmt_expr, pos, &mut chars);
+                                let res = parse_fmt_spec(start as u32, *fmt_expr, pos, &mut chars);
                                 if let Some(err) = res.err {
                                     self.result.diagnostics.push(err);
                                     i += 1 + res.dynamic_args.len();
@@ -1043,7 +1042,16 @@ impl Ctx<'_> {
                                 }
 
                                 end = res.end;
-                                Type::Real
+                                // Enhancement-71: flags/width/precision are
+                                // legal for every conversion; the argument
+                                // type follows the conversion character.
+                                match res.conversion {
+                                    'd' | 'D' | 'h' | 'H' | 'o' | 'O' | 'b' | 'B' | 'c' | 'C' => {
+                                        Type::Integer
+                                    }
+                                    's' | 'S' => Type::String,
+                                    _ => Type::Real,
+                                }
                             }
                         };
 
