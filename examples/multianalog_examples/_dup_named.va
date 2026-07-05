@@ -1,0 +1,11 @@
+`include "disciplines.vams"
+module dupn(a,c); inout a,c; electrical a,c;
+analog begin : work
+  real t; t = 1e-3;
+  I(a,c) <+ t*V(a,c);
+end
+analog begin : work
+  real t; t = 2e-3;
+  I(a,c) <+ t*V(a,c);
+end
+endmodule

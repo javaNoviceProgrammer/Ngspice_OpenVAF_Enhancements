@@ -742,6 +742,16 @@ Several unrelated language gaps found along the way are also fixed. **`localpara
 
 ---
 
+## Enhancement 60: multiple analog blocks — validation
+
+*July 2026* — Probed **multiple `analog` / `analog initial` blocks per module** (Verilog-AMS LRM 6.2: several blocks behave as if concatenated into a single block in source order) and found the feature **fully supported by construction**: hir_def's body collection iterates *every* analog block of a module into `entry_stmts` in document order — literally the as-if-concatenated semantics — and every downstream stage (type inference, lowering, autodiff, the DAE builder, OSDI) consumes that list. Nine corners probed, **zero defects**: contribution accumulation across blocks (exactly 3 mS), a module variable written in block 1 and read in block 3, `$strobe` source-order execution, an `analog function` declared *between* blocks, module declarations after a block that uses them, events split across blocks (`cross` in one, `final_step` in another), `ddt()` of a charge computed in an earlier block, a multi-block module surviving instance flattening (the E-5 elaboration re-render — series current exact to 12 digits), and two `analog initial` blocks composing in order. Also confirmed correct: duplicate *named* child blocks (`begin : work` twice) are a clean duplicate-declaration error, and V-then-I contributions across blocks match the single-block switch-branch behavior. Like Enhancement-57, the deliverable is the validation itself — a pinned example suite guarding the behavior.
+
+- 6 checks, ALL PASS — see `examples/multianalog_examples/`
+- **No compiler or ngspice source changes in this enhancement**; the Enhancement-59 full regression (55 suites, crate tests, 92/92 corpus) stands
+- Details: [Enhancement-60.md](enhancements_doc/Enhancement-60.md)
+
+---
+
 ## Prebuilt Binaries
 
 Binaries are built by CI and committed to `bin/`:

@@ -1,0 +1,14 @@
+// Enhancement-60: source-order execution. Single-statement analog blocks;
+// the strobes must print first-then-second, and the two analog INITIAL
+// blocks must compose in order (g = 1m, then g = g + 1m -> 2 mS).
+`include "disciplines.vams"
+
+module ordblk(a, c);
+  inout a, c; electrical a, c;
+  real g;
+  analog initial g = 1e-3;
+  analog initial g = g + 1e-3;
+  analog @(initial_step) $strobe("ORDER first");
+  analog @(initial_step) $strobe("ORDER second");
+  analog I(a, c) <+ g * V(a, c);
+endmodule

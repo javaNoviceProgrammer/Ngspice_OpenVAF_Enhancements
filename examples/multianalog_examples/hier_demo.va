@@ -1,0 +1,18 @@
+// Enhancement-60: a multi-block module INSTANTIATED (the E-5 elaboration
+// pass re-renders module text when flattening -- all blocks must survive).
+`include "disciplines.vams"
+
+module hleaf(p, n);
+  inout p, n; electrical p, n;
+  real k;
+  analog begin
+    k = 2.0;
+    I(p, n) <+ V(p, n) / 1e3;
+  end
+  analog I(p, n) <+ k * V(p, n) / 1e3;   // total 3 mS
+endmodule
+
+module hierblk(a, c);
+  inout a, c; electrical a, c;
+  hleaf u1(a, c);
+endmodule

@@ -1,0 +1,38 @@
+// Enhancement-60: multiple analog blocks (Verilog-AMS LRM 6.2) -- a module
+// may contain several analog blocks; they behave as if concatenated into a
+// single block in source order. Exercises: contribution accumulation across
+// blocks, a module variable written in one block and read in a later one,
+// an analog function declared BETWEEN blocks, module declarations appearing
+// AFTER an analog block that uses them, events split across blocks, and a
+// ddt whose charge expression is computed in an earlier block.
+`include "disciplines.vams"
+
+module multiblk(a, c);
+  inout a, c; electrical a, c;
+  real k, q;
+  integer up;
+
+  analog begin
+    k = 2.0;                             // read by the LAST block
+    q = cq * V(a, c);                    // cq is declared BELOW (module scope)
+    I(a, c) <+ V(a, c) / 1e3;            // 1 mS
+  end
+
+  analog function real dbl;              // function between two blocks
+    input x; real x;
+    dbl = 2.0 * x;
+  endfunction
+
+  parameter real cq = 1e-15;             // declared after first use
+
+  analog begin
+    @(cross(V(a, c) - 0.5, 1)) up = up + 1;
+    I(a, c) <+ ddt(q);                   // charge computed in block 1
+    I(a, c) <+ V(a, c) / dbl(500.0);     // 1 mS via the in-between function
+  end
+
+  analog begin
+    I(a, c) <+ k * V(a, c) / 2e3;        // k from block 1: 1 mS
+    @(final_step) $strobe("MULTIBLK up=%d", up);
+  end
+endmodule

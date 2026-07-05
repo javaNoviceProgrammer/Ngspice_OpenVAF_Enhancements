@@ -334,5 +334,9 @@ examples/lrmcorner_examples/_pin_compile.osdi
 examples/lrmcorner_examples/_rec_*.osdi
 examples/lrmcorner_examples/_pc_bad.osdi
 
+# Enhancement 60 multiple-analog-block example scripts: temp netlists + negative test
+examples/multianalog_examples/_*.cir
+examples/multianalog_examples/_dup_named.osdi
+
 # Python bytecode cache (e.g. from importing _setup.py)
 __pycache__/
