@@ -603,6 +603,38 @@ impl GenerateFor {
     }
 }
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct GenerateIf {
+    pub(crate) syntax: SyntaxNode,
+}
+impl ast::AttrsOwner for GenerateIf {}
+impl GenerateIf {
+    pub fn if_token(&self) -> Option<SyntaxToken> { support::token(&self.syntax, T![if]) }
+    pub fn condition(&self) -> Option<Expr> { support::child(&self.syntax) }
+    pub fn blocks(&self) -> AstChildren<GenerateBlock> { support::children(&self.syntax) }
+    pub fn else_token(&self) -> Option<SyntaxToken> { support::token(&self.syntax, T![else]) }
+}
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct GenerateCase {
+    pub(crate) syntax: SyntaxNode,
+}
+impl ast::AttrsOwner for GenerateCase {}
+impl GenerateCase {
+    pub fn case_token(&self) -> Option<SyntaxToken> { support::token(&self.syntax, T![case]) }
+    pub fn discriminant(&self) -> Option<Expr> { support::child(&self.syntax) }
+    pub fn arms(&self) -> AstChildren<GenerateCaseArm> { support::children(&self.syntax) }
+}
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct GenerateCaseArm {
+    pub(crate) syntax: SyntaxNode,
+}
+impl GenerateCaseArm {
+    pub fn default_token(&self) -> Option<SyntaxToken> {
+        support::token(&self.syntax, T![default])
+    }
+    pub fn vals(&self) -> AstChildren<Expr> { support::children(&self.syntax) }
+    pub fn block(&self) -> Option<GenerateBlock> { support::child(&self.syntax) }
+}
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ModulePort {
     pub(crate) syntax: SyntaxNode,
 }
@@ -806,6 +838,8 @@ pub enum ModuleItem {
     Instantiation(Instantiation),
     GenvarDecl(GenvarDecl),
     GenerateFor(GenerateFor),
+    GenerateIf(GenerateIf),
+    GenerateCase(GenerateCase),
 }
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ModulePortKind {
@@ -1430,6 +1464,39 @@ impl AstNode for GenerateFor {
     }
     fn syntax(&self) -> &SyntaxNode { &self.syntax }
 }
+impl AstNode for GenerateIf {
+    fn can_cast(kind: SyntaxKind) -> bool { kind == GENERATE_IF }
+    fn cast(syntax: SyntaxNode) -> Option<Self> {
+        if Self::can_cast(syntax.kind()) {
+            Some(Self { syntax })
+        } else {
+            None
+        }
+    }
+    fn syntax(&self) -> &SyntaxNode { &self.syntax }
+}
+impl AstNode for GenerateCase {
+    fn can_cast(kind: SyntaxKind) -> bool { kind == GENERATE_CASE }
+    fn cast(syntax: SyntaxNode) -> Option<Self> {
+        if Self::can_cast(syntax.kind()) {
+            Some(Self { syntax })
+        } else {
+            None
+        }
+    }
+    fn syntax(&self) -> &SyntaxNode { &self.syntax }
+}
+impl AstNode for GenerateCaseArm {
+    fn can_cast(kind: SyntaxKind) -> bool { kind == GENERATE_CASE_ARM }
+    fn cast(syntax: SyntaxNode) -> Option<Self> {
+        if Self::can_cast(syntax.kind()) {
+            Some(Self { syntax })
+        } else {
+            None
+        }
+    }
+    fn syntax(&self) -> &SyntaxNode { &self.syntax }
+}
 impl AstNode for ModulePort {
     fn can_cast(kind: SyntaxKind) -> bool { kind == MODULE_PORT }
     fn cast(syntax: SyntaxNode) -> Option<Self> {
@@ -1874,7 +1941,8 @@ impl AstNode for ModuleItem {
     fn can_cast(kind: SyntaxKind) -> bool {
         match kind {
             BODY_PORT_DECL | NET_DECL | ANALOG_BEHAVIOUR | FUNCTION | BRANCH_DECL | VAR_DECL
-            | PARAM_DECL | ALIAS_PARAM | INSTANTIATION | GENVAR_DECL | GENERATE_FOR => true,
+            | PARAM_DECL | ALIAS_PARAM | INSTANTIATION | GENVAR_DECL | GENERATE_FOR
+            | GENERATE_IF | GENERATE_CASE => true,
             _ => false,
         }
     }
@@ -1891,6 +1959,8 @@ impl AstNode for ModuleItem {
             INSTANTIATION => ModuleItem::Instantiation(Instantiation { syntax }),
             GENVAR_DECL => ModuleItem::GenvarDecl(GenvarDecl { syntax }),
             GENERATE_FOR => ModuleItem::GenerateFor(GenerateFor { syntax }),
+            GENERATE_IF => ModuleItem::GenerateIf(GenerateIf { syntax }),
+            GENERATE_CASE => ModuleItem::GenerateCase(GenerateCase { syntax }),
             _ => return None,
         };
         Some(res)
@@ -1908,6 +1978,8 @@ impl AstNode for ModuleItem {
             ModuleItem::Instantiation(it) => &it.syntax,
             ModuleItem::GenvarDecl(it) => &it.syntax,
             ModuleItem::GenerateFor(it) => &it.syntax,
+            ModuleItem::GenerateIf(it) => &it.syntax,
+            ModuleItem::GenerateCase(it) => &it.syntax,
         }
     }
 }

@@ -501,6 +501,18 @@ impl Ctx {
                         .diagnostics
                         .push(ItemTreeDiagnostic::UnelaboratedGenerate { ast_id: ast_id.into() });
                 }
+                ast::ModuleItem::GenerateIf(gen) => {
+                    let ast_id = self.source_ast_id_map.ast_id(&gen);
+                    self.tree
+                        .diagnostics
+                        .push(ItemTreeDiagnostic::UnelaboratedGenerate { ast_id: ast_id.into() });
+                }
+                ast::ModuleItem::GenerateCase(gen) => {
+                    let ast_id = self.source_ast_id_map.ast_id(&gen);
+                    self.tree
+                        .diagnostics
+                        .push(ItemTreeDiagnostic::UnelaboratedGenerate { ast_id: ast_id.into() });
+                }
             };
         }
     }

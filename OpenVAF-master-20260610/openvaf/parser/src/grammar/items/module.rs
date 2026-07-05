@@ -169,7 +169,7 @@ fn module_items(p: &mut Parser) {
                 genvar_decl(p, m);
             }
             GENERATE_KW => {
-                generate_for(p, m);
+                generate_region(p, m);
             }
             INTEGER_KW | REAL_KW | STRING_KW => var_decl(p, m),
             INPUT_KW | OUTPUT_KW | INOUT_KW => port_decl::<false>(p, m),
@@ -411,9 +411,29 @@ fn generate_assign(p: &mut Parser) {
     m.complete(p, ASSIGN);
 }
 
-/// `generate for (i = 0; i < N; i = i + 1) begin : label ... end endgenerate`
-fn generate_for(p: &mut Parser, m: Marker) {
+/// `generate <for|if|case> ... endgenerate` -- dispatches on the construct
+/// following the `generate` keyword (Enhancement-67; previously only `for`).
+fn generate_region(p: &mut Parser, m: Marker) {
     p.bump(GENERATE_KW);
+    match p.current() {
+        IF_KW => {
+            generate_if_tail(p, m, true);
+        }
+        CASE_KW => {
+            generate_case_tail(p, m, true);
+        }
+        _ => {
+            generate_for_tail(p, m, true);
+        }
+    }
+}
+
+/// `for (i = 0; i < N; i = i + 1) begin [: label] ... end` -- the loop part
+/// of a generate region. `top` distinguishes a top-level region (whose
+/// closing `endgenerate` belongs to this node) from a NESTED loop inside
+/// another generate block (Enhancement-67), which has neither `generate`
+/// nor `endgenerate` of its own.
+fn generate_for_tail(p: &mut Parser, m: Marker, top: bool) {
     p.expect(FOR_KW);
     p.expect(T!['(']);
     generate_assign(p);
@@ -425,8 +445,61 @@ fn generate_for(p: &mut Parser, m: Marker) {
 
     generate_block(p);
 
-    p.expect(ENDGENERATE_KW);
+    if top {
+        p.expect(ENDGENERATE_KW);
+    }
     m.complete(p, GENERATE_FOR);
+}
+
+/// `if (<const-expr>) begin [: label] ... end [else if ... | else begin ...]`
+/// (Enhancement-67). Branch bodies must be begin/end generate blocks; an
+/// `else if` chain nests a new GENERATE_IF inside the else position.
+fn generate_if_tail(p: &mut Parser, m: Marker, top: bool) {
+    p.expect(IF_KW);
+    p.expect(T!['(']);
+    expr(p);
+    p.expect(T![')']);
+    generate_block(p);
+    if p.eat(ELSE_KW) {
+        if p.at(IF_KW) {
+            let inner = p.start();
+            generate_if_tail(p, inner, false);
+        } else {
+            generate_block(p);
+        }
+    }
+    if top {
+        p.expect(ENDGENERATE_KW);
+    }
+    m.complete(p, GENERATE_IF);
+}
+
+/// `case (<const-expr>) v[, v]*: begin ... end ... [default[:] begin ... end]
+/// endcase` (Enhancement-67).
+fn generate_case_tail(p: &mut Parser, m: Marker, top: bool) {
+    p.expect(CASE_KW);
+    p.expect(T!['(']);
+    expr(p);
+    p.expect(T![')']);
+    while !p.at(ENDCASE_KW) && !p.at(EOF) && !p.at(ENDGENERATE_KW) && !p.at(ENDMODULE_KW) {
+        let arm = p.start();
+        if p.eat(DEFAULT_KW) {
+            p.eat(T![:]);
+        } else {
+            expr(p);
+            while p.eat(T![,]) {
+                expr(p);
+            }
+            p.expect(T![:]);
+        }
+        generate_block(p);
+        arm.complete(p, GENERATE_CASE_ARM);
+    }
+    p.expect(ENDCASE_KW);
+    if top {
+        p.expect(ENDGENERATE_KW);
+    }
+    m.complete(p, GENERATE_CASE);
 }
 
 const GENERATE_BLOCK_RECOVER: TokenSet = TokenSet::new(&[END_KW, EOF, ENDMODULE_KW, ENDGENERATE_KW]);
@@ -436,13 +509,27 @@ const GENERATE_BLOCK_RECOVER: TokenSet = TokenSet::new(&[END_KW, EOF, ENDMODULE_
 fn generate_block(p: &mut Parser) {
     let m = p.start();
     p.expect(BEGIN_KW);
-    p.expect(T![:]);
-    name(p);
+    // the `: label` is optional (Enhancement-67): anonymous generate blocks
+    // are legal per 1364-2005; elaboration auto-names them.
+    if p.eat(T![:]) {
+        name(p);
+    }
 
     while !p.at_ts(GENERATE_BLOCK_RECOVER) {
         let m = p.start();
         attrs(p, MODULE_ITEM_RECOVERY);
         match p.current() {
+            // nested generate constructs (no `generate`/`endgenerate` of
+            // their own -- Enhancement-67)
+            FOR_KW => {
+                generate_for_tail(p, m, false);
+            }
+            IF_KW => {
+                generate_if_tail(p, m, false);
+            }
+            CASE_KW => {
+                generate_case_tail(p, m, false);
+            }
             IDENT if is_instantiation(p) => {
                 instantiation(p, m);
             }

@@ -812,6 +812,16 @@ Several unrelated language gaps found along the way are also fixed. **`localpara
 
 ---
 
+## Enhancement 67: generate audit — genvar-substitution fix, nested loops, `generate if`/`case`
+
+*July 2026* — A systematic audit of the **`generate`/`genvar` machinery** (built in Enhancement-5, never audited since): 13 probe forms. The basics were solid; the audit found **one real defect and three gaps**. **The defect:** a genvar used in any ordinary expression position — most visibly a parameter override like `#(.r(1e3*(i+1)))` — was substituted through the identifier-renaming path, which re-escaped the numeral into a broken *escaped identifier* (`1e3*(\0 +1)` → `error: '0' was not found`); bit-selects only worked because they had a dedicated pre-fold. Genvars now never touch identifier renaming: bit-select indices keep their whole-index constant folds (the bus machinery requires literal indices) and every remaining bare genvar becomes a literal-value hole. **The gaps, all implemented:** nested `generate for` loops (recursive per-item rendering with an environment of *all* in-scope genvars — inner bounds may reference outer ones — and cumulative `_i_j` name suffixes per block); anonymous `begin` blocks (the `: label` was wrongly mandatory); and **`generate if` (with else/else-if chains) and `generate case` (multi-value arms, default)** — previously mis-parsed into a broken `GENERATE_FOR` with actively misleading errors, now full pipeline-threaded constructs (new node kinds, typed AST, grammar dispatch, elaboration-time constant folding). Conditions fold over integer literals and genvars — enabling triangle structures like `if (j <= i)` inside nested loops — while a condition or bound on a module *parameter* is a clear, honest error explaining the OSDI reality: parameters bind at simulation time (model cards), so they fundamentally cannot shape generated structure.
+
+- Verified numerically exact end-to-end: nested 2×3 loops (6 mS), genvar param-override expressions (1k∥2k∥3k = 11/6 mS), the genvar-if triangle (6 mS), if/else (1.5 mS), `generate case` (2.75 mS), anonymous blocks with per-iteration nets (1 mS), `i = 2; i <= 6; i += 2` bounds (3 mS), plus the original Enhancement-5 ladder pinned bit-identical to its hand-written twin — `examples/generate_examples/` finally has a verify script (9 checks)
+- Regression-checked: all example verify suites ALL PASS; crate tests pass; the VA_TEST corpus compiles 92/92
+- Details: [Enhancement-67.md](enhancements_doc/Enhancement-67.md)
+
+---
+
 ## Prebuilt Binaries
 
 Binaries are built by CI and committed to `bin/`:

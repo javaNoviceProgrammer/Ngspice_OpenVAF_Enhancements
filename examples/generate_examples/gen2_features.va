@@ -1,0 +1,110 @@
+// Enhancement-67: the expanded generate feature set, self-checking --
+// every module below produces an exact, hand-computable conductance.
+`include "disciplines.vams"
+
+module res(p, n);
+  inout p, n; electrical p, n;
+  parameter real r = 1e3;
+  analog I(p, n) <+ V(p, n)/r;
+endmodule
+
+// nested generate-for loops: 2 x 3 = 6 parallel 1k -> 6 mS
+module gnest(a, c);
+  inout a, c; electrical a, c;
+  genvar i, j;
+  generate
+    for (i = 0; i < 2; i = i + 1) begin : go
+      for (j = 0; j < 3; j = j + 1) begin : gi
+        res rij(a, c);
+      end
+    end
+  endgenerate
+endmodule
+
+// genvar in a parameter-override EXPRESSION (used to render as the broken
+// escaped identifier `\0`): 1k || 2k || 3k -> 11/6 mS
+module gpexpr(a, c);
+  inout a, c; electrical a, c;
+  genvar i;
+  generate
+    for (i = 0; i < 3; i = i + 1) begin : g
+      res #(.r(1e3*(i+1))) ri(a, c);
+    end
+  endgenerate
+endmodule
+
+// generate if on genvars (triangle: j <= i): 1+2+3 = 6 parallel -> 6 mS
+module gtri(a, c);
+  inout a, c; electrical a, c;
+  genvar i, j;
+  generate
+    for (i = 0; i < 3; i = i + 1) begin : go
+      for (j = 0; j < 3; j = j + 1) begin : gi
+        if (j <= i) begin : gsel
+          res rij(a, c);
+        end
+      end
+    end
+  endgenerate
+endmodule
+
+// generate if/else: 1k (i=0) + 2k (i=1) -> 1.5 mS
+module gelse(a, c);
+  inout a, c; electrical a, c;
+  genvar i;
+  generate
+    for (i = 0; i < 2; i = i + 1) begin : g
+      if (i == 0) begin : t
+        res r1(a, c);
+      end else begin : e
+        res #(.r(2e3)) r2(a, c);
+      end
+    end
+  endgenerate
+endmodule
+
+// generate case (multi-value arm + default): 1k+1k+2k+4k -> 2.75 mS
+module gcase(a, c);
+  inout a, c; electrical a, c;
+  genvar i;
+  generate
+    for (i = 0; i < 4; i = i + 1) begin : g
+      case (i)
+        0, 1: begin : ga
+          res r1(a, c);
+        end
+        2: begin : gb
+          res #(.r(2e3)) r2(a, c);
+        end
+        default: begin : gd
+          res #(.r(4e3)) r3(a, c);
+        end
+      endcase
+    end
+  endgenerate
+endmodule
+
+// anonymous block (no ": label") + per-iteration net declaration:
+// two series 1k+1k pairs in parallel -> 1 mS
+module ganon(a, c);
+  inout a, c; electrical a, c;
+  genvar i;
+  generate
+    for (i = 0; i < 2; i = i + 1) begin
+      electrical m;
+      res r1(a, m);
+      res r2(m, c);
+    end
+  endgenerate
+endmodule
+
+// start != 0, step 2, <= bound: i = 2,4,6 -> 3 parallel -> 3 mS
+module gbounds(a, c);
+  inout a, c; electrical a, c;
+  genvar i;
+  generate
+    for (i = 2; i <= 6; i = i + 2) begin : g
+      res ri(a, c);
+    end
+  endgenerate
+endmodule

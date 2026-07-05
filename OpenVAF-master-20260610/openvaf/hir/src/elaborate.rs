@@ -83,7 +83,8 @@ pub(crate) fn elaborate_generates(db: &mut CompilationDB) -> anyhow::Result<()> 
 
     let has_any_generate = parse.tree().items().any(|item| {
         matches!(&item, ast::Item::ModuleDecl(m) if m.module_items().any(|it| {
-            matches!(it, ast::ModuleItem::GenerateFor(_) | ast::ModuleItem::GenvarDecl(_))
+            matches!(it, ast::ModuleItem::GenerateFor(_) | ast::ModuleItem::GenvarDecl(_)
+            | ast::ModuleItem::GenerateIf(_) | ast::ModuleItem::GenerateCase(_))
         }))
     });
     if !has_any_generate {
@@ -130,7 +131,8 @@ pub(crate) fn elaborate_generates(db: &mut CompilationDB) -> anyhow::Result<()> 
 /// for the overwhelming majority of modules.
 fn render_module_with_generates(module_ast: &ast::ModuleDecl) -> anyhow::Result<String> {
     let has_generate = module_ast.module_items().any(|it| {
-        matches!(it, ast::ModuleItem::GenerateFor(_) | ast::ModuleItem::GenvarDecl(_))
+        matches!(it, ast::ModuleItem::GenerateFor(_) | ast::ModuleItem::GenvarDecl(_)
+            | ast::ModuleItem::GenerateIf(_) | ast::ModuleItem::GenerateCase(_))
     });
     if !has_generate {
         return Ok(module_ast.syntax().text().to_string());
@@ -143,7 +145,13 @@ fn render_module_with_generates(module_ast: &ast::ModuleDecl) -> anyhow::Result<
                 // Compile-time-only; dropped entirely, never reaches `hir_def`.
             }
             ast::ModuleItem::GenerateFor(gen_for) => {
-                out.push_str(&render_generate_for(&gen_for)?);
+                out.push_str(&render_generate_for(&gen_for, &HashMap::new(), "", &Scope::default())?);
+            }
+            ast::ModuleItem::GenerateIf(gen_if) => {
+                out.push_str(&render_generate_if(&gen_if, &HashMap::new(), "", &Scope::default())?);
+            }
+            ast::ModuleItem::GenerateCase(gen_case) => {
+                out.push_str(&render_generate_case(&gen_case, &HashMap::new(), "", &Scope::default())?);
             }
             other => out.push_str(&other.syntax().text().to_string()),
         }
@@ -215,35 +223,6 @@ fn eval_int_expr(expr: &ast::Expr, env: &HashMap<String, i32>) -> Option<i32> {
     }
 }
 
-/// Scans `body` (the *original*, already-parsed `generate for` body AST --
-/// not re-parsed text) for every `BitSelectExpr` (`ident[index]`, e.g.
-/// `node[i+1]`) whose `index` constant-folds against `env` (mapping the
-/// genvar's name to its current-iteration value), and returns one hole
-/// (relative to `base`, so directly usable against `body_text`'s coordinate
-/// space -- see `render_generate_for`) per match, replacing just the index
-/// sub-expression's byte range with its folded literal value -- e.g.
-/// `node[i+1]` becomes a hole turning `i+1` into `1`, so the *subsequent*
-/// whole-identifier genvar substitution pass (`apply_rename`) only ever has
-/// to rename bare `node`/`i` tokens outside of holes, never reason about
-/// arithmetic itself (which `render_with_holes`'s token-level substitution
-/// cannot do).
-fn fold_bit_select_indices(
-    body: &ast::GenerateBlock,
-    base: TextSize,
-    env: &HashMap<String, i32>,
-) -> Vec<(Range<usize>, String)> {
-    let mut holes = Vec::new();
-    for node in body.syntax().descendants() {
-        if let Some(sel) = ast::BitSelectExpr::cast(node) {
-            for index in sel.indices() {
-                if let Some(v) = eval_int_expr(&index, env) {
-                    holes.push((rel_range(base, index.syntax().text_range()), v.to_string()));
-                }
-            }
-        }
-    }
-    holes
-}
 
 /// Unrolls one `generate for (init; condition; incr) begin : label ... end`
 /// loop into `N` concatenated, genvar-substituted copies of its body.
@@ -252,7 +231,12 @@ fn fold_bit_select_indices(
 /// (`<op>` is `<` or `<=`) -- i.e. a compile-time-constant-foldable
 /// iteration count, evaluated up front, not a general compile-time
 /// interpreter. Anything else is a hard elaboration error.
-fn render_generate_for(gen_for: &ast::GenerateFor) -> anyhow::Result<String> {
+fn render_generate_for(
+    gen_for: &ast::GenerateFor,
+    outer_env: &HashMap<String, i32>,
+    outer_suffix: &str,
+    outer_scope: &Scope,
+) -> anyhow::Result<String> {
     let init = gen_for
         .init()
         .ok_or_else(|| anyhow::anyhow!("generate for: missing loop-variable initializer"))?;
@@ -265,9 +249,10 @@ fn render_generate_for(gen_for: &ast::GenerateFor) -> anyhow::Result<String> {
     let body = gen_for
         .body()
         .ok_or_else(|| anyhow::anyhow!("generate for: missing 'begin : label ... end' body"))?;
-    let label = body
-        .label()
-        .ok_or_else(|| anyhow::anyhow!("generate for: body must be labelled ('begin : label ... end')"))?;
+    // the label is optional since Enhancement-67 (anonymous blocks are
+    // legal 1364-2005); it only feeds the generated comment.
+    let label =
+        body.label().map(|l| l.syntax().text().to_string()).unwrap_or_else(|| "genblk".to_owned());
 
     let genvar_name = init.lval().map(|e| e.syntax().text().to_string().trim().to_owned());
     let genvar_name = genvar_name
@@ -277,7 +262,7 @@ fn render_generate_for(gen_for: &ast::GenerateFor) -> anyhow::Result<String> {
     let start = init
         .rval()
         .as_ref()
-        .and_then(fold_int)
+        .and_then(|e| eval_int_expr(e, outer_env))
         .ok_or_else(|| anyhow::anyhow!(
             "generate for: loop-variable initial value ('{genvar_name} = ...') must be a compile-time-constant integer -- NonConstantGenerateBound"
         ))?;
@@ -296,9 +281,9 @@ fn render_generate_for(gen_for: &ast::GenerateFor) -> anyhow::Result<String> {
     let bound = cond_bin
         .rhs()
         .as_ref()
-        .and_then(fold_int)
+        .and_then(|e| eval_int_expr(e, outer_env))
         .ok_or_else(|| anyhow::anyhow!(
-            "generate for: loop bound must be a compile-time-constant integer -- NonConstantGenerateBound"
+            "generate for: loop bound must be a compile-time-constant integer (a literal or an outer genvar) -- module parameters bind at simulation time under OSDI and cannot shape the generated structure -- NonConstantGenerateBound"
         ))?;
 
     // incr: `genvar = genvar + step` (step constant-folds).
@@ -314,7 +299,7 @@ fn render_generate_for(gen_for: &ast::GenerateFor) -> anyhow::Result<String> {
     let step = incr_bin
         .rhs()
         .as_ref()
-        .and_then(fold_int)
+        .and_then(|e| eval_int_expr(e, outer_env))
         .ok_or_else(|| anyhow::anyhow!(
             "generate for: loop step must be a compile-time-constant integer -- NonConstantGenerateBound"
         ))?;
@@ -332,50 +317,238 @@ fn render_generate_for(gen_for: &ast::GenerateFor) -> anyhow::Result<String> {
         }
     }
 
-    // Every name declared directly inside the block (instance names, net
-    // names, variable/parameter names) is disambiguated per iteration by
-    // suffixing it with the iteration's genvar value, exactly like an
-    // instance-array element's synthesized name (`r[2]`) in
-    // `hir_def::item_tree::Instantiation`/Enhancement-5 -- except using
-    // `_<value>` (a valid Verilog-A identifier suffix) since these names
-    // must remain ordinary top-level identifiers, not bus-bit-select
-    // syntax.
-    let declared_names = collect_declared_names(&body);
-
-    let body_base = body.syntax().text_range().start();
-    let item_ranges: Vec<Range<usize>> =
-        body.items().map(|it| rel_range(body_base, it.syntax().text_range())).collect();
-    let full_body = body.syntax().text().to_string();
-    let (body_text, text_base) = match (item_ranges.first(), item_ranges.last()) {
-        (Some(first), Some(last)) => {
-            (full_body[first.start..last.end].to_string(), body_base + TextSize::try_from(first.start).unwrap())
-        }
-        _ => (String::new(), body_base),
-    };
-
     let mut out = String::new();
     let mut value = start;
     for _ in 0..count {
-        let mut scope = Scope::default();
-        scope.subst.insert(genvar_name.clone(), value.to_string());
-        for name in &declared_names {
-            scope.subst.insert(name.clone(), format!("{name}_{value}"));
-        }
-        let mut env = HashMap::new();
+        let iter_suffix = format!("{outer_suffix}_{value}");
+        let mut env = outer_env.clone();
         env.insert(genvar_name.clone(), value);
-        // Holes are computed relative to `text_base` (the start of
-        // `body_text` itself, i.e. the first body item), matching
-        // `body_text`'s own coordinate space -- not `body_base` (the start
-        // of the whole `begin : label ... end` block, which includes the
-        // label header `body_text` has already had stripped off).
-        let holes = fold_bit_select_indices(&body, text_base, &env);
 
         out.push_str(&format!("// generate for {label}[{value}]\n"));
-        out.push_str(&render_with_holes(&body_text, &holes, &scope));
+        out.push_str(&render_generate_block(&body, &env, &iter_suffix, outer_scope)?);
         out.push('\n');
         value += step;
     }
     Ok(out)
+}
+
+/// Renders the items of one generate block under `env` (the values of every
+/// genvar currently in scope) with `suffix` (the accumulated per-iteration
+/// disambiguator, e.g. `_0_2` two loops deep). Every name declared directly
+/// in the block (instance/net/variable/parameter names) is suffixed --
+/// exactly the Enhancement-5 flattening convention, `_<value>` per level so
+/// the result stays an ordinary identifier. Nested `for`/`if`/`case`
+/// generate constructs recurse (Enhancement-67); everything else renders as
+/// text with two hole passes: constant-folded bit-select indices (so
+/// `n[i+1]` becomes `n[3]`, which the bus machinery requires), then every
+/// remaining bare genvar identifier replaced by its literal value (so
+/// `1e3*(i+1)` works in any expression position -- routing genvars through
+/// the identifier-substitution path instead used to re-escape the numeral
+/// into a broken escaped identifier like `\0`).
+fn render_generate_block(
+    block: &ast::GenerateBlock,
+    env: &HashMap<String, i32>,
+    suffix: &str,
+    outer_scope: &Scope,
+) -> anyhow::Result<String> {
+    let mut scope = outer_scope.clone();
+    if !suffix.is_empty() {
+        for name in collect_declared_names(block) {
+            scope.subst.insert(name.clone(), format!("{name}{suffix}"));
+        }
+    }
+
+    let mut out = String::new();
+    for item in block.items() {
+        match item {
+            ast::ModuleItem::GenvarDecl(_) => {}
+            ast::ModuleItem::GenerateFor(inner) => {
+                out.push_str(&render_generate_for(&inner, env, suffix, &scope)?);
+            }
+            ast::ModuleItem::GenerateIf(inner) => {
+                out.push_str(&render_generate_if(&inner, env, suffix, &scope)?);
+            }
+            ast::ModuleItem::GenerateCase(inner) => {
+                out.push_str(&render_generate_case(&inner, env, suffix, &scope)?);
+            }
+            other => {
+                out.push_str(&render_generate_item(other.syntax(), env, &scope));
+                out.push('\n');
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// Text-renders one non-generate item from a generate block: fold
+/// bit-select indices under `env`, replace remaining bare genvar
+/// identifiers with their values, then apply the name substitutions.
+fn render_generate_item(
+    item: &syntax::SyntaxNode,
+    env: &HashMap<String, i32>,
+    scope: &Scope,
+) -> String {
+    let base = item.text_range().start();
+    let text = item.text().to_string();
+
+    let mut holes: Vec<(Range<usize>, String)> = Vec::new();
+    for node in item.descendants() {
+        if let Some(sel) = ast::BitSelectExpr::cast(node) {
+            for index in sel.indices() {
+                if let Some(v) = eval_int_expr(&index, env) {
+                    holes.push((rel_range(base, index.syntax().text_range()), v.to_string()));
+                }
+            }
+        }
+    }
+    // bare genvar identifiers anywhere else (skip ranges already covered)
+    for tok in item.descendants_with_tokens().filter_map(|el| el.into_token()) {
+        if tok.kind() != syntax::SyntaxKind::IDENT {
+            continue;
+        }
+        let Some(v) = env.get(tok.text()) else { continue };
+        let r = rel_range(base, tok.text_range());
+        if holes.iter().any(|(h, _)| h.start <= r.start && r.end <= h.end) {
+            continue;
+        }
+        holes.push((r, v.to_string()));
+    }
+    holes.sort_by_key(|(r, _)| r.start);
+
+    render_with_holes(&text, &holes, scope)
+}
+
+/// Renders a constant-folded `generate if` (Enhancement-67): evaluate the
+/// condition under `env` and emit only the chosen branch. Conditions must
+/// be elaboration-time constants (integer literals and genvars) -- module
+/// parameters bind at simulation time under OSDI and cannot shape the
+/// generated structure.
+fn render_generate_if(
+    gen_if: &ast::GenerateIf,
+    env: &HashMap<String, i32>,
+    suffix: &str,
+    scope: &Scope,
+) -> anyhow::Result<String> {
+    let condition = gen_if
+        .condition()
+        .ok_or_else(|| anyhow::anyhow!("generate if: missing condition"))?;
+    let cond = eval_cond_expr(&condition, env).ok_or_else(|| anyhow::anyhow!(
+        "generate if: the condition ('{}') must be an elaboration-time constant \
+         (integer literals and genvars); module parameters bind at simulation time \
+         under OSDI and cannot shape the generated structure",
+        condition.syntax().text()
+    ))?;
+
+    let mut blocks = gen_if.blocks();
+    let then_block = blocks
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("generate if: missing 'begin ... end' branch body"))?;
+    if cond {
+        return render_generate_block(&then_block, env, suffix, scope);
+    }
+    // else side: either a nested `else if` (a GENERATE_IF child) or a block
+    if let Some(else_if) = support_child_generate_if(gen_if) {
+        return render_generate_if(&else_if, env, suffix, scope);
+    }
+    if let Some(else_block) = blocks.next() {
+        return render_generate_block(&else_block, env, suffix, scope);
+    }
+    Ok(String::new())
+}
+
+/// The nested `else if` of a `generate if`, if any (a direct GENERATE_IF
+/// child node).
+fn support_child_generate_if(gen_if: &ast::GenerateIf) -> Option<ast::GenerateIf> {
+    gen_if.syntax().children().find_map(ast::GenerateIf::cast)
+}
+
+/// Renders a constant-folded `generate case` (Enhancement-67): fold the
+/// discriminant under `env`, pick the first arm with a matching folded
+/// value (or the `default` arm), and emit only that arm's block.
+fn render_generate_case(
+    gen_case: &ast::GenerateCase,
+    env: &HashMap<String, i32>,
+    suffix: &str,
+    scope: &Scope,
+) -> anyhow::Result<String> {
+    let disc_expr = gen_case
+        .discriminant()
+        .ok_or_else(|| anyhow::anyhow!("generate case: missing case expression"))?;
+    let disc = eval_int_expr(&disc_expr, env).ok_or_else(|| anyhow::anyhow!(
+        "generate case: the case expression ('{}') must be an elaboration-time constant \
+         (integer literals and genvars); module parameters bind at simulation time \
+         under OSDI and cannot shape the generated structure",
+        disc_expr.syntax().text()
+    ))?;
+
+    let mut default_arm = None;
+    for arm in gen_case.arms() {
+        if arm.default_token().is_some() {
+            default_arm = Some(arm);
+            continue;
+        }
+        for val in arm.vals() {
+            let v = eval_int_expr(&val, env).ok_or_else(|| anyhow::anyhow!(
+                "generate case: arm value ('{}') must be an elaboration-time constant integer",
+                val.syntax().text()
+            ))?;
+            if v == disc {
+                let block = arm.block().ok_or_else(|| {
+                    anyhow::anyhow!("generate case: arm is missing its 'begin ... end' block")
+                })?;
+                return render_generate_block(&block, env, suffix, scope);
+            }
+        }
+    }
+    if let Some(arm) = default_arm {
+        let block = arm
+            .block()
+            .ok_or_else(|| anyhow::anyhow!("generate case: default arm is missing its block"))?;
+        return render_generate_block(&block, env, suffix, scope);
+    }
+    Ok(String::new())
+}
+
+/// Evaluates a generate-time boolean condition: comparisons and logical
+/// combinations of `eval_int_expr`-foldable operands; a bare integer
+/// expression is true when non-zero.
+fn eval_cond_expr(expr: &ast::Expr, env: &HashMap<String, i32>) -> Option<bool> {
+    match expr {
+        ast::Expr::ParenExpr(p) => eval_cond_expr(&p.expr()?, env),
+        ast::Expr::PrefixExpr(p) if matches!(p.op_kind(), Some(ast::UnaryOp::Not)) => {
+            Some(!eval_cond_expr(&p.expr()?, env)?)
+        }
+        ast::Expr::BinExpr(b) => {
+            let op = b.op_kind()?;
+            match op {
+                ast::BinaryOp::BooleanAnd => {
+                    Some(eval_cond_expr(&b.lhs()?, env)? && eval_cond_expr(&b.rhs()?, env)?)
+                }
+                ast::BinaryOp::BooleanOr => {
+                    Some(eval_cond_expr(&b.lhs()?, env)? || eval_cond_expr(&b.rhs()?, env)?)
+                }
+                ast::BinaryOp::EqualityTest
+                | ast::BinaryOp::NegatedEqualityTest
+                | ast::BinaryOp::LesserTest
+                | ast::BinaryOp::LesserEqualTest
+                | ast::BinaryOp::GreaterTest
+                | ast::BinaryOp::GreaterEqualTest => {
+                    let lhs = eval_int_expr(&b.lhs()?, env)?;
+                    let rhs = eval_int_expr(&b.rhs()?, env)?;
+                    Some(match op {
+                        ast::BinaryOp::EqualityTest => lhs == rhs,
+                        ast::BinaryOp::NegatedEqualityTest => lhs != rhs,
+                        ast::BinaryOp::LesserTest => lhs < rhs,
+                        ast::BinaryOp::LesserEqualTest => lhs <= rhs,
+                        ast::BinaryOp::GreaterTest => lhs > rhs,
+                        _ => lhs >= rhs,
+                    })
+                }
+                _ => Some(eval_int_expr(expr, env)? != 0),
+            }
+        }
+        _ => Some(eval_int_expr(expr, env)? != 0),
+    }
 }
 
 /// Collects the base names of everything declared directly inside a

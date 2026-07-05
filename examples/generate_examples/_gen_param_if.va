@@ -1,0 +1,15 @@
+`include "disciplines.vams"
+module res(p, n);
+  inout p, n; electrical p, n;
+  parameter real r = 1e3;
+  analog I(p, n) <+ V(p, n)/r;
+endmodule
+module bad(a, c);
+  inout a, c; electrical a, c;
+  parameter integer sel = 1;
+  generate
+    if (sel == 1) begin : g
+      res r1(a, c);
+    end
+  endgenerate
+endmodule

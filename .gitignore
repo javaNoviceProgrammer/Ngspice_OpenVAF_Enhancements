@@ -361,5 +361,9 @@ examples/preproc_examples/_argnest.va
 # Enhancement 66 monte-carlo example scripts: temp netlists
 examples/montecarlo_examples/_*.cir
 
+# Enhancement 67 generate example scripts: temp netlists
+examples/generate_examples/_*.cir
+examples/generate_examples/_gen_param_if.osdi
+
 # Python bytecode cache (e.g. from importing _setup.py)
 __pycache__/
