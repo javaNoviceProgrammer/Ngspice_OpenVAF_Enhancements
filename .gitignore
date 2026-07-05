@@ -349,9 +349,11 @@ examples/analyses_examples/_*.txt
 # Enhancement 63 rf-analyses example scripts: temp netlists
 examples/rfanalyses_examples/_*.cir
 
-# Enhancement 64 touchstone example scripts: temp netlists + generated .sNp files
+# Enhancement 64/72 touchstone example scripts: temp netlists + generated files
 examples/touchstone_examples/_*.cir
 examples/touchstone_examples/_*.s?p
+examples/touchstone_examples/_*.y2p
+examples/touchstone_examples/_*.z2p
 
 # Enhancement 65 preprocessor example scripts: temp netlists + probe artifacts
 examples/preproc_examples/_*.cir

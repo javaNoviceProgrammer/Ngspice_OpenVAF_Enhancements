@@ -862,6 +862,16 @@ Several unrelated language gaps found along the way are also fixed. **`localpara
 
 ---
 
+## Enhancement 72: Touchstone round 2 — MA/DB formats, frequency units, Y/Z export, and the `rdsnp` reader
+
+*July 2026* — Completes the Touchstone arc begun in Enhancement-64. **Writer options**: `wrsnp <file> [ri|ma|db] [s|y|z] [hz|khz|mhz|ghz]`, any combination in any order — **MA** (magnitude/angle-degrees) and **DB** (20·log₁₀/angle) formats alongside the default RI; **Y- and Z-parameter export** from the sp plot's existing vectors, **normalized to Rbase** (`Y·R`, `Z/R`) exactly as the Touchstone v1 spec requires; and **kHz/MHz/GHz frequency units**, with the option line reflecting every choice (`# GHz S DB R 50`). The bare 2-port default stays byte-identical to the classic output; every optioned case handles the Touchstone 2-port column order and the N-port layouts. **The reader**: `rdsnp <file> [nports]` loads any Touchstone v1 file into a **new plot** with a real Hz `frequency` scale and complex vectors matching the `.sp` plot's conventions — MA/DB converted back to real/imaginary, Y/Z de-normalized to absolute values, the 2-port column order un-swapped, the port count taken from the `.sNp` extension or given explicitly, and `Rbase` published so imports round-trip back out through `wrsnp`. This is the piece that lets **measured data diff against simulation in one `let` expression**: the suite pins a full write-MA → `rdsnp` → compare round-trip at max |ΔS21| = 4e-8 (below the file's own 6-digit precision) and a hand-written measurement-style MA/MHz file read back exactly (0.5∠−90° → −0.5j).
+
+- Verified with 17 end-to-end checks (the E-64 six plus three round-2 sections) — see `examples/touchstone_examples/`
+- Regression-checked: all 66 example verify suites ALL PASS with the rebuilt ngspice, the openvaf integration suite 28/28; no compiler change
+- Details: [Enhancement-72.md](enhancements_doc/Enhancement-72.md)
+
+---
+
 ## Prebuilt Binaries
 
 Binaries are built by CI and committed to `bin/`:

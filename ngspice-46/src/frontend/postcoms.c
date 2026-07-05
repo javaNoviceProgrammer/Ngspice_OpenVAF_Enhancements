@@ -20,6 +20,8 @@ Author: 1985 Wayne A. Christopher, U. C. Berkeley CAD Group
 #include "completion.h"
 #include "postcoms.h"
 #include "variable.h"
+#include "ngspice/stringskip.h"
+#include "../misc/misc_time.h"
 #include "parser/complete.h" /* va: throwaway */
 #include "plotting/plotting.h"
 
@@ -619,13 +621,239 @@ done:
    row starting on a new line (the first row follows the frequency value);
    a 1-port is a single pair per line. (The classic 2-port S11 S21 S12 S22
    column order is handled by the original spar_write() path.) */
+/* Enhancement-72: `rdsnp <file> [nports]` -- read a Touchstone v1 file
+   into a new plot ("Touchstone import") holding a real `frequency` scale
+   in Hz plus complex `S_i_j` (or Y/Z) vectors matching the .sp plot's
+   conventions (Y/Z de-normalized back to absolute values), so imported
+   measurement data can be compared 1:1 against simulated vectors. The
+   port count comes from the `.sNp` extension unless given explicitly. */
+void
+com_read_sparam(wordlist *wl)
+{
+    FILE *fp;
+    char line[4096];
+    char *file;
+    int nports = 0;
+    double fscale = 1.0, rbase = 50.0;
+    char fmt = 'r', param = 's';
+    bool have_opt_line = FALSE;
+    double *data = NULL;
+    size_t ndata = 0, adata = 0;
+    int per_block, npts, i, j, k;
+    struct plot *new;
+    struct dvec *freqv, *last;
+
+    if (!wl) {
+        fprintf(stderr, "Error: rdsnp requires a file name\n");
+        return;
+    }
+    file = wl->wl_word;
+    if (wl->wl_next)
+        nports = atoi(wl->wl_next->wl_word);
+    if (nports <= 0) {
+        /* infer from the .sNp extension */
+        char *dot = strrchr(file, '.');
+        if (dot && (dot[1] == 's' || dot[1] == 'S')) {
+            nports = atoi(dot + 2);
+        }
+    }
+    if (nports <= 0) {
+        fprintf(stderr,
+                "Error: cannot infer the port count from '%s'; use rdsnp <file> <nports>\n",
+                file);
+        return;
+    }
+
+    if ((fp = fopen(file, "r")) == NULL) {
+        perror(file);
+        return;
+    }
+
+    while (fgets(line, sizeof(line), fp)) {
+        char *t = skip_ws(line);
+        if (*t == '\0' || *t == '!')
+            continue;
+        if (*t == '#') {
+            /* option line: [unit] [param] [format] [R n], any order */
+            char tok[64];
+            int pos = 1;
+            while (sscanf(t + pos, " %63s%n", tok, &i) == 1) {
+                pos += i;
+                if (cieq(tok, "hz"))
+                    fscale = 1.0;
+                else if (cieq(tok, "khz"))
+                    fscale = 1e3;
+                else if (cieq(tok, "mhz"))
+                    fscale = 1e6;
+                else if (cieq(tok, "ghz"))
+                    fscale = 1e9;
+                else if (cieq(tok, "s") || cieq(tok, "y") || cieq(tok, "z"))
+                    param = (char) tolower_c(tok[0]);
+                else if (cieq(tok, "ri"))
+                    fmt = 'r';
+                else if (cieq(tok, "ma"))
+                    fmt = 'm';
+                else if (cieq(tok, "db"))
+                    fmt = 'd';
+                else if (cieq(tok, "r")) {
+                    if (sscanf(t + pos, " %lg%n", &rbase, &i) == 1)
+                        pos += i;
+                }
+            }
+            have_opt_line = TRUE;
+            continue;
+        }
+        /* data line: append every number */
+        {
+            char *q = t;
+            double v;
+            while (sscanf(q, " %lg%n", &v, &i) == 1) {
+                if (ndata == adata) {
+                    adata = adata ? 2 * adata : 1024;
+                    data = TREALLOC(double, data, adata);
+                }
+                data[ndata++] = v;
+                q += i;
+            }
+        }
+    }
+    (void) fclose(fp);
+
+    if (!have_opt_line)
+        fprintf(stderr, "Warning: no '#' option line in %s; assuming Hz S RI R 50\n", file);
+
+    per_block = 1 + 2 * nports * nports;
+    if (ndata == 0 || ndata % (size_t) per_block != 0) {
+        fprintf(stderr,
+                "Error: %s holds %zu numbers, not a multiple of %d (1 + 2*%d^2) -- wrong port count?\n",
+                file, ndata, per_block, nports);
+        tfree(data);
+        return;
+    }
+    npts = (int) (ndata / (size_t) per_block);
+
+    /* build the plot (same pattern as com_linearize) */
+    new = plot_alloc("sp");
+    new->pl_name = tprintf("Touchstone import %s", file);
+    new->pl_title = copy(file);
+    new->pl_date = copy(datestring());
+    new->pl_next = plot_list;
+    plot_new(new);
+    plot_setcur(new->pl_typename);
+    plot_list = new;
+
+    freqv = dvec_alloc(copy("frequency"), SV_FREQUENCY, VF_REAL | VF_PERMANENT, npts, NULL);
+    freqv->v_plot = new;
+    for (k = 0; k < npts; k++)
+        freqv->v_realdata[k] = data[(size_t) k * (size_t) per_block] * fscale;
+    new->pl_scale = new->pl_dvecs = freqv;
+    last = freqv;
+
+    for (i = 0; i < nports; i++) {
+        for (j = 0; j < nports; j++) {
+            char nb[40];
+            struct dvec *v;
+            int pair;
+            /* position of pair (i,j) within a block, matching the writer */
+            if (nports == 2) {
+                static const int order[2][2] = {{0, 2}, {1, 3}};
+                pair = order[i][j];
+            } else {
+                pair = i * nports + j;
+            }
+            (void) sprintf(nb, "%c_%d_%d", toupper_c(param), i + 1, j + 1);
+            v = dvec_alloc(copy(nb), SV_NOTYPE, VF_COMPLEX | VF_PERMANENT, npts, NULL);
+            v->v_plot = new;
+            for (k = 0; k < npts; k++) {
+                size_t base = (size_t) k * (size_t) per_block + 1 + 2 * (size_t) pair;
+                double a = data[base], b = data[base + 1];
+                double re, im;
+                if (fmt == 'r') {
+                    re = a;
+                    im = b;
+                } else {
+                    double mag = (fmt == 'd') ? pow(10.0, a / 20.0) : a;
+                    re = mag * cos(b * M_PI / 180.0);
+                    im = mag * sin(b * M_PI / 180.0);
+                }
+                /* de-normalize back to absolute Y/Z (v1 files carry Y*R, Z/R) */
+                if (param == 'y') {
+                    re /= rbase;
+                    im /= rbase;
+                } else if (param == 'z') {
+                    re *= rbase;
+                    im *= rbase;
+                }
+                v->v_compdata[k].cx_real = re;
+                v->v_compdata[k].cx_imag = im;
+            }
+            last->v_next = v;
+            last = v;
+        }
+    }
+
+    /* publish Rbase so the imported plot round-trips through wrsnp */
+    {
+        struct dvec *rv = dvec_alloc(copy("Rbase"), SV_NOTYPE, VF_REAL | VF_PERMANENT, 1, NULL);
+        rv->v_plot = new;
+        rv->v_realdata[0] = rbase;
+        last->v_next = rv;
+    }
+
+    fprintf(stdout, "%d-port %c-parameters (%d points) read from %s into plot '%s'\n",
+            nports, toupper_c(param), npts, file, new->pl_typename);
+    tfree(data);
+}
+
+
+/* Enhancement-72: one complex value from an sp-plot vector. */
 static void
-spar_write_np(const char *file, int nports, double Rbaseval)
+spar_get(struct dvec *v, int k, double *re, double *im)
+{
+    if (isreal(v)) {
+        *re = v->v_realdata[k];
+        *im = 0.0;
+    } else {
+        *re = realpart(v->v_compdata[k]);
+        *im = imagpart(v->v_compdata[k]);
+    }
+}
+
+/* Enhancement-72: emit one network value in the requested Touchstone
+   format (RI / MA / DB) after applying the v1 normalization for Y (x R)
+   and Z (/ R) parameters. */
+static void
+spar_emit(FILE *fp, int prec, double re, double im, char fmt)
+{
+    if (fmt == 'r') {
+        fprintf(fp, "  % .*e % .*e", prec, re, prec, im);
+    } else {
+        double mag = hypot(re, im);
+        double ang = (mag > 0.0) ? atan2(im, re) * 180.0 / M_PI : 0.0;
+        if (fmt == 'd')
+            fprintf(fp, "  % .*e % .*e", prec,
+                    20.0 * log10(mag > 0.0 ? mag : 1e-300), prec, ang);
+        else
+            fprintf(fp, "  % .*e % .*e", prec, mag, prec, ang);
+    }
+}
+
+/* Enhancement-72: generalized Touchstone v1 writer -- any port count,
+   RI/MA/DB formats, S/Y/Z parameters (Y/Z normalized to Rbase per the
+   v1 spec), and Hz/kHz/MHz/GHz frequency units. The 2-port matrix uses
+   the Touchstone-special S11 S21 S12 S22 column order on one line;
+   N >= 3 is row-major with at most four pairs per data line and each
+   matrix row on its own line; a 1-port is one pair per line. */
+static void
+spar_write_np(const char *file, int nports, double Rbaseval,
+              char fmt, char param, double fscale, const char *funit)
 {
     struct dvec *freqv = vec_get("frequency");
     struct dvec **sv;
     FILE *fp;
     int i, j, k, npts, prec, inrow;
+    const char *fmt_str = (fmt == 'm') ? "MA" : (fmt == 'd') ? "DB" : "RI";
+    char param_uc = (char) toupper_c(param);
 
     if (!freqv) {
         fprintf(stderr, "Error: no frequency vector (run a .sp analysis first)\n");
@@ -638,7 +866,7 @@ spar_write_np(const char *file, int nports, double Rbaseval)
     for (i = 0; i < nports; i++)
         for (j = 0; j < nports; j++) {
             char nb[40];
-            (void) sprintf(nb, "S_%d_%d", i + 1, j + 1);
+            (void) sprintf(nb, "%c_%d_%d", param_uc, i + 1, j + 1);
             sv[i * nports + j] = vec_get(nb);
             if (!sv[i * nports + j] || sv[i * nports + j]->v_length != npts) {
                 fprintf(stderr, "Error: vector %s missing or of wrong length\n", nb);
@@ -653,31 +881,57 @@ spar_write_np(const char *file, int nports, double Rbaseval)
         return;
     }
 
-    fprintf(fp, "!%d-port S-parameter file\n", nports);
+    fprintf(fp, "!%d-port %c-parameter file\n", nports, param_uc);
     fprintf(fp, "!Title: %s\n", freqv->v_plot ? freqv->v_plot->pl_title : "");
     fprintf(fp, "!Generated by ngspice at %s\n",
             freqv->v_plot ? freqv->v_plot->pl_date : "");
-    fprintf(fp, "# Hz S RI R %g\n", Rbaseval);
+    fprintf(fp, "# %s %c %s R %g\n", funit, param_uc, fmt_str, Rbaseval);
+    if (nports == 2)
+        fprintf(fp, "!freq  %c11  %c21  %c12  %c22  (%s pairs)\n",
+                param_uc, param_uc, param_uc, param_uc, fmt_str);
 
     for (k = 0; k < npts; k++) {
         double f = isreal(freqv) ? freqv->v_realdata[k]
                                  : realpart(freqv->v_compdata[k]);
-        fprintf(fp, "% .*e", prec, f);
+        fprintf(fp, "% .*e", prec, f / fscale);
+        if (nports == 2) {
+            /* Touchstone 2-port column order: 11, 21, 12, 22 */
+            static const int order[4][2] = {{0, 0}, {1, 0}, {0, 1}, {1, 1}};
+            int n;
+            for (n = 0; n < 4; n++) {
+                double re, im;
+                spar_get(sv[order[n][0] * 2 + order[n][1]], k, &re, &im);
+                if (param == 'y') {
+                    re *= Rbaseval;
+                    im *= Rbaseval;
+                } else if (param == 'z') {
+                    re /= Rbaseval;
+                    im /= Rbaseval;
+                }
+                spar_emit(fp, prec, re, im, fmt);
+            }
+            fprintf(fp, "\n");
+            continue;
+        }
         for (i = 0; i < nports; i++) {
             if (i > 0)
                 fprintf(fp, "%*s", prec + 9, "");   /* align continuation rows */
             inrow = 0;
             for (j = 0; j < nports; j++) {
-                struct dvec *v = sv[i * nports + j];
-                double re = isreal(v) ? v->v_realdata[k]
-                                      : realpart(v->v_compdata[k]);
-                double im = isreal(v) ? 0.0
-                                      : imagpart(v->v_compdata[k]);
+                double re, im;
+                spar_get(sv[i * nports + j], k, &re, &im);
+                if (param == 'y') {
+                    re *= Rbaseval;
+                    im *= Rbaseval;
+                } else if (param == 'z') {
+                    re /= Rbaseval;
+                    im /= Rbaseval;
+                }
                 if (inrow == 4) {           /* max 4 pairs per line */
                     fprintf(fp, "\n%*s", prec + 9, "");
                     inrow = 0;
                 }
-                fprintf(fp, "  % .*e % .*e", prec, re, prec, im);
+                spar_emit(fp, prec, re, im, fmt);
                 inrow++;
             }
             fprintf(fp, "\n");             /* each matrix row on its own line */
@@ -685,7 +939,8 @@ spar_write_np(const char *file, int nports, double Rbaseval)
     }
 
     (void) fclose(fp);
-    fprintf(stdout, "%d-port S-parameters written to %s\n", nports, file);
+    fprintf(stdout, "%d-port %c-parameters written to %s (%s, %s)\n",
+            nports, param_uc, file, fmt_str, funit);
     tfree(sv);
 }
 
@@ -714,11 +969,45 @@ com_write_sparam(wordlist *wl)
     double Rbaseval;
 
     int nports = 0;
+    /* Enhancement-72: output options -- format (ri|ma|db), parameter
+       (s|y|z) and frequency unit (hz|khz|mhz|ghz), any order after the
+       file name. Defaults preserve the classic wrs2p output exactly. */
+    char fmt = 'r', param = 's';
+    double fscale = 1.0;
+    const char *funit = "Hz";
+    bool have_opts = FALSE;
 
     if (wl)
         file = wl->wl_word;
     else
         file = "s_param.s2p";
+
+    if (wl) {
+        wordlist *w;
+        for (w = wl->wl_next; w; w = w->wl_next) {
+            char *t = w->wl_word;
+            if (cieq(t, "ri") || cieq(t, "ma") || cieq(t, "db")) {
+                fmt = (char) tolower_c(t[0]);   /* 'r' | 'm' | 'd' */
+                have_opts = TRUE;
+            } else if (cieq(t, "s") || cieq(t, "y") || cieq(t, "z")) {
+                param = (char) tolower_c(t[0]);
+                have_opts = TRUE;
+            } else if (cieq(t, "hz")) {
+                fscale = 1.0; funit = "Hz"; have_opts = TRUE;
+            } else if (cieq(t, "khz")) {
+                fscale = 1e3; funit = "kHz"; have_opts = TRUE;
+            } else if (cieq(t, "mhz")) {
+                fscale = 1e6; funit = "MHz"; have_opts = TRUE;
+            } else if (cieq(t, "ghz")) {
+                fscale = 1e9; funit = "GHz"; have_opts = TRUE;
+            } else {
+                fprintf(stderr,
+                        "Error: unknown wrsnp option '%s' (expected ri|ma|db, s|y|z, hz|khz|mhz|ghz)\n",
+                        t);
+                return;
+            }
+        }
+    }
 
     /* Enhancement-64: how many ports does the current sp plot hold? */
     while (nports < 99) {
@@ -745,8 +1034,8 @@ com_write_sparam(wordlist *wl)
         return;
     }
 
-    if (nports != 2) {
-        spar_write_np(file, nports, Rbaseval);
+    if (nports != 2 || have_opts) {
+        spar_write_np(file, nports, Rbaseval, fmt, param, fscale, funit);
         return;
     }
 

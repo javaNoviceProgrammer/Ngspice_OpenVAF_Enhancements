@@ -22,8 +22,20 @@ named Rbase that nothing created) and hardwired to 2 ports. Enhancement-64:
     minors and ngspice died with "malloc: can't allocate -8 bytes". The
     adjugate of [a] is [1], making cinverse of a 1x1 equal 1/a.
 
+Round 2 (Enhancement-72) adds output options and a READER:
+  * `wrsnp <file> [ri|ma|db] [s|y|z] [hz|khz|mhz|ghz]` -- MA (magnitude/
+    angle-degrees) and DB (20*log10/angle) formats, Y-/Z-parameter export
+    (normalized to Rbase per the Touchstone v1 spec), and kHz/MHz/GHz
+    frequency units, all reflected in the option line;
+  * `rdsnp <file> [nports]` -- reads a Touchstone v1 file (any format,
+    unit, parameter type, port count; 2-port column order handled) into a
+    new plot holding a Hz `frequency` scale plus complex vectors matching
+    the .sp plot conventions, so measured data compares 1:1 against
+    simulation. Round-trip write-MA -> read -> compare is pinned below.
+
 Every SPICE deck starts with a title line (SPICE treats line 1 as the title!).
 """
+import math
 import os
 import re
 import subprocess
@@ -237,6 +249,106 @@ lines = [l for l in open(os.path.join(HERE, "_star.s5p"))
          if l.strip() and not l.strip().startswith(("!", "#"))]
 check("5 rows x 2 lines (wrap at 4 pairs) == 10 data lines", len(lines) == 10,
       f"({len(lines)} lines)")
+
+print("[6] round 2: MA/DB formats + frequency units (headers + math)")
+log = run_deck("_t6.cir", """* round2 formats
+.control
+pre_osdi ts_blocks.osdi
+.endc
+V1 in 0 DC 0 AC 1 portnum 1 z0 50
+N1 in out mm
+.model mm ores r=100
+N2 out 0 mmc
+.model mmc ocap cap=1n
+V2 out 0 DC 0 AC 1 portnum 2 z0 50
+.sp dec 1 1meg 100meg
+.control
+run
+wrsnp _r2.s2p
+wrsnp _r2ma.s2p ma
+wrsnp _r2db.s2p db ghz
+wrsnp _r2y.y2p y
+wrsnp _r2z.z2p z mhz
+.endc
+.end
+""")
+opt_ma, blocks_ma = read_touchstone("_r2ma.s2p")
+opt_db, blocks_db = read_touchstone("_r2db.s2p")
+opt_y, _ = read_touchstone("_r2y.y2p")
+opt_z, _ = read_touchstone("_r2z.z2p")
+_, blocks_ri = read_touchstone("_r2.s2p")
+check("option lines: MA, DB+GHz, Y, Z+MHz",
+      " S MA R 50" in (opt_ma or "") and opt_db is not None
+      and opt_db.startswith("# GHz") and " DB R 50" in opt_db
+      and " Y RI R 50" in (opt_y or "") and opt_z is not None
+      and opt_z.startswith("# MHz") and " Z RI R 50" in opt_z)
+# MA pair 0 (S11) must equal the RI pair 0 in polar form
+ri = blocks_ri[0][1][0]
+ma = blocks_ma[0][1][0]
+check("MA magnitude/angle == polar(RI)",
+      abs(ma[0] - math.hypot(*ri)) < 1e-5
+      and abs(ma[1] - math.degrees(math.atan2(ri[1], ri[0]))) < 1e-3)
+db = blocks_db[0][1][0]
+check("DB == 20*log10(mag), freq in GHz",
+      abs(db[0] - 20 * math.log10(math.hypot(*ri))) < 1e-4
+      and abs(blocks_db[0][0] - 1e-3) < 1e-9)
+
+print("[7] round 2: rdsnp reader round-trip (write MA -> read -> compare)")
+log = run_deck("_t7.cir", """* roundtrip
+.control
+pre_osdi ts_blocks.osdi
+.endc
+V1 in 0 DC 0 AC 1 portnum 1 z0 50
+N1 in out mm
+.model mm ores r=100
+N2 out 0 mmc
+.model mmc ocap cap=1n
+V2 out 0 DC 0 AC 1 portnum 2 z0 50
+.sp dec 1 1meg 100meg
+.control
+run
+set numdgt=10
+let s21sim = S_2_1
+wrsnp _rt.s2p ma
+rdsnp _rt.s2p
+let din = maximum(mag(S_2_1 - {sp1}.s21sim))
+print din
+.endc
+.end
+""")
+m = re.search(r"din = ([0-9.eE+-]+)", log)
+check("max |S21(read) - S21(sim)| below the file precision (1e-6)",
+      m is not None and float(m.group(1)) < 1e-6,
+      f"({m.group(1) if m else '?'})")
+check("reader announces the import",
+      "read from _rt.s2p" in log)
+
+print("[8] round 2: rdsnp of a hand-written 'measured' file")
+with open(os.path.join(HERE, "_meas.s2p"), "w") as fh:
+    fh.write("""! hand-written measurement-style file
+# MHz S MA R 50
+1.0   0.5 0.0    0.5 -90.0   0.5 -90.0   0.5 180.0
+2.0   0.4 10.0   0.6 -80.0   0.6 -80.0   0.4 170.0
+""")
+log = run_deck("_t8.cir", """* read measured
+.control
+rdsnp _meas.s2p
+set numdgt=10
+print frequency[0] frequency[1]
+print S_1_1 S_2_1
+.endc
+.end
+""")
+f0 = re.search(r"frequency\[0\] = ([0-9.eE+-]+)", log)
+rows = re.findall(r"^\d+\s+(-?[0-9.eE+-]+),\s+(-?[0-9.eE+-]+)\s+(-?[0-9.eE+-]+),\s+(-?[0-9.eE+-]+)", log, re.M)
+ok8 = (f0 is not None and abs(float(f0.group(1)) - 1e6) < 1e-3   # MHz -> Hz
+       and len(rows) == 2
+       and abs(float(rows[0][0]) - 0.5) < 1e-9                    # S11 = 0.5 at 0 deg
+       and abs(float(rows[0][1])) < 1e-9
+       and abs(float(rows[0][2])) < 1e-9                          # S21 = 0.5 at -90 deg
+       and abs(float(rows[0][3]) + 0.5) < 1e-9)                   #      -> -0.5j
+check("MHz scale + MA->RI conversion + 2-port column order", ok8,
+      f"({len(rows)} rows)")
 
 print(f"\n{'ALL PASS' if failed == 0 else 'FAILURES'}: {passed} passed, {failed} failed")
 raise SystemExit(1 if failed else 0)

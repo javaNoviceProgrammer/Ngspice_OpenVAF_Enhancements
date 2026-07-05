@@ -11,6 +11,7 @@ void com_load(wordlist *wl);
 void com_print(wordlist *wl);
 void com_write(wordlist *wl);
 void com_write_sparam(wordlist *wl);
+void com_read_sparam(wordlist *wl);
 void com_transpose(wordlist *wl);
 void com_cross(wordlist *wl);
 void com_destroy(wordlist *wl);

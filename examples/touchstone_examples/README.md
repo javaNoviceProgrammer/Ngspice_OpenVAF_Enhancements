@@ -31,10 +31,23 @@ Writing S-parameter results to industry-standard Touchstone v1 files
 - **1-port `.sp`** analyses run (the adjugate of `[a]` is `[1]`, making
   `cinverse` of a 1×1 equal `1/a` — fixed in `maths/dense/dense.c`).
 
+## Round 2 (Enhancement-72)
+
+`wrsnp` gained output options — `wrsnp <file> [ri|ma|db] [s|y|z]
+[hz|khz|mhz|ghz]` (MA = magnitude/angle-degrees, DB = 20·log₁₀/angle;
+Y/Z exported **normalized to Rbase** per the Touchstone v1 spec; the
+option line reflects every choice) — and a **reader**:
+`rdsnp <file> [nports]` loads any Touchstone v1 file into a new plot
+with a Hz `frequency` scale and complex vectors matching the `.sp`
+plot's conventions (MA/DB converted back, Y/Z de-normalized, 2-port
+column order handled), so measured data compares 1:1 against simulated
+vectors. The suite pins a full write-MA → read → compare round-trip at
+4e-8 and a hand-written measurement-style file read back exactly.
+
 ## Run
 
 ```bash
-python3 verify_touchstone.py    # 11 checks
+python3 verify_touchstone.py    # 17 checks
 ```
 
 [1] `wrs2p` with no manual `Rbase` — header `R 50`, file S21 pairs equal
