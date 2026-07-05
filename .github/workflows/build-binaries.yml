@@ -76,14 +76,17 @@ jobs:
         run: |
           # Silence two CI warnings from the runner image: it ships an
           # untrusted third-party tap (aws/tap) that brew now warns about,
-          # and a pre-installed llvm@15, which makes the llvm@18 install
-          # print a "not linked because llvm@15 is already installed"
-          # warning (brew's check is on INSTALLED versions, so a mere
-          # unlink is not enough -- remove it). Neither is used by this
-          # build: openvaf gets LLVM 18 via LLVM_SYS_181_PREFIX + PATH
-          # below, and ngspice builds with Apple's /usr/bin/clang.
+          # and a pre-installed LLVM (llvm@15 on macos-14, llvm@20 on
+          # macos-26-intel -- varies by image), which makes the llvm@18
+          # install warn "installed but not linked" (brew's check is on
+          # INSTALLED versions, so a mere unlink is not enough -- remove
+          # every non-18 llvm). None of this is used by the build: openvaf
+          # gets LLVM 18 via LLVM_SYS_181_PREFIX + PATH below, and ngspice
+          # builds with Apple's /usr/bin/clang.
           brew untap aws/tap 2>/dev/null || true
-          brew uninstall --ignore-dependencies llvm@15 2>/dev/null || true
+          for f in $(brew list --formula 2>/dev/null | grep '^llvm' | grep -v '^llvm@18$'); do
+            brew uninstall --ignore-dependencies "$f" 2>/dev/null || true
+          done
           brew update
           brew install llvm@18 automake autoconf libtool bison flex readline ncurses
           # belt-and-braces: make llvm@18 the linked default too (the build
