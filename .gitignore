@@ -368,5 +368,9 @@ examples/generate_examples/_gen_param_if.osdi
 # Enhancement 69 opvar example scripts: temp netlists
 examples/opvar_examples/_*.cir
 
+# Enhancement 70 analog-loop example scripts: temp netlists + negative probe
+examples/analogloop_examples/_*.cir
+examples/analogloop_examples/_ddt_in_loop.osdi
+
 # Python bytecode cache (e.g. from importing _setup.py)
 __pycache__/

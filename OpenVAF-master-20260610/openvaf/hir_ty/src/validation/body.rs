@@ -163,6 +163,13 @@ pub enum BodyCtx {
     AnalogBlock,
     AnalogInitialBlock,
     Conditional,
+    /// Enhancement-70: the body of a runtime loop (for/while/do-while/
+    /// repeat). Same restrictions as `Conditional`, but diagnosed as
+    /// "loops" -- an analog operator inside a loop body used to be
+    /// reported as "not allowed in conditions", which pointed users at
+    /// the wrong construct (LRM 4.5.1 forbids analog operators in
+    /// looping statements).
+    Loop,
     EventControl,
     Function,
     ConstOrAnalysis,
@@ -171,11 +178,11 @@ pub enum BodyCtx {
 
 impl BodyCtx {
     fn allow_nature_access(self) -> bool {
-        matches!(self, Self::AnalogBlock | Self::Conditional | Self::EventControl)
+        matches!(self, Self::AnalogBlock | Self::Conditional | Self::Loop | Self::EventControl)
     }
 
     fn allow_contribute(self) -> bool {
-        matches!(self, Self::AnalogBlock | Self::Conditional)
+        matches!(self, Self::AnalogBlock | Self::Conditional | Self::Loop)
     }
 
     fn allow_analog_operator(self) -> bool {
@@ -196,6 +203,7 @@ impl_display! {
        BodyCtx::AnalogBlock => "analog block";
        BodyCtx::AnalogInitialBlock => "analog initial block";
        BodyCtx::Conditional => "conditions";
+       BodyCtx::Loop => "loops";
        BodyCtx::EventControl => "events";
        BodyCtx::Function => "analog functions";
        BodyCtx::ConstOrAnalysis => "constant or analysis";
@@ -251,12 +259,20 @@ impl BodyValidator<'_> {
                 return;
             }
 
-            Stmt::If { cond, .. }
-            | Stmt::ForLoop { cond, .. }
+            Stmt::If { cond, .. } | Stmt::Case { discr: cond, .. } => cond,
+
+            Stmt::ForLoop { cond, .. }
             | Stmt::WhileLoop { cond, .. }
             | Stmt::DoWhile { cond, .. }
-            | Stmt::Repeat { count: cond, .. }
-            | Stmt::Case { discr: cond, .. } => cond,
+            | Stmt::Repeat { count: cond, .. } => {
+                // Enhancement-70: loop bodies get their own ctx so the
+                // analog-operator restriction is reported against "loops"
+                // (LRM 4.5.1), not "conditions".
+                self.validate_condition_in(BodyCtx::Loop, cond, stmt, |s| {
+                    s.body.stmts[stmt].walk_child_stmts(|stmt| s.validate_stmt(stmt))
+                });
+                return;
+            }
         };
 
         self.validate_condition(cond, stmt, |s| {
@@ -270,7 +286,20 @@ impl BodyValidator<'_> {
         stmt: StmtId,
         f: impl FnOnce(&mut Self),
     ) -> Option<Box<[ExprId]>> {
-        if self.ctx == BodyCtx::AnalogBlock || self.ctx == BodyCtx::Conditional {
+        self.validate_condition_in(BodyCtx::Conditional, cond, stmt, f)
+    }
+
+    /// Like `validate_condition`, entering `enter_ctx` for the guarded body
+    /// when the condition is non-constant (Enhancement-70: loops enter
+    /// `BodyCtx::Loop`, ifs/cases `BodyCtx::Conditional`).
+    fn validate_condition_in(
+        &mut self,
+        enter_ctx: BodyCtx,
+        cond: ExprId,
+        stmt: StmtId,
+        f: impl FnOnce(&mut Self),
+    ) -> Option<Box<[ExprId]>> {
+        if matches!(self.ctx, BodyCtx::AnalogBlock | BodyCtx::Conditional | BodyCtx::Loop) {
             let mut non_const_access = Vec::new();
             ExprValidator {
                 parent: self,
@@ -283,7 +312,7 @@ impl BodyValidator<'_> {
             if !non_const_access.is_empty() {
                 let non_const_dominator =
                     replace(&mut self.non_const_dominator, non_const_access.into_boxed_slice());
-                let ctx = replace(&mut self.ctx, BodyCtx::Conditional);
+                let ctx = replace(&mut self.ctx, enter_ctx);
                 f(self);
                 self.ctx = ctx;
                 return Some(replace(&mut self.non_const_dominator, non_const_dominator));

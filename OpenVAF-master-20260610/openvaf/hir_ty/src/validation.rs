@@ -312,6 +312,11 @@ impl Diagnostic for BodyValidationDiagnosticWrapped<'_> {
                                 "help: analog operators are only allowed in non-conditional behaviour".to_owned(),
                                 "help: only constant and analysis functions are allowed in conditions".to_owned()
                             ]
+                        } else if ctx == BodyCtx::Loop {
+                            vec![
+                                "help: analog operators are not allowed inside looping statements (LRM 4.5.1)".to_owned(),
+                                "help: hoist the operator out of the loop, or unroll the loop with `generate`".to_owned(),
+                            ]
                         } else {
                             vec!["help: analog operators are only allowed in the main-analog block"
                                 .to_owned()]

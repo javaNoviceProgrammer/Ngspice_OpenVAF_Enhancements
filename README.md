@@ -842,6 +842,16 @@ Several unrelated language gaps found along the way are also fixed. **`localpara
 
 ---
 
+## Enhancement 70: behavioral-loop audit — precise loop diagnostics
+
+*July 2026* — A systematic audit of the **runtime loop statements** inside analog blocks (`for`, `while`, `do`-`while`, `repeat(n)`) — the simulation-time cousins of Enhancement-67's `generate` audit. 14 probe forms, every compiled value **numerically exact**: all four loop statements (sum 1..4 → 10 mS four ways), nesting, loops over arrays, iterative algorithms (Newton `sqrt(16)` → exactly 4), solution-dependent `while` conditions, contributions accumulating inside loops, loops inside analog functions, and `break` correctly rejected (not Verilog-A). The most instructive result: **parameter-dependent trip counts honor model-card overrides at simulation time** (`n=25` → 25 mS) — the precise complement of Enhancement-67's generate restriction, drawing the clean line that *generated structure* binds at compile time while *loop behavior* binds at simulation time. **One defect, fixed:** an analog operator (`ddt`, `idt`, …) inside a loop *body* was rejected — correctly, per LRM 4.5.1 — but reported as *"not allowed in **conditions**"*, pointing users at the wrong construct (the validator lumped loop bodies into the conditional context). Loops now enter their own validation context: the error names **loops**, cites LRM 4.5.1, and suggests hoisting the operator or unrolling with `generate`, while the `if`/`case` messages are unchanged.
+
+- Verified with 12 end-to-end checks — see `examples/analogloop_examples/`
+- Regression-checked: all 64 example verify suites ALL PASS, the openvaf integration suite 28/28, dev-gated crate tests pass, the VA_TEST corpus compiles 92/92
+- Details: [Enhancement-70.md](enhancements_doc/Enhancement-70.md)
+
+---
+
 ## Prebuilt Binaries
 
 Binaries are built by CI and committed to `bin/`:

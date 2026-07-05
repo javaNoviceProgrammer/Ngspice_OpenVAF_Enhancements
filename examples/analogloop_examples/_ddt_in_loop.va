@@ -1,0 +1,8 @@
+`include "disciplines.vams"
+module p(a,c); inout a,c; electrical a,c;
+integer i;
+analog begin
+  for (i = 0; i < 2; i = i + 1)
+    I(a,c) <+ ddt(1e-12*V(a,c));
+end
+endmodule
