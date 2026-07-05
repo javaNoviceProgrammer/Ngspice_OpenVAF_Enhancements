@@ -429,6 +429,31 @@ DCtran(CKTcircuit *ckt,
         EVTaccept(ckt, ckt->CKTtime);
 #endif
     ckt->CKTstat->STAToldIter = ckt->CKTstat->STATnumIter;
+#ifdef OSDI
+    /* Enhancement-55: deferred Verilog-A $finish/$stop, honored at the
+       accepted-point boundary (the requesting point was just output above;
+       acting mid-Newton-iteration would break timestep control). */
+    {
+        int osdi_req = OSDIpendingRequests(ckt);
+        if (osdi_req & OSDI_REQ_FINISH) {
+            fprintf(stdout, "\nNote: $finish requested by a Verilog-A device at %e s.\n",
+                    ckt->CKTtime);
+            /* $finish completes the analysis: fire @(final_step) and wrap up
+               exactly like reaching the stop time */
+            OSDIfinalStep(ckt);
+            SPfrontEnd->OUTendPlot(job->TRANplot);
+            job->TRANplot = NULL;
+            UPDATE_STATS(0);
+            return(OK);
+        }
+        if (osdi_req & OSDI_REQ_STOP) {
+            fprintf(stdout, "\nNote: $stop requested by a Verilog-A device at %e s; pausing.\n",
+                    ckt->CKTtime);
+            UPDATE_STATS(DOING_TRAN);
+            return(E_PAUSE);
+        }
+    }
+#endif
     /* Check for the end of the tran simulation, either by stop time given,
        or final time has been reached. */
     if (have_autostop)
@@ -730,6 +755,18 @@ resume:
 
         /* If no convergence in Central solver step */
         if(converged != 0) {
+#ifdef OSDI
+            /* Enhancement-55: a Verilog-A $fatal raised E_PANIC from the
+               device load. That is an ABORT, not a convergence failure --
+               without this check the error was swallowed by the retry
+               logic below (timestep ground down, $fatal ignored). */
+            if (converged == E_PANIC) {
+                fprintf(stderr, "\nError: $fatal raised by a Verilog-A device at %e s; aborting the transient analysis.\n",
+                        ckt->CKTtime);
+                UPDATE_STATS(DOING_TRAN);
+                return(converged);
+            }
+#endif
 
 #ifndef SHARED_MODULE
             ckt->CKTtime = ckt->CKTtime -ckt->CKTdelta;

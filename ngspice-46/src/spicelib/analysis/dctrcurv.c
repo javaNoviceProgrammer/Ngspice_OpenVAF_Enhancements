@@ -431,6 +431,27 @@ DCtrCurv(CKTcircuit *ckt, int restart)
         if (ckt->CKTsoaCheck)
             error = CKTsoaCheck(ckt);
 
+#ifdef OSDI
+        /* Enhancement-55: deferred Verilog-A $finish/$stop, honored once the
+           sweep point is accepted and output. $finish ends the sweep cleanly
+           (through the normal restore/endplot path); $stop pauses resumably
+           like the user-pause below. */
+        {
+            int osdi_req = OSDIpendingRequests(ckt);
+            if (osdi_req & OSDI_REQ_FINISH) {
+                fprintf(stdout, "\nNote: $finish requested by a Verilog-A device (sweep value %g).\n",
+                        ckt->CKTtime);
+                goto osdi_finish;
+            }
+            if (osdi_req & OSDI_REQ_STOP) {
+                fprintf(stdout, "\nNote: $stop requested by a Verilog-A device (sweep value %g); pausing.\n",
+                        ckt->CKTtime);
+                job->TRCVnestState = 0;
+                return(E_PAUSE);
+            }
+        }
+#endif
+
         if (firstTime) {
             firstTime = 0;
             if (ckt->CKTstate1 && ckt->CKTstate0) {
@@ -488,6 +509,9 @@ DCtrCurv(CKTcircuit *ckt, int restart)
 
     /* all done, lets put everything back */
 
+#ifdef OSDI
+osdi_finish:
+#endif
     for (i = 0; i <= job->TRCVnestLevel; i++)
         if (job->TRCVvType[i] == vcode) {   /* voltage source */
             ((VSRCinstance*)(job->TRCVvElt[i]))->VSRCdcValue = job->TRCVvSave[i];

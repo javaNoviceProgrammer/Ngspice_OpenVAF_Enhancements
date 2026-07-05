@@ -60,6 +60,9 @@
 #define EVAL_RET_FLAG_FATAL 2
 #define EVAL_RET_FLAG_FINISH 4
 #define EVAL_RET_FLAG_STOP 8
+/* Enhancement-55: $discontinuity(n >= 0) fired at this evaluation; OSDItrunc
+ * may reject the current timestep and retry with a smaller one. */
+#define EVAL_RET_FLAG_DISCONT 16
 
 
 #define LOG_LVL_MASK 8

@@ -207,6 +207,9 @@ void set_ret_flag_finish(int *flags) { *flags |= EVAL_RET_FLAG_FINISH; }
 
 void set_ret_flag_stop(int *flags) { *flags |= EVAL_RET_FLAG_STOP; }
 
+/* Enhancement-55: $discontinuity(n >= 0) -- see EVAL_RET_FLAG_DISCONT */
+void set_ret_flag_discont(int *flags) { *flags |= EVAL_RET_FLAG_DISCONT; }
+
 double store_lim(void *sim_info_, int idx, double val) {
   OsdiSimInfo *sim_info = (OsdiSimInfo *)sim_info_;
   sim_info->next_state[idx] = val;

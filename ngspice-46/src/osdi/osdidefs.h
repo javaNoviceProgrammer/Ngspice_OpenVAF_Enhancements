@@ -130,6 +130,25 @@ typedef struct OsdiExtraInstData {
    * analysis" semantics -- see openvaf/osdi/src/eval.rs. */
   bool has_evaluated;
 
+  /* Enhancement-55: eval-return flags accumulated over ALL Newton iterations
+   * of the CURRENT timepoint attempt (reset when a new attempt starts, i.e.
+   * on MODEINITJCT/MODEINITPRED/MODEINITTRAN). `eval_flags` above only holds
+   * the LAST eval's flags -- an event (cross) that fired on an intermediate
+   * iteration would be missed. Used for the deferred $finish/$stop requests
+   * (checked at the accepted-point boundary) and the $discontinuity
+   * step-rejection in OSDItrunc. */
+  uint32_t point_eval_flags;
+
+  /* Enhancement-55: `point_eval_flags` of the last ACCEPTED timepoint, and a
+   * one-shot latch marking that the current point already had its
+   * discontinuity rejection. Together they make the $discontinuity step
+   * rejection EDGE-triggered (once per onset): a model announcing a
+   * discontinuity over a whole REGION (every eval while a condition holds,
+   * e.g. the E-24 example) must not have every step rejected down to the
+   * delta floor. Updated in OSDIaccept. */
+  uint32_t prev_point_eval_flags;
+  bool discont_retry;
+
 } ALIGN(MAX_ALIGN) OsdiExtraInstData;
 
 /* Enhancement-7: extra bit in the eval() `flags` input (see

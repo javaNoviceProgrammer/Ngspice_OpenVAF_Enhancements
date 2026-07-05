@@ -49,6 +49,15 @@ extern SPICEdev *osdi_create_spicedev(const OsdiRegistryEntry *entry);
 
 extern char *inputdir;
 
+/* Enhancement-55: deferred $finish/$stop requests. OSDIload latches the
+ * eval-return flags per timepoint attempt; the analyses check at the
+ * ACCEPTED-point boundary (acting mid-Newton-iteration breaks timestep
+ * control) and end the analysis cleanly ($finish, after firing
+ * @(final_step)) or pause resumably ($stop). */
+#define OSDI_REQ_FINISH 1
+#define OSDI_REQ_STOP 2
+extern int OSDIpendingRequests(CKTcircuit *ckt);
+
 /* Enhancement-53: fire Verilog-A `@(final_step)` blocks. Called by the
  * analyses (tran/op/dc/ac) once they complete successfully; issues one
  * dedicated eval() per OSDI instance with EVAL_FLAG_IS_FINAL_STEP set at the

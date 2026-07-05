@@ -1468,6 +1468,10 @@ impl BodyLoweringCtx<'_, '_, '_> {
                     // used by `$finish`/`$stop` is not honoured by ngspice's timestep control.)
                     let sentinel = self.ctx.fconst(-1.0);
                     self.ctx.def_place(PlaceKind::BoundStep, sentinel);
+                    // Enhancement-55: additionally raise the DISCONT eval-return
+                    // flag so the simulator can REJECT the current step and retry
+                    // with a smaller one (the sentinel only bounds the NEXT step).
+                    self.ctx.call(CallBackKind::SetRetFlag(RetFlag::Discont), &[]);
                 }
                 GRAVESTONE
             }

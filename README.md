@@ -691,6 +691,16 @@ Several unrelated language gaps found along the way are also fixed. **`localpara
 
 ---
 
+## Enhancement 55: simulation-control tasks honored + `$discontinuity` step rejection
+
+*July 2026* — The "small OSDI TODOs" audit bundle turned into four real defect fixes around the **simulation-control system tasks**. The probe showed: `$finish` was **ignored entirely** (its return flag was never checked in the load path — the transient ran to its full stop time); `$stop` **broke timestep control** (its `E_PAUSE` returned mid-Newton-iteration was treated as a step failure, grinding the step down in a rejection loop); `$fatal` under an op-dependent condition was **silently deleted at compile time** (its argument-free `SetRetFlag`/print calls looked op-independent, were hoisted to instance-init, and sat there in an unreachable block — root cause: the shared post-dominator tree roots at the `exit` sink, so taint propagation never control-tainted the fatal arm); and `$fatal`'s `E_PANIC` was **swallowed** by the transient's nonconvergence retry. Fixes: `$finish`/`$stop` requests are latched per timepoint attempt (`point_eval_flags`, OR-ed across all Newton iterations, reset per attempt) and honored at the **accepted-point boundary** — `$finish` fires `@(final_step)` and ends the analysis cleanly (transient and DC sweeps), `$stop` pauses resumably; side-effecting callbacks under op-dependent control now stay in eval (control dependence computed by arm-reachability, exact for early-exit arms) while parameter-only `$fatal` still validates at setup; `E_PANIC` aborts the transient with a clear error. On top: **`$discontinuity(n>=0)` now rejects the event step** — a new additive return flag (`EVAL_RET_FLAG_DISCONT`, **not** an ABI break) makes `OSDItrunc` request `delta/8` (with a `20·CKTdelmin` termination floor), so the integrator bisects onto the event instead of extrapolating across it (E-24's next-step clamp is kept). Two documented decisions: the `Opcode::Exit` `todo!()` was dead code (Exit is handled by the terminator path — now `unreachable!`), and runtime `is_voltage_src` OSDI exposure is deferred until a consumer exists.
+
+- Verified end-to-end with 17 checks: `$finish` ends the transient exactly at the requesting point with `@(final_step)` firing there; `$stop` pauses cleanly; `$fatal` prints its message and aborts (was silently deleted) or rejects the instance at setup (parameter validation); a DC-sweep `$finish` ends the sweep at the requesting value; and the `$discontinuity` A/B twins show the event step ≥ 4× smaller with a sharper, no-later jump — see `examples/simctrl_examples/`
+- Regression-checked: all 51 example verify suites ALL PASS; 28/28 crate tests
+- Details: [Enhancement-55.md](enhancements_doc/Enhancement-55.md)
+
+---
+
 ## Prebuilt Binaries
 
 Binaries are built by CI and committed to `bin/`:

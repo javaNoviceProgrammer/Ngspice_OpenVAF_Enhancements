@@ -307,5 +307,11 @@ examples/noisejw_examples/_*.cir
 examples/noisejw_examples/_*.va
 examples/noisejw_examples/_*.osdi
 
+# Enhancement 55 simulation-control example scripts: temp netlists + models + data
+examples/simctrl_examples/_*.cir
+examples/simctrl_examples/_*.va
+examples/simctrl_examples/_*.osdi
+examples/simctrl_examples/_*.dat
+
 # Python bytecode cache (e.g. from importing _setup.py)
 __pycache__/

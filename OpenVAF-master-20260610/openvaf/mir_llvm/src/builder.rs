@@ -936,7 +936,12 @@ impl<'ll> Builder<'_, '_, 'll> {
             Opcode::Pow => NonNull::from(self.intrinsic(args, "llvm.pow.f64")).as_ptr(),
             Opcode::OptBarrier => NonNull::from(self.values[args[0]].get(self)).as_ptr(),
             Opcode::Br | Opcode::Jmp | Opcode::Call | Opcode::Phi => unreachable!(),
-            Opcode::Exit => todo!(),
+            // Exit is a terminator: it is intercepted by `build_inst`'s
+            // InstructionData match (which emits the function's `ret`) before
+            // this value-producing opcode dispatch can ever see it -- same
+            // class as the Br/Jmp/Call/Phi arm above (Enhancement-55: was a
+            // misleading todo!(); it is dead code, not a missing feature).
+            Opcode::Exit => unreachable!("Exit is handled in build_inst"),
         };
 
         let res = self.func.dfg.first_result(inst);

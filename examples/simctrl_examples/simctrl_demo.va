@@ -1,0 +1,87 @@
+// simctrl_demo.va -- Enhancement-55: simulation-control system tasks honored
+//
+// $finish / $stop / $fatal and $discontinuity(n>=0) step rejection.
+// Before E-55: $finish was ignored entirely; $stop returned E_PAUSE
+// mid-Newton-iteration (breaking timestep control); $fatal under an
+// op-dependent condition was silently DELETED by the init/eval split
+// (its argument-free SetRetFlag call looked op-independent and was hoisted
+// into an unreachable init block); $discontinuity only clamped the NEXT
+// step (the event step itself extrapolated across the discontinuity).
+`include "disciplines.vams"
+
+// $finish mid-transient, with a final_step summary (LRM: $finish completes
+// the analysis; @(final_step) fires at the finishing point)
+module sfin(a, c);
+  inout a, c; electrical a, c;
+  analog begin
+    @(cross(V(a,c) - 0.5, 1)) begin
+      $strobe("SC_FIN requested t=%g", $abstime);
+      $finish;
+    end
+    @(final_step) $strobe("SC_FINAL fired t=%g", $abstime);
+    I(a, c) <+ V(a, c)/1e3;
+  end
+endmodule
+
+// $stop mid-transient: clean, resumable pause at the accepted point
+module sstop(a, c);
+  inout a, c; electrical a, c;
+  analog begin
+    @(cross(V(a,c) - 0.5, 1)) $stop;
+    I(a, c) <+ V(a, c)/1e3;
+  end
+endmodule
+
+// $fatal under an op-dependent condition: was silently deleted, now aborts
+module sfatal(a, c);
+  inout a, c; electrical a, c;
+  analog begin
+    if (V(a,c) > 0.25)
+      $fatal(0, "SC_FATAL device limit exceeded");
+    I(a, c) <+ V(a, c)/1e3;
+  end
+endmodule
+
+// $fatal under a parameter-only condition: still validates at SETUP
+module sfatalparam(a, c);
+  inout a, c; electrical a, c;
+  parameter real p = 1.0;
+  analog begin
+    if (p < 0.0)
+      $fatal(0, "SC_BADPARAM p must be nonnegative");
+    I(a, c) <+ V(a, c)/1e3;
+  end
+endmodule
+
+// $finish in a DC sweep: ends the sweep at the requesting point
+module sfindc(a, c);
+  inout a, c; electrical a, c;
+  analog begin
+    if (V(a,c) > 0.7) $finish;
+    I(a, c) <+ V(a, c)/1e3;
+  end
+endmodule
+
+// current step at a threshold WITH $discontinuity: the too-large step is
+// REJECTED and retried (sharp event), not just extrapolated across
+module sdisc(a, c);
+  inout a, c; electrical a, c;
+  integer on;
+  analog begin
+    @(cross(V(a,c) - 0.25, 1)) begin
+      on = 1;
+      $discontinuity(0);
+    end
+    I(a, c) <+ V(a, c)/1e3 + on*1e-3;
+  end
+endmodule
+
+// twin without the announcement (the A/B reference)
+module snodisc(a, c);
+  inout a, c; electrical a, c;
+  integer on;
+  analog begin
+    @(cross(V(a,c) - 0.25, 1)) on = 1;
+    I(a, c) <+ V(a, c)/1e3 + on*1e-3;
+  end
+endmodule

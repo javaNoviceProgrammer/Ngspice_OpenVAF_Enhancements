@@ -283,6 +283,12 @@ pub fn general_callbacks<'ll>(
                             .cx
                             .get_func_by_name("set_ret_flag_stop")
                             .expect("stdlib function set_ret_flag_stop is missing")
+                    } else if *flag == RetFlag::Discont {
+                        // Enhancement-55: $discontinuity(n >= 0)
+                        builder
+                            .cx
+                            .get_func_by_name("set_ret_flag_discont")
+                            .expect("stdlib function set_ret_flag_discont is missing")
                     } else {
                         panic!("Unsupported RetFlag encountered.");
                     };

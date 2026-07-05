@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use bitset::{BitSet, SparseBitMatrix};
 use hir::{CompilationDB, Variable};
-use hir_lower::{HirInterner, MirBuilder, ParamKind, PlaceKind};
+use hir_lower::{CallBackKind, HirInterner, MirBuilder, ParamKind, PlaceKind};
 use lasso::Rodeo;
 use mir::{Block, ControlFlowGraph, DominatorTree, Function, Inst, Value};
 use mir_opt::{
@@ -246,5 +246,88 @@ impl<'a> Context<'a> {
             self.op_dependent_vals.iter().copied(),
             &mut self.op_dependent_insts,
         );
+
+        // Enhancement-55: side-effecting callbacks must respect their CONTROL
+        // dependence. `propagate_taint`'s branch handling stops at
+        // `ipdom(branch_block)`, but with an early-exit sink ($fatal's `exit`)
+        // the post-dominator tree roots AT the sink block, so the branch body
+        // never gets block-tainted: a $fatal/$finish/$stop (SetRetFlag) or a
+        // display under an op-dependent condition looked op-independent (its
+        // args are constants), was hoisted into the instance-init split, and
+        // there sat in an unreachable block (the op-dependent branch is
+        // rewritten to its else edge) -- silently deleted from BOTH functions.
+        // Mark such calls op-dependent directly. Control dependence is computed
+        // from scratch here because the shared post-dominator machinery roots
+        // its tree at a single exit and mis-handles the extra sink the `exit`
+        // instruction introduces (ipdom(branch) = the exit arm itself, so the
+        // frontier walk inserts nothing for it). For every op-dependent
+        // branch, the blocks reachable from exactly ONE of its two arms are
+        // controlled by it -- exact for the structured CFGs the lowering
+        // emits, and in particular for early-exit arms, which never reconverge.
+        let num_blocks = self.func.layout.num_blocks();
+        let mut op_controlled = BitSet::new_empty(num_blocks);
+        let mut reach_then = BitSet::new_empty(num_blocks);
+        let mut reach_else = BitSet::new_empty(num_blocks);
+        let mut queue = Vec::new();
+        for bb in self.func.layout.blocks() {
+            let Some(term) = self.func.layout.block_terminator(bb) else { continue };
+            if !self.op_dependent_insts.contains(term) {
+                continue;
+            }
+            let mir::InstructionData::Branch { then_dst, else_dst, .. } =
+                self.func.dfg.insts[term]
+            else {
+                continue;
+            };
+            for (start, reach) in
+                [(then_dst, &mut reach_then), (else_dst, &mut reach_else)]
+            {
+                reach.clear();
+                reach.insert(start);
+                queue.push(start);
+                while let Some(next) = queue.pop() {
+                    for succ in self.cfg.succ_iter(next) {
+                        if reach.insert(succ) {
+                            queue.push(succ);
+                        }
+                    }
+                }
+            }
+            for b in reach_then.iter() {
+                if !reach_else.contains(b) {
+                    op_controlled.insert(b);
+                }
+            }
+            for b in reach_else.iter() {
+                if !reach_then.contains(b) {
+                    op_controlled.insert(b);
+                }
+            }
+        }
+        for bb in self.func.layout.blocks() {
+            if !op_controlled.contains(bb) {
+                continue;
+            }
+            let mut cursor = self.func.layout.block_inst_cursor(bb);
+            while let Some(inst) = cursor.next(&self.func.layout) {
+                if let mir::InstructionData::Call { func_ref, .. } = self.func.dfg.insts[inst] {
+                    if matches!(
+                        self.intern.callbacks[func_ref],
+                        CallBackKind::SetRetFlag(_) | CallBackKind::Print { .. }
+                    ) {
+                        self.op_dependent_insts.insert(inst);
+                    }
+                }
+            }
+        }
+
+        if std::env::var("OPENVAF_TAINT_DEBUG").is_ok() {
+            eprintln!(
+                "TAINTDBG {} op-dep insts, {} op-dep vals, {} op-controlled blocks",
+                self.op_dependent_insts.iter().count(),
+                self.op_dependent_vals.len(),
+                op_controlled.iter().count()
+            );
+        }
     }
 }

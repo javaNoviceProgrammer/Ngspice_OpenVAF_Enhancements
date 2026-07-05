@@ -14,6 +14,8 @@
 #include "ngspice/ngspice.h"
 #include "ngspice/typedefs.h"
 
+#include "ngspice/osdiitf.h"
+
 #include "osdi.h"
 #include "osdidefs.h"
 
@@ -520,6 +522,13 @@ extern int OSDIload(GENmodel *inModel, CKTcircuit *ckt) {
         absdelay_stamp_dc(inst, extra_inst_data, entry, descr);
       }
       last_crossing_stamp(inst, extra_inst_data, entry, descr, ckt, is_tran);
+      /* Enhancement-55: accumulate this timepoint attempt's flags (an
+         event may fire on an intermediate Newton iteration only) */
+      if (ckt->CKTmode & (MODEINITJCT | MODEINITPRED | MODEINITTRAN)) {
+        extra_inst_data->point_eval_flags = extra_inst_data->eval_flags;
+      } else {
+        extra_inst_data->point_eval_flags |= extra_inst_data->eval_flags;
+      }
       eval_flags |= extra_inst_data->eval_flags;
     }
   }
@@ -559,6 +568,13 @@ extern int OSDIload(GENmodel *inModel, CKTcircuit *ckt) {
           absdelay_stamp_dc(inst, extra_inst_data, entry, descr);
         }
         last_crossing_stamp(inst, extra_inst_data, entry, descr, ckt, is_tran);
+        /* Enhancement-55: accumulate this timepoint attempt's flags (an
+           event may fire on an intermediate Newton iteration only) */
+        if (ckt->CKTmode & (MODEINITJCT | MODEINITPRED | MODEINITTRAN)) {
+          extra_inst_data->point_eval_flags = extra_inst_data->eval_flags;
+        } else {
+          extra_inst_data->point_eval_flags |= extra_inst_data->eval_flags;
+        }
         eval_flags |= extra_inst_data->eval_flags;
       }
     }
@@ -575,11 +591,46 @@ extern int OSDIload(GENmodel *inModel, CKTcircuit *ckt) {
     ckt->CKTtroubleElt = gen_inst;
   }
 
-  if (eval_flags & EVAL_RET_FLAG_STOP) {
-    return E_PAUSE;
-  }
+  /* Enhancement-55: $stop/$finish are DEFERRED to the accepted-point
+   * boundary (OSDIpendingRequests below, checked by the analyses). Returning
+   * E_PAUSE here, mid-Newton-iteration, broke timestep control (the "error"
+   * made the integrator reject and grind the step down). */
 
   return OK;
+}
+
+/* Enhancement-55: report deferred $finish/$stop requests latched during the
+ * current timepoint attempt's evaluations. The analyses call this once a
+ * point is ACCEPTED and act between points: $finish ends the analysis
+ * cleanly (after firing @(final_step)), $stop pauses resumably. */
+int OSDIpendingRequests(CKTcircuit *ckt) {
+  int req = 0;
+
+  for (int type = 0; type < ft_sim->numDevices; type++) {
+    if (!ft_sim->devices[type] || !ft_sim->devices[type]->registry_entry ||
+        !ckt->CKThead[type]) {
+      continue;
+    }
+
+    OsdiRegistryEntry *entry = osdi_reg_entry_model(ckt->CKThead[type]);
+
+    for (GENmodel *gen_model = ckt->CKThead[type]; gen_model;
+         gen_model = gen_model->GENnextModel) {
+      for (GENinstance *gen_inst = gen_model->GENinstances; gen_inst;
+           gen_inst = gen_inst->GENnextInstance) {
+        OsdiExtraInstData *extra_inst_data =
+            osdi_extra_instance_data(entry, gen_inst);
+        if (extra_inst_data->point_eval_flags & EVAL_RET_FLAG_FINISH) {
+          req |= OSDI_REQ_FINISH;
+        }
+        if (extra_inst_data->point_eval_flags & EVAL_RET_FLAG_STOP) {
+          req |= OSDI_REQ_STOP;
+        }
+      }
+    }
+  }
+
+  return req;
 }
 
 /* Enhancement-53: fire Verilog-A `@(final_step)` blocks (LRM 5.10.2: the

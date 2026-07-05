@@ -23,6 +23,11 @@ pub enum RetFlag {
     Finish,
     Stop,
     Limited,
+    /// Enhancement-55: `$discontinuity(n >= 0)` announced a discontinuity at
+    /// this evaluation; the simulator may reject the current timestep and
+    /// retry with a smaller one (sharp event resolution), in addition to the
+    /// E-24 bound_step clamp on the next step.
+    Discont,
 }
 
 /// The statistical-distribution family selected for a `$random`/`$dist_*`/`$rdist_*`
@@ -92,6 +97,7 @@ impl std::fmt::Display for RetFlag {
             Self::Finish => "finish",
             Self::Stop => "stop",
             Self::Limited => "limited",
+            Self::Discont => "discont",
         };
         write!(f, "{}", txt)
     }

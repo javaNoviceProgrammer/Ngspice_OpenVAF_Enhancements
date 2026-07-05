@@ -107,6 +107,20 @@ int OSDIaccept(CKTcircuit *ckt, GENmodel *inModel) {
   if (!is_tran)
     return OK;
 
+  /* Enhancement-55: latch the accepted point's eval-return flags and clear
+   * the discontinuity-rejection one-shot -- makes the $discontinuity step
+   * rejection in OSDItrunc edge-triggered (once per onset). Must run for
+   * every instance, before the absdelay-specific early returns below. */
+  for (GENmodel *gen_model_ = inModel; gen_model_;
+       gen_model_ = gen_model_->GENnextModel) {
+    for (GENinstance *gen_inst_ = gen_model_->GENinstances; gen_inst_;
+         gen_inst_ = gen_inst_->GENnextInstance) {
+      OsdiExtraInstData *extra_ = osdi_extra_instance_data(entry, gen_inst_);
+      extra_->prev_point_eval_flags = extra_->point_eval_flags;
+      extra_->discont_retry = false;
+    }
+  }
+
   /* CKTtimePoints and CKTtimeIndex are populated by absdelay_stamp_tran
    * during the MODEINITTRAN Newton call.  If still NULL the transient hasn't
    * started yet (e.g., MODETRANOP DC OP call).                             */
