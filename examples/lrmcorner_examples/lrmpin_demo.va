@@ -1,0 +1,49 @@
+// Enhancement-59: regression pin for LRM corners the E-59 probe battery
+// VALIDATED as already working -- self-checking bitmask (E-37 technique):
+// each corner adds a distinct power of two to V(out); anything but the full
+// score pinpoints the corner that broke.
+`include "disciplines.vams"
+`include "constants.vams"
+
+module lrmpin(out, a, c);
+  output out; inout a, c; electrical out, a, c;
+  branch (a, c) br;
+  parameter real res = 1e3;
+  aliasparam r = res;                       // alias, overridden as `r` in the deck
+  parameter string mode = "lin";
+  integer i, j, k5;
+  real score, vt300, k, tol, m;
+  analog begin
+    score = 0.0;
+    // 1: real->integer assignment rounds AWAY from zero (LRM 4.2.1.1)
+    i = 2.5; j = -2.5;
+    if (i == 3 && j == -3) score = score + 1.0;
+    // 2: $vt with an explicit temperature argument = kT/q at 300 K.
+    // (1e-7 tolerance: the compiler's internal $vt uses newer CODATA
+    // constants than the LRM-1998 values in constants.vams -- diff ~3e-8.)
+    vt300 = $vt(300.0);
+    if (abs(vt300 - `P_K*300.0/`P_Q) < 1e-7) score = score + 2.0;
+    // 4: overriding through an aliasparam sets $param_given of the target
+    if ($param_given(res) && res == 2e3) score = score + 4.0;
+    // 8: string parameter drives a case statement
+    case (mode)
+      "lin":  k = 1.0;
+      "quad": k = 2.0;
+      default: k = 0.0;
+    endcase
+    if (mode == "lin" && k == 1.0) score = score + 8.0;
+    // 16: min/max/abs on integer operands
+    k5 = max(2, min(7, abs(-3)));
+    if (k5 == 3) score = score + 16.0;
+    // 32: branch nature attribute access (E-45 machinery)
+    tol = br.potential.abstol;
+    if (tol == 1e-6) score = score + 32.0;
+    // 64: $mfactor is readable (deck instantiates with m=8)
+    m = $mfactor;
+    if (m == 8.0) score = score + 64.0;
+    // 128: argument-less $vt agrees with $vt($temperature)
+    if (abs($vt - $vt($temperature)) < 1e-15) score = score + 128.0;
+    V(out) <+ score;                        // expected: 255
+    I(br) <+ V(br)/res;
+  end
+endmodule

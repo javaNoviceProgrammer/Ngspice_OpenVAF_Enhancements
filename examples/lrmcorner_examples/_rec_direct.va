@@ -1,0 +1,8 @@
+`include "disciplines.vams"
+module recd(a,c); inout a,c; electrical a,c;
+analog function real fact;
+  input n; real n;
+  fact = (n <= 1) ? 1.0 : n * fact(n-1.0);
+endfunction
+analog I(a,c) <+ V(a,c)/fact(4.0);
+endmodule

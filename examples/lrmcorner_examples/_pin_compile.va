@@ -1,0 +1,47 @@
+// Compile-only pins for probe-validated corners exercised elsewhere at
+// runtime (E-36 gnd branches, ddx-on-flow, above() in DC, parameter-
+// dependent laplace coefficients, integer output function args).
+`include "disciplines.vams"
+
+module ping(a); inout a; electrical a;
+  branch (a) gb;                       // single-node (grounded) branch
+  analog I(gb) <+ V(gb)/1e3;
+endmodule
+
+module pinddx(a,c); inout a,c; electrical a,c;
+  branch (a,c) b2; real g;
+  analog begin
+    I(b2) <+ V(b2)/1e3 + 1e-6*pow(V(b2),3);
+    g = ddx(I(b2), I(b2));             // ddx w.r.t. a flow probe
+  end
+endmodule
+
+module pinabove(a,c); inout a,c; electrical a,c; integer on;
+  analog begin
+    @(above(V(a,c)-0.5)) on = 1;       // above() is defined in DC too
+    I(a,c) <+ V(a,c)/1e3 + on*1e-4;
+  end
+endmodule
+
+module pinlap(a,c); inout a,c; electrical a,c;
+  parameter real tau = 1e-6;
+  analog V(a,c) <+ laplace_nd(I(a,c)*1e3, {1.0}, {1.0, tau});
+endmodule
+
+module pinfio(a,c); inout a,c; electrical a,c;
+  analog function integer split;
+    input x; real x;
+    output ip; integer ip;
+    output fp; real fp;
+    begin
+      ip = (x >= 0) ? x - 0.499999 : x + 0.499999;
+      fp = x - ip;
+      split = 1;
+    end
+  endfunction
+  integer ok; integer ip; real fp;
+  analog begin
+    ok = split(2.75, ip, fp);
+    I(a,c) <+ V(a,c)/1e3 * (ip + fp + ok - 3.75 + 1.0);
+  end
+endmodule

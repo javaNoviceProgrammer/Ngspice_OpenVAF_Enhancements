@@ -732,6 +732,16 @@ Several unrelated language gaps found along the way are also fixed. **`localpara
 
 ---
 
+## Enhancement 59: LRM-corner probe — event OR lists, `$realtime`, port concatenation, recursion diagnostics
+
+*July 2026* — A fresh **16-corner probe battery** over never-exercised Verilog-A (LRM Annex C) constructs: 12 corners validated as already correct (away-from-zero integer rounding, `$vt(300)`, aliasparam + `$param_given` through the alias, string-parameter `case`, `above()` in DC, grounded branch declarations, `ddx` w.r.t. a flow probe, parameter-dependent `laplace_nd` coefficients, `$mfactor` reads, `branch.potential.abstol`, integer `min`/`max`/`abs`, integer function output args) and **four gaps found and fixed**. **(1) Event OR lists** (`@(cross(...) or cross(...))`, `@(initial_step or timer(t))` — LRM 5.10.3) did not parse: new `or` keyword, a looped event grammar, an `Event::Or` HIR variant, and a select-based `bool_or` fold of the members' fired flags at lowering (a raw `ior` ICEs MIR const-eval, which has no Bool arm). Verified property: the OR body fires **exactly** when any member fires — the OR counter equals the sum of the single-event counters. **(2) `$realtime`** (LRM 9.7.2) was rejected; it now lowers to the same `Abstime` parameter as `$abstime` (identical in the continuous-time analog context). **(3) Net concatenation in port connections** (`u1({a,c})` onto a vectored port — LRM 6.5) bound the whole `{a,c}` text to *every* bit; the elaboration pass now expands the concat **bit-by-bit** (leftmost element = port msb, each side in its own declared `[msb:lsb]` order; a whole-bus element contributes all its bits; width mismatch is a hard error), working positionally, named, and nested through instance levels. **(4) Recursion diagnostics**: a direct self-call surfaced as the puzzling `expected a function but found variable` (inside a function its own name resolves to the return variable) and **mutual recursion (`f1→f2→f1`) crashed the compiler with a stack overflow** in the recursive inliner — both are now clean errors, the mutual case reporting the full call cycle via a call-graph DFS in body validation.
+
+- Verified end-to-end through ngspice: OR-counter ≡ sum of single-event counters, `$realtime ≡ $abstime` through a transient, exact port-concat op current through two concat forms, both recursion cases as clean errors, plus a self-checking bitmask module pinning 8 of the validated corners at score 255/255 — see `examples/lrmcorner_examples/`
+- Regression-checked: all 55 example verify suites ALL PASS; crate tests pass; the VA_TEST corpus still compiles 92/92
+- Details: [Enhancement-59.md](enhancements_doc/Enhancement-59.md)
+
+---
+
 ## Prebuilt Binaries
 
 Binaries are built by CI and committed to `bin/`:

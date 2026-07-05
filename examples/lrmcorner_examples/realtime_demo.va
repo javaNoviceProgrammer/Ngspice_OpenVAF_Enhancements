@@ -1,0 +1,13 @@
+// Enhancement-59: $realtime (LRM 9.7.2) -- in the analog context it is the
+// simulation time in seconds, identical to $abstime. Was rejected before.
+`include "disciplines.vams"
+
+module rtdemo(a, c);
+  inout a, c; electrical a, c;
+  real dmax;
+  analog begin
+    dmax = max(dmax, abs($realtime - $abstime));
+    I(a,c) <+ V(a,c)/1e3;
+    @(final_step) $strobe("RT dmax=%g", dmax);
+  end
+endmodule

@@ -485,6 +485,7 @@ pub mod sysfun {
         error,
         info,
         abstime,
+        realtime,
 
         bitstoreal,
         realtobits,

@@ -2,7 +2,8 @@ use std::mem;
 
 use basedb::lints::LintRegistry;
 use basedb::{AstIdMap, ErasedAstId, LintAttrs};
-use syntax::ast::{self, ArgListOwner, AttrIter, AttrsOwner, FunctionRef};
+use syntax::ast::{self, ArgListOwner, AstToken, AttrIter, AttrsOwner, FunctionRef};
+use syntax::{AstNode, SyntaxKind};
 use syntax::name::AsName;
 use syntax::AstPtr;
 
@@ -186,20 +187,70 @@ impl LowerCtx<'_> {
     }
 
     fn collect_event_stmt(&mut self, event_stmt: &ast::EventStmt) -> StmtId {
-        let kind = if event_stmt.initial_step_token().is_some() {
-            GlobalEvent::InitialStep
-        } else if event_stmt.final_step_token().is_some() {
-            GlobalEvent::FinalStep
-        } else if let Some(condition) = event_stmt.condition() {
-            return self.collect_cross_above_timer(event_stmt, &condition);
+        // Enhancement-59: the event expression is a flat list of one or more
+        // units separated by the `or` keyword (LRM 5.10) -- the body fires
+        // when ANY unit fires. Walk the EVENT_STMT's direct children in
+        // syntax order, segmenting on OR_KW tokens; each segment is either a
+        // bare `initial_step`/`final_step` (with its own optional phase
+        // strings) or a `cross`/`above`/`timer` call expression. Note the
+        // statement body is itself a child node -- stop at the closing `)`.
+        #[derive(Default)]
+        struct Unit {
+            step: Option<GlobalEvent>,
+            phases: Vec<String>,
+            condition: Option<ast::Expr>,
+        }
+        let mut units: Vec<Unit> = vec![Unit::default()];
+        for child in event_stmt.syntax().children_with_tokens() {
+            match &child {
+                syntax::NodeOrToken::Token(tok) => match tok.kind() {
+                    SyntaxKind::OR_KW => units.push(Unit::default()),
+                    SyntaxKind::INITIAL_STEP_KW => {
+                        units.last_mut().unwrap().step = Some(GlobalEvent::InitialStep)
+                    }
+                    SyntaxKind::FINAL_STEP_KW => {
+                        units.last_mut().unwrap().step = Some(GlobalEvent::FinalStep)
+                    }
+                    SyntaxKind::STR_LIT => {
+                        if let Some(lit) = ast::StrLit::cast(tok.clone()) {
+                            units.last_mut().unwrap().phases.push(lit.unescaped_value());
+                        }
+                    }
+                    SyntaxKind::R_PAREN => break,
+                    _ => (),
+                },
+                syntax::NodeOrToken::Node(node) => {
+                    if let Some(expr) = ast::Expr::cast(node.clone()) {
+                        let unit = units.last_mut().unwrap();
+                        if unit.condition.is_none() {
+                            unit.condition = Some(expr);
+                        }
+                    }
+                }
+            }
+        }
+
+        let mut events = Vec::with_capacity(units.len());
+        for unit in units {
+            let event = match (unit.step, unit.condition) {
+                (Some(kind), _) => Event::Global { kind, phases: unit.phases },
+                (None, Some(condition)) => match self.event_from_condition(&condition) {
+                    Some(ev) => ev,
+                    // malformed unit: degrade the WHOLE event control to an
+                    // unconditional body, the established Enhancement-8
+                    // convention (see `event_from_condition`'s doc comment)
+                    None => return self.collect_opt_stmt(event_stmt.stmt()),
+                },
+                (None, None) => return self.collect_opt_stmt(event_stmt.stmt()),
+            };
+            events.push(event);
+        }
+        let event = if events.len() == 1 {
+            events.pop().unwrap()
         } else {
-            return self.collect_opt_stmt(event_stmt.stmt());
+            Event::Or(events.into_boxed_slice())
         };
-
-        let phases = event_stmt.sim_phases().map(|lit| lit.unescaped_value()).collect();
-        let event = Event::Global { kind, phases };
         let stmt = Stmt::EventControl { event, body: self.collect_opt_stmt(event_stmt.stmt()) };
-
         self.alloc_stmt(stmt, AstPtr::new(event_stmt).cast().unwrap(), event_stmt.attrs())
     }
 
@@ -220,15 +271,9 @@ impl LowerCtx<'_> {
     /// right layer for a real "not a valid event-control expression"
     /// diagnostic, not yet wired up here -- see `Enhancement-8.md` known
     /// limitations).
-    fn collect_cross_above_timer(
-        &mut self,
-        event_stmt: &ast::EventStmt,
-        condition: &ast::Expr,
-    ) -> StmtId {
-        let fallback = |this: &mut Self| this.collect_opt_stmt(event_stmt.stmt());
-
+    fn event_from_condition(&mut self, condition: &ast::Expr) -> Option<Event> {
         let ast::Expr::Call(call) = condition else {
-            return fallback(self);
+            return None;
         };
         let name = call.function_ref().and_then(|fun| match fun {
             FunctionRef::Path(path) => path.as_raw_ident().map(|t| t.text().to_owned()),
@@ -238,27 +283,22 @@ impl LowerCtx<'_> {
 
         let event = match name.as_deref() {
             Some("cross") => {
-                let Some(expr) = args.next() else { return fallback(self) };
-                let expr = self.collect_expr(expr);
+                let expr = self.collect_expr(args.next()?);
                 let dir = args.next().map(|e| self.collect_expr(e));
                 Event::Cross { expr, dir }
             }
             Some("above") => {
-                let Some(expr) = args.next() else { return fallback(self) };
-                let expr = self.collect_expr(expr);
+                let expr = self.collect_expr(args.next()?);
                 Event::Above { expr }
             }
             Some("timer") => {
-                let Some(t0) = args.next() else { return fallback(self) };
-                let t0 = self.collect_expr(t0);
+                let t0 = self.collect_expr(args.next()?);
                 let period = args.next().map(|e| self.collect_expr(e));
                 Event::Timer { t0, period }
             }
-            _ => return fallback(self),
+            _ => return None,
         };
-
-        let stmt = Stmt::EventControl { event, body: self.collect_opt_stmt(event_stmt.stmt()) };
-        self.alloc_stmt(stmt, AstPtr::new(event_stmt).cast().unwrap(), event_stmt.attrs())
+        Some(event)
     }
 
     fn collect_case_stmt(&mut self, case_stmt: &ast::CaseStmt) -> Stmt {

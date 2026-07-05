@@ -66,28 +66,34 @@ fn assign_or_expr(p: &mut Parser) -> bool {
 fn event_stmt(p: &mut Parser, m: Marker) {
     p.bump(T![@]);
     p.expect(T!['(']);
-    // `@(initial_step)`/`@(final_step)` (optionally analysis-phase-filtered)
-    // keep their original bare-keyword parse. Anything else -- in practice
-    // always a `cross(...)`/`above(...)`/`timer(...)` call, per the LRM's
-    // restriction on what's legal in this position -- falls through to an
-    // ordinary `Expr` parse (Enhancement-8; see `EventStmt` in
-    // `veriloga.ungram`).
-    if p.at_ts(TokenSet::new(&[INITIAL_STEP_KW, FINAL_STEP_KW])) {
-        p.bump_any();
-        if p.eat(T!['(']) {
-            while !p.at_ts(TokenSet::new(&[T![')'], T![begin], ENDMODULE_KW])) {
-                let mut succ = p.expect(STR_LIT);
-                if !p.at(T![')']) {
-                    succ |= p.expect_with(T![,], &[T![')'], T![,]]);
-                    if !succ {
-                        p.bump_any()
+    // Enhancement-59: an event expression is a list of one or more event
+    // units separated by the `or` keyword (LRM 5.10). Each unit is either a
+    // bare `initial_step`/`final_step` (optionally analysis-phase-filtered,
+    // keeping their original parse) or -- in practice always a `cross(...)`/
+    // `above(...)`/`timer(...)` call, per the LRM's restriction on what is
+    // legal in this position -- an ordinary `Expr` (Enhancement-8; see
+    // `EventStmt` in `veriloga.ungram`).
+    loop {
+        if p.at_ts(TokenSet::new(&[INITIAL_STEP_KW, FINAL_STEP_KW])) {
+            p.bump_any();
+            if p.eat(T!['(']) {
+                while !p.at_ts(TokenSet::new(&[T![')'], T![begin], ENDMODULE_KW])) {
+                    let mut succ = p.expect(STR_LIT);
+                    if !p.at(T![')']) {
+                        succ |= p.expect_with(T![,], &[T![')'], T![,]]);
+                        if !succ {
+                            p.bump_any()
+                        }
                     }
                 }
+                p.eat(T![')']);
             }
-            p.eat(T![')']);
+        } else {
+            expr(p);
         }
-    } else {
-        expr(p);
+        if !p.eat(T![or]) {
+            break;
+        }
     }
     p.expect(T![')']);
     stmt_with_attrs(p);

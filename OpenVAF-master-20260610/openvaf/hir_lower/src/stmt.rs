@@ -172,7 +172,19 @@ impl BodyLoweringCtx<'_, '_, '_> {
     /// dropped (the "scaffolded-but-unwired" pattern: `Event::Global` always
     /// carried `phases`, this match ignored them).
     fn lower_event_control(&mut self, event: &Event, body: StmtId) {
-        let fired = match event {
+        let fired = self.lower_event_fired(event);
+
+        self.ctx.make_cond(fired, |ctx, branch| {
+            if branch {
+                BodyLoweringCtx { ctx, body: self.body, path: self.path }.lower_stmt(body);
+            }
+        });
+    }
+
+    /// Lowers one event (or an `or` list of them, Enhancement-59) to its
+    /// "fired this evaluation" boolean.
+    fn lower_event_fired(&mut self, event: &Event) -> Value {
+        match event {
             Event::Global { kind, phases } => {
                 let step = match kind {
                     GlobalEvent::InitialStep => self.ctx.use_param(ParamKind::IsInitialStep),
@@ -186,17 +198,28 @@ impl BodyLoweringCtx<'_, '_, '_> {
             Event::Cross { expr, dir } => self.lower_cross(*expr, *dir),
             Event::Above { expr } => self.lower_above(*expr),
             Event::Timer { t0, period } => self.lower_timer(*t0, *period),
+            // Enhancement-59: `@(ev1 or ev2 ...)` fires when ANY member fires.
+            // Each member keeps its own event state/phase machinery; the fired
+            // bools simply OR together.
+            Event::Or(events) => {
+                let mut acc: Option<Value> = None;
+                for ev in events.iter() {
+                    let hit = self.lower_event_fired(ev);
+                    acc = Some(match acc {
+                        None => hit,
+                        // `bool_or`, not a raw `ior`: the members are i1 values
+                        // and may const-fold (e.g. `initial_step` at t=0 paths);
+                        // the const evaluator has no Bool arm for `ior`
+                        Some(prev) => bool_or(self.ctx, prev, hit),
+                    });
+                }
+                acc.expect("the grammar guarantees a non-empty or-list")
+            }
             // `Event` is `#[non_exhaustive]` (hir_def/src/expr.rs) for forward-compatibility
             // with unimplemented LRM event kinds; every variant that actually exists today is
             // handled above.
             _ => unreachable!("all Event variants are handled above"),
-        };
-
-        self.ctx.make_cond(fired, |ctx, branch| {
-            if branch {
-                BodyLoweringCtx { ctx, body: self.body, path: self.path }.lower_stmt(body);
-            }
-        });
+        }
     }
 
     /// Lowers a step event's analysis-phase list to a bool that is true iff the

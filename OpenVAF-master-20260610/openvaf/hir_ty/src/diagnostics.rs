@@ -418,6 +418,25 @@ impl Diagnostic for InferenceDiagnosticWrapped<'_> {
                     .with_message(format!("'{name}' requires a bit-select [i]"))
                     .with_notes(vec![format!("help: use `{name}[i]` to select a single element")])
             }
+            InferenceDiagnostic::RecursiveFunctionCall { expr, ref name } => {
+                let src = self
+                    .parse
+                    .to_file_span(self.body_sm.expr_map_back[expr].as_ref().unwrap().range(), self.sm);
+
+                Report::error()
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: src.file,
+                        range: src.range.into(),
+                        message: format!("'{name}' calls itself"),
+                    }])
+                    .with_message(format!(
+                        "analog function '{name}' cannot call itself: recursion is not allowed"
+                    ))
+                    .with_notes(vec![
+                        "help: Verilog-A analog functions must not be recursive (LRM 4.7); rewrite the computation as a loop".to_owned(),
+                    ])
+            }
             InferenceDiagnostic::InvalidReplicationCount { expr } => {
                 let src = self
                     .parse

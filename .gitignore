@@ -328,5 +328,11 @@ examples/defparam_examples/_*.cir
 examples/defparam_examples/_*.va
 examples/defparam_examples/_*.osdi
 
+# Enhancement 59 lrm-corner example scripts: temp netlists + compile-only pin
+examples/lrmcorner_examples/_*.cir
+examples/lrmcorner_examples/_pin_compile.osdi
+examples/lrmcorner_examples/_rec_*.osdi
+examples/lrmcorner_examples/_pc_bad.osdi
+
 # Python bytecode cache (e.g. from importing _setup.py)
 __pycache__/

@@ -1,0 +1,7 @@
+`include "disciplines.vams"
+module pcb_leaf(p); inout [2:0] p; electrical [2:0] p;
+analog I(p[2],p[0]) <+ V(p[2],p[0])/1e3;
+endmodule
+module pcbad(a,c); inout a,c; electrical a,c;
+pcb_leaf u1({a,c});
+endmodule

@@ -124,6 +124,9 @@ pub enum BuiltIn {
     slew = 109u8,
     transition = 110u8,
     table_model = 111u8,
+    // Enhancement-59: $realtime -- in the analog context an alias of $abstime
+    // (Verilog-A has no `timescale, so both are seconds)
+    realtime = 112u8,
 }
 #[derive(Eq, PartialEq, Copy, Clone, Hash, Debug)]
 #[allow(nonstandard_style, unreachable_pub)]
@@ -290,6 +293,7 @@ pub fn insert_builtin_scope(dst: &mut IndexMap<Name, ScopeDefItem, BuildHasherDe
     dst.insert(sysfun::error, BuiltIn::error.into());
     dst.insert(sysfun::info, BuiltIn::info.into());
     dst.insert(sysfun::abstime, BuiltIn::abstime.into());
+    dst.insert(sysfun::realtime, BuiltIn::realtime.into());
     dst.insert(sysfun::dist_chi_square, BuiltIn::dist_chi_square.into());
     dst.insert(sysfun::dist_exponential, BuiltIn::dist_exponential.into());
     dst.insert(sysfun::dist_poisson, BuiltIn::dist_poisson.into());

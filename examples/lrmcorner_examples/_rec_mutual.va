@@ -1,0 +1,6 @@
+`include "disciplines.vams"
+module recm(a,c); inout a,c; electrical a,c;
+analog function real f1; input x; real x; f1 = f2(x) + 1.0; endfunction
+analog function real f2; input x; real x; f2 = f1(x) + 1.0; endfunction
+analog I(a,c) <+ V(a,c)/f1(2.0);
+endmodule

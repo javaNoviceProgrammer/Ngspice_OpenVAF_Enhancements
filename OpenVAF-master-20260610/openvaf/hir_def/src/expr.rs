@@ -185,11 +185,22 @@ pub enum Event {
     Above { expr: ExprId },
     /// `@(timer(t0, period))` -- `period` absent means a one-shot timer.
     Timer { t0: ExprId, period: Option<ExprId> },
+    /// Enhancement-59: `@(ev1 or ev2 [or ...])` (LRM 5.10 event `or` list) --
+    /// the body fires when ANY member event fires. Members may mix
+    /// `initial_step`/`final_step` (with phase filters) with
+    /// `cross`/`above`/`timer`. Never nested (the grammar is a flat list).
+    Or(Box<[Event]>),
 }
 
 impl Event {
     #[inline]
     pub fn walk_child_exprs(&self, mut f: impl FnMut(ExprId)) {
+        self.walk_child_exprs_dyn(&mut f)
+    }
+
+    // dyn indirection so the recursion through `Event::Or` doesn't
+    // monomorphize an unbounded `&mut &mut ...` closure tower
+    fn walk_child_exprs_dyn(&self, f: &mut dyn FnMut(ExprId)) {
         match *self {
             Event::Global { .. } => {}
             Event::Cross { expr, dir } => {
@@ -203,6 +214,11 @@ impl Event {
                 f(t0);
                 if let Some(period) = period {
                     f(period);
+                }
+            }
+            Event::Or(ref events) => {
+                for ev in events.iter() {
+                    ev.walk_child_exprs_dyn(f);
                 }
             }
         }

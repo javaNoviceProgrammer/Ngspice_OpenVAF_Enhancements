@@ -466,6 +466,26 @@ impl Diagnostic for BodyValidationDiagnosticWrapped<'_> {
                 }
                 .into_report(self.db, self.parse, self.map, self.sm)
             }
+            BodyValidationDiagnostic::RecursiveFunctionCall { expr, ref cycle } => {
+                let FileSpan { range, file } = self.expr_src(expr);
+                let name = &cycle[0];
+                let chain =
+                    cycle.iter().map(|n| n.to_string()).collect::<Vec<_>>().join(" -> ");
+                Report::error()
+                    .with_message(format!(
+                        "analog function '{name}' cannot call itself: recursion is not allowed"
+                    ))
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: file,
+                        range: range.into(),
+                        message: "this call is mutually recursive".to_owned(),
+                    }])
+                    .with_notes(vec![
+                        format!("info: call cycle: {chain}"),
+                        "help: Verilog-A analog functions must not be recursive (LRM 4.7); rewrite the computation as a loop".to_owned(),
+                    ])
+            }
             BodyValidationDiagnostic::TrivialBranchAccess { branch, expr, .. } => {
                 let FileSpan { range, file } = self.expr_src(expr);
                 let db = self.db.upcast();

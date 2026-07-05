@@ -1302,6 +1302,8 @@ impl BodyLoweringCtx<'_, '_, '_> {
             BuiltIn::table_model => self.lower_table_model(args),
 
             BuiltIn::abstime => self.ctx.use_param(ParamKind::Abstime),
+            // Enhancement-59: $realtime aliases $abstime (no `timescale in Verilog-A)
+            BuiltIn::realtime => self.ctx.use_param(ParamKind::Abstime),
 
             BuiltIn::ddt => {
                 if self.ctx.no_equations {

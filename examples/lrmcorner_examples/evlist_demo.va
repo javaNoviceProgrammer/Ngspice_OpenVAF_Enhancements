@@ -1,0 +1,17 @@
+// Enhancement-59: event OR lists (LRM 5.10.3 event_expression "or").
+// The OR body must fire exactly when any member fires: n == n1 + n2.
+`include "disciplines.vams"
+
+module evdemo(a, c);
+  inout a, c; electrical a, c;
+  integer n, n1, n2, m;
+  analog begin
+    @(cross(V(a,c)-0.3, 1) or cross(V(a,c)-0.7, 1)) n = n + 1;
+    @(cross(V(a,c)-0.3, 1)) n1 = n1 + 1;
+    @(cross(V(a,c)-0.7, 1)) n2 = n2 + 1;
+    // a step event and a plain event mixed in one list
+    @(initial_step or timer(0.55u)) m = m + 1;
+    I(a,c) <+ V(a,c)/1e3;
+    @(final_step) $strobe("EVLIST n=%d n1=%d n2=%d m=%d", n, n1, n2, m);
+  end
+endmodule

@@ -3,8 +3,8 @@ use std::mem::replace;
 use ahash::{HashMap, HashSet};
 use hir_def::body::Body;
 use hir_def::{
-    BranchId, BuiltIn, DefWithBodyId, DisciplineId, Expr, ExprId, FunctionArgLoc, Literal, Lookup,
-    NatureId, NodeId, ParamId, Path, Stmt, StmtId, VarId,
+    BranchId, BuiltIn, DefWithBodyId, DisciplineId, Expr, ExprId, FunctionArgLoc, FunctionId,
+    Literal, Lookup, NatureId, NodeId, ParamId, Path, Stmt, StmtId, VarId,
 };
 use stdx::impl_display;
 use syntax::ast::AssignOp;
@@ -96,6 +96,18 @@ pub enum BodyValidationDiagnostic {
         node1: NodeId,
         node2: NodeId,
     },
+
+    /// Enhancement-59: a cycle in the analog-function call graph
+    /// (`f1` calls `f2` calls `f1`). The LRM forbids recursion; without this
+    /// check the recursive inlining in lowering overflows the compiler stack.
+    /// `cycle` holds the function names along the cycle, starting and ending
+    /// with the offending function. Direct self-recursion never gets here --
+    /// inside `f`, `f` resolves to the return variable and is diagnosed at
+    /// inference (`InferenceDiagnostic::RecursiveFunctionCall`).
+    RecursiveFunctionCall {
+        expr: ExprId,
+        cycle: Vec<Name>,
+    },
 }
 
 impl BodyValidationDiagnostic {
@@ -124,6 +136,12 @@ impl BodyValidationDiagnostic {
 
         for stmt in &*body.entry_stmts {
             validator.validate_stmt(*stmt)
+        }
+
+        // Enhancement-59: reject call-graph cycles among analog functions
+        // (mutual recursion) before lowering inlines them forever.
+        if let DefWithBodyId::FunctionId(func) = def {
+            check_call_cycles(db, func, &infere, &mut validator.diagnostics);
         }
 
         for (branch, exprs) in validator.trivial_probes {
@@ -776,4 +794,60 @@ impl ExprValidator<'_, '_> {
         self.cond_diagnostic_sink = sink;
         self.parent.ctx = old;
     }
+}
+
+/// Enhancement-59: for each user-function call in `func`'s body, walk the
+/// callee's own (independently inferred) call graph; if `func` is reachable
+/// the program is mutually recursive -- report it on the call expression that
+/// enters the cycle. Each function body's `InferenceResult` is a separate
+/// salsa query that never recurses into other bodies, so querying callees
+/// here cannot cycle.
+fn check_call_cycles(
+    db: &dyn HirTyDB,
+    func: FunctionId,
+    infere: &InferenceResult,
+    diagnostics: &mut Vec<BodyValidationDiagnostic>,
+) {
+    for (expr, resolved) in infere.resolved_calls.iter() {
+        let ResolvedFun::User { func: callee, .. } = resolved else { continue };
+        let mut path = vec![*callee];
+        let mut visited = HashSet::default();
+        if calls_reach(db, *callee, func, &mut visited, &mut path) {
+            let mut cycle = vec![db.function_data(func).name.clone()];
+            cycle.extend(path.iter().map(|f| db.function_data(*f).name.clone()));
+            diagnostics.push(BodyValidationDiagnostic::RecursiveFunctionCall {
+                expr: *expr,
+                cycle,
+            });
+            return; // one report per function is plenty
+        }
+    }
+}
+
+/// DFS through resolved user-function calls: does `from`'s call graph reach
+/// `target`? On success `path` holds the functions along the way (ending in
+/// `target`).
+fn calls_reach(
+    db: &dyn HirTyDB,
+    from: FunctionId,
+    target: FunctionId,
+    visited: &mut HashSet<FunctionId>,
+    path: &mut Vec<FunctionId>,
+) -> bool {
+    if from == target {
+        return true;
+    }
+    if !visited.insert(from) {
+        return false;
+    }
+    let infere = db.inference_result(DefWithBodyId::FunctionId(from));
+    for resolved in infere.resolved_calls.values() {
+        let ResolvedFun::User { func: callee, .. } = resolved else { continue };
+        path.push(*callee);
+        if calls_reach(db, *callee, target, visited, path) {
+            return true;
+        }
+        path.pop();
+    }
+    false
 }

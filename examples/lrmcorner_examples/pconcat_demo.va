@@ -1,0 +1,21 @@
+// Enhancement-59: net concatenation in port connections (LRM 6.5),
+// `u1({a,c})` -- expanded bit-by-bit onto a vectored port at elaboration.
+// Two concat forms below (positional scalars; named bit-selects, nested one
+// instance deep) each provide a 1k path a->c.
+`include "disciplines.vams"
+
+module pcleaf(p);
+  inout [1:0] p; electrical [1:0] p;
+  analog I(p[1], p[0]) <+ V(p[1], p[0]) / 1e3;
+endmodule
+
+module pcmid(b);
+  inout [1:0] b; electrical [1:0] b;
+  pcleaf u0(.p({b[1], b[0]}));
+endmodule
+
+module pcdemo(a, c);
+  inout a, c; electrical a, c;
+  pcleaf u1({a, c});   // positional concat of scalar nets
+  pcmid  u2({a, c});   // named concat of bit-selects
+endmodule

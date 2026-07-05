@@ -634,11 +634,24 @@ impl Ctx<'_> {
                 Some(Ty::Val(Type::Real))
             }
             found => {
+                let name = fun.segments.last().unwrap().to_owned();
+                // Enhancement-59: inside an analog function, the function's own
+                // name resolves to its return variable, so a recursive call
+                // lands here disguised as "found variable" -- diagnose the
+                // actual mistake (the LRM forbids recursion) instead.
+                if let DefWithBodyId::FunctionId(owner) = self.owner {
+                    if self.db.function_data(owner).name == name {
+                        self.result
+                            .diagnostics
+                            .push(InferenceDiagnostic::RecursiveFunctionCall { expr, name });
+                        return None;
+                    }
+                }
                 self.result.diagnostics.push(InferenceDiagnostic::PathResolveError {
                     err: PathResolveError::ExpectedItemKind {
                         expected: "a function",
                         found: ResolvedPath::ScopeDefItem(found),
-                        name: fun.segments.last().unwrap().to_owned(),
+                        name,
                     },
                     expr,
                 });
@@ -2306,6 +2319,14 @@ pub enum InferenceDiagnostic {
 
     /// A vectored net/port was referenced by its base name without a bit-select.
     BareBusReference {
+        expr: ExprId,
+        name: Name,
+    },
+
+    /// Enhancement-59: an analog function calling itself. The LRM forbids
+    /// recursion; without this the call surfaces as the puzzling "expected a
+    /// function but found variable" (the name resolves to the return variable).
+    RecursiveFunctionCall {
         expr: ExprId,
         name: Name,
     },

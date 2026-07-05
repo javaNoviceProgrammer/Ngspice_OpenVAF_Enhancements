@@ -457,6 +457,7 @@ pub(crate) fn elaborate_instantiations(db: &mut CompilationDB) -> anyhow::Result
         defparam_overrides: HashMap::new(),
         defparam_applied: HashSet::new(),
         defparam_src: HashMap::new(),
+        port_conn_errors: Vec::new(),
     };
 
     let mut out = String::new();
@@ -474,6 +475,10 @@ pub(crate) fn elaborate_instantiations(db: &mut CompilationDB) -> anyhow::Result
 
     if !ctx.implicit_conflicts.is_empty() {
         anyhow::bail!("{}", ctx.implicit_conflicts.join("\n"));
+    }
+
+    if !ctx.port_conn_errors.is_empty() {
+        anyhow::bail!("{}", ctx.port_conn_errors.join("\n"));
     }
 
     // Enhancement-58: a `defparam` whose target never matched a flattened
@@ -539,6 +544,11 @@ struct ElabCtx<'a> {
     /// Flattened target name -> the original source path (`u1.typo`), for a
     /// readable unresolved-target diagnostic.
     defparam_src: HashMap<String, String>,
+    /// Enhancement-59: errors from concatenated port actuals (`u1({a,c})`)
+    /// whose bit count doesn't match the connected port's width. Collected
+    /// during rendering (which has no error channel) and bailed afterwards,
+    /// like `implicit_conflicts`.
+    port_conn_errors: Vec<String>,
 }
 
 /// Enhancement-41: returns the trimmed text if it is a plain scalar identifier
@@ -1030,7 +1040,7 @@ impl ElabCtx<'_> {
     /// (the caller is responsible for running it through its own `Scope`
     /// before handing it further down -- see `resolve_port_bindings`).
     fn raw_port_bindings(
-        &self,
+        &mut self,
         caller: &TreeModule,
         target: &TreeModule,
         target_ast: &ast::ModuleDecl,
@@ -1044,17 +1054,113 @@ impl ElabCtx<'_> {
         if conns.iter().all(|c| c.name().is_none()) {
             for (name, conn) in port_names.iter().zip(conns.iter()) {
                 if let Some(net) = conn.net() {
-                    bind_port(&mut result, target, caller, name, &net.syntax().text().to_string());
+                    self.bind_port_actual(&mut result, target, caller, name, &net);
                 }
             }
         } else {
             for conn in &conns {
                 if let (Some(name), Some(net)) = (conn.name(), conn.net()) {
-                    bind_port(&mut result, target, caller, &name.as_name(), &net.syntax().text().to_string());
+                    self.bind_port_actual(&mut result, target, caller, &name.as_name(), &net);
                 }
             }
         }
         result
+    }
+
+    /// Enhancement-59: binds one port actual, dispatching a concatenation
+    /// (`{a, c}` -- LRM 6.5 net concatenation in a port connection) to a
+    /// per-bit expansion and everything else to the plain `bind_port` path.
+    fn bind_port_actual(
+        &mut self,
+        result: &mut HashMap<Name, PortBinding>,
+        target: &TreeModule,
+        caller: &TreeModule,
+        port_name: &Name,
+        net: &ast::Expr,
+    ) {
+        if let ast::Expr::ConcatExpr(concat) = net {
+            self.bind_port_concat(result, target, caller, port_name, concat);
+        } else {
+            bind_port(result, target, caller, port_name, &net.syntax().text().to_string());
+        }
+    }
+
+    /// Expands a concatenated port actual bit-by-bit onto a vectored port.
+    /// Each concat element contributes either one bit (a scalar net, a
+    /// bit-select, ...) or -- when it names a same-scope bus used whole --
+    /// all of that bus's bits in ITS declared msb-to-lsb order. The
+    /// resulting bit list maps onto the port in the PORT's declared
+    /// msb-to-lsb order (leftmost concat element = port msb), so both
+    /// `[1:0]` and `[0:1]` declaration styles connect as written. A bit
+    /// count that doesn't match the port width is a hard error (collected
+    /// in `port_conn_errors`; rendering itself has no error channel).
+    fn bind_port_concat(
+        &mut self,
+        result: &mut HashMap<Name, PortBinding>,
+        target: &TreeModule,
+        caller: &TreeModule,
+        port_name: &Name,
+        concat: &ast::ConcatExpr,
+    ) {
+        // flatten the concat's elements into msb-first bit texts
+        let mut bit_texts: Vec<String> = Vec::new();
+        for elem in concat.exprs() {
+            let text = elem.syntax().text().to_string().trim().to_string();
+            let elem_name = Name::resolve(&text);
+            let caller_bus =
+                caller.buses.iter().chain(caller.var_arrays.iter()).find(|b| b.base_name == elem_name);
+            match caller_bus {
+                // a whole bus contributes every bit, msb first as declared
+                Some(bus) => {
+                    let step: i32 = if bus.msb >= bus.lsb { -1 } else { 1 };
+                    let mut bit = bus.msb;
+                    loop {
+                        bit_texts.push(format!("{text}[{bit}]"));
+                        if bit == bus.lsb {
+                            break;
+                        }
+                        bit += step;
+                    }
+                }
+                None => bit_texts.push(text),
+            }
+        }
+
+        let bus = target.buses.iter().chain(target.var_arrays.iter()).find(|b| &b.base_name == port_name);
+        let Some(bus) = bus else {
+            // scalar port: a one-element concat is just that element
+            if bit_texts.len() == 1 {
+                result.insert(port_name.clone(), PortBinding::Scalar(bit_texts.pop().unwrap()));
+            } else {
+                self.port_conn_errors.push(format!(
+                    "concatenation of {} nets is connected to scalar port '{}'",
+                    bit_texts.len(),
+                    port_name
+                ));
+            }
+            return;
+        };
+
+        let (lo, hi) = bus.min_max();
+        let width = (hi - lo + 1) as usize;
+        if bit_texts.len() != width {
+            self.port_conn_errors.push(format!(
+                "concatenation connected to port '{}' has {} net(s) but the port is {} bits wide",
+                port_name,
+                bit_texts.len(),
+                width
+            ));
+            return;
+        }
+
+        let mut bits = BTreeMap::new();
+        let step: i32 = if bus.msb >= bus.lsb { -1 } else { 1 };
+        let mut bit = bus.msb;
+        for text in bit_texts {
+            bits.insert(bit, text);
+            bit += step;
+        }
+        result.insert(port_name.clone(), PortBinding::Bus(bits));
     }
 
     /// Same as `raw_port_bindings` but for `#(...)` parameter overrides.
