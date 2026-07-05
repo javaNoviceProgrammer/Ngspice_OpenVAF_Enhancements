@@ -69,8 +69,7 @@ def deck(model_line, analyses, osdi="paramrange_demo.osdi"):
 
 
 def main():
-    subprocess.run([OPENVAF, "paramrange_demo.va", "-o",
-                    os.path.join(HERE, "paramrange_demo.osdi")],
+    subprocess.run([OPENVAF, "paramrange_demo.va", "-o", "paramrange_demo.osdi"],
                    cwd=HERE, check=True,
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     ok = True
@@ -114,8 +113,7 @@ def main():
     hisimsoi = os.path.join(os.path.dirname(DIODE_CMC), "..", "..", "hisimsoi",
                             "vacode", "hisimsoi.va")
     if os.path.exists(hisimsoi):
-        subprocess.run([OPENVAF, hisimsoi, "-o",
-                        os.path.join(HERE, "_hisimsoi.osdi")],
+        subprocess.run([OPENVAF, hisimsoi, "-o", "_hisimsoi.osdi"],
                        cwd=HERE, check=True,
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         # all 6 terminals connected with COBCNODE=0: the model $finish-rejects
@@ -141,8 +139,7 @@ def main():
 
     print("[5] the stock CMC diode_cmc runs at defaults (real-world regression)")
     if os.path.exists(DIODE_CMC):
-        subprocess.run([OPENVAF, DIODE_CMC, "-o",
-                        os.path.join(HERE, "_diode_cmc.osdi")],
+        subprocess.run([OPENVAF, DIODE_CMC, "-o", "_diode_cmc.osdi"],
                        cwd=HERE, check=True,
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         d = deck(".model mm DIODE_CMC",

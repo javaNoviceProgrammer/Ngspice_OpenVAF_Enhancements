@@ -56,8 +56,7 @@ def main():
         print(f"  {'PASS' if cond else 'FAIL'}  {label}   {detail}")
 
     print("[1] the audit compiles (string ternaries used to be a type error)")
-    r = subprocess.run([OPENVAF, "operator_audit.va", "-o",
-                        os.path.join(HERE, "operator_audit.osdi")],
+    r = subprocess.run([OPENVAF, "operator_audit.va", "-o", "operator_audit.osdi"],
                        cwd=HERE, capture_output=True, text=True)
     check("openvaf-r operator_audit.va", r.returncode == 0,
           "" if r.returncode == 0 else (r.stdout + r.stderr).strip().splitlines()[0])
@@ -90,7 +89,7 @@ def main():
                  '    t = (1 > 0) ? "yes" : "no";\n'
                  '    if (!(t == "yes"))                s = s + 4;\n'
                  "    V(out) <+ s;\n  end\nendmodule\n")
-    r = subprocess.run([OPENVAF, "_fix.va", "-o", os.path.join(HERE, "_fix.osdi")],
+    r = subprocess.run([OPENVAF, "_fix.va", "-o", "_fix.osdi"],
                        cwd=HERE, capture_output=True, text=True)
     check("fix-cases compile", r.returncode == 0)
     v = run("* fixes\nn1 o m\n.model m op_fix\nr1 o 0 1e6\n"

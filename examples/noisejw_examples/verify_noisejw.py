@@ -105,8 +105,7 @@ def run_noise_3t(model, sweep="dec 1 1k 1k"):
 
 
 def main():
-    subprocess.run([OPENVAF, "noisejw_demo.va", "-o",
-                    os.path.join(HERE, "noisejw_demo.osdi")],
+    subprocess.run([OPENVAF, "noisejw_demo.va", "-o", "noisejw_demo.osdi"],
                    cwd=HERE, check=True,
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     ok = True

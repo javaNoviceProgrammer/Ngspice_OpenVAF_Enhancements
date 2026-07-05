@@ -49,7 +49,7 @@ def tran_trace(rate, ic, tstop=2.0):
 
 
 def main():
-    subprocess.run([OPENVAF, "idtic_demo.va", "-o", os.path.join(HERE, "idtic_demo.osdi")],
+    subprocess.run([OPENVAF, "idtic_demo.va", "-o", "idtic_demo.osdi"],
                    cwd=HERE, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     ok = True

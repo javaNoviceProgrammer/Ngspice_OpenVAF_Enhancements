@@ -84,8 +84,7 @@ def ac_currents(k, rin, cin, freq):
 
 
 def main():
-    subprocess.run([OPENVAF, "portflow_demo.va", "-o",
-                    os.path.join(HERE, "portflow_demo.osdi")],
+    subprocess.run([OPENVAF, "portflow_demo.va", "-o", "portflow_demo.osdi"],
                    cwd=HERE, check=True,
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 

@@ -69,8 +69,7 @@ def noise_deck(model, freq="1k", extra_ctrl="", instances=None):
 
 
 def main():
-    subprocess.run([OPENVAF, "noisecorr_demo.va", "-o",
-                    os.path.join(HERE, "noisecorr_demo.osdi")],
+    subprocess.run([OPENVAF, "noisecorr_demo.va", "-o", "noisecorr_demo.osdi"],
                    cwd=HERE, check=True,
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 

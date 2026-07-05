@@ -55,8 +55,7 @@ def main():
         print(f"  {'PASS' if cond else 'FAIL'}  {label}   {detail}")
 
     print("[1] the full derived-nature matrix COMPILES")
-    r = subprocess.run([OPENVAF, "derivednature_demo.va", "-o",
-                        os.path.join(HERE, "derivednature_demo.osdi")],
+    r = subprocess.run([OPENVAF, "derivednature_demo.va", "-o", "derivednature_demo.osdi"],
                        cwd=HERE, capture_output=True, text=True)
     check("openvaf-r derivednature_demo.va", r.returncode == 0,
           "" if r.returncode == 0 else (r.stdout + r.stderr).strip().splitlines()[0])

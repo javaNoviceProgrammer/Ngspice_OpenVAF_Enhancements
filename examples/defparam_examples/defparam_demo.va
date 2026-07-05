@@ -1,0 +1,47 @@
+// defparam_demo.va -- Enhancement-58: defparam hierarchical parameter override
+//
+// LRM 2.6 (legacy Verilog-2001): `defparam <path> = <expr>;` overrides a
+// parameter, usually inside an instance, at compile time. OpenVAF's E-5
+// elaboration flattens instances into prefixed locals (u1.r -> u1__r); a
+// defparam is resolved through the same instance-chain rewrite (E-49) and
+// rewrites the flattened parameter's default. defparam has HIGHER precedence
+// than an instance `#(...)` override (LRM 2.6).
+`include "disciplines.vams"
+
+// leaf cell: a linear conductance with an optional extra conductance term
+module dp_leaf(a, c);
+  inout a, c; electrical a, c;
+  parameter real r = 1e3;
+  parameter real g = 0.0;
+  analog I(a, c) <+ V(a, c) / r + g * V(a, c);
+endmodule
+
+// a wrapper, so we can reach a parameter two levels down (u1.u2.r)
+module dp_mid(a, c);
+  inout a, c; electrical a, c;
+  dp_leaf u2(a, c);
+endmodule
+
+// [1] simplest form: override an instance parameter
+module dp_basic(a, c);
+  inout a, c; electrical a, c;
+  dp_leaf u1(a, c);
+  defparam u1.r = 2e3;             // 1k default -> 2k
+endmodule
+
+// [2] deep target + multi-assignment + precedence over #()
+module dp_deep(a, c);
+  inout a, c; electrical a, c;
+  dp_leaf #(.r(5e3)) up(a, c);     // #() sets 5k ...
+  dp_mid  u1(a, c);
+  defparam u1.u2.r = 4e3;          // two levels down
+  defparam up.r = 2e3, up.g = 1e-3;  // defparam OVERRIDES the #() 5k; + g
+endmodule
+
+// [3] override expression may reference the enclosing module's parameters
+module dp_expr(a, c);
+  inout a, c; electrical a, c;
+  parameter real scale = 3e3;
+  dp_leaf u1(a, c);
+  defparam u1.r = 2.0 * scale;     // -> 6k
+endmodule

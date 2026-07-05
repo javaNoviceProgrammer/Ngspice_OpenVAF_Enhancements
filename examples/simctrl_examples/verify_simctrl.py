@@ -78,8 +78,7 @@ def get(pattern, text, group=1):
 
 
 def main():
-    subprocess.run([OPENVAF, "simctrl_demo.va", "-o",
-                    os.path.join(HERE, "simctrl_demo.osdi")],
+    subprocess.run([OPENVAF, "simctrl_demo.va", "-o", "simctrl_demo.osdi"],
                    cwd=HERE, check=True,
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     ok = True

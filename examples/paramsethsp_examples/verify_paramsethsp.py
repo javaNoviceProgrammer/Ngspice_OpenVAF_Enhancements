@@ -63,8 +63,7 @@ def deck_v(model, inst_extra=""):
 
 
 def main():
-    subprocess.run([OPENVAF, "paramsethsp_demo.va", "-o",
-                    os.path.join(HERE, "paramsethsp_demo.osdi")],
+    subprocess.run([OPENVAF, "paramsethsp_demo.va", "-o", "paramsethsp_demo.osdi"],
                    cwd=HERE, check=True,
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 

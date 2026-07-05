@@ -65,8 +65,7 @@ def run(deck):
 
 
 def main():
-    subprocess.run([OPENVAF, "finalstep_demo.va", "-o",
-                    os.path.join(HERE, "finalstep_demo.osdi")],
+    subprocess.run([OPENVAF, "finalstep_demo.va", "-o", "finalstep_demo.osdi"],
                    cwd=HERE, check=True,
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 

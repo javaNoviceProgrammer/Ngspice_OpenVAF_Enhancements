@@ -51,8 +51,7 @@ def run(deck, *names):
 
 
 def main():
-    subprocess.run([OPENVAF, "signalflow_demo.va", "-o",
-                    os.path.join(HERE, "signalflow_demo.osdi")],
+    subprocess.run([OPENVAF, "signalflow_demo.va", "-o", "signalflow_demo.osdi"],
                    cwd=HERE, check=True,
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 

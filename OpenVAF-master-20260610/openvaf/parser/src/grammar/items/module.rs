@@ -54,6 +54,29 @@ fn module_ports(p: &mut Parser) {
     p.expect(T![')']);
 }
 
+/// Enhancement-58: `defparam <path> = <expr> [, <path> = <expr>]* ;` — a
+/// compile-time hierarchical parameter override (legacy Verilog-2001 form,
+/// LRM 2.6). Each `<path>` names a parameter, usually inside an instance
+/// (`u1.r`, `u1.u2.r`). The DEFPARAM node is consumed entirely by the E-5
+/// elaboration pass (it resolves each target to the flattened parameter and
+/// rewrites that parameter's default), so it is deliberately NOT a typed
+/// `ast::ModuleItem` — later compiler stages never see it.
+pub(super) fn defparam_decl(p: &mut Parser, m: Marker) {
+    p.bump(DEFPARAM_KW);
+    loop {
+        if p.at_ts(crate::grammar::paths::PATH_SEGMENT_TS) {
+            path(p);
+        }
+        p.expect(T![=]);
+        expr(p);
+        if !p.eat(T![,]) {
+            break;
+        }
+    }
+    p.eat(T![;]);
+    m.complete(p, DEFPARAM);
+}
+
 pub(super) fn alias_parameter_decl(p: &mut Parser, m: Marker) {
     p.bump(ALIASPARAM_KW);
     name_r(p, TokenSet::new(&[T![;], T![=]]));
@@ -135,6 +158,9 @@ fn module_items(p: &mut Parser) {
             }
             ALIASPARAM_KW => {
                 alias_parameter_decl(p, m);
+            }
+            DEFPARAM_KW => {
+                defparam_decl(p, m);
             }
             BRANCH_KW => {
                 branch_decl(p, m);

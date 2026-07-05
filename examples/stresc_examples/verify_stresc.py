@@ -33,8 +33,7 @@ from _setup import VAF as OPENVAF, NG as NGSPICE
 
 
 def main():
-    subprocess.run([OPENVAF, "stresc_demo.va", "-o",
-                    os.path.join(HERE, "stresc_demo.osdi")],
+    subprocess.run([OPENVAF, "stresc_demo.va", "-o", "stresc_demo.osdi"],
                    cwd=HERE, check=True,
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 

@@ -722,6 +722,16 @@ Several unrelated language gaps found along the way are also fixed. **`localpara
 
 ---
 
+## Enhancement 58: `defparam` hierarchical parameter override
+
+*July 2026* — Implemented **`defparam`** (the legacy Verilog-2001 compile-time hierarchical parameter override, LRM 2.6). It was a reserved word with **no grammar rule**, so `defparam u1.r = 2e3;` failed with the misleading `'defparam' was not found in the current scope` (the idiomatic `#(.r(2e3))` / `#(2e3)` instance overrides already worked). The implementation is front-end only and lives entirely in the elaboration pass: a new `DEFPARAM_KW` keyword and parser rule produce a `DEFPARAM` syntax node that is deliberately **not** a typed `ModuleItem` — the typed iterator every later compiler stage walks simply skips it, so hir_def/hir_ty/lowering needed zero changes. Each `defparam` target resolves through the **same instance-chain rewrite Enhancement-49 built** for hierarchical references (`u1.u2.r → u1__u2__r` — exactly the flattened name the parameter receives when its instance is inlined, making the mechanism depth-agnostic), and the flattened parameter's default is rewritten through the existing `#()` hole mechanism — checked first, giving `defparam` the **higher precedence over instance `#(...)` overrides** the LRM requires. Multi-assignment forms and override expressions referencing the enclosing module's parameters work; an unresolved target is a **hard error naming the original source path**.
+
+- Verified end-to-end through ngspice with exact op-point conductances: a basic override (1 kΩ → 2 kΩ), a two-level `u1.u2.r` target plus a multi-assignment `defparam` overriding an instance `#(.r(5e3))` down to 2 kΩ, an expression-valued override (`2.0*scale`), and the unresolved-target diagnostic — see `examples/defparam_examples/`
+- Regression-checked: all 54 example verify suites ALL PASS; 28/28 crate tests; the VA_TEST corpus still compiles
+- Details: [Enhancement-58.md](enhancements_doc/Enhancement-58.md)
+
+---
+
 ## Prebuilt Binaries
 
 Binaries are built by CI and committed to `bin/`:

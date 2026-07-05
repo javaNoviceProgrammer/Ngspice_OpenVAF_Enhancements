@@ -52,8 +52,7 @@ def current(analysis, use_stim, vbias=1.0):
 
 def main():
     # (1) compile -- this alone used to crash openvaf-r with an internal panic
-    r = subprocess.run([OPENVAF, "acstim_demo.va", "-o",
-                        os.path.join(HERE, "acstim_demo.osdi")],
+    r = subprocess.run([OPENVAF, "acstim_demo.va", "-o", "acstim_demo.osdi"],
                        cwd=HERE, capture_output=True, text=True)
     compiled = r.returncode == 0 and os.path.exists(os.path.join(HERE, "acstim_demo.osdi"))
 

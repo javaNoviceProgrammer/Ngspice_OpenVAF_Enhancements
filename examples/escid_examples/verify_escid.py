@@ -65,8 +65,7 @@ def i_deck(model):
 
 
 def main():
-    subprocess.run([OPENVAF, "escid_demo.va", "-o",
-                    os.path.join(HERE, "escid_demo.osdi")],
+    subprocess.run([OPENVAF, "escid_demo.va", "-o", "escid_demo.osdi"],
                    cwd=HERE, check=True,
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 

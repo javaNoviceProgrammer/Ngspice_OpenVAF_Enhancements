@@ -57,8 +57,7 @@ def run(deck, *names):
 
 
 def main():
-    subprocess.run([OPENVAF, "hiername_demo.va", "-o",
-                    os.path.join(HERE, "hiername_demo.osdi")],
+    subprocess.run([OPENVAF, "hiername_demo.va", "-o", "hiername_demo.osdi"],
                    cwd=HERE, check=True,
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 

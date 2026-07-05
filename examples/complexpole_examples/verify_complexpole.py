@@ -58,8 +58,7 @@ def ac_sweep(cols):
 
 
 def main():
-    subprocess.run([OPENVAF, "complexpole_demo.va", "-o",
-                    os.path.join(HERE, "complexpole_demo.osdi")],
+    subprocess.run([OPENVAF, "complexpole_demo.va", "-o", "complexpole_demo.osdi"],
                    cwd=HERE, check=True,
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 

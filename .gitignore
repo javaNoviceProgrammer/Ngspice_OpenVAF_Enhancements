@@ -323,5 +323,10 @@ examples/physcheck_examples/_*.cir
 examples/physcheck_examples/_*.osdi
 examples/physcheck_examples/_*.dat
 
+# Enhancement 58 defparam example scripts: temp netlists + models
+examples/defparam_examples/_*.cir
+examples/defparam_examples/_*.va
+examples/defparam_examples/_*.osdi
+
 # Python bytecode cache (e.g. from importing _setup.py)
 __pycache__/

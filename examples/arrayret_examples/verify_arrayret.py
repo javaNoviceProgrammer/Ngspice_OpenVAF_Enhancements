@@ -61,7 +61,7 @@ def ac_gm(model, vbias):
 
 
 def main():
-    subprocess.run([OPENVAF, "arrayret_demo.va", "-o", os.path.join(HERE, "arrayret_demo.osdi")],
+    subprocess.run([OPENVAF, "arrayret_demo.va", "-o", "arrayret_demo.osdi"],
                    cwd=HERE, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     ok = True

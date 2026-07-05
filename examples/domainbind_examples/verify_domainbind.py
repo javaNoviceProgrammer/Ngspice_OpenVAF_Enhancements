@@ -39,8 +39,7 @@ def main():
         print(f"  {'PASS' if cond else 'FAIL'}  {label}")
 
     print("[1] custom continuous discipline with natures simulates")
-    subprocess.run([OPENVAF, "domainbind_demo.va", "-o",
-                    os.path.join(HERE, "domainbind_demo.osdi")],
+    subprocess.run([OPENVAF, "domainbind_demo.va", "-o", "domainbind_demo.osdi"],
                    cwd=HERE, check=True,
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     deck = ("* E-50\nVs in 0 DC 1\nNDUT in 0 nm\n.model nm domainbind\n"

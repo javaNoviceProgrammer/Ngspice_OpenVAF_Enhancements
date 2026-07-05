@@ -101,7 +101,16 @@ pub(crate) fn elaborate_generates(db: &mut CompilationDB) -> anyhow::Result<()> 
         out.push('\n');
     }
 
-    let synth_name = format!("{}__generated.va", db.vfs().read().file_path(root_file));
+    // Enhancement-58: name the synthetic file by BASENAME only. The VFS holds
+    // the canonicalized absolute root path, and this name is embedded in the
+    // compiled .osdi as source-file provenance -- an absolute path would leak
+    // the build machine's layout into the artifact (repo examples must stay
+    // machine-portable). Diagnostics still render fine against the short name.
+    let root_path = db.vfs().read().file_path(root_file).to_string();
+    let base_name =
+        root_path.rsplit(['/', '\\']).next().unwrap_or(root_path.as_str()).to_owned();
+    // virtual paths must start with '/' (VfsPath::new_virtual_path)
+    let synth_name = format!("/{}__generated.va", base_name);
     let file_id = db.vfs().write().add_virt_file(&synth_name, out.into());
 
     let include_dirs = db.include_dirs(root_file);
@@ -445,6 +454,9 @@ pub(crate) fn elaborate_instantiations(db: &mut CompilationDB) -> anyhow::Result
         by_name,
         implicit_nets: HashMap::new(),
         implicit_conflicts: Vec::new(),
+        defparam_overrides: HashMap::new(),
+        defparam_applied: HashSet::new(),
+        defparam_src: HashMap::new(),
     };
 
     let mut out = String::new();
@@ -464,7 +476,32 @@ pub(crate) fn elaborate_instantiations(db: &mut CompilationDB) -> anyhow::Result
         anyhow::bail!("{}", ctx.implicit_conflicts.join("\n"));
     }
 
-    let synth_name = format!("{}__elaborated.va", db.vfs().read().file_path(root_file));
+    // Enhancement-58: a `defparam` whose target never matched a flattened
+    // parameter is almost always a mistake (typo, or an out-of-scope
+    // hierarchical target) -- surface it rather than silently ignoring it.
+    let unresolved: Vec<_> = ctx
+        .defparam_overrides
+        .keys()
+        .filter(|k| !ctx.defparam_applied.contains(*k))
+        .map(|k| ctx.defparam_src.get(k).cloned().unwrap_or_else(|| k.clone()))
+        .collect();
+    if !unresolved.is_empty() {
+        anyhow::bail!(
+            "defparam target(s) did not resolve to any parameter: {}",
+            unresolved.join(", ")
+        );
+    }
+
+    // Enhancement-58: name the synthetic file by BASENAME only. The VFS holds
+    // the canonicalized absolute root path, and this name is embedded in the
+    // compiled .osdi as source-file provenance -- an absolute path would leak
+    // the build machine's layout into the artifact (repo examples must stay
+    // machine-portable). Diagnostics still render fine against the short name.
+    let root_path = db.vfs().read().file_path(root_file).to_string();
+    let base_name =
+        root_path.rsplit(['/', '\\']).next().unwrap_or(root_path.as_str()).to_owned();
+    // virtual paths must start with '/' (VfsPath::new_virtual_path)
+    let synth_name = format!("/{}__elaborated.va", base_name);
     let file_id = db.vfs().write().add_virt_file(&synth_name, out.into());
 
     let include_dirs = db.include_dirs(root_file);
@@ -489,6 +526,19 @@ struct ElabCtx<'a> {
     /// connections implying conflicting disciplines for the same net.
     implicit_nets: HashMap<String, String>,
     implicit_conflicts: Vec<String>,
+    /// Enhancement-58: `defparam` overrides collected so far, keyed by the
+    /// target parameter's FINAL flattened name (`u1.u2.r` -> `u1__u2__r`,
+    /// resolved through the same instance-chain prefixes E-49 uses). The
+    /// value is the override expression text (already rename-applied). Read
+    /// in `render_items`' `ParamDecl` arm to rewrite that parameter's
+    /// default; `defparam` takes precedence over an instance `#(...)` value.
+    defparam_overrides: HashMap<String, String>,
+    /// Every flattened target name that a `defparam` actually overrode, so
+    /// unresolved targets (typos, out-of-scope hierarchy) can be diagnosed.
+    defparam_applied: HashSet<String>,
+    /// Flattened target name -> the original source path (`u1.typo`), for a
+    /// readable unresolved-target diagnostic.
+    defparam_src: HashMap<String, String>,
 }
 
 /// Enhancement-41: returns the trimmed text if it is a plain scalar identifier
@@ -1079,6 +1129,50 @@ impl ElabCtx<'_> {
         }
     }
 
+    /// Enhancement-58: scan one module's `defparam` statements and record each
+    /// as `flattened_target_name -> override_value_text`. The target path is
+    /// resolved through the same instance-chain rewrite E-49 uses for ordinary
+    /// hierarchical references (`find_instance_path_holes`): `u1.u2.r` becomes
+    /// `u1__u2__r`, exactly the flattened name the target parameter is given
+    /// when its instance is inlined; a single-segment target (a same-module
+    /// parameter) resolves to itself. The value expression is rename-applied
+    /// (it may reference the enclosing module's own parameters).
+    fn collect_defparams(&mut self, module_ast: &ast::ModuleDecl, scope: &Scope) {
+        for node in module_ast.syntax().children() {
+            if node.kind() != syntax::SyntaxKind::DEFPARAM {
+                continue;
+            }
+            // Direct children alternate: [target PATH, value expr, ...].
+            let parts: Vec<_> = node.children().collect();
+            let mut i = 0;
+            while i + 1 < parts.len() {
+                let path_node = &parts[i];
+                let value_node = &parts[i + 1];
+                i += 2;
+                if path_node.kind() != syntax::SyntaxKind::PATH {
+                    continue;
+                }
+                let path_text = path_node.text().to_string();
+                let path_text = path_text.trim();
+                // resolve the hierarchical target to its flattened name. A
+                // `defparam` path is a single `chain.member`, so the rewrite
+                // (when the chain resolves) yields exactly one hole whose
+                // replacement is the flattened target name.
+                let holes = find_instance_path_holes(path_text, &scope.inst_prefixes);
+                let flat = match holes.first() {
+                    Some((_, repl)) => repl.clone(),
+                    // single-segment (same-module) target, or a chain that did
+                    // not resolve: use the (rename-applied) path as-is -- if it
+                    // matches no parameter, the unresolved-target diagnostic fires
+                    None => apply_rename(path_text, scope),
+                };
+                let value = apply_rename(&value_node.text().to_string(), scope);
+                self.defparam_src.insert(flat.clone(), path_text.to_string());
+                self.defparam_overrides.insert(flat, value);
+            }
+        }
+    }
+
     fn render_items(
         &mut self,
         target_id: ItemTreeId<TreeModule>,
@@ -1088,6 +1182,11 @@ impl ElabCtx<'_> {
         prefix: &str,
     ) -> String {
         let target_ast = self.module_ast(self.tree[target_id].ast_id);
+        // Enhancement-58: collect this module's `defparam` overrides before
+        // rendering its items, so a `defparam` written after (or before) the
+        // parameter it targets, and one targeting a nested instance, are both
+        // seen when the target parameter's declaration is rendered.
+        self.collect_defparams(&target_ast, scope);
         let mut out = String::new();
         // Enhancement-41: net declarations synthesised for implicit nets found in
         // this module's instantiation connections, prepended to the rendered body
@@ -1118,7 +1217,19 @@ impl ElabCtx<'_> {
                         let (Some(name), Some(default)) = (param.name(), param.default()) else {
                             continue;
                         };
-                        if let Some(bound) = param_binding.get(&name.as_name()) {
+                        // Enhancement-58: a `defparam` targeting this parameter's
+                        // final flattened name wins over an instance `#(...)`
+                        // override (LRM 2.6: defparam has highest precedence).
+                        let flat = scope
+                            .subst
+                            .get(&name.to_string())
+                            .cloned()
+                            .unwrap_or_else(|| name.to_string());
+                        let defparam = self.defparam_overrides.get(&flat).cloned();
+                        if let Some(ov) = defparam {
+                            holes.push((rel_range(base, default.syntax().text_range()), ov));
+                            self.defparam_applied.insert(flat);
+                        } else if let Some(bound) = param_binding.get(&name.as_name()) {
                             holes.push((rel_range(base, default.syntax().text_range()), bound.clone()));
                         }
                     }

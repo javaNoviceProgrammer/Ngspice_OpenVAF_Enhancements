@@ -41,8 +41,7 @@ def floor_mod(x, m):
 
 
 def main():
-    subprocess.run([OPENVAF, "idtmod_demo.va", "-o",
-                    os.path.join(HERE, "idtmod_demo.osdi")],
+    subprocess.run([OPENVAF, "idtmod_demo.va", "-o", "idtmod_demo.osdi"],
                    cwd=HERE, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     ok = True

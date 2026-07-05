@@ -62,7 +62,7 @@ def op_current(announce):
 
 
 def main():
-    subprocess.run([OPENVAF, "disc_demo.va", "-o", os.path.join(HERE, "disc_demo.osdi")],
+    subprocess.run([OPENVAF, "disc_demo.va", "-o", "disc_demo.osdi"],
                    cwd=HERE, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     ok = True

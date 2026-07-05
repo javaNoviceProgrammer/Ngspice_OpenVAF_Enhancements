@@ -53,8 +53,7 @@ def run(deck, *names):
 
 
 def main():
-    subprocess.run([OPENVAF, "idtassert_demo.va", "-o",
-                    os.path.join(HERE, "idtassert_demo.osdi")],
+    subprocess.run([OPENVAF, "idtassert_demo.va", "-o", "idtassert_demo.osdi"],
                    cwd=HERE, check=True,
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 

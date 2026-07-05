@@ -51,8 +51,7 @@ def main():
         ok = ok and cond
         print(f"  {'PASS' if cond else 'FAIL'}  {label}   {detail}")
 
-    r = subprocess.run([OPENVAF, "precedence_audit.va", "-o",
-                        os.path.join(HERE, "precedence_audit.osdi")],
+    r = subprocess.run([OPENVAF, "precedence_audit.va", "-o", "precedence_audit.osdi"],
                        cwd=HERE, capture_output=True, text=True)
     check("precedence_audit.va compiles", r.returncode == 0,
           "" if r.returncode == 0 else (r.stdout + r.stderr).strip().splitlines()[0])
@@ -75,7 +74,7 @@ def main():
                  "  analog begin\n"
                  "    a = 6*7%4;\n"
                  "    V(out) <+ a;\n  end\nendmodule\n")
-    r = subprocess.run([OPENVAF, "_m.va", "-o", os.path.join(HERE, "_m.osdi")],
+    r = subprocess.run([OPENVAF, "_m.va", "-o", "_m.osdi"],
                        cwd=HERE, capture_output=True, text=True)
     check("fix-case compiles", r.returncode == 0)
     v = run("* m\nn1 o m\n.model m prec_m\nr1 o 0 1e6\n"

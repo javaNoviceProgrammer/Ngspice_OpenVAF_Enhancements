@@ -63,8 +63,7 @@ def op_deck(model, params="", extra=""):
 
 
 def main():
-    subprocess.run([OPENVAF, "varinit_demo.va", "-o",
-                    os.path.join(HERE, "varinit_demo.osdi")],
+    subprocess.run([OPENVAF, "varinit_demo.va", "-o", "varinit_demo.osdi"],
                    cwd=HERE, check=True,
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 

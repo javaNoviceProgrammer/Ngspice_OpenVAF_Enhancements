@@ -67,8 +67,7 @@ def op_deck(model, extra_lines=""):
 
 
 def main():
-    subprocess.run([OPENVAF, "netinit_demo.va", "-o",
-                    os.path.join(HERE, "netinit_demo.osdi")],
+    subprocess.run([OPENVAF, "netinit_demo.va", "-o", "netinit_demo.osdi"],
                    cwd=HERE, check=True,
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 

@@ -54,8 +54,7 @@ def tran_conductance():
 
 
 def main():
-    subprocess.run([OPENVAF, "simparamstr_demo.va", "-o",
-                    os.path.join(HERE, "simparamstr_demo.osdi")],
+    subprocess.run([OPENVAF, "simparamstr_demo.va", "-o", "simparamstr_demo.osdi"],
                    cwd=HERE, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     checks = [

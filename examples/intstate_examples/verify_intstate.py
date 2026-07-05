@@ -69,8 +69,7 @@ def main():
         print(f"  {'PASS' if cond else 'FAIL'}  {label}   {detail}")
 
     print("[1] integer persistent/event state COMPILES (used to crash the compiler)")
-    r = subprocess.run([OPENVAF, "intstate_demo.va", "-o",
-                        os.path.join(HERE, "intstate_demo.osdi")],
+    r = subprocess.run([OPENVAF, "intstate_demo.va", "-o", "intstate_demo.osdi"],
                        cwd=HERE, capture_output=True, text=True)
     check("openvaf-r intstate_demo.va", r.returncode == 0,
           "" if r.returncode == 0 else (r.stdout + r.stderr).strip().splitlines()[0])
