@@ -222,6 +222,22 @@ NOISEan(CKTcircuit* ckt, int restart)
         error = CKTload(ckt);
         if (error) return(error);
 
+#ifdef OSDI
+        /* Enhancement-56: honor deferred Verilog-A $finish/$stop raised
+           during the noise analysis's operating point (E-55 defers them to
+           analysis boundaries; without this check a model that rejected its
+           configuration via $finish kept evaluating in a degenerate state,
+           and the singular AC matrix later crashed the adjoint solve). */
+        {
+            int osdi_req = OSDIpendingRequests(ckt);
+            if (osdi_req & (OSDI_REQ_FINISH | OSDI_REQ_STOP)) {
+                fprintf(stdout, "\nNote: %s requested by a Verilog-A device during the noise operating point; aborting the noise analysis.\n",
+                        (osdi_req & OSDI_REQ_FINISH) ? "$finish" : "$stop");
+                return (osdi_req & OSDI_REQ_FINISH) ? OK : E_PAUSE;
+            }
+        }
+#endif
+
         if (ckt->CKTkeepOpInfo) {
             error = CKTnames(ckt, &numNames, &nameList);
             if (error) return(error);
@@ -439,7 +455,17 @@ NOISEan(CKTcircuit* ckt, int restart)
          * function between the input and output
          */
 
-        NIacIter(ckt);
+        /* Enhancement-56: NIacIter's return was ignored -- on a singular
+           AC matrix the factorization fails, and the noise adjoint solve
+           (SMPcaSolveTransposed) then asserted on the unfactored matrix
+           (SIGABRT). Abort the noise analysis cleanly instead. */
+        error = NIacIter(ckt);
+        if (error) {
+            fprintf(stderr, "\nError: AC solution failed at %g Hz; aborting the noise analysis.\n",
+                    data->freq);
+            FREE(data);
+            return(error);
+        }
         realVal = ckt->CKTrhsOld[posOutNode]
             - ckt->CKTrhsOld[negOutNode];
         imagVal = ckt->CKTirhsOld[posOutNode]

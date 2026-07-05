@@ -313,5 +313,10 @@ examples/simctrl_examples/_*.va
 examples/simctrl_examples/_*.osdi
 examples/simctrl_examples/_*.dat
 
+# Enhancement 56 parameter-range example scripts: temp netlists + models
+examples/paramrange_examples/_*.cir
+examples/paramrange_examples/_*.va
+examples/paramrange_examples/_*.osdi
+
 # Python bytecode cache (e.g. from importing _setup.py)
 __pycache__/

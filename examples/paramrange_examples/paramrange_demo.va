@@ -1,0 +1,26 @@
+// paramrange_demo.va -- Enhancement-56: parameter DEFAULTS are exempt from
+// range checks (the CMC "feature disabled by default" idiom), while GIVEN
+// values are still validated.
+//
+// CMC-standard models routinely declare a default OUTSIDE the parameter's own
+// range as the disabled state -- diode_cmc's `CORECOVERY = 0.0 from (0.0:1.0]`,
+// FBH-HBT's `Fb = 0.0 from (0.0:inf)`, ... Range constraints bind only values
+// the USER supplies. Checking defaults rejected the stock CMC models at setup.
+`include "disciplines.vams"
+
+module prng(a, c);
+  inout a, c; electrical a, c;
+  // the CMC idiom: default 0.0 is outside the exclusive-start range
+  parameter real feature = 0.0 from (0.0:1.0];
+  // an exclude-style constraint with an excluded default
+  parameter real mode = 0.0 from [0.0:10.0] exclude 0.0;
+  parameter real r = 1e3 from (0.0:inf);
+  analog begin
+    // "feature off" path must be reachable at defaults
+    if (feature > 0.0)
+      I(a, c) <+ feature * V(a, c) / r;
+    if (mode > 0.0)
+      I(a, c) <+ mode * 1e-6;
+    I(a, c) <+ V(a, c) / r;
+  end
+endmodule

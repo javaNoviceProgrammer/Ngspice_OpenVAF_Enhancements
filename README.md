@@ -701,6 +701,17 @@ Several unrelated language gaps found along the way are also fixed. **`localpara
 
 ---
 
+## Enhancement 56: end-to-end corpus sweep — CMC default-range idiom + noise crash fix
+
+*July 2026* — The first **end-to-end sweep** of the `VA_TEST/` corpus: all 92 standalone industry models compiled and run through ngspice op/AC/transient/noise on a bench generated from each model's OSDI descriptor (the corpus had only ever been compile-tested). Three real defects found and fixed. **(1) Parameter defaults were range-checked**: CMC-standard models declare a default *outside* the parameter's own range as the "feature disabled" state — `diode_cmc`'s `CORECOVERY = 0.0 from (0.0:1.0]`, FBH-HBT's `Fb = 0.0 from (0.0:inf)` — and expect ranges to bind only user-*given* values; OpenVAF validated defaults too, rejecting the stock CMC models (diode_cmc, bsimcmg-110, psphv, fbh_hbt, the hisim family) at setup with "Parameter … is out of bounds". Defaults are now exempt while given values are still fully validated (`from` ranges and `exclude` constraints). **(2) A singular AC matrix during noise analysis crashed ngspice with a SIGABRT** — `noisean.c` ignored `NIacIter`'s return and the noise adjoint solve then asserted on the unfactored matrix; it now aborts cleanly ("AC solution failed at … Hz"), and the noise analysis honors Enhancement-55's deferred `$finish`/`$stop` raised at its operating point. **(3)** A `$fatal`/`$finish` raised during *setup* (models rejecting their configuration by design, e.g. HiSIM's `$port_connected`/`COSUBNODE` guards) surfaced as ngspice's baffling "impossible error - can't occur" — now "a Verilog-A device rejected its configuration during setup". Every remaining sweep failure was triaged to by-design model behavior with documented workarounds (HiSIM config guards; `vbic_4T_et_cf` floats internal nodes at `RCX=0` — use `.option rshunt`; EPFL-HEMT bias sensitivity; FBH-HBT divides by its own disabled default `Fb=0` — give `fb>0`). A sweep-harness lesson worth recording: ngspice control scripts *continue past aborted analyses*, so completion must be detected from data, not echo markers.
+
+- Verified with 13 end-to-end checks including the real corpus reproducers: out-of-range defaults accepted with exact solutions, three forms of given-value rejection still enforced, the hisimsoi noise-crash reproducer aborts cleanly (was SIGABRT), and the stock CMC `diode_cmc` runs op/AC/noise at defaults — see `examples/paramrange_examples/`
+- Corpus after the fixes: **83/92 models fully green** end-to-end (the rest by-design, documented); all 88 noise runs crash-free
+- Regression-checked: all 52 example verify suites ALL PASS; 28/28 crate tests
+- Details: [Enhancement-56.md](enhancements_doc/Enhancement-56.md)
+
+---
+
 ## Prebuilt Binaries
 
 Binaries are built by CI and committed to `bin/`:

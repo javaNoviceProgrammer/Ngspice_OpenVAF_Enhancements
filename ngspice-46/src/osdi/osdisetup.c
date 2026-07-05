@@ -28,7 +28,14 @@
  */
 static int handle_init_info(OsdiInitInfo info, const OsdiDescriptor *descr) {
   if (info.flags & (EVAL_RET_FLAG_FATAL | EVAL_RET_FLAG_FINISH)) {
-    return (E_PANIC);
+    /* Enhancement-56: a Verilog-A $fatal/$finish during setup is the model
+     * rejecting its parameters/configuration (the model's own message was
+     * already printed via the log callback). Say so instead of surfacing
+     * E_PANIC's baffling "impossible error - can't occur". */
+    errMsg = tprintf("a Verilog-A device rejected its configuration during "
+                     "setup (%s raised)",
+                     (info.flags & EVAL_RET_FLAG_FATAL) ? "$fatal" : "$finish");
+    return (E_PRIVATE);
   }
 
   if (info.num_errors == 0) {

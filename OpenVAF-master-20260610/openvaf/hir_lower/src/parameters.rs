@@ -111,31 +111,20 @@ impl HirInterner {
                     }
                     param_val
                 } else {
-                    // Builds the else block for the case when param is not given
+                    // Builds the else block for the case when param is not given.
+                    //
+                    // Enhancement-56: the DEFAULT value is deliberately NOT
+                    // range-checked. CMC-standard models routinely declare a
+                    // default outside the parameter's own range as the
+                    // "feature disabled" state -- e.g. diode_cmc's
+                    // `CORECOVERY = 0.0 from (0.0:1.0]` -- and expect the
+                    // range to bind only user-GIVEN values (which the branch
+                    // above still validates). Checking defaults rejected the
+                    // stock CMC models (diode_cmc, bsimcmg 110, fbh_hbt,
+                    // hisimhv, ...) at setup with "parameter out of bounds".
                     let default_val = ctx.lower_expr_body(body.borrow(), 0);
                     if build_stores {
-                        let exit = ctx.create_block();
-                        let mut ctx = BodyLoweringCtx { ctx, body: body.borrow(), path: "" };
-                        ctx.check_param(
-                            default_val,
-                            &bounds,
-                            &[],
-                            ConstraintKind::From,
-                            ops,
-                            invalid,
-                            exit,
-                        );
-                        ctx.check_param(
-                            default_val,
-                            &bounds,
-                            &[],
-                            ConstraintKind::Exclude,
-                            ops,
-                            invalid,
-                            exit,
-                        );
-                        ctx.ctx.switch_to_block(exit);
-                        default_vals[i] = ctx.ctx.ins().optbarrier(default_val);
+                        default_vals[i] = ctx.ins().optbarrier(default_val);
                     }
                     default_val
                 }
