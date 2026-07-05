@@ -712,6 +712,16 @@ Several unrelated language gaps found along the way are also fixed. **`localpara
 
 ---
 
+## Enhancement 57: physics-accuracy validation suite
+
+*July 2026* — A permanent, quantitative **physics regression suite** (`examples/physcheck_examples/`): where Enhancement-56's sweep asked *does it run*, this validates *the numbers* — industry models from `VA_TEST/` must reproduce **analytic device laws** through the whole toolchain (lowering, autodiff Jacobians, the AC path, the noise pipeline). Five laws: the CMC resistor's thermal noise is **identical to a built-in ngspice resistor** (< 10⁻⁶ — a constants-free 4kT/R identity); `diode_cmc` follows the **60 mV/decade** junction law with ideality 1.004–1.009 in its ideal region (below ~0.9 V the model's recombination/TAT components dominate by design — a documented trap for naive low-bias checks); the MEXTRAM 505 **Gummel plot** shows n = 1.012–1.017 and a textbook β curve; PSP103's **AC-derived g_m/g_ds equal the numeric derivatives of the DC curves to ~10⁻⁵** — cross-validating the autodiff Jacobian against the residual on a flagship compact model; and JUNCAP200's C(V) obeys the **junction grading law self-consistently** to ~10⁻⁴. No toolchain defects were found — the deliverable is the guard itself, plus `plot_physcheck.py`, which renders all five laws as PNG plots (committed under `examples/physcheck_examples/plots/`).
+
+- 13 checks, ALL PASS (skipped gracefully if the corpus is absent); all 53 example verify suites ALL PASS
+- No compiler or ngspice source changes in this enhancement
+- Details: [Enhancement-57.md](enhancements_doc/Enhancement-57.md)
+
+---
+
 ## Prebuilt Binaries
 
 Binaries are built by CI and committed to `bin/`:

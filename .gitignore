@@ -318,5 +318,10 @@ examples/paramrange_examples/_*.cir
 examples/paramrange_examples/_*.va
 examples/paramrange_examples/_*.osdi
 
+# Enhancement 57 physics-check example scripts: temp netlists + models + data
+examples/physcheck_examples/_*.cir
+examples/physcheck_examples/_*.osdi
+examples/physcheck_examples/_*.dat
+
 # Python bytecode cache (e.g. from importing _setup.py)
 __pycache__/
