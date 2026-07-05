@@ -764,6 +764,17 @@ extern CMat* ctransposeconj(CMat* source)
 }
 
 CMat* cadjoint(CMat* A) {
+	/* Enhancement-64: 1x1 base case -- the adjugate of [a] is [1] (the
+	   empty minor's determinant is 1 by convention), making cinverse of
+	   a 1x1 equal 1/a. Without this the cofactor loop below allocates
+	   0x0 and then negative-sized minors (a 1-port .sp analysis died
+	   with "malloc: can't allocate -8 bytes"). */
+	if (A->row == 1 && A->col == 1) {
+		CMat* B1 = newcmatnoinit(1, 1);
+		B1->d[0][0].re = 1.0;
+		B1->d[0][0].im = 0.0;
+		return B1;
+	}
 	CMat* B = newcmatnoinit(A->row, A->col);
 	CMat* A1 = newcmatnoinit(A->row - 1, A->col);
 	CMat* A2 = newcmatnoinit(A->row - 1, A->col - 1);

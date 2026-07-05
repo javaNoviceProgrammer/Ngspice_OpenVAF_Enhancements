@@ -390,11 +390,10 @@ SPan(CKTcircuit* ckt, int restart)
         controlled_exit(EXIT_BAD);
     }
 
-    if (ckt->CKTportCount == 1)
-    {
-        fprintf(stderr, "\nError: Only one RF Port is found, we need at least two!\n");
-        controlled_exit(EXIT_BAD);
-    }
+    /* Enhancement-64: a single port is a perfectly good S-parameter
+       measurement (reflection, .s1p); the matrix machinery below is
+       N-general, so the old hard error was over-strict. The 2-port-only
+       noise-parameter block stays gated on CKTportCount == 2. */
 
 #ifdef XSPICE
     /* Tell the code models what mode we're in */
@@ -497,7 +496,9 @@ SPan(CKTcircuit* ckt, int restart)
             plot = NULL;
         }
 
-        int extraSPdataLength = 3 * ckt->CKTportCount * ckt->CKTportCount;
+        /* Enhancement-64: +1 for the Rbase vector (the ports' reference
+           resistance) so wrs2p/wrsnp work without a manual `let Rbase` */
+        int extraSPdataLength = 3 * ckt->CKTportCount * ckt->CKTportCount + 1;
         if (job->SPdoNoise)
         {
             extraSPdataLength += ckt->CKTportCount * ckt->CKTportCount; // Add Cy
@@ -537,6 +538,11 @@ SPan(CKTcircuit* ckt, int restart)
 
                 SPfrontEnd->IFnewUid(ckt, &(nameList[numNames++]), NULL, tmpBuf, UID_OTHER, NULL);
             }
+
+        /* Enhancement-64: publish the reference resistance of the ports as
+           a vector, so the Touchstone writers can label the file header
+           (`# Hz S RI R <Rbase>`) without user intervention. */
+        SPfrontEnd->IFnewUid(ckt, &(nameList[numNames++]), NULL, "Rbase", UID_OTHER, NULL);
 
         // Add noise related output, if needed
         if (job->SPdoNoise)

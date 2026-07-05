@@ -782,6 +782,16 @@ Several unrelated language gaps found along the way are also fixed. **`localpara
 
 ---
 
+## Enhancement 64: Touchstone export — auto-`Rbase`, N-port `wrsnp`, 1-port `.sp`
+
+*July 2026* — Made S-parameter results exportable to industry-standard **Touchstone v1** files, following directly from Enhancement-63's findings. Three fixes, all ngspice-side. **(1) `wrs2p` was unusable out of the box**: it demanded a vector named `Rbase` (the reference resistance for the `# Hz S RI R <Rbase>` option line) that no code ever created — every call failed with `No Rbase vector given` unless the user knew the undocumented `let Rbase = 50` incantation, and a wrong value silently mislabeled the file. The `.sp` analysis now **publishes `Rbase` into its plot** (read from port 1's `z0`), so the writers work with no manual step; a user-defined `let Rbase` still overrides, and the reader handles the plot's complex data robustly. **(2) New `wrsnp` command** (with `wrs2p` dispatching to the same handler): Touchstone v1 for **any port count** — N ≥ 3 in the spec's row-major layout with at most four complex pairs per data line and each matrix row starting on a new line; a 1-port is one pair per line; the classic 2-port `S11 S21 S12 S22` column order is preserved, and `wrsnp` on a 2-port produces a byte-identical file to `wrs2p`. **(3) 1-port `.sp` analyses now run at all**: the "we need at least two ports" hard error was over-strict (a 1-port is a plain reflection measurement and the matrix machinery is N-general) — and it was hiding a real crash: the complex-matrix `cadjoint()` had no 1×1 base case, so its cofactor loop allocated negative-sized minors and ngspice died with `malloc: can't allocate -8 bytes`. The adjugate of `[a]` is `[1]`, making `cinverse` of a 1×1 equal `1/a`; a 100 Ω load on a 50 Ω port now writes a proper `.s1p` with S11 = 1/3 exactly.
+
+- Verified with 11 end-to-end checks — auto-`Rbase` header + file-vs-plot value identity, the `wrs2p`/`wrsnp` byte-identity, `let Rbase` override, 1-port/.s1p (crash-fix pin), `.s3p` row-major layout with exact star values, `.s5p` wrap-at-4-pairs — see `examples/touchstone_examples/`
+- Regression-checked: all 60 example verify suites ALL PASS with the rebuilt ngspice; no compiler change
+- Details: [Enhancement-64.md](enhancements_doc/Enhancement-64.md)
+
+---
+
 ## Prebuilt Binaries
 
 Binaries are built by CI and committed to `bin/`:

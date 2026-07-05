@@ -349,5 +349,9 @@ examples/analyses_examples/_*.txt
 # Enhancement 63 rf-analyses example scripts: temp netlists
 examples/rfanalyses_examples/_*.cir
 
+# Enhancement 64 touchstone example scripts: temp netlists + generated .sNp files
+examples/touchstone_examples/_*.cir
+examples/touchstone_examples/_*.s?p
+
 # Python bytecode cache (e.g. from importing _setup.py)
 __pycache__/

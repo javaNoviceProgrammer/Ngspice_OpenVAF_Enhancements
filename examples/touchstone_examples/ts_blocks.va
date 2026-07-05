@@ -1,0 +1,12 @@
+// Enhancement-64: OSDI building blocks for the Touchstone-export suite.
+`include "disciplines.vams"
+
+module ores(a,c); inout a,c; electrical a,c;
+  parameter real r = 1e3;
+  analog I(a,c) <+ V(a,c)/r;
+endmodule
+
+module ocap(a,c); inout a,c; electrical a,c;
+  parameter real cap = 1e-9;
+  analog I(a,c) <+ ddt(cap*V(a,c));
+endmodule
