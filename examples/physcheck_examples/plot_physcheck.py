@@ -38,7 +38,9 @@ def compile_model(rel, name):
     osdi = os.path.join(HERE, f"_{name}.osdi")
     subprocess.run([OPENVAF, src, "-o", osdi], check=True,
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    return osdi
+    # decks run with cwd=HERE: reference the model RELATIVELY (keeps every
+    # generated artifact free of machine-specific absolute paths)
+    return f"_{name}.osdi"
 
 
 def run(deck, name):
