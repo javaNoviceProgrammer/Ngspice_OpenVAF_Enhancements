@@ -68,7 +68,19 @@ impl<'a> Test<'a> {
     where
         'a: 'r,
     {
-        read_dir(dir).expect("reading test data must succeed").flatten().filter_map(move |entry| {
+        // Enhancement-68: a missing test-data directory skips its tests
+        // with a note instead of panicking the whole harness.
+        let entries = match read_dir(dir) {
+            Ok(entries) => Some(entries),
+            Err(_) => {
+                eprintln!(
+                    "note: skipping '{name}' tests -- test-data directory {} not found",
+                    dir.display()
+                );
+                None
+            }
+        };
+        entries.into_iter().flatten().flatten().filter_map(move |entry| {
             let path = entry.path();
             if !filter(&path) {
                 return None;

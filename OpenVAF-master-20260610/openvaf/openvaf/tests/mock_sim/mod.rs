@@ -73,8 +73,11 @@ impl MockSimulation {
         }
     }
 
+    /// Flat (resistive) noise density of source `src`. Since OSDI 0.7
+    /// (Enhancement-54) `load_noise` fills [flat, j*omega-routed] signed
+    /// power PAIRS per source -- stride 2, the flat part first.
     pub fn read_noise(&mut self, src: usize) -> f64 {
-        self.noise_dense[src]
+        self.noise_dense[2 * src]
     }
 
     pub fn set_voltage(&mut self, node: &str, voltage: f64) {
@@ -177,7 +180,8 @@ impl OsdiInstance {
         }
         sim.state_1.resize(self.descriptor.num_states as usize, 0.0);
         sim.state_2.resize(self.descriptor.num_states as usize, 0.0);
-        sim.noise_dense.resize(self.descriptor.num_noise_src as usize, 0.0);
+        // stride 2 per source since OSDI 0.7 (see read_noise)
+        sim.noise_dense.resize(2 * self.descriptor.num_noise_src as usize, 0.0);
         Ok(sim)
     }
 

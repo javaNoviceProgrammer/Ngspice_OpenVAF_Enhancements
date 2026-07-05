@@ -328,7 +328,10 @@ pub unsafe fn load_osdi_lib(path: &Utf8Path) -> Result<&'static [OsdiDescriptor]
     let major_version: &u32 = *lib.get(b"OSDI_VERSION_MAJOR\0")?;
     let minor_version: &u32 = *lib.get(b"OSDI_VERSION_MINOR\0")?;
 
-    if *major_version != 0 || *minor_version != 4 {
+    // OSDI 0.7: 0.5 added OsdiNode.nodeset (stride change), 0.6 the ac_stim
+    // descriptor tail, 0.7 the stride-2 signed-pair load_noise convention --
+    // this loader matches exactly that layout, so gate on 0.7 alone.
+    if *major_version != 0 || *minor_version != 7 {
         bail!("invalid version v{major_version}.{minor_version}",);
     }
 

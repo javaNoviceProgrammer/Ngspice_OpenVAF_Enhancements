@@ -822,6 +822,16 @@ Several unrelated language gaps found along the way are also fixed. **`localpara
 
 ---
 
+## Enhancement 68: openvaf's own integration test suite, enabled
+
+*July 2026* — The fork ships an **integration test suite over real compact models** (BSIM3/4/6, BSIMBULK, BSIMCMG/IMG/SOI, the HiSIM family, MEXTRAM, PSP102/103, HICUM, EKV, ASMHEMT, diode_cmc — descriptor snapshots plus operating-point sanity checks per model, and live numeric `$limit`/`noise` tests against a mock simulator) that had **never run in this project**: its tests are gated behind `RUN_DEV_TESTS=1`, its optional VACASK legs panicked the whole harness on the never-initialized `external/vacask` submodule, and — most tellingly — its own **OSDI loader was frozen at ABI 0.4**, rejecting every binary this compiler produces ("invalid version v0.7"). All fixed, test-side only (the shipped compiler binary is byte-unchanged): the test loader synced to the OSDI 0.7 layout (`OsdiNode.nodeset` from E-45, the `ac_stim` descriptor tail from E-51, version gate 0.7); the mock simulator's noise buffer updated to E-54's stride-2 signed-pair convention (the `noise` test's expected values turned out numerically unchanged — a nice independent confirmation of that convention); a missing test-data directory now skips with a note instead of panicking the harness; and **13 snapshots regenerated and reviewed line by line** — every diff is a known feature of this project (`flow(<port>)` DAE unknowns from E-29, probe-only branches from E-36, implicit-equation nodes and their Jacobian entries), with no parameter-metadata or physics changes. The upstream VACASK legs (34 tests + 34 stale snapshots + the submodule reference) were **removed outright**: VACASK is AGPL-3.0 and cannot be vendored here, and the suite is better fully self-contained (the legs were run once against a temporary clone — they passed — before removal). Bonus: `RUN_DEV_TESTS=1` also un-ignores long-dormant harness tests in parser (41), syntax (40), and hir_lower (30) — all passing.
+
+- Run it: `RUN_DEV_TESTS=1 cargo test --release -p openvaf --features openvaf/llvm18 --test integration` → **28 passed**
+- Regression-checked: all example verify suites pass; crate tests pass with and without `RUN_DEV_TESTS`; the VA_TEST corpus compiles 92/92; the compiler binary is unchanged
+- Details: [Enhancement-68.md](enhancements_doc/Enhancement-68.md)
+
+---
+
 ## Prebuilt Binaries
 
 Binaries are built by CI and committed to `bin/`:

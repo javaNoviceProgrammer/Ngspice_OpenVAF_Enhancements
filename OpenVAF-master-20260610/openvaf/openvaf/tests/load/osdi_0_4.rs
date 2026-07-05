@@ -3,7 +3,7 @@
 use std::os::raw::{c_char, c_void};
 
 pub const OSDI_VERSION_MAJOR_CURR: u32 = 0;
-pub const OSDI_VERSION_MINOR_CURR: u32 = 4;
+pub const OSDI_VERSION_MINOR_CURR: u32 = 7;
 pub const PARA_TY_MASK: u32 = 3;
 pub const PARA_TY_REAL: u32 = 0;
 pub const PARA_TY_INT: u32 = 1;
@@ -121,6 +121,9 @@ pub struct OsdiNode {
     pub react_residual_off: u32,
     pub resist_limit_rhs_off: u32,
     pub react_limit_rhs_off: u32,
+    /// nodeset (initial-guess) value from a net initializer
+    /// (`electrical a = 5.0;`, Enhancement-45); NAN if none
+    pub nodeset: f64,
     pub is_flow: bool,
 }
 #[repr(C)]
@@ -141,6 +144,13 @@ pub struct OsdiNoiseSource {
 pub struct OsdiNatureRef {
     pub ref_type: u32,
     pub index: u32,
+}
+/// Enhancement-51: `ac_stim` small-signal stimulus source; `node_2 ==
+/// u32::MAX` means ground.
+#[repr(C)]
+pub struct OsdiAcStimSource {
+    pub analysis: *mut c_char,
+    pub nodes: OsdiNodePair,
 }
 #[repr(C)]
 #[non_exhaustive]
@@ -197,6 +207,11 @@ pub struct OsdiDescriptor {
     pub noise_source_type: *mut u32,
     pub load_noise_params: fn(*mut c_void, *mut c_void, *mut f64, *mut f64),
     pub module_flags: u32,
+    /// Enhancement-51 (OSDI 0.6): ac_stim small-signal stimulus sources;
+    /// `load_ac_stim` fills [re, im] pairs, one per source.
+    pub num_ac_stim_src: u32,
+    pub ac_stim_sources: *mut OsdiAcStimSource,
+    pub load_ac_stim: fn(*mut c_void, *mut c_void, *mut f64),
 }
 impl OsdiDescriptor {
     pub fn access(

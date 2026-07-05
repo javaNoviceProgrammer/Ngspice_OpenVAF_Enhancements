@@ -291,6 +291,9 @@ node "n1" units = "V", runits = "A"
 node "n2" units = "V", runits = "A"
 node "implicit_equation_0" units = "", runits = ""
 node "implicit_equation_1" units = "", runits = ""
+node(flow) "flow(<b>)" units = "A", runits = "A"
+node(flow) "flow(<c>)" units = "A", runits = "A"
+node(flow) "flow(<s>)" units = "A", runits = "A"
 jacobian (c, c) JacobianFlags(JACOBIAN_ENTRY_RESIST | JACOBIAN_ENTRY_REACT)
 jacobian (c, s) JacobianFlags(JACOBIAN_ENTRY_REACT | JACOBIAN_ENTRY_RESIST_CONST)
 jacobian (c, tnode) JacobianFlags(JACOBIAN_ENTRY_RESIST | JACOBIAN_ENTRY_REACT)
@@ -385,6 +388,22 @@ jacobian (implicit_equation_0, n1) JacobianFlags(JACOBIAN_ENTRY_REACT | JACOBIAN
 jacobian (implicit_equation_0, implicit_equation_0) JacobianFlags(JACOBIAN_ENTRY_RESIST | JACOBIAN_ENTRY_RESIST_CONST | JACOBIAN_ENTRY_REACT_CONST)
 jacobian (implicit_equation_1, n2) JacobianFlags(JACOBIAN_ENTRY_REACT | JACOBIAN_ENTRY_RESIST_CONST)
 jacobian (implicit_equation_1, implicit_equation_1) JacobianFlags(JACOBIAN_ENTRY_RESIST | JACOBIAN_ENTRY_RESIST_CONST | JACOBIAN_ENTRY_REACT_CONST)
+jacobian (flow(<b>), b) JacobianFlags(JACOBIAN_ENTRY_RESIST | JACOBIAN_ENTRY_REACT)
+jacobian (flow(<b>), e) JacobianFlags(JACOBIAN_ENTRY_REACT | JACOBIAN_ENTRY_RESIST_CONST)
+jacobian (flow(<b>), tnode) JacobianFlags(JACOBIAN_ENTRY_RESIST | JACOBIAN_ENTRY_REACT)
+jacobian (flow(<b>), ci) JacobianFlags(JACOBIAN_ENTRY_REACT | JACOBIAN_ENTRY_RESIST_CONST)
+jacobian (flow(<b>), bp) JacobianFlags(JACOBIAN_ENTRY_RESIST | JACOBIAN_ENTRY_REACT_CONST)
+jacobian (flow(<b>), flow(<b>)) JacobianFlags(JACOBIAN_ENTRY_RESIST | JACOBIAN_ENTRY_RESIST_CONST | JACOBIAN_ENTRY_REACT_CONST)
+jacobian (flow(<c>), c) JacobianFlags(JACOBIAN_ENTRY_RESIST | JACOBIAN_ENTRY_REACT)
+jacobian (flow(<c>), s) JacobianFlags(JACOBIAN_ENTRY_REACT | JACOBIAN_ENTRY_RESIST_CONST)
+jacobian (flow(<c>), tnode) JacobianFlags(JACOBIAN_ENTRY_RESIST | JACOBIAN_ENTRY_REACT)
+jacobian (flow(<c>), ci) JacobianFlags(JACOBIAN_ENTRY_RESIST | JACOBIAN_ENTRY_REACT_CONST)
+jacobian (flow(<c>), flow(<c>)) JacobianFlags(JACOBIAN_ENTRY_RESIST | JACOBIAN_ENTRY_RESIST_CONST | JACOBIAN_ENTRY_REACT_CONST)
+jacobian (flow(<s>), c) JacobianFlags(JACOBIAN_ENTRY_REACT | JACOBIAN_ENTRY_RESIST_CONST)
+jacobian (flow(<s>), s) JacobianFlags(JACOBIAN_ENTRY_RESIST | JACOBIAN_ENTRY_REACT)
+jacobian (flow(<s>), tnode) JacobianFlags(JACOBIAN_ENTRY_REACT | JACOBIAN_ENTRY_RESIST_CONST)
+jacobian (flow(<s>), si) JacobianFlags(JACOBIAN_ENTRY_RESIST | JACOBIAN_ENTRY_REACT)
+jacobian (flow(<s>), flow(<s>)) JacobianFlags(JACOBIAN_ENTRY_RESIST | JACOBIAN_ENTRY_RESIST_CONST | JACOBIAN_ENTRY_REACT_CONST)
 collapsible (implicit_equation_0, gnd)
 collapsible (implicit_equation_1, gnd)
 collapsible (b, bp)
