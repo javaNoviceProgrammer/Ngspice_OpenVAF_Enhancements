@@ -365,5 +365,8 @@ examples/montecarlo_examples/_*.cir
 examples/generate_examples/_*.cir
 examples/generate_examples/_gen_param_if.osdi
 
+# Enhancement 69 opvar example scripts: temp netlists
+examples/opvar_examples/_*.cir
+
 # Python bytecode cache (e.g. from importing _setup.py)
 __pycache__/

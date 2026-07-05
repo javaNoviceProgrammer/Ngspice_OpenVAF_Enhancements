@@ -1,0 +1,16 @@
+`include "disciplines.vams"
+module opvdemo(a, c);
+  inout a, c; electrical a, c;
+  parameter real r = 1e3;
+  (* desc="branch current", units="A" *)   real ids;
+  (* desc="conductance", units="S" *)      real gm;
+  (* desc="region flag" *)                 integer region;
+  real hidden;                              // no desc: should NOT be an opvar
+  analog begin
+    ids = V(a, c)/r;
+    gm = 1.0/r;
+    region = (V(a, c) > 0.5) ? 2 : 1;
+    hidden = 42.0;
+    I(a, c) <+ ids;
+  end
+endmodule

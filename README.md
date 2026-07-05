@@ -832,6 +832,16 @@ Several unrelated language gaps found along the way are also fixed. **`localpara
 
 ---
 
+## Enhancement 69: operating-point variables end-to-end — validation
+
+*July 2026* — Audited **operating-point-variable (opvar) access** — Verilog-A module variables carrying a `(* desc="..." *)` attribute, exposed through the OSDI descriptor and read back from ngspice as `@instance[variable]` — across every access path, and found the surface **fully working**; like Enhancements 57, 60, and 66, the deliverable is the validation itself. Verified exact: **`.op` access** for real *and integer* opvars (a variable *without* a desc attribute is correctly not exposed — clean error, no silent zero); **`.tran` per-point recording** for both types (the Enhancement-32 `outitf.c` integer fix finally gets its regression pin); **`.dc` sweeps** with the integer flag stepping exactly at the threshold; **`.ac`** recording with two instances of one model kept distinct; **`.meas`** MAX/MIN/AVG on opvar vectors plus `WHEN … RISE` verified against the analytic crossing time asin(0.5)/2π (83.3334 ns measured); and **string opvars** displaying via `show <inst>` while the inherently-numeric vector path fails with a clear message (pinned) rather than a crash. A symmetry worth remembering: instance access to *parameters* needs `(* type="instance" *)` (E-62), instance access to *variables* needs `(* desc *)` (E-69).
+
+- Verified with 11 end-to-end checks — see `examples/opvar_examples/`
+- **No compiler or ngspice source changes**; the Enhancement-68 regression state stands
+- Details: [Enhancement-69.md](enhancements_doc/Enhancement-69.md)
+
+---
+
 ## Prebuilt Binaries
 
 Binaries are built by CI and committed to `bin/`:

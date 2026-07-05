@@ -1,0 +1,11 @@
+`include "disciplines.vams"
+module opvstr(a, c);
+  inout a, c; electrical a, c;
+  (* desc="mode name" *) string modename;
+  (* desc="current", units="A" *) real ids;
+  analog begin
+    modename = (V(a,c) > 0.5) ? "high" : "low";
+    ids = V(a,c)/1e3;
+    I(a,c) <+ ids;
+  end
+endmodule
