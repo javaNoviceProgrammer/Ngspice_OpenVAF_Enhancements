@@ -48,7 +48,7 @@ jobs:
           # need to be dropped again around then, this time for good.
           - { name: macos-intel,         os: macos-26-intel,   bin: macos/intel }
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: Install build deps (Linux)
         if: runner.os == 'Linux'
@@ -74,6 +74,14 @@ jobs:
       - name: Install build deps (macOS)
         if: runner.os == 'macOS'
         run: |
+          # Silence two CI warnings from the runner image: it ships an
+          # untrusted third-party tap (aws/tap) that brew now warns about,
+          # and llvm@15 pre-linked, which makes the llvm@18 install print a
+          # "not linked" warning. Neither is used by this build -- openvaf
+          # gets LLVM 18 via LLVM_SYS_181_PREFIX + PATH below, never via the
+          # brew link, and ngspice builds with Apple's /usr/bin/clang.
+          brew untap aws/tap 2>/dev/null || true
+          brew unlink llvm@15 2>/dev/null || true
           brew update
           brew install llvm@18 automake autoconf libtool bison flex readline ncurses
           # XQuartz provides the X11 headers/libs at /opt/X11 for --with-x.
@@ -109,7 +117,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache cargo + target
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry
@@ -152,7 +160,7 @@ jobs:
           ls -lh "out/bin/${{ matrix.bin }}/"
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: bin-${{ matrix.name }}
           path: out/
@@ -165,7 +173,7 @@ jobs:
     name: windows-intel
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - uses: msys2/setup-msys2@v2
         with:
@@ -283,7 +291,7 @@ jobs:
           ls -lh out/bin/windows/intel/
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: bin-windows-intel
           path: out/
@@ -297,7 +305,7 @@ jobs:
     if: ${{ always() && (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main') }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           ref: main
 
@@ -306,7 +314,7 @@ jobs:
       # exactly the set of platforms that built — partial runs are fine.
       # merge-multiple combines each platform's bin/<os>/<arch> tree into one.
       - name: Download successful platform artifacts
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v8
         with:
           path: _artifacts
           merge-multiple: true
