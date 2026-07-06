@@ -84,3 +84,4 @@ table is the enhancement index of the top-level
 | 74 | Performance benchmark — OSDI-vs-built-in twins at parity (RC ladder 0.99×), flagship compile times | [doc](../../enhancements_doc/Enhancement-74.md) | [benchmark](../../examples/benchmark_examples/) |
 | 75 | Dynamic physics validation — reactive paths cross-checked (Cgg AC ≡ transient, charge conservation, tran-sine ≡ .ac) | [doc](../../enhancements_doc/Enhancement-75.md) | [dynphys](../../examples/dynphys_examples/) |
 | 76 | Multi-module `.osdi` libraries — audit + registration fixes (duplicate warning, double-load skip, stock `.model` segfault) | [doc](../../enhancements_doc/Enhancement-76.md) | [multimod](../../examples/multimod_examples/) |
+| 77 | ngspice zero-warning build (33 → 0) — SDK macro clashes, `%Id`→`%zu` (readable plot-memory errors), codemodel `dynamic_lookup` | [doc](../../enhancements_doc/Enhancement-77.md) | — |

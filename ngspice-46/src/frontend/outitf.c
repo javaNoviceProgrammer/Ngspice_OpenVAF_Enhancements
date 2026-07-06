@@ -562,8 +562,8 @@ OUTpD_memory(runDesc *run, IFvalue *refValue, IFvalue *valuePtr)
         size_t memavail = getAvailableMemorySize();
 
         if (memrequ > memavail) {
-            fprintf(stderr, "\nError: memory required (%Id Bytes)\n"
-                "       is more than memory available (%Id Bytes)!\n",
+            fprintf(stderr, "\nError: memory required (%zu Bytes)\n"
+                "       is more than memory available (%zu Bytes)!\n",
                 memrequ, memavail);
             fprintf(stderr, "Setting the output memory is not possible.\n");
             controlled_exit(1);

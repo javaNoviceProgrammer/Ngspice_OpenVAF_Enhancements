@@ -52,10 +52,11 @@ typedef struct {
 #endif
 
 
+/* named OSDI_ALIGN: plain ALIGN collides with the macOS SDK <sys/param.h> */
 #ifndef _MSC_VER
-#define ALIGN(pow) __attribute__((aligned(pow)))
+#define OSDI_ALIGN(pow) __attribute__((aligned(pow)))
 #else
-#define ALIGN(pow) __declspec(align(pow))
+#define OSDI_ALIGN(pow) __declspec(align(pow))
 #endif
 
 /* Per-absdelay slot descriptor read from the .osdi binary at load time. */
@@ -149,7 +150,7 @@ typedef struct OsdiExtraInstData {
   uint32_t prev_point_eval_flags;
   bool discont_retry;
 
-} ALIGN(MAX_ALIGN) OsdiExtraInstData;
+} OSDI_ALIGN(MAX_ALIGN) OsdiExtraInstData;
 
 /* Enhancement-7: extra bit in the eval() `flags` input (see
  * OsdiSimInfo.flags / eval_flags convention in osdi_0_4.h), set by
