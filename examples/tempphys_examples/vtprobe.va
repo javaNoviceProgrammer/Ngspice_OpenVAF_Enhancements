@@ -1,0 +1,6 @@
+`include "disciplines.vams"
+module vtprobe(p, n);
+    inout p, n;
+    electrical p, n;
+    analog V(p, n) <+ $vt;
+endmodule

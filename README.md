@@ -28,7 +28,7 @@ https://ngspice.sourceforge.io/
 
 ## The Enhancements
 
-Seventy-nine enhancements so far — language features, correctness fixes, systematic audits, and simulator-side workflow tooling, each verified end-to-end by a committed example suite and released with a detailed write-up.
+Eighty enhancements so far — language features, correctness fixes, systematic audits, and simulator-side workflow tooling, each verified end-to-end by a committed example suite and released with a detailed write-up.
 
 **📖 Start with the [User Handbook](docs/handbook/README.md)**, which organizes everything by topic: [getting started](docs/handbook/01-getting-started.md), the [Verilog-A feature matrix](docs/handbook/02-verilog-a-language.md), [ngspice workflows](docs/handbook/03-ngspice-workflows.md), and the [limitations & gotchas](docs/handbook/04-limitations-and-gotchas.md). The whole handbook plus the complete text of every enhancement write-up is also one linked PDF: [docs/Ngspice-OpenVAF-Handbook.pdf](docs/Ngspice-OpenVAF-Handbook.pdf).
 
@@ -115,6 +115,7 @@ The index: **Doc** links each enhancement's detailed write-up, **Examples** link
 | 77 | ngspice zero-warning build (33 → 0) — SDK macro clashes, `%Id`→`%zu` (readable plot-memory errors), codemodel `dynamic_lookup` | [doc](enhancements_doc/Enhancement-77.md) | — |
 | 78 | `casex`/`casez` — don't-care digits in item literals as comparison masks (priority-encoder idiom) | [doc](enhancements_doc/Enhancement-78.md) | [casexz](examples/casexz_examples/) |
 | 79 | Benchmark round 2 — BSIM4 ring-oscillator twin (1.1% freq match), `.ac`/`.noise` throughput, KLU-vs-SPARSE + solver-independence pin | [doc](enhancements_doc/Enhancement-79.md) | [benchmark](examples/benchmark_examples/) |
+| 80 | Temperature physics — `$vt`≡kT/q, `dtemp` alias fix, noise ∝ T, MEXTRAM E_g = 1.25 eV, PSP103 ZTC flip | [doc](enhancements_doc/Enhancement-80.md) | [tempphys](examples/tempphys_examples/) |
 
 ---
 

@@ -114,7 +114,8 @@ extern SPICEdev *osdi_create_spicedev(const OsdiRegistryEntry *entry) {
     *num_instance_para_names += (int)(1 + descr->param_opvar[i].num_alias);
   }
   if (entry->dt != UINT32_MAX) {
-    *num_instance_para_names += 1;
+    /* "dt" plus the conventional "dtemp" spelling every built-in uses */
+    *num_instance_para_names += 2;
   }
 
   if (entry->temp != UINT32_MAX) {
@@ -131,7 +132,9 @@ extern SPICEdev *osdi_create_spicedev(const OsdiRegistryEntry *entry) {
   if (entry->dt != UINT32_MAX) {
     dst[0] = (IFparm){"dt", (int)entry->dt, IF_REAL | IF_SET,
                       "Instance delta temperature"};
-    dst += 1;
+    dst[1] = (IFparm){"dtemp", (int)entry->dt, IF_REAL | IF_SET,
+                      "Instance delta temperature"};
+    dst += 2;
   }
 
   if (entry->temp != UINT32_MAX) {
