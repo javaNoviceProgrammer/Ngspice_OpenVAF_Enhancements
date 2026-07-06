@@ -45,6 +45,11 @@ extern NGHASHPTR modtabhash;
 static IFparm *
 find_model_parameter(const char *name, IFdevice *device)
 {
+    /* devices without .model-card support (VCVS, CCCS, ...) have a NULL
+     * parameter table; a .model card naming such a type used to crash here */
+    if (!device->modelParms || !device->numModelParms)
+        return NULL;
+
     IFparm *p = device->modelParms;
     IFparm *p_end = p + *(device->numModelParms);
 

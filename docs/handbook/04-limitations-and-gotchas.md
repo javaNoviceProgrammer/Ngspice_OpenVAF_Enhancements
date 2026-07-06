@@ -95,8 +95,10 @@ scripting ngspice:
 - **`sp lin 2 f1 f2` yields one point** (a stock ngspice quirk; `lin 3`
   and up behave; [E-63](../../enhancements_doc/Enhancement-63.md)).
 - **Module names that collide with ngspice built-in device types**
-  (`cccs`, `vccs`, `vcvs`, …) break model creation — name your modules
-  something else ([E-29](../../enhancements_doc/Enhancement-29.md)).
+  (`cccs`, `vccs`, `vcvs`, …) are skipped with a warning — the built-in
+  keeps the name, so pick another module name to actually use the model
+  (this used to be a hard crash;
+  [E-76](../../enhancements_doc/Enhancement-76.md)).
 
 ## 4.6 Assorted edges
 

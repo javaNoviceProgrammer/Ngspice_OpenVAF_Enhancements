@@ -581,29 +581,70 @@ static void free_dlerr_msg(char *msg)
 #ifdef OSDI
 #include "ngspice/osdiitf.h"
 
+/* A device-type name may only be registered once: a duplicate would be
+ * unreachable at best (the model-card lookup scans the table and the first
+ * entry wins, silently shadowing the new one) and, for a Verilog-A module
+ * named like a built-in device, crashed model creation outright. */
+static bool osdi_device_name_taken(const char *name) {
+  int k;
+  for (k = 0; k < DEVNUM; k++) {
+    if (DEVices[k] && DEVices[k]->DEVpublic.name &&
+        strcasecmp(DEVices[k]->DEVpublic.name, name) == 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
 static int osdi_add_device(int n, OsdiRegistryEntry *devs) {
   int i;
+  int added = 0;
   int dnum = DEVNUM + n;
   DEVices = TREALLOC(SPICEdev *, DEVices, dnum);
 #ifdef XSPICE
   DEVicesfl = TREALLOC(int, DEVicesfl, dnum);
 #endif
   for (i = 0; i < n; i++) {
-    DEVices[DEVNUM + i] = osdi_create_spicedev(&devs[i]);
+    SPICEdev *dev = osdi_create_spicedev(&devs[i]);
+    if (osdi_device_name_taken(dev->DEVpublic.name)) {
+      printf("Warning(osdi): device \"%s\" is already registered; "
+             "keeping the existing device and ignoring this one\n",
+             dev->DEVpublic.name);
+      continue;
+    }
+    DEVices[DEVNUM + added] = dev;
 #ifdef TRACE
-    printf("Added device: %s\n", DEVices[DEVNUM + i]->DEVpublic.name);
+    printf("Added device: %s\n", DEVices[DEVNUM + added]->DEVpublic.name);
 #endif
+    added++;
   }
-  DEVNUM += n;
+  DEVNUM += added;
   relink();
   return 0;
 }
 
+/* Loading the same object file twice would only produce a page of duplicate
+ * warnings; note it once and skip. */
+static char **osdi_loaded_paths = NULL;
+static int osdi_num_loaded = 0;
+
 int load_osdi(const char *path) {
-  OsdiObjectFile file = load_object_file(path);
+  OsdiObjectFile file;
+  int k;
+  for (k = 0; k < osdi_num_loaded; k++) {
+    if (strcmp(osdi_loaded_paths[k], path) == 0) {
+      printf("Note(osdi): \"%s\" is already loaded; skipping\n", path);
+      return 0;
+    }
+  }
+
+  file = load_object_file(path);
   if (file.num_entries < 0) {
     return file.num_entries;
   }
+
+  osdi_loaded_paths = TREALLOC(char *, osdi_loaded_paths, osdi_num_loaded + 1);
+  osdi_loaded_paths[osdi_num_loaded++] = copy(path);
 
   osdi_add_device(file.num_entries, file.entrys);
   return 0;

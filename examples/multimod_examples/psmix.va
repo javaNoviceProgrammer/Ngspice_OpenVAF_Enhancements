@@ -1,0 +1,13 @@
+`include "disciplines.vams"
+module res_p(p, n);
+    inout p, n; electrical p, n;
+    parameter real r = 1k from (0:inf);
+    analog I(p, n) <+ V(p, n) / r;
+endmodule
+paramset fat res_p;
+    .r = 250;
+endparamset
+module other(p, n);
+    inout p, n; electrical p, n;
+    analog I(p, n) <+ V(p, n) / 4k;
+endmodule

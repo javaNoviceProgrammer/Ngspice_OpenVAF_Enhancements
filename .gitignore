@@ -388,5 +388,9 @@ examples/dynphys_examples/_*.cir
 examples/dynphys_examples/_*.dat
 examples/dynphys_examples/_*.osdi
 
+# Enhancement 76 multi-module scripts: temp decks + generated osdi
+examples/multimod_examples/_*.cir
+examples/multimod_examples/*.osdi
+
 # Python bytecode cache (e.g. from importing _setup.py)
 __pycache__/

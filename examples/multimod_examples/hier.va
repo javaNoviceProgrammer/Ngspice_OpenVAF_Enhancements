@@ -1,0 +1,16 @@
+`include "disciplines.vams"
+
+module leaf(p, n);
+    inout p, n;
+    electrical p, n;
+    parameter real r = 1k from (0:inf);
+    analog I(p, n) <+ V(p, n) / r;
+endmodule
+
+module top(a, b);
+    inout a, b;
+    electrical a, b;
+    leaf u1 (a, mid);
+    leaf #(.r(2k)) u2 (mid, b);
+    electrical mid;
+endmodule

@@ -1,0 +1,22 @@
+`include "disciplines.vams"
+
+module res_a(p, n);
+    inout p, n;
+    electrical p, n;
+    parameter real r = 1k from (0:inf);
+    analog I(p, n) <+ V(p, n) / r;
+endmodule
+
+module cond_b(p, n);
+    inout p, n;
+    electrical p, n;
+    parameter real g = 2m from (0:inf);
+    analog I(p, n) <+ g * V(p, n);
+endmodule
+
+module gainer_c(in, out);
+    inout in, out;
+    electrical in, out;
+    parameter real k = 3.0;
+    analog V(out) <+ k * V(in);
+endmodule
