@@ -89,3 +89,4 @@ table is the enhancement index of the top-level
 | 79 | Benchmark round 2 — BSIM4 ring-oscillator twin (1.1% freq match), `.ac`/`.noise` throughput, KLU-vs-SPARSE + solver-independence pin | [doc](../../enhancements_doc/Enhancement-79.md) | [benchmark](../../examples/benchmark_examples/) |
 | 80 | Temperature physics — `$vt`≡kT/q, `dtemp` alias fix, noise ∝ T, MEXTRAM E_g = 1.25 eV, PSP103 ZTC flip | [doc](../../enhancements_doc/Enhancement-80.md) | [tempphys](../../examples/tempphys_examples/) |
 | 81 | Session-lifecycle audit — reset loops leak-free, `destroy all` verified; once-per-excursion memory warning + `no_mem_check`, `pre_osdi` restart hint | [doc](../../enhancements_doc/Enhancement-81.md) | [lifecycle](../../examples/lifecycle_examples/) |
+| 82 | Provenance + compliance docs — full change reports for both tools (`docs/change_log/`) and the Verilog-A LRM compliance document (`docs/compliance/`) | [doc](../../enhancements_doc/Enhancement-82.md) | — |
