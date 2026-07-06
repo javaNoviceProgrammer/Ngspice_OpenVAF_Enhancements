@@ -36,7 +36,7 @@ error: unexpected token ':'; expected ';'
 
 Unlike Enhancement-1, this change is **entirely confined to OpenVAF**
 (parser → AST → HIR → HIR lowering). No ngspice/OSDI changes were needed —
-see [§6](#6-why-no-backendosdi-changes-were-needed).
+see [§5](#5-why-no-backendosdi-changes-were-needed).
 
 ---
 

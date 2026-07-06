@@ -1,4 +1,4 @@
-# Enhancement-1 changes — `absdelay` support for OSDI/Verilog-A in OpenVAF + ngspice
+# Enhancement-1 — `absdelay` support for OSDI/Verilog-A in OpenVAF + ngspice
 
 This document describes, step by step, every source change made to turn the
 **original** OpenVAF and ngspice-46 sources into **version 2**. It was produced
