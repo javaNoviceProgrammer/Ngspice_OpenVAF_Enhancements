@@ -6,7 +6,10 @@ in the project's `original/` snapshot, which already contains
 OpenVAF-Reloaded's stock OSDI support); the current state is the tree
 committed in this repository under `ngspice-46/`. Each entry links the
 enhancement write-up in [`enhancements_doc/`](../enhancements_doc/) that
-carries the full engineering detail and the verifying example suite.
+carries the full engineering detail and the verifying example suite. The
+companion document
+[openvaf_changes_full-report.md](openvaf_changes_full-report.md) covers
+the compiler side.
 
 > **Maintenance note:** this report is updated whenever an enhancement
 > touches ngspice sources. If you are reading it alongside a newer tree,
