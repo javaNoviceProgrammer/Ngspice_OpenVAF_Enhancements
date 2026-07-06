@@ -94,6 +94,10 @@ scripting ngspice:
   ([E-56](../../enhancements_doc/Enhancement-56.md)).
 - **`sp lin 2 f1 f2` yields one point** (a stock ngspice quirk; `lin 3`
   and up behave; [E-63](../../enhancements_doc/Enhancement-63.md)).
+- **A recompiled `.osdi` does not reload in-session** — `pre_osdi` on an
+  already-loaded path notes it and keeps the existing registration;
+  restart ngspice to pick up a recompiled file
+  ([E-81](../../enhancements_doc/Enhancement-81.md)).
 - **Module names that collide with ngspice built-in device types**
   (`cccs`, `vccs`, `vcvs`, …) are skipped with a warning — the built-in
   keeps the name, so pick another module name to actually use the model

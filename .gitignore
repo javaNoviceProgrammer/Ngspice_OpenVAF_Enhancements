@@ -400,5 +400,9 @@ examples/tempphys_examples/_*
 examples/tempphys_examples/vtprobe.osdi
 examples/tempphys_examples/nres.osdi
 
+# Enhancement 81 lifecycle scripts: temp decks + generated osdi
+examples/lifecycle_examples/_*
+examples/lifecycle_examples/lres.osdi
+
 # Python bytecode cache (e.g. from importing _setup.py)
 __pycache__/

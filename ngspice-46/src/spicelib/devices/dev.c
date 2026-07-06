@@ -633,7 +633,9 @@ int load_osdi(const char *path) {
   int k;
   for (k = 0; k < osdi_num_loaded; k++) {
     if (strcmp(osdi_loaded_paths[k], path) == 0) {
-      printf("Note(osdi): \"%s\" is already loaded; skipping\n", path);
+      printf("Note(osdi): \"%s\" is already loaded; skipping "
+             "(restart ngspice to load a recompiled file)\n",
+             path);
       return 0;
     }
   }
