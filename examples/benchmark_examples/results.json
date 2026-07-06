@@ -1,0 +1,144 @@
+{
+ "machine": "Apple M2 Ultra \u2014 Darwin 25.5.0, arm64",
+ "compile": [
+  {
+   "model": "BSIM4 (4.8)",
+   "file": "bsim4/vacode/bsim4.va",
+   "loc": 9723,
+   "seconds": 2.274
+  },
+  {
+   "model": "BSIM6 (6.1.1)",
+   "file": "bsim6/vacode/BSIM6.1.1.va",
+   "loc": 4548,
+   "seconds": 1.613
+  },
+  {
+   "model": "BSIM-BULK",
+   "file": "bsimbulk/vacode/bsimbulk.va",
+   "loc": 5228,
+   "seconds": 2.496
+  },
+  {
+   "model": "BSIM-CMG",
+   "file": "bsimcmg/vacode/bsimcmg.va",
+   "loc": 6871,
+   "seconds": 3.767
+  },
+  {
+   "model": "BSIM-SOI",
+   "file": "bsimsoi/vacode/bsimsoi.va",
+   "loc": 8172,
+   "seconds": 1.634
+  },
+  {
+   "model": "PSP 103",
+   "file": "psp103/vacode/psp103.va",
+   "loc": 6642,
+   "seconds": 2.178
+  },
+  {
+   "model": "PSP 102",
+   "file": "psp102/vacode/psp102.va",
+   "loc": 5980,
+   "seconds": 1.569
+  },
+  {
+   "model": "HiCUM L2 (3.0)",
+   "file": "hicum2/vacode/hicumL2V3p0p0.va",
+   "loc": 1581,
+   "seconds": 0.442
+  },
+  {
+   "model": "MEXTRAM 505",
+   "file": "mextram/vacode/bjt505.va",
+   "loc": 2445,
+   "seconds": 0.367
+  },
+  {
+   "model": "EKV 3",
+   "file": "ekv3/vacode/ekv3.va",
+   "loc": 4749,
+   "seconds": 0.426
+  },
+  {
+   "model": "ASM-HEMT",
+   "file": "ASMHEMT/vacode/asmhemt.va",
+   "loc": 2100,
+   "seconds": 3.489
+  },
+  {
+   "model": "diode_cmc",
+   "file": "diode_cmc/vacode/diode_cmc.va",
+   "loc": 2653,
+   "seconds": 0.789
+  }
+ ],
+ "twins": [
+  {
+   "bench": "rcladder",
+   "builtin_s": 2.293,
+   "osdi_s": 2.268,
+   "ratio": 0.989,
+   "timepoints": 100306,
+   "osdi_pts_per_s": 44225,
+   "max_wave_diff": 8.89e-32
+  },
+  {
+   "bench": "rectifier",
+   "builtin_s": 0.287,
+   "osdi_s": 0.362,
+   "ratio": 1.264,
+   "timepoints": 20008,
+   "osdi_pts_per_s": 55231,
+   "max_wave_diff": 2.77e-05
+  },
+  {
+   "bench": "bsim4stage",
+   "builtin_s": 0.217,
+   "osdi_s": 0.274,
+   "ratio": 1.263,
+   "timepoints": 50008,
+   "osdi_pts_per_s": 182674,
+   "max_wave_diff": 0.00687
+  }
+ ],
+ "scaling": [
+  {
+   "n": 10,
+   "bi_s": 0.109,
+   "osdi_s": 0.111,
+   "ratio": 1.018
+  },
+  {
+   "n": 20,
+   "bi_s": 0.133,
+   "osdi_s": 0.135,
+   "ratio": 1.015
+  },
+  {
+   "n": 50,
+   "bi_s": 0.202,
+   "osdi_s": 0.203,
+   "ratio": 1.005
+  },
+  {
+   "n": 100,
+   "bi_s": 0.325,
+   "osdi_s": 0.322,
+   "ratio": 0.991
+  },
+  {
+   "n": 200,
+   "bi_s": 0.583,
+   "osdi_s": 0.583,
+   "ratio": 1.0
+  },
+  {
+   "n": 500,
+   "bi_s": 1.317,
+   "osdi_s": 1.411,
+   "ratio": 1.071
+  }
+ ]
+}

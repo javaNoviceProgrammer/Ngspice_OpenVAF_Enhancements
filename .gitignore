@@ -377,5 +377,11 @@ examples/analogloop_examples/_ddt_in_loop.osdi
 # Enhancement 71 display example scripts: temp netlists
 examples/display_examples/_*.cir
 
+# Enhancement 74 benchmark scripts: temp decks/waves + corpus-derived osdi
+examples/benchmark_examples/_*.cir
+examples/benchmark_examples/_*.txt
+examples/benchmark_examples/_*.osdi
+examples/benchmark_examples/bsim4va.osdi
+
 # Python bytecode cache (e.g. from importing _setup.py)
 __pycache__/

@@ -81,3 +81,4 @@ table is the enhancement index of the top-level
 | 71 | Display-task audit — full format surface + `%b` segfault fix | [doc](../../enhancements_doc/Enhancement-71.md) | [display](../../examples/display_examples/) |
 | 72 | Touchstone round 2 — MA/DB, units, Y/Z, `rdsnp` reader | [doc](../../enhancements_doc/Enhancement-72.md) | [touchstone](../../examples/touchstone_examples/) |
 | 73 | This handbook, its PDF edition, and the README index | [doc](../../enhancements_doc/Enhancement-73.md) | [docs/handbook](README.md) |
+| 74 | Performance benchmark — OSDI-vs-built-in twins at parity (RC ladder 0.99×), flagship compile times | [doc](../../enhancements_doc/Enhancement-74.md) | [benchmark](../../examples/benchmark_examples/) |

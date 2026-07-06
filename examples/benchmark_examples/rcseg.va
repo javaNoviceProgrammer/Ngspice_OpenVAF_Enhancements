@@ -1,0 +1,20 @@
+`include "disciplines.vams"
+
+// One RC ladder segment: series R from a to b, shunt C from b to ground.
+// The exact-physics twin of a built-in `r` + `c` pair, used for the
+// OSDI-vs-built-in throughput benchmark: same equations, same Jacobian,
+// so ngspice follows the identical timestep trajectory and the waveforms
+// must match to machine precision.
+module rcseg(a, b);
+    inout a, b;
+    electrical a, b;
+    ground gnd;
+    electrical gnd;
+    parameter real r = 1k from (0:inf);
+    parameter real c = 1n from (0:inf);
+
+    analog begin
+        I(a, b) <+ V(a, b) / r;
+        I(b, gnd) <+ ddt(c * V(b, gnd));
+    end
+endmodule

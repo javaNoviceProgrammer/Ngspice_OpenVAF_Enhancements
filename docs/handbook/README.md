@@ -2,7 +2,8 @@
 
 This handbook is the consolidated user guide to the enhanced toolchain in this
 repository: **openvaf-r** (the Verilog-A compiler) and **ngspice-46** (the
-simulator), as extended by Enhancements 1–72. The repository's top-level
+simulator), as extended by the enhancement series (see the
+[index](05-enhancement-index.md)). The repository's top-level
 [README](../../README.md) carries the one-line enhancement index; the
 detailed write-ups live in [`enhancements_doc/`](../../enhancements_doc/),
 one per enhancement, in the order the work happened. This handbook
@@ -11,10 +12,10 @@ know the project history to find out whether a language feature works, how
 to run an analysis, or where the sharp edges are.
 
 > **Prefer a single file?** The whole handbook *plus the complete text of
-> all 73 enhancement write-ups* is compiled into one PDF:
-> [`docs/Ngspice-OpenVAF-Handbook.pdf`](../Ngspice-OpenVAF-Handbook.pdf)
-> (202 pages, linked table of contents). Regenerate it after edits with
-> `python3 docs/handbook/build_pdf.py` (needs pandoc + xelatex).
+> every enhancement write-up* is compiled into one PDF with a linked table
+> of contents: [`docs/Ngspice-OpenVAF-Handbook.pdf`](../Ngspice-OpenVAF-Handbook.pdf).
+> Regenerate it after edits with `python3 docs/handbook/build_pdf.py`
+> (needs pandoc + xelatex).
 
 ## The chapters
 
