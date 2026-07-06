@@ -9,9 +9,11 @@
 #   VAF   absolute path to the openvaf-r binary for this platform
 #   OSDI  absolute path to a freshly compiled absdelay.osdi (in .build/)
 
-# Directory containing this file (= absdelay_examples/)
+# Directory containing this file (= absdelay_examples/); the repo root is
+# two levels up (examples/ sits under the repo root, next to bin/)
 _SETUP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
-_BIN_DIR="$(cd "$_SETUP_DIR/../bin" && pwd)"
+_ROOT_DIR="$(cd "$_SETUP_DIR/../.." && pwd)"
+_BIN_DIR="$_ROOT_DIR/bin"
 
 # --- detect OS / arch and map to the bin/ matrix ---
 case "$(uname -s)" in
@@ -25,8 +27,12 @@ case "$(uname -m)" in
   *) echo "Unsupported architecture: $(uname -m)" >&2; exit 1 ;;
 esac
 
-NG="$_BIN_DIR/$_os/$_arch/ngspice"
-VAF="$_BIN_DIR/$_os/$_arch/openvaf-r"
+# Prefer the locally-built binaries when present (matching _setup.py), else
+# fall back to the committed CI-built bin/<os>/<arch>/ matrix.
+NG="$_ROOT_DIR/ngspice-46/build/src/ngspice"
+VAF="$_ROOT_DIR/OpenVAF-master-20260610/target/release/openvaf-r"
+[ -x "$NG" ]  || NG="$_BIN_DIR/$_os/$_arch/ngspice"
+[ -x "$VAF" ] || VAF="$_BIN_DIR/$_os/$_arch/openvaf-r"
 
 for _b in "$NG" "$VAF"; do
   if [ ! -x "$_b" ]; then
