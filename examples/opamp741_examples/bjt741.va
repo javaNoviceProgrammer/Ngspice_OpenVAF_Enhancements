@@ -1,0 +1,67 @@
+`include "disciplines.vams"
+`include "constants.vams"
+
+// A compact Gummel-Poon-flavored BJT for the transistor-level uA741 demo:
+// Ebers-Moll transport with forward Early effect, ideal base currents via
+// BF/BR, depletion + diffusion charges on both junctions, and the
+// simulator's gmin across the junctions for robust convergence. One
+// module serves NPN (type=1) and PNP (type=-1) by polarity reflection.
+// Deliberately simple -- it captures 741 behavior (gain, GBW, slew), not
+// any particular fab's silicon.
+module bjt741(c, b, e);
+    inout c, b, e;
+    electrical c, b, e;
+
+    parameter integer type = 1  from [-1:1] exclude 0; // 1 = NPN, -1 = PNP
+    parameter real is_ = 1e-14  from (0:inf);          // transport saturation current
+    parameter real bf  = 200.0  from (0:inf);          // forward beta
+    parameter real br  = 2.0    from (0:inf);          // reverse beta
+    parameter real vaf = 100.0  from (0:inf);          // forward Early voltage
+    parameter real nf  = 1.0    from (0:2);            // emission coefficient
+    parameter real tf  = 0.5n   from [0:inf);          // forward transit time
+    parameter real tr  = 20n    from [0:inf);          // reverse transit time
+    parameter real cje = 1p     from [0:inf);          // B-E zero-bias depletion cap
+    parameter real cjc = 0.5p   from [0:inf);          // B-C zero-bias depletion cap
+    parameter real vj  = 0.75   from (0:inf);          // junction built-in potential
+    parameter real mj  = 0.33   from (0:1);            // grading coefficient
+    parameter real fc  = 0.5    from [0:0.95];         // depletion linearization knee
+
+    real vbe, vbc, icc, iec, it;
+
+    // standard SPICE depletion charge with the fc linearization above fc*vj
+    analog function real qdep;
+        input v, cj0, vjx, mjx, fcx;
+        real  v, cj0, vjx, mjx, fcx, f1, f2, f3;
+        begin
+            if (v < fcx*vjx)
+                qdep = cj0*vjx/(1.0 - mjx) * (1.0 - pow(1.0 - v/vjx, 1.0 - mjx));
+            else begin
+                f1 = cj0*vjx/(1.0 - mjx) * (1.0 - pow(1.0 - fcx, 1.0 - mjx));
+                f2 = pow(1.0 - fcx, -1.0 - mjx);
+                f3 = 1.0 - fcx*(1.0 + mjx);
+                qdep = f1 + cj0*f2*(f3*(v - fcx*vjx)
+                       + mjx/(2.0*vjx)*(v*v - fcx*fcx*vjx*vjx));
+            end
+        end
+    endfunction
+
+    analog begin
+        vbe = type * V(b, e);
+        vbc = type * V(b, c);
+
+        icc = is_ * (limexp(vbe/(nf*$vt)) - 1.0);
+        iec = is_ * (limexp(vbc/(nf*$vt)) - 1.0);
+
+        // transport current with forward Early modulation (vbc < 0 in
+        // forward active, so the factor exceeds 1 as |Vcb| grows)
+        it = (icc - iec) * (1.0 - vbc/vaf);
+
+        I(c, e) <+ type * it;
+        I(b, e) <+ type * icc/bf + $simparam("gmin", 0.0)*V(b, e);
+        I(b, c) <+ type * iec/br + $simparam("gmin", 0.0)*V(b, c);
+
+        // diffusion + depletion charges
+        I(b, e) <+ ddt(type * (tf*icc + qdep(vbe, cje, vj, mj, fc)));
+        I(b, c) <+ ddt(type * (tr*iec + qdep(vbc, cjc, vj, mj, fc)));
+    end
+endmodule

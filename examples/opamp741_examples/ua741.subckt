@@ -1,0 +1,50 @@
+* ua741.subckt -- textbook transistor-level uA741 (Fairchild topology,
+* 20-transistor core) built entirely from the bjt741 Verilog-A model.
+* Nodes: inp inn out vcc vee
+* Protection devices (Q15, Q21-Q24) omitted -- this is a behavioral demo,
+* not production silicon.
+
+.subckt ua741 inp inn out vcc vee
+
+* ---------- input stage: emitter followers + common-base pnp ----------
+nq1  cm   inp  e1   q_npn      ; Q1  EF, in+
+nq2  cm   inn  e2   q_npn      ; Q2  EF, in-
+nq3  c3   b34  e1   q_pnp      ; Q3  common-base
+nq4  o1   b34  e2   q_pnp      ; Q4  common-base
+* active load mirror with degeneration + Q7 beta-helper
+nq5  c3   b56  e5   q_npn      ; Q5
+nq6  o1   b56  e6   q_npn      ; Q6
+nq7  vcc  c3   b56  q_npn      ; Q7  follower closing the mirror loop
+r1   e5   vee  1k
+r2   e6   vee  1k
+r3   b56  vee  50k
+
+* ---------- bias: Q8/Q9 pnp mirror + Q10/Q11 Widlar + Q12/Q13 ----------
+nq8  cm   cm   vcc  q_pnp      ; Q8  diode (input-stage common-mode sense)
+nq9  b34  cm   vcc  q_pnp      ; Q9  mirrors to the Q3/Q4 base node
+nq10 b34  b11  e10  q_npn      ; Q10 Widlar output
+nq11 b11  b11  vee  q_npn      ; Q11 diode
+r4   e10  vee  5k
+r5   b11  c12  39k             ; master bias reference chain
+nq12 c12  c12  vcc  q_pnp      ; Q12 diode
+nq13 bq14 c12  vcc  q_pnp      ; Q13 mirror: second-stage / output bias
+
+* ---------- second stage: Q16 EF + Q17 CE with Miller Cc ----------
+nq16 vcc  o1   b17  q_npn      ; Q16
+nq17 o2   b17  e17  q_npn      ; Q17
+r8   e17  vee  100
+r9   b17  vee  50k
+cc   o1   o2   30p             ; Miller compensation
+
+* ---------- class-AB output: 2xVbe bias + complementary followers ----
+nq18 bq14 bq14 d18  q_npn      ; diode-connected Vbe
+nq19 d18  d18  o2   q_npn      ; diode-connected Vbe
+nq14 vcc  bq14 e14  q_npn      ; Q14 sources
+r6   e14  out  27
+nq20 vee  o2   e20  q_pnp      ; Q20 sinks
+r7   out  e20  22
+
+.model q_npn bjt741(type=1  is_=1e-14 bf=200 br=2 vaf=100 tf=0.5n cje=1p cjc=0.5p)
+.model q_pnp bjt741(type=-1 is_=1e-14 bf=50  br=4 vaf=50  tf=10n  cje=1p cjc=1p)
+
+.ends ua741

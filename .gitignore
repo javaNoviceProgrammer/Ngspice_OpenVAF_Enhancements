@@ -404,5 +404,10 @@ examples/tempphys_examples/nres.osdi
 examples/lifecycle_examples/_*
 examples/lifecycle_examples/lres.osdi
 
+# Enhancement 83 opamp741 scripts: temp decks + generated osdi/results
+examples/opamp741_examples/_*
+examples/opamp741_examples/bjt741.osdi
+examples/opamp741_examples/results/
+
 # Python bytecode cache (e.g. from importing _setup.py)
 __pycache__/
