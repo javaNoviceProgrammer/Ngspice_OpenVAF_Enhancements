@@ -5,140 +5,193 @@
    "model": "BSIM4 (4.8)",
    "file": "bsim4/vacode/bsim4.va",
    "loc": 9723,
-   "seconds": 2.274
+   "seconds": 2.292
   },
   {
    "model": "BSIM6 (6.1.1)",
    "file": "bsim6/vacode/BSIM6.1.1.va",
    "loc": 4548,
-   "seconds": 1.613
+   "seconds": 1.625
   },
   {
    "model": "BSIM-BULK",
    "file": "bsimbulk/vacode/bsimbulk.va",
    "loc": 5228,
-   "seconds": 2.496
+   "seconds": 2.502
   },
   {
    "model": "BSIM-CMG",
    "file": "bsimcmg/vacode/bsimcmg.va",
    "loc": 6871,
-   "seconds": 3.767
+   "seconds": 3.895
   },
   {
    "model": "BSIM-SOI",
    "file": "bsimsoi/vacode/bsimsoi.va",
    "loc": 8172,
-   "seconds": 1.634
+   "seconds": 1.655
   },
   {
    "model": "PSP 103",
    "file": "psp103/vacode/psp103.va",
    "loc": 6642,
-   "seconds": 2.178
+   "seconds": 2.225
   },
   {
    "model": "PSP 102",
    "file": "psp102/vacode/psp102.va",
    "loc": 5980,
-   "seconds": 1.569
+   "seconds": 1.596
   },
   {
    "model": "HiCUM L2 (3.0)",
    "file": "hicum2/vacode/hicumL2V3p0p0.va",
    "loc": 1581,
-   "seconds": 0.442
+   "seconds": 0.464
   },
   {
    "model": "MEXTRAM 505",
    "file": "mextram/vacode/bjt505.va",
    "loc": 2445,
-   "seconds": 0.367
+   "seconds": 0.374
   },
   {
    "model": "EKV 3",
    "file": "ekv3/vacode/ekv3.va",
    "loc": 4749,
-   "seconds": 0.426
+   "seconds": 0.431
   },
   {
    "model": "ASM-HEMT",
    "file": "ASMHEMT/vacode/asmhemt.va",
    "loc": 2100,
-   "seconds": 3.489
+   "seconds": 3.544
   },
   {
    "model": "diode_cmc",
    "file": "diode_cmc/vacode/diode_cmc.va",
    "loc": 2653,
-   "seconds": 0.789
+   "seconds": 0.813
   }
  ],
  "twins": [
   {
    "bench": "rcladder",
-   "builtin_s": 2.293,
-   "osdi_s": 2.268,
-   "ratio": 0.989,
+   "builtin_s": 2.44,
+   "osdi_s": 2.365,
+   "ratio": 0.969,
    "timepoints": 100306,
-   "osdi_pts_per_s": 44225,
+   "osdi_pts_per_s": 42418,
    "max_wave_diff": 8.89e-32
   },
   {
    "bench": "rectifier",
-   "builtin_s": 0.287,
-   "osdi_s": 0.362,
-   "ratio": 1.264,
+   "builtin_s": 0.281,
+   "osdi_s": 0.372,
+   "ratio": 1.324,
    "timepoints": 20008,
-   "osdi_pts_per_s": 55231,
+   "osdi_pts_per_s": 53745,
    "max_wave_diff": 2.77e-05
   },
   {
    "bench": "bsim4stage",
-   "builtin_s": 0.217,
-   "osdi_s": 0.274,
-   "ratio": 1.263,
+   "builtin_s": 0.212,
+   "osdi_s": 0.269,
+   "ratio": 1.265,
    "timepoints": 50008,
-   "osdi_pts_per_s": 182674,
+   "osdi_pts_per_s": 186199,
    "max_wave_diff": 0.00687
   }
  ],
  "scaling": [
   {
    "n": 10,
-   "bi_s": 0.109,
+   "bi_s": 0.108,
    "osdi_s": 0.111,
-   "ratio": 1.018
+   "ratio": 1.028
   },
   {
    "n": 20,
-   "bi_s": 0.133,
+   "bi_s": 0.135,
    "osdi_s": 0.135,
-   "ratio": 1.015
+   "ratio": 1.0
   },
   {
    "n": 50,
-   "bi_s": 0.202,
-   "osdi_s": 0.203,
+   "bi_s": 0.201,
+   "osdi_s": 0.202,
    "ratio": 1.005
   },
   {
    "n": 100,
-   "bi_s": 0.325,
-   "osdi_s": 0.322,
-   "ratio": 0.991
+   "bi_s": 0.333,
+   "osdi_s": 0.329,
+   "ratio": 0.988
   },
   {
    "n": 200,
-   "bi_s": 0.583,
-   "osdi_s": 0.583,
-   "ratio": 1.0
+   "bi_s": 0.584,
+   "osdi_s": 0.586,
+   "ratio": 1.003
   },
   {
    "n": 500,
-   "bi_s": 1.317,
-   "osdi_s": 1.411,
-   "ratio": 1.071
+   "bi_s": 1.31,
+   "osdi_s": 1.398,
+   "ratio": 1.067
+  }
+ ],
+ "ring_osc": {
+  "builtin_s": 1.03,
+  "osdi_s": 1.968,
+  "ratio": 1.911,
+  "f_builtin_ghz": 1.0769,
+  "f_osdi_ghz": 1.0648
+ },
+ "smallsig": [
+  {
+   "bench": "ac",
+   "builtin_s": 0.054,
+   "osdi_s": 0.048,
+   "ratio": 0.905,
+   "max_diff": 0.0
+  },
+  {
+   "bench": "noise",
+   "builtin_s": 0.035,
+   "osdi_s": 0.041,
+   "ratio": 1.188,
+   "max_diff": 7.6e-15
+  }
+ ],
+ "klu": [
+  {
+   "bench": "rcladder500",
+   "kind": "bi",
+   "sparse_s": 1.296,
+   "klu_s": 1.425,
+   "speedup": 0.909
+  },
+  {
+   "bench": "rcladder500",
+   "kind": "osdi",
+   "sparse_s": 1.404,
+   "klu_s": 1.534,
+   "speedup": 0.915
+  },
+  {
+   "bench": "ringosc",
+   "kind": "bi",
+   "sparse_s": 1.04,
+   "klu_s": 1.042,
+   "speedup": 0.999
+  },
+  {
+   "bench": "ringosc",
+   "kind": "osdi",
+   "sparse_s": 1.962,
+   "klu_s": 2.007,
+   "speedup": 0.977
   }
  ]
 }

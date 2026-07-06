@@ -210,3 +210,94 @@ def max_wave_diff(txt_a, txt_b, samples=2000):
         if d > worst:
             worst = d
     return worst
+
+def ro_deck(kind, n, tstep, tstop, out_txt, osdi_file="bsim4va.osdi"):
+    """n-stage (odd) BSIM4 ring oscillator, 2n devices, uic kick-started."""
+    lines = [f"* ring oscillator {kind} N={n}", "vdd vdd 0 dc 1.2"]
+    for i in range(1, n + 1):
+        inp = f"s{i-1}" if i > 1 else f"s{n}"
+        out = f"s{i}"
+        if kind == "osdi":
+            lines.append(f"np{i} {out} {inp} vdd vdd pmv")
+            lines.append(f"nn{i} {out} {inp} 0 0 nmv")
+        else:
+            lines.append(f"mp{i} {out} {inp} vdd vdd pmb W=2u L=0.2u")
+            lines.append(f"mn{i} {out} {inp} 0 0 nmb W=1u L=0.2u")
+        lines.append(f"c{i} {out} 0 2f")
+    if kind == "osdi":
+        lines.append(".model nmv bsim4va(type=1 w=1e-6 l=0.2e-6)")
+        lines.append(".model pmv bsim4va(type=-1 w=2e-6 l=0.2e-6)")
+    else:
+        lines.append(".model nmb nmos(level=14 version=4.8)")
+        lines.append(".model pmb pmos(level=14 version=4.8)")
+    lines.append(".ic v(s1)=0")
+    lines += [".control"]
+    if kind == "osdi":
+        lines.append(f"pre_osdi {osdi_file}")
+    lines += ["save v(s1)", f"tran {tstep} {tstop} uic",
+              f"wrdata {out_txt} v(s1)", "quit", ".endc", ".end"]
+    return "\n".join(lines) + "\n"
+
+
+def ac_ladder_deck(kind, n, out_txt):
+    """RC ladder .ac sweep (reuses the rcseg twin), 1 Hz .. 1 GHz."""
+    lines = [f"* rc ladder ac {kind} N={n}", "v1 n0 0 dc 0 ac 1"]
+    for i in range(1, n + 1):
+        if kind == "osdi":
+            lines.append(f"nx{i} n{i-1} n{i} segmod")
+        else:
+            lines.append(f"r{i} n{i-1} n{i} 1k")
+            lines.append(f"c{i} n{i} 0 1n")
+    if kind == "osdi":
+        lines.append(".model segmod rcseg(r=1k c=1n)")
+    lines += [".control"]
+    if kind == "osdi":
+        lines.append("pre_osdi rcseg.osdi")
+    lines += [f"save v(n{n})", "ac dec 300 1 1g",
+              f"wrdata {out_txt} v(n{n})", "quit", ".endc", ".end"]
+    return "\n".join(lines) + "\n"
+
+
+def noise_ladder_deck(kind, n, out_txt):
+    """Noisy-resistor ladder .noise sweep: nres.va is the exact 4kT/R twin
+    of a built-in resistor (the E-57 identity), so the output spectra must
+    match while the adjoint solves do the same work."""
+    lines = [f"* noise ladder {kind} N={n}", "v1 n0 0 dc 1 ac 1"]
+    for i in range(1, n + 1):
+        if kind == "osdi":
+            lines.append(f"nx{i} n{i-1} n{i} nmod")
+        else:
+            lines.append(f"r{i} n{i-1} n{i} 1k")
+        lines.append(f"c{i} n{i} 0 1n")
+    if kind == "osdi":
+        lines.append(".model nmod nres(r=1k)")
+    lines += [".control"]
+    if kind == "osdi":
+        lines.append("pre_osdi nres.osdi")
+    lines += [f"noise v(n{n}) v1 dec 100 1k 1g", "setplot noise1",
+              f"wrdata {out_txt} onoise_spectrum", "quit", ".endc", ".end"]
+    return "\n".join(lines) + "\n"
+
+
+def with_klu(deck_text):
+    """The KLU variant of a deck: `.options klu` right after the title
+    (the E-1 benchmark recipe); without it ngspice uses SPARSE 1.3."""
+    lines = deck_text.split("\n")
+    return "\n".join([lines[0], ".options klu"] + lines[1:])
+
+
+def binary_has_klu():
+    import shutil
+    with open(NGSPICE if os.path.isabs(NGSPICE) else shutil.which(NGSPICE) or NGSPICE, "rb") as fh:
+        return b"KLU Direct Linear Solver" in fh.read()
+
+
+def osc_freq(txt_name, vth=0.6):
+    """Oscillation frequency from rising vth-crossings in the 2nd half."""
+    t, v = load_wave(txt_name)
+    t_half = t[-1] / 2
+    cross = [t[k + 1] for k in range(len(t) - 1)
+             if t[k] >= t_half and v[k] < vth <= v[k + 1]]
+    if len(cross) < 3:
+        return None
+    return (len(cross) - 1) / (cross[-1] - cross[0])

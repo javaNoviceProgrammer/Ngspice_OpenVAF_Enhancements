@@ -28,8 +28,14 @@ fig.tight_layout()
 fig.savefig(os.path.join(PLOTS, "scaling.png"), dpi=110)
 plt.close(fig)
 
-# twin throughput bars
-tw = res["twins"]
+# twin throughput bars (round 2 adds the ring oscillator + small-signal)
+tw = list(res["twins"])
+if res.get("ring_osc"):
+    tw.append({"bench": "ringosc", **{k: res["ring_osc"][k]
+                                      for k in ("builtin_s", "osdi_s", "ratio")}})
+for r in res.get("smallsig") or []:
+    tw.append({"bench": "." + r["bench"], "builtin_s": r["builtin_s"],
+               "osdi_s": r["osdi_s"], "ratio": r["ratio"]})
 labels = [r["bench"] for r in tw]
 x = range(len(tw))
 fig, ax = plt.subplots(figsize=(7, 4.5))
@@ -46,6 +52,26 @@ ax.legend()
 fig.tight_layout()
 fig.savefig(os.path.join(PLOTS, "throughput.png"), dpi=110)
 plt.close(fig)
+
+# KLU vs SPARSE (round 2)
+if res.get("klu"):
+    rows = res["klu"]
+    labels = [f"{r['bench']}\n({r['kind']})" for r in rows]
+    x = range(len(rows))
+    fig, ax = plt.subplots(figsize=(7, 4.5))
+    w = 0.38
+    ax.bar([i - w / 2 for i in x], [r["sparse_s"] for r in rows], w, label="SPARSE 1.3")
+    ax.bar([i + w / 2 for i in x], [r["klu_s"] for r in rows], w, label="KLU")
+    for i, r in enumerate(rows):
+        ax.text(i + w / 2, r["klu_s"], f" ×{r['speedup']:.2f}", ha="center", va="bottom")
+    ax.set_xticks(list(x))
+    ax.set_xticklabels(labels)
+    ax.set_ylabel("transient wall time [s]")
+    ax.set_title("Solver comparison: KLU speedup over SPARSE 1.3")
+    ax.legend()
+    fig.tight_layout()
+    fig.savefig(os.path.join(PLOTS, "klu_vs_sparse.png"), dpi=110)
+    plt.close(fig)
 
 # compile times
 if res.get("compile"):

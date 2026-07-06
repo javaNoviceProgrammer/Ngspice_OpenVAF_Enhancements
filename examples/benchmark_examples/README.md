@@ -45,6 +45,21 @@ each run checks alongside the timing:
 The compile section uses the `VA_TEST/` corpus and skips gracefully when
 it is absent (the physcheck-suite precedent).
 
+## Round 2 (Enhancement-79)
+
+Three sections extend the baseline:
+
+- **[D] a 9-stage BSIM4 ring oscillator** — 18 compact-model devices,
+  evaluation-dominated, with the oscillation frequencies doubling as a
+  correspondence pin (built-in vs VA within ~1%);
+- **[E] `.ac` and `.noise` throughput** on N=200 ladders — the `.noise`
+  twin uses `nres.va`, a noisy resistor whose 4kT/R spectrum is
+  *identical* to the built-in resistor's (the E-57 identity, re-pinned
+  here to 7×10⁻⁷ while timing the adjoint solves);
+- **[F] KLU vs SPARSE 1.3** — both device kinds, with `.options klu`
+  (skipped gracefully on binaries built without KLU), plus a
+  solver-independence pin: KLU and SPARSE waveforms agree to ~1e-15.
+
 ## Reference headline (see RESULTS.md for the full tables)
 
 Compiled Verilog-A through OSDI runs within a small factor of ngspice's

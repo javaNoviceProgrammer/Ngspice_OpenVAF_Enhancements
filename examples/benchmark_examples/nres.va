@@ -1,0 +1,15 @@
+`include "disciplines.vams"
+`include "constants.vams"
+
+// Noisy resistor: the exact-physics twin of a built-in `r` including its
+// 4kT/R thermal noise (the E-57 identity), for .noise throughput twins.
+module nres(a, b);
+    inout a, b;
+    electrical a, b;
+    parameter real r = 1k from (0:inf);
+
+    analog begin
+        I(a, b) <+ V(a, b) / r;
+        I(a, b) <+ white_noise(4.0 * `P_K * $temperature / r, "thermal");
+    end
+endmodule

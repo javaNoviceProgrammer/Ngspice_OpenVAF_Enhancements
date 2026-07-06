@@ -23,9 +23,11 @@ import subprocess
 import sys
 import time
 
-from bench_common import (HERE, OPENVAF, CORPUS, COMPILE_MODELS, count_loc, machine_info,
-                          compile_va, median_time, write_deck, rc_ladder_deck,
-                          rectifier_deck, bsim4_deck, load_wave, max_wave_diff)
+from bench_common import (HERE, OPENVAF, CORPUS, COMPILE_MODELS, ac_ladder_deck,
+                          binary_has_klu, bsim4_deck, compile_va, count_loc,
+                          load_wave, machine_info, max_wave_diff, median_time,
+                          noise_ladder_deck, osc_freq, rc_ladder_deck,
+                          rectifier_deck, ro_deck, with_klu, write_deck)
 
 RESULTS_JSON = os.path.join(HERE, "results.json")
 RESULTS_MD = os.path.join(HERE, "RESULTS.md")
@@ -114,6 +116,32 @@ def write_report(res):
               "| N segments | built-in | OSDI | ratio |", "|---:|---:|---:|---:|"]
     for r in res["scaling"]:
         lines.append(f"| {r['n']} | {r['bi_s']:.2f} s | {r['osdi_s']:.2f} s | {r['ratio']:.2f} |")
+    if res.get("ring_osc"):
+        ro = res["ring_osc"]
+        lines += ["", "## [D] 9-stage BSIM4 ring oscillator", "",
+                  "18 BSIM4 devices, evaluation-dominated; the oscillation",
+                  "frequencies double as a correspondence pin.", "",
+                  "| | built-in | OSDI | OSDI/built-in |",
+                  "|---|---:|---:|---:|",
+                  f"| wall time | {ro['builtin_s']:.2f} s | {ro['osdi_s']:.2f} s | {ro['ratio']:.2f} |",
+                  f"| frequency | {ro['f_builtin_ghz']:.3f} GHz | {ro['f_osdi_ghz']:.3f} GHz | — |",
+                  ""]
+    if res.get("smallsig"):
+        lines += ["## [E] Small-signal throughput (ladders, N = 200)", "",
+                  "| Analysis | built-in | OSDI | OSDI/built-in | max output diff |",
+                  "|---|---:|---:|---:|---:|"]
+        for r in res["smallsig"]:
+            lines.append(f"| .{r['bench']} | {r['builtin_s']:.2f} s | {r['osdi_s']:.2f} s | "
+                         f"{r['ratio']:.2f} | {r['max_diff']:.2e} |")
+        lines.append("")
+    if res.get("klu"):
+        lines += ["## [F] KLU vs SPARSE 1.3", "",
+                  "| Benchmark | devices | SPARSE | KLU | KLU speedup |",
+                  "|---|---|---:|---:|---:|"]
+        for r in res["klu"]:
+            lines.append(f"| {r['bench']} | {r['kind']} | {r['sparse_s']:.2f} s | "
+                         f"{r['klu_s']:.2f} s | {r['speedup']:.2f}x |")
+        lines.append("")
     lines += ["", "![scaling](plots/scaling.png)", "",
               "![throughput](plots/throughput.png)", ""]
     if res.get("compile"):
@@ -148,6 +176,70 @@ def main():
 
     print("[C] RC-ladder scaling")
     res["scaling"] = bench_scaling()
+
+    # ------------------------------------------------------- round 2 (E-79)
+    if have_bsim4:
+        print("[D] 9-stage BSIM4 ring oscillator (multi-device nonlinear)")
+        for kind in ("bi", "osdi"):
+            write_deck(f"_ro_{kind}.cir",
+                       ro_deck(kind, 9, "5p", "200n", f"_ro_{kind}.txt"))
+        t_bi = median_time("_ro_bi.cir")
+        t_osdi = median_time("_ro_osdi.cir")
+        f_bi = osc_freq("_ro_bi.txt")
+        f_osdi = osc_freq("_ro_osdi.txt")
+        res["ring_osc"] = {
+            "builtin_s": round(t_bi, 3), "osdi_s": round(t_osdi, 3),
+            "ratio": round(t_osdi / t_bi, 3),
+            "f_builtin_ghz": round(f_bi / 1e9, 4) if f_bi else None,
+            "f_osdi_ghz": round(f_osdi / 1e9, 4) if f_osdi else None,
+        }
+        print(f"  built-in {t_bi:6.2f} s @ {f_bi/1e9:.3f} GHz | "
+              f"OSDI {t_osdi:6.2f} s @ {f_osdi/1e9:.3f} GHz | "
+              f"ratio {t_osdi/t_bi:5.2f}")
+
+    print("[E] .ac and .noise throughput (RC / noisy-resistor ladders, N=200)")
+    smallsig = []
+    for label, gen, extra in (
+            ("ac", lambda k, o: ac_ladder_deck(k, 200, o), None),
+            ("noise", lambda k, o: noise_ladder_deck(k, 200, o), "spectrum")):
+        for kind in ("bi", "osdi"):
+            write_deck(f"_ss_{label}_{kind}.cir", gen(kind, f"_ss_{label}_{kind}.txt"))
+        t_bi = median_time(f"_ss_{label}_bi.cir")
+        t_osdi = median_time(f"_ss_{label}_osdi.cir")
+        diff = max_wave_diff(f"_ss_{label}_bi.txt", f"_ss_{label}_osdi.txt")
+        row = {"bench": label, "builtin_s": round(t_bi, 3),
+               "osdi_s": round(t_osdi, 3), "ratio": round(t_osdi / t_bi, 3),
+               "max_diff": float(f"{diff:.3g}")}
+        smallsig.append(row)
+        print(f"  .{label:6s} built-in {t_bi:6.2f} s | OSDI {t_osdi:6.2f} s | "
+              f"ratio {row['ratio']:5.2f} | max diff {diff:.2e}")
+    res["smallsig"] = smallsig
+
+    if binary_has_klu():
+        print("[F] KLU vs SPARSE (RC ladder N=500 + the ring oscillator)")
+        klu_rows = []
+        benches = [("rcladder500",
+                    lambda k, o: rc_ladder_deck(k, 500, "2n", "50u", o))]
+        if have_bsim4:
+            benches.append(("ringosc",
+                            lambda k, o: ro_deck(k, 9, "5p", "200n", o)))
+        for label, gen in benches:
+            for kind in ("bi", "osdi"):
+                base = gen(kind, f"_klu_{label}_{kind}.txt")
+                write_deck(f"_sp_{label}_{kind}.cir", base)
+                write_deck(f"_klu_{label}_{kind}.cir", with_klu(base))
+                t_sp = median_time(f"_sp_{label}_{kind}.cir", runs=2)
+                t_klu = median_time(f"_klu_{label}_{kind}.cir", runs=2)
+                klu_rows.append({"bench": label, "kind": kind,
+                                 "sparse_s": round(t_sp, 3),
+                                 "klu_s": round(t_klu, 3),
+                                 "speedup": round(t_sp / t_klu, 3)})
+                print(f"  {label:12s} {kind:4s}: SPARSE {t_sp:6.2f} s | "
+                      f"KLU {t_klu:6.2f} s | speedup {t_sp/t_klu:5.2f}x")
+        res["klu"] = klu_rows
+    else:
+        print("[F] SKIP: this ngspice binary was built without KLU")
+        res["klu"] = None
 
     with open(RESULTS_JSON, "w") as fh:
         json.dump(res, fh, indent=1)

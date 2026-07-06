@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-verify_benchmark.py -- deterministic checks for the Enhancement-74
+verify_benchmark.py -- deterministic checks for the Enhancement-74/-79
 performance benchmark, end-to-end through the committed openvaf-r +
 ngspice.
 
@@ -19,7 +19,13 @@ only what is deterministic or generously bounded:
       under 60 s;
   [5] an OSDI-overhead sanity bound: the OSDI RC ladder runs within 25x
       of the built-in twin (catches only catastrophic regressions);
-  [6] the harness artifacts (RESULTS.md, plots) exist in the folder.
+  [6] the harness artifacts (RESULTS.md, plots) exist in the folder;
+  [7] (round 2, E-79) both BSIM4 ring oscillators oscillate and their
+      frequencies correspond within 10%;
+  [8] (round 2) the noisy-resistor ladder's .noise spectrum is identical
+      to the built-in resistors' (the E-57 4kT/R identity, re-pinned);
+  [9] (round 2) KLU and SPARSE produce the same waveform (solver
+      independence) -- skipped on binaries built without KLU.
 
 Corpus-dependent checks skip gracefully when VA_TEST is absent.
 Every SPICE deck starts with a title line (SPICE treats line 1 as the title!).
@@ -31,9 +37,10 @@ import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
-from bench_common import (OPENVAF, NGSPICE, CORPUS, compile_va, run_ngspice,
-                          write_deck, rc_ladder_deck, rectifier_deck,
-                          bsim4_deck, max_wave_diff)
+from bench_common import (OPENVAF, NGSPICE, CORPUS, binary_has_klu, bsim4_deck,
+                          compile_va, max_wave_diff, noise_ladder_deck,
+                          osc_freq, rc_ladder_deck, rectifier_deck,
+                          ro_deck, run_ngspice, with_klu, write_deck)
 
 checks = []
 
@@ -92,6 +99,49 @@ def main():
               f"OSDI {i_va:.4e} A vs built-in {i_bi:.4e} A ({100*rel:.1f}% < 10%)")
     else:
         print("[3][4] SKIP: VA_TEST corpus not found")
+
+    if os.path.isfile(os.path.join(CORPUS, "bsim4", "vacode", "bsim4.va")):
+        print("[7] round 2: BSIM4 ring-oscillator twins (short run)")
+        for kind in ("bi", "osdi"):
+            write_deck(f"_v_ro_{kind}.cir",
+                       ro_deck(kind, 9, "5p", "50n", f"_v_ro_{kind}.txt"))
+            run_ngspice(f"_v_ro_{kind}.cir")
+        f_bi = osc_freq("_v_ro_bi.txt")
+        f_osdi = osc_freq("_v_ro_osdi.txt")
+        check("both ring oscillators oscillate", bool(f_bi and f_osdi),
+              f"bi={f_bi} osdi={f_osdi}")
+        if f_bi and f_osdi:
+            rel = abs(f_osdi - f_bi) / f_bi
+            check("frequencies correspond", rel < 0.10,
+                  f"{f_bi/1e9:.3f} vs {f_osdi/1e9:.3f} GHz ({100*rel:.1f}% < 10%)")
+    else:
+        print("[7] SKIP: corpus absent")
+
+    print("[8] round 2: noisy-resistor .noise spectrum identity")
+    compile_va(os.path.join(HERE, "nres.va"), os.path.join(HERE, "nres.osdi"))
+    for kind in ("bi", "osdi"):
+        write_deck(f"_v_nz_{kind}.cir",
+                   noise_ladder_deck(kind, 50, f"_v_nz_{kind}.txt"))
+        run_ngspice(f"_v_nz_{kind}.cir")
+    from bench_common import load_wave
+    _, va = load_wave("_v_nz_bi.txt")
+    _, vb = load_wave("_v_nz_osdi.txt")
+    worst = max(abs(x - y) / x for x, y in zip(va, vb))
+    check("thermal-noise ladder identical to built-in",
+          len(va) > 100 and worst < 1e-4, f"worst rel {worst:.2e} (< 1e-4)")
+
+    if binary_has_klu():
+        print("[9] round 2: KLU solves match SPARSE (solver independence)")
+        base = rc_ladder_deck("osdi", 50, "2n", "50u", "_v_klu.txt")
+        write_deck("_v_sp.cir", base.replace("_v_klu.txt", "_v_sp.txt"))
+        write_deck("_v_klu.cir", with_klu(base))
+        run_ngspice("_v_sp.cir")
+        out = run_ngspice("_v_klu.cir")
+        d = max_wave_diff("_v_sp.txt", "_v_klu.txt")
+        check("KLU and SPARSE waveforms agree", d < 1e-6,
+              f"max|dV| = {d:.2e} (< 1e-6)")
+    else:
+        print("[9] SKIP: binary built without KLU")
 
     print("[6] committed reference artifacts present")
     for f in ("RESULTS.md", "plots/scaling.png", "plots/throughput.png"):
