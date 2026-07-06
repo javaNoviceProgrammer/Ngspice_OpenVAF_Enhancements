@@ -142,12 +142,17 @@ Binaries are built by CI and committed to `bin/`:
 
 ### Running on Linux
 
-The binaries are dynamically linked against standard system libraries. Install them with your package manager if missing:
+The binaries are built on Ubuntu 22.04, so they run on any distro with **glibc ≥ 2.35** (Ubuntu 22.04+, Debian 12+; an error like ``version `GLIBC_2.39' not found`` means the binary in your checkout predates this baseline — pull the latest). They are dynamically linked against standard system libraries. Install them with your package manager if missing:
 
 **Ubuntu / Debian:**
 ```bash
 sudo apt-get install libreadline8 libx11-6 libxaw7 libxft2 libxext6   # ngspice
-sudo apt-get install libllvm18                                        # openvaf-r
+sudo apt-get install libllvm18                                        # openvaf-r (Ubuntu 24.04+ / Debian 13+)
+```
+
+On Ubuntu 22.04 / Debian 12, whose repos stop at older LLVM versions, get `openvaf-r`'s LLVM 18 runtime from [apt.llvm.org](https://apt.llvm.org/):
+```bash
+wget https://apt.llvm.org/llvm.sh && chmod +x llvm.sh && sudo ./llvm.sh 18
 ```
 
 **Fedora / RHEL:**

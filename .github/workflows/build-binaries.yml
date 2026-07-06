@@ -31,12 +31,19 @@ jobs:
   build-unix:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
+    # The Linux legs build inside an ubuntu:22.04 (jammy) container so the
+    # binaries link against glibc 2.35 instead of the 24.04 runner's 2.39;
+    # built on the bare runner they refuse to start on any distro older than
+    # Ubuntu 24.04 ("version `GLIBC_2.39' not found"). Jammy-built binaries
+    # run on Ubuntu 22.04+ / Debian 12+. macOS entries leave `container`
+    # unset, which GitHub treats as "no container".
+    container: ${{ matrix.container }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { name: linux-intel,         os: ubuntu-latest,    bin: linux/intel }
-          - { name: linux-arm,           os: ubuntu-24.04-arm, bin: linux/arm }
+          - { name: linux-intel,         os: ubuntu-latest,    container: "ubuntu:22.04", bin: linux/intel }
+          - { name: linux-arm,           os: ubuntu-24.04-arm, container: "ubuntu:22.04", bin: linux/arm }
           - { name: macos-apple-silicon, os: macos-14,         bin: macos/apple-silicon }
           # macos-13 (the old Intel-macOS image) was scarce/deprecated and never
           # got scheduled, which used to stall the whole matrix. macos-26-intel
@@ -48,21 +55,35 @@ jobs:
           # need to be dropped again around then, this time for good.
           - { name: macos-intel,         os: macos-26-intel,   bin: macos/intel }
     steps:
+      # The jammy container starts bare (no git, no CA certs); install git
+      # before checkout so actions/checkout does a real git clone rather than
+      # falling back to the REST-API tarball download.
+      - name: Prepare container (Linux)
+        if: runner.os == 'Linux'
+        run: apt-get update && apt-get install -y --no-install-recommends git ca-certificates
+
       - uses: actions/checkout@v7
 
       - name: Install build deps (Linux)
         if: runner.os == 'Linux'
         run: |
-          # Ubuntu 24.04 (both x86 and arm runners) ships LLVM 18 natively, so
-          # install from the distro repos.  The apt.llvm.org repo is avoided
-          # because on arm64 it conflicts with noble's packages ("held broken
-          # packages").
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
+          # Jammy has no distro LLVM 18, so it comes from apt.llvm.org. (The
+          # earlier reason for avoiding apt.llvm.org -- arm64 package conflicts
+          # -- was specific to noble's own llvm packages and does not apply on
+          # jammy.) Running as root inside the container, hence no sudo.
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            curl wget gnupg \
             build-essential automake autoconf libtool bison flex pkg-config \
-            llvm-18 llvm-18-dev libclang-18-dev clang-18 libpolly-18-dev \
             zlib1g-dev libzstd-dev libtinfo-dev libxml2-dev \
             libreadline-dev libx11-dev libxaw7-dev libxft-dev libxext-dev libxmu-dev libxt-dev
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key \
+            | gpg --dearmor -o /usr/share/keyrings/apt-llvm-org.gpg
+          echo "deb [signed-by=/usr/share/keyrings/apt-llvm-org.gpg] http://apt.llvm.org/jammy/ llvm-toolchain-jammy-18 main" \
+            > /etc/apt/sources.list.d/llvm18.list
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            llvm-18 llvm-18-dev libclang-18-dev clang-18 libpolly-18-dev
           PREFIX="$(llvm-config-18 --prefix)"
           echo "LLVM_SYS_181_PREFIX=$PREFIX" >> "$GITHUB_ENV"
           # The openvaf 'target' crate build.rs invokes clang + llvm-lib, so the
@@ -132,8 +153,11 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             ${{ env.OPENVAF_DIR }}/target
-          key: cargo-${{ matrix.name }}-${{ hashFiles(format('{0}/Cargo.lock', env.OPENVAF_DIR)) }}
-          restore-keys: cargo-${{ matrix.name }}-
+          # 'jammy'/'host' keeps container builds from restoring a target/
+          # full of noble-built (glibc 2.39) objects that cargo would happily
+          # relink without recompiling.
+          key: cargo-${{ matrix.name }}-${{ matrix.container && 'jammy' || 'host' }}-${{ hashFiles(format('{0}/Cargo.lock', env.OPENVAF_DIR)) }}
+          restore-keys: cargo-${{ matrix.name }}-${{ matrix.container && 'jammy' || 'host' }}-
 
       - name: Build openvaf-r
         working-directory: ${{ env.OPENVAF_DIR }}
@@ -167,6 +191,18 @@ jobs:
           strip $STRIP_ARGS "out/bin/${{ matrix.bin }}/ngspice"   || true
           chmod +x "out/bin/${{ matrix.bin }}/"*
           ls -lh "out/bin/${{ matrix.bin }}/"
+          # Portability guard: fail the build if either binary picked up a
+          # glibc symbol newer than jammy's 2.35 (i.e. if the container setup
+          # ever silently stops taking effect).
+          if [ "${{ runner.os }}" = "Linux" ]; then
+            MAX="$(objdump -T out/bin/${{ matrix.bin }}/openvaf-r out/bin/${{ matrix.bin }}/ngspice \
+                   | grep -oE 'GLIBC_[0-9]+\.[0-9]+' | sort -uV | tail -1)"
+            echo "max glibc symbol version required: $MAX"
+            if [ "$(printf '%s\n' "$MAX" GLIBC_2.35 | sort -V | tail -1)" != "GLIBC_2.35" ]; then
+              echo "::error::binaries require $MAX > 2.35 -- not portable to Ubuntu 22.04"
+              exit 1
+            fi
+          fi
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
