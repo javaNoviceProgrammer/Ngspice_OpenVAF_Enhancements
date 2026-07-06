@@ -383,5 +383,10 @@ examples/benchmark_examples/_*.txt
 examples/benchmark_examples/_*.osdi
 examples/benchmark_examples/bsim4va.osdi
 
+# Enhancement 75 dynamic-physics scripts: temp decks/waves + corpus-derived osdi
+examples/dynphys_examples/_*.cir
+examples/dynphys_examples/_*.dat
+examples/dynphys_examples/_*.osdi
+
 # Python bytecode cache (e.g. from importing _setup.py)
 __pycache__/

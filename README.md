@@ -28,7 +28,7 @@ https://ngspice.sourceforge.io/
 
 ## The Enhancements
 
-Seventy-four enhancements so far — language features, correctness fixes, systematic audits, and simulator-side workflow tooling, each verified end-to-end by a committed example suite and released with a detailed write-up.
+Seventy-five enhancements so far — language features, correctness fixes, systematic audits, and simulator-side workflow tooling, each verified end-to-end by a committed example suite and released with a detailed write-up.
 
 **📖 Start with the [User Handbook](docs/handbook/README.md)**, which organizes everything by topic: [getting started](docs/handbook/01-getting-started.md), the [Verilog-A feature matrix](docs/handbook/02-verilog-a-language.md), [ngspice workflows](docs/handbook/03-ngspice-workflows.md), and the [limitations & gotchas](docs/handbook/04-limitations-and-gotchas.md). The whole handbook plus the complete text of every enhancement write-up is also one linked PDF: [docs/Ngspice-OpenVAF-Handbook.pdf](docs/Ngspice-OpenVAF-Handbook.pdf).
 
@@ -110,6 +110,7 @@ The index: **Doc** links each enhancement's detailed write-up, **Examples** link
 | 72 | Touchstone round 2 — MA/DB, units, Y/Z, `rdsnp` reader | [doc](enhancements_doc/Enhancement-72.md) | [touchstone](examples/touchstone_examples/) |
 | 73 | The user handbook, its PDF edition, and this README index | [doc](enhancements_doc/Enhancement-73.md) | [docs/handbook](docs/handbook/README.md) |
 | 74 | Performance benchmark — OSDI-vs-built-in twins at parity (RC ladder 0.99×), flagship compile times | [doc](enhancements_doc/Enhancement-74.md) | [benchmark](examples/benchmark_examples/) |
+| 75 | Dynamic physics validation — reactive paths cross-checked (Cgg AC ≡ transient, charge conservation, tran-sine ≡ .ac) | [doc](enhancements_doc/Enhancement-75.md) | [dynphys](examples/dynphys_examples/) |
 
 ---
 
