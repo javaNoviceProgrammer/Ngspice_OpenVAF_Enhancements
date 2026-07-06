@@ -17,7 +17,7 @@ pub use basedb::diagnostics::DiagnosticSink;
 use basedb::{BaseDB, FileId};
 pub use hir_def::body::{ConstraintValue, ParamConstraint};
 use hir_def::db::HirDefDB;
-pub use hir_def::expr::CaseCond;
+pub use hir_def::expr::{CaseCond, CaseKind, CaseMask};
 pub use hir_def::nameres::diagnostics::PathResolveError;
 use hir_def::nameres::{DefMap, LocalScopeId, ScopeDefItem};
 use hir_def::{

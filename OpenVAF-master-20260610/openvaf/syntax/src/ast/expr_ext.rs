@@ -336,6 +336,14 @@ fn strip_separators(src: &str) -> std::borrow::Cow<'_, str> {
 /// given radix, masked to `size` bits when a size is given (clamped to 1..=32),
 /// and sign-extended from the size's MSB under the `s` qualifier.
 fn parse_based_int(text: &str) -> Option<i32> {
+    parse_based_int_masked(text).map(|(val, ..)| val)
+}
+
+/// Like [`parse_based_int`] but also reports the don't-care digit masks
+/// (Enhancement-78, `casex`/`casez`): `x`/`X` digits set their bit positions
+/// in `x_mask`, `z`/`Z`/`?` digits set theirs in `z_mask`, and both
+/// contribute zero value bits. Returns `(value, x_mask, z_mask)`.
+pub fn parse_based_int_masked(text: &str) -> Option<(i32, i32, i32)> {
     let quote = text.find('\'')?;
     let (size_s, rest) = text.split_at(quote);
     let mut rest = &rest[1..];
@@ -343,18 +351,50 @@ fn parse_based_int(text: &str) -> Option<i32> {
     if signed {
         rest = &rest[1..];
     }
-    let radix = match rest.as_bytes().first()? {
-        b'd' | b'D' => 10,
-        b'h' | b'H' => 16,
-        b'o' | b'O' => 8,
-        b'b' | b'B' => 2,
+    let (radix, bits_per_digit) = match rest.as_bytes().first()? {
+        b'd' | b'D' => (10, 0),
+        b'h' | b'H' => (16, 4),
+        b'o' | b'O' => (8, 3),
+        b'b' | b'B' => (2, 1),
         _ => return None,
     };
     let digits = &rest[1..];
     if digits.is_empty() {
         return None;
     }
-    let mut val = u128::from_str_radix(digits, radix).ok()?;
+    let (mut val, mut x_mask, mut z_mask) = (0u128, 0u128, 0u128);
+    let mut any_digit = false;
+    for c in digits.chars() {
+        if c == '_' {
+            continue;
+        }
+        any_digit = true;
+        match c {
+            'x' | 'X' if bits_per_digit > 0 => {
+                val <<= bits_per_digit;
+                x_mask = (x_mask << bits_per_digit) | ((1 << bits_per_digit) - 1);
+                z_mask <<= bits_per_digit;
+            }
+            'z' | 'Z' | '?' if bits_per_digit > 0 => {
+                val <<= bits_per_digit;
+                z_mask = (z_mask << bits_per_digit) | ((1 << bits_per_digit) - 1);
+                x_mask <<= bits_per_digit;
+            }
+            _ => {
+                let d = c.to_digit(radix)?;
+                if bits_per_digit > 0 {
+                    val = (val << bits_per_digit) | d as u128;
+                    x_mask <<= bits_per_digit;
+                    z_mask <<= bits_per_digit;
+                } else {
+                    val = val.checked_mul(10)?.checked_add(d as u128)?;
+                }
+            }
+        }
+    }
+    if !any_digit {
+        return None;
+    }
     let size: u32 = if size_s.is_empty() {
         32
     } else {
@@ -363,11 +403,13 @@ fn parse_based_int(text: &str) -> Option<i32> {
     if size < 32 {
         let mask = (1u128 << size) - 1;
         val &= mask;
+        x_mask &= mask;
+        z_mask &= mask;
         if signed && (val >> (size - 1)) & 1 == 1 {
             val |= !mask;
         }
     }
-    Some(val as u32 as i32)
+    Some((val as u32 as i32, x_mask as u32 as i32, z_mask as u32 as i32))
 }
 
 impl ast::StdRealNumber {
@@ -410,6 +452,21 @@ impl ast::IntNumber {
             return parse_based_int(&src);
         }
         src.parse().ok()
+    }
+
+    /// The don't-care digit masks of a based literal -- `(x_mask, z_mask)`
+    /// bit sets -- or `None` when it has none (Enhancement-78, casex/casez).
+    pub fn dontcare_masks(&self) -> Option<(i32, i32)> {
+        let src = strip_separators(self.syntax.text());
+        if !src.contains('\'') {
+            return None;
+        }
+        let (_, x_mask, z_mask) = parse_based_int_masked(&src)?;
+        if x_mask == 0 && z_mask == 0 {
+            None
+        } else {
+            Some((x_mask, z_mask))
+        }
     }
 
     /// Parses this integer literal's text as an `f64`. Always succeeds for any token the

@@ -3,9 +3,10 @@ use std::mem::replace;
 use ahash::{HashMap, HashSet};
 use hir_def::body::Body;
 use hir_def::{
-    BranchId, BuiltIn, DefWithBodyId, DisciplineId, Expr, ExprId, FunctionArgLoc, FunctionId,
-    Literal, Lookup, NatureId, NodeId, ParamId, Path, Stmt, StmtId, VarId,
+    BranchId, BuiltIn, CaseKind, DefWithBodyId, DisciplineId, Expr, ExprId, FunctionArgLoc,
+    FunctionId, Literal, Lookup, NatureId, NodeId, ParamId, Path, Stmt, StmtId, Type, VarId,
 };
+use hir_def::expr::CaseCond;
 use stdx::impl_display;
 use syntax::ast::AssignOp;
 use syntax::name::{AsIdent, Name};
@@ -108,6 +109,23 @@ pub enum BodyValidationDiagnostic {
         expr: ExprId,
         cycle: Vec<Name>,
     },
+
+    /// Enhancement-78: an integer literal spelled with don't-care digits
+    /// (`'b1x?`) anywhere other than directly as a `casex`/`casez` item.
+    StrayDontCareLiteral {
+        expr: ExprId,
+    },
+    /// Enhancement-78: an `x` digit in a `casez` item -- only `z`/`?` are
+    /// don't-cares under `casez` (use `casex` for `x` as well).
+    XDigitInCaseZ {
+        expr: ExprId,
+    },
+    /// Enhancement-78: `casex`/`casez` masks are bitwise, so the
+    /// discriminant must be an integer.
+    NonIntegerCaseXZ {
+        kind: CaseKind,
+        discr: ExprId,
+    },
 }
 
 impl BodyValidationDiagnostic {
@@ -136,6 +154,12 @@ impl BodyValidationDiagnostic {
 
         for stmt in &*body.entry_stmts {
             validator.validate_stmt(*stmt)
+        }
+
+        // Enhancement-78: every don't-care literal that survived collection
+        // (i.e. was not consumed as a casex/casez item) is an error
+        for &expr in &body.stray_dontcare_literals {
+            validator.diagnostics.push(BodyValidationDiagnostic::StrayDontCareLiteral { expr });
         }
 
         // Enhancement-59: reject call-graph cycles among analog functions
@@ -259,7 +283,33 @@ impl BodyValidator<'_> {
                 return;
             }
 
-            Stmt::If { cond, .. } | Stmt::Case { discr: cond, .. } => cond,
+            Stmt::If { cond, .. } => cond,
+
+            Stmt::Case { kind, discr, ref case_arms } => {
+                // Enhancement-78: casex/casez restrictions
+                if kind != CaseKind::Case {
+                    if self.infer.expr_types[discr].to_value() != Some(Type::Integer) {
+                        self.diagnostics
+                            .push(BodyValidationDiagnostic::NonIntegerCaseXZ { kind, discr });
+                    }
+                    if kind == CaseKind::CaseZ {
+                        for arm in case_arms {
+                            if let CaseCond::Vals(vals) = &arm.cond {
+                                for (val, mask) in vals.iter().zip(&arm.masks) {
+                                    if mask.had_x {
+                                        self.diagnostics.push(
+                                            BodyValidationDiagnostic::XDigitInCaseZ {
+                                                expr: *val,
+                                            },
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                discr
+            }
 
             Stmt::ForLoop { cond, .. }
             | Stmt::WhileLoop { cond, .. }

@@ -134,8 +134,13 @@ impl Printer<'_> {
                 wln!(self, ")");
                 self.indented(|sel| sel.pretty_print_stmt(body))
             }
-            Stmt::Case { discr, ref case_arms } => {
-                w!(self, "case(");
+            Stmt::Case { kind, discr, ref case_arms } => {
+                let kw = match kind {
+                    crate::CaseKind::Case => "case",
+                    crate::CaseKind::CaseX => "casex",
+                    crate::CaseKind::CaseZ => "casez",
+                };
+                w!(self, "{}(", kw);
                 self.pretty_print_expr(discr);
                 self.indented(|sel| {
                     for case in case_arms {

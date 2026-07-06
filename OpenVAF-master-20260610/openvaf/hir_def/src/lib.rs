@@ -27,7 +27,7 @@ use syntax::{AstNode, AstPtr};
 pub use crate::builtin::{BuiltIn, ParamSysFun};
 pub use crate::data::FunctionArg;
 use crate::db::HirDefDB;
-pub use crate::expr::{Case, Expr, ExprId, Literal, Stmt, StmtId};
+pub use crate::expr::{Case, CaseKind, CaseMask, Expr, ExprId, Literal, Stmt, StmtId};
 pub use crate::item_tree::{
     AliasParam, Branch, BranchKind, BusDecl, Discipline, DisciplineAttr, Function, Instantiation,
     ItemTree, ItemTreeId, ItemTreeNode, Module, Nature, NatureAttr, NatureRef, NatureRefKind,

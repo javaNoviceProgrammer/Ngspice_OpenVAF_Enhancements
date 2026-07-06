@@ -392,5 +392,8 @@ examples/dynphys_examples/_*.osdi
 examples/multimod_examples/_*.cir
 examples/multimod_examples/*.osdi
 
+# Enhancement 78 casex/casez scripts: temp decks
+examples/casexz_examples/_*.cir
+
 # Python bytecode cache (e.g. from importing _setup.py)
 __pycache__/

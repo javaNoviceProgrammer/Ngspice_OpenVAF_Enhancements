@@ -1,13 +1,14 @@
 use super::*;
 
 pub(super) const STMT_TS: TokenSet = TokenSet::new(&[
-    IF_KW, WHILE_KW, REPEAT_KW, DO_KW, DISABLE_KW, FOR_KW, CASE_KW, BEGIN_KW, T![;], IDENT, SYSFUN,
+    IF_KW, WHILE_KW, REPEAT_KW, DO_KW, DISABLE_KW, FOR_KW, CASE_KW, CASEX_KW, CASEZ_KW,
+    BEGIN_KW, T![;], IDENT, SYSFUN,
     T![@],
 ]);
 pub(super) const STMT_RECOVER: TokenSet = TokenSet::new(&[EOF, ENDMODULE_KW, T![;]]);
 
 pub(super) const STMT_ATTR_RECOVER: TokenSet =
-    TokenSet::new(&[IF_KW, WHILE_KW, REPEAT_KW, DO_KW, DISABLE_KW, FOR_KW, CASE_KW, BEGIN_KW, T![;]])
+    TokenSet::new(&[IF_KW, WHILE_KW, REPEAT_KW, DO_KW, DISABLE_KW, FOR_KW, CASE_KW, CASEX_KW, CASEZ_KW, BEGIN_KW, T![;]])
         .union(STMT_RECOVER);
 
 pub(super) fn stmt_with_attrs(p: &mut Parser) {
@@ -24,7 +25,7 @@ pub(super) fn stmt(p: &mut Parser, m: Marker, expected: TokenSet, recover: Token
         DO_KW => do_stmt(p, m),
         DISABLE_KW => disable_stmt(p, m),
         FOR_KW => for_stmt(p, m),
-        CASE_KW => case_stmt(p, m),
+        CASE_KW | CASEX_KW | CASEZ_KW => case_stmt(p, m),
         BEGIN_KW => block_stmt(p, m),
         T![@] => event_stmt(p, m),
         IDENT | SYSFUN => expr_or_assign_stmt::<true>(p, m),
@@ -178,7 +179,9 @@ fn for_stmt(p: &mut Parser, m: Marker) {
 
 const CASE_ITEM_RECOVERY: TokenSet = TokenSet::new(&[EOF, ENDCASE_KW, ENDMODULE_KW]);
 fn case_stmt(p: &mut Parser, m: Marker) {
-    p.bump(CASE_KW);
+    // case / casex / casez share the grammar; the keyword token on the
+    // CASE_STMT node carries the don't-care kind downstream
+    p.bump_any();
     p.expect(T!['(']);
     expr(p);
     p.expect(T![')']);

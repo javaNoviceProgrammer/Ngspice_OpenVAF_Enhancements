@@ -178,6 +178,55 @@ impl Diagnostic for BodyValidationDiagnosticWrapped<'_> {
                             .to_owned(),
                     ])
             }
+            BodyValidationDiagnostic::StrayDontCareLiteral { expr } => {
+                let FileSpan { range, file } = self.expr_src(expr);
+                Report::error()
+                    .with_message("don't-care digits are only allowed in casex/casez items")
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: file,
+                        range: range.into(),
+                        message: "literal with x/z/? digits".to_owned(),
+                    }])
+                    .with_notes(vec![
+                        "help: `x`/`z`/`?` digits form comparison masks and are meaningful \
+                         only as items of a `casex`/`casez` statement"
+                            .to_owned(),
+                    ])
+            }
+            BodyValidationDiagnostic::XDigitInCaseZ { expr } => {
+                let FileSpan { range, file } = self.expr_src(expr);
+                Report::error()
+                    .with_message("'x' digits are not don't-cares in casez")
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: file,
+                        range: range.into(),
+                        message: "casez item with an 'x' digit".to_owned(),
+                    }])
+                    .with_notes(vec![
+                        "help: `casez` treats only `z`/`?` digits as don't-cares; use `casex` \
+                         to treat `x` digits as don't-cares as well"
+                            .to_owned(),
+                    ])
+            }
+            BodyValidationDiagnostic::NonIntegerCaseXZ { kind, discr } => {
+                let FileSpan { range, file } = self.expr_src(discr);
+                let kw = if kind == hir_def::CaseKind::CaseX { "casex" } else { "casez" };
+                Report::error()
+                    .with_message(format!("{} requires an integer discriminant", kw))
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: file,
+                        range: range.into(),
+                        message: "expected an integer expression".to_owned(),
+                    }])
+                    .with_notes(vec![
+                        "help: don't-care masks compare bit-wise, which is only defined for \
+                         `integer` values"
+                            .to_owned(),
+                    ])
+            }
             BodyValidationDiagnostic::PotentialOfPortFlow { expr, branch } => {
                 let FileSpan { range, file } = self.expr_src(expr);
 

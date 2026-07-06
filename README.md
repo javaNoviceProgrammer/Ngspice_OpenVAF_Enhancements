@@ -28,7 +28,7 @@ https://ngspice.sourceforge.io/
 
 ## The Enhancements
 
-Seventy-seven enhancements so far — language features, correctness fixes, systematic audits, and simulator-side workflow tooling, each verified end-to-end by a committed example suite and released with a detailed write-up.
+Seventy-eight enhancements so far — language features, correctness fixes, systematic audits, and simulator-side workflow tooling, each verified end-to-end by a committed example suite and released with a detailed write-up.
 
 **📖 Start with the [User Handbook](docs/handbook/README.md)**, which organizes everything by topic: [getting started](docs/handbook/01-getting-started.md), the [Verilog-A feature matrix](docs/handbook/02-verilog-a-language.md), [ngspice workflows](docs/handbook/03-ngspice-workflows.md), and the [limitations & gotchas](docs/handbook/04-limitations-and-gotchas.md). The whole handbook plus the complete text of every enhancement write-up is also one linked PDF: [docs/Ngspice-OpenVAF-Handbook.pdf](docs/Ngspice-OpenVAF-Handbook.pdf).
 
@@ -113,6 +113,7 @@ The index: **Doc** links each enhancement's detailed write-up, **Examples** link
 | 75 | Dynamic physics validation — reactive paths cross-checked (Cgg AC ≡ transient, charge conservation, tran-sine ≡ .ac) | [doc](enhancements_doc/Enhancement-75.md) | [dynphys](examples/dynphys_examples/) |
 | 76 | Multi-module `.osdi` libraries — audit + registration fixes (duplicate warning, double-load skip, stock `.model` segfault) | [doc](enhancements_doc/Enhancement-76.md) | [multimod](examples/multimod_examples/) |
 | 77 | ngspice zero-warning build (33 → 0) — SDK macro clashes, `%Id`→`%zu` (readable plot-memory errors), codemodel `dynamic_lookup` | [doc](enhancements_doc/Enhancement-77.md) | — |
+| 78 | `casex`/`casez` — don't-care digits in item literals as comparison masks (priority-encoder idiom) | [doc](enhancements_doc/Enhancement-78.md) | [casexz](examples/casexz_examples/) |
 
 ---
 

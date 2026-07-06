@@ -153,7 +153,7 @@ the actual construct and suggest hoisting or `generate` unrolling
 
 | Feature | Notes | Since |
 |---|---|---|
-| `if`/`else`, `case` | Including `case` on strings and arrays. (The `casex`/`casez` don't-care variants are not implemented.) | [E-33](../../enhancements_doc/Enhancement-33.md), [E-59](../../enhancements_doc/Enhancement-59.md) |
+| `if`/`else`, `case`, `casex`/`casez` | `case` works on strings and arrays; `casex`/`casez` treat `x`/`z`/`?` digits of item literals as comparison masks (the priority-encoder idiom), with don't-care literals rejected everywhere else. `examples/casexz_examples/` | [E-33](../../enhancements_doc/Enhancement-33.md), [E-59](../../enhancements_doc/Enhancement-59.md), [E-78](../../enhancements_doc/Enhancement-78.md) |
 | `for`, `while`, `repeat(n)`, `do…while` | All four, audited: nesting, loops over arrays, solution-dependent conditions, contributions accumulating inside loops. Parameter-dependent trip counts honor **model-card overrides at simulation time**. `examples/analogloop_examples/`, `examples/dowhile_examples/`, `examples/repeat_examples/` | [E-9](../../enhancements_doc/Enhancement-9.md), [E-19](../../enhancements_doc/Enhancement-19.md), [E-70](../../enhancements_doc/Enhancement-70.md) |
 | `disable <block>;` | Verilog-A's early exit — the idiom from which `break`/`continue` are built (the language has neither keyword). `examples/disable_examples/` | [E-9](../../enhancements_doc/Enhancement-9.md) |
 

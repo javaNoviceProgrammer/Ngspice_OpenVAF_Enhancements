@@ -27,6 +27,10 @@ pub struct Body {
     pub stmt_scopes: ArenaMap<Stmt, ScopeId>,
     pub stmts: Arena<Stmt>,
     pub entry_stmts: Box<[StmtId]>,
+    /// Integer literals spelled with don't-care digits (`'b1x?`) that are
+    /// NOT `casex`/`casez` items (those are consumed into [`Case::masks`]
+    /// at collection); validation rejects every entry (Enhancement-78).
+    pub stray_dontcare_literals: Vec<ExprId>,
 }
 
 #[derive(Default, Debug, Eq, PartialEq)]

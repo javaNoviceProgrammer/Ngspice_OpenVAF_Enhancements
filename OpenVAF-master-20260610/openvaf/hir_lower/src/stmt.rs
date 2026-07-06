@@ -1,6 +1,6 @@
 use hir::{
-    ArrayAssignElem, BranchWrite, Case, CaseCond, ContributeKind, Event, ExprId, GlobalEvent, Node,
-    Stmt, StmtId, Type,
+    ArrayAssignElem, BranchWrite, Case, CaseCond, CaseKind, CaseMask, ContributeKind, Event, ExprId,
+    GlobalEvent, Node, Stmt, StmtId, Type,
 };
 use mir::builder::InstBuilder;
 use mir::cursor::{Cursor, FuncCursor};
@@ -150,7 +150,7 @@ impl BodyLoweringCtx<'_, '_, '_> {
             Stmt::WhileLoop { cond, body } => self.lower_loop(cond, |s| s.lower_stmt(body)),
             Stmt::DoWhile { cond, body } => self.lower_do_while(cond, |s| s.lower_stmt(body)),
             Stmt::Repeat { count, body } => self.lower_repeat(count, body),
-            Stmt::Case { discr, case_arms } => self.lower_case(discr, case_arms),
+            Stmt::Case { kind, discr, case_arms } => self.lower_case(kind, discr, case_arms),
         }
     }
 
@@ -348,7 +348,7 @@ impl BodyLoweringCtx<'_, '_, '_> {
         fired
     }
 
-    fn lower_case(&mut self, discr: ExprId, case_arms: &[Case]) {
+    fn lower_case(&mut self, kind: CaseKind, discr: ExprId, case_arms: &[Case]) {
         // Enhancement-33: a `case` over an array (literal or whole-array variable — type
         // inference guarantees every case item has the identical array type) compares
         // ELEMENT-WISE: the arm matches iff all elements are equal. The discriminant and
@@ -372,7 +372,8 @@ impl BodyLoweringCtx<'_, '_, '_> {
         };
         let end = self.ctx.create_block();
 
-        for Case { cond, body } in case_arms {
+        for arm in case_arms {
+            let Case { cond, body, masks } = arm;
             // TODO does default mean that further cases are ignored?
             // standard seems to suggest that no matter where the default case is placed that all
             // other conditions are tested prior
@@ -384,8 +385,17 @@ impl BodyLoweringCtx<'_, '_, '_> {
             // Create the body block
             let body_head = self.ctx.create_block();
 
-            for val in vals {
+            for (val_idx, val) in vals.iter().enumerate() {
                 self.ctx.ensured_sealed();
+
+                // Enhancement-78: a casex/casez item literal with don't-care
+                // digits compares only its care bits -- (discr & care) ==
+                // (item & care); validation guarantees an integer scalar
+                let mask = if kind == CaseKind::Case {
+                    CaseMask::FULL
+                } else {
+                    masks.get(val_idx).copied().unwrap_or(CaseMask::FULL)
+                };
 
                 // Lower the condition (val == discriminant); for arrays, all elements equal
                 let val_elems = if is_array {
@@ -399,6 +409,12 @@ impl BodyLoweringCtx<'_, '_, '_> {
                 self.ctx.set_srcloc(mir::SourceLoc::new(u32::from(*val) as i32 + 1));
                 let mut cond = None;
                 for (&val_, &discr_) in val_elems.iter().zip(&discr_vals) {
+                    let (val_, discr_) = if mask.care != !0 && discr_op == Opcode::Ieq {
+                        let care = self.ctx.iconst(mask.care);
+                        (self.ctx.ins().iand(val_, care), self.ctx.ins().iand(discr_, care))
+                    } else {
+                        (val_, discr_)
+                    };
                     let eq = self.ctx.ins().binary1(discr_op, val_, discr_);
                     cond = Some(match cond {
                         None => eq,

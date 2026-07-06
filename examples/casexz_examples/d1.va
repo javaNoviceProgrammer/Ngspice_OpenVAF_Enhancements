@@ -1,0 +1,9 @@
+`include "disciplines.vams"
+module d1(p, n);
+    inout p, n; electrical p, n;
+    integer x;
+    analog begin
+        x = 'b1x0;
+        I(p, n) <+ x * V(p, n);
+    end
+endmodule

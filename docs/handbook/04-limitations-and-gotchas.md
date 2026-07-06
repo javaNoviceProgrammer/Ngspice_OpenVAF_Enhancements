@@ -102,9 +102,6 @@ scripting ngspice:
 
 ## 4.6 Assorted edges
 
-- **`casex`/`casez` are not implemented** — plain `case` (including over
-  strings and arrays) is; the don't-care variants are rejected at parse
-  time.
 - **`break`/`continue` don't exist in Verilog-A** — the compiler rejects
   them with the `disable <block>;` idiom as the alternative
   ([E-9](../../enhancements_doc/Enhancement-9.md), [E-70](../../enhancements_doc/Enhancement-70.md)).

@@ -212,7 +212,7 @@ impl Ctx<'_> {
 
             Stmt::EventControl { ref event, .. } => self.infere_event_control(stmt, event),
 
-            Stmt::Case { discr, ref case_arms } => {
+            Stmt::Case { discr, ref case_arms, .. } => {
                 // Enhancement-33: infer the discriminant and case items with the
                 // array-aware helper, so whole-array variable references are accepted
                 // (and registered in `array_var_refs`) alongside array literals and

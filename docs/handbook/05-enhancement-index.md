@@ -85,3 +85,4 @@ table is the enhancement index of the top-level
 | 75 | Dynamic physics validation — reactive paths cross-checked (Cgg AC ≡ transient, charge conservation, tran-sine ≡ .ac) | [doc](../../enhancements_doc/Enhancement-75.md) | [dynphys](../../examples/dynphys_examples/) |
 | 76 | Multi-module `.osdi` libraries — audit + registration fixes (duplicate warning, double-load skip, stock `.model` segfault) | [doc](../../enhancements_doc/Enhancement-76.md) | [multimod](../../examples/multimod_examples/) |
 | 77 | ngspice zero-warning build (33 → 0) — SDK macro clashes, `%Id`→`%zu` (readable plot-memory errors), codemodel `dynamic_lookup` | [doc](../../enhancements_doc/Enhancement-77.md) | — |
+| 78 | `casex`/`casez` — don't-care digits in item literals as comparison masks (priority-encoder idiom) | [doc](../../enhancements_doc/Enhancement-78.md) | [casexz](../../examples/casexz_examples/) |

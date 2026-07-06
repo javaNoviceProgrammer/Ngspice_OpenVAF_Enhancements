@@ -3,7 +3,7 @@ use std::sync::Arc;
 use hir_def::db::HirDefDB;
 pub use hir_def::expr::Event;
 use hir_def::DefWithBodyId;
-pub use hir_def::{/*expr::CaseCond,*/ BuiltIn, Case, ExprId, Literal, ParamSysFun, StmtId, Type,};
+pub use hir_def::{/*expr::CaseCond,*/ BuiltIn, Case, CaseKind, ExprId, Literal, ParamSysFun, StmtId, Type,};
 use hir_ty::db::HirTyDB;
 use hir_ty::inference;
 use hir_ty::types::{Signature, Ty};
@@ -341,7 +341,9 @@ impl<'a> BodyRef<'a> {
             hir_def::Stmt::WhileLoop { cond, body } => Some(Stmt::WhileLoop { cond, body }),
             hir_def::Stmt::DoWhile { cond, body } => Some(Stmt::DoWhile { cond, body }),
             hir_def::Stmt::Repeat { count, body } => Some(Stmt::Repeat { count, body }),
-            hir_def::Stmt::Case { discr, ref case_arms } => Some(Stmt::Case { discr, case_arms }),
+            hir_def::Stmt::Case { kind, discr, ref case_arms } => {
+                Some(Stmt::Case { kind, discr, case_arms })
+            }
         }
     }
 }
@@ -400,7 +402,7 @@ pub enum Stmt<'a> {
     WhileLoop { cond: ExprId, body: StmtId },
     DoWhile { cond: ExprId, body: StmtId },
     Repeat { count: ExprId, body: StmtId },
-    Case { discr: ExprId, case_arms: &'a [Case] }, // TODO lint on unreachable
+    Case { kind: CaseKind, discr: ExprId, case_arms: &'a [Case] }, // TODO lint on unreachable
 }
 impl Stmt<'_> {
     #[inline]

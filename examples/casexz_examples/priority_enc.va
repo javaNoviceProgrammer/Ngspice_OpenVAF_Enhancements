@@ -1,0 +1,22 @@
+`include "disciplines.vams"
+
+// The classic casex idiom: a priority encoder. The highest set bit of
+// `sel` (a 4-bit request word, overridable from the model card) picks the
+// conductance; lower bits are don't-cares in each item.
+module priority_enc(p, n);
+    inout p, n;
+    electrical p, n;
+    parameter integer sel = 0 from [0:15];
+    integer grant;
+
+    analog begin
+        casex (sel)
+            4'b1xxx: grant = 8;
+            4'b01xx: grant = 4;
+            4'b001x: grant = 2;
+            4'b0001: grant = 1;
+            default: grant = 0;
+        endcase
+        I(p, n) <+ grant * 1e-3 * V(p, n);
+    end
+endmodule

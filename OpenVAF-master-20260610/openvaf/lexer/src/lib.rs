@@ -33,7 +33,7 @@ fn is_base_char(c: char) -> bool {
 /// A character that can start the digit run of a based integer literal --
 /// the hex superset; per-base validity is enforced while eating the digits.
 fn is_based_digit(c: char) -> bool {
-    c.is_ascii_hexdigit() || c == '_'
+    c.is_ascii_hexdigit() || matches!(c, '_' | 'x' | 'X' | 'z' | 'Z' | '?')
 }
 
 pub fn is_whitespace(c: char) -> bool {
@@ -443,11 +443,17 @@ impl Cursor<'_> {
         self.bump();
         loop {
             let ok = match base {
-                'b' | 'B' => matches!(self.first(), '0' | '1' | '_'),
-                'o' | 'O' => matches!(self.first(), '0'..='7' | '_'),
+                // x/z/? are don't-care digits (casex/casez items, LRM A.8.7);
+                // legal in the power-of-two bases, not in decimal
+                'b' | 'B' => {
+                    matches!(self.first(), '0' | '1' | '_' | 'x' | 'X' | 'z' | 'Z' | '?')
+                }
+                'o' | 'O' => {
+                    matches!(self.first(), '0'..='7' | '_' | 'x' | 'X' | 'z' | 'Z' | '?')
+                }
                 'd' | 'D' => matches!(self.first(), '0'..='9' | '_'),
                 'h' | 'H' => {
-                    matches!(self.first(), '0'..='9' | 'a'..='f' | 'A'..='F' | '_')
+                    matches!(self.first(), '0'..='9' | 'a'..='f' | 'A'..='F' | '_' | 'x' | 'X' | 'z' | 'Z' | '?')
                 }
                 _ => false,
             };

@@ -1,0 +1,55 @@
+`include "disciplines.vams"
+
+// casex/casez probe: 8-way self-checking bitmask (E-37 audit technique).
+// Each check that passes adds a power of two to `score`; the expected
+// total is exact, so any wrong don't-care semantics shows as a specific
+// missing/extra bit in the DC conductance.
+module casexz_probe(p, n);
+    inout p, n;
+    electrical p, n;
+    parameter integer sel = 0;
+    integer score;
+
+    analog begin
+        score = 0;
+
+        // [1] casex: x digits in the item are don't-cares
+        casex (6'b101101)
+            6'b1x11x1: score = score + 1;   // matches: bits 4,1 ignored
+            default:   score = score + 64;
+        endcase
+
+        // [2] casex: z and ? are don't-cares too
+        casex (6'b101101)
+            6'b10z10?: score = score + 2;
+            default:   score = score + 64;
+        endcase
+
+        // [4] casez: z/? are don't-cares
+        casez (6'b101101)
+            6'b10?10z: score = score + 4;
+            default:   score = score + 64;
+        endcase
+
+        // [8] casez: a fully-specified non-matching item falls to default
+        casez (6'b101101)
+            6'b101100: score = score + 64;
+            default:   score = score + 8;
+        endcase
+
+        // [16] first matching arm wins (LRM order)
+        casex (4'b1010)
+            4'b1xxx: score = score + 16;
+            4'b101x: score = score + 64;
+        endcase
+
+        // [32] plain case still exact
+        case (6'b101101)
+            45: score = score + 32;
+            default: score = score + 64;
+        endcase
+
+        // expected score: 1+2+4+8+16+32 = 63
+        I(p, n) <+ score * 1e-3 * V(p, n);
+    end
+endmodule

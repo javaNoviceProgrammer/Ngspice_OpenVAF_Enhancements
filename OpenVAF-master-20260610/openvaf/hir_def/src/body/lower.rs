@@ -12,7 +12,7 @@ use super::{Body, BodySourceMap};
 use crate::db::HirDefDB;
 use crate::expr::{CaseCond, Event, GlobalEvent};
 use crate::nameres::DefMapSource;
-use crate::{BlockLoc, Case, Expr, ExprId, Intern, Literal, Path, ScopeId, Stmt, StmtId};
+use crate::{BlockLoc, Case, CaseKind, CaseMask, Expr, ExprId, Intern, Literal, Path, ScopeId, Stmt, StmtId};
 
 pub(super) struct LowerCtx<'a> {
     pub(super) db: &'a dyn HirDefDB,
@@ -116,7 +116,19 @@ impl LowerCtx<'_> {
                 }
             }
 
-            ast::Expr::Literal(lit) => Expr::Literal(Literal::new(lit.kind())),
+            ast::Expr::Literal(lit) => {
+                let id =
+                    self.alloc_expr(Expr::Literal(Literal::new(lit.kind())), AstPtr::new(&expr));
+                // don't-care digits ('b1x?) are only meaningful as casex/casez
+                // items; track every such literal -- collect_case_stmt removes
+                // the legal ones and validation rejects the rest (E-78)
+                if let ast::LiteralKind::IntNumber(int) = lit.kind() {
+                    if int.dontcare_masks().is_some() {
+                        self.body.stray_dontcare_literals.push(id);
+                    }
+                }
+                return id;
+            }
         };
         self.alloc_expr(e, AstPtr::new(&expr))
     }
@@ -302,22 +314,71 @@ impl LowerCtx<'_> {
     }
 
     fn collect_case_stmt(&mut self, case_stmt: &ast::CaseStmt) -> Stmt {
+        // case / casex / casez share the CASE_STMT node; the keyword token
+        // distinguishes them (Enhancement-78)
+        let kind = case_stmt
+            .syntax()
+            .children_with_tokens()
+            .filter_map(|it| it.into_token())
+            .find_map(|t| match t.kind() {
+                SyntaxKind::CASE_KW => Some(CaseKind::Case),
+                SyntaxKind::CASEX_KW => Some(CaseKind::CaseX),
+                SyntaxKind::CASEZ_KW => Some(CaseKind::CaseZ),
+                _ => None,
+            })
+            .unwrap_or(CaseKind::Case);
         let discr = self.collect_opt_expr(case_stmt.discriminant());
         let case_arms = case_stmt
             .cases()
             .map(|case| {
-                let cond = if case.default_token().is_some() {
+                let (cond, masks) = if case.default_token().is_some() {
                     debug_assert_eq!(case.exprs().next(), None);
-                    CaseCond::Default
+                    (CaseCond::Default, Vec::new())
                 } else {
-                    let vals = case.exprs().map(|e| self.collect_expr(e)).collect();
-                    CaseCond::Vals(vals)
+                    let mut masks = Vec::new();
+                    let vals = case
+                        .exprs()
+                        .map(|e| {
+                            let id = self.collect_expr(e.clone());
+                            masks.push(self.case_item_mask(kind, &e, id));
+                            id
+                        })
+                        .collect();
+                    (CaseCond::Vals(vals), masks)
                 };
-                Case { cond, body: self.collect_opt_stmt(case.stmt()) }
+                Case { cond, masks, body: self.collect_opt_stmt(case.stmt()) }
             })
             .collect();
 
-        Stmt::Case { discr, case_arms }
+        Stmt::Case { kind, discr, case_arms }
+    }
+
+    /// The comparison mask of one casex/casez item: a *directly written*
+    /// integer literal with don't-care digits contributes a partial-care
+    /// mask (and is legal there, so it leaves the stray list); everything
+    /// else compares in full.
+    fn case_item_mask(&mut self, kind: CaseKind, e: &ast::Expr, id: ExprId) -> CaseMask {
+        if kind == CaseKind::Case {
+            return CaseMask::FULL;
+        }
+        let int = match e {
+            ast::Expr::Literal(lit) => match lit.kind() {
+                ast::LiteralKind::IntNumber(int) => int,
+                _ => return CaseMask::FULL,
+            },
+            _ => return CaseMask::FULL,
+        };
+        match int.dontcare_masks() {
+            Some((x_mask, z_mask)) => {
+                self.body.stray_dontcare_literals.retain(|&it| it != id);
+                let care = match kind {
+                    CaseKind::CaseX => !(x_mask | z_mask),
+                    _ => !z_mask,
+                };
+                CaseMask { care, had_x: x_mask != 0 }
+            }
+            None => CaseMask::FULL,
+        }
     }
 
     pub fn collect_block(&mut self, block: &ast::BlockStmt) -> Stmt {

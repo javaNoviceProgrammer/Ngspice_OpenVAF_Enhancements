@@ -161,7 +161,7 @@ pub enum Stmt {
     /// `repeat (count) body` -- executes `body` `count` (truncated to integer)
     /// times. Lowered to a counted loop in `hir_lower`.
     Repeat { count: ExprId, body: StmtId },
-    Case { discr: ExprId, case_arms: Vec<Case> }, // TODO lint on unreachable
+    Case { kind: CaseKind, discr: ExprId, case_arms: Vec<Case> }, // TODO lint on unreachable
 }
 
 #[derive(Debug, Eq, PartialEq, Hash, Clone, Copy)]
@@ -231,9 +231,33 @@ pub enum CaseCond {
     Vals(Vec<ExprId>), // TODO PROFILE: SmallVec<[ExprId; 1]> here
 }
 
+/// Which `case` statement flavor (Enhancement-78): `casex`/`casez` treat
+/// don't-care digits in their item literals as comparison masks.
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum CaseKind {
+    Case,
+    CaseX,
+    CaseZ,
+}
+
+/// Per-item comparison mask for `casex`/`casez` (parallel to
+/// `CaseCond::Vals`): `care` has a 0 at every don't-care bit position
+/// (`!0` = ordinary full comparison); `had_x` records whether the item
+/// literal spelled any `x` digit (a validation error under `casez`).
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub struct CaseMask {
+    pub care: i32,
+    pub had_x: bool,
+}
+
+impl CaseMask {
+    pub const FULL: CaseMask = CaseMask { care: !0, had_x: false };
+}
+
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct Case {
     pub cond: CaseCond,
+    pub masks: Vec<CaseMask>,
     pub body: StmtId,
 }
 
