@@ -56,5 +56,9 @@ Two larger guards sit on top of the per-feature suites:
 The [`docs/`](..) folder holds the primary sources this project is written
 against: the Verilog-AMS Language Reference Manual (`VAMS-LRM-2023.pdf` —
 Verilog-A is its Annex C subset), the ngspice-46 manual, and the OSDI
-interface specification. When the handbook cites "LRM 4.5.1" or similar,
+interface specification. It also holds the
+[ngspice full change report](../ngspice_changes_full-report.md) (with a
+[PDF edition](../ngspice_changes_full-report.pdf)): every modification
+this project applied to ngspice-46, organized by subsystem, each with its
+reason and enhancement link. When the handbook cites "LRM 4.5.1" or similar,
 that's the document it means.
