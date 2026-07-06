@@ -56,7 +56,10 @@ Two larger guards sit on top of the per-feature suites:
 The [`docs/`](..) folder holds the primary sources this project is written
 against: the Verilog-AMS Language Reference Manual (`VAMS-LRM-2023.pdf` —
 Verilog-A is its Annex C subset), the ngspice-46 manual, and the OSDI
-interface specification. Its [`change_log/`](../change_log/) subfolder holds the two full
+interface specification. Its [`compliance/`](../compliance/) subfolder holds the
+[Verilog-A LRM compliance document](../compliance/OpenVAF_Verilog-A_LRM_Compliance.md)
+(with a PDF edition) — clause-by-clause language coverage with verified
+code examples. Its [`change_log/`](../change_log/) subfolder holds the two full
 change reports — [ngspice](../change_log/ngspice_changes_full-report.md) and
 [openvaf-r](../change_log/openvaf_changes_full-report.md), each with a PDF edition —
 documenting every modification this project applied to either tool,
