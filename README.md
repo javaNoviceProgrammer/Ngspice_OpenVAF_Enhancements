@@ -146,12 +146,14 @@ The binaries are dynamically linked against standard system libraries. Install t
 
 **Ubuntu / Debian:**
 ```bash
-sudo apt-get install libreadline8 libx11-6 libxaw7 libxft2 libxext6
+sudo apt-get install libreadline8 libx11-6 libxaw7 libxft2 libxext6   # ngspice
+sudo apt-get install libllvm18                                        # openvaf-r
 ```
 
 **Fedora / RHEL:**
 ```bash
-sudo dnf install readline libX11 libXaw libXft libXext
+sudo dnf install readline libX11 libXaw libXft libXext   # ngspice
+sudo dnf install llvm18-libs                             # openvaf-r
 ```
 
 After that, mark the binaries executable and run:
@@ -170,8 +172,14 @@ Download and install from [https://www.xquartz.org](https://www.xquartz.org), th
 
 **2. Install Homebrew dependencies:**
 ```bash
-brew install readline ncurses
+brew install readline ncurses     # for ngspice
+brew install llvm@18              # for openvaf-r (runtime: libLLVM + libunwind)
 ```
+
+> `openvaf-r` links LLVM dynamically, so it needs Homebrew's `llvm@18` at
+> runtime — without it you'll see
+> `Library not loaded: .../opt/llvm@18/lib/libunwind.1.dylib` (Intel Macs
+> resolve it under `/usr/local/opt`, Apple Silicon under `/opt/homebrew/opt`).
 
 **3. Mark binaries executable and run:**
 ```bash
