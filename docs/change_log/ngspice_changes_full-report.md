@@ -261,7 +261,12 @@ plot expressions as `plot`/`gnuplot`; the `com_pyplot()` wrapper mirrors
 `com_gnuplot()`, and `pyplot` is registered in both command tables. Two
 `set` variables tune it: `pyplot_terminal=png` renders headless (Agg) to a
 PNG, and `pyplot_python` picks the interpreter (default `python3`). Purely
-additive ([E-94](../../enhancements_doc/Enhancement-94.md)).
+additive ([E-94](../../enhancements_doc/Enhancement-94.md)). The output file
+base name is **optional** ([E-95](../../enhancements_doc/Enhancement-95.md)):
+`com_pyplot()` treats the first word as a file name only when it is not a plot
+expression (no `(`, and not a vector by `vec_get()`), otherwise it defaults to
+`pyplot` — so `pyplot v(out)` plots directly (the command's minimum argument
+count was lowered from 2 to 1).
 
 ### `postcoms.c` (414 diff lines) + `postcoms.h` + `commands.c` (16)
 
@@ -438,6 +443,7 @@ Every enhancement that touched ngspice, oldest first:
 | [E-81](../../enhancements_doc/Enhancement-81.md) | resource.c, dev.c | memory-warning opt-out + once-per-excursion; reload-note hint |
 | [E-93](../../enhancements_doc/Enhancement-93.md) | osdi.h, osdiparam.c | warn (not silently ignore) when a netlist sets a `PARA_FLAG_FIXED` (`localparam`) OSDI parameter |
 | [E-94](../../enhancements_doc/Enhancement-94.md) | plotting/pyplot.c (new), com_pyplot.c (new), plotit.c, commands.c | new `pyplot` command — plot vectors with matplotlib (a Python `gnuplot`) |
+| [E-95](../../enhancements_doc/Enhancement-95.md) | com_pyplot.c, commands.c | make the `pyplot` output file name optional (defaults to `pyplot`) |
 
 *(E-25's simparam exposure lives in the OSDI callback table populated at
 load time; its diff rides inside the `osdiload.c`/callbacks changes.)*

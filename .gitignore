@@ -416,6 +416,8 @@ examples/pyplot_examples/tran.sp
 examples/pyplot_examples/ac.sp
 examples/pyplot_examples/rc.*
 examples/pyplot_examples/acmag.*
+examples/pyplot_examples/pyplot.*
+examples/pyplot_examples/nofn.sp
 
 # Enhancement-93 paramnonset: verify-run scratch files
 examples/paramnonset_examples/*.osdi

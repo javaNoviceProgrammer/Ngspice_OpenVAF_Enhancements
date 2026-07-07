@@ -28,7 +28,7 @@ https://ngspice.sourceforge.io/
 
 ## The Enhancements
 
-Ninety-four enhancements so far — language features, correctness fixes, systematic audits, and simulator-side workflow tooling, each verified end-to-end by a committed example suite and released with a detailed write-up.
+Ninety-five enhancements so far — language features, correctness fixes, systematic audits, and simulator-side workflow tooling, each verified end-to-end by a committed example suite and released with a detailed write-up.
 
 **📖 Start with the [User Handbook](docs/handbook/README.md)**, which organizes everything by topic: [getting started](docs/handbook/01-getting-started.md), the [Verilog-A feature matrix](docs/handbook/02-verilog-a-language.md), [ngspice workflows](docs/handbook/03-ngspice-workflows.md), and the [limitations & gotchas](docs/handbook/04-limitations-and-gotchas.md). The whole handbook plus the complete text of every enhancement write-up is also one linked PDF: [docs/Ngspice-OpenVAF-Handbook.pdf](docs/Ngspice-OpenVAF-Handbook.pdf).
 
@@ -130,6 +130,7 @@ The index: **Doc** links each enhancement's detailed write-up, **Examples** link
 | 92 | Freeze structural (width) parameters to `localparam` so a netlist override cannot desync the frozen width from behavioural code (fixes a silent out-of-bounds in E-91) | [doc](enhancements_doc/Enhancement-92.md) | [paramfreeze](examples/paramfreeze_examples/) |
 | 93 | Warn when a netlist sets a fixed (`localparam`) parameter: openvaf flags it non-settable (`PARA_FLAG_FIXED`), ngspice warns instead of silently ignoring the value | [doc](enhancements_doc/Enhancement-93.md) | [paramnonset](examples/paramnonset_examples/) |
 | 94 | New ngspice `pyplot` command — plot simulated vectors with **matplotlib** (a Python counterpart to `gnuplot`); `pyplot_terminal=png` renders headless to a PNG | [doc](enhancements_doc/Enhancement-94.md) | [pyplot](examples/pyplot_examples/) |
+| 95 | Make the `pyplot` output file name optional — `pyplot v(out)` (or bare node names) defaults the base name to `pyplot`; an explicit name still works | [doc](enhancements_doc/Enhancement-95.md) | [pyplot](examples/pyplot_examples/) |
 
 ---
 

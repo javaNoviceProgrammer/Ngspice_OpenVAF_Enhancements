@@ -93,8 +93,31 @@ with open(os.path.join(HERE, "ac.sp"), "w") as f:
 subprocess.run([NGSPICE, "-b", "ac.sp"], capture_output=True, text=True, cwd=HERE)
 check("AC log-scale plot renders a PNG", is_png(os.path.join(HERE, "acmag.png")))
 
-for f in ("tran.sp", "ac.sp", "rc.py", "rc.data", "rc.png",
-          "acmag.py", "acmag.data", "acmag.png", "rcload.osdi"):
+# Enhancement-95: the file name is optional -- `pyplot v(out)` (no file name)
+# defaults the base name to "pyplot".
+nofndeck = """* pyplot without a file name
+.model rl rcload
+V1 in 0 PULSE(0 1 0 1n 1n 1m 2m)
+N1 in out rl
+C1 out 0 1u
+.tran 10u 3m
+.control
+pre_osdi rcload.osdi
+run
+set pyplot_terminal=png
+pyplot v(out)
+.endc
+.end
+"""
+with open(os.path.join(HERE, "nofn.sp"), "w") as f:
+    f.write(nofndeck)
+subprocess.run([NGSPICE, "-b", "nofn.sp"], capture_output=True, text=True, cwd=HERE)
+check("pyplot with no file name defaults to 'pyplot.png'",
+      is_png(os.path.join(HERE, "pyplot.png")))
+
+for f in ("tran.sp", "ac.sp", "nofn.sp", "rc.py", "rc.data", "rc.png",
+          "acmag.py", "acmag.data", "acmag.png",
+          "pyplot.py", "pyplot.data", "pyplot.png", "rcload.osdi"):
     p = os.path.join(HERE, f)
     if os.path.exists(p):
         os.remove(p)
