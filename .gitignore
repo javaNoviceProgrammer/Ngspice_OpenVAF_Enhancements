@@ -409,6 +409,14 @@ examples/opamp741_examples/_*
 examples/opamp741_examples/bjt741.osdi
 examples/opamp741_examples/results/
 
+# Enhancement-94 pyplot: verify-run scratch files (generated plots/scripts)
+examples/pyplot_examples/*.osdi
+examples/pyplot_examples/*.data
+examples/pyplot_examples/tran.sp
+examples/pyplot_examples/ac.sp
+examples/pyplot_examples/rc.*
+examples/pyplot_examples/acmag.*
+
 # Enhancement-93 paramnonset: verify-run scratch files
 examples/paramnonset_examples/*.osdi
 examples/paramnonset_examples/*.sp

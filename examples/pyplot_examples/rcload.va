@@ -1,0 +1,9 @@
+`include "disciplines.vams"
+// A small OpenVAF/OSDI model (a linear conductance) whose transient response
+// is plotted with the Enhancement-94 `pyplot` command.
+module rcload(a, b);
+   inout a, b;
+   electrical a, b;
+   parameter real g = 1e-3;   // 1 mS -> 1 kOhm
+   analog I(a, b) <+ g * V(a, b);
+endmodule

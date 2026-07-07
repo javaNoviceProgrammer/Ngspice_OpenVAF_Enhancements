@@ -249,6 +249,20 @@ Adds `osdiaccept.c` to the build ([E-55](../../enhancements_doc/Enhancement-55.m
 
 ## 4. Frontend — `src/frontend/`
 
+### `plotting/pyplot.c` (new) + `com_pyplot.c` (new) + `plotit.c`, `commands.c` (E-94)
+
+A new interactive command, **`pyplot`**, plots simulated vectors with
+**matplotlib** — a Python counterpart to `gnuplot`. `ft_pyplot()`
+(`plotting/pyplot.c`) mirrors `ft_gnuplot()`: it writes a `<file>.data`
+table and a `<file>.py` matplotlib script and `system()`s `python3`
+(synchronously for a PNG, backgrounded for an interactive window). A new
+`"pyplot"` device arm in `plotit()` routes to it, so it accepts the same
+plot expressions as `plot`/`gnuplot`; the `com_pyplot()` wrapper mirrors
+`com_gnuplot()`, and `pyplot` is registered in both command tables. Two
+`set` variables tune it: `pyplot_terminal=png` renders headless (Agg) to a
+PNG, and `pyplot_python` picks the interpreter (default `python3`). Purely
+additive ([E-94](../../enhancements_doc/Enhancement-94.md)).
+
 ### `postcoms.c` (414 diff lines) + `postcoms.h` + `commands.c` (16)
 
 The Touchstone I/O subsystem
@@ -423,6 +437,7 @@ Every enhancement that touched ngspice, oldest first:
 | [E-80](../../enhancements_doc/Enhancement-80.md) | osdiinit.c | `dtemp` instance-parameter alias |
 | [E-81](../../enhancements_doc/Enhancement-81.md) | resource.c, dev.c | memory-warning opt-out + once-per-excursion; reload-note hint |
 | [E-93](../../enhancements_doc/Enhancement-93.md) | osdi.h, osdiparam.c | warn (not silently ignore) when a netlist sets a `PARA_FLAG_FIXED` (`localparam`) OSDI parameter |
+| [E-94](../../enhancements_doc/Enhancement-94.md) | plotting/pyplot.c (new), com_pyplot.c (new), plotit.c, commands.c | new `pyplot` command — plot vectors with matplotlib (a Python `gnuplot`) |
 
 *(E-25's simparam exposure lives in the OSDI callback table populated at
 load time; its diff rides inside the `osdiload.c`/callbacks changes.)*
