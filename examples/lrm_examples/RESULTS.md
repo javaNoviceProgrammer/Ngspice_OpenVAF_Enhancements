@@ -1,7 +1,7 @@
 # Results — LRM 2023 example sweep vs openvaf-r
 
 **Summary: 231 code blocks extracted from the 442-page LRM PDF. Of the
-complete-module examples, 39 compile cleanly, 20 hit documented
+complete-module examples, 40 compile cleanly, 19 hit documented
 openvaf-r limitations (each pinned to its exact diagnostic), 21 use the
 mixed-signal subset a Verilog-A compiler correctly rejects. The sweep
 exposed eight compiler defects — all eight are now fixed (six in
@@ -34,7 +34,7 @@ defects must compile, open gaps must keep their exact diagnostic.
    deny-level lint (L016); the affected files compile with
    `-W port_without_direction`.
 
-## In-scope examples that compile (39)
+## In-scope examples that compile (40)
 
 | File | LRM page | Notes |
 |---|---|---|
@@ -54,6 +54,7 @@ defects must compile, open gaps must keep their exact diagnostic.
 | `lrm_p116_1.va` | 116 | verbatim |
 | `lrm_p116_2.va` | 116 | verbatim |
 | `lrm_p118_1.va` | 118 | verbatim |
+| `lrm_p119_1.va` | 119 | hierarchical net + named-branch probes from sibling modules (V(top.drv.a), V(top.a1.b)); parse/elaboration added by E-86; trailing branch()-fragment section trimmed |
 | `lrm_p138_1.va` | 138 | verbatim |
 | `lrm_p140_1.va` | 140 | verbatim |
 | `lrm_p142_1.va` | 142 | verbatim |
@@ -78,7 +79,7 @@ defects must compile, open gaps must keep their exact diagnostic.
 | `lrm_p416_1.va` | 416 | differential pair; LRM omits port directions (lint demoted) + vertNPN context stub |
 | `lrm_p416_3.va` | 416 | ECP oscillator pair of examples merged; Annex E primitive stubs added |
 
-## Documented limitations (20)
+## Documented limitations (19)
 
 Each file is verified to be *rejected with this exact diagnostic and no
 crash* — if a future enhancement implements one of these, verify fails and
@@ -90,7 +91,6 @@ the file graduates to `va/`.
 | `lrm_p091_1.va` | 91 | `not a constant expression` | parameter-dependent bus width (electrical [0:bits-1]) |
 | `lrm_p112_1.va` | 112 | `unexpected token` | block-scoped parameters; the LRM example itself also demos an illegal override |
 | `lrm_p117_1.va` | 117 | `not a constant expression` | parameter-dependent bus width |
-| `lrm_p119_1.va` | 119 | `unexpected token 'branch'` | hierarchical branch probes V(top.drv.branch(a,b)) / I(top.drv.branch(<p>)) |
 | `lrm_p134_1.va` | 134 | `not a constant expression` | parameter-dependent bus width |
 | `lrm_p152_2.va` | 152 | `refers to module` | instantiates the Annex E SPICE primitives spice_pmos/spice_nmos (SPICE-compatibility layer not supported) |
 | `lrm_p153_2.va` | 153 | `refers to module 'mosp'` | uses the SPICE-compat mosp of the page-152 example, which itself cannot elaborate (Annex E) |

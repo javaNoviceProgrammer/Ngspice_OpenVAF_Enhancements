@@ -81,6 +81,10 @@ templates the generated token/AST/builtin/instruction tables come from):
   ([E-2](../../enhancements_doc/Enhancement-2.md));
 - the `<<<`/`>>>` arithmetic-shift tokens (plus a pre-existing lexer bug
   fix) ([E-6](../../enhancements_doc/Enhancement-6.md));
+- **hierarchical branch reference tails** (`.branch(a,b)` / `.branch(<p>)`)
+  swallowed into the path node so the enclosing item's CST stays whole
+  for the elaboration rewrite (a keyword in path position used to shred
+  the item, leaving the hole scanner truncated text) ([E-86](../../enhancements_doc/Enhancement-86.md));
 - **part-selects in instance connections** (`inst (out[3:2], in)`): the
   bit-select bracket accepts an optional `: expr`, with the colon token
   in the CST distinguishing a range from multi-dimensional indexing —
@@ -183,6 +187,15 @@ every structural feature:
   width-1 slices onto scalar ports degrade to the bit-select) with the
   same ascending bit-order convention as full-bus slicing
   ([E-85](../../enhancements_doc/Enhancement-85.md));
+- **hierarchical branch probes** ([E-86](../../enhancements_doc/Enhancement-86.md)): the top module's
+  absolute chain map rides into every inlined child so SIBLING bodies
+  resolve `V(top.a1.b)`/`$root...` references; unnamed-branch forms
+  expand to the flattened node pair; port-branch probes
+  `I(inst.branch(<p>))` read a 0V ammeter synthesized at flattening
+  (which also fixes child-declared `branch (<p>)` port branches, broken
+  after inlining); hierarchy-bound monitor modules are omitted from
+  standalone output; `ground`/net-type declarations in inlined children
+  keep their keyword;
 - **`$port_connected` resolved at flattening time** to a literal
   `(1)`/`(0)` per instance — after inlining, an open port is just a
   synthesized local net, so the builtin used to fail validation in
@@ -437,6 +450,23 @@ every structural feature:
 - `idt` reset-mode charge dynamics and conditional step bounding
   ([E-52](../../enhancements_doc/Enhancement-52.md)).
 
+- **voltage-source branches feeding internal nodes were open circuits
+  at DC**: the small-signal (noise/`ac_stim`) pruner keyed node
+  registration on the branch's LIVE voltage unknown, so a pure
+  `V(a, f) <+ expr` (V(a,f) never read) registered nothing and the
+  node's conduction silently moved to the AC-only residual; any
+  voltage-capable branch now disqualifies its nodes
+  ([E-86](../../enhancements_doc/Enhancement-86.md));
+- **probed `V(x,y) <+ 0` branches were node-collapsed away**, making
+  `I(branch)` read zero; hint pairs whose branch current is a DAE
+  unknown are suppressed (the unprobed collapse idiom is untouched)
+  and `NodeCollapse::hint` tolerates suppressed pairs; pinned by the
+  permanent `vsrc_internal_node` snapshot test. Behavior change: a
+  collapsible branch whose current the model references (MVSG_CMC's
+  access resistances carry noise on `flow(d,drc)`) stays a real 0V
+  source — electrically identical, two extra matrix rows
+  ([E-86](../../enhancements_doc/Enhancement-86.md)).
+
 ## 11. OSDI code generation — `openvaf/osdi/`
 
 `lib.rs`, `metadata.rs` + `metadata/osdi_0_4.rs`, `inst_data.rs`,
@@ -585,6 +615,7 @@ tests hide behind `RUN_DEV_TESTS=1`. Fixed test-side only
 | [E-78](../../enhancements_doc/Enhancement-78.md) | lexer→hir_lower, hir_ty | `casex`/`casez` don't-care masks |
 | [E-84](../../enhancements_doc/Enhancement-84.md) | parser, elaborate, hir_ty, hir_lower, mir_opt, driver | LRM example sweep: 6 defect fixes (port-branch panic, parser robustness, silent undefined modules, `$port_connected` on open ports, dead-op codegen, exit codes) |
 | [E-85](../../enhancements_doc/Enhancement-85.md) | parser, elaborate, hir_def, hir_ty | `` `__FILE__``/`` `__LINE__`` + connection part-selects (the last two sweep findings) |
+| [E-86](../../enhancements_doc/Enhancement-86.md) | parser, elaborate, **sim_back** | hierarchical branch probes + 2 DAE fixes (V-source-to-internal open circuit, collapse-of-probed-branch) |
 
 Enhancements not listed (57, 60, 62–64, 69, 72–77, 79–83) changed no
 compiler sources — they were validation suites, documentation, benchmark

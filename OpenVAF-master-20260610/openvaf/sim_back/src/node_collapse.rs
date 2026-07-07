@@ -34,11 +34,35 @@ impl NodeCollapse {
                 pairs.insert((eq, None));
             }
         }
+        // A collapse hint whose branch current is an actual DAE unknown must
+        // not collapse: the model reads I(branch) (e.g. an explicit 0V
+        // ammeter, or the port-branch ammeters Enhancement-86 synthesizes),
+        // and collapsing the pair eliminates the very unknown the probe
+        // reads -- it silently became 0. The hint callback stays in the
+        // init MIR but, with no registered pair, marks nothing.
+        let mut probed_pairs: Vec<(SimUnknown, Option<SimUnknown>)> = Vec::new();
+        for (_, &kind) in dae_system.unknowns.iter_enumerated() {
+            if let SimUnknownKind::Current(kind) = kind {
+                if let Ok(branch) = BranchWrite::try_from(kind) {
+                    let (hi, lo) = branch.nodes(ctx.db);
+                    let hi = dae_system.unknowns.unwrap_index(&SimUnknownKind::KirchoffLaw(hi));
+                    let lo = lo
+                        .map(|lo| dae_system.unknowns.unwrap_index(&SimUnknownKind::KirchoffLaw(lo)));
+                    probed_pairs.push((hi, lo));
+                }
+            }
+        }
+
         for kind in init.intern.callbacks.iter() {
             if let CallBackKind::CollapseHint(hi, lo) = *kind {
                 let hi = dae_system.unknowns.unwrap_index(&SimUnknownKind::KirchoffLaw(hi));
                 let lo =
                     lo.map(|lo| dae_system.unknowns.unwrap_index(&SimUnknownKind::KirchoffLaw(lo)));
+                let probed = probed_pairs.contains(&(hi, lo))
+                    || lo.is_some_and(|lo| probed_pairs.contains(&(lo, Some(hi))));
+                if probed {
+                    continue;
+                }
                 pairs.insert((hi, lo));
             }
         }
@@ -71,7 +95,9 @@ impl NodeCollapse {
     /// indicates that a collapse hint was provided, `f` is called
     /// for each pair of nodes that should be collapsed together
     pub fn hint(&self, hi: SimUnknown, lo: Option<SimUnknown>, mut f: impl FnMut(CollapsePair)) {
-        let pair = self.pairs.unwrap_index(&(hi, lo));
+        // A hint whose pair was suppressed (its branch current is a DAE
+        // unknown the model reads -- see `new`) marks nothing.
+        let Some(pair) = self.pairs.index(&(hi, lo)) else { return };
         f(pair);
         for extra_pair in self.extra_pairs[pair].iter() {
             f(extra_pair)

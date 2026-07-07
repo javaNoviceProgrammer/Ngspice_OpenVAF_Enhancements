@@ -41,7 +41,8 @@ def node(name):
     return float(m.group(1)) if m else None
 for name, expect, why in [("o1", 8.0, "positional v[3:2]"),
                           ("o2", 2.0, "named .i(v[1:0])"),
-                          ("o3", 2.0, "width-1 slice v[2:2]")]:
+                          ("o3", 2.0, "width-1 slice v[2:2]"),
+                          ("o4", 13.0, "OUTPUT-direction named .q(w[3:2])")]:
     v = node(name)
     check(f"{name} == {expect} V ({why})", v is not None and abs(v - expect) < 1e-9, str(v))
 

@@ -97,6 +97,12 @@
    "note": ""
   },
   {
+   "file": "lrm_p119_1.va",
+   "block": "block_119_1",
+   "page": 119,
+   "note": "hierarchical net + named-branch probes from sibling modules (V(top.drv.a), V(top.a1.b)); parse/elaboration added by E-86; trailing branch()-fragment section trimmed"
+  },
+  {
    "file": "lrm_p138_1.va",
    "block": "block_138_1",
    "page": 138,
@@ -271,13 +277,6 @@
    "page": 117,
    "note": "parameter-dependent bus width",
    "expect": "not a constant expression"
-  },
-  {
-   "file": "lrm_p119_1.va",
-   "block": "block_119_1",
-   "page": 119,
-   "note": "hierarchical branch probes V(top.drv.branch(a,b)) / I(top.drv.branch(<p>))",
-   "expect": "unexpected token 'branch'"
   },
   {
    "file": "lrm_p134_1.va",

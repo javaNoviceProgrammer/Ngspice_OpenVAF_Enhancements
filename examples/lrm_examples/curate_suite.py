@@ -123,9 +123,22 @@ endmodule
     "block_117_1": dict(fp="module dac", cls="limitation",
         expect="not a constant expression",
         note="parameter-dependent bus width"),
-    "block_119_1": dict(fp="signal_monitor", cls="limitation",
-        expect="unexpected token 'branch'",
-        note="hierarchical branch probes V(top.drv.branch(a,b)) / I(top.drv.branch(<p>))"),
+    "block_119_1": dict(fp="signal_monitor", cls="ok",
+        trim_after=("endmodule", 4),
+        patches=[("    module top;\n       A a1();\n       B b1();",
+                  "    module top;\n       A a1();\n       B b1();\n       drv_m drv();          // [lrm_examples context] provides the top.drv nets\n       signal_monitor mon(); // [lrm_examples context] instantiated so its refs resolve")],
+        append="""
+// [lrm_examples context] the LRM leaves top.drv to the imagination; a
+// minimal module with the two nets the monitor probes.
+module drv_m();
+   electrical a, b;
+   analog begin
+      V(a, b) <+ 0.75;
+      I(b) <+ V(b)/1k;
+   end
+endmodule
+""",
+        note="hierarchical net + named-branch probes from sibling modules (V(top.drv.a), V(top.a1.b)); parse/elaboration added by E-86; trailing branch()-fragment section trimmed"),
     "block_134_1": dict(fp="genvarexp", cls="limitation",
         expect="not a constant expression",
         note="parameter-dependent bus width"),

@@ -10,8 +10,8 @@ the sweep is exhaustive: 231 candidate blocks from 442 pages.
 
 | Directory | Contents | Verified as |
 |---|---|---|
-| `va/` | 39 in-scope examples | **compile cleanly** (exit 0) |
-| `limitations/` | 20 in-scope examples openvaf-r rejects today | rejected with the exact pinned diagnostic, **without crashing** |
+| `va/` | 40 in-scope examples | **compile cleanly** (exit 0) |
+| `limitations/` | 19 in-scope examples openvaf-r rejects today | rejected with the exact pinned diagnostic, **without crashing** |
 | `ams/` | 21 mixed-signal/digital examples (`reg`, `always`, `wire`, `connectmodule`, …) | out of Verilog-A scope by design — stored, not compiled |
 | `findings/` | 6 micro-repros for the compiler defects the sweep exposed | fixed defects must compile, open gaps keep their pinned diagnostic |
 | `fragments/` | 146 non-module snippets (expressions, declarations, syntax illustrations) | reference only (they double as a fuzz corpus: all must not crash the compiler) |

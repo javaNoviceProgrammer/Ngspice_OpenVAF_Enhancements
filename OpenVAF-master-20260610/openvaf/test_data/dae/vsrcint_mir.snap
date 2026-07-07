@@ -1,0 +1,29 @@
+function %(v16, v17, v20, v24, v25, v26) {
+    inst0 = fn %collapse_node0_Some(node2)(0) -> 0
+    v7 = fconst -0x1.0000000000000p0
+    v18 = fconst 0x1.f400000000000p9
+    v63 = fconst 0x1.0624dd2f1a9fcp-10
+
+                                block2:
+                                    call inst0()
+@0009                               v19 = fdiv v17, v18
+@000f                               v21 = fmul v18, v20
+                                    v27 = fneg v16
+                                    v50 = fmul v26, v20
+                                    v28 = optbarrier v50
+                                    v29 = fneg v20
+                                    v30 = fadd v29, v19
+                                    v31 = optbarrier v21
+                                    v32 = fsub v31, v24
+                                    v51 = fmul v26, v25
+                                    v33 = optbarrier v51
+                                    v59 = fmul v26, v63
+                                    v44 = optbarrier v59
+                                    v60 = fmul v26, v7
+                                    v45 = optbarrier v60
+                                    v53 = fmul v26, v30
+                                    v52 = optbarrier v53
+                                    v54 = optbarrier v27
+                                    v55 = optbarrier v32
+                                    v56 = optbarrier v26
+}

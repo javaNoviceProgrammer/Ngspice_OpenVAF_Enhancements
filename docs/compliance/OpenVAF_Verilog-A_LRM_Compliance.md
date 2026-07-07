@@ -171,6 +171,17 @@ branch (<p>) probe_p;          // named branch over port p
 iprobe = I(probe_p);           // same value as I(<p>)
 ```
 
+**Hierarchical branch probes** (E-86) read another instance's branches
+from outside it — named, unnamed, and port-branch forms, the last via a
+0V ammeter synthesized at flattening so it reads that instance's own
+current rather than the node total:
+
+```verilog
+V(top.a1.b)              // named branch of instance a1
+V(top.d1.branch(va, vb)) // unnamed branch of instance d1
+I(top.d1.branch(<p>))    // d1's own current into its port p
+```
+
 ## 4. Expressions (LRM 4)
 
 ### 4.1 Operators and precedence (LRM 4.1, Table 4-2) — ✅
@@ -543,7 +554,7 @@ connected port.)*
 | casex/casez | ✅ | `casexz` |
 | 5.10 Events (steps, cross/above/timer, OR lists, phase lists) | ✅ | `initial_step`, `finalstep`, `cross`, `timer`, `lrmcorner` |
 | 5.11 Analog functions (arrays in/out/return) | ✅ | `funcarray`, `arrayout`, `arrayret` |
-| 6 Hierarchy (instantiation, generate, defparam, $root, part-select connections) | ✅ (param-shaped structure ⚠️ explained) | `instantiation`, `generate`, `defparam`, `hiername`, `implicitnet`, `partselect` |
+| 6 Hierarchy (instantiation, generate, defparam, $root, part-select connections, hierarchical branch probes) | ✅ (param-shaped structure ⚠️ explained) | `instantiation`, `generate`, `defparam`, `hiername`, `implicitnet`, `partselect`, `hierbranch` |
 | 9.4–9.8 Display, file/string I/O | ✅ | `display`, `fileio`, `stringio` |
 | 9.13 Random/distributions | ✅ (deterministic seed ⚠️ documented) | `rng`, `montecarlo` |
 | 9 misc ($finish family, $simparam, attributes) | ✅ | `simctrl`, `simparamstr`, `opvar` |
@@ -553,7 +564,7 @@ connected port.)*
 
 As of E-84 the standard's own examples are a compliance suite: every
 code example in the LRM 2023 PDF is extracted and compiled
-(`examples/lrm_examples/` — 39 compile, 20 documented limitations pinned
+(`examples/lrm_examples/` — 40 compile, 19 documented limitations pinned
 to their diagnostics, 21 correctly rejected as mixed-signal), and the
 146 non-module fragments double as a no-crash fuzz corpus.
 

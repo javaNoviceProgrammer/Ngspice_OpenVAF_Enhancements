@@ -146,3 +146,26 @@ fn dyn_switch_branch() {
     "#};
     run_test(src);
 }
+
+/// Enhancement-86 regression: a voltage-source branch between a port and an
+/// internal node. Two DAE bugs hid here: the small-signal pruner classified
+/// the internal node as a zero-DC noise node (its conduction silently moved
+/// to the AC-only residual), and the V<+0 collapse hint eliminated the very
+/// branch-current unknown the model reads.
+#[test]
+fn vsrc_internal_node() {
+    let src = indoc! {r#"
+        `include "disciplines.vams"
+        module vsrcint(a, o);
+            inout a, o; electrical a, o;
+            electrical f;
+            branch (a, f) am;
+            analog begin
+                V(am) <+ 0.0;
+                I(f) <+ V(f)/1k;
+                V(o) <+ 1000.0*I(am);
+            end
+        endmodule
+    "#};
+    run_test(src);
+}

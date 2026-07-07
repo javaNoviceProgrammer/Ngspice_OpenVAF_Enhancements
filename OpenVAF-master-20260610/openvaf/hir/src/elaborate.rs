@@ -43,7 +43,7 @@
 //! bus port's base name and replacing the *whole* sequence, turning it
 //! into an ordinary hole for `render_with_holes`.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::ops::Range;
 
 use basedb::{AstId, AstIdMap, BaseDB, VfsStorage};
@@ -748,7 +748,33 @@ pub(crate) fn elaborate_instantiations(db: &mut CompilationDB) -> anyhow::Result
         defparam_src: HashMap::new(),
         port_conn_errors: Vec::new(),
         unknown_module_errors: Vec::new(),
+        abs_prefixes: HashMap::new(),
+        port_ammeters: HashMap::new(),
     };
+
+    // Enhancement-86: a module whose body holds ABSOLUTE hierarchical
+    // references anchored at another module (`V(top.a1.b)`,
+    // `I($root.top.d1.branch(<p>))` -- the LRM's cross-instance monitor
+    // idiom) is hierarchy-bound: its inlined copies under that anchor
+    // resolve fine, but a standalone flattened copy cannot. Detect these
+    // with the anchor's own qualified chain map and omit the standalone
+    // copy instead of emitting unresolvable text.
+    let anchor_maps: Vec<(Name, HashMap<String, String>)> = tree
+        .data
+        .modules
+        .iter_enumerated()
+        .map(|(id, m)| {
+            let mut chains = HashMap::new();
+            ctx.collect_inst_prefixes(id, "", "", &mut chains);
+            let anchor = m.name.to_string();
+            let mut map: HashMap<String, String> = chains
+                .iter()
+                .map(|(k, v)| (format!("{anchor}.{k}"), v.clone()))
+                .collect();
+            map.insert(anchor, String::new());
+            (m.name.clone(), map)
+        })
+        .collect();
 
     let mut out = String::new();
     for item in parse.tree().items() {
@@ -756,7 +782,17 @@ pub(crate) fn elaborate_instantiations(db: &mut CompilationDB) -> anyhow::Result
             ast::Item::ModuleDecl(module_ast) => {
                 let Some(name) = module_ast.name().map(|n| n.as_name()) else { continue };
                 let Some(&module_id) = ctx.by_name.get(&name) else { continue };
-                out.push_str(&ctx.flatten_top_level_module(module_id, &module_ast));
+                let text = module_ast.syntax().text().to_string();
+                let anchor = anchor_maps.iter().find(|(anchor_name, map)| {
+                    *anchor_name != name && !find_instance_path_holes(&text, map).is_empty()
+                });
+                if let Some((anchor_name, _)) = anchor {
+                    out.push_str(&format!(
+                        "// module '{name}' omitted from standalone output: it holds hierarchical references anchored at '{anchor_name}' and is elaborated inline where instantiated (Enhancement-86)"
+                    ));
+                } else {
+                    out.push_str(&ctx.flatten_top_level_module(module_id, &module_ast));
+                }
             }
             other => out.push_str(&other.syntax().text().to_string()),
         }
@@ -847,6 +883,18 @@ struct ElabCtx<'a> {
     /// compilation unit. These used to be silently dropped from the rendered
     /// output — a typo'd module name became an invisible open circuit.
     unknown_module_errors: Vec<String>,
+    /// Enhancement-86: the ABSOLUTE instance-chain map of the top module
+    /// currently being flattened — only the unambiguous spellings (the top
+    /// module's own name, and `<top>.<chain>`-qualified keys), so it can be
+    /// merged into every inlined child's scope without colliding with the
+    /// child's own relative chains. This is what lets a SIBLING's body
+    /// resolve `V(top.a1.b)` / `$root.top…` references.
+    abs_prefixes: HashMap<String, String>,
+    /// Enhancement-86: instance prefixes whose listed ports need a
+    /// synthesized 0V ammeter because some body probes
+    /// `<chain>.branch(<port>)` — collected by a pre-scan over every
+    /// module's text before the top module renders.
+    port_ammeters: HashMap<String, BTreeSet<String>>,
 }
 
 /// Rewrites `$port_connected(<name>)` calls in an already-rendered instance
@@ -1001,6 +1049,119 @@ fn is_trivia(kind: TokenKind) -> bool {
 /// another `.` -- e.g. a block inside the child -- is left untouched for
 /// name resolution to diagnose). Bus selects after the member stay in place
 /// (`u1.b[2]` -> `u1__b[2]`).
+
+/// Enhancement-86: finds `<chain>.branch(<port>)` port-branch probes in raw
+/// module text, resolving `<chain>` (with an optional `$root.` opener and
+/// `[int]` instance-array segments) through `prefixes`. Returns the resolved
+/// instance prefix and the port name for each hit, so
+/// `render_instance_content` synthesizes the matching 0V ammeter.
+fn find_port_branch_probes(
+    text: &str,
+    prefixes: &HashMap<String, String>,
+) -> Vec<(String, String)> {
+    let mut spans = Vec::new();
+    let mut pos = 0usize;
+    for tok in lexer::tokenize(text) {
+        let start = pos;
+        let end = pos + usize::from(tok.len);
+        pos = end;
+        spans.push((start, end, tok.kind));
+    }
+    let next_sig = |mut j: usize| {
+        while j < spans.len() && is_trivia(spans[j].2) {
+            j += 1;
+        }
+        j
+    };
+    let prev_sig = |j: usize| -> Option<usize> {
+        let mut j = j.checked_sub(1)?;
+        while is_trivia(spans[j].2) {
+            j = j.checked_sub(1)?;
+        }
+        Some(j)
+    };
+    let txt = |j: usize| &text[spans[j].0..spans[j].1];
+
+    let mut out = Vec::new();
+    for i in 0..spans.len() {
+        if spans[i].2 != TokenKind::SimpleIdent || txt(i) != "branch" {
+            continue;
+        }
+        // `. branch ( < port > )`
+        let Some(dot) = prev_sig(i) else { continue };
+        if spans[dot].2 != TokenKind::Dot {
+            continue;
+        }
+        let op = next_sig(i + 1);
+        if spans.get(op).map(|s| s.2) != Some(TokenKind::OpenParen) {
+            continue;
+        }
+        let lt = next_sig(op + 1);
+        if spans.get(lt).map(|s| s.2) != Some(TokenKind::Lt) {
+            continue;
+        }
+        let pid = next_sig(lt + 1);
+        if spans.get(pid).map(|s| s.2) != Some(TokenKind::SimpleIdent) {
+            continue;
+        }
+        let gt = next_sig(pid + 1);
+        if spans.get(gt).map(|s| s.2) != Some(TokenKind::Gt) {
+            continue;
+        }
+        let cp = next_sig(gt + 1);
+        if spans.get(cp).map(|s| s.2) != Some(TokenKind::CloseParen) {
+            continue;
+        }
+        let port = txt(pid).to_owned();
+
+        // walk LEFT from the dot collecting `ident` / `ident[int]` segments
+        let mut segs: Vec<String> = Vec::new();
+        let mut cursor = dot;
+        loop {
+            let Some(seg_end) = prev_sig(cursor) else { break };
+            let seg = if spans[seg_end].2 == TokenKind::CloseBracket {
+                let Some(litj) = prev_sig(seg_end) else { break };
+                let Some(obj) = prev_sig(litj) else { break };
+                let Some(idj) = prev_sig(obj) else { break };
+                if !matches!(spans[litj].2, TokenKind::Literal { .. })
+                    || spans[obj].2 != TokenKind::OpenBracket
+                    || spans[idj].2 != TokenKind::SimpleIdent
+                {
+                    break;
+                }
+                cursor = idj;
+                format!("{}[{}]", txt(idj), txt(litj))
+            } else if spans[seg_end].2 == TokenKind::SimpleIdent {
+                cursor = seg_end;
+                txt(seg_end).to_owned()
+            } else if spans[seg_end].2 == TokenKind::SystemCallIdent && txt(seg_end) == "$root" {
+                segs.push("$root".to_owned());
+                break;
+            } else {
+                break;
+            };
+            segs.push(seg);
+            let Some(dj) = prev_sig(cursor) else { break };
+            if spans[dj].2 != TokenKind::Dot {
+                break;
+            }
+            cursor = dj;
+        }
+        segs.reverse();
+        if segs.is_empty() {
+            continue;
+        }
+        if segs.first().map(String::as_str) == Some("$root") {
+            segs.remove(0);
+        }
+        let chain = segs.join(".");
+        if let Some(prefix) = prefixes.get(&chain) {
+            out.push((prefix.clone(), port));
+        }
+    }
+    out
+}
+
 fn find_instance_path_holes(
     text: &str,
     inst_prefixes: &HashMap<String, String>,
@@ -1124,6 +1285,78 @@ fn find_instance_path_holes(
         };
         if !matches!(mkind, TokenKind::SimpleIdent | TokenKind::EscapedIdent) {
             i += 1;
+            continue;
+        }
+        // Enhancement-86: `<chain>.branch(a, b)` / `<chain>.branch(a)` /
+        // `<chain>.branch(<p>)` -- the LRM's unnamed-branch and port-branch
+        // references into an instance. The net forms expand to the
+        // prefixed net pair (V/I of the child's unnamed branch is exactly
+        // V/I of the same flattened node pair); the port form names the
+        // 0V ammeter `render_instance_content` synthesizes for it.
+        if mkind == TokenKind::SimpleIdent && &text[ms..me] == "branch" {
+            let op = next_sig(k + 1);
+            if spans.get(op).map(|s| s.2) == Some(TokenKind::OpenParen) {
+                let hole_start =
+                    if root_skipped { start } else { spans[chain_start_idx].0 };
+                let a = next_sig(op + 1);
+                match spans.get(a).map(|s| s.2) {
+                    Some(TokenKind::Lt) => {
+                        let pid = next_sig(a + 1);
+                        let gt = next_sig(pid + 1);
+                        let cp = next_sig(gt + 1);
+                        if spans.get(pid).map(|s| s.2) == Some(TokenKind::SimpleIdent)
+                            && spans.get(gt).map(|s| s.2) == Some(TokenKind::Gt)
+                            && spans.get(cp).map(|s| s.2) == Some(TokenKind::CloseParen)
+                        {
+                            let port = &text[spans[pid].0..spans[pid].1];
+                            holes.push((
+                                hole_start..spans[cp].1,
+                                render_name(&format!("{prefix}pflow__{port}")),
+                            ));
+                            i = cp + 1;
+                            continue;
+                        }
+                    }
+                    Some(TokenKind::SimpleIdent) => {
+                        let x = &text[spans[a].0..spans[a].1];
+                        let q = next_sig(a + 1);
+                        match spans.get(q).map(|s| s.2) {
+                            Some(TokenKind::CloseParen) => {
+                                holes.push((
+                                    hole_start..spans[q].1,
+                                    render_name(&format!("{prefix}{x}")),
+                                ));
+                                i = q + 1;
+                                continue;
+                            }
+                            Some(TokenKind::Comma) => {
+                                let yj = next_sig(q + 1);
+                                let cp = next_sig(yj + 1);
+                                if spans.get(yj).map(|s| s.2) == Some(TokenKind::SimpleIdent)
+                                    && spans.get(cp).map(|s| s.2)
+                                        == Some(TokenKind::CloseParen)
+                                {
+                                    let y = &text[spans[yj].0..spans[yj].1];
+                                    holes.push((
+                                        hole_start..spans[cp].1,
+                                        format!(
+                                            "{}, {}",
+                                            render_name(&format!("{prefix}{x}")),
+                                            render_name(&format!("{prefix}{y}"))
+                                        ),
+                                    ));
+                                    i = cp + 1;
+                                    continue;
+                                }
+                            }
+                            _ => (),
+                        }
+                    }
+                    _ => (),
+                }
+            }
+            // malformed branch(...) tail: leave untouched
+            i = k + 1;
             continue;
         }
         // a member followed by a further `.` (block/child scopes inside the
@@ -1704,6 +1937,19 @@ impl ElabCtx<'_> {
                 // internal net), so re-declaring them as ports here would
                 // collide with that outer declaration -- drop entirely.
                 ast::ModuleItem::BodyPortDecl(_) if !port_names.is_empty() => continue,
+                // Enhancement-86: a port-branch declaration (`branch (<p>)
+                // pb;`) has no port to attach to once the instance is
+                // flattened; its names alias the synthesized 0V ammeter (see
+                // `render_instance_content`), so the declaration is dropped.
+                ast::ModuleItem::BranchDecl(decl)
+                    if !port_names.is_empty()
+                        && matches!(
+                            decl.branch_kind(),
+                            Some(ast::BranchKind::PortFlow(_))
+                        ) =>
+                {
+                    continue
+                }
                 ast::ModuleItem::Instantiation(nested) => {
                     out.push_str(&self.expand_instantiation(
                         target_id,
@@ -1775,11 +2021,21 @@ impl ElabCtx<'_> {
                             .discipline()
                             .map(|d| d.syntax().text().to_string())
                             .unwrap_or_default();
+                        // `ground gnd;` / `wire w;`-style declarations carry a
+                        // net-type token instead of (or before) a discipline;
+                        // dropping it rendered ` a1__gnd;` (Enhancement-86)
+                        let net_type = decl
+                            .net_type_token()
+                            .map(|t| format!("{} ", t.text()))
+                            .unwrap_or_default();
                         let width = decl
                             .width()
                             .map(|w| format!("{} ", w.syntax().text()))
                             .unwrap_or_default();
-                        out.push_str(&format!("{discipline} {width}{};", kept.join(", ")));
+                        out.push_str(&format!(
+                            "{net_type}{discipline} {width}{};",
+                            kept.join(", ")
+                        ));
                     }
                 }
                 other => out.push_str(&apply_rename(&other.syntax().text().to_string(), scope)),
@@ -1977,7 +2233,30 @@ impl ElabCtx<'_> {
         // Enhancement-49: the child's own hierarchical references into ITS
         // sub-instances rewrite through the composed prefixes
         self.collect_inst_prefixes(target_id, prefix, "", &mut scope.inst_prefixes);
+        // Enhancement-86: absolute (`<top>.`-qualified / `$root.`) references
+        // resolve from ANY inlined body, not just the top module's own text.
+        for (k, v) in &self.abs_prefixes {
+            scope.inst_prefixes.entry(k.clone()).or_insert_with(|| v.clone());
+        }
         let mut extra_decls = Vec::new();
+
+        // Enhancement-86: ports that need a synthesized 0V ammeter -- because
+        // the child itself declares a port branch over them (`branch (<p>)
+        // pb;`, which after flattening has no port left to attach to), or
+        // because some body probes `<chain>.branch(<p>)` for this instance.
+        let mut ammeter_ports: BTreeSet<String> =
+            self.port_ammeters.get(prefix).cloned().unwrap_or_default();
+        let mut port_branch_names: Vec<(String, String)> = Vec::new();
+        for item in &target.items {
+            let ModuleItem::Branch(id) = item else { continue };
+            let branch = &self.tree[*id];
+            let hir_def::item_tree::BranchKind::PortFlow(path) = &branch.kind else {
+                continue;
+            };
+            let Some(port) = path.segments.last() else { continue };
+            ammeter_ports.insert(port.to_string());
+            port_branch_names.push((branch.name.to_string(), port.to_string()));
+        }
         // NOTE: a vectored port's bits beyond the first are appended to
         // `nodes` wherever their `[msb:lsb]` clause is declared in the
         // module body (see `target_port_names`'s doc comment), so `nodes`
@@ -2027,7 +2306,26 @@ impl ElabCtx<'_> {
                     fresh
                 }
             };
-            scope.subst.insert(node.name.to_string(), bound);
+            // Enhancement-86: the port-branch ammeter. The child's body sees a
+            // fresh internal net; a named 0V branch from the caller's net to
+            // it carries exactly the child's current INTO the port (positive
+            // hi->lo == into the child, matching E-29's I(<p>) sign), so
+            // `I(<chain>.branch(<p>))` probes and the child's own
+            // `branch (<p>) pb` declarations both read it.
+            if ammeter_ports.contains(&node.name.to_string()) {
+                let discipline = node
+                    .discipline(self.tree)
+                    .map(|d| d.to_string())
+                    .unwrap_or_else(|| "electrical".to_owned());
+                let fresh = format!("{prefix}pflow_net__{}", node.name);
+                let ammeter = format!("{prefix}pflow__{}", node.name);
+                extra_decls.push(format!("{discipline} {fresh};"));
+                extra_decls.push(format!("branch ({bound}, {fresh}) {ammeter};"));
+                extra_decls.push(format!("analog V({ammeter}) <+ 0.0;"));
+                scope.subst.insert(node.name.to_string(), fresh);
+            } else {
+                scope.subst.insert(node.name.to_string(), bound);
+            }
         }
 
         // Bus ports: one `scope.bus_ports` entry per base name, filling in
@@ -2086,6 +2384,12 @@ impl ElabCtx<'_> {
             if let Some(name) = renamed {
                 scope.subst.insert(name.to_string(), format!("{prefix}{name}"));
             }
+        }
+        // Enhancement-86: a child's own port-branch names alias the synthesized
+        // ammeter (overriding the generic `{prefix}{name}` rename above); the
+        // declaration itself is dropped by `render_items`.
+        for (branch_name, port) in &port_branch_names {
+            scope.subst.insert(branch_name.clone(), format!("{prefix}pflow__{port}"));
         }
 
         let body = self.render_items(target_id, &scope, param_binding, &port_names, prefix);
@@ -2152,7 +2456,31 @@ impl ElabCtx<'_> {
             .map(|(k, v)| (format!("{top_name}.{k}"), v.clone()))
             .collect();
         scope.inst_prefixes.extend(alias);
-        scope.inst_prefixes.insert(top_name, String::new());
+        scope.inst_prefixes.insert(top_name.clone(), String::new());
+
+        // Enhancement-86: publish the unambiguous absolute spellings
+        // (`<top>` and `<top>.<chain>`) for every inlined child's scope, so
+        // sibling bodies can resolve absolute hierarchical references
+        // (`V(top.a1.b)`, `$root.top.d1.branch(a,b)`).
+        self.abs_prefixes = scope
+            .inst_prefixes
+            .iter()
+            .filter(|(k, _)| *k == &top_name || k.starts_with(&format!("{top_name}.")))
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+
+        // Enhancement-86: pre-scan EVERY module's text for port-branch probes
+        // (`<chain>.branch(<port>)`) resolvable under this top module, so the
+        // targeted instances synthesize their 0V ammeter regardless of the
+        // order the referencing bodies render in.
+        self.port_ammeters.clear();
+        for item in self.parse.tree().items() {
+            let ast::Item::ModuleDecl(m) = item else { continue };
+            let text = m.syntax().text().to_string();
+            for (prefix, port) in find_port_branch_probes(&text, &scope.inst_prefixes) {
+                self.port_ammeters.entry(prefix).or_default().insert(port);
+            }
+        }
 
         let body = self.render_items(module_id, &scope, &HashMap::new(), &Default::default(), "");
         format!("{}{}{}", &full[..rel_start], body, &full[rel_end..])

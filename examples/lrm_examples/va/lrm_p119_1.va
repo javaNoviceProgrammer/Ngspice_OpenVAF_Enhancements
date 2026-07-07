@@ -1,0 +1,47 @@
+// Verilog-AMS LRM 2023 (Accellera), example from page 119
+// extracted by lrm_examples/extract_lrm_examples.py (block_119_1)
+`include "disciplines.vams"
+`include "constants.vams"
+    module signal_monitor;
+       parameter refv = 2.3;
+       electrical a;
+       analog begin
+          V(a) <+ refv;
+          // Creates an unnamed branch in module signal_monitor between
+          // nets top.drv.a and implicit ground.
+          $strobe("voltage at top.drv.a = %g volts", V(top.drv.a));
+          // Creates an unnamed branch in module signal_monitor between
+          // nets top.drv.a and top.drv.b
+          $strobe("voltage diff in top.drv = %g volts", V(top.drv.a, top.drv.b));
+          // Creates an unnamed branch in module signal_monitor between
+          // local net a and top.drv.a
+          $strobe("voltage diff from ref in top.drv = %g volts", V(a,top.drv.a));
+          // References the unnamed branch created in the first $strobe()
+          // statement
+          if(V(top.drv.a) > 10.0) $strobe("voltage limit exceeded at top.drv.a");
+       end
+    endmodule
+    module top;
+       A a1();
+       B b1();
+       drv_m drv();          // [lrm_examples context] provides the top.drv nets
+       signal_monitor mon(); // [lrm_examples context] instantiated so its refs resolve
+    endmodule
+    module A;
+       electrical n,p;
+       branch (n,p) b;
+       analog V(b) <+ 1.34;
+    endmodule
+    module B;
+       analog $strobe("voltage == %g", V(top.a1.b));
+    endmodule
+
+// [lrm_examples context] the LRM leaves top.drv to the imagination; a
+// minimal module with the two nets the monitor probes.
+module drv_m();
+   electrical a, b;
+   analog begin
+      V(a, b) <+ 0.75;
+      I(b) <+ V(b)/1k;
+   end
+endmodule

@@ -28,7 +28,7 @@ https://ngspice.sourceforge.io/
 
 ## The Enhancements
 
-Eighty-five enhancements so far — language features, correctness fixes, systematic audits, and simulator-side workflow tooling, each verified end-to-end by a committed example suite and released with a detailed write-up.
+Eighty-six enhancements so far — language features, correctness fixes, systematic audits, and simulator-side workflow tooling, each verified end-to-end by a committed example suite and released with a detailed write-up.
 
 **📖 Start with the [User Handbook](docs/handbook/README.md)**, which organizes everything by topic: [getting started](docs/handbook/01-getting-started.md), the [Verilog-A feature matrix](docs/handbook/02-verilog-a-language.md), [ngspice workflows](docs/handbook/03-ngspice-workflows.md), and the [limitations & gotchas](docs/handbook/04-limitations-and-gotchas.md). The whole handbook plus the complete text of every enhancement write-up is also one linked PDF: [docs/Ngspice-OpenVAF-Handbook.pdf](docs/Ngspice-OpenVAF-Handbook.pdf).
 
@@ -121,6 +121,7 @@ The index: **Doc** links each enhancement's detailed write-up, **Examples** link
 | 83 | Transistor-level µA741 demo — a Verilog-A BJT powering the textbook 20-transistor 741; datasheet figures emerge (104 dB, 0.75 MHz, 0.54 V/µs) | [doc](enhancements_doc/Enhancement-83.md) | [opamp741](examples/opamp741_examples/) |
 | 84 | LRM example sweep — all 231 code examples of the Verilog-AMS LRM 2023 compiled + 6 defect fixes (port-branch/garbage-input panics, silent undefined modules, $port_connected on open ports, dead-op codegen aborts, exit-0-on-error) | [doc](enhancements_doc/Enhancement-84.md) | [lrm](examples/lrm_examples/) |
 | 85 | `` `__FILE__``/`` `__LINE__`` predefined macros + part-selects in instance connections (`inst (out[3:2], in)`) — the last two LRM-sweep findings; all 8 sweep defects now fixed | [doc](enhancements_doc/Enhancement-85.md) | [filemacro](examples/filemacro_examples/), [partselect](examples/partselect_examples/) |
+| 86 | Hierarchical branch probes — `V(top.a1.b)`, `V(inst.branch(a,b))`, `I(inst.branch(<p>))` via synthesized 0V ammeters; + 2 DAE fixes (V-source-to-internal-node open circuit, collapse-of-probed-branch) | [doc](enhancements_doc/Enhancement-86.md) | [hierbranch](examples/hierbranch_examples/) |
 
 ---
 

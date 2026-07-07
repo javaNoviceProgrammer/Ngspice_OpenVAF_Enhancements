@@ -23,17 +23,32 @@ module single(o, i);
    analog V(o) <+ V(i);
 endmodule
 
-module quad(o1, o2, o3);
-   output o1, o2, o3;
-   electrical o1, o2, o3;
+// drives its 2-bit OUTPUT bus to fixed rails (bit1 = 4 V, bit0 = 5 V)
+module duo(q);
+   output [1:0] q;
+   electrical [1:0] q;
+   analog begin
+      V(q[1]) <+ 4.0;
+      V(q[0]) <+ 5.0;
+   end
+endmodule
+
+module quad(o1, o2, o3, o4);
+   output o1, o2, o3, o4;
+   electrical o1, o2, o3, o4;
    electrical [3:0] v;
+   electrical [3:0] w;
    analog begin
       V(v[0]) <+ 0.0;
       V(v[1]) <+ 1.0;
       V(v[2]) <+ 2.0;
       V(v[3]) <+ 3.0;
+      V(w[0]) <+ 0.0;
+      V(w[1]) <+ 0.0;
    end
    pair   p1 (o1, v[3:2]);        // positional part-select
    pair   p2 (.o(o2), .i(v[1:0])); // named part-select
    single s1 (o3, v[2:2]);        // width-1 slice onto a scalar port
+   duo    d1 (.q(w[3:2]));        // OUTPUT-direction named part-select
+   analog V(o4) <+ 2.0*V(w[3]) + V(w[2]);   // = 2*4 + 5 = 13 V
 endmodule

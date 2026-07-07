@@ -317,7 +317,18 @@ impl Builder<'_> {
                 contributes.voltage_src.unknown.filter(|&val| !self.func.dfg.value_dead(val));
             let flow =
                 contributes.current_src.unknown.filter(|&val| !self.func.dfg.value_dead(val));
-            if let Some(potential) = potential {
+            // A branch that can act as a voltage source pins its nodes'
+            // potentials at DC, so they must never be pruned into the
+            // small-signal network -- even when the branch's own voltage
+            // unknown is dead (a pure `V(a, f) <+ expr` whose V(a,f) is
+            // never read). Keying registration on the LIVE unknown alone
+            // used to skip exactly those branches: an internal node fed
+            // only by such a source and linear conduction was classified
+            // as a zero-DC small-signal node, and its conduction silently
+            // moved to the AC-only residual (an open circuit at DC).
+            let vsrc_capable = contributes.is_voltage_src != FALSE;
+            if potential.is_some() || vsrc_capable {
+                let potential = potential.unwrap_or(F_ZERO);
                 let mut register_node = |node: Node, valid: bool| {
                     if node.is_port(self.db) {
                         cov_mark::hit!(port_not_small_signal)
@@ -343,7 +354,7 @@ impl Builder<'_> {
                     register_node(hi, false);
                     register_node(lo, false);
                 } else {
-                    register_node(hi, is_current_src);
+                    register_node(hi, is_current_src && !vsrc_capable);
                 }
             }
             if let Some(flow) = flow.filter(|_| is_current_src) {
