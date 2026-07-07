@@ -184,7 +184,14 @@ name-then-range form `electrical bus[3:0];` / `input bus[3:0];` (E-89).
 A bit of a multi-bit **input** bus port reads its own terminal regardless
 of the port's position in the header — a bus port that is not the last
 port keeps its bits contiguous and in header order, so the simulator's
-positional terminal mapping stays correct (E-90).
+positional terminal mapping stays correct (E-90). The name-then-range form
+also accepts a **multi-name** list with per-name widths (`input a[0:1],
+b[0:3], c;`, E-91). A net/port/array width may **reference a parameter**
+(`electrical [0:N-1] out;`, `real w[0:N-1];`, E-91): it is folded from the
+parameter's elaboration-time default and fixed at that value — a structural
+parameter, since the OSDI descriptor has one node count per module (a model
+card override does not resize it). A **multi-dimensional** vectored port
+(`in[0:2][0:1]`) is not supported in either declaration order.
 
 Signal-flow disciplines (potential-only or flow-only) are fully usable,
 including **probe-only branches** — probing a branch that is never

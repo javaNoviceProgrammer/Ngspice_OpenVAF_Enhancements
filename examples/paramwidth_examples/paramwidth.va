@@ -1,0 +1,67 @@
+`include "disciplines.vams"
+// Enhancement-91: parameter-dependent declaration widths. A net/port/array
+// range whose bounds reference a parameter (`[0:N-1]`, `[0:bits-1]`) is folded
+// to a literal range using the parameter's elaboration-time default, so the
+// bus machinery (E-3) and array machinery (E-14) see a constant width. The
+// width is fixed at the default -- a structural parameter (one OSDI descriptor
+// per module), see Enhancement-91.md.
+
+// (1) parameter-SIZED array + a runtime loop over the parameter (E-70): the
+// harmonic sum  sum_{k=0}^{N-1} vref/(k+1).
+module wsum4(out);
+   parameter integer N = 4;
+   parameter real vref = 1.0;
+   output out; electrical out;
+   real w[0:N-1];
+   integer k;
+   analog begin : b
+      real acc;
+      acc = 0.0;
+      for (k = 0; k < N; k = k + 1) begin
+         w[k] = vref / (k + 1);
+         acc = acc + w[k];
+      end
+      V(out) <+ acc;
+   end
+endmodule
+
+// (2) same source shape, a different default N -- the array width (and so the
+// sum) tracks the parameter default.
+module wsum8(out);
+   parameter integer N = 8;
+   parameter real vref = 1.0;
+   output out; electrical out;
+   real w[0:N-1];
+   integer k;
+   analog begin : b
+      real acc;
+      acc = 0.0;
+      for (k = 0; k < N; k = k + 1) begin
+         w[k] = vref / (k + 1);
+         acc = acc + w[k];
+      end
+      V(out) <+ acc;
+   end
+endmodule
+
+// (3) parameter-WIDTH node bus: `[0:bits-1]` folds from the default (4 bits).
+module busout4(out);
+   parameter integer bits = 4;
+   output [0:bits-1] out;
+   electrical [0:bits-1] out;
+   analog begin
+      V(out[0]) <+ 0.25; V(out[1]) <+ 0.5;
+      V(out[2]) <+ 0.75; V(out[3]) <+ 1.0;
+   end
+endmodule
+
+// (4) the same, a wider default -- the bus (and terminal count) tracks it.
+module busout6(out);
+   parameter integer bits = 6;
+   output [0:bits-1] out;
+   electrical [0:bits-1] out;
+   analog begin
+      V(out[0]) <+ 0.1; V(out[1]) <+ 0.2; V(out[2]) <+ 0.3;
+      V(out[3]) <+ 0.4; V(out[4]) <+ 0.5; V(out[5]) <+ 0.6;
+   end
+endmodule

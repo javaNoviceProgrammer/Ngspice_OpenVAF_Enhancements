@@ -1,0 +1,17 @@
+`include "disciplines.vams"
+// Enhancement-91: multi-name name-then-range net/port declarations, completing
+// the single-name form from Enhancement-89. A comma-separated list with
+// per-name ranges (`input a[0:1], b[0:2], c;`) is normalised to one
+// range-then-name declaration per name (`input [0:1] a; input [0:2] b; input
+// c;`), so buses of different widths and scalars can share one declaration.
+module mnbus(a, b, c, o1, o2, o3);
+   input a[0:1], b[0:2], c;
+   electrical a[0:1], b[0:2], c;
+   output o1, o2, o3;
+   electrical o1, o2, o3;
+   analog begin
+      V(o1) <+ V(a[1]);   // second bit of the 2-bit bus a
+      V(o2) <+ V(b[2]);   // third bit of the 3-bit bus b
+      V(o3) <+ V(c);      // scalar
+   end
+endmodule

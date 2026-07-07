@@ -409,6 +409,11 @@ examples/opamp741_examples/_*
 examples/opamp741_examples/bjt741.osdi
 examples/opamp741_examples/results/
 
+# Enhancement-91 paramwidth: verify-run scratch files
+examples/paramwidth_examples/*.osdi
+examples/paramwidth_examples/*.sp
+examples/paramwidth_examples/_*.va
+
 # Enhancement-90 busport: verify-run scratch files
 examples/busport_examples/*.osdi
 examples/busport_examples/_*.va

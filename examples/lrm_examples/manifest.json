@@ -273,8 +273,8 @@
    "file": "lrm_p091_1.va",
    "block": "block_091_1",
    "page": 91,
-   "note": "parameter-dependent bus width (electrical [0:bits-1])",
-   "expect": "not a constant expression"
+   "note": "param-dependent bus width now folds (E-91); still blocked on the genvar for-loop used *inside* the analog block (analog-block genvar unrolling is unsupported)",
+   "expect": "'i' was not found in the current scope"
   },
   {
    "file": "lrm_p112_1.va",
@@ -287,15 +287,15 @@
    "file": "lrm_p117_1.va",
    "block": "block_117_1",
    "page": 117,
-   "note": "parameter-dependent bus width",
-   "expect": "not a constant expression"
+   "note": "param-dependent bus width now folds (E-91); still blocked on the analog-block genvar for-loop",
+   "expect": "'i' was not found in the current scope"
   },
   {
    "file": "lrm_p134_1.va",
    "block": "block_134_1",
    "page": 134,
-   "note": "parameter-dependent bus width",
-   "expect": "not a constant expression"
+   "note": "param-dependent bus width now folds (E-91); still blocked on the analog-block genvar for-loop",
+   "expect": "'k' was not found in the current scope"
   },
   {
    "file": "lrm_p155_3.va",
@@ -322,15 +322,15 @@
    "file": "lrm_p169_1.va",
    "block": "block_169_1",
    "page": 169,
-   "note": "parameter-dependent bus width (electrical [0:N])",
-   "expect": "not a constant expression"
+   "note": "param-dependent bus width now folds (E-91); still blocked on a param-valued bus bit-select outside a declaration (n[N]) + the undefined resistor/capacitor primitives",
+   "expect": "bus bit-select index must be a constant"
   },
   {
    "file": "lrm_p169_2.va",
    "block": "block_169_2",
    "page": 169,
-   "note": "parameter-dependent bus width",
-   "expect": "not a constant expression"
+   "note": "param-dependent bus width now folds (E-91); still blocked on a param-valued bus bit-select (n[N]) + undefined primitives",
+   "expect": "bus bit-select index must be a constant"
   },
   {
    "file": "lrm_p170_1.va",

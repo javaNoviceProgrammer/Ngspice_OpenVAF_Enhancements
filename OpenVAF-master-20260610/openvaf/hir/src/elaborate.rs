@@ -199,10 +199,25 @@ fn tok_spans(text: &str) -> Vec<Tok> {
 /// compile-time unroll. Shared by the legacy-generate bound evaluation and
 /// its bit-select index folding (Enhancement-88).
 fn eval_const_int_tokens(text: &str, spans: &[Tok], lo: usize, hi: usize) -> Option<i32> {
+    eval_const_int_with_params(text, spans, lo, hi, &HashMap::new())
+}
+
+/// Like `eval_const_int_tokens` but resolves bare identifiers against `params`
+/// (a name -> constant-integer map), used by the Enhancement-91
+/// parameter-dependent bus-width fold. With an empty map it is identical to
+/// `eval_const_int_tokens` (identifiers make the fold fail), which is what the
+/// Enhancement-88 legacy-generate bounds evaluator relies on.
+fn eval_const_int_with_params(
+    text: &str,
+    spans: &[Tok],
+    lo: usize,
+    hi: usize,
+    params: &HashMap<String, i32>,
+) -> Option<i32> {
     // Gather the significant (non-trivia) tokens in [lo, hi).
     let toks: Vec<&Tok> = spans[lo..hi].iter().filter(|t| !is_trivia(t.kind)).collect();
     let mut pos = 0usize;
-    let res = parse_add(text, &toks, &mut pos)?;
+    let res = parse_add(text, &toks, &mut pos, params)?;
     if pos == toks.len() {
         Some(res)
     } else {
@@ -210,18 +225,18 @@ fn eval_const_int_tokens(text: &str, spans: &[Tok], lo: usize, hi: usize) -> Opt
     }
 }
 
-fn parse_add(text: &str, toks: &[&Tok], pos: &mut usize) -> Option<i32> {
-    let mut acc = parse_mul(text, toks, pos)?;
+fn parse_add(text: &str, toks: &[&Tok], pos: &mut usize, params: &HashMap<String, i32>) -> Option<i32> {
+    let mut acc = parse_mul(text, toks, pos, params)?;
     while *pos < toks.len() {
         let raw = &text[toks[*pos].start..toks[*pos].end];
         match raw {
             "+" => {
                 *pos += 1;
-                acc += parse_mul(text, toks, pos)?;
+                acc += parse_mul(text, toks, pos, params)?;
             }
             "-" => {
                 *pos += 1;
-                acc -= parse_mul(text, toks, pos)?;
+                acc -= parse_mul(text, toks, pos, params)?;
             }
             _ => break,
         }
@@ -229,18 +244,18 @@ fn parse_add(text: &str, toks: &[&Tok], pos: &mut usize) -> Option<i32> {
     Some(acc)
 }
 
-fn parse_mul(text: &str, toks: &[&Tok], pos: &mut usize) -> Option<i32> {
-    let mut acc = parse_unary(text, toks, pos)?;
+fn parse_mul(text: &str, toks: &[&Tok], pos: &mut usize, params: &HashMap<String, i32>) -> Option<i32> {
+    let mut acc = parse_unary(text, toks, pos, params)?;
     while *pos < toks.len() {
         let raw = &text[toks[*pos].start..toks[*pos].end];
         match raw {
             "*" => {
                 *pos += 1;
-                acc = acc.checked_mul(parse_unary(text, toks, pos)?)?;
+                acc = acc.checked_mul(parse_unary(text, toks, pos, params)?)?;
             }
             "/" => {
                 *pos += 1;
-                let d = parse_unary(text, toks, pos)?;
+                let d = parse_unary(text, toks, pos, params)?;
                 if d == 0 {
                     return None;
                 }
@@ -252,27 +267,27 @@ fn parse_mul(text: &str, toks: &[&Tok], pos: &mut usize) -> Option<i32> {
     Some(acc)
 }
 
-fn parse_unary(text: &str, toks: &[&Tok], pos: &mut usize) -> Option<i32> {
+fn parse_unary(text: &str, toks: &[&Tok], pos: &mut usize, params: &HashMap<String, i32>) -> Option<i32> {
     let raw = &text[toks.get(*pos)?.start..toks[*pos].end];
     match raw {
         "-" => {
             *pos += 1;
-            Some(-parse_unary(text, toks, pos)?)
+            Some(-parse_unary(text, toks, pos, params)?)
         }
         "+" => {
             *pos += 1;
-            parse_unary(text, toks, pos)
+            parse_unary(text, toks, pos, params)
         }
-        _ => parse_atom(text, toks, pos),
+        _ => parse_atom(text, toks, pos, params),
     }
 }
 
-fn parse_atom(text: &str, toks: &[&Tok], pos: &mut usize) -> Option<i32> {
+fn parse_atom(text: &str, toks: &[&Tok], pos: &mut usize, params: &HashMap<String, i32>) -> Option<i32> {
     let t = toks.get(*pos)?;
     let raw = &text[t.start..t.end];
     if t.kind == TokenKind::OpenParen {
         *pos += 1;
-        let v = parse_add(text, toks, pos)?;
+        let v = parse_add(text, toks, pos, params)?;
         if toks.get(*pos)?.kind != TokenKind::CloseParen {
             return None;
         }
@@ -283,7 +298,235 @@ fn parse_atom(text: &str, toks: &[&Tok], pos: &mut usize) -> Option<i32> {
         *pos += 1;
         return raw.replace('_', "").parse::<i32>().ok();
     }
+    // Enhancement-91: a bare identifier resolves to a parameter's
+    // elaboration-time value when known (empty map => not resolvable).
+    if t.kind == TokenKind::SimpleIdent {
+        if let Some(&v) = params.get(raw) {
+            *pos += 1;
+            return Some(v);
+        }
+    }
     None
+}
+
+/// Collects one `[type] name = <expr>` group of a parameter declaration
+/// (Enhancement-91). `lo`/`hi` are significant-token positions bounding the
+/// group; the declared name is the last identifier before `=` and the value
+/// expression is everything after it. Groups without a default `=` are skipped.
+fn collect_param_group(
+    text: &str,
+    spans: &[Tok],
+    sig: &[usize],
+    lo: usize,
+    hi: usize,
+    decls: &mut Vec<(String, usize, usize)>,
+) {
+    let raw = |i: usize| &text[spans[i].start..spans[i].end];
+    let mut eq = None;
+    for q in lo..hi {
+        if raw(sig[q]) == "=" {
+            eq = Some(q);
+            break;
+        }
+    }
+    let Some(eq) = eq else { return };
+    // The parameter name is the last identifier before `=`.
+    let mut name_span = None;
+    for q in lo..eq {
+        if spans[sig[q]].kind == TokenKind::SimpleIdent {
+            name_span = Some(sig[q]);
+        }
+    }
+    let Some(ns) = name_span else { return };
+    let name = text[spans[ns].start..spans[ns].end].to_owned();
+    let expr_lo = sig[eq] + 1;
+    // The value expression ends at the group boundary, or earlier at a
+    // `from`/`exclude` range constraint (`parameter integer N = 10 from
+    // (0:inf);`) -- the constraint is not part of the value.
+    let mut expr_end_sig = hi;
+    for q in (eq + 1)..hi {
+        if matches!(raw(sig[q]), "from" | "exclude") {
+            expr_end_sig = q;
+            break;
+        }
+    }
+    let expr_hi = if expr_end_sig < sig.len() { sig[expr_end_sig] } else { spans.len() };
+    decls.push((name, expr_lo, expr_hi));
+}
+
+/// Enhancement-91: folds *parameter-dependent* net/port/array declaration
+/// widths -- `electrical [0:bits-1] out;`, `integer result[0:bits-1];` -- into
+/// literal ranges using each module's parameter defaults, so the range-then-name
+/// bus machinery (Enhancement-3) and the array machinery (Enhancement-14/15) see
+/// constant bounds. A textual pre-pass, like the sibling declaration normalisers.
+///
+/// Scope note: the width is fixed at the parameter's *elaboration-time* value
+/// (its default, resolved through other parameters). A model card / instance
+/// that overrides the parameter does **not** resize the bus -- the OSDI
+/// descriptor has a single fixed node count, so a width parameter is structural
+/// (the same decision as generate bounds, Enhancement-67/88). Only declaration
+/// ranges (`[msb:lsb]`, containing a `:`) are touched; bit-selects (`x[i]`) and
+/// literal ranges are left unchanged.
+pub(crate) fn fold_parameter_widths(db: &mut CompilationDB) -> anyhow::Result<()> {
+    let root_file = db.compilation_unit().root_file();
+    let Ok(text) = db.file_text(root_file) else { return Ok(()) };
+    if !text.contains('[') {
+        return Ok(());
+    }
+    let spans = tok_spans(&text);
+    let sig: Vec<usize> = (0..spans.len()).filter(|&i| !is_trivia(spans[i].kind)).collect();
+    let raw = |i: usize| &text[spans[i].start..spans[i].end];
+
+    // Segment into module regions [start, end) of significant-token positions so
+    // parameters stay module-scoped (two modules may reuse a parameter name).
+    let mut regions: Vec<(usize, usize)> = Vec::new();
+    let mut cur_start: Option<usize> = None;
+    for (p, &i) in sig.iter().enumerate() {
+        match raw(i) {
+            "module" => cur_start = Some(p),
+            "endmodule" => {
+                if let Some(s) = cur_start.take() {
+                    regions.push((s, p));
+                }
+            }
+            _ => {}
+        }
+    }
+    if regions.is_empty() {
+        regions.push((0, sig.len()));
+    }
+
+    let match_bracket = |openj: usize| -> Option<usize> {
+        let mut depth = 0i32;
+        for j in openj..spans.len() {
+            match spans[j].kind {
+                TokenKind::OpenBracket => depth += 1,
+                TokenKind::CloseBracket => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some(j);
+                    }
+                }
+                _ => {}
+            }
+        }
+        None
+    };
+
+    let mut rewrites: Vec<(usize, usize, String)> = Vec::new();
+    for (rs, re) in regions {
+        // pass 1: collect integer parameter defaults in this module
+        let mut decls: Vec<(String, usize, usize)> = Vec::new();
+        let mut p = rs;
+        while p < re {
+            if matches!(raw(sig[p]), "parameter" | "localparam") {
+                let mut q = p + 1;
+                let mut group_start = q;
+                let mut depth = 0i32;
+                let mut end = re;
+                while q < re {
+                    match raw(sig[q]) {
+                        "(" | "[" | "{" => depth += 1,
+                        ")" | "]" | "}" => depth -= 1,
+                        ";" if depth == 0 => {
+                            end = q;
+                            break;
+                        }
+                        "," if depth == 0 => {
+                            collect_param_group(&text, &spans, &sig, group_start, q, &mut decls);
+                            group_start = q + 1;
+                        }
+                        _ => {}
+                    }
+                    q += 1;
+                }
+                collect_param_group(&text, &spans, &sig, group_start, end, &mut decls);
+                p = end;
+            }
+            p += 1;
+        }
+        // resolve to a name -> value map (fixpoint: a parameter default may
+        // reference an earlier/later parameter of the same module)
+        let mut map: HashMap<String, i32> = HashMap::new();
+        loop {
+            let mut changed = false;
+            for (name, lo, hi) in &decls {
+                if map.contains_key(name) {
+                    continue;
+                }
+                if let Some(v) = eval_const_int_with_params(&text, &spans, *lo, *hi, &map) {
+                    map.insert(name.clone(), v);
+                    changed = true;
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+        if map.is_empty() {
+            continue;
+        }
+
+        // pass 2: fold `[e1:e2]` declaration ranges that reference a parameter
+        for p in rs..re {
+            let bi = sig[p];
+            if spans[bi].kind != TokenKind::OpenBracket {
+                continue;
+            }
+            let Some(cj) = match_bracket(bi) else { continue };
+            // find the range colon at the bracket's own depth, and note whether
+            // any inner identifier is a known parameter
+            let mut colon = None;
+            let mut refs_param = false;
+            let mut depth = 0i32;
+            for j in (bi + 1)..cj {
+                match spans[j].kind {
+                    TokenKind::OpenBracket | TokenKind::OpenParen => depth += 1,
+                    TokenKind::CloseBracket | TokenKind::CloseParen => depth -= 1,
+                    TokenKind::Colon if depth == 0 && colon.is_none() => colon = Some(j),
+                    TokenKind::SimpleIdent if map.contains_key(&text[spans[j].start..spans[j].end]) => {
+                        refs_param = true
+                    }
+                    _ => {}
+                }
+            }
+            let (Some(cpos), true) = (colon, refs_param) else { continue };
+            let Some(lhs) = eval_const_int_with_params(&text, &spans, bi + 1, cpos, &map) else {
+                continue;
+            };
+            let Some(rhs) = eval_const_int_with_params(&text, &spans, cpos + 1, cj, &map) else {
+                continue;
+            };
+            rewrites.push((spans[bi].start, spans[cj].end, format!("[{lhs}:{rhs}]")));
+        }
+    }
+
+    if rewrites.is_empty() {
+        return Ok(());
+    }
+    rewrites.sort_by_key(|(s, _, _)| *s);
+    let mut out = String::with_capacity(text.len());
+    let mut prev = 0usize;
+    for (s, e, rep) in rewrites {
+        out.push_str(&text[prev..s]);
+        out.push_str(&rep);
+        prev = e;
+    }
+    out.push_str(&text[prev..]);
+
+    let root_path = db.vfs().read().file_path(root_file).to_string();
+    let base_name =
+        root_path.rsplit(['/', '\\']).next().unwrap_or(root_path.as_str()).to_owned();
+    let synth_name = format!("/{base_name}__paramwidth.va");
+    let file_id = db.vfs().write().add_virt_file(&synth_name, out.into());
+    let include_dirs = db.include_dirs(root_file);
+    db.set_include_dirs(file_id, include_dirs);
+    let macro_flags = db.macro_flags(root_file);
+    db.set_macro_flags(file_id, macro_flags);
+    let overwrites = db.global_lint_overwrites(root_file);
+    db.set_global_lint_overwrites(file_id, overwrites);
+    db.set_root_file(file_id);
+    Ok(())
 }
 
 /// Verilog-A keywords that can precede `<name> [ … ]` and must NOT be treated
@@ -305,9 +548,17 @@ const NAME_RANGE_HEAD_EXCLUDE: &[&str] = &[
 ///
 /// Disambiguation from an instance array (`foo a[0:2] (ports)`) is exact: an
 /// instantiation always has a `(port list)` after the range, so a
-/// `<head> <name> [range]` that is instead followed by `;` is a declaration.
-/// Scope: single-name declarations with a 1-D range (the LRM form); a
-/// multi-name or multi-dimensional name-then-range declaration is left as-is.
+/// `<head> <name> [range]` that is instead followed by `,`/`;` is a
+/// declaration.
+///
+/// Enhancement-91 extends this to *multi-name* declarations
+/// (`input a[0:1], b[0:3], c;`): the comma-separated name list is split into
+/// one range-then-name declaration per name, each sharing the head (per-name
+/// widths, so `input [0:1] a; input [0:3] b; input c;`). The first name must
+/// carry the range (the anchor). A *multi-dimensional* name
+/// (`in[0:2][0:1]`) is still left untouched -- multi-dimensional vectored
+/// ports are unsupported in *both* declaration orders (the range-then-name
+/// form does not parse either), so the existing diagnostic fires.
 pub(crate) fn normalize_name_range_decls(db: &mut CompilationDB) -> anyhow::Result<()> {
     let root_file = db.compilation_unit().root_file();
     let Ok(text) = db.file_text(root_file) else { return Ok(()) };
@@ -321,6 +572,26 @@ pub(crate) fn normalize_name_range_decls(db: &mut CompilationDB) -> anyhow::Resu
     // sig index -> position in `sig`, for stepping to previous significant tokens
     let pos_in_sig: HashMap<usize, usize> =
         sig.iter().enumerate().map(|(p, &i)| (i, p)).collect();
+
+    // Finds the matching `]` (span index) for an `[` at span index `openj`.
+    let match_bracket = |openj: usize| -> Option<usize> {
+        let mut depth = 0i32;
+        let mut j = openj;
+        while j < spans.len() {
+            match spans[j].kind {
+                TokenKind::OpenBracket => depth += 1,
+                TokenKind::CloseBracket => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some(j);
+                    }
+                }
+                _ => {}
+            }
+            j += 1;
+        }
+        None
+    };
 
     let mut rewrites: Vec<(usize, usize, String)> = Vec::new();
     for (sp, &bi) in sig.iter().enumerate() {
@@ -353,38 +624,86 @@ pub(crate) fn normalize_name_range_decls(db: &mut CompilationDB) -> anyhow::Resu
         if !boundary {
             continue;
         }
-        // matching `]`
-        let mut depth = 0i32;
-        let mut close = None;
-        let mut j = bi;
-        while j < spans.len() {
-            match spans[j].kind {
-                TokenKind::OpenBracket => depth += 1,
-                TokenKind::CloseBracket => {
-                    depth -= 1;
-                    if depth == 0 {
-                        close = Some(j);
-                        break;
-                    }
-                }
-                _ => {}
-            }
-            j += 1;
+        // The full head prefix is the maximal run of significant identifiers
+        // ending at `head_i` (`input`, `electrical`, `input electrical`, ...);
+        // it is replicated ahead of every name when a multi-name declaration is
+        // split (Enhancement-91). The run cannot cross a boundary token, which
+        // is never an identifier.
+        let mut hstart_p = hp;
+        while hstart_p > 0 && spans[sig[hstart_p - 1]].kind == TokenKind::SimpleIdent {
+            hstart_p -= 1;
         }
-        let Some(cj) = close else { continue };
-        // single-name, 1-D: the token after `]` must be `;`
-        let after = pos_in_sig[&cj] + 1;
-        if after >= sig.len() || spans[sig[after]].kind != TokenKind::Semi {
+        let head_prefix = &text[spans[sig[hstart_p]].start..spans[head_i].end];
+
+        // Parse the comma-separated name list, starting at the first name
+        // (which carries `[range]`): `name [range]? (, name [range]?)* ;`.
+        // Each name may be scalar or a 1-D bus. A multi-dimensional name
+        // (`in[0:2][0:1]`) is left untouched -- multi-dim vectored ports are
+        // unsupported in *both* spellings, so the existing diagnostic fires.
+        let mut names: Vec<(String, Option<String>)> = Vec::new();
+        let mut p = sp - 1; // sig position of the first name
+        let mut ok = true;
+        let mut semi_end = None;
+        loop {
+            let ni = sig[p];
+            if spans[ni].kind != TokenKind::SimpleIdent {
+                ok = false;
+                break;
+            }
+            let nm = text[spans[ni].start..spans[ni].end].to_owned();
+            p += 1;
+            let mut range: Option<String> = None;
+            let mut groups = 0;
+            while p < sig.len() && spans[sig[p]].kind == TokenKind::OpenBracket {
+                let Some(cj) = match_bracket(sig[p]) else {
+                    ok = false;
+                    break;
+                };
+                range = Some(text[spans[sig[p]].start..spans[cj].end].to_owned());
+                groups += 1;
+                p = pos_in_sig[&cj] + 1;
+            }
+            if !ok || groups > 1 {
+                ok = false;
+                break;
+            }
+            names.push((nm, range));
+            if p >= sig.len() {
+                ok = false;
+                break;
+            }
+            match spans[sig[p]].kind {
+                TokenKind::Comma => {
+                    p += 1;
+                    continue;
+                }
+                TokenKind::Semi => {
+                    semi_end = Some(spans[sig[p]].end);
+                    break;
+                }
+                _ => {
+                    ok = false;
+                    break;
+                }
+            }
+        }
+        let (Some(semi_end), true) = (semi_end, ok) else { continue };
+        // Nothing to normalize unless at least one name carried a range.
+        if !names.iter().any(|(_, r)| r.is_some()) {
             continue;
         }
-        // rewrite `<name> [range]` -> `[range] <name>`
-        let name_txt = &text[spans[name_i].start..spans[name_i].end];
-        let range_txt = &text[spans[bi].start..spans[cj].end];
-        rewrites.push((
-            spans[name_i].start,
-            spans[cj].end,
-            format!("{range_txt} {name_txt}"),
-        ));
+        // Emit one range-then-name declaration per name, sharing the head.
+        let mut rep = String::new();
+        for (k, (nm, rng)) in names.iter().enumerate() {
+            if k > 0 {
+                rep.push(' ');
+            }
+            match rng {
+                Some(r) => rep.push_str(&format!("{head_prefix} {r} {nm};")),
+                None => rep.push_str(&format!("{head_prefix} {nm};")),
+            }
+        }
+        rewrites.push((spans[sig[hstart_p]].start, semi_end, rep));
     }
 
     if rewrites.is_empty() {

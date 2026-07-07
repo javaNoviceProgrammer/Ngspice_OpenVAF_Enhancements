@@ -183,7 +183,21 @@ every structural feature:
   `electrical out[0:2]`, LRM 3.6/3.7): a textual pre-pass rewrites the
   `<head> <name>[range]` form to the range-then-name form (Enhancement-3),
   reusing all bus/port machinery; the `(`-after-range instance rule keeps
-  instance arrays untouched ([E-89](../../enhancements_doc/Enhancement-89.md));
+  instance arrays untouched ([E-89](../../enhancements_doc/Enhancement-89.md)).
+  Extended to **multi-name** lists (`input a[0:1], b[0:3], c;`), split into
+  one range-then-name declaration per name with per-name widths; a
+  multi-dimensional name is left untouched (unsupported in both orders)
+  ([E-91](../../enhancements_doc/Enhancement-91.md));
+- **parameter-dependent declaration widths** (`electrical [0:N-1] out;`,
+  `real w[0:N-1];`): a textual pre-pass folds a declaration range whose
+  bounds reference a parameter to a literal range, using the module's
+  constant-integer parameter defaults (a fixpoint resolves one default
+  through another; `from`/`exclude` constraints are skipped). Only
+  declaration ranges (with a `:`) are folded, not bit-selects; the shared
+  constant-integer evaluator gained an optional parameter map (empty map =
+  the E-88 literal-only behavior). The width is fixed at the default -- a
+  structural parameter, since OSDI has one node count per module (E-67/88
+  decision) ([E-91](../../enhancements_doc/Enhancement-91.md));
 - **the legacy `generate <id> (start, end [, incr])` statement**
   (obsolete Verilog-A 1.0 analog-block loop-unroll, LRM Annex C.4)
   unrolled by a textual pre-pass: the index substitutes to a literal per
@@ -648,6 +662,7 @@ tests hide behind `RUN_DEV_TESTS=1`. Fixed test-side only
 | [E-88](../../enhancements_doc/Enhancement-88.md) | elaborate | legacy `generate <id> (start,end)` analog-block loop-unroll (textual pre-pass) |
 | [E-89](../../enhancements_doc/Enhancement-89.md) | elaborate | name-then-range net/port decls (textual normalize) + Annex E SPICE-primitives example library |
 | [E-90](../../enhancements_doc/Enhancement-90.md) | hir_def (item_tree) | multi-bit input bus port bit reads: pre-scan body widths so a non-last bus port's bits stay contiguous in header/terminal order |
+| [E-91](../../enhancements_doc/Enhancement-91.md) | elaborate | multi-name name-then-range declarations + parameter-dependent declaration widths (folded from the parameter default) |
 
 Enhancements not listed (57, 60, 62–64, 69, 72–77, 79–83) changed no
 compiler sources — they were validation suites, documentation, benchmark
