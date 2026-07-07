@@ -174,6 +174,23 @@ fn module_items(p: &mut Parser) {
             GENERATE_KW => {
                 generate_region(p, m);
             }
+            // Enhancement-96: a module-level `generate for`/`if`/`case` whose
+            // `generate`/`endgenerate` keywords are omitted (LRM: they are not
+            // required). Without these arms a bare `for`/`if`/`case` at module
+            // scope fell through to the error recovery below -- "unexpected
+            // token 'for'" -- or, when a following `analog` block let recovery
+            // resync, silently dropped the construct. Parsed here as the same
+            // GENERATE_FOR/IF/CASE nodes the nested form produces (top = false:
+            // no `endgenerate` of their own).
+            FOR_KW => {
+                generate_for_tail(p, m, false);
+            }
+            IF_KW => {
+                generate_if_tail(p, m, false);
+            }
+            CASE_KW => {
+                generate_case_tail(p, m, false);
+            }
             INTEGER_KW | REAL_KW | STRING_KW => var_decl(p, m),
             INPUT_KW | OUTPUT_KW | INOUT_KW => port_decl::<false>(p, m),
             _ => {

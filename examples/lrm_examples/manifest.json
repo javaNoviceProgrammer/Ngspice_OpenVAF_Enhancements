@@ -322,15 +322,15 @@
    "file": "lrm_p169_1.va",
    "block": "block_169_1",
    "page": 169,
-   "note": "param-dependent bus width now folds (E-91); still blocked on a param-valued bus bit-select outside a declaration (n[N]) + the undefined resistor/capacitor primitives",
-   "expect": "bus bit-select index must be a constant"
+   "note": "bare module-level generate-for now parses (E-96); still blocked on the parameter loop bound N (generate structure cannot depend on a runtime-bindable parameter, E-67 scope) + undefined resistor/capacitor primitives",
+   "expect": "generate for: loop bound must be a compile-time-constant integer"
   },
   {
    "file": "lrm_p169_2.va",
    "block": "block_169_2",
    "page": 169,
-   "note": "param-dependent bus width now folds (E-91); still blocked on a param-valued bus bit-select (n[N]) + undefined primitives",
-   "expect": "bus bit-select index must be a constant"
+   "note": "bare module-level generate-for now parses (E-96); still blocked on the parameter loop bound N (E-67 scope) + undefined primitives",
+   "expect": "generate for: loop bound must be a compile-time-constant integer"
   },
   {
    "file": "lrm_p170_1.va",
@@ -350,8 +350,8 @@
    "file": "lrm_p172_1.va",
    "block": "block_172_1",
    "page": 172,
-   "note": "generate-if with parameter condition + implicit genblk naming (E-67 scope decision)",
-   "expect": "unexpected token 'if'"
+   "note": "bare module-level generate-if now parses (E-96); still blocked on the parameter/implicit-genblk condition (generate structure cannot depend on a parameter, E-67 scope)",
+   "expect": "generate if: the condition"
   },
   {
    "file": "lrm_p267_1.va",

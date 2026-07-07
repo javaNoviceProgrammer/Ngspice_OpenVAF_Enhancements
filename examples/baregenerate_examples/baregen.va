@@ -1,0 +1,40 @@
+`include "disciplines.vams"
+// Enhancement-96: a module-level `generate for` whose `generate`/`endgenerate`
+// keywords are omitted (the LRM says they are not required). This used to fail
+// to parse ("unexpected token 'for'") -- or, when an analog block let the
+// parser's error recovery resync, the whole loop was silently dropped -- in
+// two module shapes: a module with a header BUS PORT, and a module with NO
+// analog block. Both now parse and the loop is elaborated.
+
+// a leaf conductance (name avoids the ngspice built-in 'resistor')
+module gcell(a, b);
+   inout a, b; electrical a, b;
+   parameter real g = 1e-3;
+   analog I(a, b) <+ g * V(a, b);
+endmodule
+
+// (1) header BUS PORT + bare generate-for, NO analog block: each bus bit is
+// tied to ground through a gcell whose conductance scales with the bit index.
+module busgen(bus);
+   inout [0:3] bus;
+   electrical [0:3] bus;
+   ground gnd; electrical gnd;
+   genvar i;
+   for (i = 0; i < 4; i = i + 1) begin : sec
+      gcell #(.g(1e-3 * (i + 1))) c (bus[i], gnd);
+   end
+endmodule
+
+// (2) NO analog block, internal bus: a divider bank observable through port p's
+// current -- p connects to each internal node through a gcell, and each node to
+// ground through a gcell (4 parallel 2-section dividers).
+module divgen(p);
+   inout p; electrical p;
+   electrical [0:3] node;
+   ground gnd; electrical gnd;
+   genvar i;
+   for (i = 0; i < 4; i = i + 1) begin : sec
+      gcell #(.g(1e-3)) top (p, node[i]);
+      gcell #(.g(1e-3)) bot (node[i], gnd);
+   end
+endmodule

@@ -419,6 +419,10 @@ examples/pyplot_examples/acmag.*
 examples/pyplot_examples/pyplot.*
 examples/pyplot_examples/nofn.sp
 
+# Enhancement-96 baregenerate: verify-run scratch files
+examples/baregenerate_examples/*.osdi
+examples/baregenerate_examples/*.sp
+
 # Enhancement-93 paramnonset: verify-run scratch files
 examples/paramnonset_examples/*.osdi
 examples/paramnonset_examples/*.sp

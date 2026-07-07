@@ -93,6 +93,14 @@ templates the generated token/AST/builtin/instruction tables come from):
   bit-select bracket accepts an optional `: expr`, with the colon token
   in the CST distinguishing a range from multi-dimensional indexing —
   no new node kind ([E-85](../../enhancements_doc/Enhancement-85.md));
+- **module-level `generate for`/`if`/`case` without the optional
+  `generate`/`endgenerate` keywords**: `module_items` handled a
+  `generate … endgenerate` region but had no bare `FOR_KW`/`IF_KW`/`CASE_KW`
+  arm, so a keyword-less loop at module scope fell to error recovery —
+  `unexpected token 'for'`, or a silent drop of the loop when a following
+  `analog` block let recovery resync. New arms parse it into the same
+  `GENERATE_FOR`/`IF`/`CASE` nodes the nested/`generate`-wrapped forms
+  produce ([E-96](../../enhancements_doc/Enhancement-96.md));
 - **panic-free direction parsing**: `port_decl`/`func_arg` asserted the
   next token was a direction (`bump_ts`), which any non-Verilog text
   reaching a module-head port list turned into a compiler crash; both
@@ -677,6 +685,7 @@ tests hide behind `RUN_DEV_TESTS=1`. Fixed test-side only
 | [E-91](../../enhancements_doc/Enhancement-91.md) | elaborate | multi-name name-then-range declarations + parameter-dependent declaration widths (folded from the parameter default) |
 | [E-92](../../enhancements_doc/Enhancement-92.md) | elaborate | freeze structural (width) parameters to `localparam` (split multi-parameter decls) so a netlist override cannot desync the frozen width from behaviour |
 | [E-93](../../enhancements_doc/Enhancement-93.md) | osdi (metadata) | flag `localparam` OSDI parameters non-settable (`PARA_FLAG_FIXED`, additive) so ngspice can warn on a netlist override (ngspice side too) |
+| [E-96](../../enhancements_doc/Enhancement-96.md) | parser (module grammar) | parse a module-level `generate for`/`if`/`case` without the optional `generate`/`endgenerate` keywords |
 
 Enhancements not listed (57, 60, 62–64, 69, 72–77, 79–83) changed no
 compiler sources — they were validation suites, documentation, benchmark
