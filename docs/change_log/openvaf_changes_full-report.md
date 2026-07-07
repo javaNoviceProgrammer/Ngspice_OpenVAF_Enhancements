@@ -531,6 +531,11 @@ every structural feature:
   pairs in `load_noise`
   ([E-54](../../enhancements_doc/Enhancement-54.md)) — the version tuple
   lives in `osdi/src/lib.rs`;
+- **`metadata.rs`**: the `PARA_FLAG_FIXED` parameter-descriptor flag (a free
+  bit of the `flags` field, additive — no layout/ABI change) set on every
+  `localparam`, so the simulator can warn when a netlist tries to set a
+  non-settable parameter (a `localparam`, or a structural width parameter
+  frozen by Enhancement-92) ([E-93](../../enhancements_doc/Enhancement-93.md));
 - **`eval.rs`**: final-step flag gating
   ([E-53](../../enhancements_doc/Enhancement-53.md)); simulation-control
   return flags ([E-55](../../enhancements_doc/Enhancement-55.md)); the
@@ -671,6 +676,7 @@ tests hide behind `RUN_DEV_TESTS=1`. Fixed test-side only
 | [E-90](../../enhancements_doc/Enhancement-90.md) | hir_def (item_tree) | multi-bit input bus port bit reads: pre-scan body widths so a non-last bus port's bits stay contiguous in header/terminal order |
 | [E-91](../../enhancements_doc/Enhancement-91.md) | elaborate | multi-name name-then-range declarations + parameter-dependent declaration widths (folded from the parameter default) |
 | [E-92](../../enhancements_doc/Enhancement-92.md) | elaborate | freeze structural (width) parameters to `localparam` (split multi-parameter decls) so a netlist override cannot desync the frozen width from behaviour |
+| [E-93](../../enhancements_doc/Enhancement-93.md) | osdi (metadata) | flag `localparam` OSDI parameters non-settable (`PARA_FLAG_FIXED`, additive) so ngspice can warn on a netlist override (ngspice side too) |
 
 Enhancements not listed (57, 60, 62–64, 69, 72–77, 79–83) changed no
 compiler sources — they were validation suites, documentation, benchmark

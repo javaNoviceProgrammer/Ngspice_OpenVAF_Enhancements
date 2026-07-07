@@ -8,6 +8,7 @@ pub const PARA_TY_MASK: u32 = 3;
 pub const PARA_TY_REAL: u32 = 0;
 pub const PARA_TY_INT: u32 = 1;
 pub const PARA_TY_STR: u32 = 2;
+pub const PARA_FLAG_FIXED: u32 = 1 << 2;
 pub const PARA_KIND_MASK: u32 = (3 << 30);
 pub const PARA_KIND_MODEL: u32 = (0 << 30);
 pub const PARA_KIND_INST: u32 = (1 << 30);

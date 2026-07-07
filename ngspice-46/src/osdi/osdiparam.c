@@ -105,6 +105,17 @@ extern int OSDIparam(int param, IFvalue *value, GENinstance *instPtr,
     return (E_BADPARM);
   }
 
+  /* Enhancement-93: a fixed (localparam) parameter -- e.g. a structural width
+   * parameter frozen by openvaf -- cannot be set from the netlist. Warn and
+   * ignore rather than silently swallowing the value. */
+  if (descr->param_opvar[param].flags & PARA_FLAG_FIXED) {
+    fprintf(stderr,
+            "Warning: parameter '%s' is a fixed (localparam) value and cannot "
+            "be set from the netlist; ignored.\n",
+            descr->param_opvar[param].name[0]);
+    return (OK);
+  }
+
   void *inst = osdi_instance_data(entry, instPtr);
   void *dst = descr->access(inst, NULL, (uint32_t)param,
                             ACCESS_FLAG_SET | ACCESS_FLAG_INSTANCE);
@@ -119,6 +130,15 @@ extern int OSDImParam(int param, IFvalue *value, GENmodel *modelPtr) {
   if (param > (int)descr->num_params ||
       param < (int)descr->num_instance_params) {
     return (E_BADPARM);
+  }
+
+  /* Enhancement-93: fixed (localparam) model parameter -- warn and ignore. */
+  if (descr->param_opvar[param].flags & PARA_FLAG_FIXED) {
+    fprintf(stderr,
+            "Warning: parameter '%s' is a fixed (localparam) value and cannot "
+            "be set from the netlist; ignored.\n",
+            descr->param_opvar[param].name[0]);
+    return (OK);
   }
 
   void *model = osdi_model_data(modelPtr);

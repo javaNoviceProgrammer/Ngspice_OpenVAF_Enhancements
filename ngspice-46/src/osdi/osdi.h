@@ -24,6 +24,9 @@
 #define PARA_TY_REAL 0
 #define PARA_TY_INT 1
 #define PARA_TY_STR 2
+/* Enhancement-93: parameter not settable from the netlist (a Verilog-A
+   localparam, e.g. a structural width parameter frozen by Enhancement-92). */
+#define PARA_FLAG_FIXED (1 << 2)
 #define PARA_KIND_MASK  (3 << 30)
 #define PARA_KIND_MODEL (0 << 30)
 #define PARA_KIND_INST  (1 << 30)

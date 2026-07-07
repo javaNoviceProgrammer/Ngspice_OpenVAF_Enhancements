@@ -33,7 +33,7 @@ use crate::metadata::osdi_0_4::{
     OsdiParamOpvar, OsdiTys, JACOBIAN_ENTRY_REACT, JACOBIAN_ENTRY_REACT_CONST,
     JACOBIAN_ENTRY_RESIST, JACOBIAN_ENTRY_RESIST_CONST, MODULEFLAG_ABSTIME, NATREF_DISCIPLINE_FLOW,
     NATREF_DISCIPLINE_POTENTIAL, NATREF_NONE, NOISE_TYPE_FLICKER, NOISE_TYPE_TABLE,
-    NOISE_TYPE_WHITE, PARA_KIND_INST, PARA_KIND_MODEL, PARA_KIND_OPVAR, PARA_TY_INT, PARA_TY_REAL,
+    NOISE_TYPE_WHITE, PARA_FLAG_FIXED, PARA_KIND_INST, PARA_KIND_MODEL, PARA_KIND_OPVAR, PARA_TY_INT, PARA_TY_REAL,
     PARA_TY_STR,
 };
 use crate::ty_len;
@@ -159,7 +159,10 @@ impl<'ll> OsdiCompilationUnit<'_, '_, 'll> {
                 let param_info = &module.info.params[param];
                 let ty = param.ty(self.db);
 
-                let flags = para_ty_flags(&ty) | PARA_KIND_INST;
+                let mut flags = para_ty_flags(&ty) | PARA_KIND_INST;
+                if param.is_local(self.db) {
+                    flags |= PARA_FLAG_FIXED;
+                }
                 OsdiParamOpvar {
                     name: once(&param_info.name)
                         .chain(&*param_info.alias)
@@ -180,7 +183,10 @@ impl<'ll> OsdiCompilationUnit<'_, '_, 'll> {
                 return None;
             }
             let ty = param.ty(self.db);
-            let flags = para_ty_flags(&ty) | PARA_KIND_MODEL;
+            let mut flags = para_ty_flags(&ty) | PARA_KIND_MODEL;
+            if param.is_local(self.db) {
+                flags |= PARA_FLAG_FIXED;
+            }
             let param_opvar = OsdiParamOpvar {
                 name: once(&param_info.name)
                     .chain(&*param_info.alias)

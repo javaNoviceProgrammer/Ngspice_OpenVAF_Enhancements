@@ -629,7 +629,7 @@ units = "1/cm^3", desc = "Channel concentration change due to WPE", flags = Para
 param "NSUBPWPE"
 units = "1/cm^3", desc = "Pocket concentration change due to WPE", flags = ParameterFlags(0x0)
 param "TN"
-units = "", desc = "", flags = ParameterFlags(0x0)
+units = "", desc = "", flags = ParameterFlags(PARA_FLAG_FIXED)
 
 4 terminals
 node "d" units = "V", runits = "A"

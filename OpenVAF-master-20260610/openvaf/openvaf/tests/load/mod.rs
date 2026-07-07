@@ -512,6 +512,7 @@ bitflags! {
         const PARA_TY_REAL  = PARA_TY_REAL;
         const PARA_TY_INT  = PARA_TY_INT;
         const PARA_TY_STR  = PARA_TY_STR;
+        const PARA_FLAG_FIXED  = PARA_FLAG_FIXED;
         const PARA_KIND_MODEL  = PARA_KIND_MODEL;
         const PARA_KIND_INST  = PARA_KIND_INST;
         const PARA_KIND_OPVAR  = PARA_KIND_OPVAR;

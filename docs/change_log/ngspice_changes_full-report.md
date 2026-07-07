@@ -337,6 +337,18 @@ NULL guard; both shapes now produce clean, located errors
   skips — with the remedy stated: *"restart ngspice to load a recompiled
   file"* ([E-76](../../enhancements_doc/Enhancement-76.md), [E-81](../../enhancements_doc/Enhancement-81.md)).
 
+### `osdi/osdiparam.c` (E-93)
+
+Setting a **fixed (`localparam`) OSDI parameter** from the netlist used to
+be swallowed silently: openvaf exports every `localparam` as a parameter,
+its "given" flag is forced false, and the written value is overwritten by
+the parameter-init default — so `.model … N=8` on a frozen structural width
+parameter changed nothing, with no feedback. `OSDIparam`/`OSDImParam` now
+test the new `PARA_FLAG_FIXED` descriptor flag (set by openvaf, a free bit
+of the parameter `flags` field) and emit *"parameter 'N' is a fixed
+(localparam) value and cannot be set from the netlist; ignored"* instead of
+silently dropping it ([E-93](../../enhancements_doc/Enhancement-93.md)).
+
 ---
 
 ## 6. Maths — `src/maths/`
@@ -410,6 +422,7 @@ Every enhancement that touched ngspice, oldest first:
 | [E-77](../../enhancements_doc/Enhancement-77.md) | osdidefs.h, display.c, outitf.c, spfactor.c, makedefs.in (+autotools regen) | zero-warning build, 33 → 0 |
 | [E-80](../../enhancements_doc/Enhancement-80.md) | osdiinit.c | `dtemp` instance-parameter alias |
 | [E-81](../../enhancements_doc/Enhancement-81.md) | resource.c, dev.c | memory-warning opt-out + once-per-excursion; reload-note hint |
+| [E-93](../../enhancements_doc/Enhancement-93.md) | osdi.h, osdiparam.c | warn (not silently ignore) when a netlist sets a `PARA_FLAG_FIXED` (`localparam`) OSDI parameter |
 
 *(E-25's simparam exposure lives in the OSDI callback table populated at
 load time; its diff rides inside the `osdiload.c`/callbacks changes.)*

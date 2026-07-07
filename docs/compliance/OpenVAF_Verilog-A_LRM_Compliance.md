@@ -192,7 +192,10 @@ parameter's elaboration-time default and fixed at that value — a structural
 parameter, since the OSDI descriptor has one node count per module. Such a
 parameter is **frozen to a `localparam`** (E-92) so a netlist override cannot
 resize the compiled structure (or desync it from behavioural code); to change
-the width, edit the default and recompile. A **multi-dimensional** vectored port
+the width, edit the default and recompile. Any `localparam` (frozen width
+parameter or hand-written) is flagged non-settable in the OSDI descriptor, so
+ngspice **warns** rather than silently ignoring a netlist attempt to set it
+(E-93). A **multi-dimensional** vectored port
 (`in[0:2][0:1]`) is not supported in either declaration order.
 
 Signal-flow disciplines (potential-only or flow-only) are fully usable,

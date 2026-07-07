@@ -1,0 +1,35 @@
+`include "disciplines.vams"
+// Enhancement-93: a Verilog-A `localparam` (including a structural width
+// parameter frozen by Enhancement-92) is marked non-settable in the OSDI
+// parameter descriptor (PARA_FLAG_FIXED), so ngspice warns -- instead of
+// silently swallowing the value -- when a netlist tries to set it.
+
+// wsum: N is a structural width parameter (sizes w[0:N-1] and bounds the
+// loop). Enhancement-91 folds it and Enhancement-92 freezes it to a localparam;
+// Enhancement-93 makes an override of it warn. `gain` is an ordinary,
+// overridable parameter for contrast.
+module wsum(out);
+   parameter integer N = 4;
+   parameter real gain = 1.0;
+   output out; electrical out;
+   real w[0:N-1];
+   integer k;
+   analog begin : b
+      real acc;
+      acc = 0.0;
+      for (k = 0; k < N; k = k + 1) begin
+         w[k] = gain / (k + 1);
+         acc = acc + w[k];
+      end
+      V(out) <+ acc;
+   end
+endmodule
+
+// a hand-written localparam (derived from an overridable parameter) -- also
+// non-settable, also warns.
+module derived(out);
+   parameter real base = 1.0;
+   localparam real scale = 2.5;
+   output out; electrical out;
+   analog V(out) <+ base * scale;
+endmodule
