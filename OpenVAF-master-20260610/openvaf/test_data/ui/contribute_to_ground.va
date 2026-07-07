@@ -1,0 +1,16 @@
+`include "disciplines.vams"
+// Enhancement-97: a contribution whose branch is entirely the `ground`
+// reference has no unknown to stamp -- it used to panic the compiler
+// (unreachable!() in lower_contribute_unnamed_branch); now a clean diagnostic.
+module m(a);
+   inout a;
+   electrical a;
+   ground gnd;
+   electrical gnd;
+   analog begin
+      V(gnd) <+ 0.0;          // single ground node
+      V(gnd, gnd) <+ 1.0;     // both endpoints ground
+      I(gnd) <+ 2.0;          // flow to ground
+      V(a, gnd) <+ 3.0;       // OK: a real node-to-ground branch
+   end
+endmodule

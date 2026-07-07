@@ -1,0 +1,11 @@
+`include "disciplines.vams"
+// Enhancement-97: a valid model that contributes to a real node-to-ground
+// branch. The companion verify also checks that the degenerate all-ground
+// contribution (`V(gnd) <+ ...`) is now a clean diagnostic rather than a
+// compiler panic.
+module vsrc(p);
+   inout p; electrical p;
+   ground gnd; electrical gnd;
+   parameter real v0 = 1.5;
+   analog V(p, gnd) <+ v0;   // node-to-ground branch: perfectly legal
+endmodule

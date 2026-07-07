@@ -1,0 +1,24 @@
+error: contribution to a ground node
+   --> /contribute_to_ground.va:11:7
+   |
+11 |       V(gnd) <+ 0.0;          // single ground node
+   |       ^^^^^^ this branch is entirely 'ground'
+   |
+   = help: the potential of 'ground' is fixed at 0, so there is no unknown to contribute to; contribute to a real node instead
+
+error: contribution to a ground node
+   --> /contribute_to_ground.va:12:7
+   |
+12 |       V(gnd, gnd) <+ 1.0;     // both endpoints ground
+   |       ^^^^^^^^^^^ this branch is entirely 'ground'
+   |
+   = help: the potential of 'ground' is fixed at 0, so there is no unknown to contribute to; contribute to a real node instead
+
+error: contribution to a ground node
+   --> /contribute_to_ground.va:13:7
+   |
+13 |       I(gnd) <+ 2.0;          // flow to ground
+   |       ^^^^^^ this branch is entirely 'ground'
+   |
+   = help: the potential of 'ground' is fixed at 0, so there is no unknown to contribute to; contribute to a real node instead
+

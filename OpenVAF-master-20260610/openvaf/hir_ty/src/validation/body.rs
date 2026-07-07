@@ -55,6 +55,13 @@ pub enum BodyValidationDiagnostic {
         expr: ExprId,
         branch: BranchId,
     },
+    // Enhancement-97: a contribution whose branch is entirely the `ground`
+    // reference (`V(gnd) <+ ...`, `V(gnd, gnd) <+ ...`) -- both endpoints
+    // collapse to node 0, so there is no unknown to contribute to. Used to
+    // panic (`unreachable!()`) in `lower_contribute_unnamed_branch`.
+    ContributeToGround {
+        expr: ExprId,
+    },
     IllegalContribute {
         stmt: StmtId,
         ctx: BodyCtx,
@@ -708,6 +715,16 @@ impl ExprValidator<'_, '_> {
             (BuiltIn::potential | BuiltIn::flow, Some(NATURE_ACCESS_NODES)) => {
                 let hi = self.parent.infer.expr_types[args[0]].unwrap_node();
                 let lo = self.parent.infer.expr_types[args[1]].unwrap_node();
+                // Enhancement-97: contributing to a branch whose endpoints are
+                // both `ground` (e.g. `V(gnd, gnd) <+ ...`) has no unknown to
+                // stamp and used to panic during lowering.
+                if self.write
+                    && self.parent.db.node_data(hi).is_gnd
+                    && self.parent.db.node_data(lo).is_gnd
+                {
+                    self.report(BodyValidationDiagnostic::ContributeToGround { expr });
+                    return;
+                }
                 let branch = if hi >= lo {
                     BranchWrite::Unnamed { hi, lo: Some(lo) }
                 } else {
@@ -721,6 +738,13 @@ impl ExprValidator<'_, '_> {
 
             (BuiltIn::potential | BuiltIn::flow, Some(NATURE_ACCESS_NODE_GND)) => {
                 let node = self.parent.infer.expr_types[args[0]].unwrap_node();
+                // Enhancement-97: `V(gnd) <+ ...` -- the single node is the
+                // ground reference, so the implicit node-to-ground branch is
+                // ground-to-ground (no unknown; used to panic during lowering).
+                if self.write && self.parent.db.node_data(node).is_gnd {
+                    self.report(BodyValidationDiagnostic::ContributeToGround { expr });
+                    return;
+                }
                 if let Some(discipline) = self.parent.db.node_discipline(node) {
                     self.lint_trivial_branch(
                         BranchWrite::Unnamed { hi: node, lo: None },

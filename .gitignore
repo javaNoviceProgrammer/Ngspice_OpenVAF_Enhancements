@@ -423,6 +423,11 @@ examples/pyplot_examples/nofn.sp
 examples/baregenerate_examples/*.osdi
 examples/baregenerate_examples/*.sp
 
+# Enhancement-97 groundcontrib: verify-run scratch files
+examples/groundcontrib_examples/*.osdi
+examples/groundcontrib_examples/*.sp
+examples/groundcontrib_examples/_t.va
+
 # Enhancement-93 paramnonset: verify-run scratch files
 examples/paramnonset_examples/*.osdi
 examples/paramnonset_examples/*.sp

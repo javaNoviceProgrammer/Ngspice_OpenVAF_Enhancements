@@ -300,6 +300,22 @@ impl Diagnostic for BodyValidationDiagnosticWrapped<'_> {
                             .to_owned(),
                     ])
             }
+            BodyValidationDiagnostic::ContributeToGround { expr } => {
+                let FileSpan { range, file } = self.expr_src(expr);
+                Report::error()
+                    .with_message("contribution to a ground node")
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: file,
+                        range: range.into(),
+                        message: "this branch is entirely 'ground'".to_owned(),
+                    }])
+                    .with_notes(vec![
+                        "help: the potential of 'ground' is fixed at 0, so there is no \
+                         unknown to contribute to; contribute to a real node instead"
+                            .to_owned(),
+                    ])
+            }
             BodyValidationDiagnostic::IllegalContribute { stmt, ctx } => {
                 let FileSpan { range, file } = self.parse.to_file_span(
                     self.body_sm.stmt_map_back[stmt].as_ref().unwrap().range(),

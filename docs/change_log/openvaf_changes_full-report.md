@@ -368,7 +368,14 @@ every structural feature:
 - **contributions to port branches diagnosed** (`ContributeToPortFlow`,
   with the declaration site labeled): `I(pb) <+ …` on a
   `branch (<p>) pb;` slipped through the write path unvalidated and
-  panicked during lowering ([E-84](../../enhancements_doc/Enhancement-84.md)).
+  panicked during lowering ([E-84](../../enhancements_doc/Enhancement-84.md));
+- **contributions to an all-`ground` branch diagnosed**
+  (`ContributeToGround`): `V(gnd) <+ …` / `V(gnd, gnd) <+ …` reduce both
+  endpoints to the fixed 0 reference (no unknown) and hit an
+  `unreachable!()` in `lower_contribute_unnamed_branch` — an ICE. The write
+  path now checks the branch's `is_gnd` nodes and reports a clean error; a
+  real node-to-ground branch and a `V(gnd)` probe are untouched
+  ([E-97](../../enhancements_doc/Enhancement-97.md)).
 
 ## 8. Lowering — `openvaf/hir_lower/`
 
@@ -686,6 +693,7 @@ tests hide behind `RUN_DEV_TESTS=1`. Fixed test-side only
 | [E-92](../../enhancements_doc/Enhancement-92.md) | elaborate | freeze structural (width) parameters to `localparam` (split multi-parameter decls) so a netlist override cannot desync the frozen width from behaviour |
 | [E-93](../../enhancements_doc/Enhancement-93.md) | osdi (metadata) | flag `localparam` OSDI parameters non-settable (`PARA_FLAG_FIXED`, additive) so ngspice can warn on a netlist override (ngspice side too) |
 | [E-96](../../enhancements_doc/Enhancement-96.md) | parser (module grammar) | parse a module-level `generate for`/`if`/`case` without the optional `generate`/`endgenerate` keywords |
+| [E-97](../../enhancements_doc/Enhancement-97.md) | hir_ty (validation) | clean diagnostic (was an ICE) for a contribution to an all-`ground` branch (`V(gnd) <+ …`) |
 
 Enhancements not listed (57, 60, 62–64, 69, 72–77, 79–83) changed no
 compiler sources — they were validation suites, documentation, benchmark
