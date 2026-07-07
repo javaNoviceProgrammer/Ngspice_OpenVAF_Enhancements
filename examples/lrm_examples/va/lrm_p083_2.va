@@ -1,0 +1,19 @@
+// Verilog-AMS LRM 2023 (Accellera), example from page 83
+// extracted by lrm_examples/extract_lrm_examples.py (block_083_2)
+`include "disciplines.vams"
+`include "constants.vams"
+    module diode(a,c);
+       inout a, c;
+       electrical a, c;
+       parameter real IS = 1.0e-14;
+       parameter real RS = 0.0;
+       real idio, gdio;
+       (*desc="effective conductance"*)
+       real geff;
+       analog begin
+          idio = IS * (limexp((V(a,c)-RS*I(a,c))/$vt) - 1);
+          gdio = ddx(idio, V(a));
+          geff = gdio / (RS * gdio + 1.0);
+          I(a,c) <+ idio;
+       end
+    endmodule

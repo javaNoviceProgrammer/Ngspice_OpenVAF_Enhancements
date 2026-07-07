@@ -1,0 +1,9 @@
+    paramset nch nmos3; // long-channel paramset
+       parameter real l=1u from [1u:inf);
+       parameter real w=1u from [0.2u:inf);
+       parameter real ad=0.4*w from (0:inf);
+       parameter real as=0.4*w from (0:inf);
+       .l=l; .w=w; .ad=ad; .as=as;
+       .kp=5e-5; .tox=3e-8; .u0=640; .nsub=1.3e17;
+       .vmax=0; .tpg=1; .nfs=0.7e12;
+    endparamset

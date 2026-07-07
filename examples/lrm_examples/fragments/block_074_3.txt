@@ -1,0 +1,5 @@
+    real measurements[0:2];
+    real a,b,c;
+    analog begin
+       ...
+       measurements = '{a,b,c};

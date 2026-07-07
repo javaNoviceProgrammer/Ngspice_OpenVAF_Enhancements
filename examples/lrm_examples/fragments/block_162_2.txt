@@ -1,0 +1,4 @@
+    input [3:0] in;
+    electrical [0:3] in; // error, MSB and LSB in the port type declaration does
+                        // not evaluate to the same value as the port direction
+                        // declaration.

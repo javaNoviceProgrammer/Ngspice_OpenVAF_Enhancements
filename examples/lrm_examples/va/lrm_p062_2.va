@@ -1,0 +1,11 @@
+// Verilog-AMS LRM 2023 (Accellera), example from page 62
+// extracted by lrm_examples/extract_lrm_examples.py (block_062_2)
+`include "disciplines.vams"
+`include "constants.vams"
+    module current_sink(p);
+   inout p; // [lrm_examples patch] direction added
+       electrical p;
+       branch (<p>) probe_p;
+       analog
+          $strobe("current probed is %g", I(probe_p));
+    endmodule

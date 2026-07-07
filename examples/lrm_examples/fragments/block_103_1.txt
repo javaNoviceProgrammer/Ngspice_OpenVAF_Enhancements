@@ -1,0 +1,2 @@
+    P = pow(10, log(p1) + (log(p2)-log(p1)) * (log(f)-log(f1)) / (log(f2)-
+    log(f1)) )

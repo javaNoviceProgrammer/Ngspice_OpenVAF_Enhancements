@@ -1,0 +1,17 @@
+// Verilog-AMS LRM 2023 (Accellera), example from page 114
+// extracted by lrm_examples/extract_lrm_examples.py (block_114_2)
+`include "disciplines.vams"
+`include "constants.vams"
+    module relay (p, n, ps, ns);
+       inout p, n, ps, ns;
+       electrical p, n, ps, ns;
+       parameter vth=0.5;
+       integer closed;
+       analog begin
+          closed = (V(ps,ns) >vth ? 1 : 0);
+          if (closed)
+             V(p,n) <+ 0;
+          else
+             I(p,n) <+ 0;
+       end
+    endmodule

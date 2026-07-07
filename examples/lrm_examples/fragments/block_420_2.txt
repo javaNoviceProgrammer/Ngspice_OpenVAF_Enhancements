@@ -1,0 +1,3 @@
+    resistor #(.r(1k)) r3
+       ((* port_discipline="rotational" *) node1,
+       (* port_discipline="rotational" *) node2);

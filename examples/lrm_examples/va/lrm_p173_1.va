@@ -1,0 +1,30 @@
+// Verilog-AMS LRM 2023 (Accellera), example from page 173
+// extracted by lrm_examples/extract_lrm_examples.py (block_173_1)
+`include "disciplines.vams"
+`include "constants.vams"
+    module samplehold (in, cntrl, out);
+       input in, cntrl;
+       output out;
+       electrical in, cntrl, out;
+       electrical store, sample;
+       parameter real vthresh = 0.0;
+       parameter real cap = 10e-9;
+       amp op1 (in, sample, sample);
+       amp op2 (store, out, out);
+       analog begin
+          I(store) <+ cap * ddt(V(store));
+          if (V(cntrl) > vthresh)
+             V(store, sample) <+ 0;
+          else
+             I(store, sample) <+ 0;
+       end
+    endmodule
+    module amp(inp, inm, out);
+       input inp, inm;
+       output out;
+       electrical inp, inm, out;
+       parameter real gain=1e5;
+       analog begin
+          V(out) <+ gain*V(inp,inm);
+       end
+    endmodule

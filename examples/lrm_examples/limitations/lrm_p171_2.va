@@ -1,0 +1,20 @@
+// Verilog-AMS LRM 2023 (Accellera), example from page 171
+// extracted by lrm_examples/extract_lrm_examples.py (block_171_2)
+`include "disciplines.vams"
+`include "constants.vams"
+    module pipeline_adc (in, out);
+       parameter bits=8, fullscale=1.0;
+       inout in;
+       inout [0:bits-1] out;
+       electrical in;
+       electrical [0:bits-1] out;
+       comparator #(.ref(fullscale/2)) cmp (in, out[bits-1]);
+       generate
+          if (bits > 1) begin
+             electrical n1, n2;
+             subtractor #(.level(fullscale)) sub (in, out[bits-1], n1);
+             amp2x amp (n1, n2);
+             pipeline_adc #(.bits(bits-1)) section (n2, out[0:bits-2]);
+          end
+       endgenerate
+    endmodule

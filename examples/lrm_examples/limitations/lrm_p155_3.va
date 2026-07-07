@@ -1,0 +1,18 @@
+// Verilog-AMS LRM 2023 (Accellera), example from page 155
+// extracted by lrm_examples/extract_lrm_examples.py (block_155_3)
+`include "disciplines.vams"
+`include "constants.vams"
+    module polyres(a, b);
+       inout a, b;
+       electrical a, b;
+       parameter real length = 1u from (0:inf);
+       parameter real width = 1u from (0:inf);
+       real rho, reff;
+       analog begin
+          rho = processinfo.rho
+                   + $xposition * processinfo.drho_dx
+                   + $yposition * processinfo.drho_dy;
+          reff = rho * length / width;
+          I(a,b) <+ V(a,b) / reff;
+       end
+    endmodule

@@ -1,0 +1,2 @@
+    area = l * w;
+    perim = 2 * ( l + w );

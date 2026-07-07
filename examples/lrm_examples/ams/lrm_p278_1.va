@@ -1,0 +1,53 @@
+// Verilog-AMS LRM 2023 (Accellera), example from page 278
+// extracted by lrm_examples/extract_lrm_examples.py (block_278_1)
+`include "disciplines.vams"
+`include "constants.vams"
+    connectmodule c2e(d,a);
+       input d;
+       output a;
+       ddiscrete d;
+       electrical a, rail, gnd;
+       reg out;
+       ground gnd;
+       branch (rail,a)pull_up;
+       branch (a,gnd)pull_down;
+       branch (rail,gnd)power;
+       parameter real impedance0 = 120.0;
+       parameter real impedance1 = 100.0;
+       parameter real impedanceOff = 1e6;
+       parameter real vt_hi = 3.5;
+       parameter real vt_lo = 1.5;
+       parameter real supply = 5.0;
+       integer i, num_ones, num_zeros;
+       assign d=out;
+       initial begin
+          num_ones = 0;
+          num_zeros = 0;
+       end
+       always @(driver_update(d)) begin
+          num_ones = 0;
+          num_zeros = 0;
+          for ( i = 0; i < $driver_count(d); i=i+1)
+             if ( $driver_state(d,i) == 1 )
+                num_ones = num_ones + 1;
+             else
+                num_zeros = num_zeros + 1;
+       end
+       always @(cross(V(a) - vt_hi, -1) or cross(V(a) - vt_lo, +1))
+          out = 1'bx;
+       always @(cross(V(a) - vt_hi, +1))
+          out = 1'b1;
+       always @(cross(V(a) - vt_lo, -1))
+          out = 1'b0;
+       analog begin
+          // Approximately one impedance1 resistor to rail per high output
+          // connected to the digital net
+          V(pull_up) <+ 1/((1/impedance1)*num_ones+(1/impedanceOff)) *
+             I(pull_up);
+          // Approximately one impedance0 resistor to ground per low output
+          // connected to the digital net
+          V(pull_down) <+ 1/((1/impedance0)*num_zeros+(1/impedanceOff)) *
+             I(pull_down);
+          V(power) <+ supply;
+       end
+    endmodule

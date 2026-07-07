@@ -1,0 +1,18 @@
+// Verilog-AMS LRM 2023 (Accellera), example from page 170
+// extracted by lrm_examples/extract_lrm_examples.py (block_170_1)
+`include "disciplines.vams"
+`include "constants.vams"
+    module nlres (inout electrical a, inout electrical b);
+       parameter real res = 1k from (0:inf);
+       parameter real coeff1 = 0.0;
+       generate
+          if ($param_given(coeff1) && coeff1 != 0.0)
+             analog
+                V(a, b) <+ res * (1.0 + coeff1 * I(a, b)) * I(a, b);
+          else if (res == 0.0)
+             analog
+                V(a, b) <+ 0.0;
+          else
+             resistor #(.r(res)) R1(a, b);
+       endgenerate
+    endmodule

@@ -1,0 +1,4 @@
+    if (analysis("ic"))
+       V(cap) <+ initial_value;
+    else
+       I(cap) <+ ddt(C*V(cap));

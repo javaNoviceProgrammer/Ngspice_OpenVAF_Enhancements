@@ -1,0 +1,18 @@
+`include "disciplines.vams"
+// F7 (fixed): an analog operator inside a constant-false branch -- the dead
+// transition() survived const-folding as a detached op and aborted codegen
+module m(a, b);
+   output a, b; electrical a, b;
+   integer q;
+   analog begin
+      @(timer(0, 1u)) q = !q;
+      if ((1))
+         V(a) <+ transition(q, 1n, 1n, 1n);
+      else
+         V(a) <+ 0.0;
+      if ((0))
+         V(b) <+ transition(!q, 1n, 1n, 1n);
+      else
+         V(b) <+ 0.0;
+   end
+endmodule

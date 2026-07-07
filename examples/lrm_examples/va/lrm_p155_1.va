@@ -1,0 +1,12 @@
+// Verilog-AMS LRM 2023 (Accellera), example from page 155
+// extracted by lrm_examples/extract_lrm_examples.py (block_155_1)
+`include "disciplines.vams"
+`include "constants.vams"
+    module badres(a, b);
+       inout a, b;
+       electrical a, b;
+       parameter real r = 1.0 from (0:inf);
+       analog begin
+          I(a,b) <+ V(a,b) / r * $mfactor; // ERROR
+       end
+    endmodule

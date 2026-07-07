@@ -122,6 +122,13 @@ def main():
 \fvset{breaklines}
 % STIX Two Text lacks these; take them from the math font instead.
 \usepackage{newunicodechar}
+\newunicodechar{✅}{\checkmark}
+\newunicodechar{❌}{\ensuremath{\times}}
+\newunicodechar{⚠}{\ensuremath{\triangle}}
+\newunicodechar{∝}{\ensuremath{\propto}}
+\newunicodechar{∫}{\ensuremath{\int}}
+\newunicodechar{✓}{\checkmark}
+\newunicodechar{️}{}
 \newunicodechar{→}{\ensuremath{\rightarrow}}
 \newunicodechar{↔}{\ensuremath{\leftrightarrow}}
 \newunicodechar{⇒}{\ensuremath{\Rightarrow}}

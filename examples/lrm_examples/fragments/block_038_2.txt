@@ -1,0 +1,2 @@
+    (* desc="gate-source capacitance", units="F" *)
+    real cgs;

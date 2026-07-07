@@ -1,0 +1,2 @@
+    integer pos ;
+    pos = $ftell ( fd );

@@ -1,0 +1,32 @@
+// Verilog-AMS LRM 2023 (Accellera), example from page 263
+// extracted by lrm_examples/extract_lrm_examples.py (block_263_3)
+`include "disciplines.vams"
+`include "constants.vams"
+    module test_module(p,n);
+       inout p,n;
+       electrical p,n;
+       module_a A1(p,n);
+    endmodule
+    module module_a(p,n);
+       inout p,n;
+       electrical p,n;
+       module_b #(.$xposition(1u)) B1(p,n); // xposition=1.1u + 1u
+    endmodule
+    module module_b(p,n);
+       inout p,n;
+       electrical p,n;
+       module_c #(.$xposition(2u)) C1(p,n); // xposition=1.1u + 1u + 2u = 4.1u
+    endmodule
+    // linear resistor
+    module module_c(p,n);
+       inout p,n;
+       electrical p,n;
+       parameter r=1.0;
+       analog begin
+          // Expected value of xposition=4.1e-6
+          if ($xposition == 4.1u)
+             I(p,n) <+ V(p,n)/1.0;
+          else
+             I(p,n) <+ V(p,n)/2.0;
+       end
+    endmodule

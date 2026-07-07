@@ -1,0 +1,2 @@
+    integer code ;
+    code = $fgets ( str, fd );

@@ -1,0 +1,2 @@
+                              bool vect_flag = vpi_get(vpivector, obj_h);
+                              int size = vpi_get_size(vpiSize, obj_h);

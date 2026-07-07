@@ -1,0 +1,5 @@
+         connectrules example;
+           connect d2a merged input ttl, output electrical ;
+           connect bidir merged output electrical, input ttl ;
+           connect bidir merged inout ttl, inout electrical ;
+        endconnectrules

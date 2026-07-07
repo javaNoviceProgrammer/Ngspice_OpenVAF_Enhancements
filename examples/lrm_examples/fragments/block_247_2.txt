@@ -1,0 +1,2 @@
+    integer errno ;
+    errno = $ferror ( fd, str );

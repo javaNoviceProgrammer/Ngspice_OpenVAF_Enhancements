@@ -1,0 +1,17 @@
+// Verilog-AMS LRM 2023 (Accellera), example from page 114
+// extracted by lrm_examples/extract_lrm_examples.py (block_114_1)
+`include "disciplines.vams"
+`include "constants.vams"
+    module diode (a, c);
+       inout a, c;
+       electrical a, c;
+       branch (a, c) i_diode, junc_cap;
+       parameter real is = 1e-14, tf = 0, cjo = 0, imax = 1, phi = 0.7;
+       analog begin
+          I(i_diode) <+ is*(limexp(V(i_diode)/$vt) - 1);
+          I(junc_cap) <+
+             ddt(tf*I(i_diode) - 2*cjo*sqrt(phi*(phi*V(junc_cap))));
+          if (I(<a>) > imax)
+             $strobe( "Warning: diode is melting!" );
+       end
+    endmodule

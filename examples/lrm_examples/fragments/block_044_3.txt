@@ -1,0 +1,1 @@
+    nmos2 #(.trise(5)) m1(.d(d), .g(g), .s(s), .b(b));

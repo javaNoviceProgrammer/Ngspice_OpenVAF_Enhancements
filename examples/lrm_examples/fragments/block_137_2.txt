@@ -1,0 +1,2 @@
+    @(initial_step("ac", "dc")) // active for dc and ac only
+    @(initial_step("tran"))      // active for transient only

@@ -1,0 +1,21 @@
+// Verilog-AMS LRM 2023 (Accellera), example from page 153
+// extracted by lrm_examples/extract_lrm_examples.py (block_153_3)
+`include "disciplines.vams"
+`include "constants.vams"
+    module n (lo_out, rf_in);
+       output lo_out;
+       input rf_in;
+       electrical lo_out, rf_in;
+       //create an instance and set parameters
+       vco #(.centerFreq(5000), .convGain(1000)) vco1(lo_out, rf_in);
+    endmodule
+
+// [lrm_examples context] The LRM never defines the vco it instantiates;
+// minimal stand-in with the two parameters the example overrides.
+module vco(lo_out, rf_in);
+   output lo_out; input rf_in;
+   electrical lo_out, rf_in;
+   parameter real centerFreq = 1000 from (0:inf);
+   parameter real convGain = 100 from (0:inf);
+   analog V(lo_out) <+ convGain * V(rf_in) / centerFreq;
+endmodule

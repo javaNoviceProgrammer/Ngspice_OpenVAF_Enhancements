@@ -1,0 +1,29 @@
+// Verilog-AMS LRM 2023 (Accellera), example from page 274
+// extracted by lrm_examples/extract_lrm_examples.py (block_274_3)
+`include "disciplines.vams"
+`include "constants.vams"
+    module example_tb(a, b);
+       electrical a, b;
+       inout a, b;
+       real y[0:11], x[0:11],f_xy[0:11];
+       analog begin
+          @(initial_step) begin
+             // y=0.0 isoline
+             y[0] =0.0; x[0] =1.0; f_xy[0] =0.5;
+             y[1] =0.0; x[1] =2.0; f_xy[1] =1.0;
+             y[2] =0.0; x[2] =3.0; f_xy[2] =1.5;
+             y[3] =0.0; x[3] =4.0; f_xy[3] =2.0;
+             y[4] =0.0; x[4] =5.0; f_xy[4] =2.5;
+             y[5] =0.0; x[5] =6.0; f_xy[5] =3.0;
+             // y=0.5 isoline
+             y[6] =0.5; x[6] =1.0; f_xy[6] =1.0;
+             y[7] =0.5; x[7] =3.0; f_xy[7] =2.0;
+             y[8] =0.5; x[8] =5.0; f_xy[8] =3.0;
+             // y=1.0 isoline
+             y[9] =1.0; x[9] =1.0; f_xy[9] =1.5;
+             y[10]=1.0; x[10]=2.0; f_xy[10]=2.0;
+             y[11]=1.0; x[11]=4.0; f_xy[11]=3.0;
+          end
+          I(a, b) <+ $table_model(0, V(a,b), y, x, f_xy);
+       end
+    endmodule

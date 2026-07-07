@@ -1,0 +1,9 @@
+    analog function real geomcalc;
+       input l, w;
+       output area, perim;
+       real l, w, area, perim;
+       begin
+          area = l * w;
+          perim = 2 * ( l + w );
+       end
+    endfunction

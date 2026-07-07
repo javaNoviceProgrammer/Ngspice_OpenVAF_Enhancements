@@ -1,0 +1,3 @@
+       delay_s.da = &path_da;
+       path_da[0].real = rise;
+       path_da[1].real = fall;

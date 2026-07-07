@@ -1,0 +1,2 @@
+    {b, {3{a, b}}}   // This yields the same value as
+                     // {b, a, b, a, b, a, b}

@@ -1,0 +1,6 @@
+    integer a[1:64];          // an array of 64 integer values
+    real float;               // a variable to store real value
+    real gain_factor[1:30];   // array of 30 gain multipliers
+                              // with floating point values
+    integer flag_array[0:8][0:3]; // a multidimensional integer array
+    real vtable[0:16][0:7][0:64]; // a multidimensional real array

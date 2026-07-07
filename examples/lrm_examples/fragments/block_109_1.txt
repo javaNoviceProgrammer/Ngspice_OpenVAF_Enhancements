@@ -1,0 +1,1 @@
+    V(out) <+ maxValue(val1, val2);

@@ -1,0 +1,8 @@
+// Verilog-AMS LRM 2023 (Accellera), example from page 205
+// extracted by lrm_examples/extract_lrm_examples.py (block_205_2)
+`include "disciplines.vams"
+`include "constants.vams"
+    module global_supply;
+       electrical vdd;
+       analog V(vdd) <+ 5.0;
+    endmodule

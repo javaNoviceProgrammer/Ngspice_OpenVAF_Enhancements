@@ -1,0 +1,2 @@
+       reg out; // value of out determined in CM, see example in 9.22.7
+       assign d = out;

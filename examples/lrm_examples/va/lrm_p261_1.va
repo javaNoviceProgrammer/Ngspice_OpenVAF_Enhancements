@@ -1,0 +1,43 @@
+// Verilog-AMS LRM 2023 (Accellera), example from page 261
+// extracted by lrm_examples/extract_lrm_examples.py (block_261_1)
+`include "disciplines.vams"
+`include "constants.vams"
+    module diode(a,c);
+       inout a, c;
+       electrical a, c;
+       parameter real IS = 1.0e-14;
+       parameter real CJO = 0.0;
+       analog function real spicepnjlim;
+          input vnew, vold, vt, vcrit;
+          real vnew, vold, vt, vcrit, vlimit, arg;
+          begin
+             vlimit=vnew;
+             if ((vnew > vcrit) && (abs(vnew-vold) > (vt+vt))) begin
+                if (vold > 0) begin
+                   arg = 1 + (vnew-vold) / vt;
+                   if (arg > 0)
+                     vlimit = vold + vt * ln(arg);
+                   else
+                     vlimit = vcrit;
+                end else
+                   vlimit = vt * ln(vnew/vt);
+                $discontinuity(-1);
+             end
+             spicepnjlim = vlimit;
+          end
+       endfunction
+       real vdio, idio, qdio, vcrit;
+       analog begin
+          vcrit=0.7;
+          vdio = $limit(V(a,c), spicepnjlim, $vt, vcrit);
+          idio = IS * (exp(vdio/$vt) - 1);
+          I(a,c) <+ idio;
+          if (vdio < 0.5) begin
+             qdio = 0.5 * CJO * (1-sqrt(1-V(a,c)));
+          end else begin
+             qdio = CJO* (2.0*(1.0-sqrt(0.5))
+                     + sqrt(2.0)/2.0*(vdio*vdio+vdio-3.0/4.0));
+          end
+          I(a,c) <+ ddt(qdio);
+       end
+    endmodule

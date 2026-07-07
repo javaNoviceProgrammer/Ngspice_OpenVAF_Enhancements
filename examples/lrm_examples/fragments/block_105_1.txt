@@ -1,0 +1,3 @@
+    I(a,c) <+ is*(exp(V(a,c) / (n * $vt)) - 1)
+       + white_noise(2*'P_Q*I(<a>))
+       + flicker_noise(kf*pow(abs(I(<a>)), af), ef);

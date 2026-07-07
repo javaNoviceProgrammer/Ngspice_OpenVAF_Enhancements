@@ -1,0 +1,2 @@
+       $ln(), $log10(), $exp(), $sqrt(), $pow(), $floor() and
+       $ceil()

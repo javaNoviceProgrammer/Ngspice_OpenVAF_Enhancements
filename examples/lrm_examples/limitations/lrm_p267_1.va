@@ -1,0 +1,40 @@
+// Verilog-AMS LRM 2023 (Accellera), example from page 267
+// extracted by lrm_examples/extract_lrm_examples.py (block_267_1)
+`include "disciplines.vams"
+`include "constants.vams"
+    module top;
+       electrical a, b, c, gnd;
+       ground gnd;
+       resistor #(.r(1k)) r1(.p(a), .n(gnd));
+       checker #(.n1_str("top.a")) ch1();
+       analog V(a,gnd) <+ 5;
+    endmodule
+    module checker;
+       electrical n1, n2;
+       parameter string n1_str = "(not_given)";
+       integer status;
+       real iprobe, vprobe;
+       analog initial begin
+          // node n1 will be aliased to top.gnd
+          status = $analog_node_alias(n1, "top.gnd");
+          // Invalid alias as top.a is not a port. Node n2 at this stage
+          // is still just a local node in ch1(). The integer status will
+          // be assigned a value of 0.
+          status = $analog_port_alias(n2, "$root.top.a");
+          // even though n1 was assigned a valid alias to top.gnd, this
+          // one to top.a will take precedence.
+          status = $analog_node_alias(n1, n1_str);
+          // Here n2 is now successfully aliased to the port p in instance r1.
+          status = $analog_port_alias(n2, "top.r1.p");
+       end
+       analog begin
+          // since n2 is aliased to the port p of instance top.r1
+          // we are allowed to probe the port current. In this case,
+          // the probe will return a value of 5mA.
+          iprobe = I(<n2>);
+          // since n1 is aliased to the node top.a, we will be
+          // probing the potential of that node. In this case,
+          // the probe will return a value of 5V.
+          vprobe = V(n1);
+       end
+    endmodule

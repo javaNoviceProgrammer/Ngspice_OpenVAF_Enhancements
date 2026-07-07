@@ -1,6 +1,6 @@
 use hir::{
-    ArrayAssignElem, BranchWrite, Case, CaseCond, CaseKind, CaseMask, ContributeKind, Event, ExprId,
-    GlobalEvent, Node, Stmt, StmtId, Type,
+    ArrayAssignElem, BranchWrite, Case, CaseCond, CaseKind, CaseMask, ContributeKind, Event, Expr,
+    ExprId, GlobalEvent, Literal, Node, Stmt, StmtId, Type,
 };
 use mir::builder::InstBuilder;
 use mir::cursor::{Cursor, FuncCursor};
@@ -133,12 +133,23 @@ impl BodyLoweringCtx<'_, '_, '_> {
                 }
             }
             Stmt::If { cond, then_branch, else_branch } => {
-                let cond_ = self.lower_expr(cond);
+                // A literal condition -- `if (0)`, and the `(1)`/`(0)` that
+                // `$port_connected` resolves to during flattening -- lowers to
+                // just the taken branch. The dead arm must not reach the MIR
+                // at all: its analog operators (transition, ddt, ...) would
+                // survive const-folding as interned ops whose state setup
+                // reads optimized-away values and aborts codegen.
+                if let Expr::Literal(Literal::Int(i)) = self.body.get_expr(cond) {
+                    self.lower_stmt(if *i != 0 { then_branch } else { else_branch });
+                } else {
+                    let cond_ = self.lower_expr(cond);
 
-                self.ctx.make_cond(cond_, |ctx, branch| {
-                    let stmt = if branch { then_branch } else { else_branch };
-                    BodyLoweringCtx { body: self.body, path: self.path, ctx }.lower_stmt(stmt);
-                });
+                    self.ctx.make_cond(cond_, |ctx, branch| {
+                        let stmt = if branch { then_branch } else { else_branch };
+                        BodyLoweringCtx { body: self.body, path: self.path, ctx }
+                            .lower_stmt(stmt);
+                    });
+                }
             }
             Stmt::ForLoop { init, cond, incr, body } => {
                 self.lower_stmt(init);

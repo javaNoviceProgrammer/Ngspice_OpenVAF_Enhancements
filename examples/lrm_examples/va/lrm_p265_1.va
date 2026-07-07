@@ -1,0 +1,38 @@
+// Verilog-AMS LRM 2023 (Accellera), example from page 265
+// extracted by lrm_examples/extract_lrm_examples.py (block_265_1)
+`include "disciplines.vams"
+`include "constants.vams"
+    module myclk(vout_q, vout_qbar);
+       output vout_q, vout_qbar;
+       electrical vout_q, vout_qbar;
+       parameter real tdel = 3u from [0:inf);
+       parameter real trise = 1u from (0:inf);
+       parameter real tfall = 1u from (0:inf);
+       parameter real period = 20u from (0:inf);
+       integer q;
+       analog begin
+          @ (timer(0, period))
+             q = 0;
+          @ (timer(period/2, period))
+             q = 1;
+          if ($port_connected(vout_q))
+             V(vout_q) <+ transition( q, tdel, trise, tfall);
+          else
+             V(vout_q) <+ 0.0;
+          if ($port_connected(vout_qbar))
+             V(vout_qbar) <+ transition( !q, tdel, trise, tfall);
+          else
+             V(vout_qbar) <+ 0.0;
+       end
+    endmodule
+    module twoclk(vout_q1, vout_q2);
+       output vout_q1, vout_q2;
+       electrical vout_q1, vout_q2; // [lrm_examples patch] LRM erratum: 'vout_q1b' is a typo for port 'vout_q2'
+       myclk clk1(.vout_q(vout_q1));
+       myclk clk2(.vout_q(vout_q2));
+    endmodule
+    module top(clk_out);
+       output clk_out;
+       electrical clk_out;
+       twoclk topclk1(.vout_q1(clk_out));
+    endmodule

@@ -1,0 +1,25 @@
+// Verilog-AMS LRM 2023 (Accellera), example from page 169
+// extracted by lrm_examples/extract_lrm_examples.py (block_169_2)
+`include "disciplines.vams"
+`include "constants.vams"
+    module rcline2 (n1, n2);
+       inout n1, n2;
+       electrical n1, n2, gnd;
+       ground gnd;
+       parameter integer N = 10 from (0:inf);
+       electrical [0:N] n;
+       parameter Cap = 1p, Res = 1k;
+       localparam Csec = Cap/N, Rsec = Res/(2*N);
+       genvar i;
+       for (i=0; i <N; i=i+1) begin : section
+          electrical n_int;
+          resistor #(.r(Rsec)) R1(n[i], n_int);
+          resistor #(.r(Rsec)) R2(n_int, n[i+1]);
+          analog
+             I(n_int, gnd) <+ Csec * ddt(V(n_int));
+       end
+       analog begin
+          V(n1, n[0]) <+ 0.0;
+          V(n2, n[N]) <+ 0.0;
+       end
+    endmodule

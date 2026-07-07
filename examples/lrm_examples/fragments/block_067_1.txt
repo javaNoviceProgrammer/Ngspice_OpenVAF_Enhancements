@@ -1,0 +1,5 @@
+    integer varA, varB, varC, result;
+    analog function integer myFunc;
+       ...
+    endfunction
+    result = varA & (varB | myFunc(varC));

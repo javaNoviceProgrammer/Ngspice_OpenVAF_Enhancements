@@ -409,5 +409,10 @@ examples/opamp741_examples/_*
 examples/opamp741_examples/bjt741.osdi
 examples/opamp741_examples/results/
 
+# Enhancement-84 LRM example sweep: verify-run compile artifacts
+examples/lrm_examples/va/*.osdi
+examples/lrm_examples/findings/*.osdi
+examples/lrm_examples/limitations/*.osdi
+
 # Python bytecode cache (e.g. from importing _setup.py)
 __pycache__/

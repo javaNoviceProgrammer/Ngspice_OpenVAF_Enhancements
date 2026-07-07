@@ -1,0 +1,17 @@
+// Verilog-AMS LRM 2023 (Accellera), example from page 144
+// extracted by lrm_examples/extract_lrm_examples.py (block_144_1)
+    `include "disciplines.vams"
+    `timescale 1ns / 100ps
+    module electrical_sampler (e_in, r_out);
+       input e_in;
+       output r_out;
+       electrical e_in;
+       wreal r_out;
+       parameter real vdelta=0.1 from (0:inf); // voltage delta
+       parameter real ttol=1n from (0:1m]; // time tolerance
+       parameter real vtol=0.01 from (0:inf); // voltage tolerance
+       real sampled;
+       assign r_out = sampled;
+       always @(absdelta(V(e_in), vdelta, ttol, vtol))
+          sampled = V(e_in);
+    endmodule

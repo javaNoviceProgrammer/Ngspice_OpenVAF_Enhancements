@@ -1,0 +1,18 @@
+    analog @(timer(0,100n))
+       smpl = V(in);
+    always @(smpl) begin
+       ...
+    analog begin
+       @(posedge n)
+          r = 3.14;
+    end
+        connect cmos3 cmos4 resolveto cmos3;
+        connect cmos1 cmos2 cmos3 resolveto cmos1;
+     connect cmos3 cmos4 resolveto cmos3;
+    connect cmos1 cmos2 cmos3 resolveto cmos1;
+     connect cmos3 cmos4 resolveto cmos3; // discrete resolveto's ignored
+    connect cmos1 cmos2 cmos3 resolveto cmos1; // discrete resolveto's ignored
+     connect cmos3 cmos4 resolveto cmos3; // discrete resolveto's ignored
+    connect cmos1 cmos2 cmos3 resolveto cmos1; // discrete resolveto's ignored
+    cmos3 top.digital_blk.twoblks.NetB
+      endmodule

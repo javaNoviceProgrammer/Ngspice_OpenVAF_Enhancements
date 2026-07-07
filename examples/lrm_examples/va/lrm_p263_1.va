@@ -1,0 +1,16 @@
+// Verilog-AMS LRM 2023 (Accellera), example from page 263
+// extracted by lrm_examples/extract_lrm_examples.py (block_263_1)
+`include "disciplines.vams"
+`include "constants.vams"
+    module test_module(p,n);
+       inout p,n;
+       electrical p,n;
+       module_a A1(p,n);
+    endmodule
+
+// [lrm_examples context] trivial stand-in for the undefined module_a.
+module module_a(p, n);
+   inout p, n;
+   electrical p, n;
+   analog I(p, n) <+ V(p, n) / 1k;
+endmodule

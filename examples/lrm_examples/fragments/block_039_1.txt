@@ -1,0 +1,2 @@
+    parameter string default_name = "John Smith";
+    string myName = default_name;

@@ -1,0 +1,2 @@
+    y = idt(expr, ic);
+    z = idtmod(expr, ic, modulus, offset);

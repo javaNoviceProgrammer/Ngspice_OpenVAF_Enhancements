@@ -1,0 +1,38 @@
+// Verilog-AMS LRM 2023 (Accellera), example from page 220
+// extracted by lrm_examples/extract_lrm_examples.py (block_220_1)
+`include "disciplines.vams"
+`include "constants.vams"
+    connectmodule a2d(i,o);
+       parameter vdd = 1.0;
+       ddiscrete   o;
+       input       i;
+       output      o;
+       reg         o;
+      electrical i;
+       always begin  @(cross(V(i) - vdd/2,+1))o = 1; end
+       always begin  @(cross(V(i) - vdd/2,-1))o = 0; end
+    endmodule
+    connectmodule d2a(i, o);
+       parameter   vdd  =  1.0;
+       parameter   slewrate = 2.0/1e-9; // V/s
+       input       i;
+       output      o;
+      electrical o;
+       reg         qd_val, // queued value
+                   nw_val;
+       real        et;     // delay to event
+       real  start_delay;  // .. to ramp start
+       always @(driver_update i) begin
+          nw_val = $driver_next_state(i,0); // assume one driver
+          if (nw_val == qd_val) begin
+             // no change (assume delay constant)
+          end else begin
+             et      = $driver_delay(i,0) * 1e-9; // real delay
+             qd_val  = nw_val;
+          end
+       end
+       analog begin
+          @(qd_val)  start_delay = et - (vdd/2)/slewrate;
+          V(o) <+ vdd * transition(qd_val,start_delay,vdd/slewrate);
+       end
+    endmodule

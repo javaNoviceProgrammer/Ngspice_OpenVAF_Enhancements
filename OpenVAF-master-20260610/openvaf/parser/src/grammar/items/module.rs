@@ -99,7 +99,10 @@ const NET_RECOVERY: TokenSet = TokenSet::new(&[EOF, ENDMODULE_KW, T![;]]);
 
 fn port_decl<const MODULE_HEAD: bool>(p: &mut Parser, m: Marker) {
     let direction = p.start();
-    p.bump_ts(DIRECTION_TS);
+    // Module-head callers reach here for anything that is not a plain port
+    // name, so a missing direction must become a diagnostic (with one token
+    // of forced progress), not an assertion failure.
+    p.expect_ts_r(DIRECTION_TS, MODULE_PORT_RECOVERY);
     direction.complete(p, DIRECTION);
 
     //direction and type are both optional since only one is required
@@ -279,7 +282,7 @@ fn func_decl(p: &mut Parser, m: Marker) {
 const FUNC_ARG_RECOVER: TokenSet = TokenSet::new(&[EOF, ENDMODULE_KW]);
 fn func_arg(p: &mut Parser, m: Marker) {
     let direction = p.start();
-    p.bump_ts(DIRECTION_TS);
+    p.expect_ts_r(DIRECTION_TS, FUNC_ARG_RECOVER);
     direction.complete(p, DIRECTION);
 
     decl_list(p, T![;], decl_name, FUNC_ARG_RECOVER);

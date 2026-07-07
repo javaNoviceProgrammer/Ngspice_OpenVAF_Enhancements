@@ -1,0 +1,21 @@
+// Verilog-AMS LRM 2023 (Accellera), example from page 164
+// extracted by lrm_examples/extract_lrm_examples.py (block_164_1)
+`include "disciplines.vams"
+`include "constants.vams"
+    module adc4 (out, rem, in);
+       input in;
+       output [3:0] out;   output rem;
+       electrical [3:0] out;
+       electrical in, rem, rem_chain;
+       adc2 hi (.in(in), .out(out[3:2]), .remainder(rem_chain));
+       adc2 lo (.in(rem_chain), .out(out[1:0]), .remainder(rem));
+    endmodule
+    module adc2 (out, in, remainder);
+       output [1:0] out;   output remainder;
+       input in;
+       electrical [1:0] out;
+       electrical in, remainder, r;
+       // adc is same as defined in 6.5.4
+       adc hi1 (out[1], r, in);
+       adc lo1 (out[0], remainder, r);
+    endmodule

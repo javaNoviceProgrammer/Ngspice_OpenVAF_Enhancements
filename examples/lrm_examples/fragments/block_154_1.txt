@@ -1,0 +1,4 @@
+    parameter
+       gate_width  = 0.3e-6,
+       gate_length = 4.0e-6,
+       gate_cap    = gate_length * gate_width * 'COX;

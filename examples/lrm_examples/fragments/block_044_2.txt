@@ -1,0 +1,2 @@
+    parameter real dtemp = 0 from [-'P_CELSIUS0:inf);
+    aliasparam trise = dtemp;

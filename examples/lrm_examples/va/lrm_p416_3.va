@@ -1,0 +1,66 @@
+// Verilog-AMS LRM 2023 (Accellera), example from page 416
+// extracted by lrm_examples/extract_lrm_examples.py (block_416_3)
+`include "disciplines.vams"
+`include "constants.vams"
+    module osc (out, gnd);
+       electrical out, gnd;
+       ecpOsc Osc1 (out, gnd); // instantiates the module from the next example
+    endmodule
+
+    module ecpOsc (out, gnd);
+       electrical out, gnd;
+       vsine #(.dc(5)) Vcc (vcc, gnd);
+       isine #(.dc(1m)) Iee (e, gnd);
+       vertNPN Q1 (vcc, b1, e, vcc);
+       vertNPN Q2 (out, b2, e, out);
+       inductor #(.l(1u)) L1 (vcc, out);
+       capacitor #(.c(1p), .ic(1)) C1 (vcc, out);
+       capacitor #(.c(272.7p)) C2 (out, b1);
+       capacitor #(.c(3n)) C3 (b1, gnd);
+       resistor #(.r(10k)) R1 (b1, gnd);
+       capacitor #(.c(3n)) C4 (b2, gnd);
+       resistor #(.r(10k)) R2 (b2, gnd);
+    endmodule
+
+// [lrm_examples context] Annex E SPICE-compatibility primitives referenced
+// by the oscillator example, as plain Verilog-A modules.
+module resistor(p, n);
+   inout p, n; electrical p, n;
+   parameter real r = 1k;
+   analog I(p, n) <+ V(p, n)/r;
+endmodule
+module capacitor(p, n);
+   inout p, n; electrical p, n;
+   parameter real c = 1p;
+   parameter real ic = 0;
+   analog I(p, n) <+ ddt(c*V(p, n));
+endmodule
+module inductor(p, n);
+   inout p, n; electrical p, n;
+   parameter real l = 1u;
+   analog V(p, n) <+ ddt(l*I(p, n));
+endmodule
+module vsine(p, n);
+   inout p, n; electrical p, n;
+   parameter real dc = 0;
+   analog V(p, n) <+ dc;
+endmodule
+module isine(p, n);
+   inout p, n; electrical p, n;
+   parameter real dc = 0;
+   analog I(p, n) <+ dc;
+endmodule
+
+// [lrm_examples context] The LRM leaves vertNPN to the imagination (it is a
+// SPICE .model in the companion netlist of Annex E).  Minimal GP-style BJT
+// so elaboration has a real target.
+module vertNPN(c, b, e);
+   inout c, b, e;
+   electrical c, b, e;
+   parameter real is_ = 1e-16 from (0:inf);
+   parameter real bf = 100.0 from (0:inf);
+   analog begin
+      I(b, e) <+ (is_/bf)*(limexp(V(b, e)/$vt) - 1);
+      I(c, e) <+ is_*(limexp(V(b, e)/$vt) - 1);
+   end
+endmodule

@@ -1,0 +1,11 @@
+    nature current;
+       units = "A";
+       access = I;
+       idt_nature = charge;
+       abstol = 1u;
+    endnature
+    nature voltage;
+       units = "V";
+       access = V;
+       abstol = 1u;
+    endnature

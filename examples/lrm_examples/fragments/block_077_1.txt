@@ -1,0 +1,8 @@
+        V(b1)
+        potential(b1)
+        V(n1)
+        V(n1,n2)
+        V(n1,n1)
+        I(b1)
+        I(n1)
+        flow(n1)

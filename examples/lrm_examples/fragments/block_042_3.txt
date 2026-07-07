@@ -1,0 +1,1 @@
+    parameter real val3=0 from [0:inf) exclude (10:20) exclude (30:40];

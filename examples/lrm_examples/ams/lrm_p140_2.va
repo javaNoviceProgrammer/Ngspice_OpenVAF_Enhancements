@@ -1,0 +1,17 @@
+// Verilog-AMS LRM 2023 (Accellera), example from page 140
+// extracted by lrm_examples/extract_lrm_examples.py (block_140_2)
+`include "disciplines.vams"
+`include "constants.vams"
+    module sh (in, out, smpl, en);
+       parameter real thresh = 0.0;
+       parameter integer dir = +1 from [-1:+1] exclude 0;
+       output out;
+       input in, smpl, en;
+       electrical in, out, smpl;
+       real state;
+       analog begin
+          @(cross(V(smpl) - thresh, dir, , , en === 1'b1))
+             state = V(in);
+          V(out) <+ transition(state, 0, 10n);
+       end
+    endmodule

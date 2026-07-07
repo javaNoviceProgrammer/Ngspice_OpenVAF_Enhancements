@@ -1,0 +1,26 @@
+// Verilog-AMS LRM 2023 (Accellera), example from page 182
+// extracted by lrm_examples/extract_lrm_examples.py (block_182_1)
+`include "disciplines.vams"
+`include "constants.vams"
+    module converter(dnet, anet);
+       output dnet;
+       inout anet;
+       reg dnet;
+       electrical anet;
+       integer var1;
+       real var2;
+       initial begin
+          dnet = 1'b1;
+          #50 dnet = 1'bz;
+          $finish;
+       end
+       analog begin
+          var1 = 1'bx;        // error
+          var2 = 1'bz;        // error
+          var1 = 1 + dnet;    // error after #50
+          if (dnet === 1'bx)  // error
+             $display("Error to access x bit in continuous context");
+          V(anet) <+ 1'bz;    // error
+          V(anet) <+ dnet;    // error after #50
+       end
+    endmodule

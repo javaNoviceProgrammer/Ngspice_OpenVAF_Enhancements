@@ -1,0 +1,4 @@
+    if ($param_given(tdevice))
+       temp = tdevice + 'P_CELSIUS0;
+    else
+       temp = $temperature;

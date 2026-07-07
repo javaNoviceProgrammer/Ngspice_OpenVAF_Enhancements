@@ -1,0 +1,8 @@
+    analog function real maxValue;
+       input n1, n2;
+       real n1, n2;
+       begin
+          // code to compare potential of two signals
+          maxValue = (n1 > n2) ? n1 : n2;
+       end
+    endfunction

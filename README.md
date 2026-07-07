@@ -28,7 +28,7 @@ https://ngspice.sourceforge.io/
 
 ## The Enhancements
 
-Eighty-three enhancements so far — language features, correctness fixes, systematic audits, and simulator-side workflow tooling, each verified end-to-end by a committed example suite and released with a detailed write-up.
+Eighty-four enhancements so far — language features, correctness fixes, systematic audits, and simulator-side workflow tooling, each verified end-to-end by a committed example suite and released with a detailed write-up.
 
 **📖 Start with the [User Handbook](docs/handbook/README.md)**, which organizes everything by topic: [getting started](docs/handbook/01-getting-started.md), the [Verilog-A feature matrix](docs/handbook/02-verilog-a-language.md), [ngspice workflows](docs/handbook/03-ngspice-workflows.md), and the [limitations & gotchas](docs/handbook/04-limitations-and-gotchas.md). The whole handbook plus the complete text of every enhancement write-up is also one linked PDF: [docs/Ngspice-OpenVAF-Handbook.pdf](docs/Ngspice-OpenVAF-Handbook.pdf).
 
@@ -119,6 +119,7 @@ The index: **Doc** links each enhancement's detailed write-up, **Examples** link
 | 81 | Session-lifecycle audit — reset loops leak-free, `destroy all` verified; once-per-excursion memory warning + `no_mem_check`, `pre_osdi` restart hint | [doc](enhancements_doc/Enhancement-81.md) | [lifecycle](examples/lifecycle_examples/) |
 | 82 | Provenance + compliance docs — full change reports for both tools (`docs/change_log/`) and the Verilog-A LRM compliance document (`docs/compliance/`) | [doc](enhancements_doc/Enhancement-82.md) | — |
 | 83 | Transistor-level µA741 demo — a Verilog-A BJT powering the textbook 20-transistor 741; datasheet figures emerge (104 dB, 0.75 MHz, 0.54 V/µs) | [doc](enhancements_doc/Enhancement-83.md) | [opamp741](examples/opamp741_examples/) |
+| 84 | LRM example sweep — all 231 code examples of the Verilog-AMS LRM 2023 compiled + 6 defect fixes (port-branch/garbage-input panics, silent undefined modules, $port_connected on open ports, dead-op codegen aborts, exit-0-on-error) | [doc](enhancements_doc/Enhancement-84.md) | [lrm](examples/lrm_examples/) |
 
 ---
 

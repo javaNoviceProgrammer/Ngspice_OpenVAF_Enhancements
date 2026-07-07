@@ -256,6 +256,33 @@ impl Diagnostic for BodyValidationDiagnosticWrapped<'_> {
                             .to_owned(),
                     ])
             }
+            BodyValidationDiagnostic::ContributeToPortFlow { expr, branch } => {
+                let FileSpan { range, file } = self.expr_src(expr);
+                let (name, FileSpan { range: decl_range, file: decl_file }) =
+                    self.lookup(branch);
+
+                Report::error()
+                    .with_message("contribution to a port branch")
+                    .with_labels(vec![
+                        Label {
+                            style: LabelStyle::Primary,
+                            file_id: file,
+                            range: range.into(),
+                            message: "cannot contribute to a port branch".to_owned(),
+                        },
+                        Label {
+                            style: LabelStyle::Secondary,
+                            file_id: decl_file,
+                            range: decl_range.into(),
+                            message: format!("info: '{}' was declared here", name),
+                        },
+                    ])
+                    .with_notes(vec![
+                        "help: a port branch carries the flow already defined by the \
+                         connected network; it can only be probed, e.g. I(branch_name)"
+                            .to_owned(),
+                    ])
+            }
             BodyValidationDiagnostic::IllegalContribute { stmt, ctx } => {
                 let FileSpan { range, file } = self.parse.to_file_span(
                     self.body_sm.stmt_map_back[stmt].as_ref().unwrap().range(),

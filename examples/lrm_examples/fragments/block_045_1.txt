@@ -1,0 +1,1 @@
+    nmos2 #(.dtemp(5)) m2(.d(d), .g(g), .s(s), .b(b));

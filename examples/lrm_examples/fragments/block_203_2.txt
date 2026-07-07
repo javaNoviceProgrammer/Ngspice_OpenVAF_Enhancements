@@ -1,0 +1,1 @@
+    connect cmosA2d merged #(.r(15k) input electrical, output cmos04u;

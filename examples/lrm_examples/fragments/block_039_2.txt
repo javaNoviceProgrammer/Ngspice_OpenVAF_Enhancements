@@ -1,0 +1,3 @@
+    string names[1:3] = '{"first", "middle", "last"};
+    string paths[0:2][0:1] =
+                '{ '{"dir1", "fileA"}, '{"dir2", "fileA"},'{"dir1","fileB"}};

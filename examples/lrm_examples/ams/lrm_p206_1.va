@@ -1,0 +1,34 @@
+// Verilog-AMS LRM 2023 (Accellera), example from page 206
+// extracted by lrm_examples/extract_lrm_examples.py (block_206_1)
+`include "disciplines.vams"
+`include "constants.vams"
+    module ring;
+       dig_inv d1 (n1, n2);
+       dig_inv d2 (n2, n3);
+       analog_inv a3 (n3, n1, $root.global_supply.vdd);
+    endmodule
+    connectmodule elect_to_logic(el, cm);
+       input el;
+       output cm;
+       reg cm;
+       electrical el;
+       ddiscrete cm;
+       always
+          @(cross(V(el) - V($root.global_supply.vdd)/2.0, 1))
+             cm = 1;
+       always
+          @(cross(V(el) - V($root.global_supply.vdd)/2.0, -1))
+             cm = 0;
+    endmodule
+    connectmodule logic_to_elect(cm, el);
+       input cm;
+       output el;
+       ddiscrete cm;
+       electrical el;
+       analog
+          V(el) <+ V($root.global_supply.vdd) * transition((cm == 1) ? 1 : 0);
+    endmodule
+    connectrules mixedsignal;
+       connect elect_to_logic;
+       connect logic_to_elect;
+    endconnectrules

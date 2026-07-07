@@ -1,0 +1,23 @@
+// Verilog-AMS LRM 2023 (Accellera), example from page 152
+// extracted by lrm_examples/extract_lrm_examples.py (block_152_2)
+`include "disciplines.vams"
+`include "constants.vams"
+    module tgate ();
+       electrical io1,io2,control,control_bar;
+       mosn m1 (io1, io2, control);
+       mosp m2 (io1, io2, control_bar);
+    endmodule
+    module mosp (drain,gate,source);
+       inout drain, gate, source;
+       electrical drain, gate, source;
+       parameter gate_length = 0.3e-6,
+       gate_width  = 4.0e-6;
+       spice_pmos #(.l(gate_length),.w(gate_width)) p (drain, gate, source);
+    endmodule
+    module mosn (drain,gate,source);
+       inout drain, gate, source;
+       electrical drain, gate, source;
+       parameter gate_length = 0.3e-6,
+       gate_width  = 4.0e-6;
+       spice_nmos #(.l(gate_length),.w(gate_width)) n (drain, gate, source);
+    endmodule

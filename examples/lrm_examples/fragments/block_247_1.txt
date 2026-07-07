@@ -1,0 +1,3 @@
+    $fflush ( mcd );
+    $fflush ( fd );
+    $fflush ( );

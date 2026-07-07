@@ -1,0 +1,4 @@
+    659      // is a decimal number
+    'h 837FF // is a hexadecimal number
+    'o7460   // is an octal number
+    4af      // is illegal (hexadecimal format requires 'h)

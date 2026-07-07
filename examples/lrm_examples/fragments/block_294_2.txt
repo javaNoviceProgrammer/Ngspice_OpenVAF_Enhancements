@@ -1,0 +1,1 @@
+                              obj_h = vpi_handle(vpiTag, ref_h);

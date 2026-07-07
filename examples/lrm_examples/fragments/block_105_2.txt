@@ -1,0 +1,3 @@
+    n = white_noise(pwr);
+    V(a,b) <+ c1*n;
+    V(c,d) <+ c2*n;

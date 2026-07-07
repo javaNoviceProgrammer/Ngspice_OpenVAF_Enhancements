@@ -1,0 +1,6 @@
+ Str1 != Str2
+ Str1 < Str2
+ Str1 <= Str2
+ Str1 > Str2
+ Str1 >= Str2
+ {Str1,Str2,...,Strn}

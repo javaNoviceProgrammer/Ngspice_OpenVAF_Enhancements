@@ -1,0 +1,8 @@
+`include "disciplines.vams"
+// F3 (fixed): this used to compile SILENTLY, dropping the instance
+module top(a, b);
+   inout a, b;
+   electrical a, b;
+   foo f1(a, b);
+   analog V(a,b) <+ 1.0;
+endmodule

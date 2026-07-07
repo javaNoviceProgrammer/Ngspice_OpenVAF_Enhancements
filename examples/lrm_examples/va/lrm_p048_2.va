@@ -1,0 +1,25 @@
+// Verilog-AMS LRM 2023 (Accellera), example from page 48
+// extracted by lrm_examples/extract_lrm_examples.py (block_048_2)
+    nature ttl_curr;
+       units = "A";
+       access = I;
+       abstol = 1u;
+    endnature
+    // An alias
+    nature ttl_net_curr : ttl_curr;
+    endnature
+    nature new_curr : ttl_curr;  // derived, but different
+       abstol = 1m;              // modified for this nature
+       maxval = 12.3;            // new attribute for this nature
+    endnature
+
+// [lrm_examples context] minimal discipline + module so the derived
+// natures are actually elaborated (flow-only signal per LRM 3.6.1).
+discipline ttl;
+   flow new_curr;
+enddiscipline
+module ttl_load(a, b);
+   inout a, b;
+   ttl a, b;
+   analog I(a, b) <+ 1u;
+endmodule

@@ -1,0 +1,2 @@
+                   phase = idtmod(fc + gain*V(in), 0, 1, 0);
+                   V(OUT) <+ sin(2*'M_PI*phase);

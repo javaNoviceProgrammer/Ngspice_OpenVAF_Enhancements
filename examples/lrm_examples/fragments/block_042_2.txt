@@ -1,0 +1,3 @@
+    parameter real neg_rail = -15 from [-50:0);
+    parameter integer pos_rail = 15 from (0:50);
+    parameter real gain = 1 from [1:1000];

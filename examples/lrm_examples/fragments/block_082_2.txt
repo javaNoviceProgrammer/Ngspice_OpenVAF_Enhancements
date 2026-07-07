@@ -1,0 +1,1 @@
+    y = n * modulus + z;   // n is an integer

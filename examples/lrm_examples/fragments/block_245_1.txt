@@ -1,0 +1,3 @@
+    integer code ;
+    code = $fscanf ( fd, format, args );
+    code = $sscanf ( str, format, args );

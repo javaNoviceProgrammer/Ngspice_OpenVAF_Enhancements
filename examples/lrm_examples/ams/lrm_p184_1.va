@@ -1,0 +1,16 @@
+// Verilog-AMS LRM 2023 (Accellera), example from page 184
+// extracted by lrm_examples/extract_lrm_examples.py (block_184_1)
+`include "disciplines.vams"
+`include "constants.vams"
+    module sampler3 (in, clk1, clk2, out);
+       input in, clk1, clk2;
+       output out;
+       wire clk1;
+       electrical in, clk2, out;
+       real vout;
+       analog begin
+          @(posedge clk1 or cross(V(clk2), 1))
+             vout = V(in);
+          V(out) <+ vout;
+       end
+    endmodule

@@ -52,6 +52,10 @@ pub fn main() {
             write!(&mut stderr, ":").unwrap();
             stderr.set_color(&ColorSpec::new()).unwrap();
             writeln!(&mut stderr, " failed to compile {input}").unwrap();
+            // This arm used to fall through to a normal return, so hard errors
+            // (elaboration failures, unreadable input, ...) exited with status
+            // 0 and shell scripts saw a "successful" compile.
+            exit(DATA_ERROR);
         }
     }
 }

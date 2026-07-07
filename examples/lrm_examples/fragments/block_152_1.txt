@@ -1,0 +1,7 @@
+    genvar i;
+    generate
+       for (i = 0; i < 8; i = i + 1) begin : somename
+          flop my_flop(in[i], in1[i], out1[i]);
+          defparam somename[i+1].my_flop.xyz = i ;
+       end
+    endgenerate

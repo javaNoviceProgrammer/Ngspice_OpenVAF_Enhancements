@@ -1,0 +1,2 @@
+    (* desc="Resistance", units="Ohms" *)
+    parameter real res = 1.0 from [0:inf);

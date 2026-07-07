@@ -1,0 +1,36 @@
+      nature Voltage;                         nature Force;
+         access = V;                             access = F;
+         units = "V";                            units = "N";
+         abstol = 1u;                            abstol = 1n;
+      endnature                               endnature
+      nature Current;                         discipline rotational;
+         access = I;                             potential Position;
+         units = "A";                            flow Force;
+         abstol = 1p;                         enddiscipline
+      endnature
+                                               discipline sig_flow_x;
+      nature highvoltage: Voltage;               potential Position;
+         abstol = 1.0;                        enddiscipline
+      endnature
+                                               discipline sig_flow_f;
+      discipline electrical;                      flow Force;
+         potential Voltage;                   enddiscipline
+         flow Current;
+      enddiscipline                           discipline domainless;
+                                              enddiscipline
+      discipline highvolt;
+         potential highvoltage;               discipline ddiscrete;
+         flow Current;                           domain discrete;
+      enddiscipline                           enddiscipline
+      discipline sig_flow_v;                   discipline natureless;
+         potential Voltage;                      domain continuous;
+      enddiscipline                           enddiscipline
+      discipline sig_flow_i;                   discipline continuous_elec;
+         flow Current;                           domain continuous;
+      enddiscipline                              potential Voltage;
+                                                 flow Current;
+      nature Position;                         enddiscipline
+         access = X;
+         units = "m";
+         abstol = 1u;
+      endnature

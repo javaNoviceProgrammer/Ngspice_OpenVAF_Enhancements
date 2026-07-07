@@ -1,0 +1,1 @@
+    sourcescale = $simparam("sourceScaleFactor", 1.0);

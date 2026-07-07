@@ -1,0 +1,4 @@
+    (* port_discipline="electrical" *) resistor #(.r(1k))
+       r1 (node1, node2); // not needed as default
+    (* port_discipline="rotational" *) resistor #(.r(1k))
+       r2 (node1, node2);

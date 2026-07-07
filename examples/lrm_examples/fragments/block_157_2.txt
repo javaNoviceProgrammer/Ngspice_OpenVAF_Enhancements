@@ -1,0 +1,9 @@
+    nch #(.l(1u), .w(10u)) m1 (.d(d1), .g(g), .s(0), .b(0));
+    nch #(.l(1u), .w(5u))  m2 (.d(d2), .g(g), .s(0), .b(0));
+    paramset nch nmos3; // default paramset
+       parameter real l=1u from [0.25u:inf);
+       parameter real w=1u from [0.2u:inf);
+       .l=l; .w=w; .ad=w*0.5u; .as=w*0.5u;
+       .kp=5e-5; .tox=3e-8; .u0=650; .nsub=1.3e17;
+       .vmax=0; .tpg=1; .nfs=0.8e12;
+    endparamset

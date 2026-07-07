@@ -1,0 +1,7 @@
+    paramset smnpn npn; // small npn paramset
+       (*desc="cut-off frequency"*) real ft;
+       .is=2.0e-17; .bf=120.0; .br=10; rb=145; .rc=75; .re=12;
+       .cje=2.0e-14; .vje=0.9; .mje=0.4;
+       .cjc=3.0e-14; .vjc=0.6; .mjc=0.3; .xcjc=0.2;
+       ft = .gm/('M_TWO_PI*(.cpi + .cmu));
+    endparamset

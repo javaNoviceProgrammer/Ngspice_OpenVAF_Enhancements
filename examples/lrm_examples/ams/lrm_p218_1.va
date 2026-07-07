@@ -1,0 +1,13 @@
+// Verilog-AMS LRM 2023 (Accellera), example from page 218
+// extracted by lrm_examples/extract_lrm_examples.py (block_218_1)
+`include "disciplines.vams"
+`include "constants.vams"
+    module d2a(val,vo); // 16 bit D->A
+       parameter   Vgain = 1.0/65536;
+       input       val;
+       wire [15:0] val;
+      electrical vo;
+       analog begin
+          V(vo) <+ Vgain * val;
+       end
+    endmodule

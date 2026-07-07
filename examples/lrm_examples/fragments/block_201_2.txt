@@ -1,0 +1,1 @@
+    connect elect_to_logic split;

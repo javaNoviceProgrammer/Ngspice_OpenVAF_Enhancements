@@ -1,0 +1,1 @@
+    V(out) <+ noise_table_log('{1,1, 1e6,1e-6});

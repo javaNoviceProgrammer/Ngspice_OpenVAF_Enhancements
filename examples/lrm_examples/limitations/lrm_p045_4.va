@@ -1,0 +1,75 @@
+// Verilog-AMS LRM 2023 (Accellera), example from page 45
+// extracted by lrm_examples/extract_lrm_examples.py (block_045_4)
+`include "disciplines.vams"
+`include "constants.vams"
+    module test;
+       electrical out[0:2];
+       electrical in[0:2];
+       /* Instantiate crosstalk module passing a
+       * multidimensional parameter array literal
+       * for channel coupling
+       */
+       crosstalk #(.c('{'{0.0,0.1,0.1},'{0.1,0.0,0.1},'{0.1,0.1,0.0}}))
+          C1(out,in,1'b1);
+       gen G1(in);
+       sink S1(out);
+    endmodule
+    module crosstalk(out, in, distort_enable);
+       input in[0:2];
+       input distort_enable;
+       output out[0:2];
+       // A multidimensional real parameter array for channel coupling
+       parameter real c[0:2][0:2] =
+                '{'{0.0,0.2,0.2},'{0.2,0.0,0.2},'{0.2,0.2,0.0}};
+       electrical in[0:2];
+       electrical out[0:2];
+       /* A multidimensional real variable to hold the distortion calculations
+       * all elements are initialized to 0.0 using
+       * an assignment pattern and replication operator
+       */
+       real distort[0:2][0:2] = '{ 3{ '{3{0.0}}}};
+       /* multidimensional string to flag excessive distortion
+       * all elements are initialized to " " using
+       * an assignment pattern and replication operator
+       */
+       string above_0p5[0:2][0:2] = '{ 3{ '{3{" "}}}};
+       real in_val[0:2];
+       integer ii, jj;
+       analog begin
+          // assign to variable using an assignment pattern
+          in_val = '{V(in[0]),V(in[1]),V(in[2])};
+          if (distort_enable) begin
+             for( ii=0; ii <= 2; ii=ii+1 ) begin
+                for (jj=0; jj<= 2; jj=jj+1 ) begin
+                   distort[ii][jj] = c[ii][jj]*in_val[jj];
+                   if (distort[ii][jj] > 0.1)
+                     above_0p5[ii][jj] = "*";
+                end
+             end
+          end
+          V(out[0]) <+ in_val[0]     + distort[0][1] + distort[0][2];
+          V(out[1]) <+ distort[1][0] + in_val[1]     + distort[1][2];
+          V(out[2]) <+ distort[2][0] + distort[2][1] + in_val[2];
+          @(final_step) begin
+             $display("Table of distortions greater than 0.5");
+             $display("#012"); // write the table header
+             for( ii=0; ii <= 2; ii=ii+1 ) begin
+                $write("%0d",ii); // %0d means write int in minimum width
+                for (jj=0; jj<= 2; jj=jj+1 ) begin
+                   $write(above_0p5[ii][jj]);
+                end
+                $display; // print a newline
+             end
+          end
+       end
+    endmodule
+    genvar i;
+    analog begin
+       ...
+       for (i = 0; i < 8; i = i + 1) begin
+          V(out[i]) <+ transition(value[i], td, tr);
+       end
+       ...
+    end
+flow.
+      endnature

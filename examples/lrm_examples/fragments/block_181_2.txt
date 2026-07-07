@@ -1,0 +1,6 @@
+          case (dnet)
+             1'b1: avar = 5;
+             1'bx: avar = avar; // hold value
+             1'b0: avar = 0;
+             1'bz: avar = 2.5; // high impedance - float value
+          endcase

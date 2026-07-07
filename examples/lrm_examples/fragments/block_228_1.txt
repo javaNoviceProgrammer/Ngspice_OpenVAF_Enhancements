@@ -1,0 +1,34 @@
+    while (there are events){
+       if (no active events){
+          if (there are inactive events){
+             activate all inactive events;
+          else if (there are explicit D2A events) {
+             activate all explicit D2A events;
+          }else if (there are non blocking assign update events){
+             activate all non blocking assign update events;
+          }else if (there are analog macro-process events) {
+             activate all analog macro-process events;
+          }else if (there are monitor events){
+             activate all monitor events;
+          }else {
+             advance T to the next event time;
+             activate all inactive events for time T;
+          }
+       }
+       E =any active event;
+       if (E is an update event){
+          update the modified object;
+          add evaluation events for sensitive processes to event queue;
+       }else if (E is a D2A event) {
+          evaluate the D2A
+          modify the analog values
+          add A2D events to event queue, if any
+       }else if (E is an analog macro-process event) {
+          evaluate the analog macro-process
+          modify the analog values
+          add A2D events to event queue, if any
+       }else {/*shall be an evaluation event */
+          evaluate the process;
+          add update events to the event queue;
+       }
+    }

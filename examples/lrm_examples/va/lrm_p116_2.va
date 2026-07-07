@@ -1,0 +1,12 @@
+// Verilog-AMS LRM 2023 (Accellera), example from page 116
+// extracted by lrm_examples/extract_lrm_examples.py (block_116_2)
+`include "disciplines.vams"
+`include "constants.vams"
+    module measure1(p);
+       output p;
+       electrical p;
+       parameter real V = 1.1;
+       analog begin
+          $strobe("%M: voltage ratio is %g", potential(p) / V);
+       end
+    endmodule

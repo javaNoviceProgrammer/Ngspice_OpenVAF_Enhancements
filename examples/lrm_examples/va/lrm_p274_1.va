@@ -1,0 +1,11 @@
+// Verilog-AMS LRM 2023 (Accellera), example from page 274
+// extracted by lrm_examples/extract_lrm_examples.py (block_274_1)
+`include "disciplines.vams"
+`include "constants.vams"
+    module example_tb(a, b);
+       electrical a, b;
+       inout a, b;
+       analog begin
+          I(a, b) <+ $table_model(0.0, V(a,b),"sample.dat");
+       end
+    endmodule

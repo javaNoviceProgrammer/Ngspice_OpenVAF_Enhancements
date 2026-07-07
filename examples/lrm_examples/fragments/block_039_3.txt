@@ -1,0 +1,2 @@
+    reg [8*4:1] h = "hello";  // assigns to h "ello"
+    reg [10:0] a = "A";       // assigns to a 'b000_0100_0001

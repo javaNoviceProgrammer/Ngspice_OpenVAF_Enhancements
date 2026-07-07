@@ -1,0 +1,12 @@
+       itr = vpi_iterate(vpiNet, mod);
+       while (net = vpi_scan(itr))
+       {
+          char *net_name = vpi_get_str(vpiName, net);
+          if (strcmp(target, net_name) == 0)
+          {
+             vpi_get_value(net, value_p);
+             vpi_printf("Value of net %s: %s\n",
+                vpi_get_str(vpiFullName, net),value_p->value.str);
+          }
+       }
+    }

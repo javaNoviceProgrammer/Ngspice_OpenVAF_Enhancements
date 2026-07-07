@@ -1,0 +1,19 @@
+`include "disciplines.vams"
+// F5 (fixed): $port_connected on an unconnected port of a flattened
+// instance -- used to fail validation after the port became a local net
+module leaf(a, b);
+   output a, b;
+   electrical a, b;
+   analog begin
+      V(a) <+ 1.0;
+      if ($port_connected(b))
+         V(b) <+ 2.0;
+      else
+         V(b) <+ 0.0;
+   end
+endmodule
+module top(y);
+   output y;
+   electrical y;
+   leaf l1(.a(y));   // .b left unconnected
+endmodule

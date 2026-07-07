@@ -1,0 +1,11 @@
+// Verilog-AMS LRM 2023 (Accellera), example from page 80
+// extracted by lrm_examples/extract_lrm_examples.py (block_080_1)
+`include "disciplines.vams"
+`include "constants.vams"
+    module opamp(out, pin, nin);
+       output out;
+       input pin, nin;
+       voltage out, pin, nin;
+       analog
+          V(out) <+ idt(V(pin,nin));
+    endmodule

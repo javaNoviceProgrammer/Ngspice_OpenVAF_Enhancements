@@ -1,0 +1,3 @@
+                              itr = vpi_iterate(vpiTag, ref_h);
+                              while (obj_h = vpi_scan(itr) )
+                                 /* process 'obj_h' */

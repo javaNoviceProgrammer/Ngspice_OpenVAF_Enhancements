@@ -1,0 +1,87 @@
+// Verilog-AMS LRM 2023 (Accellera), example from page 256
+// extracted by lrm_examples/extract_lrm_examples.py (block_256_1)
+`include "disciplines.vams"
+`include "constants.vams"
+    module testbench;
+       dut dut1;
+    endmodule
+    module dut;
+       task mytask;
+          $display( "%s\n%s\n%s\n", $simparam$str( "module"),
+                   $simparam$str( "instance"),
+                   $simparam$str( "path"));
+       endtask
+    endmodule
+    dut
+    testbench.dut1
+    testbench.dut1.mytask
+    module monitor;
+       parameter string inst = "default";
+       parameter string quant = "default";
+       parameter real threshold = 0.0;
+       real probe;
+       analog begin
+          probe = $simprobe(inst,quant);
+          if (probe > threshold) begin
+             $strobe("ERROR: Time %e: %s#%s (%g) > threshold (%e)",
+                     $abstime, inst,quant, probe, threshold);
+             $finish;
+          end
+       end
+    endmodule
+    module top(d,g,s);
+       electrical d,g,s;
+       inout d,g,s;
+       electrical gnd; ground gnd;
+       SPICE_pmos #(.w(4u),.l(0.1u),.ad(4p),.as(4p),.pd(10u),.ps(10u))
+          mp(d,g,s,s);
+       SPICE_nmos #(.w(2u),.l(0.1u),.ad(2p),.as(2p),.pd(6u),.ps(6u))
+          mn(d,g,gnd,gnd);
+       monitor #(.inst("mn"),.quant("id"),.threshold(4.0e-3))
+          amonitor();
+    endmodule
+    $discontinuity [ ( constant_expression ) ];
+    module relay (c1, c2, pin, nin) ;
+       inout c1, c2 ;
+       input pin, nin ;
+       electrical c1, c2, pin, nin ;
+       parameter real r=1 ;
+       analog begin
+          @(cross(V(pin,nin))) $discontinuity ;
+          if (V(pin,nin) >= 0)
+             I(c1,c2) <+ V(c1,c2)/r;
+          else
+             I(c1,c2) <+ 0 ;
+       end
+    endmodule
+    module triangle(out);
+       output out;
+       voltage out;
+       parameter real period = 10.0, amplitude = 1.0;
+       integer slope;
+       real offset;
+       analog begin
+          @(timer(0, period)) begin
+             slope = +1;
+             offset = $abstime ;
+             $discontinuity;
+          end
+          @(timer(period/2, period)) begin
+             slope = -1 ;
+             offset = $abstime;
+             $discontinuity ;
+          end
+          V(out) <+ amplitude*slope*
+             (4*($abstime - offset)/period - 1);
+       end
+    endmodule
+    $bound_step ( expression ) ;
+    module vsine(out);
+       output out;
+       voltage out;
+       parameter real freq=1.0, ampl=1.0, offset=0.0;
+       analog begin
+          V(out) <+ ampl*sin(2.0*'M_PI*freq*$abstime) + offset;
+          $bound_step(0.05/freq);
+       end
+    endmodule

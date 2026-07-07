@@ -1,0 +1,2 @@
+    code = $fseek ( fd, offset, operation );
+    code = $rewind ( fd );

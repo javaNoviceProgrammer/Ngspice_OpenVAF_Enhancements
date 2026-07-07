@@ -1,0 +1,28 @@
+// Verilog-AMS LRM 2023 (Accellera), example from page 92
+// extracted by lrm_examples/extract_lrm_examples.py (block_092_1)
+`include "disciplines.vams"
+`include "constants.vams"
+    module period(in);
+       input in;
+       voltage in;
+       integer crossings;
+       real latest, previous;
+       analog begin
+          @(initial_step) begin
+             crossings = 0;
+             previous = 0;
+          end
+          @(cross(V(in), +1)) begin
+             crossings = crossings + 1;
+             previous = latest;
+          end
+          latest = last_crossing(V(in), +1);
+          @(final_step) begin
+             if (crossings < 2)
+                $strobe("Could not measure period.");
+             else
+                $strobe("period = %g, crossings = %d",
+                   latest-previous, crossings);
+          end
+       end
+    endmodule

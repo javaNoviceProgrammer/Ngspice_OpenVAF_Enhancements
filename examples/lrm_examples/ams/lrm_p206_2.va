@@ -1,0 +1,51 @@
+// Verilog-AMS LRM 2023 (Accellera), example from page 206
+// extracted by lrm_examples/extract_lrm_examples.py (block_206_2)
+`include "disciplines.vams"
+`include "constants.vams"
+    module dig_inv(in, out);
+       input in;
+       output out;
+       reg out;
+       ddiscrete in, out;
+       always out = #10 ~in;
+    endmodule
+    module analog_inv(in, out, vdd);
+       input in;
+       output out;
+       electrical in, out;
+       electrical vdd;
+       real outval;
+       analog begin
+          if (V(in) > V(vdd)/2.0)
+             outval = 0;
+          else
+             outval = V(vdd);
+          V(out) <+ transition(outval);
+       end
+    endmodule
+    module global_supply;
+       electrical vdd;
+       analog V(vdd) <+ 5.0;
+    endmodule
+    module ring;
+       dig_inv d1 (n1, n2);
+       dig_inv d2 (n2, n3);
+       analog_inv a3 (n3, n1, $root.global_supply.vdd);
+    endmodule
+    connectmodule elect_to_logic(el, cm);
+       input el;
+       output cm;
+       reg cm;
+       electrical el;
+       ddiscrete cm;
+       electrical vdd;
+       parameter string vddname = "(not_given)"; // Set via the CR
+       analog initial begin
+          if($analog_node_alias(vdd, vddname) == 0)
+             $error("Unable to resolve power supply: %s", vddname);
+       end
+       always @(cross(V(el) - V(vdd)/2.0, 1))
+          cm = 1;
+       always @(cross(V(el) - V(vdd)/2.0, -1))
+          cm = 0;
+    endmodule

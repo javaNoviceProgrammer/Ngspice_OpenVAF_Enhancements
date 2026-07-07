@@ -51,6 +51,10 @@ pub enum BodyValidationDiagnostic {
         expr: ExprId,
         branch: Option<BranchId>,
     },
+    ContributeToPortFlow {
+        expr: ExprId,
+        branch: BranchId,
+    },
     IllegalContribute {
         stmt: StmtId,
         ctx: BodyCtx,
@@ -742,7 +746,16 @@ impl ExprValidator<'_, '_> {
                                     expr,
                                     branch: Some(branch),
                                 })
-                            } else if !self.write {
+                            } else if self.write {
+                                // Port branches are probe-only (LRM 5.4.3.1): the port
+                                // flow is defined by the connected network, so
+                                // contributing to it is illegal (and used to panic in
+                                // BranchWrite::nodes during lowering).
+                                self.report(BodyValidationDiagnostic::ContributeToPortFlow {
+                                    expr,
+                                    branch,
+                                })
+                            } else {
                                 self.validate_flow_or_pot(
                                     expr,
                                     BuiltIn::flow,

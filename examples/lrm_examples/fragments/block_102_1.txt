@@ -1,0 +1,2 @@
+    I(a,b) <+ V(a,b)/R +
+       white_noise(4 * 'P_K * $temperature/R, "thermal");

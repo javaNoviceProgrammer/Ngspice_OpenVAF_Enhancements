@@ -1,0 +1,1 @@
+    a % b = ((a/b) < 0) ? (a - ceil(a/b)*b) : (a - floor(a/b)*b);

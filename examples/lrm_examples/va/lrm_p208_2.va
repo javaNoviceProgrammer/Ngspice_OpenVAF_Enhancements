@@ -1,0 +1,18 @@
+// Verilog-AMS LRM 2023 (Accellera), example from page 208
+// extracted by lrm_examples/extract_lrm_examples.py (block_208_2)
+    `include "disciplines.vams"
+    `timescale 1ns/1ns
+    discipline ddiscrete_1v2
+       domain discrete;
+    enddiscipline
+    discipline ddiscrete_1v8
+       domain discrete;
+    enddiscipline
+    module global_supply;
+       electrical vdd_1v2;
+       electrical vdd_1v8;
+       analog begin
+          V(vdd_1v2) <+ 1.2;
+          V(vdd_1v8) <+ 1.8;
+       end
+    endmodule

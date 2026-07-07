@@ -1,0 +1,9 @@
+// Verilog-AMS LRM 2023 (Accellera), example from page 153
+// extracted by lrm_examples/extract_lrm_examples.py (block_153_1)
+`include "disciplines.vams"
+`include "constants.vams"
+    module annotate ();
+       defparam
+          tgate.m1.gate_width = 5e-6,
+          tgate.m2.gate_width = 10e-6;
+    endmodule

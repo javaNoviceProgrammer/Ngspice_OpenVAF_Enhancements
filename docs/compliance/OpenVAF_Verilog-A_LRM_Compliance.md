@@ -162,6 +162,15 @@ including **probe-only branches** — probing a branch that is never
 contributed to reads its true flow (an ideal ammeter) instead of the
 0-and-open-circuit a naive topology gives.
 
+**Named port branches** (LRM 3.7.2) work as of E-84 and carry the same
+defining equation as a direct port-flow probe; contributing to one is a
+proper diagnostic (port branches are probe-only per the LRM):
+
+```verilog
+branch (<p>) probe_p;          // named branch over port p
+iprobe = I(probe_p);           // same value as I(<p>)
+```
+
 ## 4. Expressions (LRM 4)
 
 ### 4.1 Operators and precedence (LRM 4.1, Table 4-2) — ✅
@@ -283,7 +292,13 @@ construct), and **port-flow probes**:
 V(out): V(inp, inn) == 0;      // indirect: drive out so V(inp,inn)=0
 I(p,n) <+ V(p,n)/r;            // accumulates with other <+ statements
 iport = I(<p>);                // total flow through port p (ideal probe)
+branch (<p>) pb;               // named port branch: I(pb) == I(<p>)  (E-84)
 ```
+
+`$port_connected` works on connected *and* unconnected ports of
+flattened instances (resolved per instance at elaboration time), and
+instantiating an undefined module is a hard error rather than a silent
+drop (both E-84).
 
 ### 5.3 Procedural statements (LRM 5.7–5.9) — ✅
 
@@ -508,7 +523,7 @@ connected port.)*
 | 4.5 Analog operators (all) | ✅ (`limexp` stateless ⚠️ documented) | `absdelay`, `laplace`, `zi`, `slew`, `transition`, `idt*`, `ddx`, `opargs`, `discontinuity`, `last_crossing` |
 | 4.6 Noise (incl. correlation 4.6.4) | ✅ | `noise`, `noisecorr`, `noisejw` |
 | 5.2/6.2 Analog blocks (multiple) | ✅ | `multianalog` |
-| 5.6 Contributions, indirect assignment, port flow | ✅ | `indirect_assignment`, `portflow`, `signalflow` |
+| 5.6 Contributions, indirect assignment, port flow (incl. named port branches) | ✅ | `indirect_assignment`, `portflow`, `signalflow`, `lrm` |
 | 5.7–5.9 Procedural statements, loops, disable | ✅ | `analogloop`, `dowhile`, `repeat`, `disable`, `arraycase` |
 | casex/casez | ✅ | `casexz` |
 | 5.10 Events (steps, cross/above/timer, OR lists, phase lists) | ✅ | `initial_step`, `finalstep`, `cross`, `timer`, `lrmcorner` |
@@ -520,6 +535,12 @@ connected port.)*
 | plusargs / simprobe / node aliases | ⚠️ LRM fallbacks | `alias` |
 | 10 Compiler directives | ✅ | `preproc`, `directive`, `defaulttransition` |
 | Mixed-signal / digital (outside Annex C) | ❌ by scope | — |
+
+As of E-84 the standard's own examples are a compliance suite: every
+code example in the LRM 2023 PDF is extracted and compiled
+(`examples/lrm_examples/` — 37 compile, 22 documented limitations pinned
+to their diagnostics, 21 correctly rejected as mixed-signal), and the
+146 non-module fragments double as a no-crash fuzz corpus.
 
 Beyond construct-level checks, three cross-cutting guards pin that the
 *whole language implementation* produces correct physics: the 92-model

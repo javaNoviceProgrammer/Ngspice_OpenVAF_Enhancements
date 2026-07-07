@@ -1,0 +1,17 @@
+// Verilog-AMS LRM 2023 (Accellera), example from page 84
+// extracted by lrm_examples/extract_lrm_examples.py (block_084_1)
+`include "disciplines.vams"
+`include "constants.vams"
+    module vccs(pout,nout,pin,nin);
+       inout pout, nout, pin, nin;
+       electrical pout, nout, pin, nin;
+       parameter real k = 1.0;
+       real vin, one, minusone, zero;
+       analog begin
+          vin = V(pin,nin);
+          one = ddx(vin, V(pin));
+          minusone = ddx(vin, V(nin));
+          zero = ddx(vin, V(pout));
+          I(pout,nout) <+ k * vin;
+       end
+    endmodule

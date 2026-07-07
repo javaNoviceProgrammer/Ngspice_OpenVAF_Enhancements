@@ -1,0 +1,19 @@
+// Verilog-AMS LRM 2023 (Accellera), example from page 112
+// extracted by lrm_examples/extract_lrm_examples.py (block_112_1)
+`include "disciplines.vams"
+`include "constants.vams"
+    module example;
+       parameter integer p1 = 1;
+       real moduleVar;
+       analog begin
+          begin: myscope
+             parameter real p2 = p1;
+             real localVar = 1.5 * p2;
+          end
+          moduleVar = myscope.localVar;
+       end
+    endmodule
+    module top;
+       example #(.p1(4)) inst1();            // allowed
+       example #(.myscope.p2(4)) inst2();    // error
+    endmodule

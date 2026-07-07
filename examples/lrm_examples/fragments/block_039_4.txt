@@ -1,0 +1,1 @@
+    string s1 = "hello\0world"; // sets s1 to "helloworld"

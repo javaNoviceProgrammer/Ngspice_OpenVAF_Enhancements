@@ -1,0 +1,54 @@
+// Verilog-AMS LRM 2023 (Accellera), example from page 117
+// extracted by lrm_examples/extract_lrm_examples.py (block_117_1)
+`include "disciplines.vams"
+`include "constants.vams"
+    module dac(out, in, clk);
+       parameter integer width = 8 from [2:24];
+       parameter real fullscale = 1.0, vth = 2.5, td = 1n, tt = 1n;
+       output out;
+       input [0:width-1] in;
+       input clk;
+       electrical out;
+       electrical [0:width-1] in;
+       electrical clk;
+       real aout;
+       genvar i;
+       analog begin
+          @(cross(V(clk) - vth, +1)) begin
+             aout = 0;
+             for (i = width - 1; i >= 0; i = i - 1) begin
+                if (V(in[i]) > vth) begin
+                   aout = aout + fullscale/pow(2, width - i);
+                end
+             end
+          end
+          V(out) <+ transition(aout, td, tt);
+       end
+    endmodule
+    //
+    // 8-bit fixed-width DAC example.
+    //
+    module dac8(out, in, clk);
+       parameter real fullscale = 1.0, vth = 2.5, td = 1n, tt = 1n;
+       output out;
+       input [0:7] in;
+       input clk;
+       electrical out;
+       electrical [0:7] in;
+       electrical clk;
+       real aout;
+       analog begin
+          @(cross(V(clk) - 2.5, +1)) begin
+             aout = 0;
+             aout = aout + ((V(in[7]) > vth) ? fullscale/2.0 : 0.0);
+             aout = aout + ((V(in[6]) > vth) ? fullscale/4.0 : 0.0);
+             aout = aout + ((V(in[5]) > vth) ? fullscale/8.0 : 0.0);
+             aout = aout + ((V(in[4]) > vth) ? fullscale/16.0 : 0.0);
+             aout = aout + ((V(in[3]) > vth) ? fullscale/32.0 : 0.0);
+             aout = aout + ((V(in[2]) > vth) ? fullscale/64.0 : 0.0);
+             aout = aout + ((V(in[1]) > vth) ? fullscale/128.0 : 0.0);
+             aout = aout + ((V(in[0]) > vth) ? fullscale/256.0 : 0.0);
+          end
+          V(out) <+ transition(aout, td, tt);
+       end
+    endmodule

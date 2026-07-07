@@ -1,0 +1,29 @@
+// Verilog-AMS LRM 2023 (Accellera), example from page 156
+// extracted by lrm_examples/extract_lrm_examples.py (block_156_1)
+`include "disciplines.vams"
+`include "constants.vams"
+    module matchedres(a, b);
+       inout a, b;
+       electrical a, b;
+       parameter real length = 1u from (0:inf);
+       parameter real width = 1u from (0:inf);
+       polyres #(.width(width/4.0), .length(length),
+       .$xposition(-1u),  .$yposition(-1u))  R1 (a, b);
+       polyres #(.width(width/4.0), .length(length),
+       .$xposition(+1u),  .$yposition(-1u))  R2 (a, b);
+       polyres #(.width(width/4.0), .length(length),
+       .$xposition(-1u),  .$yposition(+1u))  R3 (a, b);
+       polyres #(.width(width/4.0), .length(length),
+       .$xposition(+1u),  .$yposition(+1u))  R4 (a, b);
+    endmodule
+
+// [lrm_examples context] polyres per the page-155 example, minus the
+// processinfo hierarchy the LRM leaves undefined.
+module polyres(a, b);
+   inout a, b;
+   electrical a, b;
+   parameter real length = 1u from (0:inf);
+   parameter real width = 1u from (0:inf);
+   parameter real rsh = 50 from (0:inf);
+   analog I(a, b) <+ V(a, b) * width / (rsh * length);
+endmodule

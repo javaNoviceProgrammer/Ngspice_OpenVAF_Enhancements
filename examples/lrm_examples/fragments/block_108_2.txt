@@ -1,0 +1,3 @@
+    for(i = 0; i < 2; i = i + 1) begin
+       a[i] = a[i] + b[i];
+    end

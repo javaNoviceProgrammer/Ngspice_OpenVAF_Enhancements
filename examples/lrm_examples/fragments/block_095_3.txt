@@ -1,0 +1,1 @@
+    V(out) <+ laplace_zp(white_noise(k), , '{1,0,1,0,-1,0,-1,0});

@@ -1,0 +1,44 @@
+// Verilog-AMS LRM 2023 (Accellera), example from page 210
+// extracted by lrm_examples/extract_lrm_examples.py (block_210_1)
+`include "disciplines.vams"
+`include "constants.vams"
+    connectmodule elect_to_logic(el, cm);
+       input el;
+       output cm;
+      reg cm;
+       electrical el;
+       ddiscrete cm;
+       electrical vdd;
+       parameter string vddname = "(not_given)"; // Set via the connect rule
+       analog initial begin
+          if($analog_node_alias(vdd, vddname) == 0)
+             $error("Unable to resolve power supply: %s", vddname);
+       end
+       always @(cross(V(el) - V(vdd)/2.0, 1))
+          cm = 1;
+       always @(cross(V(el) - V(vdd)/2.0, -1))
+          cm = 0;
+    endmodule
+    connectmodule logic_to_elect(cm, el);
+       input cm;
+       output el;
+       ddiscrete cm;
+       electrical el;
+       electrical vdd;
+       parameter string vddname = "(not_given)"; // Set via the connect rule
+       analog initial begin
+          if($analog_node_alias(vdd, vddname) == 0)
+             $error("Unable to resolve power supply: %s", vddname);
+       end
+       analog V(el) <+ V(vdd) * transition((cm == 1) ? 1 : 0);
+    endmodule
+    connectrules mixedsignal;
+       connect elect_to_logic #(.vddname("$root.global_supply.vdd_1v2"))
+                input electrical, output ddiscrete_1v2;
+       connect logic_to_elect #(.vddname("$root.global_supply.vdd_1v2"))
+                input ddiscrete_1v2, output electrical;
+       connect elect_to_logic #(.vddname("$root.global_supply.vdd_1v8"))
+                input electrical, output ddiscrete_1v8;
+       connect logic_to_elect #(.vddname("$root.global_supply.vdd_1v8"))
+                input ddiscrete_1v8, output electrical;
+    endconnectrules

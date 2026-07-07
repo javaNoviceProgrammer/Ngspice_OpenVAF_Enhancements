@@ -1,0 +1,11 @@
+    analog function real arrayadd;
+       inout [0:1]a;
+       input [0:1]b;
+       real a[0:1], b[0:1];
+       integer i;
+       begin
+          for(i = 0; i < 2; i = i + 1) begin
+             a[i] = a[i] + b[i];
+          end
+       end
+    endfunction

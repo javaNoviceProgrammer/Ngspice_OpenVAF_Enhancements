@@ -1,0 +1,2 @@
+    if (closed)
+       V(p,n) <+ 0;

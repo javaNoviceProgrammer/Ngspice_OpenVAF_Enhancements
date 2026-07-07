@@ -1,0 +1,2 @@
+                              char name[nameSize];
+                              vpi_get_str(vpiName, obj_h);

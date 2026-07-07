@@ -1,0 +1,4 @@
+    (* port_discipline="electrical" *) vcvs #(.gain(1.45e-3))
+       motor1 (n1, gnd_e,
+          (* port_discipline="rotational_omega" *) shaft1,
+          (* port_discipline="rotational_omega" *) gnd_rot);

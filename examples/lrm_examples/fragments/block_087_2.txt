@@ -1,0 +1,2 @@
+    always #5 clk = ~clk;
+    analog V(aclk) <+ transition(clk,5.1n,1p);

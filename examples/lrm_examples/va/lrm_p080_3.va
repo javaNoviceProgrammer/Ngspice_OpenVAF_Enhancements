@@ -1,0 +1,15 @@
+// Verilog-AMS LRM 2023 (Accellera), example from page 80
+// extracted by lrm_examples/extract_lrm_examples.py (block_080_3)
+`include "disciplines.vams"
+`include "constants.vams"
+    module ramp_generator(out);
+       output out;
+       voltage out;
+       integer reset;
+       analog begin
+          reset = 0;
+          @(timer(1, 1))
+             reset = 1;
+          V(out) <+ idt(1.0, 0, reset);
+       end
+    endmodule

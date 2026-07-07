@@ -1,0 +1,16 @@
+// Verilog-AMS LRM 2023 (Accellera), example from page 219
+// extracted by lrm_examples/extract_lrm_examples.py (block_219_1)
+`include "disciplines.vams"
+`include "constants.vams"
+    module d2aC(clk,val,vo); // Clocked 16 bit D2A
+       parameter   Vgain = 1.0/65536;
+       input       clk;
+       input       val;
+       wire [15:0] val;
+      electrical vo;
+       real        v_clkd;
+       analog begin
+          @(posedge clk) v_clkd = Vgain * val;
+          V(vo) <+ v_clkd;
+       end
+    endmodule

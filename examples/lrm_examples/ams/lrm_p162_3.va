@@ -1,0 +1,46 @@
+// Verilog-AMS LRM 2023 (Accellera), example from page 162
+// extracted by lrm_examples/extract_lrm_examples.py (block_162_3)
+`include "disciplines.vams"
+`include "constants.vams"
+    module top();
+       wreal stim;
+       reg clk;
+       wire [1:8] out;
+       testbench tb1 (stim, clk);
+       a2d dut (out, stim, clk);
+       initial clk = 0;
+       always #1 clk = ~clk;
+    endmodule
+    module testbench(wout, clk);
+       output wout;
+       input clk;
+       real out;
+       wire clk;
+       wreal wout;
+       assign wout = out;
+       always @(posedge clk) begin
+          out = out + $abstime;
+       end
+    endmodule
+    module a2d(dout, in, clk);
+       output [1:8] dout;
+       input in, clk;
+       wreal in;
+       wire clk;
+       reg [1:8] dout;
+       real residue;
+       integer i;
+       always @(negedge clk) begin
+          residue = in;
+          for (i = 8; i >= 1; i = i - 1) begin
+             if (residue > 0.5) begin
+                dout[i] = 1'b1;
+                residue = residue - 0.5;
+             end
+             else begin
+                dout[i] = 1'b0;
+             end
+             residue = residue*2;
+          end
+       end
+    endmodule

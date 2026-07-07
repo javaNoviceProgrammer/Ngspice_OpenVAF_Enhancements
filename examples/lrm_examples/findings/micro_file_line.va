@@ -1,0 +1,9 @@
+`include "disciplines.vams"
+// F4 (open): `__FILE__/`__LINE__ predefined macros are not implemented
+module m(a, b);
+   inout a, b; electrical a, b;
+   analog begin
+      $strobe("at %s:%d", `__FILE__, `__LINE__);
+      V(a,b) <+ 1.0;
+   end
+endmodule

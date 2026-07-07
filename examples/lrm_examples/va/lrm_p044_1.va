@@ -1,0 +1,21 @@
+// Verilog-AMS LRM 2023 (Accellera), example from page 44
+// extracted by lrm_examples/extract_lrm_examples.py (block_044_1)
+`include "disciplines.vams"
+`include "constants.vams"
+    module ebersmoll (c,b,e);
+       inout c, b, e;
+       electrical c, b, e;
+       parameter string transistortype = "NPN" from '{ "NPN", "PNP" };
+       parameter real alphaf = 0.99 from (0:inf);
+       parameter real alphar = 0.5 from (0:inf);
+       parameter real ies = 1.0e-17 from (0:inf);
+       parameter real ics = 1.0e-17 from (0:inf);
+       real sign, ifor, irev;
+       analog begin
+          sign = (transistortype == "NPN") ? 1.0 : -1.0;
+          ifor = ies * (limexp(sign*V(b,e)/$vt)-1);
+          irev = ics * (limexp(sign*V(b,c)/$vt)-1);
+          I(b,e) <+ sign*(ifor - alphar * irev);
+          I(b,c) <+ sign*(irev - alphaf * ifor);
+       end
+    endmodule

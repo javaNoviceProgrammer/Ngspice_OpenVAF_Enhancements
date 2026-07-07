@@ -1,0 +1,27 @@
+// Verilog-AMS LRM 2023 (Accellera), example from page 205
+// extracted by lrm_examples/extract_lrm_examples.py (block_205_1)
+`include "disciplines.vams"
+`include "constants.vams"
+    module dig_inv(in, out);
+       input in;
+       output out;
+       reg out;
+       ddiscrete in, out;
+       always begin
+          out = #10 ~in;
+       end
+    endmodule
+    module analog_inv(in, out, vdd);
+       input in;
+       output out;
+       electrical in, out;
+       electrical vdd;
+       real outval;
+       analog begin
+          if (V(in) > V(vdd)/2 )
+             outval = 0;
+          else
+             outval = V(vdd) ;
+          V(out) <+ transition(outval);
+       end
+    endmodule

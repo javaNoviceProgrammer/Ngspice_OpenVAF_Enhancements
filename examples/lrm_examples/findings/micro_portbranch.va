@@ -1,0 +1,8 @@
+`include "disciplines.vams"
+// F1 (fixed): named port branch, LRM 3.7.2 -- used to panic the compiler
+module current_sink(p);
+   inout p;
+   electrical p;
+   branch (<p>) probe_p;
+   analog $strobe("current probed is %g", I(probe_p));
+endmodule

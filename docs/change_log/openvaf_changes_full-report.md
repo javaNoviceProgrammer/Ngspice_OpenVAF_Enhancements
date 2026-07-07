@@ -81,6 +81,11 @@ templates the generated token/AST/builtin/instruction tables come from):
   ([E-2](../../enhancements_doc/Enhancement-2.md));
 - the `<<<`/`>>>` arithmetic-shift tokens (plus a pre-existing lexer bug
   fix) ([E-6](../../enhancements_doc/Enhancement-6.md));
+- **panic-free direction parsing**: `port_decl`/`func_arg` asserted the
+  next token was a direction (`bump_ts`), which any non-Verilog text
+  reaching a module-head port list turned into a compiler crash; both
+  now emit a diagnostic with one token of forced progress
+  ([E-84](../../enhancements_doc/Enhancement-84.md));
 - **operator precedence corrected against LRM Table 4-2**: `%` bound
   tighter than `*`/`/` (so `6*7%4` evaluated to 18, not 2), and xnor
   split from xor ([E-38](../../enhancements_doc/Enhancement-38.md));
@@ -155,7 +160,18 @@ every structural feature:
   rendering ([E-21](../../enhancements_doc/Enhancement-21.md)); net
   initializers preserved through re-rendering
   ([E-45](../../enhancements_doc/Enhancement-45.md)); escaped identifiers
-  re-rendered correctly ([E-46](../../enhancements_doc/Enhancement-46.md)).
+  re-rendered correctly ([E-46](../../enhancements_doc/Enhancement-46.md));
+- **undefined instantiation targets are a hard error** — they used to be
+  silently dropped from the rendered output, turning a typo'd module
+  name into an invisible open circuit; discipline-named mis-parses
+  (`electrical out[0:2];` parses as an instantiation) and paramsets
+  dropped over unresolvable targets get tailored messages
+  ([E-84](../../enhancements_doc/Enhancement-84.md));
+- **`$port_connected` resolved at flattening time** to a literal
+  `(1)`/`(0)` per instance — after inlining, an open port is just a
+  synthesized local net, so the builtin used to fail validation in
+  exactly the unconnected case it exists to detect; top-level modules
+  keep the native OSDI connected-flag path ([E-84](../../enhancements_doc/Enhancement-84.md)).
 
 ## 6. Definition layer — `openvaf/hir_def/` (+ `openvaf/hir/` mirrors)
 
@@ -258,7 +274,11 @@ every structural feature:
   exempt from their own ranges** (the CMC "feature disabled" idiom —
   stock rejected diode_cmc, BSIM-CMG, PSP-HV and the HiSIM family at
   setup) while given values stay fully validated
-  ([E-56](../../enhancements_doc/Enhancement-56.md)).
+  ([E-56](../../enhancements_doc/Enhancement-56.md));
+- **contributions to port branches diagnosed** (`ContributeToPortFlow`,
+  with the declaration site labeled): `I(pb) <+ …` on a
+  `branch (<p>) pb;` slipped through the write path unvalidated and
+  panicked during lowering ([E-84](../../enhancements_doc/Enhancement-84.md)).
 
 ## 8. Lowering — `openvaf/hir_lower/`
 
@@ -320,7 +340,17 @@ every structural feature:
   array function-argument writeback
   ([E-20](../../enhancements_doc/Enhancement-20.md)) and array returns via
   a function-named var-array
-  ([E-23](../../enhancements_doc/Enhancement-23.md)).
+  ([E-23](../../enhancements_doc/Enhancement-23.md));
+- **named port branches** (`branch (<p>) pb;` — LRM 3.7.2): a flow probe
+  of a PortFlow-kind branch routes through the same `CurrentKind::Port`
+  param as a direct `I(<p>)`, so E-29's defining equation covers both
+  spellings; probing one used to hit `unreachable!()`
+  ([E-84](../../enhancements_doc/Enhancement-84.md));
+- **literal `if` conditions lower only the taken branch** — a dead
+  analog operator (`transition()` under `if ((0))`, the exact shape the
+  `$port_connected` rewrite produces) survived const-folding as a
+  detached-but-interned op whose state setup read optimized-away values
+  and aborted codegen ([E-84](../../enhancements_doc/Enhancement-84.md)).
 
 ## 9. MIR core and optimization — `openvaf/mir*`
 
@@ -342,6 +372,9 @@ every structural feature:
   callbacks under op-dependent control now stay in eval; control
   dependence computed by arm-reachability)
   ([E-55](../../enhancements_doc/Enhancement-55.md));
+- `split_tainted.rs` **tolerates layout-detached branch instructions**
+  (a branch whose condition const-folded has no CFG effect to taint;
+  it used to unwrap and panic) ([E-84](../../enhancements_doc/Enhancement-84.md));
 - const-eval agreement with runtime semantics for shifts and the
   bitwise-not fix ([E-37](../../enhancements_doc/Enhancement-37.md));
 - **autodiff**: noise operators process before any `ddt` (a shared ddt
@@ -432,6 +465,11 @@ every structural feature:
 
 ## 12. Driver, libraries, and infrastructure
 
+- `openvaf-driver/src/main.rs`: **hard errors now exit non-zero** — the
+  error arm printed the failure but fell through to a success exit, so
+  every elaboration failure looked like a successful compile to shell
+  scripts (a quirk first noticed during E-58's work)
+  ([E-84](../../enhancements_doc/Enhancement-84.md));
 - `openvaf-driver/src/crash_report.rs`, `linker/src/lib.rs`,
   `lib/bforest/` (`map.rs`, `pool.rs`, `set.rs`),
   `lib/typed_indexmap/` (`set.rs`): the **zero-warning cleanup**
@@ -525,8 +563,9 @@ tests hide behind `RUN_DEV_TESTS=1`. Fixed test-side only
 | [E-70](../../enhancements_doc/Enhancement-70.md) | hir_ty validation | loop-context diagnostics |
 | [E-71](../../enhancements_doc/Enhancement-71.md) | hir_ty fmt, hir_lower fmt, osdi | display-format surface + `%b` segfault |
 | [E-78](../../enhancements_doc/Enhancement-78.md) | lexer→hir_lower, hir_ty | `casex`/`casez` don't-care masks |
+| [E-84](../../enhancements_doc/Enhancement-84.md) | parser, elaborate, hir_ty, hir_lower, mir_opt, driver | LRM example sweep: 6 defect fixes (port-branch panic, parser robustness, silent undefined modules, `$port_connected` on open ports, dead-op codegen, exit codes) |
 
-Enhancements not listed (57, 60, 62–64, 69, 72–77, 79–81) changed no
+Enhancements not listed (57, 60, 62–64, 69, 72–77, 79–83) changed no
 compiler sources — they were validation suites, documentation, benchmark
 tooling, or ngspice-side work (see the
 [ngspice report](ngspice_changes_full-report.md)).

@@ -1,0 +1,13 @@
+// Verilog-AMS LRM 2023 (Accellera), example from page 343
+// extracted by lrm_examples/extract_lrm_examples.py (block_343_1)
+`include "disciplines.vams"
+`include "constants.vams"
+    module resistor(p, n);
+       electrical p, n;
+       parameter real r = 1k;
+       real curr;
+       analog begin
+          $resistor(curr, V(p, n), r);
+          I(p, n) <+ curr;
+       end
+    endmodule

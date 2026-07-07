@@ -1,0 +1,2 @@
+    parameter string transistortype = "NMOS" from '{ "NMOS", "PMOS" };
+    parameter string filename = "output.dat" exclude '{ "" };

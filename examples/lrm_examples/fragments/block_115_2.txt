@@ -1,0 +1,4 @@
+    if (closed)
+       V(p,n) <+ 0;
+    else
+       I(p,n) <+ 0;

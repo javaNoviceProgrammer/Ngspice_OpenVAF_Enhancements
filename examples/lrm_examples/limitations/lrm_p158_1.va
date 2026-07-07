@@ -1,0 +1,28 @@
+// Verilog-AMS LRM 2023 (Accellera), example from page 158
+// extracted by lrm_examples/extract_lrm_examples.py (block_158_1)
+`include "disciplines.vams"
+`include "constants.vams"
+    module semicoCMOS ();
+       localparam real tox = 3e-8;
+       localparam real dtox_g = $rdist_normal(1,0,1n,"global");
+       localparam real dtox_mm = $rdist_normal(2,0,5n,"instance");
+    endmodule
+    paramset nch nmos3; // mismatch paramset
+       parameter real l=1u from [0.25u:inf);
+       parameter real w=1u from [0.2u:inf);
+       parameter integer mm=0 from (0:1];
+       .l=l; .w=w; .ad=w*0.5u; .as=w*0.5u;
+       .kp=5e-5; .u0=650; .nsub=1.3e17;
+       .vmax=0; .tpg=1; .nfs=0.8e12;
+       .tox = semicoCMOS.tox + semicoCMOS.dtox_g + semicoCMOS.dtox_mm;
+    endparamset
+    module top ();
+       electrical d1, d2, g, vdd, gnd;
+       ground gnd;
+       nch #(.l(1u), .w(5u), .mm(1)) m1(.d(d1), .g(g), .s(gnd), .b(gnd));
+       nch #(.l(1u), .w(5u), .mm(1)) m2(.d(d2), .g(g), .s(gnd), .b(gnd));
+       resistor #(.r(1k)) R1 (vdd, d1);
+       resistor #(.r(1k)) R2 (vdd, d2);
+       vsine #(.dc(2.5)) Vdd (vdd, gnd);
+       vsine #(.dc(0), .ampl(1.0), .offset(1.5), .freq(1k)) Vg (g, gnd);
+    endmodule

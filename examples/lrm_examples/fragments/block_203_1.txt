@@ -1,0 +1,1 @@
+    connect cmosA2d split #(.r(30k) input electrical, output cmos02u;

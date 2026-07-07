@@ -163,8 +163,11 @@ impl TaintSolver<'_> {
             while let Some(inst) = self.inst_queue.pop() {
                 match self.func.dfg.insts[inst] {
                     InstructionData::Branch { then_dst, else_dst, .. } => {
-                        // For branch instructions taint the then and the else destination blocks
-                        let bb = self.func.layout.inst_block(inst).unwrap();
+                        // For branch instructions taint the then and the else destination blocks.
+                        // A branch whose condition const-folded (e.g. `if ((0))` around a
+                        // transition() contribution) may already be detached from the layout;
+                        // it has no CFG effect, so there is nothing to taint.
+                        let Some(bb) = self.func.layout.inst_block(inst) else { continue };
                         let end = self.dom_tree.ipdom(bb);
                         self.taint_block(then_dst, end);
                         self.taint_block(else_dst, end);

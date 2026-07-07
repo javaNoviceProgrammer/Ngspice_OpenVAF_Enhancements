@@ -1,0 +1,15 @@
+// Verilog-AMS LRM 2023 (Accellera), example from page 143
+// extracted by lrm_examples/extract_lrm_examples.py (block_143_1)
+`include "disciplines.vams"
+`include "constants.vams"
+    module bitStream (out);
+       output out;
+       electrical out;
+       parameter period = 1.0;
+       integer x;
+       analog begin
+          @(timer(0, period))
+             x = $random + 0.5;
+          V(out) <+ transition( x, 0.0, period/100.0 );
+       end
+    endmodule

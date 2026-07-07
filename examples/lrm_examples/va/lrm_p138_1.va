@@ -1,0 +1,23 @@
+// Verilog-AMS LRM 2023 (Accellera), example from page 138
+// extracted by lrm_examples/extract_lrm_examples.py (block_138_1)
+`include "disciplines.vams"
+`include "constants.vams"
+    module bitErrorRate (in, ref);
+       input in, ref;
+       electrical in, ref;
+       parameter real period=1, thresh=0.5;
+       integer bits, errors;
+       analog begin
+          @(initial_step) begin
+             bits = 0;
+             errors = 0;
+          end
+          @(timer(0, period)) begin
+             if ((V(in) > thresh) != (V(ref) > thresh))
+                errors = errors + 1;
+             bits = bits + 1;
+          end
+          @(final_step)
+             $strobe("bit error rate = %f%%", 100.0 * errors / bits );
+       end
+    endmodule

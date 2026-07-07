@@ -1,0 +1,13 @@
+    reg [15:0] r;
+    integer i = 1;
+    string b = "";
+    string a = {"Hi", b};
+    b = "Hi";        // OK
+    b = {5{"Hi"}};   // OK
+    a = {i{"Hi"}};   // OK (non constant replication)
+    r = {i{"Hi"}};   // invalid (non constant replication)
+    a = {i{b}};      // OK
+    a = {a,b};       // OK
+    a = {"Hi",b};    // OK
+    r = {"H",""};    // yields "H\0". "" is converted to 8'b0
+    b = {"H",""};    // yields "H". "" is the empty string

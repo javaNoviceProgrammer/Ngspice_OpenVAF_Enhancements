@@ -1,0 +1,9 @@
+    event ana_event;
+    event dig_event;
+    initial #10 -> dig_event;
+    always @(ana_event) $display("Event: ana_event detected in digital");
+    analog begin
+       @(timer(1n)) -> ana_event;
+       @(ana_event) $display("Event: ana_event detected in analog");
+       @(dig_event) $display("Event: dig_event detected in analog");
+    end

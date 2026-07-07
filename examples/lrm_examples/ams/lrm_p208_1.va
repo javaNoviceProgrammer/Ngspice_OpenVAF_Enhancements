@@ -1,0 +1,21 @@
+// Verilog-AMS LRM 2023 (Accellera), example from page 208
+// extracted by lrm_examples/extract_lrm_examples.py (block_208_1)
+`include "disciplines.vams"
+`include "constants.vams"
+    connectmodule logic_to_elect(cm, el);
+       input cm;
+       output el;
+       ddiscrete cm;
+       electrical el;
+       electrical vdd;
+       parameter string vddname = "(not_given)"; // Set via the CR
+       analog initial begin
+          if($analog_node_alias(vdd, vddname) == 0)
+             $error("Unable to resolve power supply: %s", vddname);
+       end
+       analog V(el) <+ V(vdd) * transition((cm == 1) ? 1 : 0);
+    endmodule
+    connectrules mixedsignal;
+       connect elect_to_logic #(.vddname("$root.global_supply.vdd"));
+       connect logic_to_elect #(.vddname("$root.global_supply.vdd"));
+    endconnectrules

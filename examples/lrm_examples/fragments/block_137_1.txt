@@ -1,0 +1,6 @@
+    analog begin
+       @(initial_step or cross(V(smpl)-2.5,+1)) begin
+          vout = (V(in) > 2.5);
+       end
+       V(out) <+ vout;
+    end

@@ -1,0 +1,92 @@
+// Verilog-AMS LRM 2023 (Accellera), example from page 191
+// extracted by lrm_examples/extract_lrm_examples.py (block_191_1)
+`include "disciplines.vams"
+`include "constants.vams"
+    connectmodule d2a (in, out);
+       input in;
+       output out;
+       ddiscrete in;
+       electrical out;
+       // insert connect module behavioral here
+    endmodule
+      ddiscrete.
+    connectmodule a2d (out, in);
+       output out;
+       input in;
+       ddiscrete out;
+       electrical in;
+       // insert connect module behavioral here
+    endmodule
+    connectmodule bidir (out, in);
+       inout out;
+       inout in;
+       ddiscrete out;
+       electrical in;
+       // insert connect module behavioral here
+    endmodule
+      endconnectrules
+    | exclude
+    connect logic18 logic32 resolveto exclude ;
+    connect electrical18 electrical32 resolveto exclude ;
+    connect x,y,a resolveto a;
+    connect x,y resolveto x;
+    connect x,y,a resolveto y;
+    connect x,y,a resolveto a;
+    connect x,y,b resolveto b;
+    connect a2d_035u #(.tt(3.5n), .vcc(3.3));
+    connect a2d_035u split #(.tt(3.5n), .vcc(3.3));
+    module dig_inv(in, out);
+       input in;
+       output out;
+       reg out;
+       ddiscrete in, out;
+       always begin
+          out = #10 ~in;
+       end
+    endmodule
+    module analog_inv(in, out);
+       input in;
+       output out;
+       electrical in, out;
+       parameter real vth = 2.5;
+       real outval;
+       analog begin
+          if (V(in) > vth)
+             outval = 0;
+          else
+             outval = 5 ;
+          V(out) <+ transition(outval);
+       end
+    endmodule
+    module ring;
+       dig_inv d1 (n1, n2);
+       dig_inv d2 (n2, n3);
+       analog_inv a3 (n3, n1);
+    endmodule
+    connectmodule elect_to_logic(el,cm);
+       input el;
+       output cm;
+       reg cm;
+       electrical el;
+       ddiscrete cm;
+       always
+          @(cross(V(el) - 2.5, 1))
+             cm = 1;
+       always
+          @(cross(V(el) - 2.5, -1))
+             cm = 0;
+    endmodule
+    connectmodule logic_to_elect(cm,el);
+       input cm;
+       output el;
+       ddiscrete cm;
+       electrical el;
+       analog
+          V(el) <+ transition((cm == 1) ? 5.0 : 0.0);
+    endmodule
+    connectrules mixedsignal;
+       connect elect_to_logic;
+       connect logic_to_elect;
+    endconnectrules
+     // All digital modules have only output ports of discipline cmos1
+    connect cmos_d2a input cmos1 output electrical;

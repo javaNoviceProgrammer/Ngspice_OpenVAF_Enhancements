@@ -1354,9 +1354,18 @@ impl BodyLoweringCtx<'_, '_, '_> {
                             args,
                             |hi, lo| ParamKind::Current(CurrentKind::Unnamed{hi,lo})
                         ),
-                        NATURE_ACCESS_BRANCH => self.ctx.use_param(ParamKind::Current(
-                            CurrentKind::Branch(self.body.into_branch(args[0]))
-                        )),
+                        NATURE_ACCESS_BRANCH => {
+                            let branch = self.body.into_branch(args[0]);
+                            // A named branch declared over a port (`branch (<p>) name;`,
+                            // LRM 3.7.2) *is* the port's flow: route it through the same
+                            // Port current param as a direct `I(<p>)` so
+                            // build_port_flow_equations defines it.
+                            let kind = match branch.kind(self.ctx.db) {
+                                hir::BranchKind::PortFlow(node) => CurrentKind::Port(node),
+                                _ => CurrentKind::Branch(branch),
+                            };
+                            self.ctx.use_param(ParamKind::Current(kind))
+                        },
                         NATURE_ACCESS_PORT_FLOW => self.ctx.use_param(ParamKind::Current(
                             CurrentKind::Port(self.body.into_port_flow(args[0]))
                         ))

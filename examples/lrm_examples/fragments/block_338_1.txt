@@ -1,0 +1,14 @@
+             /* Rip out 4 characters */
+             for (cnt2=0;cnt2<4;cnt2++)
+             {
+                item = entryVal&0xff;
+                if (item)
+                   vpi_printf("%c", item);
+                else
+                   vpi_printf("_");
+                entryVal = entryVal>>8;
+             }
+          }
+       }
+       vpi_printf("\n");
+    }

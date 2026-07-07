@@ -1,0 +1,4 @@
+    m1 d1 g 0 0 nch l=1u w=10u
+    m2 d2 g 0 0 nch l=1u w=5u
+    .model nch nmos (level=3 kp=5e-5 tox=3e-8 u0=650 nsub=1.3e17
+                     + vmax=0 tpg=1 nfs=0.8e12)

@@ -1,0 +1,4 @@
+    a < foo - 1         // this expression is the same as
+    a < (foo - 1)       // this expression, but . . .
+    foo - (1 < a)       // this one is not the same as
+    foo - 1 < a         // this expression

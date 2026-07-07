@@ -1,0 +1,44 @@
+// Verilog-AMS LRM 2023 (Accellera), example from page 18
+// extracted by lrm_examples/extract_lrm_examples.py (block_018_1)
+`include "disciplines.vams"
+`include "constants.vams"
+    module shiftPlus5(in, out);
+    input in;
+    output out;
+    voltage in, out; //voltage is a signal flow
+                     //discipline compatible with
+                     //electrical, but having a
+                     //potential nature only
+    analog begin
+       V(out) <+ 5.0 + V(in);
+    end
+    endmodule
+    module currmir(in, out);
+       input in;
+       output out;
+       current in, out; // current is a signal flow
+                        // discipline compatible with
+                        // electrical, but having a
+                        // flow nature only
+       analog begin
+          I(out) <+ -I(in);
+       end
+    endmodule
+    module voltage_amplifier (out, in);
+       input in;
+       output out;
+       voltage  out,    // Discipline voltage defined elsewhere
+                in;     // with access function V()
+       parameter real GAIN_V = 10.0;
+       analog
+          V(out) <+ GAIN_V * V(in);
+    endmodule
+    module current_amplifier (out, in);
+       input in;
+       output out;
+       current  out,    // Discipline current defined elsewhere
+                in;     // with access function I()
+       parameter real GAIN_I = 10.0;
+       analog
+          I(out) <+ GAIN_I * I(in);
+    endmodule

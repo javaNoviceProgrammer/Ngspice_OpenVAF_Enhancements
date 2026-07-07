@@ -631,6 +631,7 @@ pub(crate) fn elaborate_instantiations(db: &mut CompilationDB) -> anyhow::Result
         defparam_applied: HashSet::new(),
         defparam_src: HashMap::new(),
         port_conn_errors: Vec::new(),
+        unknown_module_errors: Vec::new(),
     };
 
     let mut out = String::new();
@@ -652,6 +653,10 @@ pub(crate) fn elaborate_instantiations(db: &mut CompilationDB) -> anyhow::Result
 
     if !ctx.port_conn_errors.is_empty() {
         anyhow::bail!("{}", ctx.port_conn_errors.join("\n"));
+    }
+
+    if !ctx.unknown_module_errors.is_empty() {
+        anyhow::bail!("{}", ctx.unknown_module_errors.join("\n"));
     }
 
     // Enhancement-58: a `defparam` whose target never matched a flattened
@@ -722,6 +727,50 @@ struct ElabCtx<'a> {
     /// during rendering (which has no error channel) and bailed afterwards,
     /// like `implicit_conflicts`.
     port_conn_errors: Vec<String>,
+    /// Instantiations whose target module does not exist anywhere in the
+    /// compilation unit. These used to be silently dropped from the rendered
+    /// output — a typo'd module name became an invisible open circuit.
+    unknown_module_errors: Vec<String>,
+}
+
+/// Rewrites `$port_connected(<name>)` calls in an already-rendered instance
+/// body to the literal `(1)`/`(0)` recorded for `<name>` in `conn` (keyed by
+/// the RENDERED argument name — see the call site). Calls whose argument is
+/// not in the map (bit-selects, expressions, ports of a nested not-yet-
+/// rendered instance) are left untouched.
+fn resolve_port_connected(body: &str, conn: &HashMap<String, bool>) -> String {
+    const NEEDLE: &str = "$port_connected";
+    if conn.is_empty() || !body.contains(NEEDLE) {
+        return body.to_string();
+    }
+    let is_ident_char = |c: char| c.is_ascii_alphanumeric() || c == '_' || c == '$';
+    let mut out = String::with_capacity(body.len());
+    let mut rest = body;
+    while let Some(pos) = rest.find(NEEDLE) {
+        let after = &rest[pos + NEEDLE.len()..];
+        // Parse `( <ident> )` directly after the needle, tolerating spaces.
+        let open = after.trim_start();
+        let replacement = open.strip_prefix('(').and_then(|inner| {
+            let inner = inner.trim_start();
+            let end = inner.find(|c: char| !is_ident_char(c)).unwrap_or(inner.len());
+            let ident = &inner[..end];
+            let close = inner[end..].trim_start().strip_prefix(')')?;
+            conn.get(ident).map(|&c| (if c { "(1)" } else { "(0)" }, close))
+        });
+        match replacement {
+            Some((lit, remainder)) => {
+                out.push_str(&rest[..pos]);
+                out.push_str(lit);
+                rest = remainder;
+            }
+            None => {
+                out.push_str(&rest[..pos + NEEDLE.len()]);
+                rest = after;
+            }
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 /// Enhancement-41: returns the trimmed text if it is a plain scalar identifier
@@ -1586,7 +1635,51 @@ impl ElabCtx<'_> {
         implicit_decls: &mut Vec<String>,
     ) -> String {
         let Some(module_name) = inst.module().map(|n| n.as_name()) else { return String::new() };
-        let Some(&target_id) = self.by_name.get(&module_name) else { return String::new() };
+        let Some(&target_id) = self.by_name.get(&module_name) else {
+            let instances: Vec<_> = inst
+                .instance_units()
+                .filter_map(|u| u.name().map(|n| n.as_name().to_string()))
+                .collect();
+            // `electrical out[0:2];` parses as an instantiation of "module
+            // electrical" -- when the unresolved name is a discipline, what
+            // the user actually wrote is a name-then-range net declaration,
+            // which deserves its own message (range-then-name works).
+            let is_discipline =
+                self.tree.data.disciplines.iter().any(|d| d.name == module_name);
+            // A paramset whose target failed to resolve contributes no twin
+            // module (see UnknownParamsetTarget), so an instantiation of it
+            // lands here; say so instead of claiming the name doesn't exist.
+            let is_dropped_paramset = self.parse.tree().items().any(|it| {
+                matches!(&it, ast::Item::ParamsetDecl(ps)
+                    if ps.name().map(|n| n.as_name()) == Some(module_name.clone()))
+            });
+            let msg = if is_discipline {
+                format!(
+                    "name-then-range bus declarations like '{} {}[msb:lsb];' are not \
+                     supported; declare the range before the name: '{} [msb:lsb] {};'",
+                    module_name,
+                    instances.join("', '"),
+                    module_name,
+                    instances.join(", "),
+                )
+            } else if is_dropped_paramset {
+                format!(
+                    "instance '{}' instantiates paramset '{}', which was dropped because \
+                     its target module could not be resolved",
+                    instances.join("', '"),
+                    module_name,
+                )
+            } else {
+                format!(
+                    "instance '{}' refers to module '{}', which is not defined anywhere \
+                     in this compilation unit",
+                    instances.join("', '"),
+                    module_name,
+                )
+            };
+            self.unknown_module_errors.push(msg);
+            return String::new();
+        };
         let target = self.tree[target_id].clone();
         let target_ast = self.module_ast(target.ast_id);
         let parent = self.tree[parent_id].clone();
@@ -1821,6 +1914,29 @@ impl ElabCtx<'_> {
         }
 
         let body = self.render_items(target_id, &scope, param_binding, &port_names, prefix);
+
+        // `$port_connected(p)` must be decided HERE, where the binding is
+        // known: after flattening, an open port is just a synthesized local
+        // net, no longer a port reference, so leaving the call in the
+        // rendered text failed validation for exactly the unconnected case
+        // the builtin exists to detect. The call's argument has already been
+        // renamed by `render_items` (to the caller's net, or to the fresh
+        // `open__` net), so connectivity is keyed by the RENDERED name.
+        // Top-level modules are untouched and keep the native OSDI path.
+        let mut port_connectivity: HashMap<String, bool> = HashMap::new();
+        for node in target.nodes.iter().filter(|n| n.is_port) {
+            let name = node.name.to_string();
+            if name.contains('[') {
+                continue; // $port_connected takes a scalar port per the LRM
+            }
+            if let Some(rendered) = scope.subst.get(&name) {
+                let connected =
+                    matches!(port_binding.get(&node.name), Some(PortBinding::Scalar(_)));
+                port_connectivity.insert(rendered.clone(), connected);
+            }
+        }
+        let body = resolve_port_connected(&body, &port_connectivity);
+
         let mut out = extra_decls.join("\n");
         if !out.is_empty() {
             out.push('\n');

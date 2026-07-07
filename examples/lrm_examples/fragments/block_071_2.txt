@@ -1,0 +1,5 @@
+    integer start, result;
+    analog begin
+       start = 3;
+       result = (start >> 1);
+    end

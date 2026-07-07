@@ -1,0 +1,19 @@
+// Verilog-AMS LRM 2023 (Accellera), example from page 116
+// extracted by lrm_examples/extract_lrm_examples.py (block_116_1)
+`include "disciplines.vams"
+`include "constants.vams"
+    module transamp(out, in);
+       inout out, in;
+       electrical out, in;
+       parameter real gm = 1;
+       analog
+          I(out) <+ gm*V(in);
+    endmodule
+    module resistor(p, n);
+       inout p, n;
+       electrical p, n;
+       branch (p,n) res;
+       parameter real R = 50;
+       analog
+          V(res) <+ R*I(res);
+    endmodule

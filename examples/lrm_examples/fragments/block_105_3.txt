@@ -1,0 +1,5 @@
+    n1 = white_noise(1-corr);
+    n2 = white_noise(1-corr);
+    n12 = white_noise(corr);
+    V(a,b) <+ Kv*(n1 + n12);
+    I(b,c) <+ Ki*(n2 + n12);

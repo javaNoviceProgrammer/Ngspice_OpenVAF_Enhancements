@@ -1,0 +1,20 @@
+// Verilog-AMS LRM 2023 (Accellera), example from page 438
+// extracted by lrm_examples/extract_lrm_examples.py (block_438_1)
+`include "disciplines.vams"
+`include "constants.vams"
+    module adc(in,out) ;
+       parameter bits=8, fullscale=1.0, dly=0.0, ttime=10n;
+       input in;
+       output [0:bits-1] out;
+       electrical in;
+       electrical [0:bits-1] out;
+       real sample, thresh;
+       analog begin
+          thresh = fullscale/2.0;
+          generate i (bits-1,0) begin
+             V(out[i]) <+ transition(sample > thresh, dly, ttime);
+             if (sample > thresh) sample = sample - thresh;
+             sample = 2.0*sample;
+          end
+       end
+    endmodule

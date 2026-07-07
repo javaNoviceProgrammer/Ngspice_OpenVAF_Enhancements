@@ -1,0 +1,23 @@
+// Verilog-AMS LRM 2023 (Accellera), example from page 416
+// extracted by lrm_examples/extract_lrm_examples.py (block_416_1)
+`include "disciplines.vams"
+`include "constants.vams"
+    module diffPair (c1, b1, e, b2, c2);
+       electrical c1, b1, e, b2, c2;
+       vertNPN Q1 (c1, b1, e);
+       vertNPN Q2 (.c(c2), .b(b2), .e(e));
+    endmodule
+
+// [lrm_examples context] The LRM leaves vertNPN to the imagination (it is a
+// SPICE .model in the companion netlist of Annex E).  Minimal GP-style BJT
+// so elaboration has a real target.
+module vertNPN(c, b, e);
+   inout c, b, e;
+   electrical c, b, e;
+   parameter real is_ = 1e-16 from (0:inf);
+   parameter real bf = 100.0 from (0:inf);
+   analog begin
+      I(b, e) <+ (is_/bf)*(limexp(V(b, e)/$vt) - 1);
+      I(c, e) <+ is_*(limexp(V(b, e)/$vt) - 1);
+   end
+endmodule

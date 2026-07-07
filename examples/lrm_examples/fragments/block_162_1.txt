@@ -1,0 +1,6 @@
+    input [0:3] in;
+    electrical [0:3] in; // valid, MSB and LSB in both the port type and port
+                        // direction declaration evaluate to the same value
+    input [0:3] in;
+    electrical [0:4-1] in;  // valid, MSB and LSB in both the port type and port
+                           // direction declaration evaluate to the same value
