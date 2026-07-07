@@ -748,6 +748,7 @@ pub(crate) fn elaborate_instantiations(db: &mut CompilationDB) -> anyhow::Result
         defparam_src: HashMap::new(),
         port_conn_errors: Vec::new(),
         unknown_module_errors: Vec::new(),
+        hier_param_errors: Vec::new(),
         abs_prefixes: HashMap::new(),
         port_ammeters: HashMap::new(),
     };
@@ -809,6 +810,10 @@ pub(crate) fn elaborate_instantiations(db: &mut CompilationDB) -> anyhow::Result
 
     if !ctx.unknown_module_errors.is_empty() {
         anyhow::bail!("{}", ctx.unknown_module_errors.join("\n"));
+    }
+
+    if !ctx.hier_param_errors.is_empty() {
+        anyhow::bail!("{}", ctx.hier_param_errors.join("\n"));
     }
 
     // Enhancement-58: a `defparam` whose target never matched a flattened
@@ -883,6 +888,10 @@ struct ElabCtx<'a> {
     /// compilation unit. These used to be silently dropped from the rendered
     /// output — a typo'd module name became an invisible open circuit.
     unknown_module_errors: Vec<String>,
+    /// Enhancement-87: instance parameter overrides that name a
+    /// hierarchical/block-scoped parameter (`#(.blk.p(4))`), which the LRM
+    /// forbids (only a module-level parameter may be named here).
+    hier_param_errors: Vec<String>,
     /// Enhancement-86: the ABSOLUTE instance-chain map of the top module
     /// currently being flattened — only the unambiguous spellings (the top
     /// module's own name, and `<top>.<chain>`-qualified keys), so it can be
@@ -1795,7 +1804,7 @@ impl ElabCtx<'_> {
 
     /// Same as `raw_port_bindings` but for `#(...)` parameter overrides.
     fn resolve_param_bindings(
-        &self,
+        &mut self,
         target: &TreeModule,
         overrides: Option<ast::ParamOverrides>,
     ) -> HashMap<Name, String> {
@@ -1819,6 +1828,26 @@ impl ElabCtx<'_> {
             }
         } else {
             for assign in &assigns {
+                // Enhancement-87: a hierarchical override target
+                // (`#(.blk.p(4))`, parsed as more than one NAME child) tries
+                // to reach a block-scoped parameter, which is local to its
+                // block. The LRM permits only a module-level parameter name
+                // here (LRM 6.3.2 / the page-112 `// error` case).
+                let names: Vec<_> = assign
+                    .syntax()
+                    .children()
+                    .filter(|c| c.kind() == syntax::SyntaxKind::NAME)
+                    .collect();
+                if names.len() > 1 {
+                    self.hier_param_errors.push(format!(
+                        "instance parameter override '.{}' targets a hierarchical/block-scoped \
+                         parameter, which cannot be overridden this way; only a module-level \
+                         parameter of '{}' may be named in an instance parameter assignment",
+                        names.iter().map(|n| n.text().to_string()).collect::<Vec<_>>().join("."),
+                        target.name,
+                    ));
+                    continue;
+                }
                 if let (Some(name), Some(val)) = (assign.name(), assign.val()) {
                     result.insert(name.as_name(), val.syntax().text().to_string());
                 }

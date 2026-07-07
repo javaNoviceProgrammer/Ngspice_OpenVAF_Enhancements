@@ -144,6 +144,10 @@ def main():
 \newunicodechar{∥}{\ensuremath{\parallel}}
 \newunicodechar{‖}{\ensuremath{\Vert}}
 \newunicodechar{␄}{\texttt{<EOF>}}
+% em/en dashes: force the text font (mathspec would otherwise route a dash
+% landing in a math-ish context through Latin Modern, which lacks U+2014).
+\newunicodechar{—}{\textemdash}
+\newunicodechar{–}{\textendash}
 """
 
     # pandoc's gfm reader emits pipe tables with no column widths, which
@@ -193,6 +197,11 @@ end
             "pandoc", md, "-f", "gfm+attributes", "-o", OUT,
             "--pdf-engine=xelatex", "--toc", "--toc-depth=2",
             "-H", hdr, "--lua-filter", lua,
+            # Load `mathspec` instead of pandoc's default `unicode-math` for
+            # the xelatex engine: unicode-math makes glyphs like the integral
+            # sign math-active, which breaks the `newunicodechar` text-mode
+            # mappings above (they render fine in prose under mathspec).
+            "-V", "mathspec",
             "-V", "documentclass=article",
             "-V", "papersize=a4",
             "-V", "geometry:margin=2.2cm",

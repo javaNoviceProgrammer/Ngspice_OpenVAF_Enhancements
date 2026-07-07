@@ -127,6 +127,26 @@ compact models use out-of-range defaults as "feature disabled" markers —
 while every user-given value is fully validated. ⚠️ documented in the
 [handbook's limitations chapter](../handbook/04-limitations-and-gotchas.md).
 
+**Block-scoped parameters** (LRM 6.3): a `parameter`/`localparam` declared
+inside a named `begin: label` block is a compile-time constant local to
+that block, read hierarchically and derivable from the module's
+parameters (E-87):
+
+```verilog
+analog begin
+   begin: s
+      parameter real g2 = gain * gain;  // block param, from a module param
+      real contrib = g2 + 1.0;
+   end
+   vout = s.contrib;                      // hierarchical read
+end
+```
+
+Overriding a module parameter propagates into the block-scoped parameters
+that depend on it. The LRM's `#(.blk.p(4))` instance override of a
+block-scoped parameter is illegal (LRM 6.3.2) and rejected with a targeted
+diagnostic.
+
 **`paramset`** blocks (a Verilog-AMS 3.4.6 feature adopted because real
 model libraries use them) work, including hidden-system-parameter
 assignments:
@@ -543,7 +563,7 @@ connected port.)*
 |---|---|---|
 | 2 Lexical (identifiers, numbers, strings, attributes) | ✅ | `escid`, `stresc`, `comment` suites |
 | 3.2–3.3 Value types, variables, persistence | ✅ | `vartype`, `variable_persistence`, `intstate`, `varinit` |
-| 3.4 Parameters (ranges, localparam, aliasparam, arrays, paramset) | ✅ (default-exemption ⚠️ documented) | `paramrange`, `localparam`, `array`, `paramset`, `paramsethsp` |
+| 3.4 Parameters (ranges, localparam, aliasparam, arrays, paramset, block-scoped) | ✅ (default-exemption ⚠️ documented) | `paramrange`, `localparam`, `array`, `paramset`, `paramsethsp`, `blockparam` |
 | 3.5–3.7 Natures, disciplines, nets, buses, nodesets | ✅ | `derivednature`, `domainbind`, `bus`, `netinit`, `ground`, `signalflow` |
 | 4.1–4.3 Operators, precedence, functions | ✅ (audited) | `operator`, `precedence`, `shift`, `concat` |
 | 4.5 Analog operators (all) | ✅ (`limexp` stateless ⚠️ documented) | `absdelay`, `laplace`, `zi`, `slew`, `transition`, `idt*`, `ddx`, `opargs`, `discontinuity`, `last_crossing` |

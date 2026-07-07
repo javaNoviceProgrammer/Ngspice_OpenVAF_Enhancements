@@ -1,0 +1,14 @@
+`include "disciplines.vams"
+module nested(a);
+   inout a; electrical a;
+   parameter real p = 2.0;
+   analog begin
+      begin: outer
+         parameter real po = p * 3.0;        // = 6
+         begin: inner
+            parameter real pi = po + 1.0;    // = 7, from the outer block param
+         end
+      end
+      V(a) <+ outer.inner.pi;                // = 7
+   end
+endmodule

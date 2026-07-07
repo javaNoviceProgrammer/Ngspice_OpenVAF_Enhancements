@@ -81,6 +81,10 @@ templates the generated token/AST/builtin/instruction tables come from):
   ([E-2](../../enhancements_doc/Enhancement-2.md));
 - the `<<<`/`>>>` arithmetic-shift tokens (plus a pre-existing lexer bug
   fix) ([E-6](../../enhancements_doc/Enhancement-6.md));
+- **hierarchical parameter override targets** (`#(.blk.p(4))`): the
+  extra `.segment`s are consumed so the parse stays clean instead of
+  cascading -- elaboration then rejects the block-scoped override with a
+  targeted diagnostic ([E-87](../../enhancements_doc/Enhancement-87.md));
 - **hierarchical branch reference tails** (`.branch(a,b)` / `.branch(<p>)`)
   swallowed into the path node so the enclosing item's CST stays whole
   for the elaboration rewrite (a keyword in path position used to shred
@@ -187,6 +191,12 @@ every structural feature:
   width-1 slices onto scalar ports degrade to the bit-select) with the
   same ascending bit-order convention as full-bus slicing
   ([E-85](../../enhancements_doc/Enhancement-85.md));
+- **block-scoped parameter override rejected** with a targeted message
+  (a named instance override `#(.blk.p(4))` naming a hierarchical target
+  is collected and bailed like the unknown-module errors; block-scoped
+  parameters are local to their block and take their value from their
+  initializer, which may reference the module's parameters)
+  ([E-87](../../enhancements_doc/Enhancement-87.md));
 - **hierarchical branch probes** ([E-86](../../enhancements_doc/Enhancement-86.md)): the top module's
   absolute chain map rides into every inlined child so SIBLING bodies
   resolve `V(top.a1.b)`/`$root...` references; unnamed-branch forms
@@ -616,6 +626,7 @@ tests hide behind `RUN_DEV_TESTS=1`. Fixed test-side only
 | [E-84](../../enhancements_doc/Enhancement-84.md) | parser, elaborate, hir_ty, hir_lower, mir_opt, driver | LRM example sweep: 6 defect fixes (port-branch panic, parser robustness, silent undefined modules, `$port_connected` on open ports, dead-op codegen, exit codes) |
 | [E-85](../../enhancements_doc/Enhancement-85.md) | parser, elaborate, hir_def, hir_ty | `` `__FILE__``/`` `__LINE__`` + connection part-selects (the last two sweep findings) |
 | [E-86](../../enhancements_doc/Enhancement-86.md) | parser, elaborate, **sim_back** | hierarchical branch probes + 2 DAE fixes (V-source-to-internal open circuit, collapse-of-probed-branch) |
+| [E-87](../../enhancements_doc/Enhancement-87.md) | parser, elaborate | block-scoped parameters (validated) + clean diagnostic for the illegal `#(.blk.p())` override |
 
 Enhancements not listed (57, 60, 62–64, 69, 72–77, 79–83) changed no
 compiler sources — they were validation suites, documentation, benchmark

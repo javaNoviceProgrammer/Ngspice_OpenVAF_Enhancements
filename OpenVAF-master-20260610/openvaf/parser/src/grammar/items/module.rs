@@ -342,7 +342,16 @@ fn instantiation(p: &mut Parser, m: Marker) {
 fn param_assign(p: &mut Parser) {
     let m = p.start();
     if p.eat(T![.]) {
-        name_r(p, TokenSet::unique(T!['(']));
+        name_r(p, TokenSet::new(&[T!['('], T![.]]));
+        // Enhancement-87: a hierarchical override target (`.blk.p(...)`, e.g.
+        // an attempt to reach a block-scoped parameter). The LRM only permits
+        // a simple parameter name here, so consume any extra `.segment`s to
+        // keep the parse clean -- CST validation rejects the multi-segment
+        // form with a targeted diagnostic instead of a parser cascade.
+        while p.at(T![.]) {
+            p.bump(T![.]);
+            name_r(p, TokenSet::new(&[T!['('], T![.]]));
+        }
         p.expect(T!['(']);
         expr(p);
         p.expect(T![')']);

@@ -1,0 +1,32 @@
+// Enhancement-87: block-scoped parameters (LRM 6.3 / page 112).
+//
+// A `parameter`/`localparam` may be declared inside a named `begin: label`
+// block. It is a compile-time constant local to that block, referenced
+// hierarchically (`label.name`) and derivable from the enclosing module's
+// parameters -- so a model-card override of a MODULE parameter flows into
+// the block-scoped parameters that depend on it.
+//
+// With defaults gain=2, offset=0.5:  vout = gain^2 + 1 + offset*10 = 10
+// With override gain=3, offset=0.2:  vout =        9 + 1 +      2  = 12
+`include "disciplines.vams"
+
+module blockparam(a);
+   inout a;
+   electrical a;
+   parameter real gain = 2.0 from (0:inf);
+   parameter real offset = 0.5 from [0:inf);
+   real vout;
+   analog begin
+      begin: s
+         parameter real g2 = gain * gain;   // block param, from module param
+         localparam real base = 1.0;         // block localparam
+         real contrib = g2 + base;           // block var uses both
+      end
+      begin: t
+         parameter real k = offset * 10.0;   // a second, sibling block
+         real val = k;
+      end
+      vout = s.contrib + t.val;              // hierarchical reads
+      V(a) <+ vout;
+   end
+endmodule

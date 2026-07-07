@@ -268,8 +268,8 @@
    "file": "lrm_p112_1.va",
    "block": "block_112_1",
    "page": 112,
-   "note": "block-scoped parameters; the LRM example itself also demos an illegal override",
-   "expect": "unexpected token"
+   "note": "block-scoped parameters WORK (E-87); this file is correctly rejected only because it also demos the LRM's own `#(.myscope.p2(4)) // error` case, now a clean targeted diagnostic (was a parser cascade)",
+   "expect": "hierarchical/block-scoped parameter"
   },
   {
    "file": "lrm_p117_1.va",
