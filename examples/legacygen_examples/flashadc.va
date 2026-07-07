@@ -1,0 +1,34 @@
+// Enhancement-88: the obsolete Verilog-A 1.0 `generate` statement
+// (LRM Annex C.4) -- an analog-block loop-unroll. This is the LRM's own
+// page-438 flash-ADC example, with the bus width made a constant (the
+// parameter-dependent width `[0:bits-1]` is a separate limitation).
+//
+// The `generate i (3, 0)` unrolls DESCENDING (MSB first), and the body is
+// stateful across iterations (`sample` is halved each step) -- so the unroll
+// ORDER matters. For a DC input the outputs are the binary code of in/fullscale.
+//
+// in = 0.7, fullscale = 1.0, thresh = 0.5:
+//   i=3: 0.7>0.5 -> out[3]=1, sample=0.4      (0.2 then *2)
+//   i=2: 0.4>0.5 -> out[2]=0, sample=0.8
+//   i=1: 0.8>0.5 -> out[1]=1, sample=0.6      (0.3 then *2)
+//   i=0: 0.6>0.5 -> out[0]=1, sample=0.2      (0.1 then *2)
+//   => 1 0 1 1  (binary 1011 = 0.6875)
+`include "disciplines.vams"
+
+module flashadc(in, out);
+   parameter real fullscale = 1.0, dly = 0.0, ttime = 1n;
+   input in;
+   output [0:3] out;
+   electrical in;
+   electrical [0:3] out;
+   real sample, thresh;
+   analog begin
+      thresh = fullscale / 2.0;
+      sample = V(in);
+      generate i (3, 0) begin
+         V(out[i]) <+ transition(sample > thresh ? 1.0 : 0.0, dly, ttime);
+         if (sample > thresh) sample = sample - thresh;
+         sample = 2.0 * sample;
+      end
+   end
+endmodule

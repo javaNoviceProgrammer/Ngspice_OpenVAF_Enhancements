@@ -409,6 +409,10 @@ examples/opamp741_examples/_*
 examples/opamp741_examples/bjt741.osdi
 examples/opamp741_examples/results/
 
+# Enhancement-88 legacy generate: verify-run scratch files
+examples/legacygen_examples/*.osdi
+examples/legacygen_examples/_*.va
+
 # Enhancement-87 block-scoped params: verify-run scratch files
 examples/blockparam_examples/*.osdi
 examples/blockparam_examples/_*.va

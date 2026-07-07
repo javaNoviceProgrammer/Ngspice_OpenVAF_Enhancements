@@ -179,6 +179,12 @@ every structural feature:
   (`electrical out[0:2];` parses as an instantiation) and paramsets
   dropped over unresolvable targets get tailored messages
   ([E-84](../../enhancements_doc/Enhancement-84.md));
+- **the legacy `generate <id> (start, end [, incr])` statement**
+  (obsolete Verilog-A 1.0 analog-block loop-unroll, LRM Annex C.4)
+  unrolled by a textual pre-pass: the index substitutes to a literal per
+  iteration (with bit-select bracket folding, since a bus bit-select needs
+  a literal index), constant bounds only -- a parameter bound cannot shape
+  the unroll (E-67 scope decision) ([E-88](../../enhancements_doc/Enhancement-88.md));
 - **`` `__FILE__``/`` `__LINE__`` expanded by a textual pre-pass** run
   before the other passes (preprocessor tokens are (kind, span) pairs
   into existing source and cannot carry synthesized literals):
@@ -627,6 +633,7 @@ tests hide behind `RUN_DEV_TESTS=1`. Fixed test-side only
 | [E-85](../../enhancements_doc/Enhancement-85.md) | parser, elaborate, hir_def, hir_ty | `` `__FILE__``/`` `__LINE__`` + connection part-selects (the last two sweep findings) |
 | [E-86](../../enhancements_doc/Enhancement-86.md) | parser, elaborate, **sim_back** | hierarchical branch probes + 2 DAE fixes (V-source-to-internal open circuit, collapse-of-probed-branch) |
 | [E-87](../../enhancements_doc/Enhancement-87.md) | parser, elaborate | block-scoped parameters (validated) + clean diagnostic for the illegal `#(.blk.p())` override |
+| [E-88](../../enhancements_doc/Enhancement-88.md) | elaborate | legacy `generate <id> (start,end)` analog-block loop-unroll (textual pre-pass) |
 
 Enhancements not listed (57, 60, 62–64, 69, 72–77, 79–83) changed no
 compiler sources — they were validation suites, documentation, benchmark

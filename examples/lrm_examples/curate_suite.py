@@ -297,8 +297,8 @@ endmodule
         note="ECP oscillator pair of examples merged; Annex E primitive stubs added"),
     "block_416_4": dict(fp="ecpOsc", cls="merged", note="merged into block_416_3"),
     "block_438_1": dict(fp="generate i (bits-1,0)", cls="limitation",
-        expect="unexpected token 'generate'",
-        note="legacy Verilog-A 1.0 'generate i (msb,lsb)' statement (obsolete Annex C form)"),
+        expect="legacy generate 'i': the bounds must be elaboration-time constants",
+        note="legacy Verilog-A 1.0 'generate i (msb,lsb)' statement (Annex C) now supported (E-88) with constant bounds; this example uses a PARAMETER bound (bits-1) + parameter bus width, both elaboration-time-unresolvable -- stays a limitation"),
 }
 
 

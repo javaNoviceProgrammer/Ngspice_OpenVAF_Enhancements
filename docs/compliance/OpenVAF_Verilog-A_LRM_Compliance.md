@@ -574,7 +574,7 @@ connected port.)*
 | casex/casez | ✅ | `casexz` |
 | 5.10 Events (steps, cross/above/timer, OR lists, phase lists) | ✅ | `initial_step`, `finalstep`, `cross`, `timer`, `lrmcorner` |
 | 5.11 Analog functions (arrays in/out/return) | ✅ | `funcarray`, `arrayout`, `arrayret` |
-| 6 Hierarchy (instantiation, generate, defparam, $root, part-select connections, hierarchical branch probes) | ✅ (param-shaped structure ⚠️ explained) | `instantiation`, `generate`, `defparam`, `hiername`, `implicitnet`, `partselect`, `hierbranch` |
+| 6 Hierarchy (instantiation, generate incl. legacy analog-block form, defparam, $root, part-select connections, hierarchical branch probes) | ✅ (param-shaped structure ⚠️ explained) | `instantiation`, `generate`, `legacygen`, `defparam`, `hiername`, `implicitnet`, `partselect`, `hierbranch` |
 | 9.4–9.8 Display, file/string I/O | ✅ | `display`, `fileio`, `stringio` |
 | 9.13 Random/distributions | ✅ (deterministic seed ⚠️ documented) | `rng`, `montecarlo` |
 | 9 misc ($finish family, $simparam, attributes) | ✅ | `simctrl`, `simparamstr`, `opvar` |

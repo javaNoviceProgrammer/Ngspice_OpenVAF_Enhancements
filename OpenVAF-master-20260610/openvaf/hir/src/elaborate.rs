@@ -173,6 +173,385 @@ pub(crate) fn expand_source_location_macros(db: &mut CompilationDB) -> anyhow::R
     Ok(())
 }
 
+/// A lexer token with its byte span in the source.
+struct Tok {
+    start: usize,
+    end: usize,
+    kind: TokenKind,
+}
+
+fn tok_spans(text: &str) -> Vec<Tok> {
+    let mut spans = Vec::new();
+    let mut pos = 0usize;
+    for t in lexer::tokenize(text) {
+        let start = pos;
+        let end = pos + usize::from(t.len);
+        pos = end;
+        spans.push(Tok { start, end, kind: t.kind });
+    }
+    spans
+}
+
+/// Evaluates a constant integer expression over the raw token slice
+/// `spans[lo..hi]` of `text` (decimal literals, `+ - * /`, unary `-`,
+/// parens). Any identifier or unsupported token makes the whole thing
+/// non-constant (`None`) -- e.g. a module parameter, which cannot shape a
+/// compile-time unroll. Shared by the legacy-generate bound evaluation and
+/// its bit-select index folding (Enhancement-88).
+fn eval_const_int_tokens(text: &str, spans: &[Tok], lo: usize, hi: usize) -> Option<i32> {
+    // Gather the significant (non-trivia) tokens in [lo, hi).
+    let toks: Vec<&Tok> = spans[lo..hi].iter().filter(|t| !is_trivia(t.kind)).collect();
+    let mut pos = 0usize;
+    let res = parse_add(text, &toks, &mut pos)?;
+    if pos == toks.len() {
+        Some(res)
+    } else {
+        None
+    }
+}
+
+fn parse_add(text: &str, toks: &[&Tok], pos: &mut usize) -> Option<i32> {
+    let mut acc = parse_mul(text, toks, pos)?;
+    while *pos < toks.len() {
+        let raw = &text[toks[*pos].start..toks[*pos].end];
+        match raw {
+            "+" => {
+                *pos += 1;
+                acc += parse_mul(text, toks, pos)?;
+            }
+            "-" => {
+                *pos += 1;
+                acc -= parse_mul(text, toks, pos)?;
+            }
+            _ => break,
+        }
+    }
+    Some(acc)
+}
+
+fn parse_mul(text: &str, toks: &[&Tok], pos: &mut usize) -> Option<i32> {
+    let mut acc = parse_unary(text, toks, pos)?;
+    while *pos < toks.len() {
+        let raw = &text[toks[*pos].start..toks[*pos].end];
+        match raw {
+            "*" => {
+                *pos += 1;
+                acc = acc.checked_mul(parse_unary(text, toks, pos)?)?;
+            }
+            "/" => {
+                *pos += 1;
+                let d = parse_unary(text, toks, pos)?;
+                if d == 0 {
+                    return None;
+                }
+                acc /= d;
+            }
+            _ => break,
+        }
+    }
+    Some(acc)
+}
+
+fn parse_unary(text: &str, toks: &[&Tok], pos: &mut usize) -> Option<i32> {
+    let raw = &text[toks.get(*pos)?.start..toks[*pos].end];
+    match raw {
+        "-" => {
+            *pos += 1;
+            Some(-parse_unary(text, toks, pos)?)
+        }
+        "+" => {
+            *pos += 1;
+            parse_unary(text, toks, pos)
+        }
+        _ => parse_atom(text, toks, pos),
+    }
+}
+
+fn parse_atom(text: &str, toks: &[&Tok], pos: &mut usize) -> Option<i32> {
+    let t = toks.get(*pos)?;
+    let raw = &text[t.start..t.end];
+    if t.kind == TokenKind::OpenParen {
+        *pos += 1;
+        let v = parse_add(text, toks, pos)?;
+        if toks.get(*pos)?.kind != TokenKind::CloseParen {
+            return None;
+        }
+        *pos += 1;
+        return Some(v);
+    }
+    if matches!(t.kind, TokenKind::Literal { .. }) {
+        *pos += 1;
+        return raw.replace('_', "").parse::<i32>().ok();
+    }
+    None
+}
+
+/// Enhancement-88: unrolls the obsolete Verilog-A 1.0 `generate` statement
+/// (LRM Annex C.4): `generate <id> ( <start>, <end> [, <incr>] ) <body>`.
+/// This is an analog-block loop-unroll -- the body is replicated with `<id>`
+/// substituted by each successive constant value, so an index expression like
+/// `out[i]` becomes a literal bus bit-select. Handled textually, like the
+/// module-level `generate for` (Enhancement-8), and run before that pass and
+/// before name resolution (the index is not a declared variable).
+///
+/// Bounds must be elaboration-time constants (literals / constant
+/// arithmetic); a parameter bound cannot shape the unrolled structure -- the
+/// same scope decision as `generate for`/`generate if` (Enhancement-67).
+pub(crate) fn elaborate_legacy_generate(db: &mut CompilationDB) -> anyhow::Result<()> {
+    let root_file = db.compilation_unit().root_file();
+    let Ok(text0) = db.file_text(root_file) else { return Ok(()) };
+    if !text0.contains("generate") {
+        return Ok(());
+    }
+
+    let mut text = text0.to_string();
+    // Fixpoint over nested legacy generates: each unroll can expose a
+    // generate that was inside the body.
+    for _ in 0..64 {
+        let Some(next) = unroll_first_legacy_generate(&text)? else { break };
+        text = next;
+    }
+
+    if text == *text0 {
+        return Ok(());
+    }
+
+    let root_path = db.vfs().read().file_path(root_file).to_string();
+    let base_name =
+        root_path.rsplit(['/', '\\']).next().unwrap_or(root_path.as_str()).to_owned();
+    let synth_name = format!("/{base_name}__legacygen.va");
+    let file_id = db.vfs().write().add_virt_file(&synth_name, text.into());
+    let include_dirs = db.include_dirs(root_file);
+    db.set_include_dirs(file_id, include_dirs);
+    let macro_flags = db.macro_flags(root_file);
+    db.set_macro_flags(file_id, macro_flags);
+    let overwrites = db.global_lint_overwrites(root_file);
+    db.set_global_lint_overwrites(file_id, overwrites);
+    db.set_root_file(file_id);
+    Ok(())
+}
+
+/// Finds the first legacy `generate <id> (...)` statement in `text`, unrolls
+/// it, and returns the rewritten source. Returns `Ok(None)` when there is no
+/// legacy generate left.
+fn unroll_first_legacy_generate(text: &str) -> anyhow::Result<Option<String>> {
+    let spans = tok_spans(text);
+    let sig: Vec<usize> = (0..spans.len()).filter(|&i| !is_trivia(spans[i].kind)).collect();
+    let raw = |i: usize| &text[spans[i].start..spans[i].end];
+
+    // locate `generate` (a SimpleIdent, since the raw lexer does not classify
+    // keywords) immediately followed by an identifier that is not for/if/case
+    // (those are the module-level generate regions, left untouched).
+    for w in 0..sig.len().saturating_sub(1) {
+        let gi = sig[w];
+        if spans[gi].kind != TokenKind::SimpleIdent || raw(gi) != "generate" {
+            continue;
+        }
+        let ni = sig[w + 1];
+        if spans[ni].kind != TokenKind::SimpleIdent
+            || matches!(raw(ni), "for" | "if" | "case" | "begin")
+        {
+            continue;
+        }
+        let index_name = raw(ni).to_owned();
+
+        // `( start , end [, incr] )`
+        let opi = *sig.get(w + 2).ok_or_else(|| anyhow::anyhow!("legacy generate: expected '('"))?;
+        if spans[opi].kind != TokenKind::OpenParen {
+            anyhow::bail!(
+                "legacy generate '{index_name}': expected '( start, end )' after the index"
+            );
+        }
+        // find matching ')', and the comma positions at paren-depth 1
+        let mut depth = 0i32;
+        let mut close = None;
+        let mut commas: Vec<usize> = Vec::new();
+        let mut j = opi;
+        while j < spans.len() {
+            match spans[j].kind {
+                TokenKind::OpenParen => depth += 1,
+                TokenKind::CloseParen => {
+                    depth -= 1;
+                    if depth == 0 {
+                        close = Some(j);
+                        break;
+                    }
+                }
+                TokenKind::Comma if depth == 1 => commas.push(j),
+                _ => {}
+            }
+            j += 1;
+        }
+        let cpi = close.ok_or_else(|| {
+            anyhow::anyhow!("legacy generate '{index_name}': unterminated argument list")
+        })?;
+        if commas.is_empty() || commas.len() > 2 {
+            anyhow::bail!(
+                "legacy generate '{index_name}': expected 'generate {index_name} (start, end [, incr])'"
+            );
+        }
+        let bound_err = || {
+            anyhow::anyhow!(
+                "legacy generate '{index_name}': the bounds must be elaboration-time constants \
+                 (literals / constant arithmetic); a module parameter cannot shape a \
+                 compile-time unroll"
+            )
+        };
+        let start = eval_const_int_tokens(text, &spans, opi + 1, commas[0]).ok_or_else(bound_err)?;
+        let end_hi = if commas.len() == 2 { commas[1] } else { cpi };
+        let end = eval_const_int_tokens(text, &spans, commas[0] + 1, end_hi).ok_or_else(bound_err)?;
+        let step = if commas.len() == 2 {
+            eval_const_int_tokens(text, &spans, commas[1] + 1, cpi).ok_or_else(bound_err)?
+        } else if start <= end {
+            1
+        } else {
+            -1
+        };
+        if step == 0 {
+            anyhow::bail!("legacy generate '{index_name}': increment must be non-zero");
+        }
+
+        // body: `begin ... end` (balanced) or a single statement up to ';'
+        let mut k = cpi + 1;
+        while k < spans.len() && is_trivia(spans[k].kind) {
+            k += 1;
+        }
+        let bstart = k;
+        let body_end; // exclusive byte index just past the body
+        if k < spans.len() && spans[k].kind == TokenKind::SimpleIdent && raw(k) == "begin" {
+            let mut bd = 0i32;
+            let mut m = k;
+            loop {
+                if m >= spans.len() {
+                    anyhow::bail!("legacy generate '{index_name}': unterminated 'begin ... end'");
+                }
+                if spans[m].kind == TokenKind::SimpleIdent {
+                    match raw(m) {
+                        "begin" => bd += 1,
+                        "end" => {
+                            bd -= 1;
+                            if bd == 0 {
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                m += 1;
+            }
+            body_end = spans[m].end;
+        } else {
+            // single statement: to the next top-level ';'
+            let mut m = k;
+            while m < spans.len() && spans[m].kind != TokenKind::Semi {
+                m += 1;
+            }
+            if m >= spans.len() {
+                anyhow::bail!("legacy generate '{index_name}': missing ';' after the body");
+            }
+            body_end = spans[m].end;
+        }
+        let body_text = &text[spans[bstart].start..body_end];
+
+        // unroll -- wrapped in a single outer `begin ... end` so the whole
+        // expansion is ONE statement, valid whether the legacy generate was
+        // inside an `analog begin ... end` (nested block) or the direct body
+        // of `analog` (which takes a single statement).
+        let mut count = 0u32;
+        let mut v = start;
+        let mut unrolled = String::from("\nbegin\n");
+        loop {
+            let done = if step > 0 { v > end } else { v < end };
+            if done {
+                break;
+            }
+            unrolled.push_str(&format!("// legacy generate {index_name} = {v}\nbegin\n"));
+            unrolled.push_str(&substitute_index(body_text, &index_name, v));
+            unrolled.push_str("\nend\n");
+            v += step;
+            count += 1;
+            if count > 1_000_000 {
+                anyhow::bail!("legacy generate '{index_name}': more than 1,000,000 iterations");
+            }
+        }
+        unrolled.push_str("end\n");
+
+        let mut new_text = String::with_capacity(text.len());
+        new_text.push_str(&text[..spans[gi].start]);
+        new_text.push_str(&unrolled);
+        new_text.push_str(&text[body_end..]);
+        return Ok(Some(new_text));
+    }
+    Ok(None)
+}
+
+/// Substitutes the legacy-generate index `name` with the literal `value`
+/// in `body`: every whole-identifier occurrence becomes the literal, and
+/// each bit-select `[<expr>]` whose contents then constant-fold is replaced
+/// by `[<literal>]` (a bus bit-select requires a literal index, not a
+/// constant expression). Non-folding indices (dynamic array access) are left
+/// untouched.
+fn substitute_index(body: &str, name: &str, value: i32) -> String {
+    // pass 1: whole-identifier substitution of `name` -> value
+    let spans = tok_spans(body);
+    let mut s1 = String::with_capacity(body.len());
+    let mut prev = 0usize;
+    for t in &spans {
+        if t.kind == TokenKind::SimpleIdent && &body[t.start..t.end] == name {
+            s1.push_str(&body[prev..t.start]);
+            s1.push_str(&value.to_string());
+            prev = t.end;
+        }
+    }
+    s1.push_str(&body[prev..]);
+
+    // pass 2: fold bit-select brackets `[<const-int>]` -> `[<int>]`
+    let spans = tok_spans(&s1);
+    let mut holes: Vec<(usize, usize, String)> = Vec::new();
+    let mut i = 0usize;
+    while i < spans.len() {
+        if spans[i].kind == TokenKind::OpenBracket {
+            let mut depth = 0i32;
+            let mut close = None;
+            let mut j = i;
+            while j < spans.len() {
+                match spans[j].kind {
+                    TokenKind::OpenBracket => depth += 1,
+                    TokenKind::CloseBracket => {
+                        depth -= 1;
+                        if depth == 0 {
+                            close = Some(j);
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+                j += 1;
+            }
+            if let Some(cj) = close {
+                if let Some(val) = eval_const_int_tokens(&s1, &spans, i + 1, cj) {
+                    holes.push((spans[i].end, spans[cj].start, val.to_string()));
+                }
+                i = cj + 1;
+                continue;
+            }
+        }
+        i += 1;
+    }
+    if holes.is_empty() {
+        return s1;
+    }
+    let mut out = String::with_capacity(s1.len());
+    let mut prev = 0usize;
+    for (hs, he, rep) in holes {
+        out.push_str(&s1[prev..hs]);
+        out.push_str(&rep);
+        prev = he;
+    }
+    out.push_str(&s1[prev..]);
+    out
+}
+
 /// Entry point for `generate for`/`genvar` elaboration, called once from
 /// [`CompilationDB::new`] *before* [`elaborate_instantiations`] -- so that
 /// any instantiation statements written inside a `generate for` body have

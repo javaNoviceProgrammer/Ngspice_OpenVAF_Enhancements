@@ -155,6 +155,7 @@ impl CompilationDB {
         res.set_global_lint_overwrites(root_file, overwrites);
 
         crate::elaborate::expand_source_location_macros(&mut res)?;
+        crate::elaborate::elaborate_legacy_generate(&mut res)?;
         crate::elaborate::elaborate_generates(&mut res)?;
         crate::elaborate::elaborate_instantiations(&mut res)?;
 
