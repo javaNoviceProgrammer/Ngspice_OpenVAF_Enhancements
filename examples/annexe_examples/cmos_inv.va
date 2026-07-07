@@ -1,0 +1,8 @@
+`include "disciplines.vams"
+`include "annex_e_primitives.va"
+// A CMOS inverter built from the Annex E square-law MOS primitives.
+module cmos_inv(in, out, vdd, vss);
+   inout in, out, vdd, vss; electrical in, out, vdd, vss;
+   spice_pmos #(.w(4u), .l(1u)) mp(out, in, vdd);
+   spice_nmos #(.w(2u), .l(1u)) mn(out, in, vss);
+endmodule

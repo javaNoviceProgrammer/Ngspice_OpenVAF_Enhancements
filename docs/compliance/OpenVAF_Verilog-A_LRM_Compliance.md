@@ -172,10 +172,15 @@ nature CurrentX : Current;   // derived nature, inherits abstol/units
     abstol = 1e-15;
 endnature
 
-electrical [3:0] bus;        // vectored net
+electrical [3:0] bus;        // vectored net (range-then-name)
+electrical data[0:7];        // vectored net (name-then-range, E-89)
 electrical vout = 2.5;       // initializer -> OSDI nodeset (initial guess)
 ground electrical gnd;
 ```
+
+Both declaration orders are accepted for vectored nets and ports: the
+range-then-name form `electrical [3:0] bus;` / `input [3:0] bus;` and the
+name-then-range form `electrical bus[3:0];` / `input bus[3:0];` (E-89).
 
 Signal-flow disciplines (potential-only or flow-only) are fully usable,
 including **probe-only branches** — probing a branch that is never

@@ -1,0 +1,78 @@
+// Enhancement-89: Annex E SPICE-compatibility primitives, as clean
+// Verilog-A modules (LRM Annex E). These are the built-in primitives a
+// Verilog-AMS simulator provides for SPICE interoperability; here they are
+// a small, reusable library that behavioral models instantiate. Include it
+// with `include "annex_e_primitives.va"`.
+//
+// The names (resistor/capacitor/inductor) match ngspice's built-in device
+// names, so they may ONLY be used as sub-modules that get flattened into a
+// top module (Enhancement-5) -- never registered directly as a `.model`
+// device (that collides with the built-in). openvaf-r warns (L018) if a
+// top-level module carries one of these names.
+
+// --- linear one-ports -----------------------------------------------------
+module resistor(p, n);
+   inout p, n; electrical p, n;
+   parameter real r = 1k from (0:inf);
+   analog I(p, n) <+ V(p, n) / r;
+endmodule
+
+module capacitor(p, n);
+   inout p, n; electrical p, n;
+   parameter real c = 1p from [0:inf);
+   analog I(p, n) <+ ddt(c * V(p, n));
+endmodule
+
+module inductor(p, n);
+   inout p, n; electrical p, n;
+   parameter real l = 1u from (0:inf);
+   analog V(p, n) <+ ddt(l * I(p, n));
+endmodule
+
+// --- independent sources ---------------------------------------------------
+module vsource(p, n);
+   inout p, n; electrical p, n;
+   parameter real dc = 0.0;
+   analog V(p, n) <+ dc;
+endmodule
+
+module isource(p, n);
+   inout p, n; electrical p, n;
+   parameter real dc = 0.0;
+   analog I(p, n) <+ dc;
+endmodule
+
+// --- square-law (SPICE level-1) MOSFETs, 3-terminal ------------------------
+module spice_nmos(d, g, s);
+   inout d, g, s; electrical d, g, s;
+   parameter real l = 1u from (0:inf);
+   parameter real w = 1u from (0:inf);
+   parameter real vto = 0.7;
+   parameter real kp = 2e-5 from (0:inf);
+   parameter real lambda = 0.0 from [0:inf);
+   real vgs, vds, vov, ids;
+   analog begin
+      vgs = V(g, s); vds = V(d, s); vov = vgs - vto;
+      if (vov <= 0.0)      ids = 0.0;                                  // cutoff
+      else if (vds >= vov) ids = 0.5*kp*(w/l)*vov*vov*(1.0 + lambda*vds); // sat
+      else                 ids = kp*(w/l)*(vov*vds - 0.5*vds*vds);      // triode
+      I(d, s) <+ ids;
+   end
+endmodule
+
+module spice_pmos(d, g, s);
+   inout d, g, s; electrical d, g, s;
+   parameter real l = 1u from (0:inf);
+   parameter real w = 1u from (0:inf);
+   parameter real vto = -0.7;
+   parameter real kp = 1e-5 from (0:inf);
+   parameter real lambda = 0.0 from [0:inf);
+   real vsg, vsd, vov, isd;
+   analog begin
+      vsg = V(s, g); vsd = V(s, d); vov = vsg + vto;
+      if (vov <= 0.0)      isd = 0.0;
+      else if (vsd >= vov) isd = 0.5*kp*(w/l)*vov*vov*(1.0 + lambda*vsd);
+      else                 isd = kp*(w/l)*(vov*vsd - 0.5*vsd*vsd);
+      I(s, d) <+ isd;
+   end
+endmodule

@@ -1,7 +1,7 @@
 # Results — LRM 2023 example sweep vs openvaf-r
 
 **Summary: 231 code blocks extracted from the 442-page LRM PDF. Of the
-complete-module examples, 40 compile cleanly, 19 hit documented
+complete-module examples, 42 compile cleanly, 17 hit documented
 openvaf-r limitations (each pinned to its exact diagnostic), 21 use the
 mixed-signal subset a Verilog-A compiler correctly rejects. The sweep
 exposed eight compiler defects — all eight are now fixed (six in
@@ -34,7 +34,7 @@ defects must compile, open gaps must keep their exact diagnostic.
    deny-level lint (L016); the affected files compile with
    `-W port_without_direction`.
 
-## In-scope examples that compile (40)
+## In-scope examples that compile (42)
 
 | File | LRM page | Notes |
 |---|---|---|
@@ -60,7 +60,9 @@ defects must compile, open gaps must keep their exact diagnostic.
 | `lrm_p142_1.va` | 142 | verbatim |
 | `lrm_p143_1.va` | 143 | verbatim |
 | `lrm_p150_1.va` | 150 | sigma-delta ADC loop (cross/transition/idt, implicit nets aa0-aa2); d2a context stub added |
+| `lrm_p152_2.va` | 152 | transmission gate over the Annex E SPICE MOS primitives spice_nmos/spice_pmos; primitives provided as context (E-89, examples/annexe_examples) |
 | `lrm_p153_1.va` | 153 | verbatim |
+| `lrm_p153_2.va` | 153 | instance-parameter forms over the mosp/spice_pmos Annex E primitives; provided as context (E-89) |
 | `lrm_p153_3.va` | 153 | hierarchy example (named parameter overrides); vco context stub added |
 | `lrm_p155_1.va` | 155 | verbatim |
 | `lrm_p155_2.va` | 155 | verbatim |
@@ -79,7 +81,7 @@ defects must compile, open gaps must keep their exact diagnostic.
 | `lrm_p416_1.va` | 416 | differential pair; LRM omits port directions (lint demoted) + vertNPN context stub |
 | `lrm_p416_3.va` | 416 | ECP oscillator pair of examples merged; Annex E primitive stubs added |
 
-## Documented limitations (19)
+## Documented limitations (17)
 
 Each file is verified to be *rejected with this exact diagnostic and no
 crash* — if a future enhancement implements one of these, verify fails and
@@ -87,13 +89,11 @@ the file graduates to `va/`.
 
 | File | LRM page | Pinned diagnostic | What it needs |
 |---|---|---|---|
-| `lrm_p045_4.va` | 45 | `name-then-range bus declarations` | name-then-range array ports (input in[0:2]) not supported |
+| `lrm_p045_4.va` | 45 | `refers to module 'gen'` | name-then-range array ports (input in[0:2]) now supported (E-89); still a limitation on the undefined gen/sink modules + the multi-dimensional parameter-array literal override |
 | `lrm_p091_1.va` | 91 | `not a constant expression` | parameter-dependent bus width (electrical [0:bits-1]) |
-| `lrm_p112_1.va` | 112 | `unexpected token` | block-scoped parameters; the LRM example itself also demos an illegal override |
+| `lrm_p112_1.va` | 112 | `hierarchical/block-scoped parameter` | block-scoped parameters WORK (E-87); this file is correctly rejected only because it also demos the LRM's own `#(.myscope.p2(4)) // error` case, now a clean targeted diagnostic (was a parser cascade) |
 | `lrm_p117_1.va` | 117 | `not a constant expression` | parameter-dependent bus width |
 | `lrm_p134_1.va` | 134 | `not a constant expression` | parameter-dependent bus width |
-| `lrm_p152_2.va` | 152 | `refers to module` | instantiates the Annex E SPICE primitives spice_pmos/spice_nmos (SPICE-compatibility layer not supported) |
-| `lrm_p153_2.va` | 153 | `refers to module 'mosp'` | uses the SPICE-compat mosp of the page-152 example, which itself cannot elaborate (Annex E) |
 | `lrm_p155_3.va` | 155 | `'processinfo' was not found` | hierarchical refs to an uninstantiated process-info module |
 | `lrm_p158_1.va` | 158 | `instantiates paramset 'nch'` | paramset targeting a SPICE primitive (nmos3) rather than a VA module |
 | `lrm_p168_1.va` | 168 | `compile-time-constant integer` | generate-for with parameter loop bounds (structure cannot depend on runtime-bindable parameters; E-67 scope decision) |
@@ -105,7 +105,7 @@ the file graduates to `va/`.
 | `lrm_p267_1.va` | 267 | `refers to module 'resistor'` | $analog_node_alias/$analog_port_alias example; elaboration rejects the unconnected instance nets |
 | `lrm_p274_3.va` | 274 | `requires a bit-select` | $table_model with runtime array data arguments |
 | `lrm_p343_1.va` | 343 | `'$resistor' was not found` | Annex E SPICE-compatibility system function $resistor() |
-| `lrm_p438_1.va` | 438 | `unexpected token 'generate'` | legacy Verilog-A 1.0 'generate i (msb,lsb)' statement (obsolete Annex C form) |
+| `lrm_p438_1.va` | 438 | `legacy generate 'i': the bounds must be elaboration-time constants` | legacy Verilog-A 1.0 'generate i (msb,lsb)' statement (Annex C) now supported (E-88) with constant bounds; this example uses a PARAMETER bound (bits-1) + parameter bus width, both elaboration-time-unresolvable -- stays a limitation |
 
 ## Mixed-signal examples, correctly out of scope (21)
 

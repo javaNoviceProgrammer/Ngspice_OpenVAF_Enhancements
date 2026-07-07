@@ -93,8 +93,8 @@ MANUAL = {
     "block_032_1": dict(fp="full_case", cls="junk",
         note="attribute-section pseudo-code (<rest_of_case_statement>); crashes the compiler - finding F2"),
     "block_045_4": dict(fp="crosstalk", cls="limitation",
-        expect="name-then-range bus declarations",
-        note="name-then-range array ports (input in[0:2]) not supported"),
+        expect="refers to module 'gen'",
+        note="name-then-range array ports (input in[0:2]) now supported (E-89); still a limitation on the undefined gen/sink modules + the multi-dimensional parameter-array literal override"),
     "block_048_2": dict(fp="ttl_curr", cls="ok",
         trim_after=("endnature", 3),
         no_include=True,  # ttl_curr declares access=I, which collides with disciplines.vams Current
@@ -164,12 +164,69 @@ module d2a(dout, aref, din);
 endmodule
 """,
         note="sigma-delta ADC loop (cross/transition/idt, implicit nets aa0-aa2); d2a context stub added"),
-    "block_152_2": dict(fp="spice_pmos", cls="limitation",
-        expect="refers to module",
-        note="instantiates the Annex E SPICE primitives spice_pmos/spice_nmos (SPICE-compatibility layer not supported)"),
-    "block_153_2": dict(fp="weakp", cls="limitation",
-        expect="refers to module 'mosp'",
-        note="uses the SPICE-compat mosp of the page-152 example, which itself cannot elaborate (Annex E)"),
+    "block_152_2": dict(fp="spice_pmos", cls="ok",
+        append="""
+// [lrm_examples context] Annex E SPICE-compatibility MOS primitives
+// (square-law level-1, 3-terminal), matching examples/annexe_examples (E-89).
+module spice_nmos(d, g, s);
+   inout d, g, s; electrical d, g, s;
+   parameter real l = 1u from (0:inf);
+   parameter real w = 1u from (0:inf);
+   parameter real vto = 0.7;
+   parameter real kp = 2e-5 from (0:inf);
+   real vgs, vds, vov, ids;
+   analog begin
+      vgs = V(g, s); vds = V(d, s); vov = vgs - vto;
+      if (vov <= 0.0)      ids = 0.0;
+      else if (vds >= vov) ids = 0.5*kp*(w/l)*vov*vov;
+      else                 ids = kp*(w/l)*(vov*vds - 0.5*vds*vds);
+      I(d, s) <+ ids;
+   end
+endmodule
+module spice_pmos(d, g, s);
+   inout d, g, s; electrical d, g, s;
+   parameter real l = 1u from (0:inf);
+   parameter real w = 1u from (0:inf);
+   parameter real vto = -0.7;
+   parameter real kp = 1e-5 from (0:inf);
+   real vsg, vsd, vov, isd;
+   analog begin
+      vsg = V(s, g); vsd = V(s, d); vov = vsg + vto;
+      if (vov <= 0.0)      isd = 0.0;
+      else if (vsd >= vov) isd = 0.5*kp*(w/l)*vov*vov;
+      else                 isd = kp*(w/l)*(vov*vsd - 0.5*vsd*vsd);
+      I(s, d) <+ isd;
+   end
+endmodule
+""",
+        note="transmission gate over the Annex E SPICE MOS primitives spice_nmos/spice_pmos; primitives provided as context (E-89, examples/annexe_examples)"),
+    "block_153_2": dict(fp="weakp", cls="ok",
+        append="""
+// [lrm_examples context] the `mosp` wrapper from the page-152 example plus
+// the Annex E spice_pmos it instantiates (E-89).
+module mosp(drain, gate, source);
+   inout drain, gate, source; electrical drain, gate, source;
+   parameter real gate_length = 0.3e-6;
+   parameter real gate_width  = 4.0e-6;
+   spice_pmos #(.l(gate_length), .w(gate_width)) p(drain, gate, source);
+endmodule
+module spice_pmos(d, g, s);
+   inout d, g, s; electrical d, g, s;
+   parameter real l = 1u from (0:inf);
+   parameter real w = 1u from (0:inf);
+   parameter real vto = -0.7;
+   parameter real kp = 1e-5 from (0:inf);
+   real vsg, vsd, vov, isd;
+   analog begin
+      vsg = V(s, g); vsd = V(s, d); vov = vsg + vto;
+      if (vov <= 0.0)      isd = 0.0;
+      else if (vsd >= vov) isd = 0.5*kp*(w/l)*vov*vov;
+      else                 isd = kp*(w/l)*(vov*vsd - 0.5*vsd*vsd);
+      I(s, d) <+ isd;
+   end
+endmodule
+""",
+        note="instance-parameter forms over the mosp/spice_pmos Annex E primitives; provided as context (E-89)"),
     "block_153_3": dict(fp="vco1", cls="ok",
         append="""
 // [lrm_examples context] The LRM never defines the vco it instantiates;

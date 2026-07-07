@@ -133,10 +133,22 @@
    "note": "sigma-delta ADC loop (cross/transition/idt, implicit nets aa0-aa2); d2a context stub added"
   },
   {
+   "file": "lrm_p152_2.va",
+   "block": "block_152_2",
+   "page": 152,
+   "note": "transmission gate over the Annex E SPICE MOS primitives spice_nmos/spice_pmos; primitives provided as context (E-89, examples/annexe_examples)"
+  },
+  {
    "file": "lrm_p153_1.va",
    "block": "block_153_1",
    "page": 153,
    "note": ""
+  },
+  {
+   "file": "lrm_p153_2.va",
+   "block": "block_153_2",
+   "page": 153,
+   "note": "instance-parameter forms over the mosp/spice_pmos Annex E primitives; provided as context (E-89)"
   },
   {
    "file": "lrm_p153_3.va",
@@ -254,8 +266,8 @@
    "file": "lrm_p045_4.va",
    "block": "block_045_4",
    "page": 45,
-   "note": "name-then-range array ports (input in[0:2]) not supported",
-   "expect": "name-then-range bus declarations"
+   "note": "name-then-range array ports (input in[0:2]) now supported (E-89); still a limitation on the undefined gen/sink modules + the multi-dimensional parameter-array literal override",
+   "expect": "refers to module 'gen'"
   },
   {
    "file": "lrm_p091_1.va",
@@ -284,20 +296,6 @@
    "page": 134,
    "note": "parameter-dependent bus width",
    "expect": "not a constant expression"
-  },
-  {
-   "file": "lrm_p152_2.va",
-   "block": "block_152_2",
-   "page": 152,
-   "note": "instantiates the Annex E SPICE primitives spice_pmos/spice_nmos (SPICE-compatibility layer not supported)",
-   "expect": "refers to module"
-  },
-  {
-   "file": "lrm_p153_2.va",
-   "block": "block_153_2",
-   "page": 153,
-   "note": "uses the SPICE-compat mosp of the page-152 example, which itself cannot elaborate (Annex E)",
-   "expect": "refers to module 'mosp'"
   },
   {
    "file": "lrm_p155_3.va",

@@ -286,6 +286,135 @@ fn parse_atom(text: &str, toks: &[&Tok], pos: &mut usize) -> Option<i32> {
     None
 }
 
+/// Verilog-A keywords that can precede `<name> [ … ]` and must NOT be treated
+/// as a discipline in a name-then-range net declaration (they head variable,
+/// parameter, or other declarations that already support the array form, or
+/// are not net declarations at all).
+const NAME_RANGE_HEAD_EXCLUDE: &[&str] = &[
+    "real", "integer", "string", "parameter", "localparam", "aliasparam",
+    "genvar", "branch", "defparam", "generate", "analog", "module", "function",
+    "nature", "discipline", "paramset", "begin",
+];
+
+/// Enhancement-89: normalizes the *name-then-range* form of a net or port
+/// declaration -- `electrical in[0:2];`, `input in[0:2];` (LRM 3.6 / 3.7,
+/// example page 45) -- to the equivalent *range-then-name* form
+/// (`electrical [0:2] in;`, `input [0:2] in;`), which is fully supported
+/// (Enhancement-3). Purely syntactic; a textual pre-pass so all of the
+/// existing bus/port machinery is reused unchanged.
+///
+/// Disambiguation from an instance array (`foo a[0:2] (ports)`) is exact: an
+/// instantiation always has a `(port list)` after the range, so a
+/// `<head> <name> [range]` that is instead followed by `;` is a declaration.
+/// Scope: single-name declarations with a 1-D range (the LRM form); a
+/// multi-name or multi-dimensional name-then-range declaration is left as-is.
+pub(crate) fn normalize_name_range_decls(db: &mut CompilationDB) -> anyhow::Result<()> {
+    let root_file = db.compilation_unit().root_file();
+    let Ok(text) = db.file_text(root_file) else { return Ok(()) };
+    if !text.contains('[') {
+        return Ok(());
+    }
+
+    let spans = tok_spans(&text);
+    let sig: Vec<usize> = (0..spans.len()).filter(|&i| !is_trivia(spans[i].kind)).collect();
+    let raw = |i: usize| &text[spans[i].start..spans[i].end];
+    // sig index -> position in `sig`, for stepping to previous significant tokens
+    let pos_in_sig: HashMap<usize, usize> =
+        sig.iter().enumerate().map(|(p, &i)| (i, p)).collect();
+
+    let mut rewrites: Vec<(usize, usize, String)> = Vec::new();
+    for (sp, &bi) in sig.iter().enumerate() {
+        if spans[bi].kind != TokenKind::OpenBracket || sp < 2 {
+            continue;
+        }
+        let name_i = sig[sp - 1];
+        let head_i = sig[sp - 2];
+        if spans[name_i].kind != TokenKind::SimpleIdent
+            || spans[head_i].kind != TokenKind::SimpleIdent
+        {
+            continue;
+        }
+        let head = raw(head_i);
+        let is_dir = matches!(head, "input" | "output" | "inout");
+        if !is_dir && NAME_RANGE_HEAD_EXCLUDE.contains(&head) {
+            continue;
+        }
+        // the name itself must not be a keyword/net-type
+        if matches!(raw(name_i), "ground" | "wire" | "wreal") {
+            continue;
+        }
+        // declaration boundary: the token before the head is `;`, `)`
+        // (module-port list or a preceding statement), a direction keyword
+        // (net-type-after-direction case, `input electrical in[0:2]`), or the
+        // head is the very first token.
+        let hp = pos_in_sig[&head_i];
+        let boundary = hp == 0
+            || matches!(raw(sig[hp - 1]), ";" | ")" | "input" | "output" | "inout");
+        if !boundary {
+            continue;
+        }
+        // matching `]`
+        let mut depth = 0i32;
+        let mut close = None;
+        let mut j = bi;
+        while j < spans.len() {
+            match spans[j].kind {
+                TokenKind::OpenBracket => depth += 1,
+                TokenKind::CloseBracket => {
+                    depth -= 1;
+                    if depth == 0 {
+                        close = Some(j);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+            j += 1;
+        }
+        let Some(cj) = close else { continue };
+        // single-name, 1-D: the token after `]` must be `;`
+        let after = pos_in_sig[&cj] + 1;
+        if after >= sig.len() || spans[sig[after]].kind != TokenKind::Semi {
+            continue;
+        }
+        // rewrite `<name> [range]` -> `[range] <name>`
+        let name_txt = &text[spans[name_i].start..spans[name_i].end];
+        let range_txt = &text[spans[bi].start..spans[cj].end];
+        rewrites.push((
+            spans[name_i].start,
+            spans[cj].end,
+            format!("{range_txt} {name_txt}"),
+        ));
+    }
+
+    if rewrites.is_empty() {
+        return Ok(());
+    }
+    rewrites.sort_by_key(|(s, _, _)| *s);
+    let mut out = String::with_capacity(text.len());
+    let mut prev = 0usize;
+    for (s, e, rep) in rewrites {
+        out.push_str(&text[prev..s]);
+        out.push_str(&rep);
+        prev = e;
+    }
+    out.push_str(&text[prev..]);
+
+    let root_path = db.vfs().read().file_path(root_file).to_string();
+    let base_name =
+        root_path.rsplit(['/', '\\']).next().unwrap_or(root_path.as_str()).to_owned();
+    let synth_name = format!("/{base_name}__namerange.va");
+    let file_id = db.vfs().write().add_virt_file(&synth_name, out.into());
+    let include_dirs = db.include_dirs(root_file);
+    db.set_include_dirs(file_id, include_dirs);
+    let macro_flags = db.macro_flags(root_file);
+    db.set_macro_flags(file_id, macro_flags);
+    let overwrites = db.global_lint_overwrites(root_file);
+    db.set_global_lint_overwrites(file_id, overwrites);
+    db.set_root_file(file_id);
+    Ok(())
+}
+
 /// Enhancement-88: unrolls the obsolete Verilog-A 1.0 `generate` statement
 /// (LRM Annex C.4): `generate <id> ( <start>, <end> [, <incr>] ) <body>`.
 /// This is an analog-block loop-unroll -- the body is replicated with `<id>`

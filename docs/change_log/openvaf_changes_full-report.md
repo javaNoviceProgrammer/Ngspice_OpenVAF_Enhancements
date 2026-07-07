@@ -179,6 +179,11 @@ every structural feature:
   (`electrical out[0:2];` parses as an instantiation) and paramsets
   dropped over unresolvable targets get tailored messages
   ([E-84](../../enhancements_doc/Enhancement-84.md));
+- **name-then-range net/port declarations** (`input in[0:2]`,
+  `electrical out[0:2]`, LRM 3.6/3.7): a textual pre-pass rewrites the
+  `<head> <name>[range]` form to the range-then-name form (Enhancement-3),
+  reusing all bus/port machinery; the `(`-after-range instance rule keeps
+  instance arrays untouched ([E-89](../../enhancements_doc/Enhancement-89.md));
 - **the legacy `generate <id> (start, end [, incr])` statement**
   (obsolete Verilog-A 1.0 analog-block loop-unroll, LRM Annex C.4)
   unrolled by a textual pre-pass: the index substitutes to a literal per
@@ -634,6 +639,7 @@ tests hide behind `RUN_DEV_TESTS=1`. Fixed test-side only
 | [E-86](../../enhancements_doc/Enhancement-86.md) | parser, elaborate, **sim_back** | hierarchical branch probes + 2 DAE fixes (V-source-to-internal open circuit, collapse-of-probed-branch) |
 | [E-87](../../enhancements_doc/Enhancement-87.md) | parser, elaborate | block-scoped parameters (validated) + clean diagnostic for the illegal `#(.blk.p())` override |
 | [E-88](../../enhancements_doc/Enhancement-88.md) | elaborate | legacy `generate <id> (start,end)` analog-block loop-unroll (textual pre-pass) |
+| [E-89](../../enhancements_doc/Enhancement-89.md) | elaborate | name-then-range net/port decls (textual normalize) + Annex E SPICE-primitives example library |
 
 Enhancements not listed (57, 60, 62–64, 69, 72–77, 79–83) changed no
 compiler sources — they were validation suites, documentation, benchmark

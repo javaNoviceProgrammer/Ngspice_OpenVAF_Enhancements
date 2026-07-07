@@ -1,0 +1,10 @@
+`include "disciplines.vams"
+`include "annex_e_primitives.va"
+// An RC lowpass built from the Annex E resistor + capacitor primitives.
+module rc_lowpass(in, out);
+   inout in, out; electrical in, out; electrical gnd; ground gnd;
+   parameter real r = 1k from (0:inf);
+   parameter real c = 1u from (0:inf);
+   resistor  #(.r(r)) r1(in, out);
+   capacitor #(.c(c)) c1(out, gnd);
+endmodule
