@@ -266,7 +266,11 @@ base name is **optional** ([E-95](../../enhancements_doc/Enhancement-95.md)):
 `com_pyplot()` treats the first word as a file name only when it is not a plot
 expression (no `(`, and not a vector by `vec_get()`), otherwise it defaults to
 `pyplot` — so `pyplot v(out)` plots directly (the command's minimum argument
-count was lowered from 2 to 1).
+count was lowered from 2 to 1). `ft_pyplot()` also grew **stacked subplots**
+(`set pyplot_subplots=N` → `plt.subplots(nrows, 1, sharex=True)`, `N` traces
+per panel; `vs` stays the x-axis, so it is not a panel separator) and
+**matplotlib style sheets** (`set pyplot_style=<name>`, `dark` →
+`dark_background`, guarded) ([E-98](../../enhancements_doc/Enhancement-98.md)).
 
 ### `postcoms.c` (414 diff lines) + `postcoms.h` + `commands.c` (16)
 
@@ -444,6 +448,7 @@ Every enhancement that touched ngspice, oldest first:
 | [E-93](../../enhancements_doc/Enhancement-93.md) | osdi.h, osdiparam.c | warn (not silently ignore) when a netlist sets a `PARA_FLAG_FIXED` (`localparam`) OSDI parameter |
 | [E-94](../../enhancements_doc/Enhancement-94.md) | plotting/pyplot.c (new), com_pyplot.c (new), plotit.c, commands.c | new `pyplot` command — plot vectors with matplotlib (a Python `gnuplot`) |
 | [E-95](../../enhancements_doc/Enhancement-95.md) | com_pyplot.c, commands.c | make the `pyplot` output file name optional (defaults to `pyplot`) |
+| [E-98](../../enhancements_doc/Enhancement-98.md) | plotting/pyplot.c | `pyplot` stacked subplots (`pyplot_subplots=N`) + matplotlib style sheets (`pyplot_style`) |
 
 *(E-25's simparam exposure lives in the OSDI callback table populated at
 load time; its diff rides inside the `osdiload.c`/callbacks changes.)*

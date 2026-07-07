@@ -46,9 +46,9 @@ void ft_pyplot(double *xlims, double *ylims,
 {
     FILE *file, *file_data;
     struct dvec *v, *scale = NULL;
-    int i, col, numVecs, err;
-    bool xlog, ylog, nogrid, markers, boxes;
-    char pointstyle[BSIZE_SP], terminal[BSIZE_SP], python[BSIZE_SP];
+    int i, col, numVecs, err, nper, nrows, row;
+    bool xlog, ylog, nogrid, markers, boxes, have_style;
+    char pointstyle[BSIZE_SP], terminal[BSIZE_SP], python[BSIZE_SP], style[BSIZE_SP];
     char filename_data[128], filename_py[128];
     char buf[2 * 128 + BSIZE_SP];
     char *text;
@@ -85,6 +85,20 @@ void ft_pyplot(double *xlims, double *ylims,
     /* the Python interpreter, overridable with `set pyplot_python=...`. */
     if (!cp_getvar("pyplot_python", CP_STRING, python, sizeof(python)))
         strcpy(python, "python3");
+
+    /* Enhancement-98: `set pyplot_subplots=N` -> stacked subplots sharing the
+       x-axis, N traces per panel (0/unset = a single axis, as before). */
+    if (!cp_getvar("pyplot_subplots", CP_NUM, &nper, 0))
+        nper = 0;
+    if (nper < 0)
+        nper = 0;
+    nrows = (nper > 0) ? ((numVecs + nper - 1) / nper) : 1;
+
+    /* Enhancement-98: `set pyplot_style=<name>` -> a matplotlib style sheet
+       (e.g. dark, ggplot, bmh). "dark" aliases matplotlib's dark_background. */
+    have_style = cp_getvar("pyplot_style", CP_STRING, style, sizeof(style)) ? TRUE : FALSE;
+    if (have_style && cieq(style, "dark"))
+        strcpy(style, "dark_background");
 
     markers = FALSE;
     if (cp_getvar("pointstyle", CP_STRING, pointstyle, sizeof(pointstyle)))
@@ -155,15 +169,27 @@ void ft_pyplot(double *xlims, double *ylims,
         fprintf(file, "matplotlib.use('Agg')\n");
     }
     fprintf(file, "import matplotlib.pyplot as plt\n");
+    /* Enhancement-98: apply a matplotlib style sheet if requested (ignore an
+       unknown name rather than aborting the plot). */
+    if (have_style) {
+        fprintf(file, "try:\n    plt.style.use(");
+        quote_python_string(file, style);
+        fprintf(file, ")\nexcept Exception:\n    pass\n");
+    }
     fprintf(file, "d = np.loadtxt(");
     quote_python_string(file, filename_data);
     fprintf(file, ")\n");
     fprintf(file, "if d.ndim == 1:\n    d = d.reshape(-1, %d)\n", 2 * numVecs);
-    fprintf(file, "fig, ax = plt.subplots()\n");
+    /* Enhancement-98: one axis, or `nrows` stacked subplots sharing the x-axis.
+       `axes` is always a 2-D array (squeeze=False) so it is indexed uniformly. */
+    fprintf(file, "fig, axes = plt.subplots(%d, 1, sharex=True, squeeze=False)\n", nrows);
 
     col = 0;
+    row = 0;
+    i = 0;
     for (v = vecs; v; v = v->v_link2) {
-        fprintf(file, "ax.");
+        row = (nper > 0) ? (i / nper) : 0;
+        fprintf(file, "axes[%d, 0].", row);
         if (boxes)
             fprintf(file, "step(d[:, %d], d[:, %d], where='mid', ", col, col + 1);
         else if (markers)
@@ -175,40 +201,44 @@ void ft_pyplot(double *xlims, double *ylims,
         quote_python_string(file, v->v_name ? v->v_name : "");
         fprintf(file, ")\n");
         col += 2;
+        i++;
     }
 
-    if (title) {
-        text = cp_unquote(title);
-        fprintf(file, "ax.set_title(");
-        quote_python_string(file, text);
-        fprintf(file, ")\n");
-        tfree(text);
-    }
-    if (xlabel) {
-        text = cp_unquote(xlabel);
-        fprintf(file, "ax.set_xlabel(");
-        quote_python_string(file, text);
-        fprintf(file, ")\n");
-        tfree(text);
-    }
+    /* Per-axis cosmetics applied to every panel; the x-label goes on the
+       bottom panel only, the title becomes the figure suptitle. */
+    fprintf(file, "for _ax in axes[:, 0]:\n");
     if (ylabel) {
         text = cp_unquote(ylabel);
-        fprintf(file, "ax.set_ylabel(");
+        fprintf(file, "    _ax.set_ylabel(");
         quote_python_string(file, text);
         fprintf(file, ")\n");
         tfree(text);
     }
     if (xlog)
-        fprintf(file, "ax.set_xscale('log')\n");
+        fprintf(file, "    _ax.set_xscale('log')\n");
     if (ylog)
-        fprintf(file, "ax.set_yscale('log')\n");
+        fprintf(file, "    _ax.set_yscale('log')\n");
     if (!nogrid)
-        fprintf(file, "ax.grid(True, which='both')\n");
+        fprintf(file, "    _ax.grid(True, which='both')\n");
     if (xlims)
-        fprintf(file, "ax.set_xlim(%e, %e)\n", xlims[0], xlims[1]);
+        fprintf(file, "    _ax.set_xlim(%e, %e)\n", xlims[0], xlims[1]);
     if (ylims && !ylog)
-        fprintf(file, "ax.set_ylim(%e, %e)\n", ylims[0], ylims[1]);
-    fprintf(file, "ax.legend()\n");
+        fprintf(file, "    _ax.set_ylim(%e, %e)\n", ylims[0], ylims[1]);
+    fprintf(file, "    _ax.legend()\n");
+    if (xlabel) {
+        text = cp_unquote(xlabel);
+        fprintf(file, "axes[-1, 0].set_xlabel(");
+        quote_python_string(file, text);
+        fprintf(file, ")\n");
+        tfree(text);
+    }
+    if (title) {
+        text = cp_unquote(title);
+        fprintf(file, "fig.suptitle(");
+        quote_python_string(file, text);
+        fprintf(file, ")\n");
+        tfree(text);
+    }
     fprintf(file, "fig.tight_layout()\n");
     if (to_png) {
         fprintf(file, "fig.savefig(");

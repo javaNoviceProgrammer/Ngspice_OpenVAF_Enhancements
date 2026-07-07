@@ -409,6 +409,15 @@ examples/opamp741_examples/_*
 examples/opamp741_examples/bjt741.osdi
 examples/opamp741_examples/results/
 
+# Enhancement-98 pyplotpanel: verify-run scratch files (generated plots/scripts)
+examples/pyplotpanel_examples/*.png
+examples/pyplotpanel_examples/*.data
+examples/pyplotpanel_examples/deck.sp
+examples/pyplotpanel_examples/base.py
+examples/pyplotpanel_examples/p1.py
+examples/pyplotpanel_examples/p2.py
+examples/pyplotpanel_examples/sty.py
+
 # Enhancement-94 pyplot: verify-run scratch files (generated plots/scripts)
 examples/pyplot_examples/*.osdi
 examples/pyplot_examples/*.data
