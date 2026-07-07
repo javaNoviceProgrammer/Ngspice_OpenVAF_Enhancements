@@ -189,8 +189,10 @@ also accepts a **multi-name** list with per-name widths (`input a[0:1],
 b[0:3], c;`, E-91). A net/port/array width may **reference a parameter**
 (`electrical [0:N-1] out;`, `real w[0:N-1];`, E-91): it is folded from the
 parameter's elaboration-time default and fixed at that value — a structural
-parameter, since the OSDI descriptor has one node count per module (a model
-card override does not resize it). A **multi-dimensional** vectored port
+parameter, since the OSDI descriptor has one node count per module. Such a
+parameter is **frozen to a `localparam`** (E-92) so a netlist override cannot
+resize the compiled structure (or desync it from behavioural code); to change
+the width, edit the default and recompile. A **multi-dimensional** vectored port
 (`in[0:2][0:1]`) is not supported in either declaration order.
 
 Signal-flow disciplines (potential-only or flow-only) are fully usable,

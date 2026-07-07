@@ -1,0 +1,40 @@
+`include "disciplines.vams"
+// Enhancement-92: a parameter that shapes a declaration width (Enhancement-91)
+// is *structural* -- the OSDI descriptor has one fixed node/array count -- so
+// it is frozen to a localparam at its declaration. Overriding it from the
+// netlist can no longer desync the frozen structure from behavioural code.
+
+// wsum: N sizes the array `w[0:N-1]` AND bounds the runtime loop. Before E-92,
+// overriding N to a larger value left w sized at the default while the loop ran
+// to the new N -- a silent out-of-bounds (garbage result). Now N is frozen:
+// the override is ignored and the model keeps its default, so the result stays
+// correct.
+module wsum(out);
+   parameter integer N = 4;
+   output out; electrical out;
+   real w[0:N-1];
+   integer k;
+   analog begin : b
+      real acc;
+      acc = 0.0;
+      for (k = 0; k < N; k = k + 1) begin
+         w[k] = 1.0 / (k + 1);
+         acc = acc + w[k];
+      end
+      V(out) <+ acc;
+   end
+endmodule
+
+// mp: a multi-parameter declaration is split so ONLY the structural name
+// freezes. `bits` (a width) becomes a localparam; `gain` stays an ordinary,
+// overridable parameter.
+module mp(out);
+   parameter integer bits = 4;
+   parameter real gain = 2.0;
+   output [0:bits-1] out;
+   electrical [0:bits-1] out;
+   analog begin
+      V(out[0]) <+ 0.1 * gain; V(out[1]) <+ 0.2 * gain;
+      V(out[2]) <+ 0.3 * gain; V(out[3]) <+ 0.4 * gain;
+   end
+endmodule

@@ -354,6 +354,122 @@ fn collect_param_group(
     decls.push((name, expr_lo, expr_hi));
 }
 
+/// Enhancement-92: rewrites the declarations of parameters listed in `frozen`
+/// (those that shaped a declaration width) from `parameter` to `localparam`,
+/// within the module region `[rs, re)`. A multi-parameter declaration is split
+/// so only the structural names freeze; a range constraint (`from [2:24]`) is
+/// dropped from a frozen name (a localparam cannot carry one) but preserved on
+/// the parameters that stay overridable. Emits declaration-span rewrites into
+/// `rewrites` (disjoint from the width-range rewrites, which sit in separate
+/// net/port/array declarations).
+fn freeze_width_parameters(
+    text: &str,
+    spans: &[Tok],
+    sig: &[usize],
+    rs: usize,
+    re: usize,
+    frozen: &HashSet<String>,
+    rewrites: &mut Vec<(usize, usize, String)>,
+) {
+    if frozen.is_empty() {
+        return;
+    }
+    let raw = |i: usize| &text[spans[i].start..spans[i].end];
+    // (name, text) for a parameter group at significant positions [g, stop);
+    // the name is the last identifier before `=` (or the last identifier).
+    let group = |g: usize, stop: usize| -> Option<(String, String)> {
+        if g >= stop {
+            return None;
+        }
+        let mut name_end = stop;
+        for q in g..stop {
+            if raw(sig[q]) == "=" {
+                name_end = q;
+                break;
+            }
+        }
+        let mut name = None;
+        for q in g..name_end {
+            if spans[sig[q]].kind == TokenKind::SimpleIdent {
+                name = Some(raw(sig[q]).to_owned());
+            }
+        }
+        let txt = text[spans[sig[g]].start..spans[sig[stop - 1]].end].trim().to_owned();
+        Some((name?, txt))
+    };
+
+    let mut p = rs;
+    while p < re {
+        if raw(sig[p]) != "parameter" {
+            p += 1;
+            continue;
+        }
+        // optional shared type keyword
+        let mut gp = p + 1;
+        let type_kw = if gp < re
+            && matches!(raw(sig[gp]), "integer" | "real" | "string" | "realtime")
+        {
+            let t = raw(sig[gp]).to_owned();
+            gp += 1;
+            Some(t)
+        } else {
+            None
+        };
+        let mut froze: Vec<String> = Vec::new();
+        let mut kept: Vec<String> = Vec::new();
+        let mut any = false;
+        let mut depth = 0i32;
+        let mut g_start = gp;
+        let mut val_stop: Option<usize> = None; // before a `from`/`exclude` constraint
+        let mut semi: Option<usize> = None;
+        let mut q = gp;
+        let close_group = |g_start: usize, boundary: usize, val_stop: Option<usize>,
+                               froze: &mut Vec<String>, kept: &mut Vec<String>, any: &mut bool| {
+            let vs = val_stop.unwrap_or(boundary);
+            if let Some((name, no_constraint)) = group(g_start, vs) {
+                if frozen.contains(&name) {
+                    froze.push(no_constraint);
+                    *any = true;
+                } else if let Some((_, full)) = group(g_start, boundary) {
+                    kept.push(full);
+                }
+            }
+        };
+        while q < re {
+            match raw(sig[q]) {
+                "(" | "[" | "{" => depth += 1,
+                ")" | "]" | "}" => depth -= 1,
+                "from" | "exclude" if depth == 0 && val_stop.is_none() => val_stop = Some(q),
+                "," if depth == 0 => {
+                    close_group(g_start, q, val_stop, &mut froze, &mut kept, &mut any);
+                    g_start = q + 1;
+                    val_stop = None;
+                }
+                ";" if depth == 0 => {
+                    close_group(g_start, q, val_stop, &mut froze, &mut kept, &mut any);
+                    semi = Some(q);
+                    break;
+                }
+                _ => {}
+            }
+            q += 1;
+        }
+        let Some(semi) = semi else {
+            p += 1;
+            continue;
+        };
+        if any {
+            let ty = type_kw.as_deref().map(|t| format!("{t} ")).unwrap_or_default();
+            let mut rep = format!("localparam {}{};", ty, froze.join(", "));
+            if !kept.is_empty() {
+                rep.push_str(&format!(" parameter {}{};", ty, kept.join(", ")));
+            }
+            rewrites.push((spans[sig[p]].start, spans[sig[semi]].end, rep));
+        }
+        p = semi + 1;
+    }
+}
+
 /// Enhancement-91: folds *parameter-dependent* net/port/array declaration
 /// widths -- `electrical [0:bits-1] out;`, `integer result[0:bits-1];` -- into
 /// literal ranges using each module's parameter defaults, so the range-then-name
@@ -467,30 +583,34 @@ pub(crate) fn fold_parameter_widths(db: &mut CompilationDB) -> anyhow::Result<()
             continue;
         }
 
-        // pass 2: fold `[e1:e2]` declaration ranges that reference a parameter
+        // pass 2: fold `[e1:e2]` declaration ranges that reference a parameter,
+        // recording which parameters actually shaped a width.
+        let mut frozen: HashSet<String> = HashSet::new();
         for p in rs..re {
             let bi = sig[p];
             if spans[bi].kind != TokenKind::OpenBracket {
                 continue;
             }
             let Some(cj) = match_bracket(bi) else { continue };
-            // find the range colon at the bracket's own depth, and note whether
-            // any inner identifier is a known parameter
+            // find the range colon at the bracket's own depth, and collect any
+            // inner identifiers that are known parameters
             let mut colon = None;
-            let mut refs_param = false;
+            let mut names_here: Vec<String> = Vec::new();
             let mut depth = 0i32;
             for j in (bi + 1)..cj {
                 match spans[j].kind {
                     TokenKind::OpenBracket | TokenKind::OpenParen => depth += 1,
                     TokenKind::CloseBracket | TokenKind::CloseParen => depth -= 1,
                     TokenKind::Colon if depth == 0 && colon.is_none() => colon = Some(j),
-                    TokenKind::SimpleIdent if map.contains_key(&text[spans[j].start..spans[j].end]) => {
-                        refs_param = true
+                    TokenKind::SimpleIdent
+                        if map.contains_key(&text[spans[j].start..spans[j].end]) =>
+                    {
+                        names_here.push(text[spans[j].start..spans[j].end].to_owned())
                     }
                     _ => {}
                 }
             }
-            let (Some(cpos), true) = (colon, refs_param) else { continue };
+            let (Some(cpos), false) = (colon, names_here.is_empty()) else { continue };
             let Some(lhs) = eval_const_int_with_params(&text, &spans, bi + 1, cpos, &map) else {
                 continue;
             };
@@ -498,7 +618,18 @@ pub(crate) fn fold_parameter_widths(db: &mut CompilationDB) -> anyhow::Result<()
                 continue;
             };
             rewrites.push((spans[bi].start, spans[cj].end, format!("[{lhs}:{rhs}]")));
+            frozen.extend(names_here);
         }
+
+        // pass 3 (Enhancement-92): a parameter that shaped a declaration width
+        // is *structural* -- the OSDI descriptor has one fixed node/array count,
+        // so the value must not change at simulation time. Rewrite its
+        // declaration to `localparam` (splitting a multi-parameter declaration
+        // so only the structural names freeze, and dropping the now-illegal
+        // range constraint). Without this an override that grows the parameter
+        // would leave the frozen width behind while behavioural code (a runtime
+        // loop bound, say) follows the new value -- a silent out-of-bounds.
+        freeze_width_parameters(&text, &spans, &sig, rs, re, &frozen, &mut rewrites);
     }
 
     if rewrites.is_empty() {

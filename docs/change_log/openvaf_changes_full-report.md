@@ -197,7 +197,14 @@ every structural feature:
   constant-integer evaluator gained an optional parameter map (empty map =
   the E-88 literal-only behavior). The width is fixed at the default -- a
   structural parameter, since OSDI has one node count per module (E-67/88
-  decision) ([E-91](../../enhancements_doc/Enhancement-91.md));
+  decision) ([E-91](../../enhancements_doc/Enhancement-91.md)). A parameter
+  that shaped a width is then **frozen to a `localparam`**
+  (`freeze_width_parameters`): a multi-parameter declaration is split so only
+  the structural names freeze, and a range constraint is dropped from a frozen
+  name. This keeps structure and behaviour consistent under a netlist override
+  -- without it, overriding a width parameter that also bounds a runtime loop
+  left the frozen array size behind, a silent out-of-bounds
+  ([E-92](../../enhancements_doc/Enhancement-92.md));
 - **the legacy `generate <id> (start, end [, incr])` statement**
   (obsolete Verilog-A 1.0 analog-block loop-unroll, LRM Annex C.4)
   unrolled by a textual pre-pass: the index substitutes to a literal per
@@ -663,6 +670,7 @@ tests hide behind `RUN_DEV_TESTS=1`. Fixed test-side only
 | [E-89](../../enhancements_doc/Enhancement-89.md) | elaborate | name-then-range net/port decls (textual normalize) + Annex E SPICE-primitives example library |
 | [E-90](../../enhancements_doc/Enhancement-90.md) | hir_def (item_tree) | multi-bit input bus port bit reads: pre-scan body widths so a non-last bus port's bits stay contiguous in header/terminal order |
 | [E-91](../../enhancements_doc/Enhancement-91.md) | elaborate | multi-name name-then-range declarations + parameter-dependent declaration widths (folded from the parameter default) |
+| [E-92](../../enhancements_doc/Enhancement-92.md) | elaborate | freeze structural (width) parameters to `localparam` (split multi-parameter decls) so a netlist override cannot desync the frozen width from behaviour |
 
 Enhancements not listed (57, 60, 62–64, 69, 72–77, 79–83) changed no
 compiler sources — they were validation suites, documentation, benchmark
