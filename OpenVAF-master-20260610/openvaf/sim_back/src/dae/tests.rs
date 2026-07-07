@@ -169,3 +169,23 @@ fn vsrc_internal_node() {
     "#};
     run_test(src);
 }
+
+// Enhancement-90: a non-ANSI header with a multi-bit *input* bus port that
+// is not the last port. The bus bits must appear contiguously and in
+// header-port order among the DAE unknowns (`in[0], in[1], in[2], y`), so
+// the OSDI terminals map positionally to the netlist. Before the fix the
+// extra bits were appended after `y`, scrambling terminal order.
+#[test]
+fn bus_input_port_order() {
+    let src = indoc! {r#"
+        `include "disciplines.vams"
+        module busport_e90(in, y);
+            input [0:2] in;
+            output y;
+            electrical [0:2] in;
+            electrical y;
+            analog I(y) <+ (V(y) - V(in[1]))*1e-3;
+        endmodule
+    "#};
+    run_test(src);
+}

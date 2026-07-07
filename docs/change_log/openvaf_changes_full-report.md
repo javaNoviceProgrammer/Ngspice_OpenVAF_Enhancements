@@ -271,7 +271,14 @@ every structural feature:
   both) ([E-43](../../enhancements_doc/Enhancement-43.md));
 - multiple `analog` blocks collect into `entry_stmts` in source order —
   the as-if-concatenated LRM semantics, by construction
-  ([E-60](../../enhancements_doc/Enhancement-60.md)).
+  ([E-60](../../enhancements_doc/Enhancement-60.md));
+- **bus-port node ordering** (`item_tree/lower.rs`): a non-ANSI header
+  bus port (`module m(in, y); input [0:2] in;`) had its first bit merged
+  into the header placeholder but the remaining bits appended after later
+  ports, scrambling OSDI terminal order whenever the bus was not the last
+  port. A pre-scan of body port widths now expands the bus into contiguous
+  bits in header order at placeholder-creation time
+  ([E-90](../../enhancements_doc/Enhancement-90.md)).
 
 ## 7. Types and validation — `openvaf/hir_ty/`
 
@@ -640,6 +647,7 @@ tests hide behind `RUN_DEV_TESTS=1`. Fixed test-side only
 | [E-87](../../enhancements_doc/Enhancement-87.md) | parser, elaborate | block-scoped parameters (validated) + clean diagnostic for the illegal `#(.blk.p())` override |
 | [E-88](../../enhancements_doc/Enhancement-88.md) | elaborate | legacy `generate <id> (start,end)` analog-block loop-unroll (textual pre-pass) |
 | [E-89](../../enhancements_doc/Enhancement-89.md) | elaborate | name-then-range net/port decls (textual normalize) + Annex E SPICE-primitives example library |
+| [E-90](../../enhancements_doc/Enhancement-90.md) | hir_def (item_tree) | multi-bit input bus port bit reads: pre-scan body widths so a non-last bus port's bits stay contiguous in header/terminal order |
 
 Enhancements not listed (57, 60, 62–64, 69, 72–77, 79–83) changed no
 compiler sources — they were validation suites, documentation, benchmark

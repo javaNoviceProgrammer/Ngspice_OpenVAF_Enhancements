@@ -1,0 +1,22 @@
+`include "disciplines.vams"
+// Enhancement-90: read individual bits of a multi-bit INPUT bus port that is
+// NOT the last port in a non-ANSI header. Each output mirrors one input bit.
+//
+// The header lists bare port names (`busport(in, o0, o1, o2)`) and the widths
+// live in the body declarations -- the non-ANSI (Verilog-2001) style. Before
+// Enhancement-90 the bus port `in` had its first bit merged into the header
+// placeholder but the remaining bits `in[1]`, `in[2]` were appended after the
+// later scalar ports, scrambling the OSDI terminal order so that `V(in[1])`
+// read the wrong terminal (or 0). The fix pre-expands the bus in header order
+// so its bits stay contiguous: terminals map to [in[0], in[1], in[2], o0, ...].
+module busport(in, o0, o1, o2);
+   input  [0:2] in;
+   electrical [0:2] in;
+   output o0, o1, o2;
+   electrical o0, o1, o2;
+   analog begin
+      V(o0) <+ V(in[0]);
+      V(o1) <+ V(in[1]);
+      V(o2) <+ V(in[2]);
+   end
+endmodule

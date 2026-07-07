@@ -409,6 +409,11 @@ examples/opamp741_examples/_*
 examples/opamp741_examples/bjt741.osdi
 examples/opamp741_examples/results/
 
+# Enhancement-90 busport: verify-run scratch files
+examples/busport_examples/*.osdi
+examples/busport_examples/_*.va
+examples/busport_examples/_*.sp
+
 # Enhancement-89 arrayport + annexe: verify-run scratch files
 examples/arrayport_examples/*.osdi
 examples/arrayport_examples/_*.va

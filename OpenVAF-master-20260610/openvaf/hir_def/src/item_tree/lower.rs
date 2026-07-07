@@ -431,8 +431,13 @@ impl Ctx {
         let mut buses = Vec::new();
         let mut var_arrays = Vec::new();
         let mut param_arrays = Vec::new();
+        // Enhancement-90: for non-ANSI headers (`module m(in, y);` with the
+        // width in a body declaration), we need each bus port's width *before*
+        // creating its header placeholder so the bits stay contiguous in
+        // header-port order. Pre-scan the body port declarations for widths.
+        let port_widths = Self::prescan_body_port_widths(decl.module_items());
         if let Some(ports) = decl.module_ports() {
-            self.lower_module_ports(ports, &mut nodes, &mut items, &mut buses);
+            self.lower_module_ports(ports, &mut nodes, &mut items, &mut buses, &port_widths);
         }
 
         let num_ports = nodes.len() as u32;
@@ -800,12 +805,36 @@ impl Ctx {
         }
     }
 
+    /// Pre-scans a module's body port declarations, collecting the declared
+    /// width (if any) for each port name. Used by `lower_module_ports` to
+    /// expand a non-ANSI header bus port into its bits in header-port order
+    /// (Enhancement-90). Only port (direction) declarations carry authoritative
+    /// terminal widths; the first width seen for a name wins.
+    fn prescan_body_port_widths(
+        items: ast::AstChildren<ast::ModuleItem>,
+    ) -> Vec<(Name, ast::Range)> {
+        let mut res: Vec<(Name, ast::Range)> = Vec::new();
+        for item in items {
+            let ast::ModuleItem::BodyPortDecl(decl) = item else { continue };
+            let Some(decl) = decl.port_decl() else { continue };
+            let Some(width) = decl.width() else { continue };
+            for name in decl.names() {
+                let name = name.as_name();
+                if !res.iter().any(|(n, _)| *n == name) {
+                    res.push((name, width.clone()));
+                }
+            }
+        }
+        res
+    }
+
     fn lower_module_ports(
         &mut self,
         ports: ast::ModulePorts,
         nodes: &mut TiVec<LocalNodeId, Node>,
         dst: &mut Vec<ModuleItem>,
         buses: &mut Vec<BusDecl>,
+        port_widths: &[(Name, ast::Range)],
     ) {
         for port in ports.ports() {
             let ast_id = self.source_ast_id_map.ast_id(&port);
@@ -813,13 +842,43 @@ impl Ctx {
                 ast::ModulePortKind::Name(name) => {
                     let name = name.as_name();
                     if nodes.iter().all(|node| node.name != name) {
-                        let node = nodes.push_and_get_key(Node {
-                            name,
-                            is_port: true,
-                            ast_id: ast_id.into(),
-                            decls: Vec::new(),
-                        });
-                        dst.push(node.into())
+                        // Enhancement-90: a non-ANSI header port whose width is
+                        // declared in the body. Pre-expand the bus here, in
+                        // header order, so its bits stay contiguous. Without
+                        // this the header creates a single bare placeholder and
+                        // the body's expansion appends the remaining bits at the
+                        // end of the node list -- scrambling terminal order for
+                        // any bus port that is not the last port, which then
+                        // mis-wires the netlist terminals. The `BusDecl` itself
+                        // is still registered by the body declaration below.
+                        let width = port_widths
+                            .iter()
+                            .find(|(n, _)| *n == name)
+                            .and_then(|(_, w)| fold_width_range(w));
+                        match width {
+                            Some((msb, lsb)) => {
+                                let (lo, hi) =
+                                    if msb >= lsb { (lsb, msb) } else { (msb, lsb) };
+                                for bit in lo..=hi {
+                                    let node = nodes.push_and_get_key(Node {
+                                        name: super::bus_bit_name(&name, bit),
+                                        is_port: true,
+                                        ast_id: ast_id.into(),
+                                        decls: Vec::new(),
+                                    });
+                                    dst.push(node.into())
+                                }
+                            }
+                            None => {
+                                let node = nodes.push_and_get_key(Node {
+                                    name,
+                                    is_port: true,
+                                    ast_id: ast_id.into(),
+                                    decls: Vec::new(),
+                                });
+                                dst.push(node.into())
+                            }
+                        }
                     }
                 }
                 ast::ModulePortKind::PortDecl(decl) => {

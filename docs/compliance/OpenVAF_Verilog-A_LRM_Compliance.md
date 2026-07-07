@@ -181,6 +181,10 @@ ground electrical gnd;
 Both declaration orders are accepted for vectored nets and ports: the
 range-then-name form `electrical [3:0] bus;` / `input [3:0] bus;` and the
 name-then-range form `electrical bus[3:0];` / `input bus[3:0];` (E-89).
+A bit of a multi-bit **input** bus port reads its own terminal regardless
+of the port's position in the header — a bus port that is not the last
+port keeps its bits contiguous and in header order, so the simulator's
+positional terminal mapping stays correct (E-90).
 
 Signal-flow disciplines (potential-only or flow-only) are fully usable,
 including **probe-only branches** — probing a branch that is never

@@ -28,7 +28,7 @@ https://ngspice.sourceforge.io/
 
 ## The Enhancements
 
-Eighty-nine enhancements so far — language features, correctness fixes, systematic audits, and simulator-side workflow tooling, each verified end-to-end by a committed example suite and released with a detailed write-up.
+Ninety enhancements so far — language features, correctness fixes, systematic audits, and simulator-side workflow tooling, each verified end-to-end by a committed example suite and released with a detailed write-up.
 
 **📖 Start with the [User Handbook](docs/handbook/README.md)**, which organizes everything by topic: [getting started](docs/handbook/01-getting-started.md), the [Verilog-A feature matrix](docs/handbook/02-verilog-a-language.md), [ngspice workflows](docs/handbook/03-ngspice-workflows.md), and the [limitations & gotchas](docs/handbook/04-limitations-and-gotchas.md). The whole handbook plus the complete text of every enhancement write-up is also one linked PDF: [docs/Ngspice-OpenVAF-Handbook.pdf](docs/Ngspice-OpenVAF-Handbook.pdf).
 
@@ -125,6 +125,7 @@ The index: **Doc** links each enhancement's detailed write-up, **Examples** link
 | 87 | Block-scoped parameters (`parameter`/`localparam` inside `begin: label`, read `label.name`) — feature validated end-to-end + clean diagnostic for the LRM's illegal `#(.blk.p(4))` override | [doc](enhancements_doc/Enhancement-87.md) | [blockparam](examples/blockparam_examples/) |
 | 88 | Legacy `generate <id> (start, end)` statement (obsolete Verilog-A 1.0 analog-block loop-unroll, LRM Annex C.4) with constant bounds | [doc](enhancements_doc/Enhancement-88.md) | [legacygen](examples/legacygen_examples/) |
 | 89 | Name-then-range net/port declarations (`input in[0:2]`, `electrical out[0:2]`) + an Annex E SPICE-primitives library (resistor/capacitor/inductor/sources/square-law MOS) | [doc](enhancements_doc/Enhancement-89.md) | [arrayport](examples/arrayport_examples/), [annexe](examples/annexe_examples/) |
+| 90 | Multi-bit input bus port bit reads: fix scrambled terminal order when a vectored port (`input [0:2] in`) is not the last port in a non-ANSI header, so `V(in[k])` maps to the correct terminal | [doc](enhancements_doc/Enhancement-90.md) | [busport](examples/busport_examples/) |
 
 ---
 
