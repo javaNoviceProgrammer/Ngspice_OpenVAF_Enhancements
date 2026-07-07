@@ -57,6 +57,122 @@ use tokens::lexer::TokenKind;
 
 use crate::db::CompilationDB;
 
+
+/// Expands the LRM's predefined source-location macros as a textual
+/// pre-pass, before preprocessing/elaboration ever run: `` `__FILE__ ``
+/// becomes a string literal holding the root file's BASENAME (basename, not
+/// the full path, for the same provenance reason Enhancement-58 names the
+/// synthetic elaboration files by basename: the expanded string is baked
+/// into the compiled .osdi, and an absolute path would leak the build
+/// machine's layout), and `` `__LINE__ `` becomes the 1-based line number of
+/// the occurrence in the user's file. Replacements are inline (no newlines
+/// added or removed), so all later line numbers stay exact. Occurrences
+/// inside string literals and comments are left untouched.
+///
+/// Scope: the ROOT file only. The standard headers never use these macros,
+/// and a use inside a `` `define `` body expands here, textually, to the
+/// definition site's location (documented; the LRM's C-style "line of use"
+/// would need real preprocessor tokens, which are (kind, span) pairs into
+/// existing source text and cannot carry synthesized values).
+pub(crate) fn expand_source_location_macros(db: &mut CompilationDB) -> anyhow::Result<()> {
+    let root_file = db.compilation_unit().root_file();
+    let Ok(text) = db.file_text(root_file) else { return Ok(()) };
+    if !text.contains("`__FILE__") && !text.contains("`__LINE__") {
+        return Ok(());
+    }
+
+    let root_path = db.vfs().read().file_path(root_file).to_string();
+    let base_name = root_path.rsplit(['/', '\\']).next().unwrap_or(root_path.as_str()).to_owned();
+    let file_lit = format!("\"{base_name}\"");
+
+    let bytes = text.as_bytes();
+    let mut out = String::with_capacity(text.len());
+    let mut line = 1usize;
+    let mut i = 0usize;
+    #[derive(PartialEq)]
+    enum St {
+        Code,
+        Str,
+        LineComment,
+        BlockComment,
+    }
+    let mut st = St::Code;
+    while i < bytes.len() {
+        let c = bytes[i] as char;
+        match st {
+            St::Code => {
+                if c == '`'
+                    && (bytes[i..].starts_with(b"`__FILE__") || bytes[i..].starts_with(b"`__LINE__"))
+                    // word boundary: `__FILE__X is some other macro
+                    && !bytes.get(i + 9).is_some_and(|b| b.is_ascii_alphanumeric() || *b == b'_')
+                {
+                    if bytes[i..].starts_with(b"`__FILE__") {
+                        out.push_str(&file_lit);
+                    } else {
+                        out.push_str(&line.to_string());
+                    }
+                    i += 9;
+                    continue;
+                }
+                match c {
+                    '"' => st = St::Str,
+                    '/' if bytes.get(i + 1) == Some(&b'/') => st = St::LineComment,
+                    '/' if bytes.get(i + 1) == Some(&b'*') => st = St::BlockComment,
+                    _ => (),
+                }
+            }
+            St::Str => match c {
+                '\\' => {
+                    // keep the escaped character (incl. \") opaque
+                    out.push(c);
+                    i += 1;
+                    if let Some(&n) = bytes.get(i) {
+                        if n as char == '\n' {
+                            line += 1;
+                        }
+                        out.push(n as char);
+                        i += 1;
+                    }
+                    continue;
+                }
+                '"' => st = St::Code,
+                _ => (),
+            },
+            St::LineComment => {
+                if c == '\n' {
+                    st = St::Code;
+                }
+            }
+            St::BlockComment => {
+                if c == '*' && bytes.get(i + 1) == Some(&b'/') {
+                    out.push('*');
+                    out.push('/');
+                    i += 2;
+                    st = St::Code;
+                    continue;
+                }
+            }
+        }
+        if c == '\n' {
+            line += 1;
+        }
+        out.push(c);
+        i += 1;
+    }
+
+    let synth_name = format!("/{base_name}__srcloc.va");
+    let file_id = db.vfs().write().add_virt_file(&synth_name, out.into());
+
+    let include_dirs = db.include_dirs(root_file);
+    db.set_include_dirs(file_id, include_dirs);
+    let macro_flags = db.macro_flags(root_file);
+    db.set_macro_flags(file_id, macro_flags);
+    let overwrites = db.global_lint_overwrites(root_file);
+    db.set_global_lint_overwrites(file_id, overwrites);
+    db.set_root_file(file_id);
+    Ok(())
+}
+
 /// Entry point for `generate for`/`genvar` elaboration, called once from
 /// [`CompilationDB::new`] *before* [`elaborate_instantiations`] -- so that
 /// any instantiation statements written inside a `generate for` body have
@@ -1185,6 +1301,36 @@ fn find_matching_caller_bus<'a>(scope: &'a TreeModule, text: &str, width: usize)
     })
 }
 
+
+/// Parses a constant part-select actual `base[msb:lsb]` (integer-literal
+/// bounds; Enhancement-85). Anything else -- plain nets, single bit-selects,
+/// expressions, non-constant bounds -- returns None and follows the ordinary
+/// binding path.
+fn as_part_select(text: &str) -> Option<(&str, i32, i32)> {
+    let text = text.trim();
+    let open = text.find('[')?;
+    let base = text[..open].trim_end();
+    if base.is_empty() || !as_plain_ident(base).is_some() {
+        return None;
+    }
+    let inner = text[open + 1..].strip_suffix(']')?;
+    let (msb, lsb) = inner.split_once(':')?;
+    Some((base, msb.trim().parse().ok()?, lsb.trim().parse().ok()?))
+}
+
+/// True if `caller` declares a bus (net or variable array) named `base`
+/// whose declared range covers bits `lo..=hi` -- the validity check for a
+/// part-select actual (Enhancement-85).
+fn find_matching_caller_bus_covering(caller: &TreeModule, base: &str, lo: i32, hi: i32) -> bool {
+    let name = Name::resolve(base);
+    caller.buses.iter().chain(caller.var_arrays.iter()).any(|b| {
+        b.base_name == name && {
+            let (blo, bhi) = b.min_max();
+            blo <= lo && hi <= bhi
+        }
+    })
+}
+
 /// Binds one syntactic port (`port_name`, in `target`) to `net_text` (raw,
 /// as written in the instantiating module `caller`), producing either a
 /// single scalar binding, or -- if `port_name` names a bus in `target` --
@@ -1194,12 +1340,41 @@ fn find_matching_caller_bus<'a>(scope: &'a TreeModule, text: &str, width: usize)
 fn bind_port(result: &mut HashMap<Name, PortBinding>, target: &TreeModule, caller: &TreeModule, port_name: &Name, net_text: &str) {
     let bus = target.buses.iter().chain(target.var_arrays.iter()).find(|b| &b.base_name == port_name);
     let Some(bus) = bus else {
+        // A width-1 part-select onto a scalar port degrades to the single
+        // bit-select it denotes (`in[2:2]` == `in[2]`); wider slices onto a
+        // scalar port keep the raw text and fail downstream with the
+        // ordinary unresolved-connection diagnostics.
+        if let Some((base, msb, lsb)) = as_part_select(net_text) {
+            if msb == lsb {
+                result.insert(port_name.clone(), PortBinding::Scalar(format!("{base}[{msb}]")));
+                return;
+            }
+        }
         result.insert(port_name.clone(), PortBinding::Scalar(net_text.to_string()));
         return;
     };
 
     let (lo, hi) = bus.min_max();
     let width = (hi - lo + 1) as usize;
+
+    // Part-select actual `base[msb:lsb]` (Enhancement-85): slice those bits
+    // of the caller's bus onto the port, ascending-to-ascending -- the same
+    // bit-order convention the full-bus slicing below uses.
+    if let Some((base, msb, lsb)) = as_part_select(net_text) {
+        let (slo, shi) = if msb <= lsb { (msb, lsb) } else { (lsb, msb) };
+        let slice_width = (shi - slo + 1) as usize;
+        if slice_width == width && find_matching_caller_bus_covering(caller, base, slo, shi) {
+            let mut bits = BTreeMap::new();
+            for bit in lo..=hi {
+                bits.insert(bit, format!("{base}[{}]", slo + (bit - lo)));
+            }
+            result.insert(port_name.clone(), PortBinding::Bus(bits));
+            return;
+        }
+        // width mismatch / unknown base: fall through to the ordinary path,
+        // whose broadcast produces the standard downstream diagnostics
+    }
+
     let caller_bus = find_matching_caller_bus(caller, net_text, width);
 
     let mut bits = BTreeMap::new();

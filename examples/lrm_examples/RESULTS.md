@@ -1,11 +1,12 @@
 # Results — LRM 2023 example sweep vs openvaf-r
 
 **Summary: 231 code blocks extracted from the 442-page LRM PDF. Of the
-complete-module examples, 37 compile cleanly, 22 hit documented
+complete-module examples, 39 compile cleanly, 20 hit documented
 openvaf-r limitations (each pinned to its exact diagnostic), 21 use the
-mixed-signal subset a Verilog-A compiler correctly rejects, and the sweep
-exposed eight compiler defects — six of which are now fixed (Enhancement-84).
-Two errors were found in the LRM's own examples.**
+mixed-signal subset a Verilog-A compiler correctly rejects. The sweep
+exposed eight compiler defects — all eight are now fixed (six in
+Enhancement-84, the final two in Enhancement-85). Two errors were found
+in the LRM's own examples.**
 
 ## Defect findings
 
@@ -17,9 +18,9 @@ defects must compile, open gaps must keep their exact diagnostic.
 | F1 | **Named port branch crashed the compiler.** `branch (<p>) probe_p;` is plain Verilog-A (LRM 3.7.2) — openvaf-r panicked (`BranchWrite::nodes` unreachable). Now lowers to the same defining equation as a direct `I(<p>)` (E-29); runtime-verified in ngspice (probe reads +5 mA where the source branch reads −5 mA). Contributing to a port branch now gets a proper diagnostic instead of a panic. | **fixed (E-84)** | `micro_portbranch.va`, `va/lrm_p062_2.va` |
 | F2 | **Garbage input crashed the parser.** Non-Verilog text (the LRM's attribute pseudo-code, its Annex B keyword table) tripped `bump_ts` assertions in port/function-argument direction parsing. Both sites now emit a diagnostic with forced progress; all 146 extracted LRM fragments compile-attempt cleanly as a fuzz corpus. | **fixed (E-84)** | any non-Verilog text |
 | F3 | **Instantiating an undefined module was silently accepted.** The E-5 flattener dropped instantiations whose target didn't exist — a typo'd module name became an invisible open circuit. Now a hard error; discipline-named mis-parses (`electrical out[0:2];`) and dropped paramsets get their own tailored messages. Unmasked 13 suite files that had never really compiled. | **fixed (E-84)** | `micro_unknownmod.va` |
-| F4 | **`` `__FILE__ `` / `` `__LINE__ `` are not implemented** (LRM-mandated predefined macros). | open | `micro_file_line.va` |
+| F4 | **`` `__FILE__ `` / `` `__LINE__ `` were not implemented** (LRM-mandated predefined macros). Now expanded as a textual pre-pass: `` `__FILE__ `` becomes the source basename (machine-portable provenance), `` `__LINE__ `` the exact 1-based line; a use inside a `` `define `` body expands at the definition site (documented). Runtime-verified via `$strobe` in ngspice. | **fixed (E-85)** | `micro_file_line.va`, `filemacro` suite |
 | F5 | **`$port_connected` failed on the port it exists for.** Flattening renamed an unconnected port to a local net, which then failed the port-reference check. Now resolved at elaboration time: the call becomes a literal `(1)`/`(0)` per instance. The page-265 clock example compiles. | **fixed (E-84)** | `micro_portconnected.va`, `va/lrm_p265_1.va` |
-| F6 | **Part-selects in instance connections don't parse.** `adc2 hi (out[3:2], in);` (pages 163–164) — bit-selects work, ranges don't. | open | `micro_partselect.va` |
+| F6 | **Part-selects in instance connections didn't parse.** `adc2 hi (out[3:2], in);` (pages 163–164). Now parsed (the colon in the bit-select bracket) and sliced onto bus ports during flattening — positional, named, and width-1 forms, runtime-verified per bit in ngspice; behavioral misuse gets a dedicated diagnostic. | **fixed (E-85)** | `micro_partselect.va`, `partselect` suite |
 | F7 | **Dead analog operators aborted codegen.** An operator like `transition()` inside a constant-false branch survived const-folding as a detached op whose state setup read optimized-away values (`split_tainted` panic, then an undefined-value abort in LLVM codegen). Literal `if` conditions now lower only the taken branch, and `split_tainted` tolerates detached branches. Found while fixing F5 (whose `(0)` literals are exactly this shape). | **fixed (E-84)** | `micro_deadop.va` |
 | F8 | **openvaf-r exited 0 on hard errors.** The driver's error arm printed the failure but fell through to a success exit — elaboration failures looked like successful compiles to shell scripts (a quirk first noticed in E-58). Now exits 65. Unmasked six more suite files whose "compiles" were error exits. | **fixed (E-84)** | `openvaf-r missing.va; echo $?` |
 
@@ -33,7 +34,7 @@ defects must compile, open gaps must keep their exact diagnostic.
    deny-level lint (L016); the affected files compile with
    `-W port_without_direction`.
 
-## In-scope examples that compile (37)
+## In-scope examples that compile (39)
 
 | File | LRM page | Notes |
 |---|---|---|
@@ -63,6 +64,8 @@ defects must compile, open gaps must keep their exact diagnostic.
 | `lrm_p155_1.va` | 155 | verbatim |
 | `lrm_p155_2.va` | 155 | verbatim |
 | `lrm_p156_1.va` | 156 | matched-resistor layout example: .$xposition/.$yposition instance overrides on each polyres (E-44 hidden state parameters); context stub added |
+| `lrm_p163_1.va` | 163 | binary ADC tree wired with part-selects (out[3:2]); used to be a parse error - fixed by E-85 (F6) |
+| `lrm_p164_1.va` | 164 | named part-select connections (.out(out[3:2])); parse fixed by E-85 (F6), adc context stub added |
 | `lrm_p173_1.va` | 173 | verbatim |
 | `lrm_p205_2.va` | 205 | verbatim |
 | `lrm_p208_2.va` | 208 | verbatim |
@@ -75,7 +78,7 @@ defects must compile, open gaps must keep their exact diagnostic.
 | `lrm_p416_1.va` | 416 | differential pair; LRM omits port directions (lint demoted) + vertNPN context stub |
 | `lrm_p416_3.va` | 416 | ECP oscillator pair of examples merged; Annex E primitive stubs added |
 
-## Documented limitations (22)
+## Documented limitations (20)
 
 Each file is verified to be *rejected with this exact diagnostic and no
 crash* — if a future enhancement implements one of these, verify fails and
@@ -93,8 +96,6 @@ the file graduates to `va/`.
 | `lrm_p153_2.va` | 153 | `refers to module 'mosp'` | uses the SPICE-compat mosp of the page-152 example, which itself cannot elaborate (Annex E) |
 | `lrm_p155_3.va` | 155 | `'processinfo' was not found` | hierarchical refs to an uninstantiated process-info module |
 | `lrm_p158_1.va` | 158 | `instantiates paramset 'nch'` | paramset targeting a SPICE primitive (nmos3) rather than a VA module |
-| `lrm_p163_1.va` | 163 | `unexpected token ':'` | part-select in instance connection (out[3:2]) |
-| `lrm_p164_1.va` | 164 | `refers to module 'adc'` | part-select in named instance connection (.out(out[3:2])) |
 | `lrm_p168_1.va` | 168 | `compile-time-constant integer` | generate-for with parameter loop bounds (structure cannot depend on runtime-bindable parameters; E-67 scope decision) |
 | `lrm_p169_1.va` | 169 | `not a constant expression` | parameter-dependent bus width (electrical [0:N]) |
 | `lrm_p169_2.va` | 169 | `not a constant expression` | parameter-dependent bus width |

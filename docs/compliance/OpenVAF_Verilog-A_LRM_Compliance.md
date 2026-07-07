@@ -298,7 +298,13 @@ branch (<p>) pb;               // named port branch: I(pb) == I(<p>)  (E-84)
 `$port_connected` works on connected *and* unconnected ports of
 flattened instances (resolved per instance at elaboration time), and
 instantiating an undefined module is a hard error rather than a silent
-drop (both E-84).
+drop (both E-84). Bus actuals may be **part-selects** — positional,
+named, or width-1 onto a scalar port (E-85):
+
+```verilog
+adc2 hi (out[3:2], in);        // positional slice
+adc2 lo (.out(out[1:0]), .in(r)); // named slice
+```
 
 ### 5.3 Procedural statements (LRM 5.7–5.9) — ✅
 
@@ -487,6 +493,15 @@ parameter puts it on the instance line and under `alter`/`.dc` sweeps;
 
 ## 8. Compiler directives (LRM 10) — ✅
 
+The predefined source-location macros work (E-85): `` `__FILE__``
+expands to the source file's basename, `` `__LINE__`` to the exact line
+(a use inside a `` `define`` body reports the definition site —
+documented textual-expansion semantics):
+
+```verilog
+$strobe("evaluated at %s:%0d", `__FILE__, `__LINE__);
+```
+
 `` `define `` with arguments (macros-in-macros, macro calls as
 arguments), `` `ifdef ``/`` `ifndef ``/`` `elsif ``/`` `else ``/
 `` `endif `` chained and nested, `` `include `` chains, `` `undef ``,
@@ -528,17 +543,17 @@ connected port.)*
 | casex/casez | ✅ | `casexz` |
 | 5.10 Events (steps, cross/above/timer, OR lists, phase lists) | ✅ | `initial_step`, `finalstep`, `cross`, `timer`, `lrmcorner` |
 | 5.11 Analog functions (arrays in/out/return) | ✅ | `funcarray`, `arrayout`, `arrayret` |
-| 6 Hierarchy (instantiation, generate, defparam, $root) | ✅ (param-shaped structure ⚠️ explained) | `instantiation`, `generate`, `defparam`, `hiername`, `implicitnet` |
+| 6 Hierarchy (instantiation, generate, defparam, $root, part-select connections) | ✅ (param-shaped structure ⚠️ explained) | `instantiation`, `generate`, `defparam`, `hiername`, `implicitnet`, `partselect` |
 | 9.4–9.8 Display, file/string I/O | ✅ | `display`, `fileio`, `stringio` |
 | 9.13 Random/distributions | ✅ (deterministic seed ⚠️ documented) | `rng`, `montecarlo` |
 | 9 misc ($finish family, $simparam, attributes) | ✅ | `simctrl`, `simparamstr`, `opvar` |
 | plusargs / simprobe / node aliases | ⚠️ LRM fallbacks | `alias` |
-| 10 Compiler directives | ✅ | `preproc`, `directive`, `defaulttransition` |
+| 10 Compiler directives (incl. `` `__FILE__``/`` `__LINE__``) | ✅ | `preproc`, `directive`, `defaulttransition`, `filemacro` |
 | Mixed-signal / digital (outside Annex C) | ❌ by scope | — |
 
 As of E-84 the standard's own examples are a compliance suite: every
 code example in the LRM 2023 PDF is extracted and compiled
-(`examples/lrm_examples/` — 37 compile, 22 documented limitations pinned
+(`examples/lrm_examples/` — 39 compile, 20 documented limitations pinned
 to their diagnostics, 21 correctly rejected as mixed-signal), and the
 146 non-module fragments double as a no-crash fuzz corpus.
 

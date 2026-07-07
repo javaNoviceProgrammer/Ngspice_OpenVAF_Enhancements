@@ -1,0 +1,23 @@
+// Enhancement-85 (F4): the LRM's predefined source-location macros.
+//
+// `__FILE__ expands to a string literal holding the source file's name
+// (basename -- the expansion is baked into the compiled .osdi, so it must
+// stay machine-portable), `__LINE__ to the 1-based line number of the
+// occurrence. A use inside a `define body expands at the DEFINITION site
+// (textual pre-pass semantics; documented deviation from C-style
+// line-of-use).
+`include "disciplines.vams"
+
+`define WHERE $strobe("macro-site %s:%0d", `__FILE__, `__LINE__)
+
+module srcloc(a, b);
+   inout a, b;
+   electrical a, b;
+   analog begin
+      @(initial_step) begin
+         $strobe("direct %s:%0d", `__FILE__, `__LINE__);
+         `WHERE;
+      end
+      V(a,b) <+ V(a,b)/1k;
+   end
+endmodule

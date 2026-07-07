@@ -31,6 +31,11 @@ pub struct Body {
     /// NOT `casex`/`casez` items (those are consumed into [`Case::masks`]
     /// at collection); validation rejects every entry (Enhancement-78).
     pub stray_dontcare_literals: Vec<ExprId>,
+    /// Part-select expressions (`base[msb:lsb]`, Enhancement-85) found in
+    /// this body. They are only legal in instance port connections (which
+    /// never body-lower -- elaboration consumes them textually), so every
+    /// entry here is an error, reported by hir_ty body validation.
+    pub stray_part_selects: Vec<ExprId>,
 }
 
 #[derive(Default, Debug, Eq, PartialEq)]

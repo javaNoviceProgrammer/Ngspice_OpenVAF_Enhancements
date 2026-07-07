@@ -178,6 +178,23 @@ impl Diagnostic for BodyValidationDiagnosticWrapped<'_> {
                             .to_owned(),
                     ])
             }
+            BodyValidationDiagnostic::StrayPartSelect { expr } => {
+                let FileSpan { range, file } = self.expr_src(expr);
+                Report::error()
+                    .with_message("part-select in an expression")
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: file,
+                        range: range.into(),
+                        message: "part-selects cannot be used here".to_owned(),
+                    }])
+                    .with_notes(vec![
+                        "help: `v[msb:lsb]` is supported in instance port connections \
+                         (e.g. `adc2 hi (out[3:2], in);`); in behavioral code \
+                         access the bits individually"
+                            .to_owned(),
+                    ])
+            }
             BodyValidationDiagnostic::StrayDontCareLiteral { expr } => {
                 let FileSpan { range, file } = self.expr_src(expr);
                 Report::error()

@@ -19,3 +19,15 @@
        adc hi1 (out[1], r, in);
        adc lo1 (out[0], remainder, r);
     endmodule
+
+// [lrm_examples context] "adc is same as defined in 6.5.4" -- the 1-bit
+// slice of the page-163 example, minimal analog stand-in.
+module adc (out, remainder, in);
+   output out, remainder;
+   input in;
+   electrical out, remainder, in;
+   analog begin
+      V(out) <+ (V(in) > 0.5) ? 1.0 : 0.0;
+      V(remainder) <+ 2.0*(V(in) - ((V(in) > 0.5) ? 0.5 : 0.0));
+   end
+endmodule

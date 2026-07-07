@@ -127,6 +127,18 @@ impl ast::Expr {
     }
 }
 
+impl ast::BitSelectExpr {
+    /// `base[msb:lsb]` (Enhancement-85): the colon token distinguishes a
+    /// part-select from multi-dimensional `[i][j]` indexing. Only legal in
+    /// instance port connections; hir_ty validation rejects other uses.
+    pub fn is_part_select(&self) -> bool {
+        self.syntax
+            .children_with_tokens()
+            .filter_map(|it| it.into_token())
+            .any(|tok| tok.kind() == T![:])
+    }
+}
+
 impl ast::Range {
     // if the range bound is missing we just assume inclusive here
 

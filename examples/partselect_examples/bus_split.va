@@ -1,0 +1,39 @@
+// Enhancement-85 (F6): part-selects in instance port connections.
+//
+// A 4-bit bus in `quad` is wired to two instances of the 2-bit `pair`
+// module by slicing: p1 gets v[3:2] (positional), p2 gets v[1:0] (named
+// .i(...) form). Each pair outputs 2*V(msb) + V(lsb), so with V(v[k]) = k
+// volts the outputs pin the exact bit routing:
+//   o1 = 2*3 + 2 = 8 V     o2 = 2*1 + 0 = 2 V
+// `single` additionally takes the width-1 slice v[2:2] (== v[2] = 2 V).
+`include "disciplines.vams"
+
+module pair(o, i);
+   output o;
+   input [1:0] i;
+   electrical o;
+   electrical [1:0] i;
+   analog V(o) <+ 2.0*V(i[1]) + V(i[0]);
+endmodule
+
+module single(o, i);
+   output o;
+   input i;
+   electrical o, i;
+   analog V(o) <+ V(i);
+endmodule
+
+module quad(o1, o2, o3);
+   output o1, o2, o3;
+   electrical o1, o2, o3;
+   electrical [3:0] v;
+   analog begin
+      V(v[0]) <+ 0.0;
+      V(v[1]) <+ 1.0;
+      V(v[2]) <+ 2.0;
+      V(v[3]) <+ 3.0;
+   end
+   pair   p1 (o1, v[3:2]);        // positional part-select
+   pair   p2 (.o(o2), .i(v[1:0])); // named part-select
+   single s1 (o3, v[2:2]);        // width-1 slice onto a scalar port
+endmodule

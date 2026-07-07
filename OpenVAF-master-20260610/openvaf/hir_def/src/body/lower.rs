@@ -110,7 +110,15 @@ impl LowerCtx<'_> {
             ast::Expr::BitSelectExpr(bit_select) => {
                 if let Some(base) = bit_select.base().and_then(Path::resolve) {
                     let indices = bit_select.indices().map(|e| self.collect_expr(e)).collect();
-                    Expr::BitSelect { base, indices }
+                    let id = self
+                        .alloc_expr(Expr::BitSelect { base, indices }, AstPtr::new(&expr));
+                    // part-selects are only legal in instance port connections,
+                    // which elaboration consumes textually and never body-lowers;
+                    // anything landing here is an error (Enhancement-85)
+                    if bit_select.is_part_select() {
+                        self.body.stray_part_selects.push(id);
+                    }
+                    return id;
                 } else {
                     return self.missing_expr();
                 }

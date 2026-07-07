@@ -1,5 +1,5 @@
 `include "disciplines.vams"
-// F4 (open): `__FILE__/`__LINE__ predefined macros are not implemented
+// F4 (fixed by E-85): `__FILE__/`__LINE__ predefined macros
 module m(a, b);
    inout a, b; electrical a, b;
    analog begin

@@ -114,6 +114,11 @@ pub enum BodyValidationDiagnostic {
         cycle: Vec<Name>,
     },
 
+    /// Enhancement-85: a part-select (`v[msb:lsb]`) anywhere other than an
+    /// instance port connection (which elaboration consumes textually).
+    StrayPartSelect {
+        expr: ExprId,
+    },
     /// Enhancement-78: an integer literal spelled with don't-care digits
     /// (`'b1x?`) anywhere other than directly as a `casex`/`casez` item.
     StrayDontCareLiteral {
@@ -164,6 +169,13 @@ impl BodyValidationDiagnostic {
         // (i.e. was not consumed as a casex/casez item) is an error
         for &expr in &body.stray_dontcare_literals {
             validator.diagnostics.push(BodyValidationDiagnostic::StrayDontCareLiteral { expr });
+        }
+
+        // Enhancement-85: part-selects (`v[msb:lsb]`) are only legal in
+        // instance port connections, which elaboration consumes textually --
+        // one that reached body lowering is behavioral-code misuse.
+        for &expr in &body.stray_part_selects {
+            validator.diagnostics.push(BodyValidationDiagnostic::StrayPartSelect { expr });
         }
 
         // Enhancement-59: reject call-graph cycles among analog functions

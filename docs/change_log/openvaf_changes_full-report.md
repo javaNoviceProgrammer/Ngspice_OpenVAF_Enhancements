@@ -81,6 +81,10 @@ templates the generated token/AST/builtin/instruction tables come from):
   ([E-2](../../enhancements_doc/Enhancement-2.md));
 - the `<<<`/`>>>` arithmetic-shift tokens (plus a pre-existing lexer bug
   fix) ([E-6](../../enhancements_doc/Enhancement-6.md));
+- **part-selects in instance connections** (`inst (out[3:2], in)`): the
+  bit-select bracket accepts an optional `: expr`, with the colon token
+  in the CST distinguishing a range from multi-dimensional indexing —
+  no new node kind ([E-85](../../enhancements_doc/Enhancement-85.md));
 - **panic-free direction parsing**: `port_decl`/`func_arg` asserted the
   next token was a direction (`bump_ts`), which any non-Verilog text
   reaching a module-head port list turned into a compiler crash; both
@@ -167,6 +171,18 @@ every structural feature:
   (`electrical out[0:2];` parses as an instantiation) and paramsets
   dropped over unresolvable targets get tailored messages
   ([E-84](../../enhancements_doc/Enhancement-84.md));
+- **`` `__FILE__``/`` `__LINE__`` expanded by a textual pre-pass** run
+  before the other passes (preprocessor tokens are (kind, span) pairs
+  into existing source and cannot carry synthesized literals):
+  `` `__FILE__`` becomes the root file's basename (machine-portable
+  provenance, the E-58 rule), `` `__LINE__`` the exact 1-based line;
+  string/comment occurrences are skipped and replacements are inline so
+  later line numbers stay true ([E-85](../../enhancements_doc/Enhancement-85.md));
+- **part-select actuals sliced onto bus ports** in `bind_port`
+  (`base[msb:lsb]`, constant bounds; positional and named forms;
+  width-1 slices onto scalar ports degrade to the bit-select) with the
+  same ascending bit-order convention as full-bus slicing
+  ([E-85](../../enhancements_doc/Enhancement-85.md));
 - **`$port_connected` resolved at flattening time** to a literal
   `(1)`/`(0)` per instance — after inlining, an open port is just a
   synthesized local net, so the builtin used to fail validation in
@@ -275,6 +291,10 @@ every structural feature:
   stock rejected diode_cmc, BSIM-CMG, PSP-HV and the HiSIM family at
   setup) while given values stay fully validated
   ([E-56](../../enhancements_doc/Enhancement-56.md));
+- **part-selects outside port connections diagnosed** (the E-78
+  stray-list pattern: body lowering collects them, validation reports
+  a dedicated error naming the supported connection form)
+  ([E-85](../../enhancements_doc/Enhancement-85.md));
 - **contributions to port branches diagnosed** (`ContributeToPortFlow`,
   with the declaration site labeled): `I(pb) <+ …` on a
   `branch (<p>) pb;` slipped through the write path unvalidated and
@@ -564,6 +584,7 @@ tests hide behind `RUN_DEV_TESTS=1`. Fixed test-side only
 | [E-71](../../enhancements_doc/Enhancement-71.md) | hir_ty fmt, hir_lower fmt, osdi | display-format surface + `%b` segfault |
 | [E-78](../../enhancements_doc/Enhancement-78.md) | lexer→hir_lower, hir_ty | `casex`/`casez` don't-care masks |
 | [E-84](../../enhancements_doc/Enhancement-84.md) | parser, elaborate, hir_ty, hir_lower, mir_opt, driver | LRM example sweep: 6 defect fixes (port-branch panic, parser robustness, silent undefined modules, `$port_connected` on open ports, dead-op codegen, exit codes) |
+| [E-85](../../enhancements_doc/Enhancement-85.md) | parser, elaborate, hir_def, hir_ty | `` `__FILE__``/`` `__LINE__`` + connection part-selects (the last two sweep findings) |
 
 Enhancements not listed (57, 60, 62–64, 69, 72–77, 79–83) changed no
 compiler sources — they were validation suites, documentation, benchmark

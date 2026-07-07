@@ -157,6 +157,18 @@
    "note": "matched-resistor layout example: .$xposition/.$yposition instance overrides on each polyres (E-44 hidden state parameters); context stub added"
   },
   {
+   "file": "lrm_p163_1.va",
+   "block": "block_163_1",
+   "page": 163,
+   "note": "binary ADC tree wired with part-selects (out[3:2]); used to be a parse error - fixed by E-85 (F6)"
+  },
+  {
+   "file": "lrm_p164_1.va",
+   "block": "block_164_1",
+   "page": 164,
+   "note": "named part-select connections (.out(out[3:2])); parse fixed by E-85 (F6), adc context stub added"
+  },
+  {
    "file": "lrm_p173_1.va",
    "block": "block_173_1",
    "page": 173,
@@ -301,20 +313,6 @@
    "page": 158,
    "note": "paramset targeting a SPICE primitive (nmos3) rather than a VA module",
    "expect": "instantiates paramset 'nch'"
-  },
-  {
-   "file": "lrm_p163_1.va",
-   "block": "block_163_1",
-   "page": 163,
-   "note": "part-select in instance connection (out[3:2])",
-   "expect": "unexpected token ':'"
-  },
-  {
-   "file": "lrm_p164_1.va",
-   "block": "block_164_1",
-   "page": 164,
-   "note": "part-select in named instance connection (.out(out[3:2]))",
-   "expect": "refers to module 'adc'"
   },
   {
    "file": "lrm_p168_1.va",
@@ -549,15 +547,13 @@
    "file": "micro_file_line.va",
    "block": "micro",
    "page": 0,
-   "note": "F4 (open): `__FILE__/`__LINE__ predefined macros are not implemented",
-   "expect": "macro '`__FILE__' has not been declared"
+   "note": "F4 (fixed by E-85): `__FILE__/`__LINE__ predefined macros"
   },
   {
    "file": "micro_partselect.va",
    "block": "micro",
    "page": 0,
-   "note": "F6 (open): part-selects in instance connections do not parse",
-   "expect": "unexpected token ')'"
+   "note": "F6 (fixed by E-85): part-selects in instance connections"
   }
  ],
  "fragments": [

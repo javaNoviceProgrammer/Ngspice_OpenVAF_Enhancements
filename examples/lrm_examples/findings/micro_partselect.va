@@ -1,5 +1,5 @@
 `include "disciplines.vams"
-// F6 (open): part-selects in instance connections do not parse
+// F6 (fixed by E-85): part-selects in instance connections
 module adc2(out, in);
    output [1:0] out; input in;
    electrical [1:0] out; electrical in;

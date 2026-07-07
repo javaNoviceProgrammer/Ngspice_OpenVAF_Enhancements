@@ -212,12 +212,23 @@ endmodule
     "block_209_1": dict(fp="module analog_inv", cls="ams",
         note="mixed-net example: analog inverter wired to ddiscrete_1v2 nets via connect rules"),
     "block_162_3": dict(fp="reg clk", cls="ams", note="digital testbench (reg/initial/always)"),
-    "block_163_1": dict(fp="adc4", cls="limitation",
-        expect="unexpected token ':'",
-        note="part-select in instance connection (out[3:2])"),
-    "block_164_1": dict(fp="adc2 hi", cls="limitation",
-        expect="refers to module 'adc'",
-        note="part-select in named instance connection (.out(out[3:2]))"),
+    "block_163_1": dict(fp="adc4", cls="ok",
+        note="binary ADC tree wired with part-selects (out[3:2]); used to be a parse error - fixed by E-85 (F6)"),
+    "block_164_1": dict(fp="adc2 hi", cls="ok",
+        append="""
+// [lrm_examples context] "adc is same as defined in 6.5.4" -- the 1-bit
+// slice of the page-163 example, minimal analog stand-in.
+module adc (out, remainder, in);
+   output out, remainder;
+   input in;
+   electrical out, remainder, in;
+   analog begin
+      V(out) <+ (V(in) > 0.5) ? 1.0 : 0.0;
+      V(remainder) <+ 2.0*(V(in) - ((V(in) > 0.5) ? 0.5 : 0.0));
+   end
+endmodule
+""",
+        note="named part-select connections (.out(out[3:2])); parse fixed by E-85 (F6), adc context stub added"),
     "block_169_1": dict(fp="rcline", cls="limitation",
         expect="not a constant expression",
         note="parameter-dependent bus width (electrical [0:N])"),
@@ -345,9 +356,9 @@ module top(a, b);
 endmodule
 """),
     "micro_file_line.va": dict(
-        expect="macro '`__FILE__' has not been declared",
+        expect=None,
         src="""`include "disciplines.vams"
-// F4 (open): `__FILE__/`__LINE__ predefined macros are not implemented
+// F4 (fixed by E-85): `__FILE__/`__LINE__ predefined macros
 module m(a, b);
    inout a, b; electrical a, b;
    analog begin
@@ -357,9 +368,9 @@ module m(a, b);
 endmodule
 """),
     "micro_partselect.va": dict(
-        expect="unexpected token ')'",
+        expect=None,
         src="""`include "disciplines.vams"
-// F6 (open): part-selects in instance connections do not parse
+// F6 (fixed by E-85): part-selects in instance connections
 module adc2(out, in);
    output [1:0] out; input in;
    electrical [1:0] out; electrical in;

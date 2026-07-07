@@ -129,6 +129,14 @@ fn atom_expr(p: &mut Parser) -> Option<CompletedMarker> {
                 while p.at(T!['[']) {
                     p.bump(T!['[']);
                     expr(p);
+                    // Optional part-select `[msb:lsb]` (Enhancement-85). The
+                    // colon token stays in the CST and distinguishes a range
+                    // from E-15's multi-dimensional `[i][j]` indexing; it is
+                    // only legal in instance port connections, which body
+                    // lowering enforces.
+                    if p.eat(T![:]) {
+                        expr(p);
+                    }
                     p.expect(T![']']);
                 }
                 m.complete(p, BIT_SELECT_EXPR)
