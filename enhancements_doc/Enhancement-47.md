@@ -1,4 +1,4 @@
-# Enhancement-47 — `default_transition + transition() fixes (version11)
+# Enhancement-47 — `default_transition + transition() fixes
 
 This document describes the changes made to **OpenVAF-r** in the `version11/`
 directory to implement the **`` `default_transition``** compiler directive and

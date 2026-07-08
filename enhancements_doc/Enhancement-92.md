@@ -1,4 +1,4 @@
-# Enhancement-92 — freezing structural (width) parameters (version11)
+# Enhancement-92 — freezing structural (width) parameters
 
 Enhancement-92 closes a safety gap in Enhancement-91's parameter-dependent
 declaration widths: a parameter that shapes a width is now frozen to a

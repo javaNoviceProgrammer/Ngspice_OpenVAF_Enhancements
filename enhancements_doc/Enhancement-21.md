@@ -1,4 +1,4 @@
-# Enhancement-21 — Verilog-AMS `paramset` blocks (version11)
+# Enhancement-21 — Verilog-AMS `paramset` blocks
 
 This document describes the source-code changes made to **OpenVAF-r** in the
 `version11/` directory to support **Verilog-AMS `paramset` blocks** — named,

@@ -1,4 +1,4 @@
-# Enhancement-76 — multi-module `.osdi` libraries: audit + three registration fixes (version11)
+# Enhancement-76 — multi-module `.osdi` libraries: audit + three registration fixes
 
 This document describes Enhancement-76: an audit of the **multi-module
 packaging surface** — one `.va` file holding several modules, compiled into

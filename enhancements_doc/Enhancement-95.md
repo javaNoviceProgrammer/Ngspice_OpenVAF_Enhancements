@@ -1,4 +1,4 @@
-# Enhancement-95 — optional file name for `pyplot` (version11)
+# Enhancement-95 — optional file name for `pyplot`
 
 A small refinement to Enhancement-94's `pyplot` command: the output file base
 name is now **optional**, so you can plot directly without inventing a name.

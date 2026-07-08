@@ -1,4 +1,4 @@
-# Enhancement-66 — Monte Carlo with OSDI devices: validation deliverable (version11)
+# Enhancement-66 — Monte Carlo with OSDI devices: validation deliverable
 
 This document records the Enhancement-66 probe of **Monte Carlo
 (statistical) simulation over OSDI parameters** — the remaining workflow

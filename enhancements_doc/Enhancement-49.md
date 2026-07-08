@@ -1,4 +1,4 @@
-# Enhancement-49 — $root + hierarchical names, transition() input (version11)
+# Enhancement-49 — $root + hierarchical names, transition() input
 
 This document describes the changes made to **OpenVAF-r** in the `version11/`
 directory for three related front-end defects: hierarchical references into

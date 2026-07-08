@@ -1,4 +1,4 @@
-# Enhancement-53 — `@(final_step)` + analysis-phase lists on step events (version11)
+# Enhancement-53 — `@(final_step)` + analysis-phase lists on step events
 
 This document describes the changes made to **OpenVAF-r** and **ngspice-46**
 in the `version11/` directory to implement the `@(final_step)` event and the

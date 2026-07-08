@@ -1,4 +1,4 @@
-# Enhancement-74 — performance benchmark: OSDI vs built-in twins + flagship compile times (version11)
+# Enhancement-74 — performance benchmark: OSDI vs built-in twins + flagship compile times
 
 This document describes Enhancement-74: a **tracked performance baseline**
 for the toolchain — the first quantitative answer to "how fast is compiled

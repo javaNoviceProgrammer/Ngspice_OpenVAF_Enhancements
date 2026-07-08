@@ -1,4 +1,4 @@
-# Enhancement-73 — the user handbook: 72 enhancements consolidated into `docs/handbook/` (version11)
+# Enhancement-73 — the user handbook: 72 enhancements consolidated into `docs/handbook/`
 
 This document describes Enhancement-73: a **documentation deliverable** —
 the repository's first consolidated user guide. No compiler or ngspice

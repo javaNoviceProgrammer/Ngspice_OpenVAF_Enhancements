@@ -1,4 +1,4 @@
-# Enhancement-13 — `limexp()`: investigation, kept stateless (version11)
+# Enhancement-13 — `limexp()`: investigation, kept stateless
 
 This document records an investigation into the Verilog-AMS `limexp()` limited
 exponential in **OpenVAF-r** (`version11/`), and the deliberate decision to

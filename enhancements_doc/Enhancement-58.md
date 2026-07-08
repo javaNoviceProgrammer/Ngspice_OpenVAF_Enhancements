@@ -1,4 +1,4 @@
-# Enhancement-58 — `defparam` hierarchical parameter override (version11)
+# Enhancement-58 — `defparam` hierarchical parameter override
 
 This document describes the changes made to **OpenVAF-r** in the `version11/`
 directory to implement `defparam` (legacy Verilog-2001 compile-time

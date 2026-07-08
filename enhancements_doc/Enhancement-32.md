@@ -1,4 +1,4 @@
-# Enhancement-32 — integer persistent/event-state variables (version11)
+# Enhancement-32 — integer persistent/event-state variables
 
 This document describes the changes made to **OpenVAF-r** and **ngspice** in the
 `version11/` directory to fix a **compiler crash on integer persistent state** and to

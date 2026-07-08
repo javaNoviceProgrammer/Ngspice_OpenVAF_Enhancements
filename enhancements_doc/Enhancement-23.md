@@ -1,4 +1,4 @@
-# Enhancement-23 — array return values from analog functions (version11)
+# Enhancement-23 — array return values from analog functions
 
 This document describes the source-code changes made to **OpenVAF-r** in the
 `version11/` directory to support **array return values** from `analog function`s

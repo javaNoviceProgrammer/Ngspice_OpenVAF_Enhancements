@@ -1,4 +1,4 @@
-# Enhancement-96 — module-level `generate for` without `generate`/`endgenerate` (version11)
+# Enhancement-96 — module-level `generate for` without `generate`/`endgenerate`
 
 A parser fix: a `generate for`/`if`/`case` written at module scope **without**
 the optional `generate`/`endgenerate` keywords is now parsed and elaborated.

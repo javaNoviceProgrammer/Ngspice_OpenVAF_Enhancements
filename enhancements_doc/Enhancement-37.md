@@ -1,4 +1,4 @@
-# Enhancement-37 — operator-correctness audit + fixes (version11)
+# Enhancement-37 — operator-correctness audit + fixes
 
 This document describes the changes made to **OpenVAF-r** in the `version11/`
 directory after a systematic **operator-correctness audit** covering the

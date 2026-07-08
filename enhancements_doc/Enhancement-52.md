@@ -1,4 +1,4 @@
-# Enhancement-52 — idt() assert/reset forms (version11)
+# Enhancement-52 — idt() assert/reset forms
 
 This document describes the change made to **OpenVAF-r** in the `version11/`
 directory to fix the **`idt(expr, ic, assert[, tol|nature])` reset forms** —

@@ -1,4 +1,4 @@
-# Enhancement-78 — `casex` / `casez`: the don't-care case statements (version11)
+# Enhancement-78 — `casex` / `casez`: the don't-care case statements
 
 This document describes Enhancement-78: the `casex`/`casez` case-statement
 variants — the one "not implemented" row the Enhancement-73 handbook audit

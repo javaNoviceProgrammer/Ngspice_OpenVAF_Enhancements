@@ -1,4 +1,4 @@
-# Enhancement-89 — name-then-range ports and the Annex E primitives (version11)
+# Enhancement-89 — name-then-range ports and the Annex E primitives
 
 This document describes Enhancement-89, two related pieces of LRM
 coverage: the **name-then-range** form of vectored net/port declarations,

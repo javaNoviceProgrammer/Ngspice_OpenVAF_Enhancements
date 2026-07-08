@@ -1,4 +1,4 @@
-# Enhancement-59 — LRM-corner probe follow-up: event OR lists, `$realtime`, port concatenation, recursion diagnostics (version11)
+# Enhancement-59 — LRM-corner probe follow-up: event OR lists, `$realtime`, port concatenation, recursion diagnostics
 
 This document describes the changes made to **OpenVAF-r** in the `version11/`
 directory following a fresh LRM-corner probe battery (16 never-exercised

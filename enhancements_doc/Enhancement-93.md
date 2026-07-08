@@ -1,4 +1,4 @@
-# Enhancement-93 — warning when a fixed (localparam) parameter is set (version11)
+# Enhancement-93 — warning when a fixed (localparam) parameter is set
 
 Enhancement-92 froze structural width parameters to `localparam` so a netlist
 override could no longer corrupt the model. But the override was still

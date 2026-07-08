@@ -1,4 +1,4 @@
-# Enhancement-98 — `pyplot` multi-panel subplots and style sheets (version11)
+# Enhancement-98 — `pyplot` multi-panel subplots and style sheets
 
 Two additions to the Enhancement-94/95 `pyplot` command: **stacked subplots**
 and **matplotlib style sheets**, both driven by `set` variables.

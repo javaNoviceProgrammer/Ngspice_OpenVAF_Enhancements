@@ -1,4 +1,4 @@
-# Enhancement-18 — array declaration syntax + arrays in analog functions (version11)
+# Enhancement-18 — array declaration syntax + arrays in analog functions
 
 This document describes two related source-code changes made to **OpenVAF-r** in
 the `version11/` directory:

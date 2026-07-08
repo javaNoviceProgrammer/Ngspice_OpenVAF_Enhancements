@@ -1,4 +1,4 @@
-# Enhancement-11 — Verilog-A file I/O and string-formatting system functions (version11)
+# Enhancement-11 — Verilog-A file I/O and string-formatting system functions
 
 This document describes the source-code changes made to **OpenVAF-r** in the
 `version11/` directory, implementing the Verilog-AMS **file I/O, file-descriptor,

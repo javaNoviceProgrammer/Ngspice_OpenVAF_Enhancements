@@ -1,4 +1,4 @@
-# Enhancement-57 — physics-accuracy validation suite (version11)
+# Enhancement-57 — physics-accuracy validation suite
 
 This enhancement adds a permanent, quantitative **physics regression suite**
 (`physcheck_examples/`) checking that industry compact models compiled by

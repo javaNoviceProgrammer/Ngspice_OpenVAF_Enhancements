@@ -1,4 +1,4 @@
-# Enhancement-94 — the `pyplot` command (matplotlib backend) (version11)
+# Enhancement-94 — the `pyplot` command (matplotlib backend)
 
 Enhancement-94 adds a new ngspice interactive command, **`pyplot`**, that
 renders simulated vectors with **matplotlib** — a Python counterpart to the

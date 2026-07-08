@@ -1,4 +1,4 @@
-# Enhancement-67 — generate audit: genvar-substitution fix, nested loops, `generate if`/`case` (version11)
+# Enhancement-67 — generate audit: genvar-substitution fix, nested loops, `generate if`/`case`
 
 This document describes the changes made to **OpenVAF-r** in the
 `version11/` directory following a systematic audit of the

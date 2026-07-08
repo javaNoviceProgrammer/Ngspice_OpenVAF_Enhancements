@@ -1,4 +1,4 @@
-# Enhancement-77 — ngspice zero-warning build: 33 → 0 (version11)
+# Enhancement-77 — ngspice zero-warning build: 33 → 0
 
 This document describes Enhancement-77: the ngspice counterpart of the
 openvaf-r warning cleanup released with Enhancement-66 (44 → 0). A full

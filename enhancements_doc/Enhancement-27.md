@@ -1,4 +1,4 @@
-# Enhancement-27 — `idtmod(...)` modulo-integrator fix (version11)
+# Enhancement-27 — `idtmod(...)` modulo-integrator fix
 
 This document describes the change made to **OpenVAF-r** in the `version11/`
 directory to fix **`idtmod(expr, ic, modulus[, offset[, ...]])`**, the Verilog-AMS

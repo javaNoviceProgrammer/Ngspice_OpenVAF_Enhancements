@@ -1,4 +1,4 @@
-# Enhancement-90 — multi-bit input bus port bit reads (version11)
+# Enhancement-90 — multi-bit input bus port bit reads
 
 This document describes Enhancement-90, a compiler fix for reading an
 individual bit of a **multi-bit input bus port** declared in the non-ANSI

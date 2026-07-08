@@ -1,4 +1,4 @@
-# Enhancement-41 — implicit nets in instance connections (version11)
+# Enhancement-41 — implicit nets in instance connections
 
 This document describes the change made to **OpenVAF-r** in the `version11/`
 directory to support **implicit nets**: a plain identifier used in a

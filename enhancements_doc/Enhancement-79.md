@@ -1,4 +1,4 @@
-# Enhancement-79 — benchmark round 2: ring oscillator, small-signal throughput, KLU vs SPARSE (version11)
+# Enhancement-79 — benchmark round 2: ring oscillator, small-signal throughput, KLU vs SPARSE
 
 This document describes Enhancement-79, extending Enhancement-74's
 performance baseline with three sections — multi-device nonlinear

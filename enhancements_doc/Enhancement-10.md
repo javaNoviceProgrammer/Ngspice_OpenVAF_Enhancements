@@ -1,4 +1,4 @@
-# Enhancement-10 — Verilog-A statistical / random-number system functions (version11)
+# Enhancement-10 — Verilog-A statistical / random-number system functions
 
 This document describes the source-code changes made to **OpenVAF-r** in the
 `version11/` directory, on top of `version10/` (Enhancement-9, noise sources +

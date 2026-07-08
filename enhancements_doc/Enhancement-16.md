@@ -1,4 +1,4 @@
-# Enhancement-16 — Verilog-A `$table_model` (version11)
+# Enhancement-16 — Verilog-A `$table_model`
 
 This document describes the source-code changes made to **OpenVAF-r** in the
 `version11/` directory to implement the Verilog-AMS **`$table_model`** lookup-table

@@ -1,4 +1,4 @@
-# Enhancement-64 — Touchstone export: auto-`Rbase`, N-port `wrsnp`, 1-port `.sp` (version11)
+# Enhancement-64 — Touchstone export: auto-`Rbase`, N-port `wrsnp`, 1-port `.sp`
 
 This document describes Enhancement-64: making S-parameter results
 exportable to industry-standard Touchstone v1 files from the `.sp`

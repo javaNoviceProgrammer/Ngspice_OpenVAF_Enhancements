@@ -1,4 +1,4 @@
-# Enhancement-44 — paramset hierarchical system parameters (version11)
+# Enhancement-44 — paramset hierarchical system parameters
 
 This document describes the changes made to **OpenVAF-r** in the `version11/`
 directory to support **hierarchical system parameters in paramsets**

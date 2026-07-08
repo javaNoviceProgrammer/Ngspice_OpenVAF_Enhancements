@@ -1,4 +1,4 @@
-# Enhancement-46 — escaped identifiers + integer literal bases (version11)
+# Enhancement-46 — escaped identifiers + integer literal bases
 
 This document describes the changes made to **OpenVAF-r** in the `version11/`
 directory to implement **integer literal bases** (LRM A.8.7) and complete

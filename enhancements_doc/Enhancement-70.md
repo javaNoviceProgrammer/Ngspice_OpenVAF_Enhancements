@@ -1,4 +1,4 @@
-# Enhancement-70 — behavioral-loop audit: precise loop diagnostics (version11)
+# Enhancement-70 — behavioral-loop audit: precise loop diagnostics
 
 This document describes Enhancement-70: a systematic audit of the
 **runtime loop statements** inside analog blocks (`for`, `while`,

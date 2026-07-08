@@ -1,4 +1,4 @@
-# Enhancement-33 — array `case` + array-literal function arguments (version11)
+# Enhancement-33 — array `case` + array-literal function arguments
 
 This document describes the changes made to **OpenVAF-r** in the `version11/`
 directory to retire the compiler's **last `todo!()` hard-panic stubs** and fix the

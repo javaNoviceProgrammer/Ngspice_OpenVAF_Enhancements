@@ -1,4 +1,4 @@
-# Enhancement-29 — port-branch flow access `I(<port>)` (version11)
+# Enhancement-29 — port-branch flow access `I(<port>)`
 
 This document describes the change made to **OpenVAF-r** in the `version11/`
 directory to make the **port-branch flow probe `I(<port>)`** functional. The

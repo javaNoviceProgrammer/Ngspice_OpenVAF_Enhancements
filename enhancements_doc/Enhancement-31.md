@@ -1,4 +1,4 @@
-# Enhancement-31 — complex poles/zeros in laplace/zi root forms (version11)
+# Enhancement-31 — complex poles/zeros in laplace/zi root forms
 
 This document describes the change made to **OpenVAF-r** in the `version11/`
 directory to support **complex conjugate poles and zeros** in the root-based forms of

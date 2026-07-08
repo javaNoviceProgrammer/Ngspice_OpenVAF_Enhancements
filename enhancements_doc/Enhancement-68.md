@@ -1,4 +1,4 @@
-# Enhancement-68 — enabling openvaf's own integration test suite (version11)
+# Enhancement-68 — enabling openvaf's own integration test suite
 
 This document describes Enhancement-68: bringing the fork's dormant
 integration test suite — 28 tests over real compact models (BSIM3/4/6,

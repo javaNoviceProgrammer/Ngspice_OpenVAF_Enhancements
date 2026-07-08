@@ -1,4 +1,4 @@
-# Enhancement-63 — RF analyses with OSDI devices: `.sp` / transient noise / PSS + `span.c` NaN fix (version11)
+# Enhancement-63 — RF analyses with OSDI devices: `.sp` / transient noise / PSS + `span.c` NaN fix
 
 This document describes Enhancement-63: round 2 of the analysis-coverage
 work (Enhancement-62), probing the RF-flavored ngspice analyses —

@@ -1,4 +1,4 @@
-# Enhancement-86 — hierarchical branch probes (version11)
+# Enhancement-86 — hierarchical branch probes
 
 This document describes Enhancement-86: the LRM page-119 hierarchical
 branch reference forms — `V(top.a1.b)`, `V(top.d1.branch(a, b))`, and

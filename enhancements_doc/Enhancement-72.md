@@ -1,4 +1,4 @@
-# Enhancement-72 — Touchstone round 2: MA/DB formats, frequency units, Y/Z export, and the `rdsnp` reader (version11)
+# Enhancement-72 — Touchstone round 2: MA/DB formats, frequency units, Y/Z export, and the `rdsnp` reader
 
 This document describes Enhancement-72, completing the Touchstone arc
 begun in Enhancement-64. ngspice-only — no compiler/OSDI change.

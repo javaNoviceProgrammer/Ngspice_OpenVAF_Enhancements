@@ -1,4 +1,4 @@
-# Enhancement-88 — the legacy `generate` statement (version11)
+# Enhancement-88 — the legacy `generate` statement
 
 This document describes Enhancement-88: support for the obsolete
 Verilog-A 1.0 `generate` statement (LRM Annex C.4), the last unsupported

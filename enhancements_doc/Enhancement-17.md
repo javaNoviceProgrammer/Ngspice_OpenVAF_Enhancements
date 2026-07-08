@@ -1,4 +1,4 @@
-# Enhancement-17 — multi-dimensional `$table_model` (version11)
+# Enhancement-17 — multi-dimensional `$table_model`
 
 This document describes the source-code changes made to **OpenVAF-r** in the
 `version11/` directory to generalise the 1-D `$table_model` of Enhancement-16 to

@@ -1,4 +1,4 @@
-# Enhancement-24 — `$discontinuity(n)` simulator support (version11)
+# Enhancement-24 — `$discontinuity(n)` simulator support
 
 This document describes the changes made to **OpenVAF-r** *and* **ngspice-46** in
 the `version11/` directory to give real effect to **`$discontinuity(n)`** (for

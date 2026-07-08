@@ -1,4 +1,4 @@
-# Enhancement-81 — session-lifecycle + memory audit: two resource fixes (version11)
+# Enhancement-81 — session-lifecycle + memory audit: two resource fixes
 
 This document describes Enhancement-81: an audit of **interactive ngspice
 workflows with OSDI devices** — re-sourcing, circuit removal, long

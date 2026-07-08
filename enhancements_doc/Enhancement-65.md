@@ -1,4 +1,4 @@
-# Enhancement-65 — preprocessor audit: macro-recursion guard (version11)
+# Enhancement-65 — preprocessor audit: macro-recursion guard
 
 This document describes the changes made to **OpenVAF-r** in the
 `version11/` directory following a systematic audit of the Verilog-A

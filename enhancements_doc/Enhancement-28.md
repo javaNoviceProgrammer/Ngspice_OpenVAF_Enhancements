@@ -1,4 +1,4 @@
-# Enhancement-28 — `idt(...)` initial-condition fix (version11)
+# Enhancement-28 — `idt(...)` initial-condition fix
 
 This document describes the change made to **OpenVAF-r** in the `version11/`
 directory to fix the **initial condition of `idt(expr, ic[, ...])`** in transient

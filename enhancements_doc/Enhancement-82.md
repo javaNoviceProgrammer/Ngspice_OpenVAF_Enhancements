@@ -1,4 +1,4 @@
-# Enhancement-82 — provenance and compliance documentation (version11)
+# Enhancement-82 — provenance and compliance documentation
 
 This document describes Enhancement-82: a documentation round in the
 Enhancement-73 mold, adding the project's **provenance** and

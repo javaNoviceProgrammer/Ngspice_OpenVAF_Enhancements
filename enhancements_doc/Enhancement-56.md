@@ -1,4 +1,4 @@
-# Enhancement-56 — VA_TEST end-to-end sweep: CMC default-range idiom + noise crash (version11)
+# Enhancement-56 — VA_TEST end-to-end sweep: CMC default-range idiom + noise crash
 
 This document describes the changes made to **OpenVAF-r** and **ngspice-46**
 in the `version11/` directory as the outcome of the first **end-to-end**

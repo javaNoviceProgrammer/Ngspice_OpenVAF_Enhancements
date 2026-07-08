@@ -1,4 +1,4 @@
-# Enhancement-42 — correlated (same-named) noise sources (version11)
+# Enhancement-42 — correlated (same-named) noise sources
 
 This document describes the changes made to **OpenVAF-r** and **ngspice-46** in
 the `version11/` directory to implement **noise-source correlation by name**:

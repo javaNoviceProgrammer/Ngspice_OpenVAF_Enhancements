@@ -1,4 +1,4 @@
-# Enhancement-34 — `{...}` concatenation & `{n{...}}` replication (version11)
+# Enhancement-34 — `{...}` concatenation & `{n{...}}` replication
 
 This document describes the changes made to **OpenVAF-r** in the `version11/`
 directory to implement the Verilog-AMS **concatenation** and **replication**

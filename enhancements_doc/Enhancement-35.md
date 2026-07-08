@@ -1,4 +1,4 @@
-# Enhancement-35 — lexer hang on `//` comment at end-of-file (version11)
+# Enhancement-35 — lexer hang on `//` comment at end-of-file
 
 This document describes the change made to **OpenVAF-r** in the `version11/`
 directory to fix a **compiler infinite loop** on a `//` line comment terminated by

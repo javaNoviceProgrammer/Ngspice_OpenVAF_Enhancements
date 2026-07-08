@@ -1,4 +1,4 @@
-# Enhancement-55 — simulation-control tasks + `$discontinuity` rejection (version11)
+# Enhancement-55 — simulation-control tasks + `$discontinuity` rejection
 
 This document describes the changes made to **OpenVAF-r** and **ngspice-46**
 in the `version11/` directory for the remaining simulator-behavior audit

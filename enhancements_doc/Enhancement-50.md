@@ -1,4 +1,4 @@
-# Enhancement-50 — domain binding validation (version11)
+# Enhancement-50 — domain binding validation
 
 This document describes the change made to **OpenVAF-r** in the `version11/`
 directory to enforce the one missing rule of **discipline domain bindings**

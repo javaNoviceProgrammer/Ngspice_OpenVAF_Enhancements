@@ -1,4 +1,4 @@
-# Enhancement-14 — Verilog-A array literals / aggregates (version11)
+# Enhancement-14 — Verilog-A array literals / aggregates
 
 This document describes the source-code changes made to **OpenVAF-r** in the
 `version11/` directory to implement **array literals and aggregate operations**

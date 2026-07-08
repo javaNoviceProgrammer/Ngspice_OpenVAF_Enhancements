@@ -1,4 +1,4 @@
-# Enhancement-45 — net initialization + net attribute access (version11)
+# Enhancement-45 — net initialization + net attribute access
 
 This document describes the changes made to **OpenVAF-r** and **ngspice-46**
 in the `version11/` directory to implement two LRM features that were both

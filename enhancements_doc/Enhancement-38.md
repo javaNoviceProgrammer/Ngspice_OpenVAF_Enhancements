@@ -1,4 +1,4 @@
-# Enhancement-38 — operator-precedence audit + fixes (version11)
+# Enhancement-38 — operator-precedence audit + fixes
 
 This document describes the changes made to **OpenVAF-r** in the `version11/`
 directory after a systematic **operator-precedence audit** against the

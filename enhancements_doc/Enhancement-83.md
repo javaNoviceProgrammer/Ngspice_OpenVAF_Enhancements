@@ -1,4 +1,4 @@
-# Enhancement-83 — the transistor-level µA741: a complete model-to-circuit demo (version11)
+# Enhancement-83 — the transistor-level µA741: a complete model-to-circuit demo
 
 This document describes Enhancement-83: the classic op-amp built entirely
 from a Verilog-A BJT and characterized across DC, AC, and transient — a

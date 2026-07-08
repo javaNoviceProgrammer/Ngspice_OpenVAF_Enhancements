@@ -1,4 +1,4 @@
-# Enhancement-30 — variadic `analysis(arg1, arg2, ...)` (version11)
+# Enhancement-30 — variadic `analysis(arg1, arg2, ...)`
 
 This document describes the change made to **OpenVAF-r** in the `version11/`
 directory to support the **multi-argument list form** of the Verilog-AMS

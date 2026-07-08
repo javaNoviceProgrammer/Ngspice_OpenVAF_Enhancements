@@ -1,4 +1,4 @@
-# Enhancement-51 — full ac_stim AC injection (version11)
+# Enhancement-51 — full ac_stim AC injection
 
 This document describes the changes made to **OpenVAF-r** and **ngspice-46**
 in the `version11/` directory to complete **`ac_stim`** (LRM 4.6.3) — the

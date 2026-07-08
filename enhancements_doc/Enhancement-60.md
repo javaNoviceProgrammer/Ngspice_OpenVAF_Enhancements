@@ -1,4 +1,4 @@
-# Enhancement-60 — multiple analog blocks: validation deliverable (version11)
+# Enhancement-60 — multiple analog blocks: validation deliverable
 
 This document records the Enhancement-60 probe of **multiple `analog` /
 `analog initial` blocks per module** (Verilog-AMS LRM 6.2: several blocks

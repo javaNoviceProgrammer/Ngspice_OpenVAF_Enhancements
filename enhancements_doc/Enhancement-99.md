@@ -1,4 +1,4 @@
-# Enhancement-99 — `pyplot` vector export formats (SVG/PDF) and figure size (version11)
+# Enhancement-99 — `pyplot` vector export formats (SVG/PDF) and figure size
 
 Two more additions to the Enhancement-94/95/98 `pyplot` command: **vector
 export formats** (SVG and PDF alongside the existing PNG) and a **figure size**

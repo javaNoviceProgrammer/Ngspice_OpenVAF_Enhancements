@@ -1,4 +1,4 @@
-# Enhancement-39 — derived natures & deriving natures from disciplines (version11)
+# Enhancement-39 — derived natures & deriving natures from disciplines
 
 This document describes the changes made to **OpenVAF-r** in the `version11/`
 directory to make **derived natures** — `nature X : Parent;` and

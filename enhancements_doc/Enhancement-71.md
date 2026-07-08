@@ -1,4 +1,4 @@
-# Enhancement-71 — display-task audit: format flags/width for every conversion + the `%b` segfault (version11)
+# Enhancement-71 — display-task audit: format flags/width for every conversion + the `%b` segfault
 
 This document describes Enhancement-71: a systematic audit of the display
 tasks (`$strobe`, `$display`, `$write`, `$monitor`, `$debug`) and the full

@@ -1,4 +1,4 @@
-# Enhancement-80 — temperature physics validation + the `dtemp` alias (version11)
+# Enhancement-80 — temperature physics validation + the `dtemp` alias
 
 This document describes Enhancement-80: **physcheck round 3, the thermal
 axis**. E-57 validated the static laws of compiled industry models, E-75

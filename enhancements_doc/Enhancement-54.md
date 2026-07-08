@@ -1,4 +1,4 @@
-# Enhancement-54 — correct + node-free noise factors (version11)
+# Enhancement-54 — correct + node-free noise factors
 
 This document describes the changes made to **OpenVAF-r** and **ngspice-46**
 in the `version11/` directory for the noise "extra node" subsystem — the last

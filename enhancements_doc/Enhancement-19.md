@@ -1,4 +1,4 @@
-# Enhancement-19 — `do ... while` loop (version11)
+# Enhancement-19 — `do ... while` loop
 
 This document describes the source-code changes made to **OpenVAF-r** in the
 `version11/` directory to implement the Verilog-AMS **`do ... while`** loop,

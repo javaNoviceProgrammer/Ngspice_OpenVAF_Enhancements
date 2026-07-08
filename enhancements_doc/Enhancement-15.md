@@ -1,4 +1,4 @@
-# Enhancement-15 — Verilog-A multi-dimensional arrays (version11)
+# Enhancement-15 — Verilog-A multi-dimensional arrays
 
 This document describes the source-code changes made to **OpenVAF-r** in the
 `version11/` directory to generalise the 1-D array support of Enhancement-14 to

@@ -1,4 +1,4 @@
-# Enhancement-48 — string literal escape sequences (version11)
+# Enhancement-48 — string literal escape sequences
 
 This document describes the change made to **OpenVAF-r** in the `version11/`
 directory to complete **string literal escape handling** per LRM 2.7.1.

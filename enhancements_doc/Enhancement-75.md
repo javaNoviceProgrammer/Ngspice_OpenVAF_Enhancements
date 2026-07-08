@@ -1,4 +1,4 @@
-# Enhancement-75 — dynamic physics validation: the reactive paths cross-checked (version11)
+# Enhancement-75 — dynamic physics validation: the reactive paths cross-checked
 
 This document describes Enhancement-75: the **dynamic** companion of
 Enhancement-57's physics suite. Where physcheck validated the static laws

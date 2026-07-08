@@ -1,4 +1,4 @@
-# Enhancement-40 — N-dimensional `$table_model` (version11)
+# Enhancement-40 — N-dimensional `$table_model`
 
 This document describes the changes made to **OpenVAF-r** in the `version11/`
 directory to lift `$table_model`'s **3-dimension cap**: lookup tables of any

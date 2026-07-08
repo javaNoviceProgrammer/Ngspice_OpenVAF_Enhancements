@@ -1,4 +1,4 @@
-# Enhancement-62 — ngspice analysis coverage for OSDI devices: `.dc @inst[param]` sweeps + `.disto` warning (version11)
+# Enhancement-62 — ngspice analysis coverage for OSDI devices: `.dc @inst[param]` sweeps + `.disto` warning
 
 This document describes the changes made to **ngspice-46** in the
 `version11/` directory following an analysis-coverage probe of OSDI

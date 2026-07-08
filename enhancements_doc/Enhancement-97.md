@@ -1,4 +1,4 @@
-# Enhancement-97 — clean diagnostic for a contribution to a ground branch (version11)
+# Enhancement-97 — clean diagnostic for a contribution to a ground branch
 
 A crash fix: contributing to a branch that is **entirely the `ground`
 reference** — `V(gnd) <+ …`, `V(gnd, gnd) <+ …`, `I(gnd) <+ …` — panicked the

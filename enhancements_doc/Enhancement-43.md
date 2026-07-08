@@ -1,4 +1,4 @@
-# Enhancement-43 — variable initializers, completed (version11)
+# Enhancement-43 — variable initializers, completed
 
 This document describes the changes made to **OpenVAF-r** in the `version11/`
 directory to complete **declaration initializers** (`real x = 2.5;`). All

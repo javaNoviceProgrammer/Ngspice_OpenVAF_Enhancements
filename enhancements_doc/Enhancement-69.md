@@ -1,4 +1,4 @@
-# Enhancement-69 — operating-point variables end-to-end: validation deliverable (version11)
+# Enhancement-69 — operating-point variables end-to-end: validation deliverable
 
 This document records the Enhancement-69 audit of **operating-point
 variable (opvar) access** — Verilog-A module variables carrying a

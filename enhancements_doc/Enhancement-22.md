@@ -1,4 +1,4 @@
-# Enhancement-22 — natural cubic-spline `$table_model` (version11)
+# Enhancement-22 — natural cubic-spline `$table_model`
 
 This document describes the source-code change made to **OpenVAF-r** in the
 `version11/` directory to add **natural cubic-spline** interpolation to

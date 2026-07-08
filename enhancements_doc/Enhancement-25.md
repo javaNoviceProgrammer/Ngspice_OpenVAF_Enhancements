@@ -1,4 +1,4 @@
-# Enhancement-25 — `$simparam$str(name)` support (version11)
+# Enhancement-25 — `$simparam$str(name)` support
 
 This document describes the changes made to **OpenVAF-r** *and* **ngspice-46** in
 the `version11/` directory to make **`$simparam$str(name)`** work. It returns a

@@ -1,4 +1,4 @@
-# Enhancement-61 — operator-argument audit: `slew` sign-convention fix (version11)
+# Enhancement-61 — operator-argument audit: `slew` sign-convention fix
 
 This document describes the changes made to **OpenVAF-r** in the `version11/`
 directory following a full-argument-form audit of the analog operators

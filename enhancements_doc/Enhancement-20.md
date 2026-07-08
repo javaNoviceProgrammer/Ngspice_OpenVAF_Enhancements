@@ -1,4 +1,4 @@
-# Enhancement-20 — array output/inout arguments to analog functions (version11)
+# Enhancement-20 — array output/inout arguments to analog functions
 
 This document describes the source-code change made to **OpenVAF-r** in the
 `version11/` directory to support **`output`** and **`inout`** array arguments to

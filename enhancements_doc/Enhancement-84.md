@@ -1,4 +1,4 @@
-# Enhancement-84 — the LRM example sweep and its six defect fixes (version11)
+# Enhancement-84 — the LRM example sweep and its six defect fixes
 
 This document describes Enhancement-84: every code example in the
 Verilog-AMS LRM 2023 PDF extracted, classified, and compiled against

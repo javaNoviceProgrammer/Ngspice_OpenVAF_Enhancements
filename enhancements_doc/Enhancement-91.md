@@ -1,4 +1,4 @@
-# Enhancement-91 — multi-name name-then-range declarations and parameter-dependent widths (version11)
+# Enhancement-91 — multi-name name-then-range declarations and parameter-dependent widths
 
 Enhancement-91 adds two related pieces of net/port/array declaration
 coverage, both handled by textual pre-passes in `hir/src/elaborate.rs`

@@ -1,4 +1,4 @@
-# Enhancement-85 — `__FILE__/`__LINE__ and connection part-selects (version11)
+# Enhancement-85 — `__FILE__/`__LINE__ and connection part-selects
 
 This document describes Enhancement-85: the last two open findings of
 E-84's LRM example sweep, implemented. With F4 and F6 closed, **all

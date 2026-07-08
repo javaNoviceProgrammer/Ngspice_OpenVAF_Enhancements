@@ -1,4 +1,4 @@
-# Enhancement-12 — the last Verilog-A system functions: probe / alias / plusargs (version11)
+# Enhancement-12 — the last Verilog-A system functions: probe / alias / plusargs
 
 This document describes the source-code changes made to **OpenVAF-r** in the
 `version11/` directory, implementing the **final** group of previously-gated

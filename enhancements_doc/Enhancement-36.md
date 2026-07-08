@@ -1,4 +1,4 @@
-# Enhancement-36 — probe-only branches / ideal ammeter + flow-only signal flow (version11)
+# Enhancement-36 — probe-only branches / ideal ammeter + flow-only signal flow
 
 This document describes the change made to **OpenVAF-r** in the `version11/`
 directory to give **probe-only branches** their LRM-mandated **0V-source (ideal

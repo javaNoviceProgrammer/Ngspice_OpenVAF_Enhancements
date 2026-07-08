@@ -1,4 +1,4 @@
-# Enhancement-87 — block-scoped parameters (version11)
+# Enhancement-87 — block-scoped parameters
 
 This document describes Enhancement-87: block-scoped parameters (LRM 6.3,
 the page-112 example) — `parameter`/`localparam` declared inside a named
