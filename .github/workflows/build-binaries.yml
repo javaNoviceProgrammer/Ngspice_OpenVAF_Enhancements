@@ -372,6 +372,12 @@ jobs:
             exit 0
           fi
           cp -R _artifacts/bin/. bin/
+          # GitHub's upload/download-artifact round-trip drops the POSIX
+          # executable bit, so the openvaf-r / ngspice binaries arrive as mode
+          # 0644 and would be committed (and checked out) non-executable. Restore
+          # +x before staging so `git add` records mode 100755. (.exe on Windows
+          # does not need it.)
+          find bin -type f \( -name openvaf-r -o -name ngspice \) -exec chmod +x {} +
           echo "Binaries provided by the platforms that built successfully:"
           find _artifacts/bin -type f | sed 's#_artifacts/##; s/^/  /'
 
