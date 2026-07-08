@@ -28,7 +28,7 @@ https://ngspice.sourceforge.io/
 
 ## The Enhancements
 
-One hundred and four enhancements so far — language features, correctness fixes, systematic audits, and simulator-side workflow tooling, each verified end-to-end by a committed example suite and released with a detailed write-up.
+One hundred and five enhancements so far — language features, correctness fixes, systematic audits, and simulator-side workflow tooling, each verified end-to-end by a committed example suite and released with a detailed write-up.
 
 **📖 Start with the [User Handbook](docs/handbook/README.md)**, which organizes everything by topic: [getting started](docs/handbook/01-getting-started.md), the [Verilog-A feature matrix](docs/handbook/02-verilog-a-language.md), [ngspice workflows](docs/handbook/03-ngspice-workflows.md), and the [limitations & gotchas](docs/handbook/04-limitations-and-gotchas.md). The whole handbook plus the complete text of every enhancement write-up is also one linked PDF: [docs/Ngspice-OpenVAF-Handbook.pdf](docs/Ngspice-OpenVAF-Handbook.pdf).
 
@@ -140,6 +140,7 @@ The index: **Doc** links each enhancement's detailed write-up, **Examples** link
 | 102 | Name-then-range array parameters — `parameter real c[0:2]` (dims after the name), completing the name-then-range line (vars/nets/ports already had it) | [doc](enhancements_doc/Enhancement-102.md) | [paramarray](examples/paramarray_examples/) |
 | 103 | `ceil()` of a runtime argument no longer crashes the compiler (the `llvm.ceil.f64` intrinsic was unregistered; `floor` worked) | [doc](enhancements_doc/Enhancement-103.md) | [ceil](examples/ceil_examples/) |
 | 104 | `$rtoi` / `$itor` real↔integer conversion functions (`$rtoi` truncates toward zero, distinct from the rounding implicit cast) | [doc](enhancements_doc/Enhancement-104.md) | [convert](examples/convert_examples/) |
+| 105 | `$sscanf` / `$fscanf` honour the format base (`%h`/`%x` hex, `%o` octal, `%b` binary) instead of ignoring it | [doc](enhancements_doc/Enhancement-105.md) | [sscanf](examples/sscanf_examples/) |
 
 ---
 

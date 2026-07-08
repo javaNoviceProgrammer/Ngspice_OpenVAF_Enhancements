@@ -1128,13 +1128,13 @@ impl BodyLoweringCtx<'_, '_, '_> {
             }
             BuiltIn::sscanf => {
                 let input = self.lower_expr(args[0]);
-                self.lower_scanf(input, &args[2..])
+                self.lower_scanf(input, args[1], &args[2..])
             }
             BuiltIn::fscanf => {
                 // Read one line from the descriptor, then scan it like $sscanf.
                 let fd = self.lower_expr(args[0]);
                 let input = self.ctx.call1(CallBackKind::Fgets, &[fd]);
-                self.lower_scanf(input, &args[2..])
+                self.lower_scanf(input, args[1], &args[2..])
             }
 
             // Enhancement-12: connectivity-aliasing and plusarg functions. The
@@ -1660,12 +1660,28 @@ impl BodyLoweringCtx<'_, '_, '_> {
     /// target variable (the runtime parses each token by the variable's type, not
     /// by the format string) and stores it. Returns the number of successful
     /// conversions. `var_args` are the destination variable references.
-    fn lower_scanf(&mut self, input: Value, var_args: &[ExprId]) -> Value {
+    fn lower_scanf(&mut self, input: Value, fmt: ExprId, var_args: &[ExprId]) -> Value {
         self.ctx.call(CallBackKind::ScanBegin, &[input]);
-        for &arg in var_args {
+        // Enhancement-105: the conversion character of each field selects the
+        // integer base -- `%h` hex, `%o` octal, `%b` binary; anything else keeps
+        // strtol's base-0 auto-detection. The format string is normally a
+        // literal; if it is not, every field falls back to the default
+        // `Int`/`Real`/`Str` chosen from the destination variable's type.
+        let convs: Vec<char> = match self.body.as_literal(fmt) {
+            Some(Literal::String(s)) => scanf_conversion_chars(s),
+            _ => Vec::new(),
+        };
+        for (i, &arg) in var_args.iter().enumerate() {
             let var = self.body.into_variable(arg);
             let kind = match self.body.expr_type(arg) {
-                Type::Integer => ScanKind::Int,
+                Type::Integer => match convs.get(i) {
+                    // `%h`/`%H` is the Verilog hex conversion; `%x`/`%X` (the C
+                    // spelling) is accepted too for convenience.
+                    Some('h' | 'H' | 'x' | 'X') => ScanKind::IntHex,
+                    Some('o' | 'O') => ScanKind::IntOct,
+                    Some('b' | 'B') => ScanKind::IntBin,
+                    _ => ScanKind::Int,
+                },
                 Type::Real => ScanKind::Real,
                 Type::String => ScanKind::Str,
                 ty => unreachable!("invalid $sscanf target type {ty:?}"),
@@ -2392,4 +2408,35 @@ fn binomial_bilinear_weight(n: usize, k: usize, i: usize) -> f64 {
         sum += sign * binomial(k, a) * binomial(n_k, b);
     }
     sum
+}
+
+/// Enhancement-105: extract the ordered list of `$sscanf`/`$fscanf` conversion
+/// characters (`d`, `h`, `o`, `b`, `g`, `s`, ...) from a format string, one per
+/// consumed argument. `%%` is a literal percent and `%m`/`%M` take no argument,
+/// so both are skipped; flags/width/precision between `%` and the conversion
+/// are ignored. Used to pick the integer base of each scanned field.
+fn scanf_conversion_chars(fmt: &str) -> Vec<char> {
+    let mut out = Vec::new();
+    let mut chars = fmt.chars();
+    while let Some(c) = chars.next() {
+        if c != '%' {
+            continue;
+        }
+        let mut d = match chars.next() {
+            Some(d) => d,
+            None => break,
+        };
+        // skip any flags / width / precision prefix
+        while matches!(d, '-' | '+' | ' ' | '#' | '0'..='9' | '.' | '*') {
+            d = match chars.next() {
+                Some(d) => d,
+                None => return out,
+            };
+        }
+        match d {
+            '%' | 'm' | 'M' => {} // no argument consumed
+            _ => out.push(d),
+        }
+    }
+    out
 }

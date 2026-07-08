@@ -630,6 +630,52 @@ int osdi_scan_int(void) {
   return 0;
 }
 
+// Enhancement-105: base-specific integer scanners for the `%h`/`%o`/`%b`
+// conversions. Unlike osdi_scan_int (strtol base 0, which infers the base from
+// the input's own prefix), these force the base named by the format specifier,
+// so `$sscanf("ff", "%h", x)` yields 255 and `$sscanf("17", "%o", x)` yields 15.
+OSDI_NOINLINE
+int osdi_scan_hex(void) {
+  const char *p = osdi_skip_ws(osdi_scan_cursor);
+  char *end;
+  long v = strtol(p, &end, 16);
+  if (end != p) {
+    osdi_scan_cursor = end;
+    osdi_scan_matches++;
+    return (int)v;
+  }
+  osdi_scan_cursor = p;
+  return 0;
+}
+
+OSDI_NOINLINE
+int osdi_scan_oct(void) {
+  const char *p = osdi_skip_ws(osdi_scan_cursor);
+  char *end;
+  long v = strtol(p, &end, 8);
+  if (end != p) {
+    osdi_scan_cursor = end;
+    osdi_scan_matches++;
+    return (int)v;
+  }
+  osdi_scan_cursor = p;
+  return 0;
+}
+
+OSDI_NOINLINE
+int osdi_scan_bin(void) {
+  const char *p = osdi_skip_ws(osdi_scan_cursor);
+  char *end;
+  long v = strtol(p, &end, 2);
+  if (end != p) {
+    osdi_scan_cursor = end;
+    osdi_scan_matches++;
+    return (int)v;
+  }
+  osdi_scan_cursor = p;
+  return 0;
+}
+
 OSDI_NOINLINE
 double osdi_scan_real(void) {
   const char *p = osdi_skip_ws(osdi_scan_cursor);

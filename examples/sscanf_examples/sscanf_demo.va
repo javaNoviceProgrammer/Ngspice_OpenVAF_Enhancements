@@ -1,0 +1,38 @@
+// Enhancement-105: `$sscanf` honours the format conversion base.
+//
+// The scanf runtime parsed every integer field with strtol base 0 (base
+// inferred from the INPUT's own prefix), ignoring the format string entirely.
+// So `$sscanf("ff", "%h", x)` gave 0 (needed "0xff") and `$sscanf("17", "%o",
+// x)` gave 17 as decimal (needed "017"). Now the conversion character selects
+// the base: `%h`/`%x` hex, `%o` octal, `%b` binary, `%d` decimal.
+//
+// The `*_v` opvars hold the parsed value; `nm` is the match count ($sscanf's
+// return). A device reads a fixed input string so the results are deterministic.
+`include "disciplines.vams"
+
+module sscanf_demo (p, n);
+    inout p, n;
+    electrical p, n;
+
+    (* desc = "hex ff -> 255"    *) integer hex_v;
+    (* desc = "oct 17 -> 15"     *) integer oct_v;
+    (* desc = "bin 1010 -> 10"   *) integer bin_v;
+    (* desc = "dec 42 -> 42"     *) integer dec_v;
+    (* desc = "two ints a"       *) integer two_a;
+    (* desc = "two ints b"       *) integer two_b;
+    (* desc = "int+real mixed i" *) integer mix_i;
+    (* desc = "int+real mixed r" *) real     mix_r;
+    (* desc = "match count"      *) integer  nm;
+
+    analog begin
+        hex_v = 0; oct_v = 0; bin_v = 0; dec_v = 0;
+        two_a = 0; two_b = 0; mix_i = 0; mix_r = 0.0;
+        $sscanf("ff",        "%h",    hex_v);
+        $sscanf("17",        "%o",    oct_v);
+        $sscanf("1010",      "%b",    bin_v);
+        $sscanf("42",        "%d",    dec_v);
+        $sscanf("a0 ff",     "%h %h", two_a, two_b);   // 160, 255
+        nm = $sscanf("7 8.5", "%d %g", mix_i, mix_r);  // 7, 8.5, nm=2
+        I(p, n) <+ V(p, n) * 1.0e-3;
+    end
+endmodule

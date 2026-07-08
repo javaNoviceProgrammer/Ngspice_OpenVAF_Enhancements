@@ -508,3 +508,7 @@ examples/ceil_examples/_ceil.sp
 # Enhancement-104 convert: verify-run scratch files
 examples/convert_examples/*.osdi
 examples/convert_examples/_conv.sp
+
+# Enhancement-105 sscanf: verify-run scratch files
+examples/sscanf_examples/*.osdi
+examples/sscanf_examples/_ss.sp

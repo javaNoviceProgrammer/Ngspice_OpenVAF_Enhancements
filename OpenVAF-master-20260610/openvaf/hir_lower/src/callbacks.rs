@@ -168,6 +168,11 @@ pub enum PrintDst {
 #[derive(Debug, Clone, Copy, Hash, Eq, PartialEq)]
 pub enum ScanKind {
     Int,
+    // Enhancement-105: integer fields with an explicit base conversion
+    // (`%h`/`%o`/`%b`); the default `Int` keeps strtol's base-0 auto-detection.
+    IntHex,
+    IntOct,
+    IntBin,
     Real,
     Str,
 }
@@ -176,6 +181,9 @@ impl ScanKind {
     pub fn stdlib_name(self) -> &'static str {
         match self {
             ScanKind::Int => "osdi_scan_int",
+            ScanKind::IntHex => "osdi_scan_hex",
+            ScanKind::IntOct => "osdi_scan_oct",
+            ScanKind::IntBin => "osdi_scan_bin",
             ScanKind::Real => "osdi_scan_real",
             ScanKind::Str => "osdi_scan_str",
         }

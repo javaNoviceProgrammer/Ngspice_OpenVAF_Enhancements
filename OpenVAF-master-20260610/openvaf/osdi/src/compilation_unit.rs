@@ -351,6 +351,16 @@ pub fn general_callbacks<'ll>(
                         CallBackKind::Scan(hir_lower::ScanKind::Int) => {
                             ("osdi_scan_int", vec![], int)
                         }
+                        // Enhancement-105: base-specific integer scanners.
+                        CallBackKind::Scan(hir_lower::ScanKind::IntHex) => {
+                            ("osdi_scan_hex", vec![], int)
+                        }
+                        CallBackKind::Scan(hir_lower::ScanKind::IntOct) => {
+                            ("osdi_scan_oct", vec![], int)
+                        }
+                        CallBackKind::Scan(hir_lower::ScanKind::IntBin) => {
+                            ("osdi_scan_bin", vec![], int)
+                        }
                         CallBackKind::Scan(hir_lower::ScanKind::Real) => {
                             ("osdi_scan_real", vec![], dbl)
                         }
