@@ -119,7 +119,11 @@ impl<'a> Interpreter<'a> {
             mir::Opcode::Bnot => (!args(0).bool()).into(),
             mir::Opcode::Fneg => (-args(0).f64()).into(),
             mir::Opcode::Ineg => (-args(0).i32()).into(),
-            mir::Opcode::FIcast => (args(0).f64() as i32).into(),
+            // FIcast is the implicit real->int cast, which per the LRM rounds to
+            // nearest (ties away from zero) -- NOT truncation. Match the shipped
+            // evaluators: mir_llvm uses llvm.lround, mir_opt/const_eval uses
+            // f64::round(); a bare `as i32` truncated toward zero and disagreed.
+            mir::Opcode::FIcast => (args(0).f64().round() as i32).into(),
             mir::Opcode::IFcast => (args(0).i32() as f64).into(),
             mir::Opcode::BIcast => (args(0).bool() as i32).into(),
             mir::Opcode::IBcast => (args(0).i32() != 0).into(),

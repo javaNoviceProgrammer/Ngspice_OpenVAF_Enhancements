@@ -245,8 +245,9 @@ lexicographic (`strcmp`) comparison (E-106).
 
 `ln/log/exp/sqrt/pow/min/max/abs/floor/ceil`, trigonometric and
 hyperbolic families (integer `min`/`max`/`abs` correctly integer-typed;
-integer division/rounding away from zero per the LRM; `ceil` of a runtime
-argument fixed, E-103), `$clog2` returning `ceil(log2 n)` (E-101), the
+integer division **truncates toward zero** and real→integer conversion
+**rounds to nearest, ties away from zero**, per the LRM — the two are
+distinct rules; `ceil` of a runtime argument fixed, E-103), `$clog2` returning `ceil(log2 n)` (E-101), the
 conversion functions `$rtoi` (real→integer, truncating toward zero — as
 distinct from the rounding implicit cast) and `$itor` (integer→real, E-104),
 and the environment: `$temperature` (kelvin — verified as the exact kT/q law
@@ -618,7 +619,7 @@ connected port.)*
 
 As of E-84 the standard's own examples are a compliance suite: every
 code example in the LRM 2023 PDF is extracted and compiled
-(`examples/lrm_examples/` — 40 compile, 19 documented limitations pinned
+(`examples/lrm_examples/` — 42 compile, 17 documented limitations pinned
 to their diagnostics, 21 correctly rejected as mixed-signal), and the
 146 non-module fragments double as a no-crash fuzz corpus.
 
