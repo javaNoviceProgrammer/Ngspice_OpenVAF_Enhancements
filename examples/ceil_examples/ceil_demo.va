@@ -1,0 +1,42 @@
+// Enhancement-103: `ceil()` on a runtime (non-constant) argument.
+//
+// The LLVM code generator emitted the `llvm.ceil.f64` intrinsic for `ceil()`,
+// but that intrinsic was never registered in the intrinsics table (its sibling
+// `llvm.floor.f64` was). So `ceil(x)` for any non-constant `x` crashed the
+// compiler with "internal error: intrinsic llvm.ceil.f64 not found", while
+// `floor(x)` compiled fine. Registering the intrinsic fixes it.
+//
+// The `c_*` operating-point variables take `ceil` of module PARAMETERS, which
+// forces the runtime code path (a constant argument would fold at compile time
+// and never reach codegen). `f_*` cross-check `floor` on the same inputs.
+`include "disciplines.vams"
+
+module ceil_demo (p, n);
+    inout p, n;
+    electrical p, n;
+
+    parameter real a =  2.1;   // ceil 3,  floor 2
+    parameter real b =  2.0;   // ceil 2,  floor 2   (exact integer)
+    parameter real c = -2.7;   // ceil -2, floor -3
+    parameter real d = -0.5;   // ceil 0,  floor -1
+    parameter real e =  5.0;   // ceil 5,  floor 5
+
+    (* desc = "ceil(a)"  *) real c_a;
+    (* desc = "ceil(b)"  *) real c_b;
+    (* desc = "ceil(c)"  *) real c_c;
+    (* desc = "ceil(d)"  *) real c_d;
+    (* desc = "ceil(e)"  *) real c_e;
+    (* desc = "floor(a)" *) real f_a;
+    (* desc = "floor(c)" *) real f_c;
+
+    analog begin
+        c_a = ceil(a);
+        c_b = ceil(b);
+        c_c = ceil(c);
+        c_d = ceil(d);
+        c_e = ceil(e);
+        f_a = floor(a);
+        f_c = floor(c);
+        I(p, n) <+ V(p, n) * 1.0e-3;
+    end
+endmodule

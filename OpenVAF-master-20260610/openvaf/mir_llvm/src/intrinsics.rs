@@ -37,6 +37,11 @@ impl<'a, 'll> CodegenCx<'a, 'll> {
         ifn!("llvm.log10.f64", fn(t_f64) -> t_f64);
         ifn!("llvm.log2.f64", fn(t_f64) -> t_f64);
         ifn!("llvm.floor.f64", fn(t_f64) -> t_f64);
+        // Enhancement-103: `ceil` was emitted by the codegen (`llvm.ceil.f64`)
+        // but never registered here, so `ceil(x)` of any non-constant argument
+        // crashed the compiler ("intrinsic llvm.ceil.f64 not found"). `floor`
+        // above was registered; this is its missing sibling.
+        ifn!("llvm.ceil.f64", fn(t_f64) -> t_f64);
         ifn!("llvm.fabs.f64", fn(t_f64) -> t_f64);
         ifn!("llvm.ctlz", fn(t_i32, t_bool) -> t_i32);
 

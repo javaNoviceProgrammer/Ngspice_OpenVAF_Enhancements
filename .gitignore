@@ -500,3 +500,7 @@ examples/clog2_examples/_cpar.sp
 examples/paramarray_examples/*.osdi
 examples/paramarray_examples/_ttr.va
 examples/paramarray_examples/_pa.sp
+
+# Enhancement-103 ceil: verify-run scratch files
+examples/ceil_examples/*.osdi
+examples/ceil_examples/_ceil.sp

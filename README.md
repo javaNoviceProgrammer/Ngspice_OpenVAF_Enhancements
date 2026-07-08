@@ -28,7 +28,7 @@ https://ngspice.sourceforge.io/
 
 ## The Enhancements
 
-One hundred and two enhancements so far — language features, correctness fixes, systematic audits, and simulator-side workflow tooling, each verified end-to-end by a committed example suite and released with a detailed write-up.
+One hundred and three enhancements so far — language features, correctness fixes, systematic audits, and simulator-side workflow tooling, each verified end-to-end by a committed example suite and released with a detailed write-up.
 
 **📖 Start with the [User Handbook](docs/handbook/README.md)**, which organizes everything by topic: [getting started](docs/handbook/01-getting-started.md), the [Verilog-A feature matrix](docs/handbook/02-verilog-a-language.md), [ngspice workflows](docs/handbook/03-ngspice-workflows.md), and the [limitations & gotchas](docs/handbook/04-limitations-and-gotchas.md). The whole handbook plus the complete text of every enhancement write-up is also one linked PDF: [docs/Ngspice-OpenVAF-Handbook.pdf](docs/Ngspice-OpenVAF-Handbook.pdf).
 
@@ -138,6 +138,7 @@ The index: **Doc** links each enhancement's detailed write-up, **Examples** link
 | 100 | Milestone audit & retrospective — full-tree re-verification (90/90 suites + 28/28 integration), provenance/link audit, and a look back at the first hundred | [doc](enhancements_doc/Enhancement-100.md) | — |
 | 101 | `$clog2` correctness — accept one argument (was a bad 2-arg signature) and return `ceil(log2 n)` (was off by one on exact powers of two) | [doc](enhancements_doc/Enhancement-101.md) | [clog2](examples/clog2_examples/) |
 | 102 | Name-then-range array parameters — `parameter real c[0:2]` (dims after the name), completing the name-then-range line (vars/nets/ports already had it) | [doc](enhancements_doc/Enhancement-102.md) | [paramarray](examples/paramarray_examples/) |
+| 103 | `ceil()` of a runtime argument no longer crashes the compiler (the `llvm.ceil.f64` intrinsic was unregistered; `floor` worked) | [doc](enhancements_doc/Enhancement-103.md) | [ceil](examples/ceil_examples/) |
 
 ---
 
