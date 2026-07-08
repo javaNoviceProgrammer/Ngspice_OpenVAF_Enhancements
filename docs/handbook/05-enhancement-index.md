@@ -107,3 +107,4 @@ table is the enhancement index of the top-level
 | 97 | Clean diagnostic instead of a compiler panic when a contribution's branch is entirely `ground` (`V(gnd) <+ ...`) | [doc](../../enhancements_doc/Enhancement-97.md) | [groundcontrib](../../examples/groundcontrib_examples/) |
 | 98 | `pyplot` multi-panel subplots (`set pyplot_subplots=N`, N traces per stacked panel) + matplotlib style sheets (`set pyplot_style=dark`) | [doc](../../enhancements_doc/Enhancement-98.md) | [pyplotpanel](../../examples/pyplotpanel_examples/) |
 | 99 | `pyplot` vector export formats (`set pyplot_terminal=svg`/`pdf`) + figure size (`set pyplot_figsize="W,H"`) | [doc](../../enhancements_doc/Enhancement-99.md) | [pyplotexport](../../examples/pyplotexport_examples/) |
+| 100 | Milestone audit & retrospective — full-tree re-verification (90/90 suites + 28/28 integration), provenance/link audit, and a look back at the first hundred | [doc](../../enhancements_doc/Enhancement-100.md) | — |
