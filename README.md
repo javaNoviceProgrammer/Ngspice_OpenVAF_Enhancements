@@ -28,7 +28,7 @@ https://ngspice.sourceforge.io/
 
 ## The Enhancements
 
-Ninety-eight enhancements so far — language features, correctness fixes, systematic audits, and simulator-side workflow tooling, each verified end-to-end by a committed example suite and released with a detailed write-up.
+Ninety-nine enhancements so far — language features, correctness fixes, systematic audits, and simulator-side workflow tooling, each verified end-to-end by a committed example suite and released with a detailed write-up.
 
 **📖 Start with the [User Handbook](docs/handbook/README.md)**, which organizes everything by topic: [getting started](docs/handbook/01-getting-started.md), the [Verilog-A feature matrix](docs/handbook/02-verilog-a-language.md), [ngspice workflows](docs/handbook/03-ngspice-workflows.md), and the [limitations & gotchas](docs/handbook/04-limitations-and-gotchas.md). The whole handbook plus the complete text of every enhancement write-up is also one linked PDF: [docs/Ngspice-OpenVAF-Handbook.pdf](docs/Ngspice-OpenVAF-Handbook.pdf).
 
@@ -134,6 +134,7 @@ The index: **Doc** links each enhancement's detailed write-up, **Examples** link
 | 96 | Parse a module-level `generate for`/`if`/`case` written **without** the optional `generate`/`endgenerate` keywords (was `unexpected token 'for'`, or silently dropped the loop) | [doc](enhancements_doc/Enhancement-96.md) | [baregenerate](examples/baregenerate_examples/) |
 | 97 | Clean diagnostic instead of a compiler panic when a contribution's branch is entirely `ground` (`V(gnd) <+ ...`) | [doc](enhancements_doc/Enhancement-97.md) | [groundcontrib](examples/groundcontrib_examples/) |
 | 98 | `pyplot` multi-panel subplots (`set pyplot_subplots=N`, N traces per stacked panel) + matplotlib style sheets (`set pyplot_style=dark`) | [doc](enhancements_doc/Enhancement-98.md) | [pyplotpanel](examples/pyplotpanel_examples/) |
+| 99 | `pyplot` vector export formats (`set pyplot_terminal=svg`/`pdf`) + figure size (`set pyplot_figsize="W,H"`) | [doc](enhancements_doc/Enhancement-99.md) | [pyplotexport](examples/pyplotexport_examples/) |
 
 ---
 

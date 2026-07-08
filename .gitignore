@@ -432,6 +432,16 @@ examples/pyplot_examples/nofn.sp
 examples/baregenerate_examples/*.osdi
 examples/baregenerate_examples/*.sp
 
+# Enhancement-99 pyplotexport: verify-run scratch files (generated plots/scripts)
+examples/pyplotexport_examples/*.data
+examples/pyplotexport_examples/deck.sp
+examples/pyplotexport_examples/expsvg.py
+examples/pyplotexport_examples/expsvg.svg
+examples/pyplotexport_examples/exppdf.py
+examples/pyplotexport_examples/exppdf.pdf
+examples/pyplotexport_examples/exppng.py
+examples/pyplotexport_examples/exppng.png
+
 # Enhancement-97 groundcontrib: verify-run scratch files
 examples/groundcontrib_examples/*.osdi
 examples/groundcontrib_examples/*.sp

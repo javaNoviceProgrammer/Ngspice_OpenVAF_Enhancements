@@ -271,6 +271,12 @@ count was lowered from 2 to 1). `ft_pyplot()` also grew **stacked subplots**
 per panel; `vs` stays the x-axis, so it is not a panel separator) and
 **matplotlib style sheets** (`set pyplot_style=<name>`, `dark` →
 `dark_background`, guarded) ([E-98](../../enhancements_doc/Enhancement-98.md)).
+The headless `pyplot_terminal` was extended from PNG-only to the **vector
+export formats** `svg` and `pdf` (`set pyplot_terminal=svg`/`pdf` →
+`fig.savefig(<file>.<fmt>)`, matplotlib picking the writer from the extension),
+and a **figure size** control was added (`set pyplot_figsize="W,H"` →
+`plt.subplots(..., figsize=(W, H))`; quote the value so ngspice keeps the
+comma) ([E-99](../../enhancements_doc/Enhancement-99.md)).
 
 ### `postcoms.c` (414 diff lines) + `postcoms.h` + `commands.c` (16)
 
@@ -449,6 +455,7 @@ Every enhancement that touched ngspice, oldest first:
 | [E-94](../../enhancements_doc/Enhancement-94.md) | plotting/pyplot.c (new), com_pyplot.c (new), plotit.c, commands.c | new `pyplot` command — plot vectors with matplotlib (a Python `gnuplot`) |
 | [E-95](../../enhancements_doc/Enhancement-95.md) | com_pyplot.c, commands.c | make the `pyplot` output file name optional (defaults to `pyplot`) |
 | [E-98](../../enhancements_doc/Enhancement-98.md) | plotting/pyplot.c | `pyplot` stacked subplots (`pyplot_subplots=N`) + matplotlib style sheets (`pyplot_style`) |
+| [E-99](../../enhancements_doc/Enhancement-99.md) | plotting/pyplot.c | `pyplot` vector export formats (`pyplot_terminal=svg`/`pdf`) + figure size (`pyplot_figsize`) |
 
 *(E-25's simparam exposure lives in the OSDI callback table populated at
 load time; its diff rides inside the `osdiload.c`/callbacks changes.)*
