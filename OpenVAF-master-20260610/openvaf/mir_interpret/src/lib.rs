@@ -131,9 +131,17 @@ impl<'a> Interpreter<'a> {
             mir::Opcode::Ln => f64::ln(args(0).f64()).into(),
             mir::Opcode::Log => f64::log10(args(0).f64()).into(),
             mir::Opcode::Clog2 => {
+                // Enhancement-101: $clog2(n) = ceil(log2 n) per IEEE 1800 -- the
+                // number of bits needed to index `n` distinct values, i.e.
+                // bit_width(n-1) for n>=2, else 0. The old `bit_width(n)`
+                // overcounted exact powers of two (clog2(16) gave 5, not 4).
                 let val = args(0).i32();
-                let val = 8 * size_of_val(&val) as i32 - val.leading_zeros() as i32;
-                val.into()
+                let res = if val <= 1 {
+                    0i32
+                } else {
+                    8 * size_of_val(&val) as i32 - (val - 1).leading_zeros() as i32
+                };
+                res.into()
             }
             mir::Opcode::Floor => f64::floor(args(0).f64()).into(),
             mir::Opcode::Ceil => f64::ceil(args(0).f64()).into(),

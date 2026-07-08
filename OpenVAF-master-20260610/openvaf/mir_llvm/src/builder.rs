@@ -911,10 +911,41 @@ impl<'ll> Builder<'_, '_, 'll> {
             Opcode::Ln => NonNull::from(self.intrinsic(args, "llvm.log.f64")).as_ptr(),
             Opcode::Log => NonNull::from(self.intrinsic(args, "llvm.log10.f64")).as_ptr(),
             Opcode::Clog2 => {
-                let leading_zeros =
-                    NonNull::from(self.intrinsic(&[args[0], true.into()], "llvm.ctlz")).as_ptr();
+                // Enhancement-101: $clog2(n) = ceil(log2 n) per IEEE 1800 =
+                // bit_width(n-1) for n>=2, else 0. The previous `32 - ctlz(n)`
+                // computed bit_width(n) = floor(log2 n)+1, which overcounts
+                // exact powers of two (clog2(16) gave 5 instead of 4).
+                let n = NonNull::from(self.values[args[0]].get(self)).as_ptr();
+                let one = NonNull::from(self.cx.const_int(1)).as_ptr();
+                let nm1 = llvm_sys::core::LLVMBuildSub(self.llbuilder, n, one, UNNAMED);
+                // ctlz with is_zero_poison = false so ctlz(0) = 32 is defined
+                // (this makes the n == 1 case, where n-1 == 0, evaluate to 0).
+                let (ctlz_ty, ctlz_fun) = self
+                    .cx
+                    .intrinsic("llvm.ctlz")
+                    .unwrap_or_else(|| unreachable!("intrinsic llvm.ctlz not found"));
+                let mut ctlz_args = [nm1, NonNull::from(self.cx.const_bool(false)).as_ptr()];
+                let leading_zeros = llvm_sys::core::LLVMBuildCall2(
+                    self.llbuilder,
+                    NonNull::from(ctlz_ty).as_ptr(),
+                    NonNull::from(ctlz_fun).as_ptr(),
+                    ctlz_args.as_mut_ptr(),
+                    ctlz_args.len() as u32,
+                    UNNAMED,
+                );
                 let total_bits = NonNull::from(self.cx.const_int(32)).as_ptr();
-                llvm_sys::core::LLVMBuildSub(self.llbuilder, total_bits, leading_zeros, UNNAMED)
+                let width =
+                    llvm_sys::core::LLVMBuildSub(self.llbuilder, total_bits, leading_zeros, UNNAMED);
+                // guard n < 1 -> 0 (per the LRM, $clog2 of 0 is 0).
+                let cond = llvm_sys::core::LLVMBuildICmp(
+                    self.llbuilder,
+                    llvm_sys::LLVMIntPredicate::LLVMIntSLT,
+                    n,
+                    one,
+                    UNNAMED,
+                );
+                let zero = NonNull::from(self.cx.const_int(0)).as_ptr();
+                llvm_sys::core::LLVMBuildSelect(self.llbuilder, cond, zero, width, UNNAMED)
             }
             Opcode::Floor => NonNull::from(self.intrinsic(args, "llvm.floor.f64")).as_ptr(),
             Opcode::Ceil => NonNull::from(self.intrinsic(args, "llvm.ceil.f64")).as_ptr(),

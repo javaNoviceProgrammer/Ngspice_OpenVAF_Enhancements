@@ -490,3 +490,8 @@ examples/lrm_examples/limitations/*.osdi
 
 # Python bytecode cache (e.g. from importing _setup.py)
 __pycache__/
+
+# Enhancement-101 clog2: verify-run scratch files
+examples/clog2_examples/*.osdi
+examples/clog2_examples/_clit.sp
+examples/clog2_examples/_cpar.sp

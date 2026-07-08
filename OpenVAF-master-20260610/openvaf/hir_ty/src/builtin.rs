@@ -186,7 +186,12 @@ bultins! {
     const fn REAL_INFO() -> Real;
     const fn REAL_MATH_1(Val(Real)) -> Real;
     const fn REAL_MATH_2(Val(Real),Val(Real)) -> Real;
-    const fn INT_MATH_2(Val(Integer),Val(Integer)) -> Integer;
+    // Enhancement-101: `$clog2(n)` is a ONE-argument system function (ceiling of
+    // log2). It had been aliased to a 2-arg integer signature, so every call was
+    // rejected with "expected 2 arguments" even though the lowering already
+    // consumes a single argument. INT_MATH_1 is the correct 1-arg integer
+    // signature; it is the only integer-math template, so no 2-arg form remains.
+    const fn INT_MATH_1(Val(Integer)) -> Integer;
 
 
     VT = const {
@@ -514,7 +519,7 @@ copied_builtins! {
     FLOOR = REAL_MATH_1
     LN = REAL_MATH_1
     LOG = REAL_MATH_1
-    CLOG2 = INT_MATH_2
+    CLOG2 = INT_MATH_1
     LOG10 = REAL_MATH_1
     CEIL = REAL_MATH_1
     LIMEXP = REAL_MATH_1

@@ -102,8 +102,14 @@ pub fn eval_unary(func: &mut Function, op: Opcode, val: Const) -> Option<Value> 
             Opcode::IFcast => func.dfg.f64const(val as f64),
             Opcode::IBcast => (val != 0).into(),
             Opcode::Clog2 => {
-                let val = 8 * size_of_val(&val) as i32 - val.leading_zeros() as i32;
-                func.dfg.iconst(val)
+                // Enhancement-101: $clog2(n) = ceil(log2 n) = bit_width(n-1) for
+                // n>=2, else 0 (the old bit_width(n) overcounted powers of two).
+                let res = if val <= 1 {
+                    0i32
+                } else {
+                    8 * size_of_val(&val) as i32 - (val - 1).leading_zeros() as i32
+                };
+                func.dfg.iconst(res)
             }
             _ => unreachable!("invalid int operation {}", op),
         },

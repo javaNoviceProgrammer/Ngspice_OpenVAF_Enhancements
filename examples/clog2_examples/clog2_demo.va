@@ -1,0 +1,44 @@
+// Enhancement-101: `$clog2(n)` correctness.
+//
+// `$clog2` is the IEEE-1800 system function returning the ceiling of the base-2
+// logarithm of its single argument (the number of bits needed to index `n`
+// distinct values). Before E-101 openvaf-r (a) rejected every call, demanding
+// two arguments, because the builtin was aliased to a 2-arg integer signature,
+// and (b) once that was fixed, computed bit_width(n) = floor(log2 n)+1, which
+// overcounts exact powers of two.  Both are fixed here.
+//
+// The `cN` operating-point variable exercises the runtime (parameter-dependent)
+// code path; the literal `c_*` opvars exercise the constant-folding path.
+`include "disciplines.vams"
+
+module clog2_demo (p, n);
+    inout p, n;
+    electrical p, n;
+
+    parameter integer N = 16;
+
+    (* desc = "clog2(N), runtime path" *) integer cN;
+    (* desc = "clog2(1)"    *) integer c_1;
+    (* desc = "clog2(2)"    *) integer c_2;
+    (* desc = "clog2(3)"    *) integer c_3;
+    (* desc = "clog2(4)"    *) integer c_4;
+    (* desc = "clog2(7)"    *) integer c_7;
+    (* desc = "clog2(8)"    *) integer c_8;
+    (* desc = "clog2(16)"   *) integer c_16;
+    (* desc = "clog2(17)"   *) integer c_17;
+    (* desc = "clog2(1024)" *) integer c_1024;
+
+    analog begin
+        cN     = $clog2(N);
+        c_1    = $clog2(1);
+        c_2    = $clog2(2);
+        c_3    = $clog2(3);
+        c_4    = $clog2(4);
+        c_7    = $clog2(7);
+        c_8    = $clog2(8);
+        c_16   = $clog2(16);
+        c_17   = $clog2(17);
+        c_1024 = $clog2(1024);
+        I(p, n) <+ V(p, n) * 1.0e-3;
+    end
+endmodule

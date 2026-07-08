@@ -694,8 +694,9 @@ tests hide behind `RUN_DEV_TESTS=1`. Fixed test-side only
 | [E-93](../../enhancements_doc/Enhancement-93.md) | osdi (metadata) | flag `localparam` OSDI parameters non-settable (`PARA_FLAG_FIXED`, additive) so ngspice can warn on a netlist override (ngspice side too) |
 | [E-96](../../enhancements_doc/Enhancement-96.md) | parser (module grammar) | parse a module-level `generate for`/`if`/`case` without the optional `generate`/`endgenerate` keywords |
 | [E-97](../../enhancements_doc/Enhancement-97.md) | hir_ty (validation) | clean diagnostic (was an ICE) for a contribution to an all-`ground` branch (`V(gnd) <+ …`) |
+| [E-101](../../enhancements_doc/Enhancement-101.md) | hir_ty (builtin), mir_opt / mir_interpret / mir_llvm | `$clog2`: accept one argument (`INT_MATH_1`, was a 2-arg signature) and compute `ceil(log2 n)` = `bit_width(n-1)` in all three backends (was `floor(log2 n)+1`, wrong on exact powers of two) |
 
-Enhancements not listed (57, 60, 62–64, 69, 72–77, 79–83) changed no
+Enhancements not listed (57, 60, 62–64, 69, 72–77, 79–83, 94–95, 98–100) changed no
 compiler sources — they were validation suites, documentation, benchmark
 tooling, or ngspice-side work (see the
 [ngspice report](ngspice_changes_full-report.md)).
