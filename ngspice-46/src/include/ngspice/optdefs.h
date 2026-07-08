@@ -136,7 +136,22 @@ enum {
     OPT_LTEABSTOL,
     OPT_LTETRTOL,
     OPT_NEWTRUNC,
+    OPT_ERRPRESET,      /* Enhancement-110: coordinated accuracy preset */
 };
+
+/* Enhancement-110: `.option errpreset=conservative|moderate|liberal` sets a
+ * coordinated group of tolerance/robustness options with one knob. Each bit
+ * below records that the user gave the corresponding option EXPLICITLY, so an
+ * explicit .option always overrides the preset regardless of .options line
+ * order (errpreset only writes fields whose bit is clear). */
+#define ERRP_RELTOL    (1u << 0)
+#define ERRP_ABSTOL    (1u << 1)
+#define ERRP_VNTOL     (1u << 2)
+#define ERRP_CHGTOL    (1u << 3)
+#define ERRP_TRTOL     (1u << 4)
+#define ERRP_SRCSTEPS  (1u << 5)
+#define ERRP_GMINSTEPS (1u << 6)
+#define ERRP_ITL1      (1u << 7)
 
 #ifdef XSPICE
 /* gtri - begin - wbk - add new options */

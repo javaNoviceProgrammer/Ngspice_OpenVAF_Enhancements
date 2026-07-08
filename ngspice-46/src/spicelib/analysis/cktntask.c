@@ -86,6 +86,7 @@ CKTnewTask(CKTcircuit *ckt, TSKtask **taskPtr, IFuid taskName, TSKtask **defPtr)
         tsk->TSKlteAbstol       = def->TSKlteAbstol;
         tsk->TSKlteTrtol       = def->TSKlteTrtol;
         tsk->TSKnewtrunc       = def->TSKnewtrunc;
+        tsk->TSKtolGiven       = 0; /* Enhancement-110: no user-given options yet */
     } else {
 #endif /*CDHW*/
 
@@ -97,6 +98,7 @@ CKTnewTask(CKTcircuit *ckt, TSKtask **taskPtr, IFuid taskName, TSKtask **defPtr)
         tsk->TSKreltol          = 1e-3;
         tsk->TSKchgtol          = 1e-14;
         tsk->TSKvoltTol         = 1e-6;
+        tsk->TSKtolGiven        = 0; /* Enhancement-110: no user-given options yet */
         tsk->TSKlteReltol       = 1e-3;
         tsk->TSKlteAbstol       = 1e-6;
         tsk->TSKlteTrtol        = 500.;

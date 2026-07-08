@@ -16,7 +16,7 @@ the compiler side.
 > the per-enhancement index at the end tells you the last change it
 > covers.
 
-**Scope summary.** One new source file and 33 modified ones carry all the
+**Scope summary.** One new source file and 37 modified ones carry all the
 functional changes (~2,000 substantive diff lines). A further ~100
 `Makefile.in` files and `config.h.in` differ only because the autotools
 were regenerated with a current libtool
@@ -456,6 +456,7 @@ Every enhancement that touched ngspice, oldest first:
 | [E-95](../../enhancements_doc/Enhancement-95.md) | com_pyplot.c, commands.c | make the `pyplot` output file name optional (defaults to `pyplot`) |
 | [E-98](../../enhancements_doc/Enhancement-98.md) | plotting/pyplot.c | `pyplot` stacked subplots (`pyplot_subplots=N`) + matplotlib style sheets (`pyplot_style`) |
 | [E-99](../../enhancements_doc/Enhancement-99.md) | plotting/pyplot.c | `pyplot` vector export formats (`pyplot_terminal=svg`/`pdf`) + figure size (`pyplot_figsize`) |
+| [E-110](../../enhancements_doc/Enhancement-110.md) | optdefs.h, tskdefs.h, cktsopt.c, cktntask.c | `.option errpreset=conservative\|moderate\|liberal` — one knob for a coordinated tolerance/robustness set; explicit options override regardless of order (`moderate` = historical defaults) |
 
 *(E-25's simparam exposure lives in the OSDI callback table populated at
 load time; its diff rides inside the `osdiload.c`/callbacks changes.)*

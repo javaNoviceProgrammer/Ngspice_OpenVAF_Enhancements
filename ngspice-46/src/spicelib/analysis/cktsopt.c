@@ -28,6 +28,48 @@ Modified: 2000 AlansFixes
 /* gtri - end - wbk - add includes */
 #endif
 
+/* Enhancement-110: apply a coordinated accuracy preset. Each preset is one
+ * consistent set of tolerance / LTE / DC-robustness options, so the user
+ * trades accuracy vs. speed with a single knob instead of hand-tuning ~8
+ * interacting values. `moderate` reproduces ngspice's historical defaults, so
+ * the feature is fully backward-compatible. Fields the user set EXPLICITLY
+ * (recorded in task->TSKtolGiven by the individual option cases below) are
+ * left untouched, so an explicit .option always wins over the preset,
+ * regardless of the order the options appear on the .options line(s). */
+enum { ERRPRESET_CONSERVATIVE = 1, ERRPRESET_MODERATE, ERRPRESET_LIBERAL };
+
+static void
+ckt_apply_errpreset(TSKtask *task, int preset)
+{
+    double reltol, abstol, vntol, chgtol, trtol;
+    int srcsteps, gminsteps, itl1;
+
+    switch (preset) {
+    case ERRPRESET_CONSERVATIVE: /* accurate / robust, slower */
+        reltol = 1e-4; abstol = 1e-13; vntol = 1e-7; chgtol = 1e-15;
+        trtol  = 1.0;  srcsteps = 10;  gminsteps = 10; itl1 = 200;
+        break;
+    case ERRPRESET_LIBERAL:      /* fast, looser accuracy */
+        reltol = 1e-2; abstol = 1e-10; vntol = 1e-4; chgtol = 1e-12;
+        trtol  = 20.0; srcsteps = 1;   gminsteps = 1;  itl1 = 100;
+        break;
+    case ERRPRESET_MODERATE:     /* ngspice defaults (backward compatible) */
+    default:
+        reltol = 1e-3; abstol = 1e-12; vntol = 1e-6; chgtol = 1e-14;
+        trtol  = 7.0;  srcsteps = 1;   gminsteps = 1;  itl1 = 100;
+        break;
+    }
+
+    if (!(task->TSKtolGiven & ERRP_RELTOL))    task->TSKreltol       = reltol;
+    if (!(task->TSKtolGiven & ERRP_ABSTOL))    task->TSKabstol       = abstol;
+    if (!(task->TSKtolGiven & ERRP_VNTOL))     task->TSKvoltTol      = vntol;
+    if (!(task->TSKtolGiven & ERRP_CHGTOL))    task->TSKchgtol       = chgtol;
+    if (!(task->TSKtolGiven & ERRP_TRTOL))     task->TSKtrtol        = trtol;
+    if (!(task->TSKtolGiven & ERRP_SRCSTEPS))  task->TSKnumSrcSteps  = srcsteps;
+    if (!(task->TSKtolGiven & ERRP_GMINSTEPS)) task->TSKnumGminSteps = gminsteps;
+    if (!(task->TSKtolGiven & ERRP_ITL1))      task->TSKdcMaxIter    = itl1;
+}
+
 /* ARGSUSED */
 int
 CKTsetOpt(CKTcircuit *ckt, JOB *anal, int opt, IFvalue *val)
@@ -49,18 +91,23 @@ CKTsetOpt(CKTcircuit *ckt, JOB *anal, int opt, IFvalue *val)
         break;
     case OPT_RELTOL:
         task->TSKreltol = val->rValue;
+        task->TSKtolGiven |= ERRP_RELTOL;
         break;
     case OPT_ABSTOL:
         task->TSKabstol = val->rValue;
+        task->TSKtolGiven |= ERRP_ABSTOL;
         break;
     case OPT_VNTOL:
         task->TSKvoltTol = val->rValue;
+        task->TSKtolGiven |= ERRP_VNTOL;
         break;
     case OPT_TRTOL:
         task->TSKtrtol = val->rValue;
+        task->TSKtolGiven |= ERRP_TRTOL;
         break;
     case OPT_CHGTOL:
         task->TSKchgtol = val->rValue;
+        task->TSKtolGiven |= ERRP_CHGTOL;
         break;
     case OPT_PIVTOL:
         task->TSKpivotAbsTol = val->rValue;
@@ -76,6 +123,7 @@ CKTsetOpt(CKTcircuit *ckt, JOB *anal, int opt, IFvalue *val)
         break;
     case OPT_ITL1:
         task->TSKdcMaxIter = val->iValue;
+        task->TSKtolGiven |= ERRP_ITL1;
         break;
     case OPT_ITL2:
         task->TSKdcTrcvMaxIter = val->iValue;
@@ -89,9 +137,11 @@ CKTsetOpt(CKTcircuit *ckt, JOB *anal, int opt, IFvalue *val)
         break;
     case OPT_SRCSTEPS:
         task->TSKnumSrcSteps = val->iValue;
+        task->TSKtolGiven |= ERRP_SRCSTEPS;
         break;
     case OPT_GMINSTEPS:
         task->TSKnumGminSteps = val->iValue;
+        task->TSKtolGiven |= ERRP_GMINSTEPS;
         break;
     case OPT_GMINFACT:
         task->TSKgminFactor = val->rValue;
@@ -174,6 +224,18 @@ CKTsetOpt(CKTcircuit *ckt, JOB *anal, int opt, IFvalue *val)
         break;
     case OPT_CSHUNT:
         task->TSKcshunt = val->rValue;
+        break;
+    case OPT_ERRPRESET: /* Enhancement-110 */
+        if (strncmp(val->sValue, "cons", 4) == 0)
+            ckt_apply_errpreset(task, ERRPRESET_CONSERVATIVE);
+        else if (strncmp(val->sValue, "mod", 3) == 0)
+            ckt_apply_errpreset(task, ERRPRESET_MODERATE);
+        else if (strncmp(val->sValue, "lib", 3) == 0)
+            ckt_apply_errpreset(task, ERRPRESET_LIBERAL);
+        else
+            fprintf(stderr, "Warning: unknown errpreset '%s' "
+                    "(use conservative|moderate|liberal); ignored.\n",
+                    val->sValue);
         break;
 
 #ifdef KLU
@@ -275,6 +337,7 @@ static IFparm OPTtbl[] = {
  { "noopiter", OPT_NOOPITER,IF_SET|IF_FLAG,"Go directly to gmin stepping" },
  { "gmin", OPT_GMIN,IF_SET|IF_REAL,"Minimum conductance" },
  { "gshunt", OPT_GSHUNT,IF_SET|IF_REAL,"Shunt conductance" },
+ { "errpreset", OPT_ERRPRESET,IF_SET|IF_STRING,"Coordinated accuracy preset: conservative|moderate|liberal"},
  { "reltol", OPT_RELTOL,IF_SET|IF_REAL ,"Relative error tolerence"},
  { "abstol", OPT_ABSTOL,IF_SET|IF_REAL,"Absolute error tolerence" },
  { "vntol", OPT_VNTOL,IF_SET|IF_REAL,"Voltage error tolerence" },

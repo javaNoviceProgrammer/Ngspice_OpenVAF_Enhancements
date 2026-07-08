@@ -1,0 +1,25 @@
+errpreset demo -- one knob for coordinated transient accuracy
+* Enhancement-110: `.option errpreset=conservative|moderate|liberal` sets a
+* coordinated group of accuracy/robustness options (reltol, abstol, vntol,
+* chgtol, trtol, gmin/source steps, itl1) with a single knob. `moderate`
+* reproduces ngspice's historical defaults. Explicit .options still win.
+*
+* A 2-stage RC network driven by a fast pulse; adaptive time-stepping (which
+* trtol/reltol control) sets how finely the edges are resolved.
+v1  in  0   pulse(0 1 5n 0.1n 0.1n 200n 400n)
+r1  in  mid 1k
+c1  mid 0   0.2p
+r2  mid out 1k
+c2  out 0   0.2p
+
+.option errpreset=conservative
+
+.tran 10n 800n
+.control
+run
+let npts = length(time)
+meas tran vpk MAX v(out)
+print npts
+* Try `errpreset=liberal` above: far fewer time-points, looser accuracy.
+.endc
+.end

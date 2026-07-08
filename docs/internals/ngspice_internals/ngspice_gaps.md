@@ -32,7 +32,7 @@ mark is ⚠️ or ❌.
 | Convergence | gmin stepping + source stepping homotopy | ✅ | ✅ |
 | Convergence | Pseudo-transient / dynamic-gmin continuation | ❌ | ✅ |
 | Convergence | Damped / trust-region (globalized) Newton | ❌ | ✅ |
-| Convergence | Coordinated accuracy presets (`errpreset`) | ❌ | ✅ |
+| Convergence | Coordinated accuracy presets (`errpreset`) | ✅ | ✅ |
 
 ## Standard analyses (analog)
 
@@ -137,9 +137,11 @@ leverage on the existing strength × differentiation × tractability:
    The device/OSDI side already supplies what these need (noise-source topology,
    operating-point- and frequency-dependent `load_noise`, periodic Jacobians);
    the work is the analysis engines. Genuinely novel in open source.
-2. **Convergence robustness** (pseudo-transient homotopy + coordinated accuracy
-   presets) — unglamorous but makes every analysis usable on real circuits;
-   self-contained in the ngspice core.
+2. **Convergence robustness** — coordinated accuracy presets (`errpreset`)
+   **landed in [Enhancement-110](../../../enhancements_doc/Enhancement-110.md)**;
+   the remaining piece is pseudo-transient / dynamic-gmin homotopy. Unglamorous
+   but makes every analysis usable on real circuits; self-contained in the
+   ngspice core.
 3. **High-sigma statistical sampling** — high industrial value (yield / SRAM),
    moderate difficulty, leans on the deterministic-seed RNG already in place.
 

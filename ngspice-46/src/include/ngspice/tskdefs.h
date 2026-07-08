@@ -48,6 +48,8 @@ struct TSKtask {
     double TSKreltol;
     double TSKchgtol;
     double TSKvoltTol;
+    unsigned int TSKtolGiven; /* Enhancement-110: ERRP_* bits for options the
+                                 user set explicitly (errpreset override guard) */
     double TSKlteReltol;
     double TSKlteAbstol;
     double TSKlteTrtol;
