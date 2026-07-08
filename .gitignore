@@ -495,3 +495,8 @@ __pycache__/
 examples/clog2_examples/*.osdi
 examples/clog2_examples/_clit.sp
 examples/clog2_examples/_cpar.sp
+
+# Enhancement-102 paramarray: verify-run scratch files
+examples/paramarray_examples/*.osdi
+examples/paramarray_examples/_ttr.va
+examples/paramarray_examples/_pa.sp

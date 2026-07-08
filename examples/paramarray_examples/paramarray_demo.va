@@ -1,0 +1,47 @@
+// Enhancement-102: name-then-range array-valued parameters.
+//
+// `parameter real c[0:2] = '{...}` (dimensions AFTER the name) now compiles,
+// complementing the type-then-range form `parameter real [0:2] c`
+// (Enhancement-14/15). Local variables, nets, and ports already accepted the
+// name-then-range spelling (Enhancement-18/89/91); this closes the gap for
+// parameters. Each name carries its own dimensions, so a multi-name declaration
+// may mix widths, and multi-dimensional names are supported too.
+//
+// Elements are exposed as OSDI parameters `c[0]`, `c[1]`, ... exactly as for the
+// type-then-range form, so per-element `.model` overrides work unchanged.
+`include "disciplines.vams"
+
+module paramarray_demo (p, n);
+    inout p, n;
+    electrical p, n;
+
+    // single name, name-then-range
+    parameter real c[0:2] = '{1.0, 2.0, 3.0};
+    // multi-name with per-name widths (a is 1-D, b is 1-D wider, g is scalar)
+    parameter real a[0:1] = '{10.0, 20.0}, b[0:2] = '{30.0, 40.0, 50.0}, g = 7.0;
+    // multi-dimensional name-then-range
+    parameter real m[0:1][0:1] = '{'{1.0, 2.0}, '{3.0, 4.0}};
+    // integer localparam, name-then-range
+    localparam integer w[0:1] = '{3, 5};
+
+    (* desc = "c[0]"        *) real oc0;
+    (* desc = "c[1]"        *) real oc1;
+    (* desc = "c[2]"        *) real oc2;
+    (* desc = "a[1]"        *) real oa1;
+    (* desc = "b[2]"        *) real ob2;
+    (* desc = "g"           *) real og;
+    (* desc = "m[1][0]"     *) real om10;
+    (* desc = "w-sum (=8)"  *) real ow;
+
+    analog begin
+        oc0  = c[0];
+        oc1  = c[1];
+        oc2  = c[2];
+        oa1  = a[1];
+        ob2  = b[2];
+        og   = g;
+        om10 = m[1][0];
+        ow   = w[0] + w[1];
+        I(p, n) <+ V(p, n) * 1.0e-3;
+    end
+endmodule

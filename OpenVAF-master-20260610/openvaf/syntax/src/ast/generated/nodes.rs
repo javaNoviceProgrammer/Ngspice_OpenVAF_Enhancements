@@ -680,6 +680,7 @@ pub struct Param {
 }
 impl Param {
     pub fn name(&self) -> Option<Name> { support::child(&self.syntax) }
+    pub fn widths(&self) -> AstChildren<Range> { support::children(&self.syntax) }
     pub fn eq_token(&self) -> Option<SyntaxToken> { support::token(&self.syntax, T![=]) }
     pub fn default(&self) -> Option<Expr> { support::child(&self.syntax) }
     pub fn constraints(&self) -> AstChildren<Constraint> { support::children(&self.syntax) }

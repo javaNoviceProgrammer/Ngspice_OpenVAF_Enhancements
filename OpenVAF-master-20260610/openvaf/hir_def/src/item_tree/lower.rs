@@ -1257,14 +1257,23 @@ impl Ctx {
     ) {
         let ty = decl.ty().map(|ty| ty.as_type());
         let is_local = decl.localparam_token().is_some();
-        // One `[msb:lsb]` clause per dimension (Enhancement-15); empty for a scalar parameter.
-        let widths: Vec<ast::Range> = decl.widths().collect();
-        let dims = if widths.is_empty() { None } else { fold_width_ranges(widths.iter().cloned()) };
+        // Type-then-range dims (`parameter real [0:2] c`, Enhancement-14/15) are
+        // shared by every name in the declaration. Enhancement-102 also allows
+        // the name-then-range form (`parameter real c[0:2]`), where each name
+        // carries its own dims -- so the width set is resolved per name below.
+        let decl_widths: Vec<ast::Range> = decl.widths().collect();
+        let has_param_arrays = param_arrays.is_some();
 
         for param in decl.paras() {
             let Some(name) = param.name() else { continue };
             let base_name = name.as_name();
             let ast_id = self.source_ast_id_map.ast_id(&param);
+            // Enhancement-102: prefer the shared decl-level dims; otherwise fall
+            // back to this name's own name-then-range dims (empty for a scalar).
+            let widths: Vec<ast::Range> =
+                if decl_widths.is_empty() { param.widths().collect() } else { decl_widths.clone() };
+            let dims =
+                if widths.is_empty() { None } else { fold_width_ranges(widths.iter().cloned()) };
 
             let push_scalar = |this: &mut Self, dst: &mut Vec<T>| {
                 let param = Param {
@@ -1279,7 +1288,7 @@ impl Ctx {
                 dst.push(id.into());
             };
 
-            match (widths.is_empty(), param_arrays.is_some(), &dims) {
+            match (widths.is_empty(), has_param_arrays, &dims) {
                 // ordinary scalar parameter
                 (true, _, _) => push_scalar(self, dst),
                 // array-valued parameter at module scope with constant widths
@@ -1333,10 +1342,21 @@ impl Ctx {
             }
         }
 
-        // Register the parameter array so `c[i]`/`c[i][j]` bit-selects resolve to the elements.
-        if let (Some(param_arrays), Some(dims)) = (param_arrays, &dims) {
+        // Register the parameter array so `c[i]`/`c[i][j]` bit-selects resolve to
+        // the elements. Enhancement-102: the dims are resolved per name (shared
+        // decl-level type-then-range, or this name's own name-then-range dims).
+        if let Some(param_arrays) = param_arrays {
             for param in decl.paras() {
-                if let Some(name) = param.name() {
+                let Some(name) = param.name() else { continue };
+                let widths: Vec<ast::Range> = if decl_widths.is_empty() {
+                    param.widths().collect()
+                } else {
+                    decl_widths.clone()
+                };
+                if widths.is_empty() {
+                    continue;
+                }
+                if let Some(dims) = fold_width_ranges(widths.iter().cloned()) {
                     param_arrays.push(BusDecl {
                         base_name: name.as_name(),
                         msb: dims[0].0,

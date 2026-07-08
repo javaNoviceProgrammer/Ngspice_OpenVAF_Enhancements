@@ -192,7 +192,15 @@ pub(super) fn parameter_decl(p: &mut Parser, m: Marker) {
 const PARAM_RECOVER: TokenSet = MODULE_ITEM_OR_ATTR_RECOVERY.union(TokenSet::new(&[T![,], T![;]]));
 fn parameter(p: &mut Parser) -> bool {
     let m = p.start();
-    name_r(p, TokenSet::new(&[T![,], T![;]]));
+    name_r(p, TokenSet::new(&[T!['['], T![,], T![=], T![;]]));
+    // Enhancement-102: name-then-range array-valued parameter, `parameter real
+    // c[0:2] = '{...};` (and multi-dimensional `c[0:1][0:2]`), mirroring the
+    // array-variable form in `var()`. It complements the type-then-range form
+    // `parameter real [0:2] c` (Enhancement-14/15); each name carries its own
+    // dimensions, so a multi-name declaration may mix widths.
+    while p.at(T!['[']) {
+        width_range(p);
+    }
     p.expect(T![=]);
     expr(p);
     while !p.at_ts(PARAM_RECOVER) {
