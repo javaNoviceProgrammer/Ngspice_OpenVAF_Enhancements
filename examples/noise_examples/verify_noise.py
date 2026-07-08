@@ -67,10 +67,16 @@ def zpar(a, b):
     return a * b / (a + b)
 
 
-def table_interp(freq, xs, ys):
-    """Piecewise-linear interp of power ys over log10-freq nodes xs, clamped."""
-    lx = np.log10(freq)
-    return np.interp(lx, xs, ys)  # np.interp clamps to endpoints, matching OSDI
+def table_interp(freq, fs, ys):
+    """noise_table(): piecewise-LINEAR interp of power ys over frequency fs,
+    clamped to the endpoints (LRM 4.6.4.3; Enhancement-109)."""
+    return np.interp(freq, fs, ys)  # np.interp clamps to endpoints, matching OSDI
+
+
+def table_interp_log(freq, fs, ys):
+    """noise_table_log(): LOG-LOG interp -- log10(P) linear over log10(f),
+    clamped (LRM 4.6.4.4; Enhancement-109)."""
+    return 10.0 ** np.interp(np.log10(freq), np.log10(fs), np.log10(ys))
 
 
 def check(name, freq, sim, ana, tol=2e-3):
@@ -121,13 +127,17 @@ def main():
     ax.grid(True, which="both", alpha=0.3); ax.legend()
 
     # ---- noise_table: measured spectrum -----------------------------------
-    xs = np.array([0.0, 2.0, 4.0])          # log10(f) nodes
+    fs = np.array([1.0, 100.0, 1e4])        # frequency nodes [Hz]
     ys = np.array([1e-12, 1e-12, 1e-16])    # power at nodes
     R1, Rdev = 1e3, 1e9
     zout = zpar(R1, Rdev)
 
     def table_ana(f):
-        Si = table_interp(f, xs, ys) + 4 * KB * T / R1
+        Si = table_interp(f, fs, ys) + 4 * KB * T / R1
+        return np.sqrt(Si * zout ** 2)
+
+    def table_log_ana(f):
+        Si = table_interp_log(f, fs, ys) + 4 * KB * T / R1
         return np.sqrt(Si * zout ** 2)
 
     compile_va("table_noise")
@@ -142,21 +152,26 @@ def main():
     ax.set_xlabel("frequency [Hz]"); ax.set_ylabel("onoise [V/sqrt(Hz)]")
     ax.grid(True, which="both", alpha=0.3); ax.legend()
 
-    # ---- noise_table_log: identical spectrum ------------------------------
+    # ---- noise_table_log: same input, log-log interpolation ---------------
     compile_va("table_noise_log")
     run_cir("table_log.cir")
     fl, siml = read_wrdata("table_log_onoise.txt")
-    anal = table_ana(fl)
+    anal = table_log_ana(fl)
     all_ok &= check("table_log", fl, siml, anal)
-    # also require it to match the linear table bit-for-bit
-    dmax = np.abs(siml - sim).max()
-    print(f"  table_log vs table: max |diff| = {dmax:.3e}  "
-          f"({'PASS' if dmax < 1e-12 else 'FAIL'})")
-    all_ok &= dmax < 1e-12
+    # the two forms must agree AT the tabulated nodes (interp rules differ
+    # between nodes: linear-in-f vs log-log)
+    node_ok = True
+    for fn_ in (1.0, 100.0, 1e4):
+        i = int(np.argmin(np.abs(f - fn_)))
+        il = int(np.argmin(np.abs(fl - fn_)))
+        if abs(sim[i] - siml[il]) > 2e-3 * abs(sim[i]):
+            node_ok = False
+    print(f"  table vs table_log at the nodes: {'PASS' if node_ok else 'FAIL'}")
+    all_ok &= node_ok
     ax = axes[1, 1]
-    ax.loglog(fl, siml, "g-", lw=2, label="noise_table_log")
-    ax.loglog(f, sim, "b--", lw=1, label="noise_table")
-    ax.set_title("noise_table_log() == noise_table()")
+    ax.loglog(fl, siml, "g-", lw=2, label="noise_table_log (log-log)")
+    ax.loglog(f, sim, "b--", lw=1, label="noise_table (linear)")
+    ax.set_title("noise_table_log(): log-log interpolation")
     ax.set_xlabel("frequency [Hz]"); ax.set_ylabel("onoise [V/sqrt(Hz)]")
     ax.grid(True, which="both", alpha=0.3); ax.legend()
 

@@ -1,11 +1,11 @@
 // table_noise_log.va — noise_table_log() from a data file (Enhancement-9)
 //
-// `noise_table_log("file")` is identical to `noise_table()` except that the
-// frequency column of the data file is already given as log10(frequency)
-// rather than linear frequency. The interpolation domain (log10-frequency) and
-// the returned quantity (linear power spectral density) are the same, so a
-// `_log` table whose first column holds log10(f) yields exactly the same noise
-// spectrum as the equivalent linear-frequency `noise_table()`.
+// `noise_table_log("file")` takes the same `<frequency Hz> <power>` input as
+// `noise_table()` (LRM 4.6.4.4) but interpolates LOG-LOG: for f between two
+// tabulated points, P = 10^( log10(p1) + (log10(p2)-log10(p1)) *
+// (log10(f)-log10(f1)) / (log10(f2)-log10(f1)) ). Outside the tabulated range
+// the power clamps to the endpoint values. (Enhancement-109 corrected this --
+// it used to expect a log10-frequency column and interpolate the raw power.)
 `include "disciplines.vams"
 
 module table_noise_log(p, n);

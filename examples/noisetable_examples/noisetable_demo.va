@@ -1,0 +1,36 @@
+// Enhancement-109: `noise_table` / `noise_table_log` interpolation per the LRM.
+//
+// LRM 4.6.4.3: `noise_table` performs piecewise-LINEAR interpolation of the
+// tabulated power over FREQUENCY, clamped to the endpoint powers outside the
+// tabulated range. LRM 4.6.4.4: `noise_table_log` takes the same `(f, p)`
+// input (frequencies in Hz) but interpolates LOG-LOG:
+//     P = 10^( log10(p1) + (log10(p2)-log10(p1))
+//                          * (log10(f)-log10(f1)) / (log10(f2)-log10(f1)) ).
+//
+// Before this fix, `noise_table` interpolated the power linearly over
+// log10(f) (a lin-log hybrid), and `noise_table_log` expected a
+// log10-frequency input column and interpolated the raw power -- both
+// nonconformant.
+//
+// `kind` selects the source; the device is a 1 mS conductor so the output
+// noise PSD is S(f) * R^2 with R = 1k.
+`include "disciplines.vams"
+
+module noisetable_demo (out, gnd);
+    inout out, gnd;
+    electrical out, gnd;
+
+    parameter integer kind = 0;
+
+    analog begin
+        I(out, gnd) <+ V(out, gnd) * 1.0e-3;
+        if (kind == 0)
+            // linear: S(10)=1e-12 .. S(1000)=3e-12; at 100 Hz the LINEAR
+            // interp gives 1e-12 + 2e-12*(100-10)/(1000-10) = 1.1818e-12
+            I(out, gnd) <+ noise_table('{10.0, 1.0e-12, 1000.0, 3.0e-12}, "nt");
+        else
+            // log-log: S(10)=1e-12 .. S(1000)=1e-16; at 100 Hz (the log
+            // midpoint) the LOG-LOG interp gives sqrt(1e-12*1e-16) = 1e-14
+            I(out, gnd) <+ noise_table_log('{10.0, 1.0e-12, 1000.0, 1.0e-16}, "ntl");
+    end
+endmodule

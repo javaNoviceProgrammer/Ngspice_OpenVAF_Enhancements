@@ -28,7 +28,7 @@ https://ngspice.sourceforge.io/
 
 ## The Enhancements
 
-One hundred and eight enhancements so far — language features, correctness fixes, systematic audits, and simulator-side workflow tooling, each verified end-to-end by a committed example suite and released with a detailed write-up.
+One hundred and nine enhancements so far — language features, correctness fixes, systematic audits, and simulator-side workflow tooling, each verified end-to-end by a committed example suite and released with a detailed write-up.
 
 **📖 Start with the [User Handbook](docs/handbook/README.md)**, which organizes everything by topic: [getting started](docs/handbook/01-getting-started.md), the [Verilog-A feature matrix](docs/handbook/02-verilog-a-language.md), [ngspice workflows](docs/handbook/03-ngspice-workflows.md), and the [limitations & gotchas](docs/handbook/04-limitations-and-gotchas.md). The whole handbook plus the complete text of every enhancement write-up is also one linked PDF: [docs/Ngspice-OpenVAF-Handbook.pdf](docs/Ngspice-OpenVAF-Handbook.pdf).
 
@@ -144,6 +144,7 @@ The index: **Doc** links each enhancement's detailed write-up, **Examples** link
 | 106 | String relational comparison (`<`, `<=`, `>`, `>=`) via lexicographic `strcmp` (completes the string comparison surface; `==`/`!=` already worked) | [doc](enhancements_doc/Enhancement-106.md) | [stringcmp](examples/stringcmp_examples/) |
 | 107 | `$fgetc(fd)` single-character file read (completes the file I/O family: `$fgets`/`$fscanf`/`$ftell`/… already existed) | [doc](enhancements_doc/Enhancement-107.md) | [fgetc](examples/fgetc_examples/) |
 | 108 | `$ungetc(c, fd)` one-character pushback (the peek/look-ahead companion to `$fgetc`) | [doc](enhancements_doc/Enhancement-108.md) | [ungetc](examples/ungetc_examples/) |
+| 109 | `noise_table`/`noise_table_log` interpolation corrected to the LRM (linear-in-`f` / log-log; both took Hz input) | [doc](enhancements_doc/Enhancement-109.md) | [noisetable](examples/noisetable_examples/) |
 
 ---
 

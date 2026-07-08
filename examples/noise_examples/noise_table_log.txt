@@ -1,7 +1,9 @@
-# Same measured spectrum as noise_table.txt, but the frequency column is
-# expressed as log10(frequency) for use with noise_table_log().
-#   column 1: log10(frequency)  [log10 Hz]
-#   column 2: noise PSD S_i(f)   [A^2/Hz]
-0        1e-12
-2        1e-12
-4        1e-16
+# Same measured spectrum as noise_table.txt -- the frequency column is in Hz
+# for noise_table_log() too (LRM 4.6.4.4: input as for noise_table()).
+#   column 1: frequency        [Hz]
+#   column 2: noise PSD S_i(f)  [A^2/Hz]
+# noise_table_log(): LOG-LOG interpolation -- P = 10^( lerp of log10(p) over
+# log10(f) ), clamped outside [1 Hz, 10 kHz].
+1        1e-12
+100      1e-12
+10000    1e-16

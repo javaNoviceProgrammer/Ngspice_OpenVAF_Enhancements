@@ -702,6 +702,7 @@ tests hide behind `RUN_DEV_TESTS=1`. Fixed test-side only
 | [E-106](../../enhancements_doc/Enhancement-106.md) | hir_ty (types, inference), hir (signatures), hir_lower (expr, callbacks), osdi (compilation_unit, stdlib.c) | string relational comparison (`<`/`<=`/`>`/`>=`) via a lexicographic `osdi_strcmp` callback (`RELATIONAL_COMPARISON` adds the STR signature; `a<op>b` lowers to `strcmp(a,b)<op>0`) |
 | [E-107](../../enhancements_doc/Enhancement-107.md) | syntax (name), hir_def (builtin), hir_ty (builtin), hir_lower (expr, callbacks), osdi (stdlib.c) | add `$fgetc(fd)` single-character read as a `FileOp::Getc` -> `osdi_fgetc` (completes the file I/O family) |
 | [E-108](../../enhancements_doc/Enhancement-108.md) | syntax (name), hir_def (builtin), hir_ty (builtin), hir_lower (expr, callbacks), osdi (stdlib.c) | add `$ungetc(c, fd)` one-character pushback as a 2-arg `FileOp::Ungetc` -> `osdi_ungetc` (companion to `$fgetc`) |
+| [E-109](../../enhancements_doc/Enhancement-109.md) | hir_lower (callbacks), osdi (load) | correct `noise_table` (piecewise-linear in `f`) and `noise_table_log` (log-log, `P=10^lerp(log10 p, log10 f)`) interpolation to LRM 4.6.4.3/4.6.4.4 -- both were nonconformant (lin-log, and a mis-keyed log-freq input) |
 
 Enhancements not listed (57, 60, 62–64, 69, 72–77, 79–83, 94–95, 98–100) changed no
 compiler sources — they were validation suites, documentation, benchmark

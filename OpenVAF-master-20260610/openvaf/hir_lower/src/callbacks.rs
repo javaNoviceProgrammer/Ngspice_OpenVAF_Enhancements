@@ -492,9 +492,20 @@ pub struct NoiseTable {
 impl NoiseTable {
     // `vals` are the raw `(frequency, power)` pairs already gathered by the
     // caller from an inline array or a data file (see
-    // `BodyLoweringCtx::noise_table_data` in `expr.rs`). For `log == false`
-    // the frequency column is `log10`-ed here so that, in both the linear and
-    // `_log` cases, `vals` ends up keyed by `log10(frequency)`.
+    // `BodyLoweringCtx::noise_table_data` in `expr.rs`). In both forms the
+    // input frequencies are in Hz (LRM 4.6.4.3/4.6.4.4).
+    //
+    // Enhancement-109: store the pairs in the coordinate system the LRM's
+    // interpolation rule for each form calls for -- the runtime interpolator
+    // (`osdi::load::build_noise_table_interp`) is piecewise linear over the
+    // stored axes:
+    //  * `noise_table` (log == false): keep `(f, power)` raw; the LRM wants
+    //    plain piecewise-LINEAR interpolation of the power over frequency.
+    //    (It used to log10 the frequency axis, yielding a lin-log hybrid.)
+    //  * `noise_table_log` (log == true): store `(log10 f, log10 power)`; the
+    //    LRM formula is log-log: P = 10^( lerp of log10(p) over log10(f) ).
+    //    (It used to store the pairs raw, which mis-keyed Hz inputs against a
+    //    log10(freq) lookup and interpolated the raw power.)
     pub fn new(
         vals: impl IntoIterator<Item = (f64, f64)>,
         log: bool,
@@ -502,9 +513,9 @@ impl NoiseTable {
         idx: u32,
     ) -> Self {
         let mut vals: Vec<(Ieee64, Ieee64)> = if log {
-            vals.into_iter().map(|(f, pwr)| (f.into(), pwr.into())).collect()
+            vals.into_iter().map(|(f, pwr)| (f.log10().into(), pwr.log10().into())).collect()
         } else {
-            vals.into_iter().map(|(f, pwr)| (f.log10().into(), pwr.into())).collect()
+            vals.into_iter().map(|(f, pwr)| (f.into(), pwr.into())).collect()
         };
         vals.sort_unstable_by(|(f1, _), (f2, _)| f1.partial_cmp(f2).unwrap());
         vals.dedup_by_key(|(f, _)| *f);

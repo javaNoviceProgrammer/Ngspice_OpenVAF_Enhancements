@@ -46,12 +46,16 @@ impl<'ll> OsdiCompilationUnit<'_, '_, 'll> {
     /// Emit the LLVM IR that evaluates a `noise_table`/`noise_table_log` power
     /// spectral density at run time for a given `freq`.
     ///
-    /// `vals` are the sorted `(x, power)` pairs produced by
-    /// `hir_lower::NoiseTable::new`, where `x` is already in `log10(frequency)`
-    /// space (linear-input tables are `log10`-ed at build time; `_log` tables
-    /// are stored as-is). The lookup key is therefore `log10(freq)`, and the
-    /// power is obtained by piecewise-linear interpolation over `x`, clamped to
-    /// the table's endpoints outside `[x[0], x[n-1]]`.
+    /// `vals` are the sorted pairs produced by `hir_lower::NoiseTable::new`
+    /// (Enhancement-109):
+    ///  * `noise_table` (`log == false`): raw `(f, power)` -- the lookup key is
+    ///    the raw frequency and the interpolation is piecewise LINEAR in `f`
+    ///    (LRM 4.6.4.3).
+    ///  * `noise_table_log` (`log == true`): `(log10 f, log10 power)` -- the key
+    ///    is `log10(freq)`, the interpolation is linear in that space, and the
+    ///    result is exponentiated (`10^v`), giving the LRM 4.6.4.4 log-log
+    ///    formula.
+    /// Outside `[x[0], x[n-1]]` the power clamps to the endpoint values.
     ///
     /// The interpolation is fully unrolled into `select`s: every segment's
     /// slope/intercept is a compile-time constant, so each segment costs one
@@ -61,6 +65,7 @@ impl<'ll> OsdiCompilationUnit<'_, '_, 'll> {
         llbuilder: llvm_sys::prelude::LLVMBuilderRef,
         freq: llvm_sys::prelude::LLVMValueRef,
         vals: &[(stdx::Ieee64, stdx::Ieee64)],
+        log: bool,
     ) -> &'ll llvm_sys::LLVMValue {
         let cx = self.cx;
         let n = vals.len();
@@ -70,23 +75,30 @@ impl<'ll> OsdiCompilationUnit<'_, '_, 'll> {
         let x: Vec<f64> = vals.iter().map(|v| f64::from(v.0)).collect();
         let y: Vec<f64> = vals.iter().map(|v| f64::from(v.1)).collect();
         if n == 1 {
-            return cx.const_real(y[0]);
+            // A single point: constant power (for the log form `y` holds
+            // log10(power), so exponentiate back).
+            return if log { cx.const_real(10f64.powf(y[0])) } else { cx.const_real(y[0]) };
         }
 
-        // lx = log10(freq)
-        let (log_ty, log_fn) = self
-            .cx
-            .intrinsic("llvm.log10.f64")
-            .unwrap_or_else(|| unreachable!("intrinsic llvm.log10.f64 not found"));
-        let mut log_args: [llvm_sys::prelude::LLVMValueRef; 1] = [freq];
-        let lx = LLVMBuildCall2(
-            llbuilder,
-            NonNull::from(log_ty).as_ptr(),
-            NonNull::from(log_fn).as_ptr(),
-            log_args.as_mut_ptr(),
-            1,
-            UNNAMED,
-        );
+        // Lookup key: log10(freq) for the log-log form, the raw frequency for
+        // the linear form.
+        let lx = if log {
+            let (log_ty, log_fn) = self
+                .cx
+                .intrinsic("llvm.log10.f64")
+                .unwrap_or_else(|| unreachable!("intrinsic llvm.log10.f64 not found"));
+            let mut log_args: [llvm_sys::prelude::LLVMValueRef; 1] = [freq];
+            LLVMBuildCall2(
+                llbuilder,
+                NonNull::from(log_ty).as_ptr(),
+                NonNull::from(log_fn).as_ptr(),
+                log_args.as_mut_ptr(),
+                1,
+                UNNAMED,
+            )
+        } else {
+            freq
+        };
 
         // Default (lx >= x[n-1]): clamp to the last point.
         let mut result = NonNull::from(cx.const_real(y[n - 1])).as_ptr();
@@ -136,6 +148,30 @@ impl<'ll> OsdiCompilationUnit<'_, '_, 'll> {
             result,
             UNNAMED,
         );
+
+        // Enhancement-109: the log-log form interpolated log10(power); map it
+        // back to a power: 10^v = exp(v * ln 10).
+        if log {
+            let scaled = LLVMBuildFMul(
+                llbuilder,
+                result,
+                NonNull::from(cx.const_real(core::f64::consts::LN_10)).as_ptr(),
+                UNNAMED,
+            );
+            let (exp_ty, exp_fn) = self
+                .cx
+                .intrinsic("llvm.exp.f64")
+                .unwrap_or_else(|| unreachable!("intrinsic llvm.exp.f64 not found"));
+            let mut exp_args: [llvm_sys::prelude::LLVMValueRef; 1] = [scaled];
+            result = LLVMBuildCall2(
+                llbuilder,
+                NonNull::from(exp_ty).as_ptr(),
+                NonNull::from(exp_fn).as_ptr(),
+                exp_args.as_mut_ptr(),
+                1,
+                UNNAMED,
+            );
+        }
 
         &*result
     }
@@ -227,9 +263,9 @@ impl<'ll> OsdiCompilationUnit<'_, '_, 'll> {
 
                         pwr
                     }
-                    NoiseSourceKind::NoiseTable { ref vals, .. } => {
+                    NoiseSourceKind::NoiseTable { ref vals, log } => {
                         let freq_ptr = freq as *const llvm_sys::LLVMValue as *mut _;
-                        self.build_noise_table_interp(llbuilder, freq_ptr, vals)
+                        self.build_noise_table_interp(llbuilder, freq_ptr, vals, log)
                     }
                     NoiseSourceKind::AcStim { .. } => unreachable!("filtered above"),
                 };

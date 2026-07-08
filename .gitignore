@@ -526,3 +526,8 @@ examples/fgetc_examples/fgetc_input.txt
 examples/ungetc_examples/*.osdi
 examples/ungetc_examples/_ug.sp
 examples/ungetc_examples/ungetc_input.txt
+
+# Enhancement-109 noisetable: verify-run scratch files
+examples/noisetable_examples/*.osdi
+examples/noisetable_examples/_nt.cir
+examples/noisetable_examples/_nt_out.txt
