@@ -4,7 +4,7 @@ use hir_def::BuiltIn;
 
 use crate::builtin::*;
 
-const BUILTIN_INFO: [BuiltinInfo; 116usize] = [
+const BUILTIN_INFO: [BuiltinInfo; 117usize] = [
     ABS,
     ACOS,
     ACOSH,
@@ -125,5 +125,7 @@ const BUILTIN_INFO: [BuiltinInfo; 116usize] = [
     ITOR,
     // Enhancement-107: $fgetc (index must equal BuiltIn::fgetc = 115)
     FGETC,
+    // Enhancement-108: $ungetc (index must equal BuiltIn::ungetc = 116)
+    UNGETC,
 ];
 pub(crate) fn builtin_info(builtin: BuiltIn) -> BuiltinInfo { BUILTIN_INFO[builtin as u8 as usize] }

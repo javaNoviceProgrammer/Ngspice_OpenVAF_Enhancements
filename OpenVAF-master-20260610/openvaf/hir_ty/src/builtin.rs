@@ -302,6 +302,8 @@ bultins! {
 
     fn FGETS(Var(String),Val(Integer)) -> Integer;
     fn FSEEK(Val(Integer),Val(Integer),Val(Integer)) -> Integer;
+    // Enhancement-108: `$ungetc(c, fd)` -> int (the char, or -1 on failure).
+    fn UNGETC(Val(Integer),Val(Integer)) -> Integer;
 
     FFLUSH = {
         fn FFLUSH_ALL() -> Integer;

@@ -29,6 +29,7 @@ extern void rewind(void *);
 extern int feof(void *);
 extern int ferror(void *);
 extern int fgetc(void *);
+extern int ungetc(int, void *);
 extern char *fgets(char *, int, void *);
 extern long strtol(const char *, char **, int);
 extern double strtod(const char *, char **);
@@ -530,6 +531,17 @@ OSDI_NOINLINE int osdi_fgetc(int fd) {
     return -1;
   }
   return fgetc(f);
+}
+
+// Enhancement-108: $ungetc(c, fd) -- push character c back onto the stream so
+// the next $fgetc(fd) returns it. Returns c on success, or -1 on failure / a
+// bad descriptor. Argument order matches the Verilog `$ungetc(c, fd)` call.
+OSDI_NOINLINE int osdi_ungetc(int c, int fd) {
+  void *f = osdi_file_lookup(fd);
+  if (f == NULL) {
+    return -1;
+  }
+  return ungetc(c, f);
 }
 
 // $fseek(fd, offset, whence)  -- whence 0/1/2 = SET/CUR/END

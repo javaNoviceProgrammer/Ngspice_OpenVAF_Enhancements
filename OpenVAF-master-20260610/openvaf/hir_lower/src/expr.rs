@@ -1194,6 +1194,8 @@ impl BodyLoweringCtx<'_, '_, '_> {
             BuiltIn::rewind => self.lower_file_op(FileOp::Rewind, args),
             // Enhancement-107: `$fgetc(fd)` -- read one character.
             BuiltIn::fgetc => self.lower_file_op(FileOp::Getc, args),
+            // Enhancement-108: `$ungetc(c, fd)` -- push a character back.
+            BuiltIn::ungetc => self.lower_file_op(FileOp::Ungetc, args),
             BuiltIn::fseek => self.lower_file_op(FileOp::Seek, args),
             BuiltIn::fflush => {
                 // $fflush() flushes all descriptors; $fflush(fd) flushes one.

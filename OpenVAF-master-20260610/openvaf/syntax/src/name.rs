@@ -466,6 +466,7 @@ pub mod sysfun {
         fmonitor,
         fgets,
         fgetc,
+        ungetc,
         fscanf,
         swrite,
         sformat,

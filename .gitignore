@@ -521,3 +521,8 @@ examples/stringcmp_examples/_sc.sp
 examples/fgetc_examples/*.osdi
 examples/fgetc_examples/_gc.sp
 examples/fgetc_examples/fgetc_input.txt
+
+# Enhancement-108 ungetc: verify-run scratch files
+examples/ungetc_examples/*.osdi
+examples/ungetc_examples/_ug.sp
+examples/ungetc_examples/ungetc_input.txt

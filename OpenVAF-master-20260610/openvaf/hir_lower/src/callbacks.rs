@@ -124,6 +124,8 @@ pub enum FileOp {
     Seek,
     /// Enhancement-107: `$fgetc(fd)` -- read one character (code, or -1 at EOF).
     Getc,
+    /// Enhancement-108: `$ungetc(c, fd)` -- push a character back onto the stream.
+    Ungetc,
 }
 
 impl FileOp {
@@ -137,6 +139,7 @@ impl FileOp {
             FileOp::Rewind => "osdi_frewind",
             FileOp::Seek => "osdi_fseek",
             FileOp::Getc => "osdi_fgetc",
+            FileOp::Ungetc => "osdi_ungetc",
         }
     }
 
@@ -145,6 +148,7 @@ impl FileOp {
         match self {
             FileOp::FlushAll => 0,
             FileOp::Seek => 3,
+            FileOp::Ungetc => 2,
             _ => 1,
         }
     }

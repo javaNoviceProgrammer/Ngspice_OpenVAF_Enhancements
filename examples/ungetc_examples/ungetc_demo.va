@@ -1,0 +1,51 @@
+// Enhancement-108: the `$ungetc(c, fd)` file-input function.
+//
+// `$ungetc(c, fd)` pushes character `c` back onto the input stream so the next
+// `$fgetc(fd)` returns it -- the standard one-character peek/pushback that
+// complements the `$fgetc` added in Enhancement-107. It returns `c` on success,
+// or -1 on failure.
+//
+// This device demonstrates the classic use: a one-character look-ahead. It reads
+// the leading run of decimal digits from the file into an integer, using
+// `$ungetc` to put back the first NON-digit so it is not consumed.
+`include "disciplines.vams"
+
+module ungetc_demo (p, n);
+    inout p, n;
+    electrical p, n;
+
+    integer fd, ch, tmp;
+
+    (* desc = "1st char read"       *) integer first;
+    (* desc = "$ungetc return"      *) integer ur;
+    (* desc = "char re-read"        *) integer reread;
+    (* desc = "parsed leading int"  *) integer value;
+    (* desc = "1st non-digit char"  *) integer stopch;
+
+    analog begin
+        @(initial_step) begin
+            fd = $fopen("ungetc_input.txt", "r");
+
+            // (a) pushback: read a char, put it back, read again -> same char
+            first  = $fgetc(fd);
+            ur     = $ungetc(first, fd);
+            reread = $fgetc(fd);
+            // put it back once more so the parse below sees the whole number
+            tmp    = $ungetc(reread, fd);
+
+            // (b) one-char look-ahead: accumulate digits until a non-digit,
+            // then $ungetc the non-digit so it stays in the stream.
+            value = 0;
+            ch = $fgetc(fd);
+            while (ch >= 48 && ch <= 57) begin   // '0'..'9'
+                value = value * 10 + (ch - 48);
+                ch = $fgetc(fd);
+            end
+            stopch = ch;              // the first non-digit
+            tmp = $ungetc(ch, fd);    // push it back (not consumed)
+
+            $fclose(fd);
+        end
+        I(p, n) <+ V(p, n) * 1.0e-3;
+    end
+endmodule
