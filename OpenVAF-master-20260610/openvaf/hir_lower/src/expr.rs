@@ -10,7 +10,7 @@ use hir::signatures::{
     INT_EQ, INT_OP, LAST_CROSSING_DIRECTION, LAST_CROSSING_NO_DIRECTION, LIMIT_BUILTIN_FUNCTION,
     MAX_INT, MAX_REAL, NATURE_ACCESS_BRANCH,
     NATURE_ACCESS_NODES, NATURE_ACCESS_NODE_GND, NATURE_ACCESS_PORT_FLOW, REAL_EQ, REAL_OP,
-    SIMPARAM_DEFAULT, SIMPARAM_NO_DEFAULT, SLEW_NEG_MAX, SLEW_NO_MAX, SLEW_POS_MAX, STR_EQ,
+    SIMPARAM_DEFAULT, SIMPARAM_NO_DEFAULT, SLEW_NEG_MAX, SLEW_NO_MAX, SLEW_POS_MAX, STR_EQ, STR_REL,
     TRANSITION_DELAY, TRANSITION_DELAY_RISET, TRANSITION_DELAY_RISET_FALLT,
     TRANSITION_DELAY_RISET_FALLT_TOL, TRANSITION_NO_ARGS,
 };
@@ -281,6 +281,27 @@ impl BodyLoweringCtx<'_, '_, '_> {
     }
     fn lower_bin_op(&mut self, expr: ExprId, lhs: ExprId, rhs: ExprId, op: BinaryOp) -> Value {
         let signature = self.body.get_call_signature(expr);
+        // Enhancement-106: string relational comparison. `==`/`!=` already had
+        // a string signature (STR_EQ); the relational operators now accept two
+        // strings too and lower to `strcmp(a, b) <op> 0` (lexicographic). The
+        // op guard is required: a `Signature` is only an index into the
+        // operator's own signature set, so `STR_REL` (index 2) also names, e.g.,
+        // real equality's REAL_EQ -- only the relational ops use index 2 for a
+        // string.
+        let str_rel_op = match op {
+            BinaryOp::LesserTest if signature == STR_REL => Some(Opcode::Ilt),
+            BinaryOp::LesserEqualTest if signature == STR_REL => Some(Opcode::Ile),
+            BinaryOp::GreaterTest if signature == STR_REL => Some(Opcode::Igt),
+            BinaryOp::GreaterEqualTest if signature == STR_REL => Some(Opcode::Ige),
+            _ => None,
+        };
+        if let Some(cmp_op) = str_rel_op {
+            let lhs_ = self.lower_expr(lhs);
+            let rhs_ = self.lower_expr(rhs);
+            let cmp = self.ctx.call1(CallBackKind::StrCmp, &[lhs_, rhs_]);
+            let zero = self.ctx.iconst(0);
+            return self.ctx.ins().binary1(cmp_op, cmp, zero);
+        }
         let op = match op {
             BinaryOp::BooleanOr => {
                 // lhs || rhs if lhs { true } else { rhs }

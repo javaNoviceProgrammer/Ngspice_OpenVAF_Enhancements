@@ -308,6 +308,14 @@ impl SignatureData {
         &[SignatureData::INT_BIN_OP, SignatureData::REAL_BIN_OP];
     pub const NUMERIC_COMPARISON: &'static [SignatureData] =
         &[SignatureData::INT_COMPARISON, SignatureData::REAL_COMPARISON];
+    /// Enhancement-106: the relational operators (`<`, `<=`, `>`, `>=`) also
+    /// accept two strings (lexicographic comparison). The string signature is
+    /// appended LAST so the INT/REAL signature indices stay stable.
+    pub const RELATIONAL_COMPARISON: &'static [SignatureData] = &[
+        SignatureData::INT_COMPARISON,
+        SignatureData::REAL_COMPARISON,
+        SignatureData::STR_COMPARISON,
+    ];
     pub const ANY_COMPARISON: &'static [SignatureData] = &[
         SignatureData::BOOL_COMPARISON,
         SignatureData::INT_COMPARISON,
@@ -338,6 +346,9 @@ pub const STR_EQ: Signature = Signature(3);
 
 pub const INT_OP: Signature = Signature(0);
 pub const REAL_OP: Signature = Signature(1);
+// Enhancement-106: the string branch of RELATIONAL_COMPARISON (INT_OP = 0,
+// REAL_OP = 1, string = 2).
+pub const STR_REL: Signature = Signature(2);
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub struct Signature(pub u32);

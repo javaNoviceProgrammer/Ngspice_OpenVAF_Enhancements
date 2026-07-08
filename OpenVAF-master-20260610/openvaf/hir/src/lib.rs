@@ -63,7 +63,7 @@ pub mod signatures {
         SLEW_NO_MAX, SLEW_POS_MAX, TRANSITION_DELAY, TRANSITION_DELAY_RISET,
         TRANSITION_DELAY_RISET_FALLT, TRANSITION_DELAY_RISET_FALLT_TOL, TRANSITION_NO_ARGS,
     };
-    pub use hir_ty::types::{BOOL_EQ, INT_EQ, INT_OP, REAL_EQ, REAL_OP, STR_EQ};
+    pub use hir_ty::types::{BOOL_EQ, INT_EQ, INT_OP, REAL_EQ, REAL_OP, STR_EQ, STR_REL};
 }
 
 /// A root file represents a compilation root file.

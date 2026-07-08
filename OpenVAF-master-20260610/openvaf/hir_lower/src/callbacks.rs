@@ -210,6 +210,10 @@ pub enum CallBackKind {
     Fgets,
     /// `osdi_strlen(s) -> int`: length of a string (for `$fgets`'s return count).
     StrLen,
+    /// Enhancement-106: `osdi_strcmp(a, b) -> int`: lexicographic string
+    /// comparison (sign of the difference), backing the string relational
+    /// operators `<`, `<=`, `>`, `>=`.
+    StrCmp,
     /// `$ferror(fd)` error message (`-> char*`) and code (`-> int`).
     FerrorMsg,
     FerrorCode,
@@ -342,6 +346,12 @@ impl CallBackKind {
             CallBackKind::StrLen => FunctionSignature {
                 name: "strlen".to_owned(),
                 params: 1,
+                returns: 1,
+                has_sideeffects: false,
+            },
+            CallBackKind::StrCmp => FunctionSignature {
+                name: "strcmp".to_owned(),
+                params: 2,
                 returns: 1,
                 has_sideeffects: false,
             },

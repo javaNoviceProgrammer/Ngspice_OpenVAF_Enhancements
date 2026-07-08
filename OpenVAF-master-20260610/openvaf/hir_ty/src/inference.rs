@@ -1571,7 +1571,7 @@ impl Ctx<'_> {
             BinaryOp::LesserEqualTest
             | BinaryOp::GreaterEqualTest
             | BinaryOp::LesserTest
-            | BinaryOp::GreaterTest => SignatureData::NUMERIC_COMPARISON,
+            | BinaryOp::GreaterTest => SignatureData::RELATIONAL_COMPARISON,
 
             BinaryOp::Addition
             | BinaryOp::Multiplication

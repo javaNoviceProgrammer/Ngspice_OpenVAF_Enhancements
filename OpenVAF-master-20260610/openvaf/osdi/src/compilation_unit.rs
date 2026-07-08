@@ -341,6 +341,7 @@ pub fn general_callbacks<'ll>(
                 | CallBackKind::ScanCount
                 | CallBackKind::Fgets
                 | CallBackKind::StrLen
+                | CallBackKind::StrCmp
                 | CallBackKind::FerrorMsg
                 | CallBackKind::FerrorCode => {
                     let cx = builder.cx;
@@ -370,6 +371,8 @@ pub fn general_callbacks<'ll>(
                         CallBackKind::ScanCount => ("osdi_scanf_count", vec![], int),
                         CallBackKind::Fgets => ("osdi_fgets", vec![int], ptr_ty),
                         CallBackKind::StrLen => ("osdi_strlen", vec![ptr_ty], int),
+                        // Enhancement-106: lexicographic string comparison.
+                        CallBackKind::StrCmp => ("osdi_strcmp", vec![ptr_ty, ptr_ty], int),
                         CallBackKind::FerrorMsg => ("osdi_ferror_msg", vec![int], ptr_ty),
                         CallBackKind::FerrorCode => ("osdi_ferror_code", vec![int], int),
                         _ => unreachable!(),

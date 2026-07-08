@@ -558,9 +558,18 @@ OSDI_NOINLINE int osdi_frewind(int fd) {
 // ---------------------------------------------------------------------------
 
 extern size_t strlen(const char *);
+extern int strcmp(const char *, const char *);
 
 OSDI_NOINLINE
 int osdi_strlen(const char *s) { return s ? (int)strlen(s) : 0; }
+
+// Enhancement-106: lexicographic string comparison backing the relational
+// operators (`<`, `<=`, `>`, `>=`). Returns the sign of the difference; a NULL
+// string is treated as empty.
+OSDI_NOINLINE
+int osdi_strcmp(const char *a, const char *b) {
+  return strcmp(a ? a : "", b ? b : "");
+}
 
 OSDI_NOINLINE
 char *osdi_fgets(int fd) {

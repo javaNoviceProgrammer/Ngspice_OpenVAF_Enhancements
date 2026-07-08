@@ -512,3 +512,7 @@ examples/convert_examples/_conv.sp
 # Enhancement-105 sscanf: verify-run scratch files
 examples/sscanf_examples/*.osdi
 examples/sscanf_examples/_ss.sp
+
+# Enhancement-106 stringcmp: verify-run scratch files
+examples/stringcmp_examples/*.osdi
+examples/stringcmp_examples/_sc.sp
