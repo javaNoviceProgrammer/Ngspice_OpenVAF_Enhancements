@@ -237,14 +237,19 @@ unary `~` emitted arithmetic negate, and the constant folder disagreed
 with the runtime on `>>`; one precedence defect: `%` bound tighter than
 `*`/`/` (so `6*7%4` evaluated to 18 instead of 2). Associativity verified
 including `2**3**2 = 64` (left-associative per Verilog) and unary binding
-above `**` (`-2**2 = 4`).
+above `**` (`-2**2 = 4`). String comparison covers both equality
+(`==`/`!=`) and the relational operators (`<`/`<=`/`>`/`>=`), the latter a
+lexicographic (`strcmp`) comparison (E-106).
 
 ### 4.2 Built-in and environment functions (LRM 4.3, 9.7) — ✅
 
 `ln/log/exp/sqrt/pow/min/max/abs/floor/ceil`, trigonometric and
 hyperbolic families (integer `min`/`max`/`abs` correctly integer-typed;
-integer division/rounding away from zero per the LRM), and the
-environment: `$temperature` (kelvin — verified as the exact kT/q law
+integer division/rounding away from zero per the LRM; `ceil` of a runtime
+argument fixed, E-103), `$clog2` returning `ceil(log2 n)` (E-101), the
+conversion functions `$rtoi` (real→integer, truncating toward zero — as
+distinct from the rounding implicit cast) and `$itor` (integer→real, E-104),
+and the environment: `$temperature` (kelvin — verified as the exact kT/q law
 across a −50…150 °C sweep), `$vt` and `$vt(T)`, `$abstime`, `$realtime`
 (identical in the continuous-time analog context), `$simparam` and
 `$simparam$str`, `$param_given`, `$port_connected`, `$mfactor` and the
@@ -495,8 +500,10 @@ $strobe("Vth=%7.4f V  region=%2d  id=%r  name=%s", vth, reg, id, name);
 ### 7.2 File and string I/O (LRM 9.5, 9.8) — ✅
 
 `$fopen/$fclose/$fdisplay/$fwrite/$fstrobe/$fmonitor/$fdebug/$fflush/
-$ftell/$fseek/$rewind/$feof/$ferror` and `$swrite/$sformat/$sscanf/
-$fgets/$fscanf`:
+$ftell/$fseek/$rewind/$feof/$ferror/$fgetc/$ungetc` (single-character read
+and one-character pushback, E-107/E-108) and `$swrite/$sformat/$sscanf/
+$fgets/$fscanf`. `$sscanf`/`$fscanf` honour the format conversion base —
+`%h`/`%x` hex, `%o` octal, `%b` binary, `%d` decimal (E-105):
 
 ```verilog
 integer fd;
@@ -590,11 +597,11 @@ connected port.)*
 |---|---|---|
 | 2 Lexical (identifiers, numbers, strings, attributes) | ✅ | `escid`, `stresc`, `comment` suites |
 | 3.2–3.3 Value types, variables, persistence | ✅ | `vartype`, `variable_persistence`, `intstate`, `varinit` |
-| 3.4 Parameters (ranges, localparam, aliasparam, arrays, paramset, block-scoped) | ✅ (default-exemption ⚠️ documented) | `paramrange`, `localparam`, `array`, `paramset`, `paramsethsp`, `blockparam` |
+| 3.4 Parameters (ranges, localparam, aliasparam, arrays incl. name-then-range, paramset, block-scoped) | ✅ (default-exemption ⚠️ documented) | `paramrange`, `localparam`, `array`, `paramarray`, `paramset`, `paramsethsp`, `blockparam` |
 | 3.5–3.7 Natures, disciplines, nets, buses, nodesets | ✅ | `derivednature`, `domainbind`, `bus`, `netinit`, `ground`, `signalflow` |
-| 4.1–4.3 Operators, precedence, functions | ✅ (audited) | `operator`, `precedence`, `shift`, `concat` |
+| 4.1–4.3 Operators (incl. string relational), precedence, functions (`$clog2`, `$rtoi`/`$itor`) | ✅ (audited) | `operator`, `precedence`, `shift`, `concat`, `stringcmp`, `clog2`, `convert`, `ceil` |
 | 4.5 Analog operators (all) | ✅ (`limexp` stateless ⚠️ documented) | `absdelay`, `laplace`, `zi`, `slew`, `transition`, `idt*`, `ddx`, `opargs`, `discontinuity`, `last_crossing` |
-| 4.6 Noise (incl. correlation 4.6.4) | ✅ | `noise`, `noisecorr`, `noisejw` |
+| 4.6 Noise (incl. correlation 4.6.4; `noise_table` linear-in-f, `noise_table_log` log-log) | ✅ | `noise`, `noisetable`, `noisecorr`, `noisejw` |
 | 5.2/6.2 Analog blocks (multiple) | ✅ | `multianalog` |
 | 5.6 Contributions, indirect assignment, port flow (incl. named port branches) | ✅ | `indirect_assignment`, `portflow`, `signalflow`, `lrm` |
 | 5.7–5.9 Procedural statements, loops, disable | ✅ | `analogloop`, `dowhile`, `repeat`, `disable`, `arraycase` |
@@ -602,7 +609,7 @@ connected port.)*
 | 5.10 Events (steps, cross/above/timer, OR lists, phase lists) | ✅ | `initial_step`, `finalstep`, `cross`, `timer`, `lrmcorner` |
 | 5.11 Analog functions (arrays in/out/return) | ✅ | `funcarray`, `arrayout`, `arrayret` |
 | 6 Hierarchy (instantiation, generate incl. legacy analog-block form, defparam, $root, part-select connections, hierarchical branch probes) | ✅ (param-shaped structure ⚠️ explained) | `instantiation`, `generate`, `legacygen`, `defparam`, `hiername`, `implicitnet`, `partselect`, `hierbranch` |
-| 9.4–9.8 Display, file/string I/O | ✅ | `display`, `fileio`, `stringio` |
+| 9.4–9.8 Display, file/string I/O (incl. `$fgetc`/`$ungetc`, `$sscanf` base) | ✅ | `display`, `fileio`, `stringio`, `fgetc`, `ungetc`, `sscanf` |
 | 9.13 Random/distributions | ✅ (deterministic seed ⚠️ documented) | `rng`, `montecarlo` |
 | 9 misc ($finish family, $simparam, attributes) | ✅ | `simctrl`, `simparamstr`, `opvar` |
 | plusargs / simprobe / node aliases | ⚠️ LRM fallbacks | `alias` |
