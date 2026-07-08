@@ -293,7 +293,13 @@ V(out) <+ ac_stim("ac", 1.0, 90.0);        // module AS the AC stimulus
   `noise_table`, `noise_table_log` (inline or file data);
   operating-point-dependent factors and `ddt()`-shaped noise are exact
   with **no extra matrix unknowns**; same-named sources sum coherently
-  per LRM 4.6.4 including anti-phase cancellation: ✅
+  per LRM 4.6.4 including anti-phase cancellation: ✅.
+  `noise_table` interpolates the power **piecewise-linearly over frequency**
+  (LRM 4.6.4.3) and `noise_table_log` interpolates **log-log**
+  (`P = 10^(lerp of log10 p over log10 f)`, LRM 4.6.4.4) — both taking Hz
+  input and clamping to the endpoint powers outside the tabulated range
+  (Enhancement-109 corrected these; they had been a lin-log hybrid and a
+  mis-keyed log-frequency input respectively): ✅
 
   ```verilog
   I(a,b) <+ white_noise(4.0 * `P_K * $temperature / r, "thermal");
