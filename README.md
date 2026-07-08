@@ -26,20 +26,6 @@ https://ngspice.sourceforge.io/
 
 ---
 
-## Where next? — ngspice vs. a commercial simulator
-
-With the Verilog-A / OSDI device side now on par with commercial tools, the
-remaining gaps are all on the **simulator** side. [ngspice vs. Spectre — feature
-gap analysis](docs/internals/ngspice_internals/ngspice_gaps.md)
-([PDF](docs/internals/ngspice_internals/ngspice_gaps.pdf)) is a category-by-category
-✅/⚠️/❌ table, grounded in the ngspice-46 source, showing where ngspice already
-matches Spectre (standard analog analyses, core numerics) and where the gaps are
-(the RF periodic suite — HB/Pnoise/PAC/PXF/envelope — plus fast-SPICE scale,
-high-sigma statistics, and reliability/aging). It closes with a prioritized view
-of where to invest next.
-
----
-
 ## The Enhancements
 
 One hundred and nine enhancements so far — language features, correctness fixes, systematic audits, and simulator-side workflow tooling, each verified end-to-end by a committed example suite and released with a detailed write-up.
@@ -274,3 +260,17 @@ Builds run on push to `main` (source changes only; binary commits are skipped) o
 | `windows-latest` | `bin/windows/intel/` | LLVM 18 official tarball, ngspice via MSYS2/MinGW (static) |
 
 See [`.github/workflows/build-binaries.yml`](.github/workflows/build-binaries.yml) for the full workflow.
+
+---
+
+## Where next? — ngspice vs. a commercial simulator
+
+With the Verilog-A / OSDI device side now on par with commercial tools, the
+remaining gaps are all on the **simulator** side. [ngspice vs. Spectre — feature
+gap analysis](docs/internals/ngspice_internals/ngspice_gaps.md)
+([PDF](docs/internals/ngspice_internals/ngspice_gaps.pdf)) is a category-by-category
+✅/⚠️/❌ table, grounded in the ngspice-46 source, showing where ngspice already
+matches Spectre (standard analog analyses, core numerics) and where the gaps are
+(the RF periodic suite — HB/Pnoise/PAC/PXF/envelope — plus fast-SPICE scale,
+high-sigma statistics, and reliability/aging). It closes with a prioritized view
+of where to invest next.
