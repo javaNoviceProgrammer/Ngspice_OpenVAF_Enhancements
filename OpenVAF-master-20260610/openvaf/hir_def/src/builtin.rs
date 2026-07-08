@@ -132,6 +132,9 @@ pub enum BuiltIn {
     // $itor converts integer to real.
     rtoi = 113u8,
     itor = 114u8,
+    // Enhancement-107: `$fgetc(fd)` -- read one character (completes the file
+    // I/O family alongside $fgets/$fscanf/$ftell/...).
+    fgetc = 115u8,
 }
 #[derive(Eq, PartialEq, Copy, Clone, Hash, Debug)]
 #[allow(nonstandard_style, unreachable_pub)]
@@ -301,6 +304,7 @@ pub fn insert_builtin_scope(dst: &mut IndexMap<Name, ScopeDefItem, BuildHasherDe
     dst.insert(sysfun::realtime, BuiltIn::realtime.into());
     dst.insert(sysfun::rtoi, BuiltIn::rtoi.into());
     dst.insert(sysfun::itor, BuiltIn::itor.into());
+    dst.insert(sysfun::fgetc, BuiltIn::fgetc.into());
     dst.insert(sysfun::dist_chi_square, BuiltIn::dist_chi_square.into());
     dst.insert(sysfun::dist_exponential, BuiltIn::dist_exponential.into());
     dst.insert(sysfun::dist_poisson, BuiltIn::dist_poisson.into());

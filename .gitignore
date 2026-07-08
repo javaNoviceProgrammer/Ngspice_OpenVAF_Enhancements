@@ -516,3 +516,8 @@ examples/sscanf_examples/_ss.sp
 # Enhancement-106 stringcmp: verify-run scratch files
 examples/stringcmp_examples/*.osdi
 examples/stringcmp_examples/_sc.sp
+
+# Enhancement-107 fgetc: verify-run scratch files
+examples/fgetc_examples/*.osdi
+examples/fgetc_examples/_gc.sp
+examples/fgetc_examples/fgetc_input.txt

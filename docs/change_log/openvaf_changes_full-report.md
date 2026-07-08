@@ -700,6 +700,7 @@ tests hide behind `RUN_DEV_TESTS=1`. Fixed test-side only
 | [E-104](../../enhancements_doc/Enhancement-104.md) | syntax (name), hir_def (builtin), hir_ty (builtin), hir_lower (expr) | add `$rtoi` (real->int, truncate toward zero via `ficast((x<0)?ceil:floor)`) and `$itor` (int->real) conversion builtins |
 | [E-105](../../enhancements_doc/Enhancement-105.md) | hir_lower (expr, callbacks), osdi (compilation_unit, stdlib.c) | `$sscanf`/`$fscanf` honour the format conversion base -- parse the format string, dispatch integer fields to base-specific scanners (`%h`/`%x` hex, `%o` octal, `%b` binary) |
 | [E-106](../../enhancements_doc/Enhancement-106.md) | hir_ty (types, inference), hir (signatures), hir_lower (expr, callbacks), osdi (compilation_unit, stdlib.c) | string relational comparison (`<`/`<=`/`>`/`>=`) via a lexicographic `osdi_strcmp` callback (`RELATIONAL_COMPARISON` adds the STR signature; `a<op>b` lowers to `strcmp(a,b)<op>0`) |
+| [E-107](../../enhancements_doc/Enhancement-107.md) | syntax (name), hir_def (builtin), hir_ty (builtin), hir_lower (expr, callbacks), osdi (stdlib.c) | add `$fgetc(fd)` single-character read as a `FileOp::Getc` -> `osdi_fgetc` (completes the file I/O family) |
 
 Enhancements not listed (57, 60, 62–64, 69, 72–77, 79–83, 94–95, 98–100) changed no
 compiler sources — they were validation suites, documentation, benchmark

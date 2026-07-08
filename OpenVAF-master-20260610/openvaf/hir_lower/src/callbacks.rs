@@ -122,6 +122,8 @@ pub enum FileOp {
     Rewind,
     /// `$fseek(fd, offset, whence)`
     Seek,
+    /// Enhancement-107: `$fgetc(fd)` -- read one character (code, or -1 at EOF).
+    Getc,
 }
 
 impl FileOp {
@@ -134,6 +136,7 @@ impl FileOp {
             FileOp::Tell => "osdi_ftell",
             FileOp::Rewind => "osdi_frewind",
             FileOp::Seek => "osdi_fseek",
+            FileOp::Getc => "osdi_fgetc",
         }
     }
 

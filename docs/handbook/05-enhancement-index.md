@@ -114,3 +114,4 @@ table is the enhancement index of the top-level
 | 104 | `$rtoi` / `$itor` real↔integer conversion functions (`$rtoi` truncates toward zero, distinct from the rounding implicit cast) | [doc](../../enhancements_doc/Enhancement-104.md) | [convert](../../examples/convert_examples/) |
 | 105 | `$sscanf` / `$fscanf` honour the format base (`%h`/`%x` hex, `%o` octal, `%b` binary) instead of ignoring it | [doc](../../enhancements_doc/Enhancement-105.md) | [sscanf](../../examples/sscanf_examples/) |
 | 106 | String relational comparison (`<`, `<=`, `>`, `>=`) via lexicographic `strcmp` (completes the string comparison surface; `==`/`!=` already worked) | [doc](../../enhancements_doc/Enhancement-106.md) | [stringcmp](../../examples/stringcmp_examples/) |
+| 107 | `$fgetc(fd)` single-character file read (completes the file I/O family: `$fgets`/`$fscanf`/`$ftell`/… already existed) | [doc](../../enhancements_doc/Enhancement-107.md) | [fgetc](../../examples/fgetc_examples/) |

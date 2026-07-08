@@ -573,6 +573,8 @@ copied_builtins! {
     FEOF = BASIC_IO
     FCLOSE = BASIC_IO
     FTELL = BASIC_IO
+    // Enhancement-107: `$fgetc(fd)` -> int (character code, or -1 at EOF).
+    FGETC = BASIC_IO
 
     STOP = FINISH
 

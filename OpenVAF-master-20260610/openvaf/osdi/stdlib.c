@@ -28,6 +28,7 @@ extern long ftell(void *);
 extern void rewind(void *);
 extern int feof(void *);
 extern int ferror(void *);
+extern int fgetc(void *);
 extern char *fgets(char *, int, void *);
 extern long strtol(const char *, char **, int);
 extern double strtod(const char *, char **);
@@ -519,6 +520,16 @@ OSDI_NOINLINE int osdi_ftell(int fd) {
     return -1;
   }
   return (int)ftell(f);
+}
+
+// Enhancement-107: $fgetc(fd) -- read one character; returns its code, or -1
+// (EOF) at end-of-file or on a bad descriptor.
+OSDI_NOINLINE int osdi_fgetc(int fd) {
+  void *f = osdi_file_lookup(fd);
+  if (f == NULL) {
+    return -1;
+  }
+  return fgetc(f);
 }
 
 // $fseek(fd, offset, whence)  -- whence 0/1/2 = SET/CUR/END

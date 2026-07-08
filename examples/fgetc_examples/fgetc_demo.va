@@ -1,0 +1,44 @@
+// Enhancement-107: the `$fgetc(fd)` file-input function.
+//
+// The file I/O family had `$fgets`, `$fscanf`, `$ftell`, `$feof`, etc., but not
+// `$fgetc` -- read one character, returning its integer code, or -1 (EOF) at
+// end of file / on a bad descriptor. It is a peer of the other `fd -> int`
+// file operations and reuses the same descriptor machinery.
+//
+// This device reads "fgetc_input.txt" character by character: the first few
+// codes are exposed directly, and a `while` loop consumes the rest, counting
+// the characters and summing their codes until EOF.
+`include "disciplines.vams"
+
+module fgetc_demo (p, n);
+    inout p, n;
+    electrical p, n;
+
+    integer fd, ch;
+
+    (* desc = "1st char code"   *) integer c1;
+    (* desc = "2nd char code"   *) integer c2;
+    (* desc = "char count"      *) integer nchar;
+    (* desc = "sum of codes"    *) integer csum;
+    (* desc = "EOF sentinel"    *) integer last;
+
+    analog begin
+        @(initial_step) begin
+            fd = $fopen("fgetc_input.txt", "r");
+            c1 = $fgetc(fd);
+            c2 = $fgetc(fd);
+            // count + sum the remaining characters until EOF (-1)
+            nchar = 0;
+            csum = 0;
+            ch = $fgetc(fd);
+            while (ch != -1) begin
+                nchar = nchar + 1;
+                csum  = csum + ch;
+                ch = $fgetc(fd);
+            end
+            last = ch;   // -1 at EOF
+            $fclose(fd);
+        end
+        I(p, n) <+ V(p, n) * 1.0e-3;
+    end
+endmodule
