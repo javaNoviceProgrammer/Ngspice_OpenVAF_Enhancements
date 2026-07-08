@@ -697,6 +697,7 @@ tests hide behind `RUN_DEV_TESTS=1`. Fixed test-side only
 | [E-101](../../enhancements_doc/Enhancement-101.md) | hir_ty (builtin), mir_opt / mir_interpret / mir_llvm | `$clog2`: accept one argument (`INT_MATH_1`, was a 2-arg signature) and compute `ceil(log2 n)` = `bit_width(n-1)` in all three backends (was `floor(log2 n)+1`, wrong on exact powers of two) |
 | [E-102](../../enhancements_doc/Enhancement-102.md) | parser (items), syntax (ungrammar + ast), hir_def (item_tree) | name-then-range array-valued parameters (`parameter real c[0:2]`); `parameter()` accepts post-name `[range]`, `lower_param` resolves dims per name |
 | [E-103](../../enhancements_doc/Enhancement-103.md) | mir_llvm (intrinsics) | register the `llvm.ceil.f64` intrinsic (was missing; `ceil()` of a non-constant argument crashed codegen -- `floor` was registered) |
+| [E-104](../../enhancements_doc/Enhancement-104.md) | syntax (name), hir_def (builtin), hir_ty (builtin), hir_lower (expr) | add `$rtoi` (real->int, truncate toward zero via `ficast((x<0)?ceil:floor)`) and `$itor` (int->real) conversion builtins |
 
 Enhancements not listed (57, 60, 62–64, 69, 72–77, 79–83, 94–95, 98–100) changed no
 compiler sources — they were validation suites, documentation, benchmark

@@ -1,0 +1,46 @@
+// Enhancement-104: the `$rtoi` / `$itor` real<->integer conversion functions.
+//
+// `$rtoi(real)` converts to integer by TRUNCATING toward zero (LRM); this is
+// deliberately different from an implicit real->integer assignment, which
+// ROUNDS to nearest. `$itor(integer)` converts an integer to real. Only the
+// implicit conversions existed before; the explicit functions are standard and
+// commonly used in compact models.
+//
+// The `r_*` opvars take `$rtoi` of module PARAMETERS (the runtime path); `rl`
+// exercises the constant-folding path via a localparam. `i_*` check `$itor`.
+`include "disciplines.vams"
+
+module convert_demo (p, n);
+    inout p, n;
+    electrical p, n;
+
+    parameter real a =  3.9;   // rtoi 3
+    parameter real b = -3.9;   // rtoi -3  (toward zero, NOT -4)
+    parameter real c =  3.2;   // rtoi 3
+    parameter real d = -3.2;   // rtoi -3
+    parameter real e =  5.0;   // rtoi 5
+    parameter integer k = 7;
+
+    localparam integer LP = $rtoi(9.6);   // = 9, const-folded
+
+    (* desc = "rtoi(3.9)"   *) integer r_a;
+    (* desc = "rtoi(-3.9)"  *) integer r_b;
+    (* desc = "rtoi(3.2)"   *) integer r_c;
+    (* desc = "rtoi(-3.2)"  *) integer r_d;
+    (* desc = "rtoi(5.0)"   *) integer r_e;
+    (* desc = "rtoi(9.6) localparam" *) integer r_l;
+    (* desc = "itor(k)"     *) real i_k;
+    (* desc = "itor(k)*0.5" *) real i_h;
+
+    analog begin
+        r_a = $rtoi(a);
+        r_b = $rtoi(b);
+        r_c = $rtoi(c);
+        r_d = $rtoi(d);
+        r_e = $rtoi(e);
+        r_l = LP;
+        i_k = $itor(k);
+        i_h = $itor(k) * 0.5;   // real division -> 3.5, proving $itor is real
+        I(p, n) <+ V(p, n) * 1.0e-3;
+    end
+endmodule

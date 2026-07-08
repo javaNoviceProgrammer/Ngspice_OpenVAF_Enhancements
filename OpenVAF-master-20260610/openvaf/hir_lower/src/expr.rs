@@ -1305,6 +1305,25 @@ impl BodyLoweringCtx<'_, '_, '_> {
             // Enhancement-59: $realtime aliases $abstime (no `timescale in Verilog-A)
             BuiltIn::realtime => self.ctx.use_param(ParamKind::Abstime),
 
+            // Enhancement-104: $rtoi truncates toward zero (LRM), unlike the
+            // implicit real->int cast which rounds. trunc(x) = (x<0) ? ceil(x) :
+            // floor(x); the result is an exact integer-valued real, so ficast
+            // (round-to-nearest) yields it exactly. $itor is a plain int->real.
+            BuiltIn::rtoi => {
+                let val = self.lower_expr(args[0]);
+                let cond = self.ctx.ins().flt(val, F_ZERO);
+                let trunc = self.lower_select_with(
+                    cond,
+                    |sel| sel.ctx.ins().ceil(val),
+                    |sel| sel.ctx.ins().floor(val),
+                );
+                self.ctx.ins().ficast(trunc)
+            }
+            BuiltIn::itor => {
+                let val = self.lower_expr(args[0]);
+                self.ctx.ins().ifcast(val)
+            }
+
             BuiltIn::ddt => {
                 if self.ctx.no_equations {
                     return F_ZERO;

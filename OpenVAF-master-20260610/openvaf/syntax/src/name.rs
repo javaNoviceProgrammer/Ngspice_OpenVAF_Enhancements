@@ -487,6 +487,10 @@ pub mod sysfun {
         abstime,
         realtime,
 
+        // Enhancement-104: real<->integer conversion functions
+        rtoi,
+        itor,
+
         bitstoreal,
         realtobits,
 

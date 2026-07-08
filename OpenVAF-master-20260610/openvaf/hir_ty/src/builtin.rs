@@ -192,6 +192,10 @@ bultins! {
     // consumes a single argument. INT_MATH_1 is the correct 1-arg integer
     // signature; it is the only integer-math template, so no 2-arg form remains.
     const fn INT_MATH_1(Val(Integer)) -> Integer;
+    // Enhancement-104: `$rtoi(real)` -> integer (truncates toward zero),
+    // `$itor(integer)` -> real.
+    const fn RTOI(Val(Real)) -> Integer;
+    const fn ITOR(Val(Integer)) -> Real;
 
 
     VT = const {

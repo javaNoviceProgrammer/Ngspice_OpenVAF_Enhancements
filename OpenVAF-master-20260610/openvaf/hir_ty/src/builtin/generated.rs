@@ -4,7 +4,7 @@ use hir_def::BuiltIn;
 
 use crate::builtin::*;
 
-const BUILTIN_INFO: [BuiltinInfo; 113usize] = [
+const BUILTIN_INFO: [BuiltinInfo; 115usize] = [
     ABS,
     ACOS,
     ACOSH,
@@ -119,5 +119,9 @@ const BUILTIN_INFO: [BuiltinInfo; 113usize] = [
     TABLE_MODEL,
     // Enhancement-59: $realtime (index must equal BuiltIn::realtime = 112)
     REALTIME,
+    // Enhancement-104: $rtoi / $itor (indices must equal BuiltIn::rtoi = 113,
+    // BuiltIn::itor = 114)
+    RTOI,
+    ITOR,
 ];
 pub(crate) fn builtin_info(builtin: BuiltIn) -> BuiltinInfo { BUILTIN_INFO[builtin as u8 as usize] }

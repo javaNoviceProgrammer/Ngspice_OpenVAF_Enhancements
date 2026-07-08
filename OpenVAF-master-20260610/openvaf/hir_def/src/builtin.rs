@@ -127,6 +127,11 @@ pub enum BuiltIn {
     // Enhancement-59: $realtime -- in the analog context an alias of $abstime
     // (Verilog-A has no `timescale, so both are seconds)
     realtime = 112u8,
+    // Enhancement-104: real<->integer conversion functions. $rtoi truncates
+    // toward zero (distinct from the implicit real->int cast, which rounds);
+    // $itor converts integer to real.
+    rtoi = 113u8,
+    itor = 114u8,
 }
 #[derive(Eq, PartialEq, Copy, Clone, Hash, Debug)]
 #[allow(nonstandard_style, unreachable_pub)]
@@ -294,6 +299,8 @@ pub fn insert_builtin_scope(dst: &mut IndexMap<Name, ScopeDefItem, BuildHasherDe
     dst.insert(sysfun::info, BuiltIn::info.into());
     dst.insert(sysfun::abstime, BuiltIn::abstime.into());
     dst.insert(sysfun::realtime, BuiltIn::realtime.into());
+    dst.insert(sysfun::rtoi, BuiltIn::rtoi.into());
+    dst.insert(sysfun::itor, BuiltIn::itor.into());
     dst.insert(sysfun::dist_chi_square, BuiltIn::dist_chi_square.into());
     dst.insert(sysfun::dist_exponential, BuiltIn::dist_exponential.into());
     dst.insert(sysfun::dist_poisson, BuiltIn::dist_poisson.into());
