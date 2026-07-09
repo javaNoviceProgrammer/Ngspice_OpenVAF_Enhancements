@@ -83,15 +83,12 @@ _KLU_UNSUPPORTED = "not (yet) supported with 'option KLU'"
 # a real KLU discrepancy that Sparse 1.3 (the default) handles correctly. See
 # docs/internals/ngspice_internals/ngspice_solver_notes.md.
 #   opamp741      — the stiff transistor-level 741 transient diverges under KLU.
-#   groundcontrib — the degenerate single-node node-to-ground contribution gives
-#                   the wrong DC answer under KLU (v(p)=0 instead of 1.5).
-#   hierbranch    — hierarchical branch *current* probes read 0 under KLU (the
-#                   node voltages are correct). Deterministic; independent of the
-#                   E-114 sensitivity fix (the DC KLU solve is untouched). This
-#                   was previously masked by the deck-injector pollution bug (a
-#                   stale `.option sparse` made the "klu" child silently run
-#                   Sparse — a false pass); fixing that restore bug exposed it.
-KLU_XFAIL = frozenset({"opamp741", "groundcontrib", "hierbranch"})
+# (groundcontrib and hierbranch were XFAIL until Enhancement-116 fixed the root
+#  cause: an OSDI internal node that appears in no Jacobian entry -- e.g. an
+#  explicit `ground gnd` reference -- was given its own all-zero solver row,
+#  which made the KLU matrix structurally singular. Such nodes are now tied to
+#  ground at setup, so both pass under KLU. See osdisetup.c.)
+KLU_XFAIL = frozenset({"opamp741"})
 
 
 def _example_stem(script):

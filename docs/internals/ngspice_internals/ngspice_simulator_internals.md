@@ -580,7 +580,7 @@ a useful index if you are tracing one:
 | Netlist preprocessing (5) | `frontend/inpcom.c`, `inp2dot.c` | `__FILE__`/`__LINE__` (E-85), legacy `generate` (E-88), bare `generate` (E-96) |
 | Analyses (11) | `spicelib/analysis/*` | `.dc @inst[param]` & `.tf`/`.pz`/`.sens` (E-62), RF `.sp`/PSS (E-63), Touchstone (E-64, E-72), sim-control tasks (E-55) |
 | Newton core (10) | `maths/ni/niiter.c` | `.option linesearch` globalized Newton (E-111) |
-| Matrix / solver (9) | `maths/KLU/klusmp.c`, `klu_multiply.c`, `spicelib/analysis/cktsens.c`, `distoan.c` | KLU line search (E-112), KLU noise + single-ended pole-zero (E-113), KLU sensitivity (E-114), KLU distortion (E-115) |
+| Matrix / solver (9) | `maths/KLU/klusmp.c`, `klu_multiply.c`, `spicelib/analysis/cktsens.c`, `distoan.c`, `osdi/osdisetup.c` | KLU line search (E-112), KLU noise + single-ended pole-zero (E-113), KLU sensitivity (E-114), KLU distortion (E-115), KLU wrong-DC fix for decoupled OSDI nodes (E-116) |
 | Options / tasks | `spicelib/analysis/cktsopt.c`, `cktntask.c` | `.option errpreset` (E-110), `.option linesearch`/`.option klu` plumbing |
 | Frontend commands (4) | `frontend/com_*`, `commands.c` | `pyplot` matplotlib plotting (E-94/95/98/99) |
 | OSDI bridge (12) | `src/osdi/*` | `$discontinuity` clamp (E-24), `ac_stim` AC-RHS (E-51), noise factors (E-54), final-step phases (E-53), multi-module libs (E-76) |

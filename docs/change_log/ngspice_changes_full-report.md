@@ -133,6 +133,16 @@ pointers, and `OSDIpendingRequests()` is exported so the analyses can ask
   surface as ngspice's baffling *"impossible error — can't occur"*; it
   now reads *"a Verilog-A device rejected its configuration during
   setup"* ([E-56](../../enhancements_doc/Enhancement-56.md)).
+- An internal OSDI node that appears in **no Jacobian entry** — a net
+  structurally decoupled from the matrix, e.g. an explicit `ground gnd`
+  reference whose branch contribution `V(p,gnd) <+ …` drops the `gnd`
+  column — used to be allocated its own solver row. That all-zero
+  row/column is benign under Sparse (it decouples to `V=0`) but makes
+  the **KLU** matrix structurally singular, so KLU returned a wrong DC
+  answer (`groundcontrib`: `v(p)=0` not `1.5`; `hierbranch`: branch
+  currents `0`). Such nodes are now tied to ground (node 0) at setup,
+  matching how OpenVAF already treats them and fixing both solvers
+  ([E-116](../../enhancements_doc/Enhancement-116.md)).
 
 ### `osdiacld.c` (89 diff lines)
 
@@ -515,6 +525,7 @@ Every enhancement that touched ngspice, oldest first:
 | [E-113](../../enhancements_doc/Enhancement-113.md) | maths/KLU/klusmp.c, spicelib/analysis/noisean.c, pzan.c | KLU support for noise + single-ended pole-zero — `SMPcaSolve`'s adjoint KLU branch used the non-transposed solve (silently wrong noise on asymmetric matrices); now `klu_z_tsolve`. Guards removed; balanced-output pz keeps a targeted guard |
 | [E-114](../../enhancements_doc/Enhancement-114.md) | spicelib/analysis/cktsens.c | KLU support for sensitivity — the auxiliary perturbation matrix `delta_Y` is Sparse, but two KLU setup blocks gated on the *main* matrix's flag dereferenced its NULL `SMPkluMatrix` (segfault on every DC/AC `.sens`); now gated on `delta_Y`'s own flag. DC/AC `.sens` match Sparse exactly |
 | [E-115](../../enhancements_doc/Enhancement-115.md) | spicelib/analysis/distoan.c | KLU support for distortion — `.disto` is a complex analysis but `distoan.c` had no KLU code, so under KLU the matrix stayed real and every harmonic came back zero (silent wrong answer); now converts real↔complex around the solve loop like `acan.c`. Matches Sparse bit-for-bit |
+| [E-116](../../enhancements_doc/Enhancement-116.md) | osdi/osdisetup.c | KLU wrong-DC fix — an OSDI internal node with no Jacobian entry (a decoupled `ground` reference) was given an all-zero solver row that made the KLU matrix structurally singular; now tied to ground. Fixes the `groundcontrib` and `hierbranch` KLU_XFAILs |
 
 *(E-25's simparam exposure lives in the OSDI callback table populated at
 load time; its diff rides inside the `osdiload.c`/callbacks changes.)*

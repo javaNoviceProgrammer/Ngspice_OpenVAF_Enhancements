@@ -284,16 +284,45 @@ int OSDIsetup(SMPmatrix *matrix, GENmodel *inModel, CKTcircuit *ckt,
           }
         }
       }
+      /* Enhancement-116: an internal node that appears in NO Jacobian entry is
+       * structurally decoupled from the matrix -- e.g. an explicit `ground gnd`
+       * net whose branch contributions drop its column (OpenVAF omits the
+       * partial w.r.t. a ground reference). Giving it its own solver row leaves
+       * an all-zero row/column: Sparse tolerates that decoupled row, but KLU's
+       * factorization sees a structurally singular matrix and returns a wrong DC
+       * solution. Tie such nodes to ground (node 0) instead of allocating a row;
+       * this is consistent with how OpenVAF already treats them (no coupling)
+       * and fixes both solvers. Build the "used" set over local node indices. */
+      uint32_t *node_mapping =
+          (uint32_t *)(((char *)inst) + descr->node_mapping_offset);
+      bool *node_used = TMALLOC(bool, num_nodes);
+      for (uint32_t i = 0; i < num_nodes; i++)
+        node_used[i] = false;
+      for (uint32_t e = 0; e < descr->num_jacobian_entries; e++) {
+        uint32_t eq = node_mapping[descr->jacobian_entries[e].nodes.node_1];
+        uint32_t un = node_mapping[descr->jacobian_entries[e].nodes.node_2];
+        if (eq != UINT32_MAX && eq < num_nodes)
+          node_used[eq] = true;
+        if (un != UINT32_MAX && un < num_nodes)
+          node_used[un] = true;
+      }
       /* create internal nodes as required */
       for (uint32_t i = connected_terminals; i < num_nodes; i++) {
+        if (!node_used[i]) {
+          /* decoupled internal node -> ground */
+          node_ids[i] = 0;
+          continue;
+        }
         // TODO handle currents  correctly
         if (descr->nodes[i].is_flow) {
           error = CKTmkCur(ckt, &tmp, gen_inst->GENname, descr->nodes[i].name);
         } else {
           error = CKTmkVolt(ckt, &tmp, gen_inst->GENname, descr->nodes[i].name);
         }
-        if (error)
+        if (error) {
+          FREE(node_used);
           return (error);
+        }
         node_ids[i] = (uint32_t)tmp->number;
         /* Enhancement-45: apply the net's nodeset initializer as the
          * internal node's .nodeset-equivalent initial guess */
@@ -302,6 +331,7 @@ int OSDIsetup(SMPmatrix *matrix, GENmodel *inModel, CKTcircuit *ckt,
           tmp->nsGiven = 1;
         }
       }
+      FREE(node_used);
       write_node_mapping(descr, inst, node_ids);
 
       /* now that we have the node mapping we can create the matrix entries */

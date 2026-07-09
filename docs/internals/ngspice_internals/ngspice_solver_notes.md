@@ -13,7 +13,7 @@ of the whole [`examples/`](../../../examples/) suite.
 | **Availability in this build** | Compiled in (SuiteSparse, statically linked — 44 `klu_*` symbols in the binary) | Always present (ngspice's own solver) |
 | **Default?** | No | **Yes** — this build defaults to Sparse 1.3 |
 | **How to select** | `.option klu` | `.option sparse` (or just the default) |
-| **DC op / DC sweep** | ✅ correct (one caveat below) | ✅ correct |
+| **DC op / DC sweep** | ✅ correct | ✅ correct |
 | **AC** | ✅ correct | ✅ correct |
 | **Transient** | ✅ correct (one caveat below) | ✅ correct |
 | **Noise (`.noise`)** | ✅ correct (since E-113) | ✅ correct |
@@ -32,8 +32,7 @@ sensitivity**, and since
 **balanced-output pole-zero**. Reach for `.option klu`
 on large, sparse DC/AC problems where KLU's ordering and factorization are
 faster, and expect it to be
-**less robust on stiff transient edges and degenerate topologies** (see the two
-genuine discrepancies below).
+**less robust on stiff transient edges** (see the one genuine discrepancy below).
 
 ## Selecting and confirming the solver
 
@@ -97,59 +96,44 @@ sensitivity** now match Sparse exactly.
   converts the KLU matrix real↔complex around the distortion solve loop (exactly
   as `acan.c` does for AC), so `.disto` now matches Sparse bit-for-bit.
 
-## Three genuine KLU discrepancies
+## One genuine KLU discrepancy (opamp741)
 
-Beyond the noise/pole-zero refusals, three examples in the suite produce a
-**different (wrong) result under KLU** than under Sparse. All are marked
-`KLU_XFAIL` in the [dual-solver harness](#the-dual-solver-test-harness) so they
-are exercised and tracked rather than silently skipped.
+Beyond balanced-output pole-zero, exactly **one** example still produces a
+**different (wrong) result under KLU** than under Sparse; it is marked `KLU_XFAIL`
+in the [dual-solver harness](#the-dual-solver-test-harness) so it is exercised and
+tracked rather than silently skipped.
 
-**1. opamp741 — stiff transient diverges.** The transistor-level
+**opamp741 — stiff transient diverges.** The transistor-level
 [opamp741 example](../../../examples/opamp741_examples/) (a µA741 from ~70 lines
 of Verilog-A BJT):
 
 - **Sparse 1.3:** the large-signal slew test (`pulse(-5 5 …)` into the follower)
   runs the full `tran 20n 80u` cleanly (~4058 points), slew rate ≈ 0.54 V/µs.
-- **KLU:** the same run **diverges at the slewing edge** — `v(out)` overshoots
-  past the −5 V rail to ≈ −6.16 V and ngspice **aborts the timestep at
-  t ≈ 2.03 µs** (~133 points), so the characterization can't complete.
+- **KLU:** the same run **diverges at the slewing edge** — output-stage
+  transistors switch off, their transconductances collapse, KLU declares the
+  Jacobian **singular** (nodes `x1.o1`/`o2`/`b34`/`cm`), the timestep collapses,
+  and ngspice **aborts at t ≈ 2.03 µs** (~133 points).
 
-A convergence/timestep robustness difference on a stiff circuit: Sparse's
-pivoting survives the fast edge and KLU's does not. (E-111's line search does not
-help — it damps the **DC-op** Newton, not per-timepoint transient iterations.)
+A convergence/robustness difference on a stiff circuit: KLU's fill-reducing
+symbolic ordering is computed **once** and `klu_factor` can only pivot *within* it,
+whereas Sparse re-orders **every** factorization (dynamic Markowitz threshold
+pivoting) and survives the fast edge. This was confirmed not fixable with the
+available knobs — full partial pivoting (`tol = 1.0`), disabling BTF and
+re-analyzing a fresh ordering, and the gmin-loading path (identical to Sparse —
+both skip absent diagonals) all left the abort unchanged
+([E-116](../../../enhancements_doc/Enhancement-116.md)). A real fix would need a
+**hybrid solver** that falls back to Sparse when KLU's factorization fails. (E-111's
+line search does not help either — it damps the **DC-op** Newton, not per-timepoint
+transient iterations.)
 
-**2. groundcontrib — wrong DC answer on a degenerate topology.** The
-[groundcontrib example](../../../examples/groundcontrib_examples/) drives a single
-node `p` with a node-to-ground voltage contribution `V(p) <+ 1.5` through a load
-resistor to ground. On this **exact same deck**, changing only the solver:
-
-```
-.option sparse  ->  v(p) = 1.5   (correct)
-.option klu     ->  v(p) = 0.0   (wrong)
-```
-
-This is a genuine KLU **correctness** miss (not a refusal or a divergence): on
-this degenerate single-node system KLU returns zero. It is the reason to prefer
-Sparse for unusual/degenerate one-node topologies. The ~90 other OSDI examples
-run correctly under KLU, so the issue is specific to this topology, not OSDI
-generally.
-
-**3. hierbranch — hierarchical branch *current* probes read zero.** The
-[hierbranch example](../../../examples/hierbranch_examples/) probes currents on
-hierarchical/synthesized ammeter branches (the E-86 zero-volt sources). On the
-same deck, changing only the solver:
-
-- **Sparse 1.3:** all six checks pass — node voltages *and* branch currents
-  (`I(top.d1.branch(<p>)) = 5 mA`, `i(V1) = −10 mA`).
-- **KLU:** the node **voltages** are correct (`V(top.a1.b) = 1.34 V`,
-  `V(top.d1.branch(va,vb)) = 2.5 V`), but the branch **currents** read `0`.
-
-Deterministic (KLU always 4/6, Sparse always 6/6), and independent of the E-114
-sensitivity fix — the DC KLU solve is untouched by E-114. It was previously
-**masked**: the old deck-injector left a stale `.option sparse` in the deck that
-had never been restored, so the "klu" child silently ran Sparse and reported a
-false pass. Fixing that injector-restore bug (E-114) exposed the real KLU miss on
-the synthesized current-unknown rows — a candidate for a future enhancement.
+**Two former discrepancies, now fixed (E-116).** `groundcontrib` (node-to-ground
+`V(p,gnd) <+ 1.5` read `v(p)=0` under KLU instead of `1.5`) and `hierbranch`
+(hierarchical branch-*current* probes read `0`) were both **structural**, not
+numerical: an OSDI internal node that appears in **no** Jacobian entry — a `ground`
+reference whose branch contribution drops its column — was allocated its own
+all-zero solver row, which Sparse tolerates but KLU treats as structurally
+singular. [Enhancement-116](../../../enhancements_doc/Enhancement-116.md) ties such
+decoupled internal nodes to ground at setup, so both now match Sparse under KLU.
 
 ## The dual-solver test harness
 
@@ -164,9 +148,10 @@ klu` into every ngspice deck — and prints a combined verdict:
 ```
 
 KLU's one remaining unsupported analysis (balanced-output pole-zero) is
-auto-detected and reported `SKIP`; the three `KLU_XFAIL` examples above are
-expected-fail under KLU. Env escape hatches: `NGSPICE_SOLVER=klu|sparse` runs
-once under one solver; `NG_BOTH=0` disables the dual run.
+auto-detected and reported `SKIP`; the single `KLU_XFAIL` example above
+(`opamp741`) is expected-fail under KLU. Env escape hatches:
+`NGSPICE_SOLVER=klu|sparse` runs once under one solver; `NG_BOTH=0` disables the
+dual run.
 
 **Sweep result** (all 101 machine-checkable scripts): **101/101 OK** — every
 example is `sparse=PASS` with `klu` in `{PASS, SKIP, XFAIL}`, i.e. the two solvers
@@ -176,15 +161,16 @@ fixed; [Enhancement-113](../../../enhancements_doc/Enhancement-113.md) then move
 **10** examples from KLU-skipped to KLU-passing by enabling noise and single-ended
 pole-zero; [Enhancement-114](../../../enhancements_doc/Enhancement-114.md) fixed
 the AC/DC-sensitivity crash under KLU, and — by fixing the deck-injector restore
-bug — un-masked a third `XFAIL`;
+bug — un-masked two more `XFAIL`s (`groundcontrib`, `hierbranch`);
 [Enhancement-115](../../../enhancements_doc/Enhancement-115.md) then fixed
-distortion, so the `analyses` example now runs **fully** under KLU. The `XFAIL`
-entries are opamp741, groundcontrib, and hierbranch.)
+distortion, so the `analyses` example now runs **fully** under KLU; and
+[Enhancement-116](../../../enhancements_doc/Enhancement-116.md) fixed
+`groundcontrib` and `hierbranch` at their shared root cause. The only remaining
+`XFAIL` is `opamp741`.)
 
 **Conclusion:** for DC, AC, transient, noise, single-ended pole-zero,
 sensitivity, and distortion the two solvers agree across the suite, with exactly
-three KLU exceptions (the stiff opamp741 transient, the degenerate groundcontrib
-DC topology, and hierbranch's hierarchical branch-current probes), while
-balanced-output pole-zero is **Sparse-1.3-only** by ngspice design. Sparse 1.3,
-the default, covers everything — which is why it is the default and why the
-dual-solver harness keys correctness off it.
+one KLU exception (the stiff `opamp741` transient), while balanced-output
+pole-zero is **Sparse-1.3-only** by ngspice design. Sparse 1.3, the default,
+covers everything — which is why it is the default and why the dual-solver harness
+keys correctness off it.
