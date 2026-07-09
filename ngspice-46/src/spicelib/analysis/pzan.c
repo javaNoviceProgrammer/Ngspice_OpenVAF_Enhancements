@@ -26,13 +26,16 @@ PZan(CKTcircuit *ckt, int reset)
 
     NG_IGNORE(reset);
 
-    /* Pole-zero runs under KLU for the common single-ended (grounded output
-     * reference) case. The one exception is a non-grounded output reference
-     * (balanced/differential output): its zeros phase folds columns
-     * (SMPcAddCol/SMPcZeroCol in CKTpzLoad) at solve time, which KLU's fixed
-     * symbolic factorization cannot survive the way Sparse's dynamic Markowitz
-     * re-ordering does. That case is caught below, after CKTpzSetup determines
-     * job->PZbalance_col. */
+    /* Pole-zero POLES run correctly under KLU. Finding finite ZEROS does not:
+     * the zeros phase zeroes the solution column (and, for a non-grounded output
+     * reference, folds in the balance column) at solve time, and KLU's fixed
+     * symbolic factorization cannot survive that the way Sparse's dynamic
+     * Markowitz re-ordering does -- the determinant search goes singular. Two
+     * guards below turn that into a clear "use 'option sparse'" message instead
+     * of a misleading result: the balanced/differential-output case is caught
+     * up front (job->PZbalance_col set), and the single-ended case is caught
+     * when CKTpzFindZeros returns E_SHORT under KLU (a circuit with actual
+     * finite zeros; pole-only and zero-free circuits still run fine under KLU). */
 
     error = PZinit(ckt);
     if (error != OK) return error;
@@ -94,6 +97,21 @@ PZan(CKTcircuit *ckt, int reset)
 	}
 #endif
         error = CKTpzFindZeros(ckt, &job->PZzeroList, &job->PZnZeros);
+#ifdef KLU
+	if (ckt->CKTkluMODE && error == E_SHORT) {
+	    /* Single-ended finite-zero case: KLU's factorization goes singular
+	     * during the zero search, which CKTpzFindZeros surfaces as E_SHORT
+	     * (setting the global errMsg to the misleading "input shorted" text).
+	     * Re-map it to a clear message. If the output really is shorted to the
+	     * input, 'option sparse' will report that instead. Clear the stale
+	     * errMsg so doAnalyses does not print the misleading one after ours. */
+	    fprintf(stderr, "Error: pole-zero finite-zero computation is not "
+		    "supported with 'option KLU'; if the output is not actually "
+		    "shorted to the input, re-run with 'option sparse'.\n");
+	    FREE(errMsg);
+	    return(E_UNSUPP);
+	}
+#endif
         if (error != OK)
 	    return(error);
     }
