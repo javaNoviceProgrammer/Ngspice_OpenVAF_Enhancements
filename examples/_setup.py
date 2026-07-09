@@ -137,9 +137,16 @@ def _inject_card(deck, cwd, card):
         pass
 
 
-# noise / pole-zero analysis cards (dot-card or .control command form). KLU does
-# not implement these; a deck that requests one is Sparse-only.
-_KLU_UNSUPPORTED_RE = re.compile(r"(?im)^\s*\.?(noise|pz)\s")
+# As of Enhancement-113 KLU runs noise and single-ended (grounded output
+# reference) pole-zero. Two analyses remain Sparse-only under KLU:
+#   * BALANCED-output pole-zero -- a `pz n1 n2 n3 n4 vol|cur` command whose 4th
+#     node (the output reference) is not ground (0);
+#   * AC sensitivity -- a `.sens <out> ac ...` card (DC `.sens` works under KLU).
+_KLU_UNSUPPORTED_RE = re.compile(
+    r"(?im)^\s*(?:"
+    r"pz\s+\S+\s+\S+\s+\S+\s+(?!0\s)\S+\s+(?:vol|cur)"   # balanced-output pole-zero
+    r"|\.sens\b.*\bac\b"                                  # AC sensitivity
+    r")")
 
 
 def _deck_requests_klu_unsupported(deck, cwd):
@@ -158,10 +165,10 @@ def _install_solver_injector(solver):
     """Patch subprocess so every ngspice call pins `solver` via `.option`.
     Hooks `Popen.__init__`, through which run/check_output/call/Popen all pass.
 
-    Under KLU, a deck that requests noise / pole-zero (which KLU cannot run) makes
-    the injector emit the ngspice `_KLU_UNSUPPORTED` string on this process's own
-    stderr, so the dual-solver harness can see it and report SKIP even when the
-    verify script captures (and hence hides) ngspice's own error output."""
+    Under KLU, a deck that requests balanced-output pole-zero (which KLU cannot
+    run) makes the injector emit the ngspice `_KLU_UNSUPPORTED` string on this
+    process's own stderr, so the dual-solver harness can see it and report SKIP
+    even when the verify script captures (and hence hides) ngspice's error."""
     card = _SOLVER_CARD.get(solver)
     if not card:
         return
@@ -232,7 +239,7 @@ def check_both_solvers(script=None):
 
         print(f"\n----- [solver={solver}] {status} -----", flush=True)
         if status == "SKIP":
-            print("    KLU does not support noise / pole-zero analysis "
+            print("    KLU does not support balanced-output pole-zero "
                   "(ngspice: \"" + _KLU_UNSUPPORTED + "\").")
             print("    This example is Sparse-only for that analysis; KLU skipped.")
         elif status == "XFAIL":

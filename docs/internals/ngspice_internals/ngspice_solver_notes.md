@@ -16,14 +16,17 @@ of the whole [`examples/`](../../../examples/) suite.
 | **DC op / DC sweep** | ✅ correct (one caveat below) | ✅ correct |
 | **AC** | ✅ correct | ✅ correct |
 | **Transient** | ✅ correct (one caveat below) | ✅ correct |
-| **Noise (`.noise`)** | ❌ **rejected** — `noisean.c:78` | ✅ correct |
-| **Pole-zero (`.pz`)** | ❌ **rejected** — `pzan.c:31` | ✅ correct |
+| **Noise (`.noise`)** | ✅ correct (since E-113) | ✅ correct |
+| **Pole-zero (`.pz`)** | ✅ single-ended; ⚠️ balanced-output Sparse-only | ✅ correct |
+| **AC sensitivity (`.sens … ac`)** | ❌ Sparse-only | ✅ correct |
 
 **Practical guidance:** leave the default (Sparse 1.3) unless you have a specific
-reason to switch. Sparse 1.3 runs **every** analysis in the suite — DC, AC,
-transient, *and* noise/pole-zero. Reach for `.option klu` on large, sparse
-DC/AC problems where KLU's ordering and factorization are faster, but **do not
-use it for noise or pole-zero** (ngspice will error out), and expect it to be
+reason to switch. Sparse 1.3 runs **every** analysis in the suite. Since
+[Enhancement-113](../../../enhancements_doc/Enhancement-113.md) KLU also runs
+**noise** and **single-ended pole-zero** correctly; still Sparse-only under KLU
+are **balanced-output pole-zero** and **AC sensitivity**. Reach for `.option klu`
+on large, sparse DC/AC problems where KLU's ordering and factorization are
+faster, and expect it to be
 **less robust on stiff transient edges and degenerate topologies** (see the two
 genuine discrepancies below).
 
@@ -52,21 +55,30 @@ On the committed `bin/` binary this reports **`Sparse 1.3`** for a bare deck and
 for `.option sparse`, and **`KLU`** only when `.option klu` is given —
 confirming Sparse 1.3 is the default here.
 
-## Why KLU rejects noise and pole-zero
+## Noise and pole-zero under KLU (Enhancement-113)
 
-These are not silent wrong answers — ngspice **refuses** the analysis with an
-explicit diagnostic and aborts:
+ngspice **used to refuse** both outright (`noisean.c` / `pzan.c` printed
+"not (yet) supported with 'option KLU'"). The real reason for noise was subtler
+than "not wired up": noise uses the **adjoint method** — it solves the
+*transposed* system `Aᵀ·x = e` via `SMPcaSolve` — and `SMPcaSolve`'s KLU branch
+was calling the **non-transposed** `klu_z_solve` where its Sparse branch calls
+`spSolveTransposed`. That silently produced the **wrong** noise for any
+asymmetric matrix (every circuit with a transistor or controlled source), which
+is why it was disabled rather than merely slow.
 
-```
-Error: Noise simulation is not (yet) supported with 'option KLU'.        (noisean.c:78)
-Error: Pole/zero analysis is not (yet) supported with 'option KLU'.      (pzan.c:31)
-```
+[Enhancement-113](../../../enhancements_doc/Enhancement-113.md) fixes the adjoint
+solve (`klu_z_tsolve`) and lifts the guards, so under KLU:
 
-The noise and pole-zero paths build and manipulate the small-signal matrix in a
-way that was only wired up for the Sparse 1.3 storage, not the KLU/CSC path. This
-is an **upstream ngspice limitation**, independent of the Verilog-A/OSDI work in
-this repository. The `.noise` and `.pz` engines themselves are correct — they
-simply require the Sparse 1.3 solver.
+- **Noise** is correct — verified identical to Sparse on resistor thermal noise,
+  asymmetric VCCS circuits, OSDI device models, and integrated totals. (`.sp`
+  S-parameters share the same adjoint solve and are corrected too.)
+- **Single-ended pole-zero** (grounded output reference) runs correctly.
+- **Balanced-output pole-zero** (non-grounded reference) stays Sparse-only: its
+  zeros phase folds columns at solve time, which Sparse survives via dynamic
+  Markowitz re-ordering but KLU's fixed symbolic factorization cannot; a targeted
+  guard now directs that case to `.option sparse`.
+- **AC sensitivity** (`.sens … ac`) remains Sparse-only — a separate KLU gap
+  (DC `.sens` works).
 
 ## Two genuine KLU discrepancies
 
@@ -117,17 +129,19 @@ klu` into every ngspice deck — and prints a combined verdict:
 === BOTH-SOLVER RESULT [ceil]: sparse=PASS  klu=PASS => OK ===
 ```
 
-KLU's unsupported analyses (noise / pole-zero) are auto-detected and reported
-`SKIP`; the two `KLU_XFAIL` examples above are expected-fail under KLU. Env
-escape hatches: `NGSPICE_SOLVER=klu|sparse` runs once under one solver;
-`NG_BOTH=0` disables the dual run.
+KLU's remaining unsupported analyses (balanced-output pole-zero, AC sensitivity)
+are auto-detected and reported `SKIP`; the two `KLU_XFAIL` examples above are
+expected-fail under KLU. Env escape hatches: `NGSPICE_SOLVER=klu|sparse` runs
+once under one solver; `NG_BOTH=0` disables the dual run.
 
 **Sweep result** (all 101 machine-checkable scripts): **101/101 OK** — every
 example is `sparse=PASS` with `klu` in `{PASS, SKIP, XFAIL}`, i.e. the two solvers
 agree wherever KLU is applicable. (The `linesearch` example initially *crashed*
-under KLU — `.option linesearch` segfaulted with `.option klu` — which
-[Enhancement-112](../../../enhancements_doc/Enhancement-112.md) fixed; the two
-`XFAIL` entries remain opamp741 and groundcontrib.)
+under KLU, which [Enhancement-112](../../../enhancements_doc/Enhancement-112.md)
+fixed; [Enhancement-113](../../../enhancements_doc/Enhancement-113.md) then moved
+**10** examples from KLU-skipped to KLU-passing by enabling noise and single-ended
+pole-zero, leaving only `analyses` skipped under KLU for its AC-sensitivity
+sub-test. The two `XFAIL` entries remain opamp741 and groundcontrib.)
 
 **Conclusion:** for DC, AC, and transient the two solvers agree across the suite,
 with exactly two KLU exceptions (the stiff opamp741 transient, and the degenerate

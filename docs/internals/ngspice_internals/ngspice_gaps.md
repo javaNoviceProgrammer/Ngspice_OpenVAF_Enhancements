@@ -50,9 +50,13 @@ residual-merit sequence numerically identical between them.*
 
 *¹ KLU is compiled in (SuiteSparse, statically linked) but is **not** the default
 in this build — the default direct solver is **Sparse 1.3**; KLU is selected with
-`.option klu`. The two agree on DC / AC / transient, but KLU **rejects noise and
-pole-zero** (an upstream ngspice limitation) and is less robust on stiff transient
-edges. Full behavior, defaults, and a solver-by-solver sweep of the example suite:
+`.option klu`. The two agree on DC / AC / transient, and — since
+[Enhancement-113](../../../enhancements_doc/Enhancement-113.md) — on **noise** and
+**single-ended pole-zero** as well (the KLU adjoint solve was doing a
+non-transposed solve, silently wrong on asymmetric matrices; now fixed). Still
+Sparse-only under KLU: **balanced-output pole-zero** and **AC sensitivity**; KLU
+is also less robust on stiff transient edges. Full behavior, defaults, and a
+solver-by-solver sweep of the example suite:
 [KLU vs. Sparse 1.3 solver notes](ngspice_solver_notes.md).*
 
 ## Standard analyses (analog)

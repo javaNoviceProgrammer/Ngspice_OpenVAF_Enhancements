@@ -28,7 +28,7 @@ https://ngspice.sourceforge.io/
 
 ## The Enhancements
 
-One hundred and twelve enhancements so far — language features, correctness fixes, systematic audits, and simulator-side workflow tooling, each verified end-to-end by a committed example suite and released with a detailed write-up.
+One hundred and thirteen enhancements so far — language features, correctness fixes, systematic audits, and simulator-side workflow tooling, each verified end-to-end by a committed example suite and released with a detailed write-up.
 
 **📖 Start with the [User Handbook](docs/handbook/README.md)**, which organizes everything by topic: [getting started](docs/handbook/01-getting-started.md), the [Verilog-A feature matrix](docs/handbook/02-verilog-a-language.md), [ngspice workflows](docs/handbook/03-ngspice-workflows.md), and the [limitations & gotchas](docs/handbook/04-limitations-and-gotchas.md). The whole handbook plus the complete text of every enhancement write-up is also one linked PDF: [docs/Ngspice-OpenVAF-Handbook.pdf](docs/Ngspice-OpenVAF-Handbook.pdf).
 
@@ -150,6 +150,7 @@ The index: **Doc** links each enhancement's detailed write-up, **Examples** link
 | 110 | ngspice `.option errpreset=conservative\|moderate\|liberal` — one knob for a coordinated tolerance/robustness set (Spectre-style); explicit options override regardless of order, `moderate` = historical defaults | [doc](enhancements_doc/Enhancement-110.md) | [errpreset](examples/errpreset_examples/) |
 | 111 | ngspice `.option linesearch` — globalized (damped) Newton via Armijo backtracking on a new KCL-residual merit `‖F‖=‖G·x−b‖` (the merit ngspice lacked); result-neutral, off by default | [doc](enhancements_doc/Enhancement-111.md) | [linesearch](examples/linesearch_examples/) |
 | 112 | ngspice KLU support for `.option linesearch` — the KLU matrix-vector product passed NULL ordering maps and segfaulted; the line search now runs under **both** KLU and Sparse 1.3 (merit numerically identical) | [doc](enhancements_doc/Enhancement-112.md) | [linesearch](examples/linesearch_examples/) |
+| 113 | ngspice KLU support for **noise** and single-ended **pole-zero** — the KLU adjoint solve (`SMPcaSolve`) did a non-transposed solve, silently wrong on asymmetric circuits; now `klu_z_tsolve`, so KLU noise matches Sparse exactly (balanced-output pz stays Sparse-only) | [doc](enhancements_doc/Enhancement-113.md) | [analyses](examples/analyses_examples/), [noisejw](examples/noisejw_examples/) |
 
 ---
 

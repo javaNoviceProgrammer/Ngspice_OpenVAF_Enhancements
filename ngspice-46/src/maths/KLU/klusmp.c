@@ -896,8 +896,14 @@ SMPcaSolve (SMPmatrix *Matrix, double RHS[], double iRHS[], double Spare[], doub
             Matrix->SMPkluMatrix->KLUmatrixIntermediateComplex [2 * i + 1] = iRHS [i + 1] ;
         }
 
-        ret = klu_z_solve (Matrix->SMPkluMatrix->KLUmatrixSymbolic, Matrix->SMPkluMatrix->KLUmatrixNumeric, (int)Matrix->SMPkluMatrix->KLUmatrixN, 1,
-                           Matrix->SMPkluMatrix->KLUmatrixIntermediateComplex, Matrix->SMPkluMatrix->KLUmatrixCommon) ;
+        /* SMPcaSolve is the complex *adjoint* (transposed) solve -- the Sparse
+         * branch below uses spSolveTransposed, so the KLU branch must solve
+         * A.'x = b too (klu_z_tsolve, conj_solve = 0). The plain klu_z_solve
+         * used here before silently produced WRONG results for any asymmetric
+         * matrix (every circuit with a transistor or controlled source), which
+         * is why KLU noise and pole-zero were disabled. */
+        ret = klu_z_tsolve (Matrix->SMPkluMatrix->KLUmatrixSymbolic, Matrix->SMPkluMatrix->KLUmatrixNumeric, (int)Matrix->SMPkluMatrix->KLUmatrixN, 1,
+                            Matrix->SMPkluMatrix->KLUmatrixIntermediateComplex, 0, Matrix->SMPkluMatrix->KLUmatrixCommon) ;
 
         for (i = 0 ; i < Matrix->SMPkluMatrix->KLUmatrixN ; i++)
         {

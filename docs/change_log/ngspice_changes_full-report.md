@@ -414,6 +414,18 @@ and hence the [E-111](../../enhancements_doc/Enhancement-111.md) line-search
 residual merit — correct under KLU, with a merit sequence numerically identical
 to Sparse 1.3 ([E-112](../../enhancements_doc/Enhancement-112.md)).
 
+### `KLU/klusmp.c` (SMPcaSolve)
+
+`SMPcaSolve` is the complex **adjoint** (transposed) solve used by noise and
+S-parameters. Its Sparse branch calls `spSolveTransposed`, but the KLU branch
+called the *non-transposed* `klu_z_solve` — silently wrong for any asymmetric
+matrix (every circuit with a transistor or controlled source), which is why
+`.noise` was disabled under KLU. It now calls `klu_z_tsolve` (transposed), so KLU
+noise matches Sparse exactly (including OSDI device models). This is the core of
+[E-113](../../enhancements_doc/Enhancement-113.md), which also removes the KLU
+refusal guards in `noisean.c` / `pzan.c` (single-ended pole-zero runs under KLU;
+balanced-output pole-zero keeps a targeted guard).
+
 ---
 
 ## 7. Build system
@@ -472,6 +484,7 @@ Every enhancement that touched ngspice, oldest first:
 | [E-110](../../enhancements_doc/Enhancement-110.md) | optdefs.h, tskdefs.h, cktsopt.c, cktntask.c | `.option errpreset=conservative\|moderate\|liberal` — one knob for a coordinated tolerance/robustness set; explicit options override regardless of order (`moderate` = historical defaults) |
 | [E-111](../../enhancements_doc/Enhancement-111.md) | optdefs.h, tskdefs.h, cktdefs.h, cktsopt.c, cktdojob.c, cktntask.c, cktdest.c, niiter.c | `.option linesearch` — globalized (damped) Newton via Armijo backtracking on a new KCL-residual merit `‖F‖=‖G·x−b‖`; result-neutral, off by default |
 | [E-112](../../enhancements_doc/Enhancement-112.md) | maths/KLU/klu_multiply.c | KLU support for `.option linesearch` — `SMPmultiply`'s KLU path passed NULL ordering maps that `klu_matrix_vector_multiply` dereferenced (SIGSEGV); NULL now means identity ordering. Line search verified merit-identical KLU vs Sparse |
+| [E-113](../../enhancements_doc/Enhancement-113.md) | maths/KLU/klusmp.c, spicelib/analysis/noisean.c, pzan.c | KLU support for noise + single-ended pole-zero — `SMPcaSolve`'s adjoint KLU branch used the non-transposed solve (silently wrong noise on asymmetric matrices); now `klu_z_tsolve`. Guards removed; balanced-output pz keeps a targeted guard |
 
 *(E-25's simparam exposure lives in the OSDI callback table populated at
 load time; its diff rides inside the `osdiload.c`/callbacks changes.)*
