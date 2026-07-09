@@ -122,12 +122,12 @@ KLU's unsupported analyses (noise / pole-zero) are auto-detected and reported
 escape hatches: `NGSPICE_SOLVER=klu|sparse` runs once under one solver;
 `NG_BOTH=0` disables the dual run.
 
-**Sweep result** (all 101 machine-checkable scripts): every example is
-`sparse=PASS` with `klu` in `{PASS, SKIP, XFAIL}` — i.e. the two solvers agree
-wherever KLU is applicable — with two standing exceptions unrelated to the
-solver: `hierbranch` fails under **both** solvers (the prebuilt `bin/` ngspice
-predates the E-86 hierarchical-branch-probe feature), so it is a binary-version
-gap, not a solver difference.
+**Sweep result** (all 101 machine-checkable scripts): **101/101 OK** — every
+example is `sparse=PASS` with `klu` in `{PASS, SKIP, XFAIL}`, i.e. the two solvers
+agree wherever KLU is applicable. (The `linesearch` example initially *crashed*
+under KLU — `.option linesearch` segfaulted with `.option klu` — which
+[Enhancement-112](../../../enhancements_doc/Enhancement-112.md) fixed; the two
+`XFAIL` entries remain opamp741 and groundcontrib.)
 
 **Conclusion:** for DC, AC, and transient the two solvers agree across the suite,
 with exactly two KLU exceptions (the stiff opamp741 transient, and the degenerate

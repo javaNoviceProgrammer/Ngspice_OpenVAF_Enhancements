@@ -42,7 +42,11 @@ globalized Newton (residual-based trust-region / Armijo) and a classic
 pseudo-transient (Ẋ-embedded) continuation. [Enhancement-111](../../../enhancements_doc/Enhancement-111.md)
 adds the former: `.option linesearch`, an Armijo backtracking line search on a
 new KCL-residual merit `‖F‖=‖G·x−b‖` (result-neutral, off by default) — see the
-[implementation write-up](ngspice_linesearch_globalized_newton.md).*
+[implementation write-up](ngspice_linesearch_globalized_newton.md).
+[Enhancement-112](../../../enhancements_doc/Enhancement-112.md) then extended it to
+the **KLU** solver — it originally ran only under Sparse 1.3 and segfaulted under
+`.option klu` — so the line search now works under **both** linear solvers, with a
+residual-merit sequence numerically identical between them.*
 
 *¹ KLU is compiled in (SuiteSparse, statically linked) but is **not** the default
 in this build — the default direct solver is **Sparse 1.3**; KLU is selected with

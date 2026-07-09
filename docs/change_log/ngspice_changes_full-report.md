@@ -401,6 +401,19 @@ as a double; the conversion is now explicit — identical semantics,
 intentional and warning-free
 ([E-77](../../enhancements_doc/Enhancement-77.md)).
 
+### `KLU/klu_multiply.c` (16)
+
+`SMPmultiply`'s KLU path passed `NULL` internal↔external ordering maps to
+`KLU_matrix_vector_multiply`, which dereferenced them unconditionally
+(`&NULL[n]` = `0x14` for `n = 5`) and **segfaulted** — so `.option linesearch`
+crashed under `.option klu`. The line search is the only caller of
+`SMPmultiply` under KLU, so this path had never been exercised. A NULL map now
+means the **identity** ordering (`ext = i + 1`, since the KLU CSR is 0-based and
+the RHS/Solution vectors are 1-based), making the KLU matrix-vector product —
+and hence the [E-111](../../enhancements_doc/Enhancement-111.md) line-search
+residual merit — correct under KLU, with a merit sequence numerically identical
+to Sparse 1.3 ([E-112](../../enhancements_doc/Enhancement-112.md)).
+
 ---
 
 ## 7. Build system
@@ -458,6 +471,7 @@ Every enhancement that touched ngspice, oldest first:
 | [E-99](../../enhancements_doc/Enhancement-99.md) | plotting/pyplot.c | `pyplot` vector export formats (`pyplot_terminal=svg`/`pdf`) + figure size (`pyplot_figsize`) |
 | [E-110](../../enhancements_doc/Enhancement-110.md) | optdefs.h, tskdefs.h, cktsopt.c, cktntask.c | `.option errpreset=conservative\|moderate\|liberal` — one knob for a coordinated tolerance/robustness set; explicit options override regardless of order (`moderate` = historical defaults) |
 | [E-111](../../enhancements_doc/Enhancement-111.md) | optdefs.h, tskdefs.h, cktdefs.h, cktsopt.c, cktdojob.c, cktntask.c, cktdest.c, niiter.c | `.option linesearch` — globalized (damped) Newton via Armijo backtracking on a new KCL-residual merit `‖F‖=‖G·x−b‖`; result-neutral, off by default |
+| [E-112](../../enhancements_doc/Enhancement-112.md) | maths/KLU/klu_multiply.c | KLU support for `.option linesearch` — `SMPmultiply`'s KLU path passed NULL ordering maps that `klu_matrix_vector_multiply` dereferenced (SIGSEGV); NULL now means identity ordering. Line search verified merit-identical KLU vs Sparse |
 
 *(E-25's simparam exposure lives in the OSDI callback table populated at
 load time; its diff rides inside the `osdiload.c`/callbacks changes.)*
