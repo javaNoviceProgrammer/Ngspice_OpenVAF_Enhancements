@@ -12,7 +12,10 @@ converged operating point must be identical. This suite pins exactly that:
   [1] `.option linesearch` is accepted (not an unknown option);
   [2] RESULT-NEUTRALITY: across a battery of nonlinear DC circuits (BJT, diode,
       two-diode divider, bistable latch) the converged node voltages with the
-      line search ON are identical (to a tight tolerance) to OFF;
+      line search ON are identical (to a tight tolerance) to OFF -- checked
+      under BOTH linear solvers, KLU (default) and legacy Sparse1.3
+      (`.option sparse`), since the residual merit is built on the shared
+      SPmatrix and must be correct regardless of which solver factorizes it;
   [3] each circuit still converges with the option ON (no regression).
 
 Note: the line search only *backtracks* (takes a damped step) when the full
@@ -71,8 +74,13 @@ r2 qb 0 1k
 }
 
 
-def run(body, nodes, linesearch):
-    opt = ".option linesearch\n" if linesearch else ""
+def run(body, nodes, linesearch, sparse=False):
+    opts = []
+    if linesearch:
+        opts.append(".option linesearch")
+    if sparse:
+        opts.append(".option sparse")   # force the Sparse1.3 solver instead of KLU
+    opt = ("\n".join(opts) + "\n") if opts else ""
     prints = " ".join(f"v({n})" for n in nodes)
     deck = f"linesearch test\n{body}\n{opt}.op\n.control\nrun\nprint {prints}\n.endc\n.end\n"
     p = os.path.join(HERE, "_tmp.cir")
@@ -102,15 +110,20 @@ def main():
     _, unknown, _ = run(CIRCUITS["bjt"][0], ["c"], True)
     check("`.option linesearch` accepted (not an unknown option)", not unknown)
 
-    # [2]+[3] result-neutrality + convergence across the battery
-    for name, (body, nodes) in CIRCUITS.items():
-        off, _, _ = run(body, nodes, False)
-        on, _, _ = run(body, nodes, True)
-        converged = all(on[n] is not None for n in nodes)
-        neutral = all(close(off[n], on[n]) for n in nodes)
-        detail = ", ".join(f"{n}:{off[n]}~={on[n]}" for n in nodes)
-        check(f"{name}: converges with linesearch ON", converged)
-        check(f"{name}: result-neutral (ON == OFF)", neutral, detail)
+    # [2]+[3] result-neutrality + convergence across the battery, under BOTH
+    # linear solvers -- KLU (the default) and the legacy Sparse1.3 (`.option
+    # sparse`). The residual merit ||F||=||G*x-b|| is formed by SMPmultiply on
+    # the SPmatrix, which both solvers share, so the line search must be correct
+    # (and result-neutral) regardless of which solver factorizes the system.
+    for solver, sparse in (("KLU", False), ("SPARSE", True)):
+        for name, (body, nodes) in CIRCUITS.items():
+            off, _, _ = run(body, nodes, False, sparse=sparse)
+            on, _, _ = run(body, nodes, True, sparse=sparse)
+            converged = all(on[n] is not None for n in nodes)
+            neutral = all(close(off[n], on[n]) for n in nodes)
+            detail = ", ".join(f"{n}:{off[n]}~={on[n]}" for n in nodes)
+            check(f"[{solver}] {name}: converges with linesearch ON", converged)
+            check(f"[{solver}] {name}: result-neutral (ON == OFF)", neutral, detail)
 
     print(f"\n{'ALL PASS' if passed == checks else 'FAILURES'}: {passed}/{checks} passed")
     sys.exit(0 if passed == checks else 1)

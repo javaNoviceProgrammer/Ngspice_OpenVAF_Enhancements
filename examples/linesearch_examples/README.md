@@ -36,9 +36,12 @@ python3 verify_linesearch.py
 ```
 
 Runs a battery of nonlinear DC circuits (BJT, BJT+diode, two-diode divider,
-bistable latch) with the line search OFF and ON and checks (9/9) that the option
-is accepted, each circuit still converges, and — the load-bearing property — the
-converged node voltages are **identical** ON vs OFF (result-neutrality). The
+bistable latch) with the line search OFF and ON and checks (17/17) that the
+option is accepted, each circuit still converges, and — the load-bearing
+property — the converged node voltages are **identical** ON vs OFF
+(result-neutrality). The battery runs under **both** linear solvers, KLU (the
+default) and the legacy Sparse1.3 (`.option sparse`), since the residual merit
+is built on the shared `SPmatrix` and must be correct under either. The
 correctness of the *backtracking* path itself (λ<1) was validated separately by
 forcing damped steps on every iteration and confirming the same roots are reached
 down to λ=0.1, including on the bistable latch (same basin); see

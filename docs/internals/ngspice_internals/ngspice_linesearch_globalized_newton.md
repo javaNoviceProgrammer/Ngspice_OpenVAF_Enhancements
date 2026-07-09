@@ -198,9 +198,13 @@ failure and two segfaults — each of which pinpointed a real constraint:
    **populated by the first LU factorization**. On iteration 1 (before any
    factorization) they contain garbage, so the multiply indexes off the end of the
    solution vector. **Fix:** gate the merit to `iterno > 1`, when the maps from the
-   previous factorization are valid. (This also, happily, works in the default
-   **KLU** solver build — the earlier fear that the sparse multiply was
-   KLU-incompatible was wrong; it was purely the iteration-1 ordering issue.)
+   previous factorization are valid. (This also, happily, resolved the solver
+   question entirely: `SMPmultiply` operates on the shared `SPmatrix`, so the
+   merit — and the whole line search — works identically under **both** the
+   default **KLU** solver and the legacy **Sparse1.3** (`.option sparse`); the
+   earlier fear that the sparse multiply was KLU-incompatible was wrong, it was
+   purely the iteration-1 ordering issue. Both solvers are verified
+   result-neutral in the example suite.)
 
 With those two fixes the residual computed correctly and behaved *textbook*:
 
@@ -366,7 +370,7 @@ path itself must reach the right root**. Both were checked.
 ### 5.1 Result-neutrality across a nonlinear battery
 
 The committed suite,
-[`examples/linesearch_examples/`](../../../examples/linesearch_examples/) (9/9),
+[`examples/linesearch_examples/`](../../../examples/linesearch_examples/) (17/17),
 runs a battery of nonlinear DC circuits (BJT, BJT+diode, two-diode divider,
 bistable latch) with `.option linesearch` OFF and ON, and checks that every
 converged node voltage is **identical** to a tight tolerance:
@@ -377,6 +381,12 @@ converged node voltage is **identical** to a tight tolerance:
   two_diode  b: 1.425729 == 1.425729,  m: 0.679789 == 0.679789
   latch      q: 4.68e-13 == 4.68e-13, qb: 4.68e-13 == 4.68e-13
 ```
+
+Each circuit is run twice more under `.option sparse`, so the same four
+identities are checked with the legacy **Sparse1.3** solver in place of KLU — the
+merit is formed by `SMPmultiply` on the shared `SPmatrix`, so the line search is
+result-neutral under either solver (hence 17 checks: 1 option-accepted + 8 KLU +
+8 Sparse1.3).
 
 ### 5.2 Validating the backtracking path directly
 
@@ -447,7 +457,8 @@ This write-up would be dishonest without them:
 Two things outlast the specific feature:
 
 1. **A residual merit function for ngspice.** `‖F‖ = ‖G·x − b‖`, computed on the
-   loaded unfactored matrix, mid-solve, in the default KLU build. ngspice never
+   loaded unfactored matrix, mid-solve, under both the KLU and Sparse1.3 solvers.
+   ngspice never
    had this. It is the prerequisite for a whole family of advanced convergence
    methods (trust regions, pseudo-transient continuation, convergence
    diagnostics), and it is now available to build on.

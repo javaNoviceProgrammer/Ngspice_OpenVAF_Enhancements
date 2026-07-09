@@ -43,7 +43,10 @@ the [implementation write-up](../docs/internals/ngspice_internals/)):
 - **The residual is only computable after ordering.** `SMPmultiply` reads the
   matrix's external-ordering maps, which are populated by the *first*
   factorization — so the merit is gated to `iterno > 1` (before that it would
-  read garbage and crash). Works in the default KLU build.
+  read garbage and crash). The merit is built by `SMPmultiply` on the shared
+  `SPmatrix`, so it works identically under **both** linear solvers — KLU (the
+  default) and the legacy Sparse1.3 (`.option sparse`) — verified result-neutral
+  in both.
 - **SPICE device limiting is stateful.** Junction-voltage limiting is referenced
   to the previous iterate stored in `CKTstate0`; naive trial re-loads drift that
   reference and destroy the iteration. The trial loads are made **state-neutral**
