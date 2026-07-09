@@ -41,7 +41,8 @@ and a multi-stage homotopy cascade (`dynamic_gmin` → `new_gmin` → `spice3_gm
 globalized Newton (residual-based trust-region / Armijo) and a classic
 pseudo-transient (Ẋ-embedded) continuation. [Enhancement-111](../../../enhancements_doc/Enhancement-111.md)
 adds the former: `.option linesearch`, an Armijo backtracking line search on a
-new KCL-residual merit `‖F‖=‖G·x−b‖` (result-neutral, off by default).*
+new KCL-residual merit `‖F‖=‖G·x−b‖` (result-neutral, off by default) — see the
+[implementation write-up](ngspice_linesearch_globalized_newton.md).*
 
 ## Standard analyses (analog)
 
