@@ -137,6 +137,7 @@ enum {
     OPT_LTETRTOL,
     OPT_NEWTRUNC,
     OPT_ERRPRESET,      /* Enhancement-110: coordinated accuracy preset */
+    OPT_LINESEARCH,     /* Enhancement-111: adaptive damped-Newton line search */
 };
 
 /* Enhancement-110: `.option errpreset=conservative|moderate|liberal` sets a

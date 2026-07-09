@@ -71,6 +71,7 @@ struct TSKtask {
     unsigned int TSKkeepOpInfo:1; /* flag for small signal analyses */
     unsigned int TSKcopyNodesets:1; /* flag for nodeset copy */
     unsigned int TSKnodeDamping:1;  /* flag for node damping */
+    unsigned int TSKlinesearch:1;   /* Enhancement-111: adaptive damped-Newton line search */
     unsigned int TSKnoopac:1; /* flag for no OP calculation before AC */
     double TSKabsDv;                 /* abs limit for iter-iter voltage change */
     double TSKrelDv;                 /* rel limit for iter-iter voltage change */

@@ -30,9 +30,18 @@ mark is ⚠️ or ❌.
 | Integration | Trapezoidal + variable-order Gear | ✅ | ✅ |
 | Integration | Advanced LTE-based step/order control | ⚠️ | ✅ |
 | Convergence | gmin stepping + source stepping homotopy | ✅ | ✅ |
-| Convergence | Pseudo-transient / dynamic-gmin continuation | ❌ | ✅ |
-| Convergence | Damped / trust-region (globalized) Newton | ❌ | ✅ |
+| Convergence | Pseudo-transient / dynamic-gmin continuation | ⚠️ | ✅ |
+| Convergence | Damped / trust-region (globalized) Newton | ⚠️ | ✅ |
 | Convergence | Coordinated accuracy presets (`errpreset`) | ✅ | ✅ |
+
+*The two convergence ⚠️ rows: ngspice's DC path is not naked — it has per-device
+junction limiting (30 device families), an optional `nodedamping` step clamp,
+and a multi-stage homotopy cascade (`dynamic_gmin` → `new_gmin` → `spice3_gmin`
+→ source stepping). What it lacks vs. commercial tools is a *principled*
+globalized Newton (residual-based trust-region / Armijo) and a classic
+pseudo-transient (Ẋ-embedded) continuation. [Enhancement-111](../../../enhancements_doc/Enhancement-111.md)
+adds the former: `.option linesearch`, an Armijo backtracking line search on a
+new KCL-residual merit `‖F‖=‖G·x−b‖` (result-neutral, off by default).*
 
 ## Standard analyses (analog)
 

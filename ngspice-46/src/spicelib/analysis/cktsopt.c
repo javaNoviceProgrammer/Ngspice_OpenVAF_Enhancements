@@ -210,6 +210,9 @@ CKTsetOpt(CKTcircuit *ckt, JOB *anal, int opt, IFvalue *val)
     case OPT_NODEDAMPING:
         task->TSKnodeDamping = (val->iValue != 0);
         break;
+    case OPT_LINESEARCH: /* Enhancement-111 */
+        task->TSKlinesearch = (val->iValue != 0);
+        break;
     case OPT_ABSDV:
         task->TSKabsDv = val->rValue;
         break;
@@ -418,6 +421,8 @@ static IFparm OPTtbl[] = {
         "Copy nodesets from device terminals to internal nodes" },
  { "nodedamping", OPT_NODEDAMPING, IF_SET|IF_FLAG,
         "Limit iteration to iteration node voltage change" },
+ { "linesearch", OPT_LINESEARCH, IF_SET|IF_FLAG,
+        "Adaptive damped-Newton line search on the weighted step norm" },
  { "absdv", OPT_ABSDV, IF_SET|IF_REAL,
         "Maximum absolute iter-iter node voltage change" },
  { "reldv", OPT_RELDV, IF_SET|IF_REAL,

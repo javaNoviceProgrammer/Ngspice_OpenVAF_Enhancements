@@ -1,0 +1,26 @@
+globalized (damped) Newton line search demo
+* Enhancement-111: `.option linesearch` enables an Armijo backtracking line
+* search on the true KCL residual ||F|| = ||G*x - b|| during the DC operating-
+* point Newton iteration. It damps the Newton step to guarantee a sufficient
+* decrease of ||F||, a principled globalization ngspice otherwise lacks.
+* It is OFF by default and result-neutral: the converged answer is identical to
+* a normal run; only the iteration PATH can change (on overshoot). A two-stage
+* BJT + diode network:
+vcc cc 0 5
+rc  cc c 2k
+vbb bb 0 2
+rb  bb b 100k
+q1  c  b  0 qmod
+d1  c  dd dmod
+rd  dd 0 1k
+.model qmod npn(is=1e-15 bf=100)
+.model dmod d(is=1e-14)
+
+.option linesearch
+
+.op
+.control
+run
+print v(c) v(dd)
+.endc
+.end
