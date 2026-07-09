@@ -29,6 +29,7 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))          # the examples/ dir (holds _setup.py)
 from _setup import VAF as OPENVAF, NG as NGSPICE
+from _setup import check_both_solvers as _check_both_solvers; _check_both_solvers(__file__)  # verify under BOTH KLU and Sparse solvers
 
 f4 = lambda x, y, z, w: 2 + x + 2*y + 3*z + 4*w + x*y*z*w
 f5 = lambda a, b, c, d, e: 1 + a + 2*b + 3*c + 4*d + 0.5*e + a*b*c*d*e

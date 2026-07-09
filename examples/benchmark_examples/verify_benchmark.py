@@ -41,6 +41,8 @@ from bench_common import (OPENVAF, NGSPICE, CORPUS, binary_has_klu, bsim4_deck,
                           compile_va, max_wave_diff, noise_ladder_deck,
                           osc_freq, rc_ladder_deck, rectifier_deck,
                           ro_deck, run_ngspice, with_klu, write_deck)
+from _setup import check_both_solvers as _check_both_solvers
+_check_both_solvers(__file__)   # verify under BOTH KLU and Sparse solvers
 
 checks = []
 

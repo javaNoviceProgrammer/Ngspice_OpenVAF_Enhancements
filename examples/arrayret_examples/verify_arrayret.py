@@ -23,6 +23,7 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))          # repo root
 from _setup import VAF as OPENVAF, NG as NGSPICE
+from _setup import check_both_solvers as _check_both_solvers; _check_both_solvers(__file__)  # verify under BOTH KLU and Sparse solvers
 
 C0, C1, C2, C3 = 0.10, 0.50, 0.30, 0.05
 

@@ -48,6 +48,7 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 from _setup import VAF as OPENVAF, NG as NGSPICE
+from _setup import check_both_solvers as _check_both_solvers; _check_both_solvers(__file__)  # verify under BOTH KLU and Sparse solvers
 
 # the VA_TEST corpus lives in this repository (checks 4-5 use it)
 DIODE_CMC = os.path.join(HERE, "..", "..", "VA_TEST", "VA-Models-main",

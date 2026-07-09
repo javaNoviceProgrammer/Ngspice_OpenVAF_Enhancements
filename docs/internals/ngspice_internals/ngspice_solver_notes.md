@@ -13,7 +13,7 @@ of the whole [`examples/`](../../../examples/) suite.
 | **Availability in this build** | Compiled in (SuiteSparse, statically linked — 44 `klu_*` symbols in the binary) | Always present (ngspice's own solver) |
 | **Default?** | No | **Yes** — this build defaults to Sparse 1.3 |
 | **How to select** | `.option klu` | `.option sparse` (or just the default) |
-| **DC op / DC sweep** | ✅ correct | ✅ correct |
+| **DC op / DC sweep** | ✅ correct (one caveat below) | ✅ correct |
 | **AC** | ✅ correct | ✅ correct |
 | **Transient** | ✅ correct (one caveat below) | ✅ correct |
 | **Noise (`.noise`)** | ❌ **rejected** — `noisean.c:78` | ✅ correct |
@@ -24,7 +24,8 @@ reason to switch. Sparse 1.3 runs **every** analysis in the suite — DC, AC,
 transient, *and* noise/pole-zero. Reach for `.option klu` on large, sparse
 DC/AC problems where KLU's ordering and factorization are faster, but **do not
 use it for noise or pole-zero** (ngspice will error out), and expect it to be
-**less robust on stiff transient edges** (see opamp741 below).
+**less robust on stiff transient edges and degenerate topologies** (see the two
+genuine discrepancies below).
 
 ## Selecting and confirming the solver
 
@@ -67,11 +68,16 @@ is an **upstream ngspice limitation**, independent of the Verilog-A/OSDI work in
 this repository. The `.noise` and `.pz` engines themselves are correct — they
 simply require the Sparse 1.3 solver.
 
-## The one transient caveat — opamp741
+## Two genuine KLU discrepancies
 
-The transistor-level [opamp741 example](../../../examples/opamp741_examples/)
-(a µA741 built from ~70 lines of Verilog-A BJT) is the single case in the suite
-where KLU and Sparse produce **different transient results**:
+Beyond the noise/pole-zero refusals, two examples in the suite produce a
+**different (wrong) result under KLU** than under Sparse. Both are marked
+`KLU_XFAIL` in the [dual-solver harness](#the-dual-solver-test-harness) so they
+are exercised and tracked rather than silently skipped.
+
+**1. opamp741 — stiff transient diverges.** The transistor-level
+[opamp741 example](../../../examples/opamp741_examples/) (a µA741 from ~70 lines
+of Verilog-A BJT):
 
 - **Sparse 1.3:** the large-signal slew test (`pulse(-5 5 …)` into the follower)
   runs the full `tran 20n 80u` cleanly (~4058 points), slew rate ≈ 0.54 V/µs.
@@ -79,38 +85,52 @@ where KLU and Sparse produce **different transient results**:
   past the −5 V rail to ≈ −6.16 V and ngspice **aborts the timestep at
   t ≈ 2.03 µs** (~133 points), so the characterization can't complete.
 
-This is a **convergence/timestep robustness difference on a stiff circuit**, not a
-correctness bug in either solver: on the same circuit Sparse's pivoting survives
-the fast edge and KLU's does not. Smaller, better-conditioned transients
-(the other transient examples) run identically under both.
+A convergence/timestep robustness difference on a stiff circuit: Sparse's
+pivoting survives the fast edge and KLU's does not. (E-111's line search does not
+help — it damps the **DC-op** Newton, not per-timepoint transient iterations.)
 
-> Note: this is exactly the class of hard-convergence problem that
-> [Enhancement-111](../../../enhancements_doc/Enhancement-111.md)'s globalized
-> Newton targets — but that line search damps the **DC operating-point** Newton,
-> not per-timepoint transient Newton iterations, so it does not address this
-> particular transient divergence.
+**2. groundcontrib — wrong DC answer on a degenerate topology.** The
+[groundcontrib example](../../../examples/groundcontrib_examples/) drives a single
+node `p` with a node-to-ground voltage contribution `V(p) <+ 1.5` through a load
+resistor to ground. On this **exact same deck**, changing only the solver:
 
-## How this was verified
+```
+.option sparse  ->  v(p) = 1.5   (correct)
+.option klu     ->  v(p) = 0.0   (wrong)
+```
 
-Every `verify_*.py` in [`examples/`](../../../examples/) (101 machine-checkable
-scripts) was run twice — once with `.option klu` and once with `.option sparse`
-force-injected into every deck — and the pass/fail sets were diffed. Result:
+This is a genuine KLU **correctness** miss (not a refusal or a divergence): on
+this degenerate single-node system KLU returns zero. It is the reason to prefer
+Sparse for unusual/degenerate one-node topologies. The ~90 other OSDI examples
+run correctly under KLU, so the issue is specific to this topology, not OSDI
+generally.
 
-- **Sparse 1.3: 93/101.** KLU: **82/101.**
-- All **11** differing examples pass under Sparse and fail under KLU, and every
-  one is explained by the table above:
-  - **9** run a `.noise` analysis → rejected under KLU
-    (`analyses`, `finalstep`, `noisecorr`, `noisejw`, `noisetable`, `paramrange`,
-    `paramsethsp`, `physcheck`, `tempphys`);
-  - **1** is the opamp741 transient divergence;
-  - **1** (`groundcontrib`) is a flaky compile-only diagnostic, unrelated to the
-    solver (passes on retry).
-- A further **8** examples fail **identically under both solvers** — i.e. not
-  solver-related at all: 7 are missing-Python-dependency issues (`numpy` /
-  `matplotlib`) in the test environment, and 1 (`hierbranch`) is a pre-existing
-  content check. These are orthogonal to the solver question.
+## The dual-solver test harness
 
-**Conclusion:** for DC, AC, and transient the two solvers agree across the suite
-(the lone exception being the stiff opamp741 transient under KLU), while noise
-and pole-zero are **Sparse-1.3-only** by ngspice design. Sparse 1.3, the default,
-covers everything.
+Every `verify_*.py` in [`examples/`](../../../examples/) is run under **both**
+solvers automatically. Each script calls `check_both_solvers(__file__)` (right
+after importing [`_setup`](../../../examples/_setup.py)); on a normal run that
+re-executes the script once per solver — injecting `.option sparse` / `.option
+klu` into every ngspice deck — and prints a combined verdict:
+
+```
+=== BOTH-SOLVER RESULT [ceil]: sparse=PASS  klu=PASS => OK ===
+```
+
+KLU's unsupported analyses (noise / pole-zero) are auto-detected and reported
+`SKIP`; the two `KLU_XFAIL` examples above are expected-fail under KLU. Env
+escape hatches: `NGSPICE_SOLVER=klu|sparse` runs once under one solver;
+`NG_BOTH=0` disables the dual run.
+
+**Sweep result** (all 101 machine-checkable scripts): every example is
+`sparse=PASS` with `klu` in `{PASS, SKIP, XFAIL}` — i.e. the two solvers agree
+wherever KLU is applicable — with two standing exceptions unrelated to the
+solver: `hierbranch` fails under **both** solvers (the prebuilt `bin/` ngspice
+predates the E-86 hierarchical-branch-probe feature), so it is a binary-version
+gap, not a solver difference.
+
+**Conclusion:** for DC, AC, and transient the two solvers agree across the suite,
+with exactly two KLU exceptions (the stiff opamp741 transient, and the degenerate
+groundcontrib DC topology), while noise and pole-zero are **Sparse-1.3-only** by
+ngspice design. Sparse 1.3, the default, covers everything — which is why it is
+the default and why the dual-solver harness keys correctness off it.
