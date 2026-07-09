@@ -83,7 +83,7 @@ solver-by-solver sweep of the example suite:
 |---|---|:---:|:---:|
 | RF | S-parameter analysis + noise figure (`.sp`) | ✅ | ✅ |
 | RF | Touchstone (`.sNp`) import / export | ✅ | ✅ |
-| RF | Periodic steady state (PSS) | ⚠️ | ✅ |
+| RF | Periodic steady state (PSS) | ✅¹ | ✅ |
 | RF | Harmonic Balance (HB) | ❌ | ✅ |
 | RF | Periodic / phase noise (Pnoise) | ❌ | ✅ |
 | RF | Periodic AC (PAC, conversion gain) | ❌ | ✅ |
@@ -92,9 +92,14 @@ solver-by-solver sweep of the example suite:
 | RF | Quasi-periodic / multi-tone (QPSS / QPAC) | ❌ | ✅ |
 | RF | Envelope following | ❌ | ✅ |
 
-*PSS is ⚠️: present but a brute-force shooting method, flagged experimental, and
-fragile on some circuits. HB exists only as a `WITH_HB` stub that returns
-"unsupported".*
+*¹ PSS was ⚠️ (experimental `--enable-pss` flag, so `.pss` was unimplemented in
+shipped builds, and ~230 lines of shooting-loop trace per run). Since
+[Enhancement-117](../../../enhancements_doc/Enhancement-117.md) it is built by
+default, quiet (trace behind `set ngdebug`), and verified against the analytic AC
+response — a shipped, Sparse-1.3-domain analysis (it hangs under `.option klu`, so
+a fail-fast guard directs `.pss` to Sparse). It is still a brute-force shooting
+method and remains the foundation for the periodic small-signal analyses below.
+HB exists only as a `WITH_HB` stub that returns "unsupported".*
 
 ## Performance & scale
 
@@ -162,10 +167,13 @@ OSDI/Verilog-A-native simulator with a real RF-noise and statistical story** —
 not out-engineering 25 years of commercial fast-SPICE/parallel work. Ranked by
 leverage on the existing strength × differentiation × tractability:
 
-1. **RF periodic small-signal suite — Pnoise → PAC → PXF, on a hardened PSS.**
-   The device/OSDI side already supplies what these need (noise-source topology,
+1. **RF periodic small-signal suite — Pnoise → PAC → PXF, on the hardened PSS.**
+   The PSS foundation is now shipped and verified
+   ([Enhancement-117](../../../enhancements_doc/Enhancement-117.md)); the
+   device/OSDI side already supplies what these need (noise-source topology,
    operating-point- and frequency-dependent `load_noise`, periodic Jacobians);
-   the work is the analysis engines. Genuinely novel in open source.
+   the remaining work is the small-signal analysis engines. Genuinely novel in
+   open source. (KLU-PSS convergence is a smaller adjacent fix.)
 2. **Convergence robustness** — coordinated accuracy presets (`errpreset`)
    **landed in [Enhancement-110](../../../enhancements_doc/Enhancement-110.md)**;
    the remaining piece is pseudo-transient / dynamic-gmin homotopy. Unglamorous

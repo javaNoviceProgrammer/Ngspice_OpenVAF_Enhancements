@@ -150,9 +150,11 @@ AC_ARG_ENABLE([osdi],
 AC_ARG_ENABLE([cider],
     [AS_HELP_STRING([--enable-cider], [Enable CIDER enhancements])])
 
-# --enable-pss: enable PSS Analysis
+# --enable-pss / --disable-pss: PSS (periodic steady state) analysis.
+# Enhancement-117: PSS is now a shipped, default-on analysis; pass --disable-pss
+# to omit it.
 AC_ARG_ENABLE([pss],
-    [AS_HELP_STRING([--enable-pss], [Enable PSS Analysis, (experimental)])])
+    [AS_HELP_STRING([--disable-pss], [Disable PSS (periodic steady state) analysis. Default=enabled])])
 
 # --disable-sp: disable S Parameter Analysis
 AC_ARG_ENABLE([sp],
@@ -1068,9 +1070,9 @@ if test "x$enable_pzdebug" = xyes; then
     AC_DEFINE([PZDEBUG], [], [Define if you want to debug pole-zero analysis])
     AC_MSG_RESULT([WARNING: Pole/Zero analysis debug is enabled])
 fi
-if test "x$enable_pss" = xyes; then
+if test "x$enable_pss" != xno; then
     AC_DEFINE([WITH_PSS], [], [Define if you want PSS analysis])
-    AC_MSG_RESULT([WARNING: PSS analysis enabled])
+    AC_MSG_RESULT([PSS (periodic steady state) analysis enabled])
 fi
 if test "x$enable_blktmsdebug" = xyes; then
     AC_DEFINE([D_DBG_BLOCKTIMES], [], [Define if we want debug distortion analysis (BLOCKTIMES)])
@@ -1221,7 +1223,7 @@ AM_CONDITIONAL([SP_WANTED], [test "x$has_sp" = xtrue])
 
 AM_CONDITIONAL([CIDER_WANTED], [test "x$enable_cider" = xyes])
 AM_CONDITIONAL([NUMDEV_WANTED], [test "x$enable_cider" = xyes])
-AM_CONDITIONAL([PSS_WANTED], [test "x$enable_pss" = xyes])
+AM_CONDITIONAL([PSS_WANTED], [test "x$enable_pss" != xno])
 AM_CONDITIONAL([SENSE2_WANTED], [test "x$enable_sense2" = xyes])
 
 

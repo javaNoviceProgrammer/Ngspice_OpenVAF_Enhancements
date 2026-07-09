@@ -1,0 +1,12 @@
+* Enhancement-117: PSS on a driven RC low-pass.
+* Drive 1 MHz; the periodic steady state's fundamental must equal the analytic
+* AC response |H(1MHz)| = 1/sqrt(1+(2*pi*f*R*C)^2) = 0.157136 for R=1k, C=1n.
+V1 a 0 SIN(0 1 1meg)
+R1 a b 1k
+C1 b 0 1n
+.pss 1meg 1u b 1024 10 50 5u
+.control
+run
+print b
+.endc
+.end
