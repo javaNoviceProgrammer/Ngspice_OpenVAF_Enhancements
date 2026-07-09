@@ -53,9 +53,11 @@ in this build — the default direct solver is **Sparse 1.3**; KLU is selected w
 `.option klu`. The two agree on DC / AC / transient, and — since
 [Enhancement-113](../../../enhancements_doc/Enhancement-113.md) — on **noise** and
 **single-ended pole-zero** as well (the KLU adjoint solve was doing a
-non-transposed solve, silently wrong on asymmetric matrices; now fixed). Still
-Sparse-only under KLU: **balanced-output pole-zero** and **AC sensitivity**; KLU
-is also less robust on stiff transient edges. Full behavior, defaults, and a
+non-transposed solve, silently wrong on asymmetric matrices; now fixed), and —
+since [Enhancement-114](../../../enhancements_doc/Enhancement-114.md) — on **DC/AC
+sensitivity** (`.sens`) too. Still Sparse-only under KLU: **balanced-output
+pole-zero** and **distortion** (`.disto`, no KLU binding); KLU is also less robust
+on stiff transient edges. Full behavior, defaults, and a
 solver-by-solver sweep of the example suite:
 [KLU vs. Sparse 1.3 solver notes](ngspice_solver_notes.md).*
 

@@ -85,7 +85,13 @@ _KLU_UNSUPPORTED = "not (yet) supported with 'option KLU'"
 #   opamp741      — the stiff transistor-level 741 transient diverges under KLU.
 #   groundcontrib — the degenerate single-node node-to-ground contribution gives
 #                   the wrong DC answer under KLU (v(p)=0 instead of 1.5).
-KLU_XFAIL = frozenset({"opamp741", "groundcontrib"})
+#   hierbranch    — hierarchical branch *current* probes read 0 under KLU (the
+#                   node voltages are correct). Deterministic; independent of the
+#                   E-114 sensitivity fix (the DC KLU solve is untouched). This
+#                   was previously masked by the deck-injector pollution bug (a
+#                   stale `.option sparse` made the "klu" child silently run
+#                   Sparse — a false pass); fixing that restore bug exposed it.
+KLU_XFAIL = frozenset({"opamp741", "groundcontrib", "hierbranch"})
 
 
 def _example_stem(script):
@@ -113,8 +119,27 @@ def _deck_from_args(args):
     return None
 
 
+# Decks we edited in place, mapped to their original contents. We restore them
+# when this (single-solver) process exits -- ngspice has long since read the deck
+# by then -- so a both-solver run never leaves `.option` cards committed in the
+# real example decks. Without this, each sweep permanently pollutes the decks.
+_INJECTED_ORIGINALS = {}
+_RESTORE_REGISTERED = False
+
+
+def _restore_injected_decks():
+    for deck, txt in _INJECTED_ORIGINALS.items():
+        try:
+            with open(deck, "w") as f:
+                f.write(txt)
+        except OSError:
+            pass
+
+
 def _inject_card(deck, cwd, card):
-    """Insert `card` as the second line (after the SPICE title) of `deck`."""
+    """Insert `card` as the second line (after the SPICE title) of `deck`,
+    remembering the original so it is restored when this process exits."""
+    global _RESTORE_REGISTERED
     if not deck:
         return
     if not os.path.isabs(deck):
@@ -128,6 +153,12 @@ def _inject_card(deck, cwd, card):
         return
     if card.lower() in txt.lower():
         return  # already pinned (idempotent)
+    if deck not in _INJECTED_ORIGINALS:
+        _INJECTED_ORIGINALS[deck] = txt
+        if not _RESTORE_REGISTERED:
+            import atexit
+            atexit.register(_restore_injected_decks)
+            _RESTORE_REGISTERED = True
     lines = txt.split("\n")
     lines.insert(1 if lines else 0, card)
     try:
@@ -138,14 +169,17 @@ def _inject_card(deck, cwd, card):
 
 
 # As of Enhancement-113 KLU runs noise and single-ended (grounded output
-# reference) pole-zero. Two analyses remain Sparse-only under KLU:
+# reference) pole-zero, and as of Enhancement-114 KLU runs DC/AC sensitivity.
+# Two analyses remain Sparse-only under KLU:
 #   * BALANCED-output pole-zero -- a `pz n1 n2 n3 n4 vol|cur` command whose 4th
 #     node (the output reference) is not ground (0);
-#   * AC sensitivity -- a `.sens <out> ac ...` card (DC `.sens` works under KLU).
+#   * DISTORTION (`.disto`) -- the distortion path has no KLU wiring at all and
+#     silently produces no output under `.option klu` (a separate pre-existing
+#     gap, unrelated to sensitivity; out of scope for E-114).
 _KLU_UNSUPPORTED_RE = re.compile(
     r"(?im)^\s*(?:"
     r"pz\s+\S+\s+\S+\s+\S+\s+(?!0\s)\S+\s+(?:vol|cur)"   # balanced-output pole-zero
-    r"|\.sens\b.*\bac\b"                                  # AC sensitivity
+    r"|\.disto\b"                                         # distortion analysis
     r")")
 
 

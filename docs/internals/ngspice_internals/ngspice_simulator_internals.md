@@ -345,8 +345,9 @@ The key SMP calls:
 Markowitz threshold pivoting — it re-orders on every factorization, which makes
 it robust on hard/degenerate matrices. KLU (`maths/klu/`, wrapped in
 `klusmp.c`) computes a fill-reducing symbolic ordering **once** and re-factors
-numerically thereafter — faster, but that fixed ordering is why some analyses
-(balanced-output pole-zero) stay Sparse-only. In this build **Sparse 1.3 is the
+numerically thereafter — faster, but that fixed ordering is why balanced-output
+pole-zero stays Sparse-only (distortion, `.disto`, is Sparse-only for a different
+reason — it simply has no KLU binding). In this build **Sparse 1.3 is the
 default**; `.option klu` selects KLU. Details and the correctness map are in the
 [solver notes](ngspice_solver_notes.md).
 
@@ -411,7 +412,9 @@ results out through the front end.
   determinant).
 - **Sensitivity / S-parameters / distortion / PSS** — the remaining drivers
   (`sensetup`/`cktsens`, `span.c`, `distoan.c`, `pss` under `--enable-pss`),
-  several of which also use the adjoint solve.
+  several of which also use the adjoint solve. Sensitivity builds an auxiliary
+  Sparse perturbation matrix `delta_Y` (`∂Y/∂p`) that is only multiplied, never
+  factored — the KLU-safety of that split is the [E-114](../../../enhancements_doc/Enhancement-114.md) fix.
 
 ---
 
@@ -576,7 +579,7 @@ a useful index if you are tracing one:
 | Netlist preprocessing (5) | `frontend/inpcom.c`, `inp2dot.c` | `__FILE__`/`__LINE__` (E-85), legacy `generate` (E-88), bare `generate` (E-96) |
 | Analyses (11) | `spicelib/analysis/*` | `.dc @inst[param]` & `.tf`/`.pz`/`.sens` (E-62), RF `.sp`/PSS (E-63), Touchstone (E-64, E-72), sim-control tasks (E-55) |
 | Newton core (10) | `maths/ni/niiter.c` | `.option linesearch` globalized Newton (E-111) |
-| Matrix / solver (9) | `maths/KLU/klusmp.c`, `klu_multiply.c` | KLU line search (E-112), KLU noise + single-ended pole-zero (E-113) |
+| Matrix / solver (9) | `maths/KLU/klusmp.c`, `klu_multiply.c`, `spicelib/analysis/cktsens.c` | KLU line search (E-112), KLU noise + single-ended pole-zero (E-113), KLU sensitivity (E-114) |
 | Options / tasks | `spicelib/analysis/cktsopt.c`, `cktntask.c` | `.option errpreset` (E-110), `.option linesearch`/`.option klu` plumbing |
 | Frontend commands (4) | `frontend/com_*`, `commands.c` | `pyplot` matplotlib plotting (E-94/95/98/99) |
 | OSDI bridge (12) | `src/osdi/*` | `$discontinuity` clamp (E-24), `ac_stim` AC-RHS (E-51), noise factors (E-54), final-step phases (E-53), multi-module libs (E-76) |

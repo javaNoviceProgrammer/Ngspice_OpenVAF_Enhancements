@@ -426,6 +426,21 @@ noise matches Sparse exactly (including OSDI device models). This is the core of
 refusal guards in `noisean.c` / `pzan.c` (single-ended pole-zero runs under KLU;
 balanced-output pole-zero keeps a targeted guard).
 
+### `spicelib/analysis/cktsens.c`
+
+Sensitivity builds an auxiliary perturbation matrix `delta_Y` (holding `∂Y/∂p`)
+via `SMPnewMatrix`, which allocates a plain **Sparse 1.3** matrix
+(`delta_Y->CKTkluMODE = 0`, no `SMPkluMatrix`). It is only *multiplied* against
+the solution (`SMPmultiply` → `spMultiply`), never factored, and `DEVbindCSC`
+always binds into `ckt->CKTmatrix`, not `delta_Y` — so it is correctly Sparse in
+every case. But two KLU-only setup blocks were gated on the **main** matrix's
+`CKTkluMODE`, so under `.option klu` they ran and dereferenced the NULL
+`delta_Y->SMPkluMatrix` — a **segfault** on every DC/AC `.sens` deck. The blocks
+now gate on `delta_Y->CKTkluMODE` (its own flag, `0`), keeping `delta_Y` Sparse
+under KLU exactly as it already is under the default solver, while the main `Y`
+matrix stays KLU. DC and AC sensitivity now match Sparse exactly
+([E-114](../../enhancements_doc/Enhancement-114.md)).
+
 ---
 
 ## 7. Build system
@@ -485,6 +500,7 @@ Every enhancement that touched ngspice, oldest first:
 | [E-111](../../enhancements_doc/Enhancement-111.md) | optdefs.h, tskdefs.h, cktdefs.h, cktsopt.c, cktdojob.c, cktntask.c, cktdest.c, niiter.c | `.option linesearch` — globalized (damped) Newton via Armijo backtracking on a new KCL-residual merit `‖F‖=‖G·x−b‖`; result-neutral, off by default |
 | [E-112](../../enhancements_doc/Enhancement-112.md) | maths/KLU/klu_multiply.c | KLU support for `.option linesearch` — `SMPmultiply`'s KLU path passed NULL ordering maps that `klu_matrix_vector_multiply` dereferenced (SIGSEGV); NULL now means identity ordering. Line search verified merit-identical KLU vs Sparse |
 | [E-113](../../enhancements_doc/Enhancement-113.md) | maths/KLU/klusmp.c, spicelib/analysis/noisean.c, pzan.c | KLU support for noise + single-ended pole-zero — `SMPcaSolve`'s adjoint KLU branch used the non-transposed solve (silently wrong noise on asymmetric matrices); now `klu_z_tsolve`. Guards removed; balanced-output pz keeps a targeted guard |
+| [E-114](../../enhancements_doc/Enhancement-114.md) | spicelib/analysis/cktsens.c | KLU support for sensitivity — the auxiliary perturbation matrix `delta_Y` is Sparse, but two KLU setup blocks gated on the *main* matrix's flag dereferenced its NULL `SMPkluMatrix` (segfault on every DC/AC `.sens`); now gated on `delta_Y`'s own flag. DC/AC `.sens` match Sparse exactly |
 
 *(E-25's simparam exposure lives in the OSDI callback table populated at
 load time; its diff rides inside the `osdiload.c`/callbacks changes.)*

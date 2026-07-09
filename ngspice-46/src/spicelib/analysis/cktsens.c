@@ -499,7 +499,13 @@ int sens_sens(CKTcircuit* ckt, int restart)
             }
 
 #ifdef KLU
-            if (ckt->CKTmatrix->CKTkluMODE)
+            /* delta_Y is a plain Sparse matrix (SMPnewMatrix leaves CKTkluMODE=0):
+             * it is only multiplied (SMPmultiply -> spMultiply), never factored,
+             * and DEVbindCSC always binds to ckt->CKTmatrix, not delta_Y -- so the
+             * KLU-specific delta_Y setup below must NOT run when the *main* solver
+             * is KLU. Gate on delta_Y's own flag (0) instead of the main matrix's,
+             * so delta_Y behaves exactly as it does under the default Sparse solver. */
+            if (delta_Y->CKTkluMODE)
             {
                 /* Populate the delta_Y KLU Matrix */
 
@@ -533,7 +539,7 @@ int sens_sens(CKTcircuit* ckt, int restart)
              * the right node voltages */
 
 #ifdef KLU
-            if (ckt->CKTkluMODE)
+            if (delta_Y->CKTkluMODE)   /* delta_Y is Sparse under KLU too -- see above */
             {
                 if (!is_dc)
                 {
