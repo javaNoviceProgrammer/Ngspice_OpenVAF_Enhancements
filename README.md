@@ -276,3 +276,11 @@ matches Spectre (standard analog analyses, core numerics) and where the gaps are
 (the RF periodic suite — HB/Pnoise/PAC/PXF/envelope — plus fast-SPICE scale,
 high-sigma statistics, and reliability/aging). It closes with a prioritized view
 of where to invest next.
+
+A companion note, [KLU vs. Sparse 1.3 solver
+notes](docs/internals/ngspice_internals/ngspice_solver_notes.md)
+([PDF](docs/internals/ngspice_internals/ngspice_solver_notes.pdf)), documents this
+build's two linear solvers: Sparse 1.3 is the **default** and runs everything,
+while KLU (opt-in via `.option klu`) matches it on DC/AC/transient but **rejects
+noise and pole-zero** and is less robust on stiff transient edges — verified by a
+solver-by-solver sweep of the whole example suite.

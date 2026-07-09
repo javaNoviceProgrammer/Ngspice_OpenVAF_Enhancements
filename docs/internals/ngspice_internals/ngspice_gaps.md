@@ -23,7 +23,7 @@ mark is ⚠️ or ❌.
 
 | Category | Feature | ngspice | Spectre |
 |---|---|:---:|:---:|
-| Core solver | Sparse LU (KLU) direct solver | ✅ | ✅ |
+| Core solver | Sparse LU (KLU) direct solver | ✅¹ | ✅ |
 | Core solver | Legacy Sparse1.3 fallback | ✅ | ✅ |
 | Core solver | Parallel / partitioned / GPU linear solve | ❌ | ✅ |
 | Core solver | Matrix reordering + scaling beyond KLU defaults | ⚠️ | ✅ |
@@ -43,6 +43,13 @@ pseudo-transient (Ẋ-embedded) continuation. [Enhancement-111](../../../enhance
 adds the former: `.option linesearch`, an Armijo backtracking line search on a
 new KCL-residual merit `‖F‖=‖G·x−b‖` (result-neutral, off by default) — see the
 [implementation write-up](ngspice_linesearch_globalized_newton.md).*
+
+*¹ KLU is compiled in (SuiteSparse, statically linked) but is **not** the default
+in this build — the default direct solver is **Sparse 1.3**; KLU is selected with
+`.option klu`. The two agree on DC / AC / transient, but KLU **rejects noise and
+pole-zero** (an upstream ngspice limitation) and is less robust on stiff transient
+edges. Full behavior, defaults, and a solver-by-solver sweep of the example suite:
+[KLU vs. Sparse 1.3 solver notes](ngspice_solver_notes.md).*
 
 ## Standard analyses (analog)
 

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Regenerate the PDF edition of the ngspice-vs-Spectre gap analysis.
+"""Regenerate the PDF edition of the KLU vs. Sparse 1.3 solver notes.
 
-Usage:  python3 docs/internals/ngspice_internals/build_pdf.py
-Needs pandoc + xelatex. The ✅ / ⚠️ / ❌ status marks are rendered in colour
-(green / orange / red) so the table reads the same as on GitHub.
+Usage:  python3 docs/internals/ngspice_internals/build_solver_notes_pdf.py
+Needs pandoc + xelatex. The status marks (green check / red x) are coloured to
+match the GitHub emoji semantics; repo-relative links become GitHub URLs.
 """
 import datetime
 import os
@@ -15,7 +15,7 @@ import tempfile
 HERE = os.path.dirname(os.path.abspath(__file__))          # docs/internals/ngspice_internals
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(HERE)))   # repo root
 GITHUB = "https://github.com/javaNoviceProgrammer/Ngspice_OpenVAF_Enhancements"
-STEM = "ngspice_gaps"
+STEM = "ngspice_solver_notes"
 
 HEADER_TEX = r"""
 \usepackage{titlesec}
@@ -33,12 +33,10 @@ HEADER_TEX = r"""
 \newunicodechar{→}{\ensuremath{\rightarrow}}
 \newunicodechar{·}{\ensuremath{\cdot}}
 \newunicodechar{×}{\ensuremath{\times}}
+\newunicodechar{≈}{\ensuremath{\approx}}
 \newunicodechar{−}{\ensuremath{-}}
-\newunicodechar{‖}{\ensuremath{\Vert}}
+\newunicodechar{µ}{\ensuremath{\mu}}
 \newunicodechar{–}{--}
-\newunicodechar{¹}{\textsuperscript{1}}
-\newunicodechar{⁶}{\textsuperscript{6}}
-\newunicodechar{⁸}{\textsuperscript{8}}
 """
 
 WIDTHS_LUA = r"""
@@ -97,13 +95,14 @@ def main():
         open(lua, "w").write(WIDTHS_LUA)
         r = subprocess.run([
             "pandoc", md, "-f", "gfm", "-o", os.path.join(HERE, STEM + ".pdf"),
-            "--pdf-engine=xelatex", "--toc", "--toc-depth=1",
+            "--pdf-engine=xelatex", "--toc", "--toc-depth=2",
             "-H", hdr, "--lua-filter", lua,
             "-V", "documentclass=article", "-V", "papersize=a4",
             "-V", "geometry:margin=2cm",
             "-V", "mainfont=STIX Two Text", "-V", "monofont=Menlo",
             "-V", "fontsize=10pt", "-V", "colorlinks=true",
-            "-V", "title=ngspice-46 vs. Spectre — Feature Gap Analysis",
+            "-V", "title=ngspice Linear Solvers — KLU vs. Sparse 1.3",
+            "-V", "subtitle=Behavior, defaults, and limitations across DC / AC / transient / noise",
             "-V", "author=Ngspice + OpenVAF Enhancements project",
             "-V", f"date={datetime.date.today():%B %Y}",
         ], capture_output=True, text=True)
