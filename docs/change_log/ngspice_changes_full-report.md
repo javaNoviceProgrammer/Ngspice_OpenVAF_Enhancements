@@ -441,6 +441,19 @@ under KLU exactly as it already is under the default solver, while the main `Y`
 matrix stays KLU. DC and AC sensitivity now match Sparse exactly
 ([E-114](../../enhancements_doc/Enhancement-114.md)).
 
+### `spicelib/analysis/distoan.c`
+
+Distortion is a **complex** analysis (Volterra series solved at the harmonic /
+intermodulation frequencies via `NIdIter` → `SMPcSolve`), but `distoan.c` had
+**no KLU code at all**: under `.option klu` the KLU matrix stayed in *real* mode,
+the complex solves ran against an unconverted matrix, and every harmonic came
+back **zero** — a silent wrong answer. The fix mirrors `acan.c`: before the
+solve loop it converts the matrix to complex (`DEVbindCSCComplex` per device +
+`KLUmatrixIsComplex`), and on exit converts back to real
+(`DEVbindCSCComplexToReal`) so a later real analysis in the same session is
+unaffected. KLU distortion now matches Sparse bit-for-bit (single-tone, two-tone
+intermodulation, and OSDI models) ([E-115](../../enhancements_doc/Enhancement-115.md)).
+
 ---
 
 ## 7. Build system
@@ -501,6 +514,7 @@ Every enhancement that touched ngspice, oldest first:
 | [E-112](../../enhancements_doc/Enhancement-112.md) | maths/KLU/klu_multiply.c | KLU support for `.option linesearch` — `SMPmultiply`'s KLU path passed NULL ordering maps that `klu_matrix_vector_multiply` dereferenced (SIGSEGV); NULL now means identity ordering. Line search verified merit-identical KLU vs Sparse |
 | [E-113](../../enhancements_doc/Enhancement-113.md) | maths/KLU/klusmp.c, spicelib/analysis/noisean.c, pzan.c | KLU support for noise + single-ended pole-zero — `SMPcaSolve`'s adjoint KLU branch used the non-transposed solve (silently wrong noise on asymmetric matrices); now `klu_z_tsolve`. Guards removed; balanced-output pz keeps a targeted guard |
 | [E-114](../../enhancements_doc/Enhancement-114.md) | spicelib/analysis/cktsens.c | KLU support for sensitivity — the auxiliary perturbation matrix `delta_Y` is Sparse, but two KLU setup blocks gated on the *main* matrix's flag dereferenced its NULL `SMPkluMatrix` (segfault on every DC/AC `.sens`); now gated on `delta_Y`'s own flag. DC/AC `.sens` match Sparse exactly |
+| [E-115](../../enhancements_doc/Enhancement-115.md) | spicelib/analysis/distoan.c | KLU support for distortion — `.disto` is a complex analysis but `distoan.c` had no KLU code, so under KLU the matrix stayed real and every harmonic came back zero (silent wrong answer); now converts real↔complex around the solve loop like `acan.c`. Matches Sparse bit-for-bit |
 
 *(E-25's simparam exposure lives in the OSDI callback table populated at
 load time; its diff rides inside the `osdiload.c`/callbacks changes.)*

@@ -168,18 +168,13 @@ def _inject_card(deck, cwd, card):
         pass
 
 
-# As of Enhancement-113 KLU runs noise and single-ended (grounded output
-# reference) pole-zero, and as of Enhancement-114 KLU runs DC/AC sensitivity.
-# Two analyses remain Sparse-only under KLU:
+# KLU now runs noise + single-ended pole-zero (E-113), DC/AC sensitivity (E-114),
+# and distortion (E-115). One analysis remains Sparse-only under KLU:
 #   * BALANCED-output pole-zero -- a `pz n1 n2 n3 n4 vol|cur` command whose 4th
-#     node (the output reference) is not ground (0);
-#   * DISTORTION (`.disto`) -- the distortion path has no KLU wiring at all and
-#     silently produces no output under `.option klu` (a separate pre-existing
-#     gap, unrelated to sensitivity; out of scope for E-114).
+#     node (the output reference) is not ground (0).
 _KLU_UNSUPPORTED_RE = re.compile(
     r"(?im)^\s*(?:"
     r"pz\s+\S+\s+\S+\s+\S+\s+(?!0\s)\S+\s+(?:vol|cur)"   # balanced-output pole-zero
-    r"|\.disto\b"                                         # distortion analysis
     r")")
 
 

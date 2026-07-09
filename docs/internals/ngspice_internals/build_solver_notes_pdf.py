@@ -31,6 +31,7 @@ HEADER_TEX = r"""
 \newunicodechar{️}{}
 % math / punctuation
 \newunicodechar{→}{\ensuremath{\rightarrow}}
+\newunicodechar{↔}{\ensuremath{\leftrightarrow}}
 \newunicodechar{·}{\ensuremath{\cdot}}
 \newunicodechar{×}{\ensuremath{\times}}
 \newunicodechar{≈}{\ensuremath{\approx}}

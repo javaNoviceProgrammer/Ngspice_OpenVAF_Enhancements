@@ -6,6 +6,7 @@ Author: 1988 Jaijeet S Roychowdhury
 #include "ngspice/ngspice.h"
 #include "ngspice/cktdefs.h"
 #include "ngspice/distodef.h"
+#include "ngspice/devdefs.h"   /* Enhancement-115: DEVices/DEVbindCSCComplex for KLU */
 #include "ngspice/sperror.h"
 
 
@@ -247,6 +248,27 @@ printf("Time for other setup (storage allocation etc.): %g seconds \n", time1);
 #endif
 
 
+
+#ifdef KLU
+    /* Enhancement-115: distortion solves are complex (harmonic frequencies),
+     * so -- exactly as acan.c does before NIacIter -- bind the device matrix
+     * entries to the complex KLU storage and switch the matrix to complex mode.
+     * Without this the KLU matrix stays real, the complex solves in NIdIter
+     * (SMPcSolve) run against an unconverted matrix, and .disto silently
+     * produces no output under `.option klu`. The whole disto loop is complex,
+     * so this one-time conversion before the loop suffices. */
+    if (ckt->CKTmatrix->CKTkluMODE)
+    {
+        if (!ckt->CKTmatrix->SMPkluMatrix->KLUmatrixIsComplex)
+        {
+            for (i = 0 ; i < DEVmaxnum ; i++)
+                if (DEVices [i] && DEVices [i]->DEVbindCSCComplex && ckt->CKThead [i])
+                    DEVices [i]->DEVbindCSCComplex (ckt->CKThead [i], ckt) ;
+
+            ckt->CKTmatrix->SMPkluMatrix->KLUmatrixIsComplex = KLUMatrixComplex ;
+        }
+    }
+#endif
 
 #ifdef D_DBG_BLOCKTIMES
 time1 = SPfrontEnd->IFseconds();
@@ -665,5 +687,23 @@ FREE(job->i3H1m2stor);
 time1 = SPfrontEnd->IFseconds() - time1;
 printf("Time for output and deallocation: %g seconds \n", time1);
 #endif
+
+#ifdef KLU
+    /* Enhancement-115: convert the KLU matrix back to real mode on the way out
+     * (as acan.c does after AC), so a subsequent real analysis in the same
+     * interactive session finds the matrix in the expected state. */
+    if (ckt->CKTmatrix->CKTkluMODE)
+    {
+        if (ckt->CKTmatrix->SMPkluMatrix->KLUmatrixIsComplex)
+        {
+            for (i = 0 ; i < DEVmaxnum ; i++)
+                if (DEVices [i] && DEVices [i]->DEVbindCSCComplexToReal && ckt->CKThead [i])
+                    DEVices [i]->DEVbindCSCComplexToReal (ckt->CKThead [i], ckt) ;
+
+            ckt->CKTmatrix->SMPkluMatrix->KLUmatrixIsComplex = KLUmatrixReal ;
+        }
+    }
+#endif
+
     return(OK);
 }
