@@ -207,9 +207,9 @@ ratio, no common period) are out of reach of transient sampling, and small-signa
 *⁷ HB is ✅ since
 [Enhancement-134](../../../enhancements_doc/Enhancement-134.md): a `hb <f0> <K>`
 command solves the periodic steady state in the **frequency domain** by Newton -- each
-node voltage a truncated Fourier series, the KCL residual `F_k = I_R,k(V) + [dq/dt]_k
-- Is_k = 0` driven to zero with the E-121 `(2K+1)N` conversion matrix as the exact
-Jacobian. The device residual/Jacobian are sampled by driving DC+AC loads at the
+node voltage a truncated Fourier series, the KCL residual
+`F_k = I_R,k(V) + [dq/dt]_k - Is_k = 0` driven to zero with the E-121 `(2K+1)N`
+conversion matrix as the exact Jacobian. The device residual/Jacobian are sampled by driving DC+AC loads at the
 current iterate's voltages; nonlinear **reactive** elements need NO charge extraction
 because `dq/dt = C(v)*v'` -- the reactive current is the conversion matrix's `jwC`
 term applied to V, using the sampled `C(t)`. **Solver-independent (KLU + Sparse):** the
