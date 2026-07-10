@@ -20,7 +20,7 @@ of the whole [`examples/`](../../../examples/) suite.
 | **Pole-zero (`.pz`)** | ✅ single-ended; ⚠️ balanced-output Sparse-only | ✅ correct |
 | **Sensitivity (`.sens`, DC & AC)** | ✅ correct (since E-114) | ✅ correct |
 | **Distortion (`.disto`)** | ✅ correct (since E-115) | ✅ correct |
-| **Periodic steady state (`.pss`)** | ❌ hangs — guarded to Sparse (E-117) | ✅ correct |
+| **Periodic steady state (`.pss`)** | ✅ correct (since E-118) | ✅ correct |
 
 **Practical guidance:** leave the default (Sparse 1.3) unless you have a specific
 reason to switch. Sparse 1.3 runs **every** analysis in the suite. Since

@@ -117,19 +117,6 @@ DCpss(CKTcircuit *ckt,
     int position;
     double max_freq;
 
-    /* Enhancement-117: PSS is a Sparse-1.3-domain analysis. Its shooting loop
-     * does not converge under the KLU solver -- it stalls at the first shooting
-     * cycle -- while a plain `.tran` on the same circuit runs fine under KLU, so
-     * the issue is specific to the periodic breakpoint/timestep machinery, not
-     * KLU transients in general. Fail fast with a clear message instead of
-     * spinning; `.pss` users simply keep the default Sparse solver. */
-    if (ckt->CKTmatrix && ckt->CKTmatrix->CKTkluMODE) {
-        fprintf(stderr, "Error: periodic steady state analysis (.pss) is not "
-                "supported with 'option KLU'; use 'option sparse' (the default "
-                "solver) for .pss.\n");
-        return(E_UNSUPP);
-    }
-
     /* Print some useful information */
     PSSDBG( "Periodic Steady State Analysis Started\n\n") ;
     PSSDBG( "PSS Guessed Frequency %g\n", ckt->CKTguessedFreq) ;
@@ -1284,6 +1271,19 @@ resume:
 /* gtri - end - wbk - Set evt_step */
 #endif
 
+        /* Enhancement-118: under KLU, force a full factorization every PSS
+         * timestep. NIiter otherwise reuses `klu_refactor` (the previous pivot
+         * ordering, values only) for speed; across PSS's very fine,
+         * breakpoint-dense shooting timesteps that reused ordering accumulates
+         * just enough numerical error to inflate the local truncation error,
+         * which collapses the step size into a ~20-million-step run that never
+         * finishes. Setting NISHOULDREORDER makes NIiter take the accurate
+         * SMPreorder (`klu_factor`, re-pivoted) path, so KLU PSS converges to
+         * the same result as Sparse. (Sparse's own factor is accurate enough to
+         * not need this; a plain `.tran` under KLU is unaffected -- its steps
+         * are coarse enough that the refactor error never matters.) */
+        if (ckt->CKTmatrix->CKTkluMODE)
+            ckt->CKTniState |= NISHOULDREORDER;
         converged = NIiter(ckt,ckt->CKTtranMaxIter);
 
 #ifdef XSPICE

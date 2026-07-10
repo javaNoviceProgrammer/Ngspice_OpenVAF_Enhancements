@@ -96,10 +96,12 @@ solver-by-solver sweep of the example suite:
 shipped builds, and ~230 lines of shooting-loop trace per run). Since
 [Enhancement-117](../../../enhancements_doc/Enhancement-117.md) it is built by
 default, quiet (trace behind `set ngdebug`), and verified against the analytic AC
-response — a shipped, Sparse-1.3-domain analysis (it hangs under `.option klu`, so
-a fail-fast guard directs `.pss` to Sparse). It is still a brute-force shooting
-method and remains the foundation for the periodic small-signal analyses below.
-HB exists only as a `WITH_HB` stub that returns "unsupported".*
+response; [Enhancement-118](../../../enhancements_doc/Enhancement-118.md) then made
+it run under **both** linear solvers (KLU had hung on a timestep explosion from
+reused refactor pivots — now a full re-factor is forced each PSS step under KLU).
+It is still a brute-force shooting method and remains the foundation for the
+periodic small-signal analyses below. HB exists only as a `WITH_HB` stub that
+returns "unsupported".*
 
 ## Performance & scale
 
