@@ -51,13 +51,20 @@ the sampled `C(t)`.
 
 The independent-source excitation `Is_k` is captured by loading the circuit at zero
 node voltage with the sources evaluated at each sample time. Reuses `pac_build_matrix`
-(Jacobian) and `pss_csolve` (dense solve) from the PSS/PAC suite; solver-independent
-(it drives ordinary DC/AC device loads).
+(Jacobian) and `pss_csolve` (dense solve) from the PSS/PAC suite.
+
+**Solver-independent (KLU *and* Sparse).** HB does its own dense complex Newton solve,
+so the sparse linear solver is used only to *read* the periodic `G(t)`/`C(t)` off the
+device matrix. Under Sparse that is `spSetComplex`; under KLU the matrix is a complex
+CSC, so `hb_extract` binds the device pointers with `DEVbindCSCComplex` (the same guard
+`pac_extract_harmonics` uses). The `hb` command also copies the task's KLU mode before
+building the circuit, so a bare `hb` honours `.option klu`. Verified bit-identical under
+both solvers (the diode rectifier gives the same 18-iteration spectrum either way).
 
 ## Verification
 
 `verify_hb.py` drives nonlinear circuits with a tone and compares HB's spectrum
-against ngspice's own transient + `fourier` steady-state harmonics (7/7):
+against ngspice's own transient + `fourier` steady-state harmonics (8/8):
 
 - **nonlinear resistor** — fundamental and 3rd harmonic match; Newton converges
   **quadratically** in 3 iterations; even-order products are ~0.
@@ -69,6 +76,9 @@ against ngspice's own transient + `fourier` steady-state harmonics (7/7):
 - **nonlinear C (OSDI varactor)** — a `Q = cj0·(V + γV²)` charge makes a real 2nd
   harmonic (`|V₂| ≈ 1.4e−2`) that a linear cap cannot; HB matches the transient — the
   **full nonlinear-reactive** result, on a compiled Verilog-A device.
+- **solver parity** — the diode rectifier gives a bit-identical spectrum under
+  `.option klu` and `.option sparse` (HB's own dense Newton makes the linear solver a
+  read-only detail).
 
 Also confirmed by hand: HB reproduces the analytic cubic 3rd harmonic
 `|v₃| = R·g₃·|v₁|³/4`, and works under both current- and voltage-source excitation.
@@ -77,8 +87,8 @@ Also confirmed by hand: HB reproduces the analytic cubic 3rd harmonic
 
 | File | Change |
 |---|---|
-| `ngspice-46/src/spicelib/analysis/dcpss.c` | the HB engine: `hb_extract` (samples `I_R`/`G`/`C` at prescribed voltages) and `HBanalyze` (source spectrum + frequency-domain Newton + spectrum output), reusing `pac_build_matrix` + `pss_csolve` |
-| `ngspice-46/src/frontend/com_hb.c` / `.h`, `commands.c`, `com_commands.h`, `Makefile.am` | the `hb` command (parse, build the circuit, run `HBanalyze`) |
+| `ngspice-46/src/spicelib/analysis/dcpss.c` | the HB engine: `hb_extract` (samples `I_R`/`G`/`C` at prescribed voltages, complex-mode via `spSetComplex` on Sparse or `DEVbindCSCComplex` on KLU) and `HBanalyze` (source spectrum + frequency-domain Newton + spectrum output), reusing `pac_build_matrix` + `pss_csolve` |
+| `ngspice-46/src/frontend/com_hb.c` / `.h`, `commands.c`, `com_commands.h`, `Makefile.am` | the `hb` command (parse, honour `.option klu`, build the circuit, run `HBanalyze`) |
 | `ngspice-46/src/include/ngspice/cktdefs.h` | `HBanalyze` prototype |
 | `examples/hb_examples/` | `verify_hb.py`, `vavar.va` (nonlinear-cap varactor) |
 

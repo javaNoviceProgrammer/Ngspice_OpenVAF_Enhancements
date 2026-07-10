@@ -31,8 +31,14 @@ the sparse linear solver** — so they inherit the solver only through the under
 PSS, which runs correctly under both since E-118 (KLU re-factors every shooting
 step, so PSS is *slower* under KLU but not wrong). The E-133 two-tone `qpss` and the
 E-134 frequency-domain `hb` (harmonic balance) are likewise solver-independent —
-`qpss` drives a transient and direct-DFTs it; `hb` drives DC+AC device loads and does
-a dense complex Newton on the conversion matrix, independent of the sparse solver.
+`qpss` drives a transient and direct-DFTs it; `hb` does a dense complex Newton on the
+conversion matrix and uses the sparse solver only to *read* the periodic `G(t)`/`C(t)`
+off the device matrix. That read is the one solver-specific detail: Sparse uses
+`spSetComplex`, KLU needs the complex-CSC binding (`DEVbindCSCComplex`), exactly as the
+PAC harmonic extraction does — `hb` carries the same `#ifdef KLU` branch, so it is
+verified **bit-identical under `.option klu` and `.option sparse`** (a bare `hb` also
+copies the task's KLU mode before building the matrix, so `.option klu` takes effect
+without a prior analysis).
 Transient **checkpoint/restart**
 ([Enhancement-131](../../../enhancements_doc/Enhancement-131.md)) is the one feature
 that is genuinely Sparse-only: on the restore path KLU's symbolic/numeric

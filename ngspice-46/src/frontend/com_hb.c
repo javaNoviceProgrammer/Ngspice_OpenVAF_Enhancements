@@ -59,6 +59,16 @@ com_hb(wordlist *wl)
         return;
     }
 
+    /* Honor `.option klu`: a bare `hb` builds the circuit here rather than via
+     * cktdojob (which is where a normal analysis copies task->TSKkluMODE), so pull
+     * the KLU mode from the task before CKTsetup wires the matrix -- else the matrix
+     * defaults to Sparse and the `.option klu` request is silently ignored. */
+#ifdef KLU
+    if (ft_curckt->ci_defTask &&
+        (ckt->CKTmatrix == NULL || SMPmatSize(ckt->CKTmatrix) <= 0))
+        ckt->CKTkluMODE = ft_curckt->ci_defTask->TSKkluMODE;
+#endif
+
     /* make sure the circuit is built (matrix + states allocated) */
     if (ckt->CKTmatrix == NULL || SMPmatSize(ckt->CKTmatrix) <= 0) {
         if ((err = CKTsetup(ckt)) != OK || (err = CKTtemp(ckt)) != OK) {

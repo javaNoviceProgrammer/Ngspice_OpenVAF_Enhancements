@@ -1255,7 +1255,21 @@ hb_extract(CKTcircuit *ckt, const double *vsamp, int N, int P, int K,
         return 1;
     bsave = TMALLOC(double, N);
 
-    spSetComplex(ckt->CKTmatrix->SPmatrix);
+    /* Matrix must be in complex mode so CKTacLoad stamps G(el[0]) + jC(el[1]) and
+     * SMPfindElt reads both parts. Under KLU the live matrix is the CSC form, not
+     * SPmatrix, so bind the device pointers to the complex CSC (mirrors
+     * pac_extract_harmonics -- this is what makes HB solver-independent). */
+#ifdef KLU
+    if (ckt->CKTmatrix->CKTkluMODE) {
+        if (!ckt->CKTmatrix->SMPkluMatrix->KLUmatrixIsComplex) {
+            for (i = 0; i < DEVmaxnum; i++)
+                if (DEVices[i] && DEVices[i]->DEVbindCSCComplex && ckt->CKThead[i])
+                    DEVices[i]->DEVbindCSCComplex(ckt->CKThead[i], ckt);
+            ckt->CKTmatrix->SMPkluMatrix->KLUmatrixIsComplex = KLUMatrixComplex;
+        }
+    } else
+#endif
+        spSetComplex(ckt->CKTmatrix->SPmatrix);
 
     /* establish structure at sample 0's bias */
     for (i = 1; i <= N; i++)

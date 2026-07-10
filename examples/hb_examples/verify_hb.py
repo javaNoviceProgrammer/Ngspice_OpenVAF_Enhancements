@@ -146,5 +146,25 @@ if os.path.exists(osdi):
 else:
     check("OSDI varactor: compiled vavar.va", False, cr.stderr.strip()[:80])
 
+# [5] SOLVER PARITY: HB must give the SAME spectrum under KLU and Sparse. HB runs its
+# own dense complex Newton solve on the conversion matrix; the sparse/KLU choice only
+# affects how the periodic G(t)/C(t) are read from the device matrix (spSetComplex for
+# Sparse vs the complex CSC binding for KLU). Run the diode rectifier -- a real,
+# junction-LIMITED nonlinear device -- under both and require a bit-close match.
+def solver_spectrum(sol):
+    nl = ("V1 s 0 SIN(0 1 100meg)\nRs s a 100\nD1 a n DMOD\nRn n 0 1k\n"
+          f".model DMOD D(IS=1e-12 N=1.2)\n.options {sol}")
+    out = run(f"* hb solver parity\n{nl}\n.control\nhb 100meg 8\n.endc\n.end\n")
+    return out, hb_spectrum(out, "n")
+
+outk, hbk = solver_spectrum("klu")
+outs, hbs = solver_spectrum("sparse")
+klu_active = "Using KLU" in outk
+common = set(hbk) & set(hbs)
+maxrel = max((abs(hbk[k] - hbs[k]) / max(hbs[k], 1e-9) for k in common), default=1.0)
+check("HB is solver-independent: KLU vs Sparse spectra identical",
+      klu_active and common and maxrel < 1e-6,
+      f"klu_active={klu_active} maxrel={maxrel:.2e}")
+
 print(f"\n{'ALL PASS' if passed == checks else 'FAILURES'}: {passed}/{checks} passed")
 sys.exit(0 if passed == checks else 1)

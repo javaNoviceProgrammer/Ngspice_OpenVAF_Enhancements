@@ -212,11 +212,16 @@ node voltage a truncated Fourier series, the KCL residual `F_k = I_R,k(V) + [dq/
 Jacobian. The device residual/Jacobian are sampled by driving DC+AC loads at the
 current iterate's voltages; nonlinear **reactive** elements need NO charge extraction
 because `dq/dt = C(v)*v'` -- the reactive current is the conversion matrix's `jwC`
-term applied to V, using the sampled `C(t)`. Solver-independent; built-in and OSDI
-devices. Verified 7/7 against the transient/`fourier` steady state, with quadratic
+term applied to V, using the sampled `C(t)`. **Solver-independent (KLU + Sparse):** the
+dense complex Newton is HB's own, so the linear solver is used only to *read* `G(t)`/
+`C(t)` off the device matrix -- `hb_extract` carries the same `#ifdef KLU` complex-CSC
+binding as the PAC extraction, and `hb` honours `.option klu`, verified bit-identical
+under both. Built-in and OSDI
+devices. Verified 8/8 against the transient/`fourier` steady state, with quadratic
 Newton convergence: nonlinear R (analytic 3rd harmonic), nonlinear R+C, a real **diode
-rectifier** (junction devices are settled per sample so their limiter is a no-op), and
-a compiled OSDI varactor whose `Q(v)` 2nd harmonic matches. Single-tone; strongly-driven
+rectifier** (junction devices are settled per sample so their limiter is a no-op), a
+compiled OSDI varactor whose `Q(v)` 2nd harmonic matches, and KLU==Sparse parity.
+Single-tone; strongly-driven
 continuation, a sparse block solve, and multi-tone HB (true incommensurate QPSS,
 cf. note 6) are the follow-ups.*
 
