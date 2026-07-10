@@ -249,7 +249,107 @@ curve passes right through the target dot at 0.9 V / 1 ms.
 
 ---
 
-## 7. Writing a good cost expression
+## 7. Optimizing OSDI / Verilog-A devices
+
+Everything so far used ngspice's built-in components, but the real strength of this
+build is **compiled Verilog-A models** (OSDI): you write a device in Verilog-A,
+compile it to a `.osdi` file with `openvaf-r`, and load it with `pre_osdi`. The
+optimizer tunes those devices in exactly the same way — you just point `-param` at
+an OSDI *instance parameter*.
+
+**One rule to remember.** For the optimizer to change a Verilog-A parameter, that
+parameter must be an **instance** parameter, so mark it with `(*type="instance"*)` in
+the model. (A plain `parameter` is a *model* parameter — shared by every instance and
+not reachable by the per-instance `alter` the optimizer uses.) You then refer to it as
+`@<instance>[<param>]`.
+
+### A Verilog-A resistor
+
+Here is a one-line resistor whose resistance `r` is an instance parameter:
+
+```verilog
+// optres.va
+`include "disciplines.vams"
+module optres(p, n);
+    inout p, n;
+    electrical p, n;
+    (*type="instance"*) parameter real r = 1000.0 from (0:inf);
+    analog
+        I(p, n) <+ V(p, n) / r;
+endmodule
+```
+
+Compile it with `openvaf-r optres.va -o optres.osdi` and drop it into the divider from
+Example 1. The only change is that `R1` is now the Verilog-A device `N1`, and the knob
+is `@n1[r]`:
+
+```spice
+OSDI resistor divider: tune the Verilog-A resistor
+V1 in 0 dc 1
+N1 in out rmod
+R2 out 0 1k
+.model rmod optres r=1k
+
+.control
+pre_osdi optres.osdi
+optimize -param @n1[r] 1k 100 10k -analysis op -minimize (v(out)-0.3)^2
+.endc
+.end
+```
+
+The optimizer finds `@n1[r] = 2333.33 Ω` — the same answer as Example 1, now for a
+compiled device.
+
+### Parameter extraction: fitting a diode
+
+The more useful OSDI task is **model parameter extraction** — you have measured data
+for a device and want the model parameters that reproduce it. Here is a Verilog-A
+diode (the Shockley equation) with its saturation current `is` and emission coefficient
+`n` as instance parameters:
+
+```verilog
+// optdiode.va
+`include "disciplines.vams"
+module optdiode(a, c);
+    inout a, c;
+    electrical a, c;
+    (*type="instance"*) parameter real is = 1e-14 from (0:inf);
+    (*type="instance"*) parameter real n  = 1.0   from (0:inf);
+    analog
+        I(a, c) <+ is * (limexp(V(a, c) / (n * $vt)) - 1.0);
+endmodule
+```
+
+Suppose a measurement says the diode passes **1 mA at 0.65 V**, and we want the `is`
+that reproduces it. We bias the diode at 0.65 V, run an operating point, and drive the
+current toward 1 mA:
+
+```spice
+Diode parameter extraction: fit is so I(0.65 V) = 1 mA
+Vd a 0 dc 0.65
+N1 a 0 dmod
+.model dmod optdiode is=1e-15 n=1
+
+.control
+pre_osdi optdiode.osdi
+optimize -param @n1[is] 1e-15 1e-16 1e-12 -analysis op -minimize (abs(i(vd))-1m)^2 -tol 1e-24
+.endc
+.end
+```
+
+`abs(i(vd))` is the current through the diode (what the source `Vd` must supply). The
+optimizer reports `@n1[is] = 1.22e-14`, and the diode now passes exactly 1 mA at 0.65 V.
+Plotting the whole I–V curve before and after shows the fitted curve sliding onto the
+measured point:
+
+![Fitting a Verilog-A diode's saturation current](ngspice_optimizer_figs/osdi_diode.png)
+
+That is the everyday modeling loop — measure a device, write a Verilog-A model, and let
+`optimize` recover the parameters — done entirely inside ngspice. You fit several
+parameters at once by adding more `-param` flags (and more measured points to the
+objective, e.g. two diode instances of the same model biased at two voltages).
+
+## 8. Writing a good cost expression
 
 The cost is the only tricky part, and the recipe is simple: **make it zero when the
 circuit is perfect, and positive otherwise.** Some patterns:
@@ -269,7 +369,7 @@ If the expression produces a whole waveform (as in a transient), the optimizer u
 
 ---
 
-## 8. Tips and common pitfalls
+## 9. Tips and common pitfalls
 
 - **Give sensible bounds.** `lo` and `hi` define the search box; pick a range you know
   contains a good answer. The starting value `init` should be inside it.
@@ -289,7 +389,7 @@ If the expression produces a whole waveform (as in a transient), the optimizer u
 
 ---
 
-## 9. How it works, briefly
+## 10. How it works, briefly
 
 Under the hood, `optimize` uses the **Nelder–Mead downhill-simplex** method — a classic
 derivative-free optimizer. For `N` knobs it keeps `N+1` trial points (a "simplex"), and

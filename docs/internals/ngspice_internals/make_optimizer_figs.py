@@ -25,6 +25,12 @@ NG = os.path.join(ROOT, "bin", "macos", "apple-silicon", "ngspice")
 if not os.path.isfile(NG):
     NG = os.path.join(ROOT, "ngspice-46", "build", "src", "ngspice")
 
+# openvaf-r, to compile the Verilog-A models for the OSDI example
+VAF = os.path.join(ROOT, "OpenVAF-master-20260610", "target", "release", "openvaf-r")
+if not os.path.isfile(VAF):
+    VAF = os.path.join(ROOT, "bin", "macos", "apple-silicon", "openvaf-r")
+OPT_EX = os.path.join(ROOT, "examples", "optimize_examples")
+
 BLUE, ORANGE, GREEN, RED, GREY = "#2563eb", "#ea7317", "#159947", "#cf222e", "#6b7280"
 plt.rcParams.update({"font.size": 11, "axes.grid": True, "grid.alpha": 0.3,
                      "figure.dpi": 130, "savefig.bbox": "tight"})
@@ -147,8 +153,42 @@ def fig_tran_response():
     fig.savefig(os.path.join(FIGS, "tran_response.png")); plt.close(fig)
 
 
+# ------------------------------------------------------- Fig 6: OSDI diode I-V fit
+def fig_osdi_diode():
+    osdi = os.path.join(tempfile.gettempdir(), "optdiode.osdi")
+    subprocess.run([VAF, os.path.join(OPT_EX, "optdiode.va"), "-o", osdi],
+                   capture_output=True, text=True, timeout=120)
+
+    def iv(is_val):
+        body = (f"diode iv\nVd a 0 dc 0\nN1 a 0 dmod\n.model dmod optdiode is={is_val} n=1\n"
+                f".control\npre_osdi {osdi}\ndc Vd 0 0.8 0.004\n"
+                f"wrdata {{f}} abs(i(vd))\n.endc\n.end\n")
+        tmp = os.path.join(tempfile.gettempdir(), "iv.txt")
+        run(body.replace("{f}", tmp))
+        d = np.array([[float(x) for x in ln.split()] for ln in open(tmp)
+                      if ln.split() and ln.split()[0].replace('.', '', 1).replace('-', '', 1)[:1].isdigit()])
+        os.remove(tmp)
+        return d
+
+    before = iv("1e-15")          # starting guess
+    after = iv("1.2188e-14")      # fitted value
+    os.remove(osdi)
+    fig, ax = plt.subplots(figsize=(6.4, 3.8))
+    ax.semilogy(before[:, 0], np.abs(before[:, 1]), color=GREY, lw=2,
+                label="before  (is = 1e-15)")
+    ax.semilogy(after[:, 0], np.abs(after[:, 1]), color=BLUE, lw=2,
+                label="after  (is = 1.22e-14, fitted)")
+    ax.plot([0.65], [1e-3], "o", color=GREEN, ms=9, zorder=5)
+    ax.annotate("measured point:\n1 mA at 0.65 V", (0.65, 1e-3), xytext=(0.10, 3e-3),
+                color=GREEN, arrowprops=dict(arrowstyle="->", color=GREEN))
+    ax.set_xlabel("diode voltage  (V)"); ax.set_ylabel("current  (A, log scale)")
+    ax.set_title("Fitting a Verilog-A diode's is to a measured I–V point")
+    ax.legend(loc="lower right"); ax.set_ylim(1e-9, 1e-1)
+    fig.savefig(os.path.join(FIGS, "osdi_diode.png")); plt.close(fig)
+
+
 if __name__ == "__main__":
     for f in (fig_cost_bowl, fig_convergence, fig_ac_response,
-              fig_contour_2d, fig_tran_response):
+              fig_contour_2d, fig_tran_response, fig_osdi_diode):
         f(); print("wrote", f.__name__)
     print("figures in", FIGS)

@@ -29,7 +29,7 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))  # the examples/ dir, for _setup.py
-from _setup import NG as NGSPICE
+from _setup import NG as NGSPICE, VAF as OPENVAF
 
 checks = passed = 0
 def check(label, ok, detail=""):
@@ -109,6 +109,25 @@ check(f"inner analyses are suppressed by default ({quiet_banners} banner(s) for 
 o_verbose = run(d1.replace("-tol 1e-14", "-tol 1e-14 -verbose"))
 check("-verbose prints per-iteration progress",
       "best cost" in o_verbose)
+
+# [5] OSDI / Verilog-A device: fit a compiled diode's saturation current `is`
+osdi = os.path.join(HERE, "optdiode.osdi")
+subprocess.run([OPENVAF, os.path.join(HERE, "optdiode.va"), "-o", osdi],
+               capture_output=True, text=True, timeout=120)
+d5 = ("osdi diode fit\nVd a 0 dc 0.65\nN1 a 0 dmod\n.model dmod optdiode is=1e-15 n=1\n"
+      f".control\npre_osdi {osdi}\n"
+      "optimize -param @n1[is] 1e-15 1e-16 1e-12 -analysis op "
+      "-minimize (abs(i(vd))-1m)^2 -tol 1e-24\n"
+      "let icurr = abs(i(vd))\nprint icurr\n.endc\n.end\n")
+o5 = run(d5)
+if os.path.exists(osdi):
+    os.remove(osdi)
+is_fit = optval(o5, "@n1[is]")
+icurr = val(o5, "icurr")
+check(f"OSDI diode: is fitted so I(0.65V)=1mA (got is={is_fit})",
+      is_fit is not None and 1.0e-14 < is_fit < 1.5e-14, str(is_fit))
+check(f"OSDI diode: current -> 1 mA target (got {icurr})",
+      icurr is not None and abs(icurr - 1e-3) / 1e-3 < 1e-3, str(icurr))
 
 print(f"\n{'ALL PASS' if passed == checks else 'FAILURES'}: {passed}/{checks} passed")
 sys.exit(0 if passed == checks else 1)

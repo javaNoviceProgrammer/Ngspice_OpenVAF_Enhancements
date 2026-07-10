@@ -552,3 +552,6 @@ examples/ungetc_examples/ungetc_input.txt
 examples/noisetable_examples/*.osdi
 examples/noisetable_examples/_nt.cir
 examples/noisetable_examples/_nt_out.txt
+
+# optimize_examples: compiled Verilog-A models (generated from the .va sources)
+examples/optimize_examples/*.osdi

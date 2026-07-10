@@ -1,0 +1,12 @@
+// A minimal Verilog-A resistor for the `optimize` examples.
+// `r` is marked as an INSTANCE parameter (*type="instance"*) so the optimizer can
+// tune it per instance with `alter @<inst>[r]=<value>`.
+`include "disciplines.vams"
+
+module optres(p, n);
+    inout p, n;
+    electrical p, n;
+    (*type="instance"*) parameter real r = 1000.0 from (0:inf);
+    analog
+        I(p, n) <+ V(p, n) / r;
+endmodule

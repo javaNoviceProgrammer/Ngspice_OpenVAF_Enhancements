@@ -1,0 +1,14 @@
+// A minimal Verilog-A diode for the `optimize` examples (Shockley I-V).
+// `is` (saturation current) and `n` (emission coefficient) are INSTANCE
+// parameters (*type="instance"*) so the optimizer can fit them with
+// `alter @<inst>[is]=<value>`. $vt is the thermal voltage kT/q.
+`include "disciplines.vams"
+
+module optdiode(a, c);
+    inout a, c;
+    electrical a, c;
+    (*type="instance"*) parameter real is = 1e-14 from (0:inf);
+    (*type="instance"*) parameter real n  = 1.0   from (0:inf);
+    analog
+        I(a, c) <+ is * (limexp(V(a, c) / (n * $vt)) - 1.0);
+endmodule
