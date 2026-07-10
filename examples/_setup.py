@@ -82,13 +82,21 @@ _KLU_UNSUPPORTED = "not (yet) supported with 'option KLU'"
 # examples with a genuine, documented KLU limitation (not a mere skip) — each is
 # a real KLU discrepancy that Sparse 1.3 (the default) handles correctly. See
 # docs/internals/ngspice_internals/ngspice_solver_notes.md.
-#   opamp741      — the stiff transistor-level 741 transient diverges under KLU.
+#
+# There are currently none — the set is empty.
+#
 # (groundcontrib and hierbranch were XFAIL until Enhancement-116 fixed the root
 #  cause: an OSDI internal node that appears in no Jacobian entry -- e.g. an
 #  explicit `ground gnd` reference -- was given its own all-zero solver row,
 #  which made the KLU matrix structurally singular. Such nodes are now tied to
-#  ground at setup, so both pass under KLU. See osdisetup.c.)
-KLU_XFAIL = frozenset({"opamp741"})
+#  ground at setup, so both pass under KLU. See osdisetup.c.
+#  opamp741 was XFAIL because its transient used the default TRAPEZOIDAL method,
+#  which rings on the stiff transistor-level feedback slew and collapses the
+#  timestep under KLU -- an integration-method issue, not a KLU linear-solve
+#  issue. Its transient decks (run_opamp741.py) now use Gear (`.option
+#  method=gear`), which is dissipative, stable under KLU, and matches Sparse to
+#  ~8 sig figs, so it passes under BOTH solvers.)
+KLU_XFAIL = frozenset()
 
 
 def _example_stem(script):

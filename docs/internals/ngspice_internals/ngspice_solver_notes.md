@@ -32,8 +32,10 @@ sensitivity**, and since
 (`.disto`)** correctly; the only analysis still Sparse-only under KLU is
 **balanced-output pole-zero**. Reach for `.option klu`
 on large, sparse DC/AC problems where KLU's ordering and factorization are
-faster, and expect it to be
-**less robust on stiff transient edges** (see the one genuine discrepancy below).
+faster, and — because its symbolic ordering is computed once and cannot re-pivot
+dynamically like Sparse — expect it to be **less forgiving of a near-singular
+Jacobian on a stiff transient edge**, which the dissipative Gear integrator avoids
+(see the [former opamp741 discrepancy](#klu-discrepancies--all-resolved) below).
 
 ## Selecting and confirming the solver
 
@@ -97,35 +99,38 @@ sensitivity** now match Sparse exactly.
   converts the KLU matrix real↔complex around the distortion solve loop (exactly
   as `acan.c` does for AC), so `.disto` now matches Sparse bit-for-bit.
 
-## One genuine KLU discrepancy (opamp741)
+## KLU discrepancies — all resolved
 
-Beyond balanced-output pole-zero, exactly **one** example still produces a
-**different (wrong) result under KLU** than under Sparse; it is marked `KLU_XFAIL`
-in the [dual-solver harness](#the-dual-solver-test-harness) so it is exercised and
-tracked rather than silently skipped.
+Beyond balanced-output pole-zero (a genuine "not (yet) supported" *skip*, not a
+wrong result), **no** example now produces a different result under KLU than under
+Sparse. `KLU_XFAIL` is empty; the harness runs every example under both solvers and
+expects agreement.
 
-**opamp741 — stiff transient diverges.** The transistor-level
-[opamp741 example](../../../examples/opamp741_examples/) (a µA741 from ~70 lines
-of Verilog-A BJT):
+**opamp741 — was the last one; the real cause was the integration method, not
+KLU.** The transistor-level [opamp741 example](../../../examples/opamp741_examples/)
+(a µA741 from ~70 lines of Verilog-A BJT) used to abort under KLU on its large-signal
+slew test (`pulse(-5 5 …)` into the follower): output-stage transistors switch off at
+the slewing edge, their transconductances collapse, KLU declares the Jacobian
+singular (`x1.o1`/`o2`/`b34`/`cm`), the timestep collapses, and ngspice aborted at
+t ≈ 2.03 µs — while Sparse ran the full `tran 20n 80u` cleanly.
 
-- **Sparse 1.3:** the large-signal slew test (`pulse(-5 5 …)` into the follower)
-  runs the full `tran 20n 80u` cleanly (~4058 points), slew rate ≈ 0.54 V/µs.
-- **KLU:** the same run **diverges at the slewing edge** — output-stage
-  transistors switch off, their transconductances collapse, KLU declares the
-  Jacobian **singular** (nodes `x1.o1`/`o2`/`b34`/`cm`), the timestep collapses,
-  and ngspice **aborts at t ≈ 2.03 µs** (~133 points).
+The near-singular Jacobian at the edge was **manufactured by the default trapezoidal
+integrator**, which is non-dissipative and *rings* on the stiff feedback slew,
+driving the output transistors hard off. It is that ringing — not KLU's linear solve
+— that produced the collapse: Sparse's dynamic Markowitz re-ordering happened to
+survive the near-singular step where KLU's fixed symbolic ordering could not, but the
+step should never have been that singular. Switching the two transient decks to
+**Gear** (`.option method=gear`, dissipative BDF-2) damps the ringing so the edge is
+never near-singular: the slew now runs to completion under **both** solvers and the
+results agree to ~8 sig figs (final V(out) −3.3153833712 KLU vs −3.3153833649 Sparse),
+with every figure of merit (Aol, fu, PM, slew rate, offset, swing) identical between
+the solvers. opamp741 was removed from `KLU_XFAIL` accordingly.
 
-A convergence/robustness difference on a stiff circuit: KLU's fill-reducing
-symbolic ordering is computed **once** and `klu_factor` can only pivot *within* it,
-whereas Sparse re-orders **every** factorization (dynamic Markowitz threshold
-pivoting) and survives the fast edge. This was confirmed not fixable with the
-available knobs — full partial pivoting (`tol = 1.0`), disabling BTF and
-re-analyzing a fresh ordering, and the gmin-loading path (identical to Sparse —
-both skip absent diagonals) all left the abort unchanged
-([E-116](../../../enhancements_doc/Enhancement-116.md)). A real fix would need a
-**hybrid solver** that falls back to Sparse when KLU's factorization fails. (E-111's
-line search does not help either — it damps the **DC-op** Newton, not per-timepoint
-transient iterations.)
+(This corrects the earlier reading of this case as an unfixable KLU linear-solver
+limitation needing a hybrid Sparse-fallback: the earlier pivoting/ordering knobs
+[E-116] left the *trapezoidal* run's abort unchanged because they addressed the
+symptom, not the ringing that caused it. The genuinely structural KLU issues were the
+two below, which E-116 did fix.)
 
 **Two former discrepancies, now fixed (E-116).** `groundcontrib` (node-to-ground
 `V(p,gnd) <+ 1.5` read `v(p)=0` under KLU instead of `1.5`) and `hierbranch`
@@ -149,8 +154,8 @@ klu` into every ngspice deck — and prints a combined verdict:
 ```
 
 KLU's one remaining unsupported analysis (balanced-output pole-zero) is
-auto-detected and reported `SKIP`; the single `KLU_XFAIL` example above
-(`opamp741`) is expected-fail under KLU. Env escape hatches:
+auto-detected and reported `SKIP`; `KLU_XFAIL` is now empty (opamp741, its last
+member, was resolved — see above). Env escape hatches:
 `NGSPICE_SOLVER=klu|sparse` runs once under one solver; `NG_BOTH=0` disables the
 dual run.
 
@@ -166,12 +171,13 @@ bug — un-masked two more `XFAIL`s (`groundcontrib`, `hierbranch`);
 [Enhancement-115](../../../enhancements_doc/Enhancement-115.md) then fixed
 distortion, so the `analyses` example now runs **fully** under KLU; and
 [Enhancement-116](../../../enhancements_doc/Enhancement-116.md) fixed
-`groundcontrib` and `hierbranch` at their shared root cause. The only remaining
-`XFAIL` is `opamp741`.)
+`groundcontrib` and `hierbranch` at their shared root cause; and `opamp741` — the
+last `XFAIL` — was resolved by running its stiff transient under Gear rather than
+the default trapezoidal method, so **`KLU_XFAIL` is now empty**.)
 
 **Conclusion:** for DC, AC, transient, noise, single-ended pole-zero,
-sensitivity, and distortion the two solvers agree across the suite, with exactly
-one KLU exception (the stiff `opamp741` transient), while balanced-output
-pole-zero is **Sparse-1.3-only** by ngspice design. Sparse 1.3, the default,
+sensitivity, and distortion the two solvers agree across the **entire** suite
+(`KLU_XFAIL` is empty), while balanced-output pole-zero is **Sparse-1.3-only** by
+ngspice design. Sparse 1.3, the default,
 covers everything — which is why it is the default and why the dual-solver harness
 keys correctness off it.

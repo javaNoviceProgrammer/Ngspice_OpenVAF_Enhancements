@@ -107,15 +107,23 @@ def main():
     print(f"  unity-gain frequency = {fu/1e6:.3f} MHz, phase margin = {pm:.1f} deg")
 
     # ---------------- TRAN ----------------
+    # Gear (BDF) integration for the stiff transistor-level transients: the
+    # default trapezoidal method rings on the sharp feedback slew and collapses
+    # the timestep under the KLU solver. Dissipative Gear-2 (the default maxord)
+    # is stable there and matches Sparse to ~8 sig figs -- so opamp741 solves
+    # under BOTH linear solvers. DC/AC use no integration method and are
+    # unaffected.
     run("* 741 follower small step\n" + HDR +
         "vin in 0 dc 0 pulse(0 0.1 1u 10n 10n 40u 80u)\n"
-        "x1 in out out vcc vee ua741\nrl out 0 2k\n" + CTL +
+        "x1 in out out vcc vee ua741\nrl out 0 2k\n"
+        ".option method=gear\n" + CTL +
         "save v(in) v(out)\ntran 10n 40u\n"
         "wrdata results/tran_step.txt v(in) v(out)\n.endc\n.end\n", "trs")
 
     run("* 741 follower slew (big square)\n" + HDR +
         "vin in 0 dc 0 pulse(-5 5 2u 10n 10n 60u 120u)\n"
-        "x1 in out out vcc vee ua741\nrl out 0 2k\n" + CTL +
+        "x1 in out out vcc vee ua741\nrl out 0 2k\n"
+        ".option method=gear\n" + CTL +
         "save v(in) v(out)\ntran 20n 80u\n"
         "wrdata results/tran_slew.txt v(in) v(out)\n.endc\n.end\n", "trb")
     slw = wave("results/tran_slew.txt", 3)
