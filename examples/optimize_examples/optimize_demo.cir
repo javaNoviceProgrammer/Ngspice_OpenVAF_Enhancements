@@ -1,0 +1,28 @@
+Built-in optimizer demo (Enhancement-130)
+* -------------------------------------------------------------------------
+* `optimize` is a derivative-free Nelder-Mead search that varies device
+* parameters, re-runs an analysis, and minimizes an objective expression.
+*
+* Here it tunes the two resistors of a divider so that the output is 0.4 V
+* AND the total resistance is 5 k (i.e. i(V1) = -0.2 mA). The unique
+* solution is R1 = 3 k, R2 = 2 k, which the optimizer discovers from a
+* 1 k / 1 k start.
+*
+*   optimize -param <name> <init> <lo> <hi> [-param ...]
+*            -analysis <cmd> -minimize <expr> [-maxiter N] [-tol T] [-verbose]
+*
+* Add -verbose to watch the cost fall each iteration. The hundreds of inner
+* analyses are otherwise silent.
+* -------------------------------------------------------------------------
+V1 in 0 dc 1
+R1 in out 1k
+R2 out 0 1k
+
+.control
+optimize -param R1 1k 100 10k -param R2 1k 100 10k
++        -analysis op
++        -minimize (v(out)-0.4)^2 + (abs(i(v1))-0.2m)^2
++        -maxiter 400 -tol 1e-15
+print v(out) i(v1)
+.endc
+.end

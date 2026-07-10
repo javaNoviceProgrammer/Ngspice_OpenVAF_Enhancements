@@ -50,6 +50,8 @@ libfte_la_SOURCES = \
     com_history.h   \
     com_let.c   \
     com_let.h   \
+    com_optimize.c  \
+    com_optimize.h  \
     com_option.c    \
     com_option.h    \
     com_plot.c  \

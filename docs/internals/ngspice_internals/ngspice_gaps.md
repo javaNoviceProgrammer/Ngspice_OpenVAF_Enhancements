@@ -233,8 +233,14 @@ block with sampling controls.*
 |---|---|:---:|:---:|
 | Interface | Shared-library / programmatic API | ✅ | ✅ |
 | Interface | Python bindings | ✅ | ✅ |
-| Infrastructure | Built-in optimizer | ❌ | ✅ |
+| Infrastructure | Built-in optimizer | ✅ | ✅ |
 | Infrastructure | Checkpoint / restart of long runs | ⚠️ | ✅ |
+
+*The "built-in optimizer" row is ✅ since
+[Enhancement-130](../../../enhancements_doc/Enhancement-130.md): the `optimize`
+command is a derivative-free Nelder-Mead search that varies device/`alter`
+parameters, re-runs an analysis, and minimizes an objective expression in
+normalized [0,1] space — verified to reach analytic optima in 1-D and 2-D.*
 
 ## Where to invest (given the Verilog-A/OSDI side is done)
 

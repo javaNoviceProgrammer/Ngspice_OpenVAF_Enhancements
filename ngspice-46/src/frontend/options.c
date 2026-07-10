@@ -24,6 +24,7 @@ Author: 1985 Wayne A. Christopher, U. C. Berkeley CAD Group
 bool ft_acctprint = FALSE, ft_noacctprint = FALSE, ft_listprint = FALSE;
 bool ft_nodesprint = FALSE, ft_optsprint = FALSE, ft_noinitprint = FALSE;
 bool ft_norefprint = FALSE;
+bool ft_optimizing = FALSE;    /* Enhancement-130: silence per-iteration analysis chatter */
 bool ft_ngdebug = FALSE, ft_nginfo = FALSE, ft_stricterror = FALSE, ft_spiniterror = FALSE;
 bool ft_codemodelerror = FALSE, ft_osdierror = FALSE;
 

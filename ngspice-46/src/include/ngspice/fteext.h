@@ -147,6 +147,7 @@ extern bool ft_acctprint;
 extern bool ft_noacctprint;
 extern bool ft_noinitprint;
 extern bool ft_norefprint;
+extern bool ft_optimizing;      /* Enhancement-130 */
 extern bool ft_listprint;
 extern bool ft_nopage;
 extern bool ft_nomod;

@@ -122,8 +122,9 @@ CKTdoJob(CKTcircuit* ckt, int reset, TSKtask* task)
     ckt->CKTlteTrtol = task->TSKlteTrtol;
     ckt->CKTnewtrunc = task->TSKnewtrunc;
 
-    fprintf(stdout, "Doing analysis at TEMP = %f and TNOM = %f\n\n",
-        ckt->CKTtemp - CONSTCtoK, ckt->CKTnomTemp - CONSTCtoK);
+    if (!ft_optimizing)    /* Enhancement-130: quiet during optimizer iterations */
+        fprintf(stdout, "Doing analysis at TEMP = %f and TNOM = %f\n\n",
+            ckt->CKTtemp - CONSTCtoK, ckt->CKTnomTemp - CONSTCtoK);
 
     if (ckt->CKTnewtrunc)
         fprintf(stdout, "Note: Voltage based truncation error correction selected\n");

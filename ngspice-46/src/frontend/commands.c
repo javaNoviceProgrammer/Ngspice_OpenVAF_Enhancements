@@ -418,6 +418,10 @@ struct comm spcp_coms[] = {
       { 040, 040, 040, 040 }, E_DEFHMASK, 1, LOTS,
       NULL,
       "devspecs : parmname value : Alter .param parameters." },
+    { "optimize", com_optimize, TRUE, FALSE,     /* Enhancement-130 */
+      { 040, 040, 040, 040 }, E_DEFHMASK, 1, LOTS,
+      NULL,
+      "-param name init lo hi ... -analysis <cmd> -minimize <expr> [-maxiter N] [-tol T] [-verbose] : Nelder-Mead parameter optimizer." },
     { "resume", com_resume, TRUE, FALSE,
       { 0, 0, 0, 0 }, E_DEFHMASK, 0, 0,
       NULL,
