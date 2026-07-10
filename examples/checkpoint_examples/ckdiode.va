@@ -1,0 +1,18 @@
+// A minimal Verilog-A diode for the checkpoint/restart examples (Shockley I-V
+// with a small junction capacitance so the device carries reactive transient
+// state).  `is` and `n` are instance parameters so the deck can set them.
+`include "disciplines.vams"
+
+module ckdiode(a, c);
+    inout a, c;
+    electrical a, c;
+    (*type="instance"*) parameter real is  = 1e-14 from (0:inf);
+    (*type="instance"*) parameter real n   = 1.6   from (0:inf);
+    (*type="instance"*) parameter real cj0 = 1e-12 from [0:inf);
+    real id, qd;
+    analog begin
+        id = is * (limexp(V(a, c) / (n * $vt)) - 1.0);
+        qd = cj0 * V(a, c);                 // simple linear junction charge
+        I(a, c) <+ id + ddt(qd);
+    end
+endmodule

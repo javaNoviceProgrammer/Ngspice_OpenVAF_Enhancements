@@ -422,6 +422,14 @@ struct comm spcp_coms[] = {
       { 040, 040, 040, 040 }, E_DEFHMASK, 1, LOTS,
       NULL,
       "-param name init lo hi ... -analysis <cmd> -minimize <expr> [-maxiter N] [-tol T] [-verbose] : Nelder-Mead parameter optimizer." },
+    { "savestate", com_savestate, FALSE, TRUE,   /* Enhancement-131 */
+      { 1, 040000, 040000, 040000 }, E_DEFHMASK, 1, 1,
+      NULL,
+      "file : Save the current transient state to a checkpoint file." },
+    { "loadstate", com_loadstate, FALSE, TRUE,   /* Enhancement-131 */
+      { 1, 040000, 040000, 040000 }, E_DEFHMASK, 1, 1,
+      NULL,
+      "file : Restore a transient checkpoint and continue the .tran run." },
     { "resume", com_resume, TRUE, FALSE,
       { 0, 0, 0, 0 }, E_DEFHMASK, 0, 0,
       NULL,

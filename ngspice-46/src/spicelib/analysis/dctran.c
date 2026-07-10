@@ -117,6 +117,78 @@ DCtran(CKTcircuit *ckt,
 #if defined SHARED_MODULE
     int redostep;
 #endif
+    if(ckt->CKTcheckpoint) {
+        /* Enhancement-131: continue a transient run from a checkpoint that was
+           restored from disk (see com_loadstate() in com_checkpoint.c).  The
+           restored circuit already carries the saved CKTtime, CKTdelta,
+           CKTstates[], CKTrhsOld and integration order, so -- unlike a fresh
+           run -- we must NOT reset them or redo the DC operating point.  Unlike
+           the in-memory `resume` path below we also cannot 666-relink an
+           existing output plot (there is none across a reload), so we open a
+           FRESH plot exactly as the restart branch does, then jump straight
+           into the time-stepping loop. */
+        ckt->CKTcheckpoint = 0;             /* one-shot */
+        ckt->CKTmode = (ckt->CKTmode & MODEUIC) | MODETRAN | MODEINITPRED;
+        INIT_STATS();
+        firsttime = 0;
+        if(ckt->CKTminBreak == 0)
+            ckt->CKTminBreak = ckt->CKTmaxStep * 5e-5;
+
+#ifdef XSPICE
+        /* The in-memory `resume` inherits these from the original run; a
+           cross-session restore starts a fresh process, so initialise the
+           XSPICE temporary-breakpoint markers (otherwise the stepping loop
+           forces CKTdelta to breakpoint.current - CKTtime = -CKTtime). */
+        g_mif_info.circuit.anal_type = MIF_DC;
+        g_mif_info.breakpoint.current = 1.0e30;
+        g_mif_info.breakpoint.last    = 1.0e30;
+#endif
+
+        /* Build a fresh output plot for the continuation. */
+        error = CKTnames(ckt, &numNames, &nameList);
+        if(error) return(error);
+        SPfrontEnd->IFnewUid (ckt, &timeUid, NULL, "time", UID_OTHER, NULL);
+        error = SPfrontEnd->OUTpBeginPlot (ckt, ckt->CKTcurJob,
+                                           ckt->CKTcurJob->JOBname,
+                                           timeUid, IF_REAL,
+                                           numNames, nameList, IF_REAL,
+                                           &(job->TRANplot));
+        tfree(nameList);
+        if(error) return(error);
+
+        if (ckt->CKTsoaCheck)
+            error = CKTsoaInit();
+
+        /* Fix up the breakpoint list for the continuation.  Drop any restored
+           breakpoints at or before the resume time (they are in the past and
+           would yield a negative time step); keep the genuine future ones (e.g.
+           pending source edges).  Then guarantee the (possibly extended) final
+           time is present and that at least two entries exist -- the stepping
+           loop reads CKTbreaks[1].  Sources re-schedule their own future edges
+           as the run proceeds. */
+        if(ckt->CKTbreaks != NULL && ckt->CKTbreakSize > 0) {
+            int nb, w = 0;
+            for(nb = 0; nb < ckt->CKTbreakSize; nb++)
+                if(ckt->CKTbreaks[nb] > ckt->CKTtime + ckt->CKTdelmin)
+                    ckt->CKTbreaks[w++] = ckt->CKTbreaks[nb];
+            ckt->CKTbreakSize = w;
+        }
+        if(ckt->CKTbreaks == NULL || ckt->CKTbreakSize < 1) {
+            if(ckt->CKTbreaks) FREE(ckt->CKTbreaks);
+            ckt->CKTbreaks = TMALLOC(double, 2);
+            if(ckt->CKTbreaks == NULL) return(E_NOMEM);
+            ckt->CKTbreaks[0] = ckt->CKTfinalTime;
+            ckt->CKTbreaks[1] = ckt->CKTfinalTime + ckt->CKTmaxStep;
+            ckt->CKTbreakSize = 2;
+        } else {
+            if(ckt->CKTfinalTime > ckt->CKTtime)
+                CKTsetBreak(ckt, ckt->CKTfinalTime);
+            if(ckt->CKTbreakSize < 2)
+                CKTsetBreak(ckt, ckt->CKTfinalTime + ckt->CKTmaxStep);
+        }
+
+        goto resume;
+    }
     if(restart || ckt->CKTtime == 0) {
         /* dctran() is entered here upon starting transient simulation
            with time 0 and restart 1.
