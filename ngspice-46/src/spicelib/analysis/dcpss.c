@@ -152,6 +152,273 @@ pss_jacobian_report(CKTcircuit *ckt, PSSan *job)
 }
 
 
+/* Enhancement-121: dense complex linear solve A x = b (Gaussian elimination with
+ * partial pivoting), used for the small harmonic conversion matrix below. A is
+ * n x n row-major in split real/imag arrays (Ar, Ai); b is length n in (br, bi)
+ * and is overwritten with the solution x. Returns 0 on success, 1 if singular.
+ * The conversion matrix is (2K+1)*msize -- tiny for the circuits PAC targets, so
+ * a direct dense factor is simplest and exact; a production PAC on large circuits
+ * would assemble this as a sparse block system instead. */
+static int
+pss_csolve(int n, double *Ar, double *Ai, double *br, double *bi)
+{
+    int i, j, k, piv;
+
+    for (k = 0; k < n; k++) {
+        /* partial pivot: largest |A[i][k]| in the remaining column */
+        double amax = -1.0;
+        piv = k;
+        for (i = k; i < n; i++) {
+            double m = Ar[i*n+k]*Ar[i*n+k] + Ai[i*n+k]*Ai[i*n+k];
+            if (m > amax) { amax = m; piv = i; }
+        }
+        if (amax <= 0.0)
+            return 1;                       /* singular */
+        if (piv != k) {                     /* swap rows piv <-> k */
+            for (j = 0; j < n; j++) {
+                double t;
+                t = Ar[piv*n+j]; Ar[piv*n+j] = Ar[k*n+j]; Ar[k*n+j] = t;
+                t = Ai[piv*n+j]; Ai[piv*n+j] = Ai[k*n+j]; Ai[k*n+j] = t;
+            }
+            { double t; t = br[piv]; br[piv] = br[k]; br[k] = t;
+                       t = bi[piv]; bi[piv] = bi[k]; bi[k] = t; }
+        }
+        /* eliminate below the pivot */
+        {
+            double dr = Ar[k*n+k], di = Ai[k*n+k], den = dr*dr + di*di;
+            for (i = k+1; i < n; i++) {
+                double fr = (Ar[i*n+k]*dr + Ai[i*n+k]*di) / den;   /* A[i][k]/A[k][k] */
+                double fi = (Ai[i*n+k]*dr - Ar[i*n+k]*di) / den;
+                for (j = k; j < n; j++) {
+                    double pr = fr*Ar[k*n+j] - fi*Ai[k*n+j];
+                    double pi = fr*Ai[k*n+j] + fi*Ar[k*n+j];
+                    Ar[i*n+j] -= pr; Ai[i*n+j] -= pi;
+                }
+                { double pr = fr*br[k] - fi*bi[k];
+                  double pi = fr*bi[k] + fi*br[k];
+                  br[i] -= pr; bi[i] -= pi; }
+            }
+        }
+    }
+    /* back-substitution */
+    for (k = n-1; k >= 0; k--) {
+        double sr = br[k], si = bi[k];
+        double dr, di, den;
+        for (j = k+1; j < n; j++) {
+            sr -= Ar[k*n+j]*br[j] - Ai[k*n+j]*bi[j];
+            si -= Ar[k*n+j]*bi[j] + Ai[k*n+j]*br[j];
+        }
+        dr = Ar[k*n+k]; di = Ai[k*n+k]; den = dr*dr + di*di;
+        br[k] = (sr*dr + si*di) / den;
+        bi[k] = (si*dr - sr*di) / den;
+    }
+    return 0;
+}
+
+
+/* Enhancement-121: periodic AC (PAC) conversion-matrix engine.
+ *
+ * A circuit linearized about its PSS steady state has a T-periodic Jacobian, so a
+ * small tone at f_in produces responses not only at f_in but at every sideband
+ * f_in + k*f0 (k = -M..M). Collecting the harmonics G_k, C_k of the periodic
+ * Jacobian (E-120, now for every matrix entry, not just the osc diagonal) into a
+ * block matrix gives the harmonic conversion matrix H, block (n,m):
+ *
+ *     H_{nm} = G_{n-m} + j*omega_m*C_{n-m},   omega_m = 2*pi*(f_in + m*f0)
+ *
+ * of size (2M+1)*N. Solving H X = B for a stimulus B injected at one sideband
+ * yields the responses X at all sidebands -- the conversion gains. This routine
+ * assembles H, injects a unit current at the osc node in the 0-th sideband, solves,
+ * and reports the response magnitude at the -1/0/+1 sidebands. For a *linear*
+ * circuit the off-diagonal harmonics G_k,C_k (k!=0) vanish, so H is block-diagonal,
+ * the 0-block is exactly the ordinary AC matrix at f_in, and the result is the AC
+ * driving-point response at f_in with zero conversion to the other sidebands --
+ * the verifiable slice. A pumped nonlinear circuit fills the off-diagonal blocks
+ * and mixes energy between sidebands (real conversion gain). */
+static void
+pss_pac_report(CKTcircuit *ckt, PSSan *job)
+{
+    long   P = job->PSSopPoints, s;
+    int    N = job->PSSopMsize, ns = job->PSSopNumStates;
+    int    onode = job->PSSoscNode ? job->PSSoscNode->number : 0;
+    int    K = ckt->CKTharms;
+    int    M, H, Ntot, nnz, i, r, c, e, ni, mi, n, mm, h;
+    double f0 = job->PSSopFreq, f_in;
+    int    *rr, *cc;
+    double *Gt, *Ct, *Gmr, *Gmi, *Cmr, *Cmi, *cw, *sw;
+    double *Ar, *Ai, *Br, *Bi;
+
+    if (onode <= 0 || onode > N || P <= 0 || K <= 0 || f0 <= 0.0)
+        return;
+
+    /* sidebands each side; conversion matrix harmonics span -2M..2M */
+    M = (K - 1 < 3) ? (K - 1) : 3;
+    if (M < 1)
+        return;
+    H = 2 * M;
+    Ntot = (2*M + 1) * N;
+    if (Ntot > 400)                 /* dense-solve guard: PAC targets small blocks */
+        return;
+    f_in = 0.5 * f0;                /* probe input frequency (offset from harmonics) */
+
+    /* matrix must be in complex mode so CKTacLoad's SMPcClear clears the imag part
+     * (else C(t) accumulates across samples -- see E-120). */
+#ifdef KLU
+    if (ckt->CKTmatrix->CKTkluMODE) {
+        if (!ckt->CKTmatrix->SMPkluMatrix->KLUmatrixIsComplex) {
+            for (i = 0; i < DEVmaxnum; i++)
+                if (DEVices[i] && DEVices[i]->DEVbindCSCComplex && ckt->CKThead[i])
+                    DEVices[i]->DEVbindCSCComplex(ckt->CKThead[i], ckt);
+            ckt->CKTmatrix->SMPkluMatrix->KLUmatrixIsComplex = KLUMatrixComplex;
+        }
+    } else
+#endif
+        spSetComplex(ckt->CKTmatrix->SPmatrix);
+
+    /* establish the matrix structure: stamp G + jC at sample 0's bias */
+    for (i = 1; i <= N; i++)
+        ckt->CKTrhsOld[i] = job->PSSopVoltages[(i - 1)];
+    ckt->CKTrhsOld[0] = 0.0;
+    if (ns > 0)
+        memcpy(ckt->CKTstate0, job->PSSopStates, (size_t)ns * sizeof(double));
+    ckt->CKTmode = (ckt->CKTmode & MODEUIC) | MODEDCOP | MODEINITSMSIG;
+    CKTload(ckt);
+    ckt->CKTomega = 1.0;
+    ckt->CKTmode = (ckt->CKTmode & MODEUIC) | MODEAC;
+    CKTacLoad(ckt);
+
+    /* enumerate the structural nonzeros (SMPfindElt does not create) */
+    nnz = 0;
+    for (r = 1; r <= N; r++)
+        for (c = 1; c <= N; c++)
+            if (SMPfindElt(ckt->CKTmatrix, r, c, 0))
+                nnz++;
+    if (nnz <= 0)
+        return;
+    rr = TMALLOC(int, nnz);
+    cc = TMALLOC(int, nnz);
+    e = 0;
+    for (r = 1; r <= N; r++)
+        for (c = 1; c <= N; c++)
+            if (SMPfindElt(ckt->CKTmatrix, r, c, 0)) { rr[e] = r; cc[e] = c; e++; }
+
+    /* sample every nonzero of the periodic Jacobian G(t) + jC(t) over one period */
+    Gt = TMALLOC(double, (size_t)nnz * (size_t)P);
+    Ct = TMALLOC(double, (size_t)nnz * (size_t)P);
+    for (s = 0; s < P; s++) {
+        for (i = 1; i <= N; i++)
+            ckt->CKTrhsOld[i] = job->PSSopVoltages[(i - 1) + s * N];
+        ckt->CKTrhsOld[0] = 0.0;
+        if (ns > 0)
+            memcpy(ckt->CKTstate0, job->PSSopStates + (size_t)s * (size_t)ns,
+                   (size_t)ns * sizeof(double));
+        ckt->CKTmode = (ckt->CKTmode & MODEUIC) | MODEDCOP | MODEINITSMSIG;
+        CKTload(ckt);
+        ckt->CKTomega = 1.0;
+        ckt->CKTmode = (ckt->CKTmode & MODEUIC) | MODEAC;
+        CKTacLoad(ckt);
+        for (e = 0; e < nnz; e++) {
+            double *el = (double *) SMPfindElt(ckt->CKTmatrix, rr[e], cc[e], 0);
+            Gt[(size_t)e * (size_t)P + (size_t)s] = el ? el[0] : 0.0;
+            Ct[(size_t)e * (size_t)P + (size_t)s] = el ? el[1] : 0.0;
+        }
+    }
+
+    /* complex DFT of each entry: harmonics h = 0..H (G_{-h} = conj(G_h) for real
+     * G(t)). Uniform sampling over the period, so index-based twiddles suffice. */
+    cw = TMALLOC(double, (size_t)(H + 1) * (size_t)P);
+    sw = TMALLOC(double, (size_t)(H + 1) * (size_t)P);
+    for (h = 0; h <= H; h++)
+        for (s = 0; s < P; s++) {
+            double ang = 2.0 * M_PI * (double)h * (double)s / (double)P;
+            cw[(size_t)h * (size_t)P + (size_t)s] = cos(ang);
+            sw[(size_t)h * (size_t)P + (size_t)s] = sin(ang);
+        }
+    Gmr = TMALLOC(double, (size_t)nnz * (size_t)(H + 1));
+    Gmi = TMALLOC(double, (size_t)nnz * (size_t)(H + 1));
+    Cmr = TMALLOC(double, (size_t)nnz * (size_t)(H + 1));
+    Cmi = TMALLOC(double, (size_t)nnz * (size_t)(H + 1));
+    for (e = 0; e < nnz; e++)
+        for (h = 0; h <= H; h++) {
+            double gr = 0, gi = 0, cr = 0, ci = 0;
+            for (s = 0; s < P; s++) {
+                double cs = cw[(size_t)h * (size_t)P + (size_t)s];
+                double sn = sw[(size_t)h * (size_t)P + (size_t)s];
+                double gv = Gt[(size_t)e * (size_t)P + (size_t)s];
+                double cv = Ct[(size_t)e * (size_t)P + (size_t)s];
+                gr += gv * cs;  gi -= gv * sn;
+                cr += cv * cs;  ci -= cv * sn;
+            }
+            Gmr[(size_t)e * (size_t)(H + 1) + (size_t)h] = gr / (double)P;
+            Gmi[(size_t)e * (size_t)(H + 1) + (size_t)h] = gi / (double)P;
+            Cmr[(size_t)e * (size_t)(H + 1) + (size_t)h] = cr / (double)P;
+            Cmi[(size_t)e * (size_t)(H + 1) + (size_t)h] = ci / (double)P;
+        }
+
+    /* assemble the (2M+1)N conversion matrix H_{nm} = G_{n-m} + j*omega_m*C_{n-m} */
+    Ar = TMALLOC(double, (size_t)Ntot * (size_t)Ntot);
+    Ai = TMALLOC(double, (size_t)Ntot * (size_t)Ntot);
+    memset(Ar, 0, (size_t)Ntot * (size_t)Ntot * sizeof(double));
+    memset(Ai, 0, (size_t)Ntot * (size_t)Ntot * sizeof(double));
+    for (ni = 0; ni <= 2*M; ni++) {
+        n = ni - M;
+        for (mi = 0; mi <= 2*M; mi++) {
+            int dm;
+            double omega;
+            mm = mi - M;
+            dm = n - mm;                                   /* harmonic index, -H..H */
+            omega = 2.0 * M_PI * (f_in + (double)mm * f0);
+            for (e = 0; e < nnz; e++) {
+                double gr, gi, cr, ci;
+                size_t hi = (size_t)e * (size_t)(H + 1) + (size_t)abs(dm);
+                gr = Gmr[hi]; gi = Gmi[hi]; cr = Cmr[hi]; ci = Cmi[hi];
+                if (dm < 0) { gi = -gi; ci = -ci; }        /* conjugate for -h */
+                {
+                    double er = gr - omega * ci;           /* (g) + j*omega*(c) */
+                    double ei = gi + omega * cr;
+                    size_t row = (size_t)ni * (size_t)N + (size_t)(rr[e] - 1);
+                    size_t col = (size_t)mi * (size_t)N + (size_t)(cc[e] - 1);
+                    Ar[row * (size_t)Ntot + col] += er;
+                    Ai[row * (size_t)Ntot + col] += ei;
+                }
+            }
+        }
+    }
+
+    /* stimulus: unit current at the osc node in the 0-th sideband */
+    Br = TMALLOC(double, Ntot);
+    Bi = TMALLOC(double, Ntot);
+    memset(Br, 0, (size_t)Ntot * sizeof(double));
+    memset(Bi, 0, (size_t)Ntot * sizeof(double));
+    Br[(size_t)M * (size_t)N + (size_t)(onode - 1)] = 1.0;
+
+    if (pss_csolve(Ntot, Ar, Ai, Br, Bi) == 0) {
+        /* expected linear driving-point |Z| from the osc-node diagonal harmonics */
+        double g0 = 0, c0 = 0, zexp;
+        for (e = 0; e < nnz; e++)
+            if (rr[e] == onode && cc[e] == onode) {
+                g0 = Gmr[(size_t)e * (size_t)(H + 1)];     /* h = 0 */
+                c0 = Cmr[(size_t)e * (size_t)(H + 1)];
+            }
+        zexp = 1.0 / hypot(g0, 2.0 * M_PI * f_in * c0);
+        fprintf(stderr, "PAC conversion matrix: f_in = %.6g Hz, %d sidebands, "
+                        "unit I at osc node\n", f_in, 2*M + 1);
+        for (n = -1; n <= 1; n++) {
+            size_t idx = (size_t)(n + M) * (size_t)N + (size_t)(onode - 1);
+            double mag = hypot(Br[idx], Bi[idx]);
+            fprintf(stderr, "  sideband %+d (%.6g Hz): |V| = %.6g\n",
+                    n, f_in + (double)n * f0, mag);
+        }
+        fprintf(stderr, "  expected sideband-0 driving-point |Z| = %.6g Ohm "
+                        "(linear, from G0/C0)\n", zexp);
+    }
+
+    FREE(rr); FREE(cc); FREE(Gt); FREE(Ct);
+    FREE(cw); FREE(sw); FREE(Gmr); FREE(Gmi); FREE(Cmr); FREE(Cmi);
+    FREE(Ar); FREE(Ai); FREE(Br); FREE(Bi);
+}
+
+
 int
 DCpss(CKTcircuit *ckt,
        int restart)   /* forced restart flag */
@@ -1151,6 +1418,10 @@ DCpss(CKTcircuit *ckt,
                 /* Enhancement-120: report the periodic small-signal Jacobian
                  * harmonics at the osc node, built from the retained op-point. */
                 pss_jacobian_report (ckt, job) ;
+
+                /* Enhancement-121: assemble the harmonic conversion matrix from
+                 * the full periodic Jacobian and solve it -- the PAC engine. */
+                pss_pac_report (ckt, job) ;
             }
             /****************************/
 

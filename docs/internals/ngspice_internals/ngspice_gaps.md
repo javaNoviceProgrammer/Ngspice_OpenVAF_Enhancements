@@ -86,7 +86,7 @@ solver-by-solver sweep of the example suite:
 | RF | Periodic steady state (PSS) | ✅¹ | ✅ |
 | RF | Harmonic Balance (HB) | ❌ | ✅ |
 | RF | Periodic / phase noise (Pnoise) | ❌ | ✅ |
-| RF | Periodic AC (PAC, conversion gain) | ❌ | ✅ |
+| RF | Periodic AC (PAC, conversion gain) | ⚠️² | ✅ |
 | RF | Periodic transfer function (PXF) | ❌ | ✅ |
 | RF | Periodic S-parameters (PSP) | ❌ | ✅ |
 | RF | Quasi-periodic / multi-tone (QPSS / QPAC) | ❌ | ✅ |
@@ -102,6 +102,20 @@ reused refactor pivots — now a full re-factor is forced each PSS step under KL
 It is still a brute-force shooting method and remains the foundation for the
 periodic small-signal analyses below. HB exists only as a `WITH_HB` stub that
 returns "unsupported".*
+
+*² PAC is ⚠️ (**engine present, command pending**). The periodic small-signal
+substrate is now built and verified: [Enhancement-119](../../../enhancements_doc/Enhancement-119.md)
+retains the periodic operating point,
+[Enhancement-120](../../../enhancements_doc/Enhancement-120.md) extracts the
+periodic Jacobian harmonics `G_k`, `C_k`, and
+[Enhancement-121](../../../enhancements_doc/Enhancement-121.md) assembles the
+`(2M+1)N` **harmonic conversion matrix** `H_{nm}=G_{n−m}+jω_m·C_{n−m}` and solves
+it (dense complex LU) — the numerical heart of PAC/pnoise/PXF. It is verified on
+the linear RC: the sideband-0 response reproduces the AC driving-point impedance
+at `f_in` to six figures and the ±1 sidebands carry no spurious conversion. What
+remains is the user-facing `.pac` command that sweeps `f_in` and writes the
+conversion gains as an output vector (and then reusing the same solve for pnoise
+and PXF).*
 
 ## Performance & scale
 
@@ -176,11 +190,14 @@ leverage on the existing strength × differentiation × tractability:
    [Enhancement-119](../../../enhancements_doc/Enhancement-119.md) retains the
    periodic operating point (voltages + device states per sample) and
    [Enhancement-120](../../../enhancements_doc/Enhancement-120.md) turns it into
-   the periodic Jacobian harmonics `G_k`, `C_k` — the substrate and the blocks
-   these analyses are built from. The device/OSDI side already supplies the rest
-   (noise-source topology, operating-point- and frequency-dependent `load_noise`);
-   the remaining work is the conversion-matrix solve + `.pac` command (E-121).
-   Genuinely novel in open source.
+   the periodic Jacobian harmonics `G_k`, `C_k`, and
+   [Enhancement-121](../../../enhancements_doc/Enhancement-121.md) assembles those
+   into the `(2M+1)N` harmonic conversion matrix and solves it — the numerical
+   engine of PAC/pnoise/PXF, verified against the exact linear driving-point
+   response. The device/OSDI side already supplies the rest (noise-source
+   topology, operating-point- and frequency-dependent `load_noise`); the remaining
+   work is the user-facing `.pac` command (sweep `f_in`, write conversion gains)
+   and then reusing the same solve for pnoise/PXF. Genuinely novel in open source.
 2. **Convergence robustness** — coordinated accuracy presets (`errpreset`)
    **landed in [Enhancement-110](../../../enhancements_doc/Enhancement-110.md)**;
    the remaining piece is pseudo-transient / dynamic-gmin homotopy. Unglamorous

@@ -42,3 +42,25 @@ deck takes ~1–2 minutes and is intentionally run under a single linear solver.
 
 To see the full shooting-loop diagnostics, add `set ngdebug` in the `.control`
 block before `run`.
+
+## RF periodic small-signal suite (Enhancements 119–121)
+
+Built on the retained PSS operating point, `rc_pss.cir` also exercises the periodic
+small-signal chain that leads to periodic AC (PAC):
+
+- **E-119** retains the converged periodic operating point (node voltages + device
+  states per sample) on the analysis job instead of freeing it.
+- **E-120** turns it into the harmonics `G_k`, `C_k` of the periodically
+  time-varying device Jacobian `G(t) = ∂I/∂V`, `C(t) = ∂Q/∂V`.
+- **E-121** assembles those harmonics into the **harmonic conversion matrix**
+  `H_{nm} = G_{n−m} + j·ω_m·C_{n−m}` (size `(2M+1)N`) and solves it — injecting a
+  unit current at the osc node in the 0-th sideband and reporting the response at
+  each sideband `f_in + k·f0`. This is the numerical engine of PAC / periodic
+  noise / PXF.
+
+For the linear RC the conversion matrix is block-diagonal, so the sideband-0
+response equals the ordinary AC driving-point impedance at `f_in = f0/2`
+(`|Z| = 1/|1/R + j·2π·f_in·C| = 303.3 Ω`) and the ±1 sidebands carry no converted
+energy — exactly what a non-mixing circuit should show. `verify_rcpss.py` checks
+all of this. A pumped nonlinear circuit fills the off-diagonal blocks and produces
+real conversion gain through the same path.

@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """
-verify_rcpss.py -- verifies periodic steady state (PSS) through the committed
-ngspice: Enhancement-117 (PSS shipped + hardened) and Enhancement-118 (PSS runs
-under KLU).
+verify_rcpss.py -- verifies periodic steady state (PSS) and the RF periodic
+small-signal suite built on it through the committed ngspice: Enhancement-117 (PSS
+shipped + hardened), Enhancement-118 (PSS runs under KLU), Enhancement-119 (the
+periodic operating point is retained), Enhancement-120 (periodic Jacobian
+harmonics G_k, C_k), and Enhancement-121 (the PAC conversion-matrix engine --
+assemble (2M+1)N harmonic blocks and solve).
 
 PSS was experimental: gated behind `--enable-pss` (so `.pss` was unimplemented in
 every shipped build) and, when enabled, it flooded stderr with ~230 lines of
@@ -135,6 +138,38 @@ check(f"[E-120] C(t) DC capacitance == C1 = {C:.4g} F (got {cdc})",
       cdc is not None and abs(cdc - C) / C < 0.01, str(cdc))
 check(f"[E-120] C(t) is time-invariant -- harmonics ~ 0 (max |Ck| = {ch})",
       ch is not None and ch < 1e-12, str(ch))
+
+# --- Enhancement-121: PAC conversion matrix. The full periodic Jacobian G_k, C_k
+#     is assembled into the (2M+1)N harmonic conversion matrix
+#         H_{nm} = G_{n-m} + j*omega_m*C_{n-m},  omega_m = 2*pi*(f_in + m*f0)
+#     and solved with a unit current injected at the osc node in the 0-th sideband.
+#     For this LINEAR RC the off-diagonal harmonic blocks (G_k, C_k, k!=0) vanish,
+#     so H is block-diagonal: the 0-block is exactly the AC matrix at f_in, and the
+#     solve returns the AC driving-point impedance at f_in = f0/2 with NO conversion
+#     to the +-1 sidebands. Analytic driving-point |Z| = 1/|1/R + j*2*pi*f_in*C|. ---
+f_in = 0.5 * f0
+Zana = 1.0 / math.hypot(1.0 / R, 2 * math.pi * f_in * C)   # ~303.3 Ohm at 0.5 MHz
+mpac = re.search(r"PAC conversion matrix:\s*f_in\s*=\s*([-\d.eE+]+)\s*Hz", slog)
+check("[E-121] PAC conversion matrix is assembled and solved", mpac is not None)
+sb = {}
+for idx, _freq, mag in re.findall(
+        r"sideband\s*([+-]\d+)\s*\(([-\d.eE+]+)\s*Hz\):\s*\|V\|\s*=\s*([-\d.eE+]+)", slog):
+    sb[int(idx)] = float(mag)
+mzexp = re.search(r"driving-point\s*\|Z\|\s*=\s*([-\d.eE+]+)\s*Ohm", slog)
+zexp = float(mzexp.group(1)) if mzexp else None
+check(f"[E-121] input frequency == f0/2 = {f_in:.4g} Hz",
+      mpac is not None and abs(float(mpac.group(1)) - f_in) / f_in < 1e-6,
+      mpac.group(1) if mpac else None)
+check("[E-121] all three sidebands (-1, 0, +1) reported", set(sb) >= {-1, 0, 1})
+check(f"[E-121] reported driving-point |Z| == analytic {Zana:.4g} Ohm (got {zexp})",
+      zexp is not None and abs(zexp - Zana) / Zana < 0.02, str(zexp))
+check(f"[E-121] PAC sideband-0 |V| == driving-point |Z| = {Zana:.4g} Ohm "
+      f"(got {sb.get(0)})",
+      0 in sb and abs(sb[0] - Zana) / Zana < 0.02, str(sb.get(0)))
+conv = max(sb.get(1, 0.0), sb.get(-1, 0.0))
+check(f"[E-121] linear circuit -> no conversion to +-1 sidebands "
+      f"(max |V_sb| = {conv:.3g} << sideband-0 {sb.get(0, 0):.4g})",
+      0 in sb and sb[0] > 0 and conv / sb[0] < 1e-6, f"conv {conv}")
 
 # --- KLU (Enhancement-118: PSS now converges under KLU via forced re-factor) ---
 klog = run("klu")
