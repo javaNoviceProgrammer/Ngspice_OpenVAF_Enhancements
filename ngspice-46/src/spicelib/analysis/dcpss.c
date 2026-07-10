@@ -12,6 +12,7 @@
 #include "ngspice/devdefs.h"   /* Enhancement-120: DEVbindCSCComplex for the KLU AC stamp */
 #include "ngspice/smpdefs.h"   /* Enhancement-120: SMPfindElt to read the Jacobian */
 #include "ngspice/spmatrix.h"  /* Enhancement-120: spSetComplex (Sparse complex mode) */
+#include "ngspice/noisedef.h"  /* Enhancement-124: NOISEAN/Ndata + CKTnoise for pnoise */
 #include "ngspice/sperror.h"
 #include "ngspice/fteext.h"
 
@@ -620,6 +621,204 @@ pac_sweep(CKTcircuit *ckt, PSSan *job)
 
     SPfrontEnd->OUTendPlot(pacPlot);
     FREE(Xr); FREE(Xi);
+    pac_free_harmonics(&hd);
+}
+
+
+/* Enhancement-124: solve the ADJOINT conversion system Hᵀ Psi = e_{out,0}. Psi
+ * then holds, for every (node j, sideband k), the transfer from a unit injection
+ * at (j,k) to the output at sideband 0 -- the conversion transimpedance the noise
+ * folding needs. Assembles Hᵀ (the transpose of the pac_solve_at matrix) and puts a
+ * unit at the output node in the 0-th sideband. Returns 0 on success, 1 if singular. */
+static int
+pac_solve_adjoint(struct pac_harm *hd, double f0, double f_in, int outNode,
+                  double *Psr, double *Psi)
+{
+    int    N = hd->N, M = hd->M, H = hd->H, nnz = hd->nnz, Ntot = hd->Ntot;
+    int    ni, mi, n, mm, e, rc;
+    double *Ar, *Ai;
+
+    Ar = TMALLOC(double, (size_t)Ntot * (size_t)Ntot);
+    Ai = TMALLOC(double, (size_t)Ntot * (size_t)Ntot);
+    memset(Ar, 0, (size_t)Ntot * (size_t)Ntot * sizeof(double));
+    memset(Ai, 0, (size_t)Ntot * (size_t)Ntot * sizeof(double));
+    for (ni = 0; ni <= 2*M; ni++) {
+        n = ni - M;
+        for (mi = 0; mi <= 2*M; mi++) {
+            int dm;
+            double omega;
+            mm = mi - M;
+            dm = n - mm;
+            omega = 2.0 * M_PI * (f_in + (double)mm * f0);
+            for (e = 0; e < nnz; e++) {
+                double gr, gi, cr, ci;
+                size_t hi = (size_t)e * (size_t)(H + 1) + (size_t)abs(dm);
+                gr = hd->Gmr[hi]; gi = hd->Gmi[hi];
+                cr = hd->Cmr[hi]; ci = hd->Cmi[hi];
+                if (dm < 0) { gi = -gi; ci = -ci; }
+                {
+                    double er = gr - omega * ci;
+                    double ei = gi + omega * cr;
+                    size_t row = (size_t)ni * (size_t)N + (size_t)(hd->rr[e] - 1);
+                    size_t col = (size_t)mi * (size_t)N + (size_t)(hd->cc[e] - 1);
+                    Ar[col * (size_t)Ntot + row] += er;   /* transpose: [col][row] */
+                    Ai[col * (size_t)Ntot + row] += ei;
+                }
+            }
+        }
+    }
+
+    memset(Psr, 0, (size_t)Ntot * sizeof(double));
+    memset(Psi, 0, (size_t)Ntot * sizeof(double));
+    Psr[(size_t)M * (size_t)N + (size_t)(outNode - 1)] = 1.0;
+    rc = pss_csolve(Ntot, Ar, Ai, Psr, Psi);
+    FREE(Ar); FREE(Ai);
+    return rc;
+}
+
+
+/* Enhancement-124: periodic noise (.pnoise). Runs off the retained operating point:
+ * folds every device's noise through the conversion-matrix adjoint over all
+ * sidebands to get the output noise spectrum. The device noise routines
+ * (DEVnoise/NevalSrc, OSDI load_noise) compute S*|dTransimp|^2 reading the
+ * transimpedance from CKTrhs/CKTirhs -- so loading the sideband-k adjoint into
+ * CKTrhs and summing over k = -M..M folds the noise exactly. A local NOISEAN job
+ * gives those routines their expected context. For a linear (block-diagonal)
+ * circuit only sideband 0 contributes, so the result reduces to ordinary .noise. */
+static void
+pnoise_sweep(CKTcircuit *ckt, PSSan *job)
+{
+    int    N = job->PSSopMsize, ns = job->PSSopNumStates;
+    int    outNode = job->PnOutNode ? job->PnOutNode->number : 0;
+    int    M, i, j, k, np = job->PACpoints, stepType = job->PACstepType, error;
+    double f0 = job->PSSopFreq, fstart = job->PACfStart, fstop = job->PACfStop;
+    double freq, mult, linstep;
+    struct pac_harm hd;
+    double *Psr, *Psi, *Xr, *Xi;
+    NOISEAN nj;
+    Ndata   data;
+    JOB    *oldJob;
+    IFuid   freqUid, nlist[2];
+    runDesc *plot = NULL;
+
+    if (outNode <= 0 || outNode > N || f0 <= 0.0 || fstart <= 0.0 ||
+        fstop < fstart || np < 1)
+        return;
+    M = pac_choose_M(ckt, job);
+    if (M < 1) {
+        fprintf(stderr, "PNOISE: conversion matrix too large -- sweep skipped\n");
+        return;
+    }
+    if (pac_extract_harmonics(ckt, job, M, &hd))
+        return;
+
+    /* set the device bias to the (sample-0) operating point so each noise PSD
+     * (conductances, dc currents) is evaluated at the periodic operating point. */
+    for (i = 1; i <= N; i++)
+        ckt->CKTrhsOld[i] = job->PSSopVoltages[(i - 1)];
+    ckt->CKTrhsOld[0] = 0.0;
+    if (ns > 0)
+        memcpy(ckt->CKTstate0, job->PSSopStates, (size_t)ns * sizeof(double));
+    ckt->CKTmode = (ckt->CKTmode & MODEUIC) | MODEDCOP | MODEINITSMSIG;
+    CKTload(ckt);
+
+    /* output plot (onoise/inoise spectrum vs frequency), opened while CKTcurJob is
+     * still the persistent PSS job. */
+    SPfrontEnd->IFnewUid(ckt, &freqUid, NULL, "frequency", UID_OTHER, NULL);
+    SPfrontEnd->IFnewUid(ckt, &nlist[0], NULL, "onoise_spectrum", UID_OTHER, NULL);
+    SPfrontEnd->IFnewUid(ckt, &nlist[1], NULL, "inoise_spectrum", UID_OTHER, NULL);
+    error = SPfrontEnd->OUTpBeginPlot(ckt, ckt->CKTcurJob, "PNoise Analysis",
+                                      freqUid, IF_REAL, 2, nlist, IF_REAL, &plot);
+    if (error) { pac_free_harmonics(&hd); return; }
+    if (stepType != 0)
+        SPfrontEnd->OUTattributes(plot, NULL, OUT_SCALE_LOG, NULL);
+
+    /* a minimal NOISEAN context for the device noise routines (they cast
+     * CKTcurJob to NOISEAN* and read NStpsSm / NstartFreq). */
+    memset(&nj, 0, sizeof(nj));
+    nj.output = job->PnOutNode;
+    nj.outputRef = job->PnOutNode;
+    nj.input = job->PnInSrc;
+    nj.NstartFreq = fstart;
+    nj.NstopFreq = fstop;
+    nj.NnumSteps = np;
+    nj.NstpType = stepType;
+    nj.NStpsSm = 0;                 /* no per-device summary vectors */
+    nj.JOBname = "pnoise";
+    memset(&data, 0, sizeof(data));
+    data.prtSummary = FALSE;        /* keep the routines from writing outpVector */
+
+    oldJob = ckt->CKTcurJob;
+    ckt->CKTcurJob = (JOB *) &nj;
+
+    /* let each device set up its noise state (a no-op naming pass with NStpsSm=0) */
+    for (i = 0; i < DEVmaxnum; i++)
+        if (DEVices[i] && DEVices[i]->DEVnoise && ckt->CKThead[i]) {
+            double dummy = 0.0;
+            DEVices[i]->DEVnoise(N_DENS, N_OPEN, ckt->CKThead[i], ckt, &data, &dummy);
+        }
+
+    Psr = TMALLOC(double, hd.Ntot);  Psi = TMALLOC(double, hd.Ntot);
+    Xr  = TMALLOC(double, hd.Ntot);  Xi  = TMALLOC(double, hd.Ntot);
+    mult    = (stepType == 1) ? pow(10.0, 1.0 / np) :
+              (stepType == 2) ? pow(2.0,  1.0 / np) : 0.0;
+    linstep = (np > 1) ? (fstop - fstart) / (np - 1) : 0.0;
+
+    fprintf(stderr, "PNOISE sweep: %s from %.6g to %.6g Hz around f0 = %.6g Hz; "
+                    "output node %d; folding %d sidebands\n",
+            (stepType == 1) ? "dec" : (stepType == 2) ? "oct" : "lin",
+            fstart, fstop, f0, outNode, 2*M + 1);
+
+    for (freq = fstart; freq <= fstop * (1.0 + 1e-9); ) {
+        double onoise = 0.0, gain2 = 1.0, gsi;
+
+        data.freq = freq;
+        data.delFreq = 0.0;         /* density only -- we do not integrate here */
+        data.prtSummary = FALSE;
+
+        /* transfer from every (node, sideband) to the output at sideband 0 */
+        if (pac_solve_adjoint(&hd, f0, freq, outNode, Psr, Psi) == 0) {
+            for (k = -M; k <= M; k++) {
+                double dens = 0.0;
+                size_t blk = (size_t)(k + M) * (size_t)N;
+                for (j = 1; j <= N; j++) {
+                    ckt->CKTrhs[j]  = Psr[blk + (size_t)(j - 1)];
+                    ckt->CKTirhs[j] = Psi[blk + (size_t)(j - 1)];
+                }
+                ckt->CKTrhs[0] = 0.0;  ckt->CKTirhs[0] = 0.0;
+                for (i = 0; i < DEVmaxnum; i++)
+                    if (DEVices[i] && DEVices[i]->DEVnoise && ckt->CKThead[i])
+                        DEVices[i]->DEVnoise(N_DENS, N_CALC, ckt->CKThead[i],
+                                             ckt, &data, &dens);
+                onoise += dens;                 /* sum device noise over sidebands */
+            }
+        }
+
+        /* input-referred: divide by the source->output conversion gain (sideband 0) */
+        if (hd.has_src && pac_solve_at(&hd, f0, freq, outNode, 1, Xr, Xi) == 0) {
+            size_t oidx = (size_t)M * (size_t)N + (size_t)(outNode - 1);
+            gain2 = Xr[oidx] * Xr[oidx] + Xi[oidx] * Xi[oidx];
+        }
+        gsi = 1.0 / MAX(gain2, N_MINGAIN);
+
+        {
+            IFvalue refVal, valData;
+            double out[2];
+            out[0] = onoise;                    /* output noise density (V^2/Hz) */
+            out[1] = onoise * gsi;              /* input-referred density */
+            refVal.rValue = freq;
+            valData.v.numValue = 2;
+            valData.v.vec.rVec = out;
+            SPfrontEnd->OUTpData(plot, &refVal, &valData);
+        }
+
+        if (stepType == 0) { if (np <= 1) break; freq += linstep; }
+        else               { freq *= mult; }
+    }
+
+    SPfrontEnd->OUTendPlot(plot);
+    ckt->CKTcurJob = oldJob;
+    FREE(Psr); FREE(Psi); FREE(Xr); FREE(Xi);
     pac_free_harmonics(&hd);
 }
 
@@ -1632,6 +1831,11 @@ DCpss(CKTcircuit *ckt,
                  * emit the sideband-0 node responses as a complex plot. */
                 if (job->PSSdoPAC)
                     pac_sweep (ckt, job) ;
+
+                /* Enhancement-124: for a .pnoise card, fold each device's noise
+                 * through the conversion matrix to get the output noise spectrum. */
+                if (job->PSSdoPnoise)
+                    pnoise_sweep (ckt, job) ;
             }
             /****************************/
 

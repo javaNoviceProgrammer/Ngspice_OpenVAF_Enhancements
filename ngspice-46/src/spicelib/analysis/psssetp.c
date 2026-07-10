@@ -67,6 +67,17 @@ PSSsetParm(CKTcircuit *ckt, JOB *anal, int which, IFvalue *value)
         job->PACmaxSideband = value->iValue;
         break;
 
+    /* Enhancement-124: pnoise parameters (.pnoise card) */
+    case PNOISE_DO:
+        job->PSSdoPnoise = value->iValue;
+        break;
+    case PNOISE_OUT:
+        job->PnOutNode = value->nValue;
+        break;
+    case PNOISE_INSRC:
+        job->PnInSrc = value->uValue;
+        break;
+
     default:
         return(E_BADPARM);
     }
@@ -88,7 +99,10 @@ static IFparm PSSparms[] = {
     { "pac_fstop",  PAC_FSTOP,		IF_SET|IF_REAL,		"PAC input sweep stop frequency" },
     { "pac_points", PAC_POINTS,		IF_SET|IF_INTEGER,	"PAC points per decade/octave (or total for linear)" },
     { "pac_step",   PAC_STEPTYPE,	IF_SET|IF_INTEGER,	"PAC sweep step type (0 lin, 1 dec, 2 oct)" },
-    { "pac_maxsb",  PAC_MAXSB,		IF_SET|IF_INTEGER,	"PAC output conversion sidebands each side (0 = sideband 0 only)" }
+    { "pac_maxsb",  PAC_MAXSB,		IF_SET|IF_INTEGER,	"PAC output conversion sidebands each side (0 = sideband 0 only)" },
+    { "pnoise",       PNOISE_DO,	IF_SET|IF_INTEGER,	"run a periodic-noise sweep after PSS" },
+    { "pnoise_out",   PNOISE_OUT,	IF_SET|IF_STRING,	"pnoise output node" },
+    { "pnoise_insrc", PNOISE_INSRC,	IF_SET|IF_STRING,	"pnoise input source (for the input-referred spectrum)" }
 };
 
 SPICEanalysis PSSinfo  = {

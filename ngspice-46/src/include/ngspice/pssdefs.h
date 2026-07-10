@@ -51,6 +51,13 @@ typedef struct {
     int    PACpoints;        /* points per decade/octave, or total for linear */
     int    PACstepType;      /* 0 = LIN, 1 = DEC, 2 = OCT */
     int    PACmaxSideband;   /* number of output conversion sidebands each side (0 = sb0 only) */
+
+    /* Enhancement-124: periodic noise (.pnoise). Runs PSS, then folds each device's
+     * noise through the conversion-matrix adjoint over all sidebands to get the
+     * output noise spectrum. Reuses the PAC sweep fields for the frequency sweep. */
+    int      PSSdoPnoise;    /* 1 if this job runs a pnoise sweep */
+    CKTnode *PnOutNode;      /* pnoise output node (reference = ground) */
+    IFuid    PnInSrc;        /* input source name, for the input-referred spectrum */
 } PSSan;
 
 enum {
@@ -68,6 +75,9 @@ enum {
     PAC_POINTS,
     PAC_STEPTYPE,
     PAC_MAXSB,
+    PNOISE_DO,
+    PNOISE_OUT,
+    PNOISE_INSRC,
 };
 
 #endif

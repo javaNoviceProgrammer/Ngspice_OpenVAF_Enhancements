@@ -85,7 +85,7 @@ solver-by-solver sweep of the example suite:
 | RF | Touchstone (`.sNp`) import / export | ✅ | ✅ |
 | RF | Periodic steady state (PSS) | ✅¹ | ✅ |
 | RF | Harmonic Balance (HB) | ❌ | ✅ |
-| RF | Periodic / phase noise (Pnoise) | ❌ | ✅ |
+| RF | Periodic / phase noise (Pnoise) | ⚠️³ | ✅ |
 | RF | Periodic AC (PAC, conversion gain) | ✅² | ✅ |
 | RF | Periodic transfer function (PXF) | ❌ | ✅ |
 | RF | Periodic S-parameters (PSP) | ❌ | ✅ |
@@ -122,6 +122,20 @@ impedance and, with `V1 AC 1`, sideband-0 reproduces the low-pass transfer
 floating-point zero (a linear circuit does not mix). The one scale caveat: the
 conversion matrix is solved densely (capped for modest circuits) on the brute-force
 shooting PSS. The same solve is the substrate for pnoise and PXF.*
+
+*³ Pnoise is ⚠️ (**working, stationary-source first cut**).
+[Enhancement-124](../../../enhancements_doc/Enhancement-124.md) adds a `.pnoise`
+command that folds every device's noise through the **adjoint** of the conversion
+matrix (`Hᵀ Ψ = e_{out,0}`): it loads the sideband-`k` transfer into
+`CKTrhs`/`CKTirhs` and calls the existing device noise routines (`NevalSrc`, OSDI
+`load_noise`) once per sideband, accumulating `Σ_k S·|ΔΨ_k|²` — so it reuses every
+device noise model and needs no per-device code. Verified on the RC: because the
+circuit is linear the conversion matrix is block-diagonal, only sideband 0
+contributes, and pnoise reduces **exactly** to `.noise` (`4kTR/(1+(2πfRC)²)`,
+matching the `.noise` reference to every printed digit). It stays ⚠️ because the
+first cut evaluates each device's noise PSD at the periodic operating-point sample
+(a stationary approximation of the cyclostationary source) and does not yet emit a
+dedicated phase-noise (jitter) spectrum — both refinements of the same fold.*
 
 ## Performance & scale
 
@@ -204,10 +218,13 @@ leverage on the existing strength × differentiation × tractability:
    [Enhancement-123](../../../enhancements_doc/Enhancement-123.md) finishes it with
    a netlist-referenced source stimulus and multi-sideband conversion-gain output —
    a complete periodic-AC analysis, verified against the exact linear transfer and
-   driving-point responses. The device/OSDI side already supplies the rest
-   (noise-source topology, operating-point- and frequency-dependent `load_noise`);
-   the next analyses are **pnoise** (fold device-noise sidebands through `Hᵀ`) and
-   **PXF**, both reusing this same conversion-matrix solve. Genuinely novel in open
+   driving-point responses, and [Enhancement-124](../../../enhancements_doc/Enhancement-124.md)
+   adds **`.pnoise`** — folding every device's noise through the conversion-matrix
+   adjoint `Hᵀ` (reusing the existing device noise routines), verified to reduce
+   exactly to `.noise` in the linear limit. The device/OSDI side already supplied
+   the rest (noise-source topology, operating-point- and frequency-dependent
+   `load_noise`). The one analysis left in the trio is **PXF** (periodic transfer
+   function), reusing the same conversion-matrix adjoint. Genuinely novel in open
    source.
 2. **Convergence robustness** — coordinated accuracy presets (`errpreset`)
    **landed in [Enhancement-110](../../../enhancements_doc/Enhancement-110.md)**;

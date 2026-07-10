@@ -117,3 +117,35 @@ sidebands) decks.
 
 **Note:** `.pac` runs a PSS shooting method (~2 minutes per deck) and
 `verify_rcpac.py` runs under the Sparse solver only.
+
+## `.pnoise` command — periodic noise (Enhancement-124)
+
+`.pnoise` propagates **noise** through the periodic operating point. Each device's
+noise sources are converted between sidebands, and the output noise at a frequency
+is every source folded through the harmonic conversion matrix:
+
+```
+.pnoise Fguess StabTime OscNode Points Harmonics SC_iter Steady_coeff \
+        OutNode InSrc <DEC|OCT|LIN> Npts Fstart Fstop
+```
+
+It reuses ngspice's device noise routines unchanged: it solves the **adjoint** of
+the conversion matrix (`Hᵀ Ψ = e_{out,0}`), loads the sideband-`k` transfer into
+`CKTrhs`/`CKTirhs`, and calls each device's noise routine once per sideband,
+accumulating `Σ_k S·|ΔΨ_k|²` — so resistors, OSDI/Verilog-A devices, and transistors
+all fold correctly. Output is a `PNoise Analysis` plot with `onoise_spectrum` and
+`inoise_spectrum`.
+
+`rc_pnoise.cir` runs it on the RC (output `b`, input `v1`):
+
+```
+.pnoise 1meg 1u b 1024 10 50 5u b v1 dec 10 10k 1meg
+```
+
+For this linear circuit the conversion matrix is block-diagonal, so only sideband 0
+contributes and `.pnoise` reduces to ordinary `.noise`: the output noise density is
+the thermal-noise result `4·k·T·R1 / (1 + (2πf·R1·C1)²)` (1.65e−17 V²/Hz at 10 kHz →
+4.10e−19 at 1 MHz). `verify_rcpnoise.py` checks it against both the analytic law and
+a plain `.noise` run (which it matches to every digit). A pumped nonlinear circuit
+folds noise between sidebands (up/down-conversion, phase noise) through the same
+path.

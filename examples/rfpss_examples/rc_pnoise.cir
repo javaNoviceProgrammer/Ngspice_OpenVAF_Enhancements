@@ -1,0 +1,16 @@
+* Enhancement-124: periodic noise (.pnoise) on a driven RC low-pass.
+* Runs PSS (drive 1 MHz), then folds each device's noise through the conversion
+* matrix over all sidebands to get the output noise spectrum at node b. For this
+* linear circuit the periodic Jacobian is time-invariant (block-diagonal conversion
+* matrix), so pnoise reduces to ordinary .noise: only R1's thermal noise contributes
+* and the output noise density is 4*k*T*R1 / (1 + (2*pi*f*R1*C1)^2).
+V1 a 0 DC 0 AC 1 SIN(0 1 1meg)
+R1 a b 1k
+C1 b 0 1n
+* .pnoise <pss params> OutNode InSrc <dec|oct|lin> Npts Fstart Fstop
+.pnoise 1meg 1u b 1024 10 50 5u b v1 dec 10 10k 1meg
+.control
+run
+print onoise_spectrum
+.endc
+.end
