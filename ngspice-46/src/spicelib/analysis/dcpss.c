@@ -110,6 +110,7 @@ DCpss(CKTcircuit *ckt,
     double gf_last_0 = HUGE_VAL, gf_last_1 = GF_LAST ;
     double thd = 0 ;
     double *psstimes, *pssvalues;
+    double *pssstates;   /* Enhancement-119: device states captured per PSS sample */
     double *RHS_max, *RHS_min, *err_conv ;
 
     /* Francesco Lannutti's MOD */
@@ -157,12 +158,18 @@ DCpss(CKTcircuit *ckt,
 
     psstimes = TMALLOC (double, ckt->CKTpsspoints + 1) ;
     pssvalues = TMALLOC (double, msize * (ckt->CKTpsspoints + 1)) ;
+    /* Enhancement-119: also capture the device states (charges/fluxes) per
+     * sample -- CKTstate0 holds the accepted state alongside CKTrhsOld. */
+    pssstates = TMALLOC (double, ckt->CKTnumStates * (ckt->CKTpsspoints + 1)) ;
 
     for (i = 0 ; i < ckt->CKTpsspoints + 1 ; i++)
         psstimes [i] = 0.0 ;
 
     for (i = 0 ; i < msize * (ckt->CKTpsspoints + 1) ; i++)
         pssvalues [i] = 0.0 ;
+
+    for (i = 0 ; i < ckt->CKTnumStates * (ckt->CKTpsspoints + 1) ; i++)
+        pssstates [i] = 0.0 ;
 
     /* Delta timestep and circuit time setup */
     delta = ckt->CKTstep ;
@@ -447,6 +454,10 @@ DCpss(CKTcircuit *ckt,
             /* Store values for the FFT calculation */
             for (i = 1 ; i <= msize ; i++)
                 pssvalues [i - 1 + pss_points_cycle * msize] = ckt->CKTrhsOld [i] ;
+
+            /* Enhancement-119: capture the device states at this sample */
+            memcpy (pssstates + (size_t)pss_points_cycle * ckt->CKTnumStates,
+                    ckt->CKTstate0, (size_t)ckt->CKTnumStates * sizeof(double)) ;
 
             /* Update PSS counter cycle, used to stop the entire algorithm */
             pss_points_cycle++ ;
@@ -736,6 +747,7 @@ DCpss(CKTcircuit *ckt,
                 FREE (err_conv) ;
                 FREE (psstimes) ;
                 FREE (pssvalues) ;
+                FREE (pssstates) ;
                 return (E_PANIC) ; /* to be corrected with definition of new error macro in iferrmsg.h */
             }
             else if ((time_err_min_0 - time_temp) < 0)
@@ -752,6 +764,7 @@ DCpss(CKTcircuit *ckt,
                 FREE (err_conv) ;
                 FREE (psstimes) ;
                 FREE (pssvalues) ;
+                FREE (pssstates) ;
                 return (E_PANIC) ; /* to be corrected with definition of new error macro in iferrmsg.h */
             }
 
@@ -881,6 +894,10 @@ DCpss(CKTcircuit *ckt,
                 for (i = 1 ; i <= msize ; i++)
                     pssvalues [i - 1 + pss_points_cycle * msize] = ckt->CKTrhsOld [i] ;
 
+                /* Enhancement-119: capture the device states at the first sample */
+                memcpy (pssstates + (size_t)pss_points_cycle * ckt->CKTnumStates,
+                        ckt->CKTstate0, (size_t)ckt->CKTnumStates * sizeof(double)) ;
+
                 /* Update the PSS points counter and set the next Breakpoint */
                 pss_points_cycle++ ;
                 CKTsetBreak (ckt, time_temp + (1 / ckt->CKTguessedFreq) * ((double)pss_points_cycle / (double)ckt->CKTpsspoints)) ;
@@ -999,6 +1016,49 @@ DCpss(CKTcircuit *ckt,
                 PSSDBG( "The predicted fundamental frequency is incorrect.\nRelaunching the analysis...\n\n") ;
                 PSSDBG( "The new guessed fundamental frequency is: %.6g\n\n", ckt->CKTguessedFreq) ;
                 DCpss (ckt, 1) ;
+                /* the relaunched run retained its own (correct) operating point;
+                 * this run's samples are stale -- fall through and free them. */
+            }
+            else
+            {
+                /* Enhancement-119: frequency confirmed -- retain this converged
+                 * periodic operating point on the job for periodic small-signal
+                 * reuse (PAC/pnoise/PXF). Ownership of the sample arrays is
+                 * transferred to the job (set local ptrs NULL so the FREE below
+                 * is a no-op); the DFT that produced the harmonic output above
+                 * was taken from exactly these samples, so they are self-consistent. */
+                FREE (job->PSSopTimes) ;
+                FREE (job->PSSopVoltages) ;
+                FREE (job->PSSopStates) ;
+                job->PSSopPoints    = ckt->CKTpsspoints ;
+                job->PSSopMsize     = msize ;
+                job->PSSopNumStates = ckt->CKTnumStates ;
+                job->PSSopFreq      = ckt->CKTguessedFreq ;
+                job->PSSopTimes     = psstimes ;   psstimes  = NULL ;
+                job->PSSopVoltages  = pssvalues ;  pssvalues = NULL ;
+                job->PSSopStates    = pssstates ;  pssstates = NULL ;
+                fprintf (stderr, "PSS periodic operating point retained: %ld samples x "
+                                 "%d unknowns x %d states at f = %.10g Hz\n",
+                         job->PSSopPoints, job->PSSopMsize, job->PSSopNumStates,
+                         job->PSSopFreq) ;
+
+                /* Self-check: report the osc-node voltage swing straight from the
+                 * retained samples, so the retained data can be validated without
+                 * a consumer yet (a periodic node must swing over the period). */
+                {
+                    int onode = job->PSSoscNode ? job->PSSoscNode->number : 0 ;
+                    if (onode > 0 && onode <= job->PSSopMsize) {
+                        double vmin = HUGE_VAL, vmax = -HUGE_VAL ;
+                        long s ;
+                        for (s = 0 ; s < job->PSSopPoints ; s++) {
+                            double v = job->PSSopVoltages [(onode - 1) + s * job->PSSopMsize] ;
+                            if (v < vmin) vmin = v ;
+                            if (v > vmax) vmax = v ;
+                        }
+                        fprintf (stderr, "  retained op-point self-check: osc-node swing "
+                                         "[%.6g, %.6g] over the period\n", vmin, vmax) ;
+                    }
+                }
             }
             /****************************/
 
@@ -1018,6 +1078,7 @@ DCpss(CKTcircuit *ckt,
             FREE (err_conv) ;
             FREE (psstimes) ;
             FREE (pssvalues) ;
+            FREE (pssstates) ;
             return (OK) ;
         }
     }

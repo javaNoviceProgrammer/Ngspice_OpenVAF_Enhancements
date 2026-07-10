@@ -90,6 +90,30 @@ trace = sum(1 for ln in slog.splitlines()
 check(f"[sparse] clean default output -- no shooting-loop trace ({trace} lines)",
       trace == 0, f"{trace} trace lines leaked")
 
+# --- Enhancement-119: the periodic operating point is retained past the analysis
+#     (the substrate PAC/pnoise/PXF will linearize around) ---
+mret = re.search(r"operating point retained:\s*(\d+)\s*samples x\s*(\d+)\s*unknowns"
+                 r"\s*x\s*(\d+)\s*states at f =\s*([-\d.eE+]+)", slog)
+check("[E-119] periodic operating point is retained", mret is not None,
+      "no 'operating point retained' line")
+if mret:
+    nsamp, nunk, nst, retf = (int(mret.group(1)), int(mret.group(2)),
+                              int(mret.group(3)), float(mret.group(4)))
+    check(f"[E-119] retained dims: 1024 samples x 3 unknowns x 2 states "
+          f"(got {nsamp}x{nunk}x{nst})",
+          nsamp == 1024 and nunk == 3 and nst == 2)
+    check(f"[E-119] retained fundamental freq == PSS freq (got {retf})",
+          sfreq is not None and abs(retf - sfreq) / f0 < 1e-6)
+# the self-check proves the RETAINED samples hold the real waveform: a node in
+# periodic steady state must swing, and its peak equals the fundamental amplitude
+msw = re.search(r"osc-node swing\s*\[\s*([-\d.eE+]+)\s*,\s*([-\d.eE+]+)\s*\]", slog)
+check("[E-119] retained-data self-check present", msw is not None)
+if msw:
+    vmin, vmax = float(msw.group(1)), float(msw.group(2))
+    peak = max(abs(vmin), abs(vmax))
+    check(f"[E-119] retained osc-node swing peak == |H(1MHz)| = {H:.5f} "
+          f"(got {peak:.5f})", abs(peak - H) / H < 0.02, f"peak {peak}")
+
 # --- KLU (Enhancement-118: PSS now converges under KLU via forced re-factor) ---
 klog = run("klu")
 kfreq, kfund = parse(klog)

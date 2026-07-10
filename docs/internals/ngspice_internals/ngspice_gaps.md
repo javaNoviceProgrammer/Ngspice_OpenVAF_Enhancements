@@ -169,14 +169,17 @@ OSDI/Verilog-A-native simulator with a real RF-noise and statistical story** —
 not out-engineering 25 years of commercial fast-SPICE/parallel work. Ranked by
 leverage on the existing strength × differentiation × tractability:
 
-1. **RF periodic small-signal suite — Pnoise → PAC → PXF, on the hardened PSS.**
+1. **RF periodic small-signal suite — PAC → Pnoise → PXF, on the hardened PSS.**
    The PSS foundation is now shipped and verified under both linear solvers
    ([Enhancement-117](../../../enhancements_doc/Enhancement-117.md),
-   [Enhancement-118](../../../enhancements_doc/Enhancement-118.md)); the
-   device/OSDI side already supplies what these need (noise-source topology,
-   operating-point- and frequency-dependent `load_noise`, periodic Jacobians);
-   the remaining work is the small-signal analysis engines. Genuinely novel in
-   open source.
+   [Enhancement-118](../../../enhancements_doc/Enhancement-118.md)), and
+   [Enhancement-119](../../../enhancements_doc/Enhancement-119.md) retains the
+   periodic operating point (voltages + device states per sample) — the substrate
+   these analyses linearize around. The device/OSDI side already supplies the
+   rest (noise-source topology, operating-point- and frequency-dependent
+   `load_noise`, periodic Jacobians); the remaining work is the periodic Jacobian
+   harmonics (E-120) and the conversion-matrix solve + `.pac` command (E-121).
+   Genuinely novel in open source.
 2. **Convergence robustness** — coordinated accuracy presets (`errpreset`)
    **landed in [Enhancement-110](../../../enhancements_doc/Enhancement-110.md)**;
    the remaining piece is pseudo-transient / dynamic-gmin homotopy. Unglamorous
