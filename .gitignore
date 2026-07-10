@@ -105,6 +105,27 @@ examples/bessel_filter_examples/.build/
 examples/bessel_filter_examples/.*.cir
 examples/bessel_filter_examples/__pycache__/
 
+# ---------------------------------------------------------------------------
+# Temp artifacts written by the example verify_*/run_* scripts. By convention
+# every GENERATED file is prefixed with an underscore ("_tmp.cir", "_foo.osdi",
+# "_deck.sp", ...), while committed decks/models never are (rc_pss.cir,
+# bjt741.osdi, ...). These global rules cover the generated underscore-temps in
+# EVERY example directory, so a full-suite sweep leaves no untracked files and a
+# NEW example dir needs no per-dir entry. (Underscore-prefixed *source* inputs --
+# _setup.py, _*.sh, _*.va, _*.vams -- are deliberately NOT matched here.)
+examples/**/_*.cir
+examples/**/_*.sp
+examples/**/_*.osdi
+examples/**/_*.txt
+examples/**/_*.dat
+examples/**/_*.s?p
+examples/**/_*.y2p
+examples/**/_*.z2p
+# The per-directory entries below are now largely subsumed by the globals above;
+# they are kept because several also cover NON-underscore outputs (e.g. *.osdi,
+# *.sp, *.txt, *.data, surf.grid) that the underscore globals do not. New example
+# dirs do NOT need a "_*.cir" line added here.
+
 # Enhancement-9 example scripts: temp netlists written by verify_*.py
 examples/noise_examples/_*.cir
 examples/localparam_examples/_*.cir
