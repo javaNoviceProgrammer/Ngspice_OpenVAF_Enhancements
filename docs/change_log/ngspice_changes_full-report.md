@@ -541,6 +541,17 @@ Every enhancement that touched ngspice, oldest first:
 *(E-25's simparam exposure lives in the OSDI callback table populated at
 load time; its diff rides inside the `osdiload.c`/callbacks changes.)*
 
+*Build-warning cleanup (post-E-127): a full rebuild under the repo's
+`-Wconversion` flags surfaced latent warnings. `configure.ac` had `-s` (a strip
+flag) in the compile `CFLAGS`, so clang warned "argument unused during
+compilation: '-s'" on **every** source file (~1526 warnings) — removed (binaries
+are stripped separately by the fold and CI). `-Wconversion` also flagged a real
+latent bug in `maths/ni/nipzmeth.c` (`b = 0.0` was an assignment where `b == 0.0`
+was intended) — fixed — and benign `double`→`bool` conversions in
+`maths/cmaths/cmath4.c` — made explicit. Full-build warnings dropped 1903 → 394;
+the remainder are `-Wconversion` warnings in third-party SuiteSparse (KLU) and CMC
+device models (HiSIM), which are left to their upstream sources.*
+
 Every entry above is guarded by a verify script under
 [`examples/`](../../examples/) and was regression-checked against the full
 example arsenal, the compiler's integration suite, and the VA_TEST

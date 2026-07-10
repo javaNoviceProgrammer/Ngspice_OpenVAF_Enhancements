@@ -59,7 +59,7 @@ cx_and(void *data1, void *data2, short int datatype1, short int datatype2, int l
     d = alloc_d(length);
     if ((datatype1 == VF_REAL) && (datatype2 == VF_REAL)) {
         for (i = 0; i < length; i++)
-            d[i] = dd1[i] && dd2[i];
+            d[i] = (dd1[i] != 0.0) && (dd2[i] != 0.0);
     } else {
         for (i = 0; i < length; i++) {
             if (datatype1 == VF_REAL) {
@@ -74,8 +74,8 @@ cx_and(void *data1, void *data2, short int datatype1, short int datatype2, int l
             } else {
                 c2 = cc2[i];
             }
-            d[i] = ((realpart(c1) && realpart(c2)) &&
-                (imagpart(c1) && imagpart(c2)));
+            d[i] = ((realpart(c1) != 0.0 && realpart(c2) != 0.0) &&
+                (imagpart(c1) != 0.0 && imagpart(c2) != 0.0));
         }
     }
     return ((void *) d);
@@ -96,7 +96,7 @@ cx_or(void *data1, void *data2, short int datatype1, short int datatype2, int le
     d = alloc_d(length);
     if ((datatype1 == VF_REAL) && (datatype2 == VF_REAL)) {
         for (i = 0; i < length; i++)
-            d[i] = dd1[i] || dd2[i];
+            d[i] = (dd1[i] != 0.0) || (dd2[i] != 0.0);
     } else {
         for (i = 0; i < length; i++) {
             if (datatype1 == VF_REAL) {
@@ -111,8 +111,8 @@ cx_or(void *data1, void *data2, short int datatype1, short int datatype2, int le
             } else {
                 c2 = cc2[i];
             }
-            d[i] = ((realpart(c1) || realpart(c2)) &&
-                (imagpart(c1) || imagpart(c2)));
+            d[i] = ((realpart(c1) != 0.0 || realpart(c2) != 0.0) &&
+                (imagpart(c1) != 0.0 || imagpart(c2) != 0.0));
         }
     }
     return ((void *) d);
@@ -133,12 +133,12 @@ cx_not(void *data, short int type, int length, int *newlength, short int *newtyp
     if (type == VF_COMPLEX) {
         for (i = 0; i < length; i++) {
             /* gcc doens't like !double */
-            d[i] = realpart(cc[i]) ? 0 : 1;
-            d[i] = imagpart(cc[i]) ? 0 : 1;
+            d[i] = (realpart(cc[i]) != 0.0) ? 0 : 1;
+            d[i] = (imagpart(cc[i]) != 0.0) ? 0 : 1;
         }
     } else {
         for (i = 0; i < length; i++)
-            d[i] = ! dd[i];
+            d[i] = (dd[i] == 0.0) ? 1 : 0;
     }
     return ((void *) d);
 }
@@ -503,7 +503,7 @@ cx_group_delay(void *data, short int type, int length, int *newlength, short int
     }
 
     if (type == VF_COMPLEX) {
-        /*  accept continuous phase over 90° boundaries */
+        /*  accept continuous phase over 90ï¿½ boundaries */
         double last_ph = cph(cc[0]);
         v_phase[0] = radtodeg(last_ph);
         for (i = 1; i < length; i++) {

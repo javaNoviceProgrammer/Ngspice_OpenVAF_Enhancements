@@ -331,11 +331,11 @@ if test "x$ext_CFLAGS" != xyes; then
         fi
     else
         AC_MSG_RESULT([Debugging option -g removed])
-        if test "x$GCC" = xyes; then
-            CFLAGS="-O2 -s"
-        else
-            CFLAGS="-O2"
-        fi
+        # Enhancement-127 cleanup: `-s` is a strip flag that does not belong in the
+        # compile CFLAGS -- clang warns "argument unused during compilation: '-s'"
+        # on every source file (and `ld` reports it obsolete). Binaries are stripped
+        # separately (the release fold and the CI both run `strip`), so drop it here.
+        CFLAGS="-O2"
     fi
 
     if test "x$GCC" = xyes; then
