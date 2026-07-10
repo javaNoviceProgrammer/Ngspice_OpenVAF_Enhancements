@@ -18,9 +18,12 @@ read from stdout):
 
   [1] nonlinear resistor           -- resistive HB, quadratic convergence
   [2] nonlinear R + linear C       -- linear reactive (magnitude AND phase via C)
-  [3] nonlinear C (OSDI varactor)  -- NONLINEAR reactive: 2nd harmonic from Q(v)
+  [3] diode rectifier              -- junction limiting (per-sample settling)
+  [4] nonlinear C (OSDI varactor)  -- NONLINEAR reactive: 2nd harmonic from Q(v)
+  [5] strongly-driven rectifier    -- E-135 source-stepping continuation (diverges cold)
+  [6] KLU vs Sparse                -- solver-independent (bit-identical spectra)
 
-HB drives an ordinary transient/AC load, so it is solver-independent.
+HB drives an ordinary transient/AC load, so it is solver-independent (KLU + Sparse).
 """
 import math
 import os
@@ -104,7 +107,7 @@ def compare(label, nl, harmonics, tol=3e-2, pre="", K=5):
     return out, hb, fo
 
 
-print("Enhancement-134: Harmonic Balance")
+print("Enhancement-134/135: Harmonic Balance + source-stepping continuation")
 
 # [1] nonlinear resistor: fundamental + 3rd harmonic must match, and Newton must
 # converge quadratically (a handful of iterations).
@@ -146,7 +149,30 @@ if os.path.exists(osdi):
 else:
     check("OSDI varactor: compiled vavar.va", False, cr.stderr.strip()[:80])
 
-# [5] SOLVER PARITY: HB must give the SAME spectrum under KLU and Sparse. HB runs its
+# [5] SOURCE-STEPPING CONTINUATION: a strongly-driven diode rectifier (5 V into a
+# 20 ohm source R and a sharp IS=1e-14 junction) makes the nonlinearity comparable to
+# the linear term -- a cold full-strength Newton DIVERGES (|F| -> 1e69). HB ramps every
+# source by lambda: 0 -> 1 in adaptive steps, warm-starting each level, and reaches the
+# steady state. Assert it (a) converged, (b) actually needed continuation (>1 step), and
+# (c) matches the transient fourier for DC/f0/2f0.
+def levels(out):
+    m = re.search(r"converged in \d+ iterations, (\d+) continuation step", out)
+    return int(m.group(1)) if m else None
+
+strong = ("V1 s 0 SIN(0 5 100meg)\nRs s a 20\nD1 a n DMOD\nRn n 0 1k\n"
+          ".model DMOD D(IS=1e-14 N=1.0)")
+out = run(f"* strong hb\n{strong}\n.options numdgt=7\n.control\nhb 100meg 10\n"
+          f"tran 0.005n 400n 0 0.005n\nfourier 100meg v(n)\n.endc\n.end\n")
+hb = hb_spectrum(out, "n")
+fo = fourier_spectrum(out)
+nlev = levels(out)
+match = all(k in hb and k in fo and abs(hb[k] - fo[k]) <= 1.5e-2 * max(fo[k], 1e-9)
+           for k in (0, 1, 2))
+check(f"source-stepping converges a strongly-driven rectifier ({nlev} continuation steps)",
+      nlev is not None and nlev > 1 and match,
+      f"nlev={nlev} DC={hb.get(0)}/{fo.get(0)} f0={hb.get(1)}/{fo.get(1)}")
+
+# [6] SOLVER PARITY: HB must give the SAME spectrum under KLU and Sparse. HB runs its
 # own dense complex Newton solve on the conversion matrix; the sparse/KLU choice only
 # affects how the periodic G(t)/C(t) are read from the device matrix (spSetComplex for
 # Sparse vs the complex CSC binding for KLU). Run the diode rectifier -- a real,

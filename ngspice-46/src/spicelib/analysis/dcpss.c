@@ -1467,75 +1467,136 @@ HBanalyze(CKTcircuit *ckt, double f0, int K, int Pin, int maxiter, double tol, i
         FREE(ist);
     }
 
-    /* --- Newton iterations --- */
-    for (iter = 0; iter < maxiter; iter++) {
-        double fnorm = 0.0;
-        /* v(t_s) = Re sum_k V_k e^{j k w0 t_s} */
-        for (s = 0; s < P; s++)
-            for (i = 0; i < N; i++) {
-                double v = 0.0;
-                for (k = -K; k <= K; k++) {
-                    double ang = 2.0 * M_PI * k * s / (double)P;
-                    v += Vr[(size_t)(k + K) * (size_t)N + (size_t)i] * cos(ang)
-                       - Vi[(size_t)(k + K) * (size_t)N + (size_t)i] * sin(ang);
+    /* --- source-stepping continuation ------------------------------------
+     * Solve HB with every independent source scaled by a homotopy factor
+     * lambda: 0 -> 1, each level warm-started from the last converged point.
+     * Adaptive with backtracking: the first level is full strength
+     * (dlambda = 1), so an easy circuit converges at lambda = 1 on the first
+     * try -- bit-identical to the plain direct solve. When a level fails
+     * (Newton runs out, the residual goes non-finite, or the Jacobian is
+     * singular) the step is halved and retried from the last converged V; when
+     * a level converges the step grows. This carries a strongly-driven circuit
+     * (nonlinearity comparable to the linear term -- e.g. a PA near
+     * compression) to steady state where a cold full-strength Newton diverges.
+     * All independent sources (bias and drive) ramp together -- classic source
+     * stepping; to sweep drive at fixed bias, step the drive with `alter`. */
+    {
+    double lambda = 0.0, dlambda = 1.0, fnorm = 0.0;
+    double *Vsr = TMALLOC(double, Ntot);
+    double *Vsi = TMALLOC(double, Ntot);
+    int nlevels = 0, nnewton = 0, hard_err = 0;
+    memcpy(Vsr, Vr, (size_t)Ntot * sizeof(double)); /* last-good = cold V=0 (lambda=0 solution) */
+    memcpy(Vsi, Vi, (size_t)Ntot * sizeof(double));
+
+    for (;;) {
+        double target = lambda + dlambda;
+        int conv = 0;
+        if (target > 1.0)
+            target = 1.0;
+
+        for (iter = 0; iter < maxiter; iter++) {
+            /* v(t_s) = Re sum_k V_k e^{j k w0 t_s} */
+            for (s = 0; s < P; s++)
+                for (i = 0; i < N; i++) {
+                    double v = 0.0;
+                    for (k = -K; k <= K; k++) {
+                        double ang = 2.0 * M_PI * k * s / (double)P;
+                        v += Vr[(size_t)(k + K) * (size_t)N + (size_t)i] * cos(ang)
+                           - Vi[(size_t)(k + K) * (size_t)N + (size_t)i] * sin(ang);
+                    }
+                    vsamp[(size_t)s * (size_t)N + (size_t)i] = v;
                 }
-                vsamp[(size_t)s * (size_t)N + (size_t)i] = v;
+
+            if (hb_extract(ckt, vsamp, N, P, K, &hd, IRr, IRi)) {
+                fprintf(stderr, "HB: device extraction failed.\n");
+                rc = E_PARMVAL; hard_err = 1; break;
             }
 
-        if (hb_extract(ckt, vsamp, N, P, K, &hd, IRr, IRi)) {
-            fprintf(stderr, "HB: device extraction failed.\n"); rc = E_PARMVAL; break;
-        }
+            /* full Jacobian J = G + jwC conversion matrix */
+            pac_build_matrix(&hd, f0, 0.0, Jr, Ji);
 
-        /* build the full Jacobian J = G + jwC conversion matrix */
-        pac_build_matrix(&hd, f0, 0.0, Jr, Ji);
+            /* reactive current I_C = (J - Jg)*V where Jg is the resistive
+             * (G-only) conversion matrix -- i.e. the jwC part of J on V. */
+            {
+                struct pac_harm hg = hd;
+                double *Jgr = TMALLOC(double, (size_t)Ntot * (size_t)Ntot);
+                double *Jgi = TMALLOC(double, (size_t)Ntot * (size_t)Ntot);
+                hg.Cmr = TMALLOC(double, (size_t)hd.nnz * (size_t)(hd.H + 1));  /* zero C -> resistive only */
+                hg.Cmi = TMALLOC(double, (size_t)hd.nnz * (size_t)(hd.H + 1));
+                pac_build_matrix(&hg, f0, 0.0, Jgr, Jgi);
+                FREE(hg.Cmr); FREE(hg.Cmi);
+                for (i = 0; i < Ntot; i++) {
+                    double cr = 0, ci = 0;
+                    for (k = 0; k < Ntot; k++) {
+                        double ar = Jr[(size_t)i * (size_t)Ntot + (size_t)k] - Jgr[(size_t)i * (size_t)Ntot + (size_t)k];
+                        double ai = Ji[(size_t)i * (size_t)Ntot + (size_t)k] - Jgi[(size_t)i * (size_t)Ntot + (size_t)k];
+                        cr += ar * Vr[k] - ai * Vi[k];
+                        ci += ar * Vi[k] + ai * Vr[k];
+                    }
+                    Kr[i] = cr; Ki[i] = ci;     /* Kr/Ki = reactive current I_C */
+                }
+                FREE(Jgr); FREE(Jgi);
+            }
+            pac_free_harmonics(&hd);            /* hd not needed past this point */
 
-        /* reactive current I_C = (J - Jg)*V where Jg is the resistive (G-only)
-         * conversion matrix -- i.e. the jwC part of J applied to V. */
-        {
-            struct pac_harm hg = hd;
-            double *Jgr = TMALLOC(double, (size_t)Ntot * (size_t)Ntot);
-            double *Jgi = TMALLOC(double, (size_t)Ntot * (size_t)Ntot);
-            hg.Cmr = TMALLOC(double, (size_t)hd.nnz * (size_t)(hd.H + 1));  /* zero C -> resistive only */
-            hg.Cmi = TMALLOC(double, (size_t)hd.nnz * (size_t)(hd.H + 1));
-            pac_build_matrix(&hg, f0, 0.0, Jgr, Jgi);
-            FREE(hg.Cmr); FREE(hg.Cmi);
-            /* I_C = (J - Jg) * V */
+            /* residual F = I_R + I_C - lambda*Is */
+            fnorm = 0.0;
             for (i = 0; i < Ntot; i++) {
-                double cr = 0, ci = 0;
-                for (k = 0; k < Ntot; k++) {
-                    double ar = Jr[(size_t)i * (size_t)Ntot + (size_t)k] - Jgr[(size_t)i * (size_t)Ntot + (size_t)k];
-                    double ai = Ji[(size_t)i * (size_t)Ntot + (size_t)k] - Jgi[(size_t)i * (size_t)Ntot + (size_t)k];
-                    cr += ar * Vr[k] - ai * Vi[k];
-                    ci += ar * Vi[k] + ai * Vr[k];
-                }
-                Kr[i] = cr; Ki[i] = ci;         /* Kr/Ki = reactive current I_C */
+                Fr[i] = IRr[i] + Kr[i] - target * Isr[i];
+                Fi[i] = IRi[i] + Ki[i] - target * Isi[i];
+                fnorm += Fr[i] * Fr[i] + Fi[i] * Fi[i];
             }
-            FREE(Jgr); FREE(Jgi);
+            fnorm = sqrt(fnorm);
+            nnewton++;
+            if (verbose)
+                fprintf(stderr, "HB  lambda=%.4f  iter %2d: |F| = %.6e\n", target, iter, fnorm);
+
+            if (isnan(fnorm) || fnorm > 1e300)
+                break;                          /* diverged -> level fails */
+
+            /* Newton step: J * dV = -F */
+            for (i = 0; i < Ntot; i++) { Fr[i] = -Fr[i]; Fi[i] = -Fi[i]; }
+            if (pss_csolve(Ntot, Jr, Ji, Fr, Fi))   /* singular -> level fails */
+                break;
+            for (i = 0; i < Ntot; i++) { Vr[i] += Fr[i]; Vi[i] += Fi[i]; }
+
+            if (fnorm < tol) { conv = 1; break; }
         }
 
-        /* residual F = I_R + I_C - Is */
-        for (i = 0; i < Ntot; i++) {
-            Fr[i] = IRr[i] + Kr[i] - Isr[i];
-            Fi[i] = IRi[i] + Ki[i] - Isi[i];
-            fnorm += Fr[i] * Fr[i] + Fi[i] * Fi[i];
-        }
-        fnorm = sqrt(fnorm);
-        if (verbose)
-            fprintf(stderr, "HB iter %2d: |F| = %.6e\n", iter, fnorm);
-
-        /* Newton step: J * dV = -F */
-        for (i = 0; i < Ntot; i++) { Fr[i] = -Fr[i]; Fi[i] = -Fi[i]; }
-        if (pss_csolve(Ntot, Jr, Ji, Fr, Fi)) {   /* Fr/Fi <- dV */
-            fprintf(stderr, "HB: singular Jacobian.\n"); rc = E_SINGULAR;
-            pac_free_harmonics(&hd); break;
-        }
-        for (i = 0; i < Ntot; i++) { Vr[i] += Fr[i]; Vi[i] += Fi[i]; }
-        pac_free_harmonics(&hd);
-
-        if (fnorm < tol) {
-            fprintf(stdout, "HB: converged in %d iterations (|F| = %.3e).\n", iter + 1, fnorm);
+        if (hard_err)
             break;
+
+        if (conv) {
+            lambda = target;
+            nlevels++;
+            memcpy(Vsr, Vr, (size_t)Ntot * sizeof(double)); /* checkpoint this level */
+            memcpy(Vsi, Vi, (size_t)Ntot * sizeof(double));
+            if (lambda >= 1.0 - 1e-9)
+                break;                          /* reached full strength */
+            dlambda *= 1.7;                     /* grow the step while it's easy */
+            if (lambda + dlambda > 1.0)
+                dlambda = 1.0 - lambda;
+        } else {
+            memcpy(Vr, Vsr, (size_t)Ntot * sizeof(double)); /* restore last good */
+            memcpy(Vi, Vsi, (size_t)Ntot * sizeof(double));
+            dlambda *= 0.5;
+            if (dlambda < 1e-5) {
+                fprintf(stderr, "HB: source stepping stalled at lambda=%.4g "
+                                "(|F|=%.3e); the circuit may be singular or have "
+                                "no periodic steady state at this drive.\n",
+                        lambda, fnorm);
+                rc = E_ITERLIM;
+                break;
+            }
         }
+    }
+
+    if (rc == OK)
+        fprintf(stdout, "HB: converged in %d iterations, %d continuation step%s "
+                        "(|F| = %.3e).\n",
+                nnewton, nlevels, nlevels == 1 ? "" : "s", fnorm);
+    FREE(Vsr);
+    FREE(Vsi);
     }
 
     /* --- output: labelled spectrum table, magnitude per node per harmonic --- */

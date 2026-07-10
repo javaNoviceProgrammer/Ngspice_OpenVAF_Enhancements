@@ -221,9 +221,12 @@ devices. Verified 8/8 against the transient/`fourier` steady state, with quadrat
 Newton convergence: nonlinear R (analytic 3rd harmonic), nonlinear R+C, a real **diode
 rectifier** (junction devices are settled per sample so their limiter is a no-op), a
 compiled OSDI varactor whose `Q(v)` 2nd harmonic matches, and KLU==Sparse parity.
-Single-tone; strongly-driven
-continuation, a sparse block solve, and multi-tone HB (true incommensurate QPSS,
-cf. note 6) are the follow-ups.*
+**Strongly-driven circuits** (where a cold full-strength Newton diverges) are handled by
+automatic **source-stepping continuation** ([Enhancement-135](../../../enhancements_doc/Enhancement-135.md)):
+every source is ramped by `λ: 0→1` in adaptive, warm-started, backtracking steps, so a
+5 V diode rectifier that blows up cold converges in 3 continuation steps (easy circuits
+stay bit-identical). Single-tone; a sparse block solve and multi-tone HB (true
+incommensurate QPSS, cf. note 6) are the remaining follow-ups.*
 
 ## Performance & scale
 
