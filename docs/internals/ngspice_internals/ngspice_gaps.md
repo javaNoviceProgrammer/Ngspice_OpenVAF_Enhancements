@@ -28,11 +28,25 @@ mark is ⚠️ or ❌.
 | Core solver | Parallel / partitioned / GPU linear solve | ❌ | ✅ |
 | Core solver | Matrix reordering + scaling beyond KLU defaults | ⚠️ | ✅ |
 | Integration | Trapezoidal + variable-order Gear | ✅ | ✅ |
-| Integration | Advanced LTE-based step/order control | ⚠️ | ✅ |
+| Integration | Advanced LTE-based step/order control | ✅ | ✅ |
 | Convergence | gmin stepping + source stepping homotopy | ✅ | ✅ |
 | Convergence | Pseudo-transient / dynamic-gmin continuation | ✅ | ✅ |
 | Convergence | Damped / trust-region (globalized) Newton | ⚠️ | ✅ |
 | Convergence | Coordinated accuracy presets (`errpreset`) | ✅ | ✅ |
+
+*The Integration "advanced LTE-based step/order control" row was ⚠️ because,
+although ngspice implements Gear coefficients for orders 1–6 (`NIcomCof`) and an
+LTE-limited-step estimate at any order (`CKTtrunc`/`CKTterr`), the stock transient
+controller in `dctran.c` only ever toggles the order between 1 and 2 — orders 3–6
+were dead code on every ordinary run.
+[Enhancement-128](../../../enhancements_doc/Enhancement-128.md) closes it with
+`.option dynorder`: each step it compares the raw (uncapped) LTE-limited step at the
+current order and its ±1 neighbours and moves — with hysteresis, a settling hold, and
+an order-dependent growth cap — toward the order the local error rewards, so the
+higher orders are actually used. Off by default, bounded by `maxord`, verified under
+both linear solvers: 3–5× fewer timesteps at matched accuracy on a smooth RC decay and
+8.9× (and more accurate) on a smooth RLC ringdown, while a nonlinear switching circuit
+is left result-neutral to 5 significant figures.*
 
 *These two convergence rows: ngspice's DC path is not naked — it has per-device
 junction limiting (30 device families), an optional `nodedamping` step clamp,
