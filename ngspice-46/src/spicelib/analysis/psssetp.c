@@ -63,6 +63,9 @@ PSSsetParm(CKTcircuit *ckt, JOB *anal, int which, IFvalue *value)
     case PAC_STEPTYPE:
         job->PACstepType = value->iValue;
         break;
+    case PAC_MAXSB:
+        job->PACmaxSideband = value->iValue;
+        break;
 
     default:
         return(E_BADPARM);
@@ -84,7 +87,8 @@ static IFparm PSSparms[] = {
     { "pac_fstart", PAC_FSTART,		IF_SET|IF_REAL,		"PAC input sweep start frequency" },
     { "pac_fstop",  PAC_FSTOP,		IF_SET|IF_REAL,		"PAC input sweep stop frequency" },
     { "pac_points", PAC_POINTS,		IF_SET|IF_INTEGER,	"PAC points per decade/octave (or total for linear)" },
-    { "pac_step",   PAC_STEPTYPE,	IF_SET|IF_INTEGER,	"PAC sweep step type (0 lin, 1 dec, 2 oct)" }
+    { "pac_step",   PAC_STEPTYPE,	IF_SET|IF_INTEGER,	"PAC sweep step type (0 lin, 1 dec, 2 oct)" },
+    { "pac_maxsb",  PAC_MAXSB,		IF_SET|IF_INTEGER,	"PAC output conversion sidebands each side (0 = sideband 0 only)" }
 };
 
 SPICEanalysis PSSinfo  = {

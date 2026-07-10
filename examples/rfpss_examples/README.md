@@ -91,5 +91,29 @@ point against `|Z(f)|` (worst-case `1.6e−7`). A pumped nonlinear circuit's
 sideband-0 response is the genuine periodic-AC response (differs from a plain
 `.ac`) through the same path.
 
-**Note:** `.pac` runs a PSS shooting method (~2 minutes) and `verify_rcpac.py`
-runs it under the Sparse solver only.
+### Source-referenced stimulus and conversion sidebands (Enhancement-123)
+
+`.pac` takes an optional trailing `maxsideband` and honours a netlist `AC` source:
+
+```
+.pac Fguess StabTime OscNode Points Harmonics SC_iter Steady_coeff \
+     <DEC|OCT|LIN> Npts Fstart Fstop [maxsideband]
+```
+
+- **Source-referenced stimulus** — if a source carries an `AC <mag>` spec (as in
+  `.ac`), that source is the PAC input, so the result is a **transfer / conversion
+  gain**, not a driving-point impedance. `rc_pac_src.cir` drives
+  `V1 a 0 DC 0 AC 1 SIN(0 1 1meg)`, so the sideband-0 response at `b` is the
+  low-pass transfer `|H(f)| = 1/√(1 + (2πfRC)²)` (0.998 at 10 kHz → 0.157 at
+  1 MHz) — a thousand-fold different from the unit-current driving-point impedance.
+- **Multi-sideband output** — `maxsideband = Ksb` emits the response at every
+  conversion sideband `f_in + k·f0` (`k = −Ksb … Ksb`). Sideband 0 keeps the node
+  name (`plot b`); the conversion sidebands are `b_usb1`, `b_lsb1`, … For the linear
+  RC they are ~0 (no mixing); a pumped nonlinear circuit fills them with real
+  conversion gain.
+
+`verify_rcpac.py` checks both the E-122 (unit-current) and E-123 (source +
+sidebands) decks.
+
+**Note:** `.pac` runs a PSS shooting method (~2 minutes per deck) and
+`verify_rcpac.py` runs under the Sparse solver only.

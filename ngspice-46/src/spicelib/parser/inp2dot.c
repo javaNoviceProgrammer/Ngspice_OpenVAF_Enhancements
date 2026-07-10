@@ -770,6 +770,16 @@ dot_pac(char *line, void *ckt, INPtables *tab, struct card *current,
     parm = INPgetValue(ckt, &line, IF_REAL, tab);		/* fstop */
     GCA(INPapName, (ckt, which, foo, "pac_fstop", parm));
 
+    {   /* optional trailing maxsideband: output conversion sidebands each side */
+        char *p = line;
+        while (*p == ' ' || *p == '\t')
+            p++;
+        if (*p) {
+            parm = INPgetValue(ckt, &line, IF_INTEGER, tab);
+            GCA(INPapName, (ckt, which, foo, "pac_maxsb", parm));
+        }
+    }
+
     ptemp.iValue = 1;						/* enable the PAC sweep */
     GCA(INPapName, (ckt, which, foo, "pac", &ptemp));
 

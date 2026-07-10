@@ -93,6 +93,64 @@ if pts:
     check(f"[E-122] high-f point ~ |Z({fhi:.4g})| = {Zana(fhi):.4g} (got {mhi:.4g})",
           abs(mhi - Zana(fhi)) / Zana(fhi) < 0.02, str(mhi))
 
+# --- Enhancement-123: source-referenced stimulus + multi-sideband output ---
+# rc_pac_src.cir drives V1 with `AC 1`, so the PAC stimulus is that netlist source
+# (a periodic-AC transfer) rather than a unit current at the osc node -- the
+# sideband-0 response at b is now the low-pass TRANSFER |H(f)| = 1/sqrt(1+(2*pi*f*R*C)^2)
+# (0.998 -> 0.157), not the driving-point impedance. The trailing `2` asks for 2
+# conversion sidebands each side; for this linear circuit b_usb1/b_lsb1 are ~0.
+def Hlp(f):
+    return 1.0 / math.hypot(1.0, 2 * math.pi * f * R * C)
+
+def cols_by_header(log):
+    """parse ngspice `print` tables -> {vector_name: [(freq, value), ...]}."""
+    out, cur = {}, None
+    for line in log.splitlines():
+        m = re.search(r"Index\s+frequency\s+(\S+)", line)
+        if m:
+            cur = m.group(1); out.setdefault(cur, [])
+            continue
+        p = line.split()
+        if cur and len(p) == 3:
+            try:
+                out[cur].append((float(p[1]), float(p[2])))
+            except ValueError:
+                pass
+    return out
+
+with open(os.path.join(HERE, "rc_pac_src.cir")) as f:
+    lines = f.read().split("\n")
+lines.insert(1, ".option sparse")
+name = "_rcpacsrc_sparse.cir"
+with open(os.path.join(HERE, name), "w") as f:
+    f.write("\n".join(lines))
+r2 = subprocess.run([NGSPICE, "-b", name], capture_output=True, text=True, cwd=HERE)
+os.remove(os.path.join(HERE, name))
+log2 = r2.stdout + r2.stderr
+
+check("[E-123] PAC uses the netlist AC source as the stimulus",
+      "stimulus: netlist AC source" in log2, log2[-400:])
+msb = re.search(r"stimulus:.*?;\s*(\d+)\s*sidebands", log2)
+check("[E-123] multi-sideband output announced (5 sidebands for maxsideband=2)",
+      msb is not None and int(msb.group(1)) == 5, msb.group(1) if msb else None)
+
+cols = cols_by_header(log2)
+b = cols.get("mag(b)", [])
+check(f"[E-123] source-referenced sideband-0 is the AC transfer, not the impedance "
+      f"(got {b[0][1]:.4g} at {b[0][0]:.4g} Hz -> expect {Hlp(b[0][0]):.4g})" if b else
+      "[E-123] mag(b) parsed",
+      len(b) >= 5 and max(abs(m - Hlp(f)) / Hlp(f) for f, m in b) < 0.02,
+      f"worst {max(abs(m-Hlp(f))/Hlp(f) for f,m in b):.2e}" if b else "no data")
+
+for sbname in ("mag(b_usb1)", "mag(b_lsb1)"):
+    v = cols.get(sbname, [])
+    check(f"[E-123] conversion sideband {sbname} vector exists", len(v) >= 5,
+          f"{len(v)} points")
+    if v:
+        peak = max(m for _f, m in v)
+        check(f"[E-123] {sbname} ~ 0 (no conversion for a linear circuit, peak {peak:.2e})",
+              peak < 1e-9, f"peak {peak:.3e}")
+
 print()
 print(("ALL PASS" if passed == checks else "FAILURES")
       + f": {passed} passed, {checks - passed} failed")

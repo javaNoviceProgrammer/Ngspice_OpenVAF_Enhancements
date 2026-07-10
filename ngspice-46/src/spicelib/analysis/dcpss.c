@@ -246,6 +246,12 @@ struct pac_harm {
     int Ntot;                       /* (2M+1)*N -- conversion-matrix dimension */
     int *rr, *cc;                   /* nonzero row/col (1-based) */
     double *Gmr, *Gmi, *Cmr, *Cmi;  /* [nnz*(H+1)] complex harmonics G_h, C_h */
+    /* Enhancement-123: the small-signal source RHS captured from CKTacLoad (the AC
+     * stamp of netlist `AC`-flagged sources), used as the sideband-0 stimulus B_0
+     * when present -- the source-referenced PAC input, else a unit current at the
+     * osc node is injected as a fallback. Bias-independent, so captured once. */
+    double *B0r, *B0i;              /* [N] source AC RHS (0-based, node j -> row j+1) */
+    int    has_src;                 /* 1 if any netlist source stamped an AC value */
 };
 
 /* Walk the retained operating point, sample every Jacobian nonzero's G(t), C(t)
@@ -258,7 +264,8 @@ pac_extract_harmonics(CKTcircuit *ckt, PSSan *job, int M, struct pac_harm *hd)
     int    N = job->PSSopMsize, ns = job->PSSopNumStates;
     int    H = 2 * M, i, r, c, e, h, nnz;
     int    *rr, *cc;
-    double *Gt, *Ct, *cw, *sw, *Gmr, *Gmi, *Cmr, *Cmi;
+    double *Gt, *Ct, *cw, *sw, *Gmr, *Gmi, *Cmr, *Cmi, *B0r, *B0i;
+    int    has_src = 0;
 
     memset(hd, 0, sizeof(*hd));
     if (P <= 0 || N <= 0 || M < 1)
@@ -289,6 +296,19 @@ pac_extract_harmonics(CKTcircuit *ckt, PSSan *job, int M, struct pac_harm *hd)
     ckt->CKTomega = 1.0;
     ckt->CKTmode = (ckt->CKTmode & MODEUIC) | MODEAC;
     CKTacLoad(ckt);
+
+    /* Enhancement-123: capture the small-signal source RHS. CKTacLoad clears
+     * CKTrhs/CKTirhs then lets each device stamp; a netlist source with an `AC`
+     * spec stamps its (bias-independent) AC value here -- that vector is the
+     * source-referenced PAC stimulus B_0. */
+    B0r = TMALLOC(double, N);
+    B0i = TMALLOC(double, N);
+    for (i = 1; i <= N; i++) {
+        B0r[i - 1] = ckt->CKTrhs[i];
+        B0i[i - 1] = ckt->CKTirhs[i];
+        if (B0r[i - 1] != 0.0 || B0i[i - 1] != 0.0)
+            has_src = 1;
+    }
 
     /* enumerate the structural nonzeros (SMPfindElt does not create) */
     nnz = 0;
@@ -363,6 +383,7 @@ pac_extract_harmonics(CKTcircuit *ckt, PSSan *job, int M, struct pac_harm *hd)
     hd->N = N;  hd->M = M;  hd->H = H;  hd->nnz = nnz;  hd->Ntot = (2*M + 1) * N;
     hd->rr = rr;  hd->cc = cc;
     hd->Gmr = Gmr;  hd->Gmi = Gmi;  hd->Cmr = Cmr;  hd->Cmi = Cmi;
+    hd->B0r = B0r;  hd->B0i = B0i;  hd->has_src = has_src;
     return 0;
 }
 
@@ -371,18 +392,21 @@ pac_free_harmonics(struct pac_harm *hd)
 {
     FREE(hd->rr);  FREE(hd->cc);
     FREE(hd->Gmr); FREE(hd->Gmi); FREE(hd->Cmr); FREE(hd->Cmi);
+    FREE(hd->B0r); FREE(hd->B0i);
 }
 
 /* Assemble the conversion matrix H_{nm} = G_{n-m} + j*omega_m*C_{n-m} at input
- * frequency f_in, inject a unit current at node `inode` in the 0-th sideband, and
- * solve. The solution X (all sidebands, length Ntot) is written to Xr/Xi, which the
- * caller allocates. Returns 0 on success, 1 if the matrix is singular. */
+ * frequency f_in and solve for a stimulus injected in the 0-th sideband. When
+ * `use_src` is set and the netlist supplied an `AC` source, the captured source
+ * RHS B_0 is the stimulus; otherwise a unit current is injected at node `inode`.
+ * The solution X (all sidebands, length Ntot) is written to Xr/Xi, which the caller
+ * allocates. Returns 0 on success, 1 if the matrix is singular. */
 static int
-pac_solve_at(struct pac_harm *hd, double f0, double f_in, int inode,
+pac_solve_at(struct pac_harm *hd, double f0, double f_in, int inode, int use_src,
              double *Xr, double *Xi)
 {
     int    N = hd->N, M = hd->M, H = hd->H, nnz = hd->nnz, Ntot = hd->Ntot;
-    int    ni, mi, n, mm, e, rc;
+    int    ni, mi, n, mm, e, rc, j;
     double *Ar, *Ai;
 
     Ar = TMALLOC(double, (size_t)Ntot * (size_t)Ntot);
@@ -415,9 +439,17 @@ pac_solve_at(struct pac_harm *hd, double f0, double f_in, int inode,
         }
     }
 
+    /* stimulus in the 0-th sideband: netlist AC source RHS, or a unit current */
     memset(Xr, 0, (size_t)Ntot * sizeof(double));
     memset(Xi, 0, (size_t)Ntot * sizeof(double));
-    Xr[(size_t)M * (size_t)N + (size_t)(inode - 1)] = 1.0;   /* unit I, sideband 0 */
+    if (use_src && hd->has_src) {
+        for (j = 0; j < N; j++) {
+            Xr[(size_t)M * (size_t)N + (size_t)j] = hd->B0r[j];
+            Xi[(size_t)M * (size_t)N + (size_t)j] = hd->B0i[j];
+        }
+    } else {
+        Xr[(size_t)M * (size_t)N + (size_t)(inode - 1)] = 1.0;
+    }
     rc = pss_csolve(Ntot, Ar, Ai, Xr, Xi);
     FREE(Ar); FREE(Ai);
     return rc;
@@ -458,7 +490,7 @@ pss_pac_report(CKTcircuit *ckt, PSSan *job)
     f_in = 0.5 * f0;                            /* probe input frequency */
     Xr = TMALLOC(double, hd.Ntot);
     Xi = TMALLOC(double, hd.Ntot);
-    if (pac_solve_at(&hd, f0, f_in, onode, Xr, Xi) == 0) {
+    if (pac_solve_at(&hd, f0, f_in, onode, 0, Xr, Xi) == 0) {   /* unit-I probe */
         double g0 = 0, c0 = 0, zexp;
         for (e = 0; e < hd.nnz; e++)
             if (hd.rr[e] == onode && hd.cc[e] == onode) {
@@ -480,20 +512,25 @@ pss_pac_report(CKTcircuit *ckt, PSSan *job)
     pac_free_harmonics(&hd);
 }
 
-/* Enhancement-122: PAC frequency sweep (.pac). Extract the Jacobian harmonics
+/* Enhancement-122/123: PAC frequency sweep (.pac). Extract the Jacobian harmonics
  * once, then sweep the input frequency and, at each point, solve the conversion
- * matrix and emit the 0-th-sideband node responses as a complex plot vs frequency
- * -- the periodic-AC transfer/driving-point response. */
+ * matrix and emit the response at each requested sideband f_in + k*f0 as a complex
+ * plot vs frequency. The stimulus is a netlist-referenced small-signal `AC` source
+ * when present (the periodic-AC transfer / conversion gain), else a unit current at
+ * the osc node (a driving-point PAC). With `pac_maxsb = Ksb` the output vectors are
+ * the base node names (sideband 0) plus `<node>_usb<k>` / `<node>_lsb<k>` for the
+ * upper/lower conversion sidebands. */
 static void
 pac_sweep(CKTcircuit *ckt, PSSan *job)
 {
     int    N = job->PSSopMsize, onode = job->PSSoscNode ? job->PSSoscNode->number : 0;
-    int    M, i, numNames, error, stepType = job->PACstepType, np = job->PACpoints;
+    int    M, Ksb, nsb, j, s, k, numNames, nout, error;
+    int    stepType = job->PACstepType, np = job->PACpoints;
     double f0 = job->PSSopFreq, fstart = job->PACfStart, fstop = job->PACfStop;
     double freq, mult, linstep;
     struct pac_harm hd;
     double *Xr, *Xi;
-    IFuid  freqUid, *nameList = NULL;
+    IFuid  freqUid, *nameList = NULL, *outNames = NULL;
     runDesc *pacPlot = NULL;
 
     if (onode <= 0 || onode > N || f0 <= 0.0 || fstart <= 0.0 ||
@@ -507,14 +544,41 @@ pac_sweep(CKTcircuit *ckt, PSSan *job)
     if (pac_extract_harmonics(ckt, job, M, &hd))
         return;
 
-    /* begin the complex output plot (frequency scale, one vector per unknown) */
+    /* number of output sidebands each side (clamped to what the matrix carries) */
+    Ksb = job->PACmaxSideband;
+    if (Ksb < 0)  Ksb = 0;
+    if (Ksb > M)  Ksb = M;
+    nsb = 2 * Ksb + 1;
+
+    /* build the output name list: base node names for sideband 0, plus
+     * <node>_usb<k> / <node>_lsb<k> for the upper/lower conversion sidebands. */
     error = CKTnames(ckt, &numNames, &nameList);
-    if (error) { pac_free_harmonics(&hd); return; }
+    if (error || numNames != N) { pac_free_harmonics(&hd); FREE(nameList); return; }
+    nout = numNames * nsb;
+    outNames = TMALLOC(IFuid, nout);
+    for (s = 0; s < nsb; s++) {
+        k = s - Ksb;
+        for (j = 0; j < numNames; j++) {
+            if (k == 0) {
+                outNames[s * numNames + j] = nameList[j];   /* reuse base UID */
+            } else {
+                char nm[256];
+                IFuid uid;
+                (void) snprintf(nm, sizeof(nm), "%s_%csb%d",
+                                (char *) nameList[j], (k > 0) ? 'u' : 'l', abs(k));
+                if (SPfrontEnd->IFnewUid(ckt, &uid, NULL, nm, UID_OTHER, NULL))
+                    uid = nameList[j];                      /* fallback on clash */
+                outNames[s * numNames + j] = uid;
+            }
+        }
+    }
+
     SPfrontEnd->IFnewUid(ckt, &freqUid, NULL, "frequency", UID_OTHER, NULL);
     error = SPfrontEnd->OUTpBeginPlot(ckt, ckt->CKTcurJob, "PAC Analysis",
-                                      freqUid, IF_REAL, numNames, nameList,
+                                      freqUid, IF_REAL, nout, outNames,
                                       IF_COMPLEX, &pacPlot);
     tfree(nameList);
+    tfree(outNames);
     if (error) { pac_free_harmonics(&hd); return; }
     if (stepType != 0)      /* dec / oct -> log frequency axis */
         SPfrontEnd->OUTattributes(pacPlot, NULL, OUT_SCALE_LOG, NULL);
@@ -526,21 +590,26 @@ pac_sweep(CKTcircuit *ckt, PSSan *job)
     linstep = (np > 1) ? (fstop - fstart) / (np - 1) : 0.0;
 
     fprintf(stderr, "PAC sweep: %s from %.6g to %.6g Hz (%d pts/%s) around "
-                    "f0 = %.6g Hz, unit I at osc node\n",
+                    "f0 = %.6g Hz; stimulus: %s; %d sideband%s\n",
             (stepType == 1) ? "dec" : (stepType == 2) ? "oct" : "lin",
             fstart, fstop, np,
-            (stepType == 0) ? "total" : (stepType == 1) ? "decade" : "octave", f0);
+            (stepType == 0) ? "total" : (stepType == 1) ? "decade" : "octave", f0,
+            hd.has_src ? "netlist AC source" : "unit I at osc node",
+            nsb, (nsb == 1) ? "" : "s");
 
     for (freq = fstart; freq <= fstop * (1.0 + 1e-9); ) {
-        if (pac_solve_at(&hd, f0, freq, onode, Xr, Xi) == 0) {
+        if (pac_solve_at(&hd, f0, freq, onode, 1, Xr, Xi) == 0) {
             IFvalue freqData, valueData;
-            IFcomplex *data = TMALLOC(IFcomplex, N);
+            IFcomplex *data = TMALLOC(IFcomplex, nout);
             freqData.rValue = freq;
-            valueData.v.numValue = N;
+            valueData.v.numValue = nout;
             valueData.v.vec.cVec = data;
-            for (i = 0; i < N; i++) {
-                data[i].real = Xr[(size_t)M * (size_t)N + (size_t)i];
-                data[i].imag = Xi[(size_t)M * (size_t)N + (size_t)i];
+            for (s = 0; s < nsb; s++) {
+                size_t blk = (size_t)(s - Ksb + M) * (size_t)N;   /* sideband block */
+                for (j = 0; j < numNames; j++) {
+                    data[s * numNames + j].real = Xr[blk + (size_t)j];
+                    data[s * numNames + j].imag = Xi[blk + (size_t)j];
+                }
             }
             SPfrontEnd->OUTpData(pacPlot, &freqData, &valueData);
             FREE(data);

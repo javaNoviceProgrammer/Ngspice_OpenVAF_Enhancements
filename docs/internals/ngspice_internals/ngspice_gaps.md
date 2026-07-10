@@ -86,7 +86,7 @@ solver-by-solver sweep of the example suite:
 | RF | Periodic steady state (PSS) | ✅¹ | ✅ |
 | RF | Harmonic Balance (HB) | ❌ | ✅ |
 | RF | Periodic / phase noise (Pnoise) | ❌ | ✅ |
-| RF | Periodic AC (PAC, conversion gain) | ⚠️² | ✅ |
+| RF | Periodic AC (PAC, conversion gain) | ✅² | ✅ |
 | RF | Periodic transfer function (PXF) | ❌ | ✅ |
 | RF | Periodic S-parameters (PSP) | ❌ | ✅ |
 | RF | Quasi-periodic / multi-tone (QPSS / QPAC) | ❌ | ✅ |
@@ -103,22 +103,25 @@ It is still a brute-force shooting method and remains the foundation for the
 periodic small-signal analyses below. HB exists only as a `WITH_HB` stub that
 returns "unsupported".*
 
-*² PAC is ⚠️ (**working command, first cut**). The full periodic small-signal
-chain is now built and verified: [Enhancement-119](../../../enhancements_doc/Enhancement-119.md)
-retains the periodic operating point,
+*² PAC is ✅ (**complete periodic-AC analysis**). The full chain is built and
+verified: [Enhancement-119](../../../enhancements_doc/Enhancement-119.md) retains
+the periodic operating point,
 [Enhancement-120](../../../enhancements_doc/Enhancement-120.md) extracts the
 periodic Jacobian harmonics `G_k`, `C_k`,
 [Enhancement-121](../../../enhancements_doc/Enhancement-121.md) assembles and solves
-the `(2M+1)N` **harmonic conversion matrix** `H_{nm}=G_{n−m}+jω_m·C_{n−m}`, and
+the `(2M+1)N` **harmonic conversion matrix** `H_{nm}=G_{n−m}+jω_m·C_{n−m}`,
 [Enhancement-122](../../../enhancements_doc/Enhancement-122.md) wraps it in a
-user-facing **`.pac` command** that runs PSS then sweeps the input frequency and
-writes the 0-th-sideband node responses as a complex plot (`print`/`plot`/`wrdata`).
-It is verified on the linear RC: the swept sideband-0 response reproduces the AC
-driving-point impedance across the whole band to `1.6e−7`. It stays ⚠️ rather than
-✅ because the first cut injects a unit current at the osc node (rather than a
-netlist-referenced small-signal source) and outputs only sideband 0 (rather than
-every conversion-gain sideband `f_in + k·f0`) — both reuse the same solve, as do
-pnoise and PXF.*
+user-facing **`.pac` command** (runs PSS, sweeps the input frequency, writes a
+complex plot), and [Enhancement-123](../../../enhancements_doc/Enhancement-123.md)
+finishes it with a **netlist-referenced small-signal source** stimulus (a true
+transfer / conversion gain) and **multi-sideband output** — every conversion
+sideband `f_in + k·f0` as its own named vector (`<node>_usb<k>`/`<node>_lsb<k>`).
+Verified on the RC: unit-current sideband-0 reproduces the AC driving-point
+impedance and, with `V1 AC 1`, sideband-0 reproduces the low-pass transfer
+`1/√(1+(2πfRC)²)` across the band while the conversion sidebands sit at
+floating-point zero (a linear circuit does not mix). The one scale caveat: the
+conversion matrix is solved densely (capped for modest circuits) on the brute-force
+shooting PSS. The same solve is the substrate for pnoise and PXF.*
 
 ## Performance & scale
 
@@ -195,15 +198,17 @@ leverage on the existing strength × differentiation × tractability:
    [Enhancement-120](../../../enhancements_doc/Enhancement-120.md) turns it into
    the periodic Jacobian harmonics `G_k`, `C_k`, and
    [Enhancement-121](../../../enhancements_doc/Enhancement-121.md) assembles those
-   into the `(2M+1)N` harmonic conversion matrix and solves it, and
+   into the `(2M+1)N` harmonic conversion matrix and solves it,
    [Enhancement-122](../../../enhancements_doc/Enhancement-122.md) wraps that in a
-   working **`.pac` command** (runs PSS, sweeps `f_in`, writes the sideband-0 node
-   responses as a complex plot) — verified against the exact linear driving-point
-   response to `1.6e−7`. The device/OSDI side already supplies the rest
+   working **`.pac` command**, and
+   [Enhancement-123](../../../enhancements_doc/Enhancement-123.md) finishes it with
+   a netlist-referenced source stimulus and multi-sideband conversion-gain output —
+   a complete periodic-AC analysis, verified against the exact linear transfer and
+   driving-point responses. The device/OSDI side already supplies the rest
    (noise-source topology, operating-point- and frequency-dependent `load_noise`);
-   the remaining work is a source-referenced stimulus and multi-sideband
-   conversion-gain output on `.pac`, then reusing the same solve for pnoise/PXF.
-   Genuinely novel in open source.
+   the next analyses are **pnoise** (fold device-noise sidebands through `Hᵀ`) and
+   **PXF**, both reusing this same conversion-matrix solve. Genuinely novel in open
+   source.
 2. **Convergence robustness** — coordinated accuracy presets (`errpreset`)
    **landed in [Enhancement-110](../../../enhancements_doc/Enhancement-110.md)**;
    the remaining piece is pseudo-transient / dynamic-gmin homotopy. Unglamorous

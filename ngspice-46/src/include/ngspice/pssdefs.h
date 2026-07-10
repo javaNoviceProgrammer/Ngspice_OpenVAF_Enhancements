@@ -50,6 +50,7 @@ typedef struct {
     double PACfStop;         /* input-frequency sweep stop (Hz) */
     int    PACpoints;        /* points per decade/octave, or total for linear */
     int    PACstepType;      /* 0 = LIN, 1 = DEC, 2 = OCT */
+    int    PACmaxSideband;   /* number of output conversion sidebands each side (0 = sb0 only) */
 } PSSan;
 
 enum {
@@ -66,6 +67,7 @@ enum {
     PAC_FSTOP,
     PAC_POINTS,
     PAC_STEPTYPE,
+    PAC_MAXSB,
 };
 
 #endif

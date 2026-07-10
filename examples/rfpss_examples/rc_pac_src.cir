@@ -1,0 +1,18 @@
+* Enhancement-123: PAC with a source-referenced stimulus + multi-sideband output.
+* V1 is both the PSS pump (SIN, 1 MHz) and the small-signal PAC input (AC 1). With a
+* netlist AC source the PAC stimulus is that source (a periodic-AC transfer), not a
+* unit current at the osc node -- so the sideband-0 response at b is the low-pass
+* transfer |H(f)| = 1/sqrt(1 + (2*pi*f*R*C)^2). The trailing 2 asks for 2 conversion
+* sidebands each side; for this linear circuit those (b_usb1, b_lsb1, ...) are ~0.
+V1 a 0 DC 0 AC 1 SIN(0 1 1meg)
+R1 a b 1k
+C1 b 0 1n
+* .pac <pss params> <dec|oct|lin> Npts Fstart Fstop [maxsideband]
+.pac 1meg 1u b 1024 10 50 5u dec 10 10k 1meg 2
+.control
+run
+print mag(b)
+print mag(b_usb1)
+print mag(b_lsb1)
+.endc
+.end
