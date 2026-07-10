@@ -1,0 +1,20 @@
+* Enhancement-126: cyclostationary flicker-noise demo.
+* R1 (with a flicker model, AF=2) carries the RC low-pass current I(t) driven by the
+* 1 MHz pump, so its flicker noise ~ KF*|I(t)|^2 is genuinely cyclostationary. The
+* circuit is linear (fast, well-conditioned PSS) and the transfer to the output b is
+* flat (= R1) over the low-frequency noise sweep, so the cyclostationary output noise
+* satisfies
+*     onoise(f) * f = R1^2 * KF * <I(t)^2>,   <I^2> = (1/2)|(1 - H)/R1|^2,
+*     H = 1/(1 + j*2*pi*f0*R1*C1)   (the RC transfer at the pump frequency),
+* a constant independent of f that uses the period-AVERAGE <I^2> -- distinct from the
+* single-sample value a stationary analysis would use. (= 4.8765e-10 here.)
+V1 a 0 SIN(0 1 1meg)
+R1 a b rmod 1k
+C1 b 0 1n
+.model rmod R(kf=1e-9 af=2 ef=1)
+.pnoise 1meg 1u b 1024 10 50 5u b v1 dec 3 100 1k cyclo
+.control
+run
+print onoise_spectrum
+.endc
+.end

@@ -854,6 +854,23 @@ dot_pnoise(char *line, void *ckt, INPtables *tab, struct card *current,
     parm = INPgetValue(ckt, &line, IF_REAL, tab);		/* fstop */
     GCA(INPapName, (ckt, which, foo, "pac_fstop", parm));
 
+    {   /* Enhancement-126: optional trailing "cyclo" keyword */
+        char *p = line;
+        while (*p == ' ' || *p == '\t')
+            p++;
+        if (*p) {
+            char *word;
+            INPgetTok(&line, &word, 1);
+            if (strcmp(word, "cyclo") == 0) {
+                ptemp.iValue = 1;
+                GCA(INPapName, (ckt, which, foo, "pnoise_cyclo", &ptemp));
+            } else {
+                fprintf(stderr, "Error: unknown parameter %s on .pnoise - ignored\n", word);
+            }
+            tfree(word);
+        }
+    }
+
     ptemp.iValue = 1;						/* enable the pnoise sweep */
     GCA(INPapName, (ckt, which, foo, "pnoise", &ptemp));
 

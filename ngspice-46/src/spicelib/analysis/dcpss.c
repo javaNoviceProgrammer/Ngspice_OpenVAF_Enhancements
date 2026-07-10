@@ -765,10 +765,97 @@ pnoise_sweep(CKTcircuit *ckt, PSSan *job)
     linstep = (np > 1) ? (fstop - fstart) / (np - 1) : 0.0;
 
     fprintf(stderr, "PNOISE sweep: %s from %.6g to %.6g Hz around f0 = %.6g Hz; "
-                    "output node %d; folding %d sidebands\n",
+                    "output node %d; folding %d sidebands%s\n",
             (stepType == 1) ? "dec" : (stepType == 2) ? "oct" : "lin",
-            fstart, fstop, f0, outNode, 2*M + 1);
+            fstart, fstop, f0, outNode, 2*M + 1,
+            job->PSSpnCyclo ? "; cyclostationary" : "");
 
+    if (job->PSSpnCyclo) {
+        /* Enhancement-126: cyclostationary noise. The device noise PSD S(t) varies
+         * along the PSS period, and its harmonics couple sidebands. Using the
+         * identity onoise = (1/P) Σ_s S(t_s)·|ΔA_s|², where A_s(j) = Σ_k Ψ_k(j)·
+         * exp(j·2π·k·s/P) is the inverse-DFT of the sideband adjoint transfers, this
+         * is computed by evaluating each device's noise at every sample's bias
+         * (CKTload per sample) and folding through the time-domain transfer, then
+         * averaging over the period. Reduces to the stationary case (and hence
+         * .noise) when S(t) is constant, by Parseval. */
+        long   P = job->PSSopPoints, s;
+        int    Nf = 0, fi, c;
+        double *freqs, *onz, *Pr_all, *Pi_all;
+
+        for (freq = fstart; freq <= fstop * (1.0 + 1e-9); ) {   /* count points */
+            Nf++;
+            if (stepType == 0) { if (np <= 1) break; freq += linstep; }
+            else               { freq *= mult; }
+        }
+        freqs  = TMALLOC(double, Nf);
+        onz    = TMALLOC(double, Nf);
+        Pr_all = TMALLOC(double, (size_t)Nf * (size_t)hd.Ntot);
+        Pi_all = TMALLOC(double, (size_t)Nf * (size_t)hd.Ntot);
+        c = 0;
+        for (freq = fstart; freq <= fstop * (1.0 + 1e-9); ) {   /* fill + adjoints */
+            freqs[c] = freq;  onz[c] = 0.0;
+            if (pac_solve_adjoint(&hd, f0, freq, outNode, Psr, Psi) != 0) {
+                memset(Psr, 0, (size_t)hd.Ntot * sizeof(double));
+                memset(Psi, 0, (size_t)hd.Ntot * sizeof(double));
+            }
+            memcpy(Pr_all + (size_t)c * (size_t)hd.Ntot, Psr, (size_t)hd.Ntot * sizeof(double));
+            memcpy(Pi_all + (size_t)c * (size_t)hd.Ntot, Psi, (size_t)hd.Ntot * sizeof(double));
+            c++;
+            if (stepType == 0) { if (np <= 1) break; freq += linstep; }
+            else               { freq *= mult; }
+        }
+
+        for (s = 0; s < P; s++) {   /* evaluate device noise at each sample's bias */
+            double ang0 = 2.0 * M_PI * (double)s / (double)P;
+            for (i = 1; i <= N; i++)
+                ckt->CKTrhsOld[i] = job->PSSopVoltages[(i - 1) + s * N];
+            ckt->CKTrhsOld[0] = 0.0;
+            if (ns > 0)
+                memcpy(ckt->CKTstate0, job->PSSopStates + (size_t)s * (size_t)ns,
+                       (size_t)ns * sizeof(double));
+            ckt->CKTmode = (ckt->CKTmode & MODEUIC) | MODEDCOP | MODEINITSMSIG;
+            CKTload(ckt);
+            for (fi = 0; fi < Nf; fi++) {
+                double dens = 0.0;
+                double *pr = Pr_all + (size_t)fi * (size_t)hd.Ntot;
+                double *pi = Pi_all + (size_t)fi * (size_t)hd.Ntot;
+                for (j = 1; j <= N; j++) {   /* A_s(j) = IDFT_k Ψ_k(j) */
+                    double ar = 0.0, ai = 0.0;
+                    for (k = -M; k <= M; k++) {
+                        size_t idx = (size_t)(k + M) * (size_t)N + (size_t)(j - 1);
+                        double cs = cos((double)k * ang0), sn = sin((double)k * ang0);
+                        ar += pr[idx] * cs - pi[idx] * sn;
+                        ai += pr[idx] * sn + pi[idx] * cs;
+                    }
+                    ckt->CKTrhs[j] = ar;  ckt->CKTirhs[j] = ai;
+                }
+                ckt->CKTrhs[0] = 0.0;  ckt->CKTirhs[0] = 0.0;
+                data.freq = freqs[fi];  data.delFreq = 0.0;  data.prtSummary = FALSE;
+                for (i = 0; i < DEVmaxnum; i++)
+                    if (DEVices[i] && DEVices[i]->DEVnoise && ckt->CKThead[i])
+                        DEVices[i]->DEVnoise(N_DENS, N_CALC, ckt->CKThead[i],
+                                             ckt, &data, &dens);
+                onz[fi] += dens;
+            }
+        }
+
+        for (fi = 0; fi < Nf; fi++) {   /* period-average, gain, output */
+            double onoise = onz[fi] / (double)P, gain2 = 1.0, gsi;
+            IFvalue refVal, valData;
+            double out[2];
+            if (hd.has_src && pac_solve_at(&hd, f0, freqs[fi], outNode, 1, Xr, Xi) == 0) {
+                size_t oidx = (size_t)M * (size_t)N + (size_t)(outNode - 1);
+                gain2 = Xr[oidx] * Xr[oidx] + Xi[oidx] * Xi[oidx];
+            }
+            gsi = 1.0 / MAX(gain2, N_MINGAIN);
+            out[0] = onoise;  out[1] = onoise * gsi;
+            refVal.rValue = freqs[fi];
+            valData.v.numValue = 2;  valData.v.vec.rVec = out;
+            SPfrontEnd->OUTpData(plot, &refVal, &valData);
+        }
+        FREE(freqs); FREE(onz); FREE(Pr_all); FREE(Pi_all);
+    } else
     for (freq = fstart; freq <= fstop * (1.0 + 1e-9); ) {
         double onoise = 0.0, gain2 = 1.0, gsi;
 

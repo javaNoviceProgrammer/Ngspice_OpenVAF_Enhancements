@@ -58,6 +58,9 @@ typedef struct {
     int      PSSdoPnoise;    /* 1 if this job runs a pnoise sweep */
     CKTnode *PnOutNode;      /* pnoise output node (reference = ground) */
     IFuid    PnInSrc;        /* input source name, for the input-referred spectrum */
+    int      PSSpnCyclo;     /* Enhancement-126: 1 = cyclostationary noise (per-sample
+                              * bias + time-domain transfer, averaged over the period);
+                              * 0 = stationary (noise PSD at one operating point) */
 
     /* Enhancement-125: periodic transfer function (.pxf). The ADJOINT counterpart of
      * PAC: solve Hᵀ Ψ = e_{out,0} and dot Ψ with the netlist AC-source pattern to get
@@ -87,6 +90,7 @@ enum {
     PNOISE_INSRC,
     PXF_DO,
     PXF_OUT,
+    PNOISE_CYCLO,
 };
 
 #endif

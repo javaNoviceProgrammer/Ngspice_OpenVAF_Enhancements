@@ -132,10 +132,17 @@ matrix (`Hᵀ Ψ = e_{out,0}`): it loads the sideband-`k` transfer into
 device noise model and needs no per-device code. Verified on the RC: because the
 circuit is linear the conversion matrix is block-diagonal, only sideband 0
 contributes, and pnoise reduces **exactly** to `.noise` (`4kTR/(1+(2πfRC)²)`,
-matching the `.noise` reference to every printed digit). It stays ⚠️ because the
-first cut evaluates each device's noise PSD at the periodic operating-point sample
-(a stationary approximation of the cyclostationary source) and does not yet emit a
-dedicated phase-noise (jitter) spectrum — both refinements of the same fold.*
+matching the `.noise` reference to every printed digit).
+[Enhancement-126](../../../enhancements_doc/Enhancement-126.md) then adds a
+**cyclostationary** mode (`.pnoise … cyclo`): it evaluates each device's noise PSD at
+*every* PSS sample's bias and folds it through the *time-domain* adjoint transfer,
+averaging over the period, so a pumped device's bias-dependent noise (a diode's
+`2qI(t)`, a resistor's flicker `∝|I(t)|²`) is captured correctly. It reduces exactly
+to the stationary case (and hence `.noise`) for a bias-independent source by
+Parseval, and on a flicker resistor carrying a known periodic current it gives
+`onoise·f = R1²·KF·⟨I²⟩` using the period-average `⟨I²⟩` (matched to five digits). It
+stays ⚠️ only because it does not yet emit a dedicated phase-noise (jitter) spectrum
+— a refinement of the same cyclostationary fold.*
 
 *⁴ PXF is ✅ (**complete**). [Enhancement-125](../../../enhancements_doc/Enhancement-125.md)
 adds a `.pxf` command — the **adjoint** of PAC. It solves `Hᵀ Ψ = e_{out,0}` per
@@ -236,9 +243,13 @@ leverage on the existing strength × differentiation × tractability:
    [Enhancement-125](../../../enhancements_doc/Enhancement-125.md) adds **`.pxf`**,
    the adjoint transfer function, whose sideband-0 result is bit-identical to the
    PAC response by reciprocity. **The PSS → PAC → Pnoise → PXF periodic small-signal
-   suite is now complete** — genuinely novel in open source. The remaining RF work
-   is the refinements (cyclostationary/phase noise, a from-scratch Harmonic Balance
-   engine, quasi-periodic multi-tone) rather than the core analyses.
+   suite is now complete** — genuinely novel in open source — and
+   [Enhancement-126](../../../enhancements_doc/Enhancement-126.md) adds
+   **cyclostationary** noise (per-sample bias, time-domain-transfer fold) so pumped
+   devices' bias-dependent noise is handled correctly. The remaining RF work is the
+   further refinements (a dedicated phase-noise/jitter spectrum, a from-scratch
+   Harmonic Balance engine, quasi-periodic multi-tone) rather than the core
+   analyses.
 2. **Convergence robustness** — coordinated accuracy presets (`errpreset`)
    **landed in [Enhancement-110](../../../enhancements_doc/Enhancement-110.md)**;
    the remaining piece is pseudo-transient / dynamic-gmin homotopy. Unglamorous

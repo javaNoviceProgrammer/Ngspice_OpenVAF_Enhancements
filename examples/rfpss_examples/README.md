@@ -150,6 +150,30 @@ a plain `.noise` run (which it matches to every digit). A pumped nonlinear circu
 folds noise between sidebands (up/down-conversion, phase noise) through the same
 path.
 
+### Cyclostationary noise (Enhancement-126)
+
+The E-124 `.pnoise` above evaluates each device's noise PSD at one operating point.
+For a **pumped** device whose noise depends on the bias (a diode's shot noise
+`2qI(t)`, a resistor's flicker `∝|I(t)|²`) that PSD varies along the PSS period. A
+trailing `cyclo` keyword switches to the cyclostationary treatment:
+
+```
+.pnoise <pss> OutNode InSrc <DEC|OCT|LIN> Npts Fstart Fstop cyclo
+```
+
+It evaluates the noise at **every** PSS sample's bias and folds it through the
+*time-domain* adjoint transfer `A_s(j) = Σ_k Ψ_k(j)·e^{j2πks/P}`, averaging over the
+period: `onoise(f) = (1/P)·Σ_s S(t_s)·|ΔA_s|²`.
+
+- **Reduction** — for a bias-independent source (a resistor's thermal noise), `S(t)`
+  is constant and by Parseval the cyclostationary result reduces *exactly* to the
+  stationary one; on the linear RC it matches `.noise` to every digit.
+- **`rc_flicker_cyclo.cir`** — a resistor with a flicker model carries the RC current
+  `I(t)`, so its flicker noise is cyclostationary. With a flat transfer the output
+  satisfies `onoise·f = R1²·KF·⟨I²⟩` (a constant, `4.88e−10` here), using the
+  period-**average** `⟨I²⟩` rather than a single sample. `verify_rccyclo.py` checks
+  both the reduction and this quantitative result.
+
 ## `.pxf` command — periodic transfer function (Enhancement-125)
 
 `.pxf` is the **adjoint** of `.pac`: it fixes one output and gives the transfer from
