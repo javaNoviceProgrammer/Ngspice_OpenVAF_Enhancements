@@ -122,6 +122,14 @@ compare("nonlinear R + linear C",
     "I1 0 n SIN(0 0.5m 100meg)\nR1 n 0 1k\nBnl n 0 I = 0.5e-3*V(n)*V(n)*V(n)\nC1 n 0 500f",
     [1, 3])
 
+# [4] built-in DIODE half-wave rectifier: a junction device with internal voltage
+# limiting -- the sharp rectified waveform has strong DC..3rd harmonics. This is the
+# hard case: HB must settle the limited junction at each sample (else the diode looks
+# linear). Match the transient fourier for DC..3rd.
+compare("diode rectifier (junction limiting)",
+    "V1 s 0 SIN(0 1 100meg)\nRs s a 100\nD1 a n DMOD\nRn n 0 1k\n.model DMOD D(IS=1e-12 N=1.2)",
+    [0, 1, 2, 3], tol=1.5e-2, K=8)
+
 # [3] NONLINEAR C (OSDI varactor): the V^2 charge term makes a 2nd harmonic a linear
 # cap cannot -- the key "full nonlinear reactive" check.
 osdi = os.path.join(HERE, "vavar.osdi")

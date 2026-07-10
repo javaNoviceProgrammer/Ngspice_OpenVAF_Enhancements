@@ -29,10 +29,16 @@ Newton with the **`(2K+1)N` conversion matrix (E-121) as the exact Jacobian**. E
 iteration:
 
 1. inverse-DFT `V_k` → node voltages `v(t_s)` at P samples over one period;
-2. at each sample, drive the device loads at those voltages: a **DC-mode** load gives
-   the resistive Jacobian `G(t)` and the companion source `b`, from which the
-   **actual** nonlinear resistive current is `I_R = G·v − b` (not the tangent `G·v`);
-   an **AC** load at ω=1 gives `C(t)`;
+2. at each sample, drive the device loads at those voltages. **Junction devices
+   (diode/BJT/MOS) limit their internal voltage against a stored value**, so a single
+   load leaves them pinned at a stale bias (and `MODEINITSMSIG` alone reads the stored
+   op-point, ignoring the node voltage — which made real diodes look *linear*). So the
+   sample first **settles** the device: repeated `MODEINITFLOAT` loads walk the limited
+   junction to the fixed node voltages until the limiter is a no-op, yielding the true
+   companion `b` and hence the **actual** resistive current `I_R = G·v − b` (not the
+   tangent `G·v`). A following `MODEINITSMSIG` load then reads the settled bias to build
+   the small-signal linearization, and an **AC** load at ω=1 gives `C(t)`. Behavioural
+   / OSDI devices with no limiting settle on the first pass;
 3. DFT `I_R(t_s)`, `G(t)`, `C(t)` → the residual and the conversion-matrix harmonics;
 4. dense complex Newton solve (`pss_csolve`) → update `V_k`.
 
@@ -51,12 +57,15 @@ node voltage with the sources evaluated at each sample time. Reuses `pac_build_m
 ## Verification
 
 `verify_hb.py` drives nonlinear circuits with a tone and compares HB's spectrum
-against ngspice's own transient + `fourier` steady-state harmonics (6/6):
+against ngspice's own transient + `fourier` steady-state harmonics (7/7):
 
 - **nonlinear resistor** — fundamental and 3rd harmonic match; Newton converges
   **quadratically** in 3 iterations; even-order products are ~0.
 - **nonlinear R + linear C** — the reactive roll-off/phase is captured; still matches
   the transient fourier.
+- **built-in diode half-wave rectifier** — a real junction device with internal voltage
+  **limiting**; the sharp rectified waveform's DC…3rd harmonics match the transient to
+  <0.3 % (this is the hard case the per-sample settling above unlocks).
 - **nonlinear C (OSDI varactor)** — a `Q = cj0·(V + γV²)` charge makes a real 2nd
   harmonic (`|V₂| ≈ 1.4e−2`) that a linear cap cannot; HB matches the transient — the
   **full nonlinear-reactive** result, on a compiled Verilog-A device.

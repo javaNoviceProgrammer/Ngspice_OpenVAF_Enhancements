@@ -213,9 +213,10 @@ Jacobian. The device residual/Jacobian are sampled by driving DC+AC loads at the
 current iterate's voltages; nonlinear **reactive** elements need NO charge extraction
 because `dq/dt = C(v)*v'` -- the reactive current is the conversion matrix's `jwC`
 term applied to V, using the sampled `C(t)`. Solver-independent; built-in and OSDI
-devices. Verified 6/6 against the transient/`fourier` steady state, with quadratic
-Newton convergence: nonlinear R (analytic 3rd harmonic), nonlinear R+C, and a
-compiled OSDI varactor whose `Q(v)` 2nd harmonic matches. Single-tone; strongly-driven
+devices. Verified 7/7 against the transient/`fourier` steady state, with quadratic
+Newton convergence: nonlinear R (analytic 3rd harmonic), nonlinear R+C, a real **diode
+rectifier** (junction devices are settled per sample so their limiter is a no-op), and
+a compiled OSDI varactor whose `Q(v)` 2nd harmonic matches. Single-tone; strongly-driven
 continuation, a sparse block solve, and multi-tone HB (true incommensurate QPSS,
 cf. note 6) are the follow-ups.*
 

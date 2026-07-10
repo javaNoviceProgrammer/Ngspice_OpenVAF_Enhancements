@@ -1293,16 +1293,46 @@ hb_extract(CKTcircuit *ckt, const double *vsamp, int N, int P, int K,
         ckt->CKTrhsOld[0] = 0.0;
         for (i = 0; i <= N; i++)
             ckt->CKTrhs[i] = 0.0;
+        /* (a) Settle the nonlinear device state at the FIXED node voltages v(t_s).
+         * In MODEINITFLOAT a junction device (diode/BJT/MOS) reads the node voltage
+         * but LIMITS the junction step against its stored internal voltage; a single
+         * load leaves it pinned at a stale bias (and MODEINITSMSIG alone reads the
+         * stored op-point, ignoring the node voltage -- the bug that made real diodes
+         * look linear). So load repeatedly: each pass walks the internal voltage
+         * toward the fixed node voltages until the limiter is a no-op. Behavioural/
+         * OSDI devices with no limiting settle on the first pass. */
+        ckt->CKTmode = (ckt->CKTmode & MODEUIC) | MODEDCOP | MODEINITFLOAT;
+        {
+            int inner;
+            for (inner = 0; inner < 100; inner++) {
+                double bnorm = 0.0, dnorm = 0.0;
+                for (i = 0; i <= N; i++)
+                    ckt->CKTrhs[i] = 0.0;
+                CKTload(ckt);                /* reads CKTrhsOld (fixed v), evolves state0 */
+                for (i = 1; i <= N; i++) {
+                    double db = ckt->CKTrhs[i] - bsave[i - 1];
+                    dnorm += db * db;
+                    bnorm += ckt->CKTrhs[i] * ckt->CKTrhs[i];
+                    bsave[i - 1] = ckt->CKTrhs[i];
+                }
+                if (inner > 0 && sqrt(dnorm) <= 1e-12 * (sqrt(bnorm) + 1e-30))
+                    break;
+            }
+        }
+        /* The settled MODEINITFLOAT load left the DC companion b = G*v - i(v) in
+         * bsave; it gives the ACTUAL resistive current i(v) = G*v - b for EVERY
+         * device (behavioural, OSDI, junction), not the tangent G*v.
+         * (b) A MODEINITSMSIG load then reads the now-settled junction state to build
+         * the small-signal linearization the AC (C) load needs. Its RHS is NOT the DC
+         * companion, so we do NOT overwrite bsave; but the small-signal G it sets up
+         * is the same di/dv at the settled bias, so I_R = G*v - b_float = i(v). */
+        for (i = 0; i <= N; i++)
+            ckt->CKTrhs[i] = 0.0;
         ckt->CKTmode = (ckt->CKTmode & MODEUIC) | MODEDCOP | MODEINITSMSIG;
         CKTload(ckt);
-        /* companion source b = G*v - i(v) is in CKTrhs NOW; save it before acLoad
-         * clears it (so the resistive current is i(v) = G*v - b, the ACTUAL current,
-         * not the tangent G*v). */
-        for (i = 1; i <= N; i++)
-            bsave[i - 1] = ckt->CKTrhs[i];
         ckt->CKTomega = 1.0;
         ckt->CKTmode = (ckt->CKTmode & MODEUIC) | MODEAC;
-        CKTacLoad(ckt);   /* clears + stamps G (real) and C (imag) cleanly */
+        CKTacLoad(ckt);   /* clears + stamps G (real) and C (imag) at the settled bias */
 
         /* resistive current I_R = G*v - b, using the clean G from acLoad */
         Gv = IRt + (size_t)s * (size_t)N;   /* reuse row s as scratch, then subtract */
