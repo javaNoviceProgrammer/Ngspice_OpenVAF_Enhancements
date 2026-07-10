@@ -1653,24 +1653,26 @@ struct qp_harm {
     double *Gmr, *Gmi, *Cmr, *Cmi;   /* [nnz*Dsz] 2-D difference spectra */
     double f1, f2;
     double *Vr, *Vi;           /* [Ntot] retained operating point (for qpac); else NULL */
+    double *B0r, *B0i;         /* [N] AC-source stimulus for qpac (E-137); else NULL */
+    int     has_src;           /* 1 if a netlist AC source stamped B0 */
 };
 
-struct qp_harm *qpss_hb_saved = NULL;   /* retained QPSS op-point for qpac (E-137) */
+static struct qp_harm *qpss_hb_saved = NULL;   /* retained QPSS op-point for qpac (E-137) */
 
 static int qp_didx(const struct qp_harm *h, int d1, int d2)
 { return (d1 + 2*h->K1) * h->D2c + (d2 + 2*h->K2); }
 
 /* free the arrays a qp_harm owns (not the struct itself) */
-void qp_free(struct qp_harm *hd)
+static void qp_free(struct qp_harm *hd)
 {
     if (!hd) return;
     FREE(hd->rr); FREE(hd->cc); FREE(hd->h1); FREE(hd->h2);
     FREE(hd->Gmr); FREE(hd->Gmi); FREE(hd->Cmr); FREE(hd->Cmi);
-    FREE(hd->Vr); FREE(hd->Vi);
+    FREE(hd->Vr); FREE(hd->Vi); FREE(hd->B0r); FREE(hd->B0i);
 }
 
 /* assemble the dense Ntot x Ntot 2-D conversion matrix at input freq f_in */
-void qp_build_matrix(struct qp_harm *hd, double f_in, double *Ar, double *Ai)
+static void qp_build_matrix(struct qp_harm *hd, double f_in, double *Ar, double *Ai)
 {
     int Nh = hd->Nh, N = hd->N, Ntot = hd->Ntot, nnz = hd->nnz, ni, mi, e;
     memset(Ar, 0, (size_t)Ntot * (size_t)Ntot * sizeof(double));
@@ -2092,6 +2094,20 @@ QPSShb(CKTcircuit *ckt, double f1, double f2, int K1, int K2, int P1, int P2,
                 sv->Vr = TMALLOC(double, Ntot); sv->Vi = TMALLOC(double, Ntot);
                 memcpy(sv->Vr, Vr, (size_t)Ntot*sizeof(double));
                 memcpy(sv->Vi, Vi, (size_t)Ntot*sizeof(double));
+                /* capture the AC-source stimulus B0 (a netlist `AC`-flagged source's
+                 * RHS -- bias-independent) at the op-point, for qpac (E-137). */
+                sv->B0r = TMALLOC(double, N); sv->B0i = TMALLOC(double, N); sv->has_src = 0;
+                for (i = 0; i <= N; i++) { ckt->CKTrhsOld[i] = 0.0; ckt->CKTrhs[i] = 0.0; }
+                ckt->CKTmode = (ckt->CKTmode & MODEUIC) | MODEDCOP | MODEINITSMSIG;
+                CKTload(ckt);
+                ckt->CKTomega = 1.0;
+                ckt->CKTmode = (ckt->CKTmode & MODEUIC) | MODEAC;
+                CKTacLoad(ckt);
+                for (i = 0; i < N; i++) {
+                    sv->B0r[i] = ckt->CKTrhs[i+1];
+                    sv->B0i[i] = ckt->CKTirhs[i+1];
+                    if (sv->B0r[i] != 0.0 || sv->B0i[i] != 0.0) sv->has_src = 1;
+                }
                 if (qpss_hb_saved) { qp_free(qpss_hb_saved); FREE(qpss_hb_saved); }
                 qpss_hb_saved = sv;
             } else {
@@ -2103,6 +2119,80 @@ QPSShb(CKTcircuit *ckt, double f1, double f2, int K1, int K2, int P1, int P2,
     FREE(Vr); FREE(Vi); FREE(IRr); FREE(IRi); FREE(Isr); FREE(Isi);
     FREE(Fr); FREE(Fi); FREE(Jr); FREE(Ji); FREE(Kr); FREE(Ki); FREE(vsamp);
     return rc;
+}
+
+
+/* ======================================================================
+ * Enhancement-137: two-tone small-signal QPAC -- the quasi-periodic
+ * analogue of PAC. Around the QPSS operating point retained by
+ * `qpss ... hb` (qpss_hb_saved), inject a small signal at f_in; the
+ * quasi-periodic operating point converts it to the sidebands
+ * f_in + k1*f1 + k2*f2 through the SAME 2-D conversion matrix
+ * (qp_build_matrix at f_in), solved by pss_csolve. Same construction
+ * as pac_solve_at (E-121/122), on the two-tone harmonic set.
+ * ====================================================================== */
+int
+QPACanalyze(CKTcircuit *ckt, double f_in, int verbose)
+{
+    struct qp_harm *hd = qpss_hb_saved;
+    int    N, Nh, Ntot, i, hi, i00, numNames, error, k1, k2, ord;
+    IFuid *nameList = NULL;
+    double *Ar, *Ai, *Xr, *Xi;
+
+    if (!hd) {
+        fprintf(stderr, "qpac: no QPSS operating point -- run `qpss <expr> <f1> <f2> hb` first.\n");
+        return E_NOTFOUND;
+    }
+    N = hd->N; Nh = hd->Nh; Ntot = hd->Ntot;
+    Ar = TMALLOC(double, (size_t)Ntot*(size_t)Ntot);
+    Ai = TMALLOC(double, (size_t)Ntot*(size_t)Ntot);
+    Xr = TMALLOC(double, Ntot); Xi = TMALLOC(double, Ntot);
+    (void) verbose;
+
+    qp_build_matrix(hd, f_in, Ar, Ai);
+
+    /* stimulus in the (0,0) sideband: netlist AC source RHS, or unit current at node 1 */
+    memset(Xr, 0, (size_t)Ntot*sizeof(double));
+    memset(Xi, 0, (size_t)Ntot*sizeof(double));
+    i00 = hd->K1 * (2*hd->K2 + 1) + hd->K2;          /* harmonic index of (0,0) */
+    if (hd->has_src) {
+        for (i = 0; i < N; i++) {
+            Xr[(size_t)i00*(size_t)N + (size_t)i] = hd->B0r[i];
+            Xi[(size_t)i00*(size_t)N + (size_t)i] = hd->B0i[i];
+        }
+    } else {
+        Xr[(size_t)i00*(size_t)N + 0] = 1.0;
+    }
+    if (pss_csolve(Ntot, Ar, Ai, Xr, Xi)) {
+        fprintf(stderr, "qpac: singular conversion matrix.\n");
+        FREE(Ar); FREE(Ai); FREE(Xr); FREE(Xi);
+        return E_SINGULAR;
+    }
+    FREE(Ar); FREE(Ai);
+
+    error = CKTnames(ckt, &numNames, &nameList);
+    fprintf(stdout,
+            "\nQPAC: two-tone small-signal response (f_in = %g Hz, f1 = %g Hz, f2 = %g Hz)\n"
+            "  node      (k1,k2)   sideband f_in+k1f1+k2f2 [Hz]   |response|      phase [deg]\n",
+            f_in, hd->f1, hd->f2);
+    for (i = 0; i < N; i++) {
+        const char *nm = (!error && i < numNames) ? (const char *) nameList[i] : "?";
+        for (ord = 0; ord <= hd->K1 + hd->K2; ord++)
+            for (k1 = -hd->K1; k1 <= hd->K1; k1++)
+                for (k2 = -hd->K2; k2 <= hd->K2; k2++) {
+                    double fsb, xr, xi;
+                    if (abs(k1) + abs(k2) != ord) continue;
+                    hi = (k1 + hd->K1) * (2*hd->K2 + 1) + (k2 + hd->K2);
+                    fsb = f_in + k1*hd->f1 + k2*hd->f2;
+                    xr = Xr[(size_t)hi*(size_t)N + (size_t)i];
+                    xi = Xi[(size_t)hi*(size_t)N + (size_t)i];
+                    fprintf(stdout, "  %-8s  (%2d,%2d)   %18.6e   %14.6e   %10.3f\n",
+                            nm, k1, k2, fsb, hypot(xr, xi), atan2(xi, xr) * 180.0/M_PI);
+                }
+    }
+    if (nameList) tfree(nameList);
+    FREE(Xr); FREE(Xi);
+    return OK;
 }
 
 

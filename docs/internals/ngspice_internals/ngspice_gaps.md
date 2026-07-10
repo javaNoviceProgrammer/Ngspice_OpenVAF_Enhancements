@@ -111,7 +111,7 @@ solver-by-solver sweep of the example suite:
 | RF | Periodic AC (PAC, conversion gain) | ✅² | ✅ |
 | RF | Periodic transfer function (PXF) | ✅⁴ | ✅ |
 | RF | Periodic S-parameters (PSP) | ✅⁵ | ✅ |
-| RF | Quasi-periodic / multi-tone (QPSS / QPAC) | ⚠️⁶ | ✅ |
+| RF | Quasi-periodic / multi-tone (QPSS / QPAC) | ✅⁶ | ✅ |
 | RF | Envelope following | ❌ | ✅ |
 
 *¹ PSS was ⚠️ (experimental `--enable-pss` flag, so `.pss` was unimplemented in
@@ -207,8 +207,13 @@ common period — now work, which transient sampling cannot do) and 2-D DFT'd to
 conversion matrix, Newton-solved by `pss_csolve` with the E-135 source stepping; sources
 captured by an oversampled least-squares APFT. Verified 7/7 (analytic IM3 ratio, the
 incommensurate `√2` case, HB==transient, KLU==Sparse) and it retains its operating point.
-Still ⚠️ (not ✅) only because small-signal **QPAC** — the two-tone analogue of PAC around
-that retained operating point — is the last piece; it is the next enhancement.*
+[Enhancement-137](../../../enhancements_doc/Enhancement-137.md) closes the gap (**✅**) with
+small-signal **QPAC** — the two-tone analogue of PAC: `qpac <f_in>` injects a small signal
+around the retained QPSS operating point and reports the response at every sideband
+`f_in + k1·f1 + k2·f2`, mixing it through the same 2-D conversion matrix (`qp_build_matrix`
+at `f_in`, solved by `pss_csolve`) that the QPSS Newton used as its Jacobian. Verified 7/7,
+incl. reduce-to-AC (pump→0 ⇒ the direct response equals the plain `.ac` and the sidebands
+vanish) and the `v²`-pump conversion ratio.*
 
 *⁷ HB is ✅ since
 [Enhancement-134](../../../enhancements_doc/Enhancement-134.md): a `hb <f0> <K>`
