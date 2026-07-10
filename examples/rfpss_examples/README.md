@@ -149,3 +149,31 @@ the thermal-noise result `4·k·T·R1 / (1 + (2πf·R1·C1)²)` (1.65e−17 V²/
 a plain `.noise` run (which it matches to every digit). A pumped nonlinear circuit
 folds noise between sidebands (up/down-conversion, phase noise) through the same
 path.
+
+## `.pxf` command — periodic transfer function (Enhancement-125)
+
+`.pxf` is the **adjoint** of `.pac`: it fixes one output and gives the transfer from
+the input at each sideband, completing the PSS → PAC → Pnoise → PXF suite.
+
+```
+.pxf Fguess StabTime OscNode Points Harmonics SC_iter Steady_coeff \
+     OutNode <DEC|OCT|LIN> Npts Fstart Fstop [maxsideband]
+```
+
+It solves the adjoint of the conversion matrix (`Hᵀ Ψ = e_{out,0}`) and dots each
+sideband block of `Ψ` with the netlist AC-source pattern to get the input→output
+transfer `xf_k = Σ_j Ψ_k(j)·B0(j)`. Output is a `PXF Analysis` plot with `xf`
+(sideband 0) plus `xf_usb<k>`/`xf_lsb<k>`.
+
+`rc_pxf.cir` runs it on the RC (output `b`, input `V1 AC 1`):
+
+```
+.pxf 1meg 1u b 1024 10 50 5u b dec 10 10k 1meg 1
+```
+
+By the identity `(H⁻¹B)_out = (H⁻ᵀe_out)ᵀB`, the sideband-0 transfer is **exactly**
+the PAC response `mag(b)` — the low-pass transfer `1/√(1+(2πfRC)²)` (0.998 at 10 kHz
+→ 0.157 at 1 MHz) — a reciprocity cross-check between the adjoint and forward solves.
+The conversion sidebands `xf_usb1`/`xf_lsb1` are ~0 (a linear circuit does not
+convert). `verify_rcpxf.py` checks `xf` against the analytic transfer and the
+sidebands against zero.

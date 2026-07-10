@@ -823,6 +823,109 @@ pnoise_sweep(CKTcircuit *ckt, PSSan *job)
 }
 
 
+/* Enhancement-125: periodic transfer function (.pxf). The adjoint counterpart of
+ * .pac: solve Hᵀ Ψ = e_{out,0} once per frequency and dot each sideband block of Ψ
+ * with the netlist AC-source pattern B_0 to get the transfer from the input to the
+ * fixed output at each sideband, xf_k = Σ_j Ψ_k(j)·B0(j). By the identity
+ * (H⁻¹B)_out = (H⁻ᵀe_out)ᵀB, the sideband-0 transfer equals the PAC response at the
+ * output exactly -- the reciprocity cross-check. Emits xf (sideband 0) plus
+ * xf_usb<k>/xf_lsb<k> conversion transfers as a complex plot vs frequency. */
+static void
+pxf_sweep(CKTcircuit *ckt, PSSan *job)
+{
+    int    N = job->PSSopMsize, outNode = job->PxOutNode ? job->PxOutNode->number : 0;
+    int    M, Ksb, nsb, s, k, j, error, stepType = job->PACstepType, np = job->PACpoints;
+    double f0 = job->PSSopFreq, fstart = job->PACfStart, fstop = job->PACfStop;
+    double freq, mult, linstep;
+    struct pac_harm hd;
+    double *Psr, *Psi;
+    IFuid  freqUid, *outNames = NULL;
+    runDesc *plot = NULL;
+    char nm[64];
+
+    if (outNode <= 0 || outNode > N || f0 <= 0.0 || fstart <= 0.0 ||
+        fstop < fstart || np < 1)
+        return;
+    M = pac_choose_M(ckt, job);
+    if (M < 1) {
+        fprintf(stderr, "PXF: conversion matrix too large -- sweep skipped\n");
+        return;
+    }
+    if (pac_extract_harmonics(ckt, job, M, &hd))
+        return;
+    if (!hd.has_src) {
+        fprintf(stderr, "PXF: no netlist AC source found -- give the input source an "
+                        "AC value; sweep skipped\n");
+        pac_free_harmonics(&hd);
+        return;
+    }
+
+    Ksb = job->PACmaxSideband;
+    if (Ksb < 0)  Ksb = 0;
+    if (Ksb > M)  Ksb = M;
+    nsb = 2 * Ksb + 1;
+
+    /* one transfer vector per output sideband: xf (sb0), xf_usb<k>, xf_lsb<k> */
+    outNames = TMALLOC(IFuid, nsb);
+    for (s = 0; s < nsb; s++) {
+        k = s - Ksb;
+        if (k == 0)
+            (void) snprintf(nm, sizeof(nm), "xf");
+        else
+            (void) snprintf(nm, sizeof(nm), "xf_%csb%d", (k > 0) ? 'u' : 'l', abs(k));
+        SPfrontEnd->IFnewUid(ckt, &outNames[s], NULL, nm, UID_OTHER, NULL);
+    }
+
+    SPfrontEnd->IFnewUid(ckt, &freqUid, NULL, "frequency", UID_OTHER, NULL);
+    error = SPfrontEnd->OUTpBeginPlot(ckt, ckt->CKTcurJob, "PXF Analysis",
+                                      freqUid, IF_REAL, nsb, outNames,
+                                      IF_COMPLEX, &plot);
+    tfree(outNames);
+    if (error) { pac_free_harmonics(&hd); return; }
+    if (stepType != 0)
+        SPfrontEnd->OUTattributes(plot, NULL, OUT_SCALE_LOG, NULL);
+
+    Psr = TMALLOC(double, hd.Ntot);
+    Psi = TMALLOC(double, hd.Ntot);
+    mult    = (stepType == 1) ? pow(10.0, 1.0 / np) :
+              (stepType == 2) ? pow(2.0,  1.0 / np) : 0.0;
+    linstep = (np > 1) ? (fstop - fstart) / (np - 1) : 0.0;
+
+    fprintf(stderr, "PXF sweep: %s from %.6g to %.6g Hz around f0 = %.6g Hz; "
+                    "output node %d; %d sideband%s (adjoint)\n",
+            (stepType == 1) ? "dec" : (stepType == 2) ? "oct" : "lin",
+            fstart, fstop, f0, outNode, nsb, (nsb == 1) ? "" : "s");
+
+    for (freq = fstart; freq <= fstop * (1.0 + 1e-9); ) {
+        if (pac_solve_adjoint(&hd, f0, freq, outNode, Psr, Psi) == 0) {
+            IFvalue freqData, valData;
+            IFcomplex *data = TMALLOC(IFcomplex, nsb);
+            freqData.rValue = freq;
+            valData.v.numValue = nsb;
+            valData.v.vec.cVec = data;
+            for (s = 0; s < nsb; s++) {
+                size_t blk = (size_t)(s - Ksb + M) * (size_t)N;
+                double xr = 0.0, xi = 0.0;   /* xf_k = sum_j Psi_k(j) * B0(j) */
+                for (j = 0; j < N; j++) {
+                    xr += Psr[blk + (size_t)j] * hd.B0r[j] - Psi[blk + (size_t)j] * hd.B0i[j];
+                    xi += Psr[blk + (size_t)j] * hd.B0i[j] + Psi[blk + (size_t)j] * hd.B0r[j];
+                }
+                data[s].real = xr;
+                data[s].imag = xi;
+            }
+            SPfrontEnd->OUTpData(plot, &freqData, &valData);
+            FREE(data);
+        }
+        if (stepType == 0) { if (np <= 1) break; freq += linstep; }
+        else               { freq *= mult; }
+    }
+
+    SPfrontEnd->OUTendPlot(plot);
+    FREE(Psr); FREE(Psi);
+    pac_free_harmonics(&hd);
+}
+
+
 int
 DCpss(CKTcircuit *ckt,
        int restart)   /* forced restart flag */
@@ -1836,6 +1939,11 @@ DCpss(CKTcircuit *ckt,
                  * through the conversion matrix to get the output noise spectrum. */
                 if (job->PSSdoPnoise)
                     pnoise_sweep (ckt, job) ;
+
+                /* Enhancement-125: for a .pxf card, solve the conversion adjoint and
+                 * report the input->output transfer at each sideband. */
+                if (job->PSSdoPXF)
+                    pxf_sweep (ckt, job) ;
             }
             /****************************/
 

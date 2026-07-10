@@ -87,7 +87,7 @@ solver-by-solver sweep of the example suite:
 | RF | Harmonic Balance (HB) | ❌ | ✅ |
 | RF | Periodic / phase noise (Pnoise) | ⚠️³ | ✅ |
 | RF | Periodic AC (PAC, conversion gain) | ✅² | ✅ |
-| RF | Periodic transfer function (PXF) | ❌ | ✅ |
+| RF | Periodic transfer function (PXF) | ✅⁴ | ✅ |
 | RF | Periodic S-parameters (PSP) | ❌ | ✅ |
 | RF | Quasi-periodic / multi-tone (QPSS / QPAC) | ❌ | ✅ |
 | RF | Envelope following | ❌ | ✅ |
@@ -136,6 +136,17 @@ matching the `.noise` reference to every printed digit). It stays ⚠️ because
 first cut evaluates each device's noise PSD at the periodic operating-point sample
 (a stationary approximation of the cyclostationary source) and does not yet emit a
 dedicated phase-noise (jitter) spectrum — both refinements of the same fold.*
+
+*⁴ PXF is ✅ (**complete**). [Enhancement-125](../../../enhancements_doc/Enhancement-125.md)
+adds a `.pxf` command — the **adjoint** of PAC. It solves `Hᵀ Ψ = e_{out,0}` per
+frequency and dots each sideband block of `Ψ` with the netlist AC-source pattern
+`B0` to get the input→output transfer at each sideband (`xf`, `xf_usb<k>`,
+`xf_lsb<k>`). By the identity `(H⁻¹B)_out = (H⁻ᵀe_out)ᵀB` the sideband-0 transfer is
+**bit-identical** to the PAC response at the output — a reciprocity cross-check that
+pins the adjoint solve — verified on the RC to equal the analytic low-pass transfer,
+with the conversion sidebands at floating-point zero. The same dense-solve scale
+caveat as PAC applies. **This completes the PSS → PAC → Pnoise → PXF periodic
+small-signal suite.**
 
 ## Performance & scale
 
@@ -218,14 +229,16 @@ leverage on the existing strength × differentiation × tractability:
    [Enhancement-123](../../../enhancements_doc/Enhancement-123.md) finishes it with
    a netlist-referenced source stimulus and multi-sideband conversion-gain output —
    a complete periodic-AC analysis, verified against the exact linear transfer and
-   driving-point responses, and [Enhancement-124](../../../enhancements_doc/Enhancement-124.md)
+   driving-point responses, [Enhancement-124](../../../enhancements_doc/Enhancement-124.md)
    adds **`.pnoise`** — folding every device's noise through the conversion-matrix
    adjoint `Hᵀ` (reusing the existing device noise routines), verified to reduce
-   exactly to `.noise` in the linear limit. The device/OSDI side already supplied
-   the rest (noise-source topology, operating-point- and frequency-dependent
-   `load_noise`). The one analysis left in the trio is **PXF** (periodic transfer
-   function), reusing the same conversion-matrix adjoint. Genuinely novel in open
-   source.
+   exactly to `.noise` in the linear limit — and
+   [Enhancement-125](../../../enhancements_doc/Enhancement-125.md) adds **`.pxf`**,
+   the adjoint transfer function, whose sideband-0 result is bit-identical to the
+   PAC response by reciprocity. **The PSS → PAC → Pnoise → PXF periodic small-signal
+   suite is now complete** — genuinely novel in open source. The remaining RF work
+   is the refinements (cyclostationary/phase noise, a from-scratch Harmonic Balance
+   engine, quasi-periodic multi-tone) rather than the core analyses.
 2. **Convergence robustness** — coordinated accuracy presets (`errpreset`)
    **landed in [Enhancement-110](../../../enhancements_doc/Enhancement-110.md)**;
    the remaining piece is pseudo-transient / dynamic-gmin homotopy. Unglamorous

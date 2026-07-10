@@ -859,6 +859,85 @@ dot_pnoise(char *line, void *ckt, INPtables *tab, struct card *current,
 
     return (0);
 }
+
+/* Enhancement-125: Periodic transfer function (PXF). The adjoint of PAC: runs PSS
+ * then solves Hᵀ Ψ = e_{out,0} and dots Ψ with the netlist AC-source pattern to get
+ * the transfer from the input to a fixed output at each sideband. Reuses the PSS
+ * analysis (like .pac). */
+static int
+dot_pxf(char *line, void *ckt, INPtables *tab, struct card *current,
+        void *task, void *gnode, JOB *foo)
+{
+    int error;			/* error code temporary */
+    IFvalue ptemp;		/* a value structure to package resistance into */
+    IFvalue *parm;		/* a pointer to a value struct for function returns */
+    char *nname;		/* a node name */
+    CKTnode *nnode;		/* a node pointer */
+    int which;			/* which analysis we are performing */
+    char *steptype;		/* pxf sweep type: dec/oct/lin */
+
+    NG_IGNORE(gnode);
+    NG_IGNORE(current);
+
+    /* .pxf Fguess StabTime OscNode Points Harmonics SC_iter Steady_coeff
+     *      OutNode <DEC|OCT|LIN> NumPts Fstart Fstop [maxsideband] */
+    which = ft_find_analysis("PSS");
+    if (which == -1) {
+        LITERR("Periodic transfer-function (PXF) analysis unsupported.\n");
+        return (0);
+    }
+    IFC(newAnalysis, (ckt, which, "Periodic Transfer Function Analysis", &foo, task));
+
+    parm = INPgetValue(ckt, &line, IF_REAL, tab);		/* Fguess */
+    GCA(INPapName, (ckt, which, foo, "fguess", parm));
+    parm = INPgetValue(ckt, &line, IF_REAL, tab);		/* StabTime */
+    GCA(INPapName, (ckt, which, foo, "stabtime", parm));
+    INPgetNetTok(&line, &nname, 0);				/* OscNode */
+    INPtermInsert(ckt, &nname, tab, &nnode);
+    ptemp.nValue = nnode;
+    GCA(INPapName, (ckt, which, foo, "oscnode", &ptemp));
+    parm = INPgetValue(ckt, &line, IF_INTEGER, tab);		/* PSS points */
+    GCA(INPapName, (ckt, which, foo, "points", parm));
+    parm = INPgetValue(ckt, &line, IF_INTEGER, tab);		/* PSS harmonics */
+    GCA(INPapName, (ckt, which, foo, "harmonics", parm));
+    parm = INPgetValue(ckt, &line, IF_INTEGER, tab);		/* SC iterations */
+    GCA(INPapName, (ckt, which, foo, "sc_iter", parm));
+    parm = INPgetValue(ckt, &line, IF_REAL, tab);		/* Steady coefficient */
+    GCA(INPapName, (ckt, which, foo, "steady_coeff", parm));
+
+    INPgetNetTok(&line, &nname, 0);				/* OutNode */
+    INPtermInsert(ckt, &nname, tab, &nnode);
+    ptemp.nValue = nnode;
+    GCA(INPapName, (ckt, which, foo, "pxf_out", &ptemp));
+
+    /* sweep tail: <DEC|OCT|LIN> NumPts Fstart Fstop [maxsideband] */
+    INPgetTok(&line, &steptype, 1);
+    ptemp.iValue = (strcmp(steptype, "dec") == 0) ? 1 :
+                   (strcmp(steptype, "oct") == 0) ? 2 : 0;
+    tfree(steptype);
+    GCA(INPapName, (ckt, which, foo, "pac_step", &ptemp));
+    parm = INPgetValue(ckt, &line, IF_INTEGER, tab);		/* number of points */
+    GCA(INPapName, (ckt, which, foo, "pac_points", parm));
+    parm = INPgetValue(ckt, &line, IF_REAL, tab);		/* fstart */
+    GCA(INPapName, (ckt, which, foo, "pac_fstart", parm));
+    parm = INPgetValue(ckt, &line, IF_REAL, tab);		/* fstop */
+    GCA(INPapName, (ckt, which, foo, "pac_fstop", parm));
+
+    {   /* optional trailing maxsideband */
+        char *p = line;
+        while (*p == ' ' || *p == '\t')
+            p++;
+        if (*p) {
+            parm = INPgetValue(ckt, &line, IF_INTEGER, tab);
+            GCA(INPapName, (ckt, which, foo, "pac_maxsb", parm));
+        }
+    }
+
+    ptemp.iValue = 1;						/* enable the pxf sweep */
+    GCA(INPapName, (ckt, which, foo, "pxf", &ptemp));
+
+    return (0);
+}
 #endif
 
 
@@ -1063,6 +1142,10 @@ INP2dot(CKTcircuit *ckt, INPtables *tab, struct card *current, TSKtask *task, CK
         /* Enhancement-124: Periodic noise */
     } else if ((strcmp(token, ".pnoise") == 0)) {
         rtn = dot_pnoise(line, ckt, tab, current, task, gnode, foo);
+        goto quit;
+        /* Enhancement-125: Periodic transfer function */
+    } else if ((strcmp(token, ".pxf") == 0)) {
+        rtn = dot_pxf(line, ckt, tab, current, task, gnode, foo);
         goto quit;
 #endif
 #ifdef RFSPICE

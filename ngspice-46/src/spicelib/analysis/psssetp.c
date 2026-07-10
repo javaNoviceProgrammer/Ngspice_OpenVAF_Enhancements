@@ -78,6 +78,14 @@ PSSsetParm(CKTcircuit *ckt, JOB *anal, int which, IFvalue *value)
         job->PnInSrc = value->uValue;
         break;
 
+    /* Enhancement-125: pxf parameters (.pxf card) */
+    case PXF_DO:
+        job->PSSdoPXF = value->iValue;
+        break;
+    case PXF_OUT:
+        job->PxOutNode = value->nValue;
+        break;
+
     default:
         return(E_BADPARM);
     }
@@ -102,7 +110,9 @@ static IFparm PSSparms[] = {
     { "pac_maxsb",  PAC_MAXSB,		IF_SET|IF_INTEGER,	"PAC output conversion sidebands each side (0 = sideband 0 only)" },
     { "pnoise",       PNOISE_DO,	IF_SET|IF_INTEGER,	"run a periodic-noise sweep after PSS" },
     { "pnoise_out",   PNOISE_OUT,	IF_SET|IF_STRING,	"pnoise output node" },
-    { "pnoise_insrc", PNOISE_INSRC,	IF_SET|IF_STRING,	"pnoise input source (for the input-referred spectrum)" }
+    { "pnoise_insrc", PNOISE_INSRC,	IF_SET|IF_STRING,	"pnoise input source (for the input-referred spectrum)" },
+    { "pxf",          PXF_DO,		IF_SET|IF_INTEGER,	"run a periodic transfer-function sweep after PSS" },
+    { "pxf_out",      PXF_OUT,		IF_SET|IF_STRING,	"pxf output node" }
 };
 
 SPICEanalysis PSSinfo  = {

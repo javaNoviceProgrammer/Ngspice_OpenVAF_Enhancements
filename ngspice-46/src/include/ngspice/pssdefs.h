@@ -58,6 +58,13 @@ typedef struct {
     int      PSSdoPnoise;    /* 1 if this job runs a pnoise sweep */
     CKTnode *PnOutNode;      /* pnoise output node (reference = ground) */
     IFuid    PnInSrc;        /* input source name, for the input-referred spectrum */
+
+    /* Enhancement-125: periodic transfer function (.pxf). The ADJOINT counterpart of
+     * PAC: solve Hᵀ Ψ = e_{out,0} and dot Ψ with the netlist AC-source pattern to get
+     * the transfer from the input to a fixed output at each sideband. Reuses the PAC
+     * sweep fields + PACmaxSideband. */
+    int      PSSdoPXF;       /* 1 if this job runs a PXF sweep */
+    CKTnode *PxOutNode;      /* PXF output node (reference = ground) */
 } PSSan;
 
 enum {
@@ -78,6 +85,8 @@ enum {
     PNOISE_DO,
     PNOISE_OUT,
     PNOISE_INSRC,
+    PXF_DO,
+    PXF_OUT,
 };
 
 #endif

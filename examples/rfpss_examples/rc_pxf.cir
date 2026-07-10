@@ -1,0 +1,19 @@
+* Enhancement-125: periodic transfer function (.pxf) on a driven RC low-pass.
+* PXF is the ADJOINT of PAC: it solves Hᵀ Ψ = e_{out,0} and dots Ψ with the netlist
+* AC-source pattern to get the transfer from the input (V1, AC 1) to the fixed output
+* (b) at each sideband. By reciprocity the sideband-0 transfer equals the PAC
+* response at b -- for this linear RC that is the low-pass transfer
+* |H(f)| = 1/sqrt(1 + (2*pi*f*R1*C1)^2) (0.998 at 10 kHz -> 0.157 at 1 MHz), and the
+* conversion sidebands (xf_usb1, xf_lsb1) are ~0.
+V1 a 0 DC 0 AC 1 SIN(0 1 1meg)
+R1 a b 1k
+C1 b 0 1n
+* .pxf <pss params> OutNode <dec|oct|lin> Npts Fstart Fstop [maxsideband]
+.pxf 1meg 1u b 1024 10 50 5u b dec 10 10k 1meg 1
+.control
+run
+print mag(xf)
+print mag(xf_usb1)
+print mag(xf_lsb1)
+.endc
+.end
