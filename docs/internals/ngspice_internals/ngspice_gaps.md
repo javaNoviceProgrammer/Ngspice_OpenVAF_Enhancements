@@ -174,11 +174,12 @@ leverage on the existing strength × differentiation × tractability:
    ([Enhancement-117](../../../enhancements_doc/Enhancement-117.md),
    [Enhancement-118](../../../enhancements_doc/Enhancement-118.md)), and
    [Enhancement-119](../../../enhancements_doc/Enhancement-119.md) retains the
-   periodic operating point (voltages + device states per sample) — the substrate
-   these analyses linearize around. The device/OSDI side already supplies the
-   rest (noise-source topology, operating-point- and frequency-dependent
-   `load_noise`, periodic Jacobians); the remaining work is the periodic Jacobian
-   harmonics (E-120) and the conversion-matrix solve + `.pac` command (E-121).
+   periodic operating point (voltages + device states per sample) and
+   [Enhancement-120](../../../enhancements_doc/Enhancement-120.md) turns it into
+   the periodic Jacobian harmonics `G_k`, `C_k` — the substrate and the blocks
+   these analyses are built from. The device/OSDI side already supplies the rest
+   (noise-source topology, operating-point- and frequency-dependent `load_noise`);
+   the remaining work is the conversion-matrix solve + `.pac` command (E-121).
    Genuinely novel in open source.
 2. **Convergence robustness** — coordinated accuracy presets (`errpreset`)
    **landed in [Enhancement-110](../../../enhancements_doc/Enhancement-110.md)**;

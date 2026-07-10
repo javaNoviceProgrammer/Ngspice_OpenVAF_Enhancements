@@ -9,6 +9,9 @@
 #include "ngspice/cktdefs.h"
 #include "cktaccept.h"
 #include "ngspice/pssdefs.h"
+#include "ngspice/devdefs.h"   /* Enhancement-120: DEVbindCSCComplex for the KLU AC stamp */
+#include "ngspice/smpdefs.h"   /* Enhancement-120: SMPfindElt to read the Jacobian */
+#include "ngspice/spmatrix.h"  /* Enhancement-120: spSetComplex (Sparse complex mode) */
 #include "ngspice/sperror.h"
 #include "ngspice/fteext.h"
 
@@ -62,6 +65,91 @@ do { \
 
 static int
 DFT(long int, int, double *, double *, double *, double, double *, double *, double *, double *, double *);
+
+
+/* Enhancement-120: periodic small-signal Jacobian harmonics.
+ *
+ * PAC/pnoise/PXF linearize around the periodic operating point and solve a
+ * harmonic conversion matrix whose blocks are the harmonics G_k, C_k of the
+ * periodically time-varying device Jacobian G(t) = dI/dV, C(t) = dQ/dV. This
+ * routine builds the first piece: it walks the retained operating point (E-119),
+ * and at each stored sample restores that instant's node voltages + device
+ * states, recomputes the small-signal linearization (CKTload with MODEINITSMSIG),
+ * and stamps G + jC into the complex matrix (CKTacLoad at omega = 1). The
+ * (osc,osc) diagonal read back is the osc node's conductance g(t) (real part) and
+ * capacitance c(t) (imag part); their DFT gives the periodic Jacobian's harmonics
+ * -- flat (DC only) for a linear circuit, rich for a pumped nonlinear one. The
+ * osc-node diagonal is reported as a verifiable slice of the full G_k/C_k the PAC
+ * conversion matrix (E-121) will be assembled from. */
+static void
+pss_jacobian_report(CKTcircuit *ckt, PSSan *job)
+{
+    long P = job->PSSopPoints, s;
+    int  msize = job->PSSopMsize, ns = job->PSSopNumStates;
+    int  onode = job->PSSoscNode ? job->PSSoscNode->number : 0;
+    int  i, K = ckt->CKTharms;
+    double thd;
+    double *gt, *ct, *tt, *frq, *mag, *phs, *nmag, *nphs;
+
+    if (onode <= 0 || onode > msize || P <= 0 || K <= 0)
+        return;
+
+    gt  = TMALLOC(double, P);   ct   = TMALLOC(double, P);   tt   = TMALLOC(double, P);
+    frq = TMALLOC(double, K);   mag  = TMALLOC(double, K);   phs  = TMALLOC(double, K);
+    nmag= TMALLOC(double, K);   nphs = TMALLOC(double, K);
+
+    /* the complex AC stamps need the matrix in complex mode, otherwise
+     * SMPcClear (spClear) leaves the imaginary part uncleared and C(t)
+     * accumulates across samples. */
+#ifdef KLU
+    if (ckt->CKTmatrix->CKTkluMODE) {
+        if (!ckt->CKTmatrix->SMPkluMatrix->KLUmatrixIsComplex) {
+            for (i = 0; i < DEVmaxnum; i++)
+                if (DEVices[i] && DEVices[i]->DEVbindCSCComplex && ckt->CKThead[i])
+                    DEVices[i]->DEVbindCSCComplex(ckt->CKThead[i], ckt);
+            ckt->CKTmatrix->SMPkluMatrix->KLUmatrixIsComplex = KLUMatrixComplex;
+        }
+    } else
+#endif
+        spSetComplex(ckt->CKTmatrix->SPmatrix);
+
+    for (s = 0; s < P; s++) {
+        double *e;
+        for (i = 1; i <= msize; i++)
+            ckt->CKTrhsOld[i] = job->PSSopVoltages[(i - 1) + s * msize];
+        ckt->CKTrhsOld[0] = 0.0;
+        if (ns > 0)
+            memcpy(ckt->CKTstate0, job->PSSopStates + (size_t)s * (size_t)ns,
+                   (size_t)ns * sizeof(double));
+
+        /* recompute the device linearization at this instant's bias */
+        ckt->CKTmode = (ckt->CKTmode & MODEUIC) | MODEDCOP | MODEINITSMSIG;
+        CKTload(ckt);
+
+        /* stamp G + jC (omega = 1 so the imaginary part is exactly C) */
+        ckt->CKTomega = 1.0;
+        ckt->CKTmode = (ckt->CKTmode & MODEUIC) | MODEAC;
+        CKTacLoad(ckt);
+
+        e = (double *) SMPfindElt(ckt->CKTmatrix, onode, onode, 0);
+        gt[s] = e ? e[0] : 0.0;   /* Real = conductance  G(t) */
+        ct[s] = e ? e[1] : 0.0;   /* Imag = capacitance  C(t) (omega = 1) */
+        tt[s] = job->PSSopTimes[s];
+    }
+
+    fprintf(stderr, "periodic small-signal Jacobian at osc node (%ld samples, %d harmonics):\n", P, K);
+    DFT(P, K, &thd, tt, gt, job->PSSopFreq, frq, mag, phs, nmag, nphs);
+    fprintf(stderr, "  G(t): DC = %.6g S", mag[0]);
+    for (i = 1; i < K && i < 4; i++) fprintf(stderr, ", |G%d| = %.4g", i, mag[i]);
+    fprintf(stderr, "\n");
+    DFT(P, K, &thd, tt, ct, job->PSSopFreq, frq, mag, phs, nmag, nphs);
+    fprintf(stderr, "  C(t): DC = %.6g F", mag[0]);
+    for (i = 1; i < K && i < 4; i++) fprintf(stderr, ", |C%d| = %.4g", i, mag[i]);
+    fprintf(stderr, "\n");
+
+    FREE(gt); FREE(ct); FREE(tt);
+    FREE(frq); FREE(mag); FREE(phs); FREE(nmag); FREE(nphs);
+}
 
 
 int
@@ -456,7 +544,7 @@ DCpss(CKTcircuit *ckt,
                 pssvalues [i - 1 + pss_points_cycle * msize] = ckt->CKTrhsOld [i] ;
 
             /* Enhancement-119: capture the device states at this sample */
-            memcpy (pssstates + (size_t)pss_points_cycle * ckt->CKTnumStates,
+            memcpy (pssstates + (size_t)pss_points_cycle * (size_t)ckt->CKTnumStates,
                     ckt->CKTstate0, (size_t)ckt->CKTnumStates * sizeof(double)) ;
 
             /* Update PSS counter cycle, used to stop the entire algorithm */
@@ -895,7 +983,7 @@ DCpss(CKTcircuit *ckt,
                     pssvalues [i - 1 + pss_points_cycle * msize] = ckt->CKTrhsOld [i] ;
 
                 /* Enhancement-119: capture the device states at the first sample */
-                memcpy (pssstates + (size_t)pss_points_cycle * ckt->CKTnumStates,
+                memcpy (pssstates + (size_t)pss_points_cycle * (size_t)ckt->CKTnumStates,
                         ckt->CKTstate0, (size_t)ckt->CKTnumStates * sizeof(double)) ;
 
                 /* Update the PSS points counter and set the next Breakpoint */
@@ -1059,6 +1147,10 @@ DCpss(CKTcircuit *ckt,
                                          "[%.6g, %.6g] over the period\n", vmin, vmax) ;
                     }
                 }
+
+                /* Enhancement-120: report the periodic small-signal Jacobian
+                 * harmonics at the osc node, built from the retained op-point. */
+                pss_jacobian_report (ckt, job) ;
             }
             /****************************/
 

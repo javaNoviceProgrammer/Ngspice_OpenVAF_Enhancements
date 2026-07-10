@@ -114,6 +114,28 @@ if msw:
     check(f"[E-119] retained osc-node swing peak == |H(1MHz)| = {H:.5f} "
           f"(got {peak:.5f})", abs(peak - H) / H < 0.02, f"peak {peak}")
 
+# --- Enhancement-120: periodic small-signal Jacobian harmonics at the osc node.
+#     For this linear RC the Jacobian is time-invariant, so G(t)=1/R1 and C(t)=C1
+#     with no harmonics -- and the extracted DC values must equal those exactly. ---
+def jac(tag):
+    m = re.search(tag + r":\s*DC\s*=\s*([-\d.eE+]+)\s*[SF](.*)", slog)
+    if not m:
+        return None, None
+    dc = float(m.group(1))
+    harms = [abs(float(x)) for x in re.findall(r"=\s*([-\d.eE+]+)", m.group(2))]
+    return dc, (max(harms) if harms else 0.0)
+gdc, gh = jac("G\\(t\\)")
+cdc, ch = jac("C\\(t\\)")
+check("[E-120] periodic Jacobian is reported", gdc is not None and cdc is not None)
+check(f"[E-120] G(t) DC conductance == 1/R1 = {1/R:.4g} S (got {gdc})",
+      gdc is not None and abs(gdc - 1/R) / (1/R) < 0.01, str(gdc))
+check(f"[E-120] G(t) is time-invariant -- harmonics ~ 0 (max |Gk| = {gh})",
+      gh is not None and gh < 1e-9, str(gh))
+check(f"[E-120] C(t) DC capacitance == C1 = {C:.4g} F (got {cdc})",
+      cdc is not None and abs(cdc - C) / C < 0.01, str(cdc))
+check(f"[E-120] C(t) is time-invariant -- harmonics ~ 0 (max |Ck| = {ch})",
+      ch is not None and ch < 1e-12, str(ch))
+
 # --- KLU (Enhancement-118: PSS now converges under KLU via forced re-factor) ---
 klog = run("klu")
 kfreq, kfund = parse(klog)
