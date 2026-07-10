@@ -1223,6 +1223,306 @@ psp_sweep(CKTcircuit *ckt, PSSan *job)
 #endif
 
 
+/* ===================== Enhancement-134: Harmonic Balance ===================== */
+/*
+ * Single-tone HB: solve the periodic steady state in the FREQUENCY domain. Each
+ * node voltage is a truncated Fourier series V(t) = sum_{k=-K..K} V_k e^{jk w0 t};
+ * the KCL residual at every node/harmonic
+ *      F_k = I_R,k(V) + [dq/dt]_k - Is_k = 0
+ * is solved by Newton, with the (2K+1)N conversion matrix (E-121) as the Jacobian.
+ *  - I_R(v(t_s)) : nonlinear RESISTIVE current, from a DC-mode device load at each of
+ *    P time samples (residual current = G*v - rhs).
+ *  - [dq/dt]_k   : the REACTIVE current. dq/dt = C(v)*v' (chain rule), so its spectrum
+ *    is the conversion matrix's reactive term (jm*w0*C_{k-m}) applied to V -- NONLINEAR
+ *    charge is handled with NO per-device charge extraction, just the C(t) samples.
+ *  - Is         : the independent-source excitation spectrum (loaded at v=0, t=t_s).
+ * Reuses pac_build_matrix (Jacobian) and pss_csolve (dense complex Newton solve).
+ */
+
+/* Sample the device residual + Jacobian at prescribed node voltages vsamp[s*N+(i-1)]
+ * (P samples). Fills hd with the G(t)/C(t) harmonics (h=0..2K) and returns the
+ * resistive-current harmonics in IRr/IRi (length (2K+1)*N). Returns 0 on success. */
+static int
+hb_extract(CKTcircuit *ckt, const double *vsamp, int N, int P, int K,
+           struct pac_harm *hd, double *IRr, double *IRi)
+{
+    int    H = 2 * K, i, r, c, e, h, nnz, s;
+    int    *rr, *cc;
+    double *Gt, *Ct, *IRt, *cw, *sw, *Gmr, *Gmi, *Cmr, *Cmi, *bsave;
+
+    memset(hd, 0, sizeof(*hd));
+    if (P <= 0 || N <= 0 || K < 1)
+        return 1;
+    bsave = TMALLOC(double, N);
+
+    spSetComplex(ckt->CKTmatrix->SPmatrix);
+
+    /* establish structure at sample 0's bias */
+    for (i = 1; i <= N; i++)
+        ckt->CKTrhsOld[i] = vsamp[i - 1];
+    ckt->CKTrhsOld[0] = 0.0;
+    ckt->CKTmode = (ckt->CKTmode & MODEUIC) | MODEDCOP | MODEINITSMSIG;
+    CKTload(ckt);
+    ckt->CKTomega = 1.0;
+    ckt->CKTmode = (ckt->CKTmode & MODEUIC) | MODEAC;
+    CKTacLoad(ckt);
+
+    nnz = 0;
+    for (r = 1; r <= N; r++)
+        for (c = 1; c <= N; c++)
+            if (SMPfindElt(ckt->CKTmatrix, r, c, 0))
+                nnz++;
+    if (nnz <= 0)
+        return 1;
+    rr = TMALLOC(int, nnz);
+    cc = TMALLOC(int, nnz);
+    e = 0;
+    for (r = 1; r <= N; r++)
+        for (c = 1; c <= N; c++)
+            if (SMPfindElt(ckt->CKTmatrix, r, c, 0)) { rr[e] = r; cc[e] = c; e++; }
+
+    Gt  = TMALLOC(double, (size_t)nnz * (size_t)P);
+    Ct  = TMALLOC(double, (size_t)nnz * (size_t)P);
+    IRt = TMALLOC(double, (size_t)N * (size_t)P);
+
+    for (s = 0; s < P; s++) {
+        double *Gv;
+        /* DC-mode load at v(t_s): matrix real = G, rhs = resistive companion */
+        for (i = 1; i <= N; i++)
+            ckt->CKTrhsOld[i] = vsamp[(size_t)s * (size_t)N + (size_t)(i - 1)];
+        ckt->CKTrhsOld[0] = 0.0;
+        for (i = 0; i <= N; i++)
+            ckt->CKTrhs[i] = 0.0;
+        ckt->CKTmode = (ckt->CKTmode & MODEUIC) | MODEDCOP | MODEINITSMSIG;
+        CKTload(ckt);
+        /* companion source b = G*v - i(v) is in CKTrhs NOW; save it before acLoad
+         * clears it (so the resistive current is i(v) = G*v - b, the ACTUAL current,
+         * not the tangent G*v). */
+        for (i = 1; i <= N; i++)
+            bsave[i - 1] = ckt->CKTrhs[i];
+        ckt->CKTomega = 1.0;
+        ckt->CKTmode = (ckt->CKTmode & MODEUIC) | MODEAC;
+        CKTacLoad(ckt);   /* clears + stamps G (real) and C (imag) cleanly */
+
+        /* resistive current I_R = G*v - b, using the clean G from acLoad */
+        Gv = IRt + (size_t)s * (size_t)N;   /* reuse row s as scratch, then subtract */
+        for (i = 0; i < N; i++)
+            Gv[i] = 0.0;
+        for (e = 0; e < nnz; e++) {
+            double *el = (double *) SMPfindElt(ckt->CKTmatrix, rr[e], cc[e], 0);
+            double g = el ? el[0] : 0.0;
+            Gt[(size_t)e * (size_t)P + (size_t)s] = g;
+            Ct[(size_t)e * (size_t)P + (size_t)s] = el ? el[1] : 0.0;
+            Gv[rr[e] - 1] += g * vsamp[(size_t)s * (size_t)N + (size_t)(cc[e] - 1)];
+        }
+        for (i = 1; i <= N; i++)
+            Gv[i - 1] -= bsave[i - 1];      /* I_R = G*v - b = i(v) */
+    }
+
+    /* DFT G(t), C(t) -> harmonics; I_R(t) -> IRr/IRi (harmonics -K..K packed 0..2K) */
+    cw = TMALLOC(double, (size_t)(H + 1) * (size_t)P);
+    sw = TMALLOC(double, (size_t)(H + 1) * (size_t)P);
+    for (h = 0; h <= H; h++)
+        for (s = 0; s < P; s++) {
+            double ang = 2.0 * M_PI * (double)h * (double)s / (double)P;
+            cw[(size_t)h * (size_t)P + (size_t)s] = cos(ang);
+            sw[(size_t)h * (size_t)P + (size_t)s] = sin(ang);
+        }
+    Gmr = TMALLOC(double, (size_t)nnz * (size_t)(H + 1));
+    Gmi = TMALLOC(double, (size_t)nnz * (size_t)(H + 1));
+    Cmr = TMALLOC(double, (size_t)nnz * (size_t)(H + 1));
+    Cmi = TMALLOC(double, (size_t)nnz * (size_t)(H + 1));
+    for (e = 0; e < nnz; e++)
+        for (h = 0; h <= H; h++) {
+            double gr = 0, gi = 0, cr = 0, ci = 0;
+            for (s = 0; s < P; s++) {
+                double cs = cw[(size_t)h * (size_t)P + (size_t)s];
+                double sn = sw[(size_t)h * (size_t)P + (size_t)s];
+                double gv = Gt[(size_t)e * (size_t)P + (size_t)s];
+                double cv = Ct[(size_t)e * (size_t)P + (size_t)s];
+                gr += gv * cs;  gi -= gv * sn;
+                cr += cv * cs;  ci -= cv * sn;
+            }
+            Gmr[(size_t)e * (size_t)(H + 1) + (size_t)h] = gr / (double)P;
+            Gmi[(size_t)e * (size_t)(H + 1) + (size_t)h] = gi / (double)P;
+            Cmr[(size_t)e * (size_t)(H + 1) + (size_t)h] = cr / (double)P;
+            Cmi[(size_t)e * (size_t)(H + 1) + (size_t)h] = ci / (double)P;
+        }
+    /* I_R harmonics: full k=-K..K (row (k+K)*N + node) */
+    for (r = 0; r < N; r++)
+        for (h = -K; h <= K; h++) {
+            double xr = 0, xi = 0;
+            int hh = h < 0 ? -h : h;
+            for (s = 0; s < P; s++) {
+                double cs = cw[(size_t)hh * (size_t)P + (size_t)s];
+                double sn = sw[(size_t)hh * (size_t)P + (size_t)s];
+                double x  = IRt[(size_t)s * (size_t)N + (size_t)r];
+                if (h >= 0) { xr += x * cs; xi -= x * sn; }
+                else        { xr += x * cs; xi += x * sn; }   /* conj for -h */
+            }
+            IRr[(size_t)(h + K) * (size_t)N + (size_t)r] = xr / (double)P;
+            IRi[(size_t)(h + K) * (size_t)N + (size_t)r] = xi / (double)P;
+        }
+
+    FREE(Gt); FREE(Ct); FREE(IRt); FREE(cw); FREE(sw); FREE(bsave);
+    hd->N = N; hd->M = K; hd->H = H; hd->nnz = nnz; hd->Ntot = (2*K + 1) * N;
+    hd->rr = rr; hd->cc = cc;
+    hd->Gmr = Gmr; hd->Gmi = Gmi; hd->Cmr = Cmr; hd->Cmi = Cmi;
+    hd->B0r = NULL; hd->B0i = NULL; hd->has_src = 0;
+    return 0;
+}
+
+int
+HBanalyze(CKTcircuit *ckt, double f0, int K, int Pin, int maxiter, double tol, int verbose)
+{
+    int    N = SMPmatSize(ckt->CKTmatrix);
+    int    P = Pin > 0 ? Pin : ((8 * K < 32) ? 32 : 8 * K);
+    int    Ntot = (2 * K + 1) * N;
+    int    iter, s, i, k, rc = 0;
+    double T = 1.0 / f0, w0 = 2.0 * M_PI * f0;
+    double *Vr, *Vi, *vsamp, *IRr, *IRi, *Isr, *Isi, *Fr, *Fi, *Jr, *Ji, *Kr, *Ki;
+    struct pac_harm hd;
+
+    if (N <= 0 || K < 1) { fprintf(stderr, "HB: bad size.\n"); return E_PARMVAL; }
+    if ((2 * K + 1) * N > 900) {
+        fprintf(stderr, "HB: system %dx%d too large for the dense solver.\n", Ntot, Ntot);
+        return E_PARMVAL;
+    }
+
+    Vr = TMALLOC(double, Ntot); Vi = TMALLOC(double, Ntot);
+    IRr = TMALLOC(double, Ntot); IRi = TMALLOC(double, Ntot);
+    Isr = TMALLOC(double, Ntot); Isi = TMALLOC(double, Ntot);
+    Fr = TMALLOC(double, Ntot); Fi = TMALLOC(double, Ntot);
+    Kr = TMALLOC(double, Ntot); Ki = TMALLOC(double, Ntot);
+    Jr = TMALLOC(double, (size_t)Ntot * (size_t)Ntot); Ji = TMALLOC(double, (size_t)Ntot * (size_t)Ntot);
+    vsamp = TMALLOC(double, (size_t)N * (size_t)P);
+
+    /* --- source spectrum Is_k: load at v=0, sources evaluated at t_s --- */
+    {
+        double *ist = TMALLOC(double, (size_t)N * (size_t)P);
+        for (s = 0; s < P; s++) {
+            for (i = 0; i <= N; i++) { ckt->CKTrhsOld[i] = 0.0; ckt->CKTrhs[i] = 0.0; }
+            ckt->CKTtime = (double)s * T / (double)P;
+            ckt->CKTmode = (ckt->CKTmode & MODEUIC) | MODETRAN | MODEINITTRAN;
+            CKTload(ckt);
+            for (i = 1; i <= N; i++)
+                ist[(size_t)s * (size_t)N + (size_t)(i - 1)] = ckt->CKTrhs[i];
+        }
+        for (i = 0; i < N; i++)
+            for (k = -K; k <= K; k++) {
+                double xr = 0, xi = 0; int hh = k < 0 ? -k : k;
+                for (s = 0; s < P; s++) {
+                    double ang = 2.0 * M_PI * hh * s / (double)P;
+                    double x = ist[(size_t)s * (size_t)N + (size_t)i];
+                    xr += x * cos(ang);
+                    xi += (k >= 0 ? -1.0 : 1.0) * x * sin(ang);
+                }
+                Isr[(size_t)(k + K) * (size_t)N + (size_t)i] = xr / P;
+                Isi[(size_t)(k + K) * (size_t)N + (size_t)i] = xi / P;
+            }
+        FREE(ist);
+    }
+
+    /* --- Newton iterations --- */
+    for (iter = 0; iter < maxiter; iter++) {
+        double fnorm = 0.0;
+        /* v(t_s) = Re sum_k V_k e^{j k w0 t_s} */
+        for (s = 0; s < P; s++)
+            for (i = 0; i < N; i++) {
+                double v = 0.0;
+                for (k = -K; k <= K; k++) {
+                    double ang = 2.0 * M_PI * k * s / (double)P;
+                    v += Vr[(size_t)(k + K) * (size_t)N + (size_t)i] * cos(ang)
+                       - Vi[(size_t)(k + K) * (size_t)N + (size_t)i] * sin(ang);
+                }
+                vsamp[(size_t)s * (size_t)N + (size_t)i] = v;
+            }
+
+        if (hb_extract(ckt, vsamp, N, P, K, &hd, IRr, IRi)) {
+            fprintf(stderr, "HB: device extraction failed.\n"); rc = E_PARMVAL; break;
+        }
+
+        /* build the full Jacobian J = G + jwC conversion matrix */
+        pac_build_matrix(&hd, f0, 0.0, Jr, Ji);
+
+        /* reactive current I_C = (J - Jg)*V where Jg is the resistive (G-only)
+         * conversion matrix -- i.e. the jwC part of J applied to V. */
+        {
+            struct pac_harm hg = hd;
+            double *Jgr = TMALLOC(double, (size_t)Ntot * (size_t)Ntot);
+            double *Jgi = TMALLOC(double, (size_t)Ntot * (size_t)Ntot);
+            hg.Cmr = TMALLOC(double, (size_t)hd.nnz * (size_t)(hd.H + 1));  /* zero C -> resistive only */
+            hg.Cmi = TMALLOC(double, (size_t)hd.nnz * (size_t)(hd.H + 1));
+            pac_build_matrix(&hg, f0, 0.0, Jgr, Jgi);
+            FREE(hg.Cmr); FREE(hg.Cmi);
+            /* I_C = (J - Jg) * V */
+            for (i = 0; i < Ntot; i++) {
+                double cr = 0, ci = 0;
+                for (k = 0; k < Ntot; k++) {
+                    double ar = Jr[(size_t)i * (size_t)Ntot + (size_t)k] - Jgr[(size_t)i * (size_t)Ntot + (size_t)k];
+                    double ai = Ji[(size_t)i * (size_t)Ntot + (size_t)k] - Jgi[(size_t)i * (size_t)Ntot + (size_t)k];
+                    cr += ar * Vr[k] - ai * Vi[k];
+                    ci += ar * Vi[k] + ai * Vr[k];
+                }
+                Kr[i] = cr; Ki[i] = ci;         /* Kr/Ki = reactive current I_C */
+            }
+            FREE(Jgr); FREE(Jgi);
+        }
+
+        /* residual F = I_R + I_C - Is */
+        for (i = 0; i < Ntot; i++) {
+            Fr[i] = IRr[i] + Kr[i] - Isr[i];
+            Fi[i] = IRi[i] + Ki[i] - Isi[i];
+            fnorm += Fr[i] * Fr[i] + Fi[i] * Fi[i];
+        }
+        fnorm = sqrt(fnorm);
+        if (verbose)
+            fprintf(stderr, "HB iter %2d: |F| = %.6e\n", iter, fnorm);
+
+        /* Newton step: J * dV = -F */
+        for (i = 0; i < Ntot; i++) { Fr[i] = -Fr[i]; Fi[i] = -Fi[i]; }
+        if (pss_csolve(Ntot, Jr, Ji, Fr, Fi)) {   /* Fr/Fi <- dV */
+            fprintf(stderr, "HB: singular Jacobian.\n"); rc = E_SINGULAR;
+            pac_free_harmonics(&hd); break;
+        }
+        for (i = 0; i < Ntot; i++) { Vr[i] += Fr[i]; Vi[i] += Fi[i]; }
+        pac_free_harmonics(&hd);
+
+        if (fnorm < tol) {
+            fprintf(stdout, "HB: converged in %d iterations (|F| = %.3e).\n", iter + 1, fnorm);
+            break;
+        }
+    }
+
+    /* --- output: labelled spectrum table, magnitude per node per harmonic --- */
+    {
+        int numNames, error;
+        IFuid *nameList = NULL;
+        error = CKTnames(ckt, &numNames, &nameList);
+        fprintf(stdout, "\nHB: harmonic-balance spectrum (f0 = %g Hz, %d harmonics)\n"
+                        "  node      harmonic   frequency [Hz]        |V|            phase [deg]\n",
+                f0, K);
+        for (i = 0; i < N; i++) {
+            const char *nm = (!error && i < numNames) ? (const char *) nameList[i] : "?";
+            for (k = 0; k <= K; k++) {
+                double sc = (k == 0) ? 1.0 : 2.0;   /* single-sided amplitude */
+                double vr = sc * Vr[(size_t)(k + K) * (size_t)N + (size_t)i];
+                double vi = sc * Vi[(size_t)(k + K) * (size_t)N + (size_t)i];
+                fprintf(stdout, "  %-8s  %6d   %16.6e   %14.6e   %10.3f\n",
+                        nm, k, k * f0, hypot(vr, vi),
+                        (k == 0) ? 0.0 : atan2(vi, vr) * 180.0 / M_PI);
+            }
+        }
+        if (nameList) tfree(nameList);
+    }
+    (void) w0;
+
+    FREE(Vr); FREE(Vi); FREE(IRr); FREE(IRi); FREE(Isr); FREE(Isi);
+    FREE(Fr); FREE(Fi); FREE(Jr); FREE(Ji); FREE(Kr); FREE(Ki); FREE(vsamp);
+    return rc;
+}
+
+
 int
 DCpss(CKTcircuit *ckt,
        int restart)   /* forced restart flag */

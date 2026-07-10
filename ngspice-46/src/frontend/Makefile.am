@@ -54,6 +54,8 @@ libfte_la_SOURCES = \
     com_optimize.h  \
     com_qpss.c  \
     com_qpss.h  \
+    com_hb.c    \
+    com_hb.h    \
     com_checkpoint.c    \
     com_checkpoint.h    \
     com_option.c    \

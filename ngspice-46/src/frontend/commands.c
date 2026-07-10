@@ -426,6 +426,10 @@ struct comm spcp_coms[] = {
       { 040, 040, 040, 040 }, E_DEFHMASK, 3, LOTS,
       NULL,
       "expr f1 f2 [periods] [maxorder] : two-tone quasi-periodic steady-state spectrum (intermodulation)." },
+    { "hb", com_hb, TRUE, FALSE,                 /* Enhancement-134 */
+      { 040, 040, 040, 040 }, E_DEFHMASK, 2, LOTS,
+      NULL,
+      "f0 K [points] [maxiter] : harmonic-balance steady-state spectrum (K harmonics)." },
     { "savestate", com_savestate, FALSE, TRUE,   /* Enhancement-131 */
       { 1, 040000, 040000, 040000 }, E_DEFHMASK, 1, 1,
       NULL,

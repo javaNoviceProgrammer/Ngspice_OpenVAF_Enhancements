@@ -473,6 +473,7 @@ extern int PSSaskQuest(CKTcircuit *, JOB *, int , IFvalue *);
 extern int PSSsetParm(CKTcircuit *, JOB *, int , IFvalue *);
 extern int PSSinit(CKTcircuit *, JOB *);
 extern int DCpss(CKTcircuit *, int);
+extern int HBanalyze(CKTcircuit *, double f0, int K, int P, int maxiter, double tol, int verbose); /* E-134 */
 #endif
 
 #ifdef RFSPICE

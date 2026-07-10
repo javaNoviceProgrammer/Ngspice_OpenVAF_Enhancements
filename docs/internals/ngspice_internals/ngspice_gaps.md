@@ -106,7 +106,7 @@ solver-by-solver sweep of the example suite:
 | RF | S-parameter analysis + noise figure (`.sp`) | ✅ | ✅ |
 | RF | Touchstone (`.sNp`) import / export | ✅ | ✅ |
 | RF | Periodic steady state (PSS) | ✅¹ | ✅ |
-| RF | Harmonic Balance (HB) | ❌ | ✅ |
+| RF | Harmonic Balance (HB) | ✅⁷ | ✅ |
 | RF | Periodic / phase noise (Pnoise) | ⚠️³ | ✅ |
 | RF | Periodic AC (PAC, conversion gain) | ✅² | ✅ |
 | RF | Periodic transfer function (PXF) | ✅⁴ | ✅ |
@@ -122,8 +122,7 @@ response; [Enhancement-118](../../../enhancements_doc/Enhancement-118.md) then m
 it run under **both** linear solvers (KLU had hung on a timestep explosion from
 reused refactor pivots — now a full re-factor is forced each PSS step under KLU).
 It is still a brute-force shooting method and remains the foundation for the
-periodic small-signal analyses below. HB exists only as a `WITH_HB` stub that
-returns "unsupported".*
+periodic small-signal analyses below. HB is now implemented -- see note 7 (it had shipped only as a `WITH_HB` stub).*
 
 *² PAC is ✅ (**complete periodic-AC analysis**). The full chain is built and
 verified: [Enhancement-119](../../../enhancements_doc/Enhancement-119.md) retains
@@ -204,6 +203,21 @@ and the 3:1 IP3 slope law. Still ⚠️ (not ✅) because the general case wants
 frequency-domain **harmonic-balance** engine: **incommensurate** tones (irrational
 ratio, no common period) are out of reach of transient sampling, and small-signal
 **QPAC** is not yet built. HB itself remains a `WITH_HB` stub.*
+
+*⁷ HB is ✅ since
+[Enhancement-134](../../../enhancements_doc/Enhancement-134.md): a `hb <f0> <K>`
+command solves the periodic steady state in the **frequency domain** by Newton -- each
+node voltage a truncated Fourier series, the KCL residual `F_k = I_R,k(V) + [dq/dt]_k
+- Is_k = 0` driven to zero with the E-121 `(2K+1)N` conversion matrix as the exact
+Jacobian. The device residual/Jacobian are sampled by driving DC+AC loads at the
+current iterate's voltages; nonlinear **reactive** elements need NO charge extraction
+because `dq/dt = C(v)*v'` -- the reactive current is the conversion matrix's `jwC`
+term applied to V, using the sampled `C(t)`. Solver-independent; built-in and OSDI
+devices. Verified 6/6 against the transient/`fourier` steady state, with quadratic
+Newton convergence: nonlinear R (analytic 3rd harmonic), nonlinear R+C, and a
+compiled OSDI varactor whose `Q(v)` 2nd harmonic matches. Single-tone; strongly-driven
+continuation, a sparse block solve, and multi-tone HB (true incommensurate QPSS,
+cf. note 6) are the follow-ups.*
 
 ## Performance & scale
 

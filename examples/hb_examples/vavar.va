@@ -1,0 +1,16 @@
+// A Verilog-A nonlinear capacitor (varactor) for the harmonic-balance example:
+//   I(p,n) = d/dt [ cj0 * (V + gamma*V^2) ]   ->   nonlinear charge Q(V).
+// Driven by a tone, the V^2 term in the charge generates a 2nd harmonic that a
+// linear cap cannot. HB resolves it because the reactive current dq/dt = C(v)*v'
+// is captured by the C(t) samples with no per-device charge extraction. Used to
+// verify HB handles a NONLINEAR reactive OSDI device (vs a transient reference).
+`include "disciplines.vams"
+
+module vavar(p, n);
+    inout p, n;
+    electrical p, n;
+    (*type="instance"*) parameter real cj0   = 1e-12;
+    (*type="instance"*) parameter real gamma = 0.3;
+    analog
+        I(p, n) <+ ddt(cj0 * (V(p, n) + gamma * V(p, n) * V(p, n)));
+endmodule
