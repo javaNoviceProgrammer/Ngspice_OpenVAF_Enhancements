@@ -288,6 +288,7 @@ DCtran(CKTcircuit *ckt,
         ckt->CKTorderCnt = 0;       /* Enhancement-128: reset the order history depth */
         ckt->CKTorderMaxUsed = 0;
         ckt->CKTorderHold = 0;
+        ckt->CKTorderRej = 0;
         /* Initialze CKTdeltaOld with maximum value */
         for(i=0;i<7;i++) {
             ckt->CKTdeltaOld[i]=ckt->CKTmaxStep;
@@ -527,7 +528,11 @@ resume:
     if ( AlmostEqualUlps( ckt->CKTtime, g_mif_info.breakpoint.last, 100 ) ) {
         ckt->CKTorder = 1;
         ckt->CKTorderCnt = 0;       /* Enhancement-128 */
-        ckt->CKTorderHold = 0;
+        /* hold the order low for a few steps after the discontinuity so it does
+         * not race up to a high order inside the violent post-breakpoint transient
+         * (E-128) */
+        ckt->CKTorderHold = ckt->CKTdynorder ? ckt->CKTmaxOrder + 2 : 0;
+        ckt->CKTorderRej = 0;
     }
 #endif
 
@@ -539,7 +544,10 @@ resume:
            and previous timestep. */
         ckt->CKTorder = 1;
         ckt->CKTorderCnt = 0;       /* Enhancement-128: breakpoint -> rebuild order history */
-        ckt->CKTorderHold = 0;
+        /* hold the order low for a few steps after the discontinuity so it does not
+         * race up to a high order inside the violent post-breakpoint transient */
+        ckt->CKTorderHold = ckt->CKTdynorder ? ckt->CKTmaxOrder + 2 : 0;
+        ckt->CKTorderRej = 0;
 #ifdef STEPDEBUG
         if( (ckt->CKTdelta > .1*ckt->CKTsaveDelta) ||
             (ckt->CKTdelta > .1*(ckt->CKTbreaks[1] - ckt->CKTbreaks[0])) ) {
@@ -878,8 +886,11 @@ resume:
                 }
 #endif
                 /* this timepoint is accepted -- account for it in the history
-                 * depth that bounds the achievable integration order */
+                 * depth that bounds the achievable integration order, and let the
+                 * rejection-rate bucket leak down by one (E-128) */
                 ckt->CKTorderCnt++;
+                if (ckt->CKTorderRej > 0)
+                    ckt->CKTorderRej--;
 
                 /* don't raise the order for backward Euler */
                 if (ckt->CKTdynorder && ckt->CKTmaxOrder > 1) {
@@ -1025,6 +1036,24 @@ resume:
                 redostep = 1;
 #endif
                 ckt->CKTdelta = newdelta;
+                /* Enhancement-128: a HIGH rejection RATE means the current order
+                 * overreaches the local dynamics (a stiff / fast-slewing region).
+                 * CKTorderRej is a leaky bucket -- +1 per rejection, -1 per accepted
+                 * step -- so a sustained run of rejections (even interspersed with the
+                 * occasional accept, as during a long slew) drives it up and drops the
+                 * order toward the robust low order, while the isolated rejections
+                 * normal on a smooth high-order run stay near zero and leave the order
+                 * (and its efficiency) intact. Bounded so it cannot run away. */
+                if (ckt->CKTdynorder && ckt->CKTorder > 1) {
+                    ckt->CKTorderRej += 2;
+                    if (ckt->CKTorderRej > 8)
+                        ckt->CKTorderRej = 8;
+                    if (ckt->CKTorderRej >= 4) {
+                        ckt->CKTorder--;
+                        ckt->CKTorderHold = ckt->CKTorder + 1;
+                        ckt->CKTorderRej = 0;
+                    }
+                }
 #ifdef STEPDEBUG
                 (void)printf(
                     "delta set to truncation error result: point rejected\n");

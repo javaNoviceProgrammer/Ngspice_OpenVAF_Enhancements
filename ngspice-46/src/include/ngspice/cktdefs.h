@@ -282,6 +282,7 @@ struct CKTcircuit {
     int CKTorderCnt;               /* E-128: accepted steps since the last order reset (history depth) */
     int CKTorderMaxUsed;           /* E-128: highest integration order actually selected (diagnostic) */
     int CKTorderHold;              /* E-128: steps to hold the order after a change (settling) */
+    int CKTorderRej;               /* E-128: consecutive LTE rejections at the current point */
     double CKTabsDv;            /* abs limit for iter-iter voltage change */
     double CKTrelDv;            /* rel limit for iter-iter voltage change */
     int CKTtroubleNode;         /* Non-convergent node number */

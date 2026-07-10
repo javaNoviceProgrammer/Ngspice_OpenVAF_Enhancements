@@ -108,6 +108,37 @@ def main():
         check(f"slew rate in the 741 window 0.3..0.9 V/us (got {sr:.2f})",
               0.3 <= sr <= 0.9)
 
+    print("[5] E-128 dynorder robustness on the stiff 741 slew")
+    # The big +/-5 V square-wave follower slew is a stiff transistor-level
+    # transient. Letting the Gear order climb during the slew used to collapse
+    # the timestep ("Timestep too small"); the E-128 order controller now holds
+    # the order low after each pulse breakpoint and walks it back down on a high
+    # rejection rate, so dynamic-order control completes it -- and to the same
+    # answer as fixed low-order Gear.
+    def slew_final(opts):
+        deck = ("* 741 follower slew (E-128 dynorder robustness)\n"
+                ".include ./ua741.subckt\n"
+                "vcc vcc 0 dc 15\nvee vee 0 dc -15\n"
+                "vin in 0 dc 0 pulse(-5 5 2u 10n 10n 60u 120u)\n"
+                "x1 in out out vcc vee ua741\nrl out 0 2k\n"
+                f".option {opts}\n"
+                ".control\npre_osdi bjt741.osdi\nset numdgt=10\ntran 20n 80u\n"
+                "let vend = v(out)[length(v(out))-1]\nprint vend\n.endc\n.end\n")
+        open(os.path.join(HERE, "_v_slew.cir"), "w").write(deck)
+        r = subprocess.run([NGSPICE, "-b", "_v_slew.cir"], cwd=HERE,
+                           capture_output=True, text=True, timeout=300)
+        out = r.stdout + r.stderr
+        m = re.search(r"vend\s*=\s*([-\d.e+]+)", out)
+        return ("Timestep too small" not in out,
+                float(m.group(1)) if m else None)
+    ref_ok, ref_v = slew_final("method=gear maxord=2")           # fixed low-order Gear
+    dyn_ok, dyn_v = slew_final("method=gear maxord=3 dynorder")   # dynamic high-order
+    check("dynorder completes the stiff 741 slew (no timestep collapse)", dyn_ok)
+    check(f"dynorder slew answer matches the Gear-2 reference "
+          f"(dyn {dyn_v} vs ref {ref_v})",
+          dyn_ok and ref_ok and dyn_v is not None and ref_v is not None
+          and abs(dyn_v - ref_v) < 5e-3 * abs(ref_v) + 1e-3)
+
     n_pass = sum(checks)
     n_fail = len(checks) - n_pass
     print()

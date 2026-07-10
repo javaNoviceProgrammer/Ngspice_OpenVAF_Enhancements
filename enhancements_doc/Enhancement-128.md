@@ -41,6 +41,29 @@ The whole path is gated on `.option dynorder` and bounded by `maxord`; with the
 default `maxord = 2` it cannot exceed the stock order-2 behaviour, so enabling it on
 an ordinary deck is inert.
 
+## Robustness on stiff transients
+
+High-order Gear is the wrong tool inside a violent transient (a large fast slew, the
+first microseconds after a breakpoint). Left unchecked, the controller would climb to
+a high order there and the timestep would collapse to zero ("Timestep too small").
+Two guards, both gated on `dynorder`, make it degrade gracefully instead:
+
+- **post-breakpoint hold** — a breakpoint (a pulse edge, a source transition) already
+  resets the order to 1; the controller now also *holds* it low for the next few steps
+  (`maxord + 2`), so it does not race back up to a high order inside the
+  post-discontinuity transient before it has settled;
+- **rejection-rate order drop** — a leaky bucket (`+2` per LTE-rejected step, `−1` per
+  accepted step) detects a *sustained* high rejection rate — the signature of a stiff
+  region where the current order overreaches — and walks the order back down. A single
+  isolated rejection, normal on a smooth high-order run, decays away and leaves the
+  order (and its efficiency) untouched.
+
+The stress case is the transistor-level µA741 follower driven by a big ±5 V square
+wave ([Enhancement-83](Enhancement-83.md)): the output slew-rate-limits for tens of
+microseconds. With these guards dynamic-order control **completes** that slew under
+both linear solvers and lands on the same answer as fixed low-order Gear (−3.31499 V
+vs −3.31538 V), where without them it collapsed the step at the pulse edge.
+
 ## Verification
 
 Three circuits, checked under **both** Sparse 1.3 (default) and KLU
@@ -72,10 +95,11 @@ result-neutral versus a plain run. All checks pass under both solvers (10/10 Spa
 
 | File | Change |
 |---|---|
-| `ngspice-46/src/include/ngspice/optdefs.h`, `tskdefs.h`, `cktdefs.h` | `OPT_DYNORDER` / `TSKdynorder` / `CKTdynorder` + `CKTorderCnt` (history depth), `CKTorderHold` (settling), `CKTorderMaxUsed` (diagnostic) |
+| `ngspice-46/src/include/ngspice/optdefs.h`, `tskdefs.h`, `cktdefs.h` | `OPT_DYNORDER` / `TSKdynorder` / `CKTdynorder` + `CKTorderCnt` (history depth), `CKTorderHold` (settling), `CKTorderRej` (rejection-rate bucket), `CKTorderMaxUsed` (diagnostic) |
 | `ngspice-46/src/spicelib/analysis/cktsopt.c`, `cktntask.c`, `cktdojob.c` | wire `.option dynorder` through the task → circuit (off by default) |
-| `ngspice-46/src/spicelib/analysis/dctran.c` | the neighbour + hysteresis + settling-hold + growth-cap order selector, replacing the stock 1↔2 toggle when `dynorder` is set; order-history resets at init and breakpoints; a `set ngdebug` summary of the highest order used |
+| `ngspice-46/src/spicelib/analysis/dctran.c` | the neighbour + hysteresis + settling-hold + growth-cap order selector, replacing the stock 1↔2 toggle when `dynorder` is set; the stiff-transient guards (post-breakpoint hold, rejection-rate order drop); order-history resets at init and breakpoints; a `set ngdebug` summary of the highest order used |
 | `examples/dynorder_examples/` | `dynorder_demo.cir`, `verify_dynorder.py` |
+| `examples/opamp741_examples/verify_opamp741.py` | dynorder robustness regression: the stiff µA741 slew under `dynorder` completes and matches fixed Gear-2 |
 
 ## Scope
 
