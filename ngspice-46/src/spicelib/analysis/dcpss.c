@@ -1628,6 +1628,484 @@ HBanalyze(CKTcircuit *ckt, double f0, int K, int Pin, int maxiter, double tol, i
 }
 
 
+/* ======================================================================
+ * Enhancement-136: frequency-domain two-tone Harmonic Balance -- the TRUE
+ * (incommensurate-capable) quasi-periodic steady state, `qpss ... hb`.
+ *
+ * Each node voltage is a 2-D Fourier series
+ *   v(t) = sum_{k1=-K1..K1, k2=-K2..K2} V_{k1,k2} e^{j(k1 w1 + k2 w2) t}.
+ * Devices are sampled on a 2-D PHASE grid (theta1,theta2) -- set the node
+ * voltages, load, read G/C -- which is time-independent, so INCOMMENSURATE
+ * tones just work (no common period); a 2-D DFT gives G_{d1,d2}, C_{d1,d2}.
+ * The source spectrum is captured by an almost-periodic Fourier transform
+ * (APFT): sample the v=0 source RHS at Nh real times and invert the
+ * Vandermonde. The 2-D conversion matrix H_{(n),(m)} = G_{n-m}+j*w_m*C_{n-m}
+ * is the direct analogue of pac_build_matrix; the Newton (with E-135 source
+ * stepping) reuses pss_csolve. The converged operating point + conversion
+ * data are retained in qpss_hb_saved for `qpac` (Enhancement-137).
+ * ====================================================================== */
+
+struct qp_harm {
+    int  N, K1, K2, Nh, Ntot, nnz;
+    int *rr, *cc;              /* [nnz] 1-based Jacobian nonzero row/col */
+    int *h1, *h2;              /* [Nh] (k1,k2) of each harmonic index */
+    int  D2c, Dsz;             /* diff-spectrum stride (4K2+1), size (4K1+1)(4K2+1) */
+    double *Gmr, *Gmi, *Cmr, *Cmi;   /* [nnz*Dsz] 2-D difference spectra */
+    double f1, f2;
+    double *Vr, *Vi;           /* [Ntot] retained operating point (for qpac); else NULL */
+};
+
+struct qp_harm *qpss_hb_saved = NULL;   /* retained QPSS op-point for qpac (E-137) */
+
+static int qp_didx(const struct qp_harm *h, int d1, int d2)
+{ return (d1 + 2*h->K1) * h->D2c + (d2 + 2*h->K2); }
+
+/* free the arrays a qp_harm owns (not the struct itself) */
+void qp_free(struct qp_harm *hd)
+{
+    if (!hd) return;
+    FREE(hd->rr); FREE(hd->cc); FREE(hd->h1); FREE(hd->h2);
+    FREE(hd->Gmr); FREE(hd->Gmi); FREE(hd->Cmr); FREE(hd->Cmi);
+    FREE(hd->Vr); FREE(hd->Vi);
+}
+
+/* assemble the dense Ntot x Ntot 2-D conversion matrix at input freq f_in */
+void qp_build_matrix(struct qp_harm *hd, double f_in, double *Ar, double *Ai)
+{
+    int Nh = hd->Nh, N = hd->N, Ntot = hd->Ntot, nnz = hd->nnz, ni, mi, e;
+    memset(Ar, 0, (size_t)Ntot * (size_t)Ntot * sizeof(double));
+    memset(Ai, 0, (size_t)Ntot * (size_t)Ntot * sizeof(double));
+    for (ni = 0; ni < Nh; ni++)
+        for (mi = 0; mi < Nh; mi++) {
+            int d1 = hd->h1[ni] - hd->h1[mi], d2 = hd->h2[ni] - hd->h2[mi];
+            double omega = 2.0 * M_PI * (f_in + hd->h1[mi]*hd->f1 + hd->h2[mi]*hd->f2);
+            int di = qp_didx(hd, d1, d2);
+            for (e = 0; e < nnz; e++) {
+                size_t hi = (size_t)e * (size_t)hd->Dsz + (size_t)di;
+                double gr = hd->Gmr[hi], gi = hd->Gmi[hi];
+                double cr = hd->Cmr[hi], ci = hd->Cmi[hi];
+                size_t row = (size_t)ni * (size_t)N + (size_t)(hd->rr[e] - 1);
+                size_t col = (size_t)mi * (size_t)N + (size_t)(hd->cc[e] - 1);
+                Ar[row * (size_t)Ntot + col] += gr - omega * ci;
+                Ai[row * (size_t)Ntot + col] += gi + omega * cr;
+            }
+        }
+}
+
+/* Sample the device Jacobian G(theta1,theta2), C(theta1,theta2) and resistive
+ * current I_R on the P1xP2 phase grid at prescribed node voltages, and 2-D DFT
+ * to the difference spectra + I_R harmonics. Fills hd; returns 0/1. Mirrors
+ * hb_extract (E-134) but on the 2-D phase grid. */
+static int
+qp_extract(CKTcircuit *ckt, const double *vsamp, int N, int P1, int P2,
+           int K1, int K2, struct qp_harm *hd, double *IRr, double *IRi)
+{
+    int P = P1 * P2, i, r, c, e, s, s1, s2, nnz, d1, d2, hi;
+    int *rr, *cc;
+    double *Gt, *Ct, *IRt, *bsave;
+
+    memset(hd, 0, sizeof(*hd));
+    if (P <= 0 || N <= 0 || K1 < 1 || K2 < 1) return 1;
+    bsave = TMALLOC(double, N);
+
+#ifdef KLU
+    if (ckt->CKTmatrix->CKTkluMODE) {
+        if (!ckt->CKTmatrix->SMPkluMatrix->KLUmatrixIsComplex) {
+            for (i = 0; i < DEVmaxnum; i++)
+                if (DEVices[i] && DEVices[i]->DEVbindCSCComplex && ckt->CKThead[i])
+                    DEVices[i]->DEVbindCSCComplex(ckt->CKThead[i], ckt);
+            ckt->CKTmatrix->SMPkluMatrix->KLUmatrixIsComplex = KLUMatrixComplex;
+        }
+    } else
+#endif
+        spSetComplex(ckt->CKTmatrix->SPmatrix);
+
+    /* establish structure at sample 0's bias */
+    for (i = 1; i <= N; i++) ckt->CKTrhsOld[i] = vsamp[i - 1];
+    ckt->CKTrhsOld[0] = 0.0;
+    ckt->CKTmode = (ckt->CKTmode & MODEUIC) | MODEDCOP | MODEINITSMSIG;
+    CKTload(ckt);
+    ckt->CKTomega = 1.0;
+    ckt->CKTmode = (ckt->CKTmode & MODEUIC) | MODEAC;
+    CKTacLoad(ckt);
+
+    nnz = 0;
+    for (r = 1; r <= N; r++) for (c = 1; c <= N; c++)
+        if (SMPfindElt(ckt->CKTmatrix, r, c, 0)) nnz++;
+    if (nnz <= 0) { FREE(bsave); return 1; }
+    rr = TMALLOC(int, nnz); cc = TMALLOC(int, nnz);
+    e = 0;
+    for (r = 1; r <= N; r++) for (c = 1; c <= N; c++)
+        if (SMPfindElt(ckt->CKTmatrix, r, c, 0)) { rr[e] = r; cc[e] = c; e++; }
+
+    Gt  = TMALLOC(double, (size_t)nnz * (size_t)P);
+    Ct  = TMALLOC(double, (size_t)nnz * (size_t)P);
+    IRt = TMALLOC(double, (size_t)N * (size_t)P);
+
+    for (s = 0; s < P; s++) {
+        double *Gv;
+        for (i = 1; i <= N; i++)
+            ckt->CKTrhsOld[i] = vsamp[(size_t)s * (size_t)N + (size_t)(i - 1)];
+        ckt->CKTrhsOld[0] = 0.0;
+        for (i = 0; i <= N; i++) ckt->CKTrhs[i] = 0.0;
+        /* settle limited junctions (E-134): repeated MODEINITFLOAT loads */
+        ckt->CKTmode = (ckt->CKTmode & MODEUIC) | MODEDCOP | MODEINITFLOAT;
+        { int inner;
+          for (inner = 0; inner < 100; inner++) {
+            double bnorm = 0.0, dnorm = 0.0;
+            for (i = 0; i <= N; i++) ckt->CKTrhs[i] = 0.0;
+            CKTload(ckt);
+            for (i = 1; i <= N; i++) {
+                double db = ckt->CKTrhs[i] - bsave[i - 1];
+                dnorm += db * db; bnorm += ckt->CKTrhs[i] * ckt->CKTrhs[i];
+                bsave[i - 1] = ckt->CKTrhs[i];
+            }
+            if (inner > 0 && sqrt(dnorm) <= 1e-12 * (sqrt(bnorm) + 1e-30)) break;
+          } }
+        for (i = 0; i <= N; i++) ckt->CKTrhs[i] = 0.0;
+        ckt->CKTmode = (ckt->CKTmode & MODEUIC) | MODEDCOP | MODEINITSMSIG;
+        CKTload(ckt);
+        ckt->CKTomega = 1.0;
+        ckt->CKTmode = (ckt->CKTmode & MODEUIC) | MODEAC;
+        CKTacLoad(ckt);
+        Gv = IRt + (size_t)s * (size_t)N;
+        for (i = 0; i < N; i++) Gv[i] = 0.0;
+        for (e = 0; e < nnz; e++) {
+            double *el = (double *) SMPfindElt(ckt->CKTmatrix, rr[e], cc[e], 0);
+            double g = el ? el[0] : 0.0;
+            Gt[(size_t)e * (size_t)P + (size_t)s] = g;
+            Ct[(size_t)e * (size_t)P + (size_t)s] = el ? el[1] : 0.0;
+            Gv[rr[e] - 1] += g * vsamp[(size_t)s * (size_t)N + (size_t)(cc[e] - 1)];
+        }
+        for (i = 1; i <= N; i++) Gv[i - 1] -= bsave[i - 1];   /* I_R = G*v - b */
+    }
+
+    hd->N = N; hd->K1 = K1; hd->K2 = K2; hd->Nh = (2*K1+1) * (2*K2+1);
+    hd->Ntot = hd->Nh * N; hd->nnz = nnz; hd->rr = rr; hd->cc = cc;
+    hd->D2c = 4*K2 + 1; hd->Dsz = (4*K1+1) * (4*K2+1);
+    hd->h1 = TMALLOC(int, hd->Nh); hd->h2 = TMALLOC(int, hd->Nh);
+    { int k1, k2; hi = 0;
+      for (k1 = -K1; k1 <= K1; k1++) for (k2 = -K2; k2 <= K2; k2++) {
+          hd->h1[hi] = k1; hd->h2[hi] = k2; hi++; } }
+
+    hd->Gmr = TMALLOC(double, (size_t)nnz * (size_t)hd->Dsz);
+    hd->Gmi = TMALLOC(double, (size_t)nnz * (size_t)hd->Dsz);
+    hd->Cmr = TMALLOC(double, (size_t)nnz * (size_t)hd->Dsz);
+    hd->Cmi = TMALLOC(double, (size_t)nnz * (size_t)hd->Dsz);
+    /* 2-D DFT of G(theta1,theta2), C(theta1,theta2) -> difference spectra */
+    for (e = 0; e < nnz; e++)
+        for (d1 = -2*K1; d1 <= 2*K1; d1++)
+            for (d2 = -2*K2; d2 <= 2*K2; d2++) {
+                double gr = 0, gi = 0, cr = 0, ci = 0;
+                for (s1 = 0; s1 < P1; s1++) for (s2 = 0; s2 < P2; s2++) {
+                    int ss = s1 * P2 + s2;
+                    double ang = 2.0*M_PI*((double)d1*s1/P1 + (double)d2*s2/P2);
+                    double cs = cos(ang), sn = sin(ang);
+                    double gv = Gt[(size_t)e * (size_t)P + (size_t)ss];
+                    double cv = Ct[(size_t)e * (size_t)P + (size_t)ss];
+                    gr += gv*cs; gi -= gv*sn; cr += cv*cs; ci -= cv*sn;
+                }
+                { size_t idx = (size_t)e * (size_t)hd->Dsz + (size_t)qp_didx(hd, d1, d2);
+                  hd->Gmr[idx] = gr/P; hd->Gmi[idx] = gi/P;
+                  hd->Cmr[idx] = cr/P; hd->Cmi[idx] = ci/P; }
+            }
+    /* I_R harmonics over the full Nh set (row hi*N + node) */
+    for (r = 0; r < N; r++)
+        for (hi = 0; hi < hd->Nh; hi++) {
+            double xr = 0, xi = 0; int k1 = hd->h1[hi], k2 = hd->h2[hi];
+            for (s1 = 0; s1 < P1; s1++) for (s2 = 0; s2 < P2; s2++) {
+                int ss = s1 * P2 + s2;
+                double ang = 2.0*M_PI*((double)k1*s1/P1 + (double)k2*s2/P2);
+                double x = IRt[(size_t)ss * (size_t)N + (size_t)r];
+                xr += x*cos(ang); xi -= x*sin(ang);
+            }
+            IRr[(size_t)hi * (size_t)N + (size_t)r] = xr/P;
+            IRi[(size_t)hi * (size_t)N + (size_t)r] = xi/P;
+        }
+
+    FREE(Gt); FREE(Ct); FREE(IRt); FREE(bsave);
+    return 0;
+}
+
+/* reconstruct v(theta1,theta2) samples [P1*P2 * N] from the 2-D spectrum V */
+static void
+qp_synth(const double *Vr, const double *Vi, int N, int K1, int K2,
+         int P1, int P2, double *vsamp)
+{
+    int s1, s2, i, k1, k2, hi;
+    for (s1 = 0; s1 < P1; s1++)
+        for (s2 = 0; s2 < P2; s2++) {
+            int s = s1 * P2 + s2;
+            for (i = 0; i < N; i++) {
+                double v = 0.0;
+                hi = 0;
+                for (k1 = -K1; k1 <= K1; k1++)
+                    for (k2 = -K2; k2 <= K2; k2++) {
+                        double ang = 2.0*M_PI*((double)k1*s1/P1 + (double)k2*s2/P2);
+                        v += Vr[(size_t)hi*(size_t)N + (size_t)i] * cos(ang)
+                           - Vi[(size_t)hi*(size_t)N + (size_t)i] * sin(ang);
+                        hi++;
+                    }
+                vsamp[(size_t)s * (size_t)N + (size_t)i] = v;
+            }
+        }
+}
+
+int
+QPSShb(CKTcircuit *ckt, double f1, double f2, int K1, int K2, int P1, int P2,
+       int maxiter, double tol, int verbose)
+{
+    int N = SMPmatSize(ckt->CKTmatrix);
+    int Nh = (2*K1+1) * (2*K2+1);
+    int Ntot = Nh * N, P, i, hi, rc = OK;
+    double *Vr, *Vi, *vsamp, *IRr, *IRi, *Isr, *Isi, *Fr, *Fi, *Jr, *Ji, *Kr, *Ki;
+    struct qp_harm hd;
+
+    if (N <= 0 || K1 < 1 || K2 < 1) { fprintf(stderr, "QPSS-HB: bad size.\n"); return E_PARMVAL; }
+    if (P1 <= 0) P1 = 4*K1 + 2;
+    if (P2 <= 0) P2 = 4*K2 + 2;
+    P = P1 * P2;
+    if (Ntot > 1600) {
+        fprintf(stderr, "QPSS-HB: system %d too large for the dense solver "
+                        "(reduce K1/K2).\n", Ntot);
+        return E_PARMVAL;
+    }
+
+    /* APFT/conversion need all harmonic frequencies k1*f1+k2*f2 distinct */
+    { int a, b, k1, k2, hh = 0; double fs = f1 + f2;
+      int *t1 = TMALLOC(int, Nh), *t2 = TMALLOC(int, Nh);
+      for (k1 = -K1; k1 <= K1; k1++) for (k2 = -K2; k2 <= K2; k2++) { t1[hh]=k1; t2[hh]=k2; hh++; }
+      for (a = 0; a < Nh; a++) for (b = a+1; b < Nh; b++)
+        if (fabs((t1[a]-t1[b])*f1 + (t2[a]-t2[b])*f2) < 1e-9 * fs) {
+            fprintf(stderr, "QPSS-HB: tones f1=%g f2=%g are too commensurate at order "
+                            "K1=%d K2=%d -- harmonics (%d,%d) and (%d,%d) alias to the same "
+                            "frequency. Reduce the order or use the transient qpss.\n",
+                    f1, f2, K1, K2, t1[a], t2[a], t1[b], t2[b]);
+            FREE(t1); FREE(t2); return E_PARMVAL;
+        }
+      FREE(t1); FREE(t2);
+    }
+
+    Vr = TMALLOC(double, Ntot); Vi = TMALLOC(double, Ntot);
+    IRr = TMALLOC(double, Ntot); IRi = TMALLOC(double, Ntot);
+    Isr = TMALLOC(double, Ntot); Isi = TMALLOC(double, Ntot);
+    Fr = TMALLOC(double, Ntot); Fi = TMALLOC(double, Ntot);
+    Kr = TMALLOC(double, Ntot); Ki = TMALLOC(double, Ntot);
+    Jr = TMALLOC(double, (size_t)Ntot * (size_t)Ntot);
+    Ji = TMALLOC(double, (size_t)Ntot * (size_t)Ntot);
+    vsamp = TMALLOC(double, (size_t)N * (size_t)P);
+
+    /* --- source spectrum Is via an OVERSAMPLED least-squares almost-periodic
+     * Fourier transform: sample the v=0 source RHS at Nt >> Nh real times
+     * t_j = j*dt and solve the normal equations (Gamma^H Gamma) Is = Gamma^H b,
+     * with Gamma_{j,h} = exp(j 2pi (k1 f1 + k2 f2) t_j). Oversampling makes
+     * Gamma^H Gamma well conditioned (~ Nt*I by near-orthogonality of the
+     * harmonics over the equidistributed phases) where a *square* Vandermonde
+     * would be catastrophically ill-conditioned beyond a handful of harmonics. */
+    {
+        int j, k1, k2, a, b, Nt = 6*Nh < 96 ? 96 : 6*Nh;
+        double lammax = K1*f1 + K2*f2, dt = 1.0 / (2.1 * lammax);
+        double *lam = TMALLOC(double, Nh);
+        double *Gr = TMALLOC(double, (size_t)Nt*(size_t)Nh);
+        double *Gi = TMALLOC(double, (size_t)Nt*(size_t)Nh);
+        double *Mr = TMALLOC(double, (size_t)Nh*(size_t)Nh);
+        double *Mi = TMALLOC(double, (size_t)Nh*(size_t)Nh);
+        double *cr = TMALLOC(double, (size_t)Nh*(size_t)Nh);
+        double *ci = TMALLOC(double, (size_t)Nh*(size_t)Nh);
+        double *br = TMALLOC(double, Nh), *bi = TMALLOC(double, Nh);
+        double *bsr = TMALLOC(double, (size_t)Nt*(size_t)N);
+        a = 0;
+        for (k1 = -K1; k1 <= K1; k1++) for (k2 = -K2; k2 <= K2; k2++) { lam[a] = k1*f1 + k2*f2; a++; }
+        for (j = 0; j < Nt; j++) {
+            for (i = 0; i <= N; i++) { ckt->CKTrhsOld[i] = 0.0; ckt->CKTrhs[i] = 0.0; }
+            ckt->CKTtime = (double)j * dt;
+            ckt->CKTmode = (ckt->CKTmode & MODEUIC) | MODETRAN | MODEINITTRAN;
+            CKTload(ckt);
+            for (i = 0; i < N; i++) bsr[(size_t)j*(size_t)N + (size_t)i] = ckt->CKTrhs[i+1];
+        }
+        for (j = 0; j < Nt; j++)
+            for (a = 0; a < Nh; a++) {
+                double ang = 2.0*M_PI*lam[a]*(double)j*dt;
+                Gr[(size_t)j*(size_t)Nh + (size_t)a] = cos(ang);
+                Gi[(size_t)j*(size_t)Nh + (size_t)a] = sin(ang);
+            }
+        /* M = Gamma^H Gamma :  M_{a,b} = sum_j conj(G_{j,a}) G_{j,b} */
+        for (a = 0; a < Nh; a++)
+            for (b = 0; b < Nh; b++) {
+                double sr = 0, si = 0;
+                for (j = 0; j < Nt; j++) {
+                    double gar = Gr[(size_t)j*(size_t)Nh+(size_t)a], gai = Gi[(size_t)j*(size_t)Nh+(size_t)a];
+                    double gbr = Gr[(size_t)j*(size_t)Nh+(size_t)b], gbi = Gi[(size_t)j*(size_t)Nh+(size_t)b];
+                    sr += gar*gbr + gai*gbi;      /* conj(ga)*gb */
+                    si += gar*gbi - gai*gbr;
+                }
+                Mr[(size_t)a*(size_t)Nh+(size_t)b] = sr;
+                Mi[(size_t)a*(size_t)Nh+(size_t)b] = si;
+            }
+        for (i = 0; i < N; i++) {
+            for (a = 0; a < Nh; a++) {              /* rhs = Gamma^H b (b real) */
+                double sr = 0, si = 0;
+                for (j = 0; j < Nt; j++) {
+                    double bj = bsr[(size_t)j*(size_t)N + (size_t)i];
+                    sr +=  Gr[(size_t)j*(size_t)Nh+(size_t)a] * bj;
+                    si += -Gi[(size_t)j*(size_t)Nh+(size_t)a] * bj;
+                }
+                br[a] = sr; bi[a] = si;
+            }
+            memcpy(cr, Mr, (size_t)Nh*(size_t)Nh*sizeof(double));
+            memcpy(ci, Mi, (size_t)Nh*(size_t)Nh*sizeof(double));
+            if (pss_csolve(Nh, cr, ci, br, bi))
+                for (a = 0; a < Nh; a++) { br[a] = 0.0; bi[a] = 0.0; }
+            for (a = 0; a < Nh; a++) {
+                Isr[(size_t)a*(size_t)N + (size_t)i] = br[a];
+                Isi[(size_t)a*(size_t)N + (size_t)i] = bi[a];
+            }
+        }
+        FREE(lam); FREE(Gr); FREE(Gi); FREE(Mr); FREE(Mi); FREE(cr); FREE(ci); FREE(br); FREE(bi); FREE(bsr);
+    }
+
+    for (i = 0; i < Ntot; i++) { Vr[i] = 0.0; Vi[i] = 0.0; }
+
+    /* --- Newton with E-135 source-stepping continuation --- */
+    {
+    double lambda = 0.0, dlambda = 1.0, fnorm = 0.0;
+    double *Vsr = TMALLOC(double, Ntot), *Vsi = TMALLOC(double, Ntot);
+    int iter, nlevels = 0, nnewton = 0, hard_err = 0;
+    memcpy(Vsr, Vr, (size_t)Ntot*sizeof(double));
+    memcpy(Vsi, Vi, (size_t)Ntot*sizeof(double));
+
+    for (;;) {
+        double target = lambda + dlambda;
+        int conv = 0;
+        if (target > 1.0) target = 1.0;
+
+        for (iter = 0; iter < maxiter; iter++) {
+            qp_synth(Vr, Vi, N, K1, K2, P1, P2, vsamp);
+            if (qp_extract(ckt, vsamp, N, P1, P2, K1, K2, &hd, IRr, IRi)) {
+                fprintf(stderr, "QPSS-HB: device extraction failed.\n");
+                rc = E_PARMVAL; hard_err = 1; break;
+            }
+            hd.f1 = f1; hd.f2 = f2;
+            qp_build_matrix(&hd, 0.0, Jr, Ji);
+            /* reactive current I_C = (J - Jg)*V (jwC part of J on V) */
+            {
+                struct qp_harm hg = hd;
+                double *Jgr = TMALLOC(double, (size_t)Ntot*(size_t)Ntot);
+                double *Jgi = TMALLOC(double, (size_t)Ntot*(size_t)Ntot);
+                hg.Cmr = TMALLOC(double, (size_t)hd.nnz*(size_t)hd.Dsz);
+                hg.Cmi = TMALLOC(double, (size_t)hd.nnz*(size_t)hd.Dsz);
+                qp_build_matrix(&hg, 0.0, Jgr, Jgi);
+                FREE(hg.Cmr); FREE(hg.Cmi);
+                for (i = 0; i < Ntot; i++) {
+                    double xr = 0, xi = 0; int kk;
+                    for (kk = 0; kk < Ntot; kk++) {
+                        double ar = Jr[(size_t)i*(size_t)Ntot+(size_t)kk] - Jgr[(size_t)i*(size_t)Ntot+(size_t)kk];
+                        double ai = Ji[(size_t)i*(size_t)Ntot+(size_t)kk] - Jgi[(size_t)i*(size_t)Ntot+(size_t)kk];
+                        xr += ar*Vr[kk] - ai*Vi[kk];
+                        xi += ar*Vi[kk] + ai*Vr[kk];
+                    }
+                    Kr[i] = xr; Ki[i] = xi;
+                }
+                FREE(Jgr); FREE(Jgi);
+            }
+            qp_free(&hd);
+
+            fnorm = 0.0;
+            for (i = 0; i < Ntot; i++) {
+                Fr[i] = IRr[i] + Kr[i] - target*Isr[i];
+                Fi[i] = IRi[i] + Ki[i] - target*Isi[i];
+                fnorm += Fr[i]*Fr[i] + Fi[i]*Fi[i];
+            }
+            fnorm = sqrt(fnorm);
+            nnewton++;
+            if (verbose)
+                fprintf(stderr, "QPSS-HB lambda=%.4f iter %2d: |F| = %.6e\n", target, iter, fnorm);
+            if (isnan(fnorm) || fnorm > 1e300) break;
+
+            for (i = 0; i < Ntot; i++) { Fr[i] = -Fr[i]; Fi[i] = -Fi[i]; }
+            if (pss_csolve(Ntot, Jr, Ji, Fr, Fi)) break;
+            for (i = 0; i < Ntot; i++) { Vr[i] += Fr[i]; Vi[i] += Fi[i]; }
+            if (fnorm < tol) { conv = 1; break; }
+        }
+
+        if (hard_err) break;
+        if (conv) {
+            lambda = target; nlevels++;
+            memcpy(Vsr, Vr, (size_t)Ntot*sizeof(double));
+            memcpy(Vsi, Vi, (size_t)Ntot*sizeof(double));
+            if (lambda >= 1.0 - 1e-9) break;
+            dlambda *= 1.7;
+            if (lambda + dlambda > 1.0) dlambda = 1.0 - lambda;
+        } else {
+            memcpy(Vr, Vsr, (size_t)Ntot*sizeof(double));
+            memcpy(Vi, Vsi, (size_t)Ntot*sizeof(double));
+            dlambda *= 0.5;
+            if (dlambda < 1e-5) {
+                fprintf(stderr, "QPSS-HB: source stepping stalled at lambda=%.4g "
+                                "(|F|=%.3e).\n", lambda, fnorm);
+                rc = E_ITERLIM; break;
+            }
+        }
+    }
+    if (rc == OK)
+        fprintf(stdout, "QPSS-HB: converged in %d iterations, %d continuation step%s "
+                        "(|F| = %.3e).\n", nnewton, nlevels, nlevels == 1 ? "" : "s", fnorm);
+    FREE(Vsr); FREE(Vsi);
+    }
+
+    /* --- output the two-tone spectrum + retain the operating point for qpac --- */
+    if (rc == OK) {
+        int numNames, error, k1, k2, ord;
+        IFuid *nameList = NULL;
+        error = CKTnames(ckt, &numNames, &nameList);
+        fprintf(stdout,
+                "\nQPSS-HB: two-tone steady state (f1 = %g Hz, f2 = %g Hz, "
+                "K1 = %d, K2 = %d)\n"
+                "  node      (k1,k2)      frequency [Hz]        |V|            phase [deg]\n",
+                f1, f2, K1, K2);
+        for (i = 0; i < N; i++) {
+            const char *nm = (!error && i < numNames) ? (const char *) nameList[i] : "?";
+            for (ord = 0; ord <= K1 + K2; ord++)
+                for (k1 = -K1; k1 <= K1; k1++)
+                    for (k2 = -K2; k2 <= K2; k2++) {
+                        double f, sc, vr, vi;
+                        if (abs(k1) + abs(k2) != ord) continue;
+                        f = k1*f1 + k2*f2;
+                        if (f < 0.0) continue;             /* report f >= 0 (conj pairs) */
+                        hi = (k1 + K1) * (2*K2 + 1) + (k2 + K2);
+                        sc = (f < 1e-9*(f1+f2)) ? 1.0 : 2.0;
+                        vr = sc * Vr[(size_t)hi*(size_t)N + (size_t)i];
+                        vi = sc * Vi[(size_t)hi*(size_t)N + (size_t)i];
+                        fprintf(stdout, "  %-8s  (%2d,%2d)   %16.6e   %14.6e   %10.3f\n",
+                                nm, k1, k2, f, hypot(vr, vi),
+                                (f < 1e-9*(f1+f2)) ? 0.0 : atan2(vi, vr) * 180.0/M_PI);
+                    }
+        }
+        if (nameList) tfree(nameList);
+
+        /* retain: re-extract at the converged V for a clean conversion structure */
+        qp_synth(Vr, Vi, N, K1, K2, P1, P2, vsamp);
+        {
+            struct qp_harm *sv = TMALLOC(struct qp_harm, 1);
+            if (qp_extract(ckt, vsamp, N, P1, P2, K1, K2, sv, IRr, IRi) == 0) {
+                sv->f1 = f1; sv->f2 = f2;
+                sv->Vr = TMALLOC(double, Ntot); sv->Vi = TMALLOC(double, Ntot);
+                memcpy(sv->Vr, Vr, (size_t)Ntot*sizeof(double));
+                memcpy(sv->Vi, Vi, (size_t)Ntot*sizeof(double));
+                if (qpss_hb_saved) { qp_free(qpss_hb_saved); FREE(qpss_hb_saved); }
+                qpss_hb_saved = sv;
+            } else {
+                FREE(sv);
+            }
+        }
+    }
+
+    FREE(Vr); FREE(Vi); FREE(IRr); FREE(IRi); FREE(Isr); FREE(Isi);
+    FREE(Fr); FREE(Fi); FREE(Jr); FREE(Ji); FREE(Kr); FREE(Ki); FREE(vsamp);
+    return rc;
+}
+
+
 int
 DCpss(CKTcircuit *ckt,
        int restart)   /* forced restart flag */

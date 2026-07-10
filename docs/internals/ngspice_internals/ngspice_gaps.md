@@ -199,10 +199,16 @@ an ordinary transient over a few beat periods, then evaluates the Fourier
 coefficient **directly at each exact intermod frequency** (no FFT-bin rounding) and
 labels it by the 2-D index `(k1,k2)`. Solver-independent (drives a transient), works
 with built-in and OSDI devices. Verified 7/7 checks incl. the analytic IM3 products
-and the 3:1 IP3 slope law. Still ⚠️ (not ✅) because the general case wants a true
-frequency-domain **harmonic-balance** engine: **incommensurate** tones (irrational
-ratio, no common period) are out of reach of transient sampling, and small-signal
-**QPAC** is not yet built. HB itself remains a `WITH_HB` stub.*
+and the 3:1 IP3 slope law. [Enhancement-136](../../../enhancements_doc/Enhancement-136.md)
+then added the **frequency-domain** two-tone Harmonic Balance engine
+(`qpss <expr> <f1> <f2> hb [K1] [K2]`): each node a 2-D Fourier series, devices sampled
+on a 2-D **phase** grid `(θ1,θ2)` (so **incommensurate** tones — irrational ratio, no
+common period — now work, which transient sampling cannot do) and 2-D DFT'd to the
+conversion matrix, Newton-solved by `pss_csolve` with the E-135 source stepping; sources
+captured by an oversampled least-squares APFT. Verified 7/7 (analytic IM3 ratio, the
+incommensurate `√2` case, HB==transient, KLU==Sparse) and it retains its operating point.
+Still ⚠️ (not ✅) only because small-signal **QPAC** — the two-tone analogue of PAC around
+that retained operating point — is the last piece; it is the next enhancement.*
 
 *⁷ HB is ✅ since
 [Enhancement-134](../../../enhancements_doc/Enhancement-134.md): a `hb <f0> <K>`

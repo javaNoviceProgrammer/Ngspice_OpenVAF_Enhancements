@@ -18,16 +18,25 @@ no resampling or FFT-bin rounding). Each product is labelled by its 2-D harmonic
 index (k1, k2), the defining QPSS output.
 
 Independent of the linear solver (it drives an ordinary transient).
+
+Enhancement-136: `qpss <expr> <f1> <f2> hb [K1] [K2]` selects a frequency-domain
+two-tone Harmonic Balance engine instead of the transient path -- the TRUE
+quasi-periodic steady state, which works for INCOMMENSURATE tones (no common beat
+period) and retains its operating point for the small-signal `qpac` (E-137). The
+engine (QPSShb, spicelib/analysis/dcpss.c) samples the devices on a 2-D phase grid,
+2-D DFTs to the conversion matrix, and Newton-solves in the frequency domain.
 **********/
 
 #include "ngspice/ngspice.h"
 #include "ngspice/cpdefs.h"
+#include "ngspice/cktdefs.h"
 #include "ngspice/ftedefs.h"
 #include "ngspice/dvec.h"
 #include "ngspice/wordlist.h"
 #include "ngspice/fteext.h"
 #include "ngspice/cpextern.h"
 
+#include "circuits.h"
 #include "com_qpss.h"
 
 /* Run one command synchronously through the command table (see com_optimize.c):
@@ -102,6 +111,52 @@ com_qpss(wordlist *wl)
     expr = wl->wl_word;
     f1 = qpssnum(wl->wl_next->wl_word);
     f2 = qpssnum(wl->wl_next->wl_next->wl_word);
+
+    /* Enhancement-136: `qpss <expr> <f1> <f2> hb [K1] [K2]` selects the
+     * frequency-domain two-tone Harmonic Balance engine -- the true,
+     * incommensurate-capable quasi-periodic steady state, which also retains
+     * the operating point for `qpac` -- instead of the E-133 transient path.
+     * The output is a per-node two-tone spectrum, so `expr` is not used here. */
+    {
+        wordlist *w;
+        for (w = wl->wl_next->wl_next->wl_next; w; w = w->wl_next)
+            if (strcasecmp(w->wl_word, "hb") == 0) {
+                CKTcircuit *ckt = ft_curckt->ci_ckt;
+                int K1 = 3, K2 = 3, verbose, err;
+                if (f1 <= 0.0 || f2 <= 0.0 || f1 == f2) {
+                    fprintf(cp_err, "Error: qpss hb: need two distinct positive tone "
+                                    "frequencies.\n");
+                    return;
+                }
+                if (w->wl_next) {
+                    K1 = (int) qpssnum(w->wl_next->wl_word);
+                    K2 = w->wl_next->wl_next
+                         ? (int) qpssnum(w->wl_next->wl_next->wl_word) : K1;
+                }
+                if (K1 < 1) K1 = 1;
+                if (K2 < 1) K2 = 1;
+#ifdef KLU
+                if (ft_curckt->ci_defTask &&
+                    (ckt->CKTmatrix == NULL || SMPmatSize(ckt->CKTmatrix) <= 0))
+                    ckt->CKTkluMODE = ft_curckt->ci_defTask->TSKkluMODE;
+#endif
+                if (ckt->CKTmatrix == NULL || SMPmatSize(ckt->CKTmatrix) <= 0) {
+                    if ((err = CKTsetup(ckt)) != OK || (err = CKTtemp(ckt)) != OK) {
+                        fprintf(cp_err, "Error: qpss hb: circuit setup failed.\n");
+                        return;
+                    }
+                }
+                verbose = cp_getvar("qpss_verbose", CP_BOOL, NULL, 0);
+                ft_curckt->ci_curTask = ft_curckt->ci_defTask;
+                ckt->CKTcurJob = ft_curckt->ci_defTask ? ft_curckt->ci_defTask->jobs : NULL;
+                err = QPSShb(ckt, f1, f2, K1, K2, 0, 0, 60, 1e-10, verbose ? 1 : 0);
+                if (err != OK)
+                    fprintf(cp_err, "qpss hb: harmonic balance did not complete "
+                                    "(error %d).\n", err);
+                return;
+            }
+    }
+
     if (wl->wl_next->wl_next->wl_next) {
         periods = (int) qpssnum(wl->wl_next->wl_next->wl_next->wl_word);
         if (wl->wl_next->wl_next->wl_next->wl_next)
