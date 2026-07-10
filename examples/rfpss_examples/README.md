@@ -64,3 +64,32 @@ response equals the ordinary AC driving-point impedance at `f_in = f0/2`
 energy — exactly what a non-mixing circuit should show. `verify_rcpss.py` checks
 all of this. A pumped nonlinear circuit fills the off-diagonal blocks and produces
 real conversion gain through the same path.
+
+## `.pac` command (Enhancement-122)
+
+`rc_pac.cir` drives the same RC through the user-facing **periodic-AC** command:
+
+```
+.pac Fguess StabTime OscNode Points Harmonics SC_iter Steady_coeff \
+     <DEC|OCT|LIN> Npts Fstart Fstop
+```
+
+The first seven fields are the `.pss` parameters (PAC runs a PSS to find the
+operating point it linearizes around); the tail is an `.ac`-style sweep. `.pac`
+runs PSS, then sweeps the small-signal input frequency and, at each point, solves
+the E-121 conversion matrix — emitting the **0-th-sideband node responses** as a
+complex `PAC Analysis` plot you read back with `print`/`plot`/`wrdata`:
+
+```
+.pac 1meg 1u b 1024 10 50 5u dec 10 10k 1meg
+```
+
+For the linear RC the swept sideband-0 response at node `b` equals the AC
+driving-point impedance `|Z(f)| = 1/|1/R + j·2π·f·C|` across the whole band —
+998 Ω at 10 kHz down to 157 Ω at 1 MHz. `verify_rcpac.py` asserts every swept
+point against `|Z(f)|` (worst-case `1.6e−7`). A pumped nonlinear circuit's
+sideband-0 response is the genuine periodic-AC response (differs from a plain
+`.ac`) through the same path.
+
+**Note:** `.pac` runs a PSS shooting method (~2 minutes) and `verify_rcpac.py`
+runs it under the Sparse solver only.

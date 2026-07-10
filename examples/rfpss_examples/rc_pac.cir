@@ -1,0 +1,15 @@
+* Enhancement-122: PAC (.pac) frequency sweep on a driven RC low-pass.
+* Runs PSS (drive 1 MHz), then sweeps a small-signal input frequency and solves the
+* harmonic conversion matrix at each point, emitting the 0-th-sideband node
+* responses. For this linear circuit the sideband-0 response at node b equals the
+* AC driving-point impedance |Z(f)| = 1/|1/R1 + j*2*pi*f*C1|.
+V1 a 0 SIN(0 1 1meg)
+R1 a b 1k
+C1 b 0 1n
+* .pac Fguess StabTime OscNode Points Harmonics SC_iter Steady_coeff <dec|oct|lin> Npts Fstart Fstop
+.pac 1meg 1u b 1024 10 50 5u dec 10 10k 1meg
+.control
+run
+print mag(b)
+.endc
+.end

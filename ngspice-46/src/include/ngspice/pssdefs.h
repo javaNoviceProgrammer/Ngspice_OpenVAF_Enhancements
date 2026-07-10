@@ -40,6 +40,16 @@ typedef struct {
     double *PSSopTimes;      /* [PSSopPoints] sample times across the period */
     double *PSSopVoltages;   /* [PSSopMsize * PSSopPoints] node voltages per sample */
     double *PSSopStates;     /* [PSSopNumStates * PSSopPoints] device states per sample */
+
+    /* Enhancement-122: PAC (.pac) frequency sweep. The .pac card runs PSS, then
+     * sweeps a small-signal input frequency and, at each point, solves the
+     * harmonic conversion matrix (E-121) built from the retained operating point,
+     * emitting the sideband-0 node responses as a complex plot vs frequency. */
+    int    PSSdoPAC;         /* 1 if this job also runs a PAC sweep */
+    double PACfStart;        /* input-frequency sweep start (Hz) */
+    double PACfStop;         /* input-frequency sweep stop (Hz) */
+    int    PACpoints;        /* points per decade/octave, or total for linear */
+    int    PACstepType;      /* 0 = LIN, 1 = DEC, 2 = OCT */
 } PSSan;
 
 enum {
@@ -51,6 +61,11 @@ enum {
     PSS_UIC,
     SC_ITER,
     STEADY_COEFF,
+    PAC_DOPAC,
+    PAC_FSTART,
+    PAC_FSTOP,
+    PAC_POINTS,
+    PAC_STEPTYPE,
 };
 
 #endif
