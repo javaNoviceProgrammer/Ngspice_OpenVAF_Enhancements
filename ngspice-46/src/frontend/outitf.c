@@ -26,6 +26,8 @@ Modified: 2000 AlansFixes, 2013/2015 patch by Krzysztof Blaszkowski
 #include "variable.h"
 #include <fcntl.h>
 #include "ngspice/cktdefs.h"
+#include "ngspice/acdefs.h"          /* Enhancement: ACAN for the sweep progress bar */
+#include "ngspice/trcvdefs.h"        /* Enhancement: TRCV (DC sweep) for the progress bar */
 #include "breakp2.h"
 #include "runcoms.h"
 #include "plotting/graf.h"
@@ -78,6 +80,96 @@ extern int sh_vecinit(runDesc *run);
 /*Suppressing progress info in -o option */
 #ifndef HAS_WINGUI
 extern bool orflag;
+#endif
+
+/* Enhancement: live progress bar on the "Reference value" line.
+ *
+ * outp_progress_frac() returns the fraction (0..1) of a DC / AC / transient
+ * sweep completed, or -1 when the running analysis has no well-defined span
+ * (operating point, noise, ...). Transient uses the elapsed time against TSTOP;
+ * AC uses the frequency against the (linear or log) start/stop band; DC sweeps
+ * use the accepted-point count against the product of the nested step counts. */
+#ifndef HAS_WINGUI
+#define OUTP_BARLEN 24
+
+static double
+outp_progress_frac(runDesc *run, double refval)
+{
+    CKTcircuit *ckt = run ? run->circuit : NULL;
+    JOB *job;
+    const char *nm;
+
+    if (!ckt || !ckt->CKTcurJob)
+        return -1.0;
+    job = ckt->CKTcurJob;
+    nm = spice_analysis_get_name(job->JOBtype);
+    if (!nm)
+        return -1.0;
+
+    if (strcmp(nm, "TRAN") == 0) {
+        double span = ckt->CKTfinalTime - ckt->CKTinitTime;
+        if (span > 0.0)
+            return (ckt->CKTtime - ckt->CKTinitTime) / span;
+    } else if (strcmp(nm, "AC") == 0) {
+        ACAN *ac = (ACAN *) job;
+        double f0 = ac->ACstartFreq, f1 = ac->ACstopFreq;
+        if (ac->ACstepType == LINEAR) {
+            if (f1 != f0)
+                return (refval - f0) / (f1 - f0);
+        } else {                        /* DECADE / OCTAVE: logarithmic band */
+            if (f0 > 0.0 && f1 > 0.0 && refval > 0.0 && f1 != f0)
+                return log(refval / f0) / log(f1 / f0);
+        }
+    } else if (strcmp(nm, "NOISE") == 0) {   /* frequency-swept, like AC */
+        NOISEAN *ns = (NOISEAN *) job;
+        double f0 = ns->NstartFreq, f1 = ns->NstopFreq;
+        if (ns->NstpType == LINEAR) {
+            if (f1 != f0)
+                return (refval - f0) / (f1 - f0);
+        } else {
+            if (f0 > 0.0 && f1 > 0.0 && refval > 0.0 && f1 != f0)
+                return log(refval / f0) / log(f1 / f0);
+        }
+    } else if (strcmp(nm, "DC") == 0) {
+        TRCV *dc = (TRCV *) job;
+        double total = 1.0;
+        int i;
+        for (i = 0; i <= dc->TRCVnestLevel; i++) {
+            double s = dc->TRCVvStep[i];
+            if (s != 0.0)
+                total *= floor(fabs((dc->TRCVvStop[i] - dc->TRCVvStart[i]) / s)
+                               + 1.0 + 0.5);
+        }
+        if (total > 0.0)
+            return (double) run->pointCount / total;
+    }
+    return -1.0;
+}
+
+/* Print the throttled "Reference value" status line, with a progress bar
+ * appended when the sweep fraction is known. Redraws in place via '\r', like
+ * the original line, and keeps a constant width so no stale characters remain. */
+static void
+outp_print_reference(runDesc *run, double refval)
+{
+    double frac = outp_progress_frac(run, refval);
+
+    if (frac >= 0.0) {
+        char bar[OUTP_BARLEN + 1];
+        int filled, k;
+        if (frac > 1.0)
+            frac = 1.0;
+        filled = (int) (frac * OUTP_BARLEN + 0.5);
+        for (k = 0; k < OUTP_BARLEN; k++)
+            bar[k] = (k < filled) ? '=' : ' ';
+        bar[OUTP_BARLEN] = '\0';
+        fprintf(stdout, " Reference value : % 12.5e  [%s] %3.0f%%\r",
+                refval, bar, frac * 100.0);
+    } else {
+        fprintf(stdout, " Reference value : % 12.5e\r", refval);
+    }
+    fflush(stdout);
+}
 #endif
 
 // fixme
@@ -670,9 +762,7 @@ OUTpData(runDesc *plotPtr, IFvalue *refValue, IFvalue *valuePtr)
                 if (!orflag && !ft_norefprint && !cp_background) {
                     currclock = clock();
                     if ((currclock-lastclock) > (0.25*CLOCKS_PER_SEC)) {
-                        fprintf(stdout, " Reference value : % 12.5e\r",
-                                refValue->cValue.real);
-                        fflush(stdout);
+                        outp_print_reference(run, refValue->cValue.real);
                         lastclock = currclock;
                     }
                 }
@@ -684,9 +774,7 @@ OUTpData(runDesc *plotPtr, IFvalue *refValue, IFvalue *valuePtr)
                 if (!orflag && !ft_norefprint && !cp_background) {
                     currclock = clock();
                     if ((currclock-lastclock) > (0.25*CLOCKS_PER_SEC)) {
-                        fprintf(stdout, " Reference value : % 12.5e\r",
-                                refValue->rValue);
-                        fflush(stdout);
+                        outp_print_reference(run, refValue->rValue);
                         lastclock = currclock;
                     }
                 }
@@ -785,14 +873,9 @@ OUTpData(runDesc *plotPtr, IFvalue *refValue, IFvalue *valuePtr)
         if (!orflag && !ft_norefprint && !cp_background) {
             currclock = clock();
             if ((currclock-lastclock) > (0.25*CLOCKS_PER_SEC)) {
-                if (run->isComplex) {
-                    fprintf(stdout, " Reference value : % 12.5e\r",
-                            refValue ? refValue->cValue.real : NAN);
-                } else {
-                    fprintf(stdout, " Reference value : % 12.5e\r",
-                            refValue ? refValue->rValue : NAN);
-                }
-                fflush(stdout);
+                outp_print_reference(run, run->isComplex
+                                     ? (refValue ? refValue->cValue.real : NAN)
+                                     : (refValue ? refValue->rValue : NAN));
                 lastclock = currclock;
             }
         }
@@ -1530,9 +1613,7 @@ InterpFileAdd(runDesc *run, IFvalue *refValue, IFvalue *valuePtr)
         if (!orflag && !ft_norefprint && !cp_background) {
             currclock = clock();
             if ((currclock-lastclock) > (0.25*CLOCKS_PER_SEC)) {
-                fprintf(stdout, " Reference value : % 12.5e\r",
-                        refValue->rValue);
-                fflush(stdout);
+                outp_print_reference(run, refValue->rValue);
                 lastclock = currclock;
             }
         }
@@ -1691,9 +1772,7 @@ InterpPlotAdd(runDesc *run, IFvalue *refValue, IFvalue *valuePtr)
     if (!orflag && !ft_norefprint && !cp_background) {
         currclock = clock();
         if ((currclock-lastclock) > (0.25*CLOCKS_PER_SEC)) {
-            fprintf(stdout, " Reference value : % 12.5e\r",
-                    refValue->rValue);
-            fflush(stdout);
+            outp_print_reference(run, refValue->rValue);
             lastclock = currclock;
         }
     }

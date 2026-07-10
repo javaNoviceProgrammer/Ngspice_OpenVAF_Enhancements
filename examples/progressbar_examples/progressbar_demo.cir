@@ -1,0 +1,29 @@
+Sweep progress-bar demo (Enhancement)
+* -------------------------------------------------------------------------
+* Run this interactively (or in batch) and watch the "Reference value"
+* status line during the analysis:
+*
+*     ngspice progressbar_demo.cir
+*
+* Instead of just the current sweep value, ngspice now appends a live
+* progress bar and percentage, redrawn in place every 0.25 s:
+*
+*     Reference value :  5.91926e-04  [==================      ]  74%
+*
+* The fraction is exact per analysis: transient uses elapsed time / TSTOP,
+* AC / noise use the frequency's position in the (log) band, DC uses the
+* swept-source position. This deck runs a long-ish nonlinear transient so the
+* bar is visible; change the analysis line to .ac / .dc / .noise to see the
+* same bar there.
+* -------------------------------------------------------------------------
+.model DM D(is=1e-14 n=1)
+V1 in 0 SIN(0 2 2k)
+D1 in out DM
+R1 out 0 1k
+C1 out 0 10n
+
+.control
+tran 2n 2m
+echo "done -- final V(out) = $&out"
+.endc
+.end
