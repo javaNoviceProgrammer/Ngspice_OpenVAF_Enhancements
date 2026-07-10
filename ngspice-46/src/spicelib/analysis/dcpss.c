@@ -15,6 +15,11 @@
 #include "ngspice/noisedef.h"  /* Enhancement-124: NOISEAN/Ndata + CKTnoise for pnoise */
 #include "ngspice/sperror.h"
 #include "ngspice/fteext.h"
+#ifdef RFSPICE
+#include "vsrc/vsrcdefs.h"             /* Enhancement-132: RF port fields (z0, ki, branch) */
+#include "../maths/dense/dense.h"      /* Enhancement-132: complex S = B*A^-1 */
+#include "../maths/dense/denseinlines.h"
+#endif
 
 #ifdef XSPICE
 /* gtri - add - wbk - Add headers */
@@ -396,22 +401,15 @@ pac_free_harmonics(struct pac_harm *hd)
     FREE(hd->B0r); FREE(hd->B0i);
 }
 
-/* Assemble the conversion matrix H_{nm} = G_{n-m} + j*omega_m*C_{n-m} at input
- * frequency f_in and solve for a stimulus injected in the 0-th sideband. When
- * `use_src` is set and the netlist supplied an `AC` source, the captured source
- * RHS B_0 is the stimulus; otherwise a unit current is injected at node `inode`.
- * The solution X (all sidebands, length Ntot) is written to Xr/Xi, which the caller
- * allocates. Returns 0 on success, 1 if the matrix is singular. */
-static int
-pac_solve_at(struct pac_harm *hd, double f0, double f_in, int inode, int use_src,
-             double *Xr, double *Xi)
+/* Enhancement-121: assemble the dense (2M+1)N complex conversion matrix H_{nm} =
+ * G_{n-m} + j*omega_m*C_{n-m} at input frequency f_in into (Ar,Ai). Shared by the
+ * PAC (pac_solve_at) and PSP (psp_solve_port) solves. */
+static void
+pac_build_matrix(struct pac_harm *hd, double f0, double f_in, double *Ar, double *Ai)
 {
     int    N = hd->N, M = hd->M, H = hd->H, nnz = hd->nnz, Ntot = hd->Ntot;
-    int    ni, mi, n, mm, e, rc, j;
-    double *Ar, *Ai;
+    int    ni, mi, n, mm, e;
 
-    Ar = TMALLOC(double, (size_t)Ntot * (size_t)Ntot);
-    Ai = TMALLOC(double, (size_t)Ntot * (size_t)Ntot);
     memset(Ar, 0, (size_t)Ntot * (size_t)Ntot * sizeof(double));
     memset(Ai, 0, (size_t)Ntot * (size_t)Ntot * sizeof(double));
     for (ni = 0; ni <= 2*M; ni++) {
@@ -439,6 +437,23 @@ pac_solve_at(struct pac_harm *hd, double f0, double f_in, int inode, int use_src
             }
         }
     }
+}
+
+/* Solve the conversion matrix at input frequency f_in for a stimulus injected in the
+ * 0-th sideband. When `use_src` is set and the netlist supplied an `AC` source, the
+ * captured source RHS B_0 is the stimulus; otherwise a unit current is injected at
+ * node `inode`. The solution X (all sidebands, length Ntot) is written to Xr/Xi,
+ * which the caller allocates. Returns 0 on success, 1 if the matrix is singular. */
+static int
+pac_solve_at(struct pac_harm *hd, double f0, double f_in, int inode, int use_src,
+             double *Xr, double *Xi)
+{
+    int    N = hd->N, M = hd->M, Ntot = hd->Ntot, rc, j;
+    double *Ar, *Ai;
+
+    Ar = TMALLOC(double, (size_t)Ntot * (size_t)Ntot);
+    Ai = TMALLOC(double, (size_t)Ntot * (size_t)Ntot);
+    pac_build_matrix(hd, f0, f_in, Ar, Ai);
 
     /* stimulus in the 0-th sideband: netlist AC source RHS, or a unit current */
     memset(Xr, 0, (size_t)Ntot * sizeof(double));
@@ -455,6 +470,33 @@ pac_solve_at(struct pac_harm *hd, double f0, double f_in, int inode, int use_src
     FREE(Ar); FREE(Ai);
     return rc;
 }
+
+#ifdef RFSPICE
+/* Enhancement-132: solve the conversion matrix with one RF port DRIVEN (V=1) in the
+ * 0-th sideband -- the per-port excitation for periodic S-parameters. The port is a
+ * unit voltage source: set its branch-equation RHS to 1 (exactly as .sp's
+ * VSRCspupdate does), so V(pos)-V(neg)=1 at that port and 0 at the others (which
+ * stay z0-terminated by the g0 shunt already in the Jacobian). Same conversion
+ * matrix as pac_solve_at, different RHS. */
+static int
+psp_solve_port(struct pac_harm *hd, double f0, double f_in, int branch,
+               double *Xr, double *Xi)
+{
+    int    N = hd->N, M = hd->M, Ntot = hd->Ntot, rc;
+    double *Ar, *Ai;
+
+    Ar = TMALLOC(double, (size_t)Ntot * (size_t)Ntot);
+    Ai = TMALLOC(double, (size_t)Ntot * (size_t)Ntot);
+    pac_build_matrix(hd, f0, f_in, Ar, Ai);
+
+    memset(Xr, 0, (size_t)Ntot * sizeof(double));
+    memset(Xi, 0, (size_t)Ntot * sizeof(double));
+    Xr[(size_t)M * (size_t)N + (size_t)(branch - 1)] = 1.0;
+    rc = pss_csolve(Ntot, Ar, Ai, Xr, Xi);
+    FREE(Ar); FREE(Ai);
+    return rc;
+}
+#endif
 
 /* pick sideband count M from the requested harmonics; conversion matrix is
  * (2M+1)*N, so cap M so the dense solve stays small. Returns 0 if unusable. */
@@ -1011,6 +1053,174 @@ pxf_sweep(CKTcircuit *ckt, PSSan *job)
     FREE(Psr); FREE(Psi);
     pac_free_harmonics(&hd);
 }
+
+
+#ifdef RFSPICE
+/* Enhancement-132: periodic S-parameters (.psp). After PSS, excite each RF port in
+ * turn with a unit current in the 0-th sideband through the conversion matrix, read
+ * the per-sideband port waves a/b (Kurosawa power waves, matching .sp's convention),
+ * and form the periodic scattering matrix S^(k) = B^(k) * A^-1 at each swept input
+ * frequency.  S = B*A^-1 is invariant to the excitation basis, so unit-current
+ * injection yields the same S as .sp's power-wave excitation; for a time-invariant
+ * circuit the conversion matrix is block-diagonal and the sideband-0 block reduces
+ * exactly to the ordinary .sp S-matrix. */
+static void
+psp_sweep(CKTcircuit *ckt, PSSan *job)
+{
+    int    N = job->PSSopMsize, np = ckt->CKTportCount;
+    int    M, Ksb, nsb, stepType = job->PACstepType, npts = job->PACpoints;
+    int    i, j, s, p, numNames, error;
+    double f0 = job->PSSopFreq, fstart = job->PACfStart, fstop = job->PACfStop;
+    double freq, mult, linstep;
+    struct pac_harm hd;
+    double *Xr, *Xi;
+    IFuid  freqUid, *outNames = NULL;
+    runDesc *plot = NULL;
+    CMat   *Amat = NULL, *Ainv = NULL, **Bmat = NULL;
+
+    if (np < 1) {
+        fprintf(stderr, "PSP: no RF ports (add `portnum`/`z0` to voltage sources) "
+                        "-- sweep skipped\n");
+        return;
+    }
+    if (f0 <= 0.0 || fstart <= 0.0 || fstop < fstart || npts < 1)
+        return;
+
+    /* every port's nodes + branch must live inside the conversion-matrix unknowns */
+    for (p = 0; p < np; p++) {
+        VSRCinstance *pr = (VSRCinstance *) ckt->CKTrfPorts[p];
+        if (pr->VSRCbranch > N || pr->VSRCposNode > N || pr->VSRCnegNode > N) {
+            fprintf(stderr, "PSP: port %d outside the PSS unknown set -- skipped\n",
+                    pr->VSRCportNum);
+            return;
+        }
+    }
+
+    M = pac_choose_M(ckt, job);
+    if (M < 1) { fprintf(stderr, "PSP: conversion matrix too large -- skipped\n"); return; }
+    if (pac_extract_harmonics(ckt, job, M, &hd))
+        return;
+
+    Ksb = job->PACmaxSideband;
+    if (Ksb < 0) Ksb = 0;
+    if (Ksb > M) Ksb = M;
+    nsb = 2 * Ksb + 1;
+
+    /* output vectors: S_<dest>_<src> per sideband (dest = measured port, src =
+     * excited).  Sideband 0 uses the plain name so it lines up with an ordinary
+     * .sp run; conversion sidebands get an _usb<k>/_lsb<k> suffix. */
+    numNames = nsb * np * np;
+    outNames = TMALLOC(IFuid, numNames);
+    {
+        int idx = 0;
+        for (s = 0; s < nsb; s++) {
+            int k = s - Ksb;
+            for (j = 1; j <= np; j++)
+                for (i = 1; i <= np; i++) {
+                    char nm[64];
+                    if (k == 0)
+                        snprintf(nm, sizeof(nm), "S_%d_%d", j, i);
+                    else
+                        snprintf(nm, sizeof(nm), "S_%d_%d_%csb%d",
+                                 j, i, (k > 0) ? 'u' : 'l', abs(k));
+                    SPfrontEnd->IFnewUid(ckt, &outNames[idx++], NULL, nm, UID_OTHER, NULL);
+                }
+        }
+    }
+    SPfrontEnd->IFnewUid(ckt, &freqUid, NULL, "frequency", UID_OTHER, NULL);
+    error = SPfrontEnd->OUTpBeginPlot(ckt, ckt->CKTcurJob, "PSP Analysis",
+                                      freqUid, IF_REAL, numNames, outNames,
+                                      IF_COMPLEX, &plot);
+    tfree(outNames);
+    if (error) { pac_free_harmonics(&hd); return; }
+    if (stepType != 0)
+        SPfrontEnd->OUTattributes(plot, NULL, OUT_SCALE_LOG, NULL);
+
+    Xr = TMALLOC(double, hd.Ntot);
+    Xi = TMALLOC(double, hd.Ntot);
+    Amat = newcmat(np, np, 0.0, 0.0);
+    Bmat = TMALLOC(CMat *, nsb);
+    for (s = 0; s < nsb; s++)
+        Bmat[s] = newcmat(np, np, 0.0, 0.0);
+
+    mult    = (stepType == 1) ? pow(10.0, 1.0 / npts) :
+              (stepType == 2) ? pow(2.0,  1.0 / npts) : 0.0;
+    linstep = (npts > 1) ? (fstop - fstart) / (npts - 1) : 0.0;
+
+    fprintf(stderr, "PSP sweep: %s from %.6g to %.6g Hz around f0 = %.6g Hz; "
+                    "%d port%s, %d sideband%s\n",
+            (stepType == 1) ? "dec" : (stepType == 2) ? "oct" : "lin",
+            fstart, fstop, f0, np, (np == 1) ? "" : "s", nsb, (nsb == 1) ? "" : "s");
+
+    for (freq = fstart; freq <= fstop * (1.0 + 1e-9); ) {
+        int ok = 1;
+        /* excite each port -> one column of A (sb0) and of each B^(k) */
+        for (i = 1; i <= np && ok; i++) {
+            VSRCinstance *pi = (VSRCinstance *) ckt->CKTrfPorts[i - 1];
+            if (psp_solve_port(&hd, f0, freq, pi->VSRCbranch, Xr, Xi)) {
+                ok = 0;
+                break;
+            }
+            for (j = 1; j <= np; j++) {
+                VSRCinstance *pj = (VSRCinstance *) ckt->CKTrfPorts[j - 1];
+                double ki = pj->VSRCki, z0 = pj->VSRCportZ0;
+                int    pn = pj->VSRCposNode, nn = pj->VSRCnegNode, br = pj->VSRCbranch;
+                for (s = 0; s < nsb; s++) {
+                    int    k = s - Ksb;
+                    size_t blk = (size_t)(k + M) * (size_t)N;
+                    double Vr = 0.0, Vi = 0.0, Ir, Ii;
+                    cplx   a, b;
+                    if (pn > 0) { Vr += Xr[blk + (size_t)(pn - 1)]; Vi += Xi[blk + (size_t)(pn - 1)]; }
+                    if (nn > 0) { Vr -= Xr[blk + (size_t)(nn - 1)]; Vi -= Xi[blk + (size_t)(nn - 1)]; }
+                    Ir = -Xr[blk + (size_t)(br - 1)];
+                    Ii = -Xi[blk + (size_t)(br - 1)];
+                    b.re = ki * (Vr - z0 * Ir);
+                    b.im = ki * (Vi - z0 * Ii);
+                    setc(Bmat[s], j - 1, i - 1, b);
+                    if (k == 0) {
+                        a.re = ki * (Vr + z0 * Ir);
+                        a.im = ki * (Vi + z0 * Ii);
+                        setc(Amat, j - 1, i - 1, a);
+                    }
+                }
+            }
+        }
+        if (ok && (Ainv = cinverse(Amat)) != NULL) {
+            IFvalue freqData, valueData;
+            IFcomplex *data = TMALLOC(IFcomplex, numNames);
+            int idx = 0;
+            freqData.rValue = freq;
+            valueData.v.numValue = numNames;
+            valueData.v.vec.cVec = data;
+            for (s = 0; s < nsb; s++) {
+                CMat *S = cmultiply(Bmat[s], Ainv);      /* S^(k) = B^(k) * A^-1 */
+                for (j = 0; j < np; j++)
+                    for (i = 0; i < np; i++) {
+                        cplx sij = getcplx(S, j, i);
+                        data[idx].real = sij.re;
+                        data[idx].imag = sij.im;
+                        idx++;
+                    }
+                freecmat(S);
+            }
+            SPfrontEnd->OUTpData(plot, &freqData, &valueData);
+            FREE(data);
+            freecmat(Ainv);
+            Ainv = NULL;
+        }
+        if (stepType == 0) { if (npts <= 1) break; freq += linstep; }
+        else               { freq *= mult; }
+    }
+
+    SPfrontEnd->OUTendPlot(plot);
+    for (s = 0; s < nsb; s++)
+        freecmat(Bmat[s]);
+    FREE(Bmat);
+    freecmat(Amat);
+    FREE(Xr); FREE(Xi);
+    pac_free_harmonics(&hd);
+}
+#endif
 
 
 int
@@ -2031,6 +2241,13 @@ DCpss(CKTcircuit *ckt,
                  * report the input->output transfer at each sideband. */
                 if (job->PSSdoPXF)
                     pxf_sweep (ckt, job) ;
+
+#ifdef RFSPICE
+                /* Enhancement-132: for a .psp card, inject at each RF port through
+                 * the conversion matrix and emit the periodic S-parameters. */
+                if (job->PSSdoPSP)
+                    psp_sweep (ckt, job) ;
+#endif
             }
             /****************************/
 

@@ -68,6 +68,14 @@ typedef struct {
      * sweep fields + PACmaxSideband. */
     int      PSSdoPXF;       /* 1 if this job runs a PXF sweep */
     CKTnode *PxOutNode;      /* PXF output node (reference = ground) */
+
+    /* Enhancement-132: periodic S-parameters (.psp). Runs PSS, then for each RF
+     * port injects a unit current in sideband 0 through the conversion matrix and
+     * reads the per-sideband port waves, building the periodic scattering matrix
+     * S^(k) = B^(k)*A^-1 vs input frequency. Reuses the PAC sweep fields
+     * (PACfStart/Stop/points/stepType/maxSideband). For a time-invariant circuit
+     * the sideband-0 result reduces to the ordinary .sp S-matrix. */
+    int      PSSdoPSP;       /* 1 if this job runs a periodic S-parameter sweep */
 } PSSan;
 
 enum {
@@ -91,6 +99,7 @@ enum {
     PXF_DO,
     PXF_OUT,
     PNOISE_CYCLO,
+    PSP_DOPSP,
 };
 
 #endif

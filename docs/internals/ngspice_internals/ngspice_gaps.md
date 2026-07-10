@@ -110,7 +110,7 @@ solver-by-solver sweep of the example suite:
 | RF | Periodic / phase noise (Pnoise) | ⚠️³ | ✅ |
 | RF | Periodic AC (PAC, conversion gain) | ✅² | ✅ |
 | RF | Periodic transfer function (PXF) | ✅⁴ | ✅ |
-| RF | Periodic S-parameters (PSP) | ❌ | ✅ |
+| RF | Periodic S-parameters (PSP) | ✅⁵ | ✅ |
 | RF | Quasi-periodic / multi-tone (QPSS / QPAC) | ❌ | ✅ |
 | RF | Envelope following | ❌ | ✅ |
 
@@ -176,6 +176,19 @@ pins the adjoint solve — verified on the RC to equal the analytic low-pass tra
 with the conversion sidebands at floating-point zero. The same dense-solve scale
 caveat as PAC applies. **This completes the PSS → PAC → Pnoise → PXF periodic
 small-signal suite.**
+
+*⁵ PSP is ✅ since
+[Enhancement-132](../../../enhancements_doc/Enhancement-132.md): a `.psp` command
+computes **periodic small-signal S-parameters** by exciting each RF port
+(`portnum`/`z0`, the `.sp` framework) through the same `(2M+1)N` conversion matrix
+and forming `S^(k) = B^(k)·A^-1` per input frequency and conversion sideband
+`f_in + k·f0`. `pac_solve_at`'s matrix assembly is factored into a shared
+`pac_build_matrix`; the per-port solve drives each port's branch source (V=1) like
+`.sp`'s `VSRCspupdate`, and the power waves use the same Kurosawa convention, so
+`S = B·A^-1` is basis-invariant and reduces exactly to `.sp` for a time-invariant
+network. Verified 7/7: sideband-0 matches `.sp` to ~10⁻¹⁶ for 1/2/3-port resistive
+and reactive networks (magnitude and phase), with correctly-zero conversion
+sidebands. Sparse-solver only, like the rest of the PSS suite.*
 
 ## Performance & scale
 

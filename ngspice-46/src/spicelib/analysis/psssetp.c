@@ -91,6 +91,11 @@ PSSsetParm(CKTcircuit *ckt, JOB *anal, int which, IFvalue *value)
         job->PSSpnCyclo = value->iValue;
         break;
 
+    /* Enhancement-132: periodic S-parameters flag */
+    case PSP_DOPSP:
+        job->PSSdoPSP = value->iValue;
+        break;
+
     default:
         return(E_BADPARM);
     }
@@ -118,7 +123,8 @@ static IFparm PSSparms[] = {
     { "pnoise_insrc", PNOISE_INSRC,	IF_SET|IF_STRING,	"pnoise input source (for the input-referred spectrum)" },
     { "pxf",          PXF_DO,		IF_SET|IF_INTEGER,	"run a periodic transfer-function sweep after PSS" },
     { "pxf_out",      PXF_OUT,		IF_SET|IF_STRING,	"pxf output node" },
-    { "pnoise_cyclo", PNOISE_CYCLO,	IF_SET|IF_INTEGER,	"pnoise cyclostationary mode (per-sample bias, period average)" }
+    { "pnoise_cyclo", PNOISE_CYCLO,	IF_SET|IF_INTEGER,	"pnoise cyclostationary mode (per-sample bias, period average)" },
+    { "psp",          PSP_DOPSP,	IF_SET|IF_INTEGER,	"run a periodic S-parameter sweep after PSS (needs RF ports)" }
 };
 
 SPICEanalysis PSSinfo  = {
