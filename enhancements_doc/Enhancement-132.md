@@ -75,7 +75,7 @@ like the rest of the PSS suite.
 
 `verify_psp.py` builds each network, runs `.sp` (reference) and `.psp`, and
 compares the complex S-parameters. For a time-invariant circuit PSP's sideband 0
-must equal `.sp` exactly and its conversion sidebands must be zero (7/7 checks):
+must equal `.sp` exactly and its conversion sidebands must be zero (8/8 checks):
 
 - **resistive 2-port** — `S = B·A⁻¹` matches `.sp` to ~10⁻¹⁶.
 - **reactive 2-port** (R + series L + shunt C) — complex S (magnitude **and**
@@ -87,6 +87,10 @@ must equal `.sp` exactly and its conversion sidebands must be zero (7/7 checks):
   ±1 conversion terms are ~10⁻¹⁷ while sideband 0 is not (the sideband machinery is
   exercised and correctly yields zero conversion with no pumping).
 - **reciprocity** — `S21 == S12` for a passive network.
+- **OSDI / Verilog-A** — a compiled VA-resistor (conductance stamp) + VA-capacitor
+  (reactive `ddt` stamp) 2-port matches `.sp` to `max |ΔS| = 0` across a 100–500 MHz
+  sweep, confirming OSDI device G **and** C Jacobian stamps are captured in the
+  conversion matrix.
 
 ## Files changed
 
@@ -96,7 +100,7 @@ must equal `.sp` exactly and its conversion sidebands must be zero (7/7 checks):
 | `ngspice-46/src/spicelib/parser/inp2dot.c` | `dot_psp` parser + `.psp` card dispatch |
 | `ngspice-46/src/spicelib/analysis/psssetp.c` | `psp` PSS parameter (setter + table) |
 | `ngspice-46/src/include/ngspice/pssdefs.h` | `PSSdoPSP` flag + `PSP_DOPSP` param id |
-| `examples/psp_examples/` | `verify_psp.py` |
+| `examples/psp_examples/` | `verify_psp.py`, `psp_dev.va` (VA resistor + capacitor for the OSDI check) |
 
 ## Scope
 

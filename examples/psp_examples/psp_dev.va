@@ -1,0 +1,22 @@
+// Minimal Verilog-A two-terminal devices for the .psp OSDI check: a linear
+// resistor and a linear (ddt) capacitor. Both are time-invariant, so a network
+// built from them must give the same periodic S-parameters at sideband 0 as an
+// ordinary .sp -- confirming that OSDI device conductance (G) and reactive (C)
+// Jacobian stamps are captured in the PSS conversion matrix.
+`include "disciplines.vams"
+
+module vares(p, n);
+    inout p, n;
+    electrical p, n;
+    (*type="instance"*) parameter real r = 1000.0 from (0:inf);
+    analog
+        I(p, n) <+ V(p, n) / r;
+endmodule
+
+module vacap(p, n);
+    inout p, n;
+    electrical p, n;
+    (*type="instance"*) parameter real c = 1e-12 from (0:inf);
+    analog
+        I(p, n) <+ ddt(c * V(p, n));
+endmodule

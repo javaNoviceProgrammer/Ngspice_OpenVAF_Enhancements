@@ -31,7 +31,7 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))  # the examples/ dir, for _setup.py
-from _setup import NG as NGSPICE
+from _setup import NG as NGSPICE, VAF as OPENVAF
 
 # a decoupled periodic reference so PSS has a period to shoot on; the measured
 # network is time-invariant, so its sideband-0 S is independent of this.
@@ -63,27 +63,29 @@ def sval(out, name):
     return complex(float(m.group(1)), float(m.group(2))) if m else None
 
 
-def sp_ref(body, names, freq):
-    deck = (f"* sp ref\n{body}\n.control\nsp lin 1 {freq} {freq}\n"
+def sp_ref(body, names, freq, pre=""):
+    ctrl = (pre + "\n") if pre else ""
+    deck = (f"* sp ref\n{body}\n.control\n{ctrl}sp lin 1 {freq} {freq}\n"
             f"print {' '.join(names)}\n.endc\n.end\n")
     out = run(deck, "_spref")
     return {n: sval(out, n) for n in names}
 
 
-def psp_run(body, names, freq, tail=""):
+def psp_run(body, names, freq, tail="", pre=""):
+    ctrl = (pre + "\n") if pre else ""
     deck = (f"* psp\n{body}\n{PSS_DRIVE}\n.psp {PSS_HEAD} lin 1 {freq} {freq}{tail}\n"
-            f".control\nrun\nprint {' '.join(names)}\n.endc\n.end\n")
+            f".control\n{ctrl}run\nprint {' '.join(names)}\n.endc\n.end\n")
     out = run(deck, "_psprun")
     return {n: sval(out, n) for n in names}
 
 
-def cmp_smatrix(label, body, names, freqs, tol=1e-6):
+def cmp_smatrix(label, body, names, freqs, tol=1e-6, pre=""):
     """PSP sideband-0 must equal .sp for every S-parameter at every frequency."""
     worst = 0.0
     ok = True
     for f in freqs:
-        ref = sp_ref(body, names, f)
-        psp = psp_run(body, names, f)
+        ref = sp_ref(body, names, f, pre=pre)
+        psp = psp_run(body, names, f, pre=pre)
         for n in names:
             a, b = ref.get(n), psp.get(n)
             if a is None or b is None:
@@ -136,6 +138,23 @@ s21, s12 = rec.get("s_2_1"), rec.get("s_1_2")
 check(f"reciprocity S21 == S12 for a passive network (|ΔS| = "
       f"{abs(s21-s12):.1e})" if None not in (s21, s12) else "reciprocity parse",
       None not in (s21, s12) and abs(s21 - s12) < 1e-6)
+
+# [7] OSDI / Verilog-A devices: a compiled VA resistor (G stamp) + VA capacitor
+# (reactive ddt stamp) 2-port. Both are time-invariant, so PSP sideband-0 must
+# still equal .sp -- confirming OSDI device Jacobian stamps are captured in the
+# conversion matrix across frequency (magnitude and phase).
+osdi = os.path.join(HERE, "psp_dev.osdi")
+cr = subprocess.run([OPENVAF, os.path.join(HERE, "psp_dev.va"), "-o", osdi],
+                    capture_output=True, text=True, timeout=120)
+if os.path.exists(osdi):
+    bo = ("V1 in 0 DC 0 AC 1 portnum 1 z0 50\nV2 out 0 DC 0 AC 1 portnum 2 z0 50\n"
+          "N1 in out rmod\nNc out 0 cmod\n.model rmod vares r=30\n.model cmod vacap c=100p")
+    cmp_smatrix("OSDI 2-port (VA R + VA C)", bo,
+                ["s_1_1", "s_2_1", "s_1_2", "s_2_2"],
+                ["100meg", "300meg", "500meg"], pre=f"pre_osdi {osdi}")
+    os.remove(osdi)
+else:
+    check("OSDI 2-port: compiled psp_dev.va", False, cr.stderr.strip()[:80])
 
 print(f"\n{'ALL PASS' if passed == checks else 'FAILURES'}: {passed}/{checks} passed")
 sys.exit(0 if passed == checks else 1)

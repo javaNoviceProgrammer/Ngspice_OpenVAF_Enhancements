@@ -186,9 +186,10 @@ and forming `S^(k) = B^(k)·A^-1` per input frequency and conversion sideband
 `pac_build_matrix`; the per-port solve drives each port's branch source (V=1) like
 `.sp`'s `VSRCspupdate`, and the power waves use the same Kurosawa convention, so
 `S = B·A^-1` is basis-invariant and reduces exactly to `.sp` for a time-invariant
-network. Verified 7/7: sideband-0 matches `.sp` to ~10⁻¹⁶ for 1/2/3-port resistive
-and reactive networks (magnitude and phase), with correctly-zero conversion
-sidebands. Sparse-solver only, like the rest of the PSS suite.*
+network. Verified 8/8: sideband-0 matches `.sp` to ~10⁻¹⁶ for 1/2/3-port resistive
+and reactive networks (magnitude and phase) — including **OSDI Verilog-A** devices
+(conductance and reactive `ddt` stamps) — with correctly-zero conversion sidebands.
+Sparse-solver only, like the rest of the PSS suite.*
 
 ## Performance & scale
 
