@@ -78,7 +78,11 @@ def compile_va(src, out, timeout=600):
     p = subprocess.run([OPENVAF, src, "-o", out], cwd=HERE,
                        capture_output=True, text=True, timeout=timeout)
     dt = time.monotonic() - t0
-    if p.returncode != 0 or not os.path.exists(out):
+    # openvaf ran with cwd=HERE, so `out` (a relpath) was written under HERE;
+    # resolve the existence check there, not against this process's cwd -- else
+    # the compile succeeds but this raises whenever the verify is launched from a
+    # directory other than the example dir (e.g. the repo root).
+    if p.returncode != 0 or not os.path.exists(os.path.join(HERE, out)):
         raise RuntimeError(f"compile failed for {src}:\n{p.stderr or p.stdout}")
     return dt
 
