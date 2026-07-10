@@ -1,0 +1,16 @@
+// A Verilog-A controlled cubic voltage source for the QPSS example:
+//   V(op,on) = g1 * V(cp,cn) + g3 * V(cp,cn)^3
+// A memoryless weak nonlinearity -- driven by two tones it generates the
+// third-order intermodulation (IM3) products QPSS resolves. Used to confirm the
+// two-tone qpss analysis works on a compiled OSDI device, matching the built-in
+// behavioral (B-source) equivalent.
+`include "disciplines.vams"
+
+module vacube(op, on, cp, cn);
+    inout op, on, cp, cn;
+    electrical op, on, cp, cn;
+    (*type="instance"*) parameter real g1 = 0.0;
+    (*type="instance"*) parameter real g3 = 0.5;
+    analog
+        V(op, on) <+ g1 * V(cp, cn) + g3 * pow(V(cp, cn), 3.0);
+endmodule

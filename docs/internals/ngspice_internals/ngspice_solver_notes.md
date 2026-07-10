@@ -29,7 +29,9 @@ S-parameters `.psp`) build a **dense** `(2M+1)N` harmonic conversion matrix and
 solve it with a standalone dense complex LU (`pss_csolve`) that is **independent of
 the sparse linear solver** — so they inherit the solver only through the underlying
 PSS, which runs correctly under both since E-118 (KLU re-factors every shooting
-step, so PSS is *slower* under KLU but not wrong). Transient **checkpoint/restart**
+step, so PSS is *slower* under KLU but not wrong). The E-133 two-tone `qpss` is
+likewise solver-independent — it is a front-end command that drives an ordinary
+transient and then direct-DFTs the result. Transient **checkpoint/restart**
 ([Enhancement-131](../../../enhancements_doc/Enhancement-131.md)) is the one feature
 that is genuinely Sparse-only: on the restore path KLU's symbolic/numeric
 factorization objects are absent (they are only built during a full run's operating

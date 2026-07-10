@@ -422,6 +422,10 @@ struct comm spcp_coms[] = {
       { 040, 040, 040, 040 }, E_DEFHMASK, 1, LOTS,
       NULL,
       "-param name init lo hi ... -analysis <cmd> -minimize <expr> [-maxiter N] [-tol T] [-verbose] : Nelder-Mead parameter optimizer." },
+    { "qpss", com_qpss, TRUE, FALSE,             /* Enhancement-133 */
+      { 040, 040, 040, 040 }, E_DEFHMASK, 3, LOTS,
+      NULL,
+      "expr f1 f2 [periods] [maxorder] : two-tone quasi-periodic steady-state spectrum (intermodulation)." },
     { "savestate", com_savestate, FALSE, TRUE,   /* Enhancement-131 */
       { 1, 040000, 040000, 040000 }, E_DEFHMASK, 1, 1,
       NULL,

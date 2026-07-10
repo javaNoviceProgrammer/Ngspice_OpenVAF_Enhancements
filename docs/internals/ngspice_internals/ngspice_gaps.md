@@ -111,7 +111,7 @@ solver-by-solver sweep of the example suite:
 | RF | Periodic AC (PAC, conversion gain) | ✅² | ✅ |
 | RF | Periodic transfer function (PXF) | ✅⁴ | ✅ |
 | RF | Periodic S-parameters (PSP) | ✅⁵ | ✅ |
-| RF | Quasi-periodic / multi-tone (QPSS / QPAC) | ❌ | ✅ |
+| RF | Quasi-periodic / multi-tone (QPSS / QPAC) | ⚠️⁶ | ✅ |
 | RF | Envelope following | ❌ | ✅ |
 
 *¹ PSS was ⚠️ (experimental `--enable-pss` flag, so `.pss` was unimplemented in
@@ -191,6 +191,19 @@ and reactive networks (magnitude and phase) — including **OSDI Verilog-A** dev
 (conductance and reactive `ddt` stamps) — with correctly-zero conversion sidebands.
 Runs under **both** linear solvers (the conversion matrix is a standalone dense LU;
 PSS runs under both since E-118), verified bit-identical under KLU and Sparse.*
+
+*⁶ QPSS is ⚠️ (**working two-tone, transient-sampling**) since
+[Enhancement-133](../../../enhancements_doc/Enhancement-133.md): a `qpss` command
+computes the two-tone steady-state spectrum — every mixing product `k1·f1+k2·f2`
+including **IM3** — for **commensurate** tones (common beat `fb=gcd(f1,f2)`). It runs
+an ordinary transient over a few beat periods, then evaluates the Fourier
+coefficient **directly at each exact intermod frequency** (no FFT-bin rounding) and
+labels it by the 2-D index `(k1,k2)`. Solver-independent (drives a transient), works
+with built-in and OSDI devices. Verified 7/7 checks incl. the analytic IM3 products
+and the 3:1 IP3 slope law. Still ⚠️ (not ✅) because the general case wants a true
+frequency-domain **harmonic-balance** engine: **incommensurate** tones (irrational
+ratio, no common period) are out of reach of transient sampling, and small-signal
+**QPAC** is not yet built. HB itself remains a `WITH_HB` stub.*
 
 ## Performance & scale
 
