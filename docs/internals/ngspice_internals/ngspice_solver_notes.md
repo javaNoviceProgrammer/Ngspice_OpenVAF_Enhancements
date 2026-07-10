@@ -155,9 +155,17 @@ klu` into every ngspice deck — and prints a combined verdict:
 
 KLU's one remaining unsupported analysis (balanced-output pole-zero) is
 auto-detected and reported `SKIP`; `KLU_XFAIL` is now empty (opamp741, its last
-member, was resolved — see above). Env escape hatches:
+member, was resolved — see above). A separate `SPARSE_ONLY` registry
+(`{rfanalyses, rfpss}`) marks the heavy periodic-steady-state examples whose KLU
+pass is not *wrong*, just **slow** — KLU re-factors every PSS shooting step, so a
+1024-sample `.pss` that is a couple of minutes under Sparse becomes 10–15 min under
+KLU. Those run **Sparse-only** by default (reported `klu=SKIP`); their KLU
+correctness is a property of the ngspice source, verified once when
+[E-118](../../../enhancements_doc/Enhancement-118.md) landed, not something worth
+re-paying every sweep. Env escape hatches:
 `NGSPICE_SOLVER=klu|sparse` runs once under one solver; `NG_BOTH=0` disables the
-dual run.
+dual run; **`NG_SLOW_KLU=1`** forces the skipped heavy-PSS KLU pass back on (to
+re-check the E-118 KLU-PSS fix on demand).
 
 **Sweep result** (all 101 machine-checkable scripts): **101/101 OK** — every
 example is `sparse=PASS` with `klu` in `{PASS, SKIP, XFAIL}`, i.e. the two solvers

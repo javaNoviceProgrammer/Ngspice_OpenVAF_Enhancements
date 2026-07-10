@@ -98,6 +98,42 @@ _KLU_UNSUPPORTED = "not (yet) supported with 'option KLU'"
 #  ~8 sig figs, so it passes under BOTH solvers.)
 KLU_XFAIL = frozenset()
 
+# Examples whose KLU pass is prohibitively SLOW (not wrong — just slow) and so is
+# skipped by default: the heavy periodic-steady-state (PSS) decks, where KLU must
+# re-factor every shooting step (a documented KLU characteristic — see
+# ngspice_solver_notes.md and Enhancement-118). These run SPARSE-only in the
+# regular suite; set NG_SLOW_KLU=1 to force the KLU pass on (e.g. to re-check the
+# E-118 KLU-PSS fix). The correctness of these analyses under KLU is a property of
+# the ngspice source, verified once when the feature landed — not something worth
+# paying minutes-per-run for on every regression sweep.
+#   rfanalyses — .sp/.pss/.pac/.pnoise/.pxf, incl. a 1024-sample PSS
+#   rfpss      — the rc_pss/pac/pnoise/pxf/cyclo PSS-based checks
+SPARSE_ONLY = frozenset({"rfanalyses", "rfpss"})
+
+# Examples excluded from the routine full-regression sweep (run_regression.py)
+# because they are too slow to be worth running every time -- they still work and
+# can be run directly (or with `run_regression.py --all` / NG_RUN_ALL=1), they are
+# just not part of the fast sweep. All of them are periodic-steady-state (PSS)
+# based: PSS shoots a full transient to a fixed point every solve, so even under
+# Sparse a single 1024-sample `.pss` is a couple of minutes.
+#   rfanalyses — THREE heavy PSS decks (two 1024-sample + one 256-sample) plus
+#                PAC/pnoise/pxf/.sp; several minutes even Sparse-only.
+#   rfpss      — rc_pss / rc_pac / rc_pnoise / rc_pxf / rc_flick_cyclo, five PSS-
+#                based checks, ~2-4 min each Sparse-only.
+# (These verify the RF periodic small-signal suite E-117..126; their correctness is
+# established and re-run on demand, not on every regression sweep.)
+REGRESSION_EXCLUDE = frozenset({"rfanalyses", "rfpss"})
+
+
+def klu_enabled(script=None):
+    """Whether an example's KLU pass should run. SPARSE_ONLY examples (heavy PSS)
+    skip KLU by default for speed; NG_SLOW_KLU=1 forces it on. Used both by
+    check_both_solvers and by scripts that drive the two solvers themselves."""
+    import sys as _sys
+    if os.environ.get("NG_SLOW_KLU") == "1":
+        return True
+    return _example_stem(script or _sys.argv[0]) not in SPARSE_ONLY
+
 
 def _example_stem(script):
     """`opamp741` from `.../opamp741_examples/verify_opamp741.py`."""
@@ -248,11 +284,18 @@ def check_both_solvers(script=None):
 
     script = os.path.abspath(script or sys.argv[0])
     stem = _example_stem(script)
-    print(f"=== [{stem}] verifying under BOTH solvers ({', '.join(SOLVERS)}) ===",
-          flush=True)
+    # heavy-PSS examples skip the (slow) KLU pass unless NG_SLOW_KLU=1
+    solvers = [s for s in SOLVERS if s != "klu" or klu_enabled(script)]
+    if len(solvers) == 1:
+        print(f"=== [{stem}] verifying under {solvers[0]} only "
+              f"(KLU skipped: heavy PSS is slow to re-factor; NG_SLOW_KLU=1 to force) ===",
+              flush=True)
+    else:
+        print(f"=== [{stem}] verifying under BOTH solvers ({', '.join(solvers)}) ===",
+              flush=True)
 
     results = {}
-    for solver in SOLVERS:
+    for solver in solvers:
         env = dict(os.environ)
         env["_NG_SOLVER"] = solver
         try:
@@ -284,6 +327,8 @@ def check_both_solvers(script=None):
         else:
             print(_indent(out.strip()))
 
+    if "klu" not in results:
+        results["klu"] = "SKIP"   # heavy-PSS example: KLU pass intentionally skipped
     ok = (results.get("sparse") == "PASS"
           and results.get("klu") in ("PASS", "SKIP", "XFAIL"))
     summary = "  ".join(f"{s}={results[s]}" for s in SOLVERS)

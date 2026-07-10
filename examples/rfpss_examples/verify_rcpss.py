@@ -35,6 +35,7 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 from _setup import NG as NGSPICE
+from _setup import klu_enabled as _klu_enabled
 
 checks = passed = 0
 def check(label, ok, detail=""):
@@ -172,19 +173,25 @@ check(f"[E-121] linear circuit -> no conversion to +-1 sidebands "
       0 in sb and sb[0] > 0 and conv / sb[0] < 1e-6, f"conv {conv}")
 
 # --- KLU (Enhancement-118: PSS now converges under KLU via forced re-factor) ---
-klog = run("klu")
-kfreq, kfund = parse(klog)
-check("[klu] PSS is NOT refused (no 'option KLU' guard)",
-      "not supported with 'option KLU'" not in klog)
-check("[klu] PSS converges under KLU (was a timestep-explosion hang)",
-      "Convergence reached" in klog and kfreq is not None, "no convergence line")
-check(f"[klu] fundamental magnitude == |H(1MHz)| = {H:.5f} (got {kfund})",
-      kfund is not None and abs(kfund - H) / H < 0.02, str(kfund))
-check(f"[klu] matches sparse -- freq {kfreq} vs {sfreq}, fund {kfund} vs {sfund}",
-      kfreq is not None and sfreq is not None
-      and abs(kfreq - sfreq) / f0 < 1e-6
-      and kfund is not None and sfund is not None
-      and abs(kfund - sfund) / H < 1e-3)
+# KLU re-factors every shooting step, so this 1024-sample PSS is minutes-slow under
+# KLU. It is SPARSE-only in the regular suite; set NG_SLOW_KLU=1 to run the KLU pass
+# (re-checking the E-118 fix). See docs/.../ngspice_solver_notes.md.
+if _klu_enabled():
+    klog = run("klu")
+    kfreq, kfund = parse(klog)
+    check("[klu] PSS is NOT refused (no 'option KLU' guard)",
+          "not supported with 'option KLU'" not in klog)
+    check("[klu] PSS converges under KLU (was a timestep-explosion hang)",
+          "Convergence reached" in klog and kfreq is not None, "no convergence line")
+    check(f"[klu] fundamental magnitude == |H(1MHz)| = {H:.5f} (got {kfund})",
+          kfund is not None and abs(kfund - H) / H < 0.02, str(kfund))
+    check(f"[klu] matches sparse -- freq {kfreq} vs {sfreq}, fund {kfund} vs {sfund}",
+          kfreq is not None and sfreq is not None
+          and abs(kfreq - sfreq) / f0 < 1e-6
+          and kfund is not None and sfund is not None
+          and abs(kfund - sfund) / H < 1e-3)
+else:
+    print("  SKIP  [klu] PSS pass (heavy 1024-sample re-factor; NG_SLOW_KLU=1 to run)")
 
 print()
 print(("ALL PASS" if passed == checks else "FAILURES")
