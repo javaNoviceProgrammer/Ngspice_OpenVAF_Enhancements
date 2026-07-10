@@ -278,6 +278,10 @@ struct CKTcircuit {
     unsigned int CKTptcont:1;      /* Enhancement-127: pseudo-transient continuation enabled */
     double CKTpseudoGmin;          /* E-127: pseudo-transient shunt conductance Gps=Cps/dtau (0 = off) */
     double *CKTpseudoPrev;         /* E-127: pseudo-transient previous-step solution x_prev */
+    unsigned int CKTdynorder:1;    /* Enhancement-128: LTE-based dynamic integration order */
+    int CKTorderCnt;               /* E-128: accepted steps since the last order reset (history depth) */
+    int CKTorderMaxUsed;           /* E-128: highest integration order actually selected (diagnostic) */
+    int CKTorderHold;              /* E-128: steps to hold the order after a change (settling) */
     double CKTabsDv;            /* abs limit for iter-iter voltage change */
     double CKTrelDv;            /* rel limit for iter-iter voltage change */
     int CKTtroubleNode;         /* Non-convergent node number */

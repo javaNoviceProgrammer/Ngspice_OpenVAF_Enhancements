@@ -285,6 +285,9 @@ DCtran(CKTcircuit *ckt,
 #endif
         ckt->CKTstat->STATtimePts ++;
         ckt->CKTorder = 1;
+        ckt->CKTorderCnt = 0;       /* Enhancement-128: reset the order history depth */
+        ckt->CKTorderMaxUsed = 0;
+        ckt->CKTorderHold = 0;
         /* Initialze CKTdeltaOld with maximum value */
         for(i=0;i<7;i++) {
             ckt->CKTdeltaOld[i]=ckt->CKTmaxStep;
@@ -482,6 +485,13 @@ DCtran(CKTcircuit *ckt,
            transient point (results are not loaded into the matrix). */
         OSDIfinalStep(ckt);
 #endif
+        /* Enhancement-128: report the highest integration order the LTE-based
+           dynamic order control actually selected (only under 'set ngdebug'). */
+        if (ckt->CKTdynorder && ft_ngdebug)
+            fprintf(stderr, "Dynamic order control: highest integration order used "
+                    "= %d of maxord %d; %d accepted / %d rejected steps\n",
+                    ckt->CKTorderMaxUsed, ckt->CKTmaxOrder,
+                    ckt->CKTstat->STATaccepted, ckt->CKTstat->STATrejected);
         /* Final return from tran upon success */
         return(OK);
     }
@@ -514,8 +524,11 @@ resume:
 
 #ifdef XSPICE
     /* Cut integration order if first timepoint after breakpoint */
-    if ( AlmostEqualUlps( ckt->CKTtime, g_mif_info.breakpoint.last, 100 ) )
+    if ( AlmostEqualUlps( ckt->CKTtime, g_mif_info.breakpoint.last, 100 ) ) {
         ckt->CKTorder = 1;
+        ckt->CKTorderCnt = 0;       /* Enhancement-128 */
+        ckt->CKTorderHold = 0;
+    }
 #endif
 
     /* Are we at a breakpoint, or indistinguishably close? */
@@ -525,6 +538,8 @@ resume:
            and limit timestep to .1 times minimum of time to next breakpoint,
            and previous timestep. */
         ckt->CKTorder = 1;
+        ckt->CKTorderCnt = 0;       /* Enhancement-128: breakpoint -> rebuild order history */
+        ckt->CKTorderHold = 0;
 #ifdef STEPDEBUG
         if( (ckt->CKTdelta > .1*ckt->CKTsaveDelta) ||
             (ckt->CKTdelta > .1*(ckt->CKTbreaks[1] - ckt->CKTbreaks[0])) ) {
@@ -862,8 +877,87 @@ resume:
                     }
                 }
 #endif
+                /* this timepoint is accepted -- account for it in the history
+                 * depth that bounds the achievable integration order */
+                ckt->CKTorderCnt++;
+
                 /* don't raise the order for backward Euler */
-                if ((ckt->CKTorder == 1) && (ckt->CKTmaxOrder > 1)) {
+                if (ckt->CKTdynorder && ckt->CKTmaxOrder > 1) {
+                    /* Enhancement-128: advanced LTE-based order control. The stock
+                     * controller only ever toggles order 1<->2. Here the LTE-limited
+                     * timestep is evaluated at the current order and its immediate
+                     * neighbours (order+-1, up to the history available); the order is
+                     * raised or lowered only when a neighbour clearly permits a bigger
+                     * step (hysteresis), else kept. Checking only neighbours with
+                     * hysteresis -- rather than greedily picking the global maximum
+                     * every step -- is what keeps the order from oscillating (which
+                     * makes the LTE history inconsistent and triggers step rejections);
+                     * over successive smooth steps it still climbs to the order (up to
+                     * maxord) that the local truncation error rewards. */
+                    int curOrder = ckt->CKTorder;
+                    int availOrder = MIN(ckt->CKTmaxOrder, ckt->CKTorderCnt);
+                    double lteCur = 1e30, lteUp = 0.0, lteDn = 0.0, bestLte;
+                    int changed = 0;
+                    /* The RAW LTE-limited step per order -- pass a huge input so
+                     * CKTtrunc's 2x growth cap does not mask the order difference
+                     * (with the cap in play every order returns 2*delta and the
+                     * comparison is blind). */
+                    ckt->CKTorder = curOrder;
+                    error = CKTtrunc(ckt, &lteCur);
+                    /* only look to RAISE once the order has SETTLED -- the BDF
+                     * divided differences that feed the higher-order LTE assume a
+                     * roughly constant step, so raising on freshly-changed (stale)
+                     * history lets a bad step slip past the estimate. Lowering is
+                     * always allowed as a safety valve. */
+                    if (!error && curOrder < availOrder && ckt->CKTorderHold == 0) {
+                        lteUp = 1e30;
+                        ckt->CKTorder = curOrder + 1;
+                        error = CKTtrunc(ckt, &lteUp);
+                    }
+                    if (!error && curOrder > 1) {
+                        lteDn = 1e30;
+                        ckt->CKTorder = curOrder - 1;
+                        error = CKTtrunc(ckt, &lteDn);
+                    }
+                    if (error) {
+                        UPDATE_STATS(DOING_TRAN);
+                        return(error);
+                    }
+                    /* hysteresis: change order only when a neighbour clearly (1.2x)
+                     * beats the current order's LTE limit, else keep it */
+                    bestLte = lteCur;
+                    if (lteUp > 1.2 * lteCur && lteUp >= lteDn) {
+                        ckt->CKTorder = curOrder + 1;  bestLte = lteUp;  changed = 1;
+                    } else if (lteDn > 1.2 * lteCur) {
+                        ckt->CKTorder = curOrder - 1;  bestLte = lteDn;  changed = 1;
+                    } else {
+                        ckt->CKTorder = curOrder;
+                    }
+                    if (changed) {
+                        /* hold the new order for a few steps so its divided-difference
+                         * history can rebuild, and do NOT also grow the step this same
+                         * step -- raising the order while doubling the step corrupts
+                         * the (roughly constant-step) BDF history */
+                        ckt->CKTorderHold = ckt->CKTorder + 1;
+                        newdelta = MIN(ckt->CKTdelta, bestLte);
+                    } else {
+                        if (ckt->CKTorderHold > 0)
+                            ckt->CKTorderHold--;
+                        /* Cap the per-step growth. High-order Gear weights past
+                         * points by step-size ratios, so a large jump corrupts the
+                         * divided differences the LTE estimate relies on -- tighten
+                         * the cap as the order rises (2x at order<=3, down to 1.3x
+                         * at order 6). Below the growth ceiling the LTE limit rules. */
+                        {
+                            double grow = (ckt->CKTorder <= 3) ? 2.0 :
+                                          (ckt->CKTorder == 4) ? 1.7 :
+                                          (ckt->CKTorder == 5) ? 1.5 : 1.3;
+                            newdelta = MIN(grow * ckt->CKTdelta, bestLte);
+                        }
+                    }
+                    if (ckt->CKTorder > ckt->CKTorderMaxUsed)
+                        ckt->CKTorderMaxUsed = ckt->CKTorder;
+                } else if ((ckt->CKTorder == 1) && (ckt->CKTmaxOrder > 1)) {
                     newdelta = ckt->CKTdelta;
                     ckt->CKTorder = 2;
                     error = CKTtrunc(ckt, &newdelta);

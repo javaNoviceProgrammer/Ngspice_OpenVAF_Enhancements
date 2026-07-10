@@ -139,6 +139,7 @@ enum {
     OPT_ERRPRESET,      /* Enhancement-110: coordinated accuracy preset */
     OPT_LINESEARCH,     /* Enhancement-111: adaptive damped-Newton line search */
     OPT_PTCONT,         /* Enhancement-127: pseudo-transient continuation */
+    OPT_DYNORDER,       /* Enhancement-128: LTE-based dynamic integration order */
 };
 
 /* Enhancement-110: `.option errpreset=conservative|moderate|liberal` sets a

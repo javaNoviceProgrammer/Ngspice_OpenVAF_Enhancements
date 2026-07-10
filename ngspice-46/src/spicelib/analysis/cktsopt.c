@@ -216,6 +216,9 @@ CKTsetOpt(CKTcircuit *ckt, JOB *anal, int opt, IFvalue *val)
     case OPT_PTCONT: /* Enhancement-127 */
         task->TSKptcont = (val->iValue != 0);
         break;
+    case OPT_DYNORDER: /* Enhancement-128 */
+        task->TSKdynorder = (val->iValue != 0);
+        break;
     case OPT_ABSDV:
         task->TSKabsDv = val->rValue;
         break;
@@ -428,6 +431,8 @@ static IFparm OPTtbl[] = {
         "Adaptive damped-Newton line search on the weighted step norm" },
  { "ptcont", OPT_PTCONT, IF_SET|IF_FLAG,
         "Pseudo-transient continuation homotopy for the DC operating point" },
+ { "dynorder", OPT_DYNORDER, IF_SET|IF_FLAG,
+        "LTE-based dynamic integration-order selection (Gear, up to maxord)" },
  { "absdv", OPT_ABSDV, IF_SET|IF_REAL,
         "Maximum absolute iter-iter node voltage change" },
  { "reldv", OPT_RELDV, IF_SET|IF_REAL,

@@ -73,6 +73,7 @@ struct TSKtask {
     unsigned int TSKnodeDamping:1;  /* flag for node damping */
     unsigned int TSKlinesearch:1;   /* Enhancement-111: adaptive damped-Newton line search */
     unsigned int TSKptcont:1;       /* Enhancement-127: pseudo-transient continuation */
+    unsigned int TSKdynorder:1;     /* Enhancement-128: LTE-based dynamic integration order */
     unsigned int TSKnoopac:1; /* flag for no OP calculation before AC */
     double TSKabsDv;                 /* abs limit for iter-iter voltage change */
     double TSKrelDv;                 /* rel limit for iter-iter voltage change */
