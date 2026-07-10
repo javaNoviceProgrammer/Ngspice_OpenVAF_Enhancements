@@ -88,6 +88,20 @@ NIiter(CKTcircuit *ckt, int maxIter)
                 return (error);
             }
 
+            /* Enhancement-127: pseudo-transient continuation. The DC problem
+             * f(x)=0 is embedded in a fictitious backward-Euler step
+             * f(x) + Gps*(x - x_prev) = 0. The diagonal Gps term is added at
+             * factor time (CKTdiagGmin, set by the PTC driver, like gmin
+             * stepping); here we add the Gps*x_prev coupling to the RHS. As the
+             * pseudo-timestep grows (Gps -> 0) the solution relaxes to the true
+             * DC operating point along a stable trajectory. */
+            if (ckt->CKTpseudoGmin > 0.0 && ckt->CKTpseudoPrev) {
+                int sz = SMPmatSize(ckt->CKTmatrix);
+                int k;
+                for (k = 1; k <= sz; k++)
+                    ckt->CKTrhs[k] += ckt->CKTpseudoGmin * ckt->CKTpseudoPrev[k];
+            }
+
             /* printf("after loading, before solving\n"); */
             /* CKTdump(ckt); */
 

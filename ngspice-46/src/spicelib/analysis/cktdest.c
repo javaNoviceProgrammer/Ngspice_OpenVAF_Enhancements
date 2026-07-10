@@ -88,6 +88,7 @@ CKTdestroy(CKTcircuit *ckt)
     FREE(ckt->CKTrhsSpare);
     FREE(ckt->CKTlsXk);        /* Enhancement-111 */
     FREE(ckt->CKTlsD);         /* Enhancement-111 */
+    FREE(ckt->CKTpseudoPrev);  /* Enhancement-127 */
     FREE(ckt->CKTirhs);
     FREE(ckt->CKTirhsOld);
     FREE(ckt->CKTirhsSpare);

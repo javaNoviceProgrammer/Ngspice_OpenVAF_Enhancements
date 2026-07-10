@@ -19,6 +19,7 @@ Modified: 2005 Paolo Nenzi - Restructured
 static int dynamic_gmin(CKTcircuit *, long int, long int, int);
 static int spice3_gmin(CKTcircuit *, long int, long int, int);
 static int new_gmin(CKTcircuit*, long int, long int, int);
+static int pseudo_transient(CKTcircuit *, long int, long int, int);   /* Enhancement-127 */
 static int gillespie_src(CKTcircuit *, long int, long int, int);
 static int spice3_src(CKTcircuit *, long int, long int, int);
 
@@ -91,6 +92,16 @@ CKTop (CKTcircuit *ckt, long int firstmode, long int continuemode,
             return converged;
     }
 
+    /* Enhancement-127: pseudo-transient continuation (.option ptcont). A
+     * fictitious backward-Euler homotopy that relaxes to the DC operating point
+     * along a stable trajectory -- a more robust fallback than static gmin/source
+     * stepping for circuits that otherwise stall or diverge. */
+    if (ckt->CKTptcont) {
+        converged = pseudo_transient(ckt, firstmode, continuemode, iterlim);
+        if (converged == 0)
+            return converged;
+    }
+
     /* If command 'optran' is not given, the function
        returns immediately with the previous 'converged' */
     int prevconverged = converged;
@@ -112,6 +123,104 @@ CKTop (CKTcircuit *ckt, long int firstmode, long int continuemode,
         controlled_exit(1);
     fprintf(cp_err, "    Any of the following steps may fail.!\n\n");
 
+    return converged;
+}
+
+
+/* Enhancement-127: pseudo-transient continuation.
+ *
+ * Embeds the DC problem f(x)=0 in a fictitious backward-Euler pseudo-transient
+ *     f(x) + Gps*(x - x_prev) = 0,   Gps = Cps / dtau,
+ * and marches the pseudo-timestep dtau from small (Gps large, strongly damped and
+ * well-conditioned) to large (Gps -> 0, the true DC operating point). Each step is
+ * a Newton solve of the augmented system: the Gps diagonal is added at factor time
+ * (CKTdiagGmin, as in gmin stepping) and the Gps*x_prev coupling is added to the RHS
+ * inside NIiter. Unlike static gmin/source stepping, the x_prev coupling makes each
+ * step follow a stable trajectory, so it converges on circuits that otherwise stall
+ * or diverge. Switched-evolution-relaxation stepping: grow dtau when a step
+ * converges easily, shrink it (and backtrack) when a step fails. */
+static int
+pseudo_transient(CKTcircuit *ckt, long int firstmode,
+                 long int continuemode, int iterlim)
+{
+    int    converged, sz, k, pstep, iters, failcnt = 0;
+    double gtarget, gfac = 10.0;
+    double *bestState;
+
+    sz = SMPmatSize(ckt->CKTmatrix);
+    ckt->CKTmode = firstmode;
+    SPfrontEnd->IFerrorf(ERR_INFO, "Starting pseudo-transient continuation");
+
+    if (!ckt->CKTpseudoPrev)
+        ckt->CKTpseudoPrev = TMALLOC(double, sz + 1);
+    bestState = TMALLOC(double, ckt->CKTnumStates + 1);
+
+    /* start the trajectory from the zero state (well-conditioned) */
+    for (k = 0; k <= sz; k++) {
+        ckt->CKTrhsOld[k] = 0.0;
+        ckt->CKTpseudoPrev[k] = 0.0;
+    }
+    for (k = 0; k < ckt->CKTnumStates; k++)
+        ckt->CKTstate0[k] = 0.0;
+
+    gtarget = MAX(ckt->CKTgmin, ckt->CKTgshunt);
+    if (gtarget <= 0.0)
+        gtarget = 1e-12;
+    ckt->CKTpseudoGmin = 1.0;          /* Gps large -> pseudo-dt small */
+    ckt->CKTdiagGmin   = ckt->CKTpseudoGmin;
+
+    for (pstep = 0; pstep < 400; pstep++) {
+        ckt->CKTnoncon = 1;
+        iters = ckt->CKTstat->STATnumIter;
+        converged = NIiter(ckt, ckt->CKTdcTrcvMaxIter);
+        iters = ckt->CKTstat->STATnumIter - iters;
+
+        if (ft_ngdebug)
+            fprintf(stderr, "PTC: Gps = %12.4E  %s (%d iters)\n",
+                    ckt->CKTpseudoGmin, converged ? "FAIL" : "ok", iters);
+
+        if (converged == 0) {
+            ckt->CKTmode = continuemode;
+            failcnt = 0;
+            for (k = 1; k <= sz; k++)              /* advance: x_prev <- x */
+                ckt->CKTpseudoPrev[k] = ckt->CKTrhsOld[k];
+            if (ckt->CKTnumStates > 0)
+                memcpy(bestState, ckt->CKTstate0,
+                       (size_t) ckt->CKTnumStates * sizeof(double));
+            if (ckt->CKTpseudoGmin <= gtarget)
+                break;                            /* reached the DC region */
+            /* grow the pseudo-timestep (shrink Gps); faster when it converged easily */
+            ckt->CKTpseudoGmin /=
+                (iters <= ckt->CKTdcTrcvMaxIter / 4) ? (gfac * gfac) : gfac;
+            if (ckt->CKTpseudoGmin < gtarget)
+                ckt->CKTpseudoGmin = gtarget;
+            ckt->CKTdiagGmin = ckt->CKTpseudoGmin;
+        } else {
+            if (++failcnt > 30 || ckt->CKTpseudoGmin > 1e14)
+                break;                            /* give up */
+            ckt->CKTpseudoGmin *= gfac;           /* shrink pseudo-dt, backtrack */
+            ckt->CKTdiagGmin = ckt->CKTpseudoGmin;
+            for (k = 1; k <= sz; k++)
+                ckt->CKTrhsOld[k] = ckt->CKTpseudoPrev[k];
+            if (ckt->CKTnumStates > 0)
+                memcpy(ckt->CKTstate0, bestState,
+                       (size_t) ckt->CKTnumStates * sizeof(double));
+        }
+    }
+
+    /* final solve at Gps = 0: the true DC operating point */
+    ckt->CKTpseudoGmin = 0.0;
+    ckt->CKTdiagGmin = ckt->CKTgshunt;
+    ckt->CKTmode = continuemode;
+    converged = NIiter(ckt, iterlim);
+
+    ckt->CKTpseudoGmin = 0.0;                     /* disable the NIiter hook */
+    FREE(bestState);
+
+    if (converged == 0)
+        SPfrontEnd->IFerrorf(ERR_INFO, "Pseudo-transient continuation completed");
+    else
+        SPfrontEnd->IFerrorf(ERR_WARNING, "Pseudo-transient continuation failed");
     return converged;
 }
 

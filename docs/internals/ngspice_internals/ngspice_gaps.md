@@ -30,23 +30,31 @@ mark is ⚠️ or ❌.
 | Integration | Trapezoidal + variable-order Gear | ✅ | ✅ |
 | Integration | Advanced LTE-based step/order control | ⚠️ | ✅ |
 | Convergence | gmin stepping + source stepping homotopy | ✅ | ✅ |
-| Convergence | Pseudo-transient / dynamic-gmin continuation | ⚠️ | ✅ |
+| Convergence | Pseudo-transient / dynamic-gmin continuation | ✅ | ✅ |
 | Convergence | Damped / trust-region (globalized) Newton | ⚠️ | ✅ |
 | Convergence | Coordinated accuracy presets (`errpreset`) | ✅ | ✅ |
 
-*The two convergence ⚠️ rows: ngspice's DC path is not naked — it has per-device
+*These two convergence rows: ngspice's DC path is not naked — it has per-device
 junction limiting (30 device families), an optional `nodedamping` step clamp,
 and a multi-stage homotopy cascade (`dynamic_gmin` → `new_gmin` → `spice3_gmin`
-→ source stepping). What it lacks vs. commercial tools is a *principled*
+→ source stepping). What it lacked vs. commercial tools was a *principled*
 globalized Newton (residual-based trust-region / Armijo) and a classic
-pseudo-transient (Ẋ-embedded) continuation. [Enhancement-111](../../../enhancements_doc/Enhancement-111.md)
+pseudo-transient (Ẋ-embedded) continuation — **both now added**.
+[Enhancement-111](../../../enhancements_doc/Enhancement-111.md)
 adds the former: `.option linesearch`, an Armijo backtracking line search on a
 new KCL-residual merit `‖F‖=‖G·x−b‖` (result-neutral, off by default) — see the
 [implementation write-up](ngspice_linesearch_globalized_newton.md).
 [Enhancement-112](../../../enhancements_doc/Enhancement-112.md) then extended it to
 the **KLU** solver — it originally ran only under Sparse 1.3 and segfaulted under
 `.option klu` — so the line search now works under **both** linear solvers, with a
-residual-merit sequence numerically identical between them.*
+residual-merit sequence numerically identical between them.
+[Enhancement-127](../../../enhancements_doc/Enhancement-127.md) adds the latter:
+`.option ptcont`, a pseudo-transient continuation that embeds `f(x)=0` in a
+backward-Euler pseudo-transient `f(x)+Gps·(x−x_prev)=0` and marches the pseudo-timestep
+from small to large (`Gps→0`). The `Gps·x_prev` RHS coupling makes each step follow a
+stable trajectory (vs a static gmin step), so it converges — and to the physically
+correct root — on stiff circuits where plain Newton overshoots; result-neutral and
+off by default, verified under both linear solvers.*
 
 *¹ KLU is compiled in (SuiteSparse, statically linked) but is **not** the default
 in this build — the default direct solver is **Sparse 1.3**; KLU is selected with
@@ -251,10 +259,14 @@ leverage on the existing strength × differentiation × tractability:
    Harmonic Balance engine, quasi-periodic multi-tone) rather than the core
    analyses.
 2. **Convergence robustness** — coordinated accuracy presets (`errpreset`)
-   **landed in [Enhancement-110](../../../enhancements_doc/Enhancement-110.md)**;
-   the remaining piece is pseudo-transient / dynamic-gmin homotopy. Unglamorous
-   but makes every analysis usable on real circuits; self-contained in the
-   ngspice core.
+   **landed in [Enhancement-110](../../../enhancements_doc/Enhancement-110.md)**, a
+   globalized Newton line search in
+   [Enhancement-111](../../../enhancements_doc/Enhancement-111.md)/[112](../../../enhancements_doc/Enhancement-112.md),
+   and pseudo-transient continuation (`.option ptcont`) in
+   [Enhancement-127](../../../enhancements_doc/Enhancement-127.md) — so the principled
+   globalization and continuation gaps are now closed. What remains is mostly
+   auto-triggering heuristics (reaching for these aids without the user asking) and
+   folding them into the robustness presets. Self-contained in the ngspice core.
 3. **High-sigma statistical sampling** — high industrial value (yield / SRAM),
    moderate difficulty, leans on the deterministic-seed RNG already in place.
 

@@ -213,6 +213,9 @@ CKTsetOpt(CKTcircuit *ckt, JOB *anal, int opt, IFvalue *val)
     case OPT_LINESEARCH: /* Enhancement-111 */
         task->TSKlinesearch = (val->iValue != 0);
         break;
+    case OPT_PTCONT: /* Enhancement-127 */
+        task->TSKptcont = (val->iValue != 0);
+        break;
     case OPT_ABSDV:
         task->TSKabsDv = val->rValue;
         break;
@@ -423,6 +426,8 @@ static IFparm OPTtbl[] = {
         "Limit iteration to iteration node voltage change" },
  { "linesearch", OPT_LINESEARCH, IF_SET|IF_FLAG,
         "Adaptive damped-Newton line search on the weighted step norm" },
+ { "ptcont", OPT_PTCONT, IF_SET|IF_FLAG,
+        "Pseudo-transient continuation homotopy for the DC operating point" },
  { "absdv", OPT_ABSDV, IF_SET|IF_REAL,
         "Maximum absolute iter-iter node voltage change" },
  { "reldv", OPT_RELDV, IF_SET|IF_REAL,

@@ -1,0 +1,26 @@
+pseudo-transient continuation demo
+* Enhancement-127: `.option ptcont` enables a pseudo-transient continuation
+* homotopy for the DC operating point. It embeds f(x)=0 in a fictitious
+* backward-Euler pseudo-transient  f(x) + Gps*(x - x_prev) = 0  and marches the
+* pseudo-timestep from small (Gps large, strongly damped) to large (Gps -> 0, the
+* true DC point), following a stable trajectory. Unlike static gmin/source
+* stepping, the x_prev coupling keeps each step on that trajectory, so it converges
+* -- and lands on the physically correct solution -- on stiff circuits where plain
+* Newton overshoots.
+*
+* A behavioral exponential with NO junction limiting (a deliberately stiff
+* nonlinearity): plain Newton, from V=0, overshoots the huge exp derivative and
+* settles on a spurious root, while pseudo-transient continuation reaches the
+* correct operating point  V(1) = 0.837922 V  (the root of
+* 1e-14*(exp(V/0.026)-1) = (100-V)/100).  gmin/source stepping are disabled here so
+* the result depends on the pseudo-transient homotopy alone.
+.option ptcont gminsteps=0 srcsteps=0
+B1 1 0 I = 1e-14 * (exp(V(1)/0.026) - 1)
+R1 2 1 100
+V1 2 0 100
+.op
+.control
+run
+print v(1)
+.endc
+.end

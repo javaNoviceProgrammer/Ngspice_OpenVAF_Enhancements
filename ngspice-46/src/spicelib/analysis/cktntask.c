@@ -73,6 +73,7 @@ CKTnewTask(CKTcircuit *ckt, TSKtask **taskPtr, IFuid taskName, TSKtask **defPtr)
         tsk->TSKcopyNodesets    = def->TSKcopyNodesets;
         tsk->TSKnodeDamping     = def->TSKnodeDamping;
         tsk->TSKlinesearch      = def->TSKlinesearch; /* Enhancement-111 */
+        tsk->TSKptcont          = def->TSKptcont; /* Enhancement-127 */
         tsk->TSKabsDv           = def->TSKabsDv;
         tsk->TSKrelDv           = def->TSKrelDv;
         tsk->TSKnoopac          = def->TSKnoopac;
@@ -139,6 +140,7 @@ CKTnewTask(CKTcircuit *ckt, TSKtask **taskPtr, IFuid taskName, TSKtask **defPtr)
         tsk->TSKcopyNodesets    = 0;
         tsk->TSKnodeDamping     = 0;
         tsk->TSKlinesearch      = 0; /* Enhancement-111: off by default */
+        tsk->TSKptcont          = 0; /* Enhancement-127: off by default */
         tsk->TSKabsDv           = 0.5;
         tsk->TSKrelDv           = 2.0;
         tsk->TSKepsmin          = 1e-28;
