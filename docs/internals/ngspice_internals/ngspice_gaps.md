@@ -189,7 +189,8 @@ and forming `S^(k) = B^(k)·A^-1` per input frequency and conversion sideband
 network. Verified 8/8: sideband-0 matches `.sp` to ~10⁻¹⁶ for 1/2/3-port resistive
 and reactive networks (magnitude and phase) — including **OSDI Verilog-A** devices
 (conductance and reactive `ddt` stamps) — with correctly-zero conversion sidebands.
-Sparse-solver only, like the rest of the PSS suite.*
+Runs under **both** linear solvers (the conversion matrix is a standalone dense LU;
+PSS runs under both since E-118), verified bit-identical under KLU and Sparse.*
 
 ## Performance & scale
 

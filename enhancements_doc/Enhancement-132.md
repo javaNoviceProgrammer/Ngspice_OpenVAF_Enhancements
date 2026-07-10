@@ -68,8 +68,12 @@ ordinary `.sp` S-matrix and every conversion sideband is zero.
 Implementation notes: `pac_solve_at`'s conversion-matrix assembly was factored into
 a shared `pac_build_matrix` used by both the PAC solve and the new per-port PSP
 solve `psp_solve_port`; a `PSSdoPSP` flag + `psp` PSS parameter carry the mode; the
-`.psp` card is parsed by `dot_psp` (a sibling of `dot_pac`). **Sparse-solver only**,
-like the rest of the PSS suite.
+`.psp` card is parsed by `dot_psp` (a sibling of `dot_pac`). Like the rest of the
+periodic small-signal suite it runs under **both linear solvers**: the `(2M+1)N`
+conversion matrix is solved with a standalone dense complex LU (`pss_csolve`) that
+is independent of KLU/Sparse, and PSS itself runs under both since E-118 (KLU
+re-factors each shooting step, so it is *slower* but not wrong). Verified
+bit-identical under `.option klu` and `.option sparse`.
 
 ## Verification
 

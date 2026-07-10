@@ -21,6 +21,20 @@ of the whole [`examples/`](../../../examples/) suite.
 | **Sensitivity (`.sens`, DC & AC)** | ✅ correct (since E-114) | ✅ correct |
 | **Distortion (`.disto`)** | ✅ correct (since E-115) | ✅ correct |
 | **Periodic steady state (`.pss`)** | ✅ correct (since E-118) | ✅ correct |
+| **Periodic small-signal (`.pac`/`.pnoise`/`.pxf`/`.psp`)** | ✅ correct | ✅ correct |
+| **Transient checkpoint/restart (`savestate`/`loadstate`)** | ⚠️ Sparse-only (E-131) | ✅ correct |
+
+The periodic small-signal analyses (PAC / Pnoise / PXF and the E-132 periodic
+S-parameters `.psp`) build a **dense** `(2M+1)N` harmonic conversion matrix and
+solve it with a standalone dense complex LU (`pss_csolve`) that is **independent of
+the sparse linear solver** — so they inherit the solver only through the underlying
+PSS, which runs correctly under both since E-118 (KLU re-factors every shooting
+step, so PSS is *slower* under KLU but not wrong). Transient **checkpoint/restart**
+([Enhancement-131](../../../enhancements_doc/Enhancement-131.md)) is the one feature
+that is genuinely Sparse-only: on the restore path KLU's symbolic/numeric
+factorization objects are absent (they are only built during a full run's operating
+point), so `savestate`/`loadstate` reject `.option klu` with a clear message rather
+than crash.
 
 **Practical guidance:** leave the default (Sparse 1.3) unless you have a specific
 reason to switch. Sparse 1.3 runs **every** analysis in the suite. Since
@@ -29,8 +43,9 @@ reason to switch. Sparse 1.3 runs **every** analysis in the suite. Since
 [Enhancement-114](../../../enhancements_doc/Enhancement-114.md) it runs **DC/AC
 sensitivity**, and since
 [Enhancement-115](../../../enhancements_doc/Enhancement-115.md) **distortion
-(`.disto`)** correctly; the only analysis still Sparse-only under KLU is
-**balanced-output pole-zero**. Reach for `.option klu`
+(`.disto`)** correctly; the only *analysis* still Sparse-only under KLU is
+**balanced-output pole-zero** (the transient checkpoint/restart *feature* is also
+Sparse-only, per the table above). Reach for `.option klu`
 on large, sparse DC/AC problems where KLU's ordering and factorization are
 faster, and — because its symbolic ordering is computed once and cannot re-pivot
 dynamically like Sparse — expect it to be **less forgiving of a near-singular

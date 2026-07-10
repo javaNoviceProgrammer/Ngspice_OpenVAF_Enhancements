@@ -21,7 +21,11 @@ S-parameters:
   [4] 3-port resistive star     -- N-general machinery for N > 2
   [5] conversion sidebands ~0   -- a time-invariant circuit has no mixing
 
-PSS-based, so it runs under the Sparse solver only.
+Like the rest of the periodic small-signal suite, `.psp` runs correctly under both
+linear solvers (the conversion matrix is a standalone dense LU independent of
+KLU/Sparse; PSS runs under both since E-118). This script exercises the default
+Sparse solver -- PSS shooting is slow under KLU, so the dual-solver run is left out
+of the fast regression, matching the other rfpss examples.
 """
 import math
 import os
