@@ -170,12 +170,13 @@ not out-engineering 25 years of commercial fast-SPICE/parallel work. Ranked by
 leverage on the existing strength × differentiation × tractability:
 
 1. **RF periodic small-signal suite — Pnoise → PAC → PXF, on the hardened PSS.**
-   The PSS foundation is now shipped and verified
-   ([Enhancement-117](../../../enhancements_doc/Enhancement-117.md)); the
+   The PSS foundation is now shipped and verified under both linear solvers
+   ([Enhancement-117](../../../enhancements_doc/Enhancement-117.md),
+   [Enhancement-118](../../../enhancements_doc/Enhancement-118.md)); the
    device/OSDI side already supplies what these need (noise-source topology,
    operating-point- and frequency-dependent `load_noise`, periodic Jacobians);
    the remaining work is the small-signal analysis engines. Genuinely novel in
-   open source. (KLU-PSS convergence is a smaller adjacent fix.)
+   open source.
 2. **Convergence robustness** — coordinated accuracy presets (`errpreset`)
    **landed in [Enhancement-110](../../../enhancements_doc/Enhancement-110.md)**;
    the remaining piece is pseudo-transient / dynamic-gmin homotopy. Unglamorous
