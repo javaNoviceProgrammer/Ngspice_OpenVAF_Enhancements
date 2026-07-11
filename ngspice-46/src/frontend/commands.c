@@ -430,6 +430,10 @@ struct comm spcp_coms[] = {
       { 040, 040, 040, 040 }, E_DEFHMASK, 1, LOTS,
       NULL,
       "f_in : two-tone small-signal QPAC -- response at sidebands f_in+k1f1+k2f2 around the `qpss ... hb` operating point." },
+    { "qpxf", com_qpxf, TRUE, FALSE,             /* Enhancement-141 */
+      { 040, 040, 040, 040 }, E_DEFHMASK, 2, LOTS,
+      NULL,
+      "output_node f_in : two-tone QPXF -- transfer from each input sideband f_in+k1f1+k2f2 to the output, around the `qpss ... hb` operating point." },
     { "qpnoise", com_qpnoise, TRUE, FALSE,       /* Enhancement-138 */
       { 040, 040, 040, 040 }, E_DEFHMASK, 2, LOTS,
       NULL,

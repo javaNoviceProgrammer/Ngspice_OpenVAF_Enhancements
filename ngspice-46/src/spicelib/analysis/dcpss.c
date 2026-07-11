@@ -2412,6 +2412,74 @@ QPnoiseAnalyze(CKTcircuit *ckt, int outNode, double f_in, int cyclo, int verbose
 
 
 /* ======================================================================
+ * Enhancement-141: two-tone small-signal QPXF -- the quasi-periodic transfer
+ * function, the ADJOINT of QPAC (Enhancement-137). One adjoint solve of the
+ * 2-D conversion matrix, H^T Psi = e_{out,(0,0)}, gives the transimpedance
+ * Psi_{(k1,k2),j} from an injection at (node j, sideband (k1,k2)) to the
+ * output at sideband (0,0). Dotting each sideband block of Psi with the
+ * netlist AC-source pattern B0 gives the transfer from that input sideband to
+ * the output. By reciprocity the (0,0) transfer equals the QPAC response at
+ * the output node -- a cross-check that pins the adjoint solve (cf. PXF/PAC,
+ * Enhancement-125). Reuses qp_solve_adjoint (built for QPnoise, E-138).
+ * ====================================================================== */
+int
+QPXFanalyze(CKTcircuit *ckt, int outNode, double f_in, int verbose)
+{
+    struct qp_harm *hd = qpss_hb_saved;
+    int    N, Ntot, j, hi, numNames, error, k1, k2, ord;
+    IFuid *nameList = NULL;
+    double *Psr, *Psi;
+
+    if (!hd) {
+        fprintf(stderr, "qpxf: no QPSS operating point -- run `qpss <expr> <f1> <f2> hb` first.\n");
+        return E_NOTFOUND;
+    }
+    N = hd->N; Ntot = hd->Ntot;
+    if (outNode <= 0 || outNode > N) { fprintf(stderr, "qpxf: bad output node.\n"); return E_PARMVAL; }
+    (void) verbose;
+    Psr = TMALLOC(double, Ntot); Psi = TMALLOC(double, Ntot);
+
+    if (qp_solve_adjoint(hd, f_in, outNode, Psr, Psi)) {
+        fprintf(stderr, "qpxf: singular conversion matrix.\n");
+        FREE(Psr); FREE(Psi); return E_SINGULAR;
+    }
+
+    error = CKTnames(ckt, &numNames, &nameList);
+    fprintf(stdout,
+            "\nQPXF: two-tone transfer function to node %s (f_in = %g Hz, f1 = %g Hz, f2 = %g Hz)\n"
+            "  (k1,k2)   input sideband f_in+k1f1+k2f2 [Hz]   |H|            phase [deg]\n",
+            (!error && (outNode-1) < numNames) ? (const char *) nameList[outNode-1] : "?",
+            f_in, hd->f1, hd->f2);
+    for (ord = 0; ord <= hd->K1 + hd->K2; ord++)
+        for (k1 = -hd->K1; k1 <= hd->K1; k1++)
+            for (k2 = -hd->K2; k2 <= hd->K2; k2++) {
+                double fsb, hr = 0.0, hii = 0.0;
+                if (abs(k1) + abs(k2) != ord) continue;
+                hi = (k1 + hd->K1) * (2*hd->K2 + 1) + (k2 + hd->K2);
+                /* transfer from input at this sideband to the output: Psi_block . B0
+                 * (AC-source pattern), or Psi at the injection node if no AC source */
+                if (hd->has_src) {
+                    for (j = 0; j < N; j++) {
+                        double pr = Psr[(size_t)hi*(size_t)N + (size_t)j];
+                        double pi = Psi[(size_t)hi*(size_t)N + (size_t)j];
+                        hr += pr*hd->B0r[j] - pi*hd->B0i[j];
+                        hii += pr*hd->B0i[j] + pi*hd->B0r[j];
+                    }
+                } else {
+                    hr = Psr[(size_t)hi*(size_t)N + 0];
+                    hii = Psi[(size_t)hi*(size_t)N + 0];
+                }
+                fsb = f_in + k1*hd->f1 + k2*hd->f2;
+                fprintf(stdout, "  (%2d,%2d)   %18.6e   %14.6e   %10.3f\n",
+                        k1, k2, fsb, hypot(hr, hii), atan2(hii, hr) * 180.0/M_PI);
+            }
+    if (nameList) tfree(nameList);
+    FREE(Psr); FREE(Psi);
+    return OK;
+}
+
+
+/* ======================================================================
  * Enhancement-140: oscillator phase noise.
  *
  * (1) HBOSCanalyze -- AUTONOMOUS harmonic balance. An oscillator has no
