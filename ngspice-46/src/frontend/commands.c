@@ -488,6 +488,10 @@ struct comm spcp_coms[] = {
       { 040, 040, 040, 040 }, E_DEFHMASK, 1, LOTS,
       NULL,
       "fmax [factor f] [file fname] [name subckt] [keep node ...] : reduce the R/C parasitic network (TICER) to an equivalent .subckt preserving port behaviour over DC..fmax." },
+    { "aging", com_aging, TRUE, FALSE,           /* Enhancement-157 */
+      { 040, 040, 040, 040 }, E_DEFHMASK, 1, LOTS,
+      NULL,
+      "t_target [rate opvar] [param ageparam] [dynamic tstop [tstep]] [verbose] : age every aging-capable device to a target lifetime (stress -> degrade -> re-stamp) for fresh-vs-aged reliability simulation." },
     { "savestate", com_savestate, FALSE, TRUE,   /* Enhancement-131 */
       { 1, 040000, 040000, 040000 }, E_DEFHMASK, 1, 1,
       NULL,

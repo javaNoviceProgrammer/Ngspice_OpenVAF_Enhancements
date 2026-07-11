@@ -1,0 +1,56 @@
+`include "disciplines.vams"
+
+// -----------------------------------------------------------------------------
+// agemos -- a square-law NMOS with an NBTI-style aging hook, for de-risking the
+// `aging` command.  Two things the aging engine relies on:
+//   * an operating-point variable `agerate` = instantaneous stress rate at the
+//     present bias (dose units per second), and
+//   * a per-INSTANCE parameter `age` = accumulated stress dose, written back by
+//     the engine.  The model owns the physics that maps age -> threshold shift.
+// -----------------------------------------------------------------------------
+module agemos(d, g, s);
+  inout d, g, s;
+  electrical d, g, s;
+
+  parameter real vth0   = 0.5    from (0:inf);   // fresh threshold (V)
+  parameter real kp     = 100e-6 from (0:inf);   // transconductance (A/V^2)
+  (* type="instance" *) parameter real w = 1e-6 from (0:inf);
+  (* type="instance" *) parameter real l = 1e-6 from (0:inf);
+  parameter real lambda = 0.0    from [0:inf);   // channel-length modulation
+
+  // --- aging ---------------------------------------------------------------
+  // `age` is the accumulated stress dose written back by the aging engine.
+  // The model maps it to a threshold shift with a sublinear power law:
+  //     dVth = dvth_ref * (age/age_ref)^n
+  (* type="instance" *) parameter real age = 0.0 from [0:inf);
+  parameter real dvth_ref = 0.05   from [0:inf); // dVth at the reference dose
+  parameter real age_ref  = 1.5e8  from (0:inf); // reference dose (V*s)
+  parameter real nnbti    = 0.25   from (0:1];   // time exponent
+
+  (* desc="NBTI aging rate", units="V/s" *)   real agerate;
+  (* desc="effective threshold", units="V" *) real vtheff;
+  (* desc="drain current", units="A" *)       real ids_op;
+
+  real vov, vds, dvth;
+
+  analog begin
+    dvth   = dvth_ref * pow(age / age_ref, nnbti);
+    vtheff = vth0 + dvth;
+
+    vov = V(g, s) - vtheff;
+    vds = V(d, s);
+
+    if (vov <= 0.0)
+      ids_op = 0.0;
+    else if (vds < vov)
+      ids_op = kp * (w / l) * (vov * vds - 0.5 * vds * vds) * (1.0 + lambda * vds);
+    else
+      ids_op = 0.5 * kp * (w / l) * vov * vov * (1.0 + lambda * vds);
+
+    // NBTI stress rate: proportional to gate overdrive over the FRESH threshold
+    // while the device is biased on; zero when off.  (Illustrative, monotone.)
+    agerate = (V(g, s) > vth0) ? (V(g, s) - vth0) : 0.0;
+
+    I(d, s) <+ ids_op;
+  end
+endmodule

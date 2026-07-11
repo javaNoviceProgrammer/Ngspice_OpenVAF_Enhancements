@@ -70,6 +70,8 @@ libfte_la_SOURCES = \
     com_envelope.h  \
     com_reduce.c  \
     com_reduce.h  \
+    com_aging.c  \
+    com_aging.h  \
     com_checkpoint.c    \
     com_checkpoint.h    \
     com_option.c    \

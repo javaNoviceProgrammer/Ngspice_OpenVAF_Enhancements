@@ -370,8 +370,8 @@ independent — the correlation model is what decides it.*
 
 | Category | Feature | ngspice | Spectre |
 |---|---|:---:|:---:|
-| Reliability | Device aging (HCI / NBTI / TDDB) | ❌ | ✅ |
-| Reliability | Stress → degrade → re-simulate (fresh/aged) flow | ❌ | ✅ |
+| Reliability | Device aging (HCI / NBTI / TDDB) | ✅¹⁰ | ✅ |
+| Reliability | Stress → degrade → re-simulate (fresh/aged) flow | ✅¹⁰ | ✅ |
 | Reliability | Electromigration + IR-drop (EMIR) | ❌ | ✅ |
 
 ## Post-layout / parasitics
@@ -398,6 +398,20 @@ then makes the engine **sparse** — per-node adjacency lists + minimum-degree
 elimination (like sparse LU) + a `maxdeg` fill guard — lifting the node cap from ~2500
 into the millions (a 65k-node network reduces in ~4 s), so it reaches real extraction
 scale.*
+
+*¹⁰ Device aging and the stress → degrade → re-simulate flow are ✅ since
+[Enhancement-157](../../../enhancements_doc/Enhancement-157.md): the `aging <t_target>`
+command finds every aging-capable device, computes how much it has degraded after the
+target lifetime, writes that back, and **re-stamps** the circuit so any later analysis
+sees the aged devices (fresh vs aged). It is **model-agnostic** — a Verilog-A/OSDI model
+opts in by exposing a degradation-rate operating-point variable (`agerate`) and a
+per-instance `age` parameter; the engine integrates the rate into a dose and feeds it
+back, the model owns the physics (dose → parameter shift). **Static** mode uses the DC
+operating-point stress; **dynamic** mode time-averages the rate over a transient
+(capturing duty cycle). Verified under both solvers against an NBTI demo NMOS: exact
+dose, the analytic `ΔVth ∝ t^0.25` power law, monotone degradation, near-threshold
+sensitivity, and 0.30× aging for a 30%-duty gate. Electromigration + IR-drop (EMIR)
+remains a separate power-grid analysis (a natural follow-up), so that row stays ❌.*
 
 ## Behavioral / mixed-signal / AMS
 

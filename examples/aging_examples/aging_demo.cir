@@ -1,0 +1,19 @@
+* aging demo -- fresh vs 10-year-aged NMOS operating point
+* Compile the model first:  openvaf-r agemos.va -o agemos.osdi
+.control
+pre_osdi agemos.osdi
+.endc
+Vd d 0 dc 1.0
+Vg g 0 dc 1.8
+N1 d g 0 amos
+.model amos agemos vth0=0.5 kp=100u w=2u l=0.5u
+.control
+op
+echo fresh:
+print @n1[ids_op] @n1[vtheff]
+aging 3.15e8                 $ age to ~10 years at this stress bias
+op
+echo aged:
+print @n1[ids_op] @n1[vtheff]
+.endc
+.end

@@ -96,10 +96,10 @@
   <header>
     <div class="eyebrow">feature catalog</div>
     <h1>ngspice&#8209;46 <span class="amp">+</span> OpenVAF&#8209;r</h1>
-    <p class="lede">Every capability added across <b>156 enhancements</b>, grouped into feature areas — a feature usually spans several enhancements. Two code bases: the <b>OpenVAF&#8209;r</b> Verilog&#8209;A/OSDI compiler and the <b>ngspice</b> circuit simulator. Each chip links to its write&#8209;up.</p>
+    <p class="lede">Every capability added across <b>157 enhancements</b>, grouped into feature areas — a feature usually spans several enhancements. Two code bases: the <b>OpenVAF&#8209;r</b> Verilog&#8209;A/OSDI compiler and the <b>ngspice</b> circuit simulator. Each chip links to its write&#8209;up.</p>
     <div class="stats" id="stats">
-      <div class="stat"><div class="n">156</div><div class="l">enhancements</div></div>
-      <div class="stat"><div class="n">18</div><div class="l">feature areas</div></div>
+      <div class="stat"><div class="n">157</div><div class="l">enhancements</div></div>
+      <div class="stat"><div class="n">19</div><div class="l">feature areas</div></div>
       <div class="stat"><div class="n">2</div><div class="l">code bases</div></div>
       <div class="stat ok"><div class="n">RF ✓</div><div class="l">suite complete</div></div>
       <div class="stat ok"><div class="n">KLU+Sparse</div><div class="l">both solvers</div></div>
@@ -154,7 +154,8 @@
    {d:"simulator",n:"Optimization & parametric sweeps",x:"Nelder-Mead + Levenberg-Marquardt fitting over every knob kind; a universal sweep.",c:[[130,"optimize (Nelder-Mead)"],[143,"least-squares LM"],[144,"-dparam (.param)"],[145,"-mparam (.model)"],[146,"universal sweep"]]},
    {d:"simulator",n:"Workflow, docs & benchmarks",x:"Handbook and provenance docs, OSDI-vs-built-in benchmarks, checkpoint/restart, lifecycle, plotting, tests, warning-free build.",c:[[68,"integration tests"],[73,"handbook + README index"],[74,"OSDI-vs-built-in benchmark"],[77,"ngspice warnings → 0"],[79,"benchmark round 2 (BSIM4)"],[81,"lifecycle / leak-free"],[82,"provenance / compliance docs"],[83,"opamp741 demo"],[94,"pyplot"],[95,"pyplot default filename"],[98,"pyplot subplots"],[99,"pyplot export formats"],[100,"milestone audit"],[129,"sweep progress bar"],[131,"checkpoint / restart"]]},
    {d:"simulator",n:"Physics validation",x:"Cross-checks of simulator output against analytic device and dynamic laws.",c:[[57,"physcheck vs analytic"],[75,"dynamic physics"],[80,"temperature physics"]]},
-   {d:"simulator",n:"Post-layout parasitics",x:"Reduce extracted parasitic R/C networks to small equivalent subcircuits (TICER model-order reduction), at real extraction scale.",c:[[155,"RC reduction (reduce / TICER)"],[156,"sparse RC reduction (scales to millions)"]]}
+   {d:"simulator",n:"Post-layout parasitics",x:"Reduce extracted parasitic R/C networks to small equivalent subcircuits (TICER model-order reduction), at real extraction scale.",c:[[155,"RC reduction (reduce / TICER)"],[156,"sparse RC reduction (scales to millions)"]]},
+   {d:"simulator",n:"Reliability / aging",x:"Stress → degrade → re-simulate flow: age every aging-capable device to a target lifetime and re-stamp the circuit for fresh-vs-aged comparison (HCI / NBTI / TDDB).",c:[[157,"device aging (aging command; static + dynamic)"]]}
   ];
 
   function render(){
