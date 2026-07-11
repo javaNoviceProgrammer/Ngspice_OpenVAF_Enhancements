@@ -1655,6 +1655,7 @@ struct qp_harm {
     double *Vr, *Vi;           /* [Ntot] retained operating point (for qpac); else NULL */
     double *B0r, *B0i;         /* [N] AC-source stimulus for qpac (E-137); else NULL */
     int     has_src;           /* 1 if a netlist AC source stamped B0 */
+    int     P1, P2;            /* phase-grid used for extraction (for cyclostationary qpnoise, E-139) */
 };
 
 static struct qp_harm *qpss_hb_saved = NULL;   /* retained QPSS op-point for qpac (E-137) */
@@ -1785,6 +1786,7 @@ qp_extract(CKTcircuit *ckt, const double *vsamp, int N, int P1, int P2,
     hd->N = N; hd->K1 = K1; hd->K2 = K2; hd->Nh = (2*K1+1) * (2*K2+1);
     hd->Ntot = hd->Nh * N; hd->nnz = nnz; hd->rr = rr; hd->cc = cc;
     hd->D2c = 4*K2 + 1; hd->Dsz = (4*K1+1) * (4*K2+1);
+    hd->P1 = P1; hd->P2 = P2;
     hd->h1 = TMALLOC(int, hd->Nh); hd->h2 = TMALLOC(int, hd->Nh);
     { int k1, k2; hi = 0;
       for (k1 = -K1; k1 <= K1; k1++) for (k2 = -K2; k2 <= K2; k2++) {
@@ -2240,7 +2242,7 @@ qp_solve_adjoint(struct qp_harm *hd, double f_in, int outNode, double *Psr, doub
 }
 
 int
-QPnoiseAnalyze(CKTcircuit *ckt, int outNode, double f_in, int verbose)
+QPnoiseAnalyze(CKTcircuit *ckt, int outNode, double f_in, int cyclo, int verbose)
 {
     struct qp_harm *hd = qpss_hb_saved;
     int    N, Nh, Ntot, i, j, hi, i00;
@@ -2293,22 +2295,85 @@ QPnoiseAnalyze(CKTcircuit *ckt, int outNode, double f_in, int verbose)
     Psr = TMALLOC(double, Ntot); Psi = TMALLOC(double, Ntot);
     Xr  = TMALLOC(double, Ntot); Xi  = TMALLOC(double, Ntot);
 
-    /* adjoint transfer from every (node, harmonic) to the output at (0,0), then
-     * fold each device's noise density over all sidebands. */
+    /* adjoint transfer from every (node, harmonic) to the output at (0,0) */
     data.freq = f_in; data.delFreq = 0.0; data.prtSummary = FALSE;
     if (qp_solve_adjoint(hd, f_in, outNode, Psr, Psi) == 0) {
-        for (hi = 0; hi < Nh; hi++) {
-            double dens = 0.0;
-            size_t blk = (size_t)hi * (size_t)N;
-            for (j = 1; j <= N; j++) {
-                ckt->CKTrhs[j]  = Psr[blk + (size_t)(j-1)];
-                ckt->CKTirhs[j] = Psi[blk + (size_t)(j-1)];
+        if (!cyclo) {
+            /* STATIONARY (E-138): fold S*|Psi_{(k1,k2)}|^2 over all sidebands, with
+             * the device PSD S taken once at the operating-point bias. */
+            for (hi = 0; hi < Nh; hi++) {
+                double dens = 0.0;
+                size_t blk = (size_t)hi * (size_t)N;
+                for (j = 1; j <= N; j++) {
+                    ckt->CKTrhs[j]  = Psr[blk + (size_t)(j-1)];
+                    ckt->CKTirhs[j] = Psi[blk + (size_t)(j-1)];
+                }
+                ckt->CKTrhs[0] = 0.0; ckt->CKTirhs[0] = 0.0;
+                for (i = 0; i < DEVmaxnum; i++)
+                    if (DEVices[i] && DEVices[i]->DEVnoise && ckt->CKThead[i])
+                        DEVices[i]->DEVnoise(N_DENS, N_CALC, ckt->CKThead[i], ckt, &data, &dens);
+                onoise += dens;                   /* sum device noise over sidebands */
             }
-            ckt->CKTrhs[0] = 0.0; ckt->CKTirhs[0] = 0.0;
-            for (i = 0; i < DEVmaxnum; i++)
-                if (DEVices[i] && DEVices[i]->DEVnoise && ckt->CKThead[i])
-                    DEVices[i]->DEVnoise(N_DENS, N_CALC, ckt->CKThead[i], ckt, &data, &dens);
-            onoise += dens;                       /* sum device noise over sidebands */
+        } else {
+            /* CYCLOSTATIONARY (E-139): the device PSD S(t) swings over the two-tone
+             * period, so instead of the frequency-domain sum we use the identity
+             * onoise = (1/P) Sum_s S(t_s)*|A_s|^2, where A_s(j) = IDFT_{(k1,k2)} Psi
+             * is the TIME-domain transfer at 2-D phase sample s = (s1,s2). Evaluate
+             * each device's noise at every sample's bias (v(theta1,theta2) from the
+             * retained V) and average over the P1xP2 grid. By Parseval this reduces to
+             * the stationary sum (and hence .noise) when S(t) is constant. */
+            int P1 = hd->P1, P2 = hd->P2, s1, s2;
+            int Ptot = P1 * P2;
+            double *vsamp = TMALLOC(double, (size_t)N * (size_t)Ptot);
+            double *bset  = TMALLOC(double, N);
+            qp_synth(hd->Vr, hd->Vi, N, hd->K1, hd->K2, P1, P2, vsamp);
+            for (s1 = 0; s1 < P1; s1++)
+                for (s2 = 0; s2 < P2; s2++) {
+                    int s = s1 * P2 + s2;
+                    double dens = 0.0;
+                    /* bias the devices at this sample's quasi-periodic operating point */
+                    for (j = 1; j <= N; j++)
+                        ckt->CKTrhsOld[j] = vsamp[(size_t)s*(size_t)N + (size_t)(j-1)];
+                    ckt->CKTrhsOld[0] = 0.0;
+                    /* settle limited junctions at the fixed sample voltages (E-134) so a
+                     * diode/BJT/MOS reports the noise PSD at THIS sample's bias, not a
+                     * stale stored junction -- else the noise looks stationary. */
+                    ckt->CKTmode = (ckt->CKTmode & MODEUIC) | MODEDCOP | MODEINITFLOAT;
+                    { int inner;
+                      for (inner = 0; inner < 100; inner++) {
+                        double bnorm = 0.0, dnorm = 0.0;
+                        for (i = 0; i <= N; i++) ckt->CKTrhs[i] = 0.0;
+                        CKTload(ckt);
+                        for (i = 1; i <= N; i++) {
+                            double db = ckt->CKTrhs[i] - bset[i-1];
+                            dnorm += db*db; bnorm += ckt->CKTrhs[i]*ckt->CKTrhs[i];
+                            bset[i-1] = ckt->CKTrhs[i];
+                        }
+                        if (inner > 0 && sqrt(dnorm) <= 1e-12*(sqrt(bnorm)+1e-30)) break;
+                      } }
+                    ckt->CKTmode = (ckt->CKTmode & MODEUIC) | MODEDCOP | MODEINITSMSIG;
+                    CKTload(ckt);
+                    /* A_s(j) = Sum_{(k1,k2)} Psi_{(k1,k2)}(j) * exp(j 2pi(k1 s1/P1 + k2 s2/P2)) */
+                    for (j = 1; j <= N; j++) {
+                        double ar = 0.0, ai = 0.0;
+                        for (hi = 0; hi < Nh; hi++) {
+                            size_t idx = (size_t)hi*(size_t)N + (size_t)(j-1);
+                            double ang = 2.0*M_PI*((double)hd->h1[hi]*s1/P1 + (double)hd->h2[hi]*s2/P2);
+                            double cs = cos(ang), sn = sin(ang);
+                            ar += Psr[idx]*cs - Psi[idx]*sn;
+                            ai += Psr[idx]*sn + Psi[idx]*cs;
+                        }
+                        ckt->CKTrhs[j] = ar; ckt->CKTirhs[j] = ai;
+                    }
+                    ckt->CKTrhs[0] = 0.0; ckt->CKTirhs[0] = 0.0;
+                    data.freq = f_in; data.delFreq = 0.0; data.prtSummary = FALSE;
+                    for (i = 0; i < DEVmaxnum; i++)
+                        if (DEVices[i] && DEVices[i]->DEVnoise && ckt->CKThead[i])
+                            DEVices[i]->DEVnoise(N_DENS, N_CALC, ckt->CKThead[i], ckt, &data, &dens);
+                    onoise += dens;
+                }
+            onoise /= (double)Ptot;               /* period average */
+            FREE(vsamp); FREE(bset);
         }
     }
 
@@ -2334,10 +2399,11 @@ QPnoiseAnalyze(CKTcircuit *ckt, int outNode, double f_in, int verbose)
     ckt->CKTcurJob = oldJob;
     (void) verbose;
     fprintf(stdout,
-            "\nQPnoise: two-tone output noise at f_in = %g Hz (folding %d sidebands, "
+            "\nQPnoise: two-tone %s output noise at f_in = %g Hz (folding %d sidebands, "
             "f1 = %g, f2 = %g)\n"
             "  onoise density = %.6e  V^2/Hz   (%.6e V/sqrt(Hz))\n"
             "  inoise density = %.6e           (gain^2 = %.6e)\n",
+            cyclo ? "cyclostationary" : "stationary",
             f_in, Nh, hd->f1, hd->f2, onoise, sqrt(onoise), inoise, gain2);
 
     FREE(Psr); FREE(Psi); FREE(Xr); FREE(Xi);

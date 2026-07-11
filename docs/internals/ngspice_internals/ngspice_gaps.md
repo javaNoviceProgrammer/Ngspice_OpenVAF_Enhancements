@@ -219,7 +219,13 @@ vanish) and the `v²`-pump conversion ratio.
 point: one ADJOINT solve `Hᵀ Ψ = e_{out,(0,0)}` gives the transimpedance from every
 (node, sideband) to the output, and each device's `DEVnoise` folds `S·|Ψ|²` over all
 sidebands (the mixer/PA noise conversion a static `.noise` cannot see). Verified 6/6,
-anchored by reduce-to-noise (pump→0 ⇒ `onoise` = plain `.noise` = `4kTR`, exactly).*
+anchored by reduce-to-noise (pump→0 ⇒ `onoise` = plain `.noise` = `4kTR`, exactly).
+[Enhancement-139](../../../enhancements_doc/Enhancement-139.md) adds the **cyclostationary**
+mode (`qpnoise … cyclo`): the device PSD `S(t)` swings over the two-tone period, so instead
+of a single-bias fold it averages `(1/P)·Σ_s S(t_s)·|A_s|²` with `A_s` the inverse 2-D DFT
+of `Ψ`, re-biasing each phase sample (with per-sample junction settling). Reduces to the
+stationary case by Parseval when `S` is constant; a hard-pumped diode's switching shot
+noise makes `cyclo` ~8× the stationary estimate (10/10).*
 
 *⁷ HB is ✅ since
 [Enhancement-134](../../../enhancements_doc/Enhancement-134.md): a `hb <f0> <K>`

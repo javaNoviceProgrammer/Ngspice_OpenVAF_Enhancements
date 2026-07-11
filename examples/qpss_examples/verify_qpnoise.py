@@ -18,6 +18,13 @@ Checks (numpy-free, parsed from stdout):
   [4] inoise consistency -- inoise = onoise / gain^2
   [5] no op-point        -- qpnoise with no prior `qpss ... hb` errors cleanly
   [6] KLU vs Sparse      -- solver-independent (bit-identical)
+
+Enhancement-139 adds cyclostationary device noise (`qpnoise ... cyclo`):
+
+  [7] cyclo reduce-to-noise -- pump->0: cyclo == plain .noise (Parseval)
+  [8] Parseval              -- bias-independent PSD -> cyclo == stationary under pump
+  [9] cyclo diode           -- hard-pumped diode: cyclo differs markedly from stationary
+  [10] cyclo KLU vs Sparse  -- solver-independent
 """
 import math
 import os
@@ -49,7 +56,7 @@ def run(deck, name="_qpn"):
 
 
 def qpn(out):
-    """parse QPnoise output -> dict(onoise, onoise_sqrt, inoise, gain2)."""
+    """parse the first QPnoise block -> dict(onoise, onoise_sqrt, inoise, gain2)."""
     d = {}
     m = re.search(r"onoise density\s*=\s*([-\d.eE+]+)\s*V\^2/Hz\s*\(([-\d.eE+]+)", out)
     if m:
@@ -58,6 +65,11 @@ def qpn(out):
     if m:
         d["inoise"] = float(m.group(1)); d["gain2"] = float(m.group(2))
     return d
+
+def qpn_mode(out, mode):
+    """onoise density (V^2/Hz) from the `stationary` or `cyclostationary` block."""
+    m = re.search(rf"two-tone {mode} output.*?onoise density\s*=\s*([-\d.eE+]+)", out, re.S)
+    return float(m.group(1)) if m else None
 
 
 def deck(Apump, f_in="0.3G", opt="", K="3 3"):
@@ -108,6 +120,43 @@ ok = qpn(run(deck("0.5m", opt=".options klu\n"))).get("onoise")
 os_ = qpn(run(deck("0.5m", opt=".options sparse\n"))).get("onoise")
 check("QPnoise solver-independent: KLU vs Sparse identical",
       ok and os_ and abs(ok - os_) < 1e-9 * os_, f"klu={ok} sparse={os_}")
+
+# ----- Enhancement-139: cyclostationary QPnoise (`qpnoise ... cyclo`) -----
+# The device PSD S(t) swings over the two-tone period; instead of the frequency-domain
+# fold (a single-bias PSD) the cyclo path IDFTs the adjoint transfers to the time domain
+# and averages S(t_s)*|A_s|^2 over the P1xP2 phase grid. By Parseval it reduces to the
+# stationary sum (and hence .noise) when S(t) is constant.
+
+# [7] cyclo reduce-to-noise: pump->0, S constant -> cyclo == stationary == plain .noise.
+both0 = run(deck("1e-9").replace("qpnoise n 0.3G\n", "qpnoise n 0.3G\nqpnoise n 0.3G cyclo\n"))
+cyc0 = qpn_mode(both0, "cyclostationary")
+check("cyclo reduce-to-noise: pump->0 cyclo == plain .noise",
+      cyc0 and noise_ref and abs(math.sqrt(cyc0) - noise_ref) < 1e-4 * noise_ref,
+      f"cyclo={math.sqrt(cyc0) if cyc0 else None} noise={noise_ref}")
+
+# [8] Parseval with a bias-INDEPENDENT PSD: a thermal resistor's noise is constant even
+# under a full pump, so cyclo must still equal stationary exactly.
+bothR = run(deck("0.5m").replace("qpnoise n 0.3G\n", "qpnoise n 0.3G\nqpnoise n 0.3G cyclo\n"))
+stR, cyR = qpn_mode(bothR, "stationary"), qpn_mode(bothR, "cyclostationary")
+check("Parseval: thermal (bias-indep) PSD -> cyclo == stationary under pump",
+      stR and cyR and abs(cyR - stR) < 1e-6 * stR, f"stat={stR} cyclo={cyR}")
+
+# [9] a hard-pumped DIODE has strongly bias-dependent shot noise (2qI_D swings as the
+# junction switches), so cyclo must DIFFER markedly from the single-bias stationary
+# estimate -- the cyclostationary noise enhancement of a switching mixer.
+diode = ("Vb b 0 0.45\nRs b a 200\nI1 0 a SIN(0 2m 1.0G)\nI2 0 a SIN(0 2m 1.1G)\n"
+         "D1 a n DMOD\nRn n 0 1k\nIac 0 n AC 1\n.model DMOD D(IS=1e-14 N=1.0)\n"
+         ".control\nqpss v(n) 1.0G 1.1G hb 3 3\nqpnoise n 0.3G\nqpnoise n 0.3G cyclo\n.endc\n.end\n")
+bothD = run("* diode cyclo\n" + diode)
+stD, cyD = qpn_mode(bothD, "stationary"), qpn_mode(bothD, "cyclostationary")
+check("cyclostationary diode noise differs from stationary (>2x under hard pump)",
+      stD and cyD and cyD > 2.0 * stD, f"stat={stD} cyclo={cyD}")
+
+# [10] cyclo is solver-independent too.
+ck = qpn_mode(run("* p\n" + diode.replace(".control", ".options klu\n.control")), "cyclostationary")
+cs = qpn_mode(run("* p\n" + diode.replace(".control", ".options sparse\n.control")), "cyclostationary")
+check("cyclo QPnoise solver-independent: KLU vs Sparse identical",
+      ck and cs and abs(ck - cs) < 1e-9 * cs, f"klu={ck} sparse={cs}")
 
 print(f"\n{'ALL PASS' if passed == checks else 'FAILURES'}: {passed}/{checks} passed")
 sys.exit(0 if passed == checks else 1)

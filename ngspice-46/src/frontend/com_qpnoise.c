@@ -51,7 +51,7 @@ com_qpnoise(wordlist *wl)
 {
     CKTcircuit *ckt;
     double f_in;
-    int    outNode, verbose, err;
+    int    outNode, verbose, err, cyclo = 0;
 
     if (!ft_curckt || !ft_curckt->ci_ckt) {
         fprintf(cp_err, "Error: qpnoise: there is no circuit loaded.\n");
@@ -60,7 +60,7 @@ com_qpnoise(wordlist *wl)
     ckt = ft_curckt->ci_ckt;
 
     if (!wl || !wl->wl_next) {
-        fprintf(cp_err, "Usage: qpnoise <output_node> <f_in>   "
+        fprintf(cp_err, "Usage: qpnoise <output_node> <f_in> [cyclo]   "
                         "(run `qpss <expr> <f1> <f2> hb` first)\n");
         return;
     }
@@ -74,9 +74,12 @@ com_qpnoise(wordlist *wl)
         fprintf(cp_err, "Error: qpnoise: need f_in > 0.\n");
         return;
     }
+    /* optional `cyclo` keyword: cyclostationary device noise (E-139) */
+    if (wl->wl_next->wl_next && strcasecmp(wl->wl_next->wl_next->wl_word, "cyclo") == 0)
+        cyclo = 1;
 
     verbose = cp_getvar("qpnoise_verbose", CP_BOOL, NULL, 0);
-    err = QPnoiseAnalyze(ckt, outNode, f_in, verbose ? 1 : 0);
+    err = QPnoiseAnalyze(ckt, outNode, f_in, cyclo, verbose ? 1 : 0);
     if (err != OK)
         fprintf(cp_err, "qpnoise: quasi-periodic noise did not complete (error %d).\n", err);
 }
