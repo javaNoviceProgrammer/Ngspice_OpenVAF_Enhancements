@@ -776,6 +776,13 @@ inp_spsource(FILE *fp, bool comfile, char *filename, bool intfile)
                     commands = FALSE;
                 else
                     fprintf(cp_err, "Warning: misplaced .endc card\n");
+            } else if (!commands && ciprefix(".sweep", dd->line)) {
+                /* Enhancement-146: a top-level `.sweep ...` card is run after the
+                 * circuit is parsed as a `sweep ...` command -- drop the leading
+                 * '.' and add it to the post-parse control list. */
+                controls = wl_cons(copy(skip_ws(dd->line) + 1), controls);
+                ld->nextcard = dd->nextcard;
+                line_free(dd, FALSE);
             } else if (commands || prefix("*#", dd->line)) {
                 s = dd->line;
 

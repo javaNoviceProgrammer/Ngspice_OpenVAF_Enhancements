@@ -1,0 +1,11 @@
+// A Verilog-A resistor whose `r` is a MODEL parameter (no (*type="instance"*)),
+// used to exercise `sweep @<model>[r]` (which routes through `altermod`).
+`include "disciplines.vams"
+
+module resmod(p, n);
+    inout p, n;
+    electrical p, n;
+    parameter real r = 1000.0 from (0:inf);
+    analog
+        I(p, n) <+ V(p, n) / r;
+endmodule

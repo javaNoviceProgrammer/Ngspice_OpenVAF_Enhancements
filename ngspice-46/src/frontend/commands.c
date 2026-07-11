@@ -422,6 +422,10 @@ struct comm spcp_coms[] = {
       { 040, 040, 040, 040 }, E_DEFHMASK, 1, LOTS,
       NULL,
       "(-param|-mparam|-dparam) name init lo hi ... -analysis <cmd> (-minimize <expr> | -target <expr> <val> [<w>] ...) [-method nm|lm] [-maxiter N] [-tol T] [-verbose] : parameter optimizer (Nelder-Mead / least-squares Levenberg-Marquardt; -param = alter device/instance, -mparam = @model[param] via altermod, -dparam = symbolic .param via re-source; multi-analysis)." },
+    { "sweep", com_sweep, TRUE, FALSE,           /* Enhancement-146 */
+      { 040, 040, 040, 040 }, E_DEFHMASK, 1, LOTS,
+      NULL,
+      "<knob> (<start> <stop> <step> | lin|dec|oct <N> <start> <stop> | list <v>...) [-analysis <cmd>] [-output <expr> ...] : sweep any knob and record outputs into a plot (auto-detects device/instance/source via alter, @model[param] via altermod, .param via re-source)." },
     { "qpss", com_qpss, TRUE, FALSE,             /* Enhancement-133 / -136 */
       { 040, 040, 040, 040 }, E_DEFHMASK, 3, LOTS,
       NULL,

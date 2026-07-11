@@ -362,7 +362,16 @@ a model parameter is not `alter`-reachable (only sources, resistors and device
 is changed in place with `altermod` (no re-source, unlike `.param`). All three
 kinds — `-param` (instance/`alter`), `-mparam` (model/`altermod`), `-dparam`
 (`.param`/re-source) — mix in one optimization; verified recovering an OSDI and a
-built-in diode model parameter and a joint model+instance fit.*
+built-in diode model parameter and a joint model+instance fit.
+[Enhancement-146](../../../enhancements_doc/Enhancement-146.md) reuses the same
+knob-application machinery for a **universal parametric sweep** — a `sweep`
+command and `.sweep` card that step **any** knob (auto-detecting instance / model /
+`.param`) over a range, run a chosen inner analysis at each point and record the
+outputs into a plot. This is the parametric-analysis / `.step` capability commercial
+tools have: `.dc` can only step sources, resistors and instance parameters, whereas
+`sweep` also covers model parameters and symbolic `.param`s. Verified to reproduce
+the built-in `.dc` bit-for-bit on an instance sweep and to match the analytic
+response on model-parameter, `.param`, AC and transient sweeps.*
 
 *The "checkpoint / restart" row is ✅ since
 [Enhancement-131](../../../enhancements_doc/Enhancement-131.md): stock ngspice

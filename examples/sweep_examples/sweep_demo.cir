@@ -1,0 +1,29 @@
+Universal sweep command demo (Enhancement-146)
+* -------------------------------------------------------------------------
+* `sweep` varies ANY circuit knob over a range and records outputs into a
+* plot -- a generalization of `.dc`, which can only step a source, resistor
+* or device INSTANCE parameter. `sweep` also handles MODEL parameters and
+* symbolic `.param` values, auto-detecting each knob's kind:
+*
+*   device / instance / source / resistor -> alter      (in place)
+*   @<model>[<param>]                      -> altermod   (in place)
+*   a .param                               -> alterparam + reset (re-source)
+*
+*   sweep <knob> (<start> <stop> <step> | lin|dec|oct <N> <start> <stop>
+*                 | list <v>...) [-analysis <cmd>] [-output <name>=<expr> ...]
+*
+* Here we sweep the shunt resistor of a divider and record the output. Try:
+*   sweep R2 1k 9k 1k -output vo=v(out)
+*   plot vo            (vo versus R2)
+* Also works for a .param: `.param k=1` ... `sweep k 1 9 1 ...`.
+* -------------------------------------------------------------------------
+V1 in 0 dc 1
+R1 in mid 1k
+R2 mid 0 1k
+
+.control
+sweep R2 1k 9k 1k -output vo=v(mid)
+print r2 vo
+* the summary plot 'sweep' is now current; `plot vo` shows vo vs R2
+.endc
+.end

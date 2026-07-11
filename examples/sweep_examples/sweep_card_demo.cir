@@ -1,0 +1,21 @@
+.sweep card demo (Enhancement-146)
+* -------------------------------------------------------------------------
+* A `.sweep` card runs after the circuit is parsed, exactly like a `sweep`
+* command in a .control block -- so you can drive a parameter sweep straight
+* from the netlist. Here it sweeps a symbolic `.param` (which `.dc` cannot
+* do) and records the AC gain at 1 kHz for each value.
+*
+*   .sweep <knob> <start> <stop> <step> [-analysis <cmd>] [-output name=expr ...]
+* -------------------------------------------------------------------------
+.param rr=1k
+V1 in 0 ac 1
+R1 in out {rr}
+C1 out 0 100n
+
+.sweep rr 1k 5k 1k -analysis ac lin 1 1k 1k -output gain=mag(v(out))
+
+.control
+print rr gain
+* `plot gain` shows the 1 kHz gain versus the swept resistance rr
+.endc
+.end
