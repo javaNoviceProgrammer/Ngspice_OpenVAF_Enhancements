@@ -327,3 +327,14 @@ build's two linear solvers: Sparse 1.3 is the **default** and runs everything,
 while KLU (opt-in via `.option klu`) matches it on DC/AC/transient but **rejects
 noise and pole-zero** and is less robust on stiff transient edges — verified by a
 solver-by-solver sweep of the whole example suite.
+
+Not every idea survives measurement. [OSDI/Verilog-A device bypass — an
+investigation](docs/internals/ngspice_internals/ngspice_osdi_bypass.md)
+([PDF](docs/internals/ngspice_internals/ngspice_osdi_bypass.pdf)) records a full,
+correct prototype of element bypass (latency exploitation) for OSDI devices that
+was **built, measured, and then reverted**: it delivered no speedup (often a
+slowdown), because the per-device Jacobian/residual extraction a *safe* bypass
+test needs is not free for a monolithic OSDI `eval()`, and freezing device
+linearizations inflated the Newton iteration count enough to erase the eval
+savings — and on some circuits broke convergence outright. This mirrors ngspice's
+own choice to ship `.option bypass` disabled by default.
