@@ -393,8 +393,11 @@ a `factor` knob trades reduction against in-band accuracy (monotone). Ports are
 auto-detected as nodes touched by any non-R/C device (sources, transistors, OSDI) plus
 ground and user `keep` nodes. Verified under both solvers: identity reduction is
 bit-exact, a moderate factor gives ~4× fewer nodes at <0.25 dB in-band error, and an
-OSDI device auto-marks its port. The first cut is dense (node cap ~2500); a sparse
-implementation to reach real extraction scale is the follow-up.*
+OSDI device auto-marks its port. [Enhancement-156](../../../enhancements_doc/Enhancement-156.md)
+then makes the engine **sparse** — per-node adjacency lists + minimum-degree
+elimination (like sparse LU) + a `maxdeg` fill guard — lifting the node cap from ~2500
+into the millions (a 65k-node network reduces in ~4 s), so it reaches real extraction
+scale.*
 
 ## Behavioral / mixed-signal / AMS
 

@@ -79,6 +79,14 @@ def ladder(N=24, R=15, C="50f"):
     return "\n".join(L) + "\n"
 
 
+def subckt_terms(fname):
+    """the port order emitted on the `.subckt` line (terminals ARE node names)."""
+    for line in open(os.path.join(SCRATCH, fname)):
+        if line.lower().lstrip().startswith(".subckt"):
+            return line.split()[2:]
+    return []
+
+
 LAD = ladder()
 FMAX = 3e9
 
@@ -108,10 +116,14 @@ reduce {FMAX:g} factor {factor:g} {keep} file red.sp name rcred
 """, "rin.cir")
     m = re.search(r"reduce:\s*RC network\s+(\d+)\s+nodes\s*->\s*(\d+)\s+nodes", out)
     full_n, red_n = (int(m.group(1)), int(m.group(2))) if m else (0, 0)
+    # the .subckt terminal order is emitted (node-index order), so instantiate the
+    # xr with the terminals in that same order -- they ARE the node names.
+    terms = subckt_terms("red.sp")
+    inst = "xr " + " ".join(terms) + " rcred"
     # AC of the reduced subckt with the same external load
     run(f"""* reduced AC
 .include red.sp
-xr in out rcred
+{inst}
 V1 in 0 DC 0 AC 1
 Rload out 0 1k
 .control
@@ -125,7 +137,7 @@ wrdata red.dat vdb(out)
     return full_n, red_n, (max(inband) if inband else 1e9), out
 
 
-print("Enhancement-155: reduce (TICER RC reduction)")
+print("Enhancement-155/156: reduce (sparse TICER RC reduction)")
 
 fn, rn, err, out = reduce_and_ac(5)
 check("[1] `reduce` runs and reports a reduction", fn > 0 and rn > 0 and rn < fn,
@@ -158,6 +170,21 @@ sub = [l for l in open(os.path.join(SCRATCH, "red.sp")) if l.startswith(".subckt
 terms = sub[0].split()[2:] if sub else []
 check("[5] OSDI device auto-marks its node as a kept port (in + out, no `keep`)",
       "in" in terms and "out" in terms, f".subckt terminals = {terms}")
+
+# [6] SCALE (E-156): a network far past the old dense ~2500-node cap reduces sparsely
+BIG = 8000
+big = ["* big RC network"]
+prev = "in"
+for k in range(1, BIG):
+    big += [f"R{k} {prev} m{k} {12 + (k % 30)}", f"C{k} m{k} 0 {40 + (k % 80)}f"]
+    prev = f"m{k}"
+big += [f"R{BIG} {prev} out 12", "Cout out 0 50f"]
+outb = run("\n".join(big) + "\nV1 in 0 DC 0 AC 1\n.control\nop\n"
+           f"reduce 3g factor 20 keep out file big.sp name b\n.endc\n.end\n", "big.cir")
+mb = re.search(r"reduce:\s*RC network\s+(\d+)\s+nodes\s*->\s*(\d+)\s+nodes", outb)
+bn, brn = (int(mb.group(1)), int(mb.group(2))) if mb else (0, 0)
+check("[6] scales past the old ~2500-node dense cap (sparse min-degree)",
+      bn > 5000 and 0 < brn < bn, f"{bn} nodes -> {brn} (dense build capped at 2500)")
 
 print(f"\n{'ALL PASS' if _fail == 0 else 'FAILURES'}: {_fail} failed check(s)")
 sys.exit(0 if _fail == 0 else 1)

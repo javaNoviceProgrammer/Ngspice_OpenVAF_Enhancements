@@ -8,8 +8,21 @@ and writes it as an ordinary `.subckt` of R's and C's you can drop straight back
 a netlist.
 
 ```
-reduce <fmax> [factor <f>] [file <fname>] [name <subckt>] [keep <node> ...]
+reduce <fmax> [factor <f>] [maxdeg <d>] [file <fname>] [name <subckt>] [keep <node> ...]
 ```
+
+**Scale (Enhancement-156).** The engine is **sparse**: the network is stored as
+adjacency lists and interior nodes are eliminated in a **minimum-degree** order (like
+sparse LU), so fill-in stays tiny — a degree-2 chain node merges two series elements
+with *zero* fill. A **fill guard** (`maxdeg`, default 12) refuses to eliminate a node
+once its degree grows past the threshold, so a dense mesh core is left intact instead
+of blowing up. This lifts the node cap from ~2500 (the original dense build) into the
+millions — a 65k-node network reduces in a few seconds.
+
+> **Terminal order matters.** The reduced `.subckt`'s terminals are emitted in a fixed
+> order, which `reduce` prints (`reduce: instantiate as x1 <ports…> <name>`). Instance
+> it with the ports in *that* order, e.g. `x1 out in reduced` — not necessarily the
+> order you typed them.
 
 It uses **TICER** (Time-Constant Equilibration Reduction): Schur-complement (Gaussian)
 elimination of interior nodes, kept first-order in `s` so the result stays realizable
@@ -56,9 +69,7 @@ starts to deviate above ~1 GHz).
 
 ## Scope and follow-ups
 
-This first cut uses a **dense** elimination (capped at a few thousand nodes) — enough
-to demonstrate the capability and to reduce modest blocks. The natural follow-ups are
-a **sparse** TICER (eliminate low-degree nodes first to control fill-in, lifting the
-size cap into the millions), optional **passivity enforcement** (naive TICER can emit
-small negative elements, harmless for AC but worth guarding for transient), and RLCk
-(inductive) reduction.
+The reducer is **sparse** (Enhancement-156): minimum-degree elimination + a `maxdeg`
+fill guard scale it into the millions of nodes. Remaining follow-ups: optional
+**passivity enforcement** (naive TICER can emit small negative elements, harmless for
+AC but worth guarding for transient), and RLCk (inductive) reduction.

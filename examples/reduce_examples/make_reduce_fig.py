@@ -46,7 +46,10 @@ for fac in (5, 40):
     out = run(f"{LAD}V1 in 0 DC 0 AC 1\n.control\nop\nreduce 3g factor {fac} keep out file r.sp name rc\n.endc\n.end\n")
     m = re.search(r"(\d+)\s+nodes\s*->\s*(\d+)\s+nodes", out)
     fn_, rn_ = (int(m.group(1)), int(m.group(2))) if m else (0, 0)
-    run(".include r.sp\nxr in out rc\nV1 in 0 DC 0 AC 1\nRload out 0 1k\n"
+    # instantiate with the terminals in the emitted .subckt order (they ARE node names)
+    terms = next((l.split()[2:] for l in open(os.path.join(W, "r.sp"))
+                  if l.lower().lstrip().startswith(".subckt")), ["in", "out"])
+    run(f".include r.sp\nxr {' '.join(terms)} rc\nV1 in 0 DC 0 AC 1\nRload out 0 1k\n"
         ".control\nac dec 30 1meg 12g\nwrdata r.dat vdb(out)\n.endc\n.end\n")
     rt, rdb = acdat("r.dat")
     curves.append((fac, fn_, rn_, rt, rdb))

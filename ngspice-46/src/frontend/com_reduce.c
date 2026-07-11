@@ -50,7 +50,7 @@ com_reduce(wordlist *wl)
     CKTcircuit *ckt;
     double fmax, factor = 5.0;
     const char *fname = "reduced.sp", *subname = "reduced";
-    int keep[256], nkeep = 0, r;
+    int keep[256], nkeep = 0, r, maxdeg = 12;
     wordlist *w;
 
     if (!ft_curckt || !ft_curckt->ci_ckt) {
@@ -60,7 +60,7 @@ com_reduce(wordlist *wl)
     ckt = ft_curckt->ci_ckt;
 
     if (!wl || !wl->wl_word) {
-        fprintf(cp_err, "Usage: reduce <fmax> [factor <f>] [file <fname>] "
+        fprintf(cp_err, "Usage: reduce <fmax> [factor <f>] [maxdeg <d>] [file <fname>] "
                         "[name <subckt>] [keep <node> ...]\n");
         return;
     }
@@ -75,6 +75,8 @@ com_reduce(wordlist *wl)
         const char *k = w->wl_word;
         if (strcasecmp(k, "factor") == 0 && w->wl_next) {
             factor = rednum(w->wl_next->wl_word); w = w->wl_next;
+        } else if (strcasecmp(k, "maxdeg") == 0 && w->wl_next) {
+            maxdeg = (int) rednum(w->wl_next->wl_word); w = w->wl_next;
         } else if (strcasecmp(k, "file") == 0 && w->wl_next) {
             fname = w->wl_next->wl_word; w = w->wl_next;
         } else if (strcasecmp(k, "name") == 0 && w->wl_next) {
@@ -83,7 +85,8 @@ com_reduce(wordlist *wl)
             while (w->wl_next && nkeep < 256) {
                 const char *nx = w->wl_next->wl_word;
                 if (strcasecmp(nx, "factor") == 0 || strcasecmp(nx, "file") == 0 ||
-                    strcasecmp(nx, "name") == 0 || strcasecmp(nx, "keep") == 0)
+                    strcasecmp(nx, "name") == 0 || strcasecmp(nx, "keep") == 0 ||
+                    strcasecmp(nx, "maxdeg") == 0)
                     break;                          /* next keyword: stop consuming */
                 {
                     int nd = red_node(ckt, nx);
@@ -97,8 +100,9 @@ com_reduce(wordlist *wl)
         }
     }
     if (factor < 1.0) factor = 1.0;
+    if (maxdeg < 3) maxdeg = 3;
 
-    r = CKTreduceRC(ckt, fmax, factor, keep, nkeep, fname, subname);
+    r = CKTreduceRC(ckt, fmax, factor, maxdeg, keep, nkeep, fname, subname);
     if (r < 0)
         fprintf(cp_err, "reduce: reduction did not complete.\n");
 }
