@@ -11,6 +11,10 @@ pub enum PreprocessorDiagnostic {
     MacroNotFound { name: String, span: CtxSpan },
     MacroNotDefined { name: String, span: CtxSpan },
     MacroRecursion { name: String, span: CtxSpan },
+    /// Enhancement-148: a `` `include `` nesting deeper than the limit (a file that
+    /// includes itself, directly or transitively) -- reported instead of overflowing
+    /// the compiler stack, mirroring the `MacroRecursion` guard.
+    IncludeRecursionLimit { file: String, span: CtxSpan },
     UnsupportedCompDir { name: String, span: CtxSpan },
     FileNotFound { file: String, error: io::ErrorKind, span: Option<CtxSpan> },
     InvalidTextFormat { span: Option<CtxSpan>, file: VfsPath, err: InvalidTextFormatErr },
@@ -27,6 +31,7 @@ impl_display! {
         MacroNotFound{name,..} =>  "macro '`{}' has not been declared", name;
         MacroNotDefined{name,..} =>  "cannot undefine macro '`{}'", name;
         MacroRecursion { name,..} => "macro '`{}' was called recursively",name;
+        IncludeRecursionLimit { file,..} => "'`include \"{}\"' nests too deeply (a file that includes itself?)", file;
         UnsupportedCompDir { name,.. } => "unsupported compiler directive {}",name;
         FileNotFound { file, error, .. } => "failed to read '{}': {}", file, std::io::Error::from(*error);
         InvalidTextFormat {  file, ..} => "failed to read {}: file contents are not valid text", file;

@@ -24,11 +24,16 @@ pub(crate) struct Parser<'t> {
     pos: u32,
     events: Vec<Event>,
     steps: Cell<u32>,
+    /// Enhancement-148: current expression-tree depth (recursion + operator-chain
+    /// length). Bounded so a pathologically nested expression is reported cleanly
+    /// instead of overflowing the recursive-descent parser -- or a later recursive
+    /// tree traversal.
+    pub(crate) expr_depth: Cell<u32>,
 }
 
 impl<'t> Parser<'t> {
     pub(super) fn new(tokens: &'t [SyntaxKind]) -> Parser<'t> {
-        Parser { tokens, events: Vec::new(), steps: Cell::new(0), pos: 0 }
+        Parser { tokens, events: Vec::new(), steps: Cell::new(0), expr_depth: Cell::new(0), pos: 0 }
     }
 
     pub(crate) fn finish(self) -> Vec<Event> {

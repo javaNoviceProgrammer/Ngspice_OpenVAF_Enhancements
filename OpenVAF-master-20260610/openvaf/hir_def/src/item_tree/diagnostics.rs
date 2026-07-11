@@ -33,6 +33,25 @@ impl Diagnostic for ItemTreeDiagnosticWrapped<'_> {
                             .to_owned(),
                     ])
             }
+            ItemTreeDiagnostic::ArrayTooLarge { ast_id, size } => {
+                let range = self.ast_id_map.get_syntax(*ast_id).range();
+                let span = self.parse.to_file_span(range, self.sm);
+                Report::error()
+                    .with_message(format!(
+                        "array declaration expands to {size} elements, exceeding the limit"
+                    ))
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: span.file,
+                        range: span.range.into(),
+                        message: "array is too large to materialize".to_owned(),
+                    }])
+                    .with_notes(vec![
+                        "help: each element is expanded into its own scalar; use a smaller \
+                         range (the declaration was treated as a single scalar)"
+                            .to_owned(),
+                    ])
+            }
             ItemTreeDiagnostic::BareBusReferenceInBranch { ast_id, bus_name } => {
                 let range = self.ast_id_map.get_syntax(*ast_id).range();
                 let span = self.parse.to_file_span(range, self.sm);

@@ -74,6 +74,11 @@ pub enum ItemTreeDiagnostic {
     /// literals; the instantiation was treated as a single (non-arrayed)
     /// instance instead.
     NonConstantInstanceArrayWidth { ast_id: ErasedAstId },
+    /// Enhancement-148: an array / bus / instance-array declaration would expand to
+    /// more scalar elements than the compiler will materialize (e.g.
+    /// `real x[0:100000000]`). Reported instead of exhausting memory; the
+    /// declaration is treated as a single scalar so compilation proceeds.
+    ArrayTooLarge { ast_id: ErasedAstId, size: i64 },
     /// The `'{...}` initializer of an array variable or array parameter has a
     /// different number of leaf elements than the array's declared size
     /// (Enhancement-43). Previously a too-short literal crashed the compiler

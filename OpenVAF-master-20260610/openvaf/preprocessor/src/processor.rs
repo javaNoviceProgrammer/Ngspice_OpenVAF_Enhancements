@@ -36,6 +36,10 @@ pub(crate) struct Processor<'a> {
     /// the compiler stack (the diagnostic existed but was never emitted --
     /// `call_macro`'s "TODO track recursion").
     expansion_stack: Vec<&'a str>,
+    /// Enhancement-148: current `` `include `` nesting depth. A file that includes
+    /// itself (directly or transitively) is reported as `IncludeRecursionLimit`
+    /// instead of overflowing the compiler stack.
+    include_depth: u32,
     /// Value of the most recently seen `` `default_transition `` directive
     /// (Enhancement-47): the default rise/fall time for `transition()` filters
     /// that omit those arguments. `None` = 0 (instantaneous, the LRM default).
@@ -67,6 +71,7 @@ impl<'a> Processor<'a> {
             sources,
             include_dirs: sources.include_dirs(root_file),
             expansion_stack: Vec::new(),
+            include_depth: 0,
             default_discipline: None,
             default_transition: None,
         };
@@ -97,6 +102,17 @@ impl<'a> Processor<'a> {
         errors: &mut Diagnostics,
         workdir: &VfsPath,
     ) -> Result<(), (FileReadError, Option<VfsPath>)> {
+        // Enhancement-148: bound `include nesting so a file that includes itself
+        // (directly or transitively) is reported cleanly instead of recursing until
+        // the compiler stack overflows.
+        const MAX_INCLUDE_DEPTH: u32 = 64;
+        if self.include_depth >= MAX_INCLUDE_DEPTH {
+            errors.push(PreprocessorDiagnostic::IncludeRecursionLimit {
+                file: path.to_owned(),
+                span,
+            });
+            return Ok(());
+        }
         let mut include_dirs = once(workdir).chain(&*self.include_dirs);
         let found = loop {
             if let Some(dir) = include_dirs.next() {
@@ -121,7 +137,9 @@ impl<'a> Processor<'a> {
             .add_ctx(FileSpan { file, range: TextRange::up_to(TextSize::of(src)) }, span);
 
         let parser = Parser::new(src, ctx, workdir, dst, errors);
+        self.include_depth += 1;
         self.process_file(parser, errors);
+        self.include_depth -= 1;
 
         Ok(())
     }

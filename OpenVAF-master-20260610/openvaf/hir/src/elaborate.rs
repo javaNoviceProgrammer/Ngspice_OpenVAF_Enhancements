@@ -3159,7 +3159,19 @@ impl ElabCtx<'_> {
             let indices: Vec<Option<i32>> = match unit.width().and_then(|r| fold_width_range(&r)) {
                 Some((msb, lsb)) => {
                     let (lo, hi) = if msb <= lsb { (msb, lsb) } else { (lsb, msb) };
-                    (lo..=hi).map(Some).collect()
+                    // Enhancement-148: an instance array is flattened into one rendered
+                    // copy per element; refuse an absurd count instead of exhausting
+                    // memory (mirrors the item-tree / net-array caps).
+                    if (hi as i64 - lo as i64) + 1 > (1 << 20) {
+                        self.unknown_module_errors.push(format!(
+                            "instance array '{base_name}[{msb}:{lsb}]' expands to {} instances, \
+                             exceeding the limit",
+                            (hi as i64 - lo as i64) + 1
+                        ));
+                        vec![None]
+                    } else {
+                        (lo..=hi).map(Some).collect()
+                    }
                 }
                 None => vec![None],
             };

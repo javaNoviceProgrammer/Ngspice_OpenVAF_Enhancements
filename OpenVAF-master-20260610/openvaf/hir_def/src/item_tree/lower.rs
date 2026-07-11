@@ -25,6 +25,21 @@ use crate::{LocalFunctionArgId, LocalNodeId, Path, Type};
 /// Only literal integers (optionally unary-negated) are supported, matching
 /// `ast::Expr::as_constexprval`. Returns `None` if either bound is missing or
 /// not a constant integer.
+/// Enhancement-148: cap on how many scalar elements an array / bus / instance-array
+/// declaration may expand to. Each element becomes its own scalar net/var/instance, so
+/// an unbounded range (`real x[0:100000000]`) would exhaust memory; past this it is
+/// reported and degraded to a single scalar. Real declared arrays are far smaller.
+const MAX_ARRAY_ELEMS: i64 = 1 << 20; // ~1.05M
+
+/// Number of scalar elements a set of `[msb:lsb]` dimensions expands to, or `None` if
+/// that exceeds `MAX_ARRAY_ELEMS` (or overflows).
+fn array_elem_count(dims: &[(i32, i32)]) -> Option<i64> {
+    let n = dims.iter().try_fold(1i64, |acc, (msb, lsb)| {
+        acc.checked_mul((*msb as i64 - *lsb as i64).abs() + 1)
+    })?;
+    (n <= MAX_ARRAY_ELEMS).then_some(n)
+}
+
 fn fold_width_range(range: &ast::Range) -> Option<(i32, i32)> {
     let msb = range.start()?.as_constexprval()?;
     let lsb = range.end()?.as_constexprval()?;
@@ -555,6 +570,22 @@ impl Ctx {
             };
 
             match fold_width_range(&range) {
+                // Enhancement-148: cap instance-array expansion so `dev r[0:100000000]()`
+                // is reported instead of materializing millions of instances.
+                Some((msb, lsb)) if array_elem_count(&[(msb, lsb)]).is_none() => {
+                    self.tree.diagnostics.push(ItemTreeDiagnostic::ArrayTooLarge {
+                        ast_id: ast_id.into(),
+                        size: (msb as i64 - lsb as i64).abs() + 1,
+                    });
+                    let id = self.tree.data.instantiations.push_and_get_key(Instantiation {
+                        name: base_name.clone(),
+                        unit_idx,
+                        array_index: None,
+                        module: module.clone(),
+                        ast_id,
+                    });
+                    dst.push(id.into());
+                }
                 Some((msb, lsb)) => {
                     let (lo, hi) = if msb <= lsb { (msb, lsb) } else { (lsb, msb) };
                     for idx in lo..=hi {
@@ -645,6 +676,17 @@ impl Ctx {
                 None
             } else {
                 match fold_width_ranges(ret_widths.iter().cloned()) {
+                    // Enhancement-148: cap array-return expansion.
+                    Some(dims) if array_elem_count(&dims).is_none() => {
+                        let fun_ast_id = self.source_ast_id_map.ast_id(&fun);
+                        self.tree.diagnostics.push(ItemTreeDiagnostic::ArrayTooLarge {
+                            ast_id: fun_ast_id.into(),
+                            size: dims.iter().fold(1i64, |a, (m, l)| {
+                                a.saturating_mul((*m as i64 - *l as i64).abs() + 1)
+                            }),
+                        });
+                        None
+                    }
                     Some(dims) => {
                         let fun_ast_id = self.source_ast_id_map.ast_id(&fun);
                         let arr = BusDecl {
@@ -856,6 +898,22 @@ impl Ctx {
                             .find(|(n, _)| *n == name)
                             .and_then(|(_, w)| fold_width_range(w));
                         match width {
+                            // Enhancement-148: cap bus-port expansion.
+                            Some((msb, lsb))
+                                if array_elem_count(&[(msb, lsb)]).is_none() =>
+                            {
+                                self.tree.diagnostics.push(ItemTreeDiagnostic::ArrayTooLarge {
+                                    ast_id: ast_id.into(),
+                                    size: (msb as i64 - lsb as i64).abs() + 1,
+                                });
+                                let node = nodes.push_and_get_key(Node {
+                                    name,
+                                    is_port: true,
+                                    ast_id: ast_id.into(),
+                                    decls: Vec::new(),
+                                });
+                                dst.push(node.into())
+                            }
                             Some((msb, lsb)) => {
                                 let (lo, hi) =
                                     if msb >= lsb { (lsb, msb) } else { (msb, lsb) };
@@ -915,6 +973,14 @@ impl Ctx {
         for (name_idx, name) in names.enumerate() {
             let base_name = name.as_name();
             match fold_width_range(&width) {
+                // Enhancement-148: cap net/port bus expansion.
+                Some((msb, lsb)) if array_elem_count(&[(msb, lsb)]).is_none() => {
+                    self.tree.diagnostics.push(ItemTreeDiagnostic::ArrayTooLarge {
+                        ast_id,
+                        size: (msb as i64 - lsb as i64).abs() + 1,
+                    });
+                    res.push((base_name, name_idx, None));
+                }
                 Some((msb, lsb)) => {
                     buses.push(BusDecl {
                         base_name: base_name.clone(),
@@ -1194,6 +1260,17 @@ impl Ctx {
 
             match fold_width_ranges(widths.iter().cloned()) {
                 Some(dims) => {
+                    // Enhancement-148: refuse to materialize an absurdly large array.
+                    if array_elem_count(&dims).is_none() {
+                        let size = dims.iter().fold(1i64, |a, (m, l)| {
+                            a.saturating_mul((*m as i64 - *l as i64).abs() + 1)
+                        });
+                        self.tree
+                            .diagnostics
+                            .push(ItemTreeDiagnostic::ArrayTooLarge { ast_id: ast_id.into(), size });
+                        push_scalar(self);
+                        continue;
+                    }
                     let arr = BusDecl {
                         base_name: base_name.clone(),
                         msb: dims[0].0,
@@ -1293,6 +1370,17 @@ impl Ctx {
                 (true, _, _) => push_scalar(self, dst),
                 // array-valued parameter at module scope with constant widths
                 (false, true, Some(dims)) => {
+                    // Enhancement-148: refuse to materialize an absurdly large array param.
+                    if array_elem_count(dims).is_none() {
+                        let size = dims.iter().fold(1i64, |a, (m, l)| {
+                            a.saturating_mul((*m as i64 - *l as i64).abs() + 1)
+                        });
+                        self.tree
+                            .diagnostics
+                            .push(ItemTreeDiagnostic::ArrayTooLarge { ast_id: ast_id.into(), size });
+                        push_scalar(self, dst);
+                        continue;
+                    }
                     let arr = BusDecl {
                         base_name: base_name.clone(),
                         msb: dims[0].0,

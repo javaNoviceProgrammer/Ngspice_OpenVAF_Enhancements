@@ -66,6 +66,21 @@ impl Diagnostic for PreprocessorDiagnostic {
                             .to_owned(),
                     ])
             }
+            PreprocessorDiagnostic::IncludeRecursionLimit { span, .. } => {
+                let span = span.to_file_span(&sm);
+
+                Report::error()
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: span.file,
+                        range: span.range.into(),
+                        message: "include nested too deeply here".to_owned(),
+                    }])
+                    .with_notes(vec![
+                        "help: a file must not `include itself, directly or through other files"
+                            .to_owned(),
+                    ])
+            }
             PreprocessorDiagnostic::UnsupportedCompDir { span, .. } => {
                 let span = span.to_file_span(&sm);
 

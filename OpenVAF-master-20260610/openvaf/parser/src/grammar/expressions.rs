@@ -63,8 +63,31 @@ fn current_op(p: &Parser) -> (u8, SyntaxKind) {
     }
 }
 
+/// Enhancement-148: bound expression-tree depth (recursive nesting *and*
+/// operator-chain length) so a pathologically deep expression is reported cleanly
+/// instead of overflowing the recursive-descent parser -- or a later recursive
+/// traversal of the resulting (deep, left-leaning) syntax tree. Real device models
+/// nest expressions only a few dozen deep; 1000 leaves generous headroom.
+const MAX_EXPR_DEPTH: u32 = 1000;
+
+/// Report an over-deep expression and recover to the next expression boundary --
+/// the same recovery the generic "unexpected token" path uses.
+fn expr_too_deep(p: &mut Parser) {
+    p.err_recover(p.unexpected_tokens_msg(EXPR_EXPECTED.to_owned()), EXPR_RECOVERY_SET);
+}
+
 // Parses expression with binding power of at least bp.
 fn expr_bp(p: &mut Parser, bp: u8) -> Option<CompletedMarker> {
+    // `atom_expr` brackets recursive nesting; the loop below adds one depth unit per
+    // operator (the left-leaning chain it builds is exactly that deep). Restore the
+    // entry depth on the way out so sibling expressions start fresh.
+    let start = p.expr_depth.get();
+    let res = expr_bp_inner(p, bp);
+    p.expr_depth.set(start);
+    res
+}
+
+fn expr_bp_inner(p: &mut Parser, bp: u8) -> Option<CompletedMarker> {
     let mut lhs = atom_expr(p)?;
 
     loop {
@@ -72,6 +95,12 @@ fn expr_bp(p: &mut Parser, bp: u8) -> Option<CompletedMarker> {
 
         if op_bp < bp {
             break;
+        }
+
+        p.expr_depth.set(p.expr_depth.get() + 1);
+        if p.expr_depth.get() > MAX_EXPR_DEPTH {
+            expr_too_deep(p);
+            return None;
         }
 
         if op == T![?] {
@@ -103,6 +132,23 @@ pub(crate) const EXPR_RECOVERY_SET: TokenSet = TokenSet::new(&[
 ]);
 
 fn atom_expr(p: &mut Parser) -> Option<CompletedMarker> {
+    // Enhancement-148: every level of expression nesting passes through `atom_expr`
+    // (prefix operators recurse into it directly; parentheses, calls and ternary
+    // branches recurse through `expr` -> `expr_bp` -> `atom_expr`). Counting here
+    // bounds the recursion depth; the shared counter is restored by the caller.
+    let depth = p.expr_depth.get() + 1;
+    p.expr_depth.set(depth);
+    let res = if depth > MAX_EXPR_DEPTH {
+        expr_too_deep(p);
+        None
+    } else {
+        atom_expr_inner(p)
+    };
+    p.expr_depth.set(p.expr_depth.get() - 1);
+    res
+}
+
+fn atom_expr_inner(p: &mut Parser) -> Option<CompletedMarker> {
     // if let Some(m) = literal(p) {
     //     return Some(m);
     // }
