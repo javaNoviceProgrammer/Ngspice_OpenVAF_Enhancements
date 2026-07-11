@@ -125,10 +125,41 @@ optimization level, which is a genuine trade-off:
   and simulation speed does not matter, `-O1` cuts compile time 20–31 % at a
   negligible-to-small (0–3 %) runtime cost.
 
-The one path to a genuine *free* speedup would be **splitting the monolithic `eval`
-module** so its LLVM optimization parallelizes across the idle cores — potentially
-approaching a 2× wall-clock reduction on a large model — but that is a significant
-architectural change to the OSDI codegen, recorded here as future work.
+### Future work: splitting the `eval` module — and why it isn't a clean win
+
+The obvious idea for reclaiming the idle cores is to **split the monolithic `eval`
+module** so its LLVM optimization parallelizes. On a large model that could approach a
+2× wall-clock reduction. But it is a significant change to the OSDI codegen, and — as
+the numbers show — it is *not* a free win. It has a cost at both ends.
+
+**Small models: the fixed-cost floor makes it a net loss.** A trivial resistor (whose
+`eval` is a single divide) compiles in **0.094 s at `-O3` versus 0.090 s at `-O0`** —
+optimization adds only ~4 ms, so essentially the entire ~90 ms is fixed overhead:
+process startup, the front-end, and the *setup / build / emit / link* of the modules
+that already exist. Splitting `eval` there would spread work that is already
+sub-millisecond while adding more of exactly that fixed overhead — a new `LLVMContext`
+and module, another object file to emit and **link** (the final `.osdi` links every
+`.o`, so more of them means more linker work), and a thread spawn/join. Below some
+size threshold the compile is dominated by that floor, so extra modules can only make
+it **slower**.
+
+**Large models: it trades compile time for simulation speed.** The existing four-way
+split (`access` / `setup_model` / `setup_instance` / `eval`) is free parallelism
+because those are *genuinely independent* OSDI entry-point functions — they never
+inline into one another, so nothing is lost. `eval`, by contrast, is **one logical
+function**. Parallelizing it means breaking it into separate functions in separate
+modules, which introduces call boundaries and **loses cross-function inlining and
+optimization across the split** (openvaf builds with LTO off). For the device hot path
+that runs millions of times in a simulation, that is a *runtime* cost — the very thing
+the `-O3` default exists to protect.
+
+So a real implementation would have to be **adaptive**, not unconditional: split
+`eval` only when it is large enough that the parallel compile savings clearly beat the
+fixed per-split overhead, keep the monolithic module below that threshold (leaving
+small models untouched), and choose split points that minimize the inlining loss —
+the same shape as `rustc`'s codegen-units or ThinLTO import thresholds. The net is a
+plausible win only on the handful of big CMC models, and even there a compile-vs-
+runtime trade — which is why it stays future work rather than an obvious optimization.
 
 ## Reproducing
 
@@ -140,3 +171,7 @@ architectural change to the OSDI codegen, recorded here as future work.
 - **Opt-level trade-off:** compile the same model at `-O0/1/2/3`, time each, then
   build a `.osdi` at each level and time a device-heavy transient in ngspice (many
   instances × many timesteps) so the model `eval` dominates the simulator's runtime.
+- **Fixed-cost floor:** compile a trivial model (a one-line resistor) at `-O3` and at
+  `-O0`; their near-equal times (≈90 ms here, differing by a few ms) are almost
+  entirely startup + front-end + module setup/emit/link, with negligible optimization
+  — the overhead any further module split would add to on top.
