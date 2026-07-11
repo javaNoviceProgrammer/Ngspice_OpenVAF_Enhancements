@@ -43,6 +43,7 @@ Copyright 2008 Holger Vogt
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdint.h>
 #ifdef _MSC_VER
 #include <process.h>
 #else
@@ -326,4 +327,256 @@ void
 setseedinfo(void)
 {
     seedinfo = TRUE;
+}
+
+
+/* =====================================================================
+ * Enhancement-149: Latin-Hypercube (LHS) low-discrepancy Monte Carlo
+ * sampling.
+ *
+ * Plain Monte Carlo draws each random parameter independently from the PRNG,
+ * so with a modest number of runs the samples clump and leave gaps, and the
+ * estimated mean / yield converges only as 1/sqrt(N). Latin-Hypercube sampling
+ * instead partitions every random dimension's [0,1) range into N equal strata
+ * and guarantees exactly one sample per stratum (with an independent random
+ * permutation across dimensions), which removes the clumping and typically cuts
+ * the variance of the estimate substantially for the same N.
+ *
+ * Integration model. The netlist Monte Carlo idiom is a `reset`-driven loop:
+ * each `reset` re-evaluates the `.param` expressions, and the stochastic
+ * functions agauss/gauss/aunif/unif/limit (numparam/xpressn.c) draw one value
+ * apiece. So within one pass the k-th stochastic call is "dimension k", and each
+ * pass is one "sample". mc_sample_advance() (called from the NUPADECKCOPY pass
+ * edge in spicenum.c) steps the sample index and rewinds the dimension counter;
+ * every draw then returns the stratified value for (dimension, sample).
+ *
+ * Each dimension's stratum permutation and per-sample jitter are generated
+ * lazily on first use, from a splitmix64 seeded by (user seed, dimension), so
+ * the whole sequence is reproducible and independent of evaluation order.
+ * ===================================================================== */
+
+enum { MC_MODE_RANDOM = 0, MC_MODE_LHS = 1 };
+
+static int      lhs_mode = MC_MODE_RANDOM;
+static int      lhs_N = 0;         /* number of samples / strata            */
+static int      lhs_sample = -1;   /* current sample index in [0, N)        */
+static int      lhs_dim = 0;       /* dimension counter within this sample  */
+static unsigned lhs_seed = 1;
+static int    **lhs_perm = NULL;   /* [dim][N] stratum permutation          */
+static double **lhs_jit = NULL;    /* [dim][N] in-stratum jitter in [0,1)   */
+static int      lhs_dim_cap = 0;   /* allocated length of lhs_perm/lhs_jit  */
+
+/* splitmix64 -- a tiny, self-contained, reproducible generator used only to
+ * build the per-dimension strata, kept independent of the global PRNG state. */
+static uint64_t sm_next(uint64_t *s)
+{
+    uint64_t z = (*s += 0x9E3779B97F4A7C15ULL);
+    z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ULL;
+    z = (z ^ (z >> 27)) * 0x94D049BB133111EBULL;
+    return z ^ (z >> 31);
+}
+
+static double sm_unif(uint64_t *s)   /* [0,1) with 53-bit resolution */
+{
+    return (double)(sm_next(s) >> 11) * (1.0 / 9007199254740992.0);
+}
+
+static void lhs_free_tables(void)
+{
+    int d;
+    for (d = 0; d < lhs_dim_cap; d++) {
+        tfree(lhs_perm[d]);
+        tfree(lhs_jit[d]);
+    }
+    tfree(lhs_perm);
+    tfree(lhs_jit);
+    lhs_dim_cap = 0;
+}
+
+/* Build the stratum permutation and jitter for dimension d (grows the tables as
+ * needed). Fisher-Yates over 0..N-1, then N jitters, from a per-dimension seed. */
+static void lhs_gen_dim(int d)
+{
+    int i;
+    if (d >= lhs_dim_cap) {
+        int newcap = (d + 1) * 2;
+        lhs_perm = TREALLOC(int *, lhs_perm, newcap);
+        lhs_jit = TREALLOC(double *, lhs_jit, newcap);
+        for (i = lhs_dim_cap; i < newcap; i++) {
+            lhs_perm[i] = NULL;
+            lhs_jit[i] = NULL;
+        }
+        lhs_dim_cap = newcap;
+    }
+    if (lhs_perm[d] != NULL)
+        return;
+
+    int *p = TMALLOC(int, lhs_N);
+    double *j = TMALLOC(double, lhs_N);
+    uint64_t s = (uint64_t)lhs_seed * 0x2545F4914F6CDD1DULL +
+                 (uint64_t)(d + 1) * 0x9E3779B97F4A7C15ULL;
+    for (i = 0; i < lhs_N; i++)
+        p[i] = i;
+    for (i = lhs_N - 1; i > 0; i--) {
+        int k = (int)(sm_unif(&s) * (double)(i + 1));
+        if (k > i)
+            k = i;
+        int tmp = p[i];
+        p[i] = p[k];
+        p[k] = tmp;
+    }
+    for (i = 0; i < lhs_N; i++)
+        j[i] = sm_unif(&s);
+    lhs_perm[d] = p;
+    lhs_jit[d] = j;
+}
+
+int mc_sample_active(void)
+{
+    return lhs_mode == MC_MODE_LHS && lhs_N > 0;
+}
+
+/* Step to the next sample and rewind the per-sample dimension counter. Called
+ * once per deck re-evaluation pass. */
+void mc_sample_advance(void)
+{
+    if (!mc_sample_active())
+        return;
+    lhs_sample++;
+    lhs_dim = 0;
+}
+
+/* Next stratified uniform in [0,1) for the current (sample, dimension). Falls
+ * back to a PRNG uniform outside the configured N (e.g. extra draws past the
+ * requested sample count), so behaviour is never worse than plain MC. */
+double mc_sample_uniform(void)
+{
+    if (!mc_sample_active() || lhs_sample < 0 || lhs_sample >= lhs_N)
+        return 0.5 * (drand() + 1.0);
+    int d = lhs_dim++;
+    lhs_gen_dim(d);
+    return ((double)lhs_perm[d][lhs_sample] + lhs_jit[d][lhs_sample]) /
+           (double)lhs_N;
+}
+
+/* Next stratified standard-normal draw: stratify in uniform space, then map
+ * through the inverse normal CDF so the Gaussian tails are covered evenly. */
+double mc_sample_gauss(void)
+{
+    if (!mc_sample_active() || lhs_sample < 0 || lhs_sample >= lhs_N)
+        return gauss1();
+    double u = mc_sample_uniform();
+    if (u < 1e-12)
+        u = 1e-12;
+    else if (u > 1.0 - 1e-12)
+        u = 1.0 - 1e-12;
+    return inv_normal_cdf(u);
+}
+
+/* Peter Acklam's rational approximation to the inverse standard-normal CDF
+ * (relative error < 1.15e-9 across (0,1)). Maps a uniform in (0,1) to the
+ * corresponding standard-normal quantile. */
+double inv_normal_cdf(double p)
+{
+    static const double a[6] = {
+        -3.969683028665376e+01, 2.209460984245205e+02, -2.759285104469687e+02,
+        1.383577518672690e+02, -3.066479806614716e+01, 2.506628277459239e+00};
+    static const double b[5] = {
+        -5.447609879822406e+01, 1.615858368580409e+02, -1.556989798598866e+02,
+        6.680131188771972e+01, -1.328068155288572e+01};
+    static const double c[6] = {
+        -7.784894002430293e-03, -3.223964580411365e-01, -2.400758277161838e+00,
+        -2.549732539343734e+00, 4.374664141464968e+00, 2.938163982698783e+00};
+    static const double d[4] = {
+        7.784695709041462e-03, 3.224671290700398e-01, 2.445134137142996e+00,
+        3.754408661907416e+00};
+    const double p_low = 0.02425, p_high = 1.0 - 0.02425;
+    double q, r;
+    if (p <= 0.0)
+        return -HUGE_VAL;
+    if (p >= 1.0)
+        return HUGE_VAL;
+    if (p < p_low) {
+        q = sqrt(-2.0 * log(p));
+        return (((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q +
+                c[5]) /
+               ((((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1.0);
+    } else if (p <= p_high) {
+        q = p - 0.5;
+        r = q * q;
+        return (((((a[0] * r + a[1]) * r + a[2]) * r + a[3]) * r + a[4]) * r +
+                a[5]) *
+               q /
+               (((((b[0] * r + b[1]) * r + b[2]) * r + b[3]) * r + b[4]) * r +
+                1.0);
+    } else {
+        q = sqrt(-2.0 * log(1.0 - p));
+        return -(((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q +
+                 c[5]) /
+               ((((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1.0);
+    }
+}
+
+/* mcsample lhs <N> [seed <s>]   -- engage Latin-Hypercube sampling for N runs
+ * mcsample random | off         -- revert to independent PRNG sampling         */
+void com_mcsample(wordlist *wl)
+{
+    if (wl == NULL) {
+        if (mc_sample_active())
+            printf("Monte Carlo sampling: Latin-Hypercube, N = %d, seed = %u "
+                   "(sample %d).\n", lhs_N, lhs_seed, lhs_sample);
+        else
+            printf("Monte Carlo sampling: random (independent PRNG).\n");
+        return;
+    }
+
+    char *method = wl->wl_word;
+    if (cieq(method, "off") || cieq(method, "random")) {
+        lhs_free_tables();
+        lhs_mode = MC_MODE_RANDOM;
+        lhs_N = 0;
+        lhs_sample = -1;
+        lhs_dim = 0;
+        printf("Monte Carlo sampling reset to random (independent PRNG).\n");
+        return;
+    }
+
+    if (!cieq(method, "lhs")) {
+        fprintf(cp_err, "Error: unknown sampling method '%s' "
+                        "(use 'lhs', 'random', or 'off').\n", method);
+        return;
+    }
+
+    if (wl->wl_next == NULL) {
+        fprintf(cp_err, "Error: 'mcsample lhs' needs a sample count N.\n");
+        return;
+    }
+    int nsamp = atoi(wl->wl_next->wl_word);
+    if (nsamp < 2) {
+        fprintf(cp_err, "Error: LHS sample count must be >= 2 (got '%s').\n",
+                wl->wl_next->wl_word);
+        return;
+    }
+
+    /* optional: seed <s> */
+    unsigned seed = 1;
+    wordlist *w = wl->wl_next->wl_next;
+    if (w != NULL) {
+        if (cieq(w->wl_word, "seed") && w->wl_next != NULL) {
+            seed = (unsigned)strtoul(w->wl_next->wl_word, NULL, 10);
+        } else {
+            fprintf(cp_err, "Warning: ignoring trailing 'mcsample' arguments "
+                            "starting at '%s'.\n", w->wl_word);
+        }
+    }
+
+    lhs_free_tables();
+    lhs_mode = MC_MODE_LHS;
+    lhs_N = nsamp;
+    lhs_seed = seed;
+    lhs_sample = -1;
+    lhs_dim = 0;
+    printf("Monte Carlo sampling: Latin-Hypercube, N = %d, seed = %u.\n"
+           "  Each of the next %d reset-driven passes draws one stratified "
+           "sample per random parameter.\n", lhs_N, lhs_seed, lhs_N);
 }

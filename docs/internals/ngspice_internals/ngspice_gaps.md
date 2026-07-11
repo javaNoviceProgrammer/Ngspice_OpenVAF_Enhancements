@@ -289,13 +289,20 @@ incommensurate QPSS, cf. note 6) are the remaining follow-ups.*
 |---|---|:---:|:---:|
 | Statistical | Monte Carlo | ⚠️ | ✅ |
 | Statistical | Native process/mismatch modeling + correlations | ⚠️ | ✅ |
-| Statistical | Low-discrepancy sampling (Sobol / Latin-hypercube) | ❌ | ✅ |
+| Statistical | Low-discrepancy sampling (Sobol / Latin-hypercube) | ✅ | ✅ |
 | Statistical | High-sigma methods (importance sampling, worst-case distance) | ❌ | ✅ |
 | Statistical | Corner + MC + yield estimation flow | ⚠️ | ✅ |
 
 *Monte Carlo is ⚠️: works, but script-driven (`alter` + `sgauss`, with the
 deterministic-seed RNG from Enhancement-10/66) rather than a native statistical
 block with sampling controls.*
+
+*Low-discrepancy sampling is ✅ since
+[Enhancement-149](../../../enhancements_doc/Enhancement-149.md): `mcsample lhs <N>`
+gives Latin-Hypercube stratification for the `reset`-driven `.param` Monte Carlo
+idiom (agauss/gauss/aunif/unif/limit), measured ~130× lower estimator variance at
+the same run count. Sobol and the nutmeg-loop `sgauss`/`sunif` idiom remain
+follow-ups.*
 
 ## Reliability / aging
 
@@ -428,8 +435,13 @@ leverage on the existing strength × differentiation × tractability:
    globalization and continuation gaps are now closed. What remains is mostly
    auto-triggering heuristics (reaching for these aids without the user asking) and
    folding them into the robustness presets. Self-contained in the ngspice core.
-3. **High-sigma statistical sampling** — high industrial value (yield / SRAM),
-   moderate difficulty, leans on the deterministic-seed RNG already in place.
+3. **Statistical sampling** — the foundational brick landed in
+   [Enhancement-149](../../../enhancements_doc/Enhancement-149.md): Latin-Hypercube
+   low-discrepancy sampling (`mcsample lhs`), ~130× lower estimator variance at the
+   same run count. What remains is high industrial value (yield / SRAM), moderate
+   difficulty, and now has a good sampler to build on: **high-sigma methods**
+   (importance sampling, worst-case distance) and native process/mismatch
+   correlations.
 
 Explicitly **lower priority**: fast-SPICE parallelism and aging/EMIR — enormous
 efforts that don't leverage what makes this project distinctive.

@@ -42,6 +42,23 @@ ternary_fcn(double conditional, double if_value, double else_value)
 }
 
 
+/* Enhancement-149: one standard-normal / one uniform-in-[-1,1) draw, taken from
+ * the Latin-Hypercube sampler when `mcsample lhs` is engaged and otherwise from
+ * the plain PRNG. Each call consumes exactly one LHS dimension, so a `.param`
+ * with K stochastic functions maps to K stratified dimensions per sample. */
+static double
+mc_gauss_draw(void)
+{
+    return mc_sample_active() ? mc_sample_gauss() : gauss1();
+}
+
+static double
+mc_unif_draw(void)
+{
+    return mc_sample_active() ? (2.0 * mc_sample_uniform() - 1.0) : drand();
+}
+
+
 static double
 agauss(double nominal_val, double abs_variation, double sigma)
 {
@@ -49,7 +66,7 @@ agauss(double nominal_val, double abs_variation, double sigma)
     if (abs_variation <= 0 || sigma <= 0)
         return nominal_val;
     stdvar = abs_variation / sigma;
-    return (nominal_val + stdvar * gauss1());
+    return (nominal_val + stdvar * mc_gauss_draw());
 }
 
 
@@ -60,28 +77,28 @@ gauss(double nominal_val, double rel_variation, double sigma)
     if (rel_variation <= 0 || sigma <= 0)
         return nominal_val;
     stdvar = nominal_val * rel_variation / sigma;
-    return (nominal_val + stdvar * gauss1());
+    return (nominal_val + stdvar * mc_gauss_draw());
 }
 
 
 static double
 unif(double nominal_val, double rel_variation)
 {
-    return (nominal_val + nominal_val * rel_variation * drand());
+    return (nominal_val + nominal_val * rel_variation * mc_unif_draw());
 }
 
 
 static double
 aunif(double nominal_val, double abs_variation)
 {
-    return (nominal_val + abs_variation * drand());
+    return (nominal_val + abs_variation * mc_unif_draw());
 }
 
 
 static double
 limit(double nominal_val, double abs_variation)
 {
-    return (nominal_val + (drand() > 0 ? abs_variation : -1. * abs_variation));
+    return (nominal_val + (mc_unif_draw() > 0 ? abs_variation : -1. * abs_variation));
 }
 
 /* The list of built-in functions. Patch 'mathfunction', here to get more ...

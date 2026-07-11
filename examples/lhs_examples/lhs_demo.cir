@@ -1,0 +1,59 @@
+* lhs_demo.cir -- Latin-Hypercube Monte Carlo sampling (Enhancement-149)
+*
+* A resistor divider whose two resistors are independent random parameters.
+* We estimate the mean output voltage from N=64 Monte Carlo runs, first with
+* plain random sampling and then with Latin-Hypercube sampling engaged by
+* `mcsample lhs`, and report the sample mean and standard deviation of each.
+*
+* LHS partitions every random parameter's range into N equal strata and draws
+* exactly one sample per stratum, so N runs cover each distribution evenly
+* instead of clumping -- the sample statistics are a much tighter estimate of
+* the true distribution for the same number of runs. `mcsample random` (or
+* `off`) reverts to independent PRNG draws.
+*
+* Run:  ngspice -b lhs_demo.cir
+
+.param rtop = agauss(1000, 100, 3)      ; ~ N(1000, 33.33)
+.param rbot = aunif(1000, 100)          ; uniform on [900, 1100]
+vin in 0 dc 1
+rt  in out {rtop}
+rb  out 0 {rbot}
+
+.control
+  set numdgt=8
+  let nrun = 64
+
+  * ---- plain random Monte Carlo ----
+  * accumulators created once, up front, so they survive the reset loops
+  let vr = unitvec(nrun)
+  let vh = unitvec(nrun)
+
+  * ---- plain random Monte Carlo ----
+  mcsample random
+  setseed 1
+  let k = 0
+  dowhile k < nrun
+    reset
+    op
+    let vr[k] = v(out)
+    let k = k + 1
+  end
+
+  * ---- Latin-Hypercube Monte Carlo (same N) ----
+  mcsample lhs 64 seed 1
+  let k = 0
+  dowhile k < nrun
+    reset
+    op
+    let vh[k] = v(out)
+    let k = k + 1
+  end
+
+  echo --- plain random Monte Carlo, N=64 ---
+  print mean(vr) stddev(vr)
+  echo --- Latin-Hypercube Monte Carlo, N=64 (same N) ---
+  print mean(vh) stddev(vh)
+
+  mcsample off
+.endc
+.end

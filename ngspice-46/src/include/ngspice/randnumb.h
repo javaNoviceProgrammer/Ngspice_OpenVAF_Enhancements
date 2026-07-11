@@ -19,4 +19,17 @@ extern void TausSeed(void);
 extern unsigned int CombLCGTausInt(void);
 extern unsigned int CombLCGTausInt2(void);
 
+/* Enhancement-149: Latin-Hypercube (LHS) low-discrepancy Monte Carlo sampling.
+   The `mcsample` command configures a stratified sampler that the netlist
+   stochastic functions (agauss/gauss/aunif/unif/limit) draw from instead of the
+   plain PRNG, so N `reset`-driven samples cover each random dimension's range
+   evenly (one sample per stratum). mc_sample_advance() is called once per deck
+   re-evaluation pass (the NUPADECKCOPY edge) to step to the next sample. */
+extern void com_mcsample(wordlist *wl);
+extern int  mc_sample_active(void);      /* nonzero when LHS mode is engaged   */
+extern void mc_sample_advance(void);     /* step to the next sample (per pass) */
+extern double mc_sample_uniform(void);   /* next stratified U in [0,1)         */
+extern double mc_sample_gauss(void);     /* next stratified standard normal    */
+extern double inv_normal_cdf(double p);  /* probit: standard-normal quantile   */
+
 #endif

@@ -29,6 +29,7 @@ Todo:
 #include "ngspice/fteext.h"
 #include "ngspice/stringskip.h"
 #include "ngspice/compatmode.h"
+#include "ngspice/randnumb.h"   /* Enhancement-149: LHS sample advance */
 
 #ifdef SHARED_MODULE
 extern ATTRIBUTE_NORETURN void shared_exit(int status);
@@ -726,6 +727,10 @@ nupa_signal(int sig)
     if (sig == NUPADECKCOPY) {
         if (firstsignalS) {
             nupa_init();
+            /* Enhancement-149: one full deck re-evaluation pass == one Monte
+             * Carlo sample; step the Latin-Hypercube sampler to the next
+             * stratified point before the `.param` stochastic draws run. */
+            mc_sample_advance();
             firstsignalS = 0;
         }
     } else if (sig == NUPASUBSTART) {
