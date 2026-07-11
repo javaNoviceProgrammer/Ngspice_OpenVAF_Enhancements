@@ -617,6 +617,12 @@ impl ExprValidator<'_, '_> {
                         sink.extend(non_const_dominators.to_vec())
                     }
                 }
+                // Robustness fix: the arm above already validates cond, then_val and
+                // else_val (via validate_condition). Falling through to the generic
+                // walk_child_exprs below would validate then_val/else_val a SECOND
+                // time, so a chain of N nested ternaries was validated 2^N times --
+                // an exponential-time hang. Return like the Call / Path arms do.
+                return;
             }
 
             Expr::Path { port: false, .. } => {

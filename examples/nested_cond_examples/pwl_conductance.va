@@ -1,0 +1,20 @@
+// A resistor whose conductance is chosen by a chain of nested ternary (?:)
+// conditionals on the terminal voltage -- a piecewise-constant conductance.
+// Nested conditionals like this used to make the compiler's body validator run
+// in O(2^depth) time (Enhancement-147); this 8-deep chain is a small correctness
+// check for that fix.
+`include "disciplines.vams"
+
+module pwl_conductance(a, b);
+    inout a, b;
+    electrical a, b;
+    real g;
+    analog begin
+        // g = 1/1k above 4 V, 1/2k in (3,4], 1/3k in (2,3], 1/4k in (1,2], 1/5k below
+        g = (V(a,b) > 4.0) ? 1.0e-3 :
+            (V(a,b) > 3.0) ? 0.5e-3 :
+            (V(a,b) > 2.0) ? (1.0/3.0e3) :
+            (V(a,b) > 1.0) ? 0.25e-3 : 0.2e-3;
+        I(a,b) <+ g * V(a,b);
+    end
+endmodule
