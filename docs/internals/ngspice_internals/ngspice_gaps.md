@@ -130,7 +130,7 @@ solver-by-solver sweep of the example suite:
 | RF | Periodic transfer function (PXF) | ✅⁴ | ✅ |
 | RF | Periodic S-parameters (PSP) | ✅⁵ | ✅ |
 | RF | Quasi-periodic / multi-tone (QPSS / QPAC) | ✅⁶ | ✅ |
-| RF | Envelope following | ❌ | ✅ |
+| RF | Envelope following | ✅⁸ | ✅ |
 
 *¹ PSS was ⚠️ (experimental `--enable-pss` flag, so `.pss` was unimplemented in
 shipped builds, and ~230 lines of shooting-loop trace per run). Since
@@ -290,6 +290,28 @@ every source is ramped by `λ: 0→1` in adaptive, warm-started, backtracking st
 5 V diode rectifier that blows up cold converges in 3 continuation steps (easy circuits
 stay bit-identical). Single-tone; a sparse block solve and multi-tone HB (true
 incommensurate QPSS, cf. note 6) are the remaining follow-ups.*
+
+*⁸ Envelope following is ✅ since
+[Enhancement-154](../../../enhancements_doc/Enhancement-154.md): the `envelope`
+command computes the slow amplitude/phase envelope of a carrier-driven circuit by
+sampling the state once per carrier period `T=1/fc` and integrating the slow drift,
+jumping `M` periods at a time. The per-period map is `X_{n+1}=phi(X_n)` (`phi` = one
+carrier period of DAE integration); the naive forward-Euler envelope jump is
+**unstable** on high-Q circuits (the one-period monodromy has unit-circle
+eigenvalues) — which is exactly why an earlier forward-Euler attempt blew up and was
+shelved. E-154 uses the **implicit** backward-Euler jump `X_{n+M}=X_n+M(phi(X_{n+M})−
+X_{n+M})`, Newton-solved with the finite-difference monodromy `Phi=dphi/dY` as
+`[(1+M)I−M·Phi]dY=−G`; the A-stable step tracks a resonator's envelope without
+diverging and its fixed point is the true steady state. Step size `M` is chosen by
+step-doubling LTE control; the one-period map reuses the transient primitives on a
+fixed `nppp` grid in trapezoidal mode (backward-Euler damps high Q), self-started.
+Verified against a full `.tran` under both solvers: <3 % across a Q~3160 tank
+ring-up (26 envelope samples for ~3000 carrier periods), converging to the steady
+state, and ~1.6 % on a Q~316 tank. It pays off when the envelope is much slower than
+the carrier (high-Q / PLL / modulated-PA), where it is several times faster than the
+full transient; a second-order non-dissipative self-start and a sparse monodromy are
+follow-ups. **With this, every analysis in the RF / periodic-steady-state suite is
+present.***
 
 ## Performance & scale
 
@@ -457,10 +479,17 @@ leverage on the existing strength × differentiation × tractability:
    suite is now complete** — genuinely novel in open source — and
    [Enhancement-126](../../../enhancements_doc/Enhancement-126.md) adds
    **cyclostationary** noise (per-sample bias, time-domain-transfer fold) so pumped
-   devices' bias-dependent noise is handled correctly. The remaining RF work is the
-   further refinements (a dedicated phase-noise/jitter spectrum, a from-scratch
-   Harmonic Balance engine, quasi-periodic multi-tone) rather than the core
-   analyses.
+   devices' bias-dependent noise is handled correctly. The single-tone suite is now
+   complemented by frequency-domain Harmonic Balance
+   ([Enhancement-134](../../../enhancements_doc/Enhancement-134.md)), oscillator
+   phase noise ([Enhancement-140](../../../enhancements_doc/Enhancement-140.md)), the
+   two-tone quasi-periodic set (QPSS/QPAC/QPnoise/QPXF,
+   [Enhancement-136](../../../enhancements_doc/Enhancement-136.md)–[142](../../../enhancements_doc/Enhancement-142.md)),
+   and finally **envelope following**
+   ([Enhancement-154](../../../enhancements_doc/Enhancement-154.md), implicit
+   monodromy period-jumping) — so **every analysis in the RF / periodic-steady-state
+   suite is now present**. What remains is efficiency refinement (sparse
+   conversion-matrix and monodromy solves, three-plus-tone) rather than new analyses.
 2. **Convergence robustness** — coordinated accuracy presets (`errpreset`)
    **landed in [Enhancement-110](../../../enhancements_doc/Enhancement-110.md)**, a
    globalized Newton line search in

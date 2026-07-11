@@ -74,6 +74,7 @@ libckt_la_SOURCES = \
 		dcosetp.c	\
 		dctaskq.c	\
 		dctran.c	\
+		envelope.c	\
 		dctrcurv.c	\
 		dctsetp.c	\
 		distoan.c	\

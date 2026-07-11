@@ -15,6 +15,7 @@ void com_qpnoise(wordlist *wl);    /* Enhancement-138 */
 void com_hbosc(wordlist *wl);      /* Enhancement-140 */
 void com_phasenoise(wordlist *wl); /* Enhancement-140 */
 void com_hb(wordlist *wl);         /* Enhancement-134 */
+void com_envelope(wordlist *wl);   /* Enhancement-154 */
 void com_savestate(wordlist *wl);  /* Enhancement-131 */
 void com_loadstate(wordlist *wl);  /* Enhancement-131 */
 void com_meas(wordlist *wl);

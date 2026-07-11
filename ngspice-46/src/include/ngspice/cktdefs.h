@@ -487,6 +487,7 @@ extern int QPnoiseSweep(CKTcircuit *, int outNode, int stepType, int np, double 
 extern int QPXFsweep(CKTcircuit *, int outNode, int stepType, int np, double fstart, double fstop, double *freqs, double *data); /* E-142 */
 extern int QPnoiseAnalyze(CKTcircuit *, int outNode, double f_in, int cyclo, int verbose); /* E-138 / -139 */
 extern int HBOSCanalyze(CKTcircuit *, int oscNode, int K, int P, double f0seed, double ampseed, int maxiter, double tol, int verbose); /* E-140 */
+extern int EFanalysis(CKTcircuit *, int obsNode, double fc, double tstop, int nppp, int M0, int Mmax, double reltol, double *o_time, double *o_amp, double *o_dc, double *o_re, double *o_im, int maxpts); /* E-154 envelope following */
 extern int PhaseNoiseAnalyze(CKTcircuit *, double fstart, double fstop, int npts, int verbose); /* E-140 */
 #endif
 

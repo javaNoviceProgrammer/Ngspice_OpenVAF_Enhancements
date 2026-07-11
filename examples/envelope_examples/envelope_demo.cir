@@ -1,0 +1,26 @@
+* Envelope Following demo -- high-Q RLC tank rung up by an on-resonance carrier
+*
+* A parallel LC tank (L1, C1) with loss R1, driven through the inductor by a
+* carrier V1 at the tank resonance f0 = 1/(2*pi*sqrt(L*C)) ~ 5.033 MHz. With
+* R1 = 100k the quality factor is Q = R*sqrt(C/L) ~ 3160, so the amplitude rings
+* up to its steady state (~Q volts) over ~1000 carrier periods -- a slow envelope
+* on a fast carrier: exactly what envelope following is for.
+*
+* `envelope` samples the state once per carrier period and jumps many periods at a
+* time with an implicit (backward-Euler + monodromy) step. It tracks 3000 carrier
+* periods with a few dozen samples and stays bounded -- a naive explicit envelope
+* jump diverges on a resonator this sharp.
+
+v1 s 0 sin(0 1 5.032921e6)
+l1 s a 1u
+c1 a 0 1n
+r1 a 0 100k
+
+.control
+* envelope <node> <fc> <tstop> [nppp N] [m M0] [maxm Mmax] [reltol t] [settle ts]
+envelope a 5.032921e6 596u
+* the new `envelope` plot holds a_amp (2|V1|), a_dc, a_re, a_im vs time
+plot a_amp
+print a_amp
+.endc
+.end
