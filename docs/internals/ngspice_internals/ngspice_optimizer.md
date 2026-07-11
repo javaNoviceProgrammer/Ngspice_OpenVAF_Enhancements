@@ -1,6 +1,7 @@
 # The ngspice `optimize` command — a friendly user manual
 
-*A built-in parameter optimizer for ngspice (Enhancement-130).*
+*A built-in parameter optimizer for ngspice (Enhancement-130, with least-squares
+curve fitting added in Enhancement-143).*
 
 This guide explains how to use the `optimize` command from scratch. You do **not**
 need any background in optimization or numerical methods — if you can write a small
@@ -53,15 +54,18 @@ You run `optimize` inside a `.control … .endc` block, after your circuit is lo
 ```
 optimize -param <name> <init> <lo> <hi>   [-param ...]
          -analysis <command ...>
-         -minimize <expression ...>
-         [-maxiter <N>] [-tol <T>] [-verbose]
+         ( -minimize <expression ...>                          (one goal)
+           | -target <expr> <value> [<weight>]  [-target ...] ) (fit several)
+         [-method nm|lm] [-maxiter <N>] [-tol <T>] [-verbose]
 ```
 
 | Part | Meaning |
 |---|---|
 | `-param name init lo hi` | A knob to turn. `name` is a device (like `R1`, `C1`) or a device parameter. `init` is where to start, `lo`/`hi` are the smallest/largest values allowed. Repeat `-param` for each knob (up to 16). |
-| `-analysis <cmd>` | The simulation to run every time it turns the knobs — an ordinary ngspice command such as `op`, `ac dec 20 1 1meg`, or `tran 1u 1m`. |
-| `-minimize <expr>` | The cost. Any ngspice expression over the results that should be **zero when the circuit is perfect**. A very common shape is `(something - target)^2`. |
+| `-analysis <cmd>` | The simulation to run every time it turns the knobs — an ordinary ngspice command such as `op`, `ac dec 20 1 1meg`, or `tran 1u 1m`. Give several to combine analyses in one fit (see §8). |
+| `-minimize <expr>` | The cost, for a **single** goal. Any ngspice expression over the results that should be **zero when the circuit is perfect**. A very common shape is `(something - target)^2`. |
+| `-target <expr> <val> [<w>]` | A measurement to **fit** (§8). Repeat to fit many at once; the optimizer minimizes the sum of squared residuals `w·(expr − val)`. Use `-target` *or* `-minimize`, not both. |
+| `-method nm\|lm` | (optional) force Nelder-Mead (`nm`) or Levenberg-Marquardt (`lm`). Default: a `-target` fit uses `lm`, a `-minimize` goal uses `nm`. |
 | `-maxiter N` | (optional) stop after at most `N` steps. Default `100`. |
 | `-tol T` | (optional) stop when the cost stops improving by more than `T`. Default `1e-6`. |
 | `-verbose` | (optional) print the cost after every step so you can watch it fall. |
@@ -346,10 +350,100 @@ measured point:
 
 That is the everyday modeling loop — measure a device, write a Verilog-A model, and let
 `optimize` recover the parameters — done entirely inside ngspice. You fit several
-parameters at once by adding more `-param` flags (and more measured points to the
-objective, e.g. two diode instances of the same model biased at two voltages).
+parameters at once by adding more `-param` flags — and, for several measured points,
+the dedicated **least-squares mode** in the next section is the better tool.
 
-## 8. Writing a good cost expression
+## 8. Fitting to measurements — the least-squares mode
+
+Everything so far minimized **one** number you wrote by hand (`-minimize <expr>`). But
+the most common job — *fitting* a circuit or a device model to a set of measurements —
+is really "make **all of these** measurements match at once." You *can* fold them into
+one expression by hand (`(X-t1)^2 + (Y-t2)^2 + …`), but that is tedious and throws away
+useful structure. So `optimize` has a purpose-built mode for it.
+
+Instead of `-minimize`, list each measurement as a **`-target`**:
+
+```
+-target <expression> <desired-value> [<weight>]
+```
+
+The optimizer forms the *residual* `weight·(expression − desired-value)` for each one
+and drives the **sum of their squares** to zero — a classic *least-squares* fit. You can
+give up to 64 targets.
+
+### Targets can come from different analyses
+
+Each `-analysis` opens a **stage**, and every `-target` after it is measured on that
+stage's results. So a single fit can span **several analyses at once** — for example a DC
+operating point *and* an AC response. Here we fit a series `R1` and a shunt `R2‖C` so
+that the DC gain is 0.4 **and** the gain at 2 kHz is 0.221:
+
+```spice
+Least-squares fit across a DC and an AC analysis
+V1 in 0 dc 1 ac 1
+R1 in out 3.3k
+R2 out 0 3.3k
+C1 out 0 100n
+
+.control
+optimize -param R1 3.3k 500 8k -param R2 3.3k 500 8k
++        -analysis op                 -target v(out)      0.4
++        -analysis ac lin 1 2000 2000 -target mag(v(out)) 0.221061
+.endc
+.end
+```
+
+The optimizer reports `R1 = 3 kΩ`, `R2 = 2 kΩ` — the one circuit that satisfies both
+goals — recovered from a 3.3 k / 3.3 k start.
+
+### It fits faster, too
+
+When you write the objective as a list of residuals, the optimizer knows it is a
+least-squares problem and switches to the **Levenberg-Marquardt** method — a
+gradient-based search that estimates the slope of each residual (a *Jacobian*) and steps
+straight toward the bottom, instead of the slower "shrinking triangle" of Nelder-Mead.
+On smooth problems this is dramatic: the same two-target filter fit below reaches the
+optimum in **26 evaluations with Levenberg-Marquardt versus 66 with Nelder-Mead**.
+
+![Least-squares fit: gradient LM reaches the optimum in far fewer analysis runs](ngspice_optimizer_figs/lm_vs_nm.png)
+
+You can force either method with **`-method nm`** (Nelder-Mead) or **`-method lm`**
+(Levenberg-Marquardt); by default a `-target` fit uses `lm` and a scalar `-minimize`
+uses `nm`.
+
+### Device parameter extraction, the proper way
+
+The diode fit from the previous section had just one measured point. With two points we
+can recover **both** `is` and `n` at once. Measure the diode's current at two voltages
+(here 0.6 V and 0.7 V), then fit both parameters as one least-squares problem — using the
+optional **weight** `1/current` so each point counts *relatively* even though the two
+currents differ by more than a decade:
+
+```spice
+Diode extraction: recover is AND n from two I-V points
+Vd a 0 dc 0.6
+N1 a 0 dmod
+.model dmod optdiode is=5e-15 n=1.0
+
+.control
+pre_osdi optdiode.osdi
+optimize -param @n1[is] 5e-15 1e-15 5e-14 -param @n1[n] 1.0 0.5 2.0
++        -analysis dc Vd 0.6 0.7 0.1
++        -target abs(i(vd))[0] 2.4856e-6  402315
++        -target abs(i(vd))[1] 6.2326e-5  16045
+.endc
+.end
+```
+
+`abs(i(vd))[0]` and `[1]` index the two points of the DC sweep. From a deliberately
+wrong start (`is = 5e-15`, `n = 1.0`) the fit recovers `is = 1e-14`, `n = 1.2` — the exact
+values the "measurements" came from.
+
+> **A note on targeting a single point.** Like `-minimize`, each `-target` reads the
+> **last** value of its expression. Use a one-point analysis (e.g. `ac lin 1 f f`) or a
+> vector index (`v(out)[3]`, as above) to pin a specific point.
+
+## 9. Writing a good cost expression
 
 The cost is the only tricky part, and the recipe is simple: **make it zero when the
 circuit is perfect, and positive otherwise.** Some patterns:
@@ -369,7 +463,7 @@ If the expression produces a whole waveform (as in a transient), the optimizer u
 
 ---
 
-## 9. Tips and common pitfalls
+## 10. Tips and common pitfalls
 
 - **Give sensible bounds.** `lo` and `hi` define the search box; pick a range you know
   contains a good answer. The starting value `init` should be inside it.
@@ -389,7 +483,7 @@ If the expression produces a whole waveform (as in a transient), the optimizer u
 
 ---
 
-## 10. How it works, briefly
+## 11. How it works, briefly
 
 Under the hood, `optimize` uses the **Nelder–Mead downhill-simplex** method — a classic
 derivative-free optimizer. For `N` knobs it keeps `N+1` trial points (a "simplex"), and
@@ -402,6 +496,15 @@ For every trial it applies the candidate values with `alter`, runs your analysis
 evaluates your cost expression. It searches in a normalized `[0, 1]` version of each
 parameter's range so that very different component scales are treated evenly.
 
+When you give `-target`s instead of `-minimize`, the objective is a sum of squared
+residuals, and `optimize` switches (by default) to **Levenberg–Marquardt**: it estimates
+the slope of each residual with a finite difference (a *Jacobian*), forms the normal
+equations, and solves a small damped linear system for the next step — decreasing the
+damping when a step succeeds and increasing it until one does. Exploiting the
+least-squares structure this way reaches the optimum in far fewer circuit evaluations
+than the simplex on smooth problems (§8).
+
 The implementation lives in `ngspice-46/src/frontend/com_optimize.c`; the design notes
-are in [Enhancement-130](../../../enhancements_doc/Enhancement-130.md), and a runnable
+are in [Enhancement-130](../../../enhancements_doc/Enhancement-130.md) and
+[Enhancement-143](../../../enhancements_doc/Enhancement-143.md), and a runnable
 example set is under [`examples/optimize_examples/`](../../../examples/optimize_examples/).

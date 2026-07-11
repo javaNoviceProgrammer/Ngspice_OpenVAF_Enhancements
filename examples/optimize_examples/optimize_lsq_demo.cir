@@ -1,0 +1,43 @@
+Least-squares curve-fit demo (Enhancement-143)
+* -------------------------------------------------------------------------
+* Enhancement-143 adds a gradient-based least-squares mode to `optimize`.
+* Instead of a single scalar `-minimize`, you give one or more weighted
+* `-target <expr> <value> [<weight>]` measurements, optionally spread over
+* several `-analysis` stages, and the optimizer fits the parameters by
+* minimizing the sum of squared residuals with Levenberg-Marquardt (a
+* finite-difference Jacobian) -- far fewer analysis runs than Nelder-Mead on
+* smooth problems.
+*
+* Here a series R1 feeds a shunt R2 || C. Two parameters (R1, R2) are fitted
+* to TWO measurements taken from DIFFERENT analyses at once:
+*
+*     H(0)          = R2/(R1+R2)                       (a DC operating point)
+*     |H(2 kHz)|    = R2/|(R1+R2) + jw R1 R2 C|        (an AC magnitude)
+*
+* The unique solution of DC gain 0.4 and |H(2kHz)| 0.221061 is R1 = 3 k,
+* R2 = 2 k, which the fit recovers from a 3.3 k / 3.3 k start.
+*
+*   optimize -param <name> <init> <lo> <hi> [-param ...]
+*            -analysis <cmd> -target <expr> <val> [<w>] [-target ...]
+*            [-analysis <cmd> -target ...] [-method nm|lm] ...
+*
+* Add -verbose to watch the sum-squared residual and the LM damping fall each
+* iteration.
+* -------------------------------------------------------------------------
+V1 in 0 dc 1 ac 1
+R1 in out 3.3k
+R2 out 0 3.3k
+C1 out 0 100n
+
+.control
+optimize -param R1 3.3k 500 8k -param R2 3.3k 500 8k
++        -analysis op                 -target v(out)      0.4
++        -analysis ac lin 1 2000 2000 -target mag(v(out)) 0.221061
++        -tol 1e-13 -maxiter 200
+* leave the circuit at the fitted values; confirm both measurements
+op
+print v(out)
+ac lin 1 2000 2000
+print mag(v(out))
+.endc
+.end

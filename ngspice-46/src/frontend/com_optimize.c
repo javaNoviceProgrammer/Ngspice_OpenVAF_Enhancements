@@ -1,26 +1,48 @@
 /**********
-Enhancement-130: a built-in Nelder-Mead optimizer.
+Enhancement-130 / Enhancement-143: a built-in parameter optimizer.
 
-`optimize` varies a set of circuit/device parameters, re-runs a user-chosen
-analysis, and minimizes a user-supplied objective expression -- a derivative-free
-downhill-simplex search implemented in normalized [0,1] parameter space (so it is
-scale-invariant across parameters that span orders of magnitude).
+`optimize` varies a set of circuit/device parameters, re-runs one or more
+user-chosen analyses, and drives a user-supplied objective to a minimum. Two
+modes are supported:
+
+  * Scalar mode (-minimize <expr>): minimize a single scalar expression with a
+    derivative-free Nelder-Mead downhill simplex (Enhancement-130).
+
+  * Least-squares mode (one or more -target <expr> <value> [<weight>]): fit the
+    circuit to a set of target measurements by minimizing the weighted sum of
+    squared residuals  Sum_i [ w_i*(expr_i - value_i) ]^2 . Smooth problems --
+    curve fitting, device-parameter extraction -- converge much faster with the
+    gradient-based Levenberg-Marquardt method (finite-difference Jacobian), which
+    is the default here; -method nm forces Nelder-Mead on the summed cost
+    (Enhancement-143).
+
+Targets may be spread over several analyses: each -analysis opens a new "stage",
+and every -target that follows it is evaluated on that stage's results, so a
+single objective can combine (say) a DC operating point and an AC response
+(Enhancement-143 multi-analysis objectives).
+
+The search runs in normalized [0,1] parameter space (so it is scale-invariant
+across parameters that span orders of magnitude).
 
 Syntax (in a .control block, after the circuit is loaded):
 
   optimize -param <name> <init> <lo> <hi>  [-param ...]
            -analysis <command ...>
-           -minimize <expression ...>
-           [-maxiter <N>] [-tol <T>] [-verbose]
+           ( -minimize <expression ...>
+             | -target <expr> <value> [<weight>]  [-target ...]
+               [ -analysis <command ...> -target ... ] )
+           [-method nm|lm] [-maxiter <N>] [-tol <T>] [-verbose]
 
 Each <name> is an `alter` target -- a device instance (e.g. R1, C1) or a
 parameter (e.g. @m1[w]). For every candidate the optimizer applies each value in
-place with `alter <name>=<value>`, runs the `-analysis` command, and evaluates the
-`-minimize` expression (its last value is the scalar cost). `-analysis` and
-`-minimize` collect every following token up to the next `-<letter>` flag, so
-multi-word commands/expressions need no quoting; negative bounds (e.g. `-5`) are
-`-`+digit and are not mistaken for flags. Console chatter from the hundreds of
-inner analyses is suppressed (via ft_optimizing) unless `-verbose`.
+place with `alter <name>=<value>`, runs each -analysis command, and evaluates the
+objective. `-analysis` and `-minimize` collect every following token up to the
+next `-<letter>` flag, so multi-word commands/expressions need no quoting; a
+-target expression is a single token (use the no-space forms `v(out)-v(in)`,
+`mag(v(out))`, `v(out)[3]`). Each objective/target reads the LAST value of its
+expression, so target a single point with a one-point analysis or a vector index.
+Console chatter from the hundreds of inner analyses is suppressed (via
+ft_optimizing) unless `-verbose`.
 **********/
 
 #include "ngspice/ngspice.h"
@@ -33,15 +55,31 @@ inner analyses is suppressed (via ft_optimizing) unless `-verbose`.
 
 #include "com_optimize.h"
 
-#define OPT_MAXP     16          /* max parameters to optimize */
-#define OPT_PENALTY  1e30        /* cost returned for a failed / non-finite eval */
+#define OPT_MAXP     16          /* max parameters to optimize            */
+#define OPT_MAXS      8          /* max analysis stages                   */
+#define OPT_MAXT     64          /* max least-squares targets (total)     */
+#define OPT_PENALTY  1e30        /* cost for a failed / non-finite eval   */
+
+struct opt_target {
+    char  *expr;                 /* expression to fit                     */
+    double target;               /* desired value                         */
+    double weight;               /* residual weight                       */
+    int    stage;                /* which -analysis stage it belongs to   */
+};
 
 struct optctx {
     int np;
     char *name[OPT_MAXP];
     double lo[OPT_MAXP], hi[OPT_MAXP], x0[OPT_MAXP];
-    char *analysis;              /* analysis command, e.g. "tran 1u 1m" */
-    char *objective;             /* expression to minimize */
+
+    int ns;                              /* number of analysis stages      */
+    char *analysis[OPT_MAXS];
+
+    int nt;                              /* number of least-squares targets*/
+    struct opt_target tgt[OPT_MAXT];
+
+    char *objective;                     /* scalar -minimize expr (or NULL)*/
+    int method;                          /* 0 auto, 1 nelder-mead, 2 levmar*/
     int maxiter;
     double tol;
     int verbose;
@@ -90,35 +128,13 @@ static double optnum(const char *w)
 }
 
 
-/* Evaluate the objective at a normalized point u in [0,1]^np: alter each param
- * in place, run the analysis, evaluate the objective expression. */
-static double opt_eval(struct optctx *c, const double *u)
+/* Evaluate one ngspice expression, returning the LAST value of the result vector
+ * (its magnitude if complex), or OPT_PENALTY on a failed / non-finite eval. */
+static double opt_eval_expr(const char *expr)
 {
-    int k;
-    char cmd[512];
-    struct pnode *pn;
+    struct pnode *pn = ft_getpnames_from_string(expr, TRUE);
     double f = OPT_PENALTY;
 
-    /* Silence the per-iteration console chatter (alter's re-setup banner, the
-     * analysis banner, row count, reference-value progress) unless -verbose.
-     * ft_optimizing gates those prints at their source -- the analyses write to
-     * stdout directly, and docommand's cp_ioreset() would undo an external fd
-     * redirect. `alter` changes the value in place (no re-source), so the flag
-     * set here survives through to the analysis. */
-    ft_optimizing = !c->verbose;
-
-    for (k = 0; k < c->np; k++) {
-        double val = c->lo[k] + clamp01(u[k]) * (c->hi[k] - c->lo[k]);
-        (void) snprintf(cmd, sizeof cmd, "alter %s=%.10g", c->name[k], val);
-        opt_run_cmd(cmd);
-    }
-    opt_run_cmd(c->analysis);
-
-    c->nevals++;
-
-    /* evaluate the objective while still quiet -- reading a result vector can
-     * re-trigger the analysis (which would print its banner) */
-    pn = ft_getpnames_from_string(c->objective, TRUE);
     if (pn) {
         struct dvec *v = ft_evaluate(pn);
         if (v && v->v_length >= 1) {
@@ -136,15 +152,201 @@ static double opt_eval(struct optctx *c, const double *u)
             vec_free(v);
         free_pnode(pn);
     }
+    return f;
+}
+
+
+/* Evaluate at a normalized point u in [0,1]^np: alter each param in place, run
+ * every analysis stage, and either evaluate the scalar objective or accumulate
+ * the least-squares residuals. Returns the scalar cost (the objective value, or
+ * the weighted sum of squared residuals). If resid != NULL (least-squares mode),
+ * it is filled with the nt residuals. */
+static double opt_eval(struct optctx *c, const double *u, double *resid)
+{
+    int k, s, i;
+    char cmd[512];
+    double cost = 0.0;
+
+    /* Silence the per-iteration console chatter (alter's re-setup banner, the
+     * analysis banner, row count, reference-value progress) unless -verbose.
+     * ft_optimizing gates those prints at their source -- the analyses write to
+     * stdout directly, and docommand's cp_ioreset() would undo an external fd
+     * redirect. `alter` changes the value in place (no re-source), so the flag
+     * set here survives through to the analyses. */
+    ft_optimizing = !c->verbose;
+
+    for (k = 0; k < c->np; k++) {
+        double val = c->lo[k] + clamp01(u[k]) * (c->hi[k] - c->lo[k]);
+        (void) snprintf(cmd, sizeof cmd, "alter %s=%.10g", c->name[k], val);
+        opt_run_cmd(cmd);
+    }
+
+    c->nevals++;
+
+    if (c->nt > 0) {
+        /* least-squares: each stage's analysis, then its targets, evaluated
+         * while that stage's plot is still current */
+        for (s = 0; s < c->ns; s++) {
+            opt_run_cmd(c->analysis[s]);
+            for (i = 0; i < c->nt; i++) {
+                if (c->tgt[i].stage != s)
+                    continue;
+                double val = opt_eval_expr(c->tgt[i].expr);
+                double ri;
+                if (val >= OPT_PENALTY)
+                    ri = 1e15;                    /* bad eval -> push away  */
+                else
+                    ri = c->tgt[i].weight * (val - c->tgt[i].target);
+                if (resid)
+                    resid[i] = ri;
+                cost += ri * ri;
+            }
+        }
+    } else {
+        /* scalar objective evaluated after the (single) analysis stage */
+        opt_run_cmd(c->analysis[0]);
+        cost = opt_eval_expr(c->objective);
+    }
 
     ft_optimizing = FALSE;
-    return f;
+    return cost;
+}
+
+
+/* Solve the n-by-n dense system A x = b by Gaussian elimination with partial
+ * pivoting. A (row-major) and b are overwritten. Returns 0 if singular. */
+static int solve_lin(int n, double *A, double *b, double *x)
+{
+    int i, j, k;
+
+    for (i = 0; i < n; i++) {
+        int piv = i;
+        double mx = fabs(A[i * n + i]);
+        for (k = i + 1; k < n; k++) {
+            double a = fabs(A[k * n + i]);
+            if (a > mx) { mx = a; piv = k; }
+        }
+        if (mx < 1e-300)
+            return 0;
+        if (piv != i) {
+            for (j = 0; j < n; j++) {
+                double t = A[i * n + j]; A[i * n + j] = A[piv * n + j]; A[piv * n + j] = t;
+            }
+            double t = b[i]; b[i] = b[piv]; b[piv] = t;
+        }
+        for (k = i + 1; k < n; k++) {
+            double f = A[k * n + i] / A[i * n + i];
+            for (j = i; j < n; j++)
+                A[k * n + j] -= f * A[i * n + j];
+            b[k] -= f * b[i];
+        }
+    }
+    for (i = n - 1; i >= 0; i--) {
+        double spp = b[i];
+        for (j = i + 1; j < n; j++)
+            spp -= A[i * n + j] * x[j];
+        x[i] = spp / A[i * n + i];
+    }
+    return 1;
+}
+
+
+/* Levenberg-Marquardt least-squares over the np normalized parameters. On entry
+ * ubest holds the normalized start point; on exit it holds the best point and
+ * *fbest the sum of squared residuals there. Jacobian by forward (or, near the
+ * upper bound, backward) finite differences. */
+static void levenberg_marquardt(struct optctx *c, double *ubest, double *fbest)
+{
+    const int n = c->np, m = c->nt;
+    const double h = 1e-3;
+    double u[OPT_MAXP], r0[OPT_MAXT], rj[OPT_MAXT];
+    double J[OPT_MAXT][OPT_MAXP];
+    double A[OPT_MAXP * OPT_MAXP], g[OPT_MAXP], delta[OPT_MAXP], unew[OPT_MAXP];
+    double lambda = 1e-3, cost0;
+    int i, j, k, iter;
+
+    for (j = 0; j < n; j++)
+        u[j] = clamp01(ubest[j]);
+    cost0 = opt_eval(c, u, r0);
+
+    for (iter = 0; iter < c->maxiter; iter++) {
+        int accepted = 0;
+        double dnorm = 0.0, costn = cost0;
+        int tries;
+
+        /* finite-difference Jacobian J[i][j] = d r_i / d u_j */
+        for (j = 0; j < n; j++) {
+            double uj[OPT_MAXP], sgn = 1.0;
+            for (i = 0; i < n; i++) uj[i] = u[i];
+            if (u[j] + h > 1.0) { uj[j] = u[j] - h; sgn = -1.0; }
+            else                  uj[j] = u[j] + h;
+            (void) opt_eval(c, uj, rj);
+            for (i = 0; i < m; i++)
+                J[i][j] = (rj[i] - r0[i]) / (sgn * h);
+        }
+
+        /* normal equations: A = J^T J, g = J^T r0 */
+        for (i = 0; i < n; i++) {
+            g[i] = 0.0;
+            for (k = 0; k < m; k++) g[i] += J[k][i] * r0[k];
+            for (j = 0; j < n; j++) {
+                double s = 0.0;
+                for (k = 0; k < m; k++) s += J[k][i] * J[k][j];
+                A[i * n + j] = s;
+            }
+        }
+
+        /* increase lambda until (A + lambda*diag(A)) delta = -g reduces cost */
+        for (tries = 0; tries < 12 && !accepted; tries++) {
+            double M[OPT_MAXP * OPT_MAXP], b[OPT_MAXP];
+            for (i = 0; i < n; i++) {
+                for (j = 0; j < n; j++) M[i * n + j] = A[i * n + j];
+                double d = A[i * n + i];
+                M[i * n + i] += lambda * (d > 1e-12 ? d : 1e-12) + 1e-12;
+                b[i] = -g[i];
+            }
+            if (!solve_lin(n, M, b, delta)) { lambda *= 4.0; continue; }
+
+            dnorm = 0.0;
+            for (i = 0; i < n; i++) {
+                unew[i] = clamp01(u[i] + delta[i]);
+                dnorm += delta[i] * delta[i];
+            }
+            costn = opt_eval(c, unew, rj);
+            if (costn < cost0) {
+                for (i = 0; i < n; i++) u[i] = unew[i];
+                for (i = 0; i < m; i++) r0[i] = rj[i];
+                accepted = 1;
+                lambda *= 0.3;
+                if (lambda < 1e-12) lambda = 1e-12;
+            } else {
+                lambda *= 4.0;
+            }
+        }
+
+        if (c->verbose)
+            fprintf(cp_out, "  iter %-3d  cost %.6g  lambda %.2g  (%d evals)\n",
+                    iter + 1, accepted ? costn : cost0, lambda, c->nevals);
+
+        if (!accepted)
+            break;                                /* cannot reduce further  */
+        {
+            double improve = cost0 - costn;
+            cost0 = costn;
+            if (improve <= c->tol * (cost0 + c->tol) || sqrt(dnorm) < c->tol)
+                break;                            /* converged              */
+        }
+    }
+
+    for (j = 0; j < n; j++)
+        ubest[j] = u[j];
+    *fbest = cost0;
 }
 
 
 /* Nelder-Mead downhill simplex over the np normalized parameters. On entry
  * ubest holds the normalized starting point; on exit it holds the best point
- * and *fbest its cost. */
+ * and *fbest its cost. In least-squares mode the cost is the summed square. */
 static void nelder_mead(struct optctx *c, double *ubest, double *fbest)
 {
     const double alpha = 1.0, gamma = 2.0, rho = 0.5, sigma = 0.5;
@@ -157,7 +359,7 @@ static void nelder_mead(struct optctx *c, double *ubest, double *fbest)
      * nudged by 0.1 in normalized space */
     for (j = 0; j < n; j++)
         s[0][j] = clamp01(ubest[j]);
-    fv[0] = opt_eval(c, s[0]);
+    fv[0] = opt_eval(c, s[0], NULL);
     for (i = 1; i <= n; i++) {
         for (j = 0; j < n; j++)
             s[i][j] = s[0][j];
@@ -165,7 +367,7 @@ static void nelder_mead(struct optctx *c, double *ubest, double *fbest)
         if (b > 1.0)
             b = s[0][i - 1] - 0.1;
         s[i][i - 1] = clamp01(b);
-        fv[i] = opt_eval(c, s[i]);
+        fv[i] = opt_eval(c, s[i], NULL);
     }
 
     for (iter = 0; iter < c->maxiter; iter++) {
@@ -193,13 +395,13 @@ static void nelder_mead(struct optctx *c, double *ubest, double *fbest)
 
         for (j = 0; j < n; j++)                  /* reflect */
             xr[j] = clamp01(cent[j] + alpha * (cent[j] - s[hi][j]));
-        fr = opt_eval(c, xr);
+        fr = opt_eval(c, xr, NULL);
 
         if (fr < fv[lo]) {                        /* expand */
             double fe;
             for (j = 0; j < n; j++)
                 xe[j] = clamp01(cent[j] + gamma * (xr[j] - cent[j]));
-            fe = opt_eval(c, xe);
+            fe = opt_eval(c, xe, NULL);
             if (fe < fr) {
                 for (j = 0; j < n; j++) s[hi][j] = xe[j];
                 fv[hi] = fe;
@@ -214,7 +416,7 @@ static void nelder_mead(struct optctx *c, double *ubest, double *fbest)
             double fc;
             for (j = 0; j < n; j++)
                 xc[j] = clamp01(cent[j] + rho * (s[hi][j] - cent[j]));
-            fc = opt_eval(c, xc);
+            fc = opt_eval(c, xc, NULL);
             if (fc < fv[hi]) {
                 for (j = 0; j < n; j++) s[hi][j] = xc[j];
                 fv[hi] = fc;
@@ -223,7 +425,7 @@ static void nelder_mead(struct optctx *c, double *ubest, double *fbest)
                     if (i != lo) {
                         for (j = 0; j < n; j++)
                             s[i][j] = clamp01(s[lo][j] + sigma * (s[i][j] - s[lo][j]));
-                        fv[i] = opt_eval(c, s[i]);
+                        fv[i] = opt_eval(c, s[i], NULL);
                     }
             }
         }
@@ -244,6 +446,19 @@ static void nelder_mead(struct optctx *c, double *ubest, double *fbest)
 static int is_flag(const char *w)
 {
     return w && w[0] == '-' && isalpha((unsigned char) w[1]);
+}
+
+
+/* does the token look like a plain number (optionally signed)? */
+static int is_number_token(const char *w)
+{
+    const char *s = w;
+    if (!w || !*w)
+        return 0;
+    if (*s == '+' || *s == '-')
+        s++;
+    return isdigit((unsigned char) *s) ||
+           (*s == '.' && isdigit((unsigned char) s[1]));
 }
 
 
@@ -271,7 +486,7 @@ void com_optimize(wordlist *wl)
 {
     struct optctx c;
     double ubest[OPT_MAXP], fbest = OPT_PENALTY;
-    int k;
+    int k, use_lm;
 
     memset(&c, 0, sizeof c);
     c.maxiter = 100;
@@ -282,13 +497,13 @@ void com_optimize(wordlist *wl)
         if (eq(w, "-param") || eq(w, "-p")) {
             if (c.np >= OPT_MAXP) {
                 fprintf(cp_err, "optimize: too many -param (max %d)\n", OPT_MAXP);
-                return;
+                goto cleanup;
             }
             wordlist *a = wl->wl_next, *b = a ? a->wl_next : NULL;
             wordlist *d = b ? b->wl_next : NULL, *e = d ? d->wl_next : NULL;
             if (!a || !b || !d || !e) {
                 fprintf(cp_err, "optimize: -param needs <name> <init> <lo> <hi>\n");
-                return;
+                goto cleanup;
             }
             c.name[c.np] = copy(a->wl_word);
             c.x0[c.np]   = optnum(b->wl_word);
@@ -296,18 +511,66 @@ void com_optimize(wordlist *wl)
             c.hi[c.np]   = optnum(e->wl_word);
             if (c.hi[c.np] <= c.lo[c.np]) {
                 fprintf(cp_err, "optimize: param '%s' needs hi > lo\n", c.name[c.np]);
-                return;
+                tfree(c.name[c.np]);
+                goto cleanup;
             }
             c.np++;
             wl = e->wl_next;
         } else if (eq(w, "-analysis") || eq(w, "-a")) {
+            if (c.ns >= OPT_MAXS) {
+                fprintf(cp_err, "optimize: too many -analysis (max %d)\n", OPT_MAXS);
+                goto cleanup;
+            }
             wl = wl->wl_next;
-            tfree(c.analysis);
-            c.analysis = collect_until_flag(&wl);
+            c.analysis[c.ns] = collect_until_flag(&wl);
+            if (!c.analysis[c.ns]) {
+                fprintf(cp_err, "optimize: -analysis needs a command\n");
+                goto cleanup;
+            }
+            c.ns++;
         } else if (eq(w, "-minimize") || eq(w, "-min") || eq(w, "-o")) {
             wl = wl->wl_next;
             tfree(c.objective);
             c.objective = collect_until_flag(&wl);
+        } else if (eq(w, "-target")) {
+            if (c.ns < 1) {
+                fprintf(cp_err, "optimize: -target must follow an -analysis\n");
+                goto cleanup;
+            }
+            if (c.nt >= OPT_MAXT) {
+                fprintf(cp_err, "optimize: too many -target (max %d)\n", OPT_MAXT);
+                goto cleanup;
+            }
+            wordlist *a = wl->wl_next, *b = a ? a->wl_next : NULL;
+            if (!a || !b) {
+                fprintf(cp_err, "optimize: -target needs <expr> <value> [<weight>]\n");
+                goto cleanup;
+            }
+            c.tgt[c.nt].expr   = copy(a->wl_word);
+            c.tgt[c.nt].target = optnum(b->wl_word);
+            c.tgt[c.nt].weight = 1.0;
+            c.tgt[c.nt].stage  = c.ns - 1;
+            wl = b->wl_next;
+            if (wl && !is_flag(wl->wl_word) && is_number_token(wl->wl_word)) {
+                c.tgt[c.nt].weight = optnum(wl->wl_word);
+                wl = wl->wl_next;
+            }
+            c.nt++;
+        } else if (eq(w, "-method")) {
+            if (wl->wl_next) {
+                const char *mm = wl->wl_next->wl_word;
+                if (eq(mm, "nm") || eq(mm, "neldermead") || eq(mm, "simplex"))
+                    c.method = 1;
+                else if (eq(mm, "lm") || eq(mm, "levmar") || eq(mm, "leastsq"))
+                    c.method = 2;
+                else {
+                    fprintf(cp_err, "optimize: unknown -method '%s' (use nm or lm)\n", mm);
+                    goto cleanup;
+                }
+                wl = wl->wl_next->wl_next;
+            } else {
+                wl = NULL;
+            }
         } else if (eq(w, "-maxiter") || eq(w, "-n")) {
             if (wl->wl_next) { c.maxiter = atoi(wl->wl_next->wl_word); wl = wl->wl_next->wl_next; }
             else wl = NULL;
@@ -323,9 +586,19 @@ void com_optimize(wordlist *wl)
         }
     }
 
-    if (c.np < 1 || !c.analysis || !c.objective) {
+    /* --- validate --- */
+    if (c.np < 1 || c.ns < 1 || (!c.objective && c.nt == 0)) {
         fprintf(cp_err, "usage: optimize -param <name> <init> <lo> <hi> [-param ...] "
-                        "-analysis <cmd> -minimize <expr> [-maxiter N] [-tol T] [-verbose]\n");
+                        "-analysis <cmd> (-minimize <expr> | -target <expr> <val> "
+                        "[<w>] ...) [-method nm|lm] [-maxiter N] [-tol T] [-verbose]\n");
+        goto cleanup;
+    }
+    if (c.objective && c.nt > 0) {
+        fprintf(cp_err, "optimize: use either -minimize or -target, not both\n");
+        goto cleanup;
+    }
+    if (c.objective && c.ns > 1) {
+        fprintf(cp_err, "optimize: multiple -analysis stages require -target objectives\n");
         goto cleanup;
     }
     if (c.maxiter < 1) c.maxiter = 1;
@@ -336,20 +609,43 @@ void com_optimize(wordlist *wl)
         goto cleanup;
     }
 
-    fprintf(cp_out, "optimize: %d parameter%s, analysis '%s', minimizing '%s'\n",
-            c.np, c.np == 1 ? "" : "s", c.analysis, c.objective);
+    /* method resolution: LS defaults to Levenberg-Marquardt, scalar to
+     * Nelder-Mead; -method may override (lm needs least-squares targets) */
+    if (c.method == 2 && c.nt == 0) {
+        fprintf(cp_err, "optimize: -method lm requires -target objectives\n");
+        goto cleanup;
+    }
+    use_lm = (c.method == 2) || (c.method == 0 && c.nt > 0);
+
+    if (c.nt > 0)
+        fprintf(cp_out, "optimize: %d parameter%s, %d target%s over %d analysis "
+                        "stage%s, %s\n",
+                c.np, c.np == 1 ? "" : "s", c.nt, c.nt == 1 ? "" : "s",
+                c.ns, c.ns == 1 ? "" : "s",
+                use_lm ? "Levenberg-Marquardt" : "Nelder-Mead");
+    else
+        fprintf(cp_out, "optimize: %d parameter%s, analysis '%s', minimizing '%s'\n",
+                c.np, c.np == 1 ? "" : "s", c.analysis[0], c.objective);
 
     for (k = 0; k < c.np; k++)
         ubest[k] = clamp01((c.x0[k] - c.lo[k]) / (c.hi[k] - c.lo[k]));
 
-    nelder_mead(&c, ubest, &fbest);
+    if (use_lm)
+        levenberg_marquardt(&c, ubest, &fbest);
+    else
+        nelder_mead(&c, ubest, &fbest);
 
     /* leave the circuit at the optimum (verbose final run) and report */
     c.verbose = 1;
-    (void) opt_eval(&c, ubest);
+    (void) opt_eval(&c, ubest, NULL);
 
-    fprintf(cp_out, "optimize: converged, objective = %.6g after %d evaluations\n",
-            fbest, c.nevals);
+    if (c.nt > 0)
+        fprintf(cp_out, "optimize: converged, sum-sq residual = %.6g (rms %.6g) "
+                        "after %d evaluations\n",
+                fbest, sqrt(fbest / c.nt), c.nevals);
+    else
+        fprintf(cp_out, "optimize: converged, objective = %.6g after %d evaluations\n",
+                fbest, c.nevals);
     for (k = 0; k < c.np; k++) {
         double val = c.lo[k] + ubest[k] * (c.hi[k] - c.lo[k]);
         fprintf(cp_out, "    %s = %.6g\n", c.name[k], val);
@@ -358,6 +654,9 @@ void com_optimize(wordlist *wl)
 cleanup:
     for (k = 0; k < c.np; k++)
         tfree(c.name[k]);
-    tfree(c.analysis);
+    for (k = 0; k < c.ns; k++)
+        tfree(c.analysis[k]);
+    for (k = 0; k < c.nt; k++)
+        tfree(c.tgt[k].expr);
     tfree(c.objective);
 }

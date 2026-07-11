@@ -336,7 +336,16 @@ block with sampling controls.*
 [Enhancement-130](../../../enhancements_doc/Enhancement-130.md): the `optimize`
 command is a derivative-free Nelder-Mead search that varies device/`alter`
 parameters, re-runs an analysis, and minimizes an objective expression in
-normalized [0,1] space — verified to reach analytic optima in 1-D and 2-D.*
+normalized [0,1] space — verified to reach analytic optima in 1-D and 2-D.
+[Enhancement-143](../../../enhancements_doc/Enhancement-143.md) adds a
+gradient-based **least-squares** mode: one or more weighted `-target <expr>
+<value>` measurements, optionally spread over several `-analysis` stages
+(so a single fit can combine, say, a DC operating point and an AC response),
+are fitted with **Levenberg-Marquardt** (finite-difference Jacobian) — the
+right tool for smooth curve-fitting / device-parameter-extraction problems,
+reaching the optimum in far fewer analysis runs than the simplex (e.g. 27 vs 67
+evaluations on a two-target RC fit). Verified to recover both `is` and `n` of a
+compiled OSDI diode from two I-V points.*
 
 *The "checkpoint / restart" row is ✅ since
 [Enhancement-131](../../../enhancements_doc/Enhancement-131.md): stock ngspice

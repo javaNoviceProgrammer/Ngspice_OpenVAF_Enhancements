@@ -187,8 +187,39 @@ def fig_osdi_diode():
     fig.savefig(os.path.join(FIGS, "osdi_diode.png")); plt.close(fig)
 
 
+# ------------------------------------------- Fig 7: least-squares LM vs NM (E-143)
+def fig_lm_vs_nm():
+    import math
+    Rc, Cc = 2000.0, 100e-9
+    H = [1.0 / math.sqrt(1.0 + (2 * math.pi * f * Rc * Cc) ** 2) for f in (500.0, 2000.0)]
+    base = ("optimizer method compare\nV1 in 0 ac 1\nR1 in out 1k\nC1 out 0 100n\n"
+            ".control\noptimize -param R1 1k 100 10k\n"
+            f"+  -analysis ac lin 1 500 500   -target mag(v(out)) {H[0]:.10g}\n"
+            f"+  -analysis ac lin 1 2000 2000 -target mag(v(out)) {H[1]:.10g}\n"
+            "+  -method {M} -tol 1e-12 -maxiter 400 -verbose\n.endc\n.end\n")
+
+    def trace(method, pat):
+        out = run(base.replace("{M}", method))
+        ev, cost = [], []
+        for m in re.finditer(pat, out):
+            cost.append(float(m.group(1))); ev.append(int(m.group(2)))
+        return np.array(ev), np.array(cost)
+
+    e_lm, c_lm = trace("lm", r"iter\s+\d+\s+cost\s+([-\d.eE+]+)\s+lambda\s+[-\d.eE+]+\s+\((\d+)\s+evals\)")
+    e_nm, c_nm = trace("nm", r"iter\s+\d+\s+best cost\s+([-\d.eE+]+)\s+\((\d+)\s+evals\)")
+    fig, ax = plt.subplots(figsize=(6.4, 3.8))
+    ax.semilogy(e_nm, np.maximum(c_nm, 1e-20), "o-", color=ORANGE, ms=4, lw=1.5,
+                label=f"Nelder-Mead  ({e_nm[-1] if len(e_nm) else 0} evals)")
+    ax.semilogy(e_lm, np.maximum(c_lm, 1e-20), "s-", color=BLUE, ms=5, lw=1.8,
+                label=f"Levenberg-Marquardt  ({e_lm[-1] if len(e_lm) else 0} evals)")
+    ax.set_xlabel("analysis evaluations"); ax.set_ylabel("sum-squared residual  (log scale)")
+    ax.set_title("Least-squares fit: gradient LM reaches the optimum in fewer runs")
+    ax.legend(loc="upper right")
+    fig.savefig(os.path.join(FIGS, "lm_vs_nm.png")); plt.close(fig)
+
+
 if __name__ == "__main__":
     for f in (fig_cost_bowl, fig_convergence, fig_ac_response,
-              fig_contour_2d, fig_tran_response, fig_osdi_diode):
+              fig_contour_2d, fig_tran_response, fig_osdi_diode, fig_lm_vs_nm):
         f(); print("wrote", f.__name__)
     print("figures in", FIGS)
