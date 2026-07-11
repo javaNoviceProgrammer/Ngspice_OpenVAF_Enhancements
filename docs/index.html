@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Feature catalog of the ngspice-46 + OpenVAF-r enhancement project: 154 enhancements grouped into 17 feature areas.">
+<title>ngspice + OpenVAF-r — feature catalog</title>
+<style>
+  :root{
+    --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --bg:#f6f8f9; --surface:#ffffff; --surface2:#eef2f4; --border:#e0e6ea; --border2:#cfd8dd;
+    --text:#171f27; --dim:#54626d; --faint:#87949f;
+    --cmp:#9a6a12; --cmp-mid:#c0851f; --cmp-bg:#f7eddc; --cmp-br:#e6d6b0;
+    --sim:#0a7c72; --sim-mid:#12a294; --sim-bg:#e0f2ef; --sim-br:#b6ded8;
+    --radius:9px;
+  }
+  @media (prefers-color-scheme:dark){:root{
+    --bg:#0c1116; --surface:#141b22; --surface2:#1a232b; --border:#26303a; --border2:#33404b;
+    --text:#dbe3ea; --dim:#93a3b0; --faint:#61717d;
+    --cmp:#e2ab52; --cmp-mid:#c99436; --cmp-bg:#28210f; --cmp-br:#4a3d1c;
+    --sim:#4ec4b8; --sim-mid:#2ba99c; --sim-bg:#10241f; --sim-br:#234a41;
+  }}
+  :root[data-theme="dark"]{
+    --bg:#0c1116; --surface:#141b22; --surface2:#1a232b; --border:#26303a; --border2:#33404b;
+    --text:#dbe3ea; --dim:#93a3b0; --faint:#61717d;
+    --cmp:#e2ab52; --cmp-mid:#c99436; --cmp-bg:#28210f; --cmp-br:#4a3d1c;
+    --sim:#4ec4b8; --sim-mid:#2ba99c; --sim-bg:#10241f; --sim-br:#234a41;
+  }
+  :root[data-theme="light"]{
+    --bg:#f6f8f9; --surface:#ffffff; --surface2:#eef2f4; --border:#e0e6ea; --border2:#cfd8dd;
+    --text:#171f27; --dim:#54626d; --faint:#87949f;
+    --cmp:#9a6a12; --cmp-mid:#c0851f; --cmp-bg:#f7eddc; --cmp-br:#e6d6b0;
+    --sim:#0a7c72; --sim-mid:#12a294; --sim-bg:#e0f2ef; --sim-br:#b6ded8;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:var(--sans);
+    -webkit-font-smoothing:antialiased;line-height:1.5}
+  .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);border:0}
+  .wrap{max-width:1140px;margin:0 auto;padding:clamp(20px,4vw,44px) clamp(16px,4vw,32px) 80px}
+  header .eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--faint)}
+  h1{font-family:var(--mono);font-weight:700;font-size:clamp(26px,4.4vw,40px);line-height:1.08;
+    margin:.5rem 0 .6rem;letter-spacing:-.01em;text-wrap:balance}
+  h1 .amp{color:var(--faint);font-weight:400}
+  .lede{max-width:60ch;color:var(--dim);font-size:15.5px;margin:0}
+  .lede b{color:var(--text);font-weight:600}
+  .stats{display:flex;flex-wrap:wrap;gap:10px;margin:1.5rem 0 0}
+  .stat{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
+    padding:.6rem .9rem;min-width:96px}
+  .stat .n{font-family:var(--mono);font-weight:700;font-size:21px;line-height:1}
+  .stat .l{font-size:11.5px;color:var(--faint);margin-top:5px;letter-spacing:.02em}
+  .stat.ok .n{color:var(--sim)}
+  .controls{position:sticky;top:0;z-index:5;background:var(--bg);
+    padding:1.4rem 0 1rem;margin:1.8rem 0 .4rem;display:flex;flex-wrap:wrap;gap:12px;align-items:center;
+    border-bottom:1px solid var(--border)}
+  #q{flex:1;min-width:200px;font-family:var(--mono);font-size:13.5px;color:var(--text);
+    background:var(--surface);border:1px solid var(--border2);border-radius:var(--radius);
+    padding:.6rem .8rem;outline:none}
+  #q:focus{border-color:var(--sim-mid);box-shadow:0 0 0 3px var(--sim-bg)}
+  .filters{display:flex;gap:6px}
+  .fbtn{font-family:var(--mono);font-size:12.5px;cursor:pointer;color:var(--dim);
+    background:var(--surface);border:1px solid var(--border2);border-radius:var(--radius);padding:.55rem .8rem}
+  .fbtn[aria-pressed="true"]{color:var(--text);border-color:currentColor;font-weight:600}
+  .fbtn.cmp[aria-pressed="true"]{color:var(--cmp);background:var(--cmp-bg);border-color:var(--cmp-br)}
+  .fbtn.sim[aria-pressed="true"]{color:var(--sim);background:var(--sim-bg);border-color:var(--sim-br)}
+  .fbtn:focus-visible{outline:2px solid var(--sim-mid);outline-offset:2px}
+  .band{display:flex;align-items:baseline;gap:12px;margin:2.4rem 0 1rem;flex-wrap:wrap}
+  .band .dot{width:9px;height:9px;border-radius:50%;flex:none}
+  .band.cmp .dot{background:var(--cmp-mid)} .band.sim .dot{background:var(--sim-mid)}
+  .band h2{font-family:var(--mono);font-size:15px;font-weight:700;margin:0;letter-spacing:.01em}
+  .band .sub{font-size:13px;color:var(--faint)}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,320px),1fr));gap:14px}
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:12px;
+    padding:1rem 1.1rem 1.05rem;border-top:3px solid var(--accent)}
+  .card.cmp{--accent:var(--cmp-mid)} .card.sim{--accent:var(--sim-mid)}
+  .card h3{font-family:var(--mono);font-size:14px;font-weight:600;margin:0 0 .1rem;line-height:1.25}
+  .card .cnt{font-family:var(--mono);font-size:11px;color:var(--faint);float:right;font-weight:400}
+  .card .d{font-size:13px;color:var(--dim);margin:.35rem 0 .7rem;line-height:1.45}
+  .chips{display:flex;flex-wrap:wrap;gap:5px}
+  .chip{font-family:var(--mono);font-size:11.5px;text-decoration:none;color:var(--dim);
+    background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:2px 6px;white-space:nowrap}
+  .chip:hover{color:var(--accent);border-color:var(--accent)}
+  .card.cmp .chip:hover{color:var(--cmp)} .card.sim .chip:hover{color:var(--sim)}
+  .chip:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+  .empty{display:none;font-family:var(--mono);color:var(--faint);padding:2rem 0}
+  footer{margin-top:3rem;padding-top:1.2rem;border-top:1px solid var(--border);
+    font-size:12.5px;color:var(--faint);line-height:1.6}
+  footer code{font-family:var(--mono);color:var(--dim)}
+  @media (max-width:560px){.stat{flex:1 1 40%}}
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <h2 class="sr-only">Categorized catalog of 154 implemented features across the OpenVAF-r Verilog-A compiler and the ngspice simulator.</h2>
+  <header>
+    <div class="eyebrow">feature catalog</div>
+    <h1>ngspice&#8209;46 <span class="amp">+</span> OpenVAF&#8209;r</h1>
+    <p class="lede">Every capability added across <b>154 enhancements</b>, grouped into feature areas — a feature usually spans several enhancements. Two code bases: the <b>OpenVAF&#8209;r</b> Verilog&#8209;A/OSDI compiler and the <b>ngspice</b> circuit simulator. Each chip links to its write&#8209;up.</p>
+    <div class="stats" id="stats">
+      <div class="stat"><div class="n">154</div><div class="l">enhancements</div></div>
+      <div class="stat"><div class="n">17</div><div class="l">feature areas</div></div>
+      <div class="stat"><div class="n">2</div><div class="l">code bases</div></div>
+      <div class="stat ok"><div class="n">RF ✓</div><div class="l">suite complete</div></div>
+      <div class="stat ok"><div class="n">KLU+Sparse</div><div class="l">both solvers</div></div>
+    </div>
+  </header>
+
+  <div class="controls">
+    <input id="q" type="search" placeholder="filter — e.g. table, KLU, noise, E-134…" aria-label="filter features">
+    <div class="filters" role="group" aria-label="domain filter">
+      <button class="fbtn" data-f="all" aria-pressed="true">all</button>
+      <button class="fbtn cmp" data-f="compiler" aria-pressed="false">compiler</button>
+      <button class="fbtn sim" data-f="simulator" aria-pressed="false">simulator</button>
+    </div>
+  </div>
+
+  <section id="compiler-sec">
+    <div class="band cmp"><span class="dot"></span><h2>OpenVAF&#8209;r</h2><span class="sub">Verilog&#8209;A / OSDI compiler — language &amp; modeling</span></div>
+    <div class="grid" id="cmp-grid"></div>
+  </section>
+
+  <section id="simulator-sec">
+    <div class="band sim"><span class="dot"></span><h2>ngspice</h2><span class="sub">circuit simulator — analyses, solver, workflow</span></div>
+    <div class="grid" id="sim-grid"></div>
+  </section>
+
+  <p class="empty" id="empty">no features match that filter.</p>
+
+  <footer>
+    Verilog&#8209;A scope targets the LRM Annex&#8209;C analog subset via OSDI (not full AMS). Chips link to <code>enhancements_doc/Enhancement&#8209;N.md</code> on GitHub; a few grouped or early enhancements share a doc. The genuine remaining gaps (fast&#8209;SPICE parallelism, device aging, RC model&#8209;order reduction, mixed&#8209;signal AMS) are tracked in the repo's gap analysis.
+  </footer>
+</div>
+
+<script>
+(function(){
+  var REPO="https://github.com/javaNoviceProgrammer/Ngspice_OpenVAF_Enhancements/blob/main/enhancements_doc/Enhancement-";
+  var F=[
+   {d:"compiler",n:"Analog operators & dynamics",x:"Continuous-time behavioral operators: transport delay, filters, integrators, limiting, events.",c:[[1,"absdelay transport delay"],[4,"laplace_* / array vars"],[6,"slew / transition / zi_ / last_crossing"],[8,"cross / above / timer events"],[13,"limexp"],[24,"$discontinuity"],[26,"ac_stim baseline"],[27,"idtmod"],[28,"idt IC"],[31,"complex poles / zeros"],[47,"default_transition"],[51,"ac_stim injection"],[52,"idt assert"],[53,"@(final_step) + step events"]]},
+   {d:"compiler",n:"Branches, nets & ports",x:"Topology beyond scalar electrical nodes: buses, implicit nets, flow probes, hierarchy.",c:[[2,"indirect branch assignment"],[3,"bus nets/ports + bit-select"],[29,"I(port) flow"],[36,"probe-only branches"],[41,"implicit nets"],[45,"net init + attrs"],[86,"hierarchical branches"],[89,"array ports + Annex E"],[90,"bus port order"],[97,"ground contribution"]]},
+   {d:"compiler",n:"Arrays",x:"Array declarations, literals, dynamic indexing, function args/returns, N-D shapes.",c:[[14,"arrays"],[15,"multi-dim arrays"],[18,"array syntax + functions"],[20,"array output args"],[23,"array return"],[33,"array case"],[34,"concat / replication"],[43,"variable initializers"],[102,"array parameters"]]},
+   {d:"compiler",n:"Lookup tables",x:"$table_model interpolation compiled to differentiable MIR (autodiff Jacobian).",c:[[16,"$table_model 1-D"],[17,"multi-dim table"],[22,"cubic-spline table"],[40,"N-D table"],[109,"noise_table interp"]]},
+   {d:"compiler",n:"Modules, parameters & hierarchy",x:"Instantiation/flattening, paramsets, defparam, generate, natures, persistent state.",c:[[5,"module instantiation"],[7,"variable persistence / initial_step"],[21,"paramset"],[32,"integer state"],[39,"derived natures"],[44,"paramset HSPs"],[49,"hierarchical names"],[50,"domain binding"],[58,"defparam"],[60,"multiple analog blocks"],[67,"generate audit"],[76,"multi-module .osdi"],[87,"block params"],[88,"legacy generate"],[91,"param width + multi-name"],[92,"paramfreeze"],[93,"paramnonset warn"],[96,"bare generate"]]},
+   {d:"compiler",n:"System tasks & functions",x:"$random, file I/O, string format/parse, sim control, math and conversion builtins.",c:[[10,"$random / $dist_*"],[11,"file I/O + strings"],[12,"$simprobe / aliases / plusargs"],[25,"$simparam$str"],[30,"analysis() variadic"],[48,"string escapes"],[55,"$finish / $stop / $fatal"],[71,"$display formatting"],[85,"`__FILE__ / `__LINE__"],[101,"$clog2"],[103,"ceil"],[104,"$rtoi / $itor"],[105,"$sscanf format base"],[106,"string relational"],[107,"$fgetc"],[108,"$ungetc"]]},
+   {d:"compiler",n:"Noise modeling (Verilog-A)",x:"Table, correlated, and operating-point-dependent noise sources.",c:[[9,"noise_table(_log)"],[42,"correlated noise"],[54,"noise factors"],[109,"noise_table interp"]]},
+   {d:"compiler",n:"Operators, control flow & preprocessor",x:"Operator semantics, precedence, procedural loops, based/escaped literals, macros, compile-time cost.",c:[[19,"do-while"],[37,"operator audit"],[38,"precedence"],[46,"escaped ids + based literals"],[61,"operator-args audit"],[65,"preprocessor audit"],[70,"behavioral loops"],[78,"casex / casez"],[147,"nested ?: compile-time"]]},
+   {d:"compiler",n:"Compiler correctness & robustness",x:"Crash/hang fixes, corpus + LRM-2023 sweeps, physics checks, depth-limit hardening.",c:[[35,"comment EOF hang"],[56,"corpus sweep"],[57,"physics validation"],[59,"LRM corners"],[69,"opvar audit"],[80,"temperature physics"],[84,"LRM-2023 sweep"],[148,"compiler hardening"]]},
+
+   {d:"simulator",n:"RF / periodic steady-state suite",x:"Complete PSS → PAC/Pnoise/PXF/PSP, Harmonic Balance, two-tone QP set, phase noise, envelope following.",c:[[63,"RF analyses (.sp / NF)"],[64,"Touchstone export"],[72,"Touchstone round 2"],[117,"PSS"],[118,"KLU-PSS"],[119,"PAC: retain op"],[120,"PAC: Jacobian harmonics"],[121,"PAC: conversion matrix"],[122,".pac command"],[123,".pac finish"],[124,"pnoise"],[125,"pxf"],[126,"cyclostationary noise"],[132,"PSP"],[133,"QPSS (transient)"],[134,"Harmonic Balance"],[135,"HB continuation"],[136,"two-tone HB QPSS"],[137,"QPAC"],[138,"QPnoise"],[139,"cyclo QPnoise"],[140,"oscillator phase noise"],[141,"QPXF"],[142,"QP sweep"],[154,"envelope following"]]},
+   {d:"simulator",n:"Standard analyses",x:"DC/AC/tran plus .dc @inst sweeps, .tf, .pz, .sens, .disto, operating-point vars.",c:[[62,".dc @inst / .tf / .pz / .sens / .disto"],[69,"opvar output"]]},
+   {d:"simulator",n:"Convergence & integration",x:"Globalized Newton, continuation, order control, and coordinated accuracy presets.",c:[[110,"errpreset"],[111,"line search"],[127,"ptcont"],[128,"dynorder"],[153,"trust-region"]]},
+   {d:"simulator",n:"KLU solver parity & tuning",x:"KLU brought to Sparse parity on every analysis, plus ordering/scaling controls.",c:[[112,"KLU line search"],[113,"KLU noise + pz"],[114,"KLU sensitivity"],[115,"KLU distortion"],[116,"KLU decoupled OSDI"],[118,"KLU-PSS"],[152,"KLU tuning"]]},
+   {d:"simulator",n:"Statistical / variability / yield",x:"Monte Carlo with OSDI, low-discrepancy + high-sigma sampling, correlations, packaged yield.",c:[[66,"Monte Carlo (OSDI)"],[149,"Latin-Hypercube"],[150,"high-sigma"],[151,"correlations + yield"]]},
+   {d:"simulator",n:"Optimization & parametric sweeps",x:"Nelder-Mead + Levenberg-Marquardt fitting over every knob kind; a universal sweep.",c:[[130,"optimize (Nelder-Mead)"],[143,"least-squares LM"],[144,"-dparam (.param)"],[145,"-mparam (.model)"],[146,"universal sweep"]]},
+   {d:"simulator",n:"Workflow, docs & benchmarks",x:"Handbook and provenance docs, OSDI-vs-built-in benchmarks, checkpoint/restart, lifecycle, plotting, tests, warning-free build.",c:[[68,"integration tests"],[73,"handbook + README index"],[74,"OSDI-vs-built-in benchmark"],[77,"ngspice warnings → 0"],[79,"benchmark round 2 (BSIM4)"],[81,"lifecycle / leak-free"],[82,"provenance / compliance docs"],[83,"opamp741 demo"],[94,"pyplot"],[95,"pyplot default filename"],[98,"pyplot subplots"],[99,"pyplot export formats"],[100,"milestone audit"],[129,"sweep progress bar"],[131,"checkpoint / restart"]]},
+   {d:"simulator",n:"Physics validation",x:"Cross-checks of simulator output against analytic device and dynamic laws.",c:[[57,"physcheck vs analytic"],[75,"dynamic physics"],[80,"temperature physics"]]}
+  ];
+
+  function render(){
+    var cg=document.getElementById("cmp-grid"), sg=document.getElementById("sim-grid");
+    F.forEach(function(f){
+      var card=document.createElement("div");
+      card.className="card "+(f.d==="compiler"?"cmp":"sim");
+      var chips=f.c.map(function(p){
+        return '<a class="chip" href="'+REPO+p[0]+'.md" title="'+p[1]+'">E-'+p[0]+'</a>';
+      }).join("");
+      var terms=(f.n+" "+f.x+" "+f.c.map(function(p){return "e-"+p[0]+" e"+p[0]+" "+p[1]}).join(" ")).toLowerCase();
+      card.dataset.terms=terms; card.dataset.domain=f.d;
+      card.innerHTML='<span class="cnt">'+f.c.length+'</span><h3>'+f.n+'</h3>'+
+        '<p class="d">'+f.x+'</p><div class="chips">'+chips+'</div>';
+      (f.d==="compiler"?cg:sg).appendChild(card);
+    });
+  }
+  render();
+
+  var domain="all", query="";
+  var cards=[].slice.call(document.querySelectorAll(".card"));
+  function apply(){
+    var shown=0;
+    cards.forEach(function(c){
+      var ok=(domain==="all"||c.dataset.domain===domain) &&
+             (!query||c.dataset.terms.indexOf(query)>-1);
+      c.style.display=ok?"":"none"; if(ok)shown++;
+    });
+    document.getElementById("compiler-sec").style.display=(domain==="simulator")?"none":"";
+    document.getElementById("simulator-sec").style.display=(domain==="compiler")?"none":"";
+    document.getElementById("empty").style.display=shown?"none":"block";
+  }
+  document.getElementById("q").addEventListener("input",function(e){query=e.target.value.trim().toLowerCase();apply();});
+  document.querySelectorAll(".fbtn").forEach(function(b){
+    b.addEventListener("click",function(){
+      domain=b.dataset.f;
+      document.querySelectorAll(".fbtn").forEach(function(o){o.setAttribute("aria-pressed",o===b);});
+      apply();
+    });
+  });
+})();
+</script>
+</body>
+</html>
