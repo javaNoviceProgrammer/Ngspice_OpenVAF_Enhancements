@@ -429,15 +429,15 @@ struct comm spcp_coms[] = {
     { "qpac", com_qpac, TRUE, FALSE,             /* Enhancement-137 */
       { 040, 040, 040, 040 }, E_DEFHMASK, 1, LOTS,
       NULL,
-      "f_in : two-tone small-signal QPAC -- response at sidebands f_in+k1f1+k2f2 around the `qpss ... hb` operating point." },
+      "f_in | <dec|oct|lin> N fstart fstop : two-tone QPAC -- sideband response (single f) or swept plot vs f_in, around the `qpss ... hb` operating point." },
     { "qpxf", com_qpxf, TRUE, FALSE,             /* Enhancement-141 */
       { 040, 040, 040, 040 }, E_DEFHMASK, 2, LOTS,
       NULL,
-      "output_node f_in : two-tone QPXF -- transfer from each input sideband f_in+k1f1+k2f2 to the output, around the `qpss ... hb` operating point." },
+      "output_node f_in | output_node <dec|oct|lin> N fstart fstop : two-tone QPXF -- per-sideband transfer at f_in (or swept xf/xf_conv plot), around the `qpss ... hb` operating point." },
     { "qpnoise", com_qpnoise, TRUE, FALSE,       /* Enhancement-138 */
       { 040, 040, 040, 040 }, E_DEFHMASK, 2, LOTS,
       NULL,
-      "output_node f_in [cyclo] : two-tone QPnoise -- output/input noise density at f_in, folding device noise over all sidebands around the `qpss ... hb` operating point (`cyclo` = cyclostationary PSD)." },
+      "output_node f_in [cyclo] | output_node <dec|oct|lin> N fstart fstop : two-tone QPnoise -- output/input noise density at f_in (or swept onoise/inoise plot), around the `qpss ... hb` operating point (`cyclo` = cyclostationary PSD)." },
     { "hbosc", com_hbosc, TRUE, FALSE,           /* Enhancement-140 */
       { 040, 040, 040, 040 }, E_DEFHMASK, 2, LOTS,
       NULL,

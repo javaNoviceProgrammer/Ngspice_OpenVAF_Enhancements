@@ -243,7 +243,11 @@ adjoint solve `Hᵀ Ψ = e_{out,(0,0)}`, each sideband block of `Ψ` dotted with
 pattern, gives the transfer from an input at every sideband `f_in+k1·f1+k2·f2` to the
 output. By the reciprocity identity the sideband-(0,0) transfer is **bit-identical** to the
 QPAC response (verified 6/6). So the quasi-periodic small-signal set now mirrors the
-single-tone PAC/Pnoise/PXF exactly: **QPSS → QPAC → QPnoise → QPXF**.*
+single-tone PAC/Pnoise/PXF exactly: **QPSS → QPAC → QPnoise → QPXF**.
+[Enhancement-142](../../../enhancements_doc/Enhancement-142.md) then gives all three a
+`dec|oct|lin` **input-frequency sweep** that emits a plottable ngspice plot (conversion
+gain / noise figure / image-rejection curves), matching how `.ac`/`.pnoise`/`.pxf` sweep —
+each swept point reuses the single-frequency solve and equals it to machine precision (5/5).*
 
 *⁷ HB is ✅ since
 [Enhancement-134](../../../enhancements_doc/Enhancement-134.md): a `hb <f0> <K>`

@@ -2480,6 +2480,125 @@ QPXFanalyze(CKTcircuit *ckt, int outNode, double f_in, int verbose)
 
 
 /* ======================================================================
+ * Enhancement-142: input-frequency SWEEP for the two-tone small-signal
+ * analyses. `qpac`/`qpnoise`/`qpxf` gain a dec|oct|lin sweep of f_in. Each
+ * point reuses the same single-frequency solve; these fill caller arrays
+ * (freqs[] + data[], point-major) and the frontend builds the ngspice plot
+ * (conversion gain / NF / image-rejection curves vs f_in). Return #points.
+ * ====================================================================== */
+
+/* QPAC swept: data[pt*N + node] = |(0,0) response| per node. */
+int
+QPACsweep(CKTcircuit *ckt, int stepType, int np, double fstart, double fstop, double *freqs, double *data)
+{
+    struct qp_harm *hd = qpss_hb_saved;
+    int    N, Ntot, i, i00, pt = 0;
+    double *Ar, *Ai, *Xr, *Xi, freq, mult, linstep;
+    (void) ckt;
+    if (!hd) { fprintf(stderr, "qpac: no QPSS operating point -- run `qpss ... hb` first.\n"); return -1; }
+    N = hd->N; Ntot = hd->Ntot; i00 = hd->K1*(2*hd->K2+1) + hd->K2;
+    Ar = TMALLOC(double,(size_t)Ntot*(size_t)Ntot); Ai = TMALLOC(double,(size_t)Ntot*(size_t)Ntot);
+    Xr = TMALLOC(double, Ntot); Xi = TMALLOC(double, Ntot);
+    mult = (stepType==1)?pow(10.0,1.0/np):(stepType==2)?pow(2.0,1.0/np):0.0;
+    linstep = (np>1)?(fstop-fstart)/(np-1):0.0;
+    for (freq=fstart; freq<=fstop*(1.0+1e-9); ) {
+        qp_build_matrix(hd, freq, Ar, Ai);
+        memset(Xr,0,(size_t)Ntot*sizeof(double)); memset(Xi,0,(size_t)Ntot*sizeof(double));
+        if (hd->has_src) for (i=0;i<N;i++){ Xr[(size_t)i00*(size_t)N+(size_t)i]=hd->B0r[i]; Xi[(size_t)i00*(size_t)N+(size_t)i]=hd->B0i[i]; }
+        else Xr[(size_t)i00*(size_t)N+0]=1.0;
+        if (pss_csolve(Ntot,Ar,Ai,Xr,Xi)) for (i=0;i<Ntot;i++){Xr[i]=0;Xi[i]=0;}
+        freqs[pt]=freq;
+        for (i=0;i<N;i++){ double xr=Xr[(size_t)i00*(size_t)N+(size_t)i], xi=Xi[(size_t)i00*(size_t)N+(size_t)i]; data[(size_t)pt*(size_t)N+(size_t)i]=hypot(xr,xi); }
+        pt++;
+        if (stepType==0){ if(np<=1) break; freq+=linstep; } else freq*=mult;
+    }
+    FREE(Ar); FREE(Ai); FREE(Xr); FREE(Xi);
+    return pt;
+}
+
+/* QPnoise swept: data[pt*2+0]=onoise, data[pt*2+1]=inoise. */
+int
+QPnoiseSweep(CKTcircuit *ckt, int outNode, int stepType, int np, double fstart, double fstop, double *freqs, double *data)
+{
+    struct qp_harm *hd = qpss_hb_saved;
+    int    N, Nh, Ntot, i, j, k, i00, pt = 0;
+    NOISEAN nj; Ndata dn; JOB *oldJob;
+    double *Psr, *Psi, *Ar, *Ai, *Xr, *Xi, freq, mult, linstep;
+    if (!hd) { fprintf(stderr, "qpnoise: no QPSS operating point -- run `qpss ... hb` first.\n"); return -1; }
+    N = hd->N; Nh = hd->Nh; Ntot = hd->Ntot; i00 = hd->K1*(2*hd->K2+1) + hd->K2;
+    if (outNode <= 0 || outNode > N) { fprintf(stderr, "qpnoise: bad output node.\n"); return -1; }
+    for (j=1;j<=N;j++){ double v=0.0; for (k=0;k<Nh;k++) v+=hd->Vr[(size_t)k*(size_t)N+(size_t)(j-1)]; ckt->CKTrhsOld[j]=v; }
+    ckt->CKTrhsOld[0]=0.0; ckt->CKTmode=(ckt->CKTmode & MODEUIC)|MODEDCOP|MODEINITSMSIG; CKTload(ckt);
+    memset(&nj,0,sizeof(nj)); nj.NstartFreq=fstart; nj.NstopFreq=fstop; nj.NnumSteps=np; nj.NstpType=stepType; nj.NStpsSm=0; nj.JOBname="qpnoise";
+    memset(&dn,0,sizeof(dn)); dn.prtSummary=FALSE;
+    oldJob=ckt->CKTcurJob; ckt->CKTcurJob=(JOB*)&nj;
+    for (i=0;i<DEVmaxnum;i++) if (DEVices[i]&&DEVices[i]->DEVnoise&&ckt->CKThead[i]){ double d=0.0; DEVices[i]->DEVnoise(N_DENS,N_OPEN,ckt->CKThead[i],ckt,&dn,&d); }
+    Psr=TMALLOC(double,Ntot); Psi=TMALLOC(double,Ntot);
+    Ar=TMALLOC(double,(size_t)Ntot*(size_t)Ntot); Ai=TMALLOC(double,(size_t)Ntot*(size_t)Ntot);
+    Xr=TMALLOC(double,Ntot); Xi=TMALLOC(double,Ntot);
+    mult=(stepType==1)?pow(10.0,1.0/np):(stepType==2)?pow(2.0,1.0/np):0.0;
+    linstep=(np>1)?(fstop-fstart)/(np-1):0.0;
+    for (freq=fstart; freq<=fstop*(1.0+1e-9); ) {
+        double onoise=0.0, gain2=1.0;
+        if (qp_solve_adjoint(hd, freq, outNode, Psr, Psi)==0) {
+            dn.freq=freq; dn.delFreq=0.0; dn.prtSummary=FALSE;
+            for (k=0;k<Nh;k++){ double dens=0.0; size_t blk=(size_t)k*(size_t)N;
+                for (j=1;j<=N;j++){ ckt->CKTrhs[j]=Psr[blk+(size_t)(j-1)]; ckt->CKTirhs[j]=Psi[blk+(size_t)(j-1)]; }
+                ckt->CKTrhs[0]=0.0; ckt->CKTirhs[0]=0.0;
+                for (i=0;i<DEVmaxnum;i++) if (DEVices[i]&&DEVices[i]->DEVnoise&&ckt->CKThead[i]) DEVices[i]->DEVnoise(N_DENS,N_CALC,ckt->CKThead[i],ckt,&dn,&dens);
+                onoise+=dens;
+            }
+        }
+        if (hd->has_src){
+            qp_build_matrix(hd, freq, Ar, Ai);
+            memset(Xr,0,(size_t)Ntot*sizeof(double)); memset(Xi,0,(size_t)Ntot*sizeof(double));
+            for (i=0;i<N;i++){ Xr[(size_t)i00*(size_t)N+(size_t)i]=hd->B0r[i]; Xi[(size_t)i00*(size_t)N+(size_t)i]=hd->B0i[i]; }
+            if (pss_csolve(Ntot,Ar,Ai,Xr,Xi)==0){ size_t o=(size_t)i00*(size_t)N+(size_t)(outNode-1); gain2=Xr[o]*Xr[o]+Xi[o]*Xi[o]; }
+        }
+        freqs[pt]=freq; data[(size_t)pt*2+0]=onoise; data[(size_t)pt*2+1]=onoise/MAX(gain2,N_MINGAIN);
+        pt++;
+        if (stepType==0){ if(np<=1) break; freq+=linstep; } else freq*=mult;
+    }
+    ckt->CKTcurJob=oldJob;
+    FREE(Psr);FREE(Psi);FREE(Ar);FREE(Ai);FREE(Xr);FREE(Xi);
+    return pt;
+}
+
+/* QPXF swept: data[pt*2+0]=|(0,0) transfer|, data[pt*2+1]=total conversion. */
+int
+QPXFsweep(CKTcircuit *ckt, int outNode, int stepType, int np, double fstart, double fstop, double *freqs, double *data)
+{
+    struct qp_harm *hd = qpss_hb_saved;
+    int    N, Nh, Ntot, j, hi, i00, pt = 0;
+    double *Psr, *Psi, freq, mult, linstep;
+    (void) ckt;
+    if (!hd) { fprintf(stderr, "qpxf: no QPSS operating point -- run `qpss ... hb` first.\n"); return -1; }
+    N = hd->N; Nh = hd->Nh; Ntot = hd->Ntot; i00 = hd->K1*(2*hd->K2+1) + hd->K2;
+    if (outNode <= 0 || outNode > N) { fprintf(stderr, "qpxf: bad output node.\n"); return -1; }
+    Psr=TMALLOC(double,Ntot); Psi=TMALLOC(double,Ntot);
+    mult=(stepType==1)?pow(10.0,1.0/np):(stepType==2)?pow(2.0,1.0/np):0.0;
+    linstep=(np>1)?(fstop-fstart)/(np-1):0.0;
+    for (freq=fstart; freq<=fstop*(1.0+1e-9); ) {
+        double xf0=0.0, conv=0.0;
+        if (qp_solve_adjoint(hd, freq, outNode, Psr, Psi)==0){
+            for (hi=0;hi<Nh;hi++){
+                double hr=0.0, hii=0.0, m2;
+                if (hd->has_src) for (j=0;j<N;j++){ double pr=Psr[(size_t)hi*(size_t)N+(size_t)j], pi=Psi[(size_t)hi*(size_t)N+(size_t)j]; hr+=pr*hd->B0r[j]-pi*hd->B0i[j]; hii+=pr*hd->B0i[j]+pi*hd->B0r[j]; }
+                else { hr=Psr[(size_t)hi*(size_t)N+0]; hii=Psi[(size_t)hi*(size_t)N+0]; }
+                m2=hr*hr+hii*hii;
+                if (hi==i00) xf0=sqrt(m2); else conv+=m2;
+            }
+        }
+        freqs[pt]=freq; data[(size_t)pt*2+0]=xf0; data[(size_t)pt*2+1]=sqrt(conv);
+        pt++;
+        if (stepType==0){ if(np<=1) break; freq+=linstep; } else freq*=mult;
+    }
+    FREE(Psr); FREE(Psi);
+    return pt;
+}
+
+
+/* ======================================================================
  * Enhancement-140: oscillator phase noise.
  *
  * (1) HBOSCanalyze -- AUTONOMOUS harmonic balance. An oscillator has no

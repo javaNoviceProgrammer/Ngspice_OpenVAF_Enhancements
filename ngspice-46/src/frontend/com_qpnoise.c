@@ -69,6 +69,34 @@ com_qpnoise(wordlist *wl)
         fprintf(cp_err, "Error: qpnoise: unknown output node '%s'.\n", wl->wl_word);
         return;
     }
+    {   /* sweep form: qpnoise <out> <dec|oct|lin> <N> <fstart> <fstop> -> onoise/inoise plot */
+        extern int qp_steptype(const char *w);
+        extern int qp_sweep_maxpts(int stepType, int np, double fstart, double fstop);
+        extern void qp_emit_plot(const char *plotname, const char *title, double *freqs, int npts,
+                                 char **vnames, int nvec, double *data);
+        int st = qp_steptype(wl->wl_next->wl_word);
+        if (st >= 0) {
+            double fstart, fstop, *freqs, *data; int np, npts, maxpts;
+            char *vn[2] = { (char*)"onoise_spectrum", (char*)"inoise_spectrum" };
+            wordlist *w = wl->wl_next->wl_next;
+            if (!w || !w->wl_next || !w->wl_next->wl_next) {
+                fprintf(cp_err, "Usage: qpnoise <output_node> <dec|oct|lin> <N> <fstart> <fstop>\n"); return;
+            }
+            np = (int) qpnnum(w->wl_word);
+            fstart = qpnnum(w->wl_next->wl_word);
+            fstop  = qpnnum(w->wl_next->wl_next->wl_word);
+            if (np < 1 || fstart <= 0.0 || fstop < fstart) { fprintf(cp_err, "Error: qpnoise: bad sweep spec.\n"); return; }
+            maxpts = qp_sweep_maxpts(st, np, fstart, fstop);
+            freqs = TMALLOC(double, maxpts); data = TMALLOC(double, (size_t)maxpts*2);
+            npts = QPnoiseSweep(ckt, outNode, st, np, fstart, fstop, freqs, data);
+            if (npts > 0) {
+                qp_emit_plot("qpnoise", "QPnoise Analysis", freqs, npts, vn, 2, data);
+                fprintf(cp_out, "qpnoise: swept %d points into a new plot (now current); `plot onoise_spectrum inoise_spectrum` to view.\n", npts);
+            } else fprintf(cp_err, "qpnoise: sweep did not complete.\n");
+            FREE(freqs); FREE(data);
+            return;
+        }
+    }
     f_in = qpnnum(wl->wl_next->wl_word);
     if (f_in <= 0.0) {
         fprintf(cp_err, "Error: qpnoise: need f_in > 0.\n");
