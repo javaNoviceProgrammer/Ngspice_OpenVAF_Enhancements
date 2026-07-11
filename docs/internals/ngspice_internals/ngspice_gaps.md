@@ -213,7 +213,13 @@ around the retained QPSS operating point and reports the response at every sideb
 `f_in + k1·f1 + k2·f2`, mixing it through the same 2-D conversion matrix (`qp_build_matrix`
 at `f_in`, solved by `pss_csolve`) that the QPSS Newton used as its Jacobian. Verified 7/7,
 incl. reduce-to-AC (pump→0 ⇒ the direct response equals the plain `.ac` and the sidebands
-vanish) and the `v²`-pump conversion ratio.*
+vanish) and the `v²`-pump conversion ratio.
+[Enhancement-138](../../../enhancements_doc/Enhancement-138.md) adds **QPnoise**
+(`qpnoise <output_node> <f_in>`), the two-tone analogue of pnoise on the same operating
+point: one ADJOINT solve `Hᵀ Ψ = e_{out,(0,0)}` gives the transimpedance from every
+(node, sideband) to the output, and each device's `DEVnoise` folds `S·|Ψ|²` over all
+sidebands (the mixer/PA noise conversion a static `.noise` cannot see). Verified 6/6,
+anchored by reduce-to-noise (pump→0 ⇒ `onoise` = plain `.noise` = `4kTR`, exactly).*
 
 *⁷ HB is ✅ since
 [Enhancement-134](../../../enhancements_doc/Enhancement-134.md): a `hb <f0> <K>`

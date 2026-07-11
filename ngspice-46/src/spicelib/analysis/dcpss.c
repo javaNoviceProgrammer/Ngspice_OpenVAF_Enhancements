@@ -2196,6 +2196,155 @@ QPACanalyze(CKTcircuit *ckt, double f_in, int verbose)
 }
 
 
+/* ======================================================================
+ * Enhancement-138: two-tone small-signal QPnoise (quasi-periodic noise).
+ * Around the QPSS operating point retained by `qpss ... hb`, fold every
+ * device's noise through the ADJOINT of the 2-D conversion matrix over
+ * all sidebands to the output at f_in -- the two-tone analogue of pnoise
+ * (E-124). Each device's noise routine computes S*|dTransimp|^2 reading
+ * the transimpedance from CKTrhs/CKTirhs, so loading the sideband-(k1,k2)
+ * adjoint transfer into CKTrhs and summing over all harmonics folds the
+ * noise exactly (mixer/PA folded noise). With no pump the conversion
+ * matrix is block-diagonal, so only sideband (0,0) contributes and the
+ * result reduces to ordinary .noise.
+ * ====================================================================== */
+
+/* Solve the ADJOINT 2-D conversion system H^T Psi = e_{out,(0,0)}. Psi then
+ * holds, for every (node j, harmonic hi), the transfer from a unit injection at
+ * (j,hi) to the output at sideband (0,0). Reuses qp_build_matrix (forward H) and
+ * transposes in place. Returns 0 on success, 1 if singular. */
+static int
+qp_solve_adjoint(struct qp_harm *hd, double f_in, int outNode, double *Psr, double *Psi)
+{
+    int    Ntot = hd->Ntot, N = hd->N, i, j, i00, rc;
+    double *Ar, *Ai;
+
+    Ar = TMALLOC(double, (size_t)Ntot * (size_t)Ntot);
+    Ai = TMALLOC(double, (size_t)Ntot * (size_t)Ntot);
+    qp_build_matrix(hd, f_in, Ar, Ai);
+    for (i = 0; i < Ntot; i++)                       /* transpose in place: H -> H^T */
+        for (j = i + 1; j < Ntot; j++) {
+            size_t ij = (size_t)i*(size_t)Ntot + (size_t)j;
+            size_t ji = (size_t)j*(size_t)Ntot + (size_t)i;
+            double t;
+            t = Ar[ij]; Ar[ij] = Ar[ji]; Ar[ji] = t;
+            t = Ai[ij]; Ai[ij] = Ai[ji]; Ai[ji] = t;
+        }
+    memset(Psr, 0, (size_t)Ntot * sizeof(double));
+    memset(Psi, 0, (size_t)Ntot * sizeof(double));
+    i00 = hd->K1 * (2*hd->K2 + 1) + hd->K2;
+    Psr[(size_t)i00 * (size_t)N + (size_t)(outNode - 1)] = 1.0;
+    rc = pss_csolve(Ntot, Ar, Ai, Psr, Psi);
+    FREE(Ar); FREE(Ai);
+    return rc;
+}
+
+int
+QPnoiseAnalyze(CKTcircuit *ckt, int outNode, double f_in, int verbose)
+{
+    struct qp_harm *hd = qpss_hb_saved;
+    int    N, Nh, Ntot, i, j, hi, i00;
+    double *Psr, *Psi, *Xr, *Xi;
+    double onoise = 0.0, inoise, gain2 = 1.0;
+    NOISEAN nj;
+    Ndata   data;
+    JOB    *oldJob;
+
+    if (!hd) {
+        fprintf(stderr, "qpnoise: no QPSS operating point -- run `qpss <expr> <f1> <f2> hb` first.\n");
+        return E_NOTFOUND;
+    }
+    N = hd->N; Nh = hd->Nh; Ntot = hd->Ntot;
+    if (outNode <= 0 || outNode > N) {
+        fprintf(stderr, "qpnoise: bad output node.\n");
+        return E_PARMVAL;
+    }
+    i00 = hd->K1 * (2*hd->K2 + 1) + hd->K2;
+
+    /* bias the devices at the QPSS operating point (phase (0,0) sample: v = sum of
+     * all harmonic coefficients) so each noise PSD is at the periodic bias. */
+    for (j = 1; j <= N; j++) {
+        double v = 0.0;
+        for (hi = 0; hi < Nh; hi++) v += hd->Vr[(size_t)hi*(size_t)N + (size_t)(j-1)];
+        ckt->CKTrhsOld[j] = v;
+    }
+    ckt->CKTrhsOld[0] = 0.0;
+    ckt->CKTmode = (ckt->CKTmode & MODEUIC) | MODEDCOP | MODEINITSMSIG;
+    CKTload(ckt);
+
+    /* minimal NOISEAN context (device noise routines cast CKTcurJob to NOISEAN*) */
+    memset(&nj, 0, sizeof(nj));
+    nj.NstartFreq = f_in;
+    nj.NstopFreq = f_in;
+    nj.NnumSteps = 1;
+    nj.NstpType = 0;
+    nj.NStpsSm = 0;
+    nj.JOBname = "qpnoise";
+    memset(&data, 0, sizeof(data));
+    data.prtSummary = FALSE;
+    oldJob = ckt->CKTcurJob;
+    ckt->CKTcurJob = (JOB *) &nj;
+    for (i = 0; i < DEVmaxnum; i++)
+        if (DEVices[i] && DEVices[i]->DEVnoise && ckt->CKThead[i]) {
+            double dummy = 0.0;
+            DEVices[i]->DEVnoise(N_DENS, N_OPEN, ckt->CKThead[i], ckt, &data, &dummy);
+        }
+
+    Psr = TMALLOC(double, Ntot); Psi = TMALLOC(double, Ntot);
+    Xr  = TMALLOC(double, Ntot); Xi  = TMALLOC(double, Ntot);
+
+    /* adjoint transfer from every (node, harmonic) to the output at (0,0), then
+     * fold each device's noise density over all sidebands. */
+    data.freq = f_in; data.delFreq = 0.0; data.prtSummary = FALSE;
+    if (qp_solve_adjoint(hd, f_in, outNode, Psr, Psi) == 0) {
+        for (hi = 0; hi < Nh; hi++) {
+            double dens = 0.0;
+            size_t blk = (size_t)hi * (size_t)N;
+            for (j = 1; j <= N; j++) {
+                ckt->CKTrhs[j]  = Psr[blk + (size_t)(j-1)];
+                ckt->CKTirhs[j] = Psi[blk + (size_t)(j-1)];
+            }
+            ckt->CKTrhs[0] = 0.0; ckt->CKTirhs[0] = 0.0;
+            for (i = 0; i < DEVmaxnum; i++)
+                if (DEVices[i] && DEVices[i]->DEVnoise && ckt->CKThead[i])
+                    DEVices[i]->DEVnoise(N_DENS, N_CALC, ckt->CKThead[i], ckt, &data, &dens);
+            onoise += dens;                       /* sum device noise over sidebands */
+        }
+    }
+
+    /* input-referred: divide by the source->output conversion gain at (0,0) */
+    if (hd->has_src) {
+        double *Ar = TMALLOC(double, (size_t)Ntot*(size_t)Ntot);
+        double *Ai = TMALLOC(double, (size_t)Ntot*(size_t)Ntot);
+        qp_build_matrix(hd, f_in, Ar, Ai);
+        memset(Xr, 0, (size_t)Ntot*sizeof(double));
+        memset(Xi, 0, (size_t)Ntot*sizeof(double));
+        for (i = 0; i < N; i++) {
+            Xr[(size_t)i00*(size_t)N + (size_t)i] = hd->B0r[i];
+            Xi[(size_t)i00*(size_t)N + (size_t)i] = hd->B0i[i];
+        }
+        if (pss_csolve(Ntot, Ar, Ai, Xr, Xi) == 0) {
+            size_t oidx = (size_t)i00*(size_t)N + (size_t)(outNode-1);
+            gain2 = Xr[oidx]*Xr[oidx] + Xi[oidx]*Xi[oidx];
+        }
+        FREE(Ar); FREE(Ai);
+    }
+    inoise = onoise / MAX(gain2, N_MINGAIN);
+
+    ckt->CKTcurJob = oldJob;
+    (void) verbose;
+    fprintf(stdout,
+            "\nQPnoise: two-tone output noise at f_in = %g Hz (folding %d sidebands, "
+            "f1 = %g, f2 = %g)\n"
+            "  onoise density = %.6e  V^2/Hz   (%.6e V/sqrt(Hz))\n"
+            "  inoise density = %.6e           (gain^2 = %.6e)\n",
+            f_in, Nh, hd->f1, hd->f2, onoise, sqrt(onoise), inoise, gain2);
+
+    FREE(Psr); FREE(Psi); FREE(Xr); FREE(Xi);
+    return OK;
+}
+
+
 int
 DCpss(CKTcircuit *ckt,
        int restart)   /* forced restart flag */

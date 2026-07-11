@@ -476,6 +476,7 @@ extern int DCpss(CKTcircuit *, int);
 extern int HBanalyze(CKTcircuit *, double f0, int K, int P, int maxiter, double tol, int verbose); /* E-134 */
 extern int QPSShb(CKTcircuit *, double f1, double f2, int K1, int K2, int P1, int P2, int maxiter, double tol, int verbose); /* E-136 */
 extern int QPACanalyze(CKTcircuit *, double f_in, int verbose); /* E-137 */
+extern int QPnoiseAnalyze(CKTcircuit *, int outNode, double f_in, int verbose); /* E-138 */
 #endif
 
 #ifdef RFSPICE
