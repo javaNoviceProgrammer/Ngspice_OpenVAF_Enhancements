@@ -35,6 +35,18 @@ command reaches it:
   [10] input validation: -method lm without -target, -minimize with -target, and
       multiple -analysis with a scalar -minimize are all rejected.
 
+  Enhancement-144 (optimizing symbolic `.param` values via -dparam):
+  [11] scalar `.param` fit: `-dparam rtop` tunes a `.param` used as a device value
+      (via alterparam + a quiet re-source) so v(out) = 0.3 => rtop = 2333.3.
+  [12] mixed -dparam + -param: a `.param` AND a device (`alter`) parameter fitted
+      together (R1={rtop}, R2 altered) => rtop = 3 k, R2 = 2 k. Confirms the deck
+      param is re-sourced FIRST and the in-place alter is re-applied after, so the
+      two kinds mix correctly.
+  [13] `.param` inside an arithmetic device expression (R1={500*k}) => k = 6.
+  [14] least-squares `-dparam` fit (`-target`, Levenberg-Marquardt) => rtop = 2333.3.
+  [15] the per-iteration re-sources are quiet: the "Reset re-loads" banner appears
+      at most once (only the final leave-at-optimum run), not once per evaluation.
+
 It is a front-end command, independent of the linear solver, so it is checked once.
 """
 import math
@@ -253,6 +265,62 @@ check("rejects -method lm without -target", "requires -target" in e_lm)
 check("rejects -minimize together with -target", "not both" in e_both)
 check("rejects multiple -analysis with a scalar -minimize",
       "require -target" in e_multi)
+
+print("\nEnhancement-144: optimizing symbolic .param values (-dparam)")
+
+# [11] scalar .param fit: rtop used as a device value -> 2333.3 for v(out)=0.3
+d11 = ("optimizer dparam divider\n.param rtop=1k\nV1 in 0 dc 1\nR1 in out {rtop}\n"
+       "R2 out 0 1k\n.control\n"
+       "optimize -dparam rtop 1k 100 10k -analysis op -minimize (v(out)-0.3)^2 -tol 1e-14\n"
+       "op\nlet vout = v(out)\nprint vout\n.endc\n.end\n")
+o11 = run(d11)
+rt11 = optval(o11, "rtop")
+vo11 = val(o11, "vout")
+check(f"scalar .param fit: rtop -> 2333.3 (got {rt11})",
+      rt11 is not None and abs(rt11 - 2333.333) / 2333.333 < 1e-3, str(rt11))
+check(f"scalar .param fit: v(out) -> 0.3 (got {vo11})",
+      vo11 is not None and abs(vo11 - 0.3) < 1e-4, str(vo11))
+
+# [12] mixed -dparam (rtop) + -param (R2): rtop=3k, R2=2k for v(out)=0.4 & Rtot=5k
+d12 = ("optimizer mixed dparam+param\n.param rtop=1k\nV1 in 0 dc 1\nR1 in out {rtop}\n"
+       "R2 out 0 1k\n.control\n"
+       "optimize -dparam rtop 1k 100 10k -param R2 1k 100 10k -analysis op "
+       "-minimize (v(out)-0.4)^2+(abs(i(v1))-0.2m)^2 -maxiter 400 -tol 1e-15\n"
+       ".endc\n.end\n")
+o12 = run(d12)
+rt12 = optval(o12, "rtop")
+r2_12 = optval(o12, "r2") or optval(o12, "R2")
+check(f"mixed: .param rtop -> 3k (got {rt12})",
+      rt12 is not None and abs(rt12 - 3000) / 3000 < 5e-3, str(rt12))
+check(f"mixed: alter R2 -> 2k, survives the re-source (got {r2_12})",
+      r2_12 is not None and abs(r2_12 - 2000) / 2000 < 5e-3, str(r2_12))
+
+# [13] .param inside an arithmetic expression: R1 = {500*k}, v(out)=0.25 -> k=6
+d13 = ("optimizer dparam expr\n.param k=2\nV1 in 0 dc 1\nR1 in out {500*k}\n"
+       "R2 out 0 1k\n.control\n"
+       "optimize -dparam k 2 0.5 20 -analysis op -minimize (v(out)-0.25)^2 -tol 1e-16\n"
+       ".endc\n.end\n")
+o13 = run(d13)
+k13 = optval(o13, "k")
+check(f".param in expression: k -> 6 (got {k13})",
+      k13 is not None and abs(k13 - 6.0) / 6.0 < 2e-3, str(k13))
+
+# [14] least-squares .param fit (LM)
+d14 = ("optimizer dparam lsq\n.param rtop=1k\nV1 in 0 dc 1\nR1 in out {rtop}\n"
+       "R2 out 0 1k\n.control\n"
+       "optimize -dparam rtop 1k 100 10k -analysis op -target v(out) 0.3 -tol 1e-14\n"
+       ".endc\n.end\n")
+o14 = run(d14)
+rt14 = optval(o14, "rtop")
+check(f"least-squares .param fit: rtop -> 2333.3 (got {rt14})",
+      rt14 is not None and abs(rt14 - 2333.333) / 2333.333 < 1e-3, str(rt14))
+check("least-squares .param fit uses Levenberg-Marquardt",
+      "Levenberg-Marquardt" in o14)
+
+# [15] the inner re-sources are quiet (one banner for the final run, not ~67)
+resets = o11.count("Reset re-loads")
+check(f"inner re-sources are silent ({resets} 'Reset re-loads' banner(s) for ~67 evals)",
+      resets <= 1, f"{resets} banners")
 
 print(f"\n{'ALL PASS' if passed == checks else 'FAILURES'}: {passed}/{checks} passed")
 sys.exit(0 if passed == checks else 1)

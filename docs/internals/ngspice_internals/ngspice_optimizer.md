@@ -1,7 +1,8 @@
 # The ngspice `optimize` command — a friendly user manual
 
 *A built-in parameter optimizer for ngspice (Enhancement-130, with least-squares
-curve fitting added in Enhancement-143).*
+curve fitting added in Enhancement-143 and symbolic `.param` tuning in
+Enhancement-144).*
 
 This guide explains how to use the `optimize` command from scratch. You do **not**
 need any background in optimization or numerical methods — if you can write a small
@@ -52,7 +53,7 @@ optimizer only ever tries to make it small.
 You run `optimize` inside a `.control … .endc` block, after your circuit is loaded:
 
 ```
-optimize -param <name> <init> <lo> <hi>   [-param ...]
+optimize (-param|-dparam) <name> <init> <lo> <hi>   [...]
          -analysis <command ...>
          ( -minimize <expression ...>                          (one goal)
            | -target <expr> <value> [<weight>]  [-target ...] ) (fit several)
@@ -61,7 +62,8 @@ optimize -param <name> <init> <lo> <hi>   [-param ...]
 
 | Part | Meaning |
 |---|---|
-| `-param name init lo hi` | A knob to turn. `name` is a device (like `R1`, `C1`) or a device parameter. `init` is where to start, `lo`/`hi` are the smallest/largest values allowed. Repeat `-param` for each knob (up to 16). |
+| `-param name init lo hi` | A knob to turn. `name` is a device (like `R1`, `C1`) or a device parameter (`@m1[w]`). `init` is where to start, `lo`/`hi` are the smallest/largest values allowed. Repeat for each knob (up to 16). |
+| `-dparam name init lo hi` | Like `-param`, but `name` is a symbolic netlist **`.param`** (e.g. the `w` in `.param w=1u`, or a name used in an expression like `R1={500*k}`). See §9. Mixes freely with `-param`. |
 | `-analysis <cmd>` | The simulation to run every time it turns the knobs — an ordinary ngspice command such as `op`, `ac dec 20 1 1meg`, or `tran 1u 1m`. Give several to combine analyses in one fit (see §8). |
 | `-minimize <expr>` | The cost, for a **single** goal. Any ngspice expression over the results that should be **zero when the circuit is perfect**. A very common shape is `(something - target)^2`. |
 | `-target <expr> <val> [<w>]` | A measurement to **fit** (§8). Repeat to fit many at once; the optimizer minimizes the sum of squared residuals `w·(expr − val)`. Use `-target` *or* `-minimize`, not both. |
@@ -443,7 +445,47 @@ values the "measurements" came from.
 > **last** value of its expression. Use a one-point analysis (e.g. `ac lin 1 f f`) or a
 > vector index (`v(out)[3]`, as above) to pin a specific point.
 
-## 9. Writing a good cost expression
+## 9. Tuning a `.param` value
+
+So far every knob has been a **device** — `R1`, `C1`, or a device parameter like
+`@m1[w]` — which `optimize` changes on the spot with `alter`. But netlists are
+usually written with **symbolic parameters**:
+
+```spice
+.param rtop=1k
+R1 in out {rtop}
+```
+
+`rtop` is not a device, and `alter` can't touch it: a `.param` is worked out when
+the deck is first read, and then it's gone. To turn a `.param` knob the optimizer
+has to edit the deck and read it again. It does that for you — just use
+**`-dparam`** instead of `-param`:
+
+```spice
+.param rtop=1k
+V1 in 0 dc 1
+R1 in out {rtop}
+R2 out 0 1k
+.control
+optimize -dparam rtop 1k 100 10k -analysis op -minimize (v(out)-0.3)^2
+.endc
+```
+
+This tunes `rtop` until `v(out) = 0.3`, giving `rtop = 2333.3 Ω`. It works for a
+`.param` used **inside an expression** too — `R2 out 0 {1k*kdiv}` and
+`-dparam kdiv …` is fine.
+
+Everything else is the same — `-dparam` obeys the same `init lo hi`, works with
+`-minimize` or `-target`, and **mixes with `-param`** in one command (some knobs
+symbolic, some devices). A couple of things worth knowing:
+
+- **It's slower per step.** Changing a device with `-param` is instant; changing a
+  `.param` with `-dparam` re-reads the whole deck each time. So prefer `-param`
+  when a knob is a real device, and use `-dparam` only for genuine `.param`s.
+- **It's quiet.** The re-read normally prints a `Reset re-loads circuit …` line;
+  during optimization those are suppressed, so you don't see hundreds of them.
+
+## 10. Writing a good cost expression
 
 The cost is the only tricky part, and the recipe is simple: **make it zero when the
 circuit is perfect, and positive otherwise.** Some patterns:
@@ -463,7 +505,7 @@ If the expression produces a whole waveform (as in a transient), the optimizer u
 
 ---
 
-## 10. Tips and common pitfalls
+## 11. Tips and common pitfalls
 
 - **Give sensible bounds.** `lo` and `hi` define the search box; pick a range you know
   contains a good answer. The starting value `init` should be inside it.
@@ -483,7 +525,7 @@ If the expression produces a whole waveform (as in a transient), the optimizer u
 
 ---
 
-## 11. How it works, briefly
+## 12. How it works, briefly
 
 Under the hood, `optimize` uses the **Nelder–Mead downhill-simplex** method — a classic
 derivative-free optimizer. For `N` knobs it keeps `N+1` trial points (a "simplex"), and
@@ -492,9 +534,11 @@ contracting when it doesn't, so the shape tumbles and shrinks downhill until it 
 on the minimum. It needs no derivatives — only the ability to run the circuit and read a
 number — which is exactly what a SPICE simulation gives it.
 
-For every trial it applies the candidate values with `alter`, runs your analysis, and
-evaluates your cost expression. It searches in a normalized `[0, 1]` version of each
-parameter's range so that very different component scales are treated evenly.
+For every trial it applies the candidate values — device knobs (`-param`) in place with
+`alter`, and symbolic `.param` knobs (`-dparam`) by rewriting the deck with `alterparam`
+and re-sourcing it — runs your analysis, and evaluates your cost expression. It searches
+in a normalized `[0, 1]` version of each parameter's range so that very different
+component scales are treated evenly.
 
 When you give `-target`s instead of `-minimize`, the objective is a sum of squared
 residuals, and `optimize` switches (by default) to **Levenberg–Marquardt**: it estimates
@@ -505,6 +549,7 @@ least-squares structure this way reaches the optimum in far fewer circuit evalua
 than the simplex on smooth problems (§8).
 
 The implementation lives in `ngspice-46/src/frontend/com_optimize.c`; the design notes
-are in [Enhancement-130](../../../enhancements_doc/Enhancement-130.md) and
-[Enhancement-143](../../../enhancements_doc/Enhancement-143.md), and a runnable
+are in [Enhancement-130](../../../enhancements_doc/Enhancement-130.md),
+[Enhancement-143](../../../enhancements_doc/Enhancement-143.md) and
+[Enhancement-144](../../../enhancements_doc/Enhancement-144.md), and a runnable
 example set is under [`examples/optimize_examples/`](../../../examples/optimize_examples/).

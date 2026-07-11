@@ -26,17 +26,23 @@ across parameters that span orders of magnitude).
 
 Syntax (in a .control block, after the circuit is loaded):
 
-  optimize -param <name> <init> <lo> <hi>  [-param ...]
+  optimize (-param|-dparam) <name> <init> <lo> <hi>  [...]
            -analysis <command ...>
            ( -minimize <expression ...>
              | -target <expr> <value> [<weight>]  [-target ...]
                [ -analysis <command ...> -target ... ] )
            [-method nm|lm] [-maxiter <N>] [-tol <T>] [-verbose]
 
-Each <name> is an `alter` target -- a device instance (e.g. R1, C1) or a
-parameter (e.g. @m1[w]). For every candidate the optimizer applies each value in
-place with `alter <name>=<value>`, runs each -analysis command, and evaluates the
-objective. `-analysis` and `-minimize` collect every following token up to the
+A -param <name> is an `alter` target -- a device instance (e.g. R1, C1) or a
+device/model parameter (e.g. @m1[w]); it is changed in place with `alter
+<name>=<value>` (fast, no re-parse). A -dparam <name> is a symbolic netlist
+`.param` (e.g. `.param w=1u`); since those are expanded at parse time, it is
+changed with `alterparam <name>=<value>` followed by a `reset` that re-sources
+the deck (re-evaluating every `.param` and re-stamping device values) -- heavier,
+but the only way to tune a `.param`. Deck params are applied and re-sourced first,
+then the in-place `alter` params, so the two kinds mix correctly. For every
+candidate the optimizer applies the values, runs each -analysis command, and
+evaluates the objective. `-analysis` and `-minimize` collect every following token up to the
 next `-<letter>` flag, so multi-word commands/expressions need no quoting; a
 -target expression is a single token (use the no-space forms `v(out)-v(in)`,
 `mag(v(out))`, `v(out)[3]`). Each objective/target reads the LAST value of its
@@ -67,9 +73,15 @@ struct opt_target {
     int    stage;                /* which -analysis stage it belongs to   */
 };
 
+/* how a parameter is applied to the circuit */
+#define OPT_ALTER      0         /* device/instance param, in place via `alter`   */
+#define OPT_DECKPARAM  1         /* symbolic `.param`, via `alterparam` + re-source*/
+
 struct optctx {
     int np;
     char *name[OPT_MAXP];
+    int  kind[OPT_MAXP];         /* OPT_ALTER or OPT_DECKPARAM                     */
+    int  has_deckparam;          /* any OPT_DECKPARAM present -> a re-source per eval*/
     double lo[OPT_MAXP], hi[OPT_MAXP], x0[OPT_MAXP];
 
     int ns;                              /* number of analysis stages      */
@@ -175,7 +187,28 @@ static double opt_eval(struct optctx *c, const double *u, double *resid)
      * set here survives through to the analyses. */
     ft_optimizing = !c->verbose;
 
+    /* Symbolic `.param`s can only be changed by editing the deck and re-parsing:
+     * `alterparam name=val` rewrites the stored deck, then `reset` re-sources it
+     * (re-evaluating every `.param` expression and re-stamping device values). We
+     * apply all deck params first, re-source once, THEN apply the in-place `alter`
+     * params -- because `reset` rebuilds the circuit from the deck and would wipe
+     * an earlier in-place `alter`. Circuits with no `.param` knob skip this
+     * entirely (unchanged fast path). */
+    if (c->has_deckparam) {
+        for (k = 0; k < c->np; k++) {
+            if (c->kind[k] != OPT_DECKPARAM)
+                continue;
+            double val = c->lo[k] + clamp01(u[k]) * (c->hi[k] - c->lo[k]);
+            (void) snprintf(cmd, sizeof cmd, "alterparam %s=%.10g", c->name[k], val);
+            opt_run_cmd(cmd);
+        }
+        opt_run_cmd("reset");
+        ft_optimizing = !c->verbose;   /* re-assert in case re-source cleared it */
+    }
+
     for (k = 0; k < c->np; k++) {
+        if (c->kind[k] != OPT_ALTER)
+            continue;
         double val = c->lo[k] + clamp01(u[k]) * (c->hi[k] - c->lo[k]);
         (void) snprintf(cmd, sizeof cmd, "alter %s=%.10g", c->name[k], val);
         opt_run_cmd(cmd);
@@ -494,7 +527,8 @@ void com_optimize(wordlist *wl)
 
     while (wl) {
         const char *w = wl->wl_word;
-        if (eq(w, "-param") || eq(w, "-p")) {
+        if (eq(w, "-param") || eq(w, "-p") || eq(w, "-dparam") || eq(w, "-d")) {
+            int knd = (eq(w, "-dparam") || eq(w, "-d")) ? OPT_DECKPARAM : OPT_ALTER;
             if (c.np >= OPT_MAXP) {
                 fprintf(cp_err, "optimize: too many -param (max %d)\n", OPT_MAXP);
                 goto cleanup;
@@ -502,10 +536,11 @@ void com_optimize(wordlist *wl)
             wordlist *a = wl->wl_next, *b = a ? a->wl_next : NULL;
             wordlist *d = b ? b->wl_next : NULL, *e = d ? d->wl_next : NULL;
             if (!a || !b || !d || !e) {
-                fprintf(cp_err, "optimize: -param needs <name> <init> <lo> <hi>\n");
+                fprintf(cp_err, "optimize: %s needs <name> <init> <lo> <hi>\n", w);
                 goto cleanup;
             }
             c.name[c.np] = copy(a->wl_word);
+            c.kind[c.np] = knd;
             c.x0[c.np]   = optnum(b->wl_word);
             c.lo[c.np]   = optnum(d->wl_word);
             c.hi[c.np]   = optnum(e->wl_word);
@@ -514,6 +549,8 @@ void com_optimize(wordlist *wl)
                 tfree(c.name[c.np]);
                 goto cleanup;
             }
+            if (knd == OPT_DECKPARAM)
+                c.has_deckparam = 1;
             c.np++;
             wl = e->wl_next;
         } else if (eq(w, "-analysis") || eq(w, "-a")) {
@@ -588,9 +625,10 @@ void com_optimize(wordlist *wl)
 
     /* --- validate --- */
     if (c.np < 1 || c.ns < 1 || (!c.objective && c.nt == 0)) {
-        fprintf(cp_err, "usage: optimize -param <name> <init> <lo> <hi> [-param ...] "
-                        "-analysis <cmd> (-minimize <expr> | -target <expr> <val> "
-                        "[<w>] ...) [-method nm|lm] [-maxiter N] [-tol T] [-verbose]\n");
+        fprintf(cp_err, "usage: optimize (-param|-dparam) <name> <init> <lo> <hi> "
+                        "[...] -analysis <cmd> (-minimize <expr> | -target <expr> "
+                        "<val> [<w>] ...) [-method nm|lm] [-maxiter N] [-tol T] "
+                        "[-verbose]\n");
         goto cleanup;
     }
     if (c.objective && c.nt > 0) {

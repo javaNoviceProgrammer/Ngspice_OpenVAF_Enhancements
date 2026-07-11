@@ -1,0 +1,35 @@
+Symbolic .param optimization demo (Enhancement-144)
+* -------------------------------------------------------------------------
+* Enhancement-144 lets `optimize` tune symbolic netlist `.param` values, not
+* just alter-reachable device parameters. A `.param` is expanded when the deck
+* is parsed, so it cannot be changed with `alter`; instead `-dparam` changes it
+* with `alterparam` + a quiet `reset` that re-sources the deck.
+*
+* Here `rtop` is a `.param` used as R1's value, and `kdiv` is a `.param` used
+* inside an expression (R2 = 1k*kdiv). We fit BOTH so that the divider output
+* is 0.4 V and the total resistance is 5 k (i.e. i(V1) = -0.2 mA). The unique
+* solution is R1 = 3 k, R2 = 2 k, i.e. rtop = 3 k and kdiv = 2, recovered from
+* a 1 k / 1 start.
+*
+*   optimize (-param|-dparam) <name> <init> <lo> <hi> [...]
+*            -analysis <cmd> (-minimize <expr> | -target <expr> <val> ...) ...
+*
+* `-param` = device/instance knob (in place, fast); `-dparam` = symbolic .param
+* (re-sourced). The two mix freely. Add -verbose to watch the cost fall.
+* -------------------------------------------------------------------------
+.param rtop=1k
+.param kdiv=1
+V1 in 0 dc 1
+R1 in out {rtop}
+R2 out 0 {1k*kdiv}
+
+.control
+optimize -dparam rtop 1k 100 10k -dparam kdiv 1 0.1 10
++        -analysis op
++        -minimize (v(out)-0.4)^2 + (abs(i(v1))-0.2m)^2
++        -maxiter 400 -tol 1e-15
+* leave the circuit at the optimum and confirm
+op
+print v(out) i(v1)
+.endc
+.end

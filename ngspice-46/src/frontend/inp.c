@@ -546,7 +546,8 @@ inp_spsource(FILE *fp, bool comfile, char *filename, bool intfile)
             deck = inp_deckcopy(mc_deck);
             expr_w_temper = TRUE;
             mc_reload = FALSE;
-            fprintf(stdout, "Reset re-loads circuit %s\n", mc_deck->line);
+            if (!ft_optimizing)   /* Enhancement-144: quiet during optimizer re-source */
+                fprintf(stdout, "Reset re-loads circuit %s\n", mc_deck->line);
             dynmaxline = 0;
             /* recover the number of lines in deck */
             for (dd = deck; dd; dd = dd->nextcard)
@@ -662,8 +663,8 @@ inp_spsource(FILE *fp, bool comfile, char *filename, bool intfile)
 
             with_params = TRUE;
             size = sizeof header + 10;  // Allow for %u and close.
-            for (argc = 0; Copy_of_argv[optind + argc]; ++argc)
-                size += (int)strlen(Copy_of_argv[optind + argc]);
+            for (argc = 0; Copy_of_argv[optind + (int)argc]; ++argc)
+                size += (unsigned int)strlen(Copy_of_argv[optind + (int)argc]);
             size += 3 * argc; // Spaces and quotes.
             if (size <= sizeof buf)
                 p_buf_active = buf;
@@ -672,7 +673,7 @@ inp_spsource(FILE *fp, bool comfile, char *filename, bool intfile)
 
             /* Fill the buffer. */
 
-            size = sprintf(p_buf_active, header, argc);
+            size = (unsigned int)sprintf(p_buf_active, header, argc);
             while (Copy_of_argv[optind]) {
                 char c, *fmt;
 
@@ -684,7 +685,7 @@ inp_spsource(FILE *fp, bool comfile, char *filename, bool intfile)
                 } else {
                     fmt = " %s";
                 }
-                size += sprintf(p_buf_active + size, fmt,
+                size += (unsigned int)sprintf(p_buf_active + size, fmt,
                                 Copy_of_argv[optind++]);
             }
             strcpy(p_buf_active + size, " )");
@@ -858,7 +859,8 @@ inp_spsource(FILE *fp, bool comfile, char *filename, bool intfile)
         /* We are done handling the control stuff.  Now process remainder of deck.
            Go on if there is something left after the controls.*/
         if (deck->nextcard) {
-            fprintf(cp_out, "\nCircuit: %s\n\n", tt);
+            if (!ft_optimizing)   /* Enhancement-144: quiet during optimizer re-source */
+                fprintf(cp_out, "\nCircuit: %s\n\n", tt);
 #ifdef HAS_PROGREP
             SetAnalyse("Prepare Deck", 0);
 #endif

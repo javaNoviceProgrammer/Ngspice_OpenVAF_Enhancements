@@ -345,7 +345,16 @@ are fitted with **Levenberg-Marquardt** (finite-difference Jacobian) — the
 right tool for smooth curve-fitting / device-parameter-extraction problems,
 reaching the optimum in far fewer analysis runs than the simplex (e.g. 27 vs 67
 evaluations on a two-target RC fit). Verified to recover both `is` and `n` of a
-compiled OSDI diode from two I-V points.*
+compiled OSDI diode from two I-V points.
+[Enhancement-144](../../../enhancements_doc/Enhancement-144.md) closes the last
+gap in the knob set: besides `alter`-reachable device/instance parameters
+(`-param`), the optimizer can now tune **symbolic netlist `.param` values**
+(`-dparam`) — since those are expanded at parse time, each candidate is applied
+with `alterparam` and a quiet `reset` that re-sources the deck (re-evaluating the
+`.param` expressions and re-stamping device values). Deck params are re-sourced
+first and the in-place `alter` params re-applied after, so the two kinds mix in
+one run; verified on `.param`s used directly and inside expressions, including an
+OSDI-device value.*
 
 *The "checkpoint / restart" row is ✅ since
 [Enhancement-131](../../../enhancements_doc/Enhancement-131.md): stock ngspice
