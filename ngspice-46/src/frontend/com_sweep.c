@@ -558,3 +558,153 @@ void com_highsigma(wordlist *wl)
     hs_set_result("highsigma_sigma", sigma);
     hs_set_result("highsigma_nfail", (double) nfail);
 }
+
+
+/**********
+Enhancement-151: `montecarlo` -- a packaged Monte Carlo yield analysis. It lives
+here for the same reason `highsigma` does (reuses `sw_run_cmd` and
+`sw_eval_expr`, and is a sampling-driven analysis loop).
+
+  montecarlo <N> [-lhs] [-seed <s>] [-analysis <cmd>]
+             (-spec <metric> [-max <hi>] [-min <lo>])...
+
+Runs N Monte Carlo samples (each re-sources the deck, redrawing its random
+`.param`s, and runs `-analysis`, default `op`), evaluates every `-spec` metric,
+and counts a sample as PASS only if all specs are within their limits. Reports
+the yield (fraction passing) with a Wilson 95% confidence interval and a
+per-spec violation count; leaves `montecarlo_yield`, `montecarlo_npass`,
+`montecarlo_n` for scripting. With `-lhs` it draws Latin-Hypercube samples
+(Enhancement-149) for a lower-variance yield estimate. Process/mismatch
+correlations are handled by `mvnorm()` (Enhancement-151) in the `.param`s, and
+process corners by the ordinary `.lib`/`.include` corner selection.
+**********/
+
+#define MC_MAXSPEC 32
+
+void com_montecarlo(wordlist *wl)
+{
+    int nsamp = 0, uselhs = 0, nspec = 0;
+    unsigned seed = 1;
+    char analysis[512] = "op";
+    char metric[MC_MAXSPEC][256];
+    double hi[MC_MAXSPEC], lo[MC_MAXSPEC];
+    int hasmax[MC_MAXSPEC], hasmin[MC_MAXSPEC];
+    long specfail[MC_MAXSPEC];
+    int save_optimizing = ft_optimizing;
+    int s;
+
+    if (wl == NULL || wl->wl_word == NULL) {
+        fprintf(cp_err, "Usage: montecarlo <N> [-lhs] [-seed <s>] [-analysis <cmd>] "
+                        "(-spec <metric> [-max <hi>] [-min <lo>])...\n");
+        return;
+    }
+    nsamp = atoi(wl->wl_word);
+    if (nsamp < 2) {
+        fprintf(cp_err, "montecarlo: sample count must be >= 2 (got '%s')\n", wl->wl_word);
+        return;
+    }
+    wl = wl->wl_next;
+
+    while (wl && wl->wl_word) {
+        const char *w = wl->wl_word;
+        if (eq(w, "-lhs")) {
+            uselhs = 1; wl = wl->wl_next;
+        } else if (eq(w, "-seed") || eq(w, "seed")) {
+            if (!wl->wl_next) { fprintf(cp_err, "montecarlo: -seed needs a value\n"); return; }
+            wl = wl->wl_next; seed = (unsigned) strtoul(wl->wl_word, NULL, 10); wl = wl->wl_next;
+        } else if (eq(w, "-analysis")) {
+            analysis[0] = '\0';
+            wl = wl->wl_next;
+            while (wl && wl->wl_word && wl->wl_word[0] != '-') {
+                if (analysis[0]) strncat(analysis, " ", sizeof(analysis) - strlen(analysis) - 1);
+                strncat(analysis, wl->wl_word, sizeof(analysis) - strlen(analysis) - 1);
+                wl = wl->wl_next;
+            }
+        } else if (eq(w, "-spec")) {
+            if (nspec >= MC_MAXSPEC) { fprintf(cp_err, "montecarlo: too many -spec (max %d)\n", MC_MAXSPEC); return; }
+            if (!wl->wl_next) { fprintf(cp_err, "montecarlo: -spec needs a metric expression\n"); return; }
+            wl = wl->wl_next;
+            strncpy(metric[nspec], wl->wl_word, sizeof(metric[nspec]) - 1);
+            metric[nspec][sizeof(metric[nspec]) - 1] = '\0';
+            hasmax[nspec] = hasmin[nspec] = 0; specfail[nspec] = 0;
+            nspec++;
+            wl = wl->wl_next;
+        } else if (eq(w, "-max")) {
+            if (nspec == 0) { fprintf(cp_err, "montecarlo: -max before any -spec\n"); return; }
+            if (!wl->wl_next) { fprintf(cp_err, "montecarlo: -max needs a value\n"); return; }
+            wl = wl->wl_next; hi[nspec - 1] = sw_num(wl->wl_word); hasmax[nspec - 1] = 1; wl = wl->wl_next;
+        } else if (eq(w, "-min")) {
+            if (nspec == 0) { fprintf(cp_err, "montecarlo: -min before any -spec\n"); return; }
+            if (!wl->wl_next) { fprintf(cp_err, "montecarlo: -min needs a value\n"); return; }
+            wl = wl->wl_next; lo[nspec - 1] = sw_num(wl->wl_word); hasmin[nspec - 1] = 1; wl = wl->wl_next;
+        } else {
+            fprintf(cp_err, "montecarlo: unexpected token '%s'\n", w);
+            return;
+        }
+    }
+
+    if (nspec == 0) {
+        fprintf(cp_err, "montecarlo: at least one '-spec <metric> (-max/-min)' is required\n");
+        return;
+    }
+    for (s = 0; s < nspec; s++)
+        if (!hasmax[s] && !hasmin[s]) {
+            fprintf(cp_err, "montecarlo: spec '%s' has no -max/-min limit\n", metric[s]);
+            return;
+        }
+    if (ft_curckt == NULL || ft_curckt->ci_ckt == NULL) {
+        fprintf(cp_err, "montecarlo: no circuit loaded\n");
+        return;
+    }
+
+    fprintf(cp_out, "montecarlo: %d %s samples, analysis '%s', %d spec%s\n",
+            nsamp, uselhs ? "Latin-Hypercube" : "random", analysis,
+            nspec, nspec == 1 ? "" : "s");
+
+    if (uselhs) {
+        mc_lhs_config(nsamp, seed);
+    } else {
+        char cmd[64];
+        snprintf(cmd, sizeof cmd, "setseed %u", seed);
+        sw_run_cmd(cmd);
+    }
+
+    long npass = 0;
+    ft_optimizing = TRUE;
+    for (int i = 0; i < nsamp; i++) {
+        ft_optimizing = TRUE;
+        sw_run_cmd("reset");
+        sw_run_cmd(analysis);
+        int pass = 1;
+        for (s = 0; s < nspec; s++) {
+            double m = sw_eval_expr(metric[s]);
+            if ((hasmax[s] && m > hi[s]) || (hasmin[s] && m < lo[s])) {
+                pass = 0;
+                specfail[s]++;
+            }
+        }
+        if (pass) npass++;
+    }
+    ft_optimizing = save_optimizing;
+    if (uselhs)
+        mc_sss_off();
+
+    /* yield and a Wilson 95% score interval for the pass proportion */
+    double p = (double) npass / (double) nsamp;
+    const double z = 1.959964, z2 = z * z;
+    double denom = 1.0 + z2 / nsamp;
+    double center = (p + z2 / (2.0 * nsamp)) / denom;
+    double half = z * sqrt(p * (1.0 - p) / nsamp + z2 / (4.0 * nsamp * nsamp)) / denom;
+
+    fprintf(cp_out, "\n  yield  : %.3f%%  (%ld / %d pass)\n"
+                    "  95%% CI : [%.3f%%, %.3f%%]  (Wilson score)\n",
+            100.0 * p, npass, nsamp,
+            100.0 * (center - half), 100.0 * (center + half));
+    for (s = 0; s < nspec; s++)
+        fprintf(cp_out, "  spec %d (%s): %ld violation%s\n",
+                s + 1, metric[s], specfail[s], specfail[s] == 1 ? "" : "s");
+
+    hs_set_result("montecarlo_yield", p);
+    hs_set_result("montecarlo_npass", (double) npass);
+    hs_set_result("montecarlo_n", (double) nsamp);
+}

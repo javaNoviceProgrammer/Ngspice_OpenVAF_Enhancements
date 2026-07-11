@@ -372,6 +372,17 @@ static int      lhs_dim_cap = 0;   /* allocated length of lhs_perm/lhs_jit  */
 static double   sss_lambda = 1.0;  /* SSS variance-inflation factor (>1)    */
 static double   sss_logw = 0.0;    /* accumulated log importance weight     */
 
+/* Enhancement-151: correlated (process/mismatch) sampling. `mccorr` registers a
+ * k x k correlation matrix, Cholesky-factored into `corr_L` (lower, row-major).
+ * `mvnorm(i)` in a .param returns the i-th component of one correlated
+ * standard-normal draw per sample: y = L*z with z ~ N(0,I) drawn through the
+ * mode-aware mc_sample_gauss() (so correlation composes with LHS and SSS). */
+static int      corr_k = 0;        /* group size (0 == none registered)     */
+static double  *corr_L = NULL;     /* [k*k] lower Cholesky factor           */
+static double  *corr_y = NULL;     /* [k] cached correlated draw            */
+static double  *corr_z = NULL;     /* [k] scratch for the underlying z      */
+static int      corr_drawn = 0;    /* has corr_y been built this sample?    */
+
 /* splitmix64 -- a tiny, self-contained, reproducible generator used only to
  * build the per-dimension strata, kept independent of the global PRNG state. */
 static uint64_t sm_next(uint64_t *s)
@@ -449,6 +460,7 @@ int mc_sample_active(void)
  * re-evaluation pass. */
 void mc_sample_advance(void)
 {
+    corr_drawn = 0;                 /* rebuild the correlated draw next use  */
     if (!mc_sample_active())
         return;
     lhs_sample++;
@@ -572,6 +584,130 @@ double inv_normal_cdf(double p)
     }
 }
 
+/* Engage Latin-Hypercube sampling for N reset-driven samples (shared by the
+ * `mcsample lhs` command and the `montecarlo -lhs` yield flow). */
+void mc_lhs_config(int nsamples, unsigned seed)
+{
+    lhs_free_tables();
+    lhs_mode = MC_MODE_LHS;
+    lhs_N = nsamples;
+    lhs_seed = seed;
+    lhs_sample = -1;
+    lhs_dim = 0;
+}
+
+/* -----------------------------------------------------------------------
+ * Enhancement-151: correlated (process/mismatch) sampling.
+ * ----------------------------------------------------------------------- */
+
+/* i-th component (1-based) of the current sample's correlated standard-normal
+ * draw. With no correlation registered it degrades to an independent draw, so
+ * `mvnorm(i)` is always usable. The k underlying z's are drawn once per sample
+ * through mc_sample_gauss() -- inheriting LHS stratification / SSS weighting --
+ * then mapped by the Cholesky factor: y = L*z. */
+double mc_corr_component(int idx)
+{
+    if (corr_k <= 0 || idx < 1 || idx > corr_k)
+        return mc_sample_gauss();
+    if (!corr_drawn) {
+        int i, j;
+        for (i = 0; i < corr_k; i++)
+            corr_z[i] = mc_sample_gauss();
+        for (i = 0; i < corr_k; i++) {
+            double s = 0.0;
+            for (j = 0; j <= i; j++)
+                s += corr_L[i * corr_k + j] * corr_z[j];
+            corr_y[i] = s;
+        }
+        corr_drawn = 1;
+    }
+    return corr_y[idx - 1];
+}
+
+/* Register a k x k correlation matrix (row-major, symmetric, unit diagonal) and
+ * Cholesky-factor it. Returns 0 on success, -1 if not positive-definite. */
+int mc_corr_config(int k, const double *mat)
+{
+    int i, j, m;
+    if (k < 1)
+        return -1;
+    tfree(corr_L);
+    tfree(corr_y);
+    tfree(corr_z);
+    corr_L = TMALLOC(double, k * k);
+    corr_y = TMALLOC(double, k);
+    corr_z = TMALLOC(double, k);
+    for (i = 0; i < k * k; i++)
+        corr_L[i] = 0.0;
+    /* Cholesky: L L^T = mat, L lower-triangular */
+    for (i = 0; i < k; i++) {
+        for (j = 0; j <= i; j++) {
+            double s = mat[i * k + j];
+            for (m = 0; m < j; m++)
+                s -= corr_L[i * k + m] * corr_L[j * k + m];
+            if (i == j) {
+                if (s <= 0.0) {                 /* not positive-definite */
+                    tfree(corr_L); tfree(corr_y); tfree(corr_z);
+                    corr_L = corr_y = corr_z = NULL;
+                    corr_k = 0;
+                    return -1;
+                }
+                corr_L[i * k + j] = sqrt(s);
+            } else {
+                corr_L[i * k + j] = s / corr_L[j * k + j];
+            }
+        }
+    }
+    corr_k = k;
+    corr_drawn = 0;
+    return 0;
+}
+
+/* mccorr <k> <m11> <m12> ... <mkk>   -- register a k x k correlation matrix
+ * mccorr off                          -- clear it                              */
+void com_mccorr(wordlist *wl)
+{
+    if (wl == NULL || wl->wl_word == NULL) {
+        if (corr_k > 0)
+            printf("Correlated sampling: %d x %d matrix registered "
+                   "(mvnorm(1..%d)).\n", corr_k, corr_k, corr_k);
+        else
+            printf("Correlated sampling: none (mvnorm() draws independently).\n");
+        return;
+    }
+    if (cieq(wl->wl_word, "off") || cieq(wl->wl_word, "none")) {
+        tfree(corr_L); tfree(corr_y); tfree(corr_z);
+        corr_L = corr_y = corr_z = NULL;
+        corr_k = 0;
+        printf("Correlated sampling cleared.\n");
+        return;
+    }
+    int k = atoi(wl->wl_word);
+    if (k < 1 || k > 256) {
+        fprintf(cp_err, "mccorr: group size must be in [1, 256] (got '%s')\n",
+                wl->wl_word);
+        return;
+    }
+    double *mat = TMALLOC(double, k * k);
+    wordlist *w = wl->wl_next;
+    int n = 0;
+    for (; w != NULL && n < k * k; w = w->wl_next, n++)
+        mat[n] = atof(w->wl_word);
+    if (n != k * k) {
+        fprintf(cp_err, "mccorr: expected %d matrix entries (row-major), got %d\n",
+                k * k, n);
+        tfree(mat);
+        return;
+    }
+    if (mc_corr_config(k, mat) != 0)
+        fprintf(cp_err, "mccorr: the matrix is not positive-definite "
+                        "(not a valid correlation matrix)\n");
+    else
+        printf("Correlated sampling: %d x %d correlation matrix registered; "
+               "use mvnorm(1..%d) in .param expressions.\n", k, k, k);
+    tfree(mat);
+}
+
 /* mcsample lhs <N> [seed <s>]   -- engage Latin-Hypercube sampling for N runs
  * mcsample random | off         -- revert to independent PRNG sampling         */
 void com_mcsample(wordlist *wl)
@@ -625,12 +761,7 @@ void com_mcsample(wordlist *wl)
         }
     }
 
-    lhs_free_tables();
-    lhs_mode = MC_MODE_LHS;
-    lhs_N = nsamp;
-    lhs_seed = seed;
-    lhs_sample = -1;
-    lhs_dim = 0;
+    mc_lhs_config(nsamp, seed);
     printf("Monte Carlo sampling: Latin-Hypercube, N = %d, seed = %u.\n"
            "  Each of the next %d reset-driven passes draws one stratified "
            "sample per random parameter.\n", lhs_N, lhs_seed, lhs_N);

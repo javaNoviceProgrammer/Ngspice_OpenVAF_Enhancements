@@ -1,0 +1,35 @@
+* yield_demo.cir -- process/mismatch correlations + Monte Carlo yield (Enhancement-151)
+*
+* A resistor divider whose two resistors should match. Their output ratio
+* v(out) = R2/(R1+R2) ~ 0.5 must stay within a +/-4% spec [0.48, 0.52].
+*
+* R1 and R2 each vary by 5% (1-sigma). How correlated that variation is decides
+* the yield: with a strong common process component R1 and R2 track each other,
+* the ratio barely moves, and the yield is high; with independent (mismatch-only)
+* variation the ratio wanders and the yield is much lower. The `mccorr` matrix
+* sets the correlation; `mvnorm(i)` draws the correlated process/mismatch factors.
+*
+* Run:  ngspice -b yield_demo.cir
+
+.param r1 = 1000 + 50*mvnorm(1)       ; 5% 1-sigma
+.param r2 = 1000 + 50*mvnorm(2)
+V1 in 0 DC 1
+R1 in out {r1}
+R2 out 0 {r2}
+
+.control
+  set numdgt=6
+
+  * --- strongly correlated (common process variation) ---
+  mccorr 2  1 0.9  0.9 1
+  echo --- R1,R2 process-correlated (rho = 0.9) ---
+  montecarlo 5000 -lhs -seed 1 -analysis op -spec v(out) -max 0.52 -min 0.48
+
+  * --- independent (mismatch only) ---
+  mccorr 2  1 0 0 1
+  echo --- R1,R2 independent (rho = 0) ---
+  montecarlo 5000 -lhs -seed 1 -analysis op -spec v(out) -max 0.52 -min 0.48
+
+  mccorr off
+.endc
+.end

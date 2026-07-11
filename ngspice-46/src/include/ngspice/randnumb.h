@@ -40,5 +40,14 @@ extern void com_highsigma(wordlist *wl);
 extern void mc_sss_config(int nsamples, double lambda, unsigned seed);
 extern void mc_sss_off(void);
 extern double mc_sample_weight(void);    /* importance weight of current sample */
+extern void mc_lhs_config(int nsamples, unsigned seed);  /* engage LHS directly */
+
+/* Enhancement-151: correlated (process/mismatch) sampling and packaged yield.
+ * `mccorr` registers a k x k correlation matrix; `mvnorm(i)` in a .param returns
+ * the i-th correlated standard normal. `montecarlo` runs a spec-based yield MC. */
+extern void com_mccorr(wordlist *wl);
+extern void com_montecarlo(wordlist *wl);
+extern int  mc_corr_config(int k, const double *mat);
+extern double mc_corr_component(int idx);   /* i-th correlated normal (1-based)  */
 
 #endif

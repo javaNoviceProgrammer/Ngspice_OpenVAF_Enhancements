@@ -218,6 +218,19 @@ struct comm spcp_coms[] = {
       "rare-event (high-sigma) failure-probability estimation by scaled-sigma importance sampling -- "
       "inflates Gaussian .param sigmas by lambda so tail failures (metric > hi or < lo) are sampled "
       "often, reweights, and reports P(fail), relative error, and equivalent sigma-to-fail." } ,
+    { "mccorr", com_mccorr, FALSE, FALSE,          /* Enhancement-151 */
+      { 0, 0, 0, 0 }, E_DEFHMASK, 0, LOTS,
+      NULL,
+      "<k> <m11> <m12> ... <mkk> | off : register a k x k correlation matrix (row-major) for "
+      "process/mismatch sampling; then use mvnorm(1..k) in .param expressions to draw correlated "
+      "standard normals (one shared draw per Monte Carlo sample)." } ,
+    { "montecarlo", com_montecarlo, FALSE, FALSE,  /* Enhancement-151 */
+      { 0, 0, 0, 0 }, E_DEFHMASK, 1, LOTS,
+      NULL,
+      "<N> [-lhs] [-seed <s>] [-analysis <cmd>] (-spec <metric> [-max <hi>] [-min <lo>])... : "
+      "packaged Monte Carlo yield analysis -- runs N samples, counts a sample as pass only if all "
+      "specs are within limits, and reports the yield with a Wilson 95% CI and per-spec violations "
+      "(-lhs for a lower-variance estimate; correlations via mvnorm(), corners via .lib)." } ,
     { "transpose", com_transpose, FALSE, FALSE,
       { 040000, 040000, 040000, 040000 }, E_DEFHMASK, 1, LOTS,
       NULL,
@@ -824,6 +837,19 @@ struct comm nutcp_coms[] = {
       "rare-event (high-sigma) failure-probability estimation by scaled-sigma importance sampling -- "
       "inflates Gaussian .param sigmas by lambda so tail failures (metric > hi or < lo) are sampled "
       "often, reweights, and reports P(fail), relative error, and equivalent sigma-to-fail." } ,
+    { "mccorr", com_mccorr, FALSE, FALSE,          /* Enhancement-151 */
+      { 0, 0, 0, 0 }, E_DEFHMASK, 0, LOTS,
+      NULL,
+      "<k> <m11> <m12> ... <mkk> | off : register a k x k correlation matrix (row-major) for "
+      "process/mismatch sampling; then use mvnorm(1..k) in .param expressions to draw correlated "
+      "standard normals (one shared draw per Monte Carlo sample)." } ,
+    { "montecarlo", com_montecarlo, FALSE, FALSE,  /* Enhancement-151 */
+      { 0, 0, 0, 0 }, E_DEFHMASK, 1, LOTS,
+      NULL,
+      "<N> [-lhs] [-seed <s>] [-analysis <cmd>] (-spec <metric> [-max <hi>] [-min <lo>])... : "
+      "packaged Monte Carlo yield analysis -- runs N samples, counts a sample as pass only if all "
+      "specs are within limits, and reports the yield with a Wilson 95% CI and per-spec violations "
+      "(-lhs for a lower-variance estimate; correlations via mvnorm(), corners via .lib)." } ,
     { "transpose", com_transpose, FALSE, FALSE,
       { 040000, 040000, 040000, 040000 }, E_DEFHMASK, 1, LOTS,
       NULL,
