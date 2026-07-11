@@ -331,6 +331,15 @@ while KLU (opt-in via `.option klu`) matches it on DC/AC/transient but **rejects
 noise and pole-zero** and is less robust on stiff transient edges — verified by a
 solver-by-solver sweep of the whole example suite.
 
+For the statistical side, [Statistical simulation in
+ngspice](docs/internals/ngspice_internals/ngspice_statistics.md)
+([PDF](docs/internals/ngspice_internals/ngspice_statistics.pdf)) is a complete,
+plotted guide to the whole suite — the random `.param` functions, ordinary Monte
+Carlo, Latin-Hypercube sampling (`mcsample`), high-sigma rare-event estimation
+(`highsigma`), native process/mismatch correlations (`mccorr`/`mvnorm`), and the
+packaged yield command (`montecarlo`) — with worked examples and figures
+generated from real ngspice runs.
+
 Not every idea survives measurement. [OSDI/Verilog-A device bypass — an
 investigation](docs/internals/ngspice_internals/ngspice_osdi_bypass.md)
 ([PDF](docs/internals/ngspice_internals/ngspice_osdi_bypass.pdf)) records a full,
