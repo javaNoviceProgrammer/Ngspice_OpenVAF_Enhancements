@@ -31,7 +31,7 @@ mark is ⚠️ or ❌.
 | Integration | Advanced LTE-based step/order control | ✅ | ✅ |
 | Convergence | gmin stepping + source stepping homotopy | ✅ | ✅ |
 | Convergence | Pseudo-transient / dynamic-gmin continuation | ✅ | ✅ |
-| Convergence | Damped / trust-region (globalized) Newton | ⚠️ | ✅ |
+| Convergence | Damped / trust-region (globalized) Newton | ✅ | ✅ |
 | Convergence | Coordinated accuracy presets (`errpreset`) | ✅ | ✅ |
 
 *The "matrix reordering + scaling beyond KLU defaults" row is ✅ since
@@ -66,6 +66,16 @@ pseudo-transient (Ẋ-embedded) continuation — **both now added**.
 adds the former: `.option linesearch`, an Armijo backtracking line search on a
 new KCL-residual merit `‖F‖=‖G·x−b‖` (result-neutral, off by default) — see the
 [implementation write-up](ngspice_linesearch_globalized_newton.md).
+[Enhancement-153](../../../enhancements_doc/Enhancement-153.md) completes this row
+with the *trust-region* counterpart: `.option trustregion`, a Levenberg-Marquardt
+Newton that damps the **Jacobian** (`x_{k+1}=x_k−(J+μI)⁻¹F`, `μ=λ·‖diag(J)‖`,
+Marquardt-scaled) rather than just the step length, re-aiming the step to
+regularize an ill-conditioned Jacobian — result-neutral, off by default, verified
+bit-identical to plain Newton. Its honest scope: because ngspice globalizes at the
+*device* level (junction limiting) *before* the residual is formed, a solver-level
+trust-region measures **zero** step-rejections on typical circuits and stays inert;
+it is a correct regularization for the residual-overshoot cases the device-level
+machinery does not catch.
 [Enhancement-112](../../../enhancements_doc/Enhancement-112.md) then extended it to
 the **KLU** solver — it originally ran only under Sparse 1.3 and segfaulted under
 `.option klu` — so the line search now works under **both** linear solvers, with a

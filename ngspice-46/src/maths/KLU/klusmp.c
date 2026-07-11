@@ -1081,6 +1081,34 @@ SMPmatSize (SMPmatrix *Matrix)
 }
 
 /*
+ * SMPdiagNorm() -- Enhancement-153: the largest magnitude on the loaded matrix
+ * diagonal, used as the scale-invariant reference for the trust-region
+ * (Levenberg-Marquardt) damping mu = lambda * ||diag||. Must be called after
+ * CKTload and before factorization (the factor overwrites the matrix in place).
+ */
+double
+SMPdiagNorm (SMPmatrix *Matrix)
+{
+    double norm = 0.0 ;
+    if (Matrix->CKTkluMODE) {
+        double **diag = Matrix->SMPkluMatrix->KLUmatrixDiag ;
+        unsigned int i, n = Matrix->SMPkluMatrix->KLUmatrixN ;
+        if (diag == NULL)
+            return 0.0 ;
+        for (i = 0 ; i < n ; i++)
+            if (diag [i] != NULL && fabs (*(diag [i])) > norm)
+                norm = fabs (*(diag [i])) ;
+    } else {
+        MatrixPtr M = Matrix->SPmatrix ;
+        int I ;
+        for (I = M->Size ; I > 0 ; I--)
+            if (M->Diag [I] != NULL && fabs (M->Diag [I]->Real) > norm)
+                norm = fabs (M->Diag [I]->Real) ;
+    }
+    return norm ;
+}
+
+/*
  * SMPnewMatrix()
  */
 int

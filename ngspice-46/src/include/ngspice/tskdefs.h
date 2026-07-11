@@ -72,6 +72,7 @@ struct TSKtask {
     unsigned int TSKcopyNodesets:1; /* flag for nodeset copy */
     unsigned int TSKnodeDamping:1;  /* flag for node damping */
     unsigned int TSKlinesearch:1;   /* Enhancement-111: adaptive damped-Newton line search */
+    unsigned int TSKtrustregion:1;  /* Enhancement-153: Levenberg-Marquardt trust-region Newton */
     unsigned int TSKptcont:1;       /* Enhancement-127: pseudo-transient continuation */
     unsigned int TSKdynorder:1;     /* Enhancement-128: LTE-based dynamic integration order */
     unsigned int TSKnoopac:1; /* flag for no OP calculation before AC */

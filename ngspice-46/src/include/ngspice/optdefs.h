@@ -141,6 +141,7 @@ enum {
     OPT_NEWTRUNC,
     OPT_ERRPRESET,      /* Enhancement-110: coordinated accuracy preset */
     OPT_LINESEARCH,     /* Enhancement-111: adaptive damped-Newton line search */
+    OPT_TRUSTREGION,    /* Enhancement-153: Levenberg-Marquardt trust-region Newton */
     OPT_PTCONT,         /* Enhancement-127: pseudo-transient continuation */
     OPT_DYNORDER,       /* Enhancement-128: LTE-based dynamic integration order */
 };

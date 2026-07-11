@@ -74,6 +74,7 @@ void SMPcSolve( SMPmatrix *, double [], double [], double [], double []);
 void SMPsolve( SMPmatrix *, double [], double []);
 int SMPmatSize( SMPmatrix *);
 int SMPnewMatrix( SMPmatrix *, int );
+double SMPdiagNorm( SMPmatrix * );   /* Enhancement-153: max |diagonal| (pre-factor) */
 void SMPdestroy( SMPmatrix *);
 int SMPpreOrder( SMPmatrix *);
 void SMPprint( SMPmatrix * , char *);

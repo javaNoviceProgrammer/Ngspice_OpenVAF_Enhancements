@@ -275,6 +275,8 @@ struct CKTcircuit {
     double *CKTlsXk;               /* E-111: line-search scratch (saved x_k) */
     double *CKTlsD;                /* E-111: line-search scratch (Newton step d) */
     int CKTlsBufSz;                /* E-111: allocated size of the LS scratch buffers */
+    unsigned int CKTtrustregion:1; /* Enhancement-153: Levenberg-Marquardt trust-region Newton */
+    double CKTtrLambda;            /* E-153: dimensionless trust-region damping parameter */
     unsigned int CKTptcont:1;      /* Enhancement-127: pseudo-transient continuation enabled */
     double CKTpseudoGmin;          /* E-127: pseudo-transient shunt conductance Gps=Cps/dtau (0 = off) */
     double *CKTpseudoPrev;         /* E-127: pseudo-transient previous-step solution x_prev */

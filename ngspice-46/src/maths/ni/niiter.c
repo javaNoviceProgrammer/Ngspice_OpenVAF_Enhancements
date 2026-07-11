@@ -66,7 +66,12 @@ NIiter(CKTcircuit *ckt, int maxIter)
 
     /* OldCKTstate0 = TMALLOC(double, ckt->CKTnumStates + 1); */
 
+    /* Enhancement-153: reset the trust-region damping for this Newton solve. */
+    if (ckt->CKTtrustregion)
+        ckt->CKTtrLambda = 0.0;
+
     for (;;) {
+        double trGmin = ckt->CKTdiagGmin;   /* E-153: effective diagonal add */
 
         ckt->CKTnoncon = 0;
 
@@ -131,7 +136,8 @@ NIiter(CKTcircuit *ckt, int maxIter)
              * x_k = CKTrhsOld, b = CKTrhs. F is the KCL residual (a current) --
              * the merit function ngspice's iterate-based Newton otherwise lacks.
              * CKTrhsSpare is scratch (free until the solve below). */
-            if (ckt->CKTlinesearch && ckt->CKTrhsSpare && (iterno > 1)) {
+            if ((ckt->CKTlinesearch || ckt->CKTtrustregion) &&
+                ckt->CKTrhsSpare && (iterno > 1)) {
                 int sz = SMPmatSize(ckt->CKTmatrix);
                 int k;
                 double m = 0.0;
@@ -145,6 +151,30 @@ NIiter(CKTcircuit *ckt, int maxIter)
                         m = w;
                 }
                 ckt->CKTlsMerit = m;
+
+                /* Enhancement-153: Levenberg-Marquardt trust-region Newton. When
+                 * a positive damping `lambda` is in effect (set by the step
+                 * rejection below), add mu = lambda * ||diag(J)|| to the Jacobian
+                 * diagonal (trGmin, applied at factor time) AND mu*x_k to the RHS,
+                 * so the solve yields the exact damped step
+                 *   x_{k+1} = x_k - (J + mu I)^-1 F(x_k)
+                 * (the E-127 pseudo-transient RHS coupling with x_prev = x_k).
+                 * The scale ||diag(J)|| makes lambda dimensionless (Marquardt),
+                 * and the fixed point is F=0 for any mu -- so it converges to the
+                 * true operating point. lambda starts at 0 and returns to 0 once
+                 * the steps succeed, making this result-neutral on well-behaved
+                 * circuits; a large mu tilts the step toward steepest descent,
+                 * regularizing an ill-conditioned Jacobian a line search cannot. */
+                if (ckt->CKTtrustregion && (iterno > 1) && (ckt->CKTtrLambda > 0.0) &&
+                    ((ckt->CKTmode & MODETRANOP) || (ckt->CKTmode & MODEDCOP)) &&
+                    (ckt->CKTmode & MODEINITFLOAT)) {
+                    double mu = ckt->CKTtrLambda * SMPdiagNorm(ckt->CKTmatrix);
+                    if (finite(mu) && mu > 0.0) {
+                        for (k = 1; k <= sz; k++)
+                            ckt->CKTrhs[k] += mu * ckt->CKTrhsOld[k];
+                        trGmin = ckt->CKTdiagGmin + mu;
+                    }
+                }
             }
 
             if (ckt->CKTniState & NISHOULDREORDER) {
@@ -157,7 +187,7 @@ NIiter(CKTcircuit *ckt, int maxIter)
 #endif
 
                 error = SMPreorder(ckt->CKTmatrix, ckt->CKTpivotAbsTol,
-                                   ckt->CKTpivotRelTol, ckt->CKTdiagGmin);
+                                   ckt->CKTpivotRelTol, trGmin);
                 ckt->CKTstat->STATreorderTime +=
                     SPfrontEnd->IFseconds() - startTime;
                 if (error) {
@@ -191,7 +221,7 @@ NIiter(CKTcircuit *ckt, int maxIter)
 #endif
 
                 error = SMPluFac(ckt->CKTmatrix, ckt->CKTpivotAbsTol,
-                                 ckt->CKTdiagGmin);
+                                 trGmin);
                 ckt->CKTstat->STATdecompTime +=
                     SPfrontEnd->IFseconds() - startTime;
 
@@ -207,7 +237,7 @@ NIiter(CKTcircuit *ckt, int maxIter)
                         fprintf (stderr, "Warning: KLU ReFactor failed. Factoring again...\n") ;
                     ckt->CKTniState |= NISHOULDREORDER;
                     ckt->CKTmatrix->SMPkluMatrix->KLUloadDiagGmin = 0 ;
-                    error = SMPreorder(ckt->CKTmatrix, ckt->CKTpivotAbsTol, ckt->CKTpivotRelTol, ckt->CKTdiagGmin);
+                    error = SMPreorder(ckt->CKTmatrix, ckt->CKTpivotAbsTol, ckt->CKTpivotRelTol, trGmin);
                     ckt->CKTstat->STATreorderTime += SPfrontEnd->IFseconds() - startTime;
                     if (error) {
                         SMPgetError(ckt->CKTmatrix, &i, &j);
@@ -325,6 +355,14 @@ NIiter(CKTcircuit *ckt, int maxIter)
             else
                 ckt->CKTnoncon = 1;
 
+            /* Enhancement-153: never declare convergence while the trust-region
+             * step is still damped (lambda > 0) -- force another, less-damped
+             * iteration so the accepted operating point is an undamped Newton
+             * step (F = 0), keeping the result identical to plain Newton. */
+            if (ckt->CKTtrustregion && (ckt->CKTtrLambda > 0.0) &&
+                (ckt->CKTnoncon == 0))
+                ckt->CKTnoncon = 1;
+
 #ifdef STEPDEBUG
             printf("noncon is %d\n", ckt->CKTnoncon);
 #endif
@@ -359,6 +397,86 @@ NIiter(CKTcircuit *ckt, int maxIter)
             }
         }
 
+        /* Enhancement-153: trust-region step acceptance (option `trustregion`,
+         * OFF by default; takes precedence over the line search). The step just
+         * solved (x_new = CKTrhs) used the current damping mu = lambda*||diag||.
+         * Evaluate the true residual ||F(x_new)|| by re-loading at x_new; if it
+         * did NOT decrease vs ||F(x_k)|| the step is rejected -- x_k is restored,
+         * lambda is grown, and another iteration is forced so the step is retried
+         * with more damping (re-loaded and re-factored at the top of the loop).
+         * If it decreased, the step is accepted and lambda relaxes toward 0. This
+         * is the standard Levenberg-Marquardt acceptance: unlike the line search
+         * (which only shortens a fixed Newton direction) it also *re-aims* the
+         * step, so it can escape an ill-conditioned or divergent Jacobian. */
+        if (ckt->CKTtrustregion && (ckt->CKTnoncon != 0) &&
+            ((ckt->CKTmode & MODETRANOP) || (ckt->CKTmode & MODEDCOP)) &&
+            (ckt->CKTmode & MODEINITFLOAT) && (iterno > 1))
+        {
+            int sz = SMPmatSize(ckt->CKTmatrix);
+            int k, saved_noncon = ckt->CKTnoncon;
+            double merit_k = ckt->CKTlsMerit, trial_merit = 0.0;
+
+            if (ckt->CKTlsBufSz < sz + 1) {
+                FREE(ckt->CKTlsXk);
+                FREE(ckt->CKTlsD);
+                ckt->CKTlsXk = TMALLOC(double, sz + 1);
+                ckt->CKTlsD  = TMALLOC(double, sz + 1);
+                ckt->CKTlsBufSz = sz + 1;
+            }
+            for (k = 1; k <= sz; k++) {
+                ckt->CKTlsXk[k] = ckt->CKTrhsOld[k];   /* x_k               */
+                ckt->CKTlsD[k]  = ckt->CKTrhs[k];      /* x_new (the step)  */
+            }
+            /* residual at x_new: load there (state reset to x_k first) */
+            for (k = 1; k <= sz; k++)
+                ckt->CKTrhsOld[k] = ckt->CKTlsD[k];
+            if (OldCKTstate0 && ckt->CKTstate0)
+                memcpy(ckt->CKTstate0, OldCKTstate0,
+                       (size_t) ckt->CKTnumStates * sizeof(double));
+            if (!CKTload(ckt)) {
+                SMPmultiply(ckt->CKTmatrix, ckt->CKTrhsSpare, ckt->CKTrhsOld,
+                            NULL, NULL);
+                for (k = 1; k <= sz; k++) {
+                    double resid = ckt->CKTrhsSpare[k] - ckt->CKTrhs[k];
+                    double w = fabs(resid) /
+                        (ckt->CKTabstol + ckt->CKTreltol * fabs(ckt->CKTrhsSpare[k]));
+                    if (w > trial_merit)
+                        trial_merit = w;
+                }
+            } else {
+                trial_merit = 2.0 * merit_k + 1.0;   /* load failed -> reject */
+            }
+            /* restore x_k and its device state */
+            for (k = 1; k <= sz; k++)
+                ckt->CKTrhsOld[k] = ckt->CKTlsXk[k];
+            if (OldCKTstate0 && ckt->CKTstate0)
+                memcpy(ckt->CKTstate0, OldCKTstate0,
+                       (size_t) ckt->CKTnumStates * sizeof(double));
+            ckt->CKTnoncon = saved_noncon;
+
+            if (trial_merit <= merit_k * (1.0 + 1.0e-4) ||
+                ckt->CKTtrLambda >= 1.0e12) {
+                /* ACCEPT: advance to x_new; relax the damping toward 0. */
+                for (k = 1; k <= sz; k++) {
+                    ckt->CKTrhs[k]    = ckt->CKTlsD[k];   /* x_new  */
+                    ckt->CKTrhsOld[k] = ckt->CKTlsXk[k];  /* x_k    */
+                }
+                ckt->CKTtrLambda *= 0.25;
+                if (ckt->CKTtrLambda < 1.0e-12)
+                    ckt->CKTtrLambda = 0.0;
+            } else {
+                /* REJECT: stay at x_k, grow lambda, force another iteration so
+                 * the step is retried with more damping. */
+                for (k = 1; k <= sz; k++) {
+                    ckt->CKTrhs[k]    = ckt->CKTlsXk[k];
+                    ckt->CKTrhsOld[k] = ckt->CKTlsXk[k];
+                }
+                ckt->CKTtrLambda = (ckt->CKTtrLambda > 0.0)
+                                       ? ckt->CKTtrLambda * 4.0 : 1.0e-3;
+                ckt->CKTnoncon = 1;
+            }
+        }
+
         /* Enhancement-111: globalized (damped) Newton via Armijo backtracking
          * line search (option `linesearch`, OFF by default). Runs only on the
          * non-convergence path. Using the residual merit ||F|| = ||G*x - b||
@@ -372,7 +490,7 @@ NIiter(CKTcircuit *ckt, int maxIter)
          * in on genuine overshoot. This gives ngspice the principled globalized
          * Newton it lacks -- the merit is the real residual, not the iterate
          * change. */
-        if (ckt->CKTlinesearch && (ckt->CKTnoncon != 0) &&
+        if (ckt->CKTlinesearch && !ckt->CKTtrustregion && (ckt->CKTnoncon != 0) &&
             ((ckt->CKTmode & MODETRANOP) || (ckt->CKTmode & MODEDCOP)) &&
             (ckt->CKTmode & MODEINITFLOAT) && (iterno > 1))
         {

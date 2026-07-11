@@ -103,6 +103,7 @@ CKTdoJob(CKTcircuit* ckt, int reset, TSKtask* task)
     ckt->CKTcopyNodesets = task->TSKcopyNodesets;
     ckt->CKTnodeDamping = task->TSKnodeDamping;
     ckt->CKTlinesearch = task->TSKlinesearch; /* Enhancement-111 */
+    ckt->CKTtrustregion = task->TSKtrustregion; /* Enhancement-153 */
     ckt->CKTptcont = task->TSKptcont; /* Enhancement-127 */
     ckt->CKTdynorder = task->TSKdynorder; /* Enhancement-128 */
     ckt->CKTabsDv = task->TSKabsDv;

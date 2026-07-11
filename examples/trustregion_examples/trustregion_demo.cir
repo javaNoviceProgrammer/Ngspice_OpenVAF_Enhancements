@@ -1,0 +1,31 @@
+* trustregion_demo.cir -- Levenberg-Marquardt trust-region Newton (Enhancement-153)
+*
+* `.option trustregion` engages a globalized (damped) Newton for the DC operating
+* point: if a Newton step would increase the KCL residual, it is rejected and
+* retried with an adaptive Jacobian-diagonal damping mu = lambda*||diag(J)|| that
+* re-aims the step. Because the fixed point is F=0 for any mu, it converges to the
+* SAME operating point as plain Newton -- it is result-neutral. On ordinary
+* circuits ngspice's per-device junction limiting already prevents overshoot, so
+* the damping stays at lambda=0 (inert); the option is for solver-level
+* regularization of ill-conditioned Jacobians.
+*
+* Run:  ngspice -b trustregion_demo.cir
+
+V1 in 0 dc 2
+R1 in a 1k
+D1 a 0 dmod
+R2 a 0 10k
+.model dmod d(is=1e-14 n=1.0)
+
+.control
+  set numdgt=12
+  echo --- plain Newton ---
+  op
+  print v(a)
+  echo --- trust-region Newton (same result) ---
+  option trustregion
+  reset
+  op
+  print v(a)
+.endc
+.end

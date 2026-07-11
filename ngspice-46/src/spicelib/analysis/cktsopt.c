@@ -213,6 +213,9 @@ CKTsetOpt(CKTcircuit *ckt, JOB *anal, int opt, IFvalue *val)
     case OPT_LINESEARCH: /* Enhancement-111 */
         task->TSKlinesearch = (val->iValue != 0);
         break;
+    case OPT_TRUSTREGION: /* Enhancement-153 */
+        task->TSKtrustregion = (val->iValue != 0);
+        break;
     case OPT_PTCONT: /* Enhancement-127 */
         task->TSKptcont = (val->iValue != 0);
         break;
@@ -458,6 +461,8 @@ static IFparm OPTtbl[] = {
         "Limit iteration to iteration node voltage change" },
  { "linesearch", OPT_LINESEARCH, IF_SET|IF_FLAG,
         "Adaptive damped-Newton line search on the weighted step norm" },
+ { "trustregion", OPT_TRUSTREGION, IF_SET|IF_FLAG,
+        "Levenberg-Marquardt trust-region Newton (adaptive Jacobian diagonal damping)" },
  { "ptcont", OPT_PTCONT, IF_SET|IF_FLAG,
         "Pseudo-transient continuation homotopy for the DC operating point" },
  { "dynorder", OPT_DYNORDER, IF_SET|IF_FLAG,
