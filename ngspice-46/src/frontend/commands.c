@@ -418,10 +418,10 @@ struct comm spcp_coms[] = {
       { 040, 040, 040, 040 }, E_DEFHMASK, 1, LOTS,
       NULL,
       "devspecs : parmname value : Alter .param parameters." },
-    { "optimize", com_optimize, TRUE, FALSE,     /* Enhancement-130 / -143 / -144 */
+    { "optimize", com_optimize, TRUE, FALSE,     /* Enhancement-130 / -143 / -144 / -145 */
       { 040, 040, 040, 040 }, E_DEFHMASK, 1, LOTS,
       NULL,
-      "(-param|-dparam) name init lo hi ... -analysis <cmd> (-minimize <expr> | -target <expr> <val> [<w>] ...) [-method nm|lm] [-maxiter N] [-tol T] [-verbose] : parameter optimizer (Nelder-Mead / least-squares Levenberg-Marquardt; -param = alter device/instance, -dparam = symbolic .param via re-source; multi-analysis)." },
+      "(-param|-mparam|-dparam) name init lo hi ... -analysis <cmd> (-minimize <expr> | -target <expr> <val> [<w>] ...) [-method nm|lm] [-maxiter N] [-tol T] [-verbose] : parameter optimizer (Nelder-Mead / least-squares Levenberg-Marquardt; -param = alter device/instance, -mparam = @model[param] via altermod, -dparam = symbolic .param via re-source; multi-analysis)." },
     { "qpss", com_qpss, TRUE, FALSE,             /* Enhancement-133 / -136 */
       { 040, 040, 040, 040 }, E_DEFHMASK, 3, LOTS,
       NULL,

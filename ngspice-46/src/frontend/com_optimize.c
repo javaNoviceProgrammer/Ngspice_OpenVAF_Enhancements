@@ -26,21 +26,26 @@ across parameters that span orders of magnitude).
 
 Syntax (in a .control block, after the circuit is loaded):
 
-  optimize (-param|-dparam) <name> <init> <lo> <hi>  [...]
+  optimize (-param|-mparam|-dparam) <name> <init> <lo> <hi>  [...]
            -analysis <command ...>
            ( -minimize <expression ...>
              | -target <expr> <value> [<weight>]  [-target ...]
                [ -analysis <command ...> -target ... ] )
            [-method nm|lm] [-maxiter <N>] [-tol <T>] [-verbose]
 
-A -param <name> is an `alter` target -- a device instance (e.g. R1, C1) or a
-device/model parameter (e.g. @m1[w]); it is changed in place with `alter
-<name>=<value>` (fast, no re-parse). A -dparam <name> is a symbolic netlist
-`.param` (e.g. `.param w=1u`); since those are expanded at parse time, it is
-changed with `alterparam <name>=<value>` followed by a `reset` that re-sources
-the deck (re-evaluating every `.param` and re-stamping device values) -- heavier,
-but the only way to tune a `.param`. Deck params are applied and re-sourced first,
-then the in-place `alter` params, so the two kinds mix correctly. For every
+Three knob kinds, all in-place except -dparam:
+  -param  <name> -- an `alter` target: a device instance (e.g. R1, C1) or an
+          instance parameter (e.g. @m1[w]); changed with `alter <name>=<value>`.
+  -mparam <name> -- a `.model`-card parameter, named `@<model>[<param>]` (e.g.
+          @dmod[is]); changed with `altermod <name>=<value>`. Also in place, no
+          re-parse (a .model param is not `alter`-reachable, only `altermod`).
+  -dparam <name> -- a symbolic netlist `.param` (e.g. `.param w=1u`); since those
+          are expanded at parse time, changed with `alterparam <name>=<value>`
+          then a `reset` that re-sources the deck (re-evaluating every `.param`
+          and re-stamping device values) -- heavier, but the only way to tune a
+          `.param`.
+Deck params are applied and re-sourced first, then the in-place `alter` /
+`altermod` params, so the kinds mix correctly. For every
 candidate the optimizer applies the values, runs each -analysis command, and
 evaluates the objective. `-analysis` and `-minimize` collect every following token up to the
 next `-<letter>` flag, so multi-word commands/expressions need no quoting; a
@@ -76,11 +81,12 @@ struct opt_target {
 /* how a parameter is applied to the circuit */
 #define OPT_ALTER      0         /* device/instance param, in place via `alter`   */
 #define OPT_DECKPARAM  1         /* symbolic `.param`, via `alterparam` + re-source*/
+#define OPT_MODELPARAM 2         /* .model card param, in place via `altermod`    */
 
 struct optctx {
     int np;
     char *name[OPT_MAXP];
-    int  kind[OPT_MAXP];         /* OPT_ALTER or OPT_DECKPARAM                     */
+    int  kind[OPT_MAXP];         /* OPT_ALTER / OPT_DECKPARAM / OPT_MODELPARAM     */
     int  has_deckparam;          /* any OPT_DECKPARAM present -> a re-source per eval*/
     double lo[OPT_MAXP], hi[OPT_MAXP], x0[OPT_MAXP];
 
@@ -206,11 +212,21 @@ static double opt_eval(struct optctx *c, const double *u, double *resid)
         ft_optimizing = !c->verbose;   /* re-assert in case re-source cleared it */
     }
 
+    /* Apply the in-place params on the (possibly re-sourced) circuit: device /
+     * instance params with `alter`, .model-card params with `altermod`. Both take
+     * effect immediately without a re-parse, so they run after any `.param`
+     * re-source above. */
     for (k = 0; k < c->np; k++) {
-        if (c->kind[k] != OPT_ALTER)
-            continue;
-        double val = c->lo[k] + clamp01(u[k]) * (c->hi[k] - c->lo[k]);
-        (void) snprintf(cmd, sizeof cmd, "alter %s=%.10g", c->name[k], val);
+        double val;
+        if (c->kind[k] == OPT_ALTER)
+            (void) snprintf(cmd, sizeof cmd, "alter %s=%.10g", c->name[k],
+                            (val = c->lo[k] + clamp01(u[k]) * (c->hi[k] - c->lo[k])));
+        else if (c->kind[k] == OPT_MODELPARAM)
+            (void) snprintf(cmd, sizeof cmd, "altermod %s=%.10g", c->name[k],
+                            (val = c->lo[k] + clamp01(u[k]) * (c->hi[k] - c->lo[k])));
+        else
+            continue;                    /* OPT_DECKPARAM handled above */
+        (void) val;
         opt_run_cmd(cmd);
     }
 
@@ -527,8 +543,10 @@ void com_optimize(wordlist *wl)
 
     while (wl) {
         const char *w = wl->wl_word;
-        if (eq(w, "-param") || eq(w, "-p") || eq(w, "-dparam") || eq(w, "-d")) {
-            int knd = (eq(w, "-dparam") || eq(w, "-d")) ? OPT_DECKPARAM : OPT_ALTER;
+        if (eq(w, "-param") || eq(w, "-p") || eq(w, "-dparam") || eq(w, "-d") ||
+            eq(w, "-mparam") || eq(w, "-m")) {
+            int knd = (eq(w, "-dparam") || eq(w, "-d")) ? OPT_DECKPARAM :
+                      (eq(w, "-mparam") || eq(w, "-m")) ? OPT_MODELPARAM : OPT_ALTER;
             if (c.np >= OPT_MAXP) {
                 fprintf(cp_err, "optimize: too many -param (max %d)\n", OPT_MAXP);
                 goto cleanup;
@@ -625,10 +643,10 @@ void com_optimize(wordlist *wl)
 
     /* --- validate --- */
     if (c.np < 1 || c.ns < 1 || (!c.objective && c.nt == 0)) {
-        fprintf(cp_err, "usage: optimize (-param|-dparam) <name> <init> <lo> <hi> "
-                        "[...] -analysis <cmd> (-minimize <expr> | -target <expr> "
-                        "<val> [<w>] ...) [-method nm|lm] [-maxiter N] [-tol T] "
-                        "[-verbose]\n");
+        fprintf(cp_err, "usage: optimize (-param|-mparam|-dparam) <name> <init> "
+                        "<lo> <hi> [...] -analysis <cmd> (-minimize <expr> | -target "
+                        "<expr> <val> [<w>] ...) [-method nm|lm] [-maxiter N] "
+                        "[-tol T] [-verbose]\n");
         goto cleanup;
     }
     if (c.objective && c.nt > 0) {

@@ -28,7 +28,7 @@ https://ngspice.sourceforge.io/
 
 ## The Enhancements
 
-One hundred and forty-four enhancements so far — language features, correctness fixes, systematic audits, and simulator-side workflow tooling, each verified end-to-end by a committed example suite and released with a detailed write-up.
+One hundred and forty-five enhancements so far — language features, correctness fixes, systematic audits, and simulator-side workflow tooling, each verified end-to-end by a committed example suite and released with a detailed write-up.
 
 **📖 Start with the [User Handbook](docs/handbook/README.md)**, which organizes everything by topic: [getting started](docs/handbook/01-getting-started.md), the [Verilog-A feature matrix](docs/handbook/02-verilog-a-language.md), [ngspice workflows](docs/handbook/03-ngspice-workflows.md), and the [limitations & gotchas](docs/handbook/04-limitations-and-gotchas.md). The whole handbook plus the complete text of every enhancement write-up is also one linked PDF: [docs/Ngspice-OpenVAF-Handbook.pdf](docs/Ngspice-OpenVAF-Handbook.pdf).
 
@@ -184,6 +184,7 @@ The index: **Doc** links each enhancement's detailed write-up, **Examples** link
 | 142 | ngspice **QP small-signal frequency sweep** — `qpac`/`qpnoise`/`qpxf` gain a `<dec\|oct\|lin> N f0 f1` sweep of `f_in`, emitting a plottable ngspice plot (conversion gain / NF / image-rejection curves). 5/5 | ngspice | [doc](enhancements_doc/Enhancement-142.md) | [sweep](examples/qpss_examples/) |
 | 143 | ngspice **least-squares curve fitting for `optimize`** — a gradient-based `-target` least-squares mode (Levenberg-Marquardt) over one or more `-analysis` stages; ~27 vs 67 evals vs the simplex; OSDI diode extraction. 23/23 | ngspice | [doc](enhancements_doc/Enhancement-143.md) | [fit](examples/optimize_examples/) |
 | 144 | ngspice **`optimize` tunes symbolic `.param` values** — new knob kind `-dparam` varies netlist `.param` symbols (via `alterparam` + a quiet `reset` re-source), mixing freely with `-param` device knobs. Closes the last E-143 follow-up. 31/31 | ngspice | [doc](enhancements_doc/Enhancement-144.md) | [fit](examples/optimize_examples/) |
+| 145 | ngspice **`optimize` tunes `.model`-card parameters** — a third knob kind `-mparam` varies model params named `@<model>[<param>]` (e.g. `@dmod[is]`), which are neither `alter`-reachable nor `.dc`-sweepable; applied in place with `altermod` (no re-source, like `-param`). All three kinds — `-param` (instance), `-mparam` (model), `-dparam` (`.param`) — mix in one run, so the optimizer now covers every circuit knob. In `com_optimize.c` only. Verified 39/39 (adds OSDI + built-in model-param fits, model+instance joint fit, in-place fast path) | ngspice | [doc](enhancements_doc/Enhancement-145.md) | [fit](examples/optimize_examples/) |
 
 ---
 

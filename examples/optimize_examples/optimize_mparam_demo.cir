@@ -1,0 +1,37 @@
+Model-parameter optimization demo (Enhancement-145)
+* -------------------------------------------------------------------------
+* Enhancement-145 lets `optimize` tune `.model`-card parameters, named
+* `@<model>[<param>]`, via a new `-mparam` knob kind. A model parameter is
+* NOT an `alter` target (that reaches only device instances) and is NOT
+* `.dc`-sweepable either; ngspice changes it with `altermod`, which the
+* optimizer now drives. Like `-param` it is applied in place (no re-source),
+* so it is as cheap per evaluation as an instance knob.
+*
+* `optresm.va` is a Verilog-A resistor whose `r` is a MODEL parameter (it has
+* no (*type="instance"*) attribute). N1 (r) and R2 (1k) form a divider from
+* 1 V; we tune the model's `r` so v(out) = 0.25 V, i.e. r = 3 k. From r = 1 k
+* the optimizer finds @rmod[r] = 3 k.
+*
+*   optimize (-param|-mparam|-dparam) <name> <init> <lo> <hi> [...]
+*            -analysis <cmd> (-minimize <expr> | -target <expr> <val> ...) ...
+*
+* -param  = device/instance knob (alter);  -mparam = @model[param] (altermod);
+* -dparam = symbolic .param (alterparam + reset). All three mix in one run.
+* Add -verbose to watch the cost fall.
+* -------------------------------------------------------------------------
+V1 in 0 dc 1
+N1 in out rmod
+R2 out 0 1k
+.model rmod optresm r=1k
+
+.control
+pre_osdi optresm.osdi
+optimize -mparam @rmod[r] 1k 100 10k
++        -analysis op
++        -minimize (v(out)-0.25)^2
++        -tol 1e-16
+* leave the model at the fitted value and confirm
+op
+print v(out)
+.endc
+.end

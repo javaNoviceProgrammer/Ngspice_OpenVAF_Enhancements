@@ -354,7 +354,15 @@ with `alterparam` and a quiet `reset` that re-sources the deck (re-evaluating th
 `.param` expressions and re-stamping device values). Deck params are re-sourced
 first and the in-place `alter` params re-applied after, so the two kinds mix in
 one run; verified on `.param`s used directly and inside expressions, including an
-OSDI-device value.*
+OSDI-device value.
+[Enhancement-145](../../../enhancements_doc/Enhancement-145.md) adds the third
+knob kind, `-mparam`, for `.model`-card parameters (named `@<model>[<param>]`):
+a model parameter is not `alter`-reachable (only sources, resistors and device
+**instance** parameters are — which is also exactly what `.dc` can sweep), so it
+is changed in place with `altermod` (no re-source, unlike `.param`). All three
+kinds — `-param` (instance/`alter`), `-mparam` (model/`altermod`), `-dparam`
+(`.param`/re-source) — mix in one optimization; verified recovering an OSDI and a
+built-in diode model parameter and a joint model+instance fit.*
 
 *The "checkpoint / restart" row is ✅ since
 [Enhancement-131](../../../enhancements_doc/Enhancement-131.md): stock ngspice

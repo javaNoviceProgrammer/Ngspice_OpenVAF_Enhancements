@@ -1,0 +1,12 @@
+// A minimal Verilog-A resistor for the `optimize` examples whose `r` is a
+// MODEL parameter (no (*type="instance"*)), so it is tuned with `optimize
+// -mparam @<model>[r]` (via `altermod`), not `-param` (which uses `alter`).
+`include "disciplines.vams"
+
+module optresm(p, n);
+    inout p, n;
+    electrical p, n;
+    parameter real r = 1000.0 from (0:inf);   // model-level parameter
+    analog
+        I(p, n) <+ V(p, n) / r;
+endmodule

@@ -47,6 +47,18 @@ command reaches it:
   [15] the per-iteration re-sources are quiet: the "Reset re-loads" banner appears
       at most once (only the final leave-at-optimum run), not once per evaluation.
 
+  Enhancement-145 (optimizing `.model`-card parameters via -mparam):
+  [16] OSDI model param: `-mparam @rmod[r]` fits a Verilog-A resistor's MODEL `r`
+      (via altermod) so v(out) = 0.25 => r = 3 k.
+  [17] built-in model param: `-mparam @dmod[is]` fits a diode model's `is` so
+      I(0.65 V) = 1 mA => is = 1.22e-14.
+  [18] determined mixed fit: a model param (`@rmod[r]`) AND an instance param
+      (`R2`) fitted together => r = 3 k, R2 = 2 k.
+  [19] `-mparam` is the in-place fast path: it does NOT re-source (0 "Reset
+      re-loads" banners), unlike -dparam.
+  [20] all three knob kinds (`-dparam` + `-mparam` + `-param`) coexist in one run
+      and converge.
+
 It is a front-end command, independent of the linear solver, so it is checked once.
 """
 import math
@@ -321,6 +333,81 @@ check("least-squares .param fit uses Levenberg-Marquardt",
 resets = o11.count("Reset re-loads")
 check(f"inner re-sources are silent ({resets} 'Reset re-loads' banner(s) for ~67 evals)",
       resets <= 1, f"{resets} banners")
+
+print("\nEnhancement-145: optimizing .model-card parameters (-mparam)")
+
+# compile the model-parameter Verilog-A resistor (r is a MODEL param)
+osdim = os.path.join(HERE, "optresm.osdi")
+subprocess.run([OPENVAF, os.path.join(HERE, "optresm.va"), "-o", osdim],
+               capture_output=True, text=True, timeout=120)
+
+# [16] OSDI model param: fit @rmod[r] so v(out)=0.25 -> r=3k
+d16 = ("optimizer mparam osdi\nV1 in 0 dc 1\nN1 in out rmod\nR2 out 0 1k\n"
+       ".model rmod optresm r=1k\n.control\n"
+       f"pre_osdi {osdim}\n"
+       "optimize -mparam @rmod[r] 1k 100 10k -analysis op -minimize (v(out)-0.25)^2 -tol 1e-16\n"
+       "op\nlet vo = v(out)\nprint vo\n.endc\n.end\n")
+o16 = run(d16)
+rm16 = optval(o16, "@rmod[r]")
+vo16 = val(o16, "vo")
+check(f"OSDI model param: @rmod[r] -> 3k (got {rm16})",
+      rm16 is not None and abs(rm16 - 3000) / 3000 < 2e-3, str(rm16))
+check(f"OSDI model param: v(out) -> 0.25 (got {vo16})",
+      vo16 is not None and abs(vo16 - 0.25) < 1e-4, str(vo16))
+
+# [17] built-in diode model param: fit @dmod[is] so I(0.65V)=1mA
+d17 = ("optimizer mparam builtin\nVd a 0 dc 0.65\nD1 a 0 dmod\n"
+       ".model dmod d(is=1e-15 n=1)\n.control\n"
+       "optimize -mparam @dmod[is] 1e-15 1e-16 1e-12 -analysis op "
+       "-minimize (abs(i(vd))-1m)^2 -tol 1e-24\n"
+       "op\nlet ic = abs(i(vd))\nprint ic\n.endc\n.end\n")
+o17 = run(d17)
+is17 = optval(o17, "@dmod[is]")
+ic17 = val(o17, "ic")
+check(f"built-in model param: @dmod[is] fitted (got {is17})",
+      is17 is not None and 1.0e-14 < is17 < 1.5e-14, str(is17))
+check(f"built-in model param: I(0.65V) -> 1 mA (got {ic17})",
+      ic17 is not None and abs(ic17 - 1e-3) / 1e-3 < 1e-3, str(ic17))
+
+# [18] determined mixed model + instance fit -> r=3k, R2=2k
+d18 = ("optimizer mparam+param\nV1 in 0 dc 1\nN1 in mid rmod\nR2 mid 0 1k\n"
+       ".model rmod optresm r=1k\n.control\n"
+       f"pre_osdi {osdim}\n"
+       "optimize -mparam @rmod[r] 1k 100 10k -param R2 1k 100 10k -analysis op "
+       "-minimize (v(mid)-0.4)^2+(abs(i(v1))-0.2m)^2 -maxiter 400 -tol 1e-15\n"
+       ".endc\n.end\n")
+o18 = run(d18)
+rm18 = optval(o18, "@rmod[r]")
+r2_18 = optval(o18, "r2") or optval(o18, "R2")
+check(f"mixed model+instance: @rmod[r] -> 3k (got {rm18})",
+      rm18 is not None and abs(rm18 - 3000) / 3000 < 5e-3, str(rm18))
+check(f"mixed model+instance: R2 -> 2k (got {r2_18})",
+      r2_18 is not None and abs(r2_18 - 2000) / 2000 < 5e-3, str(r2_18))
+
+# [19] -mparam alone is in-place: NO re-source (unlike -dparam)
+resets16 = o16.count("Reset re-loads")
+check(f"-mparam is the in-place fast path (0 re-sources, got {resets16})",
+      resets16 == 0, f"{resets16} banners")
+
+# [20] all three knob kinds coexist in one run and converge
+d20 = ("optimizer all-three\n.param rtop=1k\nV1 in 0 dc 1\nRtop in a {rtop}\n"
+       "N1 a b rmod\nR2 b 0 1k\n.model rmod optresm r=1k\n.control\n"
+       f"pre_osdi {osdim}\n"
+       "optimize -dparam rtop 1k 100 10k -mparam @rmod[r] 1k 100 10k "
+       "-param R2 1k 100 10k -analysis op "
+       "-target v(a) 0.66667 -target v(b) 0.33333 -maxiter 400 -tol 1e-13\n"
+       ".endc\n.end\n")
+o20 = run(d20)
+m20 = re.search(r"sum-sq residual = ([-\d.eE+]+)", o20)
+resid20 = float(m20.group(1)) if m20 else None
+has_all3 = (optval(o20, "rtop") is not None and optval(o20, "@rmod[r]") is not None
+            and (optval(o20, "r2") or optval(o20, "R2")) is not None)
+check(f"all three knob kinds (-dparam/-mparam/-param) coexist and converge "
+      f"(residual {resid20})",
+      resid20 is not None and resid20 < 1e-12 and has_all3, str(resid20))
+
+if os.path.exists(osdim):
+    os.remove(osdim)
 
 print(f"\n{'ALL PASS' if passed == checks else 'FAILURES'}: {passed}/{checks} passed")
 sys.exit(0 if passed == checks else 1)
