@@ -211,6 +211,13 @@ struct comm spcp_coms[] = {
       "lhs <N> [seed <s>] | random | off : Latin-Hypercube Monte Carlo sampling -- "
       "the .param agauss/gauss/aunif/unif/limit draws become stratified so N reset-driven "
       "runs cover each random dimension evenly (lower-variance estimates than plain MC)." } ,
+    { "highsigma", com_highsigma, FALSE, FALSE,   /* Enhancement-150 */
+      { 0, 0, 0, 0 }, E_DEFHMASK, 1, LOTS,
+      NULL,
+      "<N> [-scale <lambda>] [-seed <s>] [-analysis <cmd>] -metric <expr> [-max <hi>] [-min <lo>] : "
+      "rare-event (high-sigma) failure-probability estimation by scaled-sigma importance sampling -- "
+      "inflates Gaussian .param sigmas by lambda so tail failures (metric > hi or < lo) are sampled "
+      "often, reweights, and reports P(fail), relative error, and equivalent sigma-to-fail." } ,
     { "transpose", com_transpose, FALSE, FALSE,
       { 040000, 040000, 040000, 040000 }, E_DEFHMASK, 1, LOTS,
       NULL,
@@ -810,6 +817,13 @@ struct comm nutcp_coms[] = {
       "lhs <N> [seed <s>] | random | off : Latin-Hypercube Monte Carlo sampling -- "
       "the .param agauss/gauss/aunif/unif/limit draws become stratified so N reset-driven "
       "runs cover each random dimension evenly (lower-variance estimates than plain MC)." } ,
+    { "highsigma", com_highsigma, FALSE, FALSE,   /* Enhancement-150 */
+      { 0, 0, 0, 0 }, E_DEFHMASK, 1, LOTS,
+      NULL,
+      "<N> [-scale <lambda>] [-seed <s>] [-analysis <cmd>] -metric <expr> [-max <hi>] [-min <lo>] : "
+      "rare-event (high-sigma) failure-probability estimation by scaled-sigma importance sampling -- "
+      "inflates Gaussian .param sigmas by lambda so tail failures (metric > hi or < lo) are sampled "
+      "often, reweights, and reports P(fail), relative error, and equivalent sigma-to-fail." } ,
     { "transpose", com_transpose, FALSE, FALSE,
       { 040000, 040000, 040000, 040000 }, E_DEFHMASK, 1, LOTS,
       NULL,

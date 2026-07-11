@@ -290,7 +290,7 @@ incommensurate QPSS, cf. note 6) are the remaining follow-ups.*
 | Statistical | Monte Carlo | ⚠️ | ✅ |
 | Statistical | Native process/mismatch modeling + correlations | ⚠️ | ✅ |
 | Statistical | Low-discrepancy sampling (Sobol / Latin-hypercube) | ✅ | ✅ |
-| Statistical | High-sigma methods (importance sampling, worst-case distance) | ❌ | ✅ |
+| Statistical | High-sigma methods (importance sampling, worst-case distance) | ✅ | ✅ |
 | Statistical | Corner + MC + yield estimation flow | ⚠️ | ✅ |
 
 *Monte Carlo is ⚠️: works, but script-driven (`alter` + `sgauss`, with the
@@ -303,6 +303,14 @@ gives Latin-Hypercube stratification for the `reset`-driven `.param` Monte Carlo
 idiom (agauss/gauss/aunif/unif/limit), measured ~130× lower estimator variance at
 the same run count. Sobol and the nutmeg-loop `sgauss`/`sunif` idiom remain
 follow-ups.*
+
+*High-sigma methods are ✅ since
+[Enhancement-150](../../../enhancements_doc/Enhancement-150.md): `highsigma <N>
+-metric <expr> -max/-min <spec>` estimates 4–6 sigma rare-event failure
+probabilities by scaled-sigma importance sampling (inflate the Gaussian `.param`
+sigmas, reweight by the likelihood ratio) — direction-free, verified against the
+analytic `Phi(-beta)` (e.g. a 5-sigma, 2.87e-7 event recovered from ~6000 runs).
+Mean-shift / worst-case-distance importance sampling remains a follow-up.*
 
 ## Reliability / aging
 
@@ -435,13 +443,15 @@ leverage on the existing strength × differentiation × tractability:
    globalization and continuation gaps are now closed. What remains is mostly
    auto-triggering heuristics (reaching for these aids without the user asking) and
    folding them into the robustness presets. Self-contained in the ngspice core.
-3. **Statistical sampling** — the foundational brick landed in
-   [Enhancement-149](../../../enhancements_doc/Enhancement-149.md): Latin-Hypercube
-   low-discrepancy sampling (`mcsample lhs`), ~130× lower estimator variance at the
-   same run count. What remains is high industrial value (yield / SRAM), moderate
-   difficulty, and now has a good sampler to build on: **high-sigma methods**
-   (importance sampling, worst-case distance) and native process/mismatch
-   correlations.
+3. **Statistical sampling** — largely delivered. The foundation landed in
+   [Enhancement-149](../../../enhancements_doc/Enhancement-149.md) (Latin-Hypercube
+   low-discrepancy sampling, `mcsample lhs`, ~130× lower estimator variance) and the
+   high-sigma tail in
+   [Enhancement-150](../../../enhancements_doc/Enhancement-150.md) (`highsigma`
+   scaled-sigma importance sampling, 4–6 sigma rare events from a few thousand runs).
+   What remains is the higher-efficiency variants (mean-shift / worst-case-distance
+   importance sampling), native process/mismatch correlations, and a packaged
+   corner + MC + yield-estimation flow.
 
 Explicitly **lower priority**: fast-SPICE parallelism and aging/EMIR — enormous
 efforts that don't leverage what makes this project distinctive.

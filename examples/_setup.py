@@ -108,7 +108,7 @@ KLU_XFAIL = frozenset()
 # paying minutes-per-run for on every regression sweep.
 #   rfanalyses — .sp/.pss/.pac/.pnoise/.pxf, incl. a 1024-sample PSS
 #   rfpss      — the rc_pss/pac/pnoise/pxf/cyclo PSS-based checks
-SPARSE_ONLY = frozenset({"rfanalyses", "rfpss"})
+SPARSE_ONLY = frozenset({"rfanalyses", "rfpss", "highsigma"})
 
 # Examples excluded from the routine full-regression sweep (run_regression.py)
 # because they are too slow to be worth running every time -- they still work and

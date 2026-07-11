@@ -355,7 +355,11 @@ setseedinfo(void)
  * the whole sequence is reproducible and independent of evaluation order.
  * ===================================================================== */
 
-enum { MC_MODE_RANDOM = 0, MC_MODE_LHS = 1 };
+/* MC_MODE_SSS (Enhancement-150): scaled-sigma importance sampling -- Gaussian
+ * .param draws are inflated by `sss_lambda` (fatter tails, so rare failures are
+ * sampled often) and each sample carries the likelihood-ratio weight
+ * exp(sss_logw) so an unbiased rare-event probability can be recovered. */
+enum { MC_MODE_RANDOM = 0, MC_MODE_LHS = 1, MC_MODE_SSS = 2 };
 
 static int      lhs_mode = MC_MODE_RANDOM;
 static int      lhs_N = 0;         /* number of samples / strata            */
@@ -365,6 +369,8 @@ static unsigned lhs_seed = 1;
 static int    **lhs_perm = NULL;   /* [dim][N] stratum permutation          */
 static double **lhs_jit = NULL;    /* [dim][N] in-stratum jitter in [0,1)   */
 static int      lhs_dim_cap = 0;   /* allocated length of lhs_perm/lhs_jit  */
+static double   sss_lambda = 1.0;  /* SSS variance-inflation factor (>1)    */
+static double   sss_logw = 0.0;    /* accumulated log importance weight     */
 
 /* splitmix64 -- a tiny, self-contained, reproducible generator used only to
  * build the per-dimension strata, kept independent of the global PRNG state. */
@@ -431,27 +437,31 @@ static void lhs_gen_dim(int d)
     lhs_jit[d] = j;
 }
 
+/* Nonzero when a stratified/importance sampler (LHS or SSS) is engaged, so the
+ * netlist stochastic functions route their draws through it. */
 int mc_sample_active(void)
 {
-    return lhs_mode == MC_MODE_LHS && lhs_N > 0;
+    return lhs_mode != MC_MODE_RANDOM && lhs_N > 0;
 }
 
-/* Step to the next sample and rewind the per-sample dimension counter. Called
- * once per deck re-evaluation pass. */
+/* Step to the next sample: rewind the per-sample dimension counter and, under
+ * SSS, reset the accumulated importance weight. Called once per deck
+ * re-evaluation pass. */
 void mc_sample_advance(void)
 {
     if (!mc_sample_active())
         return;
     lhs_sample++;
     lhs_dim = 0;
+    sss_logw = 0.0;
 }
 
-/* Next stratified uniform in [0,1) for the current (sample, dimension). Falls
- * back to a PRNG uniform outside the configured N (e.g. extra draws past the
- * requested sample count), so behaviour is never worse than plain MC. */
+/* Next uniform in [0,1) for the current draw. LHS returns the stratified value;
+ * SSS and out-of-range fall back to a plain PRNG uniform (uniform .params are
+ * bounded, so SSS does not inflate them -- they carry weight 1). */
 double mc_sample_uniform(void)
 {
-    if (!mc_sample_active() || lhs_sample < 0 || lhs_sample >= lhs_N)
+    if (lhs_mode != MC_MODE_LHS || lhs_sample < 0 || lhs_sample >= lhs_N)
         return 0.5 * (drand() + 1.0);
     int d = lhs_dim++;
     lhs_gen_dim(d);
@@ -459,11 +469,19 @@ double mc_sample_uniform(void)
            (double)lhs_N;
 }
 
-/* Next stratified standard-normal draw: stratify in uniform space, then map
- * through the inverse normal CDF so the Gaussian tails are covered evenly. */
+/* Next standard-normal draw. LHS stratifies in uniform space then maps through
+ * the inverse normal CDF; SSS draws from the lambda-inflated normal (z = lambda*u)
+ * and accumulates this dimension's log likelihood ratio into sss_logw. */
 double mc_sample_gauss(void)
 {
-    if (!mc_sample_active() || lhs_sample < 0 || lhs_sample >= lhs_N)
+    if (lhs_mode == MC_MODE_SSS && lhs_sample >= 0 && lhs_sample < lhs_N) {
+        double z = sss_lambda * gauss1();
+        /* log w_d = log(lambda) - (z^2/2)(1 - 1/lambda^2) */
+        sss_logw += log(sss_lambda) -
+                    0.5 * z * z * (1.0 - 1.0 / (sss_lambda * sss_lambda));
+        return z;
+    }
+    if (lhs_mode != MC_MODE_LHS || lhs_sample < 0 || lhs_sample >= lhs_N)
         return gauss1();
     double u = mc_sample_uniform();
     if (u < 1e-12)
@@ -471,6 +489,43 @@ double mc_sample_gauss(void)
     else if (u > 1.0 - 1e-12)
         u = 1.0 - 1e-12;
     return inv_normal_cdf(u);
+}
+
+/* The importance weight p_nominal/p_sampling of the current sample (product over
+ * its Gaussian draws). 1.0 outside SSS, so plain/LHS runs are unweighted. */
+double mc_sample_weight(void)
+{
+    return (lhs_mode == MC_MODE_SSS) ? exp(sss_logw) : 1.0;
+}
+
+/* Engage scaled-sigma importance sampling for N samples with inflation lambda.
+ * Called by the `highsigma` command around its sampling loop. */
+void mc_sss_config(int nsamples, double lambda, unsigned seed)
+{
+    lhs_free_tables();
+    lhs_mode = MC_MODE_SSS;
+    lhs_N = nsamples;
+    sss_lambda = (lambda > 1.0) ? lambda : 1.0;
+    lhs_seed = seed;
+    lhs_sample = -1;
+    lhs_dim = 0;
+    sss_logw = 0.0;
+    /* SSS draws through gauss1() (the global PRNG); seed it so a given seed
+     * reproduces the sample sequence bit-for-bit. */
+    srand(seed);
+    TausSeed();
+}
+
+/* Revert to plain independent sampling (called by `highsigma` when done). */
+void mc_sss_off(void)
+{
+    lhs_free_tables();
+    lhs_mode = MC_MODE_RANDOM;
+    lhs_N = 0;
+    lhs_sample = -1;
+    lhs_dim = 0;
+    sss_logw = 0.0;
+    sss_lambda = 1.0;
 }
 
 /* Peter Acklam's rational approximation to the inverse standard-normal CDF

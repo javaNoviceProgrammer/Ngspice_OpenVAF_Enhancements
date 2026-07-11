@@ -32,4 +32,13 @@ extern double mc_sample_uniform(void);   /* next stratified U in [0,1)         *
 extern double mc_sample_gauss(void);     /* next stratified standard normal    */
 extern double inv_normal_cdf(double p);  /* probit: standard-normal quantile   */
 
+/* Enhancement-150: scaled-sigma importance sampling for rare-event (high-sigma)
+ * probability. `highsigma` engages it, runs its N-sample loop (each `reset`
+ * redraws the lambda-inflated Gaussian .params), and reads each sample's
+ * likelihood-ratio weight to form an unbiased failure-probability estimate. */
+extern void com_highsigma(wordlist *wl);
+extern void mc_sss_config(int nsamples, double lambda, unsigned seed);
+extern void mc_sss_off(void);
+extern double mc_sample_weight(void);    /* importance weight of current sample */
+
 #endif

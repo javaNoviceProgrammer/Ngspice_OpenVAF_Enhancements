@@ -39,6 +39,7 @@ analyses is suppressed via `ft_optimizing`.
 #include "ngspice/sim.h"
 
 #include "numparam/numpaif.h"
+#include "ngspice/randnumb.h"
 #include "com_sweep.h"
 
 #define SW_ALTER   0             /* alter     -- device / instance / source      */
@@ -380,4 +381,180 @@ cleanup:
     for (k = 0; k < nout; k++) { tfree(outname[k]); tfree(outexpr[k]); }
     tfree(knob); tfree(analysis); tfree(scname);
     tfree(vals); tfree(data);
+}
+
+
+/**********
+Enhancement-150: `highsigma` -- rare-event (high-sigma) failure-probability
+estimation by scaled-sigma importance sampling. It lives here because it reuses
+this file's synchronous command runner (`sw_run_cmd`) and expression evaluator
+(`sw_eval_expr`), and is likewise a sampling-driven analysis loop.
+
+Plain Monte Carlo cannot reach the 4-6 sigma failure probabilities that matter
+for high-replication circuits (SRAM cells, standard-cell libraries): a 1e-7
+failure needs ~1e8 runs to see ten failures. Scaled-sigma sampling inflates every
+Gaussian `.param`'s sigma by a factor `lambda`, so the rare failure region is
+sampled often, then reweights each sample by the likelihood ratio
+p_nominal/p_inflated to recover an unbiased estimate. It is direction-free -- no
+gradient / sensitivity / most-probable-failure-point search -- so it is robust for
+an arbitrary failure condition.
+
+  highsigma <N> [-scale <lambda>] [-seed <s>] [-analysis <cmd>] -metric <expr> [-max <hi>] [-min <lo>]
+
+Each of N samples re-sources the deck (redrawing the lambda-inflated Gaussian
+`.param`s via the E-149/E-150 sampler), runs `-analysis` (default `op`), and
+evaluates `-metric`; the sample fails if the metric exceeds `-max` or falls below
+`-min` (at least one spec limit is required; give both for a two-sided spec). The
+comparison is done here rather than inside the expression precisely because a bare
+`>` / `<` in a control-language command is an I/O redirect. Reports P(fail), its
+relative error, the equivalent one-sided sigma-to-fail, and the raw failure count,
+and leaves them in the vectors/vars `highsigma_pfail`, `highsigma_relerr`,
+`highsigma_sigma`, `highsigma_nfail`.
+**********/
+
+#define HS_MAXN 100000000
+
+/* Publish a scalar result as a settable variable ($name) and a one-element
+ * vector (so scripts can use it in `let`/`print`). */
+static void hs_set_result(const char *name, double val)
+{
+    struct dvec *v;
+    cp_vset(name, CP_REAL, &val);
+    v = dvec_alloc(copy(name), SV_NOTYPE, VF_REAL | VF_PERMANENT, 1, NULL);
+    if (v) {
+        v->v_realdata[0] = val;
+        vec_new(v);
+    }
+}
+
+void com_highsigma(wordlist *wl)
+{
+    int nsamp = 0;
+    double lambda = 2.0;
+    unsigned seed = 1;
+    char analysis[512] = "op";
+    char metric[1024] = "";
+    double hi = 0.0, lo = 0.0;
+    int have_metric = 0, have_max = 0, have_min = 0;
+    int save_optimizing = ft_optimizing;
+
+    if (wl == NULL || wl->wl_word == NULL) {
+        fprintf(cp_err, "Usage: highsigma <N> [-scale <lambda>] [-seed <s>] "
+                        "[-analysis <cmd>] -metric <expr> [-max <hi>] [-min <lo>]\n");
+        return;
+    }
+
+    nsamp = atoi(wl->wl_word);
+    if (nsamp < 2 || nsamp > HS_MAXN) {
+        fprintf(cp_err, "highsigma: sample count must be in [2, %d] (got '%s')\n",
+                HS_MAXN, wl->wl_word);
+        return;
+    }
+    wl = wl->wl_next;
+
+    while (wl && wl->wl_word) {
+        const char *w = wl->wl_word;
+        if (eq(w, "-scale") || eq(w, "scale")) {
+            if (!wl->wl_next) { fprintf(cp_err, "highsigma: -scale needs a value\n"); return; }
+            wl = wl->wl_next; lambda = atof(wl->wl_word); wl = wl->wl_next;
+        } else if (eq(w, "-seed") || eq(w, "seed")) {
+            if (!wl->wl_next) { fprintf(cp_err, "highsigma: -seed needs a value\n"); return; }
+            wl = wl->wl_next; seed = (unsigned) strtoul(wl->wl_word, NULL, 10); wl = wl->wl_next;
+        } else if (eq(w, "-max")) {
+            if (!wl->wl_next) { fprintf(cp_err, "highsigma: -max needs a value\n"); return; }
+            wl = wl->wl_next; hi = sw_num(wl->wl_word); have_max = 1; wl = wl->wl_next;
+        } else if (eq(w, "-min")) {
+            if (!wl->wl_next) { fprintf(cp_err, "highsigma: -min needs a value\n"); return; }
+            wl = wl->wl_next; lo = sw_num(wl->wl_word); have_min = 1; wl = wl->wl_next;
+        } else if (eq(w, "-analysis")) {
+            analysis[0] = '\0';
+            wl = wl->wl_next;
+            while (wl && wl->wl_word && wl->wl_word[0] != '-') {
+                if (analysis[0]) strncat(analysis, " ", sizeof(analysis) - strlen(analysis) - 1);
+                strncat(analysis, wl->wl_word, sizeof(analysis) - strlen(analysis) - 1);
+                wl = wl->wl_next;
+            }
+        } else if (eq(w, "-metric")) {
+            /* one token -- an ngspice expression needs no spaces, and a leading
+             * '-' (e.g. `-1/i(v1)`) would otherwise look like a flag */
+            if (!wl->wl_next) { fprintf(cp_err, "highsigma: -metric needs an expression\n"); return; }
+            wl = wl->wl_next;
+            strncpy(metric, wl->wl_word, sizeof(metric) - 1);
+            metric[sizeof(metric) - 1] = '\0';
+            have_metric = 1;
+            wl = wl->wl_next;
+        } else {
+            fprintf(cp_err, "highsigma: unexpected token '%s'\n", w);
+            return;
+        }
+    }
+
+    if (!have_metric || metric[0] == '\0') {
+        fprintf(cp_err, "highsigma: a '-metric <expr>' is required\n");
+        return;
+    }
+    if (!have_max && !have_min) {
+        fprintf(cp_err, "highsigma: give a spec limit -- '-max <hi>' and/or "
+                        "'-min <lo>' (failure region)\n");
+        return;
+    }
+    if (lambda <= 1.0) {
+        fprintf(cp_err, "highsigma: -scale (lambda) must be > 1 (got %g)\n", lambda);
+        return;
+    }
+    if (ft_curckt == NULL || ft_curckt->ci_ckt == NULL) {
+        fprintf(cp_err, "highsigma: no circuit loaded\n");
+        return;
+    }
+
+    {
+        char spec[128] = "";
+        if (have_max) snprintf(spec, sizeof spec, "> %g", hi);
+        if (have_min) snprintf(spec + strlen(spec), sizeof spec - strlen(spec),
+                               "%s< %g", have_max ? " or " : "", lo);
+        fprintf(cp_out, "highsigma: %d samples, scale (sigma inflation) = %g, "
+                        "analysis '%s', fail if (%s) %s\n",
+                nsamp, lambda, analysis, metric, spec);
+    }
+
+    mc_sss_config(nsamp, lambda, seed);
+    double sum_wf = 0.0, sum_w2f2 = 0.0;
+    long nfail = 0;
+
+    ft_optimizing = TRUE;
+    for (int i = 0; i < nsamp; i++) {
+        ft_optimizing = TRUE;               /* reset re-source may clear it */
+        sw_run_cmd("reset");                /* redraws the lambda-inflated .params */
+        sw_run_cmd(analysis);
+        double m = sw_eval_expr(metric);
+        double f = ((have_max && m > hi) || (have_min && m < lo)) ? 1.0 : 0.0;
+        double w = mc_sample_weight();
+        double x = w * f;
+        sum_wf += x;
+        sum_w2f2 += x * x;
+        if (f != 0.0) nfail++;
+    }
+    ft_optimizing = save_optimizing;
+    mc_sss_off();
+
+    double pfail = sum_wf / (double) nsamp;
+    double var_x = sum_w2f2 / (double) nsamp - pfail * pfail;
+    if (var_x < 0.0) var_x = 0.0;
+    double se = sqrt(var_x / (double) nsamp);
+    double relerr = (pfail > 0.0) ? se / pfail : 0.0;
+    double sigma = (pfail > 0.0 && pfail < 1.0) ? -inv_normal_cdf(pfail) : 0.0;
+
+    fprintf(cp_out,
+            "\n  failures observed : %ld / %d (in the inflated sampling)\n"
+            "  P(fail)           : %.4e  +/- %.2e  (relative error %.1f%%)\n"
+            "  equivalent sigma  : %.3f  (one-sided, P = Phi(-sigma))\n",
+            nfail, nsamp, pfail, se, 100.0 * relerr, sigma);
+    if (nfail == 0)
+        fprintf(cp_out, "  (no failures sampled -- increase -scale or N; "
+                        "P(fail) is below what this run can resolve)\n");
+
+    hs_set_result("highsigma_pfail", pfail);
+    hs_set_result("highsigma_relerr", relerr);
+    hs_set_result("highsigma_sigma", sigma);
+    hs_set_result("highsigma_nfail", (double) nfail);
 }

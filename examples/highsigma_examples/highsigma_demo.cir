@@ -1,0 +1,26 @@
+* highsigma_demo.cir -- rare-event (high-sigma) probability (Enhancement-150)
+*
+* A resistor whose value is Gaussian, R ~ N(1000, 33.33). We want the
+* probability that R exceeds a 4.5-sigma spec limit (1150 ohm). That probability
+* is Phi(-4.5) ~ 3.4e-6 -- plain Monte Carlo would need ~1e6 runs to see even a
+* few failures. `highsigma` estimates it with a few thousand runs by inflating
+* the sampling sigma (scaled-sigma importance sampling) and reweighting.
+*
+* Run:  ngspice -b highsigma_demo.cir
+
+.param rr = agauss(1000, 100, 3)      ; sigma = 100/3 = 33.33
+V1 a 0 DC 1
+R1 a 0 {rr}                            ; R = -1/i(V1)
+
+.control
+  set numdgt=8
+
+  * fail if R > 1150 ohm (= mean + 4.5 sigma); analytic P = Phi(-4.5) = 3.40e-6
+  highsigma 6000 -scale 3.0 -seed 1 -analysis op -metric -1/i(v1) -max 1150
+
+  * the results are also left in vectors for scripting:
+  echo
+  echo estimated failure probability : $&highsigma_pfail
+  echo equivalent sigma-to-fail      : $&highsigma_sigma
+.endc
+.end
