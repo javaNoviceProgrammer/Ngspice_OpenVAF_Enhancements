@@ -1,0 +1,40 @@
+* RC reduction demo (Enhancement-155) -- TICER `reduce` command
+*
+* A 24-section RC ladder stands in for an extracted post-layout parasitic network
+* between a driver node `in` and a receiver node `out`. `reduce` collapses the
+* interior RC-only nodes into a small, electrically equivalent .subckt of R's and
+* C's that preserves the port behaviour over the band of interest (here DC..3 GHz).
+*
+* Ports (nodes to keep) are auto-detected: `in` is kept because the source V1
+* touches it. `out` is kept here via `keep out` (nothing else touches it); in a real
+* netlist the receiver transistor / OSDI device would mark it automatically.
+*
+*   ngspice -b reduce_demo.cir
+* then `.include reduced.sp` and instance `.subckt reduced` in place of the ladder.
+
+R1 in n1 15
+C1 n1 0 50f
+R2 n1 n2 15
+C2 n2 0 50f
+R3 n2 n3 15
+C3 n3 0 50f
+R4 n3 n4 15
+C4 n4 0 50f
+R5 n4 n5 15
+C5 n5 0 50f
+R6 n5 n6 15
+C6 n6 0 50f
+R7 n6 out 15
+Cout out 0 50f
+
+V1 in 0 DC 0 AC 1
+
+.control
+op
+* reduce the R/C network: band of interest DC..3 GHz, moderate accuracy factor
+reduce 3g factor 20 keep out file reduced.sp name reduced
+* the reduced .subckt is now in reduced.sp -- compare its AC to the full ladder
+ac dec 20 1meg 6g
+plot vdb(out)
+.endc
+.end

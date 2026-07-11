@@ -379,8 +379,22 @@ independent — the correlation model is what decides it.*
 | Category | Feature | ngspice | Spectre |
 |---|---|:---:|:---:|
 | Post-layout | Flat parasitic (RC) netlist simulation | ✅ | ✅ |
-| Post-layout | RC reduction / model-order reduction | ❌ | ✅ |
+| Post-layout | RC reduction / model-order reduction | ✅⁹ | ✅ |
 | Post-layout | n-port (S/Y/Z) extracted-block import | ✅ | ✅ |
+
+*⁹ RC reduction is ✅ since
+[Enhancement-155](../../../enhancements_doc/Enhancement-155.md): the `reduce` command
+collapses a post-layout parasitic R/C network into a small, electrically equivalent
+`.subckt` of R's and C's that preserves the port behaviour over `DC..fmax`, using
+**TICER** (Time-Constant Equilibration Reduction) — Schur-complement elimination of
+interior nodes kept first-order in `s`, so the result is realizable R's and C's (no
+model-order-reduction black box, no passive-synthesis step). DC is preserved exactly;
+a `factor` knob trades reduction against in-band accuracy (monotone). Ports are
+auto-detected as nodes touched by any non-R/C device (sources, transistors, OSDI) plus
+ground and user `keep` nodes. Verified under both solvers: identity reduction is
+bit-exact, a moderate factor gives ~4× fewer nodes at <0.25 dB in-band error, and an
+OSDI device auto-marks its port. The first cut is dense (node cap ~2500); a sparse
+implementation to reach real extraction scale is the follow-up.*
 
 ## Behavioral / mixed-signal / AMS
 

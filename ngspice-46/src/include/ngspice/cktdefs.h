@@ -488,6 +488,7 @@ extern int QPXFsweep(CKTcircuit *, int outNode, int stepType, int np, double fst
 extern int QPnoiseAnalyze(CKTcircuit *, int outNode, double f_in, int cyclo, int verbose); /* E-138 / -139 */
 extern int HBOSCanalyze(CKTcircuit *, int oscNode, int K, int P, double f0seed, double ampseed, int maxiter, double tol, int verbose); /* E-140 */
 extern int EFanalysis(CKTcircuit *, int obsNode, double fc, double tstop, int nppp, int M0, int Mmax, double reltol, double *o_time, double *o_amp, double *o_dc, double *o_re, double *o_im, int maxpts); /* E-154 envelope following */
+extern int CKTreduceRC(CKTcircuit *, double fmax, double factor, int *keep, int nkeep, const char *fname, const char *subname); /* E-155 TICER RC reduction */
 extern int PhaseNoiseAnalyze(CKTcircuit *, double fstart, double fstop, int npts, int verbose); /* E-140 */
 #endif
 

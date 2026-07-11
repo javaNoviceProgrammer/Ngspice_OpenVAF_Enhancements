@@ -484,6 +484,10 @@ struct comm spcp_coms[] = {
       { 040, 040, 040, 040 }, E_DEFHMASK, 3, LOTS,
       NULL,
       "node fc tstop [nppp N] [m M0] [maxm Mmax] [reltol t] [settle ts] : envelope following -- the slow amplitude/phase envelope of a carrier-driven circuit (implicit monodromy period jumps)." },
+    { "reduce", com_reduce, TRUE, FALSE,         /* Enhancement-155 */
+      { 040, 040, 040, 040 }, E_DEFHMASK, 1, LOTS,
+      NULL,
+      "fmax [factor f] [file fname] [name subckt] [keep node ...] : reduce the R/C parasitic network (TICER) to an equivalent .subckt preserving port behaviour over DC..fmax." },
     { "savestate", com_savestate, FALSE, TRUE,   /* Enhancement-131 */
       { 1, 040000, 040000, 040000 }, E_DEFHMASK, 1, 1,
       NULL,
