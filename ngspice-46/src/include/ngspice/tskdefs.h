@@ -82,6 +82,9 @@ struct TSKtask {
 #ifdef KLU
     unsigned int TSKkluMODE:1;
     double TSKkluMemGrowFactor ;
+    int TSKkluOrdering ;        /* Enhancement-152: 0=AMD, 1=COLAMD          */
+    int TSKkluScale ;           /* Enhancement-152: 0=none, 1=sum, 2=max     */
+    int TSKkluBTF ;             /* Enhancement-152: 1=block-triangular, 0=off */
 #endif
 
 };

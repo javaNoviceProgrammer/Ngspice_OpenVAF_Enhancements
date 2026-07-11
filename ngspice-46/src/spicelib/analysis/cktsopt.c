@@ -255,7 +255,36 @@ CKTsetOpt(CKTcircuit *ckt, JOB *anal, int opt, IFvalue *val)
         task->TSKkluMODE = (val->iValue != 0);
         break;
     case OPT_KLU_MEMGROW_FACTOR:
-        task->TSKkluMemGrowFactor = (val->rValue == 1.2);
+        task->TSKkluMemGrowFactor = val->rValue;   /* E-152: was (rValue==1.2), a boolean */
+        break;
+    case OPT_KLU_ORDERING:      /* Enhancement-152 */
+        if (strncmp(val->sValue, "amd", 3) == 0)
+            task->TSKkluOrdering = 0;
+        else if (strncmp(val->sValue, "colamd", 6) == 0)
+            task->TSKkluOrdering = 1;
+        else
+            fprintf(stderr, "Warning: unknown klu_ordering '%s' "
+                    "(use amd|colamd); ignored.\n", val->sValue);
+        break;
+    case OPT_KLU_SCALE:         /* Enhancement-152 */
+        if (strncmp(val->sValue, "none", 4) == 0)
+            task->TSKkluScale = 0;
+        else if (strncmp(val->sValue, "sum", 3) == 0)
+            task->TSKkluScale = 1;
+        else if (strncmp(val->sValue, "max", 3) == 0)
+            task->TSKkluScale = 2;
+        else
+            fprintf(stderr, "Warning: unknown klu_scale '%s' "
+                    "(use none|sum|max); ignored.\n", val->sValue);
+        break;
+    case OPT_KLU_BTF:           /* Enhancement-152 */
+        if (strncmp(val->sValue, "on", 2) == 0)
+            task->TSKkluBTF = 1;
+        else if (strncmp(val->sValue, "off", 3) == 0)
+            task->TSKkluBTF = 0;
+        else
+            fprintf(stderr, "Warning: unknown klu_btf '%s' "
+                    "(use on|off); ignored.\n", val->sValue);
         break;
 #endif
     case OPT_LTERELTOL:
@@ -449,6 +478,12 @@ static IFparm OPTtbl[] = {
         "Set KLU as Direct Linear Solver" },
  { "klu_memgrow_factor", OPT_KLU_MEMGROW_FACTOR, IF_SET|IF_REAL,
         "KLU Memory Grow Factor (default is 1.2)" },
+ { "klu_ordering", OPT_KLU_ORDERING, IF_SET|IF_STRING,
+        "KLU fill-reducing ordering: amd (default) | colamd" },
+ { "klu_scale", OPT_KLU_SCALE, IF_SET|IF_STRING,
+        "KLU matrix row scaling: none | sum | max (default)" },
+ { "klu_btf", OPT_KLU_BTF, IF_SET|IF_STRING,
+        "KLU block-triangular-form permutation: on (default) | off" },
 #endif
 
  { "ltereltol", OPT_LTERELTOL,IF_SET | IF_REAL ,"Relative error tolerence" },

@@ -1114,6 +1114,11 @@ SMPnewMatrix (SMPmatrix *Matrix, int size)
         /* Initialize the KLU Common Data Structure */
         klu_defaults (Matrix->SMPkluMatrix->KLUmatrixCommon) ;
         Matrix->SMPkluMatrix->KLUmatrixCommon->memgrow = Matrix->CKTkluMemGrowFactor ;
+        /* Enhancement-152: honor .option klu_ordering / klu_scale / klu_btf
+         * (defaults above match klu_defaults, so unchanged unless the user set them) */
+        Matrix->SMPkluMatrix->KLUmatrixCommon->ordering = Matrix->CKTkluOrdering ;
+        Matrix->SMPkluMatrix->KLUmatrixCommon->scale = Matrix->CKTkluScale ;
+        Matrix->SMPkluMatrix->KLUmatrixCommon->btf = Matrix->CKTkluBTF ;
 
         /* Allocate KLU data structures */
         Matrix->SMPkluMatrix->KLUmatrixN = (unsigned int)size ;

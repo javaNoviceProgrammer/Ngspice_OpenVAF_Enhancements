@@ -26,13 +26,21 @@ mark is ⚠️ or ❌.
 | Core solver | Sparse LU (KLU) direct solver | ✅¹ | ✅ |
 | Core solver | Legacy Sparse1.3 fallback | ✅ | ✅ |
 | Core solver | Parallel / partitioned / GPU linear solve | ❌ | ✅ |
-| Core solver | Matrix reordering + scaling beyond KLU defaults | ⚠️ | ✅ |
+| Core solver | Matrix reordering + scaling beyond KLU defaults | ✅ | ✅ |
 | Integration | Trapezoidal + variable-order Gear | ✅ | ✅ |
 | Integration | Advanced LTE-based step/order control | ✅ | ✅ |
 | Convergence | gmin stepping + source stepping homotopy | ✅ | ✅ |
 | Convergence | Pseudo-transient / dynamic-gmin continuation | ✅ | ✅ |
 | Convergence | Damped / trust-region (globalized) Newton | ⚠️ | ✅ |
 | Convergence | Coordinated accuracy presets (`errpreset`) | ✅ | ✅ |
+
+*The "matrix reordering + scaling beyond KLU defaults" row is ✅ since
+[Enhancement-152](../../../enhancements_doc/Enhancement-152.md): KLU's
+fill-reducing ordering (`klu_ordering=amd|colamd`), row scaling
+(`klu_scale=none|sum|max`), and BTF permutation (`klu_btf=on|off`) are now
+`.option`s (previously hard-coded to AMD/max/on), and the broken
+`klu_memgrow_factor` is fixed. They change only how the matrix factors, not the
+solution.*
 
 *The Integration "advanced LTE-based step/order control" row was ⚠️ because,
 although ngspice implements Gear coefficients for orders 1–6 (`NIcomCof`) and an

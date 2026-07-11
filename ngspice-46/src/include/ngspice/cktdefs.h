@@ -342,6 +342,9 @@ struct CKTcircuit {
 #ifdef KLU
     unsigned int CKTkluMODE:1;
     double CKTkluMemGrowFactor ;
+    int CKTkluOrdering ;        /* Enhancement-152: 0=AMD, 1=COLAMD          */
+    int CKTkluScale ;           /* Enhancement-152: 0=none, 1=sum, 2=max     */
+    int CKTkluBTF ;             /* Enhancement-152: 1=block-triangular, 0=off */
 #endif
 };
 

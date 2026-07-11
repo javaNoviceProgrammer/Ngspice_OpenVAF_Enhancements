@@ -33,6 +33,9 @@ typedef struct sSMPmatrix {
     #define CKTkluON 1                     /* KLU MODE ON definition */
     #define CKTkluOFF 0                    /* KLU MODE OFF definition */
     double CKTkluMemGrowFactor ;           /* KLU Memory Grow Factor - default = 1.2 */
+    int CKTkluOrdering ;                   /* Enhancement-152: 0=AMD, 1=COLAMD        */
+    int CKTkluScale ;                      /* Enhancement-152: 0=none, 1=sum, 2=max   */
+    int CKTkluBTF ;                        /* Enhancement-152: 1=BTF on, 0=off        */
 #endif
 
 } SMPmatrix ;

@@ -62,6 +62,16 @@ dynamically like Sparse — expect it to be **less forgiving of a near-singular
 Jacobian on a stiff transient edge**, which the dissipative Gear integrator avoids
 (see the [former opamp741 discrepancy](#klu-discrepancies--all-resolved) below).
 
+**Tuning KLU** ([Enhancement-152](../../../enhancements_doc/Enhancement-152.md)):
+KLU's reordering and scaling, previously hard-coded, are now `.option`s —
+`klu_ordering=amd|colamd` (fill-reducing ordering), `klu_scale=none|sum|max` (row
+equilibration), and `klu_btf=on|off` (block-triangular-form permutation), with
+defaults `amd`/`max`/`on`. They change only *how* the matrix factors, never the
+solution (verified physically identical to ~1e-14 across all settings), and matter
+only on unusual matrix structures (a different ordering can reduce fill) or
+badly-scaled matrices. The `klu_memgrow_factor` knob was also fixed (it had
+silently collapsed to a boolean).
+
 ## Selecting and confirming the solver
 
 The netlist option is a simple flag:

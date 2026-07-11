@@ -115,6 +115,9 @@ CKTdoJob(CKTcircuit* ckt, int reset, TSKtask* task)
 #ifdef KLU
     ckt->CKTkluMODE = task->TSKkluMODE;
     ckt->CKTkluMemGrowFactor = task->TSKkluMemGrowFactor ;
+    ckt->CKTkluOrdering = task->TSKkluOrdering ;
+    ckt->CKTkluScale = task->TSKkluScale ;
+    ckt->CKTkluBTF = task->TSKkluBTF ;
 #endif
 
     ckt->CKTlteReltol = task->TSKlteReltol;

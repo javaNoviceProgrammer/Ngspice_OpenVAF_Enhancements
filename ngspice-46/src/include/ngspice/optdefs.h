@@ -130,6 +130,9 @@ enum {
     OPT_SPARSE,
     OPT_KLU,
     OPT_KLU_MEMGROW_FACTOR,
+    OPT_KLU_ORDERING,           /* Enhancement-152: fill-reducing ordering  */
+    OPT_KLU_SCALE,              /* Enhancement-152: matrix scaling          */
+    OPT_KLU_BTF,                /* Enhancement-152: block-triangular form   */
 #endif
 
     OPT_LTERELTOL,

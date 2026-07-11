@@ -34,6 +34,9 @@ NIinit(CKTcircuit *ckt)
 #ifdef KLU
     ckt->CKTmatrix->CKTkluMODE = ckt->CKTkluMODE ; /* TO BE SUBSTITUTED WITH THE HEURISTICS */
     ckt->CKTmatrix->CKTkluMemGrowFactor = ckt->CKTkluMemGrowFactor ;
+    ckt->CKTmatrix->CKTkluOrdering = ckt->CKTkluOrdering ;
+    ckt->CKTmatrix->CKTkluScale = ckt->CKTkluScale ;
+    ckt->CKTmatrix->CKTkluBTF = ckt->CKTkluBTF ;
 #endif
 
     ckt->CKTniState = NIUNINITIALIZED;
