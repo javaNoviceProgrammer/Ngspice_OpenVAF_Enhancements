@@ -119,6 +119,11 @@ solver-by-solver sweep of the example suite:
 
 ## RF / periodic steady-state suite
 
+> **Tutorial:** [The ngspice RF / periodic steady-state suite](ngspice_rf_suite.md)
+> ([PDF](ngspice_rf_suite.pdf)) is a beginner-friendly, worked walkthrough of every
+> analysis below — with schematics, runnable built-in and OSDI netlists, real result
+> plots, and the physics behind each.
+
 | Category | Feature | ngspice | Spectre |
 |---|---|:---:|:---:|
 | RF | S-parameter analysis + noise figure (`.sp`) | ✅ | ✅ |
