@@ -58,6 +58,8 @@ libfte_la_SOURCES = \
     com_qpac.h  \
     com_qpnoise.c  \
     com_qpnoise.h  \
+    com_hbosc.c  \
+    com_hbosc.h  \
     com_hb.c    \
     com_hb.h    \
     com_checkpoint.c    \

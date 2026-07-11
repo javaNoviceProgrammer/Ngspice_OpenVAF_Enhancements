@@ -2411,6 +2411,276 @@ QPnoiseAnalyze(CKTcircuit *ckt, int outNode, double f_in, int cyclo, int verbose
 }
 
 
+/* ======================================================================
+ * Enhancement-140: oscillator phase noise.
+ *
+ * (1) HBOSCanalyze -- AUTONOMOUS harmonic balance. An oscillator has no
+ *     driving source, so the HB residual F(V) = I_R + [dq/dt] = 0 is solved
+ *     for the harmonics V *and* the unknown oscillation frequency w0, with a
+ *     phase gauge (the solution's phase is free). The Jacobian dF/dV is the
+ *     conversion matrix H -- SINGULAR, its right null space the phase mode
+ *     u_k = jk V_k (shifting the oscillator's phase is a symmetry). Newton on
+ *     the bordered system  [ H  dF/dw0 ; u*^T  0 ] [dV; dw0] = [-F; 0]
+ *     (nonsingular by bordering) refines (V, w0) from a transient seed.
+ * (2) PhaseNoiseAnalyze -- the phase-noise spectrum L(df). The PPV (Demir's
+ *     perturbation projection vector) is the LEFT null vector of H, normalized
+ *     so <v1, phase-mode> = 1. The phase diffusion constant c is the device
+ *     noise folded through the PPV (same machinery as pnoise, transfer -> PPV),
+ *     and L(df) = 10 log10( f0^2 c / df^2 ) -- the classic 1/df^2 (-20 dB/dec)
+ *     oscillator phase noise, saturating into a Lorentzian near the carrier.
+ * ====================================================================== */
+
+static struct pac_harm osc_hd;                 /* retained oscillator conversion data */
+static double *osc_Vr = NULL, *osc_Vi = NULL;  /* [Ntot] retained oscillator spectrum */
+static double  osc_f0 = 0.0;
+static int     osc_node = 0, osc_valid = 0;
+
+int
+HBOSCanalyze(CKTcircuit *ckt, int oscNode, int K, int Pin, double f0seed,
+             double ampseed, int maxiter, double tol, int verbose)
+{
+    int N = SMPmatSize(ckt->CKTmatrix);
+    int P = Pin > 0 ? Pin : ((8*K < 32) ? 32 : 8*K);
+    int Ntot = (2*K+1)*N, Naug = Ntot + 1;
+    int iter, s, i, k, c, rc = E_ITERLIM, have_hd = 0;
+    double f0 = f0seed, w0 = 2.0*M_PI*f0, fnorm = 0.0;
+    double *Vr, *Vi, *vsamp, *IRr, *IRi, *Kr, *Ki, *Jr, *Ji, *Fr, *Fi, *Ar, *Ai, *br, *bi;
+    struct pac_harm hd;
+
+    if (N <= 0 || K < 1 || oscNode <= 0 || oscNode > N) {
+        fprintf(stderr, "hbosc: bad size or oscillator node.\n"); return E_PARMVAL;
+    }
+    if (Naug > 1600) { fprintf(stderr, "hbosc: system too large (reduce K).\n"); return E_PARMVAL; }
+
+    Vr = TMALLOC(double, Ntot); Vi = TMALLOC(double, Ntot);
+    IRr = TMALLOC(double, Ntot); IRi = TMALLOC(double, Ntot);
+    Kr = TMALLOC(double, Ntot); Ki = TMALLOC(double, Ntot);
+    Fr = TMALLOC(double, Ntot); Fi = TMALLOC(double, Ntot);
+    Jr = TMALLOC(double, (size_t)Ntot*(size_t)Ntot); Ji = TMALLOC(double, (size_t)Ntot*(size_t)Ntot);
+    Ar = TMALLOC(double, (size_t)Naug*(size_t)Naug); Ai = TMALLOC(double, (size_t)Naug*(size_t)Naug);
+    br = TMALLOC(double, Naug); bi = TMALLOC(double, Naug);
+    vsamp = TMALLOC(double, (size_t)N*(size_t)P);
+
+    /* seed: fundamental at the osc node (amplitude A -> |V_1| = A/2, real, phase 0) */
+    for (i = 0; i < Ntot; i++) { Vr[i] = 0.0; Vi[i] = 0.0; }
+    Vr[(size_t)(1+K)*(size_t)N + (size_t)(oscNode-1)] = ampseed * 0.5;
+    Vr[(size_t)(K-1)*(size_t)N + (size_t)(oscNode-1)] = ampseed * 0.5;
+
+    for (iter = 0; iter < maxiter; iter++) {
+        w0 = 2.0*M_PI*f0;
+        for (s = 0; s < P; s++)
+            for (i = 0; i < N; i++) {
+                double v = 0.0;
+                for (k = -K; k <= K; k++) {
+                    double ang = 2.0*M_PI*k*s/(double)P;
+                    v += Vr[(size_t)(k+K)*(size_t)N+(size_t)i]*cos(ang)
+                       - Vi[(size_t)(k+K)*(size_t)N+(size_t)i]*sin(ang);
+                }
+                vsamp[(size_t)s*(size_t)N+(size_t)i] = v;
+            }
+        if (hb_extract(ckt, vsamp, N, P, K, &hd, IRr, IRi)) {
+            fprintf(stderr, "hbosc: device extraction failed.\n"); rc = E_PARMVAL; break;
+        }
+        have_hd = 1;
+        pac_build_matrix(&hd, f0, 0.0, Jr, Ji);
+        {   /* I_C = (J - Jg) V */
+            struct pac_harm hg = hd;
+            double *Jgr = TMALLOC(double, (size_t)Ntot*(size_t)Ntot);
+            double *Jgi = TMALLOC(double, (size_t)Ntot*(size_t)Ntot);
+            hg.Cmr = TMALLOC(double, (size_t)hd.nnz*(size_t)(hd.H+1));
+            hg.Cmi = TMALLOC(double, (size_t)hd.nnz*(size_t)(hd.H+1));
+            pac_build_matrix(&hg, f0, 0.0, Jgr, Jgi);
+            FREE(hg.Cmr); FREE(hg.Cmi);
+            for (i = 0; i < Ntot; i++) {
+                double cr = 0, ci = 0;
+                for (c = 0; c < Ntot; c++) {
+                    double ar = Jr[(size_t)i*(size_t)Ntot+(size_t)c] - Jgr[(size_t)i*(size_t)Ntot+(size_t)c];
+                    double ai = Ji[(size_t)i*(size_t)Ntot+(size_t)c] - Jgi[(size_t)i*(size_t)Ntot+(size_t)c];
+                    cr += ar*Vr[c] - ai*Vi[c]; ci += ar*Vi[c] + ai*Vr[c];
+                }
+                Kr[i] = cr; Ki[i] = ci;
+            }
+            FREE(Jgr); FREE(Jgi);
+        }
+        fnorm = 0.0;
+        for (i = 0; i < Ntot; i++) {
+            Fr[i] = IRr[i] + Kr[i]; Fi[i] = IRi[i] + Ki[i];
+            fnorm += Fr[i]*Fr[i] + Fi[i]*Fi[i];
+        }
+        fnorm = sqrt(fnorm);
+        if (verbose)
+            fprintf(stderr, "hbosc iter %2d: |F| = %.6e  f0 = %.8g Hz\n", iter, fnorm, f0);
+        if (isnan(fnorm) || fnorm > 1e300) { pac_free_harmonics(&hd); have_hd = 0; break; }
+        if (fnorm < tol) { rc = OK; break; }        /* converged: keep hd for retention */
+
+        /* bordered Newton: [ H  d ; u*^T 0 ] [dV; dw0] = [-F; 0] */
+        memset(Ar, 0, (size_t)Naug*(size_t)Naug*sizeof(double));
+        memset(Ai, 0, (size_t)Naug*(size_t)Naug*sizeof(double));
+        for (i = 0; i < Ntot; i++)
+            for (c = 0; c < Ntot; c++) {
+                Ar[(size_t)i*(size_t)Naug+(size_t)c] = Jr[(size_t)i*(size_t)Ntot+(size_t)c];
+                Ai[(size_t)i*(size_t)Naug+(size_t)c] = Ji[(size_t)i*(size_t)Ntot+(size_t)c];
+            }
+        for (i = 0; i < Ntot; i++) {                /* d = dF/dw0 = I_C / w0 */
+            Ar[(size_t)i*(size_t)Naug+(size_t)Ntot] = Kr[i]/w0;
+            Ai[(size_t)i*(size_t)Naug+(size_t)Ntot] = Ki[i]/w0;
+        }
+        for (i = 0; i < Ntot; i++) {                /* row = conj(u), u_k = jk V_k */
+            int kk = (i/N) - K;
+            Ar[(size_t)Ntot*(size_t)Naug+(size_t)i] = -(double)kk * Vi[i];   /* Re conj(u) */
+            Ai[(size_t)Ntot*(size_t)Naug+(size_t)i] = -(double)kk * Vr[i];   /* Im conj(u) */
+        }
+        for (i = 0; i < Ntot; i++) { br[i] = -Fr[i]; bi[i] = -Fi[i]; }
+        br[Ntot] = 0.0; bi[Ntot] = 0.0;
+        pac_free_harmonics(&hd); have_hd = 0;
+        if (pss_csolve(Naug, Ar, Ai, br, bi)) {
+            fprintf(stderr, "hbosc: singular augmented system.\n"); rc = E_SINGULAR; break;
+        }
+        for (i = 0; i < Ntot; i++) { Vr[i] += br[i]; Vi[i] += bi[i]; }
+        f0 += br[Ntot] / (2.0*M_PI);                /* dw0 = Re(x[Ntot]) */
+    }
+
+    if (rc == OK && have_hd) {
+        int numNames, error;
+        IFuid *nameList = NULL;
+        /* retain the operating point for phasenoise */
+        if (osc_valid) { pac_free_harmonics(&osc_hd); FREE(osc_Vr); FREE(osc_Vi); }
+        osc_hd = hd;                                /* transfer ownership of hd's arrays */
+        osc_Vr = TMALLOC(double, Ntot); osc_Vi = TMALLOC(double, Ntot);
+        memcpy(osc_Vr, Vr, (size_t)Ntot*sizeof(double));
+        memcpy(osc_Vi, Vi, (size_t)Ntot*sizeof(double));
+        osc_f0 = f0; osc_node = oscNode; osc_valid = 1;
+
+        error = CKTnames(ckt, &numNames, &nameList);
+        fprintf(stdout, "\nHBOSC: autonomous oscillator steady state\n"
+                        "  oscillation frequency f0 = %.9g Hz  (converged, |F| = %.3e)\n"
+                        "  node      harmonic   frequency [Hz]        |V|            phase [deg]\n",
+                f0, fnorm);
+        for (i = 0; i < N; i++) {
+            const char *nm = (!error && i < numNames) ? (const char *) nameList[i] : "?";
+            for (k = 0; k <= K; k++) {
+                double sc = (k == 0) ? 1.0 : 2.0;
+                double vr = sc*Vr[(size_t)(k+K)*(size_t)N+(size_t)i];
+                double vi = sc*Vi[(size_t)(k+K)*(size_t)N+(size_t)i];
+                fprintf(stdout, "  %-8s  %6d   %16.6e   %14.6e   %10.3f\n",
+                        nm, k, k*f0, hypot(vr, vi), (k==0)?0.0:atan2(vi, vr)*180.0/M_PI);
+            }
+        }
+        if (nameList) tfree(nameList);
+    } else {
+        if (have_hd) pac_free_harmonics(&hd);
+        if (rc != OK)
+            fprintf(stderr, "hbosc: did not converge to an oscillation (try a better fguess/tstab).\n");
+    }
+
+    FREE(Vr); FREE(Vi); FREE(IRr); FREE(IRi); FREE(Kr); FREE(Ki);
+    FREE(Fr); FREE(Fi); FREE(Jr); FREE(Ji); FREE(Ar); FREE(Ai); FREE(br); FREE(bi); FREE(vsamp);
+    return rc;
+}
+
+int
+PhaseNoiseAnalyze(CKTcircuit *ckt, double fstart, double fstop, int npts, int verbose)
+{
+    struct pac_harm *hd = &osc_hd;
+    int    N, M, Ntot, i, j, k, rc = OK, onode, ni, mi, ei;
+    double f0 = osc_f0;
+    double *Psr, *Psi, Pcar, freq, mult;
+    NOISEAN nj; Ndata data; JOB *oldJob;
+
+    if (!osc_valid) {
+        fprintf(stderr, "phasenoise: no oscillator operating point -- run `hbosc` first.\n");
+        return E_NOTFOUND;
+    }
+    N = hd->N; M = hd->M; Ntot = hd->Ntot; onode = osc_node;
+    Psr = TMALLOC(double, Ntot); Psi = TMALLOC(double, Ntot);
+
+    /* carrier power at the oscillator node: single-sided amplitude A = 2|V_1|, mean
+     * square A^2/2 = 2|V_1|^2 (the reference the sideband noise is measured against). */
+    {
+        size_t c1 = (size_t)(M+1)*(size_t)N + (size_t)(onode-1);
+        Pcar = 2.0 * (osc_Vr[c1]*osc_Vr[c1] + osc_Vi[c1]*osc_Vi[c1]);
+        if (Pcar <= 0.0) Pcar = 1.0;
+    }
+
+    /* bias the devices at the oscillator op-point (phase-0 sample) for their noise PSD */
+    for (j = 1; j <= N; j++) {
+        double v = 0.0;
+        for (k = -M; k <= M; k++)
+            v += osc_Vr[(size_t)(k+M)*(size_t)N+(size_t)(j-1)];
+        ckt->CKTrhsOld[j] = v;
+    }
+    ckt->CKTrhsOld[0] = 0.0;
+    ckt->CKTmode = (ckt->CKTmode & MODEUIC) | MODEDCOP | MODEINITSMSIG;
+    CKTload(ckt);
+    memset(&nj, 0, sizeof(nj));
+    nj.NstartFreq = fstart; nj.NstopFreq = fstop; nj.NnumSteps = npts;
+    nj.NstpType = 0; nj.NStpsSm = 0; nj.JOBname = "phasenoise";
+    memset(&data, 0, sizeof(data)); data.prtSummary = FALSE;
+    oldJob = ckt->CKTcurJob; ckt->CKTcurJob = (JOB *) &nj;
+    for (i = 0; i < DEVmaxnum; i++)
+        if (DEVices[i] && DEVices[i]->DEVnoise && ckt->CKThead[i]) {
+            double dummy = 0.0;
+            DEVices[i]->DEVnoise(N_DENS, N_OPEN, ckt->CKThead[i], ckt, &data, &dummy);
+        }
+
+    fprintf(stdout, "\nPhaseNoise: oscillator phase noise (f0 = %.9g Hz, carrier power %.4e)\n"
+                    "  offset [Hz]        L(df) [dBc/Hz]\n", f0, Pcar);
+    mult = (npts > 1) ? pow(fstop/fstart, 1.0/(double)(npts-1)) : 1.0;
+
+    for (freq = fstart, i = 0; i < npts; i++, freq *= mult) {
+        /* adjoint of H at OFFSET f_in = df, unit at the CARRIER sideband (m=1) of the
+         * osc node: Psi is the transimpedance from a noise injection at every (node,
+         * sideband) to the carrier. As df -> 0, H(df) -> the singular limit-cycle matrix,
+         * so Psi (through the phase mode) blows up as 1/df -> Sv ~ 1/df^2 = phase noise. */
+        double *Ar = TMALLOC(double, (size_t)Ntot*(size_t)Ntot);
+        double *Ai = TMALLOC(double, (size_t)Ntot*(size_t)Ntot);
+        double Sv = 0.0;
+        memset(Ar, 0, (size_t)Ntot*(size_t)Ntot*sizeof(double));
+        memset(Ai, 0, (size_t)Ntot*(size_t)Ntot*sizeof(double));
+        for (ni = 0; ni <= 2*M; ni++)
+            for (mi = 0; mi <= 2*M; mi++) {
+                int dm = (ni - M) - (mi - M);
+                double omega = 2.0*M_PI*(freq + (double)(mi - M)*f0);
+                for (ei = 0; ei < hd->nnz; ei++) {
+                    size_t hi = (size_t)ei*(size_t)(hd->H+1) + (size_t)abs(dm);
+                    double gr = hd->Gmr[hi], gi = hd->Gmi[hi], cr = hd->Cmr[hi], ci = hd->Cmi[hi];
+                    double er, eii; size_t row, col;
+                    if (dm < 0) { gi = -gi; ci = -ci; }
+                    er = gr - omega*ci; eii = gi + omega*cr;
+                    row = (size_t)ni*(size_t)N + (size_t)(hd->rr[ei]-1);
+                    col = (size_t)mi*(size_t)N + (size_t)(hd->cc[ei]-1);
+                    Ar[col*(size_t)Ntot+row] += er;     /* transpose: [col][row] = H^T */
+                    Ai[col*(size_t)Ntot+row] += eii;
+                }
+            }
+        memset(Psr, 0, (size_t)Ntot*sizeof(double));
+        memset(Psi, 0, (size_t)Ntot*sizeof(double));
+        Psr[(size_t)(M+1)*(size_t)N + (size_t)(onode-1)] = 1.0;   /* carrier sideband m=1 */
+        if (pss_csolve(Ntot, Ar, Ai, Psr, Psi) == 0) {
+            data.freq = freq; data.delFreq = 0.0; data.prtSummary = FALSE;
+            for (k = -M; k <= M; k++) {
+                double dens = 0.0;
+                size_t blk = (size_t)(k+M)*(size_t)N;
+                for (j = 1; j <= N; j++) { ckt->CKTrhs[j] = Psr[blk+(size_t)(j-1)]; ckt->CKTirhs[j] = Psi[blk+(size_t)(j-1)]; }
+                ckt->CKTrhs[0] = 0.0; ckt->CKTirhs[0] = 0.0;
+                for (ei = 0; ei < DEVmaxnum; ei++)
+                    if (DEVices[ei] && DEVices[ei]->DEVnoise && ckt->CKThead[ei])
+                        DEVices[ei]->DEVnoise(N_DENS, N_CALC, ckt->CKThead[ei], ckt, &data, &dens);
+                Sv += dens;
+            }
+        }
+        FREE(Ar); FREE(Ai);
+        fprintf(stdout, "  %14.6e   %12.4f\n", freq, 10.0*log10(Sv / Pcar));
+        if (npts == 1) break;
+    }
+    ckt->CKTcurJob = oldJob;
+    (void) verbose;
+
+    FREE(Psr); FREE(Psi);
+    return rc;
+}
+
+
 int
 DCpss(CKTcircuit *ckt,
        int restart)   /* forced restart flag */

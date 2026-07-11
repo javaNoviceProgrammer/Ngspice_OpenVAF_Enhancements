@@ -434,6 +434,14 @@ struct comm spcp_coms[] = {
       { 040, 040, 040, 040 }, E_DEFHMASK, 2, LOTS,
       NULL,
       "output_node f_in [cyclo] : two-tone QPnoise -- output/input noise density at f_in, folding device noise over all sidebands around the `qpss ... hb` operating point (`cyclo` = cyclostationary PSD)." },
+    { "hbosc", com_hbosc, TRUE, FALSE,           /* Enhancement-140 */
+      { 040, 040, 040, 040 }, E_DEFHMASK, 2, LOTS,
+      NULL,
+      "oscnode K [fguess] [tstab] : autonomous harmonic balance -- an oscillator's steady state (harmonics + oscillation frequency), seeded from a transient." },
+    { "phasenoise", com_phasenoise, TRUE, FALSE, /* Enhancement-140 */
+      { 040, 040, 040, 040 }, E_DEFHMASK, 2, LOTS,
+      NULL,
+      "fstart fstop [points] : oscillator phase-noise spectrum L(df) via the PPV, around the `hbosc` operating point." },
     { "hb", com_hb, TRUE, FALSE,                 /* Enhancement-134 */
       { 040, 040, 040, 040 }, E_DEFHMASK, 2, LOTS,
       NULL,

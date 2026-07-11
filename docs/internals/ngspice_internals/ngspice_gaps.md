@@ -107,7 +107,7 @@ solver-by-solver sweep of the example suite:
 | RF | Touchstone (`.sNp`) import / export | ✅ | ✅ |
 | RF | Periodic steady state (PSS) | ✅¹ | ✅ |
 | RF | Harmonic Balance (HB) | ✅⁷ | ✅ |
-| RF | Periodic / phase noise (Pnoise) | ⚠️³ | ✅ |
+| RF | Periodic / phase noise (Pnoise) | ✅³ | ✅ |
 | RF | Periodic AC (PAC, conversion gain) | ✅² | ✅ |
 | RF | Periodic transfer function (PXF) | ✅⁴ | ✅ |
 | RF | Periodic S-parameters (PSP) | ✅⁵ | ✅ |
@@ -161,9 +161,20 @@ averaging over the period, so a pumped device's bias-dependent noise (a diode's
 `2qI(t)`, a resistor's flicker `∝|I(t)|²`) is captured correctly. It reduces exactly
 to the stationary case (and hence `.noise`) for a bias-independent source by
 Parseval, and on a flicker resistor carrying a known periodic current it gives
-`onoise·f = R1²·KF·⟨I²⟩` using the period-average `⟨I²⟩` (matched to five digits). It
-stays ⚠️ only because it does not yet emit a dedicated phase-noise (jitter) spectrum
-— a refinement of the same cyclostationary fold.*
+`onoise·f = R1²·KF·⟨I²⟩` using the period-average `⟨I²⟩` (matched to five digits).
+[Enhancement-140](../../../enhancements_doc/Enhancement-140.md) closes the gap (**✅**)
+with the **oscillator phase-noise** piece. `hbosc` is an **autonomous** harmonic balance:
+an oscillator has no source, so the HB residual `F(V)=I_R+[dq/dt]=0` is solved for the
+harmonics **and** the unknown oscillation frequency `w0`, the singular conversion matrix
+(its phase mode `u_k=jk V_k`) bordered with `dF/dw0` and a phase gauge and Newton-solved
+from a transient seed. `phasenoise` then reports `L(df)`: the adjoint of the conversion
+matrix at OFFSET `df`, unit at the carrier sideband, folds the device noise to the
+output; as `df→0` the limit-cycle matrix goes singular through the phase mode, so the
+folded noise diverges as `1/df²` — the phase-noise skirt — normalized to the carrier
+power. Verified 8/8 on an LC oscillator: autonomous HB converges to `f0` and the
+describing-function amplitude, `L(df)` has the `−20 dB/dec` skirt near the carrier
+flattening into the noise floor, at a physical absolute level, and the thermal noise
+scales as `L ∝ T` (doubling T raises L by exactly 3 dB).*
 
 *⁴ PXF is ✅ (**complete**). [Enhancement-125](../../../enhancements_doc/Enhancement-125.md)
 adds a `.pxf` command — the **adjoint** of PAC. It solves `Hᵀ Ψ = e_{out,0}` per
