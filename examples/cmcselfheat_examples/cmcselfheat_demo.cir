@@ -1,0 +1,66 @@
+* Cross-model self-heating demo -- the SAME electro-thermal analogy
+* V(tnode) = Pdiss * rth_eff for four different CMC device classes at once.
+* Compile the models first:
+*   openvaf-r ../../OpenVAF-master-20260610/integration_tests/HICUML2/hicuml2.va  -o hicuml2.osdi
+*   openvaf-r ../../OpenVAF-master-20260610/integration_tests/ASMHEMT/asmhemt.va  -o asmhemt.osdi
+*   openvaf-r ../../OpenVAF-master-20260610/integration_tests/BSIMBULK/bsimbulk.va -o bsimbulk.osdi
+*   openvaf-r ../../OpenVAF-master-20260610/integration_tests/BSIMCMG/bsimcmg.va  -o bsimcmg.osdi
+*
+* Each model exposes its self-heating thermal node as an extra terminal; wiring it
+* to a node lets us read the temperature rise. The 1e12-ohm resistor from each
+* thermal node to ground is a high-impedance probe (negligible vs the model's own
+* 1/rth thermal conductance). rth_eff is: rth (HICUM), rth0 (ASMHEMT), RTH0/W
+* (BSIMBULK, per-width), and a geometry-normalized RTH0 (BSIMCMG).
+.control
+pre_osdi hicuml2.osdi
+pre_osdi asmhemt.osdi
+pre_osdi bsimbulk.osdi
+pre_osdi bsimcmg.osdi
+.endc
+
+* SiGe HBT (current-biased, stable)
+Vc  c 0 dc 2.0
+Ib1 0 b dc 20u
+Nhbt c b 0 0 th1 mhb
+Rp1 th1 0 1e12
+.model mhb hicumL2va flsh=1 rth=2000
+
+* GaN HEMT
+Vd2 d2 0 dc 5.0
+Vg2 g2 0 dc 0
+Nhemt d2 g2 0 0 th2 mhemt
+Rp2 th2 0 1e12
+.model mhemt asmhemt shmod=1 rth0=20
+
+* bulk MOSFET (W = 1 um, so rth_eff = RTH0/W = 1000 K/W)
+Vd3 d3 0 dc 1.0
+Vg3 g3 0 dc 1.2
+Nmos d3 g3 0 0 th3 mmos W=1u L=0.1u
+Rp3 th3 0 1e12
+.model mmos bsimbulk SHMOD=1 RTH0=1e-3
+
+* FinFET
+Vd4 d4 0 dc 1.0
+Vg4 g4 0 dc 1.0
+Nfin d4 g4 0 0 th4 mfin
+Rp4 th4 0 1e12
+.model mfin bsimcmg_va SHMOD=1 RTH0=5e-3
+
+.op
+
+.control
+run
+echo
+echo Each model: temperature rise V(tnode) = dissipated power x thermal resistance.
+echo
+echo "HICUM/L2  (SiGe HBT)    V(th)/Pdiss [K/W] = (expect rth   = 2000):"
+print v(th1)/(abs(i(vc))*v(c))
+echo "ASMHEMT   (GaN HEMT)    V(th)/Pdiss [K/W] = (expect rth0  = 20):"
+print v(th2)/(abs(i(vd2))*v(d2))
+echo "BSIMBULK  (bulk MOSFET) V(th)/Pdiss [K/W] = (expect RTH0/W = 1000):"
+print v(th3)/(abs(i(vd3))*v(d3))
+echo "BSIMCMG   (FinFET)      V(th)/Pdiss [K/W] = (geometry-normalized RTH0):"
+print v(th4)/(abs(i(vd4))*v(d4))
+.endc
+
+.end
