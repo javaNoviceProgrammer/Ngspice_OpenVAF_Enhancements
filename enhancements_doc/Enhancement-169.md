@@ -32,6 +32,12 @@ command is visible before Enter is pressed. This is a real ngspice change (new
   one terminal row; otherwise it defers to readline's own `rl_redisplay()`, so a
   line that wraps is never corrupted. The cursor is repositioned with a plain
   `CR` + `CUF` (cursor-forward) so editing mid-line behaves normally.
+- Because that manual cursor positioning bypasses readline's internal position
+  tracking, readline's own accept-line no longer emits the closing newline, so the
+  Enter key is bound to a small wrapper (`cp_synhl_accept`) that emits the newline
+  itself (only when coloring is active) before running the normal accept-line —
+  otherwise the command's output would begin on the input line. With coloring off
+  the wrapper is a no-op and readline handles the newline as usual.
 - It is **on by default** at an interactive terminal and disabled by
   `set no_syntax_highlight`, by the `NO_COLOR` environment convention, or whenever
   the output is not a TTY — a piped or redirected session never has color codes

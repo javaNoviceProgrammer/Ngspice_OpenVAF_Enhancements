@@ -159,6 +159,31 @@ else:
           (GREEN + "plo").encode() not in out and (RED + "plo").encode() not in out)
     out = type_live("plot", env_extra={"NO_COLOR": "1"})
     check("NO_COLOR suppresses live coloring", b"\033[32m" not in out)
+
+    # pressing Enter must move to a fresh line before the command output -- the
+    # custom redisplay bypasses readline's cursor tracking, so accept-line has to
+    # emit the closing newline itself (else output runs onto the input line).
+    def screen_lines(raw):
+        import re as _re
+        raw = _re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", raw.decode(errors="replace"))
+        lines = []
+        for pl in raw.split("\n"):
+            cur = ""
+            for seg in pl.split("\r"):
+                cur = seg if len(seg) >= len(cur) else seg + cur[len(seg):]
+            lines.append(cur.rstrip())
+        return lines
+    # Use a command whose output text is distinct from the command itself: if
+    # accept-line failed to emit the closing newline, the error would be
+    # concatenated onto the input line ("... print v(zqx)Error: ...").
+    out = type_live("print v(zqx)\r", settle=1.0)   # \r submits the line
+    sc = screen_lines(out)
+    input_line = next((l for l in sc if "print v(zqx)" in l and "->" in l), "")
+    check("Enter moves output to a new line (not concatenated onto the input)",
+          input_line != "" and "not available" not in input_line
+          and "Warning" not in input_line
+          and b"not available" in out,           # the command did run (and warn)
+          f"(input line={input_line!r})")
     # a non-tty (piped) session must never leak color codes into output
     r = subprocess.run([NGSPICE], input="plot\nboguscmd\nquit\n",
                        capture_output=True, text=True, timeout=30)

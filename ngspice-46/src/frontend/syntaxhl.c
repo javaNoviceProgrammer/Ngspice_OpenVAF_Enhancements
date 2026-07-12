@@ -243,9 +243,32 @@ static void cp_synhl_redisplay(void)
 #endif /* HAVE_GNUREADLINE */
 
 
+#ifdef HAVE_GNUREADLINE
+
+/* accept-line replacement.  Our custom redisplay leaves the cursor positioned
+ * with raw escape sequences, which bypasses readline's internal cursor tracking,
+ * so readline's own accept handling does not emit the closing newline before the
+ * command runs (the command output would otherwise start on the input line).
+ * Emit that newline here when coloring is active, then run the normal
+ * accept-line. */
+static int cp_synhl_accept(int count, int key)
+{
+    if (synhl_active()) {
+        rl_crlf();
+        fflush(rl_outstream);
+        rl_on_new_line();
+    }
+    return rl_newline(count, key);
+}
+
+#endif /* HAVE_GNUREADLINE */
+
+
 void cp_synhl_init(void)
 {
 #ifdef HAVE_GNUREADLINE
     rl_redisplay_function = cp_synhl_redisplay;
+    rl_bind_key('\r', cp_synhl_accept);
+    rl_bind_key('\n', cp_synhl_accept);
 #endif
 }
