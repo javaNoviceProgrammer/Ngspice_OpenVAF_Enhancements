@@ -492,6 +492,10 @@ struct comm spcp_coms[] = {
       { 040, 040, 040, 040 }, E_DEFHMASK, 1, LOTS,
       NULL,
       "t_target [rate opvar] [param ageparam] [dynamic tstop [tstep]] [verbose] : age every aging-capable device to a target lifetime (stress -> degrade -> re-stamp) for fresh-vs-aged reliability simulation." },
+    { "emir", com_emir, TRUE, FALSE,             /* Enhancement-158 */
+      { 040, 040, 040, 040 }, E_DEFHMASK, 0, LOTS,
+      NULL,
+      "[rail V] [thresh frac] [thick m] [jmax A/m2] [n exp] [tref s] [top k] [verbose] : power-grid reliability -- worst IR-drop and per-segment electromigration current density + Black's-equation MTTF." },
     { "savestate", com_savestate, FALSE, TRUE,   /* Enhancement-131 */
       { 1, 040000, 040000, 040000 }, E_DEFHMASK, 1, 1,
       NULL,

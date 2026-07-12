@@ -18,6 +18,7 @@ void com_hb(wordlist *wl);         /* Enhancement-134 */
 void com_envelope(wordlist *wl);   /* Enhancement-154 */
 void com_reduce(wordlist *wl);     /* Enhancement-155 */
 void com_aging(wordlist *wl);      /* Enhancement-157 */
+void com_emir(wordlist *wl);       /* Enhancement-158 */
 void com_savestate(wordlist *wl);  /* Enhancement-131 */
 void com_loadstate(wordlist *wl);  /* Enhancement-131 */
 void com_meas(wordlist *wl);

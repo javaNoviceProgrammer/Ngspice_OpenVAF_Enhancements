@@ -1,0 +1,14 @@
+* emir demo -- IR-drop + electromigration on a 3-segment power grid
+* 1 V rail feeds a resistive ladder; each tap draws 0.1 A; wires taper in width.
+Vdd vdd 0 dc 1.0
+Rw1 vdd n1 0.5 w=2u
+Rw2 n1 n2 0.5 w=1u
+Rw3 n2 n3 0.5 w=0.5u
+Iload1 n1 0 dc 0.1
+Iload2 n2 0 dc 0.1
+Iload3 n3 0 dc 0.1
+.control
+* thickness 0.5 um, EM limit 3.5e11 A/m^2, reference lifetime 10 years
+emir thick 0.5u jmax 3.5e11 tref 3.15e8
+.endc
+.end

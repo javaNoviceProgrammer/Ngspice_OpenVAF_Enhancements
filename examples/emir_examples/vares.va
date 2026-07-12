@@ -1,0 +1,12 @@
+`include "disciplines.vams"
+
+// A minimal 2-terminal Verilog-A resistor, used as an OSDI current-drawing load
+// on the power grid so `emir` can be exercised with OSDI (not just built-in)
+// devices sinking current at a tap node.
+module vares(a, c);
+  inout a, c;
+  electrical a, c;
+  parameter real r = 1.0 from (0:inf);
+  analog
+    I(a, c) <+ V(a, c) / r;
+endmodule

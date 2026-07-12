@@ -372,7 +372,7 @@ independent — the correlation model is what decides it.*
 |---|---|:---:|:---:|
 | Reliability | Device aging (HCI / NBTI / TDDB) | ✅¹⁰ | ✅ |
 | Reliability | Stress → degrade → re-simulate (fresh/aged) flow | ✅¹⁰ | ✅ |
-| Reliability | Electromigration + IR-drop (EMIR) | ❌ | ✅ |
+| Reliability | Electromigration + IR-drop (EMIR) | ✅¹¹ | ✅ |
 
 ## Post-layout / parasitics
 
@@ -410,8 +410,21 @@ back, the model owns the physics (dose → parameter shift). **Static** mode use
 operating-point stress; **dynamic** mode time-averages the rate over a transient
 (capturing duty cycle). Verified under both solvers against an NBTI demo NMOS: exact
 dose, the analytic `ΔVth ∝ t^0.25` power law, monotone degradation, near-threshold
-sensitivity, and 0.30× aging for a 30%-duty gate. Electromigration + IR-drop (EMIR)
-remains a separate power-grid analysis (a natural follow-up), so that row stays ❌.*
+sensitivity, and 0.30× aging for a 30%-duty gate.*
+
+*¹¹ Electromigration + IR-drop (EMIR) is ✅ since
+[Enhancement-158](../../../enhancements_doc/Enhancement-158.md): the `emir` command
+runs a DC solve of the power-distribution network and reports **IR-drop** (how far
+each node sags below the supply rail under load, worst node + violations past a
+threshold) and **electromigration** (per wire-segment current **density**
+`J = |I|/(w·thickness)`, ranked, with a Black's-equation relative lifetime
+`MTTF/ref = (Jmax/J)^n`). The point of the analysis is that EM is set by current
+*density*, not current — a fat trunk carrying huge current is safe while a thin wire
+at a fraction of that current voids first — which is why real grids taper wire width
+with carried current. Verified under both solvers on a tapered ladder: exact IR-drop,
+linear scaling, `J=I/(w·thick)` exact, narrow-wire-is-worst physics, Black `J^-n`
+scaling, and an OSDI current load. First cut is DC/average-current; transient/RMS EM
+and a temperature-coupled MTTF map are follow-ups.*
 
 ## Behavioral / mixed-signal / AMS
 

@@ -42,7 +42,21 @@ CHAPTERS = [
 ]
 CHAPTER_IDS = {name: cid for name, cid in CHAPTERS}
 
-LINK = re.compile(r"\[([^\]]*)\]\(([^)\s]+)\)")
+# image links (![alt](target)) are handled separately -- embedded from a local
+# path -- so the LINK rewriter (which turns links into GitHub URLs) skips them
+# via the negative lookbehind for the leading '!'.
+IMG = re.compile(r"!\[([^\]]*)\]\(([^)\s]+)\)")
+LINK = re.compile(r"(?<!!)\[([^\]]*)\]\(([^)\s]+)\)")
+
+
+def image_local(alt, target, src_dir):
+    """Resolve a relative figure path to an absolute local path so pandoc
+    embeds the actual image (rather than the LINK rewriter turning it into a
+    GitHub blob URL, which is an HTML page xelatex cannot size)."""
+    if target.startswith(("http://", "https://")):
+        return f"![{alt}]({target})"
+    absp = os.path.normpath(os.path.join(ROOT, src_dir, target))
+    return f"![{alt}]({absp})"
 
 
 def enh_docs():
@@ -92,6 +106,8 @@ def process(path, first_heading_id):
                 if not tagged:
                     line += f" {{#{first_heading_id}}}"
                     tagged = True
+            line = IMG.sub(
+                lambda mm: image_local(mm.group(1), mm.group(2), src_dir), line)
             line = LINK.sub(
                 lambda mm: f"[{mm.group(1)}]({rewrite_target(mm.group(2), src_dir)})",
                 line,
