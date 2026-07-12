@@ -1,0 +1,46 @@
+* Electro-thermal self-heating demo -- HICUM/L2 (OSDI), thermal node exposed
+* Compile the model first:
+*   openvaf-r ../../OpenVAF-master-20260610/integration_tests/HICUML2/hicuml2.va -o hicuml2.osdi
+*
+* HICUM/L2's self-heating network is gated by the model flag `flsh`, with
+* parameters rth (thermal resistance, K/W) and cth (thermal capacitance, J/K).
+* Exposing the model's thermal node as a 5th device terminal (here node `th`)
+* lets us read the temperature rise directly:  V(th) = temperature rise [K].
+* Terminals of the OSDI HICUM device are (collector, base, emitter, substrate,
+* thermal).
+.control
+pre_osdi hicuml2.osdi
+.endc
+
+* Current-biased common-emitter stage -> stable operating point (no runaway).
+* Start ISOTHERMAL (flsh=0); we enable self-heating below with altermod, which
+* warm-starts the harder self-heated operating point from the isothermal one.
+Vc  c 0 dc 2.0
+Ibb 0 b dc 20u
+N1  c b 0 0 th m
+.model m hicumL2va flsh=0 rth=2000
+
+.control
+run
+* Isothermal baseline: no self-heating, so the thermal node V(th) = 0.
+echo
+echo isothermal (flsh=0): Vbe and thermal node V(th) (=0, no heating):
+print v(b) v(th)
+echo
+
+* Enable self-heating and re-solve (warm-started from the isothermal point).
+altermod m flsh=1
+op
+echo self-heating on (flsh=1):
+echo   collector current Ic:
+print abs(i(vc))
+echo   dissipated power Pdiss = Ic*Vce:
+print abs(i(vc))*v(c)
+echo   measured temperature rise V(th), and expected Pdiss*rth:
+print v(th) abs(i(vc))*v(c)*2000
+echo   (the two agree -- V(th) = Pdiss*rth, the electro-thermal analogy)
+echo   self-heated Vbe -- lower than the isothermal 0.792 V, the junction is hotter:
+print v(b)
+.endc
+
+.end
