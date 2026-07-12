@@ -1,0 +1,25 @@
+* Interactive syntax-highlighting demo.
+*
+* At an interactive ngspice prompt (any readline-enabled build -- as the shipped
+* binaries are), the command line is colored live AS YOU TYPE: the command word
+* turns green the moment it is a recognized command, red when it cannot become
+* one, and stays neutral while it is still a valid prefix; numbers, quoted
+* strings and -option flags get their own colors.
+*
+* This deck previews that coloring non-interactively with the `synhl' command,
+* which prints the colorized form of a line.  (Toggle the live feature off at the
+* prompt with:  set no_syntax_highlight  ; NO_COLOR is also honored.)
+.control
+echo
+echo 'Preview -- green = valid command, red = unknown, yellow = number,'
+echo 'magenta = "string", cyan = -option :'
+echo
+synhl tran 1n 100n uic
+synhl plot v(out) v(in)
+synhl ac dec 10 1 1meg
+synhl let rout = v(out)/i(vin)
+synhl write results.raw all
+synhl echo "hello world" -foo 3.14
+synhl boguscommand 1 2 3
+.endc
+.end

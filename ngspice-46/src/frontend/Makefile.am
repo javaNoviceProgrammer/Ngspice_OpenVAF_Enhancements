@@ -215,6 +215,7 @@ libfte_la_SOURCES = \
     subckt.h    \
     svg.c       \
     svg.h       \
+    syntaxhl.c  \
     typesdef.c  \
     typesdef.h  \
     udevices.c  \

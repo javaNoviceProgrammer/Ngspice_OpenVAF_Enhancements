@@ -46,6 +46,7 @@
 #include "com_help.h"
 #include "com_let.h"
 #include "com_plot.h"
+#include "ngspice/syntaxhl.h"
 #include "com_setscale.h"
 #include "com_gnuplot.h"
 #include "com_pyplot.h"
@@ -621,6 +622,10 @@ struct comm spcp_coms[] = {
       { 1, 1, 1, 1 }, E_DEFHMASK, 0, NLOTS,
       NULL,
       "[stuff ...] : Print stuff." } ,
+    { "synhl", com_synhl, FALSE, FALSE,
+      { 1, 1, 1, 1 }, E_DEFHMASK, 0, NLOTS,
+      NULL,
+      "[command line ...] : Preview interactive syntax highlighting of a line." } ,
     { "shell", com_shell, FALSE, TRUE,
       { 1, 1, 1, 1 }, E_DEFHMASK, 0, LOTS,
       NULL,
@@ -1107,6 +1112,10 @@ struct comm nutcp_coms[] = {
       { 1, 1, 1, 1 }, E_DEFHMASK, 0, LOTS,
       NULL,
       "[stuff ...] : Print stuff." } ,
+    { "synhl", com_synhl, FALSE, FALSE,
+      { 1, 1, 1, 1 }, E_DEFHMASK, 0, NLOTS,
+      NULL,
+      "[command line ...] : Preview interactive syntax highlighting of a line." } ,
     { "shell", com_shell, FALSE, TRUE,
       { 1, 1, 1, 1 }, E_DEFHMASK, 0, LOTS,
       NULL,

@@ -36,6 +36,7 @@ extern int rl_catch_signals;        /* missing from editline/readline.h */
 
 #include "ngspice/iferrmsg.h"
 #include "ngspice/ftedefs.h"
+#include "ngspice/syntaxhl.h"
 #include "ngspice/devdefs.h"
 #include "spicelib/devices/dev.h"
 #include "spicelib/analysis/analysis.h"
@@ -644,6 +645,8 @@ app_rl_init(void)
     rl_instream = cp_in;
     rl_outstream = cp_out;
     rl_catch_signals = 0;   /* disable signal handling  */
+
+    cp_synhl_init();        /* live command-line syntax highlighting */
 
     /* sjb - what to do for editline?
        This variable is not supported by editline. */
