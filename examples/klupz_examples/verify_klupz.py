@@ -36,6 +36,17 @@ Checks -- each circuit's FULL pole/zero root set under KLU vs Sparse:
   [6] RLC bandpass: complex poles + origin zero (finite-zero search under KLU,
       previously guarded off as unsupported)
 
+Enhancement-172 extends this: SMPcAddCol gained a KLU branch (with the union
+sparsity pattern reserved in CKTpzSetup), so BALANCED / DIFFERENTIAL-output
+pole-zero now runs under KLU (it was guarded off as unsupported), and the
+out-of-range pivot-tolerance fallback became FULL partial pivoting (tol=1.0):
+KLU's ordering is fixed at analyze time (pattern-only), so PZ's ~20-decade |s|
+sweep needs the strongest within-block pivoting to keep the determinant accurate
+(with the old 0.001 default, far-field factorizations went catastrophically
+inaccurate -- wrong sign AND magnitude vs an exact rational determinant --
+minting spurious roots at |s| ~ 1e19..1e21).  Checks [7]-[9] cover the balanced
+output forms and the twin-T notch that previously stalled.
+
 The dual-solver harness is NOT used here: this verify drives both solvers itself
 (the comparison across solvers is the check).
 
@@ -152,6 +163,28 @@ compare("[6] RLC bandpass: finite-zero search under KLU (was 'not supported')",
         "l1 in n1 1m\nc1 n1 out 1n\nr1 out 0 100",
         "pz in 0 out 0 vol pz",
         expect=[("pole", -5e4, 998749.2), ("zero", 0.0, 0.0)])
+
+# [7] balanced (differential) output: RC bridge, out = v(a)-v(b)
+#     poles -1/(R1C1) = -1e6 and -1/(R2C2) = -5e5, single zero at the origin.
+#     Was "not supported with 'option KLU'" before E-172.
+compare("[7] balanced output: differential RC bridge (was unsupported under KLU)",
+        "r1 in a 1k\nc1 a 0 1n\nr2 in b 2k\nc2 b 0 1n",
+        "pz in 0 a b vol pz",
+        expect=[("pole", -1e6, 0.0), ("pole", -5e5, 0.0), ("zero", 0.0, 0.0)])
+
+# [8] balanced output with a complex pole pair (RLC branch vs RC branch)
+compare("[8] balanced output: complex poles across a floating pair",
+        "rr in a 10\nll a c 1m\ncc c 0 1n\nrx in b 1k\ncx b 0 1n",
+        "pz in 0 c b vol pol",
+        expect=[("pole", -5000.0, 999987.5), ("pole", -1e6, 0.0)])
+
+# [9] twin-T notch: 3 poles + real zero + conjugate notch pair at +-j1e6.
+#     The conjugate pair used to stall under KLU (found 4 of 6 roots) until the
+#     full-partial-pivoting fallback kept the far-field determinant accurate.
+compare("[9] twin-T notch: deflated conjugate zero pair (was stalling under KLU)",
+        "r1 in n1 1k\nr2 n1 out 1k\nc3 n1 0 2n\nc1 in n2 1n\nc2 n2 out 1n\nr3 n2 0 500\nrl out 0 100k",
+        "pz in 0 out 0 vol pz",
+        expect=[("zero", 0.0, 1e6)])
 
 print(f"\n{passed} passed, {failed} failed")
 raise SystemExit(1 if failed else 0)

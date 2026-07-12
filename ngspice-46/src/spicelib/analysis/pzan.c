@@ -26,16 +26,13 @@ PZan(CKTcircuit *ckt, int reset)
 
     NG_IGNORE(reset);
 
-    /* Pole-zero POLES run correctly under KLU. Finding finite ZEROS does not:
-     * the zeros phase zeroes the solution column (and, for a non-grounded output
-     * reference, folds in the balance column) at solve time, and KLU's fixed
-     * symbolic factorization cannot survive that the way Sparse's dynamic
-     * Markowitz re-ordering does -- the determinant search goes singular. Two
-     * guards below turn that into a clear "use 'option sparse'" message instead
-     * of a misleading result: the balanced/differential-output case is caught
-     * up front (job->PZbalance_col set), and the single-ended case is caught
-     * when CKTpzFindZeros returns E_SHORT under KLU (a circuit with actual
-     * finite zeros; pole-only and zero-free circuits still run fine under KLU). */
+    /* Pole-zero runs fully under both solvers.  Under KLU this took three
+     * fixes: the complex-pivot determinant formula and the PivRel=0.0 pivot
+     * tolerance in the KLU<->SMP bridge (which had made every complex-plane
+     * determinant evaluation garbage and the s=0 trial spuriously singular),
+     * and a KLU branch for SMPcAddCol plus a union-pattern reservation in
+     * CKTpzSetup so the balanced/differential-output column fold works on
+     * KLU's fixed CSC sparsity pattern. */
 
     error = PZinit(ckt);
     if (error != OK) return error;
@@ -71,14 +68,6 @@ PZan(CKTcircuit *ckt, int reset)
 	error = CKTpzSetup(ckt, PZ_DO_POLES);
 	if (error != OK)
 	    return error;
-#ifdef KLU
-	if (ckt->CKTkluMODE && job->PZbalance_col) {
-	    fprintf(stderr, "Error: pole-zero with a non-grounded output reference "
-		    "node (balanced/differential output) is not supported with "
-		    "'option KLU'; use 'option sparse' for that case.\n");
-	    return(E_UNSUPP);
-	}
-#endif
         error = CKTpzFindZeros(ckt, &job->PZpoleList, &job->PZnPoles);
         if (error != OK)
 	    return(error);
@@ -88,14 +77,6 @@ PZan(CKTcircuit *ckt, int reset)
 	error = CKTpzSetup(ckt, PZ_DO_ZEROS);
 	if (error != OK)
 	    return error;
-#ifdef KLU
-	if (ckt->CKTkluMODE && job->PZbalance_col) {
-	    fprintf(stderr, "Error: pole-zero with a non-grounded output reference "
-		    "node (balanced/differential output) is not supported with "
-		    "'option KLU'; use 'option sparse' for that case.\n");
-	    return(E_UNSUPP);
-	}
-#endif
         error = CKTpzFindZeros(ckt, &job->PZzeroList, &job->PZnZeros);
 	/* (An earlier KLU-specific E_SHORT remap lived here: the KLU zero
 	 * search used to go spuriously singular.  Root causes fixed in the

@@ -703,15 +703,26 @@ SMPcReorder (SMPmatrix *Matrix, double PivTol, double PivRel, int *NumSwaps)
           return 0 ;
         }
 
-        /* Mirror Sparse's spOrderAndFactor threshold sanitization: an
-         * out-of-range PivRel keeps the current (default 0.001) partial-pivoting
-         * tolerance.  Passing 0.0 straight through (as this code used to) makes
-         * KLU accept an EXACTLY-ZERO diagonal as pivot -- pole-zero calls
-         * SMPcReorder with PivRel = 0.0, and at its s = 0 trial an inductor
-         * branch has a 0.0 diagonal, so the factorization came back
-         * KLU_SINGULAR and PZ recorded a spurious root at the origin. */
+        /* Sanitize the pivot threshold like Sparse's spOrderAndFactor does: an
+         * in-range PivRel takes effect; an out-of-range one (pole-zero passes
+         * 0.0) falls back to FULL partial pivoting (tol = 1.0) instead of being
+         * used raw.  Two reasons.  (1) tol = 0.0 makes KLU accept an
+         * EXACTLY-ZERO diagonal as pivot: at PZ's s = 0 trial an inductor
+         * branch has a 0.0 diagonal, the factorization came back KLU_SINGULAR,
+         * and PZ recorded a spurious root at the origin.  (2) KLU's ordering is
+         * fixed at klu_analyze time (pattern-only); Sparse re-runs value-aware
+         * Markowitz ordering every PZ trial, but KLU's only value-adaptive
+         * lever is the within-block partial pivoting.  PZ sweeps |s| across
+         * ~20 decades, and with the relaxed default tol = 0.001 the fixed
+         * ordering picks catastrophically-cancelling pivots at extreme |s| --
+         * the determinant came back with the wrong sign and magnitude (verified
+         * against an exact rational determinant of the same loaded matrix),
+         * minting spurious far-field roots.  Full partial pivoting keeps the
+         * determinant accurate across the whole sweep. */
         if (PivRel > 0.0 && PivRel <= 1.0)
             Matrix->SMPkluMatrix->KLUmatrixCommon->tol = PivRel ;
+        else
+            Matrix->SMPkluMatrix->KLUmatrixCommon->tol = 1.0 ;
 
         if (Matrix->SMPkluMatrix->KLUmatrixNumeric != NULL) {
             klu_free_numeric (&(Matrix->SMPkluMatrix->KLUmatrixNumeric), Matrix->SMPkluMatrix->KLUmatrixCommon) ;
@@ -773,6 +784,8 @@ SMPreorder (SMPmatrix *Matrix, double PivTol, double PivRel, double Gmin)
         /* Same threshold sanitization as SMPcReorder above. */
         if (PivRel > 0.0 && PivRel <= 1.0)
             Matrix->SMPkluMatrix->KLUmatrixCommon->tol = PivRel ;
+        else
+            Matrix->SMPkluMatrix->KLUmatrixCommon->tol = 1.0 ;
 
         if (Matrix->SMPkluMatrix->KLUmatrixNumeric != NULL) {
             klu_free_numeric (&(Matrix->SMPkluMatrix->KLUmatrixNumeric), Matrix->SMPkluMatrix->KLUmatrixCommon) ;
@@ -1538,6 +1551,7 @@ spDeterminant_KLU (SMPmatrix *Matrix, int *pExponent, RealNumber *pDeterminant, 
         nSwap = PermutationParity (P, Matrix->SMPkluMatrix->KLUmatrixN)
               ^ PermutationParity (Q, Matrix->SMPkluMatrix->KLUmatrixN) ;
 
+
         /* KLU factors R\A(P,Q) = L*U (block triangular; the off-diagonal F
          * blocks do not change the determinant), with L unit-diagonal and the
          * row scaling DIVIDING row i by Rs[i].  klu_z_extract_Udiag returns the
@@ -1927,33 +1941,65 @@ SMPcZeroCol (SMPmatrix *eMatrix, int Col)
 int
 SMPcAddCol (SMPmatrix *eMatrix, int Accum_Col, int Addend_Col)
 {
-    MatrixPtr Matrix = eMatrix->SPmatrix ;
-    ElementPtr	Accum, Addend, *Prev ;
-
-    Accum_Col = Matrix->ExtToIntColMap [Accum_Col] ;
-    Addend_Col = Matrix->ExtToIntColMap [Addend_Col] ;
-
-    Addend = Matrix->FirstInCol [Addend_Col] ;
-    Prev = &Matrix->FirstInCol [Accum_Col] ;
-    Accum = *Prev;
-
-    while (Addend != NULL)
+    if (eMatrix->CKTkluMODE)
     {
-	while (Accum && Accum->Row < Addend->Row)
-        {
-	    Prev = &Accum->NextInCol ;
-	    Accum = *Prev ;
-	}
-	if (!Accum || Accum->Row > Addend->Row)
-        {
-	    Accum = spcCreateElement (Matrix, Addend->Row, Accum_Col, Prev, 0) ;
-	}
-	Accum->Real += Addend->Real ;
-	Accum->Imag += Addend->Imag ;
-	Addend = Addend->NextInCol ;
-    }
+        /* Fold column Addend_Col into column Accum_Col (complex values).  KLU's
+         * CSC pattern is fixed, so every addend row must already exist in the
+         * accumulator column -- CKTpzSetup reserves that union pattern for the
+         * balanced (differential) pole-zero output before the COO->CSC
+         * conversion.  Rows are sorted within each CSC column, so merge-walk. */
+        int *Ap = eMatrix->SMPkluMatrix->KLUmatrixAp ;
+        int *Ai = eMatrix->SMPkluMatrix->KLUmatrixAi ;
+        double *Ax = eMatrix->SMPkluMatrix->KLUmatrixAxComplex ;
+        int acc = Accum_Col - 1 ;
+        int add = Addend_Col - 1 ;
+        int i, j ;
 
-    return spError (Matrix) ;
+        j = Ap [acc] ;
+        for (i = Ap [add] ; i < Ap [add + 1] ; i++)
+        {
+            while ((j < Ap [acc + 1]) && (Ai [j] < Ai [i]))
+                j++ ;
+            if ((j < Ap [acc + 1]) && (Ai [j] == Ai [i])) {
+                Ax [2 * j] += Ax [2 * i] ;
+                Ax [2 * j + 1] += Ax [2 * i + 1] ;
+            } else {
+                /* cannot happen once CKTpzSetup reserved the union pattern */
+                fprintf (stderr, "Error (SMPcAddCol): KLU pattern lacks element (%d, %d)\n",
+                         Ai [i] + 1, Accum_Col) ;
+                return 1 ;
+            }
+        }
+        return 0 ;
+    } else {
+        MatrixPtr Matrix = eMatrix->SPmatrix ;
+        ElementPtr	Accum, Addend, *Prev ;
+
+        Accum_Col = Matrix->ExtToIntColMap [Accum_Col] ;
+        Addend_Col = Matrix->ExtToIntColMap [Addend_Col] ;
+
+        Addend = Matrix->FirstInCol [Addend_Col] ;
+        Prev = &Matrix->FirstInCol [Accum_Col] ;
+        Accum = *Prev;
+
+        while (Addend != NULL)
+        {
+            while (Accum && Accum->Row < Addend->Row)
+            {
+                Prev = &Accum->NextInCol ;
+                Accum = *Prev ;
+            }
+            if (!Accum || Accum->Row > Addend->Row)
+            {
+                Accum = spcCreateElement (Matrix, Addend->Row, Accum_Col, Prev, 0) ;
+            }
+            Accum->Real += Addend->Real ;
+            Accum->Imag += Addend->Imag ;
+            Addend = Addend->NextInCol ;
+        }
+
+        return spError (Matrix) ;
+    }
 }
 
 /*

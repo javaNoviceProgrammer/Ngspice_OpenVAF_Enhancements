@@ -93,6 +93,27 @@ CKTpzSetup(CKTcircuit *ckt, int type)
     {
         fprintf (stdout, "Using KLU as Direct Linear Solver\n") ;
 
+        /* Balanced (differential) output: CKTpzLoad folds the solution column
+         * into the balance column (SMPcAddCol) on every trial.  KLU's CSC
+         * sparsity pattern is fixed at conversion time -- unlike Sparse, which
+         * creates missing elements on the fly -- so reserve the union pattern
+         * now: every row present in the solution column must also exist in the
+         * balance column.  Duplicate (row, col) entries are folded into one CSC
+         * slot by the COO->CSC conversion, so adding them blindly is safe. */
+        if (balance_col && solution_col) {
+            KluLinkedListCOO *node ;
+            unsigned int *rows ;
+            unsigned int nrows = 0, k ;
+
+            rows = TMALLOC (unsigned int, matrix->SMPkluMatrix->KLUmatrixLinkedListNZ) ;
+            for (node = matrix->SMPkluMatrix->KLUmatrixLinkedListCOO ; node ; node = node->next)
+                if (node->col == (unsigned int) (solution_col - 1))
+                    rows [nrows++] = node->row ;
+            for (k = 0 ; k < nrows ; k++)
+                SMPmakeElt (matrix, (int) rows [k] + 1, balance_col) ;
+            tfree (rows) ;
+        }
+
         /* Convert the COO Storage to CSC for KLU and Fill the Binding Table */
         SMPconvertCOOtoCSC (matrix) ;
 

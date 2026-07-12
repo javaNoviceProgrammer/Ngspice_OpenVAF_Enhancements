@@ -20,7 +20,6 @@ Exposes module-level `VAF` (openvaf-r) and `NG` (ngspice) absolute paths, plus
 """
 import os
 import platform
-import re
 
 # This file lives in `examples/`; the repo root (which holds
 # `OpenVAF-master-20260610/`, `ngspice-46/`, and `bin/`) is one level up.
@@ -64,10 +63,12 @@ NG = _resolve(("ngspice-46", "build", "src", "ngspice"), "ngspice")
 # How it works: a verify script calls `check_both_solvers(__file__)` right after
 # importing this module. On a normal (top-level) run that call re-executes the
 # same script once per solver, injecting `.option <solver>` into every ngspice
-# deck, and reports a combined verdict. KLU cannot run noise / pole-zero
-# analyses (an upstream ngspice limitation) — those are auto-detected from
-# ngspice's own error and reported as SKIP rather than a failure. The handful of
-# examples with a genuine known KLU limitation are listed in `KLU_XFAIL`.
+# deck, and reports a combined verdict. Every analysis now runs under KLU
+# (noise/pz E-113, sens E-114, disto E-115, complex-root pz E-171, balanced pz
+# E-172); if ngspice ever reports an analysis as KLU-unsupported it is detected
+# from its own error text and reported as SKIP rather than a failure. The
+# handful of examples with a genuine known KLU limitation are listed in
+# `KLU_XFAIL`.
 #
 # Escape hatches (env):
 #   NGSPICE_SOLVER=klu|sparse   run ONCE under that solver (no dual re-exec)
@@ -210,35 +211,22 @@ def _inject_card(deck, cwd, card):
 
 
 # KLU now runs noise + single-ended pole-zero (E-113), DC/AC sensitivity (E-114),
-# and distortion (E-115). One analysis remains Sparse-only under KLU:
-#   * BALANCED-output pole-zero -- a `pz n1 n2 n3 n4 vol|cur` command whose 4th
-#     node (the output reference) is not ground (0).
-_KLU_UNSUPPORTED_RE = re.compile(
-    r"(?im)^\s*(?:"
-    r"pz\s+\S+\s+\S+\s+\S+\s+(?!0\s)\S+\s+(?:vol|cur)"   # balanced-output pole-zero
-    r")")
-
-
+# distortion (E-115), complex-root pole-zero (E-171), and balanced/differential-
+# output pole-zero (E-172: SMPcAddCol gained a KLU branch with the union pattern
+# reserved at setup). No analysis card remains Sparse-only under KLU.
 def _deck_requests_klu_unsupported(deck, cwd):
-    if not deck:
-        return False
-    if not os.path.isabs(deck):
-        deck = os.path.join(cwd or os.getcwd(), deck)
-    try:
-        with open(deck) as f:
-            return bool(_KLU_UNSUPPORTED_RE.search(f.read()))
-    except OSError:
-        return False
+    _ = (deck, cwd)
+    return False
 
 
 def _install_solver_injector(solver):
     """Patch subprocess so every ngspice call pins `solver` via `.option`.
     Hooks `Popen.__init__`, through which run/check_output/call/Popen all pass.
 
-    Under KLU, a deck that requests balanced-output pole-zero (which KLU cannot
-    run) makes the injector emit the ngspice `_KLU_UNSUPPORTED` string on this
-    process's own stderr, so the dual-solver harness can see it and report SKIP
-    even when the verify script captures (and hence hides) ngspice's error."""
+    (_deck_requests_klu_unsupported is a stub kept for the emit hook below: as
+    of E-172 every analysis card runs under KLU, so it always returns False.  If
+    a future KLU gap appears, detect it there and the harness will report SKIP
+    even when the verify script captures ngspice's error output.)"""
     card = _SOLVER_CARD.get(solver)
     if not card:
         return
@@ -316,9 +304,8 @@ def check_both_solvers(script=None):
 
         print(f"\n----- [solver={solver}] {status} -----", flush=True)
         if status == "SKIP":
-            print("    KLU does not support balanced-output pole-zero "
-                  "(ngspice: \"" + _KLU_UNSUPPORTED + "\").")
-            print("    This example is Sparse-only for that analysis; KLU skipped.")
+            print("    ngspice reported \"" + _KLU_UNSUPPORTED + "\";")
+            print("    this example is Sparse-only for that analysis; KLU skipped.")
         elif status == "XFAIL":
             print("    Known KLU limitation (stiff transient diverges under KLU); "
                   "expected. See docs/internals/ngspice_internals/"
