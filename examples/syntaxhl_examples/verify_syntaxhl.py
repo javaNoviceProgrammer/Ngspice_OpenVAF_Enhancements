@@ -91,8 +91,8 @@ check("string magenta, option cyan, number yellow",
       f"({o!r})")
 
 o = synhl("PLOT v(1)")
-check("command match is case-insensitive (upper-case 'PLOT' recognized -> green, not red)",
-      GREEN in o and RED not in o, f"({o!r})")
+check("command match is case-insensitive (upper-case 'PLOT' recognized -> green)",
+      o.startswith(GREEN + "plot"), f"({o!r})")
 
 
 # ---- [live] as-you-type coloring at a pseudo-terminal ------------------------
@@ -189,6 +189,69 @@ else:
                        capture_output=True, text=True, timeout=30)
     check("piped (non-tty) session leaks no color codes",
           "\033[32m" not in r.stdout and "\033[31m" not in r.stdout)
+
+    # ---- semantic layer (E-170): signal + expression validity, red errors ----
+    import tempfile as _tf
+    _rc = os.path.join(_tf.gettempdir(), "synhl_rc.cir")
+    open(_rc, "w").write("* rc\nv1 a 0 dc 1\nr1 a b 1k\nr2 b 0 1k\n.op\n.end\n")
+
+    def type_after_run(keys, env_extra=None, settle=0.7):
+        """Type `keys' after sourcing + running a circuit, so its node signals
+        (a, b, ...) exist in the current plot."""
+        import pty, time, select
+        pid, fd = pty.fork()
+        if pid == 0:
+            if env_extra:
+                os.environ.update(env_extra)
+            os.execv(NGSPICE, [NGSPICE])
+        time.sleep(1.0)
+        for s in ("source " + _rc + "\r", "run\r"):
+            os.write(fd, s.encode()); time.sleep(0.6)
+        while select.select([fd], [], [], 0.3)[0]:
+            try:
+                os.read(fd, 4096)
+            except OSError:
+                break
+        for ch in keys:
+            os.write(fd, ch.encode()); time.sleep(0.05)
+        time.sleep(settle)
+        buf = b""
+        while select.select([fd], [], [], 0.3)[0]:
+            try:
+                d = os.read(fd, 4096)
+            except OSError:
+                break
+            if not d:
+                break
+            buf += d
+        try:
+            os.write(fd, b"\x03quit\r"); time.sleep(0.15); os.close(fd)
+        except OSError:
+            pass
+        return buf
+
+    print("--- semantic layer (signal + expression validity, red errors) ---")
+    out = type_after_run("print v(a)")
+    check("[signal] a valid signal v(a) is not red (exists after run)",
+          b"v(a)" in out and (RED + "v(a)").encode() not in out)
+    out = type_after_run("print v(zzz)")
+    check("[signal] an invalid signal v(zzz) is red",
+          (RED + "v(zzz)").encode() in out)
+    out = type_after_run("print v(a)+v(zzz)")
+    check("[expr] invalid signal inside a valid expression: only the signal is red",
+          (RED + "v(zzz)").encode() in out and (RED + "v(a)").encode() not in out)
+    out = type_after_run("print v(a)*/v(b)")
+    check("[parse] a settled malformed expression is red as a whole",
+          (RED + "v(a)*/v(b)").encode() in out)
+    out = type_after_run("print v(bP")
+    check("[incomplete] a half-typed expression stays neutral, no parser-error spam",
+          (RED + "v(bP").encode() not in out and b"syntax error" not in out)
+    out = type_after_run("print v(zzz)\r", settle=1.0)
+    check("[error] error/warning output is drawn in red",
+          b"\033[31mWarning" in out)
+    out = type_after_run("print v(zzz)\r", env_extra={"NO_COLOR": "1"}, settle=1.0)
+    check("[error] NO_COLOR suppresses red error output",
+          b"\033[31m" not in out and b"not available" in out)
 
 print(f"\n{passed} passed, {failed} failed, {skipped} skipped")
 raise SystemExit(1 if failed else 0)

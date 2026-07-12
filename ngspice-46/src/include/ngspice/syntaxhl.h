@@ -18,6 +18,10 @@ char *cp_highlight_line(const char *line);
  * is typed.  No-op unless built with GNU readline. */
 void cp_synhl_init(void);
 
+/* Wrap cp_err so error output is drawn in red at an interactive terminal.
+ * Call once after cp_err has been set.  No-op on unsupported platforms. */
+void cp_synhl_wrap_errors(void);
+
 /* The `synhl' command: print the colorized form of its arguments. */
 void com_synhl(wordlist *wl);
 

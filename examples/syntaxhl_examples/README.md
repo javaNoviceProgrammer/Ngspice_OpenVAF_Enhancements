@@ -1,4 +1,4 @@
-# Interactive syntax highlighting (Enhancement-169)
+# Interactive syntax highlighting (Enhancements 169 & 170)
 
 ngspice now **colors the interactive command line as you type it**. The command
 word is shown **green** the moment it is a recognized command, **red** when it
@@ -7,6 +7,19 @@ being typed. Numbers, quoted strings and `-option` flags get their own colors, s
 a mistyped command or argument is visible before you press Enter.
 
 ![syntax highlighting](syntaxhl.png)
+
+**Enhancement-170** extends this from *lexical* to *semantic* coloring: it checks
+whether the **signals** and **expressions** you type actually exist and parse, and
+draws **error output in red**.
+
+![semantic syntax highlighting](syntaxhl_semantic.png)
+
+- An invalid signal (`v(typo)`, `i(nope)`, `@dev[bad]`) turns **red**; a valid one
+  keeps the default color. Inside an expression, only the invalid signal reddens
+  (`v(a)+v(zzz)` → just `v(zzz)`).
+- A genuinely malformed expression (`v(a)*/v(b)`) reddens as a whole, checked with
+  the real parser (muted). A half-typed one (`v(bP`, `v(a)+`) stays neutral.
+- Error/warning output is drawn red at an interactive terminal.
 
 This is a real ngspice change (`src/frontend/syntaxhl.c`, wired into the readline
 prompt in `src/main.c`), not an example-only enhancement.
