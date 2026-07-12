@@ -1,0 +1,27 @@
+* KLU pole-zero demo -- complex-conjugate poles under `.option klu'
+*
+* A series RLC driven through its resistor: the textbook 2nd-order system with
+*   sigma = R/(2L) = 5000 rad/s,  omega = sqrt(1/LC - sigma^2) ~ 999987.5 rad/s
+* so the poles are  -5000 +- j*999987.5.
+*
+* Before Enhancement-171 this deck reported FOUR bogus real "poles"
+* (-100, -10, -0.89, 0) under KLU: the KLU<->SMP bridge built the complex
+* determinant with a formula that was only right for real pivots, and pole-zero's
+* PivRel=0.0 made KLU accept an exactly-zero inductor-branch diagonal as a pivot
+* (a spurious singularity = a fake root at the origin).  Both fixed; KLU now
+* matches `.option sparse' digit for digit.
+.option klu
+v1 in 0 dc 0 ac 1
+r1 in n1 10
+l1 n1 out 1m
+c1 out 0 1n
+
+.control
+pz in 0 out 0 vol pol
+echo
+echo Poles (expect -5000 +- j999987.5):
+set numdgt=10
+print all
+.endc
+
+.end

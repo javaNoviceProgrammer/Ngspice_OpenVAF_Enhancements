@@ -97,21 +97,12 @@ PZan(CKTcircuit *ckt, int reset)
 	}
 #endif
         error = CKTpzFindZeros(ckt, &job->PZzeroList, &job->PZnZeros);
-#ifdef KLU
-	if (ckt->CKTkluMODE && error == E_SHORT) {
-	    /* Single-ended finite-zero case: KLU's factorization goes singular
-	     * during the zero search, which CKTpzFindZeros surfaces as E_SHORT
-	     * (setting the global errMsg to the misleading "input shorted" text).
-	     * Re-map it to a clear message. If the output really is shorted to the
-	     * input, 'option sparse' will report that instead. Clear the stale
-	     * errMsg so doAnalyses does not print the misleading one after ours. */
-	    fprintf(stderr, "Error: pole-zero finite-zero computation is not "
-		    "supported with 'option KLU'; if the output is not actually "
-		    "shorted to the input, re-run with 'option sparse'.\n");
-	    FREE(errMsg);
-	    return(E_UNSUPP);
-	}
-#endif
+	/* (An earlier KLU-specific E_SHORT remap lived here: the KLU zero
+	 * search used to go spuriously singular.  Root causes fixed in the
+	 * KLU<->SMP bridge -- the determinant's complex-pivot formula and the
+	 * unsanitized PivRel=0.0 pivot tolerance -- so the finite-zero search
+	 * now works under KLU and a genuine E_SHORT reports the same "input
+	 * shorted" diagnostic as the Sparse solver.) */
         if (error != OK)
 	    return(error);
     }

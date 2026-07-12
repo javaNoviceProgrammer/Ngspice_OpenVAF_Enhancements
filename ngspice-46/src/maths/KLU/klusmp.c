@@ -703,7 +703,15 @@ SMPcReorder (SMPmatrix *Matrix, double PivTol, double PivRel, int *NumSwaps)
           return 0 ;
         }
 
-        Matrix->SMPkluMatrix->KLUmatrixCommon->tol = PivRel ;
+        /* Mirror Sparse's spOrderAndFactor threshold sanitization: an
+         * out-of-range PivRel keeps the current (default 0.001) partial-pivoting
+         * tolerance.  Passing 0.0 straight through (as this code used to) makes
+         * KLU accept an EXACTLY-ZERO diagonal as pivot -- pole-zero calls
+         * SMPcReorder with PivRel = 0.0, and at its s = 0 trial an inductor
+         * branch has a 0.0 diagonal, so the factorization came back
+         * KLU_SINGULAR and PZ recorded a spurious root at the origin. */
+        if (PivRel > 0.0 && PivRel <= 1.0)
+            Matrix->SMPkluMatrix->KLUmatrixCommon->tol = PivRel ;
 
         if (Matrix->SMPkluMatrix->KLUmatrixNumeric != NULL) {
             klu_free_numeric (&(Matrix->SMPkluMatrix->KLUmatrixNumeric), Matrix->SMPkluMatrix->KLUmatrixCommon) ;
@@ -762,7 +770,9 @@ SMPreorder (SMPmatrix *Matrix, double PivTol, double PivRel, double Gmin)
         if (Matrix->SMPkluMatrix->KLUloadDiagGmin) {
             LoadGmin_CSC (Matrix->SMPkluMatrix->KLUmatrixDiag, Matrix->SMPkluMatrix->KLUmatrixN, Gmin) ;
         }
-        Matrix->SMPkluMatrix->KLUmatrixCommon->tol = PivRel ;
+        /* Same threshold sanitization as SMPcReorder above. */
+        if (PivRel > 0.0 && PivRel <= 1.0)
+            Matrix->SMPkluMatrix->KLUmatrixCommon->tol = PivRel ;
 
         if (Matrix->SMPkluMatrix->KLUmatrixNumeric != NULL) {
             klu_free_numeric (&(Matrix->SMPkluMatrix->KLUmatrixNumeric), Matrix->SMPkluMatrix->KLUmatrixCommon) ;
@@ -1416,16 +1426,45 @@ SMPgetError (SMPmatrix *Matrix, int *Col, int *Row)
     }
 }
 
+/* Parity of the permutation vector perm[0..n-1]: 0 if even, 1 if odd.
+ * Computed exactly via cycle decomposition -- a cycle of length L contributes
+ * L-1 transpositions.  (The previous code counted non-fixed points and halved,
+ * which is wrong for any cycle longer than 2: a 3-cycle is an EVEN permutation
+ * but was counted as odd, flipping the determinant's sign.) */
+static unsigned int
+PermutationParity (const int *perm, unsigned int n)
+{
+    unsigned char *visited = (unsigned char *) calloc ((size_t)n, 1) ;
+    unsigned int i, j, parity = 0 ;
+
+    if (visited == NULL)
+        return 0 ;
+    for (i = 0 ; i < n ; i++) {
+        if (!visited [i]) {
+            unsigned int len = 0 ;
+            j = i ;
+            while (!visited [j]) {
+                visited [j] = 1 ;
+                j = (unsigned int) perm [j] ;
+                len++ ;
+            }
+            parity ^= (len - 1) & 1 ;
+        }
+    }
+    free (visited) ;
+    return parity ;
+}
+
 void
 spDeterminant_KLU (SMPmatrix *Matrix, int *pExponent, RealNumber *pDeterminant, RealNumber *piDeterminant)
 {
     int I, Size ;
     RealNumber Norm, nr, ni ;
-    ComplexNumber Pivot, cDeterminant, Udiag ;
+    ComplexNumber Pivot, cDeterminant ;
 
     int *P, *Q ;
     double *Rs, *Ux, *Uz ;
-    unsigned int nSwap, nSwapP, nSwapQ ;
+    unsigned int nSwap ;
 
 #define  NORM(a)     (nr = ABS((a).Real), ni = ABS((a).Imag), MAX (nr,ni))
 
@@ -1434,10 +1473,7 @@ spDeterminant_KLU (SMPmatrix *Matrix, int *pExponent, RealNumber *pDeterminant, 
     if (Matrix->SMPkluMatrix->KLUmatrixCommon->status == KLU_SINGULAR)
     {
 	*pDeterminant = 0.0 ;
-        if (Matrix->SMPkluMatrix->KLUmatrixIsComplex == KLUMatrixComplex)
-        {
-            *piDeterminant = 0.0 ;
-        }
+        *piDeterminant = 0.0 ;
         return ;
     }
 
@@ -1499,51 +1535,25 @@ spDeterminant_KLU (SMPmatrix *Matrix, int *pExponent, RealNumber *pDeterminant, 
             printf ("U - Value: %-.9g\t%-.9g\n", Ux [I], Uz [I]) ;
         }
 */
-        nSwapP = 0 ;
-        for (I = 0 ; I < (int)Matrix->SMPkluMatrix->KLUmatrixN ; I++)
-        {
-            if (P [I] != I)
-            {
-                nSwapP++ ;
-            }
-        }
-        nSwapP /= 2 ;
+        nSwap = PermutationParity (P, Matrix->SMPkluMatrix->KLUmatrixN)
+              ^ PermutationParity (Q, Matrix->SMPkluMatrix->KLUmatrixN) ;
 
-        nSwapQ = 0 ;
-        for (I = 0 ; I < (int)Matrix->SMPkluMatrix->KLUmatrixN ; I++)
-        {
-            if (Q [I] != I)
-            {
-                nSwapQ++ ;
-            }
-        }
-        nSwapQ /= 2 ;
-
-        nSwap = nSwapP + nSwapQ ;
-/*
-        free (Lp) ;
-        free (Li) ;
-        free (Lx) ;
-        free (Lz) ;
-        free (Up) ;
-        free (Ui) ;
-        free (Fp) ;
-        free (Fi) ;
-        free (Fx) ;
-        free (Fz) ;
-*/
+        /* KLU factors R\A(P,Q) = L*U (block triangular; the off-diagonal F
+         * blocks do not change the determinant), with L unit-diagonal and the
+         * row scaling DIVIDING row i by Rs[i].  klu_z_extract_Udiag returns the
+         * U diagonal AS STORED (KLU's solve divides by Udiag, so it is the
+         * actual pivot, not a reciprocal).  Hence
+         *     det(A) = sign(P)*sign(Q) * prod(Udiag[k] * Rs[k]).
+         * The previous code built the bogus mixed quantity (1/(Ux*Rs), Uz*Rs)
+         * and took its complex reciprocal -- correct ONLY for a real pivot
+         * (Uz == 0), garbage otherwise, which silently broke every KLU
+         * pole-zero analysis with complex poles or zeros. */
         I = 0 ;
         while (I < Size)
         {
-            Udiag.Real = 1 / (Ux [I] * Rs [I]) ;
-            Udiag.Imag = Uz [I] * Rs [I] ;
-
-//            printf ("Udiag.Real: %-.9g\tUdiag.Imag %-.9g\n", Udiag.Real, Udiag.Imag) ;
-
-            CMPLX_RECIPROCAL (Pivot, Udiag) ;
+            Pivot.Real = Ux [I] * Rs [I] ;
+            Pivot.Imag = Uz [I] * Rs [I] ;
             CMPLX_MULT_ASSIGN (cDeterminant, Pivot) ;
-
-//            printf ("cDeterminant.Real: %-.9g\tcDeterminant.Imag %-.9g\n", cDeterminant.Real, cDeterminant.Imag) ;
 
 	    /* Scale Determinant. */
             Norm = NORM (cDeterminant) ;
@@ -1600,34 +1610,24 @@ spDeterminant_KLU (SMPmatrix *Matrix, int *pExponent, RealNumber *pDeterminant, 
     {
 	/* Real Case. */
         *pDeterminant = 1.0 ;
+        *piDeterminant = 0.0 ;
 
         klu_extract_Udiag (Matrix->SMPkluMatrix->KLUmatrixNumeric, Matrix->SMPkluMatrix->KLUmatrixSymbolic, Ux, P, Q, Rs, Matrix->SMPkluMatrix->KLUmatrixCommon) ;
 
-        nSwapP = 0 ;
-        for (I = 0 ; I < (int)Matrix->SMPkluMatrix->KLUmatrixN ; I++)
-        {
-            if (P [I] != I)
-            {
-                nSwapP++ ;
-            }
-        }
-        nSwapP /= 2 ;
+        nSwap = PermutationParity (P, Matrix->SMPkluMatrix->KLUmatrixN)
+              ^ PermutationParity (Q, Matrix->SMPkluMatrix->KLUmatrixN) ;
 
-        nSwapQ = 0 ;
-        for (I = 0 ; I < (int)Matrix->SMPkluMatrix->KLUmatrixN ; I++)
-        {
-            if (Q [I] != I)
-            {
-                nSwapQ++ ;
-            }
-        }
-        nSwapQ /= 2 ;
-
-        nSwap = nSwapP + nSwapQ ;
-
+        /* det(A) = sign(P)*sign(Q) * prod(Udiag[k] * Rs[k]) -- see the complex
+         * branch.  The previous code (a) never reset I, so this loop NEVER RAN
+         * (the parity for-loops above had left I == Size and the determinant
+         * came out as +/-1.0 regardless of the matrix), (b) divided instead of
+         * multiplying (copied from Sparse, whose Diag stores reciprocal pivots
+         * -- KLU's extract returns the actual pivots), and (c) never wrote
+         * *piDeterminant, so SMPcDProd consumed an uninitialized value. */
+        I = 0 ;
         while (I < Size)
         {
-            *pDeterminant /= (Ux [I] * Rs [I]) ;
+            *pDeterminant *= (Ux [I] * Rs [I]) ;
 
 	    /* Scale Determinant. */
             if (*pDeterminant != 0.0)
