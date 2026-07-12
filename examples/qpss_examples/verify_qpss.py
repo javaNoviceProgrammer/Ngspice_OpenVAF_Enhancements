@@ -133,5 +133,17 @@ if os.path.exists(osdi):
 else:
     check("OSDI cubic: compiled vacube.va", False, cr.stderr.strip()[:80])
 
+# [.] DOT-CARD PARITY (Enhancement-163): a top-level `.qpss ...` netlist card must
+# run the same engine as the `qpss` command in a .control block, straight from the
+# deck. Compare the two-tone spectrum from the dot-card against the command form --
+# they must be bit-for-bit identical.
+_cmd_sp, _ = qpss(deck(f"{src(0.1)}\n{CUBIC}"))
+_dot_sp, _dfb = qpss(f"* qpss dotcard\n{src(0.1)}\n{CUBIC}\n"
+                     ".qpss v(out) 100meg 110meg 4 3\n.end\n")
+_common = set(_cmd_sp) & set(_dot_sp)
+_ident = bool(_common) and all(_cmd_sp[k] == _dot_sp[k] for k in _common)
+check("`.qpss` dot-card runs in batch and matches the `qpss` command bit-for-bit",
+      _ident and _dfb is not None, f"common={len(_common)} fb={_dfb}")
+
 print(f"\n{'ALL PASS' if passed == checks else 'FAILURES'}: {passed}/{checks} passed")
 sys.exit(0 if passed == checks else 1)

@@ -794,6 +794,23 @@ inp_spsource(FILE *fp, bool comfile, char *filename, bool intfile)
                 controls = wl_cons(copy(skip_ws(dd->line) + 1), controls);
                 ld->nextcard = dd->nextcard;
                 line_free(dd, FALSE);
+            } else if (!commands &&
+                       ((ciprefix(".qpss", dd->line) &&
+                         (dd->line[5] == '\0' || isspace_c(dd->line[5]))) ||
+                        (ciprefix(".hbosc", dd->line) &&
+                         (dd->line[6] == '\0' || isspace_c(dd->line[6]))) ||
+                        (ciprefix(".phasenoise", dd->line) &&
+                         (dd->line[11] == '\0' || isspace_c(dd->line[11]))))) {
+                /* Enhancement-163: the rest of the harmonic-balance family as
+                 * command-style dot-cards, mirroring `.hb` (Enhancement-162) and
+                 * `.sweep` (Enhancement-146): a top-level `.qpss` / `.hbosc` /
+                 * `.phasenoise` is stripped of its leading '.' and run after the
+                 * circuit is parsed as the corresponding command. Each boundary
+                 * check keeps the card from swallowing a longer name (e.g. `.hbosc`
+                 * is not matched by the `.hb` branch above). */
+                controls = wl_cons(copy(skip_ws(dd->line) + 1), controls);
+                ld->nextcard = dd->nextcard;
+                line_free(dd, FALSE);
             } else if (commands || prefix("*#", dd->line)) {
                 s = dd->line;
 

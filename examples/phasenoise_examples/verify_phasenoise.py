@@ -131,5 +131,23 @@ ls = Ldf(run(deck(opt=".options sparse\n"))).get(1e4)
 check("phase noise solver-independent: KLU vs Sparse identical",
       lk is not None and ls is not None and abs(lk - ls) < 1e-3, f"klu={lk} sparse={ls}")
 
+# [.] DOT-CARD PARITY (Enhancement-163): top-level `.hbosc` and `.phasenoise`
+# netlist cards must run the same E-140 engines as the commands in a .control
+# block, straight from the deck, with order preserved (hbosc sets up the
+# oscillator PSS that phasenoise then uses). Compare the oscillation frequency and
+# a phase-noise point against the command form.
+_dot = ("* LC oscillator phase noise (dotcard)\n"
+        "L1 n 0 1u\nC1 n 0 1n\nBnl 0 n I = 2m*V(n) - 5m*V(n)*V(n)*V(n)\n"
+        "R1 n 0 100k\n.ic V(n)=0.1\n"
+        ".hbosc n 5 5.0329meg 60u\n.phasenoise 1k 10meg 5\n.end\n")
+_dout = run(_dot)
+_cout = run(deck())
+_f_dot, _f_cmd = osc_freq(_dout), osc_freq(_cout)
+_l_dot, _l_cmd = Ldf(_dout).get(1e4), Ldf(_cout).get(1e4)
+check("`.hbosc` + `.phasenoise` dot-cards run in batch and match the commands",
+      _f_dot is not None and _f_cmd is not None and _f_dot == _f_cmd
+      and _l_dot is not None and _l_cmd is not None and _l_dot == _l_cmd,
+      f"f0 dot={_f_dot}/cmd={_f_cmd}, L(1e4) dot={_l_dot}/cmd={_l_cmd}")
+
 print(f"\n{'ALL PASS' if passed == checks else 'FAILURES'}: {passed}/{checks} passed")
 sys.exit(0 if passed == checks else 1)
