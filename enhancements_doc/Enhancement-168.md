@@ -34,7 +34,7 @@ asymptotes are the amplifier's input **voltage noise** `en` (dominating at small
 `Rs`, `NF → in²·Rs/4kT`); they cross near the minimum, which is exactly why an LNA
 has an optimum source impedance.
 
-Extracting `en` and `in` from the measured curve (`inoise² = en² + in²·Rs² +
+Extracting `en` and `in` from the simulated curve (`inoise² = en² + in²·Rs² +
 4kT·Rs`) gives `en ≈ 0.73 nV/√Hz` and `in ≈ 2.59 pA/√Hz`. The current noise equals
 the base **shot noise** `√(2q·IB) = 2.53 pA/√Hz` (IB = 20 µA) to within 3 % —
 the physical origin of the optimum is the transistor's base current.
@@ -43,13 +43,13 @@ the physical origin of the optimum is the transistor's base current.
 
 A two-stage cascade obeys the **Friis formula** `F_total = F1 + (F2−1)/G_av1`,
 where `G_av1` is the first stage's *available power gain* and `F2` is the second
-stage's noise factor measured with a source impedance equal to the first stage's
-output impedance. The validation measures all three:
+stage's noise factor obtained with a source impedance equal to the first stage's
+output impedance. The validation extracts all three from simulation:
 
 - **High first-stage gain** (`G_av1 ≈ 181`): `F_total = 0.858 dB` sits barely above
   `F1 = 0.849 dB` — the second stage adds only 0.01 dB. This is the **first-stage-
   dominance** principle: a high-gain front end sets the whole system's noise figure.
-  The measured `F_total` matches the Friis prediction to 0.001 dB.
+  The simulated `F_total` matches the Friis prediction to 0.001 dB.
 - **Low first-stage gain** (`G_av1 ≈ 19`): the second stage now contributes a
   clearly measurable 0.05 dB, and `F_total = 1.065 dB` still matches Friis (`1.065`
   predicted) exactly — validating the formula where its correction term matters.
@@ -77,9 +77,9 @@ under **both** the Sparse and KLU solvers (6 checks; `.noise` works under KLU si
 ## Why the results are physically correct
 
 - **Noise figure ≥ 0 dB.** Any amplifier adds noise, so the output SNR can only
-  fall — `F ≥ 1`. Measured `NF` is positive at every frequency and `Rs`.
+  fall — `F ≥ 1`. The simulated `NF` is positive at every frequency and `Rs`.
 - **Optimum source resistance.** A two-generator noise model (`en`, `in`) gives
-  `F = 1 + (en² + in²·Rs²)/(4kT·Rs)`, minimized at `Rs_opt = en/in`. The measured
+  `F = 1 + (en² + in²·Rs²)/(4kT·Rs)`, minimized at `Rs_opt = en/in`. The simulated
   U-curve, its asymptotes, and `in = √(2q·IB)` all follow this.
 - **Friis / first-stage dominance.** Noise added after a gain `G1` is referred back
   to the input divided by `G1`, so a high-gain first stage suppresses later-stage

@@ -60,9 +60,9 @@ ngspice -b noisefigure_demo.cir
 ## Notes
 
 - **Available power gain.** The Friis `G_av1` is the first stage's *available*
-  power gain, measured as `|v_c|²·Rs/Rout` with `Rout ≈ RC`. The second stage's
-  noise factor `F2` is measured with a source resistance equal to the first stage's
-  output impedance (`≈ RC1`) — the impedance it actually sees.
+  power gain, obtained from `.ac` as `|v_c|²·Rs/Rout` with `Rout ≈ RC`. The second
+  stage's noise factor `F2` is obtained with a source resistance equal to the first
+  stage's output impedance (`≈ RC1`) — the impedance it actually sees.
 - **Reference temperature.** `NF` is pinned to the standard `T0 = 290 K`
   (`.options temp=16.85`), so the `4kT·Rs` in the formula uses the same temperature
   as ngspice's resistor thermal-noise model — the extraction is self-consistent.

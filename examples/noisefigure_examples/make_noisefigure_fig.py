@@ -6,10 +6,10 @@ source resistance Rs (markers), the classic U-curve with an optimum source
 resistance Rs_opt. The two dashed asymptotes -- the amplifier's input VOLTAGE
 noise en (dominating at small Rs) and its input CURRENT noise in (the base SHOT
 noise, dominating at large Rs) -- cross near the minimum, showing why an LNA has
-an optimum source impedance. en and in are extracted from the measured curve.
+an optimum source impedance. en and in are extracted from the simulated curve.
 
 Panel B -- FRIIS CASCADE. Noise figure of a two-stage cascade versus the first
-stage's available power gain G1 (set by its collector load). The measured
+stage's available power gain G1 (set by its collector load). The simulated
 F_total (markers) tracks the Friis prediction F1 + (F2-1)/G1 (line) and collapses
 onto the first stage's own NF F1 (dashed) as G1 grows -- the first-stage-
 dominance principle that makes the front-end LNA set the system noise figure.
@@ -153,7 +153,7 @@ for rc1 in RC1S:
 fig, (axA, axB) = plt.subplots(1, 2, figsize=(13, 5.2))
 C1, C2, C3 = "#1f77b4", "#d62728", "#2ca02c"
 
-axA.semilogx(RSS, rs_nf, "o", color=C1, ms=7, label="LNA noise figure (measured)")
+axA.semilogx(RSS, rs_nf, "o", color=C1, ms=7, label="LNA noise figure (simulated)")
 rsl = [r for r in [10 * 1.3 ** k for k in range(30)] if 15 <= r <= 6000]
 axA.semilogx(rsl, [10 * math.log10(1 + en2 / (FOURKT * r)) for r in rsl], "--",
              color=C3, lw=1.3, label=r"voltage-noise limit  $e_n^2/4kTR_s$")
@@ -177,7 +177,7 @@ axA.text(0.02, 0.02, f"extracted  $e_n$={en*1e9:.2f} nV/$\\sqrt{{Hz}}$,  "
 
 order = sorted(range(len(g1s)), key=lambda k: g1s[k])
 gx = [g1s[k] for k in order]
-axB.semilogx(gx, [ftot[k] for k in order], "o", color=C1, ms=8, label="$F_{total}$ measured")
+axB.semilogx(gx, [ftot[k] for k in order], "o", color=C1, ms=8, label="$F_{total}$ simulated")
 axB.semilogx(gx, [fried[k] for k in order], "-", color=C2, lw=1.6,
              label=r"Friis  $F_1+(F_2-1)/G_1$")
 axB.semilogx(gx, [f1s[k] for k in order], "--", color="#888", lw=1.3,
