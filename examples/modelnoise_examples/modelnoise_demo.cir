@@ -1,0 +1,32 @@
+* BSIM4 noise demo -- OSDI vs ngspice built-in, common-source amp
+* Compile the model first:
+*   openvaf-r ../../OpenVAF-master-20260610/integration_tests/BSIM4/bsim4.va -o bsim4.osdi
+.control
+pre_osdi bsim4.osdi
+.endc
+* built-in BSIM4 branch
+Vdd ddb 0 dc 1.8
+RDb ddb db 10k
+Vgb gb 0 dc 0.8 ac 1
+M1 db gb 0 0 nb W=10u L=1u
+.model nb nmos level=54 version=4.8.2 rdsmod=1 rsh=1
+* OSDI BSIM4 branch
+Vddo ddo 0 dc 1.8
+RDo ddo do 10k
+Vgo go 0 dc 0.8 ac 1
+N1 do go 0 0 no
+.model no bsim4va w=10u l=1u rdsmod=1 rsh=1
+.control
+noise v(db) Vgb dec 10 1 1e9
+setplot noise1
+let sv_builtin = onoise_spectrum
+noise v(do) Vgo dec 10 1 1e9
+setplot noise3
+let sv_osdi = onoise_spectrum
+echo built-in vs OSDI output noise at 1 Hz (flicker) and 1 GHz (thermal):
+setplot noise1
+print onoise_spectrum[0] onoise_spectrum[90]
+setplot noise3
+print onoise_spectrum[0] onoise_spectrum[90]
+.endc
+.end
