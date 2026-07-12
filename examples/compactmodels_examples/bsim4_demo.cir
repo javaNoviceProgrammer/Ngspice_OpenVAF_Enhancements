@@ -1,0 +1,27 @@
+* BSIM4 real-model demo -- OSDI (openvaf-r) vs ngspice built-in, one bias
+* Compile the model first (from the bundled CMC reference source):
+*   openvaf-r ../../OpenVAF-master-20260610/integration_tests/BSIM4/bsim4.va -o bsim4.osdi
+.control
+pre_osdi bsim4.osdi
+.endc
+Vg  g 0 dc 1.0
+Vd  d 0 dc 0.6
+* built-in BSIM4 (level 54)
+Vmb d db 0
+M1 db g 0 0 nb W=10u L=1u
+.model nb nmos level=54 version=4.8.2 rdsmod=1 rsh=1
+* OSDI BSIM4 (compiled Verilog-A) -- rdsmod=1 connects the internal S/D nodes
+* (OSDI keeps them static, so the default rdsmod=0 leaves them floating -> Id=0)
+Vmo d do 0
+N1 do g 0 0 no
+.model no bsim4va w=10u l=1u rdsmod=1 rsh=1
+.op
+.control
+run
+set numdgt=6
+echo built-in Id:
+print abs(i(vmb))
+echo OSDI Id (should match within a couple percent):
+print abs(i(vmo))
+.endc
+.end
