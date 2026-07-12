@@ -138,10 +138,8 @@ void print_compat_mode(void) {
             fprintf(stdout, " a");
         fprintf(stdout, "\n\n");
     }
-    else {
-        fprintf(stdout, "\n");
-        fprintf(stdout, "Note: No compatibility mode selected!\n\n");
-    }
+    /* When no compatibility mode is selected -- the common case -- stay silent
+     * rather than printing a "No compatibility mode selected!" startup notice. */
 }
 
 
