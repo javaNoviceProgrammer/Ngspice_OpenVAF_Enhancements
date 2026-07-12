@@ -83,6 +83,7 @@ CKTnewTask(CKTcircuit *ckt, TSKtask **taskPtr, IFuid taskName, TSKtask **defPtr)
 
 #ifdef KLU
         tsk->TSKkluMODE         = def->TSKkluMODE;
+        tsk->TSKpzEig           = def->TSKpzEig;
         tsk->TSKkluMemGrowFactor = def->TSKkluMemGrowFactor ;
         tsk->TSKkluOrdering     = def->TSKkluOrdering ;
         tsk->TSKkluScale        = def->TSKkluScale ;
@@ -154,6 +155,7 @@ CKTnewTask(CKTcircuit *ckt, TSKtask **taskPtr, IFuid taskName, TSKtask **defPtr)
 
 #ifdef KLU
         tsk->TSKkluMODE         = CKTkluOFF;
+        tsk->TSKpzEig           = 0;
         tsk->TSKkluMemGrowFactor = 1.2 ;
         tsk->TSKkluOrdering     = 0 ;      /* AMD  (matches klu_defaults) */
         tsk->TSKkluScale        = 2 ;      /* max  (matches klu_defaults) */

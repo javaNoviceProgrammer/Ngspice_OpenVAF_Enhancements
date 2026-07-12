@@ -250,6 +250,9 @@ CKTsetOpt(CKTcircuit *ckt, JOB *anal, int opt, IFvalue *val)
                     val->sValue);
         break;
 
+    case OPT_PZEIG:
+        task->TSKpzEig = (val->iValue != 0);
+        break;
 #ifdef KLU
     case OPT_SPARSE:
         task->TSKkluMODE = (val->iValue == 0);
@@ -476,6 +479,8 @@ static IFparm OPTtbl[] = {
  { "epsmin", OPT_EPSMIN, IF_SET|IF_REAL,
         "Minimum value for log" },
 
+ { "pzeig", OPT_PZEIG, IF_SET|IF_FLAG,
+        "Use the eigenvalue-based pole-zero root finder (Enhancement-173)" },
 #ifdef KLU
  { "sparse", OPT_SPARSE, IF_SET|IF_FLAG,
         "Set SPARSE 1.3 as Direct Linear Solver" },

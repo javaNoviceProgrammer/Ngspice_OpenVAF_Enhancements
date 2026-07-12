@@ -68,7 +68,10 @@ PZan(CKTcircuit *ckt, int reset)
 	error = CKTpzSetup(ckt, PZ_DO_POLES);
 	if (error != OK)
 	    return error;
-        error = CKTpzFindZeros(ckt, &job->PZpoleList, &job->PZnPoles);
+        if (ckt->CKTpzEig)      /* Enhancement-173: .options pzeig */
+            error = CKTpzEig(ckt, &job->PZpoleList, &job->PZnPoles);
+        else
+            error = CKTpzFindZeros(ckt, &job->PZpoleList, &job->PZnPoles);
         if (error != OK)
 	    return(error);
     }
@@ -77,7 +80,10 @@ PZan(CKTcircuit *ckt, int reset)
 	error = CKTpzSetup(ckt, PZ_DO_ZEROS);
 	if (error != OK)
 	    return error;
-        error = CKTpzFindZeros(ckt, &job->PZzeroList, &job->PZnZeros);
+        if (ckt->CKTpzEig)      /* Enhancement-173: .options pzeig */
+            error = CKTpzEig(ckt, &job->PZzeroList, &job->PZnZeros);
+        else
+            error = CKTpzFindZeros(ckt, &job->PZzeroList, &job->PZnZeros);
 	/* (An earlier KLU-specific E_SHORT remap lived here: the KLU zero
 	 * search used to go spuriously singular.  Root causes fixed in the
 	 * KLU<->SMP bridge -- the determinant's complex-pivot formula and the

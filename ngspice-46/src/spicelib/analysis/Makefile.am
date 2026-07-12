@@ -52,7 +52,8 @@ libckt_la_SOURCES = \
 		cktparam.c	\
 		cktpmnam.c	\
 		cktpname.c	\
-		cktpzld.c	\
+		cktpzeig.c \
+	cktpzld.c	\
 		cktpzset.c	\
 		cktpzstr.c	\
 		cktsens.c	\

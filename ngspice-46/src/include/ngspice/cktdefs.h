@@ -343,6 +343,7 @@ struct CKTcircuit {
 
 #ifdef KLU
     unsigned int CKTkluMODE:1;
+    unsigned int CKTpzEig:1;    /* Enhancement-173: eigenvalue-based pole-zero */
     double CKTkluMemGrowFactor ;
     int CKTkluOrdering ;        /* Enhancement-152: 0=AMD, 1=COLAMD          */
     int CKTkluScale ;           /* Enhancement-152: 0=none, 1=sum, 2=max     */
@@ -420,6 +421,7 @@ extern int CKTpModName(char *, IFvalue *, CKTcircuit *, int , IFuid , GENmodel *
 extern int CKTpName(char *, IFvalue *, CKTcircuit *, int , char *, GENinstance **);
 extern int CKTparam(CKTcircuit *, GENinstance *, int , IFvalue *, IFvalue *);
 extern int CKTpzFindZeros(CKTcircuit *, PZtrial **, int *);
+extern int CKTpzEig(CKTcircuit *, PZtrial **, int *);
 extern int CKTpzLoad(CKTcircuit *, SPcomplex *);
 extern int CKTpzSetup(CKTcircuit *, int);
 extern int CKTsenAC(CKTcircuit *);

@@ -1091,6 +1091,44 @@ SMPsolveKLUforCIDER (SMPmatrix *Matrix, double RHS[], double RHSsolution[], doub
 #endif
 
 /*
+ * SMPdenseExtractReal() -- Enhancement-173: copy the real parts of the loaded
+ * (complex-stored) matrix into a dense n*n row-major array, in EXTERNAL node
+ * indexing, for the eigenvalue-based pole-zero method.  Read-only; must be
+ * called after a load and before a factorization (Sparse factors in place).
+ */
+void
+SMPdenseExtractReal (SMPmatrix *eMatrix, int n, double *out)
+{
+    int i, j ;
+
+    for (i = 0 ; i < n * n ; i++)
+        out [i] = 0.0 ;
+
+    if (eMatrix->CKTkluMODE)
+    {
+        int *Ap = eMatrix->SMPkluMatrix->KLUmatrixAp ;
+        int *Ai = eMatrix->SMPkluMatrix->KLUmatrixAi ;
+        double *Ax = eMatrix->SMPkluMatrix->KLUmatrixAxComplex ;
+
+        for (j = 0 ; j < (int)eMatrix->SMPkluMatrix->KLUmatrixN && j < n ; j++)
+            for (i = Ap [j] ; i < Ap [j + 1] ; i++)
+                if (Ai [i] < n)
+                    out [(size_t)Ai [i] * (size_t)n + (size_t)j] = Ax [2 * i] ;
+    } else {
+        MatrixPtr M = eMatrix->SPmatrix ;
+        ElementPtr e ;
+
+        for (j = 1 ; j <= M->Size ; j++)
+            for (e = M->FirstInCol [j] ; e != NULL ; e = e->NextInCol) {
+                int er = M->IntToExtRowMap [e->Row] - 1 ;
+                int ec = M->IntToExtColMap [j] - 1 ;
+                if (er >= 0 && er < n && ec >= 0 && ec < n)
+                    out [(size_t)er * (size_t)n + (size_t)ec] = e->Real ;
+            }
+    }
+}
+
+/*
  * SMPmatSize()
  */
 int

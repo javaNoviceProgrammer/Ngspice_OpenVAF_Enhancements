@@ -1,0 +1,24 @@
+* Eigenvalue-based pole-zero demo -- `.options pzeig' (Enhancement-173)
+*
+* The RLC bandpass below is a case where the vintage Muller pole-zero driver
+* hits its iteration limit under the Sparse solver ("Warning: Pole-zero
+* iteration limit reached...").  With `.options pzeig' the same roots come out
+* of a direct dense eigenvalue solve -- shift-invert linearization of the
+* pencil (G, C) + Francis QR -- with no iteration and no warnings:
+*   poles  -5e4 +- j*998749.2  (sigma = R/2L' form),  zero at the origin.
+* Remove the pzeig option to compare with the Muller method.
+.options pzeig
+v1 in 0 dc 0 ac 1
+l1 in n1 1m
+c1 n1 out 1n
+r1 out 0 100
+
+.control
+pz in 0 out 0 vol pz
+echo
+echo Roots via the eigenvalue method (expect poles -5e4 +- j998749, zero at 0):
+set numdgt=10
+print all
+.endc
+
+.end

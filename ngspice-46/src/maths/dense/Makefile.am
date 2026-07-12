@@ -4,6 +4,7 @@ noinst_LTLIBRARIES = libdense.la
 
 libdense_la_SOURCES = \
 		dense.c \
+	eig.c \
 		dense.h \
 		denseinlines.h
 

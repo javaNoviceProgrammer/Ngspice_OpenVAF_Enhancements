@@ -73,6 +73,7 @@ void SMPcaSolve(SMPmatrix *Matrix, double RHS[], double iRHS[],
 void SMPcSolve( SMPmatrix *, double [], double [], double [], double []);
 void SMPsolve( SMPmatrix *, double [], double []);
 int SMPmatSize( SMPmatrix *);
+void SMPdenseExtractReal(SMPmatrix *Matrix, int n, double *out);
 int SMPnewMatrix( SMPmatrix *, int );
 double SMPdiagNorm( SMPmatrix * );   /* Enhancement-153: max |diagonal| (pre-factor) */
 void SMPdestroy( SMPmatrix *);
