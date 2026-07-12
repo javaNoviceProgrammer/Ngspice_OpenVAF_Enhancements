@@ -1,0 +1,17 @@
+* HICUM SiGe-HBT common-emitter amp -- large-signal single tone
+* Compile the model first:
+*   openvaf-r ../../OpenVAF-master-20260610/integration_tests/HICUML2/hicuml2.va -o hicuml2.osdi
+.control
+pre_osdi hicuml2.osdi
+.endc
+Vcc cc 0 dc 3.0
+RC  cc c 400
+Vsrc s 0 dc 0.77 SIN(0.77 0.1 1G)   $ 0.77 V bias + 0.1 V, 1 GHz drive
+Rb  s b 50                          $ 50 ohm RF source resistance
+N1  c b 0 0 0 m
+.model m hicumL2va t0=1e-11 cjei0=1f cjci0=1f cjep0=1f cjcx0=1f
+.control
+tran 2p 80n 40n
+fourier 1G v(c)                     $ gain (h1) + harmonic distortion (HD2/HD3, THD)
+.endc
+.end
