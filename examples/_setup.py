@@ -108,7 +108,7 @@ KLU_XFAIL = frozenset()
 # paying minutes-per-run for on every regression sweep.
 #   rfanalyses — .sp/.pss/.pac/.pnoise/.pxf, incl. a 1024-sample PSS
 #   rfpss      — the rc_pss/pac/pnoise/pxf/cyclo PSS-based checks
-SPARSE_ONLY = frozenset({"rfanalyses", "rfpss", "highsigma", "yield"})
+SPARSE_ONLY = frozenset({"rfanalyses", "rfpss", "highsigma", "yield", "cmcsweep"})
 
 # Examples excluded from the routine full-regression sweep (run_regression.py)
 # because they are too slow to be worth running every time -- they still work and
@@ -122,7 +122,7 @@ SPARSE_ONLY = frozenset({"rfanalyses", "rfpss", "highsigma", "yield"})
 #                based checks, ~2-4 min each Sparse-only.
 # (These verify the RF periodic small-signal suite E-117..126; their correctness is
 # established and re-run on demand, not on every regression sweep.)
-REGRESSION_EXCLUDE = frozenset({"rfanalyses", "rfpss"})
+REGRESSION_EXCLUDE = frozenset({"rfanalyses", "rfpss", "cmcsweep"})
 
 
 def klu_enabled(script=None):
