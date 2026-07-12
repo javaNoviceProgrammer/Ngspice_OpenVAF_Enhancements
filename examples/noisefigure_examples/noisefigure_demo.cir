@@ -1,0 +1,37 @@
+* LNA noise figure demo -- common-emitter HICUM/L2 (OSDI), source resistance Rs
+* Compile the model first:
+*   openvaf-r ../../OpenVAF-master-20260610/integration_tests/HICUML2/hicuml2.va -o hicuml2.osdi
+*
+* The noise figure is extracted from ngspice's .noise analysis as
+*     NF = 10*log10( inoise^2 / (4 k T Rs) )
+* i.e. the total input-referred noise power over the source-resistor thermal
+* noise. T is pinned to the 290 K reference (temp = 16.85 C) for standard NF.
+.options temp=16.85
+.control
+pre_osdi hicuml2.osdi
+.endc
+
+Vsrc s 0 dc 0 ac 1
+Rs   s in 200
+Cin  in b 1u
+Ib   0 b dc 20u
+Vcc  cc 0 dc 3.0
+RC   cc c 1k
+N1   c b 0 0 0 m
+.model m hicumL2va t0=1e-11 cjei0=1f cjci0=1f cjep0=1f cjcx0=1f
+
+.noise v(c) Vsrc dec 10 1e6 1e10
+
+.control
+run
+setplot noise1
+* noise figure across frequency: flat white mid-band, rising as the input cap
+* rolls off the gain at high frequency
+let nf_db = 10*log10(inoise_spectrum^2 / (4*1.380649e-23*290*200))
+echo
+echo "noise figure NF(f) [dB] at 10 MHz, 100 MHz, 1 GHz, 10 GHz"
+echo "(flat white mid-band ~0.85 dB, rising at high f as gain rolls off):"
+print nf_db[10] nf_db[20] nf_db[30] nf_db[40]
+.endc
+
+.end

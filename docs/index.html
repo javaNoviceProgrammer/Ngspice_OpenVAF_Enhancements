@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="description" content="Feature catalog of the ngspice-46 + OpenVAF-r enhancement project: 167 enhancements grouped into 19 feature areas.">
+<meta name="description" content="Feature catalog of the ngspice-46 + OpenVAF-r enhancement project: 168 enhancements grouped into 19 feature areas.">
 <title>ngspice + OpenVAF-r — feature catalog</title>
 <style>
   :root{
@@ -96,9 +96,9 @@
   <header>
     <div class="eyebrow">feature catalog</div>
     <h1>ngspice&#8209;46 <span class="amp">+</span> OpenVAF&#8209;r</h1>
-    <p class="lede">Every capability added across <b>167 enhancements</b>, grouped into feature areas — a feature usually spans several enhancements. Two code bases: the <b>OpenVAF&#8209;r</b> Verilog&#8209;A/OSDI compiler and the <b>ngspice</b> circuit simulator. Each chip links to its write&#8209;up.</p>
+    <p class="lede">Every capability added across <b>168 enhancements</b>, grouped into feature areas — a feature usually spans several enhancements. Two code bases: the <b>OpenVAF&#8209;r</b> Verilog&#8209;A/OSDI compiler and the <b>ngspice</b> circuit simulator. Each chip links to its write&#8209;up.</p>
     <div class="stats" id="stats">
-      <div class="stat"><div class="n">167</div><div class="l">enhancements</div></div>
+      <div class="stat"><div class="n">168</div><div class="l">enhancements</div></div>
       <div class="stat"><div class="n">19</div><div class="l">feature areas</div></div>
       <div class="stat"><div class="n">2</div><div class="l">code bases</div></div>
       <div class="stat ok"><div class="n">RF ✓</div><div class="l">suite complete</div></div>
@@ -153,7 +153,7 @@
    {d:"simulator",n:"Statistical / variability / yield",x:"Monte Carlo with OSDI, low-discrepancy + high-sigma sampling, correlations, packaged yield.",c:[[66,"Monte Carlo (OSDI)"],[149,"Latin-Hypercube"],[150,"high-sigma"],[151,"correlations + yield"]]},
    {d:"simulator",n:"Optimization & parametric sweeps",x:"Nelder-Mead + Levenberg-Marquardt fitting over every knob kind; a universal sweep.",c:[[130,"optimize (Nelder-Mead)"],[143,"least-squares LM"],[144,"-dparam (.param)"],[145,"-mparam (.model)"],[146,"universal sweep"]]},
    {d:"simulator",n:"Workflow, docs & benchmarks",x:"Handbook and provenance docs, OSDI-vs-built-in benchmarks, checkpoint/restart, lifecycle, plotting, tests, warning-free build.",c:[[68,"integration tests"],[73,"handbook + README index"],[74,"OSDI-vs-built-in benchmark"],[77,"ngspice warnings → 0"],[79,"benchmark round 2 (BSIM4)"],[81,"lifecycle / leak-free"],[82,"provenance / compliance docs"],[83,"opamp741 demo"],[94,"pyplot"],[95,"pyplot default filename"],[98,"pyplot subplots"],[99,"pyplot export formats"],[100,"milestone audit"],[129,"sweep progress bar"],[131,"checkpoint / restart"]]},
-   {d:"simulator",n:"Physics validation",x:"Cross-checks of simulator output against analytic laws, and the full CMC compact-model suite against ngspice's built-in.",c:[[57,"physcheck vs analytic"],[75,"dynamic physics"],[80,"temperature physics"],[159,"real compact models (BSIM4 / EKV)"],[160,"CMC coverage sweep (19 models)"],[161,"dynamic C-V / fT vs built-in"],[164,"large-signal RF (P1dB / IP3)"],[165,"model noise (flicker/thermal/shot)"],[166,"electro-thermal self-heating"],[167,"cross-model self-heating (4 classes)"]]},
+   {d:"simulator",n:"Physics validation",x:"Cross-checks of simulator output against analytic laws, and the full CMC compact-model suite against ngspice's built-in.",c:[[57,"physcheck vs analytic"],[75,"dynamic physics"],[80,"temperature physics"],[159,"real compact models (BSIM4 / EKV)"],[160,"CMC coverage sweep (19 models)"],[161,"dynamic C-V / fT vs built-in"],[164,"large-signal RF (P1dB / IP3)"],[165,"model noise (flicker/thermal/shot)"],[166,"electro-thermal self-heating"],[167,"cross-model self-heating (4 classes)"],[168,"LNA noise figure (Friis / noise match)"]]},
    {d:"simulator",n:"Post-layout parasitics",x:"Reduce extracted parasitic R/C networks to small equivalent subcircuits (TICER model-order reduction), at real extraction scale.",c:[[155,"RC reduction (reduce / TICER)"],[156,"sparse RC reduction (scales to millions)"]]},
    {d:"simulator",n:"Reliability / aging",x:"Stress → degrade → re-simulate flow: age every aging-capable device to a target lifetime and re-stamp the circuit (HCI / NBTI / TDDB); plus power-grid IR-drop + electromigration sign-off.",c:[[157,"device aging (aging command; static + dynamic)"],[158,"power-grid EMIR (IR-drop + electromigration)"]]}
   ];
