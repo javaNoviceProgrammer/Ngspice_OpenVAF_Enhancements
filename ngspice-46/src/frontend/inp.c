@@ -783,6 +783,17 @@ inp_spsource(FILE *fp, bool comfile, char *filename, bool intfile)
                 controls = wl_cons(copy(skip_ws(dd->line) + 1), controls);
                 ld->nextcard = dd->nextcard;
                 line_free(dd, FALSE);
+            } else if (!commands && ciprefix(".hb", dd->line) &&
+                       (dd->line[3] == '\0' || isspace_c(dd->line[3]))) {
+                /* Enhancement-162: a top-level `.hb ...` card is run after the
+                 * circuit is parsed as an `hb ...` command (Enhancement-134
+                 * harmonic balance), mirroring the `.sweep` handling above -- drop
+                 * the leading '.' and add it to the post-parse control list. The
+                 * boundary check keeps `.hb` from swallowing any future `.hb*`
+                 * card. */
+                controls = wl_cons(copy(skip_ws(dd->line) + 1), controls);
+                ld->nextcard = dd->nextcard;
+                line_free(dd, FALSE);
             } else if (commands || prefix("*#", dd->line)) {
                 s = dd->line;
 

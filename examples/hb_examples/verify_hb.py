@@ -192,5 +192,33 @@ check("HB is solver-independent: KLU vs Sparse spectra identical",
       klu_active and common and maxrel < 1e-6,
       f"klu_active={klu_active} maxrel={maxrel:.2e}")
 
+# [7] DOT-CARD PARITY (Enhancement-162): a top-level `.hb <f0> <K> ...` netlist
+# card must run the same E-134 engine as the `hb` command in a .control block, and
+# in plain batch mode (no .control needed). Compare the diode-rectifier spectrum
+# from the dot-card against the command form -- they must be bit-for-bit identical.
+_nl = ("V1 s 0 SIN(0 1 100meg)\nRs s a 100\nD1 a n DMOD\nRn n 0 1k\n"
+       ".model DMOD D(IS=1e-12 N=1.2)")
+out_cmd = run(f"* hb command\n{_nl}\n.control\nhb 100meg 8\n.endc\n.end\n")
+out_dot = run(f"* hb dotcard\n{_nl}\n.hb 100meg 8\n.end\n")
+hb_cmd, hb_dot = hb_spectrum(out_cmd, "n"), hb_spectrum(out_dot, "n")
+common = set(hb_cmd) & set(hb_dot)
+identical = bool(common) and all(hb_cmd[k] == hb_dot[k] for k in common)
+# the dot-card deck has NO .control block and NO other analysis card, so a
+# converged spectrum in its output proves `.hb` dispatched the E-134 engine in
+# plain batch mode. (Like `.sweep`, a bare command-style dot-card also prints a
+# benign "no simulations run" notice, since HB is not a deck analysis job.)
+ran_in_batch = "harmonic-balance spectrum" in out_dot and "converged" in out_dot
+check("`.hb` dot-card runs in batch and matches the `hb` command bit-for-bit",
+      identical and ran_in_batch,
+      f"identical={identical} ran_in_batch={ran_in_batch}")
+
+# [8] the dot-card threads its optional [points] [maxiter] args through, and a
+# following .control block still runs (order preserved).
+out_args = run(f"* hb dotcard args\n{_nl}\n.hb 100meg 6 128 40\n"
+               ".control\necho after-hb-ok\n.endc\n.end\n")
+check("`.hb` passes [points]/[maxiter] args and coexists with a .control block",
+      "harmonic-balance spectrum" in out_args and "after-hb-ok" in out_args
+      and "6 harmonics" in out_args)
+
 print(f"\n{'ALL PASS' if passed == checks else 'FAILURES'}: {passed}/{checks} passed")
 sys.exit(0 if passed == checks else 1)
