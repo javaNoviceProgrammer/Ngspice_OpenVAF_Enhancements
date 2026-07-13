@@ -22,7 +22,7 @@ of the whole [`examples/`](../../../examples/) suite.
 | **Distortion (`.disto`)** | ✅ correct (since E-115) | ✅ correct |
 | **Periodic steady state (`.pss`)** | ✅ correct (since E-118) | ✅ correct |
 | **Periodic small-signal (`.pac`/`.pnoise`/`.pxf`/`.psp`)** | ✅ correct | ✅ correct |
-| **Transient checkpoint/restart (`savestate`/`loadstate`)** | ⚠️ Sparse-only (E-131) | ✅ correct |
+| **Transient checkpoint/restart (`savestate`/`loadstate`)** | ✅ correct (since E-180; incl. cross-solver restore) | ✅ correct |
 
 The periodic small-signal analyses (PAC / Pnoise / PXF and the E-132 periodic
 S-parameters `.psp`) build a **dense** `(2M+1)N` harmonic conversion matrix and
@@ -43,11 +43,17 @@ verified **bit-identical under `.option klu` and `.option sparse`** (a bare `hb`
 copies the task's KLU mode before building the matrix, so `.option klu` takes effect
 without a prior analysis).
 Transient **checkpoint/restart**
-([Enhancement-131](../../../enhancements_doc/Enhancement-131.md)) is the one feature
-that is genuinely Sparse-only: on the restore path KLU's symbolic/numeric
-factorization objects are absent (they are only built during a full run's operating
-point), so `savestate`/`loadstate` reject `.option klu` with a clear message rather
-than crash.
+([Enhancement-131](../../../enhancements_doc/Enhancement-131.md)) was guarded
+Sparse-only until [Enhancement-180](../../../enhancements_doc/Enhancement-180.md)
+diagnosed the real defect: the E-131-era explanation ("KLU factorization objects
+absent on the restore path") was wrong — `loadstate` called `CKTsetup` *before*
+the analysis dispatch copies the task's `.option klu` into the circuit, so the
+matrix was built as Sparse; the resume dispatch then flipped the circuit to KLU
+mode over it and `NIiter` dereferenced the NULL `SMPkluMatrix`. Copying the
+task's solver selection (and the E-152 KLU knobs) into the circuit before setup
+fixes it: all four save×load solver combinations — **including cross-solver
+restores** (the checkpoint file contains only solver-agnostic state) — now
+continue exactly on the uninterrupted run's trajectory.
 
 **Practical guidance:** leave the default (Sparse 1.3) unless you have a specific
 reason to switch. Sparse 1.3 runs **every** analysis in the suite. Since
@@ -60,8 +66,9 @@ sensitivity**, and since
 [Enhancement-171](../../../enhancements_doc/Enhancement-171.md)/[172](../../../enhancements_doc/Enhancement-172.md)
 the pole-zero path is fully KLU-correct too (complex-plane determinant, balanced
 output, full-partial-pivot fallback) — **no analysis is Sparse-only under KLU any
-more** (the transient checkpoint/restart *feature* of E-131 still is, per the
-table above). Reach for `.option klu`
+more**, and since [Enhancement-180](../../../enhancements_doc/Enhancement-180.md)
+no *feature* is either (transient checkpoint/restart, the last one, now runs —
+and even restores across solvers). Reach for `.option klu`
 on large, sparse DC/AC problems where KLU's ordering and factorization are
 faster, and — because its symbolic ordering is computed once and cannot re-pivot
 dynamically like Sparse — expect it to be **less forgiving of a near-singular
@@ -246,7 +253,8 @@ PSS examples from `SPARSE_ONLY` into the regular both-solver sweep.)
 **Conclusion:** the two solvers agree across the **entire** suite — DC, AC,
 transient, noise, pole-zero (single-ended *and* balanced, plus `pzeig`),
 sensitivity, distortion, PSS, and the whole periodic small-signal family
-(`KLU_XFAIL` is empty; no analysis is Sparse-only since E-172). The one
-Sparse-only *feature* is transient checkpoint/restart (E-131). Sparse 1.3, the
+(`KLU_XFAIL` is empty; no analysis is Sparse-only since E-172, and no feature
+since E-180 — transient checkpoint/restart, the last holdout, now works under
+both solvers and even across them). Sparse 1.3, the
 default, covers everything — which is why it is the default and why the
 dual-solver harness keys correctness off it.

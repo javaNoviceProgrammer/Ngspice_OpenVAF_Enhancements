@@ -105,8 +105,10 @@ parity — silent garbage for complex roots) and
 Sparse-only analysis: **balanced/differential-output `.pz`** now runs under KLU
 (union-pattern reservation + a merge-walk `SMPcAddCol` branch), with a
 full-partial-pivoting fallback that also cured far-field spurious roots — so
-**no analysis is Sparse-only under KLU any more** (the transient
-checkpoint/restart *feature* of E-131 still is).
+**no analysis is Sparse-only under KLU any more**, and since
+[Enhancement-180](../../../enhancements_doc/Enhancement-180.md) no feature is
+either (transient checkpoint/restart, the last holdout, was a solver-mode
+ordering bug in `loadstate`, not a KLU limitation).
 [Enhancement-173](../../../enhancements_doc/Enhancement-173.md) added a modern
 alternative to the fragile Muller PZ driver altogether: `.options pzeig`, a
 shift-invert pencil + self-contained Francis-QR eigensolver (no LAPACK), default
@@ -551,7 +553,10 @@ integration state (solution vector, device state history, time/step/order,
 pending breakpoints) to disk and resume it — including in a **fresh process** —
 so a long run survives a crash, splits across sessions, or moves between
 machines. The resumed waveform is bit-identical to an uninterrupted run for
-built-in devices (Sparse solver).*
+built-in devices. Since [Enhancement-180](../../../enhancements_doc/Enhancement-180.md)
+it works under **both** linear solvers — and across them (save under one,
+resume under the other): the E-131 KLU guard had masked a solver-mode ordering
+bug in `loadstate`, not a real limitation.*
 
 ## Where to invest (given the Verilog-A/OSDI side is done)
 

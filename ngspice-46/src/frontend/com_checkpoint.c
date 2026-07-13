@@ -103,12 +103,6 @@ com_savestate(wordlist *wl)
                 "Error: savestate: transient time is 0; nothing to checkpoint.\n");
         return;
     }
-    if (ckt->CKTmatrix && ckt->CKTmatrix->CKTkluMODE) {
-        fprintf(cp_err,
-                "Error: savestate: checkpoint/restart is only supported with the "
-                "default Sparse solver, not KLU (remove '.option klu').\n");
-        return;
-    }
 
     fp = fopen(fname, "wb");
     if (!fp) {
@@ -223,6 +217,25 @@ com_loadstate(wordlist *wl)
     /* Make sure the circuit is built so the state vectors exist to fill.  A
        freshly sourced deck has not been set up yet; do it now (once). */
     if (ckt->CKTstates[0] == NULL || ckt->CKTmaxEqNum <= 0) {
+#ifdef KLU
+        /* Enhancement-180: CKTsetup builds the matrix from ckt->CKTkluMODE,
+           but that flag is only copied from the task inside CKTdoJob at
+           analysis dispatch -- which this flow reaches AFTER setup (via the
+           "resume" run, which must NOT rebuild the circuit).  Without this
+           copy a `.option klu` deck got a SPARSE matrix here, the resume
+           dispatch then flipped the circuit to KLU mode, and NIiter
+           dereferenced the NULL SMPkluMatrix.  Copy the solver selection
+           (and the E-152 KLU knobs) from the default task first, exactly
+           as CKTdoJob does. */
+        if (ft_curckt && ft_curckt->ci_defTask) {
+            TSKtask *dtask = ft_curckt->ci_defTask;
+            ckt->CKTkluMODE          = dtask->TSKkluMODE;
+            ckt->CKTkluMemGrowFactor = dtask->TSKkluMemGrowFactor;
+            ckt->CKTkluOrdering      = dtask->TSKkluOrdering;
+            ckt->CKTkluScale         = dtask->TSKkluScale;
+            ckt->CKTkluBTF           = dtask->TSKkluBTF;
+        }
+#endif
         if ((err = CKTsetup(ckt)) != OK) {
             fprintf(cp_err, "Error: loadstate: circuit setup failed.\n");
             (void) fclose(fp);
@@ -235,13 +248,6 @@ com_loadstate(wordlist *wl)
         }
     }
 
-    if (ckt->CKTmatrix && ckt->CKTmatrix->CKTkluMODE) {
-        fprintf(cp_err,
-                "Error: loadstate: checkpoint/restart is only supported with the "
-                "default Sparse solver, not KLU (remove '.option klu').\n");
-        (void) fclose(fp);
-        return;
-    }
 
     /* signature check: the checkpoint must belong to this exact circuit */
     if (maxEqNum != ckt->CKTmaxEqNum ||

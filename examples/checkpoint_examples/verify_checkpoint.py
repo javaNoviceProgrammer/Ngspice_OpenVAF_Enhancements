@@ -21,8 +21,14 @@ and continue to T2.  The resumed waveform must match the reference at the end
 (exact, to the printed precision) and at an interior sample time.
 
 It is a front-end + transient-core command, independent of the enhancement it
-verifies; checkpoint/restart is Sparse-solver only (KLU is rejected), so this is
-run once under the default solver.
+verifies. Since Enhancement-180 checkpoint/restart works under BOTH linear
+solvers (E-131 had guarded KLU off: loadstate built the matrix before the
+task's solver selection was copied into the circuit, so a `.option klu` deck
+got a Sparse matrix and the resume dispatch then flipped the circuit to KLU
+mode over it -- NIiter dereferenced the NULL SMPkluMatrix). Check [7] runs the
+full save x load solver matrix -- including CROSS-solver restores, since the
+checkpoint file contains only solver-agnostic state -- so this script drives
+both solvers itself and runs once.
 """
 import math
 import os
@@ -164,17 +170,35 @@ if os.path.exists(ckpt):
     os.remove(ckpt)
 check("mismatched circuit is rejected (not crashed)", "does not match" in mm, mm[-120:])
 
-# [7] Robustness: KLU solver is rejected with a clear message.
-ckpt = os.path.join(HERE, "_klu.state")
-if os.path.exists(ckpt):
-    os.remove(ckpt)
-klu = run("* klu\nV1 in 0 dc 1\nR1 in out 1k\nC1 out 0 1u\n.option klu\n.tran 1u 1m\n"
-          f".control\nrun\nsavestate {ckpt}\n.endc\n.end\n", "_klu")
-wrote = os.path.exists(ckpt)
-if wrote:
-    os.remove(ckpt)
-check("KLU solver rejected with a clear message (no crash, no file)",
-      ("only supported with the default Sparse" in klu) and not wrote)
+# [7] Enhancement-180: the full save x load SOLVER MATRIX, incl. cross-solver.
+# (E-131 rejected KLU outright; the real defect was loadstate building the
+# matrix before the task's solver selection reached the circuit.)
+KBODY = ("V1 in 0 SIN(0 1 1k)\nR1 in a 1k\nC1 a 0 1u\nD1 a 0 DMOD\n"
+         ".model DMOD D(IS=1e-14 N=1)")
+kref = {}
+for sol in ("sparse", "klu"):
+    out = run(f"* kref {sol}\n.option {sol}\n{KBODY}\n.tran 1u 4m\n"
+              ".control\nrun\nmeas tran vref FIND v(a) AT=3.5m\n.endc\n.end\n",
+              f"_kref_{sol}")
+    kref[sol] = meas_val(out, "vref")
+for ssol in ("sparse", "klu"):
+    ckpt = os.path.join(HERE, f"_k_{ssol}.state")
+    if os.path.exists(ckpt):
+        os.remove(ckpt)
+    run(f"* ksave {ssol}\n.option {ssol}\n{KBODY}\n.tran 1u 2m\n"
+        f".control\nrun\nsavestate {ckpt}\n.endc\n.end\n", f"_ksv_{ssol}")
+    for lsol in ("sparse", "klu"):
+        out = run(f"* kload {ssol}->{lsol}\n.option {lsol}\n{KBODY}\n.tran 1u 4m\n"
+                  f".control\nloadstate {ckpt}\nmeas tran vcont FIND v(a) AT=3.5m\n"
+                  ".endc\n.end\n", f"_kld_{ssol}_{lsol}")
+        got, r = meas_val(out, "vcont"), kref[lsol]
+        ok = ("Restored checkpoint" in out and got is not None and r is not None
+              and abs(got - r) <= 1e-6 * max(1.0, abs(r))
+              and "only supported with the default Sparse" not in out)
+        check(f"E-180 solver matrix save={ssol} load={lsol}: continuation == "
+              f"uninterrupted (ref={r}, got={got})", ok)
+    if os.path.exists(ckpt):
+        os.remove(ckpt)
 
 print(f"\n{'ALL PASS' if passed == checks else 'FAILURES'}: {passed}/{checks} passed")
 sys.exit(0 if passed == checks else 1)
