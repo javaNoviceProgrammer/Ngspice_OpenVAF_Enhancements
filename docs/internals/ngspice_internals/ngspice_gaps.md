@@ -459,8 +459,9 @@ independent — the correlation model is what decides it.*
 collapses a post-layout parasitic R/C network into a small, electrically equivalent
 `.subckt` of R's and C's that preserves the port behaviour over `DC..fmax`, using
 **TICER** (Time-Constant Equilibration Reduction) — Schur-complement elimination of
-interior nodes kept first-order in `s`, so the result is realizable R's and C's (no
-model-order-reduction black box, no passive-synthesis step). DC is preserved exactly;
+interior nodes kept first-order in `s`, so the result is element-level R's and C's, not a
+model-order-reduction black box or passive-synthesis step (some TICER coupling caps can
+come out negative — electrically valid, not physically realizable). DC is preserved exactly;
 a `factor` knob trades reduction against in-band accuracy (monotone). Ports are
 auto-detected as nodes touched by any non-R/C device (sources, transistors, OSDI) plus
 ground and user `keep` nodes. Verified under both solvers: identity reduction is
