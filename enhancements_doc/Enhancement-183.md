@@ -1,6 +1,6 @@
 # Enhancement-183 — pyplot usability: distinct default names, deck-folder output, linewidth & backend
 
-A round of `pyplot` (the matplotlib plotting command, [E-94](Enhancement-94.md)/95/98/99/[182](Enhancement-182.md)) usability improvements driven by real use. Four independent changes, all in the `pyplot` front-end (`com_pyplot.c`, `plotting/pyplot.c`); none affect any other command.
+A round of `pyplot` (the matplotlib plotting command, [E-94](Enhancement-94.md)/[95](Enhancement-95.md)/[98](Enhancement-98.md)/[99](Enhancement-99.md)/[182](Enhancement-182.md)) usability improvements driven by real use. Four independent changes, all in the `pyplot` front-end (`com_pyplot.c`, `plotting/pyplot.c`); none affect any other command.
 
 ## 1. Distinct default names for successive no-name plots (a real bug)
 
