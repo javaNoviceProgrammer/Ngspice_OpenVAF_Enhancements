@@ -92,6 +92,12 @@ extern bool orflag;
 #ifndef HAS_WINGUI
 #define OUTP_BARLEN 24
 
+/* Enhancement-184: state so the bar can be forced to 100% at end of run. The
+ * throttled per-point print usually skips the final sweep point, leaving the
+ * bar frozen just below 100%. */
+static int outp_bar_shown = 0;      /* a sweep bar was drawn during this run */
+static double outp_last_refval = 0.0;
+
 static double
 outp_progress_frac(runDesc *run, double refval)
 {
@@ -157,6 +163,9 @@ outp_print_reference(runDesc *run, double refval)
     if (ft_optimizing)          /* Enhancement-130: quiet during optimizer iterations */
         return;
     frac = outp_progress_frac(run, refval);
+    outp_last_refval = refval;               /* Enhancement-184: remember the point */
+    if (frac >= 0.0)
+        outp_bar_shown = 1;
 
     if (frac >= 0.0) {
         char bar[OUTP_BARLEN + 1];
@@ -172,6 +181,46 @@ outp_print_reference(runDesc *run, double refval)
     } else {
         fprintf(stdout, " Reference value : % 12.5e\r", refval);
     }
+    fflush(stdout);
+}
+
+/* Enhancement-184: force the bar to 100% once a swept run has finished. The
+ * throttled per-point print usually skips the final point (it lands within the
+ * 0.25 s window), so the last drawn bar sits below 100%; reprint it full, in
+ * place, using the sweep's true endpoint, before the "No. of Data Rows" line.
+ * A no-op unless a bar was actually shown (op-point / tf / ... never draw). */
+static void
+outp_finish_reference(runDesc *run)
+{
+    CKTcircuit *ckt = run ? run->circuit : NULL;
+    double endref = outp_last_refval;
+    char bar[OUTP_BARLEN + 1];
+    int k;
+
+    if (!outp_bar_shown)
+        return;
+    outp_bar_shown = 0;                 /* one-shot */
+    if (ft_optimizing || ft_norefprint || cp_background)
+        return;
+
+    if (ckt && ckt->CKTcurJob) {        /* prefer the sweep's exact endpoint */
+        const char *nm = spice_analysis_get_name(ckt->CKTcurJob->JOBtype);
+        if (nm) {
+            if (strcmp(nm, "TRAN") == 0)
+                endref = ckt->CKTfinalTime;
+            else if (strcmp(nm, "AC") == 0)
+                endref = ((ACAN *) ckt->CKTcurJob)->ACstopFreq;
+            else if (strcmp(nm, "NOISE") == 0)
+                endref = ((NOISEAN *) ckt->CKTcurJob)->NstopFreq;
+            /* DC: the last printed source value is the sweep endpoint */
+        }
+    }
+
+    for (k = 0; k < OUTP_BARLEN; k++)
+        bar[k] = '=';
+    bar[OUTP_BARLEN] = '\0';
+    fprintf(stdout, " Reference value : % 12.5e  [%s] %3.0f%%\r",
+            endref, bar, 100.0);
     fflush(stdout);
 }
 #endif
@@ -559,6 +608,9 @@ beginPlot(JOB *analysisPtr, CKTcircuit *circuitPtr, char *cktName, char *analNam
 #endif
 
     startclock = clock();
+#ifndef HAS_WINGUI
+    outp_bar_shown = 0;         /* Enhancement-184: fresh progress state per run */
+#endif
     return (OK);
 }
 
@@ -1188,8 +1240,12 @@ fileEnd(runDesc *run)
         long place = ftell(run->fp);
         fseek(run->fp, run->pointPos, SEEK_SET);
         fprintf(run->fp, "%d", run->pointCount);
-        if (!ft_optimizing)     /* Enhancement-130 */
+        if (!ft_optimizing) {   /* Enhancement-130 */
+#ifndef HAS_WINGUI
+            outp_finish_reference(run);   /* Enhancement-184: bar reaches 100% */
+#endif
             fprintf(stdout, "\nNo. of Data Rows : %d\n", run->pointCount);
+        }
         fseek(run->fp, place, SEEK_SET);
     } else {
         /* Yet another hack-around */
@@ -1351,8 +1407,12 @@ plotAddComplexValue(dataDesc *desc, IFcomplex value)
 static void
 plotEnd(runDesc *run)
 {
-    if (!ft_optimizing)         /* Enhancement-130 */
+    if (!ft_optimizing) {       /* Enhancement-130 */
+#ifndef HAS_WINGUI
+        outp_finish_reference(run);   /* Enhancement-184: bar reaches 100% */
+#endif
         fprintf(stdout, "\nNo. of Data Rows : %d\n", run->pointCount);
+    }
 }
 
 

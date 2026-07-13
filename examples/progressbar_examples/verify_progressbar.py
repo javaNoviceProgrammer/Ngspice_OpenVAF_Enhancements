@@ -82,7 +82,9 @@ def validate(name, rows, expected_pct, tol=3.0):
     # [4] monotone non-decreasing, ends near 100%
     pcts = [pct for _, _, pct in rows]
     check(f"{name}: % monotone non-decreasing", all(b >= a for a, b in zip(pcts, pcts[1:])))
-    check(f"{name}: reaches near 100% ({pcts[-1]}%)", pcts[-1] >= 90)
+    # Enhancement-184: the throttle used to skip the final point, freezing the
+    # bar below 100%; a forced end-of-run print now always completes it.
+    check(f"{name}: reaches exactly 100% ({pcts[-1]}%)", pcts[-1] == 100)
 
 
 print("Enhancement: sweep progress bar on the 'Reference value' line")
