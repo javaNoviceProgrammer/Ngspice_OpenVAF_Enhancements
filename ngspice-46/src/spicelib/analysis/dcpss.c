@@ -847,7 +847,16 @@ pnoise_sweep(CKTcircuit *ckt, PSSan *job)
          * is computed by evaluating each device's noise at every sample's bias
          * (CKTload per sample) and folding through the time-domain transfer, then
          * averaging over the period. Reduces to the stationary case (and hence
-         * .noise) when S(t) is constant, by Parseval. */
+         * .noise) when S(t) is constant, by Parseval.
+         *
+         * Enhancement-177 note: this time-domain identity treats the source
+         * PSD as FREQUENCY-FLAT across the folding span (exact for
+         * modulated-white noise). A frequency-dependent PSD (flicker) folded
+         * through k != 0 conversion cannot be collapsed into the |A_s|^2
+         * product with the aggregate device-noise API; use the stationary
+         * mode (which evaluates each sideband at its own source frequency,
+         * E-177) when folded flicker matters. The shipped cyclo use cases
+         * (modulated white; flicker on conversion-free circuits) are exact. */
         long   P = job->PSSopPoints, s;
         int    Nf = 0, fi, c;
         double *freqs, *onz, *Pr_all, *Pi_all;
@@ -928,7 +937,6 @@ pnoise_sweep(CKTcircuit *ckt, PSSan *job)
     for (freq = fstart; freq <= fstop * (1.0 + 1e-9); ) {
         double onoise = 0.0, gain2 = 1.0, gsi;
 
-        data.freq = freq;
         data.delFreq = 0.0;         /* density only -- we do not integrate here */
         data.prtSummary = FALSE;
 
@@ -937,6 +945,15 @@ pnoise_sweep(CKTcircuit *ckt, PSSan *job)
             for (k = -M; k <= M; k++) {
                 double dens = 0.0;
                 size_t blk = (size_t)(k + M) * (size_t)N;
+                /* Enhancement-177: the sideband-k adjoint carries noise that
+                 * ORIGINATES at the physical frequency |freq + k*f0| -- a
+                 * frequency-dependent source PSD (flicker 1/f, noise_table)
+                 * must be evaluated THERE, not at the output frequency.
+                 * (White sources are flat, and LTI circuits have no k != 0
+                 * transfer, which is why every earlier check passed.) */
+                data.freq = fabs(freq + (double)k * f0);
+                if (data.freq == 0.0)
+                    data.freq = freq;   /* exact-hit guard (1/f at dc) */
                 for (j = 1; j <= N; j++) {
                     ckt->CKTrhs[j]  = Psr[blk + (size_t)(j - 1)];
                     ckt->CKTirhs[j] = Psi[blk + (size_t)(j - 1)];
@@ -2337,6 +2354,11 @@ QPnoiseAnalyze(CKTcircuit *ckt, int outNode, double f_in, int cyclo, int verbose
             for (hi = 0; hi < Nh; hi++) {
                 double dens = 0.0;
                 size_t blk = (size_t)hi * (size_t)N;
+                /* Enhancement-177: evaluate the source PSD at the harmonic's
+                 * own physical frequency (see pnoise_sweep). */
+                data.freq = fabs(f_in + hd->h1[hi] * hd->f1 + hd->h2[hi] * hd->f2);
+                if (data.freq == 0.0)
+                    data.freq = f_in;
                 for (j = 1; j <= N; j++) {
                     ckt->CKTrhs[j]  = Psr[blk + (size_t)(j-1)];
                     ckt->CKTirhs[j] = Psi[blk + (size_t)(j-1)];
@@ -2354,7 +2376,10 @@ QPnoiseAnalyze(CKTcircuit *ckt, int outNode, double f_in, int cyclo, int verbose
              * is the TIME-domain transfer at 2-D phase sample s = (s1,s2). Evaluate
              * each device's noise at every sample's bias (v(theta1,theta2) from the
              * retained V) and average over the P1xP2 grid. By Parseval this reduces to
-             * the stationary sum (and hence .noise) when S(t) is constant. */
+             * the stationary sum (and hence .noise) when S(t) is constant.
+             * (E-177: same frequency-flat assumption as the single-tone cyclo
+             * path -- exact for modulated-white; use stationary mode for folded
+             * flicker.) */
             int P1 = hd->P1, P2 = hd->P2, s1, s2;
             int Ptot = P1 * P2;
             double *vsamp = TMALLOC(double, (size_t)N * (size_t)Ptot);
@@ -2879,10 +2904,17 @@ PhaseNoiseAnalyze(CKTcircuit *ckt, double fstart, double fstop, int npts, int ve
         memset(Psi, 0, (size_t)Ntot*sizeof(double));
         Psr[(size_t)(M+1)*(size_t)N + (size_t)(onode-1)] = 1.0;   /* carrier sideband m=1 */
         if (pss_csolve(Ntot, Ar, Ai, Psr, Psi) == 0) {
-            data.freq = freq; data.delFreq = 0.0; data.prtSummary = FALSE;
+            data.delFreq = 0.0; data.prtSummary = FALSE;
             for (k = -M; k <= M; k++) {
                 double dens = 0.0;
                 size_t blk = (size_t)(k+M)*(size_t)N;
+                /* Enhancement-177: sideband k folds noise ORIGINATING at
+                 * |freq + k*f0| -- crucial for the flicker (1/f^3) region,
+                 * where evaluating the folded far-sideband blocks at the tiny
+                 * offset frequency would wildly overweight them. */
+                data.freq = fabs(freq + (double)k * f0);
+                if (data.freq == 0.0)
+                    data.freq = freq;
                 for (j = 1; j <= N; j++) { ckt->CKTrhs[j] = Psr[blk+(size_t)(j-1)]; ckt->CKTirhs[j] = Psi[blk+(size_t)(j-1)]; }
                 ckt->CKTrhs[0] = 0.0; ckt->CKTirhs[0] = 0.0;
                 for (ei = 0; ei < DEVmaxnum; ei++)

@@ -1,0 +1,24 @@
+* pnoise folded-flicker demo -- Enhancement-177
+*
+* A 10k resistor with flicker noise (kf=1e-9, af=2) feeds a node whose load
+* conductance is pumped at 1 MHz: G(t) = 1m + 0.8m*sin(2*pi*1MHz*t). The pump
+* folds noise from the sidebands f +- k*1MHz into the output. Flicker at
+* ~1 MHz is ~1000x weaker than at 1 kHz -- but before E-177 the folded
+* sidebands were evaluated at the OUTPUT frequency (1 kHz), overestimating
+* onoise by ~21% here (digit-for-digit the wrong-frequency model; unbounded
+* as f << f0). The values below now match an independent LPTV referee and a
+* TRNOISE transient Monte-Carlo to <0.5%.
+V1 lo 0 SIN(0 1 1meg)
+VDC a 0 DC 1
+R1 a b rmod 10k
+B1 b 0 I=(1m + 0.8m*v(lo))*v(b)
+C1 b 0 100p
+.model rmod R(kf=1e-9 af=2 ef=1)
+.pnoise 1meg 1u b 1024 6 50 5u b vdc dec 2 1k 100k
+
+.control
+run
+print onoise_spectrum
+.endc
+
+.end
