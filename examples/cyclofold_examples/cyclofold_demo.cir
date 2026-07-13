@@ -1,0 +1,19 @@
+* Enhancement-178: exact separable cyclostationary noise folding demo.
+* An LPTV conductance (B1: g(t) = 1m + 0.8m*sin(2pi*1MHz*t)) pumps node b, fed
+* by a flicker-noisy 10k resistor. In cyclo mode the folded flicker is now
+* evaluated EXACTLY: per generator, the modulation envelope's harmonics B_q are
+* extracted by load polarization and each is folded from its SOURCE frequency
+* |f + q*f0| -- the old frequency-flat identity overestimated onoise by 34%
+* on this circuit ("flicker sees <m>^2, white sees <m^2>").
+V1 lo 0 SIN(0 1 1meg)
+VDC a 0 DC 1
+R1 a b rmod 10k
+B1 b 0 I=(1m + 0.8m*v(lo))*v(b)
+C1 b 0 100p
+.model rmod R(kf=1e-9 af=2 ef=1)
+.pnoise 1meg 1u b 1024 6 50 5u b vdc dec 4 500 200k cyclo
+.control
+run
+print onoise_spectrum
+.endc
+.end

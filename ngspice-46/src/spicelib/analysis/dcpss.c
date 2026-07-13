@@ -840,26 +840,58 @@ pnoise_sweep(CKTcircuit *ckt, PSSan *job)
             job->PSSpnCyclo ? "; cyclostationary" : "");
 
     if (job->PSSpnCyclo) {
-        /* Enhancement-126: cyclostationary noise. The device noise PSD S(t) varies
-         * along the PSS period, and its harmonics couple sidebands. Using the
-         * identity onoise = (1/P) Σ_s S(t_s)·|ΔA_s|², where A_s(j) = Σ_k Ψ_k(j)·
-         * exp(j·2π·k·s/P) is the inverse-DFT of the sideband adjoint transfers, this
-         * is computed by evaluating each device's noise at every sample's bias
-         * (CKTload per sample) and folding through the time-domain transfer, then
-         * averaging over the period. Reduces to the stationary case (and hence
-         * .noise) when S(t) is constant, by Parseval.
+        /* Enhancement-178: EXACT separable cyclostationary folding.
          *
-         * Enhancement-177 note: this time-domain identity treats the source
-         * PSD as FREQUENCY-FLAT across the folding span (exact for
-         * modulated-white noise). A frequency-dependent PSD (flicker) folded
-         * through k != 0 conversion cannot be collapsed into the |A_s|^2
-         * product with the aggregate device-noise API; use the stationary
-         * mode (which evaluates each sideband at its own source frequency,
-         * E-177) when folded flicker matters. The shipped cyclo use cases
-         * (modulated white; flicker on conversion-free circuits) are exact. */
+         * E-126's identity onoise = (1/P) Sum_s S(t_s)|A_s|^2 is exact only for
+         * frequency-FLAT (modulated-white) sources: it cannot see that noise
+         * folded from sideband q ORIGINATES at |f + q*f0| where a colored
+         * source (flicker 1/f, noise_table) has a different density (E-177).
+         * For the physical separable model S(t, f) = m(t)^2 * g(f) (a colored
+         * stationary process amplitude-modulated along the orbit) the exact
+         * output noise is
+         *
+         *   onoise(f) = Sum_g Sum_q | B_q(g) |^2 * g_g(|f + q*f0|),
+         *   B_q(g)    = (1/P) Sum_s m_g(t_s) * dA_s(g) * e^{+j q th_s},
+         *   dA_s(g)   = the generator's transimpedance difference of
+         *               A-_s(j) = Sum_k Psi_k(j) e^{-j k th_s}.
+         *
+         * (Stationary limit m = const: B_q = m*dPsi_q, recovering the E-177
+         * stationary sum exactly; flat limit g = const: Parseval collapses the
+         * q-sum back to E-126's time-domain identity. This path therefore
+         * strictly generalizes both.)
+         *
+         * The per-generator amplitudes are recovered WITHOUT any device-API
+         * change through the noise-summary machinery (data->prtSummary fills
+         * data->outpVector with one density per generator) plus load
+         * POLARIZATION against a fixed reference load R = Psi_0:
+         * four sweeps with loads A+-R, A+-jR give the complex
+         * S_g(t_s)*dA_s(g)*conj(dR(g)) per generator, a fifth (load R) gives
+         * S_g(t_s)*|dR(g)|^2, and c_g,s = y/sqrt(z) equals
+         * sqrt(S_g(t_s)) * dA_s(g) * (unit phasor that cancels in |B_q|^2).
+         * The spectral shape g_g is MEASURED pointwise at the needed
+         * frequencies |f + q*f0| (no 1/f^EF assumption -- noise_table works),
+         * at several probe biases so a generator quiet at one phase still gets
+         * its shape from an active phase.
+         *
+         * Generators whose measured shape is flat are routed through the
+         * original time-domain identity (exact for ANY quadratic form,
+         * including NevalSrc2-correlated pairs); colored generators through
+         * the B_q machinery (exact for the rank-1 node-pair sources that all
+         * colored generators are in practice). A colored generator invisible
+         * to the reference load falls back to the flat identity (the old
+         * behavior) rather than being dropped. */
         long   P = job->PSSopPoints, s;
-        int    Nf = 0, fi, c;
+        int    Nf = 0, fi, c, G, g, qi;
+        int    Qmax = 2 * M, nq = 2 * Qmax + 1;
+        int    NB = 8;                      /* shape-probe biases */
         double *freqs, *onz, *Pr_all, *Pi_all;
+        Ndata   d2;
+        NOISEAN nj2;
+        int    *is_total;
+        double *swv[5];
+        double *Bqr, *Bqi, *Dflat, *zsum, *probe;
+        double *Lr, *Li;
+        double  dummy_dens;
 
         for (freq = fstart; freq <= fstop * (1.0 + 1e-9); ) {   /* count points */
             Nf++;
@@ -884,7 +916,51 @@ pnoise_sweep(CKTcircuit *ckt, PSSan *job)
             else               { freq *= mult; }
         }
 
-        for (s = 0; s < P; s++) {   /* evaluate device noise at each sample's bias */
+        /* --- generator naming pass: one summary slot per noise generator --- */
+        nj2 = nj;
+        nj2.NStpsSm = 1;
+        memset(&d2, 0, sizeof d2);
+        ckt->CKTcurJob = (JOB *) &nj2;
+        for (i = 0; i < DEVmaxnum; i++)
+            if (DEVices[i] && DEVices[i]->DEVnoise && ckt->CKThead[i]) {
+                dummy_dens = 0.0;
+                DEVices[i]->DEVnoise(N_DENS, N_OPEN, ckt->CKThead[i], ckt, &d2, &dummy_dens);
+            }
+        G = d2.numPlots;
+        is_total = TMALLOC(int, (G > 0) ? G : 1);
+        for (g = 0; g < G; g++) {
+            /* a slot whose name is a proper prefix of the preceding slot's name
+             * is the family TOTAL ("onoise_R1" after "onoise_R1_1overf"):
+             * totals are redundant sums and must not be folded again */
+            is_total[g] = 0;
+            if (g > 0) {
+                const char *nm = (const char *) d2.namelist[g];
+                const char *pm = (const char *) d2.namelist[g - 1];
+                size_t ln = strlen(nm);
+                if (strncmp(nm, pm, ln) == 0 && strlen(pm) > ln)
+                    is_total[g] = 1;
+            }
+        }
+        d2.outpVector = TMALLOC(double, (G > 0) ? G : 1);
+        d2.prtSummary = TRUE;
+        d2.delFreq = 0.0;
+        for (i = 0; i < 5; i++)
+            swv[i] = TMALLOC(double, (G > 0) ? G : 1);
+        Bqr   = TMALLOC(double, (size_t)Nf * (size_t)G * (size_t)nq);
+        Bqi   = TMALLOC(double, (size_t)Nf * (size_t)G * (size_t)nq);
+        Dflat = TMALLOC(double, (size_t)Nf * (size_t)G);
+        zsum  = TMALLOC(double, (size_t)Nf * (size_t)G);
+        probe = TMALLOC(double, (size_t)NB * (size_t)Nf * (size_t)G * (size_t)nq);
+        memset(Bqr, 0, (size_t)Nf * (size_t)G * (size_t)nq * sizeof(double));
+        memset(Bqi, 0, (size_t)Nf * (size_t)G * (size_t)nq * sizeof(double));
+        memset(Dflat, 0, (size_t)Nf * (size_t)G * sizeof(double));
+        memset(zsum, 0, (size_t)Nf * (size_t)G * sizeof(double));
+        memset(probe, 0, (size_t)NB * (size_t)Nf * (size_t)G * (size_t)nq * sizeof(double));
+        Lr = TMALLOC(double, N + 1);
+        Li = TMALLOC(double, N + 1);
+
+        /* --- main collection loop: per sample, per frequency, five sweeps --- */
+        for (s = 0; s < P; s++) {
             double ang0 = 2.0 * M_PI * (double)s / (double)P;
             for (i = 1; i <= N; i++)
                 ckt->CKTrhsOld[i] = job->PSSopVoltages[(i - 1) + s * N];
@@ -895,31 +971,149 @@ pnoise_sweep(CKTcircuit *ckt, PSSan *job)
             ckt->CKTmode = (ckt->CKTmode & MODEUIC) | MODEDCOP | MODEINITSMSIG;
             CKTload(ckt);
             for (fi = 0; fi < Nf; fi++) {
-                double dens = 0.0;
                 double *pr = Pr_all + (size_t)fi * (size_t)hd.Ntot;
                 double *pi = Pi_all + (size_t)fi * (size_t)hd.Ntot;
-                for (j = 1; j <= N; j++) {   /* A_s(j) = IDFT_k Ψ_k(j) */
+                int sweep;
+                for (j = 1; j <= N; j++) {   /* A-_s(j) = Sum_k Psi_k(j) e^{-jk th} */
                     double ar = 0.0, ai = 0.0;
                     for (k = -M; k <= M; k++) {
                         size_t idx = (size_t)(k + M) * (size_t)N + (size_t)(j - 1);
                         double cs = cos((double)k * ang0), sn = sin((double)k * ang0);
-                        ar += pr[idx] * cs - pi[idx] * sn;
-                        ai += pr[idx] * sn + pi[idx] * cs;
+                        ar += pr[idx] * cs + pi[idx] * sn;    /* e^{-jk*th} */
+                        ai += pi[idx] * cs - pr[idx] * sn;
                     }
-                    ckt->CKTrhs[j] = ar;  ckt->CKTirhs[j] = ai;
+                    Lr[j] = ar;  Li[j] = ai;
                 }
-                ckt->CKTrhs[0] = 0.0;  ckt->CKTirhs[0] = 0.0;
-                data.freq = freqs[fi];  data.delFreq = 0.0;  data.prtSummary = FALSE;
-                for (i = 0; i < DEVmaxnum; i++)
-                    if (DEVices[i] && DEVices[i]->DEVnoise && ckt->CKThead[i])
-                        DEVices[i]->DEVnoise(N_DENS, N_CALC, ckt->CKThead[i],
-                                             ckt, &data, &dens);
-                onz[fi] += dens;
+                for (sweep = 0; sweep < 5; sweep++) {
+                    size_t r0 = (size_t)M * (size_t)N;        /* Psi_0 block = R */
+                    for (j = 1; j <= N; j++) {
+                        double rr = pr[r0 + (size_t)(j - 1)];
+                        double ri = pi[r0 + (size_t)(j - 1)];
+                        switch (sweep) {
+                        case 0: ckt->CKTrhs[j] = Lr[j] + rr;  ckt->CKTirhs[j] = Li[j] + ri;  break;
+                        case 1: ckt->CKTrhs[j] = Lr[j] - rr;  ckt->CKTirhs[j] = Li[j] - ri;  break;
+                        case 2: ckt->CKTrhs[j] = Lr[j] - ri;  ckt->CKTirhs[j] = Li[j] + rr;  break; /* A + jR */
+                        case 3: ckt->CKTrhs[j] = Lr[j] + ri;  ckt->CKTirhs[j] = Li[j] - rr;  break; /* A - jR */
+                        default: ckt->CKTrhs[j] = rr;         ckt->CKTirhs[j] = ri;          break; /* R */
+                        }
+                    }
+                    ckt->CKTrhs[0] = 0.0;  ckt->CKTirhs[0] = 0.0;
+                    d2.freq = freqs[fi];  d2.outNumber = 0;
+                    dummy_dens = 0.0;
+                    for (i = 0; i < DEVmaxnum; i++)
+                        if (DEVices[i] && DEVices[i]->DEVnoise && ckt->CKThead[i])
+                            DEVices[i]->DEVnoise(N_DENS, N_CALC, ckt->CKThead[i],
+                                                 ckt, &d2, &dummy_dens);
+                    memcpy(swv[sweep], d2.outpVector, (size_t)G * sizeof(double));
+                }
+                for (g = 0; g < G; g++) {
+                    double dp, dm, djp, djm, z, qa;
+                    size_t bfg = ((size_t)fi * (size_t)G + (size_t)g) * (size_t)nq;
+                    if (is_total[g])
+                        continue;
+                    dp = swv[0][g];  dm = swv[1][g];
+                    djp = swv[2][g]; djm = swv[3][g];
+                    z = swv[4][g];
+                    qa = 0.5 * (dp + dm) - z;                 /* S_g * Q_g(A-_s) */
+                    Dflat[(size_t)fi * (size_t)G + (size_t)g] += qa;
+                    if (z > 1e-280) {
+                        double yr = 0.25 * (dp - dm);          /* S*Re(dA dR*) */
+                        double yi = 0.25 * (djp - djm);        /* S*Im(dA dR*) */
+                        double sz = sqrt(z);
+                        double cr = yr / sz, ci = yi / sz;     /* c_g,s */
+                        zsum[(size_t)fi * (size_t)G + (size_t)g] += z;
+                        for (qi = 0; qi < nq; qi++) {
+                            double aq = (double)(qi - Qmax) * ang0;
+                            double cq = cos(aq), sq = sin(aq);
+                            Bqr[bfg + (size_t)qi] += cr * cq - ci * sq;   /* c * e^{+jq th} */
+                            Bqi[bfg + (size_t)qi] += cr * sq + ci * cq;
+                        }
+                    }
+                }
             }
         }
 
-        for (fi = 0; fi < Nf; fi++) {   /* period-average, gain, output */
-            double onoise = onz[fi] / (double)P, gain2 = 1.0, gsi;
+        /* --- spectral-shape probes: S_g(t_b, |f + q f0|) with load R --- */
+        {
+            int b;
+            for (b = 0; b < NB; b++) {
+                long sb = (long)b * P / NB;
+                for (i = 1; i <= N; i++)
+                    ckt->CKTrhsOld[i] = job->PSSopVoltages[(i - 1) + sb * N];
+                ckt->CKTrhsOld[0] = 0.0;
+                if (ns > 0)
+                    memcpy(ckt->CKTstate0, job->PSSopStates + (size_t)sb * (size_t)ns,
+                           (size_t)ns * sizeof(double));
+                ckt->CKTmode = (ckt->CKTmode & MODEUIC) | MODEDCOP | MODEINITSMSIG;
+                CKTload(ckt);
+                for (fi = 0; fi < Nf; fi++) {
+                    double *pr = Pr_all + (size_t)fi * (size_t)hd.Ntot;
+                    double *pi = Pi_all + (size_t)fi * (size_t)hd.Ntot;
+                    size_t r0 = (size_t)M * (size_t)N;
+                    for (j = 1; j <= N; j++) {
+                        ckt->CKTrhs[j]  = pr[r0 + (size_t)(j - 1)];
+                        ckt->CKTirhs[j] = pi[r0 + (size_t)(j - 1)];
+                    }
+                    ckt->CKTrhs[0] = 0.0;  ckt->CKTirhs[0] = 0.0;
+                    for (qi = 0; qi < nq; qi++) {
+                        double fq = fabs(freqs[fi] + (double)(qi - Qmax) * f0);
+                        if (fq == 0.0)
+                            fq = freqs[fi];
+                        d2.freq = fq;  d2.outNumber = 0;
+                        dummy_dens = 0.0;
+                        for (i = 0; i < DEVmaxnum; i++)
+                            if (DEVices[i] && DEVices[i]->DEVnoise && ckt->CKThead[i])
+                                DEVices[i]->DEVnoise(N_DENS, N_CALC, ckt->CKThead[i],
+                                                     ckt, &d2, &dummy_dens);
+                        for (g = 0; g < G; g++)
+                            probe[(((size_t)b * (size_t)Nf + (size_t)fi) * (size_t)G
+                                   + (size_t)g) * (size_t)nq + (size_t)qi] = d2.outpVector[g];
+                    }
+                }
+            }
+        }
+
+        /* --- combine: flat slots via the time-domain identity, colored slots
+         *     via Sum_q |B_q|^2 * r(q) with the measured shape ratio --- */
+        for (fi = 0; fi < Nf; fi++) {
+            for (g = 0; g < G; g++) {
+                double zref = 0.0, on_g;
+                int    b, bbest = 0, colored = 0;
+                size_t bfg = ((size_t)fi * (size_t)G + (size_t)g) * (size_t)nq;
+                if (is_total[g])
+                    continue;
+                for (b = 0; b < NB; b++) {                    /* most active probe bias */
+                    double zr = probe[(((size_t)b * (size_t)Nf + (size_t)fi) * (size_t)G
+                                       + (size_t)g) * (size_t)nq + (size_t)Qmax];
+                    if (zr > zref) { zref = zr; bbest = b; }
+                }
+                if (zref > 0.0) {
+                    for (qi = 0; qi < nq; qi++) {
+                        double rq = probe[(((size_t)bbest * (size_t)Nf + (size_t)fi) * (size_t)G
+                                           + (size_t)g) * (size_t)nq + (size_t)qi] / zref;
+                        if (fabs(rq - 1.0) > 1e-6) { colored = 1; break; }
+                    }
+                }
+                if (colored && zsum[(size_t)fi * (size_t)G + (size_t)g] > 0.0) {
+                    on_g = 0.0;
+                    for (qi = 0; qi < nq; qi++) {
+                        double rq = probe[(((size_t)bbest * (size_t)Nf + (size_t)fi) * (size_t)G
+                                           + (size_t)g) * (size_t)nq + (size_t)qi] / zref;
+                        double br = Bqr[bfg + (size_t)qi] / (double)P;
+                        double bi = Bqi[bfg + (size_t)qi] / (double)P;
+                        on_g += (br * br + bi * bi) * rq;
+                    }
+                } else {
+                    /* flat generator, or colored one invisible to the reference
+                     * load: the (any-rank exact / legacy) time-domain identity */
+                    on_g = Dflat[(size_t)fi * (size_t)G + (size_t)g] / (double)P;
+                }
+                onz[fi] += on_g;
+            }
+        }
+
+        for (fi = 0; fi < Nf; fi++) {   /* gain, output */
+            double onoise = onz[fi], gain2 = 1.0, gsi;
             IFvalue refVal, valData;
             double out[2];
             if (hd.has_src && pac_solve_at(&hd, f0, freqs[fi], outNode, 1, Xr, Xi) == 0) {
@@ -932,6 +1126,11 @@ pnoise_sweep(CKTcircuit *ckt, PSSan *job)
             valData.v.numValue = 2;  valData.v.vec.rVec = out;
             SPfrontEnd->OUTpData(plot, &refVal, &valData);
         }
+        ckt->CKTcurJob = (JOB *) &nj;
+        for (i = 0; i < 5; i++) FREE(swv[i]);
+        FREE(is_total); FREE(d2.outpVector); FREE(d2.namelist);
+        FREE(Bqr); FREE(Bqi); FREE(Dflat); FREE(zsum); FREE(probe);
+        FREE(Lr); FREE(Li);
         FREE(freqs); FREE(onz); FREE(Pr_all); FREE(Pi_all);
     } else
     for (freq = fstart; freq <= fstop * (1.0 + 1e-9); ) {
@@ -1584,12 +1783,27 @@ HBanalyze(CKTcircuit *ckt, double f0, int K, int Pin, int maxiter, double tol, i
             pac_free_harmonics(&hd);            /* hd not needed past this point */
 
             /* residual F = I_R + I_C - lambda*Is */
-            fnorm = 0.0;
             for (i = 0; i < Ntot; i++) {
                 Fr[i] = IRr[i] + Kr[i] - target * Isr[i];
                 Fi[i] = IRi[i] + Ki[i] - target * Isi[i];
-                fnorm += Fr[i] * Fr[i] + Fi[i] * Fi[i];
             }
+            /* Enhancement-178: the settle-mode rhs folded into I_R already
+             * carries the DC (operating-point) source values, so -lambda*Is
+             * on its own would subtract the DC sources a SECOND time: the
+             * converged spectrum answered a doubled DC drive (every DC bias
+             * voltage came out exactly 2x, silently corrupting all
+             * bias-dependent noise and conversion downstream -- caught by the
+             * E-178 cyclostationary referee). Adding the UNSCALED DC source
+             * block back makes the net DC drive exactly -lambda*Is_DC.
+             * (Assumes the DCOP source value equals the tone-basis DC
+             * average, true for DC/SIN sources -- the HB use cases.) */
+            for (i = 0; i < N; i++) {
+                Fr[(size_t)K * (size_t)N + (size_t)i] += Isr[(size_t)K * (size_t)N + (size_t)i];
+                Fi[(size_t)K * (size_t)N + (size_t)i] += Isi[(size_t)K * (size_t)N + (size_t)i];
+            }
+            fnorm = 0.0;
+            for (i = 0; i < Ntot; i++)
+                fnorm += Fr[i] * Fr[i] + Fi[i] * Fi[i];
             fnorm = sqrt(fnorm);
             nnewton++;
             if (verbose)
@@ -2064,12 +2278,28 @@ QPSShb(CKTcircuit *ckt, double f1, double f2, int K1, int K2, int P1, int P2,
             }
             qp_free(&hd);
 
-            fnorm = 0.0;
             for (i = 0; i < Ntot; i++) {
                 Fr[i] = IRr[i] + Kr[i] - target*Isr[i];
                 Fi[i] = IRi[i] + Ki[i] - target*Isi[i];
-                fnorm += Fr[i]*Fr[i] + Fi[i]*Fi[i];
             }
+            /* Enhancement-178: the settle-mode rhs folded into I_R already
+             * carries the DC (operating-point) source values, so -lambda*Is
+             * on its own would subtract the DC sources a SECOND time: the
+             * converged spectrum answered a doubled DC drive (every DC bias
+             * voltage came out exactly 2x, silently corrupting all
+             * bias-dependent noise and conversion downstream -- caught by the
+             * E-178 cyclostationary referee). Adding the UNSCALED DC source
+             * block back makes the net DC drive exactly -lambda*Is_DC.
+             * (Assumes the DCOP source value equals the tone-basis DC
+             * average, true for DC/SIN sources -- the HB use cases.) */
+            { int i00f = K1*(2*K2+1) + K2;
+              for (i = 0; i < N; i++) {
+                Fr[(size_t)i00f*(size_t)N + (size_t)i] += Isr[(size_t)i00f*(size_t)N + (size_t)i];
+                Fi[(size_t)i00f*(size_t)N + (size_t)i] += Isi[(size_t)i00f*(size_t)N + (size_t)i];
+              } }
+            fnorm = 0.0;
+            for (i = 0; i < Ntot; i++)
+                fnorm += Fr[i]*Fr[i] + Fi[i]*Fi[i];
             fnorm = sqrt(fnorm);
             nnewton++;
             if (verbose)
@@ -2370,25 +2600,85 @@ QPnoiseAnalyze(CKTcircuit *ckt, int outNode, double f_in, int cyclo, int verbose
                 onoise += dens;                   /* sum device noise over sidebands */
             }
         } else {
-            /* CYCLOSTATIONARY (E-139): the device PSD S(t) swings over the two-tone
-             * period, so instead of the frequency-domain sum we use the identity
-             * onoise = (1/P) Sum_s S(t_s)*|A_s|^2, where A_s(j) = IDFT_{(k1,k2)} Psi
-             * is the TIME-domain transfer at 2-D phase sample s = (s1,s2). Evaluate
-             * each device's noise at every sample's bias (v(theta1,theta2) from the
-             * retained V) and average over the P1xP2 grid. By Parseval this reduces to
-             * the stationary sum (and hence .noise) when S(t) is constant.
-             * (E-177: same frequency-flat assumption as the single-tone cyclo
-             * path -- exact for modulated-white; use stationary mode for folded
-             * flicker.) */
+            /* CYCLOSTATIONARY (E-139, exact-separable E-178): the device PSD
+             * swings over the two-tone quasi-period. E-139 used the identity
+             * onoise = (1/P) Sum_s S(t_s)|A_s|^2, exact only for frequency-FLAT
+             * (modulated-white) sources. E-178 replaces it with the exact
+             * separable model, the 2-D analog of the single-tone pnoise cyclo
+             * path (see pnoise_sweep): per generator g,
+             *   onoise = Sum_{q1,q2} |B_{q1,q2}(g)|^2 * g_g(|f + q1 f1 + q2 f2|),
+             *   B_q(g) = (1/P1P2) Sum_s m_g(t_s) dA_s(g) e^{+j(q1 th1 + q2 th2)},
+             * with per-generator amplitudes recovered by load POLARIZATION
+             * against the reference load R = Psi_(0,0) (five DEVnoise sweeps
+             * per sample) and the spectral shape g_g MEASURED pointwise at the
+             * folded frequencies. Flat generators (thermal/shot) are routed
+             * through the original identity (exact for any quadratic form);
+             * colored ones (flicker, noise_table) through the B_q machinery.
+             * Stationary m: reduces to the E-177 stationary sum; flat g:
+             * Parseval collapses back to the E-139 identity. */
             int P1 = hd->P1, P2 = hd->P2, s1, s2;
             int Ptot = P1 * P2;
+            int Q1 = 2 * hd->K1, Q2 = 2 * hd->K2;
+            int nq = (2*Q1 + 1) * (2*Q2 + 1), qi, q1, q2;
+            int G, g, sw, b1, b2;
+            int NB1 = (P1 < 4) ? P1 : 4, NB2 = (P2 < 4) ? P2 : 4;
             double *vsamp = TMALLOC(double, (size_t)N * (size_t)Ptot);
             double *bset  = TMALLOC(double, N);
+            double *Lr    = TMALLOC(double, N + 1);
+            double *Li    = TMALLOC(double, N + 1);
+            NOISEAN nj2;
+            Ndata   d2;
+            int    *is_total;
+            double *swv[5], *Bqr, *Bqi, *Dflat, *zsum, *probe;
+            double  dummy_dens;
+
             qp_synth(hd->Vr, hd->Vi, N, hd->K1, hd->K2, P1, P2, vsamp);
+
+            /* generator naming pass (one summary slot per noise generator) */
+            nj2 = nj;
+            nj2.NStpsSm = 1;
+            memset(&d2, 0, sizeof d2);
+            ckt->CKTcurJob = (JOB *) &nj2;
+            for (i = 0; i < DEVmaxnum; i++)
+                if (DEVices[i] && DEVices[i]->DEVnoise && ckt->CKThead[i]) {
+                    dummy_dens = 0.0;
+                    DEVices[i]->DEVnoise(N_DENS, N_OPEN, ckt->CKThead[i], ckt, &d2, &dummy_dens);
+                }
+            G = d2.numPlots;
+            is_total = TMALLOC(int, (G > 0) ? G : 1);
+            for (g = 0; g < G; g++) {
+                /* family-TOTAL slots: name is a proper prefix of the preceding
+                 * generator's name (see pnoise_sweep) */
+                is_total[g] = 0;
+                if (g > 0) {
+                    const char *nm = (const char *) d2.namelist[g];
+                    const char *pm = (const char *) d2.namelist[g - 1];
+                    size_t ln = strlen(nm);
+                    if (strncmp(nm, pm, ln) == 0 && strlen(pm) > ln)
+                        is_total[g] = 1;
+                }
+            }
+            d2.outpVector = TMALLOC(double, (G > 0) ? G : 1);
+            d2.prtSummary = TRUE;
+            d2.delFreq = 0.0;
+            for (i = 0; i < 5; i++)
+                swv[i] = TMALLOC(double, (G > 0) ? G : 1);
+            Bqr   = TMALLOC(double, (size_t)G * (size_t)nq);
+            Bqi   = TMALLOC(double, (size_t)G * (size_t)nq);
+            Dflat = TMALLOC(double, (size_t)G);
+            zsum  = TMALLOC(double, (size_t)G);
+            probe = TMALLOC(double, (size_t)NB1 * (size_t)NB2 * (size_t)G * (size_t)nq);
+            memset(Bqr, 0, (size_t)G * (size_t)nq * sizeof(double));
+            memset(Bqi, 0, (size_t)G * (size_t)nq * sizeof(double));
+            memset(Dflat, 0, (size_t)G * sizeof(double));
+            memset(zsum, 0, (size_t)G * sizeof(double));
+            memset(probe, 0, (size_t)NB1 * (size_t)NB2 * (size_t)G * (size_t)nq * sizeof(double));
+
             for (s1 = 0; s1 < P1; s1++)
                 for (s2 = 0; s2 < P2; s2++) {
                     int s = s1 * P2 + s2;
-                    double dens = 0.0;
+                    double th1 = 2.0*M_PI*(double)s1/(double)P1;
+                    double th2 = 2.0*M_PI*(double)s2/(double)P2;
                     /* bias the devices at this sample's quasi-periodic operating point */
                     for (j = 1; j <= N; j++)
                         ckt->CKTrhsOld[j] = vsamp[(size_t)s*(size_t)N + (size_t)(j-1)];
@@ -2411,27 +2701,152 @@ QPnoiseAnalyze(CKTcircuit *ckt, int outNode, double f_in, int cyclo, int verbose
                       } }
                     ckt->CKTmode = (ckt->CKTmode & MODEUIC) | MODEDCOP | MODEINITSMSIG;
                     CKTload(ckt);
-                    /* A_s(j) = Sum_{(k1,k2)} Psi_{(k1,k2)}(j) * exp(j 2pi(k1 s1/P1 + k2 s2/P2)) */
+                    /* A-_s(j) = Sum_{(k1,k2)} Psi_{(k1,k2)}(j) e^{-j(k1 th1 + k2 th2)} */
                     for (j = 1; j <= N; j++) {
                         double ar = 0.0, ai = 0.0;
                         for (hi = 0; hi < Nh; hi++) {
                             size_t idx = (size_t)hi*(size_t)N + (size_t)(j-1);
-                            double ang = 2.0*M_PI*((double)hd->h1[hi]*s1/P1 + (double)hd->h2[hi]*s2/P2);
+                            double ang = (double)hd->h1[hi]*th1 + (double)hd->h2[hi]*th2;
                             double cs = cos(ang), sn = sin(ang);
-                            ar += Psr[idx]*cs - Psi[idx]*sn;
-                            ai += Psr[idx]*sn + Psi[idx]*cs;
+                            ar += Psr[idx]*cs + Psi[idx]*sn;
+                            ai += Psi[idx]*cs - Psr[idx]*sn;
                         }
-                        ckt->CKTrhs[j] = ar; ckt->CKTirhs[j] = ai;
+                        Lr[j] = ar; Li[j] = ai;
                     }
-                    ckt->CKTrhs[0] = 0.0; ckt->CKTirhs[0] = 0.0;
-                    data.freq = f_in; data.delFreq = 0.0; data.prtSummary = FALSE;
-                    for (i = 0; i < DEVmaxnum; i++)
-                        if (DEVices[i] && DEVices[i]->DEVnoise && ckt->CKThead[i])
-                            DEVices[i]->DEVnoise(N_DENS, N_CALC, ckt->CKThead[i], ckt, &data, &dens);
-                    onoise += dens;
+                    for (sw = 0; sw < 5; sw++) {
+                        size_t r0 = (size_t)i00 * (size_t)N;   /* Psi_(0,0) = R */
+                        for (j = 1; j <= N; j++) {
+                            double rr = Psr[r0 + (size_t)(j-1)];
+                            double ri = Psi[r0 + (size_t)(j-1)];
+                            switch (sw) {
+                            case 0: ckt->CKTrhs[j] = Lr[j] + rr;  ckt->CKTirhs[j] = Li[j] + ri;  break;
+                            case 1: ckt->CKTrhs[j] = Lr[j] - rr;  ckt->CKTirhs[j] = Li[j] - ri;  break;
+                            case 2: ckt->CKTrhs[j] = Lr[j] - ri;  ckt->CKTirhs[j] = Li[j] + rr;  break; /* A + jR */
+                            case 3: ckt->CKTrhs[j] = Lr[j] + ri;  ckt->CKTirhs[j] = Li[j] - rr;  break; /* A - jR */
+                            default: ckt->CKTrhs[j] = rr;         ckt->CKTirhs[j] = ri;          break; /* R */
+                            }
+                        }
+                        ckt->CKTrhs[0] = 0.0;  ckt->CKTirhs[0] = 0.0;
+                        d2.freq = f_in;  d2.outNumber = 0;
+                        dummy_dens = 0.0;
+                        for (i = 0; i < DEVmaxnum; i++)
+                            if (DEVices[i] && DEVices[i]->DEVnoise && ckt->CKThead[i])
+                                DEVices[i]->DEVnoise(N_DENS, N_CALC, ckt->CKThead[i],
+                                                     ckt, &d2, &dummy_dens);
+                        memcpy(swv[sw], d2.outpVector, (size_t)G * sizeof(double));
+                    }
+                    for (g = 0; g < G; g++) {
+                        double dp, dm, djp, djm, z, qa;
+                        if (is_total[g])
+                            continue;
+                        dp = swv[0][g];  dm = swv[1][g];
+                        djp = swv[2][g]; djm = swv[3][g];
+                        z = swv[4][g];
+                        qa = 0.5 * (dp + dm) - z;
+                        Dflat[g] += qa;
+                        if (z > 1e-280) {
+                            double yr = 0.25 * (dp - dm);
+                            double yi = 0.25 * (djp - djm);
+                            double sz = sqrt(z);
+                            double cr = yr / sz, ci = yi / sz;
+                            zsum[g] += z;
+                            for (qi = 0; qi < nq; qi++) {
+                                double aq;
+                                q1 = qi / (2*Q2 + 1) - Q1;
+                                q2 = qi % (2*Q2 + 1) - Q2;
+                                aq = (double)q1*th1 + (double)q2*th2;
+                                Bqr[(size_t)g*(size_t)nq + (size_t)qi] += cr*cos(aq) - ci*sin(aq);
+                                Bqi[(size_t)g*(size_t)nq + (size_t)qi] += cr*sin(aq) + ci*cos(aq);
+                            }
+                        }
+                    }
                 }
-            onoise /= (double)Ptot;               /* period average */
-            FREE(vsamp); FREE(bset);
+
+            /* spectral-shape probes at the folded frequencies, load R */
+            for (b1 = 0; b1 < NB1; b1++)
+                for (b2 = 0; b2 < NB2; b2++) {
+                    int sb = (b1 * P1 / NB1) * P2 + (b2 * P2 / NB2);
+                    size_t r0 = (size_t)i00 * (size_t)N;
+                    for (j = 1; j <= N; j++)
+                        ckt->CKTrhsOld[j] = vsamp[(size_t)sb*(size_t)N + (size_t)(j-1)];
+                    ckt->CKTrhsOld[0] = 0.0;
+                    ckt->CKTmode = (ckt->CKTmode & MODEUIC) | MODEDCOP | MODEINITFLOAT;
+                    { int inner;
+                      for (inner = 0; inner < 100; inner++) {
+                        double bnorm = 0.0, dnorm = 0.0;
+                        for (i = 0; i <= N; i++) ckt->CKTrhs[i] = 0.0;
+                        CKTload(ckt);
+                        for (i = 1; i <= N; i++) {
+                            double db = ckt->CKTrhs[i] - bset[i-1];
+                            dnorm += db*db; bnorm += ckt->CKTrhs[i]*ckt->CKTrhs[i];
+                            bset[i-1] = ckt->CKTrhs[i];
+                        }
+                        if (inner > 0 && sqrt(dnorm) <= 1e-12*(sqrt(bnorm)+1e-30)) break;
+                      } }
+                    ckt->CKTmode = (ckt->CKTmode & MODEUIC) | MODEDCOP | MODEINITSMSIG;
+                    CKTload(ckt);
+                    for (j = 1; j <= N; j++) {
+                        ckt->CKTrhs[j]  = Psr[r0 + (size_t)(j-1)];
+                        ckt->CKTirhs[j] = Psi[r0 + (size_t)(j-1)];
+                    }
+                    ckt->CKTrhs[0] = 0.0;  ckt->CKTirhs[0] = 0.0;
+                    for (qi = 0; qi < nq; qi++) {
+                        double fq;
+                        q1 = qi / (2*Q2 + 1) - Q1;
+                        q2 = qi % (2*Q2 + 1) - Q2;
+                        fq = fabs(f_in + (double)q1*hd->f1 + (double)q2*hd->f2);
+                        if (fq == 0.0)
+                            fq = f_in;
+                        d2.freq = fq;  d2.outNumber = 0;
+                        dummy_dens = 0.0;
+                        for (i = 0; i < DEVmaxnum; i++)
+                            if (DEVices[i] && DEVices[i]->DEVnoise && ckt->CKThead[i])
+                                DEVices[i]->DEVnoise(N_DENS, N_CALC, ckt->CKThead[i],
+                                                     ckt, &d2, &dummy_dens);
+                        for (g = 0; g < G; g++)
+                            probe[(((size_t)(b1*NB2 + b2)) * (size_t)G + (size_t)g)
+                                  * (size_t)nq + (size_t)qi] = d2.outpVector[g];
+                    }
+                }
+
+            /* combine */
+            for (g = 0; g < G; g++) {
+                double zref = 0.0, on_g;
+                int    b, bbest = 0, colored = 0;
+                int    q00 = Q1 * (2*Q2 + 1) + Q2;             /* (0,0) bin */
+                if (is_total[g])
+                    continue;
+                for (b = 0; b < NB1*NB2; b++) {
+                    double zr = probe[((size_t)b * (size_t)G + (size_t)g) * (size_t)nq
+                                      + (size_t)q00];
+                    if (zr > zref) { zref = zr; bbest = b; }
+                }
+                if (zref > 0.0) {
+                    for (qi = 0; qi < nq; qi++) {
+                        double rq = probe[((size_t)bbest * (size_t)G + (size_t)g) * (size_t)nq
+                                          + (size_t)qi] / zref;
+                        if (fabs(rq - 1.0) > 1e-6) { colored = 1; break; }
+                    }
+                }
+                if (colored && zsum[g] > 0.0) {
+                    on_g = 0.0;
+                    for (qi = 0; qi < nq; qi++) {
+                        double rq = probe[((size_t)bbest * (size_t)G + (size_t)g) * (size_t)nq
+                                          + (size_t)qi] / zref;
+                        double br = Bqr[(size_t)g*(size_t)nq + (size_t)qi] / (double)Ptot;
+                        double bi = Bqi[(size_t)g*(size_t)nq + (size_t)qi] / (double)Ptot;
+                        on_g += (br*br + bi*bi) * rq;
+                    }
+                } else {
+                    on_g = Dflat[g] / (double)Ptot;
+                }
+                onoise += on_g;
+            }
+            ckt->CKTcurJob = (JOB *) &nj;
+            for (i = 0; i < 5; i++) FREE(swv[i]);
+            FREE(is_total); FREE(d2.outpVector); FREE(d2.namelist);
+            FREE(Bqr); FREE(Bqi); FREE(Dflat); FREE(zsum); FREE(probe);
+            FREE(vsamp); FREE(bset); FREE(Lr); FREE(Li);
         }
     }
 

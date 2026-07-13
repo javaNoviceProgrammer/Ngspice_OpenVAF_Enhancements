@@ -23,12 +23,14 @@ Two checks:
    ~ KF*|I(t)|^2 is genuinely cyclostationary. The circuit is linear (fast PSS) and
    the transfer to the output is flat (= R1) over the low-frequency noise sweep, so
 
-       onoise_flicker(f) * f = R1^2 * KF * <I(t)^2>,  <I^2> = (1/2)|(1 - H)/R1|^2,
-       H = 1/(1 + j*2*pi*f0*R1*C1)   (the RC transfer at the pump frequency)
+       onoise_flicker(f) * f = R1^2 * KF * <|I(t)|>^2 = R1^2 * KF * (8/pi^2) * <I^2>,
+       <I^2> = (1/2)|(1 - H)/R1|^2,  H = 1/(1 + j*2*pi*f0*R1*C1)
 
-   -- a constant, independent of frequency, using the period-AVERAGE <I^2> (not the
-   single-sample value a stationary analysis would use). This pins the per-sample
-   averaging.
+   -- a constant, independent of frequency. Since Enhancement-178 the cyclo mode is
+   EXACT for colored sources: only the DC of the envelope |I(t)| feeds the 1/f band
+   at f << f0 ("flicker sees <m>^2"), so the target is <|I|>^2, 23% below the old
+   frequency-flat <I^2> law E-126 shipped. This pins the per-sample averaging AND
+   the folded-frequency bookkeeping.
 
 NOTE: each `.pnoise` runs a PSS shooting method (~2 min) under the Sparse solver only.
 """
@@ -92,10 +94,17 @@ if cpts:
           f"worst {worst:.3e}")
 
 # --- Check 2: quantitative cyclostationary flicker (rc_flicker_cyclo.cir) ---
+# Enhancement-178 made the cyclo mode EXACT for colored (flicker) sources: at
+# f << f0 only the DC component of the envelope m(t) = sqrt(KF)*|I(t)| feeds
+# the 1/f band -- the AC components are shifted to sidebands of +-f0, +-2f0
+# where 1/f is negligible ("flicker sees <m>^2, white sees <m^2>"). For the
+# sinusoidal I(t) here <|I|>^2 = (8/pi^2)*<I^2>, i.e. 23% below the old
+# frequency-flat law R1^2*KF*<I^2> that E-126 shipped (and E-177 documented as
+# a known cyclo-mode limitation).
 f0, R1, C1, KF = 1e6, 1e3, 1e-9, 1e-9
 H = 1.0 / (1.0 + 1j * 2 * math.pi * f0 * R1 * C1)    # RC transfer at the pump freq
 I2avg = 0.5 * abs((1.0 - H) / R1) ** 2               # <I_R1^2> over the period
-target = R1 ** 2 * KF * I2avg                        # onoise_flicker * f  (constant)
+target = R1 ** 2 * KF * (8 / math.pi ** 2) * I2avg   # onoise_flicker * f = <|I|>^2 law
 with open(os.path.join(HERE, "rc_flicker_cyclo.cir")) as f:
     fl = f.read().split("\n")
 fl.insert(1, ".option sparse")
@@ -103,12 +112,12 @@ flog = run("\n".join(fl), "_flick_cyclo.cir")
 fpts = table(flog)
 check(f"[E-126] cyclostationary flicker produced a spectrum ({len(fpts)} pts)", len(fpts) >= 3)
 if fpts:
-    # flicker dominates over thermal here; onoise*f should be flat == R1^2*KF*<I^2>
+    # flicker dominates over thermal here; onoise*f should be flat == R1^2*KF*<|I|>^2
     prods = [f * v for f, v in fpts]
     worst = max(abs(p - target) / target for p in prods)
-    check(f"[E-126] cyclostationary flicker onoise*f == R1^2*KF*<I^2> = {target:.4e} "
-          f"(uses the period-average <I^2>={I2avg:.4e}, worst rel err {worst:.2e})",
-          worst < 0.05, f"worst {worst:.3e}, prods {[f'{p:.3e}' for p in prods]}")
+    check(f"[E-178] cyclostationary flicker onoise*f == R1^2*KF*<|I|>^2 = {target:.4e} "
+          f"(= (8/pi^2)*<I^2> law; worst rel err {worst:.2e})",
+          worst < 0.02, f"worst {worst:.3e}, prods {[f'{p:.3e}' for p in prods]}")
     # the average |I(t)|^2 that pins the cyclostationary result varies over the period
     # (I(t) swings through 0), so it is genuinely distinct from any single-sample value
     check("[E-126] cyclostationary onoise is flat in onoise*f (flicker 1/f, period-averaged)",
