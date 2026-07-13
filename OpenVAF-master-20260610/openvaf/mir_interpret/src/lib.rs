@@ -127,7 +127,13 @@ impl<'a> Interpreter<'a> {
             mir::Opcode::IFcast => (args(0).i32() as f64).into(),
             mir::Opcode::BIcast => (args(0).bool() as i32).into(),
             mir::Opcode::IBcast => (args(0).i32() != 0).into(),
-            mir::Opcode::FBcast => (args(0).f64().round() as i32).into(),
+            // FBcast is real->bool: the value is (x != 0), NOT round(x). The old
+            // `round() as i32` was copy-pasted from FIcast and wrote an int into
+            // the (untagged) Data union, so a bool read of it saw the low byte:
+            // 0.3 -> round 0 -> false (should be true), 256.0 -> low byte 0 ->
+            // false too. Matches mir_opt/const_eval `(val.abs() != 0.0)` and
+            // mir_llvm `x != 0.0`.
+            mir::Opcode::FBcast => (args(0).f64() != 0.0).into(),
             mir::Opcode::BFcast => (args(0).bool() as i32 as f64).into(),
             mir::Opcode::OptBarrier => args(0),
             mir::Opcode::Sqrt => f64::sqrt(args(0).f64()).into(),
@@ -167,7 +173,12 @@ impl<'a> Interpreter<'a> {
             mir::Opcode::Idiv => (args(0).i32() / args(1).i32()).into(),
             mir::Opcode::Irem => (args(0).i32() % args(1).i32()).into(),
             mir::Opcode::Ishl => (args(0).i32() << args(1).i32()).into(),
-            mir::Opcode::Ishr => (args(0).i32() >> args(1).i32()).into(),
+            // Ishr (Verilog `>>`) is a LOGICAL (zero-fill) shift -- shift as u32.
+            // Rust's `>>` on a signed i32 sign-extends, which is Iashr (`>>>`);
+            // using it here made Ishr == Iashr and disagreed with the shipped
+            // evaluators (const_eval `((lhs as u32) >> rhs) as i32`, codegen
+            // LLVMBuildLShr): e.g. -16 >> 2 was -4 instead of 1073741820.
+            mir::Opcode::Ishr => (((args(0).i32() as u32) >> args(1).i32()) as i32).into(),
             // Rust's `>>` on a signed i32 is already an arithmetic (sign-extending) shift.
             mir::Opcode::Iashr => (args(0).i32() >> args(1).i32()).into(),
             mir::Opcode::Ixor => (args(0).i32() ^ args(1).i32()).into(),
@@ -203,3 +214,52 @@ impl<'a> Interpreter<'a> {
         self.state.vals[res] = val;
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use mir_reader::parse_function;
+    use typed_index_collections::TiSlice;
+
+    use crate::{Data, Interpreter};
+
+    fn eval(src: &str, params: &[Data]) -> Data {
+        let (func, _) = parse_function(src).unwrap();
+        let args: Vec<Data> = params.to_vec();
+        let mut interp =
+            Interpreter::new(&func, TiSlice::from_ref(&[]), TiSlice::from_ref(&args));
+        interp.run();
+        interp.state.read(100u32.into())
+    }
+
+    #[test]
+    fn ishr_is_logical_shift() {
+        // Ishr (Verilog `>>`) is a LOGICAL (zero-fill) shift, so a negative
+        // operand does NOT sign-extend. -16 >> 2 == ((-16 as u32) >> 2) as i32.
+        let src = "function %f(v10, v11) {\nblock0:\n    v100 = ishr v10, v11\n}";
+        let v: i32 = eval(src, &[Data::from(-16i32), Data::from(2i32)]).into();
+        assert_eq!(v, ((-16i32 as u32) >> 2) as i32); // 1073741820, NOT -4
+    }
+
+    #[test]
+    fn iashr_is_arithmetic_shift() {
+        // Iashr (Verilog `>>>`) sign-extends: -16 >>> 2 == -4. (Guards against a
+        // "fix" that accidentally makes both shifts logical.)
+        let src = "function %f(v10, v11) {\nblock0:\n    v100 = iashr v10, v11\n}";
+        let v: i32 = eval(src, &[Data::from(-16i32), Data::from(2i32)]).into();
+        assert_eq!(v, -4);
+    }
+
+    #[test]
+    fn fbcast_is_nonzero_test() {
+        // FBcast (real->bool) is (x != 0), not round(x): a nonzero magnitude
+        // below 0.5, and a value whose rounded low byte is 0, must both be true.
+        let src = "function %f(v10) {\nblock0:\n    v100 = fbcast v10\n}";
+        let below_half: bool = eval(src, &[Data::from(0.3f64)]).into();
+        let low_byte_zero: bool = eval(src, &[Data::from(256.0f64)]).into();
+        let zero: bool = eval(src, &[Data::from(0.0f64)]).into();
+        assert!(below_half, "fbcast(0.3) must be true");
+        assert!(low_byte_zero, "fbcast(256.0) must be true");
+        assert!(!zero, "fbcast(0.0) must be false");
+    }
+}
+

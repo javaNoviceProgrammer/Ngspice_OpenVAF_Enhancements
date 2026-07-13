@@ -14,3 +14,6 @@ mir = {version = "0.0.0", path = "../mir" }
 
 typed-index-collections = "3.1"
 lasso = {version = "0.7", features = ["ahash"]}
+
+[dev-dependencies]
+mir_reader = {version = "0.0.0", path = "../mir_reader" }
