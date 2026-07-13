@@ -1,0 +1,10 @@
+// Enhancement-185 demo: hypot in a compact-model-style smoothed law.
+// I = Isat * (hypot(V,Vk) - Vk) / Vk  -- a soft "diode-like" turn-on whose
+// small-signal conductance dI/dV = Isat*V/(Vk*hypot(V,Vk)) is now correct in AC.
+`include "disciplines.vams"
+module hypot_demo(a,b);
+    inout a,b; electrical a,b;
+    parameter real Isat = 1e-3;
+    parameter real Vk   = 0.5;
+    analog I(a,b) <+ Isat*(hypot(V(a,b),Vk) - Vk)/Vk;
+endmodule

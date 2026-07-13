@@ -1,0 +1,11 @@
+* hypot_demo: DC I-V and its AC small-signal conductance
+Vb a 0 DC 0.7 AC 1
+N1 a 0 dm
+.model dm hypot_demo(Isat=1m Vk=0.5)
+.control
+pre_osdi hypot_demo.osdi
+op
+ac lin 1 1k 1k
+print i(vb)
+.endc
+.end

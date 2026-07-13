@@ -558,9 +558,10 @@ impl<'a, 'u> DerivativeBuilder<'a, 'u> {
             //            Opcode::Exp => res,
             Opcode::Exp => self.ins().exp(arg0),
 
-            // hypot(x,y) -> (x' + y')/2hypot(x,y)
             // sqrt(x) -> 1/2sqrt(x)
-            Opcode::Hypot | Opcode::Sqrt => self.ins().fmul(F_TWO, res),
+            Opcode::Sqrt => self.ins().fmul(F_TWO, res),
+            // hypot(x,y) -> (x*x' + y*y')/hypot(x,y): cache hypot(x,y) itself
+            Opcode::Hypot => res,
             // ln(x) -> 1/x
             Opcode::Ln => arg0,
             // log(x) -> log(e)/x
@@ -601,13 +602,17 @@ impl<'a, 'u> DerivativeBuilder<'a, 'u> {
                 self.ins().fadd(F_ONE, arg_squared)
             }
             // arctan2(x,y) => (x'*y - y'*x)/(x^2+y^2)
+            // The shared Pow|Atan2 chain rule computes
+            //   (x'*cache[0] + y'*cache[1]) * cache[2],
+            // so cache[2] must be the RECIPROCAL 1/(x^2+y^2) (it is multiplied,
+            // not divided) and cache[1] must be -x (the y' term SUBTRACTS).
             Opcode::Atan2 => {
                 let lhs_squared = self.ins().fmul(arg0, arg0);
                 let rhs_squared = self.ins().fmul(arg1, arg1);
                 let bot = self.ins().fadd(lhs_squared, rhs_squared);
 
-                cache[2] = bot.into();
-                cache[1] = arg0.into();
+                cache[2] = self.ins().fdiv(F_ONE, bot).into();
+                cache[1] = self.ins().fneg(arg0).into();
                 arg1
             }
 
@@ -912,10 +917,35 @@ impl<'a, 'u> DerivativeBuilder<'a, 'u> {
             }
 
             Opcode::Hypot => {
+                // d/du hypot(x,y) = (x*x' + y*y') / hypot(x,y)
                 let dlhs = arg_derivative(self, 0);
                 let drhs = arg_derivative(self, 1);
-                let sum = self.ins().fadd(dlhs, drhs);
-                self.ins().fdiv(sum, cache[0].unwrap_unchecked())
+                let t0 = if dlhs == F_ZERO {
+                    F_ZERO
+                } else if dlhs == F_ONE {
+                    arg0
+                } else {
+                    self.ins().fmul(arg0, dlhs)
+                };
+                let t1 = if drhs == F_ZERO {
+                    F_ZERO
+                } else if drhs == F_ONE {
+                    arg1
+                } else {
+                    self.ins().fmul(arg1, drhs)
+                };
+                let sum = if t0 == F_ZERO {
+                    t1
+                } else if t1 == F_ZERO {
+                    t0
+                } else {
+                    self.ins().fadd(t0, t1)
+                };
+                if sum == F_ZERO {
+                    F_ZERO
+                } else {
+                    self.ins().fdiv(sum, cache[0].unwrap_unchecked())
+                }
             }
             Opcode::Br | Opcode::Jmp | Opcode::Phi | Opcode::Exit  => unreachable!(),
         };
