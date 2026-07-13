@@ -3,7 +3,7 @@ use std::mem::swap;
 
 use mir::{
     Function, Inst, InstructionData, Opcode, PhiNode, Value, ValueDef, F_N_ONE, F_ONE, F_TEN,
-    F_TWO, F_ZERO, N_ONE, ONE, ZERO,
+    F_ZERO, N_ONE, ONE, ZERO,
 };
 
 use crate::const_eval::{eval_binary, eval_unary};
@@ -103,21 +103,10 @@ impl<'a, FP: Arithmetic, M: Fn(Value, &Function) -> Value> SimplifyCtx<'a, FP, M
             | Opcode::Clog2 => return None,
             Opcode::IBcast => Opcode::BIcast,
             Opcode::FBcast => Opcode::BFcast,
-            Opcode::Sqrt => {
-                if let Some([x, y]) = self.as_binary(arg, Opcode::Fmul) {
-                    if x == y {
-                        return Some(x);
-                    }
-                }
-
-                if let Some([x, y]) = self.as_binary(arg, Opcode::Pow) {
-                    if y == F_TWO {
-                        return Some(x);
-                    }
-                }
-
-                return None;
-            }
+            // sqrt(x*x) and sqrt(x**2) are |x|, NOT x -- returning x is wrong
+            // for any x < 0 (e.g. sqrt((-3)^2) = 3, not -3). MIR has no fabs to
+            // fold to, so leave the sqrt in place (it computes |x| correctly).
+            Opcode::Sqrt => return None,
             Opcode::Exp => Opcode::Ln,
             Opcode::Ln => Opcode::Exp,
             Opcode::Log => {
@@ -139,17 +128,24 @@ impl<'a, FP: Arithmetic, M: Fn(Value, &Function) -> Value> SimplifyCtx<'a, FP, M
                     return None;
                 }
             }
+            // f(g(x)) -> x is only valid when f is a true LEFT INVERSE of g over
+            // ALL of g's range. The forward-then-inverse compositions where the
+            // OUTER function only returns PRINCIPAL values are wrong outside that
+            // range and must NOT cancel:
+            //   asin(sin(x))  != x  for |x| > pi/2   (e.g. asin(sin 3) = pi-3)
+            //   acos(cos(x))  != x  for x outside [0,pi]
+            //   atan(tan(x))  != x  for |x| > pi/2    (a legitimate angle-wrap!)
+            //   acosh(cosh(x))!= x  for x < 0         (cosh is even -> |x|)
+            // Those four are handled by returning None below. The remaining
+            // cancellations invert over the whole real line and stay.
             Opcode::Sin => Opcode::Asin,
             Opcode::Cos => Opcode::Acos,
             Opcode::Tan => Opcode::Atan,
-            Opcode::Asin => Opcode::Sin,
-            Opcode::Acos => Opcode::Cos,
-            Opcode::Atan => Opcode::Tan,
+            Opcode::Asin | Opcode::Acos | Opcode::Atan | Opcode::Acosh => return None,
             Opcode::Sinh => Opcode::Asinh,
             Opcode::Cosh => Opcode::Acosh,
             Opcode::Tanh => Opcode::Atanh,
             Opcode::Asinh => Opcode::Sinh,
-            Opcode::Acosh => Opcode::Cosh,
             Opcode::Atanh => Opcode::Tanh,
             _ => unreachable!(""),
         };

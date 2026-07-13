@@ -1,0 +1,18 @@
+* Enhancement-187 demo: atan(tan(V)) angle-wrap sawtooth
+* Build:  openvaf-r wrap_demo.va -o wrap_demo.osdi
+* Run:    ngspice -b wrap_demo.cir
+* Sweep V from -5..5 rad; i(vb) = -atan(tan(V)) mA (negated by the ammeter
+* convention), a sawtooth that jumps by pi at each odd multiple of pi/2 --
+* proving the optimizer no longer collapses atan(tan(V)) to the identity V
+* (were it collapsed, i(vb) would be the straight line -V, e.g. -3 mA at V=3
+* instead of the observed +0.1416 mA = -(3-pi)).
+Vb a 0 DC 0
+N1 a 0 dm
+.model dm wrap_demo
+.control
+pre_osdi wrap_demo.osdi
+dc Vb -5 5 0.25
+* current in mA equals the wrapped angle in radians
+print i(vb)
+.endc
+.end

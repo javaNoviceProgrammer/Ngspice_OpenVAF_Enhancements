@@ -1,0 +1,13 @@
+// Enhancement-187 demo: atan(tan(x)) is an angle-WRAP into (-pi/2, pi/2),
+// NOT the identity. The simplifier used to cancel it to x, defeating the wrap.
+// I(a,b) reports the wrapped angle (scaled to mA) so a DC sweep of V draws the
+// characteristic sawtooth.
+`include "disciplines.vams"
+module wrap_demo(a, b);
+    inout a, b;
+    electrical a, b;
+    analog begin
+        // wrapped = atan(tan(V))  in (-pi/2, pi/2), period pi
+        I(a, b) <+ 1e-3 * atan(tan(V(a, b)));
+    end
+endmodule

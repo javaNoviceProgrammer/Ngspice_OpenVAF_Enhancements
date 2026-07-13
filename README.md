@@ -28,7 +28,7 @@ https://ngspice.sourceforge.io/
 
 ## The Enhancements
 
-One hundred and eighty-six enhancements so far — language features, correctness fixes, systematic audits, and simulator-side workflow tooling, each verified end-to-end by a committed example suite and released with a detailed write-up.
+One hundred and eighty-seven enhancements so far — language features, correctness fixes, systematic audits, and simulator-side workflow tooling, each verified end-to-end by a committed example suite and released with a detailed write-up.
 
 **🗂️ Browse them all in the [live feature catalog](https://javanoviceprogrammer.github.io/Ngspice_OpenVAF_Enhancements/)** — every enhancement grouped into 19 feature areas across the compiler and the simulator, searchable, with each entry linking to its write-up.
 
@@ -183,6 +183,7 @@ The index: **Doc** links each enhancement's detailed write-up, **Examples** link
 | 184 | **sweep progress bar reaches 100%** — the throttled `Reference value` line skipped the final point, freezing the bar below 100%; a one-shot end print forces it full | ngspice | [doc](enhancements_doc/Enhancement-184.md) | [progressbar](examples/progressbar_examples/) |
 | 185 | **autodiff audit: `hypot` & `atan2` derivative fixes** — both had a correct DC value but a wrong Jacobian (`hypot` used the sqrt rule; `atan2` had a reciprocal + sign bug); first compiler-side accidental-correctness bug | openvaf-r | [doc](enhancements_doc/Enhancement-185.md) | [vafautodiff](examples/vafautodiff_examples/) |
 | 186 | **autodiff audit: real-modulo (`%`) derivative fix** — `%` was grouped with floor/ceil and given a zero derivative (right value, zero AC/Jacobian); fixed to `x' − floor(x/c)·c'` | openvaf-r | [doc](enhancements_doc/Enhancement-186.md) | [vafautodiff](examples/vafautodiff_examples/) |
+| 187 | **math-identity simplifier: invalid inverse-function cancellations** — `asin(sin x)`, `acos(cos x)`, `atan(tan x)`, `acosh(cosh x)`, `sqrt(x²)` were collapsed to the raw inner `x`, wrong for finite inputs outside the principal range (corrupts the DC value itself, not just the derivative); kept only the whole-real-line-valid identities | openvaf-r | [doc](enhancements_doc/Enhancement-187.md) | [mathident](examples/mathident_examples/) |
 | 132 | ngspice **periodic S-parameters** (`.psp`) — small-signal S-parameters around a PSS op-point including input↔sideband conversion (mixers/switched circuits); sideband-0 reduces exactly to `.sp`. Both solvers; 8/8 | ngspice | [doc](enhancements_doc/Enhancement-132.md) | [psp](examples/psp_examples/) |
 | 133 | ngspice **quasi-periodic two-tone steady state** (`qpss`) — two-tone spectrum incl. IM3 via transient + direct DFT at each exact intermod frequency (commensurate tones). Solver-independent; 11/11 incl. the 3:1 IP3 law | ngspice | [doc](enhancements_doc/Enhancement-133.md) | [qpss](examples/qpss_examples/) |
 | 134 | ngspice **Harmonic Balance** (`hb`) — frequency-domain periodic steady state by Newton, using the E-121 conversion matrix as the exact Jacobian; nonlinear reactive via `C(v)v'` (no charge extraction). Both solvers, built-in + OSDI; 8/8 | ngspice | [doc](enhancements_doc/Enhancement-134.md) | [hb](examples/hb_examples/) |
