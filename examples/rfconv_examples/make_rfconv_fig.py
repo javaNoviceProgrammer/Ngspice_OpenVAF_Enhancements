@@ -50,8 +50,8 @@ def run(name, deck):
 
 # truth: transient + beat-window projection
 run("_tr.cir", "* tr\n" + VC.format(a2="1m") +
-    ".tran 0.5n 60u 56u 0.5n\n.option reltol=1e-5\n.control\nrun\nwrdata rfconv_tr.csv v(b)\n.endc\n.end\n")
-d = np.loadtxt(os.path.join(HERE, "rfconv_tr.csv"))
+    ".tran 0.5n 60u 56u 0.5n\n.option reltol=1e-5\n.control\nrun\nwrdata _rfconv_tr.csv v(b)\n.endc\n.end\n")
+d = np.loadtxt(os.path.join(HERE, "_rfconv_tr.csv"))
 t, v = d[:, 0], d[:, 1]
 Tb = 4e-6
 tu = np.linspace(t[-1] - Tb, t[-1], 8192, endpoint=False)

@@ -93,12 +93,12 @@ C1 b 0 100p
 # ---- Panel A data: live cyclo sweep + orbit + qpnoise point ----
 deck = ("* cyclo flicker fig\n" + BODY +
         ".pnoise 1meg 1u b 1024 6 50 5u b vdc dec 4 500 200k cyclo\n"
-        ".control\nrun\nprint onoise_spectrum\nsetplot pss1\nwrdata cyfig_td.csv v(b)\n.endc\n.end\n")
+        ".control\nrun\nprint onoise_spectrum\nsetplot pss1\nwrdata _cyfig_td.csv v(b)\n.endc\n.end\n")
 out = run("_figA.cir", deck)
 pts = {}
 for m_ in re.finditer(r"^\d+\s+([\d.eE+-]+)\s+([\d.eE+-]+)", out, re.M):
     pts[float(m_.group(1))] = float(m_.group(2))
-rows = [l.split() for l in open(os.path.join(HERE, "cyfig_td.csv")) if l.strip()]
+rows = [l.split() for l in open(os.path.join(HERE, "_cyfig_td.csv")) if l.strip()]
 vb = [float(r[1]) for r in rows]
 if len(vb) > 1 and abs(vb[0] - vb[-1]) < 1e-9:
     vb = vb[:-1]

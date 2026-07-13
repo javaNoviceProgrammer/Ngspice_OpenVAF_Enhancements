@@ -116,6 +116,8 @@ examples/bessel_filter_examples/__pycache__/
 examples/**/_*.cir
 examples/**/_*.sp
 examples/**/_*.osdi
+examples/**/*.osdi
+examples/**/_*.csv
 examples/**/_*.txt
 examples/**/_*.dat
 examples/**/_*.s?p

@@ -76,7 +76,7 @@ C1 b 0 100p
 run
 print onoise_spectrum
 setplot pss1
-wrdata pnfig_td.csv v(b)
+wrdata _pnfig_td.csv v(b)
 .endc
 .end
 """
@@ -84,7 +84,7 @@ out = run("_fig.cir", DECK)
 pts = {}
 for m in re.finditer(r"^\d+\s+([\d.eE+-]+)\s+([\d.eE+-]+)", out, re.M):
     pts[float(m.group(1))] = float(m.group(2))
-rows = [l.split() for l in open(os.path.join(HERE, "pnfig_td.csv")) if l.strip()]
+rows = [l.split() for l in open(os.path.join(HERE, "_pnfig_td.csv")) if l.strip()]
 I0 = (1.0 - float(rows[0][1])) / R1
 
 fs = sorted(pts)

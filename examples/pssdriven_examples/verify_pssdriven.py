@@ -94,7 +94,7 @@ C1 b 0 1n
 .control
 run
 setplot pss1
-wrdata pssdriven_td.csv v(b)
+wrdata _pssdriven_td.csv v(b)
 .endc
 .end
 """
@@ -111,7 +111,7 @@ ok = msw is not None and abs(max(abs(float(msw.group(1))), abs(float(msw.group(2
 check("[2] retained swing == |H(1MHz)| = 0.157175 within 0.1% (step-clamp guard)",
       ok, f"(swing {msw.groups() if msw else 'none'})")
 rows = [tuple(map(float, l.split())) for l in
-        open(os.path.join(HERE, "pssdriven_td.csv")) if l.strip()]
+        open(os.path.join(HERE, "_pssdriven_td.csv")) if l.strip()]
 t = [r[0] for r in rows]
 v = [r[1] for r in rows]
 span_ok = abs((t[-1] - t[0]) - 1e-6) < 2e-9
@@ -147,13 +147,13 @@ N1 b 0 vc
 .tran 0.5n 60u 56u 0.5n
 .control
 run
-wrdata pssdriven_tr.csv v(b)
+wrdata _pssdriven_tr.csv v(b)
 .endc
 .end
 """
 run_deck("_tr.cir", deck)
 d = [tuple(map(float, l.split())) for l in
-     open(os.path.join(HERE, "pssdriven_tr.csv")) if l.strip()]
+     open(os.path.join(HERE, "_pssdriven_tr.csv")) if l.strip()]
 tt = [x[0] for x in d]
 vv = [x[1] for x in d]
 Tb = 4e-6

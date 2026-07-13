@@ -164,10 +164,10 @@ deck = ("* flicker folding\n" +
         BODY.format(rmod="rmod ", g1="0.8m") +
         ".model rmod R(kf=1e-9 af=2 ef=1)\n"
         ".pnoise 1meg 1u b 1024 6 50 5u b vdc lin 3 1k 100k\n"
-        ".control\nrun\nprint onoise_spectrum\nsetplot pss1\nwrdata pnf_td.csv v(b)\n.endc\n.end\n")
+        ".control\nrun\nprint onoise_spectrum\nsetplot pss1\nwrdata _pnf_td.csv v(b)\n.endc\n.end\n")
 out = run_deck("_f.cir", deck)
 pts = onoise_table(out)
-rows = [l.split() for l in open(os.path.join(HERE, "pnf_td.csv")) if l.strip()]
+rows = [l.split() for l in open(os.path.join(HERE, "_pnf_td.csv")) if l.strip()]
 vb0 = float(rows[0][1])                      # sample-0 bias (stationary pnoise uses it)
 I0 = (1.0 - vb0) / R1
 ok = len(pts) == 3 and all(

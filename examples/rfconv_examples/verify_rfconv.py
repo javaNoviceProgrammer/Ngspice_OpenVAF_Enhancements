@@ -99,9 +99,9 @@ N1 b 0 vc
 
 # ---------- ground truth: transient + one-beat Fourier projection ----------
 deck = "* transient truth\n" + VC_BODY.format(a2="1m") + \
-       ".tran 0.5n 60u 56u 0.5n\n.option reltol=1e-5\n.control\nrun\nwrdata rfconv_tr.csv v(b)\n.endc\n.end\n"
+       ".tran 0.5n 60u 56u 0.5n\n.option reltol=1e-5\n.control\nrun\nwrdata _rfconv_tr.csv v(b)\n.endc\n.end\n"
 run_deck("_tr.cir", deck)
-d = [tuple(map(float, l.split())) for l in open(os.path.join(HERE, "rfconv_tr.csv"))
+d = [tuple(map(float, l.split())) for l in open(os.path.join(HERE, "_rfconv_tr.csv"))
      if l.strip()]
 t = [x[0] for x in d]
 v = [x[1] for x in d]

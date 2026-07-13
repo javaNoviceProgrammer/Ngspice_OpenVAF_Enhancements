@@ -184,10 +184,10 @@ C1 b 0 100p
 deck = ("* cyclo flicker folding\n" + BODY.format(rmod="rmod ", g1="0.8m") +
         ".model rmod R(kf=1e-9 af=2 ef=1)\n"
         ".pnoise 1meg 1u b 1024 6 50 5u b vdc lin 3 1k 100k cyclo\n"
-        ".control\nrun\nprint onoise_spectrum\nsetplot pss1\nwrdata cyf_td.csv v(b)\n.endc\n.end\n")
+        ".control\nrun\nprint onoise_spectrum\nsetplot pss1\nwrdata _cyf_td.csv v(b)\n.endc\n.end\n")
 out = run_deck("_cf.cir", deck)
 pts = onoise_table(out)
-rows = [l.split() for l in open(os.path.join(HERE, "cyf_td.csv")) if l.strip()]
+rows = [l.split() for l in open(os.path.join(HERE, "_cyf_td.csv")) if l.strip()]
 vb = [float(r[1]) for r in rows]
 if len(vb) > 1 and abs(vb[0] - vb[-1]) < 1e-9:
     vb = vb[:-1]                                 # drop the duplicated endpoint
