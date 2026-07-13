@@ -401,11 +401,30 @@ pac_free_harmonics(struct pac_harm *hd)
     FREE(hd->B0r); FREE(hd->B0i);
 }
 
-/* Enhancement-121: assemble the dense (2M+1)N complex conversion matrix H_{nm} =
- * G_{n-m} + j*omega_m*C_{n-m} at input frequency f_in into (Ar,Ai). Shared by the
- * PAC (pac_solve_at) and PSP (psp_solve_port) solves. */
+/* Enhancement-121: assemble the dense (2M+1)N complex conversion matrix at input
+ * frequency f_in into (Ar,Ai). Shared by the PAC (pac_solve_at) and PSP
+ * (psp_solve_port) small-signal solves and by the HB/HBOSC Newton (residual and
+ * Jacobian).
+ *
+ * The reactive frequency multiplier differs between the two uses (RF-audit fix):
+ *
+ *   smallsig=1 (LPTV small-signal: PAC/PSP/pnoise/pxf):
+ *       H_{nm} = G_{n-m} + j*omega_n*C_{n-m}      (ROW = output sideband)
+ *     The small signal rides a FROZEN periodic C(t) = dQ/dv|orbit, so
+ *     di = d/dt[C(t) dv] = Cdot*dv + C*dv_dot; by the product rule the n-th
+ *     sideband is j*[(n-m)w0 + w_m]*C_{n-m}*X_m = j*w_n*C_{n-m}*X_m. Using the
+ *     column frequency here silently DROPS the parametric-pumping term Cdot*dv
+ *     (a pumped varactor would not convert).
+ *
+ *   smallsig=0 (harmonic-balance residual, f_in = 0):
+ *       H_{nm} = G_{n-m} + j*omega_m*C_{n-m}      (COLUMN = chain rule)
+ *     The residual's reactive current is the exact d/dt Q(v(t)) = C(v(t))*vdot,
+ *     whose n-th harmonic is sum_m C_{n-m} * (j*w_m*V_m) -- here the COLUMN
+ *     frequency is the correct one (and the same form serves as the standard
+ *     frozen-C quasi-Newton Jacobian). */
 static void
-pac_build_matrix(struct pac_harm *hd, double f0, double f_in, double *Ar, double *Ai)
+pac_build_matrix(struct pac_harm *hd, double f0, double f_in, double *Ar, double *Ai,
+                 int smallsig)
 {
     int    N = hd->N, M = hd->M, H = hd->H, nnz = hd->nnz, Ntot = hd->Ntot;
     int    ni, mi, n, mm, e;
@@ -419,7 +438,7 @@ pac_build_matrix(struct pac_harm *hd, double f0, double f_in, double *Ar, double
             double omega;
             mm = mi - M;
             dm = n - mm;                                   /* harmonic index, -H..H */
-            omega = 2.0 * M_PI * (f_in + (double)mm * f0);
+            omega = 2.0 * M_PI * (f_in + (double)(smallsig ? n : mm) * f0);
             for (e = 0; e < nnz; e++) {
                 double gr, gi, cr, ci;
                 size_t hi = (size_t)e * (size_t)(H + 1) + (size_t)abs(dm);
@@ -453,7 +472,7 @@ pac_solve_at(struct pac_harm *hd, double f0, double f_in, int inode, int use_src
 
     Ar = TMALLOC(double, (size_t)Ntot * (size_t)Ntot);
     Ai = TMALLOC(double, (size_t)Ntot * (size_t)Ntot);
-    pac_build_matrix(hd, f0, f_in, Ar, Ai);
+    pac_build_matrix(hd, f0, f_in, Ar, Ai, 1);
 
     /* stimulus in the 0-th sideband: netlist AC source RHS, or a unit current */
     memset(Xr, 0, (size_t)Ntot * sizeof(double));
@@ -487,7 +506,7 @@ psp_solve_port(struct pac_harm *hd, double f0, double f_in, int branch,
 
     Ar = TMALLOC(double, (size_t)Ntot * (size_t)Ntot);
     Ai = TMALLOC(double, (size_t)Ntot * (size_t)Ntot);
-    pac_build_matrix(hd, f0, f_in, Ar, Ai);
+    pac_build_matrix(hd, f0, f_in, Ar, Ai, 1);
 
     memset(Xr, 0, (size_t)Ntot * sizeof(double));
     memset(Xi, 0, (size_t)Ntot * sizeof(double));
@@ -691,7 +710,10 @@ pac_solve_adjoint(struct pac_harm *hd, double f0, double f_in, int outNode,
             double omega;
             mm = mi - M;
             dm = n - mm;
-            omega = 2.0 * M_PI * (f_in + (double)mm * f0);
+            /* small-signal reactive multiplier: ROW (output) sideband frequency
+             * (see pac_build_matrix) -- the transpose below swaps storage, not
+             * the roles of n and m in the operator being transposed. */
+            omega = 2.0 * M_PI * (f_in + (double)n * f0);
             for (e = 0; e < nnz; e++) {
                 double gr, gi, cr, ci;
                 size_t hi = (size_t)e * (size_t)(H + 1) + (size_t)abs(dm);
@@ -1513,7 +1535,7 @@ HBanalyze(CKTcircuit *ckt, double f0, int K, int Pin, int maxiter, double tol, i
             }
 
             /* full Jacobian J = G + jwC conversion matrix */
-            pac_build_matrix(&hd, f0, 0.0, Jr, Ji);
+            pac_build_matrix(&hd, f0, 0.0, Jr, Ji, 0);
 
             /* reactive current I_C = (J - Jg)*V where Jg is the resistive
              * (G-only) conversion matrix -- i.e. the jwC part of J on V. */
@@ -1523,7 +1545,7 @@ HBanalyze(CKTcircuit *ckt, double f0, int K, int Pin, int maxiter, double tol, i
                 double *Jgi = TMALLOC(double, (size_t)Ntot * (size_t)Ntot);
                 hg.Cmr = TMALLOC(double, (size_t)hd.nnz * (size_t)(hd.H + 1));  /* zero C -> resistive only */
                 hg.Cmi = TMALLOC(double, (size_t)hd.nnz * (size_t)(hd.H + 1));
-                pac_build_matrix(&hg, f0, 0.0, Jgr, Jgi);
+                pac_build_matrix(&hg, f0, 0.0, Jgr, Jgi, 0);
                 FREE(hg.Cmr); FREE(hg.Cmi);
                 for (i = 0; i < Ntot; i++) {
                     double cr = 0, ci = 0;
@@ -1672,8 +1694,13 @@ static void qp_free(struct qp_harm *hd)
     FREE(hd->Vr); FREE(hd->Vi); FREE(hd->B0r); FREE(hd->B0i);
 }
 
-/* assemble the dense Ntot x Ntot 2-D conversion matrix at input freq f_in */
-static void qp_build_matrix(struct qp_harm *hd, double f_in, double *Ar, double *Ai)
+/* assemble the dense Ntot x Ntot 2-D conversion matrix at input freq f_in.
+ * smallsig selects the reactive frequency multiplier exactly as in
+ * pac_build_matrix (RF-audit fix): 1 = ROW frequency (LPTV small-signal:
+ * qpac/qpnoise/qpxf), 0 = COLUMN frequency (QPSS-HB residual/Jacobian,
+ * chain rule). */
+static void qp_build_matrix(struct qp_harm *hd, double f_in, double *Ar, double *Ai,
+                            int smallsig)
 {
     int Nh = hd->Nh, N = hd->N, Ntot = hd->Ntot, nnz = hd->nnz, ni, mi, e;
     memset(Ar, 0, (size_t)Ntot * (size_t)Ntot * sizeof(double));
@@ -1681,7 +1708,8 @@ static void qp_build_matrix(struct qp_harm *hd, double f_in, double *Ar, double 
     for (ni = 0; ni < Nh; ni++)
         for (mi = 0; mi < Nh; mi++) {
             int d1 = hd->h1[ni] - hd->h1[mi], d2 = hd->h2[ni] - hd->h2[mi];
-            double omega = 2.0 * M_PI * (f_in + hd->h1[mi]*hd->f1 + hd->h2[mi]*hd->f2);
+            int fi = smallsig ? ni : mi;
+            double omega = 2.0 * M_PI * (f_in + hd->h1[fi]*hd->f1 + hd->h2[fi]*hd->f2);
             int di = qp_didx(hd, d1, d2);
             for (e = 0; e < nnz; e++) {
                 size_t hi = (size_t)e * (size_t)hd->Dsz + (size_t)di;
@@ -1990,7 +2018,7 @@ QPSShb(CKTcircuit *ckt, double f1, double f2, int K1, int K2, int P1, int P2,
                 rc = E_PARMVAL; hard_err = 1; break;
             }
             hd.f1 = f1; hd.f2 = f2;
-            qp_build_matrix(&hd, 0.0, Jr, Ji);
+            qp_build_matrix(&hd, 0.0, Jr, Ji, 0);
             /* reactive current I_C = (J - Jg)*V (jwC part of J on V) */
             {
                 struct qp_harm hg = hd;
@@ -1998,7 +2026,7 @@ QPSShb(CKTcircuit *ckt, double f1, double f2, int K1, int K2, int P1, int P2,
                 double *Jgi = TMALLOC(double, (size_t)Ntot*(size_t)Ntot);
                 hg.Cmr = TMALLOC(double, (size_t)hd.nnz*(size_t)hd.Dsz);
                 hg.Cmi = TMALLOC(double, (size_t)hd.nnz*(size_t)hd.Dsz);
-                qp_build_matrix(&hg, 0.0, Jgr, Jgi);
+                qp_build_matrix(&hg, 0.0, Jgr, Jgi, 0);
                 FREE(hg.Cmr); FREE(hg.Cmi);
                 for (i = 0; i < Ntot; i++) {
                     double xr = 0, xi = 0; int kk;
@@ -2151,7 +2179,7 @@ QPACanalyze(CKTcircuit *ckt, double f_in, int verbose)
     Xr = TMALLOC(double, Ntot); Xi = TMALLOC(double, Ntot);
     (void) verbose;
 
-    qp_build_matrix(hd, f_in, Ar, Ai);
+    qp_build_matrix(hd, f_in, Ar, Ai, 1);
 
     /* stimulus in the (0,0) sideband: netlist AC source RHS, or unit current at node 1 */
     memset(Xr, 0, (size_t)Ntot*sizeof(double));
@@ -2223,7 +2251,7 @@ qp_solve_adjoint(struct qp_harm *hd, double f_in, int outNode, double *Psr, doub
 
     Ar = TMALLOC(double, (size_t)Ntot * (size_t)Ntot);
     Ai = TMALLOC(double, (size_t)Ntot * (size_t)Ntot);
-    qp_build_matrix(hd, f_in, Ar, Ai);
+    qp_build_matrix(hd, f_in, Ar, Ai, 1);
     for (i = 0; i < Ntot; i++)                       /* transpose in place: H -> H^T */
         for (j = i + 1; j < Ntot; j++) {
             size_t ij = (size_t)i*(size_t)Ntot + (size_t)j;
@@ -2381,7 +2409,7 @@ QPnoiseAnalyze(CKTcircuit *ckt, int outNode, double f_in, int cyclo, int verbose
     if (hd->has_src) {
         double *Ar = TMALLOC(double, (size_t)Ntot*(size_t)Ntot);
         double *Ai = TMALLOC(double, (size_t)Ntot*(size_t)Ntot);
-        qp_build_matrix(hd, f_in, Ar, Ai);
+        qp_build_matrix(hd, f_in, Ar, Ai, 1);
         memset(Xr, 0, (size_t)Ntot*sizeof(double));
         memset(Xi, 0, (size_t)Ntot*sizeof(double));
         for (i = 0; i < N; i++) {
@@ -2502,7 +2530,7 @@ QPACsweep(CKTcircuit *ckt, int stepType, int np, double fstart, double fstop, do
     mult = (stepType==1)?pow(10.0,1.0/np):(stepType==2)?pow(2.0,1.0/np):0.0;
     linstep = (np>1)?(fstop-fstart)/(np-1):0.0;
     for (freq=fstart; freq<=fstop*(1.0+1e-9); ) {
-        qp_build_matrix(hd, freq, Ar, Ai);
+        qp_build_matrix(hd, freq, Ar, Ai, 1);
         memset(Xr,0,(size_t)Ntot*sizeof(double)); memset(Xi,0,(size_t)Ntot*sizeof(double));
         if (hd->has_src) for (i=0;i<N;i++){ Xr[(size_t)i00*(size_t)N+(size_t)i]=hd->B0r[i]; Xi[(size_t)i00*(size_t)N+(size_t)i]=hd->B0i[i]; }
         else Xr[(size_t)i00*(size_t)N+0]=1.0;
@@ -2550,7 +2578,7 @@ QPnoiseSweep(CKTcircuit *ckt, int outNode, int stepType, int np, double fstart, 
             }
         }
         if (hd->has_src){
-            qp_build_matrix(hd, freq, Ar, Ai);
+            qp_build_matrix(hd, freq, Ar, Ai, 1);
             memset(Xr,0,(size_t)Ntot*sizeof(double)); memset(Xi,0,(size_t)Ntot*sizeof(double));
             for (i=0;i<N;i++){ Xr[(size_t)i00*(size_t)N+(size_t)i]=hd->B0r[i]; Xi[(size_t)i00*(size_t)N+(size_t)i]=hd->B0i[i]; }
             if (pss_csolve(Ntot,Ar,Ai,Xr,Xi)==0){ size_t o=(size_t)i00*(size_t)N+(size_t)(outNode-1); gain2=Xr[o]*Xr[o]+Xi[o]*Xi[o]; }
@@ -2669,14 +2697,14 @@ HBOSCanalyze(CKTcircuit *ckt, int oscNode, int K, int Pin, double f0seed,
             fprintf(stderr, "hbosc: device extraction failed.\n"); rc = E_PARMVAL; break;
         }
         have_hd = 1;
-        pac_build_matrix(&hd, f0, 0.0, Jr, Ji);
+        pac_build_matrix(&hd, f0, 0.0, Jr, Ji, 0);
         {   /* I_C = (J - Jg) V */
             struct pac_harm hg = hd;
             double *Jgr = TMALLOC(double, (size_t)Ntot*(size_t)Ntot);
             double *Jgi = TMALLOC(double, (size_t)Ntot*(size_t)Ntot);
             hg.Cmr = TMALLOC(double, (size_t)hd.nnz*(size_t)(hd.H+1));
             hg.Cmi = TMALLOC(double, (size_t)hd.nnz*(size_t)(hd.H+1));
-            pac_build_matrix(&hg, f0, 0.0, Jgr, Jgi);
+            pac_build_matrix(&hg, f0, 0.0, Jgr, Jgi, 0);
             FREE(hg.Cmr); FREE(hg.Cmi);
             for (i = 0; i < Ntot; i++) {
                 double cr = 0, ci = 0;
@@ -2827,7 +2855,9 @@ PhaseNoiseAnalyze(CKTcircuit *ckt, double fstart, double fstop, int npts, int ve
         for (ni = 0; ni <= 2*M; ni++)
             for (mi = 0; mi <= 2*M; mi++) {
                 int dm = (ni - M) - (mi - M);
-                double omega = 2.0*M_PI*(freq + (double)(mi - M)*f0);
+                /* small-signal adjoint: ROW sideband frequency (see
+                 * pac_build_matrix; RF-audit fix) */
+                double omega = 2.0*M_PI*(freq + (double)(ni - M)*f0);
                 for (ei = 0; ei < hd->nnz; ei++) {
                     size_t hi = (size_t)ei*(size_t)(hd->H+1) + (size_t)abs(dm);
                     double gr = hd->Gmr[hi], gi = hd->Gmi[hi], cr = hd->Cmr[hi], ci = hd->Cmi[hi];

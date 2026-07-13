@@ -1,0 +1,24 @@
+* Pumped-varactor conversion demo -- Enhancement-175
+*
+* An OSDI varactor (C(v) = c0*(1+alpha*v)) pumped by a 1 V, 1 MHz LO converts a
+* small 250 kHz signal into sidebands at 250k +- k*1MHz. Before E-175 every
+* periodic small-signal analysis (pac/psp/pnoise/pxf/qpac/qpnoise/qpxf and the
+* phasenoise adjoint) scaled the reactive conversion terms by the INPUT-sideband
+* frequency, silently dropping the parametric-pumping term Cdot*dv: the
+* conversion sidebands below came out exactly 3x/5x/7x/9x too small.
+* Cross-check the qpac lines against `.tran` + Fourier -- they now agree to <1%.
+.control
+pre_osdi varcap.osdi
+.endc
+V1 x 0 SIN(0 1 1meg) AC 1
+V2 a x SIN(0 0 3.1meg)
+R1 a b 1k
+N1 b 0 vc
+.model vc varcap c0=1n alpha=0.5
+
+.control
+qpss v(b) 1meg 3.1meg hb 6 1
+qpac 250k
+.endc
+
+.end
