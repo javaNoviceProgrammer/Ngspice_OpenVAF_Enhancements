@@ -1,29 +1,39 @@
 #!/usr/bin/env python3
-"""Enhancement-185: openvaf-r autodiff audit -- hypot & atan2 derivative fixes.
+"""openvaf-r autodiff audit -- hypot, atan2 & real-modulo derivative fixes
+(Enhancement-185 + Enhancement-186).
 
 The compiler builds the small-signal Jacobian (used by AC, convergence, noise,
 .pz, every derivative-dependent result) with its own automatic differentiation.
 An audit that compared the AC small-signal conductance g = dI/dV of many
-nonlinear laws I = f(V) against the *analytic* f'(V) found two builtins whose
+nonlinear laws I = f(V) against the *analytic* f'(V) found three builtins whose
 VALUE is correct (so DC is right) but whose DERIVATIVE was wrong -- the classic
 "accidental correctness" pattern that DC-only tests miss:
 
   * hypot(x,y): the autodiff rule computed (x' + y')/(2*hypot) -- the sqrt
     pattern misapplied -- instead of the correct (x*x' + y*y')/hypot. At
     V=0.7, y=0.5 it gave 0.581/hypot where the answer is 0.7/hypot (28% off).
-    It is only accidentally correct at x=0.5 (with y constant).
+    It is only accidentally correct at x=0.5 (with y constant).            [185]
 
   * atan2(x,y): TWO bugs in the cached factors -- the common factor was
     (x^2+y^2) where the shared chain rule multiplies by it, so it needed the
     RECIPROCAL 1/(x^2+y^2); and the second-argument factor was +x where the
     derivative subtracts, so it needed -x. Result: wrong magnitude AND wrong
-    sign for the y-argument derivative.
+    sign for the y-argument derivative.                                    [185]
 
-Both are fixed in mir_autodiff/src/builder.rs. This suite recompiles a battery
-of nonlinear laws, reads the AC conductance, and checks it against the analytic
-derivative -- with hypot and atan2 (both argument orders, both a resistive I
-and a reactive Q) as the headline cases, plus a regression battery of the other
-math builtins that were already correct.
+  * real modulo % (Frem): x % c = x - floor(x/c)*c is a slope-1 sawtooth in x,
+    so d/dx(x % c) = 1 (away from wrap points), yet the opcode was grouped with
+    floor/ceil/integer ops and forced to derivative 0 in BOTH the
+    live-derivative gate (lib.rs) and the chain rule (builder.rs). A model
+    using real modulo (phase wrap, periodic geometry) got a correct DC value
+    but a zero AC/Jacobian contribution. Correct rule (also for a variable
+    divisor): d/du(x % c) = x' - floor(x/c)*c'.                            [186]
+
+All three are fixed in mir_autodiff (builder.rs + lib.rs). This suite
+recompiles a battery of nonlinear laws, reads the AC conductance, and checks it
+against the analytic derivative -- with hypot, atan2 and real-modulo (both a
+resistive I and a reactive Q, both argument orders, chain-composed) as the
+headline cases, plus a regression battery of the other math builtins that were
+already correct.
 
 Every SPICE deck starts with a title line (SPICE treats line 1 as the title!).
 """
@@ -98,7 +108,7 @@ def check_deriv(name, expr, fp, v0, label, tol=2e-3):
 
 
 K = 1e-3
-print("Enhancement-185: openvaf-r autodiff -- hypot & atan2 derivative fixes")
+print("Enhancement-185/186: openvaf-r autodiff -- hypot, atan2 & real-modulo fixes")
 
 # ---------------- hypot (the headline fix) ----------------
 check_deriv("h_a", f"{K}*hypot(V(a,b),0.5)", lambda v: K * v / math.hypot(v, 0.5), 0.7,
@@ -134,6 +144,27 @@ bref = 1e-9 * 0.7 / math.hypot(0.7, 0.5)
 check("[hypot] reactive charge dQ/dV (AC susceptance) also fixed",
       err is None and abs(bq - bref) < 2e-3 * abs(bref),
       f"(dQ/dV={bq:.6e} analytic={bref:.6e})" if err is None else err)
+
+# ---------------- real modulo % (Enhancement-186) ----------------
+# x % c is a slope-1 sawtooth in x: the VALUE tracks V (DC right) but the
+# derivative was forced to 0 by grouping Frem with floor/ceil in the
+# live-derivative gate AND the chain rule. Correct: d/dV (V % c) == 1.
+check_deriv("m_a", f"{K}*(V(a,b) % 1.0)", lambda v: K, 0.7,
+            "[frem] d/dV (V % 1.0) == 1 (was 0: modulo mis-grouped with floor)")
+check_deriv("m_b", "5e-3*(V(a,b) % 1.0)", lambda v: 5e-3, 0.3,
+            "[frem] d/dV (5m*(V % 1.0)) scales with the prefactor")
+check_deriv("m_c", f"{K}*(V(a,b) % 0.4)", lambda v: K, 0.7,
+            "[frem] d/dV (V % 0.4) == 1 (constant divisor != 1)")
+# the chain rule must flow THROUGH the modulo: d/dV (V%1)^2 = 2*(V%1)
+check_deriv("m_d", f"{K}*((V(a,b) % 1.0)*(V(a,b) % 1.0))",
+            lambda v: K * 2 * (v % 1.0), 0.7,
+            "[frem] chain rule through modulo: d/dV (V%1)^2 == 2*(V%1)")
+# floor/ceil are GENUINELY piecewise-constant -- the fix must leave them at 0
+gfl, _, efl = ac_gac("m_fl", f"{K}*floor(V(a,b)*10.0)", 0.72)
+gcl, _, ecl = ac_gac("m_cl", f"{K}*ceil(V(a,b)*10.0)", 0.72)
+check("[frem] floor/ceil derivatives untouched (genuinely 0)",
+      efl is None and ecl is None and abs(gfl) < 1e-12 and abs(gcl) < 1e-12,
+      f"(floor'={gfl} ceil'={gcl})")
 
 # ---------------- regression: the other builtins were already correct ----------------
 battery = [

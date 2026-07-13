@@ -802,7 +802,6 @@ impl<'a, 'u> DerivativeBuilder<'a, 'u> {
             | Opcode::Iand
             | Opcode::Ior
             | Opcode::Clog2
-            | Opcode::Frem
             | Opcode::Floor
             | Opcode::Ceil
             | Opcode::Bnot
@@ -843,6 +842,31 @@ impl<'a, 'u> DerivativeBuilder<'a, 'u> {
                 let dlhs = arg_derivative(self, 0);
                 let drhs = arg_derivative(self, 1);
                 self.ins().fsub(dlhs, drhs)
+            }
+
+            // real modulo: x % c = x - floor(x/c)*c, so
+            //   d/du (x % c) = x' - floor(x/c)*c'
+            // floor(x/c) is locally constant (its derivative is 0 away from the
+            // wrap points). For the common constant-divisor case this folds to
+            // just the dividend's derivative x'.
+            Opcode::Frem => {
+                let dlhs = arg_derivative(self, 0);
+                let drhs = arg_derivative(self, 1);
+                if drhs == F_ZERO {
+                    if dlhs == F_ZERO {
+                        return;
+                    }
+                    dlhs
+                } else {
+                    let quot = self.ins().fdiv(arg0, arg1);
+                    let fl = self.ins().floor(quot);
+                    let term = self.ins().fmul(fl, drhs);
+                    if dlhs == F_ZERO {
+                        self.ins().fneg(term)
+                    } else {
+                        self.ins().fsub(dlhs, term)
+                    }
+                }
             }
 
             Opcode::Fmul => gen_mul_derivative(self,  arg0,arg1, false),

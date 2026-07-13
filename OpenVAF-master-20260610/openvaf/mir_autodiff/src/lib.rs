@@ -59,7 +59,6 @@ fn zero_derivative(dfg: &DataFlowGraph, inst: Inst) -> bool {
             | Opcode::Iand
             | Opcode::Ior
             | Opcode::Clog2
-            | Opcode::Frem
             | Opcode::Floor
             | Opcode::Ceil
             | Opcode::Bnot
