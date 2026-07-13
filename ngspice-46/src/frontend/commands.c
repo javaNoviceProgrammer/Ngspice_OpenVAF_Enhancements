@@ -230,7 +230,7 @@ struct comm spcp_coms[] = {
       NULL,
       "<N> [-lhs] [-seed <s>] [-analysis <cmd>] (-spec <metric> [-max <hi>] [-min <lo>])... : "
       "packaged Monte Carlo yield analysis -- runs N samples, counts a sample as pass only if all "
-      "specs are within limits, and reports the yield with a Wilson 95% CI and per-spec violations "
+      "specs are within limits, and reports the yield with a Wilson 95%% CI and per-spec violations "
       "(-lhs for a lower-variance estimate; correlations via mvnorm(), corners via .lib)." } ,
     { "transpose", com_transpose, FALSE, FALSE,
       { 040000, 040000, 040000, 040000 }, E_DEFHMASK, 1, LOTS,
@@ -869,7 +869,7 @@ struct comm nutcp_coms[] = {
       NULL,
       "<N> [-lhs] [-seed <s>] [-analysis <cmd>] (-spec <metric> [-max <hi>] [-min <lo>])... : "
       "packaged Monte Carlo yield analysis -- runs N samples, counts a sample as pass only if all "
-      "specs are within limits, and reports the yield with a Wilson 95% CI and per-spec violations "
+      "specs are within limits, and reports the yield with a Wilson 95%% CI and per-spec violations "
       "(-lhs for a lower-variance estimate; correlations via mvnorm(), corners via .lib)." } ,
     { "transpose", com_transpose, FALSE, FALSE,
       { 040000, 040000, 040000, 040000 }, E_DEFHMASK, 1, LOTS,
