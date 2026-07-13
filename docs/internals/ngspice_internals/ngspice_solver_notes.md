@@ -17,7 +17,7 @@ of the whole [`examples/`](../../../examples/) suite.
 | **AC** | ✅ correct | ✅ correct |
 | **Transient** | ✅ correct (one caveat below) | ✅ correct |
 | **Noise (`.noise`)** | ✅ correct (since E-113) | ✅ correct |
-| **Pole-zero (`.pz`)** | ✅ single-ended; ⚠️ balanced-output Sparse-only | ✅ correct |
+| **Pole-zero (`.pz`)** | ✅ correct (single-ended E-113; balanced-output + complex-root determinant E-171/172) | ✅ correct |
 | **Sensitivity (`.sens`, DC & AC)** | ✅ correct (since E-114) | ✅ correct |
 | **Distortion (`.disto`)** | ✅ correct (since E-115) | ✅ correct |
 | **Periodic steady state (`.pss`)** | ✅ correct (since E-118) | ✅ correct |
@@ -53,9 +53,12 @@ reason to switch. Sparse 1.3 runs **every** analysis in the suite. Since
 [Enhancement-114](../../../enhancements_doc/Enhancement-114.md) it runs **DC/AC
 sensitivity**, and since
 [Enhancement-115](../../../enhancements_doc/Enhancement-115.md) **distortion
-(`.disto`)** correctly; the only *analysis* still Sparse-only under KLU is
-**balanced-output pole-zero** (the transient checkpoint/restart *feature* is also
-Sparse-only, per the table above). Reach for `.option klu`
+(`.disto`)** correctly; since
+[Enhancement-171](../../../enhancements_doc/Enhancement-171.md)/[172](../../../enhancements_doc/Enhancement-172.md)
+the pole-zero path is fully KLU-correct too (complex-plane determinant, balanced
+output, full-partial-pivot fallback) — **no analysis is Sparse-only under KLU any
+more** (the transient checkpoint/restart *feature* of E-131 still is, per the
+table above). Reach for `.option klu`
 on large, sparse DC/AC problems where KLU's ordering and factorization are
 faster, and — because its symbolic ordering is computed once and cannot re-pivot
 dynamically like Sparse — expect it to be **less forgiving of a near-singular
@@ -115,10 +118,17 @@ solve (`klu_z_tsolve`) and lifts the guards, so under KLU:
   asymmetric VCCS circuits, OSDI device models, and integrated totals. (`.sp`
   S-parameters share the same adjoint solve and are corrected too.)
 - **Single-ended pole-zero** (grounded output reference) runs correctly.
-- **Balanced-output pole-zero** (non-grounded reference) stays Sparse-only: its
-  zeros phase folds columns at solve time, which Sparse survives via dynamic
-  Markowitz re-ordering but KLU's fixed symbolic factorization cannot; a targeted
-  guard now directs that case to `.option sparse`.
+- **Balanced-output pole-zero** (non-grounded reference) was Sparse-only at
+  first: its zeros phase folds columns at solve time, which Sparse survives via
+  dynamic Markowitz re-ordering but KLU's fixed symbolic factorization could not.
+  [Enhancement-172](../../../enhancements_doc/Enhancement-172.md) closed it —
+  `CKTpzSetup` reserves the union pattern before COO→CSC conversion and
+  `SMPcAddCol` gained a merge-walk KLU branch — and replaced the out-of-range
+  pivot-tolerance fallback with full partial pivoting (`tol=1.0`), which also
+  cured spurious far-field roots and a twin-T conjugate-pair stall.
+  [Enhancement-171](../../../enhancements_doc/Enhancement-171.md) had first fixed
+  the KLU complex determinant itself (mixed real/complex pivot products and
+  permutation parity — silent garbage for complex roots).
 
 [Enhancement-114](../../../enhancements_doc/Enhancement-114.md) then fixes
 **sensitivity** under KLU. Sensitivity builds an auxiliary perturbation matrix

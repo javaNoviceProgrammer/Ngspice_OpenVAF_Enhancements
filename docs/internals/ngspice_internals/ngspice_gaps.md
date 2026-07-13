@@ -97,10 +97,21 @@ non-transposed solve, silently wrong on asymmetric matrices; now fixed), and —
 since [Enhancement-114](../../../enhancements_doc/Enhancement-114.md) — on **DC/AC
 sensitivity** (`.sens`), and — since
 [Enhancement-115](../../../enhancements_doc/Enhancement-115.md) — on **distortion**
-(`.disto`) too. The only analysis still Sparse-only under KLU is
-**balanced-output pole-zero**; KLU is also less robust on stiff transient edges.
-Full behavior, defaults, and a
-solver-by-solver sweep of the example suite:
+(`.disto`) too. The KLU pole-zero path was then hardened end-to-end:
+[Enhancement-171](../../../enhancements_doc/Enhancement-171.md) fixed the KLU
+complex-plane determinant (mixed real/complex pivot products and permutation
+parity — silent garbage for complex roots) and
+[Enhancement-172](../../../enhancements_doc/Enhancement-172.md) closed the last
+Sparse-only analysis: **balanced/differential-output `.pz`** now runs under KLU
+(union-pattern reservation + a merge-walk `SMPcAddCol` branch), with a
+full-partial-pivoting fallback that also cured far-field spurious roots — so
+**no analysis is Sparse-only under KLU any more** (the transient
+checkpoint/restart *feature* of E-131 still is).
+[Enhancement-173](../../../enhancements_doc/Enhancement-173.md) added a modern
+alternative to the fragile Muller PZ driver altogether: `.options pzeig`, a
+shift-invert pencil + self-contained Francis-QR eigensolver (no LAPACK), default
+off. KLU remains less robust on stiff transient edges. Full behavior, defaults,
+and a solver-by-solver sweep of the example suite:
 [KLU vs. Sparse 1.3 solver notes](ngspice_solver_notes.md).*
 
 ## Standard analyses (analog)
@@ -144,8 +155,16 @@ default, quiet (trace behind `set ngdebug`), and verified against the analytic A
 response; [Enhancement-118](../../../enhancements_doc/Enhancement-118.md) then made
 it run under **both** linear solvers (KLU had hung on a timestep explosion from
 reused refactor pivots — now a full re-factor is forced each PSS step under KLU).
-It is still a brute-force shooting method and remains the foundation for the
-periodic small-signal analyses below. HB is now implemented -- see note 7 (it had shipped only as a `WITH_HB` stub).*
+[Enhancement-176](../../../enhancements_doc/Enhancement-176.md) then split the
+shooting into a **driven mode**: on circuits with time-dependent sources the
+oscillator-style frequency hunt (and its `steady_coeff` breakpoint flood — ~0.2 ps
+steps, 9.6 M timepoints on a pumped varactor, never converging) is replaced by the
+exact source period and a `T/psspoints` step clamp, converging in a few hundred
+timepoints (~1000× faster) — which is what makes the whole periodic small-signal
+suite below cheap enough to regression-test on every sweep. It remains a shooting
+method (the frequency hunt still runs for autonomous oscillators) and remains the
+foundation for the periodic small-signal analyses below. HB is now implemented --
+see note 7 (it had shipped only as a `WITH_HB` stub).*
 
 *² PAC is ✅ (**complete periodic-AC analysis**). The full chain is built and
 verified: [Enhancement-119](../../../enhancements_doc/Enhancement-119.md) retains
@@ -153,7 +172,11 @@ the periodic operating point,
 [Enhancement-120](../../../enhancements_doc/Enhancement-120.md) extracts the
 periodic Jacobian harmonics `G_k`, `C_k`,
 [Enhancement-121](../../../enhancements_doc/Enhancement-121.md) assembles and solves
-the `(2M+1)N` **harmonic conversion matrix** `H_{nm}=G_{n−m}+jω_m·C_{n−m}`,
+the `(2M+1)N` **harmonic conversion matrix** `H_{nm}=G_{n−m}+jω_n·C_{n−m}` (row
+frequency: the [E-175](../../../enhancements_doc/Enhancement-175.md) RF audit
+proved the column-frequency form silently drops the parametric term `Ċ·δv` on
+pumped capacitances and fixed every small-signal builder — HB's residual keeps
+`ω_m` by the chain rule, now an explicit mode flag),
 [Enhancement-122](../../../enhancements_doc/Enhancement-122.md) wraps it in a
 user-facing **`.pac` command** (runs PSS, sweeps the input frequency, writes a
 complex plot), and [Enhancement-123](../../../enhancements_doc/Enhancement-123.md)
@@ -181,10 +204,27 @@ matching the `.noise` reference to every printed digit).
 **cyclostationary** mode (`.pnoise … cyclo`): it evaluates each device's noise PSD at
 *every* PSS sample's bias and folds it through the *time-domain* adjoint transfer,
 averaging over the period, so a pumped device's bias-dependent noise (a diode's
-`2qI(t)`, a resistor's flicker `∝|I(t)|²`) is captured correctly. It reduces exactly
+`2qI(t)`, a resistor's flicker `∝|I(t)|²`) is captured. It reduces exactly
 to the stationary case (and hence `.noise`) for a bias-independent source by
-Parseval, and on a flicker resistor carrying a known periodic current it gives
-`onoise·f = R1²·KF·⟨I²⟩` using the period-average `⟨I²⟩` (matched to five digits).
+Parseval. [Enhancement-177](../../../enhancements_doc/Enhancement-177.md) built an
+independent **noise-folding referee** (from-scratch Python conversion matrix +
+TRNOISE transient Monte-Carlo + LTI/white limits): the white path is
+measured-correct to 6 digits, and the referee caught a real bug — the stationary
+`pnoise`/`qpnoise`/`phasenoise` loops evaluated every folded sideband at the
+*output* frequency, whereas sideband-k noise originates at `|f+k·f0|`
+(frequency-dependent PSDs — flicker, `noise_table` — folded through conversion
+were wrong; 21% high on the referee circuit, unbounded as f≪f0; digit-exact proof
+both ways). [Enhancement-178](../../../enhancements_doc/Enhancement-178.md) then
+made the **cyclo mode exact** for colored sources too (it had assumed a
+frequency-flat PSD): per-generator envelope harmonics `B_q` are recovered by load
+polarization against the sideband-0 adjoint (five `DEVnoise` sweeps per orbit
+sample, no device-API change) and folded from their source frequencies, with the
+spectral shape measured pointwise. The physics: *flicker sees ⟨m⟩², white sees
+⟨m²⟩* — only the envelope's DC feeds the 1/f band, so the old flat identity was
+23% high (π²/8) on |sin|-modulated flicker (`onoise·f = R1²·KF·⟨|I|⟩²`, not
+`⟨I²⟩`) and 34% high on the referee's conversion circuit; the exact path matches
+the referee to ≤3e-4 and reduces to the (now exact) stationary sum in the
+constant-envelope limit.
 [Enhancement-140](../../../enhancements_doc/Enhancement-140.md) closes the gap (**✅**)
 with the **oscillator phase-noise** piece. `hbosc` is an **autonomous** harmonic balance:
 an oscillator has no source, so the HB residual `F(V)=I_R+[dq/dt]=0` is solved for the
@@ -256,10 +296,17 @@ sidebands (the mixer/PA noise conversion a static `.noise` cannot see). Verified
 anchored by reduce-to-noise (pump→0 ⇒ `onoise` = plain `.noise` = `4kTR`, exactly).
 [Enhancement-139](../../../enhancements_doc/Enhancement-139.md) adds the **cyclostationary**
 mode (`qpnoise … cyclo`): the device PSD `S(t)` swings over the two-tone period, so instead
-of a single-bias fold it averages `(1/P)·Σ_s S(t_s)·|A_s|²` with `A_s` the inverse 2-D DFT
-of `Ψ`, re-biasing each phase sample (with per-sample junction settling). Reduces to the
-stationary case by Parseval when `S` is constant; a hard-pumped diode's switching shot
-noise makes `cyclo` ~8× the stationary estimate (10/10).
+of a single-bias fold it averages over the 2-D phase grid, re-biasing each phase sample
+(with per-sample junction settling); it reduces to the stationary case by Parseval when
+`S` is constant. Both qpnoise modes were later corrected and hardened:
+[E-177](../../../enhancements_doc/Enhancement-177.md) fixed the folded-sideband source
+frequency (`|f_in+k1·f1+k2·f2|`), [E-178](../../../enhancements_doc/Enhancement-178.md)
+ported the exact separable cyclostationary folding to the 2-D grid (`B_{q1,q2}`) —
+verified digit-identical to the 1-D `pnoise cyclo` on the same circuit across the two
+orbit machineries — and its hardening pass replaced the old "~8× enhancement"
+hard-pumped-diode expectation, an artifact of uninitialized diode sidewall summary
+slots and the doubled HB DC bias (see note 7), with a closed-form torus-average
+referee the cyclo result now matches.
 [Enhancement-141](../../../enhancements_doc/Enhancement-141.md) completes the two-tone
 small-signal suite with **QPXF** (`qpxf <output_node> <f_in>`), the ADJOINT of QPAC: one
 adjoint solve `Hᵀ Ψ = e_{out,(0,0)}`, each sideband block of `Ψ` dotted with the AC-source
@@ -293,8 +340,18 @@ compiled OSDI varactor whose `Q(v)` 2nd harmonic matches, and KLU==Sparse parity
 automatic **source-stepping continuation** ([Enhancement-135](../../../enhancements_doc/Enhancement-135.md)):
 every source is ramped by `λ: 0→1` in adaptive, warm-started, backtracking steps, so a
 5 V diode rectifier that blows up cold converges in 3 continuation steps (easy circuits
-stay bit-identical). Single-tone; a sparse block solve and multi-tone HB (true
-incommensurate QPSS, cf. note 6) are the remaining follow-ups.*
+stay bit-identical). `.hb` and the rest of the HB family gained netlist **dot-cards** in
+[Enhancement-162](../../../enhancements_doc/Enhancement-162.md)/[163](../../../enhancements_doc/Enhancement-163.md).
+One serious latent defect was found and fixed by the
+[E-178](../../../enhancements_doc/Enhancement-178.md) cross-machinery check: both HB
+Newtons (single-tone `hb` and two-tone `qpss … hb`) **double-subtracted the DC
+sources** — the settle-mode rhs folded into the device-current term already carries
+them, and `−λ·Is` subtracted them again — so every DC bias voltage converged to
+exactly **2×**, silently corrupting all bias-dependent noise and conversion
+(flicker ∝ I^AF off by 2^AF) while AC content and every AC-driven validation stayed
+exact. Fixed (net DC drive is now exactly `−λ·Is_DC`); `qpnoise cyclo` agrees with
+`pnoise cyclo` digit-for-digit across the two orbit machineries since. Multi-tone HB
+beyond two tones and a sparse block solve remain the follow-ups.*
 
 *⁸ Envelope following is ✅ since
 [Enhancement-154](../../../enhancements_doc/Enhancement-154.md): the `envelope`
@@ -537,8 +594,13 @@ leverage on the existing strength × differentiation × tractability:
    and finally **envelope following**
    ([Enhancement-154](../../../enhancements_doc/Enhancement-154.md), implicit
    monodromy period-jumping) — so **every analysis in the RF / periodic-steady-state
-   suite is now present**. What remains is efficiency refinement (sparse
-   conversion-matrix and monodromy solves, three-plus-tone) rather than new analyses.
+   suite is now present**. The suite has since been through a systematic
+   correctness-audit arc ([E-171](../../../enhancements_doc/Enhancement-171.md)–[178](../../../enhancements_doc/Enhancement-178.md):
+   KLU pole-zero determinants, the conversion-matrix parametric term, driven-mode
+   PSS, the noise-folding referee, exact cyclostationary folding, and the HB
+   DC-source fix — each found by probing a region no prior test could see). What
+   remains is efficiency refinement (sparse conversion-matrix and monodromy solves,
+   three-plus-tone) rather than new analyses.
 2. **Convergence robustness** — coordinated accuracy presets (`errpreset`)
    **landed in [Enhancement-110](../../../enhancements_doc/Enhancement-110.md)**, a
    globalized Newton line search in
