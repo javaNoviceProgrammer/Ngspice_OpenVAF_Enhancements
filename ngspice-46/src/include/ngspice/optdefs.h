@@ -145,6 +145,7 @@ enum {
     OPT_TRUSTREGION,    /* Enhancement-153: Levenberg-Marquardt trust-region Newton */
     OPT_PTCONT,         /* Enhancement-127: pseudo-transient continuation */
     OPT_DYNORDER,       /* Enhancement-128: LTE-based dynamic integration order */
+    OPT_ORDFIX,         /* Enhancement-181: fixed integration order (verification) */
 };
 
 /* Enhancement-110: `.option errpreset=conservative|moderate|liberal` sets a

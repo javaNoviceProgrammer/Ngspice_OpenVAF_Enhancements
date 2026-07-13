@@ -222,6 +222,9 @@ CKTsetOpt(CKTcircuit *ckt, JOB *anal, int opt, IFvalue *val)
     case OPT_DYNORDER: /* Enhancement-128 */
         task->TSKdynorder = (val->iValue != 0);
         break;
+    case OPT_ORDFIX: /* Enhancement-181 */
+        task->TSKordFix = val->iValue;
+        break;
     case OPT_ABSDV:
         task->TSKabsDv = val->rValue;
         break;
@@ -470,6 +473,8 @@ static IFparm OPTtbl[] = {
         "Pseudo-transient continuation homotopy for the DC operating point" },
  { "dynorder", OPT_DYNORDER, IF_SET|IF_FLAG,
         "LTE-based dynamic integration-order selection (Gear, up to maxord)" },
+ { "ordfix", OPT_ORDFIX, IF_SET|IF_INTEGER,
+        "Pin the integration order (verification: no LTE step control)" },
  { "absdv", OPT_ABSDV, IF_SET|IF_REAL,
         "Maximum absolute iter-iter node voltage change" },
  { "reldv", OPT_RELDV, IF_SET|IF_REAL,

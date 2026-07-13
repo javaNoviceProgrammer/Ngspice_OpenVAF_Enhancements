@@ -281,6 +281,7 @@ struct CKTcircuit {
     double CKTpseudoGmin;          /* E-127: pseudo-transient shunt conductance Gps=Cps/dtau (0 = off) */
     double *CKTpseudoPrev;         /* E-127: pseudo-transient previous-step solution x_prev */
     unsigned int CKTdynorder:1;    /* Enhancement-128: LTE-based dynamic integration order */
+    int CKTordFix;                 /* Enhancement-181: fixed integration order, 0 = off */
     int CKTorderCnt;               /* E-128: accepted steps since the last order reset (history depth) */
     int CKTorderMaxUsed;           /* E-128: highest integration order actually selected (diagnostic) */
     int CKTorderHold;              /* E-128: steps to hold the order after a change (settling) */
@@ -449,6 +450,7 @@ extern int DCTsetParm(CKTcircuit  *, JOB *, int , IFvalue *);
 extern int DCop(CKTcircuit *ckt, int notused); /* va: notused avoids "init from incompatible pointer type" */
 extern int DCtrCurv(CKTcircuit *, int);
 extern int DCtran(CKTcircuit *, int);
+extern int DCtran_step_quit(CKTcircuit *ckt);
 extern int DISTOan(CKTcircuit *, int);
 extern int NOISEan(CKTcircuit *, int);
 extern int PZan(CKTcircuit *, int);

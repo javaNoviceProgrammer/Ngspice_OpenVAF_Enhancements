@@ -366,6 +366,15 @@ DCtran(CKTcircuit *ckt,
             ckt->CKTdeltaOld[i]=ckt->CKTmaxStep;
         }
         ckt->CKTdelta = delta; /* delta set in line 130 */
+        /* Enhancement-181: in fixed-order verification mode start from a MUCH
+         * smaller first step -- the first point is integrated at order 1, and
+         * a first step proportional to the pinned step imposes an O(h^2)
+         * startup error floor that masks the high-order convergence this mode
+         * exists to measure. The step doubles back up to the tmax pin while
+         * the order ramps to ordfix, so full order is reached before full
+         * step size. */
+        if (ckt->CKTordFix > 0)
+            ckt->CKTdelta *= 1e-3;
 #ifdef STEPDEBUG
         (void)printf("delta initialized to %g\n",ckt->CKTdelta);
 #endif
@@ -560,7 +569,7 @@ DCtran(CKTcircuit *ckt,
 #endif
         /* Enhancement-128: report the highest integration order the LTE-based
            dynamic order control actually selected (only under 'set ngdebug'). */
-        if (ckt->CKTdynorder && ft_ngdebug)
+        if ((ckt->CKTdynorder || ckt->CKTordFix > 0) && ft_ngdebug)
             fprintf(stderr, "Dynamic order control: highest integration order used "
                     "= %d of maxord %d; %d accepted / %d rejected steps\n",
                     ckt->CKTorderMaxUsed, ckt->CKTmaxOrder,
@@ -937,6 +946,15 @@ resume:
                 UPDATE_STATS(DOING_TRAN);
                 return(error);
             }
+            /* Enhancement-181: fixed-order verification mode -- accept every
+             * converged step at the externally-pinned delta (the step is ruled
+             * by tmax/breakpoints, NOT by the LTE estimate). Used to measure
+             * the integrator's order of convergence against analytic
+             * references; useless (and mildly dangerous) for production runs
+             * since the local error is whatever the pinned step gives. */
+            if (ckt->CKTordFix > 0)
+                newdelta = 2.0 * ckt->CKTdelta;   /* grow to the tmax pin; the
+                                                   * loop top clamps to CKTmaxStep */
             if (newdelta > .9 * ckt->CKTdelta) {
 #if defined(XSPICE)
                 /* The timestep has succeeded.  XSPICE instances with
@@ -965,7 +983,27 @@ resume:
                     ckt->CKTorderRej--;
 
                 /* don't raise the order for backward Euler */
-                if (ckt->CKTdynorder && ckt->CKTmaxOrder > 1) {
+                if (ckt->CKTordFix > 0) {
+                    /* Enhancement-181: ramp straight to the pinned order as the
+                     * BDF history builds (order k needs k back points); no LTE
+                     * involvement, no step-size change */
+                    int tgt = MIN(ckt->CKTordFix, ckt->CKTmaxOrder);
+                    if (tgt > ckt->CKTorderCnt)
+                        tgt = ckt->CKTorderCnt;
+                    if (tgt < 1)
+                        tgt = 1;
+                    ckt->CKTorder = tgt;
+                    if (ckt->CKTorder > ckt->CKTorderMaxUsed)
+                        ckt->CKTorderMaxUsed = ckt->CKTorder;
+                    /* grow the step back up to the tmax pin: fast while the
+                     * order is low (the step is tiny, errors negligible), then
+                     * GENTLY (x1.15) once the full order is reached -- large
+                     * step ratios destabilize variable-step BDF at high order
+                     * and low-order ramp steps near full size would seed an
+                     * O(h^3) error floor that masks the measurement */
+                    newdelta = ((ckt->CKTorder < ckt->CKTordFix &&
+                                 ckt->CKTorder <= 2) ? 2.0 : 1.15) * ckt->CKTdelta;
+                } else if (ckt->CKTdynorder && ckt->CKTmaxOrder > 1) {
                     /* Enhancement-128: advanced LTE-based order control. The stock
                      * controller only ever toggles order 1<->2. Here the LTE-limited
                      * timestep is evaluated at the current order and its immediate

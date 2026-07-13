@@ -42,6 +42,19 @@ fill-reducing ordering (`klu_ordering=amd|colamd`), row scaling
 `klu_memgrow_factor` is fixed. They change only how the matrix factors, not the
 solution.*
 
+*The integration methods themselves are now **certified exactly**
+([Enhancement-181](../../../enhancements_doc/Enhancement-181.md)): at every Gear
+order 1–6 the accepted trajectory satisfies the exact variable-step BDF-k
+formula to machine precision (≤1.3e-13) — the first direct verification of the
+`NIcomCof` coefficients, including the orders 3–6 that were dead code for ~30
+years before E-128. The audit ships `.options ordfix=K` (a fixed-order
+verification mode) and referees the rest of this table: solver precision
+tracks conditioning theory under both solvers, all DC convergence-aid paths
+agree on a hard-DC chain, and the `xmu`/`lvltim=1` legacy paths work. Three
+apparent bugs found on the way were real numerics — the LTE order preference
+inverts at loose tolerance, order-1 starters impose an O(h²) floor, and
+lossless-LC divergence at high order is the textbook A(α) stability wedge.*
+
 *The Integration "advanced LTE-based step/order control" row was ⚠️ because,
 although ngspice implements Gear coefficients for orders 1–6 (`NIcomCof`) and an
 LTE-limited-step estimate at any order (`CKTtrunc`/`CKTterr`), the stock transient
