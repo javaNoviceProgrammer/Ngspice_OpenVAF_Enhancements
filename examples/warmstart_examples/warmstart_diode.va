@@ -1,0 +1,13 @@
+// warmstart_diode.va -- a minimal Verilog-A diode for the Monte Carlo
+// warm-start demo (Enhancement-188). `is` is an instance parameter so each
+// ladder stage can carry its own random saturation current.
+`include "disciplines.vams"
+
+module wdiode(p, n);
+    inout p, n;
+    electrical p, n;
+    (* type = "instance" *) parameter real is = 1e-14 from (0:inf);
+    parameter real vt = 0.02585;
+    analog
+        I(p, n) <+ is * (limexp(V(p, n) / vt) - 1.0);
+endmodule

@@ -1,0 +1,41 @@
+* warmstart_demo.cir -- Monte Carlo warm-start (Enhancement-188)
+*
+* A ladder of forward-biased Verilog-A diodes with random saturation currents.
+* Each Monte Carlo sample re-sources the deck (new random draws) and solves a
+* DC operating point that has moved only slightly from the previous sample --
+* yet ngspice cold-solves every one, burning the full gmin/source-stepping
+* homotopy (~50 Newton iterations here) each time.
+*
+* `montecarlo ... -warm` reuses the previous converged solution as the initial
+* guess for the next sample, so a direct Newton converges in a handful of
+* iterations (~4). A poor guess simply falls back to the cold homotopy, so the
+* yield is IDENTICAL to the cold run -- only the iteration count drops.
+*
+* Build:  openvaf-r warmstart_diode.va -o warmstart_diode.osdi
+* Run:    ngspice -b warmstart_demo.cir
+Vs 1 0 DC 5
+N1 1 2 dm is={agauss(1e-14, 3e-15, 3)}
+N2 2 3 dm is={agauss(1e-14, 3e-15, 3)}
+N3 3 4 dm is={agauss(1e-14, 3e-15, 3)}
+N4 4 5 dm is={agauss(1e-14, 3e-15, 3)}
+N5 5 6 dm is={agauss(1e-14, 3e-15, 3)}
+N6 6 7 dm is={agauss(1e-14, 3e-15, 3)}
+R1 2 0 100k
+R2 3 0 100k
+R3 4 0 100k
+R4 5 0 100k
+R5 6 0 100k
+R6 7 0 100k
+.model dm wdiode
+.control
+  pre_osdi warmstart_diode.osdi
+  set numdgt=6
+  option noacct
+  echo --- cold Monte Carlo (rusage totiter = last sample's Newton iters) ---
+  montecarlo 400 -seed 1 -analysis op -spec v(3) -max 3.791 -min 3.785
+  rusage totiter
+  echo --- warm Monte Carlo (same yield to convergence tolerance, far fewer iters) ---
+  montecarlo 400 -warm -seed 1 -analysis op -spec v(3) -max 3.791 -min 3.785
+  rusage totiter
+.endc
+.end

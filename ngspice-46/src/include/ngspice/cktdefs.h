@@ -418,6 +418,7 @@ extern IFuid CKTnodName(CKTcircuit *, int);
 extern void CKTnodOut(CKTcircuit *);
 extern CKTnode * CKTnum2nod(CKTcircuit *, int);
 extern int CKTop(CKTcircuit *, long, long, int);
+extern void CKTsetWarmStart(int);   /* Enhancement-188: warm-start repeated DC ops */
 extern int CKTpModName(char *, IFvalue *, CKTcircuit *, int , IFuid , GENmodel **);
 extern int CKTpName(char *, IFvalue *, CKTcircuit *, int , char *, GENinstance **);
 extern int CKTparam(CKTcircuit *, GENinstance *, int , IFvalue *, IFvalue *);

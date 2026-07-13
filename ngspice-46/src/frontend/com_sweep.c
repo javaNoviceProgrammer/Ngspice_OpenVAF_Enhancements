@@ -583,7 +583,7 @@ process corners by the ordinary `.lib`/`.include` corner selection.
 
 void com_montecarlo(wordlist *wl)
 {
-    int nsamp = 0, uselhs = 0, nspec = 0;
+    int nsamp = 0, uselhs = 0, nspec = 0, usewarm = 0;
     unsigned seed = 1;
     char analysis[512] = "op";
     char metric[MC_MAXSPEC][256];
@@ -594,7 +594,7 @@ void com_montecarlo(wordlist *wl)
     int s;
 
     if (wl == NULL || wl->wl_word == NULL) {
-        fprintf(cp_err, "Usage: montecarlo <N> [-lhs] [-seed <s>] [-analysis <cmd>] "
+        fprintf(cp_err, "Usage: montecarlo <N> [-lhs] [-warm] [-seed <s>] [-analysis <cmd>] "
                         "(-spec <metric> [-max <hi>] [-min <lo>])...\n");
         return;
     }
@@ -609,6 +609,8 @@ void com_montecarlo(wordlist *wl)
         const char *w = wl->wl_word;
         if (eq(w, "-lhs")) {
             uselhs = 1; wl = wl->wl_next;
+        } else if (eq(w, "-warm")) {
+            usewarm = 1; wl = wl->wl_next;
         } else if (eq(w, "-seed") || eq(w, "seed")) {
             if (!wl->wl_next) { fprintf(cp_err, "montecarlo: -seed needs a value\n"); return; }
             wl = wl->wl_next; seed = (unsigned) strtoul(wl->wl_word, NULL, 10); wl = wl->wl_next;
@@ -671,6 +673,11 @@ void com_montecarlo(wordlist *wl)
 
     long npass = 0;
     ft_optimizing = TRUE;
+    /* Enhancement-188: warm-start each sample's DC bias point from the previous
+     * converged solution (opt-in). Only the iteration count changes; the
+     * converged point -- and thus the yield -- is identical to the cold path. */
+    if (usewarm)
+        CKTsetWarmStart(1);
     for (int i = 0; i < nsamp; i++) {
         ft_optimizing = TRUE;
         sw_run_cmd("reset");
@@ -685,6 +692,8 @@ void com_montecarlo(wordlist *wl)
         }
         if (pass) npass++;
     }
+    if (usewarm)
+        CKTsetWarmStart(0);
     ft_optimizing = save_optimizing;
     if (uselhs)
         mc_sss_off();
