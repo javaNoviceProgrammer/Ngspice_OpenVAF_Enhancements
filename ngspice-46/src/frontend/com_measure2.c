@@ -66,7 +66,7 @@ is_arith_char2(char c)
     return c != '\0' && strchr("*/<>?:|&^!%\\", c);
 }
 
-bool
+static bool
 str_has_arith_char2(char* s)
 {
     if (*s == '+' || *s == '-')
@@ -236,9 +236,11 @@ measure_function_type(char *operation)
         mFunctionType = AT_RMS;
     else if (strcasecmp(mFunction, "PP") == 0)
         mFunctionType = AT_PP;
-    else if (strcasecmp(mFunction, "INTEG") == 0)
+    else if (strcasecmp(mFunction, "INTEG") == 0 ||
+             strcasecmp(mFunction, "INTEGRAL") == 0)
         mFunctionType = AT_INTEG;
-    else if (strcasecmp(mFunction, "DERIV") == 0)
+    else if (strcasecmp(mFunction, "DERIV") == 0 ||
+             strcasecmp(mFunction, "DERIVATIVE") == 0)
         mFunctionType = AT_DERIV;
     else if (strcasecmp(mFunction, "ERR") == 0)
         mFunctionType = AT_ERR;
@@ -754,6 +756,107 @@ measure_at(
     }
 
     meas->m_measured = NAN;
+    return MEASUREMENT_OK;
+}
+
+
+/* -----------------------------------------------------------------
+ * Function: measure the DERIVATIVE of a vector at a given scale
+ * point (Enhancement-179 -- .meas DERIV was parsed but never
+ * evaluated: it fell into the 'currently not supported' stub).
+ * A quadratic through the three samples around `at` is
+ * differentiated analytically, handling a nonuniform timestep; at
+ * the interval ends it degrades to the two-point slope.
+ * ----------------------------------------------------------------- */
+static int
+measure_deriv_at(
+    MEASUREPTR meas,            /* in : parsed measurement data request */
+    double at                   /* in : scale value to differentiate at */
+    )
+{
+    int i, j;
+    bool ac_check = FALSE, sp_check = FALSE;
+    struct dvec *d, *dScale;
+
+    if (meas->m_vec == NULL) {
+        fprintf(stderr, "Error: Syntax error in meas line, missing vector\n");
+        return MEASUREMENT_FAILURE;
+    }
+
+    d = vec_get(meas->m_vec);
+    dScale = plot_cur->pl_scale;
+
+    if (d == NULL) {
+        fprintf(cp_err, "Error: no such vector as %s.\n", meas->m_vec);
+        return MEASUREMENT_FAILURE;
+    }
+    if (dScale == NULL || (dScale->v_realdata == NULL && dScale->v_compdata == NULL)) {
+        fprintf(cp_err, "Error: scale vector time, frequency or dc has no data.\n");
+        return MEASUREMENT_FAILURE;
+    }
+
+    if (cieq(meas->m_analysis, "ac"))
+        ac_check = TRUE;
+    else if (cieq(meas->m_analysis, "sp"))
+        sp_check = TRUE;
+    else if (!cieq(meas->m_analysis, "dc") && !d->v_realdata) {
+        fprintf(stderr, "Error: no real data available for measurement (no tran simulation?)\n");
+        return MEASUREMENT_FAILURE;
+    }
+
+    if (d->v_length < 2) {
+        meas->m_measured = NAN;
+        return MEASUREMENT_OK;
+    }
+
+#define DERIV_VAL(idx) (((ac_check || sp_check) && d->v_compdata) ? \
+                        get_value(meas, d, (idx)) : d->v_realdata[(idx)])
+#define DERIV_SCL(idx) (dScale->v_compdata ? dScale->v_compdata[(idx)].cx_real \
+                                           : dScale->v_realdata[(idx)])
+
+    /* find the interval [j-1, j] bracketing `at` */
+    for (j = 1; j < d->v_length; j++) {
+        double s0 = DERIV_SCL(j - 1), s1 = DERIV_SCL(j);
+        if ((s0 <= at && at <= s1) || (s0 >= at && at >= s1))
+            break;
+    }
+    if (j >= d->v_length) {
+        meas->m_measured = NAN;
+        return MEASUREMENT_OK;
+    }
+
+    /* three-point stencil around the bracket (shift at the ends) */
+    i = j - 1;
+    if (i == 0)
+        i = 1;
+    if (i > d->v_length - 2)
+        i = d->v_length - 2;
+
+    {
+        double t0 = DERIV_SCL(i - 1), t1 = DERIV_SCL(i), t2 = DERIV_SCL(i + 1);
+        double v0 = DERIV_VAL(i - 1), v1 = DERIV_VAL(i), v2 = DERIV_VAL(i + 1);
+        double d01 = t1 - t0, d12 = t2 - t1, d02 = t2 - t0;
+
+        if (d01 == 0.0 || d12 == 0.0 || d02 == 0.0) {
+            /* repeated scale points (breakpoint duplicates): two-point slope */
+            double sa = DERIV_SCL(j - 1), sb = DERIV_SCL(j);
+            if (sb == sa) {
+                meas->m_measured = NAN;
+                return MEASUREMENT_OK;
+            }
+            meas->m_measured = (DERIV_VAL(j) - DERIV_VAL(j - 1)) / (sb - sa);
+            return MEASUREMENT_OK;
+        }
+        /* derivative of the Lagrange quadratic through (t0,v0),(t1,v1),(t2,v2) */
+        meas->m_measured =
+            v0 * (2.0 * at - t1 - t2) / (d01 * d02)
+          - v1 * (2.0 * at - t0 - t2) / (d01 * d12)
+          + v2 * (2.0 * at - t0 - t1) / (d02 * d12);
+    }
+
+#undef DERIV_VAL
+#undef DERIV_SCL
+
     return MEASUREMENT_OK;
 }
 
@@ -2153,6 +2256,79 @@ err_ret7:
     }
 
     case AT_DERIV:
+    {
+        /* Enhancement-179: DERIV{ATIVE} out_var AT=val | WHEN ... -- was
+         * parsed but unimplemented ('currently not supported'). Same
+         * parse/locate flow as FIND, with the derivative evaluator. */
+        MEASUREPTR meas, measFind;
+        meas = TMALLOC(struct measure, 1);
+        measFind = TMALLOC(struct measure, 1);
+
+        meas->m_analysis = measFind->m_analysis = mAnalysis;
+
+        if (measure_parse_find(meas, words, wlWhen, errbuf) == MEASUREMENT_FAILURE) {
+            measure_errMessage(mName, mFunction, "DERIV", errbuf, autocheck);
+            goto err_ret_deriv;
+        }
+
+        if (meas->m_at == 1e99) {
+            /* deriv .. when statement */
+            while (words != wlWhen)
+                words = words->wl_next;
+
+            if (words)
+                words = words->wl_next;
+
+            if (measure_parse_when(measFind, words, errbuf) == MEASUREMENT_FAILURE) {
+                measure_errMessage(mName, mFunction, "WHEN", errbuf, autocheck);
+                goto err_ret_deriv;
+            }
+
+            com_measure_when(measFind);
+
+            if (isnan(measFind->m_measured)) {
+                sprintf(errbuf, "out of interval\n");
+                measure_errMessage(mName, mFunction, "WHEN", errbuf, autocheck);
+                goto err_ret_deriv;
+            }
+
+            if (measure_deriv_at(meas, measFind->m_measured) == MEASUREMENT_FAILURE)
+                goto err_ret_deriv;
+
+            meas->m_at = measFind->m_measured;
+
+        } else {
+            if (measure_deriv_at(meas, meas->m_at) == MEASUREMENT_FAILURE)
+                goto err_ret_deriv;
+        }
+
+        if (isnan(meas->m_measured)) {
+            sprintf(errbuf, "out of interval\n");
+            measure_errMessage(mName, mFunction, "AT", errbuf, autocheck);
+            goto err_ret_deriv;
+        }
+
+        if (out_line)
+            sprintf(out_line, "%-20s=  %.*e\n", mName, precision, meas->m_measured);
+        else
+            fprintf(mout, "%-20s=  %.*e\n", mName, precision, meas->m_measured);
+
+        *result = meas->m_measured;
+
+        ret_val = MEASUREMENT_OK;
+
+err_ret_deriv:
+        tfree(mAnalysis);
+        tfree(mName);
+        tfree(meas->m_vec);
+        tfree(meas);
+        tfree(measFind->m_vec);
+        tfree(measFind);
+        tfree(mFunction);
+
+        return ret_val;
+    }
+
     case AT_ERR:
     case AT_ERR1:
     case AT_ERR2:
