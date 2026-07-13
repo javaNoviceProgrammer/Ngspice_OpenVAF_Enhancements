@@ -14,6 +14,7 @@
 
 #include "plotting/plotit.h"
 #include "../misc/mktemp.h"
+#include "../misc/util.h" /* ngdirname() */
 
 #include "com_pyplot.h"
 
@@ -23,8 +24,18 @@ void
 com_pyplot(wordlist *wl)
 {
     char *fname = NULL;
-    char defname[] = "pyplot";
+    char *fullname = NULL;
+    char defname[64] = "pyplot";
     bool tempf = FALSE;
+    /* Enhancement-183: successive default-named plots must get DISTINCT base
+       names. In window (interactive) mode pyplot launches the Python viewer in
+       the BACKGROUND, so two plots that share the "pyplot" base race on the
+       same pyplot.py/pyplot.data: the second call overwrites the files before
+       the first viewer has read them, and both windows end up showing the
+       second plot (its title, its data). A per-session counter keeps the first
+       default plot named "pyplot" (unchanged) and names later ones
+       "pyplot-2", "pyplot-3", ... so each viewer reads its own files. */
+    static unsigned int autoseq = 0;
 
     if (!wl)
         return;
@@ -42,19 +53,42 @@ com_pyplot(wordlist *wl)
         }
     }
 
-    if (!fname)
+    if (!fname) {
+        if (autoseq > 0)
+            (void) snprintf(defname, sizeof defname, "pyplot-%u", autoseq + 1);
+        autoseq++;
         fname = defname;
+    }
 
     if (cieq(fname, "temp") || cieq(fname, "tmp")) {
         fname = smktemp("py");
         tempf = TRUE;
     }
 
+    /* Enhancement-183: write the .py/.data (and the .png) next to the CIRCUIT
+       FILE, not in whatever directory ngspice happens to have been started
+       from -- so a self-contained deck folder collects its own plot artifacts.
+       Only when the user gave a bare base name (their own path, if any, is
+       respected) and we know where the deck came from; a bare relative deck
+       name (ci_filename dir == ".") is left in the cwd, exactly as before. */
+    if (!tempf && ft_curckt && ft_curckt->ci_filename &&
+            strchr(fname, DIR_TERM) == NULL && strchr(fname, '/') == NULL) {
+        char *dir = ngdirname(ft_curckt->ci_filename);
+        if (dir && dir[0] && !(dir[0] == '.' && dir[1] == '\0')) {
+            fullname = tprintf("%s%s%s", dir, DIR_PATHSEP, fname);
+            fname = fullname;
+        }
+        tfree(dir);
+    }
+
     if (!wl) /* no plot arguments left */
-        return;
+        goto done;
 
     (void) plotit(wl, fname, "pyplot");
 
+done:
     if (tempf)
         tfree(fname);
+    if (fullname)
+        tfree(fullname);
 }

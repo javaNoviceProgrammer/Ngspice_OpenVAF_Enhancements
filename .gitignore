@@ -557,3 +557,6 @@ examples/noisetable_examples/_nt_out.txt
 
 # optimize_examples: compiled Verilog-A models (generated from the .va sources)
 examples/optimize_examples/*.osdi
+
+# pyplot example: verify_pyplot.py generates these decks at runtime
+examples/pyplot_examples/*.sp

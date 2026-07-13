@@ -12,6 +12,13 @@ writes a `<file>.data` table and a `<file>.py` script and runs Python. With
   [3] rc.png is a valid PNG (magic bytes) of non-trivial size
   [4] the generated rc.py references both plotted vectors and uses matplotlib
   [5] an AC log-scale plot (`set type=...`/loglog) also renders a PNG
+
+Enhancement-183 (this session's options):
+  [E-183a] two omitted-file-name plots get DISTINCT names (pyplot, pyplot-2)
+           with their own titles -- no interactive-window collision
+  [E-183b] the .py/.data/.png are written next to the CIRCUIT FILE, not the cwd
+  [E-183c] `set pyplot_linewidth=<w>` -> linewidth in the plot() calls
+  [E-183d] `set pyplot_backend=<name>` -> matplotlib.use(<name>)
 """
 import os
 import re
@@ -140,7 +147,85 @@ subprocess.run([NGSPICE, "-b", "nofn.sp"], capture_output=True, text=True, cwd=H
 check("pyplot with no file name defaults to 'pyplot.png'",
       is_png(os.path.join(HERE, "pyplot.png")))
 
-for f in ("tran.sp", "ac.sp", "nofn.sp", "rc.py", "rc.data", "rc.png",
+# ---- Enhancement-183a: distinct default names for successive no-name plots ----
+for f_ in ("pyplot.py", "pyplot.data", "pyplot.png",
+           "pyplot-2.py", "pyplot-2.data", "pyplot-2.png"):
+    try:
+        os.remove(os.path.join(HERE, f_))
+    except OSError:
+        pass
+twodeck = """* two no-name plots
+.model rl rcload
+V1 in 0 PULSE(0 1 0 1n 1n 1m 2m)
+N1 in out rl
+C1 out 0 1u
+.tran 10u 3m
+.control
+pre_osdi rcload.osdi
+run
+set pyplot_terminal=png
+pyplot v(out) title first
+pyplot v(in) title second
+.endc
+.end
+"""
+with open(os.path.join(HERE, "two.sp"), "w") as f:
+    f.write(twodeck)
+subprocess.run([NGSPICE, "-b", "two.sp"], capture_output=True, text=True, cwd=HERE)
+p1 = open(os.path.join(HERE, "pyplot.py")).read() if os.path.isfile(os.path.join(HERE, "pyplot.py")) else ""
+p2 = open(os.path.join(HERE, "pyplot-2.py")).read() if os.path.isfile(os.path.join(HERE, "pyplot-2.py")) else ""
+check("E-183a: two no-name plots -> distinct pyplot / pyplot-2 with own titles",
+      is_png(os.path.join(HERE, "pyplot.png")) and is_png(os.path.join(HERE, "pyplot-2.png"))
+      and "suptitle('first')" in p1 and "suptitle('second')" in p2)
+
+# ---- Enhancement-183b: artifacts written next to the CIRCUIT FILE ----
+for f_ in ("dir.py", "dir.data", "dir.png"):
+    try:
+        os.remove(os.path.join(HERE, f_))
+    except OSError:
+        pass
+dirdeck = twodeck.replace("pyplot v(out) title first\npyplot v(in) title second",
+                          "pyplot dir v(out)")
+deckpath = os.path.join(HERE, "dir.sp")
+with open(deckpath, "w") as f:
+    f.write(dirdeck)
+# run from the PARENT dir but give the deck by ABSOLUTE path -> outputs must
+# land next to the deck (HERE), not in the cwd (the parent)
+parent = os.path.dirname(HERE)
+subprocess.run([NGSPICE, "-b", deckpath], capture_output=True, text=True, cwd=parent)
+pydir = open(os.path.join(HERE, "dir.py")).read() if os.path.isfile(os.path.join(HERE, "dir.py")) else ""
+check("E-183b: artifacts land next to the .cir (abs deck path, run from parent)",
+      is_png(os.path.join(HERE, "dir.png"))
+      and not os.path.exists(os.path.join(parent, "dir.png"))
+      and os.path.join(HERE, "dir.data") in pydir)
+
+# ---- Enhancement-183c: pyplot_linewidth ----
+lwdeck = twodeck.replace(
+    "set pyplot_terminal=png\npyplot v(out) title first\npyplot v(in) title second",
+    "set pyplot_terminal=png\nset pyplot_linewidth=3.5\npyplot lw v(out)")
+with open(os.path.join(HERE, "lw.sp"), "w") as f:
+    f.write(lwdeck)
+subprocess.run([NGSPICE, "-b", "lw.sp"], capture_output=True, text=True, cwd=HERE)
+pylw = open(os.path.join(HERE, "lw.py")).read() if os.path.isfile(os.path.join(HERE, "lw.py")) else ""
+check("E-183c: set pyplot_linewidth=3.5 -> linewidth=3.5 in the plot() call",
+      "linewidth=3.5" in pylw and is_png(os.path.join(HERE, "lw.png")))
+
+# ---- Enhancement-183d: pyplot_backend ----
+bedeck = twodeck.replace(
+    "set pyplot_terminal=png\npyplot v(out) title first\npyplot v(in) title second",
+    "set pyplot_terminal=png\nset pyplot_backend=Agg\npyplot be v(out)")
+with open(os.path.join(HERE, "be.sp"), "w") as f:
+    f.write(bedeck)
+subprocess.run([NGSPICE, "-b", "be.sp"], capture_output=True, text=True, cwd=HERE)
+pybe = open(os.path.join(HERE, "be.py")).read() if os.path.isfile(os.path.join(HERE, "be.py")) else ""
+check("E-183d: set pyplot_backend=Agg -> matplotlib.use('agg') in the script",
+      "matplotlib.use('agg')" in pybe and is_png(os.path.join(HERE, "be.png")))
+
+for f in ("two.sp", "dir.sp", "lw.sp", "be.sp",
+          "pyplot-2.py", "pyplot-2.data", "pyplot-2.png",
+          "dir.py", "dir.data", "dir.png", "lw.py", "lw.data", "lw.png",
+          "be.py", "be.data", "be.png",
+          "tran.sp", "ac.sp", "nofn.sp", "rc.py", "rc.data", "rc.png",
           "acmag.py", "acmag.data", "acmag.png",
           "pyplot.py", "pyplot.data", "pyplot.png", "rcload.osdi"):
     p = os.path.join(HERE, f)
