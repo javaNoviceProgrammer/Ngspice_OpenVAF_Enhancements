@@ -74,6 +74,30 @@ py = open(os.path.join(HERE, "rc.py")).read() if os.path.isfile(os.path.join(HER
 check("rc.py uses matplotlib and plots both vectors",
       "matplotlib" in py and "v(out)" in py and "v(in)" in py)
 
+# Enhancement-182: without explicit user limits the script must NOT pin the
+# axes -- matplotlib's autoscaling + fig.tight_layout() frame the data (the
+# old behavior forwarded ngspice's grid-rounded internal ranges).
+check("E-182: auto plot has no set_xlim/set_ylim, relies on tight_layout",
+      "set_xlim" not in py and "set_ylim" not in py and "tight_layout" in py)
+
+# ... while explicit `xlimit`/`ylimit` on the command are still honored.
+limdeck = deck.replace("pyplot rc v(out) v(in)",
+                       "pyplot rclim v(out) v(in) xlimit 0 1m ylimit -1 1")
+with open(os.path.join(HERE, "tranlim.sp"), "w") as f:
+    f.write(limdeck)
+r = subprocess.run([NGSPICE, "-b", "tranlim.sp"], capture_output=True, text=True, cwd=HERE)
+pylim = (open(os.path.join(HERE, "rclim.py")).read()
+         if os.path.isfile(os.path.join(HERE, "rclim.py")) else "")
+check("E-182: explicit xlimit/ylimit still emit set_xlim and set_ylim",
+      "set_xlim(0.000000e+00, 1.000000e-03)" in pylim and
+      "set_ylim(-1.000000e+00, 1.000000e+00)" in pylim and
+      is_png(os.path.join(HERE, "rclim.png")))
+for f_ in ("tranlim.sp", "rclim.py", "rclim.data", "rclim.png"):
+    try:
+        os.remove(os.path.join(HERE, f_))
+    except OSError:
+        pass
+
 # AC magnitude on a log x-axis
 acdeck = """* pyplot AC demo
 .model rl rcload

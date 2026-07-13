@@ -245,6 +245,9 @@ void ft_pyplot(double *xlims, double *ylims,
         fprintf(file, "    _ax.set_yscale('log')\n");
     if (!nogrid)
         fprintf(file, "    _ax.grid(True, which='both')\n");
+    /* Enhancement-182: xlims/ylims arrive non-NULL only when the user gave
+     * explicit `xlimit`/`ylimit` on the command; otherwise the axes are left
+     * to matplotlib's autoscaling (with fig.tight_layout() below). */
     if (xlims)
         fprintf(file, "    _ax.set_xlim(%e, %e)\n", xlims[0], xlims[1]);
     if (ylims && !ylog)

@@ -289,6 +289,7 @@ bool plotit(wordlist *wl, const char *hcopy, const char *devname)
     static PLOTTYPE ptype = PLOT_LIN;
 
     bool gfound = FALSE, pfound = FALSE, oneval = FALSE, contour2d = FALSE, digitop = FALSE;
+    bool user_xlim = FALSE, user_ylim = FALSE;   /* Enhancement-182 */
     double ylims[2], xlims[2];
     struct pnode *pn, *names = NULL;
     struct dvec *d = NULL, *vecs = NULL, *lv = NULL, *lastvs = NULL;
@@ -1129,6 +1130,12 @@ bool plotit(wordlist *wl, const char *hcopy, const char *devname)
         ylims[1] = 1.0;
     }
 
+    /* Enhancement-182: remember whether the axis limits came from the USER
+     * (`xl`/`xlimit`, `yl`/`ylimit`) before the statics are freed -- the
+     * pyplot back-end only pins axes for explicit user limits and otherwise
+     * leaves matplotlib to autoscale. */
+    user_xlim = (xlim != NULL);
+    user_ylim = (ylim != NULL);
     if (xlim) {
         tfree(xlim);
     }
@@ -1230,8 +1237,13 @@ bool plotit(wordlist *wl, const char *hcopy, const char *devname)
     }
 
     if (devname && eq(devname, "pyplot")) {
-        /* Enhancement-94: interface to matplotlib */
-        ft_pyplot(xlims, ylims,
+        /* Enhancement-94: interface to matplotlib.
+         * Enhancement-182: pass axis limits only when the USER asked for them
+         * (`xl`/`xlimit`, `yl`/`ylimit` -- the static xlim/ylim hold those);
+         * for the data-derived defaults the generated script relies on
+         * matplotlib's own autoscaling + fig.tight_layout(), which frames the
+         * data better than ngspice's internal grid-rounded ranges. */
+        ft_pyplot(user_xlim ? xlims : NULL, user_ylim ? ylims : NULL,
                   xdelta ? *xdelta : 0.0,
                   ydelta ? *ydelta : 0.0,
                   hcopy,
