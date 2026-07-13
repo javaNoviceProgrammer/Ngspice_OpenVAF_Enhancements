@@ -28,8 +28,11 @@ The periodic small-signal analyses (PAC / Pnoise / PXF and the E-132 periodic
 S-parameters `.psp`) build a **dense** `(2M+1)N` harmonic conversion matrix and
 solve it with a standalone dense complex LU (`pss_csolve`) that is **independent of
 the sparse linear solver** — so they inherit the solver only through the underlying
-PSS, which runs correctly under both since E-118 (KLU re-factors every shooting
-step, so PSS is *slower* under KLU but not wrong). The E-133 two-tone `qpss` and the
+PSS, which runs correctly under both since E-118 (KLU forces a full re-factor
+every shooting step, so it pays a small premium — dramatic before
+[Enhancement-176](../../../enhancements_doc/Enhancement-176.md), whose
+driven-mode shooting cut a pumped run from millions of breakpoint-flooded
+timepoints to a few hundred, making PSS cheap under **both** solvers). The E-133 two-tone `qpss` and the
 E-134 frequency-domain `hb` (harmonic balance) are likewise solver-independent —
 `qpss` drives a transient and direct-DFTs it; `hb` does a dense complex Newton on the
 conversion matrix and uses the sparse solver only to *read* the periodic `G(t)`/`C(t)`
@@ -129,6 +132,11 @@ solve (`klu_z_tsolve`) and lifts the guards, so under KLU:
   [Enhancement-171](../../../enhancements_doc/Enhancement-171.md) had first fixed
   the KLU complex determinant itself (mixed real/complex pivot products and
   permutation parity — silent garbage for complex roots).
+  [Enhancement-173](../../../enhancements_doc/Enhancement-173.md)'s alternative
+  root finder (`.options pzeig`, shift-invert pencil + its own Francis-QR
+  eigensolver) is solver-agnostic by construction — the pencil is extracted
+  densely through `SMPdenseExtractReal` from whichever solver holds the matrix —
+  and returns identical roots under both.
 
 [Enhancement-114](../../../enhancements_doc/Enhancement-114.md) then fixes
 **sensitivity** under KLU. Sensitivity builds an auxiliary perturbation matrix
@@ -146,10 +154,11 @@ sensitivity** now match Sparse exactly.
 
 ## KLU discrepancies — all resolved
 
-Beyond balanced-output pole-zero (a genuine "not (yet) supported" *skip*, not a
-wrong result), **no** example now produces a different result under KLU than under
-Sparse. `KLU_XFAIL` is empty; the harness runs every example under both solvers and
-expects agreement.
+**No** example produces a different result under KLU than under Sparse.
+`KLU_XFAIL` is empty; the harness runs every example under both solvers and
+expects agreement. (Balanced-output pole-zero — formerly a genuine "not (yet)
+supported" *skip*, not a wrong result — runs under KLU since
+[Enhancement-172](../../../enhancements_doc/Enhancement-172.md).)
 
 **opamp741 — was the last one; the real cause was the integration method, not
 KLU.** The transistor-level [opamp741 example](../../../examples/opamp741_examples/)
@@ -198,23 +207,25 @@ klu` into every ngspice deck — and prints a combined verdict:
 === BOTH-SOLVER RESULT [ceil]: sparse=PASS  klu=PASS => OK ===
 ```
 
-KLU's one remaining unsupported analysis (balanced-output pole-zero) is
-auto-detected and reported `SKIP`; `KLU_XFAIL` is now empty (opamp741, its last
-member, was resolved — see above). A separate `SPARSE_ONLY` registry
-(`{rfanalyses, rfpss}`) marks the heavy periodic-steady-state examples whose KLU
-pass is not *wrong*, just **slow** — KLU re-factors every PSS shooting step, so a
-1024-sample `.pss` that is a couple of minutes under Sparse becomes 10–15 min under
-KLU. Those run **Sparse-only** by default (reported `klu=SKIP`); their KLU
-correctness is a property of the ngspice source, verified once when
-[E-118](../../../enhancements_doc/Enhancement-118.md) landed, not something worth
-re-paying every sweep. Env escape hatches:
+`KLU_XFAIL` is empty (opamp741, its last member, was resolved — see above), and
+since [Enhancement-172](../../../enhancements_doc/Enhancement-172.md) there is no
+KLU-unsupported *analysis* left to auto-skip. A separate `SPARSE_ONLY` registry
+(`{highsigma, yield, cmcsweep}`) marks examples whose KLU pass is not *wrong*,
+just **slow** — today those are the heavy Monte-Carlo batteries (thousands of
+runs each), which run Sparse-only by default (reported `klu=SKIP`). The
+periodic-steady-state examples (`rfpss`, `rfanalyses`) used to live in that
+registry too, because KLU re-factors every PSS shooting step and a 1024-sample
+`.pss` cost 10–15 min;
+[Enhancement-176](../../../enhancements_doc/Enhancement-176.md)'s driven-mode
+shooting made them fractions of a second, so the whole RF suite now runs under
+**both** solvers on every sweep. Env escape hatches:
 `NGSPICE_SOLVER=klu|sparse` runs once under one solver; `NG_BOTH=0` disables the
-dual run; **`NG_SLOW_KLU=1`** forces the skipped heavy-PSS KLU pass back on (to
-re-check the E-118 KLU-PSS fix on demand).
+dual run; **`NG_SLOW_KLU=1`** forces the skipped heavy KLU passes back on.
 
-**Sweep result** (all 101 machine-checkable scripts): **101/101 OK** — every
-example is `sparse=PASS` with `klu` in `{PASS, SKIP, XFAIL}`, i.e. the two solvers
-agree wherever KLU is applicable. (The `linesearch` example initially *crashed*
+**Sweep result** (148 verify scripts; 147 in the routine sweep, `cmcsweep`
+excluded for runtime): **147/147 OK** — every
+example is `sparse=PASS` with `klu` in `{PASS, SKIP}`, i.e. the two solvers
+agree wherever KLU runs. (The `linesearch` example initially *crashed*
 under KLU, which [Enhancement-112](../../../enhancements_doc/Enhancement-112.md)
 fixed; [Enhancement-113](../../../enhancements_doc/Enhancement-113.md) then moved
 **10** examples from KLU-skipped to KLU-passing by enabling noise and single-ended
@@ -226,11 +237,16 @@ distortion, so the `analyses` example now runs **fully** under KLU; and
 [Enhancement-116](../../../enhancements_doc/Enhancement-116.md) fixed
 `groundcontrib` and `hierbranch` at their shared root cause; and `opamp741` — the
 last `XFAIL` — was resolved by running its stiff transient under Gear rather than
-the default trapezoidal method, so **`KLU_XFAIL` is now empty**.)
+the default trapezoidal method, so **`KLU_XFAIL` is now empty**. Later,
+[Enhancement-171](../../../enhancements_doc/Enhancement-171.md)/[172](../../../enhancements_doc/Enhancement-172.md)
+moved balanced-output pole-zero from auto-`SKIP` to passing, and
+[Enhancement-176](../../../enhancements_doc/Enhancement-176.md) moved the heavy
+PSS examples from `SPARSE_ONLY` into the regular both-solver sweep.)
 
-**Conclusion:** for DC, AC, transient, noise, single-ended pole-zero,
-sensitivity, and distortion the two solvers agree across the **entire** suite
-(`KLU_XFAIL` is empty), while balanced-output pole-zero is **Sparse-1.3-only** by
-ngspice design. Sparse 1.3, the default,
-covers everything — which is why it is the default and why the dual-solver harness
-keys correctness off it.
+**Conclusion:** the two solvers agree across the **entire** suite — DC, AC,
+transient, noise, pole-zero (single-ended *and* balanced, plus `pzeig`),
+sensitivity, distortion, PSS, and the whole periodic small-signal family
+(`KLU_XFAIL` is empty; no analysis is Sparse-only since E-172). The one
+Sparse-only *feature* is transient checkpoint/restart (E-131). Sparse 1.3, the
+default, covers everything — which is why it is the default and why the
+dual-solver harness keys correctness off it.
