@@ -141,16 +141,65 @@ stR, cyR = qpn_mode(bothR, "stationary"), qpn_mode(bothR, "cyclostationary")
 check("Parseval: thermal (bias-indep) PSD -> cyclo == stationary under pump",
       stR and cyR and abs(cyR - stR) < 1e-6 * stR, f"stat={stR} cyclo={cyR}")
 
-# [9] a hard-pumped DIODE has strongly bias-dependent shot noise (2qI_D swings as the
-# junction switches), so cyclo must DIFFER markedly from the single-bias stationary
-# estimate -- the cyclostationary noise enhancement of a switching mixer.
+# [9] a hard-pumped DIODE: bias-dependent shot noise (2qI_D swings as the junction
+# switches). The circuit is purely RESISTIVE, so the network is memoryless and the
+# exact cyclostationary answer has a CLOSED FORM: the torus average of the
+# instantaneous identity, onoise = <2qI_D(th1,th2)*dA^2 + 4kT/Rn*psi_n^2 +
+# 4kT/Rs*psi_a^2> with per-sample adjoints from the 2-node conductance matrix.
+# (E-178 hardening: the previous ">2x stationary" expectation was an artifact --
+# the diode's uninitialized sidewall summary slots fed stack garbage into the
+# cyclo path, and the pre-E-178 HB DC double-subtraction doubled the bias. The
+# true cyclo value is DOMINATED by Rn's own thermal noise: when the junction
+# conducts hard its S rises but its transfer to the output collapses, so the
+# shot term is small and cyclo lands close to, not far from, stationary.)
 diode = ("Vb b 0 0.45\nRs b a 200\nI1 0 a SIN(0 2m 1.0G)\nI2 0 a SIN(0 2m 1.1G)\n"
          "D1 a n DMOD\nRn n 0 1k\nIac 0 n AC 1\n.model DMOD D(IS=1e-14 N=1.0)\n"
          ".control\nqpss v(n) 1.0G 1.1G hb 3 3\nqpnoise n 0.3G\nqpnoise n 0.3G cyclo\n.endc\n.end\n")
 bothD = run("* diode cyclo\n" + diode)
 stD, cyD = qpn_mode(bothD, "stationary"), qpn_mode(bothD, "cyclostationary")
-check("cyclostationary diode noise differs from stationary (>2x under hard pump)",
-      stD and cyD and cyD > 2.0 * stD, f"stat={stD} cyclo={cyD}")
+
+
+def _diode_cyclo_referee(P1=48, P2=48):
+    IS, VT = 1e-14, 0.025864                     # 300.15 K
+    RS, RN, VB, IA = 200.0, 1000.0, 0.45, 2e-3
+    q, kT4 = 1.602176634e-19, 4 * 1.380649e-23 * 300.15
+    tot = 0.0
+    for s1 in range(P1):
+        for s2 in range(P2):
+            isrc = IA * (math.sin(2*math.pi*s1/P1) + math.sin(2*math.pi*s2/P2))
+            va, vn = 0.4, 0.01
+            for _ in range(300):                 # damped Newton, 2-node algebra
+                v = va - vn
+                e = math.exp(min(v/VT, 60.0))
+                idio, g = IS*(e-1.0), IS*e/VT
+                f1 = (VB-va)/RS + isrc - idio
+                f2 = idio - vn/RN
+                a11, a12, a21, a22 = -1/RS-g, g, g, -g-1/RN
+                det = a11*a22 - a12*a21
+                dva = (-f1*a22 + f2*a12)/det
+                dvn = (-a11*f2 + a21*f1)/det
+                dv = dva - dvn
+                if abs(dv) > 2*VT:
+                    sc = 2*VT/abs(dv); dva *= sc; dvn *= sc
+                va += dva; vn += dvn
+                if abs(dva) < 1e-15 and abs(dvn) < 1e-15:
+                    break
+            v = va - vn
+            e = math.exp(min(v/VT, 60.0))
+            idio, g = IS*(e-1.0), IS*e/VT
+            a11, a12, a22 = 1/RS+g, -g, g+1/RN   # symmetric G
+            det = a11*a22 - a12*a12
+            psi_a, psi_n = -a12/det, a11/det     # adjoint for output n
+            dA = psi_a - psi_n
+            tot += (2*q*max(idio, 0.0)*dA*dA + kT4/RN*psi_n*psi_n
+                    + kT4/RS*psi_a*psi_a)
+    return tot / (P1*P2)
+
+
+refD = _diode_cyclo_referee()
+check("cyclostationary diode noise == closed-form torus-average referee (<=10%)",
+      stD and cyD and abs(cyD - refD) <= 0.10 * refD,
+      f"stat={stD} cyclo={cyD} referee={refD:.4e}")
 
 # [10] cyclo is solver-independent too.
 ck = qpn_mode(run("* p\n" + diode.replace(".control", ".options klu\n.control")), "cyclostationary")

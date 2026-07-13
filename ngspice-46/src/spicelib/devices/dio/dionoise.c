@@ -135,6 +135,18 @@ DIOnoise(int mode, int operation, GENmodel *genmodel, CKTcircuit *ckt,
                         noizDens[DIOTOTNOIZ] += noizDens[DIORSSWNOIZ] +
                             noizDens[DIOIDSWNOIZ] +
                             noizDens[DIOFLSWNOIZ];
+                    } else {
+                        /* no sidewall model: the sw slots are never computed,
+                         * but the prtSummary block below copies ALL DIONSRCS
+                         * entries -- leave them defined (zero), not stack
+                         * garbage (Enhancement-178: the periodic cyclo noise
+                         * path consumes per-generator densities). */
+                        noizDens[DIORSSWNOIZ] = 0.0;
+                        noizDens[DIOIDSWNOIZ] = 0.0;
+                        noizDens[DIOFLSWNOIZ] = 0.0;
+                        lnNdens[DIORSSWNOIZ] = log(N_MINLOG);
+                        lnNdens[DIOIDSWNOIZ] = log(N_MINLOG);
+                        lnNdens[DIOFLSWNOIZ] = log(N_MINLOG);
                     }
 
                     lnNdens[DIOTOTNOIZ] =

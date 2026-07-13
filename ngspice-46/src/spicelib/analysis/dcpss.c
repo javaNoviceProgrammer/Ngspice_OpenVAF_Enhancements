@@ -1014,6 +1014,13 @@ pnoise_sweep(CKTcircuit *ckt, PSSan *job)
                     dp = swv[0][g];  dm = swv[1][g];
                     djp = swv[2][g]; djm = swv[3][g];
                     z = swv[4][g];
+                    /* densities are PSDs (>= 0, finite); anything else is an
+                     * unwritten/garbage summary slot (e.g. a conditional
+                     * generator the device never computed) -- drop the sample */
+                    if (!(dp >= 0.0 && dp < 1e100) || !(dm >= 0.0 && dm < 1e100) ||
+                        !(djp >= 0.0 && djp < 1e100) || !(djm >= 0.0 && djm < 1e100) ||
+                        !(z >= 0.0 && z < 1e100))
+                        continue;
                     qa = 0.5 * (dp + dm) - z;                 /* S_g * Q_g(A-_s) */
                     Dflat[(size_t)fi * (size_t)G + (size_t)g] += qa;
                     if (z > 1e-280) {
@@ -1085,13 +1092,14 @@ pnoise_sweep(CKTcircuit *ckt, PSSan *job)
                 for (b = 0; b < NB; b++) {                    /* most active probe bias */
                     double zr = probe[(((size_t)b * (size_t)Nf + (size_t)fi) * (size_t)G
                                        + (size_t)g) * (size_t)nq + (size_t)Qmax];
-                    if (zr > zref) { zref = zr; bbest = b; }
+                    if (zr > zref && zr < 1e100) { zref = zr; bbest = b; }
                 }
                 if (zref > 0.0) {
                     for (qi = 0; qi < nq; qi++) {
                         double rq = probe[(((size_t)bbest * (size_t)Nf + (size_t)fi) * (size_t)G
                                            + (size_t)g) * (size_t)nq + (size_t)qi] / zref;
-                        if (fabs(rq - 1.0) > 1e-6) { colored = 1; break; }
+                        if (!(rq >= 0.0 && rq < 1e100)) { colored = 0; break; }
+                        if (fabs(rq - 1.0) > 1e-6) colored = 1;
                     }
                 }
                 if (colored && zsum[(size_t)fi * (size_t)G + (size_t)g] > 0.0) {
@@ -2742,6 +2750,12 @@ QPnoiseAnalyze(CKTcircuit *ckt, int outNode, double f_in, int cyclo, int verbose
                         dp = swv[0][g];  dm = swv[1][g];
                         djp = swv[2][g]; djm = swv[3][g];
                         z = swv[4][g];
+                        /* PSDs are >= 0 and finite; drop garbage summary slots
+                         * (see the 1-D cyclo path) */
+                        if (!(dp >= 0.0 && dp < 1e100) || !(dm >= 0.0 && dm < 1e100) ||
+                            !(djp >= 0.0 && djp < 1e100) || !(djm >= 0.0 && djm < 1e100) ||
+                            !(z >= 0.0 && z < 1e100))
+                            continue;
                         qa = 0.5 * (dp + dm) - z;
                         Dflat[g] += qa;
                         if (z > 1e-280) {
@@ -2819,13 +2833,14 @@ QPnoiseAnalyze(CKTcircuit *ckt, int outNode, double f_in, int cyclo, int verbose
                 for (b = 0; b < NB1*NB2; b++) {
                     double zr = probe[((size_t)b * (size_t)G + (size_t)g) * (size_t)nq
                                       + (size_t)q00];
-                    if (zr > zref) { zref = zr; bbest = b; }
+                    if (zr > zref && zr < 1e100) { zref = zr; bbest = b; }
                 }
                 if (zref > 0.0) {
                     for (qi = 0; qi < nq; qi++) {
                         double rq = probe[((size_t)bbest * (size_t)G + (size_t)g) * (size_t)nq
                                           + (size_t)qi] / zref;
-                        if (fabs(rq - 1.0) > 1e-6) { colored = 1; break; }
+                        if (!(rq >= 0.0 && rq < 1e100)) { colored = 0; break; }
+                        if (fabs(rq - 1.0) > 1e-6) colored = 1;
                     }
                 }
                 if (colored && zsum[g] > 0.0) {
