@@ -1,0 +1,23 @@
+* Driven-mode PSS demo -- Enhancement-176
+*
+* A pumped OSDI varactor behind 1 kOhm, driven at 1 MHz. Before E-176 this
+* .pss ran for 17+ minutes WITHOUT converging: the oscillator-style shooting
+* hunted a fundamental frequency the circuit already dictates, through a
+* forced-breakpoint grid of ~0.2 ps spacing (millions of timesteps per cycle).
+* With the driven mode (auto-detected from the SIN source) the same analysis
+* converges to a period residual of ~8e-9 in 17 one-period cycles, in well
+* under a second, and retains the periodic operating point at EXACTLY 1 MHz.
+.control
+pre_osdi varcap.osdi
+.endc
+V1 a 0 SIN(0 1 1meg)
+R1 a b 1k
+N1 b 0 vc
+.model vc varcap c0=1n alpha=0.5
+.pss 1meg 1u b 1024 6 50 5u
+
+.control
+run
+.endc
+
+.end

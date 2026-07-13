@@ -100,30 +100,20 @@ _KLU_UNSUPPORTED = "not (yet) supported with 'option KLU'"
 KLU_XFAIL = frozenset()
 
 # Examples whose KLU pass is prohibitively SLOW (not wrong — just slow) and so is
-# skipped by default: the heavy periodic-steady-state (PSS) decks, where KLU must
-# re-factor every shooting step (a documented KLU characteristic — see
-# ngspice_solver_notes.md and Enhancement-118). These run SPARSE-only in the
-# regular suite; set NG_SLOW_KLU=1 to force the KLU pass on (e.g. to re-check the
-# E-118 KLU-PSS fix). The correctness of these analyses under KLU is a property of
-# the ngspice source, verified once when the feature landed — not something worth
-# paying minutes-per-run for on every regression sweep.
-#   rfanalyses — .sp/.pss/.pac/.pnoise/.pxf, incl. a 1024-sample PSS
-#   rfpss      — the rc_pss/pac/pnoise/pxf/cyclo PSS-based checks
-SPARSE_ONLY = frozenset({"rfanalyses", "rfpss", "highsigma", "yield", "cmcsweep"})
+# skipped by default; set NG_SLOW_KLU=1 to force the KLU pass on.
+# (rfanalyses and rfpss were here until Enhancement-176: the driven-mode PSS
+# made their shooting runs ~1000x faster, so both now run under BOTH solvers in
+# the regular sweep. The remaining entries are heavy Monte-Carlo batteries, not
+# PSS decks.)
+SPARSE_ONLY = frozenset({"highsigma", "yield", "cmcsweep"})
 
 # Examples excluded from the routine full-regression sweep (run_regression.py)
 # because they are too slow to be worth running every time -- they still work and
-# can be run directly (or with `run_regression.py --all` / NG_RUN_ALL=1), they are
-# just not part of the fast sweep. All of them are periodic-steady-state (PSS)
-# based: PSS shoots a full transient to a fixed point every solve, so even under
-# Sparse a single 1024-sample `.pss` is a couple of minutes.
-#   rfanalyses — THREE heavy PSS decks (two 1024-sample + one 256-sample) plus
-#                PAC/pnoise/pxf/.sp; several minutes even Sparse-only.
-#   rfpss      — rc_pss / rc_pac / rc_pnoise / rc_pxf / rc_flick_cyclo, five PSS-
-#                based checks, ~2-4 min each Sparse-only.
-# (These verify the RF periodic small-signal suite E-117..126; their correctness is
-# established and re-run on demand, not on every regression sweep.)
-REGRESSION_EXCLUDE = frozenset({"rfanalyses", "rfpss", "cmcsweep"})
+# can be run directly (or with `run_regression.py --all` / NG_RUN_ALL=1).
+# (rfanalyses and rfpss were excluded here until Enhancement-176: the driven-mode
+# PSS cut their runtimes from minutes to fractions of a second, so the whole RF
+# periodic small-signal suite E-117..126 is now guarded on every sweep.)
+REGRESSION_EXCLUDE = frozenset({"cmcsweep"})
 
 
 def klu_enabled(script=None):

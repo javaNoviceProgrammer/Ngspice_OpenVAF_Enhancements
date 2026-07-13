@@ -17,6 +17,7 @@
 #include "ngspice/fteext.h"
 #ifdef RFSPICE
 #include "vsrc/vsrcdefs.h"             /* Enhancement-132: RF port fields (z0, ki, branch) */
+#include "isrc/isrcdefs.h"             /* Enhancement-176: driven-mode source detection */
 #include "../maths/dense/dense.h"      /* Enhancement-132: complex S = B*A^-1 */
 #include "../maths/dense/denseinlines.h"
 #endif
@@ -523,7 +524,11 @@ static int
 pac_choose_M(CKTcircuit *ckt, PSSan *job)
 {
     int K = ckt->CKTharms, N = job->PSSopMsize, M;
-    M = (K - 1 < 3) ? (K - 1) : 3;
+    /* Enhancement-176: honor the requested harmonic count (the old hard cap of
+     * 3 sidebands silently truncated the conversion basis -- the +-2 sidebands
+     * carried ~10% error with no way to buy accuracy). The dense-solve guard
+     * below still bounds the matrix size. */
+    M = K - 1;
     if (M < 1)
         return 0;
     while (M > 1 && (2*M + 1) * N > 400)     /* dense-solve guard */
@@ -2941,6 +2946,7 @@ DCpss(CKTcircuit *ckt,
     double time_err_min_1 = 0, time_err_min_0 = 0, err_min_0 = HUGE_VAL, err_min_1 = 0 ;
     double err_1 = 0, err_max = HUGE_VAL ;
     int pss_points_cycle = 0, dynamic_test = 0 ;
+    int pss_driven = 0 ;    /* Enhancement-176: driven (non-autonomous) circuit */
     double gf_last_0 = HUGE_VAL, gf_last_1 = GF_LAST ;
     double thd = 0 ;
     double *psstimes, *pssvalues;
@@ -2961,6 +2967,52 @@ DCpss(CKTcircuit *ckt,
     PSSDBG( "PSS sc_iter %d\n", ckt->CKTsc_iter) ;
     PSSDBG( "PSS Stabilization Time %g\n", ckt->CKTstabTime) ;
 
+
+    /* Enhancement-176: DRIVEN-mode detection. The Lannutti shooting was built
+     * for autonomous oscillators: it hunts the fundamental frequency through a
+     * fine forced-breakpoint grid whose spacing is proportional to
+     * steady_coeff -- on a driven circuit at steady_coeff = 5e-6 that is a
+     * sub-picosecond grid, i.e. millions of forced timesteps per shooting
+     * cycle. But when the circuit contains a time-varying independent source
+     * (a SIN/PULSE/... V or I source) the period is EXACTLY the source period:
+     * no frequency estimation is needed, so the grid (and the estimator) is
+     * skipped entirely and each shooting cycle runs at plain-transient speed.
+     * The autonomous (oscillator) path is untouched. */
+    {
+        int vt = CKTtypelook("Vsource") ;
+        int itk = CKTtypelook("Isource") ;
+        if (vt >= 0 && ckt->CKThead [vt]) {
+            VSRCmodel *vm ;
+            VSRCinstance *vi ;
+            for (vm = (VSRCmodel *) ckt->CKThead [vt] ; vm && !pss_driven ; vm = VSRCnextModel (vm))
+                for (vi = VSRCinstances (vm) ; vi ; vi = VSRCnextInstance (vi))
+                    if (vi->VSRCfuncTGiven) { pss_driven = 1 ; break ; }
+        }
+        if (itk >= 0 && ckt->CKThead [itk] && !pss_driven) {
+            ISRCmodel *im ;
+            ISRCinstance *ii ;
+            for (im = (ISRCmodel *) ckt->CKThead [itk] ; im && !pss_driven ; im = ISRCnextModel (im))
+                for (ii = ISRCinstances (im) ; ii ; ii = ISRCnextInstance (ii))
+                    if (ii->ISRCfuncTGiven) { pss_driven = 1 ; break ; }
+        }
+        if (pss_driven) {
+            /* Match the shooting-phase integration resolution to the sampling
+             * resolution the user asked for (psspoints samples per period).
+             * Without the (removed) breakpoint flood the LTE control would let
+             * steps grow to CKTmaxStep = T/2, and the shooting then converges
+             * to the fixed point of that COARSE discretization -- several
+             * percent off the true orbit -- which the fine-stepped sampling
+             * pass afterwards drifts away from (an inconsistent retained
+             * period). One clamp keeps orbit and samples on the same
+             * discretization; the cycle count is unchanged, so this is still
+             * orders of magnitude faster than the grid flood. */
+            double h_samp = (1.0 / ckt->CKTguessedFreq) / (double) ckt->CKTpsspoints ;
+            if (ckt->CKTmaxStep > h_samp)
+                ckt->CKTmaxStep = h_samp ;
+            fprintf (stderr, "PSS: driven circuit detected -- shooting at the fixed source period (%g Hz), frequency estimation off\n",
+                     ckt->CKTguessedFreq) ;
+        }
+    }
 
     oscnNode = job->PSSoscNode->number ;
 
@@ -3398,8 +3450,9 @@ DCpss(CKTcircuit *ckt,
         }
         err = sqrt (err) ;
 
-        /* Start frequency estimation */
-        if ((err < err_0) && (ckt->CKTtime >= time_temp + 0.5 / ckt->CKTguessedFreq)) /* far enough from time temp... */
+        /* Start frequency estimation (autonomous mode only) */
+        if (!pss_driven &&
+            (err < err_0) && (ckt->CKTtime >= time_temp + 0.5 / ckt->CKTguessedFreq)) /* far enough from time temp... */
         {
             if (err < err_min_0)
             {
@@ -3429,7 +3482,14 @@ DCpss(CKTcircuit *ckt,
 /*        double offset, interval, nextBreak ;
         int i ;
 */
-        if ((ckt->CKTtime > time_temp + (1 / ckt->CKTguessedFreq) * 0.995) && (ckt->CKTtime <= time_temp + (1 / ckt->CKTguessedFreq)))
+        if (pss_driven)
+        {
+            /* Enhancement-176: the period is the exact source period; no
+             * frequency estimation, so no mid-period breakpoint grid is
+             * needed -- the cycle-end breakpoint is set by the shooting
+             * logic below and the LTE control resolves the waveform. */
+        }
+        else if ((ckt->CKTtime > time_temp + (1 / ckt->CKTguessedFreq) * 0.995) && (ckt->CKTtime <= time_temp + (1 / ckt->CKTguessedFreq)))
         {
             offset = time_temp + (1 / ckt->CKTguessedFreq) * 0.995 ;
             interval = (1 / ckt->CKTguessedFreq) * (1 - 0.995) * (ckt->CKTsteady_coeff / 10) ;
@@ -3584,7 +3644,7 @@ DCpss(CKTcircuit *ckt,
                 FREE (pssstates) ;
                 return (E_PANIC) ; /* to be corrected with definition of new error macro in iferrmsg.h */
             }
-            else if ((time_err_min_0 - time_temp) < 0)
+            else if (!pss_driven && (time_err_min_0 - time_temp) < 0)
             {
                 /* Something has gone wrong... */
                 fprintf(stderr, "Cannot find a minimum for error vector in estimated period. Try to adjust tstab! PSS analysis aborted\n") ;
@@ -3616,7 +3676,15 @@ DCpss(CKTcircuit *ckt,
             /***********************************/
             /*** FREQUENCY ESTIMATION UPDATE ***/
             /***********************************/
-            if ((err_min_0 == err) || (err_min_0 == HUGE_VAL))
+            if (pss_driven)
+            {
+                /* Enhancement-176: driven circuit -- the fundamental IS the
+                 * source frequency; no estimation. Rank the iteration history
+                 * by the period residual instead of the (meaningless here)
+                 * period-correction prediction. */
+                predsum_history [shooting_cycle_counter] = err ;
+            }
+            else if ((err_min_0 == err) || (err_min_0 == HUGE_VAL))
             {
                 /* Enters here if guessed frequency is higher than the 'real' value */
                 ckt->CKTguessedFreq = 1 / (1 / ckt->CKTguessedFreq + fabs (predsum)) ;
@@ -3648,6 +3716,13 @@ DCpss(CKTcircuit *ckt,
             rr_history [shooting_cycle_counter] = err ;
             gf_history [shooting_cycle_counter] = ckt->CKTguessedFreq ;
             shooting_cycle_counter++ ;
+
+            if (getenv("PSSTRACE"))
+                fprintf(stderr, "[pss] cyc=%-3d t=%.6g gf=%.10g err=%.3e badnodes=%d predsum=%.3e pts=%d rej=%d nit=%d\n",
+                        shooting_cycle_counter - 1, ckt->CKTtime, ckt->CKTguessedFreq,
+                        err, excessive_err_nodes, predsum,
+                        ckt->CKTstat->STATtimePts, ckt->CKTstat->STATrejected,
+                        ckt->CKTstat->STATnumIter) ;
 
             PSSDBG( "Updated guessed frequency: %1.10lg .\n", ckt->CKTguessedFreq) ;
             PSSDBG( "Next shooting evaluation time is %1.10g and current time is %1.10g.\n",
@@ -3844,8 +3919,12 @@ DCpss(CKTcircuit *ckt,
                 }
             }
 
-            if (pssfreqs [position] != ckt->CKTguessedFreq)
+            if (!pss_driven && pssfreqs [position] != ckt->CKTguessedFreq)
             {
+                /* autonomous only: for a driven circuit the fundamental IS the
+                 * source frequency -- relaunching at the strongest spectral
+                 * line (e.g. a rectifier's dominant 2nd harmonic) would retain
+                 * the wrong period (Enhancement-176). */
                 ckt->CKTguessedFreq = pssfreqs [position] ;
                 PSSDBG( "The predicted fundamental frequency is incorrect.\nRelaunching the analysis...\n\n") ;
                 PSSDBG( "The new guessed fundamental frequency is: %.6g\n\n", ckt->CKTguessedFreq) ;
