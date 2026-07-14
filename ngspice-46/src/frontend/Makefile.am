@@ -56,6 +56,9 @@ libfte_la_SOURCES = \
     com_sweep.h  \
     com_stb.c  \
     com_stb.h  \
+    snp2va.c  \
+    snp2va.h  \
+    com_presnp.c  \
     com_qpss.c  \
     com_qpss.h  \
     com_qpac.c  \

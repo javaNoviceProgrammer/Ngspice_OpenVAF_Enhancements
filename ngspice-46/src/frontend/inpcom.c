@@ -1791,6 +1791,10 @@ static struct inp_read_t inp_read(FILE* fp, int call_depth, const char* dir_name
                     ciprefix("codemodel", buffer) ||
                     ciprefix("osdi", buffer) ||
                     ciprefix("pre_osdi", buffer) ||
+
+                    ciprefix("snp", buffer) ||
+
+                    ciprefix("pre_snp", buffer) ||
                     ciprefix("echo", buffer) || ciprefix("shell", buffer) ||
                     ciprefix("source", buffer) ||ciprefix("cd", buffer) ||
                     ciprefix("load", buffer) || ciprefix("setcs", buffer))))) {

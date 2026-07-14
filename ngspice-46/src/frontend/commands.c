@@ -94,6 +94,7 @@
 #include "spiceif.h" /* for com_snload() and com_snsave() */
 
 #include "com_dl.h"
+#include "snp2va.h"
 
 #ifdef XSPICE
 /* gtri - begin - wbk - add include files */
@@ -316,6 +317,10 @@ struct comm spcp_coms[] = {
       NULL,
       "library library ... : Loads a osdi library." } ,
 #endif
+    { "snp", com_pre_snp, FALSE, TRUE,          /* Enhancement-200 (use as `pre_snp`) */
+      { 040000, 040000, 040000, 040000 }, E_BEGINNING, 1, LOTS,
+      NULL,
+      "file.sNp [module] : compile a Touchstone S-parameter file to a Verilog-A n-port OSDI model. Use as `pre_snp file.sNp` (runs before circuit parsing); load the .osdi it writes with `pre_osdi file.osdi`." },
 #ifdef DEVLIB
     { "use", com_use, FALSE, TRUE,
       { 040000, 040000, 040000, 040000 }, E_BEGINNING, 1, LOTS,

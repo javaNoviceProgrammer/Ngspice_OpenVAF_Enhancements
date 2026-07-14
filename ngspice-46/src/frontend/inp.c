@@ -876,13 +876,24 @@ inp_spsource(FILE *fp, bool comfile, char *filename, bool intfile)
         /* Now that the deck is loaded, do the pre commands, if there are any,
            before the circuit structure is set up */
         if (pre_controls) {
+            int pass;
             pre_controls = wl_reverse(pre_controls);
-            for (wl = pre_controls; wl; wl = wl->wl_next){
+            /* Enhancement-200: run every pre_snp (stripped to "snp") before any
+             * other pre_ command -- notably pre_osdi (stripped to "osdi") -- so the
+             * .osdi that pre_snp generates already exists when pre_osdi loads it.
+             * Pass 0 executes the snp commands (in deck order), pass 1 the rest. */
+            for (pass = 0; pass < 2; pass++) {
+                for (wl = pre_controls; wl; wl = wl->wl_next) {
+                    int is_snp = ciprefix("snp ", wl->wl_word) ||
+                                 strcasecmp(wl->wl_word, "snp") == 0;
+                    if (pass == 0 ? !is_snp : is_snp)
+                        continue;
 #ifdef OSDI
-                inputdir = dir_name;
+                    inputdir = dir_name;
 #endif
-                /* process each pre_xxx command */
-                cp_evloop(wl->wl_word);
+                    /* process each pre_xxx command */
+                    cp_evloop(wl->wl_word);
+                }
             }
 
 #ifdef OSDI
