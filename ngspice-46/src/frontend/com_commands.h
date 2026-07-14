@@ -8,6 +8,7 @@ void com_altermod(wordlist *wl);
 void com_alterparam(wordlist *wl);
 void com_optimize(wordlist *wl);   /* Enhancement-130 */
 void com_sweep(wordlist *wl);      /* Enhancement-146 */
+void com_stb(wordlist *wl);        /* Enhancement-198 */
 void com_qpss(wordlist *wl);       /* Enhancement-133 */
 void com_qpac(wordlist *wl);       /* Enhancement-137 */
 void com_qpxf(wordlist *wl);       /* Enhancement-141 */

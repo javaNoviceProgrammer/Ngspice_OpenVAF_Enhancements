@@ -1,0 +1,35 @@
+* Enhancement-198: stb loop-gain / stability analysis of a 3-pole op-amp loop
+*
+* A 3-pole op-amp macromodel (DC gain 1e5; poles at 10 Hz, 1 MHz, 3 MHz) with a
+* finite 1 k output impedance, closed in a resistive feedback divider
+* (beta = 1k/(1k+9k) = 0.1, i.e. a x10 non-inverting amplifier). The feedback
+* wire is broken between the op-amp output `out` (driver) and the divider input
+* `rt` (load) by a loop-gain probe pair:
+*    Vstb out rt   series 0 V source (carries the DC bias, injects a test voltage)
+*    Istb 0   rt   shunt 0 A source  (injects a test current into the load node)
+* `stb` runs the Middlebrook/Tian double injection and reports the phase and gain
+* margin.  The 1 k output impedance makes this a LOADED break, where a single
+* injection would mis-measure the loop gain; the double injection corrects it.
+G1 0 n1 inp inn 1
+R1 n1 0 1e5
+C1 n1 0 1.59154943e-7
+E2 n2 0 n1 0 1
+R2 n2 n3 1k
+C2 n3 0 1.59154943e-10
+E3 n4 0 n3 0 1
+R3 n4 n5 1k
+C3 n5 0 5.30516477e-11
+E4 obuf 0 n5 0 1
+Rout obuf out 1k
+Vin inp 0 dc 0 ac 0
+Vstb out rt dc 0 ac 0
+Istb 0 rt dc 0 ac 0
+Rf rt inn 9k
+Rg inn 0 1k
+.control
+stb Vstb Istb dec 20 1 100meg
+* the loop gain is now in the complex vector 'loopgain' vs 'frequency':
+*   plot db(loopgain)                 ; magnitude (dB)
+*   plot 180/PI*cph(loopgain)         ; phase (deg, unwrapped)
+.endc
+.end

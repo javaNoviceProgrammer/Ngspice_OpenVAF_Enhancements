@@ -453,6 +453,10 @@ struct comm spcp_coms[] = {
       { 040, 040, 040, 040 }, E_DEFHMASK, 1, LOTS,
       NULL,
       "<knob> (<start> <stop> <step> | lin|dec|oct <N> <start> <stop> | list <v>...) [-analysis <cmd>] [-output <expr> ...] : sweep any knob and record outputs into a plot (auto-detects device/instance/source via alter, @model[param] via altermod, .param via re-source)." },
+    { "stb", com_stb, TRUE, FALSE,               /* Enhancement-198 */
+      { 040, 040, 040, 040 }, E_DEFHMASK, 1, LOTS,
+      NULL,
+      "<Vprobe> <Iprobe> (dec|oct|lin <N> <fstart> <fstop>) : stability / loop-gain analysis (Middlebrook/Tian double injection). Vprobe = series 0 V probe in the loop (+node = driver A, -node = load B); Iprobe = shunt 0 A probe (ground -> load node B). Reports phase/gain margin and stores complex 'loopgain'." },
     { "qpss", com_qpss, TRUE, FALSE,             /* Enhancement-133 / -136 */
       { 040, 040, 040, 040 }, E_DEFHMASK, 3, LOTS,
       NULL,
