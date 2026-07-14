@@ -24,14 +24,21 @@ single objective can combine (say) a DC operating point and an AC response
 The search runs in normalized [0,1] parameter space (so it is scale-invariant
 across parameters that span orders of magnitude).
 
-A third method, particle swarm optimization (-method pso, Enhancement-194), is a
-global, population-based, derivative-free search: a swarm of trial points flies
-through the parameter box, each pulled toward its own and the swarm's best-seen
-point. Unlike the local Nelder-Mead simplex (which settles into whichever basin
-its start point sits in) it explores the whole box, so it is the right tool for
-MULTIMODAL / rugged objectives with several local minima. It works for both a
-scalar -minimize objective and -target least-squares. `-swarmsize <N>` sets the
-population (default auto, ~10+4*np), `-seed <s>` makes a run reproducible.
+Two GLOBAL, population-based, derivative-free methods explore the whole parameter
+box (rather than settling into whichever basin the start point sits in like the
+local simplex), so they are the right tools for MULTIMODAL / rugged objectives
+with several local minima:
+
+  * -method pso (Enhancement-194): particle swarm -- a swarm of trial points, each
+    pulled toward its own and the swarm's best-seen point.
+  * -method de (Enhancement-195): differential evolution -- trials are built from a
+    scaled DIFFERENCE of random members (v = a + F*(b-c)) crossed with the target,
+    which self-scales to the population spread; often more robust on rugged /
+    discontinuous landscapes.
+
+Both work for a scalar -minimize objective and -target least-squares. `-swarmsize
+<N>` sets the population (default auto, ~10+4*np), `-seed <s>` makes a run
+reproducible.
 
 Syntax (in a .control block, after the circuit is loaded):
 
@@ -40,7 +47,7 @@ Syntax (in a .control block, after the circuit is loaded):
            ( -minimize <expression ...>
              | -target <expr> <value> [<weight>]  [-target ...]
                [ -analysis <command ...> -target ... ] )
-           [-method nm|lm|pso] [-swarmsize <N>] [-seed <s>]
+           [-method nm|lm|pso|de] [-swarmsize <N>] [-seed <s>]
            [-maxiter <N>] [-tol <T>] [-verbose]
 
 Three knob kinds, all in-place except -dparam:
@@ -591,6 +598,74 @@ static void particle_swarm(struct optctx *c, double *ubest, double *fbest)
 }
 
 
+/* Enhancement-195: differential evolution (DE/rand/1/bin) over the np normalized
+ * parameters. Like PSO a global, population-based, derivative-free method, but it
+ * builds each trial by adding a scaled DIFFERENCE of two random population members
+ * to a third -- v = a + F*(b - c) -- then binomially crosses it with the target
+ * vector. That difference vector self-scales to the population's own spread (large
+ * while the members are far apart, shrinking as they converge), which makes DE
+ * robust on rugged / discontinuous / poorly-scaled landscapes where a fixed step
+ * struggles. Greedy selection keeps the trial only if it is no worse. On exit
+ * ubest holds the best point and *fbest its cost. Works for scalar and
+ * least-squares objectives (opt_eval returns the scalar cost either way). */
+static void differential_evolution(struct optctx *c, double *ubest, double *fbest)
+{
+    const int    n = c->np, NP = c->swarmsize;
+    const double F = 0.8, CR = 0.9;                 /* classic DE/rand/1/bin gains */
+    double *x  = TMALLOC(double, (size_t) NP * (size_t) n);   /* population        */
+    double *fx = TMALLOC(double, NP);                         /* member costs      */
+    double trial[OPT_MAXP], gb[OPT_MAXP], gf = 1e300;
+    int i, j, iter, gi = 0, stall = 0;
+
+    opt_srand(c->seed);
+
+    /* init: member 0 at the start point, the rest uniform random in [0,1]^n */
+    for (i = 0; i < NP; i++) {
+        for (j = 0; j < n; j++)
+            x[i * n + j] = (i == 0) ? clamp01(ubest[j]) : opt_rand();
+        fx[i] = opt_eval(c, &x[i * n], NULL);
+        if (fx[i] < gf) { gf = fx[i]; gi = i; }
+    }
+    for (j = 0; j < n; j++) gb[j] = x[gi * n + j];
+
+    for (iter = 0; iter < c->maxiter; iter++) {
+        double prevgf = gf;
+        for (i = 0; i < NP; i++) {
+            int a, b, e, jr;
+            double ft;
+            do a = (int) (opt_rand() * NP); while (a == i);              /* distinct */
+            do b = (int) (opt_rand() * NP); while (b == i || b == a);
+            do e = (int) (opt_rand() * NP); while (e == i || e == a || e == b);
+            jr = (int) (opt_rand() * n);            /* one always-crossed dimension  */
+            for (j = 0; j < n; j++) {
+                if (opt_rand() < CR || j == jr)
+                    trial[j] = clamp01(x[a * n + j] + F * (x[b * n + j] - x[e * n + j]));
+                else
+                    trial[j] = x[i * n + j];
+            }
+            ft = opt_eval(c, trial, NULL);
+            if (ft <= fx[i]) {                       /* greedy: keep if no worse     */
+                for (j = 0; j < n; j++) x[i * n + j] = trial[j];
+                fx[i] = ft;
+                if (ft < gf) { gf = ft; for (j = 0; j < n; j++) gb[j] = trial[j]; }
+            }
+        }
+        if (prevgf - gf <= c->tol * (fabs(gf) + c->tol)) {
+            if (++stall >= 8) break;
+        } else {
+            stall = 0;
+        }
+        if (c->verbose)
+            fprintf(cp_out, "  iter %-3d  best cost %.6g  (%d evals)\n",
+                    iter + 1, gf, c->nevals);
+    }
+
+    for (j = 0; j < n; j++) ubest[j] = gb[j];
+    *fbest = gf;
+    tfree(x); tfree(fx);
+}
+
+
 static int is_flag(const char *w)
 {
     return w && w[0] == '-' && isalpha((unsigned char) w[1]);
@@ -634,7 +709,7 @@ void com_optimize(wordlist *wl)
 {
     struct optctx c;
     double ubest[OPT_MAXP], fbest = OPT_PENALTY;
-    int k, use_lm, use_pso;
+    int k, use_lm, use_pso, use_de;
 
     memset(&c, 0, sizeof c);
     c.maxiter = 100;
@@ -719,8 +794,12 @@ void com_optimize(wordlist *wl)
                     c.method = 2;
                 else if (eq(mm, "pso") || eq(mm, "swarm") || eq(mm, "particleswarm"))
                     c.method = 3;        /* Enhancement-194 */
+                else if (eq(mm, "de") || eq(mm, "diffevol") ||
+                         eq(mm, "differentialevolution"))
+                    c.method = 4;        /* Enhancement-195 */
                 else {
-                    fprintf(cp_err, "optimize: unknown -method '%s' (use nm, lm or pso)\n", mm);
+                    fprintf(cp_err, "optimize: unknown -method '%s' "
+                                    "(use nm, lm, pso or de)\n", mm);
                     goto cleanup;
                 }
                 wl = wl->wl_next->wl_next;
@@ -753,7 +832,7 @@ void com_optimize(wordlist *wl)
     if (c.np < 1 || c.ns < 1 || (!c.objective && c.nt == 0)) {
         fprintf(cp_err, "usage: optimize (-param|-mparam|-dparam) <name> <init> "
                         "<lo> <hi> [...] -analysis <cmd> (-minimize <expr> | -target "
-                        "<expr> <val> [<w>] ...) [-method nm|lm|pso] [-swarmsize N] "
+                        "<expr> <val> [<w>] ...) [-method nm|lm|pso|de] [-swarmsize N] "
                         "[-seed s] [-maxiter N] [-tol T] [-verbose]\n");
         goto cleanup;
     }
@@ -782,19 +861,22 @@ void com_optimize(wordlist *wl)
     }
     use_lm  = (c.method == 2) || (c.method == 0 && c.nt > 0);
     use_pso = (c.method == 3);
-    if (use_pso) use_lm = 0;
+    use_de  = (c.method == 4);
+    if (use_pso || use_de) use_lm = 0;
 
-    if (use_pso) {
-        /* auto population: scales gently with dimension, bounded for speed */
+    if (use_pso || use_de) {
+        /* auto population: scales gently with dimension, bounded for speed. DE
+         * needs at least 4 distinct members (target + a,b,c) to form a mutant. */
         if (c.swarmsize <= 0) {
             c.swarmsize = 10 + 4 * c.np;
             if (c.swarmsize > 60) c.swarmsize = 60;
         }
-        if (c.swarmsize < 4) c.swarmsize = 4;
+        if (c.swarmsize < 5) c.swarmsize = 5;
     }
 
     {
         const char *mname = use_pso ? "Particle Swarm"
+                          : use_de  ? "Differential Evolution"
                           : use_lm  ? "Levenberg-Marquardt" : "Nelder-Mead";
         if (c.nt > 0)
             fprintf(cp_out, "optimize: %d parameter%s, %d target%s over %d analysis "
@@ -807,6 +889,9 @@ void com_optimize(wordlist *wl)
         if (use_pso)
             fprintf(cp_out, "optimize: swarm of %d particles, seed %lu, up to %d iterations\n",
                     c.swarmsize, c.seed, c.maxiter);
+        else if (use_de)
+            fprintf(cp_out, "optimize: population of %d vectors, seed %lu, up to %d generations\n",
+                    c.swarmsize, c.seed, c.maxiter);
     }
 
     for (k = 0; k < c.np; k++)
@@ -814,6 +899,8 @@ void com_optimize(wordlist *wl)
 
     if (use_pso)
         particle_swarm(&c, ubest, &fbest);
+    else if (use_de)
+        differential_evolution(&c, ubest, &fbest);
     else if (use_lm)
         levenberg_marquardt(&c, ubest, &fbest);
     else

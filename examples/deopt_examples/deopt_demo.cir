@@ -1,0 +1,29 @@
+* Enhancement-195: differential evolution -- optimize -method de
+*
+* DE is the second GLOBAL optimizer method (after PSO, E-194). It builds each
+* trial from a scaled DIFFERENCE of random population members, v = a + F*(b-c),
+* crossed with the target vector -- the difference self-scales to the population
+* spread, so DE is robust on rugged / multimodal objectives.
+*
+* Objective: the multimodal f(p) = sin(p) + sin(10 p / 3) on [2.7, 7.5], global
+* minimum p* = 5.1457, f* = -1.8996. From the p = 2.7 corner the local Nelder-Mead
+* simplex falls into a local minimum (~ -1.20); DE and PSO find the global one.
+
+.param p=2.7
+V1 out 0 dc {sin(p) + sin(10*p/3)}
+R1 out 0 1
+
+.control
+echo
+echo --- Nelder-Mead (local: trapped from the p=2.7 corner) ---
+optimize -dparam p 2.7 2.7 7.5 -analysis op -minimize v(out) -method nm -tol 1e-8
+
+echo
+echo --- Differential evolution (global: finds p* = 5.146, f* = -1.900) ---
+optimize -dparam p 2.7 2.7 7.5 -analysis op -minimize v(out) -method de -swarmsize 24 -maxiter 60 -seed 1 -tol 1e-8
+
+echo
+echo --- Particle swarm (global, for comparison) ---
+optimize -dparam p 2.7 2.7 7.5 -analysis op -minimize v(out) -method pso -swarmsize 24 -maxiter 60 -seed 1 -tol 1e-8
+.endc
+.end
