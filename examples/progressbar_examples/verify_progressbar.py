@@ -72,10 +72,23 @@ def validate(name, rows, expected_pct, tol=3.0):
           f"{len(rows)} bar lines")
     if not rows:
         return
-    # [2] percentage matches the analytic fraction at that reference value
-    worst = max(abs(pct - expected_pct(ref)) for ref, _, pct in rows)
-    check(f"{name}: printed % matches sweep fraction (max err {worst:.1f} <= {tol})",
-          worst <= tol, f"max err {worst:.2f}")
+    # [2] each in-progress THROTTLED percentage matches the analytic fraction at
+    # its reference value. These are exact to <0.5% (just integer rounding) on
+    # any machine. The end-of-run forced-completion line (Enhancement-184) is
+    # excluded: it prints 100% next to the *last throttled* reference value, which
+    # for a DC sweep is the last point BEFORE the endpoint -- so its 100%
+    # deliberately runs ahead of that (stale) ref, and the gap grows on a fast
+    # machine that throttled fewer times (the sole source of the old flakiness,
+    # which bounced 2-7% purely with timing). Check [4] separately guarantees the
+    # run reaches exactly 100%.
+    prog = [(ref, pct) for ref, _, pct in rows if pct < 100]
+    if prog:
+        worst = max(abs(pct - expected_pct(ref)) for ref, pct in prog)
+        check(f"{name}: throttled % matches sweep fraction (max err {worst:.2f} <= {tol})",
+              worst <= tol, f"max err {worst:.2f}")
+    else:
+        check(f"{name}: throttled % matches sweep fraction", True,
+              "only the forced completion line present")
     # [3] bar fill proportional to percentage
     fillbad = max(abs(fill - round(pct / 100.0 * BARLEN)) for _, fill, pct in rows)
     check(f"{name}: bar fill proportional to % (max off {fillbad})", fillbad <= 1)
