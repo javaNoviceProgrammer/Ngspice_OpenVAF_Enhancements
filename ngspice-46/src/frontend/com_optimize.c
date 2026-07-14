@@ -88,9 +88,9 @@ ft_optimizing) unless `-verbose`.
 
 #include "com_optimize.h"
 
-#define OPT_MAXP     16          /* max parameters to optimize            */
+#define OPT_MAXP    128          /* max parameters to optimize (E-197)    */
 #define OPT_MAXS      8          /* max analysis stages                   */
-#define OPT_MAXT     64          /* max least-squares targets (total)     */
+#define OPT_MAXT    128          /* max least-squares targets (E-197)     */
 #define OPT_PENALTY  1e30        /* cost for a failed / non-finite eval   */
 
 struct opt_target {
@@ -586,9 +586,10 @@ static void particle_swarm(struct optctx *c, double *ubest, double *fbest)
                 if (f < gf) { gf = f; for (j = 0; j < n; j++) gb[j] = x[i * n + j]; }
             }
         }
-        /* converge on relative gbest stagnation held over several iterations */
+        /* converge on relative gbest stagnation held over several iterations
+         * (E-197: more patience as dimension grows; unchanged for small n) */
         if (prevgf - gf <= c->tol * (fabs(gf) + c->tol)) {
-            if (++stall >= 8) break;
+            if (++stall >= 8 + n / 4) break;
         } else {
             stall = 0;
         }
@@ -616,7 +617,14 @@ static void particle_swarm(struct optctx *c, double *ubest, double *fbest)
 static void differential_evolution(struct optctx *c, double *ubest, double *fbest)
 {
     const int    n = c->np, NP = c->swarmsize;
-    const double F = 0.8, CR = 0.9;                 /* classic DE/rand/1/bin gains */
+    const double F = 0.8;
+    /* Crossover rate. Classic DE/rand/1 uses CR ~ 0.9, which mutates almost every
+     * coordinate -- fine in low dimension, but in HIGH dimension a trial that
+     * perturbs ~n coordinates at once is nearly always worse than the target and
+     * gets rejected, so DE stalls. Enhancement-197: cap the expected number of
+     * mutated coordinates (~CR*n) at about 15 for large n, so high-dimensional
+     * runs still make progress; small problems keep the classic CR = 0.9 exactly. */
+    const double CR = (n <= 16) ? 0.9 : 15.0 / (double) n;
     double *x  = TMALLOC(double, (size_t) NP * (size_t) n);   /* population        */
     double *fx = TMALLOC(double, NP);                         /* member costs      */
     double trial[OPT_MAXP], gb[OPT_MAXP], gf = 1e300;
@@ -655,8 +663,11 @@ static void differential_evolution(struct optctx *c, double *ubest, double *fbes
                 if (ft < gf) { gf = ft; for (j = 0; j < n; j++) gb[j] = trial[j]; }
             }
         }
+        /* E-197: high-dimensional runs plateau for several generations between
+         * improvements, so give the stagnation counter more patience as n grows
+         * (unchanged for small n: 8 for n <= 3). */
         if (prevgf - gf <= c->tol * (fabs(gf) + c->tol)) {
-            if (++stall >= 8) break;
+            if (++stall >= 8 + n / 4) break;
         } else {
             stall = 0;
         }
@@ -940,11 +951,13 @@ void com_optimize(wordlist *wl)
     if (use_pso || use_de || use_sa) use_lm = 0;
 
     if (use_pso || use_de) {
-        /* auto population: scales gently with dimension, bounded for speed. DE
-         * needs at least 4 distinct members (target + a,b,c) to form a mutant. */
+        /* auto population: ~4x the dimension, bounded for speed. E-197 raised the
+         * cap from 60 to 256 so a high-dimensional run (up to OPT_MAXP params) gets
+         * an adequately sized swarm; `-swarmsize` overrides either way. DE needs at
+         * least 4 distinct members (target + a,b,c) to form a mutant. */
         if (c.swarmsize <= 0) {
             c.swarmsize = 10 + 4 * c.np;
-            if (c.swarmsize > 60) c.swarmsize = 60;
+            if (c.swarmsize > 256) c.swarmsize = 256;
         }
         if (c.swarmsize < 5) c.swarmsize = 5;
     }

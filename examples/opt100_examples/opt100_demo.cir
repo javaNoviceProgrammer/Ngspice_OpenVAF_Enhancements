@@ -1,0 +1,214 @@
+* Enhancement-197: 100-parameter circuit optimization (opt100_demo.cir)
+* 100 independent 1 mA current sources, each into an unknown resistor R_i to
+* ground, so v(n_i) = 1e-3 * R_i.  Fit all 100 resistors so every node voltage
+* hits its target t_i = 1e-3 * (100 + 9800*i/99) ohm (a linear ramp 0.1 .. 9.9 V).
+* Levenberg-Marquardt solves the well-posed 100-D least-squares to machine
+* precision; the raised limits (OPT_MAXP/OPT_MAXT = 128) let all 100 params and
+* 100 targets be declared at once.
+I0 0 n0 dc 1m
+R0 n0 0 1k
+I1 0 n1 dc 1m
+R1 n1 0 1k
+I2 0 n2 dc 1m
+R2 n2 0 1k
+I3 0 n3 dc 1m
+R3 n3 0 1k
+I4 0 n4 dc 1m
+R4 n4 0 1k
+I5 0 n5 dc 1m
+R5 n5 0 1k
+I6 0 n6 dc 1m
+R6 n6 0 1k
+I7 0 n7 dc 1m
+R7 n7 0 1k
+I8 0 n8 dc 1m
+R8 n8 0 1k
+I9 0 n9 dc 1m
+R9 n9 0 1k
+I10 0 n10 dc 1m
+R10 n10 0 1k
+I11 0 n11 dc 1m
+R11 n11 0 1k
+I12 0 n12 dc 1m
+R12 n12 0 1k
+I13 0 n13 dc 1m
+R13 n13 0 1k
+I14 0 n14 dc 1m
+R14 n14 0 1k
+I15 0 n15 dc 1m
+R15 n15 0 1k
+I16 0 n16 dc 1m
+R16 n16 0 1k
+I17 0 n17 dc 1m
+R17 n17 0 1k
+I18 0 n18 dc 1m
+R18 n18 0 1k
+I19 0 n19 dc 1m
+R19 n19 0 1k
+I20 0 n20 dc 1m
+R20 n20 0 1k
+I21 0 n21 dc 1m
+R21 n21 0 1k
+I22 0 n22 dc 1m
+R22 n22 0 1k
+I23 0 n23 dc 1m
+R23 n23 0 1k
+I24 0 n24 dc 1m
+R24 n24 0 1k
+I25 0 n25 dc 1m
+R25 n25 0 1k
+I26 0 n26 dc 1m
+R26 n26 0 1k
+I27 0 n27 dc 1m
+R27 n27 0 1k
+I28 0 n28 dc 1m
+R28 n28 0 1k
+I29 0 n29 dc 1m
+R29 n29 0 1k
+I30 0 n30 dc 1m
+R30 n30 0 1k
+I31 0 n31 dc 1m
+R31 n31 0 1k
+I32 0 n32 dc 1m
+R32 n32 0 1k
+I33 0 n33 dc 1m
+R33 n33 0 1k
+I34 0 n34 dc 1m
+R34 n34 0 1k
+I35 0 n35 dc 1m
+R35 n35 0 1k
+I36 0 n36 dc 1m
+R36 n36 0 1k
+I37 0 n37 dc 1m
+R37 n37 0 1k
+I38 0 n38 dc 1m
+R38 n38 0 1k
+I39 0 n39 dc 1m
+R39 n39 0 1k
+I40 0 n40 dc 1m
+R40 n40 0 1k
+I41 0 n41 dc 1m
+R41 n41 0 1k
+I42 0 n42 dc 1m
+R42 n42 0 1k
+I43 0 n43 dc 1m
+R43 n43 0 1k
+I44 0 n44 dc 1m
+R44 n44 0 1k
+I45 0 n45 dc 1m
+R45 n45 0 1k
+I46 0 n46 dc 1m
+R46 n46 0 1k
+I47 0 n47 dc 1m
+R47 n47 0 1k
+I48 0 n48 dc 1m
+R48 n48 0 1k
+I49 0 n49 dc 1m
+R49 n49 0 1k
+I50 0 n50 dc 1m
+R50 n50 0 1k
+I51 0 n51 dc 1m
+R51 n51 0 1k
+I52 0 n52 dc 1m
+R52 n52 0 1k
+I53 0 n53 dc 1m
+R53 n53 0 1k
+I54 0 n54 dc 1m
+R54 n54 0 1k
+I55 0 n55 dc 1m
+R55 n55 0 1k
+I56 0 n56 dc 1m
+R56 n56 0 1k
+I57 0 n57 dc 1m
+R57 n57 0 1k
+I58 0 n58 dc 1m
+R58 n58 0 1k
+I59 0 n59 dc 1m
+R59 n59 0 1k
+I60 0 n60 dc 1m
+R60 n60 0 1k
+I61 0 n61 dc 1m
+R61 n61 0 1k
+I62 0 n62 dc 1m
+R62 n62 0 1k
+I63 0 n63 dc 1m
+R63 n63 0 1k
+I64 0 n64 dc 1m
+R64 n64 0 1k
+I65 0 n65 dc 1m
+R65 n65 0 1k
+I66 0 n66 dc 1m
+R66 n66 0 1k
+I67 0 n67 dc 1m
+R67 n67 0 1k
+I68 0 n68 dc 1m
+R68 n68 0 1k
+I69 0 n69 dc 1m
+R69 n69 0 1k
+I70 0 n70 dc 1m
+R70 n70 0 1k
+I71 0 n71 dc 1m
+R71 n71 0 1k
+I72 0 n72 dc 1m
+R72 n72 0 1k
+I73 0 n73 dc 1m
+R73 n73 0 1k
+I74 0 n74 dc 1m
+R74 n74 0 1k
+I75 0 n75 dc 1m
+R75 n75 0 1k
+I76 0 n76 dc 1m
+R76 n76 0 1k
+I77 0 n77 dc 1m
+R77 n77 0 1k
+I78 0 n78 dc 1m
+R78 n78 0 1k
+I79 0 n79 dc 1m
+R79 n79 0 1k
+I80 0 n80 dc 1m
+R80 n80 0 1k
+I81 0 n81 dc 1m
+R81 n81 0 1k
+I82 0 n82 dc 1m
+R82 n82 0 1k
+I83 0 n83 dc 1m
+R83 n83 0 1k
+I84 0 n84 dc 1m
+R84 n84 0 1k
+I85 0 n85 dc 1m
+R85 n85 0 1k
+I86 0 n86 dc 1m
+R86 n86 0 1k
+I87 0 n87 dc 1m
+R87 n87 0 1k
+I88 0 n88 dc 1m
+R88 n88 0 1k
+I89 0 n89 dc 1m
+R89 n89 0 1k
+I90 0 n90 dc 1m
+R90 n90 0 1k
+I91 0 n91 dc 1m
+R91 n91 0 1k
+I92 0 n92 dc 1m
+R92 n92 0 1k
+I93 0 n93 dc 1m
+R93 n93 0 1k
+I94 0 n94 dc 1m
+R94 n94 0 1k
+I95 0 n95 dc 1m
+R95 n95 0 1k
+I96 0 n96 dc 1m
+R96 n96 0 1k
+I97 0 n97 dc 1m
+R97 n97 0 1k
+I98 0 n98 dc 1m
+R98 n98 0 1k
+I99 0 n99 dc 1m
+R99 n99 0 1k
+.control
+* --- Levenberg-Marquardt: 100 parameters, 100 targets ---
+optimize -param R0 1k 10 10000 -param R1 1k 10 10000 -param R2 1k 10 10000 -param R3 1k 10 10000 -param R4 1k 10 10000 -param R5 1k 10 10000 -param R6 1k 10 10000 -param R7 1k 10 10000 -param R8 1k 10 10000 -param R9 1k 10 10000 -param R10 1k 10 10000 -param R11 1k 10 10000 -param R12 1k 10 10000 -param R13 1k 10 10000 -param R14 1k 10 10000 -param R15 1k 10 10000 -param R16 1k 10 10000 -param R17 1k 10 10000 -param R18 1k 10 10000 -param R19 1k 10 10000 -param R20 1k 10 10000 -param R21 1k 10 10000 -param R22 1k 10 10000 -param R23 1k 10 10000 -param R24 1k 10 10000 -param R25 1k 10 10000 -param R26 1k 10 10000 -param R27 1k 10 10000 -param R28 1k 10 10000 -param R29 1k 10 10000 -param R30 1k 10 10000 -param R31 1k 10 10000 -param R32 1k 10 10000 -param R33 1k 10 10000 -param R34 1k 10 10000 -param R35 1k 10 10000 -param R36 1k 10 10000 -param R37 1k 10 10000 -param R38 1k 10 10000 -param R39 1k 10 10000 -param R40 1k 10 10000 -param R41 1k 10 10000 -param R42 1k 10 10000 -param R43 1k 10 10000 -param R44 1k 10 10000 -param R45 1k 10 10000 -param R46 1k 10 10000 -param R47 1k 10 10000 -param R48 1k 10 10000 -param R49 1k 10 10000 -param R50 1k 10 10000 -param R51 1k 10 10000 -param R52 1k 10 10000 -param R53 1k 10 10000 -param R54 1k 10 10000 -param R55 1k 10 10000 -param R56 1k 10 10000 -param R57 1k 10 10000 -param R58 1k 10 10000 -param R59 1k 10 10000 -param R60 1k 10 10000 -param R61 1k 10 10000 -param R62 1k 10 10000 -param R63 1k 10 10000 -param R64 1k 10 10000 -param R65 1k 10 10000 -param R66 1k 10 10000 -param R67 1k 10 10000 -param R68 1k 10 10000 -param R69 1k 10 10000 -param R70 1k 10 10000 -param R71 1k 10 10000 -param R72 1k 10 10000 -param R73 1k 10 10000 -param R74 1k 10 10000 -param R75 1k 10 10000 -param R76 1k 10 10000 -param R77 1k 10 10000 -param R78 1k 10 10000 -param R79 1k 10 10000 -param R80 1k 10 10000 -param R81 1k 10 10000 -param R82 1k 10 10000 -param R83 1k 10 10000 -param R84 1k 10 10000 -param R85 1k 10 10000 -param R86 1k 10 10000 -param R87 1k 10 10000 -param R88 1k 10 10000 -param R89 1k 10 10000 -param R90 1k 10 10000 -param R91 1k 10 10000 -param R92 1k 10 10000 -param R93 1k 10 10000 -param R94 1k 10 10000 -param R95 1k 10 10000 -param R96 1k 10 10000 -param R97 1k 10 10000 -param R98 1k 10 10000 -param R99 1k 10 10000 -analysis op -target v(n0) 0.1 -target v(n1) 0.19899 -target v(n2) 0.29798 -target v(n3) 0.39697 -target v(n4) 0.49596 -target v(n5) 0.594949 -target v(n6) 0.693939 -target v(n7) 0.792929 -target v(n8) 0.891919 -target v(n9) 0.990909 -target v(n10) 1.0899 -target v(n11) 1.18889 -target v(n12) 1.28788 -target v(n13) 1.38687 -target v(n14) 1.48586 -target v(n15) 1.58485 -target v(n16) 1.68384 -target v(n17) 1.78283 -target v(n18) 1.88182 -target v(n19) 1.98081 -target v(n20) 2.0798 -target v(n21) 2.17879 -target v(n22) 2.27778 -target v(n23) 2.37677 -target v(n24) 2.47576 -target v(n25) 2.57475 -target v(n26) 2.67374 -target v(n27) 2.77273 -target v(n28) 2.87172 -target v(n29) 2.97071 -target v(n30) 3.0697 -target v(n31) 3.16869 -target v(n32) 3.26768 -target v(n33) 3.36667 -target v(n34) 3.46566 -target v(n35) 3.56465 -target v(n36) 3.66364 -target v(n37) 3.76263 -target v(n38) 3.86162 -target v(n39) 3.96061 -target v(n40) 4.0596 -target v(n41) 4.15859 -target v(n42) 4.25758 -target v(n43) 4.35657 -target v(n44) 4.45556 -target v(n45) 4.55455 -target v(n46) 4.65354 -target v(n47) 4.75253 -target v(n48) 4.85152 -target v(n49) 4.95051 -target v(n50) 5.04949 -target v(n51) 5.14848 -target v(n52) 5.24747 -target v(n53) 5.34646 -target v(n54) 5.44545 -target v(n55) 5.54444 -target v(n56) 5.64343 -target v(n57) 5.74242 -target v(n58) 5.84141 -target v(n59) 5.9404 -target v(n60) 6.03939 -target v(n61) 6.13838 -target v(n62) 6.23737 -target v(n63) 6.33636 -target v(n64) 6.43535 -target v(n65) 6.53434 -target v(n66) 6.63333 -target v(n67) 6.73232 -target v(n68) 6.83131 -target v(n69) 6.9303 -target v(n70) 7.02929 -target v(n71) 7.12828 -target v(n72) 7.22727 -target v(n73) 7.32626 -target v(n74) 7.42525 -target v(n75) 7.52424 -target v(n76) 7.62323 -target v(n77) 7.72222 -target v(n78) 7.82121 -target v(n79) 7.9202 -target v(n80) 8.01919 -target v(n81) 8.11818 -target v(n82) 8.21717 -target v(n83) 8.31616 -target v(n84) 8.41515 -target v(n85) 8.51414 -target v(n86) 8.61313 -target v(n87) 8.71212 -target v(n88) 8.81111 -target v(n89) 8.9101 -target v(n90) 9.00909 -target v(n91) 9.10808 -target v(n92) 9.20707 -target v(n93) 9.30606 -target v(n94) 9.40505 -target v(n95) 9.50404 -target v(n96) 9.60303 -target v(n97) 9.70202 -target v(n98) 9.80101 -target v(n99) 9.9 -method lm -maxiter 100 -tol 1e-12
+echo "LM recovered node voltages (targets 0.1 / 5.04949 / 9.9 V):"
+print v(n0) v(n50) v(n99)
+.endc
+.end
