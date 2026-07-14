@@ -1,0 +1,30 @@
+* Enhancement-193: `.pnoise` honors the `sqrnoise` control variable
+*
+* The ngspice manual defines onoise_spectrum / inoise_spectrum as a noise
+* spectral density in V/sqrt(Hz) by default, switchable to the squared V^2/Hz
+* form with `set sqrnoise`. `.noise` obeys this; `.pnoise` used to always emit
+* V^2/Hz and ignore `sqrnoise`, so the two analyses disagreed by a square.
+*
+* This deck runs the same driven RC low-pass twice -- default and `set sqrnoise`
+* -- and also a plain `.noise`. After E-193: default pnoise == default .noise
+* (both V/sqrt(Hz)); `set sqrnoise` squares both to V^2/Hz.
+
+V1 a 0 dc 0 ac 1 SIN(0 1 1meg)
+R1 a b 1k
+C1 b 0 1n
+.pnoise 1meg 1u b 512 6 40 5u b V1 dec 2 10k 100k
+
+.control
+* default: V/sqrt(Hz) -- matches .noise
+run
+echo
+echo pnoise default (V/sqrt(Hz)):
+print onoise_spectrum
+
+* squared form: V^2/Hz
+set sqrnoise
+run
+echo pnoise with 'set sqrnoise' (V^2/Hz = the density squared):
+print onoise_spectrum
+.endc
+.end

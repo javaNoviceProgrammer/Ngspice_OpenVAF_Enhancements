@@ -151,7 +151,7 @@ C1 b 0 100p
 # ---------------- [1] white folding vs referee ----------------
 deck = ("* white folding\n" + BODY.format(rmod="", g1="0.8m") +
         ".pnoise 1meg 1u b 1024 6 50 5u b vdc lin 3 50k 150k\n"
-        ".control\nrun\nprint onoise_spectrum\n.endc\n.end\n")
+        ".control\nset sqrnoise\nrun\nprint onoise_spectrum\n.endc\n.end\n")
 out = run_deck("_w.cir", deck)
 pts = onoise_table(out)
 ok = len(pts) == 3 and all(
@@ -164,7 +164,7 @@ deck = ("* flicker folding\n" +
         BODY.format(rmod="rmod ", g1="0.8m") +
         ".model rmod R(kf=1e-9 af=2 ef=1)\n"
         ".pnoise 1meg 1u b 1024 6 50 5u b vdc lin 3 1k 100k\n"
-        ".control\nrun\nprint onoise_spectrum\nsetplot pss1\nwrdata _pnf_td.csv v(b)\n.endc\n.end\n")
+        ".control\nset sqrnoise\nrun\nprint onoise_spectrum\nsetplot pss1\nwrdata _pnf_td.csv v(b)\n.endc\n.end\n")
 out = run_deck("_f.cir", deck)
 pts = onoise_table(out)
 rows = [l.split() for l in open(os.path.join(HERE, "_pnf_td.csv")) if l.strip()]
@@ -182,12 +182,12 @@ check("[3] pre-fix signature ABSENT (pnoise != wrong-frequency model, 21% higher
 # ---------------- [4] the folding ratio is real ----------------
 deck = ("* nopump\n" + BODY.format(rmod="", g1="0") +
         ".pnoise 1meg 1u b 1024 6 50 5u b vdc lin 3 50k 150k\n"
-        ".control\nrun\nprint onoise_spectrum\n.endc\n.end\n")
+        ".control\nset sqrnoise\nrun\nprint onoise_spectrum\n.endc\n.end\n")
 out = run_deck("_n.cir", deck)
 npts = onoise_table(out)
 pdeck = ("* pump\n" + BODY.format(rmod="", g1="0.8m") +
          ".pnoise 1meg 1u b 1024 6 50 5u b vdc lin 3 50k 150k\n"
-         ".control\nrun\nprint onoise_spectrum\n.endc\n.end\n")
+         ".control\nset sqrnoise\nrun\nprint onoise_spectrum\n.endc\n.end\n")
 out = run_deck("_p.cir", pdeck)
 ppts = onoise_table(out)
 ok = True
@@ -202,13 +202,15 @@ check("[4] pump/no-pump folding ratio == referee ratio (~1.86x, TRNOISE-MC confi
 # ---------------- [5] LTI limit: pnoise(g1=0) == .noise ----------------
 deck = ("* lti noise\n" + BODY.format(rmod="", g1="0").replace("VDC a 0 DC 1", "VDC a 0 DC 1 AC 1") +
         ".noise v(b) vdc lin 3 50k 150k 1\n"
-        ".control\nrun\nsetplot noise1\nprint onoise_spectrum\n.endc\n.end\n")
+        ".control\nset sqrnoise\nrun\nsetplot noise1\nprint onoise_spectrum\n.endc\n.end\n")
 out = run_deck("_l.cir", deck)
 lpts = onoise_table(out)
-# .noise prints V/sqrt(Hz) by default (sqrt of the density); pnoise emits V^2/Hz
-ok = len(lpts) == 3 and all(abs(npts[f] - lpts[f]**2) <= 1e-6 * lpts[f]**2 for f in lpts)
-check("[5] LTI limit: pnoise(g1=0) == plain .noise (squared V/rtHz)", ok,
-      f"(50k: pnoise={npts.get(5e4, 0):.6e} noise^2={lpts.get(5e4, 0)**2:.6e})")
+# Enhancement-193: both analyses now honor `sqrnoise`; with it set here, both
+# report the squared V^2/Hz density, so pnoise(g1=0) equals plain .noise directly
+# (before E-193 pnoise was V^2/Hz while .noise defaulted to V/sqrt(Hz)).
+ok = len(lpts) == 3 and all(abs(npts[f] - lpts[f]) <= 1e-6 * lpts[f] for f in lpts)
+check("[5] LTI limit: pnoise(g1=0) == plain .noise (both V^2/Hz via sqrnoise)", ok,
+      f"(50k: pnoise={npts.get(5e4, 0):.6e} noise={lpts.get(5e4, 0):.6e})")
 
 print(f"\n{passed} passed, {failed} failed")
 raise SystemExit(1 if failed else 0)

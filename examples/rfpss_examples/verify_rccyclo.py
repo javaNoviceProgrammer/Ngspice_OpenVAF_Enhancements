@@ -79,6 +79,9 @@ def run(text, name):
 with open(os.path.join(HERE, "rc_pnoise.cir")) as f:
     rc = f.read()
 rc = rc.replace("dec 10 10k 1meg", "dec 10 10k 1meg cyclo")   # add the cyclo flag
+# Enhancement-193: pnoise now honors `sqrnoise` (default V/sqrt(Hz)); these cyclo
+# checks are power-density relations (onoise*f == ...), so ask for the V^2/Hz form.
+rc = rc.replace(".control", ".control\nset sqrnoise", 1)
 lines = rc.split("\n"); lines.insert(1, ".option sparse")
 clog = run("\n".join(lines), "_rccyclo_sparse.cir")
 
@@ -106,7 +109,7 @@ H = 1.0 / (1.0 + 1j * 2 * math.pi * f0 * R1 * C1)    # RC transfer at the pump f
 I2avg = 0.5 * abs((1.0 - H) / R1) ** 2               # <I_R1^2> over the period
 target = R1 ** 2 * KF * (8 / math.pi ** 2) * I2avg   # onoise_flicker * f = <|I|>^2 law
 with open(os.path.join(HERE, "rc_flicker_cyclo.cir")) as f:
-    fl = f.read().split("\n")
+    fl = f.read().replace(".control", ".control\nset sqrnoise", 1).split("\n")  # E-193: V^2/Hz
 fl.insert(1, ".option sparse")
 flog = run("\n".join(fl), "_flick_cyclo.cir")
 fpts = table(flog)

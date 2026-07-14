@@ -6,7 +6,9 @@
 V1 a 0 SIN(0 1 1meg)
 R1 a b 1k
 C1 b 0 1n
-* .pac Fguess StabTime OscNode Points Harmonics SC_iter Steady_coeff <dec|oct|lin> Npts Fstart Fstop
+* .pac Fguess StabTime OscNode Points Harmonics SC_iter Steady_coeff <dec|oct|lin> Npts Fstart Fstop [maxsideband]
+* The optional trailing integer `maxsideband` Ksb (default 0 = sideband 0 only)
+* also emits the conversion sidebands b_usb<k> / b_lsb<k> (k=1..Ksb) at f +- k*f0.
 .pac 1meg 1u b 1024 10 50 5u dec 10 10k 1meg
 .control
 run

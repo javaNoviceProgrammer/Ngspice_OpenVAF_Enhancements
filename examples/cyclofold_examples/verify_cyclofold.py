@@ -184,7 +184,7 @@ C1 b 0 100p
 deck = ("* cyclo flicker folding\n" + BODY.format(rmod="rmod ", g1="0.8m") +
         ".model rmod R(kf=1e-9 af=2 ef=1)\n"
         ".pnoise 1meg 1u b 1024 6 50 5u b vdc lin 3 1k 100k cyclo\n"
-        ".control\nrun\nprint onoise_spectrum\nsetplot pss1\nwrdata _cyf_td.csv v(b)\n.endc\n.end\n")
+        ".control\nset sqrnoise\nrun\nprint onoise_spectrum\nsetplot pss1\nwrdata _cyf_td.csv v(b)\n.endc\n.end\n")
 out = run_deck("_cf.cir", deck)
 pts = onoise_table(out)
 rows = [l.split() for l in open(os.path.join(HERE, "_cyf_td.csv")) if l.strip()]
@@ -205,10 +205,10 @@ check("[2] old flat-model signature ABSENT (it is 34% higher at 1 kHz here)",
 # ---------------- [3] flat path: white pumped cyclo == stationary ----------------
 wc = ("* cyclo white\n" + BODY.format(rmod="", g1="0.8m") +
       ".pnoise 1meg 1u b 1024 6 50 5u b vdc lin 3 50k 150k cyclo\n"
-      ".control\nrun\nprint onoise_spectrum\n.endc\n.end\n")
+      ".control\nset sqrnoise\nrun\nprint onoise_spectrum\n.endc\n.end\n")
 ws = ("* stationary white\n" + BODY.format(rmod="", g1="0.8m") +
       ".pnoise 1meg 1u b 1024 6 50 5u b vdc lin 3 50k 150k\n"
-      ".control\nrun\nprint onoise_spectrum\n.endc\n.end\n")
+      ".control\nset sqrnoise\nrun\nprint onoise_spectrum\n.endc\n.end\n")
 cpts = onoise_table(run_deck("_wc.cir", wc))
 spts = onoise_table(run_deck("_ws.cir", ws))
 ok = len(cpts) == 3 and all(abs(cpts[f] - spts[f]) <= 1e-4 * spts[f] for f in cpts)
@@ -227,7 +227,7 @@ fdeck = ("* rc flicker cyclo\n"
          f"C1 b 0 {C1f:g}\n"
          ".model rmod R(kf=1e-9 af=2 ef=1)\n"
          ".pnoise 1meg 1u b 1024 10 50 5u b v1 dec 3 100 1k cyclo\n"
-         ".control\nrun\nprint onoise_spectrum\n.endc\n.end\n")
+         ".control\nset sqrnoise\nrun\nprint onoise_spectrum\n.endc\n.end\n")
 fpts = onoise_table(run_deck("_rcf.cir", fdeck))
 H = 1.0 / (1.0 + 1j * 2 * math.pi * f0f * R1f * C1f)
 I2avg = 0.5 * abs((1.0 - H) / R1f) ** 2          # <I^2> (the old law)
@@ -241,19 +241,22 @@ check("[4] |sin|-modulated flicker: onoise*f == R1^2*KF*<|I|>^2 = (8/pi^2)*<I^2>
 lc = ("* cyclo lti\n" + BODY.format(rmod="rmod ", g1="0") +
       ".model rmod R(kf=1e-9 af=2 ef=1)\n"
       ".pnoise 1meg 1u b 1024 6 50 5u b vdc lin 3 1k 100k cyclo\n"
-      ".control\nrun\nprint onoise_spectrum\n.endc\n.end\n")
+      ".control\nset sqrnoise\nrun\nprint onoise_spectrum\n.endc\n.end\n")
 ln = ("* plain noise\n" + BODY.format(rmod="rmod ", g1="0").replace(
           "VDC a 0 DC 1", "VDC a 0 DC 1 AC 1") +
       ".model rmod R(kf=1e-9 af=2 ef=1)\n"
       ".noise v(b) vdc lin 3 1k 100k 1\n"
-      ".control\nrun\nsetplot noise1\nprint onoise_spectrum\n.endc\n.end\n")
+      ".control\nset sqrnoise\nrun\nsetplot noise1\nprint onoise_spectrum\n.endc\n.end\n")
 cpts = onoise_table(run_deck("_lc.cir", lc))
 npts = onoise_table(run_deck("_ln.cir", ln))
-# .noise prints V/sqrt(Hz) (sqrt of the density); pnoise emits V^2/Hz
-ok = len(cpts) == 3 and all(abs(cpts[f] - npts[f] ** 2) <= 2e-3 * npts[f] ** 2
+# Enhancement-193: both analyses now honor `sqrnoise`; with it set, both report
+# the squared V^2/Hz density, so the LTI-limit cyclo pnoise equals plain .noise
+# directly (before E-193 pnoise was V^2/Hz while .noise was V/sqrt(Hz), needing a
+# square here).
+ok = len(cpts) == 3 and all(abs(cpts[f] - npts[f]) <= 2e-3 * npts[f]
                             for f in cpts)
-check("[5] LTI limit: cyclo(no pump) == plain .noise (squared V/rtHz)", ok,
-      f"(1k: cyclo={cpts.get(1e3, 0):.5e} noise^2={npts.get(1e3, 0) ** 2:.5e})")
+check("[5] LTI limit: cyclo(no pump) == plain .noise (both V^2/Hz via sqrnoise)", ok,
+      f"(1k: cyclo={cpts.get(1e3, 0):.5e} noise={npts.get(1e3, 0):.5e})")
 
 # ---------------- [6] two-tone qpnoise cyclo collapses to the 1-D referee ----------------
 # The same circuit under `qpss ... hb` with tone 2 inactive: the 2-D exact

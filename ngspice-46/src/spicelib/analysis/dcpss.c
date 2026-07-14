@@ -15,6 +15,7 @@
 #include "ngspice/noisedef.h"  /* Enhancement-124: NOISEAN/Ndata + CKTnoise for pnoise */
 #include "ngspice/sperror.h"
 #include "ngspice/fteext.h"
+#include "ngspice/cpextern.h"   /* Enhancement-193: cp_getvar for the `sqrnoise` flag */
 #ifdef RFSPICE
 #include "vsrc/vsrcdefs.h"             /* Enhancement-132: RF port fields (z0, ki, branch) */
 #include "isrc/isrcdefs.h"             /* Enhancement-176: driven-mode source detection */
@@ -584,9 +585,12 @@ pss_pac_report(CKTcircuit *ckt, PSSan *job)
  * matrix and emit the response at each requested sideband f_in + k*f0 as a complex
  * plot vs frequency. The stimulus is a netlist-referenced small-signal `AC` source
  * when present (the periodic-AC transfer / conversion gain), else a unit current at
- * the osc node (a driving-point PAC). With `pac_maxsb = Ksb` the output vectors are
- * the base node names (sideband 0) plus `<node>_usb<k>` / `<node>_lsb<k>` for the
- * upper/lower conversion sidebands. */
+ * the osc node (a driving-point PAC). By default only sideband 0 (the base node
+ * names) is emitted; give the `.pac` card a trailing integer `maxsideband` Ksb
+ * (after Fstop) -- equivalently the `pac_maxsb` analysis parameter -- to also emit
+ * `<node>_usb<k>` / `<node>_lsb<k>` for the upper/lower conversion sidebands
+ * k = 1..Ksb. (Note: `pac_maxsb` is an analysis parameter set on the card, not a
+ * nutmeg `set` variable.) */
 static void
 pac_sweep(CKTcircuit *ckt, PSSan *job)
 {
@@ -769,6 +773,12 @@ pnoise_sweep(CKTcircuit *ckt, PSSan *job)
     JOB    *oldJob;
     IFuid   freqUid, nlist[2];
     runDesc *plot = NULL;
+    /* Enhancement-193: honor the `sqrnoise` control variable, exactly like
+     * .noise (noisean.c): default (unset) reports the noise spectral density in
+     * V/sqrt(Hz) / A/sqrt(Hz); `set sqrnoise` reports the squared V^2/Hz form.
+     * Before E-193 pnoise always emitted the squared density and ignored the
+     * variable, contradicting the manual and diverging from .noise. */
+    int     pn_sqr = cp_getvar("sqrnoise", CP_BOOL, NULL, 0);
 
     if (outNode <= 0 || outNode > N || f0 <= 0.0 || fstart <= 0.0 ||
         fstop < fstart || np < 1)
@@ -1130,6 +1140,9 @@ pnoise_sweep(CKTcircuit *ckt, PSSan *job)
             }
             gsi = 1.0 / MAX(gain2, N_MINGAIN);
             out[0] = onoise;  out[1] = onoise * gsi;
+            if (!pn_sqr) {                          /* E-193: V/sqrt(Hz) by default */
+                out[0] = sqrt(out[0]);  out[1] = sqrt(out[1]);
+            }
             refVal.rValue = freqs[fi];
             valData.v.numValue = 2;  valData.v.vec.rVec = out;
             SPfrontEnd->OUTpData(plot, &refVal, &valData);
@@ -1186,6 +1199,9 @@ pnoise_sweep(CKTcircuit *ckt, PSSan *job)
             double out[2];
             out[0] = onoise;                    /* output noise density (V^2/Hz) */
             out[1] = onoise * gsi;              /* input-referred density */
+            if (!pn_sqr) {                      /* E-193: V/sqrt(Hz) by default */
+                out[0] = sqrt(out[0]);  out[1] = sqrt(out[1]);
+            }
             refVal.rValue = freq;
             valData.v.numValue = 2;
             valData.v.vec.rVec = out;

@@ -40,8 +40,13 @@ def check(label, ok, detail=""):
     print(f"[{'PASS' if ok else 'FAIL'}] {label}" + (f"  ({detail})" if detail and not ok else ""))
 
 def Sana(f):
-    """analytic output thermal-noise density at b: 4kTR/(1+(2*pi*f*R*C)^2)."""
+    """analytic output thermal-noise density at b: 4kTR/(1+(2*pi*f*R*C)^2) [V^2/Hz]."""
     return 4.0 * BOLTZ * TEMP * R / (1.0 + (2 * math.pi * f * R * C) ** 2)
+
+def Aana(f):
+    """same density as an AMPLITUDE spectral density [V/sqrt(Hz)] -- Enhancement-193:
+    .pnoise now honors `sqrnoise` and, like .noise, defaults to V/sqrt(Hz)."""
+    return math.sqrt(Sana(f))
 
 def table(log, col="onoise_spectrum"):
     """parse a `print <col>` table -> [(freq, value), ...] (header-aware)."""
@@ -83,21 +88,23 @@ pts = table(plog, "onoise_spectrum")
 check(f"[E-124] pnoise produced an onoise spectrum (got {len(pts)} points)", len(pts) >= 5,
       f"{len(pts)} pts")
 if pts:
-    worst = max(abs(v - Sana(f)) / Sana(f) for f, v in pts)
-    check(f"[E-124] pnoise onoise == analytic 4kTR/(1+(2*pi*f*R*C)^2) across the sweep "
+    # Enhancement-193: pnoise defaults to V/sqrt(Hz) (amplitude), like .noise
+    worst = max(abs(v - Aana(f)) / Aana(f) for f, v in pts)
+    check(f"[E-124] pnoise onoise == sqrt(4kTR/(1+(2*pi*f*R*C)^2)) [V/sqrt(Hz)] across the sweep "
           f"(worst rel err {worst:.2e})", worst < 0.03, f"worst {worst:.3e}")
     flo, vlo = pts[0]; fhi, vhi = pts[-1]
-    check(f"[E-124] low-f {flo:.4g}Hz onoise = {Sana(flo):.4e} (got {vlo:.4e})",
-          abs(vlo - Sana(flo)) / Sana(flo) < 0.03, str(vlo))
-    check(f"[E-124] high-f {fhi:.4g}Hz onoise = {Sana(fhi):.4e} (got {vhi:.4e})",
-          abs(vhi - Sana(fhi)) / Sana(fhi) < 0.03, str(vhi))
+    check(f"[E-124] low-f {flo:.4g}Hz onoise = {Aana(flo):.4e} (got {vlo:.4e})",
+          abs(vlo - Aana(flo)) / Aana(flo) < 0.03, str(vlo))
+    check(f"[E-124] high-f {fhi:.4g}Hz onoise = {Aana(fhi):.4e} (got {vhi:.4e})",
+          abs(vhi - Aana(fhi)) / Aana(fhi) < 0.03, str(vhi))
 
-# --- cross-check: plain .noise of the same network (no PSS, fast) ---
+# --- cross-check: plain .noise of the same network (no PSS, fast). Enhancement-193:
+# both analyses now default to V/sqrt(Hz), so no `set sqrnoise` needed on either. ---
 nref = run(
     "* noise ref\n"
     "V1 a 0 DC 0 AC 1\nR1 a b 1k\nC1 b 0 1n\n"
     ".noise v(b) v1 dec 10 10k 1meg\n"
-    ".control\nset sqrnoise\nrun\nsetplot noise1\nprint onoise_spectrum\n.endc\n.end\n",
+    ".control\nrun\nsetplot noise1\nprint onoise_spectrum\n.endc\n.end\n",
     "_rcnoise_ref.cir")
 nref_pts = table(nref, "onoise_spectrum")
 check(f"[E-124] .noise reference produced a spectrum (got {len(nref_pts)} points)",
