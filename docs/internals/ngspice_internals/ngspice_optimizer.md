@@ -57,20 +57,22 @@ optimize (-param|-mparam|-dparam) <name> <init> <lo> <hi>   [...]
          -analysis <command ...>
          ( -minimize <expression ...>                          (one goal)
            | -target <expr> <value> [<weight>]  [-target ...] ) (fit several)
-         [-method nm|lm] [-maxiter <N>] [-tol <T>] [-verbose]
+         [-method nm|lm|pso|de|sa] [-maxiter <N>] [-tol <T>] [-seed <S>] [-verbose]
 ```
 
 | Part | Meaning |
 |---|---|
-| `-param name init lo hi` | A knob to turn. `name` is a device (like `R1`, `C1`) or a device **instance** parameter (`@m1[w]`). `init` is where to start, `lo`/`hi` are the smallest/largest values allowed. Repeat for each knob (up to 16). |
+| `-param name init lo hi` | A knob to turn. `name` is a device (like `R1`, `C1`) or a device **instance** parameter (`@m1[w]`). `init` is where to start, `lo`/`hi` are the smallest/largest values allowed. Repeat for each knob (up to 128 — see §12). |
 | `-mparam name init lo hi` | Like `-param`, but `name` is a **`.model`-card** parameter, written `@<model>[<param>]` (e.g. `@dmod[is]`). See §9. Mixes freely with the others. |
 | `-dparam name init lo hi` | Like `-param`, but `name` is a symbolic netlist **`.param`** (e.g. the `w` in `.param w=1u`, or a name used in an expression like `R1={500*k}`). See §9. Mixes freely with the others. |
 | `-analysis <cmd>` | The simulation to run every time it turns the knobs — an ordinary ngspice command such as `op`, `ac dec 20 1 1meg`, or `tran 1u 1m`. Give several to combine analyses in one fit (see §8). |
 | `-minimize <expr>` | The cost, for a **single** goal. Any ngspice expression over the results that should be **zero when the circuit is perfect**. A very common shape is `(something - target)^2`. |
 | `-target <expr> <val> [<w>]` | A measurement to **fit** (§8). Repeat to fit many at once; the optimizer minimizes the sum of squared residuals `w·(expr − val)`. Use `-target` *or* `-minimize`, not both. |
-| `-method nm\|lm` | (optional) force Nelder-Mead (`nm`) or Levenberg-Marquardt (`lm`). Default: a `-target` fit uses `lm`, a `-minimize` goal uses `nm`. |
+| `-method nm\|lm\|pso\|de\|sa` | (optional) pick the search. **Local** (go downhill from the start): `nm` (Nelder-Mead), `lm` (Levenberg-Marquardt). **Global** (explore, to escape local minima — §12): `pso` (particle swarm), `de` (differential evolution), `sa` (simulated annealing). Default: a `-target` fit uses `lm`, a `-minimize` goal uses `nm`. |
 | `-maxiter N` | (optional) stop after at most `N` steps. Default `100`. |
 | `-tol T` | (optional) stop when the cost stops improving by more than `T`. Default `1e-6`. |
+| `-seed S` | (optional) fixed random seed for the **global** methods (`pso`/`de`/`sa`) so a run is exactly repeatable. |
+| `-swarmsize N` | (optional) population size for `pso`/`de` (default auto-scales with the number of knobs). |
 | `-verbose` | (optional) print the cost after every step so you can watch it fall. |
 
 A couple of friendly details so you don't trip up:
@@ -372,7 +374,7 @@ Instead of `-minimize`, list each measurement as a **`-target`**:
 
 The optimizer forms the *residual* `weight·(expression − desired-value)` for each one
 and drives the **sum of their squares** to zero — a classic *least-squares* fit. You can
-give up to 64 targets.
+give up to 128 targets.
 
 ### Targets can come from different analyses
 
@@ -557,7 +559,51 @@ If the expression produces a whole waveform (as in a transient), the optimizer u
 
 ---
 
-## 12. How it works, briefly
+## 12. Escaping local minima — the global methods, and large problems
+
+The methods so far (`nm`, `lm`) walk **downhill from your starting guess**, so they find
+the *nearest* valley. When the best fit is unique — a well-posed extraction or filter
+design — that valley is the answer, and these local methods are fast and exact. But some
+cost surfaces are **bumpy**, with several valleys of different depth; a downhill walk then
+lands in whichever one it started above, which may not be the deepest. For those,
+`optimize` offers three **global** methods that *explore* the whole allowed range before
+settling:
+
+| `-method` | Idea | Character |
+|---|---|---|
+| `pso` | **particle swarm** — a flock of trial points, each pulled toward its own best and the swarm's best, carrying momentum | sweeps the space, then converges together |
+| `de` | **differential evolution** — a population where each new trial is built from the *difference* of two random members | the step self-scales to the population's spread; robust on rugged, poorly-scaled surfaces |
+| `sa` | **simulated annealing** — a single walker that sometimes accepts an *uphill* move (with probability `exp(-cost_rise / T)`), then "cools" | lightest — one run per step; climbs out while hot, settles as it cools |
+
+On the deliberately bumpy `f(p) = sin(p) + sin(10 p / 3)` over `[2.7, 7.5]` (best at
+`p = 5.146`), started at the trapping `p = 2.7` corner, Nelder-Mead sticks in a shallower
+dip (`-1.20`) while **all three global methods reach the true best** (`-1.90`). A fixed
+`-seed` makes any global run exactly repeatable; `-swarmsize` sets the population for
+`pso`/`de`. Runnable sets: [`psoopt_examples`](../../../examples/psoopt_examples/),
+[`deopt_examples`](../../../examples/deopt_examples/),
+[`saopt_examples`](../../../examples/saopt_examples/).
+
+### Larger problems
+
+A run may declare up to **128 knobs** and **128 targets**. For a **well-posed** fit — one
+with a single clear best — Levenberg-Marquardt (`lm`) is the right tool even at that size:
+it solves a 100-parameter least-squares to **machine precision in about two seconds**. The
+global methods also *function* at that scale (with an adaptive high-dimensional recipe for
+`de`), but global search in high dimension is intrinsically expensive, so reserve it for
+problems that are genuinely multimodal. In short:
+
+| Your problem | Reach for |
+|---|---|
+| A unique best fit / extraction (even with many knobs) | `lm` — gradient least-squares, machine precision |
+| Smooth and unimodal, but no good gradient | `nm` — the downhill simplex |
+| Bumpy, many local minima | `pso` / `de` / `sa` — global search |
+
+Runnable set: [`opt100_examples`](../../../examples/opt100_examples/) fits 100 resistors to
+100 node-voltage targets at once.
+
+---
+
+## 13. How it works, briefly
 
 Under the hood, `optimize` uses the **Nelder–Mead downhill-simplex** method — a classic
 derivative-free optimizer. For `N` knobs it keeps `N+1` trial points (a "simplex"), and
@@ -580,9 +626,18 @@ damping when a step succeeds and increasing it until one does. Exploiting the
 least-squares structure this way reaches the optimum in far fewer circuit evaluations
 than the simplex on smooth problems (§8).
 
+The global methods (`pso`/`de`/`sa`, §12) reuse the very same machinery — they search the
+same normalized `[0, 1]` box and score every candidate through the same cost path — so
+they work with `-minimize` and `-target`, and with every knob kind, exactly like the local
+methods; they only differ in *how* they propose the next candidates.
+
 The implementation lives in `ngspice-46/src/frontend/com_optimize.c`; the design notes
 are in [Enhancement-130](../../../enhancements_doc/Enhancement-130.md),
-[Enhancement-143](../../../enhancements_doc/Enhancement-143.md),
-[Enhancement-144](../../../enhancements_doc/Enhancement-144.md) and
-[Enhancement-145](../../../enhancements_doc/Enhancement-145.md), and a runnable
+[143](../../../enhancements_doc/Enhancement-143.md),
+[144](../../../enhancements_doc/Enhancement-144.md),
+[145](../../../enhancements_doc/Enhancement-145.md) (least-squares and knob kinds),
+[194](../../../enhancements_doc/Enhancement-194.md),
+[195](../../../enhancements_doc/Enhancement-195.md),
+[196](../../../enhancements_doc/Enhancement-196.md) (the global methods) and
+[197](../../../enhancements_doc/Enhancement-197.md) (128-knob problems), and a runnable
 example set is under [`examples/optimize_examples/`](../../../examples/optimize_examples/).
