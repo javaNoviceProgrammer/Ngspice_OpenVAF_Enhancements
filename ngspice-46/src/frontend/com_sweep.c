@@ -15,7 +15,7 @@ is and applying it with the right mechanism:
 
 Syntax (in a .control block, or as a `.sweep` card in the deck):
 
-  sweep <knob> <start> <stop> <step>            [-analysis <cmd>] [-output <expr> ...]
+  sweep <knob> <start> <stop> <step>            [-analysis <cmd>] [-output <expr> ...] [-overlay]
   sweep <knob> lin|dec|oct <N> <start> <stop>   [-analysis <cmd>] [-output <expr> ...]
   sweep <knob> list <v1> <v2> ...               [-analysis <cmd>] [-output <expr> ...]
 
@@ -103,6 +103,70 @@ static double sw_eval_expr(const char *expr)
         free_pnode(pn);
     }
     return f;
+}
+
+/* Enhancement-189: linear interpolation of (x[],y[]) at xq, flat outside the
+ * data range; x[] is assumed monotonic increasing. Used to resample per-point
+ * waveforms onto a common scale for the `-overlay` family plot. */
+static double sw_interp(const double *x, const double *y, int len, double xq)
+{
+    int lo, hi, mid;
+    if (len <= 0) return 0.0;
+    if (len == 1 || xq <= x[0]) return y[0];
+    if (xq >= x[len - 1]) return y[len - 1];
+    lo = 0; hi = len - 1;
+    while (hi - lo > 1) { mid = (lo + hi) / 2; if (x[mid] <= xq) lo = mid; else hi = mid; }
+    return (x[hi] == x[lo]) ? y[lo]
+           : y[lo] + (y[hi] - y[lo]) * (xq - x[lo]) / (x[hi] - x[lo]);
+}
+
+/* Enhancement-189: evaluate `expr` and copy its FULL waveform plus its scale
+ * (independent variable). Returns the length and mallocs *px (scale) and *py
+ * (values, magnitude if complex); both are the caller's to free. The scale is
+ * taken from the evaluated vector, falling back to the current plot's scale. */
+static int sw_eval_vec(const char *expr, double **px, double **py)
+{
+    struct pnode *pn = ft_getpnames_from_string(expr, TRUE);
+    int n = 0;
+    *px = *py = NULL;
+    if (pn) {
+        struct dvec *v = ft_evaluate(pn);
+        if (v && v->v_length >= 1) {
+            struct dvec *sc = v->v_scale ? v->v_scale
+                              : (plot_cur ? plot_cur->pl_scale : NULL);
+            int i;
+            n = v->v_length;
+            *py = TMALLOC(double, n);
+            *px = TMALLOC(double, n);
+            for (i = 0; i < n; i++)
+                (*py)[i] = isreal(v) ? v->v_realdata[i]
+                           : hypot(v->v_compdata[i].cx_real,
+                                   v->v_compdata[i].cx_imag);
+            for (i = 0; i < n; i++) {
+                if (sc && i < sc->v_length)
+                    (*px)[i] = isreal(sc) ? sc->v_realdata[i]
+                               : hypot(sc->v_compdata[i].cx_real,
+                                       sc->v_compdata[i].cx_imag);
+                else
+                    (*px)[i] = (double) i;
+            }
+        }
+        if (!pn->pn_value && v)
+            vec_free(v);
+        free_pnode(pn);
+    }
+    return n;
+}
+
+/* build a clean nutmeg vector name `<base>_<value>` (non-alnum -> '_') */
+static char *sw_wavename(const char *base, double val)
+{
+    char raw[160], *s, *p;
+    (void) snprintf(raw, sizeof raw, "%s_%g", base, val);
+    s = copy(raw);
+    for (p = s; *p; p++)
+        if (!isalnum((unsigned char) *p) && *p != '_') *p = '_';
+    return s;
 }
 
 
@@ -207,6 +271,10 @@ void com_sweep(wordlist *wl)
     double *vals = NULL, *data = NULL;
     int kind, nout = 0, nv = 0, i, k;
     int save_optimizing = ft_optimizing;
+    int overlay = 0;                 /* Enhancement-189: -overlay flag          */
+    double **ovx = NULL, **ovy = NULL;   /* per-point waveform scale / values   */
+    int *ovlen = NULL;               /* per-point waveform length               */
+    char *scwavename = NULL;         /* the analysis scale name (e.g. "time")   */
 
     if (sweep_active)                /* re-entered via a .param re-source */
         return;
@@ -217,7 +285,7 @@ void com_sweep(wordlist *wl)
     if (!wl || !wl->wl_word) {
         fprintf(cp_err, "usage: sweep <knob> (<start> <stop> <step> | "
                         "lin|dec|oct <N> <start> <stop> | list <v> ...) "
-                        "[-analysis <cmd>] [-output <expr> ...]\n");
+                        "[-analysis <cmd>] [-output <expr> ...] [-overlay]\n");
         return;
     }
 
@@ -288,6 +356,8 @@ void com_sweep(wordlist *wl)
             wl = wl->wl_next;
             tfree(analysis);
             analysis = collect_until_flag(&wl);
+        } else if (eq(w, "-overlay") || eq(w, "-ov")) {
+            overlay = 1; wl = wl->wl_next;
         } else if (eq(w, "-output") || eq(w, "-o")) {
             if (wl->wl_next && nout < SW_MAXOUT) {
                 /* accept `name=expr` (clean vector name) or a bare `expr` */
@@ -344,10 +414,29 @@ void com_sweep(wordlist *wl)
                 goto cleanup;
             }
         }
-        if (i == 0)
+        if (i == 0) {
             data = TMALLOC(double, (size_t) nv * (size_t) nout);
-        for (k = 0; k < nout; k++)
-            data[(size_t) i * (size_t) nout + (size_t) k] = sw_eval_expr(outexpr[k]);
+            if (overlay) {
+                ovx = TMALLOC(double *, nv);
+                ovlen = TMALLOC(int, nv);
+                ovy = TMALLOC(double *, (size_t) nv * (size_t) nout);
+                if (plot_cur && plot_cur->pl_scale && plot_cur->pl_scale->v_name)
+                    scwavename = copy(plot_cur->pl_scale->v_name);
+            }
+        }
+        for (k = 0; k < nout; k++) {
+            if (overlay) {
+                double *xk, *yk;
+                int nk = sw_eval_vec(outexpr[k], &xk, &yk);
+                if (k == 0) { ovx[i] = xk; ovlen[i] = nk; }
+                else tfree(xk);                          /* same scale as k==0 */
+                ovy[(size_t) i * (size_t) nout + (size_t) k] = yk;
+                data[(size_t) i * (size_t) nout + (size_t) k] =
+                    (nk > 0 && yk) ? yk[nk - 1] : 0.0;   /* last value from waveform */
+            } else {
+                data[(size_t) i * (size_t) nout + (size_t) k] = sw_eval_expr(outexpr[k]);
+            }
+        }
     }
     ft_optimizing = save_optimizing;
 
@@ -372,13 +461,61 @@ void com_sweep(wordlist *wl)
             vec_new(v);
         }
     }
-    fprintf(cp_out, "sweep: %d points into plot '%s' (now current); "
-                    "`plot <output>` to view vs %s.\n", nv, "sweep", scname);
+    fprintf(cp_out, "sweep: %d points into the 'sweep' plot%s; "
+                    "`plot <output>` to view vs %s.\n",
+            nv, overlay ? "" : " (now current)", scname);
+
+    /* --- Enhancement-189: -overlay family plot of the per-point waveforms --- */
+    if (overlay && ovy) {
+        double xmin = HUGE_VAL, xmax = -HUGE_VAL;
+        int ncommon = 0, ii, jj;
+        for (ii = 0; ii < nv; ii++) {
+            if (ovlen[ii] < 1) continue;
+            if (ovx[ii][0] < xmin) xmin = ovx[ii][0];
+            if (ovx[ii][ovlen[ii] - 1] > xmax) xmax = ovx[ii][ovlen[ii] - 1];
+            if (ovlen[ii] > ncommon) ncommon = ovlen[ii];
+        }
+        if (ncommon > 1 && xmax > xmin) {
+            struct plot *pw = plot_alloc("sweepwave");
+            struct dvec *xs;
+            pw->pl_name = copy("Sweep waveforms");
+            pw->pl_title = copy(knob);
+            plot_new(pw);
+            plot_setcur(pw->pl_typename);
+            xs = dvec_alloc(copy(scwavename ? scwavename : "x"), SV_NOTYPE,
+                            (short) (VF_REAL | VF_PERMANENT), ncommon, NULL);
+            for (jj = 0; jj < ncommon; jj++)
+                xs->v_realdata[jj] = xmin + (xmax - xmin) * jj / (ncommon - 1);
+            vec_new(xs);                             /* first permanent -> scale */
+            for (k = 0; k < nout; k++)
+                for (ii = 0; ii < nv; ii++) {
+                    struct dvec *v = dvec_alloc(sw_wavename(outname[k], vals[ii]),
+                                                SV_NOTYPE,
+                                                (short) (VF_REAL | VF_PERMANENT),
+                                                ncommon, NULL);
+                    for (jj = 0; jj < ncommon; jj++)
+                        v->v_realdata[jj] = sw_interp(ovx[ii],
+                                                ovy[(size_t) ii * (size_t) nout + (size_t) k],
+                                                ovlen[ii], xs->v_realdata[jj]);
+                    vec_new(v);
+                }
+            fprintf(cp_out, "sweep: overlay of %d waveform%s per output resampled "
+                            "to %d points in the 'sweepwave' plot '%s' (now current); "
+                            "`plot <output>_<val> ...` to view.\n",
+                    nv, nv == 1 ? "" : "s", ncommon, pw->pl_typename);
+        } else {
+            fprintf(cp_out, "sweep: -overlay ignored (analysis '%s' has no waveform "
+                            "to overlay).\n", analysis);
+        }
+    }
 
 cleanup:
     sweep_active = 0;
     ft_optimizing = save_optimizing;
     for (k = 0; k < nout; k++) { tfree(outname[k]); tfree(outexpr[k]); }
+    if (ovx) for (i = 0; i < nv; i++) tfree(ovx[i]);
+    if (ovy) for (i = 0; i < nv * nout; i++) tfree(ovy[i]);
+    tfree(ovx); tfree(ovy); tfree(ovlen); tfree(scwavename);
     tfree(knob); tfree(analysis); tfree(scname);
     tfree(vals); tfree(data);
 }

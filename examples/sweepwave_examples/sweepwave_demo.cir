@@ -1,0 +1,29 @@
+* Enhancement-189: sweep -overlay -- .step-style waveform overlay
+*
+* An RC low-pass driven by a 1 V step. Sweeping R over 1k / 2k / 4k / 8k
+* scales the time constant RC (C = 1 nF), so the step response
+* v(out) = 1 - exp(-t/RC) rises more slowly for larger R.
+*
+* `sweep` (Enhancement-146) records only each run's LAST value into the
+* summary 'sweep' plot (a transfer curve vs the knob). `-overlay` additionally
+* collects every run's full WAVEFORM, resamples them onto a common time grid,
+* and builds a single 'sweepwave' plot with one vector per R value
+* (out_1000, out_2000, ...), so the whole family overlays in one plot -- the
+* classic HSPICE `.step` overlay.
+
+Vin in 0 PULSE(0 1 0 0.1n 0.1n 100u 200u)
+R1  in out 1k
+C1  out 0 1n
+
+.control
+* step R across four values, overlay the four step responses
+sweep R1 list 1k 2k 4k 8k -analysis tran 5n 8u -output vout=v(out) -overlay
+
+* the overlay plot 'sweepwave' is now current: one curve per R value
+echo
+echo Overlaid step responses, one vout_R vector per R, common time axis:
+print vout_1000[10] vout_2000[10] vout_4000[10] vout_8000[10]
+
+* interactive: `plot vout_1000 vout_2000 vout_4000 vout_8000`
+.endc
+.end
