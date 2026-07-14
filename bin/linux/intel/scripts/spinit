@@ -1,0 +1,11 @@
+* Portable ngspice init: load the XSPICE code models shipped in this
+* bin/<os>/<arch> bundle, relative to $SPICE_LIB_DIR (the bundle dir).
+if $?xspice_enabled
+codemodel $SPICE_LIB_DIR/codemodels/analog.cm
+codemodel $SPICE_LIB_DIR/codemodels/digital.cm
+codemodel $SPICE_LIB_DIR/codemodels/spice2poly.cm
+codemodel $SPICE_LIB_DIR/codemodels/table.cm
+codemodel $SPICE_LIB_DIR/codemodels/tlines.cm
+codemodel $SPICE_LIB_DIR/codemodels/xtradev.cm
+codemodel $SPICE_LIB_DIR/codemodels/xtraevt.cm
+end
