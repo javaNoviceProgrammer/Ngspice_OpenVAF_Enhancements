@@ -321,20 +321,32 @@ def fit_common(freqs, Yentries, order=None, tol=1e-3, n_iter=12):
         return P,Rr,d,E,err
     if order is not None:
         return try_order(max(1,order//2))
-    # Automatic order selection: grow the pole count until the fit reaches `tol`
-    # OR the error stops improving (the "knee" -- more poles past this just fit
-    # measurement noise, producing an over-fitted, ill-conditioned model). At the
-    # knee we return the PREVIOUS (lower) order, which captures the real dynamics.
-    best=None; prev_err=None; prev_cand=None
-    for npair in range(1, 11):
-        cand=try_order(npair); err=cand[-1]
-        if best is None or err<best[-1]: best=cand
-        if err<tol:
+    # Automatic order selection. Grow the pole count and keep the BEST STABLE fit.
+    #  - return as soon as the fit reaches `tol` (a genuine rational match, e.g. a
+    #    delay/comb response that only "engages" once enough poles are present);
+    #  - otherwise stop at the KNEE -- but only once the error is already near a
+    #    floor (so noisy data is fit at its noise floor, not over-fitted), NOT while
+    #    the fit is still poor (low orders of a delay are uniformly bad and must not
+    #    trigger the knee);
+    #  - break if a fit turns unstable (poly-root finding degrades at high degree),
+    #    since higher orders will only be worse -- return the best stable fit so far.
+    def stable(cand):
+        return all(p.real <= 1e-6 for p in cand[0]) and math.isfinite(cand[-1])
+    best = None; first_err = None; prev_err = None; prev_cand = None
+    for npair in range(1, 13):
+        cand = try_order(npair); err = cand[-1]
+        if first_err is None: first_err = err
+        st = stable(cand)
+        if st and (best is None or err < best[-1]): best = cand
+        if not st:
+            break
+        if err < tol:
             return cand
-        if prev_err is not None and err>0.8*prev_err:      # <20% improvement -> knee
+        near_floor = err < 0.1 * first_err or err < 0.05
+        if prev_err is not None and err > 0.7 * prev_err and near_floor:  # knee at floor
             return prev_cand
-        prev_err=err; prev_cand=cand
-    return best
+        prev_err = err; prev_cand = cand
+    return best if best is not None else (prev_cand or cand)
 
 # ---------------------------------------------------------------- checks
 def check_stable(poles):

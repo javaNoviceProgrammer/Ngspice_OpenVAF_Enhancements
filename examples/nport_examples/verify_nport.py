@@ -242,6 +242,63 @@ else:
     check("[nport] a 3-port .s3p converts and matches the original star network", False)
 
 
+# ================= high order: a 5-pole LC ladder (order-selection scaling) =====
+g = [0.6180, 1.6180, 2.0000, 1.6180, 0.6180]
+wc = 2 * math.pi * 100e6
+C1l = g[0] / (Z0 * wc); L2l = g[1] * Z0 / wc; C3l = g[2] / (Z0 * wc)
+L4l = g[3] * Z0 / wc; C5l = g[4] / (Z0 * wc)
+
+
+def Ylad(f):
+    s = 1j * 2 * math.pi * f
+
+    def mul(A, B):
+        return [[A[0][0] * B[0][0] + A[0][1] * B[1][0], A[0][0] * B[0][1] + A[0][1] * B[1][1]],
+                [A[1][0] * B[0][0] + A[1][1] * B[1][0], A[1][0] * B[0][1] + A[1][1] * B[1][1]]]
+    A = [[1, 0], [s * C1l, 1]]
+    for X in ([[1, s * L2l], [0, 1]], [[1, 0], [s * C3l, 1]],
+              [[1, s * L4l], [0, 1]], [[1, 0], [s * C5l, 1]]):
+        A = mul(A, X)
+    a, b, c, d = A[0][0], A[0][1], A[1][0], A[1][1]
+    return [[d / b, -1.0 / b], [-1.0 / b, a / b]]      # ABCD -> Y (reciprocal)
+
+
+freqsL = [10 ** (6 + 3 * k / 200) for k in range(201)]
+write_snp(os.path.join(HERE, "ladder.s2p"), freqsL, Ylad, 2)
+okL, infoL = convert("ladder.s2p", "ladder")
+ACTL = (f"C1 p1 0 {C1l:.6e}\nL2 p1 x {L2l:.6e}\nC3 x 0 {C3l:.6e}\n"
+        f"L4 x p2 {L4l:.6e}\nC5 p2 0 {C5l:.6e}\n")
+NPL = "N1 p1 p2 ml\n.model ml ladder\n"
+
+
+def ladder_run(dut, analysis, outfile):
+    return run(f"""* ladder
+Vs in 0 dc 0 ac 1 pulse(0 1 5n 0.1n 0.1n 30n 60n)
+Rs in p1 50
+{dut}Rl p2 0 50
+.control
+{'pre_osdi ladder.osdi' if 'N1' in dut else ''}
+{analysis}
+wrdata {outfile} v(p2)
+.endc
+.end
+""")
+
+
+la, _ = ladder_run(ACTL, "ac dec 40 1e6 1e9", "_o.dat")
+ln, _ = ladder_run(NPL, "ac dec 40 1e6 1e9", "_o.dat")
+if okL and la and ln:
+    m = min(len(la), len(ln))
+    eac = max(abs(complex(ln[k][1], ln[k][2]) - complex(la[k][1], la[k][2]))
+              / (abs(complex(la[k][1], la[k][2])) + 1e-30) for k in range(m))
+    check("[highorder] a 5-pole LC ladder converts (order-selection scales past 2 "
+          "poles) and matches the filter response", eac < 5e-3,
+          f"(AC max rel err {eac:.2e}; {infoL.split('->')[0].strip()})")
+else:
+    check("[highorder] a 5-pole LC ladder converts and matches the filter response",
+          False, infoL)
+
+
 # ================= passivity / stability safeguard on noisy data =================
 import random
 random.seed(7)
@@ -283,6 +340,7 @@ check("[robust] a noisy fit reports its passivity and (poles forced stable) stay
 # tidy
 for f in ("_t.cir", "resonator.s2p", "resonator.va", "resonator.osdi",
           "star.s3p", "star.va", "star.osdi",
+          "ladder.s2p", "ladder.va", "ladder.osdi",
           "noisy.s2p", "noisy.va", "noisy.osdi"):
     p = os.path.join(HERE, f)
     if os.path.exists(p):

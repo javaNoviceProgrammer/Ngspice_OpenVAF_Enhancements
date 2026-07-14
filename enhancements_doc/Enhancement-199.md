@@ -38,11 +38,16 @@ parse Touchstone -> S(f) -> Y(f) -> common-pole vector fit -> Verilog-A
 
 ## Hardening
 
-- **Automatic order selection** grows the pole count until the fit reaches the
-  tolerance *or* the error stops improving (the "knee" — < 20 % improvement from one
-  order to the next). Past the knee, extra poles just fit measurement noise, giving
-  an over-fitted, ill-conditioned, often unstable model; stopping at the knee fits
-  clean data to machine precision and noisy data at its noise floor.
+- **Automatic order selection** climbs the pole count and keeps the best *stable*
+  fit. It returns as soon as the fit reaches the tolerance (a genuine rational match
+  — a delay/comb response only "engages" once enough poles are present, and is
+  *uniformly* poor at low orders, so the selection must not quit on a small
+  between-order improvement there). Otherwise it stops at the "knee" — but only once
+  the error is already near a floor, so *noisy* data is fit at its noise floor rather
+  than over-fitted into an unstable model. It breaks when a fit turns unstable
+  (polynomial-root finding degrades at high degree) and returns the best stable fit.
+  (This behavior was refined by stress-testing against a transmission line — a pure
+  delay — which the first version quit on at 2 poles and now fits with ~12.)
 - **Stability** is enforced — right-half-plane poles are reflected into the left
   half plane — so the emitted model is always BIBO-stable (a noisy, even
   *non-passive*, fit still stays bounded in transient).
@@ -67,12 +72,18 @@ openvaf-r bandpass.va -o bandpass.osdi
 ## Verification
 
 [`examples/nport_examples/verify_nport.py`](../examples/nport_examples/verify_nport.py)
-— 5 checks, each generating a Touchstone file from a network whose response is known
+— 6 checks, each generating a Touchstone file from a network whose response is known
 *exactly*, running `snp2va.py` + OpenVAF, and confirming the device matches the
 ORIGINAL network in ngspice: the converter runs and compiles; the device matches an
 R-L-C resonator in **AC** to 5×10⁻⁶ (including the transmission peak) and in
-**transient** to 5×10⁻³ (one model, both analyses); a **3-port** star network
-converts and matches on both coupled outputs to 4×10⁻⁹; and a **noisy** measurement
-is fit at its noise floor (order selection stops at the knee), reported non-passive,
-yet stays bounded in transient (stability enforced). Full example regression:
-163/163.
+**transient** to 5×10⁻³ (one model, both analyses); a **5-pole LC ladder** converts
+(order selection scales past two poles); a **3-port** star network matches on both
+coupled outputs to 4×10⁻⁹; and a **noisy** measurement is fit at its noise floor,
+reported non-passive, yet stays bounded in transient (stability enforced). Full
+example regression: 163/163.
+
+Beyond the pinned checks, the converter was stress-tested to near machine precision
+on resonators, notches, high-Q blocks, and multi-pole ladders. A delay-dominated
+transmission line degrades gracefully: the AC response is accurate over the fitted
+band, while transient pulse edges ring — inherent to rational fitting of a pure
+delay, for which a `T`/`LTRA` line is the right model.

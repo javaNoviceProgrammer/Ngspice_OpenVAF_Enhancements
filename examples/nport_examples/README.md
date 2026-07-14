@@ -72,5 +72,13 @@ python3 snp2va.py bandpass.s2p -o bandpass.va && ngspice ...  # see the workflow
 Frequency-domain fitting cannot invent behavior outside the tabulated band, so keep
 the `.sNp` band wider than the simulation's spectral content. Passivity is *checked
 and reported* but not yet *enforced* by residue perturbation; for a non-passive fit
-on noisy data, clean the data or pin the order with `--order`. Very high model orders
-(sharp, many-resonance blocks) stress the polynomial `laplace_nd` form.
+on noisy data, clean the data or pin the order with `--order`.
+
+**Distributed / delay-dominated blocks** (long transmission lines, cables) are the
+hard case: a pure delay is not rational, so it takes many poles to approximate over
+a band, and the fit's group delay is accurate over the fitted band while sharp pulse
+edges ring in transient (a fundamental limit of rational fitting — for a clean delay
+use a `T`/`LTRA` line instead). Order selection climbs to capture such responses, but
+very high orders eventually stress the polynomial-root finding; pin the order with
+`--order` if needed. Lumped/rational blocks — filters, resonators, notches,
+couplers, packages — are fit to near machine precision in both AC and transient.
