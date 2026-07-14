@@ -418,6 +418,11 @@ jobs:
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add bin/
+          # Belt-and-suspenders: the root .gitignore has a global `*.cm` rule (for
+          # XSPICE build-tree outputs); a `!bin/**/*.cm` negation un-ignores the
+          # shipped bundle, but force-add the code models too so a stale checkout
+          # without the negation still commits them.
+          git add -f 'bin/**/*.cm' 2>/dev/null || true
           git commit -m "ci: update prebuilt binaries [skip ci]"
           # rebase on any concurrent change, then push the successful binaries
           git pull --rebase --autostash origin main
