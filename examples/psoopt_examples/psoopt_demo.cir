@@ -1,0 +1,25 @@
+* Enhancement-194: particle swarm optimization -- optimize -method pso
+*
+* The built-in optimizer's Nelder-Mead simplex and Levenberg-Marquardt fit are
+* both LOCAL: they descend into whichever basin the start point sits in. PSO is
+* GLOBAL and population-based -- a swarm of trial points explores the whole box.
+*
+* Objective: the multimodal f(p) = sin(p) + sin(10 p / 3) on [2.7, 7.5], with a
+* global minimum p* = 5.1457, f* = -1.8996 and several higher local minima. From
+* the p = 2.7 corner, Nelder-Mead falls into a local minimum (~ -1.20); PSO finds
+* the global one.
+
+.param p=2.7
+V1 out 0 dc {sin(p) + sin(10*p/3)}
+R1 out 0 1
+
+.control
+echo
+echo --- Nelder-Mead (local: trapped from the p=2.7 corner) ---
+optimize -dparam p 2.7 2.7 7.5 -analysis op -minimize v(out) -method nm -tol 1e-8
+
+echo
+echo --- Particle swarm (global: finds p* = 5.146, f* = -1.900) ---
+optimize -dparam p 2.7 2.7 7.5 -analysis op -minimize v(out) -method pso -swarmsize 24 -maxiter 60 -seed 1 -tol 1e-8
+.endc
+.end
