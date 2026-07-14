@@ -264,6 +264,13 @@ Binaries are built by CI and committed to `bin/`:
 | macOS Intel | `bin/macos/intel/` | `ngspice`, `openvaf-r` |
 | Windows x86-64 | `bin/windows/intel/` | `ngspice.exe`, `openvaf-r.exe` |
 
+Each platform directory also ships ngspice's **XSPICE code models** under
+`codemodels/*.cm` with a portable `scripts/spinit`. Export
+`SPICE_LIB_DIR="$PWD/bin/<os>/<arch>"` and ngspice loads them at startup so the
+`A`-device code-model library (`gain`, `summer`, oscillators, ADC/DAC bridges,
+…) is available — see [handbook §3.8](docs/handbook/03-ngspice-workflows.md).
+The example scripts set `SPICE_LIB_DIR` automatically.
+
 ### Running on Linux
 
 The binaries are built on Ubuntu 22.04, so they run on any distro with **glibc ≥ 2.35** (Ubuntu 22.04+, Debian 12+; an error like ``version `GLIBC_2.39' not found`` means the binary in your checkout predates this baseline — pull the latest). They are dynamically linked against standard system libraries. Install them with your package manager if missing:

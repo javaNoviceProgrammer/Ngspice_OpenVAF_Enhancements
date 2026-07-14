@@ -54,6 +54,22 @@ NG = _resolve(("ngspice-46", "build", "src", "ngspice"), "ngspice")
 
 
 # ---------------------------------------------------------------------------
+# XSPICE code models (SPICE_LIB_DIR)
+# ---------------------------------------------------------------------------
+# The prebuilt bin/<os>/<arch>/ bundle ships ngspice's XSPICE code models
+# (analog.cm, digital.cm, ...) under codemodels/, plus a portable spinit under
+# scripts/ that loads them relative to $SPICE_LIB_DIR. Pointing SPICE_LIB_DIR at
+# that bundle makes `codemodel`-based A-devices work out of the box. Guarded on
+# the spinit's presence, so it is a no-op until the CI-built bundle is committed;
+# a user's own SPICE_LIB_DIR always wins (setdefault). The spinit gates its
+# loads on `if $?xspice_enabled`, and a successful load is silent, so this does
+# not affect non-XSPICE decks. See docs/handbook/03-ngspice-workflows.md.
+SPICE_LIB = os.path.join(_ROOT, "bin", _bin_subdir())
+if os.path.isfile(os.path.join(SPICE_LIB, "scripts", "spinit")):
+    os.environ.setdefault("SPICE_LIB_DIR", SPICE_LIB)
+
+
+# ---------------------------------------------------------------------------
 # Dual-solver test harness (KLU + Sparse 1.3)
 # ---------------------------------------------------------------------------
 # Every example is verified under BOTH ngspice linear solvers so a regression in

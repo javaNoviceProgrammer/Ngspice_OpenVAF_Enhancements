@@ -174,7 +174,54 @@ across Newton iterations — see [§2.11](02-verilog-a-language.md#modeling-func
 which is the right tool for per-device mismatch, with the simulator-side
 idioms above layered on top for lot-level variation.
 
-## 3.8 When something misbehaves
+## 3.8 XSPICE code models
+
+Alongside the OpenVAF/OSDI device path, this ngspice is built with **XSPICE**
+enabled, so it can also load ngspice's **code models** — the `A`-device library
+of behavioural analog and event/digital blocks (`gain`, `summer`, `limit`,
+oscillators, ADC/DAC bridges, controlled sources, transmission lines, …). Code
+models are compiled `.cm` shared libraries loaded with the `codemodel` command.
+
+The prebuilt `bin/<os>/<arch>/` bundle ships them ready to use:
+
+```
+bin/<os>/<arch>/
+  ngspice, openvaf-r     the executables
+  codemodels/*.cm        analog, digital, spice2poly, xtradev,
+                         xtraevt, table, tlines
+  scripts/spinit         loads the above relative to $SPICE_LIB_DIR
+```
+
+Point **`SPICE_LIB_DIR`** at that bundle directory; ngspice reads
+`scripts/spinit` at startup, which loads every code model:
+
+```sh
+export SPICE_LIB_DIR="$PWD/bin/macos/apple-silicon"   # your platform's dir
+./bin/macos/apple-silicon/ngspice -b my_deck.cir
+```
+
+The example scripts do this automatically — `_setup.py` sets `SPICE_LIB_DIR`
+to the resolved bundle, so `codemodel` A-devices work with no extra setup. A
+minimal use is a `gain` block (`v(out) = 2·v(in)`):
+
+```spice
+* xspice gain
+Vin in 0 3
+a1 in out gainblk
+.model gainblk gain(gain=2.0)
+Rl out 0 1k
+.control
+op
+print v(out)
+.endc
+.end
+```
+
+which prints `v(out) = 6`. The loads are silent and gated on
+`if $?xspice_enabled`, so a deck that uses no `A`-device (or an ngspice built
+without XSPICE) is unaffected.
+
+## 3.9 When something misbehaves
 
 - Compile-time: `openvaf-r` diagnostics are located and specific (wrong
   construct in a condition, recursion cycles, width mismatches). `--lints`

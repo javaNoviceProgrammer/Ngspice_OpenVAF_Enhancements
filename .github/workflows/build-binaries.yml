@@ -181,6 +181,22 @@ jobs:
           mkdir -p "out/bin/${{ matrix.bin }}"
           cp "$OPENVAF_DIR/target/release/openvaf-r" "out/bin/${{ matrix.bin }}/"
           cp "$NGSPICE_DIR/ci-build/src/ngspice"     "out/bin/${{ matrix.bin }}/"
+          # XSPICE code models: ngspice builds them (xspice is default-on) under
+          # ci-build/src/xspice/icm/*/*.cm. Ship them plus a portable spinit that
+          # loads them relative to $SPICE_LIB_DIR, so a checkout's bin/<os>/<arch>
+          # is a self-contained SPICE_LIB_DIR bundle (see the handbook). _setup.py
+          # points SPICE_LIB_DIR here; users export it themselves.
+          cmdir="out/bin/${{ matrix.bin }}/codemodels"
+          mkdir -p "$cmdir" "out/bin/${{ matrix.bin }}/scripts"
+          find "$NGSPICE_DIR/ci-build/src/xspice/icm" -name '*.cm' -exec cp {} "$cmdir/" \;
+          { echo "* Portable ngspice init: load the XSPICE code models shipped in this";
+            echo "* bin/<os>/<arch> bundle, relative to \$SPICE_LIB_DIR (the bundle dir).";
+            echo "if \$?xspice_enabled";
+            for cm in "$cmdir"/*.cm; do
+              echo "codemodel \$SPICE_LIB_DIR/codemodels/$(basename "$cm")";
+            done;
+            echo "end"; } > "out/bin/${{ matrix.bin }}/scripts/spinit"
+          echo "Staged $(ls "$cmdir" | wc -l) code models + spinit."
           # Strip debug symbols before committing. Unstripped, openvaf-r carries
           # ~90 MB of embedded DWARF on Linux (~100 MB total), which exceeds
           # GitHub's 100 MB hard file-size limit and gets the whole binary-commit
@@ -243,6 +259,18 @@ jobs:
         run: |
           mkdir -p out/bin/windows/intel
           cp "$NGSPICE_DIR/ci-build/src/ngspice.exe" out/bin/windows/intel/
+          # XSPICE code models + portable spinit (same bundle layout as the other
+          # platforms; loaded relative to $SPICE_LIB_DIR).
+          cmdir="out/bin/windows/intel/codemodels"
+          mkdir -p "$cmdir" "out/bin/windows/intel/scripts"
+          find "$NGSPICE_DIR/ci-build/src/xspice/icm" -name '*.cm' -exec cp {} "$cmdir/" \;
+          { echo "* Portable ngspice init: load the XSPICE code models shipped in this";
+            echo "* bin/windows/intel bundle, relative to \$SPICE_LIB_DIR (the bundle dir).";
+            echo "if \$?xspice_enabled";
+            for cm in "$cmdir"/*.cm; do
+              echo "codemodel \$SPICE_LIB_DIR/codemodels/$(basename "$cm")";
+            done;
+            echo "end"; } > "out/bin/windows/intel/scripts/spinit"
           # libtool does not honour -static for executables reliably on MinGW.
           # Instead, find every non-Windows DLL dependency with ldd and copy
           # them alongside the .exe so the binary runs without MSYS2 installed.
