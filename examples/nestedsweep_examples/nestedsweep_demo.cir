@@ -1,0 +1,28 @@
+* Enhancement-190: nested multi-knob sweep -- `sweep ... -vs ...`
+*
+* The `sweep` command (Enhancement-146) steps ONE knob and records each output's
+* last value into a transfer curve. `-vs <knob> <spec>` adds an OUTER knob: the
+* inner (positional) knob stays the x-axis, and the outer knob's values generate
+* a curve FAMILY -- one curve per output per outer value.
+*
+* Here an RC low-pass is driven by a 1 V step. R (inner) is the x-axis; C (outer,
+* two values) makes two curves. Each curve is the exact transfer characteristic
+* v(out)|_{t=T} = 1 - exp(-T/(R*C)) as a function of R at that C. Multiple `-vs`
+* knobs compose into a full cartesian product (bounded to a few knobs).
+
+Vin in 0 PULSE(0 1 0 0.1n 0.1n 100u 200u)
+R1  in out 1k
+C1  out 0 1n
+
+.control
+* inner R1 (x-axis) x outer C1 (curve family), settled at t = 4 us
+sweep R1 lin 6 1k 6k -vs C1 list 1n 2n -analysis tran 5n 4u -output vo=v(out)
+
+* the summary 'sweep' plot now holds two curves vs R1: vo_c1_1e_09, vo_c1_2e_09
+echo
+echo Two transfer curves vs R1, one per C value (settled v(out) at t=4us):
+print vo_c1_1e_09 vo_c1_2e_09
+
+* interactive: `plot vo_c1_1e_09 vo_c1_2e_09` overlays the family vs R1
+.endc
+.end

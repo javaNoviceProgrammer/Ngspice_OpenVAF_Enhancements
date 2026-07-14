@@ -15,9 +15,14 @@ is and applying it with the right mechanism:
 
 Syntax (in a .control block, or as a `.sweep` card in the deck):
 
-  sweep <knob> <start> <stop> <step>            [-analysis <cmd>] [-output <expr> ...] [-overlay]
-  sweep <knob> lin|dec|oct <N> <start> <stop>   [-analysis <cmd>] [-output <expr> ...]
-  sweep <knob> list <v1> <v2> ...               [-analysis <cmd>] [-output <expr> ...]
+  sweep <knob> <start> <stop> <step>            [-vs <knob> <spec>]... [-analysis <cmd>] [-output <expr> ...] [-overlay]
+  sweep <knob> lin|dec|oct <N> <start> <stop>   [-vs <knob> <spec>]... [-analysis <cmd>] [-output <expr> ...]
+  sweep <knob> list <v1> <v2> ...               [-vs <knob> <spec>]... [-analysis <cmd>] [-output <expr> ...]
+
+Enhancement-190: one or more `-vs <knob> <spec>` add OUTER knobs. The inner
+(positional) knob is the x-axis of the summary plot; the outer knobs' cartesian
+product forms a curve family -- one curve per output per outer combination, named
+`<output>_<outerknob>_<value>...`. A single knob reduces exactly to E-146.
 
 For every knob value it sets the knob, runs the `-analysis` command (default `op`),
 and evaluates each `-output` expression (its LAST value). With no `-output`, every
@@ -47,6 +52,7 @@ analyses is suppressed via `ft_optimizing`.
 #define SW_DECK    2             /* alterparam + reset -- symbolic `.param`       */
 #define SW_MAXOUT  256           /* max recorded output vectors                   */
 #define SW_MAXPTS  100000        /* sanity cap on sweep points                    */
+#define SW_MAXKNOB 4             /* Enhancement-190: inner + up to 3 `-vs` knobs  */
 
 
 /* Run one command synchronously through the command table (like the optimizer's
@@ -158,18 +164,6 @@ static int sw_eval_vec(const char *expr, double **px, double **py)
     return n;
 }
 
-/* build a clean nutmeg vector name `<base>_<value>` (non-alnum -> '_') */
-static char *sw_wavename(const char *base, double val)
-{
-    char raw[160], *s, *p;
-    (void) snprintf(raw, sizeof raw, "%s_%g", base, val);
-    s = copy(raw);
-    for (p = s; *p; p++)
-        if (!isalnum((unsigned char) *p) && *p != '_') *p = '_';
-    return s;
-}
-
-
 /* Classify a knob so we know how to set it. `@<model>[p]` whose model exists is a
  * model parameter (altermod); a bare name that is a `.param` is a deck parameter
  * (alterparam + reset); everything else is an `alter` target. */
@@ -194,16 +188,21 @@ static int sw_kind(const char *name)
 }
 
 
-/* Set the knob to `val` with the appropriate command. */
-static void sw_set(int kind, const char *name, double val)
+/* Stage a `.param` knob (alterparam only). Enhancement-190: the `reset` that
+ * commits it is issued ONCE per point after every deck knob is staged, so a
+ * multi-knob cartesian point re-sources the deck a single time. */
+static void sw_set_deck(const char *name, double val)
 {
     char cmd[512];
-    if (kind == SW_DECK) {
-        (void) snprintf(cmd, sizeof cmd, "alterparam %s=%.10g", name, val);
-        sw_run_cmd(cmd);
-        sw_run_cmd("reset");
-        return;
-    }
+    (void) snprintf(cmd, sizeof cmd, "alterparam %s=%.10g", name, val);
+    sw_run_cmd(cmd);
+}
+
+/* Set an `alter` / `altermod` knob in place. These are applied AFTER any reset,
+ * because reset re-sources the deck and drops in-place alters. */
+static void sw_set_inplace(int kind, const char *name, double val)
+{
+    char cmd[512];
     (void) snprintf(cmd, sizeof cmd, "%s %s=%.10g",
                     kind == SW_MODEL ? "altermod" : "alter", name, val);
     sw_run_cmd(cmd);
@@ -259,40 +258,20 @@ static char *collect_until_flag(wordlist **pwl)
 }
 
 
-/* Guards against re-entrancy: a `.param` knob re-sources the deck (`reset`),
- * which re-runs a `.sweep` card -- that nested invocation must be a no-op or the
- * sweep would recurse forever. */
-static int sweep_active = 0;
-
-void com_sweep(wordlist *wl)
+/* Enhancement-190: parse ONE sweep specification -- `lin|dec|oct <N> <a> <b>`,
+ * `list <v> ...`, or `<start> <stop> <step>` -- from the wordlist, advancing
+ * *pwl past it. Mallocs *pvals (length *pnv, caller frees). Returns 1 on success,
+ * 0 on a malformed spec. Used for both the positional inner knob and each `-vs`
+ * outer knob, so all knobs accept the same three forms. */
+static int sw_parse_spec(wordlist **pwl, double **pvals, int *pnv)
 {
-    char *knob = NULL, *analysis = NULL, *scname = NULL;
-    char *outname[SW_MAXOUT], *outexpr[SW_MAXOUT];
-    double *vals = NULL, *data = NULL;
-    int kind, nout = 0, nv = 0, i, k;
-    int save_optimizing = ft_optimizing;
-    int overlay = 0;                 /* Enhancement-189: -overlay flag          */
-    double **ovx = NULL, **ovy = NULL;   /* per-point waveform scale / values   */
-    int *ovlen = NULL;               /* per-point waveform length               */
-    char *scwavename = NULL;         /* the analysis scale name (e.g. "time")   */
+    wordlist *wl = *pwl;
+    double *vals = NULL;
+    int nv = 0, i;
 
-    if (sweep_active)                /* re-entered via a .param re-source */
-        return;
-    if (!ft_curckt || !ft_curckt->ci_ckt) {
-        fprintf(cp_err, "sweep: no circuit loaded\n");
-        return;
-    }
-    if (!wl || !wl->wl_word) {
-        fprintf(cp_err, "usage: sweep <knob> (<start> <stop> <step> | "
-                        "lin|dec|oct <N> <start> <stop> | list <v> ...) "
-                        "[-analysis <cmd>] [-output <expr> ...] [-overlay]\n");
-        return;
-    }
+    *pvals = NULL;
+    *pnv = 0;
 
-    knob = copy(wl->wl_word);
-    wl = wl->wl_next;
-
-    /* --- sweep specification --- */
     if (wl && (eq(wl->wl_word, "lin") || eq(wl->wl_word, "dec") ||
                eq(wl->wl_word, "oct"))) {
         int mode = eq(wl->wl_word, "dec") ? 1 : eq(wl->wl_word, "oct") ? 2 : 0;
@@ -300,7 +279,7 @@ void com_sweep(wordlist *wl)
         int n; double f0, f1;
         if (!a || !b || !c) {
             fprintf(cp_err, "sweep: %s needs <N> <start> <stop>\n", wl->wl_word);
-            goto cleanup;
+            return 0;
         }
         n = atoi(a->wl_word); f0 = sw_num(b->wl_word); f1 = sw_num(c->wl_word);
         wl = c->wl_next;
@@ -315,7 +294,7 @@ void com_sweep(wordlist *wl)
             double x;
             if (f0 <= 0.0 || f1 <= 0.0) {
                 fprintf(cp_err, "sweep: dec/oct need positive endpoints\n");
-                goto cleanup;
+                return 0;
             }
             for (x = f0; x <= f1 * (1 + 1e-9) && nv < SW_MAXPTS; x *= mul) nv++;
             vals = TMALLOC(double, nv);
@@ -327,7 +306,7 @@ void com_sweep(wordlist *wl)
             wordlist *p = wl;
             while (p && is_number_token(p->wl_word)) { nv++; p = p->wl_next; }
         }
-        if (nv < 1) { fprintf(cp_err, "sweep: list needs values\n"); goto cleanup; }
+        if (nv < 1) { fprintf(cp_err, "sweep: list needs values\n"); return 0; }
         vals = TMALLOC(double, nv);
         for (i = 0; i < nv; i++) { vals[i] = sw_num(wl->wl_word); wl = wl->wl_next; }
     } else {                                         /* start stop step */
@@ -335,11 +314,11 @@ void com_sweep(wordlist *wl)
         double f0, f1, st; int cnt;
         if (!a || !b || !c) {
             fprintf(cp_err, "sweep: need <start> <stop> <step> after the knob\n");
-            goto cleanup;
+            return 0;
         }
         f0 = sw_num(a->wl_word); f1 = sw_num(b->wl_word); st = sw_num(c->wl_word);
         wl = c->wl_next;
-        if (st == 0.0) { fprintf(cp_err, "sweep: step must be non-zero\n"); goto cleanup; }
+        if (st == 0.0) { fprintf(cp_err, "sweep: step must be non-zero\n"); return 0; }
         if ((f1 - f0) * st < 0.0) st = -st;          /* fix an obvious sign slip */
         cnt = (int) floor((f1 - f0) / st + 1e-9) + 1;
         if (cnt < 1) cnt = 1;
@@ -349,7 +328,106 @@ void com_sweep(wordlist *wl)
         for (i = 0; i < nv; i++) vals[i] = f0 + st * i;
     }
 
-    /* --- options: -analysis / -output --- */
+    *pwl = wl;
+    *pvals = vals;
+    *pnv = nv;
+    return nv > 0;
+}
+
+
+/* Enhancement-190: build a family-curve / waveform vector name. `base` plus, for
+ * each knob index in [j0, nknob), a `_<scname>_<value>` segment; non-alnum
+ * characters (except '_') are mapped to '_' so the result is a legal nutmeg name.
+ * With j0==nknob (single-knob summary) it returns a plain copy of `base`. */
+static char *sw_familyname(const char *base, char *const *kscname,
+                           double *const *kvals, const int *idx,
+                           int j0, int nknob)
+{
+    char *s = copy(base), *p;
+    int j;
+    for (j = j0; j < nknob; j++) {
+        char *t = tprintf("%s_%s_%g", s, kscname[j], kvals[j][idx[j]]);
+        tfree(s);
+        s = t;
+    }
+    for (p = s; *p; p++)
+        if (!isalnum((unsigned char) *p) && *p != '_') *p = '_';
+    return s;
+}
+
+
+/* Enhancement-189/190: build an overlay-waveform vector name -- `base` plus a
+ * `_<value>` segment for EVERY knob (inner first), sanitized to a legal nutmeg
+ * name. A single knob yields `<base>_<value>` (the E-189 name). */
+static char *sw_pointname(const char *base, double *const *kvals,
+                          const int *idx, int nknob)
+{
+    char *s = copy(base), *p;
+    int j;
+    for (j = 0; j < nknob; j++) {
+        char *t = tprintf("%s_%g", s, kvals[j][idx[j]]);
+        tfree(s);
+        s = t;
+    }
+    for (p = s; *p; p++)
+        if (!isalnum((unsigned char) *p) && *p != '_') *p = '_';
+    return s;
+}
+
+
+/* Guards against re-entrancy: a `.param` knob re-sources the deck (`reset`),
+ * which re-runs a `.sweep` card -- that nested invocation must be a no-op or the
+ * sweep would recurse forever. */
+static int sweep_active = 0;
+
+void com_sweep(wordlist *wl)
+{
+    char *analysis = NULL, *scname = NULL;
+    char *outname[SW_MAXOUT], *outexpr[SW_MAXOUT];
+    double *data = NULL;
+    int nout = 0, i, k, p, j;
+    int save_optimizing = ft_optimizing;
+    int overlay = 0;                 /* Enhancement-189: -overlay flag          */
+    double **ovx = NULL, **ovy = NULL;   /* per-point waveform scale / values   */
+    int *ovlen = NULL;               /* per-point waveform length               */
+    char *scwavename = NULL;         /* the analysis scale name (e.g. "time")   */
+    /* Enhancement-190: knob[0] is the inner knob (x-axis of the summary plot);
+     * knob[1..] are `-vs` outer knobs whose cartesian product forms a curve
+     * family. A single knob reduces exactly to the E-146/E-189 path. */
+    char   *kname[SW_MAXKNOB];
+    int     kkind[SW_MAXKNOB];
+    double *kvals[SW_MAXKNOB];
+    int     knv[SW_MAXKNOB];
+    char   *kscname[SW_MAXKNOB];
+    double  prevval[SW_MAXKNOB];
+    int     nknob = 0, npt = 1, nv0 = 0, ncomb = 1, havePrev = 0;
+
+    for (j = 0; j < SW_MAXKNOB; j++) {
+        kname[j] = NULL; kvals[j] = NULL; kscname[j] = NULL;
+    }
+
+    if (sweep_active)                /* re-entered via a .param re-source */
+        return;
+    if (!ft_curckt || !ft_curckt->ci_ckt) {
+        fprintf(cp_err, "sweep: no circuit loaded\n");
+        return;
+    }
+    if (!wl || !wl->wl_word) {
+        fprintf(cp_err, "usage: sweep <knob> (<start> <stop> <step> | "
+                        "lin|dec|oct <N> <start> <stop> | list <v> ...) "
+                        "[-vs <knob> <spec>]... "
+                        "[-analysis <cmd>] [-output <expr> ...] [-overlay]\n");
+        return;
+    }
+
+    /* --- inner knob (positional) + its spec --- */
+    kname[0] = copy(wl->wl_word);
+    wl = wl->wl_next;
+    if (!sw_parse_spec(&wl, &kvals[0], &knv[0]))
+        goto cleanup;
+    nknob = 1;
+
+    /* --- options: -vs (outer knob) / -analysis / -output / -overlay --- */
     while (wl) {
         const char *w = wl->wl_word;
         if (eq(w, "-analysis") || eq(w, "-a")) {
@@ -358,6 +436,29 @@ void com_sweep(wordlist *wl)
             analysis = collect_until_flag(&wl);
         } else if (eq(w, "-overlay") || eq(w, "-ov")) {
             overlay = 1; wl = wl->wl_next;
+        } else if (eq(w, "-vs") || eq(w, "-family")) {
+            wl = wl->wl_next;
+            if (!wl || !wl->wl_word) {
+                fprintf(cp_err, "sweep: -vs needs <knob> <spec>\n");
+                goto cleanup;
+            }
+            if (nknob >= SW_MAXKNOB) {
+                char *skip;
+                fprintf(cp_err, "sweep: at most %d knobs (ignoring '%s')\n",
+                        SW_MAXKNOB, wl->wl_word);
+                wl = wl->wl_next;
+                skip = collect_until_flag(&wl);      /* skip its spec */
+                tfree(skip);
+            } else {
+                char *nm = copy(wl->wl_word);
+                wl = wl->wl_next;
+                if (!sw_parse_spec(&wl, &kvals[nknob], &knv[nknob])) {
+                    tfree(nm);
+                    goto cleanup;
+                }
+                kname[nknob] = nm;
+                nknob++;
+            }
         } else if (eq(w, "-output") || eq(w, "-o")) {
             if (wl->wl_next && nout < SW_MAXOUT) {
                 /* accept `name=expr` (clean vector name) or a bare `expr` */
@@ -383,21 +484,65 @@ void com_sweep(wordlist *wl)
     if (!analysis)
         analysis = copy("op");
 
-    kind = sw_kind(knob);
-    fprintf(cp_out, "sweep: %s (%s) over %d point%s, analysis '%s'\n", knob,
-            kind == SW_MODEL ? "model param" : kind == SW_DECK ? ".param" :
-            "instance/device", nv, nv == 1 ? "" : "s", analysis);
+    /* --- classify each knob and size the cartesian product --- */
+    nv0 = knv[0];
+    for (j = 0; j < nknob; j++) {
+        kkind[j] = sw_kind(kname[j]);
+        kscname[j] = sw_scalename(kname[j]);
+        npt *= knv[j];
+    }
+    if (npt > SW_MAXPTS) {
+        fprintf(cp_err, "sweep: %d cartesian points exceeds the %d cap\n",
+                npt, SW_MAXPTS);
+        goto cleanup;
+    }
+    ncomb = npt / nv0;                               /* outer-knob combinations */
 
-    /* --- run the sweep --- */
+    if (nknob == 1)
+        fprintf(cp_out, "sweep: %s (%s) over %d point%s, analysis '%s'\n",
+                kname[0], kkind[0] == SW_MODEL ? "model param" :
+                kkind[0] == SW_DECK ? ".param" : "instance/device",
+                nv0, nv0 == 1 ? "" : "s", analysis);
+    else {
+        fprintf(cp_out, "sweep: %s over %d point%s", kname[0], nv0,
+                nv0 == 1 ? "" : "s");
+        for (j = 1; j < nknob; j++)
+            fprintf(cp_out, " x %s(%d)", kname[j], knv[j]);
+        fprintf(cp_out, " = %d runs -> %d curve%s per output, analysis '%s'\n",
+                npt, ncomb, ncomb == 1 ? "" : "s", analysis);
+    }
+
+    /* --- run the sweep over the cartesian product (inner knob varies fastest,
+     * so point p = outer_combo * nv0 + inner_index) --- */
     sweep_active = 1;                                /* block re-source recursion */
     ft_optimizing = TRUE;                            /* silence per-point chatter */
-    for (i = 0; i < nv; i++) {
-        sw_set(kind, knob, vals[i]);
-        if (kind == SW_DECK)
-            ft_optimizing = TRUE;                    /* reset may clear it */
+    for (p = 0; p < npt; p++) {
+        int idx[SW_MAXKNOB], rem = p, anyDeck = 0, deckChanged = 0, resetNeeded;
+        double curval[SW_MAXKNOB];
+        for (j = 0; j < nknob; j++) {
+            idx[j] = rem % knv[j];
+            rem /= knv[j];
+            curval[j] = kvals[j][idx[j]];
+        }
+        for (j = 0; j < nknob; j++)
+            if (kkind[j] == SW_DECK) {
+                anyDeck = 1;
+                if (!havePrev || curval[j] != prevval[j]) deckChanged = 1;
+            }
+        resetNeeded = (!havePrev) || deckChanged;
+        if (resetNeeded && anyDeck) {                /* re-source once for the point */
+            for (j = 0; j < nknob; j++)
+                if (kkind[j] == SW_DECK) sw_set_deck(kname[j], curval[j]);
+            sw_run_cmd("reset");
+            ft_optimizing = TRUE;                    /* reset clears it */
+        }
+        for (j = 0; j < nknob; j++)                  /* in-place after any reset */
+            if (kkind[j] != SW_DECK) sw_set_inplace(kkind[j], kname[j], curval[j]);
+        for (j = 0; j < nknob; j++) prevval[j] = curval[j];
+        havePrev = 1;
         sw_run_cmd(analysis);
 
-        if (i == 0 && nout == 0) {
+        if (p == 0 && nout == 0) {
             /* no -output given: record every node voltage of the analysis */
             struct dvec *d;
             if (plot_cur)
@@ -414,12 +559,12 @@ void com_sweep(wordlist *wl)
                 goto cleanup;
             }
         }
-        if (i == 0) {
-            data = TMALLOC(double, (size_t) nv * (size_t) nout);
+        if (p == 0) {
+            data = TMALLOC(double, (size_t) npt * (size_t) nout);
             if (overlay) {
-                ovx = TMALLOC(double *, nv);
-                ovlen = TMALLOC(int, nv);
-                ovy = TMALLOC(double *, (size_t) nv * (size_t) nout);
+                ovx = TMALLOC(double *, npt);
+                ovlen = TMALLOC(int, npt);
+                ovy = TMALLOC(double *, (size_t) npt * (size_t) nout);
                 if (plot_cur && plot_cur->pl_scale && plot_cur->pl_scale->v_name)
                     scwavename = copy(plot_cur->pl_scale->v_name);
             }
@@ -428,58 +573,76 @@ void com_sweep(wordlist *wl)
             if (overlay) {
                 double *xk, *yk;
                 int nk = sw_eval_vec(outexpr[k], &xk, &yk);
-                if (k == 0) { ovx[i] = xk; ovlen[i] = nk; }
+                if (k == 0) { ovx[p] = xk; ovlen[p] = nk; }
                 else tfree(xk);                          /* same scale as k==0 */
-                ovy[(size_t) i * (size_t) nout + (size_t) k] = yk;
-                data[(size_t) i * (size_t) nout + (size_t) k] =
+                ovy[(size_t) p * (size_t) nout + (size_t) k] = yk;
+                data[(size_t) p * (size_t) nout + (size_t) k] =
                     (nk > 0 && yk) ? yk[nk - 1] : 0.0;   /* last value from waveform */
             } else {
-                data[(size_t) i * (size_t) nout + (size_t) k] = sw_eval_expr(outexpr[k]);
+                data[(size_t) p * (size_t) nout + (size_t) k] = sw_eval_expr(outexpr[k]);
             }
         }
     }
     ft_optimizing = save_optimizing;
 
-    /* --- emit the summary plot (knob values as the scale) --- */
+    /* --- emit the summary plot: the inner knob is the x-scale, and each
+     * combination of the outer `-vs` knobs produces one curve per output. With a
+     * single knob this is exactly the E-146 transfer curve (name = <output>). --- */
     {
         struct plot *pl = plot_alloc("sweep");
         struct dvec *sc;
-        scname = sw_scalename(knob);
+        int c;
+        scname = copy(kscname[0]);
         pl->pl_name = copy("Sweep");
-        pl->pl_title = copy(knob);
+        pl->pl_title = copy(kname[0]);
         plot_new(pl);
         plot_setcur(pl->pl_typename);
         sc = dvec_alloc(copy(scname), SV_NOTYPE,
-                        (short) (VF_REAL | VF_PERMANENT), nv, NULL);
-        for (i = 0; i < nv; i++) sc->v_realdata[i] = vals[i];
+                        (short) (VF_REAL | VF_PERMANENT), nv0, NULL);
+        for (i = 0; i < nv0; i++) sc->v_realdata[i] = kvals[0][i];
         vec_new(sc);                                 /* first permanent -> scale */
-        for (k = 0; k < nout; k++) {
-            struct dvec *v = dvec_alloc(copy(outname[k]), SV_NOTYPE,
-                                        (short) (VF_REAL | VF_PERMANENT), nv, NULL);
-            for (i = 0; i < nv; i++)
-                v->v_realdata[i] = data[(size_t) i * (size_t) nout + (size_t) k];
-            vec_new(v);
-        }
+        for (k = 0; k < nout; k++)
+            for (c = 0; c < ncomb; c++) {
+                int idx[SW_MAXKNOB], cc = c;
+                struct dvec *v;
+                for (j = 1; j < nknob; j++) { idx[j] = cc % knv[j]; cc /= knv[j]; }
+                v = dvec_alloc(sw_familyname(outname[k], kscname, kvals, idx, 1, nknob),
+                               SV_NOTYPE, (short) (VF_REAL | VF_PERMANENT), nv0, NULL);
+                for (i = 0; i < nv0; i++)
+                    v->v_realdata[i] =
+                        data[((size_t) c * (size_t) nv0 + (size_t) i)
+                             * (size_t) nout + (size_t) k];
+                vec_new(v);
+            }
     }
-    fprintf(cp_out, "sweep: %d points into the 'sweep' plot%s; "
-                    "`plot <output>` to view vs %s.\n",
-            nv, overlay ? "" : " (now current)", scname);
+    if (nknob == 1)
+        fprintf(cp_out, "sweep: %d points into the 'sweep' plot%s; "
+                        "`plot <output>` to view vs %s.\n",
+                nv0, overlay ? "" : " (now current)", scname);
+    else
+        fprintf(cp_out, "sweep: %d curve%s x %d output%s into the 'sweep' plot%s; "
+                        "`plot <output>_...` to view the family vs %s.\n",
+                ncomb, ncomb == 1 ? "" : "s", nout, nout == 1 ? "" : "s",
+                overlay ? "" : " (now current)", scname);
 
-    /* --- Enhancement-189: -overlay family plot of the per-point waveforms --- */
+    /* --- Enhancement-189/190: -overlay plot of every run's full waveform, one
+     * vector per (output, cartesian point) resampled onto a common grid. The
+     * name carries every knob's value (inner first), so a single-knob overlay is
+     * `<output>_<val>` exactly as in E-189. --- */
     if (overlay && ovy) {
         double xmin = HUGE_VAL, xmax = -HUGE_VAL;
-        int ncommon = 0, ii, jj;
-        for (ii = 0; ii < nv; ii++) {
-            if (ovlen[ii] < 1) continue;
-            if (ovx[ii][0] < xmin) xmin = ovx[ii][0];
-            if (ovx[ii][ovlen[ii] - 1] > xmax) xmax = ovx[ii][ovlen[ii] - 1];
-            if (ovlen[ii] > ncommon) ncommon = ovlen[ii];
+        int ncommon = 0, jj;
+        for (p = 0; p < npt; p++) {
+            if (ovlen[p] < 1) continue;
+            if (ovx[p][0] < xmin) xmin = ovx[p][0];
+            if (ovx[p][ovlen[p] - 1] > xmax) xmax = ovx[p][ovlen[p] - 1];
+            if (ovlen[p] > ncommon) ncommon = ovlen[p];
         }
         if (ncommon > 1 && xmax > xmin) {
             struct plot *pw = plot_alloc("sweepwave");
             struct dvec *xs;
             pw->pl_name = copy("Sweep waveforms");
-            pw->pl_title = copy(knob);
+            pw->pl_title = copy(kname[0]);
             plot_new(pw);
             plot_setcur(pw->pl_typename);
             xs = dvec_alloc(copy(scwavename ? scwavename : "x"), SV_NOTYPE,
@@ -488,21 +651,23 @@ void com_sweep(wordlist *wl)
                 xs->v_realdata[jj] = xmin + (xmax - xmin) * jj / (ncommon - 1);
             vec_new(xs);                             /* first permanent -> scale */
             for (k = 0; k < nout; k++)
-                for (ii = 0; ii < nv; ii++) {
-                    struct dvec *v = dvec_alloc(sw_wavename(outname[k], vals[ii]),
-                                                SV_NOTYPE,
-                                                (short) (VF_REAL | VF_PERMANENT),
-                                                ncommon, NULL);
+                for (p = 0; p < npt; p++) {
+                    int idx[SW_MAXKNOB], rem = p;
+                    struct dvec *v;
+                    for (j = 0; j < nknob; j++) { idx[j] = rem % knv[j]; rem /= knv[j]; }
+                    v = dvec_alloc(sw_pointname(outname[k], kvals, idx, nknob),
+                                   SV_NOTYPE, (short) (VF_REAL | VF_PERMANENT),
+                                   ncommon, NULL);
                     for (jj = 0; jj < ncommon; jj++)
-                        v->v_realdata[jj] = sw_interp(ovx[ii],
-                                                ovy[(size_t) ii * (size_t) nout + (size_t) k],
-                                                ovlen[ii], xs->v_realdata[jj]);
+                        v->v_realdata[jj] = sw_interp(ovx[p],
+                                                ovy[(size_t) p * (size_t) nout + (size_t) k],
+                                                ovlen[p], xs->v_realdata[jj]);
                     vec_new(v);
                 }
             fprintf(cp_out, "sweep: overlay of %d waveform%s per output resampled "
                             "to %d points in the 'sweepwave' plot '%s' (now current); "
                             "`plot <output>_<val> ...` to view.\n",
-                    nv, nv == 1 ? "" : "s", ncommon, pw->pl_typename);
+                    npt, npt == 1 ? "" : "s", ncommon, pw->pl_typename);
         } else {
             fprintf(cp_out, "sweep: -overlay ignored (analysis '%s' has no waveform "
                             "to overlay).\n", analysis);
@@ -513,11 +678,14 @@ cleanup:
     sweep_active = 0;
     ft_optimizing = save_optimizing;
     for (k = 0; k < nout; k++) { tfree(outname[k]); tfree(outexpr[k]); }
-    if (ovx) for (i = 0; i < nv; i++) tfree(ovx[i]);
-    if (ovy) for (i = 0; i < nv * nout; i++) tfree(ovy[i]);
+    if (ovx) for (p = 0; p < npt; p++) tfree(ovx[p]);
+    if (ovy) for (p = 0; p < npt * nout; p++) tfree(ovy[p]);
     tfree(ovx); tfree(ovy); tfree(ovlen); tfree(scwavename);
-    tfree(knob); tfree(analysis); tfree(scname);
-    tfree(vals); tfree(data);
+    for (j = 0; j < SW_MAXKNOB; j++) {
+        tfree(kname[j]); tfree(kvals[j]); tfree(kscname[j]);
+    }
+    tfree(analysis); tfree(scname);
+    tfree(data);
 }
 
 
