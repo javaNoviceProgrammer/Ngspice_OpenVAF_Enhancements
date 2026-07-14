@@ -1,0 +1,27 @@
+* Enhancement-191: `.ac lin 2` / `.sp lin 2` off-by-one fix
+*
+* The linear frequency-sweep step in the AC and S-parameter analyses was guarded
+* by `numberSteps - 1 > 1`, so a real step was computed only for N >= 3. Exactly
+* `lin 2` fell into the "single point" patch (freqDelta = 0) and produced ONE
+* frequency point instead of two. `> 1` restores the two-endpoint sweep while
+* keeping the genuine `lin 1` single-point case.
+*
+* Before the fix `ac lin 2 1k 10k` printed one row (1 kHz only); now it prints
+* the two endpoints 1 kHz and 10 kHz, both genuine solved points.
+
+V1 in 0 AC 1
+R1 in out 1k
+C1 out 0 100n
+
+.control
+ac lin 1 1k 10k
+echo lin 1 frequencies (single-point case, fstart only):
+print frequency
+ac lin 2 1k 10k
+echo lin 2 frequencies (both endpoints -- was 1 kHz only before E-191):
+print frequency
+ac lin 5 1k 10k
+echo lin 5 frequencies:
+print frequency
+.endc
+.end

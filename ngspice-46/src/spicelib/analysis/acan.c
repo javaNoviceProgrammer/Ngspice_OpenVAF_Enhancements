@@ -105,7 +105,7 @@ ACan(CKTcircuit* ckt, int restart)
                 exp(log(2.0) / job->ACnumberSteps);
             break;
         case LINEAR:
-            if (job->ACnumberSteps - 1 > 1)
+            if (job->ACnumberSteps > 1)
                 job->ACfreqDelta =
                 (job->ACstopFreq -
                     job->ACstartFreq) /
@@ -113,7 +113,10 @@ ACan(CKTcircuit* ckt, int restart)
             else
                 /* Patch from: Richard McRoberts
                 * This patch is for a rather pathological case:
-                * a linear step with only one point */
+                * a linear step with only one point.
+                * Enhancement-191: the guard was `numberSteps - 1 > 1`, which
+                * also caught numberSteps == 2 and collapsed `lin 2` to a single
+                * point; `> 1` restores the two-endpoint sweep (cf. noisean.c). */
                 job->ACfreqDelta = 0;
             break;
         default:
