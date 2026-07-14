@@ -388,31 +388,75 @@ static void seed_poles(double fmin, double fmax, int npair, cplx *p)
 }
 
 /* ============================ emit VA ============================ */
-/* strictly-proper numerator polynomial (ASCENDING, real) for Y_k = d + sum res/(s-p).
- * num = d*D + sum_i res_i * D/(s-p_i). out[] holds Np+1 (degree Np). */
-static void num_proper(const cplx *poles, int Np, const cplx *res_k, double d_k, double *out_asc)
-{
-    int i, j, t;
-    cplx *D = (cplx*) malloc((size_t)(Np+1)*sizeof(cplx));
-    poly_from_roots(poles, Np, D);
-    cplx *num = (cplx*) calloc((size_t)(Np+1), sizeof(cplx));
-    for (i = 0; i <= Np; i++) num[i] = d_k*D[i];
-    cplx *Di = (cplx*) malloc((size_t) Np*sizeof(cplx));
-    cplx *sub = (cplx*) malloc((size_t) Np*sizeof(cplx));
-    for (i = 0; i < Np; i++) {
-        t = 0; for (j = 0; j < Np; j++) if (j != i) sub[t++] = poles[j];
-        poly_from_roots(sub, Np-1, Di);           /* degree Np-1, len Np */
-        for (j = 0; j < Np; j++) num[j+1] += res_k[i]*Di[j];
-    }
-    for (i = 0; i <= Np; i++) out_asc[Np-i] = creal(num[i]);   /* descending->ascending, real */
-    free(D); free(num); free(Di); free(sub);
-}
-
 static void emit_arr(FILE *f, const double *v, int n)
 {
     int i; fprintf(f, "'{");
     for (i = 0; i < n; i++) fprintf(f, "%s%.12g", i?", ":"", v[i]);
     fprintf(f, "}");
+}
+
+/* term separator inside one `I(p) <+ ...;` contribution */
+static void term_sep(FILE *f, int *first)
+{
+    if (*first) *first = 0;
+    else fprintf(f, "\n                 + ");
+}
+
+/* Symmetric eigen-decomposition via cyclic Jacobi. A (n x n, row-major) is
+ * overwritten; eigenvalues -> w, orthonormal eigenvectors (columns) -> V. */
+static void jacobi_sym(double *A, int n, double *w, double *V)
+{
+    int i, j, p, q, sweep;
+    for (i = 0; i < n; i++) { for (j = 0; j < n; j++) V[i*n+j] = (i==j)?1.0:0.0; }
+    for (sweep = 0; sweep < 100; sweep++) {
+        double off = 0.0;
+        for (p = 0; p < n; p++) for (q = p+1; q < n; q++) off += A[p*n+q]*A[p*n+q];
+        if (off < 1e-300) break;
+        for (p = 0; p < n; p++) for (q = p+1; q < n; q++) {
+            double apq = A[p*n+q];
+            if (fabs(apq) < 1e-300) continue;
+            double app = A[p*n+p], aqq = A[q*n+q];
+            double phi = 0.5*(aqq-app)/apq;
+            double t = (phi>=0?1.0:-1.0)/(fabs(phi)+sqrt(phi*phi+1.0));
+            double c = 1.0/sqrt(t*t+1.0), sn = t*c;
+            for (i = 0; i < n; i++) {
+                double aip = A[i*n+p], aiq = A[i*n+q];
+                A[i*n+p] = c*aip - sn*aiq; A[i*n+q] = sn*aip + c*aiq;
+            }
+            for (i = 0; i < n; i++) {
+                double api = A[p*n+i], aqi = A[q*n+i];
+                A[p*n+i] = c*api - sn*aqi; A[q*n+i] = sn*api + c*aqi;
+            }
+            for (i = 0; i < n; i++) {
+                double vip = V[i*n+p], viq = V[i*n+q];
+                V[i*n+p] = c*vip - sn*viq; V[i*n+q] = sn*vip + c*viq;
+            }
+        }
+    }
+    for (i = 0; i < n; i++) w[i] = A[i*n+i];
+}
+
+/* Project the improper (e*s) capacitance matrix onto the symmetric PSD cone.
+ * Each Y_ij is fit independently, so E=[e_ij] carries no passivity constraint;
+ * a negative eigenvalue is a "negative capacitance" that makes the transient DAE
+ * unstable (it diverges) even though every pole is in the LHP and AC is exact.
+ * Symmetrizing and clamping negative eigenvalues to 0 yields a passive C-matrix
+ * -> stable transient, while genuinely-improper (shunt-C) networks keep their
+ * positive eigenvalues. e[] is indexed i*N+j. */
+static void psd_project_E(double *e, int N)
+{
+    double *A = (double*) malloc((size_t) N*N*sizeof(double));
+    double *V = (double*) malloc((size_t) N*N*sizeof(double));
+    double *w = (double*) malloc((size_t) N*sizeof(double));
+    int i, j, k;
+    for (i = 0; i < N; i++) for (j = 0; j < N; j++) A[i*N+j] = 0.5*(e[i*N+j]+e[j*N+i]);
+    jacobi_sym(A, N, w, V);
+    for (i = 0; i < N; i++) for (j = 0; j < N; j++) {
+        double acc = 0.0;
+        for (k = 0; k < N; k++) { double wk = w[k] > 0.0 ? w[k] : 0.0; acc += V[i*N+k]*wk*V[j*N+k]; }
+        e[i*N+j] = acc;
+    }
+    free(A); free(V); free(w);
 }
 
 /* ============================ public API ============================ */
@@ -475,7 +519,11 @@ int snp2va_convert(const char *snpfile, const char *vafile, const char *module,
                 if (firstErr < 0) firstErr = err;
         int keep_best = stable && err < bestErr;
         if (keep_best) {
-            free(bestP);free(bestRes);free(bestD);free(bestE);
+            /* Don't free the old best buffers if `prev` still aliases them (that
+             * happens after any prior keep_best iteration, where best==prev==P):
+             * the prev-shift below frees them exactly once. Freeing here would
+             * leave prev dangling and double-free at line ~490. */
+            if (bestP != prevP) { free(bestP);free(bestRes);free(bestD);free(bestE); }
             bestP=P;bestRes=res;bestD=dd;bestE=ee;bestNp=Np;bestErr=err;
         }
         if (!stable) { if(!keep_best){free(P);free(res);free(dd);free(ee);} break; }
@@ -496,15 +544,24 @@ int snp2va_convert(const char *snpfile, const char *vafile, const char *module,
     else if (bestP) { P=bestP;res=bestRes;dd=bestD;ee=bestE;Np=bestNp; }
     else { P=prevP;res=prevRes;dd=prevD;ee=prevE;Np=prevNp; }
 
-    /* ---- emit VA ---- */
+    /* force the improper (e*s) capacitance matrix passive so transient is stable */
+    psd_project_E(ee, N);
+
+    /* ---- emit VA ----
+     * Realize each Y_ij(s) = d + e*s + sum_k res_k/(s-p_k) as a PARALLEL bank of
+     * low-order laplace_nd sections rather than one degree-Np rational. A single
+     * degree-Np polynomial has coefficients spanning ~|p|^Np (e.g. ~1e79 for 8
+     * poles at 1e10 rad/s); laplace_nd's transient (companion-form) realization
+     * of that is numerically unstable and diverges, even though the poles are all
+     * in the LHP and the AC response (evaluated pointwise) is fine. Splitting into
+     * first-order (real pole) and second-order (conjugate pair) sections keeps
+     * every coefficient <= O(|p|^2) ~ 1e20, so the transient integration is
+     * well-conditioned and stable. d becomes a plain conductance and e*s a ddt. */
     FILE *fo = fopen(vafile, "w");
     if (!fo) { snprintf(msg,(size_t)msglen,"cannot write '%s'", vafile); ts_free(&ts); return 1; }
-    double *den = (double*) malloc((size_t)(Np+1)*sizeof(double));
-    { cplx *D = (cplx*) malloc((size_t)(Np+1)*sizeof(cplx)); poly_from_roots(P, Np, D);
-      for (i = 0; i <= Np; i++) den[Np-i] = creal(D[i]); free(D); }
     fprintf(fo, "`include \"disciplines.vams\"\n\n");
     fprintf(fo, "// Generated by pre_snp from %s\n", snpfile);
-    fprintf(fo, "// %d-port, %d common poles; realized with laplace_nd (AC + transient).\n", N, Np);
+    fprintf(fo, "// %d-port, %d common poles; realized as parallel laplace_nd sections (AC + transient).\n", N, Np);
     fprintf(fo, "module %s(", module);
     for (i = 0; i < N; i++) fprintf(fo, "%sp%d", i?", ":"", i+1);
     fprintf(fo, ");\n    inout ");
@@ -512,24 +569,48 @@ int snp2va_convert(const char *snpfile, const char *vafile, const char *module,
     fprintf(fo, ";\n    electrical ");
     for (i = 0; i < N; i++) fprintf(fo, "%sp%d", i?", ":"", i+1);
     fprintf(fo, ";\n    analog begin\n");
-    double *nm = (double*) malloc((size_t)(Np+1)*sizeof(double));
     for (i = 0; i < N; i++) {
+        int first = 1;
         fprintf(fo, "        I(p%d) <+ ", i+1);
         for (j = 0; j < N; j++) {
             int idx = i*N+j;
-            num_proper(P, Np, res + (long) idx*Np, dd[idx], nm);
-            if (j) fprintf(fo, "\n                 + ");
-            fprintf(fo, "laplace_nd(V(p%d), ", j+1); emit_arr(fo, nm, Np+1);
-            fprintf(fo, ", "); emit_arr(fo, den, Np+1); fprintf(fo, ")");
-            if (fabs(ee[idx]) > 1e-30) fprintf(fo, "\n                 + (%.12g)*ddt(V(p%d))", ee[idx], j+1);
+            const cplx *rk = res + (long) idx*Np;
+            if (fabs(dd[idx]) > 1e-30) {                 /* constant term -> conductance */
+                term_sep(fo, &first);
+                fprintf(fo, "(%.12g)*V(p%d)", dd[idx], j+1);
+            }
+            if (fabs(ee[idx]) > 1e-30) {                 /* improper e*s term -> capacitance */
+                term_sep(fo, &first);
+                fprintf(fo, "(%.12g)*ddt(V(p%d))", ee[idx], j+1);
+            }
+            k = 0;
+            while (k < Np) {
+                int is_pair = (k+1 < Np) && (fabs(cimag(P[k])) > 1e-6*cabs(P[k]));
+                term_sep(fo, &first);
+                fprintf(fo, "laplace_nd(V(p%d), ", j+1);
+                if (!is_pair) {                          /* real pole: res/(s - p) */
+                    double num[1] = { creal(rk[k]) };
+                    double de[2]  = { -creal(P[k]), 1.0 };
+                    emit_arr(fo, num, 1); fprintf(fo, ", "); emit_arr(fo, de, 2);
+                    k += 1;
+                } else {                                 /* conj pair {p,p*}, res {r,r*} */
+                    cplx p = P[k], rr = rk[k];
+                    double num[2] = { -2.0*creal(rr*conj(p)), 2.0*creal(rr) };
+                    double de[3]  = { creal(p*conj(p)), -2.0*creal(p), 1.0 };
+                    emit_arr(fo, num, 2); fprintf(fo, ", "); emit_arr(fo, de, 3);
+                    k += 2;
+                }
+                fprintf(fo, ")");
+            }
         }
+        if (first) fprintf(fo, "0.0");                   /* an all-zero row (should not happen) */
         fprintf(fo, ";\n");
     }
     fprintf(fo, "    end\nendmodule\n");
     fclose(fo);
     snprintf(msg,(size_t)msglen,"%d-port, %d poles, rms rel err %.2e", N, Np, bestErr<1e300?bestErr:0.0);
     /* frees (leak-tolerant: one-shot tool) */
-    free(den); free(nm); free(Y); free(s); free(sn); free(F); ts_free(&ts);
+    free(Y); free(s); free(sn); free(F); ts_free(&ts);
     return 0;
 }
 

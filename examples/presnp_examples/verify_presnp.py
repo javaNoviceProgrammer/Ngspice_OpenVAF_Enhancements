@@ -291,9 +291,92 @@ else:
           out3[-300:])
 
 
+# ============= higher-order coupled ladder (guards two order/realization bugs) ==
+# A 4-port R-L-C ladder (port -> Rs -> node with Rp||C shunt, adjacent nodes
+# coupled by L) whose fit must CLIMB past two pole orders, and whose independently
+# fitted improper (e*s) terms form an *indefinite* capacitance matrix. This case
+# exercises two failure modes the 2-pole checks above never reach:
+#   * order selection: a double-free during the climb (crashed pre_snp for any fit
+#     needing >=3 pole orders), and
+#   * realization: the OSDI model diverging in transient (v -> ~1e284) from the
+#     non-passive e-matrix, even though DC/AC are exact.
+# Both must now compile, stay BOUNDED, and match the original ladder in transient.
+def Ylad4(f):
+    s = 1j * 2 * math.pi * f
+    n = 4
+    gs, gp, Csh, Lc = 1/30.0, 1/150.0, 2e-12, 8e-9   # noqa: E741  (Csh/Lc physical)
+    M = [[0j]*n for _ in range(n)]
+    for i in range(n):
+        M[i][i] = gs + gp + s*Csh
+    for i in range(n-1):
+        y = 1.0/(s*Lc)
+        M[i][i] += y; M[i+1][i+1] += y; M[i][i+1] -= y; M[i+1][i] -= y
+    Mi = mat_inv(M)
+    return [[(gs if i == j else 0j) - gs*gs*Mi[i][j] for j in range(n)] for i in range(n)]
+
+
+freqsL4 = [10 ** (6 + 3.5 * k / 160) for k in range(161)]      # 1 MHz .. ~3.2 GHz
+write_snp(os.path.join(HERE, "ladder4.s4p"), freqsL4, Ylad4, 4)
+LADSUB = ("Rs1 p1 na 30\nRp1 na 0 150\nCa na 0 2e-12\n"
+          "Rs2 p2 nb 30\nRp2 nb 0 150\nCb nb 0 2e-12\n"
+          "Rs3 p3 nc 30\nRp3 nc 0 150\nCcc nc 0 2e-12\n"
+          "Rs4 p4 nd 30\nRp4 nd 0 150\nCd nd 0 2e-12\n"
+          "La na nb 8e-9\nLb nb nc 8e-9\nLcc nc nd 8e-9\n")
+NPL4 = "N1 p1 p2 p3 p4 mm\n.model mm lad4\n"
+
+
+def lad_tran(dut, presnp=False):
+    pre = "pre_snp ladder4.s4p lad4\npre_osdi ladder4.osdi" if presnp else ""
+    return run(f"""* 4-port ladder transient
+Vs in 0 pulse(0 1 1n 0.1n 0.1n 4n 8n)
+Rs in p1 50
+{dut}Rl2 p2 0 50
+Rl3 p3 0 50
+Rl4 p4 0 50
+.control
+{pre}
+tran 0.02n 12n
+wrdata _o.dat v(p2) v(p3)
+.endc
+.end
+""")
+
+
+cleanup("ladder4.va", "ladder4.osdi")
+la4, _ = lad_tran(LADSUB)                       # discrete reference
+ln4, outl = lad_tran(NPL4, presnp=True)         # the pre_snp OSDI model
+made_l = os.path.exists(os.path.join(HERE, "ladder4.osdi"))
+check("[order] `pre_snp` compiles a 4-port coupled ladder whose fit climbs past two "
+      "pole orders (order-selection buffer reuse would double-free before the fix)",
+      made_l, "(.osdi ok)" if made_l else "(.osdi MISSING -- pre_snp crashed)")
+
+if la4 and ln4:
+    import bisect
+    # wrdata real: 2 cols per vector -> v(p2)=col 1, scale=col 0
+    tt = [r[0] for r in ln4]; vv = [r[1] for r in ln4]
+
+    def itp(t):
+        i = bisect.bisect(tt, t); i = max(1, min(i, len(tt)-1))
+        if tt[i] == tt[i-1]:
+            return vv[i]
+        w = (t - tt[i-1])/(tt[i] - tt[i-1])
+        return vv[i-1] + w*(vv[i] - vv[i-1])
+    pk_ref = max(abs(r[1]) for r in la4)
+    pk_osd = max(abs(r[1]) for r in ln4)
+    errL = max(abs(itp(r[0]) - r[1]) for r in la4) / (pk_ref + 1e-30)
+    check("[realization] the 4-port pre_snp model stays BOUNDED and matches the ladder "
+          "in transient (indefinite e-matrix diverged to ~1e284 before the fix)",
+          pk_osd < 5*pk_ref and errL < 5e-2,
+          f"(peak osdi {pk_osd:.3f} vs ref {pk_ref:.3f}, max err {errL:.2e})")
+else:
+    check("[realization] the 4-port pre_snp model stays bounded and matches in transient",
+          False, outl[-300:])
+
+
 # tidy
 cleanup("_t.cir", "resonator.s2p", "resonator.va", "resonator.osdi",
-        "star.s3p", "star.va", "star.osdi")
+        "star.s3p", "star.va", "star.osdi",
+        "ladder4.s4p", "ladder4.va", "ladder4.osdi")
 
 print(f"\n{passed} passed, {failed} failed")
 raise SystemExit(1 if failed else 0)

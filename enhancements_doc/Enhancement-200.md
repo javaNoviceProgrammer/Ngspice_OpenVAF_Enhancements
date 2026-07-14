@@ -37,18 +37,47 @@ needs are reimplemented:
 - **complex matrix inverse** via Gauss–Jordan (`mat_inv_c`),
 - **polynomial roots** via Durand–Kerner (`poly_roots`).
 
-The pipeline is unchanged from E-199: parse Touchstone → `S(f)` → `Y(f) =
+The pipeline follows E-199: parse Touchstone → `S(f)` → `Y(f) =
 (1/z0)(I−S)(I+S)⁻¹` → common-pole **vector fit** in normalized frequency (Gustavsen)
-→ emit `I(p_i) <+ Σ_j [ laplace_nd(V(p_j), num_ij, den) + e_ij·ddt(V(p_j)) ]`, with
-the improper `e·s` (shunt-C) term split out as an explicit `ddt` because `laplace_nd`
-cannot represent an improper rational. Automatic order selection climbs the pole
-count and returns the best **stable** fit (right-half-plane poles reflected → always
-BIBO-stable). Numerically it was checked identical to the Python reference:
+→ emit `I(p_i) <+ Σ_j Y_ij(s)·V(p_j)`, with the improper `e·s` (shunt-C) term split
+out as an explicit `ddt` because `laplace_nd` cannot represent an improper rational.
+Each `Y_ij` is realized as a **parallel bank of first/second-order `laplace_nd`
+sections** (see *Transient robustness* below). Automatic order selection climbs the
+pole count and returns the best **stable** fit (right-half-plane poles reflected →
+always BIBO-stable). Numerically it was checked identical to the Python reference:
 resonator RMS 4×10⁻⁶, ladder 7×10⁻⁷, 3-port 3×10⁻⁸.
 
 The public entry point is `snp2va_convert(snpfile, vafile, module, msg, msglen)`; the
 command wrapper `com_pre_snp` (in `com_presnp.c`) calls it, then shells out to
 `openvaf-r` to compile the `.osdi`.
+
+## Transient robustness (order climb + realization)
+
+An N-port stress sweep (generate an N-port R-L-C network, extract its S-parameters
+with `.sp`, round-trip through `pre_snp`, and compare DC/AC/transient against the
+original subcircuit) surfaced two defects that the 2-pole example checks never
+reached, both now fixed:
+
+- **Order-selection double-free.** The climb that keeps the best *stable* fit let its
+  `best` and `prev` buffers alias, then freed the same allocation twice — `pre_snp`
+  aborted (`SIGABRT`) on any network whose fit needed **three or more pole orders**
+  (the 2-pole resonator/star escaped by breaking at tolerance first). Fixed by not
+  freeing a buffer the other pointer still holds.
+- **Transient divergence from a non-passive realization.** Each `Y_ij` is fit
+  independently, so two things could destabilize the *time-domain* model even though
+  every pole is in the LHP and the AC response (evaluated pointwise) is exact: a single
+  degree-`Np` rational per element has coefficients spanning `~|p|^Np` (≈10⁷⁹ for eight
+  poles at 10¹⁰ rad/s), whose companion-form integration is ill-conditioned; and the
+  improper `e·s` terms form a **capacitance matrix with no passivity constraint** — an
+  indefinite ("negative-capacitance") matrix makes the DAE unstable, so the model blew
+  up (`v → 10²⁸⁴`). Fixed by (a) realizing each element as a **parallel bank of
+  first/second-order `laplace_nd` sections** (one per real pole / conjugate pair), so
+  every coefficient stays `≤ O(|p|²)`, and (b) **projecting the `e`-matrix onto the
+  symmetric PSD cone** (symmetrize → eigendecompose via Jacobi → clamp negative
+  eigenvalues to 0). Genuinely-improper (shunt-C) networks keep their positive
+  eigenvalues; spurious ones are removed. The [`presnp` example](../examples/presnp_examples/verify_presnp.py)
+  gained a 4-port coupled-ladder check (fit climbs past two orders; transient must stay
+  bounded and match) that fails on the pre-fix converter.
 
 ## Runs before `pre_osdi`, always
 
