@@ -35,9 +35,14 @@ with several local minima:
     scaled DIFFERENCE of random members (v = a + F*(b-c)) crossed with the target,
     which self-scales to the population spread; often more robust on rugged /
     discontinuous landscapes.
+  * -method sa (Enhancement-196): simulated annealing -- a SINGLE walker that
+    accepts an uphill move with probability exp(-Dcost/T), climbing out of local
+    minima while the temperature T is high and settling as T is cooled to zero.
+    It evaluates one candidate per step (no population), so it is the cheapest
+    global method when each analysis is expensive.
 
-Both work for a scalar -minimize objective and -target least-squares. `-swarmsize
-<N>` sets the population (default auto, ~10+4*np), `-seed <s>` makes a run
+All work for a scalar -minimize objective and -target least-squares. `-swarmsize
+<N>` sets the pso/de population (default auto, ~10+4*np), `-seed <s>` makes a run
 reproducible.
 
 Syntax (in a .control block, after the circuit is loaded):
@@ -47,7 +52,7 @@ Syntax (in a .control block, after the circuit is loaded):
            ( -minimize <expression ...>
              | -target <expr> <value> [<weight>]  [-target ...]
                [ -analysis <command ...> -target ... ] )
-           [-method nm|lm|pso|de] [-swarmsize <N>] [-seed <s>]
+           [-method nm|lm|pso|de|sa] [-swarmsize <N>] [-seed <s>]
            [-maxiter <N>] [-tol <T>] [-verbose]
 
 Three knob kinds, all in-place except -dparam:
@@ -666,6 +671,72 @@ static void differential_evolution(struct optctx *c, double *ubest, double *fbes
 }
 
 
+/* Enhancement-196: simulated annealing over the np normalized parameters. A
+ * single-walker global, derivative-free method: from the current point it proposes
+ * a random neighbour and accepts it if it is better, OR -- with probability
+ * exp(-Dcost/T) -- if it is worse (the Metropolis rule), so it can climb out of a
+ * local minimum while the "temperature" T is high, then settles as T is cooled
+ * geometrically toward zero. Unlike a swarm/population it evaluates ONE candidate
+ * per step, so it is the cheapest global method when each analysis is expensive.
+ * The step size and T are auto-scaled to the problem (T0 from the cost spread of
+ * random probes; the step shrinks as T cools). On exit ubest holds the best point
+ * ever visited and *fbest its cost. Works for scalar and least-squares objectives. */
+static void simulated_annealing(struct optctx *c, double *ubest, double *fbest)
+{
+    const int n = c->np;
+    double x[OPT_MAXP], xn[OPT_MAXP], best[OPT_MAXP];
+    double fx, fn, fb, T, T0, alpha, sum;
+    int i, j, level, L, m;
+
+    opt_srand(c->seed);
+
+    for (j = 0; j < n; j++) { x[j] = clamp01(ubest[j]); best[j] = x[j]; }
+    fx = fb = opt_eval(c, x, NULL);
+
+    /* initial temperature: the mean |cost change| of a handful of random probes,
+     * so an uphill move of that size is accepted about half the time when hot */
+    sum = 0.0; m = 0;
+    for (i = 0; i < 12; i++) {
+        for (j = 0; j < n; j++) xn[j] = opt_rand();
+        fn = opt_eval(c, xn, NULL);
+        if (fn < OPT_PENALTY) { sum += fabs(fn - fx); m++; }
+    }
+    T0 = (m > 0 && sum > 0.0) ? sum / m : 1.0;
+    T  = T0;
+
+    /* c->maxiter temperature levels, L moves each; cool ~4 decades over the run */
+    L     = 8 + 4 * n;
+    alpha = pow(1e-4, 1.0 / (double) (c->maxiter > 1 ? c->maxiter : 1));
+
+    for (level = 0; level < c->maxiter; level++) {
+        double step = 0.30 * sqrt(T / T0) + 0.02;   /* wide when hot, fine when cold */
+        for (i = 0; i < L; i++) {
+            for (j = 0; j < n; j++)
+                xn[j] = clamp01(x[j] + step * (opt_rand() * 2.0 - 1.0));
+            fn = opt_eval(c, xn, NULL);
+            {
+                double d = fn - fx;
+                if (d <= 0.0 || opt_rand() < exp(-d / T)) {   /* Metropolis accept */
+                    for (j = 0; j < n; j++) x[j] = xn[j];
+                    fx = fn;
+                    if (fx < fb) {                            /* remember the best */
+                        fb = fx;
+                        for (j = 0; j < n; j++) best[j] = x[j];
+                    }
+                }
+            }
+        }
+        T *= alpha;
+        if (c->verbose)
+            fprintf(cp_out, "  level %-3d  T %.3g  best cost %.6g  (%d evals)\n",
+                    level + 1, T, fb, c->nevals);
+    }
+
+    for (j = 0; j < n; j++) ubest[j] = best[j];
+    *fbest = fb;
+}
+
+
 static int is_flag(const char *w)
 {
     return w && w[0] == '-' && isalpha((unsigned char) w[1]);
@@ -709,7 +780,7 @@ void com_optimize(wordlist *wl)
 {
     struct optctx c;
     double ubest[OPT_MAXP], fbest = OPT_PENALTY;
-    int k, use_lm, use_pso, use_de;
+    int k, use_lm, use_pso, use_de, use_sa;
 
     memset(&c, 0, sizeof c);
     c.maxiter = 100;
@@ -797,9 +868,12 @@ void com_optimize(wordlist *wl)
                 else if (eq(mm, "de") || eq(mm, "diffevol") ||
                          eq(mm, "differentialevolution"))
                     c.method = 4;        /* Enhancement-195 */
+                else if (eq(mm, "sa") || eq(mm, "anneal") ||
+                         eq(mm, "simulatedannealing"))
+                    c.method = 5;        /* Enhancement-196 */
                 else {
                     fprintf(cp_err, "optimize: unknown -method '%s' "
-                                    "(use nm, lm, pso or de)\n", mm);
+                                    "(use nm, lm, pso, de or sa)\n", mm);
                     goto cleanup;
                 }
                 wl = wl->wl_next->wl_next;
@@ -832,7 +906,7 @@ void com_optimize(wordlist *wl)
     if (c.np < 1 || c.ns < 1 || (!c.objective && c.nt == 0)) {
         fprintf(cp_err, "usage: optimize (-param|-mparam|-dparam) <name> <init> "
                         "<lo> <hi> [...] -analysis <cmd> (-minimize <expr> | -target "
-                        "<expr> <val> [<w>] ...) [-method nm|lm|pso|de] [-swarmsize N] "
+                        "<expr> <val> [<w>] ...) [-method nm|lm|pso|de|sa] [-swarmsize N] "
                         "[-seed s] [-maxiter N] [-tol T] [-verbose]\n");
         goto cleanup;
     }
@@ -862,7 +936,8 @@ void com_optimize(wordlist *wl)
     use_lm  = (c.method == 2) || (c.method == 0 && c.nt > 0);
     use_pso = (c.method == 3);
     use_de  = (c.method == 4);
-    if (use_pso || use_de) use_lm = 0;
+    use_sa  = (c.method == 5);
+    if (use_pso || use_de || use_sa) use_lm = 0;
 
     if (use_pso || use_de) {
         /* auto population: scales gently with dimension, bounded for speed. DE
@@ -877,6 +952,7 @@ void com_optimize(wordlist *wl)
     {
         const char *mname = use_pso ? "Particle Swarm"
                           : use_de  ? "Differential Evolution"
+                          : use_sa  ? "Simulated Annealing"
                           : use_lm  ? "Levenberg-Marquardt" : "Nelder-Mead";
         if (c.nt > 0)
             fprintf(cp_out, "optimize: %d parameter%s, %d target%s over %d analysis "
@@ -892,6 +968,9 @@ void com_optimize(wordlist *wl)
         else if (use_de)
             fprintf(cp_out, "optimize: population of %d vectors, seed %lu, up to %d generations\n",
                     c.swarmsize, c.seed, c.maxiter);
+        else if (use_sa)
+            fprintf(cp_out, "optimize: annealing, seed %lu, %d cooling levels\n",
+                    c.seed, c.maxiter);
     }
 
     for (k = 0; k < c.np; k++)
@@ -901,6 +980,8 @@ void com_optimize(wordlist *wl)
         particle_swarm(&c, ubest, &fbest);
     else if (use_de)
         differential_evolution(&c, ubest, &fbest);
+    else if (use_sa)
+        simulated_annealing(&c, ubest, &fbest);
     else if (use_lm)
         levenberg_marquardt(&c, ubest, &fbest);
     else

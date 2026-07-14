@@ -1,0 +1,31 @@
+* Enhancement-196: simulated annealing -- optimize -method sa
+*
+* SA is a single-walker GLOBAL method. From the current point it proposes a random
+* neighbour and accepts an UPHILL move with probability exp(-Dcost/T), so it climbs
+* out of local minima while the temperature T is high, then settles as T cools to
+* zero. One evaluation per step (no population) -- the lightest global method.
+*
+* Objective: the multimodal f(p) = sin(p) + sin(10 p / 3) on [2.7, 7.5], global
+* minimum p* = 5.1457, f* = -1.8996. This deck runs all five optimizer methods on
+* it from the p = 2.7 corner: the two LOCAL methods fall into a local minimum
+* (~ -1.20); the three GLOBAL methods (sa, pso, de) find the global.
+
+.param p=2.7
+V1 out 0 dc {sin(p) + sin(10*p/3)}
+R1 out 0 1
+
+.control
+echo
+echo --- LOCAL methods (trapped from the p=2.7 corner) ---
+optimize -dparam p 2.7 2.7 7.5 -analysis op -minimize v(out) -method nm -tol 1e-8
+
+echo
+echo --- GLOBAL: simulated annealing (single walker, temperature schedule) ---
+optimize -dparam p 2.7 2.7 7.5 -analysis op -minimize v(out) -method sa -maxiter 60 -seed 3 -tol 1e-8
+
+echo
+echo --- GLOBAL: particle swarm / differential evolution (populations), for comparison ---
+optimize -dparam p 2.7 2.7 7.5 -analysis op -minimize v(out) -method pso -swarmsize 24 -maxiter 60 -seed 1 -tol 1e-8
+optimize -dparam p 2.7 2.7 7.5 -analysis op -minimize v(out) -method de -swarmsize 24 -maxiter 60 -seed 1 -tol 1e-8
+.endc
+.end
