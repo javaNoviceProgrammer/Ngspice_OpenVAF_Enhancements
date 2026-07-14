@@ -114,6 +114,15 @@ scripting ngspice:
   diagnostics say which ([E-70](../../enhancements_doc/Enhancement-70.md)).
 - **Recursion in analog functions is illegal** — direct and mutual forms
   are clean errors naming the cycle ([E-59](../../enhancements_doc/Enhancement-59.md)).
+- **Analog function arguments use the separated (non-ANSI) declaration
+  form** — after `analog function <type> <name>;`, give the direction and
+  the data type as *separate* statements: `input x; real x;` (this is the
+  classic Verilog-A style every LRM example and compact model uses). The
+  combined declaration `input real x;` and ANSI-style function headers
+  (`analog function real f(input real x); …`) are **not** accepted — both
+  are clean parse errors (`unexpected token 'real'` / `unexpected token
+  '('`). This applies to array arguments too: `output w; real w[0:3];`,
+  not `output real w[0:3];`.
 - **String opvars** display via `show` but can't become vectors (ngspice
   vectors are numeric) — `print @n1[strvar]` fails with a clear message
   ([E-69](../../enhancements_doc/Enhancement-69.md)).
