@@ -1,0 +1,29 @@
+* Enhancement-192: auto-checkpoint on interrupt -- `set autosave=<file>`
+*
+* When `autosave` is set to a filename, an INTERRUPTED transient automatically
+* writes an Enhancement-131 checkpoint, so a long run can survive a Ctrl-C (or
+* any pause) and be resumed later with `loadstate`.
+*
+* A real interactive Ctrl-C and a `stop when ...` breakpoint reach the exact same
+* code path (the run reports "interrupted"); this batch demo uses a `stop`
+* breakpoint so it triggers deterministically. Interactively you would instead
+* just press Ctrl-C during `run`.
+
+V1 in 0 SIN(0 1 1k)
+R1 in out 1k
+C1 out 0 1u
+.tran 1u 10m
+
+.control
+set autosave=autosave_demo.chk
+* pause the run partway (stands in for a Ctrl-C at ~5 ms)
+stop when time > 5m
+run
+
+echo
+echo Interrupted -- the autosave checkpoint was written above (see the message).
+echo In a fresh ngspice session you would resume it to the end with:
+echo '    ngspice> loadstate autosave_demo.chk'
+echo '    ngspice> run'
+.endc
+.end

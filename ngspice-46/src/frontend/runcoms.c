@@ -15,6 +15,8 @@ Modified: 2000 AlansFixes
 #include "ngspice/ftedebug.h"
 #include "ngspice/dvec.h"
 #include "ngspice/hash.h"
+#include "ngspice/cktdefs.h"       /* Enhancement-192: CKTmode/MODETRAN/CKTtime */
+#include "com_checkpoint.h"        /* Enhancement-192: ckt_write_checkpoint      */
 
 #include "numparam/numpaif.h"
 
@@ -334,6 +336,23 @@ static int dosim(
         if (err == 1) {
             /* The circuit was interrupted somewhere. */
             fprintf(cp_err, "%s simulation interrupted\n", what);
+            /* Enhancement-192: auto-checkpoint on interrupt. If `set autosave=
+               <file>` is in effect and the interrupted run was a transient
+               (so the saved integration state is meaningful and resumable),
+               write a checkpoint. We are on the main thread here -- the pause
+               unwound cleanly from dctran's IFpauseTest at an accepted timepoint
+               (E_PAUSE), not from the signal handler -- so buffered I/O is safe
+               and the state is consistent. `loadstate <file>` resumes it. */
+            {
+                char asfile[BSIZE_SP];
+                CKTcircuit *ck = ft_curckt->ci_ckt;
+                if (ck && (ck->CKTmode & MODETRAN) && ck->CKTtime > 0.0 &&
+                    cp_getvar("autosave", CP_STRING, asfile, sizeof asfile) &&
+                    *asfile) {
+                    fprintf(cp_out, "Auto-checkpoint (autosave) on interrupt: ");
+                    (void) ckt_write_checkpoint(ck, asfile);
+                }
+            }
             err = 0;
         }
         else if (err == 2) {

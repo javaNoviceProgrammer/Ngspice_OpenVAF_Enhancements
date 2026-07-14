@@ -73,41 +73,31 @@ find_tran_job(void)
 }
 
 
-void
-com_savestate(wordlist *wl)
+/* Enhancement-131 / Enhancement-192: write the active transient state to `fname`.
+   Shared by the `savestate` command and the Enhancement-192 auto-checkpoint hook
+   (an interrupted run, `set autosave=<file>`). Runs on the main thread -- never a
+   signal handler -- so ordinary buffered I/O is safe. Returns TRUE on success. */
+bool
+ckt_write_checkpoint(CKTcircuit *ckt, const char *fname)
 {
-    CKTcircuit *ckt;
     FILE *fp;
-    const char *fname;
     int i, present, matSize;
-
-    if (!ft_curckt || !ft_curckt->ci_ckt) {
-        fprintf(cp_err, "Error: savestate: there is no circuit loaded.\n");
-        return;
-    }
-    ckt = ft_curckt->ci_ckt;
-
-    if (!wl || !wl->wl_word || !*wl->wl_word) {
-        fprintf(cp_err, "Usage: savestate <file>\n");
-        return;
-    }
-    fname = wl->wl_word;
 
     if (ckt->CKTstates[0] == NULL || ckt->CKTmaxEqNum <= 0) {
         fprintf(cp_err,
                 "Error: savestate: no simulation state to save; run a transient first.\n");
-        return;
+        return FALSE;
     }
     if (ckt->CKTtime <= 0.0) {
         fprintf(cp_err,
                 "Error: savestate: transient time is 0; nothing to checkpoint.\n");
-        return;
+        return FALSE;
     }
 
     fp = fopen(fname, "wb");
     if (!fp) {
         perror(fname);
-        return;
+        return FALSE;
     }
 
     /* The solution vectors CKTrhsOld/CKTirhsOld are allocated with
@@ -159,11 +149,27 @@ com_savestate(wordlist *wl)
     (void) fclose(fp);
     fprintf(cp_out, "Checkpoint written to \"%s\" at t = %g s.\n",
             fname, ckt->CKTtime);
-    return;
+    return TRUE;
 
 io_err:
     fprintf(cp_err, "Error: savestate: write failed on \"%s\".\n", fname);
     (void) fclose(fp);
+    return FALSE;
+}
+
+
+void
+com_savestate(wordlist *wl)
+{
+    if (!ft_curckt || !ft_curckt->ci_ckt) {
+        fprintf(cp_err, "Error: savestate: there is no circuit loaded.\n");
+        return;
+    }
+    if (!wl || !wl->wl_word || !*wl->wl_word) {
+        fprintf(cp_err, "Usage: savestate <file>\n");
+        return;
+    }
+    (void) ckt_write_checkpoint(ft_curckt->ci_ckt, wl->wl_word);
 }
 
 
