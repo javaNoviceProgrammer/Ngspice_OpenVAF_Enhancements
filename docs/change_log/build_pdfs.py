@@ -88,12 +88,44 @@ def githubify(src_text):
     return re.sub(r"\[([^\]]*)\]\(([^)\s]+)\)", rewrite, src_text)
 
 
+BREAKPATHS_LUA = r"""
+-- Insert zero-cost line-break opportunities after path/command separators inside
+-- text and inline code, so long file paths and commands WRAP within their table
+-- column instead of overflowing. \allowbreak only breaks when a line would overflow,
+-- so adding them liberally is harmless.
+local BREAK_AFTER = { ['/']=true, ['_']=true, ['.']=true, ['-']=true, [':']=true, ['(']=true, [',']=true }
+local function split_breaks(s, mk)
+  local out, buf = {}, ""
+  for i = 1, #s do
+    local c = s:sub(i, i)
+    buf = buf .. c
+    if BREAK_AFTER[c] and i < #s then
+      out[#out+1] = mk(buf)
+      out[#out+1] = pandoc.RawInline('latex', '\\allowbreak{}')
+      buf = ""
+    end
+  end
+  if #buf > 0 then out[#out+1] = mk(buf) end
+  return out
+end
+local function long_enough(s) return #s >= 8 end
+function Str(el)
+  if not long_enough(el.text) then return nil end
+  return split_breaks(el.text, pandoc.Str)
+end
+function Code(el)
+  if not long_enough(el.text) then return nil end
+  return split_breaks(el.text, function(t) return pandoc.Code(t) end)
+end
+"""
+
+
 def main():
     with tempfile.TemporaryDirectory() as td:
         hdr = os.path.join(td, "h.tex")
         lua = os.path.join(td, "w.lua")
         open(hdr, "w").write(HEADER_TEX)
-        open(lua, "w").write(WIDTHS_LUA)
+        open(lua, "w").write(WIDTHS_LUA + BREAKPATHS_LUA)
         for stem, title in REPORTS:
             md_in = os.path.join(HERE, stem + ".md")
             md_tmp = os.path.join(td, stem + ".md")

@@ -116,6 +116,38 @@ def process(path, first_heading_id):
     return "\n".join(out)
 
 
+BREAKPATHS_LUA = r"""
+-- Insert zero-cost line-break opportunities after path/command separators inside
+-- text and inline code, so long file paths and commands WRAP within their table
+-- column instead of overflowing. \allowbreak only breaks when a line would overflow,
+-- so adding them liberally is harmless.
+local BREAK_AFTER = { ['/']=true, ['_']=true, ['.']=true, ['-']=true, [':']=true, ['(']=true, [',']=true }
+local function split_breaks(s, mk)
+  local out, buf = {}, ""
+  for i = 1, #s do
+    local c = s:sub(i, i)
+    buf = buf .. c
+    if BREAK_AFTER[c] and i < #s then
+      out[#out+1] = mk(buf)
+      out[#out+1] = pandoc.RawInline('latex', '\\allowbreak{}')
+      buf = ""
+    end
+  end
+  if #buf > 0 then out[#out+1] = mk(buf) end
+  return out
+end
+local function long_enough(s) return #s >= 8 end
+function Str(el)
+  if not long_enough(el.text) then return nil end
+  return split_breaks(el.text, pandoc.Str)
+end
+function Code(el)
+  if not long_enough(el.text) then return nil end
+  return split_breaks(el.text, function(t) return pandoc.Code(t) end)
+end
+"""
+
+
 def main():
     parts = ["# Part I — The User Handbook {#part-i}", ""]
     for name, cid in CHAPTERS:
@@ -208,7 +240,7 @@ end
         lua = os.path.join(td, "widths.lua")
         open(md, "w").write(combined)
         open(hdr, "w").write(header_tex)
-        open(lua, "w").write(widths_lua)
+        open(lua, "w").write(widths_lua + BREAKPATHS_LUA)
         cmd = [
             "pandoc", md, "-f", "gfm+attributes", "-o", OUT,
             "--pdf-engine=xelatex", "--toc", "--toc-depth=2",
