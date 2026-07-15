@@ -373,10 +373,95 @@ else:
           False, outl[-300:])
 
 
+# ============= scalability: fast fit + shared realization at 8 ports ============
+# An 8-port coupled ladder -- the size the original converter struggled at (its
+# pole solve stacked all N^2 elements into one dense least-squares: ~190 s and an
+# O(N^4)-memory matrix). The fast (block-reduced) vector fit, reciprocity (fit the
+# symmetric upper triangle only), and the shared-pole realization (filter each
+# input port once, O(N*Np) laplace_nd instead of O(N^2*Np)) bring it down to a few
+# seconds and a compact model. This checks that an 8-port converts+compiles and
+# that the shared-realization device matches the original network in AC.
+import time
+def Yladn(f, n):
+    s = 1j * 2 * math.pi * f
+    gs, gp, Csh, Lc = 1/30.0, 1/150.0, 2e-12, 8e-9   # noqa: E741
+    M = [[0j]*n for _ in range(n)]
+    for i in range(n):
+        M[i][i] = gs + gp + s*Csh
+    for i in range(n-1):
+        y = 1.0/(s*Lc)
+        M[i][i] += y; M[i+1][i+1] += y; M[i][i+1] -= y; M[i+1][i] -= y
+    Mi = mat_inv(M)
+    return [[(gs if i == j else 0j) - gs*gs*Mi[i][j] for j in range(n)] for i in range(n)]
+
+
+NB = 8
+NODES = "abcdefgh"
+freqsL8 = [10 ** (6 + 3.5 * k / 140) for k in range(141)]
+write_snp(os.path.join(HERE, "ladder8.s8p"), freqsL8, lambda f: Yladn(f, NB), NB)
+conn8 = " ".join(f"p{i+1}" for i in range(NB))
+loads8 = "".join(f"Rl{i+1} p{i+1} 0 50\n" for i in range(1, NB))
+
+
+def ladsub8():
+    s = ""
+    for i in range(NB):
+        s += f"Rs{i+1} p{i+1} n{NODES[i]} 30\nRp{i+1} n{NODES[i]} 0 150\nCq{i+1} n{NODES[i]} 0 2e-12\n"
+    for i in range(NB-1):
+        s += f"Lq{i+1} n{NODES[i]} n{NODES[i+1]} 8e-9\n"
+    return s
+
+
+probes8 = [1, 2, 4, NB]
+pr8 = " ".join(f"v(p{i})" for i in probes8)
+
+
+def ac8(dut, pre=""):
+    return run(f"""* 8-port ladder AC
+Vs in 0 dc 0 ac 1
+Rs in p1 50
+{dut}{loads8}.control
+{pre}
+ac dec 15 1e6 3e9
+wrdata _o.dat {pr8}
+.endc
+.end
+""")
+
+
+cleanup("ladder8.va", "ladder8.osdi")
+t0 = time.time()
+run("* convert 8-port\nRd 1 0 1k\n.control\npre_snp ladder8.s8p lad8\n.endc\n.end\n")
+tconv = time.time() - t0
+made8 = os.path.exists(os.path.join(HERE, "ladder8.osdi"))
+nlap = sum(l.count("laplace_nd") for l in open(os.path.join(HERE, "ladder8.va"))) if \
+    os.path.exists(os.path.join(HERE, "ladder8.va")) else 0
+check("[scalability] `pre_snp` converts an 8-port coupled network with the fast "
+      "vector fit + shared-pole realization (dense O(N^4) pole solve took ~190s before)",
+      made8, f"(convert+compile {tconv:.1f}s, {nlap} laplace_nd for {NB} ports)")
+
+a8, _ = ac8(ladsub8())
+n8, _ = ac8("N1 " + conn8 + " mm\n.model mm lad8\n", "pre_osdi ladder8.osdi")
+if made8 and a8 and n8:
+    m = min(len(a8), len(n8))
+    e8 = 0.0
+    for c in range(len(probes8)):            # wrdata AC: 3 cols/vec -> 1+3c, 2+3c
+        ref = [complex(a8[k][1+3*c], a8[k][2+3*c]) for k in range(m)]
+        tst = [complex(n8[k][1+3*c], n8[k][2+3*c]) for k in range(m)]
+        mx = max(abs(v) for v in ref) + 1e-30
+        e8 = max(e8, max(abs(tst[k]-ref[k]) for k in range(m)) / mx)
+    check("[scalability] the 8-port shared-realization device matches the original "
+          "coupled network in AC across all probed ports", e8 < 5e-2,
+          f"(max rel err {e8:.2e})")
+else:
+    check("[scalability] the 8-port shared-realization device matches in AC", False)
+
+
 # tidy
 cleanup("_t.cir", "resonator.s2p", "resonator.va", "resonator.osdi",
         "star.s3p", "star.va", "star.osdi",
-        "ladder4.s4p", "ladder4.va", "ladder4.osdi")
+        "ladder4.s4p", "ladder4.va", "ladder4.osdi",
+        "ladder8.s8p", "ladder8.va", "ladder8.osdi")
 
 print(f"\n{passed} passed, {failed} failed")
 raise SystemExit(1 if failed else 0)

@@ -191,7 +191,7 @@ static int parse_touchstone(const char *fn, TS *out, char *msg, int msglen)
     }
     if (N <= 0) {
         int c;
-        for (c = 1; c <= 16; c++) if (nn % (1 + 2*c*c) == 0) { N = c; break; }
+        for (c = 1; c <= 512; c++) if (nn % (1 + 2*c*c) == 0) { N = c; break; }
     }
     if (N <= 0) { free(nums); snprintf(msg,(size_t)msglen,"cannot determine port count"); return 1; }
     int rec = 1 + 2*N*N;
@@ -200,12 +200,12 @@ static int parse_touchstone(const char *fn, TS *out, char *msg, int msglen)
     out->freqs = (double*) malloc((size_t) nf*sizeof(double));
     out->S = (cplx*) malloc((size_t) nf*N*N*sizeof(cplx));
     out->nf = nf; out->N = N; out->z0 = z0; out->ptype = ptype;
+    cplx *pv = (cplx*) malloc((size_t) N*N*sizeof(cplx));   /* heap: N may be large */
     int r, kk;
     for (r = 0; r < nf; r++) {
         double *chunk = nums + (long) r*rec;
         out->freqs[r] = chunk[0]*fmul;
         double *vals = chunk+1;
-        cplx pv[16*16];
         for (kk = 0; kk < N*N; kk++) {
             double a = vals[2*kk], b = vals[2*kk+1];
             if (!strcmp(fmt,"MA")) pv[kk] = a*cexp(I*b*M_PI/180.0);
@@ -217,7 +217,7 @@ static int parse_touchstone(const char *fn, TS *out, char *msg, int msglen)
         if (N == 2) { M[0]=pv[0]; M[2]=pv[1]; M[1]=pv[2]; M[3]=pv[3]; }
         else for (kk = 0; kk < N*N; kk++) M[kk] = pv[kk];
     }
-    free(nums);
+    free(pv); free(nums);
     return 0;
 }
 
@@ -247,16 +247,6 @@ static int to_Y(const TS *t, cplx *Yout)
 }
 
 /* ============================ vector fitting ============================ */
-/* layout: for each pole, 0='real', 1='cc-start' (its conjugate is the next). */
-static int build_layout(const cplx *poles, int Np, int *lay)
-{
-    int i = 0, m = 0;
-    while (i < Np) {
-        if (fabs(cimag(poles[i])) < 1e-9*fabs(creal(poles[i]))+1e-30) { lay[m++] = 0; i += 1; }
-        else { lay[m++] = 1; i += 2; }
-    }
-    return m;   /* number of blocks */
-}
 
 /* complex partial-fraction basis (real-valued cc combos), Ns x Np, row-major */
 static void build_basis(const cplx *s, int Ns, const cplx *poles, int Np, cplx *A)
@@ -287,41 +277,111 @@ static void ctil_to_cres(const double *ctil, const cplx *poles, int Np, cplx *cr
     }
 }
 
-/* One vector-fit run (fixed pole count). s,F normalized. Returns fit in poles/res/d/e. */
-static void vector_fit(const cplx *s, int Ns, const cplx *F, int Nf, int Np,
-                       cplx *poles, cplx *res, double *d, double *e, int n_iter)
+/* Canonicalize a pole set into the layout every consumer here assumes: real poles
+ * (exact Im=0) first, then complex poles as ADJACENT exact conjugate pairs. The
+ * Durand-Kerner roots of the (real) sigma numerator are conjugate-symmetric in
+ * theory, but numerical noise can leave a "pair" split or a near-real pole with a
+ * tiny nonzero imag -- which makes build_basis / ctil_to_cres walk one slot past
+ * the array (heap overflow). Rebuilding pairs from the Im>0 representatives (using
+ * exact conj) guarantees the structure and cleans the asymmetry. */
+static void canon_poles(cplx *p, int Np)
 {
-    int iter, i, j, k, r;
+    int i, no = 0;
+    cplx *out = (cplx*) malloc((size_t) Np*sizeof(cplx));
+    for (i = 0; i < Np; i++)
+        if (fabs(cimag(p[i])) < 1e-6*cabs(p[i])) p[i] = creal(p[i]);   /* snap near-real */
+    for (i = 0; i < Np; i++)
+        if (cimag(p[i]) == 0.0 && no < Np) out[no++] = p[i];           /* reals first */
+    for (i = 0; i < Np; i++)
+        if (cimag(p[i]) > 0.0) {                                       /* one per pair */
+            if (no+1 < Np) { out[no++] = p[i]; out[no++] = conj(p[i]); }
+            else if (no < Np) out[no++] = creal(p[i]);                 /* no room -> real */
+        }
+    while (no < Np) { out[no] = -fabs(creal(p[no])) ; no++; }          /* pad (safety) */
+    for (i = 0; i < Np; i++) p[i] = out[i];
+    free(out);
+}
+
+/* Householder-reduce B (m x nB, row-major) in place, applying every reflector to
+ * the tail T (m x nT) and rhs g (m). After this the rows [nB..m) of T and g are a
+ * reduced least-squares system in the remaining (shared) unknowns only -- the per-
+ * element unknowns spanned by B have been projected out. (Fast Vector Fitting:
+ * Deschrijver et al. 2008 -- avoids ever forming the full block-arrow matrix.) */
+static void hh_reduce(double *B, double *T, double *g, int m, int nB, int nT)
+{
+    int i, j, k;
+    double *v = (double*) malloc((size_t) m * sizeof(double));
+    for (k = 0; k < nB; k++) {
+        double norm = 0.0;
+        for (i = k; i < m; i++) norm += B[i*nB+k]*B[i*nB+k];
+        norm = sqrt(norm);
+        if (norm == 0.0) continue;
+        double alpha = (B[k*nB+k] >= 0.0) ? -norm : norm;
+        for (i = 0; i < k; i++) v[i] = 0.0;
+        v[k] = B[k*nB+k] - alpha;
+        for (i = k+1; i < m; i++) v[i] = B[i*nB+k];
+        double vn2 = 0.0;
+        for (i = k; i < m; i++) vn2 += v[i]*v[i];
+        if (vn2 == 0.0) continue;
+        for (j = k; j < nB; j++) {
+            double sdot = 0.0; for (i = k; i < m; i++) sdot += v[i]*B[i*nB+j];
+            sdot = sdot*2.0/vn2; for (i = k; i < m; i++) B[i*nB+j] -= sdot*v[i];
+        }
+        for (j = 0; j < nT; j++) {
+            double sdot = 0.0; for (i = k; i < m; i++) sdot += v[i]*T[i*nT+j];
+            sdot = sdot*2.0/vn2; for (i = k; i < m; i++) T[i*nT+j] -= sdot*v[i];
+        }
+        { double sdot = 0.0; for (i = k; i < m; i++) sdot += v[i]*g[i];
+          sdot = sdot*2.0/vn2; for (i = k; i < m; i++) g[i] -= sdot*v[i]; }
+    }
+    free(v);
+}
+
+/* One vector-fit run (fixed pole count) over the element indices in elems[0..Ne).
+ * s,F normalized; F is [N*N][Ns], res/d/e are written only for the listed elements.
+ * Common poles are identified with the FAST (block-reduced) pole solve, so cost is
+ * O(Ne*Ns*Np^2) with O(Ne*Ns*Np) memory instead of the O(Ne^2) dense stack. Stops
+ * early once the poles stop moving. */
+static void vector_fit(const cplx *s, int Ns, const cplx *F,
+                       const int *elems, int Ne, int Np,
+                       cplx *poles, cplx *res, double *d, double *e, int maxiter)
+{
+    int iter, i, j, k, r, ke;
     cplx *A = (cplx*) malloc((size_t) Ns*Np*sizeof(cplx));
-    for (iter = 0; iter < n_iter; iter++) {
+    int m = 2*Ns, nB = Np+2, nT = Np, redrows = 2*Ns - (Np+2);
+    if (redrows < 0) redrows = 0;
+    long stackrows = (long) redrows * Ne;
+    double *SC = (double*) malloc((size_t) stackrows * Np * sizeof(double));
+    double *Sb = (double*) malloc((size_t) stackrows * sizeof(double));
+    double *B  = (double*) malloc((size_t) m * nB * sizeof(double));
+    double *T  = (double*) malloc((size_t) m * nT * sizeof(double));
+    double *g  = (double*) malloc((size_t) m * sizeof(double));
+
+    for (iter = 0; iter < maxiter; iter++) {
         build_basis(s, Ns, poles, Np, A);
-        int ncol = Nf*(Np+2) + Np;
-        int nrow = Ns*Nf;
-        /* real-stacked LS: (2*nrow) x ncol */
-        double *M = (double*) calloc((size_t)(2*nrow)*ncol, sizeof(double));
-        double *b = (double*) calloc((size_t)(2*nrow), sizeof(double));
-        for (k = 0; k < Nf; k++) {
+        long sr = 0;
+        for (ke = 0; ke < Ne; ke++) {
+            k = elems[ke];
             for (r = 0; r < Ns; r++) {
-                int row = k*Ns + r;
-                cplx Fkr = F[(long)k*Ns+r];
+                cplx Fkr = F[(long)k*Ns + r];
                 for (j = 0; j < Np; j++) {
-                    cplx a = A[r*Np+j];
-                    M[(row)*ncol + k*(Np+2)+j]        = creal(a);
-                    M[(row+nrow)*ncol + k*(Np+2)+j]   = cimag(a);
-                    cplx neg = -Fkr*a;
-                    M[(row)*ncol + Nf*(Np+2)+j]       = creal(neg);
-                    M[(row+nrow)*ncol + Nf*(Np+2)+j]  = cimag(neg);
+                    cplx a = A[r*Np+j], neg = -Fkr*a;
+                    B[r*nB + j]      = creal(a);   B[(r+Ns)*nB + j]   = cimag(a);
+                    T[r*nT + j]      = creal(neg); T[(r+Ns)*nT + j]   = cimag(neg);
                 }
-                M[(row)*ncol + k*(Np+2)+Np]        = 1.0;   /* d (real) */
-                M[(row)*ncol + k*(Np+2)+Np+1]      = creal(s[r]);   /* e*s */
-                M[(row+nrow)*ncol + k*(Np+2)+Np+1] = cimag(s[r]);
-                b[row]      = creal(Fkr);
-                b[row+nrow] = cimag(Fkr);
+                B[r*nB + Np]     = 1.0;         B[(r+Ns)*nB + Np]    = 0.0;         /* d */
+                B[r*nB + Np+1]   = creal(s[r]); B[(r+Ns)*nB + Np+1]  = cimag(s[r]); /* e*s */
+                g[r]             = creal(Fkr);  g[r+Ns]              = cimag(Fkr);
+            }
+            hh_reduce(B, T, g, m, nB, nT);
+            for (i = nB; i < m; i++) {
+                for (j = 0; j < Np; j++) SC[sr*Np + j] = T[i*nT + j];
+                Sb[sr] = g[i];
+                sr++;
             }
         }
-        double *x = (double*) calloc((size_t) ncol, sizeof(double));
-        lstsq_real(M, b, 2*nrow, ncol, x);
-        double *ctil = x + Nf*(Np+2);
+        double *ctil = (double*) calloc((size_t) Np, sizeof(double));
+        lstsq_real(SC, Sb, (int) sr, Np, ctil);
         cplx *cres = (cplx*) malloc((size_t) Np*sizeof(cplx));
         ctil_to_cres(ctil, poles, Np, cres);
         /* relocate: roots of  D(s) + sum cres_i * D(s)/(s-a_i) */
@@ -334,7 +394,7 @@ static void vector_fit(const cplx *s, int Ns, const cplx *F, int Nf, int Np,
         for (i = 0; i < Np; i++) {
             int t = 0; for (j = 0; j < Np; j++) if (j != i) sub[t++] = poles[j];
             poly_from_roots(sub, Np-1, Di);                     /* len Np, degree Np-1 */
-            for (j = 0; j < Np; j++) numsig[j+1] += cres[i]*Di[j]; /* align: Di is degree Np-1 (len Np), numsig degree Np (len Np+1) */
+            for (j = 0; j < Np; j++) numsig[j+1] += cres[i]*Di[j];
         }
         cplx *newp = (cplx*) malloc((size_t) Np*sizeof(cplx));
         poly_roots(numsig, Np, newp);
@@ -348,31 +408,56 @@ static void vector_fit(const cplx *s, int Ns, const cplx *F, int Nf, int Np,
                                  else if (fabs(creal(newp[j])-creal(newp[i]))<1e-30 && cimag(newp[j])<cimag(newp[i])) swap = 1; }
             if (swap) { cplx t = newp[i]; newp[i]=newp[j]; newp[j]=t; }
         }
+        canon_poles(newp, Np);   /* exact adjacent conjugate pairs (prevents OOB) */
+        double mv = 0.0;   /* max relative pole movement -> convergence */
+        for (i = 0; i < Np; i++) {
+            double dm = cabs(newp[i]-poles[i])/(cabs(poles[i])+1e-300);
+            if (dm > mv) mv = dm;
+        }
         for (i = 0; i < Np; i++) poles[i] = newp[i];
-        free(M); free(b); free(x); free(cres); free(D); free(numsig); free(Di); free(sub); free(newp);
+        free(ctil); free(cres); free(D); free(numsig); free(Di); free(sub); free(newp);
+        if (mv < 1e-4) break;              /* poles settled -- stop early (Fix #3) */
     }
-    /* final residues (fixed poles) */
+    /* final residues (fixed poles), per fitted element */
     build_basis(s, Ns, poles, Np, A);
-    for (k = 0; k < Nf; k++) {
+    for (ke = 0; ke < Ne; ke++) {
+        k = elems[ke];
         int ncol = Np+2, nrow = Ns;
         double *M = (double*) calloc((size_t)(2*nrow)*ncol, sizeof(double));
-        double *b = (double*) calloc((size_t)(2*nrow), sizeof(double));
+        double *bb = (double*) calloc((size_t)(2*nrow), sizeof(double));
         for (r = 0; r < Ns; r++) {
             cplx Fkr = F[(long)k*Ns+r];
             for (j = 0; j < Np; j++) { M[r*ncol+j]=creal(A[r*Np+j]); M[(r+nrow)*ncol+j]=cimag(A[r*Np+j]); }
             M[r*ncol+Np]=1.0;
             M[r*ncol+Np+1]=creal(s[r]); M[(r+nrow)*ncol+Np+1]=cimag(s[r]);
-            b[r]=creal(Fkr); b[r+nrow]=cimag(Fkr);
+            bb[r]=creal(Fkr); bb[r+nrow]=cimag(Fkr);
         }
         double *x = (double*) calloc((size_t) ncol, sizeof(double));
-        lstsq_real(M, b, 2*nrow, ncol, x);
+        lstsq_real(M, bb, 2*nrow, ncol, x);
         cplx *cr = (cplx*) malloc((size_t) Np*sizeof(cplx));
         ctil_to_cres(x, poles, Np, cr);
         for (j = 0; j < Np; j++) res[(long)k*Np+j] = cr[j];
         d[k] = x[Np]; e[k] = x[Np+1];
-        free(M); free(b); free(x); free(cr);
+        free(M); free(bb); free(x); free(cr);
     }
-    free(A);
+    free(A); free(SC); free(Sb); free(B); free(T); free(g);
+}
+
+/* Reciprocal network? (S/Y symmetric -> fit only the upper triangle.) F is the
+ * Y data [N*N][Ns]; compare Y_ij vs Y_ji across a frequency subset. */
+static int is_reciprocal(const cplx *F, int N, int Ns)
+{
+    double maxd = 0.0, maxv = 0.0;
+    int i, j, r;
+    int step = Ns/16 > 0 ? Ns/16 : 1;
+    for (i = 0; i < N; i++) for (j = i+1; j < N; j++)
+        for (r = 0; r < Ns; r += step) {
+            cplx a = F[(long)(i*N+j)*Ns+r], b = F[(long)(j*N+i)*Ns+r];
+            double dd = cabs(a-b), va = cabs(a);
+            if (dd > maxd) maxd = dd;
+            if (va > maxv) maxv = va;
+        }
+    return maxd <= 1e-6*(maxv+1e-300);
 }
 
 static void seed_poles(double fmin, double fmax, int npair, cplx *p)
@@ -391,7 +476,14 @@ static void seed_poles(double fmin, double fmax, int npair, cplx *p)
 static void emit_arr(FILE *f, const double *v, int n)
 {
     int i; fprintf(f, "'{");
-    for (i = 0; i < n; i++) fprintf(f, "%s%.12g", i?", ":"", v[i]);
+    for (i = 0; i < n; i++) {
+        char buf[64];
+        snprintf(buf, sizeof buf, "%.12g", v[i]);
+        /* Force a REAL literal: `%.12g` prints 1.0 as "1", and OpenVAF crashes on an
+         * integer literal inside a laplace_nd coefficient array assigned to a
+         * variable (index-out-of-bounds in its lowering). Append ".0" if needed. */
+        fprintf(f, "%s%s%s", i?", ":"", buf, strpbrk(buf, ".eE") ? "" : ".0");
+    }
     fprintf(f, "}");
 }
 
@@ -479,6 +571,14 @@ int snp2va_convert(const char *snpfile, const char *vafile, const char *module,
     for (i = 0; i < N; i++) for (j = 0; j < N; j++) for (r = 0; r < nf; r++)
         F[(long)(i*N+j)*nf+r] = Y[(long)r*N*N + i*N+j];
 
+    /* reciprocity: a passive network gives symmetric Y, so fit only the upper
+     * triangle (N(N+1)/2 elements) and mirror -- ~2x fewer LS solves (Fix #2). */
+    int reciprocal = is_reciprocal(F, N, nf);
+    int *elems = (int*) malloc((size_t) Nf*sizeof(int));
+    int Ne = 0;
+    if (reciprocal) { for (i = 0; i < N; i++) for (j = i; j < N; j++) elems[Ne++] = i*N+j; }
+    else            { for (i = 0; i < Nf; i++) elems[Ne++] = i; }
+
     /* ---- order selection: climb, keep best STABLE fit, knee near a floor ---- */
     double fmin = ts.freqs[0], fmax = ts.freqs[nf-1], tol = 1e-3;
     cplx *bestP=NULL,*bestRes=NULL; double *bestD=NULL,*bestE=NULL; int bestNp=0; double bestErr=1e300;
@@ -494,14 +594,15 @@ int snp2va_convert(const char *snpfile, const char *vafile, const char *module,
         cplx *p0 = (cplx*) malloc((size_t) Np*sizeof(cplx));
         seed_poles(fmin, fmax, npair, p0);
         for (i = 0; i < Np; i++) P[i] = p0[i]/wn;
-        vector_fit(sn, nf, F, Nf, Np, P, res, dd, ee, 12);
-        /* un-normalize */
+        vector_fit(sn, nf, F, elems, Ne, Np, P, res, dd, ee, 10);
+        /* un-normalize (fitted elements only) */
         for (i = 0; i < Np; i++) P[i] *= wn;
-        for (k = 0; k < Nf; k++) { for (i = 0; i < Np; i++) res[(long)k*Np+i] *= wn; ee[k] /= wn; }
-        /* rms rel error + stability */
+        for (int ei = 0; ei < Ne; ei++) { k = elems[ei]; for (i = 0; i < Np; i++) res[(long)k*Np+i] *= wn; ee[k] /= wn; }
+        /* rms rel error + stability (over fitted elements; Y symmetric so representative) */
         double err = 0.0; int stable = 1;
         for (i = 0; i < Np; i++) if (creal(P[i]) > 1e-6) stable = 0;
-        for (k = 0; k < Nf; k++) {
+        for (int ei = 0; ei < Ne; ei++) {
+            k = elems[ei];
             double numr=0, denr=0;
             for (r = 0; r < nf; r++) {
                 cplx fit = dd[k] + s[r]*ee[k];
@@ -544,73 +645,101 @@ int snp2va_convert(const char *snpfile, const char *vafile, const char *module,
     else if (bestP) { P=bestP;res=bestRes;dd=bestD;ee=bestE;Np=bestNp; }
     else { P=prevP;res=prevRes;dd=prevD;ee=prevE;Np=prevNp; }
 
+    /* mirror the fitted upper triangle into the lower one (reciprocal case, Fix #2) */
+    if (reciprocal) {
+        for (i = 0; i < N; i++) for (j = i+1; j < N; j++) {
+            long u = i*N+j, l = j*N+i;
+            for (k = 0; k < Np; k++) res[l*Np+k] = res[u*Np+k];
+            dd[l] = dd[u]; ee[l] = ee[u];
+        }
+    }
+
     /* force the improper (e*s) capacitance matrix passive so transient is stable */
     psd_project_E(ee, N);
 
-    /* ---- emit VA ----
-     * Realize each Y_ij(s) = d + e*s + sum_k res_k/(s-p_k) as a PARALLEL bank of
-     * low-order laplace_nd sections rather than one degree-Np rational. A single
-     * degree-Np polynomial has coefficients spanning ~|p|^Np (e.g. ~1e79 for 8
-     * poles at 1e10 rad/s); laplace_nd's transient (companion-form) realization
-     * of that is numerically unstable and diverges, even though the poles are all
-     * in the LHP and the AC response (evaluated pointwise) is fine. Splitting into
-     * first-order (real pole) and second-order (conjugate pair) sections keeps
-     * every coefficient <= O(|p|^2) ~ 1e20, so the transient integration is
-     * well-conditioned and stable. d becomes a plain conductance and e*s a ddt. */
+    /* ---- emit VA (shared-pole realization; Fix #4) ----
+     * All N^2 elements share the SAME poles, so realize the pole-filters ONCE per
+     * input port and form each output current as a cheap weighted sum, instead of
+     * one independent laplace_nd bank per element. That is N*Np filter sections and
+     * O(N*Np) OSDI state, not O(N^2*Np) -- the difference between a model that
+     * compiles/simulates at large N and one that does not. Each section is still a
+     * well-conditioned 1st/2nd-order laplace_nd (a real pole -> res/(s-p); a conj
+     * pair -> a real "cos" basis (s-sigma)/D and "sin" basis omega/D, with the
+     * residue entering as a real weight), so coefficients stay <= O(|p|^2) and the
+     * transient is stable. d is a plain conductance, e*s a ddt (PSD-projected). */
+    int nsec = 0;
+    int *sc_pole = (int*) malloc((size_t) Np*sizeof(int));
+    int *sc_kind = (int*) malloc((size_t) Np*sizeof(int));   /* 0 real, 1 cos, 2 sin */
+    for (k = 0; k < Np; ) {
+        int is_pair = (k+1 < Np) && (fabs(cimag(P[k])) > 1e-6*cabs(P[k]));
+        if (!is_pair) { sc_pole[nsec]=k; sc_kind[nsec]=0; nsec++; k += 1; }
+        else { sc_pole[nsec]=k; sc_kind[nsec]=1; nsec++;
+               sc_pole[nsec]=k; sc_kind[nsec]=2; nsec++; k += 2; }
+    }
     FILE *fo = fopen(vafile, "w");
     if (!fo) { snprintf(msg,(size_t)msglen,"cannot write '%s'", vafile); ts_free(&ts); return 1; }
     fprintf(fo, "`include \"disciplines.vams\"\n\n");
     fprintf(fo, "// Generated by pre_snp from %s\n", snpfile);
-    fprintf(fo, "// %d-port, %d common poles; realized as parallel laplace_nd sections (AC + transient).\n", N, Np);
+    fprintf(fo, "// %d-port, %d common poles; shared-pole realization (%d laplace_nd sections, AC + transient).\n",
+            N, Np, N*nsec);
     fprintf(fo, "module %s(", module);
     for (i = 0; i < N; i++) fprintf(fo, "%sp%d", i?", ":"", i+1);
     fprintf(fo, ");\n    inout ");
     for (i = 0; i < N; i++) fprintf(fo, "%sp%d", i?", ":"", i+1);
     fprintf(fo, ";\n    electrical ");
     for (i = 0; i < N; i++) fprintf(fo, "%sp%d", i?", ":"", i+1);
-    fprintf(fo, ";\n    analog begin\n");
+    fprintf(fo, ";\n");
+    /* one filtered signal per (input port, section) */
+    for (j = 0; j < N; j++) {
+        fprintf(fo, "    real ");
+        for (int sctr = 0; sctr < nsec; sctr++) fprintf(fo, "%sf%d_%d", sctr?", ":"", j, sctr);
+        fprintf(fo, ";\n");
+    }
+    fprintf(fo, "    analog begin\n");
+    /* compute the shared pole-filters (each laplace_nd instantiated once) */
+    for (j = 0; j < N; j++) {
+        for (int sc = 0; sc < nsec; sc++) {
+            int kk = sc_pole[sc];
+            fprintf(fo, "        f%d_%d = laplace_nd(V(p%d), ", j, sc, j+1);
+            if (sc_kind[sc] == 0) {
+                double num[1] = { 1.0 }, de[2] = { -creal(P[kk]), 1.0 };
+                emit_arr(fo, num, 1); fprintf(fo, ", "); emit_arr(fo, de, 2);
+            } else {
+                double sig = creal(P[kk]), om = cimag(P[kk]);
+                double de[3] = { sig*sig+om*om, -2.0*sig, 1.0 };
+                if (sc_kind[sc] == 1) { double num[2] = { -sig, 1.0 }; emit_arr(fo, num, 2); }
+                else                  { double num[1] = { om };        emit_arr(fo, num, 1); }
+                fprintf(fo, ", "); emit_arr(fo, de, 3);
+            }
+            fprintf(fo, ");\n");
+        }
+    }
+    /* output currents: weighted sums of the shared filters + d + e*s */
     for (i = 0; i < N; i++) {
         int first = 1;
         fprintf(fo, "        I(p%d) <+ ", i+1);
         for (j = 0; j < N; j++) {
             int idx = i*N+j;
             const cplx *rk = res + (long) idx*Np;
-            if (fabs(dd[idx]) > 1e-30) {                 /* constant term -> conductance */
-                term_sep(fo, &first);
-                fprintf(fo, "(%.12g)*V(p%d)", dd[idx], j+1);
-            }
-            if (fabs(ee[idx]) > 1e-30) {                 /* improper e*s term -> capacitance */
-                term_sep(fo, &first);
-                fprintf(fo, "(%.12g)*ddt(V(p%d))", ee[idx], j+1);
-            }
-            k = 0;
-            while (k < Np) {
-                int is_pair = (k+1 < Np) && (fabs(cimag(P[k])) > 1e-6*cabs(P[k]));
-                term_sep(fo, &first);
-                fprintf(fo, "laplace_nd(V(p%d), ", j+1);
-                if (!is_pair) {                          /* real pole: res/(s - p) */
-                    double num[1] = { creal(rk[k]) };
-                    double de[2]  = { -creal(P[k]), 1.0 };
-                    emit_arr(fo, num, 1); fprintf(fo, ", "); emit_arr(fo, de, 2);
-                    k += 1;
-                } else {                                 /* conj pair {p,p*}, res {r,r*} */
-                    cplx p = P[k], rr = rk[k];
-                    double num[2] = { -2.0*creal(rr*conj(p)), 2.0*creal(rr) };
-                    double de[3]  = { creal(p*conj(p)), -2.0*creal(p), 1.0 };
-                    emit_arr(fo, num, 2); fprintf(fo, ", "); emit_arr(fo, de, 3);
-                    k += 2;
-                }
-                fprintf(fo, ")");
+            if (fabs(dd[idx]) > 1e-30) { term_sep(fo, &first); fprintf(fo, "(%.12g)*V(p%d)", dd[idx], j+1); }
+            if (fabs(ee[idx]) > 1e-30) { term_sep(fo, &first); fprintf(fo, "(%.12g)*ddt(V(p%d))", ee[idx], j+1); }
+            for (int sc = 0; sc < nsec; sc++) {
+                int kk = sc_pole[sc];
+                double w = (sc_kind[sc]==0) ?  creal(rk[kk])
+                         : (sc_kind[sc]==1) ?  2.0*creal(rk[kk])
+                                            : -2.0*cimag(rk[kk]);
+                if (fabs(w) > 1e-30) { term_sep(fo, &first); fprintf(fo, "(%.12g)*f%d_%d", w, j, sc); }
             }
         }
-        if (first) fprintf(fo, "0.0");                   /* an all-zero row (should not happen) */
+        if (first) fprintf(fo, "0.0");
         fprintf(fo, ";\n");
     }
     fprintf(fo, "    end\nendmodule\n");
     fclose(fo);
+    free(sc_pole); free(sc_kind);
     snprintf(msg,(size_t)msglen,"%d-port, %d poles, rms rel err %.2e", N, Np, bestErr<1e300?bestErr:0.0);
     /* frees (leak-tolerant: one-shot tool) */
-    free(Y); free(s); free(sn); free(F); ts_free(&ts);
+    free(Y); free(s); free(sn); free(F); free(elems); ts_free(&ts);
     return 0;
 }
 
