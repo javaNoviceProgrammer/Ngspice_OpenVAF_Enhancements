@@ -53,7 +53,8 @@ typedef enum AnalysisType {
     AT_FIND, AT_WHEN,
     AT_AVG, AT_MIN, AT_MAX, AT_RMS, AT_PP,
     AT_INTEG, AT_DERIV,
-    AT_ERR, AT_ERR1, AT_ERR2, AT_ERR3, AT_MIN_AT, AT_MAX_AT
+    AT_ERR, AT_ERR1, AT_ERR2, AT_ERR3, AT_MIN_AT, AT_MAX_AT,
+    AT_PHASE_MARGIN, AT_GAIN_MARGIN
 } ANALYSIS_TYPE_T;
 
 static void measure_errMessage(const char *mName, const char *mFunction,
@@ -250,6 +251,12 @@ measure_function_type(char *operation)
         mFunctionType = AT_ERR2;
     else if (strcasecmp(mFunction, "ERR3") == 0)
         mFunctionType = AT_ERR3;
+    else if (strcasecmp(mFunction, "PHASE_MARGIN") == 0 ||
+             strcasecmp(mFunction, "PHASEMARGIN") == 0)
+        mFunctionType = AT_PHASE_MARGIN;
+    else if (strcasecmp(mFunction, "GAIN_MARGIN") == 0 ||
+             strcasecmp(mFunction, "GAINMARGIN") == 0)
+        mFunctionType = AT_GAIN_MARGIN;
     else
         mFunctionType = AT_UNKNOWN;
 
@@ -258,6 +265,24 @@ measure_function_type(char *operation)
     return (mFunctionType);
 }
 
+
+/* For AC/SP, a measured item like vdb(out) / vp(out) / vm(out) is a post-processed
+ * output function; only the base vector v(out) can be .save'd. Strip the magnitude/
+ * phase suffix down to v(...)/i(...) so the auto-save pre-pass saves the right thing
+ * (otherwise batch `.meas ac ... vdb(out)' left the node unsaved -> "no data saved
+ * for AC, analysis not run"). Plain v(out) and non-parenthesised tokens pass through.
+ * Caller frees. */
+static char *
+strip_ac_vec(const char *var, const char *analysis)
+{
+    if (cieq((char *) analysis, "ac") || cieq((char *) analysis, "sp")) {
+        char c0 = var[0];
+        const char *paren = strchr(var, '(');
+        if ((c0 == 'v' || c0 == 'V' || c0 == 'i' || c0 == 'I') && paren && paren > var + 1)
+            return tprintf("%c%s", c0, paren);
+    }
+    return copy(var);
+}
 
 /* -----------------------------------------------------------------
  * Function: Parse the measurement line and extract any variables in
@@ -353,16 +378,20 @@ measure_extract_variables(char *line)
                     } else {
                         /* We may have something like V(n1)=1
                            or v(n1)=2 , same with i() */
-                        measure_var = gettoks(variable);
+                        char *sv = strip_ac_vec(variable, analysis);
+                        measure_var = gettoks(sv);
                         com_save2(measure_var, analysis);
+                        tfree(sv);
                         status = FALSE;
                     }
                 }
                 if (variable2) {
                     /* We may have something like  v(n1)=v(n2)
                        v(n2) is handled here, same with i() */
-                    measure_var = gettoks(variable2);
+                    char *sv2 = strip_ac_vec(variable2, analysis);
+                    measure_var = gettoks(sv2);
                     com_save2(measure_var, analysis);
+                    tfree(sv2);
                     status = FALSE;
                 }
             }
@@ -1061,6 +1090,115 @@ measure_minMaxAvg(
         return MEASUREMENT_FAILURE;
     }
     return MEASUREMENT_OK;
+}
+
+
+/* -----------------------------------------------------------------
+ * Function: gain margin / phase margin from an AC loop-gain response.
+ *   phase_margin: PM = 180 + phase, evaluated at the (first) gain
+ *                 crossover where |gain| = 1 (0 dB).
+ *   gain_margin:  GM = -gain(dB), evaluated at the (first) phase
+ *                 crossover where the phase = -180 deg.
+ * The phase is UNWRAPPED first -- ngspice's vp() is wrapped to
+ * (-180,180], so the raw phase never actually equals -180 and a
+ * `when vp=-180' measure cannot find the phase crossover. m_measured
+ * holds the margin, m_measured_at the crossover frequency.
+ * ----------------------------------------------------------------- */
+static int
+measure_margin(
+    MEASUREPTR meas,              /* in : parsed measurement (m_vec = loop gain) */
+    ANALYSIS_TYPE_T mFunctionType /* in: AT_PHASE_MARGIN or AT_GAIN_MARGIN */
+    )
+{
+    struct dvec *d, *dScale;
+    int i, n;
+    double *gdb, *ph, *frq;
+    double prev, offset;
+
+    meas->m_measured = NAN;
+    meas->m_measured_at = NAN;
+
+    if (meas->m_vec == NULL) {
+        fprintf(cp_err, "Syntax error in meas line\n");
+        return MEASUREMENT_FAILURE;
+    }
+    if (!cieq(meas->m_analysis, "ac") && !cieq(meas->m_analysis, "sp")) {
+        fprintf(cp_err, "Error: gain_margin/phase_margin require an 'ac' measurement.\n");
+        return MEASUREMENT_FAILURE;
+    }
+    d = vec_get(meas->m_vec);
+    if (d == NULL) {
+        fprintf(cp_err, "Error: no such vector as %s.\n", meas->m_vec);
+        return MEASUREMENT_FAILURE;
+    }
+    if (d->v_compdata == NULL) {
+        fprintf(cp_err, "Error: %s has no complex AC data for a margin measurement.\n", meas->m_vec);
+        return MEASUREMENT_FAILURE;
+    }
+    dScale = vec_get("frequency");
+    if (dScale == NULL) {
+        fprintf(cp_err, "Error: no such scale vector as frequency.\n");
+        return MEASUREMENT_FAILURE;
+    }
+
+    n = d->v_length;
+    if (n < 2)
+        return MEASUREMENT_FAILURE;
+    gdb = TMALLOC(double, n);
+    ph  = TMALLOC(double, n);
+    frq = TMALLOC(double, n);
+    prev = 0.0;
+    offset = 0.0;
+    for (i = 0; i < n; i++) {
+        double re = d->v_compdata[i].cx_real;
+        double im = d->v_compdata[i].cx_imag;
+        /* phase in DEGREES always -- margins are conventionally in degrees, and the
+         * radtodeg() macro only converts when the runtime cx_degrees flag is set
+         * (otherwise it returns radians). */
+        double p = atan2(im, re) * (180.0 / M_PI);
+        gdb[i] = 20.0 * log10(hypot(re, im));
+        if (i > 0) {                 /* unwrap: undo the +-360 jumps of atan2 */
+            double dp = p - prev;
+            if (dp > 180.0) offset -= 360.0;
+            else if (dp < -180.0) offset += 360.0;
+        }
+        prev = p;
+        ph[i] = p + offset;
+        frq[i] = dScale->v_compdata ? dScale->v_compdata[i].cx_real : dScale->v_realdata[i];
+    }
+
+    for (i = 1; i < n; i++) {
+        double t, fc;
+        if (mFunctionType == AT_PHASE_MARGIN) {
+            /* first 0 dB gain crossover */
+            if ((gdb[i-1] >= 0.0 && gdb[i] < 0.0) || (gdb[i-1] < 0.0 && gdb[i] >= 0.0)) {
+                t = (0.0 - gdb[i-1]) / (gdb[i] - gdb[i-1]);
+                meas->m_measured = 180.0 + (ph[i-1] + t * (ph[i] - ph[i-1]));
+            } else {
+                continue;
+            }
+        } else {
+            /* first -180 deg phase crossover (unwrapped) */
+            if ((ph[i-1] >= -180.0 && ph[i] < -180.0) || (ph[i-1] < -180.0 && ph[i] >= -180.0)) {
+                t = (-180.0 - ph[i-1]) / (ph[i] - ph[i-1]);
+                meas->m_measured = -(gdb[i-1] + t * (gdb[i] - gdb[i-1]));
+            } else {
+                continue;
+            }
+        }
+        /* interpolate the crossover frequency in log space (log-spaced sweep) */
+        if (frq[i-1] > 0.0 && frq[i] > 0.0)
+            fc = exp(log(frq[i-1]) + t * (log(frq[i]) - log(frq[i-1])));
+        else
+            fc = frq[i-1] + t * (frq[i] - frq[i-1]);
+        meas->m_measured_at = fc;
+        break;
+    }
+
+    tfree(gdb);
+    tfree(ph);
+    tfree(frq);
+    return isnan(meas->m_measured) ? MEASUREMENT_FAILURE : MEASUREMENT_OK;
 }
 
 
@@ -2135,6 +2273,48 @@ err_ret4:
         ret_val = MEASUREMENT_OK;
 
 err_ret5:
+        tfree(mAnalysis);
+        tfree(mName);
+        tfree(meas->m_vec);
+        tfree(meas);
+        tfree(mFunction);
+
+        return ret_val;
+    }
+    case AT_PHASE_MARGIN:
+    case AT_GAIN_MARGIN:
+    {
+        MEASUREPTR meas;
+        const char *unit = (mFunctionType == AT_PHASE_MARGIN) ? "deg" : "dB";
+        meas = TMALLOC(struct measure, 1);
+        meas->m_analysis = mAnalysis;
+
+        if (measure_parse_trigtarg(meas, words, NULL, "trig", errbuf) ==
+                MEASUREMENT_FAILURE) {
+            measure_errMessage(mName, mFunction, "TRIG", errbuf, autocheck);
+            goto err_ret_margin;
+        }
+
+        measure_margin(meas, mFunctionType);
+        if (isnan(meas->m_measured)) {
+            sprintf(errbuf, (mFunctionType == AT_PHASE_MARGIN)
+                    ? "no unity-gain (0 dB) crossover found\n"
+                    : "no -180 deg phase crossover found\n");
+            measure_errMessage(mName, mFunction, "MARGIN", errbuf, autocheck);
+            goto err_ret_margin;
+        }
+
+        if (out_line)
+            sprintf(out_line, "%-20s=  %.*e %s at=  %.*e\n", mName,
+                precision, meas->m_measured, unit, precision, meas->m_measured_at);
+        else
+            fprintf(mout, "%-20s=  %.*e %s at=  %.*e\n", mName,
+                precision, meas->m_measured, unit, precision, meas->m_measured_at);
+
+        *result = meas->m_measured;
+        ret_val = MEASUREMENT_OK;
+
+err_ret_margin:
         tfree(mAnalysis);
         tfree(mName);
         tfree(meas->m_vec);
