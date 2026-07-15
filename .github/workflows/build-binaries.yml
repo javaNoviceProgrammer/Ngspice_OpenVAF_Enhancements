@@ -155,6 +155,21 @@ jobs:
           # readline's tgetent/terminfo link check.
           echo "NGSPICE_CC=CC=/usr/bin/clang CXX=/usr/bin/clang++" >> "$GITHUB_ENV"
 
+      - name: Pre-install rustup (Linux container)
+        if: runner.os == 'Linux'
+        # The Linux legs run inside an ubuntu:22.04 container with no preinstalled
+        # rustup, so dtolnay/rust-toolchain falls back to curling sh.rustup.rs. That
+        # fetch has intermittently failed (curl: (7) Couldn't connect to server) and
+        # the action's own --retry-connrefused does not cover a plain connect/DNS
+        # blip. Install rustup here with backoff retries and put it on PATH so the
+        # toolchain step finds it (command -v rustup) and skips its own download.
+        run: |
+          set -e
+          retry() { i=1; while [ "$i" -le 5 ]; do "$@" && return 0; echo "::warning::retry $i/5 (sleep $((i*15))s): $*"; sleep $((i*15)); i=$((i+1)); done; echo "::error::gave up: $*"; return 1; }
+          retry curl --proto '=https' --tlsv1.2 -fsSL -o /tmp/rustup-init.sh https://sh.rustup.rs
+          sh /tmp/rustup-init.sh --default-toolchain none -y
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
       - name: Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
