@@ -154,6 +154,8 @@ and a solver-by-solver sweep of the example suite:
 |---|---|:---:|:---:|
 | RF | S-parameter analysis + noise figure (`.sp`) | ✅ | ✅ |
 | RF | Touchstone (`.sNp`) import / export | ✅ | ✅ |
+| RF | N-port Touchstone device (`.sNp` block → behavioral device, AC + transient) | ✅ | ✅ |
+| RF | Loop-gain stability analysis (`stb`: phase / gain margin) | ✅ | ✅ |
 | RF | Periodic steady state (PSS) | ✅¹ | ✅ |
 | RF | Harmonic Balance (HB) | ✅⁷ | ✅ |
 | RF | Periodic / phase noise (Pnoise) | ✅³ | ✅ |
