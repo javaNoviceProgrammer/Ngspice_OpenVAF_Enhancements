@@ -29,6 +29,17 @@ CKTop (CKTcircuit *ckt, long int firstmode, long int continuemode,
        int iterlim)
 {
     int converged;
+    /* Enhancement-204 (.option convhelp): auto-escalating convergence aids.
+     * `conv_aid` records which aid beyond the plain Newton solve produced the
+     * operating point, so it can be reported. Under convhelp the whole op-point
+     * solve -- including the fallback homotopies -- runs with the E-111
+     * globalized line search enabled (it reduces to a plain full Newton step
+     * whenever the full step already reduces the residual, so easy points are
+     * essentially unaffected), and pseudo-transient continuation (E-127) is
+     * tried automatically without the user setting `.option ptcont`. */
+    const char *conv_aid = NULL;
+    int prevconverged = 1;
+    unsigned int ls_saved = ckt->CKTlinesearch;
 
 #ifdef HAS_PROGREP
     /* If this is called from dc simulation, don't set "op" */
@@ -38,6 +49,9 @@ CKTop (CKTcircuit *ckt, long int firstmode, long int continuemode,
 
     ckt->CKTmode = firstmode;
 
+    if (ckt->CKTconvhelp)       /* Enhancement-204: globalize the op-point Newton */
+        ckt->CKTlinesearch = 1;
+
     if (!ckt->CKTnoOpIter) {
 #ifdef XSPICE
         /* gtri - wbk - add convergence problem reporting flags */
@@ -46,7 +60,7 @@ CKTop (CKTcircuit *ckt, long int firstmode, long int continuemode,
 #endif
         converged = NIiter (ckt, iterlim);
         if (converged == 0)
-            return converged;   /* successfull */
+            goto done;          /* successfull (plain / line-search Newton) */
     } else {
         converged = 1;          /* the 'go directly to gmin stepping' option */
     }
@@ -73,8 +87,10 @@ CKTop (CKTcircuit *ckt, long int firstmode, long int continuemode,
         else {
             converged = spice3_gmin(ckt, firstmode, continuemode, iterlim);
         }
-        if (converged == 0) /* If gmin-stepping worked... move out */
-            return converged;
+        if (converged == 0) { /* If gmin-stepping worked... move out */
+            conv_aid = "gmin stepping";
+            goto done;
+        }
     }
 
     /* ... otherwise try stepping sources ...
@@ -88,30 +104,37 @@ CKTop (CKTcircuit *ckt, long int firstmode, long int continuemode,
             converged = gillespie_src(ckt, firstmode, continuemode, iterlim);
         else
             converged = spice3_src(ckt, firstmode, continuemode, iterlim);
-        if (converged == 0) /* If gmin-stepping worked... move out */
-            return converged;
+        if (converged == 0) { /* If gmin-stepping worked... move out */
+            conv_aid = "source stepping";
+            goto done;
+        }
     }
 
     /* Enhancement-127: pseudo-transient continuation (.option ptcont). A
      * fictitious backward-Euler homotopy that relaxes to the DC operating point
      * along a stable trajectory -- a more robust fallback than static gmin/source
-     * stepping for circuits that otherwise stall or diverge. */
-    if (ckt->CKTptcont) {
+     * stepping for circuits that otherwise stall or diverge. Enhancement-204: it
+     * is also tried automatically under `.option convhelp`. */
+    if (ckt->CKTptcont || ckt->CKTconvhelp) {
         converged = pseudo_transient(ckt, firstmode, continuemode, iterlim);
-        if (converged == 0)
-            return converged;
+        if (converged == 0) {
+            conv_aid = "pseudo-transient continuation";
+            goto done;
+        }
     }
 
     /* If command 'optran' is not given, the function
        returns immediately with the previous 'converged' */
-    int prevconverged = converged;
+    prevconverged = converged;
     converged = OPtran(ckt, converged);
     if (converged == 106)
         fprintf(cp_err, "Error: Transient op failed, timestep too small\n\n");
     else if (converged != 0 && converged != prevconverged)
         fprintf(cp_err, "Error: Transient op failed, cause unrecorded\n\n");
-    else if (converged == 0)
-            return converged;
+    else if (converged == 0) {
+        conv_aid = "transient operating point (optran)";
+        goto done;
+    }
 
 #ifdef XSPICE
     /* gtri - wbk - add convergence problem reporting flags */
@@ -123,6 +146,12 @@ CKTop (CKTcircuit *ckt, long int firstmode, long int continuemode,
         controlled_exit(1);
     fprintf(cp_err, "    Any of the following steps may fail.!\n\n");
 
+ done:
+    /* Enhancement-204: restore the caller's line-search setting and, when the
+     * user asked for convergence help, report which aid produced the point. */
+    ckt->CKTlinesearch = ls_saved;
+    if (converged == 0 && conv_aid && ckt->CKTconvhelp)
+        fprintf(cp_err, "Note: DC operating point reached via %s.\n", conv_aid);
     return converged;
 }
 

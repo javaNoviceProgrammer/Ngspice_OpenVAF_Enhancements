@@ -146,6 +146,7 @@ enum {
     OPT_PTCONT,         /* Enhancement-127: pseudo-transient continuation */
     OPT_DYNORDER,       /* Enhancement-128: LTE-based dynamic integration order */
     OPT_ORDFIX,         /* Enhancement-181: fixed integration order (verification) */
+    OPT_CONVHELP,       /* Enhancement-204: auto-escalating DC convergence aids */
 };
 
 /* Enhancement-110: `.option errpreset=conservative|moderate|liberal` sets a
@@ -161,6 +162,7 @@ enum {
 #define ERRP_SRCSTEPS  (1u << 5)
 #define ERRP_GMINSTEPS (1u << 6)
 #define ERRP_ITL1      (1u << 7)
+#define ERRP_CONVHELP  (1u << 8) /* Enhancement-204: auto-escalating convergence aids */
 
 #ifdef XSPICE
 /* gtri - begin - wbk - add new options */

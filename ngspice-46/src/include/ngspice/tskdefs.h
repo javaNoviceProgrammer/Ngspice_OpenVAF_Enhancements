@@ -75,6 +75,7 @@ struct TSKtask {
     unsigned int TSKtrustregion:1;  /* Enhancement-153: Levenberg-Marquardt trust-region Newton */
     unsigned int TSKptcont:1;       /* Enhancement-127: pseudo-transient continuation */
     unsigned int TSKdynorder:1;     /* Enhancement-128: LTE-based dynamic integration order */
+    unsigned int TSKconvhelp:1;     /* Enhancement-204: auto-escalating DC convergence aids */
     int TSKordFix;                  /* Enhancement-181: fixed integration order, 0 = off */
     unsigned int TSKnoopac:1; /* flag for no OP calculation before AC */
     double TSKabsDv;                 /* abs limit for iter-iter voltage change */

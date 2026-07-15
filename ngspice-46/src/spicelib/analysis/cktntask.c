@@ -75,6 +75,7 @@ CKTnewTask(CKTcircuit *ckt, TSKtask **taskPtr, IFuid taskName, TSKtask **defPtr)
         tsk->TSKlinesearch      = def->TSKlinesearch; /* Enhancement-111 */
         tsk->TSKtrustregion     = def->TSKtrustregion; /* Enhancement-153 */
         tsk->TSKptcont          = def->TSKptcont; /* Enhancement-127 */
+        tsk->TSKconvhelp        = def->TSKconvhelp; /* Enhancement-204 */
         tsk->TSKdynorder        = def->TSKdynorder; /* Enhancement-128 */
         tsk->TSKordFix          = def->TSKordFix; /* Enhancement-181 */
         tsk->TSKabsDv           = def->TSKabsDv;
@@ -149,6 +150,7 @@ CKTnewTask(CKTcircuit *ckt, TSKtask **taskPtr, IFuid taskName, TSKtask **defPtr)
         tsk->TSKlinesearch      = 0; /* Enhancement-111: off by default */
         tsk->TSKtrustregion     = 0; /* Enhancement-153: off by default */
         tsk->TSKptcont          = 0; /* Enhancement-127: off by default */
+        tsk->TSKconvhelp        = 0; /* Enhancement-204: off by default (backward compatible) */
         tsk->TSKdynorder        = 0; /* Enhancement-128: off by default */
         tsk->TSKordFix          = 0; /* Enhancement-181: off by default */
         tsk->TSKabsDv           = 0.5;

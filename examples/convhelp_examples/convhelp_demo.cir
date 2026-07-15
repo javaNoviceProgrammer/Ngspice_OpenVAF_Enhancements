@@ -1,0 +1,24 @@
+* convhelp_demo -- Enhancement-204: auto-escalating DC convergence aids
+*
+* A deliberately stiff DC problem: a behavioral exponential branch with NO
+* junction limiting, fed from a 100 V / 100 ohm Thevenin source. The huge
+* exp() derivative makes a plain Newton step overshoot to a SPURIOUS root, and
+* here even ngspice's transient-op fallback lands on it (~70.5 V).
+*
+* The physical operating point is the root of  1e-14*(exp(V/0.026)-1) = (100-V)/100,
+* i.e. V(1) = 0.837922 V.
+*
+* `.option convhelp` turns the operating-point solver into an automatic ladder
+*   Newton(+line search) -> gmin step -> source step -> pseudo-transient -> optran
+* and reports which aid produced the point -- without the user hand-picking
+* `.option ptcont` / `.option linesearch`. Here gmin/source stepping are disabled
+* so the pseudo-transient continuation rung is what rescues (and corrects) it.
+B1 1 0 I = 1e-14 * (exp(V(1)/0.026) - 1)
+R1 2 1 100
+V1 2 0 100
+.options gminsteps=0 srcsteps=0 convhelp
+.control
+  op
+  print v(1)
+.endc
+.end

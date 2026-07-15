@@ -42,21 +42,24 @@ static void
 ckt_apply_errpreset(TSKtask *task, int preset)
 {
     double reltol, abstol, vntol, chgtol, trtol;
-    int srcsteps, gminsteps, itl1;
+    int srcsteps, gminsteps, itl1, convhelp;
 
     switch (preset) {
     case ERRPRESET_CONSERVATIVE: /* accurate / robust, slower */
         reltol = 1e-4; abstol = 1e-13; vntol = 1e-7; chgtol = 1e-15;
         trtol  = 1.0;  srcsteps = 10;  gminsteps = 10; itl1 = 200;
+        convhelp = 1;   /* Enhancement-204: auto-escalate convergence aids */
         break;
     case ERRPRESET_LIBERAL:      /* fast, looser accuracy */
         reltol = 1e-2; abstol = 1e-10; vntol = 1e-4; chgtol = 1e-12;
         trtol  = 20.0; srcsteps = 1;   gminsteps = 1;  itl1 = 100;
+        convhelp = 0;
         break;
     case ERRPRESET_MODERATE:     /* ngspice defaults (backward compatible) */
     default:
         reltol = 1e-3; abstol = 1e-12; vntol = 1e-6; chgtol = 1e-14;
         trtol  = 7.0;  srcsteps = 1;   gminsteps = 1;  itl1 = 100;
+        convhelp = 0;
         break;
     }
 
@@ -68,6 +71,7 @@ ckt_apply_errpreset(TSKtask *task, int preset)
     if (!(task->TSKtolGiven & ERRP_SRCSTEPS))  task->TSKnumSrcSteps  = srcsteps;
     if (!(task->TSKtolGiven & ERRP_GMINSTEPS)) task->TSKnumGminSteps = gminsteps;
     if (!(task->TSKtolGiven & ERRP_ITL1))      task->TSKdcMaxIter    = itl1;
+    if (!(task->TSKtolGiven & ERRP_CONVHELP))  task->TSKconvhelp     = convhelp;
 }
 
 /* ARGSUSED */
@@ -218,6 +222,10 @@ CKTsetOpt(CKTcircuit *ckt, JOB *anal, int opt, IFvalue *val)
         break;
     case OPT_PTCONT: /* Enhancement-127 */
         task->TSKptcont = (val->iValue != 0);
+        break;
+    case OPT_CONVHELP: /* Enhancement-204 */
+        task->TSKconvhelp = (val->iValue != 0);
+        task->TSKtolGiven |= ERRP_CONVHELP;
         break;
     case OPT_DYNORDER: /* Enhancement-128 */
         task->TSKdynorder = (val->iValue != 0);
@@ -471,6 +479,8 @@ static IFparm OPTtbl[] = {
         "Levenberg-Marquardt trust-region Newton (adaptive Jacobian diagonal damping)" },
  { "ptcont", OPT_PTCONT, IF_SET|IF_FLAG,
         "Pseudo-transient continuation homotopy for the DC operating point" },
+ { "convhelp", OPT_CONVHELP, IF_SET|IF_FLAG,
+        "Auto-escalate DC convergence aids (line search + pseudo-transient) and report which one converged" },
  { "dynorder", OPT_DYNORDER, IF_SET|IF_FLAG,
         "LTE-based dynamic integration-order selection (Gear, up to maxord)" },
  { "ordfix", OPT_ORDFIX, IF_SET|IF_INTEGER,

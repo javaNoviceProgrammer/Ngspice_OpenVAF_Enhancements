@@ -105,6 +105,7 @@ CKTdoJob(CKTcircuit* ckt, int reset, TSKtask* task)
     ckt->CKTlinesearch = task->TSKlinesearch; /* Enhancement-111 */
     ckt->CKTtrustregion = task->TSKtrustregion; /* Enhancement-153 */
     ckt->CKTptcont = task->TSKptcont; /* Enhancement-127 */
+    ckt->CKTconvhelp = task->TSKconvhelp; /* Enhancement-204 */
     ckt->CKTdynorder = task->TSKdynorder; /* Enhancement-128 */
     ckt->CKTordFix = task->TSKordFix; /* Enhancement-181 */
     ckt->CKTabsDv = task->TSKabsDv;
