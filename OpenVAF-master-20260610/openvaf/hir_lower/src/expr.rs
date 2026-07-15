@@ -2013,8 +2013,8 @@ impl BodyLoweringCtx<'_, '_, '_> {
         let num_is_roots = matches!(kind, BuiltIn::laplace_zd | BuiltIn::laplace_zp);
         let den_is_roots = matches!(kind, BuiltIn::laplace_np | BuiltIn::laplace_zp);
 
-        let num = self.lower_array_elems(args[1]);
-        let den = self.lower_array_elems(args[2]);
+        let num = self.lower_coeff_elems(args[1]);
+        let den = self.lower_coeff_elems(args[2]);
 
         let num = if num_is_roots { self.laplace_roots_to_poly(&num) } else { num };
         let den = if den_is_roots { self.laplace_roots_to_poly(&den) } else { den };
@@ -2033,6 +2033,23 @@ impl BodyLoweringCtx<'_, '_, '_> {
     /// expression as a single-element array if it's neither — defensive, not expected to
     /// trigger given the type-level requirements).
     pub(crate) fn lower_array_elems(&mut self, expr: ExprId) -> Vec<Value> {
+        self.lower_array_elems_impl(expr, false)
+    }
+
+    /// Like `lower_array_elems`, but every returned Value is guaranteed to be a real
+    /// (double). A `laplace_*`/`zi_*` coefficient vector is real-valued (LRM 9.19), yet an
+    /// array literal may hold integer-looking literals — `laplace_nd(x, '{1}, '{-p, 1})` —
+    /// whose elements lower to *integer* Values. Feeding an integer into the float
+    /// `fmul`/`fsub` of the state-space realization builds mixed-type MIR that the const
+    /// evaluator panics on (`eval_binary` has no (Int, Float) case), so an integer-looking
+    /// coefficient crashed the compiler. Cast each array-literal/concat element to real up
+    /// front. (A whole-array *variable* reference is already real by its declaration, so the
+    /// var-ref path needs no cast.)
+    fn lower_coeff_elems(&mut self, expr: ExprId) -> Vec<Value> {
+        self.lower_array_elems_impl(expr, true)
+    }
+
+    fn lower_array_elems_impl(&mut self, expr: ExprId, coerce_real: bool) -> Vec<Value> {
         if let Some(vars) = self.body.array_var_ref(expr) {
             return vars.iter().map(|&var| self.ctx.read_variable(var)).collect();
         }
@@ -2048,7 +2065,9 @@ impl BodyLoweringCtx<'_, '_, '_> {
                 if self.body.array_var_ref(e).is_some()
                     || matches!(self.body.get_expr(e), Expr::Concat { .. } | Expr::Array(_))
                 {
-                    unit.extend(self.lower_array_elems(e));
+                    unit.extend(self.lower_array_elems_impl(e, coerce_real));
+                } else if coerce_real {
+                    unit.push(self.lower_num_as_real(e));
                 } else {
                     unit.push(self.lower_expr(e));
                 }
@@ -2072,7 +2091,10 @@ impl BodyLoweringCtx<'_, '_, '_> {
             Expr::Array(elems) => elems.to_vec(),
             _ => vec![expr],
         };
-        elem_ids.iter().map(|&e| self.lower_expr(e)).collect()
+        elem_ids
+            .iter()
+            .map(|&e| if coerce_real { self.lower_num_as_real(e) } else { self.lower_expr(e) })
+            .collect()
     }
 
     /// Expands a list of **complex** roots into ascending-power *real* polynomial coefficients
@@ -2217,8 +2239,8 @@ impl BodyLoweringCtx<'_, '_, '_> {
         let num_is_roots = matches!(kind, BuiltIn::zi_zd | BuiltIn::zi_zp);
         let den_is_roots = matches!(kind, BuiltIn::zi_np | BuiltIn::zi_zp);
 
-        let num = self.lower_array_elems(args[1]);
-        let den = self.lower_array_elems(args[2]);
+        let num = self.lower_coeff_elems(args[1]);
+        let den = self.lower_coeff_elems(args[2]);
 
         let num = if num_is_roots { self.laplace_roots_to_poly(&num) } else { num };
         let den = if den_is_roots { self.laplace_roots_to_poly(&den) } else { den };
