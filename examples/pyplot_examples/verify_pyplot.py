@@ -19,8 +19,14 @@ Enhancement-183 (this session's options):
   [E-183b] the .py/.data/.png are written next to the CIRCUIT FILE, not the cwd
   [E-183c] `set pyplot_linewidth=<w>` -> linewidth in the plot() calls
   [E-183d] `set pyplot_backend=<name>` -> matplotlib.use(<name>)
+
+Enhancement-208:
+  [E-208] `pyplot [name] -eye <expr> -ui <T>` runs the `eye` analysis and renders
+          the folded eye as a persistence 2-D-histogram eye diagram (hist2d),
+          honouring the same pyplot_* settings; the base name defaults to "eye".
 """
 import os
+import random
 import re
 import struct
 import subprocess
@@ -221,12 +227,61 @@ pybe = open(os.path.join(HERE, "be.py")).read() if os.path.isfile(os.path.join(H
 check("E-183d: set pyplot_backend=Agg -> matplotlib.use('agg') in the script",
       "matplotlib.use('agg')" in pybe and is_png(os.path.join(HERE, "be.png")))
 
+# ---- Enhancement-208: `pyplot -eye` renders an eye diagram via matplotlib ----
+# A self-contained data eye: a short pseudo-random NRZ bit stream (PWL) through a
+# bandwidth-limiting RC channel (tau ~ 0.5 UI) so the eye is clearly open but
+# ISI-shaped -- no OSDI model needed for the rendering path.
+for f_ in ("eyefig.py", "eyefig.data", "eyefig.png",
+           "eye.py", "eye.data", "eye.png", "eye.sp"):
+    try:
+        os.remove(os.path.join(HERE, f_))
+    except OSError:
+        pass
+random.seed(7)
+_UI, _N, _TR = 0.5e-9, 300, 12e-12
+_bits = [random.randint(0, 1) for _ in range(_N)]
+_pts = ["0 %d" % _bits[0]]
+for _k in range(1, _N):
+    if _bits[_k] != _bits[_k - 1]:
+        _te = _k * _UI
+        _pts.append("%.6e %d" % (_te - _TR / 2, _bits[_k - 1]))
+        _pts.append("%.6e %d" % (_te + _TR / 2, _bits[_k]))
+eyedeck = """* pyplot -eye: eye diagram straight from a transient (Enhancement-208)
+Vtx tx 0 PWL(%s)
+Rc tx rx 250
+Cc rx 0 1p
+.tran 1p %gn
+.control
+run
+set pyplot_terminal=png
+pyplot eyefig -eye v(rx) -ui 0.5n -tstart 3n
+pyplot -eye v(rx) -ui 0.5n -tstart 3n
+.endc
+.end
+""" % (" ".join(_pts), _N * 0.5)
+with open(os.path.join(HERE, "eye.sp"), "w") as f:
+    f.write(eyedeck)
+r = subprocess.run([NGSPICE, "-b", "eye.sp"], capture_output=True, text=True, cwd=HERE)
+elog = r.stdout + r.stderr
+pyeye = (open(os.path.join(HERE, "eyefig.py")).read()
+         if os.path.isfile(os.path.join(HERE, "eyefig.py")) else "")
+check("E-208: `pyplot -eye` runs the eye analysis and reports its metrics",
+      "eye height" in elog and "eye width" in elog, elog.strip()[-160:])
+check("E-208: `pyplot eyefig -eye v(rx) -ui ...` renders a valid eye PNG",
+      is_png(os.path.join(HERE, "eyefig.png")))
+check("E-208: the generated eye script is a persistence 2-D-histogram (hist2d)",
+      "hist2d" in pyeye and "eye height" in pyeye and "matplotlib" in pyeye)
+check("E-208: the no-name form defaults the eye base to 'eye.png'",
+      is_png(os.path.join(HERE, "eye.png")))
+
 for f in ("two.sp", "dir.sp", "lw.sp", "be.sp",
           "pyplot-2.py", "pyplot-2.data", "pyplot-2.png",
           "dir.py", "dir.data", "dir.png", "lw.py", "lw.data", "lw.png",
           "be.py", "be.data", "be.png",
           "tran.sp", "ac.sp", "nofn.sp", "rc.py", "rc.data", "rc.png",
           "acmag.py", "acmag.data", "acmag.png",
+          "eye.sp", "eyefig.py", "eyefig.data", "eyefig.png",
+          "eye.py", "eye.data", "eye.png",
           "pyplot.py", "pyplot.data", "pyplot.png", "rcload.osdi"):
     p = os.path.join(HERE, f)
     if os.path.exists(p):

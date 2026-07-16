@@ -327,3 +327,213 @@ void ft_pyplot(double *xlims, double *ylims,
     setlocale(LC_NUMERIC, llocale);
 #endif
 }
+
+
+/* Read a scalar metric published by the `eye` command as a length-1 vector in
+   the current plot; return `dflt` if it is absent. */
+static double
+eye_scalar(const char *name, double dflt)
+{
+    struct dvec *v = vec_get(name);
+    if (v && v->v_length > 0)
+        return isreal(v) ? v->v_realdata[0] : realpart(v->v_compdata[0]);
+    return dflt;
+}
+
+
+/* Enhancement-208: `pyplot -eye`. The `eye` command (Enhancement-207) has just
+   folded the waveform into the current 'eye' plot -- `eye_wave` vs `eye_t` plus
+   the scalar metrics (eye_ui, eye_threshold, eye_height, eye_width, ...). Render
+   those folded samples as a persistence-style 2-D-histogram eye diagram annotated
+   with the metrics, reusing ft_pyplot()'s file/launch mechanism and the same
+   pyplot_* settings (terminal, python, backend, style, figsize). */
+void
+ft_pyplot_eye(const char *filename, const char *expr)
+{
+    FILE *file, *file_data;
+    struct dvec *ew, *et;
+    int i, err;
+    bool hardcopy = FALSE, have_style, have_figsize, have_backend, dark;
+    char terminal[BSIZE_SP], python[BSIZE_SP], style[BSIZE_SP];
+    char figsize[BSIZE_SP], backend[BSIZE_SP], fmt[16];
+    char filename_data[1024], filename_py[1024];
+    char buf[2 * 1024 + BSIZE_SP];
+    double figw = 0.0, figh = 0.0;
+    double ui, thr, eh, ewid, ewb, jr, amp;
+    const char *acol, *wcol, *lcol;   /* annotation colours (theme-aware) */
+
+#ifdef SHARED_MODULE
+    char *llocale = setlocale(LC_NUMERIC, NULL);
+    setlocale(LC_NUMERIC, "C");
+#endif
+
+    /* the folded eye must be present (the `eye` command ran first). */
+    ew = vec_get("eye_wave");
+    et = vec_get("eye_t");
+    if (!ew || !et || ew->v_length < 2 || et->v_length < 2) {
+        fprintf(cp_err, "Error: pyplot -eye found no folded eye "
+                        "('eye_wave'/'eye_t') -- did the eye analysis succeed?\n");
+#ifdef SHARED_MODULE
+        setlocale(LC_NUMERIC, llocale);
+#endif
+        return;
+    }
+
+    ui  = eye_scalar("eye_ui", 1.0);
+    thr = eye_scalar("eye_threshold", 0.0);
+    eh  = eye_scalar("eye_height", 0.0);
+    ewid = eye_scalar("eye_width", 0.0);
+    ewb = eye_scalar("eye_width_ber12", 0.0);
+    jr  = eye_scalar("eye_jitter_rms", 0.0);
+    amp = eye_scalar("eye_amplitude", 0.0);
+
+    snprintf(filename_data, sizeof(filename_data), "%s.data", filename);
+    snprintf(filename_py, sizeof(filename_py), "%s.py", filename);
+
+    /* same terminal / interpreter / backend / style / figsize handling as ft_pyplot */
+    fmt[0] = '\0';
+    if (cp_getvar("pyplot_terminal", CP_STRING, terminal, sizeof(terminal))) {
+        if (cieq(terminal, "png") || cieq(terminal, "png/quit")) {
+            strcpy(fmt, "png"); hardcopy = TRUE;
+        } else if (cieq(terminal, "svg") || cieq(terminal, "svg/quit")) {
+            strcpy(fmt, "svg"); hardcopy = TRUE;
+        } else if (cieq(terminal, "pdf") || cieq(terminal, "pdf/quit")) {
+            strcpy(fmt, "pdf"); hardcopy = TRUE;
+        }
+    }
+    if (!cp_getvar("pyplot_python", CP_STRING, python, sizeof(python)))
+        strcpy(python, "python3");
+    have_backend = cp_getvar("pyplot_backend", CP_STRING, backend, sizeof(backend))
+                   ? TRUE : FALSE;
+    have_figsize = FALSE;
+    if (cp_getvar("pyplot_figsize", CP_STRING, figsize, sizeof(figsize))) {
+        if (sscanf(figsize, "%lf%*[ ,xX]%lf", &figw, &figh) == 2
+                && figw > 0.0 && figh > 0.0)
+            have_figsize = TRUE;
+    }
+    have_style = cp_getvar("pyplot_style", CP_STRING, style, sizeof(style)) ? TRUE : FALSE;
+    if (have_style && cieq(style, "dark"))
+        strcpy(style, "dark_background");
+    /* on a dark ground the open-eye area (empty hist2d cells show the figure
+       facecolor) is dark, so annotations must be light -- and vice versa. */
+    dark = have_style && (strstr(style, "dark") != NULL);
+    acol = dark ? "white"   : "black";
+    wcol = dark ? "#9be9ff" : "#0b5fa5";
+    lcol = dark ? "0.85"    : "0.25";
+
+    /* data table: the folded (eye_t, eye_wave) sample pairs. */
+    if ((file_data = fopen(filename_data, "w")) == NULL) {
+        perror(filename);
+#ifdef SHARED_MODULE
+        setlocale(LC_NUMERIC, llocale);
+#endif
+        return;
+    }
+    {
+        int nrow = (et->v_length < ew->v_length) ? et->v_length : ew->v_length;
+        for (i = 0; i < nrow; i++) {
+            double x = isreal(et) ? et->v_realdata[i] : realpart(et->v_compdata[i]);
+            double y = isreal(ew) ? ew->v_realdata[i] : realpart(ew->v_compdata[i]);
+            fprintf(file_data, "%e %e\n", x, y);
+        }
+    }
+    (void) fclose(file_data);
+
+    /* matplotlib script: a persistence-style 2-D-histogram eye. */
+    if ((file = fopen(filename_py, "w")) == NULL) {
+        perror(filename);
+#ifdef SHARED_MODULE
+        setlocale(LC_NUMERIC, llocale);
+#endif
+        return;
+    }
+    fprintf(file, "#!/usr/bin/env python3\n");
+    fprintf(file, "# generated by ngspice 'pyplot -eye' (Enhancement-208)\n");
+    fprintf(file, "import numpy as np\n");
+    if (have_backend) {
+        fprintf(file, "import matplotlib\nmatplotlib.use(");
+        quote_python_string(file, backend);
+        fprintf(file, ")\n");
+    } else if (hardcopy) {
+        fprintf(file, "import matplotlib\nmatplotlib.use('Agg')\n");
+    }
+    fprintf(file, "import matplotlib.pyplot as plt\n");
+    fprintf(file, "from matplotlib.colors import LogNorm\n");
+    if (have_style) {
+        fprintf(file, "try:\n    plt.style.use(");
+        quote_python_string(file, style);
+        fprintf(file, ")\nexcept Exception:\n    pass\n");
+    }
+    fprintf(file, "d = np.loadtxt(");
+    quote_python_string(file, filename_data);
+    fprintf(file, ")\n");
+    fprintf(file, "if d.ndim == 1:\n    d = d.reshape(-1, 2)\n");
+    fprintf(file, "t = d[:, 0]; v = d[:, 1]\n");
+    fprintf(file, "ui = %e; thr = %e; eh = %e; ew = %e; ewb = %e; jr = %e; amp = %e\n",
+            ui, thr, eh, ewid, ewb, jr, amp);
+    if (have_figsize)
+        fprintf(file, "fig, ax = plt.subplots(figsize=(%g, %g))\n", figw, figh);
+    else
+        fprintf(file, "fig, ax = plt.subplots(figsize=(8.0, 4.6))\n");
+    fprintf(file, "vlo = float(np.min(v)); vhi = float(np.max(v))\n");
+    fprintf(file, "pad = 0.08 * (vhi - vlo + 1e-30)\n");
+    fprintf(file, "h = ax.hist2d(t, v, bins=[400, 240], cmap='turbo', norm=LogNorm(),\n");
+    fprintf(file, "              range=[[0.0, 2.0*ui], [vlo - pad, vhi + pad]], cmin=1)\n");
+    fprintf(file, "cb = fig.colorbar(h[3], ax=ax, pad=0.01)\n");
+    fprintf(file, "cb.set_label('sample density (persistence, log)')\n");
+    /* after folding, the crossings land at 0.5 UI and 1.5 UI; the eye centre
+       (sampling instant, widest opening) sits at 1.0 UI. */
+    fprintf(file, "xc = ui\n");
+    fprintf(file, "ax.axhline(thr, color='%s', lw=0.8, ls='--', alpha=0.7)\n", lcol);
+    fprintf(file, "ax.axvline(xc, color='%s', lw=0.9, ls=':', alpha=0.6)\n", lcol);
+    fprintf(file, "if eh > 0:\n");
+    fprintf(file, "    ax.annotate('', xy=(xc, thr+eh/2.0), xytext=(xc, thr-eh/2.0),\n");
+    fprintf(file, "                arrowprops=dict(arrowstyle='<->', color='%s', lw=1.6))\n", acol);
+    fprintf(file, "    ax.text(xc + 0.02*ui, thr + eh/2.0, f'  eye height {eh:.3g}',\n");
+    fprintf(file, "            color='%s', fontsize=9, va='center', ha='left')\n", acol);
+    fprintf(file, "if ew > 0:\n");
+    fprintf(file, "    ax.annotate('', xy=(xc - ew/2.0, thr), xytext=(xc + ew/2.0, thr),\n");
+    fprintf(file, "                arrowprops=dict(arrowstyle='<->', color='%s', lw=1.4))\n", wcol);
+    fprintf(file, "    ax.text(xc, thr - 0.06*(vhi - vlo + 1e-30), f'eye width {ew:.3g} s',\n");
+    fprintf(file, "            color='%s', fontsize=9, ha='center', va='top')\n", wcol);
+    fprintf(file, "ax.set_xlim(0.0, 2.0*ui)\n");
+    fprintf(file, "ax.set_xlabel('time within 2 UI  (s)')\n");
+    fprintf(file, "ax.set_ylabel(");
+    quote_python_string(file, expr && *expr ? expr : "signal");
+    fprintf(file, ")\n");
+    fprintf(file, "ax.set_title('Eye diagram  (ngspice `eye`)\\n'\n");
+    fprintf(file, "             f'UI {ui:.3g} s   |   eye height {eh:.3g}'\n");
+    fprintf(file, "             f'   |   eye width {ew:.3g} s ({100.0*ew/ui:.0f}%% UI)'\n");
+    fprintf(file, "             f'   |   jitter {jr:.3g} s rms')\n");
+    fprintf(file, "fig.tight_layout()\n");
+    if (hardcopy) {
+        fprintf(file, "fig.savefig(");
+        quote_python_string(file, filename);
+        fprintf(file, " + '.%s', dpi=110)\n", fmt);
+        fprintf(file, "print('pyplot: wrote %s.%s')\n", filename, fmt);
+    } else {
+        fprintf(file, "plt.show()\n");
+    }
+    (void) fclose(file);
+
+    /* run it: synchronously for a file, in the background for a window. */
+#if defined(__MINGW32__) || defined(_MSC_VER)
+    if (hardcopy)
+        (void) snprintf(buf, sizeof(buf), "%s %s", python, filename_py);
+    else
+        (void) snprintf(buf, sizeof(buf), "start /B %s %s", python, filename_py);
+    _flushall();
+#else
+    if (hardcopy)
+        (void) snprintf(buf, sizeof(buf), "%s %s", python, filename_py);
+    else
+        (void) snprintf(buf, sizeof(buf), "%s %s &", python, filename_py);
+#endif
+    err = system(buf);
+    if (err == -1)
+        fprintf(cp_err, "Error: could not run '%s'.\n", buf);
+
+#ifdef SHARED_MODULE
+    setlocale(LC_NUMERIC, llocale);
+#endif
+}

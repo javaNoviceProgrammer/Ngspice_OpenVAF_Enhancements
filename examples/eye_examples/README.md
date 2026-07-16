@@ -25,6 +25,15 @@ Given a transient data signal `<expr>` (e.g. `v(rx)`) and its UI `-ui <T>`, `eye
 plot eye_wave vs eye_t
 ```
 
+**One-line rendering (Enhancement-208):** `pyplot -eye <expr> -ui <T>` runs this
+analysis *and* renders the folded eye as a persistence-style 2-D-histogram eye
+diagram (like the figure below) via matplotlib, annotated with the metrics — no
+manual `wrdata` / plotting round-trip:
+
+```
+pyplot -eye v(rx) -ui 0.5n        # -> eye.png (or an interactive window)
+```
+
 All results are published as permanent vectors: `eye_height`, `eye_width`,
 `eye_width_ber12`, `eye_jitter_rms`, `eye_jitter_pp`, `eye_level0`, `eye_level1`,
 `eye_amplitude`, `eye_threshold`, `eye_crossings`, `eye_ui`.

@@ -13,10 +13,12 @@
 #include "ngspice/fteext.h"
 
 #include "plotting/plotit.h"
+#include "plotting/pyplot.h" /* ft_pyplot_eye() */
 #include "../misc/mktemp.h"
 #include "../misc/util.h" /* ngdirname() */
 
 #include "com_pyplot.h"
+#include "com_eye.h" /* com_eye() -- for the -eye flag (Enhancement-208) */
 
 
 /* matplotlib [file] plotargs */
@@ -36,15 +38,41 @@ com_pyplot(wordlist *wl)
        default plot named "pyplot" (unchanged) and names later ones
        "pyplot-2", "pyplot-3", ... so each viewer reads its own files. */
     static unsigned int autoseq = 0;
+    /* Enhancement-208: `pyplot [name] -eye <expr> -ui <T> [opts]` renders an eye
+       diagram. `eye_args` (set when a -eye marker is found) points at the `eye`
+       command's own arguments -- the expression and its flags. */
+    bool is_eye = FALSE;
+    wordlist *eye_args = NULL;
 
     if (!wl)
         return;
+
+    /* E-208: detect the -eye marker anywhere in the argument list; the tokens
+       after it belong to the `eye` command. A single bare token before -eye is
+       taken as the output base name (`pyplot myeye -eye v(rx) -ui 0.5n`). */
+    {
+        wordlist *w, *marker = NULL;
+        for (w = wl; w; w = w->wl_next)
+            if (w->wl_word && eq(w->wl_word, "-eye")) { marker = w; break; }
+        if (marker) {
+            is_eye = TRUE;
+            strcpy(defname, "eye");
+            if (wl != marker && wl->wl_word)
+                fname = wl->wl_word;
+            eye_args = marker->wl_next;
+            if (!eye_args || !eye_args->wl_word) {
+                fprintf(cp_err, "Usage: pyplot [name] -eye <expr> -ui <T> "
+                        "[-tstart t0] [-threshold vth] [-window frac]\n");
+                return;
+            }
+        }
+    }
 
     /* The first word is an output file name only if it is not itself a plot
        expression -- i.e. it has no '(' (as in v(out), db(...)) and does not
        name an existing vector (as a bare node name would). Otherwise the base
        name defaults to "pyplot" and all words are plot arguments. */
-    {
+    if (!is_eye) {
         const char *w = wl->wl_word;
         bool is_expr = (strchr(w, '(') != NULL) || (vec_get(w) != NULL);
         if (!is_expr) {
@@ -55,7 +83,8 @@ com_pyplot(wordlist *wl)
 
     if (!fname) {
         if (autoseq > 0)
-            (void) snprintf(defname, sizeof defname, "pyplot-%u", autoseq + 1);
+            (void) snprintf(defname, sizeof defname, "%s-%u",
+                            is_eye ? "eye" : "pyplot", autoseq + 1);
         autoseq++;
         fname = defname;
     }
@@ -79,6 +108,15 @@ com_pyplot(wordlist *wl)
             fname = fullname;
         }
         tfree(dir);
+    }
+
+    /* Enhancement-208: run the `eye` analysis (it folds the waveform and leaves
+       eye_wave/eye_t + the scalar metrics in a fresh current 'eye' plot), then
+       render that folded eye as a matplotlib eye diagram. */
+    if (is_eye) {
+        com_eye(eye_args);
+        ft_pyplot_eye(fname, eye_args->wl_word);
+        goto done;
     }
 
     if (!wl) /* no plot arguments left */
