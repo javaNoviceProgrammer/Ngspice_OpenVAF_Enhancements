@@ -36,8 +36,11 @@ Results are published as permanent vectors (`eye_height`, `eye_width`,
 
 New self-contained front-end command `com_eye.c` (+ `com_eye.h`), registered in
 `commands.c` / `com_commands.h` / `Makefile.am`. It reads the vector and its time
-scale via `ft_evaluate`, and creates the folded-eye vectors with `dvec_alloc` /
-`vec_new` (as `stb`/`sweep` do). No numerical-core changes.
+scale via `ft_evaluate`, and publishes its results into a fresh `eye` plot (as `stb`
+does): the folded `eye_wave` and its scale `eye_t` must share a plot of their own
+length so that `plot eye_wave vs eye_t` and `wrdata eye_wave` pair equal-length
+vectors — dumping the length-m eye vectors into the transient plot (whose scale is
+the full, much longer time vector) segfaults. No numerical-core changes.
 
 ## Verification
 

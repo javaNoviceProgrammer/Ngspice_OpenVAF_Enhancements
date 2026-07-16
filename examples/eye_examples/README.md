@@ -29,6 +29,19 @@ All results are published as permanent vectors: `eye_height`, `eye_width`,
 `eye_width_ber12`, `eye_jitter_rms`, `eye_jitter_pp`, `eye_level0`, `eye_level1`,
 `eye_amplitude`, `eye_threshold`, `eye_crossings`, `eye_ui`.
 
+## Figure
+
+![Eye diagram](eye_diagram.png)
+
+`make_eye_fig.py` drives a 2 Gb/s pseudo-random bit stream through a bandwidth-limiting
+RC channel (τ ≈ 0.5 UI, moderate inter-symbol interference), runs `eye v(rx) -ui 0.5n`,
+and renders the folded `eye_wave` vs `eye_t` samples as a persistence-style 2-D
+histogram — the eye above (eye height 565 mV, eye width 461 ps, 15.9 ps RMS jitter).
+
+```
+python3 make_eye_fig.py        # -> eye_diagram.png
+```
+
 ## Demo
 
 `eye_demo.cir` sends a 0/1 clock at UI = 0.5 ns through a bandwidth-limiting RC

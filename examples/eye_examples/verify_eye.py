@@ -109,11 +109,26 @@ check("[width] the eye width equals UI minus the peak-to-peak jitter",
       jp is not None and abs(v2.get("eye_width", 0) - (UI - jp)) < 0.02 * UI,
       f"(eye_width {v2.get('eye_width')} s, UI-pp {UI - jp if jp else 0} s)")
 
-# ---- 3) the folded-eye + scalar vectors are published ---------------------------
+# ---- 3) the folded-eye + scalar vectors are published, and wrdata-able ----------
 v3, out3 = run_eye(pwl, N, ["length(eye_wave)", "length(eye_t)"])
 check("[vectors] the folded eye is published as 'eye_wave' vs 'eye_t' for plotting",
       v3.get("length(eye_wave)", 0) > 100 and v3.get("length(eye_t)", 0) > 100,
       f"(eye_wave {v3.get('length(eye_wave)')} pts, eye_t {v3.get('length(eye_t)')} pts)")
+
+# eye_wave / eye_t must live in their own plot so wrdata (which pairs a vector with
+# its scale) does not crash on a length mismatch with the long transient time scale.
+datf = os.path.join(HERE, "_ew.dat")
+deck = (f"* eye wrdata\nV1 out 0 PWL({pwl})\nR1 out 0 1k\n.tran 0.002n {N*0.5}n\n"
+        f".control\n  run\n  eye v(out) -ui 0.5n -tstart 2n\n  wrdata {datf} eye_wave\n.endc\n.end\n")
+open(os.path.join(HERE, "_e.cir"), "w").write(deck)
+r = subprocess.run([NGSPICE, "-b", os.path.join(HERE, "_e.cir")], cwd=HERE,
+                   capture_output=True, text=True, timeout=180)
+nrows = sum(1 for _ in open(datf)) if os.path.exists(datf) else 0
+check("[wrdata] `wrdata eye_wave` writes the folded eye without crashing "
+      "(eye_wave and its scale eye_t share their own plot)",
+      r.returncode == 0 and nrows > 100, f"(rc {r.returncode}, {nrows} rows)")
+if os.path.exists(datf):
+    os.remove(datf)
 
 for f in ("_e.cir",):
     p = os.path.join(HERE, f)

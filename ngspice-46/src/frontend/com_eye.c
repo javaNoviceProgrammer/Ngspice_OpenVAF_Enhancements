@@ -192,26 +192,34 @@ void com_eye(wordlist *wl)
     double eye_width_ber12 = ui - 14.069 * jitter_rms;   /* +/-7.035 sigma each edge */
     if (eye_width_ber12 < 0) eye_width_ber12 = 0;
 
-    /* ---- folded eye vectors (scatter = the eye diagram), 2 UI wide, centred ---- */
+    /* ---- publish everything into a FRESH 'eye' plot (as `stb` does). The folded
+     * eye_wave and its scale eye_t must live in their own plot: putting the length-m
+     * eye vectors in the transient plot (scale = the full, much longer time vector)
+     * makes `wrdata`/`plot` pair mismatched-length vectors and crash. The length-1
+     * scalar metrics coexist in the same plot (montecarlo likewise stores length-1
+     * results beside a longer scale). The plot is left current so the user's
+     * `print eye_height` / `plot eye_wave vs eye_t` both resolve. ---- */
     {
+        struct plot *pl = plot_alloc("eye");
+        struct dvec *evt, *evw;
         double *et = TMALLOC(double, m), *ev = TMALLOC(double, m);
+        pl->pl_name  = copy("Eye diagram");
+        pl->pl_title = copy(ft_curckt && ft_curckt->ci_name ? ft_curckt->ci_name : "eye");
+        plot_new(pl);
+        plot_setcur(pl->pl_typename);
         for (i = 0; i < m; i++) {
             double tf = (t[i0 + i] - phase + 0.5 * ui);
             tf -= 2.0 * ui * floor(tf / (2.0 * ui));       /* fold into [0, 2 UI) */
             et[i] = tf; ev[i] = y[i0 + i];
         }
-        struct dvec *evt = dvec_alloc(copy("eye_t"), SV_TIME,
-                                      (short) (VF_REAL | VF_PERMANENT), m, NULL);
+        evt = dvec_alloc(copy("eye_t"), SV_TIME, (short) (VF_REAL | VF_PERMANENT), m, NULL);
         for (i = 0; i < m; i++) evt->v_realdata[i] = et[i];
         vec_new(evt);                                      /* first permanent -> scale */
-        struct dvec *evw = dvec_alloc(copy("eye_wave"), SV_VOLTAGE,
-                                      (short) (VF_REAL | VF_PERMANENT), m, NULL);
+        evw = dvec_alloc(copy("eye_wave"), SV_VOLTAGE, (short) (VF_REAL | VF_PERMANENT), m, NULL);
         for (i = 0; i < m; i++) evw->v_realdata[i] = ev[i];
         vec_new(evw);
         tfree(et); tfree(ev);
     }
-
-    /* ---- publish scalars + report ---- */
     eye_set("eye_ui", ui);
     eye_set("eye_level0", level0);
     eye_set("eye_level1", level1);
