@@ -85,13 +85,23 @@ ft_optimizing) unless `-verbose`.
 #include "ngspice/wordlist.h"
 #include "ngspice/fteext.h"
 #include "ngspice/cpextern.h"
+#include "ngspice/randnumb.h"    /* Enhancement-206: inner Monte-Carlo sampling */
 
 #include "com_optimize.h"
 
 #define OPT_MAXP    128          /* max parameters to optimize (E-197)    */
 #define OPT_MAXS      8          /* max analysis stages                   */
 #define OPT_MAXT    128          /* max least-squares targets (E-197)     */
+#define OPT_MAXSPEC  32          /* Enhancement-206: max yield specs      */
 #define OPT_PENALTY  1e30        /* cost for a failed / non-finite eval   */
+
+/* Enhancement-206 (design centering): one pass/fail spec for the inner Monte
+ * Carlo, exactly like montecarlo's -spec: an expression bounded by -max/-min. */
+struct opt_spec {
+    char   metric[256];
+    double hi, lo;
+    int    hasmax, hasmin;
+};
 
 struct opt_target {
     char  *expr;                 /* expression to fit                     */
@@ -126,6 +136,19 @@ struct optctx {
     int nevals;
     int swarmsize;                       /* Enhancement-194: PSO population (0=auto)*/
     unsigned long seed;                  /* Enhancement-194: PSO RNG seed          */
+
+    /* Enhancement-206: design centering. When `center` is set the objective is
+     * the parametric yield / worst-case Cpk from an inner Monte Carlo run of
+     * `nsamples` samples at the candidate design point (the process variation is
+     * in the deck's agauss/.param stmts, re-sampled by each inner reset). */
+    int    center;
+    int    nspec;
+    struct opt_spec spec[OPT_MAXSPEC];
+    int    nsamples;
+    int    lhs;                          /* Latin-Hypercube inner sampling         */
+    unsigned mcseed;                     /* inner MC seed                          */
+    double last_yield;                   /* yield at the last centering eval       */
+    double last_cpk;                     /* worst-case Cpk at the last eval        */
 };
 
 
@@ -198,6 +221,102 @@ static double opt_eval_expr(const char *expr)
 }
 
 
+/* Publish a scalar result as a permanent nutmeg vector + a shell variable
+ * (mirrors montecarlo's hs_set_result). Enhancement-206. */
+static void dc_set_result(const char *name, double val)
+{
+    struct dvec *v;
+    cp_vset(name, CP_REAL, &val);
+    v = dvec_alloc(copy(name), SV_NOTYPE, VF_REAL | VF_PERMANENT, 1, NULL);
+    if (v) { v->v_realdata[0] = val; vec_new(v); }
+}
+
+/* Apply the in-place design knobs (device/instance via `alter`, .model-card via
+ * `altermod`) for the normalized point u. Factored out (Enhancement-206) so the
+ * centering MC loop can re-apply them after each `reset` re-sources the deck. */
+static void opt_apply_inplace(struct optctx *c, const double *u)
+{
+    char cmd[512];
+    int k;
+    for (k = 0; k < c->np; k++) {
+        double val = c->lo[k] + clamp01(u[k]) * (c->hi[k] - c->lo[k]);
+        if (c->kind[k] == OPT_ALTER)
+            (void) snprintf(cmd, sizeof cmd, "alter %s=%.10g", c->name[k], val);
+        else if (c->kind[k] == OPT_MODELPARAM)
+            (void) snprintf(cmd, sizeof cmd, "altermod %s=%.10g", c->name[k], val);
+        else
+            continue;                    /* OPT_DECKPARAM handled by alterparam+reset */
+        opt_run_cmd(cmd);
+    }
+}
+
+/* Enhancement-206: the design-centering objective. The design point is already
+ * applied (the deck .params were alterparam'd + re-sourced by the caller); here
+ * we run an inner Monte Carlo of `nsamples` samples -- each `reset` re-samples
+ * the deck's process variation (agauss/.param, and any mccorr correlations)
+ * around the current design center -- evaluate every spec, and reduce to the
+ * worst-case Cpk (the smooth objective the outer optimizer maximizes) plus the
+ * pass-fraction yield (reported). Returns -min(Cpk) so that MINIMIZING the cost
+ * MAXIMIZES the process capability -> centers the design. */
+static double opt_eval_center(struct optctx *c, const double *u)
+{
+    double sum[OPT_MAXSPEC], sumsq[OPT_MAXSPEC];
+    long npass = 0;
+    int i, s;
+    char cmd[64];
+
+    for (s = 0; s < c->nspec; s++) { sum[s] = 0.0; sumsq[s] = 0.0; }
+
+    if (c->lhs) {
+        mc_lhs_config(c->nsamples, c->mcseed);
+    } else {
+        (void) snprintf(cmd, sizeof cmd, "setseed %u", c->mcseed);
+        opt_run_cmd(cmd);
+    }
+
+    for (i = 0; i < c->nsamples; i++) {
+        ft_optimizing = TRUE;            /* keep reset/analysis quiet (as montecarlo does) */
+        opt_run_cmd("reset");            /* re-source: design center (persisted) + fresh process draw */
+        ft_optimizing = TRUE;
+        opt_apply_inplace(c, u);         /* reset wiped in-place alters -> re-apply the center */
+        opt_run_cmd(c->analysis[0]);
+        int pass = 1;
+        for (s = 0; s < c->nspec; s++) {
+            double m = opt_eval_expr(c->spec[s].metric);
+            sum[s] += m; sumsq[s] += m * m;
+            if ((c->spec[s].hasmax && m > c->spec[s].hi) ||
+                (c->spec[s].hasmin && m < c->spec[s].lo))
+                pass = 0;
+        }
+        if (pass) npass++;
+    }
+    if (c->lhs)
+        mc_sss_off();
+
+    double mincpk = 1e30;
+    for (s = 0; s < c->nspec; s++) {
+        double mu  = sum[s] / c->nsamples;
+        double var = sumsq[s] / c->nsamples - mu * mu;
+        double sig = var > 0.0 ? sqrt(var) : 0.0;
+        double cpk;
+        if (sig < 1e-300) {
+            /* degenerate (no spread): Cpk is +/-large depending on whether the
+             * mean is inside the window, so the optimizer still moves it in. */
+            int within = (!c->spec[s].hasmax || mu <= c->spec[s].hi) &&
+                         (!c->spec[s].hasmin || mu >= c->spec[s].lo);
+            cpk = within ? 100.0 : -100.0;
+        } else {
+            double cu = c->spec[s].hasmax ? (c->spec[s].hi - mu) / (3.0 * sig) : 1e30;
+            double cl = c->spec[s].hasmin ? (mu - c->spec[s].lo) / (3.0 * sig) : 1e30;
+            cpk = cu < cl ? cu : cl;
+        }
+        if (cpk < mincpk) mincpk = cpk;
+    }
+    c->last_yield = (double) npass / (double) c->nsamples;
+    c->last_cpk = mincpk;
+    return -mincpk;
+}
+
 /* Evaluate at a normalized point u in [0,1]^np: alter each param in place, run
  * every analysis stage, and either evaluate the scalar objective or accumulate
  * the least-squares residuals. Returns the scalar cost (the objective value, or
@@ -240,23 +359,14 @@ static double opt_eval(struct optctx *c, const double *u, double *resid)
      * instance params with `alter`, .model-card params with `altermod`. Both take
      * effect immediately without a re-parse, so they run after any `.param`
      * re-source above. */
-    for (k = 0; k < c->np; k++) {
-        double val;
-        if (c->kind[k] == OPT_ALTER)
-            (void) snprintf(cmd, sizeof cmd, "alter %s=%.10g", c->name[k],
-                            (val = c->lo[k] + clamp01(u[k]) * (c->hi[k] - c->lo[k])));
-        else if (c->kind[k] == OPT_MODELPARAM)
-            (void) snprintf(cmd, sizeof cmd, "altermod %s=%.10g", c->name[k],
-                            (val = c->lo[k] + clamp01(u[k]) * (c->hi[k] - c->lo[k])));
-        else
-            continue;                    /* OPT_DECKPARAM handled above */
-        (void) val;
-        opt_run_cmd(cmd);
-    }
+    opt_apply_inplace(c, u);
 
     c->nevals++;
 
-    if (c->nt > 0) {
+    if (c->center) {
+        /* Enhancement-206: objective is the inner Monte-Carlo yield / Cpk. */
+        cost = opt_eval_center(c, u);
+    } else if (c->nt > 0) {
         /* least-squares: each stage's analysis, then its targets, evaluated
          * while that stage's plot is still current */
         for (s = 0; s < c->ns; s++) {
@@ -839,7 +949,10 @@ void com_optimize(wordlist *wl)
                 goto cleanup;
             }
             c.ns++;
-        } else if (eq(w, "-minimize") || eq(w, "-min") || eq(w, "-o")) {
+        } else if (eq(w, "-minimize") || eq(w, "-o") ||
+                   (eq(w, "-min") && c.nspec == 0 && !c.center)) {
+            /* bare -min is the scalar-objective alias only outside centering mode;
+             * once a -spec is present (or -center given) it is a spec lower bound. */
             wl = wl->wl_next;
             tfree(c.objective);
             c.objective = collect_until_flag(&wl);
@@ -907,6 +1020,39 @@ void com_optimize(wordlist *wl)
         } else if (eq(w, "-verbose") || eq(w, "-v")) {
             c.verbose = 1;
             wl = wl->wl_next;
+        } else if (eq(w, "-center") || eq(w, "-yield")) {   /* Enhancement-206 */
+            c.center = 1;
+            wl = wl->wl_next;
+        } else if (eq(w, "-samples") || eq(w, "-nsamp")) {
+            if (wl->wl_next) { c.nsamples = atoi(wl->wl_next->wl_word); wl = wl->wl_next->wl_next; }
+            else wl = NULL;
+        } else if (eq(w, "-lhs")) {
+            c.lhs = 1;
+            wl = wl->wl_next;
+        } else if (eq(w, "-spec")) {
+            c.center = 1;
+            if (c.nspec >= OPT_MAXSPEC) {
+                fprintf(cp_err, "optimize: too many -spec (max %d)\n", OPT_MAXSPEC);
+                goto cleanup;
+            }
+            if (!wl->wl_next) { fprintf(cp_err, "optimize: -spec needs a metric expression\n"); goto cleanup; }
+            wl = wl->wl_next;
+            strncpy(c.spec[c.nspec].metric, wl->wl_word, sizeof c.spec[c.nspec].metric - 1);
+            c.spec[c.nspec].metric[sizeof c.spec[c.nspec].metric - 1] = '\0';
+            c.spec[c.nspec].hasmax = c.spec[c.nspec].hasmin = 0;
+            c.nspec++;
+            wl = wl->wl_next;
+        } else if (eq(w, "-max")) {
+            if (c.nspec == 0) { fprintf(cp_err, "optimize: -max before any -spec\n"); goto cleanup; }
+            if (!wl->wl_next) { fprintf(cp_err, "optimize: -max needs a value\n"); goto cleanup; }
+            wl = wl->wl_next;
+            c.spec[c.nspec - 1].hi = optnum(wl->wl_word); c.spec[c.nspec - 1].hasmax = 1;
+            wl = wl->wl_next;
+        } else if (eq(w, "-min") && c.nspec > 0) {
+            if (!wl->wl_next) { fprintf(cp_err, "optimize: -min needs a value\n"); goto cleanup; }
+            wl = wl->wl_next;
+            c.spec[c.nspec - 1].lo = optnum(wl->wl_word); c.spec[c.nspec - 1].hasmin = 1;
+            wl = wl->wl_next;
         } else {
             fprintf(cp_err, "optimize: unrecognized token '%s'\n", w);
             wl = wl->wl_next;
@@ -914,12 +1060,35 @@ void com_optimize(wordlist *wl)
     }
 
     /* --- validate --- */
-    if (c.np < 1 || c.ns < 1 || (!c.objective && c.nt == 0)) {
+    if (c.np < 1 || c.ns < 1 || (!c.objective && c.nt == 0 && !c.center)) {
         fprintf(cp_err, "usage: optimize (-param|-mparam|-dparam) <name> <init> "
                         "<lo> <hi> [...] -analysis <cmd> (-minimize <expr> | -target "
-                        "<expr> <val> [<w>] ...) [-method nm|lm|pso|de|sa] [-swarmsize N] "
+                        "<expr> <val> [<w>] ... | -center (-spec <m> [-max hi] [-min lo])... "
+                        "-samples N [-lhs]) [-method nm|lm|pso|de|sa] [-swarmsize N] "
                         "[-seed s] [-maxiter N] [-tol T] [-verbose]\n");
         goto cleanup;
+    }
+    if (c.center && (c.objective || c.nt > 0)) {
+        fprintf(cp_err, "optimize: -center (yield/Cpk) cannot be combined with -minimize/-target\n");
+        goto cleanup;
+    }
+    if (c.center) {   /* Enhancement-206: design centering */
+        int s;
+        if (c.nspec < 1) {
+            fprintf(cp_err, "optimize: -center needs at least one -spec <metric> (-max/-min)\n");
+            goto cleanup;
+        }
+        for (s = 0; s < c.nspec; s++)
+            if (!c.spec[s].hasmax && !c.spec[s].hasmin) {
+                fprintf(cp_err, "optimize: spec '%s' has no -max/-min limit\n", c.spec[s].metric);
+                goto cleanup;
+            }
+        if (c.ns > 1) {
+            fprintf(cp_err, "optimize: -center uses a single -analysis stage\n");
+            goto cleanup;
+        }
+        if (c.nsamples < 2) c.nsamples = 100;         /* default inner MC size */
+        c.mcseed = (unsigned) (c.seed ? c.seed : 1);
     }
     if (c.objective && c.nt > 0) {
         fprintf(cp_err, "optimize: use either -minimize or -target, not both\n");
@@ -967,7 +1136,12 @@ void com_optimize(wordlist *wl)
                           : use_de  ? "Differential Evolution"
                           : use_sa  ? "Simulated Annealing"
                           : use_lm  ? "Levenberg-Marquardt" : "Nelder-Mead";
-        if (c.nt > 0)
+        if (c.center)
+            fprintf(cp_out, "optimize: design centering -- %d design param%s, %d spec%s, "
+                            "%d %s MC samples/eval, analysis '%s', maximizing worst-case Cpk (%s)\n",
+                    c.np, c.np == 1 ? "" : "s", c.nspec, c.nspec == 1 ? "" : "s",
+                    c.nsamples, c.lhs ? "Latin-Hypercube" : "random", c.analysis[0], mname);
+        else if (c.nt > 0)
             fprintf(cp_out, "optimize: %d parameter%s, %d target%s over %d analysis "
                             "stage%s, %s\n",
                     c.np, c.np == 1 ? "" : "s", c.nt, c.nt == 1 ? "" : "s",
@@ -1000,11 +1174,19 @@ void com_optimize(wordlist *wl)
     else
         nelder_mead(&c, ubest, &fbest);
 
-    /* leave the circuit at the optimum (verbose final run) and report */
-    c.verbose = 1;
+    /* leave the circuit at the optimum and report. The final run is verbose for a
+     * plain optimize (one analysis), but stays quiet for centering -- a verbose
+     * final run would re-do the whole inner MC and flood the console with resets. */
+    c.verbose = !c.center;
     (void) opt_eval(&c, ubest, NULL);
 
-    if (c.nt > 0)
+    if (c.center) {
+        fprintf(cp_out, "optimize: centered -- worst-case Cpk = %.4g, yield = %.2f%% "
+                        "(%d MC samples), after %d evaluations\n",
+                c.last_cpk, 100.0 * c.last_yield, c.nsamples, c.nevals);
+        dc_set_result("dcenter_yield", c.last_yield);
+        dc_set_result("dcenter_cpk", c.last_cpk);
+    } else if (c.nt > 0)
         fprintf(cp_out, "optimize: converged, sum-sq residual = %.6g (rms %.6g) "
                         "after %d evaluations\n",
                 fbest, sqrt(fbest / c.nt), c.nevals);

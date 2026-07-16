@@ -1,0 +1,24 @@
+* dcenter_demo -- Enhancement-206: design centering / yield optimization
+*
+* A minimal design-centering problem with a KNOWN optimal centre. The output
+* voltage has a nominal design centre `xc` (the design knob the optimizer moves)
+* plus zero-mean Gaussian process variation:  vo ~ N(xc, 0.5)  [agauss(m,v,3) makes
+* the actual sigma = v/3 = 0.5]. The spec window is [4, 6] V, so the yield/Cpk is
+* maximized when the distribution is centred at the midpoint, xc = 5.
+*
+* `optimize -center` runs the OUTER optimizer over xc; at each candidate it runs an
+* INNER Monte Carlo of `-samples` draws (each `reset` re-samples agauss around the
+* current xc), scores the worst-case Cpk across the specs, and drives it up. With
+* `-lhs` the stratified sample-mean is ~0, so it lands right on xc = 5 (Cpk = 0.667).
+.param xc = 4.0                       ; start off-centre
+.param vo = agauss(xc, 1.5, 3)        ; output = centre + N(0, 0.5) process variation
+V1 out 0 dc {vo}
+R1 out 0 1k
+.control
+  * off-centre baseline yield (~50%, since xc=4 sits at the spec edge)
+  montecarlo 200 -lhs -analysis op -spec v(out) -max 6 -min 4 -seed 3
+  * centre the design: maximize worst-case Cpk / yield under the process variation
+  optimize -dparam xc 4.0 3 7 -center -lhs -samples 200 -analysis op -spec v(out) -max 6 -min 4 -seed 3
+  print xc dcenter_yield dcenter_cpk
+.endc
+.end
