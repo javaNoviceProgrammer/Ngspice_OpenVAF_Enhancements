@@ -193,6 +193,43 @@ if _klu_enabled():
 else:
     print("  SKIP  [klu] PSS pass (heavy 1024-sample re-factor; NG_SLOW_KLU=1 to run)")
 
+# --- Enhancement-210: the `.pss` dot-card auto-runs in batch (no `.control run`
+#     needed, like `.hb`/`.tran`), and the frequency-domain PSS spectrum is now
+#     published as COMPLEX vectors (mag + phase, like the hb command's E-209
+#     vectors and like AC node vectors) instead of magnitude-only. ---
+def run_deck(txt):
+    p = os.path.join(HERE, "_e210.cir")
+    with open(p, "w") as f:
+        f.write(txt)
+    r = subprocess.run([NGSPICE, "-b", p], capture_output=True, text=True, cwd=HERE)
+    os.remove(p)
+    return r.stdout + r.stderr
+
+# a driven diode rectifier -> harmonics with clearly non-trivial phase
+_diode = ("* e210\nV1 in 0 SIN(0 1 1meg)\nR1 in a 100\nD1 a out DMOD\n"
+          "Rl out 0 1k\n.model DMOD D(IS=1e-12 N=1.2)\n")
+
+a = run_deck(_diode + ".pss 1meg 20u 1 1024 8 50 5m uic\n.end\n")
+check("[E-210] `.pss` dot-card auto-runs in batch (no `.control run` needed)",
+      "Convergence reached" in a and "no simulations run" not in a,
+      "did not auto-run in batch")
+
+b = run_deck(_diode + ".pss 1meg 20u 1 1024 8 50 5m uic\n.control\n"
+             "print vm(out) vp(out)\n.endc\n.end\n")
+rowvals = {}
+for line in b.splitlines():
+    p = line.split()
+    if len(p) == 4 and p[0].isdigit():
+        try:
+            rowvals[int(p[0])] = (float(p[2]), float(p[3]))   # (vm, vp[rad])
+        except ValueError:
+            pass
+has_mag = 1 in rowvals and rowvals[1][0] > 1e-3
+has_phase = any(abs(v[1]) > 0.5 for k, v in rowvals.items() if k >= 1)   # vp in radians
+check("[E-210] frequency-domain PSS spectrum is complex -- vm() and vp() both resolve",
+      has_mag and has_phase,
+      f"mag={has_mag} phase={has_phase} rows={len(rowvals)}")
+
 print()
 print(("ALL PASS" if passed == checks else "FAILURES")
       + f": {passed} passed, {checks - passed} failed")

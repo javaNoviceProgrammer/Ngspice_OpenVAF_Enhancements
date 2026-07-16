@@ -4342,6 +4342,11 @@ DCpss(CKTcircuit *ckt,
             double *pssnphases = TMALLOC (double, ckt->CKTharms);
             double *pssValues  = TMALLOC (double, ckt->CKTpsspoints + 1);
             double *pssResults = TMALLOC (double, msize * ckt->CKTharms);
+            /* Enhancement-210: keep the per-harmonic PHASE too, so the frequency-
+               domain spectrum can be published as COMPLEX (mag + phase both
+               accessible via mag()/vp(), like the hb command's E-209 vectors and
+               like AC-analysis node vectors), instead of magnitude-only. */
+            double *pssPhaseR  = TMALLOC (double, msize * ckt->CKTharms);
 
             /* End plot in Time Domain */
             SPfrontEnd->OUTendPlot (job->PSSplot_td) ;
@@ -4354,7 +4359,7 @@ DCpss(CKTcircuit *ckt,
             error = SPfrontEnd->OUTpBeginPlot (ckt, ckt->CKTcurJob,
                                                "Frequency Domain Periodic Steady State Analysis",
                                                freqUid, IF_REAL,
-                                               numNames, nameList, IF_REAL,
+                                               numNames, nameList, IF_COMPLEX,
                                                &(job->PSSplot_fd)) ;
             tfree (nameList) ;
             SPfrontEnd->OUTattributes (job->PSSplot_fd, NULL, PLOT_COMB, NULL) ;
@@ -4371,15 +4376,31 @@ DCpss(CKTcircuit *ckt,
                          pssfreqs, pssmags, pssphases, pssnmags, pssnphases) ;
 
                 for (j = 0 ; j < ckt->CKTharms ; j++)
-                    pssResults [j * msize + i] = pssmags [j] ;
+                {
+                    pssResults [j * msize + i] = pssmags [j] ;      /* single-sided magnitude */
+                    pssPhaseR  [j * msize + i] = pssphases [j] ;    /* phase, degrees (0 at DC) */
+                }
             }
 
+            /* Enhancement-210: publish each harmonic as a COMPLEX data row
+               (mag * e^{j*phase}); |.| reproduces the magnitude spectrum and the
+               phase is now recoverable via vp(). (DFT returns the phase in degrees.) */
             for (j = 0 ; j < ckt->CKTharms ; j++)
             {
+                IFvalue freqData, valData ;
+                IFcomplex *cdata = TMALLOC (IFcomplex, msize) ;
+                freqData.rValue = pssfreqs [j] ;
+                valData.v.numValue = msize ;
+                valData.v.vec.cVec = cdata ;
                 for (i = 0 ; i < msize ; i++)
-                    ckt->CKTrhsOld [i + 1] = pssResults [j * msize + i] ;
-
-                CKTdump (ckt, pssfreqs [j], job->PSSplot_fd) ;
+                {
+                    double m  = pssResults [j * msize + i] ;
+                    double ph = pssPhaseR  [j * msize + i] * M_PI / 180.0 ;
+                    cdata [i].real = m * cos (ph) ;
+                    cdata [i].imag = (j == 0) ? 0.0 : m * sin (ph) ;
+                }
+                SPfrontEnd->OUTpData (job->PSSplot_fd, &freqData, &valData) ;
+                FREE (cdata) ;
             }
             /* ****************** */
             /* Ending DFT on data */
@@ -4495,6 +4516,7 @@ DCpss(CKTcircuit *ckt,
 
 
             FREE (pssResults) ;
+            FREE (pssPhaseR) ;
             FREE (pssValues) ;
             FREE (pssnphases) ;
             FREE (pssnmags) ;

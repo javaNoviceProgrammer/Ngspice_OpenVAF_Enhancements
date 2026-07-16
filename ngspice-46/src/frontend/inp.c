@@ -794,6 +794,20 @@ inp_spsource(FILE *fp, bool comfile, char *filename, bool intfile)
                 controls = wl_cons(copy(skip_ws(dd->line) + 1), controls);
                 ld->nextcard = dd->nextcard;
                 line_free(dd, FALSE);
+            } else if (!commands && ciprefix(".pss", dd->line) &&
+                       (dd->line[4] == '\0' || isspace_c(dd->line[4]))) {
+                /* Enhancement-210: a top-level `.pss ...` card is run after the
+                 * circuit is parsed as a `pss ...` command (Enhancement-117
+                 * shooting-method PSS), mirroring the `.hb` handling above -- drop
+                 * the leading '.' and add it to the post-parse control list. The
+                 * stock `.pss` dot-card no-ops in batch (only the `pss` command
+                 * ran); this gives `.pss` the same command-dispatch the rest of
+                 * the periodic-steady-state family uses. The boundary check keeps
+                 * `.pss` from matching a longer name and never matches `.psp`
+                 * (periodic S-parameters, a distinct card). */
+                controls = wl_cons(copy(skip_ws(dd->line) + 1), controls);
+                ld->nextcard = dd->nextcard;
+                line_free(dd, FALSE);
             } else if (!commands &&
                        ((ciprefix(".qpss", dd->line) &&
                          (dd->line[5] == '\0' || isspace_c(dd->line[5]))) ||

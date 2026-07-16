@@ -337,7 +337,7 @@ C1 b 0 1n""")):
 .control
 run
 set numdgt=10
-print b
+print mag(b)
 .endc
 .end
 """, ng=ngpss, timeout=600)

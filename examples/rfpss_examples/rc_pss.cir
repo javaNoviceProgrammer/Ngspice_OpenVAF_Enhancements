@@ -7,6 +7,6 @@ C1 b 0 1n
 .pss 1meg 1u b 1024 10 50 5u
 .control
 run
-print b
+print mag(b)
 .endc
 .end
