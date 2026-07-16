@@ -6111,7 +6111,11 @@ static void inp_compat(struct card *card)
     char *out_ptr, *exp_ptr, *beg_ptr, *end_ptr, *copy_ptr, *del_ptr;
     char *xline, *x2line = NULL, *x3line = NULL, *x4line = NULL;
     size_t xlen, i, pai = 0, paui = 0, ii;
-    char *ckt_array[100];
+    char *ckt_array[100] = { NULL };   /* Enhancement-211: zero-init so a tfree() of
+                                          a slot never written on a given branch (e.g.
+                                          ckt_array[2] on the LTSPICE single-pair
+                                          `E ... table=(x,y)` path) is tfree(NULL), a
+                                          safe no-op, not a free of a garbage pointer. */
 
     int skip_control = 0;
 

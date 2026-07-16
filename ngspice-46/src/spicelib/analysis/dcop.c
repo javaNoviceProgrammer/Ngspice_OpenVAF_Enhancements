@@ -17,7 +17,7 @@ Modified: 2000  AlansFixes
  * Newton from it (MODEINITFLOAT) before any gmin/source stepping. If the guess
  * is poor, CKTop's first NIiter simply fails and it falls through to the usual
  * cold homotopy, so the converged result is identical -- only the iteration
- * count drops (measured ~52 -> ~4 on a diode ladder). The buffer lives outside
+ * count drops (measured ~52 -> ~5 on a diode ladder). The buffer lives outside
  * the CKTcircuit (which `reset` recreates) and is indexed by equation number,
  * which is stable across resets of an identical-topology deck. */
 static double *dcop_warm = NULL;   /* [size+1] last converged CKTrhsOld       */
@@ -88,6 +88,13 @@ DCop(CKTcircuit *ckt, int notused)
     if (ckt->CKTsoaCheck)
         error = CKTsoaInit();
 
+    /* Enhancement-211: the DC warm-start (below) needs the matrix size on BOTH the
+       analog and the event-driven (XSPICE EVTop) paths -- the warm-start snapshot
+       reads `wsize` unconditionally. The old code assigned it only inside the
+       analog-only else body, so it was read uninitialised whenever EVTop ran. Set
+       it here, before the branch. */
+    wsize = SMPmatSize(ckt->CKTmatrix);
+
 #ifdef XSPICE
 /* gtri - begin - wbk - 6/10/91 - Call EVTop if event-driven instances exist */
     if(ckt->evt->counts.num_insts != 0) {
@@ -101,12 +108,16 @@ DCop(CKTcircuit *ckt, int notused)
 	
         EVTop_save(ckt, MIF_TRUE, 0.0);
 	/* gtri - end - wbk - 6/10/91 - Call EVTop if event-driven instances exist */
-	} else
+	} else {
         /* If no event-driven instances, do what SPICE normally does */
 #endif
     /* Enhancement-188: preload the previous sample's solution and warm-start
-     * (MODEINITFLOAT) if a valid guess of the right size is available. */
-    wsize = SMPmatSize(ckt->CKTmatrix);
+     * (MODEINITFLOAT) if a valid guess of the right size is available.
+     * Enhancement-211: this preload and the CKTop analog solve below MUST stay
+     * inside the (non-event-driven) else -- a braceless else previously let CKTop
+     * run even after EVTop, redundantly re-solving the analog part and overwriting
+     * the event-driven DC result (and left `wsize` read uninitialised on the EVTop
+     * path). The added braces below close the else after CKTop. */
     usewarm = (dcop_warm_enable && dcop_warm_valid && dcop_warm_n == wsize);
     if (usewarm) {
         for (wi = 1; wi <= wsize; wi++)
@@ -117,6 +128,9 @@ DCop(CKTcircuit *ckt, int notused)
             (ckt->CKTmode & MODEUIC) | MODEDCOP | (usewarm ? MODEINITFLOAT : MODEINITJCT),
             (ckt->CKTmode & MODEUIC) | MODEDCOP | MODEINITFLOAT,
             ckt->CKTdcMaxIter);
+#ifdef XSPICE
+    }
+#endif
 
     if(converged != 0) {
         fprintf(stdout,"\nDC solution failed -\n");
