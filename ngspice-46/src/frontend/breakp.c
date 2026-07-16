@@ -281,7 +281,11 @@ com_iplot(wordlist *wl)
         } else {
             break;
         }
-        wl = wl->wl_next;
+        /* Enhancement-212: a "-w"/"-d" flag as the trailing token already
+         * consumed its value word above, leaving wl NULL (the inner `if (wl)`
+         * proves it); guard this advance so it doesn't dereference NULL. */
+        if (wl)
+            wl = wl->wl_next;
     }
 
     /* We use a modified ad-hoc algorithm here where db_also denotes

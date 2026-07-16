@@ -583,6 +583,13 @@ vec_get(const char *vec_name) {
     int  i = 0;
     struct variable *vv, *v;
 
+    /* Enhancement-212: a NULL vector name must not reach strchr() below.
+     * A malformed measure statement (e.g. "meas tran x FIND" with no operand)
+     * leaves meas->m_vec == NULL and reaches here; treat it as "no such
+     * vector", which every caller already handles gracefully. */
+    if (vec_name == NULL)
+        return NULL;
+
     wd = word = copy(vec_name);   /* Gets mangled below... */
 
     if (strchr(word, '.')) {

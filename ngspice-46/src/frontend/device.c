@@ -1296,6 +1296,13 @@ com_alter_common(wordlist *wl, int do_model)
          * with multiple param value pairs are not supported!
          */
         wordlist *wlin = wl_head;
+        /* Enhancement-212: com_alter guards `if (!wl)` before calling here, but
+         * com_altermod does not -- a bare `altermod` reaches this with an empty
+         * list, so wl_nthelem() returns NULL and the eq() below dereferenced it. */
+        if (!wlin) {
+            fprintf(cp_err, "Error: no device/model or parameter specified.\n");
+            return;
+        }
         int wlen = wl_length(wlin);
         int maxelem = 3;
         /* Return the last element of wlin */
