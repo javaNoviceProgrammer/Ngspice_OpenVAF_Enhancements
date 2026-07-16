@@ -221,8 +221,12 @@ ft_cktcoms(bool terse)
 
     /* If there was a .op line, then we have to do the .op output. */
     plot_cur = setcplot("op");
-    if (plot_cur != NULL) {
-        assert(plot_cur->pl_dvecs != NULL);
+    /* Enhancement-212: an empty circuit (no non-ground nodes -- e.g. an
+     * all-commented-out deck) produces an "op" plot with no data vectors, so
+     * pl_dvecs is NULL. The former assert() aborted (SIGABRT) here, and with
+     * -DNDEBUG the next line dereferenced NULL. Guard instead and skip the
+     * (empty) op printout gracefully. */
+    if (plot_cur != NULL && plot_cur->pl_dvecs != NULL) {
         if (plot_cur->pl_dvecs->v_realdata != NULL) {
             if (terse) {
                 fprintf(cp_out, "OP information in rawfile.\n");

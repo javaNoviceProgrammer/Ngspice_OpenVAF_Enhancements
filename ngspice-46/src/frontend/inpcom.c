@@ -66,6 +66,17 @@ Author: 1985 Wayne A. Christopher
 #define N_PARAMS          1000
 #define N_SUBCKT_W_PARAMS 4000
 
+/* Enhancement-212: cap the .include recursion depth. Without it a file that
+ * .includes itself (directly or via a cycle) recurses until the C stack
+ * overflows -> SIGSEGV. No legitimate netlist nests includes anywhere near
+ * this deep; a cycle is reported as an error instead of crashing. */
+#define INP_MAX_INCLUDE_DEPTH 50
+
+/* Enhancement-212: cap .func macro-expansion recursion. A self-referential
+ * function (e.g. `.func f(x)={f(x)}`) expands forever; each frame also holds a
+ * params[FCN_PARAMS] array (~8 KB), so the stack overflows near ~1000 deep. */
+#define INP_MAX_MACRO_DEPTH 100
+
 #define NPARAMS 10000
 #define FCN_PARAMS 1000
 
@@ -1577,6 +1588,19 @@ static struct inp_read_t inp_read(FILE* fp, int call_depth, const char* dir_name
                 }
 
                 y_dir_name = ngdirname(y_resolved);
+
+                /* Enhancement-212: reject runaway/circular .include nesting
+                 * instead of recursing until the stack overflows. */
+                if (call_depth + 1 > INP_MAX_INCLUDE_DEPTH) {
+                    fprintf(cp_err, "Error: .include nesting too deep "
+                            "(> %d levels), likely a circular include:\n    %s\n",
+                            INP_MAX_INCLUDE_DEPTH, y_resolved);
+                    (void) fclose(newfp);
+                    tfree(y_dir_name);
+                    tfree(y_resolved);
+                    tfree(buffer);
+                    controlled_exit(EXIT_FAILURE);
+                }
 
                 newcard = inp_read(
                     newfp, call_depth + 1, y_dir_name, y_resolved, FALSE, FALSE)
@@ -4618,12 +4642,25 @@ static char *inp_do_macro_param_replace(struct function *fcn, char *params[])
 
 static char *inp_expand_macro_in_str(struct function_env *env, char *str)
 {
+    static int macro_depth = 0;
     struct function *function;
     char *open_paren_ptr, *close_paren_ptr, *fcn_name, *params[FCN_PARAMS];
     char *curr_ptr, *macro_str, *curr_str = NULL;
     int num_params, i;
     char *orig_ptr = str, *search_ptr = str, *orig_str = copy(str);
     char keep;
+
+    /* Enhancement-212: guard against runaway recursion from a self-referential
+     * .func (e.g. `.func f(x)={f(x)}`), which would expand forever and overflow
+     * the stack instead of reporting an error. */
+    if (++macro_depth > INP_MAX_MACRO_DEPTH) {
+        fprintf(stderr, "ERROR: .func expansion nested too deep (> %d), "
+                "likely a recursive function definition, in string %s\n",
+                INP_MAX_MACRO_DEPTH, orig_str);
+        macro_depth = 0;
+        tfree(orig_str);
+        controlled_exit(EXIT_FAILURE);
+    }
 
     /* If we have '.model mymod mdname(params)', don't treat this as a function,
     but skip '.model mymod mdname' and only then start searching for functions. */
@@ -4674,6 +4711,7 @@ static char *inp_expand_macro_in_str(struct function_env *env, char *str)
                         "ERROR: did not find closing parenthesis for "
                         "function call in string %s\n",
                         orig_str);
+                macro_depth = 0;    /* Enhancement-212 */
                 controlled_exit(EXIT_FAILURE);
             }
 
@@ -4713,6 +4751,7 @@ static char *inp_expand_macro_in_str(struct function_env *env, char *str)
             if (num_params == FCN_PARAMS) {
                 fprintf(stderr, "Error: Too many params in fcn, max is %d\n",
                         FCN_PARAMS);
+                macro_depth = 0;    /* Enhancement-212 */
                 controlled_exit(EXIT_FAILURE);
             }
             params[num_params++] = inp_expand_macro_in_str(
@@ -4724,6 +4763,7 @@ static char *inp_expand_macro_in_str(struct function_env *env, char *str)
                     "ERROR: parameter mismatch for function call in string "
                     "%s\n",
                     orig_str);
+            macro_depth = 0;    /* Enhancement-212 */
             controlled_exit(EXIT_FAILURE);
         }
 
@@ -4762,6 +4802,7 @@ static char *inp_expand_macro_in_str(struct function_env *env, char *str)
     tfree(orig_str);
     // printf("%s: --> \"%s\"\n", __FUNCTION__, curr_str);
 
+    macro_depth--;      /* Enhancement-212: balance the entry guard */
     return curr_str;
 }
 

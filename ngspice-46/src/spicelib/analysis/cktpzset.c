@@ -145,10 +145,17 @@ CKTpzSetup(CKTcircuit *ckt, int type)
             j.CSC_Complex = NULL ;
             matched = (BindElement *) bsearch (&j, matrix->SMPkluMatrix->KLUmatrixBindStructCOO,
                       matrix->SMPkluMatrix->KLUmatrixLinkedListNZ, sizeof (BindElement), BindCompare) ;
+            /* Enhancement-212: guard the bsearch miss instead of dereferencing
+             * NULL (matching cktsetup.c). Unreachable today -- PZdrive_pptr was
+             * just created by SMPmakeElt and is always in the bind table -- but
+             * the former code printed the "not found" diagnostic and then
+             * dereferenced matched anyway. */
             if (matched == NULL) {
-                printf ("Ptr %p not found in BindStruct Table\n", job->PZdrive_pptr) ;
+                fprintf (stderr, "Error: Ptr %p not found in BindStruct Table\n", job->PZdrive_pptr) ;
+                job->PZdrive_pptr = NULL ;
+            } else {
+                job->PZdrive_pptr = matched->CSC_Complex ;
             }
-            job->PZdrive_pptr = matched->CSC_Complex ;
         }
 
         /* Input Neg */
@@ -161,10 +168,13 @@ CKTpzSetup(CKTcircuit *ckt, int type)
             j.CSC_Complex = NULL ;
             matched = (BindElement *) bsearch (&j, matrix->SMPkluMatrix->KLUmatrixBindStructCOO,
                       matrix->SMPkluMatrix->KLUmatrixLinkedListNZ, sizeof (BindElement), BindCompare) ;
+            /* Enhancement-212: see the PZdrive_pptr guard above. */
             if (matched == NULL) {
-                printf ("Ptr %p not found in BindStruct Table\n", job->PZdrive_nptr) ;
+                fprintf (stderr, "Error: Ptr %p not found in BindStruct Table\n", job->PZdrive_nptr) ;
+                job->PZdrive_nptr = NULL ;
+            } else {
+                job->PZdrive_nptr = matched->CSC_Complex ;
             }
-            job->PZdrive_nptr = matched->CSC_Complex ;
         }
     } else {
         fprintf (stdout, "Using SPARSE 1.3 as Direct Linear Solver\n") ;
