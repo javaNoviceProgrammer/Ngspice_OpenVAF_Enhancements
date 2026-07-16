@@ -551,6 +551,63 @@ static void psd_project_E(double *e, int N)
     free(A); free(V); free(w);
 }
 
+/* One-sided Jacobi SVD of a square real n x n matrix: A = U * diag(S) * V^T,
+ * S descending. U, S, V preallocated (n*n, n, n*n). Robust, no external deps;
+ * used to detect and factor low-rank coupling in the emit (Enhancement-205). */
+static void jacobi_svd(const double *Ain, int n, double *U, double *S, double *V)
+{
+    int i, p, q, sweep;
+    for (i = 0; i < n*n; i++) U[i] = Ain[i];
+    for (i = 0; i < n; i++) { int t; for (t = 0; t < n; t++) V[i*n+t] = (i==t)?1.0:0.0; }
+    for (sweep = 0; sweep < 60; sweep++) {
+        int rotated = 0;
+        for (p = 0; p < n-1; p++) for (q = p+1; q < n; q++) {
+            double alpha=0, beta=0, gamma=0;
+            for (i = 0; i < n; i++) { double ap=U[i*n+p], aq=U[i*n+q];
+                alpha += ap*ap; beta += aq*aq; gamma += ap*aq; }
+            if (fabs(gamma) <= 1e-15*sqrt(alpha*beta)) continue;
+            rotated = 1;
+            double zeta = (beta - alpha) / (2.0*gamma);
+            double t = (zeta>=0?1.0:-1.0) / (fabs(zeta) + sqrt(1.0+zeta*zeta));
+            double c = 1.0/sqrt(1.0+t*t), sn = c*t;
+            for (i = 0; i < n; i++) {
+                double ap=U[i*n+p], aq=U[i*n+q];
+                U[i*n+p] = c*ap - sn*aq; U[i*n+q] = sn*ap + c*aq;
+                double vp=V[i*n+p], vq=V[i*n+q];
+                V[i*n+p] = c*vp - sn*vq; V[i*n+q] = sn*vp + c*vq;
+            }
+        }
+        if (!rotated) break;
+    }
+    for (q = 0; q < n; q++) {
+        double nrm = 0.0; for (i = 0; i < n; i++) nrm += U[i*n+q]*U[i*n+q];
+        nrm = sqrt(nrm); S[q] = nrm;
+        if (nrm > 1e-300) for (i = 0; i < n; i++) U[i*n+q] /= nrm;
+    }
+    for (p = 0; p < n-1; p++) {   /* sort columns by S descending (n small) */
+        int mx = p; for (q = p+1; q < n; q++) if (S[q] > S[mx]) mx = q;
+        if (mx != p) { double t=S[p]; S[p]=S[mx]; S[mx]=t;
+            for (i = 0; i < n; i++) { double a=U[i*n+p]; U[i*n+p]=U[i*n+mx]; U[i*n+mx]=a;
+                                      double b=V[i*n+p]; V[i*n+p]=V[i*n+mx]; V[i*n+mx]=b; } }
+    }
+}
+
+/* Emit the "num, den" coefficient arrays of one pole section's laplace_nd:
+ * kind 0 = real pole (1/(s-p)); 1 = conj-pair "cos" (s-sigma)/D; 2 = "sin" om/D. */
+static void emit_filter(FILE *fo, cplx pole, int kind)
+{
+    if (kind == 0) {
+        double num[1] = { 1.0 }, de[2] = { -creal(pole), 1.0 };
+        emit_arr(fo, num, 1); fprintf(fo, ", "); emit_arr(fo, de, 2);
+    } else {
+        double sig = creal(pole), om = cimag(pole);
+        double de[3] = { sig*sig+om*om, -2.0*sig, 1.0 };
+        if (kind == 1) { double num[2] = { -sig, 1.0 }; emit_arr(fo, num, 2); }
+        else           { double num[1] = { om };        emit_arr(fo, num, 1); }
+        fprintf(fo, ", "); emit_arr(fo, de, 3);
+    }
+}
+
 /* ============================ public API ============================ */
 int snp2va_convert(const char *snpfile, const char *vafile, const char *module,
                    char *msg, int msglen)
@@ -676,12 +733,71 @@ int snp2va_convert(const char *snpfile, const char *vafile, const char *module,
         else { sc_pole[nsec]=k; sc_kind[nsec]=1; nsec++;
                sc_pole[nsec]=k; sc_kind[nsec]=2; nsec++; k += 2; }
     }
+    /* Enhancement-205: structured (diagonal + low-rank) emit. Build each
+     * "channel" weight matrix W (N x N, real) -- the conductance d, the
+     * capacitance e, and every pole section's residue weights -- and pick, per
+     * channel, the cheaper of a DENSE emit (a term per significant entry; one
+     * laplace_nd per input port) or a LOW-RANK emit W = U*V^T (rank r). Because
+     * laplace is linear, the low-rank form filters the r COMBINED inputs
+     * u_m = sum_j V[j][m]*V(p_j) ONCE (r filters, not N) and distributes them to
+     * the outputs via U -- O(N*r) terms and O(r*Np) filters. A full-rank device
+     * keeps the dense form (identical model, modulo dropping <1e-8 fit noise);
+     * a device whose ports couple through a few shared modes (multi-port
+     * filters/cavities/packages) collapses to a compact, fast-compiling model. */
+    int force_dense = (getenv("PRE_SNP_DENSE") != NULL);  /* escape hatch / A-B test */
+    const double tol_drop = 1e-9;   /* dense: drop only sub-1e-9 fit noise */
+    const double tol_rank = 1e-7;   /* low-rank: keep modes above 1e-7 (well below any
+                                     * verify tolerance, so a genuinely low-rank device
+                                     * with a clean singular-value gap compresses fully
+                                     * and is reproduced essentially exactly, while a
+                                     * slowly-decaying channel just stays dense). */
+    int nchan = 2 + nsec, c, m;
+    double **chW  = (double**) malloc((size_t) nchan*sizeof(double*));
+    double **chU  = (double**) calloc((size_t) nchan, sizeof(double*));
+    double **chV  = (double**) calloc((size_t) nchan, sizeof(double*));
+    double  *chMx = (double*)  malloc((size_t) nchan*sizeof(double));
+    int *ch_lr   = (int*) calloc((size_t) nchan, sizeof(int));
+    int *ch_r    = (int*) calloc((size_t) nchan, sizeof(int));
+    int *ch_kind = (int*) malloc((size_t) nchan*sizeof(int)); /* 0=V, 1=ddt, 2=filtered */
+    int *ch_sec  = (int*) malloc((size_t) nchan*sizeof(int));
+    double *svU=(double*)malloc((size_t)N*N*sizeof(double));
+    double *svS=(double*)malloc((size_t)N*sizeof(double));
+    double *svV=(double*)malloc((size_t)N*N*sizeof(double));
+    int nfilt = 0;
+    for (c = 0; c < nchan; c++) {
+        double *W = (double*) malloc((size_t) N*N*sizeof(double));
+        if (c == 0)      { ch_kind[c]=0; ch_sec[c]=-1; for (i=0;i<N*N;i++) W[i]=dd[i]; }
+        else if (c == 1) { ch_kind[c]=1; ch_sec[c]=-1; for (i=0;i<N*N;i++) W[i]=ee[i]; }
+        else { int sc=c-2, kk=sc_pole[sc]; ch_kind[c]=2; ch_sec[c]=sc;
+            for (i=0;i<N;i++) for (j=0;j<N;j++) { cplx rr=res[(long)(i*N+j)*Np+kk];
+                W[i*N+j] = (sc_kind[sc]==0)? creal(rr) : (sc_kind[sc]==1)? 2.0*creal(rr) : -2.0*cimag(rr); } }
+        chW[c]=W;
+        double mx=0; for (i=0;i<N*N;i++) if (fabs(W[i])>mx) mx=fabs(W[i]);
+        chMx[c]=mx;
+        if (mx==0.0) continue;                              /* zero channel */
+        int nnz=0; for (i=0;i<N*N;i++) if (fabs(W[i])>tol_drop*mx) nnz++;
+        jacobi_svd(W, N, svU, svS, svV);
+        int rnk=0; for (i=0;i<N;i++) if (svS[i] > tol_rank*svS[0]) rnk++; if (rnk<1) rnk=1;
+        int filt = (ch_kind[c]==2);
+        long lr_cost = 2L*N*rnk + (filt? rnk : 0);
+        long de_cost = (long) nnz + (filt? N : 0);
+        if (!force_dense && lr_cost < de_cost) {
+            ch_lr[c]=1; ch_r[c]=rnk; nfilt += filt? rnk : 0;
+            double *Uc=(double*)malloc((size_t)N*rnk*sizeof(double));
+            double *Vc=(double*)malloc((size_t)N*rnk*sizeof(double));
+            for (i=0;i<N;i++) for (m=0;m<rnk;m++){ double sq=sqrt(svS[m]);
+                Uc[i*rnk+m]=svU[i*N+m]*sq; Vc[i*rnk+m]=svV[i*N+m]*sq; }
+            chU[c]=Uc; chV[c]=Vc;
+        } else if (filt) nfilt += N;
+    }
+    free(svU); free(svS); free(svV);
+
     FILE *fo = fopen(vafile, "w");
     if (!fo) { snprintf(msg,(size_t)msglen,"cannot write '%s'", vafile); ts_free(&ts); return 1; }
     fprintf(fo, "`include \"disciplines.vams\"\n\n");
     fprintf(fo, "// Generated by pre_snp from %s\n", snpfile);
-    fprintf(fo, "// %d-port, %d common poles; shared-pole realization (%d laplace_nd sections, AC + transient).\n",
-            N, Np, N*nsec);
+    fprintf(fo, "// %d-port, %d common poles; structured realization (%d laplace_nd filters, AC + transient).\n",
+            N, Np, nfilt);
     fprintf(fo, "module %s(", module);
     for (i = 0; i < N; i++) fprintf(fo, "%sp%d", i?", ":"", i+1);
     fprintf(fo, ");\n    inout ");
@@ -689,53 +805,71 @@ int snp2va_convert(const char *snpfile, const char *vafile, const char *module,
     fprintf(fo, ";\n    electrical ");
     for (i = 0; i < N; i++) fprintf(fo, "%sp%d", i?", ":"", i+1);
     fprintf(fo, ";\n");
-    /* one filtered signal per (input port, section) */
-    for (j = 0; j < N; j++) {
-        fprintf(fo, "    real ");
-        for (int sctr = 0; sctr < nsec; sctr++) fprintf(fo, "%sf%d_%d", sctr?", ":"", j, sctr);
-        fprintf(fo, ";\n");
+    /* variable declarations */
+    for (c = 0; c < nchan; c++) {
+        if (chMx[c]==0.0) continue;
+        if (ch_kind[c]==2 && !ch_lr[c]) {           /* dense filtered: one filter per input */
+            fprintf(fo, "    real "); for (j=0;j<N;j++) fprintf(fo, "%sw%d_%d", j?", ":"", c, j); fprintf(fo, ";\n");
+        } else if (ch_kind[c]==2 && ch_lr[c]) {     /* low-rank filtered: r combined inputs + r filtered */
+            fprintf(fo, "    real "); for (m=0;m<ch_r[c];m++) fprintf(fo, "%su%d_%d, h%d_%d", m?", ":"", c, m, c, m); fprintf(fo, ";\n");
+        } else if (ch_kind[c]!=2 && ch_lr[c]) {     /* low-rank algebraic (d/e): r intermediates */
+            fprintf(fo, "    real "); for (m=0;m<ch_r[c];m++) fprintf(fo, "%sg%d_%d", m?", ":"", c, m); fprintf(fo, ";\n");
+        }
     }
     fprintf(fo, "    analog begin\n");
-    /* compute the shared pole-filters (each laplace_nd instantiated once) */
-    for (j = 0; j < N; j++) {
-        for (int sc = 0; sc < nsec; sc++) {
-            int kk = sc_pole[sc];
-            fprintf(fo, "        f%d_%d = laplace_nd(V(p%d), ", j, sc, j+1);
-            if (sc_kind[sc] == 0) {
-                double num[1] = { 1.0 }, de[2] = { -creal(P[kk]), 1.0 };
-                emit_arr(fo, num, 1); fprintf(fo, ", "); emit_arr(fo, de, 2);
-            } else {
-                double sig = creal(P[kk]), om = cimag(P[kk]);
-                double de[3] = { sig*sig+om*om, -2.0*sig, 1.0 };
-                if (sc_kind[sc] == 1) { double num[2] = { -sig, 1.0 }; emit_arr(fo, num, 2); }
-                else                  { double num[1] = { om };        emit_arr(fo, num, 1); }
-                fprintf(fo, ", "); emit_arr(fo, de, 3);
+    /* filter / intermediate assignments */
+    for (c = 0; c < nchan; c++) {
+        if (chMx[c]==0.0) continue;
+        if (ch_kind[c]!=2) {                        /* algebraic: only low-rank needs an intermediate */
+            if (!ch_lr[c]) continue;
+            for (m=0;m<ch_r[c];m++) {
+                int first=1; fprintf(fo, "        g%d_%d = ", c, m);
+                for (j=0;j<N;j++){ double v=chV[c][j*ch_r[c]+m];
+                    if (fabs(v)>1e-30){ term_sep(fo,&first);
+                        if (ch_kind[c]==0) fprintf(fo,"(%.12g)*V(p%d)",v,j+1); else fprintf(fo,"(%.12g)*ddt(V(p%d))",v,j+1); } }
+                if (first) fprintf(fo,"0.0"); fprintf(fo,";\n");
             }
-            fprintf(fo, ");\n");
+            continue;
+        }
+        int sc=ch_sec[c], kk=sc_pole[sc];
+        if (!ch_lr[c]) {                            /* dense: one laplace_nd per input port */
+            for (j=0;j<N;j++){ fprintf(fo,"        w%d_%d = laplace_nd(V(p%d), ", c, j, j+1);
+                emit_filter(fo, P[kk], sc_kind[sc]); fprintf(fo,");\n"); }
+        } else {                                    /* low-rank: r combined inputs, each filtered once */
+            for (m=0;m<ch_r[c];m++){
+                int first=1; fprintf(fo,"        u%d_%d = ", c, m);
+                for (j=0;j<N;j++){ double v=chV[c][j*ch_r[c]+m];
+                    if (fabs(v)>1e-30){ term_sep(fo,&first); fprintf(fo,"(%.12g)*V(p%d)",v,j+1); } }
+                if (first) fprintf(fo,"0.0"); fprintf(fo,";\n");
+                fprintf(fo,"        h%d_%d = laplace_nd(u%d_%d, ", c, m, c, m);
+                emit_filter(fo, P[kk], sc_kind[sc]); fprintf(fo,");\n");
+            }
         }
     }
-    /* output currents: weighted sums of the shared filters + d + e*s */
+    /* output currents */
     for (i = 0; i < N; i++) {
-        int first = 1;
-        fprintf(fo, "        I(p%d) <+ ", i+1);
-        for (j = 0; j < N; j++) {
-            int idx = i*N+j;
-            const cplx *rk = res + (long) idx*Np;
-            if (fabs(dd[idx]) > 1e-30) { term_sep(fo, &first); fprintf(fo, "(%.12g)*V(p%d)", dd[idx], j+1); }
-            if (fabs(ee[idx]) > 1e-30) { term_sep(fo, &first); fprintf(fo, "(%.12g)*ddt(V(p%d))", ee[idx], j+1); }
-            for (int sc = 0; sc < nsec; sc++) {
-                int kk = sc_pole[sc];
-                double w = (sc_kind[sc]==0) ?  creal(rk[kk])
-                         : (sc_kind[sc]==1) ?  2.0*creal(rk[kk])
-                                            : -2.0*cimag(rk[kk]);
-                if (fabs(w) > 1e-30) { term_sep(fo, &first); fprintf(fo, "(%.12g)*f%d_%d", w, j, sc); }
+        int first = 1; fprintf(fo, "        I(p%d) <+ ", i+1);
+        for (c = 0; c < nchan; c++) {
+            if (chMx[c]==0.0) continue;
+            if (ch_lr[c]) {
+                for (m=0;m<ch_r[c];m++){ double u=chU[c][i*ch_r[c]+m];
+                    if (fabs(u)>1e-30){ term_sep(fo,&first);
+                        if (ch_kind[c]==2) fprintf(fo,"(%.12g)*h%d_%d",u,c,m); else fprintf(fo,"(%.12g)*g%d_%d",u,c,m); } }
+            } else {
+                double thr = tol_drop*chMx[c];
+                for (j=0;j<N;j++){ double w=chW[c][i*N+j];
+                    if (fabs(w)>thr){ term_sep(fo,&first);
+                        if (ch_kind[c]==0)      fprintf(fo,"(%.12g)*V(p%d)",w,j+1);
+                        else if (ch_kind[c]==1) fprintf(fo,"(%.12g)*ddt(V(p%d))",w,j+1);
+                        else                    fprintf(fo,"(%.12g)*w%d_%d",w,c,j); } }
             }
         }
-        if (first) fprintf(fo, "0.0");
-        fprintf(fo, ";\n");
+        if (first) fprintf(fo, "0.0"); fprintf(fo, ";\n");
     }
     fprintf(fo, "    end\nendmodule\n");
     fclose(fo);
+    for (c=0;c<nchan;c++){ free(chW[c]); free(chU[c]); free(chV[c]); }
+    free(chW); free(chU); free(chV); free(chMx); free(ch_lr); free(ch_r); free(ch_kind); free(ch_sec);
     free(sc_pole); free(sc_kind);
     snprintf(msg,(size_t)msglen,"%d-port, %d poles, rms rel err %.2e", N, Np, bestErr<1e300?bestErr:0.0);
     /* frees (leak-tolerant: one-shot tool) */
