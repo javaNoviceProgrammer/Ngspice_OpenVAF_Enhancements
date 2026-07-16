@@ -220,5 +220,30 @@ check("`.hb` passes [points]/[maxiter] args and coexists with a .control block",
       "harmonic-balance spectrum" in out_args and "after-hb-ok" in out_args
       and "6 harmonics" in out_args)
 
+# [9] ENHANCEMENT-209: `hb` publishes its spectrum as nutmeg vectors -- a real
+# `hbfrequency` scale plus one COMPLEX vector per node -- so the result can be
+# plotted / printed / wrdata'd directly instead of parsing the printed table. The
+# published single-sided magnitude must equal the table's |V| column exactly.
+out_vec = run(f"* hb vectors\n{_nl}\n.control\nhb 100meg 5\n"
+              f"print hbfrequency mag(n)\n.endc\n.end\n")
+tab = hb_spectrum(out_vec, "n")                 # printed table -> {harmonic: |V|}
+vec, started = {}, False
+for line in out_vec.splitlines():
+    if "hbfrequency" in line and "mag(n)" in line:
+        started = True
+        continue
+    if started:
+        m = re.match(r"\s*(\d+)\s+[-\d.eE+]+\s+([-\d.eE+]+)", line)
+        if m:
+            vec[int(m.group(1))] = float(m.group(2))
+        elif vec and line.strip() and not line.strip().startswith("-"):
+            break
+published = "spectrum stored in the current 'hb' plot" in out_vec
+match = bool(vec) and all(abs(vec[k] - tab[k]) <= 1e-9 * max(tab[k], 1e-12)
+                          for k in vec if k in tab)
+check("E-209: `hb` publishes hbfrequency + node vectors; mag(n) equals table |V|",
+      published and match and "hbfrequency" in out_vec and len(vec) == 6,
+      f"published={published} match={match} npts={len(vec)}")
+
 print(f"\n{'ALL PASS' if passed == checks else 'FAILURES'}: {passed}/{checks} passed")
 sys.exit(0 if passed == checks else 1)

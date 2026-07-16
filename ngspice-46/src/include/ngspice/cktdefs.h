@@ -484,7 +484,17 @@ extern int PSSaskQuest(CKTcircuit *, JOB *, int , IFvalue *);
 extern int PSSsetParm(CKTcircuit *, JOB *, int , IFvalue *);
 extern int PSSinit(CKTcircuit *, JOB *);
 extern int DCpss(CKTcircuit *, int);
-extern int HBanalyze(CKTcircuit *, double f0, int K, int P, int maxiter, double tol, int verbose); /* E-134 */
+/* Enhancement-209: HBanalyze hands its converged spectrum back to the frontend
+   (com_hb) so it can publish nutmeg vectors. When `out` is non-NULL and the run
+   converges, ownership of the Vr/Vi arrays passes to the caller (which frees them
+   after publishing); pass NULL to keep the old behaviour (printed table only). */
+struct hbspectrum {
+    int     N;          /* number of circuit unknowns (solution row stride) */
+    int     K;          /* highest harmonic */
+    double  f0;         /* fundamental frequency (Hz) */
+    double *Vr, *Vi;    /* [(2K+1)*N] two-sided Fourier coefficients, index (k+K)*N+i */
+};
+extern int HBanalyze(CKTcircuit *, double f0, int K, int P, int maxiter, double tol, int verbose, struct hbspectrum *out); /* E-134; E-209 out */
 extern int QPSShb(CKTcircuit *, double f1, double f2, int K1, int K2, int P1, int P2, int maxiter, double tol, int verbose); /* E-136 */
 extern int QPACanalyze(CKTcircuit *, double f_in, int verbose); /* E-137 */
 extern int QPXFanalyze(CKTcircuit *, int outNode, double f_in, int verbose); /* E-141 */

@@ -1684,7 +1684,7 @@ hb_extract(CKTcircuit *ckt, const double *vsamp, int N, int P, int K,
 }
 
 int
-HBanalyze(CKTcircuit *ckt, double f0, int K, int Pin, int maxiter, double tol, int verbose)
+HBanalyze(CKTcircuit *ckt, double f0, int K, int Pin, int maxiter, double tol, int verbose, struct hbspectrum *out)
 {
     int    N = SMPmatSize(ckt->CKTmatrix);
     int    P = Pin > 0 ? Pin : ((8 * K < 32) ? 32 : 8 * K);
@@ -1903,6 +1903,16 @@ HBanalyze(CKTcircuit *ckt, double f0, int K, int Pin, int maxiter, double tol, i
         if (nameList) tfree(nameList);
     }
     (void) w0;
+
+    /* Enhancement-209: hand the converged two-sided spectrum to the frontend so
+       `com_hb` can publish it as nutmeg vectors (hbfrequency + one complex vector
+       per node). Ownership of Vr/Vi passes to the caller; NULL them here so the
+       cleanup below does not free them. */
+    if (out && rc == OK) {
+        out->N = N; out->K = K; out->f0 = f0;
+        out->Vr = Vr; out->Vi = Vi;
+        Vr = NULL; Vi = NULL;
+    }
 
     FREE(Vr); FREE(Vi); FREE(IRr); FREE(IRi); FREE(Isr); FREE(Isi);
     FREE(Fr); FREE(Fi); FREE(Jr); FREE(Ji); FREE(Kr); FREE(Ki); FREE(vsamp);
