@@ -410,6 +410,10 @@ struct comm spcp_coms[] = {
       { 0, 0, 0, 0 }, E_DEFHMASK, 1, LOTS,
       NULL,
       "vector ... : Create a frequency domain plot with FFT." } ,
+    { "eye", com_eye, FALSE, TRUE,               /* Enhancement-207 */
+      { 0, 0, 0, 0 }, E_DEFHMASK, 1, LOTS,
+      NULL,
+      "<expr> -ui <T> [-tstart t0] [-threshold v] : eye diagram + jitter (SerDes)." } ,
     { "psd", com_psd, FALSE, TRUE,
       { 0, 0, 0, 0 }, E_DEFHMASK, 2, LOTS,
       NULL,
@@ -1004,6 +1008,10 @@ struct comm nutcp_coms[] = {
       { 0, 0, 0, 0 }, E_DEFHMASK, 1, LOTS,
       NULL,
       "vector ... : Create a frequency domain plot with FFT." } ,
+    { "eye", com_eye, FALSE, TRUE,               /* Enhancement-207 */
+      { 0, 0, 0, 0 }, E_DEFHMASK, 1, LOTS,
+      NULL,
+      "<expr> -ui <T> [-tstart t0] [-threshold v] : eye diagram + jitter (SerDes)." } ,
     { "psd", com_psd, FALSE, TRUE,
       { 0, 0, 0, 0 }, E_DEFHMASK, 2, LOTS,
       NULL,

@@ -1,0 +1,22 @@
+* eye_demo -- Enhancement-207: eye diagram / jitter analysis
+*
+* A 0/1 data signal at UI = 0.5 ns through a bandwidth-limiting RC channel, so the
+* edges are no longer ideal -- the received eye closes vertically (ISI) and its
+* crossings smear (jitter). `eye` folds the received waveform modulo the unit
+* interval and reports the standard serial-link metrics.
+*
+* The stimulus is a fast 0/1 clock (worst-case alternating pattern); R1/C1 form a
+* one-pole channel whose bandwidth (~1/(2*pi*R*C)) is comparable to the bit rate,
+* so the received swing at v(rx) does not fully settle within a UI.
+Vtx tx 0 PULSE(0 1 0 10p 10p 0.49n 1n)
+R1 tx rx 300
+C1 rx 0 0.6p
+.tran 1p 60n
+.control
+  run
+  * eye on the RECEIVED node; UI = 0.5 ns, skip the startup transient
+  eye v(rx) -ui 0.5n -tstart 3n
+  * the folded eye is now in eye_wave vs eye_t:  plot eye_wave vs eye_t
+  print eye_amplitude eye_height eye_width eye_jitter_rms eye_jitter_pp
+.endc
+.end
