@@ -1,18 +1,25 @@
-# ngspice linear solvers — KLU vs. Sparse 1.3 (behavior, defaults, limitations)
+# ngspice linear solvers — KLU vs. Sparse 1.3 (behavior, defaults, performance, limitations)
 
-This build of ngspice-46 ships **two** direct linear solvers, and they are **not
-fully interchangeable across analysis types**. This note records exactly how they
-differ — which is the default, how to select and confirm each, and where KLU
-falls short — based on a direct read of the source and a solver-by-solver sweep
-of the whole [`examples/`](../../../examples/) suite.
+This build of ngspice-46 ships **two** direct linear solvers. They now agree
+everywhere on *results*, but they are very far apart on *cost*. This note records
+exactly how they differ — which is the default, how to select and confirm each,
+what each costs, and where KLU falls short — based on a direct read of the source,
+a solver-by-solver sweep of the whole [`examples/`](../../../examples/) suite, and
+a measured scaling benchmark.
+
+**The headline, if you read nothing else:** the default (Sparse 1.3) is the
+*correct* one, not the *fast* one. On Verilog-A/OSDI circuits its runtime grows
+steeply superlinearly while KLU's stays roughly linear — a measured **68×** at 380
+device instances, for an identical answer. See [Performance](#performance--the-default-is-not-the-fast-one).
 
 ## TL;DR
 
 | | KLU | Sparse 1.3 |
 |---|---|---|
-| **Availability in this build** | Compiled in (SuiteSparse, statically linked — 44 `klu_*` symbols in the binary) | Always present (ngspice's own solver) |
+| **Availability in this build** | Compiled in (SuiteSparse, statically linked — 45 `klu_*` symbols in the binary) | Always present (ngspice's own solver) |
 | **Default?** | No | **Yes** — this build defaults to Sparse 1.3 |
 | **How to select** | `.option klu` | `.option sparse` (or just the default) |
+| **Cost on large circuits** | ✅ ~linear in circuit size | ❌ steeply superlinear — **68× slower** at 380 OSDI instances ([below](#performance--the-default-is-not-the-fast-one)) |
 | **DC op / DC sweep** | ✅ correct | ✅ correct |
 | **AC** | ✅ correct | ✅ correct |
 | **Transient** | ✅ correct (one caveat below) | ✅ correct |
@@ -55,8 +62,16 @@ fixes it: all four save×load solver combinations — **including cross-solver
 restores** (the checkpoint file contains only solver-agnostic state) — now
 continue exactly on the uninterrupted run's trajectory.
 
-**Practical guidance:** leave the default (Sparse 1.3) unless you have a specific
-reason to switch. Sparse 1.3 runs **every** analysis in the suite. Since
+**Practical guidance:** on a small circuit, leave the default — the two are close
+there (1.2–1.4× across 19–38 device instances) and Sparse 1.3 is the one every
+result here is keyed off.
+On anything **large** — roughly a hundred device instances and up — reach for
+`.option klu`, and expect the gap to widen with every device you add
+([Performance](#performance--the-default-is-not-the-fast-one) measures 4× at 95
+instances and 68× at 380). This advice used to read "leave the default unless you
+have a specific reason to switch"; the measurement below is that reason, and the
+reason it now says otherwise. Correctness is not the deciding factor any more —
+both solvers agree across the entire suite. Since
 [Enhancement-113](../../../enhancements_doc/Enhancement-113.md) KLU also runs
 **noise** and **single-ended pole-zero** correctly, and since
 [Enhancement-114](../../../enhancements_doc/Enhancement-114.md) it runs **DC/AC
@@ -68,12 +83,16 @@ the pole-zero path is fully KLU-correct too (complex-plane determinant, balanced
 output, full-partial-pivot fallback) — **no analysis is Sparse-only under KLU any
 more**, and since [Enhancement-180](../../../enhancements_doc/Enhancement-180.md)
 no *feature* is either (transient checkpoint/restart, the last one, now runs —
-and even restores across solvers). Reach for `.option klu`
-on large, sparse DC/AC problems where KLU's ordering and factorization are
-faster, and — because its symbolic ordering is computed once and cannot re-pivot
-dynamically like Sparse — expect it to be **less forgiving of a near-singular
-Jacobian on a stiff transient edge**, which the dissipative Gear integrator avoids
-(see the [former opamp741 discrepancy](#klu-discrepancies--all-resolved) below).
+and even restores across solvers).
+
+The one thing to keep in mind when you switch: KLU's symbolic ordering is computed
+once and cannot re-pivot dynamically the way Sparse does, so it is in principle
+**less forgiving of a near-singular Jacobian on a stiff transient edge**. In
+practice the only case that ever exhibited this — opamp741's slew — turned out to
+be caused by the *trapezoidal* integrator ringing, not by KLU, and the dissipative
+Gear integrator removes it (see the [former opamp741
+discrepancy](#klu-discrepancies--all-resolved) below). `.option method=gear` is the
+right companion for a stiff transient under either solver.
 
 **Tuning KLU** ([Enhancement-152](../../../enhancements_doc/Enhancement-152.md)):
 KLU's reordering and scaling, previously hard-coded, are now `.option`s —
@@ -109,6 +128,62 @@ option        * prints, among other things:  "Matrix solver:  KLU"  or  "Sparse 
 On the committed `bin/` binary this reports **`Sparse 1.3`** for a bare deck and
 for `.option sparse`, and **`KLU`** only when `.option klu` is given —
 confirming Sparse 1.3 is the default here.
+
+## Performance — the default is not the fast one
+
+Everything above is about *correctness*, where the two solvers now agree
+everywhere. Cost is a different story, and on the circuits this project exists to
+serve — Verilog-A compact models through OSDI — it is not a close call.
+
+**Benchmark.** `bjt741.va` (the ~70-line Verilog-A BJT of the
+[opamp741 example](../../../examples/opamp741_examples/)) instantiated as N copies
+of the 20-transistor µA741 follower — **19 OSDI instances per opamp** — run as
+`tran 10n 40u` under `.option method=gear`, on the committed binary. Both solvers
+produce the **same answer**: identical timepoint counts (4014) and a worst-case
+deviation of **3.8e-07** across all outputs, so this compares like with like.
+
+| 741s | OSDI instances | Sparse 1.3 (default) | KLU | ratio |
+|---:|---:|---:|---:|---:|
+| 1 | 19 | 0.05 s | 0.04 s | 1.2× |
+| 2 | 38 | 0.10 s | 0.07 s | 1.4× |
+| 5 | 95 | 0.65 s | 0.16 s | 4.1× |
+| 10 | 190 | 8.74 s | 0.30 s | 29× |
+| 20 | 380 | **40.2 s** | **0.59 s** | **68×** |
+
+KLU is essentially **linear** in circuit size — each doubling roughly doubles its
+runtime. Sparse 1.3 is steeply **superlinear**: each doubling multiplies its
+runtime by 4.6–13×. The crossover is early, around a hundred instances, and there
+is no size at which Sparse wins.
+
+**It is not an artifact of the benchmark's structure.** N independent opamps form a
+block-diagonal matrix, which is the ideal case for KLU's block-triangular-form
+permutation, so the same sweep was repeated with the opamps wired into a
+**connected cascade** (each stage buffering the previous one's output): **63.7×** at
+380 instances, essentially unchanged. The gap is a property of the solvers, not of
+the topology.
+
+**Where the time goes.** Sampling the 380-instance run under the default solver:
+
+| symbol | share of runtime |
+|---|---:|
+| `spFactor` (Sparse numeric factorization) | **88.4%** |
+| linear solve, total | **99.1%** |
+| OSDI model `eval()` | **0.3%** |
+
+Two things follow. First, the cost is entirely in the **factorization**, not in
+evaluating the device models — so this is a solver problem, and no amount of model-
+side work (device bypass, latency exploitation, faster `eval`) can address it: the
+whole of `eval` is 0.3%. Second, ngspice's inability to handle very large
+post-layout netlists — listed as a gap against commercial simulators in
+[ngspice_gaps.md](ngspice_gaps.md) — is **substantially a default-solver artifact**
+rather than an inherent limit. `.option klu` moves that wall a long way out.
+
+**Caveat on scope.** These numbers are one model family (a bipolar compact model)
+in transient. The *direction* is not in doubt — it follows from Sparse 1.3's
+linked-list structures and Markowitz re-pivoting on every factorization versus
+KLU's fixed symbolic ordering and cache-friendly compressed-column refactor — but
+the exact ratio on a given circuit will differ. Measure your own deck; the two
+solvers agree on the answer, so switching costs nothing but the flag.
 
 ## Noise and pole-zero under KLU (Enhancement-113)
 
@@ -229,8 +304,8 @@ shooting made them fractions of a second, so the whole RF suite now runs under
 `NGSPICE_SOLVER=klu|sparse` runs once under one solver; `NG_BOTH=0` disables the
 dual run; **`NG_SLOW_KLU=1`** forces the skipped heavy KLU passes back on.
 
-**Sweep result** (148 verify scripts; 147 in the routine sweep, `cmcsweep`
-excluded for runtime): **147/147 OK** — every
+**Sweep result** (175 verify scripts; 174 in the routine sweep, `cmcsweep`
+excluded for runtime): **174/174 OK** — every
 example is `sparse=PASS` with `klu` in `{PASS, SKIP}`, i.e. the two solvers
 agree wherever KLU runs. (The `linesearch` example initially *crashed*
 under KLU, which [Enhancement-112](../../../enhancements_doc/Enhancement-112.md)
