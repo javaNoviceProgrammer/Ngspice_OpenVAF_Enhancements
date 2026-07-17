@@ -466,8 +466,11 @@ matrix (every circuit with a transistor or controlled source), which is why
 `.noise` was disabled under KLU. It now calls `klu_z_tsolve` (transposed), so KLU
 noise matches Sparse exactly (including OSDI device models). This is the core of
 [E-113](../../enhancements_doc/Enhancement-113.md), which also removes the KLU
-refusal guards in `noisean.c` / `pzan.c` (single-ended pole-zero runs under KLU;
-balanced-output pole-zero keeps a targeted guard).
+refusal guards in `noisean.c` / `pzan.c` (single-ended pole-zero runs under KLU).
+Balanced-output pole-zero was Sparse-only at first but
+[E-172](../../enhancements_doc/Enhancement-172.md) closed that too (a KLU
+`SMPcAddCol` branch plus a union-pattern reservation in `CKTpzSetup`), so **no
+analysis is Sparse-only under KLU any more**.
 
 ### `spicelib/analysis/cktsens.c`
 
