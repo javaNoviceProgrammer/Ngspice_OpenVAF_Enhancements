@@ -236,6 +236,25 @@ pub fn general_callbacks<'ll>(
                         num_state: 0,
                     })
                 }
+                // Enhancement-215: non-fatal string simparam lookup. Like
+                // simparam_opt (params prebound; name + default passed as call
+                // args), but the default and the return are string pointers.
+                CallBackKind::SimParamStrOpt => {
+                    let fun = builder
+                        .cx
+                        .get_func_by_name("simparam_str_opt")
+                        .expect("stdlib function simparam_str_opt is missing");
+                    let fun_ty = builder.cx.ty_func(
+                        &[ptr_ty, builder.cx.ty_ptr(), builder.cx.ty_ptr()],
+                        builder.cx.ty_ptr(),
+                    );
+                    CallbackFun::Prebuilt(BuiltCallbackFun {
+                        fun_ty,
+                        fun,
+                        state: vec![simparam].into_boxed_slice(),
+                        num_state: 0,
+                    })
+                }
                 // If these derivative were non zero they would have been removed
                 CallBackKind::Derivative(_) | CallBackKind::NodeDerivative(_) => {
                     let zero = builder.cx.const_real(0.0);

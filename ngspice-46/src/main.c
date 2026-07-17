@@ -36,6 +36,7 @@ extern int rl_catch_signals;        /* missing from editline/readline.h */
 
 #include "ngspice/iferrmsg.h"
 #include "ngspice/ftedefs.h"
+#include "ngspice/osdiitf.h"   /* Enhancement-215: ngspice_register_plusarg */
 #include "ngspice/syntaxhl.h"
 #include "ngspice/devdefs.h"
 #include "spicelib/devices/dev.h"
@@ -1431,6 +1432,13 @@ int main(int argc, char **argv)
                 char *arg = argv[optind++];
                 FILE *tp;
 
+                /* Enhancement-215: a `+name[=value]` argument is a Verilog-A
+                 * plusarg, not an input file -- register it and move on. */
+                if (arg[0] == '+') {
+                    ngspice_register_plusarg(arg + 1);
+                    continue;
+                }
+
                 /* Copy the the path of the first filename only */
                 if (!Infile_Path) {
                     Infile_Path = ngdirname(arg);
@@ -1607,7 +1615,13 @@ int main(int argc, char **argv)
         cp_interactive = FALSE;
 
         while (optind < argc) {
-            ft_loadfile(argv[optind++]);
+            char *arg = argv[optind++];
+            /* Enhancement-215: `+name[=value]` is a Verilog-A plusarg, not a file. */
+            if (arg[0] == '+') {
+                ngspice_register_plusarg(arg + 1);
+                continue;
+            }
+            ft_loadfile(arg);
         }
     }
 

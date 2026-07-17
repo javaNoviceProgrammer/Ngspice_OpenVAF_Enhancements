@@ -544,9 +544,8 @@ rejection), and `$warning`/`$error`/`$info` display.
 
 ### 7.5 The mechanism-unavailable group — ⚠️
 
-`$test$plusargs`/`$value$plusargs` (ngspice has no plusargs),
 `$simprobe`, `$analog_node_alias`/`$analog_port_alias` compile and return
-their LRM-specified fallback values (false / supplied default / 0). This
+their LRM-specified fallback values (supplied default / 0). (`$test$plusargs`/`$value$plusargs` are NO LONGER in this group: [Enhancement-215](../../enhancements_doc/Enhancement-215.md) serves command-line plusargs through the simparam channel.) This
 is the LRM's own escape hatch for hosts without the mechanism; models
 using them run predictably instead of being rejected.
 
@@ -613,7 +612,8 @@ connected port.)*
 | 9.4–9.8 Display, file/string I/O (incl. `$fgetc`/`$ungetc`, `$sscanf` base) | ✅ | `display`, `fileio`, `stringio`, `fgetc`, `ungetc`, `sscanf` |
 | 9.13 Random/distributions | ✅ (deterministic seed ⚠️ documented) | `rng`, `montecarlo` |
 | 9 misc ($finish family, $simparam, attributes) | ✅ | `simctrl`, `simparamstr`, `opvar` |
-| plusargs / simprobe / node aliases | ⚠️ LRM fallbacks | `alias` |
+| plusargs (`$test`/`$value`) | ✅ ([E-215](../../enhancements_doc/Enhancement-215.md)) | `plusargs` |
+| simprobe / node aliases | ⚠️ LRM fallbacks | `alias` |
 | 10 Compiler directives (incl. `` `__FILE__``/`` `__LINE__``) | ✅ | `preproc`, `directive`, `defaulttransition`, `filemacro` |
 | Mixed-signal / digital (outside Annex C) | ❌ by scope | — |
 

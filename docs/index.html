@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="description" content="Feature catalog of the ngspice-46 + OpenVAF-r enhancement project: 214 enhancements grouped into 19 feature areas.">
+<meta name="description" content="Feature catalog of the ngspice-46 + OpenVAF-r enhancement project: 215 enhancements grouped into 19 feature areas.">
 <title>ngspice + OpenVAF-r — feature catalog</title>
 <style>
   :root{
@@ -96,9 +96,9 @@
   <header>
     <div class="eyebrow">feature catalog</div>
     <h1>ngspice&#8209;46 <span class="amp">+</span> OpenVAF&#8209;r</h1>
-    <p class="lede">Every capability added across <b>214 enhancements</b>, grouped into feature areas — a feature usually spans several enhancements. Two code bases: the <b>OpenVAF&#8209;r</b> Verilog&#8209;A/OSDI compiler and the <b>ngspice</b> circuit simulator. Each chip links to its write&#8209;up.</p>
+    <p class="lede">Every capability added across <b>215 enhancements</b>, grouped into feature areas — a feature usually spans several enhancements. Two code bases: the <b>OpenVAF&#8209;r</b> Verilog&#8209;A/OSDI compiler and the <b>ngspice</b> circuit simulator. Each chip links to its write&#8209;up.</p>
     <div class="stats" id="stats">
-      <div class="stat"><div class="n">214</div><div class="l">enhancements</div></div>
+      <div class="stat"><div class="n">215</div><div class="l">enhancements</div></div>
       <div class="stat"><div class="n">19</div><div class="l">feature areas</div></div>
       <div class="stat"><div class="n">2</div><div class="l">code bases</div></div>
       <div class="stat ok"><div class="n">RF ✓</div><div class="l">suite complete</div></div>
@@ -141,7 +141,7 @@
    {d:"compiler",n:"Arrays",x:"Array declarations, literals, dynamic indexing, function args/returns, N-D shapes.",c:[[14,"arrays"],[15,"multi-dim arrays"],[18,"array syntax + functions"],[20,"array output args"],[23,"array return"],[33,"array case"],[34,"concat / replication"],[43,"variable initializers"],[102,"array parameters"]]},
    {d:"compiler",n:"Lookup tables",x:"$table_model interpolation compiled to differentiable MIR (autodiff Jacobian).",c:[[16,"$table_model 1-D"],[17,"multi-dim table"],[22,"cubic-spline table"],[40,"N-D table"],[109,"noise_table interp"]]},
    {d:"compiler",n:"Modules, parameters & hierarchy",x:"Instantiation/flattening, paramsets, defparam, generate, natures, persistent state.",c:[[5,"module instantiation"],[7,"variable persistence / initial_step"],[21,"paramset"],[32,"integer state"],[39,"derived natures"],[44,"paramset HSPs"],[49,"hierarchical names"],[50,"domain binding"],[58,"defparam"],[60,"multiple analog blocks"],[67,"generate audit"],[76,"multi-module .osdi"],[87,"block params"],[88,"legacy generate"],[91,"param width + multi-name"],[92,"paramfreeze"],[93,"paramnonset warn"],[96,"bare generate"]]},
-   {d:"compiler",n:"System tasks & functions",x:"$random, file I/O, string format/parse, sim control, math and conversion builtins.",c:[[10,"$random / $dist_*"],[11,"file I/O + strings"],[12,"$simprobe / aliases / plusargs"],[25,"$simparam$str"],[30,"analysis() variadic"],[48,"string escapes"],[55,"$finish / $stop / $fatal"],[71,"$display formatting"],[85,"`__FILE__ / `__LINE__"],[101,"$clog2"],[103,"ceil"],[104,"$rtoi / $itor"],[105,"$sscanf format base"],[106,"string relational"],[107,"$fgetc"],[108,"$ungetc"]]},
+   {d:"compiler",n:"System tasks & functions",x:"$random, file I/O, string format/parse, sim control, math and conversion builtins.",c:[[10,"$random / $dist_*"],[11,"file I/O + strings"],[12,"$simprobe / aliases / plusargs"],[25,"$simparam$str"],[215,"$test/$value$plusargs"],[30,"analysis() variadic"],[48,"string escapes"],[55,"$finish / $stop / $fatal"],[71,"$display formatting"],[85,"`__FILE__ / `__LINE__"],[101,"$clog2"],[103,"ceil"],[104,"$rtoi / $itor"],[105,"$sscanf format base"],[106,"string relational"],[107,"$fgetc"],[108,"$ungetc"]]},
    {d:"compiler",n:"Noise modeling (Verilog-A)",x:"Table, correlated, and operating-point-dependent noise sources.",c:[[9,"noise_table(_log)"],[42,"correlated noise"],[54,"noise factors"],[109,"noise_table interp"]]},
    {d:"compiler",n:"Operators, control flow & preprocessor",x:"Operator semantics, precedence, procedural loops, based/escaped literals, macros, compile-time cost.",c:[[19,"do-while"],[37,"operator audit"],[38,"precedence"],[46,"escaped ids + based literals"],[61,"operator-args audit"],[65,"preprocessor audit"],[70,"behavioral loops"],[78,"casex / casez"],[147,"nested ?: compile-time"]]},
    {d:"compiler",n:"Compiler correctness & robustness",x:"Crash/hang fixes, corpus + LRM-2023 sweeps, physics checks, depth-limit hardening.",c:[[35,"comment EOF hang"],[56,"corpus sweep"],[57,"physics validation"],[59,"LRM corners"],[69,"opvar audit"],[80,"temperature physics"],[84,"LRM-2023 sweep"],[148,"compiler hardening"],[213,"crash hardening: 4 compiler panics"],[214,"whole-array coercion: crash class fixed at root"],[185,"autodiff hypot/atan2 derivative fixes"],[186,"autodiff real-modulo derivative fix"],[187,"simplifier inverse-function cancellations"]]},

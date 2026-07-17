@@ -134,6 +134,29 @@ char *simparam_str(void *params_, void *handle, uint32_t *flags, char *name) {
   return "�";
 }
 
+/* Enhancement-215: a NON-FATAL string simparam lookup -- like simparam_str, but
+ * returns default_val instead of raising a fatal error when the name is absent.
+ * `$value$plusargs` needs to ask "is a plusarg present, and what is its string
+ * value?" without aborting when it is not: the fatal simparam_str cannot express
+ * that. Mirrors the numeric simparam_opt (state is just the params pointer; no
+ * handle/flags because it never logs or faults). */
+char *simparam_str_opt(void *params_, char *name, char *default_val) {
+  OsdiSimParas *params = params_;
+  if (params->names_str) {
+    for (int i = 0; params->names_str[i]; i++) {
+      char *p1, *p2;
+      int eq;
+      SCMP(p1, p2, params->names_str[i], name, eq);
+      if (eq) {
+        // Never hand back a NULL string: it flows straight into the scan buffer
+        // of `$value$plusargs` (osdi_scan_*), which dereferences it unchecked.
+        return params->vals_str[i] ? params->vals_str[i] : "";
+      }
+    }
+  }
+  return default_val ? default_val : "";
+}
+
 void push_error(OsdiInitError **dst, uint32_t *len, uint32_t *cap,
                 OsdiInitError err) {
   if (*dst == NULL) {

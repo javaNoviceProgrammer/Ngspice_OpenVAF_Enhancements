@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
 verify_alias.py -- verify Enhancement-12's final system-function group
-($simprobe, $analog_node_alias/$analog_port_alias, $test$plusargs/$value$plusargs)
+($simprobe, $analog_node_alias/$analog_port_alias; $test$plusargs/$value$plusargs
+moved to examples/plusargs_examples in E-215)
 end-to-end through version11's own openvaf-r + ngspice-46.
 
 These functions have no underlying mechanism in the OSDI/ngspice target, so they
@@ -48,8 +49,8 @@ def main():
     fields = run()
     results = []
     print("alias_demo results:")
-    check("$test$plusargs", fields.get("test_plusargs"), "0", results)
-    check("$value$plusargs", fields.get("value_plusargs"), "0", results)
+    # ($test$plusargs/$value$plusargs are no longer fallbacks -- see E-215 and
+    #  examples/plusargs_examples.)
     check("$analog_node_alias", fields.get("node_alias"), "0", results)
     check("$analog_port_alias", fields.get("port_alias"), "0", results)
     check("$simprobe (no default)", fields.get("simprobe"), "0", results)

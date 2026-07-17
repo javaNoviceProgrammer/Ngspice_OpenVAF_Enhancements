@@ -233,6 +233,11 @@ pub enum CallBackKind {
     SimParam,
     SimParamOpt,
     SimParamStr,
+    /// Enhancement-215: a NON-FATAL string simparam lookup `(name, default) -> str`.
+    /// Unlike `SimParamStr`, a missing name yields the default instead of a fatal
+    /// error, so `$value$plusargs` can probe for an absent plusarg. Served by the
+    /// `simparam_str_opt` stdlib function.
+    SimParamStrOpt,
     Derivative(Param),
     NodeDerivative(Node),
     ParamInfo(ParamInfoKind, Parameter),
@@ -278,6 +283,12 @@ impl CallBackKind {
             CallBackKind::SimParamStr => FunctionSignature {
                 name: "simparam_str".to_owned(),
                 params: 1,
+                returns: 1,
+                has_sideeffects: false,
+            },
+            CallBackKind::SimParamStrOpt => FunctionSignature {
+                name: "simparam_str_opt".to_owned(),
+                params: 2,
                 returns: 1,
                 has_sideeffects: false,
             },
@@ -467,6 +478,7 @@ impl CallBackKind {
                 | CallBackKind::StoreLimit(_)
                 | CallBackKind::Analysis
                 | CallBackKind::SimParamStr
+                | CallBackKind::SimParamStrOpt
                 | CallBackKind::LimDiscontinuity
                 | CallBackKind::BuiltinLimit { .. }
         )

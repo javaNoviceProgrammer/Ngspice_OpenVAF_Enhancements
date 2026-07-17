@@ -32,7 +32,6 @@ underlying mechanism for them, so they return their LRM-specified
 
 | Function | Behavior |
 |---|---|
-| `$test$plusargs` / `$value$plusargs` | `false` / default (ngspice has no plusargs) |
 | `$simprobe` | the supplied default |
 | `$analog_node_alias` / `$analog_port_alias` | `0` (no runtime hierarchical aliasing) |
 

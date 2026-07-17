@@ -281,9 +281,9 @@ static void last_crossing_stamp(void *inst, OsdiExtraInstData *extra,
 
 #define NUM_SIM_PARAMS 10
 char *sim_params[NUM_SIM_PARAMS + 1] = {
-    "iniLim", "gmin", "gdev", "tnom", 
-    "simulatorVersion", "sourceScaleFactor", 
-    "epsmin", "reltol", "vntol", "abstol", 
+    "iniLim", "gmin", "gdev", "tnom",
+    "simulatorVersion", "sourceScaleFactor",
+    "epsmin", "reltol", "vntol", "abstol",
     NULL};
 /* Enhancement-25: string simulator parameters returned by $simparam$str.
  * "analysis_name" mirrors the analysis() naming ("dc"/"ac"/"tran"/"noise");
@@ -292,6 +292,90 @@ char *sim_params_str[3] = {"analysis_name", "simulator", NULL};
 char *sim_param_vals_str[2] = {"dc", "ngspice"};
 
 double sim_param_vals[NUM_SIM_PARAMS] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+
+/* Enhancement-215: command-line plusargs (`+name[=value]`) served through the
+ * simparam channel. main.c registers each `+`-arg at startup; a compiled model's
+ * `$test$plusargs("name")` / `$value$plusargs("name=%fmt", var)` look them up as
+ * namespaced simparams -- numeric "$test$plusargs$<name>" = 1.0 (presence) and
+ * string "$value$plusargs$<name>" = "<value>". The keys are interned once at
+ * registration; get_simparams splices them onto the base arrays on first use, so
+ * a run with no plusargs pays nothing. */
+static char **pa_test_key = NULL;  /* "$test$plusargs$<name>"   numeric: present 1.0        */
+static char **pa_valset_key = NULL;/* "$valset$plusargs$<name>" numeric: given as name=value */
+static char **pa_valnum_key = NULL;/* "$valnum$plusargs$<name>" numeric: value as double     */
+static char **pa_val_key = NULL;   /* "$value$plusargs$<name>"  string:  value as text       */
+static char **pa_value = NULL;     /* "<value>" ("" when the plusarg has none)               */
+static double *pa_valset = NULL;   /* 1.0 iff the plusarg was `name=value`, else 0.0         */
+static double *pa_valnum = NULL;   /* strtod(value) (0 when non-numeric or absent)           */
+static int pa_n = 0, pa_cap = 0;
+
+void ngspice_register_plusarg(const char *arg) {
+  /* `arg` is the plusarg without its leading '+': "name" or "name=value".
+   * $test$plusargs matches either form; $value$plusargs matches only name=value
+   * (hence the separate $valset presence flag). */
+  if (arg == NULL || *arg == '\0')
+    return;
+  if (pa_n >= pa_cap) {
+    pa_cap = pa_cap ? 2 * pa_cap : 8;
+    pa_test_key = TREALLOC(char *, pa_test_key, pa_cap);
+    pa_valset_key = TREALLOC(char *, pa_valset_key, pa_cap);
+    pa_valnum_key = TREALLOC(char *, pa_valnum_key, pa_cap);
+    pa_val_key = TREALLOC(char *, pa_val_key, pa_cap);
+    pa_value = TREALLOC(char *, pa_value, pa_cap);
+    pa_valset = TREALLOC(double, pa_valset, pa_cap);
+    pa_valnum = TREALLOC(double, pa_valnum, pa_cap);
+  }
+  const char *eq = strchr(arg, '=');
+  char *name = eq ? copy_substring(arg, eq) : copy(arg);
+  pa_test_key[pa_n] = tprintf("$test$plusargs$%s", name);
+  pa_valset_key[pa_n] = tprintf("$valset$plusargs$%s", name);
+  pa_valnum_key[pa_n] = tprintf("$valnum$plusargs$%s", name);
+  pa_val_key[pa_n] = tprintf("$value$plusargs$%s", name);
+  pa_value[pa_n] = eq ? copy(eq + 1) : copy("");
+  pa_valset[pa_n] = eq ? 1.0 : 0.0;
+  pa_valnum[pa_n] = eq ? strtod(eq + 1, NULL) : 0.0;
+  tfree(name);
+  pa_n++;
+}
+
+/* Base + plusarg simparam arrays, built once on first get_simparams call when
+ * plusargs are present. The numeric values [0..NUM_SIM_PARAMS) are refreshed per
+ * call; the plusarg tail (presence 1.0 / value string) is constant. */
+static char **ext_names = NULL, **ext_names_str = NULL, **ext_vals_str = NULL;
+static double *ext_vals = NULL;
+static int ext_built = 0;
+
+static void build_plusarg_arrays(void) {
+  int i;
+  /* numeric channel: base params, then three entries per plusarg -- presence
+   * ($test$plusargs$name = 1), the name=value flag ($valset$plusargs$name) and
+   * the value as a number ($valnum$plusargs$name). */
+  ext_names = TMALLOC(char *, NUM_SIM_PARAMS + 3 * pa_n + 1);
+  ext_vals = TMALLOC(double, NUM_SIM_PARAMS + 3 * pa_n);
+  for (i = 0; i < NUM_SIM_PARAMS; i++)
+    ext_names[i] = sim_params[i];
+  for (i = 0; i < pa_n; i++) {
+    ext_names[NUM_SIM_PARAMS + 3 * i] = pa_test_key[i];
+    ext_vals[NUM_SIM_PARAMS + 3 * i] = 1.0;
+    ext_names[NUM_SIM_PARAMS + 3 * i + 1] = pa_valset_key[i];
+    ext_vals[NUM_SIM_PARAMS + 3 * i + 1] = pa_valset[i];
+    ext_names[NUM_SIM_PARAMS + 3 * i + 2] = pa_valnum_key[i];
+    ext_vals[NUM_SIM_PARAMS + 3 * i + 2] = pa_valnum[i];
+  }
+  ext_names[NUM_SIM_PARAMS + 3 * pa_n] = NULL;
+
+  ext_names_str = TMALLOC(char *, 2 + pa_n + 1);
+  ext_vals_str = TMALLOC(char *, 2 + pa_n);
+  ext_names_str[0] = "analysis_name";
+  ext_names_str[1] = "simulator";
+  ext_vals_str[1] = "ngspice";
+  for (i = 0; i < pa_n; i++) {
+    ext_names_str[2 + i] = pa_val_key[i];
+    ext_vals_str[2 + i] = pa_value[i];
+  }
+  ext_names_str[2 + pa_n] = NULL;
+  ext_built = 1;
+}
 
 /* values returned by $simparam*/
 OsdiSimParas get_simparams(const CKTcircuit *ckt) {
@@ -320,6 +404,24 @@ OsdiSimParas get_simparams(const CKTcircuit *ckt) {
   else
     analysis_name = "dc";
   sim_param_vals_str[0] = (char *)analysis_name;
+
+  /* Enhancement-215: with command-line plusargs present, return the extended
+   * arrays (base params + the namespaced plusarg entries). The base numeric
+   * values were just computed above into sim_param_vals; copy them into the
+   * extended array's head and refresh the analysis name. */
+  if (pa_n > 0) {
+    int i;
+    if (!ext_built)
+      build_plusarg_arrays();
+    for (i = 0; i < NUM_SIM_PARAMS; i++)
+      ext_vals[i] = sim_param_vals[i];
+    ext_vals_str[0] = (char *)analysis_name;
+    OsdiSimParas ext_params_ = {.names = ext_names,
+                                .vals = ext_vals,
+                                .names_str = ext_names_str,
+                                .vals_str = ext_vals_str};
+    return ext_params_;
+  }
 
   OsdiSimParas sim_params_ = {.names = sim_params,
                               .vals = (double *)&sim_param_vals,

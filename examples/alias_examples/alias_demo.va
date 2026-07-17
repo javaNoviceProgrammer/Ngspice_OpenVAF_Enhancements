@@ -1,16 +1,17 @@
-// alias_demo.va -- Enhancement-12 demo of the final group of Verilog-AMS system
-// functions: $simprobe, $analog_node_alias/$analog_port_alias, and
-// $test$plusargs/$value$plusargs.
+// alias_demo.va -- Enhancement-12 demo of the mechanism-unavailable system
+// functions: $simprobe and $analog_node_alias/$analog_port_alias.
 //
-// None of these has an underlying mechanism in the OSDI/ngspice target: OSDI
-// models get no command-line plusargs, no generic simulator-probe API, and no
+// (The plusarg functions $test$plusargs/$value$plusargs were also in this group
+// until Enhancement-215 gave them a real mechanism -- command-line plusargs served
+// through the simparam channel -- so they moved to examples/plusargs_examples.)
+//
+// Neither of the two remaining functions has an underlying mechanism in the
+// OSDI/ngspice target: OSDI models get no generic simulator-probe API and no
 // runtime hierarchical node aliasing. Each therefore returns its LRM
 // "mechanism-unavailable" result -- a well-defined constant -- so a model that
 // uses them compiles and runs (rather than being rejected) with predictable
 // behavior. The results are written to a file and checked by verify_alias.py.
 //
-//   $test$plusargs("x")            -> 0  (no plusarg is ever present)
-//   $value$plusargs("x", "y")      -> 0
 //   $analog_node_alias(node, "nm") -> 0  (no alias created)
 //   $analog_port_alias(port, "nm") -> 0
 //   $simprobe("inst", "q")         -> 0.0 (probe unavailable, no default)
@@ -23,22 +24,18 @@ module alias_demo(p, n);
 
     parameter real R = 1000.0 from (0:inf);
 
-    integer f, tp, vp, na, pa;
+    integer f, na, pa;
     real    sp, spd;
 
     analog begin
         I(p, n) <+ V(p, n) / R;
 
-        tp  = $test$plusargs("run_fast");
-        vp  = $value$plusargs("scale", "unused");
         na  = $analog_node_alias(p, "p_alias");
         pa  = $analog_port_alias(p, "p_alias");
         sp  = $simprobe("top.x1", "temp");
         spd = $simprobe("top.x1", "temp", 3.5);
 
         f = $fopen("alias_out.txt", "w");
-        $fdisplay(f, "test_plusargs=%d", tp);
-        $fdisplay(f, "value_plusargs=%d", vp);
         $fdisplay(f, "node_alias=%d", na);
         $fdisplay(f, "port_alias=%d", pa);
         $fdisplay(f, "simprobe=%g", sp);

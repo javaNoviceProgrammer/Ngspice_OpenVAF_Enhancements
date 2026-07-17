@@ -47,6 +47,11 @@ typedef struct OsdiObjectFile {
 extern OsdiObjectFile load_object_file(const char *path);
 extern SPICEdev *osdi_create_spicedev(const OsdiRegistryEntry *entry);
 
+/* Enhancement-215: register a command-line plusarg (`+name[=value]`, passed
+ * without the leading '+') so a compiled Verilog-A model's $test$plusargs /
+ * $value$plusargs can read it through the simparam channel. */
+extern void ngspice_register_plusarg(const char *arg);
+
 extern char *inputdir;
 
 /* Enhancement-55: deferred $finish/$stop requests. OSDIload latches the

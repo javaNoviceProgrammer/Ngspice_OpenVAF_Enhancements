@@ -1158,14 +1158,69 @@ impl BodyLoweringCtx<'_, '_, '_> {
                 self.lower_scanf(input, args[1], &args[2..])
             }
 
-            // Enhancement-12: connectivity-aliasing and plusarg functions. The
-            // OSDI/ngspice target has no command-line plusargs, no generic
-            // simulator probe and no runtime hierarchical node aliasing, so each
-            // lowers to its LRM "mechanism-unavailable" result: a constant, with
-            // no runtime callback or ngspice change. See Enhancement-12.md.
-            //
-            // `$test_plusargs`/`$value_plusargs` -> false (no plusarg is present).
-            BuiltIn::test_plusargs | BuiltIn::value_plusargs => FALSE,
+            // Enhancement-12/215: connectivity-aliasing and plusarg functions. The
+            // node/port alias functions still have no OSDI/ngspice mechanism and
+            // lower to their LRM "mechanism-unavailable" constant (see
+            // Enhancement-12.md). The plusarg functions ARE now served, through the
+            // simparam string channel (Enhancement-215): ngspice injects each
+            // command-line plusarg `+name[=value]` as two namespaced simparams --
+            // numeric `$test$plusargs$name` = 1.0 (presence) and string
+            // `$value$plusargs$name` = "value". The name/format is a compile-time
+            // literal, so the namespaced key is built here.
+            BuiltIn::test_plusargs => {
+                // `$test$plusargs("name")` -> is `+name` (or `+name=...`) present?
+                let name = self.body.as_literal(args[0]).unwrap().unwrap_str();
+                let key = self.ctx.sconst(&format!("$test$plusargs${name}"));
+                let present = self.ctx.call1(CallBackKind::SimParamOpt, &[key, F_ZERO]);
+                // 1.0 present / 0.0 absent -> Bool
+                self.ctx.ins().fne(present, F_ZERO)
+            }
+            BuiltIn::value_plusargs => {
+                // `$value$plusargs("name=%fmt", var)`: if `+name=<v>` is present, put
+                // <v> into `var` (parsed per the target's type) and return 1, else 0.
+                // The plusarg key is the format text before the first `%`, with a
+                // leading `+` and trailing `=`/whitespace stripped. ngspice provides
+                // each plusarg's value on three op-dependent simparam channels --
+                // presence ($test$plusargs$name = 1), the value as a number
+                // ($valnum$plusargs$name) and as a string ($value$plusargs$name) --
+                // so the value is read directly by target type, with no dependence on
+                // the $sscanf global-cursor machinery (which the setup/eval
+                // partitioner can split from its inputs).
+                let fmt = self.body.as_literal(args[0]).unwrap().unwrap_str().to_owned();
+                let name = fmt
+                    .split('%')
+                    .next()
+                    .unwrap_or("")
+                    .trim()
+                    .trim_start_matches('+')
+                    .trim_end_matches(|c| c == '=' || c == ' ');
+                // `$value$plusargs` matches only the `name=value` form, so its
+                // return keys off $valset (set iff a value was given), not the
+                // plain presence that $test$plusargs uses.
+                let present_key = self.ctx.sconst(&format!("$valset$plusargs${name}"));
+                let present = self.ctx.call1(CallBackKind::SimParamOpt, &[present_key, F_ZERO]);
+
+                let var = self.body.into_variable(args[1]);
+                let val = match self.body.expr_type(args[1]) {
+                    Type::String => {
+                        let key = self.ctx.sconst(&format!("$value$plusargs${name}"));
+                        let empty = self.ctx.sconst("");
+                        self.ctx.call1(CallBackKind::SimParamStrOpt, &[key, empty])
+                    }
+                    Type::Integer => {
+                        let key = self.ctx.sconst(&format!("$valnum$plusargs${name}"));
+                        let num = self.ctx.call1(CallBackKind::SimParamOpt, &[key, F_ZERO]);
+                        self.ctx.ins().ficast(num)
+                    }
+                    _ => {
+                        let key = self.ctx.sconst(&format!("$valnum$plusargs${name}"));
+                        self.ctx.call1(CallBackKind::SimParamOpt, &[key, F_ZERO])
+                    }
+                };
+                self.ctx.def_place(PlaceKind::Var(var), val);
+                // return 1 when the plusarg was present, else 0
+                self.ctx.ins().fne(present, F_ZERO)
+            }
             // `$analog_node_alias`/`$analog_port_alias` -> 0 (no alias created).
             BuiltIn::analog_node_alias | BuiltIn::analog_port_alias => ZERO,
             // `$simprobe(inst, quantity [, default])` -> the supplied default, or

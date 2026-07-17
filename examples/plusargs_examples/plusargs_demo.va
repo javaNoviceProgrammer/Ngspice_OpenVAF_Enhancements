@@ -1,0 +1,48 @@
+// plusargs_demo.va -- Enhancement-215: $test$plusargs / $value$plusargs.
+//
+// Before E-215 these were "mechanism-unavailable" fallbacks (E-12): $test$plusargs
+// always returned false and $value$plusargs never wrote its output. They are now
+// served through ngspice's simparam channel: each command-line plusarg
+// `+name[=value]` passed to ngspice becomes readable inside the model, so a corner
+// or a feature flag can be chosen at run time WITHOUT editing the deck --
+//
+//     ngspice -b deck.cir +corner=ff
+//     ngspice -b deck.cir +gain=25
+//     ngspice -b deck.cir +boost
+//
+// This model sets a conductance from plusargs so the choice is observable as a DC
+// current: baseline g = 1 mS, then (each overriding the previous, so the last
+// applicable plusarg wins):
+//   +boost           -> g = 10 mS   (presence flag, $test$plusargs)
+//   +gain=<n>        -> g = n  mS   (integer value, $value$plusargs %d)
+//   +scale=<x>       -> g = x  mS   (real value,    $value$plusargs %g)
+//   +corner=ff|ss    -> g = 5 | 0.2 mS  (string value, $value$plusargs %s)
+
+`include "disciplines.vams"
+
+module plusargs_demo(a, b);
+    inout a, b;
+    electrical a, b;
+
+    real    g;
+    integer nval;
+    real    xval;
+    string  corner;
+
+    analog begin
+        g = 1.0;
+        if ($test$plusargs("boost"))
+            g = 10.0;
+        if ($value$plusargs("gain=%d", nval))
+            g = nval;
+        if ($value$plusargs("scale=%g", xval))
+            g = xval;
+        if ($value$plusargs("corner=%s", corner)) begin
+            if (corner == "ff")
+                g = 5.0;
+            else if (corner == "ss")
+                g = 0.2;
+        end
+        I(a, b) <+ g * 1e-3 * V(a, b);
+    end
+endmodule

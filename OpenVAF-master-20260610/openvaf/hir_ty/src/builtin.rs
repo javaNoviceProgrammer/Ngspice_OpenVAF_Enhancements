@@ -375,8 +375,16 @@ bultins! {
         fn SIMPROBE_DEFAULT(Val(String),Val(String),Val(Real))->Real;
     }
 
-    const fn TEST_PLUSARGS(Val(String)) -> Bool;
-    const fn VALUE_PLUSARGS(Val(String),Val(String))->Bool;
+    // Enhancement-215: productionized. The plusarg name / format is a compile-time
+    // literal (the lowering namespaces it into a simparam key); `$value$plusargs`
+    // writes the extracted value into an output target whose type selects the
+    // signature (int/real/string), like $random's seed or $fgets's buffer.
+    const fn TEST_PLUSARGS(Literal(String)) -> Bool;
+    VALUE_PLUSARGS = {
+        fn VALUE_PLUSARGS_INT(Literal(String),Var(Integer)) -> Bool;
+        fn VALUE_PLUSARGS_REAL(Literal(String),Var(Real)) -> Bool;
+        fn VALUE_PLUSARGS_STR(Literal(String),Var(String)) -> Bool;
+    }
 
     fn ANALOG_NODE_ALIAS(Node,Val(String)) -> Integer;
 
