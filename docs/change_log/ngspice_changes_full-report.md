@@ -58,6 +58,17 @@ compilers must be recompiled ([E-54](../../enhancements_doc/Enhancement-54.md)).
 
 ## 2. The OSDI runtime — `src/osdi/`
 
+### `osdi.h` — `PARA_KIND_*` unsigned shifts
+
+The parameter-kind flag macros were `PARA_KIND_MASK (3 << 30)` and
+`PARA_KIND_OPVAR (2 << 30)` — both shift into the sign bit of a signed `int`,
+which is **undefined behavior** (a UBSan build flags it on every OSDI load, at
+`osdiinit.c:41`). The shifts are now unsigned (`3u << 30`, `2u << 30`, and the two
+zero/one companions for consistency). The bit patterns are unchanged
+(`0xC0000000` / `0x80000000`), so the OSDI ABI is byte-identical, and they now
+match the `u32` constants openvaf-r emits in `metadata/osdi_0_4.rs`. Found by the
+2026-07 ASan/UBSan pass.
+
 ### `osdiaccept.c` — new file ([E-55](../../enhancements_doc/Enhancement-55.md), [E-1](../../enhancements_doc/Enhancement-1.md), [E-6](../../enhancements_doc/Enhancement-6.md))
 
 The accepted-timepoint hook (`DEVaccept`) OSDI previously lacked. It
@@ -373,6 +384,17 @@ the long-documented "module named like a built-in crashes" gotcha. One
 NULL guard; both shapes now produce clean, located errors
 ([E-76](../../enhancements_doc/Enhancement-76.md)).
 
+### `parser/numparse.c` — out-of-range int test
+
+`ft_numparse` decides whether a parsed number is integer-valued with the
+round-trip `(double)(int)val == val`. Casting a `double` that lies outside `int`
+range to `int` is **undefined behavior**, reached by any control-language literal
+`>= 2^31` (e.g. `let x = 3e9`) — a UBSan build flags it at `numparse.c:166`. The
+value is now range-checked (`val >= -2147483648.0 && val < 2147483648.0`) before
+the cast; a value outside `int` range is, by definition, not int-representable, so
+the answer is unchanged for every in-range input (boundary-tested at `INT_MIN`,
+`INT_MAX`, and `±(2^31)`). Found by the 2026-07 ASan/UBSan pass.
+
 ### `devices/dev.c` (51)
 
 - **Duplicate device-type registration warned and skipped**:
@@ -474,6 +496,22 @@ solve loop it converts the matrix to complex (`DEVbindCSCComplex` per device +
 (`DEVbindCSCComplexToReal`) so a later real analysis in the same session is
 unaffected. KLU distortion now matches Sparse bit-for-bit (single-tone, two-tone
 intermodulation, and OSDI models) ([E-115](../../enhancements_doc/Enhancement-115.md)).
+
+### `misc/equality.c` (`AlmostEqualUlps`)
+
+`AlmostEqualUlps` is ngspice's ULP-distance float comparison — the primitive
+behind breakpoint matching, `.measure` triggers, transient truncation, PSS, and
+source timing (18 files). It reinterprets each `double` as an `int64_t`, maps the
+sign, and compared them with `intDiff = llabs(aInt - bInt)`. That signed
+subtraction **overflows `int64_t`** when the two keys straddle zero, and
+`llabs(INT64_MIN)` is itself undefined — surfaced by a UBSan build. It is not
+merely theoretical UB: `AlmostEqualUlps(-2.0, +2.0)` returned **TRUE** (declaring
+−2 and +2 "almost equal"), because those two keys differ by exactly `INT64_MIN`,
+whose `llabs` stays negative and slips under `maxUlps`. The difference is now taken
+in **`uint64_t`** as larger-minus-smaller, where the wraparound is well defined and
+the true magnitude of any two-`int64_t` difference always fits; the comparison
+against `maxUlps` is unsigned. Behavior is identical wherever the old code did not
+overflow, and correct (`FALSE`) where it did. Found by the 2026-07 ASan/UBSan pass.
 
 ---
 

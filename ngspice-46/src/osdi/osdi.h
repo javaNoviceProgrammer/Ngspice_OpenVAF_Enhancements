@@ -27,10 +27,16 @@
 /* Enhancement-93: parameter not settable from the netlist (a Verilog-A
    localparam, e.g. a structural width parameter frozen by Enhancement-92). */
 #define PARA_FLAG_FIXED (1 << 2)
-#define PARA_KIND_MASK  (3 << 30)
-#define PARA_KIND_MODEL (0 << 30)
-#define PARA_KIND_INST  (1 << 30)
-#define PARA_KIND_OPVAR (2 << 30)
+/* These are 32-bit flag fields: the two top bits select the parameter kind.
+ * The shifts MUST be unsigned -- `2 << 30` and `3 << 30` overflow the sign bit
+ * of a signed `int` (undefined behavior; UBSan flags it on every OSDI load).
+ * The bit patterns are identical to the unsuffixed form (0x80000000 /
+ * 0xC0000000), so this does not change the ABI, and it matches the `u32`
+ * constants openvaf-r emits in metadata/osdi_0_4.rs. */
+#define PARA_KIND_MASK  (3u << 30)
+#define PARA_KIND_MODEL (0u << 30)
+#define PARA_KIND_INST  (1u << 30)
+#define PARA_KIND_OPVAR (2u << 30)
 
 #define ACCESS_FLAG_READ 0
 #define ACCESS_FLAG_SET 1

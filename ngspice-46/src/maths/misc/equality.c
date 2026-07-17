@@ -21,7 +21,8 @@ Copyright 1991 Regents of the University of California.  All rights reserved.
 */
 bool AlmostEqualUlps(double A, double B, int maxUlps)
 {
-    int64_t aInt, bInt, intDiff;
+    int64_t aInt, bInt;
+    uint64_t intDiff;
 
     union {
         double d;
@@ -50,11 +51,19 @@ bool AlmostEqualUlps(double A, double B, int maxUlps)
     if (bInt < 0)
         bInt = INT64_MIN - bInt;
 
-    intDiff = llabs(aInt - bInt);
+    /* |aInt - bInt|.  The two lexicographic keys span nearly the full int64
+     * range, so their signed difference can overflow int64 (undefined
+     * behavior; UBSan flags it, and on overflow the wrapped `llabs` result
+     * could land <= maxUlps and wrongly report two very different numbers as
+     * "almost equal"). Subtract in uint64 -- larger minus smaller -- where the
+     * modular wraparound is well defined and the true magnitude of a
+     * difference of two int64 values always fits. */
+    intDiff = (aInt >= bInt) ? (uint64_t) aInt - (uint64_t) bInt
+                             : (uint64_t) bInt - (uint64_t) aInt;
 
-/* printf("A:%e B:%e aInt:%d bInt:%d  diff:%d\n", A, B, aInt, bInt, intDiff); */
+/* printf("A:%e B:%e aInt:%lld bInt:%lld  diff:%llu\n", A, B, aInt, bInt, intDiff); */
 
-    if (intDiff <= maxUlps)
+    if (intDiff <= (uint64_t) maxUlps)
         return TRUE;
     return FALSE;
 }

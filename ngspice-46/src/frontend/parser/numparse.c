@@ -162,8 +162,16 @@ int ft_numparse(char **p_str, bool whole, double *p_val)
                     val, p_cur);
         }
 
-        /* Test if the number can be represented as an intger */
-        return (double) (int) val == val;
+        /* Test if the number can be represented as an integer. The round-trip
+         * `(double)(int)val == val` is only valid when `val` is already within
+         * int range: casting an out-of-range double to int is undefined
+         * behavior (UBSan flags it for any control-language literal >= 2^31,
+         * e.g. `let x = 3e9`). Range-check first; a value outside int range is
+         * by definition not an int-representable number. The bounds use
+         * 2147483648.0 (= 2^31, exactly representable as a double) rather than
+         * INT_MAX, which rounds up to 2^31 when converted to double. */
+        return val >= -2147483648.0 && val < 2147483648.0 &&
+               (double) (int) val == val;
     }
 } /* end of function ft_numparse */
 

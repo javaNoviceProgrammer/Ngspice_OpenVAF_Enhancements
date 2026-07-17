@@ -41,16 +41,33 @@ def _bin_subdir():
     raise RuntimeError(f"Unsupported platform: {system} / {machine}")
 
 
-def _resolve(local_parts, name):
-    """Prefer a local build if present, else the bin/<os>/<arch>/ prebuilt."""
+def _resolve(local_parts, name, env):
+    """The `env` override, else a local build if present, else bin/<os>/<arch>/.
+
+    The override exists to point the whole suite at an ALTERNATIVE build without
+    touching the tree -- an ASan/UBSan ngspice, a bisect build, a wrapper script:
+
+        NGSPICE_BIN=/path/to/asan/ngspice python3 run_regression.py
+
+    The obvious alternative -- copying the other binary over
+    `ngspice-46/build/src/ngspice` and copying it back afterwards -- is a trap on
+    macOS: `cp` over a signed executable invalidates its code signature and the
+    kernel then SIGKILLs it (the run dies with exit 137 and no output, and stays
+    broken until you `codesign -f -s -` it). It also leaves the tree in the wrong
+    state if the run is interrupted. Use the env var.
+    """
+    override = os.environ.get(env)
+    if override:
+        return override
     local = os.path.join(_ROOT, *local_parts) + _EXE
     if os.path.isfile(local):
         return local
     return os.path.join(_ROOT, "bin", _bin_subdir(), name + _EXE)
 
 
-VAF = _resolve(("OpenVAF-master-20260610", "target", "release", "openvaf-r"), "openvaf-r")
-NG = _resolve(("ngspice-46", "build", "src", "ngspice"), "ngspice")
+VAF = _resolve(("OpenVAF-master-20260610", "target", "release", "openvaf-r"),
+               "openvaf-r", "OPENVAF_BIN")
+NG = _resolve(("ngspice-46", "build", "src", "ngspice"), "ngspice", "NGSPICE_BIN")
 
 
 # ---------------------------------------------------------------------------
