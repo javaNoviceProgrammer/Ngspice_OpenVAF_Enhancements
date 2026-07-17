@@ -116,6 +116,83 @@ def process(path, first_heading_id):
     return "\n".join(out)
 
 
+INDEX_LUA = r"""
+-- Render the enhancement index (chapter 5) as a definition list rather than a
+-- table.
+--
+-- WHY: a LaTeX table cell is a \parbox -- it cannot break across a page. The
+-- index's "What it delivered" cells run to thousands of characters, so any row
+-- taller than one page silently OVERFLOWED and was CLIPPED: the tail of the cell
+-- was simply dropped while pandoc and xelatex both reported success. Rows 210
+-- through 214 lost their endings that way (~2300 chars still fit; >=2500 did
+-- not). A definition list's definitions are ordinary paragraphs, so they flow
+-- across pages and nothing can be lost. verify_index_rows() enforces it.
+--
+-- Only THIS table is rewritten (matched on its header); every other table in the
+-- handbook keeps its tabular rendering and its column widths (see WIDTHS_LUA).
+
+local function header_of(t)
+  local h = {}
+  for _, row in ipairs(t.head.rows) do
+    for i, cell in ipairs(row.cells) do
+      h[i] = pandoc.utils.stringify(cell.contents)
+    end
+  end
+  return h
+end
+
+local function is_index_table(t)
+  if #t.colspecs ~= 4 then return false end
+  local h = header_of(t)
+  return h[1] == "#" and h[2] == "What it delivered"
+end
+
+-- A cell holds Blocks; flatten them to a single inline list.
+local function cell_inlines(cell)
+  local out = {}
+  for _, blk in ipairs(cell.contents) do
+    if blk.content and (blk.t == "Plain" or blk.t == "Para") then
+      for _, il in ipairs(blk.content) do out[#out + 1] = il end
+    else
+      out[#out + 1] = pandoc.Str(pandoc.utils.stringify(blk))
+    end
+  end
+  return out
+end
+
+local function append(dst, src)
+  for _, x in ipairs(src) do dst[#dst + 1] = x end
+end
+
+function Table(t)
+  if not is_index_table(t) then return nil end
+  local items = {}
+  for _, body in ipairs(t.bodies) do
+    for _, row in ipairs(body.body) do
+      local term = cell_inlines(row.cells[1])          -- the enhancement number
+      local def = cell_inlines(row.cells[2])           -- what it delivered
+      local links = {}                                 -- Doc / Examples close the entry
+      for i = 3, 4 do
+        local l = cell_inlines(row.cells[i])
+        if #l > 0 then
+          if #links > 0 then
+            append(links, {pandoc.Space(), pandoc.Str("·"), pandoc.Space()})
+          end
+          append(links, l)
+        end
+      end
+      if #links > 0 then
+        append(def, {pandoc.Space(), pandoc.Str("—"), pandoc.Space()})
+        append(def, links)
+      end
+      items[#items + 1] = {term, {{pandoc.Para(def)}}}
+    end
+  end
+  return pandoc.DefinitionList(items)
+end
+"""
+
+
 BREAKPATHS_LUA = r"""
 -- Insert zero-cost line-break opportunities after path/command separators inside
 -- text and inline code, so long file paths and commands WRAP within their table
@@ -146,6 +223,88 @@ function Code(el)
   return split_breaks(el.text, function(t) return pandoc.Code(t) end)
 end
 """
+
+
+def _sig(s):
+    """A comparison signature: alphanumerics only, lowercased.
+
+    Everything else is noise for this purpose and actively harmful: markdown
+    syntax (`` ` ``, ``*``, ``\\``), TeX's intra-word line breaks
+    (``mir_opt::const_eval::eval_`` + ``binary``), hyphenation, smart dashes and
+    quotes, and math glyphs rewritten by ``newunicodechar`` (``‖`` → ``\\Vert``)
+    all differ between the source and the PDF's text layer while the letters do
+    not. A naive probe that strips only ``[`*\\]`` reports false clipping on rows
+    where ``*`` is a literal glob (``laplace_*`` → ``laplace_``), which is
+    exactly how this check was first got wrong.
+    """
+    return re.sub(r"[^a-z0-9]", "", s.lower())
+
+
+#  [text](target) -> text.  A link's TARGET never reaches the PDF's text layer,
+#  only its text does, so the target must go before signing.
+LINK_TEXT_ONLY = re.compile(r"\[([^\]]*)\]\([^)\s]*\)")
+
+
+def index_rows():
+    """[(number, what-it-delivered cell)] from the enhancement-index chapter."""
+    rows = []
+    for line in open(os.path.join(HERE, "05-enhancement-index.md")):
+        if not line.startswith("| "):
+            continue
+        cells = line.split("|")
+        if len(cells) > 2 and cells[1].strip().isdigit():
+            rows.append((int(cells[1].strip()), cells[2]))
+    return rows
+
+
+def verify_index_rows():
+    """Assert every enhancement-index row reached the PDF *in full*.
+
+    A LaTeX table cell cannot break across a page, so a long index row used to
+    overflow and be silently CLIPPED -- its tail dropped, with pandoc, xelatex
+    and this script all reporting success (rows 210-214 were cut mid-sentence
+    before INDEX_LUA rendered the index as a definition list instead). Nothing
+    surfaced it: the PDF is a binary, so a shortened row is invisible in review.
+
+    This is that class of failure's guard. It is deliberately end-anchored --
+    clipping drops the END of a cell -- and it fails the BUILD, because a doc is
+    not built until it is proven built. See the doc-pdf-build-verification rule.
+    """
+    if os.environ.get("SKIP_PDF_VERIFY"):
+        print("WARNING: SKIP_PDF_VERIFY set -- the PDF is NOT verified; "
+              "silently clipped rows will go undetected")
+        return
+    try:
+        import fitz                                   # pymupdf
+    except ImportError:
+        sys.exit("ERROR: pymupdf is required to verify the build "
+                 "(pdftotext is not available here).\n"
+                 "       pip install pymupdf   -- or run with SKIP_PDF_VERIFY=1 "
+                 "to bypass, which leaves silent clipping undetected.")
+
+    with fitz.open(OUT) as doc:
+        text = _sig("".join(p.get_text() for p in doc))
+
+    rows = index_rows()
+    # A guard that silently matches nothing always passes. If the chapter's table
+    # is reformatted so the rows stop parsing, say so instead of reporting OK.
+    if len(rows) < 100:
+        sys.exit(f"ERROR: only parsed {len(rows)} enhancement-index rows from "
+                 "05-enhancement-index.md -- the check cannot be trusted; fix "
+                 "index_rows() to match the chapter's format.")
+
+    clipped = []
+    for n, cell in rows:
+        tail = _sig(LINK_TEXT_ONLY.sub(r"\1", cell))[-40:]
+        if tail and tail not in text:
+            clipped.append(n)
+
+    if clipped:
+        sys.exit(f"ERROR: {len(clipped)} enhancement-index row(s) are CLIPPED in "
+                 f"{os.path.relpath(OUT, ROOT)} -- their text is missing from the "
+                 f"PDF: {clipped}\n"
+                 "       Content is being silently dropped. See INDEX_LUA.")
+    print(f"verified {len(rows)} enhancement-index rows render in full")
 
 
 def main():
@@ -238,13 +397,19 @@ end
         md = os.path.join(td, "combined.md")
         hdr = os.path.join(td, "header.tex")
         lua = os.path.join(td, "widths.lua")
+        # INDEX_LUA must be its OWN filter file, applied first: it also defines a
+        # global `Table`, so sharing a file with widths_lua would simply have the
+        # second definition overwrite the first. Once the index is a definition
+        # list, widths_lua no longer sees it as a table.
+        index_lua = os.path.join(td, "index.lua")
         open(md, "w").write(combined)
         open(hdr, "w").write(header_tex)
+        open(index_lua, "w").write(INDEX_LUA)
         open(lua, "w").write(widths_lua + BREAKPATHS_LUA)
         cmd = [
             "pandoc", md, "-f", "gfm+attributes", "-o", OUT,
             "--pdf-engine=xelatex", "--toc", "--toc-depth=2",
-            "-H", hdr, "--lua-filter", lua,
+            "-H", hdr, "--lua-filter", index_lua, "--lua-filter", lua,
             # Load `mathspec` instead of pandoc's default `unicode-math` for
             # the xelatex engine: unicode-math makes glyphs like the integral
             # sign math-active, which breaks the `newunicodechar` text-mode
@@ -267,6 +432,7 @@ end
         sys.stderr.write(r.stderr)
         if r.returncode != 0:
             sys.exit(r.returncode)
+    verify_index_rows()
     print(f"wrote {os.path.relpath(OUT, ROOT)}")
 
 
