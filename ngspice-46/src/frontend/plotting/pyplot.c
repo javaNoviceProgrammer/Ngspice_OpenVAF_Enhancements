@@ -45,7 +45,7 @@ void ft_pyplot(double *xlims, double *ylims,
         struct dvec *vecs, bool hist)
 {
     FILE *file, *file_data;
-    struct dvec *v, *scale = NULL;
+    struct dvec *v;
     int i, col, numVecs, err, nper, nrows, row;
     bool xlog, ylog, nogrid, markers, boxes, have_style, have_figsize;
     char pointstyle[BSIZE_SP], terminal[BSIZE_SP], python[BSIZE_SP], style[BSIZE_SP];
@@ -364,6 +364,215 @@ void ft_pyplot(double *xlims, double *ylims,
     (void) fclose(file);
 
     /* Run it: synchronously for a PNG, in the background for a window. */
+#if defined(__MINGW32__) || defined(_MSC_VER)
+    if (hardcopy)
+        (void) snprintf(buf, sizeof(buf), "%s %s", python, filename_py);
+    else
+        (void) snprintf(buf, sizeof(buf), "start /B %s %s", python, filename_py);
+    _flushall();
+#else
+    if (hardcopy)
+        (void) snprintf(buf, sizeof(buf), "%s %s", python, filename_py);
+    else
+        (void) snprintf(buf, sizeof(buf), "%s %s &", python, filename_py);
+#endif
+    err = system(buf);
+    if (err == -1)
+        fprintf(cp_err, "Error: could not run '%s'.\n", buf);
+
+#ifdef SHARED_MODULE
+    setlocale(LC_NUMERIC, llocale);
+#endif
+}
+
+
+/* Enhancement-218: `pyplot -contour <z> <x> <y>`. A 2-D parameter sweep leaves a
+   quantity z sampled over a grid of two swept knobs; the natural view is a filled
+   contour map of z across the (x, y) plane. `vecs` is the 3-vector list built by
+   plotit -- z first, then x, then y (each the flattened grid, all one length). We
+   triangulate the (x, y) points (matplotlib tricontourf), so gridded OR scattered
+   sweep data plots with no dimension metadata. Same pyplot_* settings as ft_pyplot. */
+void
+ft_pyplot_contour(const char *filename, const char *title, struct dvec *vecs)
+{
+    FILE *file, *file_data;
+    struct dvec *z, *x, *y;
+    int i, n, numVecs, err;
+    bool hardcopy = FALSE, have_style, have_figsize, have_backend, lines;
+    int levels;
+    char terminal[BSIZE_SP], python[BSIZE_SP], style[BSIZE_SP];
+    char figsize[BSIZE_SP], backend[BSIZE_SP], cmap[BSIZE_SP], fmt[16];
+    char filename_data[1024], filename_py[1024];
+    char buf[2 * 1024 + BSIZE_SP];
+    double figw = 0.0, figh = 0.0;
+
+#ifdef SHARED_MODULE
+    char *llocale = setlocale(LC_NUMERIC, NULL);
+    setlocale(LC_NUMERIC, "C");
+#endif
+
+    /* need exactly three vectors: z (the contoured quantity), x and y (the axes). */
+    for (z = vecs, numVecs = 0; z; z = z->v_link2)
+        numVecs++;
+    if (numVecs != 3) {
+        fprintf(cp_err, "Error: pyplot -contour needs exactly three vectors: "
+                        "<z> <x> <y> (got %d).\n", numVecs);
+#ifdef SHARED_MODULE
+        setlocale(LC_NUMERIC, llocale);
+#endif
+        return;
+    }
+    z = vecs;
+    x = vecs->v_link2;
+    y = vecs->v_link2->v_link2;
+
+    /* the flattened grid: all three vectors share a length; take the shortest to
+       stay in bounds if a sweep produced a ragged tail. */
+    n = z->v_length;
+    if (x->v_length < n) n = x->v_length;
+    if (y->v_length < n) n = y->v_length;
+    if (n < 3) {
+        fprintf(cp_err, "Error: pyplot -contour needs at least three sample "
+                        "points to triangulate (got %d).\n", n);
+#ifdef SHARED_MODULE
+        setlocale(LC_NUMERIC, llocale);
+#endif
+        return;
+    }
+
+    /* same terminal / interpreter / backend / style / figsize handling as ft_pyplot */
+    fmt[0] = '\0';
+    if (cp_getvar("pyplot_terminal", CP_STRING, terminal, sizeof(terminal))) {
+        if (cieq(terminal, "png") || cieq(terminal, "png/quit")) {
+            strcpy(fmt, "png"); hardcopy = TRUE;
+        } else if (cieq(terminal, "svg") || cieq(terminal, "svg/quit")) {
+            strcpy(fmt, "svg"); hardcopy = TRUE;
+        } else if (cieq(terminal, "pdf") || cieq(terminal, "pdf/quit")) {
+            strcpy(fmt, "pdf"); hardcopy = TRUE;
+        }
+    }
+    if (!cp_getvar("pyplot_python", CP_STRING, python, sizeof(python)))
+        strcpy(python, "python3");
+    have_backend = cp_getvar("pyplot_backend", CP_STRING, backend, sizeof(backend))
+                   ? TRUE : FALSE;
+    have_figsize = FALSE;
+    if (cp_getvar("pyplot_figsize", CP_STRING, figsize, sizeof(figsize))) {
+        if (sscanf(figsize, "%lf%*[ ,xX]%lf", &figw, &figh) == 2
+                && figw > 0.0 && figh > 0.0)
+            have_figsize = TRUE;
+    }
+    have_style = cp_getvar("pyplot_style", CP_STRING, style, sizeof(style)) ? TRUE : FALSE;
+    if (have_style && cieq(style, "dark"))
+        strcpy(style, "dark_background");
+
+    /* contour-specific knobs: number of levels (0 => matplotlib auto), an overlaid
+       labelled line set, and the colormap. */
+    if (!cp_getvar("pyplot_contour_levels", CP_NUM, &levels, 0) || levels < 1)
+        levels = 0;
+    lines = cp_getvar("pyplot_contour_lines", CP_BOOL, NULL, 0);
+    if (!cp_getvar("pyplot_contour_cmap", CP_STRING, cmap, sizeof(cmap)))
+        strcpy(cmap, "viridis");
+
+    snprintf(filename_data, sizeof(filename_data), "%s.data", filename);
+    snprintf(filename_py, sizeof(filename_py), "%s.py", filename);
+
+    /* data table: one (x, y, z) triple per row (real part for complex data). */
+    if ((file_data = fopen(filename_data, "w")) == NULL) {
+        perror(filename);
+#ifdef SHARED_MODULE
+        setlocale(LC_NUMERIC, llocale);
+#endif
+        return;
+    }
+    for (i = 0; i < n; i++) {
+        double xv = isreal(x) ? x->v_realdata[i] : realpart(x->v_compdata[i]);
+        double yv = isreal(y) ? y->v_realdata[i] : realpart(y->v_compdata[i]);
+        double zv = isreal(z) ? z->v_realdata[i] : realpart(z->v_compdata[i]);
+        fprintf(file_data, "%e %e %e\n", xv, yv, zv);
+    }
+    (void) fclose(file_data);
+
+    /* matplotlib script: a triangulated filled contour with a colorbar. */
+    if ((file = fopen(filename_py, "w")) == NULL) {
+        perror(filename);
+#ifdef SHARED_MODULE
+        setlocale(LC_NUMERIC, llocale);
+#endif
+        return;
+    }
+    fprintf(file, "#!/usr/bin/env python3\n");
+    fprintf(file, "# generated by ngspice 'pyplot -contour' (Enhancement-218)\n");
+    fprintf(file, "import numpy as np\n");
+    if (have_backend) {
+        fprintf(file, "import matplotlib\nmatplotlib.use(");
+        quote_python_string(file, backend);
+        fprintf(file, ")\n");
+    } else if (hardcopy) {
+        fprintf(file, "import matplotlib\nmatplotlib.use('Agg')\n");
+    }
+    fprintf(file, "import matplotlib.pyplot as plt\n");
+    if (have_style) {
+        fprintf(file, "try:\n    plt.style.use(");
+        quote_python_string(file, style);
+        fprintf(file, ")\nexcept Exception:\n    pass\n");
+    }
+    fprintf(file, "d = np.loadtxt(");
+    quote_python_string(file, filename_data);
+    fprintf(file, ")\n");
+    fprintf(file, "if d.ndim == 1:\n    d = d.reshape(-1, 3)\n");
+    fprintf(file, "x = d[:, 0]; y = d[:, 1]; z = d[:, 2]\n");
+    if (have_figsize)
+        fprintf(file, "fig, ax = plt.subplots(figsize=(%g, %g))\n", figw, figh);
+    else
+        fprintf(file, "fig, ax = plt.subplots(figsize=(7.0, 5.4))\n");
+    if (levels > 0)
+        fprintf(file, "levels = %d\n", levels);
+    else
+        fprintf(file, "levels = None\n");
+    /* triangulation fails on collinear/degenerate input (a 1-D sweep): say so
+       rather than dying with a bare matplotlib traceback. */
+    fprintf(file, "try:\n");
+    fprintf(file, "    cf = ax.tricontourf(x, y, z, levels=levels, cmap=");
+    quote_python_string(file, cmap);
+    fprintf(file, ")\n");
+    if (lines) {
+        fprintf(file, "    cl = ax.tricontour(x, y, z, levels=cf.levels, "
+                      "colors='k', linewidths=0.5, alpha=0.6)\n");
+        fprintf(file, "    ax.clabel(cl, inline=True, fontsize=8, fmt='%%.3g')\n");
+    }
+    fprintf(file, "except (RuntimeError, ValueError) as e:\n");
+    fprintf(file, "    raise SystemExit('pyplot -contour: cannot triangulate the "
+                  "(x, y) points -- a contour needs a genuine 2-D sweep '\n"
+                  "                     '(the points must not be collinear): ' + str(e))\n");
+    fprintf(file, "cb = fig.colorbar(cf, ax=ax, pad=0.02)\n");
+    fprintf(file, "cb.set_label(");
+    quote_python_string(file, z->v_name ? z->v_name : "z");
+    fprintf(file, ")\n");
+    fprintf(file, "ax.set_xlabel(");
+    quote_python_string(file, x->v_name ? x->v_name : "x");
+    fprintf(file, ")\n");
+    fprintf(file, "ax.set_ylabel(");
+    quote_python_string(file, y->v_name ? y->v_name : "y");
+    fprintf(file, ")\n");
+    if (title) {
+        char *text = cp_unquote(title);
+        fprintf(file, "ax.set_title(");
+        quote_python_string(file, text);
+        fprintf(file, ")\n");
+        tfree(text);
+    }
+    fprintf(file, "fig.tight_layout()\n");
+    if (hardcopy) {
+        fprintf(file, "fig.savefig(");
+        quote_python_string(file, filename);
+        fprintf(file, " + '.%s', dpi=110)\n", fmt);
+        fprintf(file, "print('pyplot: wrote %s.%s')\n", filename, fmt);
+    } else {
+        fprintf(file, "plt.show()\n");
+    }
+    (void) fclose(file);
+
+    /* run it: synchronously for a file, in the background for a window. */
 #if defined(__MINGW32__) || defined(_MSC_VER)
     if (hardcopy)
         (void) snprintf(buf, sizeof(buf), "%s %s", python, filename_py);

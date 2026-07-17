@@ -473,6 +473,11 @@ examples/pyplothist_examples/pyplothist.py
 examples/pyplothist_examples/pyplothist.data
 examples/pyplothist_examples/pyplothist.png
 
+# Enhancement-218 pyplotcontour: verify-run scratch files (generated contour plot/script/data)
+examples/pyplotcontour_examples/pyplotcontour.py
+examples/pyplotcontour_examples/pyplotcontour.data
+examples/pyplotcontour_examples/pyplotcontour.png
+
 # Enhancement-97 groundcontrib: verify-run scratch files
 examples/groundcontrib_examples/*.osdi
 examples/groundcontrib_examples/*.sp

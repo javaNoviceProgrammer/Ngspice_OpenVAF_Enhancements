@@ -46,8 +46,12 @@ com_pyplot(wordlist *wl)
     /* Enhancement-217: `pyplot [name] -hist <sig> ...` renders each listed signal's
        value distribution as a histogram. Unlike -eye (a distinct analysis), -hist is
        just a render mode over the normal signal list, so the marker is stripped and
-       the rest dispatched to plotit's histogram device. */
+       the rest dispatched to plotit's histogram device.
+       Enhancement-218: `pyplot [name] -contour <z> <x> <y>` renders a 2-D contour
+       map of z over the (x, y) plane -- likewise a render mode over the signal
+       list, dispatched to plotit's contour device. */
     bool is_hist = FALSE;
+    bool is_contour = FALSE;
 
     if (!wl)
         return;
@@ -73,25 +77,32 @@ com_pyplot(wordlist *wl)
         }
     }
 
-    /* E-217: strip a `-hist` marker (anywhere in the list) and remember it; the
-       remaining words are the ordinary [name] + signal list. */
+    /* E-217/E-218: strip a `-hist` or `-contour` marker (anywhere in the list) and
+       remember which; the remaining words are the ordinary [name] + signal list. */
     if (!is_eye) {
         wordlist *w;
         for (w = wl; w; w = w->wl_next) {
-            if (w->wl_word && eq(w->wl_word, "-hist")) {
+            if (!w->wl_word)
+                continue;
+            if (eq(w->wl_word, "-hist"))
                 is_hist = TRUE;
-                if (w->wl_prev)
-                    w->wl_prev->wl_next = w->wl_next;
-                else
-                    wl = w->wl_next;                  /* -hist was the head */
-                if (w->wl_next)
-                    w->wl_next->wl_prev = w->wl_prev;
-                w->wl_next = w->wl_prev = NULL;
-                wl_free(w);                           /* free the single node */
-                break;
-            }
+            else if (eq(w->wl_word, "-contour"))
+                is_contour = TRUE;
+            else
+                continue;
+            if (w->wl_prev)
+                w->wl_prev->wl_next = w->wl_next;
+            else
+                wl = w->wl_next;                      /* marker was the head */
+            if (w->wl_next)
+                w->wl_next->wl_prev = w->wl_prev;
+            w->wl_next = w->wl_prev = NULL;
+            wl_free(w);                               /* free the single node */
+            break;
         }
-        if (!wl)                                      /* `pyplot -hist` with no signals */
+        if (is_contour)
+            strcpy(defname, "contour");
+        if (!wl)                                      /* marker with no signals */
             return;
     }
 
@@ -111,7 +122,8 @@ com_pyplot(wordlist *wl)
     if (!fname) {
         if (autoseq > 0)
             (void) snprintf(defname, sizeof defname, "%s-%u",
-                            is_eye ? "eye" : "pyplot", autoseq + 1);
+                            is_eye ? "eye" : is_contour ? "contour" : "pyplot",
+                            autoseq + 1);
         autoseq++;
         fname = defname;
     }
@@ -149,7 +161,8 @@ com_pyplot(wordlist *wl)
     if (!wl) /* no plot arguments left */
         goto done;
 
-    (void) plotit(wl, fname, is_hist ? "pyplothist" : "pyplot");
+    (void) plotit(wl, fname,
+                  is_contour ? "pyplotcontour" : is_hist ? "pyplothist" : "pyplot");
 
 done:
     if (tempf)

@@ -1,0 +1,32 @@
+* pyplotcontour_demo.cir -- Enhancement-218: pyplot -contour (2-D contour maps)
+*
+* `pyplot -contour <z> <x> <y>` renders a 2-D contour map of a quantity z over
+* the (x, y) plane -- the natural view of a 2-D parameter sweep (e.g. a device
+* current over a (Vgs, Vds) grid, or a gain over a (R, C) grid).
+*
+* This deck builds a grid with a KNOWN analytic surface so the contour can be
+* checked, not just drawn:
+*   z = x^2 + y^2   over x,y in [-2,2]  ->  concentric circular contours
+*                                           (a paraboloid: z=0 at the centre,
+*                                            z=8 at the corners)
+* The grid is flattened into three equal-length vectors (x, y, z); matplotlib
+* triangulates the (x,y) points, so no grid-dimension metadata is needed. A
+* trivial resistor keeps the netlist well-formed; the surface is computed purely
+* from the .control vectors and is solver-independent.
+v1 1 0 dc 0
+r1 1 0 1k
+.control
+let nx = 41
+let ny = 41
+let Np = nx * ny
+let idx = vector(Np)
+let ix = floor(idx / ny)
+let iy = idx - ix * ny
+let x = -2 + 4 * ix / (nx - 1)
+let y = -2 + 4 * iy / (ny - 1)
+let z = x^2 + y^2
+set pyplot_terminal=png
+set pyplot_contour_lines
+pyplot pyplotcontour -contour z x y
+.endc
+.end

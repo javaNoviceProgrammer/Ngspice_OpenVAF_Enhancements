@@ -1257,6 +1257,17 @@ bool plotit(wordlist *wl, const char *hcopy, const char *devname)
         goto quit;
     }
 
+    if (devname && eq(devname, "pyplotcontour")) {
+        /* Enhancement-218: `pyplot -contour <z> <x> <y>` -- a 2-D contour map of z
+         * over the (x, y) plane. plotit has already evaluated the three
+         * expressions into `vecs` (z first, then x, then y); the dedicated
+         * renderer triangulates them. Axis limits and the shared-scale line-plot
+         * machinery do not apply, so it is bypassed. */
+        ft_pyplot_contour(hcopy, title ? title : vecs->v_plot->pl_title, vecs);
+        rtn = TRUE;
+        goto quit;
+    }
+
 #ifdef TCL_MODULE
     if (devname && eq(devname, "blt")) {
         /* Just send the pairs to Tcl/Tk */
