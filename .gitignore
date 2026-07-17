@@ -563,3 +563,13 @@ examples/optimize_examples/*.osdi
 
 # pyplot example: verify_pyplot.py generates these decks at runtime
 examples/pyplot_examples/*.sp
+
+# reduce example: verify_reduce.py writes the reduced netlist + data at runtime
+examples/reduce_examples/*.sp
+examples/reduce_examples/*.dat
+
+# autosave / checkpoint examples: savestate/loadstate checkpoints + wrdata output
+examples/autosave_examples/*.chk
+examples/autosave_examples/*.dat
+examples/checkpoint_examples/*.chk
+examples/checkpoint_examples/*.dat
