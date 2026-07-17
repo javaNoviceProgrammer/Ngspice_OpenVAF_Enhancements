@@ -1,0 +1,24 @@
+* pyplothist_demo.cir -- Enhancement-217: pyplot -hist (histogram plots)
+*
+* `pyplot -hist <sig> ...` renders each signal's VALUE distribution as a
+* histogram (matplotlib plt.hist) instead of a trace vs. time/frequency.
+*
+* This deck builds two signals with KNOWN analytic value-distributions so the
+* histogram can be checked, not just rendered:
+*   ramp = i/(N-1)        -> UNIFORM on [0,1]      (a flat histogram)
+*   sine = sin(2*pi*i/100) -> ARCSINE on [-1,1]    (U-shaped: a sinusoid dwells
+*                                                   near its peaks, so the edge
+*                                                   bins tower over the middle)
+* A trivial resistor keeps the netlist well-formed; the histogram is computed
+* purely from the .control vectors and is solver-independent.
+v1 1 0 dc 0
+r1 1 0 1k
+.control
+let N = 20000
+let i = vector(N)
+let ramp = i / (N - 1)
+let sine = sin(2 * pi * i / 100)
+set pyplot_terminal=png
+pyplot pyplothist -hist ramp sine
+.endc
+.end

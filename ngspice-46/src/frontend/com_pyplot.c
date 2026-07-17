@@ -43,6 +43,11 @@ com_pyplot(wordlist *wl)
        command's own arguments -- the expression and its flags. */
     bool is_eye = FALSE;
     wordlist *eye_args = NULL;
+    /* Enhancement-217: `pyplot [name] -hist <sig> ...` renders each listed signal's
+       value distribution as a histogram. Unlike -eye (a distinct analysis), -hist is
+       just a render mode over the normal signal list, so the marker is stripped and
+       the rest dispatched to plotit's histogram device. */
+    bool is_hist = FALSE;
 
     if (!wl)
         return;
@@ -66,6 +71,28 @@ com_pyplot(wordlist *wl)
                 return;
             }
         }
+    }
+
+    /* E-217: strip a `-hist` marker (anywhere in the list) and remember it; the
+       remaining words are the ordinary [name] + signal list. */
+    if (!is_eye) {
+        wordlist *w;
+        for (w = wl; w; w = w->wl_next) {
+            if (w->wl_word && eq(w->wl_word, "-hist")) {
+                is_hist = TRUE;
+                if (w->wl_prev)
+                    w->wl_prev->wl_next = w->wl_next;
+                else
+                    wl = w->wl_next;                  /* -hist was the head */
+                if (w->wl_next)
+                    w->wl_next->wl_prev = w->wl_prev;
+                w->wl_next = w->wl_prev = NULL;
+                wl_free(w);                           /* free the single node */
+                break;
+            }
+        }
+        if (!wl)                                      /* `pyplot -hist` with no signals */
+            return;
     }
 
     /* The first word is an output file name only if it is not itself a plot
@@ -122,7 +149,7 @@ com_pyplot(wordlist *wl)
     if (!wl) /* no plot arguments left */
         goto done;
 
-    (void) plotit(wl, fname, "pyplot");
+    (void) plotit(wl, fname, is_hist ? "pyplothist" : "pyplot");
 
 done:
     if (tempf)

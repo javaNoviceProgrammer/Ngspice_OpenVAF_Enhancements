@@ -42,7 +42,7 @@ void ft_pyplot(double *xlims, double *ylims,
         const char *filename, const char *title,
         const char *xlabel, const char *ylabel,
         GRIDTYPE gridtype, PLOTTYPE plottype,
-        struct dvec *vecs)
+        struct dvec *vecs, bool hist)
 {
     FILE *file, *file_data;
     struct dvec *v, *scale = NULL;
@@ -149,6 +149,17 @@ void ft_pyplot(double *xlims, double *ylims,
     if (plottype == PLOT_POINT)
         markers = TRUE;
 
+    /* Enhancement-217: `pyplot -hist ...` renders each signal's VALUE distribution
+       as a histogram. `set pyplot_hist_bins=<N>` sets the bin count (default the
+       matplotlib 'auto' rule); `set pyplot_hist_density` normalizes to a density. */
+    int histbins = 0;
+    bool histdensity = FALSE;
+    if (hist) {
+        if (!cp_getvar("pyplot_hist_bins", CP_NUM, &histbins, 0) || histbins < 1)
+            histbins = 0;                    /* 0 => matplotlib 'auto' */
+        histdensity = cp_getvar("pyplot_hist_density", CP_BOOL, NULL, 0);
+    }
+
     switch (gridtype) {
     case GRID_LIN:
         nogrid = xlog = ylog = FALSE;
@@ -180,11 +191,24 @@ void ft_pyplot(double *xlims, double *ylims,
         perror(filename);
         return;
     }
-    scale = vecs->v_scale;
-    for (i = 0; i < scale->v_length; i++) {
+    /* Row count: a line plot walks the shared scale (time/frequency). A histogram
+       (Enhancement-217) only uses each signal's VALUES, and those signals may be
+       raw `let` vectors whose scale length differs from their own length, so it
+       walks the longest value vector instead (shorter ones pad with NaN, which the
+       generated script filters out). */
+    int datarows;
+    if (hist) {
+        datarows = 0;
+        for (v = vecs; v; v = v->v_link2)
+            if (v->v_length > datarows)
+                datarows = v->v_length;
+    } else {
+        datarows = vecs->v_scale->v_length;
+    }
+    for (i = 0; i < datarows; i++) {
         for (v = vecs; v; v = v->v_link2) {
             struct dvec *sc = v->v_scale;
-            double xval = (i < sc->v_length)
+            double xval = (sc && i < sc->v_length)
                 ? (isreal(sc) ? sc->v_realdata[i] : realpart(sc->v_compdata[i]))
                 : NAN;
             double yval = (i < v->v_length)
@@ -230,12 +254,16 @@ void ft_pyplot(double *xlims, double *ylims,
     fprintf(file, "if d.ndim == 1:\n    d = d.reshape(-1, %d)\n", 2 * numVecs);
     /* Enhancement-98: one axis, or `nrows` stacked subplots sharing the x-axis.
        `axes` is always a 2-D array (squeeze=False) so it is indexed uniformly. */
+    /* Histograms of different signals have unrelated value ranges, so their panels
+       must NOT share an x-axis (a line plot's panels share the time/frequency axis). */
+    const char *sharex = hist ? "False" : "True";
     if (have_figsize)
         fprintf(file,
-                "fig, axes = plt.subplots(%d, 1, sharex=True, squeeze=False, "
-                "figsize=(%g, %g))\n", nrows, figw, figh);
+                "fig, axes = plt.subplots(%d, 1, sharex=%s, squeeze=False, "
+                "figsize=(%g, %g))\n", nrows, sharex, figw, figh);
     else
-        fprintf(file, "fig, axes = plt.subplots(%d, 1, sharex=True, squeeze=False)\n", nrows);
+        fprintf(file, "fig, axes = plt.subplots(%d, 1, sharex=%s, squeeze=False)\n",
+                nrows, sharex);
 
     col = 0;
     row = 0;
@@ -243,7 +271,22 @@ void ft_pyplot(double *xlims, double *ylims,
     for (v = vecs; v; v = v->v_link2) {
         row = (nper > 0) ? (i / nper) : 0;
         fprintf(file, "axes[%d, 0].", row);
-        if (boxes)
+        if (hist) {
+            /* Enhancement-217: the VALUE column (col+1), NaN-filtered so vectors
+               of unequal length (padded with NaN in the data table) histogram
+               cleanly. Overlaid histograms on one axis get alpha transparency. */
+            fprintf(file, "hist(d[:, %d][~np.isnan(d[:, %d])], ", col + 1, col + 1);
+            if (histbins > 0)
+                fprintf(file, "bins=%d, ", histbins);
+            else
+                fprintf(file, "bins='auto', ");
+            if (histdensity)
+                fprintf(file, "density=True, ");
+            /* Transparency only when more than one histogram shares a panel
+               (signals-per-panel = nper, or all numVecs on a single axis). */
+            if (((nper > 0) ? nper : numVecs) > 1)
+                fprintf(file, "alpha=0.6, ");    /* overlaid: see through */
+        } else if (boxes)
             fprintf(file, "step(d[:, %d], d[:, %d], where='mid', %s", col, col + 1, lwarg);
         else if (markers)
             fprintf(file, "plot(d[:, %d], d[:, %d], marker='.', linestyle='None', ",
@@ -260,7 +303,11 @@ void ft_pyplot(double *xlims, double *ylims,
     /* Per-axis cosmetics applied to every panel; the x-label goes on the
        bottom panel only, the title becomes the figure suptitle. */
     fprintf(file, "for _ax in axes[:, 0]:\n");
-    if (ylabel) {
+    /* Enhancement-217: for a histogram the y-axis is the count (or density); for a
+       line plot it is the signal type passed in as `ylabel`. */
+    if (hist) {
+        fprintf(file, "    _ax.set_ylabel('%s')\n", histdensity ? "density" : "count");
+    } else if (ylabel) {
         text = cp_unquote(ylabel);
         fprintf(file, "    _ax.set_ylabel(");
         quote_python_string(file, text);
@@ -281,7 +328,17 @@ void ft_pyplot(double *xlims, double *ylims,
     if (ylims && !ylog)
         fprintf(file, "    _ax.set_ylim(%e, %e)\n", ylims[0], ylims[1]);
     fprintf(file, "    _ax.legend()\n");
-    if (xlabel) {
+    /* Enhancement-217: a histogram's x-axis is the signal VALUE (the `ylabel` type),
+       and the panels do not share it, so it is labelled on every panel; a line
+       plot's shared time/frequency axis is labelled on the bottom panel only. */
+    if (hist && ylabel) {
+        text = cp_unquote(ylabel);
+        fprintf(file, "    _ax.set_xlabel(");
+        quote_python_string(file, text);
+        fprintf(file, ")\n");
+        tfree(text);
+    }
+    if (!hist && xlabel) {
         text = cp_unquote(xlabel);
         fprintf(file, "axes[-1, 0].set_xlabel(");
         quote_python_string(file, text);

@@ -1236,13 +1236,15 @@ bool plotit(wordlist *wl, const char *hcopy, const char *devname)
         goto quit;
     }
 
-    if (devname && eq(devname, "pyplot")) {
+    if (devname && (eq(devname, "pyplot") || eq(devname, "pyplothist"))) {
         /* Enhancement-94: interface to matplotlib.
          * Enhancement-182: pass axis limits only when the USER asked for them
          * (`xl`/`xlimit`, `yl`/`ylimit` -- the static xlim/ylim hold those);
          * for the data-derived defaults the generated script relies on
          * matplotlib's own autoscaling + fig.tight_layout(), which frames the
-         * data better than ngspice's internal grid-rounded ranges. */
+         * data better than ngspice's internal grid-rounded ranges.
+         * Enhancement-217: `pyplothist` renders each signal's value distribution
+         * as a histogram instead of a trace. */
         ft_pyplot(user_xlim ? xlims : NULL, user_ylim ? ylims : NULL,
                   xdelta ? *xdelta : 0.0,
                   ydelta ? *ydelta : 0.0,
@@ -1250,7 +1252,7 @@ bool plotit(wordlist *wl, const char *hcopy, const char *devname)
                   title ? title : vecs->v_plot->pl_title,
                   xlabel ? xlabel : ft_typabbrev(vecs->v_scale->v_type),
                   ylabel ? ylabel : ft_typabbrev(y_type),
-                  gtype, ptype, vecs);
+                  gtype, ptype, vecs, eq(devname, "pyplothist"));
         rtn = TRUE;
         goto quit;
     }

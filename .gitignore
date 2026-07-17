@@ -468,6 +468,11 @@ examples/pyplotexport_examples/exppdf.pdf
 examples/pyplotexport_examples/exppng.py
 examples/pyplotexport_examples/exppng.png
 
+# Enhancement-217 pyplothist: verify-run scratch files (generated histogram plot/script/data)
+examples/pyplothist_examples/pyplothist.py
+examples/pyplothist_examples/pyplothist.data
+examples/pyplothist_examples/pyplothist.png
+
 # Enhancement-97 groundcontrib: verify-run scratch files
 examples/groundcontrib_examples/*.osdi
 examples/groundcontrib_examples/*.sp
