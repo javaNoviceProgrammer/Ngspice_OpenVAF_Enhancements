@@ -1,0 +1,51 @@
+// arraycast_demo.va -- Enhancement-214: whole-array type coercion.
+//
+// Both array spellings in this model used to CRASH the compiler, because an
+// integer array element reached a float MIR op that the constant evaluator has
+// no case for ("invalid operation fdiv Int(1) Float(..)"):
+//
+//   * `num` is an INTEGER array variable used as a laplace_nd coefficient
+//     vector. Coefficient vectors are real per LRM 9.19, but the elements of an
+//     integer array read back as i32 and hit the fmul/fsub/fdiv of the internal
+//     state-space realization.
+//
+//   * the `case` discriminant `sel` is a REAL array while the items are written
+//     `{1}` / `{2}`. The comparison opcode is chosen from the discriminant --
+//     Feq, for a real array -- but the items' integer elements lower to i32.
+//
+// Neither spelling is exotic: `{1}` is simply how a unity coefficient and a
+// small integer selector are naturally written. Both now coerce to real, and
+// -- verified in verify_arraycast.py -- the compiled result is bit-identical to
+// the same model written '{1.0} / '{2.0} throughout, so nothing is silently
+// mis-lowered in the process.
+//
+// The model itself is a unity-numerator first-order low-pass with a
+// mode-selected gain:  H(s) = gain / (1 + tau*s).
+
+`include "disciplines.vams"
+
+module arraycast_demo(in, out);
+    input in;
+    output out;
+    electrical in, out;
+
+    parameter real tau  = 1e-6 from (0:inf);
+    parameter real mode = 1    from [1:3];
+
+    integer num[0:0];    // integer array VARIABLE as a real coefficient vector
+    real    sel[0:0];    // real discriminant vs integer case items
+    real    gain;
+
+    analog begin
+        num[0] = 1;                       // unity numerator, written as an integer
+        sel[0] = mode;
+
+        case (sel)
+            {1}:     gain = 1.0;
+            {2}:     gain = 2.0;
+            default: gain = 0.5;          // mode 3
+        endcase
+
+        V(out) <+ gain * laplace_nd(V(in), num, '{1.0, tau});
+    end
+endmodule

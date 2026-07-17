@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="description" content="Feature catalog of the ngspice-46 + OpenVAF-r enhancement project: 213 enhancements grouped into 19 feature areas.">
+<meta name="description" content="Feature catalog of the ngspice-46 + OpenVAF-r enhancement project: 214 enhancements grouped into 19 feature areas.">
 <title>ngspice + OpenVAF-r — feature catalog</title>
 <style>
   :root{
@@ -96,9 +96,9 @@
   <header>
     <div class="eyebrow">feature catalog</div>
     <h1>ngspice&#8209;46 <span class="amp">+</span> OpenVAF&#8209;r</h1>
-    <p class="lede">Every capability added across <b>213 enhancements</b>, grouped into feature areas — a feature usually spans several enhancements. Two code bases: the <b>OpenVAF&#8209;r</b> Verilog&#8209;A/OSDI compiler and the <b>ngspice</b> circuit simulator. Each chip links to its write&#8209;up.</p>
+    <p class="lede">Every capability added across <b>214 enhancements</b>, grouped into feature areas — a feature usually spans several enhancements. Two code bases: the <b>OpenVAF&#8209;r</b> Verilog&#8209;A/OSDI compiler and the <b>ngspice</b> circuit simulator. Each chip links to its write&#8209;up.</p>
     <div class="stats" id="stats">
-      <div class="stat"><div class="n">213</div><div class="l">enhancements</div></div>
+      <div class="stat"><div class="n">214</div><div class="l">enhancements</div></div>
       <div class="stat"><div class="n">19</div><div class="l">feature areas</div></div>
       <div class="stat"><div class="n">2</div><div class="l">code bases</div></div>
       <div class="stat ok"><div class="n">RF ✓</div><div class="l">suite complete</div></div>
@@ -144,7 +144,7 @@
    {d:"compiler",n:"System tasks & functions",x:"$random, file I/O, string format/parse, sim control, math and conversion builtins.",c:[[10,"$random / $dist_*"],[11,"file I/O + strings"],[12,"$simprobe / aliases / plusargs"],[25,"$simparam$str"],[30,"analysis() variadic"],[48,"string escapes"],[55,"$finish / $stop / $fatal"],[71,"$display formatting"],[85,"`__FILE__ / `__LINE__"],[101,"$clog2"],[103,"ceil"],[104,"$rtoi / $itor"],[105,"$sscanf format base"],[106,"string relational"],[107,"$fgetc"],[108,"$ungetc"]]},
    {d:"compiler",n:"Noise modeling (Verilog-A)",x:"Table, correlated, and operating-point-dependent noise sources.",c:[[9,"noise_table(_log)"],[42,"correlated noise"],[54,"noise factors"],[109,"noise_table interp"]]},
    {d:"compiler",n:"Operators, control flow & preprocessor",x:"Operator semantics, precedence, procedural loops, based/escaped literals, macros, compile-time cost.",c:[[19,"do-while"],[37,"operator audit"],[38,"precedence"],[46,"escaped ids + based literals"],[61,"operator-args audit"],[65,"preprocessor audit"],[70,"behavioral loops"],[78,"casex / casez"],[147,"nested ?: compile-time"]]},
-   {d:"compiler",n:"Compiler correctness & robustness",x:"Crash/hang fixes, corpus + LRM-2023 sweeps, physics checks, depth-limit hardening.",c:[[35,"comment EOF hang"],[56,"corpus sweep"],[57,"physics validation"],[59,"LRM corners"],[69,"opvar audit"],[80,"temperature physics"],[84,"LRM-2023 sweep"],[148,"compiler hardening"],[213,"crash hardening: 4 compiler panics"],[185,"autodiff hypot/atan2 derivative fixes"],[186,"autodiff real-modulo derivative fix"],[187,"simplifier inverse-function cancellations"]]},
+   {d:"compiler",n:"Compiler correctness & robustness",x:"Crash/hang fixes, corpus + LRM-2023 sweeps, physics checks, depth-limit hardening.",c:[[35,"comment EOF hang"],[56,"corpus sweep"],[57,"physics validation"],[59,"LRM corners"],[69,"opvar audit"],[80,"temperature physics"],[84,"LRM-2023 sweep"],[148,"compiler hardening"],[213,"crash hardening: 4 compiler panics"],[214,"whole-array coercion: crash class fixed at root"],[185,"autodiff hypot/atan2 derivative fixes"],[186,"autodiff real-modulo derivative fix"],[187,"simplifier inverse-function cancellations"]]},
 
    {d:"simulator",n:"RF / periodic steady-state suite",x:"Complete PSS → PAC/Pnoise/PXF/PSP, Harmonic Balance, two-tone QP set, phase noise, envelope following.",c:[[63,"RF analyses (.sp / NF)"],[64,"Touchstone export"],[72,"Touchstone round 2"],[117,"PSS"],[210,"PSS .pss dot-card + complex vectors"],[118,"KLU-PSS"],[119,"PAC: retain op"],[120,"PAC: Jacobian harmonics"],[121,"PAC: conversion matrix"],[122,".pac command"],[123,".pac finish"],[124,"pnoise"],[125,"pxf"],[126,"cyclostationary noise"],[132,"PSP"],[133,"QPSS (transient)"],[134,"Harmonic Balance"],[209,"hb result vectors"],[135,"HB continuation"],[136,"two-tone HB QPSS"],[137,"QPAC"],[138,"QPnoise"],[139,"cyclo QPnoise"],[140,"oscillator phase noise"],[141,"QPXF"],[142,"QP sweep"],[154,"envelope following"],[162,".hb dot-card"],[163,".qpss/.hbosc/.phasenoise dot-cards"],[175,"conversion-matrix parametric-term fix"],[176,"driven-mode PSS (no freq hunt, ~1000x)"],[177,"pnoise folding referee + flicker fix"],[178,"exact cyclostationary folding + HB DC fix"],[193,"pnoise units: honor sqrnoise (V/√Hz)"],[199,"N-port Touchstone device (S-param, AC+tran)"],[200,"pre_snp: built-in Touchstone→OSDI command"],[201,"pre_snp scalability: fast vector fit + shared-pole realization (N→100)"],[202,".sp S-param inverse O(N!)→O(N^3) (10-port 18min→0.02s)"],[205,"pre_snp low-rank residue factorization (N^2 compile wall)"],[203,".meas ac gain_margin/phase_margin (unwrapped) + batch vdb fix"]]},
    {d:"simulator",n:"Standard analyses",x:"DC/AC/tran plus .dc @inst sweeps, .tf, .pz, .sens, .disto, operating-point vars.",c:[[62,".dc @inst / .tf / .pz / .sens / .disto"],[69,"opvar output"],[173,"eigenvalue pole-zero (pzeig)"],[179,"audit: .tf/.sens/.meas DERIV fixes + referees"],[191,".ac/.sp lin 2 off-by-one fix"],[198,"stb loop-gain / phase & gain margin"],[207,"eye diagram / jitter (SerDes)"]]},
