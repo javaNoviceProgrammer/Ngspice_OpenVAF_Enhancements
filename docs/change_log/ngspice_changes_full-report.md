@@ -395,6 +395,22 @@ the cast; a value outside `int` range is, by definition, not int-representable, 
 the answer is unchanged for every in-range input (boundary-tested at `INT_MIN`,
 `INT_MAX`, and `±(2^31)`). Found by the 2026-07 ASan/UBSan pass.
 
+### `snp2va.c` — `lstsq_real` heap overflow on a tiny Touchstone file
+
+`lstsq_real` (the Householder-QR least-squares primitive behind `pre_snp`'s
+vector fit) documented itself as requiring an **overdetermined** system (`m>=n`),
+but its back-substitution read `b[i]` and `A[i*n+i]` for every unknown `i` up to
+`n-1`, past the `m`-row buffers when `m<n`. `pre_snp` on a Touchstone file with
+very few frequency points (≤3) drives the fit underdetermined — the stacked
+system has fewer rows than poles, and the buffers shrink to a `malloc(0)` — so the
+back-substitution read off the end: a **heap-buffer-overflow** (ASan:
+`READ of size 8 … 7 bytes after a 1-byte region`), reachable from an ordinary
+coarse `.sNp` measurement. The back-substitution now leaves any unknown with no
+constraining row (`i>=m`) at zero instead of reading past the matrix; for the
+normal `m>=n` path the guard never fires and the fit is bit-identical (verified: a
+21-point file fits to 2 poles, rms 1.77e-05, before and after). Found by the
+2026-07 ASan/UBSan pass (heavy-deck sweep, via a degenerate `pre_snp` input).
+
 ### `devices/dev.c` (51)
 
 - **Duplicate device-type registration warned and skipped**:

@@ -29,8 +29,14 @@ typedef double _Complex cplx;
 
 /* ============================ linear algebra ============================ */
 
-/* Least-squares min||A x - b|| for a REAL overdetermined system (m>=n) via
- * Householder QR. A is row-major m*n, b length m, x length n. Returns 0 on ok. */
+/* Least-squares min||A x - b|| for a REAL system via Householder QR. A is
+ * row-major m*n, b length m, x length n. Returns 0 on ok. Handles the
+ * underdetermined case m<n safely: the Householder sweep triangularizes only the
+ * first min(m,n) columns, and the back-substitution below leaves any unknown with
+ * no constraining row (i>=m) at zero rather than reading past the m-row A and b
+ * (a heap-buffer-overflow reachable from `pre_snp` on a Touchstone file with very
+ * few frequency points, where the vector fit's stacked system has fewer rows than
+ * poles). For the normal overdetermined path (m>=n) the guard never fires. */
 static int lstsq_real(double *A, double *b, int m, int n, double *x)
 {
     int i, j, k;
@@ -59,6 +65,7 @@ static int lstsq_real(double *A, double *b, int m, int n, double *x)
         free(v);
     }
     for (i = n-1; i >= 0; i--) {
+        if (i >= m) { x[i] = 0.0; continue; }  /* unknown i has no constraining row */
         double acc = b[i];
         for (j = i+1; j < n; j++) acc -= A[i*n+j]*x[j];
         x[i] = (A[i*n+i] != 0.0) ? acc/A[i*n+i] : 0.0;
