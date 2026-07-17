@@ -93,6 +93,7 @@ ft_optimizing) unless `-verbose`.
 #define OPT_MAXS      8          /* max analysis stages                   */
 #define OPT_MAXT    128          /* max least-squares targets (E-197)     */
 #define OPT_MAXSPEC  32          /* Enhancement-206: max yield specs      */
+#define OPT_MAXOBJ    8          /* Enhancement-216: max NSGA-II objectives */
 #define OPT_PENALTY  1e30        /* cost for a failed / non-finite eval   */
 
 /* Enhancement-206 (design centering): one pass/fail spec for the inner Monte
@@ -149,6 +150,15 @@ struct optctx {
     unsigned mcseed;                     /* inner MC seed                          */
     double last_yield;                   /* yield at the last centering eval       */
     double last_cpk;                     /* worst-case Cpk at the last eval        */
+
+    /* Enhancement-216: multi-objective / Pareto optimization (NSGA-II). Instead of
+     * one scalar cost, `nobj` competing objectives are traded off; the result is a
+     * Pareto FRONT of non-dominated designs rather than a single optimum. Each
+     * objective is a metric expression that is minimized, or maximized (negated to
+     * a common minimization convention). Selected with `-method nsga2`. */
+    int    nobj;
+    char  *obj[OPT_MAXOBJ];
+    int    obj_max[OPT_MAXOBJ];          /* 1 = maximize, 0 = minimize             */
 };
 
 
@@ -858,6 +868,290 @@ static void simulated_annealing(struct optctx *c, double *ubest, double *fbest)
 }
 
 
+/* ==================== Enhancement-216: NSGA-II Pareto ====================== */
+
+/* Evaluate all `nobj` objectives at the normalized point `u` into `f`. Maximized
+ * objectives are negated, so throughout NSGA-II "smaller is better" for every
+ * objective (a single minimization convention). Shares opt_eval's param-apply
+ * prologue (deck-param re-source + in-place alter). */
+static void opt_eval_objs(struct optctx *c, const double *u, double *f)
+{
+    int i, k;
+    char cmd[512];
+
+    ft_optimizing = !c->verbose;
+    if (c->has_deckparam) {
+        for (k = 0; k < c->np; k++) {
+            if (c->kind[k] != OPT_DECKPARAM)
+                continue;
+            double val = c->lo[k] + clamp01(u[k]) * (c->hi[k] - c->lo[k]);
+            (void) snprintf(cmd, sizeof cmd, "alterparam %s=%.10g", c->name[k], val);
+            opt_run_cmd(cmd);
+        }
+        opt_run_cmd("reset");
+        ft_optimizing = !c->verbose;
+    }
+    opt_apply_inplace(c, u);
+    c->nevals++;
+
+    opt_run_cmd(c->analysis[0]);
+    for (i = 0; i < c->nobj; i++) {
+        double v = opt_eval_expr(c->obj[i]);
+        if (v >= OPT_PENALTY)
+            v = 1e15;                       /* failed eval -> dominated everywhere */
+        f[i] = c->obj_max[i] ? -v : v;      /* minimization convention */
+    }
+    ft_optimizing = FALSE;
+}
+
+/* Pareto dominance (minimization): a dominates b iff a[i] <= b[i] for all i and
+ * a[i] < b[i] for at least one. */
+static int nsga_dominates(const double *a, const double *b, int m)
+{
+    int i, strictly = 0;
+    for (i = 0; i < m; i++) {
+        if (a[i] > b[i]) return 0;
+        if (a[i] < b[i]) strictly = 1;
+    }
+    return strictly;
+}
+
+/* Fast non-dominated sort: fill rank[i] with the Pareto front index of member i
+ * (0 = the non-dominated front). O(m * P^2), P = population size. */
+static void nsga_sort(const double *F, int P, int m, int *rank)
+{
+    int i, j, front, remaining = P;
+    int *ndom = TMALLOC(int, P);          /* # of members that dominate i */
+    for (i = 0; i < P; i++) { rank[i] = -1; ndom[i] = 0; }
+    for (i = 0; i < P; i++)
+        for (j = 0; j < P; j++)
+            if (i != j && nsga_dominates(&F[j * m], &F[i * m], m))
+                ndom[i]++;
+    front = 0;
+    while (remaining > 0) {
+        int found = 0;
+        for (i = 0; i < P; i++)
+            if (rank[i] < 0 && ndom[i] == 0) { rank[i] = front; found++; }
+        /* peel this front: decrement the domination count of everyone it dominated */
+        for (i = 0; i < P; i++) {
+            if (rank[i] != front) continue;
+            for (j = 0; j < P; j++)
+                if (rank[j] < 0 && nsga_dominates(&F[i * m], &F[j * m], m))
+                    ndom[j]--;
+        }
+        remaining -= found;
+        front++;
+        if (found == 0) {                 /* numerical safety: assign the rest */
+            for (i = 0; i < P; i++) if (rank[i] < 0) rank[i] = front;
+            break;
+        }
+    }
+    tfree(ndom);
+}
+
+/* Crowding distance within each front: boundary points get +inf, interior points
+ * the sum over objectives of the normalized gap to their two neighbours. Larger =
+ * more isolated = preferred, to spread the front. */
+static void nsga_crowding(const double *F, int P, int m, const int *rank,
+                          double *crowd)
+{
+    int i, o, a, b, nf, front, maxfront = 0;
+    int *idx = TMALLOC(int, P);
+    for (i = 0; i < P; i++) { crowd[i] = 0.0; if (rank[i] > maxfront) maxfront = rank[i]; }
+    for (front = 0; front <= maxfront; front++) {
+        nf = 0;
+        for (i = 0; i < P; i++) if (rank[i] == front) idx[nf++] = i;
+        if (nf == 0) continue;
+        for (o = 0; o < m; o++) {
+            /* insertion-sort the front's members by objective o */
+            for (a = 1; a < nf; a++) {
+                int key = idx[a];
+                for (b = a - 1; b >= 0 && F[idx[b] * m + o] > F[key * m + o]; b--)
+                    idx[b + 1] = idx[b];
+                idx[b + 1] = key;
+            }
+            double fmin = F[idx[0] * m + o], fmax = F[idx[nf - 1] * m + o];
+            double span = fmax - fmin;
+            crowd[idx[0]] = crowd[idx[nf - 1]] = 1e30;   /* boundary = infinite */
+            if (span <= 0.0) continue;
+            for (a = 1; a < nf - 1; a++)
+                if (crowd[idx[a]] < 1e30)
+                    crowd[idx[a]] += (F[idx[a + 1] * m + o] - F[idx[a - 1] * m + o]) / span;
+        }
+    }
+    tfree(idx);
+}
+
+/* Crowded-comparison: i is "better" than j if it has a lower Pareto rank, or the
+ * same rank but a larger crowding distance. */
+static int nsga_better(int i, int j, const int *rank, const double *crowd)
+{
+    if (rank[i] != rank[j]) return rank[i] < rank[j];
+    return crowd[i] > crowd[j];
+}
+
+/* Binary tournament over the first P members using the crowded-comparison. */
+static int nsga_tournament(int P, const int *rank, const double *crowd)
+{
+    int a = (int) (opt_rand() * P), b = (int) (opt_rand() * P);
+    if (a >= P) a = P - 1;
+    if (b >= P) b = P - 1;
+    return nsga_better(a, b, rank, crowd) ? a : b;
+}
+
+/* NSGA-II main loop. Real-coded: SBX crossover + polynomial mutation on the
+ * normalized [0,1] parameters, elitist (parent+offspring) survivor selection by
+ * (rank, crowding). Prints the final non-dominated front. */
+static void nsga2(struct optctx *c)
+{
+    const int n = c->np, m = c->nobj, N = c->swarmsize;
+    const double eta_c = 15.0, eta_m = 20.0;   /* SBX / mutation distribution indices */
+    const double pm = 1.0 / (double) n;        /* per-gene mutation probability */
+    /* R holds 2N members: parents [0,N) then offspring [N,2N). */
+    double *X = TMALLOC(double, (size_t) 2 * N * n);
+    double *F = TMALLOC(double, (size_t) 2 * N * m);
+    int    *rank  = TMALLOC(int, 2 * N);
+    double *crowd = TMALLOC(double, 2 * N);
+    int    *order = TMALLOC(int, 2 * N);
+    int i, j, o, gen;
+
+    opt_srand(c->seed);
+
+    /* initial parents: member 0 at the start point, the rest uniform random */
+    for (i = 0; i < N; i++) {
+        for (j = 0; j < n; j++)
+            X[i * n + j] = (i == 0)
+                ? clamp01((c->x0[j] - c->lo[j]) / (c->hi[j] - c->lo[j]))
+                : opt_rand();
+        opt_eval_objs(c, &X[i * n], &F[i * m]);
+    }
+
+    for (gen = 0; gen < c->maxiter; gen++) {
+        /* rank+crowd the current parents [0,N) for tournament selection */
+        nsga_sort(F, N, m, rank);
+        nsga_crowding(F, N, m, rank, crowd);
+
+        /* create N offspring into [N,2N) */
+        for (i = 0; i < N; i += 2) {
+            int p1 = nsga_tournament(N, rank, crowd);
+            int p2 = nsga_tournament(N, rank, crowd);
+            int c1 = N + i, c2 = N + ((i + 1 < N) ? i + 1 : i);
+            for (j = 0; j < n; j++) {
+                double y1 = X[p1 * n + j], y2 = X[p2 * n + j], ch1, ch2;
+                /* SBX crossover */
+                if (opt_rand() <= 0.9 && fabs(y1 - y2) > 1e-14) {
+                    double u = opt_rand();
+                    double beta = (u <= 0.5) ? pow(2.0 * u, 1.0 / (eta_c + 1.0))
+                                             : pow(1.0 / (2.0 * (1.0 - u)), 1.0 / (eta_c + 1.0));
+                    ch1 = 0.5 * ((1.0 + beta) * y1 + (1.0 - beta) * y2);
+                    ch2 = 0.5 * ((1.0 - beta) * y1 + (1.0 + beta) * y2);
+                } else {
+                    ch1 = y1; ch2 = y2;
+                }
+                /* polynomial mutation */
+                if (opt_rand() < pm) {
+                    double u = opt_rand();
+                    double d = (u < 0.5) ? pow(2.0 * u, 1.0 / (eta_m + 1.0)) - 1.0
+                                         : 1.0 - pow(2.0 * (1.0 - u), 1.0 / (eta_m + 1.0));
+                    ch1 += d;
+                }
+                if (opt_rand() < pm) {
+                    double u = opt_rand();
+                    double d = (u < 0.5) ? pow(2.0 * u, 1.0 / (eta_m + 1.0)) - 1.0
+                                         : 1.0 - pow(2.0 * (1.0 - u), 1.0 / (eta_m + 1.0));
+                    ch2 += d;
+                }
+                X[c1 * n + j] = clamp01(ch1);
+                X[c2 * n + j] = clamp01(ch2);
+            }
+            opt_eval_objs(c, &X[c1 * n], &F[c1 * m]);
+            if (c2 != c1)
+                opt_eval_objs(c, &X[c2 * n], &F[c2 * m]);
+        }
+
+        /* elitist survivor selection: rank+crowd all 2N, keep the best N as parents */
+        nsga_sort(F, 2 * N, m, rank);
+        nsga_crowding(F, 2 * N, m, rank, crowd);
+        for (i = 0; i < 2 * N; i++) order[i] = i;
+        /* insertion sort order[] by crowded-comparison (2N is small) */
+        for (i = 1; i < 2 * N; i++) {
+            int key = order[i];
+            for (j = i - 1; j >= 0 && nsga_better(key, order[j], rank, crowd); j--)
+                order[j + 1] = order[j];
+            order[j + 1] = key;
+        }
+        /* compact the top N to the front of X/F (walk from the back to avoid clobber) */
+        {
+            double *nx = TMALLOC(double, (size_t) N * n);
+            double *nf = TMALLOC(double, (size_t) N * m);
+            for (i = 0; i < N; i++) {
+                for (j = 0; j < n; j++) nx[i * n + j] = X[order[i] * n + j];
+                for (o = 0; o < m; o++) nf[i * m + o] = F[order[i] * m + o];
+            }
+            for (i = 0; i < N; i++) {
+                for (j = 0; j < n; j++) X[i * n + j] = nx[i * n + j];
+                for (o = 0; o < m; o++) F[i * m + o] = nf[i * m + o];
+            }
+            tfree(nx); tfree(nf);
+        }
+        if (c->verbose) {
+            nsga_sort(F, N, m, rank);
+            int nfront = 0;
+            for (i = 0; i < N; i++) if (rank[i] == 0) nfront++;
+            fprintf(cp_out, "  gen %-3d  front size %-3d  (%d evals)\n",
+                    gen + 1, nfront, c->nevals);
+        }
+    }
+
+    /* final front: rank the parents, collect and report rank-0, sorted by obj 1 */
+    nsga_sort(F, N, m, rank);
+    {
+        int *fr = TMALLOC(int, N), nfr = 0;
+        for (i = 0; i < N; i++) if (rank[i] == 0) fr[nfr++] = i;
+        /* sort the front by the first objective (in its natural, un-negated sense) */
+        for (i = 1; i < nfr; i++) {
+            int key = fr[i];
+            for (j = i - 1; j >= 0 && F[fr[j] * m] > F[key * m]; j--) fr[j + 1] = fr[j];
+            fr[j + 1] = key;
+        }
+        fprintf(cp_out, "optimize: NSGA-II Pareto front -- %d non-dominated design%s "
+                        "after %d evaluations\n", nfr, nfr == 1 ? "" : "s", c->nevals);
+        /* header: objective names, then parameter names */
+        fprintf(cp_out, "   ");
+        for (o = 0; o < m; o++)
+            fprintf(cp_out, " %s%s", c->obj_max[o] ? "max:" : "min:", c->obj[o]);
+        fprintf(cp_out, " |");
+        for (j = 0; j < n; j++) fprintf(cp_out, " %s", c->name[j]);
+        fprintf(cp_out, "\n");
+        for (i = 0; i < nfr; i++) {
+            int e = fr[i];
+            fprintf(cp_out, "   ");
+            for (o = 0; o < m; o++)
+                fprintf(cp_out, " %.6g", c->obj_max[o] ? -F[e * m + o] : F[e * m + o]);
+            fprintf(cp_out, " |");
+            for (j = 0; j < n; j++)
+                fprintf(cp_out, " %.6g", c->lo[j] + X[e * n + j] * (c->hi[j] - c->lo[j]));
+            fprintf(cp_out, "\n");
+        }
+        /* publish the front's objective columns as vectors pareto1..paretoM so the
+         * front can be plotted (plot pareto2 vs pareto1). */
+        for (o = 0; o < m; o++) {
+            struct dvec *v;
+            char vn[32];
+            (void) snprintf(vn, sizeof vn, "pareto%d", o + 1);
+            v = dvec_alloc(copy(vn), SV_NOTYPE, VF_REAL | VF_PERMANENT, nfr, NULL);
+            if (v) {
+                for (i = 0; i < nfr; i++)
+                    v->v_realdata[i] = c->obj_max[o] ? -F[fr[i] * m + o] : F[fr[i] * m + o];
+                vec_new(v);
+            }
+        }
+        tfree(fr);
+    }
+    tfree(X); tfree(F); tfree(rank); tfree(crowd); tfree(order);
+}
+
+
 static int is_flag(const char *w)
 {
     return w && w[0] == '-' && isalpha((unsigned char) w[1]);
@@ -954,8 +1248,32 @@ void com_optimize(wordlist *wl)
             /* bare -min is the scalar-objective alias only outside centering mode;
              * once a -spec is present (or -center given) it is a spec lower bound. */
             wl = wl->wl_next;
-            tfree(c.objective);
-            c.objective = collect_until_flag(&wl);
+            char *e = collect_until_flag(&wl);
+            /* First -minimize also seeds the scalar objective (for nm/pso/de/sa);
+             * every -minimize/-maximize appends to the NSGA-II objective list
+             * (Enhancement-216). */
+            if (!c.objective)
+                c.objective = copy(e);
+            if (c.nobj < OPT_MAXOBJ) {
+                c.obj[c.nobj] = e;
+                c.obj_max[c.nobj] = 0;
+                c.nobj++;
+            } else {
+                tfree(e);
+            }
+        } else if (eq(w, "-maximize") || eq(w, "-maxobj")) {
+            /* Enhancement-216: a maximized NSGA-II objective (negated internally to
+             * the common minimization convention). NB not "-max", which is the
+             * E-206 spec upper-bound flag. */
+            wl = wl->wl_next;
+            char *e = collect_until_flag(&wl);
+            if (c.nobj < OPT_MAXOBJ) {
+                c.obj[c.nobj] = e;
+                c.obj_max[c.nobj] = 1;
+                c.nobj++;
+            } else {
+                tfree(e);
+            }
         } else if (eq(w, "-target")) {
             if (c.ns < 1) {
                 fprintf(cp_err, "optimize: -target must follow an -analysis\n");
@@ -995,9 +1313,11 @@ void com_optimize(wordlist *wl)
                 else if (eq(mm, "sa") || eq(mm, "anneal") ||
                          eq(mm, "simulatedannealing"))
                     c.method = 5;        /* Enhancement-196 */
+                else if (eq(mm, "nsga2") || eq(mm, "nsga") || eq(mm, "pareto"))
+                    c.method = 6;        /* Enhancement-216 */
                 else {
                     fprintf(cp_err, "optimize: unknown -method '%s' "
-                                    "(use nm, lm, pso, de or sa)\n", mm);
+                                    "(use nm, lm, pso, de, sa or nsga2)\n", mm);
                     goto cleanup;
                 }
                 wl = wl->wl_next->wl_next;
@@ -1113,6 +1433,40 @@ void com_optimize(wordlist *wl)
         fprintf(cp_err, "optimize: -method lm requires -target objectives\n");
         goto cleanup;
     }
+    /* Enhancement-216: NSGA-II is multi-objective and returns a Pareto FRONT rather
+     * than a single optimum, so it runs on its own branch below. */
+    if (c.method == 6) {
+        int o;
+        if (c.nobj < 2) {
+            fprintf(cp_err, "optimize: -method nsga2 needs at least two objectives "
+                            "(-minimize/-maximize <expr>)\n");
+            goto cleanup;
+        }
+        if (c.np < 1) {
+            fprintf(cp_err, "optimize: -method nsga2 needs at least one -param\n");
+            goto cleanup;
+        }
+        if (c.ns != 1) {
+            fprintf(cp_err, "optimize: -method nsga2 uses a single -analysis stage\n");
+            goto cleanup;
+        }
+        if (c.swarmsize <= 0) {
+            c.swarmsize = 20 + 4 * c.np;
+            if (c.swarmsize > 200) c.swarmsize = 200;
+        }
+        if (c.swarmsize < 8) c.swarmsize = 8;
+        if (c.swarmsize % 2) c.swarmsize++;          /* even for pairwise breeding */
+        fprintf(cp_out, "optimize: NSGA-II -- %d parameter%s, %d objectives, "
+                        "population %d, seed %lu, up to %d generations\n",
+                c.np, c.np == 1 ? "" : "s", c.nobj, c.swarmsize, c.seed, c.maxiter);
+        fprintf(cp_out, "   objectives:");
+        for (o = 0; o < c.nobj; o++)
+            fprintf(cp_out, " %s(%s)", c.obj_max[o] ? "max" : "min", c.obj[o]);
+        fprintf(cp_out, "\n");
+        nsga2(&c);
+        goto cleanup;
+    }
+
     use_lm  = (c.method == 2) || (c.method == 0 && c.nt > 0);
     use_pso = (c.method == 3);
     use_de  = (c.method == 4);
@@ -1205,5 +1559,7 @@ cleanup:
         tfree(c.analysis[k]);
     for (k = 0; k < c.nt; k++)
         tfree(c.tgt[k].expr);
+    for (k = 0; k < c.nobj; k++)          /* Enhancement-216 */
+        tfree(c.obj[k]);
     tfree(c.objective);
 }
