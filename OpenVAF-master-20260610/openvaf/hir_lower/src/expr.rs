@@ -2043,15 +2043,31 @@ impl BodyLoweringCtx<'_, '_, '_> {
     /// `fmul`/`fsub` of the state-space realization builds mixed-type MIR that the const
     /// evaluator panics on (`eval_binary` has no (Int, Float) case), so an integer-looking
     /// coefficient crashed the compiler. Cast each array-literal/concat element to real up
-    /// front. (A whole-array *variable* reference is already real by its declaration, so the
-    /// var-ref path needs no cast.)
+    /// front.
+    ///
+    /// This once claimed "(a whole-array *variable* reference is already real by its
+    /// declaration, so the var-ref path needs no cast)". That does not hold for an *integer*
+    /// array variable -- `integer c[0:0]; ... laplace_nd(V(a,b), c, '{1.0})` -- whose element
+    /// reads are i32 and hit the very same mixed-type MIR ("invalid operation fdiv Int(1)
+    /// .."). The var-ref path is coerced too, from the variable's declared type.
     fn lower_coeff_elems(&mut self, expr: ExprId) -> Vec<Value> {
         self.lower_array_elems_impl(expr, true)
     }
 
     fn lower_array_elems_impl(&mut self, expr: ExprId, coerce_real: bool) -> Vec<Value> {
         if let Some(vars) = self.body.array_var_ref(expr) {
-            return vars.iter().map(|&var| self.ctx.read_variable(var)).collect();
+            let mut res = Vec::with_capacity(vars.len());
+            for var in vars {
+                let val = self.ctx.read_variable(var);
+                // An integer array variable's reads are i32; a real-valued consumer
+                // (a laplace_*/zi_* coefficient vector) needs them as doubles.
+                res.push(if coerce_real && var.ty(self.ctx.db) == Type::Integer {
+                    self.ctx.ins().ifcast(val)
+                } else {
+                    val
+                });
+            }
+            return res;
         }
 
         // Enhancement-34: a `{...}` concatenation / `{n{...}}` replication flattens its
