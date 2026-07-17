@@ -111,13 +111,20 @@ impl<'a> SyntaxTreeBuilder<'a> {
                 .iter()
                 .any(|t| *t == T![;] || *t == T![')'])
                 .then(|| TextRange::at(self.text_pos, 0.into()));
+            // Enhancement-213: this branch reports a parse error at end of file
+            // (a module missing its `endmodule`, an unclosed `begin`, an
+            // unterminated string). `self.text_pos` is already the end of the
+            // source, so adding the *last token's* length produced a span that
+            // ran past the end of the file -- `6..12` for the 6 byte input
+            // "module". Mapping such a span back to its file then tripped the
+            // `with_subrange` assert in the source map and crashed the whole
+            // compiler instead of printing the error. The error belongs *at*
+            // EOF, so use an empty range there -- exactly what `expected_at`
+            // above already does.
             let error = SyntaxError::UnexpectedToken {
                 expected,
                 found,
-                span: TextRange::at(
-                    self.text_pos,
-                    self.tokens.last().map_or_else(|| TextSize::from(0), |t| t.span.range.len()),
-                ),
+                span: TextRange::at(self.text_pos, 0.into()),
                 expected_at,
                 missing_delimiter,
                 panic_end: None,

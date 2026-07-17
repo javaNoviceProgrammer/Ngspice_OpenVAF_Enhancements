@@ -30,6 +30,17 @@ fn is_base_char(c: char) -> bool {
     matches!(c, 'd' | 'D' | 'h' | 'H' | 'o' | 'O' | 'b' | 'B')
 }
 
+/// Enhancement-213: whether an `e`/`E` actually starts a float exponent, given
+/// the two characters that follow it -- the language requires at least one
+/// digit (optionally after a sign). Without this check `1e` was lexed as a
+/// Float whose text does not parse as an f64, and that panicked in
+/// `StdRealNumber::value()`. Leaving a bare `e` unconsumed lexes it as an
+/// ordinary identifier so the malformed number surfaces as a parse error --
+/// the same approach `based_literal_body` already takes for `8'squark`.
+fn starts_float_exponent(after_e: char, after_that: char) -> bool {
+    after_e.is_ascii_digit() || (matches!(after_e, '+' | '-') && after_that.is_ascii_digit())
+}
+
 /// A character that can start the digit run of a based integer literal --
 /// the hex superset; per-base validity is enforced while eating the digits.
 fn is_based_digit(c: char) -> bool {
@@ -385,7 +396,9 @@ impl Cursor<'_> {
                 if self.first().is_ascii_digit() {
                     self.eat_decimal_digits();
                     match self.first() {
-                        'e' | 'E' => {
+                        // Enhancement-213: only an `e` with an actual exponent
+                        // after it belongs to the number (`1.5e` -> `1.5` + `e`).
+                        'e' | 'E' if starts_float_exponent(self.second(), self.third()) => {
                             self.bump();
                             self.eat_float_exponent();
                         }
@@ -404,7 +417,10 @@ impl Cursor<'_> {
                 self.bump();
                 Float { has_scale_char: true }
             }
-            'e' | 'E' => {
+            // Enhancement-213: see starts_float_exponent -- a bare `1e` is not a
+            // real number, so leave the `e` to lex as an identifier and let the
+            // parser report it, rather than building a Float that cannot parse.
+            'e' | 'E' if starts_float_exponent(self.second(), self.third()) => {
                 self.bump();
                 self.eat_float_exponent();
                 Float { has_scale_char: false }

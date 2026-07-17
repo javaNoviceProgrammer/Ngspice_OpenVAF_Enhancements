@@ -140,13 +140,25 @@ impl<'a, 'd> Parser<'a, 'd> {
     pub(crate) fn previous_range(&self) -> TextRange {
         let pos =
             self.relevant_tokens.get(self.pos - 1u32).map_or(self.full_token_pos, |(_, pos)| *pos);
-        let len = self.full_tokens[pos].len;
+        // Enhancement-213: at end of file `pos` can be one past the last token
+        // (e.g. a bare "`define" that ends the file). Indexing directly panicked
+        // while building the "expected an identifier" diagnostic; fall back to a
+        // zero length, exactly as current_range() above already does.
+        let len = self.full_tokens.get(pos).map_or(0.into(), |t| t.len);
         TextRange::at(self.previous_offset, len)
     }
 
     pub(crate) fn followed_by_bracket_without_space(&self) -> bool {
-        let (token, idx) = self.relevant_tokens[self.pos + 1u32];
-        token == PreprocessorToken::OpenParen && idx == (self.full_token_pos + 1u32)
+        // Enhancement-213: at end of file there is no next token -- a bare
+        // "`define" that ends the file asks for one past the last -- and
+        // indexing directly panicked. Nothing follows, so it certainly is not
+        // followed by a bracket.
+        match self.relevant_tokens.get(self.pos + 1u32) {
+            Some(&(token, idx)) => {
+                token == PreprocessorToken::OpenParen && idx == (self.full_token_pos + 1u32)
+            }
+            None => false,
+        }
     }
 
     fn do_bump(&mut self, save: bool, err: &mut Vec<PreprocessorDiagnostic>) {

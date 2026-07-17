@@ -65,7 +65,8 @@ impl<T> Parse<T> {
     }
 
     fn find_ctx_range(&self, global_pos: TextSize) -> (TextRange, SourceContext, TextSize) {
-        self.ctx_map
+        let found = self
+            .ctx_map
             .binary_search_by(|(range, _, _)| {
                 if range.end() <= global_pos {
                     Ordering::Less
@@ -76,8 +77,32 @@ impl<T> Parse<T> {
                 }
             })
             .ok()
-            .map(|i| self.ctx_map[i])
-            .expect("No range in the sourcemap covers the requested position")
+            .map(|i| self.ctx_map[i]);
+
+        if let Some(res) = found {
+            return res;
+        }
+
+        // Enhancement-213: the map's ranges are half-open [start, end), so the
+        // end-of-file position -- which equals the end of the last range -- is
+        // covered by none of them. A diagnostic reported at EOF (a module
+        // missing its `endmodule`, an unclosed `begin`, an unterminated string)
+        // asks for exactly that position, and this used to panic instead of
+        // letting the error be printed. Clamp to the nearest range.
+        if let Some(&last) = self.ctx_map.last() {
+            if global_pos >= last.0.end() {
+                return last;
+            }
+        }
+        if let Some(&first) = self.ctx_map.first() {
+            if global_pos < first.0.start() {
+                return first;
+            }
+        }
+
+        // A hole between ranges should not happen; an empty map means there is
+        // no source to map a position into at all.
+        *self.ctx_map.last().expect("No range in the sourcemap covers the requested position")
     }
     pub fn ctx(&self, global_pos: TextSize) -> (SourceContext, TextSize) {
         let (range, ctx, _offset) = self.find_ctx_range(global_pos);

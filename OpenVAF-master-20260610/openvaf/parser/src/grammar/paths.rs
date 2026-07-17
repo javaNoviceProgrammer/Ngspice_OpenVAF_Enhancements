@@ -3,7 +3,13 @@ use super::*;
 pub(crate) const PATH_SEGMENT_TS: TokenSet = TokenSet::new(&[IDENT, ROOT_KW]);
 
 pub(crate) fn path(p: &mut Parser) -> CompletedMarker {
-    assert!(p.at_ts(PATH_SEGMENT_TS));
+    // Enhancement-213: this used to assert!(p.at_ts(PATH_SEGMENT_TS)). Several
+    // callers do not check that precondition and reach here on malformed but
+    // entirely plausible input -- `aliasparam x = 5;` (a literal where a
+    // parameter name belongs), `I(<>)`, or a discipline member that is not an
+    // identifier -- which crashed the compiler instead of reporting the error.
+    // expect_ts() below already emits "expected identifier", so report that and
+    // complete an (empty) path node rather than panicking.
     let path = p.start();
     p.expect_ts(PATH_SEGMENT_TS);
     let mut qual = path.complete(p, PATH);
