@@ -58,16 +58,26 @@ The colorbar is labelled with `z`'s name and the axes with `x`'s and `y`'s.
 
 ## Verification (`examples/pyplotcontour_examples`)
 
-`pyplotcontour_demo.cir` builds a grid with a **closed-form** surface, so the
-contour is checked analytically, not just rendered: `z = x² + y²` over
+`verify_pyplotcontour.py` (19 checks, both solvers) exercises **two** decks. The
+first, `pyplotcontour_demo.cir`, builds a grid with a **closed-form** surface, so
+the contour is checked analytically, not just rendered: `z = x² + y²` over
 `x, y ∈ [-2, 2]` — a paraboloid whose contours are concentric circles, `z = 0` at
-the centre and `z = 8` at the corners. `verify_pyplotcontour.py` (9 checks, both
-solvers) parses the generated `.data`/`.py` and PNG and confirms: the `-contour`
-path is taken (`tricontourf`, a colorbar labelled `z`, axes `x`/`y`); the data
-table has **three** columns `(x, y, z)` for all `N = 1681` rows; the column
-mapping is correct (`z` reconstructs `x² + y²` to 9e-16); the sweep is genuinely
-2-D (`x` and `y` each span the full range, `z` runs from ~0 at the centre to 8 at
-a corner); and a valid PNG is produced. Full regression: 178/178.
+the centre and `z = 8` at the corners. It confirms the `-contour` path is taken
+(`tricontourf`, a colorbar labelled `z`, axes `x`/`y`); the data table has
+**three** columns `(x, y, z)` for all `N = 1681` rows; the column mapping is
+correct (`z` reconstructs `x² + y²` to 9e-16); the sweep is genuinely 2-D; and a
+valid PNG is produced.
+
+The second, `bridge_dc_demo.cir`, exercises the feature on **genuine simulation
+output**: a diode-OR bridge whose output `V(c)` follows whichever of its two
+inputs is higher, swept with a nested `.dc` (`v1` drives node `a`, `v2` drives
+node `b`, so `V(a)`/`V(b)` are the two swept values at each point). `pyplot
+-contour v(c) v(a) v(b)` maps the output over the `(V(a), V(b))` plane — a
+max-like corner surface. It checks that the nested `.dc` produces the flattened
+51×51 = 2601-row, 3-column grid, that the axes are the two real swept sources
+each spanning `[-1, 1]`, and that the output is ~0 when both inputs are low and
+rises when either input is high (the diode-OR signature, which also confirms the
+columns map correctly onto a real circuit result). Full regression: 178/178.
 
 ## Scope
 

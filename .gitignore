@@ -477,6 +477,9 @@ examples/pyplothist_examples/pyplothist.png
 examples/pyplotcontour_examples/pyplotcontour.py
 examples/pyplotcontour_examples/pyplotcontour.data
 examples/pyplotcontour_examples/pyplotcontour.png
+examples/pyplotcontour_examples/bridge.py
+examples/pyplotcontour_examples/bridge.data
+examples/pyplotcontour_examples/bridge.png
 
 # Enhancement-97 groundcontrib: verify-run scratch files
 examples/groundcontrib_examples/*.osdi

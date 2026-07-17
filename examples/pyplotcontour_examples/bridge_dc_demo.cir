@@ -1,0 +1,27 @@
+* bridge_dc_demo.cir -- Enhancement-218: pyplot -contour on a REAL 2-D .dc sweep
+*
+* A diode-OR bridge: the output node c follows whichever of its two inputs is
+* higher (each input drives c through a diode). A nested .dc sweeps both inputs,
+* and `pyplot -contour` maps the output V(c) over the (V(a), V(b)) plane.
+*
+* Why this "just works": v1 drives node a and v2 drives node b, so at every
+* sweep point V(a) is the inner swept value and V(b) is the outer one -- three
+* equal-length vectors V(c), V(a), V(b) that ARE the flattened 51x51 grid. No
+* reshaping or grid-size bookkeeping: matplotlib triangulates the (V(a),V(b))
+* points. This is the everyday use of the feature -- contour any quantity over a
+* nested .dc (or a `sweep`/`.step` grid) that leaves three equal-length vectors.
+v1 a 0 dc 0
+v2 b 0 dc 0
+d1 a c dmod
+d2 b c dmod
+rl c 0 1k
+.model dmod d(is=1e-14 n=1)
+.dc v1 -1 1 0.04 v2 -1 1 0.04
+.control
+run
+set pyplot_terminal=png
+set pyplot_contour_lines
+set pyplot_contour_cmap=turbo
+pyplot bridge -contour v(c) v(a) v(b)
+.endc
+.end
