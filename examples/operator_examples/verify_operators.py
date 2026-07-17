@@ -98,6 +98,53 @@ def main():
     check("~12 == -13, -16>>2 == 1073741820, string ternary", v["v(o)"] == 0.0,
           f"score = {v['v(o)']:g}")
 
+    print("[4] constant-folded and runtime results agree for every operator")
+    # Every check above uses LITERAL operands, so it only ever exercises the
+    # constant folder (mir_opt/const_eval.rs). But E-37's shift bug was precisely
+    # a DISAGREEMENT between the folder and the runtime LLVM path -- the folder
+    # sign-extended `>>` while codegen was already correct -- so a literals-only
+    # test exercises just the side that happened to be broken, and would miss the
+    # same class of bug landing on the other side.
+    #
+    # Every operator therefore has two independent implementations that must
+    # agree. Here the left operand is laundered through $rtoi(V(in)) so it is a
+    # genuine runtime unknown that cannot be folded, and each check compares it
+    # against the identical expression written with literals. A nonzero score
+    # means const and runtime disagree -- whichever side is wrong.
+    with open(os.path.join(HERE, "_cvr.va"), "w") as fh:
+        fh.write('`include "disciplines.vams"\n'
+                 "module op_cvr(out, in); output out; voltage out;\n"
+                 "  input in; voltage in;\n"
+                 "  integer s, x, y;\n"
+                 "  analog begin\n"
+                 "    x = $rtoi(V(in));   // deck drives -16: runtime, unfoldable\n"
+                 "    y = x + 9;          // -7, still a runtime value\n"
+                 "    s = 0;\n"
+                 "    if ((x >>  2) != (-16 >>  2))  s = s + 1;      // E-37 bug 2\n"
+                 "    if ((x >>> 2) != (-16 >>> 2))  s = s + 2;\n"
+                 "    if ((x <<  2) != (-16 <<  2))  s = s + 4;\n"
+                 "    if ((x >>  1) != (-16 >>  1))  s = s + 8;\n"
+                 "    if ((y /   3) != (-7  /   3))  s = s + 16;     // trunc toward 0\n"
+                 "    if ((y %   3) != (-7  %   3))  s = s + 32;     // sign of dividend\n"
+                 "    if ((x &  12) != (-16 &  12))  s = s + 64;\n"
+                 "    if ((x |  12) != (-16 |  12))  s = s + 128;\n"
+                 "    if ((x ^  12) != (-16 ^  12))  s = s + 256;\n"
+                 "    if ((x ~^ 12) != (-16 ~^ 12))  s = s + 512;\n"
+                 "    if ((~x)      != (~(-16)))     s = s + 1024;\n"
+                 "    if ((-x)      != (-(-16)))     s = s + 2048;\n"
+                 "    if ((y *   3) != (-7  *   3))  s = s + 4096;\n"
+                 "    if ((y **  3) != (-7  **  3))  s = s + 8192;\n"
+                 "    V(out) <+ s;\n  end\nendmodule\n")
+    r = subprocess.run([OPENVAF, "_cvr.va", "-o", "_cvr.osdi"],
+                       cwd=HERE, capture_output=True, text=True)
+    check("const-vs-runtime module compiles", r.returncode == 0,
+          "" if r.returncode == 0 else (r.stdout + r.stderr).strip().splitlines()[0])
+    v = run("* const vs runtime\nvin i 0 dc -16\nn1 o i m\n.model m op_cvr\n"
+            "r1 o 0 1e6\n.control\npre_osdi _cvr.osdi\nop\nprint v(o)\n.endc\n.end\n",
+            "v(o)")
+    check("14 operators: constant-folded == runtime (score is a failing-op bitmask)",
+          v.get("v(o)") == 0.0, f"score = {v.get('v(o)')}")
+
     print("\nALL PASS" if ok else "\nSOME FAILED")
     sys.exit(0 if ok else 1)
 
