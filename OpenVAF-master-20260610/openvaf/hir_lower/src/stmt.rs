@@ -408,9 +408,19 @@ impl BodyLoweringCtx<'_, '_, '_> {
                     masks.get(val_idx).copied().unwrap_or(CaseMask::FULL)
                 };
 
-                // Lower the condition (val == discriminant); for arrays, all elements equal
+                // Lower the condition (val == discriminant); for arrays, all elements equal.
+                //
+                // The comparison opcode above comes from the DISCRIMINANT's type, so a real
+                // discriminant emits `feq` and needs real item elements. An integer-literal
+                // array item -- `case(r) {1}:` where `r` is a real array -- infers as an
+                // *integer* array, and while inference does record a cast for it, that cast
+                // lands on the item's array expression as a whole; `lower_array_elems`
+                // decomposes the array and lowers each element on its own, so the cast never
+                // reaches them and `feq` got an i32 ("invalid operation feq Int(1)" in
+                // const-eval). Coerce the elements to match the opcode. Scalar items are
+                // unaffected: they go through `lower_expr`, which applies the recorded cast.
                 let val_elems = if is_array {
-                    self.lower_array_elems(*val)
+                    self.lower_array_elems_impl(*val, discr_op == Opcode::Feq)
                 } else {
                     vec![self.lower_expr(*val)]
                 };

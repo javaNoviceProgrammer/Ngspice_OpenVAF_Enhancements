@@ -2054,7 +2054,24 @@ impl BodyLoweringCtx<'_, '_, '_> {
         self.lower_array_elems_impl(expr, true)
     }
 
-    fn lower_array_elems_impl(&mut self, expr: ExprId, coerce_real: bool) -> Vec<Value> {
+    pub(crate) fn lower_array_elems_impl(&mut self, expr: ExprId, coerce_real: bool) -> Vec<Value> {
+        // When inference coerces a *whole array* -- an integer-literal `case` item tested
+        // against a real discriminant, say -- `expect()` records the cast on the ARRAY
+        // EXPRESSION itself. But every whole-array consumer comes through here, and this
+        // function decomposes the array and lowers each element on its own, so
+        // `lower_expr`'s `needs_cast()` never sees that cast: it was silently dead. That is
+        // why one defect -- an integer value reaching a float MIR op, which the const
+        // evaluator has no case for ("invalid operation feq/fmul Int(..) Float(..)") --
+        // kept coming back in each new array context. Honouring the recorded cast here, at
+        // the single chokepoint, makes inference's intent effective for every consumer
+        // instead of requiring each call site to remember to ask.
+        //
+        // `coerce_real` remains for consumers whose element type is fixed by the language
+        // rather than by an inferred cast (a `laplace_*`/`zi_*` coefficient vector is real
+        // per LRM 9.19, and its inference records no cast).
+        let coerce_real = coerce_real
+            || matches!(self.body.needs_cast(expr), Some((_, dst)) if *dst.base_type() == Type::Real);
+
         if let Some(vars) = self.body.array_var_ref(expr) {
             let mut res = Vec::with_capacity(vars.len());
             for var in vars {
