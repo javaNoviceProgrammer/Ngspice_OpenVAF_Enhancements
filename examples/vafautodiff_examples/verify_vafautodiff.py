@@ -166,6 +166,84 @@ check("[frem] floor/ceil derivatives untouched (genuinely 0)",
       efl is None and ecl is None and abs(gfl) < 1e-12 and abs(gcl) < 1e-12,
       f"(floor'={gfl} ceil'={gcl})")
 
+# ---------------- cross-derivatives: BOTH arguments live ----------------
+# Every check above pins a two-argument builtin with the *other* argument a
+# CONSTANT (`hypot(V,0.5)` / `hypot(0.5,V)`). That cannot see the second
+# argument's chain rule as a circuit derivative: it only ever produces the
+# self-conductance dI/dV(a,b). E-185's hypot bug lived in exactly that rule, so
+# this section makes both arguments genuine circuit unknowns:
+#
+#     dut(a,b,c,d):  I(a,b) <+ f(V(a,b), V(c,d))
+#
+# and reads the current in the a-b branch while the AC stimulus sits on the
+# *other* pair. That off-diagonal Jacobian entry (the transconductance) exists
+# only if d/d(arg2) is right, and it is what AC/noise/pz consume for any model
+# whose law couples two node pairs.
+def ac_cross(name, expr, x0, y0):
+    """(df/dx, df/dy, err) with x=V(a,b), y=V(c,d) both live unknowns."""
+    body = ('`include "disciplines.vams"\n'
+            'module dutx(a,b,c,d); inout a,b,c,d; electrical a,b,c,d;\n'
+            f'analog I(a,b) <+ {expr};\n'
+            'endmodule\n')
+    ok, log = compile_va(name, body)
+    if not ok:
+        return None, None, "COMPILE-FAIL: " + (log.strip().splitlines() or [""])[-1][:70]
+    out = []
+    for drive in (1, 2):                       # which pair carries the AC stimulus
+        a1, a2 = ("1", "0") if drive == 1 else ("0", "1")
+        deck = (f"* {name} cross\nVb1 a 0 DC {x0} AC {a1}\nVb2 c 0 DC {y0} AC {a2}\n"
+                f"N1 a 0 c 0 dmx\n.model dmx dutx\n.control\npre_osdi {name}.osdi\n"
+                f"ac lin 1 1e3 1e3\nprint i(vb1)\n.endc\n.end\n")
+        open(os.path.join(HERE, name + f"_{drive}.cir"), "w").write(deck)
+        r = subprocess.run([NGSPICE, "-b", name + f"_{drive}.cir"], capture_output=True,
+                           text=True, cwd=HERE, timeout=60)
+        m = re.search(r"i\(vb1\)\s*=\s*([-\d.eE+]+),\s*([-\d.eE+]+)", r.stdout + r.stderr)
+        if not m:
+            return None, None, "NO-AC"
+        out.append(-float(m.group(1)))
+    return out[0], out[1], None
+
+
+XV, YV = "V(a,b)", "V(c,d)"
+# Points are deliberately ASYMMETRIC: E-185 records that the old hypot rule was
+# *accidentally* correct at x == y, so a symmetric point proves nothing.
+cross = [
+    ("hypot(x,y)", f"{K}*hypot({XV},{YV})",
+     lambda x, y: K * x / math.hypot(x, y), lambda x, y: K * y / math.hypot(x, y),
+     [(0.7, 0.3), (0.4, 1.1)]),
+    ("atan2(x,y)", f"{K}*atan2({XV},{YV})",
+     lambda x, y: K * y / (x * x + y * y), lambda x, y: -K * x / (x * x + y * y),
+     [(0.7, 0.3), (0.4, 1.1)]),
+    ("pow(x,y)", f"{K}*pow({XV},{YV})",
+     lambda x, y: K * y * x ** (y - 1), lambda x, y: K * x ** y * math.log(x),
+     [(0.7, 0.3), (1.3, 2.2)]),
+    ("x*y", f"{K}*{XV}*{YV}", lambda x, y: K * y, lambda x, y: K * x, [(0.7, 0.3)]),
+    ("x/y", f"{K}*{XV}/{YV}", lambda x, y: K / y, lambda x, y: -K * x / (y * y),
+     [(0.7, 0.3)]),
+    ("x*sin(y)", f"{K}*{XV}*sin({YV})",
+     lambda x, y: K * math.sin(y), lambda x, y: K * x * math.cos(y), [(0.7, 0.3)]),
+    # E-186: the modulo slope is 1 in x and -floor(x/y) in a VARIABLE divisor
+    ("x%y", f"{K}*({XV} % {YV})",
+     lambda x, y: K, lambda x, y: -K * math.floor(x / y), [(0.7, 0.3)]),
+]
+nbadx = worstx = 0
+worstx = 0.0
+for nm, ex, dfdx, dfdy, pts in cross:
+    for (x0, y0) in pts:
+        gx, gy, err = ac_cross("x_" + re.sub(r"\W", "", nm) + f"{x0}_{y0}".replace(".", ""),
+                               ex, x0, y0)
+        if err:
+            nbadx += 1
+            continue
+        for got, ref in ((gx, dfdx(x0, y0)), (gy, dfdy(x0, y0))):
+            d = abs(got - ref) / (abs(ref) + 1e-30)
+            worstx = max(worstx, d)
+            if d >= 2e-3:
+                nbadx += 1
+check(f"[cross] {len(cross)} two-arg builtins: BOTH partials correct with both "
+      f"arguments live (off-diagonal Jacobian, asymmetric points)",
+      nbadx == 0, f"(worst reldiff {worstx:.1e}, {nbadx} bad)")
+
 # ---------------- regression: the other builtins were already correct ----------------
 battery = [
     ("sin", f"{K}*sin(V(a,b))", lambda v: K * math.cos(v), 0.7),
@@ -197,6 +275,38 @@ for nm, ex, fp, v0 in battery:
         nbad += 1
 check(f"[regression] {len(battery)} other math builtins: derivatives still correct",
       nbad == 0, f"(worst reldiff {worst:.1e}, {nbad} bad)")
+
+# A single bias point per builtin is how hypot hid: its old rule was exactly
+# right at one point (V=0.5) and 28% off elsewhere. Re-run the battery over a
+# spread of points so an "accidentally correct at the tested point" rule cannot
+# pass -- scaling each builtin's point into its own valid domain.
+def spread(v0):
+    return [v0 * s for s in (0.55, 1.0, 1.7)]
+
+worst_m = 0.0
+nbad_m = 0
+npts = 0
+for nm, ex, fp, v0 in battery:
+    for i, v in enumerate(spread(v0)):
+        if nm in ("asin", "atanh") and abs(v) >= 0.98:      # domain |x| < 1
+            continue
+        if nm == "acosh" and v <= 1.02:                     # domain x > 1
+            continue
+        if nm == "tan" and abs(math.cos(v)) < 1e-2:         # near the pole
+            continue
+        gr, _, err = ac_gac(f"s_{nm}{i}", ex, v)
+        npts += 1
+        if err:
+            nbad_m += 1
+            continue
+        ref = fp(v)
+        d = abs(gr - ref) / (abs(ref) + 1e-30)
+        worst_m = max(worst_m, d)
+        if d >= 2e-3:
+            nbad_m += 1
+check(f"[multipoint] the same battery over {npts} bias points (no builtin may be "
+      f"merely accidentally correct at one point)",
+      nbad_m == 0, f"(worst reldiff {worst_m:.1e}, {nbad_m} bad)")
 
 # tidy the generated .va/.osdi/.cir this suite produced
 import glob
