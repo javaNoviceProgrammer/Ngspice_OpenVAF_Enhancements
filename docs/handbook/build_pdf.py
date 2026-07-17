@@ -240,6 +240,25 @@ def _sig(s):
     return re.sub(r"[^a-z0-9]", "", s.lower())
 
 
+def _pdf_text(path):
+    """The PDF's text, with each page's page-number footer removed.
+
+    Concatenating raw page text splices the footer into the middle of any
+    sentence that straddles a page break -- "... E-133" + "48" + "(11/11)
+    unaffected ..." -- so a signature spanning that break fails while nothing is
+    actually wrong. That cost one false "clipped" verdict before it was noticed.
+    """
+    import fitz                                       # pymupdf
+    out = []
+    with fitz.open(path) as doc:
+        for page in doc:
+            lines = page.get_text().splitlines()
+            while lines and re.fullmatch(r"\s*\d+\s*", lines[-1]):
+                lines.pop()
+            out.append("\n".join(lines))
+    return _sig("".join(out))
+
+
 #  [text](target) -> text.  A link's TARGET never reaches the PDF's text layer,
 #  only its text does, so the target must go before signing.
 LINK_TEXT_ONLY = re.compile(r"\[([^\]]*)\]\([^)\s]*\)")
@@ -275,16 +294,14 @@ def verify_index_rows():
               "silently clipped rows will go undetected")
         return
     try:
-        import fitz                                   # pymupdf
+        import fitz                                   # noqa: F401  (pymupdf)
     except ImportError:
         sys.exit("ERROR: pymupdf is required to verify the build "
                  "(pdftotext is not available here).\n"
                  "       pip install pymupdf   -- or run with SKIP_PDF_VERIFY=1 "
                  "to bypass, which leaves silent clipping undetected.")
 
-    with fitz.open(OUT) as doc:
-        text = _sig("".join(p.get_text() for p in doc))
-
+    text = _pdf_text(OUT)
     rows = index_rows()
     # A guard that silently matches nothing always passes. If the chapter's table
     # is reformatted so the rows stop parsing, say so instead of reporting OK.
