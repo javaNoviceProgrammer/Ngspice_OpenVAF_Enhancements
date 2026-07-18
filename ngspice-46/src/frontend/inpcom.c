@@ -4791,12 +4791,19 @@ static char *inp_expand_macro_in_str(struct function_env *env, char *str)
     but skip '.model mymod mdname' and only then start searching for functions. */
     if (ciprefix(".model", search_ptr)){
         search_ptr = nexttok(search_ptr);
-        search_ptr = nexttok(search_ptr);
-        char *end;
-        findtok_noparen(&search_ptr, &search_ptr, &end);
+        if (search_ptr)
+            search_ptr = nexttok(search_ptr);
+        /* Bug fix: a truncated ".model" line (e.g. ".model m" with no model
+           type) runs nexttok off the end of the string, leaving search_ptr
+           NULL. The guards here and on the loop below then skip the
+           function-call scan instead of calling strchr(NULL) and crashing. */
+        if (search_ptr) {
+            char *end;
+            findtok_noparen(&search_ptr, &search_ptr, &end);
+        }
     }
     // printf("%s: enter(\"%s\")\n", __FUNCTION__, str);
-    while ((open_paren_ptr = strchr(search_ptr, '(')) != NULL) {
+    while (search_ptr && (open_paren_ptr = strchr(search_ptr, '(')) != NULL) {
 
         fcn_name = open_paren_ptr;
         while (--fcn_name >= search_ptr)
@@ -5538,7 +5545,10 @@ int get_number_terminals(char *c)
         case 'n':
             /* Find the last non-parameter token in the line. */
 
-            for (i = 0; *c != '\0' && *c != '='; ++i) {
+            /* the (i < 1000) bound matches the other multi-token cases (x, p, ...)
+               and guards against a non-advancing tokenizer -- a real OSDI
+               instance never has anywhere near this many nodes. */
+            for (i = 0; (i < 1000) && *c != '\0' && *c != '='; ++i) {
                 inst = gettok_instance(&c);
                 if (strchr(inst, '=')) {
                     tfree(inst);
@@ -7699,17 +7709,25 @@ static char *inp_modify_exp(/* NOT CONST */ char *expr)
             int i = 0;
 
             if (((c == 'v') || (c == 'i')) && (s[1] == '(')) {
-                while (*s != ')') {
+                /* Bug fix: bound the copy by both the end of string and the
+                   fixed-size buf[] -- an unterminated "v(" (no closing ')') or
+                   a token longer than the buffer previously overran the stack
+                   buffer (a stack-smashing crash on malformed input). */
+                while (*s && *s != ')' && i < (int) sizeof(buf) - 2) {
                     buf[i++] = *s++;
                 }
-                buf[i++] = *s++;
+                if (*s == ')')
+                    buf[i++] = *s++;
                 buf[i] = '\0';
                 wl->wl_word = copy(buf);
             }
             else {
-                while (isalnum_c(*s) || (*s == '!') || (*s == '#') ||
+                /* Bug fix: same buf[] overflow -- a very long identifier-like
+                   token (e.g. a run of '[' characters, which are accepted here)
+                   overran the stack buffer. Bound it. */
+                while ((isalnum_c(*s) || (*s == '!') || (*s == '#') ||
                         (*s == '$') || (*s == '%') || (*s == '_') ||
-                        (*s == '[') || (*s == ']')) {
+                        (*s == '[') || (*s == ']')) && i < (int) sizeof(buf) - 1) {
                     buf[i++] = *s++;
                 }
                 buf[i] = '\0';

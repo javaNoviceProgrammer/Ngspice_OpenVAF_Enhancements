@@ -747,6 +747,14 @@ gettok_instance(char **s)
         ) {
         (*s)++;
     }
+    /* The scan stops at '(' or ')'. If the current char is one of those, the
+       loop above consumed nothing, so without this the function would return an
+       empty token WITHOUT advancing *s -- and a caller that loops until end of
+       line (get_number_terminals()'s OSDI 'n' case) would spin forever, e.g. on
+       a line like "nan.func f(x)=...". Consume the bracket as a one-char token
+       so every call makes forward progress. */
+    if (*s == token)
+        (*s)++;
     token_e = *s;
 
     /* Now iterate up to next non-whitespace char */

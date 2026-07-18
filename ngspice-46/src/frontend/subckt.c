@@ -436,6 +436,14 @@ doit(struct card *deck, wordlist *modnames) {
     int numpasses = MAXNEST;
     bool gotone;
     int error;
+    /* Bug fix: MAXNEST bounds the subcircuit nesting DEPTH, but a subcircuit
+       that instantiates itself with a branching factor >= 2 (e.g. two `X.. self`
+       lines in its own body) blows up exponentially in WIDTH -- 2^MAXNEST
+       instances -- before the depth cap trips, effectively hanging on a
+       recursive subcircuit. Cap the total number of instantiations expanded; a
+       real (non-recursive) hierarchy never approaches this many. */
+    long num_subst = 0;
+    const long MAX_SUBST = 1000000;
 
     /* Save all the old stuff... */
     struct subs *subs = NULL;
@@ -577,6 +585,14 @@ doit(struct card *deck, wordlist *modnames) {
                 char *scname;
 
                 gotone = TRUE;
+                if (++num_subst > MAX_SUBST) {
+                    fprintf(cp_err, "Error: subcircuit expansion exceeded %ld "
+                            "instantiations -- a subcircuit almost certainly "
+                            "instantiates itself (recursive subcircuit).\n",
+                            MAX_SUBST);
+                    error = 1;
+                    break;
+                }
                 t = tofree = s = copy(c->line);       /*  s & t hold copy of component line  */
 
                 /*  make scname point to first non-whitepace chars after refdes invocation
@@ -586,6 +602,17 @@ doit(struct card *deck, wordlist *modnames) {
                 /*scname += strlen(invoke);   */
                 while ((*scname == ' ') || (*scname == '\t') || (*scname == ':'))
                     scname++;
+
+                /* Bug fix: a malformed invocation with nothing after the refdes
+                   (e.g. a bare "X" line) leaves s pointing at "", and the
+                   walk-to-end-then-backwards below runs off the FRONT of the
+                   buffer -- an out-of-bounds read that ends in strcmp(NULL) in
+                   the .subckt-name match. Skip such a line. */
+                if (*s == '\0') {
+                    tfree(tofree);
+                    tfree(tofree2);
+                    continue;
+                }
 
                 /*  Now set s to point to last non-space chars in line (i.e.
                  *   the name of the model invoked
@@ -600,8 +627,10 @@ doit(struct card *deck, wordlist *modnames) {
                 s++;
 
                 /* iterate through .subckt list and look for .subckt name invoked */
+                /* (guard su_name: a malformed ".subckt" line can register a
+                   NULL/empty name, and eq()==strcmp() would deref NULL) */
                 for (sss = subs; sss; sss = sss->su_next)
-                    if (eq(sss->su_name, s))
+                    if (sss->su_name && eq(sss->su_name, s))
                         break;
 
 
@@ -1383,8 +1412,10 @@ translate(struct card *deck, char *formal, int flen, char *actual, char *scname,
             /* get next token */
             t = s;
             next_name = gettok_noparens(&t);
-            if ((strcmp(next_name, "POLY") == 0) ||
-                (strcmp(next_name, "poly") == 0)) {
+            /* guard: gettok_noparens() returns NULL at end of a (malformed)
+               controlled-source line; strcmp(NULL, ...) would crash */
+            if (next_name && (strcmp(next_name, "POLY") == 0 ||
+                strcmp(next_name, "poly") == 0)) {
 
 #ifdef TRACE
                 printf("In translate, looking at e, f, g, h found poly\n");
