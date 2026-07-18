@@ -57,7 +57,8 @@ One fuzz input in 12,000 still crashes, in **XSPICE** (`xspice/mif/mifgetmod.c`
 match a **non-code-model** (e.g. a diode `.model`) is processed as a code model,
 so `device->modelParms[…]` is read as the wrong type. That is a code-model
 type-confusion in the XSPICE subsystem and warrants its own fix; it is out of
-scope for this netlist-parser pass.
+scope for this netlist-parser pass. **Fixed in [E-223](Enhancement-223.md)**
+(`MIFgetMod` now rejects a non-code-model with a clean error).
 
 ## Scope
 

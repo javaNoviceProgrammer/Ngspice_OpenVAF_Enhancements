@@ -149,6 +149,24 @@ char *MIFgetMod(
             return tprintf("MIF: Unknown device type for model %s\n", name);
         }
 
+            /* An `a' (code model) device requires an XSPICE code model.  If the
+             * model name collides with a *non*-code-model (e.g. a diode
+             * `.model'), that device's XSPICE DEVpublic fields (param, conn,
+             * cm_func) are unset and its model struct is not a MIFmodel.
+             * Processing it as a code model below -- casting INPmodfast to
+             * MIFmodel, reading DEVpublic.param, and matching the `.model'
+             * parameters through the MIF path -- would read unrelated memory as
+             * the wrong type and crash.  A code model is exactly a device that
+             * carries a code-model evaluation function (cm_func); reject
+             * anything else here with a clean error instead. */
+        if (modtmp->INPmodType >= DEVmaxnum ||
+            DEVices[modtmp->INPmodType]->DEVpublic.cm_func == NULL) {
+            *model = NULL;
+            return tprintf("MIF-ERROR - model %s is not a code model; an `a' "
+                           "device requires an XSPICE code-model .model\n",
+                           name);
+        }
+
             /* check to see if this model's parameters have been processed */
 
         if (!modtmp->INPmodfast) {
