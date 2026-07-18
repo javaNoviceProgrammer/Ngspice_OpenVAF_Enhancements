@@ -44,6 +44,9 @@ Two hundred and twenty-three enhancements so far — language features, correctn
 
 The index: **Doc** links each enhancement's detailed write-up, **Examples** links the folder whose verify script pins the behavior.
 
+<details>
+<summary><b>📖 Show the full enhancement table</b> — 223 rows, click to expand</summary>
+
 | # | What it delivered | Tool | Doc | Examples |
 |---|---|---|---|---|
 | 1 | `absdelay()` transport delay via synthetic-node DAE | openvaf&#8209;r | [doc](enhancements_doc/Enhancement-1.md) | [absdelay](examples/absdelay_examples/) |
@@ -269,6 +272,8 @@ The index: **Doc** links each enhancement's detailed write-up, **Examples** link
 | 221 | array/bus node ranges (`a[0:1]`) | ngspice | [doc](enhancements_doc/Enhancement-221.md) | [busnodes](examples/busnodes_examples/) |
 | 222 | parser fuzz hardening (7 crashes/hangs) | ngspice | [doc](enhancements_doc/Enhancement-222.md) | [parserfuzz](examples/parserfuzz_examples/) |
 | 223 | XSPICE a-device model-type check (`MIFgetMod`) | ngspice | [doc](enhancements_doc/Enhancement-223.md) | [xspicemodel](examples/xspicemodel_examples/) |
+
+</details>
 
 ---
 
