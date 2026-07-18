@@ -173,12 +173,38 @@ impl<'a> ConsoleSink<'a> {
 //     }
 // }
 
+/// Enhancement-219: cap how many diagnostics are *rendered*. Pathological input
+/// (e.g. thousands of nested tokens produced by a fuzzer or a corrupted file)
+/// can emit thousands of errors; building a source-annotated report for each one
+/// (codespan_reporting extracts and lays out the surrounding source per report)
+/// turns a clean rejection into a multi-second effective hang. The first
+/// `MAX_RENDERED_DIAGNOSTICS` are rendered in full; after that only the counters
+/// advance, and `summary()` still reports the true totals. This mirrors the
+/// "too many errors" behaviour of rustc/clang.
+const MAX_RENDERED_DIAGNOSTICS: usize = 128;
+
 impl DiagnosticSink for ConsoleSink<'_> {
     fn add_report(&mut self, report: Report) {
         match report.severity {
             Severity::Error => self.error_cnt += 1,
             Severity::Warning => self.warning_cnt += 1,
             _ => (),
+        }
+
+        let rendered = self.error_cnt + self.warning_cnt;
+        if rendered > MAX_RENDERED_DIAGNOSTICS {
+            // Announce the suppression exactly once, as we cross the cap.
+            if rendered == MAX_RENDERED_DIAGNOSTICS + 1 {
+                self.print_simple_message(
+                    Severity::Note,
+                    format!(
+                        "further diagnostics suppressed after {} \
+                         (too many errors -- the input is likely malformed)",
+                        MAX_RENDERED_DIAGNOSTICS
+                    ),
+                );
+            }
+            return;
         }
 
         emit(

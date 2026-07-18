@@ -143,6 +143,14 @@ pub(crate) fn parse_define<'a>(
                 });
                 break;
             }
+            // Enhancement-219: forward-progress backstop. `expect`/`eat` do NOT
+            // advance when the current token does not match, so a stray delimiter
+            // in a macro parameter list -- neither an identifier, `)` nor `,`
+            // (e.g. a `/` or `"` in a corrupted `\`define`) -- is consumed by none
+            // of the calls below, and the loop would spin on it forever, growing
+            // the diagnostics vector without bound (a hang). Record the source
+            // offset and bail cleanly if an iteration consumes nothing.
+            let progress = p.current_range().start();
             args.push(p.current_text());
             if !p.expect(PreprocessorToken::SimpleIdent, "an identifier", err) {
                 success = false
@@ -162,6 +170,15 @@ pub(crate) fn parse_define<'a>(
             } else {
                 let expect = p.expect(PreprocessorToken::Comma, ")", err);
                 success &= expect;
+            }
+
+            if p.current_range().start() == progress {
+                success = false;
+                err.push(UnexpectedEof {
+                    expected: ")",
+                    span: CtxSpan { ctx: p.ctx(), range: p.current_range() },
+                });
+                break;
             }
         }
         args
@@ -216,11 +233,18 @@ fn parse_macro_token<'a>(
             let (call, range) = parse_macro_call(p, err, args, sm, end);
             dst.push(ParsedToken { range, kind: ParsedTokenKind::MacroCall(call) });
         } else {
-            // TODO nicer error?
+            // Enhancement-219: a non-`Macro` compiler directive (`\`include`,
+            // `\`ifdef`, `\`endif`, ...) has no meaning inside a macro-call
+            // argument list. Report it AND consume it: previously this branch
+            // returned WITHOUT advancing the parser, so the caller's collection
+            // loop (parse_macro_call) re-examined the same directive token
+            // forever -- an unbounded diagnostics-vector growth that hangs the
+            // compiler on inputs like `\`name(\`include ...`.
             err.push(PreprocessorDiagnostic::UnexpectedToken(CtxSpan {
                 ctx: p.ctx,
                 range: p.current_range(),
-            }))
+            }));
+            p.bump();
         }
         return;
     }
@@ -267,7 +291,23 @@ pub(crate) fn parse_macro_call<'a>(
                         break 'outer;
                     }
                 }
-                parse_macro_token(p, err, args, &mut dst, sm, end)
+                // Enhancement-219: forward-progress backstop. Every branch of
+                // parse_macro_token should consume at least one token; if one
+                // ever fails to (as the stray-directive branch above once did),
+                // spinning here would hang the compiler. Detect a non-advancing
+                // call via the source offset and bail with a clean diagnostic
+                // rather than looping forever.
+                let progress = p.current_range().start();
+                parse_macro_token(p, err, args, &mut dst, sm, end);
+                if p.current_range().start() == progress {
+                    let end = p.previous_range().end();
+                    arg_bindings.push((dst, TextRange::new(start, end)));
+                    err.push(UnexpectedEof {
+                        expected: ")",
+                        span: CtxSpan { ctx: p.ctx(), range: p.current_range() },
+                    });
+                    break 'outer;
+                }
             }
 
             p.eat(PreprocessorToken::Comma);

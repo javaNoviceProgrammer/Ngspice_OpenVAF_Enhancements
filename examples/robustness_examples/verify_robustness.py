@@ -18,6 +18,13 @@ Enhancement-148 turns each into a clean, bounded diagnostic:
   * a cap on how many scalar elements an array declaration may expand to (~1M),
     applied to variable, parameter, net/bus and instance arrays.
 
+Enhancement-219 closes a fifth pathology found by re-running the robustness
+campaign: a `` `name( `` macro call whose argument list contains a stray
+compiler directive (`` `include ``, `` `ifdef ``, ...) made the preprocessor's
+argument collector spin on that token forever (it emitted an error without
+advancing), hanging the compiler. The collector now always makes forward
+progress, so such input errors cleanly instead.
+
 Each check confirms the pathological input now produces a NONZERO exit quickly
 (a clean error, not a crash or a hang), and that valid deep-but-reasonable input
 still compiles. It also spot-checks the diagnostic text.
@@ -95,6 +102,27 @@ v, o, dt = run(wr("arr.va", list(arrays.values())[0]))
 check("array: diagnostic reports the element count / limit",
       "exceeding the limit" in o or "too large" in o, o[:200])
 
+# --- Enhancement-219: preprocessor argument-collection loops must terminate ---
+# The macro-CALL argument list (`\`name(`) and the `\`define` PARAMETER list both
+# scan token by token; a token that none of the loop's expect/eat calls consumes
+# (a stray directive in a macro call, a stray delimiter in a define) used to make
+# the collector spin forever (error-without-advance -> hang). Each must now error
+# cleanly and quickly, with or without deep leading parentheses.
+MOD = HDR + "module m(a); electrical a; endmodule\n"
+macro_arg = {
+    "`m( then `include": '`m(`include "x.inc"\n' + MOD,
+    "`m( then `ifdef":   '`m(`ifdef FOO\n' + MOD,
+    "`m( then `endif":   '`m(`endif\n' + MOD,
+    "`m( then `undef":   '`m(`undef X\n' + MOD,
+    "`m( + 4000 '(' then `include": '`m(' + "(" * 4000 + '`include "x.inc"\n' + MOD,
+    "`define M(a,/,b)":  '`define M(a,/,b) x\n' + MOD,
+    "`define M(a\"b)":   '`define M(a"b) x\n' + MOD,
+    "`define M(a;b)":    '`define M(a;b) x\n' + MOD,
+}
+for name, src in macro_arg.items():
+    v, o, dt = run(wr("mac.va", src), timeout=20)
+    check(f"macro-arg: {name} -> clean error, no hang  [{v} {dt:.1f}s]", v == "ERROR", v)
+
 # --- regression: valid deep-but-reasonable input still compiles ---
 def nest_tern(n):
     e = "0.0"
@@ -107,6 +135,11 @@ valid = {
     "sum of 100 terms": modexpr("V(a,b)" + "+1.0" * 100),
     "small array x[0:15]": HDR + "module m(a,b); inout a,b; electrical a,b; real x[0:15]; analog begin x[3]=V(a,b); I(a,b)<+x[3]; end endmodule\n",
     "instance array s[0:7]": HDR + "module sub(p); inout p; electrical p; endmodule\nmodule m(a,b); inout a,b; electrical a,b; sub s[0:7](a); analog I(a,b)<+V(a,b); endmodule\n",
+    # Enhancement-219: a genuine macro call with parenthesised (even nested) args
+    # must still compile -- the hang fix must not reject valid macro usage.
+    "macro call with nested-paren args":
+        HDR + "`define TWO(x) ((x)+(x))\nmodule m(a,b); inout a,b; electrical a,b; "
+              "analog I(a,b)<+ `TWO(V(a,b)); endmodule\n",
 }
 for name, src in valid.items():
     v, o, dt = run(wr("ok.va", src))
