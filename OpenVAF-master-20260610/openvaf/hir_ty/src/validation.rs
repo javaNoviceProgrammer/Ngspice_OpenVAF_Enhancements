@@ -91,7 +91,11 @@ pub struct BodyValidationDiagnosticWrapped<'a> {
 
 impl BodyValidationDiagnosticWrapped<'_> {
     fn expr_src(&self, expr: ExprId) -> FileSpan {
-        self.parse.to_file_span(self.body_sm.expr_map_back[expr].as_ref().unwrap().range(), self.sm)
+        // Enhancement-220: a synthesized expression has no source-map-back entry;
+        // fall back to an empty range rather than panic while reporting an error.
+        let range =
+            self.body_sm.expr_map_back[expr].as_ref().map_or_else(TextRange::default, |it| it.range());
+        self.parse.to_file_span(range, self.sm)
     }
 
     fn lookup<I, T>(&self, id: I) -> (Name, FileSpan)
@@ -317,8 +321,12 @@ impl Diagnostic for BodyValidationDiagnosticWrapped<'_> {
                     ])
             }
             BodyValidationDiagnostic::IllegalContribute { stmt, ctx } => {
+                // Enhancement-220: fall back to an empty range for a synthesized
+                // statement rather than panic while reporting an error.
                 let FileSpan { range, file } = self.parse.to_file_span(
-                    self.body_sm.stmt_map_back[stmt].as_ref().unwrap().range(),
+                    self.body_sm.stmt_map_back[stmt]
+                        .as_ref()
+                        .map_or_else(TextRange::default, |it| it.range()),
                     self.sm,
                 );
 

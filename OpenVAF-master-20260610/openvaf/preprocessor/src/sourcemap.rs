@@ -36,14 +36,15 @@ impl FileSpan {
     #[must_use]
     pub fn with_subrange(self, relative_range: TextRange) -> FileSpan {
         let range = relative_range + self.range.start();
-        assert!(
-            range.end() <= self.range.end(),
-            "subrange {:?} -> {:?} must fit into the total range {:?}",
-            relative_range,
-            range,
-            self.range
-        );
-        FileSpan { range, file: self.file }
+        // Enhancement-220: on malformed or synthesized input a diagnostic's
+        // subrange can extend past its parent context (e.g. a span built at EOF).
+        // Clamp it into the parent instead of asserting -- the assert crashed the
+        // compiler while merely trying to render the diagnostic. (E-213 fixed one
+        // trigger of this assert at its source; this makes the mapping itself
+        // total for every remaining case.)
+        let end = range.end().min(self.range.end());
+        let start = range.start().min(end);
+        FileSpan { range: TextRange::new(start, end), file: self.file }
     }
 
     #[inline]
@@ -230,6 +231,15 @@ impl SourceMap {
         let decl = self.ctx_data(ctx).decl;
         let ranges = spans.iter_mut().map(|span| decl.with_subrange(span.range).range).collect();
         (decl.file, ranges)
+    }
+
+    /// Enhancement-220: the file of the root source context (the compiled file).
+    /// The root context is always the first one created (see `new`), so this
+    /// gives a valid `FileId` even when there are no spans to derive one from --
+    /// used to render a diagnostic that carries an empty span list rather than
+    /// hitting `unimplemented!()`.
+    pub fn root_file(&self) -> FileId {
+        self.ctx_tree.iter().next().expect("source map always has a root context").decl.file
     }
 
     pub fn ctx_data(&self, ctx: SourceContext) -> &SourceContextData {

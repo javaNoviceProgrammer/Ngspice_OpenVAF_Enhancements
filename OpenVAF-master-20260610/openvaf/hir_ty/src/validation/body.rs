@@ -19,7 +19,7 @@ use crate::builtin::{
 use crate::db::HirTyDB;
 use crate::inference::{BranchWrite, InferenceResult, ResolvedFun};
 use crate::lower::BranchKind;
-use crate::types::{Signature, Ty};
+use crate::types::{BuiltinInfo, Signature, Ty};
 
 #[derive(PartialEq, Eq, Clone, Debug)]
 pub enum IllegalCtxAccessKind {
@@ -516,7 +516,7 @@ impl ExprValidator<'_, '_> {
     ) {
         match self.parent.infer.resolved_signatures.get(&access_expr).copied() {
             Some(NATURE_ACCESS_BRANCH) => {
-                let branch = self.parent.infer.expr_types[args[0]].unwrap_branch();
+                let branch = match self.parent.infer.expr_types[args[0]] { Ty::Branch(id) => id, _ => return };
                 if let Some(branch_info) = self.parent.db.branch_info(branch) {
                     self.report_illegal_nature_access(
                         self.parent.db.branch_data(branch).name.to_string(),
@@ -528,7 +528,7 @@ impl ExprValidator<'_, '_> {
             }
 
             Some(NATURE_ACCESS_NODE_GND) => {
-                let node = self.parent.infer.expr_types[args[0]].unwrap_node();
+                let node = match self.parent.infer.expr_types[args[0]] { Ty::Node(id) => id, _ => return };
                 if let Some(discipline) = self.parent.db.node_discipline(node) {
                     let node = self.parent.db.node_data(node);
                     self.report_illegal_nature_access(
@@ -541,8 +541,8 @@ impl ExprValidator<'_, '_> {
             }
 
             Some(NATURE_ACCESS_NODES) => {
-                let node1 = self.parent.infer.expr_types[args[0]].unwrap_node();
-                let node2 = self.parent.infer.expr_types[args[0]].unwrap_node();
+                let node1 = match self.parent.infer.expr_types[args[0]] { Ty::Node(id) => id, _ => return };
+                let node2 = match self.parent.infer.expr_types[args[0]] { Ty::Node(id) => id, _ => return };
                 if let Some(discipline1) = self.parent.db.node_discipline(node1) {
                     if let Some(discipline2) = self.parent.db.node_discipline(node2) {
                         let discipline2 = self.parent.db.discipline_info(discipline2);
@@ -567,7 +567,7 @@ impl ExprValidator<'_, '_> {
             }
 
             Some(NATURE_ACCESS_PORT_FLOW) => {
-                let node = self.parent.infer.expr_types[args[0]].unwrap_port_flow();
+                let node = match self.parent.infer.expr_types[args[0]] { Ty::PortFlow(id) => id, _ => return };
                 if let Some(discipline) = self.parent.db.node_discipline(node) {
                     let node = self.parent.db.node_data(node);
                     self.report_illegal_nature_access(
@@ -676,6 +676,15 @@ impl ExprValidator<'_, '_> {
         call: BuiltIn,
         signature: Option<Signature>,
     ) {
+        // Enhancement-220: the arms below index args[0..2] on the assumption that
+        // the call has as many arguments as the builtin requires. A call with too
+        // few arguments (e.g. `$simparam()`, `$port_connected()`) would index out
+        // of bounds and crash the compiler. Inference already reports the
+        // ArgCntMismatch for such a call (resolve_function_args), so skip the
+        // builtin-specific validation rather than panic.
+        if args.len() < BuiltinInfo::from(call).min_args {
+            return;
+        }
         match call {
             _ if call.is_unsupported() => self
                 .parent
@@ -719,8 +728,8 @@ impl ExprValidator<'_, '_> {
 
         match (call, signature) {
             (BuiltIn::potential | BuiltIn::flow, Some(NATURE_ACCESS_NODES)) => {
-                let hi = self.parent.infer.expr_types[args[0]].unwrap_node();
-                let lo = self.parent.infer.expr_types[args[1]].unwrap_node();
+                let hi = match self.parent.infer.expr_types[args[0]] { Ty::Node(id) => id, _ => return };
+                let lo = match self.parent.infer.expr_types[args[1]] { Ty::Node(id) => id, _ => return };
                 // Enhancement-97: contributing to a branch whose endpoints are
                 // both `ground` (e.g. `V(gnd, gnd) <+ ...`) has no unknown to
                 // stamp and used to panic during lowering.
@@ -743,7 +752,7 @@ impl ExprValidator<'_, '_> {
             }
 
             (BuiltIn::potential | BuiltIn::flow, Some(NATURE_ACCESS_NODE_GND)) => {
-                let node = self.parent.infer.expr_types[args[0]].unwrap_node();
+                let node = match self.parent.infer.expr_types[args[0]] { Ty::Node(id) => id, _ => return };
                 // Enhancement-97: `V(gnd) <+ ...` -- the single node is the
                 // ground reference, so the implicit node-to-ground branch is
                 // ground-to-ground (no unknown; used to panic during lowering).
@@ -762,7 +771,7 @@ impl ExprValidator<'_, '_> {
             }
 
             (BuiltIn::flow, Some(NATURE_ACCESS_PORT_FLOW)) => {
-                let node = self.parent.infer.expr_types[args[0]].unwrap_port_flow();
+                let node = match self.parent.infer.expr_types[args[0]] { Ty::PortFlow(id) => id, _ => return };
                 let node_data = self.parent.db.node_data(node);
                 if !(node_data.is_input | node_data.is_output) {
                     self.report(BodyValidationDiagnostic::ExpectedPort { node, expr })
@@ -778,7 +787,7 @@ impl ExprValidator<'_, '_> {
             }
 
             (BuiltIn::potential | BuiltIn::flow, Some(NATURE_ACCESS_BRANCH)) => {
-                let branch = self.parent.infer.expr_types[args[0]].unwrap_branch();
+                let branch = match self.parent.infer.expr_types[args[0]] { Ty::Branch(id) => id, _ => return };
 
                 if let Some(branch_info) = self.parent.db.branch_info(branch) {
                     match branch_info.kind {
@@ -827,7 +836,7 @@ impl ExprValidator<'_, '_> {
             }
 
             (BuiltIn::port_connected, _) => {
-                let node = self.parent.infer.expr_types[args[0]].unwrap_node();
+                let node = match self.parent.infer.expr_types[args[0]] { Ty::Node(id) => id, _ => return };
                 let node_data = self.parent.db.node_data(node);
                 if !(node_data.is_input | node_data.is_output) {
                     self.report(BodyValidationDiagnostic::ExpectedPort { node, expr })

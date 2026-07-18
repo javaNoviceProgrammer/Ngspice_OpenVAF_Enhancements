@@ -31,6 +31,12 @@ pub(crate) struct Parser<'t> {
     pub(crate) expr_depth: Cell<u32>,
 }
 
+/// Enhancement-220: the number of `nth()` lookahead steps after which the parser
+/// assumes it is stuck in error recovery and bails to EOF (see `Parser::nth`).
+/// A valid file finishes well under this bound; it is a safety net, not a size
+/// limit.
+const PARSER_STEP_LIMIT: u32 = 10_000_000;
+
 impl<'t> Parser<'t> {
     pub(super) fn new(tokens: &'t [SyntaxKind]) -> Parser<'t> {
         Parser { tokens, events: Vec::new(), steps: Cell::new(0), expr_depth: Cell::new(0), pos: 0 }
@@ -53,7 +59,16 @@ impl<'t> Parser<'t> {
         assert!(n <= 3);
 
         let steps = self.steps.get();
-        assert!(steps <= 10_000_000, "the parser seems stuck");
+        // Enhancement-220: on pathological malformed input the parser can spin in
+        // error recovery. Rather than panic ("the parser seems stuck") -- which
+        // crashes the compiler on a mere bad input -- signal EOF so parsing winds
+        // down and reports the errors collected so far. Returning before the
+        // increment freezes the counter, so the bail is sticky (no wrap/resume);
+        // every grammar loop already terminates at EOF (it must, to end a valid
+        // file), so this is a clean, bounded stop.
+        if steps >= PARSER_STEP_LIMIT {
+            return SyntaxKind::EOF;
+        }
         self.steps.set(steps + 1);
 
         self.tokens.get(self.pos as usize + n).copied().unwrap_or(SyntaxKind::EOF)

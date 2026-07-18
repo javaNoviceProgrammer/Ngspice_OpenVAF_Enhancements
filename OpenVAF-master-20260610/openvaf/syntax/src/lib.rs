@@ -120,7 +120,10 @@ impl<T> Parse<T> {
             let start = range.start() - ctx_range1.start() + offset1;
             let end = range.end() - ctx_range2.start() + offset2;
             if ctx1 == ctx2 {
-                CtxSpan { range: TextRange::new(start, end), ctx: ctx1 }
+                // Enhancement-220: mapping a span that straddles source contexts can
+                // yield start > end on malformed input; clamp so TextRange::new does
+                // not panic (it crashed the compiler while rendering a diagnostic).
+                CtxSpan { range: TextRange::new(start, end.max(start)), ctx: ctx1 }
             } else {
                 let (ctx, range1, range2) = sm.lowest_common_parent(
                     CtxSpan { range: TextRange::empty(start), ctx: ctx1 },

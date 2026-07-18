@@ -105,7 +105,12 @@ pub(crate) fn parse_include<'a>(
     p.bump();
     let path = p.current_text();
     if p.expect(PreprocessorToken::StrLit, "a string literal", err) {
-        Some((&path[1..path.len() - 1], TextRange::new(start, p.previous_range().end())))
+        // Enhancement-220: a malformed/unterminated string literal (e.g. a lone
+        // `"` at EOF) can be shorter than its two delimiters; stripping the quotes
+        // with `path[1..len-1]` then panicked ("slice index starts at 1 but ends
+        // at 0"). `saturating_sub` + `get` make it total (an empty include path).
+        let inner = path.get(1..path.len().saturating_sub(1)).unwrap_or("");
+        Some((inner, TextRange::new(start, p.previous_range().end().max(start))))
     } else {
         None
     }
@@ -195,7 +200,7 @@ pub(crate) fn parse_define<'a>(
     }
     // p.bump();
 
-    let range = TextRange::new(start.start(), p.end_pos(end));
+    let range = TextRange::new(start.start(), p.end_pos(end).max(start.start()));
     if success {
         Some((
             name,
@@ -283,7 +288,7 @@ pub(crate) fn parse_macro_call<'a>(
                     _ if p.before(end) => (),
                     _ => {
                         let end = p.previous_range().end();
-                        arg_bindings.push((dst, TextRange::new(start, end)));
+                        arg_bindings.push((dst, TextRange::new(start, end.max(start))));
                         err.push(UnexpectedEof {
                             expected: ")",
                             span: CtxSpan { ctx: p.ctx(), range: p.current_range() },
@@ -301,7 +306,7 @@ pub(crate) fn parse_macro_call<'a>(
                 parse_macro_token(p, err, args, &mut dst, sm, end);
                 if p.current_range().start() == progress {
                     let end = p.previous_range().end();
-                    arg_bindings.push((dst, TextRange::new(start, end)));
+                    arg_bindings.push((dst, TextRange::new(start, end.max(start))));
                     err.push(UnexpectedEof {
                         expected: ")",
                         span: CtxSpan { ctx: p.ctx(), range: p.current_range() },
@@ -313,7 +318,7 @@ pub(crate) fn parse_macro_call<'a>(
             p.eat(PreprocessorToken::Comma);
 
             let end = p.previous_range().end();
-            arg_bindings.push((dst, TextRange::new(start, end)));
+            arg_bindings.push((dst, TextRange::new(start, end.max(start))));
         }
         arg_bindings
     } else {

@@ -15,6 +15,20 @@ pathological input — all now fixed.
 > collector, plus an unbounded diagnostic-rendering flood behind it. Both are
 > now fixed ([Enhancement-219](../../../enhancements_doc/Enhancement-219.md)).
 > Corpus counts below are refreshed to the current `VA-Models-main` collection.
+>
+> **Round 2 (2026-07-18).** A second campaign with a stronger fuzzer — diverse
+> compact-model seeds and new mutation strategies (keyword / attribute / bracket
+> injection) — found that ~5 % of mutated inputs still *crashed* the compiler
+> (exit 101), the E-213 panic class. Triage grouped them into **ten distinct
+> root causes** (a parser "seems stuck" assert, an empty-span `unimplemented!()`,
+> `TextRange` start>end in span mapping, `unwrap()` on the source-map-back of
+> synthesized exprs, `unwrap_node`/`unwrap_branch` on wrong-typed builtin args,
+> an include-quote slice, a no-overload `candidates[0]`, and a too-few-arguments
+> `args[0]`), all fixed
+> ([Enhancement-220](../../../enhancements_doc/Enhancement-220.md)). A fresh
+> 12 000-iteration fuzz on the fixed compiler is now **0 crashes, 0 hangs**. All
+> the panics were already caught by the E-213 hook, so the compiler was never
+> memory-unsafe; the bug was the crash UX and the missing diagnostic.
 
 This is a companion to the [OpenVAF compiler internals](OpenVAF_compiler_internals.md)
 guide: that document explains how the compiler works; this one documents how hard it

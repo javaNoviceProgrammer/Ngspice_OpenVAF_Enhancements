@@ -65,7 +65,11 @@ pub fn to_unified_spans<const N: usize>(
 
 pub fn to_unified_span_list(sm: &SourceMap, spans: &mut [CtxSpan]) -> (FileId, Vec<TextRange>) {
     match spans {
-        [] => unimplemented!(),
+        // Enhancement-220: a diagnostic built from an empty node list (reachable
+        // from malformed input -- e.g. a mixed module head with no ports, or an
+        // empty illegal-node list) used to hit `unimplemented!()` and crash the
+        // compiler. Render it with no labels, anchored to the root file.
+        [] => (sm.root_file(), Vec::new()),
         [span] => {
             let FileSpan { range, file } = span.to_file_span(sm);
             (file, vec![range])

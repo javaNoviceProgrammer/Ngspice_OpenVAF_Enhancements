@@ -1674,6 +1674,16 @@ impl Ctx<'_> {
                         .all(|(ty, req)| ty.as_ref().map_or(false, |ty| ty.satisfies_semantic(req)))
                 });
 
+                // Enhancement-220: if NO candidate satisfies the arguments
+                // semantically, fall back to the pre-filter set so `candidates[0]`
+                // below cannot index an empty vector -- a call whose arguments
+                // match no overload otherwise panicked here (a compiler crash on
+                // malformed input). Inference then reports the mismatch as usual.
+                // Mirrors the existing restore after the exact-match retain.
+                if candidates.is_empty() {
+                    candidates.clone_from(&new_candidates);
+                }
+
                 if candidates.len() > 1 {
                     new_candidates.clone_from(&candidates);
                     candidates.retain(|candidate| {

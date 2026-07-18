@@ -14,7 +14,7 @@ use stdx::pretty::List;
 use stdx::{impl_display, pretty};
 use syntax::ast::{self, AssignOp};
 use syntax::sourcemap::{FileSpan, SourceMap};
-use syntax::{Parse, SourceFile, TextSize};
+use syntax::{Parse, SourceFile, TextRange, TextSize};
 use typed_index_collections::TiSlice;
 
 use crate::db::HirTyDB;
@@ -58,6 +58,18 @@ pub struct InferenceDiagnosticWrapped<'a> {
     pub sm: &'a SourceMap,
 }
 
+impl InferenceDiagnosticWrapped<'_> {
+    /// Enhancement-220: the source text range of an expression, or an empty range
+    /// if it has no source-map-back entry. Inference diagnostics are reachable for
+    /// expressions the lowering SYNTHESIZED (which have no source location); the
+    /// previous `expr_map_back[e].as_ref().unwrap()` panicked -- crashing the
+    /// compiler while merely trying to report a type error -- so every diagnostic
+    /// resolves its span through this fallback instead.
+    fn expr_range(&self, e: ExprId) -> TextRange {
+        self.body_sm.expr_map_back[e].as_ref().map_or_else(TextRange::default, |it| it.range())
+    }
+}
+
 impl Diagnostic for InferenceDiagnosticWrapped<'_> {
     fn build_report(&self, _root_file: FileId, _db: &dyn BaseDB) -> Report {
         match *self.diag {
@@ -68,7 +80,7 @@ impl Diagnostic for InferenceDiagnosticWrapped<'_> {
             } => {
                 let src = self
                     .parse
-                    .to_file_span(self.body_sm.expr_map_back[e].as_ref().unwrap().range(), self.sm);
+                    .to_file_span(self.expr_range(e), self.sm);
 
                 let res = Report::error().with_labels(vec![Label {
                     style: LabelStyle::Primary,
@@ -111,7 +123,7 @@ impl Diagnostic for InferenceDiagnosticWrapped<'_> {
             }
             InferenceDiagnostic::PathResolveError { ref err, expr } => {
                 let src = self.parse.to_file_span(
-                    self.body_sm.expr_map_back[expr].as_ref().unwrap().range(),
+                    self.expr_range(expr),
                     self.sm,
                 );
 
@@ -126,7 +138,7 @@ impl Diagnostic for InferenceDiagnosticWrapped<'_> {
             }
             InferenceDiagnostic::ArgCntMismatch { expected, found, expr, exact } => {
                 let src = self.parse.to_file_span(
-                    self.body_sm.expr_map_back[expr].as_ref().unwrap().range(),
+                    self.expr_range(expr),
                     self.sm,
                 );
 
@@ -150,7 +162,7 @@ impl Diagnostic for InferenceDiagnosticWrapped<'_> {
             }
             InferenceDiagnostic::TypeMismatch(ref err) => {
                 let src = self.parse.to_file_span(
-                    self.body_sm.expr_map_back[err.expr].as_ref().unwrap().range(),
+                    self.expr_range(err.expr),
                     self.sm,
                 );
 
@@ -166,7 +178,7 @@ impl Diagnostic for InferenceDiagnosticWrapped<'_> {
             InferenceDiagnostic::SignatureMismatch(ref err) => {
                 let mut res = if let [ref ty_err] = *err.type_mismatches {
                     let FileSpan { file, range } = self.parse.to_file_span(
-                        self.body_sm.expr_map_back[ty_err.expr].as_ref().unwrap().range(),
+                        self.expr_range(ty_err.expr),
                         self.sm,
                     );
 
@@ -188,7 +200,7 @@ impl Diagnostic for InferenceDiagnosticWrapped<'_> {
                         .iter()
                         .map(|it| {
                             self.parse.to_ctx_span(
-                                self.body_sm.expr_map_back[it.expr].as_ref().unwrap().range(),
+                                self.expr_range(it.expr),
                                 self.sm,
                             )
                         })
@@ -238,9 +250,9 @@ impl Diagnostic for InferenceDiagnosticWrapped<'_> {
                 found_expr,
                 expected_expr,
             }) => {
-                let found_range = self.body_sm.expr_map_back[found_expr].as_ref().unwrap().range();
+                let found_range = self.expr_range(found_expr);
                 let expected_range =
-                    self.body_sm.expr_map_back[expected_expr].as_ref().unwrap().range();
+                    self.expr_range(expected_expr);
 
                 let expected_span = self.parse.to_ctx_span(expected_range, self.sm);
                 let found_span = self.parse.to_ctx_span(found_range, self.sm);
@@ -269,7 +281,7 @@ impl Diagnostic for InferenceDiagnosticWrapped<'_> {
             InferenceDiagnostic::InvalidUnknown { e } => {
                 let src = self
                     .parse
-                    .to_file_span(self.body_sm.expr_map_back[e].as_ref().unwrap().range(), self.sm);
+                    .to_file_span(self.expr_range(e), self.sm);
 
                 Report::error()
                     .with_labels(vec![Label {
@@ -286,7 +298,7 @@ impl Diagnostic for InferenceDiagnosticWrapped<'_> {
             InferenceDiagnostic::NonStandardUnknown { e, .. } => {
                 let src = self
                     .parse
-                    .to_file_span(self.body_sm.expr_map_back[e].as_ref().unwrap().range(), self.sm);
+                    .to_file_span(self.expr_range(e), self.sm);
 
                 Report::warning()
                     .with_labels(vec![Label {
@@ -304,7 +316,7 @@ impl Diagnostic for InferenceDiagnosticWrapped<'_> {
             InferenceDiagnostic::ExpectedProbe { e } => {
                 let src = self
                     .parse
-                    .to_file_span(self.body_sm.expr_map_back[e].as_ref().unwrap().range(), self.sm);
+                    .to_file_span(self.expr_range(e), self.sm);
 
                 Report::error()
                     .with_labels(vec![Label {
@@ -321,7 +333,7 @@ impl Diagnostic for InferenceDiagnosticWrapped<'_> {
             InferenceDiagnostic::IndirectAssignRequiresEquality { e } => {
                 let src = self
                     .parse
-                    .to_file_span(self.body_sm.expr_map_back[e].as_ref().unwrap().range(), self.sm);
+                    .to_file_span(self.expr_range(e), self.sm);
 
                 Report::error()
                     .with_labels(vec![Label {
@@ -338,7 +350,7 @@ impl Diagnostic for InferenceDiagnosticWrapped<'_> {
             InferenceDiagnostic::InvalidBusReference { expr } => {
                 let src = self
                     .parse
-                    .to_file_span(self.body_sm.expr_map_back[expr].as_ref().unwrap().range(), self.sm);
+                    .to_file_span(self.expr_range(expr), self.sm);
 
                 Report::error()
                     .with_labels(vec![Label {
@@ -356,7 +368,7 @@ impl Diagnostic for InferenceDiagnosticWrapped<'_> {
             InferenceDiagnostic::NonConstantBitSelectIndex { expr } => {
                 let src = self
                     .parse
-                    .to_file_span(self.body_sm.expr_map_back[expr].as_ref().unwrap().range(), self.sm);
+                    .to_file_span(self.expr_range(expr), self.sm);
 
                 Report::error()
                     .with_labels(vec![Label {
@@ -374,7 +386,7 @@ impl Diagnostic for InferenceDiagnosticWrapped<'_> {
             InferenceDiagnostic::BitSelectOutOfRange { expr, index, msb, lsb } => {
                 let src = self
                     .parse
-                    .to_file_span(self.body_sm.expr_map_back[expr].as_ref().unwrap().range(), self.sm);
+                    .to_file_span(self.expr_range(expr), self.sm);
 
                 Report::error()
                     .with_labels(vec![Label {
@@ -389,7 +401,7 @@ impl Diagnostic for InferenceDiagnosticWrapped<'_> {
             InferenceDiagnostic::WrongArrayDimensions { expr, expected, found } => {
                 let src = self
                     .parse
-                    .to_file_span(self.body_sm.expr_map_back[expr].as_ref().unwrap().range(), self.sm);
+                    .to_file_span(self.expr_range(expr), self.sm);
 
                 Report::error()
                     .with_labels(vec![Label {
@@ -406,7 +418,7 @@ impl Diagnostic for InferenceDiagnosticWrapped<'_> {
             InferenceDiagnostic::BareBusReference { expr, ref name } => {
                 let src = self
                     .parse
-                    .to_file_span(self.body_sm.expr_map_back[expr].as_ref().unwrap().range(), self.sm);
+                    .to_file_span(self.expr_range(expr), self.sm);
 
                 Report::error()
                     .with_labels(vec![Label {
@@ -421,7 +433,7 @@ impl Diagnostic for InferenceDiagnosticWrapped<'_> {
             InferenceDiagnostic::RecursiveFunctionCall { expr, ref name } => {
                 let src = self
                     .parse
-                    .to_file_span(self.body_sm.expr_map_back[expr].as_ref().unwrap().range(), self.sm);
+                    .to_file_span(self.expr_range(expr), self.sm);
 
                 Report::error()
                     .with_labels(vec![Label {
@@ -440,7 +452,7 @@ impl Diagnostic for InferenceDiagnosticWrapped<'_> {
             InferenceDiagnostic::InvalidReplicationCount { expr } => {
                 let src = self
                     .parse
-                    .to_file_span(self.body_sm.expr_map_back[expr].as_ref().unwrap().range(), self.sm);
+                    .to_file_span(self.expr_range(expr), self.sm);
 
                 Report::error()
                     .with_labels(vec![Label {
@@ -459,7 +471,7 @@ impl Diagnostic for InferenceDiagnosticWrapped<'_> {
             InferenceDiagnostic::EmptyConcat { expr } => {
                 let src = self
                     .parse
-                    .to_file_span(self.body_sm.expr_map_back[expr].as_ref().unwrap().range(), self.sm);
+                    .to_file_span(self.expr_range(expr), self.sm);
 
                 Report::error()
                     .with_labels(vec![Label {
@@ -479,7 +491,7 @@ impl Diagnostic for InferenceDiagnosticWrapped<'_> {
                 ref output_args,
             } => {
                 let src = self.parse.to_file_span(
-                    self.body_sm.expr_map_back[expr].as_ref().unwrap().range(),
+                    self.expr_range(expr),
                     self.sm,
                 );
 
@@ -554,13 +566,13 @@ impl Diagnostic for InferenceDiagnosticWrapped<'_> {
                     .with_notes(notes)
             }
             InferenceDiagnostic::DisplayTypeMismatch { ref err, fmt_lit, lit_range, .. } => {
-                let fmt_lit = self.body_sm.expr_map_back[fmt_lit].as_ref().unwrap().range();
+                let fmt_lit = self.expr_range(fmt_lit);
                 let lit_src = self
                     .parse
                     .to_file_span(lit_range + fmt_lit.start() + TextSize::from(1u32), self.sm);
 
                 let val_src = self.parse.to_file_span(
-                    self.body_sm.expr_map_back[err.expr].as_ref().unwrap().range(),
+                    self.expr_range(err.expr),
                     self.sm,
                 );
 
@@ -582,7 +594,7 @@ impl Diagnostic for InferenceDiagnosticWrapped<'_> {
                     .with_message(format!("type mismatch: {} but found {}", &err, err.found_ty))
             }
             InferenceDiagnostic::MissingFmtArg { fmt_lit, lit_range } => {
-                let fmt_lit = self.body_sm.expr_map_back[fmt_lit].as_ref().unwrap().range();
+                let fmt_lit = self.expr_range(fmt_lit);
                 let lit_src = self
                     .parse
                     .to_file_span(lit_range + fmt_lit.start() + TextSize::from(1u32), self.sm);
@@ -602,7 +614,7 @@ impl Diagnostic for InferenceDiagnosticWrapped<'_> {
                 err_char,
                 candidates,
             } => {
-                let fmt_lit = self.body_sm.expr_map_back[fmt_lit].as_ref().unwrap().range();
+                let fmt_lit = self.expr_range(fmt_lit);
                 let lit_src = self
                     .parse
                     .to_file_span(lit_range + fmt_lit.start() + TextSize::from(1u32), self.sm);
@@ -626,7 +638,7 @@ impl Diagnostic for InferenceDiagnosticWrapped<'_> {
                     )])
             }
             InferenceDiagnostic::InvalidFmtSpecifierEnd { fmt_lit, lit_range } => {
-                let fmt_lit = self.body_sm.expr_map_back[fmt_lit].as_ref().unwrap().range();
+                let fmt_lit = self.expr_range(fmt_lit);
                 let lit_src = self
                     .parse
                     .to_file_span(lit_range + fmt_lit.start() + TextSize::from(1u32), self.sm);
