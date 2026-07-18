@@ -24,6 +24,11 @@ typedef enum {
 } MEASURE_VAL_T;
 
 #define MEASURE_DEFAULT (-1)
+/* Enhancement-225: measure error buffer. Was errbuf[100]; a long measure
+ * expression (its whole string is sprintf'd as the vector name in
+ * "no such vector as '%s'") overran it -> heap/stack smash. Bounded via
+ * snprintf(.., MEAS_ERRBUF_SIZE, ..) at every write below. */
+#define MEAS_ERRBUF_SIZE 512
 #define MEASURE_LAST_TRANSITION (-2)
 
 typedef struct measure
@@ -1548,7 +1553,7 @@ measure_parse_stdParams(
                 wl = wl->wl_next;
                 continue;
             } else {
-                sprintf(errbuf, "bad syntax. equal sign missing ?\n");
+                snprintf(errbuf, MEAS_ERRBUF_SIZE, "bad syntax. equal sign missing ?\n");
                 return MEASUREMENT_FAILURE;
             }
         }
@@ -1558,7 +1563,7 @@ measure_parse_stdParams(
         }
         else {
             if (ft_numparse(&pValue, FALSE, &engVal1) < 0) {
-                sprintf(errbuf, "bad syntax, cannot evaluate right hand side of %s=%s\n", pName, pValue);
+                snprintf(errbuf, MEAS_ERRBUF_SIZE, "bad syntax, cannot evaluate right hand side of %s=%s\n", pName, pValue);
                 return MEASUREMENT_FAILURE;
             }
         }
@@ -1586,7 +1591,7 @@ measure_parse_stdParams(
         } else if (strcasecmp(pName, "AT") == 0) {
             meas->m_at = engVal1;
         } else {
-            sprintf(errbuf, "no such parameter as '%s'\n", pName);
+            snprintf(errbuf, MEAS_ERRBUF_SIZE, "no such parameter as '%s'\n", pName);
             return MEASUREMENT_FAILURE;
         }
 
@@ -1596,22 +1601,22 @@ measure_parse_stdParams(
 
     if (pCnt == 0) {
         if (pName)
-            sprintf(errbuf, "bad syntax of %s\n", pName);
+            snprintf(errbuf, MEAS_ERRBUF_SIZE, "bad syntax of %s\n", pName);
         else
-            sprintf(errbuf, "bad syntax of\n");
+            snprintf(errbuf, MEAS_ERRBUF_SIZE, "bad syntax of\n");
         return MEASUREMENT_FAILURE;
     }
 
     // valid vector
     if (measure_valid_vector(meas->m_vec) == 0) {
-        sprintf(errbuf, "no such vector as '%s'\n", meas->m_vec);
+        snprintf(errbuf, MEAS_ERRBUF_SIZE, "no such vector as '%s'\n", meas->m_vec);
         return MEASUREMENT_FAILURE;
     }
 
     // valid vector2
     if (meas->m_vec2 != NULL)
         if (measure_valid_vector(meas->m_vec2) == 0) {
-            sprintf(errbuf, "no such vector as '%s'\n", meas->m_vec2);
+            snprintf(errbuf, MEAS_ERRBUF_SIZE, "no such vector as '%s'\n", meas->m_vec2);
             return MEASUREMENT_FAILURE;
         }
 
@@ -1672,18 +1677,18 @@ measure_parse_find(
             char * const pVal = strtok(NULL, "=");
 
             if (pVal == NULL) {
-                sprintf(errbuf, "bad syntax of WHEN\n");
+                snprintf(errbuf, MEAS_ERRBUF_SIZE, "bad syntax of WHEN\n");
                 return MEASUREMENT_FAILURE;
             }
 
             if (strcasecmp(pName, "AT") == 0) {
                 if (ft_numparse((char **) &pVal, FALSE, &meas->m_at) < 0) {
-                    sprintf(errbuf, "bad syntax of WHEN\n");
+                    snprintf(errbuf, MEAS_ERRBUF_SIZE, "bad syntax of WHEN\n");
                     return MEASUREMENT_FAILURE;
                 }
             }
             else {
-                sprintf(errbuf, "bad syntax of WHEN\n");
+                snprintf(errbuf, MEAS_ERRBUF_SIZE, "bad syntax of WHEN\n");
                 return MEASUREMENT_FAILURE;
             }
         } else {
@@ -1742,7 +1747,7 @@ measure_parse_when(
             pVar2 = strtok(NULL, "=");
 
             if (pVar2 == NULL) {
-                sprintf(errBuf, "bad syntax\n");
+                snprintf(errBuf, MEAS_ERRBUF_SIZE, "bad syntax\n");
                 return MEASUREMENT_FAILURE;
             }
 
@@ -1839,13 +1844,13 @@ measure_parse_trigtarg(
     }
 
     if (pcnt == 0) {
-        sprintf(errbuf, "bad syntax of '%s'\n", trigTarg);
+        snprintf(errbuf, MEAS_ERRBUF_SIZE, "bad syntax of '%s'\n", trigTarg);
         return MEASUREMENT_FAILURE;
     }
 
     // valid vector
     if (measure_valid_vector(meas->m_vec) == 0) {
-        sprintf(errbuf, "no such vector as '%s'\n", meas->m_vec);
+        snprintf(errbuf, MEAS_ERRBUF_SIZE, "no such vector as '%s'\n", meas->m_vec);
         return MEASUREMENT_FAILURE;
     }
 
@@ -1870,7 +1875,7 @@ get_measure2(
     )
 {
     wordlist *words, *wlTarg, *wlWhen;
-    char errbuf[100];
+    char errbuf[MEAS_ERRBUF_SIZE];
     char *mAnalysis = NULL;     // analysis type
     char *mName = NULL;         // name given to the measured output
     char *mFunction = NULL;
@@ -1999,7 +2004,7 @@ get_measure2(
 
         if ((measTrig->m_rise == -1) && (measTrig->m_fall == -1) &&
             (measTrig->m_cross == -1) && (measTrig->m_at == 1e99)) {
-            sprintf(errbuf, "at, rise, fall or cross must be given\n");
+            snprintf(errbuf, MEAS_ERRBUF_SIZE, "at, rise, fall or cross must be given\n");
             measure_errMessage(mName, mFunction, "TRIG", errbuf, autocheck);
             goto err_ret1;
         }
@@ -2018,7 +2023,7 @@ get_measure2(
 
         if ((measTarg->m_rise == -1) && (measTarg->m_fall == -1) &&
             (measTarg->m_cross == -1)&& (measTarg->m_at == 1e99)) {
-            sprintf(errbuf, "at, rise, fall or cross must be given\n");
+            snprintf(errbuf, MEAS_ERRBUF_SIZE, "at, rise, fall or cross must be given\n");
             measure_errMessage(mName, mFunction, "TARG", errbuf, autocheck);
             goto err_ret1;
         }
@@ -2038,7 +2043,7 @@ get_measure2(
 
 
         if (isnan(measTrig->m_measured)) {
-            sprintf(errbuf, "out of interval\n");
+            snprintf(errbuf, MEAS_ERRBUF_SIZE, "out of interval\n");
             measure_errMessage(mName, mFunction, "TRIG", errbuf, autocheck);
             goto err_ret1;
         }
@@ -2049,7 +2054,7 @@ get_measure2(
             measTarg->m_measured = measTarg->m_at;
 
         if (isnan(measTarg->m_measured)) {
-            sprintf(errbuf, "out of interval\n");
+            snprintf(errbuf, MEAS_ERRBUF_SIZE, "out of interval\n");
             measure_errMessage(mName, mFunction, "TARG", errbuf, autocheck);
             goto err_ret1;
         }
@@ -2108,7 +2113,7 @@ err_ret1:
             com_measure_when(measFind);
 
             if (isnan(measFind->m_measured)) {
-                sprintf(errbuf, "out of interval\n");
+                snprintf(errbuf, MEAS_ERRBUF_SIZE, "out of interval\n");
                 measure_errMessage(mName, mFunction, "AT", errbuf, autocheck);
                 goto err_ret2;
             }
@@ -2126,7 +2131,7 @@ err_ret1:
         }
 
         if (isnan(meas->m_measured)) {
-            sprintf(errbuf, "out of interval\n");
+            snprintf(errbuf, MEAS_ERRBUF_SIZE, "out of interval\n");
             measure_errMessage(mName, mFunction, "AT", errbuf, autocheck);
             goto err_ret2;
         }
@@ -2165,7 +2170,7 @@ err_ret2:
         com_measure_when(meas);
 
         if (isnan(meas->m_measured)) {
-            sprintf(errbuf, "out of interval\n");
+            snprintf(errbuf, MEAS_ERRBUF_SIZE, "out of interval\n");
             measure_errMessage(mName, mFunction, "WHEN", errbuf, autocheck);
             goto err_ret3;
         }
@@ -2207,7 +2212,7 @@ err_ret3:
         measure_rms_integral(meas, mFunctionType);
 
         if (isnan(meas->m_measured)) {
-            sprintf(errbuf, "out of interval\n");
+            snprintf(errbuf, MEAS_ERRBUF_SIZE, "out of interval\n");
             measure_errMessage(mName, mFunction, "TRIG", errbuf, autocheck); // ??
             goto err_ret4;
         }
@@ -2252,7 +2257,7 @@ err_ret4:
         // measure
         measure_minMaxAvg(meas, mFunctionType);
         if (isnan(meas->m_measured)) {
-            sprintf(errbuf, "out of interval\n");
+            snprintf(errbuf, MEAS_ERRBUF_SIZE, "out of interval\n");
             measure_errMessage(mName, mFunction, "TRIG", errbuf, autocheck); // ??
             goto err_ret5;
         }
@@ -2297,7 +2302,7 @@ err_ret5:
 
         measure_margin(meas, mFunctionType);
         if (isnan(meas->m_measured)) {
-            sprintf(errbuf, (mFunctionType == AT_PHASE_MARGIN)
+            snprintf(errbuf, MEAS_ERRBUF_SIZE, (mFunctionType == AT_PHASE_MARGIN)
                     ? "no unity-gain (0 dB) crossover found\n"
                     : "no -180 deg phase crossover found\n");
             measure_errMessage(mName, mFunction, "MARGIN", errbuf, autocheck);
@@ -2345,7 +2350,7 @@ err_ret_margin:
             measure_minMaxAvg(measTrig, AT_MAX);
 
         if (isnan(measTrig->m_measured)) {
-            sprintf(errbuf, "out of interval\n");
+            snprintf(errbuf, MEAS_ERRBUF_SIZE, "out of interval\n");
             measure_errMessage(mName, mFunction, "TRIG", errbuf, autocheck); // ??
             goto err_ret6;
         }
@@ -2398,7 +2403,7 @@ err_ret6:
         // measure min
         measure_minMaxAvg(measTrig, AT_MIN);
         if (isnan(measTrig->m_measured)) {
-            sprintf(errbuf, "out of interval\n");
+            snprintf(errbuf, MEAS_ERRBUF_SIZE, "out of interval\n");
             measure_errMessage(mName, mFunction, "TRIG", errbuf, autocheck); // ??
             goto err_ret7;
         }
@@ -2407,7 +2412,7 @@ err_ret6:
         // measure max
         measure_minMaxAvg(measTrig, AT_MAX);
         if (isnan(measTrig->m_measured)) {
-            sprintf(errbuf, "out of interval\n");
+            snprintf(errbuf, MEAS_ERRBUF_SIZE, "out of interval\n");
             measure_errMessage(mName, mFunction, "TRIG", errbuf, autocheck); // ??
             goto err_ret7;
         }
@@ -2467,7 +2472,7 @@ err_ret7:
             com_measure_when(measFind);
 
             if (isnan(measFind->m_measured)) {
-                sprintf(errbuf, "out of interval\n");
+                snprintf(errbuf, MEAS_ERRBUF_SIZE, "out of interval\n");
                 measure_errMessage(mName, mFunction, "WHEN", errbuf, autocheck);
                 goto err_ret_deriv;
             }
@@ -2483,7 +2488,7 @@ err_ret7:
         }
 
         if (isnan(meas->m_measured)) {
-            sprintf(errbuf, "out of interval\n");
+            snprintf(errbuf, MEAS_ERRBUF_SIZE, "out of interval\n");
             measure_errMessage(mName, mFunction, "AT", errbuf, autocheck);
             goto err_ret_deriv;
         }
