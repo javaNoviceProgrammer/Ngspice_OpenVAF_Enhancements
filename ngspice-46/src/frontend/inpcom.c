@@ -171,6 +171,7 @@ static char inp_get_elem_ident(char *type);
 static void rem_mfg_from_models(struct card *start_card);
 static void inp_fix_macro_param_func_paren_io(struct card *begin_card);
 static void inp_fix_gnd_name(struct card *deck);
+static void inp_expand_buses(struct card *deck);
 static void inp_chk_for_e_source_to_xspice(struct card *deck, int *line_number);
 static void inp_add_control_section(struct card *deck, int *line_number);
 static char *get_quoted_token(char *string, char **token);
@@ -1133,6 +1134,11 @@ struct card *inp_readall(FILE *fp, const char *dir_name, const char* file_name,
         inp_fix_for_numparam(subckt_w_params, working);
 
         inp_remove_excess_ws(working);
+
+        /* Enhancement-221: expand array/bus node ranges (a[0:1] -> a[0] a[1])
+           before subcircuit expansion and device parsing, so every consumer
+           sees the scalar node list. */
+        inp_expand_buses(working);
 
         if(inp_vdmos_model(working)) {
             line_free_x(cc, TRUE);
@@ -2357,6 +2363,125 @@ static char *readline(FILE *fd)
 /* Replace "gnd" by " 0 "
    Delimiters of gnd may be ' ' or ',' or '(' or ')',
    may be disabled by setting variable no_auto_gnd */
+
+/*
+ * Enhancement-221: expand array/bus node ranges in the netlist.
+ *
+ * A whitespace-delimited token of the form  base[lo:hi]  on an element or
+ * .subckt line is replaced by the sequence of scalar node tokens
+ *     base[lo] base[lo±1] ... base[hi]
+ * following the Verilog convention that the sequence descends when lo > hi:
+ *     R1 a[0:1] r=2k          ->  R1 a[0] a[1] r=2k
+ *     X1 bus[0:3] sub         ->  X1 bus[0] bus[1] bus[2] bus[3] sub
+ *     .subckt sub d[1:0] g    ->  .subckt sub d[1] d[0] g
+ * Only a WHOLE token that is exactly base[int:int] is expanded, so device
+ * values, model names, XSPICE %vd[...] port groups and already-scalar node
+ * names such as a[0] are untouched. The scalar names produced use the same
+ * bracket form, so a bus a[0:1] and an explicit a[0] denote the same node.
+ */
+#define BUS_MAX_WIDTH 8192 /* refuse absurd ranges; the device parser then errors */
+
+/* If [tok, tok+len) is exactly base[lo:hi], append its expansion to `ds` and
+   return TRUE; otherwise leave `ds` unchanged and return FALSE. */
+static bool inp_expand_bus_token(DSTRING *ds, const char *tok, size_t len)
+{
+    if (len < 6 || tok[len - 1] != ']')
+        return FALSE;
+    const char *lb = memchr(tok, '[', len);
+    if (!lb || lb == tok) /* no '[', or an empty base */
+        return FALSE;
+    const char *p;
+    for (p = tok; p < lb; p++) /* the base must be a plain node name */
+        if (*p == '[' || *p == ']' || *p == '(' || *p == ')' ||
+                *p == ',' || *p == '%' || *p == '=')
+            return FALSE;
+
+    const char *end = tok + len - 1; /* the closing ']' */
+    char *ep;
+    const char *lo_start = lb + 1;
+    long lo = strtol(lo_start, &ep, 10);
+    if (ep == lo_start || *ep != ':') /* need <int> ':' */
+        return FALSE;
+    const char *hi_start = ep + 1;
+    long hi = strtol(hi_start, &ep, 10);
+    if (ep == hi_start || ep != end) /* need <int> filling the rest before ']' */
+        return FALSE;
+
+    long width = (hi >= lo) ? (hi - lo + 1) : (lo - hi + 1);
+    if (width > BUS_MAX_WIDTH)
+        return FALSE; /* leave it literal; the device parser reports the error */
+
+    const long step = (hi >= lo) ? 1 : -1;
+    const size_t blen = (size_t) (lb - tok);
+    long i = lo;
+    for (;;) {
+        if (i != lo)
+            ds_cat_char(ds, ' ');
+        ds_cat_mem(ds, tok, blen);
+        ds_cat_printf(ds, "[%ld]", i);
+        if (i == hi)
+            break;
+        i += step;
+    }
+    return TRUE;
+}
+
+static void inp_expand_buses(struct card *deck)
+{
+    struct card *c;
+    bool in_control = FALSE;
+
+    for (c = deck; c; c = c->nextcard) {
+        char *line = c->line;
+        if (!line || *line == '*')
+            continue;
+
+        /* leave .control ... .endc command blocks completely alone */
+        if (ciprefix(".control", line)) {
+            in_control = TRUE;
+            continue;
+        }
+        if (ciprefix(".endc", line)) {
+            in_control = FALSE;
+            continue;
+        }
+        if (in_control)
+            continue;
+
+        /* only element instances (first char a letter) and subcircuit
+           definitions carry node fields; skip .model/.param/other dot cards */
+        if (!(isalpha_c(*line) || ciprefix(".subckt", line)))
+            continue;
+        if (!strchr(line, '[')) /* fast path: nothing to expand */
+            continue;
+
+        {
+            DS_CREATE(newline, 256);
+            bool changed = FALSE;
+            const char *s = line;
+            while (*s) {
+                if (isspace_c(*s)) {
+                    ds_cat_char(&newline, *s);
+                    s++;
+                    continue;
+                }
+                const char *start = s;
+                while (*s && !isspace_c(*s))
+                    s++;
+                const size_t tlen = (size_t) (s - start);
+                if (inp_expand_bus_token(&newline, start, tlen))
+                    changed = TRUE;
+                else
+                    ds_cat_mem(&newline, start, tlen);
+            }
+            if (changed) {
+                tfree(c->line);
+                c->line = copy(ds_get_buf(&newline));
+            }
+            ds_free(&newline);
+        }
+    }
+}
 
 static void inp_fix_gnd_name(struct card *c)
 {
