@@ -701,6 +701,28 @@ op_ind(struct pnode *arg1, struct pnode *arg2)
     int majsize, blocksize;
     bool rev = FALSE;
 
+    /* Enhancement-224: array/bus node names (Enhancement-221) carry literal
+     * brackets, e.g. the node "a[0]". The expression parser reads "a[0]" as
+     * index 0 of a vector named "a"; when the base is an UNRESOLVED name (a
+     * zero-length placeholder) and the index is a constant, try the literal
+     * vector name "a[0]" so `print a[0]` / `plot a[0]` reach array nodes. Done
+     * before evaluating the bare base so no spurious "no such vector a" is
+     * emitted; ordinary vector indexing (realvec[3], base resolves) is
+     * unaffected because that placeholder has non-zero length. */
+    if (arg1->pn_value != NULL && arg1->pn_value->v_length == 0 &&
+        arg1->pn_value->v_name != NULL && arg2->pn_value != NULL &&
+        arg2->pn_value->v_length >= 1 && arg2->pn_value->v_realdata != NULL) {
+        int lit_idx = (int) floor(arg2->pn_value->v_realdata[0] + 0.5);
+        char *lit_name = tprintf("%s[%d]", arg1->pn_value->v_name, lit_idx);
+        struct dvec *lit = vec_get(lit_name);
+        tfree(lit_name);
+        if (lit != NULL) {
+            res = vec_copy(lit);
+            vec_new(res);
+            return (res);
+        }
+    }
+
     v = ft_evaluate(arg1);
     ind = ft_evaluate(arg2);
     if (!v || !ind)
@@ -898,19 +920,42 @@ apply_func(struct func *func, struct pnode *arg)
      * is caught in the parser.
      */
     if (!func->fu_func) {
-        if (!arg->pn_value /* || (arg->pn_value->v_length != 1) XXX */) {
+        char *e224_node = NULL;
+        /* Enhancement-224: v(a[0]) where a[0] is an array/bus node
+         * (Enhancement-221). The argument parses as an index op INDX(name "a", 0)
+         * that has no pn_value, so the plain path below fails with "bad v()
+         * syntax"; reconstruct the literal node name "a[0]" and resolve that. */
+        if (!arg->pn_value && arg->pn_op && arg->pn_op->op_name &&
+            eq(arg->pn_op->op_name, "[") &&
+            arg->pn_left && arg->pn_left->pn_value &&
+            arg->pn_left->pn_value->v_length == 0 &&
+            arg->pn_left->pn_value->v_name &&
+            arg->pn_right && arg->pn_right->pn_value &&
+            arg->pn_right->pn_value->v_length >= 1 &&
+            arg->pn_right->pn_value->v_realdata) {
+            int e224_idx = (int) floor(arg->pn_right->pn_value->v_realdata[0] + 0.5);
+            e224_node = tprintf("%s[%d]", arg->pn_left->pn_value->v_name, e224_idx);
+        }
+        if (!e224_node && !arg->pn_value /* || (arg->pn_value->v_length != 1) XXX */) {
             fprintf(cp_err, "Error: bad v() syntax\n");
             return (NULL);
         }
         /* try not using the current plot, but the plot set in the arg... vector */
-        if(arg->pn_value->v_plot && arg->pn_value->v_plot->pl_typename)
+        if (e224_node)
+            t = vec_fromplot(e224_node, plot_cur);
+        else if(arg->pn_value->v_plot && arg->pn_value->v_plot->pl_typename)
             t = vec_fromplot(arg->pn_value->v_name, get_plot(arg->pn_value->v_plot->pl_typename));
         else
             t = vec_fromplot(arg->pn_value->v_name, plot_cur);
         if (!t) {
-            fprintf(cp_err, "Error: no such vector %s\n", arg->pn_value->v_name);
+            fprintf(cp_err, "Error: no such vector %s\n",
+                    e224_node ? e224_node : arg->pn_value->v_name);
+            if (e224_node)
+                tfree(e224_node);
             return (NULL);
         }
+        if (e224_node)
+            tfree(e224_node);
         t = vec_copy(t);
         vec_new(t);
         return (t);
