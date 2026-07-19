@@ -347,7 +347,9 @@ struct comm spcp_coms[] = {
     { "tf", com_tf, TRUE, TRUE,
       { 0, 0, 0, 0 }, E_DEFHMASK, 0, LOTS,
       NULL,
-      "[.tran line args] : Do a transient analysis." } ,
+      "<output> <input-source> : Do a small-signal DC transfer function analysis "
+      "(gain, plus input and output impedance); <output> is v(node), "
+      "v(node1,node2), or i(vsource)." } ,
     { "tran", com_tran, TRUE, TRUE,
       { 0, 0, 0, 0 }, E_DEFHMASK, 0, LOTS,
       NULL,
