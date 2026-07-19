@@ -284,6 +284,147 @@ print all
     save(fig, "pz.png")
 
 
+# ---------- 9. sens: DC sensitivity of an output to each element ---------------
+def fig_sens():
+    out = run("""* DC sensitivity of v(out) to every element
+V1 in 0 dc 5
+R1 in out 2k
+R2 out mid 3k
+R3 mid 0 1k
+.sens v(out)
+.control
+run
+print v1 r1 r2 r3
+.endc
+.end
+""")
+    def g(name):
+        m = re.search(name + r"\s*=\s*([-\d.eE+]+)", out)
+        return float(m.group(1)) if m else 0.0
+    # normalized sensitivity = (nominal value) x (d v(out)/d param) = volts of
+    # v(out) per 100% change in the parameter -> comparable across R's and V.
+    items = [("V1 (5 V)", 5.0 * g("v1")),
+             ("R1 (2 kΩ)", 2e3 * g("r1")),
+             ("R2 (3 kΩ)", 3e3 * g("r2")),
+             ("R3 (1 kΩ)", 1e3 * g("r3"))]
+    labels = [a for a, _ in items]
+    vals = [b for _, b in items]
+    fig, ax = plt.subplots(figsize=(7, 3.2))
+    cols = [BLUE if v >= 0 else RED for v in vals]
+    ax.barh(labels[::-1], vals[::-1], color=cols[::-1])
+    ax.axvline(0, color=GRAY, lw=0.8)
+    for y, v in enumerate(vals[::-1]):
+        ax.text(v + (0.05 if v >= 0 else -0.05), y, f"{v:+.2f} V",
+                va="center", ha="left" if v >= 0 else "right", fontsize=10)
+    ax.set_xlabel("Δv(out) per 100 % change in the parameter  [V]")
+    ax.set_title("`.sens` — DC sensitivity of v(out) to each element")
+    ax.set_xlim(min(vals) - 1, max(vals) + 1)
+    save(fig, "sens.png")
+
+
+# ---------- 10. disto: HD2/HD3 of a CE amplifier vs frequency -------------------
+def fig_disto():
+    run("""* small-signal distortion of a common-emitter BJT amp
+Vcc cc 0 dc 5
+Vin in 0 dc 0.75 ac 1 distof1 1
+Rb cc b 220k
+Rc cc c 2.2k
+Cin in b 1u
+Cout c 0 20p
+Q1 c b 0 QMOD
+.model QMOD NPN(is=1e-15 bf=150 vaf=80 cjc=3p tf=0.3n)
+.disto dec 20 10 1g
+.control
+run
+setplot disto1
+wrdata hd2.dat vdb(c)
+setplot disto2
+wrdata hd3.dat vdb(c)
+.endc
+.end
+""")
+    f2, (hd2,) = col("hd2.dat", 2)
+    f3, (hd3,) = col("hd3.dat", 2)
+    fig, ax = plt.subplots(figsize=(7, 3.4))
+    ax.semilogx(f2, hd2, color=BLUE, label="HD2 (2nd harmonic)")
+    ax.semilogx(f3, hd3, color=RED, label="HD3 (3rd harmonic)")
+    ax.set_xlabel("frequency  [Hz]")
+    ax.set_ylabel("distortion transfer  [dB]")
+    ax.set_title("`.disto` — 2nd/3rd-harmonic distortion transfer vs frequency")
+    ax.legend(frameon=False)
+    save(fig, "disto.png")
+
+
+# ----- a shared LO-pumped behavioral mixer for the periodic small-signal set ----
+_MIXER = """V1 lo 0 SIN(0 1 1meg)
+VDC a 0 DC 1 AC 1
+R1 a b 10k
+B1 b 0 I=(1m + 0.8m*v(lo))*v(b)
+C1 b 0 100p
+"""
+
+
+# ---------- 11. pss: periodic steady-state spectrum at the mixer output --------
+def fig_pss():
+    run("* pss operating point of a pumped mixer\n" + _MIXER +
+        """.pss 1meg 1u b 1024 8 50 5u
+.control
+run
+setplot pss2
+wrdata pss.dat mag(b)
+.endc
+.end
+""")
+    f, (m,) = col("pss.dat", 2)
+    fig, ax = plt.subplots(figsize=(7, 3.4))
+    ax.stem(f / 1e6, m, basefmt=" ", linefmt=BLUE, markerfmt="o")
+    ax.set_xlabel("frequency  [MHz]"); ax.set_ylabel("|V(b)|  [V]")
+    ax.set_title("`.pss` — periodic steady-state harmonic content at the mixer output")
+    save(fig, "pss.png")
+
+
+# ---------- 12. pac: conversion to the up/low sidebands vs input frequency ------
+def fig_pac():
+    run("* pac conversion of a pumped mixer\n" + _MIXER +
+        """.pac 1meg 1u b 1024 6 50 5u lin 60 5k 900k 1
+.control
+run
+wrdata pac.dat db(b_usb1) db(b_lsb1)
+.endc
+.end
+""")
+    f, (usb, lsb) = wr("pac.dat", 2)
+    fig, ax = plt.subplots(figsize=(7, 3.4))
+    ax.semilogx(f / 1e3, usb, color=BLUE, label="upper sideband  f₀+f")
+    ax.semilogx(f / 1e3, lsb, color=RED, label="lower sideband  f₀−f")
+    ax.set_xlabel("input offset frequency f  [kHz]")
+    ax.set_ylabel("conversion  [dB]")
+    ax.set_title("`.pac` — conversion to the sidebands around f₀ = 1 MHz")
+    ax.legend(frameon=False)
+    save(fig, "pac.png")
+
+
+# ---------- 13. pnoise: periodic output-noise spectrum vs offset ---------------
+def fig_pnoise():
+    run("* pnoise of a pumped mixer\n" + _MIXER +
+        """.pnoise 1meg 1u b 1024 6 50 5u b vdc dec 25 1k 400k
+.control
+set sqrnoise
+run
+setplot noise2
+wrdata pnoise.dat onoise_spectrum
+.endc
+.end
+""")
+    f, (n,) = col("pnoise.dat", 2)
+    fig, ax = plt.subplots(figsize=(7, 3.4))
+    ax.loglog(f / 1e3, n, color=ORANGE)
+    ax.set_xlabel("offset frequency from carrier  [kHz]")
+    ax.set_ylabel("output noise  [V/√Hz]")
+    ax.set_title("`.pnoise` — periodic output-noise density around f₀ = 1 MHz")
+    save(fig, "pnoise.png")
+
+
 if __name__ == "__main__":
     fig_tran()
     fig_ac()
@@ -293,4 +434,9 @@ if __name__ == "__main__":
     fig_fft()
     fig_sp()
     fig_pz()
+    fig_sens()
+    fig_disto()
+    fig_pss()
+    fig_pac()
+    fig_pnoise()
     print("all figures written to", OUT)

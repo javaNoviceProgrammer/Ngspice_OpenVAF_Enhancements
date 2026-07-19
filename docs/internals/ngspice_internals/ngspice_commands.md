@@ -222,16 +222,72 @@ print all
 The complex-conjugate pole pair sits at `−30 ± 95 krad/s` — a resonance near
 `ω₀ = 1/√(LC) = 100 krad/s` with the loss set by `R`.
 
-### `sens`, `disto`, `fourier`
+### `sens` — sensitivity
 
-| Command | Purpose | Example |
-|---|---|---|
-| `sens` | DC/AC sensitivity of an output to every parameter | `sens v(out)` then `.ac`-style args for AC sensitivity |
-| `disto` | small-signal harmonic/intermod distortion sweep | `disto dec 10 1k 1meg` (needs `distof1`/`distof2` on sources) |
-| `fourier` | Fourier coefficients of a transient result | `fourier 10k v(out)` after a `.tran` |
+`sens <output>` computes the DC sensitivity of an output to **every** circuit
+parameter; append `ac <lin|dec|oct> <N> <fstart> <fstop>` for the small-signal AC
+sensitivity vs frequency. The result lands in a `sens1` plot, one vector per
+device (its value sensitivity) and per model parameter (`<dev>:<param>`).
+
+```
+* DC sensitivity of v(out) to every element
+V1 in 0 dc 5
+R1 in out 2k
+R2 out mid 3k
+R3 mid 0 1k
+.sens v(out)
+.control
+run
+print v1 r1 r2 r3      ; each is ∂v(out)/∂param
+.endc
+.end
+```
+
+Scaling each raw sensitivity by the parameter's nominal value gives a comparable
+"Δv(out) per 100 % change" — the clearest way to rank which element matters most:
+
+![DC sensitivity of v(out) to each element](ngspice_commands_figs/sens.png)
+
+The output tracks the 5 V supply most strongly, and increasing the series R₁
+*lowers* it (negative sensitivity), as expected for a divider.
+
+### `disto` — small-signal distortion
+
+`disto <lin|dec|oct> <N> <fstart> <fstop> [f2overf1]` sweeps a small-signal
+harmonic (and, with a second tone, intermodulation) distortion analysis. Mark the
+driving source with `distof1` (and `distof2` for two-tone). The 2nd- and
+3rd-harmonic products land in the `disto1` / `disto2` plots.
+
+```
+* small-signal distortion of a common-emitter BJT amp
+Vcc cc 0 dc 5
+Vin in 0 dc 0.75 ac 1 distof1 1
+Rb cc b 220k
+Rc cc c 2.2k
+Cin in b 1u
+Cout c 0 20p
+Q1 c b 0 QMOD
+.model QMOD NPN(is=1e-15 bf=150 vaf=80 cjc=3p tf=0.3n)
+.disto dec 20 10 1g
+.control
+run
+setplot disto1
+plot vdb(c)            ; HD2 vs frequency  (disto2 holds HD3)
+.endc
+.end
+```
+
+![HD2 and HD3 distortion transfer vs frequency](ngspice_commands_figs/disto.png)
+
+The distortion (here in dB relative to the unit `distof1` drive) is flat across
+the amplifier's passband and rolls off with the input coupling capacitor at low
+frequency and the transistor's bandwidth at high frequency.
+
+### `fourier`
 
 `fourier <fund_freq> <vec>` prints the DC term, the first harmonics, and the THD
-of a time-domain waveform (run a `.tran` first).
+of a **time-domain** waveform — run a `.tran` first, then `fourier 10k v(out)`.
+(The `spec`/`fft` commands in §4 give the full spectrum as a plot.)
 
 ---
 
@@ -272,10 +328,68 @@ plot vdb(S_2_1)
 | `envelope` | envelope following: `envelope <node> <fc> <tstop>` |
 | `stb` | loop-gain stability (Middlebrook/Tian double injection); reports phase/gain margin |
 
-The periodic small-signal dot-cards `.pac`, `.pnoise`, `.pxf`, `.psp` (conversion
-gain, phase/periodic noise, periodic transfer function, periodic S-parameters)
-run after a `.pss`. See the [RF suite reference](ngspice_rf_suite.md) for worked
-examples and plots of these.
+### Periodic small-signal — `.pss`, `.pac`, `.pnoise`, `.pxf`, `.psp`
+
+These analyses characterise a circuit **around a large-signal periodic operating
+point** (a mixer under its LO, a switched-capacitor under its clock, an
+oscillator). `.pss` finds that periodic steady state; the rest are small-signal
+analyses *on top of it*. All share the same leading arguments
+`<fund> <tstab> <outnode> <points> <harmonics> …`.
+
+A self-contained example — a behavioural (`B`-source) conductance pumped by a
+1 MHz "LO", which acts as a mixer:
+
+```
+* LO-pumped behavioural mixer
+V1 lo 0 SIN(0 1 1meg)
+VDC a 0 DC 1 AC 1
+R1 a b 10k
+B1 b 0 I=(1m + 0.8m*v(lo))*v(b)     ; conductance modulated by the LO
+C1 b 0 100p
+.pss 1meg 1u b 1024 8 50 5u          ; find the periodic steady state
+.control
+run
+setplot pss2                         ; frequency-domain result
+plot mag(b)
+.endc
+.end
+```
+
+`.pss` returns the periodic operating point — its harmonic content shows the LO
+and the harmonics the nonlinearity generates:
+
+![Periodic steady-state harmonic content](ngspice_commands_figs/pss.png)
+
+With that operating point, `.pac` computes the small-signal **conversion** to each
+mixing sideband (`f₀ ± f`) versus the input frequency — swap the `.pss` line for:
+
+```
+.pac 1meg 1u b 1024 6 50 5u lin 60 5k 900k 1
+```
+```
+plot db(b_usb1) db(b_lsb1)     ; upper / lower sideband conversion
+```
+
+![PAC sideband conversion](ngspice_commands_figs/pac.png)
+
+`.pnoise` gives the **periodic / phase-noise** density folded from every
+sideband, versus offset from the carrier:
+
+```
+.pnoise 1meg 1u b 1024 6 50 5u b vdc dec 25 1k 400k
+```
+```
+set sqrnoise
+plot onoise_spectrum           ; V/√Hz vs offset frequency
+```
+
+![Periodic output-noise density](ngspice_commands_figs/pnoise.png)
+
+`.pxf` (periodic transfer function — sensitivity of an output to a small
+perturbation at each sideband) and `.psp` (periodic S-parameters) take the same
+`.pss` preamble; see the [RF suite reference](ngspice_rf_suite.md) for those plus
+the two-tone `qpss`/`qpac`/`qpnoise`/`qpxf` family and the oscillator
+`hbosc`/`phasenoise` flow.
 
 ---
 
