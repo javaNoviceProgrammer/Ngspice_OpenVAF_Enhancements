@@ -33,7 +33,6 @@
 /* ---- small complex helpers on ngcomplex_t ---- */
 static ngcomplex_t stbcx(double re, double im) { ngcomplex_t r; r.cx_real = re; r.cx_imag = im; return r; }
 static ngcomplex_t stbadd(ngcomplex_t a, ngcomplex_t b) { return stbcx(a.cx_real + b.cx_real, a.cx_imag + b.cx_imag); }
-static ngcomplex_t stbsub(ngcomplex_t a, ngcomplex_t b) { return stbcx(a.cx_real - b.cx_real, a.cx_imag - b.cx_imag); }
 static ngcomplex_t stbmul(ngcomplex_t a, ngcomplex_t b)
 { return stbcx(a.cx_real * b.cx_real - a.cx_imag * b.cx_imag, a.cx_real * b.cx_imag + a.cx_imag * b.cx_real); }
 static ngcomplex_t stbdiv(ngcomplex_t a, ngcomplex_t b)
@@ -118,9 +117,16 @@ void com_stb(wordlist *wl)
     sw = wl->wl_next->wl_next;
     sweep = wl_flatten(sw);                 /* the AC sweep spec, verbatim */
 
-    /* locate the voltage probe and its two terminal nodes (1 = +, 2 = -) */
+    /* locate the voltage probe and its two terminal nodes (1 = +, 2 = -).
+     * Do NOT use INPretrieve here: it replaces vlookup with the INTERNED symbol
+     * table string (the same memory the source's own name field points at) and
+     * does not free the old copy, so the tfree(vlookup) below would double-free
+     * the source's live name (a latent use-after-free -- it never bit because
+     * stb runs once with no re-setup, but it corrupts the symbol table).  ngspice
+     * stores instance names lowercased, so lowercasing a private copy resolves
+     * the probe (now also case-insensitively) without touching interned memory. */
     vlookup = copy(vname);
-    INPretrieve(&vlookup, ft_curckt->ci_symtab);
+    { char *p; for (p = vlookup; *p; p++) *p = (char) tolower((unsigned char) *p); }
     inst = ft_sim->findInstance(ckt, vlookup);
     if (!inst) {
         fprintf(cp_err, "stb: no such probe source '%s'.\n", vname);
