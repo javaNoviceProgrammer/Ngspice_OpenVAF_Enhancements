@@ -480,7 +480,8 @@ run
 plot v(out) vs time
 plot vdb(out) xlog             ; log-x Bode
 pyplot acmag vdb(out)          ; matplotlib PNG/‑window
-wrdata out.dat v(out) v(in)    ; columnar data file
+wrdata out.dat v(out) v(in)    ; columnar (whitespace) data file
+wrdata -csv out.csv v(out) v(in) ; comma-separated, with a header row
 write out.raw v(out)           ; binary rawfile (reload with `load`)
 .endc
 ```
@@ -492,7 +493,7 @@ write out.raw v(out)           ; binary rawfile (reload with `load`)
 | `gnuplot` | render/export via gnuplot |
 | `hardcopy` | write a PostScript/SVG hardcopy of a plot |
 | `asciiplot` | plot as ASCII art in the terminal |
-| `wrdata` | write columnar (whitespace) data — each vector prefixed by its scale |
+| `wrdata` | write columnar (whitespace) data — each vector prefixed by its scale; **`-csv`** (or `set wr_csv`) writes a comma-separated file with a header row and one shared scale column |
 | `write` | write a binary **rawfile** (`load` reads it back) |
 | `load` | load a rawfile into a new plot |
 | `wrsnp` / `rdsnp` / `wrs2p` | Touchstone `.sNp` write / read / 2-port write |

@@ -687,7 +687,7 @@ void ft_writesimple(double *xlims, double *ylims,
     FILE *file_data;
     struct dvec *v;
     int i, numVecs, maxlen, preci;
-    bool appendwrite, singlescale, vecnames, onespace;
+    bool appendwrite, singlescale, vecnames, onespace, csv;
 
     NG_IGNORE(xlims);
     NG_IGNORE(ylims);
@@ -701,6 +701,13 @@ void ft_writesimple(double *xlims, double *ylims,
     singlescale = cp_getvar("wr_singlescale", CP_BOOL, NULL, 0);
     vecnames = cp_getvar("wr_vecnames", CP_BOOL, NULL, 0);
     onespace = cp_getvar("wr_onespace", CP_BOOL, NULL, 0);
+    csv = cp_getvar("wr_csv", CP_BOOL, NULL, 0);
+    /* CSV output implies a single shared scale column and a header row of
+       vector names, so the file is a clean comma-separated table. */
+    if (csv) {
+        singlescale = TRUE;
+        vecnames = TRUE;
+    }
 
     /* Sanity checking. */
     for (v = vecs, numVecs = 0; v; v = v->v_link2)
@@ -741,6 +748,47 @@ void ft_writesimple(double *xlims, double *ylims,
         preci = cp_numdgt;
     else
         preci = 8;
+
+    /* CSV path: comma-separated columns, a single shared scale column, and a
+       header row.  Kept entirely separate from the space-formatted writer
+       below so that default wrdata output is byte-for-byte unchanged. */
+    if (csv) {
+        struct dvec *scale = vecs->v_scale;
+
+        /* header: scale name once, then each vector (complex -> two columns) */
+        fprintf(file_data, "%s", scale->v_name);
+        for (v = vecs; v; v = v->v_link2) {
+            if (isreal(v))
+                fprintf(file_data, ",%s", v->v_name);
+            else
+                fprintf(file_data, ",%s,%s", v->v_name, v->v_name);
+        }
+        fprintf(file_data, "\n");
+
+        /* data rows */
+        for (i = 0; i < maxlen; i++) {
+            if (i < scale->v_length) {
+                double xval = isreal(scale)
+                    ? scale->v_realdata[i]
+                    : realpart(scale->v_compdata[i]);
+                fprintf(file_data, "%.*e", preci, xval);
+            }
+            for (v = vecs; v; v = v->v_link2) {
+                if (i >= v->v_length)
+                    fprintf(file_data, isreal(v) ? "," : ",,");
+                else if (isreal(v))
+                    fprintf(file_data, ",%.*e", preci, v->v_realdata[i]);
+                else
+                    fprintf(file_data, ",%.*e,%.*e", preci,
+                            realpart(v->v_compdata[i]),
+                            preci, imagpart(v->v_compdata[i]));
+            }
+            fprintf(file_data, "\n");
+        }
+
+        (void) fclose(file_data);
+        return;
+    }
 
     /* Print names of vectors to first line */
     if (vecnames) {

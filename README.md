@@ -45,7 +45,7 @@ Two hundred and thirty enhancements so far — language features, correctness fi
 The index: **Doc** links each enhancement's detailed write-up, **Examples** links the folder whose verify script pins the behavior.
 
 <details>
-<summary><b>📖 Show the full enhancement table</b> — 230 rows, click to expand</summary>
+<summary><b>📖 Show the full enhancement table</b> — 231 rows, click to expand</summary>
 
 | # | What it delivered | Tool | Doc | Examples |
 |---|---|---|---|---|
@@ -279,6 +279,7 @@ The index: **Doc** links each enhancement's detailed write-up, **Examples** link
 | 228 | OSDI `.osdi` loader crash hardening (fuzz: reject implausible descriptor counts) | ngspice | [doc](enhancements_doc/Enhancement-228.md) | [osdifuzz](examples/osdifuzz_examples/) |
 | 229 | `pre_osdi -f` reloads a recompiled `.osdi` model in-session (no restart) | ngspice | [doc](enhancements_doc/Enhancement-229.md) | [osdireload](examples/osdireload_examples/) |
 | 230 | openvaf-r crash hardening round 3 (fuzz: 3 panics → clean errors) | openvaf&#8209;r | [doc](enhancements_doc/Enhancement-230.md) | [vafcrash3](examples/vafcrash3_examples/) |
+| 231 | wrdata CSV output: set wr_csv + wrdata -csv flag (any position) | ngspice | [doc](enhancements_doc/Enhancement-231.md) | [csv](examples/csv_examples/) |
 
 </details>
 
