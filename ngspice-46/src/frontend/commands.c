@@ -469,6 +469,10 @@ struct comm spcp_coms[] = {
       { 040, 040, 040, 040 }, E_DEFHMASK, 1, LOTS,
       NULL,
       "<Vprobe> <Iprobe> (dec|oct|lin <N> <fstart> <fstop>) : stability / loop-gain analysis (Middlebrook/Tian double injection). Vprobe = series 0 V probe in the loop (+node = driver A, -node = load B); Iprobe = shunt 0 A probe (ground -> load node B). Reports phase/gain margin and stores complex 'loopgain'." },
+    { "loadpull", com_loadpull, TRUE, FALSE,     /* Enhancement-234 */
+      { 040, 040, 040, 040 }, E_DEFHMASK, 1, LOTS,
+      NULL,
+      "-load <R> <L> <C> -out <node> -drive <Vsrc> -f <freq> [-supply <Vsrc>] [-z0 50] [-n 15] [-gmax 0.85] [-nper 20] [-source] : load-pull (or source-pull) analysis for PAs. Sweeps the load impedance Gamma over the Smith chart, runs a large-signal .tran at each point, and stores gamma_re,gamma_im,pout_dbm,gain_db[,pae,eff] in a 'loadpull' plot (contour with `pyplot -contour`)." },
     { "qpss", com_qpss, TRUE, FALSE,             /* Enhancement-133 / -136 */
       { 040, 040, 040, 040 }, E_DEFHMASK, 3, LOTS,
       NULL,

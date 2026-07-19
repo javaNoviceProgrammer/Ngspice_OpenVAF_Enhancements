@@ -327,6 +327,7 @@ plot vdb(S_2_1)
 | `qpac` / `qpxf` / `qpnoise` | two-tone periodic AC / transfer / noise around a `qpss…hb` point |
 | `envelope` | envelope following: `envelope <node> <fc> <tstop>` |
 | `stb` | loop-gain stability (Middlebrook/Tian double injection); reports phase/gain margin |
+| `loadpull` | PA **load-pull** (and source-pull, `-source`): sweep the load impedance Γ over the Smith chart, per-point large-signal `.tran`, contour **Pout / gain / PAE / efficiency**; view with `pyplot -contour gamma_re gamma_im pout_dbm` |
 
 ### Periodic small-signal — `.pss`, `.pac`, `.pnoise`, `.pxf`, `.psp`
 

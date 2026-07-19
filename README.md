@@ -45,7 +45,7 @@ Two hundred and thirty enhancements so far — language features, correctness fi
 The index: **Doc** links each enhancement's detailed write-up, **Examples** links the folder whose verify script pins the behavior.
 
 <details>
-<summary><b>📖 Show the full enhancement table</b> — 233 rows, click to expand</summary>
+<summary><b>📖 Show the full enhancement table</b> — 234 rows, click to expand</summary>
 
 | # | What it delivered | Tool | Doc | Examples |
 |---|---|---|---|---|
@@ -282,6 +282,7 @@ The index: **Doc** links each enhancement's detailed write-up, **Examples** link
 | 231 | wrdata CSV output: set wr_csv + wrdata -csv flag (any position) | ngspice | [doc](enhancements_doc/Enhancement-231.md) | [csv](examples/csv_examples/) |
 | 232 | KLU solver-glue correctness hardening (klusmp.c audit: null-checks, real/complex collapse-map, bounds guard) | ngspice | [doc](enhancements_doc/Enhancement-232.md) | [solverfix](examples/solverfix_examples/) |
 | 233 | KLU glue deeper audit: finish null-check reorder (2 more sites) + multi-gap collapse-map fix; leak refuted | ngspice | [doc](enhancements_doc/Enhancement-233.md) | [solverfix](examples/solverfix_examples/) |
+| 234 | loadpull: PA load-/source-pull, Pout/gain/PAE/efficiency contours on the Smith chart (tran+FFT, pyplot -contour) | ngspice | [doc](enhancements_doc/Enhancement-234.md) | [loadpull](examples/loadpull_examples/) |
 
 </details>
 
