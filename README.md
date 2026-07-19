@@ -45,7 +45,7 @@ Two hundred and thirty enhancements so far — language features, correctness fi
 The index: **Doc** links each enhancement's detailed write-up, **Examples** links the folder whose verify script pins the behavior.
 
 <details>
-<summary><b>📖 Show the full enhancement table</b> — 236 rows, click to expand</summary>
+<summary><b>📖 Show the full enhancement table</b> — 237 rows, click to expand</summary>
 
 | # | What it delivered | Tool | Doc | Examples |
 |---|---|---|---|---|
@@ -285,6 +285,7 @@ The index: **Doc** links each enhancement's detailed write-up, **Examples** link
 | 234 | loadpull: PA load-/source-pull, Pout/gain/PAE/efficiency contours on the Smith chart (tran+FFT, pyplot -contour) | ngspice | [doc](enhancements_doc/Enhancement-234.md) | [loadpull](examples/loadpull_examples/) |
 | 235 | stb: fix a probe-lookup use-after-free (INPretrieve double-free); probe name now case-insensitive | ngspice | [doc](enhancements_doc/Enhancement-235.md) | [stbfix](examples/stbfix_examples/) |
 | 236 | .meas: fix a stack-buffer overflow on long measurement names (sprintf into out_line[1000] → bounded snprintf) | ngspice | [doc](enhancements_doc/Enhancement-236.md) | [measovf](examples/measovf_examples/) |
+| 237 | .print/.plot/.four: fix stack-buffer overflows on long vector/node names (fixem, gettoks, vec_basename right-sized) | ngspice | [doc](enhancements_doc/Enhancement-237.md) | [nameovf](examples/nameovf_examples/) |
 
 </details>
 

@@ -839,7 +839,7 @@ struct dvec *vec_copy(struct dvec *v) {
 
     /* Make a copy with the VF_PERMANENT bit cleared in v_flags */
     nv = dvec_alloc(copy(v->v_name),
-                    v->v_type,
+                    (int) v->v_type,
                     v->v_flags & ~VF_PERMANENT,
                     v->v_length, NULL);
 
@@ -1122,15 +1122,19 @@ vec_eq(struct dvec *v1, struct dvec *v2)
 char *
 vec_basename(struct dvec *v)
 {
-    char buf[BSIZE_SP], *t, *s;
+    /* E-237: right-size the scratch copy instead of a fixed BSIZE_SP[512]
+     * buffer -- vector names (e.g. a long differential "v(a)-v(b)") can exceed
+     * it, and the old strcpy() overran the stack.  copy() computes the length
+     * and allocates to fit, preserving the original branch semantics. */
+    char *buf, *t, *s, *result;
 
     if (strchr(v->v_name, '.')) {
         if (cieq(v->v_plot->pl_typename, v->v_name))
-            (void) strcpy(buf, v->v_name + strlen(v->v_name) + 1);
+            buf = copy(v->v_name + strlen(v->v_name) + 1);
         else
-            (void) strcpy(buf, v->v_name);
+            buf = copy(v->v_name);
     } else {
-        (void) strcpy(buf, v->v_name);
+        buf = copy(v->v_name);
     }
 
     strtolower(buf);
@@ -1139,7 +1143,9 @@ vec_basename(struct dvec *v)
         ;
     while ((t > s) && isspace_c(t[-1]))
         *--t = '\0';
-    return (copy(s));
+    result = copy(s);
+    tfree(buf);
+    return result;
 }
 
 /* get address of plot named 'name' */
@@ -1356,7 +1362,7 @@ vec_mkfamily(struct dvec *v) {
         indexstring(count, v->v_numdims - 1, buf2);
 
         d = dvec_alloc(tprintf("%s%s", v->v_name, buf2),
-                       v->v_type,
+                       (int) v->v_type,
                        v->v_flags,
                        size, NULL);
 
@@ -1426,7 +1432,7 @@ copycut(struct dvec* v, struct dvec* newscalevec, int istart, int istop)
 
     /* Make a copy with the VF_PERMANENT bit cleared in v_flags */
     nv = dvec_alloc(copy(v->v_name),
-        v->v_type,
+        (int) v->v_type,
         v->v_flags,// & ~VF_PERMANENT,
         len, NULL);
 

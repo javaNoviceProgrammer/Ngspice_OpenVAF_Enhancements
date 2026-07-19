@@ -490,8 +490,16 @@ static void fixdotprint(wordlist *wl)
 
 static char *fixem(char *string)
 {
-    char buf[BSIZE_SP], *s, *t;
+    char *buf, *s, *t;
     char *ss = string; /* save addr of string in case it is freed */
+    /* E-237: size the scratch buffer to the input rather than a fixed
+     * BSIZE_SP[512] -- the rewrites below wrap the (possibly long) user node
+     * names of a differential form like v(a,b), and a long enough a/b pair
+     * overran the old fixed buffer.  The output is the input plus a small,
+     * bounded wrapper ("real(v()-v())" etc. < 20 chars), so strlen + 32 is
+     * always ample; every write below is a bounded snprintf regardless. */
+    size_t bufsz = strlen(string) + 32;
+    buf = TMALLOC(char, bufsz);
 
     if (ciprefix("v(", string) &&strchr(string, ',')) {
         for (s = string; *s && (*s != ','); s++)
@@ -501,11 +509,11 @@ static char *fixem(char *string)
             ;
         *t   = '\0';
         if (eq(s, "0"))
-            (void) sprintf(buf, "v(%s)", string + 2);
+            (void) snprintf(buf, bufsz, "v(%s)", string + 2);
         else if (eq(string + 2, "0"))
-            (void) sprintf(buf, "-v(%s)", s);
+            (void) snprintf(buf, bufsz, "-v(%s)", s);
         else
-            (void) sprintf(buf, "v(%s)-v(%s)", string + 2, s);
+            (void) snprintf(buf, bufsz, "v(%s)-v(%s)", string + 2, s);
     } else if (ciprefix("vm(", string) &&strchr(string, ',')) {
         for (s = string; *s && (*s != ','); s++)
             ;
@@ -514,11 +522,11 @@ static char *fixem(char *string)
             ;
         *t   = '\0';
         if (eq(s, "0"))
-            (void) sprintf(buf, "mag(v(%s))", string + 3);
+            (void) snprintf(buf, bufsz, "mag(v(%s))", string + 3);
         else if (eq(string + 3, "0"))
-            (void) sprintf(buf, "mag(-v(%s))", s);
+            (void) snprintf(buf, bufsz, "mag(-v(%s))", s);
         else
-            (void) sprintf(buf, "mag(v(%s)-v(%s))", string + 3, s);
+            (void) snprintf(buf, bufsz, "mag(v(%s)-v(%s))", string + 3, s);
     } else if (ciprefix("vp(", string) &&strchr(string, ',')) {
         for (s = string; *s && (*s != ','); s++)
             ;
@@ -527,11 +535,11 @@ static char *fixem(char *string)
             ;
         *t   = '\0';
         if (eq(s, "0"))
-            (void) sprintf(buf, "ph(v(%s))", string + 3);
+            (void) snprintf(buf, bufsz, "ph(v(%s))", string + 3);
         else if (eq(string + 3, "0"))
-            (void) sprintf(buf, "ph(-v(%s))", s);
+            (void) snprintf(buf, bufsz, "ph(-v(%s))", s);
         else
-            (void) sprintf(buf, "ph(v(%s)-v(%s))", string + 3, s);
+            (void) snprintf(buf, bufsz, "ph(v(%s)-v(%s))", string + 3, s);
     } else if (ciprefix("vi(", string) &&strchr(string, ',')) {
         for (s = string; *s && (*s != ','); s++)
             ;
@@ -540,11 +548,11 @@ static char *fixem(char *string)
             ;
         *t   = '\0';
         if (eq(s, "0"))
-            (void) sprintf(buf, "imag(v(%s))", string + 3);
+            (void) snprintf(buf, bufsz, "imag(v(%s))", string + 3);
         else if (eq(string + 3, "0"))
-            (void) sprintf(buf, "imag(-v(%s))", s);
+            (void) snprintf(buf, bufsz, "imag(-v(%s))", s);
         else
-            (void) sprintf(buf, "imag(v(%s)-v(%s))", string + 3, s);
+            (void) snprintf(buf, bufsz, "imag(v(%s)-v(%s))", string + 3, s);
     } else if (ciprefix("vr(", string) &&strchr(string, ',')) {
         for (s = string; *s && (*s != ','); s++)
             ;
@@ -553,11 +561,11 @@ static char *fixem(char *string)
             ;
         *t   = '\0';
         if (eq(s, "0"))
-            (void) sprintf(buf, "real(v(%s))", string + 3);
+            (void) snprintf(buf, bufsz, "real(v(%s))", string + 3);
         else if (eq(string + 3, "0"))
-            (void) sprintf(buf, "real(-v(%s))", s);
+            (void) snprintf(buf, bufsz, "real(-v(%s))", s);
         else
-            (void) sprintf(buf, "real(v(%s)-v(%s))", string + 3, s);
+            (void) snprintf(buf, bufsz, "real(v(%s)-v(%s))", string + 3, s);
     } else if (ciprefix("vdb(", string) &&strchr(string, ',')) {
         for (s = string; *s && (*s != ','); s++)
             ;
@@ -566,25 +574,25 @@ static char *fixem(char *string)
             ;
         *t   = '\0';
         if (eq(s, "0"))
-            (void) sprintf(buf, "db(v(%s))", string + 4);
+            (void) snprintf(buf, bufsz, "db(v(%s))", string + 4);
         else if (eq(string + 4, "0"))
-            (void) sprintf(buf, "db(-v(%s))", s);
+            (void) snprintf(buf, bufsz, "db(-v(%s))", s);
         else
-            (void) sprintf(buf, "db(v(%s)-v(%s))", string + 4, s);
+            (void) snprintf(buf, bufsz, "db(v(%s)-v(%s))", string + 4, s);
     } else if (ciprefix("i(", string)) {
         for (s = string; *s && (*s != ')'); s++)
             ;
         *s = '\0';
         string += 2;
-        (void) sprintf(buf, "%s#branch", string);
+        (void) snprintf(buf, bufsz, "%s#branch", string);
     } else {
+        tfree(buf);        /* no rewrite applies: hand back the original */
         return string;
     }
 
     txfree(ss);
-    string = copy(buf);
-
-    return string;
+    /* buf is already heap-allocated and right-sized -- return it directly */
+    return buf;
 } /* end of function fixem */
 
 
@@ -644,9 +652,9 @@ gettoks(char *s)
         if ((*(l - 1) == 'i' ||
              ((*(l - 1) == 'I') && (l - 1 == t))) ||
             ((l > t + 1) && isspace(*(l-2)))) {
-            char buf[513];
-            sprintf(buf, "%s#branch", l + 1);
-            wl->wl_word = copy(buf);
+            /* E-237: a long branch name overran the fixed buf[513]; build
+             * the "<name>#branch" string in a right-sized allocation. */
+            wl->wl_word = tprintf("%s#branch", l + 1);
             c = r = NULL;
         }
         else {
