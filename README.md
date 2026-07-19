@@ -28,7 +28,7 @@ https://ngspice.sourceforge.io/
 
 ## The Enhancements
 
-Two hundred and twenty-eight enhancements so far — language features, correctness fixes, systematic audits, and simulator-side workflow tooling, each verified end-to-end by a committed example suite and released with a detailed write-up.
+Two hundred and twenty-nine enhancements so far — language features, correctness fixes, systematic audits, and simulator-side workflow tooling, each verified end-to-end by a committed example suite and released with a detailed write-up.
 
 **🗂️ Browse them all in the [live feature catalog](https://javanoviceprogrammer.github.io/Ngspice_OpenVAF_Enhancements/)** — every enhancement grouped into 19 feature areas across the compiler and the simulator, searchable, with each entry linking to its write-up.
 
@@ -45,7 +45,7 @@ Two hundred and twenty-eight enhancements so far — language features, correctn
 The index: **Doc** links each enhancement's detailed write-up, **Examples** links the folder whose verify script pins the behavior.
 
 <details>
-<summary><b>📖 Show the full enhancement table</b> — 228 rows, click to expand</summary>
+<summary><b>📖 Show the full enhancement table</b> — 229 rows, click to expand</summary>
 
 | # | What it delivered | Tool | Doc | Examples |
 |---|---|---|---|---|
@@ -277,6 +277,7 @@ The index: **Doc** links each enhancement's detailed write-up, **Examples** link
 | 226 | rawfile `load` crash hardening (fuzz: missing `Flags:` line → NULL deref) | ngspice | [doc](enhancements_doc/Enhancement-226.md) | [rawfuzz](examples/rawfuzz_examples/) |
 | 227 | Touchstone `pre_snp` crash hardening (fuzz: huge `.sNp` port count → heap corruption) | ngspice | [doc](enhancements_doc/Enhancement-227.md) | [snpfuzz](examples/snpfuzz_examples/) |
 | 228 | OSDI `.osdi` loader crash hardening (fuzz: reject implausible descriptor counts) | ngspice | [doc](enhancements_doc/Enhancement-228.md) | [osdifuzz](examples/osdifuzz_examples/) |
+| 229 | `pre_osdi -f` reloads a recompiled `.osdi` model in-session (no restart) | ngspice | [doc](enhancements_doc/Enhancement-229.md) | [osdireload](examples/osdireload_examples/) |
 
 </details>
 

@@ -13,10 +13,10 @@ memory, plus the two resource fixes this enhancement ships.
       amount (well under 20 kB per reset);
   [3] plots accumulate one per analysis (the documented E-66 trap) and
       `destroy all` genuinely frees them -- the plot numbering restarts;
-  [4] the pre_osdi already-loaded note now carries the restart hint, and
+  [4] the pre_osdi already-loaded note points at the -f reload flag (E-229), and
       the stale-model behavior it warns about is pinned: overwriting a
-      loaded .osdi and re-loading the same path keeps the OLD model
-      (matching pre-E-76 shadowing; restart ngspice to reload);
+      loaded .osdi and re-loading the same path (without -f) keeps the OLD
+      model (matching pre-E-76 shadowing; use `pre_osdi -f` to reload, E-229);
   [5] `set no_mem_check` is accepted and simulation proceeds normally --
       it now also silences the ft_ckspace "approaching max data size"
       warning (the warning itself needs ~95% RAM pressure, untestable in
@@ -117,8 +117,9 @@ def main():
               "shell cp _lrv2.osdi _lr.osdi\n"
               "pre_osdi _lr.osdi\nremcirc\nsource _deck0.cir\nop\n"
               "print -i(vin)\n.endc\n.end\n", "reload")
-    check("note carries the restart hint",
-          "restart ngspice to load a recompiled file" in out)
+    check("skip note points at the -f reload flag (E-229)",
+          "already loaded" in out and "-f" in out
+          and "reload a recompiled file" in out)
     i = currents(out)
     check("stale-model behavior pinned (old default persists in-session)",
           len(i) >= 2 and abs(i[0] - 1e-3) < 1e-12 and i[0] == i[1])

@@ -28,17 +28,30 @@ if (wl && wl->wl_word)
 #endif
 
 #ifdef OSDI
+/* `pre_osdi [-f] file.osdi ...` -- load one or more OSDI object files.
+ * Enhancement-229: a leading `-f` (or `-force`) forces a reload of an already-
+ * loaded file, so an edit -> recompile -> re-source loop picks up the new model
+ * without restarting ngspice (a plain re-load is skipped, since the device type
+ * is already registered). */
 void com_osdi(wordlist *wl)
 {
     wordlist *ww;
+    bool force = FALSE;
+    /* a `-f`/`-force` anywhere in the argument list applies to every file */
     for (ww = wl; ww; ww = ww->wl_next)
-        if (load_osdi(ww->wl_word)) {
+        if (eq(ww->wl_word, "-f") || eq(ww->wl_word, "-force"))
+            force = TRUE;
+    for (ww = wl; ww; ww = ww->wl_next) {
+        if (eq(ww->wl_word, "-f") || eq(ww->wl_word, "-force"))
+            continue;
+        if (load_osdi(ww->wl_word, force)) {
             fprintf(cp_err, "Error: Library %s couldn't be loaded!\n", ww->wl_word);
             ft_spiniterror = TRUE;
             ft_osdierror = TRUE;
             if (ft_stricterror)
                 controlled_exit(EXIT_BAD);
          }
+    }
 }
 #endif
 

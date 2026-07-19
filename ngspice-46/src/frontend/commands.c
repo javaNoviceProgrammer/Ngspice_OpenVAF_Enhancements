@@ -315,7 +315,8 @@ struct comm spcp_coms[] = {
     { "osdi", com_osdi, FALSE, TRUE,
       { 040000, 040000, 040000, 040000 }, E_BEGINNING, 1, LOTS,
       NULL,
-      "library library ... : Loads a osdi library." } ,
+      "[-f] library library ... : Loads one or more OSDI libraries (use as `pre_osdi file.osdi`). "
+      "With -f, force-reloads an already-loaded file so a recompiled model is picked up without restarting." } ,
 #endif
     { "snp", com_pre_snp, FALSE, TRUE,          /* Enhancement-200 (use as `pre_snp`) */
       { 040000, 040000, 040000, 040000 }, E_BEGINNING, 1, LOTS,

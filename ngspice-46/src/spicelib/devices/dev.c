@@ -584,19 +584,20 @@ static void free_dlerr_msg(char *msg)
 /* A device-type name may only be registered once: a duplicate would be
  * unreachable at best (the model-card lookup scans the table and the first
  * entry wins, silently shadowing the new one) and, for a Verilog-A module
- * named like a built-in device, crashed model creation outright. */
-static bool osdi_device_name_taken(const char *name) {
+ * named like a built-in device, crashed model creation outright.
+ * Returns the table index of a device with this name, or -1 if none. */
+static int osdi_device_index(const char *name) {
   int k;
   for (k = 0; k < DEVNUM; k++) {
     if (DEVices[k] && DEVices[k]->DEVpublic.name &&
         strcasecmp(DEVices[k]->DEVpublic.name, name) == 0) {
-      return true;
+      return k;
     }
   }
-  return false;
+  return -1;
 }
 
-static int osdi_add_device(int n, OsdiRegistryEntry *devs) {
+static int osdi_add_device(int n, OsdiRegistryEntry *devs, bool replace) {
   int i;
   int added = 0;
   int dnum = DEVNUM + n;
@@ -606,10 +607,22 @@ static int osdi_add_device(int n, OsdiRegistryEntry *devs) {
 #endif
   for (i = 0; i < n; i++) {
     SPICEdev *dev = osdi_create_spicedev(&devs[i]);
-    if (osdi_device_name_taken(dev->DEVpublic.name)) {
-      printf("Warning(osdi): device \"%s\" is already registered; "
-             "keeping the existing device and ignoring this one\n",
-             dev->DEVpublic.name);
+    int k = osdi_device_index(dev->DEVpublic.name);
+    if (k >= 0) {
+      if (replace) {
+        /* Enhancement-229: force reload -- swap the registered device to the
+         * freshly loaded descriptor IN PLACE, so the table index stays stable
+         * and no other device type's index shifts. The previous SPICEdev (and
+         * the library mapping it points into) is intentionally left resident:
+         * a circuit still built against the old model keeps a valid device, and
+         * freeing descriptor-owned memory here would risk a double free. */
+        DEVices[k] = dev;
+      } else {
+        printf("Warning(osdi): device \"%s\" is already registered; "
+               "keeping the existing device and ignoring this one\n",
+               dev->DEVpublic.name);
+        /* dev discarded; left unfreed for the same reason as above */
+      }
       continue;
     }
     DEVices[DEVNUM + added] = dev;
@@ -628,27 +641,92 @@ static int osdi_add_device(int n, OsdiRegistryEntry *devs) {
 static char **osdi_loaded_paths = NULL;
 static int osdi_num_loaded = 0;
 
-int load_osdi(const char *path) {
+/* Enhancement-229: stage a byte-for-byte copy of an already-loaded .osdi under
+ * a fresh, unique path so dlopen re-reads the (recompiled) file instead of
+ * returning its cached handle for the original path (dlopen keys on the path,
+ * and on macOS overwriting a still-mapped file is not even permitted). The copy
+ * is removed after it is mapped -- the mapping keeps it alive on POSIX -- so
+ * nothing is left on disk. Returns a malloc'd path (caller frees) or NULL. */
+static char *osdi_stage_reload_copy(const char *path) {
+  static unsigned counter = 0;
+  const char *tmpdir = getenv("TMPDIR");
+  if (!tmpdir || !*tmpdir) tmpdir = getenv("TMP");
+  if (!tmpdir || !*tmpdir) tmpdir = getenv("TEMP");
+  if (!tmpdir || !*tmpdir) tmpdir = "/tmp";
+
+  char *dst = tprintf("%s/ngspice_osdi_reload_%ld_%u.osdi",
+                      tmpdir, (long) time(NULL), counter++);
+  FILE *in = fopen(path, "rb");
+  if (!in) { tfree(dst); return NULL; }
+  FILE *out = fopen(dst, "wb");
+  if (!out) { fclose(in); tfree(dst); return NULL; }
+
+  char buf[8192];
+  size_t nr;
+  bool ok = TRUE;
+  while ((nr = fread(buf, 1, sizeof buf, in)) > 0) {
+    if (fwrite(buf, 1, nr, out) != nr) { ok = FALSE; break; }
+  }
+  if (ferror(in)) ok = FALSE;
+  fclose(in);
+  if (fclose(out) != 0) ok = FALSE;
+  if (!ok) { remove(dst); tfree(dst); return NULL; }
+  return dst;
+}
+
+int load_osdi(const char *path, bool force) {
   OsdiObjectFile file;
   int k;
+  bool reloading = FALSE;
   for (k = 0; k < osdi_num_loaded; k++) {
     if (strcmp(osdi_loaded_paths[k], path) == 0) {
-      printf("Note(osdi): \"%s\" is already loaded; skipping "
-             "(restart ngspice to load a recompiled file)\n",
-             path);
-      return 0;
+      if (!force) {
+        printf("Note(osdi): \"%s\" is already loaded; skipping "
+               "(use `pre_osdi -f %s` to reload a recompiled file)\n",
+               path, path);
+        return 0;
+      }
+      reloading = TRUE;
+      break;
     }
   }
 
-  file = load_object_file(path);
+  /* On a forced reload, load a fresh copy under a unique path so the recompiled
+   * file is actually re-read (see osdi_stage_reload_copy). */
+  const char *loadpath = path;
+  char *staged = NULL;
+  if (reloading) {
+    staged = osdi_stage_reload_copy(path);
+    if (!staged) {
+      fprintf(stderr, "Error(osdi): could not stage a reload copy of \"%s\"\n",
+              path);
+      return -1;
+    }
+    loadpath = staged;
+  }
+
+  file = load_object_file(loadpath);
+
+  if (staged) {
+    remove(staged);   /* mapping is established; drop the on-disk copy */
+    tfree(staged);
+  }
+
   if (file.num_entries < 0) {
     return file.num_entries;
   }
 
-  osdi_loaded_paths = TREALLOC(char *, osdi_loaded_paths, osdi_num_loaded + 1);
-  osdi_loaded_paths[osdi_num_loaded++] = copy(path);
+  if (!reloading) {
+    osdi_loaded_paths = TREALLOC(char *, osdi_loaded_paths, osdi_num_loaded + 1);
+    osdi_loaded_paths[osdi_num_loaded++] = copy(path);
+  }
 
-  osdi_add_device(file.num_entries, file.entrys);
+  osdi_add_device(file.num_entries, file.entrys, reloading);
+
+  if (reloading) {
+    printf("Note(osdi): reloaded \"%s\" (%d device%s)\n",
+           path, file.num_entries, file.num_entries == 1 ? "" : "s");
+  }
   return 0;
 }
 #endif

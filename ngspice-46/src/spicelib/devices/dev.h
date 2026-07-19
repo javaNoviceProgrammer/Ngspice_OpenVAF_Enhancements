@@ -17,7 +17,7 @@ int load_dev(char *name);
 #endif
 
 #ifdef OSDI
-int load_osdi(const char *);
+int load_osdi(const char *, bool force);
 #endif
 #endif
 
