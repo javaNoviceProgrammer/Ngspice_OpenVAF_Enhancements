@@ -346,6 +346,18 @@ static NGHASHPTR known_object_files = NULL;
  * before reallocation is required
  * @returns -1 on error, 0 otherwise
  */
+/* Enhancement-228: sanity ceilings for the descriptor metadata read out of a
+ * loaded .osdi. A corrupted, truncated, or ABI-mismatched object file can
+ * present absurd counts; the loader strides / indexes arrays by them, so an
+ * out-of-range value reads past the array -> SIGSEGV. These are generous
+ * ceilings far above any real compact model (the biggest ship a few dozen
+ * modules and ~1k parameters); a count above them means the file is not a
+ * well-formed OSDI object and is rejected with a clean diagnostic. (A count
+ * that lies within the plausible range is an internally inconsistent binary we
+ * cannot tell apart from a valid one, and is out of scope.) */
+#define OSDI_MAX_DESCRIPTORS 4096u
+#define OSDI_MAX_DESC_COUNT (1u << 20)
+
 extern OsdiObjectFile load_object_file(const char *input) {
   void *handle;
   char *error;
@@ -418,6 +430,18 @@ extern OsdiObjectFile load_object_file(const char *input) {
   GET_CONST(OSDI_NUM_DESCRIPTORS, uint32_t);
   GET_PTR(OSDI_DESCRIPTORS, OsdiDescriptor);
 
+  /* Enhancement-228: reject an implausible descriptor count before it is used
+   * to size the registry and stride the descriptor array (an over-large count
+   * walks the loop off the end of OSDI_DESCRIPTORS -> out-of-bounds read). */
+  if (OSDI_NUM_DESCRIPTORS > OSDI_MAX_DESCRIPTORS) {
+    printf("Error: \"%s\" declares %u OSDI descriptors, which exceeds the %u "
+           "sanity limit;\n       the .osdi file is corrupt or was built with "
+           "an incompatible toolchain.\n",
+           path, OSDI_NUM_DESCRIPTORS, OSDI_MAX_DESCRIPTORS);
+    txfree(path);
+    return INVALID_OBJECT;
+  }
+
   INIT_CALLBACK(osdi_log, osdi_log_ptr)
 
   uint32_t lim_table_len = 0;
@@ -479,6 +503,28 @@ extern OsdiObjectFile load_object_file(const char *input) {
   for (uint32_t i = 0; i < OSDI_NUM_DESCRIPTORS; i++) {
     const OsdiDescriptor *descr = (OsdiDescriptor*)desc_ptr;
     desc_ptr += descriptor_size;
+
+    /* Enhancement-228: reject a descriptor whose own count fields are
+     * implausible before they are used to index / size arrays (e.g. the
+     * param_opvar loop below indexes descr->param_opvar[0..num_params) and
+     * dereferences each entry's name pointers; a garbage num_params reads far
+     * past the array -> SIGSEGV). Catches corrupt / ABI-mismatched objects. */
+    if (descr->num_nodes > OSDI_MAX_DESC_COUNT ||
+        descr->num_terminals > OSDI_MAX_DESC_COUNT ||
+        descr->num_params > OSDI_MAX_DESC_COUNT ||
+        descr->num_instance_params > OSDI_MAX_DESC_COUNT ||
+        descr->num_opvars > OSDI_MAX_DESC_COUNT ||
+        descr->num_noise_src > OSDI_MAX_DESC_COUNT ||
+        descr->num_jacobian_entries > OSDI_MAX_DESC_COUNT ||
+        descr->num_collapsible > OSDI_MAX_DESC_COUNT ||
+        descr->num_states > OSDI_MAX_DESC_COUNT) {
+      printf("Error: OSDI descriptor %u in \"%s\" has an implausible field "
+             "count;\n       the .osdi file is corrupt or was built with an "
+             "incompatible toolchain.\n", i, path);
+      tfree(dst);
+      txfree(path);
+      return INVALID_OBJECT;
+    }
 
     uint32_t dt = descr->num_params + descr->num_opvars;
     bool has_m = false;
