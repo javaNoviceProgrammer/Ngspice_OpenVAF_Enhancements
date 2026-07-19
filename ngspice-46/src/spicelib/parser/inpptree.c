@@ -1219,6 +1219,20 @@ INPparseNode *PT_mkfnode(const char *fname, INPparseNode * arg)
         controlled_exit(EXIT_BAD);
     }
 
+    /* E-239: pow/pwr/min/max are two-argument functions -- PTeval() reads their
+     * operands as tree->left->left and tree->left->right, i.e. it assumes the
+     * argument is a PT_COMMA pair.  A one-argument call like min(1) makes `arg`
+     * a scalar node whose ->left is NULL, so PTeval dereferenced NULL and
+     * crashed.  Reject the wrong arity here with a clean parse error. */
+    if ((funcs[i].number == PTF_POW || funcs[i].number == PTF_PWR ||
+         funcs[i].number == PTF_MIN || funcs[i].number == PTF_MAX) &&
+        arg->type != PT_COMMA) {
+        fprintf(stderr, "Error: function '%s' requires two arguments "
+            "at line %d\nfrom file\n  %s\n",
+            buf, Current_parse_line, Sourcefile);
+        controlled_exit(EXIT_BAD);
+    }
+
     p = TMALLOC(INPparseNode, 1);
 
     p->type = PT_FUNCTION;
