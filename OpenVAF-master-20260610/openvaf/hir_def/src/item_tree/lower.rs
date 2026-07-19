@@ -1158,8 +1158,16 @@ impl Ctx {
                             ast::BlockStmt(block) => {
                                 let ast_id = self.source_ast_id_map.ast_id(&block);
                                 let name = block.block_scope().and_then(|it| Some(it.name()?.as_name()));
-                                let block_info = Block { name, scope_items: Vec::new()};
-                                if block.block_scope().is_some() {
+                                let block_info = Block { name: name.clone(), scope_items: Vec::new()};
+                                // Enhancement-230: only treat a block as a named item-tree
+                                // scope when it actually has a name. A `begin :` with the
+                                // scope colon but a missing/invalid name identifier has
+                                // `block_scope().is_some()` yet `name == None`; linking it
+                                // in here made name resolution later `.expect()` the absent
+                                // name and panic ("Item tree must only contain named
+                                // blocks"). Gate on `name.is_some()` (the parser already
+                                // reports the missing block name separately).
+                                if name.is_some() {
                                     match block_scope_stack.last() {
                                         Some(block) => {
                                             let block = blocks.get_mut(block).unwrap();
@@ -1199,7 +1207,11 @@ impl Ctx {
                 WalkEvent::Leave(node) => {
                     if let Some(block) = ast::BlockStmt::cast(node) {
                         block_stack.pop();
-                        if block.block_scope().is_some() {
+                        // Enhancement-230: mirror the `name.is_some()` gate used on
+                        // Enter, so the scope stack stays balanced for a nameless
+                        // `begin :` (which is pushed on neither side).
+                        let named = block.block_scope().and_then(|it| it.name()).is_some();
+                        if named {
                             block_scope_stack.pop();
                         }
                     }

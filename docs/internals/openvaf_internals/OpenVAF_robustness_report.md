@@ -29,6 +29,21 @@ pathological input — all now fixed.
 > 12 000-iteration fuzz on the fixed compiler is now **0 crashes, 0 hangs**. All
 > the panics were already caught by the E-213 hook, so the compiler was never
 > memory-unsafe; the bug was the crash UX and the missing diagnostic.
+>
+> **Round 3 (2026-07-19).** A third campaign — the production corpus (again
+> **92 / 92 standalone**, identical verdicts) plus ~19,500 mutation-fuzz
+> iterations over diverse compact-model seeds — found **three more** distinct
+> panic root causes, all the E-213 class (caught by the hook, memory-safe, but a
+> crash instead of a diagnostic): a `begin :` block with a missing name
+> identifier (linked into the item tree as a named scope, then
+> `.name.expect(…)` in `nameres/collect.rs`); a port-flow read of a port that
+> carries both a `Net` and a `Port` decl (an attribute in the port list plus
+> `x = I(<p>)`), which hit `NodeTypeDecl::Port(_) => unreachable!()` in the
+> "expected a port" diagnostic; and an unterminated string literal (a lone `"`)
+> whose quote-stripping slice `src[1..len-1]` became `[1..0]` in
+> `StrLit::value()`. All fixed
+> ([Enhancement-230](../../../enhancements_doc/Enhancement-230.md)); a re-fuzz of
+> the fixed compiler is **0 panics, 0 hangs**.
 
 This is a companion to the [OpenVAF compiler internals](OpenVAF_compiler_internals.md)
 guide: that document explains how the compiler works; this one documents how hard it
@@ -40,8 +55,8 @@ was pushed and what broke.
 |---|---|
 | Production models compiled | **92 / 92** standalone (124 `.va` files incl. include-fragments) — 0 crashes / hangs / panics |
 | Adversarial hand-crafted inputs | **~50** — all rejected cleanly, 0 accepted-invalid |
-| Mutation-fuzzing iterations | **thousands** — 0 panics, 0 segfaults |
-| Crash / hang paths found | **5** — all fixed ([E-147](../../../enhancements_doc/Enhancement-147.md), [E-148](../../../enhancements_doc/Enhancement-148.md), [E-219](../../../enhancements_doc/Enhancement-219.md)) |
+| Mutation-fuzzing iterations | **tens of thousands** — 0 segfaults; panics found + fixed round by round |
+| Crash / hang paths found | **18** — all fixed ([E-147](../../../enhancements_doc/Enhancement-147.md), [E-148](../../../enhancements_doc/Enhancement-148.md), [E-219](../../../enhancements_doc/Enhancement-219.md), [E-220](../../../enhancements_doc/Enhancement-220.md) ×10, [E-230](../../../enhancements_doc/Enhancement-230.md) ×3) |
 
 The compiler never crashed on random or garbage input — the only failures were
 specific, structured pathologies, each turned into a clean bounded diagnostic.
@@ -105,6 +120,14 @@ then compiling it.
 | low | absurd array range `real x[0:100000000]` | expanded element-by-element → **memory exhaustion / hang** | **fixed** (E-148) |
 | **high** | `` `name( `` with a stray directive (`` `include ``, `` `ifdef ``, …) in its args | preprocessor macro-arg collector never advances → **infinite loop (hang)** | **fixed** (E-219) |
 | low | thousands of parse errors (deeply nested garbage) | every diagnostic rendered with source context → **~40 s** | **fixed** (E-219, render cap 128) |
+| low | `begin :` block with a missing name identifier | linked as a named item-tree scope → `.name.expect()` **panic** | **fixed** (E-230) |
+| low | port-flow read `I(<p>)` of a port-list-attributed port | "expected a port" report hit `Port(_) => unreachable!()` **panic** | **fixed** (E-230) |
+| low | unterminated string literal (a lone `"`, e.g. in an attribute) | quote-strip slice `[1..len-1]` → `[1..0]` **panic** | **fixed** (E-230) |
+
+Round 2 ([E-220](../../../enhancements_doc/Enhancement-220.md)) added ten more
+panic root causes and Round 3 ([E-230](../../../enhancements_doc/Enhancement-230.md))
+three; see those write-ups for the full list. Every one was a compiler panic
+(caught by the E-213 hook, never memory-unsafe) turned into a clean diagnostic.
 
 The low-severity findings all require input a human or real model would never
 write. The others are worse: ~30 nested conditionals (E-147) is easily produced by

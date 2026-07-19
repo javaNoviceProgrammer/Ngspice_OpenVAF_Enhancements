@@ -155,20 +155,26 @@ impl Diagnostic for BodyValidationDiagnosticWrapped<'_> {
                     message: "expected port".to_owned(),
                 }];
 
-                labels.extend(node.decls.iter().map(|decl| {
+                // Enhancement-230: a node that appears in the module port list but
+                // has no direction declared carries BOTH a Net decl (its `electrical`
+                // net type) and a Port decl (its header port-list entry). This
+                // "expected a port" diagnostic labels the net declarations; skip any
+                // Port decl instead of `unreachable!()` (which panicked the compiler
+                // on `x = I(<p>)` where `p` is such a directionless header port).
+                labels.extend(node.decls.iter().filter_map(|decl| {
                     let net = match decl {
                         NodeTypeDecl::Net(net) => *net,
-                        NodeTypeDecl::Port(_) => unreachable!(),
+                        NodeTypeDecl::Port(_) => return None,
                     };
 
                     let range = self.map.get(tree[net].ast_id).range();
                     let FileSpan { range, file } = self.parse.to_file_span(range, self.sm);
-                    Label {
+                    Some(Label {
                         style: LabelStyle::Secondary,
                         file_id: file,
                         range: range.into(),
                         message: format!("info: '{}' was declared here", name),
-                    }
+                    })
                 }));
 
                 Report::error()

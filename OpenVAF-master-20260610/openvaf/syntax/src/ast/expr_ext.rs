@@ -487,7 +487,13 @@ impl ast::IntNumber {
 impl ast::StrLit {
     pub fn value(&self) -> &str {
         let src = self.syntax.text();
-        &src[1..src.len() - 1]
+        // Enhancement-230: a malformed / unterminated string literal that the
+        // lexer still classified as a StrLit can be as short as a lone `"`
+        // (len 1); `src[1..src.len()-1]` would then be the range [1..0] and
+        // panic ("byte range starts at 1 but ends at 0"). Strip the surrounding
+        // quotes with a saturating range instead -- an unterminated string is
+        // already a parse error reported elsewhere.
+        src.get(1..src.len().saturating_sub(1)).unwrap_or("")
     }
     /// Processes the string literal's escape sequences in a single left-to-right
     /// pass (Enhancement-48): `\n`, `\t`, `\\`, `\"`, and `\ddd` (one to three
