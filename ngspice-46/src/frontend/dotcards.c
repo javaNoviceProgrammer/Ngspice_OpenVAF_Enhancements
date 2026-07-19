@@ -661,7 +661,12 @@ gettoks(char *s)
             wl->wl_word = copy(l + 1);
         }
 
-        if (c != r) {
+        /* E-238: a differential token like "v(a,b)" has both a comma (c) and a
+         * close paren (r), and we split off the second operand at r.  A
+         * MALFORMED token such as "v(1," has a comma but NO ')', so r is NULL
+         * while c is not -- the old `c != r` was then true and `*r = '\0'`
+         * dereferenced NULL.  Require r to be non-NULL before splitting. */
+        if (r && c != r) {
             *r = '\0';
             wl = wl_cons(copy(c + 1), NULL);
             *prevp = wl;
