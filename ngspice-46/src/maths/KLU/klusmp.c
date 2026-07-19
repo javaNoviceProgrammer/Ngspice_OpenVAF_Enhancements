@@ -593,6 +593,10 @@ SMPluFac (SMPmatrix *Matrix, double PivTol, double Gmin)
 
         if (ret == 0)
         {
+            if (Matrix->SMPkluMatrix->KLUmatrixCommon == NULL) {
+                fprintf (stderr, "Error (ReFactor): KLUcommon object is NULL. A problem occurred\n") ;
+                return 0 ;
+            }
             if (Matrix->SMPkluMatrix->KLUmatrixCommon->status == KLU_SINGULAR) {
                 if (ft_ngdebug) {
                     fprintf(stderr, "Warning (ReFactor): KLU Matrix is SINGULAR\n");
@@ -600,9 +604,6 @@ SMPluFac (SMPmatrix *Matrix, double PivTol, double Gmin)
                     fprintf(stderr, "  Singular Node: %d\n", Matrix->SMPkluMatrix->KLUmatrixCommon->singular_col + 1);
                 }
                 return E_SINGULAR ;
-            }
-            if (Matrix->SMPkluMatrix->KLUmatrixCommon == NULL) {
-                fprintf (stderr, "Error (ReFactor): KLUcommon object is NULL. A problem occurred\n") ;
             }
             if (Matrix->SMPkluMatrix->KLUmatrixCommon->status == KLU_EMPTY_MATRIX)
             {
@@ -913,10 +914,18 @@ SMPcaSolve (SMPmatrix *Matrix, double RHS[], double iRHS[], double Spare[], doub
 
     if (Matrix->CKTkluMODE)
     {
+        /* Gather the RHS through the node-collapse map, exactly as the real
+         * SMPsolve does.  The complex solves used a plain identity copy, so if
+         * a structural-zero column ever collapsed a node (NewToOld != identity)
+         * the AC/noise/pz RHS would be silently mis-ordered relative to the real
+         * DC/tran solve.  For a solvable circuit the map is the identity, so this
+         * is behaviour-preserving; it only makes the two paths consistent. */
         for (i = 0 ; i < Matrix->SMPkluMatrix->KLUmatrixN ; i++)
         {
-            Matrix->SMPkluMatrix->KLUmatrixIntermediateComplex [2 * i] = RHS [i + 1] ;
-            Matrix->SMPkluMatrix->KLUmatrixIntermediateComplex [2 * i + 1] = iRHS [i + 1] ;
+            if (Matrix->SMPkluMatrix->KLUmatrixNodeCollapsingNewToOld [i + 1] != 0) {
+                Matrix->SMPkluMatrix->KLUmatrixIntermediateComplex [2 * i] = RHS [Matrix->SMPkluMatrix->KLUmatrixNodeCollapsingNewToOld [i + 1]] ;
+                Matrix->SMPkluMatrix->KLUmatrixIntermediateComplex [2 * i + 1] = iRHS [Matrix->SMPkluMatrix->KLUmatrixNodeCollapsingNewToOld [i + 1]] ;
+            }
         }
 
         /* SMPcaSolve is the complex *adjoint* (transposed) solve -- the Sparse
@@ -928,10 +937,16 @@ SMPcaSolve (SMPmatrix *Matrix, double RHS[], double iRHS[], double Spare[], doub
         ret = klu_z_tsolve (Matrix->SMPkluMatrix->KLUmatrixSymbolic, Matrix->SMPkluMatrix->KLUmatrixNumeric, (int)Matrix->SMPkluMatrix->KLUmatrixN, 1,
                             Matrix->SMPkluMatrix->KLUmatrixIntermediateComplex, 0, Matrix->SMPkluMatrix->KLUmatrixCommon) ;
 
+        for (i = 0 ; i < Matrix->SMPkluMatrix->KLUmatrixNrhs ; i++) {
+            RHS [i] = 0 ;
+            iRHS [i] = 0 ;
+        }
         for (i = 0 ; i < Matrix->SMPkluMatrix->KLUmatrixN ; i++)
         {
-            RHS [i + 1] = Matrix->SMPkluMatrix->KLUmatrixIntermediateComplex [2 * i] ;
-            iRHS [i + 1] = Matrix->SMPkluMatrix->KLUmatrixIntermediateComplex [2 * i + 1] ;
+            if (Matrix->SMPkluMatrix->KLUmatrixNodeCollapsingNewToOld [i + 1] != 0) {
+                RHS [Matrix->SMPkluMatrix->KLUmatrixNodeCollapsingNewToOld [i + 1]] = Matrix->SMPkluMatrix->KLUmatrixIntermediateComplex [2 * i] ;
+                iRHS [Matrix->SMPkluMatrix->KLUmatrixNodeCollapsingNewToOld [i + 1]] = Matrix->SMPkluMatrix->KLUmatrixIntermediateComplex [2 * i + 1] ;
+            }
         }
     } else {
         spSolveTransposed (Matrix->SPmatrix, RHS, RHS, iRHS, iRHS) ;
@@ -953,19 +968,29 @@ SMPcSolve (SMPmatrix *Matrix, double RHS[], double iRHS[], double Spare[], doubl
 
     if (Matrix->CKTkluMODE)
     {
+        /* Gather through the node-collapse map for consistency with the real
+         * SMPsolve (identity for any solvable circuit -- behaviour-preserving). */
         for (i = 0 ; i < Matrix->SMPkluMatrix->KLUmatrixN ; i++)
         {
-            Matrix->SMPkluMatrix->KLUmatrixIntermediateComplex [2 * i] = RHS [i + 1] ;
-            Matrix->SMPkluMatrix->KLUmatrixIntermediateComplex [2 * i + 1] = iRHS [i + 1] ;
+            if (Matrix->SMPkluMatrix->KLUmatrixNodeCollapsingNewToOld [i + 1] != 0) {
+                Matrix->SMPkluMatrix->KLUmatrixIntermediateComplex [2 * i] = RHS [Matrix->SMPkluMatrix->KLUmatrixNodeCollapsingNewToOld [i + 1]] ;
+                Matrix->SMPkluMatrix->KLUmatrixIntermediateComplex [2 * i + 1] = iRHS [Matrix->SMPkluMatrix->KLUmatrixNodeCollapsingNewToOld [i + 1]] ;
+            }
         }
 
         ret = klu_z_solve (Matrix->SMPkluMatrix->KLUmatrixSymbolic, Matrix->SMPkluMatrix->KLUmatrixNumeric, (int)Matrix->SMPkluMatrix->KLUmatrixN, 1,
                            Matrix->SMPkluMatrix->KLUmatrixIntermediateComplex, Matrix->SMPkluMatrix->KLUmatrixCommon) ;
 
+        for (i = 0 ; i < Matrix->SMPkluMatrix->KLUmatrixNrhs ; i++) {
+            RHS [i] = 0 ;
+            iRHS [i] = 0 ;
+        }
         for (i = 0 ; i < Matrix->SMPkluMatrix->KLUmatrixN ; i++)
         {
-            RHS [i + 1] = Matrix->SMPkluMatrix->KLUmatrixIntermediateComplex [2 * i] ;
-            iRHS [i + 1] = Matrix->SMPkluMatrix->KLUmatrixIntermediateComplex [2 * i + 1] ;
+            if (Matrix->SMPkluMatrix->KLUmatrixNodeCollapsingNewToOld [i + 1] != 0) {
+                RHS [Matrix->SMPkluMatrix->KLUmatrixNodeCollapsingNewToOld [i + 1]] = Matrix->SMPkluMatrix->KLUmatrixIntermediateComplex [2 * i] ;
+                iRHS [Matrix->SMPkluMatrix->KLUmatrixNodeCollapsingNewToOld [i + 1]] = Matrix->SMPkluMatrix->KLUmatrixIntermediateComplex [2 * i + 1] ;
+            }
         }
     } else {
         spSolve (Matrix->SPmatrix, RHS, RHS, iRHS, iRHS) ;
@@ -1002,20 +1027,21 @@ SMPsolve (SMPmatrix *Matrix, double RHS[], double Spare[])
 
         if (ret == 0)
         {
-            if (Matrix->SMPkluMatrix->KLUmatrixCommon->status == KLU_SINGULAR) {
-                if (ft_ngdebug) {
-                    fprintf(stderr, "Warning (Solve): KLU Matrix is SINGULAR\n");
-                    fprintf(stderr, "  Numerical Rank: %d\n", Matrix->SMPkluMatrix->KLUmatrixCommon->numerical_rank);
-                    fprintf(stderr, "  Singular Node: %d\n", Matrix->SMPkluMatrix->KLUmatrixCommon->singular_col + 1);
-                }
-                /* FIXME: Do we need a 'return E_SINGULAR' here? */
-            }
             if (Matrix->SMPkluMatrix->KLUmatrixCommon == NULL) {
                 fprintf (stderr, "Error (Solve): KLUcommon object is NULL. A problem occurred\n") ;
-            }
-            if (Matrix->SMPkluMatrix->KLUmatrixCommon->status == KLU_EMPTY_MATRIX)
-            {
-                fprintf (stderr, "Error (Solve): KLU Matrix is empty\n") ;
+            } else {
+                if (Matrix->SMPkluMatrix->KLUmatrixCommon->status == KLU_SINGULAR) {
+                    if (ft_ngdebug) {
+                        fprintf(stderr, "Warning (Solve): KLU Matrix is SINGULAR\n");
+                        fprintf(stderr, "  Numerical Rank: %d\n", Matrix->SMPkluMatrix->KLUmatrixCommon->numerical_rank);
+                        fprintf(stderr, "  Singular Node: %d\n", Matrix->SMPkluMatrix->KLUmatrixCommon->singular_col + 1);
+                    }
+                    /* FIXME: Do we need a 'return E_SINGULAR' here? */
+                }
+                if (Matrix->SMPkluMatrix->KLUmatrixCommon->status == KLU_EMPTY_MATRIX)
+                {
+                    fprintf (stderr, "Error (Solve): KLU Matrix is empty\n") ;
+                }
             }
             if (Matrix->SMPkluMatrix->KLUmatrixNumeric == NULL) {
                 fprintf (stderr, "Error (Solve): KLUnumeric object is NULL. A problem occurred\n") ;
@@ -1956,6 +1982,8 @@ SMPcZeroCol (SMPmatrix *eMatrix, int Col)
     if (eMatrix->CKTkluMODE)
     {
         int i ;
+        if (Col < 1)            /* ground / invalid column: nothing to zero (Ap[Col-1] would be Ap[-1]) */
+            return 0 ;
         for (i = eMatrix->SMPkluMatrix->KLUmatrixAp [Col - 1] ; i < eMatrix->SMPkluMatrix->KLUmatrixAp [Col] ; i++)
         {
             eMatrix->SMPkluMatrix->KLUmatrixAxComplex [2 * i] = 0 ;
@@ -2119,7 +2147,8 @@ SMPmultiply (SMPmatrix *Matrix, double *RHS, double *Solution, double *iRHS, dou
                                        Ax_CSR, (int)Matrix->SMPkluMatrix->KLUmatrixN, (int)Matrix->SMPkluMatrix->KLUmatrixNZ, Matrix->SMPkluMatrix->KLUmatrixCommon) ;
             klu_matrix_vector_multiply (Ap_CSR, Ai_CSR, Ax_CSR, RHS, Solution, NULL, NULL,
                                         (int)Matrix->SMPkluMatrix->KLUmatrixN, Matrix->SMPkluMatrix->KLUmatrixCommon) ;
-            iSolution = iRHS ;
+            /* real matrix has no imaginary product (iRHS/iSolution unused here);
+             * the former `iSolution = iRHS;` only reassigned a local and did nothing. */
         }
 
         free (Ap_CSR) ;
