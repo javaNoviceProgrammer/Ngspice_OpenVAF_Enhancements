@@ -28,7 +28,7 @@ https://ngspice.sourceforge.io/
 
 ## The Enhancements
 
-Two hundred and twenty-six enhancements so far — language features, correctness fixes, systematic audits, and simulator-side workflow tooling, each verified end-to-end by a committed example suite and released with a detailed write-up.
+Two hundred and twenty-seven enhancements so far — language features, correctness fixes, systematic audits, and simulator-side workflow tooling, each verified end-to-end by a committed example suite and released with a detailed write-up.
 
 **🗂️ Browse them all in the [live feature catalog](https://javanoviceprogrammer.github.io/Ngspice_OpenVAF_Enhancements/)** — every enhancement grouped into 19 feature areas across the compiler and the simulator, searchable, with each entry linking to its write-up.
 
@@ -45,7 +45,7 @@ Two hundred and twenty-six enhancements so far — language features, correctnes
 The index: **Doc** links each enhancement's detailed write-up, **Examples** links the folder whose verify script pins the behavior.
 
 <details>
-<summary><b>📖 Show the full enhancement table</b> — 226 rows, click to expand</summary>
+<summary><b>📖 Show the full enhancement table</b> — 227 rows, click to expand</summary>
 
 | # | What it delivered | Tool | Doc | Examples |
 |---|---|---|---|---|
@@ -275,6 +275,7 @@ The index: **Doc** links each enhancement's detailed write-up, **Examples** link
 | 224 | array-node voltages in `print`/`plot` (`v(a[0])`) | ngspice | [doc](enhancements_doc/Enhancement-224.md) | [arraynodeprint](examples/arraynodeprint_examples/) |
 | 225 | command/expression evaluator crash hardening (fuzz: 5 bugs — `fft`/`deriv`/`fourier` short-vec, `?:` NULL, `meas` buffer) | ngspice | [doc](enhancements_doc/Enhancement-225.md) | [cmdfuzz](examples/cmdfuzz_examples/) |
 | 226 | rawfile `load` crash hardening (fuzz: missing `Flags:` line → NULL deref) | ngspice | [doc](enhancements_doc/Enhancement-226.md) | [rawfuzz](examples/rawfuzz_examples/) |
+| 227 | Touchstone `pre_snp` crash hardening (fuzz: huge `.sNp` port count → heap corruption) | ngspice | [doc](enhancements_doc/Enhancement-227.md) | [snpfuzz](examples/snpfuzz_examples/) |
 
 </details>
 

@@ -195,6 +195,13 @@ static int parse_touchstone(const char *fn, TS *out, char *msg, int msglen)
     const char *dot = strrchr(fn, '.');
     if (dot && (dot[1]=='s'||dot[1]=='S') && (fn[strlen(fn)-1]=='p'||fn[strlen(fn)-1]=='P')) {
         N = atoi(dot+2);
+        /* Enhancement-227: reject an implausible port count from the filename
+         * (e.g. `.s2147483647p`). N is stored in out->N and used to size the
+         * downstream N x N vector fit; a huge N over-allocates / overflows and
+         * corrupts the heap. Real Touchstone files have few ports -- above the
+         * brute-force limit, drop back to inferring N from the data. */
+        if (N > 512)
+            N = 0;
     }
     if (N <= 0) {
         int c;
