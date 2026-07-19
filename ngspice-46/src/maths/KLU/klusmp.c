@@ -243,7 +243,11 @@ void SMPconvertCOOtoCSC (SMPmatrix *Matrix)
             {
                 if (MatrixCOO [i].col > (unsigned int)col_index) {
 //                    Matrix->SMPkluMatrix->KLUmatrixNodeCollapsingOldToNew [MatrixCOO [i].col] = MatrixCOO [i].col - col_diff + 1 ;
-                    Matrix->SMPkluMatrix->KLUmatrixNodeCollapsingNewToOld [MatrixCOO [i].col - col_diff + 1] = MatrixCOO [i].col ;
+                    /* Chain through the existing map so multi-gap collapse resolves to the
+                     * TRUE original column, not a partially-reduced intermediate: on a
+                     * later pass MatrixCOO[i].col is already-reduced, and NewToOld at that
+                     * index holds the original from the earlier pass (identity on pass 1). */
+                    Matrix->SMPkluMatrix->KLUmatrixNodeCollapsingNewToOld [MatrixCOO [i].col - col_diff + 1] = Matrix->SMPkluMatrix->KLUmatrixNodeCollapsingNewToOld [MatrixCOO [i].col] ;
                     MatrixCOO [i].col = MatrixCOO [i].col - col_diff + 1 ;
                 }
                 if (MatrixCOO [i].row > (unsigned int)col_index) {
@@ -734,6 +738,10 @@ SMPcReorder (SMPmatrix *Matrix, double PivTol, double PivRel, int *NumSwaps)
 
         if (Matrix->SMPkluMatrix->KLUmatrixNumeric == NULL)
         {
+            if (Matrix->SMPkluMatrix->KLUmatrixCommon == NULL) {
+                fprintf (stderr, "Error (Factor Complex): KLUcommon object is NULL. A problem occurred\n") ;
+                return 1 ;
+            }
             if (Matrix->SMPkluMatrix->KLUmatrixCommon->status == KLU_SINGULAR) {
                 if (ft_ngdebug) {
                     fprintf(stderr, "Warning (Factor Complex): KLU Matrix is SINGULAR\n");
@@ -742,16 +750,11 @@ SMPcReorder (SMPmatrix *Matrix, double PivTol, double PivRel, int *NumSwaps)
                 }
                 return E_SINGULAR ;
             }
-            if (Matrix->SMPkluMatrix->KLUmatrixCommon == NULL) {
-                fprintf (stderr, "Error (Factor Complex): KLUnumeric object is NULL. A problem occurred\n") ;
-                fprintf (stderr, "Error (Factor Complex): KLUcommon object is NULL. A problem occurred\n") ;
-            }
             if (Matrix->SMPkluMatrix->KLUmatrixCommon->status == KLU_EMPTY_MATRIX) {
                 fprintf (stderr, "Error (Factor Complex): KLU Matrix is empty\n") ;
                 return 0 ;
             }
             if (Matrix->SMPkluMatrix->KLUmatrixSymbolic == NULL) {
-                fprintf (stderr, "Error (Factor Complex): KLUnumeric object is NULL. A problem occurred\n") ;
                 fprintf (stderr, "Error (Factor Complex): KLUsymbolic object is NULL. A problem occurred\n") ;
             }
             return 1 ;
@@ -798,6 +801,10 @@ SMPreorder (SMPmatrix *Matrix, double PivTol, double PivRel, double Gmin)
 
         if (Matrix->SMPkluMatrix->KLUmatrixNumeric == NULL)
         {
+            if (Matrix->SMPkluMatrix->KLUmatrixCommon == NULL) {
+                fprintf (stderr, "Error (Factor): KLUcommon object is NULL. A problem occurred\n") ;
+                return 1 ;
+            }
             if (Matrix->SMPkluMatrix->KLUmatrixCommon->status == KLU_SINGULAR) {
                 if (ft_ngdebug) {
                     fprintf(stderr, "Warning (Factor): KLU Matrix is SINGULAR\n");
@@ -806,16 +813,11 @@ SMPreorder (SMPmatrix *Matrix, double PivTol, double PivRel, double Gmin)
                 }
                 return E_SINGULAR ;
             }
-            if (Matrix->SMPkluMatrix->KLUmatrixCommon == NULL) {
-                fprintf (stderr, "Error (Factor): KLUnumeric object is NULL. A problem occurred\n") ;
-                fprintf (stderr, "Error (Factor): KLUcommon object is NULL. A problem occurred\n") ;
-            }
             if (Matrix->SMPkluMatrix->KLUmatrixCommon->status == KLU_EMPTY_MATRIX) {
                 fprintf (stderr, "Error (Factor): KLU Matrix is empty\n") ;
                 return 0 ;
             }
             if (Matrix->SMPkluMatrix->KLUmatrixSymbolic == NULL) {
-                fprintf (stderr, "Error (Factor): KLUnumeric object is NULL. A problem occurred\n") ;
                 fprintf (stderr, "Error (Factor): KLUsymbolic object is NULL. A problem occurred\n") ;
             }
             return 1 ;
