@@ -517,10 +517,19 @@ void cm_s_xfer(ARGS)  /* structure holding parms, inputs, outputs, etc.     */
 
         *out = 0.0;
         for (i=0; i<num_size; i++) {
-            *out = *out + ( *(integrator[i]) * 
+            *out = *out + ( *(integrator[i]) *
                             *(num_coefficient[i]) );
         }
-        pout_pin = *(integrator[1]);
+        /* E-240: a 0-order denominator (den_size == 1, e.g. a static-gain
+         * transfer function H(s)=k with den_coeff=[k0]) has no integrator[1]
+         * state -- the integrator array is calloc'd to den_size elements, so
+         * reading integrator[1] walked off a 1-element array and crashed.
+         * For den_size == 1, out = gain*num_coeff[0]*in, so the partial
+         * d(out)/d(in) is gain*num_coeff[0]. */
+        if (den_size > 1)
+            pout_pin = *(integrator[1]);
+        else
+            pout_pin = (num_size > 0) ? (*gain * *(num_coefficient[0])) : 0.0;
         
 
         /** Output values for DC & Transient **/
