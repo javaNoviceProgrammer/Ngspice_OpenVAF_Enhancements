@@ -504,6 +504,17 @@ raw_read(char *name) {
                 numdims = 1;
                 dims[0] = npoints;
             }
+            /* Enhancement-226: a rawfile with no valid "Flags:" line (missing, or
+             * only unknown flags like "Flags: xyz") leaves `flags` without
+             * VF_REAL/VF_COMPLEX, so dvec_alloc() below allocates neither
+             * v_realdata nor v_compdata and the value read dereferences NULL
+             * (memmove into 0x0). Default to real, the common case, with a
+             * warning, instead of crashing on a malformed file. */
+            if (!(flags & (VF_REAL | VF_COMPLEX))) {
+                fprintf(cp_err,
+                        "Warning: no real/complex 'Flags:' line; assuming real\n");
+                flags |= VF_REAL;
+            }
             /* Now read all the variable lines in. */
             for (i = 0; i < nvars; i++) {
                 /* Allocate the data array. We would use
