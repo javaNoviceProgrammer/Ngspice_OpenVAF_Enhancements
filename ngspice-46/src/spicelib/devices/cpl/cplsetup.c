@@ -208,6 +208,37 @@ do { if((here->ptr = SMPmakeElt(matrix, here->first, here->second)) == NULL){\
 
 			noL = here->dimension;
 
+			/* A coupled line has noL conductors.  Each symmetric R/L/C/G
+			   matrix therefore supplies noL*(noL+1)/2 (upper-triangle) entries,
+			   consumed one per (i<=j) pair in ReadCpL; and ReadCpL indexes
+			   several fixed-size arrays (in_node[], out_node[], lines[], ...)
+			   dimensioned MAX_CP_TX_LINES.  Validate the conductor count and the
+			   supplied matrix lengths up front, so an over-wide line or an
+			   under-specified matrix reports a clean error instead of writing
+			   past a fixed array (cplsetup.c ~430) or reading a matrix out of
+			   bounds (cplsetup.c ~474). */
+			{
+				int need = noL * (noL + 1) / 2;
+				if (noL < 1 || noL > MAX_CP_TX_LINES) {
+					SPfrontEnd->IFerrorf(ERR_FATAL,
+						"%s: coupled line has %d conductors; the number of "
+						"conductors must be between 1 and %d",
+						here->CPLname, noL, MAX_CP_TX_LINES);
+					return(E_BADPARM);
+				}
+				if (model->Rm_counter < need || model->Lm_counter < need ||
+					model->Cm_counter < need || model->Gm_counter < need) {
+					SPfrontEnd->IFerrorf(ERR_FATAL,
+						"%s: a %d-conductor coupled line needs %d entries "
+						"(upper triangle) in each of R, L, C and G; got "
+						"R=%d L=%d C=%d G=%d",
+						here->CPLname, noL, need,
+						model->Rm_counter, model->Lm_counter,
+						model->Cm_counter, model->Gm_counter);
+					return(E_BADPARM);
+				}
+			}
+
 			here->CPLposNodes = TMALLOC(int, noL);
 			memsaved(here->CPLposNodes);
 			here->CPLnegNodes = TMALLOC(int, noL);
