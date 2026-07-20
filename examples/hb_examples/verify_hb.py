@@ -245,5 +245,41 @@ check("E-209: `hb` publishes hbfrequency + node vectors; mag(n) equals table |V|
       published and match and "hbfrequency" in out_vec and len(vec) == 6,
       f"published={published} match={match} npts={len(vec)}")
 
+# [10] TIGHT NONLINEAR CONVERGENCE (correctness). The checks above run at K=8 with
+# a 1.5-3% tolerance, because a sharp rectifier's high harmonics are truncation-
+# limited at K=8. On a purely RESISTIVE rectifier (cjo=0/tt=0 -> the periodic
+# steady state is reached instantly, so a fine-timestep transient's only error is
+# its own O(dt^2) discretization) HB *is* the exact steady state and must converge
+# to the transient fourier as K grows. Assert (a) HB at K=24 matches a fine-dt
+# (period/2000) transient fourier to < 0.5% for DC..4th -- 6x tighter than the
+# loose checks, with orders of magnitude of margin -- and (b) raising K from 8 to
+# 24 strictly shrinks the 5th-harmonic mismatch, proving the K=8 residual is HB
+# truncation (aliasing of the discarded harmonics) rather than a modelling error.
+# (Sweeping K=8..48 shows HB -> the Richardson-extrapolated transient to ~1e-7.)
+_res = ("V1 s 0 SIN(0 1 100meg)\nRs s a 100\nD1 a n DMOD\nRn n 0 1k\n"
+        ".model DMOD D(IS=1e-12 N=1.2 cjo=0 tt=0)")
+
+
+def _hb_at(kk):
+    return hb_spectrum(run(f"* hb K={kk}\n{_res}\n.options numdgt=10\n.control\n"
+                           f"hb 100meg {kk}\n.endc\n.end\n"), "n")
+
+
+_ref = fourier_spectrum(run(f"* hb fine transient\n{_res}\n.options numdgt=10\n"
+                            f".control\ntran 0.005n 120n 0 0.005n\n"
+                            f"fourier 100meg v(n)\n.endc\n.end\n"))
+_hb8, _hb24 = _hb_at(8), _hb_at(24)
+_lo = [k for k in (0, 1, 2, 3, 4) if k in _hb24 and k in _ref]
+_tight = bool(_lo) and all(abs(_hb24[k] - _ref[k]) <= 5e-3 * max(_ref[k], 1e-9)
+                           for k in _lo)
+_conv = (5 in _hb8 and 5 in _hb24 and 5 in _ref
+         and abs(_hb24[5] - _ref[5]) < abs(_hb8[5] - _ref[5]))
+_worst = max((abs(_hb24[k] - _ref[k]) / max(_ref[k], 1e-9) for k in _lo), default=1.0)
+check("HB converges to the exact steady state: K=24 matches fine transient <0.5% "
+      "(DC..4th) and K refinement shrinks the 5th-harmonic residual",
+      _tight and _conv,
+      f"worst_rel(DC..4th)={_worst:.2e}  h5: K8={_hb8.get(5):.3e} "
+      f"K24={_hb24.get(5):.3e} tran={_ref.get(5):.3e}")
+
 print(f"\n{'ALL PASS' if passed == checks else 'FAILURES'}: {passed}/{checks} passed")
 sys.exit(0 if passed == checks else 1)
