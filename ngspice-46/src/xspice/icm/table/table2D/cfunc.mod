@@ -606,6 +606,24 @@ static Table2_Data_t *init_local_data(const char *filename, int order)
                 interporder);
         interporder = 2;
     }
+    /* Guard against a degenerate or undersized table.  The out-of-range ramp
+       reads xcol[1] / xcol[ix-2] (and the y equivalents), so each axis needs
+       at least 2 points; the ENO interpolation of order p reads a stencil that
+       needs 2*(p-1) points per axis.  Reject a 1-point axis, and clamp the
+       order down to what the smaller axis supports, so a small table
+       interpolates at a reduced (but valid) order instead of reading out of
+       bounds (e.g. the default order=3 on a 3x3 table). */
+    {
+        const int mindim = (ix < iy) ? ix : iy;
+        if (mindim < 2) {
+            cm_message_printf("table %s: each axis needs at least 2 points "
+                    "(got ix=%d, iy=%d).", filename, ix, iy);
+            xrc = -1;
+            goto EXITPOINT;
+        }
+        if (interporder > mindim / 2 + 1)
+            interporder = mindim / 2 + 1;
+    }
     /* int order : interpolation order,
        int n1, int n2 : data dimensions */
     if ((loc->newtable = sf_eno2_init(
