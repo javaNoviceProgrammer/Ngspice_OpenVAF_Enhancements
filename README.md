@@ -45,7 +45,7 @@ Two hundred and thirty enhancements so far — language features, correctness fi
 The index: **Doc** links each enhancement's detailed write-up, **Examples** links the folder whose verify script pins the behavior.
 
 <details>
-<summary><b>📖 Show the full enhancement table</b> — 243 rows, click to expand</summary>
+<summary><b>📖 Show the full enhancement table</b> — 244 rows, click to expand</summary>
 
 | # | What it delivered | Tool | Doc | Examples |
 |---|---|---|---|---|
@@ -292,6 +292,7 @@ The index: **Doc** links each enhancement's detailed write-up, **Examples** link
 | 241 | fft/spec: fix amplitude normalization for non-power-of-2 records (scaled by padded size N instead of length) | ngspice | [doc](enhancements_doc/Enhancement-241.md) | [fftnorm](examples/fftnorm_examples/) |
 | 242 | native n-port device + pre_snp -native: stamp a pole/residue Y-model directly (DC/AC/tran, KLU) with no OpenVAF compile, scaling past the VA->OSDI port wall | ngspice | [doc](enhancements_doc/Enhancement-242.md) | [nport_native](examples/nport_native_examples/) |
 | 243 | pre_snp -osdi: emit an explicit ref terminal in the generated Verilog-A so the instance line is identical for both -osdi and -native backends | ngspice | [doc](enhancements_doc/Enhancement-243.md) | [presnp](examples/presnp_examples/) |
+| 244 | crash-hardening: fix nport unbound-node SIGABRT (setup node-binding + port-count guards) and pyplot -hist/-contour first-arg use-after-free | ngspice | [doc](enhancements_doc/Enhancement-244.md) | [crashfix2](examples/crashfix2_examples/) |
 
 </details>
 

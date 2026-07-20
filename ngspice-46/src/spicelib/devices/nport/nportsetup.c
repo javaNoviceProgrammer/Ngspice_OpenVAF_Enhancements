@@ -41,6 +41,14 @@ NPORTreadFile(NPORTmodel *model)
         fprintf(stderr, "%s\n", err);
         return E_BADPARM;
     }
+    /* The instance wires up N ports + 1 reference, so the model's port count must
+     * leave room for the reference in the fixed-size GENnode array; reject a
+     * .nport file that claims more (otherwise setup would index past node[]). */
+    if (model->NPORTnPorts + 1 > NPORT_MAXTERMS) {
+        fprintf(stderr, "nport: model '%s' declares %d ports; the maximum is %d\n",
+                model->NPORTmodName, model->NPORTnPorts, NPORT_MAXTERMS - 1);
+        return E_BADPARM;
+    }
     model->NPORTloaded = 1;
     return OK;
 }
@@ -66,6 +74,20 @@ NPORTsetup(SMPmatrix *matrix, GENmodel *inModel, CKTcircuit *ckt, int *states)
 
             here->NPORTn = N;
             node = GENnode(&here->gen);      /* ports 0..N-1, ref at [N] */
+
+            /* The instance line must connect all N ports plus the reference; an
+             * unbound (-1) terminal means it wired up fewer nodes than the model's
+             * port count.  Stamping such a node would pass a negative row/col to the
+             * sparse builder (spGetElement assert / out-of-bounds) -- reject it. */
+            for (i = 0; i <= N; i++) {
+                if (node[i] < 0) {
+                    fprintf(stderr, "nport: instance '%s' connects fewer nodes than the "
+                            "%d-port model '%s' needs (%d ports + reference)\n",
+                            here->NPORTname, N, model->NPORTmodName, N);
+                    return E_BADPARM;
+                }
+            }
+
             ref = node[N];
             here->NPORTrefNode = ref;
 

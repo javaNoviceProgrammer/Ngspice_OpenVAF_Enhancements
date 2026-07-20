@@ -27,6 +27,7 @@ com_pyplot(wordlist *wl)
 {
     char *fname = NULL;
     char *fullname = NULL;
+    wordlist *wl_owned = NULL;     /* E-217/E-218: filtered copy we (not the caller) own */
     char defname[64] = "pyplot";
     bool tempf = FALSE;
     /* Enhancement-183: successive default-named plots must get DISTINCT base
@@ -77,33 +78,37 @@ com_pyplot(wordlist *wl)
         }
     }
 
-    /* E-217/E-218: strip a `-hist` or `-contour` marker (anywhere in the list) and
-       remember which; the remaining words are the ordinary [name] + signal list. */
+    /* E-217/E-218: detect a `-hist` or `-contour` render-mode marker (anywhere in
+       the list).  The marker has to be removed before the rest goes to plotit, but
+       `wl` is the command's own argument list -- owned and freed by the command loop.
+       Mutating or freeing its nodes here corrupts it: freeing the head node (when the
+       marker was the FIRST word) double-freed the whole argument list on return. So
+       build a filtered COPY without the marker and use that; `wl` is left untouched. */
     if (!is_eye) {
         wordlist *w;
+        bool found = FALSE;
         for (w = wl; w; w = w->wl_next) {
-            if (!w->wl_word)
-                continue;
-            if (eq(w->wl_word, "-hist"))
-                is_hist = TRUE;
-            else if (eq(w->wl_word, "-contour"))
-                is_contour = TRUE;
-            else
-                continue;
-            if (w->wl_prev)
-                w->wl_prev->wl_next = w->wl_next;
-            else
-                wl = w->wl_next;                      /* marker was the head */
-            if (w->wl_next)
-                w->wl_next->wl_prev = w->wl_prev;
-            w->wl_next = w->wl_prev = NULL;
-            wl_free(w);                               /* free the single node */
-            break;
+            if (w->wl_word && eq(w->wl_word, "-hist"))         { is_hist = TRUE;    found = TRUE; }
+            else if (w->wl_word && eq(w->wl_word, "-contour")) { is_contour = TRUE; found = TRUE; }
+        }
+        if (found) {
+            wordlist *tail = NULL;
+            for (w = wl; w; w = w->wl_next) {
+                if (w->wl_word && (eq(w->wl_word, "-hist") || eq(w->wl_word, "-contour")))
+                    continue;                         /* drop the marker word */
+                wordlist *nw = TMALLOC(wordlist, 1);
+                nw->wl_word = copy(w->wl_word ? w->wl_word : "");
+                nw->wl_next = NULL;
+                nw->wl_prev = tail;
+                if (tail) tail->wl_next = nw; else wl_owned = nw;
+                tail = nw;
+            }
+            wl = wl_owned;                            /* the filtered copy (may be NULL) */
         }
         if (is_contour)
             strcpy(defname, "contour");
         if (!wl)                                      /* marker with no signals */
-            return;
+            goto done;
     }
 
     /* The first word is an output file name only if it is not itself a plot
@@ -169,4 +174,6 @@ done:
         tfree(fname);
     if (fullname)
         tfree(fullname);
+    if (wl_owned)
+        wl_free(wl_owned);
 }
