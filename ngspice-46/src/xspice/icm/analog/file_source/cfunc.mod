@@ -294,8 +294,12 @@ void cm_filesource(ARGS)   /* structure holding parms, inputs, outputs, etc.    
             tprev = t;
 
             /* before storing, check if vector size is large enough.
-               If not, add another 1000*size doubles */
-            if (count > (int) loc->indata->vecallocated - size) {
+               If not, add another 1000*size doubles.  Each record appended below
+               is a full stepsize (= size + 1: one timepoint plus `size` channel
+               values), so reserve stepsize -- reserving only `size` left room for
+               one fewer value than is written and overran the buffer by one
+               double at the allocation boundary. */
+            if (count > (int) loc->indata->vecallocated - stepsize) {
                 loc->indata->vecallocated += (size_t) (size * 1000);
                 void * const p = realloc(loc->indata->datavec,
                         sizeof(double) * loc->indata->vecallocated);
