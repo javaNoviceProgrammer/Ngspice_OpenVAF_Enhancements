@@ -161,10 +161,20 @@ void cm_pwlts(ARGS)  /* structure holding parms,
 
     char *allocation_error="\n***ERROR***\nPWL: Allocation calloc failed!\n";
     char *limit_error="\n***ERROR***\nPWL: Violation of 50% rule in breakpoints!\n";
+    char *size_error="\n***ERROR***\nPWLTS: x_array and y_array must have the same length!\n";
 
     /* Retrieve frequently used parameters... */
 
     input_domain = PARAM(input_domain);
+
+    /* x_array and y_array are independent vector parameters, each allocated to
+       its own length.  The read loop below indexes y_array with the x_array
+       size, so a shorter y_array would be read out of bounds.  Require equal
+       lengths (as the sibling models oneshot / multi_input_pwl already do). */
+    if (PARAM_SIZE(x_array) != PARAM_SIZE(y_array)) {
+        cm_message_send(size_error);
+        return;
+    }
 
     /* size including space for two additional x,y pairs */
     size = PARAM_SIZE(x_array) + 2;

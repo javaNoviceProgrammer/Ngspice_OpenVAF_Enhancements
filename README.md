@@ -45,7 +45,7 @@ Two hundred and thirty enhancements so far — language features, correctness fi
 The index: **Doc** links each enhancement's detailed write-up, **Examples** links the folder whose verify script pins the behavior.
 
 <details>
-<summary><b>📖 Show the full enhancement table</b> — 245 rows, click to expand</summary>
+<summary><b>📖 Show the full enhancement table</b> — 246 rows, click to expand</summary>
 
 | # | What it delivered | Tool | Doc | Examples |
 |---|---|---|---|---|
@@ -294,6 +294,7 @@ The index: **Doc** links each enhancement's detailed write-up, **Examples** link
 | 243 | pre_snp -osdi: emit an explicit ref terminal in the generated Verilog-A so the instance line is identical for both -osdi and -native backends | ngspice | [doc](enhancements_doc/Enhancement-243.md) | [presnp](examples/presnp_examples/) |
 | 244 | crash-hardening: fix nport unbound-node SIGABRT (setup node-binding + port-count guards) and pyplot -hist/-contour first-arg use-after-free | ngspice | [doc](enhancements_doc/Enhancement-244.md) | [crashfix2](examples/crashfix2_examples/) |
 | 245 | crash-hardening: fix meas stray-`=` NULL deref (strtok) and altermod NULL-param deref (device-letter 2nd token) in core command parsers | ngspice | [doc](enhancements_doc/Enhancement-245.md) | [crashfix3](examples/crashfix3_examples/) |
+| 246 | crash-hardening: fix out-of-bounds read in the pwl and pwlts XSPICE code models when x_array and y_array differ in length | ngspice | [doc](enhancements_doc/Enhancement-246.md) | [pwlfix](examples/pwlfix_examples/) |
 
 </details>
 
