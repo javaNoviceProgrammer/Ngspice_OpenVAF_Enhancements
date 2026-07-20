@@ -45,7 +45,7 @@ Two hundred and thirty enhancements so far — language features, correctness fi
 The index: **Doc** links each enhancement's detailed write-up, **Examples** links the folder whose verify script pins the behavior.
 
 <details>
-<summary><b>📖 Show the full enhancement table</b> — 240 rows, click to expand</summary>
+<summary><b>📖 Show the full enhancement table</b> — 241 rows, click to expand</summary>
 
 | # | What it delivered | Tool | Doc | Examples |
 |---|---|---|---|---|
@@ -289,6 +289,7 @@ The index: **Doc** links each enhancement's detailed write-up, **Examples** link
 | 238 | gettoks: fix a NULL-deref crash on a malformed differential token like v(1, (comma, no close paren) | ngspice | [doc](enhancements_doc/Enhancement-238.md) | [malftoken](examples/malftoken_examples/) |
 | 239 | expr parser: fix a NULL-deref crash on a one-argument min/max/pow/pwr (arity check in PT_mkfnode) | ngspice | [doc](enhancements_doc/Enhancement-239.md) | [funcarity](examples/funcarity_examples/) |
 | 240 | XSPICE s_xfer: fix an out-of-bounds crash on a static-gain transfer function (0-order denominator) | ngspice | [doc](enhancements_doc/Enhancement-240.md) | [sxfer](examples/sxfer_examples/) |
+| 241 | fft/spec: fix amplitude normalization for non-power-of-2 records (scaled by padded size N instead of length) | ngspice | [doc](enhancements_doc/Enhancement-241.md) | [fftnorm](examples/fftnorm_examples/) |
 
 </details>
 
