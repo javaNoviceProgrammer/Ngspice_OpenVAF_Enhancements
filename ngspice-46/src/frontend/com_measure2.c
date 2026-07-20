@@ -1544,6 +1544,14 @@ measure_parse_stdParams(
         pName = strtok(p, "=");
         pValue = strtok(NULL, "=");
 
+        /* A token that is empty or only '=' separators yields pName==NULL from
+         * strtok (e.g. the stray `=` in `meas ... when v(x)=0.5 = y`); guard it
+         * before strcasecmp() so it is a clean syntax error, not a NULL deref. */
+        if (pName == NULL) {
+            snprintf(errbuf, MEAS_ERRBUF_SIZE, "bad syntax. stray '=' ?\n");
+            return MEASUREMENT_FAILURE;
+        }
+
         if (pValue == NULL) {
             if (strcasecmp(pName, "LAST") == 0) {
                 meas->m_cross = MEASURE_LAST_TRANSITION;

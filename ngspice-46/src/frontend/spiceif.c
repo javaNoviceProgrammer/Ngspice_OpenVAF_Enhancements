@@ -1108,9 +1108,13 @@ parmlookup(IFdevice *dev, GENinstance **inptr, char *param, int do_model, int in
         return NULL;
     }
 
-    if (dev->numModelParms)
+    /* `param` may be NULL here (e.g. `altermod nm c` -- com_altermod treats the
+     * stray token as a second model to alter, with no param=value), so guard it
+     * before eq()/strcmp(); the instance loop above already handles !param. */
+    if (dev->numModelParms && param)
         for (i = 0; i < *(dev->numModelParms); i++)
-            if ((((dev->modelParms[i].dataType & IF_SET) && inout == 1) ||
+            if (dev->modelParms[i].keyword &&
+                (((dev->modelParms[i].dataType & IF_SET) && inout == 1) ||
                  ((dev->modelParms[i].dataType & IF_ASK) && inout == 0)) &&
                 eq(dev->modelParms[i].keyword, param))
             {
