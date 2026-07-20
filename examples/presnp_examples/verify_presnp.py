@@ -133,7 +133,7 @@ write_snp(os.path.join(HERE, "resonator.s2p"), freqs2, Y2, 2)
 ACT2 = ("Rser p1 a 5\nL1 a b 1e-7\nCser b p2 1e-11\n"
         "Csh1 p1 0 5e-13\nCsh2 p2 0 5e-13\n")
 # The pre_snp device: no snp2va.py, no pre-generated .va/.osdi -- pre_snp makes them.
-NP2 = "N1 p1 p2 mm\n.model mm rez\n"
+NP2 = "N1 p1 p2 0 mm\n.model mm rez\n"   # E-243: explicit ref terminal (0 = ground)
 
 
 def two_port_ac(dut, presnp=False, swap=False):
@@ -255,7 +255,7 @@ def Y3(f):
 freqs3 = [10 ** (6 + 3 * k / 200) for k in range(201)]
 write_snp(os.path.join(HERE, "star.s3p"), freqs3, Y3, 3)
 ACT3 = "Rp1 p1 c 10\nRp2 p2 c 20\nRp3 p3 c 30\nCc c 0 1p\n"
-NP3 = "N1 p1 p2 p3 ms\n.model ms star3\n"
+NP3 = "N1 p1 p2 p3 0 ms\n.model ms star3\n"   # E-243: explicit ref terminal
 
 
 def three_port(dut, presnp=False):
@@ -322,7 +322,7 @@ LADSUB = ("Rs1 p1 na 30\nRp1 na 0 150\nCa na 0 2e-12\n"
           "Rs3 p3 nc 30\nRp3 nc 0 150\nCcc nc 0 2e-12\n"
           "Rs4 p4 nd 30\nRp4 nd 0 150\nCd nd 0 2e-12\n"
           "La na nb 8e-9\nLb nb nc 8e-9\nLcc nc nd 8e-9\n")
-NPL4 = "N1 p1 p2 p3 p4 mm\n.model mm lad4\n"
+NPL4 = "N1 p1 p2 p3 p4 0 mm\n.model mm lad4\n"   # E-243: explicit ref terminal
 
 
 def lad_tran(dut, presnp=False):
@@ -441,7 +441,7 @@ check("[scalability] `pre_snp` converts an 8-port coupled network with the fast 
       made8, f"(convert+compile {tconv:.1f}s, {nlap} laplace_nd for {NB} ports)")
 
 a8, _ = ac8(ladsub8())
-n8, _ = ac8("N1 " + conn8 + " mm\n.model mm lad8\n", "pre_osdi ladder8.osdi")
+n8, _ = ac8("N1 " + conn8 + " 0 mm\n.model mm lad8\n", "pre_osdi ladder8.osdi")   # E-243: +ref
 if made8 and a8 and n8:
     m = min(len(a8), len(n8))
     e8 = 0.0

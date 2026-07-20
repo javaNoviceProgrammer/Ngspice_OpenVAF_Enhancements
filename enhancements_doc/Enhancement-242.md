@@ -47,9 +47,14 @@ N1  p1 p2 ... pN  ref   mymodel
 ```
 
 `ref` is an **explicit** reference terminal (connect it to `0` for a
-ground-referenced Touchstone model). The OSDI n-port has `N` terminals with an
-implicit ground reference; the explicit reference here is the more general form —
-floating / differential blocks are expressible too.
+ground-referenced Touchstone model) — the more general form, so floating /
+differential blocks are expressible too.
+
+> **Update (E-243):** `pre_snp -osdi` was originally emitted with `N` terminals and
+> an implicit ground reference, so the two backends took *different* instance lines.
+> [Enhancement-243](Enhancement-243.md) gives the `-osdi` Verilog-A the same explicit
+> `ref` terminal, so the instance line — `N1 p1 … pN ref model` — is now **identical**
+> for both `-osdi` and `-native`.
 
 KLU is supported: `nportbindCSC.c` binds each stamped element to its CSC slot
 (real, complex, and complex→real), so the device runs identically under both the

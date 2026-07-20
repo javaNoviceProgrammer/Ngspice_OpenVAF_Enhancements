@@ -31,6 +31,9 @@ differential blocks expressible too).
   admittance (no per-port branch unknowns), so it scales to hundreds of ports —
   a 100-port block solves in tens of milliseconds.
 
+As of E-243 the `-osdi` Verilog-A carries the same explicit `ref` terminal, so the
+instance line `N1 p1 … pN ref model` is **identical** for both backends.
+
 The pole companion for transient is trapezoidal: `d` is a conductance, `s*e` a
 capacitor, and each `res/(s−p)` a first-order state `dx/dt = p·x + u` (complex
 poles handled as conjugate pairs, so the summed current is real).
