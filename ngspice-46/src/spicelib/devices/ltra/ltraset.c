@@ -104,6 +104,17 @@ LTRAsetup(SMPmatrix *matrix, GENmodel *inModel, CKTcircuit *ckt, int *state)
 	  model->LTRAmodName);
       return (E_BADPARM);
     }
+    /* R, L, G and C are per-unit-length line parameters and must be physical
+       (non-negative).  The special-case tests below only check for nonzero, so
+       a negative L or C would otherwise fall through to sqrt(L/C) / sqrt(L*C)
+       in LTRAtemp and yield NaN characteristic impedance / delay. */
+    if ((model->LTRAresist < 0) || (model->LTRAconduct < 0) ||
+	(model->LTRAcapac < 0) || (model->LTRAinduct < 0)) {
+      SPfrontEnd->IFerrorf (ERR_FATAL,
+	  "%s: R, L, G and C must be non-negative",
+	  model->LTRAmodName);
+      return (E_BADPARM);
+    }
     if ((model->LTRAresist == 0) && (model->LTRAconduct == 0) &&
 	(model->LTRAcapac != 0) && (model->LTRAinduct != 0)) {
       model->LTRAspecialCase = LTRA_MOD_LC;

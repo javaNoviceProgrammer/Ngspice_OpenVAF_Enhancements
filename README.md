@@ -45,7 +45,7 @@ Two hundred and thirty enhancements so far — language features, correctness fi
 The index: **Doc** links each enhancement's detailed write-up, **Examples** links the folder whose verify script pins the behavior.
 
 <details>
-<summary><b>📖 Show the full enhancement table</b> — 248 rows, click to expand</summary>
+<summary><b>📖 Show the full enhancement table</b> — 249 rows, click to expand</summary>
 
 | # | What it delivered | Tool | Doc | Examples |
 |---|---|---|---|---|
@@ -297,6 +297,7 @@ The index: **Doc** links each enhancement's detailed write-up, **Examples** link
 | 246 | crash-hardening: fix out-of-bounds read in the pwl and pwlts XSPICE code models when x_array and y_array differ in length | ngspice | [doc](enhancements_doc/Enhancement-246.md) | [pwlfix](examples/pwlfix_examples/) |
 | 247 | crash-hardening: fix out-of-bounds read/UB in the table2d and table3d XSPICE code models on degenerate or too-small tables (validate axes, clamp interpolation order) | ngspice | [doc](enhancements_doc/Enhancement-247.md) | [tablefix](examples/tablefix_examples/) |
 | 248 | crash-hardening: fix out-of-bounds accesses in the CPL coupled-line device (validate conductor count vs the 8-line array bound and the R/L/C/G matrix sizes) | ngspice | [doc](enhancements_doc/Enhancement-248.md) | [cplfix](examples/cplfix_examples/) |
+| 249 | crash-hardening: validate URC lump count (reject n<1 or the huge-n memory hang) and reject negative R/L/G/C in the LTRA lossy line | ngspice | [doc](enhancements_doc/Enhancement-249.md) | [tlinefix](examples/tlinefix_examples/) |
 
 </details>
 

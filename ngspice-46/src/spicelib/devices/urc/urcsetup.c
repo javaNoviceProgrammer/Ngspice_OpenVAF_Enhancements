@@ -11,6 +11,13 @@ Author: 1987 Thomas L. Quarles
 #include "ngspice/sperror.h"
 #include "ngspice/suffix.h"
 
+/* Upper bound on the number of lumps in a URC line.  The line is expanded into
+   a ladder of that many resistor+capacitor(/diode) sections at setup, so an
+   absurd count (e.g. a typo n=1000000000) would otherwise exhaust memory / hang
+   while building it.  1000 is far above any realistic discretization (the
+   auto-computed count is typically 3..~30). */
+#define URC_MAX_LUMPS 1000
+
 /* ARGSUSED */
 int
 URCsetup(SMPmatrix *matrix, GENmodel *inModel, CKTcircuit *ckt, int *state)
@@ -85,7 +92,19 @@ URCsetup(SMPmatrix *matrix, GENmodel *inModel, CKTcircuit *ckt, int *state)
                 wnorm = model->URCfmax * r0 * c0 * 2.0 * M_PI;
                 here->URClumps=(int)MAX(3.0,log(wnorm*(((p-1)/p)*((p-1)/p)))/log(p));
                 if(wnorm <35) here->URClumps=3;
-                /* may want to limit lumps to <= 100 or something like that */
+            }
+            /* The lump count drives the loop below that instantiates a
+               resistor + capacitor/diode (and their nodes) per lump, and it is
+               an exponent of pow(p, .) just below.  A user-supplied n<1 leaves
+               the line with no lumps (a silently unconnected output), and a
+               very large n exhausts memory / hangs while building the ladder.
+               Require a sane range instead. */
+            if (here->URClumps < 1 || here->URClumps > URC_MAX_LUMPS) {
+                SPfrontEnd->IFerrorf(ERR_FATAL,
+                    "%s: number of lumps n=%d is out of range; it must be "
+                    "between 1 and %d", here->URCname, here->URClumps,
+                    URC_MAX_LUMPS);
+                return(E_BADPARM);
             }
             r1 = (r0*(p-1))/((2*(pow(p,(double)here->URClumps)))-2);
             c1 = (c0 * (p-1))/((pow(p,(double)(here->URClumps-1)))*(p+1)-2);
