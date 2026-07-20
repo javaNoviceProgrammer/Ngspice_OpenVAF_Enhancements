@@ -45,7 +45,7 @@ Two hundred and thirty enhancements so far — language features, correctness fi
 The index: **Doc** links each enhancement's detailed write-up, **Examples** links the folder whose verify script pins the behavior.
 
 <details>
-<summary><b>📖 Show the full enhancement table</b> — 252 rows, click to expand</summary>
+<summary><b>📖 Show the full enhancement table</b> — 253 rows, click to expand</summary>
 
 | # | What it delivered | Tool | Doc | Examples |
 |---|---|---|---|---|
@@ -301,6 +301,7 @@ The index: **Doc** links each enhancement's detailed write-up, **Examples** link
 | 250 | crash-hardening: fix undefined-behaviour 1<<n shift in the d_lut and d_genlut XSPICE code models by capping the input-port count | ngspice | [doc](enhancements_doc/Enhancement-250.md) | [dlutfix](examples/dlutfix_examples/) |
 | 251 | correctness: tighten the harmonic-balance verification -- prove HB converges to the exact steady state (~1e-7 vs a Richardson-extrapolated transient) and enforce a 6x-tighter regression tolerance | ngspice | [doc](enhancements_doc/Enhancement-251.md) | [hb](examples/hb_examples/) |
 | 252 | crash-hardening: fix heap out-of-bounds writes in the xfer and file_source XSPICE file-parser code models (multi-record line over-store; timepoint+channels off-by-one) | ngspice | [doc](enhancements_doc/Enhancement-252.md) | [filefix](examples/filefix_examples/) |
+| 253 | RF design aid: rfstab command -- two-port stability & gain report (Rollett K, |Delta|, mu/mu-prime factors, MSG/MAG) from .sp S-parameters | ngspice | [doc](enhancements_doc/Enhancement-253.md) | [rfstab](examples/rfstab_examples/) |
 
 </details>
 

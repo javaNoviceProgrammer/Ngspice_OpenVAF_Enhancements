@@ -469,6 +469,10 @@ struct comm spcp_coms[] = {
       { 040, 040, 040, 040 }, E_DEFHMASK, 1, LOTS,
       NULL,
       "<Vprobe> <Iprobe> (dec|oct|lin <N> <fstart> <fstop>) : stability / loop-gain analysis (Middlebrook/Tian double injection). Vprobe = series 0 V probe in the loop (+node = driver A, -node = load B); Iprobe = shunt 0 A probe (ground -> load node B). Reports phase/gain margin and stores complex 'loopgain'." },
+    { "rfstab", com_rfstab, TRUE, FALSE,         /* Enhancement-253 */
+      { 040, 040, 040, 040 }, E_DEFHMASK, 0, LOTS,
+      NULL,
+      "[S11 S12 S21 S22] : two-port stability / gain report from .sp S-parameters. Computes Rollett K, |Delta|, the mu/mu' stability factors and the max stable/available gain (MSG/MAG) per frequency, stores them (k, magdelta, mu, mu_src, gmax, msg, stable) in an 'rfstab' plot, and reports the unconditional-stability verdict. With no args uses the .sp defaults S_1_1 S_1_2 S_2_1 S_2_2." },
     { "loadpull", com_loadpull, TRUE, FALSE,     /* Enhancement-234 */
       { 040, 040, 040, 040 }, E_DEFHMASK, 1, LOTS,
       NULL,
