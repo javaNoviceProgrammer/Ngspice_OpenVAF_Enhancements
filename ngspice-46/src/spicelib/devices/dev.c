@@ -117,6 +117,7 @@ extern struct coreInfo_t  coreInfo; /* cmexport.c */
 #include "mos9/mos9itf.h"
 #include "cpl/cplitf.h"
 #include "res/resitf.h"
+#include "nport/nportitf.h"
 #include "soi3/soi3itf.h"
 #include "sw/switf.h"
 #include "tra/traitf.h"
@@ -184,6 +185,7 @@ static SPICEdev *(*static_devices[])(void) = {
     get_mos6_info,
     get_mos9_info,
     get_res_info,
+    get_nport_info,
     get_soi3_info,
     get_sw_info,
     get_tra_info,

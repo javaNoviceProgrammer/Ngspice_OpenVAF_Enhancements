@@ -80,15 +80,26 @@ static void with_ext(const char *src, const char *ext, char *dst, size_t dstlen)
 
 void com_pre_snp(wordlist *wl)
 {
-    char module[256], va[1200], osdi[1200], msg[256], *snp, *ovf;
+    char module[256], va[1200], osdi[1200], nport[1200], msg[256], *snp, *ovf;
     char *cmd;
     size_t cmdlen;
-    int rc;
+    int rc, native = 0;
+
+    /* optional leading backend flag: -osdi (default) or -native */
+    while (wl && wl->wl_word && wl->wl_word[0] == '-') {
+        if (eq(wl->wl_word, "-native"))    native = 1;
+        else if (eq(wl->wl_word, "-osdi")) native = 0;
+        else { fprintf(cp_err, "pre_snp: unknown option '%s'\n", wl->wl_word); return; }
+        wl = wl->wl_next;
+    }
 
     if (!wl || !wl->wl_word) {
-        fprintf(cp_err, "usage: pre_snp <file.sNp> [module]\n"
-                        "  Converts a Touchstone file to a Verilog-A n-port and compiles it\n"
-                        "  to <file>.osdi; load it afterwards with `pre_osdi <file>.osdi`.\n");
+        fprintf(cp_err, "usage: pre_snp [-osdi|-native] <file.sNp> [module]\n"
+                        "  -osdi   (default) Touchstone -> Verilog-A -> openvaf-r -> <file>.osdi,\n"
+                        "                    then load with `pre_osdi <file>.osdi`.\n"
+                        "  -native           Touchstone -> <file>.nport for the built-in n-port\n"
+                        "                    device (no compiler); use it in the deck with\n"
+                        "                    `N1 <ports..> <ref> m` / `.model m nport(file=\"<file>.nport\")`.\n");
         return;
     }
     snp = wl->wl_word;
@@ -97,6 +108,20 @@ void com_pre_snp(wordlist *wl)
     } else {
         derive_module(snp, module, sizeof module);
     }
+
+    /* -native: emit the compact .nport fit file; no Verilog-A / openvaf-r step. */
+    if (native) {
+        with_ext(snp, ".nport", nport, sizeof nport);
+        if (snp2nport_convert(snp, nport, msg, sizeof msg)) {
+            fprintf(cp_err, "pre_snp: %s\n", msg);
+            return;
+        }
+        fprintf(cp_out, "pre_snp: %s -> %s  (%s)\n", snp, nport, msg);
+        fprintf(cp_out, "pre_snp: use it with  `N1 <ports..> <ref> m`  and\n"
+                        "                       `.model m nport(file=\"%s\")`\n", nport);
+        return;
+    }
+
     with_ext(snp, ".va", va, sizeof va);
     with_ext(snp, ".osdi", osdi, sizeof osdi);
 

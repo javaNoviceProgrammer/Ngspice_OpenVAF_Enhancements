@@ -1373,6 +1373,7 @@ AC_CONFIG_FILES([Makefile
                  src/spicelib/devices/mos9/Makefile
                  src/spicelib/devices/ndev/Makefile
                  src/spicelib/devices/res/Makefile
+                 src/spicelib/devices/nport/Makefile
                  src/spicelib/devices/soi3/Makefile
                  src/spicelib/devices/sw/Makefile
                  src/spicelib/devices/tra/Makefile

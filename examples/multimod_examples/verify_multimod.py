@@ -18,8 +18,8 @@ descriptor as a device type. This suite pins the whole packaging surface:
   [6] loading the same .osdi twice notes "already loaded" and skips;
   [7] a module named like a built-in device (vcvs) no longer crashes
       ngspice: the duplicate is warned-and-skipped and the instance line
-      gets a clean "Expected OSDI device" error (this was the documented
-      Enhancement-29 segfault gotcha, now retired);
+      gets a clean "Expected OSDI [or nport] device" error (this was the
+      documented Enhancement-29 segfault gotcha, now retired);
   [8] the underlying stock defect is fixed on its own: a .model card
       naming a card-less built-in type (vcvs), referenced by an ordinary
       MOS instance with NO OSDI involved, errors cleanly instead of
@@ -126,7 +126,7 @@ def main():
     check("no crash (used to SIGSEGV)", rc >= 0 and rc < 128)
     check("duplicate warned", 'device "vcvs" is already registered' in out)
     check("instance line gets a clean error",
-          "Expected OSDI device" in out)
+          "Expected OSDI" in out)   # E-242 broadened this to "OSDI or nport device"
 
     print("[8] stock shape: .model of a card-less built-in, no OSDI")
     rc, out = run("* stock clash\nvin in 0 dc 1\nr1 in 0 1k\nm1 a b c d mm\n"

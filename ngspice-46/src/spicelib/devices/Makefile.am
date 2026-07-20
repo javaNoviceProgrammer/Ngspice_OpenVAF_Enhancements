@@ -42,6 +42,7 @@ SUBDIRS = \
 	mos6	\
 	mos9	\
 	res	\
+	nport	\
 	soi3	\
 	sw	\
 	tra	\
@@ -104,6 +105,7 @@ DIST_SUBDIRS = \
 	mos9	\
 	ndev	\
 	res	\
+	nport	\
 	soi3	\
 	sw	\
 	tra	\
