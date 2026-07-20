@@ -45,6 +45,11 @@ NON-STANDARD FEATURES
 #include <string.h>
 
 
+/* Upper bound on the input-port count.  The lookup table has 2^n entries; a real
+   LUT has only a handful of inputs, so this both keeps the table bounded and
+   keeps 1<<n away from the undefined-behaviour region (shift >= int width). */
+#define D_LUT_MAX_INPUTS 24
+
 
 /*=== CONSTANTS ========================*/
 
@@ -141,6 +146,15 @@ void cm_d_lut(ARGS)
 
     /** Retrieve size value and compute table length... **/
     size = PORT_SIZE(in);
+    /* The lookup table has 2^size entries, computed as (1 << size).  A shift by
+       >= the width of int is undefined behaviour, and even a size in the high
+       twenties asks for a multi-gigabyte allocation.  Cap the number of input
+       ports (a real LUT has only a handful) and report a clean error. */
+    if (size < 1 || size > D_LUT_MAX_INPUTS) {
+        cm_message_send("d_lut: number of input ports out of range "
+                        "(must be 1..24); the 2^n lookup table would be too large");
+        return;
+    }
     tablelen = 1 << size;
 
     /*** Setup required state variables ***/
