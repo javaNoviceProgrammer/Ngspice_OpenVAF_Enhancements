@@ -19,12 +19,18 @@ threshold). A companion guard (ptfuncs.c) stops `pwr(0, negative)` returning raw
 +inf (like the existing /0 and sqrt(neg) guards), so a singular derivative stays
 finite rather than poisoning the Jacobian with NaN.
 
+Enhancement-257 extends the same guard to the TRANSIENT operating point
+(MODETRANOP), so a `.tran` of a biased singular-derivative source starts at the
+true bias instead of the spurious v~0 (which showed a fake startup transient).
+
 Checks (both solvers):
  [1] `I=sqrt(v(n))` DC op == the analytic solution (v0=0.178045), KCL satisfied
      (i_B1 == i_R1), NOT the spurious v~0;
  [2] `I=0.1/v(n)` DC op == the analytic upper-branch solution (v0=0.887298);
  [3] the fix is result-neutral: finite-derivative B-sources (v^2, exp, v^3, tanh)
-     converge to their exact operating points, unchanged.
+     converge to their exact operating points, unchanged;
+ [4] Enhancement-257: the `.tran` operating point starts at the true bias
+     v0=0.178045, not the spurious v~0.
 
 Line 1 of every deck is the title (ignored).
 """
@@ -93,7 +99,27 @@ for expr, vb, truth in cases:
 check("[3] result-neutral: finite-derivative B-sources (v^2/v^3/exp/tanh) unchanged",
       worst < 1e-4, f"(worst |v-analytic| = {worst:.2e})")
 
-if os.path.exists(os.path.join(HERE, "_b.cir")):
-    os.remove(os.path.join(HERE, "_b.cir"))
+# [4] Enhancement-257: the TRANSIENT operating point (MODETRANOP) is guarded too,
+# so a `.tran` of a biased sqrt(v) source starts at the true bias v0=0.178045 --
+# not the spurious v~0 that would show a fake 0->0.178 startup transient.
+open(os.path.join(HERE, "_b.cir"), "w").write(
+    "* sqrt tran op\nV1 in 0 DC 0.6\nR1 in n 1\nC1 n 0 1u\nB1 n 0 I=sqrt(v(n))\n"
+    ".tran 10u 1m\n.control\nrun\nwrdata _tb.dat v(n)\n.endc\n.end\n")
+subprocess.run([NGSPICE, "-b", "_b.cir"], capture_output=True, text=True,
+               cwd=HERE, timeout=60)
+t0 = None
+try:
+    with open(os.path.join(HERE, "_tb.dat")) as f:
+        t0 = float(f.readline().split()[1])          # v(n) at t=0 (the tran op)
+except (OSError, IndexError, ValueError):
+    pass
+check("[4] transient op (.tran) starts at the TRUE bias v0=0.178045, not spurious v~0",
+      t0 is not None and abs(t0 - 0.178045) < 1e-3,
+      f"(v(n)[t=0]={t0:.6f} vs 0.178045 -- pre-fix this was ~9e-17, a fake startup transient)"
+      if t0 is not None else "(no tran output)")
+
+for f in ("_b.cir", "_tb.dat"):
+    if os.path.exists(os.path.join(HERE, f)):
+        os.remove(os.path.join(HERE, f))
 print(f"\n{passed} passed, {failed} failed")
 raise SystemExit(1 if failed else 0)

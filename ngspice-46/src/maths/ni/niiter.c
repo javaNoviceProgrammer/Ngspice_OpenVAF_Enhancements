@@ -140,7 +140,8 @@ NIiter(CKTcircuit *ckt, int maxIter)
              * DC / tran operating point, so the false-convergence guard below
              * has the KCL residual available. */
             if ((ckt->CKTlinesearch || ckt->CKTtrustregion ||
-                 (ckt->CKTdcFirstTry && (ckt->CKTmode & MODEDCOP) &&
+                 (ckt->CKTdcFirstTry &&
+                  ((ckt->CKTmode & MODEDCOP) || (ckt->CKTmode & MODETRANOP)) &&
                   (ckt->CKTmode & MODEINITFLOAT))) &&
                 ckt->CKTrhsSpare && (iterno > 1)) {
                 int sz = SMPmatSize(ckt->CKTmatrix);
@@ -376,13 +377,17 @@ NIiter(CKTcircuit *ckt, int maxIter)
              * while grossly VIOLATING KCL: the node-current residual
              * F = G*x - b (CKTlsMerit above, normalized by the current
              * tolerance) stays huge. Verify it, in the DC / tran operating
-             * point only: if the worst node imbalance is astronomically out of
-             * tolerance (>1e6x -- a genuinely converged point sits near 1, so
-             * this is result-neutral on every well-behaved circuit), decline
-             * convergence so CKTop falls through to gmin / source stepping,
-             * which regularizes the singular node and finds the true point. */
+             * point only (Enhancement-257: MODETRANOP too, so a `.tran` no longer
+             * starts a biased circuit from a spurious bias): if the worst node
+             * imbalance is >100x tolerance (a genuinely converged point sits near
+             * 1, so this is result-neutral on every well-behaved circuit),
+             * decline convergence so CKTop falls through to gmin / source
+             * stepping, which regularizes the singular node and finds the true
+             * point. Confined to the first plain attempt (CKTdcFirstTry) so it
+             * never fires inside a convergence-aid sub-solve (optran/gmin/src). */
             if ((ckt->CKTnoncon == 0) && (iterno > 1) && ckt->CKTdcFirstTry &&
-                ((ckt->CKTmode & MODEDCOP) && (ckt->CKTmode & MODEINITFLOAT)) &&
+                (((ckt->CKTmode & MODEDCOP) || (ckt->CKTmode & MODETRANOP)) &&
+                 (ckt->CKTmode & MODEINITFLOAT)) &&
                 !ckt->CKTlinesearch && !ckt->CKTtrustregion &&
                 (!finite(ckt->CKTlsMerit) || ckt->CKTlsMerit > 100.0))
                 ckt->CKTnoncon = 1;

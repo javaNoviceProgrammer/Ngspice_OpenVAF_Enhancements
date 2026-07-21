@@ -45,7 +45,7 @@ Two hundred and thirty enhancements so far — language features, correctness fi
 The index: **Doc** links each enhancement's detailed write-up, **Examples** links the folder whose verify script pins the behavior.
 
 <details>
-<summary><b>📖 Show the full enhancement table</b> — 256 rows, click to expand</summary>
+<summary><b>📖 Show the full enhancement table</b> — 257 rows, click to expand</summary>
 
 | # | What it delivered | Tool | Doc | Examples |
 |---|---|---|---|---|
@@ -305,6 +305,7 @@ The index: **Doc** links each enhancement's detailed write-up, **Examples** link
 | 254 | RF design aid: pyplot -smith -- Smith-chart plotting mode for matplotlib output; draws complex vectors (S11, S22, reflection coefficients) over the unit circle plus constant-R/X grid | ngspice | [doc](enhancements_doc/Enhancement-254.md) | [pyplotsmith](examples/pyplotsmith_examples/) |
 | 255 | correctness: prove .disto machine-exact vs Harmonic Balance / QPSS-HB (HD2/HD3/IM3 amplitude convergence) and warn on behavioral B-source nonlinearities that .disto silently ignored | ngspice | [doc](enhancements_doc/Enhancement-255.md) | [distoexact](examples/distoexact_examples/) |
 | 256 | DC-solver correctness: fix silent spurious operating point for singular-derivative behavioral sources (B I=sqrt(v), 1/v, ln) -- detect the KCL-residual false-convergence and fall through to gmin/source stepping; confined to the first Newton attempt so all convergence aids are untouched | ngspice | [doc](enhancements_doc/Enhancement-256.md) | [bsrcconv](examples/bsrcconv_examples/) |
+| 257 | DC-solver correctness: extend the E-256 false-convergence guard to the TRANSIENT operating point (MODETRANOP), so a .tran of a biased singular-derivative source starts at the true bias instead of a spurious v~0 (which showed a fake startup transient) | ngspice | [doc](enhancements_doc/Enhancement-257.md) | [bsrcconv](examples/bsrcconv_examples/) |
 
 </details>
 
