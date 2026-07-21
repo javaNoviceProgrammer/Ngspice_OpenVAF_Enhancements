@@ -23,6 +23,10 @@ Checks (both solvers -- the integrator is solver-independent, so Sparse == KLU):
  [5] NONLINEAR charge: a diode + junction-capacitance rectifier converges under
      Richardson (TRAP, dt -> dt/2) at order ~2 -- the nonlinear device charge
      integration is 2nd order too.
+ [6] LTE STEP CONTROLLER (Enhancement-260): on a stiff circuit (fast + slow modes
+     1000x apart) the adaptive local-truncation-error step controller delivers an
+     accuracy that TRACKS reltol -- the error vs the closed form shrinks monotonically
+     as reltol tightens (a broken LTE estimate would plateau or mis-size the steps).
 
 Line 1 of every deck is the title (ignored).
 """
@@ -146,6 +150,39 @@ d1, d2 = dnorm(sols[0], sols[1]), dnorm(sols[1], sols[2])
 p_nl = math.log2(d1 / d2) if d2 > 0 else 0
 check("[5] nonlinear (diode+CJO rectifier) TRAP Richardson order p ~ 2",
       1.7 <= p_nl <= 2.3, f"(p = {p_nl:.2f})")
+
+# ---------------- [6] LTE step-controller: delivered accuracy tracks reltol ----------------
+# Enhancement-260: on a STIFF circuit (fast + slow modes, 1000x apart) the adaptive
+# LTE step controller must resolve the fast decay then coarsen. The DELIVERED error
+# vs the closed form must shrink as reltol tightens (a broken LTE estimate would
+# plateau or mis-size the steps). tau_fast=1us, tau_slow=1ms.
+TFa, TSl = 1e-6, 1e-3
+
+
+def stiff_err(reltol):
+    d_all = {}
+    deck = (f".ic v(f)=1 v(s)=1\nRf f 0 1k\nCf f 0 1n\nRs s 0 1meg\nCs s 0 1n\n"
+            f".options reltol={reltol}\n.tran 0.2u 5m 0 5u uic")
+    # wrdata writes two vectors -> columns t vf t vs
+    open(os.path.join(HERE, "_ia.cir"), "w").write(
+        f"* stiff\n{deck}\n.control\nrun\nwrdata {HERE}/_ia.dat v(f)\n.endc\n.end\n")
+    subprocess.run([NGSPICE, "-b", "_ia.cir"], capture_output=True, text=True,
+                   cwd=HERE, timeout=120)
+    out = {}
+    for ln in open(os.path.join(HERE, "_ia.dat")):
+        s = ln.split()
+        if len(s) >= 2:
+            out[float(s[0])] = float(s[1])
+    return max((abs(v - math.exp(-t / TFa)) for t, v in out.items() if t > 0), default=1.0)
+
+
+e_loose = stiff_err(1e-3)
+e_mid = stiff_err(1e-5)
+e_tight = stiff_err(1e-7)
+check("[6] LTE controller: delivered error on a stiff circuit tracks reltol (monotone, no plateau)",
+      e_tight < e_mid < e_loose and e_tight < e_loose / 10.0,
+      f"(err @reltol 1e-3/1e-5/1e-7 = {e_loose:.1e}/{e_mid:.1e}/{e_tight:.1e}; "
+      f"improved {e_loose/e_tight:.0f}x)")
 
 for f in ("_ia.cir", "_ia.dat"):
     p = os.path.join(HERE, f)
