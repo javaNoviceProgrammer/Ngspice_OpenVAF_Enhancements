@@ -1,0 +1,9 @@
+`include "disciplines.vams"
+// Enhancement-263 cause 2: ddx() whose 2nd argument is not a probe access
+// function crashed hir_lower (unwrap_param). Now a clean diagnostic.
+module m(p, n);
+  inout p, n;
+  electrical p, n;
+  analog
+    V(p,n) <+ ddx(V(p,n), 5);
+endmodule

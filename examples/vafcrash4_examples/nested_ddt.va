@@ -1,0 +1,11 @@
+`include "disciplines.vams"
+// Enhancement-263 cause 1: deeply nested analog operators produced a cached
+// value with no init-time definition (ValueDef::Invalid), which crashed the
+// instance-setup cache builder (sim_back/init.rs) and the OSDI backend. Now
+// compiles cleanly.
+module m(p, n);
+  inout p, n;
+  electrical p, n;
+  analog
+    I(p,n) <+ absdelay(ddt(ddt(absdelay(absdelay(tanh(idt(1e-12*idt(1e-12*idt(ddt(ddt(absdelay(V(p,n),1e-9,1e-6))),0.0),0.0),0.0)),1e-9,1e-6),1e-9,1e-6))),1e-9,1e-6);
+endmodule

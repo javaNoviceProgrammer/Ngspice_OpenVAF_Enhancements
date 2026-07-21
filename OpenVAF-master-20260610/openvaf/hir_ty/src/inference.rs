@@ -1166,7 +1166,15 @@ impl Ctx<'_> {
             ) {
                 (*fun, *signature)
             } else {
-                if !matches!(&self.body.exprs[expr], Expr::Call { .. }) {
+                // `unknown` did not resolve to a probe access function (V()/I()/
+                // $temperature). If it is not even a call (a literal like `ddx(f, 5)`,
+                // a plain variable, ...) it is definitely an invalid ddx unknown -- emit
+                // the diagnostic. (A call that failed to resolve already has its own
+                // error, so don't double-report.) This guard previously tested `expr`
+                // -- the ddx call itself, which is ALWAYS a Call -- so the diagnostic was
+                // dead code and `ddx(f, <non-probe>)` slipped through to hir_lower, where
+                // unwrap_node()/unwrap_param() panicked.
+                if !matches!(&self.body.exprs[unknown], Expr::Call { .. }) {
                     self.result
                         .diagnostics
                         .push(InferenceDiagnostic::InvalidUnknown { e: unknown });

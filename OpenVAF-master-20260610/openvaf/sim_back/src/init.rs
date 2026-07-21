@@ -8,8 +8,8 @@ use indexmap::IndexMap;
 use mir::builder::InstBuilder;
 use mir::cursor::{Cursor, FuncCursor};
 use mir::{
-    strip_optbarrier, Block, ControlFlowGraph, DominatorTree, FuncRef, Function, Inst,
-    InstructionData, Opcode, Value, FALSE,
+    strip_optbarrier, Block, Const, ControlFlowGraph, DominatorTree, FuncRef, Function, Inst,
+    InstructionData, Opcode, Value, ValueDef, FALSE, TRUE,
 };
 use mir_opt::{aggressive_dead_code_elimination, simplify_cfg, simplify_cfg_init, ClassId, GVN};
 use rustc_hash::FxHasher;
@@ -281,6 +281,45 @@ impl<'a> Builder<'a> {
                     return None;
                 }
 
+                // A cached value can fold to a CONSTANT in the init function -- e.g.
+                // deeply nested analog operators (ddt/idt/absdelay) whose init
+                // contribution collapses. The OSDI cache-slot codegen assumes every
+                // cached value is a computed instruction result (unwrap_inst/unwrap_result
+                // and BuilderVal), so a constant here used to crash it. Don't allocate a
+                // slot: substitute the constant directly into the eval function (exactly
+                // like the dead-value path above). eval then uses the init-time value --
+                // which IS that constant -- with no runtime cache slot or optbarrier.
+                let new_val = self.val_map[&val];
+                match self.init.func.dfg.value_def(new_val) {
+                    ValueDef::Const(Const::Float(f)) => {
+                        self.func.dfg.values.fconst_at(f, val);
+                        return None;
+                    }
+                    ValueDef::Const(Const::Int(i)) => {
+                        self.func.dfg.values.iconst_at(i, val);
+                        return None;
+                    }
+                    ValueDef::Const(Const::Str(s)) => {
+                        self.func.dfg.values.sconst_at(s, val);
+                        return None;
+                    }
+                    ValueDef::Const(Const::Bool(b)) => {
+                        self.func.dfg.values.make_alias_at(if b { TRUE } else { FALSE }, val);
+                        return None;
+                    }
+                    ValueDef::Invalid => {
+                        // The cached value has NO init-time definition -- e.g. deeply
+                        // nested analog operators (ddt(ddt(..))) produce an intermediate
+                        // that is undefined at initialization. Treat it exactly like a
+                        // dead value above: default the init value to 0 rather than
+                        // feeding an invalid value into the OSDI cache-slot codegen
+                        // (which crashed with unwrap_result/BuilderVal::Undef).
+                        self.func.dfg.values.fconst_at(0.0.into(), val);
+                        return None;
+                    }
+                    ValueDef::Result(..) | ValueDef::Param(_) => {}
+                }
+
                 let ty = if let Some(tag) = self.func.dfg.tag(val) {
                     let idx = usize::from(tag);
                     let place = self.intern.outputs.get_index(idx).unwrap().0;
@@ -300,17 +339,34 @@ impl<'a> Builder<'a> {
                     .unwrap();
                 let cache_slot = ensure_cache_slot(Some(old_inst), idx, ty);
 
-                let new_val = self.val_map[&val];
-                let (new_inst, _) = self.init.func.dfg.value_def(new_val).unwrap_result();
-
                 self.func
                     .dfg
                     .values
                     .make_param_at((cache_slot.0 as usize + self.intern.params.len()).into(), val);
-                let val = FuncCursor::new(&mut self.init.func)
-                    .after_inst_no_phi(new_inst)
-                    .ins()
-                    .ensure_optbarrier(new_val);
+
+                // new_val is an instruction result here (constants were substituted and
+                // returned above). A parameter is not expected, but should one ever reach
+                // this point it has no defining instruction, so materialize it as an
+                // optbarrier at the init function's entry instead of panicking on
+                // unwrap_result().
+                let val = match self.init.func.dfg.value_def(new_val).result() {
+                    Some((new_inst, _)) => FuncCursor::new(&mut self.init.func)
+                        .after_inst_no_phi(new_inst)
+                        .ins()
+                        .ensure_optbarrier(new_val),
+                    None => {
+                        let entry = self
+                            .init
+                            .func
+                            .layout
+                            .entry_block()
+                            .expect("init function has an entry block");
+                        FuncCursor::new(&mut self.init.func)
+                            .at_first_inst(entry)
+                            .ins()
+                            .optbarrier(new_val)
+                    }
+                };
 
                 Some((val, cache_slot))
             })

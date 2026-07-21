@@ -88,6 +88,30 @@ error: invalid unknown was supplied to the ddx operator
      explicit voltage: V(x,y)
      temperature: $temperature
 
+error: invalid unknown was supplied to the ddx operator
+   --> /ddx.va:27:21
+   |
+27 |         x = ddx(1.0,1.0);
+   |                     ^^^ invalid ddx unknown
+   |
+   = help: expected one of the following
+     branch current access: I(branch), I(a,b)
+     node voltage: V(x)
+     explicit voltage: V(x,y)
+     temperature: $temperature
+
+error: invalid unknown was supplied to the ddx operator
+   --> /ddx.va:28:21
+   |
+28 |         x = ddx(1.0,foo);
+   |                     ^^^ invalid ddx unknown
+   |
+   = help: expected one of the following
+     branch current access: I(branch), I(a,b)
+     node voltage: V(x)
+     explicit voltage: V(x,y)
+     temperature: $temperature
+
 error: access of port-branch potential
    --> /ddx.va:24:21
    |

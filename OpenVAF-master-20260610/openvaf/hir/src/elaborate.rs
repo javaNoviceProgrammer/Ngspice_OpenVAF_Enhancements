@@ -3437,6 +3437,13 @@ impl ElabCtx<'_> {
         }
 
         let items: Vec<_> = module_ast.module_items().collect();
+        // The item TREE reported an instantiation, but the parsed AST's item list can be
+        // empty on a malformed module where parser error-recovery and the item-tree
+        // builder disagree. With no AST items there is nothing to flatten, so return the
+        // module verbatim rather than panicking on items.first()/last().unwrap() below.
+        if items.is_empty() {
+            return module_ast.syntax().text().to_string();
+        }
         let base = module_ast.syntax().text_range().start();
         let full = module_ast.syntax().text().to_string();
         let rel_start = rel_range(base, items.first().unwrap().syntax().text_range()).start;

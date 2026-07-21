@@ -45,7 +45,7 @@ Two hundred and thirty enhancements so far — language features, correctness fi
 The index: **Doc** links each enhancement's detailed write-up, **Examples** links the folder whose verify script pins the behavior.
 
 <details>
-<summary><b>📖 Show the full enhancement table</b> — 262 rows, click to expand</summary>
+<summary><b>📖 Show the full enhancement table</b> — 263 rows, click to expand</summary>
 
 | # | What it delivered | Tool | Doc | Examples |
 |---|---|---|---|---|
@@ -311,6 +311,7 @@ The index: **Doc** links each enhancement's detailed write-up, **Examples** link
 | 260 | correctness proof: LTE step-controller accuracy on a stiff circuit -- the adaptive local-truncation-error stepper delivers accuracy that tracks reltol (error shrinks monotonically ~reltol^0.6, no plateau) as it resolves the fast mode then coarsens for the slow tail | ngspice | [doc](enhancements_doc/Enhancement-260.md) | [integaccuracy](examples/integaccuracy_examples/) |
 | 261 | autodiff correctness: guard the `sqrt()` derivative singularity -- `dI/dV` of `K*sqrt(V)` was raw `+inf` at the `V=0` initial guess, NaN-poisoning the Jacobian so the DC op failed outright (while identical `pow(V,0.5)` converged). Emit the regularized `1/(2*sqrt(V+a))` (a=1e-18): finite at `V=0`, exact for `V>0`, composes through downstream operators, matches ngspice's B-source `sqrt` | openvaf&#8209;r | [doc](enhancements_doc/Enhancement-261.md) | [vafsqrtguard](examples/vafsqrtguard_examples/) |
 | 262 | autodiff correctness: extend the E-261 guard to `pow(V,Y)`, `0<Y<1` -- the base derivative `Y*V^(Y-1)` is the same `+inf` at `V=0` (an `inf*0` form in the shared pow chain rule), so scaled/combined fractional `pow` NaN-failed the DC op (pow's block-split guard only protected a bare terminal pow). Cache the derivative of `pow(V+a,Y)`: finite at `V=0`, exact for `V>0`, composes; remove the block-split guard (`atan2` unaffected) | openvaf&#8209;r | [doc](enhancements_doc/Enhancement-262.md) | [vafsqrtguard](examples/vafsqrtguard_examples/) |
+| 263 | robustness: three compiler panics found by a fuzzing campaign (mutation + structured + valid-pathological) turned into clean errors -- nested `ddt`/`idt`/`absdelay` produced an undefined init-cache value (crashed `sim_back`/OSDI); `ddx(V,5)` with a non-probe unknown crashed `hir_lower` (the type check's diagnostic was dead code); a malformed module with an empty AST item list but a recorded instantiation crashed the hierarchy-flatten pass | openvaf&#8209;r | [doc](enhancements_doc/Enhancement-263.md) | [vafcrash4](examples/vafcrash4_examples/) |
 
 </details>
 
