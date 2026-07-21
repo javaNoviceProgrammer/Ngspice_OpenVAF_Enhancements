@@ -85,7 +85,11 @@ void com_let(wordlist *wl)
      * the original NULL if there was no whitespace) with a NULL. */
     {
         char *q;
-        for (q = p + strlen(p) - 1; *q <= ' ' && p <= q; q--) {
+        /* Enhancement-271: an empty or all-whitespace LHS (e.g. `let [ = ...`,
+         * where the leading '[' has already been NUL'd above) leaves q = p - 1,
+         * and `*q` was dereferenced before the `p <= q` guard could short-circuit
+         * -> a one-byte read before the buffer. Test the bound first. */
+        for (q = p + strlen(p) - 1; p <= q && *q <= ' '; q--) {
             ;
         }
         *++q = '\0';
