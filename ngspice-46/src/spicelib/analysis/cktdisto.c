@@ -38,13 +38,29 @@ CKTdisto (CKTcircuit *ckt, int mode)
 	       first derivatives through the OSDI ABI, so their
 	       nonlinearities are invisible to .disto -- the analysis would
 	       silently report ZERO distortion for them. Warn loudly instead
-	       of returning quietly-wrong numbers. */
+	       of returning quietly-wrong numbers.
+
+	       Enhancement-255: the arbitrary/behavioral source (a B line, and
+	       the POLY form of E/G) is device type "ASRC" and likewise has no
+	       DEVdisto routine, so its nonlinearity contributes ZERO to .disto
+	       -- and silently, since ASRC is a built-in device (no OSDI
+	       registry_entry) that the OSDI check above skips. Warn for it too.
+	       Linear controlled sources use the dedicated VCVS/VCCS/CCCS/CCVS
+	       devices, so an ASRC present here is a behavioral/poly definition
+	       whose nonlinear terms (if any) are excluded from the results. */
 	    for (i=0;i<DEVmaxnum;i++) {
-		if ( DEVices[i] && !DEVices[i]->DEVdisto && ckt->CKThead[i]
-		     && DEVices[i]->DEVpublic.registry_entry ) {
+		if ( !(DEVices[i] && !DEVices[i]->DEVdisto && ckt->CKThead[i]) )
+		    continue;
+		if ( DEVices[i]->DEVpublic.registry_entry ) {
 		    fprintf(stderr,
 		        "Warning: Verilog-A (OSDI) device type '%s' has no distortion model;\n"
 		        "         .disto results will NOT include its nonlinearities.\n",
+		        DEVices[i]->DEVpublic.name);
+		} else if ( DEVices[i]->DEVpublic.name
+		            && strcmp(DEVices[i]->DEVpublic.name, "ASRC") == 0 ) {
+		    fprintf(stderr,
+		        "Warning: behavioral source (B, or POLY E/G; device type '%s') has no distortion model;\n"
+		        "         .disto does not include its nonlinearities.\n",
 		        DEVices[i]->DEVpublic.name);
 		}
 	    }

@@ -45,7 +45,7 @@ Two hundred and thirty enhancements so far — language features, correctness fi
 The index: **Doc** links each enhancement's detailed write-up, **Examples** links the folder whose verify script pins the behavior.
 
 <details>
-<summary><b>📖 Show the full enhancement table</b> — 254 rows, click to expand</summary>
+<summary><b>📖 Show the full enhancement table</b> — 255 rows, click to expand</summary>
 
 | # | What it delivered | Tool | Doc | Examples |
 |---|---|---|---|---|
@@ -303,6 +303,7 @@ The index: **Doc** links each enhancement's detailed write-up, **Examples** link
 | 252 | crash-hardening: fix heap out-of-bounds writes in the xfer and file_source XSPICE file-parser code models (multi-record line over-store; timepoint+channels off-by-one) | ngspice | [doc](enhancements_doc/Enhancement-252.md) | [filefix](examples/filefix_examples/) |
 | 253 | RF design aid: rfstab command -- two-port stability & gain report (Rollett K, |Delta|, mu/mu-prime factors, MSG/MAG) from .sp S-parameters | ngspice | [doc](enhancements_doc/Enhancement-253.md) | [rfstab](examples/rfstab_examples/) |
 | 254 | RF design aid: pyplot -smith -- Smith-chart plotting mode for matplotlib output; draws complex vectors (S11, S22, reflection coefficients) over the unit circle plus constant-R/X grid | ngspice | [doc](enhancements_doc/Enhancement-254.md) | [pyplotsmith](examples/pyplotsmith_examples/) |
+| 255 | correctness: prove .disto machine-exact vs Harmonic Balance / QPSS-HB (HD2/HD3/IM3 amplitude convergence) and warn on behavioral B-source nonlinearities that .disto silently ignored | ngspice | [doc](enhancements_doc/Enhancement-255.md) | [distoexact](examples/distoexact_examples/) |
 
 </details>
 
