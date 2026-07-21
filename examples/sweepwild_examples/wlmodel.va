@@ -1,13 +1,18 @@
-// wlmodel.va -- Enhancement-268 demo model.
+// wlmodel.va -- Enhancement-268/-269 demo model.
 //
-// A two-terminal element whose resistance scales with a `wavelength` model
-// parameter: R = wavelength * 1k. Two `.model` cards of this module both carry a
-// `wavelength` parameter, so `sweep @*[wavelength] ...` co-varies both at once.
+// A two-terminal element whose resistance is R = wavelength * scale * 1k, with:
+//   * `wavelength` -- a MODEL parameter (settable on the .model card),
+//   * `scale`      -- an INSTANCE parameter (settable per device instance).
+// So `@*[wavelength]` (E-268, model wildcard) co-varies the model parameter across
+// every .model card, and `@#*[scale]` / `@*[[scale]]` (E-269, instance wildcard)
+// co-vary the instance parameter across every device instance. `scale` defaults
+// to 1, so with no scale set R = wavelength * 1k.
 `include "disciplines.vams"
 
 module wlmodel(p, n);
     inout p, n;
     electrical p, n;
-    parameter real wavelength = 1.0;
-    analog V(p, n) <+ I(p, n) * wavelength * 1000.0;
+    parameter real wavelength = 1.0;                    // model parameter
+    (* type = "instance" *) parameter real scale = 1.0; // instance parameter
+    analog V(p, n) <+ I(p, n) * wavelength * scale * 1000.0;
 endmodule

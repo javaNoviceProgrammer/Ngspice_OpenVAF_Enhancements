@@ -1,23 +1,30 @@
-# sweepwild_examples — Enhancement-268
+# sweepwild_examples — Enhancement-268 / -269
 
-The wildcard model-parameter knob **`@*[param]`** sets a model parameter on
-**every loaded model that has it**, in place (`altermod`, no deck re-source). This
-lets one `sweep` co-vary a shared parameter across several `.model` cards:
+Wildcard parameter knobs that set a parameter on **every** matching model or
+instance, in place (`altermod`/`alter`, no deck re-source) — so one `sweep` can
+co-vary a shared parameter without the slow `.param` + `reset` idiom:
+
+| knob | targets | enhancement |
+|---|---|---|
+| `@*[param]` | every **model** card that has `param` | E-268 |
+| `@#*[param]` | every **instance** that has `param` | E-269 |
+| `@*[[param]]` | alias for `@#*[param]` | E-269 |
 
 ```spice
-sweep @*[wavelength] 1.30u 1.60u 0.01u -output ...
+sweep @*[wavelength] 1.30u 1.60u 0.01u -output ...   # model parameter, all models
+sweep @#*[scale]     1 4 1              -output ...   # instance parameter, all instances
+altermod @*[wavelength]=1.55u                         # also work standalone
+alter    @#*[scale]=2
 ```
 
-Before, `sweep @dev1[wavelength]` targeted one model only, and the `.param` idiom
-worked but re-sourced the whole deck at every point (slow). `@*[param]` is applied
-in place — no `reset`. It also works standalone: `altermod @*[wavelength]=1.55u`.
+Models/instances without the parameter (and unrelated device types) are skipped;
+`@*[<absent>]` / `@#*[<absent>]` warn and change nothing. A concrete `@model[param]`
+or `@inst[param]` is unchanged. The model wildcard also reaches `.model` cards
+**inside subcircuits** (they flatten to per-instantiation model copies).
 
-Models without the parameter (and unrelated device types) are skipped; `@*[<absent
-param>]` prints a warning and changes nothing. A concrete `@model[param]` is
-unchanged.
-
-`wlmodel.va`: R = `wavelength`·1k. The verify instantiates two `.model` cards of it
-plus one unrelated model (no `wavelength`).
+`wlmodel.va`: R = `wavelength`·`scale`·1k, where `wavelength` is a **model**
+parameter and `scale` an **instance** parameter — so the verify exercises both
+wildcard kinds against one model.
 
 ## Verify
 
@@ -25,6 +32,7 @@ plus one unrelated model (no `wavelength`).
 python3 verify_sweepwild.py
 ```
 
-Four checks (both solvers): `sweep @*[wavelength]` co-varies both `wlmodel`
-devices; the unrelated model is untouched; a concrete `@dev1[wavelength]` targets
-only `dev1`; `@*[absent]` warns and changes nothing.
+Seven checks (both solvers): model wildcard co-varies both model cards; it reaches
+subcircuit-internal models; the instance wildcard `@#*[scale]` and its alias
+`@*[[scale]]` co-vary every instance; concrete knobs target one device; absent-param
+wildcards warn.

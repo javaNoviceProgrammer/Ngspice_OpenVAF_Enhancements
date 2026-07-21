@@ -1245,14 +1245,30 @@ if_set_binned_model(CKTcircuit *ckt, char *devname, char *param, struct dvec *va
 }
 
 
-/* Enhancement-268: apply an `altermod`/`alter` assignment, expanding a wildcard
- * model name `@*[param]` to every loaded model that has `param` (in place, no deck
- * re-source). A concrete `@model[param]` or device goes through if_setparam as
- * before. */
+/* Enhancement-268/-269: apply an `altermod`/`alter` assignment, expanding a
+ * wildcard to every loaded model (or instance) that has `param`, in place (no deck
+ * re-source). The wildcard is chosen by the device-name token, so the same effect
+ * is available under `alter` and `altermod`:
+ *   `@*[param]`   -> every MODEL card    that has `param`  (Enhancement-268)
+ *   `@#*[param]`  -> every INSTANCE       that has `param`  (Enhancement-269)
+ *   `@*[[param]]` -> every INSTANCE       that has `param`  (Enhancement-269 alias;
+ *                    the outer `@dev[param]` parse leaves `param` as `[param`)
+ * A concrete `@model[param]` or device goes through if_setparam as before. */
 static void
 alter_set(char *dev, char *param, struct dvec *dv, int do_model)
 {
-    if (do_model && dev && dev[0] == '*' && dev[1] == '\0') {
+    char *iparam = NULL;                     /* set -> instance wildcard on iparam */
+
+    if (dev && dev[0] == '#' && dev[1] == '*' && dev[2] == '\0')
+        iparam = param;                      /* @#*[param] */
+    else if (dev && dev[0] == '*' && dev[1] == '\0' && param && param[0] == '[')
+        iparam = param + 1;                  /* @*[[param]] -> strip the leading '[' */
+
+    if (iparam) {
+        int n = if_setparam_wildcard_instance(ft_curckt->ci_ckt, iparam, dv);
+        if (n == 0)
+            fprintf(cp_err, "Warning: no loaded instance has parameter '%s'.\n", iparam);
+    } else if (dev && dev[0] == '*' && dev[1] == '\0') {
         int n = if_setparam_wildcard(ft_curckt->ci_ckt, param, dv);
         if (n == 0)
             fprintf(cp_err, "Warning: no loaded model has parameter '%s'.\n",

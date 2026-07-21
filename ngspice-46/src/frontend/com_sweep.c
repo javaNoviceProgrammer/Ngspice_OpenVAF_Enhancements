@@ -176,10 +176,14 @@ static int sw_kind(const char *name)
         while (*p && *p != '[' && i < (int) sizeof mod - 1)
             mod[i++] = *p++;
         mod[i] = '\0';
-        /* Enhancement-268: `@*[param]` is the wildcard model-parameter knob --
-         * applied in place via `altermod @*[param]=` (no deck re-source), which
-         * sets `param` on every loaded model that has it. */
-        if (mod[0] == '*' && mod[1] == '\0')
+        /* Enhancement-268/-269: wildcard knobs, applied in place via `altermod`
+         * (no deck re-source): `@*[param]` sets every MODEL that has `param`;
+         * `@#*[param]` and `@*[[param]]` set every INSTANCE that has it. All are
+         * classified as in-place model-style knobs here; `alter_set` (device.c)
+         * disambiguates model vs instance by the name token. The `@*[[param]]`
+         * form leaves `mod` as "*" (the scan stops at the first '['). */
+        if ((mod[0] == '*' && mod[1] == '\0') ||
+            (mod[0] == '#' && mod[1] == '*' && mod[2] == '\0'))
             return SW_MODEL;
         if (*mod && ft_curckt && ft_curckt->ci_ckt &&
             ft_sim->findModel(ft_curckt->ci_ckt, (IFuid) mod))

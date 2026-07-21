@@ -1033,6 +1033,56 @@ if_setparam_wildcard(CKTcircuit *ckt, char *param, struct dvec *val)
     return count;
 }
 
+
+/* Enhancement-269: set the INSTANCE parameter `param` to `val` on EVERY device
+ * instance in the circuit that has it -- the backend of the instance wildcards
+ * `@#*[param]` / `@*[[param]]`. Where `@*[param]` (Enhancement-268) targets model
+ * cards, this targets the per-instance value. Instance parameters are a property
+ * of the device TYPE, so a single `parmlookup(..., do_model=0, ...)` per type
+ * decides whether that type's instances carry `param`; each instance (walking
+ * every model's `GENinstances -> GENnextInstance`) is then set with `doset`
+ * (`dev != NULL` -> `setInstanceParm`, the same path a plain `alter @dev[param]=`
+ * uses). Returns the number of instances set. */
+int
+if_setparam_wildcard_instance(CKTcircuit *ckt, char *param, struct dvec *val)
+{
+    int typecode, count = 0;
+
+    if (!param || !*param || !ckt)
+        return 0;
+
+    for (typecode = 0; typecode < ft_sim->numDevices; typecode++) {
+        IFdevice    *device = ft_sim->devices[typecode];
+        GENinstance *dummy  = NULL;
+        GENmodel    *mod;
+        IFparm      *opt;
+
+        if (!device || !ckt->CKThead[typecode])
+            continue;
+        /* does this device type have a settable INSTANCE parameter named `param`? */
+        opt = parmlookup(device, &dummy, param, 0 /*instance*/, 1 /*inout=set*/);
+        if (!opt)
+            continue;
+        for (mod = ckt->CKThead[typecode]; mod; mod = mod->GENnextModel) {
+            GENinstance *inst;
+            for (inst = mod->GENinstances; inst; inst = inst->GENnextInstance) {
+                doset(ckt, typecode, inst, NULL, opt, val);
+                count++;
+            }
+        }
+    }
+
+    if (count > 0 && ckt->CKTtime > 0) {
+        int error = CKTtemp(ckt);
+        if (error) {
+            fprintf(stderr, "Error during wildcard instance-parameter change!\n");
+            controlled_exit(1);
+        }
+    }
+
+    return count;
+}
+
 /* Make a linked list where the first node is a CP_LIST variable
  * pointing to the different values of the vector variables.
  *
