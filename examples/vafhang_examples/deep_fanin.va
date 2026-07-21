@@ -1,0 +1,31 @@
+// deep_fanin.va -- Enhancement-264, check B: codegen stack headroom.
+//
+// `top` instantiates an 8001-element array of `leaf`, and every instance's
+// current contribution lands on the SAME node pair (a, b). Because each instance
+// has its own parameter `R`, the 8001 contributions do NOT collapse: they
+// accumulate into one 8001-deep contribution/derivative chain in the module's
+// residual. OpenVAF's OSDI code generator (and its automatic differentiation)
+// walk that chain recursively, and the recursion ran on a rayon codegen worker
+// whose default stack is only a few MB -- so this large-but-valid design aborted
+// with "thread has overflowed its stack" (SIGABRT) instead of compiling.
+//
+// The OSDI codegen now runs on a dedicated thread pool with a generous worker
+// stack, so deep per-node fan-in compiles instead of overflowing. (The stack
+// size is a thread property only; it cannot change the generated code -- the
+// emitted OSDI module is identical.) This file compiles cleanly now; it takes a
+// while (thousands of contributions is genuinely a lot of IR), so check B is
+// gated behind `--slow` / `NG_RUN_ALL=1` in the verifier.
+`include "disciplines.vams"
+
+module leaf(a, b);
+    inout a, b;
+    electrical a, b;
+    parameter real R = 1.0;
+    analog I(a, b) <+ V(a, b) / R;
+endmodule
+
+module top(a, b);
+    inout a, b;
+    electrical a, b;
+    leaf u[0:8000] (.a(a), .b(b));
+endmodule

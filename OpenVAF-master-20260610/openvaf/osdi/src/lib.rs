@@ -138,7 +138,17 @@ pub fn compile<'a>(
     // Build natures, disciplines, and attributes vectors, intern strings in Rodeo
     let (natures_vec, disciplines_vec, attributes_vec) = nda_arrays(&*db, &mut literals);
 
-    rayon_core::scope(|scope| {
+    // Codegen recursion depth grows with per-node fan-in: e.g. thousands of
+    // instances of a device all contributing to one net produce a deep
+    // contribution/derivative chain that a recursive codegen walk descends. The
+    // default rayon worker stack is small (~a few MB) and overflows on such
+    // large-but-valid designs (SIGABRT "has overflowed its stack"). Run codegen
+    // on a dedicated pool with a generous stack so these designs compile.
+    let codegen_pool = rayon_core::ThreadPoolBuilder::new()
+        .stack_size(256 * 1024 * 1024)
+        .build()
+        .expect("failed to build OSDI codegen thread pool");
+    codegen_pool.scope(|scope| {
         let db = db;
         let literals_ = &literals;
         let target_data_ = target_data;

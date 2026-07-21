@@ -45,6 +45,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::ops::Range;
+use std::rc::Rc;
 
 use basedb::{AstId, AstIdMap, BaseDB, VfsStorage};
 use hir_def::db::HirDefDB;
@@ -1707,7 +1708,7 @@ pub(crate) fn elaborate_instantiations(db: &mut CompilationDB) -> anyhow::Result
         port_conn_errors: Vec::new(),
         unknown_module_errors: Vec::new(),
         hier_param_errors: Vec::new(),
-        abs_prefixes: HashMap::new(),
+        abs_prefixes: Rc::new(AbsPrefixes::default()),
         port_ammeters: HashMap::new(),
     };
 
@@ -1743,7 +1744,8 @@ pub(crate) fn elaborate_instantiations(db: &mut CompilationDB) -> anyhow::Result
                 let Some(&module_id) = ctx.by_name.get(&name) else { continue };
                 let text = module_ast.syntax().text().to_string();
                 let anchor = anchor_maps.iter().find(|(anchor_name, map)| {
-                    *anchor_name != name && !find_instance_path_holes(&text, map).is_empty()
+                    *anchor_name != name
+                        && !find_instance_path_holes(&text, map, &AbsPrefixes::default()).is_empty()
                 });
                 if let Some((anchor_name, _)) = anchor {
                     out.push_str(&format!(
@@ -1856,7 +1858,7 @@ struct ElabCtx<'a> {
     /// merged into every inlined child's scope without colliding with the
     /// child's own relative chains. This is what lets a SIBLING's body
     /// resolve `V(top.a1.b)` / `$root.top…` references.
-    abs_prefixes: HashMap<String, String>,
+    abs_prefixes: Rc<AbsPrefixes>,
     /// Enhancement-86: instance prefixes whose listed ports need a
     /// synthesized 0V ammeter because some body probes
     /// `<chain>.branch(<port>)` — collected by a pre-scan over every
@@ -1973,7 +1975,40 @@ enum PortBinding {
 /// bus *base* names, ...); `bus_ports` covers bus-typed ports, which need
 /// the token-sequence-aware substitution described in this module's doc
 /// comment instead.
-#[derive(Default, Clone)]
+/// Enhancement-86 absolute-hierarchical-reference prefixes (`<top>`, `<top>.<chain>`)
+/// -- the SAME for every inlined instance of one top-module flatten. Shared via `Rc`
+/// (see `Scope::abs`) instead of being cloned into each instance's `inst_prefixes`,
+/// which made flattening O(N^2) in the instance count (a `u[0:N]` array or generate
+/// loop hung the compiler). `ancestors` is the precomputed set of every proper "a.b"
+/// prefix of `map`'s keys, so `find_instance_path_holes`' ancestor test is O(1).
+#[derive(Default)]
+struct AbsPrefixes {
+    map: HashMap<String, String>,
+    ancestors: HashSet<String>,
+}
+
+impl AbsPrefixes {
+    fn new(map: HashMap<String, String>) -> Self {
+        let ancestors = build_ancestors(&map);
+        AbsPrefixes { map, ancestors }
+    }
+}
+
+/// Every proper "a.b" prefix of the keys (so "a.b.c" contributes "a" and "a.b"):
+/// membership answers "does some key start with `x.`?" in O(1).
+fn build_ancestors(prefixes: &HashMap<String, String>) -> HashSet<String> {
+    let mut set = HashSet::new();
+    for key in prefixes.keys() {
+        let mut idx = 0;
+        while let Some(dot) = key[idx..].find('.') {
+            set.insert(key[..idx + dot].to_owned());
+            idx += dot + 1;
+        }
+    }
+    set
+}
+
+#[derive(Clone, Default)]
 struct Scope {
     subst: HashMap<String, String>,
     bus_ports: HashMap<Name, BTreeMap<i32, String>>,
@@ -1982,6 +2017,9 @@ struct Scope {
     /// prefix of that instance's locals -- used to rewrite hierarchical
     /// references (`V(u1.m)`, `u1.r`) to the flattened names (`u1__m`).
     inst_prefixes: HashMap<String, String>,
+    /// Enhancement-86 absolute prefixes, shared (not cloned) across every instance
+    /// of the current top-module flatten -- see `AbsPrefixes`.
+    abs: Rc<AbsPrefixes>,
 }
 
 /// Tries to constant-fold a `[msb:lsb]` instance-array range, mirroring
@@ -2132,10 +2170,25 @@ fn find_port_branch_probes(
 fn find_instance_path_holes(
     text: &str,
     inst_prefixes: &HashMap<String, String>,
+    abs: &AbsPrefixes,
 ) -> Vec<(Range<usize>, String)> {
-    if inst_prefixes.is_empty() {
+    if inst_prefixes.is_empty() && abs.map.is_empty() {
         return Vec::new();
     }
+    // Every instance-path reference (`u1.m`, `$root.top.x`, `u[0].branch(..)`) contains
+    // a '.', so text with none has no path holes at all. Bailing here is what keeps the
+    // whole pass linear: `resolve_port_bindings` runs `apply_rename` (hence this) once
+    // PER instance-array element over the (dot-free) port-connection text.
+    if !text.contains('.') {
+        return Vec::new();
+    }
+    // A chain key / ancestor is looked up in this scope's OWN prefixes (small -- built
+    // per call) and the shared Enhancement-86 absolute prefixes (whose ancestor set is
+    // precomputed ONCE in `AbsPrefixes`). Both are O(1) lookups -- scanning all keys, or
+    // rebuilding the absolute ancestor set per call, made flattening O(N^2) in the count.
+    let inst_ancestors = build_ancestors(inst_prefixes);
+    let is_chain_key = |c: &str| inst_prefixes.contains_key(c) || abs.map.contains_key(c);
+    let has_descendant = |c: &str| inst_ancestors.contains(c) || abs.ancestors.contains(c);
     let mut spans = Vec::new();
     let mut pos = 0usize;
     for tok in lexer::tokenize(text) {
@@ -2169,9 +2222,7 @@ fn find_instance_path_holes(
                         // combined name is a known instance chain element
                         // (otherwise it is an ordinary bus select)
                         let candidate = format!("{seg}[{idx}]");
-                        if inst_prefixes.keys().any(|c| {
-                            c == &candidate || c.starts_with(&format!("{candidate}."))
-                        }) {
+                        if is_chain_key(&candidate) || has_descendant(&candidate) {
                             seg = candidate;
                             return Some((seg, m + 1));
                         }
@@ -2206,9 +2257,7 @@ fn find_instance_path_holes(
             i += 1;
             continue;
         };
-        if !inst_prefixes.contains_key(&first_seg)
-            && !inst_prefixes.keys().any(|c| c.starts_with(&format!("{first_seg}.")))
-        {
+        if !is_chain_key(&first_seg) && !has_descendant(&first_seg) {
             i += 1;
             continue;
         }
@@ -2224,9 +2273,7 @@ fn find_instance_path_holes(
             let k = next_sig(j + 1);
             let Some((seg, after_seg)) = read_segment(k) else { break };
             let candidate = format!("{chain}.{seg}");
-            if inst_prefixes.contains_key(&candidate)
-                || inst_prefixes.keys().any(|c| c.starts_with(&format!("{candidate}.")))
-            {
+            if is_chain_key(&candidate) || has_descendant(&candidate) {
                 chain = candidate;
                 cursor = after_seg;
             } else {
@@ -2234,7 +2281,7 @@ fn find_instance_path_holes(
             }
         }
 
-        let Some(prefix) = inst_prefixes.get(&chain) else {
+        let Some(prefix) = inst_prefixes.get(&chain).or_else(|| abs.map.get(&chain)) else {
             i += 1;
             continue;
         };
@@ -2428,7 +2475,7 @@ fn render_name(name: &str) -> String {
 
 fn render_with_holes(text: &str, holes: &[(Range<usize>, String)], scope: &Scope) -> String {
     let mut all_holes = find_bus_port_holes(text, &scope.bus_ports);
-    all_holes.extend(find_instance_path_holes(text, &scope.inst_prefixes));
+    all_holes.extend(find_instance_path_holes(text, &scope.inst_prefixes, &scope.abs));
     all_holes.extend(holes.iter().cloned());
     all_holes.sort_by_key(|(r, _)| r.start);
 
@@ -2881,7 +2928,7 @@ impl ElabCtx<'_> {
                 // `defparam` path is a single `chain.member`, so the rewrite
                 // (when the chain resolves) yields exactly one hole whose
                 // replacement is the flattened target name.
-                let holes = find_instance_path_holes(path_text, &scope.inst_prefixes);
+                let holes = find_instance_path_holes(path_text, &scope.inst_prefixes, &scope.abs);
                 let flat = match holes.first() {
                     Some((_, repl)) => repl.clone(),
                     // single-segment (same-module) target, or a chain that did
@@ -3232,11 +3279,11 @@ impl ElabCtx<'_> {
         // Enhancement-49: the child's own hierarchical references into ITS
         // sub-instances rewrite through the composed prefixes
         self.collect_inst_prefixes(target_id, prefix, "", &mut scope.inst_prefixes);
-        // Enhancement-86: absolute (`<top>.`-qualified / `$root.`) references
-        // resolve from ANY inlined body, not just the top module's own text.
-        for (k, v) in &self.abs_prefixes {
-            scope.inst_prefixes.entry(k.clone()).or_insert_with(|| v.clone());
-        }
+        // Enhancement-86: absolute (`<top>.`-qualified / `$root.`) references resolve
+        // from ANY inlined body, not just the top module's own text. Share the (identical
+        // for every instance) prefix map by Rc instead of cloning its N entries into this
+        // scope -- the per-instance clone made the whole flatten O(N^2) in the count.
+        scope.abs = Rc::clone(&self.abs_prefixes);
         let mut extra_decls = Vec::new();
 
         // Enhancement-86: ports that need a synthesized 0V ammeter -- because
@@ -3468,12 +3515,13 @@ impl ElabCtx<'_> {
         // (`<top>` and `<top>.<chain>`) for every inlined child's scope, so
         // sibling bodies can resolve absolute hierarchical references
         // (`V(top.a1.b)`, `$root.top.d1.branch(a,b)`).
-        self.abs_prefixes = scope
+        let abs_map: HashMap<String, String> = scope
             .inst_prefixes
             .iter()
             .filter(|(k, _)| *k == &top_name || k.starts_with(&format!("{top_name}.")))
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect();
+        self.abs_prefixes = Rc::new(AbsPrefixes::new(abs_map));
 
         // Enhancement-86: pre-scan EVERY module's text for port-branch probes
         // (`<chain>.branch(<port>)`) resolvable under this top module, so the

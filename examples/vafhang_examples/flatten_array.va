@@ -1,0 +1,27 @@
+// flatten_array.va -- Enhancement-264, check A: hierarchy-flatten scaling.
+//
+// `top` instantiates a 16001-element array of `leaf`. OpenVAF's module-flatten
+// pass (the E-5/E-49/E-86 text-rewrite that renders one copy of a sub-module per
+// instance with a per-instance name prefix) used to be O(N^2) in the instance
+// count: resolving hierarchical names re-scanned every instance prefix per token,
+// per port binding, per instance, and each per-instance scope deep-cloned the
+// whole absolute-reference map. Doubling N quadrupled elaboration time
+// (2k~1.8s, 8k~30s, 16k~100s), so a large array looked like a hang.
+//
+// The pass is now O(N): an ancestor-set gives O(1) hierarchical-prefix lookups,
+// a dot-free early-out skips the scan for the common (non-hierarchical) token,
+// and the absolute-reference map is shared by reference (Rc) instead of cloned
+// per instance. This 16001-instance array now elaborates + compiles in ~1s.
+`include "disciplines.vams"
+
+module leaf(a, b);
+    inout a, b;
+    electrical a, b;
+    analog I(a, b) <+ V(a, b);
+endmodule
+
+module top(a, b);
+    inout a, b;
+    electrical a, b;
+    leaf u[0:16000] (.a(a), .b(b));
+endmodule
