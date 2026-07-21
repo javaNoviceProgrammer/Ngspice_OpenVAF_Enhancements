@@ -413,7 +413,18 @@ DCtrCurv(CKTcircuit *ckt, int restart)
                     return(converged);
             }
             else {
+                /* Enhancement-258: the .dc sweep solves each point with a direct
+                   NIiter (warm-started from the previous point) and only falls
+                   back to CKTop on failure. The FIRST point of a segment is a
+                   COLD start (firstTime) from the v=0-ish initial guess, so a
+                   singular-derivative behavioral source can false-converge to a
+                   spurious operating point here just like a plain .op (E-256).
+                   Flag it as a first-try op so NIiter's KCL-residual guard fires;
+                   on rejection `converged != 0` routes to the CKTop fallback
+                   below (gmin/source stepping), which finds the true point. */
+                ckt->CKTdcFirstTry = firstTime;
                 converged = NIiter(ckt, ckt->CKTdcTrcvMaxIter);
+                ckt->CKTdcFirstTry = 0;
                 if (converged != 0) {
                     converged = CKTop(ckt,
                         (ckt->CKTmode & MODEUIC) | MODEDCTRANCURVE | MODEINITJCT,

@@ -30,6 +30,8 @@ Checks (both solvers):
  [3] the fix is result-neutral: finite-derivative B-sources (v^2, exp, v^3, tanh)
      converge to their exact operating points, unchanged;
  [4] Enhancement-257: the `.tran` operating point starts at the true bias
+     v0=0.178045, not the spurious v~0;
+ [5] Enhancement-258: the `.dc` sweep's first (cold-start) point is the true root
      v0=0.178045, not the spurious v~0.
 
 Line 1 of every deck is the title (ignored).
@@ -118,7 +120,26 @@ check("[4] transient op (.tran) starts at the TRUE bias v0=0.178045, not spuriou
       f"(v(n)[t=0]={t0:.6f} vs 0.178045 -- pre-fix this was ~9e-17, a fake startup transient)"
       if t0 is not None else "(no tran output)")
 
-for f in ("_b.cir", "_tb.dat"):
+# [5] Enhancement-258: the .dc sweep solves each point with a direct NIiter, so the
+# FIRST (cold-start) point is guarded too -- its operating point is the true root,
+# not the spurious v~0 that a plain warm-started NIiter would false-converge to.
+open(os.path.join(HERE, "_b.cir"), "w").write(
+    "* sqrt dc sweep\nV1 in 0 DC 0.6\nR1 in n 1\nB1 n 0 I=sqrt(v(n))\n"
+    ".dc V1 0.6 1.0 0.2\n.control\nrun\nwrdata _db.dat v(n)\n.endc\n.end\n")
+subprocess.run([NGSPICE, "-b", "_b.cir"], capture_output=True, text=True,
+               cwd=HERE, timeout=60)
+dc0 = None
+try:
+    with open(os.path.join(HERE, "_db.dat")) as f:
+        dc0 = float(f.readline().split()[1])          # v(n) at the first sweep point (V1=0.6)
+except (OSError, IndexError, ValueError):
+    pass
+check("[5] .dc first (cold-start) point is the TRUE root v0=0.178045, not spurious v~0",
+      dc0 is not None and abs(dc0 - 0.178045) < 1e-3,
+      f"(v(n)[V1=0.6]={dc0:.6f} vs 0.178045 -- pre-fix this was ~9e-17)"
+      if dc0 is not None else "(no dc output)")
+
+for f in ("_b.cir", "_tb.dat", "_db.dat"):
     if os.path.exists(os.path.join(HERE, f)):
         os.remove(os.path.join(HERE, f))
 print(f"\n{passed} passed, {failed} failed")
