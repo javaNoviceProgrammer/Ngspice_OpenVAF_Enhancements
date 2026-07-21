@@ -247,6 +247,28 @@ static int is_number_token(const char *w)
 }
 
 
+/* Enhancement-270: parse a sweep bound as a FINITE number, returning 0 for a
+ * non-numeric token (`sw_num`/`atof` silently return 0 for those, which turned a
+ * typo'd bound into a 0-valued endpoint and thus a runaway 100000-point sweep) or
+ * a non-finite value (`1e400` overflows to `inf`, which then fed an `(int)` cast
+ * -> undefined behaviour). On success stores the value and returns 1. */
+static int sw_isfinitenum(const char *w, double *out)
+{
+    char *s = (char *) w;
+    double v;
+    *out = 0.0;
+    if (ft_numparse(&s, FALSE, &v) < 0) {
+        if (!is_number_token(w))
+            return 0;                 /* not a number at all */
+        v = atof(w);
+    }
+    if (!isfinite(v))
+        return 0;                     /* inf / NaN */
+    *out = v;
+    return 1;
+}
+
+
 /* collect tokens up to the next flag, joined with single spaces */
 static char *collect_until_flag(wordlist **pwl)
 {
@@ -285,14 +307,29 @@ static int sw_parse_spec(wordlist **pwl, double **pvals, int *pnv)
                eq(wl->wl_word, "oct"))) {
         int mode = eq(wl->wl_word, "dec") ? 1 : eq(wl->wl_word, "oct") ? 2 : 0;
         wordlist *a = wl->wl_next, *b = a ? a->wl_next : NULL, *c = b ? b->wl_next : NULL;
-        int n; double f0, f1;
+        int n; double f0, f1, dn;
         if (!a || !b || !c) {
             fprintf(cp_err, "sweep: %s needs <N> <start> <stop>\n", wl->wl_word);
             return 0;
         }
-        n = atoi(a->wl_word); f0 = sw_num(b->wl_word); f1 = sw_num(c->wl_word);
+        /* Enhancement-270: reject non-numeric / non-finite N/start/stop */
+        if (!sw_isfinitenum(a->wl_word, &dn) ||
+            !sw_isfinitenum(b->wl_word, &f0) || !sw_isfinitenum(c->wl_word, &f1)) {
+            fprintf(cp_err, "sweep: %s needs finite numeric <N> <start> <stop>\n",
+                    wl->wl_word);
+            return 0;
+        }
+        n = atoi(a->wl_word);
         wl = c->wl_next;
         if (n < 1) n = 1;
+        /* Enhancement-270: an absurd point count used to be silently clamped to
+         * SW_MAXPTS (for lin, not even that -> a multi-GB alloc), so a huge <N>
+         * or a tiny dec/oct spacing ran 100000 analyses (an apparent hang).
+         * Reject it up front; a bounded <N> also keeps the dec/oct ratio > 1. */
+        if (n > SW_MAXPTS) {
+            fprintf(cp_err, "sweep: too many points (N=%d > %d)\n", n, SW_MAXPTS);
+            return 0;
+        }
         if (mode == 0) {                             /* lin: N points */
             nv = n;
             vals = TMALLOC(double, nv);
@@ -305,7 +342,13 @@ static int sw_parse_spec(wordlist **pwl, double **pvals, int *pnv)
                 fprintf(cp_err, "sweep: dec/oct need positive endpoints\n");
                 return 0;
             }
-            for (x = f0; x <= f1 * (1 + 1e-9) && nv < SW_MAXPTS; x *= mul) nv++;
+            for (x = f0; x <= f1 * (1 + 1e-9); x *= mul) {
+                if (++nv > SW_MAXPTS) {              /* huge f1/f0 range */
+                    fprintf(cp_err, "sweep: too many points (> %d); "
+                            "check <N> and the start/stop range\n", SW_MAXPTS);
+                    return 0;
+                }
+            }
             vals = TMALLOC(double, nv);
             for (i = 0, x = f0; i < nv; i++, x *= mul) vals[i] = x;
         }
@@ -320,18 +363,32 @@ static int sw_parse_spec(wordlist **pwl, double **pvals, int *pnv)
         for (i = 0; i < nv; i++) { vals[i] = sw_num(wl->wl_word); wl = wl->wl_next; }
     } else {                                         /* start stop step */
         wordlist *a = wl, *b = a ? a->wl_next : NULL, *c = b ? b->wl_next : NULL;
-        double f0, f1, st; int cnt;
+        double f0, f1, st, dcnt; int cnt;
         if (!a || !b || !c) {
             fprintf(cp_err, "sweep: need <start> <stop> <step> after the knob\n");
             return 0;
         }
-        f0 = sw_num(a->wl_word); f1 = sw_num(b->wl_word); st = sw_num(c->wl_word);
+        /* Enhancement-270: a non-numeric bound used to parse as 0 (runaway sweep),
+         * and an overflowing bound (`1e400`->inf) fed the `(int)` cast below,
+         * undefined behaviour. Require finite numbers, and clamp the point count
+         * BEFORE the cast so inf/NaN can never reach it. */
+        if (!sw_isfinitenum(a->wl_word, &f0) || !sw_isfinitenum(b->wl_word, &f1) ||
+            !sw_isfinitenum(c->wl_word, &st)) {
+            fprintf(cp_err, "sweep: non-numeric <start>/<stop>/<step> "
+                    "('%s' '%s' '%s')\n", a->wl_word, b->wl_word, c->wl_word);
+            return 0;
+        }
         wl = c->wl_next;
         if (st == 0.0) { fprintf(cp_err, "sweep: step must be non-zero\n"); return 0; }
         if ((f1 - f0) * st < 0.0) st = -st;          /* fix an obvious sign slip */
-        cnt = (int) floor((f1 - f0) / st + 1e-9) + 1;
-        if (cnt < 1) cnt = 1;
-        if (cnt > SW_MAXPTS) cnt = SW_MAXPTS;
+        dcnt = floor((f1 - f0) / st + 1e-9) + 1;
+        if (!(dcnt >= 1.0)) dcnt = 1.0;              /* also catches NaN */
+        if (dcnt > (double) SW_MAXPTS) {             /* e.g. a tiny step: 1n 1u 1e-30 */
+            fprintf(cp_err, "sweep: too many points (%.3g > %d); "
+                    "check the step size\n", dcnt, SW_MAXPTS);
+            return 0;
+        }
+        cnt = (int) dcnt;                            /* now in [1, SW_MAXPTS] */
         nv = cnt;
         vals = TMALLOC(double, nv);
         for (i = 0; i < nv; i++) vals[i] = f0 + st * i;
