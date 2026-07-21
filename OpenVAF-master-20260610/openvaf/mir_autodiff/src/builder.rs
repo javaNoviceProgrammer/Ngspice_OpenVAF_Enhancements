@@ -270,116 +270,6 @@ impl<'a, 'u> DerivativeBuilder<'a, 'u> {
 
                 self.insert_conversions(inst);
             }
-            InstructionData::Binary { opcode: Opcode::Pow, args: [base, _] } => {
-                if let Some(derivatives) = derivatives {
-                    let inst = self.dst.0;
-                    let is_base_zero = self.ins().feq(base, F_ZERO);
-
-                    let old_block =
-                        self.func.layout.inst_block(inst).expect("instruction is attached");
-                    let new_block = self.func.layout.make_block();
-
-                    if let Some(next_inst) = self.func.layout.next_inst(self.dst.0) {
-                        self.func.split_block(new_block, next_inst);
-                    } else {
-                        self.func.layout.append_block(new_block);
-                    };
-                    let calculate_derivative_block = self.func.layout.make_block();
-                    self.func.layout.insert_block_after(calculate_derivative_block, old_block);
-                    self.ins().br(is_base_zero, new_block, calculate_derivative_block);
-
-                    // insert into the newly created block
-                    self.new_block = Some(calculate_derivative_block);
-                    self.dst.0 = inst;
-                    self.build_normal_inst_derivatives(bcache, derivatives);
-                    self.ins().jump(new_block);
-
-                    self.new_block = Some(new_block);
-                    let res = self.func.dfg.first_result(inst);
-
-                    // replace the calculates derivatives with phis that return
-                    // 0 in case that base is zero to ensure numerical stability
-                    // requires collecting derivatives into a temporary vector
-                    // because we are going to overwrite derivatives that are required
-                    // for looking up higher order derivatives
-                    let new_derivatives: Vec<_> = derivatives
-                        .iter()
-                        .filter_map(|derivative| {
-                            let val = self.derivative_of(res, derivative);
-                            if val == F_ZERO {
-                                return None;
-                            }
-
-                            let checked_val = self
-                                .ins()
-                                .phi(&[(old_block, F_ZERO), (calculate_derivative_block, val)]);
-                            Some((checked_val, derivative))
-                        })
-                        .collect();
-
-                    for (val, derivative) in new_derivatives {
-                        let prev_order = self.prev_order_derivative_of(res, derivative);
-                        let unknown = self.intern.get_unknown(derivative);
-                        self.derivative_values.insert((prev_order, unknown), val);
-                    }
-                    /*
-                    // Before calling insert_conversions, ensure any derivative values it will
-                    // access that are defined in calculate_derivative_block have phi nodes.
-                    // This fixes dominance violations when chain rule conversions reference
-                    // intermediate derivatives computed in the conditional block.
-                    if let Some(conversion) = self.live_derivatives.conversions.get(&inst) {
-                        // TODO: maybe make values_to_phi a set for faster contains()
-                        let values_to_phi: Vec<_> = conversion
-                            .iter()
-                            .flat_map(|chain_rule| {
-                                let outer =
-                                    self.derivative_of(chain_rule.val, chain_rule.outer_derivative);
-                                let inner = self.derivative_of(
-                                    chain_rule.inner_derivative.0,
-                                    chain_rule.inner_derivative.1,
-                                );
-                                [outer, inner]
-                            })
-                            .filter(|&val| {
-                                if val == F_ZERO {
-                                    return false;
-                                }
-                                // Check if value is defined in calculate_derivative_block
-                                if let Some(def_inst) = self.func.dfg.value_def(val).inst() {
-                                    self.func.layout.inst_block(def_inst)
-                                        == Some(calculate_derivative_block)
-                                } else {
-                                    false
-                                }
-                            })
-                            .collect();
-
-                        // Create phis for these values and update derivative_values
-                        // We need to find the keys that map to these values
-                        let entries_to_update: Vec<_> = self
-                            .derivative_values
-                            .iter()
-                            .filter_map(|(&key, &val)| {
-                                if values_to_phi.contains(&val) {
-                                    Some((key, val))
-                                } else {
-                                    None
-                                }
-                            })
-                            .collect();
-
-                        for (key, val) in entries_to_update {
-                            let checked_val = self
-                                .ins()
-                                .phi(&[(old_block, F_ZERO), (calculate_derivative_block, val)]);
-                            self.derivative_values.insert(key, checked_val);
-                        }
-                    }
-                    */
-                    self.insert_conversions(inst);
-                    self.new_block.take();
-                }
-            }
             _ => {
                 if let Some(derivatives) = derivatives {
                     self.build_normal_inst_derivatives(bcache, derivatives);
@@ -690,12 +580,25 @@ impl<'a, 'u> DerivativeBuilder<'a, 'u> {
             // }
 
             // pow(x,y) -> pow(x,y)*(x'*y/x + ln(x) * y')
+            // pow(x,y): the shared chain rule below computes
+            //   (x'*cache[0] + y'*cache[1]) * cache[2].
+            // With the natural cache[0]=y/x, cache[2]=x^y the base term is
+            // x'*(y/x)*x^y = x'*y*x^(y-1), which for 0<y<1 is the inf*0 = NaN form at
+            // the x=0 DC initial guess (y/x=+inf, x^y=0) -- the same singularity E-261
+            // fixed for sqrt, and it NaN-poisons the Jacobian so pow(V,frac) never finds
+            // a DC op. Regularize the base with a tiny a: cache the derivative of the
+            // SHIFTED pow(x+a, y) (the VALUE res=x^y is unchanged). Then the base term is
+            // x'*y*(x+a)^(y-1) and the exponent term is y'*ln(x+a)*(x+a)^y -- both FINITE
+            // at x=0 (a=1e-18 is below the ULP for x>0, so derivatives are unchanged
+            // there) and plain values, so they compose through downstream operators
+            // (K*pow(V,frac)) exactly like the E-261 sqrt guard.
             Opcode::Pow => {
-                let arg1_div_arg0 = if arg1 == arg0 { F_ONE } else { self.ins().fdiv(arg1, arg0) };
-                let ln_x = self.ins().ln(arg0);
-                cache[2] = res.into();
+                let a = self.func.dfg.f64const(1e-18);
+                let x_reg = self.ins().fadd(arg0, a);          // x + a
+                let ln_x = self.ins().ln(x_reg);               // ln(x+a)
+                cache[2] = self.ins().pow(x_reg, arg1).into(); // (x+a)^y
                 cache[1] = ln_x.into();
-                arg1_div_arg0
+                self.ins().fdiv(arg1, x_reg)                   // y/(x+a) -> cache[0]
             }
             _ => return cache,
         };

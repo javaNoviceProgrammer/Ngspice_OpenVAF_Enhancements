@@ -6,7 +6,7 @@
 {
     cslot0: (
         (
-            Some(ClassId(76)),
+            Some(ClassId(77)),
             0,
         ),
         Real,

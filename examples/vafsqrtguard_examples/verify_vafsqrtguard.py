@@ -30,6 +30,13 @@ Checks (both linear solvers):
  [5] pow(V,0.5) (== sqrt) still agrees with sqrt(V): the internal inconsistency
      is gone.
 
+Enhancement-262 extends the same guard to pow(V, Y) with 0 < Y < 1, whose base
+derivative Y*V^(Y-1) is the identical +inf-at-V=0 singularity (an inf*0 form in
+the shared pow chain rule):
+ [6] I=K*pow(V,Y), bare and strongly-scaled (K=2,5) at fractional Y (0.5, 0.3,
+     0.25): the DC op is the true KCL root, not nan;
+ [7] the guarded pow derivative K*Y*V^(Y-1) is exact for V>0.
+
 Every SPICE deck starts with a title line (SPICE treats line 1 as the title!).
 """
 import math
@@ -192,6 +199,59 @@ if okp:
 check("[5] pow(V,0.5) agrees with sqrt(V) (inconsistency gone)",
       vp is not None and v1 is not None and abs(vp - v1) < 2e-3,
       f"(pow={vp} sqrt={v1})")
+
+# ---- Enhancement-262: the SAME singularity in pow(V, Y), 0 < Y < 1 ----
+# The base derivative Y*V^(Y-1) is +inf at V=0 (the pow chain rule's inf*0 form);
+# the regularized cache pow(V+a, .) makes it finite, so scaled/fractional pow now
+# finds its DC op and its derivative is exact for V>0. atan2 (shares the chain rule)
+# is unaffected -- proven separately in openvaf-r's own autodiff suite.
+def pow_op(K, Y):
+    deck = (f"* pow op\nV1 in 0 DC 0.6\nR1 in n 1\nN1 n 0 m\n"
+            f".model m powdev K={K} Y={Y}\n"
+            f".control\npre_osdi {OSDI}\nop\nprint v(n)\n.endc\n.end\n")
+    return run(deck, "")
+
+
+def kcl_root_pow(K, Y):
+    lo, hi = 0.0, 0.6
+    for _ in range(200):
+        mid = 0.5 * (lo + hi)
+        f = K * mid ** Y + mid - 0.6
+        if f > 0:
+            hi = mid
+        else:
+            lo = mid
+    return 0.5 * (lo + hi)
+
+
+for K, Y in ((1.0, 0.5), (2.0, 0.5), (5.0, 0.25), (1.0, 0.3)):
+    vp = pow_op(K, Y)
+    root = kcl_root_pow(K, Y)
+    check(f"[6] I={K:g}*pow(V,{Y:g}): DC op is the true root, not nan",
+          vp is not None and abs(vp - root) < 2e-3,
+          f"(v(n)={vp} vs {root:.6f}; pre-E-262 scaled/fractional pow NaN-failed)")
+
+
+def pow_G(K, Y, vb):
+    deck = (f"* pow ac\nV1 p 0 DC {vb} AC 1\nN1 p 0 m\n.model m powdev K={K} Y={Y}\n"
+            f".control\npre_osdi {OSDI}\nac lin 1 1k 1k\nprint real(i(v1))\n.endc\n.end\n")
+    open(os.path.join(HERE, "_sg.cir"), "w").write(deck)
+    r = subprocess.run([NGSPICE, "-b", "_sg.cir"], capture_output=True, text=True,
+                       cwd=HERE, timeout=60)
+    m = re.search(r"real\(i\(v1\)\)\s*=\s*([-\d.eE+]+)", r.stdout)
+    return -float(m.group(1)) if m else None
+
+worstp = 0.0
+for K, Y in ((1.0, 0.5), (1.0, 0.3), (2.0, 0.25)):
+    for vb in (0.05, 0.3, 1.2):
+        g = pow_G(K, Y, vb)
+        ga = K * Y * vb ** (Y - 1)
+        if g is None:
+            worstp = 1.0
+            break
+        worstp = max(worstp, abs(g - ga) / abs(ga))
+check("[7] pow(V,Y) derivative is EXACT for V>0 (AC G = K*Y*V^(Y-1))",
+      worstp < 1e-4, f"(worst rel err = {worstp:.2e})")
 
 # cleanup generated scratch (underscore temps are gitignored; _sgp.va is not)
 for f in ("_sg.cir", "_sgp.va", "_sgp.osdi"):

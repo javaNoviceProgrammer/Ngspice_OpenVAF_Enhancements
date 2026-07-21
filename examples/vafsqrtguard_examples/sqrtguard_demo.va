@@ -40,3 +40,21 @@ module sqrtcompose(p, n);
     I(p,n) <+ G0/(1.0 + sqrt(v));
   end
 endmodule
+
+// Enhancement-262: the same singularity in pow(V, Y) with 0 < Y < 1. The base
+// derivative Y*V^(Y-1) is +inf at V=0 (the pow chain rule's inf*0 form); the
+// regularized cache pow(V+a, .) makes it finite. K and Y select bare vs scaled
+// and different fractional exponents (Y=0.5 is exactly sqrt).
+module powdev(p, n);
+  inout p, n;
+  electrical p, n;
+  parameter real K = 1.0 from (0:inf);
+  parameter real Y = 0.5 from (0:1);
+  real v;
+  analog begin
+    v = V(p,n);
+    if (v < 0.0)
+      v = 0.0;
+    I(p,n) <+ K*pow(v, Y);
+  end
+endmodule

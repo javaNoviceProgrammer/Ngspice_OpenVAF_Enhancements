@@ -759,27 +759,35 @@ fn second_order_pow() {
             inst0 = const fn %ddx_v10(1) -> 1
             v3 = fconst 0.0
             v6 = fconst 0x1.0000000000000p0
+            v101 = fconst 0x1.2725dd1d243acp-60
 
         block0:
             v12 = pow v10, v10
-            v101 = feq v10, v3
-            br v101, block1, block2
-
-        block2:
-            v102 = ln v10
-            v103 = fadd v6, v102
-            v104 = fmul v103, v12
-            v105 = fdiv v6, v10
-            v106 = fadd v3, v105
-            v107 = fmul v106, v12
-            v108 = fmul v104, v103
-            v109 = fadd v107, v108
-            jmp block1
-
-        block1:
-            v110 = phi [v3, block0], [v104, block2]
-            v111 = phi [v3, block0], [v109, block2]
-            v100 = optbarrier v111
+            v102 = fadd v10, v101
+            v103 = ln v102
+            v104 = pow v102, v10
+            v105 = fdiv v10, v102
+            v106 = fadd v105, v103
+            v107 = fmul v106, v104
+            v108 = fadd v102, v101
+            v109 = ln v108
+            v110 = pow v108, v10
+            v111 = fdiv v10, v108
+            v112 = fmul v102, v102
+            v113 = fadd v6, v3
+            v114 = fdiv v113, v102
+            v115 = fmul v113, v111
+            v116 = fadd v115, v109
+            v117 = fmul v116, v110
+            v118 = fdiv v6, v102
+            v119 = fmul v113, v10
+            v120 = fdiv v119, v112
+            v121 = fsub v118, v120
+            v122 = fadd v121, v114
+            v123 = fmul v122, v104
+            v124 = fmul v117, v106
+            v125 = fadd v123, v124
+            v100 = optbarrier v125
         }
     "#]];
 
