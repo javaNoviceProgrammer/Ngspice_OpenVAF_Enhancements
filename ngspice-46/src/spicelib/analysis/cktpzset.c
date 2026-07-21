@@ -91,7 +91,7 @@ CKTpzSetup(CKTcircuit *ckt, int type)
 #ifdef KLU
     if (matrix->CKTkluMODE)
     {
-        fprintf (stdout, "Using KLU as Direct Linear Solver\n") ;
+        CKTannounceSolver (1) ;
 
         /* Balanced (differential) output: CKTpzLoad folds the solution column
          * into the balance column (SMPcAddCol) on every trial.  KLU's CSC
@@ -177,7 +177,7 @@ CKTpzSetup(CKTcircuit *ckt, int type)
             }
         }
     } else {
-        fprintf (stdout, "Using SPARSE 1.3 as Direct Linear Solver\n") ;
+        CKTannounceSolver (0) ;
     }
 #endif
 

@@ -30,6 +30,29 @@ Author: 1985 Thomas L. Quarles
             return(E_NOMEM);\
 }
 
+/* Enhancement-266: announce the active direct linear solver once, and again
+ * only when it changes.  CKTsetup (and CKTpzSetup) run once per analysis, so a
+ * command that re-runs the analysis for many points -- `sweep`, Monte Carlo,
+ * `optimize`, the pso/de/sa optimizers -- otherwise reprints
+ * "Using ... Direct Linear Solver" on every iteration.  The last-announced
+ * solver is tracked process-wide (not per-circuit): a `.param` sweep re-sources
+ * the deck, rebuilding the circuit each point, so a per-circuit flag would still
+ * repeat.  A genuine solver switch (`.option klu` / `.option sparse`) has a
+ * different mode and re-announces.  A fresh ngspice process starts un-announced,
+ * so batch runs and the dual-solver test harness still print it once. */
+void
+CKTannounceSolver(int klu)
+{
+    static int announced = -1;      /* -1 = none yet, 0 = SPARSE, 1 = KLU */
+    int mode = klu ? 1 : 0;
+
+    if (announced == mode)
+        return;
+    announced = mode;
+    fprintf(stdout, klu ? "Using KLU as Direct Linear Solver\n"
+                        : "Using SPARSE 1.3 as Direct Linear Solver\n");
+}
+
 int
 CKTsetup(CKTcircuit *ckt)
 {
@@ -152,7 +175,7 @@ CKTsetup(CKTcircuit *ckt)
 #ifdef KLU
     if (ckt->CKTmatrix->CKTkluMODE)
     {
-        fprintf (stdout, "Using KLU as Direct Linear Solver\n") ;
+        CKTannounceSolver (1) ;
 
         /* Convert the COO Storage to CSC for KLU and Fill the Binding Table */
         SMPconvertCOOtoCSC (matrix) ;
@@ -185,7 +208,7 @@ CKTsetup(CKTcircuit *ckt)
 #endif
 
     } else {
-        fprintf (stdout, "Using SPARSE 1.3 as Direct Linear Solver\n") ;
+        CKTannounceSolver (0) ;
     }
 #endif
 

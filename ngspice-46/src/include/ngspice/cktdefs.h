@@ -443,6 +443,7 @@ extern int CKTsetBreak(CKTcircuit *, double);
 extern int CKTsetNodPm(CKTcircuit *, CKTnode *, int , IFvalue *, IFvalue *);
 extern int CKTsetOpt(CKTcircuit *, JOB *, int , IFvalue *);
 extern int CKTsetup(CKTcircuit *);
+extern void CKTannounceSolver(int klu);   /* Enhancement-266: announce-on-change */
 extern int CKTunsetup(CKTcircuit *);
 extern int CKTtemp(CKTcircuit *);
 extern char *CKTtrouble(CKTcircuit *, char *);
