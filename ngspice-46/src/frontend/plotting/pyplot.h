@@ -24,5 +24,6 @@ void ft_pyplot_eye(const char *filename, const char *expr);
    (matplotlib tricontourf), so no grid-dimension metadata is needed. Honours the
    same pyplot_* settings as ft_pyplot. */
 void ft_pyplot_contour(const char *filename, const char *title, struct dvec *vecs);
+void ft_pyplot_smith(const char *filename, const char *title, struct dvec *vecs);
 
 #endif

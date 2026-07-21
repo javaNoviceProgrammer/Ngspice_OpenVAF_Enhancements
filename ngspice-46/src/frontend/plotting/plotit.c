@@ -1268,6 +1268,17 @@ bool plotit(wordlist *wl, const char *hcopy, const char *devname)
         goto quit;
     }
 
+    if (devname && eq(devname, "pyplotsmith")) {
+        /* Enhancement-254: `pyplot -smith <complex vectors>` -- plot reflection
+         * coefficients on a Smith chart. plotit has evaluated the expressions into
+         * `vecs`; the dedicated renderer draws the Smith grid and the traces. The
+         * Cartesian line-plot / axis-limit machinery does not apply, so it is
+         * bypassed. */
+        ft_pyplot_smith(hcopy, title ? title : vecs->v_plot->pl_title, vecs);
+        rtn = TRUE;
+        goto quit;
+    }
+
 #ifdef TCL_MODULE
     if (devname && eq(devname, "blt")) {
         /* Just send the pairs to Tcl/Tk */

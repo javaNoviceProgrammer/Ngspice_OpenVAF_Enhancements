@@ -53,6 +53,7 @@ com_pyplot(wordlist *wl)
        list, dispatched to plotit's contour device. */
     bool is_hist = FALSE;
     bool is_contour = FALSE;
+    bool is_smith = FALSE;
 
     if (!wl)
         return;
@@ -90,11 +91,13 @@ com_pyplot(wordlist *wl)
         for (w = wl; w; w = w->wl_next) {
             if (w->wl_word && eq(w->wl_word, "-hist"))         { is_hist = TRUE;    found = TRUE; }
             else if (w->wl_word && eq(w->wl_word, "-contour")) { is_contour = TRUE; found = TRUE; }
+            else if (w->wl_word && eq(w->wl_word, "-smith"))   { is_smith = TRUE;   found = TRUE; }
         }
         if (found) {
             wordlist *tail = NULL;
             for (w = wl; w; w = w->wl_next) {
-                if (w->wl_word && (eq(w->wl_word, "-hist") || eq(w->wl_word, "-contour")))
+                if (w->wl_word && (eq(w->wl_word, "-hist") || eq(w->wl_word, "-contour")
+                                   || eq(w->wl_word, "-smith")))
                     continue;                         /* drop the marker word */
                 wordlist *nw = TMALLOC(wordlist, 1);
                 nw->wl_word = copy(w->wl_word ? w->wl_word : "");
@@ -107,6 +110,8 @@ com_pyplot(wordlist *wl)
         }
         if (is_contour)
             strcpy(defname, "contour");
+        if (is_smith)
+            strcpy(defname, "smith");
         if (!wl)                                      /* marker with no signals */
             goto done;
     }
@@ -127,7 +132,8 @@ com_pyplot(wordlist *wl)
     if (!fname) {
         if (autoseq > 0)
             (void) snprintf(defname, sizeof defname, "%s-%u",
-                            is_eye ? "eye" : is_contour ? "contour" : "pyplot",
+                            is_eye ? "eye" : is_contour ? "contour"
+                            : is_smith ? "smith" : "pyplot",
                             autoseq + 1);
         autoseq++;
         fname = defname;
@@ -167,7 +173,8 @@ com_pyplot(wordlist *wl)
         goto done;
 
     (void) plotit(wl, fname,
-                  is_contour ? "pyplotcontour" : is_hist ? "pyplothist" : "pyplot");
+                  is_contour ? "pyplotcontour" : is_hist ? "pyplothist"
+                  : is_smith ? "pyplotsmith" : "pyplot");
 
 done:
     if (tempf)

@@ -481,6 +481,15 @@ examples/pyplotcontour_examples/bridge.py
 examples/pyplotcontour_examples/bridge.data
 examples/pyplotcontour_examples/bridge.png
 
+# Enhancement-254 pyplotsmith: verify-run scratch files (generated Smith plot/script/data)
+examples/pyplotsmith_examples/smith_demo.py
+examples/pyplotsmith_examples/smith_demo.data
+examples/pyplotsmith_examples/smith_demo.png
+examples/pyplotsmith_examples/smith_match.py
+examples/pyplotsmith_examples/smith_match.data
+examples/pyplotsmith_examples/smith_match.png
+examples/pyplotsmith_examples/s11.dat
+
 # Enhancement-97 groundcontrib: verify-run scratch files
 examples/groundcontrib_examples/*.osdi
 examples/groundcontrib_examples/*.sp
