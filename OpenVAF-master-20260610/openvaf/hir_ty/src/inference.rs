@@ -846,7 +846,7 @@ impl Ctx<'_> {
 
             BuiltIn::laplace_nd | BuiltIn::laplace_np | BuiltIn::laplace_zd
             | BuiltIn::laplace_zp => {
-                return self.infere_laplace(stmt, expr, args);
+                return self.infere_laplace(stmt, expr, builtin, args);
             }
 
             BuiltIn::limit => {
@@ -1215,7 +1215,13 @@ impl Ctx<'_> {
     /// builtin) because that always calls `infere_expr` on every argument, which would reject a
     /// bare array-variable reference with `BareBusReference` before `infere_array_arg`
     /// gets a chance to special-case it.
-    fn infere_laplace(&mut self, stmt: StmtId, expr: ExprId, args: &[ExprId]) -> (Option<Ty>, bool) {
+    fn infere_laplace(
+        &mut self,
+        stmt: StmtId,
+        expr: ExprId,
+        kind: BuiltIn,
+        args: &[ExprId],
+    ) -> (Option<Ty>, bool) {
         let mut valid = true;
 
         if let Some(ty) = self.infere_expr(stmt, args[0]) {
@@ -1224,9 +1230,52 @@ impl Ctx<'_> {
             valid = false;
         }
 
-        for &arg in &args[1..3] {
-            if self.infere_array_arg(stmt, arg).is_none() {
-                valid = false;
+        // In the `*_np`/`*_zp` forms the denominator argument holds *poles* (roots), not
+        // polynomial coefficients; an empty pole list is legal (denominator polynomial 1).
+        let den_is_roots = matches!(kind, BuiltIn::laplace_np | BuiltIn::laplace_zp);
+
+        for (i, &arg) in args[1..3].iter().enumerate() {
+            let is_den = i == 1; // args[1] = numerator, args[2] = denominator
+            match self.infere_array_arg(stmt, arg) {
+                None => valid = false,
+                Some(ty) => {
+                    // A num/den (pole/zero) argument must be a real coefficient vector
+                    // (LRM 9.19): a real/integer array, or a scalar accepted as a length-1
+                    // vector. `infere_array_arg` is a shared helper (also used by `case`
+                    // discriminants/items and concatenations) whose fallback just returns
+                    // the inferred type, so a *net* reference (`laplace_nd(x, 1.0, p)`), a
+                    // branch, or a string slips through here. Left unchecked it reaches
+                    // `hir_lower`, which lowers the coefficient elements as values and panics
+                    // resolving a bare net reference ("invalid HIR: path .. was not
+                    // resolved"). Require a numeric value/array here so an invalid
+                    // coefficient raises the normal "expected real value but found .."
+                    // type-mismatch instead — the same diagnostic every ordinary value
+                    // context (and the `laplace_*` input argument) already produces.
+                    let val = ty.to_value();
+                    let is_coeff = match &val {
+                        Some(Type::Real) | Some(Type::Integer) | Some(Type::EmptyArray) => true,
+                        Some(Type::Array { ty, .. }) => matches!(**ty, Type::Real | Type::Integer),
+                        _ => false,
+                    };
+                    // An empty *direct* denominator (`'{}`) has no leading coefficient: the
+                    // state-space realization computes `den.len() - 1` and reads `den[n]`,
+                    // which underflows / indexes out of bounds and crashes. An empty
+                    // numerator is fine (H(s) = 0), and an empty pole list is handled by
+                    // `den_is_roots` above, so reject only this one shape.
+                    let empty_direct_den =
+                        is_den && !den_is_roots && matches!(val, Some(Type::EmptyArray));
+                    if !is_coeff || empty_direct_den {
+                        self.result.diagnostics.push(
+                            TypeMismatch {
+                                expected: Cow::Owned(vec![TyRequirement::Val(Type::Real)]),
+                                found_ty: ty,
+                                expr: arg,
+                            }
+                            .into(),
+                        );
+                        valid = false;
+                    }
+                }
             }
         }
 

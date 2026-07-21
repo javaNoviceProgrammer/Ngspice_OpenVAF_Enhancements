@@ -1,0 +1,16 @@
+// good_filter.va -- Enhancement-265: a well-formed laplace_nd filter that must
+// keep compiling unchanged after the coefficient-argument type-check fix.
+//
+// A single-pole low-pass H(s) = 1 / (1 + tau*s), written with real coefficient
+// arrays: numerator '{1.0}, denominator '{1.0, tau}. The fix only rejects
+// *invalid* coefficient arguments (a net/branch/string reference); valid real
+// array literals, integer-looking literals, scalar coefficients, and bare
+// array-variable references are all still accepted.
+`include "disciplines.vams"
+
+module lpf(p, n);
+    inout p, n;
+    electrical p, n;
+    parameter real tau = 1e-6 from (0:inf);
+    analog V(p, n) <+ laplace_nd(V(p, n), '{1.0}, '{1.0, tau});
+endmodule

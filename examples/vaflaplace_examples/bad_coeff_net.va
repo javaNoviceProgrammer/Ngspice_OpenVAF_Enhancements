@@ -1,0 +1,20 @@
+// bad_coeff_net.va -- Enhancement-265 reproducer.
+//
+// The denominator argument of laplace_nd must be a real coefficient array (LRM
+// 9.19). Here it is a bare NET reference (`p`) instead. Every ordinary value
+// context already rejects a net used as a value with a clean
+// "type mismatch: expected real value but found net reference" diagnostic, but
+// the laplace_*/zi_* coefficient-argument type check accepted it and let it reach
+// hir_lower, where resolving a bare net reference as a value panicked
+// ("invalid HIR: path .. was not resolved") -- a compiler crash on malformed
+// input instead of a diagnostic.
+//
+// Fixed: the coefficient-argument check now requires a real value, so this file
+// now produces the same clean type-mismatch error as every other value context.
+`include "disciplines.vams"
+
+module m(p, n);
+    inout p, n;
+    electrical p, n;
+    analog V(p, n) <+ laplace_nd(1.0, 1.0, p);   // 3rd arg `p` is a net, not an array
+endmodule

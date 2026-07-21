@@ -45,7 +45,7 @@ Two hundred and thirty enhancements so far — language features, correctness fi
 The index: **Doc** links each enhancement's detailed write-up, **Examples** links the folder whose verify script pins the behavior.
 
 <details>
-<summary><b>📖 Show the full enhancement table</b> — 264 rows, click to expand</summary>
+<summary><b>📖 Show the full enhancement table</b> — 265 rows, click to expand</summary>
 
 | # | What it delivered | Tool | Doc | Examples |
 |---|---|---|---|---|
@@ -313,6 +313,7 @@ The index: **Doc** links each enhancement's detailed write-up, **Examples** link
 | 262 | autodiff correctness: extend the E-261 guard to `pow(V,Y)`, `0<Y<1` -- the base derivative `Y*V^(Y-1)` is the same `+inf` at `V=0` (an `inf*0` form in the shared pow chain rule), so scaled/combined fractional `pow` NaN-failed the DC op (pow's block-split guard only protected a bare terminal pow). Cache the derivative of `pow(V+a,Y)`: finite at `V=0`, exact for `V>0`, composes; remove the block-split guard (`atan2` unaffected) | openvaf&#8209;r | [doc](enhancements_doc/Enhancement-262.md) | [vafsqrtguard](examples/vafsqrtguard_examples/) |
 | 263 | robustness: three compiler panics found by a fuzzing campaign (mutation + structured + valid-pathological) turned into clean errors -- nested `ddt`/`idt`/`absdelay` produced an undefined init-cache value (crashed `sim_back`/OSDI); `ddx(V,5)` with a non-probe unknown crashed `hir_lower` (the type check's diagnostic was dead code); a malformed module with an empty AST item list but a recorded instantiation crashed the hierarchy-flatten pass | openvaf&#8209;r | [doc](enhancements_doc/Enhancement-263.md) | [vafcrash4](examples/vafcrash4_examples/) |
 | 264 | large instance arrays: the E-5/-49/-86 module-flatten pass was O(N&#178;) in the instance count (hierarchical-name resolution re-scanned every instance prefix per token, per port binding, per instance; each scope deep-cloned the absolute-reference map), so a big array looked like a hang -- now O(N) via a precomputed ancestor set (O(1) prefix test), a dot-free early-out, and an `Rc`-shared reference map (16k instances ~100s -> ~1s); and deep per-node fan-in (thousands of distinct contributions on one node -> a deep recursive chain) that overflowed the OSDI codegen's rayon-worker stack (SIGABRT) now runs on a pool with a generous worker stack. No generated-code change | openvaf&#8209;r | [doc](enhancements_doc/Enhancement-264.md) | [vafhang](examples/vafhang_examples/) |
+| 265 | robustness: a malformed `laplace_*`/`zi_*` coefficient argument crashed the compiler instead of erroring. The num/den type check accepted anything its array-literal / array-variable cases missed and returned the type without requiring a real value, so a bare net reference (`laplace_nd(1,1,p)`), a branch, or a string reached `hir_lower` and panicked resolving a net as a value; an empty direct denominator (`'{}`) separately crashed the state-space realization (`den[len-1]`). Now `infere_laplace` requires a real coefficient and rejects an empty direct denominator (empty numerators and empty pole lists stay legal), giving the normal type-mismatch diagnostic -- shared `case`/concat inference untouched | openvaf&#8209;r | [doc](enhancements_doc/Enhancement-265.md) | [vaflaplace](examples/vaflaplace_examples/) |
 
 </details>
 
