@@ -45,7 +45,7 @@ Two hundred and thirty enhancements so far — language features, correctness fi
 The index: **Doc** links each enhancement's detailed write-up, **Examples** links the folder whose verify script pins the behavior.
 
 <details>
-<summary><b>📖 Show the full enhancement table</b> — 260 rows, click to expand</summary>
+<summary><b>📖 Show the full enhancement table</b> — 261 rows, click to expand</summary>
 
 | # | What it delivered | Tool | Doc | Examples |
 |---|---|---|---|---|
@@ -309,6 +309,7 @@ The index: **Doc** links each enhancement's detailed write-up, **Examples** link
 | 258 | DC-solver correctness: extend the false-convergence guard to the .dc sweep cold-start point (which solves via a direct NIiter, bypassing CKTop); generalize the guard to any first-attempt op solve so .op/.tran-op/.dc are all covered | ngspice | [doc](enhancements_doc/Enhancement-258.md) | [bsrcconv](examples/bsrcconv_examples/) |
 | 259 | correctness proof: transient integration accuracy -- prove TRAP/Gear2/BE hit their theoretical order (dt^2/dt^2/dt^1), TRAP conserves LC energy while BE is dissipative, breakpoints/RLC/nonlinear-charge match closed-form analytics (both solvers) | ngspice | [doc](enhancements_doc/Enhancement-259.md) | [integaccuracy](examples/integaccuracy_examples/) |
 | 260 | correctness proof: LTE step-controller accuracy on a stiff circuit -- the adaptive local-truncation-error stepper delivers accuracy that tracks reltol (error shrinks monotonically ~reltol^0.6, no plateau) as it resolves the fast mode then coarsens for the slow tail | ngspice | [doc](enhancements_doc/Enhancement-260.md) | [integaccuracy](examples/integaccuracy_examples/) |
+| 261 | autodiff correctness: guard the `sqrt()` derivative singularity -- `dI/dV` of `K*sqrt(V)` was raw `+inf` at the `V=0` initial guess, NaN-poisoning the Jacobian so the DC op failed outright (while identical `pow(V,0.5)` converged). Emit the regularized `1/(2*sqrt(V+a))` (a=1e-18): finite at `V=0`, exact for `V>0`, composes through downstream operators, matches ngspice's B-source `sqrt` | openvaf&#8209;r | [doc](enhancements_doc/Enhancement-261.md) | [vafsqrtguard](examples/vafsqrtguard_examples/) |
 
 </details>
 

@@ -558,8 +558,24 @@ impl<'a, 'u> DerivativeBuilder<'a, 'u> {
             //            Opcode::Exp => res,
             Opcode::Exp => self.ins().exp(arg0),
 
-            // sqrt(x) -> 1/2sqrt(x)
-            Opcode::Sqrt => self.ins().fmul(F_TWO, res),
+            // sqrt(x) -> derivative is darg/cache. The natural cache 2*sqrt(x) makes the
+            // derivative x'/(2*sqrt(x)) = +inf at the x=0 initial guess, which NaN-poisons
+            // the Jacobian and fails the whole DC operating point (every convergence aid
+            // dies). Use cache = 2*sqrt(x + a) instead -- the derivative of the smoothly
+            // regularized sqrt(x+a): it is FINITE at x=0 (darg/(2*sqrt(a)), a large but
+            // bounded conductance -> small controlled Newton steps that creep out of the
+            // singularity, like ngspice's own B-source sqrt) and, because the nudge is
+            // INSIDE the root, the perturbation for x>0 is only ~a/(2x) -- with a=1e-18
+            // that is below the ULP, so every finite-x derivative (including higher-order
+            // and the sqrt(1-x^2) inside asin/acos/etc.) is unchanged. Being a plain value
+            // it composes through downstream operators (e.g. K*sqrt(x)), unlike the
+            // block-split Pow guard which only protects a bare terminal sqrt/pow.
+            Opcode::Sqrt => {
+                let a = self.func.dfg.f64const(1e-18);
+                let x_reg = self.ins().fadd(arg0, a);
+                let sqrt_reg = self.ins().sqrt(x_reg);
+                self.ins().fmul(F_TWO, sqrt_reg)
+            }
             // hypot(x,y) -> (x*x' + y*y')/hypot(x,y): cache hypot(x,y) itself
             Opcode::Hypot => res,
             // ln(x) -> 1/x

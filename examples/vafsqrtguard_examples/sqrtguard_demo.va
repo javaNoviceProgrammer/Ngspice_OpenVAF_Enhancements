@@ -1,0 +1,42 @@
+// sqrtguard_demo.va -- Verilog-A devices exercising the Enhancement-261
+// sqrt-derivative guard in openvaf-r's automatic differentiation.
+//
+// A conductor whose current is K*sqrt(V) has an INFINITE small-signal
+// conductance dI/dV = K/(2*sqrt(V)) at ngspice's default V=0 initial guess.
+// Before E-261, openvaf-r emitted that raw +inf, which NaN-poisoned the
+// Jacobian and made the DC operating point fail outright (every convergence
+// aid died). E-261 regularizes the emitted derivative to K/(2*sqrt(V + a))
+// (a = 1e-18): finite at V=0, and identical to the exact derivative for V>0
+// (the a/(2V) perturbation is below the ULP). The device now finds its true
+// operating point, exactly like ngspice's own B-source sqrt().
+`include "disciplines.vams"
+
+// I = K*sqrt(V(p,n)). K selects bare (K=1) vs strongly-scaled (K=2,5) sqrt.
+module sqrtdev(p, n);
+  inout p, n;
+  electrical p, n;
+  parameter real K = 1.0 from (0:inf);
+  real v;
+  analog begin
+    v = V(p,n);
+    if (v < 0.0)
+      v = 0.0;              // domain clamp; the derivative guard is separate
+    I(p,n) <+ K*sqrt(v);
+  end
+endmodule
+
+// A COMPOSED sqrt: I = G0/(1 + sqrt(V)). Exercises that the guarded sqrt
+// derivative composes correctly through a downstream operator (the reciprocal),
+// which the earlier block-split guard could not do.
+module sqrtcompose(p, n);
+  inout p, n;
+  electrical p, n;
+  parameter real G0 = 0.5 from (0:inf);
+  real v;
+  analog begin
+    v = V(p,n);
+    if (v < 0.0)
+      v = 0.0;
+    I(p,n) <+ G0/(1.0 + sqrt(v));
+  end
+endmodule
