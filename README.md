@@ -45,7 +45,7 @@ Two hundred and thirty enhancements so far — language features, correctness fi
 The index: **Doc** links each enhancement's detailed write-up, **Examples** links the folder whose verify script pins the behavior.
 
 <details>
-<summary><b>📖 Show the full enhancement table</b> — 258 rows, click to expand</summary>
+<summary><b>📖 Show the full enhancement table</b> — 259 rows, click to expand</summary>
 
 | # | What it delivered | Tool | Doc | Examples |
 |---|---|---|---|---|
@@ -307,6 +307,7 @@ The index: **Doc** links each enhancement's detailed write-up, **Examples** link
 | 256 | DC-solver correctness: fix silent spurious operating point for singular-derivative behavioral sources (B I=sqrt(v), 1/v, ln) -- detect the KCL-residual false-convergence and fall through to gmin/source stepping; confined to the first Newton attempt so all convergence aids are untouched | ngspice | [doc](enhancements_doc/Enhancement-256.md) | [bsrcconv](examples/bsrcconv_examples/) |
 | 257 | DC-solver correctness: extend the E-256 false-convergence guard to the TRANSIENT operating point (MODETRANOP), so a .tran of a biased singular-derivative source starts at the true bias instead of a spurious v~0 (which showed a fake startup transient) | ngspice | [doc](enhancements_doc/Enhancement-257.md) | [bsrcconv](examples/bsrcconv_examples/) |
 | 258 | DC-solver correctness: extend the false-convergence guard to the .dc sweep cold-start point (which solves via a direct NIiter, bypassing CKTop); generalize the guard to any first-attempt op solve so .op/.tran-op/.dc are all covered | ngspice | [doc](enhancements_doc/Enhancement-258.md) | [bsrcconv](examples/bsrcconv_examples/) |
+| 259 | correctness proof: transient integration accuracy -- prove TRAP/Gear2/BE hit their theoretical order (dt^2/dt^2/dt^1), TRAP conserves LC energy while BE is dissipative, breakpoints/RLC/nonlinear-charge match closed-form analytics (both solvers) | ngspice | [doc](enhancements_doc/Enhancement-259.md) | [integaccuracy](examples/integaccuracy_examples/) |
 
 </details>
 
