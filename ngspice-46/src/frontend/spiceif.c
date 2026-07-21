@@ -986,6 +986,53 @@ if_setparam(CKTcircuit *ckt, char **name, char *param, struct dvec *val, int do_
     }
 }
 
+
+/* Enhancement-268: set the model parameter `param` to `val` on EVERY model in the
+ * circuit that HAS such a parameter -- the backend of the wildcard `@*[param]`
+ * altermod / sweep knob. This lets one `sweep @*[wavelength] ...` co-vary a shared
+ * parameter across several `.model` cards in place (no `.param` + deck re-source).
+ * Model parameters are a property of the device TYPE, so a single `parmlookup`
+ * per type decides whether that type's models carry `param`; matching models are
+ * then set with `doset` (the same path a plain `altermod @model[param]=` uses).
+ * Returns the number of models set. */
+int
+if_setparam_wildcard(CKTcircuit *ckt, char *param, struct dvec *val)
+{
+    int typecode, count = 0;
+
+    if (!param || !*param || !ckt)
+        return 0;
+
+    for (typecode = 0; typecode < ft_sim->numDevices; typecode++) {
+        IFdevice    *device = ft_sim->devices[typecode];
+        GENinstance *dummy  = NULL;
+        GENmodel    *mod;
+        IFparm      *opt;
+
+        if (!device || !ckt->CKThead[typecode])
+            continue;
+        /* does this device type have a settable model parameter named `param`? */
+        opt = parmlookup(device, &dummy, param, 1 /*do_model*/, 1 /*inout=set*/);
+        if (!opt)
+            continue;
+        for (mod = ckt->CKThead[typecode]; mod; mod = mod->GENnextModel) {
+            doset(ckt, typecode, NULL, mod, opt, val);
+            count++;
+        }
+    }
+
+    /* mirror if_setparam's altermod behaviour: propagate to instances mid-run */
+    if (count > 0 && ckt->CKTtime > 0) {
+        int error = CKTtemp(ckt);
+        if (error) {
+            fprintf(stderr, "Error during wildcard model-parameter change!\n");
+            controlled_exit(1);
+        }
+    }
+
+    return count;
+}
+
 /* Make a linked list where the first node is a CP_LIST variable
  * pointing to the different values of the vector variables.
  *

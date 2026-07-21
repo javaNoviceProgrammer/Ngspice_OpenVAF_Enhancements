@@ -176,6 +176,11 @@ static int sw_kind(const char *name)
         while (*p && *p != '[' && i < (int) sizeof mod - 1)
             mod[i++] = *p++;
         mod[i] = '\0';
+        /* Enhancement-268: `@*[param]` is the wildcard model-parameter knob --
+         * applied in place via `altermod @*[param]=` (no deck re-source), which
+         * sets `param` on every loaded model that has it. */
+        if (mod[0] == '*' && mod[1] == '\0')
+            return SW_MODEL;
         if (*mod && ft_curckt && ft_curckt->ci_ckt &&
             ft_sim->findModel(ft_curckt->ci_ckt, (IFuid) mod))
             return SW_MODEL;

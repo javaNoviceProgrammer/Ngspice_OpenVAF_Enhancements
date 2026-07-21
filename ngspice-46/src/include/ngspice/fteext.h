@@ -316,6 +316,7 @@ extern struct variable *spif_getparam_special(CKTcircuit *ckt, char **name, char
 extern void if_setndnames(char *line);
 extern void if_setparam_model(CKTcircuit *ckt, char **name, char *val );
 extern void if_setparam(CKTcircuit *ckt, char **name, char *param, struct dvec *val, int do_model);
+extern int if_setparam_wildcard(CKTcircuit *ckt, char *param, struct dvec *val);   /* Enhancement-268 */
 extern struct variable *if_getstat(CKTcircuit *ckt, char *name);
 extern int ft_find_analysis(char *name);
 extern IFparm *ft_find_analysis_parm(int which, char *name);

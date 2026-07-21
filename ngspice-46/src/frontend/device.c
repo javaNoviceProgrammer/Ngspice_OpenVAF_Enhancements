@@ -1245,6 +1245,24 @@ if_set_binned_model(CKTcircuit *ckt, char *devname, char *param, struct dvec *va
 }
 
 
+/* Enhancement-268: apply an `altermod`/`alter` assignment, expanding a wildcard
+ * model name `@*[param]` to every loaded model that has `param` (in place, no deck
+ * re-source). A concrete `@model[param]` or device goes through if_setparam as
+ * before. */
+static void
+alter_set(char *dev, char *param, struct dvec *dv, int do_model)
+{
+    if (do_model && dev && dev[0] == '*' && dev[1] == '\0') {
+        int n = if_setparam_wildcard(ft_curckt->ci_ckt, param, dv);
+        if (n == 0)
+            fprintf(cp_err, "Warning: no loaded model has parameter '%s'.\n",
+                    param ? param : "");
+    } else {
+        if_setparam(ft_curckt->ci_ckt, &dev, param, dv, do_model);
+    }
+}
+
+
 static void
 com_alter_common(wordlist *wl, int do_model)
 {
@@ -1434,7 +1452,7 @@ com_alter_common(wordlist *wl, int do_model)
         /* Here I was, to change the inclusion in the circuit.
          * will have to revise that dv is right for its insertion.
          */
-        if_setparam(ft_curckt->ci_ckt, &dev, param, dv, do_model);
+        alter_set(dev, param, dv, do_model);
 
         tfree(rem_xsbuf);
         vec_free(dv);
@@ -1455,7 +1473,7 @@ com_alter_common(wordlist *wl, int do_model)
     if ((dev[0] == 'm') && (eq(param, "w") || eq(param, "l")))
         if_set_binned_model(ft_curckt->ci_ckt, dev, param, dv);
 
-    if_setparam(ft_curckt->ci_ckt, &dev, param, dv, do_model);
+    alter_set(dev, param, dv, do_model);
 
  done:
     /* va: garbage collection for dv, if pnode names is no simple value */

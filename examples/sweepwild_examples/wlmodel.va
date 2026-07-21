@@ -1,0 +1,13 @@
+// wlmodel.va -- Enhancement-268 demo model.
+//
+// A two-terminal element whose resistance scales with a `wavelength` model
+// parameter: R = wavelength * 1k. Two `.model` cards of this module both carry a
+// `wavelength` parameter, so `sweep @*[wavelength] ...` co-varies both at once.
+`include "disciplines.vams"
+
+module wlmodel(p, n);
+    inout p, n;
+    electrical p, n;
+    parameter real wavelength = 1.0;
+    analog V(p, n) <+ I(p, n) * wavelength * 1000.0;
+endmodule
