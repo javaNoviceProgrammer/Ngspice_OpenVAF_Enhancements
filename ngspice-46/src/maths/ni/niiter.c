@@ -135,8 +135,13 @@ NIiter(CKTcircuit *ckt, int maxIter)
              * requires an unfactored matrix). G is the just-loaded Jacobian,
              * x_k = CKTrhsOld, b = CKTrhs. F is the KCL residual (a current) --
              * the merit function ngspice's iterate-based Newton otherwise lacks.
-             * CKTrhsSpare is scratch (free until the solve below). */
-            if ((ckt->CKTlinesearch || ckt->CKTtrustregion) &&
+             * CKTrhsSpare is scratch (free until the solve below).
+             * Enhancement-256: also compute it for a plain (line-search-off)
+             * DC / tran operating point, so the false-convergence guard below
+             * has the KCL residual available. */
+            if ((ckt->CKTlinesearch || ckt->CKTtrustregion ||
+                 (ckt->CKTdcFirstTry && (ckt->CKTmode & MODEDCOP) &&
+                  (ckt->CKTmode & MODEINITFLOAT))) &&
                 ckt->CKTrhsSpare && (iterno > 1)) {
                 int sz = SMPmatSize(ckt->CKTmatrix);
                 int k;
@@ -361,6 +366,25 @@ NIiter(CKTcircuit *ckt, int maxIter)
              * step (F = 0), keeping the result identical to plain Newton. */
             if (ckt->CKTtrustregion && (ckt->CKTtrLambda > 0.0) &&
                 (ckt->CKTnoncon == 0))
+                ckt->CKTnoncon = 1;
+
+            /* Enhancement-256: reject a SPURIOUS operating point. NIconvTest
+             * checks only the iterate-to-iterate voltage change; a Newton step
+             * pinned by a near-singular Jacobian -- e.g. a behavioral source
+             * whose derivative -> infinity at the v = 0 initial guess, like
+             * B I=sqrt(v(n)) -- takes a vanishing step (dv -> 0, "converged")
+             * while grossly VIOLATING KCL: the node-current residual
+             * F = G*x - b (CKTlsMerit above, normalized by the current
+             * tolerance) stays huge. Verify it, in the DC / tran operating
+             * point only: if the worst node imbalance is astronomically out of
+             * tolerance (>1e6x -- a genuinely converged point sits near 1, so
+             * this is result-neutral on every well-behaved circuit), decline
+             * convergence so CKTop falls through to gmin / source stepping,
+             * which regularizes the singular node and finds the true point. */
+            if ((ckt->CKTnoncon == 0) && (iterno > 1) && ckt->CKTdcFirstTry &&
+                ((ckt->CKTmode & MODEDCOP) && (ckt->CKTmode & MODEINITFLOAT)) &&
+                !ckt->CKTlinesearch && !ckt->CKTtrustregion &&
+                (!finite(ckt->CKTlsMerit) || ckt->CKTlsMerit > 100.0))
                 ckt->CKTnoncon = 1;
 
 #ifdef STEPDEBUG

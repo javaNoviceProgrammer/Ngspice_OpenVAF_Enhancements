@@ -58,7 +58,12 @@ CKTop (CKTcircuit *ckt, long int firstmode, long int continuemode,
         ckt->enh->conv_debug.last_NIiter_call =
             (ckt->CKTnumGminSteps <= 0) && (ckt->CKTnumSrcSteps <= 0);
 #endif
+        /* Enhancement-256: mark this the FIRST plain operating-point attempt, so
+           NIiter's spurious-op guard (KCL-residual check) fires only here and
+           never inside the convergence-aid sub-solves invoked below. */
+        ckt->CKTdcFirstTry = 1;
         converged = NIiter (ckt, iterlim);
+        ckt->CKTdcFirstTry = 0;
         if (converged == 0)
             goto done;          /* successfull (plain / line-search Newton) */
     } else {

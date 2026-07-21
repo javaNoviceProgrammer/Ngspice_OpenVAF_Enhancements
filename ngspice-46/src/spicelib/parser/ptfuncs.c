@@ -129,9 +129,19 @@ PTpowerH(double arg1, double arg2)
 double
 PTpwr(double arg1, double arg2)
 {
-    /* if PSPICE device is evaluated */
-    if (arg1 == 0.0 && arg2 < 0.0 && newcompat.ps)
-        arg1 += PTfudge_factor;
+    /* Enhancement-256: pwr(0, negative) = 0^negative is +inf; a raw inf here
+       poisons the Newton Jacobian (the .disto/AC/DC derivative of v^b uses
+       pwr(v, b-1)), turning the operating-point solve into NaN. Guard it like
+       PTdivide (/0 -> HUGE) and PTsqrt (sqrt(neg) -> HUGE) so a singular
+       derivative stays FINITE -- then the false-convergence guard in NIiter can
+       recognize the pinned point and steer to gmin/source stepping.  (PSPICE
+       compat already nudged arg1 by a fudge factor; keep that exact path.) */
+    if (arg1 == 0.0 && arg2 < 0.0) {
+        if (newcompat.ps)
+            arg1 += PTfudge_factor;
+        else
+            return HUGE;
+    }
 
     if (arg1 < 0.0)
         return (-pow(-arg1, arg2));

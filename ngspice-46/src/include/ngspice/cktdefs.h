@@ -271,6 +271,10 @@ struct CKTcircuit {
     unsigned int CKTcopyNodesets:1; /* NodesetFIX */
     unsigned int CKTnodeDamping:1; /* flag for node damping fix */
     unsigned int CKTlinesearch:1;  /* Enhancement-111: adaptive damped-Newton line search */
+    unsigned int CKTdcFirstTry:1;  /* Enhancement-256: set by CKTop only around the FIRST plain
+                                      Newton operating-point attempt, so the spurious-op guard in
+                                      NIiter never fires inside a convergence-aid sub-solve
+                                      (gmin/source stepping, pseudo-transient/optran) */
     double CKTlsMerit;             /* E-111: this iteration's residual merit ||F|| = ||G*x-b|| */
     double *CKTlsXk;               /* E-111: line-search scratch (saved x_k) */
     double *CKTlsD;                /* E-111: line-search scratch (Newton step d) */
