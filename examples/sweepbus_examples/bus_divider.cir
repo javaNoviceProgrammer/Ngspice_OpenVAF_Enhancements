@@ -1,0 +1,23 @@
+* bus_divider.cir -- Enhancement-267: sweep records bus/array nodes under their
+* natural names (ph[0], ph[1], ...), not the mangled ph_0_, ph_1_.
+*
+* Four independent voltage dividers whose taps are the array/bus nodes ph[0..3]
+* (Enhancement-221 lets a node be named `ph[0]`). Sweeping the shared top
+* resistance rt records one curve per tap. Before the fix the sweep plot showed
+* ph_0_, ph_1_, ... (the '[' ']' mapped to '_'); now it shows ph[0], ph[1], ...
+r0 in ph[0] {rt}
+rl0 ph[0] 0 1k
+r1 in ph[1] {rt}
+rl1 ph[1] 0 2k
+r2 in ph[2] {rt}
+rl2 ph[2] 0 3k
+r3 in ph[3] {rt}
+rl3 ph[3] 0 4k
+v1 in 0 1
+.param rt=1k
+.control
+* -output accepts the bus range ph[0:3] (Enhancement-267) -> ph[0] ph[1] ph[2] ph[3]
+sweep rt 1k 3k 1k -output ph[0:3]
+display
+.endc
+.end

@@ -335,43 +335,99 @@ static int sw_parse_spec(wordlist **pwl, double **pvals, int *pnv)
 }
 
 
+/* Enhancement-267: append `suffix` to `s` with the suffix sanitized to a legal
+ * nutmeg name (non-alnum, except '_', -> '_'), while leaving `s` -- the caller's
+ * base output name -- byte-for-byte intact. A knob suffix like `_g_1.5` carries a
+ * float ('.', '-', 'e') that is illegal in a vector name and must be mapped, but
+ * the base may legitimately be a bus node such as `ph[0]` (Enhancement-221) whose
+ * brackets must survive: sanitizing the whole string turned `ph[0]` into `ph_0_`.
+ * Takes ownership of both `s` and `suffix` (frees them) and returns the new
+ * string. */
+static char *sw_append_sanitized(char *s, char *suffix)
+{
+    char *p, *t;
+    for (p = suffix; *p; p++)
+        if (!isalnum((unsigned char) *p) && *p != '_') *p = '_';
+    t = tprintf("%s%s", s, suffix);
+    tfree(suffix);
+    tfree(s);
+    return t;
+}
+
+
 /* Enhancement-190: build a family-curve / waveform vector name. `base` plus, for
- * each knob index in [j0, nknob), a `_<scname>_<value>` segment; non-alnum
- * characters (except '_') are mapped to '_' so the result is a legal nutmeg name.
- * With j0==nknob (single-knob summary) it returns a plain copy of `base`. */
+ * each knob index in [j0, nknob), a `_<scname>_<value>` segment. Only the appended
+ * segments are sanitized (Enhancement-267); the base name is preserved so a bus
+ * node like `ph[0]` keeps its brackets. With j0==nknob (single-knob summary) it
+ * returns a plain copy of `base`. */
 static char *sw_familyname(const char *base, char *const *kscname,
                            double *const *kvals, const int *idx,
                            int j0, int nknob)
 {
-    char *s = copy(base), *p;
+    char *s = copy(base);
     int j;
-    for (j = j0; j < nknob; j++) {
-        char *t = tprintf("%s_%s_%g", s, kscname[j], kvals[j][idx[j]]);
-        tfree(s);
-        s = t;
-    }
-    for (p = s; *p; p++)
-        if (!isalnum((unsigned char) *p) && *p != '_') *p = '_';
+    for (j = j0; j < nknob; j++)
+        s = sw_append_sanitized(s, tprintf("_%s_%g", kscname[j], kvals[j][idx[j]]));
     return s;
 }
 
 
 /* Enhancement-189/190: build an overlay-waveform vector name -- `base` plus a
- * `_<value>` segment for EVERY knob (inner first), sanitized to a legal nutmeg
- * name. A single knob yields `<base>_<value>` (the E-189 name). */
+ * `_<value>` segment for EVERY knob (inner first). Only the appended segments are
+ * sanitized (Enhancement-267); the base name is preserved. A single knob yields
+ * `<base>_<value>` (the E-189 name). */
 static char *sw_pointname(const char *base, double *const *kvals,
                           const int *idx, int nknob)
 {
-    char *s = copy(base), *p;
+    char *s = copy(base);
     int j;
-    for (j = 0; j < nknob; j++) {
-        char *t = tprintf("%s_%g", s, kvals[j][idx[j]]);
-        tfree(s);
-        s = t;
-    }
-    for (p = s; *p; p++)
-        if (!isalnum((unsigned char) *p) && *p != '_') *p = '_';
+    for (j = 0; j < nknob; j++)
+        s = sw_append_sanitized(s, tprintf("_%g", kvals[j][idx[j]]));
     return s;
+}
+
+
+/* Enhancement-267: add a bare `-output` token as one or more recorded outputs.
+ * A bus range `base[lo:hi]` (a plain base name, integer lo/hi) is expanded into
+ * one output per index -- `base[lo]`, `base[lo±1]`, ..., `base[hi]` -- to match
+ * the netlist bus expansion (Enhancement-221), so `sweep g .. -output ph[0:3]`
+ * records ph[0]..ph[3]. Any other token (an ordinary node or an expression) is
+ * added verbatim. outname[]/outexpr[] get the same string; capped at SW_MAXOUT. */
+static void sw_add_bare_output(char **outname, char **outexpr, int *pnout,
+                               const char *tok)
+{
+    const char *lb = strchr(tok, '[');
+    size_t len = strlen(tok);
+    if (lb && lb != tok && len > 0 && tok[len - 1] == ']') {
+        const char *p;
+        int plain = 1;
+        for (p = tok; p < lb; p++)
+            if (!isalnum((unsigned char) *p) && *p != '_') { plain = 0; break; }
+        if (plain) {
+            char *ep;
+            long lo = strtol(lb + 1, &ep, 10);
+            if (ep != lb + 1 && *ep == ':') {
+                long hi = strtol(ep + 1, &ep, 10);
+                if (ep == tok + len - 1) {          /* the closing ']' */
+                    long step = (hi >= lo) ? 1 : -1, i;
+                    for (i = lo; *pnout < SW_MAXOUT; i += step) {
+                        char *nm = tprintf("%.*s[%ld]", (int) (lb - tok), tok, i);
+                        outname[*pnout] = nm;
+                        outexpr[*pnout] = copy(nm);
+                        (*pnout)++;
+                        if (i == hi)
+                            break;
+                    }
+                    return;
+                }
+            }
+        }
+    }
+    if (*pnout < SW_MAXOUT) {
+        outname[*pnout] = copy(tok);
+        outexpr[*pnout] = copy(tok);
+        (*pnout)++;
+    }
 }
 
 
@@ -464,14 +520,15 @@ void com_sweep(wordlist *wl)
                 /* accept `name=expr` (clean vector name) or a bare `expr` */
                 char *tok = wl->wl_next->wl_word, *eqp = strchr(tok, '=');
                 if (eqp && eqp != tok) {
+                    /* explicit name=expr: use the given name verbatim, no bus expansion */
                     outname[nout] = copy(tok);
                     outname[nout][eqp - tok] = '\0';
                     outexpr[nout] = copy(eqp + 1);
+                    nout++;
                 } else {
-                    outname[nout] = copy(tok);
-                    outexpr[nout] = copy(tok);
+                    /* bare token: expand a bus range `base[lo:hi]`, else add as-is */
+                    sw_add_bare_output(outname, outexpr, &nout, tok);
                 }
-                nout++;
                 wl = wl->wl_next->wl_next;
             } else {
                 wl = wl->wl_next ? wl->wl_next->wl_next : NULL;
