@@ -518,6 +518,9 @@ examples/arrayport_examples/*.osdi
 examples/arrayport_examples/_*.va
 examples/annexe_examples/*.osdi
 examples/annexe_examples/_*.sp
+# numbered object-file scratch left if an OpenVAF compile of a module collides
+# with a concurrent/interrupted run (e.g. rc_lowpass.o1 .. rc_lowpass.on)
+examples/annexe_examples/*.o[0-9a-z]
 
 # Enhancement-88 legacy generate: verify-run scratch files
 examples/legacygen_examples/*.osdi
