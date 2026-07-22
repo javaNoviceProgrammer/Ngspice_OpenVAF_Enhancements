@@ -308,6 +308,110 @@ check(f"[multipoint] the same battery over {npts} bias points (no builtin may be
       f"merely accidentally correct at one point)",
       nbad_m == 0, f"(worst reldiff {worst_m:.1e}, {nbad_m} bad)")
 
+# ---------------------------------------------------------------------------
+# [matrix] the FULL multi-terminal Jacobian, both resistive and reactive.
+#
+# Everything above biases a 2-terminal device, and [cross] reads a single
+# off-diagonal entry. Neither exercises the entries openvaf does NOT obtain by
+# differentiating a contribution: on a 4-terminal device the source row follows
+# from KCL over the other contributions, and an untouched terminal must produce
+# an identically zero row/column. A sign or index slip there is invisible to a
+# 2-terminal test but wrong in every real compact model.
+#
+# Both contributions are polynomials in THREE distinct branch voltages, at a bias
+# where every branch voltage differs, so all 16 entries are distinct numbers and
+# no accidental symmetry can mask a wrong one.
+# ---------------------------------------------------------------------------
+def terminal_matrix(kind, coeffs, bias, freq=1e3):
+    """Measure the 4x4 terminal matrix of the quad dut. kind 'I' -> conductance
+    (real part), kind 'Q' -> capacitance (imag part / omega)."""
+    a1, a2, a3, c1, c2 = coeffs
+    inner_d = f"{a1}*V(d,s) + {a2}*V(g,s)*V(g,s) + {a3}*V(d,s)*V(b,s)"
+    inner_g = f"{c1}*V(g,s) + {c2}*V(d,s)*V(g,s)"
+    if kind == "Q":
+        inner_d, inner_g = f"ddt({inner_d})", f"ddt({inner_g})"
+    body = ('`include "disciplines.vams"\n'
+            'module quaddut(d,g,s,b); inout d,g,s,b; electrical d,g,s,b;\n'
+            'analog begin\n'
+            f'    I(d,s) <+ {inner_d};\n'
+            f'    I(g,s) <+ {inner_g};\n'
+            'end\nendmodule\n')
+    ok, log = compile_va("quaddut", body)
+    if not ok:
+        return None, log
+    w = 2.0 * math.pi * freq
+    meas = {}
+    for col in "dgsb":
+        src = "\n".join(f"v{t} {t} 0 dc {bias[t]} ac {1 if t == col else 0}"
+                         for t in "dgsb")
+        deck = (f"* autodiff terminal matrix, column {col}\n{src}\n"
+                "n1 d g s b qm\n.model qm quaddut()\n.control\n"
+                "pre_osdi quaddut.osdi\n"
+                f"ac lin 1 {freq:g} {freq:g}\n"
+                "print real(i(vd)) real(i(vg)) real(i(vs)) real(i(vb)) "
+                "imag(i(vd)) imag(i(vg)) imag(i(vs)) imag(i(vb))\n"
+                ".endc\n.end\n")
+        cir = os.path.join(HERE, "_qm.cir")
+        open(cir, "w").write(deck)
+        out = subprocess.run([NGSPICE, "-b", cir], capture_output=True,
+                             text=True, cwd=HERE).stdout
+        part = "real" if kind == "I" else "imag"
+        for row in "dgsb":
+            m = re.search(rf"{part}\(i\(v{row}\)\)\s*=\s*([-\d.eE+]+)", out)
+            if m is None:
+                return None, out
+            meas[(row, col)] = -float(m.group(1)) / (1.0 if kind == "I" else w)
+    return meas, ""
+
+
+def matrix_reference(kind, coeffs, bias):
+    """Analytic 4x4 terminal matrix: chain the branch partials through KCL."""
+    a1, a2, a3, c1, c2 = coeffs
+    vds, vgs, vbs = bias["d"] - bias["s"], bias["g"] - bias["s"], bias["b"] - bias["s"]
+    fd = {"ds": a1 + a3 * vbs, "gs": 2 * a2 * vgs, "bs": a3 * vds}
+    fg = {"ds": c2 * vgs, "gs": c1 + c2 * vds, "bs": 0.0}
+    dbr = {"ds": {"d": 1, "s": -1, "g": 0, "b": 0},
+           "gs": {"g": 1, "s": -1, "d": 0, "b": 0},
+           "bs": {"b": 1, "s": -1, "d": 0, "g": 0}}
+    ref = {}
+    for row in "dgsb":
+        if row == "b":
+            f = {k: 0.0 for k in fd}
+        elif row == "d":
+            f = fd
+        elif row == "g":
+            f = fg
+        else:
+            f = {k: -(fd[k] + fg[k]) for k in fd}
+        for col in "dgsb":
+            ref[(row, col)] = sum(f[br] * dbr[br][col] for br in f)
+    return ref
+
+
+COEFF_I = (0.11, 0.23, 0.37, 0.13, 0.29)
+COEFF_Q = (0.19e-12, 0.31e-12, 0.43e-12, 0.53e-12, 0.67e-12)
+BIAS = {"d": 1.7, "g": 1.1, "s": 0.4, "b": 0.9}
+
+for kind, coeffs, label, scale in (
+        ("I", COEFF_I, "conductance dI/dV", 1.0),
+        ("Q", COEFF_Q, "capacitance dQ/dV", 1e-12)):
+    meas, log = terminal_matrix(kind, coeffs, BIAS)
+    if meas is None:
+        check(f"[matrix] 4x4 {label}", False, "(no result) " + log[:200])
+        continue
+    ref = matrix_reference(kind, coeffs, BIAS)
+    worst, worst_at = 0.0, None
+    for key in ref:
+        e, g = ref[key], meas[key]
+        d = abs(g - e) / max(abs(e), scale)   # absolute floor for the zero entries
+        if d > worst:
+            worst, worst_at = d, key
+    check(f"[matrix] all 16 entries of the 4-terminal {label} "
+          f"(incl. the KCL-derived source row and the zero body row)",
+          worst < 1e-5,
+          f"(worst reldiff {worst:.1e} at dI_{worst_at[0]}/dV_{worst_at[1]})")
+
+
 # tidy the generated .va/.osdi/.cir this suite produced
 import glob
 for pat in ("*.va", "*.osdi", "*.cir", "*.dat"):

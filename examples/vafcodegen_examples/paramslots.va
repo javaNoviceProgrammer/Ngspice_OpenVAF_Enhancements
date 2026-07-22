@@ -1,0 +1,70 @@
+`include "disciplines.vams"
+
+// Enhancement-295: every parameter must read back through its OWN storage slot.
+//
+// Enhancement-290 was a wrong struct-GEP: the compiler computed a field offset as a
+// flat `5*sizeof(double)` instead of `offsetof(instance, temperature)`. In a model
+// with one or two parameters such an offset error can land on the right bytes by
+// luck. This model deliberately interleaves MODEL and INSTANCE parameters of
+// DIFFERENT types, with distinct non-round values, so a wrong slot cannot coincide
+// with a right one -- and mirrors each back through an operating-point variable so
+// the deck can read all of them.
+
+module paramslots(a, b);
+    inout a, b;
+    electrical a, b;
+
+    parameter real mp0 = 3.25;
+    (* type = "instance" *) parameter integer ip0 = 7;
+    parameter real mq0 = 1.5e-06;
+    parameter real mp1 = 117.5;
+    (* type = "instance" *) parameter integer ip1 = 4093;
+    parameter real mq1 = 0.000475;
+    parameter real mp2 = 0.008125;
+    (* type = "instance" *) parameter integer ip2 = 19;
+    parameter real mq2 = 6.125e-05;
+    parameter real mp3 = 940.75;
+    (* type = "instance" *) parameter integer ip3 = 8191;
+    parameter real mq3 = 0.0095;
+    parameter real mp4 = 0.0025;
+
+    (* desc = "readback of mp0" *) real ov_mp0;
+    (* desc = "readback of ip0" *) real ov_ip0;
+    (* desc = "readback of mq0" *) real ov_mq0;
+    (* desc = "readback of mp1" *) real ov_mp1;
+    (* desc = "readback of ip1" *) real ov_ip1;
+    (* desc = "readback of mq1" *) real ov_mq1;
+    (* desc = "readback of mp2" *) real ov_mp2;
+    (* desc = "readback of ip2" *) real ov_ip2;
+    (* desc = "readback of mq2" *) real ov_mq2;
+    (* desc = "readback of mp3" *) real ov_mp3;
+    (* desc = "readback of ip3" *) real ov_ip3;
+    (* desc = "readback of mq3" *) real ov_mq3;
+    // `$temperature` mirrored into an operating-point variable. Note this does NOT
+    // reach `nth_opvar_ptr`'s ParamKind::Temperature arm -- the second site
+    // Enhancement-290 fixed: an assignment lowers to a COMPUTED eval-output slot
+    // instead. A reachability probe (a marker compiled into that arm, run over all
+    // 326 corpus models) reached it zero times, so that arm cannot be covered by a
+    // runtime test at all; it is protected by the fix, not by this suite. The
+    // reachable site is `load_eval_output`, which the ac_stim check above does cover.
+    (* desc = "readback of $temperature" *) real ov_tk;
+    (* desc = "readback of mp4" *) real ov_mp4;
+
+    analog begin
+        ov_mp0 = mp0;
+        ov_ip0 = ip0;
+        ov_mq0 = mq0;
+        ov_mp1 = mp1;
+        ov_ip1 = ip1;
+        ov_mq1 = mq1;
+        ov_mp2 = mp2;
+        ov_ip2 = ip2;
+        ov_mq2 = mq2;
+        ov_mp3 = mp3;
+        ov_ip3 = ip3;
+        ov_mq3 = mq3;
+        ov_tk = $temperature;
+        ov_mp4 = mp4;
+        I(a, b) <+ V(a, b) / 1.0e3;
+    end
+endmodule

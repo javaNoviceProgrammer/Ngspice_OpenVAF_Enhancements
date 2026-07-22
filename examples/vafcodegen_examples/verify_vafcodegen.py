@@ -28,6 +28,11 @@ function or the bad offset forward without a word:
                            fall-through block unsealed ("block N is not sealed").
   [292] ssprune.va      -- small-signal pruning indexed a map with a key its own replay
                            never inserted ("no entry found for key").
+  [295] paramslots.va   -- every parameter must read back through its OWN eval-output
+                           slot, per instance: the guard for the E-290 CLASS, a
+                           reader/writer slot mismatch. Mutation-tested by making
+                           `nth_opvar_ptr` read a different slot than eval wrote, which
+                           makes a parameter read its neighbour's value.
   [294] staleuse.va     -- rewriting a `Branch` (one value operand) into a `Jump` (none) by
                            overwriting the instruction left the condition's entry in the use
                            list, naming an operand the instruction no longer has.
@@ -229,6 +234,58 @@ if ok:
     i = value(out, "i(v1)")
     check("and simulates: I == V/1k", i is not None and abs(i - (-1e-3)) < 1e-9,
           f"i(v1)={i}")
+
+# ---------------------------------------------------------------- [295]
+# Regression guard for the Enhancement-290 CLASS: a wrong struct-GEP offset. With one
+# or two parameters a bad offset can land on the right bytes by luck, so this model
+# interleaves model/instance parameters of different types with distinct non-round
+# values, and mirrors each through its own operating-point variable.
+print("\n[295] every parameter reads back through its own slot, per instance")
+DEFAULTS = {"mp0": 3.25, "mp1": 117.5, "mp2": 0.008125, "mp3": 940.75, "mp4": 2.5e-3,
+            "ip0": 7, "ip1": 4093, "ip2": 19, "ip3": 8191,
+            "mq0": 1.5e-6, "mq1": 4.75e-4, "mq2": 6.125e-5, "mq3": 9.5e-3}
+MODEL_P = [n for n in DEFAULTS if not n.startswith("ip")]
+INST_P = [n for n in DEFAULTS if n.startswith("ip")]
+# two distinct override sets, so a cross-instance leak shows up as a wrong number
+SET_A = {"mp0": 1.75, "mp1": 33.25, "mp2": 0.5625, "mp3": 12.125, "mp4": 7.5e-3,
+         "ip0": 23, "ip1": 1021, "ip2": 61, "ip3": 3079,
+         "mq0": 8.5e-6, "mq1": 2.25e-4, "mq2": 3.375e-5, "mq3": 1.5e-3}
+SET_B = {k: (v * 2 if isinstance(v, float) else v + 5) for k, v in SET_A.items()}
+
+ok, verdict = compile_va("paramslots.va")
+check("a model with 13 interleaved model/instance parameters compiles", ok, verdict)
+if ok:
+    def mcard(tag, d):
+        return f".model {tag} paramslots(" + " ".join(f"{n}={d[n]}" for n in MODEL_P) + ")"
+
+    def icard(inst, tag, d):
+        return f"{inst} a 0 {tag} " + " ".join(f"{n}={d[n]}" for n in INST_P)
+
+    prints = "\n".join(f"print @{i}[ov_{n}]" for i in ("n1", "n2", "n3")
+                        for n in DEFAULTS)
+    out = ngspice("* E-295 parameter slot readback\nv1 a 0 dc 1\n"
+                  + icard("n1", "pmA", SET_A) + "\n"
+                  + icard("n2", "pmB", SET_B) + "\n"
+                  + "n3 a 0 pmA\n"
+                  + mcard("pmA", SET_A) + "\n" + mcard("pmB", SET_B) + "\n"
+                  + ".control\npre_osdi paramslots.osdi\nop\n" + prints
+                  + "\n.endc\n.end\n", "_ps.cir")
+    # n1/n2 override everything; n3 shares model card A but leaves the INSTANCE
+    # parameters at their declaration defaults -- the resolution order, in one deck.
+    want = {"n1": SET_A, "n2": SET_B,
+            "n3": {**{n: SET_A[n] for n in MODEL_P},
+                   **{n: DEFAULTS[n] for n in INST_P}}}
+    bad, seen = [], 0
+    for inst in ("n1", "n2", "n3"):
+        for n in DEFAULTS:
+            g = value(out, f"@{inst}[ov_{n}]")
+            e = float(want[inst][n])
+            seen += 1
+            if g is None or abs(g - e) > max(1e-12, abs(e) * 1e-6):
+                bad.append(f"{inst}.{n}={g} want {e}")
+    check(f"{seen} (instance, parameter) readbacks: defaults, model card, instance "
+          f"line, and no cross-instance bleed", not bad,
+          f"{len(bad)} wrong" + (f" e.g. {bad[0]}" if bad else ""))
 
 print(f"\n{passed}/{checks} checks passed")
 if passed == checks:
