@@ -54,6 +54,13 @@ pub fn aggressive_dead_code_elimination(
     for bb in dead_blocks.iter() {
         if let Some(term) = func.layout.last_inst(bb) {
             if let InstructionData::Branch { else_dst, .. } = func.dfg.insts[term] {
+                // Enhancement-294: a `Branch` has one value operand (its condition); a `Jump`
+                // has none. Overwriting the instruction does NOT retire that operand's entry in the
+                // condition value's use list, so the entry survives pointing at operand 0
+                // of an instruction that now has zero operands -- `use_to_value` then
+                // indexes an empty slice. Detach the operands first, exactly as the two
+                // branch-to-jump rewrites in `simplify_cfg.rs` already do.
+                func.dfg.zap_inst(term);
                 func.dfg.insts[term] = InstructionData::Jump { destination: else_dst };
                 cfg.recompute_block(func, bb);
             }

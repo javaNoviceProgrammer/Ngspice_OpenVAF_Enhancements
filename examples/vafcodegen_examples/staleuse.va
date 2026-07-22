@@ -1,0 +1,23 @@
+`include "disciplines.vams"
+
+// Enhancement-294: a `Branch` carries one value operand -- its condition -- while a
+// `Jump` carries none. Two rewrites turned one into the other by overwriting the
+// instruction in place, which does NOT retire that operand's entry in the condition
+// value's use list: the entry survived naming operand 0 of an instruction that now has
+// zero operands, so reading it indexed an empty slice.
+//
+// The shape below is what reaches the rewrite. `$fatal` exits the analog block, so its
+// arm becomes an EMPTY EXIT block -- exactly the case `simplify_bb` rewrites to an
+// unconditional jump. The condition must be a PARAMETER compare (not a node voltage);
+// with a voltage the arm is not an empty exit block and the rewrite never fires. `$finish`
+// does not trigger it either -- only `$fatal` produces this block shape.
+module staleuse(a, c);
+    inout a, c;
+    electrical a, c;
+    parameter real p = 1.0;
+    analog begin
+        if (p < 0.0)
+            $fatal(0, "p must be nonnegative");
+        I(a, c) <+ V(a, c) / 1.0e3;
+    end
+endmodule

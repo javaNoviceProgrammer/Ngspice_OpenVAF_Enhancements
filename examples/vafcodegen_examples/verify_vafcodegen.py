@@ -28,6 +28,9 @@ function or the bad offset forward without a word:
                            fall-through block unsealed ("block N is not sealed").
   [292] ssprune.va      -- small-signal pruning indexed a map with a key its own replay
                            never inserted ("no entry found for key").
+  [294] staleuse.va     -- rewriting a `Branch` (one value operand) into a `Jump` (none) by
+                           overwriting the instruction left the condition's entry in the use
+                           list, naming an operand the instruction no longer has.
   [293] seconderiv.va   -- one analog operator nested DIRECTLY inside another
                            (`ddt(ddt(x))`): the inner operator's result was deleted while a
                            later linear contribution still named it OUTSIDE the data-flow
@@ -199,6 +202,18 @@ if ok:
     check("`ddt(2*ddt(V))` (the path that already worked) is exactly 2x",
           a and b and abs(b - 2.0 * a) < 1e-9 * max(1.0, abs(b)),
           f"nested={a} scaled={b}")
+
+# ---------------------------------------------------------------- [294]
+print("\n[294] Branch->Jump rewrite left the condition in the use list")
+ok, verdict = compile_va("staleuse.va")
+check("a `$fatal` arm guarded by a parameter compare compiles", ok, verdict)
+if ok:
+    out = ngspice("* E-294 stale use after branch-to-jump rewrite\nv1 a 0 dc 1\n"
+                  "n1 a 0 sm\n.model sm staleuse(p=1)\n.control\npre_osdi staleuse.osdi\n"
+                  "op\nprint i(v1)\n.endc\n.end\n", "_su.cir")
+    i = value(out, "i(v1)")
+    check("and simulates: I == V/1k", i is not None and abs(i - (-1e-3)) < 1e-9,
+          f"i(v1)={i}")
 
 print(f"\n{passed}/{checks} checks passed")
 if passed == checks:

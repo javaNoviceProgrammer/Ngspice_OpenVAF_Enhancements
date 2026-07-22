@@ -699,8 +699,15 @@ impl<'a> SimplifyCfg<'a> {
             if let InstructionData::Branch { then_dst, else_dst, .. } =
                 self.func.dfg.insts[terminator]
             {
+                // Enhancement-294: a `Branch` has one value operand (its condition); a `Jump`
+                // has none. Overwriting the instruction does not retire that operand's entry in the
+                // condition value's use list, so the entry survives naming operand 0 of an
+                // instruction that now has zero operands -- reading it later indexes an
+                // empty slice. `zap_inst` detaches the operands, which is what the two
+                // branch-to-jump rewrites in `const_fold_terminator` above already do.
                 if self.is_empty_exit_bb(then_dst) {
                     // Replace Branch with jump to else_dst
+                    self.func.dfg.zap_inst(terminator);
                     self.func.dfg.insts[terminator] =
                         InstructionData::Jump { destination: else_dst };
 
@@ -710,6 +717,7 @@ impl<'a> SimplifyCfg<'a> {
                     return;
                 } else if self.is_empty_exit_bb(else_dst) {
                     // Replace branch with jump to then_dst
+                    self.func.dfg.zap_inst(terminator);
                     self.func.dfg.insts[terminator] =
                         InstructionData::Jump { destination: then_dst };
 
