@@ -1485,8 +1485,12 @@ com_alter_common(wordlist *wl, int do_model)
     }
 
     /* If we want alter the geometry of a MOS device
-       we have to ensure that we are in the valid model bin. */
-    if ((dev[0] == 'm') && (eq(param, "w") || eq(param, "l")))
+       we have to ensure that we are in the valid model bin.
+       Enhancement-272: `param` is NULL for the `alter <dev> = <value>` form
+       (altering a device's principal value, no named parameter) -- reached
+       directly and via the `sweep` knob path -- so guard it before eq(): an
+       m-device with no `w`/`l` parameter must not deref a NULL param. */
+    if (param && (dev[0] == 'm') && (eq(param, "w") || eq(param, "l")))
         if_set_binned_model(ft_curckt->ci_ckt, dev, param, dv);
 
     alter_set(dev, param, dv, do_model);
