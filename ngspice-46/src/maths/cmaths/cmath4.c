@@ -259,6 +259,13 @@ cx_deriv(void *data, short int type, int length, int *newlength, short int *newt
         fprintf(cp_err, "Internal error: cx_deriv: bad scale\n");
         return (NULL);
     }
+    /* Enhancement-278: the data must be no longer than its plot scale (see cx_integ);
+     * a freq-domain deriv (group delay) has data <= scale, which stays valid. */
+    if (pl->pl_scale->v_length < length) {
+        fprintf(cp_err, "Error: deriv needs an input vector no longer than its "
+                "scale (length %d, scale %d)\n", length, pl->pl_scale->v_length);
+        return (NULL);
+    }
 
     if (!cp_getvar("dpolydegree", CP_NUM, &degree, 0))
         degree = 2; /* default quadratic */
@@ -469,6 +476,16 @@ cx_integ(void* data, short int type, int length, int* newlength, short int* newt
     /* First do some sanity checks. */
     if (!pl || !pl->pl_scale || !newpl || !newpl->pl_scale) {
         fprintf(cp_err, "Internal error: cx_integ: bad scale\n");
+        return (NULL);
+    }
+    /* Enhancement-278: integ/deriv/ifft index both the data (length) and its plot
+     * scale; a synthetic vector longer than its scale -- e.g. integ(unitvec(200))
+     * on a shorter plot -- read the scale out of bounds. cx_fft (Enhancement-225)
+     * guards this; the siblings did not. Require the data to be no longer than its
+     * scale (a shorter data vector, as from fft, stays valid). */
+    if (pl->pl_scale->v_length < length) {
+        fprintf(cp_err, "Error: integ needs an input vector no longer than its "
+                "scale (length %d, scale %d)\n", length, pl->pl_scale->v_length);
         return (NULL);
     }
 
@@ -1041,6 +1058,13 @@ cx_ifft(void *data, short int type, int length, int *newlength, short int *newty
     fftw_free(out);
 
 #else /* Green's IFFT */
+
+    /* Enhancement-278: the output loop below writes `tpts` (scale-length) points,
+     * each from datax[2*i], but N/datax were sized from the input `length`. When
+     * the input is much shorter than its scale (N < tpts) that overran datax --
+     * grow N (and M) to cover tpts. A no-op for a well-formed transform, where the
+     * next power of two above `length` is already >= tpts. */
+    while (N < tpts) { N <<= 1; M++; }
 
     printf("IFFT: Frequency span: %g Hz, input length: %d, zero padding: %d\n", 1/span*length, length, N-length);
     printf("IFFT: Time resolution: %g s, output length: %d\n", span/(tpts-1), tpts);
