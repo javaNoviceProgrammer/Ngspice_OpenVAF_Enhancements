@@ -21,6 +21,19 @@ Author: 1985 Wayne A. Christopher, U. C. Berkeley CAD Group
 #include "control.h"
 #include "spiceif.h"
 
+/* Enhancement-279: a `set` value is rounded with (int)floor(x + 0.5); that cast is
+ * undefined behaviour for a value outside int range (`set numdgt=1e30`, inf, NaN).
+ * Clamp first so the option simply saturates instead. */
+static int
+opt_int(double x)
+{
+    double f = floor(x + 0.5);
+    if (f != f)                 return 0;    /* NaN */
+    if (f >= (double) INT_MAX)  return INT_MAX;
+    if (f <= (double) INT_MIN)  return INT_MIN;
+    return (int) f;
+}
+
 bool ft_acctprint = FALSE, ft_noacctprint = FALSE, ft_listprint = FALSE;
 bool ft_nodesprint = FALSE, ft_optsprint = FALSE, ft_noinitprint = FALSE;
 bool ft_norefprint = FALSE;
@@ -337,7 +350,7 @@ cp_usrset(struct variable *var, bool isset)
         if ((var->va_type == CP_BOOL) && (isset == FALSE))
             raw_prec = -1;
         else if (var->va_type == CP_REAL)
-            raw_prec = (int)floor(var->va_real + 0.5);
+            raw_prec = opt_int(var->va_real);
         else if (var->va_type == CP_NUM)
             raw_prec = var->va_num;
         else
@@ -347,7 +360,7 @@ cp_usrset(struct variable *var, bool isset)
         if ((var->va_type == CP_BOOL) && (isset == FALSE))
             measure_precision = -1;
         else if (var->va_type == CP_REAL)
-            measure_precision = (int)floor(var->va_real + 0.5);
+            measure_precision = opt_int(var->va_real);
         else if (var->va_type == CP_NUM)
             measure_precision = var->va_num;
         else
@@ -356,7 +369,7 @@ cp_usrset(struct variable *var, bool isset)
         if ((var->va_type == CP_BOOL) && (isset == FALSE))
             cp_numdgt = -1;
         else if (var->va_type == CP_REAL)
-            cp_numdgt = (int)floor(var->va_real + 0.5);
+            cp_numdgt = opt_int(var->va_real);
         else if (var->va_type == CP_NUM)
             cp_numdgt = var->va_num;
         else

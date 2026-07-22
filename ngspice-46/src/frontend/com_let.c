@@ -31,6 +31,19 @@ int get_one_index_value(const char *s, int *p_index);
 
 static char* kivec(char* rhs);
 
+/* Enhancement-279: an index expression is rounded with (int)floor(x + 0.5); that
+ * cast is undefined behaviour for a value outside int range (`let v[1e308] = 1`,
+ * inf, NaN). Clamp first -- the caller's existing range checks then reject it. */
+static int
+let_idx_int(double x)
+{
+    double f = floor(x + 0.5);
+    if (f != f)                 return 0;    /* NaN */
+    if (f >= (double) INT_MAX)  return INT_MAX;
+    if (f <= (double) INT_MIN)  return INT_MIN;
+    return (int) f;
+}
+
 /* let <vec_name> = <expr>
  * let <vec_name> = <vec_name_old> if variable 'plainlet' is set
  * let <vec_name>[<bracket_expr>] = <expr>
@@ -472,20 +485,23 @@ static int get_index_values(char *s, int n_elem_this_dim,
                 p_range->high = n_elem_this_dim - 1;
             }
         }
+    }
 
-        /* Ensure ranges given were valid */
-        if (p_range->low > p_range->high) {
-            (void) fprintf(cp_err, "Error: low range (%d) is greater "
-                    "than high range (%d).\n",
-                    p_range->low, p_range->high);
-            return -1;
-        }
-        if (p_range->high >= n_elem_this_dim) {
-            (void) fprintf(cp_err, "Error: high range (%d) exceeds "
-                    "the maximum value (%d).\n",
-                    p_range->high, n_elem_this_dim - 1);
-            return -1;
-        }
+    /* Enhancement-280: these checks used to live inside the `l:h` branch only, so
+     * a SINGLE index was never bounds-checked against the dimension -- `let v[100] = 1`
+     * on a 66-element vector walked straight into the byte-offset arithmetic and
+     * wrote past the end of the heap allocation. Validate both forms. */
+    if (p_range->low > p_range->high) {
+        (void) fprintf(cp_err, "Error: low range (%d) is greater "
+                "than high range (%d).\n",
+                p_range->low, p_range->high);
+        return -1;
+    }
+    if (p_range->high >= n_elem_this_dim) {
+        (void) fprintf(cp_err, "Error: index/high range (%d) exceeds "
+                "the maximum value (%d).\n",
+                p_range->high, n_elem_this_dim - 1);
+        return -1;
     }
     return 0;
 } /* end of function get_index_values */
@@ -527,7 +543,7 @@ int get_one_index_value(const char *s, int *p_index)
         xrc = -1;
     }
     else {
-        const int index = (int) floor(t->v_realdata[0] + 0.5);
+        const int index = let_idx_int(t->v_realdata[0]);   /* Enhancement-279 */
         if (index < 0) {
             printf("Negative index (%d) is not allowed.\n", index);
             xrc = -1;

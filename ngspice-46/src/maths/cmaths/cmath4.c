@@ -313,7 +313,12 @@ cx_deriv(void *data, short int type, int length, int *newlength, short int *newt
         for (base = 0; base < length; base += grouping)
         {
             k = 0;
-            for (i = degree; i < grouping; i += 1)
+            /* Enhancement-281: a vector whose v_dims[0] (grouping) differs from
+             * its v_length -- e.g. min(realvec, complexvec) of unequal lengths --
+             * leaves a PARTIAL last block: `base` reaches length-1 while the fit
+             * window spans base+grouping-1, reading past the input. Bound the
+             * window by the real length (a no-op when grouping == length). */
+            for (i = degree; i < grouping && i + base < length; i += 1)
             {
 
                 /* real */
@@ -417,7 +422,12 @@ cx_deriv(void *data, short int type, int length, int *newlength, short int *newt
         for (base = 0; base < length; base += grouping)
         {
             k = 0;
-            for (i = degree; i < grouping; i += 1)
+            /* Enhancement-281: a vector whose v_dims[0] (grouping) differs from
+             * its v_length -- e.g. min(realvec, complexvec) of unequal lengths --
+             * leaves a PARTIAL last block: `base` reaches length-1 while the fit
+             * window spans base+grouping-1, reading past the input. Bound the
+             * window by the real length (a no-op when grouping == length). */
+            for (i = degree; i < grouping && i + base < length; i += 1)
             {
                 if (!ft_polyfit(scale + i - degree + base,
                     indata + i - degree + base, coefs, degree, scratch))
@@ -1120,6 +1130,15 @@ cx_mtimeavg(void* data, short int type, int length, int* newlength, short int* n
 
     if (!pl || !pl->pl_scale || !newpl || !newpl->pl_scale) {
         fprintf(cp_err, "Internal error mtimeavg: bad scale\n");
+        return (NULL);
+    }
+    /* Enhancement-279: the averaging window walks the scale data `dsc[j]` for
+     * j < nlen (= length - 1), so a data vector longer than its plot scale --
+     * e.g. mtimeavg(unitvec(200)) on a shorter plot -- read past the scale. Same
+     * guard as cx_integ / cx_deriv (Enhancement-278). */
+    if (pl->pl_scale->v_length < length) {
+        fprintf(cp_err, "Error: mtimeavg needs an input vector no longer than its "
+                "scale (length %d, scale %d)\n", length, pl->pl_scale->v_length);
         return (NULL);
     }
 

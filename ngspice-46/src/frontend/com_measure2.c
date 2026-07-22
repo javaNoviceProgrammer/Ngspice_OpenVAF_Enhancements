@@ -1526,6 +1526,20 @@ measure_valid_vector(
  * in a measurement statement.   We also check the appropriate
  * variables found in the measurement statement.
  * ----------------------------------------------------------------- */
+
+/* Enhancement-279: a measure RISE/FALL/CROSS count is rounded with
+ * (int)floor(x + 0.5); that cast is undefined behaviour for a value outside int
+ * range (`meas ... rise=1e308`, inf, NaN). Clamp first. */
+static int
+meas_int(double x)
+{
+    double f = floor(x + 0.5);
+    if (f != f)                 return 0;    /* NaN */
+    if (f >= (double) INT_MAX)  return INT_MAX;
+    if (f <= (double) INT_MIN)  return INT_MIN;
+    return (int) f;
+}
+
 static int
 measure_parse_stdParams(
     MEASUREPTR meas,          /* in : measurement structure */
@@ -1577,15 +1591,15 @@ measure_parse_stdParams(
         }
 
         if (strcasecmp(pName, "RISE") == 0) {
-            meas->m_rise = (int)floor(engVal1 + 0.5);
+            meas->m_rise = meas_int(engVal1);
             meas->m_fall = -1;
             meas->m_cross = -1;
         } else if (strcasecmp(pName, "FALL") == 0) {
-            meas->m_fall = (int)floor(engVal1 + 0.5);
+            meas->m_fall = meas_int(engVal1);
             meas->m_rise = -1;
             meas->m_cross = -1;
         } else if (strcasecmp(pName, "CROSS") == 0) {
-            meas->m_cross = (int)floor(engVal1 + 0.5);
+            meas->m_cross = meas_int(engVal1);
             meas->m_rise = -1;
             meas->m_fall = -1;
         } else if (strcasecmp(pName, "VAL") == 0) {
