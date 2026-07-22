@@ -305,6 +305,22 @@ DevFinalize(void)
         dispdev->Finalize();
 }
 
+/* Enhancement-283: convert a computed screen coordinate to int, tolerating the
+ * non-finite values a degenerate window or a log of 0/inf produces, and keeping the
+ * result inside the viewport. */
+static int
+disp_clamp_coord(double v, int lo, int hi)
+{
+    if (v != v)                 /* NaN */
+        return lo;
+    if (v <= (double) lo)
+        return lo;
+    if (v >= (double) hi)
+        return hi;
+    return (int) v;
+}
+
+
 /* note: screen coordinates are relative to window
    so need to add viewport offsets */
 static void
@@ -327,11 +343,19 @@ gen_DatatoScreen(GRAPH *graph, double x, double y, int *screenx, int *screeny)
     {
         low  = mylog10(graph->datawindow.ymin);
         high = mylog10(graph->datawindow.ymax);
-        *screeny = (int)((mylog10(y) - low) / (high - low) * graph->viewport.height
-                         + 0.5 + graph->viewportyoff);
+        /* Enhancement-283: a degenerate window (high == low) makes this 0/0, and
+         * mylog10() of 0 / denormal / overflowed data is +/-inf; (int) of a
+         * non-finite double is undefined behaviour. Clamp to the viewport. */
+        *screeny = disp_clamp_coord((mylog10(y) - low) / (high - low)
+                                    * graph->viewport.height
+                                    + 0.5 + graph->viewportyoff,
+                                    graph->viewportyoff,
+                                    graph->viewportyoff + graph->viewport.height);
     } else {
-        *screeny = (int)(((y - graph->datawindow.ymin) / graph->aspectratioy)
-                         + 0.5 + graph->viewportyoff);
+        *screeny = disp_clamp_coord((y - graph->datawindow.ymin) / graph->aspectratioy
+                                    + 0.5 + graph->viewportyoff,
+                                    graph->viewportyoff,
+                                    graph->viewportyoff + graph->viewport.height);
     }
 
     if ((graph->grid.gridtype == GRID_LOGLOG) ||
@@ -339,11 +363,16 @@ gen_DatatoScreen(GRAPH *graph, double x, double y, int *screenx, int *screeny)
     {
         low  = mylog10(graph->datawindow.xmin);
         high = mylog10(graph->datawindow.xmax);
-        *screenx = (int)((mylog10(x) - low) / (high - low) * graph->viewport.width
-                         + 0.5 + graph ->viewportxoff);
+        *screenx = disp_clamp_coord((mylog10(x) - low) / (high - low)
+                                    * graph->viewport.width
+                                    + 0.5 + graph->viewportxoff,
+                                    graph->viewportxoff,
+                                    graph->viewportxoff + graph->viewport.width);
     } else {
-        *screenx = (int)((x - graph->datawindow.xmin) / graph->aspectratiox
-                         + 0.5 + graph ->viewportxoff);
+        *screenx = disp_clamp_coord((x - graph->datawindow.xmin) / graph->aspectratiox
+                                    + 0.5 + graph->viewportxoff,
+                                    graph->viewportxoff,
+                                    graph->viewportxoff + graph->viewport.width);
     }
 }
 

@@ -1083,6 +1083,42 @@ if_setparam_wildcard_instance(CKTcircuit *ckt, char *param, struct dvec *val)
     return count;
 }
 
+/* Enhancement-284: does ANY loaded model (do_model != 0) or instance (do_model == 0)
+ * carry a settable parameter named `param`? This only PROBES -- nothing is changed.
+ * It lets a wildcard that matched nothing report the form that would have worked,
+ * instead of a bare "not found" that reads like a spelling/case problem. */
+int
+if_hasparam_wildcard(CKTcircuit *ckt, char *param, int do_model)
+{
+    int typecode, count = 0;
+
+    if (!param || !*param || !ckt)
+        return 0;
+
+    for (typecode = 0; typecode < ft_sim->numDevices; typecode++) {
+        IFdevice    *device = ft_sim->devices[typecode];
+        GENinstance *dummy  = NULL;
+        GENmodel    *mod;
+
+        if (!device || !ckt->CKThead[typecode])
+            continue;
+        if (!parmlookup(device, &dummy, param, do_model, 1 /*inout=set*/))
+            continue;
+        for (mod = ckt->CKThead[typecode]; mod; mod = mod->GENnextModel) {
+            if (do_model) {
+                count++;
+            } else {
+                GENinstance *inst;
+                for (inst = mod->GENinstances; inst; inst = inst->GENnextInstance)
+                    count++;
+            }
+        }
+    }
+
+    return count;
+}
+
+
 /* Make a linked list where the first node is a CP_LIST variable
  * pointing to the different values of the vector variables.
  *

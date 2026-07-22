@@ -197,6 +197,28 @@ static int sw_kind(const char *name)
 }
 
 
+/* Enhancement-284: describe a knob for the banner. `sw_kind` returns SW_MODEL for
+ * every knob applied IN PLACE via `altermod` -- which includes the INSTANCE
+ * wildcards `@#*[param]` / `@*[[param]]` -- so the banner must classify from the
+ * name token rather than reuse the dispatch flag, or an instance wildcard is
+ * mislabelled "model param". */
+static const char *sw_knobdesc(const char *name, int kind)
+{
+    if (kind == SW_DECK)
+        return ".param";
+    if (name && name[0] == '@') {
+        const char *p = name + 1;
+        if (p[0] == '#' && p[1] == '*')
+            return "instance param, wildcard";
+        if (p[0] == '*' && p[1] == '[' && p[2] == '[')
+            return "instance param, wildcard";
+        if (p[0] == '*' && p[1] == '[')
+            return "model param, wildcard";
+    }
+    return kind == SW_MODEL ? "model param" : "instance/device";
+}
+
+
 /* Stage a `.param` knob (alterparam only). Enhancement-190: the `reset` that
  * commits it is issued ONCE per point after every deck knob is staged, so a
  * multi-knob cartesian point re-sources the deck a single time. */
@@ -623,8 +645,7 @@ void com_sweep(wordlist *wl)
 
     if (nknob == 1)
         fprintf(cp_out, "sweep: %s (%s) over %d point%s, analysis '%s'\n",
-                kname[0], kkind[0] == SW_MODEL ? "model param" :
-                kkind[0] == SW_DECK ? ".param" : "instance/device",
+                kname[0], sw_knobdesc(kname[0], kkind[0]),
                 nv0, nv0 == 1 ? "" : "s", analysis);
     else {
         fprintf(cp_out, "sweep: %s over %d point%s", kname[0], nv0,

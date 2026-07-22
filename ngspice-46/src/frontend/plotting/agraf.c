@@ -8,6 +8,7 @@ Author: 1985 Wayne A. Christopher, U. C. Berkeley CAD Group
  */
 
 #include "ngspice/ngspice.h"
+#include <float.h>
 #include "ngspice/cpdefs.h"
 #include "ngspice/ftedefs.h"
 #include "ngspice/dvec.h"
@@ -25,6 +26,34 @@ Author: 1985 Wayne A. Christopher, U. C. Berkeley CAD Group
  * full of magic numbers that make the formatting correct.
  */
 
+
+
+/* Enhancement-283: floor() a base-10 exponent into an int, tolerating the
+ * non-finite results mylog10() returns for inf / 0 / denormal data. DBL_MAX_10_EXP
+ * bounds any decade a double can actually represent. */
+static int
+agraf_int(double v)
+{
+    if (v != v)                         /* NaN */
+        return 0;
+    if (v >=  (double) INT_MAX)
+        return INT_MAX;
+    if (v <= -(double) INT_MAX)
+        return -INT_MAX;
+    return (int) v;
+}
+
+static int
+agraf_decade(double lg)
+{
+    if (lg != lg)                       /* NaN */
+        return 0;
+    if (lg >  (double) DBL_MAX_10_EXP)
+        return DBL_MAX_10_EXP;
+    if (lg < -(double) DBL_MAX_10_EXP)
+        return -DBL_MAX_10_EXP;
+    return (int) floor(lg);
+}
 
 void
 ft_agraf(double *xlims, double *ylims, struct dvec *xscale, struct plot *plot, struct dvec *vecs, double xdel, double ydel, bool xlog, bool ylog, bool nointerp)
@@ -125,21 +154,27 @@ ft_agraf(double *xlims, double *ylims, struct dvec *xscale, struct plot *plot, s
     }
 
     /* gcc doesn't like !double */
+    /* Enhancement-283: mylog10() here can be +/-inf or NaN -- the data may overflow
+     * to inf (e.g. -1e308 * 6), or be zero/denormal -- and (int) of a non-finite
+     * double is undefined behaviour. Sanitize the exponent to a representable
+     * decade before the cast. */
     if (ylims[1] == 0.0) {
-        mag = (int) floor(mylog10(- ylims[0]));
+        mag = agraf_decade(mylog10(- ylims[0]));
         tenpowmag = pow(10.0, (double) mag);
     } else if (ylims[0] == 0.0) {
-        mag = (int) floor(mylog10(ylims[1]));
+        mag = agraf_decade(mylog10(ylims[1]));
         tenpowmag = pow(10.0, (double) mag);
     } else {
         diff = ylims[1] - ylims[0];
-        mag = (int) floor(mylog10(diff));
+        mag = agraf_decade(mylog10(diff));
         tenpowmag = pow(10.0, (double) mag);
     }
 
-    lmt = (int) floor(ylims[0] / tenpowmag);
+    /* Enhancement-283: tenpowmag can be 0 or inf for extreme data, making these
+     * ratios non-finite; (int) of that is undefined behaviour. */
+    lmt = agraf_int(floor(ylims[0] / tenpowmag));
     yrange[0] = ylims[0] = lmt * tenpowmag;
-    hmt = (int) ceil(ylims[1] / tenpowmag);
+    hmt = agraf_int(ceil(ylims[1] / tenpowmag));
     yrange[1] = ylims[1] = hmt * tenpowmag;
 
     dst = hmt - lmt;

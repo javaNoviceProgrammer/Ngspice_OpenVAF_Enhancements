@@ -57,14 +57,27 @@ ft_findpoint(double pt, double *lims, int maxp, int minp, bool islog)
         pt = lims[0];
     if (pt > lims[1])
         pt = lims[1];
-    if (islog) {
-        tl = mylog10(lims[0]);
-        th = mylog10(lims[1]);
-        return (int)(((mylog10(pt) - tl) / (th - tl)) *
-                     (maxp - minp) + minp);
-    } else {
-        return (int)(((pt - lims[0]) / (lims[1] - lims[0])) *
-                     (maxp - minp) + minp);
+    /* Enhancement-283: a degenerate range (lims[0] == lims[1], or a log range whose
+     * endpoints share a decade) makes the fraction 0/0, and mylog10() of 0 /
+     * denormal / overflowed data is +/-inf -- (int) of either is undefined
+     * behaviour. Compute in double, then map a non-finite fraction to the low end
+     * and clamp the result into [minp, maxp]. */
+    {
+        double frac;
+        if (islog) {
+            tl = mylog10(lims[0]);
+            th = mylog10(lims[1]);
+            frac = (mylog10(pt) - tl) / (th - tl);
+        } else {
+            frac = (pt - lims[0]) / (lims[1] - lims[0]);
+        }
+        if (frac != frac)               /* NaN (degenerate range) */
+            frac = 0.0;
+        if (frac < 0.0)
+            frac = 0.0;
+        if (frac > 1.0)
+            frac = 1.0;
+        return (int) (frac * (maxp - minp) + minp);
     }
 }
 

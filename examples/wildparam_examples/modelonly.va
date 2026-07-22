@@ -1,0 +1,8 @@
+// L_um declared WITHOUT (* type="instance" *) -> a MODEL parameter only
+`include "disciplines.vams"
+module modelonly(p, n);
+    inout p, n;
+    electrical p, n;
+    parameter real L_um = 2.0;      // MODEL parameter (mixed case)
+    analog V(p, n) <+ I(p, n) * L_um * 1000.0;
+endmodule

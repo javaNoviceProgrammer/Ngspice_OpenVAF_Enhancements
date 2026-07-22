@@ -1,0 +1,10 @@
+// mixed-case parameter names, to test ngspice's case-insensitive netlist tokens
+`include "disciplines.vams"
+
+module camel(p, n);
+    inout p, n;
+    electrical p, n;
+    parameter real Wavelength = 1.0;                  // mixed-case MODEL param
+    (* type = "instance" *) parameter real L_um = 2.0; // mixed-case INSTANCE param
+    analog V(p, n) <+ I(p, n) * Wavelength * L_um * 1000.0;
+endmodule

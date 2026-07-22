@@ -1266,13 +1266,34 @@ alter_set(char *dev, char *param, struct dvec *dv, int do_model)
 
     if (iparam) {
         int n = if_setparam_wildcard_instance(ft_curckt->ci_ckt, iparam, dv);
-        if (n == 0)
-            fprintf(cp_err, "Warning: no loaded instance has parameter '%s'.\n", iparam);
+        if (n == 0) {
+            /* Enhancement-284: the parameter may well exist, just at the MODEL
+             * level -- a plain `parameter real X` in Verilog-A is a model
+             * parameter unless marked (* type = "instance" *). Say so and name
+             * the form that works, instead of a bare "not found" that reads like
+             * a spelling or letter-case problem. */
+            if (if_hasparam_wildcard(ft_curckt->ci_ckt, iparam, 1) > 0)
+                fprintf(cp_err, "Warning: no loaded instance has parameter '%s', "
+                        "but a loaded model does -- use the model wildcard "
+                        "'@*[%s]' (an instance parameter needs "
+                        "(* type = \"instance\" *) in the Verilog-A).\n",
+                        iparam, iparam);
+            else
+                fprintf(cp_err, "Warning: no loaded instance has parameter '%s'.\n",
+                        iparam);
+        }
     } else if (dev && dev[0] == '*' && dev[1] == '\0') {
         int n = if_setparam_wildcard(ft_curckt->ci_ckt, param, dv);
-        if (n == 0)
-            fprintf(cp_err, "Warning: no loaded model has parameter '%s'.\n",
-                    param ? param : "");
+        if (n == 0) {
+            const char *pn = param ? param : "";
+            /* Enhancement-284: mirror of the above, the other way round. */
+            if (if_hasparam_wildcard(ft_curckt->ci_ckt, param, 0) > 0)
+                fprintf(cp_err, "Warning: no loaded model has parameter '%s', "
+                        "but a loaded instance does -- use the instance wildcard "
+                        "'@#*[%s]'.\n", pn, pn);
+            else
+                fprintf(cp_err, "Warning: no loaded model has parameter '%s'.\n", pn);
+        }
     } else {
         if_setparam(ft_curckt->ci_ckt, &dev, param, dv, do_model);
     }
