@@ -44,6 +44,7 @@ ft_agraf(double *xlims, double *ylims, struct dvec *xscale, struct plot *plot, s
     int omargin;
     int i, j, k;
     int shift;
+    int line_end;   /* Enhancement-282: index of the '\0' in line1/line2 */
 
     NG_IGNORE(xdel);
     NG_IGNORE(ydel);
@@ -96,8 +97,11 @@ ft_agraf(double *xlims, double *ylims, struct dvec *xscale, struct plot *plot, s
 
     /* Now allocate the field and stuff. */
     field = TMALLOC(char, (maxy + 1) * (maxx + 1));
-    line1 = TMALLOC(char, maxy + margin + FUDGE + 1);
-    line2 = TMALLOC(char, maxy + margin + FUDGE + 1);
+    /* Enhancement-282: remember the buffer bound now -- `maxy` is reassigned
+     * below, so this cannot be recomputed at the label loop. */
+    line_end = maxy + margin + FUDGE;
+    line1 = TMALLOC(char, line_end + 1);
+    line2 = TMALLOC(char, line_end + 1);
     if (!novalue)
         values = TMALLOC(double, maxx);
 
@@ -106,7 +110,7 @@ ft_agraf(double *xlims, double *ylims, struct dvec *xscale, struct plot *plot, s
      */
     for (i = 0, j = (maxx + 1) * (maxy + 1); i < j; i++)
         field[i] = ' ';
-    for (i = 0, j = maxy + margin + FUDGE; i < j; i++) {
+    for (i = 0, j = line_end; i < j; i++) {
         line1[i] = '-';
         line2[i] = ' ';
     }
@@ -172,10 +176,26 @@ ft_agraf(double *xlims, double *ylims, struct dvec *xscale, struct plot *plot, s
             field[k * omaxy + i] = LCHAR;
         line1[i + margin + 2 * shift] = '|';
         (void) sprintf(buf, "%.2e", j * pow(10.0, (double) mag));
-        memcpy(&line2[i + margin - ((j < 0) ? 2 : 1) - shift], buf,
-              strlen(buf));
+        /* Enhancement-282: `shift` above is measured by formatting 0.0, which
+         * always has a 2-digit exponent, so a label with a 3-DIGIT exponent
+         * ("1.00e-320", from denormal data) is one char longer than the FUDGE pad
+         * allows. The last label then overwrote line2's terminating '\0' and the
+         * printf of line2 read past the buffer. Clamp the copy to the buffer. */
+        {
+            int off = i + margin - ((j < 0) ? 2 : 1) - shift;
+            int n = (int) strlen(buf);
+            if (off < 0) {
+                n += off;
+                off = 0;
+            }
+            if (off + n > line_end)
+                n = line_end - off;
+            if (n > 0)
+                memcpy(&line2[off], buf, (size_t) n);
+        }
     }
     line1[i - spacing + margin + 1] = '\0';
+    line2[line_end] = '\0';   /* Enhancement-282: keep line2 terminated */
 
     for (i = 1; i < omargin - 1 && xscale->v_name[i - 1]; i++)
         line2[i] = xscale->v_name[i - 1];
