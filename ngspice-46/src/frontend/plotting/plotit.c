@@ -273,6 +273,23 @@ static char *getword(wordlist *wl, const char *sz_keyword)
  * hcopy: File used for plotting
  * devname: "Device" for plotting, e.g. Gnuplot
  */
+/* Enhancement-285: the transient resampling inside plotit() replaces the SHARED
+ * scale, so it must interpolate every vector or none -- and ft_interpolate takes
+ * `double *`. A COMPLEX vector has v_realdata == NULL (the dvec union holds
+ * v_compdata), so passing it dereferenced a null pointer: a hard SEGV on the
+ * shipped build (e.g. `asciiplot sqrt(-1*vector(10))`). Complex vectors plot fine
+ * through the normal path, so skip the resampling when any of them is not real. */
+static bool
+all_vecs_real(struct dvec *vecs)
+{
+    struct dvec *v;
+    for (v = vecs; v; v = v->v_link2)
+        if (!isreal(v) || !v->v_realdata)
+            return FALSE;
+    return TRUE;
+}
+
+
 bool plotit(wordlist *wl, const char *hcopy, const char *devname)
 {
     if (!wl) { /* no wordlist -> cannot plot */
@@ -1154,6 +1171,7 @@ bool plotit(wordlist *wl, const char *hcopy, const char *devname)
                 plot_cur && plot_cur->pl_dvecs &&
                 plot_cur->pl_scale &&
                 isreal(plot_cur->pl_scale) &&
+                all_vecs_real(vecs) &&              /* Enhancement-285 */
                 ciprefix("tran", plot_cur->pl_typename)) {
             int newlen = (int)((tstop - tstart) / tstep + 1.5);
 
@@ -1174,11 +1192,20 @@ bool plotit(wordlist *wl, const char *hcopy, const char *devname)
 
             for (v = vecs; v; v = v->v_link2) {
                 double *newdata = TMALLOC(double, newlen);
+                /* Enhancement-285: ft_interpolate indexes BOTH `data` and `oscale`
+                 * by `olen`, but `data` only has v_length points while the scale can
+                 * be longer -- a synthetic vector (`let y = vector(8)` on a 66-point
+                 * tran plot) carries the plot's scale, so passing the scale length
+                 * read far past the end of the vector. Use the length they share. */
+                int olen = v->v_length;
+                if (v->v_scale->v_length < olen)
+                    olen = v->v_scale->v_length;
 
-                if (!ft_interpolate(v->v_realdata, newdata,
-                        v->v_scale->v_realdata, v->v_scale->v_length,
+                if (olen < 2 || !ft_interpolate(v->v_realdata, newdata,
+                        v->v_scale->v_realdata, olen,
                         newscale, newlen, 1)) {
                     fprintf(cp_err, "Error: can't interpolate %s\n", v->v_name);
+                    tfree(newdata);
                     goto quit;
                 }
 

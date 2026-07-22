@@ -835,7 +835,11 @@ void ft_writesimple(double *xlims, double *ylims,
         for (v = vecs; v; v = v->v_link2) {
             struct dvec *scale = v->v_scale;
             /* if no more scale and value data, just print spaces */
-            if (i >= scale->v_length) {
+            /* Enhancement-285: this bound only consulted the SCALE's length but the
+             * branch below indexes the VECTOR's own data, so a vector shorter than
+             * its scale (a synthetic vector carries the plot's scale) was read past
+             * the end. Require both to have a point at `i`. */
+            if (i >= scale->v_length || i >= v->v_length) {
                 if (prscale)
                     fprintf(file_data, "%*s", preci + 8, "");
 

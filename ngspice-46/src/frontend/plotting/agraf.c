@@ -279,10 +279,20 @@ ft_agraf(double *xlims, double *ylims, struct dvec *xscale, struct plot *plot, s
             return;
         }
         for (v = vecs; v; v = v->v_link2) {
-            yy1 = (isreal(v) ? v->v_realdata[lower] :
-                   realpart(v->v_compdata[lower]));
-            y2 = (isreal(v) ? v->v_realdata[upper] :
-                  realpart(v->v_compdata[upper]));
+            /* Enhancement-285: `lower`/`upper` are bracketing indices into the
+             * X SCALE and are bounded by xscale->v_length, but they index the
+             * VECTOR here. A vector shorter than its scale -- a synthetic vector
+             * (`let y = vector(8)`) carries the plot's much longer scale -- was
+             * therefore read past its end. Clamp to this vector's own length. */
+            int lo = lower, up = upper;
+            if (lo >= v->v_length) lo = v->v_length - 1;
+            if (up >= v->v_length) up = v->v_length - 1;
+            if (lo < 0) lo = 0;
+            if (up < 0) up = 0;
+            yy1 = (isreal(v) ? v->v_realdata[lo] :
+                   realpart(v->v_compdata[lo]));
+            y2 = (isreal(v) ? v->v_realdata[up] :
+                  realpart(v->v_compdata[up]));
             if (x1 == x2)
                 y = yy1;
             else

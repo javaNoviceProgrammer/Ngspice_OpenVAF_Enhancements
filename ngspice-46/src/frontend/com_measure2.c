@@ -773,8 +773,13 @@ measure_at(
             else // fft
                 svalue = dScale->v_realdata[i];
         } else {
-            value = d->v_realdata[i];
-            svalue = dScale->v_realdata[i];
+            /* Enhancement-285: a COMPLEX vector has v_realdata == NULL (the dvec
+             * union holds v_compdata), so measuring one on this plain tran/dc path
+             * dereferenced a null pointer. The ac/sp branches above already guard
+             * it; take the real part the same way they do. */
+            value = d->v_realdata ? d->v_realdata[i] : get_value(meas, d, i);
+            svalue = dScale->v_realdata ? dScale->v_realdata[i]
+                                        : dScale->v_compdata[i].cx_real;
         }
 
         if ((i > 0) && (psvalue <= at) && (svalue >= at)) {
@@ -1003,8 +1008,13 @@ measure_minMaxAvg(
                 /* may happen if you write an sp vector and load it again */
                 svalue = dScale->v_compdata[i].cx_real;
         } else {
-            value = d->v_realdata[i];
-            svalue = dScale->v_realdata[i];
+            /* Enhancement-285: a COMPLEX vector has v_realdata == NULL (the dvec
+             * union holds v_compdata), so measuring one on this plain tran/dc path
+             * dereferenced a null pointer. The ac/sp branches above already guard
+             * it; take the real part the same way they do. */
+            value = d->v_realdata ? d->v_realdata[i] : get_value(meas, d, i);
+            svalue = dScale->v_realdata ? dScale->v_realdata[i]
+                                        : dScale->v_compdata[i].cx_real;
         }
 
         if (dc_check) {
