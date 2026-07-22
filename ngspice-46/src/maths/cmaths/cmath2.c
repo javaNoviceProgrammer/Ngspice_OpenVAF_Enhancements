@@ -537,6 +537,26 @@ cx_length(void *data, short int type, int length, int *newlength, short int *new
  * argument is irrelevant.
  */
 
+/* Enhancement-273: a vector-length argument is converted to int with a plain
+ * (int) cast, which is undefined behaviour when the value is non-finite or
+ * outside int range -- vector(1e30) / unitvec(1e30) then produced a garbage
+ * (typically INT_MAX-saturated) length and ran away allocating/filling it.
+ * Validate first; on an out-of-range length the caller (apply_func) gets a
+ * NULL and reports the error. fabs()/cmag() are >= 0, so one upper check (which
+ * also rejects NaN/inf) suffices. */
+static int cx_veclen(const double *dd, const ngcomplex_t *cc,
+                     short int type, int *ok)
+{
+    double dl = (type == VF_REAL) ? fabs(*dd) : cmag(*cc);
+    if (!(dl <= (double) INT_MAX)) {
+        fprintf(cp_err, "Error: vector length argument (%g) is out of range\n", dl);
+        *ok = 0;
+        return 0;
+    }
+    *ok = 1;
+    return (int) dl;
+}
+
 void *
 cx_vector(void *data, short int type, int length, int *newlength, short int *newtype)
 {
@@ -547,10 +567,12 @@ cx_vector(void *data, short int type, int length, int *newlength, short int *new
 
     NG_IGNORE(length);
 
-    if (type == VF_REAL)
-        len = (int)fabs(*dd);
-    else
-        len = (int)cmag(*cc);
+    {
+        int ok;
+        len = cx_veclen(dd, cc, type, &ok);   /* Enhancement-273 */
+        if (!ok)
+            return NULL;
+    }
     if (len == 0)
         len = 1;
     d = alloc_d(len);
@@ -576,10 +598,12 @@ cx_cvector(void* data, short int type, int length, int* newlength, short int* ne
 
     NG_IGNORE(length);
 
-    if (type == VF_REAL)
-        len = (int)fabs(*dd);
-    else
-        len = (int)cmag(*cc);
+    {
+        int ok;
+        len = cx_veclen(dd, cc, type, &ok);   /* Enhancement-273 */
+        if (!ok)
+            return NULL;
+    }
     if (len == 0)
         len = 1;
     d = alloc_c(len);
@@ -606,10 +630,12 @@ cx_unitvec(void *data, short int type, int length, int *newlength, short int *ne
 
     NG_IGNORE(length);
 
-    if (type == VF_REAL)
-        len = (int)fabs(*dd);
-    else
-        len = (int)cmag(*cc);
+    {
+        int ok;
+        len = cx_veclen(dd, cc, type, &ok);   /* Enhancement-273 */
+        if (!ok)
+            return NULL;
+    }
     if (len == 0)
         len = 1;
     d = alloc_d(len);
@@ -762,11 +788,13 @@ void *cx_mod(void *data1, void *data2, short int datatype1, short int datatype2,
 
         int i;
         for (i = 0; i < length; i++) {
-            const int r1 = (int) floor(fabs(dd1[i]));
-            rcheck(r1 >= 0, "mod");
-            const int r2 = (int)floor(fabs(dd2[i]));
-            rcheck(r2 > 0, "mod");
-            const int r3 = r1 % r2;
+            /* Enhancement-273: range-check before the (int) cast -- (int) of a
+             * value outside int range (1e30, inf, NaN) is undefined behaviour. */
+            const double a1 = floor(fabs(dd1[i]));
+            const double a2 = floor(fabs(dd2[i]));
+            rcheck(a1 <= (double) INT_MAX, "mod");
+            rcheck(a2 >= 1.0 && a2 <= (double) INT_MAX, "mod");
+            const int r3 = (int) a1 % (int) a2;
             d[i] = (double) r3;
         }
     }
@@ -791,16 +819,17 @@ void *cx_mod(void *data1, void *data2, short int datatype1, short int datatype2,
             } else {
                 c2 = cc2[i];
             }
-            const int r1 = (int) floor(fabs(realpart(c1)));
-            rcheck(r1 >= 0, "mod");
-            const int r2 = (int) floor(fabs(realpart(c2)));
-            rcheck(r2 > 0, "mod");
-            const int i1 = (int) floor(fabs(imagpart(c1)));
-            rcheck(i1 >= 0, "mod");
-            const int i2 = (int) floor(fabs(imagpart(c2)));
-            rcheck(i2 > 0, "mod");
-            const int r3 = r1 % r2;
-            const int i3 = i1 % i2;
+            /* Enhancement-273: range-check before the (int) casts (see above). */
+            const double ar1 = floor(fabs(realpart(c1)));
+            const double ar2 = floor(fabs(realpart(c2)));
+            const double ai1 = floor(fabs(imagpart(c1)));
+            const double ai2 = floor(fabs(imagpart(c2)));
+            rcheck(ar1 <= (double) INT_MAX, "mod");
+            rcheck(ar2 >= 1.0 && ar2 <= (double) INT_MAX, "mod");
+            rcheck(ai1 <= (double) INT_MAX, "mod");
+            rcheck(ai2 >= 1.0 && ai2 <= (double) INT_MAX, "mod");
+            const int r3 = (int) ar1 % (int) ar2;
+            const int i3 = (int) ai1 % (int) ai2;
             realpart(c[i]) = (double) r3;
             imagpart(c[i]) = (double) i3;
         }
