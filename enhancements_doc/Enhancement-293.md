@@ -77,19 +77,66 @@ decades:
 purely real, and `ddt(2*ddt(V))` — the formulation that already compiled — comes out at
 exactly **2x**, an independent cross-check of the new path against the old one.
 
-## A pre-existing limitation this surfaced
+## A pre-existing limitation this surfaced — and how to avoid it
 
-Chained `ddt` in **transient** is numerically unreliable, and gets *worse* as the
-timestep shrinks (15.8 → 63.3 → 118.7 against a target of 39.48 for 1 ms → 100 µs →
-10 µs) — error amplification of order `1/h²`, from differentiating a
-numerically-differentiated quantity through two chained implicit equations. Both
-formulations agree with each other to six figures, and the one that already compiled is
-**bit-identical between the pre-fix and post-fix compilers** at every timestep, so this
-enhancement neither causes nor cures it.
+Chained `ddt` in **transient** is unusable under ngspice's default trapezoidal
+integration, and perfectly usable under Gear. **Set `.options method=gear` and the
+problem goes away.**
+
+| step | TRAP error | Gear error |
+|---|---|---|
+| 1 ms | −23.71 | +0.00101 |
+| 500 µs | +23.75 | +0.00025 |
+| 100 µs | +23.79 | +0.00005 |
+| 10 µs | +79.25 | +0.00005 |
+
+(against an analytic `d²V/dt² / V` of 39.478 for `V = sin(2πt)`.)
+
+### What trapezoidal actually does here
+
+It is **not** a divergence, and not an error that grows as the step shrinks. Dumping
+consecutive timesteps shows the answer alternating on **every single step**:
+
+```
+t=0.6102  i/v = +76.802        t=0.6112  i/v = +2.374
+t=0.6122  i/v = +76.369        t=0.6132  i/v = +2.799
+t=0.6142  i/v = +75.953        t=0.6152  i/v = +3.205
+```
+
+The mean of each adjacent pair is the correct answer. The solution carries a persistent
+±oscillation at the Nyquist rate (period `2h`) that never decays, so a single sample
+lands wherever the parity puts it. Averaging pairs converges properly:
+
+| step | mean of adjacent pair | ring amplitude |
+|---|---|---|
+| 1 ms | 39.578 | 36.392 |
+| 500 µs | 39.529 | 36.424 |
+| 100 µs | 39.488 | 36.468 |
+
+The amplitude is roughly **constant** in `h` — it does not grow as the step shrinks —
+and it is strongly drive-dependent (a cosine drive rings at ~456 rather than ~36).
+
+This is the signature of **trapezoidal ringing**: trapezoidal is A-stable but not
+L-stable, so its amplification factor tends to −1 as `hλ → −∞` and the highest-frequency
+mode is reflected rather than damped. Gear/BDF is L-stable and annihilates it. (The
+signature is measured here; the amplitude is not derived.)
+
+Two controls worth recording:
+
+* a **single** `ddt` — an ideal capacitor — does not ring at all: trapezoidal and Gear
+  agree to four-plus digits. Only the chained form excites the mode;
+* it is **not** simply an inconsistent starting derivative. Driving with a cosine (zero
+  initial slope) instead of a sine was tested precisely to check that, and it rings
+  *worse*, so that explanation is refuted rather than assumed.
+
+### Relation to this enhancement
+
+None, beyond having surfaced it. Both formulations agree with each other to six figures,
+and the one that already compiled is **bit-identical between the pre-fix and post-fix
+compilers** at every timestep — Enhancement-293 neither causes nor cures this.
 
 Stated plainly: Enhancement-293 makes nested `ddt` compile and be exactly correct in
-AC / small-signal. It does not make transient chained `ddt` trustworthy — that is a
-separate numerical property of the formulation.
+AC / small-signal. For transient, use `.options method=gear`.
 
 ## Scope
 

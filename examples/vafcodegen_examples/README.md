@@ -40,14 +40,27 @@ the invalid IR happened to lower as intended, and the malformed function was tol
 For those the assertions above are forward regression guards, and the authoritative
 evidence is that an assertions-enabled compiler now accepts the module.
 
-### A limitation this surfaced but did not change
+### A limitation this surfaced — use `.options method=gear`
 
-Chained `ddt` in **transient** is numerically unreliable and gets *worse* as the timestep
-shrinks (error amplification ~`1/h²` from differentiating a numerically-differentiated
-quantity through two chained implicit equations). That behaviour is **pre-existing and
-bit-identical** between the pre-fix and post-fix compilers — Enhancement-293 makes nested
-`ddt` compile and be exactly right in AC/small-signal; it does not make transient chained
-`ddt` trustworthy. The AC checks above are deliberately the ones asserted.
+Chained `ddt` in **transient** is unusable under ngspice's default trapezoidal
+integration and perfectly usable under Gear:
+
+| step | TRAP error | Gear error |
+|---|---|---|
+| 1 ms | −23.71 | +0.00101 |
+| 100 µs | +23.79 | +0.00005 |
+| 10 µs | +79.25 | +0.00005 |
+
+(analytic 39.478.) It is **not** a divergence: consecutive timesteps alternate between
+~76.8 and ~2.4, whose mean is the correct answer — a persistent ±oscillation at the
+Nyquist rate that never decays, so a single sample lands wherever the parity puts it.
+The amplitude is roughly constant in `h`, not growing. That is trapezoidal ringing
+(trapezoidal is A-stable but not L-stable); Gear/BDF is L-stable and removes it. A
+*single* `ddt` does not ring at all — only the chained form.
+
+The behaviour is **pre-existing and bit-identical** between the pre-fix and post-fix
+compilers, so Enhancement-293 neither causes nor cures it. The AC checks above are
+deliberately the ones asserted; the transient workaround is `.options method=gear`.
 
 ## Verify
 

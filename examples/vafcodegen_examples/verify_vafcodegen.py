@@ -203,6 +203,21 @@ if ok:
           a and b and abs(b - 2.0 * a) < 1e-9 * max(1.0, abs(b)),
           f"nested={a} scaled={b}")
 
+    # Transient: chained ddt is unusable under the DEFAULT trapezoidal integration
+    # (a non-decaying Nyquist-rate ring -- trapezoidal is A-stable but not L-stable) and
+    # fine under Gear, which is L-stable. This guards the workaround the docs recommend.
+    out = ngspice("* E-293 second derivative in transient under Gear\n"
+                  ".options method=gear\nv1 a 0 dc 0 sin(0 1 1)\nn1 a 0 dm\n"
+                  ".model dm seconderiv()\n.control\npre_osdi seconderiv.osdi\n"
+                  "tran 100u 0.63\nmeas tran ii find i(v1) at=0.625\n"
+                  "meas tran vv find v(a) at=0.625\n.endc\n.end\n", "_sg.cir")
+    ii, vv = value(out, "ii"), value(out, "vv")
+    w2 = (2.0 * 3.141592653589793) ** 2
+    rel = abs(ii / vv - w2) / w2 if (ii is not None and vv) else None
+    check("transient under `.options method=gear` matches omega^2 (the documented "
+          "workaround)", rel is not None and rel < 0.01,
+          f"i/v={ii / vv:.5f} expect={w2:.5f} rel={rel:.2e}" if rel is not None else "no data")
+
 # ---------------------------------------------------------------- [294]
 print("\n[294] Branch->Jump rewrite left the condition in the use list")
 ok, verdict = compile_va("staleuse.va")
