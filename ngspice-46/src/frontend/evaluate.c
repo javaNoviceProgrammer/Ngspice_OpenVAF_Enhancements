@@ -700,6 +700,22 @@ op_range(struct pnode *arg1, struct pnode *arg2)
 }
 
 
+/* Enhancement-274: a vector index is rounded with (int)floor(x + 0.5); an
+ * out-of-range x (1e308, inf, NaN) makes that cast undefined behaviour. Clamp to
+ * int range first -- op_ind already clamps the resulting index to [0, majsize-1]. */
+static int
+idx_floor(double x)
+{
+    double f = floor(x + 0.5);
+    if (f != f)                 /* NaN */
+        return 0;
+    if (f >= (double) INT_MAX)
+        return INT_MAX;
+    if (f <= (double) INT_MIN)
+        return INT_MIN;
+    return (int) f;
+}
+
 /* This is another operation we do specially -- if the argument is a vector of
  * dimension n, n > 0, the result will be either a vector of dimension n - 1,
  * or a vector of dimension n with only a certain range of vectors present.
@@ -776,11 +792,11 @@ op_ind(struct pnode *arg1, struct pnode *arg2)
      */
     if (isreal(ind)) {
         newdim = v->v_numdims - 1;
-        down = up = (int)floor(ind->v_realdata[0] + 0.5);
+        down = up = idx_floor(ind->v_realdata[0]);
     } else {
         newdim = v->v_numdims;
-        down = (int)floor(realpart(ind->v_compdata[0]) + 0.5);
-        up = (int)floor(imagpart(ind->v_compdata[0]) + 0.5);
+        down = idx_floor(realpart(ind->v_compdata[0]));
+        up = idx_floor(imagpart(ind->v_compdata[0]));
     }
     if (up < down) {
         SWAP(int, up, down);

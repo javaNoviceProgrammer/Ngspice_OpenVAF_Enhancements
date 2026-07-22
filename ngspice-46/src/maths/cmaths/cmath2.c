@@ -123,6 +123,18 @@ cx_uminus(void *data, short int type, int length, int *newlength, short int *new
 }
 
 
+/* Enhancement-276: (int)floor(x) is undefined behaviour for x outside int range
+ * (rnd(1e30), inf, NaN); clamp to int range (NaN -> 0) before the cast. */
+static int
+cx_rnd_i(double x)
+{
+    double f = floor(x);
+    if (f != f)                 return 0;    /* NaN */
+    if (f >= (double) INT_MAX)  return INT_MAX;
+    if (f <= (double) INT_MIN)  return INT_MIN;
+    return (int) f;
+}
+
 /* random integers drawn from a uniform distribution
  *   data in: integer numbers, their absolut values are used,
  *            maximum is RAND_MAX (32767)
@@ -144,8 +156,8 @@ cx_rnd(void *data, short int type, int length, int *newlength, short int *newtyp
         *newtype = VF_COMPLEX;
         for (i = 0; i < length; i++) {
             int j, k;
-            j = (int)floor(realpart(cc[i]));
-            k = (int)floor(imagpart(cc[i]));
+            j = cx_rnd_i(realpart(cc[i]));   /* Enhancement-276 */
+            k = cx_rnd_i(imagpart(cc[i]));
             realpart(c[i]) = j ? rand() % j : 0;
             imagpart(c[i]) = k ? rand() % k : 0;
         }
@@ -159,7 +171,7 @@ cx_rnd(void *data, short int type, int length, int *newlength, short int *newtyp
         *newtype = VF_REAL;
         for (i = 0; i < length; i++) {
             int j;
-            j = (int)floor(dd[i]);
+            j = cx_rnd_i(dd[i]);             /* Enhancement-276 */
             d[i] = j ? rand() % j : 0;
         }
         return ((void *) d);

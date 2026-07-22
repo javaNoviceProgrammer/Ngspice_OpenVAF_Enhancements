@@ -310,8 +310,13 @@ cx_deriv(void *data, short int type, int length, int *newlength, short int *newt
             {
 
                 /* real */
+                /* Enhancement-277: the data window must align with the fit's
+                 * scale window (scale + i - degree + base), as the real branch
+                 * below does. Reading c_indata[j + i + base] instead both
+                 * misaligned the fit and ran `degree` points past the end of the
+                 * input on the last block (heap-buffer-overflow READ). */
                 for (j = 0; j < n; j++)
-                    spare[j] = c_indata[j + i + base].cx_real;
+                    spare[j] = c_indata[j + i - degree + base].cx_real;
                 if (!ft_polyfit(scale + i + base - degree,
                   spare, r_coefs, degree, scratch))
                 {
@@ -320,7 +325,10 @@ cx_deriv(void *data, short int type, int length, int *newlength, short int *newt
                 ft_polyderiv(r_coefs, degree);
 
                 /* for loop gets the beginning part */
-                for (j = k; j <= i + degree / 2; j++)
+                /* Enhancement-277: `i + degree / 2` over-ran scale[]/c_outdata[]
+                 * by `degree` on the last block; the imag loop below and the real
+                 * branch both use `i - degree / 2`. */
+                for (j = k; j <= i - degree / 2; j++)
                 {
                     x = scale[j + base];
                     c_outdata[j + base].cx_real =
@@ -328,8 +336,8 @@ cx_deriv(void *data, short int type, int length, int *newlength, short int *newt
                 }
 
                 /* imag */
-                for (j = 0; j < n; j++)
-                    spare[j] = c_indata[j + i + base].cx_imag;
+                for (j = 0; j < n; j++)                   /* Enhancement-277 */
+                    spare[j] = c_indata[j + i - degree + base].cx_imag;
                 if (!ft_polyfit(scale + i - degree + base,
                   spare, i_coefs, degree, scratch))
                 {
@@ -348,13 +356,17 @@ cx_deriv(void *data, short int type, int length, int *newlength, short int *newt
             }
 
             /* get the tail */
+            /* Enhancement-277: the real branch's tail indexes scale[]/outdata[]
+             * with `j`, not `j + base` (its FIXME notes j+base crashed); the
+             * complex tail still used `j + base`, overrunning both arrays for a
+             * grouped (base > 0) derivative. Match the real branch. */
             for (j = k; j < length; j++)
             {
-                x = scale[j + base];
+                x = scale[j];
                 /* real */
-                c_outdata[j + base].cx_real = ft_peval(x, r_coefs, degree - 1);
+                c_outdata[j].cx_real = ft_peval(x, r_coefs, degree - 1);
                 /* imag */
-                c_outdata[j + base].cx_imag = ft_peval(x, i_coefs, degree - 1);
+                c_outdata[j].cx_imag = ft_peval(x, i_coefs, degree - 1);
             }
         }
 
@@ -881,7 +893,8 @@ done:
 void *
 cx_ifft(void *data, short int type, int length, int *newlength, short int *newtype, struct plot *pl, struct plot *newpl, int grouping)
 {
-    ngcomplex_t *indata = (ngcomplex_t *) data;
+    ngcomplex_t *indata;
+    ngcomplex_t *indata_alloc = NULL;   /* Enhancement-275: real input converted here */
     int i, tpts;
     double span;
     double *xscale;
@@ -908,6 +921,25 @@ cx_ifft(void *data, short int type, int length, int *newlength, short int *newty
     if ((type != VF_REAL) && (type != VF_COMPLEX)) {
         fprintf(cp_err, "Internal error cx_ifft: argument has wrong data\n");
         return (NULL);
+    }
+    /* Enhancement-275: cx_ifft always cast `data` to ngcomplex_t*, but a VF_REAL
+     * input is a plain double[length] -- reading it as ngcomplex_t[length] runs
+     * 2x past the buffer (heap-buffer-overflow READ). Reject a degenerate length
+     * and build a proper complex array (imag = 0) for the real case, the way
+     * cx_fft (Enhancement-225) already distinguishes the two. */
+    if (length < 2) {
+        fprintf(cp_err, "Error: ifft needs an input vector of length >= 2\n");
+        return (NULL);
+    }
+    if (type == VF_REAL) {
+        double *rd = (double *) data;
+        indata = indata_alloc = TMALLOC(ngcomplex_t, length);
+        for (i = 0; i < length; i++) {
+            indata[i].cx_real = rd[i];
+            indata[i].cx_imag = 0.0;
+        }
+    } else {
+        indata = (ngcomplex_t *) data;
     }
 
 #ifdef HAVE_LIBFFTW3
@@ -1038,6 +1070,8 @@ cx_ifft(void *data, short int type, int length, int *newlength, short int *newty
 
 #endif
 
+    if (indata_alloc)                   /* Enhancement-275 */
+        tfree(indata_alloc);
     return ((void *) outdata);
 }
 
