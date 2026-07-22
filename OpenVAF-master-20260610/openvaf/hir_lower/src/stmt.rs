@@ -449,6 +449,17 @@ impl BodyLoweringCtx<'_, '_, '_> {
                 let next_block = self.ctx.create_block();
                 self.ctx.ins().branch(cond, body_head, next_block, false);
 
+                // Enhancement-291: the branch just emitted is the ONLY way into `next_block`, so all of its
+                // predecessors are already known and it can be sealed right away. Leaving it
+                // to the `ensured_sealed()` calls (top of the next iteration, or after the
+                // default arm) breaks on the last item when the default arm's body itself
+                // opens blocks -- `max`/`min`/`abs` lower to a select with real control flow
+                // (`make_cond`) -- because the body leaves `position` on ITS merge block, so
+                // the trailing `ensured_sealed()` seals that already-sealed block and this
+                // one stays unsealed, tripping "block N is not sealed" when the builder is
+                // finalized. `pow` and friends, which emit no branch, never exposed it.
+                self.ctx.seal_block(next_block);
+
                 self.ctx.switch_to_block(next_block);
             }
 

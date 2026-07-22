@@ -284,6 +284,22 @@ impl Builder<'_> {
                 // but we obviously still need it
                 let placeholder = self.func.dfg.make_invalid_value();
                 self.create_dimension(placeholder, val, None);
+                // Enhancement-292: `collect_linear_contributes` decides a contribution is
+                // linear in `val`,
+                // but the replay in `create_dimension` is what actually builds the
+                // per-dimension value -- and it deliberately declines some shapes (an
+                // `fmul` whose BOTH operands depend on the dimension, an opcode that falls
+                // through to the catch-all). The two can therefore disagree, leaving a
+                // contribution with no entry in `val_map`; indexing it then panicked
+                // ("no entry found for key") and took the whole compile down. Pruning is a
+                // best-effort optimisation -- the doc comment above says "where possible" --
+                // so give up on this value rather than crashing. The placeholder is still
+                // resolved so no invalid value survives, and the replay instructions that
+                // are now unused are dead code the later DCE pass removes.
+                if contributes.iter().any(|c| !self.val_map.contains_key(c)) {
+                    self.func.dfg.replace_uses(placeholder, val);
+                    continue;
+                }
                 for contribute in contributes {
                     let dimension = self.val_map[&contribute];
                     let contribute = self.topology.as_contribution(contribute).unwrap();

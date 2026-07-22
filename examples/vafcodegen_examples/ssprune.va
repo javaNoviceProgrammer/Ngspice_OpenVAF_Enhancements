@@ -1,0 +1,28 @@
+`include "disciplines.vams"
+
+// Enhancement-292: the small-signal pruning pass moves a linear contribution into
+// its own dimension "where possible". Whether it IS possible is decided twice, by
+// two different pieces of code: `collect_linear_contributes` classifies the
+// contribution as linear, and the replay inside `create_dimension` is what actually
+// builds the per-dimension value. The replay deliberately declines some shapes -- a
+// product both of whose operands depend on the dimension, or an opcode that falls
+// through to its catch-all -- so the two can disagree. When they did, the pass
+// indexed a map with a key that was never inserted and panicked ("no entry found
+// for key"), taking the whole compile down.
+//
+// The reproducer below is a reduced fuzzer find: noise waves routed through `idt`
+// into nested `laplace_nd` coefficient arrays, which is what drives the two
+// analyses apart. It is deliberately dense rather than pretty -- simplifying it any
+// further stops reproducing.
+module ssprune(a, b);
+    inout a, b;
+    electrical a, b;
+    parameter real q = 1e-30;
+    analog begin
+            begin
+            end
+        case ((q % 'h7fffffff))
+        endcase
+        V(a, b) <+ laplace_nd(laplace_nd(flicker_noise(idt(-1e308), idt(-1e308)), {flicker_noise(idt(-1e308), idt(-1e308)),flicker_noise(idt(-1e308), idt(-1e308))}, {flicker_noise(idt(-1e308), idt(-1e308)),flicker_noise(idt(-1e308), idt(-1e308))}), {laplace_nd(flicker_noise(idt(-1e308), idt(-1e308)), {flicker_noise(idt(-1e308), idt(-1e308)),flicker_noise(idt(-1e308), idt(-1e308))}, {flicker_noise(idt(-1e308), idt(-1e308)),flicker_noise(idt(-1e308), idt(-1e308))}),laplace_nd(flicker_noise(idt(-1e308), idt(-1e308)), {flicker_noise(idt(-1e308), idt(-1e308)),flicker_noise(idt(-1e308), idt(-1e308))}, {flicker_noise(idt(-1e308), idt(-1e308)),flicker_noise(idt(-1e308), idt(-1e308))})}, {laplace_nd(flicker_noise(idt(-1e308), idt(-1e308)), {flicker_noise(idt(-1e308), idt(-1e308)),flicker_noise(idt(-1e308), idt(-1e308))}, {flicker_noise(idt(-1e308), idt(-1e308)),flicker_noise(idt(-1e308), idt(-1e308))}),laplace_nd(flicker_noise(idt(-1e308), idt(-1e308)), {flicker_noise(idt(-1e308), idt(-1e308)),flicker_noise(idt(-1e308), idt(-1e308))}, {flicker_noise(idt(-1e308), idt(-1e308)),flicker_noise(idt(-1e308), idt(-1e308))})});
+    end
+endmodule

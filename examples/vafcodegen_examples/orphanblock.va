@@ -1,0 +1,25 @@
+`include "disciplines.vams"
+
+// Enhancement-287: a noise operator in an `if` CONDITION lets the optimizer fold
+// that branch away. Folding it orphaned the dead arm's block, but the sweep that
+// collects orphaned blocks never re-ran, so a phi in the join block kept an edge
+// labelled with the now-unreachable predecessor -- naming a value that was only
+// available through the deleted edge. That is a broken-SSA function; the MIR
+// verifier rejected it, and because the verifier is a debug assertion the release
+// compiler simply carried the malformed function forward.
+module orphanblock(a, b);
+    inout a, b;
+    electrical a, b;
+    real x, y;
+    analog begin
+        // `y` is assigned only in the else arm and `x` only in the then arm, so both
+        // are read on a path where the other was written -- that is what builds the
+        // phi whose edge went stale.
+        if (flicker_noise(1.0, 1.0) > 1.0)
+            x = $temperature;
+        else
+            y = V(a, b);
+        y = y - x;
+        I(a, b) <+ V(a, b) / 1.0e3 + 0.0 * y;
+    end
+endmodule

@@ -1,0 +1,29 @@
+`include "disciplines.vams"
+
+// Enhancement-293: one analog operator nested DIRECTLY inside another.
+//
+// A `ddt` that becomes an implicit equation replaces its result value and then
+// deletes its own instruction. A later operator evaluated as a linear contribution
+// holds its dimension values OUTSIDE the data-flow graph, so that rewrite could not
+// reach them -- and with direct nesting the stored dimension IS the deleted
+// operator's result. Everything derived from it then referenced a removed
+// instruction, which surfaced as "invalid argument" when the instance-init function
+// was validated, and crashed the compiler.
+//
+// With anything in between (`ddt(2*ddt(x))`, below) the replay yields a fresh value
+// and the situation never arose -- which is why `d2x` always compiled.
+
+// I = d2V/dt2  ->  in AC, (j*w)^2 V = -w^2 V
+module seconderiv(a, b);
+    inout a, b;
+    electrical a, b;
+    analog I(a, b) <+ ddt(ddt(V(a, b)));
+endmodule
+
+// the same second derivative reached through the path that already worked;
+// must come out at exactly twice the module above
+module seconderiv2x(a, b);
+    inout a, b;
+    electrical a, b;
+    analog I(a, b) <+ ddt(2.0 * ddt(V(a, b)));
+endmodule

@@ -43,7 +43,13 @@ impl<'a, 'll> CodegenCx<'a, 'll> {
         // above was registered; this is its missing sibling.
         ifn!("llvm.ceil.f64", fn(t_f64) -> t_f64);
         ifn!("llvm.fabs.f64", fn(t_f64) -> t_f64);
-        ifn!("llvm.ctlz", fn(t_i32, t_bool) -> t_i32);
+        // Enhancement-289: `llvm.ctlz` is an OVERLOADED intrinsic, so its name must carry the type
+        // suffix -- `llvm.ctlz.i32`. Declaring the bare name produced a module LLVM
+        // rejects ("Intrinsic name not mangled correctly for type arguments! Should
+        // be: llvm.ctlz.i32"), the same shape of bug as the `hypot` arity above, and
+        // likewise invisible in release because the verifier is a `debug_assert!`.
+        // This backs `$clog2`.
+        ifn!("llvm.ctlz.i32", fn(t_i32, t_bool) -> t_i32);
 
         // not technically intrinsics but part of the C standard library
         // TODO link custom mathematical functions
@@ -62,7 +68,13 @@ impl<'a, 'll> CodegenCx<'a, 'll> {
 
         if name == "hypot" {
             let name = if self.target.options.is_like_windows { "_hypot" } else { "hypot" };
-            return Some(self.insert_intrinsic(name, &[t_f64], t_f64, false));
+            // Enhancement-288: `hypot` is BINARY -- like its neighbour `atan2` above, and unlike every
+            // single-argument entry in this table. Declaring it `fn(f64) -> f64` while
+            // `builder.rs` emits a two-argument call produced invalid LLVM IR
+            // ("Incorrect number of arguments passed to called function!"). The module
+            // verifier that would have caught this sits behind a `debug_assert!`, so
+            // release builds emitted the malformed call instead of reporting it.
+            return Some(self.insert_intrinsic(name, &[t_f64, t_f64], t_f64, false));
         }
 
         ifn!("strcmp", fn(t_str, t_str) -> t_i32);

@@ -2,7 +2,7 @@
 //! to be created for an anlog opertor (like ddt) or to turn the analog operator
 //! into a separate dimension instead.
 
-use std::mem::take;
+use std::mem::{replace, take};
 
 use bitset::SparseBitMatrix;
 use hir_lower::{CallBackKind, HirInterner, ImplicitEquationKind, ParamKind, PlaceKind};
@@ -43,7 +43,12 @@ impl<'a> super::Builder<'a> {
         intern: &mut HirInterner,
     ) {
         let mut ssa_builder = mir_build::SSAVariableBuilder::new(self.cfg);
-        for (operator_inst, evaluation) in analog_operators {
+        // Iterated by index (rather than consuming the vec) so that handling one operator
+        // can fix up the entries still pending behind it -- see `retarget_pending` below.
+        let mut analog_operators = analog_operators;
+        for op_idx in 0..analog_operators.len() {
+            let operator_inst = analog_operators[op_idx].0;
+            let evaluation = replace(&mut analog_operators[op_idx].1, Evaluation::Dead);
             // `noise_table`/`noise_table_log` carry their data in the callback
             // and take no MIR value args, so guard against an empty arg list.
             // `arg0` is only consumed by the non-noise (ddt) branch below,
@@ -52,10 +57,39 @@ impl<'a> super::Builder<'a> {
                 self.func.dfg.instr_args(operator_inst).first().copied().unwrap_or(F_ZERO);
             let cb = self.func.dfg.func_ref(operator_inst).unwrap();
             let is_noise = intern.callbacks[cb].is_noise();
+            // Enhancement-293: an operator's result may be recorded as the `dimension` of a
+            // LATER
+            // operator's `Evaluation::Linear` -- that happens whenever one analog
+            // operator sits directly inside another (`ddt(ddt(x))`; with anything in
+            // between, such as `ddt(2*ddt(x))`, the replay yields a fresh value and the
+            // situation never arises). Those dimensions live in the `contributes`
+            // triples, i.e. OUTSIDE the DFG, so `replace_uses` cannot reach them -- and
+            // both arms below drop the operator's result and delete its instruction.
+            // Left alone, the pending entry keeps naming a removed instruction's result
+            // and everything derived from it surfaced later as "invalid argument vN"
+            // when the init function was validated. Retarget them by hand.
+            macro_rules! retarget_pending {
+                ($old: expr, $new: expr) => {
+                    let (old, new) = ($old, $new);
+                    for (_, ev) in &mut analog_operators[op_idx + 1..] {
+                        if let Evaluation::Linear { contributes } = ev {
+                            for (_, dimension, dimension_react) in contributes.iter_mut() {
+                                if *dimension == old {
+                                    *dimension = new;
+                                }
+                                if *dimension_react == old {
+                                    *dimension_react = new;
+                                }
+                            }
+                        }
+                    }
+                };
+            }
             match evaluation {
                 Evaluation::Dead => {
                     cov_mark::hit!(dead_noise);
                     let val = self.func.dfg.first_result(operator_inst);
+                    retarget_pending!(val, F_ZERO);
                     self.func.dfg.replace_uses(val, F_ZERO);
                 }
                 Evaluation::Linear { contributes } => {
@@ -136,6 +170,11 @@ impl<'a> super::Builder<'a> {
                     let eq_val =
                         intern.ensure_param(&mut self.func, ParamKind::ImplicitUnknown(eq));
                     let res = self.func.dfg.first_result(operator_inst);
+                    // `eq_val` -- the implicit unknown this operator became -- is exactly
+                    // what a nested operator's reactive contribution should now use, so
+                    // this both removes the dangling reference and states the right
+                    // second-derivative formulation.
+                    retarget_pending!(res, eq_val);
                     self.func.dfg.replace_uses(res, eq_val);
                     let collapse =
                         ssa_builder.define_at_exit(self.func, TRUE, FALSE, operator_inst);

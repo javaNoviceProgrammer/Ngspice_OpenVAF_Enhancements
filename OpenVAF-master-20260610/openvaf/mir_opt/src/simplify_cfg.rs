@@ -108,6 +108,17 @@ impl<'a> SimplifyCfg<'a> {
                         self.cfg.recompute_block(self.func, bb);
                         self.remove_phi_edges(dead_dst, bb);
                         self.vals_changed.insert(dead_dst);
+                        // Enhancement-287: dropping this edge can orphan `dead_dst` (and,
+                        // transitively, blocks
+                        // beyond it). `remove_phi_edges` only fixes phis *in* `dead_dst`; the
+                        // phis that then go stale are the ones in its SUCCESSORS, which keep an
+                        // edge labelled `dead_dst` naming a value that was only available
+                        // through the edge just deleted -- an SSA violation. `simplify_bb`
+                        // collects such predecessor-less blocks, but only on a later sweep, and
+                        // blocks are visited in layout order, so `dead_dst` may already be
+                        // behind the cursor. Flag the change so `iteratively_simplify_cfg`
+                        // sweeps again instead of stopping with the orphan still in place.
+                        self.local_changed = true;
                     }
                 }
 

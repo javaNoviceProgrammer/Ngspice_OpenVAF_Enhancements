@@ -268,7 +268,9 @@ impl<'a, FP: Arithmetic, M: Fn(Value, &Function) -> Value> SimplifyCtx<'a, FP, M
     ) -> Option<Value> {
         if let ValueDef::Const(lhs_) = self.func.dfg.value_def(*lhs) {
             if let ValueDef::Const(rhs_) = self.func.dfg.value_def(*rhs) {
-                return Some(eval_binary(self.func, op, lhs_, rhs_));
+                // Enhancement-286: eval_binary now declines (None) when there is no
+                // fold matching the generated code (div/rem by zero, bad shift).
+                return eval_binary(self.func, op, lhs_, rhs_);
             }
 
             // Canonicalize the constant to the RHS if this is a commutative operation.

@@ -1,0 +1,23 @@
+`include "disciplines.vams"
+
+// Enhancement-291: `max`/`min`/`abs` lower to a SELECT with real control flow, so
+// using one in a `case` statement's DEFAULT arm left the case's fall-through block
+// unsealed -- the arm's body moved the builder onto its own merge block, so the
+// seal at the end of the case landed on that block instead. Finalizing the
+// function then aborted with "FunctionBuilder finalized, but block N is not
+// sealed". `pow` and friends, which emit no branch, never showed it.
+//
+// V(a,b) == 5 selects the item arm (y = 11); anything else takes the default
+// (y = max(3,7) = 7).
+module casemax(a, b);
+    inout a, b;
+    electrical a, b;
+    real y;
+    analog begin
+        case (V(a, b))
+            5.0: y = 11.0;
+            default: y = max(3.0, 7.0);
+        endcase
+        I(a, b) <+ y;
+    end
+endmodule

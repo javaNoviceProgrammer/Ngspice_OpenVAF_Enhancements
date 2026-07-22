@@ -922,8 +922,8 @@ impl<'ll> Builder<'_, '_, 'll> {
                 // (this makes the n == 1 case, where n-1 == 0, evaluate to 0).
                 let (ctlz_ty, ctlz_fun) = self
                     .cx
-                    .intrinsic("llvm.ctlz")
-                    .unwrap_or_else(|| unreachable!("intrinsic llvm.ctlz not found"));
+                    .intrinsic("llvm.ctlz.i32")
+                    .unwrap_or_else(|| unreachable!("intrinsic llvm.ctlz.i32 not found"));
                 let mut ctlz_args = [nm1, NonNull::from(self.cx.const_bool(false)).as_ptr()];
                 let leading_zeros = llvm_sys::core::LLVMBuildCall2(
                     self.llbuilder,

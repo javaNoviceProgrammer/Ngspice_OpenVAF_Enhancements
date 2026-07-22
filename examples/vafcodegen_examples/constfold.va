@@ -1,0 +1,24 @@
+`include "disciplines.vams"
+
+// Enhancement-286: constant-folding an integer division or remainder by ZERO
+// evaluated the operation inside the compiler, so `openvaf-r` itself died with an
+// internal error and produced no output. A *runtime* zero divisor has always been
+// accepted, so a literal one must be too: the folder now declines and leaves the
+// instruction on exactly that runtime path.
+//
+// The same arm also folded add/sub/mul with checked arithmetic and shifted by
+// unconstrained distances; both are now wrapping / range-guarded to match what the
+// generated code actually computes.
+module constfold(a, b);
+    inout a, b;
+    electrical a, b;
+    integer q, r, s, t, u;
+    analog begin
+        q = 5 / 0;                  // literal division by zero
+        r = 5 % 0;                  // literal remainder by zero
+        s = 2147483647 + 1;         // wraps, must not abort the folder
+        t = 1 << 40;                // shift distance outside 0..32
+        u = -2147483648 / -1;       // i32::MIN / -1 overflows
+        I(a, b) <+ V(a, b) / 1.0e3 + 0.0 * (q + r + s + t + u);
+    end
+endmodule

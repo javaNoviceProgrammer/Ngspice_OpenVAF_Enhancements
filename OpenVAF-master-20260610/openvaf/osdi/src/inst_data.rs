@@ -1362,10 +1362,21 @@ impl<'ll> OsdiCompilationUnit<'_, '_, 'll> {
                         .unwrap_or_else(|| {
                             model_data.param_ptr(param, model_ptr, llbuilder).unwrap()
                         }),
+                    // Enhancement-290: the aggregate a struct-GEP indexes is the INSTANCE-DATA
+                    // struct
+                    // (`inst_data.ty`), as `eval_output_slot_ptr` and `temperature_loc`
+                    // both do it. Passing the FIELD type (`ty_double`) made LLVM compute
+                    // the offset as a flat `5 * sizeof(double)` rather than
+                    // `offsetof(inst, temperature)`: fields 0..=4 are the param-given
+                    // bitfield, the two Jacobian pointer arrays, the node mapping and the
+                    // collapse flags, so the two are never equal and the load landed on
+                    // unrelated bytes. It also emitted invalid IR ("Invalid indices for GEP
+                    // pointer type"), but the verifier that says so is a `debug_assert!`,
+                    // so release builds shipped the bad offset silently.
                     ParamKind::Temperature => (
                         &*LLVMBuildStructGEP2(
                             NonNull::from(llbuilder).as_ptr(),
-                            NonNull::from(cx.ty_double()).as_ptr(),
+                            NonNull::from(inst_data.ty).as_ptr(),
                             NonNull::from(inst_ptr).as_ptr(),
                             TEMPERATURE,
                             UNNAMED,
@@ -1467,10 +1478,13 @@ impl<'ll> OsdiCompilationUnit<'_, '_, 'll> {
                         .unwrap_or_else(|| {
                             model_data.param_ptr(param, model_ptr, llbuilder).unwrap()
                         }),
+                    // Enhancement-290: same struct-GEP type confusion as in `load_eval_output`
+                    // above,
+                    // on the operating-point-variable read path.
                     ParamKind::Temperature => (
                         &*LLVMBuildStructGEP2(
                             NonNull::from(llbuilder).as_ptr(),
-                            NonNull::from(cx.ty_double()).as_ptr(),
+                            NonNull::from(inst_data.ty).as_ptr(),
                             NonNull::from(inst_ptr).as_ptr(),
                             TEMPERATURE,
                             UNNAMED,

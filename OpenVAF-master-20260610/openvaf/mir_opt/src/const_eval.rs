@@ -2,23 +2,62 @@ use std::mem::size_of_val;
 
 use mir::{Const, Function, Opcode, Value, FALSE, F_ONE, F_ZERO, ONE, TRUE, ZERO};
 
-pub fn eval_binary(func: &mut Function, op: Opcode, lhs: Const, rhs: Const) -> Value {
-    match (lhs, rhs) {
+pub fn eval_binary(func: &mut Function, op: Opcode, lhs: Const, rhs: Const) -> Option<Value> {
+    // Enhancement-286: returns None when the operation has no folded value that
+    // matches what the generated code would compute -- see the integer arm below.
+    // (`eval_unary` already used this convention.)
+    Some(match (lhs, rhs) {
         (Const::Int(lhs), Const::Int(rhs)) => match op {
-            Opcode::Iadd => func.dfg.iconst(lhs + rhs),
-            Opcode::Isub => func.dfg.iconst(lhs - rhs),
-            Opcode::Imul => func.dfg.iconst(lhs * rhs),
-            Opcode::Idiv => func.dfg.iconst(lhs / rhs),
-            Opcode::Irem => func.dfg.iconst(lhs % rhs),
+            // Enhancement-286: LLVM emits plain (two's-complement wrapping) integer
+            // add/sub/mul here, so fold with wrapping_* -- the folded value then
+            // matches what the generated code computes, and an overflow-checked
+            // build no longer aborts on e.g. `i = 2147483647 + 1`.
+            Opcode::Iadd => func.dfg.iconst(lhs.wrapping_add(rhs)),
+            Opcode::Isub => func.dfg.iconst(lhs.wrapping_sub(rhs)),
+            Opcode::Imul => func.dfg.iconst(lhs.wrapping_mul(rhs)),
+            // Enhancement-286: a zero divisor -- and i32::MIN / -1, which overflows --
+            // has no value we can fold to, and evaluating it here crashed the whole
+            // compiler: `i = 5 / 0` reported an internal error and produced no output.
+            // openvaf already accepts a *runtime* zero divisor, so decline to fold and
+            // leave the instruction on exactly that path.
+            Opcode::Idiv => {
+                if rhs == 0 || (lhs == i32::MIN && rhs == -1) {
+                    return None;
+                }
+                func.dfg.iconst(lhs / rhs)
+            }
+            Opcode::Irem => {
+                if rhs == 0 || (lhs == i32::MIN && rhs == -1) {
+                    return None;
+                }
+                func.dfg.iconst(lhs % rhs)
+            }
 
-            Opcode::Ishl => func.dfg.iconst(lhs << rhs),
+            // Enhancement-286: a shift distance outside 0..32 is poison in LLVM and
+            // panics in Rust -- decline rather than invent a value.
+            Opcode::Ishl => {
+                if !(0..32).contains(&rhs) {
+                    return None;
+                }
+                func.dfg.iconst(lhs << rhs)
+            }
             // Enhancement-37: `Ishr` is the LOGICAL (zero-fill) right shift (`>>`);
             // Rust's `>>` on a signed i32 sign-extends, which is `Iashr`'s (`>>>`)
             // semantics -- fold through u32 so the vacated bits are zero-filled
             // (matches the LLVMBuildLShr the runtime path emits).
-            Opcode::Ishr => func.dfg.iconst(((lhs as u32) >> rhs) as i32),
+            Opcode::Ishr => {
+                if !(0..32).contains(&rhs) {
+                    return None;
+                }
+                func.dfg.iconst(((lhs as u32) >> rhs) as i32)
+            }
             // `>>` on a signed value is already an arithmetic (sign-extending) shift.
-            Opcode::Iashr => func.dfg.iconst(lhs >> rhs),
+            Opcode::Iashr => {
+                if !(0..32).contains(&rhs) {
+                    return None;
+                }
+                func.dfg.iconst(lhs >> rhs)
+            }
             Opcode::Ixor => func.dfg.iconst(lhs ^ rhs),
             Opcode::Iand => func.dfg.iconst(lhs & rhs),
             Opcode::Ior => func.dfg.iconst(lhs | rhs),
@@ -61,7 +100,7 @@ pub fn eval_binary(func: &mut Function, op: Opcode, lhs: Const, rhs: Const) -> V
             Opcode::Sne | Opcode::Bne => (lhs != rhs).into(),
             _ => unreachable!("invalid operation {} {:?} {:?}", op, lhs, rhs),
         },
-    }
+    })
 }
 
 pub fn eval_unary(func: &mut Function, op: Opcode, val: Const) -> Option<Value> {

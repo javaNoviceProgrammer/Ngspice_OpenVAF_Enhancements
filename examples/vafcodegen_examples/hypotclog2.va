@@ -1,0 +1,23 @@
+`include "disciplines.vams"
+
+// Enhancement-288 / Enhancement-289: two LLVM declarations in the intrinsic table
+// disagreed with the calls the code generator emits.
+//
+//  * `hypot` was declared with ONE parameter but is called with two, so any
+//    `hypot(x, y)` with a non-constant argument produced a module LLVM rejects
+//    ("Incorrect number of arguments passed to called function!").
+//  * `llvm.ctlz` is an OVERLOADED intrinsic and must carry its type suffix
+//    (`llvm.ctlz.i32`); the bare name is likewise invalid IR. It backs `$clog2`.
+//
+// Both were invisible in release builds because the module verifier that reports
+// them is a debug assertion. Constant arguments fold before codegen, so only
+// runtime arguments reach the bad declaration -- hence the parameters below.
+module hypotclog2(a, b);
+    inout a, b;
+    electrical a, b;
+    parameter real px = 3.0;
+    parameter real py = 4.0;
+    parameter integer pn = 100;
+    // hypot(3,4) = 5 ; $clog2(100) = 7  ->  I = 5 + 7 = 12
+    analog I(a, b) <+ hypot(px, py) + $clog2(pn) + 0.0 * V(a, b);
+endmodule

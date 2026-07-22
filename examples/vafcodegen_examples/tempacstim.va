@@ -1,0 +1,20 @@
+`include "disciplines.vams"
+
+// Enhancement-290: reading `$temperature` as an operator ARGUMENT (rather than
+// through a computed variable) took a struct-GEP that was handed the FIELD type
+// (`double`) instead of the instance-data struct. LLVM then computed the offset as
+// a flat `5 * sizeof(double)` instead of `offsetof(instance, temperature)` -- and
+// fields 0..4 are the param-given bitfield, the two Jacobian pointer arrays, the
+// node mapping and the collapse flags, so the two are never the same address.
+//
+// The malformed GEP made the SHIPPED compiler die with SIGSEGV (exit 139) while
+// optimizing this model. The same wrong type was also on the operating-point
+// variable read path (`nth_opvar_ptr`).
+//
+// AC magnitude is $temperature itself, so v(out) across a 1 ohm load reads back
+// the nominal 300.15 K.
+module tempacstim(out);
+    inout out;
+    electrical out;
+    analog I(out) <+ ac_stim("ac", $temperature, 0.0);
+endmodule
