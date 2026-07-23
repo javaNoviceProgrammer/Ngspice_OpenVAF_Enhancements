@@ -54,6 +54,49 @@ com_meas(wordlist *wl)
     }
     wl_count = wl;
 
+    /* Enhancement-311: a `param`/`expr` measurement -- `meas <an> <name> param=<expr>`
+       -- is unsupported by get_measure2() (only do_measure()'s nupa-based second pass
+       handles it, which the interactive `meas` bypasses). Handle it here BEFORE the
+       single-valued-vector substitution below, which would otherwise mangle the
+       expression: the prior meas results are ordinary single-valued vectors, so this is
+       just `let <name> = (<expr>)`. Words 0,1,2 are analysis, result name, measure type;
+       the expression is everything from after the `=` in word 2 onward (the tokenizer
+       may split it on spaces and keep or drop the surrounding quotes). */
+    if (wl->wl_next && wl->wl_next->wl_next) {
+        wordlist *mt = wl->wl_next->wl_next;      /* the measure-type word */
+        const char *tw = mt->wl_word;
+        const char *eq = (strncmp(tw, "param", 5) == 0 || strncmp(tw, "expr", 4) == 0)
+                         ? strchr(tw, '=') : NULL;
+        if (eq) {
+            char *nm = copy(wl->wl_next->wl_word); /* result name */
+            char *expr = copy(eq + 1);
+            char *rd, *wr, *cmd;
+            wordlist *w, *wl_p;
+            struct dvec *dp;
+            for (w = mt->wl_next; w; w = w->wl_next) {
+                char *j = tprintf("%s %s", expr, w->wl_word);
+                tfree(expr); expr = j;
+            }
+            for (rd = wr = expr; *rd; rd++)       /* drop delimiter single quotes */
+                if (*rd != '\'') *wr++ = *rd;
+            *wr = '\0';
+            /* Re-lex the whole `let` command so an expression that still contains
+               spaces is tokenised exactly as the interactive shell would -- passing it
+               to com_let() as one un-split word mis-parses anything with an internal
+               space (e.g. `sqrt(a1*a1 + a2*a2)`). */
+            cmd = tprintf("%s = ( %s )", nm, expr);
+            wl_p = cp_lexer(cmd);
+            tfree(cmd);
+            com_let(wl_p);
+            wl_free(wl_p);
+            dp = vec_get(nm);
+            if (dp && dp->v_length >= 1 && dp->v_realdata)
+                fprintf(stdout, "%-20s=  %.*e\n", nm, 6, dp->v_realdata[0]);
+            tfree(nm); tfree(expr);
+            return;
+        }
+    }
+
     /* check each wl entry, if it contain '=' and if the following token is
        a single valued vector. If yes, replace this vector by its value.
        Vectors may stem from other meas commands, or be generated elsewhere
