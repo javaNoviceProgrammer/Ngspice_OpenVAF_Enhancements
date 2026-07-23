@@ -66,7 +66,7 @@ for (ib = 0; ib < 1; ib = ib + 1) rc = ra;    // ...written only in the loop
 ```
 
 The loop back-edge leaves `rc` undefined on entry, so a `BuilderVal::Undef` reaches codegen.
-Left for a separate change.
+Fixed in [Enhancement-308](Enhancement-308.md).
 
 ## Scope of change
 

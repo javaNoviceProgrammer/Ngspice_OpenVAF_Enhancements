@@ -509,13 +509,32 @@ impl<'ll> Builder<'_, '_, 'll> {
         }
 
         for (phi, llval) in self.unfinished_phis.iter() {
+            // Enhancement-308: the phi node's own LLVM type, used to synthesise an
+            // `undef` incoming value for any edge whose MIR value was never
+            // materialised (see below).
+            let phi_ty = unsafe { &*llvm_sys::core::LLVMTypeOf(NonNull::from(*llval).as_ptr()) };
             let (blocks, vals): (Vec<_>, Vec<_>) = self
                 .func
                 .dfg
                 .phi_edges(phi)
                 .map(|(bb, val)| {
                     self.select_bb_before_terminator(bb);
-                    (self.blocks[bb].unwrap(), self.values[val].get(self))
+                    // Enhancement-308: every reachable block has already been built
+                    // above, so any value defined by a reachable instruction is now
+                    // `Eager`. An edge whose value is still `Undef` therefore names a
+                    // value that NO reachable block defines -- it survives only as a
+                    // dangling phi edge left behind when an optimizer pass removed the
+                    // defining instruction on a dead path (e.g. a read-before-write
+                    // fed through a loop-carried phi whose result is never
+                    // contributed). `BuilderVal::get()` used to `unreachable!` here,
+                    // crashing the SHIPPED compiler; an `undef` of the phi's type is
+                    // the correct lowering of a value that is undefined on that path,
+                    // and since the path is dead it never reaches a device equation.
+                    let llv = match self.values[val] {
+                        BuilderVal::Undef => self.cx.const_undef(phi_ty),
+                        _ => self.values[val].get(self),
+                    };
+                    (self.blocks[bb].unwrap(), llv)
                 })
                 .unzip();
 

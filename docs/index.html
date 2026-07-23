@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="description" content="Feature catalog of the ngspice-46 + OpenVAF-r enhancement project: 307 enhancements grouped into 19 feature areas.">
+<meta name="description" content="Feature catalog of the ngspice-46 + OpenVAF-r enhancement project: 308 enhancements grouped into 19 feature areas.">
 <title>ngspice + OpenVAF-r — feature catalog</title>
 <style>
   :root{
@@ -96,9 +96,9 @@
   <header>
     <div class="eyebrow">feature catalog</div>
     <h1>ngspice&#8209;46 <span class="amp">+</span> OpenVAF&#8209;r</h1>
-    <p class="lede">Every capability added across <b>307 enhancements</b>, grouped into feature areas — a feature usually spans several enhancements. Two code bases: the <b>OpenVAF&#8209;r</b> Verilog&#8209;A/OSDI compiler and the <b>ngspice</b> circuit simulator. Each chip links to its write&#8209;up.</p>
+    <p class="lede">Every capability added across <b>308 enhancements</b>, grouped into feature areas — a feature usually spans several enhancements. Two code bases: the <b>OpenVAF&#8209;r</b> Verilog&#8209;A/OSDI compiler and the <b>ngspice</b> circuit simulator. Each chip links to its write&#8209;up.</p>
     <div class="stats" id="stats">
-      <div class="stat"><div class="n">307</div><div class="l">enhancements</div></div>
+      <div class="stat"><div class="n">308</div><div class="l">enhancements</div></div>
       <div class="stat"><div class="n">19</div><div class="l">feature areas</div></div>
       <div class="stat"><div class="n">2</div><div class="l">code bases</div></div>
       <div class="stat ok"><div class="n">RF ✓</div><div class="l">suite complete</div></div>
@@ -136,7 +136,7 @@
 (function(){
   var REPO="https://github.com/javaNoviceProgrammer/Ngspice_OpenVAF_Enhancements/blob/main/enhancements_doc/Enhancement-";
   var F=[
-   {d:"compiler",n:"Analog operators & dynamics",x:"Continuous-time behavioral operators: transport delay, filters, integrators, limiting, events.",c:[[1,"absdelay transport delay"],[4,"laplace_* / array vars"],[6,"slew / transition / zi_ / last_crossing"],[8,"cross / above / timer events"],[13,"limexp"],[24,"$discontinuity"],[26,"ac_stim baseline"],[27,"idtmod"],[28,"idt IC"],[31,"complex poles / zeros"],[47,"default_transition"],[51,"ac_stim injection"],[52,"idt assert"],[53,"@(final_step) + step events"],[293,"nested ddt(ddt(x)): dangling dimension → exact second derivative"],[307,"CRASH ddt with no contributions tripped a release assert! (fuzz)"]]},
+   {d:"compiler",n:"Analog operators & dynamics",x:"Continuous-time behavioral operators: transport delay, filters, integrators, limiting, events.",c:[[1,"absdelay transport delay"],[4,"laplace_* / array vars"],[6,"slew / transition / zi_ / last_crossing"],[8,"cross / above / timer events"],[13,"limexp"],[24,"$discontinuity"],[26,"ac_stim baseline"],[27,"idtmod"],[28,"idt IC"],[31,"complex poles / zeros"],[47,"default_transition"],[51,"ac_stim injection"],[52,"idt assert"],[53,"@(final_step) + step events"],[293,"nested ddt(ddt(x)): dangling dimension → exact second derivative"],[307,"CRASH ddt with no contributions tripped a release assert! (fuzz)"],[308,"CRASH uninit read into a loop-carried phi -> undef in codegen (fuzz)"]]},
    {d:"compiler",n:"Branches, nets & ports",x:"Topology beyond scalar electrical nodes: buses, implicit nets, flow probes, hierarchy.",c:[[2,"indirect branch assignment"],[3,"bus nets/ports + bit-select"],[29,"I(port) flow"],[36,"probe-only branches"],[41,"implicit nets"],[45,"net init + attrs"],[86,"hierarchical branches"],[89,"array ports + Annex E"],[90,"bus port order"],[97,"ground contribution"]]},
    {d:"compiler",n:"Arrays",x:"Array declarations, literals, dynamic indexing, function args/returns, N-D shapes.",c:[[14,"arrays"],[15,"multi-dim arrays"],[18,"array syntax + functions"],[20,"array output args"],[23,"array return"],[33,"array case"],[34,"concat / replication"],[43,"variable initializers"],[102,"array parameters"]]},
    {d:"compiler",n:"Lookup tables",x:"$table_model interpolation compiled to differentiable MIR (autodiff Jacobian).",c:[[16,"$table_model 1-D"],[17,"multi-dim table"],[22,"cubic-spline table"],[40,"N-D table"],[109,"noise_table interp"]]},

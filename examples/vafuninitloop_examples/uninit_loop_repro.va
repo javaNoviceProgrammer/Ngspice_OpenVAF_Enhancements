@@ -1,0 +1,24 @@
+// Enhancement-308 reproducer -- delta-debugged from a fuzz seed.
+//
+// A variable read BEFORE a loop that is its only writer leaves the loop-carried phi
+// with an incoming value that no reachable block defines. An optimizer pass drops that
+// value's defining instruction on the dead path but leaves the phi edge, so codegen
+// reached `BuilderVal::get()` on a still-`Undef` value and hit
+//     unreachable!("attempted to read undefined value")   (mir_llvm/src/builder.rs)
+// -- a SHIPPED-build crash ("OpenVAF encountered a problem and has crashed!").
+//
+// The trigger needs the module to contribute nothing that keeps the value live: with an
+// `I(p,n) <+ ra;` added, the value stays live and the phi input is a real value.
+`include "disciplines.vams"
+module fz(p, n);
+   inout p, n;
+   electrical p, n;
+   analog begin : b
+      real ra, rc;
+      integer ib;
+      ra = (rc > 1.0 ? 2.0 : 3.0);          // rc read here, before it is ever written
+      for (ib = 0; ib < 1; ib = ib + 1) begin
+         rc = ra;                            // ...written only inside the loop
+      end
+   end
+endmodule

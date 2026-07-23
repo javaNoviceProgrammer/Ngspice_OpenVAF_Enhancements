@@ -64,4 +64,4 @@ for (ib = 0; ib < 1; ib = ib + 1) rc = ra;   // ...written only inside the loop
 ```
 
 The loop back-edge leaves `rc` undefined on entry, so a `BuilderVal::Undef` reaches
-codegen. The old shipped compiler crashes on it too. Left for a follow-up.
+codegen. The old shipped compiler crashes on it too. Fixed in Enhancement-308.

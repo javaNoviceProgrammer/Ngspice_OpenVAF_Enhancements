@@ -1,0 +1,18 @@
+// A LIVE loop-carried accumulator, contributed -- the oracle that proves the fix does
+// not disturb real phis. s = sum over N of g, so the conductance is exactly N*g.
+`include "disciplines.vams"
+module acc(p, n);
+   inout p, n;
+   electrical p, n;
+   parameter real g = 1e-3;
+   parameter integer nn = 4;
+   analog begin : b
+      real s;
+      integer i;
+      s = 0.0;
+      for (i = 0; i < nn; i = i + 1) begin
+         s = s + g;
+      end
+      I(p,n) <+ s*V(p,n);
+   end
+endmodule
