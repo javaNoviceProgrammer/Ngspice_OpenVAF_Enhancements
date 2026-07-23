@@ -1,0 +1,18 @@
+* pyplotmore
+v1 in 0 dc 0 ac 1 sin(0 1 1k)
+r1 in out 1591.55
+c1 out 0 100n
+.control
+tran 10u 3m
+set pyplot_terminal=png
+set pyplot_backend=Agg
+set pyplot_markers
+set pyplot_grid=off
+set pyplot_legend=upper_right
+set pyplot_axhline=0.5,-0.5
+set pyplot_axvline=1m,2m
+set pyplot_dpi=150
+set pyplot_transparent
+pyplot e296 v(in) v(out)
+.endc
+.end

@@ -1,0 +1,12 @@
+* cursor gating
+v1 a 0 dc 0 sin(0 1 1k)
+r1 a 0 1k
+.control
+tran 10u 3m
+set pyplot_cursor
+pyplot curwin v(a)
+set pyplot_terminal=png
+set pyplot_backend=Agg
+pyplot curfile v(a)
+.endc
+.end

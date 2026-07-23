@@ -505,6 +505,19 @@ pyplot v(out)
 It uses matplotlib's built-in cursor — no extra Python package — and is ignored for a
 hardcopy, where there is no mouse.
 
+If you have the [`mplcursors`](https://mplcursors.readthedocs.io/) package installed, select
+it instead for **data cursors** that snap to a trace and show its value on hover:
+
+```
+set pyplot_python=python3.13     $ an interpreter that has mplcursors
+set pyplot_mplcursors
+pyplot v(out)
+```
+
+`pyplot_mplcursors` turns the cursor on by itself. The generated script falls back to the
+built-in crosshair if `mplcursors` cannot be imported where it runs, so a deck stays
+portable. `mplcursors` must be importable by the interpreter named by `pyplot_python`.
+
 ### 12.3 The data is already exported
 
 Every `pyplot` writes `<name>.data` (the plotted columns) next to `<name>.py`. That file
@@ -610,6 +623,7 @@ unset pyplot_style
 | `pyplot_dpi` | integer | hardcopy |
 | `pyplot_transparent` | boolean | hardcopy |
 | `pyplot_cursor` | boolean | window |
+| `pyplot_mplcursors` | boolean | window |
 | `pyplot_hist_bins` | integer | `-hist` |
 | `pyplot_hist_density` | boolean | `-hist` |
 | `pyplot_fft_window` | string | `-fft` |
@@ -649,4 +663,4 @@ treated as data. Rename the output or the node.
 * `examples/pyplotcontour_examples/` — `-contour`
 * `examples/pyplotsmith_examples/` — `-smith`
 * `examples/pyplotmore_examples/` — appearance controls, `-fft`, `-bode`/`-nyquist`/`-polar`, overlay
-* Enhancement write-ups: 94, 95, 98, 99, 182, 183, 208, 217, 218, 254, 296, 297, 298, 299
+* Enhancement write-ups: 94, 95, 98, 99, 182, 183, 208, 217, 218, 254, 296, 297, 298, 299, 300

@@ -1,0 +1,11 @@
+* pyplotmore
+v1 in 0 dc 0 ac 1 sin(0 1 1k)
+r1 in out 1591.55
+c1 out 0 100n
+.control
+tran 10u 3m
+set pyplot_terminal=png
+set pyplot_backend=Agg
+pyplot e296def v(out)
+.endc
+.end

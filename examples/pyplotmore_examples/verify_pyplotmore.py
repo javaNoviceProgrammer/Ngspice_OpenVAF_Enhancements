@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""verify_pyplotmore.py -- Enhancements 296-299: four groups of pyplot additions.
+"""verify_pyplotmore.py -- Enhancements 296-300: pyplot additions.
 
   [296] appearance controls: pyplot_grid / pyplot_legend / pyplot_markers /
         pyplot_axhline / pyplot_axvline / pyplot_dpi / pyplot_transparent.
@@ -10,6 +10,9 @@
         RC low-pass values at fc: -3.01 dB and -45 deg.
   [299] cross-run overlay of different-length runs renders every trace fully; the
         `pyplot_cursor` crosshair is emitted only in an interactive window.
+  [300] `pyplot_mplcursors` selects the mplcursors backend (data cursors) instead of
+        the built-in Cursor crosshair, with a graceful fallback if mplcursors is not
+        importable; still window-only.
 
 Every generated script is also executed (matplotlib Agg) so a syntactically broken
 emission fails, not just a missing keyword.
@@ -172,6 +175,25 @@ run("* cursor gating\nv1 a 0 dc 0 sin(0 1 1k)\nr1 a 0 1k\n.control\ntran 10u 3m\
     "set pyplot_backend=Agg\npyplot curfile v(a)\n.endc\n.end\n", "e299cur.cir")
 check("299: pyplot_cursor emitted in a window, NOT in a hardcopy",
       "Cursor" in script("curwin") and "Cursor" not in script("curfile"))
+
+# ---------------------------------------------------------------- [300]
+print("\n[300] pyplot_mplcursors backend selection")
+run("* mplcursors\nv1 a 0 dc 0 sin(0 1 1k)\nr1 a 0 1k\n.control\ntran 10u 3m\n"
+    "set pyplot_mplcursors\npyplot mplwin v(a)\nunset pyplot_mplcursors\n"
+    "set pyplot_cursor\npyplot defwin v(a)\nset pyplot_terminal=png\n"
+    "set pyplot_backend=Agg\nset pyplot_mplcursors\npyplot mplfile v(a)\n.endc\n.end\n",
+    "e300.cir")
+sm = script("mplwin")
+sc = script("defwin")
+check("300: pyplot_mplcursors emits the mplcursors branch (window), on its own",
+      "import mplcursors" in sm and "mplcursors.cursor(hover=True)" in sm)
+check("300: with a graceful fallback to the built-in Cursor",
+      "from matplotlib.widgets import Cursor" in sm and "except" in sm)
+check("300: pyplot_cursor alone still uses the built-in Cursor (no mplcursors)",
+      "import mplcursors" not in sc and "Cursor(" in sc)
+check("300: no cursor of either kind in a hardcopy",
+      "mplcursors.cursor" not in script("mplfile")
+      and "widgets.Cursor" not in script("mplfile"))
 
 # tidy the generated artifacts (NOT this script or the README)
 import glob

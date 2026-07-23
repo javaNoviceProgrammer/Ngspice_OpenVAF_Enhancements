@@ -1,0 +1,11 @@
+* fft two-tone
+v1 a 0 dc 0 sin(0 2 1k)
+r1 a 0 1k
+.control
+tran 5u 20m
+let sig = 2*sin(2*3.14159265*1000*time) + 0.5*sin(2*3.14159265*3000*time)
+set pyplot_terminal=png
+set pyplot_backend=Agg
+pyplot e297 -fft sig
+.endc
+.end

@@ -1,0 +1,16 @@
+* mplcursors
+v1 a 0 dc 0 sin(0 1 1k)
+r1 a 0 1k
+.control
+tran 10u 3m
+set pyplot_mplcursors
+pyplot mplwin v(a)
+unset pyplot_mplcursors
+set pyplot_cursor
+pyplot defwin v(a)
+set pyplot_terminal=png
+set pyplot_backend=Agg
+set pyplot_mplcursors
+pyplot mplfile v(a)
+.endc
+.end

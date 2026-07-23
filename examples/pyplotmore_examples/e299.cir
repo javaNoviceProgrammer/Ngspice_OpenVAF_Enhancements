@@ -1,0 +1,13 @@
+* different-length overlay
+v1 in 0 dc 0 pulse(0 1 0 1u 1u 1m 2m)
+r1 in out 1k
+c1 out 0 100n
+.control
+set pyplot_terminal=png
+set pyplot_backend=Agg
+tran 5u 3m
+tran 2u 3m
+setplot
+pyplot ovl tran1.v(out) tran2.v(out)
+.endc
+.end

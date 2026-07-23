@@ -200,8 +200,15 @@ void ft_pyplot(double *xlims, double *ylims,
     /* Enhancement-299: `set pyplot_cursor` adds a crosshair that follows the mouse
        (matplotlib's built-in Cursor widget -- no extra package). Interactive only:
        it does nothing in a hardcopy, where there is no mouse. The window already
-       provides pan / zoom / save-image via matplotlib's own toolbar. */
-    bool cursor = cp_getvar("pyplot_cursor", CP_BOOL, NULL, 0) && !hardcopy;
+       provides pan / zoom / save-image via matplotlib's own toolbar.
+       Enhancement-300: `set pyplot_mplcursors` selects the `mplcursors` package
+       instead -- data cursors that snap to a trace and show the (x, y) value on
+       hover. It also turns the cursor on (so it works on its own), and the emitted
+       script falls back to the built-in Cursor if `mplcursors` is not importable
+       where the script runs. */
+    bool mplcursors = cp_getvar("pyplot_mplcursors", CP_BOOL, NULL, 0);
+    bool cursor = (cp_getvar("pyplot_cursor", CP_BOOL, NULL, 0) || mplcursors)
+                  && !hardcopy;
 
     boxes = (plottype == PLOT_COMB);
     if (plottype == PLOT_POINT)
@@ -537,9 +544,21 @@ void ft_pyplot(double *xlims, double *ylims,
                 transparent ? ", transparent=True" : "");
         fprintf(file, "print('pyplot: wrote %s.%s')\n", filename, fmt);
     } else {
-        /* Enhancement-299: a hover crosshair on every panel (kept in a list so it
-           is not garbage-collected). matplotlib.widgets.Cursor is core matplotlib. */
-        if (cursor) {
+        /* Enhancement-299/300: an interactive cursor, kept in a variable so it is
+           not garbage-collected before the event loop runs. `pyplot_mplcursors`
+           uses the `mplcursors` package (value readouts that snap to a trace on
+           hover) and degrades to the built-in `matplotlib.widgets.Cursor` crosshair
+           if it is not importable where the script runs; otherwise the crosshair is
+           emitted directly (core matplotlib, no extra package). */
+        if (cursor && mplcursors) {
+            fprintf(file, "try:\n");
+            fprintf(file, "    import mplcursors\n");
+            fprintf(file, "    _mpl = mplcursors.cursor(hover=True)\n");
+            fprintf(file, "except Exception:\n");
+            fprintf(file, "    from matplotlib.widgets import Cursor\n");
+            fprintf(file, "    _curs = [Cursor(_a, useblit=True, color='0.5', "
+                          "linewidth=0.8) for _a in axes[:, 0]]\n");
+        } else if (cursor) {
             fprintf(file, "from matplotlib.widgets import Cursor\n");
             fprintf(file, "_curs = [Cursor(_a, useblit=True, color='0.5', linewidth=0.8) "
                           "for _a in axes[:, 0]]\n");

@@ -1,0 +1,15 @@
+* fft options
+v1 a 0 dc 0 sin(0 1 1k)
+r1 a 0 1k
+.control
+tran 5u 20m
+let sig = sin(2*3.14159265*1000*time)
+set pyplot_terminal=png
+set pyplot_backend=Agg
+set pyplot_fft_window=blackman
+set pyplot_fft_db
+set pyplot_fft_points=8192
+set pyplot_fft_logf
+pyplot e297b -fft sig
+.endc
+.end

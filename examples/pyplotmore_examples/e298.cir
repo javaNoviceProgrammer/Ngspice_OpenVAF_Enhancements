@@ -1,0 +1,13 @@
+* pyplotmore
+v1 in 0 dc 0 ac 1 sin(0 1 1k)
+r1 in out 1591.55
+c1 out 0 100n
+.control
+ac dec 30 10 1e6
+set pyplot_terminal=png
+set pyplot_backend=Agg
+pyplot bode1 -bode v(out)
+pyplot nyq1 -nyquist v(out)
+pyplot pol1 -polar v(out)
+.endc
+.end
