@@ -1312,6 +1312,11 @@ measure_rms_integral(
     )
 {
     int i;                      /* counter */
+    /* Enhancement-304: `n` walks the samples in order of increasing scale (which is
+       index order unless a dc sweep descends); `i` is the index it maps to and `iprev`
+       the one before it in that order. */
+    int n, iprev;
+    bool ascending = TRUE;
     int xy_size;                /* # of temp array elements */
     struct dvec *d, *xScale;    /* value and indpendent (x-axis) vectors */
     double value, xvalue;       /* current value and independent value */
@@ -1391,8 +1396,38 @@ measure_rms_integral(
 
     xy_size = 0;
     toVal = -1;
+
+    /* Enhancement-304: this loop assumes the scale ASCENDS -- it clips at `from` on the
+       way in and at `to` on the way out, and the segment widths x[i+1]-x[i] it builds
+       must come out positive for the Simpson / trapezoid sums below. A dc sweep may
+       DESCEND (`dc v1 2 0 -0.001`), and then the very first sample is already above
+       `to`: the clip fired at once, interpolated against index i-1 == -1 (an OUT-OF-
+       BOUNDS read) and broke with a single point, so the sums ran zero times and the
+       measurement came back 0.0 with `from= nan`. Walk the samples in order of
+       increasing scale instead of index order; for ascending data this is the identity
+       and every step below is unchanged. */
+    {
+        double s0, sN;
+        if (ac_check) {
+            s0 = xScale->v_compdata[0].cx_real;
+            sN = xScale->v_compdata[d->v_length - 1].cx_real;
+        } else if (xScale->v_realdata) {
+            s0 = xScale->v_realdata[0];
+            sN = xScale->v_realdata[d->v_length - 1];
+        } else {
+            s0 = xScale->v_compdata[0].cx_real;
+            sN = xScale->v_compdata[d->v_length - 1].cx_real;
+        }
+        if (d->v_length > 1 && sN < s0)
+            ascending = FALSE;
+    }
+
     /* create new set of values over interval [from, to] -- interpolate if necessary */
-    for (i = 0; i < d->v_length; i++) {
+    for (n = 0; n < d->v_length; n++) {
+        /* index of this sample, and of the one before it IN TRAVERSAL ORDER */
+        i = ascending ? n : (d->v_length - 1 - n);
+        iprev = ascending ? (i - 1) : (i + 1);
+
         if (ac_check) {
             if (d->v_compdata) {
                 value = get_value(meas, d, i); //d->v_compdata[i].cx_real;
@@ -1410,10 +1445,15 @@ measure_rms_integral(
             continue;
 
         if ((meas->m_to != 0.0e0) && (xvalue > meas->m_to)) {
-            // interpolate ending value if necessary.
-            if (!AlmostEqualUlps(xvalue, meas->m_to, 100)) {
-                value = measure_interpolate(xScale, d, i-1, i, meas->m_to, 'y', meas);
+            /* interpolate ending value if necessary. `n > 0` is what keeps `iprev` in
+               range -- it is the guard the old `i-1` lacked. With no preceding sample
+               there is nothing to interpolate against, so the window simply has not
+               been entered yet. */
+            if (n > 0 && !AlmostEqualUlps(xvalue, meas->m_to, 100)) {
+                value = measure_interpolate(xScale, d, iprev, i, meas->m_to, 'y', meas);
                 xvalue = meas->m_to;
+            } else if (n == 0) {
+                continue;
             }
             x[xy_size] = xvalue;
             if (mFunctionType == AT_RMS)
@@ -1425,10 +1465,10 @@ measure_rms_integral(
         }
 
         if (first == 0) {
-            if (meas->m_from != 0.0e0 && (i > 0)) {
+            if (meas->m_from != 0.0e0 && (n > 0)) {
                 // interpolate starting value.
                 if (!AlmostEqualUlps(xvalue, meas->m_from, 100)) {
-                    value = measure_interpolate(xScale, d, i-1, i, meas->m_from, 'y' , meas);
+                    value = measure_interpolate(xScale, d, iprev, i, meas->m_from, 'y' , meas);
                     xvalue = meas->m_from;
                 }
             }
@@ -1470,23 +1510,15 @@ measure_rms_integral(
         }
     }
 
-    /* Now set the measurement values if not set */
-    if (toVal < 0.0) {
-        if (ac_check) {
-            if (d->v_compdata) {
-                value = get_value(meas, d, i); //d->v_compdata[i].cx_real;
-            } else {
-                value = d->v_realdata[i];
-                // fprintf(cp_err, "Warning: 'meas ac' input vector is real!\n");
-            }
-            xvalue = xScale->v_compdata[i].cx_real;
-            toVal = xScale->v_compdata[d->v_length-1].cx_real;
-        } else {
-            toVal = xScale->v_realdata[d->v_length-1];
-        }
-
-
-    }
+    /* Now set the measurement values if not set.
+       Enhancement-304: the window ran to the end of the data rather than hitting `to`,
+       so the end of it is simply the last point appended. Reading
+       `xScale->...[d->v_length-1]` was wrong whenever the scale descends (that is the
+       SMALLEST scale value, not the last one traversed), and the `value`/`xvalue` reads
+       that used to sit here indexed with the integration loop's counter -- past the end
+       of the data -- into variables nothing reads again. Both are gone. */
+    if (toVal < 0.0)
+        toVal = (xy_size > 0) ? x[xy_size-1] : meas->m_measured_at;
     meas->m_from = meas->m_measured_at;
     meas->m_to = toVal;
 

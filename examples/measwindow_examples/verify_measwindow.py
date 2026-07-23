@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""verify_measwindow.py -- Enhancements 302/303: `.meas avg` clips its window to [from, to].
+"""verify_measwindow.py -- Enhancements 302/303/304: `.meas` clips its window to [from, to].
 
 `.meas ... avg` accumulated a trapezoid only between the SAMPLES that fell inside
 [from, to] and divided by their span, without interpolating either boundary. RMS and
@@ -26,6 +26,12 @@ Enhancement-302 fixed the time/frequency scales (tran, ac, sp). Enhancement-303 
 fixed `dc` as well: a dc sweep may DESCEND (`dc v1 2 0 -0.001`), so its clip works from
 the actual crossing between the previous raw sample and the current one, which is
 direction-agnostic. Both sweep directions are checked below against the same oracle.
+
+Enhancement-304 then fixed `integ` and `rms` on a descending sweep, where they returned
+0.0 with `from= nan`: measure_rms_integral() met the first sample already ABOVE `to` and
+interpolated it against index `i-1 == -1` -- a heap-buffer-overflow AddressSanitizer
+flags at com_measure2.c:195 -- then broke with a one-element array, so the integration
+sums ran zero times. It now walks the samples in order of increasing scale.
 """
 import math
 import os
@@ -159,33 +165,40 @@ def dcmean(p, q):
     return (q ** 3 - p ** 3) / (3 * (q - p))
 
 
+def dcintg(p, q):
+    return (q ** 3 - p ** 3) / 3.0
+
+
+def dcrms(p, q):
+    return math.sqrt((q ** 5 - p ** 5) / 5.0 / (q - p))
+
+
 DC = "v1 in 0 dc 0\nb1 a 0 v='v(in)*v(in)'\nr1 a 0 1k\n"
-print("\n[303] dc avg clips to [from, to] in either sweep direction")
+print("\n[303]/[304] dc avg, integ and rms clip to [from, to] in either sweep direction")
 for tag, sweep in (("ascending", "dc v1 0 2 0.001"), ("descending", "dc v1 2 0 -0.001")):
     o = run(f"* dc avg {tag}\n{DC}.control\n{sweep}\n"
             "meas dc q1 avg   v(a) from=0.25 to=0.75\n"
             "meas dc q2 integ v(a) from=0.25 to=0.75\n"
             "meas dc q3 max   v(a) from=0.25 to=0.75\n"
             "meas dc q4 min   v(a) from=0.25 to=0.75\n"
+            "meas dc q5 rms   v(a) from=0.25 to=0.75\n"
             ".endc\n.end\n", f"_dc{tag[:3]}.cir")
+    # [304] integ and rms: on a descending sweep these returned 0.0 with `from= nan`
+    close(meas(o, "q2"), dcintg(0.25, 0.75), 1e-4, f"dc integ {tag} == int of x^2")
+    close(meas(o, "q5"), dcrms(0.25, 0.75), 1e-4, f"dc rms {tag} == rms of x^2")
+    close(window_to(o, "q2"), 0.75, 1e-9, f"dc integ {tag} echoes to=0.75")
     close(meas(o, "q1"), dcmean(0.25, 0.75), 1e-4, f"dc avg {tag} == mean of x^2")
     close(window_to(o, "q1"), 0.75, 1e-9, f"dc avg {tag} echoes to=0.75")
     ig = meas(o, "q2")
     a = meas(o, "q1")
-    if tag == "ascending":
-        check(f"dc avg {tag} == integ/(to-from)",
-              a is not None and ig is not None
-              and abs(a - ig / 0.5) <= 1e-4 * abs(ig / 0.5),
-              f"avg {a} vs {ig / 0.5 if ig else None}")
-    else:
-        # NOT cross-checked on a descending sweep: `integ` is separately broken there
-        # (its window loop meets the first sample already ABOVE `to`, interpolates with
-        # index i-1 == -1 -- an out-of-bounds read -- and breaks with an empty array,
-        # yielding 0.0 with `from= nan`). That is a pre-existing defect of
-        # measure_rms_integral(), untouched by 302/303, which fixed `avg` only.
-        check(f"dc avg {tag} is correct even though integ is not (known defect)",
-              a is not None and abs(a - dcmean(0.25, 0.75)) <= 1e-4,
-              f"avg {a}, integ {ig}")
+    # Enhancement-304 made this hold in BOTH directions. Before it, a descending sweep
+    # returned 0.0 with `from= nan` from measure_rms_integral() -- its window loop met
+    # the first sample already ABOVE `to` and interpolated against index i-1 == -1, a
+    # heap-buffer-overflow that AddressSanitizer flags at com_measure2.c:195.
+    check(f"dc avg {tag} == integ/(to-from)",
+          a is not None and ig is not None
+          and abs(a - ig / 0.5) <= 1e-4 * abs(ig / 0.5),
+          f"avg {a} vs {ig / 0.5 if ig else None}")
     # min/max are NOT part of the fix: they keep whole-sample semantics
     close(meas(o, "q3"), 0.75 ** 2, 3e-3, f"dc max {tag} unchanged (~0.5625)")
     close(meas(o, "q4"), 0.25 ** 2, 3e-3, f"dc min {tag} unchanged (~0.0625)")

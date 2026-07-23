@@ -1,4 +1,4 @@
-# measwindow_examples — Enhancements 302 / 303
+# measwindow_examples — Enhancements 302 / 303 / 304
 
 `.meas ... avg` did not clip its window to `[from, to]`.
 
@@ -52,13 +52,26 @@ previous raw sample and the current one, which is direction-agnostic.
 
 (oracle: `v(a)=v(in)^2`, so the mean over `[p,q]` is `(q^3-p^3)/(3(q-p))`.)
 
-## Known defect still open
+## descending `integ` / `rms` — Enhancement-304
 
-On a **descending** sweep `.meas dc integ` and `rms` return `0.0` with `from= nan`. Their
-window loop (`measure_rms_integral()`, a different function) meets the first sample already
-above `to`, interpolates it with index `i-1 == -1` -- an **out-of-bounds read** -- and breaks
-with an empty array. `avg` no longer shares that path, so it is correct in both directions
-while `integ` is not. Pre-existing; not addressed by 302/303.
+On a **descending** sweep, `.meas dc integ` and `rms` used to return `0.0` with `from= nan`
+(or print nothing). `measure_rms_integral()` met the first sample already above `to`,
+interpolated it against index `i-1 == -1` and broke with a one-element array, so the
+integration sums ran zero times. That index was a real **heap-buffer-overflow**:
+
+```
+ERROR: AddressSanitizer: heap-buffer-overflow
+    #0 measure_interpolate   com_measure2.c:195
+    #1 measure_rms_integral  com_measure2.c:1415
+```
+
+It now walks the samples in order of increasing scale (the identity for ascending data), and
+the bounds guard is the traversal position rather than the raw index.
+
+| descending, window `0.25 -> 0.75` | before | after | closed form |
+|---|---|---|---|
+| `integ` | 0.0 (`from= nan`) | 0.135416 | 0.135416667 |
+| `rms` | *no output* | 0.307458 | 0.307459347 |
 
 ## Verify
 
@@ -66,6 +79,6 @@ while `integ` is not. Pre-existing; not addressed by 302/303.
 python3 verify_measwindow.py
 ```
 
-Runs under both linear solvers (38 checks). It scores 14/28 on the pre-302 binary and
-32/38 on the pre-303 one, so both sets of checks are real regression guards rather than
-vacuous ones.
+Runs under both linear solvers (44 checks). It scores 14/28 on the pre-302 binary,
+32/38 on the pre-303 one and 40/44 on the pre-304 one, so each set of checks is a real
+regression guard rather than a vacuous one.

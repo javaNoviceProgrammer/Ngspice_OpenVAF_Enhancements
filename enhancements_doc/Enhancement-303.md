@@ -44,6 +44,9 @@ the nonsensical `from= 0.25 to= 0.25`.
 
 ## Known defect NOT addressed here
 
+> **Now fixed:** [Enhancement-304](Enhancement-304.md) resolves this, including the
+> out-of-bounds read (confirmed by AddressSanitizer).
+
 On a **descending** sweep, `.meas dc integ` (and `rms`) are still wrong — they return `0.0`
 with `from= nan`. The cause is in `measure_rms_integral()`, a different function: its window
 loop meets the very first sample already above `to`, interpolates it with index `i-1 == -1`
