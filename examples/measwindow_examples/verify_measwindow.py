@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""verify_measwindow.py -- Enhancement-302: `.meas avg` clips its window to [from, to].
+"""verify_measwindow.py -- Enhancements 302/303: `.meas avg` clips its window to [from, to].
 
 `.meas ... avg` accumulated a trapezoid only between the SAMPLES that fell inside
 [from, to] and divided by their span, without interpolating either boundary. RMS and
@@ -22,9 +22,10 @@ run -- a same-binary comparison cannot see an error that is uniformly present.
     avg          = integ/(t1-t0)
     rms          = sqrt( (A^2/2)*(1 - (sin(2 w t1)-sin(2 w t0))/(2 w (t1-t0))) )
 
-Scope: the fix applies to time/frequency scales (tran, ac, sp), which ascend. A `dc`
-sweep may descend (`dc v1 2 0 -0.001`) and is deliberately left untouched -- see the
-README for the numbers that remain.
+Enhancement-302 fixed the time/frequency scales (tran, ac, sp). Enhancement-303 then
+fixed `dc` as well: a dc sweep may DESCEND (`dc v1 2 0 -0.001`), so its clip works from
+the actual crossing between the previous raw sample and the current one, which is
+direction-agnostic. Both sweep directions are checked below against the same oracle.
 """
 import math
 import os
@@ -150,6 +151,45 @@ for i, (label, t0, t1) in enumerate(CASES):
         if abs(integ(t0, t1)) > 1e-9 else check(f"integ {label} == 0", True)
     close(meas(out, f"r{i}"), rms(t0, t1), 2e-5, f"rms   {label}")
 
+# ---------------------------------------------------------------- [303]
+# dc sweeps. Oracle: v(a) = v(in)^2, so the mean over [p,q] is (q^3-p^3)/(3(q-p)).
+# A dc sweep may DESCEND, so the same window is checked in both directions -- the
+# clip works from the actual crossing, which is direction-agnostic.
+def dcmean(p, q):
+    return (q ** 3 - p ** 3) / (3 * (q - p))
+
+
+DC = "v1 in 0 dc 0\nb1 a 0 v='v(in)*v(in)'\nr1 a 0 1k\n"
+print("\n[303] dc avg clips to [from, to] in either sweep direction")
+for tag, sweep in (("ascending", "dc v1 0 2 0.001"), ("descending", "dc v1 2 0 -0.001")):
+    o = run(f"* dc avg {tag}\n{DC}.control\n{sweep}\n"
+            "meas dc q1 avg   v(a) from=0.25 to=0.75\n"
+            "meas dc q2 integ v(a) from=0.25 to=0.75\n"
+            "meas dc q3 max   v(a) from=0.25 to=0.75\n"
+            "meas dc q4 min   v(a) from=0.25 to=0.75\n"
+            ".endc\n.end\n", f"_dc{tag[:3]}.cir")
+    close(meas(o, "q1"), dcmean(0.25, 0.75), 1e-4, f"dc avg {tag} == mean of x^2")
+    close(window_to(o, "q1"), 0.75, 1e-9, f"dc avg {tag} echoes to=0.75")
+    ig = meas(o, "q2")
+    a = meas(o, "q1")
+    if tag == "ascending":
+        check(f"dc avg {tag} == integ/(to-from)",
+              a is not None and ig is not None
+              and abs(a - ig / 0.5) <= 1e-4 * abs(ig / 0.5),
+              f"avg {a} vs {ig / 0.5 if ig else None}")
+    else:
+        # NOT cross-checked on a descending sweep: `integ` is separately broken there
+        # (its window loop meets the first sample already ABOVE `to`, interpolates with
+        # index i-1 == -1 -- an out-of-bounds read -- and breaks with an empty array,
+        # yielding 0.0 with `from= nan`). That is a pre-existing defect of
+        # measure_rms_integral(), untouched by 302/303, which fixed `avg` only.
+        check(f"dc avg {tag} is correct even though integ is not (known defect)",
+              a is not None and abs(a - dcmean(0.25, 0.75)) <= 1e-4,
+              f"avg {a}, integ {ig}")
+    # min/max are NOT part of the fix: they keep whole-sample semantics
+    close(meas(o, "q3"), 0.75 ** 2, 3e-3, f"dc max {tag} unchanged (~0.5625)")
+    close(meas(o, "q4"), 0.25 ** 2, 3e-3, f"dc min {tag} unchanged (~0.0625)")
+
 print("\n[302] min/max/pp keep whole-sample semantics (the fix is avg-only)")
 out2 = run("""* min/max/pp must be untouched
 v1 a 0 dc 0 sin(0 2 1k 0 0)
@@ -164,7 +204,7 @@ close(meas(out2, "vmax"), 2.0, 1e-3, "max == +A")
 close(meas(out2, "vmin"), -2.0, 1e-3, "min == -A")
 close(meas(out2, "vpp"), 4.0, 1e-3, "pp  == 2A")
 
-for f in ("_mw.cir", "_mm.cir"):
+for f in ("_mw.cir", "_mm.cir", "_dcasc.cir", "_dcdes.cir"):
     p = os.path.join(HERE, f)
     if os.path.exists(p):
         os.remove(p)

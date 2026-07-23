@@ -1,4 +1,4 @@
-# measwindow_examples — Enhancement-302
+# measwindow_examples — Enhancements 302 / 303
 
 `.meas ... avg` did not clip its window to `[from, to]`.
 
@@ -38,26 +38,27 @@ integ(t0,t1) = (A/w)*(cos(w t0) - cos(w t1))     avg = integ/(t1-t0)
 
 The windows deliberately land **between** samples so both boundaries need interpolation.
 
-## Scope — what is NOT fixed
+## dc — Enhancement-303
 
-The fix applies to **time/frequency scales** (`tran`, `ac`, `sp`), which ascend
-monotonically. A `dc` sweep may descend (`dc v1 2 0 -0.001`) and enters its window at the
-high end, where forcing the first point to `from` would extrapolate outside the bracketing
-samples. The `dc` path is therefore **left untouched** and every `dc` measurement is
-byte-identical to before.
+E-302 covered time/frequency scales only. `dc` was excluded because a sweep may **descend**
+(`dc v1 2 0 -0.001`) and enters its window at the HIGH end, where an unguarded clip
+extrapolates. E-303 completes it: the clip works from the **actual crossing** between the
+previous raw sample and the current one, which is direction-agnostic.
 
-`.meas dc avg` still truncates the same way — measured, on an ascending sweep with data
-available beyond both ends:
+| sweep, window `0.25 -> 0.75` | before | after | closed form |
+|---|---|---|---|
+| `dc v1 0 2 0.001` (ascending) | 0.270250 | 0.270832 | 0.2708333 |
+| `dc v1 2 0 -0.001` (descending) | 0.270250 | 0.270832 | 0.2708333 |
 
-```
-dc v1 0 2 0.001;  meas dc avg v(a) from=0.25 to=0.75   ->  0.270250   to=7.49000e-01
-                  closed form (mean of x^2)            ->  0.2708333
-```
+(oracle: `v(a)=v(in)^2`, so the mean over `[p,q]` is `(q^3-p^3)/(3(q-p))`.)
 
-(`.meas dc integ` over that window is correct: 1.35416e-01 vs 0.135416667.) Two further
-pre-existing `dc` problems turned up while scoping this and are **not** addressed here: on
-a *descending* sweep `integ` returns `0.0` with `from= nan`, and `avg` echoes a meaningless
-`to=`.
+## Known defect still open
+
+On a **descending** sweep `.meas dc integ` and `rms` return `0.0` with `from= nan`. Their
+window loop (`measure_rms_integral()`, a different function) meets the first sample already
+above `to`, interpolates it with index `i-1 == -1` -- an **out-of-bounds read** -- and breaks
+with an empty array. `avg` no longer shares that path, so it is correct in both directions
+while `integ` is not. Pre-existing; not addressed by 302/303.
 
 ## Verify
 
@@ -65,5 +66,6 @@ a *descending* sweep `integ` returns `0.0` with `from= nan`, and `avg` echoes a 
 python3 verify_measwindow.py
 ```
 
-Runs under both linear solvers (28 checks). It fails 14/28 on the pre-fix binary, so it is
-a real regression guard rather than a vacuous one.
+Runs under both linear solvers (38 checks). It scores 14/28 on the pre-302 binary and
+32/38 on the pre-303 one, so both sets of checks are real regression guards rather than
+vacuous ones.

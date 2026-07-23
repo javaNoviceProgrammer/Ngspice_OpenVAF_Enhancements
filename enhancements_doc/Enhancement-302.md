@@ -61,6 +61,10 @@ same precision `integ` itself achieves.
 
 ## Scope — the `dc` path is deliberately untouched
 
+> **Superseded in part:** [Enhancement-303](Enhancement-303.md) completes this for `dc`, in
+> both sweep directions. The remaining `integ`-on-a-descending-sweep defect noted below is
+> still open.
+
 The fix applies to **time/frequency scales** (`tran`, `ac`, `sp`), which ascend
 monotonically. A `dc` sweep may descend (`dc v1 2 0 -0.001`) and enters its window at the
 HIGH end; an unguarded boundary clip there extrapolates far outside the bracketing samples

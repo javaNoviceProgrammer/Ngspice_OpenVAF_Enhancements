@@ -916,6 +916,10 @@ measure_minMaxAvg(
     struct dvec *d, *dScale;
     double value, svalue, mValue, mValueAt;
     double pvalue = 0.0, sprev = 0.0, Tsum = 0.0;
+    /* Enhancement-303: the immediately preceding RAW sample (in or out of the window),
+       needed to interpolate the exact point where a dc sweep crosses `from` or `to`. */
+    double prev_s = 0.0, prev_v = 0.0;
+    bool have_prev = FALSE;
     int first;
     bool ac_check = FALSE, sp_check = FALSE, dc_check = FALSE, tran_check = FALSE;
 
@@ -1019,7 +1023,46 @@ measure_minMaxAvg(
 
         if (dc_check) {
             /* dc: start from pos or neg scale value */
-            if ((svalue < meas->m_from) || (svalue > meas->m_to))
+            bool in_win = !((svalue < meas->m_from) || (svalue > meas->m_to));
+
+            /* Enhancement-303: clip an AVG window to exactly [from, to] on a dc sweep
+               too. Unlike time, a dc sweep may DESCEND (`dc v1 2 0 -0.001`), so the
+               boundary cannot be assumed to be the lower one: work from the actual
+               crossing between the previous raw sample and this one, which is
+               direction-agnostic and simply never fires on a sweep that does not
+               cross. Without this the window silently began at the first sweep point
+               inside it and ended at the last -- the same O(step) truncation fixed for
+               tran/ac/sp in Enhancement-302. */
+            if (mFunctionType == AT_AVG && have_prev && svalue != prev_s) {
+                bool prev_in = !((prev_s < meas->m_from) || (prev_s > meas->m_to));
+
+                if (in_win && !prev_in && first == 0) {
+                    /* crossing INTO the window: open it at the exact boundary */
+                    double b = (prev_s < meas->m_from) ? meas->m_from : meas->m_to;
+                    double t = (b - prev_s) / (svalue - prev_s);
+                    mValue = 0.0;
+                    Tsum = 0.0;
+                    pvalue = prev_v + t * (value - prev_v);
+                    sprev = b;
+                    mValueAt = b;
+                    first = 1;          /* this sample now accumulates against `b` */
+                } else if (!in_win && prev_in && first != 0) {
+                    /* crossing OUT of it: close at the exact boundary and stop */
+                    double b = (svalue > meas->m_to) ? meas->m_to : meas->m_from;
+                    double t = (b - prev_s) / (svalue - prev_s);
+                    double bv = prev_v + t * (value - prev_v);
+                    mValue += 0.5 * (bv + pvalue) * (b - sprev);
+                    Tsum += (b - sprev);
+                    sprev = b;
+                    break;
+                }
+            }
+
+            prev_s = svalue;
+            prev_v = value;
+            have_prev = TRUE;
+
+            if (!in_win)
                 continue;
         } else {
             /* all others: start from neg scale value */
@@ -1124,9 +1167,12 @@ measure_minMaxAvg(
         /* Enhancement-302: report the END OF THE WINDOW, not `svalue` -- which, when
            the loop broke on the first out-of-window sample, was a time the average
            never covered (a 250us window was echoed as "to=2.50280e-04"). `sprev` is
-           the last point actually accumulated, i.e. the true window end. dc keeps its
-           old reporting, since its window handling is left untouched here. */
-        meas->m_measured_at = (first && !dc_check) ? sprev : svalue;
+           the last point actually accumulated, i.e. the true window end.
+           Enhancement-303: this now holds for dc as well -- but a dc sweep may DESCEND,
+           and then the accumulation ends at the LOW bound, which would print as
+           "from= 0.25 to= 0.25". The covered window is [mValueAt, sprev] in traversal
+           order, so report its upper end and the echo reads the same either way. */
+        meas->m_measured_at = first ? ((mValueAt > sprev) ? mValueAt : sprev) : svalue;
         break;
     }
     case AT_MIN:
