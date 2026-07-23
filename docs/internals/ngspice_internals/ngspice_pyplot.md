@@ -152,7 +152,7 @@ them to return to the default.
 | `pyplot_figsize` | figure size in inches, `W,H` (also `WxH`) | matplotlib default |
 | `pyplot_linewidth` | line width in points, applied to every trace | matplotlib default |
 | `pyplot_subplots` | traces per stacked panel; `0`/unset = one axis | `0` |
-| `pointstyle` | set to `markers` to draw point markers | lines only |
+| `pointstyle` † | set to `markers` to draw point markers (no line) | lines only |
 | `pyplot_markers` | a cycling marker **on** the line, per trace | lines only |
 | `pyplot_grid` | `on` / `off` / `x` / `y` — override the default | axis-dependent |
 | `pyplot_legend` | `off`, or a matplotlib location (`upper_right`, `best`) | shown |
@@ -161,6 +161,16 @@ them to return to the default.
 | `pyplot_dpi` | image resolution for a hardcopy | `100` |
 | `pyplot_transparent` | transparent figure background for a hardcopy | opaque |
 | `pyplot_cursor` | hover crosshair in an interactive window | off |
+| `pyplot_mplcursors` | use the `mplcursors` backend for that cursor | off |
+
+**† `pointstyle` is not a pyplot variable.** It is a *stock ngspice* setting, read by the
+built-in `gnuplot` command as well, and `pyplot` honours it deliberately — the two
+renderers style the same way from one `set`.
+
+That is the naming rule throughout, and it is exact: **every pyplot-specific setting is
+`pyplot_`-prefixed, and `pointstyle` is the only unprefixed one, precisely because it is
+shared.** So `set pointstyle=markers` styles both `gnuplot` and `pyplot`, while a
+`pyplot_*` setting affects `pyplot` alone.
 
 ```
 * a styled figure
@@ -206,9 +216,11 @@ Two points worth knowing:
 * **Legend locations contain a space** (`upper right`), but `set` keeps only the first
   word. Use the underscore form — `set pyplot_legend=upper_right` — and the renderer
   converts it back.
-* **`pyplot_markers` vs `pointstyle=markers`.** `pointstyle=markers` draws markers with *no*
-  line; `pyplot_markers` keeps the line and adds a marker whose shape cycles per trace
-  (`o s ^ D v * P X`), so overlaid traces are distinguishable in print or greyscale.
+* **`pyplot_markers` vs `pointstyle=markers`.** These are not two spellings of one thing.
+  `pointstyle=markers` is the **stock ngspice** setting (shared with `gnuplot`) and draws
+  markers with *no* line; `pyplot_markers` is pyplot's own and keeps the line, adding a
+  marker whose shape cycles per trace (`o s ^ D v * P X`), so overlaid traces are
+  distinguishable in print or greyscale.
 
 ---
 
@@ -628,7 +640,7 @@ unset pyplot_style
 | `pyplot_linewidth` | real | line plots |
 | `pyplot_subplots` | integer | line plots |
 | `pyplot_markers` | boolean | line plots |
-| `pointstyle` | `markers` | line plots |
+| `pointstyle` | `markers` | line plots — **stock ngspice, shared with `gnuplot`** |
 | `pyplot_grid` | `on`/`off`/`x`/`y` | line plots |
 | `pyplot_legend` | `off`/location | line plots |
 | `pyplot_axhline` / `pyplot_axvline` | value list | line plots |
