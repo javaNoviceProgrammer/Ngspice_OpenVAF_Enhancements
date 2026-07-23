@@ -519,7 +519,19 @@ impl<'a> super::Builder<'a> {
             }
         }
         if contributes.is_empty() {
-            assert!(noise, "ddt should have been deadcode eliminated");
+            // Enhancement-307: this used to `assert!(noise, ...)`, on the assumption that
+            // only a noise source could reach here with no contributions and that any
+            // other operator would already have been dead-code eliminated. That does not
+            // hold: a `ddt` whose result never reaches a contribution can survive DCE
+            // (found by fuzzing -- e.g. one feeding a variable that is only read back by
+            // control flow, in a module that contributes nothing). It was a plain
+            // `assert!`, not `debug_assert!`, so it fired in the SHIPPED build and the
+            // compiler died with "OpenVAF encountered a problem and has crashed!".
+            //
+            // No contributions means the operator's value reaches no device equation, so
+            // it contributes nothing and the existing `Dead` handling -- replace the
+            // result with zero and retarget pending uses -- is exactly right for it too;
+            // that is already what the noise case does here.
             return Evaluation::Dead;
         }
         self.create_dimension(

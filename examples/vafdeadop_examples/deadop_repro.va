@@ -1,0 +1,31 @@
+// Enhancement-307 reproducer -- delta-debugged from a fuzz seed.
+//
+// A `ddt` whose result reaches NO contribution survives dead-code elimination, and
+// `sim_back/topology/lineralize.rs` then hit
+//     assert!(noise, "ddt should have been deadcode eliminated")
+// It was a plain `assert!`, not `debug_assert!`, so the SHIPPED compiler died with
+// "OpenVAF encountered a problem and has crashed!".
+//
+// Ablation showed the ingredients are: the `ddt`, a current probe on a declared branch
+// (`I(br1)`, a probe-only branch), an if/else, and a case -- with no contributions in
+// the module at all. Removing any one of those stops the crash.
+`include "disciplines.vams"
+module fz(p, n, m);
+   inout p, n, m;
+   electrical p, n, m;
+   branch (p,n) br1;
+   parameter integer pk = 2 from [0:8];
+   real arr[0:2];
+   analog begin : blk
+      real ra, rb, rc;
+      integer ia, ib;
+      ra = 1.0; rb = 2.0; rc = 0.5; ia = 1; ib = 0;
+      if (max(((rb - (arr[1] / V(m,n))) - (($temperature + V(p,m)) + (-2.12529 - -2.0))), ((I(br1) / V(p)) * acos(atan(V(n))))) > ((hypot(($temperature + 3.0), 0.0) * (ceil(V(n)) / V(p,m))) - -0.0564652)) rc = ((asin((rc - rb)) - (log(arr[0]) / V(m,n))) - $temperature);
+      else ra = I(br1);
+      ra = ra + ddt(ra);
+      case (ia)
+        1: rc = 1.43937;
+        default: rb = (min((log(V(p,n)) - ($abstime - rb)), ((arr[0] * -1.23317) / ((ib*1.0) - ra))) + sinh((sinh(pk) * (V(m,n) - (ib*1.0)))));
+      endcase
+   end
+endmodule

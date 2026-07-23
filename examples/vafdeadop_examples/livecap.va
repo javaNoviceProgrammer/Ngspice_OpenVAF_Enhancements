@@ -1,0 +1,10 @@
+// a ddt that DOES contribute -- must be unaffected by the Dead-path fix
+`include "disciplines.vams"
+module livecap(p, n);
+   inout p, n;
+   electrical p, n;
+   parameter real c = 1e-9;
+   analog begin
+      I(p,n) <+ c*ddt(V(p,n));
+   end
+endmodule
