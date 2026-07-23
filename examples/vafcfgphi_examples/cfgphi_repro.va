@@ -1,0 +1,28 @@
+// Enhancement-310 reproducer -- a case+if control structure whose constant-branch
+// fold, in simplify_cfg's const_fold_terminator, orphaned a block that still had
+// live results. The orphan sweep leaves it (its values are still referenced), so a
+// phi in one of its successors kept an edge naming a value only reachable through the
+// deleted edge -- an SSA-invalid phi that tripped debug_assert!(cx.func.validate())
+// at sim_back/lib.rs. It was NOT a shipped crash (debug_assert) and NOT a miscompile
+// (proven: guarded output is bit-identical to a valid-MIR reference). This model is
+// deliberately clean-math and convergent so its output is well-defined.
+`include "disciplines.vams"
+module fz(p, n, m);
+   inout p, n, m;
+   electrical p, n, m;
+   parameter real pc = 1e-9 from (0:inf);
+   parameter real g = 1e-3;
+   real arr[0:2];
+   analog begin : blk
+      real ra, rb, rc;
+      integer ia, ib;
+      ra = 1.0; rb = 2.0; rc = 0.5; ia = 1; ib = 0;
+      arr[0] = 1.0; arr[1] = 2.0; arr[2] = 3.0;
+      case (ib)
+        0: ra = (tanh(asin((ra * pc))) * (1.0 + V(n)));
+      endcase
+      if (arr[1] > (arr[0] - (((V(p,m) * arr[0]) + (0.310187 - V(p,m))) * (ia*1.0)))) ra = (ia*1.0);
+      else rb = (((V(p,n) + (-4.0 + ra)) - atan((arr[0] - arr[1]))) + atan((max(rb, V(n)) * (1.10774 + V(p)))));
+      I(p,n) <+ g*((((ib*1.0) > rc ? rc : arr[0]) - rc) + ra + rb + V(p,n));
+   end
+endmodule

@@ -101,6 +101,29 @@ impl<'a> SimplifyCfg<'a> {
                         TRUE => (then_dst, else_dst),
                         _ => return,
                     };
+                    // Enhancement-310: declining a provably-unsafe fold.
+                    // If `bb` is `dead_dst`'s only predecessor, removing this edge orphans
+                    // `dead_dst`. The orphan sweep in `simplify_bb` then fixes the phis in
+                    // `dead_dst`'s successors (the E-287 path) -- BUT only when `dead_dst`
+                    // has no live results; that guard (needed for `mir_autodiff`'s
+                    // not-yet-placed instructions) leaves an orphan whose values are still
+                    // referenced in place. Its successors then keep a phi edge labelled
+                    // `dead_dst` naming a value that was only reachable through the deleted
+                    // edge -- an SSA-invalid phi the verifier (`debug_assert!(func.validate())`
+                    // at sim_back/lib.rs) rejects. Decline the fold in exactly that case; it
+                    // is only an optimisation, so this is always output-preserving, and the
+                    // branch is folded later once the block can be cleaned up safely.
+                    if self.cfg.single_predecessor(dead_dst) == Some(bb)
+                        && self.func.layout.block_insts(dead_dst).any(|inst| {
+                            self.func
+                                .dfg
+                                .inst_results(inst)
+                                .iter()
+                                .any(|&val| !self.func.dfg.value_dead(val))
+                        })
+                    {
+                        return;
+                    }
 
                     if let Some(bb) = self.func.layout.inst_block(inst) {
                         self.func.dfg.detach_operand(inst, 0);

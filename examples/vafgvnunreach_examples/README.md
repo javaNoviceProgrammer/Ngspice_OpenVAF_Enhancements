@@ -54,5 +54,4 @@ E-307, E-308 and E-309 are the three distinct compiler CRASHES found by this fuz
 campaign, all now fixed: a 12000-seed re-fuzz against the fully-fixed compiler shows zero
 occurrences of any of them. That deeper run also tripped one `debug_assert!` MIR-validation
 failure at `sim_back/src/lib.rs:175` (seed 11633) -- NOT a shipped crash (the release build
-compiles it fine), but the same assertions-only malformed-MIR class as E-286..E-294. It is
-documented for a separate follow-up.
+compiles it fine), but the same assertions-only malformed-MIR class as E-286..E-294. It is resolved in Enhancement-310, which also proved it benign.
