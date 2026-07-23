@@ -48,6 +48,19 @@ extern void mc_lhs_config(int nsamples, unsigned seed);  /* engage LHS directly 
 extern void com_mccorr(wordlist *wl);
 extern void com_montecarlo(wordlist *wl);
 extern int  mc_corr_config(int k, const double *mat);
+
+/* Enhancement-305: worst-case-distance / most-probable-failure-point high sigma.
+ * `wcd` walks standardised normal space to the closest point of the failure
+ * region (the MPFP), reports that distance beta and the first-order probability
+ * Phi(-beta), and can refine it with mean-shift importance sampling centred
+ * there. mc_wcd_config() makes every Gaussian draw deterministic so the deck is
+ * a plain function g(u); mc_wcd_shift() samples N(u*, I) carrying the exact
+ * likelihood ratio; mc_wcd_ndim() reports how many draws an evaluation used. */
+extern void com_wcd(wordlist *wl);
+extern void mc_wcd_config(const double *u, int n);
+extern void mc_wcd_shift(const double *u, int n, unsigned seed);
+extern int  mc_wcd_ndim(void);
+extern void mc_wcd_off(void);
 extern double mc_corr_component(int idx);   /* i-th correlated normal (1-based)  */
 
 #endif

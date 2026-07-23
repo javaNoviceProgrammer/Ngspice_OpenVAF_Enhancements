@@ -1,0 +1,37 @@
+* wcd_demo.cir -- worst-case distance / MPFP high-sigma (Enhancement-305)
+*
+* `highsigma` (Enhancement-150) reaches the rare tail by inflating every sigma and
+* reweighting -- direction-free, but it spends samples in every direction at once.
+* This is the industry-standard complement: work in standardised normal space and
+* ask a geometric question instead -- which point of the FAILURE region is the most
+* probable one? Its distance from the origin is the worst-case distance beta, and
+* P_fail = Phi(-beta) is exactly the sigma number a designer quotes.
+*
+* Here R ~ N(1000, 1). The spec is R > 1004.5, i.e. 4.5 sigma away, so
+*   beta         = 4.5
+*   P(fail)      = Phi(-4.5) = 3.3977e-06
+* Plain Monte Carlo would need ~1e6 runs to see a single failure. The search below
+* costs a handful of iterations of (1 + ndim) simulations.
+*
+* Run:  ngspice -b wcd_demo.cir
+
+.param rr = agauss(1000, 1, 1)         ; R = 1000 + u,  u ~ N(0,1)
+V1 a 0 DC 1
+R1 a 0 {rr}                            ; R = -1/i(V1)
+
+.control
+  set numdgt=8
+
+  * locate the most-probable failure point and report beta = |u*|
+  wcd -metric -1/i(v1) -max 1004.5 -analysis op
+
+  echo
+  echo worst-case distance (sigma) : $&wcd_beta
+  echo P(fail), first-order        : $&wcd_pfail
+
+  * optionally refine with mean-shift importance sampling centred on the MPFP.
+  * 2000 shifted samples land where the failures are, so the estimate is good
+  * even though the event is a 3.4e-6 one.
+  wcd -metric -1/i(v1) -max 1004.5 -analysis op -is 2000 -seed 1
+.endc
+.end

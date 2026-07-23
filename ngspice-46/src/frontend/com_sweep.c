@@ -1166,3 +1166,295 @@ void com_montecarlo(wordlist *wl)
     hs_set_result("montecarlo_npass", (double) npass);
     hs_set_result("montecarlo_n", (double) nsamp);
 }
+
+
+/* ------------------------------------------------------------------------
+ * Enhancement-305: worst-case distance / most-probable-failure-point.
+ *
+ * `highsigma` (Enhancement-150) estimates a rare-event probability by inflating
+ * every Gaussian sigma and reweighting -- direction-free, and robust for an
+ * arbitrary failure condition, but it spends its samples in every direction at
+ * once. The industry-standard complement works in *standardised normal space*
+ * (each statistical parameter mapped to N(0,1)) and asks a geometric question
+ * instead: which point of the failure region is the most probable one?
+ *
+ * With the performance margin written as g(u) > 0 for pass, that point is the
+ * one on the boundary g(u) = 0 closest to the origin. Its distance
+ *
+ *     beta = min |u|   subject to   g(u) = 0
+ *
+ * is the WORST-CASE DISTANCE, and because the density is spherically symmetric
+ * the first-order (FORM) failure probability is simply
+ *
+ *     P_fail ~= Phi(-beta)
+ *
+ * exactly the sigma number a designer quotes. The search is the classical
+ * Hasofer-Lind / Rackwitz-Fiessler iteration
+ *
+ *     u_{k+1} = [ (grad_g . u_k - g(u_k)) / |grad_g|^2 ] grad_g
+ *
+ * whose cost is bounded -- a handful of iterations, each of D+1 simulations for
+ * the finite-difference gradient -- rather than the 1e7..1e9 samples plain Monte
+ * Carlo would need to SEE a 5-6 sigma event.
+ *
+ * FORM is exact when g is linear in u (the boundary is then a hyperplane and
+ * beta is its distance from the origin) and approximate when it curves. So the
+ * command can optionally refine it with MEAN-SHIFT importance sampling centred
+ * on the MPFP: sampling N(u*, I) and carrying the likelihood ratio gives an
+ * unbiased estimate whose variance is small precisely because the samples land
+ * where the failures are.
+ * ------------------------------------------------------------------------ */
+
+#define WCD_MAXDIM 256
+
+/* Evaluate the deck at u and return the margin g(u): positive = pass. */
+static double wcd_margin(const double *u, int ndim, const char *analysis,
+                         const char *metric, double hi, double lo,
+                         int hasmax, int hasmin)
+{
+    double m, g;
+    mc_wcd_config(u, ndim);
+    sw_run_cmd("reset");            /* redraws the .params at this u */
+    sw_run_cmd(analysis);
+    m = sw_eval_expr(metric);
+    /* Distance to the nearest spec violation, in metric units. With both a max
+     * and a min the pass band is an interval and the margin is the smaller of
+     * the two distances. */
+    if (hasmax && hasmin)
+        g = (hi - m < m - lo) ? (hi - m) : (m - lo);
+    else if (hasmax)
+        g = hi - m;
+    else
+        g = m - lo;
+    return g;
+}
+
+void com_wcd(wordlist *wl)
+{
+    char analysis[512] = "op";
+    char metric[1024] = "";
+    double hi = 0.0, lo = 0.0;
+    int have_metric = 0, hasmax = 0, hasmin = 0;
+    int maxiter = 20, nis = 0;
+    double tol = 1e-4, step = 1e-3;
+    unsigned seed = 1;
+    int save_optimizing = ft_optimizing;
+    double u[WCD_MAXDIM], grad[WCD_MAXDIM], unew[WCD_MAXDIM];
+    int ndim = 0, it, d, converged = 0;
+    double g0, beta = 0.0, pf_form;
+
+    if (wl == NULL || wl->wl_word == NULL) {
+        fprintf(cp_err, "Usage: wcd -metric <expr> [-max <hi>] [-min <lo>] "
+                        "[-analysis <cmd>] [-maxiter <n>] [-tol <t>] [-step <h>] "
+                        "[-is <N> [-seed <s>]]\n");
+        return;
+    }
+
+    while (wl) {
+        const char *w = wl->wl_word;
+        if (eq(w, "-metric") || eq(w, "-spec")) {
+            if (!wl->wl_next) { fprintf(cp_err, "wcd: -metric needs an expression\n"); return; }
+            wl = wl->wl_next;
+            strncpy(metric, wl->wl_word, sizeof(metric) - 1);
+            metric[sizeof(metric) - 1] = '\0';
+            have_metric = 1; wl = wl->wl_next;
+        } else if (eq(w, "-max")) {
+            if (!wl->wl_next) { fprintf(cp_err, "wcd: -max needs a value\n"); return; }
+            wl = wl->wl_next; hi = sw_num(wl->wl_word); hasmax = 1; wl = wl->wl_next;
+        } else if (eq(w, "-min")) {
+            if (!wl->wl_next) { fprintf(cp_err, "wcd: -min needs a value\n"); return; }
+            wl = wl->wl_next; lo = sw_num(wl->wl_word); hasmin = 1; wl = wl->wl_next;
+        } else if (eq(w, "-analysis")) {
+            if (!wl->wl_next) { fprintf(cp_err, "wcd: -analysis needs a command\n"); return; }
+            wl = wl->wl_next;
+            strncpy(analysis, wl->wl_word, sizeof(analysis) - 1);
+            analysis[sizeof(analysis) - 1] = '\0';
+            wl = wl->wl_next;
+        } else if (eq(w, "-maxiter")) {
+            if (!wl->wl_next) { fprintf(cp_err, "wcd: -maxiter needs a value\n"); return; }
+            wl = wl->wl_next; maxiter = atoi(wl->wl_word); wl = wl->wl_next;
+        } else if (eq(w, "-tol")) {
+            if (!wl->wl_next) { fprintf(cp_err, "wcd: -tol needs a value\n"); return; }
+            wl = wl->wl_next; tol = sw_num(wl->wl_word); wl = wl->wl_next;
+        } else if (eq(w, "-step")) {
+            if (!wl->wl_next) { fprintf(cp_err, "wcd: -step needs a value\n"); return; }
+            wl = wl->wl_next; step = sw_num(wl->wl_word); wl = wl->wl_next;
+        } else if (eq(w, "-is")) {
+            if (!wl->wl_next) { fprintf(cp_err, "wcd: -is needs a sample count\n"); return; }
+            wl = wl->wl_next; nis = atoi(wl->wl_word); wl = wl->wl_next;
+        } else if (eq(w, "-seed")) {
+            if (!wl->wl_next) { fprintf(cp_err, "wcd: -seed needs a value\n"); return; }
+            wl = wl->wl_next; seed = (unsigned) strtoul(wl->wl_word, NULL, 10); wl = wl->wl_next;
+        } else {
+            fprintf(cp_err, "wcd: unknown option '%s'\n", w);
+            return;
+        }
+    }
+
+    if (!have_metric) {
+        fprintf(cp_err, "wcd: a '-metric <expr>' is required\n");
+        return;
+    }
+    if (!hasmax && !hasmin) {
+        fprintf(cp_err, "wcd: give a spec limit -- '-max <hi>' and/or '-min <lo>' "
+                        "(the failure region)\n");
+        return;
+    }
+    if (maxiter < 1 || maxiter > 1000) {
+        fprintf(cp_err, "wcd: -maxiter must be in [1, 1000]\n");
+        return;
+    }
+    if (!(step > 0.0)) {
+        fprintf(cp_err, "wcd: -step must be > 0\n");
+        return;
+    }
+    if (ft_curckt == NULL || ft_curckt->ci_ckt == NULL) {
+        fprintf(cp_err, "wcd: no circuit loaded\n");
+        return;
+    }
+
+    ft_optimizing = TRUE;
+
+    /* --- the nominal point, which also discovers the dimensionality --------
+     * How many Gaussian .params a deck draws is not known until it has been
+     * evaluated once, so evaluate at u = 0 and ask how many draws were used. */
+    for (d = 0; d < WCD_MAXDIM; d++)
+        u[d] = 0.0;
+    g0 = wcd_margin(u, WCD_MAXDIM, analysis, metric, hi, lo, hasmax, hasmin);
+    ndim = mc_wcd_ndim();
+
+    if (ndim < 1) {
+        fprintf(cp_err, "wcd: the deck draws no Gaussian .params -- nothing to "
+                        "search over (use agauss/gauss in a .param)\n");
+        ft_optimizing = save_optimizing;
+        mc_wcd_off();
+        return;
+    }
+    if (ndim > WCD_MAXDIM) {
+        fprintf(cp_err, "wcd: %d statistical dimensions exceeds the limit of %d\n",
+                ndim, WCD_MAXDIM);
+        ft_optimizing = save_optimizing;
+        mc_wcd_off();
+        return;
+    }
+
+    fprintf(cp_out, "wcd: %d statistical dimension%s, analysis '%s', "
+                    "fail if (%s) %s\n",
+            ndim, ndim == 1 ? "" : "s", analysis, metric,
+            hasmax && hasmin ? "outside [min,max]" : hasmax ? "> max" : "< min");
+    fprintf(cp_out, "  nominal margin g(0) = %+.6g  (%s at nominal)\n",
+            g0, g0 > 0.0 ? "passes" : "FAILS");
+
+    if (g0 <= 0.0)
+        fprintf(cp_out, "  note: the nominal point already violates the spec, so the\n"
+                        "        worst-case distance is reported as a NEGATIVE margin.\n");
+
+    /* --- Hasofer-Lind / Rackwitz-Fiessler iteration ---------------------- */
+    for (it = 0; it < maxiter; it++) {
+        double g = wcd_margin(u, ndim, analysis, metric, hi, lo, hasmax, hasmin);
+        double gn2 = 0.0, gdotu = 0.0, dnorm = 0.0, unorm = 0.0;
+
+        /* forward-difference gradient: D extra evaluations */
+        for (d = 0; d < ndim; d++) {
+            double save = u[d], gp;
+            u[d] = save + step;
+            gp = wcd_margin(u, ndim, analysis, metric, hi, lo, hasmax, hasmin);
+            u[d] = save;
+            grad[d] = (gp - g) / step;
+            gn2 += grad[d] * grad[d];
+            gdotu += grad[d] * save;
+        }
+
+        if (gn2 <= 0.0) {
+            fprintf(cp_err, "wcd: the metric does not respond to any statistical "
+                            "parameter (zero gradient) -- cannot locate an MPFP\n");
+            ft_optimizing = save_optimizing;
+            mc_wcd_off();
+            return;
+        }
+
+        {
+            double c = (gdotu - g) / gn2;
+            for (d = 0; d < ndim; d++) {
+                unew[d] = c * grad[d];
+                dnorm += (unew[d] - u[d]) * (unew[d] - u[d]);
+                unorm += unew[d] * unew[d];
+            }
+        }
+        dnorm = sqrt(dnorm);
+        for (d = 0; d < ndim; d++)
+            u[d] = unew[d];
+        beta = sqrt(unorm);
+
+        if (dnorm < tol) {
+            converged = 1;
+            break;
+        }
+    }
+
+    if (!converged)
+        fprintf(cp_out, "  warning: MPFP search did not converge in %d iterations "
+                        "(last step %.3g); beta below is provisional\n", maxiter, tol);
+
+    /* Sign: beta is a distance, but if nominal already fails the failure region
+     * contains the origin and the "distance to failure" is negative. */
+    if (g0 <= 0.0)
+        beta = -beta;
+    pf_form = 0.5 * erfc(beta / sqrt(2.0));      /* Phi(-beta) */
+
+    fprintf(cp_out, "\n  worst-case distance : beta = %.4f sigma%s\n"
+                    "  P(fail), first-order: %.6e   (= Phi(-beta))\n",
+            beta, converged ? "" : "  [not converged]", pf_form);
+    fprintf(cp_out, "  MPFP (standardised normal coordinates):\n   ");
+    for (d = 0; d < ndim; d++)
+        fprintf(cp_out, " u%d=%+.4f", d, u[d]);
+    fprintf(cp_out, "\n");
+
+    hs_set_result("wcd_beta", beta);
+    hs_set_result("wcd_pfail", pf_form);
+    hs_set_result("wcd_ndim", (double) ndim);
+    hs_set_result("wcd_converged", (double) converged);
+
+    /* --- optional mean-shift importance sampling around the MPFP ---------- */
+    if (nis > 1) {
+        double sum_wf = 0.0, sum_w2f2 = 0.0;
+        long nfail = 0;
+        int i;
+
+        fprintf(cp_out, "\n  refining with %d mean-shift importance samples "
+                        "centred on the MPFP...\n", nis);
+        mc_wcd_shift(u, ndim, seed);
+        for (i = 0; i < nis; i++) {
+            double m, f = 0.0, w;
+            sw_run_cmd("reset");
+            sw_run_cmd(analysis);
+            m = sw_eval_expr(metric);
+            if ((hasmax && m > hi) || (hasmin && m < lo))
+                f = 1.0;
+            w = mc_sample_weight();
+            if (f != 0.0) {
+                nfail++;
+                sum_wf += w;
+                sum_w2f2 += w * w;
+            }
+        }
+        {
+            double pf = sum_wf / (double) nis;
+            double var = sum_w2f2 / (double) nis - pf * pf;
+            double se = (var > 0.0) ? sqrt(var / (double) nis) : 0.0;
+            double rel = (pf > 0.0) ? se / pf : 0.0;
+            double sig = (pf > 0.0 && pf < 1.0) ? -inv_normal_cdf(pf) : 0.0;
+            fprintf(cp_out,
+                    "  failures seen       : %ld / %d (in the shifted sampling)\n"
+                    "  P(fail), mean-shift : %.6e  +/- %.2e  (relative error %.1f%%)\n"
+                    "  equivalent sigma    : %.3f\n",
+                    nfail, nis, pf, se, 100.0 * rel, sig);
+            hs_set_result("wcd_pfail_is", pf);
+            hs_set_result("wcd_pfail_is_err", se);
+            hs_set_result("wcd_sigma_is", sig);
+        }
+    }
+
+    mc_wcd_off();
+    ft_optimizing = save_optimizing;
+}

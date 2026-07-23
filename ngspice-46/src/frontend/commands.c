@@ -226,6 +226,15 @@ struct comm spcp_coms[] = {
       "<k> <m11> <m12> ... <mkk> | off : register a k x k correlation matrix (row-major) for "
       "process/mismatch sampling; then use mvnorm(1..k) in .param expressions to draw correlated "
       "standard normals (one shared draw per Monte Carlo sample)." } ,
+    { "wcd", com_wcd, FALSE, FALSE,               /* Enhancement-305 */
+      { 0, 0, 0, 0 }, E_DEFHMASK, 1, LOTS,
+      NULL,
+      "-metric <expr> [-max <hi>] [-min <lo>] [-analysis <cmd>] [-maxiter <n>] "
+      "[-tol <t>] [-step <h>] [-is <N> [-seed <s>]] : "
+      "worst-case distance / most-probable-failure-point high-sigma -- walks "
+      "standardised normal space to the closest failure point, reports that "
+      "distance beta and the first-order probability Phi(-beta), and can refine "
+      "it with mean-shift importance sampling centred there." } ,
     { "montecarlo", com_montecarlo, FALSE, FALSE,  /* Enhancement-151 */
       { 0, 0, 0, 0 }, E_DEFHMASK, 1, LOTS,
       NULL,
@@ -889,6 +898,15 @@ struct comm nutcp_coms[] = {
       "<k> <m11> <m12> ... <mkk> | off : register a k x k correlation matrix (row-major) for "
       "process/mismatch sampling; then use mvnorm(1..k) in .param expressions to draw correlated "
       "standard normals (one shared draw per Monte Carlo sample)." } ,
+    { "wcd", com_wcd, FALSE, FALSE,               /* Enhancement-305 */
+      { 0, 0, 0, 0 }, E_DEFHMASK, 1, LOTS,
+      NULL,
+      "-metric <expr> [-max <hi>] [-min <lo>] [-analysis <cmd>] [-maxiter <n>] "
+      "[-tol <t>] [-step <h>] [-is <N> [-seed <s>]] : "
+      "worst-case distance / most-probable-failure-point high-sigma -- walks "
+      "standardised normal space to the closest failure point, reports that "
+      "distance beta and the first-order probability Phi(-beta), and can refine "
+      "it with mean-shift importance sampling centred there." } ,
     { "montecarlo", com_montecarlo, FALSE, FALSE,  /* Enhancement-151 */
       { 0, 0, 0, 0 }, E_DEFHMASK, 1, LOTS,
       NULL,

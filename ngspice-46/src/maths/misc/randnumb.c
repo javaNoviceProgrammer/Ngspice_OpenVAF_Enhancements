@@ -359,7 +359,16 @@ setseedinfo(void)
  * .param draws are inflated by `sss_lambda` (fatter tails, so rare failures are
  * sampled often) and each sample carries the likelihood-ratio weight
  * exp(sss_logw) so an unbiased rare-event probability can be recovered. */
-enum { MC_MODE_RANDOM = 0, MC_MODE_LHS = 1, MC_MODE_SSS = 2 };
+/* MC_MODE_WCD (Enhancement-305): worst-case-distance / MPFP search. The Gaussian
+ * draws are not random at all -- dimension d returns a CHOSEN standard-normal
+ * coordinate u[d], so the deck can be evaluated at any point of standardised
+ * normal space. That is what lets the search walk to the most-probable failure
+ * point and take finite-difference gradients there.
+ * MC_MODE_SHIFT (Enhancement-305): mean-shift importance sampling around a found
+ * MPFP -- draw z = u*[d] + N(0,1) and accumulate the likelihood ratio
+ * log w = -u*.z + |u*|^2/2, giving an unbiased nominal-probability estimator. */
+enum { MC_MODE_RANDOM = 0, MC_MODE_LHS = 1, MC_MODE_SSS = 2,
+       MC_MODE_WCD = 3, MC_MODE_SHIFT = 4 };
 
 static int      lhs_mode = MC_MODE_RANDOM;
 static int      lhs_N = 0;         /* number of samples / strata            */
@@ -369,6 +378,14 @@ static unsigned lhs_seed = 1;
 static int    **lhs_perm = NULL;   /* [dim][N] stratum permutation          */
 static double **lhs_jit = NULL;    /* [dim][N] in-stratum jitter in [0,1)   */
 static int      lhs_dim_cap = 0;   /* allocated length of lhs_perm/lhs_jit  */
+/* Enhancement-305: the u-space point the deck is evaluated at (WCD), or the
+ * shift vector of the importance density (SHIFT). `wcd_ndim` records how many
+ * Gaussian draws the last evaluation actually consumed, which is how the
+ * dimensionality of the statistical space is discovered -- it is not known
+ * until a deck has been evaluated once. */
+static double  *wcd_u = NULL;      /* [wcd_cap] chosen standard-normal coords */
+static int      wcd_cap = 0;
+static int      wcd_ndim = 0;      /* draws consumed by the last evaluation   */
 static double   sss_lambda = 1.0;  /* SSS variance-inflation factor (>1)    */
 static double   sss_logw = 0.0;    /* accumulated log importance weight     */
 
@@ -452,6 +469,10 @@ static void lhs_gen_dim(int d)
  * netlist stochastic functions route their draws through it. */
 int mc_sample_active(void)
 {
+    /* Enhancement-305: WCD/SHIFT are driven by a chosen u-vector rather than by
+     * a sample count, so they are active irrespective of lhs_N. */
+    if (lhs_mode == MC_MODE_WCD || lhs_mode == MC_MODE_SHIFT)
+        return 1;
     return lhs_mode != MC_MODE_RANDOM && lhs_N > 0;
 }
 
@@ -466,6 +487,12 @@ void mc_sample_advance(void)
     lhs_sample++;
     lhs_dim = 0;
     sss_logw = 0.0;
+    /* Enhancement-305: wcd_ndim is deliberately NOT cleared here. One margin
+     * evaluation can trigger several deck-copy passes, and a later pass that
+     * draws nothing would otherwise wipe the count taken by the pass that did.
+     * The draw keeps a running maximum instead, and mc_wcd_config() clears it
+     * once per evaluation -- so wcd_ndim ends up as the largest number of
+     * Gaussian draws any single pass consumed, which is the dimensionality. */
 }
 
 /* Next uniform in [0,1) for the current draw. LHS returns the stratified value;
@@ -486,6 +513,29 @@ double mc_sample_uniform(void)
  * and accumulates this dimension's log likelihood ratio into sss_logw. */
 double mc_sample_gauss(void)
 {
+    /* Enhancement-305: evaluate the deck at a CHOSEN point of standardised
+     * normal space. Dimension d is the d-th Gaussian draw of this evaluation
+     * pass, in deck-evaluation order -- the same ordering LHS already relies
+     * on. Beyond the supplied vector the coordinate is 0 (the nominal point),
+     * so a deck that draws more than expected degrades to nominal rather than
+     * reading past the end. */
+    if (lhs_mode == MC_MODE_WCD) {
+        int d = lhs_dim++;
+        if (d + 1 > wcd_ndim)
+            wcd_ndim = d + 1;
+        return (d < wcd_cap) ? wcd_u[d] : 0.0;
+    }
+    /* Mean-shift importance sampling: centre the sampling density on the MPFP
+     * and carry the exact likelihood ratio phi(z)/phi(z-u*) per dimension. */
+    if (lhs_mode == MC_MODE_SHIFT) {
+        int d = lhs_dim++;
+        double shift = (d < wcd_cap) ? wcd_u[d] : 0.0;
+        double z = shift + gauss1();
+        if (d + 1 > wcd_ndim)
+            wcd_ndim = d + 1;
+        sss_logw += -shift * z + 0.5 * shift * shift;
+        return z;
+    }
     if (lhs_mode == MC_MODE_SSS && lhs_sample >= 0 && lhs_sample < lhs_N) {
         double z = sss_lambda * gauss1();
         /* log w_d = log(lambda) - (z^2/2)(1 - 1/lambda^2) */
@@ -507,7 +557,59 @@ double mc_sample_gauss(void)
  * its Gaussian draws). 1.0 outside SSS, so plain/LHS runs are unweighted. */
 double mc_sample_weight(void)
 {
-    return (lhs_mode == MC_MODE_SSS) ? exp(sss_logw) : 1.0;
+    /* Enhancement-305: mean-shift sampling accumulates its likelihood ratio in
+     * the same accumulator, so it reports a weight the same way. */
+    return (lhs_mode == MC_MODE_SSS || lhs_mode == MC_MODE_SHIFT)
+           ? exp(sss_logw) : 1.0;
+}
+
+/* ---------------------------------------------------------------- E-305 ---
+ * Worst-case-distance / MPFP support: evaluate the deck at a chosen point of
+ * standardised normal space, and sample around one.
+ */
+
+/* Point the next evaluations at u[0..n-1] (WCD) -- every Gaussian draw becomes
+ * deterministic, so the deck behaves as a plain function g(u). */
+void mc_wcd_config(const double *u, int n)
+{
+    int i;
+    if (n > wcd_cap) {
+        wcd_u = TREALLOC(double, wcd_u, n);
+        wcd_cap = n;
+    }
+    for (i = 0; i < n; i++)
+        wcd_u[i] = u[i];
+    lhs_mode = MC_MODE_WCD;
+    lhs_sample = 0;
+    lhs_dim = 0;
+    wcd_ndim = 0;
+}
+
+/* Sample from N(u*, I) instead, carrying the exact likelihood ratio. */
+void mc_wcd_shift(const double *u, int n, unsigned seed)
+{
+    mc_wcd_config(u, n);
+    lhs_mode = MC_MODE_SHIFT;
+    lhs_seed = seed;
+    /* seed the global PRNG the same way SSS does, so a given seed reproduces
+     * the shifted sample sequence bit-for-bit */
+    srand(seed);
+    TausSeed();
+    sss_logw = 0.0;
+}
+
+/* Gaussian draws consumed by the last evaluation = dimension of the space. */
+int mc_wcd_ndim(void)
+{
+    return wcd_ndim;
+}
+
+void mc_wcd_off(void)
+{
+    lhs_mode = MC_MODE_RANDOM;
+    lhs_sample = -1;
+    lhs_dim = 0;
+    sss_logw = 0.0;
 }
 
 /* Engage scaled-sigma importance sampling for N samples with inflation lambda.
