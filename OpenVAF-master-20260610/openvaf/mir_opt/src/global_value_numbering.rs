@@ -576,8 +576,19 @@ impl GVN {
         if leader_changed || class_changed {
             for use_ in func.dfg.inst_uses(inst) {
                 let inst = func.dfg.use_to_operand(use_).0;
-                let dfs_id = self.dfs_map.inst_to_dfs[inst].unwrap_unchecked();
-                self.touched_insts.insert(dfs_id);
+                // Enhancement-309: a user of `inst` can live in an UNREACHABLE block.
+                // `DFSMapping::populate` only numbers instructions reachable through
+                // `cfg_postorder`, so such a user has no DFS id. The previous
+                // `unwrap_unchecked()` then hit `PackedOption::unwrap()` and panicked
+                // under debug-assertions, and in release returned the reserved
+                // sentinel id -- which `touched_insts.insert` used as an out-of-range
+                // index, crashing the SHIPPED compiler all the same. An un-numbered
+                // user is not in the GVN work list (the solver only iterates
+                // `dfs_to_inst`), so marking it touched would be a no-op anyway: skip
+                // it, exactly as `get_rank` already tolerates the same `None`.
+                if let Some(dfs_id) = self.dfs_map.inst_to_dfs[inst].expand() {
+                    self.touched_insts.insert(dfs_id);
+                }
             }
         }
     }

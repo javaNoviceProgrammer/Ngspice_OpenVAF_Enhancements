@@ -1,0 +1,17 @@
+// A GVN oracle: heavy common-subexpression content the pass merges. The result must
+// stay exact -- I = 4*V*g + (V*g)^2 -- which proves the fix does not disturb GVN's
+// optimisation of reachable code.
+`include "disciplines.vams"
+module gvn(p, n);
+   inout p, n;
+   electrical p, n;
+   parameter real g = 1e-3;
+   analog begin : b
+      real a, b1, c, d;
+      a  = (V(p,n)*g + V(p,n)*g);
+      b1 = (V(p,n)*g + V(p,n)*g);
+      c  = (V(p,n)*g)*(V(p,n)*g);
+      d  = a + b1 + c;
+      I(p,n) <+ d;
+   end
+endmodule

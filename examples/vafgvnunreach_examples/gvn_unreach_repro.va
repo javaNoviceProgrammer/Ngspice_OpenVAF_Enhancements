@@ -1,0 +1,39 @@
+// Enhancement-309 reproducer (grammar-fuzz seed 6716, deterministic).
+//
+// Global value numbering iterates the USERS of each instruction to re-queue them.
+// A user living in an UNREACHABLE block was never assigned a DFS id (DFSMapping::
+// populate only numbers instructions reachable through cfg_postorder), so
+// `inst_to_dfs[user].unwrap_unchecked()` hit PackedOption::unwrap() -> panic under
+// debug-assertions, and in release used the reserved sentinel as an out-of-range
+// BitSet index -- either way the SHIPPED compiler crashed. Fix: skip users with no
+// DFS id (they are not in the GVN work list), matching how `get_rank` already
+// tolerates the same None.
+// openvaf-r fuzz seed=6716
+`include "disciplines.vams"
+module fz(p, n, m);
+   inout p, n, m;
+   electrical p, n, m;
+   branch (p,n) br1;
+   parameter real pr = 1.5 from (-inf:inf);
+   parameter real pc = 1e-9 from (0:inf);
+   parameter integer pk = 2 from [0:8];
+   real arr[0:2];
+   analog begin : blk
+      real ra, rb, rc;
+      integer ia, ib;
+      ra = 1.0; rb = 2.0; rc = 0.5; ia = 1; ib = 0;
+      arr[0] = 1.0; arr[1] = 2.0; arr[2] = 3.0;
+      ra = rc + (V(m,n) + slew((ia*1.0), 1e6, -1e6));
+      if (((hypot(-0.854162, (rb + arr[0])) - (-0.711156 / (V(p,m) * 0.13197))) / pow((asin(arr[0]) - asin(rc)), (hypot(0.0, V(n)) - arr[1]))) > floor(((tanh(pc) / V(m,n)) / I(br1)))) rb = cosh(0.266119);
+      else rb = (-2.08437 - (((arr[1] * V(p)) * min(V(p,n), (ia*1.0))) - min(-4.0, (2.77076 + -1.90461))));
+      if (ln((min(arr[0], (ra / V(p,m))) / V(p,m))) > pow(atan2(((-2.41735 - $abstime) + ($abstime * V(p,n))), $vt), (sinh(ra) - (pr * pc)))) ra = ((((ib*1.0) / (arr[2] / rc)) / (arr[2] / (arr[1] / V(m,n)))) * (((pk * V(m,n)) / rc) - (ia*1.0)));
+      else rb = (acos((max(-1.36264, arr[1]) / -3.0)) - ((V(m,n) + (V(n) / arr[0])) / (ib*1.0)));
+      ra = ra + slew((-1.72804), 1e6, -1e6);
+      rc = rc + absdelay((((V(p,m) / (ia*1.0)) - V(p,m)) > acos(pow(arr[2], (ib*1.0))) ? (min(rb, pr) * (pc - I(br1))) : sqrt(asin(V(p,n)))), 1e-9, 1e-6);
+      I(br1) <+ ra;
+      I(br1) <+ V(p,n);
+      V(m,n) <+ absdelay((+(pk + max(pk, 2.79519))), 1e-9, 1e-6);
+      I(p,n) <+ flicker_noise(0.1471, 1.0, "fn");
+   end
+endmodule
+

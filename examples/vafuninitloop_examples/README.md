@@ -56,4 +56,4 @@ pre-fix compiler.
 
 Extending the re-fuzz to 8000 seeds turned up a **different, pre-existing** ICE at
 `lib/stdx/src/packed_option.rs:60` — a `PackedOption::unwrap()` on a `None` (the old shipped
-compiler crashes on it too), at roughly 1 in 8000. Left for a follow-up.
+compiler crashes on it too), at roughly 1 in 8000. Fixed in Enhancement-309.

@@ -76,7 +76,7 @@ shows **zero** occurrences of either this crash or the E-307 one.
 
 The 8000-seed re-fuzz found a **different, pre-existing** ICE at
 `lib/stdx/src/packed_option.rs:60` (a `PackedOption::unwrap()` on `None`), which the old
-shipped compiler also crashes on, at roughly 1 in 8000. Left for a separate change.
+shipped compiler also crashes on, at roughly 1 in 8000. Fixed in [Enhancement-309](Enhancement-309.md).
 
 ## Scope of change
 
