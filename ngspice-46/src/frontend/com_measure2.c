@@ -1026,8 +1026,27 @@ measure_minMaxAvg(
             if (svalue < meas->m_from)
                 continue;
 
-            if ((meas->m_to != 0.0e0) && (svalue > meas->m_to))
+            if ((meas->m_to != 0.0e0) && (svalue > meas->m_to)) {
+                /* Enhancement-302: AVG integrates a trapezoid over the window and
+                   divides by its span, so the window has to END AT EXACTLY `to`.
+                   Without this it ended at the last sample BEFORE `to`, dropping the
+                   final partial interval -- an O(dt) error that made `avg` disagree
+                   with `integ`/(to-from) computed over the same window, even though
+                   they are the same quantity. RMS and INTEG already clip this way in
+                   measure_rms_integral(); do the same here. MIN/MAX keep their
+                   whole-sample semantics. */
+                if (mFunctionType == AT_AVG && first != 0 && i > 0 &&
+                        !AlmostEqualUlps(svalue, meas->m_to, 100)) {
+                    value = measure_interpolate(dScale, d, i - 1, i, meas->m_to,
+                                                'y', meas);
+                    svalue = meas->m_to;
+                    mValue += 0.5 * (value + pvalue) * (svalue - sprev);
+                    Tsum += (svalue - sprev);
+                    pvalue = value;
+                    sprev = svalue;
+                }
                 break;
+            }
         }
 
         if (first == 0) {
@@ -1045,6 +1064,19 @@ measure_minMaxAvg(
                 mValue = 0.0;
                 mValueAt = svalue;
                 Tsum = 0.0;
+                /* Enhancement-302: and START at exactly `from`, for the same reason --
+                   otherwise the first partial interval is dropped as well.
+                   NOT for a dc sweep: only time/frequency scales are guaranteed to
+                   ascend. A descending `dc v1 2 0 -0.001` enters the window at its
+                   HIGH end, where forcing svalue to `from` would extrapolate far
+                   outside [i-1, i] and poison every later trapezoid. */
+                if (!dc_check && meas->m_from != 0.0e0 && i > 0 &&
+                        !AlmostEqualUlps(svalue, meas->m_from, 100)) {
+                    value = measure_interpolate(dScale, d, i - 1, i, meas->m_from,
+                                                'y', meas);
+                    svalue = meas->m_from;
+                    mValueAt = svalue;
+                }
                 pvalue = value;
                 sprev = svalue;
                 break;
@@ -1089,7 +1121,12 @@ measure_minMaxAvg(
     {
     case AT_AVG: {
         meas->m_measured = mValue / (first ? Tsum : 1.0);
-        meas->m_measured_at = svalue;
+        /* Enhancement-302: report the END OF THE WINDOW, not `svalue` -- which, when
+           the loop broke on the first out-of-window sample, was a time the average
+           never covered (a 250us window was echoed as "to=2.50280e-04"). `sprev` is
+           the last point actually accumulated, i.e. the true window end. dc keeps its
+           old reporting, since its window handling is left untouched here. */
+        meas->m_measured_at = (first && !dc_check) ? sprev : svalue;
         break;
     }
     case AT_MIN:
