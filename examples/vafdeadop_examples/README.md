@@ -51,7 +51,7 @@ and the produced `.osdi` loads; and a **contributing** `ddt` is confirmed numeri
 unchanged (`I = C·ddt(V)` still gives `|Z| = 1/(2πfC)` exactly), since the fix touches the
 Dead path. The suite fails on the pre-fix compiler.
 
-## A second bug this campaign surfaced (not fixed here)
+## A second bug this campaign surfaced (fixed in Enhancement-308)
 
 Extending the fuzz to 5000 seeds found a **different, pre-existing** ICE at
 `mir_llvm/src/builder.rs:143` — *"attempted to read undefined value"*. Minimal trigger: a

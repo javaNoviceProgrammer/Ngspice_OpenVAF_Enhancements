@@ -52,7 +52,7 @@ over N loop iterations reads back exactly `N·g` — which is what proves the `u
 substitution touches only dead-path inputs and never a real value. The suite fails on the
 pre-fix compiler.
 
-## A third bug this campaign surfaced (not fixed here)
+## A third bug this campaign surfaced (fixed in Enhancement-309)
 
 Extending the re-fuzz to 8000 seeds turned up a **different, pre-existing** ICE at
 `lib/stdx/src/packed_option.rs:60` — a `PackedOption::unwrap()` on a `None` (the old shipped
