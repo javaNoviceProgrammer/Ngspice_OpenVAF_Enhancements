@@ -327,6 +327,27 @@ the same `pyplot_terminal`/`pyplot_python`/`pyplot_backend`/`pyplot_figsize`/`py
 settings. `ft_pyplot()` and the gnuplot/asciiplot back-ends are untouched
 ([E-208](../../enhancements_doc/Enhancement-208.md)).
 
+Four further groups of additions. **Appearance controls** — seven `set`
+variables (`pyplot_grid`, `pyplot_legend`, `pyplot_markers`, `pyplot_axhline`,
+`pyplot_axvline`, `pyplot_dpi`, `pyplot_transparent`) threaded into
+`ft_pyplot()`, all additive so a control-free plot is byte-identical to before
+([E-296](../../enhancements_doc/Enhancement-296.md)). A **`-fft` mode** —
+`ft_pyplot()`'s `bool hist` became an `int mode` (`LINE`/`HIST`/`FFT`);
+`-fft` reuses the time-domain data table and the emitted script resamples onto
+a uniform grid (`np.interp`, because transient data is adaptively sampled)
+before `np.fft.rfft`, scaled by `2/sum(window)` so a tone reads back its
+amplitude (`pyplot_fft_window`/`_db`/`_points`/`_logf`)
+([E-297](../../enhancements_doc/Enhancement-297.md)). **Complex-aware AC views** —
+a new `ft_pyplot_ac()` renderer for `-bode` (mag dB / phase deg vs log-f,
+stacked, `np.unwrap`), `-nyquist` (imag vs real) and `-polar` (mag at phase),
+emitting a `<vec-index> <freq> <re> <im>` table that KEEPS the imaginary part an
+ordinary `pyplot` discards ([E-298](../../enhancements_doc/Enhancement-298.md)).
+And **finishing touches** — cross-run overlay (`pyplot tran1.v(out)
+tran2.v(out)`) now sizes the data table by the longest scale so a finer second
+run is not truncated, plus a `pyplot_cursor` hover crosshair (matplotlib's
+built-in `Cursor`, window-only)
+([E-299](../../enhancements_doc/Enhancement-299.md)).
+
 ### `postcoms.c` (414 diff lines) + `postcoms.h` + `commands.c` (16)
 
 The Touchstone I/O subsystem
@@ -810,3 +831,7 @@ Every entry above is guarded by a verify script under
 [`examples/`](../../examples/) and was regression-checked against the full
 example arsenal, the compiler's integration suite, and the VA_TEST
 industry-model corpus at the time it landed.
+| [E-296](../../enhancements_doc/Enhancement-296.md) | src/frontend/plotting/pyplot.c | **pyplot appearance controls.** Seven additive `set` variables: `pyplot_grid` (on/off/x/y, overriding the grid-follows-axis default), `pyplot_legend` (off, or a matplotlib location -- underscore form since `set` keeps only the first word), `pyplot_markers` (a cycling marker `o s ^ D v * P X` ON the line, distinct from `pointstyle=markers` which drops the line), `pyplot_axhline`/`pyplot_axvline` (SI-aware reference lines via `ft_numparse`), `pyplot_dpi`, `pyplot_transparent`. With none set the emitted script is byte-identical to before. Verify (examples/pyplotmore): each control appears in the script AND the script executes; the default path is unchanged. One file. |
+| [E-297](../../enhancements_doc/Enhancement-297.md) | src/frontend/plotting/pyplot.c, plotit.c, com_pyplot.c | **pyplot `-fft` magnitude spectrum.** `ft_pyplot`'s `bool hist` -> `int mode` (LINE/HIST/FFT). `-fft <sig>` reuses the time-domain (t,y) table; the emitted Python RESAMPLES onto a uniform grid (`np.interp`) before `np.fft.rfft`, because transient data is adaptively sampled and a raw FFT over non-uniform samples is wrong. One-sided, scaled by `2/sum(window)` so a pure tone reads back its amplitude. Options `pyplot_fft_window` (hann/hamming/blackman/rect), `pyplot_fft_db`, `pyplot_fft_points`, `pyplot_fft_logf` (log-f in Python, dropping the DC bin -- NOT the command's `xlog`, which would validate the t=0 TIME scale and abort). Verify (examples/pyplotmore): a 2.0@1kHz + 0.5@3kHz tone reads 2.0 and 0.5 (amplitude oracle, rel<2%). Three files. |
+| [E-298](../../enhancements_doc/Enhancement-298.md) | src/frontend/plotting/pyplot.c, plotit.c, com_pyplot.c | **pyplot complex-aware AC views `-bode`/`-nyquist`/`-polar`.** An ordinary `pyplot v(out)` on AC data silently keeps only the REAL part (0.5 not 0.7071 at -3 dB). New `ft_pyplot_ac()` emits a `<vec-index> <freq> <re> <im>` table -- the imaginary part is CARRIED -- grouped by the first column so multiple/ragged vectors stay separate; `-bode` = 20log10|H| dB / unwrapped phase deg vs log-f stacked, `-nyquist` = imag vs real (equal aspect), `-polar` = |H| at angle(H) on a polar projection. Reuses the shared file/launch scaffolding and `pyplot_*` settings; auto-names bode/bode-2/... via the shared counter. Verify (examples/pyplotmore): RC low-pass at fc gives -3.010 dB and -45.00 deg (exact first-order values, from the preserved complex data). Three files. |
+| [E-299](../../enhancements_doc/Enhancement-299.md) | src/frontend/plotting/pyplot.c | **pyplot overlay robustness + hover cursor + export note.** Cross-run overlay via ngspice's `plotname.vector` refs (`pyplot tran1.v(out) tran2.v(out)`) already worked, but the data table was sized by the FIRST vector's scale, so a longer second run was truncated; it now walks the LONGEST scale across the plotted vectors (each still uses its own scale for x, shorter ones pad with NaN which matplotlib skips; a single run is unchanged since all share one scale). `set pyplot_cursor` adds a hover crosshair via matplotlib's built-in `Cursor` widget (no extra package), interactive-only (not emitted for a hardcopy). Pan/zoom/save (matplotlib toolbar) and the `<name>.data` export were already provided. Verify (examples/pyplotmore): a finer second run keeps every sample; cursor present in a window script, absent from a hardcopy. One file. |

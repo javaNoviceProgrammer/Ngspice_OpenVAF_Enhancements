@@ -15,6 +15,10 @@ pyplot [file] -eye     <expr> -ui <T> [-tstart t] [-threshold v] [-window f]
 pyplot [file] -hist    <vec> [vec ...]
 pyplot [file] -contour <z> <x> <y>
 pyplot [file] -smith   <vec> [vec ...]
+pyplot [file] -fft     <vec> [vec ...]
+pyplot [file] -bode    <vec> [vec ...]
+pyplot [file] -nyquist <vec> [vec ...]
+pyplot [file] -polar   <vec> [vec ...]
 ```
 
 Everything below was checked against the shipped implementation
@@ -149,6 +153,14 @@ them to return to the default.
 | `pyplot_linewidth` | line width in points, applied to every trace | matplotlib default |
 | `pyplot_subplots` | traces per stacked panel; `0`/unset = one axis | `0` |
 | `pointstyle` | set to `markers` to draw point markers | lines only |
+| `pyplot_markers` | a cycling marker **on** the line, per trace | lines only |
+| `pyplot_grid` | `on` / `off` / `x` / `y` — override the default | axis-dependent |
+| `pyplot_legend` | `off`, or a matplotlib location (`upper_right`, `best`) | shown |
+| `pyplot_axhline` | comma list of y values → horizontal reference lines | none |
+| `pyplot_axvline` | comma list of x values → vertical reference lines | none |
+| `pyplot_dpi` | image resolution for a hardcopy | `100` |
+| `pyplot_transparent` | transparent figure background for a hardcopy | opaque |
+| `pyplot_cursor` | hover crosshair in an interactive window | off |
 
 ```
 * a styled figure
@@ -175,6 +187,28 @@ pyplot panels v(in) v(out)   $ -> two stacked panels
 set pyplot_subplots=2        $ two traces per panel
 pyplot p2 v(in) v(a) v(b) v(c)   $ -> two panels of two
 ```
+
+### 4.2 Grid, legend, markers and reference lines
+
+```
+set pyplot_grid=off              $ or on / x / y
+set pyplot_legend=upper_right     $ or off; use the UNDERSCORE form (see below)
+set pyplot_markers                $ a cycling marker on each line
+set pyplot_axhline=0.5,-0.5       $ horizontal reference lines
+set pyplot_axvline=1k,10k         $ vertical lines (SI suffixes accepted)
+set pyplot_dpi=150                $ image resolution
+set pyplot_transparent            $ transparent background
+pyplot fig db(v(out))
+```
+
+Two points worth knowing:
+
+* **Legend locations contain a space** (`upper right`), but `set` keeps only the first
+  word. Use the underscore form — `set pyplot_legend=upper_right` — and the renderer
+  converts it back.
+* **`pyplot_markers` vs `pointstyle=markers`.** `pointstyle=markers` draws markers with *no*
+  line; `pyplot_markers` keeps the line and adds a marker whose shape cycles per trace
+  (`o s ^ D v * P X`), so overlaid traces are distinguishable in print or greyscale.
 
 ---
 
@@ -365,7 +399,125 @@ pyplot manual eye_wave vs eye_t
 
 ---
 
-## 10. What gets written
+## 10. Spectra — `-fft`
+
+`-fft` plots the one-sided **amplitude spectrum** of each signal — `fft`-then-`plot` in one
+command.
+
+```
+* spectrum of a transient signal
+v1 a 0 dc 0 sin(0 2 1k)
+r1 a 0 1k
+.control
+tran 5u 20m
+let sig = v(a)
+set pyplot_terminal=png
+pyplot spectrum -fft sig
+.endc
+.end
+```
+
+Transient data is **adaptively sampled**, so the generated script resamples each signal onto
+a uniform grid before the transform (a raw FFT over non-uniform samples would be wrong). The
+magnitude is scaled so a **pure tone reads back its amplitude** at its frequency — a
+`2·sin(2π·1kHz·t)` tone peaks at 2.0.
+
+| Variable | Meaning | Default |
+|---|---|---|
+| `pyplot_fft_window` | `hann` / `hamming` / `blackman` / `rect` | `hann` |
+| `pyplot_fft_db` | plot `20·log10` magnitude | linear |
+| `pyplot_fft_points` | resample / FFT length | next power of two ≥ len |
+| `pyplot_fft_logf` | log frequency axis (drops the DC bin) | linear |
+
+```
+set pyplot_fft_window=blackman
+set pyplot_fft_db
+set pyplot_fft_logf
+pyplot spectrum -fft sig
+```
+
+**Use `pyplot_fft_logf`, not `xlog`.** The command's `xlog` makes ngspice validate the
+*time* scale (which includes t = 0) and abort before the FFT runs; `pyplot_fft_logf` sets
+the log axis on the frequency data in Python and drops the DC bin.
+
+---
+
+## 11. Complex-aware AC — `-bode`, `-nyquist`, `-polar`
+
+An ordinary `pyplot v(out)` on **AC data keeps only the real part**: at the −3 dB point of an
+RC low-pass it shows 0.5, not the magnitude 0.7071. (It is the SPICE convention —
+`mag()`/`db()`/`ph()` are the explicit escapes.) These three modes use the **full complex
+value** instead.
+
+```
+* frequency response, three views
+v1 in 0 dc 0 ac 1
+r1 in out 1591.55
+c1 out 0 100n
+.control
+ac dec 30 10 1e6
+set pyplot_terminal=png
+pyplot resp -bode    v(out)     $ magnitude(dB)/phase(deg) vs log-frequency
+pyplot resp -nyquist v(out)     $ imag vs real
+pyplot resp -polar   v(out)     $ magnitude at phase, polar projection
+.endc
+.end
+```
+
+| Mode | View |
+|---|---|
+| `-bode` | stacked `20·log10\|H\|` (dB) and unwrapped phase (deg) vs a log frequency axis |
+| `-nyquist` | `imag(H)` vs `real(H)`, equal aspect, real/imag axes marked |
+| `-polar` | `\|H\|` at `angle(H)` on a polar projection |
+
+Each accepts several vectors (overlaid) and honours the shared `pyplot_*` settings. For the
+RC low-pass above, the Bode plot reads exactly **−3.01 dB and −45°** at fc — because the
+imaginary part is preserved.
+
+---
+
+## 12. Comparing runs and reading values
+
+### 12.1 Overlay several runs
+
+ngspice keeps each run in its own plot (`tran1`, `tran2`, …); reference them with
+`plotname.vector` to overlay:
+
+```
+tran 5u 3m          $ -> tran1
+alter c1 c=400n
+tran 5u 3m          $ -> tran2
+pyplot compare tran1.v(out) tran2.v(out)
+```
+
+Runs of different lengths overlay correctly — each trace keeps all of its own samples.
+
+### 12.2 Interactive crosshair and toolbar
+
+In an interactive window (no `pyplot_terminal`), matplotlib's own toolbar already gives
+**pan, zoom and save-image**. Add a value crosshair that follows the mouse with:
+
+```
+set pyplot_cursor
+pyplot v(out)
+```
+
+It uses matplotlib's built-in cursor — no extra Python package — and is ignored for a
+hardcopy, where there is no mouse.
+
+### 12.3 The data is already exported
+
+Every `pyplot` writes `<name>.data` (the plotted columns) next to `<name>.py`. That file
+*is* the export — load it anywhere:
+
+```python
+import numpy as np
+d = np.loadtxt("compare.data")
+```
+
+---
+
+## 13. What gets written
 
 For base name `NAME`, `pyplot` produces:
 
@@ -384,7 +536,7 @@ python3 rcplot.py
 
 ---
 
-## 11. Worked example — one deck, several views
+## 14. Worked example — one deck, several views
 
 ```
 * pyplot tour: transient, spectrum, panels and a histogram
@@ -423,7 +575,7 @@ unset pyplot_style
 
 ---
 
-## 12. Quick reference
+## 15. Quick reference
 
 **Modes**
 
@@ -434,6 +586,10 @@ unset pyplot_style
 | `pyplot [f] -contour <z> <x> <y>` | filled contour map |
 | `pyplot [f] -smith <vecs>` | Smith chart |
 | `pyplot [f] -eye <expr> -ui <T>` | eye diagram (runs the `eye` analysis) |
+| `pyplot [f] -fft <vecs>` | amplitude spectrum |
+| `pyplot [f] -bode <vecs>` | magnitude(dB)/phase(deg) vs log-f |
+| `pyplot [f] -nyquist <vecs>` | imag vs real |
+| `pyplot [f] -polar <vecs>` | magnitude at phase (polar) |
 
 **Variables**
 
@@ -446,16 +602,26 @@ unset pyplot_style
 | `pyplot_figsize` | `W,H` | all |
 | `pyplot_linewidth` | real | line plots |
 | `pyplot_subplots` | integer | line plots |
+| `pyplot_markers` | boolean | line plots |
 | `pointstyle` | `markers` | line plots |
+| `pyplot_grid` | `on`/`off`/`x`/`y` | line plots |
+| `pyplot_legend` | `off`/location | line plots |
+| `pyplot_axhline` / `pyplot_axvline` | value list | line plots |
+| `pyplot_dpi` | integer | hardcopy |
+| `pyplot_transparent` | boolean | hardcopy |
+| `pyplot_cursor` | boolean | window |
 | `pyplot_hist_bins` | integer | `-hist` |
 | `pyplot_hist_density` | boolean | `-hist` |
+| `pyplot_fft_window` | string | `-fft` |
+| `pyplot_fft_db` / `pyplot_fft_logf` | boolean | `-fft` |
+| `pyplot_fft_points` | integer | `-fft` |
 | `pyplot_contour_levels` | integer | `-contour` |
 | `pyplot_contour_cmap` | string | `-contour` |
 | `pyplot_contour_lines` | boolean | `-contour` |
 
 ---
 
-## 13. Troubleshooting
+## 16. Troubleshooting
 
 **Nothing appears, no error.** `pyplot_terminal` is unset, so a window was opened — on a
 headless machine there is nowhere to draw it. Set `pyplot_terminal=png` and
@@ -482,4 +648,5 @@ treated as data. Rename the output or the node.
 * `examples/pyplothist_examples/` — `-hist`
 * `examples/pyplotcontour_examples/` — `-contour`
 * `examples/pyplotsmith_examples/` — `-smith`
-* Enhancement write-ups: 94, 95, 98, 99, 182, 183, 208, 217, 218, 254
+* `examples/pyplotmore_examples/` — appearance controls, `-fft`, `-bode`/`-nyquist`/`-polar`, overlay
+* Enhancement write-ups: 94, 95, 98, 99, 182, 183, 208, 217, 218, 254, 296, 297, 298, 299

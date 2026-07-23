@@ -37,13 +37,36 @@ quote_python_string(FILE *stream, const char *s)
 }
 
 
+/* Enhancement-296: emit `_ax.axhline(v)` / `_ax.axvline(v)` for each numeric value
+   in a comma/space separated list (`fn` is "axhline" or "axvline"). SI suffixes are
+   accepted (1k, 1meg, ...) via ngspice's own numeric parser. Non-numeric tokens are
+   skipped rather than aborting the plot. */
+static void
+emit_reference_lines(FILE *file, const char *fn, const char *list)
+{
+    char *dup = copy(list);
+    char *tok, *save = NULL;
+    for (tok = strtok_r(dup, ", \t", &save); tok; tok = strtok_r(NULL, ", \t", &save)) {
+        char *s = tok;
+        double val;
+        if (ft_numparse(&s, FALSE, &val) < 0)       /* SI-aware (1k, 0.5n, ...) */
+            val = atof(tok);                        /* fall back; 0 for junk tokens */
+        fprintf(file, "    _ax.%s(%e, color='0.5', lw=0.8, ls='--', zorder=0)\n",
+                fn, val);
+    }
+    tfree(dup);
+}
+
+
 void ft_pyplot(double *xlims, double *ylims,
         double xdel, double ydel,
         const char *filename, const char *title,
         const char *xlabel, const char *ylabel,
         GRIDTYPE gridtype, PLOTTYPE plottype,
-        struct dvec *vecs, bool hist)
+        struct dvec *vecs, int mode)
 {
+    const bool hist = (mode == PYMODE_HIST);
+    const bool fft  = (mode == PYMODE_FFT);
     FILE *file, *file_data;
     struct dvec *v;
     int i, col, numVecs, err, nper, nrows, row;
@@ -54,6 +77,11 @@ void ft_pyplot(double *xlims, double *ylims,
     double linewidth = 0.0;
     char backend[BSIZE_SP]; /* Enhancement-183: matplotlib backend override */
     bool have_backend;
+    /* Enhancement-296: appearance controls. */
+    char gridvar[BSIZE_SP], legendvar[BSIZE_SP];
+    char axhline[BSIZE_SP], axvline[BSIZE_SP];
+    bool have_grid, have_legend, have_axh, have_axv, linemarkers, transparent;
+    int dpi = 100;
     /* Enhancement-183: hold a full directory path (the deck's folder) + base
        name, not just a bare "pyplot.data" -- 128 was too small for a path. */
     char filename_data[1024], filename_py[1024];
@@ -145,6 +173,36 @@ void ft_pyplot(double *xlims, double *ylims,
         if (cieq(pointstyle, "markers"))
             markers = TRUE;
 
+    /* Enhancement-296: `set pyplot_markers` draws a marker at each sample ON TOP
+       of the line (a cycling shape per trace), so overlaid traces are told apart
+       in print or greyscale -- distinct from `pointstyle=markers`, which draws
+       markers with NO line. */
+    linemarkers = cp_getvar("pyplot_markers", CP_BOOL, NULL, 0);
+
+    /* Enhancement-296: `set pyplot_grid=on|off|x|y|both` overrides the default
+       (grid follows the axis type). `set pyplot_legend=off` hides the legend;
+       any other value is passed as the matplotlib legend location
+       (e.g. "upper right", "best"). */
+    have_grid = cp_getvar("pyplot_grid", CP_STRING, gridvar, sizeof(gridvar)) ? TRUE : FALSE;
+    have_legend = cp_getvar("pyplot_legend", CP_STRING, legendvar, sizeof(legendvar)) ? TRUE : FALSE;
+
+    /* Enhancement-296: `set pyplot_axhline=v1,v2,...` / `pyplot_axvline=...` draw
+       horizontal / vertical reference lines (thresholds, -3 dB, decision levels). */
+    have_axh = cp_getvar("pyplot_axhline", CP_STRING, axhline, sizeof(axhline)) ? TRUE : FALSE;
+    have_axv = cp_getvar("pyplot_axvline", CP_STRING, axvline, sizeof(axvline)) ? TRUE : FALSE;
+
+    /* Enhancement-296: `set pyplot_dpi=<N>` (savefig resolution, default 100) and
+       `set pyplot_transparent` (transparent figure background for a hardcopy). */
+    if (!cp_getvar("pyplot_dpi", CP_NUM, &dpi, 0) || dpi < 1)
+        dpi = 100;
+    transparent = cp_getvar("pyplot_transparent", CP_BOOL, NULL, 0);
+
+    /* Enhancement-299: `set pyplot_cursor` adds a crosshair that follows the mouse
+       (matplotlib's built-in Cursor widget -- no extra package). Interactive only:
+       it does nothing in a hardcopy, where there is no mouse. The window already
+       provides pan / zoom / save-image via matplotlib's own toolbar. */
+    bool cursor = cp_getvar("pyplot_cursor", CP_BOOL, NULL, 0) && !hardcopy;
+
     boxes = (plottype == PLOT_COMB);
     if (plottype == PLOT_POINT)
         markers = TRUE;
@@ -158,6 +216,29 @@ void ft_pyplot(double *xlims, double *ylims,
         if (!cp_getvar("pyplot_hist_bins", CP_NUM, &histbins, 0) || histbins < 1)
             histbins = 0;                    /* 0 => matplotlib 'auto' */
         histdensity = cp_getvar("pyplot_hist_density", CP_BOOL, NULL, 0);
+    }
+
+    /* Enhancement-297: `pyplot -fft <sig> ...` plots the one-sided amplitude
+       spectrum of each signal. Transient data is adaptively sampled, so the
+       generated script resamples onto a UNIFORM grid (np.interp) before the FFT --
+       a raw rfft over non-uniform samples would be wrong. Options:
+         set pyplot_fft_window = hann|hamming|blackman|rect   (default hann)
+         set pyplot_fft_db                                    (20*log10 magnitude)
+         set pyplot_fft_points = <N>                          (resample length) */
+    char fftwin[BSIZE_SP];
+    bool fftdb = FALSE, fftlogf = FALSE;
+    int fftpoints = 0;
+    if (fft) {
+        if (!cp_getvar("pyplot_fft_window", CP_STRING, fftwin, sizeof(fftwin)))
+            strcpy(fftwin, "hann");
+        fftdb = cp_getvar("pyplot_fft_db", CP_BOOL, NULL, 0);
+        if (!cp_getvar("pyplot_fft_points", CP_NUM, &fftpoints, 0) || fftpoints < 8)
+            fftpoints = 0;                   /* 0 => next power of two >= len */
+        /* `set pyplot_fft_logf` -> log frequency axis. Set here (not via the
+           command's `xlog`, which would validate the TIME scale -- including t=0 --
+           and abort before the FFT runs); the DC bin is dropped so log(0) is
+           never plotted. */
+        fftlogf = cp_getvar("pyplot_fft_logf", CP_BOOL, NULL, 0);
     }
 
     switch (gridtype) {
@@ -203,7 +284,17 @@ void ft_pyplot(double *xlims, double *ylims,
             if (v->v_length > datarows)
                 datarows = v->v_length;
     } else {
-        datarows = vecs->v_scale->v_length;
+        /* Enhancement-299: walk the LONGEST scale, not just the first vector's, so
+           overlaying runs of different lengths (`pyplot tran1.v(out) tran2.v(out)`)
+           renders every trace fully -- each vector still uses its own scale for x,
+           and shorter ones pad with NaN (matplotlib skips it). For a single run all
+           vectors share one scale, so this is unchanged. */
+        datarows = 0;
+        for (v = vecs; v; v = v->v_link2) {
+            int len = (v->v_scale ? v->v_scale->v_length : v->v_length);
+            if (len > datarows)
+                datarows = len;
+        }
     }
     for (i = 0; i < datarows; i++) {
         for (v = vecs; v; v = v->v_link2) {
@@ -265,11 +356,50 @@ void ft_pyplot(double *xlims, double *ylims,
         fprintf(file, "fig, axes = plt.subplots(%d, 1, sharex=%s, squeeze=False)\n",
                 nrows, sharex);
 
+    /* Enhancement-297: the FFT window (numpy) chosen by pyplot_fft_window. */
+    const char *winexpr = "np.hanning(_N)";
+    if (fft) {
+        if (cieq(fftwin, "hamming"))       winexpr = "np.hamming(_N)";
+        else if (cieq(fftwin, "blackman")) winexpr = "np.blackman(_N)";
+        else if (cieq(fftwin, "rect") || cieq(fftwin, "none")
+                 || cieq(fftwin, "boxcar")) winexpr = "np.ones(_N)";
+    }
+
     col = 0;
     row = 0;
     i = 0;
     for (v = vecs; v; v = v->v_link2) {
         row = (nper > 0) ? (i / nper) : 0;
+        if (fft) {
+            /* Resample the (possibly non-uniform) time series onto a uniform grid,
+               window it, and take the one-sided amplitude spectrum. Scaling by
+               2/sum(w) makes a pure tone read back its amplitude. */
+            fprintf(file, "_t = d[:, %d]; _y = d[:, %d]\n", col, col + 1);
+            fprintf(file, "_m = ~np.isnan(_t) & ~np.isnan(_y); _t = _t[_m]; _y = _y[_m]\n");
+            fprintf(file, "if _t.size >= 2:\n");
+            if (fftpoints > 0)
+                fprintf(file, "    _N = %d\n", fftpoints);
+            else
+                fprintf(file, "    _N = 1 << int(np.ceil(np.log2(max(8, _t.size))))\n");
+            fprintf(file, "    _tu = np.linspace(_t[0], _t[-1], _N)\n");
+            fprintf(file, "    _yu = np.interp(_tu, _t, _y)\n");
+            fprintf(file, "    _w = %s\n", winexpr);
+            fprintf(file, "    _dt = (_t[-1] - _t[0]) / (_N - 1)\n");
+            fprintf(file, "    _Y = np.fft.rfft((_yu - _yu.mean()) * _w)\n");
+            fprintf(file, "    _f = np.fft.rfftfreq(_N, _dt)\n");
+            fprintf(file, "    _mag = np.abs(_Y) * 2.0 / np.sum(_w)\n");
+            /* Enhancement-297: drop the DC bin under a log frequency axis. */
+            if (fftlogf)
+                fprintf(file, "    _f = _f[1:]; _mag = _mag[1:]\n");
+            fprintf(file, "    axes[%d, 0].plot(_f, %s, %slabel=", row,
+                    fftdb ? "20.0 * np.log10(np.maximum(_mag, 1e-30))" : "_mag",
+                    lwarg);
+            quote_python_string(file, v->v_name ? v->v_name : "");
+            fprintf(file, ")\n");
+            col += 2;
+            i++;
+            continue;
+        }
         fprintf(file, "axes[%d, 0].", row);
         if (hist) {
             /* Enhancement-217: the VALUE column (col+1), NaN-filtered so vectors
@@ -291,7 +421,13 @@ void ft_pyplot(double *xlims, double *ylims,
         else if (markers)
             fprintf(file, "plot(d[:, %d], d[:, %d], marker='.', linestyle='None', ",
                     col, col + 1);
-        else
+        else if (linemarkers) {
+            /* Enhancement-296: line + a cycling marker shape, so overlaid traces
+               are distinguishable without colour. */
+            static const char *mk[] = { "o", "s", "^", "D", "v", "*", "P", "X" };
+            fprintf(file, "plot(d[:, %d], d[:, %d], marker='%s', markevery=0.1, %s",
+                    col, col + 1, mk[i % 8], lwarg);
+        } else
             fprintf(file, "plot(d[:, %d], d[:, %d], %s", col, col + 1, lwarg);
         fprintf(file, "label=");
         quote_python_string(file, v->v_name ? v->v_name : "");
@@ -305,7 +441,10 @@ void ft_pyplot(double *xlims, double *ylims,
     fprintf(file, "for _ax in axes[:, 0]:\n");
     /* Enhancement-217: for a histogram the y-axis is the count (or density); for a
        line plot it is the signal type passed in as `ylabel`. */
-    if (hist) {
+    if (fft) {
+        fprintf(file, "    _ax.set_ylabel('%s')\n",
+                fftdb ? "Magnitude [dB]" : "Magnitude");
+    } else if (hist) {
         fprintf(file, "    _ax.set_ylabel('%s')\n", histdensity ? "density" : "count");
     } else if (ylabel) {
         text = cp_unquote(ylabel);
@@ -314,12 +453,27 @@ void ft_pyplot(double *xlims, double *ylims,
         fprintf(file, ")\n");
         tfree(text);
     }
-    if (xlog)
+    if (xlog || (fft && fftlogf))
         fprintf(file, "    _ax.set_xscale('log')\n");
     if (ylog)
         fprintf(file, "    _ax.set_yscale('log')\n");
-    if (!nogrid)
+    /* Enhancement-296: `pyplot_grid` overrides the default (grid follows axis type). */
+    if (have_grid) {
+        if (cieq(gridvar, "off") || cieq(gridvar, "none") || cieq(gridvar, "false"))
+            fprintf(file, "    _ax.grid(False)\n");
+        else if (cieq(gridvar, "x"))
+            fprintf(file, "    _ax.grid(True, which='both', axis='x')\n");
+        else if (cieq(gridvar, "y"))
+            fprintf(file, "    _ax.grid(True, which='both', axis='y')\n");
+        else
+            fprintf(file, "    _ax.grid(True, which='both')\n");
+    } else if (!nogrid)
         fprintf(file, "    _ax.grid(True, which='both')\n");
+    /* Enhancement-296: horizontal / vertical reference lines. */
+    if (have_axh)
+        emit_reference_lines(file, "axhline", axhline);
+    if (have_axv)
+        emit_reference_lines(file, "axvline", axvline);
     /* Enhancement-182: xlims/ylims arrive non-NULL only when the user gave
      * explicit `xlimit`/`ylimit` on the command; otherwise the axes are left
      * to matplotlib's autoscaling (with fig.tight_layout() below). */
@@ -327,23 +481,45 @@ void ft_pyplot(double *xlims, double *ylims,
         fprintf(file, "    _ax.set_xlim(%e, %e)\n", xlims[0], xlims[1]);
     if (ylims && !ylog)
         fprintf(file, "    _ax.set_ylim(%e, %e)\n", ylims[0], ylims[1]);
-    fprintf(file, "    _ax.legend()\n");
+    /* Enhancement-296: `pyplot_legend=off` hides the legend; any other value is
+       the matplotlib legend location. Unset -> the default `legend()`. */
+    if (have_legend) {
+        if (cieq(legendvar, "off") || cieq(legendvar, "none") || cieq(legendvar, "false"))
+            ;                                        /* no legend */
+        else {
+            /* matplotlib locations contain a space ("upper right"), but `set`
+               keeps only the first word, so accept an underscore form
+               (`upper_right`) and convert it back to a space here. */
+            char *p;
+            for (p = legendvar; *p; p++)
+                if (*p == '_')
+                    *p = ' ';
+            fprintf(file, "    _ax.legend(loc=");
+            quote_python_string(file, legendvar);
+            fprintf(file, ")\n");
+        }
+    } else
+        fprintf(file, "    _ax.legend()\n");
     /* Enhancement-217: a histogram's x-axis is the signal VALUE (the `ylabel` type),
        and the panels do not share it, so it is labelled on every panel; a line
        plot's shared time/frequency axis is labelled on the bottom panel only. */
-    if (hist && ylabel) {
-        text = cp_unquote(ylabel);
-        fprintf(file, "    _ax.set_xlabel(");
-        quote_python_string(file, text);
-        fprintf(file, ")\n");
-        tfree(text);
-    }
-    if (!hist && xlabel) {
-        text = cp_unquote(xlabel);
-        fprintf(file, "axes[-1, 0].set_xlabel(");
-        quote_python_string(file, text);
-        fprintf(file, ")\n");
-        tfree(text);
+    if (fft) {
+        fprintf(file, "axes[-1, 0].set_xlabel('Frequency [Hz]')\n");
+    } else {
+        if (hist && ylabel) {
+            text = cp_unquote(ylabel);
+            fprintf(file, "    _ax.set_xlabel(");
+            quote_python_string(file, text);
+            fprintf(file, ")\n");
+            tfree(text);
+        }
+        if (!hist && xlabel) {
+            text = cp_unquote(xlabel);
+            fprintf(file, "axes[-1, 0].set_xlabel(");
+            quote_python_string(file, text);
+            fprintf(file, ")\n");
+            tfree(text);
+        }
     }
     if (title) {
         text = cp_unquote(title);
@@ -354,11 +530,20 @@ void ft_pyplot(double *xlims, double *ylims,
     }
     fprintf(file, "fig.tight_layout()\n");
     if (hardcopy) {
+        /* Enhancement-296: `pyplot_dpi` (default 100) and `pyplot_transparent`. */
         fprintf(file, "fig.savefig(");
         quote_python_string(file, filename);
-        fprintf(file, " + '.%s', dpi=100)\n", fmt);
+        fprintf(file, " + '.%s', dpi=%d%s)\n", fmt, dpi,
+                transparent ? ", transparent=True" : "");
         fprintf(file, "print('pyplot: wrote %s.%s')\n", filename, fmt);
     } else {
+        /* Enhancement-299: a hover crosshair on every panel (kept in a list so it
+           is not garbage-collected). matplotlib.widgets.Cursor is core matplotlib. */
+        if (cursor) {
+            fprintf(file, "from matplotlib.widgets import Cursor\n");
+            fprintf(file, "_curs = [Cursor(_a, useblit=True, color='0.5', linewidth=0.8) "
+                          "for _a in axes[:, 0]]\n");
+        }
         fprintf(file, "plt.show()\n");
     }
     (void) fclose(file);
@@ -760,6 +945,215 @@ ft_pyplot_smith(const char *filename, const char *title, struct dvec *vecs)
     (void) fclose(file);
 
     /* run it: synchronously for a file, in the background for a window. */
+#if defined(__MINGW32__) || defined(_MSC_VER)
+    if (hardcopy)
+        (void) snprintf(buf, sizeof(buf), "%s %s", python, filename_py);
+    else
+        (void) snprintf(buf, sizeof(buf), "start /B %s %s", python, filename_py);
+    _flushall();
+#else
+    if (hardcopy)
+        (void) snprintf(buf, sizeof(buf), "%s %s", python, filename_py);
+    else
+        (void) snprintf(buf, sizeof(buf), "%s %s &", python, filename_py);
+#endif
+    err = system(buf);
+    if (err == -1)
+        fprintf(cp_err, "Error: could not run '%s'.\n", buf);
+
+#ifdef SHARED_MODULE
+    setlocale(LC_NUMERIC, llocale);
+#endif
+}
+
+
+/* Enhancement-298: `pyplot -bode|-nyquist|-polar <complex vecs>`. Complex-aware AC
+   views: unlike an ordinary `pyplot` (which silently keeps the real part of a
+   complex vector), these use the FULL complex value. plotit has evaluated the
+   expressions into `vecs`; the data table is one "<vec-index> <freq> <re> <im>"
+   row per point (im = 0 for a real vector), grouped by the first column so
+   variable-length vectors stay separate. Reuses ft_pyplot()'s file/launch scaffolding
+   and the shared pyplot_* settings. */
+void
+ft_pyplot_ac(const char *filename, const char *title, struct dvec *vecs, int ac_mode)
+{
+    FILE *file, *file_data;
+    struct dvec *d;
+    int i, vi, numVecs, err;
+    bool hardcopy = FALSE, have_style, have_figsize, have_backend;
+    char terminal[BSIZE_SP], python[BSIZE_SP], style[BSIZE_SP];
+    char figsize[BSIZE_SP], backend[BSIZE_SP], fmt[16];
+    char filename_data[1024], filename_py[1024];
+    char buf[2 * 1024 + BSIZE_SP];
+    double figw = 0.0, figh = 0.0;
+    const char *modename = ac_mode == AC_BODE ? "-bode"
+                         : ac_mode == AC_NYQUIST ? "-nyquist" : "-polar";
+
+#ifdef SHARED_MODULE
+    char *llocale = setlocale(LC_NUMERIC, NULL);
+    setlocale(LC_NUMERIC, "C");
+#endif
+
+    for (d = vecs, numVecs = 0; d; d = d->v_link2)
+        numVecs++;
+    if (numVecs < 1) {
+        fprintf(cp_err, "Error: pyplot %s needs at least one vector.\n", modename);
+#ifdef SHARED_MODULE
+        setlocale(LC_NUMERIC, llocale);
+#endif
+        return;
+    }
+
+    /* same terminal / interpreter / backend / style / figsize handling as ft_pyplot */
+    fmt[0] = '\0';
+    if (cp_getvar("pyplot_terminal", CP_STRING, terminal, sizeof(terminal))) {
+        if (cieq(terminal, "png") || cieq(terminal, "png/quit")) {
+            strcpy(fmt, "png"); hardcopy = TRUE;
+        } else if (cieq(terminal, "svg") || cieq(terminal, "svg/quit")) {
+            strcpy(fmt, "svg"); hardcopy = TRUE;
+        } else if (cieq(terminal, "pdf") || cieq(terminal, "pdf/quit")) {
+            strcpy(fmt, "pdf"); hardcopy = TRUE;
+        }
+    }
+    if (!cp_getvar("pyplot_python", CP_STRING, python, sizeof(python)))
+        strcpy(python, "python3");
+    have_backend = cp_getvar("pyplot_backend", CP_STRING, backend, sizeof(backend))
+                   ? TRUE : FALSE;
+    have_figsize = FALSE;
+    if (cp_getvar("pyplot_figsize", CP_STRING, figsize, sizeof(figsize))) {
+        if (sscanf(figsize, "%lf%*[ ,xX]%lf", &figw, &figh) == 2
+                && figw > 0.0 && figh > 0.0)
+            have_figsize = TRUE;
+    }
+    have_style = cp_getvar("pyplot_style", CP_STRING, style, sizeof(style)) ? TRUE : FALSE;
+    if (have_style && cieq(style, "dark"))
+        strcpy(style, "dark_background");
+
+    snprintf(filename_data, sizeof(filename_data), "%s.data", filename);
+    snprintf(filename_py, sizeof(filename_py), "%s.py", filename);
+
+    if ((file_data = fopen(filename_data, "w")) == NULL) {
+        perror(filename);
+#ifdef SHARED_MODULE
+        setlocale(LC_NUMERIC, llocale);
+#endif
+        return;
+    }
+    for (d = vecs, vi = 0; d; d = d->v_link2, vi++) {
+        struct dvec *sc = d->v_scale;
+        for (i = 0; i < d->v_length; i++) {
+            double fr = (sc && i < sc->v_length)
+                ? (isreal(sc) ? sc->v_realdata[i] : realpart(sc->v_compdata[i]))
+                : (double) i;
+            double re = isreal(d) ? d->v_realdata[i] : realpart(d->v_compdata[i]);
+            double im = isreal(d) ? 0.0             : imagpart(d->v_compdata[i]);
+            fprintf(file_data, "%d %e %e %e\n", vi, fr, re, im);
+        }
+    }
+    (void) fclose(file_data);
+
+    if ((file = fopen(filename_py, "w")) == NULL) {
+        perror(filename);
+#ifdef SHARED_MODULE
+        setlocale(LC_NUMERIC, llocale);
+#endif
+        return;
+    }
+    fprintf(file, "#!/usr/bin/env python3\n");
+    fprintf(file, "# generated by ngspice 'pyplot %s' (Enhancement-298)\n", modename);
+    fprintf(file, "import numpy as np\n");
+    if (have_backend) {
+        fprintf(file, "import matplotlib\nmatplotlib.use(");
+        quote_python_string(file, backend);
+        fprintf(file, ")\n");
+    } else if (hardcopy) {
+        fprintf(file, "import matplotlib\nmatplotlib.use('Agg')\n");
+    }
+    fprintf(file, "import matplotlib.pyplot as plt\n");
+    if (have_style) {
+        fprintf(file, "try:\n    plt.style.use(");
+        quote_python_string(file, style);
+        fprintf(file, ")\nexcept Exception:\n    pass\n");
+    }
+    fprintf(file, "names = [");
+    for (d = vecs; d; d = d->v_link2) {
+        quote_python_string(file, d->v_name ? d->v_name : "");
+        fprintf(file, ", ");
+    }
+    fprintf(file, "]\n");
+    fprintf(file, "d = np.loadtxt(");
+    quote_python_string(file, filename_data);
+    fprintf(file, ")\n");
+    fprintf(file, "if d.ndim == 1:\n    d = d.reshape(-1, 4)\n");
+
+    if (ac_mode == AC_BODE) {
+        /* stacked magnitude (dB) / phase (deg) vs frequency (log f) */
+        if (have_figsize)
+            fprintf(file, "fig, ax = plt.subplots(2, 1, sharex=True, figsize=(%g, %g))\n",
+                    figw, figh);
+        else
+            fprintf(file, "fig, ax = plt.subplots(2, 1, sharex=True, figsize=(7.0, 5.6))\n");
+        fprintf(file, "for vi in range(len(names)):\n"
+                      "    m = d[:, 0] == vi\n"
+                      "    if not m.any():\n        continue\n"
+                      "    f = d[m, 1]; z = d[m, 2] + 1j*d[m, 3]\n"
+                      "    lbl = names[vi] if names[vi] else None\n"
+                      "    ax[0].plot(f, 20*np.log10(np.maximum(np.abs(z), 1e-30)), label=lbl)\n"
+                      "    ax[1].plot(f, np.degrees(np.unwrap(np.angle(z))))\n");
+        fprintf(file, "for a in ax:\n    a.set_xscale('log'); a.grid(True, which='both')\n");
+        fprintf(file, "ax[0].set_ylabel('Magnitude [dB]')\n");
+        fprintf(file, "ax[1].set_ylabel('Phase [deg]')\n");
+        fprintf(file, "ax[1].set_xlabel('Frequency [Hz]')\n");
+        fprintf(file, "if any(names):\n    ax[0].legend()\n");
+    } else if (ac_mode == AC_NYQUIST) {
+        if (have_figsize)
+            fprintf(file, "fig, ax = plt.subplots(figsize=(%g, %g))\n", figw, figh);
+        else
+            fprintf(file, "fig, ax = plt.subplots(figsize=(6.4, 6.0))\n");
+        fprintf(file, "for vi in range(len(names)):\n"
+                      "    m = d[:, 0] == vi\n"
+                      "    if not m.any():\n        continue\n"
+                      "    lbl = names[vi] if names[vi] else None\n"
+                      "    ax.plot(d[m, 2], d[m, 3], lw=1.6, label=lbl)\n");
+        fprintf(file, "ax.axhline(0, color='0.6', lw=0.6); ax.axvline(0, color='0.6', lw=0.6)\n");
+        fprintf(file, "ax.set_aspect('equal', 'datalim'); ax.grid(True)\n");
+        fprintf(file, "ax.set_xlabel('Real'); ax.set_ylabel('Imag')\n");
+        fprintf(file, "if any(names):\n    ax.legend()\n");
+    } else { /* AC_POLAR */
+        if (have_figsize)
+            fprintf(file, "fig, ax = plt.subplots(subplot_kw={'projection':'polar'}, "
+                          "figsize=(%g, %g))\n", figw, figh);
+        else
+            fprintf(file, "fig, ax = plt.subplots(subplot_kw={'projection':'polar'}, "
+                          "figsize=(6.4, 6.4))\n");
+        fprintf(file, "for vi in range(len(names)):\n"
+                      "    m = d[:, 0] == vi\n"
+                      "    if not m.any():\n        continue\n"
+                      "    z = d[m, 2] + 1j*d[m, 3]\n"
+                      "    lbl = names[vi] if names[vi] else None\n"
+                      "    ax.plot(np.angle(z), np.abs(z), lw=1.6, label=lbl)\n");
+        fprintf(file, "ax.grid(True)\n");
+        fprintf(file, "if any(names):\n    ax.legend(loc='upper right', fontsize=8)\n");
+    }
+
+    if (title) {
+        char *text = cp_unquote(title);
+        fprintf(file, "fig.suptitle(");
+        quote_python_string(file, text);
+        fprintf(file, ")\n");
+        tfree(text);
+    }
+    fprintf(file, "fig.tight_layout()\n");
+    if (hardcopy) {
+        fprintf(file, "fig.savefig(");
+        quote_python_string(file, filename);
+        fprintf(file, " + '.%s', dpi=110)\n", fmt);
+        fprintf(file, "print('pyplot: wrote %s.%s')\n", filename, fmt);
+    } else {
+        fprintf(file, "plt.show()\n");
+    }
+    (void) fclose(file);
+
 #if defined(__MINGW32__) || defined(_MSC_VER)
     if (hardcopy)
         (void) snprintf(buf, sizeof(buf), "%s %s", python, filename_py);

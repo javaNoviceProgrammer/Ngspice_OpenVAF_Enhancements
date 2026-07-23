@@ -54,6 +54,9 @@ com_pyplot(wordlist *wl)
     bool is_hist = FALSE;
     bool is_contour = FALSE;
     bool is_smith = FALSE;
+    bool is_fft = FALSE;    /* Enhancement-297: `-fft` magnitude spectrum */
+    /* Enhancement-298: complex-aware AC views. */
+    bool is_bode = FALSE, is_nyquist = FALSE, is_polar = FALSE;
 
     if (!wl)
         return;
@@ -92,12 +95,18 @@ com_pyplot(wordlist *wl)
             if (w->wl_word && eq(w->wl_word, "-hist"))         { is_hist = TRUE;    found = TRUE; }
             else if (w->wl_word && eq(w->wl_word, "-contour")) { is_contour = TRUE; found = TRUE; }
             else if (w->wl_word && eq(w->wl_word, "-smith"))   { is_smith = TRUE;   found = TRUE; }
+            else if (w->wl_word && eq(w->wl_word, "-fft"))     { is_fft = TRUE;     found = TRUE; }
+            else if (w->wl_word && eq(w->wl_word, "-bode"))    { is_bode = TRUE;    found = TRUE; }
+            else if (w->wl_word && eq(w->wl_word, "-nyquist")) { is_nyquist = TRUE; found = TRUE; }
+            else if (w->wl_word && eq(w->wl_word, "-polar"))   { is_polar = TRUE;   found = TRUE; }
         }
         if (found) {
             wordlist *tail = NULL;
             for (w = wl; w; w = w->wl_next) {
                 if (w->wl_word && (eq(w->wl_word, "-hist") || eq(w->wl_word, "-contour")
-                                   || eq(w->wl_word, "-smith")))
+                                   || eq(w->wl_word, "-smith") || eq(w->wl_word, "-fft")
+                                   || eq(w->wl_word, "-bode") || eq(w->wl_word, "-nyquist")
+                                   || eq(w->wl_word, "-polar")))
                     continue;                         /* drop the marker word */
                 wordlist *nw = TMALLOC(wordlist, 1);
                 nw->wl_word = copy(w->wl_word ? w->wl_word : "");
@@ -112,6 +121,14 @@ com_pyplot(wordlist *wl)
             strcpy(defname, "contour");
         if (is_smith)
             strcpy(defname, "smith");
+        if (is_fft)
+            strcpy(defname, "fft");
+        if (is_bode)
+            strcpy(defname, "bode");
+        if (is_nyquist)
+            strcpy(defname, "nyquist");
+        if (is_polar)
+            strcpy(defname, "polar");
         if (!wl)                                      /* marker with no signals */
             goto done;
     }
@@ -133,7 +150,9 @@ com_pyplot(wordlist *wl)
         if (autoseq > 0)
             (void) snprintf(defname, sizeof defname, "%s-%u",
                             is_eye ? "eye" : is_contour ? "contour"
-                            : is_smith ? "smith" : "pyplot",
+                            : is_smith ? "smith" : is_fft ? "fft"
+                            : is_bode ? "bode" : is_nyquist ? "nyquist"
+                            : is_polar ? "polar" : "pyplot",
                             autoseq + 1);
         autoseq++;
         fname = defname;
@@ -174,7 +193,9 @@ com_pyplot(wordlist *wl)
 
     (void) plotit(wl, fname,
                   is_contour ? "pyplotcontour" : is_hist ? "pyplothist"
-                  : is_smith ? "pyplotsmith" : "pyplot");
+                  : is_smith ? "pyplotsmith" : is_fft ? "pyplotfft"
+                  : is_bode ? "pyplotbode" : is_nyquist ? "pyplotnyquist"
+                  : is_polar ? "pyplotpolar" : "pyplot");
 
 done:
     if (tempf)

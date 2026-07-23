@@ -1263,7 +1263,8 @@ bool plotit(wordlist *wl, const char *hcopy, const char *devname)
         goto quit;
     }
 
-    if (devname && (eq(devname, "pyplot") || eq(devname, "pyplothist"))) {
+    if (devname && (eq(devname, "pyplot") || eq(devname, "pyplothist")
+                    || eq(devname, "pyplotfft"))) {
         /* Enhancement-94: interface to matplotlib.
          * Enhancement-182: pass axis limits only when the USER asked for them
          * (`xl`/`xlimit`, `yl`/`ylimit` -- the static xlim/ylim hold those);
@@ -1279,7 +1280,9 @@ bool plotit(wordlist *wl, const char *hcopy, const char *devname)
                   title ? title : vecs->v_plot->pl_title,
                   xlabel ? xlabel : ft_typabbrev(vecs->v_scale->v_type),
                   ylabel ? ylabel : ft_typabbrev(y_type),
-                  gtype, ptype, vecs, eq(devname, "pyplothist"));
+                  gtype, ptype, vecs,
+                  eq(devname, "pyplothist") ? PYMODE_HIST
+                  : eq(devname, "pyplotfft") ? PYMODE_FFT : PYMODE_LINE);
         rtn = TRUE;
         goto quit;
     }
@@ -1291,6 +1294,19 @@ bool plotit(wordlist *wl, const char *hcopy, const char *devname)
          * renderer triangulates them. Axis limits and the shared-scale line-plot
          * machinery do not apply, so it is bypassed. */
         ft_pyplot_contour(hcopy, title ? title : vecs->v_plot->pl_title, vecs);
+        rtn = TRUE;
+        goto quit;
+    }
+
+    if (devname && (eq(devname, "pyplotbode") || eq(devname, "pyplotnyquist")
+                    || eq(devname, "pyplotpolar"))) {
+        /* Enhancement-298: complex-aware AC views. plotit has evaluated the
+         * expressions into `vecs`; the dedicated renderer keeps the imaginary
+         * part (an ordinary pyplot would take only the real part). The Cartesian
+         * line-plot / axis-limit machinery does not apply, so it is bypassed. */
+        ft_pyplot_ac(hcopy, title ? title : vecs->v_plot->pl_title, vecs,
+                     eq(devname, "pyplotbode") ? AC_BODE
+                     : eq(devname, "pyplotnyquist") ? AC_NYQUIST : AC_POLAR);
         rtn = TRUE;
         goto quit;
     }
