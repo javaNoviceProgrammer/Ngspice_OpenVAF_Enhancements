@@ -1,4 +1,4 @@
-# pyplotmore_examples — Enhancements 296-300
+# pyplotmore_examples — Enhancements 296-301
 
 Four groups of additions to the `pyplot` command, all verified against closed-form
 oracles where a number is involved (not just against the old binary).
@@ -10,6 +10,7 @@ oracles where a number is involved (not just against the old binary).
 | 298 | `-bode` / `-nyquist` / `-polar` — complex-aware AC views | Bode keeps the imaginary part: **−3.01 dB / −45°** at fc of an RC low-pass |
 | 299 | Overlay of different-length runs renders fully; `pyplot_cursor` crosshair; the `.data` file is the data export | overlay keeps every trace; cursor emitted only in a window |
 | 300 | `pyplot_mplcursors` — the `mplcursors` backend (data cursors) instead of the built-in crosshair, with a graceful fallback | the mplcursors branch + fallback are emitted; the built-in Cursor is still the default |
+| 301 | `pyplot_cursor` is the single master switch (off by default); `pyplot_mplcursors` only selects the backend | the full gating truth table |
 
 ## The point of 298
 
@@ -24,6 +25,6 @@ plots imag vs real, `-polar` puts magnitude at phase on a polar projection.
 python3 verify_pyplotmore.py
 ```
 
-Runs under both linear solvers and prints a combined verdict (24 checks). Every generated
+Runs under both linear solvers and prints a combined verdict (26 checks). Every generated
 matplotlib script is also executed (Agg), so a syntactically broken emission fails — not
 only a missing keyword.

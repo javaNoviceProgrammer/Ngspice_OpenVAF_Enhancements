@@ -495,26 +495,38 @@ Runs of different lengths overlay correctly — each trace keeps all of its own 
 ### 12.2 Interactive crosshair and toolbar
 
 In an interactive window (no `pyplot_terminal`), matplotlib's own toolbar already gives
-**pan, zoom and save-image**. Add a value crosshair that follows the mouse with:
+**pan, zoom and save-image**. The value cursor is **off by default**; `pyplot_cursor` is the
+one switch that turns it on:
 
 ```
 set pyplot_cursor
 pyplot v(out)
 ```
 
-It uses matplotlib's built-in cursor — no extra Python package — and is ignored for a
+That draws matplotlib's built-in crosshair — no extra Python package — and is ignored for a
 hardcopy, where there is no mouse.
 
-If you have the [`mplcursors`](https://mplcursors.readthedocs.io/) package installed, select
-it instead for **data cursors** that snap to a trace and show its value on hover:
+If you have the [`mplcursors`](https://mplcursors.readthedocs.io/) package installed, add
+`pyplot_mplcursors` to switch the backend to **data cursors** that snap to a trace and show
+its value on hover:
 
 ```
 set pyplot_python=python3.13     $ an interpreter that has mplcursors
-set pyplot_mplcursors
+set pyplot_cursor                $ the cursor must be on ...
+set pyplot_mplcursors            $ ... and this selects the mplcursors backend
 pyplot v(out)
 ```
 
-`pyplot_mplcursors` turns the cursor on by itself. The generated script falls back to the
+The gating is a simple master switch plus a backend selector:
+
+| `pyplot_cursor` | `pyplot_mplcursors` | Result |
+|---|---|---|
+| unset | *(either)* | no cursor (the default) |
+| set | unset | built-in crosshair |
+| set | set | mplcursors data cursors |
+
+`pyplot_mplcursors` on its own — with `pyplot_cursor` unset — does nothing. When the
+cursor is on and mplcursors is selected, the generated script still falls back to the
 built-in crosshair if `mplcursors` cannot be imported where it runs, so a deck stays
 portable. `mplcursors` must be importable by the interpreter named by `pyplot_python`.
 
@@ -663,4 +675,4 @@ treated as data. Rename the output or the node.
 * `examples/pyplotcontour_examples/` — `-contour`
 * `examples/pyplotsmith_examples/` — `-smith`
 * `examples/pyplotmore_examples/` — appearance controls, `-fft`, `-bode`/`-nyquist`/`-polar`, overlay
-* Enhancement write-ups: 94, 95, 98, 99, 182, 183, 208, 217, 218, 254, 296, 297, 298, 299, 300
+* Enhancement write-ups: 94, 95, 98, 99, 182, 183, 208, 217, 218, 254, 296, 297, 298, 299, 300, 301

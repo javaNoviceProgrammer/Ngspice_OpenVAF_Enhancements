@@ -197,18 +197,18 @@ void ft_pyplot(double *xlims, double *ylims,
         dpi = 100;
     transparent = cp_getvar("pyplot_transparent", CP_BOOL, NULL, 0);
 
-    /* Enhancement-299: `set pyplot_cursor` adds a crosshair that follows the mouse
-       (matplotlib's built-in Cursor widget -- no extra package). Interactive only:
-       it does nothing in a hardcopy, where there is no mouse. The window already
-       provides pan / zoom / save-image via matplotlib's own toolbar.
-       Enhancement-300: `set pyplot_mplcursors` selects the `mplcursors` package
-       instead -- data cursors that snap to a trace and show the (x, y) value on
-       hover. It also turns the cursor on (so it works on its own), and the emitted
-       script falls back to the built-in Cursor if `mplcursors` is not importable
-       where the script runs. */
+    /* Enhancement-299/301: `set pyplot_cursor` is the single master switch for the
+       interactive cursor -- OFF by default, and the ONLY thing that turns any cursor
+       on. It draws matplotlib's built-in Cursor crosshair (no extra package).
+       Interactive only: it does nothing in a hardcopy, where there is no mouse (the
+       window already provides pan / zoom / save-image via matplotlib's own toolbar).
+       Enhancement-300/301: `set pyplot_mplcursors` only SELECTS the backend when the
+       cursor is on -- the `mplcursors` package (data cursors that snap to a trace and
+       show the (x, y) value on hover), with the emitted script falling back to the
+       built-in Cursor if `mplcursors` is not importable where it runs. On its own,
+       with `pyplot_cursor` unset, it does nothing. */
     bool mplcursors = cp_getvar("pyplot_mplcursors", CP_BOOL, NULL, 0);
-    bool cursor = (cp_getvar("pyplot_cursor", CP_BOOL, NULL, 0) || mplcursors)
-                  && !hardcopy;
+    bool cursor = cp_getvar("pyplot_cursor", CP_BOOL, NULL, 0) && !hardcopy;
 
     boxes = (plottype == PLOT_COMB);
     if (plottype == PLOT_POINT)

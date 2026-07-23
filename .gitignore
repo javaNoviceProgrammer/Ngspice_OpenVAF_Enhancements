@@ -598,3 +598,12 @@ examples/autosave_examples/*.chk
 examples/autosave_examples/*.dat
 examples/checkpoint_examples/*.chk
 examples/checkpoint_examples/*.dat
+
+# pyplotmore_examples: verify_pyplotmore.py generates decks + matplotlib scripts/images
+# named after the plot base (no leading underscore), then cleans them up. Ignore them so a
+# mid-run `git add` can never track them (as an E-300 commit accidentally did).
+examples/pyplotmore_examples/*.cir
+examples/pyplotmore_examples/*.data
+examples/pyplotmore_examples/*.png
+examples/pyplotmore_examples/*.py
+!examples/pyplotmore_examples/verify_pyplotmore.py
