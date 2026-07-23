@@ -830,7 +830,17 @@ cx_fft(void *data, short int type, int length, int *newlength, short int *newtyp
         *newlength = N;
         outdata = alloc_c(N);
 
-        scale = (double) N;
+        /* Enhancement-306: normalise by the number of INPUT samples, not by the
+           zero-padded transform size. Green's radix-2 kernel pads `length` samples
+           up to the next power of two N, but zero padding only interpolates the
+           spectrum -- it adds no signal, so it must not change an amplitude. The
+           unambiguous case is bin 0: X[0] is the sum of the samples = D*length for
+           a DC offset D, so dividing by N reads back D*length/N instead of D, and
+           "a DC value cannot depend on how many samples were taken". This is the
+           twin of the Enhancement-241 bug, which fixed the identical mistake in the
+           `fft` COMMAND (frontend/com_fft.c, scale = length/2) but not here in the
+           vector-expression function reached by `let F = fft(v)`. */
+        scale = (double) length;
         for (i = 0; i < N; i++) {
             outdata[i].cx_real = datax[2*i]/scale;
             outdata[i].cx_imag = datax[2*i+1]/scale;
@@ -888,7 +898,17 @@ cx_fft(void *data, short int type, int length, int *newlength, short int *newtyp
         rffts(datax, M, 1);
         fftFree();
 
-        scale = ((double)N)/2;
+        /* Enhancement-306: normalise by the number of INPUT samples, not the
+           zero-padded transform size -- the FFTW twin four lines up already
+           uses ((double)length)/2.0. Green's radix-2 kernel pads `length`
+           samples to the next power of two N, but zero padding only
+           interpolates the spectrum; it adds no signal and must not change an
+           amplitude. Bin 0 is the unambiguous case: X[0] is the sum of the
+           samples = D*length for a DC offset D, so dividing by N reads back
+           D*length/N. This is the twin of Enhancement-241, which fixed the
+           identical mistake in the `fft` COMMAND (frontend/com_fft.c) but not
+           here in the vector-expression function reached by `let F = fft(v)`. */
+        scale = ((double)length)/2;
         /* Re(x[0]), Re(x[N/2]), Re(x[1]), Im(x[1]), Re(x[2]), Im(x[2]), ... Re(x[N/2-1]), Im(x[N/2-1]). */
         outdata[0].cx_real = datax[0]/scale/2.0;
         outdata[0].cx_imag = 0.0;
