@@ -1,0 +1,11 @@
+* Enhancement-315 [8]: .disto with no distortion sources (a plain resistor) -- was SIGSEGV
+* Pre-fix: OUTpBeginPlot failed, leaving acPlot NULL, and OUTattributes(acPlot,...) crashed.
+* Post-fix: the OUTpBeginPlot result is checked and the analysis bails cleanly.
+v1 1 0 dc 1 ac 1
+r8 1 0 1
+.op
+.disto dec 2 1 10
+.control
+run
+.endc
+.end

@@ -1,0 +1,12 @@
+* Enhancement-315 [7]: a second .pz over a URC device -- was SIGSEGV
+* Pre-fix: CKTic's RHS-zeroing loop (vectorized to memset) wrote through a NULL CKTrhs.
+* Post-fix: CKTic returns cleanly when the RHS vectors are not allocated.
+v1 1 0 1
+.model um urc
+u1 1 2 0 um l=1
+.pz 1 0 3 0 cur zer
+.pz 1 0 3 0 cur zer
+.control
+run
+.endc
+.end

@@ -46,6 +46,14 @@ TFanal(CKTcircuit *ckt, int restart)
             (ckt->CKTmode & MODEUIC) | MODEDCOP | MODEINITFLOAT,
             ckt->CKTdcMaxIter);
 
+    /* Enhancement-315: CKTop's return was ignored. When the operating point fails --
+       e.g. a singular matrix from a dangling inductor (`l1 2 3 1` with 2,3 floating) --
+       the matrix is never factored, and the SMPsolve() below asserts
+       IS_FACTORED(Matrix) (spsolve.c:137, SIGABRT). Propagate the error instead of
+       solving an unfactored matrix. A well-posed .tf returns 0 here and is unaffected. */
+    if (converged)
+        return converged;
+
     ptr = CKTfndDev(ckt, job->TFinSrc);
 
     if (!ptr || ptr->GENmodPtr->GENmodType < 0) {

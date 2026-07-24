@@ -1,0 +1,9 @@
+* Enhancement-315 [6]: .tf on a singular circuit (dangling inductor) -- was SIGABRT
+* l1's nodes 2,3 float (connect to nothing else), so the operating point is singular.
+* Pre-fix: CKTop's error was ignored, then SMPsolve asserted IS_FACTORED (spsolve.c:137).
+* Post-fix: the CKTop error is propagated -> clean "singular matrix" error, no crash.
+v1 1 0 dc 1
+r1 1 0 1k
+l1 2 3 1
+.tf v(1) v1
+.end

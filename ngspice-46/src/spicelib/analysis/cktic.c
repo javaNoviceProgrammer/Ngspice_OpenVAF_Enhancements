@@ -18,6 +18,15 @@ CKTic(CKTcircuit *ckt)
     int i;
     CKTnode *node;
 
+    /* Enhancement-315: CKTic sets nodeset/IC values into the RHS vectors. When those
+       vectors have not been allocated -- reachable by running a second .pz over a URC
+       device, where the RHS is NULL when CKTic runs -- the zeroing loop below (which the
+       compiler vectorises into memset(CKTrhs, 0, ...)) wrote through a NULL pointer and
+       SIGSEGV'd. There are no initial conditions to place into vectors that do not exist,
+       so return cleanly. */
+    if (ckt->CKTrhs == NULL || ckt->CKTrhsOld == NULL || ckt->CKTmatrix == NULL)
+        return(OK);
+
     size = SMPmatSize(ckt->CKTmatrix);
     for (i=0;i<=size;i++) {
         ckt->CKTrhs[i]=0;

@@ -535,11 +535,18 @@ time1 = SPfrontEnd->IFseconds();
 	error = CKTnames(ckt,&numNames,&nameList);
 	if(error) return(error);
 	SPfrontEnd->IFnewUid (ckt, &freqUid, NULL, "frequency", UID_OTHER, NULL);
-        SPfrontEnd->OUTpBeginPlot (ckt, ckt->CKTcurJob,
+        error = SPfrontEnd->OUTpBeginPlot (ckt, ckt->CKTcurJob,
                                    "DISTORTION - 2nd harmonic",
                                    freqUid, IF_REAL,
                                    numNames, nameList, IF_COMPLEX,
                                    &acPlot);
+        /* Enhancement-315: OUTpBeginPlot's result was unchecked in the output
+           section. When it fails (e.g. .disto with no distortion sources -- a
+           plain resistor -- run after .op), acPlot stayed NULL and the following
+           OUTattributes(acPlot,...) / CKTacDump(...,acPlot) dereferenced it (SIGSEGV
+           at OUTattributes+268, addr 0x28). Bail cleanly instead. */
+        if (error) return(error);
+        if (acPlot == NULL) return(E_NOTFOUND);
         if (job->DstepType != LINEAR) {
 	    SPfrontEnd->OUTattributes (acPlot, NULL, OUT_SCALE_LOG, NULL);
 	}
@@ -559,11 +566,18 @@ time1 = SPfrontEnd->IFseconds();
 	error = CKTnames(ckt,&numNames,&nameList);
 	if(error) return(error);
 	SPfrontEnd->IFnewUid (ckt, &freqUid, NULL, "frequency", UID_OTHER, NULL);
-        SPfrontEnd->OUTpBeginPlot (ckt, ckt->CKTcurJob,
+        error = SPfrontEnd->OUTpBeginPlot (ckt, ckt->CKTcurJob,
                                    "DISTORTION - 3rd harmonic",
                                    freqUid, IF_REAL,
                                    numNames, nameList, IF_COMPLEX,
                                    &acPlot);
+        /* Enhancement-315: OUTpBeginPlot's result was unchecked in the output
+           section. When it fails (e.g. .disto with no distortion sources -- a
+           plain resistor -- run after .op), acPlot stayed NULL and the following
+           OUTattributes(acPlot,...) / CKTacDump(...,acPlot) dereferenced it (SIGSEGV
+           at OUTattributes+268, addr 0x28). Bail cleanly instead. */
+        if (error) return(error);
+        if (acPlot == NULL) return(E_NOTFOUND);
        for (i=0; i< displacement ; i++)
        {
 	DkerProc(D_THRF1,job->r3H11stor[i],
@@ -582,11 +596,18 @@ time1 = SPfrontEnd->IFseconds();
 	error = CKTnames(ckt,&numNames,&nameList);
 	if(error) return(error);
 	SPfrontEnd->IFnewUid (ckt, &freqUid, NULL, "frequency", UID_OTHER, NULL);
-        SPfrontEnd->OUTpBeginPlot (ckt, ckt->CKTcurJob,
+        error = SPfrontEnd->OUTpBeginPlot (ckt, ckt->CKTcurJob,
                                    "DISTORTION - IM: f1+f2",
                                    freqUid, IF_REAL,
                                    numNames, nameList, IF_COMPLEX,
                                    &acPlot);
+        /* Enhancement-315: OUTpBeginPlot's result was unchecked in the output
+           section. When it fails (e.g. .disto with no distortion sources -- a
+           plain resistor -- run after .op), acPlot stayed NULL and the following
+           OUTattributes(acPlot,...) / CKTacDump(...,acPlot) dereferenced it (SIGSEGV
+           at OUTattributes+268, addr 0x28). Bail cleanly instead. */
+        if (error) return(error);
+        if (acPlot == NULL) return(E_NOTFOUND);
 	   for (i=0; i< displacement ; i++)
 	   {
 	DkerProc(D_F1PF2,job->r2H12stor[i],
@@ -603,11 +624,18 @@ time1 = SPfrontEnd->IFseconds();
 	error = CKTnames(ckt,&numNames,&nameList);
 	if(error) return(error);
 	SPfrontEnd->IFnewUid (ckt, &freqUid, NULL, "frequency", UID_OTHER, NULL);
-        SPfrontEnd->OUTpBeginPlot (ckt, ckt->CKTcurJob,
+        error = SPfrontEnd->OUTpBeginPlot (ckt, ckt->CKTcurJob,
                                    "DISTORTION - IM: f1-f2",
                                    freqUid, IF_REAL,
                                    numNames, nameList, IF_COMPLEX,
                                    &acPlot);
+        /* Enhancement-315: OUTpBeginPlot's result was unchecked in the output
+           section. When it fails (e.g. .disto with no distortion sources -- a
+           plain resistor -- run after .op), acPlot stayed NULL and the following
+           OUTattributes(acPlot,...) / CKTacDump(...,acPlot) dereferenced it (SIGSEGV
+           at OUTattributes+268, addr 0x28). Bail cleanly instead. */
+        if (error) return(error);
+        if (acPlot == NULL) return(E_NOTFOUND);
 	   for (i=0; i< displacement ; i++)
 	   {
 	DkerProc(D_F1MF2,
@@ -625,11 +653,18 @@ time1 = SPfrontEnd->IFseconds();
 	error = CKTnames(ckt,&numNames,&nameList);
 	if(error) return(error);
 	SPfrontEnd->IFnewUid (ckt, &freqUid, NULL, "frequency", UID_OTHER, NULL);
-        SPfrontEnd->OUTpBeginPlot (ckt, ckt->CKTcurJob,
+        error = SPfrontEnd->OUTpBeginPlot (ckt, ckt->CKTcurJob,
                                    "DISTORTION - IM: 2f1-f2",
                                    freqUid, IF_REAL,
                                    numNames, nameList, IF_COMPLEX,
                                    &acPlot);
+        /* Enhancement-315: OUTpBeginPlot's result was unchecked in the output
+           section. When it fails (e.g. .disto with no distortion sources -- a
+           plain resistor -- run after .op), acPlot stayed NULL and the following
+           OUTattributes(acPlot,...) / CKTacDump(...,acPlot) dereferenced it (SIGSEGV
+           at OUTattributes+268, addr 0x28). Bail cleanly instead. */
+        if (error) return(error);
+        if (acPlot == NULL) return(E_NOTFOUND);
 	   for (i=0; i< displacement ; i++)
 	   {
 	DkerProc(D_2F1MF2,
