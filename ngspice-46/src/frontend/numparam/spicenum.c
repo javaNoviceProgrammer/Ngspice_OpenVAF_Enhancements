@@ -505,6 +505,21 @@ nupa_get_string_param(const char *param_name)
     return NULL;
 }
 
+/* Enhancement-321: the ORIGINAL (pre-substitution) text of deck line `linenum`,
+ * as retained by numparam in dicoS->dynrefptr. For a flattened subckt-internal
+ * device the card's linenum_orig indexes the subckt-DEFINITION body line (a
+ * top-level template stored with its `{expr}` intact), so this recovers the
+ * value expression that was frozen out of the built instance. NULL if out of
+ * range or unset. */
+const char *
+nupa_get_dynref(int linenum)
+{
+    if (!dicoS || !dicoS->dynrefptr || linenum < 0 ||
+        linenum > dicoS->linecount)
+        return NULL;
+    return dicoS->dynrefptr[linenum];
+}
+
 
 static void
 nupa_copy_entry(entry_t *proto)

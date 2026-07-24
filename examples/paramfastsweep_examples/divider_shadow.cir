@@ -1,0 +1,14 @@
+* Enhancement-321: subckt locally shadows the swept param -> reset fallback
+.param rval=1k
+.subckt res a b
+.param rval=500
+R1 a b {rval}
+.ends
+V1 in 0 1
+X1 in out res
+R2 out 0 1k
+.control
+sweep rval lin 9 100 900 -analysis op -output out
+wrdata divider_shadow_out.dat out
+.endc
+.end

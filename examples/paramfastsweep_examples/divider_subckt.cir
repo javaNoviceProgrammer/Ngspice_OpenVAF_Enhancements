@@ -1,4 +1,4 @@
-* Enhancement-320: swept param inside a subckt -> conservative reset fallback
+* Enhancement-321: swept param feeds a SUBCIRCUIT-INTERNAL device value
 .param rval=1k
 .subckt res a b
 R1 a b {rval}
@@ -7,7 +7,7 @@ V1 in 0 1
 X1 in out res
 R2 out 0 1k
 .control
-sweep rval lin 9 100 900 -analysis op -output out
-wrdata divider_sub_out.dat out
+sweep rval lin 9 100 900 -analysis op -output out -output i(v1)
+wrdata divider_sub_out.dat out i(v1)
 .endc
 .end

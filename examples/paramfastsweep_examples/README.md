@@ -12,22 +12,34 @@ live circuit with an in-place set — **no reset**. On a large circuit where the
 parameter feeds only a few devices this is **~10× faster**; even when it feeds
 every device it wins (the reset path must rebuild them all anyway).
 
-The path is conservative: if the swept parameter reaches into a subcircuit body,
+Enhancement-321 extends this to **subcircuit-internal** device values: a
+flattened instance links back to its subcircuit-definition template line, whose
+original `{expr}` numparam retains, so the swept value is recovered and pushed in
+place for every instance — no reset.
+
+The path stays conservative. If the swept parameter is *locally shadowed or
+derived from inside a subcircuit*, passed through a formal parameter, or used in
 a structural slot (a node name, an instance/model name, `.if`, `.temp`, an
-analysis card, `.option`, `.ic`, `.nodeset`, or a subckt call), or a derived
-`.param`, it **disarms and falls back to the exact reset path** — so results are
-always identical to today's, never a miscompute.
+analysis card, `.option`, `.ic`, `.nodeset`, or a subckt call), it **disarms and
+falls back to the exact reset path**. An arm-time self-check — each captured
+expression, re-evaluated globally, must reproduce the value baked into the
+flattened card — is the backstop, so results are always identical to today's,
+never a miscompute.
 
 ## Files
 
 - `divider.cir` — a voltage divider whose series resistor is `R1 = {rval}`, a
   top-level device value. Sweeping `rval` **arms** the fast path.
-- `divider_subckt.cir` — the same resistor moved *inside* a subckt. The swept
-  param now feeds a subckt-body value, so the fast path **disarms** and the
-  sweep uses the reset path.
-- `verify_paramfastsweep.py` — checks that (1) the top-level case arms the fast
-  path, (2) its swept `out(rval)` equals the closed form `R2 / (rval + R2)`, and
-  (3) the subckt case falls back yet produces the identical divider values.
+- `divider_subckt.cir` — the same resistor moved *inside* a subckt. E-321 still
+  **arms** here: the subckt-internal instance's expression is recovered and
+  driven in place.
+- `divider_shadow.cir` — the subckt locally redefines `.param rval` (a shadow),
+  so the internal resistor is constant, independent of the global sweep. The
+  self-check catches the mismatch and the fast path **disarms** (reset fallback).
+- `verify_paramfastsweep.py` — checks that (1) the top-level case arms, (2) its
+  swept `out(rval)` equals the closed form `R2 / (rval + R2)`, (3) the
+  subckt-internal case arms and matches the same closed form, and (4) the
+  shadowing subckt disarms yet still produces the correct constant values.
 
 ## Run
 

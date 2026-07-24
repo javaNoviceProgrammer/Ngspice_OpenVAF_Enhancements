@@ -241,26 +241,37 @@ static void sw_set_inplace(int kind, const char *name, double val)
 }
 
 
-/* ================= Enhancement-320: .param FAST-SWEEP =========================
+/* ============= Enhancement-320 / -321: .param FAST-SWEEP ======================
  * A swept `.param` normally forces a full `reset` (deck re-source + subckt
  * re-expand + CKTsetup + matrix reorder) at every point, because numparam folds
  * the param into device value literals at parse time and leaves no live binding.
- * When the swept param feeds ONLY addressable top-level device/model VALUES, we
- * can instead re-evaluate each dependent value against the retained numparam
- * table and push it into the live circuit with `alter`/`altermod` -- no reset.
+ * When the swept param feeds ONLY addressable device/model VALUES, we instead
+ * re-evaluate each dependent value against the retained numparam table and push
+ * it into the live circuit with a direct in-place set -- no reset.
  *
- * A binding is one captured top-level device/model value expression; `cmd` is
- * the alter command up to and including "= " and `expr` is the {..} contents
- * re-evaluated each point (after the swept params are overridden in the dico).
- * The path ARMS only if every occurrence of every swept param is such a value;
- * any subckt-body / structural / derived-param use disarms it (reset fallback),
- * so it is always correct: when unsure, it does exactly what it does today. */
+ * E-321 extends this from top-level to SUBCIRCUIT-INTERNAL devices. The key is
+ * that a flattened instance card (`r.x1.r1 in out 1e3`) carries `linenum` back
+ * to its subckt-DEFINITION body line, whose ORIGINAL text (`r1 a b {rval}`, with
+ * the expression intact) numparam retains in dicoS->dynrefptr. So a walk of the
+ * flattened deck (ci_deck) + nupa_get_dynref(card->linenum) recovers, for every
+ * instance (top-level and nested), its value expression paired with its full
+ * hierarchical name -- no hierarchical-name reconstruction needed.
+ *
+ * Because a subckt can locally shadow or derive from a swept global, each bind
+ * carries `flat_value` (the value numparam already baked into the flattened
+ * card at nominal params). At arm time the captured expression is re-evaluated
+ * against the GLOBAL dico and MUST reproduce that baked value; any mismatch
+ * (a local shadow, a formal-param pass-through) DISARMS the whole path. Together
+ * with the structural/derived/subckt-call disarms this keeps the guarantee that
+ * a sweep can only get faster, never change its result. */
 struct sw_fp_bind {
     char *cmd;                 /* textual fallback: "alter Rs0 = " / "altermod m vth0 = " */
-    char *name;                /* device/model instance name (for direct resolve) */
+    char *name;                /* device/model instance name (full flattened name) */
     char *param;               /* instance param keyword, or NULL for the principal */
     int   mod;                 /* 1 = .model param (altermod, textual only)         */
     char *expr;                /* e.g. "rval*2" (brace contents), re-evaluated/point */
+    double flat_value;         /* value numparam baked into the flattened card       */
+    int   flat_ok;             /* 1 = flat_value parsed, self-check applies           */
     /* resolved once (instance binds only) so the point loop sets the slot
      * directly via ft_sim->setInstanceParm, bypassing lex + @name resolution. */
     GENinstance *inst;
@@ -307,7 +318,8 @@ static int sw_line_has_swept(const char *s, const char *e,
 }
 
 static void sw_fp_add(const char *cmd, const char *name, const char *param,
-                      int mod, const char *beg_expr, const char *end_expr)
+                      int mod, const char *beg_expr, const char *end_expr,
+                      double flat_value, int flat_ok)
 {
     struct sw_fp_bind *b = TMALLOC(struct sw_fp_bind, 1);
     b->cmd = copy(cmd);
@@ -315,12 +327,71 @@ static void sw_fp_add(const char *cmd, const char *name, const char *param,
     b->param = param ? copy(param) : NULL;
     b->mod = mod;
     b->expr = copy_substring(beg_expr, end_expr);
+    b->flat_value = flat_value;
+    b->flat_ok = flat_ok;
     b->inst = NULL;
     b->devtype = -1;
     b->parmid = 0;
     b->rok = 0;
     b->next = sw_fp_list;
     sw_fp_list = b;
+}
+
+/* Extract the numeric value numparam baked into a flattened card line at the
+ * slot named by `param` (NULL = the positional principal, i.e. the last token).
+ * Captured device values are always numparam-formatted (%e), so strtod is
+ * exact. Returns 1 and sets *out on success. */
+static int sw_flat_value(const char *flat_line, const char *param, double *out)
+{
+    const char *p = flat_line;
+    char *endp;
+    double v;
+
+    if (!flat_line)
+        return 0;
+
+    if (param) {                          /* named: find `param` <ws>? = <value> */
+        size_t n = strlen(param);
+        for (; *p; p++) {
+            if (strncasecmp(p, param, n) != 0)
+                continue;
+            if (p > flat_line && sw_ident_ch((unsigned char) p[-1]))
+                continue;
+            {
+                const char *q = p + n;
+                while (*q && isspace((unsigned char) *q)) q++;
+                if (*q != '=')
+                    continue;
+                q++;
+                while (*q && isspace((unsigned char) *q)) q++;
+                v = strtod(q, &endp);
+                if (endp == q)
+                    return 0;
+                *out = v;
+                return 1;
+            }
+        }
+        return 0;
+    }
+
+    /* principal: the last whitespace-delimited token */
+    {
+        const char *last = NULL, *q = flat_line;
+        while (*q) {
+            while (*q && isspace((unsigned char) *q)) q++;
+            if (!*q || *q == ';' || *q == '$' || *q == '*')
+                break;
+            last = q;
+            while (*q && !isspace((unsigned char) *q)) q++;
+        }
+        if (!last)
+            return 0;
+        v = strtod(last, &endp);
+        if (endp == last)
+            return 0;
+        *out = v;
+        return 1;
+    }
 }
 
 static void sw_fp_free(void)
@@ -388,7 +459,7 @@ static void sw_fp_resolve(CKTcircuit *ckt, struct sw_fp_bind *b)
  * token must sit inside a value brace that is either the last token (principal)
  * or of the form `key={expr}`; anything else (node/name/mid position) disarms. */
 static int sw_fp_scan_valueline(const char *line, const char *name, int mod,
-                                char *const *sw, int nsw)
+                                char *const *sw, int nsw, const char *flat_line)
 {
     const char *p = line;
     const char *le = line + strlen(line);
@@ -423,21 +494,27 @@ static int sw_fp_scan_valueline(const char *line, const char *name, int mod,
                     if (kbeg == kend) return 0;          /* no key ident */
                     {
                         char key[256];
+                        double fv = 0.0;
+                        int fok;
                         (void) snprintf(key, sizeof key, "%.*s",
                                         (int) (kend - kbeg), kbeg);
                         (void) snprintf(cmd, sizeof cmd, "%s %s %s = ",
                                         mod ? "altermod" : "alter", name, key);
-                        sw_fp_add(cmd, name, key, mod, bexp, q);
+                        fok = sw_flat_value(flat_line, key, &fv);
+                        sw_fp_add(cmd, name, key, mod, bexp, q, fv, fok);
                     }
                 } else {
                     /* positional: must be the last token on the line */
                     const char *r = q + 1;
+                    double fv = 0.0;
+                    int fok;
                     while (*r && isspace((unsigned char) *r)) r++;
                     if (*r != '\0' && *r != ';' && *r != '$' && *r != '*')
                         return 0;                        /* not last -> ineligible */
                     if (mod) return 0;                   /* .model has no principal */
                     (void) snprintf(cmd, sizeof cmd, "alter %s = ", name);
-                    sw_fp_add(cmd, name, NULL, 0, bexp, q);
+                    fok = sw_flat_value(flat_line, NULL, &fv);
+                    sw_fp_add(cmd, name, NULL, 0, bexp, q, fv, fok);
                 }
             }
             p = q + 1;
@@ -482,8 +559,13 @@ static int sw_fp_build(char *const *sw, int nsw)
     if (!deck)
         return 0;
 
+    /* ---- Pass 1: DISARM on any use of a swept param the fast path cannot
+     * represent, scanning the ORIGINAL deck including subckt bodies. Device
+     * VALUES (top-level and subckt-internal) are captured in pass 2; here we
+     * only reject structural / derived / shadowing / subckt-passing uses. ---- */
     for (c = deck; c; c = c->nextcard) {
         const char *line = c->line, *p, *e;
+        int is_subckt, is_ends, has;
         if (!line)
             continue;
         p = line;
@@ -492,9 +574,6 @@ static int sw_fp_build(char *const *sw, int nsw)
             continue;                                   /* blank / comment */
         e = p + strlen(p);
 
-        /* skip `.control ... .endc` blocks: those are interactive commands
-         * (e.g. the `sweep` line itself), not circuit -- their mention of a
-         * swept param must not be read as a structural use. */
         if (strncasecmp(p, ".control", 8) == 0) { control_depth++; continue; }
         if (strncasecmp(p, ".endc", 5) == 0) {
             if (control_depth > 0) control_depth--;
@@ -503,37 +582,28 @@ static int sw_fp_build(char *const *sw, int nsw)
         if (control_depth > 0)
             continue;
 
-        /* track .subckt nesting */
-        if (strncasecmp(p, ".subckt", 7) == 0) { subckt_depth++; continue; }
-        if (strncasecmp(p, ".ends", 5) == 0 || strncasecmp(p, ".eom", 4) == 0) {
-            if (subckt_depth > 0) subckt_depth--;
+        is_subckt = (strncasecmp(p, ".subckt", 7) == 0);
+        is_ends = (strncasecmp(p, ".ends", 5) == 0 ||
+                   strncasecmp(p, ".eom", 4) == 0);
+        has = sw_line_has_swept(p, e, sw, nsw);
+
+        if (is_subckt) {
+            if (has) goto disarm;   /* swept param in a subckt header default */
+            subckt_depth++;
             continue;
         }
-
-        if (!sw_line_has_swept(p, e, sw, nsw))
-            continue;                                   /* line ignores swept */
-
-        if (subckt_depth > 0)                           /* subckt-body use */
-            goto disarm;
+        if (is_ends) { if (subckt_depth > 0) subckt_depth--; continue; }
+        if (!has)
+            continue;               /* line ignores every swept param */
 
         if (*p == '.') {
-            /* .model -> capture value params; .param -> derived check;
-             * anything else structural -> disarm */
             if (strncasecmp(p, ".model", 6) == 0) {
-                const char *np = p + 6, *nb, *ne;
-                char nm[256];
-                while (*np && isspace((unsigned char) *np)) np++;
-                nb = np;
-                while (*np && !isspace((unsigned char) *np) && *np != '(') np++;
-                ne = np;
-                if (ne == nb) goto disarm;
-                (void) snprintf(nm, sizeof nm, "%.*s", (int) (ne - nb), nb);
-                if (!sw_fp_scan_valueline(p, nm, 1, sw, nsw))
-                    goto disarm;
+                /* value params captured in pass 2 (flattened deck) -- allow */
             } else if (strncasecmp(p, ".param", 6) == 0) {
-                /* derived dependency: a NON-swept param defined from a swept one
-                 * cannot be pushed in v1 -> disarm. (Swept param's own def and
-                 * any assignment whose LHS is itself swept are fine.) */
+                /* per assignment: a swept LHS inside a subckt is a local shadow
+                 * (disarm); a non-swept LHS whose RHS references a swept param is
+                 * a derived param (disarm). A top-level swept LHS is the param's
+                 * own definition (fine). */
                 const char *q = p + 6;
                 while (*q) {
                     const char *nb2, *ne2, *rb, *re;
@@ -544,41 +614,98 @@ static int sw_fp_build(char *const *sw, int nsw)
                     while (*q && sw_ident_ch((unsigned char) *q)) q++;
                     ne2 = q;
                     while (*q && isspace((unsigned char) *q)) q++;
-                    if (*q != '=') { /* not an assignment token; skip on */ q++; continue; }
-                    q++;                                /* past '=' */
+                    if (*q != '=') { q++; continue; }
+                    q++;
                     while (*q && isspace((unsigned char) *q)) q++;
                     rb = q;
-                    while (*q && *q != ',' &&
-                           !(isspace((unsigned char) *q))) q++;
-                    /* extend RHS over spaces inside an expression up to next
-                     * 'ident =' or ',' or EOL: simplest safe bound is to EOL */
+                    while (*q && *q != ',' && !isspace((unsigned char) *q)) q++;
                     re = q;
                     for (k = 0; k < nsw; k++)
                         if ((size_t)(ne2 - nb2) == strlen(sw[k]) &&
                             strncmp(nb2, sw[k], (size_t)(ne2 - nb2)) == 0)
                             lhs_swept = 1;
-                    if (!lhs_swept && sw_line_has_swept(rb, re, sw, nsw))
-                        goto disarm;                    /* derived-from-swept */
+                    if (lhs_swept) {
+                        if (subckt_depth > 0) goto disarm;   /* local shadow */
+                    } else if (sw_line_has_swept(rb, re, sw, nsw)) {
+                        goto disarm;                         /* derived-from-swept */
+                    }
                 }
             } else {
-                goto disarm;                            /* structural dot-card */
+                goto disarm;        /* structural dot-card (.if/.temp/.tran/...) */
             }
+        } else if (*p == 'x' || *p == 'X') {
+            goto disarm;            /* subckt call passing a swept param */
+        }
+        /* other element lines: the swept param is a device value or a structural
+         * device use -- both are decided in pass 2 from the flattened card. */
+    }
+
+    /* ---- Pass 2: CAPTURE device/model values from the FLATTENED deck. Each
+     * card's original template text (with the {expr} intact) is recovered via
+     * nupa_get_dynref(card->linenum); the card's first token is the full
+     * (possibly hierarchical) instance name -- so subckt-internal instances are
+     * addressed exactly like top-level ones. ---- */
+    nupa_set_dicoslist(ft_curckt->ci_dicos);
+    for (c = ft_curckt->ci_deck; c; c = c->nextcard) {
+        const char *fl = c->line, *tmpl, *tp;
+        char nm[256];
+        if (!fl)
+            continue;
+        tp = fl;
+        while (*tp && isspace((unsigned char) *tp)) tp++;
+        if (*tp == '\0' || *tp == '*')
+            continue;
+
+        tmpl = nupa_get_dynref(c->linenum);
+        if (!tmpl)
+            continue;
+        if (!sw_line_has_swept(tmpl, tmpl + strlen(tmpl), sw, nsw))
+            continue;
+
+        if (*tp == '.') {
+            if (strncasecmp(tp, ".model", 6) == 0) {
+                const char *np = tp + 6, *nb, *ne;
+                while (*np && isspace((unsigned char) *np)) np++;
+                nb = np;
+                while (*np && !isspace((unsigned char) *np) && *np != '(') np++;
+                ne = np;
+                if (ne == nb) goto disarm;
+                (void) snprintf(nm, sizeof nm, "%.*s", (int) (ne - nb), nb);
+                if (!sw_fp_scan_valueline(tmpl, nm, 1, sw, nsw, fl))
+                    goto disarm;
+            }
+            /* other flattened dot-cards were classified in pass 1 */
         } else {
-            /* element line */
-            const char *nb = p, *ne;
-            char nm[256];
-            if (*p == 'x' || *p == 'X')                 /* subckt call */
-                goto disarm;
-            while (*p && !isspace((unsigned char) *p)) p++;
-            ne = p;
+            const char *nb = tp, *ne = tp;
+            while (*ne && !isspace((unsigned char) *ne)) ne++;
             (void) snprintf(nm, sizeof nm, "%.*s", (int) (ne - nb), nb);
-            if (!sw_fp_scan_valueline(line, nm, 0, sw, nsw))
+            if (!sw_fp_scan_valueline(tmpl, nm, 0, sw, nsw, fl))
                 goto disarm;
         }
     }
 
     if (!sw_fp_list)                                    /* swept feeds nothing */
         return 0;
+
+    /* ---- Pass 3: SELF-CHECK. Re-evaluate each captured expression against the
+     * GLOBAL dico at the current (nominal) param values; it MUST reproduce the
+     * value numparam baked into the flattened card. A mismatch means the value
+     * depends on a subckt-local/shadowed symbol we would mis-drive globally, so
+     * disarm. An unparsable baked value is treated the same (conservative). ---- */
+    {
+        struct sw_fp_bind *b;
+        for (b = sw_fp_list; b; b = b->next) {
+            int ok = 0;
+            double v;
+            if (!b->flat_ok)
+                goto disarm;
+            v = nupa_eval_expr(b->expr, &ok);
+            if (!ok)
+                goto disarm;
+            if (fabs(v - b->flat_value) > 1e-6 * (fabs(b->flat_value) + 1e-30))
+                goto disarm;
+        }
+    }
 
     /* resolve instance binds once for the fast direct-set path */
     {
