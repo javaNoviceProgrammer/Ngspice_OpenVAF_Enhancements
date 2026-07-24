@@ -331,7 +331,16 @@ void cm_s_xfer(ARGS)  /* structure holding parms, inputs, outputs, etc.     */
 
         for (i=0; i<den_size; i++) {
             integrator[i] = (double *) cm_analog_get_ptr(i,0);
-            old_integrator[i] = (double *) cm_analog_get_ptr(i,1);
+            /* Enhancement-312 (b): the controller-canonical feedback below subtracts
+               the fed-back integrator states from the new highest-order input. Using
+               cm_analog_get_ptr(i,1) -- the previous TIMESTEP's states -- made that
+               feedback explicit (lagged one step), which caps the whole transfer
+               function at first-order accuracy no matter how accurately each integrator
+               is stepped. Read the CURRENT-iteration states (offset 0) instead: within a
+               Newton iteration these hold the previous iteration's values and converge to
+               the consistent implicit solution, restoring second-order accuracy. (The
+               DC/init pass already uses offset 0 for both, so transient now matches it.) */
+            old_integrator[i] = (double *) cm_analog_get_ptr(i,0);
 
         }
         out = (double *) cm_analog_get_ptr(2*den_size+num_size,0);   

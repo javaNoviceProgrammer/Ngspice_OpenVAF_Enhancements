@@ -551,9 +551,27 @@ static void cm_static_integrate(int    byte_index,
 
     int     i;
 
+    /* Enhancement-312 (a): true trapezoidal integration.
+     *
+     * cm_analog_alloc() reserves bytes/sizeof(double)+1 doubles per integrator,
+     * so there is always one SPARE double immediately after each integral's slot,
+     * and SPICE rotates the whole CKTstates[] history for us. We use that spare to
+     * remember the PREVIOUS timestep's integrand u(n-1) -- the "one previous value"
+     * the original WARNING said was needed -- which lets the order-2 case implement
+     * the real trapezoidal rule  y(n) = y(n-1) + (h/2)(u(n)+u(n-1))  instead of the
+     * backward-Euler stand-in it used before. spare_ok stays false only for the
+     * (never-taken by real codemodels) case where the spare would fall outside the
+     * state vector, in which case we keep the legacy first-order behavior. */
+    int           spare_double;
+    Mif_Boolean_t spare_ok;
+    double        u_prev = 0.0;
+
 
     /* Get the address of the ckt struct from g_mif_info */
     ckt  = g_mif_info.ckt;
+
+    spare_double = byte_index / (int) sizeof(double) + 1;
+    spare_ok = (spare_double < ckt->CKTnumStates) ? MIF_TRUE : MIF_FALSE;
 
     /* Get integral values from current and previous timesteps */
     for(i = 0; i <= ckt->CKTorder; i++) {
@@ -562,6 +580,10 @@ static void cm_static_integrate(int    byte_index,
         double_ptr = (double *) char_ptr;
         intgr[i] = *double_ptr;
     }
+
+    /* Previous timestep's integrand, from the spare slot in the CKTstate1 vector */
+    if(spare_ok)
+        u_prev = ckt->CKTstates[1][spare_double];
 
 
     /* Do what SPICE3C1 does for its implicit integration */
@@ -577,10 +599,15 @@ static void cm_static_integrate(int    byte_index,
             break;
 
         case 2:
-            /* WARNING - This code needs to be redone.  */
-            /* The correct code should rely on one previous value */
-            /* of cur as done in NIintegrate() */
-            cur = -0.5 * ckt->CKTag[0] * intgr[1];
+            if(spare_ok) {
+                /* True trapezoidal: integrand = ag[0]*integral + ceq, with
+                 * ceq = -(ag[0]*y(n-1) + u(n-1)). Then
+                 * integral = y(n-1) + (u(n)+u(n-1))/ag[0] = y(n-1)+(h/2)(u(n)+u(n-1)). */
+                cur = -(ckt->CKTag[0] * intgr[1] + u_prev);
+            } else {
+                /* Legacy first-order fallback (only if no spare slot exists). */
+                cur = -0.5 * ckt->CKTag[0] * intgr[1];
+            }
             break;
         }
 
@@ -618,9 +645,12 @@ static void cm_static_integrate(int    byte_index,
     ceq = cur;
     geq = ckt->CKTag[0];
 
-    /* WARNING: Take this out when the case 2: above is fixed */
+    /* Enhancement-312 (a): the geq *= 0.5 half-step that compensated for the old
+     * backward-Euler order-2 stand-in is gone; with true trapezoidal above,
+     * geq = ag[0] just as in the order-1 and Gear cases. It is only kept for the
+     * legacy fallback path (no spare slot), to preserve the old numerics there. */
     if((ckt->CKTintegrateMethod == TRAPEZOIDAL) &&
-       (ckt->CKTorder == 2))
+       (ckt->CKTorder == 2) && (! spare_ok))
         geq *= 0.5;
 
 
@@ -630,6 +660,13 @@ static void cm_static_integrate(int    byte_index,
 
     *integral = (integrand - ceq) / geq;
     *partial  = 1.0 / geq;
+
+    /* Enhancement-312 (a): remember this iteration's integrand in the spare slot so
+     * the next timestep's order-2 trapezoidal step has u(n-1). Written on every
+     * Newton iteration; the converged value survives into CKTstate1 after the
+     * accepted step is rotated. */
+    if(spare_ok)
+        ckt->CKTstates[0][spare_double] = integrand;
 
 }
 
