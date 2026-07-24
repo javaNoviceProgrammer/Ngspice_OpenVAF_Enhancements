@@ -1,0 +1,16 @@
+// Enhancement-314 (b): unbounded string/array replication.
+// {N{...}} materializes N copies of its operands at COMPILE time. A huge literal count
+// -- {'d999999999{"x"}} ~= 1e9 -- allocated gigabytes and HUNG the compiler on ~1 line
+// of source (a shipped denial-of-service). Post-fix the count is capped at 2^20 and an
+// abusive count is rejected with a clean diagnostic instead of hanging.
+// This model uses a SMALL, legitimate replication to confirm the common case still works.
+`include "disciplines.vams"
+module bigrep(a, b);
+    inout a, b;
+    electrical a, b;
+    string s;
+    analog begin
+        s = {4{"ab"}};              // legitimate small replication -> "abababab"
+        I(a, b) <+ 1e-3 * V(a, b);
+    end
+endmodule

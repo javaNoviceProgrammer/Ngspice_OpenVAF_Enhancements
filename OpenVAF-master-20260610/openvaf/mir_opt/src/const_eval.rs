@@ -137,7 +137,11 @@ pub fn eval_unary(func: &mut Function, op: Opcode, val: Const) -> Option<Value> 
         }
         mir::Const::Int(val) => match op {
             Opcode::Inot => func.dfg.iconst(!val),
-            Opcode::Ineg => func.dfg.iconst(-val),
+            // Enhancement-314: wrapping, matching the wrapping Iadd/Isub/Imul that
+            // Enhancement-286 established for this const-fold ("eval_unary already
+            // used this convention" -- but Ineg was missed). Negating i32::MIN,
+            // e.g. from -(1<<31), otherwise panicked the overflow-checked build.
+            Opcode::Ineg => func.dfg.iconst(val.wrapping_neg()),
             Opcode::IFcast => func.dfg.f64const(val as f64),
             Opcode::IBcast => (val != 0).into(),
             Opcode::Clog2 => {

@@ -1397,7 +1397,15 @@ impl Ctx<'_> {
     fn concat_rep_count(&mut self, rep: Option<ExprId>) -> Option<u32> {
         let Some(rep) = rep else { return Some(1) };
         if let Expr::Literal(Literal::Int(n)) = self.body.exprs[rep] {
-            if n >= 1 {
+            // Enhancement-314: a `{N{...}}` replication materializes N copies of its
+            // operands at compile time (`lower_string_concat`/`infere_concat` build an
+            // N*|elems|-element list and, for strings, an N*|elems|-char format string).
+            // A huge literal count -- e.g. `{'d999999999{"x"}}` -- otherwise allocated
+            // gigabytes and HUNG the compiler (a shipped DoS on ~1 line of source). Cap
+            // it: no legitimate source-level replication needs more than 2^20 copies, and
+            // the runtime object would be absurd anyway. Reject the abusive count cleanly.
+            const MAX_REP: i32 = 1 << 20;
+            if (1..=MAX_REP).contains(&n) {
                 self.result.expr_types[rep] = Ty::Val(Type::Integer);
                 return Some(n as u32);
             }

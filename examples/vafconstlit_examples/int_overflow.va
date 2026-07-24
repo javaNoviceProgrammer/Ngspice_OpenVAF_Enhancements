@@ -1,0 +1,19 @@
+// Enhancement-314 (a): integer const-fold overflow.
+// A localparam integer whose default overflows i32 -- here via +, but - and unary
+// negate had the same defect -- panicked the overflow-checked compiler. The bus-width
+// folder (elaborate.rs, gated on the module text containing '[') runs on every integer
+// parameter default; its +/- and negate were unchecked while its * was already checked.
+// The `real d[0:1]` array declaration is what makes the folder run (the '[' gate).
+// Post-fix: the fold declines cleanly on overflow (like it already did for *), so the
+// model compiles and the parameter keeps its (wrapped) value; the model is otherwise
+// a plain linear resistor.
+`include "disciplines.vams"
+module intovf(a, b);
+    inout a, b;
+    electrical a, b;
+    localparam integer k = 2147483647 + 1;   // overflows i32
+    real d[0:1];
+    analog begin
+        I(a, b) <+ 1e-3 * V(a, b);
+    end
+endmodule

@@ -231,13 +231,18 @@ fn parse_add(text: &str, toks: &[&Tok], pos: &mut usize, params: &HashMap<String
     while *pos < toks.len() {
         let raw = &text[toks[*pos].start..toks[*pos].end];
         match raw {
+            // Enhancement-314: checked, like parse_mul's checked_mul below -- an
+            // integer bus-width expression that overflows i32 (2147483647 + 1)
+            // otherwise panicked the (overflow-checked) build. On overflow the fold
+            // fails to None and the caller (fold_parameter_widths) simply leaves the
+            // declaration unchanged, exactly as it does for any un-foldable width.
             "+" => {
                 *pos += 1;
-                acc += parse_mul(text, toks, pos, params)?;
+                acc = acc.checked_add(parse_mul(text, toks, pos, params)?)?;
             }
             "-" => {
                 *pos += 1;
-                acc -= parse_mul(text, toks, pos, params)?;
+                acc = acc.checked_sub(parse_mul(text, toks, pos, params)?)?;
             }
             _ => break,
         }
@@ -273,7 +278,8 @@ fn parse_unary(text: &str, toks: &[&Tok], pos: &mut usize, params: &HashMap<Stri
     match raw {
         "-" => {
             *pos += 1;
-            Some(-parse_unary(text, toks, pos, params)?)
+            // Enhancement-314: checked negate -- negating i32::MIN overflowed.
+            parse_unary(text, toks, pos, params)?.checked_neg()
         }
         "+" => {
             *pos += 1;
