@@ -88,6 +88,7 @@ ft_optimizing) unless `-verbose`.
 #include "ngspice/randnumb.h"    /* Enhancement-206: inner Monte-Carlo sampling */
 
 #include "com_optimize.h"
+#include "com_sweep.h"           /* Enhancement-322: shared .param fast-path engine */
 
 #define OPT_MAXP    128          /* max parameters to optimize (E-197)    */
 #define OPT_MAXS      8          /* max analysis stages                   */
@@ -159,6 +160,14 @@ struct optctx {
     int    nobj;
     char  *obj[OPT_MAXOBJ];
     int    obj_max[OPT_MAXOBJ];          /* 1 = maximize, 0 = minimize             */
+
+    /* Enhancement-322: .param fast-path. When every OPT_DECKPARAM knob feeds only
+     * addressable device/model values, each eval pushes the re-evaluated values
+     * in place (shared sw_fp_* engine) instead of alterparam+reset -- no per-eval
+     * re-source. Not used with -center (its reset re-samples process variation). */
+    int    fp_armed;
+    int    fp_idx[OPT_MAXP];             /* knob index of each deck-param fast slot */
+    int    fp_n;
 };
 
 
@@ -332,6 +341,67 @@ static double opt_eval_center(struct optctx *c, const double *u)
  * the least-squares residuals. Returns the scalar cost (the objective value, or
  * the weighted sum of squared residuals). If resid != NULL (least-squares mode),
  * it is filled with the nt residuals. */
+/* Enhancement-322: try to arm the .param fast-path for this optimization. Every
+ * OPT_DECKPARAM knob must feed only in-place-able device/model values (sw_fp_build
+ * captures + self-checks them); -center is excluded because its inner reset
+ * re-samples process variation. Returns 1 if armed. */
+/* Engage the fast path only when a reset is actually expensive. The in-place
+ * apply has a fixed per-eval cost (numparam re-eval + dico ops) that is roughly
+ * independent of circuit size, while a reset's cost grows with the deck; they
+ * cross at ~80 device instances. Below that a small deck re-parses faster than
+ * the fast path's overhead, and -- because the in-place values differ from the
+ * reset path in the last few digits (numparam string formatting) -- an extremely
+ * tight -tol could otherwise send the two paths to different iteration counts.
+ * So on a small circuit we keep the (already cheap) reset. */
+#define OPT_FP_MIN_DEVICES 80
+
+static int opt_fp_arm(struct optctx *c)
+{
+    char *names[OPT_MAXP];
+    int k, ndev = 0;
+    struct card *cc;
+
+    c->fp_armed = 0;
+    c->fp_n = 0;
+    if (c->center || !c->has_deckparam || !ft_curckt)
+        return 0;
+
+    for (cc = ft_curckt->ci_deck; cc; cc = cc->nextcard) {
+        const char *p = cc->line;
+        if (!p) continue;
+        while (*p && isspace((unsigned char) *p)) p++;
+        if (isalpha((unsigned char) *p))     /* a flattened device instance card */
+            ndev++;
+    }
+    if (ndev < OPT_FP_MIN_DEVICES)
+        return 0;                            /* reset is cheaper than the fast path */
+
+    for (k = 0; k < c->np; k++)
+        if (c->kind[k] == OPT_DECKPARAM) {
+            c->fp_idx[c->fp_n] = k;
+            names[c->fp_n] = c->name[k];
+            c->fp_n++;
+        }
+    if (c->fp_n == 0)
+        return 0;
+    c->fp_armed = sw_fp_build(names, c->fp_n);
+    return c->fp_armed;
+}
+
+/* Enhancement-322: push the current deck-param values in place (no reset). */
+static void opt_fp_apply(struct optctx *c, const double *u)
+{
+    char *names[OPT_MAXP];
+    double vals[OPT_MAXP];
+    int j;
+    for (j = 0; j < c->fp_n; j++) {
+        int k = c->fp_idx[j];
+        names[j] = c->name[k];
+        vals[j] = c->lo[k] + clamp01(u[k]) * (c->hi[k] - c->lo[k]);
+    }
+    sw_fp_apply(names, vals, c->fp_n);
+}
+
 static double opt_eval(struct optctx *c, const double *u, double *resid)
 {
     int k, s, i;
@@ -354,15 +424,20 @@ static double opt_eval(struct optctx *c, const double *u, double *resid)
      * an earlier in-place `alter`. Circuits with no `.param` knob skip this
      * entirely (unchanged fast path). */
     if (c->has_deckparam) {
-        for (k = 0; k < c->np; k++) {
-            if (c->kind[k] != OPT_DECKPARAM)
-                continue;
-            double val = c->lo[k] + clamp01(u[k]) * (c->hi[k] - c->lo[k]);
-            (void) snprintf(cmd, sizeof cmd, "alterparam %s=%.10g", c->name[k], val);
-            opt_run_cmd(cmd);
+        if (c->fp_armed) {                 /* Enhancement-322: in-place, no reset */
+            opt_fp_apply(c, u);
+        } else {
+            for (k = 0; k < c->np; k++) {
+                if (c->kind[k] != OPT_DECKPARAM)
+                    continue;
+                double val = c->lo[k] + clamp01(u[k]) * (c->hi[k] - c->lo[k]);
+                (void) snprintf(cmd, sizeof cmd, "alterparam %s=%.10g",
+                                c->name[k], val);
+                opt_run_cmd(cmd);
+            }
+            opt_run_cmd("reset");
+            ft_optimizing = !c->verbose;   /* re-assert: re-source cleared it */
         }
-        opt_run_cmd("reset");
-        ft_optimizing = !c->verbose;   /* re-assert in case re-source cleared it */
     }
 
     /* Apply the in-place params on the (possibly re-sourced) circuit: device /
@@ -881,15 +956,20 @@ static void opt_eval_objs(struct optctx *c, const double *u, double *f)
 
     ft_optimizing = !c->verbose;
     if (c->has_deckparam) {
-        for (k = 0; k < c->np; k++) {
-            if (c->kind[k] != OPT_DECKPARAM)
-                continue;
-            double val = c->lo[k] + clamp01(u[k]) * (c->hi[k] - c->lo[k]);
-            (void) snprintf(cmd, sizeof cmd, "alterparam %s=%.10g", c->name[k], val);
-            opt_run_cmd(cmd);
+        if (c->fp_armed) {                 /* Enhancement-322: in-place, no reset */
+            opt_fp_apply(c, u);
+        } else {
+            for (k = 0; k < c->np; k++) {
+                if (c->kind[k] != OPT_DECKPARAM)
+                    continue;
+                double val = c->lo[k] + clamp01(u[k]) * (c->hi[k] - c->lo[k]);
+                (void) snprintf(cmd, sizeof cmd, "alterparam %s=%.10g",
+                                c->name[k], val);
+                opt_run_cmd(cmd);
+            }
+            opt_run_cmd("reset");
+            ft_optimizing = !c->verbose;
         }
-        opt_run_cmd("reset");
-        ft_optimizing = !c->verbose;
     }
     opt_apply_inplace(c, u);
     c->nevals++;
@@ -1426,6 +1506,12 @@ void com_optimize(wordlist *wl)
         goto cleanup;
     }
 
+    /* Enhancement-322: arm the .param fast-path (in-place per-eval instead of
+     * alterparam+reset) if every deck-param knob is safely in-place-able. Covers
+     * both the NSGA-II and scalar branches below; -center opts out inside. */
+    if (opt_fp_arm(&c))
+        fprintf(cp_out, "optimize: fast .param path armed (no per-eval reset)\n");
+
     /* method resolution: LS defaults to Levenberg-Marquardt, scalar to
      * Nelder-Mead; -method may override. LM needs least-squares targets; PSO and
      * NM work for either objective kind (Enhancement-194). */
@@ -1553,6 +1639,7 @@ void com_optimize(wordlist *wl)
     }
 
 cleanup:
+    sw_fp_free();                        /* Enhancement-322: drop fast-path binds */
     for (k = 0; k < c.np; k++)
         tfree(c.name[k]);
     for (k = 0; k < c.ns; k++)

@@ -409,5 +409,28 @@ check(f"all three knob kinds (-dparam/-mparam/-param) coexist and converge "
 if os.path.exists(osdim):
     os.remove(osdim)
 
+# --- Enhancement-322: the optimizer shares the .param fast-path. On a circuit
+# large enough that a per-eval reset dominates, an OPT_DECKPARAM knob is pushed
+# in place (no reset per evaluation). Verify it ARMS and still converges to the
+# correct optimum (a big fixed ladder whose input R = .param sets v(n2)). ---
+N = 60                                    # 2*N+2 = 122 devices, above the guard
+ladder = ["* E-322 large .param optimize", ".param rtop=1k", "V1 n0 0 1",
+          "R1 n0 n1 {rtop}"]
+for i in range(1, N + 1):
+    ladder += [f"Rs{i} n{i} n{i+1} 1k", f"Rp{i} n{i} 0 10k"]
+ladder += [".control",
+           "optimize -dparam rtop 1k 100 10k -analysis op "
+           "-minimize (v(n2)-0.5)^2 -maxiter 120 -tol 1e-12",
+           "op", "print v(n2)", ".endc", ".end"]
+o22 = run("\n".join(ladder) + "\n")
+armed22 = "fast .param path armed" in o22
+vn2 = val(o22, "v(n2)")
+mobj = re.search(r"objective\s*=\s*([-\d.eE+]+)", o22)
+obj22 = float(mobj.group(1)) if mobj else None
+check("optimizer arms the .param fast-path on a large circuit (E-322)", armed22)
+check(f"large -dparam optimize converges: v(n2) -> 0.5 (got {vn2}, obj {obj22})",
+      vn2 is not None and abs(vn2 - 0.5) < 1e-4
+      and obj22 is not None and obj22 < 1e-6, f"{vn2}/{obj22}")
+
 print(f"\n{'ALL PASS' if passed == checks else 'FAILURES'}: {passed}/{checks} passed")
 sys.exit(0 if passed == checks else 1)

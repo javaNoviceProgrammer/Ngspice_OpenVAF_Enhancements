@@ -394,7 +394,7 @@ static int sw_flat_value(const char *flat_line, const char *param, double *out)
     }
 }
 
-static void sw_fp_free(void)
+void sw_fp_free(void)
 {
     struct sw_fp_bind *b = sw_fp_list, *nx;
     while (b) {
@@ -547,7 +547,7 @@ static int sw_fp_cmp_expr(const void *a, const void *b)
  * the given swept `.param` names. Returns 1 and sets sw_fp_armed if every swept
  * occurrence is an addressable top-level device/model value; otherwise frees any
  * partial captures and returns 0 (caller uses the reset path). */
-static int sw_fp_build(char *const *sw, int nsw)
+int sw_fp_build(char *const *sw, int nsw)
 {
     struct card *deck, *c;
     int subckt_depth = 0, control_depth = 0;
@@ -743,7 +743,7 @@ disarm:
 /* Apply one sweep point via the fast path: override the swept params in the
  * numparam dico, refresh the derived-param closure, then re-evaluate and push
  * every captured device/model value with alter/altermod. No reset. */
-static void sw_fp_apply(char *const *sw, const double *vals, int nsw)
+void sw_fp_apply(char *const *sw, const double *vals, int nsw)
 {
     struct sw_fp_bind *b;
     CKTcircuit *ckt = ft_curckt ? ft_curckt->ci_ckt : NULL;
