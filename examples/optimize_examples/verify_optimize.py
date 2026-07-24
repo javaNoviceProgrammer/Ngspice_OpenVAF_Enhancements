@@ -432,5 +432,34 @@ check(f"large -dparam optimize converges: v(n2) -> 0.5 (got {vn2}, obj {obj22})"
       vn2 is not None and abs(vn2 - 0.5) < 1e-4
       and obj22 is not None and obj22 < 1e-6, f"{vn2}/{obj22}")
 
+# --- Enhancement-323: the fast-path guard is cost-aware. An OSDI (compiled
+# Verilog-A) reset re-runs each instance's setup callbacks and is ~30x costlier
+# per device than a resistor, so even a SMALL OSDI circuit benefits. The guard
+# weights OSDI instances, so a handful of OSDI devices ARMS the fast path where a
+# resistor circuit of the same size would (correctly) stay on reset. ---
+osdir = os.path.join(HERE, "optres.osdi")
+subprocess.run([OPENVAF, os.path.join(HERE, "optres.va"), "-o", osdir],
+               capture_output=True, text=True, timeout=120)
+osdi_opt = ["osdi resistor .param optimize", ".param rval=1k",
+            ".model resmod optres", "V1 in 0 1"]
+prev = "in"
+for i in range(5):                        # 5 OSDI instances -> weighted well over the guard
+    osdi_opt.append(f"Ns{i} {prev} n{i+1} resmod r={{rval}}")
+    prev = f"n{i+1}"
+osdi_opt += [f"Rload {prev} 0 2k", ".control", f"pre_osdi {osdir}",
+             # v(n5) = 2k / (5*rval + 2k); target 0.25 -> rval = 1200
+             f"optimize -dparam rval 1k 100 10k -analysis op "
+             f"-minimize (v({prev})-0.25)^2 -maxiter 80 -tol 1e-11",
+             "op", f"print v({prev})", ".endc", ".end"]
+o23 = run("\n".join(osdi_opt) + "\n")
+if os.path.exists(osdir):
+    os.remove(osdir)
+armed23 = "fast .param path armed" in o23
+vout23 = val(o23, "v(n5)")
+check("small OSDI -dparam optimize arms the fast path (E-323 cost-aware guard)",
+      armed23)
+check(f"OSDI -dparam optimize converges: v(n5) -> 0.25 (got {vout23})",
+      vout23 is not None and abs(vout23 - 0.25) < 1e-3, str(vout23))
+
 print(f"\n{'ALL PASS' if passed == checks else 'FAILURES'}: {passed}/{checks} passed")
 sys.exit(0 if passed == checks else 1)

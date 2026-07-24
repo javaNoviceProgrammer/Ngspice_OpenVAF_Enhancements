@@ -46,6 +46,7 @@ typedef struct OsdiObjectFile {
 
 extern OsdiObjectFile load_object_file(const char *path);
 extern SPICEdev *osdi_create_spicedev(const OsdiRegistryEntry *entry);
+extern int osdi_devtype_is_osdi(int type);   /* Enhancement-323 */
 
 /* Enhancement-215: register a command-line plusarg (`+name[=value]`, passed
  * without the leading '+') so a compiled Verilog-A model's $test$plusargs /

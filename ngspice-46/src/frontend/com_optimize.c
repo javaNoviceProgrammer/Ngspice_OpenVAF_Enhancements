@@ -89,6 +89,9 @@ ft_optimizing) unless `-verbose`.
 
 #include "com_optimize.h"
 #include "com_sweep.h"           /* Enhancement-322: shared .param fast-path engine */
+#include "ngspice/cktdefs.h"     /* Enhancement-323: CKTcircuit->CKThead[] */
+#include "ngspice/devdefs.h"     /* Enhancement-323: DEVices[] / DEVmaxnum   */
+#include "ngspice/osdiitf.h"     /* Enhancement-323: osdi_devtype_is_osdi (call #ifdef OSDI) */
 
 #define OPT_MAXP    128          /* max parameters to optimize (E-197)    */
 #define OPT_MAXS      8          /* max analysis stages                   */
@@ -347,33 +350,53 @@ static double opt_eval_center(struct optctx *c, const double *u)
  * re-samples process variation. Returns 1 if armed. */
 /* Engage the fast path only when a reset is actually expensive. The in-place
  * apply has a fixed per-eval cost (numparam re-eval + dico ops) that is roughly
- * independent of circuit size, while a reset's cost grows with the deck; they
- * cross at ~80 device instances. Below that a small deck re-parses faster than
- * the fast path's overhead, and -- because the in-place values differ from the
- * reset path in the last few digits (numparam string formatting) -- an extremely
- * tight -tol could otherwise send the two paths to different iteration counts.
- * So on a small circuit we keep the (already cheap) reset. */
+ * independent of circuit size, while a reset's cost grows with the deck. Below
+ * the crossover a small deck re-parses faster than the fast path's overhead,
+ * and -- because the in-place values differ from the reset path in the last few
+ * digits (numparam string formatting) -- an extremely tight -tol could otherwise
+ * send the two paths to different iteration counts. So on a small, cheap circuit
+ * we keep the (already cheap) reset.
+ *
+ * The crossover is about reset COST, not device count: a resistor reset just
+ * re-parses a line, but an OSDI (compiled Verilog-A) reset re-runs each
+ * instance's setup/temperature callbacks and is ~30x costlier per device --
+ * measured crossovers ~80 primitives vs ~3 OSDI instances. So we weight each
+ * instance by its device kind and compare the weighted total to the primitive
+ * threshold. */
 #define OPT_FP_MIN_DEVICES 80
+#define OPT_FP_OSDI_WEIGHT 30
 
 static int opt_fp_arm(struct optctx *c)
 {
     char *names[OPT_MAXP];
-    int k, ndev = 0;
-    struct card *cc;
+    int k, weighted = 0;
+    CKTcircuit *ckt;
 
     c->fp_armed = 0;
     c->fp_n = 0;
-    if (c->center || !c->has_deckparam || !ft_curckt)
+    if (c->center || !c->has_deckparam || !ft_curckt || !ft_curckt->ci_ckt)
         return 0;
 
-    for (cc = ft_curckt->ci_deck; cc; cc = cc->nextcard) {
-        const char *p = cc->line;
-        if (!p) continue;
-        while (*p && isspace((unsigned char) *p)) p++;
-        if (isalpha((unsigned char) *p))     /* a flattened device instance card */
-            ndev++;
+    /* weighted device count: OSDI instances cost ~OPT_FP_OSDI_WEIGHT resets */
+    ckt = ft_curckt->ci_ckt;
+    {
+        int type;
+        for (type = 0; type < DEVmaxnum; type++) {
+            GENmodel *m;
+            GENinstance *inst;
+            int per = 1;
+            if (!DEVices[type])
+                continue;
+#ifdef OSDI
+            if (osdi_devtype_is_osdi(type))
+                per = OPT_FP_OSDI_WEIGHT;
+#endif
+            for (m = ckt->CKThead[type]; m; m = m->GENnextModel)
+                for (inst = m->GENinstances; inst; inst = inst->GENnextInstance)
+                    weighted += per;
+        }
     }
-    if (ndev < OPT_FP_MIN_DEVICES)
+    if (weighted < OPT_FP_MIN_DEVICES)
         return 0;                            /* reset is cheaper than the fast path */
 
     for (k = 0; k < c->np; k++)

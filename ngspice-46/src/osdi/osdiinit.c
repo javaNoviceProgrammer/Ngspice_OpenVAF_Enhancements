@@ -211,3 +211,15 @@ extern SPICEdev *osdi_create_spicedev(const OsdiRegistryEntry *entry) {
 
   return OSDIinfo;
 }
+
+/* Enhancement-323: is device type `type` an OSDI (compiled Verilog-A) device?
+ * Every OSDI SPICEdev is built by osdi_create_spicedev above and so shares the
+ * OSDIparam instance-parameter setter -- a stable marker no built-in device
+ * has. The optimizer's `.param` fast-path guard uses this to weight OSDI
+ * instances by their much higher per-reset cost (an OSDI reset re-runs each
+ * instance's setup/temperature callbacks). */
+int osdi_devtype_is_osdi(int type)
+{
+  return type >= 0 && type < DEVmaxnum && DEVices[type] &&
+         DEVices[type]->DEVparam == OSDIparam;
+}
