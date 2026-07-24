@@ -1,0 +1,29 @@
+// Enhancement-313 (a): a file/string format task ($sformat here) fed a `%g`
+// conversion an INTEGER argument. Before the fix, hir_ty never type-checked the
+// format arguments of the file/string format tasks (only the console ones), so the
+// integer `k` was passed to the string-formatting callback's `double` parameter with
+// no int->real cast -- invalid LLVM IR. Release emitted it anyway, and the callback
+// read the integer's bit pattern as a double: garbage.
+//
+// This model makes the corruption OBSERVABLE. It formats the integer k=5 with "%g",
+// reads the text back with $sscanf, and uses the recovered value as a conductance.
+// Correct: I(p,n) = 5*V(p,n). Pre-fix (miscompiled): the recovered value is the
+// denormal ~2.47e-323 (the bits of the integer 5 read as a double), so i(v1) collapses
+// to ~2.47e-323 instead of 5.
+`include "disciplines.vams"
+
+module fmtrt(p, n);
+    inout p, n;
+    electrical p, n;
+    integer k;
+    real gback;
+    string s;
+    integer nread;
+    analog begin
+        k = 5;
+        s = "";
+        $sformat(s, "%g", k);            // integer -> %g  (the miscompiled call)
+        nread = $sscanf(s, "%g", gback); // recover it: post-fix gback = 5
+        I(p, n) <+ gback * V(p, n);      // conductance = gback -> observable
+    end
+endmodule

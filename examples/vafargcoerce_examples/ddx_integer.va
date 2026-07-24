@@ -1,0 +1,24 @@
+// Enhancement-313 (b): `ddx` with an INTEGER first argument crashed the compiler.
+// infere_ddx recorded the "must be real" requirement (and its int->real cast) on the
+// ddx CALL expression instead of on the argument being differentiated. The ddx call
+// already has type Real, so an integer argument inserted a Real cast onto a Real-typed
+// expression; `needs_cast` then found src == dst == Real and tripped a debug_assert,
+// and the release compiler aborted downstream ("OpenVAF ... has crashed", no .osdi).
+//
+// Here `n` is an integer, and ddx(n, V(p,n)) is the derivative of a value that does not
+// depend on the probe -- i.e. 0. Post-fix the argument is coerced to real and the model
+// compiles; the derivative contributes nothing, so I(p,n) = 1e-3*V(p,n) (a plain 1k
+// resistor), which the verify script confirms is finite and correct.
+`include "disciplines.vams"
+
+module ddxint(p, n);
+    inout p, n;
+    electrical p, n;
+    integer n_i;
+    real d;
+    analog begin
+        n_i = 3;
+        d = ddx(n_i, V(p, n));       // integer first arg -- crashed the compiler
+        I(p, n) <+ 1e-3 * V(p, n) + d;
+    end
+endmodule

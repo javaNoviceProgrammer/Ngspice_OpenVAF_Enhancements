@@ -920,7 +920,26 @@ impl Ctx<'_> {
             | BuiltIn::warning
             | BuiltIn::error
             | BuiltIn::info
-            | BuiltIn::fatal => self.infere_display(stmt, args),
+            | BuiltIn::fatal
+            // Enhancement-313: the file ($fdisplay/$fwrite/$fstrobe/$fmonitor/
+            // $fdebug) and string ($swrite/$sformat) format tasks were NOT
+            // routed through infere_display, so their format arguments never got
+            // the type check + implicit cast the console tasks record here. A
+            // %g/%e/%f/%r conversion fed an integer therefore stayed integer,
+            // while the callback types its parameter from the conversion (double
+            // for %g) -- so lowering passed a raw i32 to a double parameter,
+            // producing invalid LLVM IR (caught by the verifier debug_assert; a
+            // malformed .osdi shipped silently in release). infere_display scans
+            // for string-LITERAL format strings, so the leading file descriptor
+            // (integer) or destination (string variable) argument is naturally
+            // skipped and the real format string is found.
+            | BuiltIn::fdisplay
+            | BuiltIn::fwrite
+            | BuiltIn::fstrobe
+            | BuiltIn::fmonitor
+            | BuiltIn::fdebug
+            | BuiltIn::swrite
+            | BuiltIn::sformat => self.infere_display(stmt, args),
 
             _ => (),
         }
@@ -1155,7 +1174,14 @@ impl Ctx<'_> {
 
     fn infere_ddx(&mut self, stmt: StmtId, expr: ExprId, val: ExprId, unknown: ExprId) {
         if let Some(ty) = self.infere_expr(stmt, val) {
-            self.expect::<false>(expr, None, ty, Cow::Borrowed(&[TyRequirement::Val(Type::Real)]));
+            // Enhancement-313: record the "must be real" requirement (and its
+            // integer->real cast) on `val` -- the argument being differentiated --
+            // NOT on `expr`, the ddx call itself. `expr` already has type Real, so
+            // an integer `val` (e.g. `ddx(n, V(b))`) inserted a Real cast onto a
+            // Real-typed expression; `needs_cast` then saw src == dst == Real and
+            // tripped its debug_assert, and the release build crashed downstream.
+            // Casting `val` instead coerces the integrand to real where it belongs.
+            self.expect::<false>(val, None, ty, Cow::Borrowed(&[TyRequirement::Val(Type::Real)]));
         }
 
         let ty = self.infere_expr(stmt, unknown);
