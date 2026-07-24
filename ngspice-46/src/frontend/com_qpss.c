@@ -93,11 +93,11 @@ com_qpss(wordlist *wl)
     const char *expr;
     double f1, f2, fb, fmax, tstop, tstep, T, wstart, wend;
     int    periods = 8, maxorder = 5;
-    int    n, k1, k2, i0, ord;
+    int    n, k1, k2, i0, ord, M = 0;   /* M: uniform-resample length (Enhancement-319) */
     char   cmd[256];
     struct pnode *pn;
     struct dvec  *v, *sc;
-    double *tt, *vv;
+    double *tt, *vv, *ur = NULL;   /* ur: last period resampled onto a uniform grid (E-319) */
 
     if (!ft_curckt || !ft_curckt->ci_ckt) {
         fprintf(cp_err, "Error: qpss: there is no circuit loaded.\n");
@@ -218,14 +218,49 @@ com_qpss(wordlist *wl)
             "  (k1,k2)      frequency [Hz]        |value|         phase [deg]\n",
             expr, f1, f2, fb, periods, maxorder);
 
+    /* Enhancement-319: resample the last beat period onto a UNIFORM grid over EXACTLY
+     * [wend - T, wend) and Fourier-project below with the rectangular rule. For commensurate
+     * tones every reported harmonic k1*f1 + k2*f2 = m*fb completes an integer m cycles in T,
+     * so a uniform DFT over exactly T is EXACT -- a linear circuit's mixing products come out
+     * at machine zero. The earlier code integrated (trapezoidally) over the raw transient grid,
+     * whose window length was not exactly T, whose steps were non-uniform, and whose endpoints
+     * were non-periodic, so it leaked the DC/fundamental (~tstep/T) into every mixing bin (a
+     * ~5.8e-4 * |dominant line| floor on a linear two-tone RC where every product must be 0). */
+    {
+        double num_bins = maxorder * fmax / fb;   /* highest reported harmonic, in fb bins */
+        int j, m, target;
+        /* Resolve the highest harmonic AND do not downsample the transient grid (which
+         * already carries the last period at the run's tstep) -- upsampling never hurts,
+         * downsampling would alias and coarsen the interpolation. */
+        target = (int) (8.0 * num_bins);
+        if (target < n - i0)
+            target = n - i0;
+        for (M = 64; M < target && M < 65536; M <<= 1)
+            ;
+        ur = TMALLOC(double, M);
+        wstart = wend - T;
+        j = (i0 > 0) ? i0 - 1 : 0;                 /* interpolation cursor into (tt, vv) */
+        for (m = 0; m < M; m++) {
+            double tq = wstart + ((double) m * T) / M;
+            while (j + 1 < n && tt[j + 1] < tq)
+                j++;
+            if (j + 1 >= n) {
+                ur[m] = vv[n - 1];
+            } else {
+                double dtj = tt[j + 1] - tt[j];
+                ur[m] = (dtj > 0.0)
+                    ? vv[j] + (vv[j + 1] - vv[j]) * (tq - tt[j]) / dtj
+                    : vv[j];
+            }
+        }
+    }
+
     /* Enumerate distinct 2-D harmonics k1*f1 + k2*f2 >= 0 with |k1|+|k2| <= order,
-     * and evaluate the Fourier coefficient directly at each frequency over the last
-     * period by trapezoidal integration. */
+     * and evaluate the Fourier coefficient at each frequency over the uniform last period. */
     for (ord = 0; ord <= maxorder; ord++) {    /* report in ascending total order */
         for (k1 = -maxorder; k1 <= maxorder; k1++) {
             for (k2 = -maxorder; k2 <= maxorder; k2++) {
                 double f, w, cre, cim, mag, phase;
-                int    i;
                 if (abs(k1) + abs(k2) != ord)
                     continue;
                 f = k1 * f1 + k2 * f2;
@@ -242,23 +277,20 @@ com_qpss(wordlist *wl)
                     if (dup) continue;
                 }
 
-                /* Fourier coefficient at f over the last period, trapezoidal:
-                 * c = integral of v(t) * exp(-j 2 pi f t) dt. */
+                /* Enhancement-319: Fourier coefficient at f = integral of v(t)*exp(-j2pi f t) dt
+                 * over exactly one period, rectangular rule on the uniform resampled grid. For a
+                 * periodic signal over a full period the rectangular rule equals the trapezoidal
+                 * rule (equal endpoints) and, for commensurate f, is exact. */
                 cre = cim = 0.0;
                 {
-                    double pr = 0.0, pi = 0.0;      /* previous integrand samples */
-                    for (i = i0; i < v->v_length; i++) {
-                        double ph = 2.0 * M_PI * f * tt[i];
-                        double gr =  vv[i] * cos(ph);
-                        double gi = -vv[i] * sin(ph);
-                        if (i > i0) {
-                            double dt = tt[i] - tt[i - 1];
-                            cre += 0.5 * (gr + pr) * dt;
-                            cim += 0.5 * (gi + pi) * dt;
-                        }
-                        pr = gr;
-                        pi = gi;
+                    int m;
+                    for (m = 0; m < M; m++) {
+                        double ph = 2.0 * M_PI * f * (wstart + ((double) m * T) / M);
+                        cre += ur[m] * cos(ph);
+                        cim -= ur[m] * sin(ph);
                     }
+                    cre *= T / M;
+                    cim *= T / M;
                 }
                 w   = (f < 0.5 * fb) ? (1.0 / T) : (2.0 / T);   /* DC single-sided */
                 mag = w * hypot(cre, cim);
@@ -270,6 +302,7 @@ com_qpss(wordlist *wl)
         }
     }
 
+    tfree(ur);   /* Enhancement-319 */
     if (pn && !pn->pn_value && v)
         vec_free(v);
     if (pn)

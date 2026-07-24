@@ -1,0 +1,10 @@
+* Enhancement-319: transient-form QPSS spectral leakage. On a LINEAR two-tone RC circuit
+* every mixing product k1*f1+k2*f2 with |k1|+|k2|>=2 is analytically EXACTLY 0. Pre-fix the
+* trapezoidal DFT over a non-integer-period, non-uniform window leaked the fundamental into
+* every mixing bin at ~5.8e-4 (~-45 dB). Post-fix (uniform resample over exactly the beat
+* period + rectangular DFT) the floor drops to ~6.6e-8 (~-122 dB). Line 1 is the title.
+V1 p 0 SIN(1 0.1 100meg)
+V2 q p SIN(0 0.1 110meg)
+R1 q a 1000
+C1 a 0 1p
+.end
