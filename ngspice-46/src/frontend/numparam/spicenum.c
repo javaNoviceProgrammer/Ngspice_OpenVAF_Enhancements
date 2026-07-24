@@ -543,6 +543,85 @@ nupa_add_param(char *param_name, double value)
 }
 
 
+/* Enhancement-320: evaluate a bare expression string against the ACTIVE
+ * circuit's numparam table (dicoS), returning the numeric result. Used by the
+ * .param fast-sweep path to re-evaluate a captured device-value expression
+ * after overriding a swept .param, without re-sourcing the deck. Caller must
+ * have selected the right circuit's dico via nupa_set_dicoslist(ci_dicos).
+ * *found (optional) is set to 0 on a parse/eval error, 1 on success. */
+double
+nupa_eval_expr(const char *expr, int *found)
+{
+    bool err = 0;
+    double v;
+    if (!dicoS || !expr) {
+        if (found)
+            *found = 0;
+        return 0.0;
+    }
+    v = nupa_expr_eval(dicoS, expr, &err);
+    if (found)
+        *found = err ? 0 : 1;
+    return v;
+}
+
+
+/* Enhancement-320: re-evaluate every .param ('P') definition line in source
+ * order against dicoS, EXCEPT lines whose first assigned identifier is one of
+ * the swept names (those are held at the caller-set value via nupa_add_param).
+ * This refreshes the whole derived-parameter closure in place -- e.g. after
+ * overriding `rval`, a `.param a=rval*2` line is recomputed -- so a subsequent
+ * nupa_eval_expr() of a device value that references a derived param is
+ * correct, all without a deck re-source. Mirrors nupa_eval()'s 'P' branch. */
+void
+nupa_recompute_params(char *const *swept, int nswept)
+{
+    int i, k;
+    if (!dicoS || !dicoS->dynrefptr || !dicoS->dyncategory)
+        return;
+
+    for (i = 0; i <= dicoS->linecount; i++) {
+        char *line, *p, *name;
+        size_t len;
+        int is_swept = 0;
+
+        if (dicoS->dyncategory[i] != 'P')
+            continue;
+        line = dicoS->dynrefptr[i];
+        if (!line)
+            continue;
+
+        /* parse the first assigned identifier: skip leading blanks, an
+         * optional leading dot-keyword (".param"), then read the ident up to
+         * space/'='. */
+        p = line;
+        while (*p && (unsigned char) (*p) <= ' ')
+            p++;
+        if (*p == '.') {
+            while (*p && (unsigned char) (*p) > ' ')
+                p++;
+            while (*p && (unsigned char) (*p) <= ' ')
+                p++;
+        }
+        name = p;
+        while (*p && (unsigned char) (*p) > ' ' && *p != '=')
+            p++;
+        len = (size_t) (p - name);
+
+        for (k = 0; k < nswept; k++)
+            if (swept[k] && strlen(swept[k]) == len &&
+                strncmp(name, swept[k], len) == 0) {
+                is_swept = 1;
+                break;
+            }
+        if (is_swept)
+            continue;          /* keep the caller-imposed sweep value */
+
+        nupa_assignment(dicoS, line, 'N');
+    }
+}
+
+
 void
 nupa_copy_inst_entry(char *param_name, entry_t *proto)
 {

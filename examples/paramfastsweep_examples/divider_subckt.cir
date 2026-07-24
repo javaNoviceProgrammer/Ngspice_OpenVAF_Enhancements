@@ -1,0 +1,13 @@
+* Enhancement-320: swept param inside a subckt -> conservative reset fallback
+.param rval=1k
+.subckt res a b
+R1 a b {rval}
+.ends
+V1 in 0 1
+X1 in out res
+R2 out 0 1k
+.control
+sweep rval lin 9 100 900 -analysis op -output out
+wrdata divider_sub_out.dat out
+.endc
+.end

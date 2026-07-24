@@ -21,6 +21,8 @@ extern void   nupa_list_params(FILE *cp_out);
 extern double nupa_get_param(const char *param_name, int *found);
 extern const char *nupa_get_string_param(const char *param_name);
 extern void   nupa_add_param(char *param_name, double value);
+extern double nupa_eval_expr(const char *expr, int *found);            /* Enhancement-320 */
+extern void   nupa_recompute_params(char *const *swept, int nswept);   /* Enhancement-320 */
 extern void   nupa_copy_inst_dico(void);
 extern void   nupa_del_dicoS(void);
 extern int    nupa_add_dicoslist(void);

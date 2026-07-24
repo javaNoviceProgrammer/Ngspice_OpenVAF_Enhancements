@@ -1269,6 +1269,28 @@ evaluate_expr(dico_t *dico, DSTRINGPTR qstr_p, const char *t, const char * const
 }
 
 
+/* Enhancement-320: evaluate a bare expression string against a dico's current
+ * symbol table, returning the numeric result. Thin non-static wrapper around
+ * formula() so the .param fast-sweep path (com_sweep.c) can re-evaluate a
+ * captured device-value expression after overriding a swept .param -- with NO
+ * deck re-source. *perror is set on a parse/eval error. */
+double
+nupa_expr_eval(dico_t *dico, const char *s, bool *perror)
+{
+    bool err = 0;
+    double u;
+    if (!s || !*s) {
+        if (perror)
+            *perror = 1;
+        return 0.0;
+    }
+    u = formula(dico, s, s + strlen(s), &err);
+    if (perror)
+        *perror = err;
+    return u;
+}
+
+
 /********* interface functions for spice3f5 extension ***********/
 
 static bool

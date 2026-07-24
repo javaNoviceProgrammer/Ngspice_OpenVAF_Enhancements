@@ -45,6 +45,7 @@ analyses is suppressed via `ft_optimizing`.
 
 #include "numparam/numpaif.h"
 #include "ngspice/randnumb.h"
+#include "ngspice/devdefs.h"      /* Enhancement-320: DEVices[]/DEVmaxnum direct set */
 #include "com_sweep.h"
 
 #define SW_ALTER   0             /* alter     -- device / instance / source      */
@@ -237,6 +238,438 @@ static void sw_set_inplace(int kind, const char *name, double val)
     (void) snprintf(cmd, sizeof cmd, "%s %s=%.10g",
                     kind == SW_MODEL ? "altermod" : "alter", name, val);
     sw_run_cmd(cmd);
+}
+
+
+/* ================= Enhancement-320: .param FAST-SWEEP =========================
+ * A swept `.param` normally forces a full `reset` (deck re-source + subckt
+ * re-expand + CKTsetup + matrix reorder) at every point, because numparam folds
+ * the param into device value literals at parse time and leaves no live binding.
+ * When the swept param feeds ONLY addressable top-level device/model VALUES, we
+ * can instead re-evaluate each dependent value against the retained numparam
+ * table and push it into the live circuit with `alter`/`altermod` -- no reset.
+ *
+ * A binding is one captured top-level device/model value expression; `cmd` is
+ * the alter command up to and including "= " and `expr` is the {..} contents
+ * re-evaluated each point (after the swept params are overridden in the dico).
+ * The path ARMS only if every occurrence of every swept param is such a value;
+ * any subckt-body / structural / derived-param use disarms it (reset fallback),
+ * so it is always correct: when unsure, it does exactly what it does today. */
+struct sw_fp_bind {
+    char *cmd;                 /* textual fallback: "alter Rs0 = " / "altermod m vth0 = " */
+    char *name;                /* device/model instance name (for direct resolve) */
+    char *param;               /* instance param keyword, or NULL for the principal */
+    int   mod;                 /* 1 = .model param (altermod, textual only)         */
+    char *expr;                /* e.g. "rval*2" (brace contents), re-evaluated/point */
+    /* resolved once (instance binds only) so the point loop sets the slot
+     * directly via ft_sim->setInstanceParm, bypassing lex + @name resolution. */
+    GENinstance *inst;
+    int   devtype;
+    int   parmid;
+    int   rok;                 /* 1 = resolved, use direct set; 0 = textual cmd */
+    struct sw_fp_bind *next;
+};
+static struct sw_fp_bind *sw_fp_list = NULL;
+static int sw_fp_armed = 0;
+
+static int sw_ident_ch(int c)
+{
+    return isalnum(c) || c == '_';
+}
+
+/* whole-identifier-token search: TRUE iff `tok` occurs in [s,e) on ident
+ * boundaries (so "rval" does not match inside "rvalue" or "xrval"). */
+static int sw_has_token(const char *s, const char *e, const char *tok)
+{
+    size_t n = strlen(tok);
+    const char *p;
+    for (p = s; p + n <= e; p++) {
+        if (strncmp(p, tok, n) != 0)
+            continue;
+        if (p > s && sw_ident_ch((unsigned char) p[-1]))
+            continue;
+        if (p + n < e && sw_ident_ch((unsigned char) p[n]))
+            continue;
+        return 1;
+    }
+    return 0;
+}
+
+/* does any swept name occur as a token in [s,e)? */
+static int sw_line_has_swept(const char *s, const char *e,
+                             char *const *sw, int nsw)
+{
+    int k;
+    for (k = 0; k < nsw; k++)
+        if (sw_has_token(s, e, sw[k]))
+            return 1;
+    return 0;
+}
+
+static void sw_fp_add(const char *cmd, const char *name, const char *param,
+                      int mod, const char *beg_expr, const char *end_expr)
+{
+    struct sw_fp_bind *b = TMALLOC(struct sw_fp_bind, 1);
+    b->cmd = copy(cmd);
+    b->name = copy(name);
+    b->param = param ? copy(param) : NULL;
+    b->mod = mod;
+    b->expr = copy_substring(beg_expr, end_expr);
+    b->inst = NULL;
+    b->devtype = -1;
+    b->parmid = 0;
+    b->rok = 0;
+    b->next = sw_fp_list;
+    sw_fp_list = b;
+}
+
+static void sw_fp_free(void)
+{
+    struct sw_fp_bind *b = sw_fp_list, *nx;
+    while (b) {
+        nx = b->next;
+        tfree(b->cmd);
+        tfree(b->name);
+        tfree(b->param);
+        tfree(b->expr);
+        tfree(b);
+        b = nx;
+    }
+    sw_fp_list = NULL;
+    sw_fp_armed = 0;
+}
+
+/* Resolve an instance bind to (instance, type, param-id) once, so the point
+ * loop can set it directly. Model binds (mod=1) stay on the textual altermod
+ * path. rok stays 0 on any failure -> that bind falls back to its textual cmd. */
+static void sw_fp_resolve(CKTcircuit *ckt, struct sw_fp_bind *b)
+{
+    int type, k;
+    GENmodel *m;
+    GENinstance *inst;
+
+    b->rok = 0;
+    if (!ckt || b->mod)
+        return;
+    for (type = 0; type < DEVmaxnum; type++) {
+        if (!DEVices[type])
+            continue;
+        for (m = ckt->CKThead[type]; m; m = m->GENnextModel)
+            for (inst = m->GENinstances; inst; inst = inst->GENnextInstance)
+                if (inst->GENname && cieq(inst->GENname, b->name)) {
+                    IFdevice *dev = &DEVices[type]->DEVpublic;
+                    for (k = 0; dev->instanceParms &&
+                                k < *dev->numInstanceParms; k++) {
+                        IFparm *prm = dev->instanceParms + k;
+                        if (!(prm->dataType & IF_SET))
+                            continue;
+                        if ((prm->dataType & IF_VARTYPES) != IF_REAL)
+                            continue;
+                        if (b->param) {
+                            if (!cieq(prm->keyword, b->param))
+                                continue;
+                        } else if (!(prm->dataType & IF_PRINCIPAL)) {
+                            continue;
+                        }
+                        b->inst = inst;
+                        b->devtype = type;
+                        b->parmid = prm->id;
+                        b->rok = 1;
+                        return;
+                    }
+                    return;                 /* instance found, no settable parm */
+                }
+    }
+}
+
+/* Classify+capture one top-level ELEMENT or .model line (`line`); `name` is the
+ * already-extracted device/model instance name, `mod` selects altermod. Returns
+ * 0 if the line makes the fast path INELIGIBLE, 1 if fully handled. Every swept
+ * token must sit inside a value brace that is either the last token (principal)
+ * or of the form `key={expr}`; anything else (node/name/mid position) disarms. */
+static int sw_fp_scan_valueline(const char *line, const char *name, int mod,
+                                char *const *sw, int nsw)
+{
+    const char *p = line;
+    const char *le = line + strlen(line);
+
+    while (*p) {
+        if (*p == '{') {
+            const char *bexp = p + 1;
+            const char *q = bexp;
+            int depth = 1;
+            while (*q && depth) {           /* find matching close brace */
+                if (*q == '{') depth++;
+                else if (*q == '}') depth--;
+                if (depth) q++;
+            }
+            if (depth) return 0;            /* unbalanced -> bail (ineligible) */
+            /* q points at '}'; [bexp,q) is the expression */
+            if (sw_line_has_swept(bexp, q, sw, nsw)) {
+                const char *k = p;          /* look left of '{' for '=' */
+                char cmd[600];
+                while (k > line && isspace((unsigned char) k[-1])) k--;
+                if (k > line && k[-1] == '=') {
+                    /* key={expr} : named param */
+                    const char *ke = k - 1;             /* at '=' */
+                    const char *kend, *kbeg;
+                    while (ke > line && isspace((unsigned char) ke[-1])) ke--;
+                    kend = ke;                           /* one past key end? */
+                    /* ke now just past '='; step to end of key */
+                    kend = k - 1;
+                    while (kend > line && isspace((unsigned char) kend[-1])) kend--;
+                    kbeg = kend;
+                    while (kbeg > line && sw_ident_ch((unsigned char) kbeg[-1])) kbeg--;
+                    if (kbeg == kend) return 0;          /* no key ident */
+                    {
+                        char key[256];
+                        (void) snprintf(key, sizeof key, "%.*s",
+                                        (int) (kend - kbeg), kbeg);
+                        (void) snprintf(cmd, sizeof cmd, "%s %s %s = ",
+                                        mod ? "altermod" : "alter", name, key);
+                        sw_fp_add(cmd, name, key, mod, bexp, q);
+                    }
+                } else {
+                    /* positional: must be the last token on the line */
+                    const char *r = q + 1;
+                    while (*r && isspace((unsigned char) *r)) r++;
+                    if (*r != '\0' && *r != ';' && *r != '$' && *r != '*')
+                        return 0;                        /* not last -> ineligible */
+                    if (mod) return 0;                   /* .model has no principal */
+                    (void) snprintf(cmd, sizeof cmd, "alter %s = ", name);
+                    sw_fp_add(cmd, name, NULL, 0, bexp, q);
+                }
+            }
+            p = q + 1;
+            continue;
+        }
+        /* a swept token OUTSIDE any brace (node/name/type position) disarms */
+        if (sw_ident_ch((unsigned char) *p) &&
+            (p == line || !sw_ident_ch((unsigned char) p[-1]))) {
+            const char *w = p;
+            while (*p && sw_ident_ch((unsigned char) *p)) p++;
+            if (sw_line_has_swept(w, p, sw, nsw))
+                return 0;
+            continue;
+        }
+        p++;
+    }
+    (void) le;
+    return 1;
+}
+
+/* qsort comparator: group bindings by identical expression text. */
+static int sw_fp_cmp_expr(const void *a, const void *b)
+{
+    const struct sw_fp_bind *ba = *(struct sw_fp_bind *const *) a;
+    const struct sw_fp_bind *bb = *(struct sw_fp_bind *const *) b;
+    return strcmp(ba->expr, bb->expr);
+}
+
+/* Build the fast-path binding list from the ORIGINAL (pre-expansion) deck for
+ * the given swept `.param` names. Returns 1 and sets sw_fp_armed if every swept
+ * occurrence is an addressable top-level device/model value; otherwise frees any
+ * partial captures and returns 0 (caller uses the reset path). */
+static int sw_fp_build(char *const *sw, int nsw)
+{
+    struct card *deck, *c;
+    int subckt_depth = 0, control_depth = 0;
+
+    sw_fp_free();
+    if (nsw <= 0 || !ft_curckt)
+        return 0;
+    deck = ft_curckt->ci_origdeck;
+    if (!deck)
+        return 0;
+
+    for (c = deck; c; c = c->nextcard) {
+        const char *line = c->line, *p, *e;
+        if (!line)
+            continue;
+        p = line;
+        while (*p && isspace((unsigned char) *p)) p++;
+        if (*p == '\0' || *p == '*')
+            continue;                                   /* blank / comment */
+        e = p + strlen(p);
+
+        /* skip `.control ... .endc` blocks: those are interactive commands
+         * (e.g. the `sweep` line itself), not circuit -- their mention of a
+         * swept param must not be read as a structural use. */
+        if (strncasecmp(p, ".control", 8) == 0) { control_depth++; continue; }
+        if (strncasecmp(p, ".endc", 5) == 0) {
+            if (control_depth > 0) control_depth--;
+            continue;
+        }
+        if (control_depth > 0)
+            continue;
+
+        /* track .subckt nesting */
+        if (strncasecmp(p, ".subckt", 7) == 0) { subckt_depth++; continue; }
+        if (strncasecmp(p, ".ends", 5) == 0 || strncasecmp(p, ".eom", 4) == 0) {
+            if (subckt_depth > 0) subckt_depth--;
+            continue;
+        }
+
+        if (!sw_line_has_swept(p, e, sw, nsw))
+            continue;                                   /* line ignores swept */
+
+        if (subckt_depth > 0)                           /* subckt-body use */
+            goto disarm;
+
+        if (*p == '.') {
+            /* .model -> capture value params; .param -> derived check;
+             * anything else structural -> disarm */
+            if (strncasecmp(p, ".model", 6) == 0) {
+                const char *np = p + 6, *nb, *ne;
+                char nm[256];
+                while (*np && isspace((unsigned char) *np)) np++;
+                nb = np;
+                while (*np && !isspace((unsigned char) *np) && *np != '(') np++;
+                ne = np;
+                if (ne == nb) goto disarm;
+                (void) snprintf(nm, sizeof nm, "%.*s", (int) (ne - nb), nb);
+                if (!sw_fp_scan_valueline(p, nm, 1, sw, nsw))
+                    goto disarm;
+            } else if (strncasecmp(p, ".param", 6) == 0) {
+                /* derived dependency: a NON-swept param defined from a swept one
+                 * cannot be pushed in v1 -> disarm. (Swept param's own def and
+                 * any assignment whose LHS is itself swept are fine.) */
+                const char *q = p + 6;
+                while (*q) {
+                    const char *nb2, *ne2, *rb, *re;
+                    int lhs_swept = 0, k;
+                    while (*q && (isspace((unsigned char) *q) || *q == ',')) q++;
+                    if (!*q) break;
+                    nb2 = q;
+                    while (*q && sw_ident_ch((unsigned char) *q)) q++;
+                    ne2 = q;
+                    while (*q && isspace((unsigned char) *q)) q++;
+                    if (*q != '=') { /* not an assignment token; skip on */ q++; continue; }
+                    q++;                                /* past '=' */
+                    while (*q && isspace((unsigned char) *q)) q++;
+                    rb = q;
+                    while (*q && *q != ',' &&
+                           !(isspace((unsigned char) *q))) q++;
+                    /* extend RHS over spaces inside an expression up to next
+                     * 'ident =' or ',' or EOL: simplest safe bound is to EOL */
+                    re = q;
+                    for (k = 0; k < nsw; k++)
+                        if ((size_t)(ne2 - nb2) == strlen(sw[k]) &&
+                            strncmp(nb2, sw[k], (size_t)(ne2 - nb2)) == 0)
+                            lhs_swept = 1;
+                    if (!lhs_swept && sw_line_has_swept(rb, re, sw, nsw))
+                        goto disarm;                    /* derived-from-swept */
+                }
+            } else {
+                goto disarm;                            /* structural dot-card */
+            }
+        } else {
+            /* element line */
+            const char *nb = p, *ne;
+            char nm[256];
+            if (*p == 'x' || *p == 'X')                 /* subckt call */
+                goto disarm;
+            while (*p && !isspace((unsigned char) *p)) p++;
+            ne = p;
+            (void) snprintf(nm, sizeof nm, "%.*s", (int) (ne - nb), nb);
+            if (!sw_fp_scan_valueline(line, nm, 0, sw, nsw))
+                goto disarm;
+        }
+    }
+
+    if (!sw_fp_list)                                    /* swept feeds nothing */
+        return 0;
+
+    /* resolve instance binds once for the fast direct-set path */
+    {
+        struct sw_fp_bind *b;
+        for (b = sw_fp_list; b; b = b->next)
+            sw_fp_resolve(ft_curckt->ci_ckt, b);
+    }
+
+    /* group identical expressions so the point loop evaluates each UNIQUE
+     * expression only once -- a swept param usually feeds many identically
+     * valued devices (every R = {rval}). Order among binds does not matter
+     * (independent instance slots), so sorting by expr text is safe. */
+    {
+        int n = 0, i;
+        struct sw_fp_bind *b, **arr;
+        for (b = sw_fp_list; b; b = b->next) n++;
+        if (n > 1) {
+            arr = TMALLOC(struct sw_fp_bind *, n);
+            for (b = sw_fp_list, i = 0; b; b = b->next) arr[i++] = b;
+            qsort(arr, (size_t) n, sizeof(*arr), sw_fp_cmp_expr);
+            for (i = 0; i < n - 1; i++) arr[i]->next = arr[i + 1];
+            arr[n - 1]->next = NULL;
+            sw_fp_list = arr[0];
+            tfree(arr);
+        }
+    }
+    sw_fp_armed = 1;
+    return 1;
+
+disarm:
+    sw_fp_free();
+    return 0;
+}
+
+/* Apply one sweep point via the fast path: override the swept params in the
+ * numparam dico, refresh the derived-param closure, then re-evaluate and push
+ * every captured device/model value with alter/altermod. No reset. */
+static void sw_fp_apply(char *const *sw, const double *vals, int nsw)
+{
+    struct sw_fp_bind *b;
+    CKTcircuit *ckt = ft_curckt ? ft_curckt->ci_ckt : NULL;
+    char *touched = NULL;
+    int j, type, any_direct = 0;
+
+    if (ft_curckt)
+        nupa_set_dicoslist(ft_curckt->ci_dicos);
+    for (j = 0; j < nsw; j++)
+        nupa_add_param((char *) sw[j], vals[j]);
+    nupa_recompute_params(sw, nsw);      /* refresh derived-param closure */
+
+    if (ckt && DEVmaxnum > 0)
+        touched = TMALLOC(char, DEVmaxnum);
+    if (touched)
+        for (type = 0; type < DEVmaxnum; type++)
+            touched[type] = 0;
+
+    const char *last_expr = NULL;        /* eval cache: binds are expr-sorted */
+    double last_v = 0.0;
+    for (b = sw_fp_list; b; b = b->next) {
+        double v;
+        if (last_expr && strcmp(b->expr, last_expr) == 0) {
+            v = last_v;                  /* same expression as previous bind */
+        } else {
+            int ok = 0;
+            v = nupa_eval_expr(b->expr, &ok);
+            if (!ok) { last_expr = NULL; continue; }
+            last_expr = b->expr;
+            last_v = v;
+        }
+        if (b->rok && touched && ckt) {  /* direct slot write, no lex/resolve */
+            IFvalue val;
+            val.rValue = v;
+            ft_sim->setInstanceParm(ckt, b->inst, b->parmid, &val, NULL);
+            touched[b->devtype] = 1;
+            any_direct = 1;
+        } else {                         /* textual fallback (model params etc.) */
+            char cmd[700];
+            (void) snprintf(cmd, sizeof cmd, "%s%.17g", b->cmd, v);
+            sw_run_cmd(cmd);
+        }
+    }
+
+    /* refresh each touched device type's derived state once (mirrors the
+     * .dc @inst[param] path, DCTsetInstParam): O(devices) per type, not per
+     * instance. RES recomputes its conductance inside DEVparam already, but
+     * OSDI and other devices update derived state only in DEVtemperature. */
+    if (any_direct && touched && ckt)
+        for (type = 0; type < DEVmaxnum; type++)
+            if (touched[type] && DEVices[type] && DEVices[type]->DEVtemperature)
+                DEVices[type]->DEVtemperature(ckt->CKThead[type], ckt);
+    tfree(touched);
 }
 
 
@@ -545,6 +978,8 @@ void com_sweep(wordlist *wl)
     char   *kscname[SW_MAXKNOB];
     double  prevval[SW_MAXKNOB];
     int     nknob = 0, npt = 1, nv0 = 0, ncomb = 1, havePrev = 0;
+    char   *deck_fp_names[SW_MAXKNOB];   /* Enhancement-320: swept .param names   */
+    int     ndeck_fp = 0, fast_fp = 0;   /* .param fast-sweep arm state           */
 
     for (j = 0; j < SW_MAXKNOB; j++) {
         kname[j] = NULL; kvals[j] = NULL; kscname[j] = NULL;
@@ -656,6 +1091,25 @@ void com_sweep(wordlist *wl)
                 npt, ncomb, ncomb == 1 ? "" : "s", analysis);
     }
 
+    /* --- Enhancement-320: try to arm the .param fast-sweep. Collect the
+     * SW_DECK (symbolic `.param`) knob names; if every swept param feeds only
+     * addressable top-level device/model values, sw_fp_build() captures them and
+     * the point loop pushes values in place (alter) instead of re-sourcing. */
+    {
+        ndeck_fp = 0;
+        for (j = 0; j < nknob; j++)
+            if (kkind[j] == SW_DECK)
+                deck_fp_names[ndeck_fp++] = kname[j];
+        fast_fp = (ndeck_fp > 0) ? sw_fp_build(deck_fp_names, ndeck_fp) : 0;
+        if (fast_fp) {
+            int nb = 0;
+            struct sw_fp_bind *b;
+            for (b = sw_fp_list; b; b = b->next) nb++;
+            fprintf(cp_out, "sweep: fast .param path armed (%d value binding%s, "
+                    "no per-point reset)\n", nb, nb == 1 ? "" : "s");
+        }
+    }
+
     /* --- run the sweep over the cartesian product (inner knob varies fastest,
      * so point p = outer_combo * nv0 + inner_index) --- */
     sweep_active = 1;                                /* block re-source recursion */
@@ -674,11 +1128,19 @@ void com_sweep(wordlist *wl)
                 if (!havePrev || curval[j] != prevval[j]) deckChanged = 1;
             }
         resetNeeded = (!havePrev) || deckChanged;
-        if (resetNeeded && anyDeck) {                /* re-source once for the point */
-            for (j = 0; j < nknob; j++)
-                if (kkind[j] == SW_DECK) sw_set_deck(kname[j], curval[j]);
-            sw_run_cmd("reset");
-            ft_optimizing = TRUE;                    /* reset clears it */
+        if (resetNeeded && anyDeck) {
+            if (fast_fp) {                           /* Enhancement-320: no reset */
+                double dvals[SW_MAXKNOB];
+                int di = 0;
+                for (j = 0; j < nknob; j++)
+                    if (kkind[j] == SW_DECK) dvals[di++] = curval[j];
+                sw_fp_apply(deck_fp_names, dvals, ndeck_fp);
+            } else {                                 /* re-source once for the point */
+                for (j = 0; j < nknob; j++)
+                    if (kkind[j] == SW_DECK) sw_set_deck(kname[j], curval[j]);
+                sw_run_cmd("reset");
+                ft_optimizing = TRUE;                /* reset clears it */
+            }
         }
         for (j = 0; j < nknob; j++)                  /* in-place after any reset */
             if (kkind[j] != SW_DECK) sw_set_inplace(kkind[j], kname[j], curval[j]);
@@ -819,6 +1281,7 @@ void com_sweep(wordlist *wl)
     }
 
 cleanup:
+    sw_fp_free();                        /* Enhancement-320: drop fast-path binds */
     sweep_active = 0;
     ft_optimizing = save_optimizing;
     for (k = 0; k < nout; k++) { tfree(outname[k]); tfree(outexpr[k]); }

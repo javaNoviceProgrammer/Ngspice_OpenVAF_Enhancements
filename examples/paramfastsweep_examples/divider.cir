@@ -1,0 +1,10 @@
+* Enhancement-320: .param fast-sweep -- top-level param feeds a device value
+.param rval=1k
+V1 in 0 1
+R1 in out {rval}
+R2 out 0 1k
+.control
+sweep rval lin 9 100 900 -analysis op -output out -output i(v1)
+wrdata divider_out.dat out i(v1)
+.endc
+.end

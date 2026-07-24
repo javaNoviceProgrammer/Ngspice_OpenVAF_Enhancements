@@ -68,6 +68,7 @@ bool defsubckt(dico_t *, const struct card *);
 int findsubckt(dico_t *, const char *s);
 bool nupa_substitute(dico_t *, const char *s, char **lp);
 bool nupa_assignment(dico_t *, const char *s, char mode);
+double nupa_expr_eval(dico_t *, const char *s, bool *perror);  /* Enhancement-320 */
 bool nupa_subcktcall(dico_t *, const char *s, const char *x,
         char *inst_name);
 void nupa_subcktexit(dico_t *);
