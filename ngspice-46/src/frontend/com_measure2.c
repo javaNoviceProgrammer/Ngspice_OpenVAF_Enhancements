@@ -1078,11 +1078,23 @@ measure_minMaxAvg(
                    they are the same quantity. RMS and INTEG already clip this way in
                    measure_rms_integral(); do the same here. MIN/MAX keep their
                    whole-sample semantics. */
-                if (mFunctionType == AT_AVG && first != 0 && i > 0 &&
-                        !AlmostEqualUlps(svalue, meas->m_to, 100)) {
-                    value = measure_interpolate(dScale, d, i - 1, i, meas->m_to,
-                                                'y', meas);
-                    svalue = meas->m_to;
+                if (mFunctionType == AT_AVG && first != 0 && i > 0) {
+                    /* Enhancement-316: always add the final partial interval up to `to`.
+                       The !AlmostEqualUlps guard used to gate the whole accumulation, so
+                       when the first out-of-window sample fell within 100 ULPs of `to`
+                       the entire final trapezoid [sprev, to] -- a full timestep -- was
+                       dropped, ending AVG's window one step short of `to`. That made
+                       `avg` disagree with `integ`/(to-from) over the same window (they
+                       are the same quantity -- the Enhancement-302 contract). INTEG/RMS
+                       in measure_rms_integral() ALWAYS add the final point, interpolating
+                       only when the sample overshoots `to`; match that here -- interpolate
+                       to `to` only when the sample is more than 100 ULPs beyond it, else
+                       use it as-is, but add the trapezoid either way. */
+                    if (!AlmostEqualUlps(svalue, meas->m_to, 100)) {
+                        value = measure_interpolate(dScale, d, i - 1, i, meas->m_to,
+                                                    'y', meas);
+                        svalue = meas->m_to;
+                    }
                     mValue += 0.5 * (value + pvalue) * (svalue - sprev);
                     Tsum += (svalue - sprev);
                     pvalue = value;
