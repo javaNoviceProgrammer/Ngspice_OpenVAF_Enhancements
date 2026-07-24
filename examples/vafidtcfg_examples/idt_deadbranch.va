@@ -1,0 +1,20 @@
+// Enhancement-317: an idt() with an initial condition placed inside a statically-false
+// branch crashed the compiler. `ceil(0) > 1` is always false but ceil() is not const-folded,
+// so the dead branch survives into MIR; the guarded w = idt(V(a),0) initial-condition state
+// is never used, so codegen prunes the branch CONDITION's computation as dead -- yet the
+// branch instruction survives into setup_instance, and reading its now-Undef condition hit
+// unreachable!() in the LLVM builder (builder.rs:143), crashing the shipped compiler (exit 101).
+// Post-fix: the Undef condition is lowered as constant false (the guarded code is dead either
+// way), so the model compiles. It reduces to a plain integrator I(a,b) <+ idt(V(a),0).
+`include "disciplines.vams"
+module idtcfg(a, b);
+    inout a, b;
+    electrical a, b;
+    real x, w;
+    analog begin
+        x = idt(V(a), 0);
+        if (ceil(0) > 1)
+            w = idt(V(a), 0);      // dead branch: never taken, w unused
+        I(a, b) <+ 1e-6 * x + 1e-3 * V(a, b);
+    end
+endmodule

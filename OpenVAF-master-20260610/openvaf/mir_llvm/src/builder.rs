@@ -633,9 +633,25 @@ impl<'ll> Builder<'_, '_, 'll> {
             mir::InstructionData::Unary { opcode, ref arg } => (opcode, slice::from_ref(arg)),
             mir::InstructionData::Binary { opcode, ref args } => (opcode, args.as_slice()),
             mir::InstructionData::Branch { cond, then_dst, else_dst, .. } => {
+                // Enhancement-317: the condition can still be `Undef` when a branch
+                // survives into a derived function (e.g. osdi::setup::setup_instance) whose
+                // build prunes the condition's computation as dead -- the branch only
+                // guarded dead code, such as the initial-condition state init of an
+                // `idt(_, IC)` placed inside a statically-false branch
+                // (`if (ceil(0) > 1) w = idt(V(a),0);` -- ceil() is not const-folded, so the
+                // dead branch survives into MIR but its guarded state is never used). Reading
+                // that `Undef` condition hit `unreachable!()` in BuilderVal::get and crashed
+                // the shipped compiler. Feed a constant `false` instead: the guarded code is
+                // dead on either edge, so this is observationally equivalent (verified
+                // corpus-bit-identical) and avoids emitting an undefined `br`.
+                let cond_val = if matches!(self.values[cond], BuilderVal::Undef) {
+                    self.cx.const_bool(false)
+                } else {
+                    self.values[cond].get(self)
+                };
                 llvm_sys::core::LLVMBuildCondBr(
                     self.llbuilder as *const _ as *mut _,
-                    NonNull::from(self.values[cond].get(self)).as_ptr(),
+                    NonNull::from(cond_val).as_ptr(),
                     NonNull::from(self.blocks[then_dst].unwrap()).as_ptr(),
                     NonNull::from(self.blocks[else_dst].unwrap()).as_ptr(),
                 );
