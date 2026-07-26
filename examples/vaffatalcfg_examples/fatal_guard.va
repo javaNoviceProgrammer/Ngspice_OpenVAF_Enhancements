@@ -1,0 +1,21 @@
+// Enhancement-324: the realistic `$fatal` usage -- a parameter validity guard.
+// This one COMPILED before the fix too; it is here as the BEHAVIOUR guard, to
+// prove the fix did not change what `$fatal` does at run time. `r` defaults to
+// 0, so the guard fires and the simulator must abort the run with the message.
+// Note the fall-through `V/r` divide: `$fatal` now falls through (exactly as
+// `$finish`/`$stop` already did) instead of terminating the MIR function, and
+// the abort still happens cleanly before any of it can matter.
+`include "disciplines.vams"
+module fatal_guard(a, c);
+    inout a, c;
+    electrical a, c;
+    parameter real r = 0.0;
+    real i;
+    analog begin
+        if (r <= 0.0) begin
+            $fatal(0, "r must be positive, got %g", r);
+        end
+        i = V(a, c) / r;
+        I(a, c) <+ i;
+    end
+endmodule

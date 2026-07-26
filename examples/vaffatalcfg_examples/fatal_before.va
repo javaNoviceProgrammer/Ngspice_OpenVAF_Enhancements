@@ -1,0 +1,15 @@
+// Enhancement-324: a contribution BEFORE an unconditional `$fatal`.
+// Pre-fix this crashed the SHIPPED compiler for the mirror-image reason: the
+// `exit()` left the OSDI eval epilogue (which stores the residual/jacobian
+// outputs the ABI requires) stranded in the predecessor-less block, where the
+// residual value does not dominate, so codegen read an undefined value:
+//   panicked at mir_llvm/src/builder.rs: attempted to read undefined value
+`include "disciplines.vams"
+module fatal_before(a, c);
+    inout a, c;
+    electrical a, c;
+    analog begin
+        I(a, c) <+ V(a, c) / 1.0e3;
+        $fatal(0);
+    end
+endmodule

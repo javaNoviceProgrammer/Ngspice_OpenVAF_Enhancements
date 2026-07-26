@@ -1263,15 +1263,25 @@ impl BodyLoweringCtx<'_, '_, '_> {
                 // Fatal code is 0 (used for translation MIR->IR)
                 let call_args = vec![];
                 self.ctx.call(CallBackKind::SetRetFlag(RetFlag::Abort), &call_args);
-                self.ctx.ins().exit();
-
-                // Create unreachable block for the remainder of iftrue (after $fatal).
-                // Seal it (it is the replacement of the original iftrue block).
-                // Because it has no incoming edges it will be removed from MIR.
-                let unreachable_bb = self.ctx.create_block();
-                self.ctx.switch_to_block(unreachable_bb);
-                self.ctx.seal_block(unreachable_bb);
-
+                // Enhancement-324: `$fatal` sets its return flag and CONTINUES, exactly
+                // like `$finish`/`$stop` below. It used to emit `exit()` and then switch
+                // lowering into a freshly created, predecessor-less "unreachable" block.
+                // That was unsound for a compiled device: the OSDI eval function has a
+                // mandatory epilogue (store residual/jacobian outputs) which the ABI
+                // requires to run, and every ret-flag -- Abort, Finish, Stop -- is only a
+                // flag the simulator inspects AFTER eval returns; none of them can
+                // longjmp out of the middle of an evaluation. Terminating the MIR
+                // function early therefore left the epilogue, and any statement written
+                // after `$fatal`, stranded in a block with no incoming edges:
+                //   * `$fatal(0); V(a) <+ 1.0;`  -- the contribution was lowered into the
+                //     unreachable block, but stayed referenced by the contribution
+                //     bookkeeping, so aggressive DCE hit an instruction that belongs to
+                //     no block (`inst_block(inst).unwrap()`, dead_code_aggressive.rs).
+                //   * `V(a) <+ 2.0; $fatal(0);`  -- the epilogue itself landed in the
+                //     unreachable block, where the residual value does not dominate, so
+                //     codegen read an `Undef` (`BuilderVal::get`, mir_llvm/builder.rs).
+                // Both crashed the SHIPPED compiler. Setting the flag and falling through
+                // keeps the CFG connected, so neither situation can arise.
                 GRAVESTONE
             }
             BuiltIn::analysis => {

@@ -1,0 +1,16 @@
+// Enhancement-324: a statement AFTER an unconditional `$fatal`.
+// Pre-fix this crashed the SHIPPED compiler: `$fatal` emitted `exit()` and then
+// switched lowering into a freshly created block with no incoming edges, so the
+// contribution below was lowered into unreachable code while staying referenced
+// by the contribution bookkeeping. Aggressive DCE then hit an instruction that
+// belongs to no block:
+//   panicked at mir_opt/src/dead_code_aggressive.rs: Option::unwrap() on None
+`include "disciplines.vams"
+module fatal_after(a, c);
+    inout a, c;
+    electrical a, c;
+    analog begin
+        $fatal(0);
+        I(a, c) <+ V(a, c) / 1.0e3;
+    end
+endmodule

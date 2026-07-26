@@ -45,7 +45,7 @@ Two hundred and thirty enhancements so far — language features, correctness fi
 The index: **Doc** links each enhancement's detailed write-up, **Examples** links the folder whose verify script pins the behavior.
 
 <details>
-<summary><b>📖 Show the full enhancement table</b> — 323 rows, click to expand</summary>
+<summary><b>📖 Show the full enhancement table</b> — 324 rows, click to expand</summary>
 
 | # | What it delivered | Tool | Doc | Examples |
 |---|---|---|---|---|
@@ -372,6 +372,7 @@ The index: **Doc** links each enhancement's detailed write-up, **Examples** link
 | 321 | extend `.param` fast-sweep to subcircuit-internal device values | ngspice | [doc](enhancements_doc/Enhancement-321.md) | [paramfastsweep](examples/paramfastsweep_examples/) |
 | 322 | `optimize` reuses `.param` fast-path, no per-eval reset | ngspice | [doc](enhancements_doc/Enhancement-322.md) | [optimize](examples/optimize_examples/) |
 | 323 | arm `optimize` fast-path for small OSDI fits (weight OSDI 30x) | ngspice | [doc](enhancements_doc/Enhancement-323.md) | [optimize](examples/optimize_examples/) |
+| 324 | fix `$fatal` stranding code in an unreachable block (2 shipped crashes) | openvaf&#8209;r | [doc](enhancements_doc/Enhancement-324.md) | [vaffatalcfg](examples/vaffatalcfg_examples/) |
 
 </details>
 
