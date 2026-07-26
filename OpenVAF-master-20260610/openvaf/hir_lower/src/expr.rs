@@ -16,7 +16,7 @@ use hir::signatures::{
 };
 use hir::{Body, BuiltIn, Expr, ExprId, Literal, /*ParamSysFun,*/ Ref, ResolvedFun, Type};
 use mir::builder::InstBuilder;
-use mir::{Opcode, Value, FALSE, F_ONE, F_ZERO, GRAVESTONE, INFINITY, TRUE, ZERO};
+use mir::{InstructionData, Opcode, Value, FALSE, F_ONE, F_ZERO, GRAVESTONE, INFINITY, TRUE, ZERO};
 use stdx::iter::zip;
 use syntax::ast::{BinaryOp, UnaryOp};
 
@@ -1514,14 +1514,53 @@ impl BodyLoweringCtx<'_, '_, '_> {
             BuiltIn::ddx => {
                 let val = self.lower_expr(args[0]);
                 let unknown = self.lower_expr(args[1]);
-                let call = if signature == DDX_POT {
-                    // TODO how to handle gnd nodes?
-                    let node = self.ctx.unwrap_node(unknown);
-                    CallBackKind::NodeDerivative(node)
-                } else {
-                    CallBackKind::Derivative(self.ctx.dfg().value_def(unknown).unwrap_param())
-                };
-                self.ctx.call1(call, &[val])
+
+                // Enhancement-327: the unknown does NOT always lower to a bare Param, so
+                // unwrapping one unconditionally crashed the SHIPPED compiler ("Value is
+                // not a parameter") on legal input. `LoweringCtx::nodes` can yield:
+                //   * a Param        -- a forward-oriented probe, e.g. V(a,b) or V(a)
+                //   * `fneg(param)`  -- a REVERSE-oriented probe, e.g. V(b,a) (the same
+                //                       branch with the opposite reference direction, or
+                //                       a probe whose high side is ground)
+                //   * F_ZERO         -- a probe of ground only, which is not an unknown
+                //                       of the DAE system at all
+                // Both extra shapes are legal and have an obvious derivative, so they
+                // must COMPILE rather than error: V(b,a) == -V(a,b), hence
+                // df/dV(b,a) == -(df/dV(a,b)); and df/d(ground) == 0.
+                let mut negate = false;
+                let mut probe = unknown;
+                if let Some(inst) = self.ctx.dfg().value_def(probe).inst() {
+                    if let InstructionData::Unary { opcode: Opcode::Fneg, arg } =
+                        self.ctx.dfg().insts[inst]
+                    {
+                        negate = true;
+                        probe = arg;
+                    }
+                }
+
+                match self.ctx.dfg().value_def(probe).as_param() {
+                    // Not an unknown of the system (ground, or a probe that collapsed to
+                    // a constant): the derivative is identically zero.
+                    None => F_ZERO,
+                    Some(param) => {
+                        let call = if signature == DDX_POT {
+                            match self.ctx.param_kind(param).pot_node() {
+                                Some(node) => CallBackKind::NodeDerivative(node),
+                                // a single-node potential that is not a plain node
+                                // potential cannot be an unknown either
+                                None => return F_ZERO,
+                            }
+                        } else {
+                            CallBackKind::Derivative(param)
+                        };
+                        let res = self.ctx.call1(call, &[val]);
+                        if negate {
+                            self.ctx.ins().fneg(res)
+                        } else {
+                            res
+                        }
+                    }
+                }
             }
             BuiltIn::temperature => self.ctx.use_param(ParamKind::Temperature),
             BuiltIn::simparam => {

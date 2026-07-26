@@ -2,7 +2,8 @@ use ahash::AHashSet;
 use hir::{CompilationDB, Name, Node, Type, Variable};
 use mir::builder::{InsertBuilder, InstBuilder};
 use mir::{
-    Block, DataFlowGraph, FuncRef, Inst, Opcode, SourceLoc, Value, FALSE, F_ZERO, INFINITY, TRUE,
+    Block, DataFlowGraph, FuncRef, Inst, Opcode, Param, SourceLoc, Value, FALSE, F_ZERO, INFINITY,
+    TRUE,
 };
 use mir_build::{FuncInstBuilder, FunctionBuilder, Place};
 use typed_indexmap::TiSet;
@@ -139,6 +140,13 @@ impl<'a, 'c> LoweringCtx<'a, 'c> {
     pub fn unwrap_node(&mut self, val: Value) -> Node {
         let param = self.dfg().value_def(val).unwrap_param();
         self.intern.params.get_index(param).unwrap().0.unwrap_pot_node()
+    }
+
+    /// Enhancement-327: the [`ParamKind`] a [`Param`] was interned for. Lets `ddx`
+    /// lowering INSPECT a user-supplied unknown (is it a plain node potential?)
+    /// rather than assert its shape and panic.
+    pub fn param_kind(&self, param: Param) -> &ParamKind {
+        self.intern.params.get_index(param).unwrap().0
     }
 
     pub fn call1(&mut self, kind: CallBackKind, args: &[Value]) -> Value {

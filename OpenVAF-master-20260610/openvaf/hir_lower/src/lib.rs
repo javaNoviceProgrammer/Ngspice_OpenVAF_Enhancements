@@ -142,6 +142,18 @@ impl ParamKind {
         }
     }
 
+    /// Enhancement-327: the non-panicking form of [`Self::unwrap_pot_node`]. `ddx`'s
+    /// unknown is user-supplied, so lowering must be able to ASK whether a parameter is
+    /// a plain node potential instead of asserting it -- a probe that is not one (a
+    /// ground reference, a flow probe) simply is not an unknown of the DAE system and
+    /// its derivative is zero.
+    pub fn pot_node(&self) -> Option<Node> {
+        match self {
+            ParamKind::Voltage { hi, lo: None } => Some(*hi),
+            _ => None,
+        }
+    }
+
     pub fn op_dependent(&self) -> bool {
         matches!(
             self,

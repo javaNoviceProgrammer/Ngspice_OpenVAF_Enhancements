@@ -1,0 +1,40 @@
+// Enhancement-327: `ddx` unknowns that do not lower to a bare MIR Param.
+//
+// `LoweringCtx::nodes` can return a Param (a forward-oriented probe), an `fneg`
+// INSTRUCTION (a reverse-oriented probe such as V(b,a), or one whose high side is
+// ground), or F_ZERO (a probe of ground only, which is not an unknown of the DAE
+// system at all). `ddx` lowering unwrapped a Param unconditionally, so the latter
+// two panicked -- "Value is not a parameter" -- crashing the SHIPPED compiler on
+// legal input.
+//
+// Both extra shapes have an unambiguous derivative, so they must COMPILE:
+//   V(b,a) is the same branch with the opposite reference direction, i.e.
+//   V(b,a) == -V(a,b), hence  d f / d V(b,a) == -( d f / d V(a,b) );
+//   ground is not an unknown, so  d f / d V(gnd) == 0.
+//
+// Each module differentiates V^2, whose exact derivative is 2*V, and drives the
+// result as a current through a 1 mS scale so the value is directly observable.
+`include "disciplines.vams"
+
+// forward orientation: I = 1e-3 * 2V
+module ddx_fwd(a, b);
+    inout a, b;
+    electrical a, b;
+    analog I(a, b) <+ 1.0e-3 * ddx(V(a, b) * V(a, b), V(a, b));
+endmodule
+
+// reverse orientation: must be the exact negative of ddx_fwd
+module ddx_rev(a, b);
+    inout a, b;
+    electrical a, b;
+    analog I(a, b) <+ 1.0e-3 * ddx(V(a, b) * V(a, b), V(b, a));
+endmodule
+
+// ground as the unknown: the derivative is identically zero, so only the
+// explicit 1e-9 leak term remains
+module ddx_gnd(a, b);
+    inout a, b;
+    electrical a, b;
+    ground b;
+    analog I(a, b) <+ 1.0e-3 * ddx(V(a, b) * V(a, b), V(b)) + 1.0e-9 * V(a, b);
+endmodule
