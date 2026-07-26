@@ -120,7 +120,13 @@ impl Builder<'_> {
             ValueDef::Param(_) => {
                 return FlatSet::Bottom;
             }
-            ValueDef::Invalid => unreachable!(),
+            // Enhancement-329: `ValueDef::Invalid` is GRAVESTONE, the placeholder the
+            // SSA re-builder puts in a phi for an edge that has NO reaching definition
+            // (an edge from a block unreachable from the entry that simplify_cfg cannot
+            // delete). It is by construction never used at run time, so it contributes
+            // nothing to the small-signal network -- exactly like the F_ZERO arm above.
+            // Asserting it could not appear here crashed the SHIPPED compiler.
+            ValueDef::Invalid => return FlatSet::Zero,
         };
 
         match self.func.dfg.insts[inst] {
@@ -171,7 +177,10 @@ impl Builder<'_> {
                 return Dependency::NonZero
             }
             ValueDef::Param(_) | ValueDef::Const(_) => return Dependency::Independent,
-            ValueDef::Invalid => unreachable!(),
+            // Enhancement-329: GRAVESTONE, a phi operand on an edge with no reaching
+            // definition (see the sibling arm in `analyze_value`). It cannot be used at
+            // run time, so it carries no dependency on the unknown.
+            ValueDef::Invalid => return Dependency::Independent,
         };
         if !self.scratch_buf.contains(inst) {
             return Dependency::Independent;

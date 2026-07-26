@@ -1,0 +1,43 @@
+// Enhancement-329: a GRAVESTONE phi operand reaching the small-signal network.
+//
+// GRAVESTONE is the compiler's own placeholder for "an unused value that must
+// remain (in phis)" -- the SSA re-builder puts it in a phi for an edge with NO
+// reaching definition (an edge from a block unreachable from the entry that
+// simplify_cfg cannot delete). The small-signal network builder asserted such a
+// value could never reach it (`ValueDef::Invalid => unreachable!()`, in both
+// analyze_value and analyze_dependency) and crashed the SHIPPED compiler here.
+//
+// Ingredients: a `ddt` of a NEGATED flow probe, a statically-false branch
+// ((1*s0)-s0 == 0) containing a loop, and a product with a variable that is
+// never assigned (`r1`, which reads as the uninitialized default, i.e. 0).
+//
+// `ssn` and `ssn_ref` must therefore produce IDENTICAL results: `r0*r1` is
+// exactly zero, so only the explicit 1e-3*V terms remain.
+`include "disciplines.vams"
+
+module ssn(a, b, c);
+    inout a, b, c;
+    electrical a, b, c;
+    parameter integer s0 = 2;
+    real r0, r1;
+    integer lc3;
+    analog begin
+        r0 = ddt(-I(a, b));
+        if ((1 * s0) - s0) begin
+            lc3 = 0;
+            while (lc3 < 4) lc3 = lc3 + 1;
+        end
+        I(a, b) <+ 1.0e-3 * V(a, b);
+        I(b, c) <+ 1.0e-3 * V(b, c) + r0 * r1;
+    end
+endmodule
+
+// the same circuit with the crash ingredients removed
+module ssn_ref(a, b, c);
+    inout a, b, c;
+    electrical a, b, c;
+    analog begin
+        I(a, b) <+ 1.0e-3 * V(a, b);
+        I(b, c) <+ 1.0e-3 * V(b, c);
+    end
+endmodule

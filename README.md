@@ -45,7 +45,7 @@ Two hundred and thirty enhancements so far — language features, correctness fi
 The index: **Doc** links each enhancement's detailed write-up, **Examples** links the folder whose verify script pins the behavior.
 
 <details>
-<summary><b>📖 Show the full enhancement table</b> — 327 rows, click to expand</summary>
+<summary><b>📖 Show the full enhancement table</b> — 329 rows, click to expand</summary>
 
 | # | What it delivered | Tool | Doc | Examples |
 |---|---|---|---|---|
@@ -376,6 +376,8 @@ The index: **Doc** links each enhancement's detailed write-up, **Examples** link
 | 325 | bound materialized size of `{n{...}}` (string arity hang, 2^40 u32 wrap) | openvaf&#8209;r | [doc](enhancements_doc/Enhancement-325.md) | [vafconcatsize](examples/vafconcatsize_examples/) |
 | 326 | fix shipped SIGSEGV: cross-namespace `Value` compare mis-typed init cache slots | openvaf&#8209;r | [doc](enhancements_doc/Enhancement-326.md) | [vafinitcache](examples/vafinitcache_examples/) |
 | 327 | fix `ddx` crash on reverse-oriented or ground unknowns (now compile) | openvaf&#8209;r | [doc](enhancements_doc/Enhancement-327.md) | [vafddxunknown](examples/vafddxunknown_examples/) |
+| 328 | fix crash: dynamic array index used directly as a contribution RHS | openvaf&#8209;r | [doc](enhancements_doc/Enhancement-328.md) | [vafdynidx](examples/vafdynidx_examples/) |
+| 329 | fix crash: GRAVESTONE phi operand in the small-signal network builder | openvaf&#8209;r | [doc](enhancements_doc/Enhancement-329.md) | [vafssngravestone](examples/vafssngravestone_examples/) |
 
 </details>
 
