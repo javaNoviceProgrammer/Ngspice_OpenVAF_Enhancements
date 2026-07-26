@@ -273,8 +273,18 @@ impl<'a> Builder<'a> {
             .init_cache
             .iter()
             .filter_map(|(&val, &old_inst)| {
+                // Enhancement-326: `collapse_implicit` holds INIT-function values --
+                // `build_init_itern` inserts `self.val_map[&val]`, and `optimize()` tests
+                // it against `self.init.func`. `val` here comes from `self.init_cache`,
+                // which is keyed by MAIN-function values, so it must be mapped through
+                // `val_map` before the lookup. `Value` is a bare u32 index, so comparing
+                // the two namespaces directly does not fail loudly -- it silently
+                // succeeds whenever the two independent value counters happen to
+                // collide, making the result depend on a meaningless coincidence.
+                let is_collapse_flag =
+                    self.val_map.get(&val).map_or(false, |v| collapse_implicit.contains(v));
                 if self.func.dfg.value_dead(val)
-                    && (!self.output_values.contains(val) || collapse_implicit.contains(&val))
+                    && (!self.output_values.contains(val) || is_collapse_flag)
                 {
                     // make some other value here so there isn't an undefined parameter
                     self.func.dfg.values.fconst_at(0.0.into(), val);
@@ -324,7 +334,14 @@ impl<'a> Builder<'a> {
                     let idx = usize::from(tag);
                     let place = self.intern.outputs.get_index(idx).unwrap().0;
                     place.ty(self.db)
-                } else if collapse_implicit.contains(&val) {
+                } else if is_collapse_flag {
+                    // Enhancement-326: see above -- this must be the MAPPED lookup. When
+                    // the raw comparison coincided, a slot holding an f64 was recorded as
+                    // `Type::Bool`, which lowers to i8 (`ty_c_bool`): the store side then
+                    // emitted `trunc double .. to i8` and the noise loader read the slot
+                    // back as a raw i8 straight into `fmul i8 %x, double %y` -- invalid
+                    // IR that the shipped compiler carried into LLVM, where it SIGSEGV'd
+                    // in DoubleAPFloat::multiply.
                     Type::Bool
                 } else {
                     Type::Real

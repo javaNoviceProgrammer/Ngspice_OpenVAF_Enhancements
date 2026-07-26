@@ -1,0 +1,35 @@
+// Enhancement-326: an init cache slot was typed by a CROSS-NAMESPACE `Value`
+// comparison, so its recorded type depended on a numeric coincidence.
+//
+// `collapse_implicit` holds INIT-function values; `build_init_cache` tested
+// MAIN-function values against it. `Value` is a bare u32 index, so membership
+// silently succeeded whenever the two independent value counters collided. On a
+// collision an f64 cache slot was recorded as `Type::Bool` -> i8, so the store
+// side emitted `trunc double .. to i8` and the noise loader read the slot back as
+// a raw i8 straight into `fmul i8 %x, double %y`. That invalid IR reached LLVM,
+// where the SHIPPED compiler died with EXC_BAD_ACCESS in DoubleAPFloat::multiply.
+//
+// The ingredients that make the collision reachable (each verified essential by
+// ablation): a noise source whose POWER is an op-independent NON-parameter
+// expression (so it lands in a cache slot rather than a Param/Const output), an
+// analog operator that creates an implicit equation (`idt`) under a
+// parameter-only NON-constant condition (so the collapse flag is a runtime phi,
+// not a folded constant), and the noise live in a contribution. The two filler
+// statements are load-bearing only in that they position the value counters --
+// deleting one shifts an index and breaks the coincidence, which is why the
+// original 917-byte fuzz reproducer resisted line-by-line minimization.
+`include "disciplines.vams"
+module initcache(a, b);
+    inout a, b;
+    electrical a, b;
+    parameter real p = 1.0;
+    parameter integer s = 1;
+    real n, q, d;
+    analog begin
+        d = d + V(a, b) * 1.0;
+        d = d + V(a, b) * 2.0;
+        n = white_noise(abs(p));
+        if (s) q = idt(V(a, b));
+        I(a, b) <+ n * q + 1e-30 * d;
+    end
+endmodule

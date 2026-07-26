@@ -1,0 +1,27 @@
+// Enhancement-326: the NUMERIC guard for the mis-typed init cache slot.
+//
+// Same ingredients as `initcache.va` -- a noise source whose power is an
+// op-independent NON-parameter expression (so it is routed through an init CACHE
+// SLOT, which is exactly the slot whose recorded type was wrong), plus an `idt`
+// implicit equation under a parameter-only non-constant condition -- but here the
+// noise is left observable at the terminals so its magnitude can be checked
+// against the closed form.
+//
+// If the slot is typed `Bool` (i8) instead of `Real`, the power is read back as a
+// raw i8 and the noise magnitude is garbage; with the fix it matches
+// white_noise(p) exactly.
+`include "disciplines.vams"
+module initcache_noise(a, b);
+    inout a, b;
+    electrical a, b;
+    parameter real p = 4.0e-18;
+    parameter integer s = 1;
+    real n, q, d;
+    analog begin
+        d = d + V(a, b) * 1.0;
+        d = d + V(a, b) * 2.0;
+        n = white_noise(abs(p));          // power routed through a cache slot
+        if (s) q = idt(V(a, b));          // implicit equation -> collapse flag
+        I(a, b) <+ 1.0e-3 * V(a, b) + n + 1.0e-30 * (d + q);
+    end
+endmodule
