@@ -1,0 +1,27 @@
+// Enhancement-325: legitimate concatenation/replication must keep working.
+// This is the forward correctness guard for the size caps: a string replication,
+// an array replication and a mixed concatenation, all well within the limits, and
+// the resulting values are actually used so the model simulates.
+`include "disciplines.vams"
+module concat_ok(a, c);
+    inout a, c;
+    electrical a, c;
+
+    parameter string tag = {4{"ab"}};        // "abababab", 8 operands
+
+    real g[0:5];
+    real mix[0:3];
+    real gsum;
+    integer k;
+
+    analog begin
+        g   = {6{2.0}};                      // array replication
+        mix = {1.0, 2.0, {2{3.0}}};          // concatenation with a nested replication
+        gsum = 0.0;
+        for (k = 0; k <= 3; k = k + 1) begin
+            gsum = gsum + mix[k];            // 1+2+3+3 = 9
+        end
+        // g[0]=2.0 so the conductance is 2.0m; gsum only scales the check value
+        I(a, c) <+ V(a, c) * g[0] * 1.0e-3;
+    end
+endmodule

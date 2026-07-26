@@ -42,6 +42,22 @@ pub enum ResolvedFun {
     InvalidNatureAccess(NatureId),
 }
 
+/// Enhancement-325: cap on the number of elements a NUMERIC `{...}` concatenation /
+/// `{n{...}}` replication may materialize. Enhancement-314 capped the replication
+/// COUNT; this caps the resulting SIZE, which is what actually overflowed the u32
+/// array length. The numeric path is linear and cheap (65536 elements compile in
+/// ~0.4 s), so this bound only rules out the absurd.
+pub const MAX_CONCAT_ELEMS: u64 = 1 << 20;
+
+/// Enhancement-325: cap on the operand count of a STRING concatenation/replication.
+/// Much tighter than `MAX_CONCAT_ELEMS` because a string concatenation is lowered to
+/// a generated LLVM callback with ONE PARAMETER PER OPERAND (`lower_string_concat`
+/// builds an N-operand list and an N-"%s" format string), and LLVM degrades
+/// super-linearly in function arity: measured 2000 -> 0.4 s, 8000 -> 2.9 s,
+/// 16000 -> 8.6 s, 32000 -> did not finish. 4096 keeps the worst case near a second
+/// and is orders of magnitude above any legitimate source-level string literal.
+pub const MAX_CONCAT_STR_OPERANDS: u64 = 4096;
+
 #[derive(Debug, Clone, PartialEq, Eq, Copy)]
 pub enum AssignDst {
     Var(VarId),
@@ -1394,6 +1410,15 @@ impl Ctx<'_> {
 
     /// Enhancement-34: evaluates a `{n{...}}` replication count. Must be a positive
     /// compile-time integer literal; `None` (no replication) counts as 1.
+    /// Enhancement-325: the largest number of elements a `{...}` concatenation /
+    /// `{n{...}}` replication may materialize. Enhancement-314 capped the replication
+    /// COUNT at 2^20, but the count is only one factor of the final size: nesting
+    /// (`{1<<20{{1<<20{1.0}}}}` = 2^40) or a long operand list multiplies past it. The
+    /// materialized size is what actually costs -- it is the array length (a u32, which
+    /// overflowed: a panic under overflow-checks, a silent wrap to 0 in release) and,
+    /// for strings, the ARITY of a generated LLVM callback (200000 operands hung the
+    /// compiler in LLVM, and crashed the shipped build with a SIGSEGV-class failure).
+    /// No legitimate model materializes more than 2^20 elements from one literal.
     fn concat_rep_count(&mut self, rep: Option<ExprId>) -> Option<u32> {
         let Some(rep) = rep else { return Some(1) };
         if let Expr::Literal(Literal::Int(n)) = self.body.exprs[rep] {
@@ -1456,12 +1481,27 @@ impl Ctx<'_> {
                     }
                 }
             }
+            // Enhancement-325: a string concatenation is materialized as ONE generated
+            // LLVM callback per operand copy -- `lower_string_concat` builds an
+            // `elems.len() * rep_cnt` operand list AND a format string of that many
+            // "%s", which becomes the callback's ARITY. `{200000{"x"}}` therefore hung
+            // the compiler inside LLVM (and crashed the shipped build). Bound the
+            // materialized operand count, not just the replication factor.
+            let flat = (elems.len() as u64).saturating_mul(rep_cnt as u64);
+            if flat > MAX_CONCAT_STR_OPERANDS {
+                self.result.diagnostics.push(InferenceDiagnostic::ConcatTooLarge {
+                    expr,
+                    elems: flat,
+                    limit: MAX_CONCAT_STR_OPERANDS,
+                });
+                return None;
+            }
             return Some(Ty::Val(Type::String));
         }
 
         // numeric: flatten scalars + arrays
         let mut any_real = false;
-        let mut total: u32 = 0;
+        let mut total: u64 = 0;
         for (&e, ty) in elems.iter().zip(&tys) {
             match ty.as_ref().and_then(|t| t.to_value()) {
                 Some(Type::Real) => {
@@ -1473,7 +1513,9 @@ impl Ctx<'_> {
                     if **ety == Type::Real {
                         any_real = true;
                     }
-                    total += len;
+                    // Enhancement-325: u64 + saturating, so a long operand list cannot
+                    // wrap the running total before the cap below is consulted.
+                    total = total.saturating_add(len as u64);
                 }
                 _ => {
                     if let Some(ty) = ty {
@@ -1517,7 +1559,21 @@ impl Ctx<'_> {
             }
         }
 
-        Some(Ty::Val(Type::Array { ty: Box::new(elem), len: total * rep_cnt }))
+        // Enhancement-325: `total * rep_cnt` was an unchecked u32 multiply -- it panicked
+        // under overflow-checks and WRAPPED in the shipped release (2^20 * 2^20 = 2^40
+        // wrapped to 0, yielding a confusing "expected real[0:2], found real[0:0]"
+        // instead of a real diagnostic). Compute in u64, bound the materialized size,
+        // and only then narrow to the u32 array length.
+        let flat = total.saturating_mul(rep_cnt as u64);
+        if flat > MAX_CONCAT_ELEMS {
+            self.result.diagnostics.push(InferenceDiagnostic::ConcatTooLarge {
+                expr,
+                elems: flat,
+                limit: MAX_CONCAT_ELEMS,
+            });
+            return None;
+        }
+        Some(Ty::Val(Type::Array { ty: Box::new(elem), len: flat as u32 }))
     }
 
     /// Enhancement-34: expands a (typed) `{...}` concatenation into one source per
@@ -2424,6 +2480,19 @@ pub enum InferenceDiagnostic {
     /// Enhancement-34: an empty `{}` concatenation.
     EmptyConcat {
         expr: ExprId,
+    },
+
+    /// Enhancement-325: a `{...}` concatenation / `{n{...}}` replication whose
+    /// MATERIALIZED size exceeds what the compiler will expand. Enhancement-314
+    /// capped the replication COUNT, but the count is only one factor: nesting
+    /// (`{1<<20{{1<<20{1.0}}}}`) or a large operand list multiplies out to a size
+    /// that overflowed the u32 length (a panic under overflow-checks, a silent
+    /// wrap to 0 in release), and for strings became the ARITY of a generated
+    /// LLVM callback, which hung the compiler.
+    ConcatTooLarge {
+        expr: ExprId,
+        elems: u64,
+        limit: u64,
     },
 
     /// A vectored net/port was referenced by its base name without a bit-select.

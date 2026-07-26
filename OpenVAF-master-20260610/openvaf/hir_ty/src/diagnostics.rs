@@ -449,6 +449,24 @@ impl Diagnostic for InferenceDiagnosticWrapped<'_> {
                         "help: Verilog-A analog functions must not be recursive (LRM 4.7); rewrite the computation as a loop".to_owned(),
                     ])
             }
+            InferenceDiagnostic::ConcatTooLarge { expr, elems, limit } => {
+                let src = self
+                    .parse
+                    .to_file_span(self.expr_range(expr), self.sm);
+
+                Report::error()
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: src.file,
+                        range: src.range.into(),
+                        message: format!("expands to {elems} elements"),
+                    }])
+                    .with_message("concatenation/replication expands to too many elements")
+                    .with_notes(vec![format!(
+                        "help: a `{{...}}` concatenation is materialized at compile time; \
+                         this one would expand to {elems} elements, above the limit of {limit}"
+                    )])
+            }
             InferenceDiagnostic::InvalidReplicationCount { expr } => {
                 let src = self
                     .parse
