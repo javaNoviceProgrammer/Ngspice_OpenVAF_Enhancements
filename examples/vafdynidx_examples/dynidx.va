@@ -1,0 +1,35 @@
+// Enhancement-328: a dynamically-indexed array read used where a caller only
+// probes the expression's SHAPE -- e.g. directly as a contribution RHS.
+//
+// `BodyRef::get_expr` funnelled every `BitSelect` into `resolve_path`, which can
+// only resolve `Ty::Var`/`Ty::Param`/... and `panic!`s otherwise. A dynamic array
+// read has NO backing variable: inference types it `Ty::Val(..)` and records the
+// element variables, bounds and index expressions out-of-band in
+// `dynamic_index_refs`. So `get_expr` was not a total function, and any caller
+// that merely asked a question about the expression (is it a literal zero? is it
+// an aggregate?) crashed the SHIPPED compiler with
+//   "invalid HIR: path BitSelect { .. } was not resolved Val(Real)".
+//
+// `lower_expr` never hit it only because it short-circuits on `dynamic_index()`
+// BEFORE consulting `get_expr` -- which is why `x = g[k]; I <+ V*x;` compiled but
+// `I <+ V*g[k];` did not.
+//
+// A dynamically-indexed array read is legal Verilog-A, so it must COMPILE and
+// select the right element -- not merely stop crashing. Each instance below picks
+// a different element via its `k` parameter, and the four elements have distinct
+// conductances so the selection is directly observable.
+`include "disciplines.vams"
+module dynidx(a, b);
+    inout a, b;
+    electrical a, b;
+    parameter integer k = 0 from [0:3];
+    real g[0:3];
+    analog begin
+        g[0] = 1.0e-3;
+        g[1] = 2.0e-3;
+        g[2] = 3.0e-3;
+        g[3] = 4.0e-3;
+        // the dynamic index sits DIRECTLY in the contribution -- the shape that crashed
+        I(a, b) <+ V(a, b) * g[k];
+    end
+endmodule

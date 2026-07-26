@@ -130,6 +130,14 @@ impl BodyLoweringCtx<'_, '_, '_> {
         }
 
         let mut res = match self.body.get_expr(expr) {
+            // Enhancement-328: unreachable here -- the `dynamic_index()` short-circuit
+            // above already returned for exactly these expressions. The arm exists so
+            // that `Expr` can carry the shape for OTHER `get_expr` callers (which merely
+            // probe an expression and used to panic on it) while keeping this match
+            // exhaustive.
+            Expr::DynIndexRead => unreachable!(
+                "dynamic-index array read must be lowered by the short-circuit above"
+            ),
             Expr::Read(Ref::Variable(var)) => self.ctx.read_variable(var),
             Expr::Read(Ref::ParamSysFun(param)) => {
                 self.ctx.use_param(ParamKind::ParamSysFun(param))

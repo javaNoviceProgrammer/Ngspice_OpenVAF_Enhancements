@@ -167,6 +167,15 @@ impl<'a> BodyRef<'a> {
     }
 
     pub fn get_expr(&self, expr: ExprId) -> Expr<'a> {
+        // Enhancement-328: a dynamically-indexed array read has no `Ref` -- inference
+        // types it `Ty::Val(..)` and records it in `dynamic_index_refs` -- so routing it
+        // into `resolve_path` below panicked ("invalid HIR: path BitSelect .. was not
+        // resolved"). Answer the SHAPE question here instead, which keeps `get_expr`
+        // total for every caller; the value itself is still lowered by `lower_expr`'s
+        // `dynamic_index()` short-circuit, exactly as before.
+        if self.infere.dynamic_index_refs.contains_key(&expr) {
+            return Expr::DynIndexRead;
+        }
         match self.body.exprs[expr] {
             hir_def::Expr::Path { .. } | hir_def::Expr::BitSelect { .. } => {
                 Expr::Read(self.resolve_path(expr))
@@ -427,6 +436,20 @@ pub enum Expr<'a> {
     /// constant repetition-count expression of the replication form).
     Concat { rep: Option<ExprId>, elems: &'a [ExprId] },
     Literal(&'a Literal),
+    /// Enhancement-328: a dynamically-indexed array read, `c[i]` / `m[i][j]` with a
+    /// non-constant index. It has no `Ref`: inference types it `Ty::Val(..)` and records
+    /// the element variables, bounds and index expressions out-of-band in
+    /// `InferenceResult::dynamic_index_refs` (reachable via [`BodyRef::dynamic_index`]),
+    /// from which `lower_expr` builds a runtime select chain.
+    ///
+    /// It exists as a variant so that [`BodyRef::get_expr`] stays TOTAL. `get_expr`
+    /// previously funnelled every `BitSelect` into `resolve_path`, which only knows how
+    /// to resolve `Ty::Var`/`Ty::Param`/... and `panic!`s otherwise -- so any caller that
+    /// merely probes an expression's SHAPE (a literal-zero test, a literal-condition
+    /// fold, an aggregate check) crashed the compiler on a perfectly legal dynamic array
+    /// read. `lower_expr` never hit it only because it short-circuits on
+    /// `dynamic_index()` before consulting `get_expr`.
+    DynIndexRead,
 }
 impl Expr<'_> {
     pub fn is_zero(&self) -> bool {
