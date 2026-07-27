@@ -11,6 +11,62 @@ use typed_indexmap::TiSet;
 
 use crate::topology::Topology;
 
+/// Order `insts` so that every instruction comes after the instructions (within
+/// the same set) that produce its operands -- a topological order of the
+/// data-flow sub-graph.
+///
+/// `create_dimension`'s replay is only correct in such an order; see the comment
+/// at its call site for why the traversal's own postorder does not provide one.
+/// Instructions left over by a dependency cycle (phi back edges) are appended in
+/// their original relative order rather than dropped.
+fn dfg_topo_order(func: &Function, insts: &[Inst]) -> Vec<Inst> {
+    let mut in_set = BitSet::new_empty(func.dfg.num_insts());
+    for &inst in insts {
+        in_set.insert(inst);
+    }
+    let mut indeg: AHashMap<Inst, u32> = AHashMap::with_capacity(insts.len());
+    let mut succs: AHashMap<Inst, Vec<Inst>> = AHashMap::with_capacity(insts.len());
+    for &inst in insts {
+        indeg.entry(inst).or_insert(0);
+    }
+    for &inst in insts {
+        for &arg in func.dfg.instr_args(inst) {
+            if let Some(def) = func.dfg.value_def(arg).inst() {
+                if in_set.contains(def) {
+                    // one edge PER OPERAND USE, so `fadd t, t` is decremented twice
+                    succs.entry(def).or_default().push(inst);
+                    *indeg.entry(inst).or_insert(0) += 1;
+                }
+            }
+        }
+    }
+    let mut ready: Vec<Inst> =
+        insts.iter().copied().filter(|inst| indeg[inst] == 0).collect();
+    let mut out = Vec::with_capacity(insts.len());
+    let mut emitted = BitSet::new_empty(func.dfg.num_insts());
+    while let Some(inst) = ready.pop() {
+        out.push(inst);
+        emitted.insert(inst);
+        if let Some(succs) = succs.get(&inst) {
+            for &succ in succs {
+                let deg = indeg.get_mut(&succ).unwrap();
+                *deg -= 1;
+                if *deg == 0 {
+                    ready.push(succ);
+                }
+            }
+        }
+    }
+    if out.len() != insts.len() {
+        for &inst in insts {
+            if !emitted.contains(inst) {
+                out.push(inst);
+            }
+        }
+    }
+    out
+}
+
 pub(super) struct Builder<'a> {
     pub(super) topology: &'a mut Topology,
     pub(super) db: &'a CompilationDB,
@@ -51,7 +107,24 @@ impl<'a> Builder<'a> {
         self.val_map.clear();
         self.val_map_react.clear();
         self.val_map.insert(val, dim_val);
-        for &inst in self.postorder.iter().rev() {
+        // The replay below assumes an instruction is visited only AFTER every
+        // operand it depends on, because the `(None, Some(x)) => Some(x)` arms
+        // read "the unmapped operand does not depend on the dimension". That is
+        // only sound in a topological order.
+        //
+        // `postorder` does NOT guarantee one: `Postorder::populate` pushes every
+        // use of the operator's result onto its stack up front and marks each
+        // visited on PUSH, so when one such use feeds another the earlier-pushed
+        // one is popped (and emitted) first. For `ddt(V)+ddt(V)+ddt(V)` the
+        // instruction `t+t` was emitted before `(t+t)+t`, so replaying the latter
+        // found its `t+t` operand still unmapped, took it for dimension-
+        // independent, and DROPPED it -- silently yielding C = 1 F instead of 3 F.
+        //
+        // Sort into a real topological order first. Instructions in a dependency
+        // cycle (phi back edges) cannot be ordered and keep their previous
+        // relative order; the phi arm below already defers those deliberately.
+        let order = dfg_topo_order(self.func, &self.postorder);
+        for &inst in &order {
             macro_rules! ins {
                 () => {
                     FuncCursor::new(self.func).after_inst(inst).ins()

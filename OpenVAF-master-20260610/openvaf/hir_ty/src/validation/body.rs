@@ -427,7 +427,17 @@ struct ExprValidator<'a, 'b> {
 
 impl ExprValidator<'_, '_> {
     fn report_illegal_access(&mut self, kind: IllegalCtxAccessKind, expr: ExprId) {
-        let err = IllegalCtxAccess { kind, ctx: self.parent.ctx, expr };
+        // `ctx` only reaches `BodyCtx::Loop` when the loop's controlling
+        // expression is non-constant, so a `repeat (3)` reported via `loop_depth`
+        // would otherwise be described as being in an "analog block" -- naming the
+        // wrong construct and omitting the loop rule the user needs. Report the
+        // context the check actually used.
+        let ctx = if self.parent.loop_depth != 0 && self.parent.ctx.allow_analog_operator() {
+            BodyCtx::Loop
+        } else {
+            self.parent.ctx
+        };
+        let err = IllegalCtxAccess { kind, ctx, expr };
         self.report(BodyValidationDiagnostic::IllegalCtxAccess(err));
     }
 
@@ -716,14 +726,28 @@ impl ExprValidator<'_, '_> {
             // (confirmed: 99.8% of samples in raise_order_with, RSS climbing, no
             // termination at 15 min). Every other analog operator is already
             // rejected here; `ddx` was the lone hole.
-            BuiltIn::ddx if self.parent.loop_depth != 0 => self.report_illegal_access(
-                IllegalCtxAccessKind::AnalogOperator {
-                    name: name.as_ref().and_then(|p| p.as_ident()).unwrap(),
-                    is_standard: true,
-                    non_const_dominator: self.parent.non_const_dominator.clone(),
-                },
-                expr,
-            ),
+            //
+            // The same `loop_depth` test now covers EVERY analog operator, not just
+            // `ddx`. The generic arm below asks `ctx.allow_analog_operator()`, and
+            // `ctx` only becomes `BodyCtx::Loop` when the loop's controlling
+            // expression is NON-CONSTANT -- so `repeat (3)` (or any loop with a
+            // constant bound) slipped past it. `ddt` inside such a loop compiled
+            // silently and produced the WRONG CHARGE, where the identical `for`
+            // and `while` spellings were correctly rejected. `loop_depth` counts
+            // every loop form, so the diagnostic no longer depends on whether the
+            // trip count happens to be a literal.
+            _ if (call.is_analog_operator() || call.is_analog_operator_sysfun())
+                && self.parent.loop_depth != 0 =>
+            {
+                self.report_illegal_access(
+                    IllegalCtxAccessKind::AnalogOperator {
+                        name: name.as_ref().and_then(|p| p.as_ident()).unwrap(),
+                        is_standard: call.is_analog_operator(),
+                        non_const_dominator: self.parent.non_const_dominator.clone(),
+                    },
+                    expr,
+                )
+            }
 
             _ if call.is_analog_operator() && call != BuiltIn::ddx
                 || call.is_analog_operator_sysfun() =>

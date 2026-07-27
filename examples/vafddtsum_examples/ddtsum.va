@@ -1,0 +1,18 @@
+// Enhancement-332: summing three or more `ddt()` terms into one contribution
+// silently dropped charge.
+//
+// `I(a,b) <+ ddt(V) + ddt(V) + ddt(V)` must behave as a 3 F capacitor. The
+// shipped compiler produced 1 F: the DAE linearisation replayed `(t+t)+t`
+// BEFORE the `t+t` it depends on, found that operand unmapped, and took it for
+// dimension-independent -- dropping the term instead of adding it.
+//
+// Two and fewer terms were correct, which is why this survived so long.
+`include "disciplines.vams"
+
+module ddtsum(a, b);
+    inout a, b;
+    electrical a, b;
+    analog begin
+        I(a, b) <+ ddt(V(a, b)) + ddt(V(a, b)) + ddt(V(a, b));
+    end
+endmodule

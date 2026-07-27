@@ -1,0 +1,22 @@
+// Enhancement-332: the same defect reached through LEGAL, idiomatic code.
+//
+// A `generate` loop is unrolled at compile time, so this is exactly
+// `s = ddt(V) + ddt(V) + ddt(V)` -- an ordinary way to build a scaled charge.
+// It must behave as a 3 F capacitor; the shipped compiler gave 1 F.
+//
+// This is the case that matters: the defect is reachable without writing
+// anything unusual.
+`include "disciplines.vams"
+
+module ddtsum_generate(a, b);
+    inout a, b;
+    electrical a, b;
+    genvar k;
+    real s;
+    analog begin
+        s = 0.0;
+        generate k (0, 2)
+            s = s + ddt(V(a, b));
+        I(a, b) <+ s;
+    end
+endmodule

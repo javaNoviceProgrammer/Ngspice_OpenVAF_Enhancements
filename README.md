@@ -380,6 +380,7 @@ The index: **Doc** links each enhancement's detailed write-up, **Examples** link
 | 329 | fix crash: GRAVESTONE phi operand in the small-signal network builder | openvaf&#8209;r | [doc](enhancements_doc/Enhancement-329.md) | [vafssngravestone](examples/vafssngravestone_examples/) |
 | 330 | fix compiler hang: `ddx` in a runtime loop now a clean LRM 4.5.1 error | openvaf&#8209;r | [doc](enhancements_doc/Enhancement-330.md) | [vafddxloop](examples/vafddxloop_examples/) |
 | 331 | fix crash: `BitSet::contains` panicked outside its domain (dense rows) | openvaf&#8209;r | [doc](enhancements_doc/Enhancement-331.md) | [vafbitsetdomain](examples/vafbitsetdomain_examples/) |
+| 332 | fix wrong charge: summing 3+ `ddt()` terms dropped all but one | openvaf&#8209;r | [doc](enhancements_doc/Enhancement-332.md) | [vafddtsum](examples/vafddtsum_examples/) |
 
 </details>
 
