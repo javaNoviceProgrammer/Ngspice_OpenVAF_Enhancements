@@ -389,6 +389,7 @@ The index: **Doc** links each enhancement's detailed write-up, **Examples** link
 | 338 | fix hang: 64-bit bus range overflowed the width guard (7.6 GB in 9 s) | ngspice | [doc](enhancements_doc/Enhancement-338.md) | [busoverflow](examples/busoverflow_examples/) |
 | 339 | fix crash: `v()` with 3+ node names double-freed (print/let/pyplot) | ngspice | [doc](enhancements_doc/Enhancement-339.md) | [vfuncarity](examples/vfuncarity_examples/) |
 | 340 | fix nondeterminism: implicit-net declaration order came from HashMap walk | openvaf&#8209;r | [doc](enhancements_doc/Enhancement-340.md) | [vafdeterminism](examples/vafdeterminism_examples/) |
+| 341 | fix crash: `sweep -analysis reset/remcirc` freed the circuit mid-loop | ngspice | [doc](enhancements_doc/Enhancement-341.md) | [sweepanalysis](examples/sweepanalysis_examples/) |
 
 </details>
 

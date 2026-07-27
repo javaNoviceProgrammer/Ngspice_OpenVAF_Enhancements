@@ -1,0 +1,24 @@
+* Enhancement-341: `sweep -analysis reset` / `-analysis remcirc` SIGSEGV'd.
+*
+* `sweep` runs its `-analysis` argument as a command at every point, dispatching
+* it by name -- so a user could name `reset` or `remcirc`, which free and rebuild
+* (or remove) the very circuit the sweep is iterating over. The loop kept using
+* its resolved knob bindings, the old CKTcircuit* and the old plot, and ngspice
+* died with SIGSEGV.
+*
+* Both are now refused before the loop starts. Nothing legitimate is lost: the
+* sweep re-sources the deck itself when a knob needs it, so a user `reset` in the
+* per-point analysis has no purpose.
+.param pr = 1k
+V1 in 0 dc 1
+R1 in out 1k
+R2 out 0 {pr}
+.control
+echo "--- destructive analyses: must be refused, not crash ---"
+sweep pr lin 3 1k 3k -analysis reset -output v(out)
+sweep pr lin 3 1k 3k -analysis remcirc -output v(out)
+echo "--- a real analysis must still sweep ---"
+sweep pr lin 3 1k 3k -analysis op -output v(out)
+print v(out)
+.endc
+.end

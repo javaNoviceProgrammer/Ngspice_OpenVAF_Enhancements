@@ -220,6 +220,49 @@ static const char *sw_knobdesc(const char *name, int kind)
 }
 
 
+
+/* Enhancement-341: refuse an `-analysis` command that would destroy the circuit.
+ *
+ * `sw_run_cmd` dispatches any command by name, so `-analysis reset` and
+ * `-analysis remcirc` free and rebuild (or remove) the very circuit the sweep is
+ * iterating over. The loop then kept using its resolved knob bindings, the old
+ * `CKTcircuit *` and the old plot, and ngspice died with SIGSEGV.
+ *
+ * Rejecting the command BEFORE the loop starts is deliberate. Detecting the
+ * damage afterwards and breaking out is not enough: the sweep's post-loop plot
+ * finalisation touches the same freed state, so an abort path would have to be
+ * made safe as well -- and an early attempt at that turned a previously working
+ * case (`-analysis 'optimize ...'`, which resets internally but recovers) into a
+ * crash. Nothing legitimate is lost: a sweep re-sources the deck itself when a
+ * knob needs it, so a user `reset` in the per-point analysis has no purpose.
+ *
+ * `optimize` is NOT rejected -- it resets internally but re-establishes its own
+ * state, and it works today.
+ */
+static bool sw_analysis_is_destructive(const char *analysis)
+{
+    static const char *const banned[] = { "reset", "remcirc", "destroy",
+                                          "source", "load", "quit", NULL };
+    const char *p = analysis;
+    size_t n;
+    int i;
+
+    while (*p == ' ' || *p == '\t')
+        p++;
+    for (n = 0; p[n] && p[n] != ' ' && p[n] != '\t'; n++)
+        ;
+    for (i = 0; banned[i]; i++)
+        if (strlen(banned[i]) == n && strncasecmp(p, banned[i], n) == 0) {
+            fprintf(cp_err,
+                    "sweep: -analysis '%s' would destroy the circuit the sweep is "
+                    "iterating over; use a real analysis (op, dc, ac, tran, ...). "
+                    "The sweep re-sources the deck itself when a knob needs it.\n",
+                    banned[i]);
+            return TRUE;
+        }
+    return FALSE;
+}
+
 /* Stage a `.param` knob (alterparam only). Enhancement-190: the `reset` that
  * commits it is issued ONCE per point after every deck knob is staged, so a
  * multi-knob cartesian point re-sources the deck a single time. */
@@ -1190,6 +1233,12 @@ void com_sweep(wordlist *wl)
     }
     if (!analysis)
         analysis = copy("op");
+
+    /* Enhancement-341: reject a circuit-destroying -analysis before any work. */
+    if (sw_analysis_is_destructive(analysis)) {
+        tfree(analysis);
+        return;
+    }
 
     /* --- classify each knob and size the cartesian product --- */
     nv0 = knv[0];
