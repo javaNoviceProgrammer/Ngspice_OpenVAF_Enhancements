@@ -1,0 +1,37 @@
+`include "disciplines.vams"
+
+// Enhancement-334: the two integer operations Enhancement-333 left behind.
+//
+// E-286's comment named THREE compile-time-constant integer operations that LLVM
+// defines as poison -- a zero divisor, `i32::MIN / -1`, and a shift distance
+// outside 0..32 -- and declined to fold each one. Declining leaves the poison in
+// the IR, where it becomes `unreachable` -> `brk`. E-333 fixed only the divisor;
+// these two still compiled with exit 0 and killed ngspice with SIGTRAP.
+//
+// Each is inside a short-circuit `&&` with a runtime right operand, which is what
+// keeps the operation out of reach of constant folding so it survives to codegen.
+module intub(o);
+    output o;
+    electrical o;
+    parameter integer ione = 1;
+    analog begin
+        // `(-2147483647 - 1)` is how i32::MIN is reachable: the literal
+        // -2147483648 exceeds i32::MAX and promotes to REAL instead.
+        if ((-2147483647 - 1) / (-1) > 0 && ione > 0)
+            V(o) <+ 1.0;
+        else
+            V(o) <+ 2.0;
+    end
+endmodule
+
+module intub_shift(o);
+    output o;
+    electrical o;
+    parameter integer ione = 1;
+    analog begin
+        if ((1 << 40) > 0 && ione > 0)      // distance outside 0..=31
+            V(o) <+ 1.0;
+        else
+            V(o) <+ 2.0;
+    end
+endmodule

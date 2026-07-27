@@ -2,6 +2,11 @@ use std::borrow::Cow;
 use std::mem;
 use std::sync::Arc;
 
+/// Enhancement-333: recursion bound for `const_int_expr`. Deep enough for the constant
+/// folding real sources do (`-2147483647 - 1`, `1 << (4*8)`), shallow enough that a
+/// pathological expression cannot blow the stack.
+const CONST_FOLD_DEPTH: u32 = 16;
+
 use ahash::AHashMap;
 use arena::ArenaMap;
 use hir_def::body::Body;
@@ -555,14 +560,49 @@ impl Ctx<'_> {
                 // parameter, or a derived constant (`3 - 3`) is lowered as a runtime
                 // value, so the optimiser never sees a constant-zero divisor and none
                 // of those trap (each verified).
-                if matches!(op, BinaryOp::Division | BinaryOp::Remainder)
-                    && self.is_literal_zero(rhs)
-                {
-                    self.result.diagnostics.push(InferenceDiagnostic::DivisionByZero {
-                        expr,
-                        rhs,
-                        is_remainder: matches!(op, BinaryOp::Remainder),
-                    });
+                // All three shapes below are the SAME defect: an integer operation whose
+                // operands the code generator can see, and whose result LLVM defines as
+                // poison. Enhancement-286's comment named all three -- a zero divisor,
+                // `i32::MIN / -1`, and a shift distance outside 0..32 -- and declined to
+                // fold each one, which is precisely what leaves the poison in the IR.
+                match op {
+                    BinaryOp::Division | BinaryOp::Remainder => {
+                        let is_rem = matches!(op, BinaryOp::Remainder);
+                        match self.const_int_expr(rhs, CONST_FOLD_DEPTH) {
+                            Some(0) => {
+                                self.result.diagnostics.push(
+                                    InferenceDiagnostic::DivisionByZero { expr, rhs, is_remainder: is_rem },
+                                );
+                            }
+                            // `i32::MIN / -1` overflows: the true result is 2^31, which
+                            // is not representable, and LLVM makes `sdiv` of it poison.
+                            Some(-1)
+                                if self.const_int_expr(lhs, CONST_FOLD_DEPTH) == Some(i32::MIN) =>
+                            {
+                                self.result.diagnostics.push(
+                                    InferenceDiagnostic::IntegerDivisionOverflow { expr, is_remainder: is_rem },
+                                );
+                            }
+                            _ => {}
+                        }
+                    }
+                    BinaryOp::LeftShift
+                    | BinaryOp::RightShift
+                    | BinaryOp::ArithmeticLeftShift
+                    | BinaryOp::ArithmeticRightShift => {
+                        // A Verilog-A `integer` is 32 bit, so only 0..=31 is meaningful;
+                        // anything else is poison in LLVM. (At RUNTIME the same distance
+                        // is silently masked to 5 bits instead -- a separate wrong-answer
+                        // defect that this check does not address.)
+                        if let Some(dist) = self.const_int_expr(rhs, CONST_FOLD_DEPTH) {
+                            if !(0..32).contains(&dist) {
+                                self.result.diagnostics.push(
+                                    InferenceDiagnostic::ShiftOutOfRange { expr, rhs, dist },
+                                );
+                            }
+                        }
+                    }
+                    _ => {}
                 }
                 self.infere_bin_op(stmt, expr, lhs, rhs, op)?
             }
@@ -1989,14 +2029,41 @@ impl Ctx<'_> {
     }
 
     /// A bit-select index that constant-folds to an integer literal (optionally negated), or `None`.
-    /// Enhancement-333: is this expression a literal integer zero (`0`, or `-0`)?
+    /// Enhancement-333: fold an integer expression built ONLY from literals.
     ///
-    /// Deliberately literal-only. A localparam/parameter/derived zero is lowered as a
-    /// runtime value and never becomes a constant-zero divisor in the IR, so it is not
-    /// part of the undefined-behaviour surface this guards -- and treating it as one
-    /// would reject working models.
-    fn is_literal_zero(&self, expr: ExprId) -> bool {
-        self.const_int_index(expr) == Some(0)
+    /// Deliberately limited to literals and `+ - *` over them, because that is exactly
+    /// the set the code generator sees as a compile-time constant. A localparam,
+    /// parameter or any identifier is lowered as a RUNTIME value and never becomes a
+    /// constant operand in the IR, so it is not part of the undefined-behaviour surface
+    /// this guards -- and treating it as one would reject working models (verified: a
+    /// parameter, a localparam and `3 - 3` all compile and simulate).
+    ///
+    /// Wrapping arithmetic, to match what the generated code computes. `depth` bounds
+    /// the recursion so a pathological expression cannot blow the stack.
+    fn const_int_expr(&self, expr: ExprId, depth: u32) -> Option<i32> {
+        if depth == 0 {
+            return None;
+        }
+        match self.body.exprs[expr] {
+            Expr::Literal(Literal::Int(i)) => Some(i),
+            Expr::UnaryOp { expr: inner, op: UnaryOp::Neg } => {
+                self.const_int_expr(inner, depth - 1).map(i32::wrapping_neg)
+            }
+            Expr::UnaryOp { expr: inner, op: UnaryOp::Identity } => {
+                self.const_int_expr(inner, depth - 1)
+            }
+            Expr::BinaryOp { lhs, rhs, op: Some(op) } => {
+                let l = self.const_int_expr(lhs, depth - 1)?;
+                let r = self.const_int_expr(rhs, depth - 1)?;
+                match op {
+                    BinaryOp::Addition => Some(l.wrapping_add(r)),
+                    BinaryOp::Subtraction => Some(l.wrapping_sub(r)),
+                    BinaryOp::Multiplication => Some(l.wrapping_mul(r)),
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
     }
 
     fn const_int_index(&self, index: ExprId) -> Option<i32> {
@@ -2494,13 +2561,28 @@ pub enum InferenceDiagnostic {
         expr: ExprId,
     },
 
-    /// Enhancement-333: integer `/` or `%` by a LITERAL zero. It has no value, and
-    /// leaving it in the IR is undefined behaviour the optimiser turns into a trap
-    /// that kills the host simulator.
+    /// Enhancement-333: integer `/` or `%` by a compile-time-constant zero. It has no
+    /// value, and leaving it in the IR is undefined behaviour the optimiser turns into
+    /// a trap that kills the host simulator.
     DivisionByZero {
         expr: ExprId,
         rhs: ExprId,
         is_remainder: bool,
+    },
+
+    /// Enhancement-333: `i32::MIN / -1` (or `%`) with compile-time-constant operands.
+    /// The true result 2^31 is not representable, and LLVM makes it poison.
+    IntegerDivisionOverflow {
+        expr: ExprId,
+        is_remainder: bool,
+    },
+
+    /// Enhancement-333: a shift by a compile-time-constant distance outside 0..=31.
+    /// A Verilog-A `integer` is 32 bit, so anything else is poison in LLVM.
+    ShiftOutOfRange {
+        expr: ExprId,
+        rhs: ExprId,
+        dist: i32,
     },
 
     /// A bus bit-select index was outside the bus's declared `[msb:lsb]` width.

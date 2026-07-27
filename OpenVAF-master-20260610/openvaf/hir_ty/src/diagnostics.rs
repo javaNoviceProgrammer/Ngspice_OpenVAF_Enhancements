@@ -413,6 +413,52 @@ impl Diagnostic for InferenceDiagnosticWrapped<'_> {
                             .to_owned(),
                     ])
             }
+            InferenceDiagnostic::IntegerDivisionOverflow { expr, is_remainder } => {
+                let src = self.parse.to_file_span(self.expr_range(expr), self.sm);
+                let op = if is_remainder { "remainder" } else { "division" };
+
+                Report::error()
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: src.file,
+                        range: src.range.into(),
+                        message: "this overflows a 32-bit integer".to_owned(),
+                    }])
+                    .with_message(format!("integer {op} overflows"))
+                    .with_notes(vec![
+                        "help: the result of `-2147483648 / -1` is 2147483648, which does \
+                         not fit in a 32-bit integer; the generated code would trap and \
+                         take the simulator with it"
+                            .to_owned(),
+                    ])
+            }
+            InferenceDiagnostic::ShiftOutOfRange { expr, rhs, dist } => {
+                let src = self.parse.to_file_span(self.expr_range(expr), self.sm);
+                let at = self.parse.to_file_span(self.expr_range(rhs), self.sm);
+
+                Report::error()
+                    .with_labels(vec![
+                        Label {
+                            style: LabelStyle::Primary,
+                            file_id: at.file,
+                            range: at.range.into(),
+                            message: format!("shift distance is {dist}"),
+                        },
+                        Label {
+                            style: LabelStyle::Secondary,
+                            file_id: src.file,
+                            range: src.range.into(),
+                            message: "in this shift".to_owned(),
+                        },
+                    ])
+                    .with_message("shift distance out of range")
+                    .with_notes(vec![
+                        "help: a Verilog-A `integer` is 32 bits, so the shift distance \
+                         must be 0..=31; the generated code would trap and take the \
+                         simulator with it"
+                            .to_owned(),
+                    ])
+            }
             InferenceDiagnostic::BitSelectOutOfRange { expr, index, msb, lsb } => {
                 let src = self
                     .parse

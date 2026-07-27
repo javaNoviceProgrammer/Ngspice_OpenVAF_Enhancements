@@ -17,6 +17,14 @@
 // the diagnostic. A zero divisor reaching the folder through a LOCALPARAM is still
 // accepted (it stays a runtime value), and is kept here so this file still
 // exercises the div/rem fold path.
+//
+// Enhancement-334 UPDATE: `1 << 40` was here for the same reason and is rejected for
+// the same reason -- an out-of-range shift distance is poison in LLVM and traps. It
+// moved to `intub.va`; the largest LEGAL distance is kept here instead.
+//
+// `-2147483648` exceeds i32::MAX, so that literal promotes to REAL and the line below
+// is a real division, not the integer overflow E-286 believed it was testing. The
+// integer case is only reachable as `(-2147483647 - 1)`, and lives in `intub.va`.
 module constfold(a, b);
     inout a, b;
     electrical a, b;
@@ -26,8 +34,8 @@ module constfold(a, b);
         q = 5 / lzero;              // zero divisor via localparam: still accepted
         r = 5 % lzero;              // ditto for remainder
         s = 2147483647 + 1;         // wraps, must not abort the folder
-        t = 1 << 40;                // shift distance outside 0..32
-        u = -2147483648 / -1;       // i32::MIN / -1 overflows
+        t = 1 << 31;                // largest LEGAL shift distance (see below)
+        u = -2147483648 / -1;       // literal exceeds i32, so this is REAL division
         I(a, b) <+ V(a, b) / 1.0e3 + 0.0 * (q + r + s + t + u);
     end
 endmodule

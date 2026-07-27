@@ -1,0 +1,23 @@
+`include "disciplines.vams"
+
+// Enhancement-334: everything the check must NOT reject.
+//
+// The guard is limited to operands the code generator sees as compile-time
+// constants. A parameter or localparam is a RUNTIME value, never becomes a
+// constant operand in the IR, and is therefore not undefined behaviour -- so it
+// must keep compiling. Legal shift distances and ordinary arithmetic likewise.
+module intub_ok(a, b);
+    inout a, b;
+    electrical a, b;
+    parameter integer pn = 3;
+    parameter integer pzero = 0;
+    localparam integer lmin = -2147483647 - 1;
+    integer w, x, y, z;
+    analog begin
+        w = 1 << 31;                // largest legal distance
+        x = 1 << pn;                // runtime distance: accepted (masked at runtime)
+        y = lmin / (-1);            // localparam operand: runtime, accepted
+        z = (7 / 2) + (7 % 3);      // ordinary integer arithmetic
+        I(a, b) <+ V(a, b) / 1.0e3 + 0.0 * (w + x + y + z + (5 / pzero));
+    end
+endmodule
