@@ -489,8 +489,26 @@ impl<'ll> OsdiCompilationUnit<'_, '_, 'll> {
                 load_limit_rhs_react: self.load_lim_rhs(true),
                 given_flag_model: self.given_flag_model(),
                 given_flag_instance: self.given_flag_instance(),
-                num_resistive_jacobian_entries: module.dae_system.num_resistive,
-                num_reactive_jacobian_entries: module.dae_system.num_reactive,
+                // Enhancement-335: count these from the SAME map that produces
+                // `jacobian_entries` above, rather than trusting the value cached by
+                // `count_jacobian_entries` while the DAE system was being built. The
+                // jacobian can lose entries after that point (node collapsing), which
+                // left the cached count STALE and larger than the whole entry list --
+                // observed as num_resistive=8 against num_jacobian_entries=7, i.e. a
+                // count an OSDI consumer could use to walk past the end of the array.
+                // Deriving both from one source makes them consistent by construction.
+                num_resistive_jacobian_entries: module
+                    .dae_system
+                    .jacobian
+                    .iter()
+                    .filter(|entry| entry.resist != F_ZERO)
+                    .count() as u32,
+                num_reactive_jacobian_entries: module
+                    .dae_system
+                    .jacobian
+                    .iter()
+                    .filter(|entry| entry.react != F_ZERO)
+                    .count() as u32,
                 write_jacobian_array_resist: self.write_jacobian_array(JacobianLoadType::Resist),
                 write_jacobian_array_react: self.write_jacobian_array(JacobianLoadType::React),
                 num_inputs: inputs.len() as u32,

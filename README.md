@@ -383,6 +383,8 @@ The index: **Doc** links each enhancement's detailed write-up, **Examples** link
 | 332 | fix wrong charge: summing 3+ `ddt()` terms dropped all but one | openvaf&#8209;r | [doc](enhancements_doc/Enhancement-332.md) | [vafddtsum](examples/vafddtsum_examples/) |
 | 333 | fix crash: integer division by a literal zero SIGTRAPped the simulator | openvaf&#8209;r | [doc](enhancements_doc/Enhancement-333.md) | [vafdivzero](examples/vafdivzero_examples/) |
 | 334 | fix crash: `INT_MIN/-1` and out-of-range shifts also SIGTRAPped (E-333 gap) | openvaf&#8209;r | [doc](enhancements_doc/Enhancement-334.md) | [vafintub](examples/vafintub_examples/) |
+| 335 | fix wrong answers: `!=` vs NaN, runtime shift masking, fast-math folds on doubles | openvaf&#8209;r | [doc](enhancements_doc/Enhancement-335.md) | [vafieee](examples/vafieee_examples/) |
+| 336 | fix OSDI binding: param `M` taken as multiplier, case collisions, stale Jacobian count | both | [doc](enhancements_doc/Enhancement-336.md) | [osdiparam](examples/osdiparam_examples/) |
 
 </details>
 

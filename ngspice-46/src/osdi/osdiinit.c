@@ -95,6 +95,35 @@ static int write_param_info(IFparm **dst, const OsdiDescriptor *descr,
  * populating the SPICEdev struct with descriptor specific metadata and pointers
  * to the descriptor independent functions.
  * */
+
+/* Enhancement-335: Verilog-A is case-SENSITIVE, SPICE is not. Two OSDI
+ * parameters differing only in case (`GAIN` and `gain`) both fold to the same
+ * lowercased keyword, and one of them silently loses -- a value written in the
+ * deck lands on whichever registered last while the other keeps its default,
+ * with nothing to indicate a value was dropped.
+ *
+ * This cannot be RESOLVED in the loader: a SPICE netlist is lowercased when it
+ * is parsed, so by the time a value arrives the two names are indistinguishable.
+ * What we can do is refuse to be silent about it, so the model author learns
+ * their parameters are unreachable instead of debugging a wrong answer. */
+static void osdi_warn_case_collisions(const IFparm *params, int n,
+                                      const char *module, const char *kind) {
+  for (int i = 1; i < n; i++) {
+    if (!params[i].keyword)
+      continue;
+    for (int j = 0; j < i; j++) {
+      if (params[j].keyword && !strcmp(params[j].keyword, params[i].keyword)) {
+        fprintf(stderr,
+                "Warning: %s: %s parameter '%s' is declared more than once "
+                "differing only in case; SPICE cannot tell the names apart, so "
+                "only one of them can be set from a netlist.\n",
+                module ? module : "(osdi)", kind, params[i].keyword);
+        break;
+      }
+    }
+  }
+}
+
 extern SPICEdev *osdi_create_spicedev(const OsdiRegistryEntry *entry) {
   const OsdiDescriptor *descr = entry->descriptor;
 
@@ -145,6 +174,8 @@ extern SPICEdev *osdi_create_spicedev(const OsdiRegistryEntry *entry) {
   write_param_info(&dst, descr, 0, descr->num_instance_params, entry->has_m);
   write_param_info(&dst, descr, descr->num_params,
                    descr->num_params + descr->num_opvars, true);
+  osdi_warn_case_collisions(instance_para_names, *num_instance_para_names,
+                            descr->name, "instance");
 
   // allocate and fill model params
   int *num_model_para_names = TMALLOC(int, 1);
@@ -155,6 +186,8 @@ extern SPICEdev *osdi_create_spicedev(const OsdiRegistryEntry *entry) {
   dst = model_para_names;
   write_param_info(&dst, descr, descr->num_instance_params, descr->num_params,
                    true);
+  osdi_warn_case_collisions(model_para_names, *num_model_para_names,
+                            descr->name, "model");
 
   // Allocate SPICE device
   SPICEdev *OSDIinfo = TMALLOC(SPICEdev, 1);

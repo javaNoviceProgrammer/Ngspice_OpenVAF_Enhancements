@@ -1,0 +1,15 @@
+`include "disciplines.vams"
+
+// Enhancement-336: two parameters differing only in case.
+//
+// Verilog-A is case-SENSITIVE, so these are two distinct parameters. SPICE is
+// not: a netlist is lowercased when parsed, so by the time a value arrives the
+// names are indistinguishable and only one of them can be reached. That cannot
+// be resolved in the loader -- but it must not be SILENT, which it was.
+module casecollide(a, b);
+    inout a, b;
+    electrical a, b;
+    parameter real GAIN = 1.0;
+    parameter real gain = 1000.0;
+    analog I(a, b) <+ V(a,b)*GAIN + V(a,b)*gain*1e-6;
+endmodule

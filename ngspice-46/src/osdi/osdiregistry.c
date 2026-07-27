@@ -533,7 +533,18 @@ extern OsdiObjectFile load_object_file(const char *input) {
       OsdiParamOpvar *param = &descr->param_opvar[param_id];
       for (uint32_t j = 0; j < 1 + param->num_alias; j++) {
         char *name = param->name[j];
-        if (!strcmp(name, "m")) {
+        /* Enhancement-335: match "m" case-INSENSITIVELY.
+         *
+         * A model declaring its own instance parameter `M` did not match the
+         * case-sensitive compare, so `has_m` stayed false and ngspice synthesized
+         * its `m` alias for $mfactor (osdiinit.c). The model's own `M` is
+         * lowercased to `m` when registered, so both ended up as `m` and the
+         * $mfactor alias won: `M=7` on an instance line was silently applied as
+         * the device multiplier while the model's own M kept its default.
+         *
+         * The `dtemp`/`dt`/`temp` tests immediately below already use
+         * strcasecmp, so this was inconsistent within a single loop. */
+        if (!strcasecmp(name, "m")) {
           has_m = true;
         } else if (!strcmp(name, "dt")) {
           dt = UINT32_MAX;

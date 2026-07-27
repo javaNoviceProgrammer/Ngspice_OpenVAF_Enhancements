@@ -1,0 +1,20 @@
+`include "disciplines.vams"
+
+// Enhancement-336: the descriptor's num_resistive_jacobian_entries exceeded the
+// whole jacobian_entries list (8 against 7) for this contribution shape.
+//
+// The counts were cached while the DAE system was built, but the jacobian can
+// lose entries afterwards (node collapsing), leaving the cached number stale --
+// and larger than the array it describes, so an OSDI consumer that trusted it
+// would walk off the end. The counts are now derived from the same map that
+// produces the entry list.
+module jacentries(a, b, c);
+    inout a, b, c;
+    electrical a, b, c;
+    parameter real k = 1.0;
+    analog begin
+        I(a,b) <+ k*V(a,c);
+        I(a,b) <+ -k*V(b,c);
+        I(c,b) <+ V(c,b)*1e-9;
+    end
+endmodule

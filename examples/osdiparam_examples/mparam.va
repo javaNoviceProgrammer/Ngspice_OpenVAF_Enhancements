@@ -1,0 +1,16 @@
+`include "disciplines.vams"
+
+// Enhancement-336: a Verilog-A instance parameter named `M` was shadowed by the
+// `m` alias ngspice synthesizes for $mfactor.
+//
+// ngspice decided whether to synthesize that alias with a case-SENSITIVE
+// compare against "m", so a model declaring `M` did not suppress it -- while the
+// model's own `M` was lowercased to `m` when registered. Both became `m`, the
+// alias won, and `M=7` on an instance line was silently applied as the device
+// multiplier while the model's own M kept its default.
+module mparam(a, b);
+    inout a, b;
+    electrical a, b;
+    (* type="instance" *) parameter real M = 2.0;
+    analog I(a, b) <+ V(a, b) * M;
+endmodule
