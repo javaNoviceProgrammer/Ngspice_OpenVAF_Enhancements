@@ -9,6 +9,6 @@ X1 in out res
 R2 out 0 1k
 .control
 sweep rval lin 9 100 900 -analysis op -output out
-wrdata divider_shadow_out.dat out
+wrdata _divider_shadow_out.dat out
 .endc
 .end

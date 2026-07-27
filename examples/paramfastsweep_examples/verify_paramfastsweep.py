@@ -45,7 +45,7 @@ def main():
         fails.append("Check 1: top-level device-value param did NOT arm")
     else:
         print("  [1] top-level param armed (no per-point reset)  OK")
-    rows = load("divider_out.dat")
+    rows = load("_divider_out.dat")
     worst = max(abs(v - R2 / (rv + R2)) / (R2 / (rv + R2))
                 for (rv, v, _rv2, _iv1) in rows)
     if len(rows) != len(RVALS) or worst > 1e-6:
@@ -57,7 +57,7 @@ def main():
     out_s = run("divider_subckt.cir")
     if "fast .param path armed" not in out_s:
         fails.append("Check 3: subckt-internal device-value param did NOT arm")
-    rows_s = load("divider_sub_out.dat")
+    rows_s = load("_divider_sub_out.dat")
     worst_s = max(abs(v - R2 / (rv + R2)) / (R2 / (rv + R2))
                   for (rv, v, _rv2, _iv1) in rows_s)
     if len(rows_s) != len(RVALS) or worst_s > 1e-6:
@@ -68,7 +68,7 @@ def main():
     # --- Check 4 (E-321): subckt local shadow disarms, still correct ---
     out_sh = run("divider_shadow.cir")
     armed_sh = "fast .param path armed" in out_sh
-    rows_sh = load("divider_shadow_out.dat")
+    rows_sh = load("_divider_shadow_out.dat")
     # local rval=500 (constant): out is constant R2/(500+R2) regardless of sweep
     const = R2 / (500.0 + R2)
     worst_sh = max(abs(v - const) / const for (_rv, v) in rows_sh)
