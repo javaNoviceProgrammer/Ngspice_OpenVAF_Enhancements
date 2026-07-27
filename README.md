@@ -45,7 +45,7 @@ Two hundred and thirty enhancements so far — language features, correctness fi
 The index: **Doc** links each enhancement's detailed write-up, **Examples** links the folder whose verify script pins the behavior.
 
 <details>
-<summary><b>📖 Show the full enhancement table</b> — 330 rows, click to expand</summary>
+<summary><b>📖 Show the full enhancement table</b> — 331 rows, click to expand</summary>
 
 | # | What it delivered | Tool | Doc | Examples |
 |---|---|---|---|---|
@@ -379,6 +379,7 @@ The index: **Doc** links each enhancement's detailed write-up, **Examples** link
 | 328 | fix crash: dynamic array index used directly as a contribution RHS | openvaf&#8209;r | [doc](enhancements_doc/Enhancement-328.md) | [vafdynidx](examples/vafdynidx_examples/) |
 | 329 | fix crash: GRAVESTONE phi operand in the small-signal network builder | openvaf&#8209;r | [doc](enhancements_doc/Enhancement-329.md) | [vafssngravestone](examples/vafssngravestone_examples/) |
 | 330 | fix compiler hang: `ddx` in a runtime loop now a clean LRM 4.5.1 error | openvaf&#8209;r | [doc](enhancements_doc/Enhancement-330.md) | [vafddxloop](examples/vafddxloop_examples/) |
+| 331 | fix crash: `BitSet::contains` panicked outside its domain (dense rows) | openvaf&#8209;r | [doc](enhancements_doc/Enhancement-331.md) | [vafbitsetdomain](examples/vafbitsetdomain_examples/) |
 
 </details>
 

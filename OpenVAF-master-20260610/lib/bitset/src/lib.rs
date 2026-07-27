@@ -108,10 +108,21 @@ impl<T: From<usize> + Into<usize> + Copy + PartialEq + Debug> BitSet<T> {
     }
 
     /// Returns `true` if `self` contains `elem`.
+    ///
+    /// Enhancement-331: an `elem` beyond this set's `domain_size` reports `false`
+    /// rather than panicking. It cannot have been inserted -- `insert` grows the
+    /// domain -- so "not contained" is the only correct answer, and it is already
+    /// the answer the sparse representation gives: `SparseBitSet::contains` is a
+    /// search over a `Vec` and is total for any element. A `HybridBitSet` switches
+    /// between the two representations as a size optimisation, so indexing blindly
+    /// here made the SAME logical query on the SAME logical set return `false`
+    /// while sparse and CRASH once dense -- leaking the representation, which the
+    /// hybrid type exists to hide, out as a panic
+    /// ("index out of bounds: the len is 1 but the index is 1").
     #[inline]
     pub fn contains(&self, elem: T) -> bool {
         let (word_index, mask) = word_index_and_mask(elem);
-        (self.words[word_index] & mask) != 0
+        self.words.get(word_index).map_or(false, |word| (word & mask) != 0)
     }
 
     /// Is `self` is a (non-strict) superset of `other`?

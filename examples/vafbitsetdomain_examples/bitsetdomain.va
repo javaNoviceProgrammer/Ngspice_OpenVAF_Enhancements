@@ -1,0 +1,27 @@
+// Enhancement-331: 66 nested `ddx` calls -- deep enough that the live-derivative
+// universe grows past 64, i.e. past ONE `BitSet` word.
+//
+// `BitSet::contains` indexed `self.words[word_index]` with no bounds guard, so once
+// a `HybridBitSet` row had switched to its DENSE representation it kept the word
+// count it had at that moment; a later query for a higher element panicked with
+// "index out of bounds: the len is 1 but the index is 1" (via
+// `HybridBitSet::contains` <- `populate_reachable`), crashing the SHIPPED compiler.
+//
+// The sparse representation never had this problem -- `SparseBitSet::contains` is a
+// search over a `Vec` and is total for any element -- so the SAME logical query on
+// the SAME logical set returned `false` while sparse and CRASHED once dense. The
+// representation, which `HybridBitSet` exists to hide, leaked out as a panic.
+//
+// An element beyond the domain cannot have been inserted (`insert` grows the
+// domain), so "not contained" is the only correct answer, and it is now what both
+// representations give.
+//
+// The contribution is one very long line by construction: the nesting has to be a
+// single expression to build the derivative chain, and breaking it would split a
+// token.
+`include "disciplines.vams"
+module bitsetdomain(a, b);
+    inout a, b;
+    electrical a, b;
+    analog I(a, b) <+ 1.0e-3 * (ddx((ddx((ddx((ddx((ddx((ddx((ddx((ddx((ddx((ddx((ddx((ddx((ddx((ddx((ddx((ddx((ddx((ddx((ddx((ddx((ddx((ddx((ddx((ddx((ddx((ddx((ddx((ddx((ddx((ddx((ddx((ddx((ddx((ddx((ddx((ddx((ddx((ddx((ddx((ddx((ddx((ddx((ddx((ddx((ddx((ddx((ddx((ddx((ddx((ddx((ddx((ddx((ddx((ddx((ddx((ddx((ddx((ddx((ddx((ddx((ddx((ddx((ddx((ddx((ddx((ddx((V(a,b)*V(a,b))*V(a,b), V(a,b)))*V(a,b), V(a,b)))*V(a,b), V(a,b)))*V(a,b), V(a,b)))*V(a,b), V(a,b)))*V(a,b), V(a,b)))*V(a,b), V(a,b)))*V(a,b), V(a,b)))*V(a,b), V(a,b)))*V(a,b), V(a,b)))*V(a,b), V(a,b)))*V(a,b), V(a,b)))*V(a,b), V(a,b)))*V(a,b), V(a,b)))*V(a,b), V(a,b)))*V(a,b), V(a,b)))*V(a,b), V(a,b)))*V(a,b), V(a,b)))*V(a,b), V(a,b)))*V(a,b), V(a,b)))*V(a,b), V(a,b)))*V(a,b), V(a,b)))*V(a,b), V(a,b)))*V(a,b), V(a,b)))*V(a,b), V(a,b)))*V(a,b), V(a,b)))*V(a,b), V(a,b)))*V(a,b), V(a,b)))*V(a,b), V(a,b)))*V(a,b), V(a,b)))*V(a,b), V(a,b)))*V(a,b), V(a,b)))*V(a,b), V(a,b)))*V(a,b), V(a,b)))*V(a,b), V(a,b)))*V(a,b), V(a,b)))*V(a,b), V(a,b)))*V(a,b), V(a,b)))*V(a,b), V(a,b)))*V(a,b), V(a,b)))*V(a,b), V(a,b)))*V(a,b), V(a,b)))*V(a,b), V(a,b)))*V(a,b), V(a,b)))*V(a,b), V(a,b)))*V(a,b), V(a,b)))*V(a,b), V(a,b)))*V(a,b), V(a,b)))*V(a,b), V(a,b)))*V(a,b), V(a,b)))*V(a,b), V(a,b)))*V(a,b), V(a,b)))*V(a,b), V(a,b)))*V(a,b), V(a,b)))*V(a,b), V(a,b)))*V(a,b), V(a,b)))*V(a,b), V(a,b)))*V(a,b), V(a,b)))*V(a,b), V(a,b)))*V(a,b), V(a,b)))*V(a,b), V(a,b)))*V(a,b), V(a,b)))*V(a,b), V(a,b)))*V(a,b), V(a,b)))*V(a,b), V(a,b)))*V(a,b), V(a,b)));
+endmodule

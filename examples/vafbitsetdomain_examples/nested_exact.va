@@ -1,0 +1,17 @@
+// Enhancement-331: the NUMERIC guard. Higher-order derivatives must stay exact
+// after making `BitSet::contains` total -- a query that wrongly answered "absent"
+// would silently drop a live derivative and corrupt the result.
+//   d/dV (V^3) = 3V^2 ,  d2/dV2 (V^3) = 6V ,  d3/dV3 (V^3) = 6
+`include "disciplines.vams"
+module nd1(a, b);
+    inout a, b; electrical a, b;
+    analog I(a, b) <+ 1.0e-3 * ddx(V(a,b)*V(a,b)*V(a,b), V(a,b));
+endmodule
+module nd2(a, b);
+    inout a, b; electrical a, b;
+    analog I(a, b) <+ 1.0e-3 * ddx(ddx(V(a,b)*V(a,b)*V(a,b), V(a,b)), V(a,b));
+endmodule
+module nd3(a, b);
+    inout a, b; electrical a, b;
+    analog I(a, b) <+ 1.0e-3 * ddx(ddx(ddx(V(a,b)*V(a,b)*V(a,b), V(a,b)), V(a,b)), V(a,b));
+endmodule
