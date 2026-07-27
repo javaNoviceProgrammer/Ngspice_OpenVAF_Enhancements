@@ -1,0 +1,30 @@
+Enhancement-344: .model params take the fast path's direct set
+* The `.param` fast sweep (Enhancement-320..323) pushes a swept value straight
+* into a resolved device slot via ft_sim->setInstanceParm, skipping the
+* per-point reset. MODEL params were the one tier left out: they still went
+* through the textual `altermod <model> <param> = <value>` command, which
+* re-lexes the command and re-resolves the model BY NAME on every single point.
+*
+* E-344 resolves a model bind to (GENmodel *, type, param-id) once at arm time,
+* exactly as instance binds already were, and pushes it with
+* ft_sim->setModelParm. Model params now cost what instance params cost.
+*
+* A semiconductor resistor with l=w=1u has R = rsh, so with the 1k load
+*   v(out) = 1000 / (rsh + 1000)
+* which the verify script checks in closed form at every swept point.
+.param rsh_p = 100
+V1 in 0 dc 1
+R1 in out rm l=1u w=1u
+R2 out 0 1k
+.model rm r rsh={rsh_p}
+.control
+set numdgt=12
+sweep rsh_p lin 5 100 500 -analysis op -output v(out)
+
+* rsh 100 -> 0.909090..., rsh 500 -> 0.666666...
+print v(out)[0]
+print v(out)[4]
+
+echo SURVIVED
+.endc
+.end

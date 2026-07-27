@@ -392,6 +392,7 @@ The index: **Doc** links each enhancement's detailed write-up, **Examples** link
 | 341 | fix crash: `sweep -analysis reset/remcirc` freed the circuit mid-loop | ngspice | [doc](enhancements_doc/Enhancement-341.md) | [sweepanalysis](examples/sweepanalysis_examples/) |
 | 342 | fix crash: rawfile `Option: plots` use-after-free; `unset plots` double free | ngspice | [doc](enhancements_doc/Enhancement-342.md) | [usrvarown](examples/usrvarown_examples/) |
 | 343 | perf: sweep no longer O(N&#178;) -- 26.6x at 16k points; `cp_getvar` built all 5 usrvars per call | ngspice | [doc](enhancements_doc/Enhancement-343.md) | [sweepscale](examples/sweepscale_examples/) |
+| 344 | perf: `.model` params join the fast `.param` sweep's direct set -- now as cheap as instance params | ngspice | [doc](enhancements_doc/Enhancement-344.md) | [modelparamset](examples/modelparamset_examples/) |
 
 </details>
 

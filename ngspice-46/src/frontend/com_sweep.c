@@ -311,13 +311,16 @@ struct sw_fp_bind {
     char *cmd;                 /* textual fallback: "alter Rs0 = " / "altermod m vth0 = " */
     char *name;                /* device/model instance name (full flattened name) */
     char *param;               /* instance param keyword, or NULL for the principal */
-    int   mod;                 /* 1 = .model param (altermod, textual only)         */
+    int   mod;                 /* 1 = .model param (setModelParm), 0 = instance      */
     char *expr;                /* e.g. "rval*2" (brace contents), re-evaluated/point */
     double flat_value;         /* value numparam baked into the flattened card       */
     int   flat_ok;             /* 1 = flat_value parsed, self-check applies           */
-    /* resolved once (instance binds only) so the point loop sets the slot
-     * directly via ft_sim->setInstanceParm, bypassing lex + @name resolution. */
+    /* Resolved once so the point loop can write the slot directly, bypassing the
+     * per-point lex + @name resolution the textual alter/altermod path repeats.
+     * `inst` is used for instance binds, `modp` for model binds (Enhancement-344);
+     * exactly one is non-NULL, selected by `mod`. */
     GENinstance *inst;
+    GENmodel *modp;
     int   devtype;
     int   parmid;
     int   rok;                 /* 1 = resolved, use direct set; 0 = textual cmd */
@@ -373,6 +376,7 @@ static void sw_fp_add(const char *cmd, const char *name, const char *param,
     b->flat_value = flat_value;
     b->flat_ok = flat_ok;
     b->inst = NULL;
+    b->modp = NULL;
     b->devtype = -1;
     b->parmid = 0;
     b->rok = 0;
@@ -453,18 +457,70 @@ void sw_fp_free(void)
     sw_fp_armed = 0;
 }
 
-/* Resolve an instance bind to (instance, type, param-id) once, so the point
- * loop can set it directly. Model binds (mod=1) stay on the textual altermod
- * path. rok stays 0 on any failure -> that bind falls back to its textual cmd. */
+/* Find a settable real parameter by keyword in a parameter table, returning its
+ * id. `param` NULL selects the positional principal (instance tables only, since
+ * a .model line has no principal slot). Returns 0 on no match, 1 on success. */
+static int sw_fp_find_parm(const IFparm *tab, int ntab, const char *param,
+                           int *parmid)
+{
+    int k;
+
+    for (k = 0; tab && k < ntab; k++) {
+        const IFparm *prm = tab + k;
+        if (!(prm->dataType & IF_SET))
+            continue;
+        if ((prm->dataType & IF_VARTYPES) != IF_REAL)
+            continue;
+        if (param) {
+            if (!cieq(prm->keyword, param))
+                continue;
+        } else if (!(prm->dataType & IF_PRINCIPAL)) {
+            continue;
+        }
+        *parmid = prm->id;
+        return 1;
+    }
+    return 0;
+}
+
+/* Resolve a bind to (instance-or-model, type, param-id) once, so the point loop
+ * can set it directly. rok stays 0 on any failure -> that bind falls back to its
+ * textual alter/altermod cmd, which is always correct, just slower. */
 static void sw_fp_resolve(CKTcircuit *ckt, struct sw_fp_bind *b)
 {
-    int type, k;
+    int type;
     GENmodel *m;
     GENinstance *inst;
 
     b->rok = 0;
-    if (!ckt || b->mod)
+    if (!ckt)
         return;
+
+    if (b->mod) {
+        /* Enhancement-344: model binds take ft_sim->setModelParm directly.
+         * A .model line only ever carries `key={expr}` slots, so b->param is
+         * always set here; a NULL would mean a principal, which models lack. */
+        if (!b->param)
+            return;
+        for (type = 0; type < DEVmaxnum; type++) {
+            if (!DEVices[type])
+                continue;
+            for (m = ckt->CKThead[type]; m; m = m->GENnextModel)
+                if (m->GENmodName && cieq(m->GENmodName, b->name)) {
+                    IFdevice *dev = &DEVices[type]->DEVpublic;
+                    if (sw_fp_find_parm(dev->modelParms,
+                                        dev->numModelParms ? *dev->numModelParms : 0,
+                                        b->param, &b->parmid)) {
+                        b->modp = m;
+                        b->devtype = type;
+                        b->rok = 1;
+                    }
+                    return;             /* model found; settable or not, done */
+                }
+        }
+        return;
+    }
+
     for (type = 0; type < DEVmaxnum; type++) {
         if (!DEVices[type])
             continue;
@@ -472,26 +528,15 @@ static void sw_fp_resolve(CKTcircuit *ckt, struct sw_fp_bind *b)
             for (inst = m->GENinstances; inst; inst = inst->GENnextInstance)
                 if (inst->GENname && cieq(inst->GENname, b->name)) {
                     IFdevice *dev = &DEVices[type]->DEVpublic;
-                    for (k = 0; dev->instanceParms &&
-                                k < *dev->numInstanceParms; k++) {
-                        IFparm *prm = dev->instanceParms + k;
-                        if (!(prm->dataType & IF_SET))
-                            continue;
-                        if ((prm->dataType & IF_VARTYPES) != IF_REAL)
-                            continue;
-                        if (b->param) {
-                            if (!cieq(prm->keyword, b->param))
-                                continue;
-                        } else if (!(prm->dataType & IF_PRINCIPAL)) {
-                            continue;
-                        }
+                    if (sw_fp_find_parm(dev->instanceParms,
+                                        dev->numInstanceParms
+                                            ? *dev->numInstanceParms : 0,
+                                        b->param, &b->parmid)) {
                         b->inst = inst;
                         b->devtype = type;
-                        b->parmid = prm->id;
                         b->rok = 1;
-                        return;
                     }
-                    return;                 /* instance found, no settable parm */
+                    return;                 /* instance found, settable or not */
                 }
     }
 }
@@ -750,7 +795,8 @@ int sw_fp_build(char *const *sw, int nsw)
         }
     }
 
-    /* resolve instance binds once for the fast direct-set path */
+    /* resolve binds once for the fast direct-set path (instances and, since
+     * Enhancement-344, models); anything unresolved keeps its textual command */
     {
         struct sw_fp_bind *b;
         for (b = sw_fp_list; b; b = b->next)
@@ -821,10 +867,13 @@ void sw_fp_apply(char *const *sw, const double *vals, int nsw)
         if (b->rok && touched && ckt) {  /* direct slot write, no lex/resolve */
             IFvalue val;
             val.rValue = v;
-            ft_sim->setInstanceParm(ckt, b->inst, b->parmid, &val, NULL);
+            if (b->mod)                  /* Enhancement-344: model tier */
+                ft_sim->setModelParm(ckt, b->modp, b->parmid, &val, NULL);
+            else
+                ft_sim->setInstanceParm(ckt, b->inst, b->parmid, &val, NULL);
             touched[b->devtype] = 1;
             any_direct = 1;
-        } else {                         /* textual fallback (model params etc.) */
+        } else {                         /* textual fallback (unresolvable binds) */
             char cmd[700];
             (void) snprintf(cmd, sizeof cmd, "%s%.17g", b->cmd, v);
             sw_run_cmd(cmd);
@@ -1278,11 +1327,21 @@ void com_sweep(wordlist *wl)
                 deck_fp_names[ndeck_fp++] = kname[j];
         fast_fp = (ndeck_fp > 0) ? sw_fp_build(deck_fp_names, ndeck_fp) : 0;
         if (fast_fp) {
-            int nb = 0;
+            int nb = 0, ntext = 0;
             struct sw_fp_bind *b;
-            for (b = sw_fp_list; b; b = b->next) nb++;
+            for (b = sw_fp_list; b; b = b->next) {
+                nb++;
+                if (!b->rok)
+                    ntext++;
+            }
             fprintf(cp_out, "sweep: fast .param path armed (%d value binding%s, "
-                    "no per-point reset)\n", nb, nb == 1 ? "" : "s");
+                    "no per-point reset)", nb, nb == 1 ? "" : "s");
+            /* Enhancement-344: instance AND model binds now take the direct slot
+             * write, so an unresolved bind is the exception -- say so rather than
+             * letting the slower textual push hide behind the same banner. */
+            if (ntext)
+                fprintf(cp_out, ", %d via alter/altermod", ntext);
+            fprintf(cp_out, "\n");
         }
     }
 
