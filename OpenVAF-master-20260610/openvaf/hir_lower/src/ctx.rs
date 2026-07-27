@@ -137,11 +137,6 @@ impl<'a, 'c> LoweringCtx<'a, 'c> {
         self.intern.params.get(&kind).copied()
     }
 
-    pub fn unwrap_node(&mut self, val: Value) -> Node {
-        let param = self.dfg().value_def(val).unwrap_param();
-        self.intern.params.get_index(param).unwrap().0.unwrap_pot_node()
-    }
-
     /// Enhancement-327: the [`ParamKind`] a [`Param`] was interned for. Lets `ddx`
     /// lowering INSPECT a user-supplied unknown (is it a plain node potential?)
     /// rather than assert its shape and panic.

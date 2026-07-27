@@ -87,6 +87,25 @@ callback construction is unchanged, so there is nothing to preserve in the
 diverging case and nothing to change in the converging one. Confirmed against the
 corpus with the deterministic `--dump-mir` oracle.
 
+## Follow-up — the methods this replaced were left behind
+
+Switching `ddx` lowering from asserting to asking left the old panicking pair with
+no callers: `LoweringCtx::unwrap_node` (`ctx.rs`) and its only callee
+`ParamKind::unwrap_pot_node` (`lib.rs`). They were removed afterwards.
+
+Worth recording *how* that was missed. The tree is audited warnings-clean, and
+`cargo` does not re-emit warnings for a crate it does not recompile — so every
+incremental build after this change stayed silent, and the two `dead_code`
+warnings only appeared on a **clean** build of `hir_lower`.
+
+Behaviour is unaffected by construction: the methods had no callers, so nothing
+could invoke them. Checked after the removal — 0 warnings, 0 errors, and the
+`ddx` examples still hold to the closed form (forward `d/dV(V²) = 2V` → −6 mA,
+the reverse orientation its exact negative, a ground unknown exactly 0, and the
+higher-order chain `3V²`/`6V`/`6` at V = 2 → −12/−12/−6 mA). The corpus-wide
+`--dump-mir` A/B was **not** run to completion for this removal and no such
+claim is made here.
+
 ## Files
 
 - `OpenVAF-master-20260610/openvaf/hir_lower/src/expr.rs` — the `ddx` arm.
