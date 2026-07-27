@@ -1,0 +1,18 @@
+// Enhancement-330: `ddx` remains fully usable OUTSIDE a runtime loop -- including
+// inside `if`/`else`, which the industry CMC corpus relies on in 192 places.
+// This is the forward guard that the loop rejection did not over-reach.
+`include "disciplines.vams"
+module ddxloop_ok(a, b);
+    inout a, b;
+    electrical a, b;
+    real g;
+    analog begin
+        g = 0.0;
+        // ddx under a runtime condition: still legal, still exact (d/dV of V^2 = 2V)
+        if (V(a, b) > 0.0)
+            g = ddx(V(a, b) * V(a, b), V(a, b));
+        else
+            g = ddx(V(a, b), V(a, b));
+        I(a, b) <+ 1.0e-3 * g;
+    end
+endmodule

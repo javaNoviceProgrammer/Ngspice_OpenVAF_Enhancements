@@ -163,6 +163,7 @@ impl BodyValidationDiagnostic {
             infer: &infere,
             diagnostics: Vec::new(),
             ctx,
+            loop_depth: 0,
             non_const_dominator: Box::default(),
             non_trivial_branches: HashSet::default(),
             trivial_probes: HashMap::default(),
@@ -265,6 +266,12 @@ struct BodyValidator<'a> {
     infer: &'a InferenceResult,
     diagnostics: Vec<BodyValidationDiagnostic>,
     ctx: BodyCtx,
+    /// Enhancement-330: number of enclosing RUNTIME loops. `ctx` cannot express
+    /// this: `validate_condition_in` REPLACES it rather than stacking, so an `if`
+    /// nested inside a `for` resets it to `BodyCtx::Conditional`. It also only
+    /// becomes `BodyCtx::Loop` when the controlling expression is non-constant,
+    /// so `repeat(3)` would be missed.
+    loop_depth: u32,
     non_const_dominator: Box<[ExprId]>,
     non_trivial_branches: HashSet<BranchWrite>,
     trivial_probes: HashMap<BranchWrite, Vec<(StmtId, ExprId)>>,
@@ -341,9 +348,11 @@ impl BodyValidator<'_> {
                 // Enhancement-70: loop bodies get their own ctx so the
                 // analog-operator restriction is reported against "loops"
                 // (LRM 4.5.1), not "conditions".
+                self.loop_depth += 1;
                 self.validate_condition_in(BodyCtx::Loop, cond, stmt, |s| {
                     s.body.stmts[stmt].walk_child_stmts(|stmt| s.validate_stmt(stmt))
                 });
+                self.loop_depth -= 1;
                 return;
             }
         };
@@ -694,6 +703,26 @@ impl ExprValidator<'_, '_> {
                 |_| IllegalCtxAccessKind::NatureAccess,
                 expr,
                 self.parent.ctx.allow_nature_access(),
+            ),
+
+            // Enhancement-330: `ddx` is exempt from the general analog-operator
+            // context restriction below -- it is symbolic and stateless, and the
+            // industry CMC corpus uses it inside `if` in 192 places, so that
+            // exemption must stay. It is NOT valid inside a runtime loop: a back
+            // edge lets the differentiated expression depend on the ddx result
+            // itself, so `live_derivative_fixpoint` requests a new derivative one
+            // order higher every round -- it grows the very lattice it iterates
+            // over, so it has no fixed point and the compiler HANGS forever
+            // (confirmed: 99.8% of samples in raise_order_with, RSS climbing, no
+            // termination at 15 min). Every other analog operator is already
+            // rejected here; `ddx` was the lone hole.
+            BuiltIn::ddx if self.parent.loop_depth != 0 => self.report_illegal_access(
+                IllegalCtxAccessKind::AnalogOperator {
+                    name: name.as_ref().and_then(|p| p.as_ident()).unwrap(),
+                    is_standard: true,
+                    non_const_dominator: self.parent.non_const_dominator.clone(),
+                },
+                expr,
             ),
 
             _ if call.is_analog_operator() && call != BuiltIn::ddx

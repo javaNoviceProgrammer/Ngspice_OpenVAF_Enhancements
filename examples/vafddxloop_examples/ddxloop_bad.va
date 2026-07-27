@@ -1,0 +1,28 @@
+// Enhancement-330: `ddx` inside a RUNTIME LOOP whose differentiated expression
+// depends on the ddx's own result through the loop back edge.
+//
+// This HUNG the shipped compiler forever. `live_derivative_fixpoint` asks, for
+// every derivative live at a ddx call, for one of order+1; the loop back edge
+// feeds that result back into the ddx's own argument, so round n always produces
+// order n+1 -- the fixpoint GROWS THE VERY LATTICE IT ITERATES OVER and therefore
+// has no fixed point. (Profiling: 99.8% of samples in raise_order_with, resident
+// memory climbing, no termination after 15 minutes.)
+//
+// There is no finite MIR that implements it: iteration k would need the k-th
+// derivative and the trip count is not known at compile time. `ddx` is an analog
+// operator (openvaf classifies it as one), and LRM 4.5.1 forbids analog operators
+// in non-genvar loops -- every other analog operator was already rejected here.
+// So this must be a clean compile error, which is what it now is.
+`include "disciplines.vams"
+module ddxloop_bad(a, b);
+    inout a, b;
+    electrical a, b;
+    real x;
+    integer i;
+    analog begin
+        x = 0.0;
+        i = 0;
+        for (i = 0; i < 1; i = i + 1) x = ddx(V(a) * x, V(a));
+        V(a, b) <+ x;
+    end
+endmodule
