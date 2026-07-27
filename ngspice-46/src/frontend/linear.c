@@ -96,10 +96,10 @@ com_linearize(wordlist *wl)
     new->pl_name = tprintf("%s (linearized)", old->pl_name);
     new->pl_title = copy(old->pl_title);
     new->pl_date = copy(old->pl_date);
-    new->pl_next = plot_list;
-    plot_new(new);
+    plot_new(new);           /* E-345: this already inserts; the open-coded
+                              * pl_next/plot_list lines that used to bracket it
+                              * were redundant and have been removed */
     plot_setcur(new->pl_typename);
-    plot_list = new;
 
     /* check if "np=" is the only entry in wl.
 -       If yes, linearize all vectors */
@@ -245,10 +245,10 @@ com_cutout(wordlist* wl)
         new->pl_name = tprintf("%s (cut out)", old->pl_name);
     new->pl_title = copy(old->pl_title);
     new->pl_date = copy(old->pl_date);
-    new->pl_next = plot_list;
-    plot_new(new);
+    plot_new(new);           /* E-345: this already inserts; the open-coded
+                              * pl_next/plot_list lines that used to bracket it
+                              * were redundant and have been removed */
     plot_setcur(new->pl_typename);
-    plot_list = new;
 
     /* copy a new scale vector (time) */
     len = istop - istart;

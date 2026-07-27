@@ -737,10 +737,10 @@ com_read_sparam(wordlist *wl)
     new->pl_name = tprintf("Touchstone import %s", file);
     new->pl_title = copy(file);
     new->pl_date = copy(datestring());
-    new->pl_next = plot_list;
-    plot_new(new);
+    plot_new(new);           /* E-345: this already inserts; the open-coded
+                              * pl_next/plot_list lines that used to bracket it
+                              * were redundant and have been removed */
     plot_setcur(new->pl_typename);
-    plot_list = new;
 
     freqv = dvec_alloc(copy("frequency"), SV_FREQUENCY, VF_REAL | VF_PERMANENT, npts, NULL);
     freqv->v_plot = new;
@@ -1335,6 +1335,10 @@ static void killplot(struct plot *pl)
             vec_free(v);
         }
     }
+
+    /* Enhancement-345: release the name before unlinking, so a number freed
+     * here can be handed out again exactly as it was before the index existed */
+    plot_forget(pl);
 
     /* unlink from plot_list (linked via pl_next) */
     if (pl == plot_list) { /* First in list */

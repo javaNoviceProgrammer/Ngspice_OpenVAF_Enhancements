@@ -358,6 +358,10 @@ extern void vec_remove(const char *name);
 extern void plot_setcur(const char *name);
 extern struct plot *get_plot(const char *name);
 extern void plot_new(struct plot *pl);
+extern void plot_forget(struct plot *pl);   /* Enhancement-345: drop from the
+                                            * plot-typename index when a plot
+                                            * leaves plot_list */
+extern void plot_forget_all(void);
 extern char *vec_basename(struct dvec *v);
 extern void vec_transpose(struct dvec *v);
 extern struct dvec* copycut(struct dvec* ov, struct dvec* newscalevec, int istart, int istop);

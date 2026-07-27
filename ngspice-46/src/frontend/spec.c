@@ -193,8 +193,7 @@ com_spec(wordlist *wl)
         goto done;
 
     plot_cur = plot_alloc("spectrum");
-    plot_cur->pl_next = plot_list;
-    plot_list = plot_cur;
+    plot_new(plot_cur);      /* E-345: single insertion point */
     plot_cur->pl_title = copy((plot_cur->pl_next)->pl_title);
     plot_cur->pl_name = copy("Spectrum");
     plot_cur->pl_date = copy(datestring());

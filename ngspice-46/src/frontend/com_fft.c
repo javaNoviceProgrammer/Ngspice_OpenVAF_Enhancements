@@ -138,8 +138,7 @@ com_fft(wordlist *wl)
         goto done;
 
     plot_cur = plot_alloc("spectrum");
-    plot_cur->pl_next = plot_list;
-    plot_list = plot_cur;
+    plot_new(plot_cur);      /* E-345: single insertion point */
     plot_cur->pl_title = copy((plot_cur->pl_next)->pl_title);
     plot_cur->pl_name = copy("Spectrum");
     plot_cur->pl_date = copy(datestring());
@@ -371,8 +370,7 @@ com_psd(wordlist *wl)
         goto done;
 
     plot_cur = plot_alloc("spectrum");
-    plot_cur->pl_next = plot_list;
-    plot_list = plot_cur;
+    plot_new(plot_cur);      /* E-345: single insertion point */
     plot_cur->pl_title = copy((plot_cur->pl_next)->pl_title);
     plot_cur->pl_name = copy("PSD");
     plot_cur->pl_date = copy(datestring());

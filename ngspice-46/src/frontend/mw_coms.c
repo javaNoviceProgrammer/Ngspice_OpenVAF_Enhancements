@@ -80,6 +80,11 @@ com_removecirc(wordlist *wl)
     }
 
 
+    /* Enhancement-345: this function rewrites plot_list directly rather than
+     * going through killplot(), so the typename index has to be dropped
+     * wholesale; it rebuilds itself from the list on the next plot naming. */
+    plot_forget_all();
+
     /* If the plot is the first one and there are no other plots */
     if (!plot_list->pl_next && strcmp(plot_list->pl_title, namecircuit) == 0)
         plot_list = NULL;

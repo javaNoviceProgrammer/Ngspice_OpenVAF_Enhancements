@@ -1,0 +1,35 @@
+Enhancement-345: naming a plot no longer walks the plot list
+* plot_alloc() and plot_add() pick a unique plot name by counting a shared,
+* monotone plot_num up until <abbrev><plot_num> is not the typename of any plot
+* in plot_list. That membership test was a walk of the WHOLE list with a
+* case-insensitive compare, so naming a plot cost O(plots) -- and a sweep
+* creates a plot per point, which made naming them quadratic in the sweep
+* length. After Enhancement-343 removed the other quadratic term, profiling a
+* 64000-point sweep put 89% of the run right here, in plot_alloc -> cieq.
+*
+* E-345 keeps a hash index of the typenames currently in plot_list, so the
+* membership test is O(1). ONLY the test changed: the search still starts at the
+* same shared plot_num and still counts up by one, so the names handed out are
+* exactly what they were -- including the reuse of a number that `destroy all`
+* frees, which a "remember every name ever issued" cache would have changed.
+V1 in 0 dc 1
+R1 in out 1k
+C1 out 0 1p
+.control
+* the shared-plot_num sequence: note tran1 then op2, and ac2 not ac1
+op
+tran 1n 5n
+op
+ac dec 2 1 100
+op
+echo NAMES $plots
+
+* destroying frees the numbers again, so the next plots reuse them
+destroy all
+op
+op
+echo REUSED $plots
+
+echo SURVIVED
+.endc
+.end
