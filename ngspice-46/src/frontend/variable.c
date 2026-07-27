@@ -635,7 +635,8 @@ void cp_remvar(char *varname)
      */
     bool free_v = FALSE;
 
-    uv1 = cp_usrvars();
+    /* as in cp_getvar(): only the name being removed can match here */
+    uv1 = cp_usrvar(varname);
 
     for (p = &variables; *p; p = &(*p)->va_next) {
         if (eq((*p)->va_name, varname)) {
@@ -743,7 +744,10 @@ cp_getvar(char *name, enum cp_types type, void *retval, size_t rsize)
     struct variable *v;
     struct variable *uv1;
 
-    uv1 = cp_usrvars();
+    /* Only the one name that is actually being looked up -- see cp_usrvar_p().
+     * Building all five here cost O(number of plots) per call, which made a
+     * long sweep quadratic in its own point count. */
+    uv1 = cp_usrvar(name);
 
 #ifdef TRACE
     /* SDB debug statement */

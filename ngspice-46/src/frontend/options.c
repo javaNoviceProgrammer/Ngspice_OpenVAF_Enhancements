@@ -209,22 +209,86 @@ static struct variable *cp_enqvec_as_var(const char *vec_name,
  * a node that is still owned and reachable elsewhere. So take a copy whenever
  * cp_enqvar reports that it did not allocate.
  */
+static const char * const usrvar_names[] = {
+    "plots", "curplot", "curplottitle", "curplotname", "curplotdate"
+};
+
+
+/* Fetch one synthetic user variable, ready to be freed by the caller.
+ *
+ * Returns NULL unless `name` is one of the five, so a caller looking up some
+ * other variable does no work at all -- which matters, because synthesizing
+ * $plots walks the whole plot list and copies a string per plot. See
+ * cp_usrvar_p() for why that is worth avoiding.
+ */
+static struct variable *
+usrvar_fetch(const char *name)
+{
+    int tbfreed = 0;
+    struct variable *tv = cp_enqvar(name, &tbfreed);
+
+    if (tv == NULL)
+        return NULL;
+    if (!tbfreed) /* borrowed -- must not be relinked or freed */
+        tv = var_copy(tv);
+    tv->va_next = NULL;
+    return tv;
+}
+
+
+/* Is `name` one of the variables cp_usrvars() synthesizes?
+ *
+ * cp_getvar() and cp_remvar() look up ONE name, but used to build the whole
+ * synthetic list before looking at it. That is not merely wasteful: $plots is
+ * rebuilt from the live plot list on every call, one malloc'd string per plot,
+ * so its cost grows with the number of plots in the session. A sweep creates a
+ * plot per point and OUTpBeginPlot() does two cp_getvar() lookups per analysis,
+ * which made a long sweep cost O(N^2) in its own point count -- measured at
+ * 174 us/point over 1000 points but 2449 us/point over 16000.
+ *
+ * Neither of those two hot lookups ("printinfo", "interp") is a synthetic name,
+ * so gating on the name removes the work entirely rather than deferring it.
+ * Deferring was tried first -- building the list only after the `variables`
+ * search missed -- and measured no improvement at all, because those variables
+ * are normally unset, so the search misses and the list gets built anyway.
+ *
+ * Gating is safe because every caller that uses it also searches
+ * plot_cur->pl_env and ft_curckt->ci_vars separately, which is the only other
+ * thing cp_enqvar() could have found.
+ */
+bool
+cp_usrvar_p(const char *name)
+{
+    size_t i;
+    for (i = 0; i < NUMELEMS(usrvar_names); i++)
+        if (eq(name, usrvar_names[i]))
+            return TRUE;
+    return FALSE;
+}
+
+
+/* Return just the named synthetic variable as a one-element list, or NULL if
+ * `name` is not one of them. The result is owned by the caller.
+ */
+struct variable *
+cp_usrvar(const char *name)
+{
+    if (!cp_usrvar_p(name))
+        return (struct variable *) NULL;
+    return usrvar_fetch(name);
+}
+
+
 struct variable *
 cp_usrvars(void)
 {
-    static const char * const names[] = {
-        "plots", "curplot", "curplottitle", "curplotname", "curplotdate"
-    };
     struct variable *v = (struct variable *) NULL;
     size_t i;
 
-    for (i = 0; i < NUMELEMS(names); i++) {
-        int tbfreed = 0;
-        struct variable *tv = cp_enqvar(names[i], &tbfreed);
+    for (i = 0; i < NUMELEMS(usrvar_names); i++) {
+        struct variable *tv = usrvar_fetch(usrvar_names[i]);
         if (tv == NULL)
             continue;
-        if (!tbfreed) /* borrowed -- must not be relinked or freed */
-            tv = var_copy(tv);
         tv->va_next = v;
         v = tv;
     }

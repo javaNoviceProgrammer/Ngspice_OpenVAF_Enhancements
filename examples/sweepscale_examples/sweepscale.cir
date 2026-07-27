@@ -1,0 +1,41 @@
+Enhancement-343: cp_getvar() built the whole synthetic user-variable list
+* cp_getvar(name, ...) looks up ONE name, but its first statement synthesized
+* all five of $plots, $curplot, $curplottitle, $curplotname and $curplotdate,
+* searched the result and freed it again.
+*
+* Building $plots walks the live plot list and copies a string per plot, so the
+* call cost O(number of plots in the session). beginPlot() does two cp_getvar()
+* lookups per analysis -- "printinfo" and "interp" -- and a sweep creates a plot
+* per point, so a long sweep was quadratic in its own point count: 174 us/point
+* over 1000 points, but 2449 us/point over 16000.
+*
+* Neither hot lookup is one of the five names, so the fix gates on the name and
+* builds nothing at all. A previous attempt deferred construction until the
+* `variables` search missed and measured NO improvement, because those two
+* variables are normally unset and the search misses anyway.
+*
+* This deck sweeps over enough points that the old cost was plainly visible,
+* then reads back the synthetic variables to show they still work. $plots is
+* deliberately not echoed -- it would print one name per sweep point.
+.param pr = 1k
+V1 in 0 dc 1
+R1 in out 1k
+R2 out 0 {pr}
+.control
+sweep pr lin 4000 1k 3k -analysis op -output v(out)
+
+* the divider gives v(out) = pr / (1k + pr): 0.5 at pr=1k, 0.75 at pr=3k
+print v(out)[0]
+print v(out)[3999]
+
+* the synthetic user variables must still read back correctly
+echo CURPLOT $curplot
+echo CURPLOTNAME $curplotname
+echo CURPLOTTITLE $curplottitle
+
+* and the cp_remvar() path still refuses these by name rather than crashing
+unset plots
+
+echo SURVIVED
+.endc
+.end

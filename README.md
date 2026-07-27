@@ -391,6 +391,7 @@ The index: **Doc** links each enhancement's detailed write-up, **Examples** link
 | 340 | fix nondeterminism: implicit-net declaration order came from HashMap walk | openvaf&#8209;r | [doc](enhancements_doc/Enhancement-340.md) | [vafdeterminism](examples/vafdeterminism_examples/) |
 | 341 | fix crash: `sweep -analysis reset/remcirc` freed the circuit mid-loop | ngspice | [doc](enhancements_doc/Enhancement-341.md) | [sweepanalysis](examples/sweepanalysis_examples/) |
 | 342 | fix crash: rawfile `Option: plots` use-after-free; `unset plots` double free | ngspice | [doc](enhancements_doc/Enhancement-342.md) | [usrvarown](examples/usrvarown_examples/) |
+| 343 | perf: sweep no longer O(N&#178;) -- 26.6x at 16k points; `cp_getvar` built all 5 usrvars per call | ngspice | [doc](enhancements_doc/Enhancement-343.md) | [sweepscale](examples/sweepscale_examples/) |
 
 </details>
 

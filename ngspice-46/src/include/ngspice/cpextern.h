@@ -175,6 +175,8 @@ extern struct comm *cp_coms;
 extern char *cp_program;
 extern struct variable *cp_enqvar(const char *word, int *tbfreed);
 extern struct variable *cp_usrvars(void);
+extern struct variable *cp_usrvar(const char *name);
+extern bool cp_usrvar_p(const char *name);
 int cp_usrset(struct variable *var, bool isset);
 extern void fatal(void);
 
