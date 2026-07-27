@@ -1,0 +1,32 @@
+`include "disciplines.vams"
+
+// Enhancement-340: compiling this twice produced two different MIRs.
+//
+// `sub` is instantiated with NAMED port connections, two of which name nets
+// that are not declared anywhere -- `n_a` and `n_b`. Enhancement-41 declares
+// such names implicitly, emitting one declaration the first time each is met
+// while walking the instance's port bindings.
+//
+// Those bindings live in a HashMap, and Rust seeds its hashers randomly PER
+// PROCESS, so the walk order -- and therefore which implicit net was declared
+// first -- varied from run to run. The declaration order set the string-interner
+// ids, which set the node numbering, which set the SSA value numbering. Two
+// compilations of this file produced different (though equivalent) MIR.
+//
+// TWO implicit nets on ONE instance is what it takes: with one there is nothing
+// to reorder.
+module twoimplicit(p, q);
+    inout p, q;
+    electrical p, q;
+    sub S1(.a(n_a), .b(n_b), .c(p));
+    sub S2(.a(n_b), .b(n_a), .c(q));
+endmodule
+
+module sub(a, b, c);
+    inout a, b, c;
+    electrical a, b, c;
+    analog begin
+        I(a, c) <+ 1.0e-3 * V(a, c);
+        I(b, c) <+ 2.0e-3 * V(b, c);
+    end
+endmodule

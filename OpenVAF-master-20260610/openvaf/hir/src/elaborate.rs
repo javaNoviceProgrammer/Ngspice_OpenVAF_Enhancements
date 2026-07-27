@@ -3176,7 +3176,34 @@ impl ElabCtx<'_> {
             // net), its declaration is emitted once into the parent's rendered body,
             // and two connections implying different disciplines are a hard error.
             let parent_decls = declared_names(&parent, self.tree);
-            for (port_name, binding) in port_raw.iter_mut() {
+            // Enhancement-340: iterate the port bindings in a DETERMINISTIC order.
+            //
+            // `port_raw` is a HashMap, so `iter_mut()` yields its entries in hash
+            // order -- and Rust seeds its hashers randomly PER PROCESS, so that order
+            // varies from run to run. The loop below emits an implicit-net DECLARATION
+            // the first time it meets each undeclared name, so the declaration order,
+            // and with it the string-interner ids, the node numbering and the SSA value
+            // numbering, all inherited that randomness. Two compilations of the same
+            // source produced different (though equivalent) MIR: `lrm_p150_1.va`, whose
+            // `comparator C1(.cout(aa0), .inp(in), .inm(aa2))` introduces two implicit
+            // nets on ONE instance, flipped `Spur(27)`/`Spur(28)` between 'aa0' and
+            // 'aa2' about half the time. Not a miscompile -- the permutation is
+            // consistent and the simulated output is byte-identical -- but builds were
+            // not reproducible, and it defeated MIR-diff output-preservation checking.
+            //
+            // Order by the TARGET's declared port order, which is both deterministic
+            // and the order a reader would expect; ports not found there (which the
+            // lookup below already tolerates) fall back to their name, so the order is
+            // total regardless.
+            let mut ordered: Vec<Name> = port_raw.keys().cloned().collect();
+            ordered.sort_by_key(|n| {
+                (target.nodes.iter().position(|x| &x.name == n).unwrap_or(usize::MAX),
+                 n.to_string())
+            });
+            for port_name in &ordered {
+                let port_name = port_name.clone();
+                let Some(binding) = port_raw.get_mut(&port_name) else { continue };
+                let port_name = &port_name;
                 let PortBinding::Scalar(text) = binding else { continue };
                 let Some(ident) = as_plain_ident(text) else { continue };
                 if parent_decls.contains(ident) {

@@ -388,6 +388,7 @@ The index: **Doc** links each enhancement's detailed write-up, **Examples** link
 | 337 | keep `x*0` fold: removing it shifted HiSIM2 drain current 10x (E-335 overreach) | openvaf&#8209;r | [doc](enhancements_doc/Enhancement-337.md) | [vafmulzero](examples/vafmulzero_examples/) |
 | 338 | fix hang: 64-bit bus range overflowed the width guard (7.6 GB in 9 s) | ngspice | [doc](enhancements_doc/Enhancement-338.md) | [busoverflow](examples/busoverflow_examples/) |
 | 339 | fix crash: `v()` with 3+ node names double-freed (print/let/pyplot) | ngspice | [doc](enhancements_doc/Enhancement-339.md) | [vfuncarity](examples/vfuncarity_examples/) |
+| 340 | fix nondeterminism: implicit-net declaration order came from HashMap walk | openvaf&#8209;r | [doc](enhancements_doc/Enhancement-340.md) | [vafdeterminism](examples/vafdeterminism_examples/) |
 
 </details>
 
