@@ -1,0 +1,30 @@
+Enhancement-346: random draws on the fast .param path, and the Monte Carlo tier
+* Two things, one mechanism.
+*
+* THE BUG. The fast `.param` sweep only ever re-evaluated brace expressions that
+* MENTION the swept name. numparam inlines a `.param`'s expression into the
+* device line during preprocessing, so `.param rv = agauss(...)` + `R2 a b {rv}`
+* reaches the fast path as `r2 a b {(agauss(...))}` -- a line with no swept name
+* in it, which was therefore skipped and left FROZEN, while the reset path
+* re-drew it at every point. The fast path silently disagreed with reset.
+*
+* THE FEATURE. Once random expressions are captured and re-drawn in deck order,
+* Monte Carlo needs nothing else: a sample is a re-draw plus an in-place push,
+* with no re-source. `montecarlo` now arms the same machinery with no swept knob.
+*
+* Both rest on consuming the RNG stream exactly as re-sourcing did: random binds
+* are evaluated in DECK ORDER, never served from the by-expression cache (two
+* devices with identical random text must draw independently), and a sample
+* boundary is raised per pass so the Latin-Hypercube sampler steps correctly.
+.param rv = agauss(1000, 300, 3)
+V1 in 0 dc 1
+Rk in m 1k
+R2 m 0 {rv}
+.control
+* the montecarlo command on the fast path. verify_mcfastpath.py runs the same
+* experiment as a hand-rolled `reset` loop in a separate invocation -- the path
+* this replaces -- and requires the two counts to agree exactly.
+montecarlo 200 -analysis op -spec v(m) -max 0.52 -min 0.48 -seed 7
+echo SURVIVED
+.endc
+.end

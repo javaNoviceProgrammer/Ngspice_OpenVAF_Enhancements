@@ -394,6 +394,7 @@ The index: **Doc** links each enhancement's detailed write-up, **Examples** link
 | 343 | perf: sweep no longer O(N&#178;) -- 26.6x at 16k points; `cp_getvar` built all 5 usrvars per call | ngspice | [doc](enhancements_doc/Enhancement-343.md) | [sweepscale](examples/sweepscale_examples/) |
 | 344 | perf: `.model` params join the fast `.param` sweep's direct set -- now as cheap as instance params | ngspice | [doc](enhancements_doc/Enhancement-344.md) | [modelparamset](examples/modelparamset_examples/) |
 | 345 | perf: sweep is now LINEAR -- plot naming no longer walks the plot list; 87x at 64k points | ngspice | [doc](enhancements_doc/Enhancement-345.md) | [plotname](examples/plotname_examples/) |
+| 346 | fix: fast `.param` path froze random draws reset re-drew; adds the Monte Carlo tier | ngspice | [doc](enhancements_doc/Enhancement-346.md) | [mcfastpath](examples/mcfastpath_examples/) |
 
 </details>
 

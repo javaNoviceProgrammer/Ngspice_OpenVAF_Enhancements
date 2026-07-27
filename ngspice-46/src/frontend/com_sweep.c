@@ -324,15 +324,63 @@ struct sw_fp_bind {
     int   devtype;
     int   parmid;
     int   rok;                 /* 1 = resolved, use direct set; 0 = textual cmd */
+    /* Enhancement-346: this expression draws from the RNG (agauss/gauss/unif/
+     * aunif/limit/mvnorm), so it is NOT constant between points. Such a bind is
+     * captured even when the swept name is absent, is never evaluated at arm
+     * time (that would consume a draw and fail the nominal self-check), is
+     * never served from the by-expression-text cache (two devices with the same
+     * text get INDEPENDENT draws, as re-sourcing gives them), and is evaluated
+     * in DECK ORDER so the RNG stream is consumed exactly as a reset would. */
+    int   rnd;
+    int   seq;                 /* capture index = deck order */
     struct sw_fp_bind *next;
 };
 static struct sw_fp_bind *sw_fp_list = NULL;
 static int sw_fp_armed = 0;
+static int sw_fp_nseq = 0;     /* running capture counter (deck order) */
+static int sw_fp_nrnd = 0;     /* how many captured binds draw from the RNG */
 
 static int sw_ident_ch(int c)
 {
     return isalnum(c) || c == '_';
 }
+
+/* Does this brace expression call a numparam function that consumes a random
+ * draw? These are the only sources of per-evaluation variation in a value
+ * expression; everything else is a pure function of the dico. */
+static int sw_expr_is_random(const char *e)
+{
+    static const char *const rf[] = { "agauss", "gauss", "unif", "aunif",
+                                      "limit", "mvnorm", NULL };
+    const char *p;
+    int i;
+
+    if (!e)
+        return 0;
+    for (i = 0; rf[i]; i++) {
+        size_t n = strlen(rf[i]);
+        for (p = e; (p = strstr(p, rf[i])) != NULL; p += n) {
+            const char *q = p + n;
+            if (p > e && sw_ident_ch((unsigned char) p[-1]))
+                continue;                       /* part of a longer identifier */
+            while (*q && isspace((unsigned char) *q))
+                q++;
+            if (*q == '(')                      /* a call, not a bare word */
+                return 1;
+        }
+    }
+    return 0;
+}
+
+/* range form of sw_expr_is_random for un-terminated brace contents */
+static int sw_expr_is_random_range(const char *b, const char *e)
+{
+    char *tmp = copy_substring(b, e);
+    int r = sw_expr_is_random(tmp);
+    tfree(tmp);
+    return r;
+}
+
 
 /* whole-identifier-token search: TRUE iff `tok` occurs in [s,e) on ident
  * boundaries (so "rval" does not match inside "rvalue" or "xrval"). */
@@ -375,6 +423,10 @@ static void sw_fp_add(const char *cmd, const char *name, const char *param,
     b->expr = copy_substring(beg_expr, end_expr);
     b->flat_value = flat_value;
     b->flat_ok = flat_ok;
+    b->rnd = sw_expr_is_random(b->expr);
+    b->seq = sw_fp_nseq++;
+    if (b->rnd)
+        sw_fp_nrnd++;
     b->inst = NULL;
     b->modp = NULL;
     b->devtype = -1;
@@ -455,6 +507,8 @@ void sw_fp_free(void)
     }
     sw_fp_list = NULL;
     sw_fp_armed = 0;
+    sw_fp_nseq = 0;
+    sw_fp_nrnd = 0;
 }
 
 /* Find a settable real parameter by keyword in a parameter table, returning its
@@ -564,7 +618,11 @@ static int sw_fp_scan_valueline(const char *line, const char *name, int mod,
             }
             if (depth) return 0;            /* unbalanced -> bail (ineligible) */
             /* q points at '}'; [bexp,q) is the expression */
-            if (sw_line_has_swept(bexp, q, sw, nsw)) {
+            /* Enhancement-346: a RANDOM expression is captured even when the
+             * swept name is absent -- it is not constant between points, and
+             * leaving it alone is what made the fast path disagree with reset. */
+            if (sw_line_has_swept(bexp, q, sw, nsw) ||
+                sw_expr_is_random_range(bexp, q)) {
                 const char *k = p;          /* look left of '{' for '=' */
                 char cmd[600];
                 while (k > line && isspace((unsigned char) k[-1])) k--;
@@ -628,6 +686,15 @@ static int sw_fp_cmp_expr(const void *a, const void *b)
 {
     const struct sw_fp_bind *ba = *(struct sw_fp_bind *const *) a;
     const struct sw_fp_bind *bb = *(struct sw_fp_bind *const *) b;
+    /* Enhancement-346: RANDOM binds sort first, in DECK ORDER. Re-sourcing
+     * evaluates brace expressions in deck order, and only the random ones
+     * consume the RNG, so evaluating exactly those in that order reproduces the
+     * stream a reset would have produced. Deterministic binds follow, grouped
+     * by expression text so each distinct one is evaluated once per point. */
+    if (ba->rnd != bb->rnd)
+        return bb->rnd - ba->rnd;
+    if (ba->rnd)
+        return ba->seq - bb->seq;
     return strcmp(ba->expr, bb->expr);
 }
 
@@ -641,7 +708,11 @@ int sw_fp_build(char *const *sw, int nsw)
     int subckt_depth = 0, control_depth = 0;
 
     sw_fp_free();
-    if (nsw <= 0 || !ft_curckt)
+    /* Enhancement-346: nsw == 0 is legitimate -- Monte Carlo has no swept knob,
+     * only random value expressions to re-draw. Everything below already keys
+     * off `has`/`sw_line_has_swept`, which is simply false everywhere when
+     * nsw == 0, so pass 1 reduces to the random-in-a-structural-slot check. */
+    if (nsw < 0 || !ft_curckt)
         return 0;
     deck = ft_curckt->ci_origdeck;
     if (!deck)
@@ -674,6 +745,13 @@ int sw_fp_build(char *const *sw, int nsw)
         is_ends = (strncasecmp(p, ".ends", 5) == 0 ||
                    strncasecmp(p, ".eom", 4) == 0);
         has = sw_line_has_swept(p, e, sw, nsw);
+        /* Enhancement-346: a random draw is a varying value too, so a line that
+         * calls one gets the same structural scrutiny as one naming a swept
+         * param. `.param` is exempt: numparam inlines those into the device
+         * lines, where pass 2 captures them. */
+        if (!has && strncasecmp(p, ".param", 6) != 0 &&
+            sw_expr_is_random_range(p, e))
+            has = 1;
 
         if (is_subckt) {
             if (has) goto disarm;   /* swept param in a subckt header default */
@@ -747,7 +825,14 @@ int sw_fp_build(char *const *sw, int nsw)
         tmpl = nupa_get_dynref(c->linenum);
         if (!tmpl)
             continue;
-        if (!sw_line_has_swept(tmpl, tmpl + strlen(tmpl), sw, nsw))
+        /* Enhancement-346: also let through a line whose value expression DRAWS
+         * from the RNG even though no swept name appears in it. numparam inlines
+         * a `.param`'s expression into the device line during preprocessing, so
+         * `.param rv = agauss(...)` + `R2 a b {rv}` arrives here as
+         * `r2 a b {(agauss(...))}` -- and skipping it is exactly what left such
+         * a value frozen on the fast path while a reset re-drew it. */
+        if (!sw_line_has_swept(tmpl, tmpl + strlen(tmpl), sw, nsw) &&
+            !sw_expr_is_random(tmpl))
             continue;
 
         if (*tp == '.') {
@@ -785,6 +870,13 @@ int sw_fp_build(char *const *sw, int nsw)
         for (b = sw_fp_list; b; b = b->next) {
             int ok = 0;
             double v;
+            /* Enhancement-346: a random expression cannot be self-checked --
+             * re-evaluating it draws a NEW value, so it could never reproduce
+             * the baked one, and the draw would perturb the RNG stream that
+             * must match a re-source. Its correctness rests on the structural
+             * disarms instead. */
+            if (b->rnd)
+                continue;
             if (!b->flat_ok)
                 goto disarm;
             v = nupa_eval_expr(b->expr, &ok);
@@ -841,6 +933,16 @@ void sw_fp_apply(char *const *sw, const double *vals, int nsw)
 
     if (ft_curckt)
         nupa_set_dicoslist(ft_curckt->ci_dicos);
+
+    /* Enhancement-346: a deck re-copy signals one Monte Carlo sample boundary
+     * (nupa_signal(NUPADECKCOPY) -> mc_sample_advance()), which rewinds the
+     * per-sample dimension counter and steps the Latin-Hypercube sampler to its
+     * next stratified point. Skipping the re-source skips that signal, so the
+     * stratified draws all came from dimension 0 of one sample -- which is
+     * exactly why `-lhs` disagreed with the reset path while plain random draws
+     * matched. Raise the same boundary here. */
+    mc_sample_advance();
+
     for (j = 0; j < nsw; j++)
         nupa_add_param((char *) sw[j], vals[j]);
     nupa_recompute_params(sw, nsw);      /* refresh derived-param closure */
@@ -855,8 +957,17 @@ void sw_fp_apply(char *const *sw, const double *vals, int nsw)
     double last_v = 0.0;
     for (b = sw_fp_list; b; b = b->next) {
         double v;
-        if (last_expr && strcmp(b->expr, last_expr) == 0) {
+        if (!b->rnd && last_expr && strcmp(b->expr, last_expr) == 0) {
             v = last_v;                  /* same expression as previous bind */
+        } else if (b->rnd) {
+            /* Enhancement-346: never cached -- two devices carrying the same
+             * random text must get INDEPENDENT draws, exactly as re-sourcing
+             * gives them (verified: two `{agauss(1000,300,3)}` resistors come
+             * out at 1113.1 and 1099.5, not equal). */
+            int ok = 0;
+            v = nupa_eval_expr(b->expr, &ok);
+            if (!ok) { last_expr = NULL; continue; }
+            last_expr = NULL;
         } else {
             int ok = 0;
             v = nupa_eval_expr(b->expr, &ok);
@@ -1818,6 +1929,18 @@ void com_montecarlo(wordlist *wl)
         sw_run_cmd(cmd);
     }
 
+    /* Enhancement-346: arm the fast path for Monte Carlo. MC has no swept knob
+     * -- what varies per sample is the RNG, so sw_fp_build() is asked for the
+     * random value bindings alone (nsw == 0). When every random draw feeds an
+     * addressable device/model value, a sample is a re-draw plus an in-place
+     * push instead of a full re-source; the binds are evaluated in deck order
+     * and never cached, so the RNG stream is consumed exactly as the reset path
+     * consumed it and the samples are identical draw for draw. */
+    int fast_mc = sw_fp_build(NULL, 0);
+    if (fast_mc)
+        fprintf(cp_out, "montecarlo: fast path armed (%d random value binding%s,"
+                " no per-sample reset)\n", sw_fp_nrnd, sw_fp_nrnd == 1 ? "" : "s");
+
     long npass = 0;
     ft_optimizing = TRUE;
     /* Enhancement-188: warm-start each sample's DC bias point from the previous
@@ -1827,7 +1950,10 @@ void com_montecarlo(wordlist *wl)
         CKTsetWarmStart(1);
     for (int i = 0; i < nsamp; i++) {
         ft_optimizing = TRUE;
-        sw_run_cmd("reset");
+        if (fast_mc)
+            sw_fp_apply(NULL, NULL, 0);   /* re-draw + push in place, no reset */
+        else
+            sw_run_cmd("reset");
         sw_run_cmd(analysis);
         int pass = 1;
         for (s = 0; s < nspec; s++) {
@@ -1842,6 +1968,8 @@ void com_montecarlo(wordlist *wl)
     if (usewarm)
         CKTsetWarmStart(0);
     ft_optimizing = save_optimizing;
+    if (fast_mc)
+        sw_fp_free();                     /* Enhancement-346: drop the binds */
     if (uselhs)
         mc_sss_off();
 
