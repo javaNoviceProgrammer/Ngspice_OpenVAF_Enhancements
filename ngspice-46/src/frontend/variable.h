@@ -39,6 +39,7 @@ wordlist *cp_variablesubst(wordlist *wlist);
 void free_struct_variable(struct variable *v);
 
 struct variable *var_alloc(char *name, struct variable *next);
+struct variable *var_copy(const struct variable *v);
 
 struct variable *var_alloc_bool(char *name, bool, struct variable *next);
 struct variable *var_alloc_num(char *name, int, struct variable *next);

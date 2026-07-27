@@ -193,32 +193,38 @@ static struct variable *cp_enqvec_as_var(const char *vec_name,
 
 
 /* Return $plots, $curplot, $curplottitle, $curplotname, and
- * $curplotdate as a linked list of variables in that order */
+ * $curplotdate as a linked list of variables in that order.
+ *
+ * The list returned here is OWNED BY THE CALLER -- cp_getvar(), cp_remvar()
+ * and cp_vprint() all free it with free_struct_variable(). cp_enqvar() does
+ * not always allocate, though: it clears *tbfreed and returns a BORROWED
+ * pointer straight into plot_cur->pl_env or ft_curckt->ci_vars when one of
+ * those happens to define a variable of the requested name. Such a name is not
+ * hypothetical -- a rawfile "Option:" line writes pl_env (rawfile.c) and a deck
+ * ".option" line writes ci_vars (inp.c), so a file can define "plots" or any
+ * of the "curplot*" names and reach this path.
+ *
+ * Splicing a borrowed node in would do two wrong things: `tv->va_next = v`
+ * rewrites the live list's link, orphaning its tail, and the caller then frees
+ * a node that is still owned and reachable elsewhere. So take a copy whenever
+ * cp_enqvar reports that it did not allocate.
+ */
 struct variable *
 cp_usrvars(void)
 {
-    struct variable *v, *tv;
-    int tbfreed;
+    static const char * const names[] = {
+        "plots", "curplot", "curplottitle", "curplotname", "curplotdate"
+    };
+    struct variable *v = (struct variable *) NULL;
+    size_t i;
 
-    v = (struct variable *) NULL;
-
-    if ((tv = cp_enqvar("plots", &tbfreed)) != NULL) {
-        tv->va_next = v;
-        v = tv;
-    }
-    if ((tv = cp_enqvar("curplot", &tbfreed)) != NULL) {
-        tv->va_next = v;
-        v = tv;
-    }
-    if ((tv = cp_enqvar("curplottitle", &tbfreed)) != NULL) {
-        tv->va_next = v;
-        v = tv;
-    }
-    if ((tv = cp_enqvar("curplotname", &tbfreed)) != NULL) {
-        tv->va_next = v;
-        v = tv;
-    }
-    if ((tv = cp_enqvar("curplotdate", &tbfreed)) != NULL) {
+    for (i = 0; i < NUMELEMS(names); i++) {
+        int tbfreed = 0;
+        struct variable *tv = cp_enqvar(names[i], &tbfreed);
+        if (tv == NULL)
+            continue;
+        if (!tbfreed) /* borrowed -- must not be relinked or freed */
+            tv = var_copy(tv);
         tv->va_next = v;
         v = tv;
     }

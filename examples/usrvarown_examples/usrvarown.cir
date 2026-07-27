@@ -1,0 +1,46 @@
+Enhancement-342: ownership of the synthetic user-variable list
+* cp_usrvars() builds $plots, $curplot, $curplottitle, $curplotname and
+* $curplotdate on demand and hands the list to a caller that frees it.
+* Two ways that went wrong, both reachable from ordinary input:
+*
+*   1. cp_enqvar() sometimes returns a BORROWED pointer into a live list
+*      instead of allocating, and cp_usrvars() ignored the flag that says so.
+*      A rawfile "Option:" line can put one of those five names into the
+*      plot environment, after which the borrowed node was relinked and
+*      then freed -- heap-use-after-free, SIGSEGV.
+*
+*   2. cp_remvar() freed the variable it had just looked up even when that
+*      variable was still linked into the list it came from, so "unset plots"
+*      freed a node that free_struct_variable(uv1) then freed again --
+*      double free, SIGABRT. No file needed; this deck alone showed it.
+*
+* This deck covers case 2 and the read-back of every synthetic variable.
+* verify_usrvarown.py additionally builds the rawfiles for case 1.
+V1 in 0 dc 1
+R1 in out 1k
+R2 out 0 1k
+.control
+op
+op
+
+* the five synthetic user variables must still read back correctly
+echo PLOTS $plots
+echo CURPLOT $curplot
+echo CURPLOTNAME $curplotname
+echo CURPLOTTITLE $curplottitle
+
+* each of these used to abort in malloc with a double free
+unset plots
+unset curplot
+unset curplotname
+unset curplottitle
+unset curplotdate
+
+* an ordinary variable must still set and unset normally
+set myvar = 42
+echo MYVAR $myvar
+unset myvar
+
+echo SURVIVED
+.endc
+.end

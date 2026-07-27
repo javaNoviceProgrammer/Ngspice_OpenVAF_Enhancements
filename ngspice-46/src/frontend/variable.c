@@ -574,11 +574,66 @@ free_struct_variable(struct variable *v)
 } /* end of function free_struct_variable */
 
 
+/* Deep-copy one variable, without its va_next link.
+ *
+ * This is the dual of free_struct_variable(): the result owns everything that
+ * function would free, so a copy may safely be handed to a caller that frees
+ * its list. Use it when a variable that belongs to somebody else (a plot
+ * environment, a circuit's variables) has to be placed in a list the caller
+ * will tear down -- see cp_usrvars().
+ */
+struct variable *
+var_copy(const struct variable *v)
+{
+    struct variable *nv;
+
+    if (!v)
+        return NULL;
+
+    switch (v->va_type) {
+    case CP_BOOL:
+        return var_alloc_bool(copy(v->va_name), v->va_bool, NULL);
+    case CP_NUM:
+        return var_alloc_num(copy(v->va_name), v->va_num, NULL);
+    case CP_REAL:
+        return var_alloc_real(copy(v->va_name), v->va_real, NULL);
+    case CP_STRING:
+        return var_alloc_string(copy(v->va_name), copy(v->va_string), NULL);
+    case CP_LIST: {
+        /* Copy the elements too -- free_struct_variable() recurses into
+         * va_vlist, so a shallow copy would free somebody else's elements. */
+        struct variable *head = NULL, **tail = &head;
+        const struct variable *e;
+        for (e = v->va_vlist; e; e = e->va_next) {
+            *tail = var_copy(e);
+            tail = &(*tail)->va_next;
+        }
+        return var_alloc_vlist(copy(v->va_name), head, NULL);
+    }
+    default:
+        /* No owned payload for the remaining types, so the union copies. */
+        nv = var_alloc(copy(v->va_name), NULL);
+        nv->va_type = v->va_type;
+        nv->va_V = v->va_V;
+        return nv;
+    }
+} /* end of function var_copy */
+
+
 void cp_remvar(char *varname)
 {
     struct variable *v, **p;
     struct variable *uv1;
     int i;
+    /* Whether v is ours to free at the end. A variable found in one of the
+     * lists searched below still BELONGS to that list unless the US_OK path
+     * unlinks it. Freeing it anyway leaves a dangling link in `variables`,
+     * pl_env or ci_vars -- and for a variable found in uv1 it is freed a
+     * second time by the free_struct_variable(uv1) that ends this function,
+     * which is what made `unset plots` (and each of the curplot* names, all of
+     * which cp_usrset reports as read-only or don't-record) abort in malloc.
+     */
+    bool free_v = FALSE;
 
     uv1 = cp_usrvars();
 
@@ -617,6 +672,7 @@ void cp_remvar(char *varname)
     /* make up an auxiliary struct variable for cp_usrset() */
     if (!v) {
         v = var_alloc_num(copy(varname), 0, NULL);
+        free_v = TRUE;          /* no list owns this one */
     }
 
     /* Update options that depend on variables */
@@ -628,6 +684,7 @@ void cp_remvar(char *varname)
         /* Normal case. */
         if (*p) {
             *p = v->va_next;
+            free_v = TRUE;      /* unlinked from its list, so ours now */
         }
         break;
 
@@ -668,8 +725,10 @@ void cp_remvar(char *varname)
         break;
     }
 
-    v->va_next = NULL;
-    free_struct_variable(v);
+    if (free_v) {
+        v->va_next = NULL;
+        free_struct_variable(v);
+    }
 
     free_struct_variable(uv1);
 } /* end of function cp_remvar */

@@ -390,6 +390,7 @@ The index: **Doc** links each enhancement's detailed write-up, **Examples** link
 | 339 | fix crash: `v()` with 3+ node names double-freed (print/let/pyplot) | ngspice | [doc](enhancements_doc/Enhancement-339.md) | [vfuncarity](examples/vfuncarity_examples/) |
 | 340 | fix nondeterminism: implicit-net declaration order came from HashMap walk | openvaf&#8209;r | [doc](enhancements_doc/Enhancement-340.md) | [vafdeterminism](examples/vafdeterminism_examples/) |
 | 341 | fix crash: `sweep -analysis reset/remcirc` freed the circuit mid-loop | ngspice | [doc](enhancements_doc/Enhancement-341.md) | [sweepanalysis](examples/sweepanalysis_examples/) |
+| 342 | fix crash: rawfile `Option: plots` use-after-free; `unset plots` double free | ngspice | [doc](enhancements_doc/Enhancement-342.md) | [usrvarown](examples/usrvarown_examples/) |
 
 </details>
 

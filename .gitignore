@@ -123,6 +123,7 @@ examples/**/*.osdi
 examples/**/_*.csv
 examples/**/_*.txt
 examples/**/_*.dat
+examples/**/_*.raw
 examples/**/_*.s?p
 examples/**/_*.y2p
 examples/**/_*.z2p
