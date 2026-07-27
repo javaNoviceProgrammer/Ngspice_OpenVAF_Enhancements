@@ -539,6 +539,30 @@ struct pnode *PP_mkfnode(const char *func, struct pnode *arg)
     }
 
     if (!f->fu_func && arg->pn_op && arg->pn_op->op_num == PT_OP_COMMA) {
+        /* Enhancement-339: `v()` takes AT MOST TWO node names -- `v(a)` or the
+         * differential `v(a,b)`. A comma argument whose own child is another
+         * comma means three or more were given, which is not valid syntax.
+         *
+         * Recursing on such a child SEGFAULTED. This branch CONSUMES its
+         * argument (`free_pnode(arg)` below), while the normal path at the end
+         * of this function BORROWS it and bumps `pn_use`. With two names the
+         * children are plain nodes, so they are borrowed and the caller's free
+         * merely decrements -- safe. With three, one child is itself a comma,
+         * so the recursive call frees it, and then the outer `free_pnode(arg)`
+         * walks into that already-freed child: a double free, and ngspice died
+         * with SIGSEGV on `print`, `let` and `pyplot` alike (`plot` happened to
+         * survive). The inconsistent ownership between the two paths is the
+         * underlying hazard; rejecting the invalid arity avoids relying on it.
+         */
+        if ((arg->pn_left && arg->pn_left->pn_op &&
+                    arg->pn_left->pn_op->op_num == PT_OP_COMMA) ||
+                (arg->pn_right && arg->pn_right->pn_op &&
+                    arg->pn_right->pn_op->op_num == PT_OP_COMMA)) {
+            fprintf(cp_err,
+                    "Error: %s() takes at most two node names.\n", func);
+            free_pnode(arg);
+            return (struct pnode *) NULL;
+        }
         p = PP_mkbnode(PT_OP_MINUS, PP_mkfnode(func, arg->pn_left),
                     PP_mkfnode(func, arg->pn_right));
         free_pnode(arg);

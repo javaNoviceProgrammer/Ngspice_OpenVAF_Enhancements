@@ -1,0 +1,30 @@
+* Enhancement-339: v() with three or more node names SIGSEGV'd ngspice.
+*
+* `v()` takes at most two node names -- `v(a)` or the differential `v(a,b)`.
+* A third was not rejected: PP_mkfnode's comma branch recursed on a child that
+* is itself a comma node, and that branch CONSUMES its argument (free_pnode),
+* while the normal path BORROWS it and bumps pn_use. So the recursive call
+* freed the child and the outer free_pnode(arg) then walked into it -- a double
+* free. `print`, `let` and `pyplot` all died with SIGSEGV; `plot` happened to
+* survive because it does not take that path.
+*
+* Found by fuzzing the pyplot command family; the defect is in the shared
+* expression parser, not in pyplot.
+*
+* Node existence is irrelevant -- all-present, all-missing and mixed all crashed.
+V1 in 0 pulse(0 1 0 1n 1n 5n 10n)
+R1 in out 1k
+C1 out 0 1p
+.control
+tran 0.1n 20n
+echo "--- three node names: must be a clean error, not a crash ---"
+print v(in,out,0)
+let q = v(in,out,0)
+pyplot _va3 v(in,out,0)
+echo "--- four ---"
+print v(in,out,0,in)
+echo "--- the legal forms must still work ---"
+print v(out)
+print v(in,out)
+.endc
+.end
