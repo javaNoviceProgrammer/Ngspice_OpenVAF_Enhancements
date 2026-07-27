@@ -1,0 +1,38 @@
+`include "disciplines.vams"
+
+// Enhancement-335: the compiler silently computed something other than what
+// IEEE 754 and IEEE 1364 specify.
+//
+//  * `!=` on reals was lowered as an ORDERED compare, so `x != x` -- the
+//    canonical isnan idiom -- was false for NaN, and `a != b` was not the
+//    complement of `a == b`.
+//  * A shift distance outside 0..=31 was handed to the hardware, which on
+//    AArch64 masks it to 5 bits: `1 << 32` evaluated to `1 << 0` == 1 where
+//    Verilog requires 0.
+//  * The simplifier applied algebraic identities that hold for real numbers but
+//    not for IEEE doubles: `x/x -> 1`, `sqrt(x)*sqrt(x) -> x`, `exp(ln x) -> x`.
+//    Each is exactly how a model guards a domain, so folding them turned a
+//    deliberate NaN into a plausible wrong number.
+//
+// Every operand below is a NODE VOLTAGE, so nothing can be constant-folded.
+module ieee(z, w, n, o_ne, o_cmp, o_shl, o_shr, o_div, o_sqrt, o_explog);
+    inout z, w, n;
+    output o_ne, o_cmp, o_shl, o_shr, o_div, o_sqrt, o_explog;
+    electrical z, w, n, o_ne, o_cmp, o_shl, o_shr, o_div, o_sqrt, o_explog;
+    parameter integer nsh = 32;
+    real q, a, b, c;
+    analog begin
+        q = sqrt(V(w));                 // w < 0  -> NaN
+        a = V(z) / V(z);                // z = 0  -> NaN
+        b = sqrt(V(w)) * sqrt(V(w));    // NaN
+        c = exp(ln(V(w)));              // NaN
+
+        V(o_ne)   <+ (q != q) ? 1.0 : 0.0;            // IEEE: 1
+        V(o_cmp)  <+ ((q != q) == !(q == q)) ? 1.0 : 0.0;  // complements: 1
+        V(o_shl)  <+ 1 << nsh;                        // Verilog: 0
+        V(o_shr)  <+ (-1) >> nsh;                     // Verilog: 0
+        V(o_div)  <+ (a != a) ? 1.0 : 0.0;            // IEEE: 1
+        V(o_sqrt) <+ (b != b) ? 1.0 : 0.0;            // IEEE: 1
+        V(o_explog) <+ (c != c) ? 1.0 : 0.0;          // IEEE: 1
+    end
+endmodule

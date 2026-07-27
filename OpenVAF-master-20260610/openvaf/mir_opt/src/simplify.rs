@@ -2,7 +2,7 @@ use std::marker::PhantomData;
 use std::mem::swap;
 
 use mir::{
-    Function, Inst, InstructionData, Opcode, PhiNode, Value, ValueDef, F_N_ONE, F_ONE, F_TEN,
+    Function, Inst, InstructionData, Opcode, PhiNode, Value, ValueDef, F_N_ONE, F_ONE,
     F_ZERO, N_ONE, ONE, ZERO,
 };
 
@@ -19,6 +19,15 @@ pub trait Arithmetic {
     const N_ONE: Value;
     const DIV_EXACT: bool;
     const HAS_SQRT: bool;
+    /// Enhancement-335: does this type obey ORDINARY ALGEBRA?
+    ///
+    /// Integers do. IEEE doubles do NOT: with NaN and the infinities in the value set,
+    /// `x - x`, `x + (-x)` and `x * 0` are NaN rather than 0, and `x / x` and `x / -x`
+    /// are NaN rather than +-1. Rewrites that assume algebra therefore silently change
+    /// results -- they are only valid under fast-math, which this compiler does not
+    /// promise. Gate them on this so the intent is visible at each site instead of
+    /// being implied by the type.
+    const EXACT_ALGEBRA: bool;
 }
 
 impl Arithmetic for f64 {
@@ -30,8 +39,15 @@ impl Arithmetic for f64 {
     const ZERO: Value = F_ZERO;
     const ONE: Value = F_ONE;
     const N_ONE: Value = F_N_ONE;
-    const DIV_EXACT: bool = true;
-    const HAS_SQRT: bool = true;
+    // Enhancement-335: all three were `true`, which turned on rewrites that are only
+    // sound under fast-math: `(x/y)*y -> x`, `sqrt(x)*sqrt(x) -> x`, `x/x -> 1`,
+    // `x*0 -> 0`, `x-x -> 0`. With node voltages as operands these fired at run time
+    // and produced 1 for `V(z)/V(z)` at z=0 and -4 for `sqrt(V(w))*sqrt(V(w))` at
+    // w=-4, where IEEE requires NaN -- silently breaking the domain guards and
+    // cancellation idioms compact models rely on.
+    const DIV_EXACT: bool = false;
+    const HAS_SQRT: bool = false;
+    const EXACT_ALGEBRA: bool = false;
 }
 
 impl Arithmetic for i32 {
@@ -45,6 +61,7 @@ impl Arithmetic for i32 {
     const N_ONE: Value = N_ONE;
     const DIV_EXACT: bool = false;
     const HAS_SQRT: bool = false;
+    const EXACT_ALGEBRA: bool = true;
 }
 
 pub struct SimplifyCtx<'a, FP: Arithmetic, M: Fn(Value, &Function) -> Value> {
@@ -107,17 +124,22 @@ impl<'a, FP: Arithmetic, M: Fn(Value, &Function) -> Value> SimplifyCtx<'a, FP, M
             // for any x < 0 (e.g. sqrt((-3)^2) = 3, not -3). MIR has no fabs to
             // fold to, so leave the sqrt in place (it computes |x| correctly).
             Opcode::Sqrt => return None,
-            Opcode::Exp => Opcode::Ln,
-            Opcode::Ln => Opcode::Exp,
-            Opcode::Log => {
-                if let Some([x, y]) = self.as_binary(arg, Opcode::Pow) {
-                    if x == F_TEN {
-                        return Some(y);
-                    }
-                }
-
-                return None;
+            // Enhancement-335: `f(g(x)) -> x` also needs g's RANGE to lie inside f's
+            // DOMAIN and neither step to overflow. The principal-value cases were
+            // already excluded below; these are the DOMAIN and OVERFLOW ones, and they
+            // were silently returning x where IEEE gives NaN or infinity:
+            //   exp(ln x)      x < 0   -> ln is NaN, so this is NaN, not x
+            //   ln(exp x)      large x -> exp overflows to inf, so inf, not x
+            //   cosh(acosh x)  x < 1   -> acosh is NaN, so NaN, not x
+            //   sinh(asinh x) / asinh(sinh x)  large x -> overflow to inf, not x
+            //   tanh(atanh x) |x| >= 1 -> atanh is NaN (or +-inf), not x
+            //   log(pow(10,y)) large y -> pow overflows to inf, not y
+            // Each of those is exactly how a model guards a domain, so folding them
+            // away turns a deliberate NaN into a plausible wrong number.
+            Opcode::Exp | Opcode::Ln | Opcode::Cosh | Opcode::Sinh | Opcode::Asinh => {
+                return None
             }
+            Opcode::Log => return None,
             Opcode::Floor | Opcode::Ceil => {
                 if matches!(
                     self.as_any_unary(arg),
@@ -142,11 +164,12 @@ impl<'a, FP: Arithmetic, M: Fn(Value, &Function) -> Value> SimplifyCtx<'a, FP, M
             Opcode::Cos => Opcode::Acos,
             Opcode::Tan => Opcode::Atan,
             Opcode::Asin | Opcode::Acos | Opcode::Atan | Opcode::Acosh => return None,
-            Opcode::Sinh => Opcode::Asinh,
-            Opcode::Cosh => Opcode::Acosh,
-            Opcode::Tanh => Opcode::Atanh,
-            Opcode::Asinh => Opcode::Sinh,
+            // `tanh` has range (-1,1), which is strictly inside `atanh`'s domain and
+            // cannot overflow, so this one direction really does invert everywhere and
+            // is kept. Its reverse (`tanh(atanh x)`) is NOT: |x| >= 1 is outside
+            // atanh's domain, and is handled above.
             Opcode::Atanh => Opcode::Tanh,
+            Opcode::Tanh => return None,
             _ => unreachable!(""),
         };
 
@@ -297,14 +320,18 @@ impl<'a, FP: Arithmetic, M: Fn(Value, &Function) -> Value> SimplifyCtx<'a, FP, M
             return Some(lhs);
         }
 
-        if self.is_neg(A::NEG, A::SUB, lhs, rhs) {
-            return Some(A::ZERO);
-        }
+        // Enhancement-335: `x + (-x)` is NaN, not 0, when x is inf or NaN; and
+        // `X + (Y - X) -> Y` is an associativity rewrite that rounding invalidates.
+        if A::EXACT_ALGEBRA {
+            if self.is_neg(A::NEG, A::SUB, lhs, rhs) {
+                return Some(A::ZERO);
+            }
 
-        // X + (Y - X) -> Y
-        if let Some([y, x]) = self.as_binary(rhs, A::SUB) {
-            if x == lhs {
-                return Some(y);
+            // X + (Y - X) -> Y
+            if let Some([y, x]) = self.as_binary(rhs, A::SUB) {
+                if x == lhs {
+                    return Some(y);
+                }
             }
         }
 
@@ -332,8 +359,14 @@ impl<'a, FP: Arithmetic, M: Fn(Value, &Function) -> Value> SimplifyCtx<'a, FP, M
             return Some(lhs);
         }
 
-        if lhs == rhs {
+        // Enhancement-335: `x - x` is NaN, not 0, when x is inf or NaN.
+        if A::EXACT_ALGEBRA && lhs == rhs {
             return Some(A::ZERO);
+        }
+        if !A::EXACT_ALGEBRA {
+            // the (X+Y)-Z chain below rewrites through associativity, which does not
+            // hold for floating point either ((a+b)-b != a once rounding is involved)
+            return None;
         }
         self.recurse(|sel| sel.simplify_sub_inst_inner::<A>(lhs, rhs))
     }
@@ -434,7 +467,8 @@ impl<'a, FP: Arithmetic, M: Fn(Value, &Function) -> Value> SimplifyCtx<'a, FP, M
             return Some(lhs);
         }
 
-        if rhs == A::ZERO {
+        // Enhancement-335: `x * 0` is NaN, not 0, when x is inf or NaN.
+        if A::EXACT_ALGEBRA && rhs == A::ZERO {
             return Some(A::ZERO);
         }
 
@@ -504,7 +538,8 @@ impl<'a, FP: Arithmetic, M: Fn(Value, &Function) -> Value> SimplifyCtx<'a, FP, M
             return Some(lhs);
         }
 
-        if self.is_neg(A::NEG, A::SUB, lhs, rhs) {
+        // Enhancement-335: `x / -x` is NaN, not -1, for x = 0, inf or NaN.
+        if A::EXACT_ALGEBRA && self.is_neg(A::NEG, A::SUB, lhs, rhs) {
             return Some(A::N_ONE);
         }
 

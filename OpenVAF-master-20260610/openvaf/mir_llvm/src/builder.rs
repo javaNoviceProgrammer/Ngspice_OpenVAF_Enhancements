@@ -827,20 +827,52 @@ impl<'ll> Builder<'_, '_, 'll> {
                 let rhs = NonNull::from(self.values[args[1]].get(self)).as_ptr();
                 llvm_sys::core::LLVMBuildSRem(self.llbuilder, lhs, rhs, UNNAMED)
             }
-            Opcode::Ishl => {
+            // Enhancement-335: a shift distance outside 0..=31 is POISON in LLVM, and at
+            // run time the hardware supplies its own answer instead of Verilog's -- on
+            // AArch64 the distance is masked to 5 bits, so `1 << 32` evaluated to
+            // `1 << 0` == 1 where IEEE 1364 requires 0. The right operand of a shift is
+            // treated as UNSIGNED, so a negative distance is a huge one and also gives 0.
+            //
+            // Guard the distance explicitly rather than trusting the target:
+            //   <<  and >>  (logical) : distance >= 32  =>  0
+            //   >>> (arithmetic)      : distance >= 32  =>  all sign bits, i.e. clamp
+            //                           the distance to 31
+            Opcode::Ishl | Opcode::Ishr => {
                 let lhs = NonNull::from(self.values[args[0]].get(self)).as_ptr();
                 let rhs = NonNull::from(self.values[args[1]].get(self)).as_ptr();
-                llvm_sys::core::LLVMBuildShl(self.llbuilder, lhs, rhs, UNNAMED)
-            }
-            Opcode::Ishr => {
-                let lhs = NonNull::from(self.values[args[0]].get(self)).as_ptr();
-                let rhs = NonNull::from(self.values[args[1]].get(self)).as_ptr();
-                llvm_sys::core::LLVMBuildLShr(self.llbuilder, lhs, rhs, UNNAMED)
+                let width = NonNull::from(self.cx.const_int(32)).as_ptr();
+                let zero = NonNull::from(self.cx.const_int(0)).as_ptr();
+                let raw = if matches!(self.func.dfg.insts[inst].opcode(), Opcode::Ishl) {
+                    llvm_sys::core::LLVMBuildShl(self.llbuilder, lhs, rhs, UNNAMED)
+                } else {
+                    llvm_sys::core::LLVMBuildLShr(self.llbuilder, lhs, rhs, UNNAMED)
+                };
+                // UNSIGNED compare, so a negative distance counts as out of range too
+                let oob = llvm_sys::core::LLVMBuildICmp(
+                    self.llbuilder,
+                    llvm_sys::LLVMIntPredicate::LLVMIntUGE,
+                    rhs,
+                    width,
+                    UNNAMED,
+                );
+                llvm_sys::core::LLVMBuildSelect(self.llbuilder, oob, zero, raw, UNNAMED)
             }
             Opcode::Iashr => {
                 let lhs = NonNull::from(self.values[args[0]].get(self)).as_ptr();
                 let rhs = NonNull::from(self.values[args[1]].get(self)).as_ptr();
-                llvm_sys::core::LLVMBuildAShr(self.llbuilder, lhs, rhs, UNNAMED)
+                let width = NonNull::from(self.cx.const_int(32)).as_ptr();
+                let max = NonNull::from(self.cx.const_int(31)).as_ptr();
+                // clamping to 31 yields exactly the all-sign-bits result Verilog wants
+                let oob = llvm_sys::core::LLVMBuildICmp(
+                    self.llbuilder,
+                    llvm_sys::LLVMIntPredicate::LLVMIntUGE,
+                    rhs,
+                    width,
+                    UNNAMED,
+                );
+                let dist =
+                    llvm_sys::core::LLVMBuildSelect(self.llbuilder, oob, max, rhs, UNNAMED);
+                llvm_sys::core::LLVMBuildAShr(self.llbuilder, lhs, dist, UNNAMED)
             }
             Opcode::Ixor => {
                 let lhs = NonNull::from(self.values[args[0]].get(self)).as_ptr();
@@ -930,8 +962,15 @@ impl<'ll> Builder<'_, '_, 'll> {
                 NonNull::from(self.build_real_cmp(args, llvm_sys::LLVMRealPredicate::LLVMRealOEQ))
                     .as_ptr()
             }
+            // Enhancement-335: `!=` on reals must be the UNORDERED not-equal predicate.
+            // `LLVMRealONE` is ORDERED not-equal, which is FALSE whenever either operand
+            // is NaN -- so `x != x` (the canonical isnan idiom) silently returned false,
+            // and `a != b` was not the complement of `a == b`. IEEE 754 requires NaN to
+            // compare unequal to everything, itself included. `Feq` correctly stays
+            // ORDERED (`OEQ`): NaN == NaN is false, and the two are complements again
+            // only when this one is UNORDERED.
             Opcode::Fne => {
-                NonNull::from(self.build_real_cmp(args, llvm_sys::LLVMRealPredicate::LLVMRealONE))
+                NonNull::from(self.build_real_cmp(args, llvm_sys::LLVMRealPredicate::LLVMRealUNE))
                     .as_ptr()
             }
             Opcode::Bne | Opcode::Ine => {
