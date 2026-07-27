@@ -31,6 +31,7 @@ Author: 1985 Wayne A. Christopher
 
 #include "com_set.h"
 
+#include <errno.h>
 #include <limits.h>
 #include <stdlib.h>
 
@@ -2399,16 +2400,38 @@ static bool inp_expand_bus_token(DSTRING *ds, const char *tok, size_t len)
     const char *end = tok + len - 1; /* the closing ']' */
     char *ep;
     const char *lo_start = lb + 1;
+    errno = 0;
     long lo = strtol(lo_start, &ep, 10);
     if (ep == lo_start || *ep != ':') /* need <int> ':' */
         return FALSE;
+    if (errno == ERANGE) /* endpoint does not even fit a long -- see below */
+        return FALSE;
     const char *hi_start = ep + 1;
+    errno = 0;
     long hi = strtol(hi_start, &ep, 10);
     if (ep == hi_start || ep != end) /* need <int> filling the rest before ']' */
         return FALSE;
+    if (errno == ERANGE)
+        return FALSE;
 
-    long width = (hi >= lo) ? (hi - lo + 1) : (lo - hi + 1);
-    if (width > BUS_MAX_WIDTH)
+    /* Enhancement-338: compute the span in UNSIGNED arithmetic.
+     *
+     * `hi - lo + 1` OVERFLOWS a signed long for a full-range span such as
+     * a[-9223372036854775808:9223372036854775807]: the overflow wrapped to a
+     * small value, sailed past the BUS_MAX_WIDTH guard, and the loop below then
+     * stepped from LONG_MIN toward LONG_MAX -- about 1.8e19 iterations, each
+     * appending to `ds`. ngspice hung and grew without bound (7.6 GB after 9 s)
+     * on a single netlist line. Signed overflow is undefined behaviour, so the
+     * guard could not be relied on to see the real width at all.
+     *
+     * The unsigned difference is exact for every pair of longs, and comparing
+     * the SPAN (width - 1) against the limit also avoids the `+ 1` overflowing.
+     * strtol saturates at LONG_MIN/LONG_MAX and sets ERANGE, so an endpoint too
+     * large to represent is rejected above rather than silently clamped into a
+     * range that looks acceptable. */
+    unsigned long span = (hi >= lo) ? ((unsigned long) hi - (unsigned long) lo)
+                                    : ((unsigned long) lo - (unsigned long) hi);
+    if (span >= (unsigned long) BUS_MAX_WIDTH)
         return FALSE; /* leave it literal; the device parser reports the error */
 
     const long step = (hi >= lo) ? 1 : -1;

@@ -1,0 +1,22 @@
+* Enhancement-338: a full 64-bit bus range hung ngspice and grew without bound.
+*
+* `hi - lo + 1` was computed in signed `long`. For the full span
+* a[-9223372036854775808:9223372036854775807] that OVERFLOWS -- undefined
+* behaviour -- and wrapped to a small value, so it sailed past the
+* BUS_MAX_WIDTH (8192) guard. The expansion loop then stepped from LONG_MIN
+* toward LONG_MAX, about 1.8e19 iterations, appending to a string each time:
+* ngspice hung and reached 7.6 GB after 9 seconds on this one line.
+*
+* The one-sided spans below are NOT affected -- their width is ~9.2e18, which
+* the guard sees correctly -- so only the full span triggered it.
+V1 in 0 dc 1
+R1 a[-9223372036854775808:9223372036854775807] r=2k
+R2 b[9223372036854775807:-9223372036854775808] r=2k
+R3 c[-9223372036854775808:0] r=2k
+R4 d[0:9223372036854775807] r=2k
+R5 e[99999999999999999999:0] r=2k
+Rl in 0 1k
+.control
+op
+.endc
+.end
