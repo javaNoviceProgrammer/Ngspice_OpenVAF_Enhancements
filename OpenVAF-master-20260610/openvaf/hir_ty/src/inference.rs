@@ -535,6 +535,35 @@ impl Ctx<'_> {
             }
 
             Expr::BinaryOp { lhs, rhs, op: Some(op) } => {
+                // Enhancement-333: an integer `/` or `%` by a LITERAL zero has no value
+                // and must not reach code generation. LLVM treats `sdiv x, 0` as
+                // immediate undefined behaviour and lowers it to poison ->
+                // `unreachable` -> a `brk`, so the compiled .osdi killed the host
+                // simulator with SIGTRAP and no diagnostic at all, from a model
+                // openvaf had accepted with exit 0.
+                //
+                // Enhancement-286 deliberately let this through, reasoning that "a
+                // runtime zero divisor has always been accepted, so a literal one must
+                // be too". Both halves of that turned out to be wrong: the literal case
+                // is NOT the runtime case (only the literal one is UB the optimiser can
+                // exploit), and runtime acceptance is itself target-specific -- AArch64
+                // returns a value where x86 raises SIGFPE, and this project ships x86
+                // builds for macOS, Linux and Windows. There is no portable value to
+                // fold to, so the honest answer is to reject it.
+                //
+                // LITERAL only, which is exactly the UB surface: a localparam, a
+                // parameter, or a derived constant (`3 - 3`) is lowered as a runtime
+                // value, so the optimiser never sees a constant-zero divisor and none
+                // of those trap (each verified).
+                if matches!(op, BinaryOp::Division | BinaryOp::Remainder)
+                    && self.is_literal_zero(rhs)
+                {
+                    self.result.diagnostics.push(InferenceDiagnostic::DivisionByZero {
+                        expr,
+                        rhs,
+                        is_remainder: matches!(op, BinaryOp::Remainder),
+                    });
+                }
                 self.infere_bin_op(stmt, expr, lhs, rhs, op)?
             }
 
@@ -1960,6 +1989,16 @@ impl Ctx<'_> {
     }
 
     /// A bit-select index that constant-folds to an integer literal (optionally negated), or `None`.
+    /// Enhancement-333: is this expression a literal integer zero (`0`, or `-0`)?
+    ///
+    /// Deliberately literal-only. A localparam/parameter/derived zero is lowered as a
+    /// runtime value and never becomes a constant-zero divisor in the IR, so it is not
+    /// part of the undefined-behaviour surface this guards -- and treating it as one
+    /// would reject working models.
+    fn is_literal_zero(&self, expr: ExprId) -> bool {
+        self.const_int_index(expr) == Some(0)
+    }
+
     fn const_int_index(&self, index: ExprId) -> Option<i32> {
         match self.body.exprs[index] {
             Expr::Literal(Literal::Int(i)) => Some(i),
@@ -2453,6 +2492,15 @@ pub enum InferenceDiagnostic {
     /// A bus bit-select index was not a compile-time-constant integer literal.
     NonConstantBitSelectIndex {
         expr: ExprId,
+    },
+
+    /// Enhancement-333: integer `/` or `%` by a LITERAL zero. It has no value, and
+    /// leaving it in the IR is undefined behaviour the optimiser turns into a trap
+    /// that kills the host simulator.
+    DivisionByZero {
+        expr: ExprId,
+        rhs: ExprId,
+        is_remainder: bool,
     },
 
     /// A bus bit-select index was outside the bus's declared `[msb:lsb]` width.

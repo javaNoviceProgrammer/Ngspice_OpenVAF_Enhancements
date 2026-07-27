@@ -69,6 +69,22 @@ def check(label, ok, detail=""):
     print(f"  {'PASS' if ok else 'FAIL'}  {label}" + (f"  [{detail}]" if detail else ""))
 
 
+def compile_va_raw(name):
+    """Compile <name>.va; return (returncode, combined output) verbatim.
+
+    Enhancement-333 needs to assert a specific NON-zero exit (a clean compile
+    error, 65) and inspect the diagnostic text, which `compile_va` collapses to a
+    pass/fail verdict.
+    """
+    osdi = os.path.join(HERE, name.replace(".va", ".osdi"))
+    try:
+        r = subprocess.run([OPENVAF, os.path.join(HERE, name), "-o", osdi],
+                           capture_output=True, text=True, timeout=90, errors="replace")
+    except subprocess.TimeoutExpired:
+        return "HANG", ""
+    return r.returncode, (r.stdout or "") + (r.stderr or "")
+
+
 def compile_va(name):
     """Compile <name>.va next to this script; return (ok, verdict)."""
     osdi = os.path.join(HERE, name.replace(".va", ".osdi"))
@@ -112,8 +128,21 @@ print("Enhancements 286-293: openvaf-r optimizer / code-generator defects")
 # ---------------------------------------------------------------- [286]
 print("\n[286] constant-folding an integer div/rem by zero killed the compiler")
 ok, verdict = compile_va("constfold.va")
-check("`5/0`, `5%0`, `i32::MIN/-1`, `1<<40` compile (were an internal error)",
-      ok, verdict)
+check("`i32::MIN/-1`, `1<<40`, wrapping add and a localparam zero divisor compile "
+      "(were an internal error)", ok, verdict)
+
+# ---------------------------------------------------------------- [333]
+# E-286 also ACCEPTED a literal `5/0`, leaving an `sdiv x, 0` in the IR. LLVM
+# treats that as undefined behaviour and lowers it to a trap, so the compiled
+# .osdi killed the host simulator with SIGTRAP and no diagnostic. It is now a
+# clean compile error -- which must still not be an internal error/panic.
+print("\n[333] a LITERAL zero divisor is rejected instead of trapping the simulator")
+rc, out = compile_va_raw("constfold_divzero.va")
+check("`5/0` / `5%0` are a clean compile error, not a crash and not accepted",
+      rc == 65, f"rc={rc}")
+check("the diagnostic names the defect and both operators",
+      "division by zero" in out and "remainder by zero" in out,
+      (out.strip().splitlines() or ["no output"])[0][:70])
 
 # ---------------------------------------------------------------- [287]
 print("\n[287] a folded-away branch orphaned a block, leaving a stale phi edge")

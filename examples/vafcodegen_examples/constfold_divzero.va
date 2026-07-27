@@ -1,0 +1,23 @@
+`include "disciplines.vams"
+
+// Enhancement-333: integer division / remainder by a LITERAL zero.
+//
+// This must be a clean compile error (exit 65), NOT an internal error and NOT a
+// silently accepted model. Enhancement-286 accepted it -- the folder declined and
+// left the instruction in the IR -- but LLVM treats `sdiv x, 0` as immediate
+// undefined behaviour and lowers it to poison -> `unreachable` -> `brk`, so the
+// compiled .osdi killed the host simulator with SIGTRAP and no diagnostic.
+//
+// There is no portable value to fold to either: AArch64 returns a result where
+// x86 raises SIGFPE, and this project ships x86 builds. So the honest answer is
+// to reject it.
+module constfold_divzero(a, b);
+    inout a, b;
+    electrical a, b;
+    integer q, r;
+    analog begin
+        q = 5 / 0;                  // literal division by zero  -> error
+        r = 5 % 0;                  // literal remainder by zero -> error
+        I(a, b) <+ V(a, b) / 1.0e3 + 0.0 * (q + r);
+    end
+endmodule

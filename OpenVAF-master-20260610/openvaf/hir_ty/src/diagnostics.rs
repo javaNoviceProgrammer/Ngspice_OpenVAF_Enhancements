@@ -383,6 +383,36 @@ impl Diagnostic for InferenceDiagnosticWrapped<'_> {
                             .to_owned(),
                     ])
             }
+            InferenceDiagnostic::DivisionByZero { expr, rhs, is_remainder } => {
+                let src = self.parse.to_file_span(self.expr_range(expr), self.sm);
+                let zero = self.parse.to_file_span(self.expr_range(rhs), self.sm);
+                let op = if is_remainder { "remainder" } else { "division" };
+
+                Report::error()
+                    .with_labels(vec![
+                        Label {
+                            style: LabelStyle::Primary,
+                            file_id: zero.file,
+                            range: zero.range.into(),
+                            message: "divisor is zero".to_owned(),
+                        },
+                        Label {
+                            style: LabelStyle::Secondary,
+                            file_id: src.file,
+                            range: src.range.into(),
+                            message: format!("in this integer {op}"),
+                        },
+                    ])
+                    .with_message(format!("integer {op} by zero"))
+                    .with_notes(vec![
+                        "help: an integer division or remainder by a literal zero has no \
+                         value; the generated code would trap and take the simulator with it"
+                            .to_owned(),
+                        "help: a zero divisor that is a parameter or localparam is a runtime \
+                         value and is still accepted"
+                            .to_owned(),
+                    ])
+            }
             InferenceDiagnostic::BitSelectOutOfRange { expr, index, msb, lsb } => {
                 let src = self
                     .parse

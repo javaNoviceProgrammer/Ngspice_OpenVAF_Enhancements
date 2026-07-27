@@ -1,0 +1,31 @@
+`include "disciplines.vams"
+
+// Enhancement-333: a zero divisor that is NOT a literal must still be accepted.
+//
+// A localparam, a parameter and a derived constant are all lowered as runtime
+// values, so the optimiser never sees a constant-zero divisor and none of them is
+// undefined behaviour. Rejecting these would break working models, so the check
+// is deliberately literal-only.
+//
+// Also exercises ordinary division/remainder and IEEE float division by zero,
+// none of which this change may disturb.
+module divzero_ok(a, b);
+    inout a, b;
+    electrical a, b;
+    parameter integer pzero = 0;
+    localparam integer lzero = 0;
+    localparam integer dzero = 3 - 3;
+    integer q, r, s, big;
+    real f;
+    analog begin
+        q = 5 / pzero;              // parameter zero  -- runtime, accepted
+        r = 5 % lzero;              // localparam zero -- runtime, accepted
+        s = (7 / 2) + (7 % 3);      // ordinary integer division: 3 + 1 = 4
+        f = 1.0 / 0.0;              // IEEE float division: NOT integer, untouched
+        // `f` is +inf, so use it through a COMPARISON. Multiplying it by 0.0 would
+        // give NaN and poison the contribution -- that would be a bug in this test,
+        // not in the compiler.
+        big = (f > 1.0e300) ? 1 : 0;
+        I(a, b) <+ V(a, b) / 1.0e3 + 0.0 * (q + r + s / dzero + big);
+    end
+endmodule

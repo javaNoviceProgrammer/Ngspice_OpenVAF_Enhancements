@@ -1,0 +1,21 @@
+`include "disciplines.vams"
+
+// Enhancement-333: integer division by a LITERAL zero must be a clean compile
+// error, not a model that traps the simulator.
+//
+// The divisor here is inside a short-circuit `&&` whose right operand is a
+// runtime value, which is what kept it out of reach of constant folding: the
+// division survived into the generated code as `sdiv x, 0`, LLVM treated that as
+// undefined behaviour and lowered it to poison -> `unreachable` -> `brk`, and
+// ngspice died with SIGTRAP and no output at all. openvaf had reported success.
+module divzero_bad(o);
+    output o;
+    electrical o;
+    parameter integer ione = 1;
+    analog begin
+        if ((5 / 0) > 0 && ione > 0)
+            V(o) <+ 1.0;
+        else
+            V(o) <+ 2.0;
+    end
+endmodule

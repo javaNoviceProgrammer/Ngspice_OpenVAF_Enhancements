@@ -381,6 +381,7 @@ The index: **Doc** links each enhancement's detailed write-up, **Examples** link
 | 330 | fix compiler hang: `ddx` in a runtime loop now a clean LRM 4.5.1 error | openvaf&#8209;r | [doc](enhancements_doc/Enhancement-330.md) | [vafddxloop](examples/vafddxloop_examples/) |
 | 331 | fix crash: `BitSet::contains` panicked outside its domain (dense rows) | openvaf&#8209;r | [doc](enhancements_doc/Enhancement-331.md) | [vafbitsetdomain](examples/vafbitsetdomain_examples/) |
 | 332 | fix wrong charge: summing 3+ `ddt()` terms dropped all but one | openvaf&#8209;r | [doc](enhancements_doc/Enhancement-332.md) | [vafddtsum](examples/vafddtsum_examples/) |
+| 333 | fix crash: integer division by a literal zero SIGTRAPped the simulator | openvaf&#8209;r | [doc](enhancements_doc/Enhancement-333.md) | [vafdivzero](examples/vafdivzero_examples/) |
 
 </details>
 
