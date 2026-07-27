@@ -385,6 +385,7 @@ The index: **Doc** links each enhancement's detailed write-up, **Examples** link
 | 334 | fix crash: `INT_MIN/-1` and out-of-range shifts also SIGTRAPped (E-333 gap) | openvaf&#8209;r | [doc](enhancements_doc/Enhancement-334.md) | [vafintub](examples/vafintub_examples/) |
 | 335 | fix wrong answers: `!=` vs NaN, runtime shift masking, fast-math folds on doubles | openvaf&#8209;r | [doc](enhancements_doc/Enhancement-335.md) | [vafieee](examples/vafieee_examples/) |
 | 336 | fix OSDI binding: param `M` taken as multiplier, case collisions, stale Jacobian count | both | [doc](enhancements_doc/Enhancement-336.md) | [osdiparam](examples/osdiparam_examples/) |
+| 337 | keep `x*0` fold: removing it shifted HiSIM2 drain current 10x (E-335 overreach) | openvaf&#8209;r | [doc](enhancements_doc/Enhancement-337.md) | [vafmulzero](examples/vafmulzero_examples/) |
 
 </details>
 

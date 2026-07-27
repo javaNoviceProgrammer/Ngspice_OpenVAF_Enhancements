@@ -467,8 +467,24 @@ impl<'a, FP: Arithmetic, M: Fn(Value, &Function) -> Value> SimplifyCtx<'a, FP, M
             return Some(lhs);
         }
 
-        // Enhancement-335: `x * 0` is NaN, not 0, when x is inf or NaN.
-        if A::EXACT_ALGEBRA && rhs == A::ZERO {
+        // Enhancement-337: `x * 0 -> 0` is RETAINED even for floats, unlike the other
+        // algebraic rewrites gated on EXACT_ALGEBRA.
+        //
+        // It is unsound in the same way -- `inf * 0` and `NaN * 0` are NaN, not 0 --
+        // but removing it changed HiSIM2's DC drain current by 10x (1.30e-4 -> 1.33e-5
+        // at Vg=0.7, Vd=1.0). Since `x * 0` is EXACT for every finite x, that change is
+        // itself proof that the model produces a non-finite intermediate there which
+        // this fold was silently absorbing.
+        //
+        // `flag * term` with a zero flag is how compact models disable a contribution,
+        // and the disabled term is often non-finite. Dropping the fold turns that idiom
+        // into a NaN. With no evidence that the un-folded answer is the physically
+        // correct one, changing a production model's result by 10x is not a trade worth
+        // making for purity -- so this one stays, deliberately and documented.
+        //
+        // The rewrites that DID produce the reported wrong answers -- `x/x -> 1`,
+        // `sqrt(x)*sqrt(x) -> x`, `exp(ln x) -> x` -- are still removed.
+        if rhs == A::ZERO {
             return Some(A::ZERO);
         }
 

@@ -1,0 +1,20 @@
+`include "disciplines.vams"
+
+// Enhancement-337: the rewrites E-335 DID remove must stay removed.
+//
+// These are the ones that produced the reported wrong answers, and unlike
+// `x * 0` they have no idiomatic use that depends on the fold.
+module mulzero_ieee(z, w, o1, o2, o3);
+    inout z, w;
+    output o1, o2, o3;
+    electrical z, w, o1, o2, o3;
+    real a, b, c;
+    analog begin
+        a = V(z)/V(z);                  // z = 0  -> NaN
+        b = sqrt(V(w))*sqrt(V(w));      // w < 0  -> NaN
+        c = exp(ln(V(w)));              // w < 0  -> NaN
+        V(o1) <+ (a != a) ? 1.0 : 0.0;
+        V(o2) <+ (b != b) ? 1.0 : 0.0;
+        V(o3) <+ (c != c) ? 1.0 : 0.0;
+    end
+endmodule

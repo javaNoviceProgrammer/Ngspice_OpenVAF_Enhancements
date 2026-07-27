@@ -1,0 +1,24 @@
+`include "disciplines.vams"
+
+// Enhancement-337: `x * 0 -> 0` is RETAINED for floats, deliberately.
+//
+// E-335 removed the IEEE-unsound algebraic rewrites. `x * 0 -> 0` is unsound the
+// same way -- `inf * 0` and `NaN * 0` are NaN, not 0 -- but removing it changed
+// HiSIM2's DC drain current by 10x (1.30e-4 -> 1.33e-5 at Vg=0.7, Vd=1.0).
+// Since `x * 0` is EXACT for every finite x, that change is itself proof the
+// model produces a non-finite intermediate which the fold was absorbing.
+//
+// WHAT ACTUALLY TRIGGERS THE FOLD: one operand must be the interned CONSTANT
+// zero, and the other must be a RUNTIME value. If both are constant, const_eval
+// folds `0 * inf` to NaN first (correctly) and the rewrite never applies; and a
+// zero-valued PARAMETER is a runtime value, so it does not trigger it either.
+//
+// So: `1.0 / V(z)` with z driven to 0 is a runtime +inf, multiplied by a literal
+// zero. That term must vanish rather than poison the whole solve.
+module mulzero(a, b, z);
+    inout a, b, z;
+    electrical a, b, z;
+    analog begin
+        I(a, b) <+ V(a,b)*1.0e-3 + 0.0 * (1.0 / V(z));
+    end
+endmodule
