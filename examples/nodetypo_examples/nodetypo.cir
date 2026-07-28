@@ -1,0 +1,25 @@
+nodetypo -- Enhancement-349 reproducer: analysis cards naming a node that does not exist
+* Each command below used to end the process with
+*   "Internal Error: incomplete CKTunsetup(), this will cause serious problems"
+* because the parser CREATED the mistyped node into an already-set-up circuit.
+* The deck is expected to run to completion and print SURVIVED.
+V1 in 0 dc 1 ac 1 sin(0 1 1e6)
+R1 in out 1k
+R2 out 0 3k
+C1 out 0 1p
+.control
+option noacct
+* an op first: this is what sets the circuit up and sizes the matrix
+op
+* --- each of these used to be fatal on the very next teardown
+tf v(zznode) v1
+pz zznode 0 out 0 vol pol
+noise v(zznode) v1 dec 2 100 1e4
+sens v(zznode)
+pss 1meg 1u zznode 1024 10 50 5u
+* --- and the valid forms still work
+tf v(out) v1
+print transfer_function
+echo SURVIVED
+.endc
+.end

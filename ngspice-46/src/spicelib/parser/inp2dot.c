@@ -14,6 +14,50 @@ Modified: 2000 AlansFixes
 #include "inpxx.h"
 #include "ngspice/cpdefs.h"
 #include "ngspice/tskdefs.h"
+#include "ngspice/cktdefs.h"   /* Enhancement-349: for CKTisSetup */
+
+/* Enhancement-349: resolve a node NAMED BY AN ANALYSIS CARD.
+ *
+ * INPtermInsert() is create-or-find. That is right for a device card, where
+ * the device DEFINES its nodes, but wrong for ".tf v(out) v1" and friends,
+ * where the node has to exist already: a mistyped name quietly became a brand
+ * new node, and the analysis then reported it as a perfectly good 0 V.
+ *
+ * From the .control section it was worse than wrong. By then CKTsetup() has
+ * run and snapshotted the node list, and the matrix has been sized; the extra
+ * node makes the tail check at the end of CKTunsetup() fail, and that calls
+ * controlled_exit(EXIT_FAILURE). A single typo killed the process and took
+ * every loaded circuit and plot with it.
+ *
+ * Deck order still has to work -- a .tf card may sit ahead of the devices that
+ * define its nodes -- so creating is left alone while the circuit is not yet
+ * set up. Once it is, deck parsing is over and an unknown name is a typo. */
+static int
+inp_analysis_node(void *ckt, char **token, INPtables *tab, CKTnode **node)
+{
+    CKTcircuit *c = (CKTcircuit *) ckt;
+
+    if (INPtermSearch(c, token, tab, node) == E_EXISTS)
+        return OK;                        /* the ordinary case: a real node */
+    if (c && c->CKTisSetup)
+        return E_NOTFOUND;                /* deck parsing is over -- a typo */
+    INPtermInsert(c, token, tab, node);   /* card ahead of its own devices */
+    return OK;
+}
+
+/* Report an analysis card that names a node which does not exist, and abandon
+ * the card. `nm` is still owned here -- nothing took it into the symbol
+ * table -- so it is released along the way. */
+#define ANALYSIS_NODE(nm, nd)                                           \
+    do {                                                                \
+        if (inp_analysis_node(ckt, &(nm), tab, &(nd)) != OK) {          \
+            char *emsg_ = tprintf("no such node: %s\n", (nm));          \
+            LITERR(emsg_);                                              \
+            tfree(emsg_);                                               \
+            tfree(nm);                                                  \
+            return (0);                                                 \
+        }                                                               \
+    } while(0)
 
 static int
 dot_noise(char *line, CKTcircuit *ckt, INPtables *tab, struct card *current,
@@ -50,13 +94,13 @@ dot_noise(char *line, CKTcircuit *ckt, INPtables *tab, struct card *current,
         if ((*name == 'V' || *name == 'v') && !name[1]) {
 
             INPgetNetTok(&line, &nname1, 0);
-            INPtermInsert(ckt, &nname1, tab, &node1);
+            ANALYSIS_NODE(nname1, node1);
             ptemp.nValue = node1;
             GCA(INPapName, (ckt, which, foo, "output", &ptemp));
 
             if (*line != ')') {
                 INPgetNetTok(&line, &nname2, 1);
-                INPtermInsert(ckt, &nname2, tab, &node2);
+                ANALYSIS_NODE(nname2, node2);
                 ptemp.nValue = node2;
             } else {
                 ptemp.nValue = gnode;
@@ -245,9 +289,14 @@ dot_pz(char *line, CKTcircuit *ckt, INPtables *tab, struct card *current,
 {
     int error;			/* error code temporary */
     IFvalue ptemp;		/* a value structure to package resistance into */
-    IFvalue *parm;		/* a pointer to a value struct for function returns */
     int which;			/* which analysis we are performing */
     char *steptype;		/* ac analysis, type of stepping function */
+    char *nname;		/* a node name as written on the card */
+    CKTnode *nnode;		/* the node it resolves to */
+    int i;
+
+    /* the four node parameters, in the order .pz names them */
+    static char * const pz_nodes[] = {"nodei", "nodeg", "nodej", "nodek"};
 
     NG_IGNORE(gnode);
 
@@ -258,14 +307,16 @@ dot_pz(char *line, CKTcircuit *ckt, INPtables *tab, struct card *current,
         return (0);
     }
     IFC(newAnalysis, (ckt, which, "Pole-Zero Analysis", &foo, task));
-    parm = INPgetValue(ckt, &line, IF_NODE, tab);
-    GCA(INPapName, (ckt, which, foo, "nodei", parm));
-    parm = INPgetValue(ckt, &line, IF_NODE, tab);
-    GCA(INPapName, (ckt, which, foo, "nodeg", parm));
-    parm = INPgetValue(ckt, &line, IF_NODE, tab);
-    GCA(INPapName, (ckt, which, foo, "nodej", parm));
-    parm = INPgetValue(ckt, &line, IF_NODE, tab);
-    GCA(INPapName, (ckt, which, foo, "nodek", parm));
+    /* Enhancement-349: these were read through INPgetValue(IF_NODE), which
+     * resolves the name with INPtermInsert() and so invented a node for any
+     * name that did not exist. Resolve them the same way every other analysis
+     * card now does, so a typo is reported instead of created. */
+    for (i = 0; i < 4; i++) {
+        INPgetNetTok(&line, &nname, 1);
+        ANALYSIS_NODE(nname, nnode);
+        ptemp.nValue = nnode;
+        GCA(INPapName, (ckt, which, foo, pz_nodes[i], &ptemp));
+    }
     INPgetTok(&line, &steptype, 1);	/* get V or I */
     ptemp.iValue = 1;
     GCA(INPapName, (ckt, which, foo, steptype, &ptemp));
@@ -368,12 +419,12 @@ dot_tf(char *line, CKTcircuit *ckt, INPtables *tab, struct card *current,
             /* error, bad input format */
         }
         INPgetNetTok(&line, &nname1, 0);
-        INPtermInsert(ckt, &nname1, tab, &node1);
+        ANALYSIS_NODE(nname1, node1);
         ptemp.nValue = node1;
         GCA(INPapName, (ckt, which, foo, "outpos", &ptemp));
         if (*line != ')') {
             INPgetNetTok(&line, &nname2, 1);
-            INPtermInsert(ckt, &nname2, tab, &node2);
+            ANALYSIS_NODE(nname2, node2);
             ptemp.nValue = node2;
             GCA(INPapName, (ckt, which, foo, "outneg", &ptemp));
             ptemp.sValue = tprintf("V(%s,%s)", nname1, nname2);
@@ -492,13 +543,13 @@ dot_sens(char *line, CKTcircuit *ckt, INPtables *tab, struct card *current,
             return 0;
         }
         INPgetNetTok(&line, &nname1, 0);
-        INPtermInsert(ckt, &nname1, tab, &node1);
+        ANALYSIS_NODE(nname1, node1);
         ptemp.nValue = node1;
         GCA(INPapName, (ckt, which, foo, "outpos", &ptemp));
 
         if (*line != ')') {
             INPgetNetTok(&line, &nname2, 1);
-            INPtermInsert(ckt, &nname2, tab, &node2);
+            ANALYSIS_NODE(nname2, node2);
             ptemp.nValue = node2;
             GCA(INPapName, (ckt, which, foo, "outneg", &ptemp));
             ptemp.sValue = tprintf("V(%s,%s)", nname1, nname2);
@@ -691,7 +742,7 @@ dot_pss(char *line, void *ckt, INPtables *tab, struct card *current,
 
     PSS_NEED_ARG("oscnode");
     INPgetNetTok(&line, &nname, 0);
-    INPtermInsert(ckt, &nname, tab, &nnode);
+    ANALYSIS_NODE(nname, nnode);
     ptemp.nValue = nnode;
     GCA(INPapName, (ckt, which, foo, "oscnode", &ptemp));	/* OscNode given as string */
 
@@ -759,7 +810,7 @@ dot_pac(char *line, void *ckt, INPtables *tab, struct card *current,
     GCA(INPapName, (ckt, which, foo, "stabtime", parm));
 
     INPgetNetTok(&line, &nname, 0);
-    INPtermInsert(ckt, &nname, tab, &nnode);
+    ANALYSIS_NODE(nname, nnode);
     ptemp.nValue = nnode;
     GCA(INPapName, (ckt, which, foo, "oscnode", &ptemp));	/* OscNode given as string */
 
@@ -842,7 +893,7 @@ dot_psp(char *line, void *ckt, INPtables *tab, struct card *current,
     GCA(INPapName, (ckt, which, foo, "stabtime", parm));
 
     INPgetNetTok(&line, &nname, 0);
-    INPtermInsert(ckt, &nname, tab, &nnode);
+    ANALYSIS_NODE(nname, nnode);
     ptemp.nValue = nnode;
     GCA(INPapName, (ckt, which, foo, "oscnode", &ptemp));	/* OscNode given as string */
 
@@ -923,7 +974,7 @@ dot_pnoise(char *line, void *ckt, INPtables *tab, struct card *current,
     parm = INPgetValue(ckt, &line, IF_REAL, tab);		/* StabTime */
     GCA(INPapName, (ckt, which, foo, "stabtime", parm));
     INPgetNetTok(&line, &nname, 0);				/* OscNode */
-    INPtermInsert(ckt, &nname, tab, &nnode);
+    ANALYSIS_NODE(nname, nnode);
     ptemp.nValue = nnode;
     GCA(INPapName, (ckt, which, foo, "oscnode", &ptemp));
     parm = INPgetValue(ckt, &line, IF_INTEGER, tab);		/* PSS points */
@@ -936,7 +987,7 @@ dot_pnoise(char *line, void *ckt, INPtables *tab, struct card *current,
     GCA(INPapName, (ckt, which, foo, "steady_coeff", parm));
 
     INPgetNetTok(&line, &nname, 0);				/* OutNode */
-    INPtermInsert(ckt, &nname, tab, &nnode);
+    ANALYSIS_NODE(nname, nnode);
     ptemp.nValue = nnode;
     GCA(INPapName, (ckt, which, foo, "pnoise_out", &ptemp));
 
@@ -1014,7 +1065,7 @@ dot_pxf(char *line, void *ckt, INPtables *tab, struct card *current,
     parm = INPgetValue(ckt, &line, IF_REAL, tab);		/* StabTime */
     GCA(INPapName, (ckt, which, foo, "stabtime", parm));
     INPgetNetTok(&line, &nname, 0);				/* OscNode */
-    INPtermInsert(ckt, &nname, tab, &nnode);
+    ANALYSIS_NODE(nname, nnode);
     ptemp.nValue = nnode;
     GCA(INPapName, (ckt, which, foo, "oscnode", &ptemp));
     parm = INPgetValue(ckt, &line, IF_INTEGER, tab);		/* PSS points */
@@ -1027,7 +1078,7 @@ dot_pxf(char *line, void *ckt, INPtables *tab, struct card *current,
     GCA(INPapName, (ckt, which, foo, "steady_coeff", parm));
 
     INPgetNetTok(&line, &nname, 0);				/* OutNode */
-    INPtermInsert(ckt, &nname, tab, &nnode);
+    ANALYSIS_NODE(nname, nnode);
     ptemp.nValue = nnode;
     GCA(INPapName, (ckt, which, foo, "pxf_out", &ptemp));
 
@@ -1129,7 +1180,7 @@ dot_hb(char* line, void* ckt, INPtables* tab, struct card* current,
     GCA(INPapName, (ckt, which, foo, "harmonics", parm));
 
     INPgetNetTok(&line, &nname, 0);
-    INPtermInsert(ckt, &nname, tab, &nnode);
+    ANALYSIS_NODE(nname, nnode);
     ptemp.nValue = nnode;
     GCA(INPapName, (ckt, which, foo, "oscnode", &ptemp));	/* OscNode given as string */
 

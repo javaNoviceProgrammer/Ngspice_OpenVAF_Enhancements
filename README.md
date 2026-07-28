@@ -397,6 +397,7 @@ The index: **Doc** links each enhancement's detailed write-up, **Examples** link
 | 346 | fix: fast `.param` path froze random draws reset re-drew; adds the Monte Carlo tier | ngspice | [doc](enhancements_doc/Enhancement-346.md) | [mcfastpath](examples/mcfastpath_examples/) |
 | 347 | fix: SSA re-builder no longer mints an Invalid phi operand (assertions build clean) | openvaf&#8209;r | [doc](enhancements_doc/Enhancement-347.md) | [ssavalid](examples/ssavalid_examples/) |
 | 348 | fix crash: `.pss` segfaulted on a short argument list, and on `harmonics 0` at full arity | ngspice | [doc](enhancements_doc/Enhancement-348.md) | [pssargs](examples/pssargs_examples/) |
+| 349 | fix crash: a mistyped node name on `tf`/`pz`/`noise`/`sens`/`pss` killed the process | ngspice | [doc](enhancements_doc/Enhancement-349.md) | [nodetypo](examples/nodetypo_examples/) |
 
 </details>
 
