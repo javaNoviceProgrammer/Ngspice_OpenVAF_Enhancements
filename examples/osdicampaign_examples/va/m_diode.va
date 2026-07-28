@@ -1,0 +1,9 @@
+`include "disciplines.vams"
+// use the SIMULATOR's thermal voltage, not a hardcoded constant, so this is
+// comparable with ngspice's built-in diode at any temperature
+module m_diode(a, c);
+  inout a, c;  electrical a, c;
+  (*type="instance"*) parameter real is = 1e-14 from (0:inf);
+  (*type="instance"*) parameter real n  = 1.0   from (0:inf);
+  analog I(a,c) <+ is*(limexp(V(a,c)/(n*$vt)) - 1.0);
+endmodule

@@ -406,6 +406,20 @@ The index: **Doc** links each enhancement's detailed write-up, **Examples** link
 
 ---
 
+## OSDI correctness campaign
+
+`examples/osdicampaign_examples/` is an **oracle-based** campaign over the OSDI device path — 83 checks across analyses (both solvers), sweeps, all seven optimizers, Monte Carlo, RF, and deliberate abuse. Every check computes its expected value independently, so a pass means the number is *right*, not that a run finished: `.noise` is checked against √(4kTR), `.pz` against −1/RC, `.sp` against exact S-parameter algebra, the optimizers against an analytic optimum, and Monte Carlo against both a hand-rolled `reset`-loop and the exact Gaussian probability. OSDI devices come out **bit-identical** to ngspice's built-in `R`/`C`/`L`/`G` through `op`/`ac`/`tran`/`tf`/`pz`/`sens`.
+
+It is **deliberately outside the regression suite** — `run_regression.py` discovers `verify_*.py`, and this driver is named `run_campaign.py`, so the routine sweep never picks it up. The suite answers "did anything change?" on every fold; this answers "is the OSDI path correct?" and is worth running when the OSDI or analysis machinery is touched:
+
+```bash
+cd examples/osdicampaign_examples && python3 run_campaign.py     # or: run_campaign.py A C
+```
+
+Last run: **83/83, no ngspice or OSDI defect.** Two differences are documented rather than tolerated — a 0.24 ppm thermal-voltage *constant* difference between OpenVAF's `$vt` (exactly the `constants.vams` value) and ngspice's built-in diode, and PSS discretisation error that the check verifies **converges** under grid refinement instead of pinning to a fixed tolerance. See [the README there](examples/osdicampaign_examples/README.md), which also collects the usage gotchas that each looked like a bug at first.
+
+---
+
 ## Prebuilt Binaries
 
 Binaries are built by CI and committed to `bin/`:

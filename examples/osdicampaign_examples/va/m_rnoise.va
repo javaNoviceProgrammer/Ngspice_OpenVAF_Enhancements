@@ -1,0 +1,10 @@
+`include "disciplines.vams"
+// resistor with EXACT thermal noise 4kT/r -- oracle for .noise
+module m_rnoise(p, n);
+  inout p, n;  electrical p, n;
+  (*type="instance"*) parameter real r = 1000.0 from (0:inf);
+  analog begin
+    I(p,n) <+ V(p,n)/r;
+    I(p,n) <+ white_noise(4.0*1.3806503e-23*$temperature/r, "thermal");
+  end
+endmodule

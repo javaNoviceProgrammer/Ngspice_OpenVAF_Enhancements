@@ -1,0 +1,6 @@
+`include "disciplines.vams"
+module m_ind(p, n);
+  inout p, n;  electrical p, n;
+  (*type="instance"*) parameter real l = 1e-6 from (0:inf);
+  analog V(p,n) <+ ddt(l*I(p,n));
+endmodule

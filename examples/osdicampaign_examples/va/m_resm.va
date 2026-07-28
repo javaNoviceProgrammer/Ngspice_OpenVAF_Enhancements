@@ -1,0 +1,7 @@
+`include "disciplines.vams"
+// same resistor but `r` is a MODEL parameter (no (*type="instance"*))
+module m_resm(p, n);
+  inout p, n;  electrical p, n;
+  parameter real r = 1000.0 from (0:inf);
+  analog I(p,n) <+ V(p,n)/r;
+endmodule

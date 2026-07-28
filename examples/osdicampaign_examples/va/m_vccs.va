@@ -1,0 +1,6 @@
+`include "disciplines.vams"
+module m_vccs(op, on, ip, in);
+  inout op, on, ip, in;  electrical op, on, ip, in;
+  (*type="instance"*) parameter real gm = 1e-3;
+  analog I(op,on) <+ gm*V(ip,in);
+endmodule
