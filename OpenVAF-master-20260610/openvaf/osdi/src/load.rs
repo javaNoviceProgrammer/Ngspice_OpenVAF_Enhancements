@@ -446,6 +446,68 @@ impl<'ll> OsdiCompilationUnit<'_, '_, 'll> {
         llfunc
     }
 
+    /// Enhancement-352: `void load_taylor2/3(void* inst, void* model, double* dst)`
+    /// -- fills `dst` with `[resistive, reactive]` PAIRS, one per descriptor
+    /// entry and in the same order. The values are RAW partial derivatives; the
+    /// 1/n! and the multinomial multiplicity are the simulator's job.
+    fn load_taylor_generic(&self, third: bool) -> &'ll llvm_sys::LLVMValue {
+        let OsdiCompilationUnit { cx, module, .. } = self;
+        let void_ptr = cx.ty_ptr();
+        let f64_ptr_ty = cx.ty_ptr();
+        let fun_ty = cx.ty_func(&[void_ptr, void_ptr, f64_ptr_ty], cx.ty_void());
+        let name =
+            &format!("load_taylor{}_{}", if third { 3 } else { 2 }, module.sym);
+        let llfunc = cx.declare_int_c_fn(name, fun_ty);
+
+        unsafe {
+            let entry = LLVMAppendBasicBlockInContext(
+                NonNull::from(cx.llcx).as_ptr(),
+                NonNull::from(llfunc).as_ptr(),
+                UNNAMED,
+            );
+            let llbuilder = LLVMCreateBuilderInContext(NonNull::from(cx.llcx).as_ptr());
+            LLVMPositionBuilderAtEnd(llbuilder, entry);
+            let inst = LLVMGetParam(NonNull::from(llfunc).as_ptr(), 0);
+            let model = LLVMGetParam(NonNull::from(llfunc).as_ptr(), 1);
+            let dst = LLVMGetParam(NonNull::from(llfunc).as_ptr(), 2);
+
+            let slots =
+                if third { &self.inst_data.taylor3 } else { &self.inst_data.taylor2 };
+            for (i, (resist, react)) in slots.iter().enumerate() {
+                let r = self.load_eval_output(*resist, &*inst, &*model, &*llbuilder);
+                let x = self.load_eval_output(*react, &*inst, &*model, &*llbuilder);
+                let mut store = |val: *mut llvm_sys::LLVMValue, off: usize| {
+                    let mut gep_indices =
+                        [NonNull::from(cx.const_usize(off)).as_ptr()];
+                    let slot_ptr = LLVMBuildGEP2(
+                        llbuilder,
+                        NonNull::from(cx.ty_double()).as_ptr(),
+                        dst,
+                        gep_indices.as_mut_ptr(),
+                        1,
+                        UNNAMED,
+                    );
+                    LLVMBuildStore(llbuilder, val, slot_ptr);
+                };
+                store(NonNull::from(r).as_ptr(), 2 * i);
+                store(NonNull::from(x).as_ptr(), 2 * i + 1);
+            }
+
+            LLVMBuildRetVoid(llbuilder);
+            LLVMDisposeBuilder(llbuilder);
+        }
+
+        llfunc
+    }
+
+    pub fn load_taylor2(&self) -> &'ll llvm_sys::LLVMValue {
+        self.load_taylor_generic(false)
+    }
+
+    pub fn load_taylor3(&self) -> &'ll llvm_sys::LLVMValue {
+        self.load_taylor_generic(true)
+    }
+
     pub fn load_noise_params(&self) -> &'ll llvm_sys::LLVMValue {
         let OsdiCompilationUnit { cx, module, .. } = self;
         let void_ptr = cx.ty_ptr();

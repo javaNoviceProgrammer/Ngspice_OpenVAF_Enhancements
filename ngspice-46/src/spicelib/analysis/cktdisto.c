@@ -49,6 +49,12 @@ CKTdisto (CKTcircuit *ckt, int mode)
 	       devices, so an ASRC present here is a behavioral/poly definition
 	       whose nonlinear terms (if any) are excluded from the results. */
 	    for (i=0;i<DEVmaxnum;i++) {
+		/* Enhancement-352: an OSDI device now HAS a DEVdisto (OSDIdisto),
+		   so it no longer lands in this loop at all when its .osdi is
+		   OSDI >= 0.8. A model compiled with an older openvaf-r still
+		   reaches the warning below via OSDIdisto returning early --
+		   which is the honest outcome: its nonlinearities really are
+		   excluded until it is recompiled. */
 		if ( !(DEVices[i] && !DEVices[i]->DEVdisto && ckt->CKThead[i]) )
 		    continue;
 		if ( DEVices[i]->DEVpublic.registry_entry ) {

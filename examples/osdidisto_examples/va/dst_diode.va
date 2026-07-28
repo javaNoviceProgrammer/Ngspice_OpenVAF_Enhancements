@@ -1,0 +1,9 @@
+`include "disciplines.vams"
+// Exponential diode WITHOUT $limit, so its nonlinearity reaches the tensor
+// pass. Compared against ngspice's built-in diode, whose diodisto.c is a
+// known-good reference for the two-tone modes.
+module dst_diode(a,c);
+  inout a,c; electrical a,c;
+  (*type="instance"*) parameter real is = 1e-14 from (0:inf);
+  analog I(a,c) <+ is*(limexp(V(a,c)/$vt) - 1.0);
+endmodule

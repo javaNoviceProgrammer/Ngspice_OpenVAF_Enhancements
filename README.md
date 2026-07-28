@@ -400,6 +400,7 @@ The index: **Doc** links each enhancement's detailed write-up, **Examples** link
 | 349 | fix crash: a mistyped node name on `tf`/`pz`/`noise`/`sens`/`pss` killed the process | ngspice | [doc](enhancements_doc/Enhancement-349.md) | [nodetypo](examples/nodetypo_examples/) |
 | 350 | fix: a sweep now restores its `.param`; repeat sweeps no longer disarm the fast path | ngspice | [doc](enhancements_doc/Enhancement-350.md) | [sweeprestore](examples/sweeprestore_examples/) |
 | 351 | fix crash: `sens` killed ngspice on any OSDI model with an internal node | ngspice | [doc](enhancements_doc/Enhancement-351.md) | [osdisens](examples/osdisens_examples/) |
+| 352 | `.disto` for Verilog-A devices via OSDI 0.8 Taylor tensors; no variable-count limit | both | [doc](enhancements_doc/Enhancement-352.md) | [osdidisto](examples/osdidisto_examples/) |
 
 </details>
 

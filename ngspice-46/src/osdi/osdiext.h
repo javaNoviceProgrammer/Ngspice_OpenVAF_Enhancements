@@ -30,6 +30,8 @@ extern int OSDItrunc(GENmodel *, CKTcircuit *, double *);
 extern int OSDIaccept(CKTcircuit *, GENmodel *);
 extern int OSDIpzLoad(GENmodel *, CKTcircuit *, SPcomplex *);
 extern int OSDInoise(int, int, GENmodel *, CKTcircuit *, Ndata *, double *);
+/* Enhancement-352: Volterra distortion analysis for Verilog-A devices */
+extern int OSDIdisto(int, GENmodel *, CKTcircuit *);
 
 #ifdef KLU
 extern int OSDIbindCSC(GENmodel *inModel, CKTcircuit *ckt);

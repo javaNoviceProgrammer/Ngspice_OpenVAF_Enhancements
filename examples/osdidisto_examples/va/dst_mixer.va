@@ -1,0 +1,14 @@
+`include "disciplines.vams"
+// The multi-variable case. Its ONLY nonlinearity is the MIXED partial
+// d2I/dV(a,ref)dV(b,ref) -- both diagonal second derivatives are identically
+// zero. If cross terms were dropped, or the tensor collapsed to one variable,
+// the answer would be exactly zero rather than merely wrong.
+module dst_mixer(a, b, out, ref);
+  inout a, b, out, ref; electrical a, b, out, ref;
+  (*type="instance"*) parameter real k = 1e-3;
+  analog begin
+    I(a, ref)   <+ 1e-9*V(a, ref);
+    I(b, ref)   <+ 1e-9*V(b, ref);
+    I(out, ref) <+ k*V(a, ref)*V(b, ref);
+  end
+endmodule

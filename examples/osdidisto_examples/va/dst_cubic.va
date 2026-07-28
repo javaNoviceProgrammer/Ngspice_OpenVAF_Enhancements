@@ -1,0 +1,11 @@
+`include "disciplines.vams"
+// Pure polynomial: at zero bias its Taylor coefficients ARE the parameters
+// (c2 = a2, c3 = a3), so every harmonic has a closed form and the test needs
+// no simulator to check against.
+module dst_cubic(p,n);
+  inout p,n; electrical p,n;
+  (*type="instance"*) parameter real a1 = 1e-3;
+  (*type="instance"*) parameter real a2 = 1e-4;
+  (*type="instance"*) parameter real a3 = 4e-5;
+  analog I(p,n) <+ a1*V(p,n) + a2*V(p,n)*V(p,n) + a3*V(p,n)*V(p,n)*V(p,n);
+endmodule

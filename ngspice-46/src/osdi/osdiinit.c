@@ -235,6 +235,9 @@ extern SPICEdev *osdi_create_spicedev(const OsdiRegistryEntry *entry) {
   OSDIinfo->DEVtrunc = OSDItrunc;
   OSDIinfo->DEVaccept = OSDIaccept;
   OSDIinfo->DEVnoise = OSDInoise;
+  /* Enhancement-352: OSDI 0.8 models carry 2nd/3rd order Taylor tensors, so
+   * .disto can include their nonlinearities like a built-in device's. */
+  OSDIinfo->DEVdisto = OSDIdisto;
 
   #ifdef KLU
   OSDIinfo->DEVbindCSC = OSDIbindCSC;

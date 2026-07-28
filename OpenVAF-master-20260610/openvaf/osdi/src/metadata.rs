@@ -29,6 +29,7 @@ use crate::inst_data::{
 use crate::load::JacobianLoadType;
 use crate::metadata::osdi_0_4::{
     OsdiAcStimSource, OsdiDescriptor, OsdiJacobianEntry, OsdiNatureRef, OsdiNode, OsdiNodePair,
+    OsdiTaylor2Entry, OsdiTaylor3Entry,
     OsdiNoiseSource,
     OsdiParamOpvar, OsdiTys, JACOBIAN_ENTRY_REACT, JACOBIAN_ENTRY_REACT_CONST,
     JACOBIAN_ENTRY_RESIST, JACOBIAN_ENTRY_RESIST_CONST, MODULEFLAG_ABSTIME, NATREF_DISCIPLINE_FLOW,
@@ -461,6 +462,34 @@ impl<'ll> OsdiCompilationUnit<'_, '_, 'll> {
                 num_ac_stim_src: ac_stim_sources.len() as u32,
                 ac_stim_sources,
                 load_ac_stim: self.load_ac_stim(),
+                // Enhancement-352: distortion Taylor tensors. Both arrays are
+                // empty for a linear model -- sim_back's sparsification drops
+                // every identically-zero entry -- so nothing is paid for them.
+                num_taylor2: module.dae_system.taylor2.len() as u32,
+                taylor2_entries: module
+                    .dae_system
+                    .taylor2
+                    .iter()
+                    .map(|e| OsdiTaylor2Entry {
+                        row: u32::from(e.row),
+                        col1: e.col1,
+                        col2: e.col2,
+                    })
+                    .collect(),
+                load_taylor2: self.load_taylor2(),
+                num_taylor3: module.dae_system.taylor3.len() as u32,
+                taylor3_entries: module
+                    .dae_system
+                    .taylor3
+                    .iter()
+                    .map(|e| OsdiTaylor3Entry {
+                        row: u32::from(e.row),
+                        col1: e.col1,
+                        col2: e.col2,
+                        col3: e.col3,
+                    })
+                    .collect(),
+                load_taylor3: self.load_taylor3(),
 
                 num_params: model_data.params.len() as u32 + inst_data.params.len() as u32,
                 num_instance_params: inst_data.params.len() as u32,

@@ -17,7 +17,9 @@ use std::vec;
 use typed_index_collections::TiVec;
 
 use crate::context::Context;
-use crate::dae::{DaeSystem, MatrixEntry, Residual, ResidualNatureKind, SimUnknown};
+use crate::dae::{
+    DaeSystem, MatrixEntry, Residual, ResidualNatureKind, SimUnknown, Taylor2Entry, Taylor3Entry,
+};
 use crate::noise::{NoiseSource, NoiseSourceKind};
 use crate::topology::{BranchInfo, Contribution};
 use crate::util::{add, is_op_dependent, update_optbarrier};
@@ -112,6 +114,9 @@ impl<'a> Builder<'a> {
         self.cursor.goto_exit();
 
         self.build_jacobian(&sim_unknown_reads, &derivative_info, &derivatives);
+        // Enhancement-352: 2nd/3rd order Taylor tensors for distortion analysis.
+        // Must run before build_lim_rhs, which consumes `derivatives`.
+        self.build_taylor_tensors(&derivative_info, &derivatives);
         self.build_lim_rhs(&derivative_info, derivatives);
         self.ensure_optbarriers();
 
@@ -351,6 +356,193 @@ impl<'a> Builder<'a> {
                     react: replace(react, F_ZERO),
                 });
             }
+        }
+    }
+
+    /// Enhancement-352: the MODEL-INPUT values, in exactly the order
+    /// `build_input_unknown_pairs` records them in `system.model_inputs`.
+    ///
+    /// The distortion tensors are indexed by model input -- a BRANCH VOLTAGE --
+    /// rather than by node unknown. That is what the built-in devices do (the
+    /// diode differentiates w.r.t. its `vd`), it is what the Volterra kernels
+    /// are naturally read at, and it means the consumer never has to unpick the
+    /// hi/lo sign convention: the ABI already publishes each input's node pair
+    /// as `OsdiDescriptor.inputs`, so index i here IS input i there.
+    ///
+    /// The two must stay in lockstep, so this mirrors the filter in
+    /// `build_input_unknown_pairs` exactly rather than approximating it.
+    fn taylor_input_values(&self) -> Vec<Value> {
+        let mut out = Vec::new();
+        for (_, &kind, val) in self.intern.live_params(&self.cursor.func.dfg) {
+            match kind {
+                ParamKind::Voltage { hi, lo } => {
+                    let uh = SimUnknownKind::KirchoffLaw(hi);
+                    let ih = self.system.unknowns.index(&uh);
+                    let il = lo.and_then(|lo| {
+                        self.system.unknowns.index(&SimUnknownKind::KirchoffLaw(lo))
+                    });
+                    if ih.is_some() && il.is_some() {
+                        out.push(val);
+                    }
+                }
+                ParamKind::Current(cur_kind) => {
+                    if self.system.unknowns.index(&SimUnknownKind::Current(cur_kind)).is_some() {
+                        out.push(val);
+                    }
+                }
+                ParamKind::ImplicitUnknown(ieq_kind) => {
+                    if self.system.unknowns.index(&SimUnknownKind::Implicit(ieq_kind)).is_some() {
+                        out.push(val);
+                    }
+                }
+                _ => {}
+            }
+        }
+        out
+    }
+
+    /// Enhancement-352: build the 2nd- and 3rd-order Taylor tensors of the
+    /// residual with respect to the model inputs.
+    ///
+    /// OpenVAF's autodiff is already arbitrary-order -- `DerivativeIntern`
+    /// chains derivatives through `previous_order` -- so this does not
+    /// implement higher-order differentiation, it only ASKS for it: run
+    /// `auto_diff` again over the first-order results to get the second, and
+    /// again over those to get the third.
+    ///
+    /// Only col1 <= col2 <= col3 is generated; the tensors are symmetric and
+    /// the consumer reconstructs the mirrored terms. The values emitted are the
+    /// RAW partial derivatives -- the 1/n! and the multinomial multiplicity are
+    /// applied by the consumer, so the ABI stays self-describing rather than
+    /// carrying a convention the reader has to guess.
+    fn build_taylor_tensors(
+        &mut self,
+        derivative_info: &KnownDerivatives,
+        first: &HashMap<(Value, Unknown), Value, BuildHasherDefault<FxHasher>>,
+    ) {
+        let inputs = self.taylor_input_values();
+        if inputs.is_empty() {
+            return;
+        }
+        // map each model input to its autodiff Unknown; an input with no
+        // Unknown cannot be differentiated against and is skipped in lockstep
+        let unknowns: Vec<Option<Unknown>> =
+            inputs.iter().map(|v| derivative_info.unknowns.index(v)).collect();
+
+        let residuals: Vec<(SimUnknown, Value, Value)> = self
+            .system
+            .residual
+            .iter_enumerated()
+            .map(|(row, r)| (row, r.resist, r.react))
+            .collect();
+
+        // ---- second order -------------------------------------------------
+        // request d(dI/dx_a)/dx_b for b >= a
+        let mut req2: Vec<(Value, Unknown)> = Vec::new();
+        let mut plan2: Vec<(SimUnknown, usize, usize, Value, Value)> = Vec::new();
+        {
+            for &(row, resist, react) in &residuals {
+                for (a, &ua) in unknowns.iter().enumerate() {
+                    let ua = match ua {
+                        Some(it) => it,
+                        None => continue,
+                    };
+                    let d1r = first.get(&(resist, ua)).copied().unwrap_or(F_ZERO);
+                    let d1x = first.get(&(react, ua)).copied().unwrap_or(F_ZERO);
+                    if d1r == F_ZERO && d1x == F_ZERO {
+                        continue;
+                    }
+                    for (b, &ub) in unknowns.iter().enumerate().skip(a) {
+                        let ub = match ub {
+                            Some(it) => it,
+                            None => continue,
+                        };
+                        if d1r != F_ZERO {
+                            req2.push((d1r, ub));
+                        }
+                        if d1x != F_ZERO {
+                            req2.push((d1x, ub));
+                        }
+                        plan2.push((row, a, b, d1r, d1x));
+                    }
+                }
+            }
+        }
+        if plan2.is_empty() {
+            return;
+        }
+        self.dom_tree.compute(self.cursor.func, self.cfg, true, false, true);
+        let d2 = auto_diff(&mut *self.cursor.func, self.dom_tree, derivative_info, &req2);
+        self.cursor.goto_exit();
+
+        let mut second: Vec<(SimUnknown, usize, usize, Value, Value)> = Vec::new();
+        for &(row, a, b, d1r, d1x) in &plan2 {
+            let ub = match unknowns[b] {
+                Some(it) => it,
+                None => continue,
+            };
+            let vr =
+                if d1r == F_ZERO { F_ZERO } else { d2.get(&(d1r, ub)).copied().unwrap_or(F_ZERO) };
+            let vx =
+                if d1x == F_ZERO { F_ZERO } else { d2.get(&(d1x, ub)).copied().unwrap_or(F_ZERO) };
+            if vr == F_ZERO && vx == F_ZERO {
+                continue;
+            }
+            self.system.taylor2.push(Taylor2Entry {
+                row,
+                col1: a as u32,
+                col2: b as u32,
+                resist: vr,
+                react: vx,
+            });
+            second.push((row, a, b, vr, vx));
+        }
+
+        // ---- third order --------------------------------------------------
+        let mut req3: Vec<(Value, Unknown)> = Vec::new();
+        let mut plan3: Vec<(SimUnknown, usize, usize, usize, Value, Value)> = Vec::new();
+        for &(row, a, b, vr, vx) in &second {
+            for (c, &uc) in unknowns.iter().enumerate().skip(b) {
+                let uc = match uc {
+                    Some(it) => it,
+                    None => continue,
+                };
+                if vr != F_ZERO {
+                    req3.push((vr, uc));
+                }
+                if vx != F_ZERO {
+                    req3.push((vx, uc));
+                }
+                plan3.push((row, a, b, c, vr, vx));
+            }
+        }
+        if plan3.is_empty() {
+            return;
+        }
+        self.dom_tree.compute(self.cursor.func, self.cfg, true, false, true);
+        let d3 = auto_diff(&mut *self.cursor.func, self.dom_tree, derivative_info, &req3);
+        self.cursor.goto_exit();
+
+        for &(row, a, b, c, vr, vx) in &plan3 {
+            let uc = match unknowns[c] {
+                Some(it) => it,
+                None => continue,
+            };
+            let wr =
+                if vr == F_ZERO { F_ZERO } else { d3.get(&(vr, uc)).copied().unwrap_or(F_ZERO) };
+            let wx =
+                if vx == F_ZERO { F_ZERO } else { d3.get(&(vx, uc)).copied().unwrap_or(F_ZERO) };
+            if wr == F_ZERO && wx == F_ZERO {
+                continue;
+            }
+            self.system.taylor3.push(Taylor3Entry {
+                row,
+                col1: a as u32,
+                col2: b as u32,
+                col3: c as u32,
+                resist: wr,
+                react: wx,
+            });
         }
     }
 
@@ -955,6 +1147,27 @@ impl<'a> Builder<'a> {
         }
 
         for entry in &mut self.system.jacobian {
+            let is_kirchoff =
+                matches!(self.system.unknowns[entry.row], SimUnknownKind::KirchoffLaw(_));
+            entry.resist = ensure_optbarrier(entry.resist, is_kirchoff);
+            entry.react = ensure_optbarrier(entry.react, is_kirchoff);
+        }
+
+        // Enhancement-352: the distortion tensors need the same protection. They
+        // feed nothing else in the MIR, so without an optbarrier (and without
+        // being registered as output values) the optimiser deletes them outright
+        // and every coefficient reaches the simulator as zero -- which reads
+        // exactly like "this model has no distortion", the one failure mode this
+        // whole feature exists to remove. They are scaled by mfactor for the same
+        // reason the jacobian is: m parallel devices inject m times the
+        // distortion current.
+        for entry in &mut self.system.taylor2 {
+            let is_kirchoff =
+                matches!(self.system.unknowns[entry.row], SimUnknownKind::KirchoffLaw(_));
+            entry.resist = ensure_optbarrier(entry.resist, is_kirchoff);
+            entry.react = ensure_optbarrier(entry.react, is_kirchoff);
+        }
+        for entry in &mut self.system.taylor3 {
             let is_kirchoff =
                 matches!(self.system.unknowns[entry.row], SimUnknownKind::KirchoffLaw(_));
             entry.resist = ensure_optbarrier(entry.resist, is_kirchoff);
