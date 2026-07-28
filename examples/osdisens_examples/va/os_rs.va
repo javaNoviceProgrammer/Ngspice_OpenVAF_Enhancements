@@ -1,0 +1,14 @@
+`include "disciplines.vams"
+// A resistor with a series access resistance. The point is the INTERNAL node:
+// every production compact model (BSIM, HICUM, PSP, EKV) has one or more for
+// its terminal resistances, and that is what used to make `sens` abort.
+module os_rs(p, n);
+  inout p, n;  electrical p, n;
+  electrical mid;                       // <-- internal node
+  (*type="instance"*) parameter real r  = 3000.0 from (0:inf);
+  (*type="instance"*) parameter real rs = 10.0   from [0:inf);
+  analog begin
+    I(p,mid) <+ V(p,mid)/rs;
+    I(mid,n) <+ V(mid,n)/r;
+  end
+endmodule

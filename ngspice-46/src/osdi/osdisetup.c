@@ -306,11 +306,31 @@ int OSDIsetup(SMPmatrix *matrix, GENmodel *inModel, CKTcircuit *ckt,
         if (un != UINT32_MAX && un < num_nodes)
           node_used[un] = true;
       }
+      /* Enhancement-351: reuse the internal nodes if this instance already has
+       * them. `sens` calls DEVsetup() a second time on a circuit that is still
+       * set up, purely to stamp the perturbation matrix, and requires that no
+       * node be allocated -- so allocating a fresh set here is what made every
+       * internal-node OSDI model abort the process. The node numbers only
+       * survive while the nodes do: OSDIunsetup() deletes them and clears this,
+       * so a real re-setup still allocates. Reuse only when the node count
+       * matches, since collapsing depends on parameters that `alter` can move. */
+      bool reuse_nodes = (extra_inst_data->int_node_ids != NULL &&
+                          extra_inst_data->int_node_count == num_nodes);
+      if (!reuse_nodes && extra_inst_data->int_node_ids != NULL) {
+        FREE(extra_inst_data->int_node_ids);
+        extra_inst_data->int_node_ids = NULL;
+        extra_inst_data->int_node_count = 0;
+      }
+
       /* create internal nodes as required */
       for (uint32_t i = connected_terminals; i < num_nodes; i++) {
         if (!node_used[i]) {
           /* decoupled internal node -> ground */
           node_ids[i] = 0;
+          continue;
+        }
+        if (reuse_nodes) {
+          node_ids[i] = extra_inst_data->int_node_ids[i];
           continue;
         }
         // TODO handle currents  correctly
@@ -329,6 +349,15 @@ int OSDIsetup(SMPmatrix *matrix, GENmodel *inModel, CKTcircuit *ckt,
         if (!isnan(descr->nodes[i].nodeset) && !descr->nodes[i].is_flow) {
           tmp->nodeset = descr->nodes[i].nodeset;
           tmp->nsGiven = 1;
+        }
+      }
+      /* remember them for the next DEVsetup() on this same set-up circuit */
+      if (!reuse_nodes) {
+        extra_inst_data->int_node_ids = TMALLOC(uint32_t, num_nodes);
+        if (extra_inst_data->int_node_ids) {
+          extra_inst_data->int_node_count = num_nodes;
+          for (uint32_t i = 0; i < num_nodes; i++)
+            extra_inst_data->int_node_ids[i] = node_ids[i];
         }
       }
       FREE(node_used);
@@ -501,6 +530,19 @@ extern int OSDIunsetup(GENmodel *inModel, CKTcircuit *ckt) {
     for (gen_inst = gen_model->GENinstances; gen_inst != NULL;
          gen_inst = gen_inst->GENnextInstance) {
       void *inst = osdi_instance_data(entry, gen_inst);
+
+      /* Enhancement-351: the internal nodes recorded at setup are about to be
+       * deleted below, so drop the record with them -- the next setup must
+       * allocate afresh rather than hand out numbers that no longer exist.
+       * This is the OSDI counterpart of INDunsetup() zeroing INDbrEq. */
+      {
+        OsdiExtraInstData *extra = osdi_extra_instance_data(entry, gen_inst);
+        if (extra->int_node_ids) {
+          FREE(extra->int_node_ids);
+          extra->int_node_ids = NULL;
+        }
+        extra->int_node_count = 0;
+      }
 
       // reset is collapsible
       bool *collapsed = (bool *)(((char *)inst) + descr->collapsed_offset);

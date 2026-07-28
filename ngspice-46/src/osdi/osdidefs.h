@@ -150,6 +150,22 @@ typedef struct OsdiExtraInstData {
   uint32_t prev_point_eval_flags;
   bool discont_retry;
 
+  /* Enhancement-351: the global node numbers this instance's INTERNAL nodes
+   * were given, so a SECOND DEVsetup() on an already-set-up circuit reuses them
+   * instead of allocating a fresh set.
+   *
+   * `sens` re-invokes every model's DEVsetup() to stamp the perturbation
+   * matrix, and requires that doing so allocate no nodes -- it snapshots
+   * CKTlastNode around the call and calls controlled_exit() if it moved. Every
+   * built-in device satisfies that by guarding its allocation on "not already
+   * allocated" (the inductor's `if (here->INDbrEq == 0)`); OSDI had no such
+   * guard, so any model with an internal node killed the process.
+   *
+   * Cleared by OSDIunsetup(), which deletes the nodes -- so a genuine re-setup
+   * after teardown allocates afresh, exactly as INDunsetup() zeroes INDbrEq. */
+  uint32_t *int_node_ids;   /* [int_node_count], NULL before the first setup */
+  uint32_t int_node_count;
+
 } OSDI_ALIGN(MAX_ALIGN) OsdiExtraInstData;
 
 /* Enhancement-7: extra bit in the eval() `flags` input (see

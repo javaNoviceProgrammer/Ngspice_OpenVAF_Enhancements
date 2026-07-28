@@ -1,0 +1,9 @@
+`include "disciplines.vams"
+// The same two-terminal resistance with NO internal node, so a deck using it is
+// electrically identical to os_rs(r, rs) at r+rs -- the reference the internal-
+// node model's sensitivities are checked against.
+module os_plain(p, n);
+  inout p, n;  electrical p, n;
+  (*type="instance"*) parameter real r = 3010.0 from (0:inf);
+  analog I(p,n) <+ V(p,n)/r;
+endmodule

@@ -399,6 +399,7 @@ The index: **Doc** links each enhancement's detailed write-up, **Examples** link
 | 348 | fix crash: `.pss` segfaulted on a short argument list, and on `harmonics 0` at full arity | ngspice | [doc](enhancements_doc/Enhancement-348.md) | [pssargs](examples/pssargs_examples/) |
 | 349 | fix crash: a mistyped node name on `tf`/`pz`/`noise`/`sens`/`pss` killed the process | ngspice | [doc](enhancements_doc/Enhancement-349.md) | [nodetypo](examples/nodetypo_examples/) |
 | 350 | fix: a sweep now restores its `.param`; repeat sweeps no longer disarm the fast path | ngspice | [doc](enhancements_doc/Enhancement-350.md) | [sweeprestore](examples/sweeprestore_examples/) |
+| 351 | fix crash: `sens` killed ngspice on any OSDI model with an internal node | ngspice | [doc](enhancements_doc/Enhancement-351.md) | [osdisens](examples/osdisens_examples/) |
 
 </details>
 
