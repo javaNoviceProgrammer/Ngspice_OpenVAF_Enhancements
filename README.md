@@ -421,6 +421,20 @@ Last run: **83/83, no ngspice or OSDI defect.** Two differences are documented r
 
 ---
 
+## Sparse vs KLU differential campaign
+
+`examples/solverdiff_examples/` compares the two linear solvers on circuits where the solve is actually hard — ill-conditioned networks and stiff nonlinear ones. **A solver-vs-solver diff says they differ; it cannot say which is wrong**, so phase 1 has `numpy` solve the same MNA system independently as a third opinion, reports each deck's **condition number**, and asserts against `eps·cond`; decks beyond what float64 can deliver are reported, never asserted. Phase 2 covers the nonlinear regime — where Sparse actually re-pivots — using solver-vs-solver at tight tolerance plus a tightened-`reltol` run that separates a linear-solve difference from convergence slack.
+
+Like the OSDI campaign it is **deliberately outside the regression suite**: the driver is named `run_solverdiff.py`, so `run_regression.py` (which discovers `verify_*.py`) never picks it up.
+
+```bash
+cd examples/solverdiff_examples && python3 run_solverdiff.py     # or: run_solverdiff.py 1
+```
+
+Last run: **37/37, no solver defect.** Worst Sparse-vs-KLU disagreement anywhere was 7.06e-06, on cond 2.4e12 where `eps·cond` is 5e-4. Both solvers track the exact solution in step with conditioning and **trade places** (Sparse better on `ladder_ratio`, KLU on `star(9)`), so neither shows systematic bias — Sparse is numerically sound where float64 allows; its weakness is cost, not accuracy. [The README there](examples/solverdiff_examples/README.md) also records the harness traps, each of which produced a false green or false red before being caught — including a first version that reported 25/25 and meant nothing.
+
+---
+
 ## Prebuilt Binaries
 
 Binaries are built by CI and committed to `bin/`:
