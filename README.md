@@ -396,6 +396,7 @@ The index: **Doc** links each enhancement's detailed write-up, **Examples** link
 | 345 | perf: sweep is now LINEAR -- plot naming no longer walks the plot list; 87x at 64k points | ngspice | [doc](enhancements_doc/Enhancement-345.md) | [plotname](examples/plotname_examples/) |
 | 346 | fix: fast `.param` path froze random draws reset re-drew; adds the Monte Carlo tier | ngspice | [doc](enhancements_doc/Enhancement-346.md) | [mcfastpath](examples/mcfastpath_examples/) |
 | 347 | fix: SSA re-builder no longer mints an Invalid phi operand (assertions build clean) | openvaf&#8209;r | [doc](enhancements_doc/Enhancement-347.md) | [ssavalid](examples/ssavalid_examples/) |
+| 348 | fix crash: `.pss` segfaulted on a short argument list, and on `harmonics 0` at full arity | ngspice | [doc](enhancements_doc/Enhancement-348.md) | [pssargs](examples/pssargs_examples/) |
 
 </details>
 

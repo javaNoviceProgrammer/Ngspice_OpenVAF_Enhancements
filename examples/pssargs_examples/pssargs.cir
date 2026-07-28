@@ -1,0 +1,24 @@
+pssargs -- Enhancement-348 reproducer: short and degenerate .pss cards
+* Each command below used to end the process. The deck is expected to run to
+* completion and print SURVIVED: every card is refused with a named error.
+V1 in 0 dc 1 ac 1 sin(0 1 1e6)
+R1 in out 1k
+R2 out 0 3k
+C1 out 0 1p
+.control
+option noacct
+* --- truncated argument lists: 1..4 args used to SIGSEGV, 0 args used to hang
+pss
+pss 1meg
+pss 1meg 1u
+pss 1meg 1u out
+pss 1meg 1u out 1024
+* --- full arity, degenerate values: the entrance a parser guard alone misses
+pss 1meg 1u out 1024 0 50 5u
+pss 0 1u out 1024 10 50 5u
+pss 1meg 1u out 0 10 50 5u
+* --- and the valid card still works
+pss 1meg 1u out 1024 10 50 5u
+echo SURVIVED
+.endc
+.end

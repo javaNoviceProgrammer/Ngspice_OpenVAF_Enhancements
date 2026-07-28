@@ -3455,6 +3455,29 @@ DCpss(CKTcircuit *ckt,
     PSSDBG( "PSS sc_iter %d\n", ckt->CKTsc_iter) ;
     PSSDBG( "PSS Stabilization Time %g\n", ckt->CKTstabTime) ;
 
+    /* Enhancement-348: reject a job whose parameters cannot describe an
+     * analysis, BEFORE anything is sized from them. CKTharms is the length of
+     * every array the DFT below writes into, so at 0 the TMALLOCs return NULL
+     * and the DFT's unconditional Mag[0]/Phase[0] store dereferences it; at
+     * fguess 0 the shooting loop has no period to converge on and spins
+     * forever. Both are reachable from an ordinary ".pss" card -- either by
+     * writing the value out (".pss 1meg 1u out 1024 0 50 5u") or by leaving
+     * arguments off the end, which used to leave them uninitialised. */
+    if (ckt->CKTguessedFreq <= 0.0) {
+        fprintf(stderr, "ERROR: .pss fguess must be > 0 (got %g)\n",
+                ckt->CKTguessedFreq) ;
+        return E_PARMVAL ;
+    }
+    if (ckt->CKTpsspoints < 1) {
+        fprintf(stderr, "ERROR: .pss points must be >= 1 (got %ld)\n",
+                ckt->CKTpsspoints) ;
+        return E_PARMVAL ;
+    }
+    if (ckt->CKTharms < 1) {
+        fprintf(stderr, "ERROR: .pss harmonics must be >= 1 (got %d)\n",
+                ckt->CKTharms) ;
+        return E_PARMVAL ;
+    }
 
     /* Enhancement-176: DRIVEN-mode detection. The Lannutti shooting was built
      * for autonomous oscillators: it hunts the fundamental frequency through a
@@ -4972,6 +4995,15 @@ DFT
     double tmp;
 
     NG_IGNORE (Time);
+
+    /* Enhancement-348: the stores below are not all inside the numFreq loop --
+     * Mag [0], Phase [0], nMag [0], nPhase [0] and Freq [0] are written
+     * unconditionally. With numFreq 0 the caller's TMALLOCs return NULL and
+     * those five stores dereference it, so the bound has to be checked here
+     * rather than relied upon from the loops. */
+    if (ndata < 1 || numFreq < 1 ||
+            !Freq || !Mag || !Phase || !nMag || !nPhase)
+        return (E_PARMVAL);
 
     /* clear output/computation arrays */
 

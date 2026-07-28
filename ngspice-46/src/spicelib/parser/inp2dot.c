@@ -644,6 +644,20 @@ dot_sens2(char *line, CKTcircuit *ckt, INPtables *tab, struct card *current,
 #endif
 
 #ifdef WITH_PSS
+
+/* Enhancement-348: every .pss argument is REQUIRED, but INPgetValue() has no
+ * way to report "there was nothing left to read" -- it hands back 0. A card
+ * that stopped early therefore reached the analysis with points/harmonics 0,
+ * sizing the DFT output arrays to nothing. Check the line here so the user
+ * gets the card reported instead of a crash further down. */
+#define PSS_NEED_ARG(what)                                              \
+    do {                                                                \
+        if (*line == '\0') {                                            \
+            LITERR("Not enough arguments on .pss: missing " what "\n"); \
+            return (0);                                                 \
+        }                                                               \
+    } while(0)
+
 /*SP: Steady State Analyis */
 static int
 dot_pss(char *line, void *ckt, INPtables *tab, struct card *current,
@@ -667,26 +681,33 @@ dot_pss(char *line, void *ckt, INPtables *tab, struct card *current,
     }
     IFC(newAnalysis, (ckt, which, "Periodic Steady State Analysis", &foo, task));
 
+    PSS_NEED_ARG("fguess");
     parm = INPgetValue(ckt, &line, IF_REAL, tab);		/* Fguess */
     GCA(INPapName, (ckt, which, foo, "fguess", parm));
 
+    PSS_NEED_ARG("stabtime");
     parm = INPgetValue(ckt, &line, IF_REAL, tab);		/* StabTime */
     GCA(INPapName, (ckt, which, foo, "stabtime", parm));
 
+    PSS_NEED_ARG("oscnode");
     INPgetNetTok(&line, &nname, 0);
     INPtermInsert(ckt, &nname, tab, &nnode);
     ptemp.nValue = nnode;
     GCA(INPapName, (ckt, which, foo, "oscnode", &ptemp));	/* OscNode given as string */
 
+    PSS_NEED_ARG("points");
     parm = INPgetValue(ckt, &line, IF_INTEGER, tab);		/* PSS points */
     GCA(INPapName, (ckt, which, foo, "points", parm));
 
+    PSS_NEED_ARG("harmonics");
     parm = INPgetValue(ckt, &line, IF_INTEGER, tab);		/* PSS harmonics */
     GCA(INPapName, (ckt, which, foo, "harmonics", parm));
 
+    PSS_NEED_ARG("sc_iter");
     parm = INPgetValue(ckt, &line, IF_INTEGER, tab);		/* SC iterations */
     GCA(INPapName, (ckt, which, foo, "sc_iter", parm));
 
+    PSS_NEED_ARG("steady_coeff");
     parm = INPgetValue(ckt, &line, IF_REAL, tab);		/* Steady coefficient */
     GCA(INPapName, (ckt, which, foo, "steady_coeff", parm));
 
