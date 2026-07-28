@@ -398,6 +398,7 @@ The index: **Doc** links each enhancement's detailed write-up, **Examples** link
 | 347 | fix: SSA re-builder no longer mints an Invalid phi operand (assertions build clean) | openvaf&#8209;r | [doc](enhancements_doc/Enhancement-347.md) | [ssavalid](examples/ssavalid_examples/) |
 | 348 | fix crash: `.pss` segfaulted on a short argument list, and on `harmonics 0` at full arity | ngspice | [doc](enhancements_doc/Enhancement-348.md) | [pssargs](examples/pssargs_examples/) |
 | 349 | fix crash: a mistyped node name on `tf`/`pz`/`noise`/`sens`/`pss` killed the process | ngspice | [doc](enhancements_doc/Enhancement-349.md) | [nodetypo](examples/nodetypo_examples/) |
+| 350 | fix: a sweep now restores its `.param`; repeat sweeps no longer disarm the fast path | ngspice | [doc](enhancements_doc/Enhancement-350.md) | [sweeprestore](examples/sweeprestore_examples/) |
 
 </details>
 

@@ -1,0 +1,22 @@
+sweeprestore -- Enhancement-350 reproducer: a sweep restores its .param
+* v(out) = rload/(1k+rload); at the nominal 3k that is exactly 0.75.
+* Three sweeps run below, the last of them ending at 10k. Before E-350 the
+* closing `reset` could not undo that -- the deck itself had been rewritten by
+* the alterparam the reset path uses per point -- so this deck ended at
+* 0.909 (rload stuck at 10k). It must now end at 0.75.
+.param rload = 3k
+V1 in 0 dc 1
+R1 in out 1k
+R2 out 0 {rload}
+.control
+option noacct
+set numdgt=10
+sweep rload lin 3 1k 5k  -analysis op -output v(out)
+sweep rload list 2k 10k  -analysis op -output v(out)
+sweep rload dec 2 1k 10k -analysis op -output v(out)
+* back to the deck's own value
+reset
+op
+print v(out)
+.endc
+.end

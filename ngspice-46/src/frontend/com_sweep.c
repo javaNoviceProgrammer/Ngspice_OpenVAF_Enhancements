@@ -1310,6 +1310,10 @@ void com_sweep(wordlist *wl)
     int     nknob = 0, npt = 1, nv0 = 0, ncomb = 1, havePrev = 0;
     char   *deck_fp_names[SW_MAXKNOB];   /* Enhancement-320: swept .param names   */
     int     ndeck_fp = 0, fast_fp = 0;   /* .param fast-sweep arm state           */
+    /* Enhancement-350: nominal value of each swept `.param`, captured before the
+     * first point and put back when the sweep ends. See the restore at cleanup. */
+    double  deck_fp_nominal[SW_MAXKNOB];
+    int     ndeck_fp_nominal = 0;
 
     for (j = 0; j < SW_MAXKNOB; j++) {
         kname[j] = NULL; kvals[j] = NULL; kscname[j] = NULL;
@@ -1436,6 +1440,18 @@ void com_sweep(wordlist *wl)
         for (j = 0; j < nknob; j++)
             if (kkind[j] == SW_DECK)
                 deck_fp_names[ndeck_fp++] = kname[j];
+        /* Enhancement-350: remember what each swept `.param` was worth BEFORE the
+         * first point overwrites it, so the sweep can put it back on the way out. */
+        ndeck_fp_nominal = 0;
+        for (j = 0; j < ndeck_fp; j++) {
+            int found = 0;
+            double v = nupa_get_param(deck_fp_names[j], &found);
+            if (!found)
+                break;                  /* cannot restore what we cannot read */
+            deck_fp_nominal[ndeck_fp_nominal++] = v;
+        }
+        if (ndeck_fp_nominal != ndeck_fp)
+            ndeck_fp_nominal = 0;       /* all or nothing -- never a partial undo */
         fast_fp = (ndeck_fp > 0) ? sw_fp_build(deck_fp_names, ndeck_fp) : 0;
         if (fast_fp) {
             int nb = 0, ntext = 0;
@@ -1627,6 +1643,43 @@ void com_sweep(wordlist *wl)
     }
 
 cleanup:
+    /* Enhancement-350: put each swept `.param` back to what it was worth before
+     * the sweep started.
+     *
+     * The two paths used to disagree about this, which is exactly what E-320
+     * promises they never do. The reset path drives a point with `alterparam`,
+     * which edits the parameter PERMANENTLY -- so a later `reset`, which
+     * re-sources that same deck, reproduced the last swept value rather than the
+     * deck's. The fast path never touches the deck, so `reset` did restore. Same
+     * command, same netlist, different state afterwards depending only on which
+     * path happened to arm.
+     *
+     * Leaving it dirty also broke the NEXT sweep of the same parameter. Arming
+     * self-checks each captured expression against the value numparam baked into
+     * the flattened card at nominal; with the dico still holding the last swept
+     * value that check cannot pass, so the second sweep silently fell back to the
+     * reset path -- no error, just a quiet loss of the fast path, and then the
+     * permanent edit above.
+     *
+     * Restoring is the direction that makes both paths agree AND keeps `reset`
+     * meaningful. It also matches how ngspice treats a swept source in `.dc`,
+     * which does not leave it parked at the last step. */
+    if (ndeck_fp_nominal == ndeck_fp && ndeck_fp > 0) {
+        /* The deck text and the numparam dico both have to go back. `alterparam`
+         * rewrites the deck, which is what a later `reset` re-sources; the dico
+         * is what the NEXT sweep reads for its own nominal and what arming
+         * self-checks against, so leaving it dirty would just move the problem
+         * one sweep along -- the second sweep would faithfully restore the first
+         * sweep's last value as though it were the deck's. */
+        for (j = 0; j < ndeck_fp; j++)
+            sw_set_deck(deck_fp_names[j], deck_fp_nominal[j]);
+        if (ft_curckt && ft_curckt->ci_dicos)
+            nupa_set_dicoslist(ft_curckt->ci_dicos);
+        for (j = 0; j < ndeck_fp; j++)
+            nupa_add_param(deck_fp_names[j], deck_fp_nominal[j]);
+        nupa_recompute_params(deck_fp_names, ndeck_fp);
+    }
+
     sw_fp_free();                        /* Enhancement-320: drop fast-path binds */
     sweep_active = 0;
     ft_optimizing = save_optimizing;
