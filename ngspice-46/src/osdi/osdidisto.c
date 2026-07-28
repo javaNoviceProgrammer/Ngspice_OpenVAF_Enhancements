@@ -136,18 +136,22 @@ extern int OSDIdisto(int mode, GENmodel *inModel, CKTcircuit *ckt)
         return OK;
     if (descr->num_taylor2 == 0 && descr->num_taylor3 == 0) {
         /* No tensors. Either the model is genuinely linear (fine, nothing to
-         * add) or its nonlinearity is not reachable by the tensor pass -- most
-         * importantly a model whose contribution goes through $limit, where the
-         * residual depends on the LIMITED value rather than the raw voltage
-         * read. Those must still be reported: registering DEVdisto removed the
-         * blanket warning in cktdisto.c, and silently returning zero here would
+         * add) or its nonlinearity is not reachable by the tensor pass. The
+         * remaining unreachable case is a nonlinearity in a GROUND-REFERENCED
+         * probe: the tensors are indexed by model input, and a bare V(a) is not
+         * recorded as one because it has no hi/lo pair. ($limit used to sit here
+         * too -- Enhancement-353 folds the limited values into the derivative
+         * chain, so limiting models now contribute properly.) Whatever remains
+         * must still be reported: registering DEVdisto removed the blanket
+         * warning in cktdisto.c, and silently returning zero here would
          * reinstate exactly the quietly-wrong result Enhancement-62 added that
          * warning to prevent. Warn once per model, at setup. */
         if (mode == D_SETUP && descr->num_jacobian_entries > descr->num_nodes) {
             fprintf(stderr,
                 "Warning: Verilog-A (OSDI) device '%s' contributes no distortion\n"
                 "         tensors; .disto will NOT include its nonlinearities.\n"
-                "         (A model using $limit currently falls in this case.)\n",
+                "         (A nonlinearity in a ground-referenced probe, which is\n"
+                "         not a model input, falls in this case.)\n",
                 descr->name);
         }
         return OK;

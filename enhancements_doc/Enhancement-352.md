@@ -88,13 +88,18 @@ catch: `D1nF12` returns `0.5 * S2vF12(...)`, and `S2vF12` **already** sums both
 index orderings. Without that 0.5 the mixed-tone products came out exactly 2×,
 and because IM3 consumes the f1−f2 kernel its error was a non-obvious 2.246×.
 
-## Known limitation: `$limit`
+## Known limitation: `$limit` — resolved by [Enhancement-353](Enhancement-353.md)
 
-A model whose contribution goes through `$limit` emits **no tensors**. The
+A model whose contribution goes through `$limit` emitted **no tensors**. The
 residual depends on the limited value, not the raw voltage read;
-`build_jacobian` handles that through `intern.lim_state` and the tensor pass
-does not yet. Limiting is standard in production diode/BJT/MOS models, so this
-is a real restriction and not a corner case.
+`build_jacobian` handled that through `intern.lim_state` and the tensor pass did
+not. Limiting is standard in production diode/BJT/MOS models, so this was a real
+restriction and not a corner case.
+
+[Enhancement-353](Enhancement-353.md) folds the limited values into the
+derivative chain and lifts it. What remains unreachable is a nonlinearity in a
+**ground-referenced probe**: the tensors are indexed by model input, and a bare
+`V(a)` is not recorded as one because it has no hi/lo pair.
 
 Registering `DEVdisto` removed `cktdisto.c`'s blanket warning, so such a model
 would have become a **silent zero** — worse than before. `OSDIdisto` therefore
@@ -103,7 +108,8 @@ warns for itself:
 ```
 Warning: Verilog-A (OSDI) device 'odio' contributes no distortion
          tensors; .disto will NOT include its nonlinearities.
-         (A model using $limit currently falls in this case.)
+         (A nonlinearity in a ground-referenced probe, which is
+         not a model input, falls in this case.)
 ```
 
 ## Verification

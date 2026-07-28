@@ -307,7 +307,7 @@ check("alter @n1[r]=4k takes effect", len(vals) >= 2 and abs(float(vals[1]) + 2.
 check("altermod does not override the given instance value",
       len(vals) >= 3 and abs(float(vals[2]) + 2.5e-4) < 1e-12)
 
-print("[7] .disto and OSDI devices (Enhancement-62 warning, Enhancement-352 tensors)")
+print("[7] .disto and OSDI devices (E-62 warning, E-352 tensors, E-353 $limit)")
 log = run_deck("_disto.cir", """* disto osdi
 .control
 pre_osdi analyses_dio.osdi
@@ -325,15 +325,23 @@ print v(a)
 .endc
 .end
 """)
-# Enhancement-352 gives OSDI models 2nd/3rd order Taylor tensors, so .disto can
-# now include their nonlinearities. THIS model is not yet one of them: it drives
-# its exponential through $limit, and the tensor pass differentiates w.r.t. the
-# raw voltage read rather than the limited value, so no tensors are emitted.
-# What must hold either way is that the user is TOLD -- a silent zero here is the
-# failure mode Enhancement-62 added a warning for, and registering DEVdisto
-# removed the blanket warning that used to cover it.
-check("a model contributing no tensors is reported, not silently zero",
-      "contributes no distortion" in log and "odio" in log)
+# Enhancement-352 gives OSDI models 2nd/3rd order Taylor tensors, so .disto
+# includes their nonlinearities. This model drives its exponential through
+# $limit, which Enhancement-352 could not reach -- it differentiated w.r.t. the
+# raw voltage read rather than the limited value, so no tensors were emitted and
+# the device was reported as contributing nothing. Enhancement-353 folds the
+# limited values into the derivative chain, so it now contributes properly.
+#
+# Both halves matter. The warning must be gone, AND the result must be non-zero:
+# a silent zero is the failure mode Enhancement-62 added a warning for, and
+# checking only for the absent warning would score exactly that as a pass.
+# examples/limitdisto_examples pins the VALUES against the unlimited spelling.
+disto_vals = [float(m) for m in
+              re.findall(r"^\d+\s+[-\d.e+]+\s+([-\d.e+]+),", log, re.M)]
+check("a limiting model is no longer reported as contributing no distortion",
+      "contributes no distortion" not in log)
+check("a limiting model's distortion is non-zero, not a silent zero",
+      bool(disto_vals) and all(abs(v) > 1e-12 for v in disto_vals))
 check("analysis still completes (linear part valid)",
       re.search(r"length\(v\(a\)\) = [0-9]", log) is not None)
 

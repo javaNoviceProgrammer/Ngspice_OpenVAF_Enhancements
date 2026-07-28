@@ -193,31 +193,39 @@ print d[0]
           bool(lv) and abs(lv[0]) < 1e-30, "%s" % (abs(lv[0]) if lv else None))
 
     # ---------------------------------------------------------------- [6]
-    # A $limit-based model's nonlinearity is not reachable by the tensor pass
-    # (the residual depends on the limited value, not the raw voltage read).
-    # Registering DEVdisto removed cktdisto.c's blanket warning, so the report
-    # has to come from OSDIdisto or the result is a silent zero.
-    with open(os.path.join(HERE, "_lim.va"), "w") as f:
+    # A nonlinearity in a GROUND-REFERENCED probe is not reachable by the tensor
+    # pass: the tensors are indexed by model input, and a bare V(a) is not
+    # recorded as one because it has no hi/lo pair. Registering DEVdisto removed
+    # cktdisto.c's blanket warning, so the report has to come from OSDIdisto or
+    # the result is a silent zero.
+    # ($limit was the other unreachable case until Enhancement-353 folded the
+    # limited values into the derivative chain; limiting models now contribute
+    # properly, and examples/limitdisto_examples covers them.)
+    with open(os.path.join(HERE, "_gref.va"), "w") as f:
         f.write("""`include "disciplines.vams"
-module dst_lim(a,c); inout a,c; electrical a,c;
-  parameter real is_ = 1e-15;
-  analog I(a,c) <+ is_*(exp($limit(V(a,c),"pnjlim",0.026,0.7)/0.026) - 1) + 1e-12*V(a,c);
+module dst_gref(a,b); inout a,b; electrical a,b;
+  parameter real k = 1e-3;
+  analog begin
+    I(a) <+ 1e-3*V(a) + k*V(a)*V(b);
+    I(b) <+ 1e-3*V(b);
+  end
 endmodule
 """)
-    subprocess.run([OPENVAF, os.path.join(HERE, "_lim.va"), "-o",
-                    os.path.join(HERE, "_dst_lim.osdi")], capture_output=True, timeout=900)
-    out = run("""dst lim
-V1 in 0 dc 0.7 ac 1 distof1 0.01
-R1 in a 100
-N1 a 0 mm
-.model mm dst_lim
+    subprocess.run([OPENVAF, os.path.join(HERE, "_gref.va"), "-o",
+                    os.path.join(HERE, "_dst_gref.osdi")], capture_output=True, timeout=900)
+    out = run("""dst gref
+V1 in 0 dc 0 ac 1 distof1 1
+Rs in d 1k
+N1 d e mm
+Re e 0 1k
+.model mm dst_gref(k=1e-3)
 .control
-pre_osdi _dst_lim.osdi
+pre_osdi _dst_gref.osdi
 option noacct
 disto dec 2 1e4 1e5
 .endc
 .end
-""", "lim")
+""", "gref")
     check("a model contributing no tensors is reported, not silently zero",
           "contributes no distortion" in out, "warned" if "contributes no distortion" in out
           else "SILENT")

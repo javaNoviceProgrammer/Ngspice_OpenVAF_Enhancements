@@ -401,6 +401,35 @@ impl<'a> Builder<'a> {
         out
     }
 
+    /// Enhancement-353: the set of autodiff unknowns a model input's derivative
+    /// must be taken over, with the sign each contributes.
+    ///
+    /// For an ordinary input that is just the input's own unknown. For an input
+    /// that passes through `$limit` it is the LIMITED values instead: the
+    /// residual depends on the limited quantity, not on the raw voltage read,
+    /// so differentiating by the raw read yields zero and the model looks
+    /// linear. `build_jacobian` already folds these in via `intern.lim_state`;
+    /// this is the same fold, and without it every production diode/BJT/MOS
+    /// model -- all of which limit -- emits no tensors at all.
+    fn taylor_unknown_chain(
+        &self,
+        val: Value,
+        derivatives: &KnownDerivatives,
+    ) -> Vec<(Unknown, bool)> {
+        let mut out = Vec::new();
+        if let Some(lim_vals) = self.intern.lim_state.raw.get(&val) {
+            for (lim_val, negate) in lim_vals {
+                if let Some(u) = derivatives.unknowns.index(lim_val) {
+                    out.push((u, *negate));
+                }
+            }
+        }
+        if let Some(u) = derivatives.unknowns.index(&val) {
+            out.push((u, false));
+        }
+        out
+    }
+
     /// Enhancement-352: build the 2nd- and 3rd-order Taylor tensors of the
     /// residual with respect to the model inputs.
     ///
@@ -424,10 +453,16 @@ impl<'a> Builder<'a> {
         if inputs.is_empty() {
             return;
         }
-        // map each model input to its autodiff Unknown; an input with no
-        // Unknown cannot be differentiated against and is skipped in lockstep
-        let unknowns: Vec<Option<Unknown>> =
-            inputs.iter().map(|v| derivative_info.unknowns.index(v)).collect();
+        let chains: Vec<Vec<(Unknown, bool)>> =
+            inputs.iter().map(|v| self.taylor_unknown_chain(*v, derivative_info)).collect();
+        if chains.iter().all(|c| c.is_empty()) {
+            return;
+        }
+        if std::env::var("OPENVAF_DAE_DEBUG").is_ok() {
+            for (i, c) in chains.iter().enumerate() {
+                eprintln!("DAEDBG chain in{i} len {} {:?}", c.len(), c);
+            }
+        }
 
         let residuals: Vec<(SimUnknown, Value, Value)> = self
             .system
@@ -437,33 +472,33 @@ impl<'a> Builder<'a> {
             .collect();
 
         // ---- second order -------------------------------------------------
-        // request d(dI/dx_a)/dx_b for b >= a
+        // d2 I / dv_a dv_b = sum over the chains of a and b, with signs.
         let mut req2: Vec<(Value, Unknown)> = Vec::new();
-        let mut plan2: Vec<(SimUnknown, usize, usize, Value, Value)> = Vec::new();
-        {
-            for &(row, resist, react) in &residuals {
-                for (a, &ua) in unknowns.iter().enumerate() {
-                    let ua = match ua {
-                        Some(it) => it,
-                        None => continue,
-                    };
-                    let d1r = first.get(&(resist, ua)).copied().unwrap_or(F_ZERO);
-                    let d1x = first.get(&(react, ua)).copied().unwrap_or(F_ZERO);
-                    if d1r == F_ZERO && d1x == F_ZERO {
-                        continue;
+        // (row, a, b, [(d1_resist, d1_react, ub, negate)])
+        let mut plan2: Vec<(SimUnknown, usize, usize, Vec<(Value, Value, Unknown, bool)>)> =
+            Vec::new();
+        for &(row, resist, react) in &residuals {
+            for a in 0..chains.len() {
+                for b in a..chains.len() {
+                    let mut terms = Vec::new();
+                    for &(ua, na) in &chains[a] {
+                        let d1r = first.get(&(resist, ua)).copied().unwrap_or(F_ZERO);
+                        let d1x = first.get(&(react, ua)).copied().unwrap_or(F_ZERO);
+                        if d1r == F_ZERO && d1x == F_ZERO {
+                            continue;
+                        }
+                        for &(ub, nb) in &chains[b] {
+                            if d1r != F_ZERO {
+                                req2.push((d1r, ub));
+                            }
+                            if d1x != F_ZERO {
+                                req2.push((d1x, ub));
+                            }
+                            terms.push((d1r, d1x, ub, na != nb));
+                        }
                     }
-                    for (b, &ub) in unknowns.iter().enumerate().skip(a) {
-                        let ub = match ub {
-                            Some(it) => it,
-                            None => continue,
-                        };
-                        if d1r != F_ZERO {
-                            req2.push((d1r, ub));
-                        }
-                        if d1x != F_ZERO {
-                            req2.push((d1x, ub));
-                        }
-                        plan2.push((row, a, b, d1r, d1x));
+                    if !terms.is_empty() {
+                        plan2.push((row, a, b, terms));
                     }
                 }
             }
@@ -476,44 +511,52 @@ impl<'a> Builder<'a> {
         self.cursor.goto_exit();
 
         let mut second: Vec<(SimUnknown, usize, usize, Value, Value)> = Vec::new();
-        for &(row, a, b, d1r, d1x) in &plan2 {
-            let ub = match unknowns[b] {
-                Some(it) => it,
-                None => continue,
-            };
-            let vr =
-                if d1r == F_ZERO { F_ZERO } else { d2.get(&(d1r, ub)).copied().unwrap_or(F_ZERO) };
-            let vx =
-                if d1x == F_ZERO { F_ZERO } else { d2.get(&(d1x, ub)).copied().unwrap_or(F_ZERO) };
-            if vr == F_ZERO && vx == F_ZERO {
+        for (row, a, b, terms) in &plan2 {
+            let (mut acc_r, mut acc_x) = (F_ZERO, F_ZERO);
+            for &(d1r, d1x, ub, negate) in terms {
+                if d1r != F_ZERO {
+                    if let Some(&v) = d2.get(&(d1r, ub)) {
+                        add(&mut self.cursor, &mut acc_r, v, negate);
+                    }
+                }
+                if d1x != F_ZERO {
+                    if let Some(&v) = d2.get(&(d1x, ub)) {
+                        add(&mut self.cursor, &mut acc_x, v, negate);
+                    }
+                }
+            }
+            if acc_r == F_ZERO && acc_x == F_ZERO {
                 continue;
             }
             self.system.taylor2.push(Taylor2Entry {
-                row,
-                col1: a as u32,
-                col2: b as u32,
-                resist: vr,
-                react: vx,
+                row: *row,
+                col1: *a as u32,
+                col2: *b as u32,
+                resist: acc_r,
+                react: acc_x,
             });
-            second.push((row, a, b, vr, vx));
+            second.push((*row, *a, *b, acc_r, acc_x));
         }
 
         // ---- third order --------------------------------------------------
         let mut req3: Vec<(Value, Unknown)> = Vec::new();
-        let mut plan3: Vec<(SimUnknown, usize, usize, usize, Value, Value)> = Vec::new();
+        let mut plan3: Vec<(SimUnknown, usize, usize, usize, Vec<(Value, Value, Unknown, bool)>)> =
+            Vec::new();
         for &(row, a, b, vr, vx) in &second {
-            for (c, &uc) in unknowns.iter().enumerate().skip(b) {
-                let uc = match uc {
-                    Some(it) => it,
-                    None => continue,
-                };
-                if vr != F_ZERO {
-                    req3.push((vr, uc));
+            for c in b..chains.len() {
+                let mut terms = Vec::new();
+                for &(uc, nc) in &chains[c] {
+                    if vr != F_ZERO {
+                        req3.push((vr, uc));
+                    }
+                    if vx != F_ZERO {
+                        req3.push((vx, uc));
+                    }
+                    terms.push((vr, vx, uc, nc));
                 }
-                if vx != F_ZERO {
-                    req3.push((vx, uc));
+                if !terms.is_empty() {
+                    plan3.push((row, a, b, c, terms));
                 }
-                plan3.push((row, a, b, c, vr, vx));
             }
         }
         if plan3.is_empty() {
@@ -523,25 +566,30 @@ impl<'a> Builder<'a> {
         let d3 = auto_diff(&mut *self.cursor.func, self.dom_tree, derivative_info, &req3);
         self.cursor.goto_exit();
 
-        for &(row, a, b, c, vr, vx) in &plan3 {
-            let uc = match unknowns[c] {
-                Some(it) => it,
-                None => continue,
-            };
-            let wr =
-                if vr == F_ZERO { F_ZERO } else { d3.get(&(vr, uc)).copied().unwrap_or(F_ZERO) };
-            let wx =
-                if vx == F_ZERO { F_ZERO } else { d3.get(&(vx, uc)).copied().unwrap_or(F_ZERO) };
-            if wr == F_ZERO && wx == F_ZERO {
+        for (row, a, b, c, terms) in &plan3 {
+            let (mut acc_r, mut acc_x) = (F_ZERO, F_ZERO);
+            for &(vr, vx, uc, negate) in terms {
+                if vr != F_ZERO {
+                    if let Some(&v) = d3.get(&(vr, uc)) {
+                        add(&mut self.cursor, &mut acc_r, v, negate);
+                    }
+                }
+                if vx != F_ZERO {
+                    if let Some(&v) = d3.get(&(vx, uc)) {
+                        add(&mut self.cursor, &mut acc_x, v, negate);
+                    }
+                }
+            }
+            if acc_r == F_ZERO && acc_x == F_ZERO {
                 continue;
             }
             self.system.taylor3.push(Taylor3Entry {
-                row,
-                col1: a as u32,
-                col2: b as u32,
-                col3: c as u32,
-                resist: wr,
-                react: wx,
+                row: *row,
+                col1: *a as u32,
+                col2: *b as u32,
+                col3: *c as u32,
+                resist: acc_r,
+                react: acc_x,
             });
         }
     }

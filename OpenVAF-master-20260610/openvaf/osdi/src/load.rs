@@ -476,7 +476,7 @@ impl<'ll> OsdiCompilationUnit<'_, '_, 'll> {
             for (i, (resist, react)) in slots.iter().enumerate() {
                 let r = self.load_eval_output(*resist, &*inst, &*model, &*llbuilder);
                 let x = self.load_eval_output(*react, &*inst, &*model, &*llbuilder);
-                let mut store = |val: *mut llvm_sys::LLVMValue, off: usize| {
+                let store = |val: *mut llvm_sys::LLVMValue, off: usize| {
                     let mut gep_indices =
                         [NonNull::from(cx.const_usize(off)).as_ptr()];
                     let slot_ptr = LLVMBuildGEP2(
