@@ -506,10 +506,35 @@ impl<C: ControlFlowGraph> SSABuilder<C> {
                 let mut blocks = Map::new();
 
                 let vals = &self.results[self.results.len() - num_predecessors..];
+
+                // Enhancement-347: a predecessor with NO reaching definition yields
+                // GRAVESTONE (`Value(0)`, whose `ValueDef` is `Invalid`) -- see the
+                // `ZeroOneOrMore::Zero` arm below. Putting that in a phi makes the
+                // MIR SSA-INVALID: `Function::validate` rejects an `Invalid` phi
+                // operand outright, so the assertions build trips on input the
+                // release compiles and evaluates correctly (Enhancement-329 fixed
+                // the crash that came of it and left this).
+                //
+                // Such an operand sits on an edge out of a block unreachable from
+                // the entry, so the edge cannot execute and the value on it is
+                // never read. Any SIBLING operand of the same phi is therefore an
+                // equally correct value for it -- and a sibling is type-correct by
+                // construction, which a synthesised constant would not be: this
+                // builder is type-agnostic and has no `Type` for the place.
+                //
+                // A phi whose operands are ALL gravestones is left alone; there is
+                // nothing valid to substitute, and such a phi is itself dead.
+                let live = vals.iter().copied().find(|&v| v != GRAVESTONE);
                 let iter =
                     zip(self.cfg.predecessors(dest_block), vals).map(|(pred_block, pred_val)| {
+                        let mut pred_val = *pred_val;
+                        if pred_val == GRAVESTONE {
+                            if let Some(live) = live {
+                                pred_val = live;
+                            }
+                        }
                         // We already did a full `use_var` above, so we can do just the fast path.
-                        let i = args.push(*pred_val, &mut func.dfg.insts.value_lists) as u32;
+                        let i = args.push(pred_val, &mut func.dfg.insts.value_lists) as u32;
                         (pred_block, i)
                     });
 

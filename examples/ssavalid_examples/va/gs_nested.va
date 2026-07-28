@@ -1,0 +1,14 @@
+`include "disciplines.vams"
+// nested statically-false branches, each with a loop
+module gs_nested(a,b,c); inout a,b,c; electrical a,b,c;
+  parameter integer k = 3; real q0, q1; integer i, j;
+  analog begin
+    q0 = ddt(-I(a,b));
+    if ((k*1)-k) begin
+      i = 0; while (i < 3) i = i + 1;
+      if (k-k) begin j = 0; while (j < 2) j = j + 1; end
+    end
+    I(a,b) <+ 2.0e-3*V(a,b);
+    I(b,c) <+ 2.0e-3*V(b,c) + q0*q1;
+  end
+endmodule

@@ -1,0 +1,12 @@
+`include "disciplines.vams"
+// two independent dead loops feeding two unassigned reals
+module gs_two_dead_loops(a,b,c); inout a,b,c; electrical a,b,c;
+  parameter integer p = 7; real m0, m1, m2; integer u, v;
+  analog begin
+    m0 = ddt(-I(a,b));
+    if ((p*1)-p) begin u = 0; while (u < 3) u = u + 1; end
+    if ((p*1)-p) begin v = 0; while (v < 3) v = v + 1; end
+    I(a,b) <+ 1.0e-3*V(a,b);
+    I(b,c) <+ 1.0e-3*V(b,c) + m0*m1 + m0*m2;
+  end
+endmodule

@@ -1,0 +1,10 @@
+`include "disciplines.vams"
+module gs_basic(a,b,c); inout a,b,c; electrical a,b,c;
+  parameter integer s0 = 2; real r0, r1; integer lc;
+  analog begin
+    r0 = ddt(-I(a,b));
+    if ((1*s0)-s0) begin lc = 0; while (lc < 4) lc = lc + 1; end
+    I(a,b) <+ 1.0e-3*V(a,b);
+    I(b,c) <+ 1.0e-3*V(b,c) + r0*r1;
+  end
+endmodule

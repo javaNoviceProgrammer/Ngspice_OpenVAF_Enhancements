@@ -395,6 +395,7 @@ The index: **Doc** links each enhancement's detailed write-up, **Examples** link
 | 344 | perf: `.model` params join the fast `.param` sweep's direct set -- now as cheap as instance params | ngspice | [doc](enhancements_doc/Enhancement-344.md) | [modelparamset](examples/modelparamset_examples/) |
 | 345 | perf: sweep is now LINEAR -- plot naming no longer walks the plot list; 87x at 64k points | ngspice | [doc](enhancements_doc/Enhancement-345.md) | [plotname](examples/plotname_examples/) |
 | 346 | fix: fast `.param` path froze random draws reset re-drew; adds the Monte Carlo tier | ngspice | [doc](enhancements_doc/Enhancement-346.md) | [mcfastpath](examples/mcfastpath_examples/) |
+| 347 | fix: SSA re-builder no longer mints an Invalid phi operand (assertions build clean) | openvaf&#8209;r | [doc](enhancements_doc/Enhancement-347.md) | [ssavalid](examples/ssavalid_examples/) |
 
 </details>
 
