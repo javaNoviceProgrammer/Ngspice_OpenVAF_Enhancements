@@ -20,6 +20,7 @@ function %(v16, v17, v18, v19, v25, v31, v39) {
                                     v34 = fneg v16
                                     v52 = fmul v31, v16
                                     v36 = optbarrier v52
+                                    v37 = fneg v34
                                     v55 = fmul v31, v34
                                     v38 = optbarrier v55
                                     v40 = fsub v39, v17
@@ -33,5 +34,6 @@ function %(v16, v17, v18, v19, v25, v31, v39) {
                                     v48 = optbarrier v49
                                     v51 = optbarrier v31
                                     v53 = optbarrier v55
-                                    v56 = optbarrier v52
+                                    v57 = fmul v31, v37
+                                    v56 = optbarrier v57
 }

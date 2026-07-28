@@ -62,4 +62,6 @@ DaeSystem {
     model_inputs: [],
     num_resistive: 2,
     num_reactive: 0,
+    taylor2: {},
+    taylor3: {},
 }

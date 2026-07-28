@@ -121,4 +121,6 @@ DaeSystem {
     ],
     num_resistive: 8,
     num_reactive: 0,
+    taylor2: {},
+    taylor3: {},
 }

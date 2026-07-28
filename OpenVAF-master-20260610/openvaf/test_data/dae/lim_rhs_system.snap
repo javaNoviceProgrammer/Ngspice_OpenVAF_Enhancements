@@ -9,16 +9,16 @@ DaeSystem {
             react: v3,
             resist_small_signal: v3,
             react_small_signal: v3,
-            resist_lim_rhs: v43,
+            resist_lim_rhs: v53,
             react_lim_rhs: v3,
             nature_kind: Flow,
         },
         sim_node1: Residual {
-            resist: v49,
+            resist: v59,
             react: v3,
             resist_small_signal: v3,
             react_small_signal: v3,
-            resist_lim_rhs: v46,
+            resist_lim_rhs: v56,
             react_lim_rhs: v3,
             nature_kind: Flow,
         },
@@ -33,7 +33,7 @@ DaeSystem {
         j1: MatrixEntry {
             row: sim_node0,
             col: sim_node1,
-            resist: v54,
+            resist: v64,
             react: v3,
         },
         j2: MatrixEntry {
@@ -45,7 +45,7 @@ DaeSystem {
         j3: MatrixEntry {
             row: sim_node1,
             col: sim_node1,
-            resist: v57,
+            resist: v67,
             react: v3,
         },
     },
@@ -59,4 +59,38 @@ DaeSystem {
     ],
     num_resistive: 4,
     num_reactive: 0,
+    taylor2: {
+        t2_0: Taylor2Entry {
+            row: sim_node0,
+            col1: 0,
+            col2: 0,
+            resist: v43,
+            react: v3,
+        },
+        t2_1: Taylor2Entry {
+            row: sim_node1,
+            col1: 0,
+            col2: 0,
+            resist: v44,
+            react: v3,
+        },
+    },
+    taylor3: {
+        t3_0: Taylor3Entry {
+            row: sim_node0,
+            col1: 0,
+            col2: 0,
+            col3: 0,
+            resist: v48,
+            react: v3,
+        },
+        t3_1: Taylor3Entry {
+            row: sim_node1,
+            col1: 0,
+            col2: 0,
+            col3: 0,
+            resist: v49,
+            react: v3,
+        },
+    },
 }
