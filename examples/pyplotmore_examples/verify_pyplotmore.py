@@ -19,6 +19,14 @@
 
 Every generated script is also executed (matplotlib Agg) so a syntactically broken
 emission fails, not just a missing keyword.
+
+The cursor cases ([299]-[301]) have to run in WINDOW mode, because the cursor is
+gated on `!hardcopy` -- that gating is the thing under test, so `pyplot_terminal`
+would delete it. They set `pyplot_backend=Agg` instead: the window-mode code path
+is untouched (plt.show() and the Cursor lines are still emitted, which is what the
+checks read) but matplotlib renders headless, so the suite opens no windows. Do
+not drop those `set pyplot_backend=Agg` lines -- without them this suite pops five
+matplotlib windows on every run, twice over, once per solver.
 """
 import math
 import os
@@ -173,9 +181,16 @@ check("299: overlay of different-length runs keeps every trace full", ok_ovl,
       "" if ok_ovl else "truncated")
 check("299: the overlay script runs clean", run_generated("ovl"))
 
+# `pyplot_backend=Agg` up front: these cases must stay in WINDOW mode, because
+# that is exactly what they check -- the cursor is gated on `!hardcopy`, so
+# switching them to pyplot_terminal=png would delete the behaviour under test.
+# Setting only the matplotlib BACKEND keeps the window-mode code path intact
+# (plt.show() and the Cursor lines are still emitted, which is what `script()`
+# reads) while rendering headless, so the suite opens no windows.
 run("* cursor gating\nv1 a 0 dc 0 sin(0 1 1k)\nr1 a 0 1k\n.control\ntran 10u 3m\n"
+    "set pyplot_backend=Agg\n"
     "set pyplot_cursor\npyplot curwin v(a)\nset pyplot_terminal=png\n"
-    "set pyplot_backend=Agg\npyplot curfile v(a)\n.endc\n.end\n", "e299cur.cir")
+    "pyplot curfile v(a)\n.endc\n.end\n", "e299cur.cir")
 check("299: pyplot_cursor emitted in a window, NOT in a hardcopy",
       "Cursor" in script("curwin") and "Cursor" not in script("curfile"))
 
@@ -183,11 +198,12 @@ check("299: pyplot_cursor emitted in a window, NOT in a hardcopy",
 print("\n[300]/[301] pyplot_cursor master switch + pyplot_mplcursors backend")
 # every gating case in one deck
 run("* cursor gating\nv1 a 0 dc 0 sin(0 1 1k)\nr1 a 0 1k\n.control\ntran 10u 3m\n"
+    "set pyplot_backend=Agg\n"          # headless; window mode otherwise unchanged
     "pyplot none v(a)\n"                                   # nothing -> OFF (default)
     "set pyplot_cursor\npyplot cur v(a)\nunset pyplot_cursor\n"      # cursor -> built-in
     "set pyplot_mplcursors\npyplot mplonly v(a)\n"                   # mplcursors ONLY -> OFF
     "set pyplot_cursor\npyplot curmpl v(a)\n"                        # both -> mplcursors
-    "set pyplot_terminal=png\nset pyplot_backend=Agg\n"
+    "set pyplot_terminal=png\n"
     "pyplot file v(a)\n.endc\n.end\n", "e301.cir")
 
 def has_builtin(b):  return "from matplotlib.widgets import Cursor" in script(b)
