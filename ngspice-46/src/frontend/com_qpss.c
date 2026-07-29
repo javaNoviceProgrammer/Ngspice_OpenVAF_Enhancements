@@ -140,7 +140,25 @@ com_qpss(wordlist *wl)
                     (ckt->CKTmatrix == NULL || SMPmatSize(ckt->CKTmatrix) <= 0))
                     ckt->CKTkluMODE = ft_curckt->ci_defTask->TSKkluMODE;
 #endif
-                if (ckt->CKTmatrix == NULL || SMPmatSize(ckt->CKTmatrix) <= 0) {
+                /* Enhancement-366: the same hazard com_hb had, which Enhancement-365
+                 * fixed there and MISSED here -- found by continuing the same
+                 * sequence-fuzzing campaign against the fixed build. "A matrix exists"
+                 * is NOT "the device bindings point into it": `pz`
+                 * (CKTpzSetup) destroys ckt->CKTmatrix and builds a different
+                 * one while leaving CKTisSetup asserted, so this test saw a
+                 * good non-empty matrix, skipped CKTsetup, and CKTload then
+                 * read every device's cached element pointer into the FREED
+                 * matrix. Rebind with a BALANCED unsetup/setup pair -- a bare
+                 * CKTsetup() returns E_NOCHANGE while CKTisSetup is 1, and
+                 * calling it without the unsetup would re-run DEVsetup on
+                 * already-setup devices and double-allocate internal nodes. */
+                if (ckt->CKTbindStale) {
+                    if ((err = CKTunsetup(ckt)) != OK || (err = CKTsetup(ckt)) != OK ||
+                        (err = CKTtemp(ckt)) != OK) {
+                        fprintf(cp_err, "Error: qpss hb: circuit setup failed.\n");
+                        return;
+                    }
+                } else if (ckt->CKTmatrix == NULL || SMPmatSize(ckt->CKTmatrix) <= 0) {
                     if ((err = CKTsetup(ckt)) != OK || (err = CKTtemp(ckt)) != OK) {
                         fprintf(cp_err, "Error: qpss hb: circuit setup failed.\n");
                         return;

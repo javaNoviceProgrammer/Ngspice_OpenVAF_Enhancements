@@ -9,19 +9,37 @@
         i.CSC = NULL ;                                                           \
         i.CSC_Complex = NULL ;                                                   \
         matched = (BindElement *) bsearch (&i, BindStruct, nz, sizeof (BindElement), BindCompare) ; \
+        /* Enhancement-366: this NULL test used to warn and then fall straight   \
+         * through to `matched->CSC`, dereferencing the NULL it had just         \
+         * reported -- undefined behaviour on every "not found", and silent on   \
+         * an ordinary build (UBSan: "member access within null pointer of type  \
+         * 'BindElement'" at the expansion site). A lookup miss must leave the   \
+         * binding alone and say so, not corrupt the pointer. It is reachable:   \
+         * `option klu` + `pz` + any AC-family analysis misses, because `pz`     \
+         * rebuilds ckt->CKTmatrix and the device's COO pointer no longer        \
+         * appears in the new matrix's bind table.                               \
+         */                                                                      \
         if (matched == NULL) {                                                   \
-            printf ("Ptr %p not found in BindStruct Table\n", here->ptr) ;       \
-        } \
-        here->binding = matched ;                                                \
-        here->ptr = matched->CSC ;                                               \
+            fprintf (stderr, "Warning: KLU binding for %p not found; "           \
+                     "matrix bindings are stale (did an earlier analysis "       \
+                     "rebuild the matrix?)\n", (void *) here->ptr) ;             \
+            here->binding = NULL ;                                               \
+        } else {                                                                 \
+            here->binding = matched ;                                            \
+            here->ptr = matched->CSC ;                                           \
+        }                                                                        \
     }
 
+/* Enhancement-366: `binding` is NULL when the lookup in
+ * CREATE_KLU_BINDING_TABLE missed (stale bindings after an analysis rebuilt the
+ * matrix). Dereferencing it was a use-after-free before that miss was recorded,
+ * and a NULL deref after. Skip instead -- the miss has already been reported. */
 #define CONVERT_KLU_BINDING_TABLE_TO_COMPLEX(ptr, binding, a, b)                 \
-    if ((here->a > 0) && (here->b > 0))                                          \
+    if ((here->a > 0) && (here->b > 0) && here->binding)                         \
         here->ptr = here->binding->CSC_Complex ;
 
 #define CONVERT_KLU_BINDING_TABLE_TO_REAL(ptr, binding, a, b)                    \
-    if ((here->a > 0) && (here->b > 0))                                          \
+    if ((here->a > 0) && (here->b > 0) && here->binding)                         \
         here->ptr = here->binding->CSC ;
 
 #ifdef XSPICE
