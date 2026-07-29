@@ -594,6 +594,18 @@ Carlo, Latin-Hypercube sampling (`mcsample`), high-sigma rare-event estimation
 packaged yield command (`montecarlo`) — with worked examples and figures
 generated from real ngspice runs.
 
+For time-domain noise, [Transient noise in
+ngspice](docs/internals/ngspice_internals/ngspice_transient_noise_analysis.md)
+([PDF](docs/internals/ngspice_internals/ngspice_transient_noise_analysis.pdf))
+covers both paths — the built-in `trnoise` sources and the OSDI (Verilog-A)
+devices made noisy in `.tran` by Enhancement-364 — deriving the amplitude law
+from the generator's structure and checking it against closed forms: the
+parameter-free `kT/C` identity across a 10x resistance sweep, shot noise tracking
+a 45x current sweep on a nonlinear diode, a 1/f spectrum matched to `.noise`, and
+a variance cross-check between the transient, `.noise`, and thermodynamics. It
+also records which elements are *not* noise sources in `.tran`, and a measurement
+trap that made a correct result look 38% wrong.
+
 Not every idea survives measurement. [OSDI/Verilog-A device bypass — an
 investigation](docs/internals/ngspice_internals/ngspice_osdi_bypass.md)
 ([PDF](docs/internals/ngspice_internals/ngspice_osdi_bypass.pdf)) records a full,

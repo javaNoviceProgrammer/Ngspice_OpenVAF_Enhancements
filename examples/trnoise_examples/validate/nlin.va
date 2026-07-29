@@ -1,0 +1,18 @@
+`include "disciplines.vams"
+// Nonlinear device: an ideal diode with SHOT noise S_i = 2qI.
+// The noise density tracks the operating point, so this tests that
+// load_noise_params() is re-read at the current bias every timepoint rather
+// than latched once at the DC solution.
+module vadio(a, c);
+  inout a, c;
+  electrical a, c;
+  parameter real is = 1e-14 from (0:inf);
+  parameter real nf = 1.0 from (0:inf);
+  real vt, id;
+  analog begin
+    vt = 1.3806488e-23 * $temperature / 1.602176565e-19;
+    id = is * (exp(V(a, c) / (nf * vt)) - 1.0);
+    I(a, c) <+ id;
+    I(a, c) <+ white_noise(2.0 * 1.602176565e-19 * abs(id), "shot");
+  end
+endmodule

@@ -25,7 +25,7 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(os.path.dirname(HERE)))
-from _setup import NG  # noqa: E402
+from _setup import NG, VAF  # noqa: E402
 Q = 1.602176565e-19
 K = 1.3806488e-23
 T = 300.15
@@ -62,6 +62,18 @@ echo VAR $&mv
 """.format(vb=vbias, ts=ts, tstop=tstop, tstep=tstep, here=HERE, c=C, rext=REXT)
 
 
+def build():
+    """Compile the diode model. This step was MISSING: the deck referenced an
+    `nlin.osdi` that lived only in a scratch directory, so the script could not
+    run from a clean checkout -- it reported `FAILED to extract` for every bias,
+    which reads like a simulator failure rather than a missing file."""
+    r = subprocess.run([VAF, "nlin.va", "-o", "nlin.osdi"], cwd=HERE,
+                       capture_output=True, text=True, timeout=600)
+    if r.returncode != 0:
+        print("  model failed to compile:\n%s" % (r.stdout + r.stderr)[:400])
+    return r.returncode == 0
+
+
 def run(src, tag):
     p = os.path.join(HERE, "_s_%s.cir" % tag)
     open(p, "w").write(src)
@@ -76,6 +88,8 @@ def val(out, key):
 
 
 def main():
+    if not build():
+        sys.exit(1)
     print("  %-7s %-11s %-11s %-11s %-11s %s"
           % ("Vbias", "I (A)", "rd (ohm)", "var meas", "var calc", "dev"))
     ok = True
