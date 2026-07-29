@@ -287,6 +287,38 @@ print d[0]
           % (("%.8e" % abs(tv[0])) if tv else None,
              ("%.8e" % abs(solo[0])) if solo else None))
 
+    # ---------------------------------------------------------------- [8]
+    # DEGENERATE SWEEP SPEC. `distoan.c` computed the point count with
+    # (int)floor(...) over expressions that go NaN on ordinary input: a decade or
+    # octave sweep with ZERO steps does exp(log(10)/0) = inf and then 0 * inf,
+    # and a linear sweep with start == stop leaves DfreqDelta at zero (0/0).
+    # Converting NaN to int is undefined -- the point count became whatever the
+    # hardware produced, so a nonsense request quietly ran with an arbitrary
+    # number of points. Reachable with BUILT-IN devices too; nothing here is
+    # OSDI-specific, but this is where the .disto tests live.
+    #
+    # Zero steps per decade is not a meaningful request and must now be refused
+    # rather than run. The start == stop case is already exercised by [4], whose
+    # mixer deck sweeps `lin 1 1e6 1e6`. The undefined behaviour itself only
+    # shows under UBSan; what an ordinary build can check is that a nonsense
+    # sweep produces no output instead of inventing some.
+    out = run("""dst degenerate zero-step
+V1 in 0 dc 0 ac 1 distof1 1
+Rs in d 1k
+N1 d 0 m1
+.model m1 dst_cubic(a1=%g a2=%g a3=%g)
+.control
+pre_osdi _dst_cubic.osdi
+option noacct
+disto dec 0 1e4 1e5
+setplot disto1
+print d[0]
+.endc
+.end
+""" % (A1, A2, A3), "deg0")
+    check("a zero-step .disto sweep is refused, not run with an arbitrary count",
+          not cplx(out), "no distortion output" if not cplx(out) else "PRODUCED OUTPUT")
+
     for junk in os.listdir(HERE):
         if junk.startswith("_"):
             os.remove(os.path.join(HERE, junk))

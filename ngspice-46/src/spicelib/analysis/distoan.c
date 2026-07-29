@@ -64,6 +64,14 @@ time1 = SPfrontEnd->IFseconds();
         switch(job->DstepType) {
 
         case DECADE:
+            /* Enhancement-361: DnumSteps == 0 makes exp(log(10)/0) infinite, and
+             * the point count below then evaluates 0 * inf = NaN, whose
+             * conversion to int is undefined behaviour (UBSan flags it, and the
+             * resulting count is whatever the hardware happens to produce). A
+             * sweep with no points per decade is not a meaningful request, so
+             * reject it the same way an unknown step type is. */
+            if (job->DnumSteps < 1)
+                return(E_BADPARM);
             job->DfreqDelta =
 					exp(log(10.0)/job->DnumSteps);
 		freqTol = job->DfreqDelta * 
@@ -71,6 +79,9 @@ time1 = SPfrontEnd->IFseconds();
 	    NoOfPoints = 1 + (int)floor ((job->DnumSteps) / log(10.0) * log((job->DstopF1+freqTol)/(job->DstartF1)));
             break;
         case OCTAVE:
+            /* Enhancement-361: same zero-step division as DECADE above. */
+            if (job->DnumSteps < 1)
+                return(E_BADPARM);
             job->DfreqDelta =
 					exp(log(2.0)/job->DnumSteps);
 		freqTol = job->DfreqDelta * 
@@ -83,7 +94,14 @@ time1 = SPfrontEnd->IFseconds();
 					job->DstartF1)/
 					(job->DnumSteps+1);
 		freqTol = job->DfreqDelta * ckt->CKTreltol;
-					NoOfPoints = job->DnumSteps+1+ (int)floor(freqTol/(job->DfreqDelta));
+		/* Enhancement-361: a linear sweep whose start equals its stop leaves
+		 * DfreqDelta at zero, so this tolerance term became 0/0 = NaN and the
+		 * conversion to int was undefined. Where the delta is non-zero the term
+		 * is floor(DfreqDelta*reltol/DfreqDelta) = floor(reltol) = 0 for any
+		 * sane reltol, so zero is the value consistent with every other case. */
+					NoOfPoints = job->DnumSteps+1+
+						(job->DfreqDelta != 0.0
+							? (int)floor(freqTol/(job->DfreqDelta)) : 0);
             break;
         default:
             return(E_BADPARM);

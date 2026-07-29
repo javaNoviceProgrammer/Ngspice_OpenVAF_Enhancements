@@ -102,7 +102,10 @@ static void numdisto_jac_at(CKTcircuit *ckt, const OsdiDescriptor *descr,
     uint32_t k, e, ri, xi;
     OsdiNgspiceHandle h = (OsdiNgspiceHandle){.kind = 3, .name = gi->GENname};
 
-    for (i = 0; i <= n; i++)
+    /* CKTrhsOld holds CKTmaxEqNum entries, so the last valid index is n-1 --
+     * ngspice's own code copies it as `CKTmaxEqNum * sizeof(double)`. `i <= n`
+     * read one element past the end on every .disto run (caught by ASan). */
+    for (i = 0; i < n; i++)
         scratch[i] = ckt->CKTrhsOld[i];
     /* assignment, not accumulation: gnodes are distinct by construction, but
      * this also keeps the shift exact if a caller passes a repeated entry */
@@ -164,8 +167,8 @@ int osdi_numdisto_build(CKTcircuit *ckt, const OsdiDescriptor *descr,
     for (p = 0; p < M; p++) {
         uint32_t gp = node_mapping[p];
         nd->g_of_node[p] = UINT32_MAX;
-        if (gp == 0 || gp > (uint32_t)n)
-            continue;                       /* ground: not a variable */
+        if (gp == 0 || gp >= (uint32_t)n)
+            continue;                       /* ground, or out of range: not a variable */
         for (k = 0; k < nd->K; k++)
             if (nd->gnodes[k] == gp)
                 break;
