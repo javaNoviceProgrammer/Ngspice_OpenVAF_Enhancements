@@ -590,11 +590,6 @@ extern OsdiObjectFile load_object_file(const char *input) {
         .dt = dt,
         .temp = temp,
         .has_m = has_m,
-        /* Enhancement-352: only OSDI >= 0.8 carries the distortion tensors.
-         * Gate on the version rather than the descriptor size so an older file
-         * is never read past its end. */
-        .has_taylor = (OSDI_VERSION_MAJOR > 0 ||
-                       (OSDI_VERSION_MAJOR == 0 && OSDI_VERSION_MINOR >= 8)),
 
 #ifdef KLU
         .matrix_ptr_offset = (uint32_t)calc_osdi_instance_matrix_off(descr),

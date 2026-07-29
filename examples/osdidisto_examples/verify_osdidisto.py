@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Enhancement-352: distortion analysis for Verilog-A (OSDI) devices.
+"""Enhancement-352/359: distortion analysis for Verilog-A (OSDI) devices.
 
 `.disto` is a Volterra-series analysis: it needs each device's Taylor expansion
 of I(v) to THIRD order, not the operating-point linearisation the Jacobian
@@ -7,20 +7,22 @@ provides. Built-in devices hand-code those coefficients, which is why only four
 of ~58 implement DEVdisto -- and why OSDI devices previously contributed nothing
 but a warning.
 
-OSDI 0.8 emits the coefficients (OpenVAF's autodiff is arbitrary-order) and a
-generic `osdidisto.c` contracts them. The contraction is done directly over the
-model's inputs rather than through ngspice's D1x/DFx helpers, so there is no
-3-variable ceiling -- `Dderivs` holds derivatives "w.r.t 3 variables" and has no
-fourth-variable form, which is a property of those helpers, not the mathematics.
+E-352 had the compiler emit those coefficients symbolically. Enhancement-359
+replaced that: ngspice now DIFFERENCES the model's analytic Jacobian at the
+operating point, so nothing is needed from the compiler and no ABI beyond what
+every OSDI >= 0.4 object already has. There is still no 3-variable ceiling --
+`Dderivs` holds derivatives "w.r.t 3 variables" and has no fourth-variable form,
+which is a property of those helpers, not the mathematics.
 
   [1] single tone against a CLOSED-FORM polynomial -- no simulator involved
   [2] the A^3 scaling law, which a wrong implementation cannot fake
   [3] two-tone f1+f2, f1-f2 and IM3 against ngspice's own built-in diode
   [4] MULTI-VARIABLE: a pure cross term, closed form. Zero here would mean the
       mixed partial was dropped -- the failure the whole change exists to avoid
-  [5] a linear model still yields no distortion (and costs no tensors)
-  [6] a model whose nonlinearity the tensor pass cannot reach is REPORTED, never
-      silently zero
+  [5] a linear model still yields no distortion
+  [6] a GROUND-REFERENCED nonlinearity contributes, against a closed form. E-352
+      indexed tensors by model input (a hi/lo pair) and so could not reach this
+      at all; E-359 works in node coordinates, where there is no pair to miss
 
 WHY THE ORACLES ARE WHAT THEY ARE. A distortion result that is wrong by a
 constant looks entirely plausible, and the previous OSDI campaign "tested"
@@ -116,8 +118,15 @@ def main():
     out = cubic_run(1.0)
     got = cplx(out)
     e2, e3 = cubic_closed_form(1.0)
+    # Enhancement-359 obtains these by differencing the model's analytic Jacobian
+    # rather than from a compiler-emitted symbolic form, so they are no longer
+    # exact. Measured against this very closed form the error is 4.0e-09 (HD2)
+    # and 5.4e-09 (HD3); the bound is set an order of magnitude above that, not
+    # at whatever would pass. For scale, the built-in-diode oracle below already
+    # sits at 1.9e-06 because of a $vt constant difference.
+    TOL = 1e-7
     ok = len(got) >= 2 and e2 > 0 and e3 > 0 and \
-        abs(abs(got[0]) - e2) <= 1e-9 * e2 and abs(abs(got[1]) - e3) <= 1e-9 * e3
+        abs(abs(got[0]) - e2) <= TOL * e2 and abs(abs(got[1]) - e3) <= TOL * e3
     check("HD2 and HD3 match the closed-form polynomial", ok,
           "HD2 %.6e vs %.6e ; HD3 %.6e vs %.6e"
           % (abs(got[0]) if got else 0, e2, abs(got[1]) if len(got) > 1 else 0, e3))
@@ -193,14 +202,16 @@ print d[0]
           bool(lv) and abs(lv[0]) < 1e-30, "%s" % (abs(lv[0]) if lv else None))
 
     # ---------------------------------------------------------------- [6]
-    # A nonlinearity in a GROUND-REFERENCED probe is not reachable by the tensor
-    # pass: the tensors are indexed by model input, and a bare V(a) is not
-    # recorded as one because it has no hi/lo pair. Registering DEVdisto removed
-    # cktdisto.c's blanket warning, so the report has to come from OSDIdisto or
-    # the result is a silent zero.
-    # ($limit was the other unreachable case until Enhancement-353 folded the
-    # limited values into the derivative chain; limiting models now contribute
-    # properly, and examples/limitdisto_examples covers them.)
+    # A nonlinearity in a GROUND-REFERENCED probe used to be unreachable: the
+    # tensors were indexed by model input, and a bare V(a) is not one because it
+    # has no hi/lo pair, so E-352 reported "contributes no distortion" and
+    # returned zero. Enhancement-359 works in NODE coordinates, where there is no
+    # pair to miss, so this now contributes -- and the value is checked against a
+    # closed form rather than merely being non-zero.
+    #
+    #   device: I(a) <+ g*V(a) + k*V(a)*V(b),  I(b) <+ g*V(b)
+    #   H_d = 1/2, H_e = 1/3 from the resistive network below
+    #   2f1 current  = k*H_d*H_e/2 ;  node response = -that / Ytot_d
     with open(os.path.join(HERE, "_gref.va"), "w") as f:
         f.write("""`include "disciplines.vams"
 module dst_gref(a,b); inout a,b; electrical a,b;
@@ -216,19 +227,26 @@ endmodule
     out = run("""dst gref
 V1 in 0 dc 0 ac 1 distof1 1
 Rs in d 1k
+Rt in e 1k
 N1 d e mm
 Re e 0 1k
 .model mm dst_gref(k=1e-3)
 .control
 pre_osdi _dst_gref.osdi
 option noacct
+set numdgt=14
 disto dec 2 1e4 1e5
+setplot disto1
+print d[0]
 .endc
 .end
 """, "gref")
-    check("a model contributing no tensors is reported, not silently zero",
-          "contributes no distortion" in out, "warned" if "contributes no distortion" in out
-          else "SILENT")
+    gv = cplx(out)
+    K, Hd, He, Ytot = 1e-3, 0.5, 1.0 / 3.0, 2e-3
+    want = (K * Hd * He / 2.0) / Ytot
+    ok = bool(gv) and abs(abs(gv[0]) - want) <= 1e-6 * want
+    check("a ground-referenced nonlinearity now contributes, matching closed form",
+          ok, "%s vs %.8e" % (("%.8e" % abs(gv[0])) if gv else None, want))
 
     for junk in os.listdir(HERE):
         if junk.startswith("_"):

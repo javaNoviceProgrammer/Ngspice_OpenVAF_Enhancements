@@ -1,5 +1,15 @@
 # Enhancement-352 — `.disto` for Verilog-A devices, with no variable-count ceiling
 
+> **Superseded by [Enhancement-359](Enhancement-359.md).** The capability this
+> added — distortion analysis for Verilog-A devices, with no variable-count
+> ceiling — is unchanged and still verified by the same oracles. The
+> *implementation* described below is not: the compiler no longer emits Taylor
+> tensors at all. E-359 obtains them in ngspice by differencing the model's
+> analytic Jacobian, which removed a 20-49x compile-time regression, 30MB
+> objects, a 3.9x runtime penalty on every other analysis, and the OSDI 0.8/0.9
+> ABI bump. Everything below is retained as the record of the original design and
+> of the Volterra formulation, which E-359 reuses unchanged.
+
 Before this, `.disto` on a circuit containing an OSDI device printed a warning
 and left the device's nonlinearity out of the result. Now:
 

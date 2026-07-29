@@ -176,35 +176,6 @@ typedef struct OsdiAcStimSource {
   OsdiNodePair nodes;
 }OsdiAcStimSource;
 
-/* Enhancement-352 (OSDI 0.8): higher-order Taylor coefficients of the residual,
- * for Volterra distortion analysis.
- *
- * `row` indexes the residual (same numbering as OsdiJacobianEntry's row).
- * `col*` index the MODEL INPUTS -- the branch voltages published in
- * `OsdiDescriptor.inputs` -- NOT the node unknowns, so the hi/lo sign
- * convention never has to be unpicked here: entry k differentiates w.r.t.
- * inputs[col1] etc., and inputs[i] already carries its node pair.
- *
- * Only col1 <= col2 (<= col3) is emitted; the tensors are symmetric and this
- * side reconstructs the mirrored terms. Identically-zero entries are not
- * emitted, so a linear model carries none of these.
- *
- * The values load_taylor2/load_taylor3 write are RAW PARTIAL DERIVATIVES.
- * The 1/n! and the multinomial multiplicity for repeated indices are applied
- * HERE (see osdidisto.c), which is why the model side needs no convention. */
-typedef struct OsdiTaylor2Entry {
-  uint32_t row;
-  uint32_t col1;
-  uint32_t col2;
-}OsdiTaylor2Entry;
-
-typedef struct OsdiTaylor3Entry {
-  uint32_t row;
-  uint32_t col1;
-  uint32_t col2;
-  uint32_t col3;
-}OsdiTaylor3Entry;
-
 typedef struct OsdiDescriptor {
   char *name;
 
@@ -287,15 +258,6 @@ typedef struct OsdiDescriptor {
   uint32_t num_ac_stim_src;
   OsdiAcStimSource *ac_stim_sources;
   void (*load_ac_stim)(void *inst, void *model, double *dst);
-  /* Enhancement-352 (OSDI 0.8): load_taylor2/3 each fill `dst` with
-   * [resistive, reactive] PAIRS (stride 2), one pair per entry, in the order of
-   * taylor2_entries/taylor3_entries. */
-  uint32_t num_taylor2;
-  OsdiTaylor2Entry *taylor2_entries;
-  void (*load_taylor2)(void *inst, void *model, double *dst);
-  uint32_t num_taylor3;
-  OsdiTaylor3Entry *taylor3_entries;
-  void (*load_taylor3)(void *inst, void *model, double *dst);
 }OsdiDescriptor;
 
 

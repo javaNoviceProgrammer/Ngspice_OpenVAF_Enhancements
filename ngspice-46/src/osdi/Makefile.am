@@ -13,7 +13,9 @@ libosdi_la_SOURCES =	\
 	osdiparam.c	\
 	osdiregistry.c	\
 	osdinoise.c \
-	osdidisto.c	\
+	osdidisto.c \
+	osdidistonum.c \
+	osdidistonum.h	\
 	osdisetup.c \
 	osditrunc.c \
 	osdipzld.c \

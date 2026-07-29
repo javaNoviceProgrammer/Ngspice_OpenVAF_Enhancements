@@ -51,12 +51,6 @@ pub struct DaeSystem {
     /// Jacobian entry counts
     pub num_resistive: u32,
     pub num_reactive: u32,
-    /// Enhancement-352: 2nd/3rd order Taylor coefficients of the residual,
-    /// used by ngspice's Volterra distortion analysis. Empty unless the model
-    /// is actually nonlinear -- a linear model has no 2nd derivative and the
-    /// sparsification below drops every entry.
-    pub taylor2: TiVec<Taylor2EntryId, Taylor2Entry>,
-    pub taylor3: TiVec<Taylor3EntryId, Taylor3Entry>,
 }
 
 impl DaeSystem {
@@ -86,14 +80,6 @@ impl DaeSystem {
             }
             for n in &sys.noise_sources {
                 eprintln!("DAEDBG noise hi={:?} lo={:?} factor={:?} factor_react={:?} kind={:?}", n.hi, n.lo, n.factor, n.factor_react, n.kind);
-            }
-            // Enhancement-352
-            eprintln!("DAEDBG inputs {:?}", sys.model_inputs);
-            for e in &sys.taylor2 {
-                eprintln!("DAEDBG t2 row={:?} d/d(in{},in{}) resist {:?} react {:?}", e.row, e.col1, e.col2, e.resist, e.react);
-            }
-            for e in &sys.taylor3 {
-                eprintln!("DAEDBG t3 row={:?} d/d(in{},in{},in{}) resist {:?} react {:?}", e.row, e.col1, e.col2, e.col3, e.resist, e.react);
             }
         }
         sys
@@ -137,21 +123,6 @@ impl DaeSystem {
             matrix_entry.resist = sparsify(matrix_entry.resist);
             matrix_entry.react = sparsify(matrix_entry.react);
             matrix_entry.resist != F_ZERO || matrix_entry.react != F_ZERO
-        });
-
-        // Enhancement-352: the same treatment for the distortion tensors. A
-        // linear model has no surviving 2nd-order term, so this is what keeps
-        // `taylor2`/`taylor3` empty (and the emitted tables absent) rather than
-        // full of structural zeros.
-        self.taylor2.raw.retain_mut(|e| {
-            e.resist = sparsify(e.resist);
-            e.react = sparsify(e.react);
-            e.resist != F_ZERO || e.react != F_ZERO
-        });
-        self.taylor3.raw.retain_mut(|e| {
-            e.resist = sparsify(e.resist);
-            e.react = sparsify(e.react);
-            e.resist != F_ZERO || e.react != F_ZERO
         });
     }
 }
@@ -281,45 +252,3 @@ pub struct MatrixEntryId(u32);
 impl_idx_from!(MatrixEntryId(u32));
 impl_debug_display! {match MatrixEntryId{MatrixEntryId(id) => "j{id}";}}
 
-/// Enhancement-352: a SECOND-order Taylor coefficient of the DAE system,
-/// d2(I_row)/d(x_col1)d(x_col2), stored with the 1/2! already folded in so the
-/// value IS the Taylor coefficient rather than the raw derivative. That is the
-/// convention ngspice's distortion analysis expects -- `diodset.c` computes
-/// `g2 = 0.5*gd/vte`, i.e. (1/2!) d2I/dV2, and the S-primitives it feeds
-/// (`S2v2F1(c,Hx,Hy) = Re(c*Hx*Hy)`) carry no factors of their own.
-///
-/// Only col1 <= col2 is stored: the tensor is symmetric, and the consumer
-/// reconstructs the mirrored term. Entries whose value is identically zero are
-/// dropped by the same sparsification the jacobian uses.
-#[derive(PartialEq, Eq, Clone, Copy, Hash, Debug)]
-pub struct Taylor2Entry {
-    pub row: SimUnknown,
-    /// indices into `DaeSystem::model_inputs` (branch voltages), col1 <= col2
-    pub col1: u32,
-    pub col2: u32,
-    pub resist: Value,
-    pub react: Value,
-}
-
-#[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
-pub struct Taylor2EntryId(u32);
-impl_idx_from!(Taylor2EntryId(u32));
-impl_debug_display! {match Taylor2EntryId{Taylor2EntryId(id) => "t2_{id}";}}
-
-/// Enhancement-352: a THIRD-order Taylor coefficient,
-/// (1/3!) d3(I_row)/d(x_col1)d(x_col2)d(x_col3), stored for col1 <= col2 <= col3.
-#[derive(PartialEq, Eq, Clone, Copy, Hash, Debug)]
-pub struct Taylor3Entry {
-    pub row: SimUnknown,
-    /// indices into `DaeSystem::model_inputs`, col1 <= col2 <= col3
-    pub col1: u32,
-    pub col2: u32,
-    pub col3: u32,
-    pub resist: Value,
-    pub react: Value,
-}
-
-#[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
-pub struct Taylor3EntryId(u32);
-impl_idx_from!(Taylor3EntryId(u32));
-impl_debug_display! {match Taylor3EntryId{Taylor3EntryId(id) => "t3_{id}";}}

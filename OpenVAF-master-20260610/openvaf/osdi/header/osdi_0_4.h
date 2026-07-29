@@ -178,36 +178,6 @@ typedef struct OsdiAcStimSource {
   OsdiNodePair nodes;
 }OsdiAcStimSource;
 
-/* Enhancement-352 (OSDI 0.8): higher-order Taylor coefficients of the residual,
- * for Volterra distortion analysis.
- *
- * `row` indexes the residual (the same numbering `jacobian_entries` uses for its
- * row). `col*` index the MODEL INPUTS -- the branch voltages published in
- * `inputs` -- not the node unknowns, so the consumer never has to unpick the
- * hi/lo sign convention: entry k differentiates with respect to inputs[col1]
- * etc., and inputs[i] already carries its node pair.
- *
- * Only col1 <= col2 (<= col3) is emitted; the tensors are symmetric and the
- * consumer reconstructs the mirrored terms. Entries that are identically zero
- * are not emitted at all, so a linear model carries none of this.
- *
- * IMPORTANT: the values `load_taylor2`/`load_taylor3` write are RAW PARTIAL
- * DERIVATIVES, d2I/dv_a dv_b and d3I/dv_a dv_b dv_c. The 1/n! and the
- * multinomial multiplicity for repeated indices are applied by the SIMULATOR,
- * so this interface carries no convention the reader has to infer. */
-typedef struct OsdiTaylor2Entry {
-  uint32_t row;
-  uint32_t col1;
-  uint32_t col2;
-}OsdiTaylor2Entry;
-
-typedef struct OsdiTaylor3Entry {
-  uint32_t row;
-  uint32_t col1;
-  uint32_t col2;
-  uint32_t col3;
-}OsdiTaylor3Entry;
-
 typedef struct OsdiDescriptor {
   char *name;
 
@@ -284,15 +254,6 @@ typedef struct OsdiDescriptor {
   uint32_t num_ac_stim_src;
   OsdiAcStimSource *ac_stim_sources;
   void (*load_ac_stim)(void *inst, void *model, double *dst);
-  /* Enhancement-352 (OSDI 0.8): distortion Taylor tensors. load_taylor2 and
-   * load_taylor3 each fill `dst` with [resistive, reactive] PAIRS (stride 2),
-   * one pair per entry, in the order of taylor2_entries/taylor3_entries. */
-  uint32_t num_taylor2;
-  OsdiTaylor2Entry *taylor2_entries;
-  void (*load_taylor2)(void *inst, void *model, double *dst);
-  uint32_t num_taylor3;
-  OsdiTaylor3Entry *taylor3_entries;
-  void (*load_taylor3)(void *inst, void *model, double *dst);
 }OsdiDescriptor;
 
 typedef struct OsdiNature {

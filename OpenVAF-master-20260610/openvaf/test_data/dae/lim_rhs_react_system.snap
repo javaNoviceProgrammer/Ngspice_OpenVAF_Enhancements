@@ -59,6 +59,4 @@ DaeSystem {
     ],
     num_resistive: 0,
     num_reactive: 4,
-    taylor2: {},
-    taylor3: {},
 }

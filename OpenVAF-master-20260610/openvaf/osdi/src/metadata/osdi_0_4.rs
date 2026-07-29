@@ -405,66 +405,10 @@ impl OsdiTyBuilder<'_, '_, '_> {
     }
 }
 
-/// Enhancement-352 (OSDI 0.8): a 2nd-order Taylor tensor entry. `row` indexes
-/// the residual; `col1 <= col2` index the MODEL INPUTS (branch voltages), not
-/// the node unknowns.
-pub struct OsdiTaylor2Entry {
-    pub row: u32,
-    pub col1: u32,
-    pub col2: u32,
-}
-impl OsdiTaylor2Entry {
-    pub fn to_ll_val<'ll>(
-        &self,
-        ctx: &CodegenCx<'_, 'll>,
-        tys: &'ll OsdiTys,
-    ) -> &'ll llvm_sys::LLVMValue {
-        let fields = [
-            ctx.const_unsigned_int(self.row),
-            ctx.const_unsigned_int(self.col1),
-            ctx.const_unsigned_int(self.col2),
-        ];
-        ctx.const_struct(tys.osdi_taylor2_entry, &fields)
-    }
-}
 impl OsdiTyBuilder<'_, '_, '_> {
-    fn osdi_taylor2_entry(&mut self) {
-        let ctx = self.ctx;
-        let fields = [ctx.ty_int(), ctx.ty_int(), ctx.ty_int()];
-        let ty = ctx.ty_struct("OsdiTaylor2Entry", &fields);
-        self.osdi_taylor2_entry = Some(ty);
-    }
 }
 
-/// Enhancement-352: a 3rd-order Taylor tensor entry, `col1 <= col2 <= col3`.
-pub struct OsdiTaylor3Entry {
-    pub row: u32,
-    pub col1: u32,
-    pub col2: u32,
-    pub col3: u32,
-}
-impl OsdiTaylor3Entry {
-    pub fn to_ll_val<'ll>(
-        &self,
-        ctx: &CodegenCx<'_, 'll>,
-        tys: &'ll OsdiTys,
-    ) -> &'ll llvm_sys::LLVMValue {
-        let fields = [
-            ctx.const_unsigned_int(self.row),
-            ctx.const_unsigned_int(self.col1),
-            ctx.const_unsigned_int(self.col2),
-            ctx.const_unsigned_int(self.col3),
-        ];
-        ctx.const_struct(tys.osdi_taylor3_entry, &fields)
-    }
-}
 impl OsdiTyBuilder<'_, '_, '_> {
-    fn osdi_taylor3_entry(&mut self) {
-        let ctx = self.ctx;
-        let fields = [ctx.ty_int(), ctx.ty_int(), ctx.ty_int(), ctx.ty_int()];
-        let ty = ctx.ty_struct("OsdiTaylor3Entry", &fields);
-        self.osdi_taylor3_entry = Some(ty);
-    }
 }
 
 pub struct OsdiDescriptor<'ll> {
@@ -524,13 +468,6 @@ pub struct OsdiDescriptor<'ll> {
     pub num_ac_stim_src: u32,
     pub ac_stim_sources: Vec<OsdiAcStimSource>,
     pub load_ac_stim: &'ll llvm_sys::LLVMValue,
-    /// Enhancement-352: distortion Taylor tensors (OSDI 0.8).
-    pub num_taylor2: u32,
-    pub taylor2_entries: Vec<OsdiTaylor2Entry>,
-    pub load_taylor2: &'ll llvm_sys::LLVMValue,
-    pub num_taylor3: u32,
-    pub taylor3_entries: Vec<OsdiTaylor3Entry>,
-    pub load_taylor3: &'ll llvm_sys::LLVMValue,
 }
 impl<'ll> OsdiDescriptor<'ll> {
     pub fn to_ll_val(
@@ -550,8 +487,6 @@ impl<'ll> OsdiDescriptor<'ll> {
             self.noise_source_type.iter().map(|it| ctx.const_unsigned_int(*it)).collect();
         let arr_ac_stim: Vec<_> =
             self.ac_stim_sources.iter().map(|it| it.to_ll_val(ctx, tys)).collect();
-        let arr_t2: Vec<_> = self.taylor2_entries.iter().map(|it| it.to_ll_val(ctx, tys)).collect();
-        let arr_t3: Vec<_> = self.taylor3_entries.iter().map(|it| it.to_ll_val(ctx, tys)).collect();
         let fields = [
             ctx.const_str_uninterned(&self.name),
             ctx.const_unsigned_int(self.num_nodes),
@@ -607,12 +542,6 @@ impl<'ll> OsdiDescriptor<'ll> {
             ctx.const_unsigned_int(self.num_ac_stim_src),
             ctx.const_arr_ptr(tys.osdi_ac_stim_source, &arr_ac_stim),
             self.load_ac_stim,
-            ctx.const_unsigned_int(self.num_taylor2),
-            ctx.const_arr_ptr(tys.osdi_taylor2_entry, &arr_t2),
-            self.load_taylor2,
-            ctx.const_unsigned_int(self.num_taylor3),
-            ctx.const_arr_ptr(tys.osdi_taylor3_entry, &arr_t3),
-            self.load_taylor3,
         ];
         let ty = tys.osdi_descriptor;
         ctx.const_struct(ty, &fields)
@@ -674,14 +603,6 @@ impl OsdiTyBuilder<'_, '_, '_> {
             ctx.ty_ptr(),
             ctx.ty_int(),
             // Enhancement-51: num_ac_stim_src, ac_stim_sources, load_ac_stim
-            ctx.ty_int(),
-            ctx.ty_ptr(),
-            ctx.ty_ptr(),
-            // Enhancement-352: num_taylor2, taylor2_entries, load_taylor2,
-            //                  num_taylor3, taylor3_entries, load_taylor3
-            ctx.ty_int(),
-            ctx.ty_ptr(),
-            ctx.ty_ptr(),
             ctx.ty_int(),
             ctx.ty_ptr(),
             ctx.ty_ptr(),
@@ -873,8 +794,6 @@ pub struct OsdiTys<'ll> {
     pub osdi_param_opvar: &'ll llvm_sys::LLVMType,
     pub osdi_noise_source: &'ll llvm_sys::LLVMType,
     pub osdi_ac_stim_source: &'ll llvm_sys::LLVMType,
-    pub osdi_taylor2_entry: &'ll llvm_sys::LLVMType,
-    pub osdi_taylor3_entry: &'ll llvm_sys::LLVMType,
     pub osdi_nature_ref: &'ll llvm_sys::LLVMType,
     pub osdi_descriptor: &'ll llvm_sys::LLVMType,
     pub osdi_nature: &'ll llvm_sys::LLVMType,
@@ -899,8 +818,6 @@ impl<'ll> OsdiTys<'ll> {
             osdi_param_opvar: None,
             osdi_noise_source: None,
             osdi_ac_stim_source: None,
-            osdi_taylor2_entry: None,
-            osdi_taylor3_entry: None,
             osdi_nature_ref: None,
             osdi_descriptor: None,
             osdi_nature: None,
@@ -920,8 +837,6 @@ impl<'ll> OsdiTys<'ll> {
         builder.osdi_param_opvar();
         builder.osdi_noise_source();
         builder.osdi_ac_stim_source();
-        builder.osdi_taylor2_entry();
-        builder.osdi_taylor3_entry();
         builder.osdi_nature_ref();
         builder.osdi_descriptor();
         builder.osdi_nature();
@@ -946,8 +861,6 @@ struct OsdiTyBuilder<'a, 'b, 'll> {
     osdi_param_opvar: Option<&'ll llvm_sys::LLVMType>,
     osdi_noise_source: Option<&'ll llvm_sys::LLVMType>,
     osdi_ac_stim_source: Option<&'ll llvm_sys::LLVMType>,
-    osdi_taylor2_entry: Option<&'ll llvm_sys::LLVMType>,
-    osdi_taylor3_entry: Option<&'ll llvm_sys::LLVMType>,
     osdi_nature_ref: Option<&'ll llvm_sys::LLVMType>,
     osdi_descriptor: Option<&'ll llvm_sys::LLVMType>,
     osdi_nature: Option<&'ll llvm_sys::LLVMType>,
@@ -970,8 +883,6 @@ impl<'ll> OsdiTyBuilder<'_, '_, 'll> {
             osdi_param_opvar: self.osdi_param_opvar.unwrap(),
             osdi_noise_source: self.osdi_noise_source.unwrap(),
             osdi_ac_stim_source: self.osdi_ac_stim_source.unwrap(),
-            osdi_taylor2_entry: self.osdi_taylor2_entry.unwrap(),
-            osdi_taylor3_entry: self.osdi_taylor3_entry.unwrap(),
             osdi_nature_ref: self.osdi_nature_ref.unwrap(),
             osdi_descriptor: self.osdi_descriptor.unwrap(),
             osdi_nature: self.osdi_nature.unwrap(),

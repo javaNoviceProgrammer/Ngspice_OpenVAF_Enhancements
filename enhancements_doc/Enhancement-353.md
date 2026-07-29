@@ -1,5 +1,12 @@
 # Enhancement-353 — `.disto` for Verilog-A models that use `$limit`
 
+> **Superseded by [Enhancement-359](Enhancement-359.md).** `$limit` models still
+> work — the seven-shape suite below passes unchanged — but the chain-fold this
+> enhancement added no longer exists. E-359 differences the Jacobian the
+> simulator actually uses, so a limited model needs no special handling at all:
+> the problem this solved cannot arise. Retained as the record of why limiting
+> models were invisible to the original symbolic design.
+
 [Enhancement-352](Enhancement-352.md) gave Verilog-A devices distortion
 analysis, but only for models that read their controlling voltages directly. A
 model that passes one through `$limit` contributed **nothing at all** — and

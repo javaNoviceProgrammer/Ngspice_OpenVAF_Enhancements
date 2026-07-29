@@ -6,21 +6,21 @@
 {
     cslot0: (
         (
-            Some(ClassId(83)),
+            Some(ClassId(77)),
             0,
         ),
         Real,
     ),
     cslot1: (
         (
-            Some(ClassId(338)),
+            Some(ClassId(193)),
             0,
         ),
         Real,
     ),
     cslot2: (
         (
-            Some(ClassId(351)),
+            Some(ClassId(202)),
             0,
         ),
         Real,

@@ -177,7 +177,11 @@ impl<'a> CompiledModule<'a> {
         // Add extra stuff needed for evaluating the DAE system
         let topology = Topology::new(&mut cx);
         debug_assert!(cx.func.validate());
+        let _t0 = std::time::Instant::now();
         let mut dae_system = DaeSystem::new(&mut cx, topology);
+        if std::env::var("PHASE_PROF").is_ok() {
+            eprintln!("PHASE dae+tensors {:?}  insts={}", _t0.elapsed(), cx.func.dfg.num_insts());
+        }
 
         // Enhancement-44: compose paramset hierarchical system parameter overrides
         // (hidden `$paramset$<name>` localparams, see `lower_paramset`) with the
@@ -208,16 +212,25 @@ impl<'a> CompiledModule<'a> {
         debug_assert!(cx.func.validate());
 
         // Optimization
+        let _pt = std::env::var("PHASE_PROF").is_ok();
+        let _t = std::time::Instant::now();
         cx.compute_cfg();
         let gvn = cx.optimize(OptimiziationStage::PostDerivative);
         dae_system.sparsify(&mut cx);
+        if _pt {
+            eprintln!("PHASE optimize+sparsify {:?}  insts={}", _t.elapsed(), cx.func.dfg.num_insts());
+        }
         debug_assert!(cx.func.validate());
 
         // Instance setup MIR - a copy of module MIR where only those instructions
         // are kept that do not depend on op.
         // This removes all instructions that do not depend on op from module MIR.
+        let _t = std::time::Instant::now();
         cx.refresh_op_dependent_insts();
         let mut init = Initialization::new(&mut cx, gvn);
+        if _pt {
+            eprintln!("PHASE init-split {:?}", _t.elapsed());
+        }
         // Build node collapse pairs
         let node_collapse = NodeCollapse::new(&init, &dae_system, &cx);
         debug_assert!(cx.func.validate());

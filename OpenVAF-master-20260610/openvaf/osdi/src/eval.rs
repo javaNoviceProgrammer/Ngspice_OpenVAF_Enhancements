@@ -458,7 +458,6 @@ impl<'ll> OsdiCompilationUnit<'_, '_, 'll> {
             Self::build_store_results(&mut builder, llfunc, &flags, CALC_NOISE, &store_noise);
 
             inst_data.store_bound_step(instance, &builder);
-            inst_data.store_taylor(instance, &builder);
             inst_data.store_delay_times(instance, &builder);
             inst_data.store_last_crossing_dirs(instance, &builder);
             inst_data.store_hidden_state(instance, &builder);

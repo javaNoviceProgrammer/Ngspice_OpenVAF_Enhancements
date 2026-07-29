@@ -37,12 +37,6 @@ typedef struct OsdiRegistryEntry {
   uint32_t num_last_crossings;
   const void *last_crossing_infos;  /* points into the loaded .osdi's OSDI_LAST_CROSSING_INFOS */
 
-  /* Enhancement-352: true when the loaded .osdi is OSDI >= 0.8 and therefore
-   * carries the distortion Taylor tensors. Older files stop at load_ac_stim, so
-   * reading taylor2_entries off them would run past the end of their (smaller)
-   * descriptor -- this flag is what keeps that from happening. */
-  bool has_taylor;
-
 } OsdiRegistryEntry;
 
 typedef struct OsdiObjectFile {

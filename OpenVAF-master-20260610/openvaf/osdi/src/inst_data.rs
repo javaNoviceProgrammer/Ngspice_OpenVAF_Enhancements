@@ -229,11 +229,6 @@ pub struct OsdiInstanceData<'ll> {
 
     pub residual: TiVec<SimUnknown, Residual>,
     pub noise: Vec<NoiseSource>,
-    /// Enhancement-352: eval-output slots for the distortion Taylor tensors,
-    /// one (resistive, reactive) pair per descriptor entry and in the same
-    /// order, so `load_taylor2`/`load_taylor3` can just walk them.
-    pub taylor2: Vec<(EvalOutput, EvalOutput)>,
-    pub taylor3: Vec<(EvalOutput, EvalOutput)>,
     pub opvars: IndexMap<Variable, EvalOutput, BuildHasherDefault<FxHasher>>,
     pub jacobian: TiVec<MatrixEntryId, MatrixEntry>,
     pub bound_step: Option<EvalOutputSlot>,
@@ -309,30 +304,6 @@ impl<'ll> OsdiInstanceData<'ll> {
             .noise_sources
             .iter()
             .map(|source| NoiseSource::new(source, module, &mut eval_outputs, ty_f64))
-            .collect();
-        // Enhancement-352: register the Taylor tensor values as eval outputs so
-        // `eval` computes and caches them exactly like a jacobian entry.
-        let taylor2: Vec<(EvalOutput, EvalOutput)> = module
-            .dae_system
-            .taylor2
-            .iter()
-            .map(|e| {
-                (
-                    EvalOutput::new(module, e.resist, &mut eval_outputs, true, ty_f64),
-                    EvalOutput::new(module, e.react, &mut eval_outputs, true, ty_f64),
-                )
-            })
-            .collect();
-        let taylor3: Vec<(EvalOutput, EvalOutput)> = module
-            .dae_system
-            .taylor3
-            .iter()
-            .map(|e| {
-                (
-                    EvalOutput::new(module, e.resist, &mut eval_outputs, true, ty_f64),
-                    EvalOutput::new(module, e.react, &mut eval_outputs, true, ty_f64),
-                )
-            })
             .collect();
         let bound_step = module.intern.outputs.get(&PlaceKind::BoundStep).and_then(|val| {
             let mut val = val.expand()?;
@@ -441,8 +412,6 @@ impl<'ll> OsdiInstanceData<'ll> {
             cache_slots,
             residual,
             noise,
-            taylor2,
-            taylor3,
             opvars,
             jacobian,
             bound_step,
@@ -460,26 +429,6 @@ impl<'ll> OsdiInstanceData<'ll> {
     ) {
         if let Some(slot) = self.bound_step {
             self.store_eval_output_slot(slot, ptr, builder);
-        }
-    }
-
-    /// Enhancement-352: persist the distortion Taylor tensors. They are plain
-    /// eval outputs like `bound_step`, so they need an explicit store -- the
-    /// jacobian/residual stores are gated on CALC_* flags that `.disto` never
-    /// sets, and without this the slots stay zero and the analysis silently
-    /// contributes nothing (which is exactly how it first failed).
-    pub unsafe fn store_taylor(
-        &self,
-        ptr: &'ll llvm_sys::LLVMValue,
-        builder: &mir_llvm::Builder<'_, '_, 'll>,
-    ) {
-        for (r, x) in self.taylor2.iter().chain(self.taylor3.iter()) {
-            if let EvalOutput::Calculated(slot) = r {
-                self.store_eval_output_slot(*slot, ptr, builder);
-            }
-            if let EvalOutput::Calculated(slot) = x {
-                self.store_eval_output_slot(*slot, ptr, builder);
-            }
         }
     }
 
