@@ -692,16 +692,31 @@ void cp_remvar(char *varname)
     case US_DONTRECORD:
         /* 'curplot' 'curplotname' 'curplottitle' 'curplotdate' */
         /* Do nothing... */
-        if (*p)
-            fprintf(cp_err, "cp_remvar: Internal Error: var %d\n", *varname);
+        /* Enhancement-372: there used to be an "Internal Error: var %d" here,
+         * guarded by `if (*p)`. Two things were wrong with it.
+         *
+         * `varname` is a `char *`, so `*varname` printed with %d rendered the
+         * FIRST CHARACTER's ASCII code: `unset plots` reported "var 112" ('p')
+         * and `unset curplot` reported "var 99" ('c'). The message never named
+         * the variable it was complaining about.
+         *
+         * And it was not an internal error at all. `*p` non-NULL only means the
+         * variable was FOUND in one of the lists walked above -- which is the
+         * normal state for `curplot` and `plots`, so the branch fired on every
+         * ordinary `unset` of them. An internal error that valid user input
+         * reaches 100% of the time carries no signal. Doing nothing here matches
+         * both this case's own comment and its siblings curplotname /
+         * curplottitle / curplotdate, which were always silent. */
         break;
 
     case US_READONLY:
         /* 'plots' and any var in plot_cur->pl_env */
-        /* Badness... */
+        /* Enhancement-372: the read-only diagnostic below is the complete and
+         * correct answer; the "Internal Error" that used to follow it was the
+         * same misprinted, always-taken branch described above. Nothing is
+         * unlinked or freed in this case, which is exactly right for a
+         * read-only variable. */
         fprintf(cp_err, "Error: %s is read-only.\n", v->va_name);
-        if (*p)
-            fprintf(cp_err, "cp_remvar: Internal Error: var %d\n", *varname);
         break;
 
     case US_SIMVAR:
