@@ -158,6 +158,14 @@ typedef struct OsdiParamOpvar {
   uint32_t len;
 }OsdiParamOpvar;
 
+/* Enhancement-364: noise-source kinds, mirrored from the compiler-side header
+ * openvaf/osdi/header/osdi_0_4.h. The field `noise_source_type` was already in
+ * the descriptor; these names were simply never copied across, which is why
+ * nothing in ngspice could interpret it. */
+#define NOISE_TYPE_WHITE 0
+#define NOISE_TYPE_FLICKER 1
+#define NOISE_TYPE_TABLE 2
+
 typedef struct OsdiNoiseSource {
   char *name;
   OsdiNodePair nodes;

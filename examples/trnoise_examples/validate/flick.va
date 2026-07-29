@@ -1,0 +1,14 @@
+`include "disciplines.vams"
+// Flicker-only device: a linear conductance whose ONLY noise source is 1/f.
+// S_i(f) = kf / f  (exponent 1). No thermal term, so the measured spectrum is
+// entirely the flicker path.
+module vaflick(p, n);
+  inout p, n;
+  electrical p, n;
+  parameter real r = 1e3 from (0:inf);
+  parameter real kf = 1e-20 from [0:inf);
+  analog begin
+    I(p, n) <+ V(p, n) / r;
+    I(p, n) <+ flicker_noise(kf, 1.0, "fl");
+  end
+endmodule

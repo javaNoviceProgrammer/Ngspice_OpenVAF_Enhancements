@@ -74,6 +74,8 @@ typedef struct OsdiLastCrossingInfo {
     uint32_t dir_offset;  /* byte offset into OSDI instance data for dir value */
 } OsdiLastCrossingInfo;
 
+struct trnoise_state;
+
 typedef struct OsdiExtraInstData {
   double dt;
   double temp;
@@ -123,6 +125,15 @@ typedef struct OsdiExtraInstData {
    * cx's pattern. NULL under SPARSE. */
   double **crossing_jac_z_csc;
   double **crossing_jac_z_cx;
+
+  /* Enhancement-364: one time-domain noise generator per Verilog-A noise
+   * source (perfectly correlated same-named sources share one, so `noise_owned`
+   * marks which pointers this instance actually owns). Allocated lazily on the
+   * first noisy transient timepoint; NULL when the circuit has no transient
+   * noise, which is the overwhelmingly common case. */
+  struct trnoise_state **noise_state;
+  char *noise_owned;
+  uint32_t noise_nsrc;
 
   /* Enhancement-7: true once this instance's eval() has been called at
    * least once. Used by OSDIload to set EVAL_FLAG_IS_INITIAL_STEP on
@@ -225,3 +236,11 @@ double osdi_limitlog(bool init, bool *icheck, double vnew, double vold,
                      double LIM_TOL);
 double osdi_fetlim(bool init, bool *icheck, double vnew, double vold,
                    double vto);
+
+/* Enhancement-364: transient noise for OSDI devices (osditrnoise.c). */
+double osdi_trnoise_ts(CKTcircuit *ckt);
+void osdi_trnoise_reset(void);
+void osdi_trnoise_free(OsdiExtraInstData *extra);
+void osdi_trnoise_stamp(CKTcircuit *ckt, void *inst, void *model,
+                        OsdiExtraInstData *extra, const OsdiDescriptor *descr,
+                        bool is_tran);

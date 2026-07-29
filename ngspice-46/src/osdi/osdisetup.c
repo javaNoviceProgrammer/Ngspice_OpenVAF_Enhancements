@@ -542,6 +542,10 @@ extern int OSDIunsetup(GENmodel *inModel, CKTcircuit *ckt) {
           extra->int_node_ids = NULL;
         }
         extra->int_node_count = 0;
+        /* Enhancement-364: release this instance's transient-noise generators;
+           the next run re-probes the circuit and re-allocates. */
+        osdi_trnoise_free(extra);
+        osdi_trnoise_reset();
       }
 
       // reset is collapsible

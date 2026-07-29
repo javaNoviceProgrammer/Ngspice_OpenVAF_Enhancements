@@ -624,6 +624,9 @@ extern int OSDIload(GENmodel *inModel, CKTcircuit *ckt) {
         absdelay_stamp_dc(inst, extra_inst_data, entry, descr);
       }
       last_crossing_stamp(inst, extra_inst_data, entry, descr, ckt, is_tran);
+      /* Enhancement-364: inject Verilog-A noise sources into the transient
+         right-hand side. No-op unless the circuit has transient noise. */
+      osdi_trnoise_stamp(ckt, inst, model, extra_inst_data, descr, is_tran);
       /* Enhancement-55: accumulate this timepoint attempt's flags (an
          event may fire on an intermediate Newton iteration only) */
       if (ckt->CKTmode & (MODEINITJCT | MODEINITPRED | MODEINITTRAN)) {
@@ -670,6 +673,9 @@ extern int OSDIload(GENmodel *inModel, CKTcircuit *ckt) {
           absdelay_stamp_dc(inst, extra_inst_data, entry, descr);
         }
         last_crossing_stamp(inst, extra_inst_data, entry, descr, ckt, is_tran);
+        /* Enhancement-364: inject Verilog-A noise sources into the transient
+           right-hand side. No-op unless the circuit has transient noise. */
+        osdi_trnoise_stamp(ckt, inst, model, extra_inst_data, descr, is_tran);
         /* Enhancement-55: accumulate this timepoint attempt's flags (an
            event may fire on an intermediate Newton iteration only) */
         if (ckt->CKTmode & (MODEINITJCT | MODEINITPRED | MODEINITTRAN)) {
