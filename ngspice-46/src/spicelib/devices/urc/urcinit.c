@@ -36,7 +36,23 @@ SPICEdev URCinfo = {
     .DEVload = NULL,
     .DEVsetup = URCsetup,
     .DEVunsetup = URCunsetup,
-    .DEVpzSetup = URCsetup,
+    /* Enhancement-370: was `URCsetup`. URCsetup is a SUBCIRCUIT EXPANDER -- it
+     * calls CKTmkVolt per lump and CKTcrtElt per element, with no idempotency
+     * guard -- while CKTpzSetup calls DEVpzSetup for every device on EVERY pz
+     * job. So each `.pz` re-expanded the URC, creating fresh internal nodes
+     * AFTER NIinit had already sized the RHS for the previous node count; the
+     * resistors of the new lump then indexed past CKTrhsOld (ASan:
+     * heap-buffer-overflow READ in RESload, buffer allocated by NIreinit).
+     *
+     * The URC stamps nothing itself -- DEVload, DEVacLoad and DEVpzLoad are all
+     * NULL -- so it needs no pz setup at all. The RES/CAP instances it creates
+     * are ordinary circuit elements registered under their own device types, and
+     * CKTpzSetup calls RESsetup/CAPsetup for them, which is what actually
+     * re-binds the matrix entries after the pz matrix is rebuilt.
+     *
+     * (RESsetup/CAPsetup are safe as DEVpzSetup because they only allocate
+     * matrix entries; URCsetup is the only expander wired up this way.) */
+    .DEVpzSetup = NULL,
     .DEVtemperature = NULL,
     .DEVtrunc = NULL,
     .DEVfindBranch = NULL,

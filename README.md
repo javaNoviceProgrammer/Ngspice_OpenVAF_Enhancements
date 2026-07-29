@@ -412,6 +412,8 @@ The index: **Doc** links each enhancement's detailed write-up, **Examples** link
 | 366 | fix: two more sites of the E-365 stale-binding class — `pz` then `qpss`, and a KLU NULL check that reported the NULL then dereferenced it | ngspice | [doc](enhancements_doc/Enhancement-366.md) | [pzklu](examples/pzklu_examples/) |
 | 367 | fix: `sweep` plots were named `unknown<N>` and the summary quoted a literal `'sweep'` no plot answered to; eight plot types registered and the real name printed | ngspice | [doc](enhancements_doc/Enhancement-367.md) | [sweepname](examples/sweepname_examples/) |
 | 368 | fix: the periodic small-signal analyses named their plots wrong — `pxf` was `unknown<N>`, and `pac`/`psp`/`pnoise`/`qpnoise`/`phasenoise`/`qpss` each collided with an unrelated analysis | ngspice | [doc](enhancements_doc/Enhancement-368.md) | [plotnames](examples/plotnames_examples/) |
+| 369 | fix: closes the E-365/366 stale-binding class — a KLU pole-zero binding was cleared only when re-established, so a later analysis dereferenced freed memory | ngspice | [doc](enhancements_doc/Enhancement-369.md) | [klubind](examples/klubind_examples/) |
+| 370 | fix: every `.pz` re-expanded a URC subcircuit, creating nodes past the allocated RHS — a heap-buffer-overflow hiding under a passing crash fixture | ngspice | [doc](enhancements_doc/Enhancement-370.md) | [urcpz](examples/urcpz_examples/) |
 
 </details>
 

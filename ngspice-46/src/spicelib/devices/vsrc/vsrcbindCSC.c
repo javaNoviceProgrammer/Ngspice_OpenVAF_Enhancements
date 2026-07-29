@@ -53,7 +53,21 @@ VSRCbindCSC (GENmodel *inModel, CKTcircuit *ckt)
             CREATE_KLU_BINDING_TABLE(VSRCibrPosPtr, VSRCibrPosBinding, VSRCbranch, VSRCposNode);
 #endif
 
-            /* Pole-Zero Analysis */
+            /* Pole-Zero Analysis
+             *
+             * Enhancement-369: CLEAR the binding when it is not re-established,
+             * rather than leaving it pointing into the PREVIOUS matrix.
+             * `VSRCibrIbrPtr` is allocated only by a pole-zero analysis, so on
+             * any later analysis the test below is false. Before this fix the
+             * binding kept its old value -- into the BindStruct that
+             * SMPdestroy() freed when the pz matrix went away -- and
+             * VSRCbindCSCComplex()/...ComplexToReal() dereferenced it, because
+             * their guard is `VSRCbranch != 0` rather than "was this binding
+             * re-established for THIS matrix". Reproduced with
+             * `option klu ; pz ; ac`: ASan reports heap-use-after-free at
+             * vsrcbindCSC.c in VSRCbindCSCComplex, freed by SMPdestroy and
+             * reallocated by SMPconvertCOOtoCSC. */
+            here->VSRCibrIbrBinding = NULL ;
             if (here->VSRCibrIbrPtr)
             {
                 i.COO = here->VSRCibrIbrPtr ;
@@ -115,7 +129,7 @@ VSRCbindCSCComplex (GENmodel *inModel, CKTcircuit *ckt)
 #endif
 
             /* Pole-Zero Analysis */
-            if ((here-> VSRCbranch != 0) && (here-> VSRCbranch != 0))
+            if (here->VSRCbranch != 0)   /* was `x != 0 && x != 0` (copy-paste slip) */
             {
                 if (here->VSRCibrIbrBinding)
                 {
@@ -171,7 +185,7 @@ VSRCbindCSCComplexToReal (GENmodel *inModel, CKTcircuit *ckt)
 #endif
 
             /* Pole-Zero Analysis */
-            if ((here-> VSRCbranch != 0) && (here-> VSRCbranch != 0))
+            if (here->VSRCbranch != 0)   /* was `x != 0 && x != 0` (copy-paste slip) */
             {
                 if (here->VSRCibrIbrBinding)
                 {
