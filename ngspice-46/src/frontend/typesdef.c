@@ -71,6 +71,12 @@ static struct plotab plotabs[NUMPLOTTYPES] = {
     { "dc", "d.c.", FALSE, FALSE },
     { "dc", "dc", FALSE, FALSE },
     { "dc", "transfer", FALSE, FALSE },
+    /* Enhancement-368: the PERIODIC small-signal analyses name their plots through
+     * beginPlot(analName) with a descriptive string, not a literal, so E-367's
+     * literal audit could not see them. Each must precede the GENERAL pattern its
+     * name happens to contain, or the general one wins: "PAC Analysis" contains
+     * "ac", so it was abbreviated `ac` and collided with ordinary AC plots. */
+    { "pac", "pac", FALSE, FALSE },
     { "ac", "a.c.", FALSE, FALSE },
     { "ac", "ac", FALSE, FALSE },
     { "pz", "pz", FALSE, FALSE },
@@ -78,14 +84,27 @@ static struct plotab plotabs[NUMPLOTTYPES] = {
     { "pz", "pole-zero", FALSE, FALSE},
     { "disto", "disto", FALSE, FALSE },
     { "dist", "dist", FALSE, FALSE },
+    /* Enhancement-368: all three of these contain "noise" and were abbreviated
+     * `noise`, colliding with ordinary noise plots AND with each other. "qpnoise"
+     * also contains "pnoise", so it must come first of the three. */
+    { "qpnoise", "qpnoise", FALSE, FALSE },
+    { "phasenoise", "phasenoise", FALSE, FALSE },
+    { "pnoise", "pnoise", FALSE, FALSE },
     { "noise", "noise", FALSE, FALSE },
     { "sens", "sens", FALSE, FALSE },
     { "sens", "sensitivity", FALSE, FALSE },
     { "sens2", "sens2", FALSE, FALSE },
+    /* Enhancement-368: "PSP Analysis" contains "sp" -> collided with S-parameters. */
+    { "psp", "psp", FALSE, FALSE },
+    { "pxf", "pxf", FALSE, FALSE },
     { "sp", "s.p.", FALSE, FALSE },
     { "sp", "sp", FALSE, FALSE },
     { "harm", "harm", FALSE, FALSE },
     { "spect", "spect", FALSE, FALSE },
+    /* Enhancement-368: QPSS is "Frequency Domain Periodic Steady State Analysis"
+     * and PSS is "Time Domain Periodic ..." -- both contain "periodic", so QPSS
+     * was abbreviated `pss`. The pattern has to carry the distinguishing words. */
+    { "qpss", "frequency domain periodic", FALSE, FALSE },
     { "pss", "periodic", FALSE, FALSE },
     /* Enhancement-367: plots created by the commands this project added had no
      * entry here, so ft_plotabbrev() returned NULL and plot_alloc() fell back to
