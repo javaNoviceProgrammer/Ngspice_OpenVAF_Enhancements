@@ -27,7 +27,9 @@ product forms a curve family -- one curve per output per outer combination, name
 For every knob value it sets the knob, runs the `-analysis` command (default `op`),
 and evaluates each `-output` expression (its LAST value). With no `-output`, every
 node voltage of the analysis is recorded (like `.dc`). The results go into a new
-plot named `sweep`, with the knob values as the scale, so `plot <output>` shows the
+plot named `sweep<N>` (Enhancement-367 -- it was `unknown<N>` before, because no
+`sweep` entry existed in the plotabs[] table in typesdef.c; the command prints the
+name it actually used), with the knob values as the scale, so `plot <output>` shows the
 output versus the swept knob. The per-point analysis plots are kept too (e.g.
 `tran1`, `tran2`, …) for overlaying waveforms. Console chatter from the inner
 analyses is suppressed via `ft_optimizing`.
@@ -1290,6 +1292,7 @@ static int sweep_active = 0;
 void com_sweep(wordlist *wl)
 {
     char *analysis = NULL, *scname = NULL;
+    const char *swplotname = "sweep";  /* Enhancement-367: the real plot name */
     char *outname[SW_MAXOUT], *outexpr[SW_MAXOUT];
     double *data = NULL;
     int nout = 0, i, k, p, j;
@@ -1565,6 +1568,9 @@ void com_sweep(wordlist *wl)
         pl->pl_title = copy(kname[0]);
         plot_new(pl);
         plot_setcur(pl->pl_typename);
+        /* Enhancement-367: remember the real name so the summary below can quote
+         * something `setplot` accepts. `pl` is block-scoped. */
+        swplotname = pl->pl_typename;
         sc = dvec_alloc(copy(scname), SV_NOTYPE,
                         (short) (VF_REAL | VF_PERMANENT), nv0, NULL);
         for (i = 0; i < nv0; i++) sc->v_realdata[i] = kvals[0][i];
@@ -1584,14 +1590,18 @@ void com_sweep(wordlist *wl)
             }
     }
     if (nknob == 1)
-        fprintf(cp_out, "sweep: %d points into the 'sweep' plot%s; "
+        /* Enhancement-367: name the plot the user can actually select. This
+         * used to print the literal 'sweep', which `setplot` rejects -- the one
+         * hint given for returning to an earlier sweep was wrong, and it only
+         * bites once a session has more than one sweep. */
+        fprintf(cp_out, "sweep: %d points into plot '%s'%s; "
                         "`plot <output>` to view vs %s.\n",
-                nv0, overlay ? "" : " (now current)", scname);
+                nv0, swplotname, overlay ? "" : " (now current)", scname);
     else
-        fprintf(cp_out, "sweep: %d curve%s x %d output%s into the 'sweep' plot%s; "
+        fprintf(cp_out, "sweep: %d curve%s x %d output%s into plot '%s'%s; "
                         "`plot <output>_...` to view the family vs %s.\n",
                 ncomb, ncomb == 1 ? "" : "s", nout, nout == 1 ? "" : "s",
-                overlay ? "" : " (now current)", scname);
+                swplotname, overlay ? "" : " (now current)", scname);
 
     /* --- Enhancement-189/190: -overlay plot of every run's full waveform, one
      * vector per (output, cartesian point) resampled onto a common grid. The

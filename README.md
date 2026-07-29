@@ -410,6 +410,7 @@ The index: **Doc** links each enhancement's detailed write-up, **Examples** link
 | 364 | transient noise for OSDI devices — Verilog-A `white_noise`/`flicker_noise` injected into `.tran`, activating automatically when the deck has a `trnoise` source | ngspice | [doc](enhancements_doc/Enhancement-364.md) | [trnoise](examples/trnoise_examples/) |
 | 365 | fix: `pz` left device matrix bindings dangling, so a following `hb` returned a silently wrong result (and read freed memory) | ngspice | [doc](enhancements_doc/Enhancement-365.md) | [pzhb](examples/pzhb_examples/) |
 | 366 | fix: two more sites of the E-365 stale-binding class — `pz` then `qpss`, and a KLU NULL check that reported the NULL then dereferenced it | ngspice | [doc](enhancements_doc/Enhancement-366.md) | [pzklu](examples/pzklu_examples/) |
+| 367 | fix: `sweep` plots were named `unknown<N>` and the summary quoted a literal `'sweep'` no plot answered to; eight plot types registered and the real name printed | ngspice | [doc](enhancements_doc/Enhancement-367.md) | [sweepname](examples/sweepname_examples/) |
 
 </details>
 

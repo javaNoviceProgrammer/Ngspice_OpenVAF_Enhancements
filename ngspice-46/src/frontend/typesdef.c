@@ -86,7 +86,33 @@ static struct plotab plotabs[NUMPLOTTYPES] = {
     { "sp", "sp", FALSE, FALSE },
     { "harm", "harm", FALSE, FALSE },
     { "spect", "spect", FALSE, FALSE },
-    { "pss", "periodic", FALSE, FALSE }
+    { "pss", "periodic", FALSE, FALSE },
+    /* Enhancement-367: plots created by the commands this project added had no
+     * entry here, so ft_plotabbrev() returned NULL and plot_alloc() fell back to
+     * "unknown" -- `sweep` produced unknown4/unknown7/unknown10 rather than
+     * sweep1/sweep2/sweep3, and the message it printed ("into the 'sweep'
+     * plot") named something `setplot` could not find. The N is a global plot
+     * counter, so the numbers were not even consecutive.
+     *
+     * FIELD ORDER, which reads backwards: {p_name, p_pattern}. The SECOND field
+     * is matched -- substring(p_pattern, plotname) -- and the FIRST is what gets
+     * returned as the abbreviation, so { "tran", "transient" } means a plot named
+     * "transient" is abbreviated "tran". The entries below use the same string
+     * twice because for these commands the plot name IS the wanted abbreviation.
+     *
+     * ORDER MATTERS: the first pattern that matches wins, so a more specific
+     * pattern must precede one that is a substring of it -- "sweepwave" before
+     * "sweep", or a sweep-waveform plot would be abbreviated "sweep" and collide
+     * with the point plot. (The same rule explains an existing quirk: a plot
+     * named "spectrum" matches the earlier "sp" entry, never "spect".) */
+    { "sweepwave", "sweepwave", FALSE, FALSE },
+    { "sweep", "sweep", FALSE, FALSE },
+    { "hb", "hb", FALSE, FALSE },
+    { "envelope", "envelope", FALSE, FALSE },
+    { "eye", "eye", FALSE, FALSE },
+    { "loadpull", "loadpull", FALSE, FALSE },
+    { "rfstab", "rfstab", FALSE, FALSE },
+    { "stb", "stb", FALSE, FALSE }
 };
 
 
