@@ -71,30 +71,63 @@ static inline dcomplex cconj(dcomplex a)
 
 /* Enhancement-359: the numerical tensors are evaluated at the DC operating
  * point, so they are frequency-independent: built once at D_SETUP and reused by
- * every mode and every frequency. Kept in iteration order -- D_SETUP and the
- * mode passes walk models/instances identically -- with the instance pointer
- * carried alongside purely as a consistency check. */
+ * every mode and every frequency.
+ *
+ * The cache is PER MODEL TYPE, not global. `DEVdisto` is dispatched once per
+ * device type (cktdisto.c walks DEVices[]), and every distinct .osdi is its own
+ * type -- so a circuit using two Verilog-A models calls this whole routine twice
+ * for each mode, D_SETUP included. A single global cache cleared at D_SETUP
+ * therefore had the second model wipe the first model's tensors, and every model
+ * but the last silently contributed ZERO distortion. That is precisely the
+ * quietly-wrong result this feature exists to avoid, so the cache is keyed by
+ * descriptor and each model only ever clears its own entries. */
 typedef struct { const void *inst; OsdiNumDisto nd; } OsdiNumCacheEnt;
-static OsdiNumCacheEnt *numcache = NULL;
-static uint32_t numcache_n = 0, numcache_cap = 0;
 
-static void numcache_clear(void)
+typedef struct {
+    const OsdiDescriptor *descr;
+    OsdiNumCacheEnt *ent;
+    uint32_t n, cap;
+} OsdiNumModelCache;
+
+static OsdiNumModelCache *numcaches = NULL;
+static uint32_t numcaches_n = 0, numcaches_cap = 0;
+
+static OsdiNumModelCache *numcache_for(const OsdiDescriptor *descr, bool create)
 {
     uint32_t i;
-    for (i = 0; i < numcache_n; i++)
-        osdi_numdisto_free(&numcache[i].nd);
-    numcache_n = 0;
+    for (i = 0; i < numcaches_n; i++)
+        if (numcaches[i].descr == descr)
+            return &numcaches[i];
+    if (!create)
+        return NULL;
+    if (numcaches_n == numcaches_cap) {
+        numcaches_cap = numcaches_cap ? numcaches_cap * 2 : 8;
+        numcaches = TREALLOC(OsdiNumModelCache, numcaches, numcaches_cap);
+    }
+    numcaches[numcaches_n].descr = descr;
+    numcaches[numcaches_n].ent = NULL;
+    numcaches[numcaches_n].n = numcaches[numcaches_n].cap = 0;
+    return &numcaches[numcaches_n++];
 }
 
-static OsdiNumDisto *numcache_push(const void *inst)
+/* drop only THIS model's entries */
+static void numcache_reset(OsdiNumModelCache *mc)
 {
-    if (numcache_n == numcache_cap) {
-        numcache_cap = numcache_cap ? numcache_cap * 2 : 32;
-        numcache = TREALLOC(OsdiNumCacheEnt, numcache, numcache_cap);
+    uint32_t i;
+    for (i = 0; i < mc->n; i++)
+        osdi_numdisto_free(&mc->ent[i].nd);
+    mc->n = 0;
+}
+
+static OsdiNumDisto *numcache_push(OsdiNumModelCache *mc, const void *inst)
+{
+    if (mc->n == mc->cap) {
+        mc->cap = mc->cap ? mc->cap * 2 : 32;
+        mc->ent = TREALLOC(OsdiNumCacheEnt, mc->ent, mc->cap);
     }
-    numcache[numcache_n].inst = inst;
-    memset(&numcache[numcache_n].nd, 0, sizeof(OsdiNumDisto));
-    return &numcache[numcache_n++].nd;
+    mc->ent[mc->n].inst = inst;
+    memset(&mc->ent[mc->n].nd, 0, sizeof(OsdiNumDisto));
+    return &mc->ent[mc->n++].nd;
 }
 
 /* kernel of distinct-global-node `k`: in node coordinates the variable IS the
@@ -193,7 +226,8 @@ extern int OSDIdisto(int mode, GENmodel *inModel, CKTcircuit *ckt)
          * the limiter for its own probe steps. Being evaluated at the operating
          * point, the tensors are frequency-independent and every frequency point
          * below reuses them. */
-        numcache_clear();
+        OsdiNumModelCache *mc = numcache_for(descr, true);
+        numcache_reset(mc);
         OsdiSimInfo sim_info = {
             .paras = get_simparams(ckt),
             .abstime = 0.0,
@@ -211,7 +245,7 @@ extern int OSDIdisto(int mode, GENmodel *inModel, CKTcircuit *ckt)
                 void *inst = osdi_instance_data(entry, gen_inst);
                 const uint32_t *nmap =
                     (const uint32_t *)(((const char *)inst) + descr->node_mapping_offset);
-                OsdiNumDisto *nd = numcache_push(inst);
+                OsdiNumDisto *nd = numcache_push(mc, inst);
                 osdi_numdisto_build(ckt, descr, gen_inst, inst, model, nmap,
                                     &sim_info, nd);
                 if (getenv("OSDI_DISTO_DEBUG"))
@@ -224,6 +258,7 @@ extern int OSDIdisto(int mode, GENmodel *inModel, CKTcircuit *ckt)
     }
 
 
+    const OsdiNumModelCache *mc = numcache_for(descr, false);
     uint32_t ci = 0;
     for (gen_model = inModel; gen_model; gen_model = gen_model->GENnextModel) {
         void *model = osdi_model_data(gen_model);
@@ -235,9 +270,9 @@ extern int OSDIdisto(int mode, GENmodel *inModel, CKTcircuit *ckt)
                 (const uint32_t *)(((const char *)inst) + descr->node_mapping_offset);
             const OsdiNumDisto *nd;
 
-            if (ci >= numcache_n || numcache[ci].inst != inst)
+            if (!mc || ci >= mc->n || mc->ent[ci].inst != inst)
                 continue;                  /* setup did not cover this instance */
-            nd = &numcache[ci++].nd;
+            nd = &mc->ent[ci++].nd;
             if (nd->n2 == 0 && nd->n3 == 0)
                 continue;                  /* linear device: nothing to add */
 

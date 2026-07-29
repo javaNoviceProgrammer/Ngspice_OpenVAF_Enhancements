@@ -248,6 +248,45 @@ print d[0]
     check("a ground-referenced nonlinearity now contributes, matching closed form",
           ok, "%s vs %.8e" % (("%.8e" % abs(gv[0])) if gv else None, want))
 
+    # ---------------------------------------------------------------- [7]
+    # TWO OSDI MODEL TYPES IN ONE CIRCUIT. `DEVdisto` is dispatched once per
+    # DEVICE TYPE and every distinct .osdi is its own type, so this whole routine
+    # runs once per model for every mode -- D_SETUP included. A tensor cache that
+    # is global and cleared at D_SETUP therefore has the second model wipe the
+    # first, and every model but the last contributes ZERO. That is a silent
+    # wrong answer, not an error, and only a multi-model deck exposes it.
+    #
+    # The cubic branch here is identical to [1], so its value must be unchanged
+    # by the presence of a second Verilog-A device elsewhere in the circuit.
+    out = run("""dst two models
+V1 in 0 dc 0 ac 1 distof1 1
+Rs in d 1k
+N1 d 0 mc
+.model mc dst_cubic(a1=%g a2=%g a3=%g)
+Vb bb 0 dc 0.65 ac 1 distof1 1
+Rb bb e 1k
+N2 e 0 md
+.model md dst_diode(is=1e-14)
+.control
+pre_osdi _dst_cubic.osdi
+pre_osdi _dst_diode.osdi
+option noacct
+set numdgt=14
+disto dec 2 1e4 1e5
+setplot disto1
+print d[0]
+.endc
+.end
+""" % (A1, A2, A3), "two")
+    tv = cplx(out)
+    solo = cplx(cubic_run(1.0))
+    ok = bool(tv) and bool(solo) and abs(tv[0]) > 1e-30 and \
+        abs(abs(tv[0]) - abs(solo[0])) <= 1e-9 * abs(solo[0])
+    check("a second OSDI model type does not silence the first", ok,
+          "%s alongside a diode vs %s alone"
+          % (("%.8e" % abs(tv[0])) if tv else None,
+             ("%.8e" % abs(solo[0])) if solo else None))
+
     for junk in os.listdir(HERE):
         if junk.startswith("_"):
             os.remove(os.path.join(HERE, junk))

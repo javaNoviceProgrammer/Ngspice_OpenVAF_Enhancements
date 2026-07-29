@@ -403,6 +403,7 @@ The index: **Doc** links each enhancement's detailed write-up, **Examples** link
 | 352 | `.disto` for Verilog-A devices via OSDI 0.8 Taylor tensors; no variable-count limit | both | [doc](enhancements_doc/Enhancement-352.md) | [osdidisto](examples/osdidisto_examples/) |
 | 353 | `.disto` now works for models using `$limit`, i.e. every production compact model | openvaf-r | [doc](enhancements_doc/Enhancement-353.md) | [limitdisto](examples/limitdisto_examples/) |
 | 359 | `.disto` rebuilt: tensors differenced from the analytic Jacobian in ngspice, so compile time and object size return to baseline | ngspice | [doc](enhancements_doc/Enhancement-359.md) | [osdidisto](examples/osdidisto_examples/) |
+| 360 | fix: a second Verilog-A model no longer silences the first in `.disto` (per-model tensor cache) | ngspice | [doc](enhancements_doc/Enhancement-360.md) | [osdidisto](examples/osdidisto_examples/) |
 
 </details>
 
