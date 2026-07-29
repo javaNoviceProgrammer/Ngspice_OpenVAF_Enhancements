@@ -1,0 +1,25 @@
+`include "disciplines.vams"
+module dowhile_neighbours(a, b);
+  inout a, b;
+  electrical a, b;
+  integer i, j;
+  analog begin
+    i = 0;
+    do begin
+      if (i > 0) j = 1; else j = 2;
+      i = i + 1;
+    end while (i < 2);
+    i = 0;
+    do begin
+      while (i > 99) i = i + 1;
+      i = i + 1;
+    end while (i < 2);
+    i = 0;
+    do begin
+      j = 0;
+      do begin j = j + 1; end while (j < 2);
+      i = i + 1;
+    end while (i < 2);
+    I(a, b) <+ V(a, b);
+  end
+endmodule

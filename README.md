@@ -406,6 +406,7 @@ The index: **Doc** links each enhancement's detailed write-up, **Examples** link
 | 360 | fix: a second Verilog-A model no longer silences the first in `.disto` (per-model tensor cache) | ngspice | [doc](enhancements_doc/Enhancement-360.md) | [osdidisto](examples/osdidisto_examples/) |
 | 361 | fix: ASan/UBSan in `.disto` — out-of-bounds read of the solution vector, and `(int)NaN` point count on degenerate sweeps | ngspice | [doc](enhancements_doc/Enhancement-361.md) | [osdidisto](examples/osdidisto_examples/) |
 | 362 | fuzzing analysis-card sweep parameters: 7 fixes — counts cast to int reaching allocators, and an unbounded `.dc` sweep | ngspice | [doc](enhancements_doc/Enhancement-362.md) | [sweepguard](examples/sweepguard_examples/) |
+| 363 | fix: two compiler crashes from cross-feature fuzzing — a block merged into itself (`case` in a `do-while`), and array parameters never instance-renamed | openvaf-r | [doc](enhancements_doc/Enhancement-363.md) | [vafcfg](examples/vafcfg_examples/) |
 
 </details>
 

@@ -1,0 +1,16 @@
+`include "disciplines.vams"
+module case_in_dowhile(a, b);
+  inout a, b;
+  electrical a, b;
+  integer i;
+  analog begin
+    i = 0;
+    do begin
+      case (1)
+        default: i = i;
+      endcase
+      i = i + 1;
+    end while (i < 2);
+    I(a, b) <+ V(a, b);
+  end
+endmodule

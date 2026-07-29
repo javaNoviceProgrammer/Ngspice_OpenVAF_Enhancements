@@ -486,6 +486,25 @@ impl<'a> SimplifyCfg<'a> {
     /// If a block only contains phis and a unconditional jump the used phis can be merged with
     /// their
     fn simplify_unconditional_jmp_term(&mut self, src: Block, dst: Block) {
+        // Enhancement-363: never merge a block into ITSELF. A block whose
+        // terminator jumps to itself (`block2: jmp block2`) is a self-loop -- what
+        // an unterminating loop lowers to, and what a `case` inside a `do-while`
+        // folds to. Merging it retargets its predecessors from `src` to `dst` ==
+        // `src` (a no-op) and then removes `src` from the layout, so every
+        // terminator still naming it dangles. `mir_llvm::Builder::new` allocates
+        // LLVM blocks only for blocks IN the layout, so codegen then unwrapped
+        // `None` (builder.rs:655/656/690) and the shipped compiler crashed on
+        // `while (1)`, on any loop whose index is never advanced, and on a `case`
+        // inside a `do-while`.
+        //
+        // The CFG layer already treats this as invalid input -- `ControlFlowGraph::
+        // replace` opens with `debug_assert_ne!(old, new)`, which is exactly the
+        // assertion that fires here on a debug-assertions build (flowgraph.rs:262).
+        // Bail out rather than trip it: a self-loop is a legitimate CFG shape and
+        // must survive to codegen.
+        if src == dst {
+            return;
+        }
         if self.cfg.single_predecessor(dst).is_some() {
             // block has only one predecessor
             // trivial case let `merge_block_into_predecessor` handle this
@@ -641,11 +660,25 @@ impl<'a> SimplifyCfg<'a> {
         for pred in self.cfg.pred_iter(src) {
             let term = self.func.layout.last_inst(pred).unwrap();
             match &mut self.func.dfg.insts[term] {
-                InstructionData::Branch { then_dst: ref mut destination, .. }
-                | InstructionData::Branch { else_dst: ref mut destination, .. }
-                    if *destination == src =>
-                {
-                    *destination = dst;
+                // Enhancement-363: rewrite BOTH destinations. The previous
+                // or-pattern bound one `destination` -- then_dst or else_dst --
+                // and rewrote only that one, so a branch whose two destinations
+                // are BOTH `src` (`br cond, src, src`, which a `case` with a
+                // single reachable arm or a loop with a constant condition folds
+                // to) kept one reference to `src`. `src` is then removed from the
+                // layout on the next line, leaving a terminator that names a block
+                // that no longer exists; `mir_llvm::Builder::new` only allocates
+                // LLVM blocks for blocks IN the layout, so codegen unwrapped
+                // `None` (builder.rs:655/656/690). That crashed the shipped
+                // compiler on `while (1)`, on any loop whose index is never
+                // advanced, and on a `case` inside a `do-while`.
+                InstructionData::Branch { ref mut then_dst, ref mut else_dst, .. } => {
+                    if *then_dst == src {
+                        *then_dst = dst;
+                    }
+                    if *else_dst == src {
+                        *else_dst = dst;
+                    }
                 }
                 InstructionData::Jump { ref mut destination } => {
                     debug_assert_eq!(*destination, src);

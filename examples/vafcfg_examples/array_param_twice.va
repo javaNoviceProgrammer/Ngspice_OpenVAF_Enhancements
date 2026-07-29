@@ -1,0 +1,15 @@
+`include "disciplines.vams"
+module apleaf(p, n);
+  inout p, n;
+  electrical p, n;
+  parameter real cf[0:2] = '{1.0, 2.0, 3.0};
+  analog I(p, n) <+ cf[0] * V(p, n);
+endmodule
+module array_param_twice(a, b);
+  inout a, b;
+  electrical a, b;
+  electrical t;
+  apleaf x0(a, t);
+  apleaf x1(a, t);
+  analog I(t, b) <+ V(t, b);
+endmodule

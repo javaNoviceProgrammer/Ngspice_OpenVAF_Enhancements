@@ -3445,7 +3445,19 @@ impl ElabCtx<'_> {
         // base name of a bus port never legally appears standalone in
         // Verilog-A (every use requires a bit-select), so it must not get
         // its own `scope.subst` entry.
-        for bus in target.buses.iter().chain(target.var_arrays.iter()) {
+        // Enhancement-363: `param_arrays` must be renamed too. A module has THREE
+        // array collections -- `buses` (vectored nets/ports), `var_arrays` (array
+        // variables, E-4) and `param_arrays` (array-valued parameters, E-14) --
+        // but this loop chained only the first two, so an array PARAMETER kept its
+        // bare name while every scalar parameter got the `{prefix}` rename below.
+        // Two instances then both declared `cf[0]`, `cf[1]`, ... and name
+        // resolution rejected the second: "'cf[0]' was already declared in this
+        // scope". That made a module with an array parameter impossible to
+        // instantiate twice, and also collided across two DIFFERENT modules that
+        // happened to share an array-parameter name -- legal Verilog-A, refused.
+        for bus in
+            target.buses.iter().chain(target.var_arrays.iter()).chain(target.param_arrays.iter())
+        {
             if port_names.contains(&bus.base_name) {
                 continue;
             }

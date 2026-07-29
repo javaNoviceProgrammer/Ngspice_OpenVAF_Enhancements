@@ -1,0 +1,21 @@
+`include "disciplines.vams"
+module apa(p, n);
+  inout p, n;
+  electrical p, n;
+  parameter real cf[0:1] = '{1.0, 2.0};
+  analog I(p, n) <+ cf[0] * V(p, n);
+endmodule
+module apb(p, n);
+  inout p, n;
+  electrical p, n;
+  parameter real cf[0:1] = '{3.0, 4.0};
+  analog I(p, n) <+ cf[1] * V(p, n);
+endmodule
+module array_param_shared_name(a, b);
+  inout a, b;
+  electrical a, b;
+  electrical t;
+  apa x0(a, t);
+  apb x1(a, t);
+  analog I(t, b) <+ V(t, b);
+endmodule
