@@ -82,4 +82,7 @@ Note that its "produces no output" check passes even pre-fix — an ordinary bui
 cannot observe an undefined conversion, only its consequences. That is why the
 sanitizer harness ships alongside it.
 
-Regression 285/285.
+Regression 286/286 — 285 as before, plus the `sweepguard` suite this enhancement
+adds. The fuzz harness is deliberately *not* among them: the runner discovers
+`examples/*_examples/verify_*.py`, so `fuzz_analysis.py` is excluded by name, and
+it refuses to run at all unless `NGSPICE_BIN` points at a sanitizer build.
