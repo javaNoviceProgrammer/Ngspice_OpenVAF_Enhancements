@@ -106,6 +106,7 @@ CKTsetup(CKTcircuit *ckt)
         return(error);
 
     ckt->CKTisSetup = 1;
+    ckt->CKTbindStale = 0;  /* Enhancement-365: bindings are current again */
 
     matrix = ckt->CKTmatrix;
 

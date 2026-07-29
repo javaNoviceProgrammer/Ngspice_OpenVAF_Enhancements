@@ -128,8 +128,26 @@ com_hb(wordlist *wl)
         ckt->CKTkluMODE = ft_curckt->ci_defTask->TSKkluMODE;
 #endif
 
-    /* make sure the circuit is built (matrix + states allocated) */
-    if (ckt->CKTmatrix == NULL || SMPmatSize(ckt->CKTmatrix) <= 0) {
+    /* make sure the circuit is built (matrix + states allocated).
+     *
+     * Enhancement-365: "a matrix exists" is NOT the same as "the device
+     * bindings point into it". `pz` (CKTpzSetup) destroys ckt->CKTmatrix and
+     * builds a different one while leaving CKTisSetup asserted, so after a
+     * `pz` this test saw a perfectly good non-empty matrix, skipped CKTsetup,
+     * and then CKTload read every device's cached element pointer into the
+     * FREED matrix -- an ASan heap-use-after-free in VSRCload, silent on an
+     * ordinary build. When the bindings are known stale, rebind with a
+     * BALANCED unsetup/setup pair: a bare CKTsetup() would return E_NOCHANGE
+     * (CKTisSetup is still 1), and calling it without the unsetup would
+     * re-run DEVsetup on already-setup devices and double-allocate their
+     * internal nodes. */
+    if (ckt->CKTbindStale) {
+        if ((err = CKTunsetup(ckt)) != OK || (err = CKTsetup(ckt)) != OK ||
+            (err = CKTtemp(ckt)) != OK) {
+            fprintf(cp_err, "Error: hb: circuit setup failed.\n");
+            return;
+        }
+    } else if (ckt->CKTmatrix == NULL || SMPmatSize(ckt->CKTmatrix) <= 0) {
         if ((err = CKTsetup(ckt)) != OK || (err = CKTtemp(ckt)) != OK) {
             fprintf(cp_err, "Error: hb: circuit setup failed.\n");
             return;

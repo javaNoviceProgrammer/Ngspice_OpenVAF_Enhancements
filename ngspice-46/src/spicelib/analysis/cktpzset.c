@@ -24,7 +24,13 @@ CKTpzSetup(CKTcircuit *ckt, int type)
     int i, solution_col, balance_col;
     int input_pos, input_neg, output_pos, output_neg;
 
+    /* Enhancement-365: this destroys the matrix that CKTsetup bound every
+     * device's element pointers into, and builds a different one. Those
+     * pointers are now dangling for anything that runs after `pz`, yet
+     * CKTisSetup still claims a valid setup -- so a consumer that trusts it
+     * (com_hb did) loads the circuit through freed memory. Record the fact. */
     NIdestroy(ckt);
+    ckt->CKTbindStale = 1;
     error = NIinit(ckt);
     if (error)
 	return(error);

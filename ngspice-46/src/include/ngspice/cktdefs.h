@@ -250,6 +250,13 @@ struct CKTcircuit {
                                    point brute force, but to use gmin stepping
                                    first */
     unsigned int CKTisSetup:1;  /* flag to indicate if CKTsetup done */
+    /* Enhancement-365: set when an analysis has REPLACED ckt->CKTmatrix while
+     * leaving CKTisSetup asserted, so every device's cached matrix-element
+     * pointer now dangles. `pz` does exactly this (CKTpzSetup destroys and
+     * rebuilds the matrix). A consumer that would otherwise skip CKTsetup must
+     * first do a balanced CKTunsetup()/CKTsetup() to rebind. Cleared by
+     * CKTsetup(), which is what makes the bindings valid again. */
+    unsigned int CKTbindStale:1;
 #ifdef XSPICE
     unsigned int CKTadevFlag:1; /* flag indicates 'A' devices in the circuit */
 #endif
