@@ -52,7 +52,7 @@ distinguished *only* by their leading words — `Time Domain Periodic …` versu
 
 ## Verification
 
-`examples/plotnames_examples` drives each analysis from a deck modelled on the
+`examples/periodicnames_examples` drives each analysis from a deck modelled on the
 project's own `.pac`/`.pxf`/`.pnoise` examples and reads back what `setplot`
 reports.
 
