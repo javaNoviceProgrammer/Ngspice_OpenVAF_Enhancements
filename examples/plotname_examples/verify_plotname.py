@@ -10,17 +10,28 @@ Enhancement-343 removed the other quadratic term, 89% of a 64000-point sweep sat
 in `plot_alloc -> cieq -> tolower`.
 
 E-345 keeps a hash index of the typenames currently in `plot_list`. ONLY the
-membership test changed. The search still starts at the same shared `plot_num`
-and still counts up by one, so the sequence of names is byte-identical --
-including the reuse of a number freed by `destroy all`, which a "remember every
-name ever issued" cache would silently have changed.
+membership test changed: the search still counted up by one from a shared
+`plot_num`, so the sequence of names was byte-identical.
+
+ENHANCEMENT-371 DELIBERATELY CHANGED THAT SEQUENCE, and the expectations below
+were updated with it. The shared counter meant one type's plots numbered another:
+a 500-point `sweep` keeps a plot per point, so op1..op500 pushed the shared
+counter and the sweep's own plot came out `sweep500`. Each abbreviation now
+carries its OWN counter, so the first sweep is `sweep1` regardless of what else
+ran, and a single-plot `destroy` recycles the freed number the way `destroy all`
+always did.
+
+What E-371 had to preserve -- and what check [4] is really guarding -- is E-345's
+LINEARITY. A per-type counter that restarted the search at 1 each time would have
+reintroduced exactly the quadratic this example was written for, so the counter is
+remembered per type and only walks back down when a plot is removed.
 
 The index is maintained where the list is mutated: `plot_new()` (now the single
 insertion point -- the callers that open-coded the same two lines were converted)
 and `plot_forget()` from `killplot()`. It is built lazily from `plot_list`
 itself, so plots that predate it are covered without registration.
 
-  [1] the shared-plot_num name sequence is exactly as before
+  [1] the PER-TYPE name sequence (E-371; was one shared counter)
   [2] `destroy all` frees the numbers, and the next plots reuse them
   [3] naming survives the paths that build plots by other routes
       (fft, linearize, spec, rawfile load) and through single-plot destroys
@@ -74,12 +85,13 @@ def plots_line(out, tag):
 
 
 def main():
-    # [1] the shared-plot_num sequence. `tran` and `ac` share the counter with
-    # `op`, which is why it runs op1 tran1 op2 ac2 op3 rather than op1..op3.
+    # [1] the per-type sequence (E-371). Each abbreviation counts independently,
+    # so this runs op1 tran1 op2 ac1 op3 -- under the old shared counter the `ac`
+    # plot came out `ac2`, numbered by the `op` plots that preceded it.
     rc, out, _ = run("seq", "op\ntran 1n 5n\nop\nac dec 2 1 100\nop\necho P $plots")
     got = plots_line(out, "P")
-    want = ["const", "op1", "tran1", "op2", "ac2", "op3"]
-    check("the shared-plot_num name sequence is unchanged", rc == 0 and got == want,
+    want = ["const", "op1", "tran1", "op2", "ac1", "op3"]
+    check("the per-type name sequence is as expected", rc == 0 and got == want,
           f"{got}")
 
     # [2] destroy frees the numbers for reuse -- the behaviour a superset cache
@@ -91,13 +103,17 @@ def main():
 
     rc, out, _ = run("done", "op\nop\nop\ndestroy op2\nop\nop\necho P $plots")
     got = plots_line(out, "P")
-    check("destroying ONE plot frees only its number",
-          rc == 0 and got == ["const", "op1", "op3", "op4", "op5"], f"{got}")
+    # E-371: the freed number is now RECYCLED, as `destroy all` always did --
+    # destroying op2 walks that type's counter back down to 2, so the next plot
+    # takes op2 and the one after it takes op4.
+    check("destroying ONE plot frees its number for reuse",
+          rc == 0 and got == ["const", "op1", "op3", "op2", "op4"], f"{got}")
 
     # [3] the other routes that create plots
     rc, out, _ = run("fft", "tran 0.1n 20n\nlinearize\nfft v(out)\nop\necho P $plots")
     got_fft = plots_line(out, "P")
-    ok_fft = rc == 0 and got_fft == ["const", "tran1", "tran2", "sp2", "op2"]
+    # E-371: sp1/op1 here, not sp2/op2 -- no longer numbered by the two trans.
+    ok_fft = rc == 0 and got_fft == ["const", "tran1", "tran2", "sp1", "op1"]
 
     rc2, out2, _ = run("load",
                        "set filetype=ascii\nop\nwrite _p.raw v(out)\nload _p.raw\n"
@@ -149,13 +165,28 @@ def main():
           and all(abs(g - w) < 1e-10 * w for g, w in zip(vals, want_v)),
           f"{[round(v, 10) for v in vals]}")
 
+    # [6] E-371: every plot carries a DATE. Only the analysis path (outitf.c) used
+    # to set one, so plots created directly by a command -- sweep, hb, envelope,
+    # eye, loadpull, stb, rfstab, qpac -- had a NULL date that `print` rendered as
+    # "(null)". plot_alloc() now stamps them all at the single point of creation.
+    DATE = re.compile(r"(Mon|Tue|Wed|Thu|Fri|Sat|Sun) [A-Z][a-z]{2} +\d+ [\d:]+ +\d{4}")
+    for label, ctl, vec in (
+            ("tran (analysis path)", "tran 1n 10n", "v(out)"),
+            ("sweep (command path)", "sweep V1 0 1 0.5", "out"),
+    ):
+        rc, out, _ = run("dt_" + label[:4], "%s\nprint %s" % (ctl, vec))
+        check("%s plot has a date" % label,
+              rc == 0 and bool(DATE.search(out)) and "(null)" not in out,
+              (DATE.search(out).group(0) if DATE.search(out) else "no date")
+              + (" + (null) present" if "(null)" in out else ""))
+
     # the committed deck
     r = subprocess.run([NGSPICE, "-b", "plotname.cir"], cwd=HERE,
                        capture_output=True, text=True, timeout=300, errors="replace")
     t = r.stdout + r.stderr
     check("the committed deck runs and names match",
           r.returncode == 0 and "SURVIVED" in t
-          and plots_line(t, "NAMES") == ["const", "op1", "tran1", "op2", "ac2", "op3"]
+          and plots_line(t, "NAMES") == ["const", "op1", "tran1", "op2", "ac1", "op3"]
           and plots_line(t, "REUSED") == ["const", "op1", "op2"],
           f"rc={r.returncode}")
 

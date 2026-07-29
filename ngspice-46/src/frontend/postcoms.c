@@ -736,7 +736,6 @@ com_read_sparam(wordlist *wl)
     new = plot_alloc("sp");
     new->pl_name = tprintf("Touchstone import %s", file);
     new->pl_title = copy(file);
-    new->pl_date = copy(datestring());
     plot_new(new);           /* E-345: this already inserts; the open-coded
                               * pl_next/plot_list lines that used to bracket it
                               * were redundant and have been removed */

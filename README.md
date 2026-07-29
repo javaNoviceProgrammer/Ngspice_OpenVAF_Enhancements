@@ -414,6 +414,7 @@ The index: **Doc** links each enhancement's detailed write-up, **Examples** link
 | 368 | fix: the periodic small-signal analyses named their plots wrong — `pxf` was `unknown<N>`, and `pac`/`psp`/`pnoise`/`qpnoise`/`phasenoise`/`qpss` each collided with an unrelated analysis | ngspice | [doc](enhancements_doc/Enhancement-368.md) | [plotnames](examples/plotnames_examples/) |
 | 369 | fix: closes the E-365/366 stale-binding class — a KLU pole-zero binding was cleared only when re-established, so a later analysis dereferenced freed memory | ngspice | [doc](enhancements_doc/Enhancement-369.md) | [klubind](examples/klubind_examples/) |
 | 370 | fix: every `.pz` re-expanded a URC subcircuit, creating nodes past the allocated RHS — a heap-buffer-overflow hiding under a passing crash fixture | ngspice | [doc](enhancements_doc/Enhancement-370.md) | [urcpz](examples/urcpz_examples/) |
+| 371 | plot naming and dates: per-type numbering, so the first sweep is `sweep1` not `sweep500`; every plot now carries a date (command-created plots printed `(null)`) | ngspice | [doc](enhancements_doc/Enhancement-371.md) | [plotname](examples/plotname_examples/) |
 
 </details>
 

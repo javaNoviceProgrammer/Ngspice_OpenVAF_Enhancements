@@ -391,6 +391,9 @@ raw_read(char *name) {
             curpl->pl_name = copy(s);
             if (!date)
                 date = copy(datestring());
+            /* Enhancement-371: plot_alloc() now stamps a date, and the
+             * file's own date must win -- free ours before replacing it. */
+            tfree(curpl->pl_date);
             curpl->pl_date = date;
             if (!title)
                 title = copy("default title");

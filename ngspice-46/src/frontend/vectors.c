@@ -481,6 +481,8 @@ ft_loadfile(char *file)
  * ------------------------------------------------------------------------ */
 
 static NGHASHPTR plot_name_index = NULL;
+static NGHASHPTR plot_type_num = NULL;        /* Enhancement-371: per-type counters */
+static void plot_type_num_forget_all(void);   /* Enhancement-371, defined below */
 
 /* nghash's string keys are case-sensitive but plot names compare with cieq,
  * so everything goes in and out of the index lowercased. */
@@ -532,12 +534,43 @@ static void plot_index_init(void)
 void plot_forget(struct plot *pl)
 {
     plot_index_delete(pl);
+
+    /* Enhancement-371: a per-type counter has to come back DOWN when plots are
+     * removed, or `destroy all` would leave numbering at tran11 instead of
+     * restarting at tran1 -- which examples/lifecycle_examples pins, and which
+     * caught this. `destroy` unlinks plots one at a time through here rather
+     * than calling plot_forget_all(), so this is the hook that must do it.
+     * Walking the counter down to the lowest freed number keeps naming linear:
+     * it only moves when a plot actually goes away. */
+    if (plot_type_num && pl && pl->pl_typename) {
+        const char *t = pl->pl_typename;
+        size_t len = strlen(t);
+        size_t d = len;
+        while (d > 0 && isdigit((unsigned char) t[d - 1]))
+            d--;
+        if (d > 0 && d < len) {
+            int n = atoi(t + d);
+            char *abbrev = copy(t);
+            char *key;
+            int cur;
+            abbrev[d] = '\0';
+            key = plot_name_key(abbrev);
+            cur = (int) (intptr_t) nghash_find(plot_type_num, key);
+            if (n >= 1 && (cur < 1 || n < cur)) {
+                nghash_delete(plot_type_num, key);
+                nghash_insert(plot_type_num, key, (void *) (intptr_t) n);
+            }
+            tfree(key);
+            tfree(abbrev);
+        }
+    }
 }
 
 /* Drop every plot from the index (for a caller that clears plot_list wholesale
  * rather than unlinking one at a time). */
 void plot_forget_all(void)
 {
+    plot_type_num_forget_all();   /* Enhancement-371: names are free again */
     if (plot_name_index) {
         /* both deleters NULL: the data are the plots themselves (not ours to
          * free) and nghash frees its own string-key copies */
@@ -573,16 +606,56 @@ static int plot_name_taken(const char *typename)
     return hit;
 }
 
-/* The shared naming loop, formerly duplicated in plot_alloc() and plot_add(). */
+/* Enhancement-371: PER-TYPE plot numbering.
+ *
+ * This loop used to start from `plot_num`, a single counter shared by EVERY plot
+ * type. Since a `sweep` runs one analysis per point and keeps its plot, a
+ * 500-point sweep created op1..op500, pushing that shared counter to 500 -- and
+ * the sweep's own plot was then named `sweep500`. The number looked like the
+ * point count; it was really "how many plots exist".
+ *
+ * Each abbreviation now carries its own counter, so the first sweep is `sweep1`
+ * whatever else has run. It only differs from the old behaviour in exactly that
+ * pathological case: when one type's plots push the number of an unrelated type.
+ *
+ * The counter must be REMEMBERED per type rather than restarting the search at 1
+ * each time, or naming would be O(plots-of-this-type) per plot and quadratic over
+ * a sweep -- which is the regression Enhancement-345 removed (89% of a 64000-point
+ * sweep was in this naming path). Resuming from the last number keeps it linear.
+ */
+static void plot_type_num_forget_all(void)
+{
+    if (plot_type_num) {
+        nghash_free(plot_type_num, NULL, NULL);
+        plot_type_num = NULL;
+    }
+}
+
 static void plot_unique_typename(const char *abbrev, char *buf, size_t bufsz)
 {
+    char *k;
+    int n;
+
     plot_index_init();
-    for (;;) {
-        (void) snprintf(buf, bufsz, "%s%d", abbrev, plot_num);
-        if (!plot_name_taken(buf))
-            return;
-        plot_num++;
+    if (!plot_type_num) {
+        plot_type_num = nghash_init(NGHASH_MIN_SIZE);
+        nghash_unique(plot_type_num, TRUE);
     }
+    k = plot_name_key(abbrev);
+    /* nghash stores void*; every number handed out is >= 1, so a NULL lookup
+     * unambiguously means "this type has not been numbered yet". */
+    n = (int) (intptr_t) nghash_find(plot_type_num, k);
+    if (n < 1)
+        n = 1;
+    for (;;) {
+        (void) snprintf(buf, bufsz, "%s%d", abbrev, n);
+        if (!plot_name_taken(buf))
+            break;
+        n++;
+    }
+    nghash_delete(plot_type_num, k);
+    nghash_insert(plot_type_num, k, (void *) (intptr_t) n);
+    tfree(k);
 }
 
 
@@ -1025,6 +1098,12 @@ struct plot * plot_alloc(char *name)
         s = "unknown";
     plot_unique_typename(s, buf, sizeof buf);
     pl->pl_typename = copy(buf);
+    /* Enhancement-371: stamp every plot here, at the one place they are all
+     * created. Only the analysis path (outitf.c) used to set this, so plots made
+     * directly by a command -- sweep, hb, envelope, eye, loadpull, stb, rfstab,
+     * qpac -- reported a NULL date, which `print` rendered as "(null)".
+     * Callers with a better date (a rawfile carries its own) overwrite it. */
+    pl->pl_date = copy(datestring());
     cp_addkword(CT_PLOT, buf);
     /* va: create a new, empty keyword tree for class CT_VECTOR, s=old tree */
     ccom = cp_kwswitch(CT_VECTOR, NULL);

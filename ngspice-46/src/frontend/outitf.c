@@ -1269,7 +1269,6 @@ plotInit(runDesc *run)
 
     pl->pl_title = copy(run->name);
     pl->pl_name = copy(run->type);
-    pl->pl_date = copy(datestring());
     pl->pl_ndims = 0;
     plot_new(pl);
     plot_setcur(pl->pl_typename);
