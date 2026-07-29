@@ -61,6 +61,19 @@ DISTOan(CKTcircuit *ckt, int restart)
 #ifdef D_DBG_BLOCKTIMES
 time1 = SPfrontEnd->IFseconds();
 #endif
+        /* Enhancement-362: the point count below is cast to int and then used as
+         * an ALLOCATION SIZE (DstorAlloc(..., NoOfPoints+2)). The expression can
+         * be +-inf (a zero or denormal start frequency makes log() diverge) or
+         * exceed INT_MAX (a huge step count over a wide span), and converting
+         * either to int is undefined -- the allocation size then becomes whatever
+         * the hardware produced, including negative. Reject the sweep instead: a
+         * count that cannot be represented is not a request we can honour. */
+/* the FINAL count must be validated, not just the term: DnumSteps is itself
+ * unbounded (INT_MAX+1 overflows) and can be negative, which reached
+ * DstorAlloc as a negative size -- ASan: "requested allocation size
+ * 0xfffffffffffffff0". */
+#define DISTO_PTS_OK(x)  ((x) == (x) && (x) >= 1.0 && (x) < 2147483000.0)
+
         switch(job->DstepType) {
 
         case DECADE:
@@ -76,7 +89,13 @@ time1 = SPfrontEnd->IFseconds();
 					exp(log(10.0)/job->DnumSteps);
 		freqTol = job->DfreqDelta * 
 				job->DstopF1 * ckt->CKTreltol;
-	    NoOfPoints = 1 + (int)floor ((job->DnumSteps) / log(10.0) * log((job->DstopF1+freqTol)/(job->DstartF1)));
+	    {
+		double pts_ = 1.0 + floor((job->DnumSteps) / log(10.0) *
+			log((job->DstopF1+freqTol)/(job->DstartF1)));
+		if (!DISTO_PTS_OK(pts_))
+		    return(E_BADPARM);
+		NoOfPoints = (int)pts_;
+	    }
             break;
         case OCTAVE:
             /* Enhancement-361: same zero-step division as DECADE above. */
@@ -86,22 +105,36 @@ time1 = SPfrontEnd->IFseconds();
 					exp(log(2.0)/job->DnumSteps);
 		freqTol = job->DfreqDelta * 
 				job->DstopF1 * ckt->CKTreltol;
-	    NoOfPoints = 1 + (int)floor ((job->DnumSteps) / log(2.0) * log((job->DstopF1+freqTol)/(job->DstartF1)));
+	    {
+		double pts_ = 1.0 + floor((job->DnumSteps) / log(2.0) *
+			log((job->DstopF1+freqTol)/(job->DstartF1)));
+		if (!DISTO_PTS_OK(pts_))
+		    return(E_BADPARM);
+		NoOfPoints = (int)pts_;
+	    }
             break;
         case LINEAR:
+            /* Enhancement-362: DnumSteps is an int and comes straight from the
+             * card, so `DnumSteps+1` overflows for INT_MAX before any of the
+             * double-valued guards below can run. Do the arithmetic in double. */
             job->DfreqDelta =
 					(job->DstopF1 -
 					job->DstartF1)/
-					(job->DnumSteps+1);
+					((double)job->DnumSteps+1.0);
 		freqTol = job->DfreqDelta * ckt->CKTreltol;
 		/* Enhancement-361: a linear sweep whose start equals its stop leaves
 		 * DfreqDelta at zero, so this tolerance term became 0/0 = NaN and the
 		 * conversion to int was undefined. Where the delta is non-zero the term
 		 * is floor(DfreqDelta*reltol/DfreqDelta) = floor(reltol) = 0 for any
 		 * sane reltol, so zero is the value consistent with every other case. */
-					NoOfPoints = job->DnumSteps+1+
-						(job->DfreqDelta != 0.0
-							? (int)floor(freqTol/(job->DfreqDelta)) : 0);
+		{
+		    double pts_ = (job->DfreqDelta != 0.0)
+			    ? floor(freqTol/(job->DfreqDelta)) : 0.0;
+		    pts_ += (double)job->DnumSteps + 1.0;
+		    if (!DISTO_PTS_OK(pts_))
+			return(E_BADPARM);
+		    NoOfPoints = (int)pts_;
+		}
             break;
         default:
             return(E_BADPARM);

@@ -148,6 +148,29 @@ DCtrCurv(CKTcircuit *ckt, int restart)
         goto resume;
     }
 
+    /* Enhancement-362: a .dc sweep advances by TRCVvStep and compares against
+     * TRCVvStop -- there is no precomputed point count, so a step that is tiny
+     * relative to the span (a `1e-30` where `1e-3` was meant) runs essentially
+     * forever, with no diagnostic and nothing to distinguish it from a merely
+     * slow circuit. A zero step is already refused; a count that cannot be
+     * represented should be too, and .tran already declines the equivalent
+     * request. Found by fuzzing analysis-card parameters. */
+    for (i = 0; i <= job->TRCVnestLevel && i < TRCVNESTLEVEL; i++) {
+        double step_ = job->TRCVvStep[i];
+        double pts_;
+        if (step_ == 0.0)
+            continue;                  /* rejected on its own path */
+        pts_ = fabs((job->TRCVvStop[i] - job->TRCVvStart[i]) / step_);
+        if (!(pts_ == pts_) || pts_ > 2147483000.0)
+            return(E_PARMVAL);
+        /* ...and the step has to actually move the sweep value. Below the ULP of
+         * the start point, `value += step` is a no-op in floating point and the
+         * loop never advances at all -- `dc V1 1 1 1e-30` hangs on a zero-length
+         * span, which the point count above cannot see. */
+        if (job->TRCVvStart[i] + step_ == job->TRCVvStart[i])
+            return(E_PARMVAL);
+    }
+
     ckt->CKTtime = 0;
     ckt->CKTdelta = job->TRCVvStep[0];
     ckt->CKTmode = (ckt->CKTmode & MODEUIC) | MODEDCTRANCURVE | MODEINITJCT;

@@ -214,7 +214,25 @@ DCtran(CKTcircuit *ckt,
 
         ckt->CKTsizeIncr = 100;
         ckt->CKTtimeIndex = -1; /* before the DC soln has been stored */
-        ckt->CKTtimeListSize = (int) ceil( ckt->CKTfinalTime / maxstepsize );
+        /* Enhancement-362: this is cast to int and then used as an allocation
+         * size -- TMALLOC(double, CKTtimeListSize) here, and osdiaccept.c sizes
+         * a buffer from (uint32_t)CKTtimeListSize + 64. finalTime/maxstepsize
+         * can exceed INT_MAX or be non-finite for extreme .tran arguments, and
+         * converting that to int is undefined: the allocation size becomes
+         * whatever the hardware produced.
+         *
+         * REJECT rather than clamp. A run needing more timepoints than an int
+         * can index is not one that can finish, and ngspice already declines it
+         * today -- but only as a side effect of this very overflow producing an
+         * allocation size that fails. Clamping to a "valid" size instead makes
+         * the allocation succeed and the transient then runs essentially
+         * forever, so the accidental rejection has to become a deliberate one. */
+        {
+            double tls_ = ceil( ckt->CKTfinalTime / maxstepsize );
+            if (!(tls_ == tls_) || tls_ < 0.0 || tls_ > 2147483000.0)
+                return(E_PARMVAL);
+            ckt->CKTtimeListSize = (int) tls_;
+        }
         ltra_num = CKTtypelook("LTRA");
         if (ltra_num >= 0 && ckt->CKThead[ltra_num] != NULL)
             ckt->CKTtimePoints = TMALLOC(double, ckt->CKTtimeListSize);

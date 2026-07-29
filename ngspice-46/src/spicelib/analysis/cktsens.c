@@ -897,7 +897,14 @@ count_steps(int type, double low, double high, int steps, double* stepsize)
             low = 1e-3;
         if (high <= low)
             high = 10.0 * low;
-        n = (int)(steps * log10(high / low) + 1.01);
+        {   /* Enhancement-362: same family as distoan.c -- this count is cast to
+             * int and drives the sweep; `steps` is unbounded and low can be zero,
+             * so the product reaches +-inf or exceeds INT_MAX. */
+            double n_ = steps * log10(high / low) + 1.01;
+            if (!(n_ == n_) || n_ < 1.0 || n_ > 2147483000.0)
+                return(E_PARMVAL);
+            n = (int)n_;
+        }
         s = pow(10.0, 1.0 / steps);
         break;
 
@@ -906,7 +913,12 @@ count_steps(int type, double low, double high, int steps, double* stepsize)
             low = 1e-3;
         if (high <= low)
             high = 2.0 * low;
-        n = (int)(steps * log(high / low) / M_LOG2E + 1.01);
+        {   /* Enhancement-362: as above, for the octave sweep. */
+            double n_ = steps * log(high / low) / M_LOG2E + 1.01;
+            if (!(n_ == n_) || n_ < 1.0 || n_ > 2147483000.0)
+                return(E_PARMVAL);
+            n = (int)n_;
+        }
         s = pow(2.0, 1.0 / steps);
         break;
     }
