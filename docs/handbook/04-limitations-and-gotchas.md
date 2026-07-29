@@ -63,13 +63,28 @@ The single most useful mental model for this toolchain:
   call site). An advancing seed would return different values on every
   Newton iteration and destroy convergence. Sequences within one evaluation
   are therefore not available; per-instance/per-call-site independence is.
-- **`.disto` warns instead of pretending** ([E-62](../../enhancements_doc/Enhancement-62.md)):
-  the small-signal distortion kernel needs higher-order Taylor coefficients
-  the OSDI ABI cannot carry; OSDI devices are skipped with a loud warning
-  (they used to contribute silent zeros).
+- **`.disto` works for OSDI devices, via numerical differencing**
+  ([E-359](../../enhancements_doc/Enhancement-359.md)): the Volterra kernel needs 2nd- and
+  3rd-order derivative tensors. Rather than have the compiler emit them — an
+  approach that was built, measured and *abandoned* because it cost 20–49x
+  compile time, 30 MB objects and a 3.3–3.9x runtime penalty on every OTHER
+  analysis — ngspice differences the analytic Jacobian numerically at the
+  operating point. Compile time, object size, runtime and the OSDI ABI are all
+  back at baseline. The tensors used *by `.disto` only* are therefore accurate
+  to ~5e-9 rather than exact; **every other analysis still uses the compiler's
+  exact derivatives**, unchanged. Supersedes the older behaviour where OSDI
+  devices were skipped with a warning ([E-62](../../enhancements_doc/Enhancement-62.md)).
 - **`@(final_step)` fires only on success**: a failed or interrupted
   analysis never fires it — "final" means the converged end of the run
   ([E-53](../../enhancements_doc/Enhancement-53.md)).
+
+- **Transient noise activates automatically** ([E-364](../../enhancements_doc/Enhancement-364.md)):
+  Verilog-A `white_noise`/`flicker_noise` are injected into `.tran` when — and
+  only when — the circuit already contains a `trnoise` source, whose noise
+  timestep is adopted so every generator shares one grid. A deck without one is
+  unaffected. `noise_table` sources are **not** injected (a tabulated spectrum
+  needs frequency shaping, not a scalar amplitude); they warn once and remain
+  fully accounted for in `.noise`.
 
 ## 4.5 ngspice control-language traps
 
@@ -104,6 +119,15 @@ scripting ngspice:
   [E-76](../../enhancements_doc/Enhancement-76.md)).
 
 ## 4.6 Assorted edges
+
+- **A non-terminating analog loop crashes the compiler** (open,
+  [E-363](../../enhancements_doc/Enhancement-363.md)): `while (1)`, or the far more ordinary case of
+  forgetting the loop increment, aborts `openvaf-r` instead of producing a
+  diagnostic. There is no correct object code for such a model — it can never
+  finish one evaluation — so the right fix is a compile-time rejection rather
+  than a substituted value, and that is deliberately left as follow-up rather
+  than trading a loud crash for a silently meaningless model. Check that your
+  loop variables actually advance.
 
 - **`break`/`continue` don't exist in Verilog-A** — the compiler rejects
   them with the `disable <block>;` idiom as the alternative

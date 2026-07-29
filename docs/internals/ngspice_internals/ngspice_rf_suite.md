@@ -514,6 +514,31 @@ step.
 
 ---
 
+## Part 8b — Design aids built on the same machinery
+
+Three commands reuse the S-parameter and PSS engines rather than adding new
+numerics of their own.
+
+**`stb` — loop-gain and stability margins** ([E-198](../../../enhancements_doc/Enhancement-198.md)).
+Middlebrook/Tian **double injection**: a series voltage probe and a shunt current
+probe are inserted at one break in the feedback path, and the loop gain is
+recovered from both injections. The double form is what makes a *loaded* break
+correct — a single injection mis-measures the loop whenever the driving stage has
+finite output impedance. Reports phase and gain margin with the crossing
+frequencies, and leaves `loopgain` as a complex vector.
+
+**`rfstab` — two-port RF stability** ([E-253](../../../enhancements_doc/Enhancement-253.md)). From the
+S-parameters already computed by `sp`: Rollett's K with |Δ|, the geometric μ and
+μ′ factors, and MSG/MAG. Reports the worst case over the sweep and whether the
+network is unconditionally stable everywhere (K > 1 and |Δ| < 1).
+
+**`loadpull` — PA load- and source-pull** ([E-234](../../../enhancements_doc/Enhancement-234.md)).
+Sweeps the load reflection coefficient Γ across the Smith chart, running a large-
+signal analysis per point and contouring delivered power and efficiency;
+`-source` does the source-side sweep. Finding a real use-after-free in
+`INPretrieve` while building this is what exposed the `INPretrieve(&x); … tfree(x)`
+double-free class later fixed in `stb` too ([E-235](../../../enhancements_doc/Enhancement-235.md)).
+
 ## Part 9 — It all works under both linear solvers
 
 Every analysis above is **independent of the linear solver**. ngspice ships with two:

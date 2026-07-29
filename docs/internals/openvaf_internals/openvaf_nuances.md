@@ -105,6 +105,30 @@ a voltage source, `i(Vsrc)`. For a two-terminal element written as a bus, e.g. a
 resistor `R1 a[0:1]` (→ `R1 a[0] a[1]`), its current is `@r1[i]`, **not**
 `I(a[0], a[1])`. `i()` in an expression takes a *source name*, not a node pair.
 
+## 5. Two composition traps
+
+Both of these are invisible to single-feature testing, which is why they survived
+several fuzzing rounds.
+
+**A `case` inside a `do-while` used to crash the compiler**
+([E-363](../../../enhancements_doc/Enhancement-363.md)). The MIR for that shape folds to a block whose
+terminator jumps to *itself*, and the CFG simplifier merged such a block into
+itself — retargeting its predecessors to itself (a no-op) and then deleting it,
+leaving terminators naming a block no longer in the layout. `if`/`else`, `while`,
+`for`, `repeat` and a nested `do-while` in the same position were always fine.
+
+**Array parameters and instantiation** ([E-363](../../../enhancements_doc/Enhancement-363.md)). A module
+has three array collections — buses, array variables and array *parameters* — and
+elaboration renamed only the first two per instance. So a module with an array
+parameter could not be instantiated twice, and two different modules sharing an
+array-parameter name collided too.
+
+**Still open:** a provably non-terminating analog loop fails to compile. After the
+fix above its MIR is well formed, but everything after the loop is unreachable, so
+codegen reads values no reachable block defines. There is no correct object code
+for a model that cannot finish one evaluation, so the fix is a diagnostic rather
+than a substituted value.
+
 ## Scope
 
 These are integration nuances of running `openvaf-r`-compiled `.osdi` models in

@@ -277,6 +277,27 @@ all-zero solver row, which Sparse tolerates but KLU treats as structurally
 singular. [Enhancement-116](../../../enhancements_doc/Enhancement-116.md) ties such
 decoupled internal nodes to ground at setup, so both now match Sparse under KLU.
 
+## Convergence aids and later solver fixes
+
+**`convhelp`** ([E-204](../../../enhancements_doc/Enhancement-204.md)) walks the standard DC
+continuation ladder automatically — plain Newton, then gmin stepping, then source
+stepping, then pseudo-transient — reporting which rung succeeded, instead of
+leaving the user to try each by hand.
+
+**DC false convergence** ([E-256](../../../enhancements_doc/Enhancement-256.md)) was a genuine
+wrong-answer bug: a B-source could report a spurious operating point that Newton
+accepted. The fix is a KCL **merit test** — if the residual current imbalance
+exceeds a threshold the "converged" point is rejected and the solver falls
+through to gmin/source stepping. Companion fixes cover the `.tran` operating
+point and `.dc` sweeps ([E-257](../../../enhancements_doc/Enhancement-257.md), [E-258](../../../enhancements_doc/Enhancement-258.md)).
+
+**KLU glue hardening** ([E-232](../../../enhancements_doc/Enhancement-232.md)) fixed a null-check
+ordering bug and the collapse-map handling in `klusmp.c`. Its follow-up
+([E-233](../../../enhancements_doc/Enhancement-233.md)) is worth reading for a negative result: a
+suspected `pz`/`sens` leak was investigated and **refuted**, and the collapse path
+was measured genuinely dead (0 of 191 corpus cases), rather than being "fixed"
+speculatively.
+
 ## The dual-solver test harness
 
 Every `verify_*.py` in [`examples/`](../../../examples/) is run under **both**

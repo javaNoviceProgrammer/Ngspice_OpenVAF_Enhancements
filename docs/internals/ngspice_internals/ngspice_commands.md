@@ -291,6 +291,19 @@ of a **time-domain** waveform — run a `.tran` first, then `fourier 10k v(out)`
 
 ---
 
+### Event-driven (XSPICE) and control-flow commands
+
+These are stock ngspice commands that this reference had not previously listed.
+
+| Command | What it does |
+|---|---|
+| `esave` | select event-driven (digital/XSPICE) nodes to record |
+| `eprint` | print the event-driven node values recorded by `esave` |
+| `edisplay` | list the event-driven nodes available in the current circuit |
+| `eprvcd` | dump event-driven node activity as a **VCD** file for a waveform viewer |
+| `foreach` | control-flow: iterate a command block over a word list (`foreach x 1 2 3 … end`) |
+| `repeat` | control-flow: run a command block a fixed number of times |
+
 ## 3. RF and periodic steady-state
 
 The project adds a full RF suite on top of the analyses above. Most run as their
@@ -328,6 +341,7 @@ plot vdb(S_2_1)
 | `envelope` | envelope following: `envelope <node> <fc> <tstop>` |
 | `stb` | loop-gain stability (Middlebrook/Tian double injection); reports phase/gain margin |
 | `loadpull` | PA **load-pull** (and source-pull, `-source`): sweep the load impedance Γ over the Smith chart, per-point large-signal `.tran`, contour **Pout / gain / PAE / efficiency**; view with `pyplot -contour gamma_re gamma_im pout_dbm` |
+| `rfstab` | two-port **RF stability** from S-parameters: Rollett K and |Δ|, the μ/μ' geometric factors, MSG/MAG; reports worst-case values and whether the network is unconditionally stable at every swept frequency (Enhancement-253) |
 
 ### Periodic small-signal — `.pss`, `.pac`, `.pnoise`, `.pxf`, `.psp`
 
@@ -583,6 +597,7 @@ montecarlo 500 -analysis ac -spec 'vdb(out)' -min -3.5 -max -2.5
 | `mccorr` | register a correlation matrix; draw with `mvnorm()` in `.param` |
 | `setseed` | reproducible random draws |
 | `sweep` | sweep any knob (device/model/`.param`) and record outputs into a plot |
+| `wcd` | **worst-case distance** / most-probable failure point: the shortest distance in standardised parameter space from nominal to a spec boundary, i.e. the sigma level at which the design first fails (Enhancement-305) |
 | `optimize` | Nelder-Mead / Levenberg-Marquardt parameter optimizer against an objective |
 
 See the [statistics](ngspice_statistics.md) and [optimizer](ngspice_optimizer.md)

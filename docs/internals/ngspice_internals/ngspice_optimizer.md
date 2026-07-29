@@ -603,6 +603,20 @@ Runnable set: [`opt100_examples`](../../../examples/opt100_examples/) fits 100 r
 
 ---
 
+## 12b. Multi-objective and margin-driven runs
+
+`nsga2` ([E-216](../../../enhancements_doc/Enhancement-216.md)) is the multi-objective member of the
+family: instead of collapsing several goals into one weighted cost, it evolves a
+population toward the **Pareto front** and returns the whole non-dominated set.
+Use it when the trade-off itself is the answer and any scalarising weight would
+be arbitrary.
+
+`wcd` ([E-305](../../../enhancements_doc/Enhancement-305.md)) is not an optimizer in the same sense but
+belongs in the same workflow: it searches for the **most-probable failure point**
+and reports its distance from nominal in sigma. A design that optimises well
+nominally but sits 1.8σ from a spec edge is usually the wrong answer, and `wcd`
+is what makes that visible.
+
 ## 13. How it works, briefly
 
 Under the hood, `optimize` uses the **Nelder–Mead downhill-simplex** method — a classic

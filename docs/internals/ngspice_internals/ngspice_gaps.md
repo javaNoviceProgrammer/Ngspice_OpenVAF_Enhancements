@@ -142,6 +142,23 @@ and a solver-by-solver sweep of the example suite:
 | Analyses | DC sensitivity (`.sens`) | ✅ | ✅ |
 | Analyses | Distortion (`.disto`) | ✅ | ✅ |
 | Analyses | Measurement / post-processing (`.meas`) | ✅ | ✅ |
+| Analyses | Transient noise, independent sources (`trnoise`) | ✅ | ✅ |
+| Analyses | Transient noise, **device-level** (Verilog-A noise in `.tran`) | ✅⁷ | ✅ |
+
+*⁷ Device-level transient noise landed in
+[Enhancement-364](../../../enhancements_doc/Enhancement-364.md): a Verilog-A model's `white_noise` and
+`flicker_noise` contributions are injected into `.tran` as RHS current sources on
+a FIXED noise grid (scaling by the adaptive timestep would make the injected power
+track the LTE controller and the spectrum an artefact of the integrator). It needed
+no ABI or compiler change — the compiler was already emitting per-source power,
+exponent, node pair and correlation name, and nothing had ever read them. It
+activates automatically when the deck already contains a `trnoise` source, adopting
+that source's grid. Verified against three independent oracles: thermal 1.7 % vs the
+exact analytic variance, shot noise 0.6–4.5 % across a 45x current range, flicker
+0.9939 ± 0.0091 vs `.noise` with fitted slope −0.993. `noise_table` sources are not
+injected (a tabulated spectrum needs frequency shaping, not a scalar amplitude) and
+remain fully accounted for in `.noise`. This closes what was, until now, the last
+noise capability where a commercial tool could do something this one could not.
 
 ## RF / periodic steady-state suite
 

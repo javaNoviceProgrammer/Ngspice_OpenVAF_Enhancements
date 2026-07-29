@@ -623,6 +623,36 @@ code example in the LRM 2023 PDF is extracted and compiled
 to their diagnostics, 21 correctly rejected as mixed-signal), and the
 146 non-module fragments double as a no-crash fuzz corpus.
 
+Two later findings are worth recording here because both were *compliance*
+failures rather than robustness ones — legal Verilog-A that the compiler refused
+or mishandled, found only after the construct-level suites above were all green:
+
+- **Array parameters could not survive instantiation**
+  ([E-363](../../enhancements_doc/Enhancement-363.md)). A module declaring `parameter real cf[0:2]`
+  could not be instantiated twice: elaboration renamed scalar parameters and
+  array *variables* per instance but not array *parameters*, so both instances
+  re-declared `cf[0]`, `cf[1]`, … and name resolution rejected the second. The
+  same collision hit two *different* modules that merely shared an
+  array-parameter name. This sits across LRM 3.4 (parameters) and LRM 6
+  (hierarchy), and no single-feature test could see it — it needs a parameter
+  form and instantiation together.
+- **A `case` inside a `do-while` crashed the compiler**
+  ([E-363](../../enhancements_doc/Enhancement-363.md)) — LRM 5.7/5.9 constructs that are individually
+  covered by the `arraycase` and `dowhile` suites, but had never been *composed*.
+
+Both came from a generator that emits valid-by-construction programs combining
+features developed in isolation, which is a different instrument from the
+mutation fuzzing used earlier: mutants die at the parser, so they never reach the
+semantics. One defect from the same round is **open by design** — a provably
+non-terminating analog loop still fails to compile, because there is no correct
+object code for a model that cannot complete one evaluation.
+
+Separately, the whole **496-file corpus now compiles with zero assertion
+failures** under an assertions-enabled build ([E-347](../../enhancements_doc/Enhancement-347.md)),
+which is a stronger statement than the release-build corpus run: a release build
+compiles every `debug_assert!` out, so internal-invariant violations pass
+silently there.
+
 Beyond construct-level checks, three cross-cutting guards pin that the
 *whole language implementation* produces correct physics: the 92-model
 industry corpus compiles and runs, the static/dynamic/thermal physics

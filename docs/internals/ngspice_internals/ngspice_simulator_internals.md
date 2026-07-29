@@ -579,12 +579,27 @@ a useful index if you are tracing one:
 |---|---|---|
 | Netlist preprocessing (5) | `frontend/inpcom.c`, `inp2dot.c` | `__FILE__`/`__LINE__` (E-85), legacy `generate` (E-88), bare `generate` (E-96) |
 | Analyses (11) | `spicelib/analysis/*` | `.dc @inst[param]` & `.tf`/`.pz`/`.sens` (E-62), RF `.sp`/PSS (E-63), Touchstone (E-64, E-72), sim-control tasks (E-55) |
-| Newton core (10) | `maths/ni/niiter.c` | `.option linesearch` globalized Newton (E-111) |
+| Newton core (10) | `maths/ni/niiter.c`, `spicelib/analysis/dctran.c` | `.option linesearch` globalized Newton (E-111), `convhelp` continuation ladder (E-204), DC false-convergence KCL merit test (E-256/257/258) |
 | Matrix / solver (9) | `maths/KLU/klusmp.c`, `klu_multiply.c`, `spicelib/analysis/cktsens.c`, `distoan.c`, `osdi/osdisetup.c` | KLU line search (E-112), KLU noise + single-ended pole-zero (E-113), KLU sensitivity (E-114), KLU distortion (E-115), KLU wrong-DC fix for decoupled OSDI nodes (E-116) |
 | Options / tasks | `spicelib/analysis/cktsopt.c`, `cktntask.c` | `.option errpreset` (E-110), `.option linesearch`/`.option klu` plumbing |
-| Frontend commands (4) | `frontend/com_*`, `commands.c` | `pyplot` matplotlib plotting (E-94/95/98/99) |
+| Frontend commands (4) | `frontend/com_*`, `commands.c` | `pyplot` matplotlib plotting (E-94/95/98/99, plus `-eye`/`-hist`/`-contour`/`-smith`), `stb` loop gain (E-198), `loadpull` (E-234), `rfstab` (E-253), `wcd` worst-case distance (E-305), `sweep` (E-146) |
 | OSDI bridge (12) | `src/osdi/*` | `$discontinuity` clamp (E-24), `ac_stim` AC-RHS (E-51), noise factors (E-54), final-step phases (E-53), multi-module libs (E-76) |
 | Build / lifecycle | tree-wide | zero-warning macOS/clang build (E-77), session lifecycle (E-81) |
+
+Two later additions do not fit a single row above:
+
+- **Transient noise for OSDI devices** ([E-364](../../../enhancements_doc/Enhancement-364.md)) — a new
+  `src/osdi/osditrnoise.c` stamped from `OSDIload`'s serial post-eval loop, next
+  to the absdelay and last_crossing stamps. It injects a device's Verilog-A noise
+  sources into `.tran` as RHS current sources (no Jacobian entry) on a fixed noise
+  grid, reusing `frontend/trannoise`'s existing generator. No ABI change: the
+  descriptor already carried per-source power, exponent, node pair and correlation
+  name, and nothing had read them.
+- **`.disto` for OSDI devices** ([E-359](../../../enhancements_doc/Enhancement-359.md)) — `osdidistonum.c`
+  differences the analytic Jacobian numerically at the operating point rather than
+  having the compiler emit derivative tensors, which keeps compile time, object
+  size, runtime and the OSDI ABI at baseline.
+
 
 The [ngspice change report](../../change_log/ngspice_changes_full-report.md) has
 the file-by-file detail; the [gap analysis](ngspice_gaps.md) places ngspice

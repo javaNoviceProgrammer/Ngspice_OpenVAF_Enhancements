@@ -44,6 +44,50 @@ pathological input — all now fixed.
 > `StrLit::value()`. All fixed
 > ([Enhancement-230](../../../enhancements_doc/Enhancement-230.md)); a re-fuzz of
 > the fixed compiler is **0 panics, 0 hangs**.
+>
+> **Round 4 (2026-07-21).** Byte/token mutation of the whole `.va` corpus,
+> grammar-aware structured adversarial inputs, and valid-but-pathological
+> modules that compile through to the backend found **three** more panics:
+> deeply nested analog operators producing a cached value with no init-time
+> definition, `ddx` on a non-probe unknown, and a malformed module with an empty
+> item list ([E-263](../../../enhancements_doc/Enhancement-263.md)). Scaling work in the same round
+> fixed a **quadratic** module-flatten (a 16 001-element instance array looked
+> like a hang: 2k~1.8 s, 8k~30 s, 16k~100 s, now linear) and a stack overflow
+> ([E-264](../../../enhancements_doc/Enhancement-264.md)), and two `laplace` panics on degenerate
+> coefficient lists ([E-265](../../../enhancements_doc/Enhancement-265.md)).
+>
+> **The assertion campaign (2026-07-24 … 07-27).** The rounds above ran against
+> a normal release build, where every `debug_assert!` is compiled out. Replaying
+> the corpus under an **assertions-enabled** build exposed a class the release
+> build silently tolerated: **eight** crashes across
+> [E-286](../../../enhancements_doc/Enhancement-286.md)–[E-295](../../../enhancements_doc/Enhancement-295.md),
+> [E-307](../../../enhancements_doc/Enhancement-307.md)–[E-317](../../../enhancements_doc/Enhancement-317.md) and
+> [E-324](../../../enhancements_doc/Enhancement-324.md)–[E-331](../../../enhancements_doc/Enhancement-331.md).
+> [E-347](../../../enhancements_doc/Enhancement-347.md) closed it: the whole **496-file** corpus now
+> compiles assertions-clean. The last one was instructive — the invalid phi
+> operand was minted by `SSAVariableBuilder` during topology linearisation, not
+> by `mir_build` as the earlier diagnosis had assumed.
+>
+> **Round 7 (2026-07-28).** A campaign aimed at *wrong code* rather than crashes
+> found **nine** defects, all fixed: a `ddt` collapse, two integer-UB SIGTRAPs,
+> IEEE `!=`/shift/fast-math violations, and an OSDI parameter/Jacobian bug
+> ([E-332](../../../enhancements_doc/Enhancement-332.md)–[E-336](../../../enhancements_doc/Enhancement-336.md)).
+>
+> **Round 8 — cross-feature composition (2026-07-29).** Every round above
+> MUTATES existing models, and mutants overwhelmingly die at the parser, so the
+> deep stages were barely reached. A generator that instead emits
+> **valid-by-construction** programs *composing* features developed in isolation
+> (~40 % of inputs reach the backend) found **two** crashes on legal input, both
+> feature interactions no single-feature test could see: a block merged into
+> ITSELF (`simplify_unconditional_jmp_term` with `src == dst`, which is what a
+> `case` inside a `do-while` folds to), and array parameters never being
+> instance-renamed during flattening, so a module with one could not be
+> instantiated twice ([E-363](../../../enhancements_doc/Enhancement-363.md)). A companion
+> **complexity sweep** over 17 size knobs found no superlinear blowup.
+> One defect from that round is **open by design**: a provably non-terminating
+> analog loop still fails to compile, because its contributions are unreachable
+> and there is no correct object code for a model that cannot finish one
+> evaluation — the fix is a diagnostic, not a substituted value.
 
 This is a companion to the [OpenVAF compiler internals](OpenVAF_compiler_internals.md)
 guide: that document explains how the compiler works; this one documents how hard it
@@ -56,10 +100,19 @@ was pushed and what broke.
 | Production models compiled | **92 / 92** standalone (124 `.va` files incl. include-fragments) — 0 crashes / hangs / panics |
 | Adversarial hand-crafted inputs | **~50** — all rejected cleanly, 0 accepted-invalid |
 | Mutation-fuzzing iterations | **tens of thousands** — 0 segfaults; panics found + fixed round by round |
-| Crash / hang paths found | **18** — all fixed ([E-147](../../../enhancements_doc/Enhancement-147.md), [E-148](../../../enhancements_doc/Enhancement-148.md), [E-219](../../../enhancements_doc/Enhancement-219.md), [E-220](../../../enhancements_doc/Enhancement-220.md) ×10, [E-230](../../../enhancements_doc/Enhancement-230.md) ×3) |
+| Cross-feature composition (round 8) | **~3 400** valid-by-construction programs; ~40 % reach the backend |
+| Assertions-enabled corpus | **496 / 496** compile with zero assertion failures ([E-347](../../../enhancements_doc/Enhancement-347.md)) |
+| Crash / hang paths found | **44** — 43 fixed, 1 open by design. Rounds 1–3: 18 ([E-147](../../../enhancements_doc/Enhancement-147.md), [E-148](../../../enhancements_doc/Enhancement-148.md), [E-219](../../../enhancements_doc/Enhancement-219.md), [E-220](../../../enhancements_doc/Enhancement-220.md) ×10, [E-230](../../../enhancements_doc/Enhancement-230.md) ×3). Round 4: 7 ([E-263](../../../enhancements_doc/Enhancement-263.md) ×3, [E-264](../../../enhancements_doc/Enhancement-264.md) ×2, [E-265](../../../enhancements_doc/Enhancement-265.md) ×2). Assertion campaign: 8. Round 7: 9. Round 8: 2 ([E-363](../../../enhancements_doc/Enhancement-363.md)) |
 
 The compiler never crashed on random or garbage input — the only failures were
 specific, structured pathologies, each turned into a clean bounded diagnostic.
+
+Two lessons generalise beyond this compiler. First, **mutation fuzzing plateaus**:
+once the parser is hardened, mutants stop reaching anything new, and the next
+defects need a generator that produces *valid* programs. Second, **panic sites are
+nondeterministic** under rayon — the same input reported `builder.rs:143` or `:690`
+across runs — so `RAYON_NUM_THREADS=1` is a prerequisite for minimisation, or the
+reduction chases a moving target.
 
 ## Method
 

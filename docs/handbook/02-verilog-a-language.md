@@ -197,6 +197,44 @@ the actual construct and suggest hoisting or `generate` unrolling
 | `` `default_transition `` | Supplies default rise/fall for bare `transition()` calls. `examples/defaulttransition_examples/` | [E-47](../../enhancements_doc/Enhancement-47.md) |
 | Housekeeping directives | `` `celldefine ``/`` `endcelldefine ``, `` `unconnected_drive ``/`` `nounconnected_drive ``, `` `timescale ``, `` `line ``, `` `pragma ``, `` `undefineall ``, `` `resetall ``, `` `default_nettype `` — accepted (previously fatal errors). `examples/directive_examples/` | [E-6](../../enhancements_doc/Enhancement-6.md) |
 
+## 2.12b Later language work
+
+The sections above were written around the first wave of language support. The
+following arrived afterwards and are all exercised by their own example suites.
+
+**Declarations and ports.** Name-then-range declarations (`electrical in[0:2];`,
+`input in[0:2];` — LRM 3.6/3.7) are normalised to the range-then-name form
+([E-89](../../enhancements_doc/Enhancement-89.md)), multi-name declarations split per name
+([E-91](../../enhancements_doc/Enhancement-91.md)), and a bus port's INPUT ordering bug was fixed
+([E-90](../../enhancements_doc/Enhancement-90.md)). Parameters that shape a declaration width become
+`localparam` so the width cannot change at simulation time
+([E-92](../../enhancements_doc/Enhancement-92.md)), and a parameter that is never set is reported
+([E-93](../../enhancements_doc/Enhancement-93.md)). Block-scoped parameters inside a named `begin`
+are supported ([E-87](../../enhancements_doc/Enhancement-87.md)).
+
+**Statements.** `casex`/`casez` with proper don't-care semantics — `z`/`?` for
+`casez`, plus `x` for `casex` ([E-78](../../enhancements_doc/Enhancement-78.md)). Part-select on the
+left and right of an assignment, and `` `__FILE__``/`` `__LINE__``
+([E-85](../../enhancements_doc/Enhancement-85.md)). The legacy `generate` form with an `analog` block
+inside ([E-88](../../enhancements_doc/Enhancement-88.md)) and the bare `generate` block
+([E-96](../../enhancements_doc/Enhancement-96.md)).
+
+**Builtins.** `$clog2` arity and its `ceil` crash ([E-101](../../enhancements_doc/Enhancement-101.md)–
+[E-103](../../enhancements_doc/Enhancement-103.md)), `$rtoi`/`$itor` and the string functions
+([E-104](../../enhancements_doc/Enhancement-104.md)–[E-108](../../enhancements_doc/Enhancement-108.md)), `$limit` for
+genuine iteration limiting ([E-353](../../enhancements_doc/Enhancement-353.md)), and hierarchical
+branch probes ([E-86](../../enhancements_doc/Enhancement-86.md)).
+
+**The LRM's own examples as a suite.** [E-84](../../enhancements_doc/Enhancement-84.md) extracts every
+code example from the LRM 2023 PDF and compiles it: 42 compile, 17 are documented
+limitations pinned to their diagnostics, and 21 are correctly rejected as
+mixed-signal (outside Annex C). The 146 non-module fragments double as a
+no-crash corpus.
+
+**One open trap.** A provably non-terminating loop — `while (1)`, or forgetting
+the increment — crashes the compiler rather than producing a diagnostic
+([E-363](../../enhancements_doc/Enhancement-363.md)). Make sure loop variables advance.
+
 ## 2.13 Attributes
 
 Attributes `(* … *)` are how a model talks to the simulator's UI:

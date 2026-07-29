@@ -249,6 +249,37 @@ typical production flow is therefore:
 2. declare correlated process/mismatch with `mccorr` + `mvnorm`;
 3. `montecarlo … -lhs` for the yield (or `highsigma …` for a rare-event spec).
 
+## 7b. Global search, yield centring and worst-case distance
+
+**Global optimizers** ([E-194](../../../enhancements_doc/Enhancement-194.md)–[E-196](../../../enhancements_doc/Enhancement-196.md)):
+particle-swarm (`pso`), differential evolution (`de`) and simulated annealing
+(`sa`) join the local Nelder–Mead and Levenberg–Marquardt methods. They matter
+for circuit sizing because the cost surface is routinely multi-modal — a local
+method converges to whichever basin the initial guess happened to land in.
+
+**Multi-objective** ([E-216](../../../enhancements_doc/Enhancement-216.md)): `nsga2` returns a **Pareto
+front** rather than a single point, which is the honest answer when the
+objectives genuinely trade off (gain against power, speed against area) and no
+scalarised weighting is defensible.
+
+**Yield centring** ([E-206](../../../enhancements_doc/Enhancement-206.md)): `dcenter` moves the nominal
+design point to maximise the fraction of the statistical population that meets
+spec, rather than optimising the nominal response alone.
+
+**Worst-case distance** ([E-305](../../../enhancements_doc/Enhancement-305.md)): `wcd` reports the
+shortest distance, in *standardised* parameter space, from the nominal point to a
+spec boundary — i.e. the sigma level at which the design first fails, and the
+most-probable failure point that gets there. It answers "how much margin do I
+have, and in which direction is it thinnest", which a yield percentage from a
+Monte-Carlo run cannot: MC estimates the tail by sampling it, and the tail is
+exactly where samples are scarce.
+
+**Warm-started Monte Carlo** ([E-188](../../../enhancements_doc/Enhancement-188.md)) reuses the previous
+sample's solution as the next sample's initial guess, and **Latin-hypercube
+sampling** ([E-149](../../../enhancements_doc/Enhancement-149.md)–[E-151](../../../enhancements_doc/Enhancement-151.md))
+stratifies the draw so a given sample count covers the space more evenly than
+independent sampling.
+
 ## 8. Practical guidance
 
 - **Reproducibility.** Every run is seeded (`setseed`, or the command's `seed`/
