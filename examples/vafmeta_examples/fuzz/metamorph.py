@@ -155,6 +155,45 @@ def gen_pair(rng, i):
     return ("gen[%s]" % name, body_a, body_b)
 
 
+TMPL3 = """`include "disciplines.vams"
+module dut(d, g, sx);
+  inout d, g, sx;
+  electrical d, g, sx;
+  parameter real k1 = 1e-3 from (0:inf);
+  parameter real k2 = 1e-3 from (0:inf);
+  analog begin
+    %s
+  end
+endmodule
+"""
+
+# 3-TERMINAL pairs. A multi-terminal model exercises things a one-port cannot:
+# KVL between branch probes, contributions to several branches, and the Jacobian
+# gaining off-diagonal entries (so an autodiff bug that cancels on a one-port
+# shows up here).
+PAIRS3 = [
+    ("3t KVL: V(d,sx) == V(d,g)+V(g,sx)",
+     "I(d,sx) <+ k1*V(d,sx); I(g,sx) <+ k2*V(g,sx);",
+     "I(d,sx) <+ k1*(V(d,g)+V(g,sx)); I(g,sx) <+ k2*V(g,sx);"),
+    ("3t two contributions vs one",
+     "I(d,sx) <+ k1*V(d,sx); I(d,sx) <+ k2*V(d,sx); I(g,sx) <+ k2*V(g,sx);",
+     "I(d,sx) <+ (k1+k2)*V(d,sx); I(g,sx) <+ k2*V(g,sx);"),
+    ("3t transconductance via g node",
+     "I(d,sx) <+ k1*V(g,sx) + k2*V(d,sx); I(g,sx) <+ k2*V(g,sx);",
+     "I(d,sx) <+ k2*V(d,sx) + k1*V(g,sx); I(g,sx) <+ k2*V(g,sx);"),
+    ("3t antisymmetry I(sx,d) == -I(d,sx)",
+     "I(d,sx) <+ k1*V(d,sx); I(g,sx) <+ k2*V(g,sx);",
+     "I(sx,d) <+ -(k1*V(d,sx)); I(g,sx) <+ k2*V(g,sx);"),
+    # $limit only changes the NEWTON PATH; the converged fixed point must be
+    # identical. That is the metamorphic property, and it is the whole point of a
+    # limiting function -- if it moved the solution it would be a bug by
+    # definition. Compared against the same model with no limiting at all.
+    ("3t $limit must not move the solution",
+     "begin : lm real vd; vd = $limit(V(d,sx), \"pnjlim\", 0.025, 0.6); "
+     "I(d,sx) <+ 1e-14*(exp(vd/0.025)-1.0); I(g,sx) <+ k2*V(g,sx); end",
+     "I(d,sx) <+ 1e-14*(exp(V(d,sx)/0.025)-1.0); I(g,sx) <+ k2*V(g,sx);"),
+]
+
 TMPL = """`include "disciplines.vams"
 module dut(p, n);
   inout p, n;
@@ -168,17 +207,33 @@ endmodule
 """
 
 
-def compile_va(body, tag):
+def compile_va(body, tag, three=False):
     d = os.path.join(HERE, "j_%s" % tag)
     os.makedirs(d, exist_ok=True)
     src = os.path.join(d, "dut.va")
-    open(src, "w").write(TMPL % body)
+    open(src, "w").write((TMPL3 if three else TMPL) % body)
     env = dict(os.environ, RAYON_NUM_THREADS="1", TMPDIR=d)
     r = subprocess.run([VAF, "dut.va", "-o", "dut.osdi"], cwd=d, env=env,
                        capture_output=True, text=True, timeout=900, errors="replace")
     if r.returncode != 0:
         return None, (r.stdout + r.stderr)[:200]
     return os.path.join(d, "dut.osdi"), ""
+
+
+def simulate3(osdi, tag):
+    """3-terminal deck: sweep the d-side and hold a gate bias, so both the
+    diagonal and the off-diagonal Jacobian entries are exercised."""
+    p = os.path.join(HERE, "s_%s.cir" % tag)
+    open(p, "w").write(
+        "meta3\nV1 in 0 dc 0.5 ac 1\nVg gg 0 dc 0.3\nRs in a 1k\nRg gg g 1k\n"
+        "N1 a g 0 dut\n.model dut dut()\n"
+        ".control\noption noacct\nset numdgt=17\npre_osdi %s\n"
+        "dc V1 -0.5 0.5 0.25\nprint v(a)\nac lin 3 1e3 1e6\nprint vdb(a)\n"
+        ".endc\n.end\n" % osdi)
+    r = subprocess.run([NG, "-b", os.path.basename(p)], cwd=HERE, capture_output=True,
+                       text=True, timeout=600, errors="replace")
+    return [float(m.group(1)) for m in re.finditer(
+        r"^\s*\d+\s+[-+0-9.eE]+\s+([-+0-9.eE]+)\s*$", r.stdout + r.stderr, re.M)]
 
 
 def simulate(osdi, tag):
@@ -208,20 +263,22 @@ def main():
     ap.add_argument("--gen", type=int, default=0, help="generated pairs to add")
     ap.add_argument("--seed", type=int, default=1)
     a = ap.parse_args()
-    pairs = list(PAIRS)
+    pairs = [(l, x, y, False) for (l, x, y) in PAIRS] + \
+            [(l, x, y, True) for (l, x, y) in PAIRS3]
     if a.gen:
         rng = random.Random(a.seed)
-        pairs += [gen_pair(rng, i) for i in range(a.gen)]
+        pairs += [gen_pair(rng, i) + (False,) for i in range(a.gen)]
     print("  %-34s %-8s %s" % ("metamorphic pair", "verdict", "detail"))
     print("  " + "-" * 92)
     bad = compiled = 0
-    for i, (label, a, b) in enumerate(pairs):
-        oa, ea = compile_va(a, "a%d" % i)
-        ob, eb = compile_va(b, "b%d" % i)
+    for i, (label, a, b, three) in enumerate(pairs):
+        oa, ea = compile_va(a, "a%d" % i, three)
+        ob, eb = compile_va(b, "b%d" % i, three)
         if not oa or not ob:
             print("  %-34s %-8s A:%s B:%s" % (label, "NOCOMP", ea[:28], eb[:28]))
             continue
-        va, vb = simulate(oa, "a%d" % i), simulate(ob, "b%d" % i)
+        sf = simulate3 if three else simulate
+        va, vb = sf(oa, "a%d" % i), sf(ob, "b%d" % i)
         if not va or not vb or len(va) != len(vb):
             print("  %-34s %-8s len %d vs %d" % (label, "NODATA", len(va), len(vb)))
             continue
