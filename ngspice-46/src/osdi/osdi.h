@@ -74,7 +74,13 @@
 #define EVAL_RET_FLAG_DISCONT 16
 
 
-#define LOG_LVL_MASK 8
+/* Enhancement-377: the level occupies the low THREE bits (DEBUG 0 .. FATAL 5),
+ * so the mask is 7. It read 8, which selects bit 3 only -- a bit no level ever
+ * sets -- so `lvl & LOG_LVL_MASK` was 0 for EVERY level and osdi_log reported
+ * $display, $info, $warning, $error and every fatal diagnostic alike as
+ * "OSDI(debug)" on stdout, instead of their own severity on stderr.
+ * OpenVAF's own copy of this header (osdi/header/osdi_0_4.h) has always said 7. */
+#define LOG_LVL_MASK 7
 #define LOG_LVL_DEBUG 0
 #define LOG_LVL_DISPLAY 1
 #define LOG_LVL_INFO 2

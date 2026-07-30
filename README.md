@@ -420,6 +420,7 @@ The index: **Doc** links each enhancement's detailed write-up, **Examples** link
 | 374 | fix: `setseed` did not seed transient noise — the Wallace generator's pools were filled at startup from `getpid()` and never rebuilt | ngspice | [doc](enhancements_doc/Enhancement-374.md) | [setseed](examples/setseed_examples/) |
 | 375 | fix: a loop that provably cannot finish is now a compile error — it used to emit a model that hung the simulator with no diagnostic; also closes 3 codegen crashes on `disable` | openvaf-r | [doc](enhancements_doc/Enhancement-375.md) | [vafloop](examples/vafloop_examples/) |
 | 376 | fix: `$dist_*` returned `real`; the LRM makes it integer (`$rdist_*` is the real family) — needed a `ficast` in the lowering too, or the value read as 0 | openvaf-r | [doc](enhancements_doc/Enhancement-376.md) | [distint](examples/distint_examples/) |
+| 377 | fix: OSDI diagnostics — name glued to its argument, no newline, no `free`, and `LOG_LVL_MASK` 8 made every severity report as `OSDI(debug)` on stdout | both | [doc](enhancements_doc/Enhancement-377.md) | [simparamdiag](examples/simparamdiag_examples/) |
 
 </details>
 

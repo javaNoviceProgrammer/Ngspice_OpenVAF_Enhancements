@@ -12,6 +12,7 @@ extern void *memcpy (void *__restrict __dest, const void *__restrict __src,
 		     size_t __n);
 extern void *malloc (size_t __size);
 extern void *realloc (void *__ptr, size_t __size);
+extern void free (void *__ptr);
 extern double log(double);
 extern double exp(double);
 extern double sqrt(double);
@@ -68,6 +69,43 @@ extern osdi_log_ptr osdi_log;
 
 #define SCMP(p1, p2, s1, s2, eq) for(p1=s1, p2=s2;*p1 && *p2 && *p1==*p2;p1++, p2++); eq = (*p1==*p2);
 
+/* Enhancement-377: report an unknown $simparam / $simparam$str name.
+ *
+ * The two call sites used to build the message with `concat(prefix, name)`, which
+ * has NO SEPARATOR -- `$simparam$str("analysis")` reported
+ *
+ *     unknown $simparam_stranalysis
+ *
+ * where the function name and the argument run together, so the reader cannot see
+ * where one ends and the other begins. Three further problems came with it:
+ * the name was spelled `$simparam_str` rather than `$simparam$str` as it is
+ * written in Verilog-A; there was no trailing newline, so consecutive reports
+ * concatenated into one unreadable line; and the malloc'd message was never
+ * freed, which leaks once per evaluation (a failing operating point retries, so
+ * that is hundreds of allocations, not one).
+ *
+ * Produces:  unknown $simparam$str "analysis"\n
+ */
+static void log_unknown_simparam(void *handle, const char *what, const char *name) {
+  const size_t lw = strlen(what);
+  const size_t ln = strlen(name);
+  /* what + '"' + name + '"' + '\n' + NUL */
+  char *msg = malloc(lw + ln + 4);
+  if (msg == NULL) {
+    /* out of memory: fall back to the bare prefix rather than saying nothing */
+    osdi_log(handle, (char *)what, LOG_LVL_FATAL | LOG_FMT_ERR);
+    return;
+  }
+  memcpy(msg, what, lw);
+  msg[lw] = '"';
+  memcpy(msg + lw + 1, name, ln);
+  msg[lw + 1 + ln] = '"';
+  msg[lw + 2 + ln] = '\n';
+  msg[lw + 3 + ln] = '\0';
+  osdi_log(handle, msg, LOG_LVL_FATAL);
+  free(msg);
+}
+
 double simparam(void *params_, void *handle, uint32_t *flags, char *name) {
   OsdiSimParas *params = params_;
   for (int i = 0; params->names[i]; i++) {
@@ -80,12 +118,7 @@ double simparam(void *params_, void *handle, uint32_t *flags, char *name) {
     }
   }
   *flags |= EVAL_RET_FLAG_FATAL;
-  char *msg = concat("unknown $simparam", name);
-  if (msg == NULL) {
-    osdi_log(handle, "unknown $simparam %s", LOG_LVL_FATAL | LOG_FMT_ERR);
-  } else {
-    osdi_log(handle, msg, LOG_LVL_FATAL);
-  }
+  log_unknown_simparam(handle, "unknown $simparam ", name);
   return 0.0;
 }
 
@@ -124,12 +157,7 @@ char *simparam_str(void *params_, void *handle, uint32_t *flags, char *name) {
   }
   *flags |= EVAL_RET_FLAG_FATAL;
 
-  char *msg = concat("unknown $simparam_str", name);
-  if (msg == NULL) {
-    osdi_log(handle, "unknown $simparam_str %s", LOG_LVL_FATAL | LOG_FMT_ERR);
-  } else {
-    osdi_log(handle, msg, LOG_LVL_FATAL);
-  }
+  log_unknown_simparam(handle, "unknown $simparam$str ", name);
 
   return "�";
 }
