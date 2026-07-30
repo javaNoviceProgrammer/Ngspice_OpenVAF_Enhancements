@@ -69,13 +69,16 @@ not even declared in the runtime's `NO_STD` extern block. At 373 reports per
 failing operating point that is 373 leaked allocations, not one. Both call sites
 now go through one helper that frees.
 
-## What is deliberately not fixed
+## The repetition, and where it went
 
-The report still repeats 373 times. That is ngspice retrying the failing operating
-point — gmin stepping, then source stepping — and re-evaluating the device each
-time. Suppressing it is a change to the convergence path, not to the diagnostic,
-and is out of scope here. It is now at least *visible* as 373 lines rather than
-hidden inside one.
+Making the messages visible exposed that there were 373 of them. That was left
+open here as "a convergence-path change, not a diagnostic one" — which turned out
+to understate it. It was not message spam: `CKTop` read the fatal's `E_PANIC`
+return as "did not converge" and answered it by walking the gmin / source-stepping
+ladder, re-evaluating the device on every pass, then blamed `timestep too small`.
+
+[Enhancement-378](Enhancement-378.md) fixes that: the fatal now aborts the
+operating point and the report appears once.
 
 ## Verification
 

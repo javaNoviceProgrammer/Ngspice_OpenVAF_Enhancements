@@ -66,6 +66,8 @@ CKTop (CKTcircuit *ckt, long int firstmode, long int continuemode,
         ckt->CKTdcFirstTry = 0;
         if (converged == 0)
             goto done;          /* successfull (plain / line-search Newton) */
+        if (converged == E_PANIC)
+            goto fatal;         /* Enhancement-378 */
     } else {
         converged = 1;          /* the 'go directly to gmin stepping' option */
     }
@@ -96,6 +98,8 @@ CKTop (CKTcircuit *ckt, long int firstmode, long int continuemode,
             conv_aid = "gmin stepping";
             goto done;
         }
+        if (converged == E_PANIC)
+            goto fatal;         /* Enhancement-378 */
     }
 
     /* ... otherwise try stepping sources ...
@@ -113,6 +117,8 @@ CKTop (CKTcircuit *ckt, long int firstmode, long int continuemode,
             conv_aid = "source stepping";
             goto done;
         }
+        if (converged == E_PANIC)
+            goto fatal;         /* Enhancement-378 */
     }
 
     /* Enhancement-127: pseudo-transient continuation (.option ptcont). A
@@ -126,6 +132,8 @@ CKTop (CKTcircuit *ckt, long int firstmode, long int continuemode,
             conv_aid = "pseudo-transient continuation";
             goto done;
         }
+        if (converged == E_PANIC)
+            goto fatal;         /* Enhancement-378 */
     }
 
     /* If command 'optran' is not given, the function
@@ -150,6 +158,32 @@ CKTop (CKTcircuit *ckt, long int firstmode, long int continuemode,
     if (ft_stricterror)
         controlled_exit(1);
     fprintf(cp_err, "    Any of the following steps may fail.!\n\n");
+
+ fatal:
+    /* Enhancement-378: a Verilog-A device raised $fatal (or hit a fatal runtime
+     * error such as an unknown $simparam name) during the operating point.
+     *
+     * That is an ABORT, not a convergence failure -- but CKTop reads any non-zero
+     * return from NIiter as "did not converge" and walks its whole ladder: gmin
+     * stepping, source stepping, pseudo-transient, optran. Each aid re-evaluates
+     * every device, so the model re-raises the same fatal on each pass (measured:
+     * 373 evaluations per device for a single failing op, exactly 373*N for N
+     * devices), and the run ends by blaming `timestep too small` -- naming
+     * convergence rather than the actual cause.
+     *
+     * Enhancement-55 added exactly this guard to the transient time-stepping loop
+     * in dctran.c, noting the error was otherwise "swallowed by the retry logic".
+     * The operating-point path never got the same treatment. E_PANIC (1) and the
+     * non-convergence code E_ITERLIM (E_PRIVATE+3 = 103) are distinct values, so
+     * this test is exact -- it cannot mistake a stalled Newton solve for a fatal.
+     */
+    fprintf(cp_err,
+            "\nError: a Verilog-A device raised $fatal during the operating point;"
+            " aborting.\n"
+            "       This is not a convergence failure -- see the OSDI(fatal)"
+            " message above for the cause.\n");
+    ckt->CKTlinesearch = ls_saved;
+    return E_PANIC;
 
  done:
     /* Enhancement-204: restore the caller's line-search setting and, when the

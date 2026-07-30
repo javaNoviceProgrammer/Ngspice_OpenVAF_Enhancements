@@ -32,10 +32,10 @@ Four separate defects in that one line.
    declared in the runtime's `NO_STD` block. At 373 reports per failing operating
    point that is 373 leaked allocations, not one.
 
-WHAT IS NOT FIXED, deliberately: the report still repeats 373 times. That is
-ngspice retrying the failing operating point (gmin then source stepping), each
-retry re-evaluating the device. Suppressing it is a convergence-path change, not a
-diagnostic one, and is left alone here.
+THE REPETITION IS FIXED SEPARATELY, in Enhancement-378. It was not message spam:
+`CKTop` read the fatal's `E_PANIC` return as "did not converge" and answered it by
+walking the gmin / source-stepping ladder, re-evaluating the device each pass. The
+fatal now aborts the operating point, so the report appears once.
 """
 import os
 import re
@@ -137,10 +137,16 @@ def main():
     check("the fatal diagnostic goes to stderr, not stdout",
           "unknown $simparam" in err and "unknown $simparam" not in out)
 
-    # 4. newline-terminated: each report on its own line, so repeats are visible
+    # 4. newline-terminated. Enhancement-378 later made the fatal ABORT the
+    #    operating point, so there is now exactly ONE report rather than 373 --
+    #    a count-based test would no longer prove anything. Test the property
+    #    directly instead: the line must END at the closing quote. Pre-fix the
+    #    message carried no newline, so whatever ngspice printed next was glued
+    #    onto the same line.
     lines = [l for l in err.splitlines() if "unknown $simparam" in l]
-    check("each report is newline-terminated (own line)", len(lines) >= 2,
-          "%d separate lines; pre-fix they concatenated into one" % len(lines))
+    check("the report is newline-terminated (nothing glued after it)",
+          len(lines) >= 1 and all(l.rstrip().endswith('"') for l in lines),
+          "%d line(s); tail = %r" % (len(lines), lines[0][-28:] if lines else ""))
     check("no line carries two concatenated reports",
           all(l.count("unknown $simparam") == 1 for l in lines),
           "max per line %d" % max([l.count("unknown $simparam") for l in lines] or [0]))
