@@ -353,21 +353,43 @@ bultins! {
     }
 
 
+
+
+
+    // Enhancement-376: the $dist_* family returns INTEGER, not real -- $rdist_*
+    // is the real-valued family, and exists precisely because these do not.
+    // The Enhancement-49 audit note below already called these "the
+    // integer-distribution $dist_* functions" while fixing their ARGUMENT types
+    // on LRM grounds; the return types were missed in the same pass. $random and
+    // $arandom above have always been `-> Integer`, so this is the established
+    // path: the osdi_rng_* runtime returns a double and integer-returning
+    // builtins cast at the call site. The cast is exact -- 20000 draws from every
+    // $dist_* function are integral, while every $rdist_* draw is not.
+    // Enhancement-376: the $dist_* family returns INTEGER, not real. $rdist_*
+    // is the real-valued family and exists precisely because these are not.
+    // The Enhancement-49 audit note below already called these "the
+    // integer-distribution $dist_* functions" while correcting their ARGUMENT
+    // types on LRM grounds; the return types were missed in that same pass.
+    // $random/$arandom above have always been `-> Integer`, so this is the
+    // established path: the osdi_rng_* runtime returns a double and
+    // integer-returning builtins cast at the call site. The cast is exact --
+    // 20000 draws from every $dist_* function are integral, while no $rdist_*
+    // column is.
     DIST_1_ARG = const {
-        fn DIST_1_ARG_SEED(Var(Integer),Val(Integer)) -> Real;
-        fn DIST_1_ARG_CONST_SEED(Param(Integer),Val(Integer)) -> Real;
-        fn DIST_1_ARG_CONST_NAME(Var(Integer),Val(Integer),Literal(String)) -> Real;
-        fn DIST_1_ARG_CONST_SEED_NAME(Param(Integer),Val(Integer),Literal(String)) -> Real;
+        fn DIST_1_ARG_SEED(Var(Integer),Val(Integer)) -> Integer;
+        fn DIST_1_ARG_CONST_SEED(Param(Integer),Val(Integer)) -> Integer;
+        fn DIST_1_ARG_CONST_NAME(Var(Integer),Val(Integer),Literal(String)) -> Integer;
+        fn DIST_1_ARG_CONST_SEED_NAME(Param(Integer),Val(Integer),Literal(String)) -> Integer;
     }
 
     DIST_2_ARG = const {
-        fn DIST_2_ARG_SEED(Var(Integer),Val(Integer),Val(Integer)) -> Real;
+        fn DIST_2_ARG_SEED(Var(Integer),Val(Integer),Val(Integer)) -> Integer;
         // Enhancement-49 audit: the middle argument said Val(Real) while every
         // sibling signature says Val(Integer) -- the integer-distribution
         // $dist_* functions take integer parameters per the LRM
-        fn DIST_2_ARG_CONST_SEED(Param(Integer),Val(Integer),Val(Integer)) -> Real;
-        fn DIST_2_ARG_CONST_NAME(Var(Integer),Val(Integer),Val(Integer),Literal(String)) -> Real;
-        fn DIST_2_ARG_CONST_SEED_NAME(Param(Integer),Val(Integer),Val(Integer),Literal(String)) -> Real;
+        fn DIST_2_ARG_CONST_SEED(Param(Integer),Val(Integer),Val(Integer)) -> Integer;
+        fn DIST_2_ARG_CONST_NAME(Var(Integer),Val(Integer),Val(Integer),Literal(String)) -> Integer;
+        fn DIST_2_ARG_CONST_SEED_NAME(Param(Integer),Val(Integer),Val(Integer),Literal(String)) -> Integer;
     }
 
     SIMPROBE = const {

@@ -1684,14 +1684,27 @@ impl BodyLoweringCtx<'_, '_, '_> {
             // statistical-distribution system functions. Each lowers to a pure
             // `osdi_rng_*` runtime callback (see `RngFun`).
             //
-            // Return types follow OpenVAF's builtin signature table: `$random`
-            // and `$arandom` are `Integer` (the real callback result is cast to
-            // int with `ficast`), while *every* `$dist_*`/`$rdist_*` function is
-            // typed `Real`. The LRM nonetheless specifies the `$dist_*` (as
-            // opposed to `$rdist_*`) forms as integer-valued, so those round the
-            // real draw to the nearest integer while keeping it a real value
-            // (`rng_round_real`). The `$dist_*` integer parameters are coerced to
-            // real for the shared real-argument callbacks via `lower_num_as_real`.
+            // Return types follow OpenVAF's builtin signature table: `$random`,
+            // `$arandom` and -- since Enhancement-376 -- every `$dist_*` form are
+            // `Integer`, while the `$rdist_*` family is `Real`. That is the LRM
+            // split, and it is the reason the `$rdist_*` family exists at all.
+            //
+            // `osdi_rng_*` always returns a double, so every integer-typed form
+            // ends in `ficast`. Where the draw is not already integral it is
+            // ROUNDED FIRST (`rng_round_real` = floor(x+0.5), which is also correct
+            // for negatives -- `$dist_t` and a zero-mean `$dist_normal` need that);
+            // `ficast` then truncates an exactly-integral double, so it is
+            // lossless. `UniformInt` and `Poisson` are already integral and are
+            // only cast.
+            //
+            // Before Enhancement-376 these rounded but stayed `Real`, which made
+            // LRM-conformant code such as `$display("%d", $dist_uniform(s,10,20))`
+            // a compile error. Changing the signature table alone was NOT enough:
+            // the lowering still produced a real value, which every downstream
+            // integer consumer then read as 0.
+            //
+            // The `$dist_*` integer parameters are coerced to real for the shared
+            // real-argument callbacks via `lower_num_as_real`.
             BuiltIn::random | BuiltIn::arandom => {
                 let seed = self.lower_rng_seed(args);
                 let r = self.lower_rng(expr, RngFun::Random, seed, &[]);
@@ -1708,7 +1721,8 @@ impl BodyLoweringCtx<'_, '_, '_> {
                 let a = self.lower_num_as_real(args[1]);
                 let b = self.lower_num_as_real(args[2]);
                 // `UniformInt` already returns an integral (but real) value.
-                self.lower_rng(expr, RngFun::UniformInt, seed, &[a, b])
+                let r = self.lower_rng(expr, RngFun::UniformInt, seed, &[a, b]);
+                self.ctx.ins().ficast(r)
             }
             BuiltIn::rdist_normal => {
                 let seed = self.lower_expr(args[0]);
@@ -1721,7 +1735,8 @@ impl BodyLoweringCtx<'_, '_, '_> {
                 let mean = self.lower_num_as_real(args[1]);
                 let sdev = self.lower_num_as_real(args[2]);
                 let r = self.lower_rng(expr, RngFun::Normal, seed, &[mean, sdev]);
-                self.rng_round_real(r)
+                let rr = self.rng_round_real(r);
+                self.ctx.ins().ficast(rr)
             }
             BuiltIn::rdist_exponential => {
                 let seed = self.lower_expr(args[0]);
@@ -1732,18 +1747,21 @@ impl BodyLoweringCtx<'_, '_, '_> {
                 let seed = self.lower_expr(args[0]);
                 let mean = self.lower_num_as_real(args[1]);
                 let r = self.lower_rng(expr, RngFun::Exponential, seed, &[mean]);
-                self.rng_round_real(r)
+                let rr = self.rng_round_real(r);
+                self.ctx.ins().ficast(rr)
             }
             BuiltIn::rdist_poisson => {
                 let seed = self.lower_expr(args[0]);
                 let mean = self.lower_expr(args[1]);
+                // stays REAL: $rdist_* is the real-valued family (Enhancement-376)
                 self.lower_rng(expr, RngFun::Poisson, seed, &[mean])
             }
             BuiltIn::dist_poisson => {
                 let seed = self.lower_expr(args[0]);
                 let mean = self.lower_num_as_real(args[1]);
                 // `Poisson` already returns an integral (but real) count.
-                self.lower_rng(expr, RngFun::Poisson, seed, &[mean])
+                let r = self.lower_rng(expr, RngFun::Poisson, seed, &[mean]);
+                self.ctx.ins().ficast(r)
             }
             BuiltIn::rdist_chi_square => {
                 let seed = self.lower_expr(args[0]);
@@ -1754,7 +1772,8 @@ impl BodyLoweringCtx<'_, '_, '_> {
                 let seed = self.lower_expr(args[0]);
                 let dof = self.lower_num_as_real(args[1]);
                 let r = self.lower_rng(expr, RngFun::ChiSquare, seed, &[dof]);
-                self.rng_round_real(r)
+                let rr = self.rng_round_real(r);
+                self.ctx.ins().ficast(rr)
             }
             BuiltIn::rdist_t => {
                 let seed = self.lower_expr(args[0]);
@@ -1765,7 +1784,8 @@ impl BodyLoweringCtx<'_, '_, '_> {
                 let seed = self.lower_expr(args[0]);
                 let dof = self.lower_num_as_real(args[1]);
                 let r = self.lower_rng(expr, RngFun::StudentT, seed, &[dof]);
-                self.rng_round_real(r)
+                let rr = self.rng_round_real(r);
+                self.ctx.ins().ficast(rr)
             }
             BuiltIn::rdist_erlang => {
                 let seed = self.lower_expr(args[0]);
@@ -1778,7 +1798,8 @@ impl BodyLoweringCtx<'_, '_, '_> {
                 let k = self.lower_num_as_real(args[1]);
                 let mean = self.lower_num_as_real(args[2]);
                 let r = self.lower_rng(expr, RngFun::Erlang, seed, &[k, mean]);
-                self.rng_round_real(r)
+                let rr = self.rng_round_real(r);
+                self.ctx.ins().ficast(rr)
             }
 
         }
