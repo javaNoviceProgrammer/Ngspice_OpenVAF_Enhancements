@@ -1,0 +1,10 @@
+`include "disciplines.vams"
+module dut(p, n);
+  inout p, n;
+  electrical p, n;
+  parameter real k1 = 1e-3 from (0:inf);
+  parameter real k2 = 2e-3 from (0:inf);
+  analog begin
+    I(p,n) <+ k2*V(p,n) + (((V(p,n)*k1)*1.0));
+  end
+endmodule
