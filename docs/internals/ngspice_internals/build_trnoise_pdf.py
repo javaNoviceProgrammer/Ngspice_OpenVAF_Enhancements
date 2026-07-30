@@ -92,7 +92,13 @@ def githubify(text):
             os.path.normpath(os.path.join(HERE, target.split("#")[0])), ROOT)
         kind = "tree" if os.path.isdir(os.path.join(ROOT, rel)) else "blob"
         return f"[{label}]({GITHUB}/{kind}/main/{rel})"
-    return re.sub(r"(!?)\[([^\]]*)\]\(([^)\s]+)\)", rewrite, text)
+        # Enhancement: the label and target must NOT span newlines. With
+    # `[^\]]*` this regex crossed a fenced code block -- the `[` in a
+    # Verilog-A `from [0:inf);` paired with a `](` many lines later, which
+    # swallowed the `!` of a following image and rewrote it as a LINK. pandoc
+    # then downloaded that GitHub page and fed it to xelatex as a graphic:
+    #   "Cannot determine size of graphic ... .shtml (no BoundingBox)"
+    return re.sub(r"(!?)\[([^\]\n]*)\]\(([^)\s\n]+)\)", rewrite, text)
 
 
 BREAKPATHS_LUA = r"""

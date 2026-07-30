@@ -432,8 +432,21 @@ quiet intervals and alias the noise.
 **t = 0.** No noise is injected at $t = 0$; the operating point must be the
 deterministic DC solution, or the starting point of every run would move.
 
-**Reproducibility.** `setseed <n>` before `tran` fixes the stream, which is what
-makes the seed-averaged statistics above possible.
+**Reproducibility — `setseed` does NOT fix the transient-noise stream.** An
+earlier version of this note claimed it did. That was wrong, and a later
+correctness sweep caught it: two identical decks with `setseed 42` produce
+*different* noise waveforms, while `setseed 42` followed by `rnd(100)` reproduces
+exactly — so the command itself works, just not for this generator.
+
+The cause is that `#define WaGauss` selects the Wallace normal generator, whose
+`initw()` runs at **startup** and does `srand(getpid())` before filling its pools.
+A later `setseed` resets the Tausworthe state but cannot refill pools that are
+already built, so the samples keep coming from the process-id-derived stream.
+
+This does **not** invalidate the seed-averaged statistics quoted above — those
+were means over genuinely independent runs, which is what the error bars
+describe — but the runs were independent *by accident* rather than by seeding, and
+an individual figure here cannot be reproduced bit-for-bit.
 
 ## 11. Known limits
 
