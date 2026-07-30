@@ -18,6 +18,14 @@ rearrangement, strength reduction (`x**2` vs `x*x`), control-flow lowering
 (each body is differentiated for the Jacobian, so a derivative bug shows up as a
 DC/AC mismatch even when the residual agrees).
 
+OPERATOR COVERAGE. `idt` and `laplace` are LINEAR operators, so the properties
+used are convention-free -- they hold whatever scaling or sign convention the
+implementation chose, which matters because guessing a laplace convention wrong
+manufactures a "mismatch" that is really a bad oracle:
+    scaling       OP(c*x) == c*OP(x)
+    additivity    OP(a) + OP(b) == OP(a+b)
+    cancellation  nd(x,{2},{2,2t}) == nd(x,{1},{1,t})
+
 HEAVY RUN ON RECORD (2026-07-29, `--gen 25 --gen3 25 --seed 11`):
   70 pairs attempted -> 64 compared, 0 MISMATCH, 6 NODATA, 0 NOCOMP.
 The 6 NODATA are generated expressions whose CIRCUIT does not converge (a random
@@ -137,6 +145,51 @@ def gen_expr(rng, depth=0):
                                      gen_expr(rng, depth + 1),
                                      gen_expr(rng, depth + 1))
 
+
+# --- idt / laplace pairs ----------------------------------------------------
+# Both are LINEAR operators, so the metamorphic properties used here are
+# convention-free: they hold whatever scaling or sign convention the
+# implementation picked, which matters because guessing a laplace convention
+# wrong produces a "mismatch" that is really a bad oracle.
+#
+#   scaling      OP(c*x) == c*OP(x)
+#   additivity   OP(a) + OP(b) == OP(a+b)
+#   common factor in a rational form cancels: nd(x,{2},{2,2t}) == nd(x,{1},{1,t})
+#
+# `idt` is given an explicit initial condition so the DC operating point is
+# well defined -- the integral of a constant is otherwise unbounded, which is a
+# property of the maths and not a defect.
+PAIRS_OP = [
+    ("idt scaling: idt(2x) == 2 idt(x)",
+     "I(p,n) <+ k2*V(p,n) + 1e-6*idt(2.0*V(p,n), 0.0);",
+     "I(p,n) <+ k2*V(p,n) + 2.0*1e-6*idt(V(p,n), 0.0);"),
+    ("idt additivity",
+     "I(p,n) <+ k2*V(p,n) + 1e-6*(idt(k1*V(p,n),0.0) + idt(k2*V(p,n),0.0));",
+     "I(p,n) <+ k2*V(p,n) + 1e-6*idt((k1+k2)*V(p,n), 0.0);"),
+    # ddt(idt(x)) == x holds in AC (ddt -> jw, idt -> 1/jw, they cancel exactly)
+    # but NOT at a DC operating point, where ddt(...) is identically ZERO by
+    # definition -- so the ddt(idt(x)) side contributes nothing there while the
+    # bare x side contributes k1*V. Measured: AC identical to 0.00e+00, DC off by
+    # 8.3e-02, and the DC numbers confirm the reason exactly (side A behaves as
+    # k2*V alone -> 1/3, side B as (k1+k2)*V -> 1/4). Comparing DC here was an
+    # ORACLE error, not a compiler defect, so this pair is marked AC-only.
+    ("ddt(idt(x)) == x  [AC only]",
+     "I(p,n) <+ k2*V(p,n) + k1*ddt(idt(V(p,n), 0.0));",
+     "I(p,n) <+ k2*V(p,n) + k1*V(p,n);", "ac"),
+    ("laplace scaling: L(2x) == 2 L(x)",
+     "I(p,n) <+ k2*V(p,n) + k1*laplace_nd(2.0*V(p,n), {1.0}, {1.0, 1e-6});",
+     "I(p,n) <+ k2*V(p,n) + 2.0*k1*laplace_nd(V(p,n), {1.0}, {1.0, 1e-6});"),
+    ("laplace additivity",
+     "I(p,n) <+ k2*V(p,n) + k1*(laplace_nd(V(p,n),{1.0},{1.0,1e-6}) "
+     "+ laplace_nd(V(p,n),{1.0},{1.0,1e-6}));",
+     "I(p,n) <+ k2*V(p,n) + 2.0*k1*laplace_nd(V(p,n),{1.0},{1.0,1e-6});"),
+    ("laplace common factor cancels",
+     "I(p,n) <+ k2*V(p,n) + k1*laplace_nd(V(p,n), {2.0}, {2.0, 2e-6});",
+     "I(p,n) <+ k2*V(p,n) + k1*laplace_nd(V(p,n), {1.0}, {1.0, 1e-6});"),
+    ("laplace numerator scaling",
+     "I(p,n) <+ k2*V(p,n) + k1*laplace_nd(V(p,n), {3.0}, {1.0, 1e-6});",
+     "I(p,n) <+ k2*V(p,n) + 3.0*k1*laplace_nd(V(p,n), {1.0}, {1.0, 1e-6});"),
+]
 
 # --- 3-TERMINAL generation --------------------------------------------------
 # The one-port generator cannot reach off-diagonal Jacobian entries. These atoms
@@ -315,18 +368,24 @@ def main():
     ap.add_argument("--gen3", type=int, default=0, help="generated 3-terminal pairs")
     ap.add_argument("--seed", type=int, default=1)
     a = ap.parse_args()
-    pairs = [(l, x, y, False) for (l, x, y) in PAIRS] + \
-            [(l, x, y, True) for (l, x, y) in PAIRS3]
+    def norm(t, three):
+        # a pair may carry a trailing "ac" marker meaning "compare AC rows only"
+        if len(t) == 4:
+            return (t[0], t[1], t[2], three, t[3])
+        return (t[0], t[1], t[2], three, "")
+    pairs = [norm(t, False) for t in PAIRS] + \
+            [norm(t, False) for t in PAIRS_OP] + \
+            [norm(t, True) for t in PAIRS3]
     if a.gen:
         rng = random.Random(a.seed)
-        pairs += [gen_pair(rng, i) + (False,) for i in range(a.gen)]
+        pairs += [gen_pair(rng, i) + (False, "") for i in range(a.gen)]
     if a.gen3:
         rng3 = random.Random(a.seed + 10007)
-        pairs += [gen_pair3(rng3, i) for i in range(a.gen3)]
+        pairs += [gen_pair3(rng3, i) + ("",) for i in range(a.gen3)]
     print("  %-34s %-8s %s" % ("metamorphic pair", "verdict", "detail"))
     print("  " + "-" * 92)
     bad = compiled = 0
-    for i, (label, a, b, three) in enumerate(pairs):
+    for i, (label, a, b, three, mode) in enumerate(pairs):
         oa, ea = compile_va(a, "a%d" % i, three)
         ob, eb = compile_va(b, "b%d" % i, three)
         if not oa or not ob:
@@ -337,6 +396,10 @@ def main():
         if not va or not vb or len(va) != len(vb):
             print("  %-34s %-8s len %d vs %d" % (label, "NODATA", len(va), len(vb)))
             continue
+        if mode == "ac":
+            # the DC rows come first; keep only the AC tail
+            nac = 3
+            va, vb = va[-nac:], vb[-nac:]
         compiled += 1
         # rel error with an ABSOLUTE floor: the sweep crosses V1 = 0, where the
         # answer is zero and a purely relative metric divides noise by noise.
