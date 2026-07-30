@@ -290,6 +290,11 @@ double exprand(double mean)
 * command "setseed <n>"
 *   seed with number <n>
 */
+#ifdef WaGauss
+extern void destroy_wallace(void);   /* Enhancement-374 */
+extern void initw(void);
+#endif
+
 void
 com_sseed(wordlist *wl)
 {
@@ -317,6 +322,20 @@ com_sseed(wordlist *wl)
         TausSeed();
         cp_vset("rndseed", CP_NUM, &newseed);
     }
+
+    /* Enhancement-374: rebuild the Wallace normal-generator pools. Without this,
+     * `setseed` had no effect on TRANSIENT NOISE: the pools are filled once at
+     * startup and GaussWa draws from them, so resetting srand/Taus alone left the
+     * old samples in place. Two identical decks with `setseed 42` produced
+     * different waveforms while `setseed 42; rnd(100)` reproduced exactly. */
+#ifdef WaGauss
+    /* NB: guarded on WaGauss ONLY. An earlier attempt wrote
+     * `#if defined(WaGauss) && defined(SIMULATOR)`, and SIMULATOR is not defined
+     * for library sources like this one -- see Enhancement-367 -- so the entire
+     * fix was compiled out and setseed still did not reproduce. */
+    destroy_wallace();
+    initw();
+#endif
 
     if (seedinfo)
         printf("\nSeed value for random number generator is set to %d\n", newseed);

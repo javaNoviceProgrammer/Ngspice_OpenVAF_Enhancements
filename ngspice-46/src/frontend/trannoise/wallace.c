@@ -79,9 +79,14 @@ initw(void)
     double totsqr, nomsqr;
     unsigned int coa;
 
-    /* initialize the uniform generator */
-    srand((unsigned int) getpid());
-    // srand(17);
+    /* Enhancement-374: seed the uniform generator from WHATEVER srand state the
+     * caller has established -- do NOT srand(getpid()) here. This function is
+     * the Wallace pool builder, and it clobbered the user's `setseed` value:
+     * initw() runs at startup, fills the pools from a getpid()-derived stream,
+     * and a later `setseed` reset only the Tausworthe state, which cannot refill
+     * pools that already exist. The result was that transient noise was NOT
+     * reproducible with `setseed` even though `rnd()` was. The startup callers
+     * now do the srand() themselves, and com_sseed() rebuilds these pools. */
     TausSeed();
 
     ScaleGauss = 1.;

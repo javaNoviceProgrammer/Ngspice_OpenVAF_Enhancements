@@ -1063,6 +1063,9 @@ ngSpice_Init(SendChar* printfcn, SendStat* statusfcn, ControlledExit* ngspiceexi
         fprintf (cp_out, "SoS %f, seed value: %ld\n", renormalize(), rseed);
     }
 #elif defined (WaGauss)
+        /* Enhancement-374: initw() no longer seeds itself; establish the
+         * per-run-random default here (setseed overrides it later). */
+        srand((unsigned int) getpid());
         initw();
 #endif
 
