@@ -238,6 +238,42 @@ PAIRS_ACT = [(lbl.replace("scaling: F(2x) == 2 F(x)", "is not a no-op"),
               a, "I(p,n) <+ k2*V(p,n) + k1*V(p,n);", "differ")
              for (lbl, a, _b) in PAIRS_FORMS]
 
+# --- the remaining $limit modes ---------------------------------------------
+# Same property as pnjlim: a limiting function changes the NEWTON PATH and must
+# not move the fixed point. One pair per LRM mode, each against the identical
+# model with no limiting at all.
+#
+# NOTE THE LIMIT OF THIS PROPERTY, stated rather than glossed: "does not move the
+# solution" is ALSO satisfied by a $limit that is a no-op and simply returns its
+# argument. Equality here proves the limiter is HARMLESS, not that it is DOING
+# anything -- and unlike the laplace/zi forms above, there is no clean inverted
+# assertion available, because a limiter that changed the answer would be a bug.
+#
+# That distinction is not academic here. `pnjlim` shows 1.07e-12, i.e. a genuinely
+# different Newton path reaching the same fixed point. `fetlim`, `limvds` and the
+# default mode all show EXACTLY 0.00e+00 -- which is what a no-op would produce.
+# Related and directly observed: openvaf-r compiles
+#     $limit(V(a,c), "bogusmode", 0.025, 0.6)
+# with rc=0 and NO diagnostic, though the LRM defines only pnjlim/fetlim/limvds
+# plus user-defined functions. So a misspelled mode is accepted silently. Whether
+# those three modes are actually implemented or silently ignored was NOT
+# established -- the comparison harness for it produced no data and the question
+# is left open rather than guessed at.
+PAIRS_LIM = [
+    ("$limit fetlim keeps the solution",
+     "begin : lf real vg; vg = $limit(V(d,g), \"fetlim\", 0.7); "
+     "I(d,sx) <+ k1*vg + k2*V(d,sx); I(g,sx) <+ k2*V(g,sx); end",
+     "I(d,sx) <+ k1*V(d,g) + k2*V(d,sx); I(g,sx) <+ k2*V(g,sx);"),
+    ("$limit limvds keeps the solution",
+     "begin : lv real vd; vd = $limit(V(d,sx), \"limvds\"); "
+     "I(d,sx) <+ k1*vd + k2*V(d,sx); I(g,sx) <+ k2*V(g,sx); end",
+     "I(d,sx) <+ k1*V(d,sx) + k2*V(d,sx); I(g,sx) <+ k2*V(g,sx);"),
+    ("$limit default mode keeps the solution",
+     "begin : ld real vd; vd = $limit(V(d,sx)); "
+     "I(d,sx) <+ k1*vd + k2*V(d,sx); I(g,sx) <+ k2*V(g,sx); end",
+     "I(d,sx) <+ k1*V(d,sx) + k2*V(d,sx); I(g,sx) <+ k2*V(g,sx);"),
+]
+
 # --- 3-TERMINAL generation --------------------------------------------------
 # The one-port generator cannot reach off-diagonal Jacobian entries. These atoms
 # span all three branch probes of the 3-terminal template, so a generated
@@ -424,6 +460,7 @@ def main():
             [norm(t, False) for t in PAIRS_OP] + \
             [norm(t, False) for t in PAIRS_FORMS] + \
             [norm(t, False) for t in PAIRS_ACT] + \
+            [norm(t, True) for t in PAIRS_LIM] + \
             [norm(t, True) for t in PAIRS3]
     if a.gen:
         rng = random.Random(a.seed)
