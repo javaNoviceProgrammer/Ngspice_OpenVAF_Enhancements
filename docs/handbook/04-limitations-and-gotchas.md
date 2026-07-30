@@ -120,18 +120,28 @@ scripting ngspice:
 
 ## 4.6 Assorted edges
 
-- **A non-terminating analog loop crashes the compiler** (open,
-  [E-363](../../enhancements_doc/Enhancement-363.md)): `while (1)`, or the far more ordinary case of
-  forgetting the loop increment, aborts `openvaf-r` instead of producing a
-  diagnostic. There is no correct object code for such a model — it can never
-  finish one evaluation — so the right fix is a compile-time rejection rather
-  than a substituted value, and that is deliberately left as follow-up rather
-  than trading a loud crash for a silently meaningless model. Check that your
-  loop variables actually advance.
+- **A non-terminating analog loop is a compile-time error**
+  ([E-375](../../enhancements_doc/Enhancement-375.md)): `while (1)`, or the far more ordinary
+  case of forgetting the loop increment, is rejected with `loop condition is
+  always true` or `loop condition can never change`. There is no correct object
+  code for such a model — it can never finish one evaluation — so a diagnostic
+  was the only right answer. It is worth knowing what it replaced: this used to
+  crash `openvaf-r`, and after the E-363 CFG repair it stopped crashing and
+  started *emitting* — the `.osdi` loaded cleanly and then hung the simulator on
+  the first device evaluation with no diagnostic at all, which is worse than the
+  crash. The check is conservative and can still miss a loop whose variables
+  change but never toward the exit, so it remains worth checking that your loop
+  variables actually advance.
 
 - **`break`/`continue` don't exist in Verilog-A** — the compiler rejects
   them with the `disable <block>;` idiom as the alternative
   ([E-9](../../enhancements_doc/Enhancement-9.md), [E-70](../../enhancements_doc/Enhancement-70.md)).
+  One restriction: `disable` works as an early exit from a loop that can *also*
+  finish normally, but it is not accepted as the **only** way out of a loop whose
+  condition never changes — `while (1) … disable blk;` is rejected by the check
+  above. That form never compiled anyway; it aborted codegen with
+  `attempted to read undefined value`, so the error replaces a compiler crash
+  ([E-375](../../enhancements_doc/Enhancement-375.md)).
 - **Analog operators can't sit in loops or solution-dependent
   conditionals** (LRM 4.5.1) — hoist them or unroll with `generate`; the
   diagnostics say which ([E-70](../../enhancements_doc/Enhancement-70.md)).

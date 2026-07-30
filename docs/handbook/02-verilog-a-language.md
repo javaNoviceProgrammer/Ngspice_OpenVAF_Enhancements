@@ -175,7 +175,7 @@ the actual construct and suggest hoisting or `generate` unrolling
 | Noise sources | `white_noise`, `flicker_noise`, `noise_table`, `noise_table_log` (inline data or file). Same-named sources sum **coherently** (LRM 4.6.4, correlation networks and anti-phase cancellation exact); operating-point-dependent factors and `ddt()`-shaped noise (induced-gate idiom) are exact and add **no matrix unknowns**. `examples/noise_examples/`, `examples/noisecorr_examples/`, `examples/noisejw_examples/` | [E-9](../../enhancements_doc/Enhancement-9.md), [E-42](../../enhancements_doc/Enhancement-42.md), [E-54](../../enhancements_doc/Enhancement-54.md) |
 | `analysis("name", …)` | Variadic; matches ngspice's analysis phases, including the AC/noise operating point counting as `"ac"`/`"noise"` per LRM 4.6.1. `examples/analysis_examples/` | [E-30](../../enhancements_doc/Enhancement-30.md), [E-53](../../enhancements_doc/Enhancement-53.md) |
 | `ac_stim([name, mag, phase])` | Full AC right-hand-side injection — a Verilog-A module can *be* the AC stimulus, with exact magnitude and phase. `examples/acstim_examples/` | [E-26](../../enhancements_doc/Enhancement-26.md), [E-51](../../enhancements_doc/Enhancement-51.md) |
-| Random / distributions | `$random`, `$arandom`, `$dist_*` and `$rdist_*` (uniform, normal, exponential, poisson, chi-square, t, erlang) — deterministic per `(seed, call site)`, stable across Newton iterations (reproducible Monte Carlo, no convergence breakage). `examples/rng_examples/` | [E-10](../../enhancements_doc/Enhancement-10.md) |
+| Random / distributions | `$random`, `$arandom`, `$dist_*` and `$rdist_*` (uniform, normal, exponential, poisson, chi-square, t, erlang) — deterministic per `(seed, call site)`, stable across Newton iterations (reproducible Monte Carlo, no convergence breakage). Per the LRM, `$dist_*` returns `integer` and `$rdist_*` returns `real`. `examples/rng_examples/`, `examples/distint_examples/` | [E-10](../../enhancements_doc/Enhancement-10.md), [E-376](../../enhancements_doc/Enhancement-376.md) |
 
 ### Environment and control
 
@@ -231,9 +231,21 @@ limitations pinned to their diagnostics, and 21 are correctly rejected as
 mixed-signal (outside Annex C). The 146 non-module fragments double as a
 no-crash corpus.
 
-**One open trap.** A provably non-terminating loop — `while (1)`, or forgetting
-the increment — crashes the compiler rather than producing a diagnostic
-([E-363](../../enhancements_doc/Enhancement-363.md)). Make sure loop variables advance.
+**Loops must be able to finish.** A provably non-terminating loop — `while (1)`,
+or forgetting the increment — is a compile-time error
+([E-375](../../enhancements_doc/Enhancement-375.md)):
+
+```
+error: loop condition is always true
+       help: write what the condition reads inside the loop body, or in the `for` increment
+```
+
+A second message, `loop condition can never change`, covers a condition that is not
+a literal but that nothing in the loop writes. The check is deliberately
+conservative — `repeat (n)` is counted, `$finish`/`$stop`/`$fatal` leave the loop,
+and a value passed to a function counts as written, since it may be an output
+argument. What it cannot see is a loop whose variables change but never toward the
+exit (nested loops sharing an index, where the bounds decide it).
 
 ## 2.13 Attributes
 

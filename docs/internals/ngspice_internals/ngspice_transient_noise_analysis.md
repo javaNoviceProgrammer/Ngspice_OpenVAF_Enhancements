@@ -432,21 +432,28 @@ quiet intervals and alias the noise.
 **t = 0.** No noise is injected at $t = 0$; the operating point must be the
 deterministic DC solution, or the starting point of every run would move.
 
-**Reproducibility — `setseed` does NOT fix the transient-noise stream.** An
-earlier version of this note claimed it did. That was wrong, and a later
-correctness sweep caught it: two identical decks with `setseed 42` produce
-*different* noise waveforms, while `setseed 42` followed by `rnd(100)` reproduces
-exactly — so the command itself works, just not for this generator.
+**Reproducibility — `setseed` fixes the transient-noise stream**
+([E-374](../../../enhancements_doc/Enhancement-374.md)). This note has said both
+things: it originally claimed `setseed` worked here, a correctness sweep showed it
+did not, and the enhancement that followed made it true.
 
-The cause is that `#define WaGauss` selects the Wallace normal generator, whose
-`initw()` runs at **startup** and does `srand(getpid())` before filling its pools.
-A later `setseed` resets the Tausworthe state but cannot refill pools that are
-already built, so the samples keep coming from the process-id-derived stream.
+The bug was worth recording. `#define WaGauss` selects the Wallace normal
+generator, whose `initw()` runs at **startup** and did `srand(getpid())` before
+filling its pools. A later `setseed` reset the Tausworthe state but could not
+refill pools that were already built, so samples kept coming from the
+process-id-derived stream: two identical decks with `setseed 42` produced
+*different* noise waveforms, while `setseed 42` followed by `rnd(100)` reproduced
+exactly — the command worked, just not for this generator. The fix has three parts,
+because moving the seeding alone is not enough: `initw()` no longer calls `srand`
+(so it cannot clobber a user seed), the two startup sites do it themselves (so an
+unseeded run stays random per process), and `com_sseed` now rebuilds the pools
+rather than resetting state nothing reads.
 
-This does **not** invalidate the seed-averaged statistics quoted above — those
-were means over genuinely independent runs, which is what the error bars
-describe — but the runs were independent *by accident* rather than by seeding, and
-an individual figure here cannot be reproduced bit-for-bit.
+The seed-averaged statistics quoted above were never invalidated by this — they
+were means over genuinely independent runs, which is what the error bars describe.
+What changed is that those runs were independent *by accident* before, and are now
+independent *by seeding*: an individual figure here is reproducible bit-for-bit
+with the same `setseed`.
 
 ## 11. Known limits
 

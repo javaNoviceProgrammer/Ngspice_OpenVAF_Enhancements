@@ -231,7 +231,13 @@ without XSPICE) is unaffected.
   setup", naming the device.
 - `$strobe`/`$display` output appears on ngspice's stdout — printf-exact
   formatting ([§2.11](02-verilog-a-language.md#display-and-io)) makes
-  temporary debug output dependable.
+  temporary debug output dependable. The **severity** tasks are routed by level:
+  `$display` prints bare and `$info` as `OSDI(info)` on stdout, while `$warning`
+  and `$error` print as `OSDI(warn)`/`OSDI(err)` on **stderr**, so `2>` separates
+  real problems from debug chatter. Before
+  [E-377](../../enhancements_doc/Enhancement-377.md) every level was labelled
+  `OSDI(debug)` and went to stdout — ngspice's `LOG_LVL_MASK` was 8 where the
+  level occupies the low three bits, so every severity ANDed to 0.
 - For convergence work: `$limit` genuinely engages iteration limiting,
   nodesets (`electrical n = 5.0;`) seed the solver, and `$discontinuity` /
   `$bound_step` steer the transient integrator ([§2.6](02-verilog-a-language.md#26-analog-operators-filters-integrators-delays)).

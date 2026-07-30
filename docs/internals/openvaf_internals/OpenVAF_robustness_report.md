@@ -84,10 +84,50 @@ pathological input — all now fixed.
 > instance-renamed during flattening, so a module with one could not be
 > instantiated twice ([E-363](../../../enhancements_doc/Enhancement-363.md)). A companion
 > **complexity sweep** over 17 size knobs found no superlinear blowup.
-> One defect from that round is **open by design**: a provably non-terminating
-> analog loop still fails to compile, because its contributions are unreachable
-> and there is no correct object code for a model that cannot finish one
-> evaluation — the fix is a diagnostic, not a substituted value.
+> One defect from that round was left open at the time — a provably
+> non-terminating analog loop — and is now **closed by
+> [E-375](../../../enhancements_doc/Enhancement-375.md)**. It could not stay open:
+> the CFG repair had turned the compiler crash into silent *emission*, and the
+> resulting `.osdi` hung the simulator on its first device evaluation with no
+> diagnostic at all. Rejecting it at compile time also closed three codegen
+> crashes on `disable` used as the only exit from such a loop.
+>
+> **Round 9 — equivalence fuzzing and a system-function sweep (2026-07-30).** Two
+> instruments, both aimed at *wrong code* rather than crashes, neither of which
+> needs a reference implementation.
+>
+> The first is **metamorphic**: generate a Verilog-A body, rewrite it into a
+> second body that is mathematically identical but structurally different, compile
+> both and require the two `.osdi` models to agree numerically in the same
+> circuit. A difference is a compiler bug on one side, with no judgement about
+> which value is "right". Beyond the curated pairs this runs from a **generative
+> grammar** over statements — nested `if`/`else`, bounded `for`/`while`, named
+> blocks with local declarations, to depth 4–5, with 1–3 composed
+> semantics-preserving rewrites — so control-flow lowering is exercised rather than
+> just expression trees. **160 generated pairs across three seeds, two depths and
+> both one-port and three-terminal bodies: 0 mismatches**, with every pair reaching
+> a numeric comparison. Two constraints the compiler enforces correctly had to be
+> learned first, both of which were wasting the budget on compile errors: `$limit`
+> takes a *branch probe*, not an expression, and analog operators are barred from
+> loop bodies and conditional expressions (an operator carries state across time
+> steps, so it must run on every evaluation — there is no hoisting).
+>
+> The second swept **all 94 `$`-prefixed system functions** against numeric or
+> textual oracles rather than smoke tests — 24 math functions bit-identical to
+> libm, `$vt(400)/$vt` equal to `400/$temperature` to 1.7e-16, `$abstime` exactly
+> equal to ngspice's time vector, all 16 distributions matching their theoretical
+> moments over 20 000 draws, and a write-then-read round trip over all 17 file-I/O
+> functions. It found three defects, all fixed:
+> [E-376](../../../enhancements_doc/Enhancement-376.md) (`$dist_*` returned `real`
+> where the LRM makes it integer — and the signature alone was not enough, since
+> the lowering still emitted a real that every integer consumer read as 0),
+> [E-377](../../../enhancements_doc/Enhancement-377.md) (a diagnostic with its
+> argument glued to the function name, no newline, a leak, and — with reach far
+> beyond `$simparam` — a `LOG_LVL_MASK` of 8 that collapsed *every* severity to
+> `OSDI(debug)` on stdout), and
+> [E-378](../../../enhancements_doc/Enhancement-378.md) (a `$fatal` read as
+> non-convergence, so the operating-point solver answered it by running its whole
+> gmin/source-stepping ladder and then blamed `timestep too small`).
 
 This is a companion to the [OpenVAF compiler internals](OpenVAF_compiler_internals.md)
 guide: that document explains how the compiler works; this one documents how hard it
@@ -102,7 +142,7 @@ was pushed and what broke.
 | Mutation-fuzzing iterations | **tens of thousands** — 0 segfaults; panics found + fixed round by round |
 | Cross-feature composition (round 8) | **~3 400** valid-by-construction programs; ~40 % reach the backend |
 | Assertions-enabled corpus | **496 / 496** compile with zero assertion failures ([E-347](../../../enhancements_doc/Enhancement-347.md)) |
-| Crash / hang paths found | **44** — 43 fixed, 1 open by design. Rounds 1–3: 18 ([E-147](../../../enhancements_doc/Enhancement-147.md), [E-148](../../../enhancements_doc/Enhancement-148.md), [E-219](../../../enhancements_doc/Enhancement-219.md), [E-220](../../../enhancements_doc/Enhancement-220.md) ×10, [E-230](../../../enhancements_doc/Enhancement-230.md) ×3). Round 4: 7 ([E-263](../../../enhancements_doc/Enhancement-263.md) ×3, [E-264](../../../enhancements_doc/Enhancement-264.md) ×2, [E-265](../../../enhancements_doc/Enhancement-265.md) ×2). Assertion campaign: 8. Round 7: 9. Round 8: 2 ([E-363](../../../enhancements_doc/Enhancement-363.md)) |
+| Crash / hang paths found | **47** — all fixed. The one long-standing "open by design" entry (a provably non-terminating analog loop) was closed by [E-375](../../../enhancements_doc/Enhancement-375.md), which also closed 3 codegen crashes on `disable` used as the only exit from such a loop. Rounds 1–3: 18 ([E-147](../../../enhancements_doc/Enhancement-147.md), [E-148](../../../enhancements_doc/Enhancement-148.md), [E-219](../../../enhancements_doc/Enhancement-219.md), [E-220](../../../enhancements_doc/Enhancement-220.md) ×10, [E-230](../../../enhancements_doc/Enhancement-230.md) ×3). Round 4: 7 ([E-263](../../../enhancements_doc/Enhancement-263.md) ×3, [E-264](../../../enhancements_doc/Enhancement-264.md) ×2, [E-265](../../../enhancements_doc/Enhancement-265.md) ×2). Assertion campaign: 8. Round 7: 9. Round 8: 2 ([E-363](../../../enhancements_doc/Enhancement-363.md)) |
 
 The compiler never crashed on random or garbage input — the only failures were
 specific, structured pathologies, each turned into a clean bounded diagnostic.

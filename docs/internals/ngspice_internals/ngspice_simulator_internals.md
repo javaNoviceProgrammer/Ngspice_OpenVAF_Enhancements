@@ -376,6 +376,18 @@ drives `NIiter` through the DC **operating-point** state machine —
 diverges. The residual is only a consistent function of the unknowns in the
 final `MODEINITFLOAT` phase — a subtlety the E-111 line search had to respect.
 
+One thing the cascade must *not* absorb: `CKTop` reads any non-zero return from
+`NIiter` as "did not converge", and a Verilog-A `$fatal` arrives through that same
+channel as `E_PANIC`. Until [E-378](../../../enhancements_doc/Enhancement-378.md)
+that meant the solver answered a fatal by trying harder — walking the whole ladder,
+re-evaluating the device on every pass (373 evaluations for a single failing op,
+exactly 373·N for N devices), and finishing with `timestep too small`, which names
+convergence rather than the model. `CKTop` now tests for `E_PANIC` after the plain
+solve and after each aid. The test is exact rather than heuristic: `E_PANIC` is 1
+and the non-convergence code `E_ITERLIM` is `E_PRIVATE+3` = 103, so a stalled
+Newton solve can never be mistaken for a fatal. The transient time-stepping loop in
+`dctran.c` had carried the same guard since E-55; the operating point had not.
+
 **Convergence and limiting.** ngspice's test is on the *iterate* (`|Δx|` small),
 not a residual norm. Robustness comes from **junction limiting** (each diode/BJT
 clamps how far its junction voltage may move per step, referenced to the value

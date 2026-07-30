@@ -526,6 +526,16 @@ iteration and destroy convergence. This gives reproducible Monte Carlo
 and independent per-instance variation, at the cost of in-evaluation
 sequences (which have no convergent meaning in an analog solver anyway).
 
+**Return types follow the LRM split**: `$dist_*` returns `integer` and
+`$rdist_*` returns `real` — the `$rdist_*` family exists precisely because the
+originals, inherited from Verilog-2001 §17.9.2, are integer-only. Both returned
+`real` until [E-376](../../enhancements_doc/Enhancement-376.md), which made the
+LRM-conformant spelling `$display("%d", $dist_uniform(s,10,20))` compile; it had
+been rejected with *"expected integer value but found real value"*. The draws
+themselves did not move — only the static type — and the discrete/continuous
+split is visible in the moments: `$dist_uniform` sits at (n²−1)/12 while
+`$rdist_uniform` sits at 100/12.
+
 ```verilog
 parameter integer seed = 1;
 real gain;
@@ -643,9 +653,15 @@ or mishandled, found only after the construct-level suites above were all green:
 Both came from a generator that emits valid-by-construction programs combining
 features developed in isolation, which is a different instrument from the
 mutation fuzzing used earlier: mutants die at the parser, so they never reach the
-semantics. One defect from the same round is **open by design** — a provably
-non-terminating analog loop still fails to compile, because there is no correct
-object code for a model that cannot complete one evaluation.
+semantics. One defect from the same round was left open at the time — a provably
+non-terminating analog loop — and is now **closed by
+[E-375](../../enhancements_doc/Enhancement-375.md)**: it is a compile-time error.
+There is no correct object code for a model that cannot complete one evaluation,
+so a diagnostic was always the only right answer. Worth recording why it could not
+simply be left: the E-363 CFG repair had stopped the compiler crashing and started
+it *emitting*, and the resulting `.osdi` loaded cleanly and then hung the simulator
+on the first device evaluation with no diagnostic at all — strictly worse than the
+crash.
 
 Separately, the whole **496-file corpus now compiles with zero assertion
 failures** under an assertions-enabled build ([E-347](../../enhancements_doc/Enhancement-347.md)),

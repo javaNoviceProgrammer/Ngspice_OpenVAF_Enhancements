@@ -123,11 +123,15 @@ elaboration renamed only the first two per instance. So a module with an array
 parameter could not be instantiated twice, and two different modules sharing an
 array-parameter name collided too.
 
-**Still open:** a provably non-terminating analog loop fails to compile. After the
-fix above its MIR is well formed, but everything after the loop is unreachable, so
-codegen reads values no reachable block defines. There is no correct object code
-for a model that cannot finish one evaluation, so the fix is a diagnostic rather
-than a substituted value.
+**Closed by [E-375](../../../enhancements_doc/Enhancement-375.md):** a provably
+non-terminating analog loop is now rejected at compile time. After the fix above
+its MIR was well formed, but everything following the loop was unreachable — and
+rather than crashing, the compiler then *emitted* a model that loaded cleanly and
+hung the simulator on its first evaluation, with no diagnostic. That is worse than
+a crash, which is why the diagnostic could not stay a follow-up. `disable <block>`
+is deliberately not accepted as the sole exit from such a loop: that form does not
+survive codegen either (it aborts with `attempted to read undefined value`), so
+rejecting it replaces a compiler crash with an actionable error.
 
 ## Scope
 
