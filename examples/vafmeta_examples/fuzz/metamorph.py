@@ -267,11 +267,30 @@ PAIRS_ACT = [(lbl.replace("scaling: F(2x) == 2 F(x)", "is not a no-op"),
 #     openvaf compiling it clean is therefore CORRECT -- the mode is resolved
 #     from OSDI_LIM_TABLE by whoever loads the object, not by the compiler.
 #
-# The most likely explanation for the zeros is that the fetlim/limvds/default
-# pairs use LINEAR bodies, where Newton converges in one step and limiting has
-# nothing to do, while the pnjlim pair uses an exponential diode. That is a
-# hypothesis, NOT a measurement: two attempts to confirm it on a nonlinear body
-# produced no data. It is recorded as such.
+# WHY THE ZEROS, MEASURED. An earlier probe silently produced nothing because its
+# module was named `d`, colliding with ngspice's built-in DIODE model type, so
+# `.model d d()` was parsed as a diode and the run died with "incorrect model
+# type! Expected OSDI or nport device". Renamed, on an exponential body at a
+# 0.75 V drive it gives:
+#
+#     no limit  6.36398962195306561e-01
+#     pnjlim    +2.27e-11      <- demonstrably acts
+#     fetlim    -3.48e-11      <- demonstrably acts
+#     limvds    +1.1e-16       <- machine noise; its condition is not met here
+#
+# So pnjlim and fetlim DO alter the converged solution when there is a junction to
+# limit: they are implemented and reachable. limvds moves nothing on this circuit,
+# consistent with DEVlimvds's condition not being triggered by a two-terminal
+# diode -- that is not evidence either way about its implementation beyond the
+# registry entry, and is not written up as though it were.
+#
+# THE "LINEAR vs NONLINEAR BODY" EXPLANATION IS REFUTED. pnjlim shifts the answer
+# in BOTH of the probe's cases, because the probe's "linear" body still contained
+# the exponential and merely added a linear term to it -- it never tested the
+# claim. The metamorphic pairs above are genuinely different: their bodies have no
+# junction at all. "The limiters have nothing to limit" survives as the consistent
+# reading, now with a measurement behind it rather than a guess, and with the false
+# step recorded rather than quietly dropped.
 PAIRS_LIM = [
     ("$limit fetlim keeps the solution",
      "begin : lf real vg; vg = $limit(V(d,g), \"fetlim\", 0.7); "
