@@ -18,6 +18,12 @@ rearrangement, strength reduction (`x**2` vs `x*x`), control-flow lowering
 (each body is differentiated for the Jacobian, so a derivative bug shows up as a
 DC/AC mismatch even when the residual agrees).
 
+HEAVY RUN ON RECORD (2026-07-29, `--gen 25 --gen3 25 --seed 11`):
+  70 pairs attempted -> 64 compared, 0 MISMATCH, 6 NODATA, 0 NOCOMP.
+The 6 NODATA are generated expressions whose CIRCUIT does not converge (a random
+body can easily have no conductance at some sweep point); they are not compiler
+failures, and they are reported separately from MISMATCH for exactly that reason.
+
 TRAPS respected, from earlier campaigns:
   * RAYON_NUM_THREADS=1 -- otherwise panic sites are nondeterministic.
   * a per-job TMPDIR -- parallel compiles otherwise collide.
@@ -130,6 +136,51 @@ def gen_expr(rng, depth=0):
     return "((%s > 0) ? %s : %s)" % (gen_expr(rng, depth + 1),
                                      gen_expr(rng, depth + 1),
                                      gen_expr(rng, depth + 1))
+
+
+# --- 3-TERMINAL generation --------------------------------------------------
+# The one-port generator cannot reach off-diagonal Jacobian entries. These atoms
+# span all three branch probes of the 3-terminal template, so a generated
+# expression naturally couples the drain and gate branches.
+ATOMS3 = ["V(d,sx)", "V(d,g)", "V(g,sx)", "k1", "k2", "1.5", "V(d,sx)*k1"]
+
+
+def gen_expr3(rng, depth=0):
+    if depth >= 2 or rng.random() < 0.35:
+        return rng.choice(ATOMS3)
+    r = rng.random()
+    if r < 0.30:
+        return "(%s %s %s)" % (gen_expr3(rng, depth + 1), rng.choice("+-*"),
+                               gen_expr3(rng, depth + 1))
+    if r < 0.55:
+        return rng.choice(UNARY) % gen_expr3(rng, depth + 1)
+    if r < 0.75:
+        return "pow(abs(%s)+1.0,2.0)" % gen_expr3(rng, depth + 1)
+    return "((%s > 0) ? %s : %s)" % (gen_expr3(rng, depth + 1),
+                                     gen_expr3(rng, depth + 1),
+                                     gen_expr3(rng, depth + 1))
+
+
+# KVL is the rewrite that only exists for a multi-terminal model: V(d,sx) and
+# V(d,g)+V(g,sx) are the same voltage by Kirchhoff, so substituting one for the
+# other must not change any result. It rewrites the TOPOLOGY of the probe, not
+# just the arithmetic, which is a different thing to get wrong.
+def kvl_rewrite(e):
+    return e.replace("V(d,sx)", "(V(d,g)+V(g,sx))")
+
+
+def gen_pair3(rng, i):
+    e = gen_expr3(rng)
+    if "V(d,sx)" in e and rng.random() < 0.5:
+        name, body_b_expr = "KVL substitution", kvl_rewrite(e)
+    else:
+        nm, fn = rng.choice([(n, f) for (n, f) in REWRITES if f is not None])
+        name, body_b_expr = nm, fn(e)
+    tail = " I(g,sx) <+ k2*V(g,sx);"
+    return ("gen3[%s]" % name,
+            "I(d,sx) <+ k2*V(d,sx) + (%s);%s" % (e, tail),
+            "I(d,sx) <+ k2*V(d,sx) + (%s);%s" % (body_b_expr, tail),
+            True)
 
 
 # each rewrite maps an expression to a mathematically identical one
@@ -260,7 +311,8 @@ def main():
         print("set OPENVAF_BIN"); return 2
     import argparse
     ap = argparse.ArgumentParser()
-    ap.add_argument("--gen", type=int, default=0, help="generated pairs to add")
+    ap.add_argument("--gen", type=int, default=0, help="generated 1-port pairs")
+    ap.add_argument("--gen3", type=int, default=0, help="generated 3-terminal pairs")
     ap.add_argument("--seed", type=int, default=1)
     a = ap.parse_args()
     pairs = [(l, x, y, False) for (l, x, y) in PAIRS] + \
@@ -268,6 +320,9 @@ def main():
     if a.gen:
         rng = random.Random(a.seed)
         pairs += [gen_pair(rng, i) + (False,) for i in range(a.gen)]
+    if a.gen3:
+        rng3 = random.Random(a.seed + 10007)
+        pairs += [gen_pair3(rng3, i) for i in range(a.gen3)]
     print("  %-34s %-8s %s" % ("metamorphic pair", "verdict", "detail"))
     print("  " + "-" * 92)
     bad = compiled = 0
