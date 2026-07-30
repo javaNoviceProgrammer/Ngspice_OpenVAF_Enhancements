@@ -352,7 +352,11 @@ impl ModelInfo {
                     let mut default_val = |attr: Attr| {
                         let val = match attr.val() {
                             Some(ref expr @ Expr::Literal(ref lit)) => match lit.kind() {
-                                LiteralKind::IntNumber(val) => val.value() as f64,
+                                // `value()` returns Option<i32> and is None for a literal too
+                            // large for Verilog-A's 32-bit `integer`; this attribute is a
+                            // real-valued default, so take the documented f64 fallback
+                            // rather than treating an oversized digit string as an error.
+                            LiteralKind::IntNumber(val) => val.value_as_f64(),
                                 LiteralKind::SiRealNumber(val) => val.value(),
                                 LiteralKind::StdRealNumber(val) => val.value(),
                                 _ => {

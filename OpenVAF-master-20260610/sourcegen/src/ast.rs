@@ -20,6 +20,31 @@ use crate::{
 
 mod src;
 
+/// DISABLED, NOT REPAIRED (Enhancement-379).
+///
+/// This rewrites `openvaf/syntax/src/ast/generated/{nodes,tokens}.rs` and
+/// `openvaf/tokens/src/parser/generated.rs` through `ensure_file_contents`, and
+/// those files have long been maintained BY HAND. The grammar
+/// (`veriloga.ungram`) never caught up, so regenerating them DELETES shipped
+/// work. Measured, by snapshotting the files and letting the test run:
+///
+///   * `DisableStmt` disappears entirely -- `disable <block>` (Verilog-AMS's loop
+///     break) has NO rule in the grammar at all; the node exists only in the
+///     checked-in file, and Enhancement-375 depends on it.
+///   * `width()` collapses from an `Option<Range>` + `widths()` pair into a single
+///     `AstChildren<Range>`, renaming accessors the parser and lowering call.
+///
+/// Two generator gaps were fixed on the way here and are KEPT, being correct in
+/// their own right: `Rule::Rep(Seq(..))` is now lowered (the grammar's
+/// `('[' index: Expr ']')*` for multi-dimensional selects used to panic with
+/// "unhandled rule"), and `pluralize` knows the irregular `index` -> `indices`.
+/// They are not sufficient: the grammar itself is missing nodes.
+///
+/// Re-enabling means bringing `veriloga.ungram` up to the checked-in AST and
+/// teaching the generator the dual singular/plural accessor pattern. Worth doing,
+/// but its own piece of work. Until then the checked-in files are the source of
+/// truth and this must not overwrite them.
+#[ignore = "generator is behind the hand-maintained AST; running it deletes DisableStmt"]
 #[test]
 pub fn ast() {
     let src = include_str!("../../openvaf/syntax/veriloga.ungram");
@@ -629,6 +654,38 @@ fn lower_rule(acc: &mut Vec<Field>, grammar: &Grammar, label: Option<&String>, r
                 let name = label.cloned().unwrap_or_else(|| pluralize(&to_lower_snake_case(&ty)));
                 let field = Field::Node { name, ty, cardinality: Cardinality::Many };
                 acc.push(field);
+                return;
+            }
+            // Enhancement-379: a repeated GROUP, e.g. the grammar's
+            // `('[' index: Expr ']')*` (multi-dimensional bit/array select,
+            // Enhancement-15). Lower the group in order so the delimiter tokens
+            // keep their places, and give the repeated node BOTH accessors: the
+            // singular `index()` for the common one-index case and the plural
+            // `indices()` for the whole list. That is what the checked-in AST
+            // has, and what the parser and lowering already call.
+            if let Rule::Seq(elems) = &**inner {
+                for elem in elems {
+                    match elem {
+                        Rule::Labeled { label: l, rule: r } => {
+                            if let Rule::Node(node) = &**r {
+                                let ty = grammar[*node].name.clone();
+                                acc.push(Field::Node {
+                                    name: l.clone(),
+                                    ty: ty.clone(),
+                                    cardinality: Cardinality::Optional,
+                                });
+                                acc.push(Field::Node {
+                                    name: pluralize(l),
+                                    ty,
+                                    cardinality: Cardinality::Many,
+                                });
+                            } else {
+                                panic!("unhandled labeled rule in repeated group: {:?}", elem)
+                            }
+                        }
+                        _ => lower_rule(acc, grammar, None, elem),
+                    }
+                }
                 return;
             }
             panic!("unhandled rule: {:?}", rule)

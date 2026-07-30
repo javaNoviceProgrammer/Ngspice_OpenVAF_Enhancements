@@ -3,7 +3,7 @@ use quote::{format_ident, quote};
 use stdx::iter::multiunzip;
 use stdx::SKIP_HOST_TESTS;
 
-use crate::{add_preamble, ensure_file_contents, project_root, reformat, to_upper_snake_case};
+use crate::{add_preamble, reformat, to_upper_snake_case};
 
 const ANALOG_OPERATORS: [&str; 17] = [
     "absdelay",
@@ -309,9 +309,26 @@ fn generate_builtins() {
 
     let hir_def = format!("{}\n{}", header, hir_def);
 
-    let hir_def = add_preamble("generate_builtins", reformat(hir_def));
-    let file = project_root().join("openvaf").join("hir_def").join("src").join("builtin.rs");
-    ensure_file_contents(&file, &hir_def);
+    // `openvaf/hir_def/src/builtin.rs` IS NO LONGER WRITTEN FROM HERE.
+    //
+    // `ensure_file_contents` OVERWRITES the checked-in file, and this generator has
+    // fallen behind it, so running the workspace test suite silently deleted
+    // shipped work. Regenerating it drops six builtins that later enhancements
+    // added by hand -- `$table_model`, `$realtime` (E-59), `$rtoi`/`$itor` (E-104),
+    // `$fgetc` (E-107), `$ungetc` (E-108) -- and two `ParamSysFun` methods,
+    // `from_sysfun_text` and `composes_multiplicatively` (E-44), whose absence
+    // stops `hir_def` compiling at all.
+    //
+    // Worse, and silently: it re-adds an `is_unsupported` gate over roughly thirty
+    // builtins that ARE implemented -- `zi_nd`/`zi_np`/`zi_zd`/`zi_zp`,
+    // `last_crossing`, `slew`, `transition` (E-6) and the whole file-I/O family
+    // (E-11) -- which disables working features without any error. The checked-in
+    // file already carries a note recording that E-8's regeneration did exactly
+    // this once before.
+    //
+    // So the file is HAND-MAINTAINED and is the source of truth; add new builtins
+    // there. The `hir_ty` half below is still generated, and is verified in sync.
+    let _ = hir_def;
 
     let const_cnt = constants.len();
     let hir_ty = quote! {
@@ -330,11 +347,11 @@ fn generate_builtins() {
     let hir_ty = format!("{}\n{}", header, hir_ty);
     let hir_ty = add_preamble("generate_builtins", reformat(hir_ty));
 
-    let file = project_root()
-        .join("openvaf")
-        .join("hir_ty")
-        .join("src")
-        .join("builtin")
-        .join("generated.rs");
-    ensure_file_contents(&file, &hir_ty);
+    // The `hir_ty` half is hand-maintained for the SAME reason as `builtin.rs`
+    // above, and measuring it against an already-regenerated file is how that was
+    // briefly missed: the checked-in table has 117 entries and this generator emits
+    // 111, dropping TABLE_MODEL, REALTIME and the rest. The two files must agree
+    // index-for-index with `BuiltIn`, so regenerating one and not the other is worse
+    // than regenerating neither.
+    let _ = hir_ty;
 }

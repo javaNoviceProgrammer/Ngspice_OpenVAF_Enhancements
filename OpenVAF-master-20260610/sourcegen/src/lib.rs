@@ -241,5 +241,12 @@ pub fn to_pascal_case(s: &str) -> String {
 }
 
 pub fn pluralize(s: &str) -> String {
+    // Enhancement-379: one irregular plural. The grammar's only repeated
+    // non-comma group is `('[' index: Expr ']')*` (BitSelectExpr), and the
+    // checked-in AST calls its accessor `indices()`; a bare "+s" would rename it
+    // to `indexs` and rewrite hand-written call sites.
+    if s == "index" {
+        return "indices".to_owned();
+    }
     format!("{}s", s)
 }

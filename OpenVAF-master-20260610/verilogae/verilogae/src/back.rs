@@ -3,7 +3,9 @@ use std::borrow::Borrow;
 
 use camino::Utf8Path;
 use hir::Type;
-use hir_lower::{CallBackKind, CurrentKind, HirInterner, ParamInfoKind, ParamKind, PlaceKind};
+use hir_lower::{
+    CallBackKind, CurrentKind, HirInterner, ParamInfoKind, ParamKind, PlaceKind, ScanKind,
+};
 use lasso::Rodeo;
 use llvm_sys::target_machine::LLVMCodeGenOptLevel;
 use mir::{ControlFlowGraph, FuncRef, Function};
@@ -75,6 +77,85 @@ pub fn stub_callbacks<'ll>(
                 | CallBackKind::SetRetFlag { .. } => return None,
                 CallBackKind::Analysis => {
                     CallbackFun::Prebuilt(cx.const_callback(&[cx.ty_ptr()], cx.const_int(1)))
+                }
+
+                // The string / file-I/O / `$sscanf` runtime (Enhancement-11, -105,
+                // -106), `ac_stim` (-51) and the RNG builtins (-10). VerilogAE
+                // evaluates model equations in-process: there is no simulator and no
+                // OSDI runtime behind it, so none of these can be served and each
+                // returns a NEUTRAL value instead.
+                //
+                // The signatures below mirror `osdi::compilation_unit`'s
+                // `general_callbacks` EXACTLY. They have to: the call is built from
+                // the MIR arguments, so a stub whose arity or types differ is
+                // malformed IR rather than a wrong number.
+                //
+                // `return None` is correct ONLY for a callback that returns nothing.
+                // The builder treats a missing callback as a no-op, so a
+                // value-returning one would leave its result undefined and abort
+                // codegen with `unreachable!("attempted to read undefined value")`.
+                CallBackKind::ScanBegin => return None, // returns nothing
+                CallBackKind::Scan(kind) => {
+                    let (args, val) = match kind {
+                        ScanKind::Int | ScanKind::IntHex | ScanKind::IntOct | ScanKind::IntBin => {
+                            (Vec::new(), cx.const_int(0))
+                        }
+                        ScanKind::Real => (Vec::new(), cx.const_real(0.0)),
+                        ScanKind::Str => (Vec::new(), cx.const_null_ptr()),
+                    };
+                    CallbackFun::Prebuilt(cx.const_callback(&args, val))
+                }
+                // no conversions have happened, so `$sscanf` reports 0
+                CallBackKind::ScanCount => {
+                    CallbackFun::Prebuilt(cx.const_callback(&[], cx.const_int(0)))
+                }
+                CallBackKind::Fgets => {
+                    CallbackFun::Prebuilt(cx.const_callback(&[cx.ty_int()], cx.const_null_ptr()))
+                }
+                CallBackKind::StrLen => {
+                    CallbackFun::Prebuilt(cx.const_callback(&[cx.ty_ptr()], cx.const_int(0)))
+                }
+                // Enhancement-106: 0 is "equal", the neutral answer for a comparison
+                CallBackKind::StrCmp => CallbackFun::Prebuilt(
+                    cx.const_callback(&[cx.ty_ptr(), cx.ty_ptr()], cx.const_int(0)),
+                ),
+                CallBackKind::FerrorMsg => {
+                    CallbackFun::Prebuilt(cx.const_callback(&[cx.ty_int()], cx.const_null_ptr()))
+                }
+                CallBackKind::FerrorCode => {
+                    CallbackFun::Prebuilt(cx.const_callback(&[cx.ty_int()], cx.const_int(0)))
+                }
+                // descriptor 0 is `$fopen`'s failure value -- reporting the open as
+                // failed is honest, where a fake descriptor would make every
+                // subsequent write look like it succeeded
+                CallBackKind::Fopen => CallbackFun::Prebuilt(
+                    cx.const_callback(&[cx.ty_ptr(), cx.ty_ptr()], cx.const_int(0)),
+                ),
+                CallBackKind::FileOp(op) => {
+                    let args: Vec<_> =
+                        std::iter::repeat(cx.ty_int()).take(op.num_args() as usize).collect();
+                    CallbackFun::Prebuilt(cx.const_callback(&args, cx.const_int(0)))
+                }
+                // Enhancement-215: the NON-FATAL string simparam lookup returns the
+                // caller's own default (argument 1) when the name is absent, which is
+                // exactly the situation here
+                CallBackKind::SimParamStrOpt => {
+                    CallbackFun::Prebuilt(cx.const_return(&[cx.ty_ptr(), cx.ty_ptr()], 1))
+                }
+                // Enhancement-51: `ac_stim` is a small-signal source and is zero
+                // outside an AC analysis, which VerilogAE never runs. Same treatment
+                // as the noise group above.
+                CallBackKind::AcStim { .. } => CallbackFun::Prebuilt(
+                    cx.const_callback(&[cx.ty_double(), cx.ty_double()], cx.const_real(0.0)),
+                ),
+                // Enhancement-10: `(seed, salt, params...) -> real`
+                CallBackKind::Rng(rng_fun) => {
+                    let mut args = vec![cx.ty_int(), cx.ty_int()];
+                    args.extend(
+                        std::iter::repeat(cx.ty_double())
+                            .take(rng_fun.num_real_params() as usize),
+                    );
+                    CallbackFun::Prebuilt(cx.const_callback(&args, cx.const_real(0.0)))
                 }
             };
 
@@ -378,8 +459,19 @@ impl CodegenCtx<'_, '_> {
                     ParamKind::ImplicitUnknown(_)
                     | ParamKind::Abstime
                     | ParamKind::PrevState(_)
+                    // cross/above/timer edge-detection state (compiler-synthesized,
+                    // so unlike `HiddenState` there is nothing outside to supply it);
+                    // 0.0 is the neutral "no edge seen yet"
+                    | ParamKind::EventState(_)
                     | ParamKind::NewState(_) => codegen.builder.cx.const_real(0.0),
                     ParamKind::EnableIntegration | ParamKind::EnableLim => {
+                        codegen.builder.cx.const_bool(false)
+                    }
+                    // VerilogAE evaluates model equations standalone: no analysis
+                    // is running, so neither step flag is ever set. This follows the
+                    // `EnableIntegration`/`EnableLim` precedent directly above --
+                    // simulator-mode flags are all false here.
+                    ParamKind::IsInitialStep | ParamKind::IsFinalStep => {
                         codegen.builder.cx.const_bool(false)
                     }
                 };
@@ -724,8 +816,19 @@ impl CodegenCtx<'_, '_> {
                     ParamKind::ImplicitUnknown(_)
                     | ParamKind::Abstime
                     | ParamKind::PrevState(_)
+                    // cross/above/timer edge-detection state (compiler-synthesized,
+                    // so unlike `HiddenState` there is nothing outside to supply it);
+                    // 0.0 is the neutral "no edge seen yet"
+                    | ParamKind::EventState(_)
                     | ParamKind::NewState(_) => builder.cx.const_real(0.0),
                     ParamKind::EnableIntegration | ParamKind::EnableLim => {
+                        builder.cx.const_bool(false)
+                    }
+                    // VerilogAE evaluates model equations standalone: no analysis
+                    // is running, so neither step flag is ever set. This follows the
+                    // `EnableIntegration`/`EnableLim` precedent directly above --
+                    // simulator-mode flags are all false here.
+                    ParamKind::IsInitialStep | ParamKind::IsFinalStep => {
                         builder.cx.const_bool(false)
                     }
                 };

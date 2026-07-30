@@ -422,6 +422,7 @@ The index: **Doc** links each enhancement's detailed write-up, **Examples** link
 | 376 | fix: `$dist_*` returned `real`; the LRM makes it integer (`$rdist_*` is the real family) — needed a `ficast` in the lowering too, or the value read as 0 | openvaf-r | [doc](enhancements_doc/Enhancement-376.md) | [distint](examples/distint_examples/) |
 | 377 | fix: OSDI diagnostics — name glued to its argument, no newline, no `free`, and `LOG_LVL_MASK` 8 made every severity report as `OSDI(debug)` on stdout | both | [doc](enhancements_doc/Enhancement-377.md) | [simparamdiag](examples/simparamdiag_examples/) |
 | 378 | fix: a Verilog-A `$fatal` during the operating point was read as non-convergence, so the gmin/source ladder retried it 373x and blamed `timestep too small` | ngspice | [doc](enhancements_doc/Enhancement-378.md) | [opfatal](examples/opfatal_examples/) |
+| 379 | fix: `cargo test --workspace` now builds and no longer overwrites checked-in source — verilogae drift, and three sourcegen generators that had fallen behind the files they generate | openvaf-r | [doc](enhancements_doc/Enhancement-379.md) | n/a |
 
 </details>
 
