@@ -142,6 +142,18 @@ pub enum BodyValidationDiagnostic {
         kind: CaseKind,
         discr: ExprId,
     },
+    /// Enhancement-375: a loop whose controlling condition provably cannot change
+    /// between iterations. `always` distinguishes a condition that is a non-zero
+    /// literal (certainly infinite) from one that is merely loop-invariant (either
+    /// never entered or never left -- not decidable here, and both are defects).
+    ///
+    /// This is an ERROR rather than a lint because there is no correct object code
+    /// for a model that cannot finish one evaluation. Emitting the loop hangs the
+    /// simulator with no diagnostic at all; substituting a value invents a device.
+    NonTerminatingLoop {
+        cond: ExprId,
+        always: bool,
+    },
 }
 
 impl BodyValidationDiagnostic {
@@ -259,6 +271,41 @@ impl_display! {
     }
 }
 
+/// Enhancement-375: does a literal condition select the loop body?
+fn literal_is_truthy(lit: &Literal) -> bool {
+    match *lit {
+        Literal::Int(val) => val != 0,
+        Literal::Float(val) => !val.is_zero(),
+        // `while ("")` is not meaningful Verilog-A and `$inf` is non-zero; neither
+        // is a zero-trip loop, so neither should suppress the diagnostic.
+        Literal::String(_) | Literal::Inf => true,
+    }
+}
+
+/// Enhancement-375: builtins that return a different value on each call, so a
+/// condition containing one is not loop-invariant no matter what the body does.
+fn builtin_is_impure(builtin: BuiltIn) -> bool {
+    matches!(
+        builtin,
+        BuiltIn::random
+            | BuiltIn::arandom
+            | BuiltIn::dist_chi_square
+            | BuiltIn::dist_exponential
+            | BuiltIn::dist_poisson
+            | BuiltIn::dist_uniform
+            | BuiltIn::dist_erlang
+            | BuiltIn::dist_normal
+            | BuiltIn::dist_t
+            | BuiltIn::rdist_chi_square
+            | BuiltIn::rdist_exponential
+            | BuiltIn::rdist_poisson
+            | BuiltIn::rdist_uniform
+            | BuiltIn::rdist_erlang
+            | BuiltIn::rdist_normal
+            | BuiltIn::rdist_t
+    )
+}
+
 struct BodyValidator<'a> {
     db: &'a dyn HirTyDB,
     owner: DefWithBodyId,
@@ -345,6 +392,10 @@ impl BodyValidator<'_> {
             | Stmt::WhileLoop { cond, .. }
             | Stmt::DoWhile { cond, .. }
             | Stmt::Repeat { count: cond, .. } => {
+                // Enhancement-375: reject a loop that provably cannot finish before
+                // it can be emitted into a model that hangs the simulator.
+                self.check_loop_termination(stmt, cond);
+
                 // Enhancement-70: loop bodies get their own ctx so the
                 // analog-operator restriction is reported against "loops"
                 // (LRM 4.5.1), not "conditions".
@@ -360,6 +411,169 @@ impl BodyValidator<'_> {
         self.validate_condition(cond, stmt, |s| {
             s.body.stmts[stmt].walk_child_stmts(|stmt| s.validate_stmt(stmt))
         });
+    }
+
+    /// Enhancement-375: flag a loop whose controlling condition cannot change.
+    ///
+    /// A Verilog-A module body must finish one evaluation; a loop that cannot exit
+    /// makes that impossible. The compiler used to panic on these (an `unwrap()` on
+    /// a loop-exit block that was never created); after the CFG repair in
+    /// Enhancement-363 it instead emitted a well-formed `.osdi` containing the
+    /// infinite loop, and ngspice hung on the first device evaluation with no
+    /// diagnostic. That is strictly worse than the crash, hence this check.
+    ///
+    /// The analysis is deliberately SOUND IN THE REJECT DIRECTION -- every bail-out
+    /// below means "say nothing", so it can miss a hang but must not reject a model
+    /// that terminates:
+    ///
+    ///   * `repeat (n)` is counted and always terminates -- exempt.
+    ///   * a literal-zero condition is a zero-trip loop, not an infinite one.
+    ///   * `$finish`, `$stop` and `$fatal` leave the loop (and compile today).
+    ///     `disable` is handled separately -- see `collect_loop_writes`.
+    ///   * a user function call may write through an OUTPUT ARGUMENT, so every name
+    ///     passed to one counts as written. A user call in the CONDITION could do
+    ///     the same, so that abandons the check outright.
+    ///   * `$random`/`$dist_*`/`$rdist_*` return a fresh value per call, so a
+    ///     condition containing one is not invariant.
+    ///
+    /// Names are matched SYNTACTICALLY rather than resolved to `VarId`s, which errs
+    /// the safe way: a shadowing declaration in a nested block makes an unrelated
+    /// name look written, which suppresses the diagnostic rather than inventing one.
+    ///
+    /// NOT DETECTED, and undecidable in general: a loop whose condition variables
+    /// are written but never toward the exit -- notably nested loops sharing an
+    /// index, where termination depends on the two bounds
+    /// (`for(i=0;i<10;i=i+1) for(i=0;i<3;i=i+1)` runs forever, but the same shape
+    /// with the bounds swapped terminates). Those still reach the simulator.
+    fn check_loop_termination(&mut self, stmt: StmtId, cond: ExprId) {
+        let (body, incr) = match self.body.stmts[stmt] {
+            Stmt::WhileLoop { body, .. } | Stmt::DoWhile { body, .. } => (body, None),
+            Stmt::ForLoop { body, incr, .. } => (body, Some(incr)),
+            // `repeat (n)` is a counted loop: it terminates by construction.
+            _ => return,
+        };
+
+        // `while (0)` never runs. It is dead code, not a hang -- not this check's
+        // business, and reporting it as non-terminating would be plainly wrong.
+        if let Expr::Literal(ref lit) = self.body.exprs[cond] {
+            if !literal_is_truthy(lit) {
+                return;
+            }
+        }
+
+        let mut reads = HashSet::default();
+        if !self.collect_cond_reads(cond, &mut reads) {
+            return;
+        }
+
+        let mut writes = HashSet::default();
+        let mut escapes = false;
+        self.collect_loop_writes(body, &mut writes, &mut escapes);
+        // The `for` INCREMENT counts, but the INIT must not: `for (i=0; i<10; j=j+1)`
+        // never changes `i`, and folding init into the write set would hide exactly
+        // the bug this check exists to find.
+        if let Some(incr) = incr {
+            self.collect_loop_writes(incr, &mut writes, &mut escapes);
+        }
+        if escapes || reads.iter().any(|name| writes.contains(name)) {
+            return;
+        }
+
+        let always =
+            matches!(self.body.exprs[cond], Expr::Literal(ref lit) if literal_is_truthy(lit));
+        self.diagnostics.push(BodyValidationDiagnostic::NonTerminatingLoop { cond, always });
+    }
+
+    /// Names read by a loop condition. Returns `false` when the condition cannot be
+    /// treated as invariant at all, in which case the caller says nothing.
+    fn collect_cond_reads(&self, expr: ExprId, out: &mut HashSet<Name>) -> bool {
+        match self.body.exprs[expr] {
+            Expr::Path { ref path, .. } => {
+                if let Some(name) = path.segments.last() {
+                    out.insert(name.clone());
+                }
+            }
+            Expr::BitSelect { ref base, .. } => {
+                if let Some(name) = base.segments.last() {
+                    out.insert(name.clone());
+                }
+            }
+            Expr::Call { .. } => match self.infer.resolved_calls.get(&expr) {
+                // an output argument could rewrite what the condition reads
+                Some(ResolvedFun::User { .. }) => return false,
+                Some(ResolvedFun::BuiltIn(builtin)) if builtin_is_impure(*builtin) => return false,
+                _ => {}
+            },
+            _ => {}
+        }
+
+        let mut invariant = true;
+        self.body.exprs[expr].walk_child_exprs(|child| {
+            if !self.collect_cond_reads(child, out) {
+                invariant = false;
+            }
+        });
+        invariant
+    }
+
+    /// Names a loop body can write, plus whether it can leave the loop early.
+    fn collect_loop_writes(&self, stmt: StmtId, out: &mut HashSet<Name>, escapes: &mut bool) {
+        match self.body.stmts[stmt] {
+            Stmt::Assignment { dst, .. } => {
+                if let Some(name) = self.root_name(dst) {
+                    out.insert(name);
+                }
+            }
+            // `disable <block>` (LRM 5.4) is Verilog-AMS's loop break, and it is
+            // deliberately NOT treated as an escape here. It works, and keeps
+            // working, for a loop that can also finish normally -- such a loop's
+            // condition changes, so this check never looks at it.
+            //
+            // As the SOLE exit from a loop whose condition cannot change it does
+            // not work today: the code after the loop is then reachable only
+            // through the `disable` edge, and OSDI codegen aborts on it with
+            // `unreachable!("attempted to read undefined value")`
+            // (mir_llvm/src/builder.rs). Verified on the shipped binary for a
+            // literal `while (1)`, a constant-folding `while (1 > 0)` and a
+            // non-constant `while (i < 10)` whose `i` is never written -- 3/3
+            // crash, with and without the loop result being used.
+            //
+            // So reporting it here cannot regress a working program: there is no
+            // such program. It replaces a compiler crash with an actionable error.
+            _ => {}
+        }
+        self.body.stmts[stmt].walk_child_exprs(|e| self.scan_call_effects(e, out, escapes));
+        self.body.stmts[stmt].walk_child_stmts(|s| self.collect_loop_writes(s, out, escapes));
+    }
+
+    fn scan_call_effects(&self, expr: ExprId, out: &mut HashSet<Name>, escapes: &mut bool) {
+        if let Expr::Call { ref args, .. } = self.body.exprs[expr] {
+            match self.infer.resolved_calls.get(&expr) {
+                Some(ResolvedFun::BuiltIn(
+                    BuiltIn::finish | BuiltIn::stop | BuiltIn::fatal,
+                )) => *escapes = true,
+                Some(ResolvedFun::User { .. }) => {
+                    // Any argument may be an output argument. Assuming they all are
+                    // is the safe direction: it can only suppress the diagnostic.
+                    for &arg in args {
+                        if let Some(name) = self.root_name(arg) {
+                            out.insert(name);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        self.body.exprs[expr].walk_child_exprs(|e| self.scan_call_effects(e, out, escapes));
+    }
+
+    /// The variable a write lands on: `x` for `x = ...`, `a` for `a[i] = ...`.
+    fn root_name(&self, expr: ExprId) -> Option<Name> {
+        match self.body.exprs[expr] {
+            Expr::Path { ref path, .. } => path.segments.last().cloned(),
+            Expr::BitSelect { ref base, .. } => base.segments.last().cloned(),
+            _ => None,
+        }
     }
 
     fn validate_condition(

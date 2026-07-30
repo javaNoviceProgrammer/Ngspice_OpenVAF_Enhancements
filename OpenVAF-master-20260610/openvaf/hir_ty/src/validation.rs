@@ -254,6 +254,38 @@ impl Diagnostic for BodyValidationDiagnosticWrapped<'_> {
                             .to_owned(),
                     ])
             }
+            // Enhancement-375
+            BodyValidationDiagnostic::NonTerminatingLoop { cond, always } => {
+                let FileSpan { range, file } = self.expr_src(cond);
+                let (msg, label) = if always {
+                    ("loop condition is always true", "this is never false")
+                } else {
+                    (
+                        "loop condition can never change",
+                        "nothing in the loop writes what this reads",
+                    )
+                };
+                Report::error()
+                    .with_message(msg.to_owned())
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: file,
+                        range: range.into(),
+                        message: label.to_owned(),
+                    }])
+                    .with_notes(vec![
+                        "a module body must complete one evaluation; a loop that cannot \
+                         exit would hang the simulator on the first evaluation with no \
+                         further diagnostic"
+                            .to_owned(),
+                        "help: write what the condition reads inside the loop body, or in \
+                         the `for` increment"
+                            .to_owned(),
+                        "note: `disable <block>` is not accepted as the only way out of \
+                         such a loop; it works for a loop that can also finish normally"
+                            .to_owned(),
+                    ])
+            }
             BodyValidationDiagnostic::PotentialOfPortFlow { expr, branch } => {
                 let FileSpan { range, file } = self.expr_src(expr);
 
