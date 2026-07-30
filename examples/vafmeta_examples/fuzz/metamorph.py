@@ -18,6 +18,18 @@ rearrangement, strength reduction (`x**2` vs `x*x`), control-flow lowering
 (each body is differentiated for the Jacobian, so a derivative bug shows up as a
 DC/AC mismatch even when the residual agrees).
 
+OPERATOR COVERAGE IS COMPLETE: all four laplace forms (nd, zd, zp, np) and all
+four Z-transform forms (zi_nd, zi_zd, zi_zp, zi_np), plus idt and ddt.
+
+For the eight rational forms the property used is SCALING, which is
+convention-free -- it needs no knowledge of whether zeros/poles are {re,im} pairs,
+what order coefficients come in, or what the zi_* sample period and transition
+time mean. But scaling ALONE is weak: F(x) == 0 and F(x) == x both satisfy
+F(2x) == 2 F(x). So every form carries a second, INVERTED assertion that its
+response must DIFFER from the bare input (verdict "NO-OP" if it does not).
+Measured separations run 2.2 to 134 -- the operators demonstrably act, which is
+what makes the scaling result meaningful rather than vacuous.
+
 OPERATOR COVERAGE. `idt` and `laplace` are LINEAR operators, so the properties
 used are convention-free -- they hold whatever scaling or sign convention the
 implementation chose, which matters because guessing a laplace convention wrong
@@ -190,6 +202,41 @@ PAIRS_OP = [
      "I(p,n) <+ k2*V(p,n) + k1*laplace_nd(V(p,n), {3.0}, {1.0, 1e-6});",
      "I(p,n) <+ k2*V(p,n) + 3.0*k1*laplace_nd(V(p,n), {1.0}, {1.0, 1e-6});"),
 ]
+
+
+# --- every other laplace form, and the Z-transform family ---------------
+# SCALING is convention-free, so one property covers all eight operators
+# without needing to know any argument convention (zeros/poles as {re,im}
+# pairs, coefficient order, or the zi_* sample period and transition time).
+PAIRS_FORMS = [
+    ("laplace_zd scaling: F(2x) == 2 F(x)",
+     "I(p,n) <+ k2*V(p,n) + k1*laplace_zd(2.0*V(p,n), {-1e7,0.0}, {1.0, 1e-6});",
+     "I(p,n) <+ k2*V(p,n) + 2.0*k1*laplace_zd(V(p,n), {-1e7,0.0}, {1.0, 1e-6});"),
+    ("laplace_zp scaling: F(2x) == 2 F(x)",
+     "I(p,n) <+ k2*V(p,n) + k1*laplace_zp(2.0*V(p,n), {-1e7,0.0}, {-1e6,0.0});",
+     "I(p,n) <+ k2*V(p,n) + 2.0*k1*laplace_zp(V(p,n), {-1e7,0.0}, {-1e6,0.0});"),
+    ("laplace_np scaling: F(2x) == 2 F(x)",
+     "I(p,n) <+ k2*V(p,n) + k1*laplace_np(2.0*V(p,n), {1.0}, {-1e6,0.0});",
+     "I(p,n) <+ k2*V(p,n) + 2.0*k1*laplace_np(V(p,n), {1.0}, {-1e6,0.0});"),
+    ("zi_nd scaling: F(2x) == 2 F(x)",
+     "I(p,n) <+ k2*V(p,n) + k1*zi_nd(2.0*V(p,n), {1.0}, {1.0, 0.5}, 1e-6, 0.0);",
+     "I(p,n) <+ k2*V(p,n) + 2.0*k1*zi_nd(V(p,n), {1.0}, {1.0, 0.5}, 1e-6, 0.0);"),
+    ("zi_zd scaling: F(2x) == 2 F(x)",
+     "I(p,n) <+ k2*V(p,n) + k1*zi_zd(2.0*V(p,n), {0.2,0.0}, {1.0, 0.5}, 1e-6, 0.0);",
+     "I(p,n) <+ k2*V(p,n) + 2.0*k1*zi_zd(V(p,n), {0.2,0.0}, {1.0, 0.5}, 1e-6, 0.0);"),
+    ("zi_zp scaling: F(2x) == 2 F(x)",
+     "I(p,n) <+ k2*V(p,n) + k1*zi_zp(2.0*V(p,n), {0.2,0.0}, {0.5,0.0}, 1e-6, 0.0);",
+     "I(p,n) <+ k2*V(p,n) + 2.0*k1*zi_zp(V(p,n), {0.2,0.0}, {0.5,0.0}, 1e-6, 0.0);"),
+    ("zi_np scaling: F(2x) == 2 F(x)",
+     "I(p,n) <+ k2*V(p,n) + k1*zi_np(2.0*V(p,n), {1.0}, {0.5,0.0}, 1e-6, 0.0);",
+     "I(p,n) <+ k2*V(p,n) + 2.0*k1*zi_np(V(p,n), {1.0}, {0.5,0.0}, 1e-6, 0.0);"),
+]
+
+# each form must also DEMONSTRABLY ACT: compared against the bare input, the
+# response has to differ, or the scaling property above is satisfied vacuously.
+PAIRS_ACT = [(lbl.replace("scaling: F(2x) == 2 F(x)", "is not a no-op"),
+              a, "I(p,n) <+ k2*V(p,n) + k1*V(p,n);", "differ")
+             for (lbl, a, _b) in PAIRS_FORMS]
 
 # --- 3-TERMINAL generation --------------------------------------------------
 # The one-port generator cannot reach off-diagonal Jacobian entries. These atoms
@@ -375,6 +422,8 @@ def main():
         return (t[0], t[1], t[2], three, "")
     pairs = [norm(t, False) for t in PAIRS] + \
             [norm(t, False) for t in PAIRS_OP] + \
+            [norm(t, False) for t in PAIRS_FORMS] + \
+            [norm(t, False) for t in PAIRS_ACT] + \
             [norm(t, True) for t in PAIRS3]
     if a.gen:
         rng = random.Random(a.seed)
@@ -395,6 +444,17 @@ def main():
         va, vb = sf(oa, "a%d" % i), sf(ob, "b%d" % i)
         if not va or not vb or len(va) != len(vb):
             print("  %-34s %-8s len %d vs %d" % (label, "NODATA", len(va), len(vb)))
+            continue
+        if mode == "differ":
+            # inverted verdict: these two bodies are NOT equivalent, and the
+            # operator is only doing something if they disagree. Without this,
+            # every scaling pair above would pass for an operator that returned 0.
+            worst = max(abs(x - y) for x, y in zip(va, vb))
+            okk = worst > 1e-6
+            bad += not okk
+            print("  %-34s %-8s max abs dev %.2e over %d points (MUST differ)"
+                  % (label, "PASS" if okk else "NO-OP", worst, len(va)))
+            compiled += 1
             continue
         if mode == "ac":
             # the DC rows come first; keep only the AC tail
