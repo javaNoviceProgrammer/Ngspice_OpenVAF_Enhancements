@@ -251,14 +251,27 @@ PAIRS_ACT = [(lbl.replace("scaling: F(2x) == 2 F(x)", "is not a no-op"),
 #
 # That distinction is not academic here. `pnjlim` shows 1.07e-12, i.e. a genuinely
 # different Newton path reaching the same fixed point. `fetlim`, `limvds` and the
-# default mode all show EXACTLY 0.00e+00 -- which is what a no-op would produce.
-# Related and directly observed: openvaf-r compiles
-#     $limit(V(a,c), "bogusmode", 0.025, 0.6)
-# with rc=0 and NO diagnostic, though the LRM defines only pnjlim/fetlim/limvds
-# plus user-defined functions. So a misspelled mode is accepted silently. Whether
-# those three modes are actually implemented or silently ignored was NOT
-# established -- the comparison harness for it produced no data and the question
-# is left open rather than guessed at.
+# default mode all show EXACTLY 0.00e+00.
+#
+# WHAT THE ZEROS ARE NOT. An earlier note here guessed they might mean those modes
+# are unimplemented, and separately claimed a misspelled mode is accepted
+# silently. BOTH were wrong, and the source settles it:
+#
+#   * ngspice implements all three, with their LRM argument counts
+#     (osdi/osdiregistry.c):
+#         IS_LIM_FUN("pnjlim", 2, osdi_pnjlim)    /* vt, vcrit */
+#         IS_LIM_FUN("limvds", 0, osdi_limvds)
+#         IS_LIM_FUN("fetlim", 1, osdi_fetlim)    /* vto */
+#   * an unknown mode IS diagnosed, at load time by the simulator rather than by
+#     the compiler:  warning(osdi): unknown $limit function "bogusmode"
+#     openvaf compiling it clean is therefore CORRECT -- the mode is resolved
+#     from OSDI_LIM_TABLE by whoever loads the object, not by the compiler.
+#
+# The most likely explanation for the zeros is that the fetlim/limvds/default
+# pairs use LINEAR bodies, where Newton converges in one step and limiting has
+# nothing to do, while the pnjlim pair uses an exponential diode. That is a
+# hypothesis, NOT a measurement: two attempts to confirm it on a nonlinear body
+# produced no data. It is recorded as such.
 PAIRS_LIM = [
     ("$limit fetlim keeps the solution",
      "begin : lf real vg; vg = $limit(V(d,g), \"fetlim\", 0.7); "
