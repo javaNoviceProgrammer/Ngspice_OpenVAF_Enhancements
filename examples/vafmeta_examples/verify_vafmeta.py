@@ -18,6 +18,13 @@ the sweep:
 
     python3 fuzz/metamorph.py --gen 40 --seed 7
 
+`fuzz/gengrammar.py` goes further: a real generative grammar over STATEMENTS
+(nested if/else, bounded for/while loops, named blocks with local declarations) to
+depth 4-5, with 1-3 composed rewrites per pair, so control-flow lowering is
+exercised rather than just expression trees:
+
+    python3 fuzz/gengrammar.py --n 60 --seed 1 --depth 5 [--three]
+
 Each pair below is chosen to force a different lowering:
   * a 3-TERMINAL KVL identity                   -- off-diagonal Jacobian entries
   * `$limit` present vs absent                   -- see below
