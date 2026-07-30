@@ -416,6 +416,7 @@ The index: **Doc** links each enhancement's detailed write-up, **Examples** link
 | 370 | fix: every `.pz` re-expanded a URC subcircuit, creating nodes past the allocated RHS — a heap-buffer-overflow hiding under a passing crash fixture | ngspice | [doc](enhancements_doc/Enhancement-370.md) | [urcpz](examples/urcpz_examples/) |
 | 371 | plot naming and dates: per-type numbering, so the first sweep is `sweep1` not `sweep500`; every plot now carries a date (command-created plots printed `(null)`) | ngspice | [doc](enhancements_doc/Enhancement-371.md) | [plotname](examples/plotname_examples/) |
 | 372 | fix: `unset plots` printed a spurious `Internal Error: var 112` — a `%d` fed a dereferenced `char *`, on a branch valid input always reaches | ngspice | [doc](enhancements_doc/Enhancement-372.md) | [unsetvar](examples/unsetvar_examples/) |
+| 373 | fix: a rawfile write/load round trip dropped the x-axis column from `print` (`pl_ndims` never restored) and renamed the `.dc` sweep axis to `v(v-sweep)` | ngspice | [doc](enhancements_doc/Enhancement-373.md) | [rawtrip](examples/rawtrip_examples/) |
 
 </details>
 

@@ -179,7 +179,18 @@ void raw_write(char *name, struct plot *pl, bool app, bool binary)
         /* write v(name)*/
         else if (v->v_type == SV_VOLTAGE) {
             /* If the node name is a number, the vector is already called v(name) */
-            if (ciprefix("v(", v->v_name) || newcompat.eg) /* FIXME: newcompat.eg should be removed if EAGLE is updated */
+            /* Enhancement-373: ... and do NOT wrap the plot's SCALE. The `v(...)`
+             * form says "the voltage AT node X" -- right for a node probe, wrong
+             * for a sweep AXIS. A `.dc` plot's scale is the synthetic,
+             * voltage-typed vector `v-sweep`, which has no `v(` prefix, so it was
+             * written as `v(v-sweep)` and came back from a load under that name:
+             * the round trip did not preserve it. (It did not compound -- the
+             * prefix test makes a second pass leave `v(v-sweep)` alone.)
+             * Node-voltage vectors are already named `v(mid)` internally and take
+             * this same branch, and `let` vectors are SV_NOTYPE, so the scale was
+             * the only thing the else-branch below was ever reached by. */
+            if (ciprefix("v(", v->v_name) || newcompat.eg /* FIXME: newcompat.eg should be removed if EAGLE is updated */
+                || v == pl->pl_scale)
                fprintf(fp, "\t%d\t%s\t%s", i++, v->v_name, ft_typenames(v->v_type));
             else
                fprintf(fp, "\t%d\tv(%s)\t%s", i++, v->v_name, ft_typenames(v->v_type));
@@ -388,11 +399,22 @@ raw_read(char *name) {
             curpl = TMALLOC(struct plot, 1);
             curpl->pl_next = plots;
             plots = curpl;
+            /* Enhancement-373: restore pl_ndims. `print` prepends the scale
+             * column only when this is non-zero (postcoms.c), and outitf.c sets
+             * it to 1 for every analysis plot -- but the rawfile reader never set
+             * it at all, so a plot that had been written and loaded back printed
+             * its data with NO x-axis column. Values were always intact and
+             * `wrdata` was unaffected; only `print` lost the scale. */
+            curpl->pl_ndims = 1;
             curpl->pl_name = copy(s);
             if (!date)
                 date = copy(datestring());
-            /* Enhancement-371: plot_alloc() now stamps a date, and the
-             * file's own date must win -- free ours before replacing it. */
+            /* Enhancement-371/373: the file's own date must win. This path
+             * builds its plot with TMALLOC rather than plot_alloc(), so pl_date
+             * is NULL here and the tfree is defensive only -- the E-371 comment
+             * that claimed plot_alloc() had already stamped it was wrong about
+             * THIS path. Kept so the field can never be overwritten unfreed if
+             * this ever moves onto plot_alloc(). */
             tfree(curpl->pl_date);
             curpl->pl_date = date;
             if (!title)
