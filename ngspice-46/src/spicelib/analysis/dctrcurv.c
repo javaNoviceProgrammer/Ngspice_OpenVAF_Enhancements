@@ -176,6 +176,38 @@ DCtrCurv(CKTcircuit *ckt, int restart)
     ckt->CKTmode = (ckt->CKTmode & MODEUIC) | MODEDCTRANCURVE | MODEINITJCT;
     ckt->CKTorder = 1;
 
+    /* Enhancement-380: a DC sweep must not inherit integration coefficients.
+     *
+     * dioload.c gates its charge branch on
+     *     MODEDCTRANCURVE | MODETRAN | MODEAC | MODEINITSMSIG
+     * so a charge-storing device DOES take that path during a .dc sweep, and it
+     * ends in NIintegrate(), which returns geq = CKTag[0] * cap.
+     *
+     * In a fresh session CKTag[] has never been computed, so it is zero, geq is
+     * zero, and charge contributes nothing to the sweep -- which is the correct
+     * DC behaviour. But CKTag[] is plain circuit state: after any analysis that
+     * drives the transient machinery -- `pss` (a shooting method, so many
+     * transient cycles), `tran`, `envelope`, `qpss` -- it still holds THAT
+     * analysis' coefficients, where ag[0] ~ 1/delta is large. The sweep then adds
+     * a spurious geq = ag[0]*cap to every charge-storing device.
+     *
+     * Measured before this fix on a 1k/1k divider with a diode across it, where
+     * v(mid) = V1/3 exactly:
+     *
+     *     op          ->  0.16666666452   correct
+     *     pss ; dc    ->  0.09391732333   44% low, silently
+     *
+     * with the diode reporting gd some 3000x too large for its own vd. Setting
+     * cjo=0 made it vanish, which is what identified the charge path; `op` was
+     * always correct because MODEDCOP is not in that gate; and only `reset`
+     * cleared it, because nothing else reinitialises CKTag[].
+     *
+     * NOTE: zeroing CKTstates[] here does NOT help -- that was tried and measured
+     * unchanged. The stale value is the coefficient, not the stored charge.
+     */
+    for (j = 0; j < 7; j++)
+        ckt->CKTag[j] = 0.0;
+
     /* Save the state of the circuit */
     for (j = 0; j < 7; j++)
         ckt->CKTdeltaOld[j] = ckt->CKTdelta;
