@@ -96,6 +96,7 @@ void com_stb(wordlist *wl)
     int nA_len = 0, nB_len = 0, nI_len = 0, nF_len = 0, n, i;
     int have_pm = 0, have_gm = 0;
     double pm = 0.0, gm = 0.0, fpm = 0.0, fgm = 0.0;
+    double vprobe_acmag = 0.0, iprobe_acmag = 0.0;  /* Enhancement-381 */
     wordlist *sw;
 
     if (!ft_curckt || !ft_curckt->ci_ckt) {
@@ -143,6 +144,25 @@ void com_stb(wordlist *wl)
     (void) snprintf(eB, sizeof eB, "v(%s)", nB);
     (void) snprintf(eI, sizeof eI, "%s#branch", vname);
 
+    /* Enhancement-381: remember what the probes were driving with. `stb` uses
+     * two existing sources as injection probes, and used to hand them back set to
+     * ZERO -- which is not "quiescent" unless they happened to start there. A
+     * source carrying `ac 1` for the user's own following `.ac` had that value
+     * destroyed, and every node of that `.ac` came back exactly 0.00000000e+00
+     * with no warning. Only the magnitude is saved: the injection below writes
+     * `ac = N`, which sets acmag and leaves acphase untouched.
+     */
+    {
+        int mlen = 0;
+        ngcomplex_t *m;
+        (void) snprintf(cmd, sizeof cmd, "@%s[acmag]", vname);
+        m = stb_eval(cmd, &mlen);
+        if (m && mlen >= 1) { vprobe_acmag = realpart(m[0]); tfree(m); }
+        (void) snprintf(cmd, sizeof cmd, "@%s[acmag]", iname);
+        m = stb_eval(cmd, &mlen);
+        if (m && mlen >= 1) { iprobe_acmag = realpart(m[0]); tfree(m); }
+    }
+
     /* --- voltage injection: Vprobe ac=1, Iprobe ac=0 --- */
     (void) snprintf(cmd, sizeof cmd, "alter %s ac = 1", vname); stb_run(cmd);
     (void) snprintf(cmd, sizeof cmd, "alter %s ac = 0", iname); stb_run(cmd);
@@ -157,9 +177,11 @@ void com_stb(wordlist *wl)
     (void) snprintf(cmd, sizeof cmd, "ac %s", sweep);           stb_run(cmd);
     ibr = stb_eval(eI, &nI_len);
 
-    /* restore the probes to quiescent */
-    (void) snprintf(cmd, sizeof cmd, "alter %s ac = 0", vname); stb_run(cmd);
-    (void) snprintf(cmd, sizeof cmd, "alter %s ac = 0", iname); stb_run(cmd);
+    /* Enhancement-381: hand the probes back EXACTLY as we found them, not zeroed */
+    (void) snprintf(cmd, sizeof cmd, "alter %s ac = %.17g", vname, vprobe_acmag);
+    stb_run(cmd);
+    (void) snprintf(cmd, sizeof cmd, "alter %s ac = %.17g", iname, iprobe_acmag);
+    stb_run(cmd);
 
     if (!vA || !vB || !ibr || !freqc ||
         nA_len != nB_len || nA_len != nI_len || nA_len != nF_len || nA_len < 2) {

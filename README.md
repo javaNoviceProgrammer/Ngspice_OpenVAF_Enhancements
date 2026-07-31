@@ -424,6 +424,7 @@ The index: **Doc** links each enhancement's detailed write-up, **Examples** link
 | 378 | fix: a Verilog-A `$fatal` during the operating point was read as non-convergence, so the gmin/source ladder retried it 373x and blamed `timestep too small` | ngspice | [doc](enhancements_doc/Enhancement-378.md) | [opfatal](examples/opfatal_examples/) |
 | 379 | fix: `cargo test --workspace` now builds and no longer overwrites checked-in source — verilogae drift, and three sourcegen generators that had fallen behind the files they generate | openvaf-r | [doc](enhancements_doc/Enhancement-379.md) | n/a |
 | 380 | fix: a `.dc` sweep inherited stale integration coefficients from a preceding `pss`/`tran`/`envelope`, adding a spurious `ag[0]*cap` to every charge-storing device — 45% silent error | ngspice | [doc](enhancements_doc/Enhancement-380.md) | [dcstate](examples/dcstate_examples/) |
+| 381 | fix: `stb` handed its probe sources back with `ac = 0` instead of their original values, so a following `.ac` returned all zeros | ngspice | [doc](enhancements_doc/Enhancement-381.md) | [stbrestore](examples/stbrestore_examples/) |
 
 </details>
 
