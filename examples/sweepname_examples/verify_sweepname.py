@@ -29,8 +29,17 @@ message now tells you the name instead of leaving you to guess it.
 ORDER MATTERS IN plotabs[].  ft_plotabbrev() returns the FIRST entry whose
 pattern is a substring of the plot name, so "sweepwave" has to precede "sweep"
 or a sweep-waveform plot would be abbreviated "sweep" and collide with the point
-plot. The same rule already explains an existing quirk: a plot named "spectrum"
-matches the earlier "sp" entry, never "spect".
+plot.
+
+ENHANCEMENT-383 -- this fix broke its own rule.  Of the eight entries added here,
+`envelope` went in at the BOTTOM of the table, below { "op", "op" }; "envel-OP-e"
+contains "op", so that entry was never reachable and envelope plots kept coming
+out as op1. Adding an entry is not enough, it has to go in the right PLACE. The
+same audit found `qpac` and `qpxf` shadowed by `pac`/`pxf`, and settled the
+"existing quirk" this comment used to record -- a plot named "spectrum" matching
+the earlier "sp" entry rather than "spect" -- which was not a quirk but the same
+defect, and is now fixed too. See examples/plotorder_examples, which asserts the
+ordering invariant against the table so a future entry cannot repeat this.
 
 The struct is {p_name, p_pattern} -- the SECOND field is the one matched and the
 FIRST is the abbreviation returned, which reads backwards from the table and is

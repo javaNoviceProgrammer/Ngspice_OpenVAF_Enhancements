@@ -112,8 +112,14 @@ def main():
     # [3] the other routes that create plots
     rc, out, _ = run("fft", "tran 0.1n 20n\nlinearize\nfft v(out)\nop\necho P $plots")
     got_fft = plots_line(out, "P")
-    # E-371: sp1/op1 here, not sp2/op2 -- no longer numbered by the two trans.
-    ok_fft = rc == 0 and got_fft == ["const", "tran1", "tran2", "sp1", "op1"]
+    # E-371: spect1/op1 here, not spect2/op2 -- no longer numbered by the two trans.
+    # E-383 CHANGED THIS NAME FROM sp1 TO spect1. `fft` and `spec` both name their
+    # plot "Spectrum" (com_fft.c, spec.c), which contains "sp", so both landed on
+    # the S-parameter abbreviation and `.sp` in the same session gave an
+    # indistinguishable sp1/sp2 pair. The { "spect", "spect" } entry that exists
+    # for this had been sitting in plotabs[] unreachable behind { "sp", "sp" };
+    # it now precedes it. See examples/plotorder_examples.
+    ok_fft = rc == 0 and got_fft == ["const", "tran1", "tran2", "spect1", "op1"]
 
     rc2, out2, _ = run("load",
                        "set filetype=ascii\nop\nwrite _p.raw v(out)\nload _p.raw\n"

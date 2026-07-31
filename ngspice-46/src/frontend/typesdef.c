@@ -66,6 +66,11 @@ static struct type types[NUMTYPES] = {
 
 static struct plotab plotabs[NUMPLOTTYPES] = {
     { "tran", "transient", FALSE, FALSE },
+    /* Enhancement-383: "envelope" CONTAINS "op" -- envel-OP-e. E-367 added an
+     * envelope entry, but placed it below this one, where it could never be
+     * reached: `envelope` plots came out named op1 and collided with the
+     * operating-point plots. It has to precede { "op", "op" }. */
+    { "envelope", "envelope", FALSE, FALSE },
     { "op", "op", FALSE, FALSE },
     { "tf", "function", FALSE, FALSE },
     { "dc", "d.c.", FALSE, FALSE },
@@ -76,6 +81,9 @@ static struct plotab plotabs[NUMPLOTTYPES] = {
      * literal audit could not see them. Each must precede the GENERAL pattern its
      * name happens to contain, or the general one wins: "PAC Analysis" contains
      * "ac", so it was abbreviated `ac` and collided with ordinary AC plots. */
+    /* Enhancement-383: "qpac" contains "pac", so qpac's sweep plot was named
+     * pac1 -- the same name .pac uses, and both can exist in one session. */
+    { "qpac", "qpac", FALSE, FALSE },
     { "pac", "pac", FALSE, FALSE },
     { "ac", "a.c.", FALSE, FALSE },
     { "ac", "ac", FALSE, FALSE },
@@ -96,11 +104,19 @@ static struct plotab plotabs[NUMPLOTTYPES] = {
     { "sens2", "sens2", FALSE, FALSE },
     /* Enhancement-368: "PSP Analysis" contains "sp" -> collided with S-parameters. */
     { "psp", "psp", FALSE, FALSE },
+    /* Enhancement-383: "qpxf" contains "pxf" -- same collision as qpac/pac. */
+    { "qpxf", "qpxf", FALSE, FALSE },
     { "pxf", "pxf", FALSE, FALSE },
+    /* Enhancement-383: "spectrum" contains "sp", so this entry was dead too and
+     * the `spec` command's plot was named sp1 -- exactly what .sp (S-parameters)
+     * uses. Running both in one session gave sp1/sp2 with nothing to tell them
+     * apart. It must stay BELOW { "noise", "noise" }: the noise analysis names a
+     * plot "Noise SPECTral Density Curves ...", which is a noise plot and has to
+     * keep matching `noise` first. */
+    { "spect", "spect", FALSE, FALSE },
     { "sp", "s.p.", FALSE, FALSE },
     { "sp", "sp", FALSE, FALSE },
     { "harm", "harm", FALSE, FALSE },
-    { "spect", "spect", FALSE, FALSE },
     /* Enhancement-368: QPSS is "Frequency Domain Periodic Steady State Analysis"
      * and PSS is "Time Domain Periodic ..." -- both contain "periodic", so QPSS
      * was abbreviated `pss`. The pattern has to carry the distinguishing words. */
@@ -122,16 +138,29 @@ static struct plotab plotabs[NUMPLOTTYPES] = {
      * ORDER MATTERS: the first pattern that matches wins, so a more specific
      * pattern must precede one that is a substring of it -- "sweepwave" before
      * "sweep", or a sweep-waveform plot would be abbreviated "sweep" and collide
-     * with the point plot. (The same rule explains an existing quirk: a plot
-     * named "spectrum" matches the earlier "sp" entry, never "spect".) */
+     * with the point plot.
+     *
+     * Enhancement-383: adding an entry is NOT enough, it has to go in the right
+     * place, and E-367 got that wrong for `envelope` by adding it here, below
+     * { "op", "op" }, where "envel-OP-e" could never reach it. That entry has
+     * moved to the head of the table. `qpac`, `qpxf` and `spectrum` were shadowed
+     * the same way and are now handled where their general patterns are declared.
+     * The rule an entry here must satisfy: no EARLIER p_pattern may be a
+     * substring of this plot's name. examples/plotorder_examples asserts it for
+     * every name in the tree that reaches plot_alloc(). */
     { "sweepwave", "sweepwave", FALSE, FALSE },
     { "sweep", "sweep", FALSE, FALSE },
     { "hb", "hb", FALSE, FALSE },
-    { "envelope", "envelope", FALSE, FALSE },
     { "eye", "eye", FALSE, FALSE },
     { "loadpull", "loadpull", FALSE, FALSE },
     { "rfstab", "rfstab", FALSE, FALSE },
     { "stb", "stb", FALSE, FALSE }
+    /* Enhancement-383: plot_alloc("digi") in vectors.c (findvec_alle) deliberately
+     * gets NO entry here. That call site overwrites pl_typename with the literal
+     * "dig1" on the next line, so whatever this table returned is discarded --
+     * adding a "digi" entry would create exactly the unreachable entry this
+     * enhancement exists to remove. See Enhancement-383 for what that call site
+     * does instead. */
 };
 
 
