@@ -622,6 +622,9 @@ impl Ctx {
         // Array-variable declarations local to this function (Enhancement-18): array locals and
         // array-typed arguments expand into element vars here, exactly like `Module::var_arrays`.
         let mut var_arrays = Vec::new();
+        // Enhancement-389: the (direction, type) of the last ANSI header entry that
+        // stated one, for entries that omit both.
+        let mut ansi_carry: Option<(bool, bool, Option<Type>)> = None;
         for item in fun.function_items() {
             match item {
                 ast::FunctionItem::ParamDecl(decl) => self.lower_param(decl, &mut items, None),
@@ -630,8 +633,27 @@ impl Ctx {
                 }
                 ast::FunctionItem::FunctionArg(arg) => {
                     let ast_id = self.source_ast_id_map.ast_id(&arg);
-                    let is_input = is_input(&arg.direction());
-                    let is_output = is_output(&arg.direction());
+                    let direction = arg.direction();
+                    // Enhancement-389: an ANSI header entry may restate neither the
+                    // direction nor the type -- `f(input real x, y)` gives `y` both
+                    // of `x`'s -- so carry the previous entry forward. Only an entry
+                    // with NO direction inherits: the separated form always writes
+                    // one (`func_arg` requires it), so its untyped `input x;` can
+                    // never pick up a stray type from an earlier argument.
+                    let (is_in, is_out, explicit_ty) = if direction.is_some() {
+                        let cur = (
+                            is_input(&direction),
+                            is_output(&direction),
+                            arg.ty().map(|ty| ty.as_type()),
+                        );
+                        ansi_carry = Some(cur.clone());
+                        cur
+                    } else {
+                        match ansi_carry.clone() {
+                            Some(prev) => prev,
+                            None => (false, false, arg.ty().map(|ty| ty.as_type())),
+                        }
+                    };
                     for (name_idx, name) in arg.names().enumerate() {
                         let name = name.as_name();
                         if let Some(arg) = args.iter_mut().find(|arg| arg.name == name) {
@@ -641,9 +663,10 @@ impl Ctx {
                         let arg = args.push_and_get_key(FunctionArg {
                             name,
                             name_idx,
-                            is_input,
-                            is_output,
+                            is_input: is_in,
+                            is_output: is_out,
                             declarations: Vec::new(),
+                            explicit_ty: explicit_ty.clone(),
                             ast_ids: vec![ast_id],
                         });
                         items.push(arg.into());

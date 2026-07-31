@@ -276,7 +276,15 @@ fn func_decl(p: &mut Parser, m: Marker) {
     while p.at(T!['[']) {
         width_range(p);
     }
-    name_r(p, TokenSet::unique(T![;]));
+    name_r(p, TokenSet::new(&[T![;], T!['(']]));
+    // Enhancement-389: the ANSI-style header
+    // `analog function real f(input real x, output real y);`. The arguments are
+    // emitted as ordinary FUNCTION_ARG children of the FUNCTION node, so they
+    // reach `lower_fun` through `function_items()` exactly like the separated
+    // `input x; real x;` form and need no separate lowering path.
+    if p.at(T!['(']) {
+        ansi_func_args(p);
+    }
     p.expect(T![;]);
 
     while !p.at_ts(FUNCTION_RECOVER) {
@@ -302,9 +310,49 @@ fn func_arg(p: &mut Parser, m: Marker) {
     p.expect_ts_r(DIRECTION_TS, FUNC_ARG_RECOVER);
     direction.complete(p, DIRECTION);
 
+    // Enhancement-389: the COMBINED declaration `input real x;`. Verilog-AMS
+    // allows the direction and the data type in one statement; openvaf accepted
+    // only the separated `input x; real x;`. The type is optional here, so the
+    // separated form parses exactly as before -- an argument with no type of its
+    // own still takes it from a matching `real x;` (or defaults to real).
+    eat_ty(p);
+
     decl_list(p, T![;], decl_name, FUNC_ARG_RECOVER);
     p.eat(T![;]);
     m.complete(p, FUNCTION_ARG);
+}
+
+/// Enhancement-389: the argument list of an ANSI-style function header.
+///
+/// Each entry is `[direction] [type] name`. Per the LRM an entry may restate
+/// neither -- `f(input real x, y)` gives `y` the direction and type of `x` --
+/// which `lower_fun` resolves by carrying the previous entry forward.
+///
+/// Array arguments are NOT accepted in this position (nor in the combined form
+/// above): an array argument still needs the separated `output w; real w[0:3];`,
+/// whose declaration-level range machinery has no counterpart here.
+fn ansi_func_args(p: &mut Parser) {
+    p.bump(T!['(']);
+    if p.eat(T![')']) {
+        return;
+    }
+    let recover = FUNC_ARG_RECOVER.union(TokenSet::new(&[T![')'], T![;]]));
+    while !p.at_ts(recover) {
+        let m = p.start();
+        if p.at_ts(DIRECTION_TS) {
+            let direction = p.start();
+            p.bump_ts(DIRECTION_TS);
+            direction.complete(p, DIRECTION);
+        }
+        eat_ty(p);
+        name_r(p, TokenSet::new(&[T![,], T![')'], T![;]]));
+        m.complete(p, FUNCTION_ARG);
+        if !p.at(T![,]) {
+            break;
+        }
+        p.bump(T![,]);
+    }
+    p.expect(T![')']);
 }
 
 fn branch_decl(p: &mut Parser, m: Marker) {

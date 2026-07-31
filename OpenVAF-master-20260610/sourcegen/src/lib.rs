@@ -149,7 +149,33 @@ pub fn reformat(text: String) -> String {
     if !stdout.ends_with('\n') {
         stdout.push('\n');
     }
-    stdout
+    unattr_docs(stdout)
+}
+
+/// Enhancement-389: rewrite `#[doc = "..."]` back to `/// ...`.
+///
+/// `quote!` cannot emit a doc COMMENT -- `///` is sugar the lexer expands into
+/// `#[doc]`, and a `TokenStream` only carries the expanded form -- so a generator
+/// that documents what it emits produces attributes, and rustfmt leaves them
+/// alone. The two spellings mean exactly the same thing to rustc; this one keeps
+/// the generated files reading like the hand-written ones they replaced.
+fn unattr_docs(text: String) -> String {
+    let mut out = String::with_capacity(text.len());
+    for line in text.lines() {
+        let trimmed = line.trim_start();
+        let rendered = trimmed
+            .strip_prefix("#[doc = \"")
+            .and_then(|rest| rest.strip_suffix("\"]"))
+            .map(|body| {
+                let indent = &line[..line.len() - trimmed.len()];
+                // undo the escaping `quote!` applied to the string literal
+                let body = body.replace("\\\"", "\"").replace("\\\\", "\\");
+                format!("{indent}///{body}")
+            });
+        out.push_str(rendered.as_deref().unwrap_or(line));
+        out.push('\n');
+    }
+    out
 }
 
 pub fn add_preamble(generator: &'static str, mut text: String) -> String {

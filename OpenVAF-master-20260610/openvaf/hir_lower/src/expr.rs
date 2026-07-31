@@ -666,6 +666,65 @@ impl BodyLoweringCtx<'_, '_, '_> {
         result
     }
 
+    /// Enhancement-389: `interp_1d_values` with a RUNTIME grid.
+    ///
+    /// `$table_model(x, xs, ys, "ctrl")` with array *variables* for the data (LRM
+    /// p274) cannot fold its breakpoints at compile time -- `xs[i]` is whatever the
+    /// body computed this evaluation -- so the abscissae become MIR values too, and
+    /// every `fconst(grid[i])` here is a live read instead.
+    ///
+    /// The shape is otherwise identical, deliberately: the segment expressions and
+    /// the select chain are the same arithmetic, so `mir_autodiff` differentiates
+    /// this exactly as it does the compile-time form, including through `xs` when a
+    /// breakpoint itself depends on the solution.
+    ///
+    /// The table must be ASCENDING in `x`, which the LRM already requires and which
+    /// cannot be checked here (a compile-time table is sorted during lowering; these
+    /// values do not exist yet). An unsorted runtime table selects the wrong segment
+    /// rather than failing.
+    fn interp_1d_runtime(
+        &mut self,
+        x: Value,
+        grid: &[Value],
+        vals: &[Value],
+        linear_extrap: bool,
+    ) -> Value {
+        let n = grid.len();
+        if n == 0 {
+            return F_ZERO;
+        }
+        if n == 1 {
+            return vals[0];
+        }
+        // segment i:  vals[i] + (x - grid[i]) * (vals[i+1]-vals[i]) / (grid[i+1]-grid[i])
+        let mut seg = Vec::with_capacity(n - 1);
+        for i in 0..n - 1 {
+            let dv = self.ctx.ins().fsub(vals[i + 1], vals[i]);
+            let dgrid = self.ctx.ins().fsub(grid[i + 1], grid[i]);
+            let slope = self.ctx.ins().fdiv(dv, dgrid);
+            let dx = self.ctx.ins().fsub(x, grid[i]);
+            let term = self.ctx.ins().fmul(dx, slope);
+            seg.push(self.ctx.ins().fadd(vals[i], term));
+        }
+        let mut result = seg[0];
+        for i in 1..n - 1 {
+            let ge = self.ctx.ins().fge(x, grid[i]);
+            let seg_i = seg[i];
+            result = self.ctx.make_select(ge, move |_c, b| if b { seg_i } else { result });
+        }
+        if !linear_extrap {
+            let v0 = vals[0];
+            let g0 = grid[0];
+            let below = self.ctx.ins().flt(x, g0);
+            result = self.ctx.make_select(below, move |_c, b| if b { v0 } else { result });
+            let vl = vals[n - 1];
+            let gl = grid[n - 1];
+            let above = self.ctx.ins().fgt(x, gl);
+            result = self.ctx.make_select(above, move |_c, b| if b { vl } else { result });
+        }
+        result
+    }
+
     /// Weighted sum `Σ_j w[j]·vals[j]` (compile-time weights, runtime values), skipping zero
     /// weights. Used to express a natural-spline moment `M_i = Σ_j L[i][j]·vals[j]` in MIR.
     fn weighted_sum(&mut self, w: &[f64], vals: &[Value]) -> Value {
@@ -855,6 +914,28 @@ impl BodyLoweringCtx<'_, '_, '_> {
     /// to the first string literal is a coordinate, the string literal is the data-file name,
     /// and one further trailing string literal is the control string.
     fn lower_table_model(&mut self, args: &[ExprId]) -> Value {
+        // Enhancement-389: the RUNTIME-ARRAY form `$table_model(x, xs, ys[, "ctrl"])`
+        // (LRM p274), where the data arrives as two array *variables* filled in by the
+        // body rather than as a compile-time literal or a data file. Detected by the
+        // data arguments being bare array references, which inference resolved to
+        // element variables; everything below this point is the compile-time path and
+        // is untouched.
+        if args.len() >= 3 && self.body.array_var_ref(args[1]).is_some() {
+            if self.body.array_var_ref(args[2]).is_some() {
+                let grid = self.lower_array_elems_impl(args[1], true);
+                let vals = self.lower_array_elems_impl(args[2], true);
+                // A shorter y than x would index past the end; the extra abscissae
+                // describe no data, so drop them rather than fault.
+                let n = grid.len().min(vals.len());
+                let linear_extrap = match args.get(3).and_then(|&a| self.body.as_literal(a)) {
+                    Some(Literal::String(ctrl)) => ctrl.contains('L') || ctrl.contains('l'),
+                    _ => false,
+                };
+                let x = self.lower_expr(args[0]);
+                return self.interp_1d_runtime(x, &grid[..n], &vals[..n], linear_extrap);
+            }
+        }
+
         let is_str =
             |sel: &Self, e: ExprId| matches!(sel.body.as_literal(e), Some(Literal::String(_)));
         let (ndim, is_file, has_ctrl) = if matches!(self.body.get_expr(args[1]), Expr::Array(_)) {

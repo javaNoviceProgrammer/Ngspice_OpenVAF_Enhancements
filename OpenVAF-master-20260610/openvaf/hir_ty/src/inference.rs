@@ -951,6 +951,17 @@ impl Ctx<'_> {
             // `[Real x ndim, Literal(String)(, Literal(String))]` synthesised from
             // the argument SHAPES, where the trailing string literals are the
             // data-file name and the optional control string.
+            // Enhancement-389: the runtime-array form `$table_model(x, xs, ys[, "ctrl"])`
+            // (LRM p274). Like `laplace_*`, it cannot use the generic
+            // `resolve_function_args` path: that calls `infere_expr` on every argument,
+            // which rejects a bare array-variable reference with "requires a bit-select"
+            // before `infere_array_arg` can special-case it.
+            BuiltIn::table_model
+                if args.len() >= 3 && self.is_bare_array_ref(args[1]) =>
+            {
+                return self.infere_table_model_runtime(stmt, expr, args);
+            }
+
             BuiltIn::table_model => {
                 let is_arr =
                     args.len() >= 2 && matches!(self.body.exprs[args[1]], Expr::Array(_));
@@ -1435,6 +1446,97 @@ impl Ctx<'_> {
     /// Anything else falls back to ordinary `infere_expr`, preserving the normal
     /// "expected array" diagnostic from signature mismatch (e.g. a plain scalar argument, or a
     /// genuine typo that doesn't name a known array variable).
+    /// Enhancement-389: is this argument a bare reference to an array variable
+    /// (`xs` for `real xs[0:2];`), as opposed to a literal, a file name or a scalar?
+    /// Decided syntactically, before any inference runs, so it can select the
+    /// argument-checking path.
+    fn is_bare_array_ref(&mut self, arg: ExprId) -> bool {
+        if let Expr::Path { ref path, port: false } = self.body.exprs[arg] {
+            if let Some(name) = path.as_ident() {
+                return self.find_var_array(&name).is_some();
+            }
+        }
+        false
+    }
+
+    /// Type-checks `$table_model(x, xs, ys[, "ctrl"])` with runtime array data.
+    ///
+    /// `xs`/`ys` go through `infere_array_arg` (which records their element `VarId`s
+    /// in `array_var_refs` for `hir_lower`); `x` is an ordinary real value and the
+    /// optional control string is a string literal, exactly as in the file form.
+    fn infere_table_model_runtime(
+        &mut self,
+        stmt: StmtId,
+        expr: ExprId,
+        args: &[ExprId],
+    ) -> (Option<Ty>, bool) {
+        let mut valid = true;
+
+        if let Some(ty) = self.infere_expr(stmt, args[0]) {
+            self.expect::<false>(
+                args[0],
+                None,
+                ty,
+                Cow::Borrowed(&[TyRequirement::Val(Type::Real)]),
+            );
+        } else {
+            valid = false;
+        }
+
+        // Both data arguments must be arrays. `xs` is a bare array reference by
+        // construction (that is what selected this path); `ys` is checked here, so
+        // `$table_model(x, xs, 1.0)` still gets an ordinary type-mismatch rather than
+        // silently interpolating a one-element table.
+        for &arg in &args[1..3] {
+            match self.infere_array_arg(stmt, arg) {
+                None => valid = false,
+                Some(ty) => {
+                    let ok = matches!(
+                        ty.to_value(),
+                        Some(Type::Array { .. }) | Some(Type::EmptyArray)
+                    );
+                    if !ok {
+                        self.expect::<false>(
+                            arg,
+                            None,
+                            ty,
+                            Cow::Owned(vec![TyRequirement::Val(Type::Array {
+                                ty: Box::new(Type::Real),
+                                len: 0,
+                            })]),
+                        );
+                        valid = false;
+                    }
+                }
+            }
+        }
+
+        if let Some(&ctrl) = args.get(3) {
+            if let Some(ty) = self.infere_expr(stmt, ctrl) {
+                self.expect::<false>(
+                    ctrl,
+                    None,
+                    ty,
+                    Cow::Borrowed(&[TyRequirement::Literal(Type::String)]),
+                );
+            } else {
+                valid = false;
+            }
+        }
+
+        if args.len() > 4 {
+            self.result.diagnostics.push(InferenceDiagnostic::ArgCntMismatch {
+                expected: 4,
+                found: args.len(),
+                expr,
+                exact: false,
+            });
+            valid = false;
+        }
+
+        (Some(Ty::Val(Type::Real)), valid)
+    }
+
     fn infere_array_arg(&mut self, stmt: StmtId, arg: ExprId) -> Option<Ty> {
         if let Expr::Array(ref elems) = self.body.exprs[arg] {
             let elems = elems.clone();

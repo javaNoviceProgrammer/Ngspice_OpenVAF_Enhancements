@@ -3,11 +3,20 @@
 use std::os::raw::{c_char, c_void};
 
 pub const OSDI_VERSION_MAJOR_CURR: u32 = 0;
-pub const OSDI_VERSION_MINOR_CURR: u32 = 4;
+/// Enhancement-389: kept in step with `OSDI_VERSION` in openvaf/osdi/src/lib.rs,
+/// which is what the compiler actually stamps into a .osdi and what ngspice
+/// gates on (>= 0.7). This constant is descriptive -- nothing reads the
+/// generated OSDI_VERSION_MINOR_CURR -- but it had drifted to 4 here and to 5 in
+/// the generated Rust while the emitted version was 7, so a reader had three
+/// answers and no way to tell which was live.
+pub const OSDI_VERSION_MINOR_CURR: u32 = 7;
 pub const PARA_TY_MASK: u32 = 3;
 pub const PARA_TY_REAL: u32 = 0;
 pub const PARA_TY_INT: u32 = 1;
 pub const PARA_TY_STR: u32 = 2;
+/// Enhancement-93: parameter not settable from the netlist (a Verilog-A
+/// localparam, e.g. a structural width parameter frozen by Enhancement-92).
+pub const PARA_FLAG_FIXED: u32 = (1 << 2);
 pub const PARA_KIND_MASK: u32 = (3 << 30);
 pub const PARA_KIND_MODEL: u32 = (0 << 30);
 pub const PARA_KIND_INST: u32 = (1 << 30);
@@ -40,6 +49,10 @@ pub const EVAL_RET_FLAG_LIM: u32 = 1;
 pub const EVAL_RET_FLAG_FATAL: u32 = 2;
 pub const EVAL_RET_FLAG_FINISH: u32 = 4;
 pub const EVAL_RET_FLAG_STOP: u32 = 8;
+/// Enhancement-55: $discontinuity(n >= 0) fired at this evaluation; the
+/// simulator may reject the current timestep and retry with a smaller one.
+/// Additive bit -- not an ABI break (older simulators simply ignore it).
+pub const EVAL_RET_FLAG_DISCONT: u32 = 16;
 pub const LOG_LVL_MASK: u32 = 7;
 pub const LOG_LVL_DEBUG: u32 = 0;
 pub const LOG_LVL_DISPLAY: u32 = 1;
@@ -121,6 +134,9 @@ pub struct OsdiNode {
     pub react_residual_off: u32,
     pub resist_limit_rhs_off: u32,
     pub react_limit_rhs_off: u32,
+    /// nodeset (initial-guess) value for the node's potential from a net
+    /// initializer (`electrical a = 5.0;`, Enhancement-45); NAN if none
+    pub nodeset: f64,
     pub is_flow: bool,
 }
 #[repr(C)]
@@ -141,6 +157,14 @@ pub struct OsdiNoiseSource {
 pub struct OsdiNatureRef {
     pub ref_type: u32,
     pub index: u32,
+}
+/// Enhancement-51: `ac_stim` small-signal stimulus source. `analysis` is the
+/// analysis name the stimulus is active in (LRM default "ac"); node_2 ==
+/// UINT32_MAX means ground.
+#[repr(C)]
+pub struct OsdiAcStimSource {
+    pub analysis: *mut c_char,
+    pub nodes: OsdiNodePair,
 }
 #[repr(C)]
 #[non_exhaustive]
@@ -197,6 +221,13 @@ pub struct OsdiDescriptor {
     pub noise_source_type: *mut u32,
     pub load_noise_params: fn(*mut c_void, *mut c_void, *mut f64, *mut f64),
     pub module_flags: u32,
+    /// Enhancement-51 (OSDI 0.6): ac_stim small-signal stimulus sources.
+    /// load_ac_stim fills dst with [re, im] PAIRS (factor*mag*cos/sin(phase)),
+    /// one per source; the simulator adds them into its complex AC RHS at the
+    /// mapped nodes (+ node_1, - node_2) when the analysis name matches.
+    pub num_ac_stim_src: u32,
+    pub ac_stim_sources: *mut OsdiAcStimSource,
+    pub load_ac_stim: fn(*mut c_void, *mut c_void, *mut f64),
 }
 impl OsdiDescriptor {
     pub fn access(
@@ -333,6 +364,9 @@ impl OsdiDescriptor {
         exponent: *mut f64,
     ) {
         (self.load_noise_params)(inst, model, power, exponent)
+    }
+    pub fn load_ac_stim(&self, inst: *mut c_void, model: *mut c_void, dst: *mut f64) {
+        (self.load_ac_stim)(inst, model, dst)
     }
 }
 #[repr(C)]

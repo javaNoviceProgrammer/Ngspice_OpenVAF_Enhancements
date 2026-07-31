@@ -8,7 +8,7 @@ use hir_def::{
 };
 use hir_def::expr::CaseCond;
 use stdx::impl_display;
-use syntax::ast::AssignOp;
+use syntax::ast::{AssignOp, BinaryOp};
 use syntax::name::{AsIdent, Name};
 
 use crate::builtin::{
@@ -519,9 +519,13 @@ impl BodyValidator<'_> {
     /// Names a loop body can write, plus whether it can leave the loop early.
     fn collect_loop_writes(&self, stmt: StmtId, out: &mut HashSet<Name>, escapes: &mut bool) {
         match self.body.stmts[stmt] {
-            Stmt::Assignment { dst, .. } => {
+            Stmt::Assignment { dst, val, .. } => {
+                // Enhancement-389: a write that provably cannot change the value is
+                // not progress toward the exit, so it must not count as one.
                 if let Some(name) = self.root_name(dst) {
-                    out.insert(name);
+                    if !self.assignment_is_noop(dst, val) {
+                        out.insert(name);
+                    }
                 }
             }
             // `disable <block>` (LRM 5.4) is Verilog-AMS's loop break, and it is
@@ -565,6 +569,73 @@ impl BodyValidator<'_> {
             }
         }
         self.body.exprs[expr].walk_child_exprs(|e| self.scan_call_effects(e, out, escapes));
+    }
+
+    /// Enhancement-389: does this assignment provably leave its destination at the
+    /// value it already had?
+    ///
+    /// `collect_loop_writes` treats any assignment to a condition variable as
+    /// progress and then says nothing. That is right for `k = k + 1` and wrong for
+    /// `k = k` and `k = k + 0`, which WRITE `k` without CHANGING it: the loop runs
+    /// forever, the check stays silent, and the model compiles into an `.osdi` that
+    /// hangs ngspice at the operating point with no diagnostic -- the exact outcome
+    /// Enhancement-375 exists to prevent, reached by a different shape.
+    ///
+    /// Only value-preserving forms count, and the arithmetic ones only on INTEGERS.
+    /// On reals `k = k + 0.0` is not quite the identity -- it turns `-0.0` into
+    /// `+0.0`, and a condition can observe that (`1.0/k < 0` flips from `-inf` to
+    /// `+inf`), so a loop really can terminate because of it. Contrived, but this
+    /// analysis is sound in the REJECT direction, so reals get only the exact copy
+    /// `k = k`, which is a bit-for-bit move for every value including NaN.
+    fn assignment_is_noop(&self, dst: ExprId, val: ExprId) -> bool {
+        // `a[i] = a[i]` would additionally require proving the two indices equal.
+        let name = match self.body.exprs[dst] {
+            Expr::Path { ref path, .. } => match path.segments.last() {
+                Some(name) => name.clone(),
+                None => return false,
+            },
+            _ => return false,
+        };
+        self.expr_reproduces(val, &name)
+    }
+
+    /// Does `expr` evaluate to exactly the current value of `name`?
+    fn expr_reproduces(&self, expr: ExprId, name: &Name) -> bool {
+        match self.body.exprs[expr] {
+            Expr::Path { .. } => self.is_var(expr, name),
+            Expr::BinaryOp { lhs, rhs, op: Some(op) } => {
+                if self.infer.expr_types[expr].to_value() != Some(Type::Integer) {
+                    return false;
+                }
+                let l = self.is_var(lhs, name);
+                let r = self.is_var(rhs, name);
+                match op {
+                    // `k + 0`, `0 + k`
+                    BinaryOp::Addition => {
+                        (l && self.is_int_lit(rhs, 0)) || (r && self.is_int_lit(lhs, 0))
+                    }
+                    // `k - 0` only; `0 - k` negates.
+                    BinaryOp::Subtraction => l && self.is_int_lit(rhs, 0),
+                    // `k * 1`, `1 * k`
+                    BinaryOp::Multiplication => {
+                        (l && self.is_int_lit(rhs, 1)) || (r && self.is_int_lit(lhs, 1))
+                    }
+                    // `k / 1` only; `1 / k` does not reproduce `k`.
+                    BinaryOp::Division => l && self.is_int_lit(rhs, 1),
+                    _ => false,
+                }
+            }
+            _ => false,
+        }
+    }
+
+    fn is_var(&self, expr: ExprId, name: &Name) -> bool {
+        matches!(self.body.exprs[expr], Expr::Path { ref path, .. }
+            if path.segments.last() == Some(name))
+    }
+
+    fn is_int_lit(&self, expr: ExprId, want: i32) -> bool {
+        matches!(self.body.exprs[expr], Expr::Literal(Literal::Int(val)) if val == want)
     }
 
     /// The variable a write lands on: `x` for `x = ...`, `a` for `a[i] = ...`.

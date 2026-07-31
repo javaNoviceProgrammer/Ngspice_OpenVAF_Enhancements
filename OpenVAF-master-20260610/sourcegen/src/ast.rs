@@ -20,31 +20,29 @@ use crate::{
 
 mod src;
 
-/// DISABLED, NOT REPAIRED (Enhancement-379).
+/// REPAIRED AND RE-ENABLED (Enhancement-389; quarantined by Enhancement-379).
 ///
-/// This rewrites `openvaf/syntax/src/ast/generated/{nodes,tokens}.rs` and
-/// `openvaf/tokens/src/parser/generated.rs` through `ensure_file_contents`, and
-/// those files have long been maintained BY HAND. The grammar
-/// (`veriloga.ungram`) never caught up, so regenerating them DELETES shipped
-/// work. Measured, by snapshotting the files and letting the test run:
+/// The generator was behind the AST it generates in three separate ways, and the
+/// checked-in file had been hand-patched around each:
 ///
-///   * `DisableStmt` disappears entirely -- `disable <block>` (Verilog-AMS's loop
-///     break) has NO rule in the grammar at all; the node exists only in the
-///     checked-in file, and Enhancement-375 depends on it.
-///   * `width()` collapses from an `Option<Range>` + `widths()` pair into a single
-///     `AstChildren<Range>`, renaming accessors the parser and lowering call.
+///   * `KINDS_SRC` was missing 8 keywords and 11 node kinds -- `casex`/`casez`,
+///     `repeat`, `do`, `paramset`/`endparamset`, `defparam`, `or`, and the
+///     concat/replication/generate-if/generate-case/disable/paramset nodes -- so
+///     regenerating deleted real language features shipped by earlier work.
+///   * `veriloga.ungram` had no rules for those 8 node types at all.
+///   * the generator emitted ONE accessor per field, but the AST carries the dual
+///     singular/plural pair (`width:Range*` -> `width()` AND `widths()`), and
+///     `{n{...}}` needs its replicated `elems` to SKIP the repetition count that
+///     precedes them. Both are now derived: a singular label gets both accessors,
+///     and a repetition skips the single fields of its own type that come first.
 ///
-/// Two generator gaps were fixed on the way here and are KEPT, being correct in
-/// their own right: `Rule::Rep(Seq(..))` is now lowered (the grammar's
-/// `('[' index: Expr ']')*` for multi-dimensional selects used to panic with
-/// "unhandled rule"), and `pluralize` knows the irregular `index` -> `indices`.
-/// They are not sufficient: the grammar itself is missing nodes.
+/// Regeneration is now purely ADDITIVE against the previously checked-in file --
+/// no struct, accessor or enum variant is lost -- which is the property that makes
+/// the test safe to run. It gains `DoWhileStmt`'s paren/semicolon tokens and three
+/// `width()` accessors that the grammar always implied.
 ///
-/// Re-enabling means bringing `veriloga.ungram` up to the checked-in AST and
-/// teaching the generator the dual singular/plural accessor pattern. Worth doing,
-/// but its own piece of work. Until then the checked-in files are the source of
-/// truth and this must not overwrite them.
-#[ignore = "generator is behind the hand-maintained AST; running it deletes DisableStmt"]
+/// Enhancement-379's two generator fixes are kept: `Rule::Rep(Seq(..))` lowering
+/// and `pluralize`'s irregular `index` -> `indices`.
 #[test]
 pub fn ast() {
     let src = include_str!("../../openvaf/syntax/veriloga.ungram");
@@ -116,14 +114,73 @@ fn generate_nodes(kinds: KindsSrc<'_>, grammar: &AstSrc) -> String {
                 quote!(impl ast::#trait_name for #name {})
             });
 
-            let methods = node.fields.iter().map(|field| {
+            // Enhancement-389: how many SINGLE fields of the same node type come
+            // before each field. A `many` field must skip exactly that many
+            // children, or `{count{elems}}` would report its repetition count as
+            // the first replicated element.
+            let preceding_singles: Vec<usize> = node
+                .fields
+                .iter()
+                .enumerate()
+                .map(|(i, f)| match f {
+                    Field::Node { name, ty, .. } => node.fields[..i]
+                        .iter()
+                        .filter(|p| match p {
+                            // A repetition's OWN singular companion does not
+                            // precede it in the tree: `('[' index: Expr ']')*`
+                            // lowers to `index` + `indices` describing the same
+                            // children, so `indices` must NOT skip `index`.
+                            // `{count{elems}}` is the real case -- `count` is a
+                            // genuinely distinct first child.
+                            Field::Node { name: pname, ty: pty, cardinality: Cardinality::Optional }
+                                => pty == ty && &pluralize(pname) != name,
+                            _ => false,
+                        })
+                        .count(),
+                    Field::Token(_) => 0,
+                })
+                .collect();
+
+            let methods = node.fields.iter().zip(&preceding_singles).map(|(field, &skip)| {
                 let method_name = field.method_name();
                 let ty = field.ty();
 
                 if field.is_many() {
-                    quote! {
-                        pub fn #method_name(&self) -> AstChildren<#ty> {
-                            support::children(&self.syntax)
+                    // Enhancement-389: a singular label on a repeated field also gets
+                    // the singular accessor (`width:Range*` -> `width()` AND
+                    // `widths()`), which the checked-in AST has always had and hand
+                    // maintained. Without it, regenerating deleted those accessors
+                    // and every call site with them.
+                    // A label that is already plural (`paras:(Param (',' Param)*)`)
+                    // names the repetition directly and gets no singular; a
+                    // singular label (`width:Range*`) names the FIRST child and
+                    // the repetition takes its plural.
+                    let raw = method_name.to_string();
+                    let plural = if raw.ends_with('s') {
+                        method_name.clone()
+                    } else {
+                        format_ident!("{}", pluralize(&raw))
+                    };
+                    let singular = (plural != method_name).then(|| {
+                        quote! {
+                            pub fn #method_name(&self) -> Option<#ty> {
+                                support::child(&self.syntax)
+                            }
+                        }
+                    });
+                    if skip == 0 {
+                        quote! {
+                            #singular
+                            pub fn #plural(&self) -> AstChildren<#ty> {
+                                support::children(&self.syntax)
+                            }
+                        }
+                    } else {
+                        quote! {
+                            #singular
+                            pub fn #plural(&self) -> impl Iterator<Item = #ty> {
+                                support::children::<#ty>(&self.syntax).skip(#skip)
+                            }
                         }
                     }
                 } else if let Some(token_kind) = field.token_kind() {

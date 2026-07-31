@@ -432,6 +432,7 @@ The index: **Doc** links each enhancement's detailed write-up, **Examples** link
 | 386 | fix: the six sensitivity queries returned the previous query's value on every device — first seen as denormal garbage from a reused static | ngspice | [doc](enhancements_doc/Enhancement-386.md) | [senscplx](examples/senscplx_examples/) |
 | 387 | fix: an empty `()` expression crashed openvaf-r with an internal compiler error; `-DNAME=VALUE` defined a macro called `NAME=VALUE`; a bad `TMPDIR` aborted via an uncaught C++ exception | openvaf-r | [doc](enhancements_doc/Enhancement-387.md) | [vafice](examples/vafice_examples/) |
 | 388 | fix: `-D` macro values are now substituted (`-DK=5.5` → 5.5, bare `-DK` → 1 as documented); the expression-depth guard says "nests too deeply" instead of a bogus token error | openvaf-r | [doc](enhancements_doc/Enhancement-388.md) | [vafdefine](examples/vafdefine_examples/) |
+| 389 | fix: a loop whose control variable is written but never changes (`k = k + 0`) compiled and then hung the simulator; ANSI and combined analog-function argument declarations are accepted; `$table_model` takes runtime array data; both quarantined code generators repaired and re-enabled | openvaf-r | [doc](enhancements_doc/Enhancement-389.md) | [vafopenitems](examples/vafopenitems_examples/) |
 
 </details>
 

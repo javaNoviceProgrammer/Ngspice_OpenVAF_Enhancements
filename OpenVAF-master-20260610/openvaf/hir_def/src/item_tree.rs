@@ -657,11 +657,21 @@ pub struct FunctionArg {
     pub is_input: bool,
     pub is_output: bool,
     pub declarations: Vec<ItemTreeId<Var>>,
+    /// Enhancement-389: the type written on the argument itself, in the combined
+    /// form `input real x;` or an ANSI header `f(input real x)`. The separated
+    /// form leaves this `None` and supplies the type through `declarations`.
+    pub explicit_ty: Option<Type>,
     pub ast_ids: Vec<AstId<ast::FunctionArg>>,
 }
 
 impl FunctionArg {
     pub fn ty(&self, tree: &ItemTree) -> Type {
+        // Enhancement-389: a type written on the argument itself wins. There is no
+        // conflict to resolve -- an argument declared `input real x;` has no separate
+        // `real x;` to disagree with, since that would redeclare the name.
+        if let Some(ty) = &self.explicit_ty {
+            return ty.clone();
+        }
         // An argument without an explicit type declaration defaults to `real`, matching the
         // return-type default (`analog function f;` is a real function per the LRM). It used
         // to yield `Type::Err`, which crashed the compiler at the first cast involving the

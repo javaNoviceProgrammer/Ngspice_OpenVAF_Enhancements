@@ -53,8 +53,13 @@ EmptyStmt
 | CaseStmt
 | EventStmt
 | BlockStmt
+| DisableStmt
 
 EmptyStmt = AttrList* ';'
+
+// `disable <block>;` (LRM 5.4) -- Verilog-A's loop/block early exit.
+DisableStmt =
+  AttrList* 'disable' Name
 
 ExprStmt =
   AttrList* Expr ';'?
@@ -129,6 +134,8 @@ Expr =
 | BitSelectExpr
 | PathExpr
 | PortFlow
+| ConcatExpr
+| ReplicationExpr
 
 
 PathExpr = Path // Required to allow
@@ -140,6 +147,16 @@ SelectExpr =
 
 ArrayExpr =
   '\'{' (Expr (',' Expr)*)? '}'
+
+// `{a, b, c}` -- Verilog-A concatenation (Enhancement-34).
+ConcatExpr =
+  '{' exprs:Expr* '}'
+
+// `{n{a, b}}` -- replication (Enhancement-34). `count` is the repetition count
+// and `elems` the replicated operands; both are plain child expressions, so the
+// generated `elems` must skip the count.
+ReplicationExpr =
+  '{' count:Expr elems:Expr* '}'
 
 Literal =
    'int_number' | 'str_lit' | 'std_real_number' | 'si_real_number' | 'inf'
@@ -181,7 +198,7 @@ SourceFile =
   Item*
 
 Item =
-   DisciplineDecl | NatureDecl | ModuleDecl
+   DisciplineDecl | NatureDecl | ModuleDecl | ParamsetDecl
 
 DisciplineDecl =
   AttrList* 'discipline' Name ';'
@@ -216,6 +233,8 @@ ModuleItem =
 | Instantiation
 | GenvarDecl
 | GenerateFor
+| GenerateIf
+| GenerateCase
 
 ModulePorts = '('ports: (ModulePort (',' ModulePort)*)? ')'
 ModulePort = kind: ModulePortKind
@@ -241,7 +260,7 @@ AliasParam =
 ParamRef =
   Path | SysFun
 
-Param = Name Range* '=' default:Expr Constraint*
+Param = Name width:Range* '=' default:Expr Constraint*
 
 Constraint =
     ('from' | 'exclude') (Expr | Range)
@@ -263,16 +282,22 @@ Direction =
   'inout' | 'input' | 'output'
 
 
+// `analog function real[0:n] f;` -- the optional `[msb:lsb]` clauses before the
+// name are the ARRAY RETURN dimensions (Enhancement-23), one per dimension.
 Function =
-  AttrList* 'analog' 'function' Type? Name ';'
+  AttrList* 'analog' 'function' Type? width:Range* Name ';'
   FunctionItem*
   'endfunction'
 
 FunctionItem =
   ParamDecl | VarDecl | FunctionArg | Stmt
 
+// The `Type?` is Enhancement-389's COMBINED declaration `input real x;`; the
+// separated form `input x; real x;` leaves it absent and takes its type from the
+// matching variable declaration. An ANSI header entry `f(input real x)` produces
+// this same node.
 FunctionArg =
-  AttrList* Direction (Name(',' Name)*)';'
+  AttrList* Direction Type? (Name(',' Name)*)';'
 
 
 
@@ -315,6 +340,29 @@ GenvarDecl =
 // (`i = 0`, `i = i + 1`); the loop bound (`N`, or any expression on either
 // side of `condition`) must constant-fold to an integer at compile time --
 // see `NonConstantGenerateBound` in `hir_def::item_tree`.
+// `generate if (c) <block> else <block>` and `generate case` -- structural
+// selection resolved at elaboration time, so their bodies are `GenerateBlock`s
+// of module items rather than statements.
+GenerateIf =
+  AttrList* 'if' condition:Expr blocks:GenerateBlock* 'else'
+
+GenerateCase =
+  AttrList* 'case' discriminant:Expr arms:GenerateCaseArm*
+
+GenerateCaseArm =
+  'default' vals:Expr* block:GenerateBlock
+
+// `paramset <name> <module>; ... endparamset` -- a named parameter preset for a
+// module, selectable from the netlist.
+ParamsetDecl =
+  AttrList* 'paramset' Name target:NameRef
+    param_decls:ParamDecl*
+    overrides:ParamsetOverride*
+  'endparamset'
+
+ParamsetOverride =
+  name:NameRef '=' val:Expr ';'
+
 GenerateFor =
   AttrList* 'generate'
     'for' '(' init: Assign ';' condition: Expr ';' incr: Assign ')'

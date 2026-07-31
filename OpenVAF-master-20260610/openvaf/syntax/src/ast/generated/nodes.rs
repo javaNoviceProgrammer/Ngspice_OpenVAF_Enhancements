@@ -117,7 +117,10 @@ impl DoWhileStmt {
     pub fn do_token(&self) -> Option<SyntaxToken> { support::token(&self.syntax, T![do]) }
     pub fn body(&self) -> Option<Stmt> { support::child(&self.syntax) }
     pub fn while_token(&self) -> Option<SyntaxToken> { support::token(&self.syntax, T![while]) }
+    pub fn l_paren_token(&self) -> Option<SyntaxToken> { support::token(&self.syntax, T!['(']) }
     pub fn condition(&self) -> Option<Expr> { support::child(&self.syntax) }
+    pub fn r_paren_token(&self) -> Option<SyntaxToken> { support::token(&self.syntax, T![')']) }
+    pub fn semicolon_token(&self) -> Option<SyntaxToken> { support::token(&self.syntax, T![;]) }
 }
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct RepeatStmt {
@@ -130,15 +133,6 @@ impl RepeatStmt {
     pub fn count(&self) -> Option<Expr> { support::child(&self.syntax) }
     pub fn r_paren_token(&self) -> Option<SyntaxToken> { support::token(&self.syntax, T![')']) }
     pub fn body(&self) -> Option<Stmt> { support::child(&self.syntax) }
-}
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct DisableStmt {
-    pub(crate) syntax: SyntaxNode,
-}
-impl ast::AttrsOwner for DisableStmt {}
-impl DisableStmt {
-    pub fn disable_token(&self) -> Option<SyntaxToken> { support::token(&self.syntax, T![disable]) }
-    pub fn name(&self) -> Option<Name> { support::child(&self.syntax) }
 }
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ForStmt {
@@ -193,6 +187,15 @@ impl BlockStmt {
     pub fn block_scope(&self) -> Option<BlockScope> { support::child(&self.syntax) }
     pub fn items(&self) -> AstChildren<BlockItem> { support::children(&self.syntax) }
     pub fn end_token(&self) -> Option<SyntaxToken> { support::token(&self.syntax, T![end]) }
+}
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct DisableStmt {
+    pub(crate) syntax: SyntaxNode,
+}
+impl ast::AttrsOwner for DisableStmt {}
+impl DisableStmt {
+    pub fn disable_token(&self) -> Option<SyntaxToken> { support::token(&self.syntax, T![disable]) }
+    pub fn name(&self) -> Option<Name> { support::child(&self.syntax) }
 }
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Assign {
@@ -288,29 +291,6 @@ impl ArrayExpr {
     pub fn r_curly_token(&self) -> Option<SyntaxToken> { support::token(&self.syntax, T!['}']) }
 }
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct ConcatExpr {
-    pub(crate) syntax: SyntaxNode,
-}
-impl ConcatExpr {
-    pub fn l_curly_token(&self) -> Option<SyntaxToken> { support::token(&self.syntax, T!['{']) }
-    pub fn exprs(&self) -> AstChildren<Expr> { support::children(&self.syntax) }
-    pub fn r_curly_token(&self) -> Option<SyntaxToken> { support::token(&self.syntax, T!['}']) }
-}
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct ReplicationExpr {
-    pub(crate) syntax: SyntaxNode,
-}
-impl ReplicationExpr {
-    pub fn l_curly_token(&self) -> Option<SyntaxToken> { support::token(&self.syntax, T!['{']) }
-    /// The (constant) repetition count -- the node's first child expression.
-    pub fn count(&self) -> Option<Expr> { support::children(&self.syntax).next() }
-    /// The replicated elements -- every child expression after the count.
-    pub fn elems(&self) -> impl Iterator<Item = Expr> {
-        support::children::<Expr>(&self.syntax).skip(1)
-    }
-    pub fn r_curly_token(&self) -> Option<SyntaxToken> { support::token(&self.syntax, T!['}']) }
-}
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Call {
     pub(crate) syntax: SyntaxNode,
 }
@@ -353,6 +333,27 @@ impl PortFlow {
     pub fn l_angle_token(&self) -> Option<SyntaxToken> { support::token(&self.syntax, T![<]) }
     pub fn port(&self) -> Option<Path> { support::child(&self.syntax) }
     pub fn r_angle_token(&self) -> Option<SyntaxToken> { support::token(&self.syntax, T![>]) }
+}
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ConcatExpr {
+    pub(crate) syntax: SyntaxNode,
+}
+impl ConcatExpr {
+    pub fn l_curly_token(&self) -> Option<SyntaxToken> { support::token(&self.syntax, T!['{']) }
+    pub fn exprs(&self) -> AstChildren<Expr> { support::children(&self.syntax) }
+    pub fn r_curly_token(&self) -> Option<SyntaxToken> { support::token(&self.syntax, T!['}']) }
+}
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ReplicationExpr {
+    pub(crate) syntax: SyntaxNode,
+}
+impl ReplicationExpr {
+    pub fn l_curly_token(&self) -> Option<SyntaxToken> { support::token(&self.syntax, T!['{']) }
+    pub fn count(&self) -> Option<Expr> { support::child(&self.syntax) }
+    pub fn elems(&self) -> impl Iterator<Item = Expr> {
+        support::children::<Expr>(&self.syntax).skip(1usize)
+    }
+    pub fn r_curly_token(&self) -> Option<SyntaxToken> { support::token(&self.syntax, T!['}']) }
 }
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ArgList {
@@ -436,24 +437,12 @@ impl ParamsetDecl {
         support::token(&self.syntax, T![paramset])
     }
     pub fn name(&self) -> Option<Name> { support::child(&self.syntax) }
-    /// The target module this paramset specialises (a `NameRef`).
     pub fn target(&self) -> Option<NameRef> { support::child(&self.syntax) }
     pub fn param_decls(&self) -> AstChildren<ParamDecl> { support::children(&self.syntax) }
     pub fn overrides(&self) -> AstChildren<ParamsetOverride> { support::children(&self.syntax) }
     pub fn endparamset_token(&self) -> Option<SyntaxToken> {
         support::token(&self.syntax, T![endparamset])
     }
-}
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct ParamsetOverride {
-    pub(crate) syntax: SyntaxNode,
-}
-impl ParamsetOverride {
-    /// The name of the target-module parameter being bound.
-    pub fn name(&self) -> Option<NameRef> { support::child(&self.syntax) }
-    pub fn eq_token(&self) -> Option<SyntaxToken> { support::token(&self.syntax, T![=]) }
-    pub fn val(&self) -> Option<Expr> { support::child(&self.syntax) }
-    pub fn semicolon_token(&self) -> Option<SyntaxToken> { support::token(&self.syntax, T![;]) }
 }
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct DisciplineAttr {
@@ -527,10 +516,9 @@ impl Function {
         support::token(&self.syntax, T![function])
     }
     pub fn ty(&self) -> Option<Type> { support::child(&self.syntax) }
-    pub fn name(&self) -> Option<Name> { support::child(&self.syntax) }
-    /// Array return dimensions `analog function real[0:n] f;` (Enhancement-23): the `[msb:lsb]`
-    /// clauses that appear directly under the function (before the name), one per dimension.
+    pub fn width(&self) -> Option<Range> { support::child(&self.syntax) }
     pub fn widths(&self) -> AstChildren<Range> { support::children(&self.syntax) }
+    pub fn name(&self) -> Option<Name> { support::child(&self.syntax) }
     pub fn semicolon_token(&self) -> Option<SyntaxToken> { support::token(&self.syntax, T![;]) }
     pub fn function_items(&self) -> AstChildren<FunctionItem> { support::children(&self.syntax) }
     pub fn endfunction_token(&self) -> Option<SyntaxToken> {
@@ -624,17 +612,6 @@ impl GenerateCase {
     pub fn arms(&self) -> AstChildren<GenerateCaseArm> { support::children(&self.syntax) }
 }
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct GenerateCaseArm {
-    pub(crate) syntax: SyntaxNode,
-}
-impl GenerateCaseArm {
-    pub fn default_token(&self) -> Option<SyntaxToken> {
-        support::token(&self.syntax, T![default])
-    }
-    pub fn vals(&self) -> AstChildren<Expr> { support::children(&self.syntax) }
-    pub fn block(&self) -> Option<GenerateBlock> { support::child(&self.syntax) }
-}
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ModulePort {
     pub(crate) syntax: SyntaxNode,
 }
@@ -670,6 +647,7 @@ pub struct Var {
 }
 impl Var {
     pub fn name(&self) -> Option<Name> { support::child(&self.syntax) }
+    pub fn width(&self) -> Option<Range> { support::child(&self.syntax) }
     pub fn widths(&self) -> AstChildren<Range> { support::children(&self.syntax) }
     pub fn eq_token(&self) -> Option<SyntaxToken> { support::token(&self.syntax, T![=]) }
     pub fn default(&self) -> Option<Expr> { support::child(&self.syntax) }
@@ -680,6 +658,7 @@ pub struct Param {
 }
 impl Param {
     pub fn name(&self) -> Option<Name> { support::child(&self.syntax) }
+    pub fn width(&self) -> Option<Range> { support::child(&self.syntax) }
     pub fn widths(&self) -> AstChildren<Range> { support::children(&self.syntax) }
     pub fn eq_token(&self) -> Option<SyntaxToken> { support::token(&self.syntax, T![=]) }
     pub fn default(&self) -> Option<Expr> { support::child(&self.syntax) }
@@ -711,6 +690,7 @@ pub struct FunctionArg {
 impl ast::AttrsOwner for FunctionArg {}
 impl FunctionArg {
     pub fn direction(&self) -> Option<Direction> { support::child(&self.syntax) }
+    pub fn ty(&self) -> Option<Type> { support::child(&self.syntax) }
     pub fn names(&self) -> AstChildren<Name> { support::children(&self.syntax) }
     pub fn semicolon_token(&self) -> Option<SyntaxToken> { support::token(&self.syntax, T![;]) }
 }
@@ -776,18 +756,37 @@ impl GenerateBlock {
     pub fn end_token(&self) -> Option<SyntaxToken> { support::token(&self.syntax, T![end]) }
 }
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct GenerateCaseArm {
+    pub(crate) syntax: SyntaxNode,
+}
+impl GenerateCaseArm {
+    pub fn default_token(&self) -> Option<SyntaxToken> { support::token(&self.syntax, T![default]) }
+    pub fn vals(&self) -> AstChildren<Expr> { support::children(&self.syntax) }
+    pub fn block(&self) -> Option<GenerateBlock> { support::child(&self.syntax) }
+}
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ParamsetOverride {
+    pub(crate) syntax: SyntaxNode,
+}
+impl ParamsetOverride {
+    pub fn name(&self) -> Option<NameRef> { support::child(&self.syntax) }
+    pub fn eq_token(&self) -> Option<SyntaxToken> { support::token(&self.syntax, T![=]) }
+    pub fn val(&self) -> Option<Expr> { support::child(&self.syntax) }
+    pub fn semicolon_token(&self) -> Option<SyntaxToken> { support::token(&self.syntax, T![;]) }
+}
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Expr {
     PrefixExpr(PrefixExpr),
     BinExpr(BinExpr),
     ParenExpr(ParenExpr),
     ArrayExpr(ArrayExpr),
-    ConcatExpr(ConcatExpr),
-    ReplicationExpr(ReplicationExpr),
     Call(Call),
     SelectExpr(SelectExpr),
     BitSelectExpr(BitSelectExpr),
     PathExpr(PathExpr),
     PortFlow(PortFlow),
+    ConcatExpr(ConcatExpr),
+    ReplicationExpr(ReplicationExpr),
     Literal(Literal),
 }
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -799,11 +798,11 @@ pub enum Stmt {
     WhileStmt(WhileStmt),
     DoWhileStmt(DoWhileStmt),
     RepeatStmt(RepeatStmt),
-    DisableStmt(DisableStmt),
     ForStmt(ForStmt),
     CaseStmt(CaseStmt),
     EventStmt(EventStmt),
     BlockStmt(BlockStmt),
+    DisableStmt(DisableStmt),
 }
 impl ast::AttrsOwner for Stmt {}
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -1003,17 +1002,6 @@ impl AstNode for RepeatStmt {
     }
     fn syntax(&self) -> &SyntaxNode { &self.syntax }
 }
-impl AstNode for DisableStmt {
-    fn can_cast(kind: SyntaxKind) -> bool { kind == DISABLE_STMT }
-    fn cast(syntax: SyntaxNode) -> Option<Self> {
-        if Self::can_cast(syntax.kind()) {
-            Some(Self { syntax })
-        } else {
-            None
-        }
-    }
-    fn syntax(&self) -> &SyntaxNode { &self.syntax }
-}
 impl AstNode for ForStmt {
     fn can_cast(kind: SyntaxKind) -> bool { kind == FOR_STMT }
     fn cast(syntax: SyntaxNode) -> Option<Self> {
@@ -1049,6 +1037,17 @@ impl AstNode for EventStmt {
 }
 impl AstNode for BlockStmt {
     fn can_cast(kind: SyntaxKind) -> bool { kind == BLOCK_STMT }
+    fn cast(syntax: SyntaxNode) -> Option<Self> {
+        if Self::can_cast(syntax.kind()) {
+            Some(Self { syntax })
+        } else {
+            None
+        }
+    }
+    fn syntax(&self) -> &SyntaxNode { &self.syntax }
+}
+impl AstNode for DisableStmt {
+    fn can_cast(kind: SyntaxKind) -> bool { kind == DISABLE_STMT }
     fn cast(syntax: SyntaxNode) -> Option<Self> {
         if Self::can_cast(syntax.kind()) {
             Some(Self { syntax })
@@ -1168,28 +1167,6 @@ impl AstNode for ArrayExpr {
     }
     fn syntax(&self) -> &SyntaxNode { &self.syntax }
 }
-impl AstNode for ConcatExpr {
-    fn can_cast(kind: SyntaxKind) -> bool { kind == CONCAT_EXPR }
-    fn cast(syntax: SyntaxNode) -> Option<Self> {
-        if Self::can_cast(syntax.kind()) {
-            Some(Self { syntax })
-        } else {
-            None
-        }
-    }
-    fn syntax(&self) -> &SyntaxNode { &self.syntax }
-}
-impl AstNode for ReplicationExpr {
-    fn can_cast(kind: SyntaxKind) -> bool { kind == REPLICATION_EXPR }
-    fn cast(syntax: SyntaxNode) -> Option<Self> {
-        if Self::can_cast(syntax.kind()) {
-            Some(Self { syntax })
-        } else {
-            None
-        }
-    }
-    fn syntax(&self) -> &SyntaxNode { &self.syntax }
-}
 impl AstNode for Call {
     fn can_cast(kind: SyntaxKind) -> bool { kind == CALL }
     fn cast(syntax: SyntaxNode) -> Option<Self> {
@@ -1236,6 +1213,28 @@ impl AstNode for PathExpr {
 }
 impl AstNode for PortFlow {
     fn can_cast(kind: SyntaxKind) -> bool { kind == PORT_FLOW }
+    fn cast(syntax: SyntaxNode) -> Option<Self> {
+        if Self::can_cast(syntax.kind()) {
+            Some(Self { syntax })
+        } else {
+            None
+        }
+    }
+    fn syntax(&self) -> &SyntaxNode { &self.syntax }
+}
+impl AstNode for ConcatExpr {
+    fn can_cast(kind: SyntaxKind) -> bool { kind == CONCAT_EXPR }
+    fn cast(syntax: SyntaxNode) -> Option<Self> {
+        if Self::can_cast(syntax.kind()) {
+            Some(Self { syntax })
+        } else {
+            None
+        }
+    }
+    fn syntax(&self) -> &SyntaxNode { &self.syntax }
+}
+impl AstNode for ReplicationExpr {
+    fn can_cast(kind: SyntaxKind) -> bool { kind == REPLICATION_EXPR }
     fn cast(syntax: SyntaxNode) -> Option<Self> {
         if Self::can_cast(syntax.kind()) {
             Some(Self { syntax })
@@ -1313,17 +1312,6 @@ impl AstNode for ModuleDecl {
 }
 impl AstNode for ParamsetDecl {
     fn can_cast(kind: SyntaxKind) -> bool { kind == PARAMSET_DECL }
-    fn cast(syntax: SyntaxNode) -> Option<Self> {
-        if Self::can_cast(syntax.kind()) {
-            Some(Self { syntax })
-        } else {
-            None
-        }
-    }
-    fn syntax(&self) -> &SyntaxNode { &self.syntax }
-}
-impl AstNode for ParamsetOverride {
-    fn can_cast(kind: SyntaxKind) -> bool { kind == PARAMSET_OVERRIDE }
     fn cast(syntax: SyntaxNode) -> Option<Self> {
         if Self::can_cast(syntax.kind()) {
             Some(Self { syntax })
@@ -1487,17 +1475,6 @@ impl AstNode for GenerateCase {
     }
     fn syntax(&self) -> &SyntaxNode { &self.syntax }
 }
-impl AstNode for GenerateCaseArm {
-    fn can_cast(kind: SyntaxKind) -> bool { kind == GENERATE_CASE_ARM }
-    fn cast(syntax: SyntaxNode) -> Option<Self> {
-        if Self::can_cast(syntax.kind()) {
-            Some(Self { syntax })
-        } else {
-            None
-        }
-    }
-    fn syntax(&self) -> &SyntaxNode { &self.syntax }
-}
 impl AstNode for ModulePort {
     fn can_cast(kind: SyntaxKind) -> bool { kind == MODULE_PORT }
     fn cast(syntax: SyntaxNode) -> Option<Self> {
@@ -1652,6 +1629,28 @@ impl AstNode for GenerateBlock {
     }
     fn syntax(&self) -> &SyntaxNode { &self.syntax }
 }
+impl AstNode for GenerateCaseArm {
+    fn can_cast(kind: SyntaxKind) -> bool { kind == GENERATE_CASE_ARM }
+    fn cast(syntax: SyntaxNode) -> Option<Self> {
+        if Self::can_cast(syntax.kind()) {
+            Some(Self { syntax })
+        } else {
+            None
+        }
+    }
+    fn syntax(&self) -> &SyntaxNode { &self.syntax }
+}
+impl AstNode for ParamsetOverride {
+    fn can_cast(kind: SyntaxKind) -> bool { kind == PARAMSET_OVERRIDE }
+    fn cast(syntax: SyntaxNode) -> Option<Self> {
+        if Self::can_cast(syntax.kind()) {
+            Some(Self { syntax })
+        } else {
+            None
+        }
+    }
+    fn syntax(&self) -> &SyntaxNode { &self.syntax }
+}
 impl From<PrefixExpr> for Expr {
     fn from(node: PrefixExpr) -> Expr { Expr::PrefixExpr(node) }
 }
@@ -1663,12 +1662,6 @@ impl From<ParenExpr> for Expr {
 }
 impl From<ArrayExpr> for Expr {
     fn from(node: ArrayExpr) -> Expr { Expr::ArrayExpr(node) }
-}
-impl From<ConcatExpr> for Expr {
-    fn from(node: ConcatExpr) -> Expr { Expr::ConcatExpr(node) }
-}
-impl From<ReplicationExpr> for Expr {
-    fn from(node: ReplicationExpr) -> Expr { Expr::ReplicationExpr(node) }
 }
 impl From<Call> for Expr {
     fn from(node: Call) -> Expr { Expr::Call(node) }
@@ -1685,15 +1678,20 @@ impl From<PathExpr> for Expr {
 impl From<PortFlow> for Expr {
     fn from(node: PortFlow) -> Expr { Expr::PortFlow(node) }
 }
+impl From<ConcatExpr> for Expr {
+    fn from(node: ConcatExpr) -> Expr { Expr::ConcatExpr(node) }
+}
+impl From<ReplicationExpr> for Expr {
+    fn from(node: ReplicationExpr) -> Expr { Expr::ReplicationExpr(node) }
+}
 impl From<Literal> for Expr {
     fn from(node: Literal) -> Expr { Expr::Literal(node) }
 }
 impl AstNode for Expr {
     fn can_cast(kind: SyntaxKind) -> bool {
         match kind {
-            PREFIX_EXPR | BIN_EXPR | PAREN_EXPR | ARRAY_EXPR | CONCAT_EXPR
-            | REPLICATION_EXPR | CALL | SELECT_EXPR | BIT_SELECT_EXPR | PATH_EXPR
-            | PORT_FLOW => true,
+            PREFIX_EXPR | BIN_EXPR | PAREN_EXPR | ARRAY_EXPR | CALL | SELECT_EXPR
+            | BIT_SELECT_EXPR | PATH_EXPR | PORT_FLOW | CONCAT_EXPR | REPLICATION_EXPR => true,
             _ => Literal::can_cast(kind),
         }
     }
@@ -1703,13 +1701,13 @@ impl AstNode for Expr {
             BIN_EXPR => Expr::BinExpr(BinExpr { syntax }),
             PAREN_EXPR => Expr::ParenExpr(ParenExpr { syntax }),
             ARRAY_EXPR => Expr::ArrayExpr(ArrayExpr { syntax }),
-            CONCAT_EXPR => Expr::ConcatExpr(ConcatExpr { syntax }),
-            REPLICATION_EXPR => Expr::ReplicationExpr(ReplicationExpr { syntax }),
             CALL => Expr::Call(Call { syntax }),
             SELECT_EXPR => Expr::SelectExpr(SelectExpr { syntax }),
             BIT_SELECT_EXPR => Expr::BitSelectExpr(BitSelectExpr { syntax }),
             PATH_EXPR => Expr::PathExpr(PathExpr { syntax }),
             PORT_FLOW => Expr::PortFlow(PortFlow { syntax }),
+            CONCAT_EXPR => Expr::ConcatExpr(ConcatExpr { syntax }),
+            REPLICATION_EXPR => Expr::ReplicationExpr(ReplicationExpr { syntax }),
             _ => Expr::Literal(Literal::cast(syntax)?),
         };
         Some(res)
@@ -1720,13 +1718,13 @@ impl AstNode for Expr {
             Expr::BinExpr(it) => &it.syntax,
             Expr::ParenExpr(it) => &it.syntax,
             Expr::ArrayExpr(it) => &it.syntax,
-            Expr::ConcatExpr(it) => &it.syntax,
-            Expr::ReplicationExpr(it) => &it.syntax,
             Expr::Call(it) => &it.syntax,
             Expr::SelectExpr(it) => &it.syntax,
             Expr::BitSelectExpr(it) => &it.syntax,
             Expr::PathExpr(it) => &it.syntax,
             Expr::PortFlow(it) => &it.syntax,
+            Expr::ConcatExpr(it) => &it.syntax,
+            Expr::ReplicationExpr(it) => &it.syntax,
             Expr::Literal(it) => it.syntax(),
         }
     }
@@ -1752,9 +1750,6 @@ impl From<DoWhileStmt> for Stmt {
 impl From<RepeatStmt> for Stmt {
     fn from(node: RepeatStmt) -> Stmt { Stmt::RepeatStmt(node) }
 }
-impl From<DisableStmt> for Stmt {
-    fn from(node: DisableStmt) -> Stmt { Stmt::DisableStmt(node) }
-}
 impl From<ForStmt> for Stmt {
     fn from(node: ForStmt) -> Stmt { Stmt::ForStmt(node) }
 }
@@ -1767,11 +1762,14 @@ impl From<EventStmt> for Stmt {
 impl From<BlockStmt> for Stmt {
     fn from(node: BlockStmt) -> Stmt { Stmt::BlockStmt(node) }
 }
+impl From<DisableStmt> for Stmt {
+    fn from(node: DisableStmt) -> Stmt { Stmt::DisableStmt(node) }
+}
 impl AstNode for Stmt {
     fn can_cast(kind: SyntaxKind) -> bool {
         match kind {
             EMPTY_STMT | ASSIGN_STMT | EXPR_STMT | IF_STMT | WHILE_STMT | DO_WHILE_STMT
-            | REPEAT_STMT | DISABLE_STMT | FOR_STMT | CASE_STMT | EVENT_STMT | BLOCK_STMT => true,
+            | REPEAT_STMT | FOR_STMT | CASE_STMT | EVENT_STMT | BLOCK_STMT | DISABLE_STMT => true,
             _ => false,
         }
     }
@@ -1784,11 +1782,11 @@ impl AstNode for Stmt {
             WHILE_STMT => Stmt::WhileStmt(WhileStmt { syntax }),
             DO_WHILE_STMT => Stmt::DoWhileStmt(DoWhileStmt { syntax }),
             REPEAT_STMT => Stmt::RepeatStmt(RepeatStmt { syntax }),
-            DISABLE_STMT => Stmt::DisableStmt(DisableStmt { syntax }),
             FOR_STMT => Stmt::ForStmt(ForStmt { syntax }),
             CASE_STMT => Stmt::CaseStmt(CaseStmt { syntax }),
             EVENT_STMT => Stmt::EventStmt(EventStmt { syntax }),
             BLOCK_STMT => Stmt::BlockStmt(BlockStmt { syntax }),
+            DISABLE_STMT => Stmt::DisableStmt(DisableStmt { syntax }),
             _ => return None,
         };
         Some(res)
@@ -1802,11 +1800,11 @@ impl AstNode for Stmt {
             Stmt::WhileStmt(it) => &it.syntax,
             Stmt::DoWhileStmt(it) => &it.syntax,
             Stmt::RepeatStmt(it) => &it.syntax,
-            Stmt::DisableStmt(it) => &it.syntax,
             Stmt::ForStmt(it) => &it.syntax,
             Stmt::CaseStmt(it) => &it.syntax,
             Stmt::EventStmt(it) => &it.syntax,
             Stmt::BlockStmt(it) => &it.syntax,
+            Stmt::DisableStmt(it) => &it.syntax,
         }
     }
 }
@@ -1879,6 +1877,9 @@ impl From<NatureDecl> for Item {
 impl From<ModuleDecl> for Item {
     fn from(node: ModuleDecl) -> Item { Item::ModuleDecl(node) }
 }
+impl From<ParamsetDecl> for Item {
+    fn from(node: ParamsetDecl) -> Item { Item::ParamsetDecl(node) }
+}
 impl AstNode for Item {
     fn can_cast(kind: SyntaxKind) -> bool {
         match kind {
@@ -1937,6 +1938,12 @@ impl From<GenvarDecl> for ModuleItem {
 }
 impl From<GenerateFor> for ModuleItem {
     fn from(node: GenerateFor) -> ModuleItem { ModuleItem::GenerateFor(node) }
+}
+impl From<GenerateIf> for ModuleItem {
+    fn from(node: GenerateIf) -> ModuleItem { ModuleItem::GenerateIf(node) }
+}
+impl From<GenerateCase> for ModuleItem {
+    fn from(node: GenerateCase) -> ModuleItem { ModuleItem::GenerateCase(node) }
 }
 impl AstNode for ModuleItem {
     fn can_cast(kind: SyntaxKind) -> bool {
@@ -2177,12 +2184,12 @@ impl std::fmt::Display for WhileStmt {
         std::fmt::Display::fmt(self.syntax(), f)
     }
 }
-impl std::fmt::Display for RepeatStmt {
+impl std::fmt::Display for DoWhileStmt {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         std::fmt::Display::fmt(self.syntax(), f)
     }
 }
-impl std::fmt::Display for DisableStmt {
+impl std::fmt::Display for RepeatStmt {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         std::fmt::Display::fmt(self.syntax(), f)
     }
@@ -2203,6 +2210,11 @@ impl std::fmt::Display for EventStmt {
     }
 }
 impl std::fmt::Display for BlockStmt {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(self.syntax(), f)
+    }
+}
+impl std::fmt::Display for DisableStmt {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         std::fmt::Display::fmt(self.syntax(), f)
     }
@@ -2282,6 +2294,16 @@ impl std::fmt::Display for PortFlow {
         std::fmt::Display::fmt(self.syntax(), f)
     }
 }
+impl std::fmt::Display for ConcatExpr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(self.syntax(), f)
+    }
+}
+impl std::fmt::Display for ReplicationExpr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(self.syntax(), f)
+    }
+}
 impl std::fmt::Display for ArgList {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         std::fmt::Display::fmt(self.syntax(), f)
@@ -2308,6 +2330,11 @@ impl std::fmt::Display for NatureDecl {
     }
 }
 impl std::fmt::Display for ModuleDecl {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(self.syntax(), f)
+    }
+}
+impl std::fmt::Display for ParamsetDecl {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         std::fmt::Display::fmt(self.syntax(), f)
     }
@@ -2368,6 +2395,16 @@ impl std::fmt::Display for GenvarDecl {
     }
 }
 impl std::fmt::Display for GenerateFor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(self.syntax(), f)
+    }
+}
+impl std::fmt::Display for GenerateIf {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(self.syntax(), f)
+    }
+}
+impl std::fmt::Display for GenerateCase {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         std::fmt::Display::fmt(self.syntax(), f)
     }
@@ -2438,6 +2475,16 @@ impl std::fmt::Display for PortConn {
     }
 }
 impl std::fmt::Display for GenerateBlock {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(self.syntax(), f)
+    }
+}
+impl std::fmt::Display for GenerateCaseArm {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(self.syntax(), f)
+    }
+}
+impl std::fmt::Display for ParamsetOverride {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         std::fmt::Display::fmt(self.syntax(), f)
     }

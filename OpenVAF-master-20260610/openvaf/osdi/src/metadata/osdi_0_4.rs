@@ -32,19 +32,20 @@ pub fn stdlib_bitcode(target: &target::spec::Target) -> &'static [u8] {
     }
 }
 pub const OSDI_VERSION_MAJOR_CURR: u32 = 0;
-// Enhancement-45 bumped the minor version to 5: `OsdiNode` gained a `nodeset`
-// field, changing the node-array stride -- a simulator compiled against the
-// old layout would misread the array, so loaders must gate on >= 0.5.
-pub const OSDI_VERSION_MINOR_CURR: u32 = 5;
+/// Enhancement-389: kept in step with `OSDI_VERSION` in openvaf/osdi/src/lib.rs,
+/// which is what the compiler actually stamps into a .osdi and what ngspice
+/// gates on (>= 0.7). This constant is descriptive -- nothing reads the
+/// generated OSDI_VERSION_MINOR_CURR -- but it had drifted to 4 here and to 5 in
+/// the generated Rust while the emitted version was 7, so a reader had three
+/// answers and no way to tell which was live.
+pub const OSDI_VERSION_MINOR_CURR: u32 = 7;
 pub const PARA_TY_MASK: u32 = 3;
 pub const PARA_TY_REAL: u32 = 0;
 pub const PARA_TY_INT: u32 = 1;
 pub const PARA_TY_STR: u32 = 2;
-// Enhancement-93: parameter descriptor flag marking a parameter that cannot be
-// set from the netlist (a Verilog-A `localparam`, including a structural width
-// parameter frozen by Enhancement-92). Additive -- occupies a free bit of the
-// `flags` field; simulators that do not know it simply ignore it.
-pub const PARA_FLAG_FIXED: u32 = 1 << 2;
+/// Enhancement-93: parameter not settable from the netlist (a Verilog-A
+/// localparam, e.g. a structural width parameter frozen by Enhancement-92).
+pub const PARA_FLAG_FIXED: u32 = (1 << 2);
 pub const PARA_KIND_MASK: u32 = (3 << 30);
 pub const PARA_KIND_MODEL: u32 = (0 << 30);
 pub const PARA_KIND_INST: u32 = (1 << 30);
@@ -77,6 +78,10 @@ pub const EVAL_RET_FLAG_LIM: u32 = 1;
 pub const EVAL_RET_FLAG_FATAL: u32 = 2;
 pub const EVAL_RET_FLAG_FINISH: u32 = 4;
 pub const EVAL_RET_FLAG_STOP: u32 = 8;
+/// Enhancement-55: $discontinuity(n >= 0) fired at this evaluation; the
+/// simulator may reject the current timestep and retry with a smaller one.
+/// Additive bit -- not an ABI break (older simulators simply ignore it).
+pub const EVAL_RET_FLAG_DISCONT: u32 = 16;
 pub const LOG_LVL_MASK: u32 = 7;
 pub const LOG_LVL_DEBUG: u32 = 0;
 pub const LOG_LVL_DISPLAY: u32 = 1;
@@ -252,8 +257,8 @@ pub struct OsdiNode {
     pub react_residual_off: u32,
     pub resist_limit_rhs_off: u32,
     pub react_limit_rhs_off: u32,
-    /// Nodeset (initial-guess) value for the node's potential from a net
-    /// initializer (`electrical a = 5.0;`, Enhancement-45); NAN if none.
+    /// nodeset (initial-guess) value for the node's potential from a net
+    /// initializer (`electrical a = 5.0;`, Enhancement-45); NAN if none
     pub nodeset: f64,
     pub is_flow: bool,
 }
@@ -378,9 +383,9 @@ impl OsdiTyBuilder<'_, '_, '_> {
         self.osdi_nature_ref = Some(ty);
     }
 }
-/// `ac_stim` small-signal stimulus source (Enhancement-51): `analysis` is the
-/// analysis name the stimulus is active in (LRM default "ac"); `nodes` mirror
-/// `OsdiNoiseSource` (node_2 == u32::MAX means ground).
+/// Enhancement-51: `ac_stim` small-signal stimulus source. `analysis` is the
+/// analysis name the stimulus is active in (LRM default "ac"); node_2 ==
+/// UINT32_MAX means ground.
 pub struct OsdiAcStimSource {
     pub analysis: String,
     pub nodes: OsdiNodePair,
@@ -404,13 +409,6 @@ impl OsdiTyBuilder<'_, '_, '_> {
         self.osdi_ac_stim_source = Some(ty);
     }
 }
-
-impl OsdiTyBuilder<'_, '_, '_> {
-}
-
-impl OsdiTyBuilder<'_, '_, '_> {
-}
-
 pub struct OsdiDescriptor<'ll> {
     pub name: String,
     pub num_nodes: u32,
@@ -463,8 +461,10 @@ pub struct OsdiDescriptor<'ll> {
     pub noise_source_type: Vec<u32>,
     pub load_noise_params: &'ll llvm_sys::LLVMValue,
     pub module_flags: u32,
-    /// Enhancement-51: `ac_stim` small-signal stimulus sources -- appended at
-    /// the end of the descriptor (OSDI 0.6).
+    /// Enhancement-51 (OSDI 0.6): ac_stim small-signal stimulus sources.
+    /// load_ac_stim fills dst with [re, im] PAIRS (factor*mag*cos/sin(phase)),
+    /// one per source; the simulator adds them into its complex AC RHS at the
+    /// mapped nodes (+ node_1, - node_2) when the analysis name matches.
     pub num_ac_stim_src: u32,
     pub ac_stim_sources: Vec<OsdiAcStimSource>,
     pub load_ac_stim: &'ll llvm_sys::LLVMValue,
@@ -485,8 +485,7 @@ impl<'ll> OsdiDescriptor<'ll> {
         let arr_47: Vec<_> = self.residual_nature.iter().map(|it| it.to_ll_val(ctx, tys)).collect();
         let arr_48: Vec<_> =
             self.noise_source_type.iter().map(|it| ctx.const_unsigned_int(*it)).collect();
-        let arr_ac_stim: Vec<_> =
-            self.ac_stim_sources.iter().map(|it| it.to_ll_val(ctx, tys)).collect();
+        let arr_52: Vec<_> = self.ac_stim_sources.iter().map(|it| it.to_ll_val(ctx, tys)).collect();
         let fields = [
             ctx.const_str_uninterned(&self.name),
             ctx.const_unsigned_int(self.num_nodes),
@@ -540,7 +539,7 @@ impl<'ll> OsdiDescriptor<'ll> {
             self.load_noise_params,
             ctx.const_unsigned_int(self.module_flags),
             ctx.const_unsigned_int(self.num_ac_stim_src),
-            ctx.const_arr_ptr(tys.osdi_ac_stim_source, &arr_ac_stim),
+            ctx.const_arr_ptr(tys.osdi_ac_stim_source, &arr_52),
             self.load_ac_stim,
         ];
         let ty = tys.osdi_descriptor;
@@ -602,7 +601,6 @@ impl OsdiTyBuilder<'_, '_, '_> {
             ctx.ty_ptr(),
             ctx.ty_ptr(),
             ctx.ty_int(),
-            // Enhancement-51: num_ac_stim_src, ac_stim_sources, load_ac_stim
             ctx.ty_int(),
             ctx.ty_ptr(),
             ctx.ty_ptr(),
@@ -793,8 +791,8 @@ pub struct OsdiTys<'ll> {
     pub osdi_node: &'ll llvm_sys::LLVMType,
     pub osdi_param_opvar: &'ll llvm_sys::LLVMType,
     pub osdi_noise_source: &'ll llvm_sys::LLVMType,
-    pub osdi_ac_stim_source: &'ll llvm_sys::LLVMType,
     pub osdi_nature_ref: &'ll llvm_sys::LLVMType,
+    pub osdi_ac_stim_source: &'ll llvm_sys::LLVMType,
     pub osdi_descriptor: &'ll llvm_sys::LLVMType,
     pub osdi_nature: &'ll llvm_sys::LLVMType,
     pub osdi_discipline: &'ll llvm_sys::LLVMType,
@@ -817,8 +815,8 @@ impl<'ll> OsdiTys<'ll> {
             osdi_node: None,
             osdi_param_opvar: None,
             osdi_noise_source: None,
-            osdi_ac_stim_source: None,
             osdi_nature_ref: None,
+            osdi_ac_stim_source: None,
             osdi_descriptor: None,
             osdi_nature: None,
             osdi_discipline: None,
@@ -836,8 +834,8 @@ impl<'ll> OsdiTys<'ll> {
         builder.osdi_node();
         builder.osdi_param_opvar();
         builder.osdi_noise_source();
-        builder.osdi_ac_stim_source();
         builder.osdi_nature_ref();
+        builder.osdi_ac_stim_source();
         builder.osdi_descriptor();
         builder.osdi_nature();
         builder.osdi_discipline();
@@ -860,8 +858,8 @@ struct OsdiTyBuilder<'a, 'b, 'll> {
     osdi_node: Option<&'ll llvm_sys::LLVMType>,
     osdi_param_opvar: Option<&'ll llvm_sys::LLVMType>,
     osdi_noise_source: Option<&'ll llvm_sys::LLVMType>,
-    osdi_ac_stim_source: Option<&'ll llvm_sys::LLVMType>,
     osdi_nature_ref: Option<&'ll llvm_sys::LLVMType>,
+    osdi_ac_stim_source: Option<&'ll llvm_sys::LLVMType>,
     osdi_descriptor: Option<&'ll llvm_sys::LLVMType>,
     osdi_nature: Option<&'ll llvm_sys::LLVMType>,
     osdi_discipline: Option<&'ll llvm_sys::LLVMType>,
@@ -882,8 +880,8 @@ impl<'ll> OsdiTyBuilder<'_, '_, 'll> {
             osdi_node: self.osdi_node.unwrap(),
             osdi_param_opvar: self.osdi_param_opvar.unwrap(),
             osdi_noise_source: self.osdi_noise_source.unwrap(),
-            osdi_ac_stim_source: self.osdi_ac_stim_source.unwrap(),
             osdi_nature_ref: self.osdi_nature_ref.unwrap(),
+            osdi_ac_stim_source: self.osdi_ac_stim_source.unwrap(),
             osdi_descriptor: self.osdi_descriptor.unwrap(),
             osdi_nature: self.osdi_nature.unwrap(),
             osdi_discipline: self.osdi_discipline.unwrap(),

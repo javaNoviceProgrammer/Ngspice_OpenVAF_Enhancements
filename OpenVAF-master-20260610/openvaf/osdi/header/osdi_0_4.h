@@ -8,7 +8,13 @@
 
 
 #define OSDI_VERSION_MAJOR_CURR 0
-#define OSDI_VERSION_MINOR_CURR 4
+/* Enhancement-389: kept in step with `OSDI_VERSION` in openvaf/osdi/src/lib.rs,
+   which is what the compiler actually stamps into a .osdi and what ngspice
+   gates on (>= 0.7). This constant is descriptive -- nothing reads the
+   generated OSDI_VERSION_MINOR_CURR -- but it had drifted to 4 here and to 5 in
+   the generated Rust while the emitted version was 7, so a reader had three
+   answers and no way to tell which was live. */
+#define OSDI_VERSION_MINOR_CURR 7
 
 #define PARA_TY_MASK 3
 #define PARA_TY_REAL 0

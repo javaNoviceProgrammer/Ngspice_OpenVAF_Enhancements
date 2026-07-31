@@ -129,9 +129,15 @@ scripting ngspice:
   crash `openvaf-r`, and after the E-363 CFG repair it stopped crashing and
   started *emitting* — the `.osdi` loaded cleanly and then hung the simulator on
   the first device evaluation with no diagnostic at all, which is worse than the
-  crash. The check is conservative and can still miss a loop whose variables
-  change but never toward the exit, so it remains worth checking that your loop
-  variables actually advance.
+  crash. [E-389](../../enhancements_doc/Enhancement-389.md) closed the gap that
+  mattered most in practice: a control variable that is *written but never
+  changes* (`for (k = 0; k < 10; k = k + 0)`, or a plain `k = k`) used to
+  satisfy the check and hang the simulator, and is now rejected too. The check
+  remains conservative — it can still miss a loop whose variables genuinely
+  change but never toward the exit, notably nested loops sharing an index — so
+  it is still worth confirming that your loop variables actually advance. A loop
+  that terminates only by integer wrap (`k = k - 1`) is *not* rejected: it does
+  finish, after about 2³¹ iterations.
 
 - **`break`/`continue` don't exist in Verilog-A** — the compiler rejects
   them with the `disable <block>;` idiom as the alternative
@@ -147,15 +153,15 @@ scripting ngspice:
   diagnostics say which ([E-70](../../enhancements_doc/Enhancement-70.md)).
 - **Recursion in analog functions is illegal** — direct and mutual forms
   are clean errors naming the cycle ([E-59](../../enhancements_doc/Enhancement-59.md)).
-- **Analog function arguments use the separated (non-ANSI) declaration
-  form** — after `analog function <type> <name>;`, give the direction and
-  the data type as *separate* statements: `input x; real x;` (this is the
-  classic Verilog-A style every LRM example and compact model uses). The
-  combined declaration `input real x;` and ANSI-style function headers
-  (`analog function real f(input real x); …`) are **not** accepted — both
-  are clean parse errors (`unexpected token 'real'` / `unexpected token
-  '('`). This applies to array arguments too: `output w; real w[0:3];`,
-  not `output real w[0:3];`.
+- **Analog function arguments accept all three declaration forms**
+  ([E-389](../../enhancements_doc/Enhancement-389.md)): the classic separated
+  style `input x; real x;`, the combined declaration `input real x;`, and the
+  ANSI header `analog function real f(input real x);` — in which a later
+  argument may restate neither direction nor type (`f(input real x, y)` gives
+  `y` both of `x`'s). Only **array** arguments still require the separated form
+  (`output w; real w[0:3];`, not `output real w[0:3];`), because the
+  declaration-level range machinery has no counterpart in the combined and ANSI
+  positions.
 - **String opvars** display via `show` but can't become vectors (ngspice
   vectors are numeric) — `print @n1[strvar]` fails with a clear message
   ([E-69](../../enhancements_doc/Enhancement-69.md)).

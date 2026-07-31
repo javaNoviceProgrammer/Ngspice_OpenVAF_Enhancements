@@ -11,20 +11,30 @@ use heck::ToUpperCamelCase;
 
 use crate::{add_preamble, ensure_file_contents, project_root, reformat, to_lower_snake_case};
 
-/// DISABLED, NOT REPAIRED (Enhancement-379).
+/// REPAIRED AND RE-ENABLED (Enhancement-389; quarantined by Enhancement-379).
 ///
-/// The header parser here cannot read the current `osdi_0_4.h`: it panics in
-/// `parse_ty` on `eat_ident().unwrap()`, having met a construct it has no case
-/// for. The header has been extended by many enhancements and this parser has not
-/// kept up, so the generator is behind the artifact it generates -- the same
-/// situation as the AST generator and as `generate_builtins`.
+/// Two things had put this generator behind the header it generates, and only one
+/// of them was about the header having grown:
 ///
-/// One real robustness bug WAS fixed on the way and is kept: `Header::new`
-/// unwrapped the version parse, so an archived snapshot sitting beside the live
-/// header (`osdi_0_4_enhancement1.h`, which strips to "4_enhancement1") killed the
-/// whole generator with a bare `ParseIntError`. It now skips any name that is not
-/// `osdi_<major>_<minor>.h`, consistent with how it already skips non-files.
-#[ignore = "header parser is behind osdi_0_4.h; panics in parse_ty"]
+///   * `trim` skipped whitespace but not COMMENTS, so the first `/* ... */`
+///     written inside a struct body left `parse_ty` looking at `/`, `eat_ident`
+///     returned `None`, and the `unwrap()` panicked. Documenting a header field is
+///     ordinary practice; the parser simply could not read it.
+///   * comments were then DISCARDED, so regenerating deleted the documentation the
+///     checked-in files carried -- which is why running it always looked
+///     destructive. They are now carried onto the generated item as doc comments,
+///     from the header, which is where a field's explanation belongs.
+///
+/// Running it also surfaced what the drift had hidden: `EVAL_RET_FLAG_DISCONT` was
+/// in the header but missing from the generated Rust, and `OSDI_VERSION_MINOR_CURR`
+/// read 4 in the header and 5 in the generated file while the compiler stamped 7
+/// (`OSDI_VERSION` in `osdi/src/lib.rs`, which is the value ngspice gates on and
+/// the only one that is live -- nothing reads the generated constant). The header
+/// now says 7 too.
+///
+/// Enhancement-379's own fix is kept: `Header::new` skips any name that is not
+/// `osdi_<major>_<minor>.h`, so an archived snapshot beside the live header no
+/// longer kills the generator with a bare `ParseIntError`.
 #[test]
 fn gen_osdi_structs() {
     let header_dir = project_root().join("openvaf").join("osdi").join("header");
@@ -126,7 +136,7 @@ impl Header {
 #[derive(Default)]
 struct ParseResults<'a> {
     tys: IndexMap<&'a str, OsdiStruct<'a>, RandomState>,
-    defines: Vec<(&'a str, &'a str)>,
+    defines: Vec<(&'a str, &'a str, Option<Vec<String>>)>,
 }
 
 struct HeaderParser<'a> {
@@ -140,11 +150,33 @@ impl<'a> HeaderParser<'a> {
         &self.header.src[self.off..]
     }
 
+    /// Skip whitespace AND C comments.
+    ///
+    /// Enhancement-389: comments were not skipped, which is what put this generator
+    /// behind the header it generates. A `/* ... */` between two struct fields left
+    /// `parse_ty` looking at `/`, `eat_ident` returned `None` and the `unwrap()`
+    /// panicked -- so the first explanatory comment added inside a struct body (the
+    /// nodeset field, and later the `ac_stim` block) silently disqualified the whole
+    /// generator. Commenting a header field is ordinary practice, so this was a gap
+    /// in the parser, not a constraint the header should have honoured.
     fn trim(&mut self) {
-        let src = self.src();
-        let (off, _) =
-            src.char_indices().find(|(_, c)| !c.is_whitespace()).unwrap_or((src.len(), '\0'));
-        self.off += off;
+        loop {
+            let src = self.src();
+            let (off, _) =
+                src.char_indices().find(|(_, c)| !c.is_whitespace()).unwrap_or((src.len(), '\0'));
+            self.off += off;
+            let src = self.src();
+            if src.starts_with("/*") {
+                // an unterminated comment runs to EOF rather than panicking
+                let end = src[2..].find("*/").map_or(src.len(), |i| i + 4);
+                self.off += end;
+            } else if src.starts_with("//") {
+                let end = src.find('\n').unwrap_or(src.len());
+                self.off += end;
+            } else {
+                return;
+            }
+        }
     }
 
     fn eat(&mut self, kw: &str) -> bool {
@@ -176,11 +208,16 @@ impl<'a> HeaderParser<'a> {
             if let Some(pos) = typedef_pos {
                 if define_pos.map_or(true, |define_pos| pos < define_pos) {
                     self.off += pos;
+                    // Enhancement-389: capture the introducing comment BEFORE the
+                    // keyword is consumed -- `preceding_doc` looks backward from the
+                    // cursor, so once `typedef` is eaten the comment is no longer
+                    // the last thing behind it.
+                    let doc = self.preceding_doc();
                     assert!(self.eat("typedef"));
                     if self.eat("struct") {
-                        self.parse_struct(false);
+                        self.parse_struct(false, doc);
                     } else if self.eat("union") {
-                        self.parse_struct(true);
+                        self.parse_struct(true, doc);
                     }
                     continue;
                 }
@@ -188,8 +225,9 @@ impl<'a> HeaderParser<'a> {
 
             if let Some(pos) = define_pos {
                 self.off += pos;
+                let doc = self.preceding_doc();
                 assert!(self.eat("#define"));
-                self.parse_define();
+                self.parse_define(doc);
                 continue;
             }
 
@@ -201,11 +239,51 @@ impl<'a> HeaderParser<'a> {
         self.res
     }
 
-    fn parse_define(&mut self) {
+    /// Enhancement-389: the comment block immediately before the current position,
+    /// as doc-comment lines.
+    ///
+    /// The generated files carried hand-written documentation that regeneration
+    /// deleted, because the parser dropped comments on the floor -- so the generator
+    /// could only ever be run by accepting a documentation loss. The header already
+    /// holds those same comments; carrying them through makes a regeneration
+    /// faithful, and keeps the header the single place a field is explained.
+    ///
+    /// Only a block separated from here by whitespace alone counts, so a comment
+    /// that follows an item on its own line documents the NEXT item.
+    fn preceding_doc(&self) -> Option<Vec<String>> {
+        let before = self.header.src[..self.off].trim_end();
+        let raw: String = if before.ends_with("*/") {
+            let start = before.rfind("/*")?;
+            before[start + 2..before.len() - 2].to_owned()
+        } else {
+            let mut lines: Vec<&str> = Vec::new();
+            for line in before.lines().rev() {
+                match line.trim().strip_prefix("//") {
+                    Some(rest) => lines.push(rest),
+                    None => break,
+                }
+            }
+            if lines.is_empty() {
+                return None;
+            }
+            lines.reverse();
+            lines.join("\n")
+        };
+
+        let doc: Vec<String> = raw
+            .lines()
+            .map(|l| l.trim().trim_start_matches('*').trim().to_owned())
+            .skip_while(|l| l.is_empty())
+            .collect();
+        let end = doc.iter().rposition(|l| !l.is_empty())? + 1;
+        Some(doc[..end].to_vec())
+    }
+
+    fn parse_define(&mut self, doc: Option<Vec<String>>) {
         let ident = self.eat_ident().unwrap();
         let end = self.src().find('\n').unwrap_or_else(|| self.src().len());
         let val = self.src()[..end].trim();
-        self.res.defines.push((ident, val));
+        self.res.defines.push((ident, val, doc));
     }
 
     fn parse_ty(&mut self) -> Ty<'a> {
@@ -234,16 +312,20 @@ impl<'a> HeaderParser<'a> {
         Ty { indirection, base: base_ty, func_args: None }
     }
 
-    fn parse_struct(&mut self, is_union: bool) {
+    fn parse_struct(&mut self, is_union: bool, doc: Option<Vec<String>>) {
         let ident = self.eat_ident().unwrap();
         assert!(self.eat("{"));
 
         let mut fields = Vec::new();
+        let mut field_docs = Vec::new();
         loop {
             if self.eat("}") {
                 break;
             }
 
+            // Enhancement-389: `eat("}")` above has already run `trim`, so any comment
+            // introducing this field is behind us and `preceding_doc` can see it.
+            let doc = self.preceding_doc();
             let mut ty = self.parse_ty();
 
             let is_func_ptr = self.eat("(") && self.eat("*");
@@ -263,11 +345,19 @@ impl<'a> HeaderParser<'a> {
 
             self.eat(";");
             fields.push((field_ident, ty));
+            field_docs.push(doc);
         }
 
         self.res.tys.insert(
             ident,
-            OsdiStruct { ident, llvm_ty_ident: to_lower_snake_case(ident), fields, is_union },
+            OsdiStruct {
+                ident,
+                llvm_ty_ident: to_lower_snake_case(ident),
+                fields,
+                field_docs,
+                doc,
+                is_union,
+            },
         );
     }
 }
@@ -366,6 +456,12 @@ struct OsdiStruct<'a> {
     ident: &'a str,
     llvm_ty_ident: String,
     fields: Vec<(&'a str, Ty<'a>)>,
+    /// Enhancement-389: doc lines for `fields[i]`, taken from the header comment
+    /// preceding that field. Parallel to `fields` so the many existing
+    /// `(name, ty)` destructurings keep working.
+    field_docs: Vec<Option<Vec<String>>>,
+    /// Enhancement-389: the header comment introducing the `typedef` itself.
+    doc: Option<Vec<String>>,
 }
 
 struct OsdiStructInterp<'a, 'b> {
@@ -558,6 +654,11 @@ impl ToTokens for OsdiStructInterp<'_, '_> {
                 let ident = Ident::new(ident, Span::call_site());
                 let field_names =
                     fields.iter().map(|(name, _)| Ident::new(name, Span::call_site()));
+                // Enhancement-389: carry each field's header comment onto the
+                // generated field, so regenerating no longer deletes documentation.
+                let field_doc_attrs: Vec<TokenStream> =
+                    self.info.field_docs.iter().map(doc_attrs).collect();
+                let struct_doc_attrs = doc_attrs(&self.info.doc);
                 let field_tys = fields.iter().map(|(_, ty)| TyInterpolater { ty, lut: self.lut });
                 let field_ll_arrays = fields
                     .iter()
@@ -594,8 +695,9 @@ impl ToTokens for OsdiStructInterp<'_, '_> {
                     }
                 } else {
                     quote! {
+                        #struct_doc_attrs
                         pub struct #ident #lt{
-                            #(pub #field_names: #field_tys),*
+                            #(#field_doc_attrs pub #field_names: #field_tys),*
                         }
 
                         impl #lt #ident #lt{
@@ -655,18 +757,21 @@ impl ToTokens for OsdiStructInterp<'_, '_> {
 struct RustStruct<'a>(&'a OsdiStruct<'a>);
 impl ToTokens for RustStruct<'_> {
     fn to_tokens(&self, tokens: &mut TokenStream) {
-        let OsdiStruct { is_union, ident, ref fields, .. } = *self.0;
+        let OsdiStruct { is_union, ident, ref fields, ref field_docs, ref doc, .. } = *self.0;
         let private =
             if matches!(ident, "OsdiDescriptor") { quote!(#[non_exhaustive]) } else { quote!() };
         let ident = format_ident!("{ident}");
         let kind = if is_union { quote!(union) } else { quote!(struct) };
         let field_names = fields.iter().map(|(name, _)| format_ident!("{name}"));
         let field_tys = fields.iter().map(|(_, ty)| RustTy(ty));
+        let field_doc_attrs: Vec<TokenStream> = field_docs.iter().map(doc_attrs).collect();
+        let struct_doc_attrs = doc_attrs(doc);
         quote! {
+            #struct_doc_attrs
             #[repr(C)]
             #private
             pub #kind #ident {
-                #(pub #field_names: #field_tys,)*
+                #(#field_doc_attrs pub #field_names: #field_tys,)*
             }
         }
         .to_tokens(tokens);
@@ -821,6 +926,40 @@ fn gen_llvm_tys<'a>(tys: &IndexMap<&'a str, OsdiStruct<'a>, RandomState>) -> Str
     .to_string()
 }
 
-fn gen_defines(defines: &[(&str, &str)]) -> String {
-    defines.iter().map(|(ident, val)| format!("pub const {ident}: u32 = {val};")).collect()
+fn gen_defines(defines: &[(&str, &str, Option<Vec<String>>)]) -> String {
+    defines
+        .iter()
+        .map(|(ident, val, doc)| {
+            let doc = render_doc(doc.as_deref(), "");
+            format!("{doc}pub const {ident}: u32 = {val};")
+        })
+        .collect()
+}
+
+/// Enhancement-389: a field's header comment as `#[doc]` attributes.
+fn doc_attrs(doc: &Option<Vec<String>>) -> TokenStream {
+    match doc {
+        None => quote!(),
+        Some(lines) => {
+            let lines = lines.iter().map(|l| format!(" {l}"));
+            quote!(#(#[doc = #lines])*)
+        }
+    }
+}
+
+/// Enhancement-389: header comment lines as Rust doc comments, at `indent`.
+fn render_doc(doc: Option<&[String]>, indent: &str) -> String {
+    match doc {
+        None => String::new(),
+        Some(lines) => lines
+            .iter()
+            .map(|l| {
+                if l.is_empty() {
+                    format!("{indent}///\n")
+                } else {
+                    format!("{indent}/// {l}\n")
+                }
+            })
+            .collect(),
+    }
 }
