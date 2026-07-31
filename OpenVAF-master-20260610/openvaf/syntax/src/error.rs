@@ -18,6 +18,12 @@ pub enum SyntaxError {
         found: SyntaxKind,
         span: TextRange,
     },
+    /// Enhancement-387: expression nested deeper than `MAX_EXPR_DEPTH`
+    /// (Enhancement-148's guard). Reported in its own right so the message
+    /// describes the actual limit instead of a token that is not the problem.
+    ExprTooDeep {
+        span: TextRange,
+    },
     MissingToken {
         expected: SyntaxKind,
         span: TextRange,
@@ -123,6 +129,7 @@ impl_display! {
     match SyntaxError{
         UnexpectedToken {expected,found,..} => "unexpected token {}; expected {}", found, expected;
         SurplusToken {found,..} => "unexpected token {}", found;
+        ExprTooDeep{..} => "expression nests too deeply";
         MissingToken{expected, ..} => "unexpected token; expected {}", expected;
         IllegalRootSegment { ..} =>  "$root is only allowed as a prefix";
         BlockItemsAfterStmt{..}  => "declarations in blocks are only allowed before the first stmt";

@@ -112,6 +112,20 @@ impl CompilationDB {
 
         let macro_flags: Arc<[_]> =
             STANDARD_FLAGS.into_iter().chain(macro_flags).map(Arc::from).collect();
+
+        // Enhancement-387: materialise the `-D` flags as a real source file so
+        // they go through the ordinary ``define`` path.
+        //
+        // They used to be synthesised directly as `Macro { body: vec![], .. }`,
+        // which has two consequences the help text does not describe: the body is
+        // always EMPTY (so `-DK=5.5` could never substitute 5.5, and a valueless
+        // `-DK` expanded to nothing rather than the documented "1"), and a macro
+        // body is a Vec<ParsedToken> whose text resolves BY SPAN against a real
+        // file -- so no value from argv could ever be given one. Writing the
+        // definitions into a virtual file solves both: the preprocessor parses
+        // them exactly as if the user had typed them, spans and all.
+        res.vfs.write().add_virt_file(DEFINES_FILE, defines_src(&macro_flags).into());
+
         res.set_macro_flags(root_file, macro_flags);
 
         res.set_plugin_lints(&[]);
@@ -183,4 +197,31 @@ impl VfsStorage for CompilationDB {
     fn vfs(&self) -> &RwLock<Vfs> {
         &self.vfs
     }
+}
+
+/// Enhancement-387: the virtual file the `-D` definitions are written into.
+/// It lives in `/std`, which is always the first include directory.
+pub const DEFINES_FILE: &str = "/std/__openvaf_defines__.va";
+
+/// Render `-D` flags as ``define`` directives. `NAME=VALUE` becomes
+/// ``define NAME VALUE``; a bare `NAME` becomes ``define NAME 1``, which is what
+/// `-D <MACRO[=VALUE]>` promises when the value is omitted. One per line so a
+/// definition's span is its own.
+fn defines_src(flags: &[Arc<str>]) -> String {
+    let mut src = String::new();
+    for flag in flags {
+        let (name, value) = match flag.split_once('=') {
+            Some((name, value)) => (name.trim(), value),
+            None => (flag.trim(), "1"),
+        };
+        if name.is_empty() {
+            continue;
+        }
+        src.push_str("`define ");
+        src.push_str(name);
+        src.push(' ');
+        src.push_str(value);
+        src.push('\n');
+    }
+    src
 }

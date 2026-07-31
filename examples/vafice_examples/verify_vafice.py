@@ -25,8 +25,8 @@
       been declared" -- no spelling of the flag could reach it. Now split on the
       first '=', which is what the `-D <MACRO[=VALUE]>` help text promises.
 
-      NOT FIXED, and stated rather than hidden: the VALUE is still not
-      substituted. A macro body is a `Vec<ParsedToken>` whose text is resolved by
+      DEFERRED AT THE TIME, and closed since by Enhancement-388
+      (examples/vafdefine_examples). The VALUE was not yet substituted: A macro body is a `Vec<ParsedToken>` whose text is resolved by
       SPAN against a real source file, and a value that arrived through argv has
       no backing text. Defining the name is the half that can be done correctly
       in the preprocessor; substituting the value needs the definitions
@@ -112,8 +112,13 @@ def main():
           (out.strip().splitlines() or ["(no output)"])[0][:70])
 
     # ---- [2] -D names ------------------------------------------------------
+    # NOTE: `` `EXT `` is used in a position that is valid for a REAL expansion.
+    # This check originally wrote `... 1e-3 `EXT ;`, which parsed only because a
+    # `-D` macro expanded to NOTHING -- the very defect Enhancement-388 fixed.
+    # Once values substitute, that source became `... 1e-3 5.5 ;` and failed, so
+    # the test had encoded the old behaviour rather than the intent.
     USE = (HDR + "module dut(p,n);\n inout p,n; electrical p,n;\n"
-           " analog I(p,n) <+ V(p,n)*1e-3 `EXT ;\nendmodule\n")
+           " analog I(p,n) <+ V(p,n)*1e-3*(`EXT);\nendmodule\n")
     rc, out = compile_va(USE, "dval", ["-DEXT=5.5"])
     check("-DNAME=VALUE defines a macro named NAME",
           rc == 0, (out.strip().splitlines() or [""])[0][:70])

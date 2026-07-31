@@ -103,7 +103,24 @@ impl<'a> SyntaxTreeBuilder<'a> {
         let leading_trivia = &self.tokens[self.token_pos..self.token_pos + n_trivia];
         let pos =
             self.text_pos + leading_trivia.iter().map(|it| it.span.range.len()).sum::<TextSize>();
-        let parser::SyntaxError::UnexpectedToken { expected, found }: parser::SyntaxError = error;
+        // Enhancement-387: parser::SyntaxError has more than one variant now, so
+        // this can no longer be an irrefutable `let`. The depth error carries no
+        // token, so it gets its span here and is pushed directly; everything
+        // below is written for UnexpectedToken and stays as it was.
+        let (expected, found) = match error {
+            parser::SyntaxError::ExprTooDeep => {
+                let span = if self.token_pos + n_trivia == self.tokens.len() {
+                    TextRange::at(self.text_pos, 0.into())
+                } else {
+                    TextRange::at(pos, self.tokens[self.token_pos + n_trivia].span.range.len())
+                };
+                if !mem::replace(&mut self.panic, true) && self.last_error.is_none() {
+                    self.errors.push(SyntaxError::ExprTooDeep { span });
+                }
+                return;
+            }
+            parser::SyntaxError::UnexpectedToken { expected, found } => (expected, found),
+        };
         let missing_delimiter = found == T![end];
         if self.token_pos + n_trivia == self.tokens.len() {
             let expected_at = expected

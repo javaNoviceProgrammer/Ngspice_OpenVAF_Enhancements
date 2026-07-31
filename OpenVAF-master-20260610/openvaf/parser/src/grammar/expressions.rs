@@ -70,10 +70,15 @@ fn current_op(p: &Parser) -> (u8, SyntaxKind) {
 /// nest expressions only a few dozen deep; 1000 leaves generous headroom.
 const MAX_EXPR_DEPTH: u32 = 1000;
 
-/// Report an over-deep expression and recover to the next expression boundary --
-/// the same recovery the generic "unexpected token" path uses.
+/// Report an over-deep expression and recover to the next expression boundary.
+///
+/// Enhancement-387: this used to hand the generic `unexpected_tokens_msg` to
+/// `err_recover`, so hitting the depth limit printed
+/// "unexpected token identifier; expected '(', '{', ..." -- a complaint about a
+/// token that is perfectly valid, with no hint that a depth limit exists. It now
+/// reports `ExprTooDeep`, keeping the same recovery.
 fn expr_too_deep(p: &mut Parser) {
-    p.err_recover(p.unexpected_tokens_msg(EXPR_EXPECTED.to_owned()), EXPR_RECOVERY_SET);
+    p.err_recover(crate::SyntaxError::ExprTooDeep, EXPR_RECOVERY_SET);
 }
 
 // Parses expression with binding power of at least bp.

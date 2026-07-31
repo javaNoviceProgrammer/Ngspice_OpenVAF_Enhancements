@@ -50,8 +50,9 @@ could reach it — not `` `EXT ``, and not `` `ifdef EXT `` either. The flag is 
 split on its first `=`, which is what the `-D <MACRO[=VALUE]>` help text promises
 and what every other toolchain does.
 
-**Half of this is deliberately not fixed, and it is worth being explicit about.**
-The *value* is still not substituted. A macro body is a `Vec<ParsedToken>` whose
+**Half of this was deliberately deferred**, and
+[Enhancement-388](Enhancement-388.md) has since closed it. At the time of this
+change the *value* was still not substituted. A macro body is a `Vec<ParsedToken>` whose
 text is resolved **by span against a real source file**, and a value that arrived
 through `argv` has no backing text. Defining the name is the half that can be
 done correctly inside the preprocessor; substituting the value requires the `-D`
@@ -105,8 +106,9 @@ rather than saying the expression is too deeply nested, which is what the
 analogous include guard does (*"nests too deeply (a file that includes itself?)"*).
 This is diagnostic wording on a deliberate guard with no correctness impact, and
 carrying a new `SyntaxError` variant through both error enums, the tree builder's
-irrefutable `let`, and the renderer is a change of its own — so it is recorded
+irrefutable `let`, and the renderer is a change of its own — so it was recorded
 here rather than rushed alongside a crash fix.
+[Enhancement-388](Enhancement-388.md) has since done it.
 
 ## Verification
 

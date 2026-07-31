@@ -54,32 +54,14 @@ impl<'a> Processor<'a> {
     ) -> Result<Self, FileReadError> {
         let src = sources.file_text(root_file)?;
         let src = storage.ensure(src);
-        // Enhancement-387: a `-D` flag of the form `NAME=VALUE` used to become a
-        // macro whose NAME WAS THE WHOLE STRING -- `-DEXT=5.5` defined a macro
-        // literally called `EXT=5.5`, so `` `EXT `` reported "macro '`EXT' has
-        // not been declared" and no spelling of the flag could reach it. Split on
-        // the first '=' so the macro is named `EXT`, which is what every other
-        // toolchain does and what the `-D <MACRO[=VALUE]>` help text promises.
-        //
-        // The VALUE is still not substituted: a macro body is a Vec<ParsedToken>
-        // whose text is resolved by span against a real source file, and a value
-        // that came from argv has no such backing text. Defining the name is the
-        // half that can be done correctly here; see Enhancement-387 for why the
-        // other half needs the definitions to be materialised as a source file.
-        let macros = sources
-            .macro_flags(root_file)
-            .iter()
-            .map(|flag| -> (&str, Macro) {
-                let name = match flag.split_once('=') {
-                    Some((name, _value)) => name.to_owned(),
-                    None => flag.to_string(),
-                };
-                (
-                    storage.ensure(name.into()),
-                    Macro { head: 0.into(), span: CtxSpan::dummy(), body: vec![], arg_cnt: 0 },
-                )
-            })
-            .collect();
+        // Enhancement-387: the `-D` flags are no longer synthesised into macros
+        // here. They are written into a virtual source file (see `defines_src` in
+        // hir/src/db.rs) and processed by `run()` below through the ordinary
+        // ``define`` path, so `-DK=5.5` actually substitutes 5.5 and a bare `-DK`
+        // expands to the documented "1". Synthesising them here could not do
+        // that: a macro body is a Vec<ParsedToken> whose text resolves BY SPAN
+        // against a real file, and a value from argv has no backing text.
+        let macros = AHashMap::default();
         let res = Self {
             source_map: SourceMap::new(root_file, TextSize::of(src)),
             macros,
@@ -99,11 +81,39 @@ impl<'a> Processor<'a> {
 
         let mut err = Diagnostics::new();
         let mut dst = Vec::new();
+
+        // Enhancement-387: process the `-D` definitions first, as ordinary source.
+        // They contain only ``define`` directives, so nothing reaches `dst`; what
+        // they leave behind is `self.macros`, populated with REAL spans -- which
+        // is what lets a `-D` value be substituted at all.
+        self.process_defines(&mut dst, &mut err);
+
         let parser =
             Parser::new(self.arena.get(0), SourceContext::ROOT, working_dir, &mut dst, &mut err);
         self.process_file(parser, &mut err);
 
         (dst, err)
+    }
+
+    /// Enhancement-387: run the virtual `-D` definitions file through the normal
+    /// preprocessor path. Silently does nothing when it is absent or empty, so a
+    /// compilation with no `-D` flags is byte-for-byte what it was before.
+    fn process_defines(&mut self, dst: &mut Vec<Token>, errors: &mut Diagnostics) {
+        const DEFINES_FILE: &str = "/std/__openvaf_defines__.va";
+        let path = VfsPath::new_virtual_path(DEFINES_FILE.to_owned());
+        let file = self.sources.file_id(path);
+        let src = match self.sources.file_text(file) {
+            Ok(src) if !src.is_empty() => src,
+            _ => return,
+        };
+        let src = self.arena.ensure(src);
+        let workdir = self.sources.file_path(file).parent().unwrap();
+        let ctx = self.source_map.add_ctx(
+            FileSpan { file, range: TextRange::up_to(TextSize::of(src)) },
+            CtxSpan { range: TextRange::empty(0.into()), ctx: SourceContext::ROOT },
+        );
+        let parser = Parser::new(src, ctx, workdir, dst, errors);
+        self.process_file(parser, errors);
     }
 
     pub(crate) fn is_macro_defined(&mut self, name: &'a str) -> bool {

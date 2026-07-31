@@ -351,6 +351,23 @@ impl Diagnostic for SyntaxError {
 
                 Report::error().with_labels(labels).with_notes(vec![hint.to_owned()])
             }
+            // Enhancement-387: the expression-depth guard, reported as itself.
+            SyntaxError::ExprTooDeep { span } => {
+                let FileSpan { range, file: file_id } = parse.to_file_span(span, &sm);
+                Report::error()
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id,
+                        range: range.into(),
+                        message: "expression nests too deeply".to_owned(),
+                    }])
+                    .with_notes(vec![
+                        "help: openvaf limits expression nesting (and operator-chain \
+                         length) to 1000 to avoid overflowing the parser; split the \
+                         expression across intermediate variables"
+                            .to_owned(),
+                    ])
+            }
             SyntaxError::IllegalInfToken { range } => {
                 let FileSpan { range, file: file_id } = parse.to_file_span(range, &sm);
                 Report::error().with_labels(vec![Label {
