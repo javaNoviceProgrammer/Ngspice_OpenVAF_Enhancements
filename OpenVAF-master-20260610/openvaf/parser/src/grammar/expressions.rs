@@ -218,6 +218,28 @@ fn paren_expr(p: &mut Parser) -> CompletedMarker {
     let m = p.start();
     p.bump(T!['(']);
 
+    // Enhancement-387: an EMPTY pair of parentheses is not an expression.
+    //
+    // The loop below is guarded by `!p.at(T![')'])`, so for `()` it never ran:
+    // nothing was parsed and -- worse -- no diagnostic was emitted. The
+    // PAREN_EXPR was completed with no child, hir_def lowered it to
+    // `Expr::Missing`, and `hir/src/body.rs` has no arm for that variant, so it
+    // fell through to `_ => panic!("invalid HIR: {:?}")`. The result was an
+    // internal compiler error on a five-line source file:
+    //
+    //     analog I(p,n) <+ ();
+    //     -> "OpenVAF encountered a problem and has crashed!" (exit 101)
+    //
+    // Every other malformed expression form (`{}`, `{1,}`, `a[]`, `? :`,
+    // `sqrt()`, `1+`) was already rejected here in the parser and never reached
+    // lowering; `()` was the one hole. Reporting it makes this a clean syntax
+    // error like the rest, and no `Expr::Missing` reaches the HIR.
+    if p.at(T![')']) {
+        p.error(p.unexpected_tokens_msg(EXPR_EXPECTED.to_owned()));
+        p.bump(T![')']);
+        return m.complete(p, PAREN_EXPR);
+    }
+
     while !p.at(EOF) && !p.at(T![')']) {
         // test tuple_attrs
         // const A: (i64, i64) = (1, #[cfg(test)] 2);

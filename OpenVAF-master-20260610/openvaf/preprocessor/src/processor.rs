@@ -54,12 +54,28 @@ impl<'a> Processor<'a> {
     ) -> Result<Self, FileReadError> {
         let src = sources.file_text(root_file)?;
         let src = storage.ensure(src);
+        // Enhancement-387: a `-D` flag of the form `NAME=VALUE` used to become a
+        // macro whose NAME WAS THE WHOLE STRING -- `-DEXT=5.5` defined a macro
+        // literally called `EXT=5.5`, so `` `EXT `` reported "macro '`EXT' has
+        // not been declared" and no spelling of the flag could reach it. Split on
+        // the first '=' so the macro is named `EXT`, which is what every other
+        // toolchain does and what the `-D <MACRO[=VALUE]>` help text promises.
+        //
+        // The VALUE is still not substituted: a macro body is a Vec<ParsedToken>
+        // whose text is resolved by span against a real source file, and a value
+        // that came from argv has no such backing text. Defining the name is the
+        // half that can be done correctly here; see Enhancement-387 for why the
+        // other half needs the definitions to be materialised as a source file.
         let macros = sources
             .macro_flags(root_file)
             .iter()
-            .map(|name| -> (&str, Macro) {
+            .map(|flag| -> (&str, Macro) {
+                let name = match flag.split_once('=') {
+                    Some((name, _value)) => name.to_owned(),
+                    None => flag.to_string(),
+                };
                 (
-                    storage.ensure(name.clone()),
+                    storage.ensure(name.into()),
                     Macro { head: 0.into(), span: CtxSpan::dummy(), body: vec![], arg_cnt: 0 },
                 )
             })

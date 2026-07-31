@@ -11,12 +11,53 @@ use camino::{Utf8Path, Utf8PathBuf};
 use cc::windows_registry;
 use target::spec::{LinkerFlavor, Target};
 
+/// Enhancement-387: check TMPDIR before handing the job to the linker.
+///
+/// The linker writes scratch files into TMPDIR. When TMPDIR names a directory
+/// that does not exist, or one that is read-only, the failure surfaced as an
+/// UNCAUGHT C++ EXCEPTION from clang's own driver:
+///
+///     libc++abi: terminating due to uncaught exception ... filesystem_error:
+///         in create_directory: No such file or directory ["$TMPDIR/ld-support-..."]
+///     clang: error: unable to execute command: Abort trap: 6
+///     error: linking failed (see linker output for details)
+///
+/// -- an abort, and a final message that blames "linking" while never mentioning
+/// TMPDIR. CI runners and sandboxes routinely set TMPDIR, and a stale or removed
+/// value is an ordinary environment mistake, so it deserves a diagnostic that
+/// names the actual cause.
+fn check_tmpdir() -> Result<()> {
+    let tmp = std::env::temp_dir();
+    if !tmp.is_dir() {
+        bail!(
+            "temporary directory '{}' does not exist (TMPDIR); \
+             the linker needs it for scratch files",
+            tmp.display()
+        );
+    }
+    // is_dir() is not enough -- a read-only TMPDIR fails the same way.
+    let probe = tmp.join(format!("openvaf-tmp-probe-{}", std::process::id()));
+    match std::fs::create_dir(&probe) {
+        Ok(()) => {
+            let _ = std::fs::remove_dir(&probe);
+            Ok(())
+        }
+        Err(err) => bail!(
+            "temporary directory '{}' is not writable (TMPDIR): {}; \
+             the linker needs it for scratch files",
+            tmp.display(),
+            err
+        ),
+    }
+}
+
 pub fn link(
     path: Option<Utf8PathBuf>,
     target: &Target,
     out_filename: &Utf8Path,
     add_objects: impl FnOnce(&mut dyn Linker),
 ) -> Result<()> {
+    check_tmpdir()?;
     let mut linker = linker_with_args(path, target, out_filename, add_objects);
 
     let import_lib_path = out_filename.with_file_name("__openvaf__import.lib");
