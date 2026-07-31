@@ -32,7 +32,14 @@ CCCSsetup(SMPmatrix *matrix, GENmodel *inModel, CKTcircuit *ckt, int *states)
         /* loop through all the instances of the model */
         for (here = CCCSinstances(model); here != NULL ;
                 here=CCCSnextInstance(here)) {
-            
+
+            /* Enhancement-385: same defect and same fix as vccsset.c -- CCCSparam
+             * folds m into CCCScoeff when `gain` is written, and m was never
+             * defaulted to 1, so `sens` writing m (which sets CCCSmGiven) then
+             * writing gain multiplied the gain by zero. */
+            if (!here->CCCSmGiven)
+                here->CCCSmValue = 1.0;
+
             here->CCCScontBranch = CKTfndBranch(ckt,here->CCCScontName);
             if(here->CCCScontBranch == 0) {
                 SPfrontEnd->IFerrorf (ERR_FATAL,

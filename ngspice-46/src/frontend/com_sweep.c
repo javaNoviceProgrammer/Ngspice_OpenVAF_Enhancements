@@ -286,6 +286,50 @@ static void sw_set_inplace(int kind, const char *name, double val)
 }
 
 
+/* Enhancement-385: read an `alter`/`altermod` knob's CURRENT value, reporting
+ * whether the read actually succeeded.
+ *
+ * sw_eval_expr() cannot be used for this: it returns 0.0 on failure, which is
+ * indistinguishable from a knob that is legitimately zero, and restoring a
+ * spurious 0 would be worse than not restoring at all. `*ok` lets the caller
+ * keep E-350's all-or-nothing rule.
+ *
+ * The name is LOWER-CASED first. A `@name[param]` string built in C must be,
+ * or PPparse rejects it and returns NULL with no diagnostic at all -- the trap
+ * Enhancement-382 documents. Knob names arrive from the command wordlist, which
+ * is already folded, but this builds no assumption on that. */
+static double sw_read_knob(const char *name, int *ok)
+{
+    struct pnode *pn;
+    char buf[512];
+    size_t i;
+    double f = 0.0;
+
+    *ok = 0;
+    if (!name)
+        return 0.0;
+    (void) snprintf(buf, sizeof buf, "%s", name);
+    for (i = 0; buf[i]; i++)
+        buf[i] = (char) tolower((unsigned char) buf[i]);
+
+    pn = ft_getpnames_from_string(buf, TRUE);
+    if (pn) {
+        struct dvec *v = ft_evaluate(pn);
+        if (v && v->v_length >= 1 && isreal(v)) {
+            f = v->v_realdata[v->v_length - 1];
+            if (finite(f))
+                *ok = 1;
+            else
+                f = 0.0;
+        }
+        if (!pn->pn_value && v)
+            vec_free(v);
+        free_pnode(pn);
+    }
+    return f;
+}
+
+
 /* ============= Enhancement-320 / -321: .param FAST-SWEEP ======================
  * A swept `.param` normally forces a full `reset` (deck re-source + subckt
  * re-expand + CKTsetup + matrix reorder) at every point, because numparam folds
@@ -1317,6 +1361,13 @@ void com_sweep(wordlist *wl)
      * first point and put back when the sweep ends. See the restore at cleanup. */
     double  deck_fp_nominal[SW_MAXKNOB];
     int     ndeck_fp_nominal = 0;
+    /* Enhancement-385: the same courtesy for `alter`/`altermod` knobs. E-350
+     * captured and restored only the SW_DECK (`.param`) knobs; sweeping a device
+     * or model parameter left it wherever the last point put it, so a following
+     * analysis silently ran against the wrong circuit -- `sweep @r1[resistance]
+     * 1800 2200 3` left r1 at 2199 and the next `op` was 3.8% off. */
+    double  inplace_nominal[SW_MAXKNOB];
+    int     ninplace_nominal = 0;
 
     for (j = 0; j < SW_MAXKNOB; j++) {
         kname[j] = NULL; kvals[j] = NULL; kscname[j] = NULL;
@@ -1455,6 +1506,24 @@ void com_sweep(wordlist *wl)
         }
         if (ndeck_fp_nominal != ndeck_fp)
             ndeck_fp_nominal = 0;       /* all or nothing -- never a partial undo */
+
+        /* Enhancement-385: and the nominal of every in-place (`alter`/`altermod`)
+         * knob, read from the LIVE circuit before the first point moves it. Same
+         * all-or-nothing rule: a partially restored circuit is harder to reason
+         * about than an untouched one. */
+        {
+            int nin = 0, allok = 1;
+            for (j = 0; j < nknob; j++) {
+                int ok = 0;
+                double v;
+                if (kkind[j] == SW_DECK)
+                    continue;
+                v = sw_read_knob(kname[j], &ok);
+                if (!ok) { allok = 0; break; }
+                inplace_nominal[nin++] = v;
+            }
+            ninplace_nominal = allok ? nin : 0;
+        }
         fast_fp = (ndeck_fp > 0) ? sw_fp_build(deck_fp_names, ndeck_fp) : 0;
         if (fast_fp) {
             int nb = 0, ntext = 0;
@@ -1688,6 +1757,32 @@ cleanup:
         for (j = 0; j < ndeck_fp; j++)
             nupa_add_param(deck_fp_names[j], deck_fp_nominal[j]);
         nupa_recompute_params(deck_fp_names, ndeck_fp);
+
+        /* Enhancement-385: on the FAST path (E-320) the point loop never touched
+         * the deck -- it pushed each point's values STRAIGHT INTO the live
+         * circuit -- so putting the numparam table back is not enough. The
+         * devices still held the last point's values: after
+         * `sweep rl lin 3 1k 5k` a `.param rl=3k` deck was left with
+         * @r2[resistance] = 5000, and the next `op` was 19% off. Push the
+         * nominals back exactly the way each point was pushed. This must precede
+         * sw_fp_free() below, which drops the binds it needs. */
+        if (fast_fp)
+            sw_fp_apply(deck_fp_names, deck_fp_nominal, ndeck_fp);
+    }
+
+    /* Enhancement-385: put the `alter`/`altermod` knobs back too. This runs
+     * AFTER the `.param` restore above, because that path can `reset` (which
+     * re-sources the deck and drops in-place alters); writing these first would
+     * simply lose them. */
+    if (ninplace_nominal > 0) {
+        int nin = 0;
+        for (j = 0; j < nknob; j++) {
+            if (kkind[j] == SW_DECK)
+                continue;
+            if (nin < ninplace_nominal)
+                sw_set_inplace(kkind[j], kname[j], inplace_nominal[nin]);
+            nin++;
+        }
     }
 
     sw_fp_free();                        /* Enhancement-320: drop fast-path binds */

@@ -99,6 +99,24 @@ VSRCtemp(GENmodel *inModel, CKTcircuit *ckt)
 
             if (here->VSRCisPort)
             {
+                /* Enhancement-385: decide the PORT waveform HERE, where whether
+                 * this source is a port is actually known, instead of in
+                 * VSRCparam's `pwr`/`freq` cases.
+                 *
+                 * E-384 stopped those cases clobbering an explicit SIN/PULSE/PWL
+                 * (`if (!VSRCfuncTGiven)`), but that left the dc-only source
+                 * unprotected: it has no waveform, so the guard passed and
+                 * `sens` -- which perturbs `pwr` and `freq` on EVERY voltage
+                 * source -- still turned it into a PORT and left it there. A
+                 * following transient then read 0 where the answer was 1.0. The
+                 * state-restoration audit caught that E-384 had only covered
+                 * half the class.
+                 *
+                 * A source is a port only if portnum and a positive z0 say so,
+                 * which is exactly the condition guarding this block. */
+                if (!here->VSRCfuncTGiven)
+                    here->VSRCfunctionType = PORT;
+
                 if (!here->VSRCportFreqGiven)
                     here->VSRCportFreq = 1.0e9;
                 if (!here->VSRCportPowerGiven)

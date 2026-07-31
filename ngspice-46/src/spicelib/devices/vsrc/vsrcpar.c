@@ -326,31 +326,21 @@ VSRCparam(int param, IFvalue *value, GENinstance *inst, IFvalue *select)
             here->VSRCportPower = value->rValue;
             here->VSRCportPowerGiven = TRUE;
 
-            /* Enhancement-384: only claim the source as a PORT if it does not
-             * already carry an explicit waveform. Writing `pwr` or `freq` used
-             * to overwrite VSRCfunctionType UNCONDITIONALLY, silently destroying
-             * a SIN/PULSE/PWL the deck had asked for -- and every voltage source
-             * has these parameters, not just ports.
-             *
-             * That is what made `sens` poison a whole session: it perturbs every
-             * settable real parameter of every device, so it wrote `pwr`/`freq`
-             * on ordinary sources, flipped them to PORT (power 0), and restored
-             * the VALUE afterwards but never the function type. A following
-             * `tran` then drove every node to exactly zero. `alter @v1[pwr]`
-             * did the same damage directly. */
-            if (!here->VSRCfuncTGiven)
-                here->VSRCfunctionType = PORT;
-
+            /* Enhancement-384/385: writing `pwr` no longer touches the waveform
+             * selector at all. It used to set VSRCfunctionType = PORT
+             * unconditionally, and every voltage source carries `pwr`/`freq`,
+             * not just ports -- so `sens`, which perturbs every settable real
+             * parameter of every device, turned ordinary sources into dead PORT
+             * sources and left them that way. E-384 guarded on "has no explicit
+             * waveform", which still caught the dc-only source; the decision now
+             * lives in VSRCtemp, where whether this instance is really a port is
+             * actually known. */
             break;
         }
         case VSRC_PORTFREQ:
         {
             here->VSRCportFreq = value->rValue;
             here->VSRCportFreqGiven = TRUE;
-
-            if (!here->VSRCfuncTGiven)
-                here->VSRCfunctionType = PORT;
-
             break;
         }
         case VSRC_PORTPHASE:

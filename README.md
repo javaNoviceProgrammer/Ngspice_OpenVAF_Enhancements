@@ -428,6 +428,7 @@ The index: **Doc** links each enhancement's detailed write-up, **Examples** link
 | 382 | fix: `loadpull` left the user's tuner R/L/C at the last swept grid point instead of restoring them, so a following analysis ran against the wrong network | ngspice | [doc](enhancements_doc/Enhancement-382.md) | [lprestore](examples/lprestore_examples/) |
 | 383 | fix: four unreachable `plotabs[]` entries named plots after a different analysis — `envelope` as `op1`, `qpac` as `pac1`, `qpxf` as `pxf1`, `spectrum` as `sp1` | ngspice | [doc](enhancements_doc/Enhancement-383.md) | [plotorder](examples/plotorder_examples/) |
 | 384 | fix: a transient after `sens` returned every node zero — plus `sens`/`sp` aborting the process, a silent partial S-matrix at `z0<=0`, an OSDI `DT` alias, and two device-table flags | ngspice | [doc](enhancements_doc/Enhancement-384.md) | [sensstate](examples/sensstate_examples/) |
+| 385 | fix: `sens ac` zeroed VCCS/CCCS sources and `sweep` never restored an `alter`/`altermod` knob — found by a state-restoration audit that ships with it | ngspice | [doc](enhancements_doc/Enhancement-385.md) | [staterestore](examples/staterestore_examples/) |
 
 </details>
 
