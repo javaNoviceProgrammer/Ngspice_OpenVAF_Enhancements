@@ -1272,6 +1272,15 @@ doask(CKTcircuit *ckt, int typecode, GENinstance *dev, GENmodel *mod, IFparm *op
 
     NG_IGNORE(typecode);
 
+    /* Enhancement-386: `pv` is STATIC, so without this it carries the previous
+     * query's bytes into the next one. Any ask handler that returns OK without
+     * writing *value therefore handed the caller a stale reading rather than an
+     * obviously-wrong one -- that is how `sens_cplx` produced denormal garbage
+     * (2.12736e-314) that varied between calls. The handlers now all write, and
+     * this makes the channel itself deterministic for any that ever do not.
+     * Zero FIRST: pv.iValue below is an INPUT (the select index). */
+    memset(&pv, 0, sizeof pv);
+
     pv.iValue = ind;    /* Sometimes this will be junk and ignored... */
 
     /* fprintf(cp_err, "Calling doask(%d, %x, %x, %x)\n",
