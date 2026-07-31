@@ -22,13 +22,24 @@ user's circuit, drive them, and then guess at what "putting them back" means.
 `sweep` already had it right (Enhancement-350 captures each swept parameter's
 nominal value and restores it at cleanup); this follows that precedent.
 
-A TRAP WORTH RECORDING, because it cost two failed attempts: ngspice CASE-FOLDS
-instance names internally, so querying `@RL[resistance]` -- the name exactly as
-the user typed it on the command line -- silently resolves to nothing and returns
-a ZERO-LENGTH vector rather than an error. The save then quietly did nothing and
-the restore was skipped. The query is now lower-cased. The first attempt also
-placed the read before loadpull's priming transient; that was a red herring, and
-only instrumenting the actual code path settled which of the two was at fault.
+A TRAP WORTH RECORDING, because it cost two failed attempts -- and it is TWO
+mechanisms, neither of which is what it first looks like.
+
+WHY THE NAME WAS WRONG. ngspice lowercases command text before evaluating it, so
+`print @RL[resistance]` works fine. But this code builds the query in C from the
+command-line word list, where the name is still `RL`, and that string never passes
+through the frontend folding. The fix lower-cases it -- matching what the frontend
+would have produced, NOT working around a case-sensitive lookup.
+
+WHY IT WAS SILENT. A missing device does normally report itself
+(`print @nosuchdev[resistance]` -> "Error: no such device or model name"). That
+comes from `if_getparam`, which is never reached: `lp_eval` calls
+`ft_getpnames_from_string(expr, TRUE)`, whose `TRUE` is a VALIDATE flag that
+returns NULL on failure with no diagnostic. So the lookup never happens at all.
+
+The first attempt blamed placement instead (reading before loadpull's priming
+transient); that was a red herring, and only instrumenting the actual code path
+settled which of the two was at fault.
 """
 import os
 import re

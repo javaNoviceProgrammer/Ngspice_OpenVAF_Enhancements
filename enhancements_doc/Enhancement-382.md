@@ -39,11 +39,40 @@ dose because that is the whole command.
 
 The fix did not work twice before it worked, and the reason is worth keeping:
 
-**ngspice case-folds instance names internally.** Querying `@RL[resistance]` — the
-name exactly as the user typed it on the command line — silently resolves to
-nothing and returns a **zero-length vector** rather than an error. The save then
-quietly did nothing, `have_tuner` stayed 0, and the restore was skipped. The query
-is now lower-cased.
+**A C-built query string bypasses the frontend's case-folding, and the validating
+parser fails it without a diagnostic.** Two separate mechanisms, and it is worth
+separating them because neither is what it first looks like:
+
+*Why the name was wrong.* ngspice lowercases command text before evaluating it
+(`inpcom.c`, `*s = tolower_c(*s)`), so typing `print @RL[resistance]` works fine —
+it is folded to `@rl[...]` before the lookup ever sees it. But this code built the
+string in C from the command-line word list, where `rname` is still `RL`:
+
+```c
+snprintf(cmd, sizeof cmd, "@%s[resistance]", rname);   /* rname == "RL" */
+pv = lp_eval(cmd, &rl_len);
+```
+
+That string never passes through the frontend folding, so it no longer matches the
+stored instance name. The fix lower-cases it — matching what the frontend would
+have produced, not working around a case-sensitive lookup.
+
+*Why it was silent.* A missing device normally does report itself
+(`print @nosuchdev[resistance]` → `Error: no such device or model name nosuchdev`).
+That diagnostic comes from `if_getparam`, which is **never reached** here.
+`lp_eval` calls `ft_getpnames_from_string(expr, TRUE)`, and that `TRUE` is a
+*validate* flag:
+
+```c
+if (check && !checkvalid(pn)) {
+    vec_free_x(pn->pn_value);
+    free_pnode(pn);
+    return (struct pnode *) NULL;      /* no diagnostic */
+}
+```
+
+Validation fails, `NULL` comes back, `lp_eval`'s `if (pn)` body never runs, and it
+returns a zero-length result. `have_tuner` stayed 0 and the restore was skipped.
 
 The first attempt blamed placement instead (reading before `loadpull`'s priming
 transient). That was a red herring, and only instrumenting the actual code path —
