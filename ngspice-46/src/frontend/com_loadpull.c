@@ -19,6 +19,7 @@
  */
 
 #include "ngspice/ngspice.h"
+#include <ctype.h>
 #include "ngspice/cpdefs.h"
 #include "ngspice/ftedefs.h"
 #include "ngspice/dvec.h"
@@ -145,6 +146,8 @@ static void lp_srcnode(const char *srcname, char *out, size_t outsz)
 void com_loadpull(wordlist *wl)
 {
     char *rname = NULL, *lname = NULL, *cname = NULL;
+    double tuner_r = 0.0, tuner_l = 0.0, tuner_c = 0.0;  /* Enhancement-382 */
+    int have_tuner = 0;
     char *outnode = NULL, *drive = NULL, *supply = NULL;
     double f0 = 0.0, z0 = 50.0, gmax = 0.85;
     int ngrid = 15, nper = 20, npts = 50;
@@ -224,6 +227,50 @@ void com_loadpull(wordlist *wl)
             (void) snprintf(cmd, sizeof cmd, "tran %.10g %.10g", tp0 / 50.0, tp0);
             lp_run(cmd);
         }
+
+    /* Enhancement-382: remember the tuner's own values before sweeping it.
+     *
+     * The sweep below walks R, L and C of the user's matching network across the
+     * Smith chart. The old code left them wherever the LAST grid point happened
+     * to put them -- the comment at the end said "restore something sane on the
+     * load (last set values are fine)", but the last set values are not a result,
+     * merely where the loop stopped. The user's network was silently replaced:
+     *
+     *     RL  50      -> 84.83 ohm
+     *     LL  1e-15   -> 1.34e-8 H
+     *
+     * and any following analysis then ran against the wrong load -- an `.ac` on
+     * the same deck moved from 0.4789 to 0.6765, a 41% error, with no warning.
+     * `sweep` already does this correctly (Enhancement-350 captures each swept
+     * parameter's nominal value and puts it back at cleanup); this follows it.
+     */
+    {
+        int rl_len = 0;
+        double *pv;
+        /* instance names are CASE-FOLDED internally, so `@RL[...]` -- the name
+         * exactly as typed on the command line -- silently resolves to nothing
+         * and lp_eval returns a zero-length vector. Query in lower case. */
+        char lc[128];
+        int ci;
+        for (ci = 0; rname[ci] && ci < (int) sizeof lc - 1; ci++)
+            lc[ci] = (char) tolower((unsigned char) rname[ci]);
+        lc[ci] = '\0';
+        (void) snprintf(cmd, sizeof cmd, "@%s[resistance]", lc);
+        pv = lp_eval(cmd, &rl_len);
+        if (pv && rl_len >= 1) { tuner_r = pv[0]; have_tuner = 1; tfree(pv); }
+        for (ci = 0; lname[ci] && ci < (int) sizeof lc - 1; ci++)
+            lc[ci] = (char) tolower((unsigned char) lname[ci]);
+        lc[ci] = '\0';
+        (void) snprintf(cmd, sizeof cmd, "@%s[inductance]", lc);
+        pv = lp_eval(cmd, &rl_len);
+        if (pv && rl_len >= 1) { tuner_l = pv[0]; tfree(pv); } else have_tuner = 0;
+        for (ci = 0; cname[ci] && ci < (int) sizeof lc - 1; ci++)
+            lc[ci] = (char) tolower((unsigned char) cname[ci]);
+        lc[ci] = '\0';
+        (void) snprintf(cmd, sizeof cmd, "@%s[capacitance]", lc);
+        pv = lp_eval(cmd, &rl_len);
+        if (pv && rl_len >= 1) { tuner_c = pv[0]; tfree(pv); } else have_tuner = 0;
+    }
         char drivelc[128], supplylc[128] = "";
         { int q; for (q = 0; drive[q] && q < 127; q++) drivelc[q] = (char) tolower((unsigned char) drive[q]); drivelc[q] = '\0'; }
         if (supply) { int q; for (q = 0; supply[q] && q < 127; q++) supplylc[q] = (char) tolower((unsigned char) supply[q]); supplylc[q] = '\0'; }
@@ -334,7 +381,16 @@ void com_loadpull(wordlist *wl)
             }
         }
 
-        /* restore something sane on the load (last set values are fine) */
+        /* Enhancement-382: put the tuner back exactly as the user had it, rather
+         * than leaving it at whatever the last grid point set. */
+        if (have_tuner) {
+            (void) snprintf(cmd, sizeof cmd, "alter %s = %.17g", rname, tuner_r);
+            lp_run(cmd);
+            (void) snprintf(cmd, sizeof cmd, "alter %s = %.17g", lname, tuner_l);
+            lp_run(cmd);
+            (void) snprintf(cmd, sizeof cmd, "alter %s = %.17g", cname, tuner_c);
+            lp_run(cmd);
+        }
 
         if (k < 3) {
             fprintf(cp_err, "loadpull: too few valid points.\n");
