@@ -99,10 +99,24 @@ distributed together.
 
 ## 5. This project's own contributions
 
-The enhancements to ngspice and OpenVAF, and the documentation, examples,
-verification harnesses and change reports written for them, are
-© 2026 javaNoviceProgrammer and are released under GPL-3.0 along with the rest of
-the combined work.
+**Modifications to the bundled sources — no separate copyright asserted.**
+The changes this project makes to ngspice and to OpenVAF are contributed under
+the terms of the works they modify: ngspice changes under ngspice's own licences
+(Modified BSD, or the relevant exception for files such as `src/osdi/`), OpenVAF
+changes under GPL-3.0. No copyright separate from the upstream projects' is
+claimed over them, and they are not to be read as a new work laid on top of the
+originals.
+
+*(Copyright arises automatically in most jurisdictions and cannot simply be
+switched off; what is stated here is that none is **asserted** over these
+modifications, and that they carry no terms beyond those of the code they
+change.)*
+
+**Files original to this project** — the documentation under `docs/` and
+`enhancements_doc/`, the examples and verification harnesses under `examples/`,
+the change reports, and the build and CI tooling written for this repository —
+are © 2026 javaNoviceProgrammer and are released under GPL-3.0 along with the
+rest of the combined work.
 
 ---
 

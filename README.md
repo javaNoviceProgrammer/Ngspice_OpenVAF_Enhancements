@@ -670,3 +670,9 @@ The [prebuilt binaries](#prebuilt-binaries) under `bin/` are built from the
 sources in this repository and are covered by GPL-3.0; the corresponding source
 required by GPL-3.0 §6 is this repository itself, so source and binary always
 travel together.
+
+**No separate copyright is asserted over this project's modifications to ngspice
+and OpenVAF.** Those changes are contributed under the terms of the works they
+modify, and claim nothing beyond them. The files original to this project — the
+documentation, examples, verification harnesses and change reports — are
+© 2026 javaNoviceProgrammer under GPL-3.0.
