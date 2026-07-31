@@ -637,3 +637,36 @@ test needs is not free for a monolithic OSDI `eval()`, and freezing device
 linearizations inflated the Newton iteration count enough to erase the eval
 savings — and on some circuits broke convergence outright. This mirrors ngspice's
 own choice to ship `.option bypass` disabled by default.
+
+---
+
+## License
+
+This repository is a **combined work**, and most of the code in it is not
+original to this project.
+
+The combination is distributed under **GPL-3.0** ([LICENSE](LICENSE)) — a
+consequence rather than a choice: the bundled OpenVAF compiler is GPL-3.0, this
+project modifies and redistributes it, and GPL-3.0 is the strongest copyleft
+among the components. Every other component's license is compatible with it.
+
+**Each bundled component keeps its own license.** GPL-3.0 governs the
+combination; it relicenses nothing. In particular:
+
+| Component | License |
+|---|---|
+| ngspice (`ngspice-46/`) | Modified BSD, © Regents of the University of California and others — with its own exception list in [`ngspice-46/COPYING`](ngspice-46/COPYING) |
+| OpenVAF (`OpenVAF-master-20260610/`) | GPL-3.0 (two utility crates are MIT OR Apache-2.0) |
+| the OSDI interface *in ngspice* (`ngspice-46/src/osdi/`) | MPL-2.0, © 2022 SemiMod GmbH — OpenVAF's side of the same ABI is GPL-3.0 |
+| KLU | LGPL-2.1-or-later |
+| parts of XSPICE, and `ndev` | public domain |
+
+The BSD, MIT and MPL-2.0 components carry attribution notices that survive
+redistribution. [**THIRD-PARTY-LICENSES.md**](THIRD-PARTY-LICENSES.md) is the
+component-by-component manifest that records them, and is the file to read
+before redistributing this work in any form.
+
+The [prebuilt binaries](#prebuilt-binaries) under `bin/` are built from the
+sources in this repository and are covered by GPL-3.0; the corresponding source
+required by GPL-3.0 §6 is this repository itself, so source and binary always
+travel together.

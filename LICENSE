@@ -1,3 +1,17 @@
+NOTE — this repository is a COMBINED WORK.
+
+The GNU General Public License v3 below governs the combination, because the
+bundled OpenVAF compiler is GPL-3.0 and this project modifies and redistributes
+it. It does NOT relicense the components bundled here, each of which keeps its
+own terms: ngspice is Modified BSD (with its own exception list in
+ngspice-46/COPYING), ngspice's OSDI layer is MPL-2.0 (c) SemiMod GmbH, KLU is
+LGPL-2.1-or-later, and parts of XSPICE are public domain.
+
+For the full component-by-component manifest, and the attribution notices the
+BSD/MIT/MPL components require, see THIRD-PARTY-LICENSES.md.
+
+----------------------------------------------------------------------------
+
                     GNU GENERAL PUBLIC LICENSE
                        Version 3, 29 June 2007
 
