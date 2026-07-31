@@ -22,20 +22,29 @@ user's circuit, drive them, and then guess at what "putting them back" means.
 `sweep` already had it right (Enhancement-350 captures each swept parameter's
 nominal value and restores it at cleanup); this follows that precedent.
 
-A TRAP WORTH RECORDING, because it cost two failed attempts -- and it is TWO
-mechanisms, neither of which is what it first looks like.
+A TRAP WORTH RECORDING: a `@name[param]` string built in C must be LOWER-CASED,
+and fails SILENTLY if it is not. Two wrong explanations preceded this one, so what
+follows is what was measured, not what seemed likely.
 
-WHY THE NAME WAS WRONG. ngspice lowercases command text before evaluating it, so
-`print @RL[resistance]` works fine. But this code builds the query in C from the
-command-line word list, where the name is still `RL`, and that string never passes
-through the frontend folding. The fix lower-cases it -- matching what the frontend
-would have produced, NOT working around a case-sensitive lookup.
+  * THE PARSER REJECTS UPPERCASE. A/B at one call site, same context:
+        raw=<@RL[resistance]> len=0    lower=<@rl[resistance]> len=1
+    `ft_getpnames_from_string("@RL[...]", TRUE)` returns NULL.
 
-WHY IT WAS SILENT. A missing device does normally report itself
-(`print @nosuchdev[resistance]` -> "Error: no such device or model name"). That
-comes from `if_getparam`, which is never reached: `lp_eval` calls
-`ft_getpnames_from_string(expr, TRUE)`, whose `TRUE` is a VALIDATE flag that
-returns NULL on failure with no diagnostic. So the lookup never happens at all.
+  * IT FAILS INSIDE PPparse, BEFORE checkvalid -- instrumenting both branches
+    showed "PPparse FAILED". That path is `return NULL` with no diagnostic, so
+    `if_getparam`, which would have printed "no such device or model name", is
+    never reached. (checkvalid DOES warn on a zero-length vector; it did not fire.)
+
+  * TYPING THE SAME TEXT WORKS, because the command never sees uppercase.
+    Instrumenting com_print's wordlist showed it already holding
+    `@rl[resistance]` when the user typed `@RL[resistance]`: the fold happens
+    BEFORE command dispatch. That is why print/alter/show/sweep all accept
+    uppercase -- none of them passes it on -- while a string a command builds
+    internally from its own argument words bypasses the fold entirely.
+
+  * NOT ESTABLISHED: where that pre-dispatch fold lives. Not com_print, not
+    ft_getpnames_quotes, not a command-table flag, and not a blanket fold of
+    .control lines (unquoted `echo UNQUOTED MixedCaseWORD` preserves case).
 
 The first attempt blamed placement instead (reading before loadpull's priming
 transient); that was a red herring, and only instrumenting the actual code path

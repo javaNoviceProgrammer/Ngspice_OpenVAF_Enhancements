@@ -39,47 +39,53 @@ dose because that is the whole command.
 
 The fix did not work twice before it worked, and the reason is worth keeping:
 
-**A C-built query string bypasses the frontend's case-folding, and the validating
-parser fails it without a diagnostic.** Two separate mechanisms, and it is worth
-separating them because neither is what it first looks like:
+**A `@name[param]` string built in C must be lower-cased, and fails silently if it
+is not.** The rule is solid; getting to it took two wrong explanations, so this
+records what was actually measured rather than what seemed likely.
 
-*Why the name was wrong.* ngspice lowercases command text before evaluating it
-(`inpcom.c`, `*s = tolower_c(*s)`), so typing `print @RL[resistance]` works fine —
-it is folded to `@rl[...]` before the lookup ever sees it. But this code built the
-string in C from the command-line word list, where `rname` is still `RL`:
+**The parser rejects uppercase.** A/B at a single call site, same context, same
+instant:
 
-```c
-snprintf(cmd, sizeof cmd, "@%s[resistance]", rname);   /* rname == "RL" */
-pv = lp_eval(cmd, &rl_len);
+```
+LPAB raw=<@RL[resistance]> len=0   lower=<@rl[resistance]> len=1
+LPDBG expr=<@RL[resistance]> pn=NULL
 ```
 
-That string never passes through the frontend folding, so it no longer matches the
-stored instance name. The fix lower-cases it — matching what the frontend would
-have produced, not working around a case-sensitive lookup.
+`ft_getpnames_from_string("@RL[resistance]", TRUE)` returns `NULL`; the lower-cased
+form returns a length-1 vector.
 
-*Why it was silent.* A missing device normally does report itself
-(`print @nosuchdev[resistance]` → `Error: no such device or model name nosuchdev`).
-That diagnostic comes from `if_getparam`, which is **never reached** here.
-`lp_eval` calls `ft_getpnames_from_string(expr, TRUE)`, and that `TRUE` is a
-*validate* flag:
+**It fails inside `PPparse`, before `checkvalid`** — instrumenting the two branches
+showed `PPparse FAILED`. That is why nothing was reported: the failure path is
 
 ```c
-if (check && !checkvalid(pn)) {
-    vec_free_x(pn->pn_value);
-    free_pnode(pn);
+if (PPparse((char **) &sz, &pn) != 0)
     return (struct pnode *) NULL;      /* no diagnostic */
-}
 ```
 
-Validation fails, `NULL` comes back, `lp_eval`'s `if (pn)` body never runs, and it
-returns a zero-length result. `have_tuner` stayed 0 and the restore was skipped.
+so `if_getparam` — which *would* have printed `Error: no such device or model
+name` — is never reached. `checkvalid` does warn on a zero-length vector, and it
+was confirmed not to fire here.
 
-The first attempt blamed placement instead (reading before `loadpull`'s priming
-transient). That was a red herring, and only instrumenting the actual code path —
-printing whether the block was reached and what the read returned — settled which
-of the two was at fault. Same lesson as
-[Enhancement-380](Enhancement-380.md), where an implemented-but-ineffective fix
-was caught only because it was instrumented.
+**Typing the same text works, because the command never sees uppercase.**
+Instrumenting `com_print`'s wordlist:
+
+```
+PRWL <@rl[resistance]>          <- what com_print receives
+GPN  <@rl[resistance]> check=1  <- what reaches the parser
+```
+
+You type `@RL[resistance]`; the wordlist already holds `@rl[resistance]`. The fold
+happens *before command dispatch*, which is why `print`, `alter`, `show` and
+`sweep` all accept uppercase — none of them passes it on. A string a command
+builds internally from its own argument words bypasses that fold entirely, which
+is exactly what this code did.
+
+**Not established:** where the pre-dispatch fold lives. It is not `com_print`, not
+`ft_getpnames_quotes`, not a command-table flag (`co_spiceonly`/`co_major` are the
+only booleans), and not a blanket fold of `.control` lines — unquoted
+`echo UNQUOTED MixedCaseWORD` preserves case, while
+`set myvar = MixedCaseVALUE; echo $myvar` yields `mixedcasevalue`. That
+distinction is unresolved, and is left stated rather than guessed at.
 
 ## Verification
 
