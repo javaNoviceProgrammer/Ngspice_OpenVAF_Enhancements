@@ -53,7 +53,12 @@ IFparm DIOmPTable[] = { /* model parameters */
  IOPR( "isw", DIO_MOD_JSW,  IF_REAL, "Sidewall Saturation current"),
 
  IOPXU( "tnom",DIO_MOD_TNOM,IF_REAL, "Parameter measurement temperature"),
- IOPUR("tref",DIO_MOD_TNOM,IF_REAL, "Parameter measurement temperature"),
+ /* Enhancement-384: `tref` aliases `tnom` (same id, DIO_MOD_TNOM) so it must
+  * carry tnom's flags. It was IOPUR, which drops IF_NONSENSE -- the flag that
+  * keeps a parameter OUT of sensitivity analysis -- so the two spellings of one
+  * parameter disagreed about whether they were sensitivity-able. Reported by
+  * ngspice's own `check_ifparm` as a dataType mismatch. */
+ IOPXUR("tref",DIO_MOD_TNOM,IF_REAL, "Parameter measurement temperature"),
  IOP( "rs",  DIO_MOD_RS,  IF_REAL, "Ohmic resistance"),
  IOPX( "rsw",  DIO_MOD_RSW,  IF_REAL, "Ohmic resistance sidewall"),
  IOP( "trs", DIO_MOD_TRS, IF_REAL, "Ohmic resistance 1st order temp. coeff."),

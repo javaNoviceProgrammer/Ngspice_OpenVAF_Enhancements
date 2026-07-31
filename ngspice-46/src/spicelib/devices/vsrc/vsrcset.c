@@ -53,16 +53,29 @@ do { if((here->ptr = SMPmakeElt(matrix, here->first, here->second)) == NULL){\
 #ifdef RFSPICE
             if (here->VSRCisPort)
             {
-                error = CKTmkVolt(ckt, &tmp, here->VSRCname, "res");
-                if (error) return(error);
-                here->VSRCresNode = tmp->number;
-                if (ckt->CKTcopyNodesets) {
-                    CKTnode* tmpNode;
-                    IFuid tmpName;
-                    if (CKTinst2Node(ckt, here, 1, &tmpNode, &tmpName) == OK) {
-                        if (tmpNode->nsGiven) {
-                            tmp->nodeset = tmpNode->nodeset;
-                            tmp->nsGiven = tmpNode->nsGiven;
+                /* Enhancement-384: allocate the port's internal node ONCE, the
+                 * way the branch-current node a few lines above already does
+                 * (`if (here->VSRCbranch == 0)`). Without that guard every
+                 * re-setup of the same instance minted another node, and
+                 * cktsens.c calls each device's DEVsetup a second time to build
+                 * its perturbation matrix. It checks that no node was added and
+                 * kills the process when one was, so `sens` on ANY deck carrying
+                 * a `portnum` source ended the session with
+                 *   "Internal Error: node allocation in DEVsetup() during
+                 *    sensitivity analysis ... please report this issue !"
+                 * A three-line deck was enough. */
+                if (here->VSRCresNode == 0) {
+                    error = CKTmkVolt(ckt, &tmp, here->VSRCname, "res");
+                    if (error) return(error);
+                    here->VSRCresNode = tmp->number;
+                    if (ckt->CKTcopyNodesets) {
+                        CKTnode* tmpNode;
+                        IFuid tmpName;
+                        if (CKTinst2Node(ckt, here, 1, &tmpNode, &tmpName) == OK) {
+                            if (tmpNode->nsGiven) {
+                                tmp->nodeset = tmpNode->nodeset;
+                                tmp->nsGiven = tmpNode->nsGiven;
+                            }
                         }
                     }
                 }

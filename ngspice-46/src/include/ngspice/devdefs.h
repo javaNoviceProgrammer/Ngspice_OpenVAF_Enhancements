@@ -171,6 +171,13 @@ extern int        DEVmaxnum;    /* size of DEVices array */
 # define IOPXR(a,b,c,d) { a, b, c|IF_SET|IF_ASK|IF_NONSENSE|IF_REDUNDANT, d }
 # define IOPXU(a,b,c,d)  { a, b, c|IF_SET|IF_ASK|IF_NONSENSE|IF_UNINTERESTING,\
 									d }
+/* Enhancement-384: the alias spelling of IOPXU. An IF_REDUNDANT entry is an
+ * ALIAS of the entry before it and must carry that entry's flags, or the two
+ * spellings of one parameter behave differently -- which is exactly what
+ * ngspice's own `check_ifparm` was reporting for the diode's tnom/tref pair.
+ * There was no NONSENSE|UNINTERESTING|REDUNDANT macro to spell it with. */
+# define IOPXUR(a,b,c,d) { a, b, c|IF_SET|IF_ASK|IF_NONSENSE|IF_UNINTERESTING\
+								|IF_REDUNDANT, d }
 # define IOPQ(a,b,c,d)  { a, b, c|IF_SET|IF_ASK|IF_SETQUERY,		d }
 # define IOPQR(a,b,c,d)  { a, b, c|IF_SET|IF_ASK|IF_SETQUERY|IF_REDUNDANT, d }
 # define IOPQU(a,b,c,d)  { a, b, c|IF_SET|IF_ASK|IF_SETQUERY|IF_UNINTERESTING,\

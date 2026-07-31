@@ -12,7 +12,11 @@ Author: 1987 Thomas L. Quarles
 IFparm MESpTable[] = { /* parameters */ 
  OPU("off",  MES_OFF,    IF_FLAG   ,"Device initially off"),
  IOPU("area", MES_AREA,   IF_REAL   ,"Area factor"),
- IOPUR("m",   MES_M,   IF_REAL   ,"Parallel Multiplier"),
+ /* Enhancement-384: `m` is its OWN parameter (MES_M), not an alias of the `area`
+  * entry above it (MES_AREA). IF_REDUNDANT means "alias of the preceding entry
+  * and shares its id", which this never satisfied -- ngspice's own
+  * `check_ifparm` reported it as an alias with a non-matching predecessor. */
+ IOPU("m",   MES_M,   IF_REAL   ,"Parallel Multiplier"),
  IOPAU("ic",         MES_IC,             IF_REALVEC,"Initial VDS,VGS vector"),
  IOPAU("icvds",  MES_IC_VDS, IF_REAL   ,"Initial D-S voltage"),
  IOPAU("icvgs",  MES_IC_VGS, IF_REAL   ,"Initial G-S voltage"),

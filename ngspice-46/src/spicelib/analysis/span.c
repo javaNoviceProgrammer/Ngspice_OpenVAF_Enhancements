@@ -386,8 +386,21 @@ SPan(CKTcircuit* ckt, int restart)
 
     if (ckt->CKTportCount == 0)
     {
+        /* Enhancement-384: forgetting `portnum` is an ordinary deck mistake, not
+         * a reason to end the process. This used to `controlled_exit(EXIT_BAD)`,
+         * so `sp` on a deck with no port source killed the session outright --
+         * everything computed so far went with it, and in an interactive or
+         * .control-scripted run there was nothing left to correct. Report it and
+         * let the caller carry on. The noise scratch block above is freed here
+         * because this is now a return rather than a process exit. */
         fprintf(stderr, "\nError: No RF Port is present, cannot run sp analysis\n");
-        controlled_exit(EXIT_BAD);
+        fprintf(stderr, "       Add `portnum <n>` (and optionally `z0 <ohms>`) to "
+                        "the source(s) that define the ports.\n");
+        if (data) {
+            FREE(data);
+            data = NULL;
+        }
+        return E_NOTFOUND;
     }
 
     /* Enhancement-64: a single port is a perfectly good S-parameter

@@ -544,16 +544,32 @@ extern OsdiObjectFile load_object_file(const char *input) {
          *
          * The `dtemp`/`dt`/`temp` tests immediately below already use
          * strcasecmp, so this was inconsistent within a single loop. */
+        /* Enhancement-384: these tests are now uniformly case-INSENSITIVE.
+         * Verilog-A parameter names arrive here with the case the model wrote,
+         * but ngspice looks parameters up case-insensitively, so `DT` and `dt`
+         * name the same knob and must be classified the same way.
+         *
+         * They were not. `strcmp(name, "dt")` matched only the lower-case
+         * spelling, so a model declaring `dt` took the UINT32_MAX branch ("the
+         * model owns this name -- do not synthesize aliases") while a model
+         * declaring `DT` fell through to the branch below and had ngspice build
+         * `dt`/`dtemp` aliases over it. The visible cost: on a model declaring
+         * `DT`, writing `dtemp=50` on the .model card was ACCEPTED without any
+         * diagnostic and then silently ignored -- the value went nowhere and the
+         * simulation ran with the default. The same model spelled `dt` rejects
+         * `dtemp` outright, which is at least honest.
+         *
+         * This is the identical mistake Enhancement-335 fixed one line above for
+         * `m`, left in place for `dt` and `temp`. */
         if (!strcasecmp(name, "m")) {
           has_m = true;
-        } else if (!strcmp(name, "dt")) {
+        } else if (!strcasecmp(name, "dt")) {
           dt = UINT32_MAX;
-        } else if (!strcasecmp(name, "dtemp") || !strcasecmp(name, "dt")) {
+        } else if (!strcasecmp(name, "dtemp")) {
           dt = param_id;
-        } else if (!strcmp(name, "temp")) {
+        } else if (!strcasecmp(name, "temp")) {
           temp = UINT32_MAX;
-        } else if (!strcasecmp(name, "temp") ||
-                   !strcasecmp(name, "temperature")) {
+        } else if (!strcasecmp(name, "temperature")) {
           temp = param_id;
         }
       }

@@ -76,6 +76,22 @@ VSRCtemp(GENmodel *inModel, CKTcircuit *ckt)
                 if (!here->VSRCportZ0Given)
                     here->VSRCportZ0 = 50.0;
 
+                /* Enhancement-384: a port whose z0 is zero or negative used to be
+                 * demoted to "not a port" right here, in silence. Nothing told
+                 * the user, and `sp` simply ran with the ports that were left:
+                 * a 2-port with `z0=0` on port 2 produced a plot containing only
+                 * S_1_1 -- no S_1_2, S_2_1 or S_2_2 -- and an S_1_1 that was a
+                 * different number from the correct one. A reference impedance
+                 * of zero is not a modelling choice, it is a typo, and z0 is a
+                 * divisor here (VSRCportY0 = 1/z0, VSRCki = 0.5/sqrt(z0)). */
+                if (here->VSRCportNum > 0 && here->VSRCportZ0 <= 0.0) {
+                    SPfrontEnd->IFerrorf(ERR_FATAL,
+                        "%s: port %d has z0 = %g; the reference impedance must be "
+                        "positive", here->VSRCname, here->VSRCportNum,
+                        here->VSRCportZ0);
+                    return(E_PARMVAL);
+                }
+
                 here->VSRCisPort = here->VSRCportZ0 > 0.0 && here->VSRCportNum > 0;
             }
             else

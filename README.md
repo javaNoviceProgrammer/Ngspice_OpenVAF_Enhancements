@@ -427,6 +427,7 @@ The index: **Doc** links each enhancement's detailed write-up, **Examples** link
 | 381 | fix: `stb` handed its probe sources back with `ac = 0` instead of their original values, so a following `.ac` returned all zeros | ngspice | [doc](enhancements_doc/Enhancement-381.md) | [stbrestore](examples/stbrestore_examples/) |
 | 382 | fix: `loadpull` left the user's tuner R/L/C at the last swept grid point instead of restoring them, so a following analysis ran against the wrong network | ngspice | [doc](enhancements_doc/Enhancement-382.md) | [lprestore](examples/lprestore_examples/) |
 | 383 | fix: four unreachable `plotabs[]` entries named plots after a different analysis — `envelope` as `op1`, `qpac` as `pac1`, `qpxf` as `pxf1`, `spectrum` as `sp1` | ngspice | [doc](enhancements_doc/Enhancement-383.md) | [plotorder](examples/plotorder_examples/) |
+| 384 | fix: a transient after `sens` returned every node zero — plus `sens`/`sp` aborting the process, a silent partial S-matrix at `z0<=0`, an OSDI `DT` alias, and two device-table flags | ngspice | [doc](enhancements_doc/Enhancement-384.md) | [sensstate](examples/sensstate_examples/) |
 
 </details>
 

@@ -1,0 +1,22 @@
+// Enhancement-384: a model that declares an UPPERCASE `DT` parameter.
+//
+// ngspice looks model parameters up case-insensitively, so `DT` and `dt` name
+// the same knob. osdiregistry.c classified them differently -- one test used
+// strcmp, the next strcasecmp -- so this model used to get ngspice's synthesized
+// `dt`/`dtemp` aliases built over the top of its own parameter. Writing
+// `dtemp=50` was then ACCEPTED with no diagnostic and silently ignored.
+//
+// The resistance is deliberately a simple linear function of the parameter so a
+// deck can tell "the value was applied" from "the value went nowhere":
+//   r = r0 * (1 + 0.01*DT)   ->  DT=50 gives r = 1500.
+`include "disciplines.vams"
+
+module rlowdt(p, n);
+    inout p, n;
+    electrical p, n;
+    parameter real r0 = 1000.0;
+    parameter real DT = 0.0;
+    analog begin
+        I(p, n) <+ V(p, n) / (r0 * (1.0 + 0.01 * DT));
+    end
+endmodule
