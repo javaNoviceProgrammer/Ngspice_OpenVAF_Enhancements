@@ -206,6 +206,33 @@ impl BuiltIn {
             _ => false,
         }
     }
+    /// Enhancement-395: the statistical draw builtins. Each is a PURE function
+    /// of (seed, salt) with no persistent state (Enhancement-10), and `salt` is
+    /// the call's ExprId -- constant per call site -- so a runtime loop over one
+    /// call site draws the same number every iteration.
+    #[allow(clippy::match_like_matches_macro)]
+    pub fn is_rng(self) -> bool {
+        matches!(
+            self,
+            BuiltIn::random
+                | BuiltIn::arandom
+                | BuiltIn::dist_chi_square
+                | BuiltIn::dist_exponential
+                | BuiltIn::dist_poisson
+                | BuiltIn::dist_uniform
+                | BuiltIn::dist_erlang
+                | BuiltIn::dist_normal
+                | BuiltIn::dist_t
+                | BuiltIn::rdist_chi_square
+                | BuiltIn::rdist_exponential
+                | BuiltIn::rdist_poisson
+                | BuiltIn::rdist_uniform
+                | BuiltIn::rdist_erlang
+                | BuiltIn::rdist_normal
+                | BuiltIn::rdist_t
+        )
+    }
+
     #[allow(clippy::match_like_matches_macro)]
     pub fn is_unsupported(self) -> bool {
         match self {

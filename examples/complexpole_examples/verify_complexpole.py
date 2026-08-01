@@ -83,9 +83,21 @@ def main():
     check("peak sits near f0 = 1 MHz", 0.9e6 < fpk < 1.1e6, f"fpk = {fpk/1e6:.3f} MHz")
 
     print("[3] notch: laplace_zd (complex ZEROS) matches laplace_nd baseline")
-    max_n_err = max(abs(v["notch_zd"] - v["notch_nd"]) for _, v in rows)
-    check("|zd - nd| < 1e-3 dB across the sweep", max_n_err < 1e-3,
-          f"max |zd-nd| = {max_n_err:.2e} dB")
+    # Enhancement-395: compare only where the response is above the simulator's
+    # numerical noise floor. The two spellings are algebraically identical, but
+    # since E-395 normalised the ROOT forms to the LRM's prod(1 - s/r) they no
+    # longer reach the null through bit-identical arithmetic -- and AT the null
+    # the response is ~300 dB down, so both node voltages are around 1e-15 and a
+    # dB comparison there measures the linear solver, not the filter. That it
+    # measures the solver is directly visible: the unrestricted maximum differed
+    # between Sparse (7.70 dB) and KLU (9.43 dB) for the same netlist. The null
+    # itself is not going unchecked -- [4] below asserts its depth and position.
+    NOISE_FLOOR_DB = -100.0
+    band = [(f, v) for f, v in rows if v["notch_nd"] > NOISE_FLOOR_DB]
+    max_n_err = max(abs(v["notch_zd"] - v["notch_nd"]) for _, v in band)
+    check(f"|zd - nd| < 1e-3 dB wherever the response is above {NOISE_FLOOR_DB:.0f} dB",
+          max_n_err < 1e-3,
+          f"max |zd-nd| = {max_n_err:.2e} dB over {len(band)}/{len(rows)} points")
 
     print("[4] complex zeros give a deep NULL at f0")
     fmin, gmin = min(((f, v["notch_zd"]) for f, v in rows), key=lambda t: t[1])

@@ -1299,6 +1299,62 @@ pub(crate) fn elaborate_generates(db: &mut CompilationDB) -> anyhow::Result<()> 
 /// dropping any `genvar` declarations) it directly contains; a module with
 /// neither is returned verbatim, byte-for-byte, keeping this pass a no-op
 /// for the overwhelming majority of modules.
+/// Enhancement-395: rejects a `genvar` whose name collides with anything else the
+/// module declares, and duplicate genvars.
+///
+/// Generate elaboration ERASES genvars textually before `hir_def` builds the item
+/// tree (`ModuleItem::GenvarDecl(_) => {}`), so they never enter a scope and never
+/// took part in the "already declared in this scope" check that catches every
+/// other duplicate pair. A `genvar` colliding with a `localparam` was therefore
+/// accepted, and the localparam then won the bit-select fold (Enhancement-393):
+/// every loop iteration indexed the SAME element, so a ladder that should have
+/// been three series elements came out disconnected -- i(v1) = 0 instead of
+/// -3.33e-4, silently. This is the only place the two names coexist.
+fn check_genvar_collisions(module_ast: &ast::ModuleDecl) -> anyhow::Result<()> {
+    let mut genvars: Vec<String> = Vec::new();
+    let mut others: Vec<String> = Vec::new();
+    for item in module_ast.module_items() {
+        match item {
+            ast::ModuleItem::GenvarDecl(decl) => {
+                for name in decl.names() {
+                    genvars.push(name.syntax().text().to_string());
+                }
+            }
+            ast::ModuleItem::ParamDecl(decl) => {
+                for para in decl.paras() {
+                    if let Some(name) = para.name() {
+                        others.push(name.syntax().text().to_string());
+                    }
+                }
+            }
+            ast::ModuleItem::VarDecl(decl) => {
+                for var in decl.vars() {
+                    if let Some(name) = var.name() {
+                        others.push(name.syntax().text().to_string());
+                    }
+                }
+            }
+            ast::ModuleItem::NetDecl(decl) => {
+                for name in decl.names() {
+                    others.push(name.syntax().text().to_string());
+                }
+            }
+            _ => {}
+        }
+    }
+    for (i, g) in genvars.iter().enumerate() {
+        if genvars[..i].contains(g) {
+            anyhow::bail!("genvar '{g}' was already declared in this scope");
+        }
+        if others.contains(g) {
+            anyhow::bail!(
+                "genvar '{g}' collides with another declaration of '{g}' in the same module"
+            );
+        }
+    }
+    Ok(())
+}
+
 fn render_module_with_generates(module_ast: &ast::ModuleDecl) -> anyhow::Result<String> {
     let has_generate = module_ast.module_items().any(|it| {
         matches!(it, ast::ModuleItem::GenerateFor(_) | ast::ModuleItem::GenvarDecl(_)
@@ -1307,6 +1363,7 @@ fn render_module_with_generates(module_ast: &ast::ModuleDecl) -> anyhow::Result<
     if !has_generate {
         return Ok(module_ast.syntax().text().to_string());
     }
+    check_genvar_collisions(module_ast)?;
 
     // Enhancement-392: a `localparam` IS a compile-time constant, so it may size a
     // generated structure. Only `parameter` cannot -- it binds at simulation time
@@ -2895,6 +2952,19 @@ impl ElabCtx<'_> {
         // matter more rather than less.
         let inst_name =
             unit.name().map(|n| n.syntax().text().to_string()).unwrap_or_else(|| "?".into());
+        // Enhancement-395: the LRM forbids MIXING positional and named connections
+        // in one instantiation. Both orders were accepted and the device came out
+        // silently DISCONNECTED (every probe read 0), because the named branch
+        // below simply ignores the dotless entries while the positional branch is
+        // never taken.
+        let n_named = conns.iter().filter(|c| c.dot_token().is_some()).count();
+        if n_named != 0 && n_named != conns.len() {
+            self.port_conn_errors.push(format!(
+                "instance '{}' of module '{}' mixes positional and named port connections; \
+                 use one form or the other",
+                inst_name, target.name,
+            ));
+        }
         if conns.iter().all(|c| c.dot_token().is_none()) {
             if conns.len() != port_names.len() {
                 self.port_conn_errors.push(format!(
@@ -2913,9 +2983,20 @@ impl ElabCtx<'_> {
                 }
             }
         } else {
+            // Enhancement-395: a port named twice was accepted and the LAST
+            // binding silently won, leaving the earlier actual unconnected.
+            let mut seen: Vec<Name> = Vec::with_capacity(conns.len());
             for conn in &conns {
                 if let (Some(name), Some(net)) = (conn.name(), conn.net()) {
                     let pname = name.as_name();
+                    if seen.contains(&pname) {
+                        self.port_conn_errors.push(format!(
+                            "instance '{}' connects port '.{}' more than once",
+                            inst_name, pname,
+                        ));
+                        continue;
+                    }
+                    seen.push(pname.clone());
                     if !port_names.contains(&pname) {
                         self.port_conn_errors.push(format!(
                             "instance '{}' connects '.{}', which is not a port of module '{}' ({})",
@@ -3077,7 +3158,22 @@ impl ElabCtx<'_> {
                 }
             }
         } else {
+            // Enhancement-395: the same parameter overridden twice
+            // (`#(.g(1e-3), .g(5e-3))`) was accepted and the LAST value silently
+            // won, so the result depended on the order the two were written.
+            let mut seen_params: Vec<Name> = Vec::with_capacity(assigns.len());
             for assign in &assigns {
+                if let Some(nm) = assign.name() {
+                    let pname = nm.as_name();
+                    if seen_params.contains(&pname) {
+                        self.hier_param_errors.push(format!(
+                            "instance parameter '.{}' is overridden more than once",
+                            pname,
+                        ));
+                        continue;
+                    }
+                    seen_params.push(pname);
+                }
                 // Enhancement-87: a hierarchical override target
                 // (`#(.blk.p(4))`, parsed as more than one NAME child) tries
                 // to reach a block-scoped parameter, which is local to its

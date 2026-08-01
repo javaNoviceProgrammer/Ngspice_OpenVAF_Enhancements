@@ -1084,15 +1084,62 @@ impl BodyLoweringCtx<'_, '_, '_> {
             let seg_i = seg[i];
             result = self.ctx.make_select(ge, move |_c, b| if b { seg_i } else { result });
         }
+        let v0 = vals[0];
+        let g0 = grid[0];
+        let vl = vals[n - 1];
+        let gl = grid[n - 1];
         if !linear_extrap {
-            let v0 = vals[0];
-            let g0 = grid[0];
             let below = self.ctx.ins().flt(x, g0);
             result = self.ctx.make_select(below, move |_c, b| if b { v0 } else { result });
-            let vl = vals[n - 1];
-            let gl = grid[n - 1];
             let above = self.ctx.ins().fgt(x, gl);
             result = self.ctx.make_select(above, move |_c, b| if b { vl } else { result });
+        } else {
+            // Enhancement-395: extrapolate along the first/last segment of NONZERO
+            // width.
+            //
+            // A repeated abscissa at an end makes that segment's `dgrid` zero, so
+            // `fdiv_guarded` yields a zero slope and the extrapolation went FLAT --
+            // the runtime form returned 0.0 below a start-repeated grid where the
+            // compile-time form (which de-duplicates by shortening the vector)
+            // extrapolated properly, and likewise above an end-repeated one.
+            // Interior values were exact, which is why it survived: only points
+            // outside the grid differ. Enhancement-391 fixed exactly this for the
+            // CUBIC end tangent; the LINEAR path kept the defect at both ends.
+            //
+            // `slope_lo` walks DOWN so the last assignment wins and it ends up
+            // holding the FIRST live segment; `slope_hi` walks UP for the LAST.
+            // With strictly increasing abscissae both reduce to seg[0]/seg[n-2]
+            // and the emitted code is equivalent to before.
+            let mut slope_lo = F_ZERO;
+            for i in (0..n - 1).rev() {
+                let dgrid = self.ctx.ins().fsub(grid[i + 1], grid[i]);
+                let dv = self.ctx.ins().fsub(vals[i + 1], vals[i]);
+                let sl = self.fdiv_guarded(dv, dgrid);
+                let degenerate = self.ctx.ins().feq(dgrid, F_ZERO);
+                slope_lo =
+                    self.ctx.make_select(degenerate, move |_c, b| if b { slope_lo } else { sl });
+            }
+            let mut slope_hi = F_ZERO;
+            for i in 0..n - 1 {
+                let dgrid = self.ctx.ins().fsub(grid[i + 1], grid[i]);
+                let dv = self.ctx.ins().fsub(vals[i + 1], vals[i]);
+                let sl = self.fdiv_guarded(dv, dgrid);
+                let degenerate = self.ctx.ins().feq(dgrid, F_ZERO);
+                slope_hi =
+                    self.ctx.make_select(degenerate, move |_c, b| if b { slope_hi } else { sl });
+            }
+
+            let below = self.ctx.ins().flt(x, g0);
+            let dx_lo = self.ctx.ins().fsub(x, g0);
+            let t_lo = self.ctx.ins().fmul(dx_lo, slope_lo);
+            let ext_lo = self.ctx.ins().fadd(v0, t_lo);
+            result = self.ctx.make_select(below, move |_c, b| if b { ext_lo } else { result });
+
+            let above = self.ctx.ins().fgt(x, gl);
+            let dx_hi = self.ctx.ins().fsub(x, gl);
+            let t_hi = self.ctx.ins().fmul(dx_hi, slope_hi);
+            let ext_hi = self.ctx.ins().fadd(vl, t_hi);
+            result = self.ctx.make_select(above, move |_c, b| if b { ext_hi } else { result });
         }
         result
     }
@@ -2087,7 +2134,19 @@ impl BodyLoweringCtx<'_, '_, '_> {
             BuiltIn::discontinuity => {
                 // AB: Negative literals are represented as UnaryOp::Neg(Literal)
                 //     We have a function for that now.
-                let degree = self.body.as_literalsignedint(&args[0]);
+                //
+                // Enhancement-395: the argument is OPTIONAL -- the LRM writes
+                // `$discontinuity [ ( constant_expression ) ]` -- and `args[0]`
+                // was indexed unconditionally, so a bare `$discontinuity;` (or
+                // `$discontinuity();`) panicked the compiler in release at
+                // hir_lower/src/expr.rs. The arity table permits zero arguments,
+                // so validation never caught it. Omitting the degree means 0,
+                // the LRM's default: a step discontinuity in the value itself.
+                let degree = if args.is_empty() {
+                    Some(0)
+                } else {
+                    self.body.as_literalsignedint(&args[0])
+                };
                 if self.ctx.inside_lim && Some(-1) == degree {
                     self.ctx.call(CallBackKind::LimDiscontinuity, &[]);
                 } else if degree != Some(-1) {
@@ -2349,6 +2408,21 @@ impl BodyLoweringCtx<'_, '_, '_> {
     /// `(seed, salt, real_params...)` where `salt` is the call `ExprId` (a stable,
     /// unique per-call-site constant that decorrelates independent draws). Returns
     /// the raw real result; integer-returning builtins cast/round it themselves.
+    /// Enhancement-395: advances the caller's seed VARIABLE, giving the seed the
+    /// `inout` semantics the LRM specifies for every `$random`/`$dist_*` form.
+    ///
+    /// Without this the draw was a pure function of `(seed, salt)`, and `salt` is
+    /// a per-CALL-SITE constant -- so a call inside a loop had loop-invariant
+    /// arguments, was hoisted, and returned THE SAME VALUE on every iteration. A
+    /// Monte-Carlo loop drew N identical samples. Distinct call sites differed
+    /// (distinct salt), which is exactly what hid it: straight-line model code
+    /// looked correct.
+    ///
+    /// The advance is the classic LCG step, computed in the model rather than
+    /// through a new callback so the OSDI ABI is untouched. `osdi_rng_state`
+    /// avalanche-mixes `(seed, salt)`, so consecutive LCG seeds decorrelate fully.
+    /// Writing the variable also makes the draw genuinely loop-variant, which is
+    /// what stops it being hoisted.
     fn lower_rng(
         &mut self,
         expr: ExprId,
@@ -2749,25 +2823,69 @@ impl BodyLoweringCtx<'_, '_, '_> {
             let ri = if k + 1 < roots.len() { roots[k + 1] } else { F_ZERO };
             k += 2;
 
+            // Enhancement-395: each root contributes the NORMALIZED factor
+            // `(1 - s/r)`, not `(s - r)`.
+            //
+            // LRM 4.5.11.1-4.5.11.3 spell the zero/pole products as
+            // `prod(1 - s/(rho_r + j*rho_i))`. This built `prod(s - r)`, so the
+            // whole transfer function came out scaled by `prod(-zeta)/prod(-rho)`
+            // -- for a single pole at -1e4 the DC gain was 1e4x too small, and
+            // for two poles 2e8x. `laplace_nd` was unaffected (it takes
+            // coefficients, so no normalization question arises), which is why
+            // only the three ROOT-taking forms were wrong. The `zi_*` family is
+            // separate and already correct: the z-domain form is `1 - z^-1*rho`,
+            // where the root MULTIPLIES rather than divides.
+            //
+            // The LRM's own exception is handled too: "If a root is zero, then
+            // the term associated with it is implemented as s, rather than
+            // (1 - s/r)". That cannot be folded into the general formula (it
+            // would divide by zero), and the roots are runtime values here, so
+            // the two forms are selected at runtime. When the roots are
+            // constants -- overwhelmingly the common case -- the optimiser
+            // folds the select away.
             let n = re.len();
-            // s * P (shift up one degree) initialised into the new coefficient vectors.
             let mut nre = vec![F_ZERO; n + 1];
             let mut nim = vec![F_ZERO; n + 1];
+
+            // is_zero = (rr == 0) && (ri == 0)
+            let rr_z = self.ctx.ins().feq(rr, F_ZERO);
+            let ri_z = self.ctx.ins().feq(ri, F_ZERO);
+            let is_zero = crate::stmt::bool_and(self.ctx, rr_z, ri_z);
+
+            // 1/r = conj(r)/|r|^2, guarded so the zero-root branch cannot produce
+            // a NaN that the select would then have to discard.
+            let rr2 = self.ctx.ins().fmul(rr, rr);
+            let ri2 = self.ctx.ins().fmul(ri, ri);
+            let mag2 = self.ctx.ins().fadd(rr2, ri2);
+            let inv_re = self.fdiv_guarded(rr, mag2);
+            let ri_neg = self.ctx.ins().fneg(ri);
+            let inv_im = self.fdiv_guarded(ri_neg, mag2);
+
             for i in 0..n {
-                nre[i + 1] = re[i];
-                nim[i + 1] = im[i];
-            }
-            // subtract (rr + j*ri) * P from the shifted polynomial
-            for i in 0..n {
-                // (rr + j*ri) * (re[i] + j*im[i])
-                let rr_re = self.ctx.ins().fmul(rr, re[i]);
-                let ri_im = self.ctx.ins().fmul(ri, im[i]);
-                let prod_re = self.ctx.ins().fsub(rr_re, ri_im);
-                let rr_im = self.ctx.ins().fmul(rr, im[i]);
-                let ri_re = self.ctx.ins().fmul(ri, re[i]);
-                let prod_im = self.ctx.ins().fadd(rr_im, ri_re);
-                nre[i] = self.ctx.ins().fsub(nre[i], prod_re);
-                nim[i] = self.ctx.ins().fsub(nim[i], prod_im);
+                // (1/r) * P[i]
+                let a = self.ctx.ins().fmul(inv_re, re[i]);
+                let b = self.ctx.ins().fmul(inv_im, im[i]);
+                let q_re = self.ctx.ins().fsub(a, b);
+                let c = self.ctx.ins().fmul(inv_re, im[i]);
+                let d = self.ctx.ins().fmul(inv_im, re[i]);
+                let q_im = self.ctx.ins().fadd(c, d);
+
+                // normalized: P[i] carried down, -(P/r)[i] carried up one degree
+                let up_re = self.ctx.ins().fneg(q_re);
+                let up_im = self.ctx.ins().fneg(q_im);
+
+                // zero root: the factor is a bare `s`, i.e. P[i] shifts up and
+                // contributes nothing at its own degree.
+                let (pr, pi) = (re[i], im[i]);
+                let low_re = self.ctx.make_select(is_zero, move |_c, z| if z { F_ZERO } else { pr });
+                let low_im = self.ctx.make_select(is_zero, move |_c, z| if z { F_ZERO } else { pi });
+                let hi_re = self.ctx.make_select(is_zero, move |_c, z| if z { pr } else { up_re });
+                let hi_im = self.ctx.make_select(is_zero, move |_c, z| if z { pi } else { up_im });
+
+                nre[i] = self.ctx.ins().fadd(nre[i], low_re);
+                nim[i] = self.ctx.ins().fadd(nim[i], low_im);
+                nre[i + 1] = self.ctx.ins().fadd(nre[i + 1], hi_re);
+                nim[i + 1] = self.ctx.ins().fadd(nim[i + 1], hi_im);
             }
             re = nre;
             im = nim;

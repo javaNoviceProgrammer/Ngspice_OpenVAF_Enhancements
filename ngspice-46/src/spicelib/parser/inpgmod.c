@@ -78,6 +78,30 @@ find_instance_parameter(const char *name, IFdevice *device)
 /*
  * code moved from INPgetMod
  */
+/* Enhancement-395: one message for both spellings of a doubly-set parameter.
+ *
+ * Deliberately does NOT name which value wins. A .model card carries two kinds
+ * of parameter and they disagree: a model parameter is written straight through
+ * so the LAST one on the card wins, while an instance-parameter default is
+ * pushed onto `INPmodfast->defaults` with wl_cons and therefore replayed in
+ * reverse, so the FIRST one on the card wins. Stating a rule here would be
+ * wrong half the time; the actionable advice is to remove one of them. The
+ * instance line has no such split and its message does say which wins. */
+static void inp_warn_dup_param(const char *dev, const char *first,
+                               const char *second)
+{
+    if (strcmp(first, second) == 0)
+        fprintf(stderr,
+                "Warning: %s: parameter '%s' is set more than once on this "
+                "model card; only one value takes effect -- remove one.\n",
+                dev, first);
+    else
+        fprintf(stderr,
+                "Warning: %s: '%s' and '%s' are the same parameter "
+                "(aliasparam) and both are set on this model card; only one "
+                "value takes effect -- remove one.\n", dev, first, second);
+}
+
 static int
 create_model(CKTcircuit *ckt, INPmodel *modtmp, INPtables *tab)
 {
@@ -130,6 +154,24 @@ create_model(CKTcircuit *ckt, INPmodel *modtmp, INPtables *tab)
     }
 #endif
 
+    /* Enhancement-395: as in INPdevParse -- an OSDI parameter and each of its
+     * `aliasparam` names share one .id, so a .model card that sets both writes
+     * a single slot twice with no diagnostic. Model parameters and the
+     * instance-parameter defaults a card may also carry are separate id
+     * spaces, so they are tracked separately. OSDI only. */
+    int n_mtrack = 0, n_itrack = 0;
+    char **mseen = NULL, **iseen = NULL;
+#ifdef OSDI
+    if (is_osdi) {
+        n_mtrack = *(device->numModelParms);
+        n_itrack = *(device->numInstanceParms);
+        mseen = TMALLOC(char *, n_mtrack);
+        iseen = TMALLOC(char *, n_itrack);
+        memset(mseen, 0, (size_t)n_mtrack * sizeof(char *));
+        memset(iseen, 0, (size_t)n_itrack * sizeof(char *));
+    }
+#endif
+
     while (*line) {
         INPgetTok(&line, &parm, 1);
         if (!*parm) {
@@ -149,10 +191,19 @@ create_model(CKTcircuit *ckt, INPmodel *modtmp, INPtables *tab)
                 ++line;
             }
 #endif
+            if (mseen && p->id >= 0 && p->id < n_mtrack) {
+                if (mseen[p->id])
+                    inp_warn_dup_param(device->name, mseen[p->id], p->keyword);
+                else
+                    mseen[p->id] = p->keyword;
+            }
             IFvalue *val = INPgetValue(ckt, &line, p->dataType, tab);
             error = ft_sim->setModelParm(ckt, modtmp->INPmodfast, p->id, val, NULL);
-            if (error)
+            if (error) {
+                FREE(mseen);
+                FREE(iseen);
                 return error;
+            }
         } else if ((strcmp(parm, "level") == 0) || (strcmp(parm, "m") == 0)) {
             /* no instance parameter default for level and multiplier */
             /* just grab the number and throw away */
@@ -167,6 +218,13 @@ create_model(CKTcircuit *ckt, INPmodel *modtmp, INPtables *tab)
                 char *value;
 
                 INPgetTok(&line, &value, 1);
+                if (iseen && p->id >= 0 && p->id < n_itrack) {
+                    if (iseen[p->id])
+                        inp_warn_dup_param(device->name, iseen[p->id],
+                                           p->keyword);
+                    else
+                        iseen[p->id] = p->keyword;
+                }
                 if (p->dataType & IF_SET) {
                     modtmp->INPmodfast->defaults =
                         wl_cons(copy(parm),
@@ -198,6 +256,8 @@ create_model(CKTcircuit *ckt, INPmodel *modtmp, INPtables *tab)
         FREE(parm);
     }
 
+    FREE(mseen);
+    FREE(iseen);
     modtmp->INPmodLine->error = err;
     return 0;
 }

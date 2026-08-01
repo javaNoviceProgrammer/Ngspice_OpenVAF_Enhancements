@@ -1,5 +1,5 @@
 use basedb::diagnostics::{Diagnostic, Label, LabelStyle, Report};
-use basedb::lints::builtin::{const_simparam, trivial_probe, variant_const_simparam};
+use basedb::lints::builtin::{const_simparam, rng_in_loop, trivial_probe, variant_const_simparam};
 use basedb::lints::{self, Lint, LintSrc};
 use basedb::{AstIdMap, BaseDB, FileId};
 pub use body::BodyValidationDiagnostic;
@@ -142,6 +142,10 @@ impl Diagnostic for BodyValidationDiagnosticWrapped<'_> {
             BodyValidationDiagnostic::TrivialBranchAccess { stmt, .. } => {
                 let src = self.body_sm.lint_src(stmt, trivial_probe);
                 Some((trivial_probe, src))
+            }
+            BodyValidationDiagnostic::RngInLoop { stmt, .. } => {
+                let src = self.body_sm.lint_src(stmt, rng_in_loop);
+                Some((rng_in_loop, src))
             }
             _ => None,
         }
@@ -306,6 +310,26 @@ impl Diagnostic for BodyValidationDiagnosticWrapped<'_> {
                             .to_owned(),
                         "an unusable data file used to yield an EMPTY table, so the device \
                          silently contributed zero with nothing reported"
+                            .to_owned(),
+                    ])
+            }
+            // Enhancement-395: an unimplemented or malformed control code.
+            BodyValidationDiagnostic::TableControlUnsupported { expr, ref code, ref why } => {
+                let FileSpan { range, file } = self.expr_src(expr);
+                Report::error()
+                    .with_message(format!("unsupported $table_model control string \"{code}\""))
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: file,
+                        range: range.into(),
+                        message: why.to_string(),
+                    }])
+                    .with_notes(vec![
+                        "supported: interpolation '1' (linear) or '3' (cubic spline), and \
+                         extrapolation 'C' (constant) or 'L' (linear) applied to both ends"
+                            .to_owned(),
+                        "an unrecognised code used to fall through to linear interpolation \
+                         with clamped ends, with nothing reported"
                             .to_owned(),
                     ])
             }
@@ -722,6 +746,33 @@ impl Diagnostic for BodyValidationDiagnosticWrapped<'_> {
                         "help: Verilog-A analog functions must not be recursive (LRM 4.7); rewrite the computation as a loop".to_owned(),
                     ])
             }
+            BodyValidationDiagnostic::RngInLoop { ref name, expr, .. } => {
+                let FileSpan { range, file } = self.expr_src(expr);
+                Report::error()
+                    .with_message(format!(
+                        "`{name}` inside a loop draws the same number every iteration"
+                    ))
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: file,
+                        range: range.into(),
+                        message: "constant within the loop".to_owned(),
+                    }])
+                    .with_notes(vec![
+                        "the statistical builtins are pure functions of (seed, salt), and \
+                         `salt` is fixed per call site, so one call site in a loop yields \
+                         one value"
+                            .to_owned(),
+                        "this is deliberate: a seed that advances in place, as the LRM \
+                         nominally prescribes, would change on every model evaluation and \
+                         break DC/transient convergence"
+                            .to_owned(),
+                        "help: to vary a draw per iteration, use a separate call site per \
+                         sample (e.g. unroll with a genvar), or move the draw out of the loop"
+                            .to_owned(),
+                    ])
+            }
+
             BodyValidationDiagnostic::TrivialBranchAccess { branch, expr, .. } => {
                 let FileSpan { range, file } = self.expr_src(expr);
                 let db = self.db.upcast();

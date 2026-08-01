@@ -39,10 +39,18 @@ module complexpole_demo(in, lp_nd, lp_np, notch_nd, notch_zd);
 
         // Resonant low-pass -- complex conjugate POLES
         V(lp_nd) <+ laplace_nd(V(in), '{w02},          '{w02, wnQ, 1.0});
-        V(lp_np) <+ laplace_np(V(in), '{w02},          '{sig, wd, sig, -wd});
+        // Enhancement-395: the root forms are products of (1 - s/r), per LRM
+        // 4.5.11, so the denominator built from the pole pair already carries
+        // the 1/w02 normalisation and the numerator is a bare 1.0. It used to
+        // be '{w02} here, compensating for an UNNORMALISED prod(s - r).
+        V(lp_np) <+ laplace_np(V(in), '{1.0},           '{sig, wd, sig, -wd});
 
         // Notch -- complex ZEROS on the imaginary axis at +/- j*w0
         V(notch_nd) <+ laplace_nd(V(in), '{w02, 0.0, 1.0}, '{w02, wnQ, 1.0});
-        V(notch_zd) <+ laplace_zd(V(in), '{0.0, w0, 0.0, -w0}, '{w02, wnQ, 1.0});
+        // Same normalisation on the ZERO side: prod(1 - s/z) for zeros at
+        // +/- j*w0 is (s^2 + w02)/w02, so the denominator coefficients are
+        // scaled by 1/w02 to keep H(s) identical to the nd spelling.
+        V(notch_zd) <+ laplace_zd(V(in), '{0.0, w0, 0.0, -w0},
+                                  '{1.0, wnQ/w02, 1.0/w02});
     end
 endmodule

@@ -15,7 +15,9 @@
 
 # Directory containing this file (= laplace_examples/)
 _SETUP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
-_BIN_DIR="$(cd "$_SETUP_DIR/../bin" && pwd)"
+# The bin/ matrix lives at the REPO ROOT, two levels up from an example
+# directory (examples/<name>_examples/), not one.
+_BIN_DIR="$(cd "$_SETUP_DIR/../../bin" && pwd)"
 
 # --- detect OS / arch and map to the bin/ matrix ---
 case "$(uname -s)" in

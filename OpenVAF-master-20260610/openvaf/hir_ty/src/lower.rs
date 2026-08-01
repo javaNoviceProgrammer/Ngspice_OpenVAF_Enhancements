@@ -165,12 +165,26 @@ impl DisciplineTy {
         })
     }
 
+    /// Which of this discipline's access functions `nature` names, if any.
+    ///
+    /// Enhancement-395: this asks whether the natures are RELATED (share a base
+    /// nature), not merely whether their UNITS strings match. `NatureTy::compatible`
+    /// compares units alone, so any unrelated user-defined nature that happened to
+    /// declare `units = "A"` was accepted as `electrical`'s flow access -- writing
+    /// `Zi(p,n)` on an electrical branch silently behaved exactly as `I(p,n)`. The
+    /// check could tell a potential from a flow but not WHICH discipline the access
+    /// function belonged to, so a genuine modelling error compiled clean.
+    ///
+    /// `related` is the LRM's own rule (natures are compatible when they share a
+    /// base nature), and it still admits every legitimate use: a discipline's own
+    /// access functions, and any nature DERIVED from them (`nature MyPot : Voltage`
+    /// keeps Voltage as its base).
     pub fn access(&self, nature: NatureId, db: &dyn HirTyDB) -> Option<DisciplineAccess> {
-        if self.flow.map_or(false, |flow| NatureTy::compatible(db, flow, nature)) {
+        if self.flow.map_or(false, |flow| NatureTy::related(db, flow, nature)) {
             Some(DisciplineAccess::Flow)
         } else if self
             .potential
-            .map_or(false, |potential| NatureTy::compatible(db, potential, nature))
+            .map_or(false, |potential| NatureTy::related(db, potential, nature))
         {
             Some(DisciplineAccess::Potential)
         } else {

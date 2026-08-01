@@ -12,6 +12,8 @@ module laplace_mixed_var_literal(in, out);
 
     analog begin
         zero_coeffs[0] = -2e6;
-        V(out) <+ laplace_zd(V(in), zero_coeffs, '{3e12, 4e6, 1.0});
+        // Enhancement-395: see laplace_zd_only.va -- the zero root normalises,
+        // so the denominator coefficients carry the matching scale.
+        V(out) <+ laplace_zd(V(in), zero_coeffs, '{1.5e6, 2.0, 5.0e-7});
     end
 endmodule

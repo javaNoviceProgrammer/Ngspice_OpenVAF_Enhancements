@@ -57,6 +57,18 @@ pub enum BodyValidationDiagnostic {
     /// where the root file and the VFS are both in hand.
     TableFileUnusable { expr: ExprId, path: Box<str> },
 
+    /// Enhancement-395: a `$table_model` control-string code that is not
+    /// implemented, or not a control code at all.
+    ///
+    /// The string was decoded by scanning for `'3'` and `'L'` anywhere in it.
+    /// Every other LRM code -- `2` (quadratic spline), `D` (closest-point
+    /// lookup), `I` (ignore this column), `E` (error on an extrapolation
+    /// request) -- and every typo silently fell through to linear interpolation
+    /// with clamped ends. A model asking for a quadratic spline got a LINEAR
+    /// one; a model asking for `E`, whose whole purpose is to be told when the
+    /// table is left, got silent clamping instead. Saying so is the point.
+    TableControlUnsupported { expr: ExprId, code: Box<str>, why: Box<str> },
+
     /// Enhancement-390: `disable <name>` naming no enclosing named block.
     ///
     /// Lowering resolves the name against the enclosing named blocks and, on a
@@ -73,6 +85,13 @@ pub enum BodyValidationDiagnostic {
     },
     TrivialBranchAccess {
         branch: BranchWrite,
+        expr: ExprId,
+        stmt: StmtId,
+    },
+    /// Enhancement-395: an `$random`/`$dist_*` call inside a runtime loop draws
+    /// the SAME number on every iteration.
+    RngInLoop {
+        name: Box<str>,
         expr: ExprId,
         stmt: StmtId,
     },
@@ -994,6 +1013,42 @@ impl ExprValidator<'_, '_> {
                                     }
                                 }
                             }
+                            // Enhancement-395: validate the control string. It is
+                            // the LAST string literal argument for inline data, and
+                            // the one AFTER the file otherwise -- the same rule
+                            // lowering uses to pick it.
+                            let ctrl_arg = if inline {
+                                args[2..].iter().rev().copied().find(|&a| {
+                                    matches!(
+                                        self.parent.body.exprs[a],
+                                        Expr::Literal(Literal::String(_))
+                                    )
+                                })
+                            } else {
+                                let mut it = args[1..].iter().copied().filter(|&a| {
+                                    matches!(
+                                        self.parent.body.exprs[a],
+                                        Expr::Literal(Literal::String(_))
+                                    )
+                                });
+                                it.next();
+                                it.next()
+                            };
+                            if let Some(carg) = ctrl_arg {
+                                if let Expr::Literal(Literal::String(ref ctrl)) =
+                                    self.parent.body.exprs[carg]
+                                {
+                                    if let Some(why) = table_ctrl_problem(ctrl) {
+                                        self.parent.diagnostics.push(
+                                            BodyValidationDiagnostic::TableControlUnsupported {
+                                                expr: carg,
+                                                code: ctrl.clone(),
+                                                why: why.into(),
+                                            },
+                                        );
+                                    }
+                                }
+                            }
                         }
                         let signature = self.parent.infer.resolved_signatures.get(&expr);
                         self.validate_builtin(fun, expr, args, *builtin, signature.cloned());
@@ -1124,6 +1179,30 @@ impl ExprValidator<'_, '_> {
             // and `while` spellings were correctly rejected. `loop_depth` counts
             // every loop form, so the diagnostic no longer depends on whether the
             // trip count happens to be a literal.
+            // Enhancement-395: the RNG builtins are PURE functions of
+            // (seed, salt) with no persistent state -- Enhancement-10 made them
+            // so deliberately, because a seed that advances in place, as the LRM
+            // nominally prescribes, changes on every model evaluation and breaks
+            // DC/transient convergence (measured: a carried seed with a
+            // meaningful spread fails gmin stepping, source stepping and the
+            // transient op outright). `salt` is the call's ExprId, so it is
+            // constant per CALL SITE -- which means a loop executing one call
+            // site N times draws the SAME number N times, and a Monte-Carlo
+            // model written the obvious way has exactly one sample of variation
+            // in it. That cannot be fixed by advancing the seed without
+            // reintroducing the convergence failure, so it is reported instead
+            // of being silent. A lint, not a hard error: the code is well
+            // formed and a model that does not care can allow it.
+            _ if call.is_rng() && self.parent.loop_depth != 0 => {
+                if let Some(name) = name.as_ref().and_then(|p| p.as_ident()) {
+                    self.parent.diagnostics.push(BodyValidationDiagnostic::RngInLoop {
+                        name: name.to_string().into_boxed_str(),
+                        expr,
+                        stmt: self.stmt,
+                    });
+                }
+            }
+
             _ if (call.is_analog_operator() || call.is_analog_operator_sysfun())
                 && self.parent.loop_depth != 0 =>
             {
@@ -1438,6 +1517,95 @@ fn calls_reach(
 
 /// Enhancement-392: mirrors `hir_lower`'s `MAX_RUNTIME_TABLE`. Kept as a function
 /// so the two crates stay textually linked; `hir_ty` cannot depend on `hir_lower`.
+/// Enhancement-395: what is wrong with a `$table_model` control string, if
+/// anything. `None` means every code in it is implemented.
+///
+/// LRM tables 9-30/9-31: the string is comma-separated per-dimension
+/// sub-strings, optionally followed by `;<column>` selecting the dependent
+/// variable. Each sub-string is one interpolation character (`I`, `D`, `1`,
+/// `2`, `3`) followed by up to two extrapolation characters (`C`, `L`, `E`),
+/// one per end.
+///
+/// Implemented here: interpolation `1` and `3`, extrapolation `C` and `L`
+/// applied to BOTH ends. Everything else the LRM defines is reported rather
+/// than silently replaced by linear-with-clamped-ends.
+///
+/// NOTE ON THE DEFAULT: the LRM makes LINEAR extrapolation the default when no
+/// extrapolation character is given; this implementation clamps. That is a
+/// deliberate compatibility decision, not an oversight -- flipping it would
+/// silently change the answer of every existing model written with `"1"` or
+/// `"3"`, including this project's own suites. It is documented rather than
+/// changed, and an explicit `L` or `C` always means exactly what it says.
+fn table_ctrl_problem(ctrl: &str) -> Option<String> {
+    // strip the dependent-variable selector
+    let body = match ctrl.split_once(';') {
+        Some((head, sel)) => {
+            if sel.is_empty() || !sel.chars().all(|c| c.is_ascii_digit()) {
+                return Some(format!(
+                    "'{sel}' is not a dependent-variable column number"
+                ));
+            }
+            head
+        }
+        None => ctrl,
+    };
+    for sub in body.split(',') {
+        // whitespace anywhere in a sub-string is ignored, so "3 L" keeps working
+        let sub: String = sub.chars().filter(|c| !c.is_whitespace()).collect();
+        let sub = sub.as_str();
+        let mut chars = sub.chars();
+        let Some(first) = chars.next() else { continue };
+        let rest: String = match first {
+            '1' | '3' => chars.collect(),
+            '2' => {
+                return Some(
+                    "quadratic spline interpolation ('2') is not implemented; use '1' or '3'"
+                        .to_owned(),
+                )
+            }
+            'D' | 'd' => {
+                return Some(
+                    "closest-point lookup ('D') is not implemented; use '1' or '3'".to_owned()
+                )
+            }
+            'I' | 'i' => {
+                return Some("column selection ('I') is not implemented".to_owned())
+            }
+            'C' | 'L' | 'c' | 'l' | 'E' | 'e' => {
+                // no interpolation character: the whole sub-string is extrapolation
+                sub.to_owned()
+            }
+            other => return Some(format!("'{other}' is not an interpolation control character")),
+        };
+        let ext: Vec<char> = rest.chars().collect();
+        if ext.len() > 2 {
+            return Some(format!("'{sub}' has more than two extrapolation characters"));
+        }
+        for &c in &ext {
+            match c {
+                'C' | 'L' | 'c' | 'l' => {}
+                'E' | 'e' => {
+                    return Some(
+                        "error-on-extrapolation ('E') is not implemented; it would silently \
+                         clamp instead, so it is rejected rather than ignored"
+                            .to_owned(),
+                    )
+                }
+                other => {
+                    return Some(format!("'{other}' is not an extrapolation control character"))
+                }
+            }
+        }
+        if ext.len() == 2 && ext[0].to_ascii_uppercase() != ext[1].to_ascii_uppercase() {
+            return Some(format!(
+                "'{sub}' asks for a different extrapolation method at each end, which is not \
+                 implemented; both ends use the same method"
+            ));
+        }
+    }
+    None
+}
+
 fn hir_lower_max_runtime_table() -> usize {
     256
 }

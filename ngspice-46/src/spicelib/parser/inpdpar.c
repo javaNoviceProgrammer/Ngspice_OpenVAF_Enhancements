@@ -45,6 +45,26 @@ INPdevParse(char **line, CKTcircuit *ckt, int dev, GENinstance *fast,
 {
     IFdevice *device = ft_sim->devices[dev];
 
+    /* Enhancement-395: an OSDI parameter and each of its `aliasparam` names are
+     * registered as separate IFparm entries that all carry the SAME .id, so
+     * `n1 ... w=1u width=2u` writes one slot twice and the last spelling on the
+     * line silently wins. Setting a parameter twice under one name does the
+     * same. Both are modelling errors that produced no diagnostic at all.
+     *
+     * Track the ids written by THIS instance line and report a repeat, naming
+     * both spellings. Scoped to OSDI devices because `aliasparam` is a
+     * Verilog-A construct -- no built-in device's parsing changes.
+     *
+     * Instance-line only: model-card defaults are applied in the loop below
+     * and an instance line overriding one of them is legitimate, not a repeat.
+     * `alter` does not come through here, so re-setting a parameter after the
+     * deck is parsed stays silent, as it should. */
+    const int track_repeats = (device->registry_entry != NULL);
+    const int n_track = track_repeats ? *(device->numInstanceParms) : 0;
+    char **seen_as = n_track ? TMALLOC(char *, n_track) : NULL;
+    if (seen_as)
+        memset(seen_as, 0, (size_t)n_track * sizeof(char *));
+
     int error;                  /* int to store evaluate error return codes in */
     char *parm = NULL;
     char *errbuf;
@@ -133,6 +153,25 @@ INPdevParse(char **line, CKTcircuit *ckt, int dev, GENinstance *fast,
             goto quit;
         }
 
+        /* Enhancement-395: same parameter slot written twice on one line. */
+        if (seen_as && p->id >= 0 && p->id < n_track) {
+            if (seen_as[p->id]) {
+                if (strcmp(seen_as[p->id], p->keyword) == 0)
+                    fprintf(stderr,
+                            "Warning: %s: parameter '%s' is set more than once "
+                            "on this line; the last value is used.\n",
+                            device->name, p->keyword);
+                else
+                    fprintf(stderr,
+                            "Warning: %s: '%s' and '%s' are the same parameter "
+                            "(aliasparam); both are set on this line and the "
+                            "last value is used.\n",
+                            device->name, seen_as[p->id], p->keyword);
+            } else {
+                seen_as[p->id] = p->keyword;
+            }
+        }
+
         val = INPgetValue(ckt, line, p->dataType, tab);
         if (!val) {
             rtn = INPerror(E_PARMVAL);
@@ -160,6 +199,7 @@ INPdevParse(char **line, CKTcircuit *ckt, int dev, GENinstance *fast,
     }
 
  quit:
+    FREE(seen_as);
     FREE(parm);
     return rtn;
 }

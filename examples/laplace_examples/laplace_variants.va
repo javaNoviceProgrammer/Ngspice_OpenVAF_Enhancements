@@ -18,14 +18,20 @@ module laplace_variants(in, out_nd, out_np, out_zd, out_zp);
         // H(s) = 1 / (1 + tau*s)
         V(out_nd) <+ laplace_nd(V(in), '{1.0}, '{1.0, tau});
 
-        // Same H(s), pole form: 1/(1+tau*s) = (1/tau) / (s + 1/tau)
+        // Same H(s), pole form. Enhancement-395: the ROOT forms are products of
+        // (1 - s/r) per LRM 4.5.11, so the pole at -1/tau already builds the
+        // denominator (1 + tau*s) and the numerator is a bare 1.0. It used to
+        // read '{1.0/tau} here, compensating for an unnormalised prod(s - r).
         // one real pole at -1/tau, written as the pair (-1/tau, 0)
-        V(out_np) <+ laplace_np(V(in), '{1.0/tau}, '{-1.0/tau, 0.0});
+        V(out_np) <+ laplace_np(V(in), '{1.0}, '{-1.0/tau, 0.0});
 
-        // Second-order: H(s) = (s - z0) / ((s-p0)*(s-p1)), z0=-2e6, p0=-1e6, p1=-3e6
-        // zero form (den as polynomial): den(s) = (s+1e6)(s+3e6) = s^2 + 4e6 s + 3e12
+        // Second-order, DC gain 1: H(s) = (1 + s/2e6) / ((1 + s/1e6)(1 + s/3e6)),
+        // i.e. a zero at -2e6 and poles at -1e6 and -3e6, each root contributing
+        // (1 - s/r) per LRM 4.5.11 (Enhancement-395).
+        // zero form (den as polynomial): (1+s/1e6)(1+s/3e6) = 1 + 1.3333e-6 s + 3.3333e-13 s^2
         // one real zero at -2e6, written as the pair (-2e6, 0)
-        V(out_zd) <+ laplace_zd(V(in), '{-2e6, 0.0}, '{3e12, 4e6, 1.0});
+        V(out_zd) <+ laplace_zd(V(in), '{-2e6, 0.0},
+                                '{1.0, 4.0e6/3.0e12, 1.0/3.0e12});
 
         // same second-order system, fully pole/zero form: two real poles as pairs
         V(out_zp) <+ laplace_zp(V(in), '{-2e6, 0.0}, '{-1e6, 0.0, -3e6, 0.0});

@@ -7,6 +7,8 @@ module laplace_zd_only(in, out);
 
     analog begin
         // H(s) = (s+2e6) / (s^2 + 4e6 s + 3e12); H(0) = 2e6/3e12 = 6.667e-7
-        V(out) <+ laplace_zd(V(in), '{-2e6}, '{3e12, 4e6, 1.0});
+        // Enhancement-395: the zero root contributes (1 - s/-2e6), so the
+        // denominator coefficients carry the matching 1/2e6 scale.
+        V(out) <+ laplace_zd(V(in), '{-2e6}, '{1.5e6, 2.0, 5.0e-7});
     end
 endmodule
