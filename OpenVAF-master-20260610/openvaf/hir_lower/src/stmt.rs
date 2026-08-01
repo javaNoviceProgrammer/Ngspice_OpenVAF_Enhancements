@@ -15,7 +15,7 @@ use crate::{CallBackKind, CurrentKind, ParamKind, PlaceKind};
 /// unlowered `ExprId` inside the branch) -- used by `lower_event_control`'s
 /// `cross`/`above`/`timer` edge-detection logic, which combines several
 /// already-computed boolean `Value`s rather than source-level expressions.
-fn bool_and(ctx: &mut LoweringCtx, a: Value, b: Value) -> Value {
+pub(crate) fn bool_and(ctx: &mut LoweringCtx, a: Value, b: Value) -> Value {
     ctx.make_select(a, |_, branch| if branch { b } else { FALSE })
 }
 

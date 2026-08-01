@@ -666,6 +666,68 @@ impl BodyLoweringCtx<'_, '_, '_> {
         result
     }
 
+    /// Enhancement-391: move repeated abscissae to the END of a runtime table and
+    /// replicate the last distinct knot over them.
+    ///
+    /// The compile-time forms de-duplicate by SHORTENING the point vector, so the
+    /// spline is solved over `m` distinct knots. Carrying the first value forward
+    /// (Enhancement-390) reproduces that for LINEAR interpolation -- a zero-width
+    /// segment with equal endpoints contributes nothing -- but not for a spline,
+    /// where the dead knot still occupies a row of the tridiagonal system and
+    /// perturbs every moment.
+    ///
+    /// A runtime array cannot shrink, so the duplicates are instead partitioned to
+    /// the end (a stable 0/1 bubble network on a "is a repeat" flag that travels
+    /// with its point), and the trailing slots take the last distinct knot's
+    /// coordinates. The live prefix is then exactly the de-duplicated table, and
+    /// `interp_1d_spline_runtime` forces the natural boundary onto the last live
+    /// knot rather than the last slot.
+    fn compact_distinct_runtime(&mut self, xs: &mut Vec<Value>, ys: &mut Vec<Value>) {
+        let n = xs.len();
+        if n < 2 {
+            return;
+        }
+        let one = self.ctx.fconst(1.0);
+        // flag = 1.0 for a point whose abscissa repeats its predecessor's. Computed
+        // before any movement, since it is a statement about the SORTED order.
+        let mut flags: Vec<Value> = Vec::with_capacity(n);
+        flags.push(F_ZERO);
+        for i in 1..n {
+            let dup = self.ctx.ins().feq(xs[i], xs[i - 1]);
+            flags.push(self.ctx.make_select(dup, move |_c, b| if b { one } else { F_ZERO }));
+        }
+        // stable partition: flagged points bubble to the end, order otherwise kept
+        for _ in 0..n {
+            for j in 0..n - 1 {
+                let swap = self.ctx.ins().fgt(flags[j], flags[j + 1]);
+                let (xa, xb) = (xs[j], xs[j + 1]);
+                let (ya, yb) = (ys[j], ys[j + 1]);
+                let (fa, fb) = (flags[j], flags[j + 1]);
+                let nx0 = self.ctx.make_select(swap, move |_c, b| if b { xb } else { xa });
+                let nx1 = self.ctx.make_select(swap, move |_c, b| if b { xa } else { xb });
+                let ny0 = self.ctx.make_select(swap, move |_c, b| if b { yb } else { ya });
+                let ny1 = self.ctx.make_select(swap, move |_c, b| if b { ya } else { yb });
+                let nf0 = self.ctx.make_select(swap, move |_c, b| if b { fb } else { fa });
+                let nf1 = self.ctx.make_select(swap, move |_c, b| if b { fa } else { fb });
+                xs[j] = nx0;
+                xs[j + 1] = nx1;
+                ys[j] = ny0;
+                ys[j + 1] = ny1;
+                flags[j] = nf0;
+                flags[j + 1] = nf1;
+            }
+        }
+        // the flagged tail takes the last distinct knot, one slot at a time
+        let half = self.ctx.fconst(0.5);
+        for i in 1..n {
+            let dropped = self.ctx.ins().fgt(flags[i], half);
+            let (px, py) = (xs[i - 1], ys[i - 1]);
+            let (cx, cy) = (xs[i], ys[i]);
+            xs[i] = self.ctx.make_select(dropped, move |_c, b| if b { px } else { cx });
+            ys[i] = self.ctx.make_select(dropped, move |_c, b| if b { py } else { cy });
+        }
+    }
+
     /// Enhancement-390: natural cubic spline over a RUNTIME grid.
     ///
     /// `interp_1d_spline` builds its moment matrix by inverting the tridiagonal
@@ -690,6 +752,12 @@ impl BodyLoweringCtx<'_, '_, '_> {
         if n < 3 {
             return self.interp_1d_runtime(x, grid, vals, linear_extrap);
         }
+        // Enhancement-391: reduce to the distinct knots first, so the system below
+        // is the one the compile-time spline solves.
+        let (mut grid, mut vals) = (grid.to_vec(), vals.to_vec());
+        self.compact_distinct_runtime(&mut grid, &mut vals);
+        let (grid, vals) = (&grid[..], &vals[..]);
+        let last_x = grid[n - 1];
         // h[i] = grid[i+1] - grid[i]
         let h: Vec<Value> =
             (0..n - 1).map(|i| self.ctx.ins().fsub(grid[i + 1], grid[i])).collect();
@@ -712,12 +780,24 @@ impl BodyLoweringCtx<'_, '_, '_> {
         let mut r = Vec::with_capacity(m_int); // rhs
         for k in 0..m_int {
             let i = k + 1;
-            a.push(h[i - 1]);
+            // Enhancement-391: a knot at the END of the live range -- the last
+            // distinct knot and every replicated slot after it -- carries the
+            // natural boundary condition M = 0. Compaction guarantees the live
+            // prefix has strictly increasing abscissae, so every OTHER row is an
+            // ordinary interior row with two non-degenerate intervals, exactly as
+            // in the de-duplicated compile-time system.
+            let at_end = self.ctx.ins().feq(grid[i], last_x);
+            let ai = h[i - 1];
             let sum = self.ctx.ins().fadd(h[i - 1], h[i]);
-            b.push(self.ctx.ins().fmul(two, sum));
-            c.push(h[i]);
+            let bi = self.ctx.ins().fmul(two, sum);
+            let ci = h[i];
             let dd = self.ctx.ins().fsub(d[i], d[i - 1]);
-            r.push(self.ctx.ins().fmul(six, dd));
+            let ri = self.ctx.ins().fmul(six, dd);
+            let one = self.ctx.fconst(1.0);
+            a.push(self.ctx.make_select(at_end, move |_c, b| if b { F_ZERO } else { ai }));
+            b.push(self.ctx.make_select(at_end, move |_c, b| if b { one } else { bi }));
+            c.push(self.ctx.make_select(at_end, move |_c, b| if b { F_ZERO } else { ci }));
+            r.push(self.ctx.make_select(at_end, move |_c, b| if b { F_ZERO } else { ri }));
         }
         // forward elimination
         let mut cp = Vec::with_capacity(m_int);
@@ -781,13 +861,22 @@ impl BodyLoweringCtx<'_, '_, '_> {
             let t4 = self.ctx.ins().fmul(c4, bb);
             let s12 = self.ctx.ins().fadd(t1, t2);
             let s34 = self.ctx.ins().fadd(t3, t4);
-            seg.push(self.ctx.ins().fadd(s12, s34));
+            let cubic = self.ctx.ins().fadd(s12, s34);
+            // A zero-width interval carries no cubic; it stands for its own knot.
+            let dead = self.ctx.ins().feq(h[i], F_ZERO);
+            let vi = vals[i];
+            seg.push(self.ctx.make_select(dead, move |_c, b| if b { vi } else { cubic }));
         }
         let mut result = seg[0];
         for i in 1..n - 1 {
+            // Enhancement-391: skip the replicated tail. Without this the highest
+            // qualifying index wins and a dead segment would shadow the last live
+            // one for every x at or beyond the final knot.
             let ge = self.ctx.ins().fge(x, grid[i]);
+            let live = self.ctx.ins().fgt(grid[i + 1], grid[i]);
+            let take = crate::stmt::bool_and(self.ctx, ge, live);
             let seg_i = seg[i];
-            result = self.ctx.make_select(ge, move |_c, b| if b { seg_i } else { result });
+            result = self.ctx.make_select(take, move |_c, b| if b { seg_i } else { result });
         }
 
         // Extrapolation, mirroring the compile-time spline exactly: with 'L' the
@@ -810,12 +899,30 @@ impl BodyLoweringCtx<'_, '_, '_> {
             let below = self.ctx.ins().flt(x, g0);
             result = self.ctx.make_select(below, move |_c, b| if b { low } else { result });
 
-            let hl = self.ctx.ins().fsub(grid[n - 1], grid[n - 2]);
+            // Enhancement-391: the upper end tangent must come from the last two
+            // LIVE knots. After compaction the final slots are replicas of the last
+            // distinct knot, so `grid[n-1] - grid[n-2]` is zero and the guarded
+            // division silently turned the extrapolation into a CLAMP -- correct
+            // inside the grid, wrong past it. Scanning forward and keeping the last
+            // knot strictly below the end finds the real neighbour, since the live
+            // prefix is strictly increasing.
+            let mut prev_x = grid[0];
+            let mut prev_y = vals[0];
+            let mut prev_m = moments[0];
+            for i in 1..n {
+                let below = self.ctx.ins().flt(grid[i], last_x);
+                let (gi, vi, mi) = (grid[i], vals[i], moments[i]);
+                let (px, py, pm) = (prev_x, prev_y, prev_m);
+                prev_x = self.ctx.make_select(below, move |_c, b| if b { gi } else { px });
+                prev_y = self.ctx.make_select(below, move |_c, b| if b { vi } else { py });
+                prev_m = self.ctx.make_select(below, move |_c, b| if b { mi } else { pm });
+            }
+            let hl = self.ctx.ins().fsub(last_x, prev_x);
             let six_c2 = self.ctx.fconst(6.0);
             let hl6 = self.fdiv_guarded(hl, six_c2);
-            let dvl = self.ctx.ins().fsub(vals[n - 1], vals[n - 2]);
+            let dvl = self.ctx.ins().fsub(vals[n - 1], prev_y);
             let dvlh = self.fdiv_guarded(dvl, hl);
-            let mlterm = self.ctx.ins().fmul(moments[n - 2], hl6);
+            let mlterm = self.ctx.ins().fmul(prev_m, hl6);
             let slopel = self.ctx.ins().fadd(dvlh, mlterm);
             let dxl = self.ctx.ins().fsub(x, gl);
             let extl = self.ctx.ins().fmul(dxl, slopel);
