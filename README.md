@@ -634,6 +634,18 @@ a variance cross-check between the transient, `.noise`, and thermodynamics. It
 also records which elements are *not* noise sources in `.tran`, and a measurement
 trap that made a correct result look 38% wrong.
 
+[Temperature and the multiplier in
+ngspice](docs/internals/ngspice_internals/ngspice_temperature.md)
+([PDF](docs/internals/ngspice_internals/ngspice_temperature.pdf)) documents the
+four instance knobs a compact model sits under — `m`, `temp`, `dtemp`, `dt` —
+and how each reaches an OSDI (Verilog-A) device: that ngspice supplies all four
+by *default* and declaring one in Verilog-A is what makes it step back; that `m`
+and `$mfactor` are distinct parameters that **multiply** rather than alias; the
+Celsius→Kelvin convention on `temp`; and why `$vt` must be checked by ratio
+rather than against a textbook `kT/q`. Every figure is generated from a
+simulation, each verified against a built-in device in the same deck — including
+a resistor used as a thermometer.
+
 Not every idea survives measurement. [OSDI/Verilog-A device bypass — an
 investigation](docs/internals/ngspice_internals/ngspice_osdi_bypass.md)
 ([PDF](docs/internals/ngspice_internals/ngspice_osdi_bypass.pdf)) records a full,
