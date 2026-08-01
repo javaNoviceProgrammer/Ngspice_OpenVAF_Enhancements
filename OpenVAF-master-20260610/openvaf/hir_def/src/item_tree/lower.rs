@@ -465,6 +465,32 @@ impl Ctx {
             &mut param_arrays,
         );
 
+        // Enhancement-396: a bus port states its range twice -- once on the
+        // direction declaration and once on the net declaration -- and the two
+        // used to be reconciled by letting the DIRECTION win. `inout [0:2] b;`
+        // beside `electrical [0:4] b;` therefore produced a three-bit port and
+        // silently dropped the net's other two bits, so the module had fewer
+        // terminals than its own source said. (The opposite order was already
+        // caught, but only incidentally, as "no discipline for net 'b[3]'".)
+        // Each declaration registers its OWN `BusDecl`, so compare every bus
+        // carrying the port's name against the range the direction stated.
+        for (name, range) in &port_widths {
+            let Some((dir_msb, dir_lsb)) = fold_width_range(range) else { continue };
+            for bus in buses.iter().filter(|b| b.base_name == *name) {
+                if bus.msb != dir_msb || bus.lsb != dir_lsb {
+                    self.tree.diagnostics.push(ItemTreeDiagnostic::PortRangeMismatch {
+                        ast_id: bus.ast_id,
+                        name: name.clone(),
+                        dir_msb,
+                        dir_lsb,
+                        net_msb: bus.msb,
+                        net_lsb: bus.lsb,
+                    });
+                    break;
+                }
+            }
+        }
+
         self.check_branch_bus_refs(&items, &buses);
 
         let res =

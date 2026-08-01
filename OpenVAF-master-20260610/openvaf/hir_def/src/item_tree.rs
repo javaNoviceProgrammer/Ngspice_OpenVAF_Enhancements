@@ -84,6 +84,18 @@ pub enum ItemTreeDiagnostic {
     /// (Enhancement-43). Previously a too-short literal crashed the compiler
     /// (the missing elements lowered as `Expr::Missing`, "invalid HIR").
     ArrayInitializerLengthMismatch { ast_id: ErasedAstId, name: Name, expected: u32, found: u32 },
+    /// Enhancement-396: a bus port whose DIRECTION declaration and NET
+    /// declaration state different ranges (`inout [0:2] b; electrical [0:4] b;`).
+    /// The direction range silently won and the net's extra bits were discarded,
+    /// so the module quietly had fewer terminals than its own declaration said.
+    PortRangeMismatch {
+        ast_id: ErasedAstId,
+        name: Name,
+        dir_msb: i32,
+        dir_lsb: i32,
+        net_msb: i32,
+        net_lsb: i32,
+    },
     /// A net declaration's nodeset initializer (`electrical a = <expr>;`,
     /// Enhancement-45) did not fold to a numeric constant; the initializer
     /// was dropped (no nodeset for that net).

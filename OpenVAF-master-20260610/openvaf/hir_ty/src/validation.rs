@@ -1,5 +1,7 @@
 use basedb::diagnostics::{Diagnostic, Label, LabelStyle, Report};
-use basedb::lints::builtin::{const_simparam, rng_in_loop, trivial_probe, variant_const_simparam};
+use basedb::lints::builtin::{
+    const_simparam, rng_in_loop, trivial_probe, unknown_limit_function, variant_const_simparam,
+};
 use basedb::lints::{self, Lint, LintSrc};
 use basedb::{AstIdMap, BaseDB, FileId};
 pub use body::BodyValidationDiagnostic;
@@ -146,6 +148,10 @@ impl Diagnostic for BodyValidationDiagnosticWrapped<'_> {
             BodyValidationDiagnostic::RngInLoop { stmt, .. } => {
                 let src = self.body_sm.lint_src(stmt, rng_in_loop);
                 Some((rng_in_loop, src))
+            }
+            BodyValidationDiagnostic::UnknownLimitFunction { stmt, .. } => {
+                let src = self.body_sm.lint_src(stmt, unknown_limit_function);
+                Some((unknown_limit_function, src))
             }
             _ => None,
         }
@@ -305,6 +311,10 @@ impl Diagnostic for BodyValidationDiagnosticWrapped<'_> {
                             .to_owned(),
                     }])
                     .with_notes(vec![
+                        "a value that is not finite -- 'nan', 'inf', or an overflowing \
+                         exponent such as 1e400 -- makes the whole file unusable, because it \
+                         would poison every interpolation drawn from it"
+                            .to_owned(),
                         "the path is resolved relative to the directory of the file being \
                          compiled"
                             .to_owned(),
@@ -746,6 +756,48 @@ impl Diagnostic for BodyValidationDiagnosticWrapped<'_> {
                         "help: Verilog-A analog functions must not be recursive (LRM 4.7); rewrite the computation as a loop".to_owned(),
                     ])
             }
+            BodyValidationDiagnostic::UnknownLimitFunction { ref name, nargs, expr, .. } => {
+                let FileSpan { range, file } = self.expr_src(expr);
+                Report::error()
+                    .with_message(format!(
+                        "$limit names the limiting function \"{name}\", which this \
+                         simulator does not provide with {nargs} extra argument(s)"
+                    ))
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: file,
+                        range: range.into(),
+                        message: "unresolvable limiting function".to_owned(),
+                    }])
+                    .with_notes(vec![
+                        "ngspice provides pnjlim (2 extra args), fetlim (1), limitlog (1) \
+                         and limvds (0)"
+                            .to_owned(),
+                        "a name or argument count it cannot resolve makes the .osdi file \
+                         refuse to load; it used to crash the simulator outright"
+                            .to_owned(),
+                    ])
+            }
+
+            BodyValidationDiagnostic::InvalidBuiltinArg {
+                ref builtin, ref what, ref why, expr,
+            } => {
+                let FileSpan { range, file } = self.expr_src(expr);
+                Report::error()
+                    .with_message(format!("{builtin}: {what} {why}"))
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: file,
+                        range: range.into(),
+                        message: format!("invalid {what} for {builtin}"),
+                    }])
+                    .with_notes(vec![
+                        "checked only when the argument is written out as a constant; a \
+                         value computed at run time is the model's own responsibility"
+                            .to_owned(),
+                    ])
+            }
+
             BodyValidationDiagnostic::RngInLoop { ref name, expr, .. } => {
                 let FileSpan { range, file } = self.expr_src(expr);
                 Report::error()
@@ -1063,6 +1115,16 @@ fn table_file_is_usable(root_file: FileId, db: &dyn BaseDB, path: &str) -> bool 
         .filter_map(|tok| tok.parse::<f64>().ok())
         .collect();
     if nums.len() < 2 {
+        return false;
+    }
+    // Enhancement-396: `f64::from_str` accepts "nan", "inf", "-infinity", and it
+    // returns an INFINITY rather than an error for an overflowing exponent like
+    // 1e400. A non-numeric token such as "abc" was already rejected, so a file
+    // holding a missing-data marker -- which is exactly how measured data files
+    // spell one -- slipped through and poisoned the ENTIRE table: every query,
+    // including points that should interpolate between valid rows, returned NaN
+    // with no diagnostic. The readers in hir_lower apply the same rule.
+    if nums.iter().any(|v| !v.is_finite()) {
         return false;
     }
     // The N-dimensional form is `ndim / sizes[ndim] / axes... / values`; the

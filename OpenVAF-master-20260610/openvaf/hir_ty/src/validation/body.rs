@@ -6,9 +6,9 @@ use hir_def::{
     BranchId, BuiltIn, CaseKind, DefWithBodyId, DisciplineId, Expr, ExprId, FunctionArgLoc,
     FunctionId, Literal, Lookup, NatureId, NodeId, ParamId, Path, Stmt, StmtId, Type, VarId,
 };
-use hir_def::expr::CaseCond;
+use hir_def::expr::{CaseCond, Event};
 use stdx::impl_display;
-use syntax::ast::{AssignOp, BinaryOp};
+use syntax::ast::{AssignOp, BinaryOp, UnaryOp};
 use syntax::name::{AsIdent, Name};
 
 use crate::builtin::{
@@ -94,6 +94,23 @@ pub enum BodyValidationDiagnostic {
         name: Box<str>,
         expr: ExprId,
         stmt: StmtId,
+    },
+    /// Enhancement-396: `$limit` names a limiting function the target simulator
+    /// is not known to provide.
+    UnknownLimitFunction {
+        name: Box<str>,
+        nargs: usize,
+        expr: ExprId,
+        stmt: StmtId,
+    },
+    /// Enhancement-396: a builtin was handed a compile-time-constant argument
+    /// that its own definition forbids (a non-positive period, a direction that
+    /// is not -1/0/+1, a malformed `noise_table` array, ...).
+    InvalidBuiltinArg {
+        builtin: Box<str>,
+        what: Box<str>,
+        why: Box<str>,
+        expr: ExprId,
     },
     PotentialOfPortFlow {
         expr: ExprId,
@@ -378,6 +395,63 @@ struct BodyValidator<'a> {
 }
 
 impl BodyValidator<'_> {
+    /// Enhancement-396: check the constant arguments of an event expression.
+    ///
+    /// `@(timer(start, period))` with a period of zero, a negative period, or a
+    /// denormal one did not error and did not disable the timer -- it fired on
+    /// EVERY solver evaluation. Over a 10 us transient a 1 us timer produced 10
+    /// events and a zero period produced 120, one per timestep, so a period
+    /// computed as `1/freq` with `freq = 0` silently turned a sampler into a
+    /// per-iteration event. `@(cross(expr, dir))` likewise accepted any integer
+    /// as the direction, where only -1, 0 and +1 mean anything.
+    fn validate_event(&mut self, event: &Event, stmt: StmtId) {
+        match *event {
+            Event::Timer { t0, period } => {
+                let mut v = ExprValidator {
+                    parent: self,
+                    cond_diagnostic_sink: None,
+                    write: false,
+                    stmt,
+                };
+                v.require_non_negative("@(timer)", "the start time", t0);
+                if let Some(period) = period {
+                    v.require_positive("@(timer)", "the period", period);
+                }
+            }
+            Event::Cross { expr: _, dir: Some(dir) } => {
+                let v = ExprValidator {
+                    parent: self,
+                    cond_diagnostic_sink: None,
+                    write: false,
+                    stmt,
+                };
+                let val = v.const_num(dir);
+                if let Some(val) = val {
+                    if val != -1.0 && val != 0.0 && val != 1.0 {
+                        let mut v = ExprValidator {
+                            parent: self,
+                            cond_diagnostic_sink: None,
+                            write: false,
+                            stmt,
+                        };
+                        v.bad_arg(
+                            "@(cross)",
+                            "the direction",
+                            format!("must be -1 (falling), 0 (either) or +1 (rising), but is {val}"),
+                            dir,
+                        );
+                    }
+                }
+            }
+            Event::Or(ref events) => {
+                for ev in events.iter() {
+                    self.validate_event(ev, stmt);
+                }
+            }
+            _ => {}
+        }
+    }
+
     fn validate_stmt(&mut self, stmt: StmtId) {
         let cond = match self.body.stmts[stmt] {
             Stmt::Assignment { dst, val, assignment_kind } => {
@@ -395,6 +469,7 @@ impl BodyValidator<'_> {
                 return;
             }
             Stmt::EventControl { ref event, body } => {
+                self.validate_event(event, stmt);
                 event.walk_child_exprs(|e| self.validate_expr(e, stmt));
                 let old = replace(&mut self.ctx, BodyCtx::EventControl);
                 self.validate_stmt(body);
@@ -1366,7 +1441,34 @@ impl ExprValidator<'_, '_> {
             (
                 BuiltIn::noise_table | BuiltIn::noise_table_log,
                 Some(NOISE_TABLE_INLINE | NOISE_TABLE_INLINE_NAME),
-            ) => self.validate_const_expr(args[0]),
+            ) => {
+                // Enhancement-396: the inline form is a flat list of
+                // (frequency, power) PAIRS. An odd length silently dropped the
+                // unpaired entry, and an empty or single-entry array made the
+                // device contribute NO NOISE AT ALL -- a spec that looks present
+                // and is not. A negative power is not a noise power at all: it
+                // reached the runtime and produced the same spectrum as its
+                // positive twin, so the sign was quietly discarded.
+                let name = "noise_table";
+                if let Expr::Array(ref elems) = self.parent.body.exprs[args[0]] {
+                    let elems = elems.clone();
+                    if elems.is_empty() {
+                        self.bad_arg(name, "table", "is empty, so the device would \
+                            contribute no noise at all".to_owned(), args[0]);
+                    } else if elems.len() % 2 != 0 {
+                        self.bad_arg(name, "table", format!(
+                            "has {} entr{}; it must hold (frequency, power) PAIRS, \
+                             so the count must be even", elems.len(),
+                            if elems.len() == 1 { "y" } else { "ies" }), args[0]);
+                    } else {
+                        for (i, &e) in elems.iter().enumerate() {
+                            let what = if i % 2 == 0 { "frequency" } else { "noise power" };
+                            self.require_non_negative(name, what, e);
+                        }
+                    }
+                }
+                self.validate_const_expr(args[0])
+            }
             (func @ (BuiltIn::simparam | BuiltIn::simparam_str), _) => {
                 if self.parent.ctx == BodyCtx::Const {
                     let known = if let Expr::Literal(Literal::String(name)) =
@@ -1396,6 +1498,106 @@ impl ExprValidator<'_, '_> {
                         expr,
                         stmt: self.stmt,
                     });
+                }
+            }
+
+            // Enhancement-396: time-like arguments spelled out as constants are
+            // checked against what the operator's own definition allows. These
+            // used to be accepted and then degrade silently at runtime.
+            // Enhancement-396: `$limit` hands the simulator a function NAME, and
+            // ngspice resolves it against a fixed table at load time. A name or
+            // arity it cannot resolve used to leave a NULL function pointer that
+            // the compiled model then CALLED -- an immediate SIGSEGV with no
+            // output at all, from source that compiled clean. ngspice refuses to
+            // load such a file now; this says the same thing at build time, when
+            // the model is in front of the author.
+            //
+            // A lint rather than an error: the set is simulator-defined, so a
+            // different OSDI consumer may legitimately provide more.
+            (BuiltIn::limit, _) if args.len() >= 2 => {
+                if let Expr::Literal(Literal::String(ref name)) =
+                    self.parent.body.exprs[args[1]]
+                {
+                    let name = name.clone();
+                    let nargs = args.len() - 2;
+                    let known = matches!(
+                        (&*name, nargs),
+                        ("pnjlim", 2) | ("fetlim", 1) | ("limitlog", 1) | ("limvds", 0)
+                    );
+                    if !known {
+                        self.report(BodyValidationDiagnostic::UnknownLimitFunction {
+                            name: name.to_string().into_boxed_str(),
+                            nargs,
+                            expr,
+                            stmt: self.stmt,
+                        });
+                    }
+                }
+            }
+
+            (BuiltIn::bound_step, _) => {
+                if let [step] = args {
+                    self.require_positive("$bound_step", "the step bound", *step);
+                }
+            }
+
+            (BuiltIn::absdelay, _) if args.len() >= 2 => {
+                self.require_non_negative("absdelay", "the delay", args[1]);
+                if args.len() >= 3 {
+                    self.require_positive("absdelay", "the maximum delay", args[2]);
+                    if let (Some(d), Some(m)) = (self.const_num(args[1]), self.const_num(args[2])) {
+                        if d > m {
+                            self.bad_arg("absdelay", "the delay", format!(
+                                "is {d}, which exceeds the declared maximum delay {m}"), args[1]);
+                        }
+                    }
+                }
+                if let [other_args @ .., const_expr] = args {
+                    if signature == Some(ABSDELAY_MAX) {
+                        args = other_args;
+                        self.validate_const_expr(*const_expr);
+                    }
+                }
+            }
+
+            (BuiltIn::transition, _) if args.len() >= 2 => {
+                for (i, what) in
+                    [(1usize, "the delay"), (2, "the rise time"), (3, "the fall time")]
+                {
+                    if let Some(&a) = args.get(i) {
+                        self.require_non_negative("transition", what, a);
+                    }
+                }
+                if let Some(&a) = args.get(4) {
+                    self.require_positive("transition", "the time tolerance", a);
+                }
+                if let [other_args @ .., const_expr] = args {
+                    if signature == Some(TRANSITION_DELAY_RISET_FALLT_TOL) {
+                        args = other_args;
+                        self.validate_const_expr(*const_expr);
+                    }
+                }
+            }
+
+            (BuiltIn::slew, _) if args.len() >= 2 => {
+                self.require_positive("slew", "the maximum positive rate", args[1]);
+                if let Some(&a) = args.get(2) {
+                    if let Some(v) = self.const_num(a) {
+                        if !(v < 0.0) {
+                            self.bad_arg("slew", "the maximum negative rate", format!(
+                                "must be less than zero, but is {v}"), a);
+                        }
+                    }
+                }
+            }
+
+            (BuiltIn::idtmod, _) if args.len() >= 3 => {
+                self.require_positive("idtmod", "the modulus", args[2]);
+                if let [other_args @ .., const_expr] = args {
+                    if signature == Some(IDT_IC_ASSERT_TOL) {
+                        args = other_args;
+                        self.validate_const_expr(*const_expr);
+                    }
                 }
             }
 
@@ -1447,6 +1649,54 @@ impl ExprValidator<'_, '_> {
 
         for arg in args {
             self.validate_expr(*arg)
+        }
+    }
+
+    /// Enhancement-396: the compile-time-constant value of `expr`, if it has
+    /// one. Only literals are folded here -- that is deliberately narrow. The
+    /// point is to catch the spelled-out mistake (`$bound_step(0)`,
+    /// `@(timer(0, 0))`) without pretending to know what a runtime expression
+    /// will evaluate to.
+    fn const_num(&self, expr: ExprId) -> Option<f64> {
+        match self.parent.body.exprs[expr] {
+            Expr::Literal(Literal::Float(v)) => Some(f64::from(v)),
+            Expr::Literal(Literal::Int(v)) => Some(v as f64),
+            Expr::UnaryOp { expr: inner, op: UnaryOp::Neg } => {
+                self.const_num(inner).map(|v| -v)
+            }
+            _ => None,
+        }
+    }
+
+    fn bad_arg(&mut self, builtin: &str, what: &str, why: String, expr: ExprId) {
+        self.report(BodyValidationDiagnostic::InvalidBuiltinArg {
+            builtin: builtin.to_owned().into_boxed_str(),
+            what: what.to_owned().into_boxed_str(),
+            why: why.into_boxed_str(),
+            expr,
+        })
+    }
+
+    /// Enhancement-396: reject a constant argument that must be strictly
+    /// positive. A zero or negative time constant is never what the model meant
+    /// and the runtime consequences are severe but silent -- `@(timer(0,0))`
+    /// fired on EVERY solver evaluation (120 events where 10 were due), a
+    /// negative `$bound_step` forced the minimum timestep everywhere (10001
+    /// output rows against 108), and `$bound_step(0)` aborted the analysis with
+    /// a "Timestep too small" that named neither the model nor the call.
+    fn require_positive(&mut self, builtin: &str, what: &str, expr: ExprId) {
+        if let Some(v) = self.const_num(expr) {
+            if !(v > 0.0) || !v.is_finite() {
+                self.bad_arg(builtin, what, format!("must be greater than zero, but is {v}"), expr)
+            }
+        }
+    }
+
+    fn require_non_negative(&mut self, builtin: &str, what: &str, expr: ExprId) {
+        if let Some(v) = self.const_num(expr) {
+            if v < 0.0 || !v.is_finite() {
+                self.bad_arg(builtin, what, format!("must not be negative, but is {v}"), expr)
+            }
         }
     }
 

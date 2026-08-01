@@ -458,6 +458,17 @@ extern OsdiObjectFile load_object_file(const char *input) {
     lim_table_len = 0;
   }
 
+  /* Enhancement-396: an unresolved $limit entry used to leave `func_ptr` NULL
+   * and merely print "ignoring..." -- but the compiled model still CALLS that
+   * pointer, so the very next evaluation dereferenced NULL and the process died
+   * with SIGSEGV and no output at all. The warning never reached the user
+   * either: it went to stdout and was destroyed, unflushed, by the crash it was
+   * warning about.
+   *
+   * There is no safe way to continue: the model's `$limit` call site is already
+   * compiled to an indirect call. So a mismatch is now a hard load failure with
+   * a message that names the function, both arities, and the supported set --
+   * and it goes to stderr, which is not buffered away by a later abort. */
   for (uint32_t i = 0; i < lim_table_len; i++) {
     int expected_args = -1;
     IS_LIM_FUN("pnjlim", 2, osdi_pnjlim)
@@ -465,12 +476,24 @@ extern OsdiObjectFile load_object_file(const char *input) {
     IS_LIM_FUN("fetlim", 1, osdi_fetlim)
     IS_LIM_FUN("limitlog", 1, osdi_limitlog)
     if (expected_args == -1) {
-      printf("warning(osdi): unknown $limit function \"%s\"", lim_table[i].name);
+      fprintf(stderr,
+              "Error: \"%s\": $limit() names the limiting function \"%s\", which "
+              "this simulator does not provide.\n"
+              "       Supported: pnjlim (2 args), fetlim (1), limitlog (1), "
+              "limvds (0).\n",
+              path, lim_table[i].name);
     } else {
-      printf("warning(osdi): unexpected number of arguments %i (expected %i) "
-             "for \"%s\", ignoring...",
-             lim_table[i].num_args, expected_args, lim_table[i].name);
+      fprintf(stderr,
+              "Error: \"%s\": $limit(..., \"%s\", ...) was given %u extra "
+              "argument%s but this simulator's \"%s\" takes %i.\n"
+              "       Supported: pnjlim (2 args), fetlim (1), limitlog (1), "
+              "limvds (0).\n",
+              path, lim_table[i].name, lim_table[i].num_args,
+              lim_table[i].num_args == 1 ? "" : "s", lim_table[i].name,
+              expected_args);
     }
+    txfree(path);
+    return INVALID_OBJECT;
   }
 
   /* Optional: absdelay descriptor arrays */

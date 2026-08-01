@@ -536,8 +536,12 @@ impl BodyLoweringCtx<'_, '_, '_> {
             }
             let mut it = line.split_whitespace();
             if let (Some(a), Some(b)) = (it.next(), it.next()) {
+                // Enhancement-396: non-finite entries are refused, as for
+                // $table_model data files.
                 if let (Ok(f), Ok(p)) = (a.parse::<f64>(), b.parse::<f64>()) {
-                    out.push((f, p));
+                    if f.is_finite() && p.is_finite() {
+                        out.push((f, p));
+                    }
                 }
             }
         }
@@ -584,8 +588,16 @@ impl BodyLoweringCtx<'_, '_, '_> {
                 continue;
             }
             for tok in line.split_whitespace() {
+                // Enhancement-396: a non-finite value (nan/inf, or an overflowing
+                // exponent, which `parse` turns into an infinity rather than an
+                // error) is refused here exactly as `table_file_is_usable` refuses
+                // it, so the reader and the validator agree on what a usable file
+                // is. Validation rejects such a file outright; this keeps the two
+                // from drifting apart if that check is ever relaxed.
                 if let Ok(v) = tok.parse::<f64>() {
-                    out.push(v);
+                    if v.is_finite() {
+                        out.push(v);
+                    }
                 }
             }
         }

@@ -127,6 +127,29 @@ impl Diagnostic for ItemTreeDiagnosticWrapped<'_> {
                             .to_owned(),
                     ])
             }
+            ItemTreeDiagnostic::PortRangeMismatch {
+                ast_id, name, dir_msb, dir_lsb, net_msb, net_lsb,
+            } => {
+                let range = self.ast_id_map.get_syntax(*ast_id).range();
+                let span = self.parse.to_file_span(range, self.sm);
+                Report::error()
+                    .with_message(format!(
+                        "port '{name}' is declared [{dir_msb}:{dir_lsb}] as a port but \
+                         [{net_msb}:{net_lsb}] as a net"
+                    ))
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: span.file,
+                        range: span.range.into(),
+                        message: format!("declared [{net_msb}:{net_lsb}] here"),
+                    }])
+                    .with_notes(vec![
+                        "the two declarations of a bus port must state the same range".to_owned(),
+                        "help: the port range used to win silently, so the net's extra bits \
+                         were discarded and the module had fewer terminals than it declared"
+                            .to_owned(),
+                    ])
+            }
             ItemTreeDiagnostic::ArrayInitializerLengthMismatch { ast_id, name, expected, found } => {
                 let range = self.ast_id_map.get_syntax(*ast_id).range();
                 let span = self.parse.to_file_span(range, self.sm);
