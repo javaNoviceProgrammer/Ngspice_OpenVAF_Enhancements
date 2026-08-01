@@ -38,6 +38,26 @@ pub struct IllegalCtxAccess {
 
 #[derive(PartialEq, Eq, Clone, Debug)]
 pub enum BodyValidationDiagnostic {
+    /// Enhancement-390: a `$table_model` data file that could not be used.
+    ///
+    /// The file is read during LOWERING, which has no diagnostic channel, so any
+    /// problem -- a mistyped name, an unreadable file, an empty or malformed one --
+    /// produced an EMPTY table and the device silently contributed zero. Nothing
+    /// was reported at compile time and nothing was odd at run time; the model just
+    /// did nothing. Whether the file is usable is decided when the report is built,
+    /// where the root file and the VFS are both in hand.
+    TableFileUnusable { expr: ExprId, path: Box<str> },
+
+    /// Enhancement-390: `disable <name>` naming no enclosing named block.
+    ///
+    /// Lowering resolves the name against the enclosing named blocks and, on a
+    /// miss, degraded to a no-op on purpose. That is invisible and wrong for the
+    /// case that actually happens: a typo'd label, or a block that was never
+    /// labelled at all. The statement silently did nothing, so a loop meant to
+    /// exit early ran to completion instead -- a changed answer from a spelling
+    /// mistake, with no diagnostic anywhere.
+    UnresolvedDisable { stmt: StmtId, name: Name },
+
     ExpectedPort {
         expr: ExprId,
         node: NodeId,
@@ -176,6 +196,7 @@ impl BodyValidationDiagnostic {
             diagnostics: Vec::new(),
             ctx,
             loop_depth: 0,
+            disable_scopes: Vec::new(),
             non_const_dominator: Box::default(),
             non_trivial_branches: HashSet::default(),
             trivial_probes: HashMap::default(),
@@ -319,6 +340,10 @@ struct BodyValidator<'a> {
     /// becomes `BodyCtx::Loop` when the controlling expression is non-constant,
     /// so `repeat(3)` would be missed.
     loop_depth: u32,
+    /// Enhancement-390: names of the enclosing `begin : label` blocks, mirroring
+    /// `hir_lower`'s `disable_scopes`, so a `disable` can be resolved here where
+    /// diagnostics exist.
+    disable_scopes: Vec<Name>,
     non_const_dominator: Box<[ExprId]>,
     non_trivial_branches: HashSet<BranchWrite>,
     trivial_probes: HashMap<BranchWrite, Vec<(StmtId, ExprId)>>,
@@ -348,12 +373,30 @@ impl BodyValidator<'_> {
                 self.ctx = old;
                 return;
             }
-            Stmt::Block { ref body, .. } => {
+            Stmt::Block { ref name, ref body } => {
+                if let Some(name) = name {
+                    self.disable_scopes.push(name.clone());
+                }
+                let named = name.is_some();
                 body.iter().for_each(|stmt| self.validate_stmt(*stmt));
+                if named {
+                    self.disable_scopes.pop();
+                }
                 return;
             }
 
-            Stmt::Missing | Stmt::Empty | Stmt::Disable { .. } => return,
+            Stmt::Disable { ref name } => {
+                // Enhancement-390: resolve against the enclosing named blocks.
+                if !self.disable_scopes.iter().any(|n| n == name) {
+                    self.diagnostics.push(BodyValidationDiagnostic::UnresolvedDisable {
+                        stmt,
+                        name: name.clone(),
+                    });
+                }
+                return;
+            }
+
+            Stmt::Missing | Stmt::Empty => return,
 
             Stmt::Expr(e) => {
                 self.validate_expr(e, stmt);
@@ -892,6 +935,38 @@ impl ExprValidator<'_, '_> {
             Expr::Call { ref fun, ref args, .. } => {
                 match self.parent.infer.resolved_calls.get(&expr) {
                     Some(ResolvedFun::BuiltIn(builtin)) => {
+                        // Enhancement-390: flag every `$table_model` data FILE. Whether
+                        // it is usable is decided when the report is built, where the
+                        // root file and the VFS are available; a usable one reports
+                        // nothing.
+                        if *builtin == BuiltIn::table_model && args.len() >= 2 {
+                            // Mirror `lower_table_model`'s own rule for WHICH argument
+                            // is the data file. Inline data -- an array literal or a
+                            // bare array-variable reference (Enhancement-389) -- means
+                            // there is no file at all, and the only string literal is
+                            // then the CONTROL STRING. Treating that as a filename
+                            // would reject every inline table for failing to open a
+                            // file named "1L".
+                            let inline = matches!(
+                                self.parent.body.exprs[args[1]],
+                                Expr::Array(_)
+                            ) || self.parent.infer.array_var_refs.contains_key(&args[1]);
+                            if !inline {
+                                for &arg in args[1..].iter() {
+                                    if let Expr::Literal(Literal::String(ref path)) =
+                                        self.parent.body.exprs[arg]
+                                    {
+                                        self.parent.diagnostics.push(
+                                            BodyValidationDiagnostic::TableFileUnusable {
+                                                expr: arg,
+                                                path: path.clone(),
+                                            },
+                                        );
+                                        break;
+                                    }
+                                }
+                            }
+                        }
                         let signature = self.parent.infer.resolved_signatures.get(&expr);
                         self.validate_builtin(fun, expr, args, *builtin, signature.cloned());
                         return;

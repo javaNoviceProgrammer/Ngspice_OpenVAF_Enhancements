@@ -1153,11 +1153,13 @@ fn substitute_index(body: &str, name: &str, value: i32) -> String {
 /// `def_map`. This keeps `generate` elaboration independent of -- and
 /// strictly prior to -- any name-resolution machinery.
 ///
-/// Scope (per Verilog-A LRM and this enhancement's design): `generate for`
-/// may only produce structural/declarative module items (net/instance/
-/// variable/parameter declarations) -- never an `analog` block. Only
-/// `generate for` is supported; `generate if`/`generate case` are out of
-/// scope (see module docs / Enhancement-8 writeup).
+/// Scope: `generate` produces module items -- net/instance/variable/parameter
+/// declarations and, since Enhancement-390, `analog` blocks. Enhancement-8's
+/// original note here said the LRM forbids an `analog` block inside a generate;
+/// it does not. The 2023 LRM's own grammar lists `analog_construct` as one
+/// alternative of `module_or_generate_item`, so an analog block is exactly as
+/// legal there as an instantiation. Until E-390 one was accepted by the
+/// elaborator and then silently DROPPED, contributing nothing.
 pub(crate) fn elaborate_generates(db: &mut CompilationDB) -> anyhow::Result<()> {
     let root_file = db.compilation_unit().root_file();
     let parse = db.parse(root_file);

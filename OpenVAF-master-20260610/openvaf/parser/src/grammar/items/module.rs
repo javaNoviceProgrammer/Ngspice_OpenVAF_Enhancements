@@ -582,7 +582,8 @@ fn generate_case_tail(p: &mut Parser, m: Marker, top: bool) {
 const GENERATE_BLOCK_RECOVER: TokenSet = TokenSet::new(&[END_KW, EOF, ENDMODULE_KW, ENDGENERATE_KW]);
 
 /// The `begin : label ... end` body of a `generate for` loop. Its items are
-/// ordinary `ModuleItem`s (structural/declarative only), not statements.
+/// ordinary `ModuleItem`s -- nets, instances, vars, params, and (since
+/// Enhancement-390) `analog` blocks -- not statements.
 fn generate_block(p: &mut Parser) {
     let m = p.start();
     p.expect(BEGIN_KW);
@@ -620,9 +621,25 @@ fn generate_block(p: &mut Parser) {
                 parameter_decl(p, m);
             }
             INTEGER_KW | REAL_KW | STRING_KW => var_decl(p, m),
+            // Enhancement-390: an `analog` block is a module item, so it is legal
+            // inside a generate block -- `generate for (i=0;i<N;i=i+1) begin
+            // analog I(p,n) <+ ...; end` is the natural way to build N identical
+            // contributions. It used to land in the catch-all below, and the
+            // resulting parse error was then SWALLOWED: elaboration re-renders the
+            // generate region from its syntax tree, so the error never reached the
+            // user and the malformed node rendered to nothing. The block compiled
+            // clean, reported no diagnostics, and contributed exactly zero.
+            ANALOG_KW if p.nth(1) == FUNCTION_KW => func_decl(p, m),
+            ANALOG_KW => {
+                p.bump(ANALOG_KW);
+                p.eat(INITIAL_KW);
+                stmt_with_attrs(p);
+                m.complete(p, ANALOG_BEHAVIOUR);
+            }
             _ => {
                 m.abandon(p);
-                let err = p.unexpected_tokens_msg(vec![NET_DECL, INSTANTIATION, VAR_DECL]);
+                let err =
+                    p.unexpected_tokens_msg(vec![NET_DECL, INSTANTIATION, VAR_DECL, ANALOG_BEHAVIOUR]);
                 p.error(err);
                 p.bump_any();
                 while !p.at_ts(MODULE_ITEM_RECOVERY.union(GENERATE_BLOCK_RECOVER)) {

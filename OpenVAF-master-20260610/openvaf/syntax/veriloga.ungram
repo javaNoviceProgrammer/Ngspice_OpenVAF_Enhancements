@@ -335,8 +335,9 @@ GenvarDecl =
   AttrList* 'genvar' (Name (',' Name)*) ';'
 
 // `generate for (i = 0; i < N; i = i + 1) begin : label ... end endgenerate`
-// -- structural/declarative-only generation (LRM: no `analog` blocks may
-// appear inside). `init`/`incr` reuse the ordinary `Assign` statement grammar
+// -- generation of module items, INCLUDING `analog` blocks: the 2023 LRM lists
+// `analog_construct` among the alternatives of `module_or_generate_item`
+// (Enhancement-390 corrects an earlier note claiming otherwise). `init`/`incr` reuse the ordinary `Assign` statement grammar
 // (`i = 0`, `i = i + 1`); the loop bound (`N`, or any expression on either
 // side of `condition`) must constant-fold to an integer at compile time --
 // see `NonConstantGenerateBound` in `hir_def::item_tree`.
@@ -370,8 +371,8 @@ GenerateFor =
   'endgenerate'
 
 // The `begin : label ... end` body of a `generate for` loop. Unlike an
-// ordinary `BlockStmt`, its items are `ModuleItem`s (structural/declarative
-// only -- nets, instances, vars, params), not statements; a named label is
+// ordinary `BlockStmt`, its items are `ModuleItem`s -- nets, instances, vars,
+// params, and `analog` blocks (Enhancement-390) -- not statements; a named label is
 // required (LRM) so per-iteration instance/net names can be disambiguated
 // (`r` -> `r_0`, `r_1`, ...) the same way an instance-array element already
 // is (see `Enhancement-5.md`).

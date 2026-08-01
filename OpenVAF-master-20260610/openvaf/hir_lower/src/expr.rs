@@ -666,6 +666,235 @@ impl BodyLoweringCtx<'_, '_, '_> {
         result
     }
 
+    /// Enhancement-390: natural cubic spline over a RUNTIME grid.
+    ///
+    /// `interp_1d_spline` builds its moment matrix by inverting the tridiagonal
+    /// system at COMPILE time, which needs the abscissae as constants. With array
+    /// variables for the data they are not, so the cubic control code was silently
+    /// ignored and `"3"` quietly interpolated LINEARLY -- the same table and the
+    /// same control string gave 0.35 from a literal and 0.5 from arrays.
+    ///
+    /// The system is instead solved in MIR by the Thomas algorithm, unrolled: the
+    /// knot COUNT is known at compile time even when the knots are not, so the
+    /// elimination and back-substitution are straight-line code over runtime
+    /// values. Divisions are guarded, so a degenerate grid yields zero moments
+    /// (i.e. the linear result) rather than NaN.
+    fn interp_1d_spline_runtime(
+        &mut self,
+        x: Value,
+        grid: &[Value],
+        vals: &[Value],
+        linear_extrap: bool,
+    ) -> Value {
+        let n = grid.len();
+        if n < 3 {
+            return self.interp_1d_runtime(x, grid, vals, linear_extrap);
+        }
+        // h[i] = grid[i+1] - grid[i]
+        let h: Vec<Value> =
+            (0..n - 1).map(|i| self.ctx.ins().fsub(grid[i + 1], grid[i])).collect();
+        // slopes d[i] = (vals[i+1]-vals[i]) / h[i]
+        let d: Vec<Value> = (0..n - 1)
+            .map(|i| {
+                let dv = self.ctx.ins().fsub(vals[i + 1], vals[i]);
+                self.fdiv_guarded(dv, h[i])
+            })
+            .collect();
+
+        // Interior system for M[1..n-2] (natural spline: M[0] = M[n-1] = 0):
+        //   h[i-1]*M[i-1] + 2*(h[i-1]+h[i])*M[i] + h[i]*M[i+1] = 6*(d[i] - d[i-1])
+        let six = self.ctx.fconst(6.0);
+        let two = self.ctx.fconst(2.0);
+        let m_int = n - 2; // number of unknowns
+        let mut a = Vec::with_capacity(m_int); // sub-diagonal
+        let mut b = Vec::with_capacity(m_int); // diagonal
+        let mut c = Vec::with_capacity(m_int); // super-diagonal
+        let mut r = Vec::with_capacity(m_int); // rhs
+        for k in 0..m_int {
+            let i = k + 1;
+            a.push(h[i - 1]);
+            let sum = self.ctx.ins().fadd(h[i - 1], h[i]);
+            b.push(self.ctx.ins().fmul(two, sum));
+            c.push(h[i]);
+            let dd = self.ctx.ins().fsub(d[i], d[i - 1]);
+            r.push(self.ctx.ins().fmul(six, dd));
+        }
+        // forward elimination
+        let mut cp = Vec::with_capacity(m_int);
+        let mut rp = Vec::with_capacity(m_int);
+        for k in 0..m_int {
+            if k == 0 {
+                cp.push(self.fdiv_guarded(c[0], b[0]));
+                rp.push(self.fdiv_guarded(r[0], b[0]));
+            } else {
+                let acp = self.ctx.ins().fmul(a[k], cp[k - 1]);
+                let den = self.ctx.ins().fsub(b[k], acp);
+                let cpk = self.fdiv_guarded(c[k], den);
+                let arp = self.ctx.ins().fmul(a[k], rp[k - 1]);
+                let num = self.ctx.ins().fsub(r[k], arp);
+                let rpk = self.fdiv_guarded(num, den);
+                cp.push(cpk);
+                rp.push(rpk);
+            }
+        }
+        // back substitution -> interior moments
+        let mut m_rev: Vec<Value> = Vec::with_capacity(m_int);
+        for k in (0..m_int).rev() {
+            let v = if k == m_int - 1 {
+                rp[k]
+            } else {
+                let prev = *m_rev.last().unwrap();
+                let cx = self.ctx.ins().fmul(cp[k], prev);
+                self.ctx.ins().fsub(rp[k], cx)
+            };
+            m_rev.push(v);
+        }
+        m_rev.reverse();
+        let mut moments = Vec::with_capacity(n);
+        moments.push(F_ZERO);
+        moments.extend(m_rev);
+        moments.push(F_ZERO);
+
+        // segment i:  M[i]*a^3/(6h) + M[i+1]*b^3/(6h)
+        //           + (vals[i]/h - M[i]*h/6)*a + (vals[i+1]/h - M[i+1]*h/6)*b
+        let mut seg = Vec::with_capacity(n - 1);
+        for i in 0..n - 1 {
+            let six_h = self.ctx.ins().fmul(six, h[i]);
+            let aa = self.ctx.ins().fsub(grid[i + 1], x);
+            let bb = self.ctx.ins().fsub(x, grid[i]);
+            let a2 = self.ctx.ins().fmul(aa, aa);
+            let a3 = self.ctx.ins().fmul(a2, aa);
+            let b2 = self.ctx.ins().fmul(bb, bb);
+            let b3 = self.ctx.ins().fmul(b2, bb);
+            let mi_a3 = self.ctx.ins().fmul(moments[i], a3);
+            let t1 = self.fdiv_guarded(mi_a3, six_h);
+            let mi1_b3 = self.ctx.ins().fmul(moments[i + 1], b3);
+            let t2 = self.fdiv_guarded(mi1_b3, six_h);
+            let h6 = self.fdiv_guarded(h[i], six);
+            let vih = self.fdiv_guarded(vals[i], h[i]);
+            let mih6 = self.ctx.ins().fmul(moments[i], h6);
+            let c3 = self.ctx.ins().fsub(vih, mih6);
+            let t3 = self.ctx.ins().fmul(c3, aa);
+            let vi1h = self.fdiv_guarded(vals[i + 1], h[i]);
+            let mi1h6 = self.ctx.ins().fmul(moments[i + 1], h6);
+            let c4 = self.ctx.ins().fsub(vi1h, mi1h6);
+            let t4 = self.ctx.ins().fmul(c4, bb);
+            let s12 = self.ctx.ins().fadd(t1, t2);
+            let s34 = self.ctx.ins().fadd(t3, t4);
+            seg.push(self.ctx.ins().fadd(s12, s34));
+        }
+        let mut result = seg[0];
+        for i in 1..n - 1 {
+            let ge = self.ctx.ins().fge(x, grid[i]);
+            let seg_i = seg[i];
+            result = self.ctx.make_select(ge, move |_c, b| if b { seg_i } else { result });
+        }
+
+        // Extrapolation, mirroring the compile-time spline exactly: with 'L' the
+        // END TANGENT is continued, NOT the cubic extended. Getting this wrong is
+        // invisible inside the grid -- interior values match to the last digit
+        // either way -- and shows up only outside it.
+        let g0 = grid[0];
+        let gl = grid[n - 1];
+        if linear_extrap {
+            let h0 = self.ctx.ins().fsub(grid[1], grid[0]);
+            let six_c = self.ctx.fconst(6.0);
+            let h06 = self.fdiv_guarded(h0, six_c);
+            let dv0 = self.ctx.ins().fsub(vals[1], vals[0]);
+            let dv0h = self.fdiv_guarded(dv0, h0);
+            let m1term = self.ctx.ins().fmul(moments[1], h06);
+            let slope0 = self.ctx.ins().fsub(dv0h, m1term);
+            let dx0 = self.ctx.ins().fsub(x, g0);
+            let ext0 = self.ctx.ins().fmul(dx0, slope0);
+            let low = self.ctx.ins().fadd(vals[0], ext0);
+            let below = self.ctx.ins().flt(x, g0);
+            result = self.ctx.make_select(below, move |_c, b| if b { low } else { result });
+
+            let hl = self.ctx.ins().fsub(grid[n - 1], grid[n - 2]);
+            let six_c2 = self.ctx.fconst(6.0);
+            let hl6 = self.fdiv_guarded(hl, six_c2);
+            let dvl = self.ctx.ins().fsub(vals[n - 1], vals[n - 2]);
+            let dvlh = self.fdiv_guarded(dvl, hl);
+            let mlterm = self.ctx.ins().fmul(moments[n - 2], hl6);
+            let slopel = self.ctx.ins().fadd(dvlh, mlterm);
+            let dxl = self.ctx.ins().fsub(x, gl);
+            let extl = self.ctx.ins().fmul(dxl, slopel);
+            let high = self.ctx.ins().fadd(vals[n - 1], extl);
+            let above = self.ctx.ins().fgt(x, gl);
+            result = self.ctx.make_select(above, move |_c, b| if b { high } else { result });
+        } else {
+            let v0 = vals[0];
+            let below = self.ctx.ins().flt(x, g0);
+            result = self.ctx.make_select(below, move |_c, b| if b { v0 } else { result });
+            let vl = vals[n - 1];
+            let above = self.ctx.ins().fgt(x, gl);
+            result = self.ctx.make_select(above, move |_c, b| if b { vl } else { result });
+        }
+        result
+    }
+
+    /// Enhancement-390: sort a runtime (x, y) table into ascending x.
+    ///
+    /// The compile-time forms sort and de-duplicate their breakpoints before
+    /// interpolating (`pts.sort_by` / `dedup_by`), so the same table data gave
+    /// DIFFERENT answers depending on whether it arrived as a literal or as array
+    /// variables -- silently, with no diagnostic on either path. The LRM does
+    /// require ascending data, but one path quietly repairing it and the other
+    /// quietly trusting it is the worst of both.
+    ///
+    /// The sort is an unrolled bubble network: `n*(n-1)/2` compare-and-swap
+    /// stages, each two `select`s. That is fine for the table sizes this form is
+    /// meant for and quadratic beyond them, so above `MAX_RUNTIME_SORT` the data
+    /// is used as given -- the LRM's ascending requirement then governs, exactly
+    /// as it did before.
+    fn sort_pairs_runtime(&mut self, xs: &mut Vec<Value>, ys: &mut Vec<Value>) {
+        const MAX_RUNTIME_SORT: usize = 64;
+        let n = xs.len();
+        if n < 2 || n > MAX_RUNTIME_SORT {
+            return;
+        }
+        for i in 0..n {
+            for j in 0..n - 1 - i {
+                let swap = self.ctx.ins().fgt(xs[j], xs[j + 1]);
+                let (xa, xb) = (xs[j], xs[j + 1]);
+                let (ya, yb) = (ys[j], ys[j + 1]);
+                let lo_x = self.ctx.make_select(swap, move |_c, b| if b { xb } else { xa });
+                let hi_x = self.ctx.make_select(swap, move |_c, b| if b { xa } else { xb });
+                let lo_y = self.ctx.make_select(swap, move |_c, b| if b { yb } else { ya });
+                let hi_y = self.ctx.make_select(swap, move |_c, b| if b { ya } else { yb });
+                xs[j] = lo_x;
+                xs[j + 1] = hi_x;
+                ys[j] = lo_y;
+                ys[j + 1] = hi_y;
+            }
+        }
+
+        // Enhancement-390: the compile-time forms also DE-DUPLICATE, keeping the
+        // first of any repeated abscissa (`pts.dedup_by(|a, b| a.0 == b.0)`). A
+        // runtime table cannot drop an element -- the array length is fixed -- but
+        // carrying the first value forward over each repeat is equivalent for
+        // interpolation, and leaves the two paths agreeing on identical data.
+        for i in 0..n - 1 {
+            let dup = self.ctx.ins().feq(xs[i + 1], xs[i]);
+            let (keep, drop_) = (ys[i], ys[i + 1]);
+            ys[i + 1] = self.ctx.make_select(dup, move |_c, b| if b { keep } else { drop_ });
+        }
+    }
+
+    /// Enhancement-390: `a / b` guarded against a zero denominator.
+    ///
+    /// A runtime table may contain two equal abscissae -- duplicated data, or an
+    /// array the body never filled in, whose elements are all 0. The segment width
+    /// is then 0, the slope divides by zero, and the NaN propagates until ngspice
+    /// gives up with "Timestep too small; cause unrecorded", which says nothing
+    /// about the table. A zero-width segment carries no information, so its slope
+    /// is taken as zero.
+    fn fdiv_guarded(&mut self, num: Value, den: Value) -> Value {
+        let zero = self.ctx.ins().feq(den, F_ZERO);
+        let quot = self.ctx.ins().fdiv(num, den);
+        self.ctx.make_select(zero, move |_c, b| if b { F_ZERO } else { quot })
+    }
+
     /// Enhancement-389: `interp_1d_values` with a RUNTIME grid.
     ///
     /// `$table_model(x, xs, ys, "ctrl")` with array *variables* for the data (LRM
@@ -701,7 +930,8 @@ impl BodyLoweringCtx<'_, '_, '_> {
         for i in 0..n - 1 {
             let dv = self.ctx.ins().fsub(vals[i + 1], vals[i]);
             let dgrid = self.ctx.ins().fsub(grid[i + 1], grid[i]);
-            let slope = self.ctx.ins().fdiv(dv, dgrid);
+            // Enhancement-390: a duplicated or unset abscissa makes this zero.
+            let slope = self.fdiv_guarded(dv, dgrid);
             let dx = self.ctx.ins().fsub(x, grid[i]);
             let term = self.ctx.ins().fmul(dx, slope);
             seg.push(self.ctx.ins().fadd(vals[i], term));
@@ -927,12 +1157,23 @@ impl BodyLoweringCtx<'_, '_, '_> {
                 // A shorter y than x would index past the end; the extra abscissae
                 // describe no data, so drop them rather than fault.
                 let n = grid.len().min(vals.len());
-                let linear_extrap = match args.get(3).and_then(|&a| self.body.as_literal(a)) {
-                    Some(Literal::String(ctrl)) => ctrl.contains('L') || ctrl.contains('l'),
-                    _ => false,
-                };
+                let (linear_extrap, cubic) =
+                    match args.get(3).and_then(|&a| self.body.as_literal(a)) {
+                        Some(Literal::String(ctrl)) => {
+                            (ctrl.contains('L') || ctrl.contains('l'), ctrl.contains('3'))
+                        }
+                        _ => (false, false),
+                    };
                 let x = self.lower_expr(args[0]);
-                return self.interp_1d_runtime(x, &grid[..n], &vals[..n], linear_extrap);
+                // Enhancement-390: sort as the compile-time forms do, and honour the
+                // cubic control code instead of silently interpolating linearly.
+                let (mut grid, mut vals) = (grid[..n].to_vec(), vals[..n].to_vec());
+                self.sort_pairs_runtime(&mut grid, &mut vals);
+                return if cubic {
+                    self.interp_1d_spline_runtime(x, &grid, &vals, linear_extrap)
+                } else {
+                    self.interp_1d_runtime(x, &grid, &vals, linear_extrap)
+                };
             }
         }
 

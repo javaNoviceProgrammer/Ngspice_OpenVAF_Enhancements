@@ -397,7 +397,6 @@ impl BodyLoweringCtx<'_, '_, '_> {
             let body_head = self.ctx.create_block();
 
             for (val_idx, val) in vals.iter().enumerate() {
-                self.ctx.ensured_sealed();
 
                 // Enhancement-78: a casex/casez item literal with don't-care
                 // digits compares only its care bits -- (discr & care) ==
@@ -479,7 +478,16 @@ impl BodyLoweringCtx<'_, '_, '_> {
             self.lower_stmt(default_case.body);
         }
 
-        self.ctx.ensured_sealed();
+        // Enhancement-390: NO `ensured_sealed()` here, and none at the top of the
+        // arm loop above. `ensured_sealed` seals the CURRENT block, which on the
+        // first arm is still the CALLER's block -- and when a `case` is the first
+        // statement of a `do-while` body that block is the loop's body head, which
+        // must stay unsealed until the back edge is added. Sealing it here completed
+        // its phis against the entry edge alone, so a variable updated in the loop
+        // read back as its pre-loop value: `while (k < 3)` folded to a constant true
+        // and the loop became `jmp` to itself. Every block this function creates is
+        // sealed explicitly (`body_head` below, `next_block` per Enhancement-291,
+        // and `end` here), so nothing needs the blanket call.
         self.ctx.ins().jump(end);
 
         self.ctx.seal_block(end);

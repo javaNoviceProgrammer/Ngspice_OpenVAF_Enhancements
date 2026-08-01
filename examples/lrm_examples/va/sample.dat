@@ -1,0 +1,9 @@
+// $table_model data for the Verilog-AMS LRM p274 example.
+// Format: ndim / per-axis sizes / the axes / the values, row-major.
+2
+3 3
+0 1 2
+0 1 2
+0 1 2
+1 2 3
+2 3 4

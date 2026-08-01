@@ -6,7 +6,7 @@ pub use body::BodyValidationDiagnostic;
 use hir_def::body::BodySourceMap;
 use hir_def::{
     DisciplineAttr, ExprId, ItemLoc, ItemTree, ItemTreeNode, Lookup, NatureAttr, NodeId,
-    NodeTypeDecl,
+    NodeTypeDecl, StmtId,
 };
 use syntax::name::Name;
 use syntax::sourcemap::{FileSpan, SourceMap};
@@ -95,6 +95,15 @@ impl BodyValidationDiagnosticWrapped<'_> {
         // fall back to an empty range rather than panic while reporting an error.
         let range =
             self.body_sm.expr_map_back[expr].as_ref().map_or_else(TextRange::default, |it| it.range());
+        self.parse.to_file_span(range, self.sm)
+    }
+
+    /// Enhancement-390: the source span of a STATEMENT, for diagnostics that
+    /// point at a statement rather than an expression.
+    fn stmt_src(&self, stmt: StmtId) -> FileSpan {
+        let range = self.body_sm.stmt_map_back[stmt]
+            .as_ref()
+            .map_or_else(TextRange::default, |it| it.range());
         self.parse.to_file_span(range, self.sm)
     }
 
@@ -251,6 +260,49 @@ impl Diagnostic for BodyValidationDiagnosticWrapped<'_> {
                     .with_notes(vec![
                         "help: don't-care masks compare bit-wise, which is only defined for \
                          `integer` values"
+                            .to_owned(),
+                    ])
+            }
+            // Enhancement-390: only reached when the file is genuinely unusable --
+            // `to_report` filters out the readable, parseable ones.
+            BodyValidationDiagnostic::TableFileUnusable { expr, ref path } => {
+                let FileSpan { range, file } = self.expr_src(expr);
+                Report::error()
+                    .with_message(format!("cannot use '{path}' as $table_model data"))
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: file,
+                        range: range.into(),
+                        message: "missing, unreadable, or contains no usable table data"
+                            .to_owned(),
+                    }])
+                    .with_notes(vec![
+                        "the path is resolved relative to the directory of the file being \
+                         compiled"
+                            .to_owned(),
+                        "an unusable data file used to yield an EMPTY table, so the device \
+                         silently contributed zero with nothing reported"
+                            .to_owned(),
+                    ])
+            }
+            // Enhancement-390
+            BodyValidationDiagnostic::UnresolvedDisable { stmt, ref name } => {
+                let FileSpan { range, file } = self.stmt_src(stmt);
+                Report::error()
+                    .with_message(format!("no enclosing block named '{name}' to disable"))
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: file,
+                        range: range.into(),
+                        message: "no block with this name encloses the statement".to_owned(),
+                    }])
+                    .with_notes(vec![
+                        "`disable` leaves the nearest enclosing block with the given name, \
+                         so the name must match a `begin : <name>` that contains it"
+                            .to_owned(),
+                        "this used to be silently ignored, which turned a typo'd label into \
+                         a changed result: the statement did nothing and execution simply \
+                         carried on"
                             .to_owned(),
                     ])
             }
@@ -686,6 +738,14 @@ impl Diagnostic for BodyValidationDiagnosticWrapped<'_> {
     }
 
     fn to_report(&self, root_file: FileId, db: &dyn BaseDB) -> Option<Report> {
+        // Enhancement-390: a `$table_model` data file is reported only when it
+        // cannot actually be used. The check lives here because this is the first
+        // point with both the root file (to resolve a relative path) and the VFS.
+        if let BodyValidationDiagnostic::TableFileUnusable { ref path, .. } = *self.diag {
+            if table_file_is_usable(root_file, db, path) {
+                return None;
+            }
+        }
         if let Some((lint, lint_src)) = self.lint(root_file, db) {
             let (lvl, is_default) = match lint_src.overwrite {
                 Some(lvl) => (lvl, false),
@@ -905,4 +965,50 @@ impl Diagnostic for TypeValidationDiagnosticWrapped<'_> {
             _ => None,
         }
     }
+}
+
+/// Enhancement-390: can this `$table_model` data file actually be read and does it
+/// contain at least one usable number?
+///
+/// Deliberately permissive -- it answers "is this file usable at all", not "is the
+/// grid well formed". The lowering code owns the format; this only distinguishes a
+/// real data file from a mistyped name, an empty file, or prose. Anything it lets
+/// through behaves exactly as before.
+fn table_file_is_usable(root_file: FileId, db: &dyn BaseDB, path: &str) -> bool {
+    let Some(dir) = db.file_path(root_file).parent() else { return true };
+    let Some(full) = dir.join(path) else { return true };
+    let Some(abs) = full.as_path() else { return true };
+    let Ok(content) = std::fs::read_to_string(abs) else { return false };
+    // Comment lines are skipped by the readers, so skip them here too.
+    let nums: Vec<f64> = content
+        .lines()
+        .map(str::trim)
+        .filter(|l| !(l.is_empty() || l.starts_with('#') || l.starts_with("//") || l.starts_with('*')))
+        .flat_map(|l| l.split_ascii_whitespace())
+        .filter_map(|tok| tok.parse::<f64>().ok())
+        .collect();
+    if nums.len() < 2 {
+        return false;
+    }
+    // The N-dimensional form is `ndim / sizes[ndim] / axes... / values`; the
+    // one-dimensional form is a flat list of (x, y) PAIRS. Accept a file that fits
+    // either shape exactly, which is what distinguishes a real table from a stray
+    // column of numbers -- the case that used to interpolate an empty table and
+    // contribute zero.
+    let d = nums[0];
+    if d.fract() == 0.0 && (1.0..=8.0).contains(&d) && nums.len() > 1 + d as usize {
+        let ndim = d as usize;
+        let sizes: Vec<usize> = nums[1..1 + ndim]
+            .iter()
+            .map(|v| if v.fract() == 0.0 && *v >= 1.0 { *v as usize } else { 0 })
+            .collect();
+        if sizes.iter().all(|&s| s > 0) {
+            let axes: usize = sizes.iter().sum();
+            let vals: usize = sizes.iter().product();
+            if nums.len() == 1 + ndim + axes + vals {
+                return true;
+            }
+        }
+    }
+    nums.len() % 2 == 0
 }

@@ -651,7 +651,16 @@ impl Ctx {
                     } else {
                         match ansi_carry.clone() {
                             Some(prev) => prev,
-                            None => (false, false, arg.ty().map(|ty| ty.as_type())),
+                            // Enhancement-390: an ANSI entry that states no direction and
+                            // has none to inherit -- `f(real x)`, the FIRST argument --
+                            // is an INPUT. Verilog defaults a function argument to input,
+                            // and the alternative was worse than wrong: the argument was
+                            // neither input nor output, so nothing was copied in and the
+                            // body read 0 while the call still accepted its value.
+                            // `f(3.0)` returned 0 instead of 6, silently. The separated
+                            // and combined forms reject a direction-less argument
+                            // outright; only this path could produce one.
+                            None => (true, false, arg.ty().map(|ty| ty.as_type())),
                         }
                     };
                     for (name_idx, name) in arg.names().enumerate() {
