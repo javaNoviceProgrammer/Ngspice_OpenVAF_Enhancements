@@ -23,26 +23,37 @@ was accepted and then degraded quietly at run time.
       time, when the model is still in front of its author. That is a lint and
       not an error because the set is simulator-defined.
 
-  [2] A MODEL PARAMETER NAMED `m` SILENTLY DEFEATED THE SUBCIRCUIT MULTIPLIER.
+  [2] AND [3] A COLLISION WARNING THAT FIRED ON ALMOST THE WHOLE INDUSTRY
+      CORPUS, FOR AN ARRANGEMENT THAT IS DELIBERATE.
 
-      Enhancement-394 applies `X1 a 0 sub m=3` by appending ` m={m}` to the
-      device line. If the model declares its own instance parameter `m`, the
-      append lands there instead: the device contributes ONE times rather than
-      three and `$mfactor` still reads 1 -- the exact defect E-394 exists to
-      fix, reintroduced through a name, with nothing said. `temp` shadows the
-      instance temperature the same way.
+      Enhancement-335 warns when two OSDI parameters fold to one lowercased
+      SPICE keyword, because one of them then becomes unreachable from a deck.
+      It compared KEYWORDS only -- and a model that declares one of the names
+      the loader also provides has TWO entries under that keyword by design:
+      `osdi_create_registry_entry` ROUTES its built-in to the model's own
+      parameter (`dtemp` sets `dt = param_id`, `m` sets `has_m`, `temp`
+      suppresses the loader's entry). Both entries address the same parameter
+      id and nothing is unreachable.
 
-      The shadowing itself is the only coherent behaviour and there is no
-      double application; what was missing was any way to find out. Both are
-      reported now.
+      `dtemp` is a conventional CMC instance parameter, so the warning fired for
+      PSP 103/104, MEXTRAM 504/505, VBIC, BSIM-BULK/CMG/IMG/SOI, HiSIM 2/HV/SOI/
+      SOTB, L-UTSOI, EKV, MVSG, ASM-HEMT, JUNCAP200, r2/r3_cmc -- **69 warnings
+      across the corpus**, none of them a real problem, and each one worded as
+      "declared more than once differing only in case" when the two spellings
+      are identical and there is no second declaration to find.
 
-  [3] THE COLLISION WARNING MISATTRIBUTED ITS OWN CAUSE.
+      Comparing parameter IDS is what separates the two situations. The corpus
+      now emits **5** warnings, all of them genuine `GAIN`/`gain`-style clashes
+      between parameters with different ids.
 
-      Declaring `dtemp` ONCE produced "declared more than once differing only in
-      case". It is declared once, and the collision is with a built-in of
-      identical case, so the reader went looking for a second declaration that
-      does not exist. The built-in collision and the genuine case collision have
-      separate messages now.
+      WITHDRAWN, and recorded because the mistake is instructive: this was first
+      reported as "a model parameter named `m` silently defeats Enhancement-394's
+      subcircuit multiplier", on the evidence that a model declaring `m` gave 1x
+      under `X1 ... m=3`. That probe declared `m` and never USED it. A real CMC
+      model declares `m` AND scales its own output by it, which is exactly why
+      `has_m` exists -- and then `X1 ... m=3` scales correctly, as the accept
+      half below pins at 1x, 3x and 5x. The multiplier is DELIVERED through the
+      model's parameter, not defeated by it.
 
   [4] $table_model DATA FILES ACCEPTED NON-FINITE VALUES.
 
@@ -190,46 +201,51 @@ def main():
             check(f"{label}: the error names the supported set",
                   "pnjlim" in o and "fetlim" in o, "")
 
-    # ================================================== [2] shadowed built-ins
-    print("\n  -- [2] a model parameter shadowing a built-in --")
-    MULT = HDR + """module dut(p,n);
+    # ============================================ [2]/[3] parameter collisions
+    print("\n  -- [2]/[3] built-in parameter collisions --")
+
+    # A CMC-style model: declares `m` AND scales by it, which is what `has_m`
+    # exists for. The subcircuit multiplier must arrive through that parameter.
+    CMC = HDR + """module dut(p,n);
  inout p,n; electrical p,n;
- (* desc="mf" *) real mf;
- analog begin mf = $mfactor; I(p,n) <+ V(p,n)*1e-3; end
+ (*type="instance"*) parameter real m = 1.0;
+ (*type="instance"*) parameter real dtemp = 0.0;
+ analog begin I(p,n) <+ m*V(p,n)*1e-3; end
 endmodule
 """
-    d, rc, out = build(MULT, "mult")
-    check("the multiplier probe compiles", rc == 0, out.strip().splitlines()[:1])
-    for m, want in [("", -1e-3), (" m=3", -3e-3)]:
-        rcs, o = run(d, ("p\n.control\npre_osdi m.osdi\n.endc\nV1 a 0 dc 1\n"
-                         f"X1 a 0 s{m}\n.subckt s p n\nN1 p n mm\n.model mm dut()\n.ends\n"
-                         ".control\noption noacct\nset numdgt=12\nop\nprint i(v1)\n.endc\n.end\n"))
-        check(f"E-394's subcircuit multiplier still works with X1{m or ' (no m)'}",
-              cur(o) is not None and abs(cur(o) - want) < 1e-12, f"{cur(o)}")
-
-    for name, needle in [("m", "shadows the device multiplier"),
-                         ("temp", "shadows the instance temperature")]:
-        d, rc, out = build(mod("I(p,n) <+ V(p,n)*1e-3;",
-                               decl=f' (*type="instance"*) parameter real {name} = 1.0;'),
-                           "shadow_" + name)
+    d, rc, out = build(CMC, "cmc")
+    check("a CMC-style model (own `m` and `dtemp`) compiles", rc == 0,
+          out.strip().splitlines()[:1])
+    if rc == 0:
+        for mult, want in [("", -1e-3), (" m=3", -3e-3), (" m=5", -5e-3)]:
+            rcs, o = run(d, ("p\n.control\npre_osdi m.osdi\n.endc\nV1 a 0 dc 1\n"
+                             f"X1 a 0 s{mult}\n.subckt s p n\nN1 p n mm\n"
+                             ".model mm dut()\n.ends\n"
+                             ".control\noption noacct\nset numdgt=12\nop\n"
+                             "print i(v1)\n.endc\n.end\n"))
+            check(f"E-394's multiplier arrives through the model's own `m`: X1{mult or ' (none)'}",
+                  cur(o) is not None and abs(cur(o) - want) < 1e-12, f"{cur(o)}")
         rcs, o = run(d, deck())
-        check(f"declaring an instance parameter '{name}' is reported", needle in o,
+        check("and declaring `m`/`dtemp` produces NO warning (the loader routes them)",
+              not [ln for ln in o.splitlines() if ln.startswith("Warning")],
               [ln.strip()[:60] for ln in o.splitlines() if ln.startswith("Warning")][:1])
 
-    # ================================================== [3] the message itself
-    print("\n  -- [3] the collision message names the right cause --")
-    d, rc, out = build(mod("I(p,n) <+ V(p,n)*1e-3*dtemp;",
-                           decl=' (*type="instance"*) parameter real dtemp = 2.0;'), "dt")
-    rcs, o = run(d, deck())
-    check("a built-in collision is not blamed on letter case",
-          "built-in instance parameter" in o and "differing only in case" not in o,
-          [ln.strip()[:60] for ln in o.splitlines() if ln.startswith("Warning")][:1])
+    for name in ("temp", "dt"):
+        d, rc, out = build(mod("I(p,n) <+ V(p,n)*1e-3;",
+                               decl=f' (*type="instance"*) parameter real {name} = 1.0;'),
+                           "route_" + name)
+        rcs, o = run(d, deck())
+        check(f"declaring '{name}' produces no warning either",
+              rc == 0 and not [ln for ln in o.splitlines() if ln.startswith("Warning")],
+              [ln.strip()[:60] for ln in o.splitlines() if ln.startswith("Warning")][:1])
 
+    # the genuine E-335 clash must still be reported
     d, rc, out = build(mod("I(p,n) <+ V(p,n)*1e-3*GAIN*gain;",
                            decl=' (*type="instance"*) parameter real GAIN = 1.0;\n'
                                 ' (*type="instance"*) parameter real gain = 2.0;'), "case")
     rcs, o = run(d, deck())
-    check("a genuine case collision still says so", "differing only in case" in o,
+    check("a real case collision between DIFFERENT parameters is still reported",
+          "differing only in case" in o,
           [ln.strip()[:60] for ln in o.splitlines() if ln.startswith("Warning")][:1])
 
     # ================================================== [4] table data files

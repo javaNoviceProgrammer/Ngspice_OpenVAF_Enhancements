@@ -1,8 +1,10 @@
 # Enhancement-396 — a NULL function pointer, a multiplier lost to a name, and eight arguments nobody checked
 
-Ten defects from a one-hour hunt aimed at **openvaf-r**. One is a hard crash,
-two are silent wrong answers, and the rest are input that was accepted and then
-degraded quietly at run time.
+Nine defects from a one-hour hunt aimed at **openvaf-r**. One is a hard crash,
+one is a silent wrong answer, one is a diagnostic that fired on almost the whole
+industry corpus, and the rest are input that was accepted and then degraded
+quietly at run time. A tenth finding was **withdrawn during the fix** — the
+reasoning is kept below, because the mistake is the instructive part.
 
 ## 1. `$limit` segfaulted the simulator on any unresolvable name or arity
 
@@ -39,35 +41,47 @@ time, when the model is still in front of its author rather than in front of
 whoever ran the deck. That one is a lint and not an error because the set is
 simulator-defined and another OSDI consumer may legitimately provide more.
 
-## 2. A model parameter named `m` silently defeated the subcircuit multiplier
+## 2 & 3. A collision warning that fired on almost the whole industry corpus
 
-| model | `X1 a 0 sub m=3` gave | should give |
-| --- | --- | --- |
-| no parameter named `m` | −3.0 mA, `$mfactor` = 3 | ✓ |
-| declares its own `m` | **−1.0 mA, `$mfactor` = 1** | −3.0 mA |
+[Enhancement-335](Enhancement-335.md) warns when two OSDI parameters fold to one
+lowercased SPICE keyword, because one of them then becomes unreachable from a
+deck. It compared **keywords only**.
 
-[Enhancement-394](Enhancement-394.md) applies a subcircuit multiplier by
-appending ` m={m}` to each device line. When the model declares its own instance
-parameter `m`, the append lands **there** — so the enclosing multiplier vanishes
-and the device contributes 1× instead of 3×. That is precisely the defect E-394
-exists to fix, reintroduced through a name collision, with nothing said. A PDK
-model that happens to call a parameter `m` under-counts device area exactly as
-it did before that release.
+A model that declares one of the names the loader also provides has two entries
+under that keyword **by design**: `osdi_create_registry_entry` *routes* its
+built-in to the model's own parameter — `dtemp` sets `dt = param_id`, `m` sets
+`has_m`, `temp` suppresses the loader's own entry. Both entries address the same
+parameter id, and nothing is unreachable.
 
-`temp` shadows the instance temperature the same way.
+`dtemp` is a conventional CMC instance parameter, so the warning fired for PSP
+103/104, MEXTRAM 504/505, VBIC, BSIM-BULK/CMG/IMG/SOI, HiSIM 2/HV/SOI/SOTB,
+L-UTSOI, EKV, MVSG, ASM-HEMT, JUNCAP200 and r2/r3_cmc — **69 warnings across the
+124-file corpus**, not one of them a real problem. Each was also worded *"declared
+more than once differing only in case"* when the two spellings are identical and
+there is no second declaration to go and find.
 
-The shadowing itself is the only coherent behaviour — the model's own
-declaration must win, and it does, cleanly, with no double application. What was
-missing was any way to find out, so both now say so.
+Comparing parameter **ids** is what separates the two situations. The corpus now
+emits **5** warnings, every one a genuine `GAIN`/`gain` clash between parameters
+with different ids — which is the case E-335 was written for and which still
+reports exactly as before.
 
-## 3. The collision warning misattributed its own cause
+### The finding this replaces, and why it was wrong
 
-Declaring `dtemp` **once** produced *"instance parameter 'dtemp' is declared more
-than once differing only in case"*. It is declared once, and the collision is
-with a built-in of *identical* case — so the message sent the reader looking for
-a second declaration that does not exist. A collision with a loader-provided
-parameter and a genuine case collision now have separate messages, told apart by
-whether the earlier entry lies in the prefix this loader wrote itself.
+This started as *"a model parameter named `m` silently defeats
+[Enhancement-394](Enhancement-394.md)'s subcircuit multiplier"*, on the evidence
+that a model declaring its own `m` contributed 1× under `X1 ... m=3` with
+`$mfactor` still reading 1.
+
+The probe declared `m` and **never used it**. A real compact model declares `m`
+*and scales its own output by it* — which is precisely what `has_m` exists for:
+ngspice sees the model owns `m`, adds no multiplier of its own, and the appended
+` m={m}` lands on the model's parameter, which the model then applies. The
+multiplier is **delivered through** that parameter, not defeated by it. The
+accept half pins it at 1×, 3× and 5×.
+
+A warning was briefly added for this and has been removed. It would have told
+every CMC model in the industry that a deliberate and correct arrangement was a
+bug.
 
 ## 4. `$table_model` data files accepted non-finite values
 
@@ -137,11 +151,11 @@ runtime-expression case in the accept half to pin that.
 
 ## Verification
 
-`examples/limguard_examples` — **80/80 fixed, 39/80 against the shipped binary**.
-Forty-one checks pin real defects.
+`examples/limguard_examples` — **81/81 fixed, 42/81 against the shipped binary**.
+Thirty-nine checks pin real defects.
 
 Every check is paired. The accept half is doing real work here: this release adds
-diagnostics across ten unrelated surfaces, so each one is matched against the
+diagnostics across nine unrelated surfaces, so each one is matched against the
 legitimate input it must not disturb — the four resolvable limiter spellings and
 the no-limiter form, a well-formed table with comments and blank lines, a
 runtime-computed timer period and step bound, matching bus ranges, an in-range
@@ -152,14 +166,23 @@ fails, but that it fails with a **positive** return code and a message naming th
 supported set — because the defect's signature was `rc = -11` with an empty
 output stream, which a naive "did it fail?" test would have called a pass.
 
-E-394's subcircuit multiplier is re-pinned end to end (1× and 3×) alongside the
-new shadowing warning, since (2) is a regression channel for that fix rather than
-a defect in it.
+**A correction, recorded rather than quietly patched.** The corpus check first
+run for this release compared only the *compiler's* output and reported "0 models
+trip any new diagnostic". That was true and irrelevant: the diagnostics in
+question are emitted by ngspice when the `.osdi` is **loaded**, which the check
+never did. Loading all 107 corpus models is what surfaced both the withdrawn
+finding above and the 69 spurious warnings. A differential has to exercise the
+stage the change actually altered.
 
-**Corpus differential.** All 124 files of the `VA_TEST` industry corpus compiled
-with the shipped binary and with this one: **107 compiled by both, 0 return-code
-differences, 0 byte differences, and 0 models trip any of the new diagnostics.**
-That last number is the one that matters for a release made almost entirely of
-new checks — it is what says they are aimed at mistakes rather than at practice.
+Loading every corpus model into ngspice: **107 loaded, 0 load failures, 0
+crashes**, warnings down from **69 to 5**. The `$limit` load failure introduced
+here never fires on the corpus — the only names reaching `OSDI_LIM_TABLE` are
+`pnjlim`/2, `fetlim`/1 and `limitlog`/1, all supported. (`typedpnjlim_new` and
+friends appear in the sources only inside `` `ifdef __XYCE__ `` branches that are
+never compiled, and VBIC's `limRTH` is a user-defined analog function, which is
+the LRM's other `$limit` form and needs no simulator entry.)
+
+**Corpus differential.** All 124 files compiled with the shipped binary and with
+this one: **107 compiled by both, 0 return-code differences, 0 byte differences.**
 
 Beyond the suite: `cargo test --workspace` **209/0**, full regression **320/320**.
