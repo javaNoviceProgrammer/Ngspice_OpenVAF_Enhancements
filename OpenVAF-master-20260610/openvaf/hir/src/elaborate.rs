@@ -1221,6 +1221,13 @@ fn render_module_with_generates(module_ast: &ast::ModuleDecl) -> anyhow::Result<
         return Ok(module_ast.syntax().text().to_string());
     }
 
+    // Enhancement-392: a `localparam` IS a compile-time constant, so it may size a
+    // generated structure. Only `parameter` cannot -- it binds at simulation time
+    // under OSDI, which is what the diagnostic has always said. The two were
+    // rejected together, even though the compiler already accepts a localparam as
+    // a constant in every other position: array bounds, bus port widths, parameter
+    // defaults, `repeat` counts.
+    let const_env = module_localparam_env(module_ast);
     let mut out = String::new();
     for item in module_ast.module_items() {
         match item {
@@ -1228,13 +1235,13 @@ fn render_module_with_generates(module_ast: &ast::ModuleDecl) -> anyhow::Result<
                 // Compile-time-only; dropped entirely, never reaches `hir_def`.
             }
             ast::ModuleItem::GenerateFor(gen_for) => {
-                out.push_str(&render_generate_for(&gen_for, &HashMap::new(), "", &Scope::default())?);
+                out.push_str(&render_generate_for(&gen_for, &const_env, "", &Scope::default())?);
             }
             ast::ModuleItem::GenerateIf(gen_if) => {
-                out.push_str(&render_generate_if(&gen_if, &HashMap::new(), "", &Scope::default())?);
+                out.push_str(&render_generate_if(&gen_if, &const_env, "", &Scope::default())?);
             }
             ast::ModuleItem::GenerateCase(gen_case) => {
-                out.push_str(&render_generate_case(&gen_case, &HashMap::new(), "", &Scope::default())?);
+                out.push_str(&render_generate_case(&gen_case, &const_env, "", &Scope::default())?);
             }
             other => out.push_str(&other.syntax().text().to_string()),
         }
@@ -1247,6 +1254,35 @@ fn render_module_with_generates(module_ast: &ast::ModuleDecl) -> anyhow::Result<
     let rel_start = rel_range(base, items.first().unwrap().syntax().text_range()).start;
     let rel_end = rel_range(base, items.last().unwrap().syntax().text_range()).end;
     Ok(format!("{}{}{}", &full[..rel_start], out, &full[rel_end..]))
+}
+
+/// Enhancement-392: a module's `localparam` names bound to their integer values.
+///
+/// Seeded into the generate elaborator's environment so a localparam can size a
+/// generated structure, exactly as a literal can. Only integer-valued localparams
+/// whose initialiser folds with the same evaluator are included -- one that
+/// depends on a `parameter`, or is not an integer, simply is not in the map and
+/// the existing "must be a compile-time-constant integer" error still applies.
+///
+/// `parameter` is deliberately NOT included: it binds at simulation time under
+/// OSDI and cannot shape the generated structure.
+fn module_localparam_env(module_ast: &ast::ModuleDecl) -> HashMap<String, i32> {
+    let mut env = HashMap::new();
+    for item in module_ast.module_items() {
+        let ast::ModuleItem::ParamDecl(decl) = item else { continue };
+        if decl.localparam_token().is_none() {
+            continue;
+        }
+        for para in decl.paras() {
+            let (Some(name), Some(default)) = (para.name(), para.default()) else { continue };
+            // fold against what is already known, so one localparam may build on
+            // an earlier one
+            if let Some(v) = eval_int_expr(&default, &env) {
+                env.insert(name.syntax().text().to_string(), v);
+            }
+        }
+    }
+    env
 }
 
 /// Constant-folds one side of a `generate for` header (loop bound,
@@ -1484,6 +1520,27 @@ fn render_generate_item(
             }
         }
     }
+    // Enhancement-392: the name in a NAMED connection -- the `r` of `.r(1e3)` or
+    // `.p(node[i])` -- belongs to the INSTANTIATED module's namespace, not to this
+    // scope, so the per-iteration renaming must not touch it. Substitution is
+    // lexical over the whole token stream, so a generate block holding
+    // `resistor #(.r(1e3)) r(...)` (an instance whose name collides with the
+    // child's parameter) rewrote the override to `.r_0(1e3)`, which then named no
+    // parameter of `resistor` and was silently dropped back to the default. Pin
+    // each such name to itself with an identity hole.
+    for node in item.descendants() {
+        let name = if let Some(conn) = ast::PortConn::cast(node.clone()) {
+            conn.name()
+        } else if let Some(assign) = ast::ParamAssign::cast(node) {
+            assign.name()
+        } else {
+            None
+        };
+        if let Some(name) = name {
+            let range = name.syntax().text_range();
+            holes.push((rel_range(base, range), text[rel_range(base, range)].to_string()));
+        }
+    }
     // bare genvar identifiers anywhere else (skip ranges already covered)
     for tok in item.descendants_with_tokens().filter_map(|el| el.into_token()) {
         if tok.kind() != syntax::SyntaxKind::IDENT {
@@ -1667,10 +1724,45 @@ fn collect_declared_names(body: &ast::GenerateBlock) -> Vec<String> {
                     names.push(n.syntax().text().to_string());
                 }
             }
+            // Enhancement-392: an `analog function` declared in a generate block
+            // needs renaming like anything else declared there. It used to fall
+            // into the catch-all below, so a second iteration redeclared it and
+            // the whole generate failed with "'ff' was already declared in this
+            // scope" -- reachable since Enhancement-390 made `analog` legal here.
+            ast::ModuleItem::Function(fun) => {
+                if let Some(n) = fun.name() {
+                    names.push(n.syntax().text().to_string());
+                }
+            }
+            // ... as does a NAMED BLOCK LABEL inside an analog block, which is not
+            // a module item at all and so was never even looked at. Renaming the
+            // label also renames the `disable <label>` that targets it, because
+            // both go through the same textual substitution.
+            ast::ModuleItem::AnalogBehaviour(ab) => {
+                if let Some(stmt) = ab.stmt() {
+                    collect_block_labels(stmt.syntax(), &mut names);
+                }
+            }
             _ => {}
         }
     }
     names
+}
+
+/// Enhancement-392: every `begin : label` label at or below `node`.
+///
+/// Collected so a generate block's analog statements get their labels renamed
+/// per iteration, exactly as its nets and variables already are.
+fn collect_block_labels(node: &syntax::SyntaxNode, names: &mut Vec<String>) {
+    for child in node.descendants() {
+        if let Some(block) = ast::BlockStmt::cast(child.clone()) {
+            if let Some(scope) = block.block_scope() {
+                if let Some(n) = scope.name() {
+                    names.push(n.syntax().text().to_string());
+                }
+            }
+        }
+    }
 }
 
 /// Entry point, called once from [`CompilationDB::new`]. No-op (and cheap:
@@ -2703,7 +2795,31 @@ impl ElabCtx<'_> {
         let conns: Vec<_> = port_conns.port_conns().collect();
         let port_names = target_port_names(target_ast);
 
-        if conns.iter().all(|c| c.name().is_none()) {
+        // Enhancement-392: the connection list is CHECKED against the target's
+        // declared ports. It used to be zipped positionally -- which silently
+        // truncates, so a surplus actual was dropped and a missing one left the
+        // port unconnected -- and named connections were bound without asking
+        // whether the port exists. Both compiled clean, with no diagnostic, and
+        // produced a device wired differently from what was written.
+        //
+        // Verilog-A creates IMPLICIT NETS (Enhancement-41), so a mistyped net name
+        // can never be caught here -- it just becomes a new net. That makes
+        // checking the things that CAN be checked, the arity and the port names,
+        // matter more rather than less.
+        let inst_name =
+            unit.name().map(|n| n.syntax().text().to_string()).unwrap_or_else(|| "?".into());
+        if conns.iter().all(|c| c.dot_token().is_none()) {
+            if conns.len() != port_names.len() {
+                self.port_conn_errors.push(format!(
+                    "instance '{}' of module '{}' connects {} port(s) but '{}' declares {} ({})",
+                    inst_name,
+                    target.name,
+                    conns.len(),
+                    target.name,
+                    port_names.len(),
+                    port_names.iter().map(|n| n.to_string()).collect::<Vec<_>>().join(", "),
+                ));
+            }
             for (name, conn) in port_names.iter().zip(conns.iter()) {
                 if let Some(net) = conn.net() {
                     self.bind_port_actual(&mut result, target, caller, name, &net);
@@ -2712,7 +2828,18 @@ impl ElabCtx<'_> {
         } else {
             for conn in &conns {
                 if let (Some(name), Some(net)) = (conn.name(), conn.net()) {
-                    self.bind_port_actual(&mut result, target, caller, &name.as_name(), &net);
+                    let pname = name.as_name();
+                    if !port_names.contains(&pname) {
+                        self.port_conn_errors.push(format!(
+                            "instance '{}' connects '.{}', which is not a port of module '{}' ({})",
+                            inst_name,
+                            pname,
+                            target.name,
+                            port_names.iter().map(|n| n.to_string()).collect::<Vec<_>>().join(", "),
+                        ));
+                        continue;
+                    }
+                    self.bind_port_actual(&mut result, target, caller, &pname, &net);
                 }
             }
         }
@@ -2833,7 +2960,30 @@ impl ElabCtx<'_> {
             })
             .collect();
 
-        if assigns.iter().all(|a| a.name().is_none()) {
+        // Enhancement-392: an override naming a parameter the target does not have
+        // used to be accepted and silently DROPPED, so `#(.vth0(0.7))` with a
+        // typo left the default in place while the model appeared to work. Both
+        // `defparam` and ngspice's own `.model` card already reject the same
+        // mistake ("defparam target(s) did not resolve" /
+        // "unrecognized parameter (zz) - ignored"); this brings the instance
+        // override into line with them.
+        // A SYSTEM parameter override (`#(.$mfactor(2))`, LRM 6.3.4) is written with
+        // a dot but carries no NAME child, because `$mfactor` is not an ordinary
+        // identifier. It names nothing the target declares and never will, so it is
+        // neither counted as positional nor checked against `param_names` -- it is
+        // passed over exactly as before. Keying "is this named?" off the DOT rather
+        // than off `name()` is what keeps it out of the positional branch.
+        let inst_of = format!("of module '{}'", target.name);
+        if assigns.iter().all(|a| a.dot_token().is_none()) {
+            if assigns.len() > param_names.len() {
+                self.hier_param_errors.push(format!(
+                    "instance {} supplies {} positional parameter override(s) but '{}' declares {}",
+                    inst_of,
+                    assigns.len(),
+                    target.name,
+                    param_names.len(),
+                ));
+            }
             for (name, assign) in param_names.iter().zip(assigns.iter()) {
                 if let Some(val) = assign.val() {
                     result.insert(name.clone(), val.syntax().text().to_string());
@@ -2862,7 +3012,28 @@ impl ElabCtx<'_> {
                     continue;
                 }
                 if let (Some(name), Some(val)) = (assign.name(), assign.val()) {
-                    result.insert(name.as_name(), val.syntax().text().to_string());
+                    let pname = name.as_name();
+                    if !param_names.contains(&pname) {
+                        self.hier_param_errors.push(format!(
+                            "instance parameter override '.{}' names no parameter of module                              '{}'{}",
+                            pname,
+                            target.name,
+                            if param_names.is_empty() {
+                                ", which declares none".to_string()
+                            } else {
+                                format!(
+                                    " (it declares {})",
+                                    param_names
+                                        .iter()
+                                        .map(|n| n.to_string())
+                                        .collect::<Vec<_>>()
+                                        .join(", ")
+                                )
+                            },
+                        ));
+                        continue;
+                    }
+                    result.insert(pname, val.syntax().text().to_string());
                 }
             }
         }

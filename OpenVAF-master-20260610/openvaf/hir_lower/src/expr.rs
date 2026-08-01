@@ -666,6 +666,18 @@ impl BodyLoweringCtx<'_, '_, '_> {
         result
     }
 
+    /// Enhancement-392: the largest runtime `$table_model` that is normalised
+    /// (sorted and de-duplicated) in the emitted code.
+    ///
+    /// Enhancement-390 set this to 64 with a quadratic bubble network. That was
+    /// low enough to matter and, worse, SILENT: above it the runtime form stopped
+    /// sorting while the compile-time form kept sorting at any size, so the same
+    /// data gave different answers again -- 160.0 against 6.2566 on a 65-knot
+    /// reversed cubic table. A Batcher odd-even merge network is O(n log^2 n)
+    /// instead of O(n^2), which buys the higher bound at lower cost than 64 used
+    /// to be, and `hir_ty` now REPORTS a table that exceeds it rather than quietly
+    /// changing behaviour.
+
     /// Enhancement-391: move repeated abscissae to the END of a runtime table and
     /// replicate the last distinct knot over them.
     ///
@@ -684,7 +696,10 @@ impl BodyLoweringCtx<'_, '_, '_> {
     /// knot rather than the last slot.
     fn compact_distinct_runtime(&mut self, xs: &mut Vec<Value>, ys: &mut Vec<Value>) {
         let n = xs.len();
-        if n < 2 {
+        // Enhancement-392: the SAME bound as the sort. De-duplication reads
+        // adjacency, so it is only meaningful on sorted data; running it past the
+        // point where sorting stops left half the normalisation in place.
+        if n < 2 || n > MAX_RUNTIME_TABLE {
             return;
         }
         let one = self.ctx.fconst(1.0);
@@ -955,25 +970,45 @@ impl BodyLoweringCtx<'_, '_, '_> {
     /// is used as given -- the LRM's ascending requirement then governs, exactly
     /// as it did before.
     fn sort_pairs_runtime(&mut self, xs: &mut Vec<Value>, ys: &mut Vec<Value>) {
-        const MAX_RUNTIME_SORT: usize = 64;
         let n = xs.len();
-        if n < 2 || n > MAX_RUNTIME_SORT {
+        if n < 2 || n > MAX_RUNTIME_TABLE {
             return;
         }
-        for i in 0..n {
-            for j in 0..n - 1 - i {
-                let swap = self.ctx.ins().fgt(xs[j], xs[j + 1]);
-                let (xa, xb) = (xs[j], xs[j + 1]);
-                let (ya, yb) = (ys[j], ys[j + 1]);
-                let lo_x = self.ctx.make_select(swap, move |_c, b| if b { xb } else { xa });
-                let hi_x = self.ctx.make_select(swap, move |_c, b| if b { xa } else { xb });
-                let lo_y = self.ctx.make_select(swap, move |_c, b| if b { yb } else { ya });
-                let hi_y = self.ctx.make_select(swap, move |_c, b| if b { ya } else { yb });
-                xs[j] = lo_x;
-                xs[j + 1] = hi_x;
-                ys[j] = lo_y;
-                ys[j + 1] = hi_y;
-            }
+        // Enhancement-392: the network must be STABLE, because the de-duplication
+        // below -- and `pts.dedup_by` in the compile-time path it has to agree with
+        // -- keeps the FIRST of any repeated abscissa in ORIGINAL order (Rust's
+        // `sort_by` is stable). An odd-even transposition network is stable for
+        // free, since it only ever exchanges neighbours; Batcher's is not, because
+        // it compares elements that are far apart, and two equal abscissae can come
+        // out swapped. That is invisible until the ys differ, and then the runtime
+        // form keeps a different point than the compile-time form does.
+        //
+        // Stability is restored by carrying the original index alongside each point
+        // and breaking ties on it, which makes every key distinct and the sort
+        // order total. The indices are compile-time constants, so this costs one
+        // more tracked value per point and nothing at runtime beyond the tie-break.
+        let mut ps: Vec<Value> = (0..n).map(|i| self.ctx.fconst(i as f64)).collect();
+        for (j, k) in batcher_network(n) {
+            let xgt = self.ctx.ins().fgt(xs[j], xs[k]);
+            let xeq = self.ctx.ins().feq(xs[j], xs[k]);
+            let pgt = self.ctx.ins().fgt(ps[j], ps[k]);
+            let tie = crate::stmt::bool_and(self.ctx, xeq, pgt);
+            let swap = crate::stmt::bool_or(self.ctx, xgt, tie);
+            let (xa, xb) = (xs[j], xs[k]);
+            let (ya, yb) = (ys[j], ys[k]);
+            let (pa, pb) = (ps[j], ps[k]);
+            let lo_x = self.ctx.make_select(swap, move |_c, b| if b { xb } else { xa });
+            let hi_x = self.ctx.make_select(swap, move |_c, b| if b { xa } else { xb });
+            let lo_y = self.ctx.make_select(swap, move |_c, b| if b { yb } else { ya });
+            let hi_y = self.ctx.make_select(swap, move |_c, b| if b { ya } else { yb });
+            let lo_p = self.ctx.make_select(swap, move |_c, b| if b { pb } else { pa });
+            let hi_p = self.ctx.make_select(swap, move |_c, b| if b { pa } else { pb });
+            xs[j] = lo_x;
+            xs[k] = hi_x;
+            ys[j] = lo_y;
+            ys[k] = hi_y;
+            ps[j] = lo_p;
+            ps[k] = hi_p;
         }
 
         // Enhancement-390: the compile-time forms also DE-DUPLICATE, keeping the
@@ -3081,4 +3116,32 @@ fn scanf_conversion_chars(fmt: &str) -> Vec<char> {
         }
     }
     out
+}
+
+/// Enhancement-392: see `MAX_RUNTIME_TABLE` on the lowering impl.
+pub(crate) const MAX_RUNTIME_TABLE: usize = 256;
+
+/// Batcher's odd-even merge sort network for `n` inputs: the (lo, hi) index pairs
+/// of a compare-exchange sequence that sorts any input, in a fixed order known at
+/// compile time. O(n log^2 n) comparators against the O(n^2) of a bubble network.
+fn batcher_network(n: usize) -> Vec<(usize, usize)> {
+    let mut pairs = Vec::new();
+    let mut p = 1;
+    while p < n {
+        let mut k = p;
+        while k >= 1 {
+            let mut j = k % p;
+            while j + k < n {
+                for i in 0..k.min(n.saturating_sub(j + k)) {
+                    if (i + j) / (p * 2) == (i + j + k) / (p * 2) {
+                        pairs.push((i + j, i + j + k));
+                    }
+                }
+                j += 2 * k;
+            }
+            k /= 2;
+        }
+        p *= 2;
+    }
+    pairs
 }

@@ -15,9 +15,27 @@ module intub(o);
     electrical o;
     parameter integer ione = 1;
     analog begin
-        // `(-2147483647 - 1)` is how i32::MIN is reachable: the literal
-        // -2147483648 exceeds i32::MAX and promotes to REAL instead.
+        // `(-2147483647 - 1)` used to be the ONLY way to reach i32::MIN, because
+        // the literal -2147483648 exceeded i32::MAX and promoted to REAL instead.
+        // Enhancement-392 folds the sign into the literal, so `-2147483648` is now
+        // an equally direct spelling and reaches this same guard -- see
+        // `intub_minlit` below, and `vafcodegen_examples/constfold.va`, which used
+        // to carry the real-division version of this line.
         if ((-2147483647 - 1) / (-1) > 0 && ione > 0)
+            V(o) <+ 1.0;
+        else
+            V(o) <+ 2.0;
+    end
+endmodule
+
+// Enhancement-392: the same overflow written with the INT_MIN literal directly.
+// Before E-392 this compiled clean and computed 2147483648.0 in real arithmetic.
+module intub_minlit(o);
+    output o;
+    electrical o;
+    parameter integer ione = 1;
+    analog begin
+        if ((-2147483648) / (-1) > 0 && ione > 0)
             V(o) <+ 1.0;
         else
             V(o) <+ 2.0;

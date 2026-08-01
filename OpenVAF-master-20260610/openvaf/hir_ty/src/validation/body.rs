@@ -38,6 +38,15 @@ pub struct IllegalCtxAccess {
 
 #[derive(PartialEq, Eq, Clone, Debug)]
 pub enum BodyValidationDiagnostic {
+    /// Enhancement-392: a runtime `$table_model` with more knots than the emitted
+    /// code normalises.
+    ///
+    /// The compile-time forms sort and de-duplicate at ANY size; the runtime form
+    /// emits a sorting network, which has to be bounded. Above that bound the two
+    /// silently disagreed again on unsorted data. Saying so is the point -- the
+    /// table is still usable, it just has to arrive already ascending.
+    TableTooLargeToSort { expr: ExprId, len: usize, max: usize },
+
     /// Enhancement-390: a `$table_model` data file that could not be used.
     ///
     /// The file is read during LOWERING, which has no diagnostic channel, so any
@@ -939,6 +948,25 @@ impl ExprValidator<'_, '_> {
                         // it is usable is decided when the report is built, where the
                         // root file and the VFS are available; a usable one reports
                         // nothing.
+                        // Enhancement-392: a runtime table larger than the emitted
+                        // sorting network can handle is reported, not silently left
+                        // unsorted.
+                        if *builtin == BuiltIn::table_model && args.len() >= 3 {
+                            if let Some(elems) =
+                                self.parent.infer.array_var_refs.get(&args[1])
+                            {
+                                let max = hir_lower_max_runtime_table();
+                                if elems.len() > max {
+                                    self.parent.diagnostics.push(
+                                        BodyValidationDiagnostic::TableTooLargeToSort {
+                                            expr: args[1],
+                                            len: elems.len(),
+                                            max,
+                                        },
+                                    );
+                                }
+                            }
+                        }
                         if *builtin == BuiltIn::table_model && args.len() >= 2 {
                             // Mirror `lower_table_model`'s own rule for WHICH argument
                             // is the data file. Inline data -- an array literal or a
@@ -1406,4 +1434,10 @@ fn calls_reach(
         path.pop();
     }
     false
+}
+
+/// Enhancement-392: mirrors `hir_lower`'s `MAX_RUNTIME_TABLE`. Kept as a function
+/// so the two crates stay textually linked; `hir_ty` cannot depend on `hir_lower`.
+fn hir_lower_max_runtime_table() -> usize {
+    256
 }

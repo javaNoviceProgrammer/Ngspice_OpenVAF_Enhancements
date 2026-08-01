@@ -20,7 +20,7 @@ pub(crate) fn bool_and(ctx: &mut LoweringCtx, a: Value, b: Value) -> Value {
 }
 
 /// `a || b`, see `bool_and`.
-fn bool_or(ctx: &mut LoweringCtx, a: Value, b: Value) -> Value {
+pub(crate) fn bool_or(ctx: &mut LoweringCtx, a: Value, b: Value) -> Value {
     ctx.make_select(a, |_, branch| if branch { TRUE } else { b })
 }
 

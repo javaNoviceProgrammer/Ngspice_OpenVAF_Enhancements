@@ -22,9 +22,17 @@
 // the same reason -- an out-of-range shift distance is poison in LLVM and traps. It
 // moved to `intub.va`; the largest LEGAL distance is kept here instead.
 //
-// `-2147483648` exceeds i32::MAX, so that literal promotes to REAL and the line below
-// is a real division, not the integer overflow E-286 believed it was testing. The
-// integer case is only reachable as `(-2147483647 - 1)`, and lives in `intub.va`.
+// Enhancement-392 UPDATE: `-2147483648 / -1` used to live here with the note that
+// the literal "exceeds i32::MAX, so that literal promotes to REAL and the line is a
+// real division". That promotion was itself the defect. `-2147483648` is the
+// smallest `integer`, but it parses as unary minus applied to `2147483648`, whose
+// magnitude does not fit i32 -- so the operand became a real and the whole
+// expression was evaluated in real arithmetic. The same value arriving at runtime
+// stayed an integer, so one expression had two meanings. The sign is now folded into
+// the literal, which makes this line genuine integer division by -1 -- the one
+// operation that really would trap -- so it is rejected by Enhancement-334 and has
+// moved to `intub.va` alongside the `(-2147483647 - 1)` spelling of the same thing.
+// A representable INT_MIN fold is kept here instead.
 module constfold(a, b);
     inout a, b;
     electrical a, b;
@@ -35,7 +43,7 @@ module constfold(a, b);
         r = 5 % lzero;              // ditto for remainder
         s = 2147483647 + 1;         // wraps, must not abort the folder
         t = 1 << 31;                // largest LEGAL shift distance (see below)
-        u = -2147483648 / -1;       // literal exceeds i32, so this is REAL division
+        u = -2147483648 / 3;        // INT_MIN as an integer: truncates toward zero
         I(a, b) <+ V(a, b) / 1.0e3 + 0.0 * (q + r + s + t + u);
     end
 endmodule

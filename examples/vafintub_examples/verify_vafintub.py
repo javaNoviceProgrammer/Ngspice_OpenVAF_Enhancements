@@ -18,8 +18,13 @@ Both are now clean compile errors.
   [4] legal shifts, runtime distances and parameter/localparam operands STILL
       compile and simulate -- the guard is constant-operand-only on purpose
 
-Note `-2147483648` written directly exceeds i32::MAX and promotes to REAL, so the
-integer overflow is only reachable as `(-2147483647 - 1)`.
+Enhancement-392 UPDATE: `-2147483648` written directly used to exceed i32::MAX and
+promote to REAL, so the integer overflow was only reachable as `(-2147483647 - 1)`.
+That promotion was itself a defect -- the same value arriving at runtime stayed an
+integer, so one expression had two meanings -- and E-392 folds the sign into the
+literal. The direct spelling therefore reaches this same guard now, which check [5]
+below pins: it is the one operation that genuinely traps, so making the literal
+work correctly must not make it compile.
 """
 import os
 import re
@@ -60,6 +65,13 @@ def main():
     check("the out-of-range shift is reported with its distance",
           "shift distance out of range" in out and "40" in out,
           next((l for l in out.splitlines() if "shift" in l), "")[:60])
+
+    # [5] E-392: the INT_MIN LITERAL spelling reaches the same guard. Before E-392
+    # `-2147483648` promoted to real, so this line compiled clean and quietly
+    # computed 2147483648.0 instead of overflowing.
+    check("the `-2147483648` literal spelling is caught too, not silently made real",
+          out.count("overflow") >= 2 and "intub_minlit" not in out.replace("overflow", ""),
+          f"overflow diagnostics={out.count('overflow')}")
 
     # [3] nothing compiled, so nothing can trap
     check("no .osdi is produced for them (nothing left to trap)",

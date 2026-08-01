@@ -21,3 +21,20 @@
           V(n2, n[N]) <+ 0.0;
        end
     endmodule
+
+// [lrm_examples context] Annex E SPICE-compatibility primitives the RC-line
+// example instantiates but does not define, as plain Verilog-A modules.
+// Enhancement-392 is what let this example elaborate at all: its loop bound `N`
+// also sizes `electrical [0:N] n`, so Enhancement-92 had already frozen `N` to a
+// localparam, and a localparam is a compile-time constant that may shape a
+// generated structure. Only a parameter that shapes nothing stays rejected.
+module resistor(p, n);
+   inout p, n; electrical p, n;
+   parameter real r = 1k;
+   analog I(p, n) <+ V(p, n)/r;
+endmodule
+module capacitor(p, n);
+   inout p, n; electrical p, n;
+   parameter real c = 1p;
+   analog I(p, n) <+ ddt(c*V(p, n));
+endmodule

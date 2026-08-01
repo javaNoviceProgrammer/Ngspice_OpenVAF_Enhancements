@@ -263,6 +263,30 @@ impl Diagnostic for BodyValidationDiagnosticWrapped<'_> {
                             .to_owned(),
                     ])
             }
+            // Enhancement-392
+            BodyValidationDiagnostic::TableTooLargeToSort { expr, len, max } => {
+                let FileSpan { range, file } = self.expr_src(expr);
+                Report::error()
+                    .with_message(format!(
+                        "$table_model runtime data has {len} points; at most {max} are sorted"
+                    ))
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: file,
+                        range: range.into(),
+                        message: "too many points to normalise in the emitted code".to_owned(),
+                    }])
+                    .with_notes(vec![
+                        format!(
+                            "the compile-time forms sort and de-duplicate at any size, so a \
+                             larger runtime table would silently disagree with the same data \
+                             written inline; supply at most {max} points, or a data file"
+                        ),
+                        "a runtime table must in any case be ascending in x (LRM); the sorting \
+                         is a convenience, not a requirement of the language"
+                            .to_owned(),
+                    ])
+            }
             // Enhancement-390: only reached when the file is genuinely unusable --
             // `to_report` filters out the readable, parseable ones.
             BodyValidationDiagnostic::TableFileUnusable { expr, ref path } => {

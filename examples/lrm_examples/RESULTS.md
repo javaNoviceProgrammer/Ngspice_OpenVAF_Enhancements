@@ -79,7 +79,7 @@ defects must compile, open gaps must keep their exact diagnostic.
 | `lrm_p265_1.va` | 265 | timer/transition/$port_connected clock source; $port_connected on unconnected flattened ports used to fail - fixed by E-84 (F5). Also fixes a genuine typo in the LRM's own example |
 | `lrm_p274_1.va` | 274 | verbatim |
 | `lrm_p416_1.va` | 416 | differential pair; LRM omits port directions (lint demoted) + vertNPN context stub |
-| `lrm_p416_3.va` | 416 | ECP oscillator pair of examples merged; Annex E primitive stubs added |
+| `lrm_p416_3.va` | 416 | ECP oscillator pair of examples merged; Annex E primitive stubs added. The vertNPN stub declares FOUR terminals (c, b, e, s) -- the LRM wires `vertNPN Q1 (vcc, b1, e, vcc)`; the three-terminal stub used to have its fourth actual silently dropped, which E-392 now diagnoses |
 
 ## Documented limitations (17)
 
@@ -96,11 +96,11 @@ the file graduates to `va/`.
 | `lrm_p134_1.va` | 134 | `not a constant expression` | parameter-dependent bus width |
 | `lrm_p155_3.va` | 155 | `'processinfo' was not found` | hierarchical refs to an uninstantiated process-info module |
 | `lrm_p158_1.va` | 158 | `instantiates paramset 'nch'` | paramset targeting a SPICE primitive (nmos3) rather than a VA module |
-| `lrm_p168_1.va` | 168 | `compile-time-constant integer` | generate-for with parameter loop bounds (structure cannot depend on runtime-bindable parameters; E-67 scope decision) |
-| `lrm_p169_1.va` | 169 | `not a constant expression` | parameter-dependent bus width (electrical [0:N]) |
-| `lrm_p169_2.va` | 169 | `not a constant expression` | parameter-dependent bus width |
+| `lrm_p168_1.va` | 168 | `only '<' and '<=' loop conditions are supported` | the bound `bits` also sizes `[0:bits-1]`, so E-92 freezes it and E-392 folds it; blocked instead on the decrementing header `for (i=bits-1; i>=0; i=i-1)` |
+| `lrm_p169_1.va` | 169 | `bus bit-select index must be a constant` | the loop bound `N` also sizes `electrical [0:N]`, so E-92 freezes it and E-392 accepts a localparam bound; resistor/capacitor stubs added. Blocked instead on `n[N]` as a bit-select index (a localparam sizes a bus but cannot index one) |
+| `lrm_p169_2.va` | 169 | `bus bit-select index must be a constant` | as `lrm_p169_1`, with a labelled section block and an analog block inside the generate body (E-390); same remaining blocker |
 | `lrm_p170_1.va` | 170 | `elaboration-time constant` | generate-if on $param_given (parameter-driven structure; E-67 scope decision) |
-| `lrm_p171_2.va` | 171 | `elaboration-time constant` | generate-if on a parameter (parameter-driven structure; E-67 scope decision) |
+| `lrm_p171_2.va` | 171 | `instantiates itself` | the condition `bits > 1` now folds (E-92 freezes the width-shaping `bits`, E-392 accepts it); blocked instead on RECURSIVE instantiation -- `pipeline_adc` instantiates itself |
 | `lrm_p172_1.va` | 172 | `unexpected token 'if'` | generate-if with parameter condition + implicit genblk naming (E-67 scope decision) |
 | `lrm_p267_1.va` | 267 | `refers to module 'resistor'` | $analog_node_alias/$analog_port_alias example; elaboration rejects the unconnected instance nets |
 | `lrm_p274_3.va` | 274 | `requires a bit-select` | $table_model with runtime array data arguments |

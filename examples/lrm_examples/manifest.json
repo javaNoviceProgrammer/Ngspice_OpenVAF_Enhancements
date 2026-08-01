@@ -1,1174 +1,1174 @@
 {
- "va": [
-  {
-   "file": "lrm_p018_1.va",
-   "block": "block_018_1",
-   "page": 18,
-   "note": "signal-flow disciplines (voltage/current); syntax-summary junk trimmed off the tail"
-  },
-  {
-   "file": "lrm_p044_1.va",
-   "block": "block_044_1",
-   "page": 44,
-   "note": ""
-  },
-  {
-   "file": "lrm_p048_2.va",
-   "block": "block_048_2",
-   "page": 48,
-   "note": "derived/alias natures (nature X : parent) with a context module added"
-  },
-  {
-   "file": "lrm_p062_2.va",
-   "block": "block_062_2",
-   "page": 62,
-   "note": "named port branch 'branch (<p>) probe_p;' (LRM 3.7.2); used to crash the compiler - fixed by E-84 (F1)"
-  },
-  {
-   "file": "lrm_p080_1.va",
-   "block": "block_080_1",
-   "page": 80,
-   "note": ""
-  },
-  {
-   "file": "lrm_p080_3.va",
-   "block": "block_080_3",
-   "page": 80,
-   "note": ""
-  },
-  {
-   "file": "lrm_p083_1.va",
-   "block": "block_083_1",
-   "page": 83,
-   "note": ""
-  },
-  {
-   "file": "lrm_p083_2.va",
-   "block": "block_083_2",
-   "page": 83,
-   "note": ""
-  },
-  {
-   "file": "lrm_p084_1.va",
-   "block": "block_084_1",
-   "page": 84,
-   "note": ""
-  },
-  {
-   "file": "lrm_p090_1.va",
-   "block": "block_090_1",
-   "page": 90,
-   "note": ""
-  },
-  {
-   "file": "lrm_p092_1.va",
-   "block": "block_092_1",
-   "page": 92,
-   "note": ""
-  },
-  {
-   "file": "lrm_p114_1.va",
-   "block": "block_114_1",
-   "page": 114,
-   "note": ""
-  },
-  {
-   "file": "lrm_p114_2.va",
-   "block": "block_114_2",
-   "page": 114,
-   "note": ""
-  },
-  {
-   "file": "lrm_p116_1.va",
-   "block": "block_116_1",
-   "page": 116,
-   "note": ""
-  },
-  {
-   "file": "lrm_p116_2.va",
-   "block": "block_116_2",
-   "page": 116,
-   "note": ""
-  },
-  {
-   "file": "lrm_p118_1.va",
-   "block": "block_118_1",
-   "page": 118,
-   "note": ""
-  },
-  {
-   "file": "lrm_p119_1.va",
-   "block": "block_119_1",
-   "page": 119,
-   "note": "hierarchical net + named-branch probes from sibling modules (V(top.drv.a), V(top.a1.b)); parse/elaboration added by E-86; trailing branch()-fragment section trimmed"
-  },
-  {
-   "file": "lrm_p138_1.va",
-   "block": "block_138_1",
-   "page": 138,
-   "note": ""
-  },
-  {
-   "file": "lrm_p140_1.va",
-   "block": "block_140_1",
-   "page": 140,
-   "note": ""
-  },
-  {
-   "file": "lrm_p142_1.va",
-   "block": "block_142_1",
-   "page": 142,
-   "note": ""
-  },
-  {
-   "file": "lrm_p143_1.va",
-   "block": "block_143_1",
-   "page": 143,
-   "note": ""
-  },
-  {
-   "file": "lrm_p150_1.va",
-   "block": "block_150_1",
-   "page": 150,
-   "note": "sigma-delta ADC loop (cross/transition/idt, implicit nets aa0-aa2); d2a context stub added"
-  },
-  {
-   "file": "lrm_p152_2.va",
-   "block": "block_152_2",
-   "page": 152,
-   "note": "transmission gate over the Annex E SPICE MOS primitives spice_nmos/spice_pmos; primitives provided as context (E-89, examples/annexe_examples)"
-  },
-  {
-   "file": "lrm_p153_1.va",
-   "block": "block_153_1",
-   "page": 153,
-   "note": ""
-  },
-  {
-   "file": "lrm_p153_2.va",
-   "block": "block_153_2",
-   "page": 153,
-   "note": "instance-parameter forms over the mosp/spice_pmos Annex E primitives; provided as context (E-89)"
-  },
-  {
-   "file": "lrm_p153_3.va",
-   "block": "block_153_3",
-   "page": 153,
-   "note": "hierarchy example (named parameter overrides); vco context stub added"
-  },
-  {
-   "file": "lrm_p155_1.va",
-   "block": "block_155_1",
-   "page": 155,
-   "note": ""
-  },
-  {
-   "file": "lrm_p155_2.va",
-   "block": "block_155_2",
-   "page": 155,
-   "note": ""
-  },
-  {
-   "file": "lrm_p156_1.va",
-   "block": "block_156_1",
-   "page": 156,
-   "note": "matched-resistor layout example: .$xposition/.$yposition instance overrides on each polyres (E-44 hidden state parameters); context stub added"
-  },
-  {
-   "file": "lrm_p163_1.va",
-   "block": "block_163_1",
-   "page": 163,
-   "note": "binary ADC tree wired with part-selects (out[3:2]); used to be a parse error - fixed by E-85 (F6)"
-  },
-  {
-   "file": "lrm_p164_1.va",
-   "block": "block_164_1",
-   "page": 164,
-   "note": "named part-select connections (.out(out[3:2])); parse fixed by E-85 (F6), adc context stub added"
-  },
-  {
-   "file": "lrm_p173_1.va",
-   "block": "block_173_1",
-   "page": 173,
-   "note": ""
-  },
-  {
-   "file": "lrm_p205_2.va",
-   "block": "block_205_2",
-   "page": 205,
-   "note": ""
-  },
-  {
-   "file": "lrm_p208_2.va",
-   "block": "block_208_2",
-   "page": 208,
-   "note": ""
-  },
-  {
-   "file": "lrm_p261_1.va",
-   "block": "block_261_1",
-   "page": 261,
-   "note": ""
-  },
-  {
-   "file": "lrm_p263_1.va",
-   "block": "block_263_1",
-   "page": 263,
-   "note": "hierarchical path illustration; module_a context stub added"
-  },
-  {
-   "file": "lrm_p263_2.va",
-   "block": "block_263_2",
-   "page": 263,
-   "note": ""
-  },
-  {
-   "file": "lrm_p263_3.va",
-   "block": "block_263_3",
-   "page": 263,
-   "note": ""
-  },
-  {
-   "file": "lrm_p265_1.va",
-   "block": "block_265_1",
-   "page": 265,
-   "note": "timer/transition/$port_connected clock source; $port_connected on unconnected flattened ports used to fail - fixed by E-84 (F5). Also fixes a genuine typo in the LRM's own example"
-  },
-  {
-   "file": "lrm_p274_1.va",
-   "block": "block_274_1",
-   "page": 274,
-   "note": ""
-  },
-  {
-   "file": "lrm_p416_1.va",
-   "block": "block_416_1",
-   "page": 416,
-   "note": "differential pair; LRM omits port directions (lint demoted) + vertNPN context stub",
-   "flags": [
-    "-W",
-    "port_without_direction"
-   ]
-  },
-  {
-   "file": "lrm_p416_3.va",
-   "block": "block_416_3",
-   "page": 416,
-   "note": "ECP oscillator pair of examples merged; Annex E primitive stubs added",
-   "flags": [
-    "-W",
-    "port_without_direction"
-   ]
-  }
- ],
- "limitations": [
-  {
-   "file": "lrm_p045_4.va",
-   "block": "block_045_4",
-   "page": 45,
-   "note": "name-then-range array ports (input in[0:2]) now supported (E-89); still a limitation on the undefined gen/sink modules + the multi-dimensional parameter-array literal override",
-   "expect": "refers to module 'gen'"
-  },
-  {
-   "file": "lrm_p091_1.va",
-   "block": "block_091_1",
-   "page": 91,
-   "note": "param-dependent bus width now folds (E-91); still blocked on the genvar for-loop used *inside* the analog block (analog-block genvar unrolling is unsupported)",
-   "expect": "'i' was not found in the current scope"
-  },
-  {
-   "file": "lrm_p112_1.va",
-   "block": "block_112_1",
-   "page": 112,
-   "note": "block-scoped parameters WORK (E-87); this file is correctly rejected only because it also demos the LRM's own `#(.myscope.p2(4)) // error` case, now a clean targeted diagnostic (was a parser cascade)",
-   "expect": "hierarchical/block-scoped parameter"
-  },
-  {
-   "file": "lrm_p117_1.va",
-   "block": "block_117_1",
-   "page": 117,
-   "note": "param-dependent bus width now folds (E-91); still blocked on the analog-block genvar for-loop",
-   "expect": "'i' was not found in the current scope"
-  },
-  {
-   "file": "lrm_p134_1.va",
-   "block": "block_134_1",
-   "page": 134,
-   "note": "param-dependent bus width now folds (E-91); still blocked on the analog-block genvar for-loop",
-   "expect": "'k' was not found in the current scope"
-  },
-  {
-   "file": "lrm_p155_3.va",
-   "block": "block_155_3",
-   "page": 155,
-   "note": "hierarchical refs to an uninstantiated process-info module",
-   "expect": "'processinfo' was not found"
-  },
-  {
-   "file": "lrm_p158_1.va",
-   "block": "block_158_1",
-   "page": 158,
-   "note": "paramset targeting a SPICE primitive (nmos3) rather than a VA module",
-   "expect": "instantiates paramset 'nch'"
-  },
-  {
-   "file": "lrm_p168_1.va",
-   "block": "block_168_1",
-   "page": 168,
-   "note": "generate-for with parameter loop bounds (structure cannot depend on runtime-bindable parameters; E-67 scope decision)",
-   "expect": "compile-time-constant integer"
-  },
-  {
-   "file": "lrm_p169_1.va",
-   "block": "block_169_1",
-   "page": 169,
-   "note": "bare module-level generate-for now parses (E-96); still blocked on the parameter loop bound N (generate structure cannot depend on a runtime-bindable parameter, E-67 scope) + undefined resistor/capacitor primitives",
-   "expect": "generate for: loop bound must be a compile-time-constant integer"
-  },
-  {
-   "file": "lrm_p169_2.va",
-   "block": "block_169_2",
-   "page": 169,
-   "note": "bare module-level generate-for now parses (E-96); still blocked on the parameter loop bound N (E-67 scope) + undefined primitives",
-   "expect": "generate for: loop bound must be a compile-time-constant integer"
-  },
-  {
-   "file": "lrm_p170_1.va",
-   "block": "block_170_1",
-   "page": 170,
-   "note": "generate-if on $param_given (parameter-driven structure; E-67 scope decision)",
-   "expect": "elaboration-time constant"
-  },
-  {
-   "file": "lrm_p171_2.va",
-   "block": "block_171_2",
-   "page": 171,
-   "note": "generate-if on a parameter (parameter-driven structure; E-67 scope decision)",
-   "expect": "elaboration-time constant"
-  },
-  {
-   "file": "lrm_p172_1.va",
-   "block": "block_172_1",
-   "page": 172,
-   "note": "bare module-level generate-if now parses (E-96); still blocked on the parameter/implicit-genblk condition (generate structure cannot depend on a parameter, E-67 scope)",
-   "expect": "generate if: the condition"
-  },
-  {
-   "file": "lrm_p267_1.va",
-   "block": "block_267_1",
-   "page": 267,
-   "note": "$analog_node_alias/$analog_port_alias example; elaboration rejects the unconnected instance nets",
-   "expect": "refers to module 'resistor'"
-  },
-  {
-   "file": "lrm_p274_3.va",
-   "block": "block_274_3",
-   "page": 274,
-   "note": "$table_model with runtime array data arguments",
-   "expect": "requires a bit-select"
-  },
-  {
-   "file": "lrm_p343_1.va",
-   "block": "block_343_1",
-   "page": 343,
-   "note": "Annex E SPICE-compatibility system function $resistor()",
-   "flags": [
-    "-W",
-    "port_without_direction"
-   ],
-   "expect": "'$resistor' was not found"
-  },
-  {
-   "file": "lrm_p438_1.va",
-   "block": "block_438_1",
-   "page": 438,
-   "note": "legacy Verilog-A 1.0 'generate i (msb,lsb)' statement (Annex C) now supported (E-88) with constant bounds; this example uses a PARAMETER bound (bits-1) + parameter bus width, both elaboration-time-unresolvable -- stays a limitation",
-   "expect": "legacy generate 'i': the bounds must be elaboration-time constants"
-  }
- ],
- "ams": [
-  {
-   "file": "lrm_p140_2.va",
-   "block": "block_140_2",
-   "page": 140,
-   "note": "cross() with digital enable expression (===) and empty optional args"
-  },
-  {
-   "file": "lrm_p144_1.va",
-   "block": "block_144_1",
-   "page": 144,
-   "note": "wreal/assign/always sampler (mixed-signal)"
-  },
-  {
-   "file": "lrm_p162_3.va",
-   "block": "block_162_3",
-   "page": 162,
-   "note": "digital testbench (reg/initial/always)"
-  },
-  {
-   "file": "lrm_p180_2.va",
-   "block": "block_180_2",
-   "page": 180,
-   "note": "wire net driving analog"
-  },
-  {
-   "file": "lrm_p181_1.va",
-   "block": "block_181_1",
-   "page": 181,
-   "note": "ddiscrete net with ===/x/z comparisons"
-  },
-  {
-   "file": "lrm_p182_1.va",
-   "block": "block_182_1",
-   "page": 182,
-   "note": "reg/initial digital converter"
-  },
-  {
-   "file": "lrm_p182_2.va",
-   "block": "block_182_2",
-   "page": 182,
-   "note": "reg/always sampler"
-  },
-  {
-   "file": "lrm_p184_1.va",
-   "block": "block_184_1",
-   "page": 184,
-   "note": "posedge on wire mixed with cross()"
-  },
-  {
-   "file": "lrm_p184_2.va",
-   "block": "block_184_2",
-   "page": 184,
-   "note": "always @(cross) driving a reg"
-  },
-  {
-   "file": "lrm_p191_1.va",
-   "block": "block_191_1",
-   "page": 191,
-   "note": "connectmodule skeletons (mixed-signal auto-insertion)"
-  },
-  {
-   "file": "lrm_p205_1.va",
-   "block": "block_205_1",
-   "page": 205,
-   "note": "digital inverter (reg/always/#delay)"
-  },
-  {
-   "file": "lrm_p206_1.va",
-   "block": "block_206_1",
-   "page": 206,
-   "note": "mixed digital/analog ring with connect rules"
-  },
-  {
-   "file": "lrm_p206_2.va",
-   "block": "block_206_2",
-   "page": 206,
-   "note": "digital inverter + analog inverter pair (reg/always)"
-  },
-  {
-   "file": "lrm_p208_1.va",
-   "block": "block_208_1",
-   "page": 208,
-   "note": "connectmodule + connectrules"
-  },
-  {
-   "file": "lrm_p209_1.va",
-   "block": "block_209_1",
-   "page": 209,
-   "note": "mixed-net example: analog inverter wired to ddiscrete_1v2 nets via connect rules"
-  },
-  {
-   "file": "lrm_p210_1.va",
-   "block": "block_210_1",
-   "page": 210,
-   "note": "connectmodule (elect_to_logic)"
-  },
-  {
-   "file": "lrm_p218_1.va",
-   "block": "block_218_1",
-   "page": 218,
-   "note": "wire nets"
-  },
-  {
-   "file": "lrm_p219_1.va",
-   "block": "block_219_1",
-   "page": 219,
-   "note": "wire [15:0] bus + posedge in analog"
-  },
-  {
-   "file": "lrm_p220_1.va",
-   "block": "block_220_1",
-   "page": 220,
-   "note": "connectmodule pair"
-  },
-  {
-   "file": "lrm_p256_1.va",
-   "block": "block_256_1",
-   "page": 256,
-   "note": "task/$display (digital context)"
-  },
-  {
-   "file": "lrm_p278_1.va",
-   "block": "block_278_1",
-   "page": 278,
-   "note": "connectmodule with drive strength"
-  }
- ],
- "findings": [
-  {
-   "file": "micro_portbranch.va",
-   "block": "micro",
-   "page": 0,
-   "note": "F1 (fixed): named port branch, LRM 3.7.2 -- used to panic the compiler"
-  },
-  {
-   "file": "micro_portconnected.va",
-   "block": "micro",
-   "page": 0,
-   "note": "F5 (fixed): $port_connected on an unconnected port of a flattened"
-  },
-  {
-   "file": "micro_deadop.va",
-   "block": "micro",
-   "page": 0,
-   "note": "F7 (fixed): an analog operator inside a constant-false branch -- the dead"
-  },
-  {
-   "file": "micro_unknownmod.va",
-   "block": "micro",
-   "page": 0,
-   "note": "F3 (fixed): this used to compile SILENTLY, dropping the instance",
-   "expect": "refers to module 'foo'"
-  },
-  {
-   "file": "micro_file_line.va",
-   "block": "micro",
-   "page": 0,
-   "note": "F4 (fixed by E-85): `__FILE__/`__LINE__ predefined macros"
-  },
-  {
-   "file": "micro_partselect.va",
-   "block": "micro",
-   "page": 0,
-   "note": "F6 (fixed by E-85): part-selects in instance connections"
-  }
- ],
- "fragments": [
-  {
-   "block": "block_027_1",
-   "page": 27
-  },
-  {
-   "block": "block_027_2",
-   "page": 27
-  },
-  {
-   "block": "block_027_3",
-   "page": 27
-  },
-  {
-   "block": "block_030_1",
-   "page": 30
-  },
-  {
-   "block": "block_031_1",
-   "page": 31
-  },
-  {
-   "block": "block_038_1",
-   "page": 38
-  },
-  {
-   "block": "block_038_2",
-   "page": 38
-  },
-  {
-   "block": "block_039_1",
-   "page": 39
-  },
-  {
-   "block": "block_039_2",
-   "page": 39
-  },
-  {
-   "block": "block_039_3",
-   "page": 39
-  },
-  {
-   "block": "block_039_4",
-   "page": 39
-  },
-  {
-   "block": "block_039_5",
-   "page": 39
-  },
-  {
-   "block": "block_040_1",
-   "page": 40
-  },
-  {
-   "block": "block_041_1",
-   "page": 41
-  },
-  {
-   "block": "block_042_1",
-   "page": 42
-  },
-  {
-   "block": "block_042_2",
-   "page": 42
-  },
-  {
-   "block": "block_042_3",
-   "page": 42
-  },
-  {
-   "block": "block_042_4",
-   "page": 42
-  },
-  {
-   "block": "block_042_5",
-   "page": 42
-  },
-  {
-   "block": "block_043_1",
-   "page": 43
-  },
-  {
-   "block": "block_043_2",
-   "page": 43
-  },
-  {
-   "block": "block_044_2",
-   "page": 44
-  },
-  {
-   "block": "block_044_3",
-   "page": 44
-  },
-  {
-   "block": "block_045_1",
-   "page": 45
-  },
-  {
-   "block": "block_045_2",
-   "page": 45
-  },
-  {
-   "block": "block_045_3",
-   "page": 45
-  },
-  {
-   "block": "block_048_1",
-   "page": 48
-  },
-  {
-   "block": "block_060_1",
-   "page": 60
-  },
-  {
-   "block": "block_062_1",
-   "page": 62
-  },
-  {
-   "block": "block_066_1",
-   "page": 66
-  },
-  {
-   "block": "block_066_2",
-   "page": 66
-  },
-  {
-   "block": "block_066_3",
-   "page": 66
-  },
-  {
-   "block": "block_066_4",
-   "page": 66
-  },
-  {
-   "block": "block_067_1",
-   "page": 67
-  },
-  {
-   "block": "block_067_2",
-   "page": 67
-  },
-  {
-   "block": "block_068_1",
-   "page": 68
-  },
-  {
-   "block": "block_069_1",
-   "page": 69
-  },
-  {
-   "block": "block_071_1",
-   "page": 71
-  },
-  {
-   "block": "block_071_2",
-   "page": 71
-  },
-  {
-   "block": "block_073_1",
-   "page": 73
-  },
-  {
-   "block": "block_073_2",
-   "page": 73
-  },
-  {
-   "block": "block_073_3",
-   "page": 73
-  },
-  {
-   "block": "block_073_4",
-   "page": 73
-  },
-  {
-   "block": "block_073_5",
-   "page": 73
-  },
-  {
-   "block": "block_074_1",
-   "page": 74
-  },
-  {
-   "block": "block_074_2",
-   "page": 74
-  },
-  {
-   "block": "block_074_3",
-   "page": 74
-  },
-  {
-   "block": "block_077_1",
-   "page": 77
-  },
-  {
-   "block": "block_077_2",
-   "page": 77
-  },
-  {
-   "block": "block_080_2",
-   "page": 80
-  },
-  {
-   "block": "block_082_1",
-   "page": 82
-  },
-  {
-   "block": "block_082_2",
-   "page": 82
-  },
-  {
-   "block": "block_082_3",
-   "page": 82
-  },
-  {
-   "block": "block_087_1",
-   "page": 87
-  },
-  {
-   "block": "block_087_2",
-   "page": 87
-  },
-  {
-   "block": "block_095_1",
-   "page": 95
-  },
-  {
-   "block": "block_095_2",
-   "page": 95
-  },
-  {
-   "block": "block_095_3",
-   "page": 95
-  },
-  {
-   "block": "block_101_1",
-   "page": 101
-  },
-  {
-   "block": "block_102_1",
-   "page": 102
-  },
-  {
-   "block": "block_103_1",
-   "page": 103
-  },
-  {
-   "block": "block_104_1",
-   "page": 104
-  },
-  {
-   "block": "block_104_2",
-   "page": 104
-  },
-  {
-   "block": "block_105_1",
-   "page": 105
-  },
-  {
-   "block": "block_105_2",
-   "page": 105
-  },
-  {
-   "block": "block_105_3",
-   "page": 105
-  },
-  {
-   "block": "block_106_1",
-   "page": 106
-  },
-  {
-   "block": "block_106_2",
-   "page": 106
-  },
-  {
-   "block": "block_107_1",
-   "page": 107
-  },
-  {
-   "block": "block_107_2",
-   "page": 107
-  },
-  {
-   "block": "block_107_3",
-   "page": 107
-  },
-  {
-   "block": "block_108_1",
-   "page": 108
-  },
-  {
-   "block": "block_108_2",
-   "page": 108
-  },
-  {
-   "block": "block_109_1",
-   "page": 109
-  },
-  {
-   "block": "block_109_2",
-   "page": 109
-  },
-  {
-   "block": "block_109_3",
-   "page": 109
-  },
-  {
-   "block": "block_109_4",
-   "page": 109
-  },
-  {
-   "block": "block_115_1",
-   "page": 115
-  },
-  {
-   "block": "block_115_2",
-   "page": 115
-  },
-  {
-   "block": "block_137_1",
-   "page": 137
-  },
-  {
-   "block": "block_137_2",
-   "page": 137
-  },
-  {
-   "block": "block_145_1",
-   "page": 145
-  },
-  {
-   "block": "block_146_1",
-   "page": 146
-  },
-  {
-   "block": "block_152_1",
-   "page": 152
-  },
-  {
-   "block": "block_154_1",
-   "page": 154
-  },
-  {
-   "block": "block_157_1",
-   "page": 157
-  },
-  {
-   "block": "block_157_2",
-   "page": 157
-  },
-  {
-   "block": "block_159_1",
-   "page": 159
-  },
-  {
-   "block": "block_159_2",
-   "page": 159
-  },
-  {
-   "block": "block_159_3",
-   "page": 159
-  },
-  {
-   "block": "block_160_1",
-   "page": 160
-  },
-  {
-   "block": "block_162_1",
-   "page": 162
-  },
-  {
-   "block": "block_162_2",
-   "page": 162
-  },
-  {
-   "block": "block_180_1",
-   "page": 180
-  },
-  {
-   "block": "block_181_2",
-   "page": 181
-  },
-  {
-   "block": "block_185_1",
-   "page": 185
-  },
-  {
-   "block": "block_185_2",
-   "page": 185
-  },
-  {
-   "block": "block_201_1",
-   "page": 201
-  },
-  {
-   "block": "block_201_2",
-   "page": 201
-  },
-  {
-   "block": "block_202_1",
-   "page": 202
-  },
-  {
-   "block": "block_203_1",
-   "page": 203
-  },
-  {
-   "block": "block_203_2",
-   "page": 203
-  },
-  {
-   "block": "block_228_1",
-   "page": 228
-  },
-  {
-   "block": "block_244_1",
-   "page": 244
-  },
-  {
-   "block": "block_245_1",
-   "page": 245
-  },
-  {
-   "block": "block_246_1",
-   "page": 246
-  },
-  {
-   "block": "block_246_2",
-   "page": 246
-  },
-  {
-   "block": "block_247_1",
-   "page": 247
-  },
-  {
-   "block": "block_247_2",
-   "page": 247
-  },
-  {
-   "block": "block_247_3",
-   "page": 247
-  },
-  {
-   "block": "block_252_1",
-   "page": 252
-  },
-  {
-   "block": "block_255_1",
-   "page": 255
-  },
-  {
-   "block": "block_255_2",
-   "page": 255
-  },
-  {
-   "block": "block_264_1",
-   "page": 264
-  },
-  {
-   "block": "block_270_1",
-   "page": 270
-  },
-  {
-   "block": "block_273_1",
-   "page": 273
-  },
-  {
-   "block": "block_273_2",
-   "page": 273
-  },
-  {
-   "block": "block_273_3",
-   "page": 273
-  },
-  {
-   "block": "block_274_2",
-   "page": 274
-  },
-  {
-   "block": "block_276_1",
-   "page": 276
-  },
-  {
-   "block": "block_277_1",
-   "page": 277
-  },
-  {
-   "block": "block_289_1",
-   "page": 289
-  },
-  {
-   "block": "block_293_1",
-   "page": 293
-  },
-  {
-   "block": "block_293_2",
-   "page": 293
-  },
-  {
-   "block": "block_294_1",
-   "page": 294
-  },
-  {
-   "block": "block_294_2",
-   "page": 294
-  },
-  {
-   "block": "block_294_3",
-   "page": 294
-  },
-  {
-   "block": "block_294_4",
-   "page": 294
-  },
-  {
-   "block": "block_294_5",
-   "page": 294
-  },
-  {
-   "block": "block_294_6",
-   "page": 294
-  },
-  {
-   "block": "block_337_1",
-   "page": 337
-  },
-  {
-   "block": "block_338_1",
-   "page": 338
-  },
-  {
-   "block": "block_338_2",
-   "page": 338
-  },
-  {
-   "block": "block_338_3",
-   "page": 338
-  },
-  {
-   "block": "block_338_4",
-   "page": 338
-  },
-  {
-   "block": "block_351_1",
-   "page": 351
-  },
-  {
-   "block": "block_351_2",
-   "page": 351
-  },
-  {
-   "block": "block_384_1",
-   "page": 384
-  },
-  {
-   "block": "block_406_1",
-   "page": 406
-  },
-  {
-   "block": "block_415_1",
-   "page": 415
-  },
-  {
-   "block": "block_420_1",
-   "page": 420
-  },
-  {
-   "block": "block_420_2",
-   "page": 420
-  },
-  {
-   "block": "block_420_3",
-   "page": 420
-  },
-  {
-   "block": "block_427_1",
-   "page": 427
-  },
-  {
-   "block": "block_430_1",
-   "page": 430
-  },
-  {
-   "block": "block_430_2",
-   "page": 430
-  }
- ],
- "excluded": [
-  {
-   "block": "block_032_1",
-   "page": 32,
-   "class": "junk",
-   "note": "attribute-section pseudo-code (<rest_of_case_statement>); crashes the compiler - finding F2"
-  },
-  {
-   "block": "block_171_1",
-   "page": 171,
-   "class": "pseudo",
-   "note": "contains a literal '...' placeholder; also generate-if on a parameter (see E-67)"
-  },
-  {
-   "block": "block_281_1",
-   "page": 281,
-   "class": "junk",
-   "note": "compiler-directive name table; separately, `__FILE__/`__LINE__ are unsupported - finding F4"
-  },
-  {
-   "block": "block_416_2",
-   "page": 416,
-   "class": "junk",
-   "note": "SPICE netlist from Annex E, not Verilog-A"
-  },
-  {
-   "block": "block_416_4",
-   "page": 416,
-   "class": "merged",
-   "note": "merged into block_416_3"
-  }
- ]
+  "va": [
+    {
+      "file": "lrm_p018_1.va",
+      "block": "block_018_1",
+      "page": 18,
+      "note": "signal-flow disciplines (voltage/current); syntax-summary junk trimmed off the tail"
+    },
+    {
+      "file": "lrm_p044_1.va",
+      "block": "block_044_1",
+      "page": 44,
+      "note": ""
+    },
+    {
+      "file": "lrm_p048_2.va",
+      "block": "block_048_2",
+      "page": 48,
+      "note": "derived/alias natures (nature X : parent) with a context module added"
+    },
+    {
+      "file": "lrm_p062_2.va",
+      "block": "block_062_2",
+      "page": 62,
+      "note": "named port branch 'branch (<p>) probe_p;' (LRM 3.7.2); used to crash the compiler - fixed by E-84 (F1)"
+    },
+    {
+      "file": "lrm_p080_1.va",
+      "block": "block_080_1",
+      "page": 80,
+      "note": ""
+    },
+    {
+      "file": "lrm_p080_3.va",
+      "block": "block_080_3",
+      "page": 80,
+      "note": ""
+    },
+    {
+      "file": "lrm_p083_1.va",
+      "block": "block_083_1",
+      "page": 83,
+      "note": ""
+    },
+    {
+      "file": "lrm_p083_2.va",
+      "block": "block_083_2",
+      "page": 83,
+      "note": ""
+    },
+    {
+      "file": "lrm_p084_1.va",
+      "block": "block_084_1",
+      "page": 84,
+      "note": ""
+    },
+    {
+      "file": "lrm_p090_1.va",
+      "block": "block_090_1",
+      "page": 90,
+      "note": ""
+    },
+    {
+      "file": "lrm_p092_1.va",
+      "block": "block_092_1",
+      "page": 92,
+      "note": ""
+    },
+    {
+      "file": "lrm_p114_1.va",
+      "block": "block_114_1",
+      "page": 114,
+      "note": ""
+    },
+    {
+      "file": "lrm_p114_2.va",
+      "block": "block_114_2",
+      "page": 114,
+      "note": ""
+    },
+    {
+      "file": "lrm_p116_1.va",
+      "block": "block_116_1",
+      "page": 116,
+      "note": ""
+    },
+    {
+      "file": "lrm_p116_2.va",
+      "block": "block_116_2",
+      "page": 116,
+      "note": ""
+    },
+    {
+      "file": "lrm_p118_1.va",
+      "block": "block_118_1",
+      "page": 118,
+      "note": ""
+    },
+    {
+      "file": "lrm_p119_1.va",
+      "block": "block_119_1",
+      "page": 119,
+      "note": "hierarchical net + named-branch probes from sibling modules (V(top.drv.a), V(top.a1.b)); parse/elaboration added by E-86; trailing branch()-fragment section trimmed"
+    },
+    {
+      "file": "lrm_p138_1.va",
+      "block": "block_138_1",
+      "page": 138,
+      "note": ""
+    },
+    {
+      "file": "lrm_p140_1.va",
+      "block": "block_140_1",
+      "page": 140,
+      "note": ""
+    },
+    {
+      "file": "lrm_p142_1.va",
+      "block": "block_142_1",
+      "page": 142,
+      "note": ""
+    },
+    {
+      "file": "lrm_p143_1.va",
+      "block": "block_143_1",
+      "page": 143,
+      "note": ""
+    },
+    {
+      "file": "lrm_p150_1.va",
+      "block": "block_150_1",
+      "page": 150,
+      "note": "sigma-delta ADC loop (cross/transition/idt, implicit nets aa0-aa2); d2a context stub added"
+    },
+    {
+      "file": "lrm_p152_2.va",
+      "block": "block_152_2",
+      "page": 152,
+      "note": "transmission gate over the Annex E SPICE MOS primitives spice_nmos/spice_pmos; primitives provided as context (E-89, examples/annexe_examples)"
+    },
+    {
+      "file": "lrm_p153_1.va",
+      "block": "block_153_1",
+      "page": 153,
+      "note": ""
+    },
+    {
+      "file": "lrm_p153_2.va",
+      "block": "block_153_2",
+      "page": 153,
+      "note": "instance-parameter forms over the mosp/spice_pmos Annex E primitives; provided as context (E-89)"
+    },
+    {
+      "file": "lrm_p153_3.va",
+      "block": "block_153_3",
+      "page": 153,
+      "note": "hierarchy example (named parameter overrides); vco context stub added"
+    },
+    {
+      "file": "lrm_p155_1.va",
+      "block": "block_155_1",
+      "page": 155,
+      "note": ""
+    },
+    {
+      "file": "lrm_p155_2.va",
+      "block": "block_155_2",
+      "page": 155,
+      "note": ""
+    },
+    {
+      "file": "lrm_p156_1.va",
+      "block": "block_156_1",
+      "page": 156,
+      "note": "matched-resistor layout example: .$xposition/.$yposition instance overrides on each polyres (E-44 hidden state parameters); context stub added"
+    },
+    {
+      "file": "lrm_p163_1.va",
+      "block": "block_163_1",
+      "page": 163,
+      "note": "binary ADC tree wired with part-selects (out[3:2]); used to be a parse error - fixed by E-85 (F6)"
+    },
+    {
+      "file": "lrm_p164_1.va",
+      "block": "block_164_1",
+      "page": 164,
+      "note": "named part-select connections (.out(out[3:2])); parse fixed by E-85 (F6), adc context stub added"
+    },
+    {
+      "file": "lrm_p173_1.va",
+      "block": "block_173_1",
+      "page": 173,
+      "note": ""
+    },
+    {
+      "file": "lrm_p205_2.va",
+      "block": "block_205_2",
+      "page": 205,
+      "note": ""
+    },
+    {
+      "file": "lrm_p208_2.va",
+      "block": "block_208_2",
+      "page": 208,
+      "note": ""
+    },
+    {
+      "file": "lrm_p261_1.va",
+      "block": "block_261_1",
+      "page": 261,
+      "note": ""
+    },
+    {
+      "file": "lrm_p263_1.va",
+      "block": "block_263_1",
+      "page": 263,
+      "note": "hierarchical path illustration; module_a context stub added"
+    },
+    {
+      "file": "lrm_p263_2.va",
+      "block": "block_263_2",
+      "page": 263,
+      "note": ""
+    },
+    {
+      "file": "lrm_p263_3.va",
+      "block": "block_263_3",
+      "page": 263,
+      "note": ""
+    },
+    {
+      "file": "lrm_p265_1.va",
+      "block": "block_265_1",
+      "page": 265,
+      "note": "timer/transition/$port_connected clock source; $port_connected on unconnected flattened ports used to fail - fixed by E-84 (F5). Also fixes a genuine typo in the LRM's own example"
+    },
+    {
+      "file": "lrm_p274_1.va",
+      "block": "block_274_1",
+      "page": 274,
+      "note": ""
+    },
+    {
+      "file": "lrm_p416_1.va",
+      "block": "block_416_1",
+      "page": 416,
+      "note": "differential pair; LRM omits port directions (lint demoted) + vertNPN context stub",
+      "flags": [
+        "-W",
+        "port_without_direction"
+      ]
+    },
+    {
+      "file": "lrm_p416_3.va",
+      "block": "block_416_3",
+      "page": 416,
+      "note": "ECP oscillator pair of examples merged; Annex E primitive stubs added",
+      "flags": [
+        "-W",
+        "port_without_direction"
+      ]
+    }
+  ],
+  "limitations": [
+    {
+      "file": "lrm_p045_4.va",
+      "block": "block_045_4",
+      "page": 45,
+      "note": "name-then-range array ports (input in[0:2]) now supported (E-89); still a limitation on the undefined gen/sink modules + the multi-dimensional parameter-array literal override",
+      "expect": "refers to module 'gen'"
+    },
+    {
+      "file": "lrm_p091_1.va",
+      "block": "block_091_1",
+      "page": 91,
+      "note": "param-dependent bus width now folds (E-91); still blocked on the genvar for-loop used *inside* the analog block (analog-block genvar unrolling is unsupported)",
+      "expect": "'i' was not found in the current scope"
+    },
+    {
+      "file": "lrm_p112_1.va",
+      "block": "block_112_1",
+      "page": 112,
+      "note": "block-scoped parameters WORK (E-87); this file is correctly rejected only because it also demos the LRM's own `#(.myscope.p2(4)) // error` case, now a clean targeted diagnostic (was a parser cascade)",
+      "expect": "hierarchical/block-scoped parameter"
+    },
+    {
+      "file": "lrm_p117_1.va",
+      "block": "block_117_1",
+      "page": 117,
+      "note": "param-dependent bus width now folds (E-91); still blocked on the analog-block genvar for-loop",
+      "expect": "'i' was not found in the current scope"
+    },
+    {
+      "file": "lrm_p134_1.va",
+      "block": "block_134_1",
+      "page": 134,
+      "note": "param-dependent bus width now folds (E-91); still blocked on the analog-block genvar for-loop",
+      "expect": "'k' was not found in the current scope"
+    },
+    {
+      "file": "lrm_p155_3.va",
+      "block": "block_155_3",
+      "page": 155,
+      "note": "hierarchical refs to an uninstantiated process-info module",
+      "expect": "'processinfo' was not found"
+    },
+    {
+      "file": "lrm_p158_1.va",
+      "block": "block_158_1",
+      "page": 158,
+      "note": "paramset targeting a SPICE primitive (nmos3) rather than a VA module",
+      "expect": "instantiates paramset 'nch'"
+    },
+    {
+      "file": "lrm_p168_1.va",
+      "block": "block_168_1",
+      "page": 168,
+      "note": "generate-for whose bound `bits` also sizes [0:bits-1], so E-92/E-392 now fold it; blocked instead on the DECREMENTING loop header `for (i=bits-1; i>=0; i=i-1)` -- only '<' and '<=' conditions are supported",
+      "expect": "only '<' and '<=' loop conditions are supported"
+    },
+    {
+      "file": "lrm_p169_1.va",
+      "block": "block_169_1",
+      "page": 169,
+      "note": "bare module-level generate-for (E-96); the parameter loop bound N is no longer the blocker -- N also sizes electrical [0:N], so E-92 freezes it to a localparam and E-392 accepts a localparam bound. resistor/capacitor context stubs added. Blocked instead on the analog block's n[N] bit-select: a localparam is not accepted as a bit-select index (it is accepted as a bus WIDTH)",
+      "expect": "bus bit-select index must be a constant"
+    },
+    {
+      "file": "lrm_p169_2.va",
+      "block": "block_169_2",
+      "page": 169,
+      "note": "as lrm_p169_1, with a labelled section block and an analog block inside the generate body (E-390); resistor context stub added. Same remaining blocker: n[N] as a bit-select index",
+      "expect": "bus bit-select index must be a constant"
+    },
+    {
+      "file": "lrm_p170_1.va",
+      "block": "block_170_1",
+      "page": 170,
+      "note": "generate-if on $param_given (parameter-driven structure; E-67 scope decision)",
+      "expect": "elaboration-time constant"
+    },
+    {
+      "file": "lrm_p171_2.va",
+      "block": "block_171_2",
+      "page": 171,
+      "note": "generate-if whose condition `bits > 1` now folds (E-92 freezes the width-shaping `bits`, E-392 accepts a localparam); blocked instead on RECURSIVE instantiation -- pipeline_adc instantiates itself to build the pipeline",
+      "expect": "instantiates itself"
+    },
+    {
+      "file": "lrm_p172_1.va",
+      "block": "block_172_1",
+      "page": 172,
+      "note": "bare module-level generate-if now parses (E-96); still blocked on the parameter/implicit-genblk condition (generate structure cannot depend on a parameter, E-67 scope)",
+      "expect": "generate if: the condition"
+    },
+    {
+      "file": "lrm_p267_1.va",
+      "block": "block_267_1",
+      "page": 267,
+      "note": "$analog_node_alias/$analog_port_alias example; elaboration rejects the unconnected instance nets",
+      "expect": "refers to module 'resistor'"
+    },
+    {
+      "file": "lrm_p274_3.va",
+      "block": "block_274_3",
+      "page": 274,
+      "note": "$table_model with runtime array data arguments",
+      "expect": "requires a bit-select"
+    },
+    {
+      "file": "lrm_p343_1.va",
+      "block": "block_343_1",
+      "page": 343,
+      "note": "Annex E SPICE-compatibility system function $resistor()",
+      "flags": [
+        "-W",
+        "port_without_direction"
+      ],
+      "expect": "'$resistor' was not found"
+    },
+    {
+      "file": "lrm_p438_1.va",
+      "block": "block_438_1",
+      "page": 438,
+      "note": "legacy Verilog-A 1.0 'generate i (msb,lsb)' statement (Annex C) now supported (E-88) with constant bounds; this example uses a PARAMETER bound (bits-1) + parameter bus width, both elaboration-time-unresolvable -- stays a limitation",
+      "expect": "legacy generate 'i': the bounds must be elaboration-time constants"
+    }
+  ],
+  "ams": [
+    {
+      "file": "lrm_p140_2.va",
+      "block": "block_140_2",
+      "page": 140,
+      "note": "cross() with digital enable expression (===) and empty optional args"
+    },
+    {
+      "file": "lrm_p144_1.va",
+      "block": "block_144_1",
+      "page": 144,
+      "note": "wreal/assign/always sampler (mixed-signal)"
+    },
+    {
+      "file": "lrm_p162_3.va",
+      "block": "block_162_3",
+      "page": 162,
+      "note": "digital testbench (reg/initial/always)"
+    },
+    {
+      "file": "lrm_p180_2.va",
+      "block": "block_180_2",
+      "page": 180,
+      "note": "wire net driving analog"
+    },
+    {
+      "file": "lrm_p181_1.va",
+      "block": "block_181_1",
+      "page": 181,
+      "note": "ddiscrete net with ===/x/z comparisons"
+    },
+    {
+      "file": "lrm_p182_1.va",
+      "block": "block_182_1",
+      "page": 182,
+      "note": "reg/initial digital converter"
+    },
+    {
+      "file": "lrm_p182_2.va",
+      "block": "block_182_2",
+      "page": 182,
+      "note": "reg/always sampler"
+    },
+    {
+      "file": "lrm_p184_1.va",
+      "block": "block_184_1",
+      "page": 184,
+      "note": "posedge on wire mixed with cross()"
+    },
+    {
+      "file": "lrm_p184_2.va",
+      "block": "block_184_2",
+      "page": 184,
+      "note": "always @(cross) driving a reg"
+    },
+    {
+      "file": "lrm_p191_1.va",
+      "block": "block_191_1",
+      "page": 191,
+      "note": "connectmodule skeletons (mixed-signal auto-insertion)"
+    },
+    {
+      "file": "lrm_p205_1.va",
+      "block": "block_205_1",
+      "page": 205,
+      "note": "digital inverter (reg/always/#delay)"
+    },
+    {
+      "file": "lrm_p206_1.va",
+      "block": "block_206_1",
+      "page": 206,
+      "note": "mixed digital/analog ring with connect rules"
+    },
+    {
+      "file": "lrm_p206_2.va",
+      "block": "block_206_2",
+      "page": 206,
+      "note": "digital inverter + analog inverter pair (reg/always)"
+    },
+    {
+      "file": "lrm_p208_1.va",
+      "block": "block_208_1",
+      "page": 208,
+      "note": "connectmodule + connectrules"
+    },
+    {
+      "file": "lrm_p209_1.va",
+      "block": "block_209_1",
+      "page": 209,
+      "note": "mixed-net example: analog inverter wired to ddiscrete_1v2 nets via connect rules"
+    },
+    {
+      "file": "lrm_p210_1.va",
+      "block": "block_210_1",
+      "page": 210,
+      "note": "connectmodule (elect_to_logic)"
+    },
+    {
+      "file": "lrm_p218_1.va",
+      "block": "block_218_1",
+      "page": 218,
+      "note": "wire nets"
+    },
+    {
+      "file": "lrm_p219_1.va",
+      "block": "block_219_1",
+      "page": 219,
+      "note": "wire [15:0] bus + posedge in analog"
+    },
+    {
+      "file": "lrm_p220_1.va",
+      "block": "block_220_1",
+      "page": 220,
+      "note": "connectmodule pair"
+    },
+    {
+      "file": "lrm_p256_1.va",
+      "block": "block_256_1",
+      "page": 256,
+      "note": "task/$display (digital context)"
+    },
+    {
+      "file": "lrm_p278_1.va",
+      "block": "block_278_1",
+      "page": 278,
+      "note": "connectmodule with drive strength"
+    }
+  ],
+  "findings": [
+    {
+      "file": "micro_portbranch.va",
+      "block": "micro",
+      "page": 0,
+      "note": "F1 (fixed): named port branch, LRM 3.7.2 -- used to panic the compiler"
+    },
+    {
+      "file": "micro_portconnected.va",
+      "block": "micro",
+      "page": 0,
+      "note": "F5 (fixed): $port_connected on an unconnected port of a flattened"
+    },
+    {
+      "file": "micro_deadop.va",
+      "block": "micro",
+      "page": 0,
+      "note": "F7 (fixed): an analog operator inside a constant-false branch -- the dead"
+    },
+    {
+      "file": "micro_unknownmod.va",
+      "block": "micro",
+      "page": 0,
+      "note": "F3 (fixed): this used to compile SILENTLY, dropping the instance",
+      "expect": "refers to module 'foo'"
+    },
+    {
+      "file": "micro_file_line.va",
+      "block": "micro",
+      "page": 0,
+      "note": "F4 (fixed by E-85): `__FILE__/`__LINE__ predefined macros"
+    },
+    {
+      "file": "micro_partselect.va",
+      "block": "micro",
+      "page": 0,
+      "note": "F6 (fixed by E-85): part-selects in instance connections"
+    }
+  ],
+  "fragments": [
+    {
+      "block": "block_027_1",
+      "page": 27
+    },
+    {
+      "block": "block_027_2",
+      "page": 27
+    },
+    {
+      "block": "block_027_3",
+      "page": 27
+    },
+    {
+      "block": "block_030_1",
+      "page": 30
+    },
+    {
+      "block": "block_031_1",
+      "page": 31
+    },
+    {
+      "block": "block_038_1",
+      "page": 38
+    },
+    {
+      "block": "block_038_2",
+      "page": 38
+    },
+    {
+      "block": "block_039_1",
+      "page": 39
+    },
+    {
+      "block": "block_039_2",
+      "page": 39
+    },
+    {
+      "block": "block_039_3",
+      "page": 39
+    },
+    {
+      "block": "block_039_4",
+      "page": 39
+    },
+    {
+      "block": "block_039_5",
+      "page": 39
+    },
+    {
+      "block": "block_040_1",
+      "page": 40
+    },
+    {
+      "block": "block_041_1",
+      "page": 41
+    },
+    {
+      "block": "block_042_1",
+      "page": 42
+    },
+    {
+      "block": "block_042_2",
+      "page": 42
+    },
+    {
+      "block": "block_042_3",
+      "page": 42
+    },
+    {
+      "block": "block_042_4",
+      "page": 42
+    },
+    {
+      "block": "block_042_5",
+      "page": 42
+    },
+    {
+      "block": "block_043_1",
+      "page": 43
+    },
+    {
+      "block": "block_043_2",
+      "page": 43
+    },
+    {
+      "block": "block_044_2",
+      "page": 44
+    },
+    {
+      "block": "block_044_3",
+      "page": 44
+    },
+    {
+      "block": "block_045_1",
+      "page": 45
+    },
+    {
+      "block": "block_045_2",
+      "page": 45
+    },
+    {
+      "block": "block_045_3",
+      "page": 45
+    },
+    {
+      "block": "block_048_1",
+      "page": 48
+    },
+    {
+      "block": "block_060_1",
+      "page": 60
+    },
+    {
+      "block": "block_062_1",
+      "page": 62
+    },
+    {
+      "block": "block_066_1",
+      "page": 66
+    },
+    {
+      "block": "block_066_2",
+      "page": 66
+    },
+    {
+      "block": "block_066_3",
+      "page": 66
+    },
+    {
+      "block": "block_066_4",
+      "page": 66
+    },
+    {
+      "block": "block_067_1",
+      "page": 67
+    },
+    {
+      "block": "block_067_2",
+      "page": 67
+    },
+    {
+      "block": "block_068_1",
+      "page": 68
+    },
+    {
+      "block": "block_069_1",
+      "page": 69
+    },
+    {
+      "block": "block_071_1",
+      "page": 71
+    },
+    {
+      "block": "block_071_2",
+      "page": 71
+    },
+    {
+      "block": "block_073_1",
+      "page": 73
+    },
+    {
+      "block": "block_073_2",
+      "page": 73
+    },
+    {
+      "block": "block_073_3",
+      "page": 73
+    },
+    {
+      "block": "block_073_4",
+      "page": 73
+    },
+    {
+      "block": "block_073_5",
+      "page": 73
+    },
+    {
+      "block": "block_074_1",
+      "page": 74
+    },
+    {
+      "block": "block_074_2",
+      "page": 74
+    },
+    {
+      "block": "block_074_3",
+      "page": 74
+    },
+    {
+      "block": "block_077_1",
+      "page": 77
+    },
+    {
+      "block": "block_077_2",
+      "page": 77
+    },
+    {
+      "block": "block_080_2",
+      "page": 80
+    },
+    {
+      "block": "block_082_1",
+      "page": 82
+    },
+    {
+      "block": "block_082_2",
+      "page": 82
+    },
+    {
+      "block": "block_082_3",
+      "page": 82
+    },
+    {
+      "block": "block_087_1",
+      "page": 87
+    },
+    {
+      "block": "block_087_2",
+      "page": 87
+    },
+    {
+      "block": "block_095_1",
+      "page": 95
+    },
+    {
+      "block": "block_095_2",
+      "page": 95
+    },
+    {
+      "block": "block_095_3",
+      "page": 95
+    },
+    {
+      "block": "block_101_1",
+      "page": 101
+    },
+    {
+      "block": "block_102_1",
+      "page": 102
+    },
+    {
+      "block": "block_103_1",
+      "page": 103
+    },
+    {
+      "block": "block_104_1",
+      "page": 104
+    },
+    {
+      "block": "block_104_2",
+      "page": 104
+    },
+    {
+      "block": "block_105_1",
+      "page": 105
+    },
+    {
+      "block": "block_105_2",
+      "page": 105
+    },
+    {
+      "block": "block_105_3",
+      "page": 105
+    },
+    {
+      "block": "block_106_1",
+      "page": 106
+    },
+    {
+      "block": "block_106_2",
+      "page": 106
+    },
+    {
+      "block": "block_107_1",
+      "page": 107
+    },
+    {
+      "block": "block_107_2",
+      "page": 107
+    },
+    {
+      "block": "block_107_3",
+      "page": 107
+    },
+    {
+      "block": "block_108_1",
+      "page": 108
+    },
+    {
+      "block": "block_108_2",
+      "page": 108
+    },
+    {
+      "block": "block_109_1",
+      "page": 109
+    },
+    {
+      "block": "block_109_2",
+      "page": 109
+    },
+    {
+      "block": "block_109_3",
+      "page": 109
+    },
+    {
+      "block": "block_109_4",
+      "page": 109
+    },
+    {
+      "block": "block_115_1",
+      "page": 115
+    },
+    {
+      "block": "block_115_2",
+      "page": 115
+    },
+    {
+      "block": "block_137_1",
+      "page": 137
+    },
+    {
+      "block": "block_137_2",
+      "page": 137
+    },
+    {
+      "block": "block_145_1",
+      "page": 145
+    },
+    {
+      "block": "block_146_1",
+      "page": 146
+    },
+    {
+      "block": "block_152_1",
+      "page": 152
+    },
+    {
+      "block": "block_154_1",
+      "page": 154
+    },
+    {
+      "block": "block_157_1",
+      "page": 157
+    },
+    {
+      "block": "block_157_2",
+      "page": 157
+    },
+    {
+      "block": "block_159_1",
+      "page": 159
+    },
+    {
+      "block": "block_159_2",
+      "page": 159
+    },
+    {
+      "block": "block_159_3",
+      "page": 159
+    },
+    {
+      "block": "block_160_1",
+      "page": 160
+    },
+    {
+      "block": "block_162_1",
+      "page": 162
+    },
+    {
+      "block": "block_162_2",
+      "page": 162
+    },
+    {
+      "block": "block_180_1",
+      "page": 180
+    },
+    {
+      "block": "block_181_2",
+      "page": 181
+    },
+    {
+      "block": "block_185_1",
+      "page": 185
+    },
+    {
+      "block": "block_185_2",
+      "page": 185
+    },
+    {
+      "block": "block_201_1",
+      "page": 201
+    },
+    {
+      "block": "block_201_2",
+      "page": 201
+    },
+    {
+      "block": "block_202_1",
+      "page": 202
+    },
+    {
+      "block": "block_203_1",
+      "page": 203
+    },
+    {
+      "block": "block_203_2",
+      "page": 203
+    },
+    {
+      "block": "block_228_1",
+      "page": 228
+    },
+    {
+      "block": "block_244_1",
+      "page": 244
+    },
+    {
+      "block": "block_245_1",
+      "page": 245
+    },
+    {
+      "block": "block_246_1",
+      "page": 246
+    },
+    {
+      "block": "block_246_2",
+      "page": 246
+    },
+    {
+      "block": "block_247_1",
+      "page": 247
+    },
+    {
+      "block": "block_247_2",
+      "page": 247
+    },
+    {
+      "block": "block_247_3",
+      "page": 247
+    },
+    {
+      "block": "block_252_1",
+      "page": 252
+    },
+    {
+      "block": "block_255_1",
+      "page": 255
+    },
+    {
+      "block": "block_255_2",
+      "page": 255
+    },
+    {
+      "block": "block_264_1",
+      "page": 264
+    },
+    {
+      "block": "block_270_1",
+      "page": 270
+    },
+    {
+      "block": "block_273_1",
+      "page": 273
+    },
+    {
+      "block": "block_273_2",
+      "page": 273
+    },
+    {
+      "block": "block_273_3",
+      "page": 273
+    },
+    {
+      "block": "block_274_2",
+      "page": 274
+    },
+    {
+      "block": "block_276_1",
+      "page": 276
+    },
+    {
+      "block": "block_277_1",
+      "page": 277
+    },
+    {
+      "block": "block_289_1",
+      "page": 289
+    },
+    {
+      "block": "block_293_1",
+      "page": 293
+    },
+    {
+      "block": "block_293_2",
+      "page": 293
+    },
+    {
+      "block": "block_294_1",
+      "page": 294
+    },
+    {
+      "block": "block_294_2",
+      "page": 294
+    },
+    {
+      "block": "block_294_3",
+      "page": 294
+    },
+    {
+      "block": "block_294_4",
+      "page": 294
+    },
+    {
+      "block": "block_294_5",
+      "page": 294
+    },
+    {
+      "block": "block_294_6",
+      "page": 294
+    },
+    {
+      "block": "block_337_1",
+      "page": 337
+    },
+    {
+      "block": "block_338_1",
+      "page": 338
+    },
+    {
+      "block": "block_338_2",
+      "page": 338
+    },
+    {
+      "block": "block_338_3",
+      "page": 338
+    },
+    {
+      "block": "block_338_4",
+      "page": 338
+    },
+    {
+      "block": "block_351_1",
+      "page": 351
+    },
+    {
+      "block": "block_351_2",
+      "page": 351
+    },
+    {
+      "block": "block_384_1",
+      "page": 384
+    },
+    {
+      "block": "block_406_1",
+      "page": 406
+    },
+    {
+      "block": "block_415_1",
+      "page": 415
+    },
+    {
+      "block": "block_420_1",
+      "page": 420
+    },
+    {
+      "block": "block_420_2",
+      "page": 420
+    },
+    {
+      "block": "block_420_3",
+      "page": 420
+    },
+    {
+      "block": "block_427_1",
+      "page": 427
+    },
+    {
+      "block": "block_430_1",
+      "page": 430
+    },
+    {
+      "block": "block_430_2",
+      "page": 430
+    }
+  ],
+  "excluded": [
+    {
+      "block": "block_032_1",
+      "page": 32,
+      "class": "junk",
+      "note": "attribute-section pseudo-code (<rest_of_case_statement>); crashes the compiler - finding F2"
+    },
+    {
+      "block": "block_171_1",
+      "page": 171,
+      "class": "pseudo",
+      "note": "contains a literal '...' placeholder; also generate-if on a parameter (see E-67)"
+    },
+    {
+      "block": "block_281_1",
+      "page": 281,
+      "class": "junk",
+      "note": "compiler-directive name table; separately, `__FILE__/`__LINE__ are unsupported - finding F4"
+    },
+    {
+      "block": "block_416_2",
+      "page": 416,
+      "class": "junk",
+      "note": "SPICE netlist from Annex E, not Verilog-A"
+    },
+    {
+      "block": "block_416_4",
+      "page": 416,
+      "class": "merged",
+      "note": "merged into block_416_3"
+    }
+  ]
 }

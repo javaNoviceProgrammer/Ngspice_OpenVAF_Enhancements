@@ -35,6 +35,29 @@ impl LowerCtx<'_> {
     pub fn collect_expr(&mut self, expr: ast::Expr) -> ExprId {
         let e = match &expr {
             ast::Expr::PrefixExpr(e) => {
+                // `-2147483648` is the smallest `integer`, but it parses as unary minus
+                // applied to `2147483648`, whose magnitude does NOT fit i32. Left alone the
+                // operand becomes a `Float` literal and the whole expression is then
+                // evaluated in REAL arithmetic: `(-2147483648)/3` rounds to -715827883
+                // instead of truncating to -715827882, and `(-2147483648)-1` saturates on
+                // the store back to `integer` instead of wrapping to i32::MAX. The runtime
+                // path (the same value arriving from a parameter) is correct throughout, so
+                // one expression gave two answers depending on whether it was folded. Fold
+                // the sign into the literal so it stays an `integer`.
+                if let (Some(ast::UnaryOp::Neg), Some(ast::Expr::Literal(lit))) =
+                    (e.op_kind(), e.expr())
+                {
+                    if let ast::LiteralKind::IntNumber(int) = lit.kind() {
+                        if int.value().is_none() {
+                            if let Some(val) = int.value_negated() {
+                                return self.alloc_expr(
+                                    Expr::Literal(Literal::Int(val)),
+                                    AstPtr::new(&expr),
+                                );
+                            }
+                        }
+                    }
+                }
                 let expr = self.collect_opt_expr(e.expr());
                 if let Some(op) = e.op_kind() {
                     Expr::UnaryOp { expr, op }

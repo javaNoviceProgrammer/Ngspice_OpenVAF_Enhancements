@@ -76,13 +76,26 @@ impl ast::Expr {
                 })),
                 LiteralKind::IntNumber(i) => Some(match i.value() {
                     Some(int) => ConstExprValue::Int(if negate { -int } else { int }),
+                    // Enhancement-392: `-2147483648` is INT_MIN, an ordinary `integer`
+                    // value -- but it can only be SPELLED as unary minus applied to
+                    // 2147483648, whose magnitude does not itself fit. Recover it by
+                    // checking against the NEGATED range before giving up.
+                    //
+                    // It used to fall straight through to the real branch below, and the
+                    // whole enclosing expression then acquired REAL semantics:
+                    // `(-2147483648)/3` floored to -715827883 where integer division
+                    // truncates toward zero to -715827882, and `(-2147483648)-1`
+                    // saturated instead of wrapping. The runtime path never goes through
+                    // here, so the same expression gave two different answers depending
+                    // on whether it was constant-folded.
+                    None if negate => match i.value_negated() {
+                        Some(int) => ConstExprValue::Int(int),
+                        None => ConstExprValue::Float((-i.value_as_f64()).into()),
+                    },
                     // doesn't fit in i32 (Verilog-A `integer`'s width) -- still a valid real
                     // constant, e.g. a laplace_nd coefficient too large to be a bit-select
                     // index/bus width anyway (those consumers already reject a non-Int here).
-                    None => {
-                        let f = i.value_as_f64();
-                        ConstExprValue::Float((if negate { -f } else { f }).into())
-                    }
+                    None => ConstExprValue::Float(i.value_as_f64().into()),
                 }),
                 _ => None,
             },
@@ -452,6 +465,26 @@ impl ast::IntNumber {
             return parse_based_int(&src);
         }
         src.parse().ok()
+    }
+
+    /// Enhancement-392: this literal's value NEGATED, when the negation fits in an
+    /// `i32` even though the literal itself does not.
+    ///
+    /// Exists for exactly one value: `2147483648`, whose negation is `i32::MIN`.
+    /// Without it, `-2147483648` -- the smallest `integer` -- could not be written
+    /// as a constant at all, and silently became a real.
+    pub fn value_negated(&self) -> Option<i32> {
+        let src = strip_separators(self.syntax.text());
+        if src.contains('\'') {
+            return None;
+        }
+        let magnitude: i64 = src.parse().ok()?;
+        let negated = -magnitude;
+        if negated >= i32::MIN as i64 && negated <= i32::MAX as i64 {
+            Some(negated as i32)
+        } else {
+            None
+        }
     }
 
     /// The don't-care digit masks of a based literal -- `(x_mask, z_mask)`
