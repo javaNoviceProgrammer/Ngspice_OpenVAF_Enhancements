@@ -22,8 +22,10 @@ ngspice provides them for *every* OSDI device, and a model reads the result
 through the standard system functions `$mfactor`, `$temperature` and `$vt`.
 
 The point of this note is that all four have a **routing rule** that is easy to
-misread from either side, and two of them were genuinely broken until
-[Enhancement-394](../../../enhancements_doc/Enhancement-394.md).
+misread from either side. Two of them were genuinely broken until
+[Enhancement-394](../../../enhancements_doc/Enhancement-394.md), and three of
+them could not be read back at all until
+[Enhancement-397](../../../enhancements_doc/Enhancement-397.md).
 
 ---
 
@@ -35,10 +37,13 @@ In `osdiregistry.c`, `dt` and `temp` are initialised to **synthetic parameter
 ids** *before* the model's own parameters are scanned:
 
 ```c
-uint32_t dt   = descr->num_params + descr->num_opvars;
+uint32_t dt   = descr->num_params + descr->num_opvars + descr->num_terminals;
 bool     has_m = false;
-uint32_t temp = descr->num_params + descr->num_opvars + 1;
+uint32_t temp = descr->num_params + descr->num_opvars + descr->num_terminals + 1;
 ```
+
+(The `+ num_terminals` is [Enhancement-397](../../../enhancements_doc/Enhancement-397.md);
+before it these sat *on top of* the terminal-current ids — see §8.)
 
 and `osdiinit.c` registers them whenever those ids are still valid:
 
@@ -286,9 +291,10 @@ Two practical notes:
 - **Do not give the output the same name as the knob.** ngspice lowercases
   identifiers, so `sweep TT ... -output tt=...` collides and `print tt` shows the
   sweep *scale* instead of the recorded output.
-- Sweeping `temp`, `dtemp` or `dt` leaves a trailing
-  `Error: no such parameter temp.` after the run completes. **The swept data is
-  complete and correct** — the message comes from §8.
+- Sweeping `temp`, `dtemp` or `dt` used to leave a trailing
+  `Error: no such parameter temp.` after the run completed — the swept data was
+  complete and correct, but a diagnostic that fires on success reads as a
+  failure, and it did mislead. Enhancement-397 removed it; see §8.
 
 If you would rather drive them symbolically, sweep a `.param` that feeds the
 instance line; this works for all four:
@@ -302,41 +308,49 @@ sweep TSET 0 100 25 -analysis op -output tdev=@n1[tdev]
 
 ---
 
-## 8. The one asymmetry that remains
+## 8. Reading the knobs back
 
-ngspice registers its own `temp`, `dtemp` and `dt` entries as **`IF_SET` without
-`IF_ASK`**:
+Until [Enhancement-397](../../../enhancements_doc/Enhancement-397.md), ngspice's
+own `temp`, `dtemp` and `dt` entries were registered `IF_SET` with no `IF_ASK` —
+they could be written and never read. `print @n1[temp]` answered *"no such
+parameter"* where every built-in reports one, `show n1` listed none of the three,
+and a `sweep` over them ended with a spurious error **after** completing
+correctly.
 
-```c
-dst[0] = (IFparm){"dt",    (int)entry->dt,   IF_REAL | IF_SET, ...};
-dst[1] = (IFparm){"dtemp", (int)entry->dt,   IF_REAL | IF_SET, ...};
-dst[0] = (IFparm){"temp",  (int)entry->temp, IF_REAL | IF_SET, ...};
-```
+All three are readable now, and they match the built-in convention exactly:
 
-whereas a model's own parameters get both. They are therefore **write-only**:
-
-| | set it | read it back |
+| netlist | `@…[temp]` | `@…[dtemp]` |
 | --- | --- | --- |
-| `@n1[m]` | yes | yes (`$mfactor` is a real descriptor parameter) |
-| `@n1[temp]`, `@n1[dtemp]`, `@n1[dt]` | yes | **no** — *"no such parameter temp."* |
-| the same names on a **built-in** | yes | yes — `@r1[temp]` → 27, `@r1[dtemp]` → 0 |
+| *(nothing)* | 27 — the ambient | 0 |
+| `temp=75` | 75 | 0 |
+| `dtemp=10` | 27 | 10 |
+| `.temp 85` | 85 — follows the ambient | 0 |
+| `.temp 85` + `dtemp=10` | 85, **not** 95 | 10 |
+| `temp=75 dtemp=10` | 75 | **0** |
 
-So `show n1` on a model that declares none of them lists only `m`, and
-`print @n1[temp]` fails. This is why the three look absent unless the Verilog-A
-declares them — declaring one turns it into a model parameter, which carries
-`IF_ASK | IF_SET`.
+`temp` is the **base** temperature in **degrees Celsius**; it never includes
+`dtemp`. The last row is the one behaviour change that came with the fix: `temp=`
+overrides `dtemp=`, and `restemp.c` does not merely say so but forces
+`RESdtemp = 0`. That was invisible while `dtemp` could not be read; now that it
+can, the offset is cleared so that what is reported is what is used. The device
+temperature is unchanged — `temp=75 dtemp=10` is 348.15 K before and after.
 
-The practical cost is small: a cosmetic trailing message after a sweep, and no
-read-back through `print`/`show`. Making them askable is contained but not a
-one-line change, because the synthetic ids overlap the range `OSDIask` uses for
-Enhancement-394's terminal currents — `entry->dt` is exactly
-`descr->num_params + descr->num_opvars`, which is also the terminal-current base.
-`OSDIask` would have to test the `dt`/`temp` ids first, mirroring what
-`OSDIparam` already does on the set side. Adding `IF_ASK` without that would make
-`@n1[temp]` return a terminal current: a wrong number instead of an error, which
-is worse.
+### Why this needed more than an `IF_ASK` flag
 
----
+The synthesized ids **collided**. `dt` was allocated at
+`num_params + num_opvars`, which is exactly the base
+[Enhancement-394](../../../enhancements_doc/Enhancement-394.md) gives the
+synthesized terminal currents — so **`dt`'s id was terminal 0's id**, and
+`temp`'s was terminal 1's. That was survivable only because the two groups were
+disjoint by *direction*: the temperature knobs were set-only and the terminal
+currents ask-only, so no lookup ever had to choose. Adding `IF_ASK` on top would
+have made `@n1[temp]` return a terminal current — a wrong number where there had
+at least been an honest error. The ids now sit **above** the terminal range,
+which makes the three spaces disjoint.
+
+A model that declares `dtemp` or `temperature` itself is unaffected: the loader
+routes its entry to that model parameter, whose id is below the synthesized
+range, so it is served by the ordinary readable-parameter path.
 
 ## 9. What is pinned, and where
 

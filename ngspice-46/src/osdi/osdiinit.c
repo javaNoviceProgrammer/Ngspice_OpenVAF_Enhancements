@@ -185,16 +185,23 @@ extern SPICEdev *osdi_create_spicedev(const OsdiRegistryEntry *entry) {
   IFparm *instance_para_names = TMALLOC(IFparm, *num_instance_para_names);
   IFparm *dst = instance_para_names;
 
+  /* Enhancement-397: these were IF_SET only, so a value could be written and
+   * never read back -- `@n1[temp]` answered "no such parameter" where every
+   * built-in reports one, `show` listed neither, and a `sweep` over them ended
+   * with a spurious error AFTER completing correctly. OSDIask serves them now
+   * (see osdiparam.c), matching the built-in convention exactly: `temp` reads
+   * back in DEGREES CELSIUS and defaults to the ambient, `dtemp`/`dt` read back
+   * the offset and default to zero. */
   if (entry->dt != UINT32_MAX) {
-    dst[0] = (IFparm){"dt", (int)entry->dt, IF_REAL | IF_SET,
+    dst[0] = (IFparm){"dt", (int)entry->dt, IF_REAL | IF_SET | IF_ASK,
                       "Instance delta temperature"};
-    dst[1] = (IFparm){"dtemp", (int)entry->dt, IF_REAL | IF_SET,
+    dst[1] = (IFparm){"dtemp", (int)entry->dt, IF_REAL | IF_SET | IF_ASK,
                       "Instance delta temperature"};
     dst += 2;
   }
 
   if (entry->temp != UINT32_MAX) {
-    dst[0] = (IFparm){"temp", (int)entry->temp, IF_REAL | IF_SET,
+    dst[0] = (IFparm){"temp", (int)entry->temp, IF_REAL | IF_SET | IF_ASK,
                       "Instance temperature"};
     dst += 1;
   }

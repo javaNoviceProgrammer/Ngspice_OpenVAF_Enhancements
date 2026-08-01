@@ -251,6 +251,14 @@ int OSDIsetup(SMPmatrix *matrix, GENmodel *inModel, CKTcircuit *ckt,
           printf("%s: Instance temperature specified, dtemp ignored\n",
                  gen_inst->GENname);
         }
+        /* Enhancement-397: restemp.c does not merely SAY dtemp is ignored, it
+         * forces `RESdtemp = 0`. That was invisible until `dtemp` became
+         * readable; now that `@n1[dtemp]` answers, leaving the written value in
+         * place would report an offset that has no effect on the device -- the
+         * exact kind of silent inconsistency this pair of releases exists to
+         * remove. Clear it so what is reported is what is used. */
+        extra_inst_data->dt = 0.0;
+        extra_inst_data->dt_given = false;
       } else if (extra_inst_data->dt_given) {
         temp += extra_inst_data->dt;
       }
@@ -507,6 +515,14 @@ extern int OSDItemp(GENmodel *inModel, CKTcircuit *ckt) {
           printf("%s: Instance temperature specified, dtemp ignored\n",
                  gen_inst->GENname);
         }
+        /* Enhancement-397: restemp.c does not merely SAY dtemp is ignored, it
+         * forces `RESdtemp = 0`. That was invisible until `dtemp` became
+         * readable; now that `@n1[dtemp]` answers, leaving the written value in
+         * place would report an offset that has no effect on the device -- the
+         * exact kind of silent inconsistency this pair of releases exists to
+         * remove. Clear it so what is reported is what is used. */
+        extra_inst_data->dt = 0.0;
+        extra_inst_data->dt_given = false;
       } else if (extra_inst_data->dt_given) {
         temp += extra_inst_data->dt;
       }

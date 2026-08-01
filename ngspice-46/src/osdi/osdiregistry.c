@@ -549,9 +549,25 @@ extern OsdiObjectFile load_object_file(const char *input) {
       return INVALID_OBJECT;
     }
 
-    uint32_t dt = descr->num_params + descr->num_opvars;
+    /* Enhancement-397: these are the ids of the instance parameters the LOADER
+     * supplies (`dt`/`dtemp`, `temp`) when the model does not declare them, and
+     * they must not collide with anything else in the synthesized id space.
+     *
+     * They used to start at `num_params + num_opvars` -- which is exactly the
+     * base Enhancement-394 gave the synthesized TERMINAL CURRENTS, so `dt`'s id
+     * WAS terminal 0's id and `temp`'s was terminal 1's. That was survivable
+     * only because the two were disjoint by direction (dt/temp were set-only,
+     * terminal currents ask-only), and it is precisely what stopped `temp`,
+     * `dtemp` and `dt` from being readable: adding IF_ASK on top of a collision
+     * would have made `@n1[temp]` return a terminal current -- a wrong number
+     * where there had at least been an honest error.
+     *
+     * Allocating them ABOVE the terminal range makes the three id spaces
+     * disjoint, so both directions can be served. */
+    uint32_t dt = descr->num_params + descr->num_opvars + descr->num_terminals;
     bool has_m = false;
-    uint32_t temp = descr->num_params + descr->num_opvars + 1;
+    uint32_t temp =
+        descr->num_params + descr->num_opvars + descr->num_terminals + 1;
     for (uint32_t param_id = 0; param_id < descr->num_params; param_id++) {
       OsdiParamOpvar *param = &descr->param_opvar[param_id];
       for (uint32_t j = 0; j < 1 + param->num_alias; j++) {

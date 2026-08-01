@@ -60,6 +60,21 @@ WHAT IT PINS
       absolute comparison would either fail spuriously or need a tolerance loose
       enough to hide a genuine error.
 
+  [7] READ-BACK. ngspice's own `temp`/`dtemp`/`dt` entries were registered
+      `IF_SET` without `IF_ASK`, so a value could be written and never read:
+      `@n1[temp]` answered "no such parameter" where every built-in reports one,
+      `show` listed neither, and a `sweep` over them ended with a spurious error
+      AFTER completing correctly. Enhancement-397 serves them from `OSDIask`,
+      matching the built-in convention exactly -- `temp` in DEGREES CELSIUS
+      defaulting to the ambient and NOT including dtemp, `dtemp`/`dt` the offset
+      defaulting to zero -- and forces `dtemp` to 0 when `temp` overrides it, as
+      `restemp.c` does, so what is reported is what is used.
+
+      The synthesized ids had to move above Enhancement-394's terminal-current
+      range first: `dt`'s id WAS terminal 0's id, survivable only while the two
+      were disjoint by direction. The terminal currents are re-pinned here for
+      that reason.
+
   [6] `.temp` propagates into subcircuits and through nesting, and a subcircuit
       parameter forwarded to the device (`.subckt s p n dtemp=0` / `N1 p n mm
       dtemp={dtemp}`) works. `temp=` written directly on an `X` line is NOT
@@ -124,6 +139,17 @@ VARIANTS = {
     "own_dt":       source('(*type="instance"*) parameter real dt = 0.0;'),
 }
 BUILT = {}
+
+
+def build_src(src, tag):
+    d = os.path.join(HERE, "_op_%s" % tag)
+    shutil.rmtree(d, ignore_errors=True)
+    os.makedirs(d)
+    open(os.path.join(d, "m.va"), "w").write(src)
+    env = dict(os.environ, RAYON_NUM_THREADS="1", TMPDIR=d)
+    r = subprocess.run([OPENVAF, os.path.join(d, "m.va"), "-o", os.path.join(d, "m.osdi")],
+                       capture_output=True, text=True, env=env, cwd=d, timeout=900)
+    return d, r.returncode, (r.stdout or "") + (r.stderr or "")
 
 
 def build(tag):
@@ -396,6 +422,92 @@ def main():
         r = osdi(dd, "N1 a 0 mm", cards=MODEL)
         check(f"{tag}: the model owning the name still simulates",
               r["rc"] == 0 and close(r["i"], -1e-3), f"i={r['i']}")
+
+    # ============================================ [7] read-back (E-397)
+    print("\n  -- [7] reading the knobs back, against the built-in convention --")
+    READBACK = [
+        ("nothing set",         "",         "",                   27.0, 0.0),
+        ("temp=75",             "",         " temp=75",           75.0, 0.0),
+        ("dtemp=10",            "",         " dtemp=10",          27.0, 10.0),
+        ("dt=10",               "",         " dt=10",             27.0, 10.0),
+        (".temp 85",            ".temp 85", "",                   85.0, 0.0),
+        (".temp 85 + dtemp=10", ".temp 85", " dtemp=10",          85.0, 10.0),
+        ("temp=75 dtemp=10",    "",         " temp=75 dtemp=10",  75.0, 0.0),
+    ]
+    for label, cards, extra, wt, wd in READBACK:
+        r = osdi(d, "N1 a 0 mm" + extra, cards=MODEL + "\n" + cards,
+                 opvars=("temp", "dtemp", "dt"))
+        check(f"{label}: @n1[temp] reads {wt:g} degC", close(r["temp"], wt), f"{r['temp']}")
+        check(f"{label}: @n1[dtemp] reads {wd:g}", close(r["dtemp"], wd), f"{r['dtemp']}")
+        check(f"{label}: @n1[dt] agrees with @n1[dtemp]", close(r["dt"], wd), f"{r['dt']}")
+        bo = run(d, ("t\n" + cards + "\nV1 a 0 dc 1\nR1 a 0 1k tc1=0.01"
+                     + extra.replace(" dt=10", " dtemp=10") + "\n"
+                     ".control\noption noacct\nset numdgt=12\nop\n"
+                     "print @r1[temp] @r1[dtemp]\n.endc\n.end\n"))[1]
+        bt = num(bo, r"@r1\[temp\]\s*=\s*(\S+)")
+        bd = num(bo, r"@r1\[dtemp\]\s*=\s*(\S+)")
+        check(f"{label}: the built-in reports the same temp/dtemp",
+              close(r["temp"], bt) and close(r["dtemp"], bd),
+              f"osdi=({r['temp']},{r['dtemp']}) builtin=({bt},{bd})")
+
+    # the physics must not have moved
+    for label, extra, wantT in [
+            ("temp=75 dtemp=10 still means 348.15 K", " temp=75 dtemp=10", 348.15),
+            ("dtemp=10 alone still means 310.15 K", " dtemp=10", 310.15)]:
+        r = osdi(d, "N1 a 0 mm" + extra, cards=MODEL, opvars=("tdev",))
+        check(label, close(r["tdev"], wantT, 1e-12), f"{r['tdev']}")
+
+    rc2, o = run(d, ("t\n.control\npre_osdi m.osdi\n.endc\nV1 a 0 dc 1\nN1 a 0 mm\n"
+                     + MODEL + ".control\noption noacct\nop\nshow n1\n.endc\n.end\n"))
+    listed = [k for k in ("m", "temp", "dtemp", "dt") if re.search(rf"^\s*{k}\s", o, re.M)]
+    check("`show` lists m, temp, dtemp and dt", len(listed) == 4, ",".join(listed))
+
+    for knob, spec, npts in [("@n1[temp]", "0 100 25", 5), ("@n1[dtemp]", "0 40 10", 5),
+                             ("@n1[dt]", "0 40 10", 5), ("@n1[m]", "1 4 1", 4)]:
+        rc2, o = run(d, ("t\n.control\npre_osdi m.osdi\n.endc\nV1 a 0 dc 1\nN1 a 0 mm\n"
+                         + MODEL + ".control\noption noacct\nset numdgt=12\n"
+                         f"sweep {knob} {spec} -analysis op -output oo=@n1[tdev]\n"
+                         "setplot sweep1\nprint oo\n.endc\n.end\n"), guard=60)
+        rows = re.findall(r"^\s*\d+\s+([-+0-9.eE]+)\s*$", o, re.M)
+        bad = [ln.strip() for ln in o.splitlines() if ln.startswith(("Error", "Warning"))]
+        check(f"sweep {knob} yields {npts} points with no spurious diagnostic",
+              len(rows) == npts and not bad, f"{len(rows)} pts; {bad[:1]}")
+
+    # E-394's terminal currents must survive the id move that made this possible
+    TRI = HDR + """module dut3(a,b,c);
+ inout a,b,c; electrical a,b,c;
+ analog begin I(a,b) <+ V(a,b)*1e-3; I(b,c) <+ V(b,c)*2e-3; end
+endmodule
+"""
+    d3, rc3, out3 = build_src(TRI, "tri")
+    check("the three-terminal probe compiles", rc3 == 0, out3.strip().splitlines()[:1])
+    if rc3 == 0:
+        rc2, o = run(d3, ("t\n.control\npre_osdi m.osdi\n.endc\nV1 a 0 dc 1\nVb b 0 dc 0.5\n"
+                          "N1 a b 0 mm\n.model mm dut3()\n"
+                          ".control\noption noacct\nset numdgt=12\nop\n"
+                          "print @n1[i_a] @n1[i_b] @n1[i_c] @n1[temp]\n.endc\n.end\n"))
+        cur3 = [num(o, rf"@n1\[i_{t}\]\s*=\s*(\S+)") for t in "abc"]
+        check("E-394 terminal currents still resolve after the id move",
+              all(c is not None for c in cur3), f"{cur3}")
+        check("and still satisfy KCL",
+              all(c is not None for c in cur3) and abs(sum(cur3)) < 1e-12,
+              f"sum={sum(c or 0 for c in cur3)}")
+        check("while @n1[temp] on the same device reads the ambient",
+              close(num(o, r"@n1\[temp\]\s*=\s*(\S+)"), 27.0), "")
+
+    rc2, o = run(d, ("t\n.control\npre_osdi m.osdi\n.endc\nV1 a 0 dc 1\nN1 a 0 mm dtemp=10\n"
+                     + MODEL + ".control\noption noacct\nset numdgt=12\nop\n"
+                     "print @n1[i] @n1[i_p] @n1[i_n]\n.endc\n.end\n"))
+    ip = num(o, r"@n1\[i_p\]\s*=\s*(\S+)")
+    inn = num(o, r"@n1\[i_n\]\s*=\s*(\S+)")
+    check("the two-terminal bare `i` alias still resolves",
+          num(o, r"@n1\[i\]\s*=\s*(\S+)") is not None and close(ip, -inn), f"i_p={ip} i_n={inn}")
+
+    dd = build("own_dtemp")[0]
+    r = osdi(dd, "N1 a 0 mm dtemp=25", cards=MODEL, opvars=("dtemp", "tdev"))
+    check("a model-declared `dtemp` is still read from the model's own parameter",
+          close(r["dtemp"], 25.0) and close(r["tdev"], 300.15, 1e-12),
+          f"dtemp={r['dtemp']} tdev={r['tdev']}")
 
     for j in os.listdir(HERE):
         if j.startswith("_op_"):

@@ -196,6 +196,34 @@ extern int OSDIask(CKTcircuit *ckt, GENinstance *instPtr, int id,
    * The same walk is repeated here so the two agree exactly; outside a
    * transient there is no reactive contribution, matching the DC stamp. */
   uint32_t cur_base = descr->num_params + descr->num_opvars;
+
+  /* Enhancement-397: the loader's own `dt`/`dtemp` and `temp`, read back with
+   * the same conventions a built-in uses -- verified against a resistor:
+   *
+   *   @r1[temp]   the BASE temperature in degrees Celsius, following the
+   *               ambient (.temp / .option temp) when the instance does not
+   *               set it, and NOT including dtemp;
+   *   @r1[dtemp]  the offset, zero when not given.
+   *
+   * The `>= cur_base` guard keeps this to the ids the LOADER synthesized. When
+   * the model declares `dtemp`/`temperature` itself, osdi_create_registry_entry
+   * routes entry->dt / entry->temp to that model parameter, whose id is below
+   * cur_base -- those fall through to the ordinary readable-parameter path
+   * below, which is what should serve them. */
+  if (entry->dt != UINT32_MAX && entry->dt >= cur_base && id == (int)entry->dt) {
+    OsdiExtraInstData *xtra = osdi_extra_instance_data(entry, instPtr);
+    value->rValue = xtra->dt_given ? xtra->dt : 0.0;
+    return (OK);
+  }
+  if (entry->temp != UINT32_MAX && entry->temp >= cur_base &&
+      id == (int)entry->temp) {
+    OsdiExtraInstData *xtra = osdi_extra_instance_data(entry, instPtr);
+    value->rValue = xtra->temp_given
+                        ? xtra->temp - CONSTCtoK
+                        : (ckt ? ckt->CKTtemp - CONSTCtoK : 27.0);
+    return (OK);
+  }
+
   if (id >= (int)cur_base) {
     uint32_t t = (uint32_t)id - cur_base;
     if (t >= descr->num_terminals) {
