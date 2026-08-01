@@ -96,7 +96,7 @@ raw number and used it directly as the Kelvin device temperature, so `temp=75`
 reached the model as `$temperature = 75` and `$vt = 6.5 mV` instead of 30 mV. On
 a Verilog-A diode that is **−2.5×10¹⁶ A where the correct answer is −4.85×10⁻⁷ A**,
 and `temp=0` made `$vt` exactly zero so `limexp(V/$vt)` divided by zero.
-Enhancement-394 fixed it; §7 shows the check that keeps it fixed.
+Enhancement-394 fixed it; §10 lists the checks that keep it fixed.
 
 The four routes and where they land:
 
@@ -117,6 +117,8 @@ with each other.
   relative to: `.temp 75` with `dtemp=10` gives 358.15 K.
 - `dt` and `dtemp` are **the same parameter**. They share an id; writing both is
   writing one slot twice.
+- `@n1[temp]` reports the **base** temperature, not the total — §9 gives the
+  expression for the device's actual temperature.
 
 ### Against an independent thermometer
 
@@ -352,14 +354,89 @@ A model that declares `dtemp` or `temperature` itself is unaffected: the loader
 routes its entry to that model parameter, whose id is below the synthesized
 range, so it is served by the ordinary readable-parameter path.
 
-## 9. What is pinned, and where
+---
 
-`examples/instknobs_examples/verify_instknobs.py` — 86 checks, in the regression
+## 9. Reading the device's *actual* temperature
+
+`@n1[temp]` is the **base** temperature, not the total. It answers "what ambient
+is this device sitting at, or what did the instance override it to" — never
+"what temperature is it running at." The same is true of a built-in resistor;
+this is not an OSDI quirk.
+
+To get the total, add the offset:
+
+```spice
+let tdev_c = @n1[temp] + @n1[dtemp]          $ degrees Celsius
+let tdev_k = @n1[temp] + @n1[dtemp] + 273.15 $ kelvin, == $temperature
+```
+
+That identity is **exact in every case**, verified against `$temperature` to
+1e-9 across the matrix below:
+
+| netlist | `@n1[temp]` | `@n1[dtemp]` | sum + 273.15 | `$temperature` |
+| --- | --- | --- | --- | --- |
+| *(default)* | 27 | 0 | 300.15 | 300.15 |
+| `dtemp=10` | 27 | 10 | 310.15 | 310.15 |
+| `dt=25` | 27 | 25 | 325.15 | 325.15 |
+| `temp=75` | 75 | 0 | 348.15 | 348.15 |
+| `temp=75 dtemp=10` | 75 | **0** | 348.15 | 348.15 |
+| `.temp 85` | 85 | 0 | 358.15 | 358.15 |
+| `.temp 85` + `dtemp=10` | 85 | 10 | 368.15 | 368.15 |
+| `.temp 85` + `temp=75 dtemp=10` | 75 | **0** | 348.15 | 348.15 |
+| `.option temp=-40` + `dtemp=5` | −40 | 5 | 238.15 | 238.15 |
+| `.temp 125` + `dtemp=-30` | 125 | −30 | 368.15 | 368.15 |
+
+![base plus offset reconstructs the device temperature](ngspice_temperature_figs/temperature_reconstruct.png)
+
+The marker is the device's actual temperature and the stack is `temp + dtemp`;
+the marker landing on top of the stack *is* the identity. A negative offset is
+hatched, because a bar that spans downward from the base would otherwise read as
+though it had been added.
+
+### Why one formula covers two different rules
+
+The two branches are not the same operation:
+
+- **no instance `temp=`** — `@n1[temp]` is the ambient and `@n1[dtemp]` is a
+  genuine offset. They add.
+- **instance `temp=` given** — that is an **override**, not a base to offset
+  from. `dtemp` is discarded, and `@n1[dtemp]` reads **0**, so the sum collapses
+  to `temp` alone, which is the right answer.
+
+So the formula works across both only because the discarded offset *reports as
+zero*. Before [Enhancement-397](../../../enhancements_doc/Enhancement-397.md)
+cleared it — matching what `restemp.c` has always done — `temp=75 dtemp=10`
+reported `dtemp=10`, and this expression would have given **358.15 K for a
+device actually running at 348.15 K**. That consequence was not designed in; it
+fell out of matching the built-in, and it is the strongest practical argument
+for having matched it.
+
+### Two caveats
+
+- **Units.** `@n1[temp]` is in °C and `@n1[dtemp]` in ΔK, so the sum is °C. Add
+  273.15 for kelvin, which is what `$temperature` reports.
+- **This describes the simulator's knobs, not necessarily the model's final
+  temperature.** If the Verilog-A declares its own `temp`, `dtemp`, `dt` or
+  `temperature`, it owns that name and applies whatever it likes — a
+  self-heating model adds a thermal node's rise on top of all of this. The sum
+  then tells you what ngspice *handed* the device, and only the model can tell
+  you the rest. If it exposes `$temperature` as an operating-point variable,
+  that reading is authoritative.
+
+ngspice does not expose the effective temperature as a knob of its own, and
+neither do built-in devices — which is why this note gives you the expression
+rather than a parameter name.
+
+## 10. What is pinned, and where
+
+`examples/instknobs_examples/verify_instknobs.py` — 127 checks, in the regression
 suite. It covers the multiplier by every route (device, subcircuit, nested,
 compounded, AC and transient, fractional, zero, 1000), temperature by every route
 against the built-in thermometer, `$vt` by the ratio test, the `m`/`$mfactor`
 independence including the 6× case, the integer rounding, subcircuit propagation
-and forwarding, and the model-owns-it rule in both directions.
+and forwarding, the model-owns-it rule in both directions, and the read-back of
+all four knobs against a built-in resistor in the same deck — including the
+`temp=` override clearing `dtemp`, which is what makes the §9 identity hold.
 
 Related notes and enhancements:
 

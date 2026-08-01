@@ -357,6 +357,60 @@ def fig_sweep(d, osdi):
     finish(fig, axes, "sweep_knobs.png")
 
 
+# ============================================================ figure 7
+def fig_reconstruct(d, osdi):
+    """@n1[temp] is the BASE temperature; the total is base + offset.
+
+    Plotted as a bar from 0 to `temp`, a second bar stacked on it for `dtemp`
+    (drawn downward when the offset is negative), and a marker at the device's
+    actual temperature. The marker landing on the top of the stack IS the
+    identity; the override case is the one where the offset bar vanishes.
+    """
+    CASES = [
+        ("default",              "",                 ""),
+        ("dtemp=10",             "",                 " dtemp=10"),
+        ("temp=75",              "",                 " temp=75"),
+        ("temp=75\ndtemp=10",    "",                " temp=75 dtemp=10"),
+        (".temp 85",             ".temp 85",         ""),
+        (".temp 85\ndtemp=10",   ".temp 85",        " dtemp=10"),
+        (".temp 125\ndtemp=-30", ".temp 125",       " dtemp=-30"),
+        (".option temp=-40\ndtemp=5", ".option temp=-40", " dtemp=5"),
+    ]
+    base, off, tot = [], [], []
+    for _, cards, extra in CASES:
+        out = op(d, osdi, "N1 a 0 mm" + extra, ".model mm probe()\n" + cards,
+                 prints=("@n1[temp]", "@n1[dtemp]", "@n1[tdev]"))
+        base.append(scalar(out, "@n1[temp]"))
+        off.append(scalar(out, "@n1[dtemp]"))
+        tot.append(scalar(out, "@n1[tdev]") - KELVIN)   # back to degC to compare
+    base, off, tot = map(lambda v: np.array(v, float), (base, off, tot))
+
+    x = np.arange(len(CASES))
+    fig, ax = plt.subplots(figsize=(8.6, 4.6))
+    ax.bar(x, base, 0.56, color=OSDI_C, label="@n1[temp]  -- the BASE temperature")
+    # A negative offset spans DOWNWARD from the base, so drawn plain it reads as
+    # if it were added. Hatch it so "removed" is unmistakable.
+    pos = np.where(off >= 0, off, 0.0)
+    neg = np.where(off < 0, off, 0.0)
+    ax.bar(x, pos, 0.56, bottom=base, color="#ff7f0e",
+           label="@n1[dtemp] > 0  -- offset added")
+    ax.bar(x, neg, 0.56, bottom=base, color="#ff7f0e", alpha=0.55,
+           hatch="///", edgecolor="white", linewidth=0.0,
+           label="@n1[dtemp] < 0  -- offset removed")
+    ax.plot(x, tot, "o", ms=9, mfc="none", mew=2.2, color="#111111",
+            label="$temperature (converted back to degC)", zorder=5)
+    ax.axhline(0, color="#888888", linewidth=0.8)
+    for xi, (b, o_, t) in enumerate(zip(base, off, tot)):
+        ax.text(xi, t + (4 if t >= 0 else -9), f"{t:g}", ha="center", fontsize=8)
+    ax.set_xticks(x)
+    ax.set_xticklabels([c[0] for c in CASES], fontsize=8)
+    ax.set_ylabel("temperature  [degC]")
+    ax.set_title("`@n1[temp]` is the BASE temperature; the total is base + offset")
+    ax.legend(fontsize=8, loc="upper left")
+    ax.set_ylim(min(-55, tot.min() - 20), max(tot.max(), base.max()) * 1.35)
+    finish(fig, ax, "temperature_reconstruct.png")
+
+
 def main():
     os.makedirs(OUT, exist_ok=True)
     os.makedirs(WORK, exist_ok=True)
@@ -373,6 +427,7 @@ def main():
     fig_multiplier(d, osdi, d, "probem.osdi")
     fig_nesting(d, osdi)
     fig_sweep(d, osdi)
+    fig_reconstruct(d, osdi)
     shutil.rmtree(WORK, ignore_errors=True)
 
 
