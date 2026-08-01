@@ -97,7 +97,21 @@ extern int OSDIparam(int param, IFvalue *value, GENinstance *instPtr,
       return (OK);
     }
     if (param == (int)entry->temp) {
-      inst->temp = value->rValue;
+      /* Enhancement-394: `temp=` is an ABSOLUTE device temperature and, by the
+       * SPICE convention every built-in follows, the user writes it in degrees
+       * CELSIUS -- `dioparam.c` does `DIOtemp = value->rValue + CONSTCtoK`, and
+       * ngspice's own OSDI code acknowledges the same convention where it hands
+       * `tnom` to the model as `CKTnomTemp - CONSTCtoK`.
+       *
+       * The raw value was stored here and then used directly as the Kelvin
+       * device temperature, so `temp=75` reached the model as $temperature=75
+       * (and $vt = 6.5 mV instead of 30 mV). On a Verilog-A diode that is
+       * -2.5e+16 A where the correct answer is -4.85e-07 A. `temp=0` made $vt
+       * exactly zero, so `limexp(V/$vt)` divided by zero and the operating
+       * point failed outright; `temp=-40` produced a negative absolute
+       * temperature and a negative thermal voltage. `.temp`, `.option temp` and
+       * `dtemp` were all correct -- only this path was raw. */
+      inst->temp = value->rValue + CONSTCtoK;
       inst->temp_given = true;
       return (OK);
     }
@@ -165,7 +179,6 @@ static int osdi_read_param(void *src, IFvalue *value, int id,
 extern int OSDIask(CKTcircuit *ckt, GENinstance *instPtr, int id,
                    IFvalue *value, IFvalue *select) {
   NG_IGNORE(select);
-  NG_IGNORE(ckt);
 
   OsdiRegistryEntry *entry = osdi_reg_entry_inst(instPtr);
   void *inst = osdi_instance_data(entry, instPtr);
@@ -173,8 +186,39 @@ extern int OSDIask(CKTcircuit *ckt, GENinstance *instPtr, int id,
 
   const OsdiDescriptor *descr = entry->descriptor;
 
-  if (id >= (int)(descr->num_params + descr->num_opvars)) {
-    return (E_BADPARM);
+  /* Enhancement-394: ids past the descriptor's parameter/opvar space are the
+   * synthesized terminal currents declared in osdiinit.c.
+   *
+   * The current into terminal t is what the device stamped into that node's
+   * KCL row: the resistive residual, plus -- in a transient -- the integrated
+   * derivative of the reactive residual (the charge), which OSDIload places in
+   * CKTstate0[state+1] while walking the reactive nodes in descriptor order.
+   * The same walk is repeated here so the two agree exactly; outside a
+   * transient there is no reactive contribution, matching the DC stamp. */
+  uint32_t cur_base = descr->num_params + descr->num_opvars;
+  if (id >= (int)cur_base) {
+    uint32_t t = (uint32_t)id - cur_base;
+    if (t >= descr->num_terminals) {
+      return (E_BADPARM);
+    }
+    double cur = 0.0;
+    if (descr->nodes[t].resist_residual_off != UINT32_MAX) {
+      cur = *((double *)(((char *)inst) + descr->nodes[t].resist_residual_off));
+    }
+    if (ckt && (ckt->CKTmode & MODETRAN) && ckt->CKTstates[0]) {
+      int state = instPtr->GENstate + (int)descr->num_states;
+      for (uint32_t i = 0; i < descr->num_nodes; i++) {
+        if (descr->nodes[i].react_residual_off == UINT32_MAX)
+          continue;
+        if (i == t) {
+          cur += ckt->CKTstate0[state + 1];
+          break;
+        }
+        state += 2;
+      }
+    }
+    value->rValue = cur;
+    return (OK);
   }
   uint32_t flags = ACCESS_FLAG_READ;
   if (id < (int)descr->num_instance_params) {

@@ -9,7 +9,11 @@ Enhancement-242: native n-port device -- parameter tables.
 
 /* instance parameters: none (everything comes from the .model / fit file) */
 IFparm NPORTpTable[] = {
-    OPU("nports_i", NPORT_NPORTS, IF_INTEGER, "number of ports")
+    OPU("nports_i", NPORT_NPORTS, IF_INTEGER, "number of ports"),
+    /* Enhancement-394: `m` is accepted so that a subcircuit multiplier, which
+       is now appended to every N line (inpcom.c), parses on an n-port too. The
+       n-port does not implement a multiplier -- see NPORTparam. */
+    IOP("m", NPORT_M, IF_REAL, "instance multiplier (not applied; see manual)")
 };
 
 /* model parameters */

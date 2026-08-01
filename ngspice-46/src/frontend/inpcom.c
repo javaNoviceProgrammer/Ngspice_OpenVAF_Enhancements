@@ -4351,8 +4351,21 @@ static int inp_fix_subckt_multiplier(struct names *subckt_w_params,
         char *curr_line = card->line;
         /* no 'm' for comment line, V, E, H and some others that are not
            using 'm' in their model description.
-           B source will get 'm' only when it is a current source. */
-        if (strchr("*vehaknopstuwy", curr_line[0]))
+           B source will get 'm' only when it is a current source.
+
+           Enhancement-394: 'n' was in this list and must not be. The N
+           dispatcher hosts OSDI (compiled Verilog-A) devices, which DO take a
+           multiplier -- `N1 a 0 md m=3` works and scales correctly. Because
+           'n' was excluded, a compact model instantiated inside a multiplied
+           subcircuit silently contributed 1x while a built-in resistor beside
+           it scaled exactly, in DC, AC, transient, noise, charge and
+           S-parameters alike. PDKs wrap compact models in multiplied subckts,
+           so this under-counted device area with no diagnostic at all.
+
+           'n' also hosts the native n-port device, which does NOT take a
+           multiplier; inp2n.c now accepts `m` for it and says so when it is
+           not 1, rather than the multiplier being dropped in silence. */
+        if (strchr("*vehakopstuwy", curr_line[0]))
             continue;
         /* no 'm' for model cards */
         if (ciprefix(".model", curr_line))
@@ -4368,7 +4381,16 @@ static int inp_fix_subckt_multiplier(struct names *subckt_w_params,
             if (ciprefix("v=", tmpstr))
                 continue;
         }
-        if (newcompat.hs && card->compmod == 0) {
+        /* Enhancement-394: an existing `m=` on the line is MULTIPLIED by the
+           subcircuit's multiplier, not shadowed by it. This was done only in
+           HSPICE compatibility mode; everywhere else a second ` m={m}` was
+           appended, and the appended one won. That is what made NESTED
+           subcircuit multipliers fail to compound -- the outer level rewrote
+           the inner X line, whose own `m=` was then discarded, so `m=2` around
+           `m=3` gave 2x and 2x3x5 gave 2x instead of 30x. Only the outermost
+           multiplier survived, for built-in devices too. Multiplying is the
+           SPICE meaning and is what the HSPICE path already did. */
+        {
             /* if there is already an m=xx in the instance line, multiply it with the new m */
             char* mult = strstr(curr_line, " m=");
             if (mult) {
@@ -4394,9 +4416,6 @@ static int inp_fix_subckt_multiplier(struct names *subckt_w_params,
             else {
                 new_str = tprintf("%s m={m}", curr_line);
             }
-        }
-        else {
-            new_str = tprintf("%s m={m}", curr_line);
         }
 
         tfree(card->line);

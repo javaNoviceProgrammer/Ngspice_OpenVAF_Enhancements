@@ -2554,6 +2554,20 @@ inp_savecurrents(struct card *deck, struct card *options, wordlist *wl, wordlist
             devname = gettok(&devline);
             newline = tprintf(".save @%s[current]", devname);
             break;
+        case 'n':
+            /* Enhancement-394: OSDI (compiled Verilog-A) devices were absent
+               from this list entirely, so `.options savecurrents` produced
+               `@r1[i]` for a built-in resistor and nothing at all for the
+               compact model beside it. Every OSDI instance now answers to
+               `i(<terminal>)`, and a two-terminal one also to the bare `i`
+               that R/C/L use -- which is what is emitted here, because this
+               is a textual pre-pass over the deck and the model's terminal
+               NAMES are not knowable at this point. Devices with more than
+               two terminals are read per terminal by name, e.g.
+               `.save @n1[i_d]`. */
+            devname = gettok(&devline);
+            newline = tprintf(".save @%s[i]", devname);
+            break;
         default:
             continue;
         }

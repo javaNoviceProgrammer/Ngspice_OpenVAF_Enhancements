@@ -155,6 +155,16 @@ extern SPICEdev *osdi_create_spicedev(const OsdiRegistryEntry *entry) {
     *num_instance_para_names += 1;
   }
 
+  /* Enhancement-394: one read-only terminal current per terminal, `i(<term>)`.
+   * An OSDI device previously exposed no current at all: `.options
+   * savecurrents` produced `@r1[i]` for a built-in resistor and nothing for
+   * the OSDI device beside it, and `@n1[i]` did not exist, so the only way to
+   * see a compact model's terminal current was to edit the model. */
+  *num_instance_para_names += (int)descr->num_terminals;
+  if (descr->num_terminals == 2) {
+    *num_instance_para_names += 1; /* the bare `i` alias */
+  }
+
   IFparm *instance_para_names = TMALLOC(IFparm, *num_instance_para_names);
   IFparm *dst = instance_para_names;
 
@@ -174,6 +184,29 @@ extern SPICEdev *osdi_create_spicedev(const OsdiRegistryEntry *entry) {
   write_param_info(&dst, descr, 0, descr->num_instance_params, entry->has_m);
   write_param_info(&dst, descr, descr->num_params,
                    descr->num_params + descr->num_opvars, true);
+
+  /* Enhancement-394: terminal currents occupy ids just past the descriptor's
+   * own parameter/opvar space; OSDIask recognises that range. Two-terminal
+   * devices additionally answer to the bare `i`, matching what R, C and L use,
+   * so `.options savecurrents` can emit `.save @dev[i]` for them without
+   * knowing the model's terminal names. */
+  {
+    uint32_t base = descr->num_params + descr->num_opvars;
+    for (uint32_t t = 0; t < descr->num_terminals; t++) {
+      /* `i_<term>`, not `i(<term>)`: the @dev[param] reader hands the text
+         between the brackets to the vector parser, which reads `i(p)` as a
+         function call and finds nothing. */
+      char *nm = tprintf("i_%s", descr->nodes[t].name);
+      dst[0] = (IFparm){nm, (int)(base + t), IF_REAL | IF_ASK,
+                        "terminal current"};
+      dst += 1;
+    }
+    if (descr->num_terminals == 2) {
+      dst[0] = (IFparm){"i", (int)base, IF_REAL | IF_ASK,
+                        "current into the first terminal"};
+      dst += 1;
+    }
+  }
   osdi_warn_case_collisions(instance_para_names, *num_instance_para_names,
                             descr->name, "instance");
 

@@ -279,11 +279,25 @@ static void last_crossing_stamp(void *inst, OsdiExtraInstData *extra,
   }
 }
 
-#define NUM_SIM_PARAMS 10
+/* Enhancement-394: `scale` joins the list. `.option scale` is applied by each
+ * BUILT-IN device inside its own parameter setter (b3par.c and friends call
+ * cp_getvar("scale")); nothing scales an OSDI instance parameter, because the
+ * OSDI ABI carries no units and ngspice cannot know which parameters are
+ * lengths. The Verilog-A way to receive it is $simparam("scale"), which real
+ * models do ask for -- the EKV model in this project's own VA_TEST corpus has
+ * `SIMPARSCAL $simparam("scale",1.0)` -- and ngspice did not answer, so the
+ * model silently used 1.0 while a built-in MOSFET in the same netlist scaled.
+ * There is no double-application risk precisely because ngspice never touches
+ * an OSDI parameter itself.
+ *
+ * NOT added: `shrink`, `imax`, `rthresh`. ngspice has no such option, so the
+ * honest answer is to leave the model's own $simparam default in force rather
+ * than invent a value. */
+#define NUM_SIM_PARAMS 11
 char *sim_params[NUM_SIM_PARAMS + 1] = {
     "iniLim", "gmin", "gdev", "tnom",
     "simulatorVersion", "sourceScaleFactor",
-    "epsmin", "reltol", "vntol", "abstol",
+    "epsmin", "reltol", "vntol", "abstol", "scale",
     NULL};
 /* Enhancement-25: string simulator parameters returned by $simparam$str.
  * "analysis_name" mirrors the analysis() naming ("dc"/"ac"/"tran"/"noise");
@@ -377,6 +391,38 @@ static void build_plusarg_arrays(void) {
   ext_built = 1;
 }
 
+/* Enhancement-394: the single source of truth for "which analysis is running",
+ * mirroring the ANALYSIS_* flag derivation in OSDIload term for term so that
+ * $simparam$str("analysis_name") and analysis() can never disagree.
+ *
+ * The order matters and matches the flags: a noise job's operating point is
+ * noise, an AC job's operating point is ac (Enhancement-53), and only then do
+ * the plain CKTmode bits decide. MODEINITSMSIG is deliberately NOT treated as
+ * `ac`: it is the small-signal pass that follows a DC solution, and a plain
+ * `op` is not an AC analysis -- `finalstep_examples` pins that ac-qualified
+ * events stay silent there. */
+static const char *osdi_analysis_name(const CKTcircuit *ckt) {
+  bool is_ac = ckt->CKTmode & MODEAC;
+  bool is_dc = ckt->CKTmode & (MODEDCOP | MODEDCTRANCURVE);
+  bool is_tran = ckt->CKTmode & (MODETRAN | MODETRANOP | MODEINITTRAN);
+  const char *job = NULL;
+
+  if (ckt->CKTcurJob && ft_sim->analyses[ckt->CKTcurJob->JOBtype])
+    job = ft_sim->analyses[ckt->CKTcurJob->JOBtype]->name;
+
+  if (ckt->CKTmode & MODEACNOISE)
+    return "noise";
+  if (is_dc && job && !strcmp(job, "NOISE"))
+    return "noise";
+  if (is_dc && job && !strcmp(job, "AC"))
+    return "ac";
+  if (is_ac)
+    return "ac";
+  if (is_tran)
+    return "tran";
+  return "dc";
+}
+
 /* values returned by $simparam*/
 OsdiSimParas get_simparams(const CKTcircuit *ckt) {
   double simulatorVersion = strtod(PACKAGE_VERSION, NULL);
@@ -386,23 +432,40 @@ OsdiSimParas get_simparams(const CKTcircuit *ckt) {
                                                       : (ckt->CKTdiagGmin);
   double initializeLimiting = (ckt->CKTmode & MODEINITJCT) ? 1 : 0;
 
+  double geom_scale;
+  if (!cp_getvar("scale", CP_REAL, &geom_scale, 0))
+    geom_scale = 1.0;
+
   double sim_param_vals_[NUM_SIM_PARAMS] = {
       // Verilog-A tnom is in degrees Celsius
       initializeLimiting, gmin, gdev, ckt->CKTnomTemp-CONSTCtoK, simulatorVersion, sourceScaleFactor, 
-      ckt->CKTepsmin, ckt->CKTreltol, ckt->CKTvoltTol, ckt->CKTabstol };
+      ckt->CKTepsmin, ckt->CKTreltol, ckt->CKTvoltTol, ckt->CKTabstol, geom_scale };
   memcpy(&sim_param_vals, &sim_param_vals_, sizeof(double) * NUM_SIM_PARAMS);
 
   /* Enhancement-25: current analysis name for $simparam$str("analysis_name"),
-   * derived from CKTmode with the same convention as analysis(). */
-  const char *analysis_name;
-  if (ckt->CKTmode & MODEACNOISE)
-    analysis_name = "noise";
-  else if (ckt->CKTmode & (MODEAC | MODEINITSMSIG))
-    analysis_name = "ac";
-  else if (ckt->CKTmode & (MODETRAN | MODETRANOP | MODEINITTRAN))
-    analysis_name = "tran";
-  else
-    analysis_name = "dc";
+   * derived from CKTmode with the same convention as analysis().
+   *
+   * Enhancement-394: it was NOT the same convention any more, and the two
+   * channels contradicted each other inside a single model evaluation.
+   * Enhancement-53 taught the ANALYSIS_* flags to consult the RUNNING JOB
+   * (`CKTcurJob`) so that an AC/noise job's operating-point phase reports
+   * `ac`/`noise`, because CKTmode alone cannot tell that phase apart from a
+   * standalone op. This string was left on the CKTmode-only derivation, so:
+   *
+   *   plain `op`      -> name="ac" while analysis("ac")=0, analysis("dc")=1
+   *                      (MODEINITSMSIG is set by the small-signal pass that
+   *                       follows a DC op, and it is matched below)
+   *   AC job's op     -> name="dc" while analysis("ac")=1
+   *
+   * A model that gates behaviour on the string therefore disagreed with one
+   * gating on analysis(). Both now come from `osdi_analysis_name`, which is
+   * built from the SAME `is_*` booleans and the same job consultation the
+   * flags use, so `name=="ac"` implies `analysis("ac")` and vice versa.
+   *
+   * A single name cannot express a phase that carries two flags (an AC job's
+   * op is both ANALYSIS_DC and ANALYSIS_AC); it reports the owning analysis,
+   * which is what E-53 established and what the LRM asks for. */
+  const char *analysis_name = osdi_analysis_name(ckt);
   sim_param_vals_str[0] = (char *)analysis_name;
 
   /* Enhancement-215: with command-line plusargs present, return the extended
@@ -539,7 +602,20 @@ extern int OSDIload(GENmodel *inModel, CKTcircuit *ckt) {
   }
 
   if (is_ac) {
-    sim_info.flags |= CALC_REACT_JACOBIAN | ANALYSIS_AC;
+    /* Enhancement-394: the reactive Jacobian IS needed during MODEINITSMSIG --
+     * that pass computes the small-signal capacitances after a DC solution --
+     * but ANALYSIS_AC is a NAME, and a plain `op` is not an AC analysis. The
+     * two were set together, so during a plain `op` a model saw
+     * analysis("ac") true while OSDIfinalStep (MODEAC only) saw it false, and
+     * $simparam$str("analysis_name") disagreed with whichever it was asked
+     * beside. The name bit now follows MODEAC, plus Enhancement-53's job
+     * consultation below for an AC/noise job's operating-point phase; the
+     * `finalstep_examples` suite pins that ac-qualified events stay silent in
+     * a plain `op`, which is the behaviour this preserves. */
+    sim_info.flags |= CALC_REACT_JACOBIAN;
+  }
+  if (ckt->CKTmode & MODEAC) {
+    sim_info.flags |= ANALYSIS_AC;
   }
 
   if (is_init_tran) {

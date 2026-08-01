@@ -236,10 +236,22 @@ int OSDIsetup(SMPmatrix *matrix, GENmodel *inModel, CKTcircuit *ckt,
       double temp = ckt->CKTtemp;
       OsdiExtraInstData *extra_inst_data =
           osdi_extra_instance_data(entry, gen_inst);
+      /* Enhancement-394: `temp` OVERRIDES, it does not stack with `dtemp`.
+       * Every built-in works that way -- restemp.c forces `RESdtemp = 0` when
+       * `temp` is given and warns that dtemp is ignored, and diotemp.c only
+       * adds dtemp when temp was NOT given. Adding them here made
+       * `temp=75 dtemp=10` mean 85, which is neither device's meaning.
+       * (`extra_inst_data->temp` is now Kelvin -- converted in osdiparam.c.) */
       if (extra_inst_data->temp_given) {
         temp = extra_inst_data->temp;
-      }
-      if (extra_inst_data->dt_given) {
+        if (extra_inst_data->dt_given &&
+            !(ckt->CKTcurJob && ckt->CKTcurJob->JOBtype == 9)) {
+          /* same message and the same sensitivity-analysis silence as
+           * restemp.c, so mixed netlists report this one way */
+          printf("%s: Instance temperature specified, dtemp ignored\n",
+                 gen_inst->GENname);
+        }
+      } else if (extra_inst_data->dt_given) {
         temp += extra_inst_data->dt;
       }
       extra_inst_data->has_evaluated = false;
@@ -480,10 +492,22 @@ extern int OSDItemp(GENmodel *inModel, CKTcircuit *ckt) {
       double temp = ckt->CKTtemp;
       OsdiExtraInstData *extra_inst_data =
           osdi_extra_instance_data(entry, gen_inst);
+      /* Enhancement-394: `temp` OVERRIDES, it does not stack with `dtemp`.
+       * Every built-in works that way -- restemp.c forces `RESdtemp = 0` when
+       * `temp` is given and warns that dtemp is ignored, and diotemp.c only
+       * adds dtemp when temp was NOT given. Adding them here made
+       * `temp=75 dtemp=10` mean 85, which is neither device's meaning.
+       * (`extra_inst_data->temp` is now Kelvin -- converted in osdiparam.c.) */
       if (extra_inst_data->temp_given) {
         temp = extra_inst_data->temp;
-      }
-      if (extra_inst_data->dt_given) {
+        if (extra_inst_data->dt_given &&
+            !(ckt->CKTcurJob && ckt->CKTcurJob->JOBtype == 9)) {
+          /* same message and the same sensitivity-analysis silence as
+           * restemp.c, so mixed netlists report this one way */
+          printf("%s: Instance temperature specified, dtemp ignored\n",
+                 gen_inst->GENname);
+        }
+      } else if (extra_inst_data->dt_given) {
         temp += extra_inst_data->dt;
       }
       extra_inst_data->has_evaluated = false;

@@ -111,6 +111,7 @@ typedef struct sNPORTmodel {
 enum {
     NPORT_MOD_NPORT = 1,   /* nport() -- the .model type flag (bare keyword) */
     NPORT_MOD_FILE,        /* file="..." */
+    NPORT_M,               /* E-394: instance multiplier (accepted, see nportparam.c) */
     NPORT_NPORTS,          /* query: N  */
     NPORT_NPOLES           /* query: Np */
 };
