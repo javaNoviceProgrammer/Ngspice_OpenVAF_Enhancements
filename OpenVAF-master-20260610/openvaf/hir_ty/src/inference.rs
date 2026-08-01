@@ -2168,15 +2168,28 @@ impl Ctx<'_> {
         }
     }
 
-    fn const_int_index(&self, index: ExprId) -> Option<i32> {
-        match self.body.exprs[index] {
-            Expr::Literal(Literal::Int(i)) => Some(i),
-            Expr::UnaryOp { expr: inner, op: UnaryOp::Neg } => match self.body.exprs[inner] {
-                Expr::Literal(Literal::Int(i)) => Some(-i),
-                _ => None,
-            },
-            _ => None,
-        }
+    /// A bit-select index folded at ELABORATION time (Enhancement-393).
+    ///
+    /// This asks a different question from [`Self::const_int_expr`] and must not be
+    /// merged with it. `const_int_expr` asks *"is this a constant the CODE GENERATOR
+    /// can see?"*, because its job is to spot operations LLVM defines as poison; a
+    /// localparam is lowered as a runtime value, so it is deliberately excluded there
+    /// and a localparam zero divisor rightly still compiles. This one asks *"is this
+    /// fixed before the OSDI descriptor is built?"*, which a localparam is -- by
+    /// definition, and the LRM forbids overriding one externally.
+    ///
+    /// So a localparam is resolved to its value here, and, recursively, so is a
+    /// localparam defined from other localparams. **A localparam defined from a
+    /// `parameter` is correctly refused by construction**: folding it requires folding
+    /// the parameter, which is not `is_local`, so the whole chain returns `None`. That
+    /// matters -- a parameter binds at simulation time, and baking its default into a
+    /// node selection would silently ignore an override from the model card.
+    ///
+    /// A parameter that shapes a declaration width is already rewritten to a
+    /// localparam by Enhancement-92 and so folds here, which is exactly right: the
+    /// bus it indexes was sized by that same frozen value.
+    fn const_int_index(&self, stmt: StmtId, index: ExprId) -> Option<i32> {
+        const_int_elab(self.db, self.body, stmt, index, CONST_FOLD_DEPTH)
     }
 
     /// Handles a dynamic-index array *write* `c[i] = v` / `m[i][j] = v` (at least one non-constant
@@ -2198,10 +2211,10 @@ impl Ctx<'_> {
         if indices.len() != arr.ndim() {
             return false;
         }
-        let all_const = indices.iter().all(|&i| self.const_int_index(i).is_some());
+        let all_const = indices.iter().all(|&i| self.const_int_index(stmt, i).is_some());
         let has_bad_literal = indices
             .iter()
-            .any(|&i| self.const_int_index(i).is_none() && self.is_literal_index(i));
+            .any(|&i| self.const_int_index(stmt, i).is_none() && self.is_literal_index(i));
         if all_const || has_bad_literal {
             return false;
         }
@@ -2535,7 +2548,7 @@ impl Ctx<'_> {
 
         // Try to constant-fold every index.
         let const_idxs: Option<Vec<i32>> =
-            indices.iter().map(|&i| self.const_int_index(i)).collect();
+            indices.iter().map(|&i| self.const_int_index(stmt, i)).collect();
 
         let Some(idxs) = const_idxs else {
             // At least one index is non-constant. Runtime (dynamic) indexing is supported for
@@ -2544,7 +2557,7 @@ impl Ctx<'_> {
             // oversized integer) is a bad constant rather than a runtime index.
             let has_bad_literal = indices
                 .iter()
-                .any(|&i| self.const_int_index(i).is_none() && self.is_literal_index(i));
+                .any(|&i| self.const_int_index(stmt, i).is_none() && self.is_literal_index(i));
             if is_net || has_bad_literal || self.find_var_array(&base_name).is_none() {
                 self.result
                     .diagnostics
@@ -2625,6 +2638,65 @@ impl Ctx<'_> {
     // fn collect_fmt_literal(&mut self, stmt: StmtId, args: &[ExprId]){
     //     self.body
     // }
+}
+
+/// Enhancement-393: the elaboration-time integer folder behind
+/// [`Ctx::const_int_index`]. See that method for why this is deliberately
+/// *not* the same evaluator as `Ctx::const_int_expr`.
+///
+/// A free function rather than a method because resolving a localparam means
+/// continuing the fold inside *that parameter's own body*, which has its own
+/// expression arena and its own scopes -- the reference `body` changes as the
+/// recursion walks the chain.
+fn const_int_elab(
+    db: &dyn HirTyDB,
+    body: &Body,
+    stmt: StmtId,
+    expr: ExprId,
+    depth: u32,
+) -> Option<i32> {
+    if depth == 0 {
+        return None;
+    }
+    match body.exprs[expr] {
+        Expr::Literal(Literal::Int(i)) => Some(i),
+        Expr::UnaryOp { expr: inner, op: UnaryOp::Neg } => {
+            const_int_elab(db, body, stmt, inner, depth - 1).map(i32::wrapping_neg)
+        }
+        Expr::UnaryOp { expr: inner, op: UnaryOp::Identity } => {
+            const_int_elab(db, body, stmt, inner, depth - 1)
+        }
+        Expr::BinaryOp { lhs, rhs, op: Some(op) } => {
+            let l = const_int_elab(db, body, stmt, lhs, depth - 1)?;
+            let r = const_int_elab(db, body, stmt, rhs, depth - 1)?;
+            match op {
+                BinaryOp::Addition => Some(l.wrapping_add(r)),
+                BinaryOp::Subtraction => Some(l.wrapping_sub(r)),
+                BinaryOp::Multiplication => Some(l.wrapping_mul(r)),
+                // A zero divisor and `i32::MIN / -1` keep the precise diagnostics
+                // Enhancement-333/334 give them. Declining to fold here leaves the
+                // index non-constant, and its own message is reported alongside.
+                BinaryOp::Division if r != 0 && !(l == i32::MIN && r == -1) => Some(l / r),
+                BinaryOp::Remainder if r != 0 && !(l == i32::MIN && r == -1) => Some(l % r),
+                _ => None,
+            }
+        }
+        Expr::Path { ref path, port: false } => {
+            let resolved = body.stmt_scopes[stmt].resolve_path(db.upcast(), path).ok()?;
+            let ResolvedPath::ScopeDefItem(ScopeDefItem::ParamId(param)) = resolved else {
+                return None;
+            };
+            // `parameter` binds at simulation time; only `localparam` is fixed here.
+            if !db.param_data(param).is_local {
+                return None;
+            }
+            let param_body = db.body(DefWithBodyId::ParamId(param));
+            let param_stmt = *param_body.entry_stmts.first()?;
+            let default = db.param_exprs(param).default;
+            const_int_elab(db, &param_body, param_stmt, default, depth - 1)
+        }
+        _ => None,
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

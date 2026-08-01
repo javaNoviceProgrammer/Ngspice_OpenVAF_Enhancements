@@ -187,6 +187,18 @@
       "note": "named part-select connections (.out(out[3:2])); parse fixed by E-85 (F6), adc context stub added"
     },
     {
+      "file": "lrm_p169_1.va",
+      "block": "block_169_1",
+      "page": 169,
+      "note": "LRM RC-line. Needed THREE enhancements to elaborate: E-96 (bare module-level generate-for), E-92+E-392 (N sizes electrical [0:N], so N freezes to a localparam and a localparam is a valid generate bound) and E-393 (n[N] as a bit-select index). resistor/capacitor context stubs added"
+    },
+    {
+      "file": "lrm_p169_2.va",
+      "block": "block_169_2",
+      "page": 169,
+      "note": "as lrm_p169_1, with a labelled section block and an analog block inside the generate body (E-390); resistor context stub added"
+    },
+    {
       "file": "lrm_p173_1.va",
       "block": "block_173_1",
       "page": 173,
@@ -317,20 +329,6 @@
       "page": 168,
       "note": "generate-for whose bound `bits` also sizes [0:bits-1], so E-92/E-392 now fold it; blocked instead on the DECREMENTING loop header `for (i=bits-1; i>=0; i=i-1)` -- only '<' and '<=' conditions are supported",
       "expect": "only '<' and '<=' loop conditions are supported"
-    },
-    {
-      "file": "lrm_p169_1.va",
-      "block": "block_169_1",
-      "page": 169,
-      "note": "bare module-level generate-for (E-96); the parameter loop bound N is no longer the blocker -- N also sizes electrical [0:N], so E-92 freezes it to a localparam and E-392 accepts a localparam bound. resistor/capacitor context stubs added. Blocked instead on the analog block's n[N] bit-select: a localparam is not accepted as a bit-select index (it is accepted as a bus WIDTH)",
-      "expect": "bus bit-select index must be a constant"
-    },
-    {
-      "file": "lrm_p169_2.va",
-      "block": "block_169_2",
-      "page": 169,
-      "note": "as lrm_p169_1, with a labelled section block and an analog block inside the generate body (E-390); resistor context stub added. Same remaining blocker: n[N] as a bit-select index",
-      "expect": "bus bit-select index must be a constant"
     },
     {
       "file": "lrm_p170_1.va",

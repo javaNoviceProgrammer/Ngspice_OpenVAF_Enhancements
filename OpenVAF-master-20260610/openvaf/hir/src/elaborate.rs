@@ -326,7 +326,8 @@ fn collect_param_group(
     sig: &[usize],
     lo: usize,
     hi: usize,
-    decls: &mut Vec<(String, usize, usize)>,
+    is_local: bool,
+    decls: &mut Vec<(String, usize, usize, bool)>,
 ) {
     let raw = |i: usize| &text[spans[i].start..spans[i].end];
     let mut eq = None;
@@ -358,7 +359,7 @@ fn collect_param_group(
         }
     }
     let expr_hi = if expr_end_sig < sig.len() { sig[expr_end_sig] } else { spans.len() };
-    decls.push((name, expr_lo, expr_hi));
+    decls.push((name, expr_lo, expr_hi, is_local));
 }
 
 /// Enhancement-92: rewrites the declarations of parameters listed in `frozen`
@@ -539,10 +540,11 @@ pub(crate) fn fold_parameter_widths(db: &mut CompilationDB) -> anyhow::Result<()
     let mut rewrites: Vec<(usize, usize, String)> = Vec::new();
     for (rs, re) in regions {
         // pass 1: collect integer parameter defaults in this module
-        let mut decls: Vec<(String, usize, usize)> = Vec::new();
+        let mut decls: Vec<(String, usize, usize, bool)> = Vec::new();
         let mut p = rs;
         while p < re {
             if matches!(raw(sig[p]), "parameter" | "localparam") {
+                let is_local = raw(sig[p]) == "localparam";
                 let mut q = p + 1;
                 let mut group_start = q;
                 let mut depth = 0i32;
@@ -556,14 +558,16 @@ pub(crate) fn fold_parameter_widths(db: &mut CompilationDB) -> anyhow::Result<()
                             break;
                         }
                         "," if depth == 0 => {
-                            collect_param_group(&text, &spans, &sig, group_start, q, &mut decls);
+                            collect_param_group(
+                                &text, &spans, &sig, group_start, q, is_local, &mut decls,
+                            );
                             group_start = q + 1;
                         }
                         _ => {}
                     }
                     q += 1;
                 }
-                collect_param_group(&text, &spans, &sig, group_start, end, &mut decls);
+                collect_param_group(&text, &spans, &sig, group_start, end, is_local, &mut decls);
                 p = end;
             }
             p += 1;
@@ -573,7 +577,7 @@ pub(crate) fn fold_parameter_widths(db: &mut CompilationDB) -> anyhow::Result<()
         let mut map: HashMap<String, i32> = HashMap::new();
         loop {
             let mut changed = false;
-            for (name, lo, hi) in &decls {
+            for (name, lo, hi, _) in &decls {
                 if map.contains_key(name) {
                     continue;
                 }
@@ -637,6 +641,89 @@ pub(crate) fn fold_parameter_widths(db: &mut CompilationDB) -> anyhow::Result<()
         // would leave the frozen width behind while behavioural code (a runtime
         // loop bound, say) follows the new value -- a silent out-of-bounds.
         freeze_width_parameters(&text, &spans, &sig, rs, re, &frozen, &mut rewrites);
+
+        // pass 4 (Enhancement-393): fold a SINGLE-index bit-select `bus[K]` whose
+        // index is elaboration-constant. `Ctx::const_int_index` in `hir_ty` already
+        // does this for indices in the analog body, but two consumers resolve their
+        // bit-selects EARLIER than name resolution and so cannot ask for a
+        // parameter's value at all: a branch endpoint (`branch (n[K], n[0])`, folded
+        // in `item_tree::lower::resolve_branch_endpoint`) and a port connection
+        // (`kid c(.p(bus[K]))`, which the instantiation elaborator resolves by
+        // synthesizing the textual name `bus[K]`). Both fold with `as_constexprval`,
+        // which sees literals only.
+        //
+        // WHICH NAMES MAY BE FOLDED IS THE WHOLE QUESTION. Only names that are fixed
+        // before the OSDI descriptor exists:
+        //
+        //   * a `localparam`, which the LRM forbids overriding externally; and
+        //   * a `parameter` that pass 3 just FROZE into one, because it shaped a
+        //     declaration width. Indexing the very bus that parameter sized is then
+        //     consistent by construction.
+        //
+        // A plain `parameter` is excluded, and so is a localparam whose value is
+        // built from one -- the second fixpoint below can only grow from seeds that
+        // are already elaboration-constant, so such a chain never resolves. Baking a
+        // parameter's default into a node selection would silently ignore an
+        // override from the model card. This mirrors, and must keep mirroring, the
+        // rule `hir_ty` applies to body indices.
+        let mut const_map: HashMap<String, i32> = HashMap::new();
+        loop {
+            let mut changed = false;
+            for (name, lo, hi, is_local) in &decls {
+                if const_map.contains_key(name) || !(*is_local || frozen.contains(name)) {
+                    continue;
+                }
+                if let Some(v) = eval_const_int_with_params(&text, &spans, *lo, *hi, &const_map) {
+                    const_map.insert(name.clone(), v);
+                    changed = true;
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+        if const_map.is_empty() {
+            continue;
+        }
+        for p in rs..re {
+            let bi = sig[p];
+            if spans[bi].kind != TokenKind::OpenBracket {
+                continue;
+            }
+            let Some(cj) = match_bracket(bi) else { continue };
+            // A `:` at the bracket's own depth makes this a range or a part-select,
+            // which pass 2 owns; only a single index is folded here.
+            let mut has_colon = false;
+            let mut mentions_const = false;
+            let mut depth = 0i32;
+            for j in (bi + 1)..cj {
+                match spans[j].kind {
+                    TokenKind::OpenBracket | TokenKind::OpenParen => depth += 1,
+                    TokenKind::CloseBracket | TokenKind::CloseParen => depth -= 1,
+                    TokenKind::Colon if depth == 0 => has_colon = true,
+                    TokenKind::SimpleIdent
+                        if const_map.contains_key(&text[spans[j].start..spans[j].end]) =>
+                    {
+                        mentions_const = true
+                    }
+                    _ => {}
+                }
+            }
+            if has_colon || !mentions_const {
+                continue;
+            }
+            // Never rewrite inside a span another pass already claimed (a parameter
+            // declaration that pass 3 rewrote wholesale, say) -- the spans are
+            // applied by offset and must stay disjoint.
+            if rewrites.iter().any(|(s, e, _)| *s <= spans[bi].start && spans[cj].end <= *e) {
+                continue;
+            }
+            let Some(idx) = eval_const_int_with_params(&text, &spans, bi + 1, cj, &const_map)
+            else {
+                continue;
+            };
+            rewrites.push((spans[bi].start, spans[cj].end, format!("[{idx}]")));
+        }
     }
 
     if rewrites.is_empty() {

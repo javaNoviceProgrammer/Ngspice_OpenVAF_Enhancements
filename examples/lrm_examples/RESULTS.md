@@ -34,7 +34,7 @@ defects must compile, open gaps must keep their exact diagnostic.
    deny-level lint (L016); the affected files compile with
    `-W port_without_direction`.
 
-## In-scope examples that compile (42)
+## In-scope examples that compile (44)
 
 | File | LRM page | Notes |
 |---|---|---|
@@ -69,6 +69,8 @@ defects must compile, open gaps must keep their exact diagnostic.
 | `lrm_p156_1.va` | 156 | matched-resistor layout example: .$xposition/.$yposition instance overrides on each polyres (E-44 hidden state parameters); context stub added |
 | `lrm_p163_1.va` | 163 | binary ADC tree wired with part-selects (out[3:2]); used to be a parse error - fixed by E-85 (F6) |
 | `lrm_p164_1.va` | 164 | named part-select connections (.out(out[3:2])); parse fixed by E-85 (F6), adc context stub added |
+| `lrm_p169_1.va` | 169 | LRM RC-line; needed THREE enhancements to elaborate -- E-96 (bare module-level generate-for), E-92+E-392 (`N` sizes `electrical [0:N]`, so it freezes to a localparam and a localparam is a valid generate bound) and E-393 (`n[N]` as a bit-select index); resistor/capacitor context stubs added |
+| `lrm_p169_2.va` | 169 | as `lrm_p169_1`, with a labelled `section` block and an analog block inside the generate body (E-390); resistor context stub added |
 | `lrm_p173_1.va` | 173 | verbatim |
 | `lrm_p205_2.va` | 205 | verbatim |
 | `lrm_p208_2.va` | 208 | verbatim |
@@ -81,7 +83,7 @@ defects must compile, open gaps must keep their exact diagnostic.
 | `lrm_p416_1.va` | 416 | differential pair; LRM omits port directions (lint demoted) + vertNPN context stub |
 | `lrm_p416_3.va` | 416 | ECP oscillator pair of examples merged; Annex E primitive stubs added. The vertNPN stub declares FOUR terminals (c, b, e, s) -- the LRM wires `vertNPN Q1 (vcc, b1, e, vcc)`; the three-terminal stub used to have its fourth actual silently dropped, which E-392 now diagnoses |
 
-## Documented limitations (17)
+## Documented limitations (15)
 
 Each file is verified to be *rejected with this exact diagnostic and no
 crash* — if a future enhancement implements one of these, verify fails and
@@ -97,8 +99,6 @@ the file graduates to `va/`.
 | `lrm_p155_3.va` | 155 | `'processinfo' was not found` | hierarchical refs to an uninstantiated process-info module |
 | `lrm_p158_1.va` | 158 | `instantiates paramset 'nch'` | paramset targeting a SPICE primitive (nmos3) rather than a VA module |
 | `lrm_p168_1.va` | 168 | `only '<' and '<=' loop conditions are supported` | the bound `bits` also sizes `[0:bits-1]`, so E-92 freezes it and E-392 folds it; blocked instead on the decrementing header `for (i=bits-1; i>=0; i=i-1)` |
-| `lrm_p169_1.va` | 169 | `bus bit-select index must be a constant` | the loop bound `N` also sizes `electrical [0:N]`, so E-92 freezes it and E-392 accepts a localparam bound; resistor/capacitor stubs added. Blocked instead on `n[N]` as a bit-select index (a localparam sizes a bus but cannot index one) |
-| `lrm_p169_2.va` | 169 | `bus bit-select index must be a constant` | as `lrm_p169_1`, with a labelled section block and an analog block inside the generate body (E-390); same remaining blocker |
 | `lrm_p170_1.va` | 170 | `elaboration-time constant` | generate-if on $param_given (parameter-driven structure; E-67 scope decision) |
 | `lrm_p171_2.va` | 171 | `instantiates itself` | the condition `bits > 1` now folds (E-92 freezes the width-shaping `bits`, E-392 accepts it); blocked instead on RECURSIVE instantiation -- `pipeline_adc` instantiates itself |
 | `lrm_p172_1.va` | 172 | `unexpected token 'if'` | generate-if with parameter condition + implicit genblk naming (E-67 scope decision) |
