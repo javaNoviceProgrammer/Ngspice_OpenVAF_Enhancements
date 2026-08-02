@@ -292,12 +292,30 @@ static void last_crossing_stamp(void *inst, OsdiExtraInstData *extra,
  *
  * NOT added: `shrink`, `imax`, `rthresh`. ngspice has no such option, so the
  * honest answer is to leave the model's own $simparam default in force rather
- * than invent a value. */
-#define NUM_SIM_PARAMS 11
+ * than invent a value.
+ *
+ * Enhancement-399: three MORE of the LRM's standard names are added, and only
+ * three -- the ones ngspice can answer truthfully from state it already keeps:
+ *
+ *   iteration            ckt->CKTstat->STATnumIter, the solver's iteration count
+ *   abstime              ckt->CKTtime, the current transient time
+ *   simulatorSubversion  0 -- this release carries no subversion
+ *
+ * `shrink`, `imax`, `imelt` and `rthresh` stay OUT for the reason above: they
+ * name options ngspice does not have, and answering with a made-up number is
+ * worse than not answering.
+ *
+ * Why it mattered that these were missing: an unknown name is not a soft miss.
+ * `$simparam("iteration")` -- no default argument -- aborts the whole run with
+ * OSDI(fatal), so a model ported from another simulator did not degrade, it
+ * died. The three added here are exactly the ones where ngspice had the answer
+ * all along. */
+#define NUM_SIM_PARAMS 14
 char *sim_params[NUM_SIM_PARAMS + 1] = {
     "iniLim", "gmin", "gdev", "tnom",
     "simulatorVersion", "sourceScaleFactor",
     "epsmin", "reltol", "vntol", "abstol", "scale",
+    "iteration", "abstime", "simulatorSubversion",
     NULL};
 /* Enhancement-25: string simulator parameters returned by $simparam$str.
  * "analysis_name" mirrors the analysis() naming ("dc"/"ac"/"tran"/"noise");
@@ -305,7 +323,7 @@ char *sim_params[NUM_SIM_PARAMS + 1] = {
 char *sim_params_str[3] = {"analysis_name", "simulator", NULL};
 char *sim_param_vals_str[2] = {"dc", "ngspice"};
 
-double sim_param_vals[NUM_SIM_PARAMS] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+double sim_param_vals[NUM_SIM_PARAMS] = {0};
 
 /* Enhancement-215: command-line plusargs (`+name[=value]`) served through the
  * simparam channel. main.c registers each `+`-arg at startup; a compiled model's
@@ -439,7 +457,11 @@ OsdiSimParas get_simparams(const CKTcircuit *ckt) {
   double sim_param_vals_[NUM_SIM_PARAMS] = {
       // Verilog-A tnom is in degrees Celsius
       initializeLimiting, gmin, gdev, ckt->CKTnomTemp-CONSTCtoK, simulatorVersion, sourceScaleFactor, 
-      ckt->CKTepsmin, ckt->CKTreltol, ckt->CKTvoltTol, ckt->CKTabstol, geom_scale };
+      ckt->CKTepsmin, ckt->CKTreltol, ckt->CKTvoltTol, ckt->CKTabstol, geom_scale,
+      /* Enhancement-399 */
+      (ckt->CKTstat != NULL) ? (double)ckt->CKTstat->STATnumIter : 0.0,
+      ckt->CKTtime,
+      0.0 };
   memcpy(&sim_param_vals, &sim_param_vals_, sizeof(double) * NUM_SIM_PARAMS);
 
   /* Enhancement-25: current analysis name for $simparam$str("analysis_name"),

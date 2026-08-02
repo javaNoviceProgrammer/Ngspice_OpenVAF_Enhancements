@@ -362,9 +362,10 @@ impl LowerCtx<'_> {
                     Some(e) => self.collect_expr(e),
                     None => self.missing_expr(),
                 };
-                let tol = args.next().map(|e| self.collect_expr(e));
+                let time_tol = args.next().map(|e| self.collect_expr(e));
+                let expr_tol = args.next().map(|e| self.collect_expr(e));
                 let surplus: Box<[_]> = args.map(|e| self.collect_expr(e)).collect();
-                Event::Above { expr, tol, surplus }
+                Event::Above { expr, time_tol, expr_tol, surplus }
             }
             Some("timer") => {
                 let t0 = match args.next() {

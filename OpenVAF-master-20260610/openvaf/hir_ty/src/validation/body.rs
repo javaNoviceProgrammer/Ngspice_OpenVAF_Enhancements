@@ -499,20 +499,19 @@ impl BodyValidator<'_> {
                 }
                 self.check_event_surplus("@(timer)", 3, surplus, stmt);
             }
-            Event::Above { expr, tol, ref surplus } => {
+            Event::Above { expr, time_tol, expr_tol, ref surplus } => {
                 if !self.check_event_arg_present("@(above)", expr, stmt) {
                     return;
                 }
-                if let Some(tol) = tol {
-                    let mut v = ExprValidator {
-                        parent: self,
-                        cond_diagnostic_sink: None,
-                        write: false,
-                        stmt,
-                    };
-                    v.require_non_negative("@(above)", "the tolerance", tol);
+                let mut v =
+                    ExprValidator { parent: self, cond_diagnostic_sink: None, write: false, stmt };
+                if let Some(t) = time_tol {
+                    v.require_non_negative("@(above)", "the time tolerance", t);
                 }
-                self.check_event_surplus("@(above)", 2, surplus, stmt);
+                if let Some(t) = expr_tol {
+                    v.require_non_negative("@(above)", "the expression tolerance", t);
+                }
+                self.check_event_surplus("@(above)", 3, surplus, stmt);
             }
             Event::Cross { expr, dir: _, time_tol, expr_tol, ref surplus } => {
                 if !self.check_event_arg_present("@(cross)", expr, stmt) {
@@ -1766,13 +1765,14 @@ impl ExprValidator<'_, '_> {
                 // ordinary MIR value, not constant-folded. Only the optional trailing
                 // tolerance/nature argument (unused, see Enhancement-4.md §1.3) still must be
                 // constant.
-                // Enhancement-399: num/den must be an array literal or an array
-                // variable -- a concatenation is neither, and produced an empty
-                // filter rather than a diagnostic.
-                if args.len() >= 3 {
-                    self.require_array_arg("laplace", "the numerator", args[1]);
-                    self.require_array_arg("laplace", "the denominator", args[2]);
-                }
+                // Enhancement-399: NO array-literal check here, deliberately.
+                // `laplace_*` accepts a concatenation and lowers it correctly --
+                // measured: `{1.0}` and `'{1.0}` produce the identical AC
+                // response, and examples/arraycast_examples relies on the
+                // concatenation form. Only `noise_table` and `$table_model`
+                // mishandle it (they yield an EMPTY table), so only they reject
+                // it. The rule is "reject what is silently wrong", not "reject
+                // everything that is not an array literal".
                 if let [_in, _num, _den, const_args @ ..] = args {
                     args = &args[..3];
                     for arg in const_args {

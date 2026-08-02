@@ -195,7 +195,12 @@ pub enum Event {
         surplus: Box<[ExprId]>,
     },
     /// `@(above(expr))`.
-    Above { expr: ExprId, tol: Option<ExprId>, surplus: Box<[ExprId]> },
+    Above {
+        expr: ExprId,
+        time_tol: Option<ExprId>,
+        expr_tol: Option<ExprId>,
+        surplus: Box<[ExprId]>,
+    },
     /// `@(timer(t0, period))` -- `period` absent means a one-shot timer.
     Timer {
         t0: ExprId,
@@ -230,10 +235,10 @@ impl Event {
                     f(e);
                 }
             }
-            Event::Above { expr, tol, ref surplus } => {
+            Event::Above { expr, time_tol, expr_tol, ref surplus } => {
                 f(expr);
-                if let Some(tol) = tol {
-                    f(tol);
+                for e in [time_tol, expr_tol].into_iter().flatten() {
+                    f(e);
                 }
                 for &e in surplus.iter() {
                     f(e);

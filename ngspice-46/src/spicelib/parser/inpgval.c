@@ -28,7 +28,25 @@ INPgetValue(CKTcircuit *ckt, char **line, int type, INPtables *tab)
     type &= IF_VARTYPES;
     if (type == IF_INTEGER) {
         tmp = INPevaluate(line, &error, 1);
-        temp.iValue = (int) floor(0.5 + tmp);
+        /* Enhancement-399: round half AWAY FROM ZERO, not half up.
+         *
+         * `floor(0.5 + x)` rounds .5 toward +infinity, which is asymmetric:
+         * 2.5 -> 3 but -2.5 -> -2, and -0.5 -> 0. That disagreed with the
+         * conversion Verilog-A performs INSIDE a model for the very same value
+         * -- assigning -2.5 to an integer variable yields -3 there, per the
+         * LRM's round-half-away-from-zero rule -- so an integer model parameter
+         * took a different value depending on whether it was supplied from the
+         * netlist or computed in the model. Every negative half-boundary
+         * disagreed (-0.5, -1.5, -2.5, -3.5); positives always agreed.
+         *
+         * `round()` is exactly the LRM rule and fixes the disagreement.
+         *
+         * This is a GENERIC parser path: it converts the integer parameters of
+         * every device, not just OSDI ones. The two forms differ ONLY at exact
+         * negative half-integers, which no built-in device uses as a meaningful
+         * parameter value, and where the old result was the surprising one.
+         */
+        temp.iValue = (int) round(tmp);
         /* printf(" returning integer value %d\n",temp.iValue); */
     } else if (type == IF_REAL) {
         temp.rValue = INPevaluate(line, &error, 1);

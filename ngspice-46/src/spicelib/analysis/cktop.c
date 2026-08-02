@@ -159,6 +159,30 @@ CKTop (CKTcircuit *ckt, long int firstmode, long int continuemode,
         controlled_exit(1);
     fprintf(cp_err, "    Any of the following steps may fail.!\n\n");
 
+    /* Enhancement-399: STOP here. This is the ordinary "every convergence aid
+     * failed" exit, and it used to FALL THROUGH into the `fatal:` label below --
+     * so a plain non-convergence was announced as
+     *
+     *     a Verilog-A device raised $fatal during the operating point
+     *     This is not a convergence failure -- see the OSDI(fatal) message above
+     *
+     * for a model that contains no $fatal at all, with no OSDI(fatal) message
+     * anywhere above to look at. Both claims were false, and the text actively
+     * denied the true cause: a singular matrix that had just defeated gmin
+     * stepping, source stepping and optran, all of which printed their own
+     * (correct) diagnostics immediately above.
+     *
+     * Enhancement-378 added the `fatal:` block for a real abort raised from a
+     * device load; it landed in the fall-through path of this ordinary failure
+     * route, so every convergence failure inherited its message. The `goto
+     * fatal` jumps that E-378 placed on the E_PANIC checks are the only way in
+     * now, which is what it intended.
+     *
+     * `converged` carries the reason the ladder gave up (E_ITERLIM and friends);
+     * return it rather than E_PANIC so the caller sees non-convergence. */
+    ckt->CKTlinesearch = ls_saved;
+    return converged;
+
  fatal:
     /* Enhancement-378: a Verilog-A device raised $fatal (or hit a fatal runtime
      * error such as an unknown $simparam name) during the operating point.
