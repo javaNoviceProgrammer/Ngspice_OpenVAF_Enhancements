@@ -28,7 +28,7 @@ https://ngspice.sourceforge.io/
 
 ## The Enhancements
 
-Four hundred and four enhancements so far — language features, correctness fixes, systematic audits, and simulator-side workflow tooling, each verified end-to-end by a committed example suite and released with a detailed write-up.
+Four hundred and five enhancements so far — language features, correctness fixes, systematic audits, and simulator-side workflow tooling, each verified end-to-end by a committed example suite and released with a detailed write-up.
 
 **🗂️ Browse them all in the [live feature catalog](https://javanoviceprogrammer.github.io/Ngspice_OpenVAF_Enhancements/)** — every enhancement grouped into 19 feature areas across the compiler and the simulator, searchable, with each entry linking to its write-up.
 
@@ -448,6 +448,7 @@ The index: **Doc** links each enhancement's detailed write-up, **Examples** link
 | 402 | fix: an OSDI instance line with too few nodes was accepted silently | ngspice | [doc](enhancements_doc/Enhancement-402.md) | n/a |
 | 403 | fix: an instance `temp=` inflated thermal noise by the nominal temperature | both | [doc](enhancements_doc/Enhancement-403.md) | n/a |
 | 404 | perf: a wide bus elaborated in time quadratic in its width — 31.5 s for `[65535:0]`, now 0.62 s | openvaf&#8209;r | [doc](enhancements_doc/Enhancement-404.md) | n/a |
+| 405 | fix: z-domain filters reciprocated every pole and zero; empty denominator hung the compiler | openvaf&#8209;r | [doc](enhancements_doc/Enhancement-405.md) | n/a |
 
 </details>
 
