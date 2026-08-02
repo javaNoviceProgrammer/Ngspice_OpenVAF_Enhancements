@@ -84,6 +84,24 @@ pub enum ItemTreeDiagnostic {
     /// (Enhancement-43). Previously a too-short literal crashed the compiler
     /// (the missing elements lowered as `Expr::Missing`, "invalid HIR").
     ArrayInitializerLengthMismatch { ast_id: ErasedAstId, name: Name, expected: u32, found: u32 },
+    /// Enhancement-398: a `paramset` override names a parameter the target
+    /// module does not declare. The netlist path reports the equivalent
+    /// ("unrecognized parameter (...) - ignored"); this one was dropped in
+    /// silence because the override simply never matched a target parameter.
+    ParamsetUnknownParam { ast_id: ErasedAstId, name: Name, target: Name },
+    /// Enhancement-398: a `paramset` assigns the same target parameter twice.
+    /// The binder takes the FIRST match, so the later assignment was silently
+    /// discarded.
+    ParamsetDuplicateOverride { ast_id: ErasedAstId, name: Name },
+    /// Enhancement-398: a `paramset` override violates the range the TARGET
+    /// parameter declares. Every other way of supplying the value is checked;
+    /// this path bound it to a localparam whose constraints were discarded.
+    ParamsetOverrideOutOfRange {
+        ast_id: ErasedAstId,
+        name: Name,
+        value: Box<str>,
+        constraint: Box<str>,
+    },
     /// Enhancement-396: a bus port whose DIRECTION declaration and NET
     /// declaration state different ranges (`inout [0:2] b; electrical [0:4] b;`).
     /// The direction range silently won and the net's extra bits were discarded,

@@ -6,6 +6,7 @@ use arena::IdxRange;
 use basedb::{AstId, AstIdMap, ErasedAstId, FileId};
 use syntax::ast::{self, ParamRef, PathSegmentKind};
 use syntax::name::{kw, AsIdent, AsName, Name};
+use syntax::ast::ConstraintKind;
 use syntax::{match_ast, AstNode, ConstExprValue, WalkEvent};
 use typed_index_collections::TiVec;
 
@@ -129,6 +130,9 @@ impl Ctx {
         let name = decl.name()?.as_name();
         let ast_id = self.source_ast_id_map.ast_id(&decl);
         let target_name = decl.target()?.as_name();
+        // Enhancement-398: the syntax root, so a target parameter's declaration
+        // (and therefore its constraints) can be reached while binding.
+        let root = decl.syntax().ancestors().last()?;
 
         // The target module must already be lowered (declared earlier in the file).
         let target_id = self
@@ -150,7 +154,8 @@ impl Ctx {
         // A `.$mfactor = <expr>;` (hierarchical system parameter, Enhancement-44) is kept
         // separately: it binds no target parameter, but becomes a hidden localparam whose
         // value composes with the instance-level system parameter in `sim_back`.
-        let mut overrides: Vec<(Name, AstId<ast::ParamsetOverride>)> = Vec::new();
+        let mut overrides: Vec<(Name, AstId<ast::ParamsetOverride>, ast::ParamsetOverride)> =
+            Vec::new();
         let mut hsp_overrides: Vec<(crate::builtin::ParamSysFun, AstId<ast::ParamsetOverride>)> =
             Vec::new();
         for ov in decl.overrides() {
@@ -168,7 +173,16 @@ impl Ctx {
                 }
                 continue;
             }
-            overrides.push((name_ref.as_name(), ov_id));
+            // Enhancement-398: the binder below takes the FIRST match, so a
+            // repeated assignment silently discarded the later one.
+            let nm = name_ref.as_name();
+            if overrides.iter().any(|(n, _, _)| *n == nm) {
+                self.tree.diagnostics.push(ItemTreeDiagnostic::ParamsetDuplicateOverride {
+                    ast_id: ov_id.into(),
+                    name: nm.clone(),
+                });
+            }
+            overrides.push((nm, ov_id, ov.clone()));
         }
 
         // Lower the paramset's own parameters (the twin's card parameters) first, so their item-
@@ -205,11 +219,30 @@ impl Ctx {
 
         // Append the target's items, rebinding any overridden parameter to a fresh localparam.
         let target = self.tree.data.modules[target_id].clone();
+        let mut bound_names: Vec<Name> = Vec::new();
         for &item in &target.items {
             match item {
                 ModuleItem::Parameter(pid) => {
                     let param_name = self.tree.data.parameters[pid].name.clone();
-                    if let Some(&(_, ov)) = overrides.iter().find(|(n, _)| *n == param_name) {
+                    if let Some((_, ov, ov_node)) =
+                        overrides.iter().find(|(n, _, _)| *n == param_name).cloned()
+                    {
+                        bound_names.push(param_name.clone());
+                        // Enhancement-398: the bound parameter becomes a localparam and
+                        // `param_body_with_sourcemap` discards its constraints, so nothing
+                        // downstream ever range-checks it -- a paramset was the ONE way to
+                        // put a value the declaration forbids into a model. Check it here,
+                        // where both the override and the target's constraints are still
+                        // syntax.
+                        if let Some(pa) = self
+                            .source_ast_id_map
+                            .get(self.tree.data.parameters[pid].ast_id)
+                            .to_node(&root)
+                            .into()
+                        {
+                            let pa: ast::Param = pa;
+                            self.check_paramset_range(&param_name, &pa, &ov_node, ov);
+                        }
                         let mut bound = self.tree.data.parameters[pid].clone();
                         bound.is_local = true;
                         bound.override_expr = Some(ov);
@@ -220,6 +253,18 @@ impl Ctx {
                     }
                 }
                 other => items.push(other),
+            }
+        }
+
+        // Enhancement-398: an override that matched no target parameter was simply
+        // never applied -- silently. Report it, as the netlist path does.
+        for (n, ov, _) in &overrides {
+            if !bound_names.contains(n) {
+                self.tree.diagnostics.push(ItemTreeDiagnostic::ParamsetUnknownParam {
+                    ast_id: (*ov).into(),
+                    name: n.clone(),
+                    target: target_name.clone(),
+                });
             }
         }
 
@@ -238,6 +283,98 @@ impl Ctx {
             param_arrays,
         };
         Some(self.tree.data.modules.push_and_get_key(twin))
+    }
+
+    /// Enhancement-398: check a `paramset` override against the range the TARGET
+    /// parameter declares.
+    ///
+    /// This is the one supply path that was unchecked. A model card, an instance
+    /// line, `alter`, `altermod`, a `.param` and a subcircuit parameter all reach
+    /// ngspice's runtime validation and abort with "Parameter k is out of
+    /// bounds!"; a paramset instead binds the value to a localparam, and
+    /// `param_body_with_sourcemap` returns `bounds: Vec::new()` for it -- so the
+    /// constraint was discarded and `insert_param_init` had nothing to emit.
+    ///
+    /// Both the override and the constraints are still syntax at this point, so
+    /// the check folds them directly. Only literal values are folded, which is
+    /// deliberately narrow: an override built from the paramset's own (netlist-
+    /// settable) parameters is not knowable here, and pretending otherwise would
+    /// reject legitimate paramsets.
+    ///
+    /// This does NOT conflict with Enhancement-56, which refuses to range-check a
+    /// parameter's DEFAULT: a paramset override is a supplied value, not a
+    /// default, and is exactly what a range is meant to bind.
+    fn check_paramset_range(
+        &mut self,
+        name: &Name,
+        param_ast: &ast::Param,
+        ov_node: &ast::ParamsetOverride,
+        ov_id: AstId<ast::ParamsetOverride>,
+    ) {
+        let Some(val) = ov_node.val().and_then(|e| Self::const_num(&e)) else { return };
+
+        for c in param_ast.constraints() {
+            let Some(kind) = c.kind() else { continue };
+            let Some(cv) = c.val() else { continue };
+            let bad = match (&cv, kind) {
+                (ast::ConstraintValue::Range(r), ConstraintKind::From) => {
+                    let lo = r.start().and_then(|e| Self::const_num(&e));
+                    let hi = r.end().and_then(|e| Self::const_num(&e));
+                    let below = lo.is_some_and(|lo| {
+                        if r.start_inclusive() { val < lo } else { val <= lo }
+                    });
+                    let above = hi.is_some_and(|hi| {
+                        if r.end_inclusive() { val > hi } else { val >= hi }
+                    });
+                    (below || above).then(|| Self::range_text(r))
+                }
+                (ast::ConstraintValue::Range(r), ConstraintKind::Exclude) => {
+                    let lo = r.start().and_then(|e| Self::const_num(&e));
+                    let hi = r.end().and_then(|e| Self::const_num(&e));
+                    let inside = lo.is_some_and(|lo| {
+                        if r.start_inclusive() { val >= lo } else { val > lo }
+                    }) && hi.is_some_and(|hi| {
+                        if r.end_inclusive() { val <= hi } else { val < hi }
+                    });
+                    inside.then(|| format!("exclude {}", Self::range_text(r)))
+                }
+                (ast::ConstraintValue::Val(v), ConstraintKind::Exclude) => Self::const_num(v)
+                    .is_some_and(|x| x == val)
+                    .then(|| format!("exclude {val}")),
+                _ => None,
+            };
+            if let Some(constraint) = bad {
+                self.tree.diagnostics.push(ItemTreeDiagnostic::ParamsetOverrideOutOfRange {
+                    ast_id: ov_id.into(),
+                    name: name.clone(),
+                    value: format!("{val}").into_boxed_str(),
+                    constraint: constraint.into_boxed_str(),
+                });
+                return;
+            }
+        }
+    }
+
+    fn range_text(r: &ast::Range) -> String {
+        let f = |e: Option<ast::Expr>| {
+            e.and_then(|e| Self::const_num(&e)).map(|v| format!("{v}")).unwrap_or("?".to_owned())
+        };
+        format!(
+            "{}{}:{}{}",
+            if r.start_inclusive() { "[" } else { "(" },
+            f(r.start()),
+            f(r.end()),
+            if r.end_inclusive() { "]" } else { ")" }
+        )
+    }
+
+    /// The numeric value of a literal expression (with an optional leading `-`).
+    fn const_num(e: &ast::Expr) -> Option<f64> {
+        match e.as_constexprval()? {
+            ConstExprValue::Int(i) => Some(i as f64),
+            ConstExprValue::Float(f) => Some(*f),
+            ConstExprValue::String(_) => None,
+        }
     }
 
     fn lower_discipline(&mut self, decl: ast::DisciplineDecl) -> Option<ItemTreeId<Discipline>> {

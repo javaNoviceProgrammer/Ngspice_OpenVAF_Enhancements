@@ -140,6 +140,11 @@ pub struct ParamData {
     /// `localparam` is a compile-time/setup constant that the LRM forbids from
     /// being overridden externally (via the model card or instance parameters).
     pub is_local: bool,
+    /// Enhancement-398: `true` when this parameter is a target parameter BOUND by
+    /// a `paramset` override. It is a localparam like any other, but the value
+    /// came from the paramset rather than from the declaration's default -- which
+    /// is what `$param_given` must report.
+    pub is_paramset_bound: bool,
 }
 
 impl ParamData {
@@ -152,6 +157,7 @@ impl ParamData {
             // A `paramset`-bound target parameter (Enhancement-21) is treated as a `localparam`:
             // its value is the override expression and it is not settable from the model card.
             is_local: param.is_local || param.override_expr.is_some(),
+            is_paramset_bound: param.override_expr.is_some(),
         })
     }
 }

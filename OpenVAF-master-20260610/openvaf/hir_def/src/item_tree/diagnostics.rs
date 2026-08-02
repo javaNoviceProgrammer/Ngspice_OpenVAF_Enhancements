@@ -127,6 +127,66 @@ impl Diagnostic for ItemTreeDiagnosticWrapped<'_> {
                             .to_owned(),
                     ])
             }
+            ItemTreeDiagnostic::ParamsetUnknownParam { ast_id, name, target } => {
+                let range = self.ast_id_map.get_syntax(*ast_id).range();
+                let span = self.parse.to_file_span(range, self.sm);
+                Report::error()
+                    .with_message(format!(
+                        "paramset assigns '{name}', which module '{target}' does not declare"
+                    ))
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: span.file,
+                        range: span.range.into(),
+                        message: "no such parameter in the target module".to_owned(),
+                    }])
+                    .with_notes(vec![
+                        "the assignment would be dropped in silence; the same value written \
+                         on a model card is reported"
+                            .to_owned(),
+                    ])
+            }
+            ItemTreeDiagnostic::ParamsetDuplicateOverride { ast_id, name } => {
+                let range = self.ast_id_map.get_syntax(*ast_id).range();
+                let span = self.parse.to_file_span(range, self.sm);
+                Report::error()
+                    .with_message(format!("paramset assigns '{name}' more than once"))
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: span.file,
+                        range: span.range.into(),
+                        message: "assigned again here".to_owned(),
+                    }])
+                    .with_notes(vec![
+                        "the FIRST assignment is the one that takes effect".to_owned(),
+                    ])
+            }
+            ItemTreeDiagnostic::ParamsetOverrideOutOfRange {
+                ast_id, name, value, constraint,
+            } => {
+                let range = self.ast_id_map.get_syntax(*ast_id).range();
+                let span = self.parse.to_file_span(range, self.sm);
+                Report::error()
+                    .with_message(format!(
+                        "paramset assigns '{name}' the value {value}, which its declared \
+                         range {constraint} forbids"
+                    ))
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: span.file,
+                        range: span.range.into(),
+                        message: format!("outside {constraint}"),
+                    }])
+                    .with_notes(vec![
+                        "every other way of supplying this value is range-checked -- a model \
+                         card, an instance line, alter/altermod, a .param, or a subcircuit \
+                         parameter"
+                            .to_owned(),
+                        "checked when the override is written as a constant; an expression \
+                         built from the paramset's own parameters is not folded here"
+                            .to_owned(),
+                    ])
+            }
             ItemTreeDiagnostic::PortRangeMismatch {
                 ast_id, name, dir_msb, dir_lsb, net_msb, net_lsb,
             } => {

@@ -525,6 +525,11 @@ impl Parameter {
         db.param_data(self.id).is_local
     }
 
+    /// Enhancement-398: this parameter's value comes from a `paramset` override.
+    pub fn is_paramset_bound(self, db: &CompilationDB) -> bool {
+        db.param_data(self.id).is_paramset_bound
+    }
+
     pub fn get_attr(&self, db: &CompilationDB, ast: &AstCache, name: &str) -> Option<ast::Attr> {
         ast.resolve_attribute(name, self.id.lookup(db).ast_id(db).erased())
     }

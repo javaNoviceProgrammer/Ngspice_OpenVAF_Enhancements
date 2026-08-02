@@ -2108,9 +2108,21 @@ impl BodyLoweringCtx<'_, '_, '_> {
                 let arg0 = self.lower_expr(args[0]);
                 self.ctx.call1(CallBackKind::SimParamStr, &[arg0])
             }
-            BuiltIn::param_given => self
-                .ctx
-                .use_param(ParamKind::ParamGiven { param: self.body.into_parameter(args[0]) }),
+            // Enhancement-398: a parameter a `paramset` bound WAS given -- by the
+            // paramset. It is a localparam, so it has no runtime given-flag and
+            // `ParamGiven` resolved to false, which meant a model gating on
+            // `$param_given` took its DEFAULT branch while running the
+            // paramset's value. That is the standard CMC idiom for "did the user
+            // specify this, or is this my default?", so every such derivation
+            // silently took the wrong branch through a paramset.
+            BuiltIn::param_given => {
+                let param = self.body.into_parameter(args[0]);
+                if param.is_paramset_bound(self.ctx.db) {
+                    self.ctx.iconst(1)
+                } else {
+                    self.ctx.use_param(ParamKind::ParamGiven { param })
+                }
+            }
             BuiltIn::port_connected => {
                 self.ctx.use_param(ParamKind::PortConnected { port: self.body.into_node(args[0]) })
             }
