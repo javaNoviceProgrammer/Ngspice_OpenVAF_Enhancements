@@ -77,8 +77,55 @@ static int handle_init_info(OsdiInitInfo info, const OsdiDescriptor *descr) {
  *
  * @returns The number of nodes required after collapsing.
  * */
+/* Enhancement-401: is this terminal short redundant?
+ *
+ * The compiler emits a real 0 V source for `V(a,b) <+ 0` between two TERMINALS,
+ * because collapse_nodes below cannot honour a collapse hint there. That equation
+ * is exactly right when a and b are two DISTINCT connected circuit nodes, and
+ * redundant otherwise -- and a redundant 0 V source is a singular row (its current
+ * appears nowhere else). "Otherwise" is: the two terminals are the same circuit
+ * node, the short is to ground and the terminal IS ground, or an endpoint is not a
+ * connected terminal at all (in which case the ordinary collapse already applies).
+ */
+static bool term_short_is_redundant(const OsdiTermShortInfo *ts,
+                                    const int *terminals,
+                                    uint32_t connected_terminals) {
+  if (ts->node_1 >= connected_terminals) {
+    return true;
+  }
+  int n1 = terminals[ts->node_1];
+  if (ts->node_2 == UINT32_MAX) {
+    return n1 == 0; /* shorted to ground, and already IS ground */
+  }
+  if (ts->node_2 >= connected_terminals) {
+    return true;
+  }
+  return n1 == terminals[ts->node_2];
+}
+
+/* Remove `node` from the instance's node mapping, exactly as collapse_nodes does
+ * for a pair collapsed to ground. Returns the new node count. */
+static uint32_t drop_node(const OsdiDescriptor *descr, uint32_t *node_mapping,
+                          uint32_t num_nodes, uint32_t node) {
+  uint32_t from = node_mapping[node];
+  if (from == UINT32_MAX) {
+    return num_nodes; /* already gone */
+  }
+  for (uint32_t j = 0; j < descr->num_nodes; j++) {
+    if (node_mapping[j] == from) {
+      node_mapping[j] = UINT32_MAX;
+    } else if (node_mapping[j] > from && node_mapping[j] != UINT32_MAX) {
+      node_mapping[j] -= 1;
+    }
+  }
+  return num_nodes - 1;
+}
+
 static uint32_t collapse_nodes(const OsdiDescriptor *descr, void *inst,
-                               uint32_t connected_terminals) {
+                               uint32_t connected_terminals,
+                               const OsdiTermShortInfo *term_shorts,
+                               uint32_t num_term_shorts,
+                               const int *terminals) {
   /* access data inside instance */
   uint32_t *node_mapping =
       (uint32_t *)(((char *)inst) + descr->node_mapping_offset);
@@ -90,6 +137,15 @@ static uint32_t collapse_nodes(const OsdiDescriptor *descr, void *inst,
   /*  populate nodes with themselves*/
   for (uint32_t i = 0; i < descr->num_nodes; i++) {
     node_mapping[i] = i;
+  }
+
+  /* Enhancement-401: drop the branch current of any terminal short the netlist
+   * has already made, before the ordinary collapses renumber anything. */
+  for (uint32_t i = 0; i < num_term_shorts; i++) {
+    if (term_short_is_redundant(&term_shorts[i], terminals, connected_terminals)) {
+      num_nodes =
+          drop_node(descr, node_mapping, num_nodes, term_shorts[i].flow_node);
+    }
   }
 
   for (uint32_t i = 0; i < descr->num_collapsible; i++) {
@@ -289,7 +345,10 @@ int OSDIsetup(SMPmatrix *matrix, GENmodel *inModel, CKTcircuit *ckt,
 
       /* setup the instance nodes */
 
-      uint32_t num_nodes = collapse_nodes(descr, inst, connected_terminals);
+      uint32_t num_nodes = collapse_nodes(
+          descr, inst, connected_terminals,
+          (const OsdiTermShortInfo *)entry->term_short_infos,
+          entry->num_term_shorts, terminals);
       /* copy terminals */
       memcpy(node_ids, gen_inst + 1, sizeof(int) * connected_terminals);
       /* Enhancement-45: a terminal net with a nodeset initializer

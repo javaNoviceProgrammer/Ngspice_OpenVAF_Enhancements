@@ -1,6 +1,8 @@
 function %_init(v17, v18, v25, v28, v30, v44, v37, v33, v39, v53) {
     inst0 = fn %collapse_node3_Some(node1)(0) -> 0
     inst1 = fn %collapse_node2_None(0) -> 0
+    // v1 = bconst false
+    // v2 = bconst true
     v3 = fconst 0.0
     v6 = fconst 0x1.0000000000000p0
     v7 = fconst -0x1.0000000000000p0
@@ -12,7 +14,7 @@ function %_init(v17, v18, v25, v28, v30, v44, v37, v33, v39, v53) {
 @0053                               v34 = pow v14, v32
 @0054                               v35 = fsub v6, v34
 @0058                               v36 = fmul v37, v35
-                                    v58 = optbarrier v36
+                                    v62 = optbarrier v36
                                     v43 = fgt v44, v18
 @0098                               br v43, block13, block12
 
@@ -29,9 +31,20 @@ function %_init(v17, v18, v25, v28, v30, v44, v37, v33, v39, v53) {
 @00cc                               jmp block16
 
                                 block16:
+                                    v47 = phi [v1, block13], [v2, block15]
+                                    v63 = optbarrier v47
                                     v49 = optbarrier v45
                                     v52 = sqrt v53
-                                    v59 = optbarrier v52
+                                    v65 = optbarrier v52
                                     v54 = fmul v49, v52
-                                    v60 = optbarrier v54
+                                    v66 = optbarrier v54
+                                    br v47, block21, block22
+
+                                block21:
+                                    jmp block22
+
+                                block22:
+                                    v56 = phi [v6, block16], [v3, block21]
+                                    v57 = fsub v3, v56
+                                    v64 = optbarrier v57
 }

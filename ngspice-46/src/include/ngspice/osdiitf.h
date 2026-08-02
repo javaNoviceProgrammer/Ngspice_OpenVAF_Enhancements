@@ -37,7 +37,27 @@ typedef struct OsdiRegistryEntry {
   uint32_t num_last_crossings;
   const void *last_crossing_infos;  /* points into the loaded .osdi's OSDI_LAST_CROSSING_INFOS */
 
+  /* Enhancement-401: terminal-short support, filled at .osdi load time from
+   * OSDI_TERM_SHORT_* symbols. A model that shorts two of its own TERMINALS with
+   * `V(a,b) <+ 0` cannot be served by node collapsing (terminals are allocated by
+   * ngspice, see collapse_nodes), so the compiler emits a real 0 V source instead
+   * and lists the branch here. If the netlist turns out to tie those terminals to
+   * ONE circuit node the equation is redundant and the system singular, so setup
+   * drops the branch current in that case. */
+  uint32_t num_term_shorts;
+  const void *term_short_infos;  /* points into the loaded .osdi's OSDI_TERM_SHORT_INFOS */
+
 } OsdiRegistryEntry;
+
+/* Enhancement-401: one entry of OSDI_TERM_SHORT_INFOS. `node_1`/`node_2` are the
+ * OSDI node indices of the two shorted terminals (`node_2` is UINT32_MAX when the
+ * short is to ground); `flow_node` is the branch-current unknown to drop when the
+ * two do not resolve to two distinct connected circuit nodes. */
+typedef struct OsdiTermShortInfo {
+  uint32_t node_1;
+  uint32_t node_2;
+  uint32_t flow_node;
+} OsdiTermShortInfo;
 
 typedef struct OsdiObjectFile {
   OsdiRegistryEntry *entrys;

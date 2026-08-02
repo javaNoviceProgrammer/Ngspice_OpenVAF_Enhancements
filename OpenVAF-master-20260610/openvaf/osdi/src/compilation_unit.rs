@@ -1,7 +1,7 @@
 use std::iter;
 use std::ptr::NonNull;
 
-use hir::CompilationDB;
+use hir::{BranchWrite, CompilationDB};
 use hir_lower::fmt::{DisplayKind, FmtArg, FmtArgKind};
 use hir_lower::{CallBackKind, HirInterner, PrintDst, RetFlag};
 use lasso::Rodeo;
@@ -139,6 +139,8 @@ pub struct OsdiModule<'a> {
     pub model_param_intern: &'a HirInterner,
     pub lim_table: &'a TiSet<OsdiLimId, OsdiLimFunction>,
     pub node_collapse: &'a NodeCollapse,
+    /// Enhancement-401: see [`sim_back::CompiledModule::terminal_shorts`].
+    pub terminal_shorts: &'a [BranchWrite],
     pub sym: String,
 }
 
@@ -158,10 +160,12 @@ impl<'a> OsdiModule<'a> {
             model_param_setup,
             model_param_intern,
             node_collapse,
+            terminal_shorts,
         } = module;
         OsdiModule {
             sym,
             lim_table,
+            terminal_shorts,
             info,
             dae_system,
             eval,

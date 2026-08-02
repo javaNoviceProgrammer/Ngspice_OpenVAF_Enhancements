@@ -303,6 +303,16 @@ pub fn compile<'a>(
         let mut last_crossing_counts: Vec<u32> = Vec::new();
         let mut last_crossing_infos_ll: Vec<&llvm_sys::LLVMValue> = Vec::new();
 
+        // Enhancement-401: { node_1: u32, node_2: u32, flow_node: u32 } -- a branch whose
+        // 0 V source exists only because its collapse hint cannot be honoured. `node_1`
+        // and `node_2` are the two terminals it shorts (`node_2` is UINT32_MAX for a short
+        // to ground) and `flow_node` is the branch-current unknown the simulator must drop
+        // if those terminals turn out to be the same circuit node.
+        let term_short_info_ty =
+            cx.ty_struct("OsdiTerminalShortInfo", &[cx.ty_int(), cx.ty_int(), cx.ty_int()]);
+        let mut term_short_counts: Vec<u32> = Vec::new();
+        let mut term_short_infos_ll: Vec<&llvm_sys::LLVMValue> = Vec::new();
+
         let descriptors: Vec<_> = osdi_modules
             .iter()
             .map(|module| {
@@ -368,6 +378,40 @@ pub fn compile<'a>(
                     last_crossing_infos_ll.push(info);
                 }
 
+                // Collect terminal-short metadata for this module (Enhancement-401)
+                let mut n_ts = 0u32;
+                for &branch in module.terminal_shorts {
+                    let node_of = |node| {
+                        module
+                            .dae_system
+                            .unknowns
+                            .index(&SimUnknownKind::KirchoffLaw(node))
+                            .map_or(u32::MAX, u32::from)
+                    };
+                    let (hi, lo) = branch.nodes(&db);
+                    let flow = module
+                        .dae_system
+                        .unknowns
+                        .index(&SimUnknownKind::Current(branch.into()))
+                        .map_or(u32::MAX, u32::from);
+                    let node_1 = node_of(hi);
+                    // an unknown that was optimized away has nothing to drop
+                    if flow == u32::MAX || node_1 == u32::MAX {
+                        continue;
+                    }
+                    let node_2 = lo.map_or(u32::MAX, node_of);
+                    term_short_infos_ll.push(cx.const_struct(
+                        term_short_info_ty,
+                        &[
+                            cx.const_unsigned_int(node_1),
+                            cx.const_unsigned_int(node_2),
+                            cx.const_unsigned_int(flow),
+                        ],
+                    ));
+                    n_ts += 1;
+                }
+                term_short_counts.push(n_ts);
+
                 descriptor.to_ll_val(&cx, &tys)
             })
             .collect();
@@ -430,6 +474,22 @@ pub fn compile<'a>(
                     "OSDI_LAST_CROSSING_INFOS",
                     last_crossing_info_ty,
                     &last_crossing_infos_ll,
+                    true,
+                    false,
+                );
+            }
+        }
+
+        // Export terminal-short info (Enhancement-401; only if any module needs it)
+        if term_short_counts.iter().any(|&n| n > 0) {
+            let counts_ll: Vec<_> =
+                term_short_counts.iter().map(|&n| cx.const_unsigned_int(n)).collect();
+            cx.export_array("OSDI_TERM_SHORT_COUNTS", cx.ty_int(), &counts_ll, true, false);
+            if !term_short_infos_ll.is_empty() {
+                cx.export_array(
+                    "OSDI_TERM_SHORT_INFOS",
+                    term_short_info_ty,
+                    &term_short_infos_ll,
                     true,
                     false,
                 );

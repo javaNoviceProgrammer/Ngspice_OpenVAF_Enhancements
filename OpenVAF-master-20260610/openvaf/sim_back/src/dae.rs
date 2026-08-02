@@ -13,6 +13,7 @@ use crate::context::Context;
 use crate::dae::builder::Builder;
 pub use crate::noise::{NoiseSource, NoiseSourceKind};
 use crate::{topology, SimUnknownKind};
+use hir::BranchWrite;
 
 mod builder;
 #[cfg(test)]
@@ -60,6 +61,10 @@ impl DaeSystem {
         ctx: &mut Context,
         contributions: topology::Topology,
         sink: &mut ConsoleSink,
+        // Enhancement-401: filled with the branches that carry a 0 V source only because
+        // their collapse hint cannot be honoured. Passed out rather than stored on
+        // `DaeSystem`, whose `Debug` output is a checked-in snapshot in several tests.
+        terminal_shorts: &mut Vec<BranchWrite>,
     ) -> DaeSystem {
         let db = ctx.db;
         // Topology is consumed here.
@@ -77,6 +82,8 @@ impl DaeSystem {
                 eprintln!("DAEDBG implicit {eq:?}: {contributions:?}");
             }
         }
+
+        *terminal_shorts = take(&mut builder.terminal_shorts);
 
         // Enhancement-400: the DAE build is the first stage that knows a branch's final
         // type, and so the first that can tell a discarded contribution from a switch

@@ -1,6 +1,6 @@
 use bitset::BitSet;
 use hir::lints::builtin::discarded_contribution;
-use hir::{BranchWrite, CompilationDB, ContributionMap, Node, ParamSysFun};
+use hir::{BranchKind, BranchWrite, CompilationDB, ContributionMap, Node, ParamSysFun};
 use hir_lower::{CurrentKind, HirInterner, ImplicitEquation, ParamKind};
 use indexmap::IndexSet;
 use mir::builder::InstBuilder;
@@ -77,6 +77,12 @@ pub(super) struct Builder<'a> {
     /// Enhancement-400: branches written as both a potential and a flow source, collected
     /// here and reported by [`DaeSystem::new`] once the whole system is built.
     pub(super) discarded_contributions: Vec<DiscardedContribution>,
+    /// Enhancement-401: branches that carry a 0 V source ONLY because their collapse hint
+    /// cannot be honoured. If the netlist ties their terminals to one circuit node the
+    /// equation is redundant and the system singular, so the simulator is told about them
+    /// and drops the branch current then. Recorded only where the model does not read the
+    /// branch current, which is what makes dropping it safe.
+    pub(super) terminal_shorts: Vec<BranchWrite>,
 }
 
 impl<'a> Builder<'a> {
@@ -95,6 +101,7 @@ impl<'a> Builder<'a> {
             unconditional_branch_kind: &ctx.unconditional_branch_kind,
             contribution_sites: None,
             discarded_contributions: Vec::new(),
+            terminal_shorts: Vec::new(),
         };
 
         // ensure ports are the first unknowns and always have an unknown
@@ -425,6 +432,44 @@ impl<'a> Builder<'a> {
         res
     }
 
+    /// Enhancement-401: would a `V(a,b) <+ 0` collapse hint for this branch be IGNORED by
+    /// the simulator?
+    ///
+    /// ngspice allocates terminal nodes itself, so `collapse_nodes`
+    /// (`ngspice-46/src/osdi/osdisetup.c`) skips any collapse pair whose endpoints are all
+    /// simulator-allocated -- terminal-to-terminal and terminal-to-ground. Such a branch
+    /// then connects NOTHING: the simulator drops the collapse, and the DAE build, seeing
+    /// a trivial potential contribution, builds no equation either, so two nodes the model
+    /// shorted are left open (the LRM's own `parares` becomes an open circuit at small r).
+    /// Build the real 0 V source for exactly that case.
+    ///
+    /// A collapse onto an INTERNAL node is honoured and must be left alone -- it is what
+    /// every compact model uses for a degenerate series resistance (BSIM4's
+    /// `V(s,si) <+ 0`), and turning those into equations would add an unknown per node.
+    ///
+    /// The 0 V source is only half the fix: if the netlist happens to tie the two
+    /// terminals to the SAME circuit node the equation is redundant and the system is
+    /// singular, which the simulator resolves using the terminal-short metadata recorded
+    /// alongside it (see `Builder::terminal_shorts`).
+    fn collapse_is_ignored(&self, branch: BranchWrite) -> bool {
+        let db = self.db;
+        let (hi, lo) = match branch {
+            BranchWrite::Named(branch) => match branch.kind(db) {
+                BranchKind::Nodes(hi, lo) => (hi, Some(lo)),
+                BranchKind::NodeGnd(hi) => (hi, None),
+                // a port-flow branch has no node pair to collapse
+                BranchKind::PortFlow(_) => return false,
+            },
+            BranchWrite::Unnamed { hi, lo } => (hi, lo),
+        };
+        // ground is simulator-allocated too; `lo == None` already means ground
+        [Some(hi), lo]
+            .into_iter()
+            .flatten()
+            .filter(|node| !node.is_gnd(db))
+            .all(|node| node.is_port(db))
+    }
+
     /// Enhancement-400: `is_voltage_src` is a CONSTANT here, so on every path the last
     /// contribution to `branch` was of the kind named by `kept_potential`, and the branch
     /// is built as a plain potential or flow source. If the module *also* contributes the
@@ -514,7 +559,16 @@ impl<'a> Builder<'a> {
                 // sources, make sure to ignore these branches
                 let requires_unknown =
                     self.intern.is_param_live(&self.cursor, &ParamKind::Current(current));
-                if requires_unknown || !contributions.voltage_src.is_trivial() {
+                // Enhancement-401: ... unless the collapse it relies on cannot be
+                // honoured, in which case the branch must carry a real 0 V source.
+                let only_for_collapse =
+                    !requires_unknown && contributions.voltage_src.is_trivial();
+                let collapse_ignored = only_for_collapse && self.collapse_is_ignored(branch);
+                if collapse_ignored {
+                    self.terminal_shorts.push(branch);
+                }
+                if requires_unknown || !contributions.voltage_src.is_trivial() || collapse_ignored
+                {
                     let contrib = self.voltage_branch(contributions);
                     // A branch with voltage contributions only, we need a nextra equation
                     // because its current must be an unknown in the DAE system
@@ -543,9 +597,22 @@ impl<'a> Builder<'a> {
                 );
                 // most cases that look like switch branches are just node collapsing
                 // so make sure we don't crate switch branches when they aren't needed
+                // Enhancement-401: a conditional collapse between two terminals is a real
+                // switch branch, not "just node collapsing" -- the simulator ignores the
+                // hint, so the 0 V arm has to be an equation. This is the arm the LRM's
+                // `parares` takes: its condition is parameter-dependent, so
+                // `is_voltage_src` is a runtime value but `op_dependent` is false.
+                let only_for_collapse = !op_dependent
+                    && !requires_current_unknown
+                    && contributions.voltage_src.is_trivial();
+                let collapse_ignored = only_for_collapse && self.collapse_is_ignored(branch);
+                if collapse_ignored {
+                    self.terminal_shorts.push(branch);
+                }
                 if op_dependent
                     || requires_current_unknown
                     || !contributions.voltage_src.is_trivial()
+                    || collapse_ignored
                 {
                     // An actual switch branch
                     let start_bb = self.cursor.current_block().unwrap();

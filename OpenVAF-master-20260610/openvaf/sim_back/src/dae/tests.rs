@@ -22,7 +22,7 @@ fn run_test(src: &str) {
     context.compute_cfg();
     context.optimize(OptimiziationStage::Initial);
     let topology = topology::Topology::new(&mut context);
-    let mut dae_system = DaeSystem::new(&mut context, topology, &mut sink);
+    let mut dae_system = DaeSystem::new(&mut context, topology, &mut sink, &mut Vec::new());
     context.compute_cfg();
     context.optimize(OptimiziationStage::Final);
     dae_system.sparsify(&mut context);
@@ -212,7 +212,7 @@ fn diagnostics_of(src: &str) -> String {
         context.compute_cfg();
         context.optimize(OptimiziationStage::Initial);
         let topology = topology::Topology::new(&mut context);
-        DaeSystem::new(&mut context, topology, &mut sink);
+        DaeSystem::new(&mut context, topology, &mut sink, &mut Vec::new());
     }
     String::from_utf8(buf.into_inner()).unwrap()
 }

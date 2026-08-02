@@ -23,7 +23,7 @@ fn run_test(src: &str) {
     cx.optimize(OptimiziationStage::Initial);
 
     let topology = Topology::new(&mut cx);
-    let mut dae_system = DaeSystem::new(&mut cx, topology, &mut sink);
+    let mut dae_system = DaeSystem::new(&mut cx, topology, &mut sink, &mut Vec::new());
 
     cx.compute_cfg();
     let gvn = cx.optimize(OptimiziationStage::PostDerivative);

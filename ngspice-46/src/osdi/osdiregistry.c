@@ -510,6 +510,13 @@ extern OsdiObjectFile load_object_file(const char *input) {
   sym = GET_SYM(handle, "OSDI_LAST_CROSSING_INFOS");
   const void *last_crossing_infos_base = sym;
 
+  /* Optional: terminal-short descriptor arrays (Enhancement-401) */
+  sym = GET_SYM(handle, "OSDI_TERM_SHORT_COUNTS");
+  const uint32_t *term_short_counts = (const uint32_t *)sym;
+
+  sym = GET_SYM(handle, "OSDI_TERM_SHORT_INFOS");
+  const void *term_short_infos_base = sym;
+
   OsdiRegistryEntry *dst = TMALLOC(OsdiRegistryEntry, OSDI_NUM_DESCRIPTORS);
 
   /* Size of one OsdiAbsDelayInfo struct as exported from OpenVAF:
@@ -521,6 +528,11 @@ extern OsdiObjectFile load_object_file(const char *input) {
    * { y_node: u32, z_node: u32, dir_offset: u32 } = 12 bytes */
   const size_t last_crossing_info_size = 12;
   uint32_t last_crossing_info_offset = 0;
+
+  /* Size of one OsdiTermShortInfo struct as exported from OpenVAF:
+   * { node_1: u32, node_2: u32, flow_node: u32 } = 12 bytes */
+  const size_t term_short_info_size = 12;
+  uint32_t term_short_info_offset = 0;
 
   char* desc_ptr = (char*)OSDI_DESCRIPTORS;
   for (uint32_t i = 0; i < OSDI_NUM_DESCRIPTORS; i++) {
@@ -636,6 +648,18 @@ extern OsdiObjectFile load_object_file(const char *input) {
       }
     }
 
+    /* Enhancement-401 */
+    uint32_t n_term_shorts = 0;
+    const void *term_shorts_ptr = NULL;
+    if (term_short_counts) {
+      n_term_shorts = term_short_counts[i];
+      if (n_term_shorts > 0 && term_short_infos_base) {
+        term_shorts_ptr = (const char *)term_short_infos_base +
+                          term_short_info_offset * term_short_info_size;
+        term_short_info_offset += n_term_shorts;
+      }
+    }
+
     size_t inst_off = calc_osdi_instance_data_off(descr);
     size_t noise_off = calc_osdi_noise_off(descr);
     dst[i] = (OsdiRegistryEntry){
@@ -655,6 +679,8 @@ extern OsdiObjectFile load_object_file(const char *input) {
 
         .num_last_crossings = n_crossings,
         .last_crossing_infos = crossings_ptr,
+        .num_term_shorts = n_term_shorts,
+        .term_short_infos = term_shorts_ptr,
     };
   }
 

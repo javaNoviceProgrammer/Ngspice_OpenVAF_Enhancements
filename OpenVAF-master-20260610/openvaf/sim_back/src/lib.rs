@@ -51,6 +51,11 @@ pub struct CompiledModule<'a> {
     pub model_param_setup: Function,
     pub model_param_intern: HirInterner,
     pub node_collapse: NodeCollapse,
+    /// Enhancement-401: branches whose 0 V source exists only because the simulator cannot
+    /// honour their collapse hint (both endpoints are terminals). Emitted into the `.osdi`
+    /// so the simulator can drop the branch current when the netlist already ties those
+    /// terminals to one node -- otherwise the redundant equation makes the system singular.
+    pub terminal_shorts: Vec<BranchWrite>,
 }
 
 pub fn print_module(
@@ -181,7 +186,9 @@ impl<'a> CompiledModule<'a> {
         let topology = Topology::new(&mut cx);
         debug_assert!(cx.func.validate());
         let _t0 = std::time::Instant::now();
-        let mut dae_system = DaeSystem::new(&mut cx, topology, sink);
+        let mut terminal_shorts = Vec::new();
+        let mut dae_system =
+            DaeSystem::new(&mut cx, topology, sink, &mut terminal_shorts);
         if std::env::var("PHASE_PROF").is_ok() {
             eprintln!("PHASE dae+tensors {:?}  insts={}", _t0.elapsed(), cx.func.dfg.num_insts());
         }
@@ -289,6 +296,7 @@ impl<'a> CompiledModule<'a> {
             model_param_intern,
             model_param_setup,
             node_collapse,
+            terminal_shorts,
         }
     }
 }
