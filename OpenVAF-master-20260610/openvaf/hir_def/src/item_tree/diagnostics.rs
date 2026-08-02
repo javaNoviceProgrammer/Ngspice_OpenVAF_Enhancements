@@ -166,16 +166,31 @@ impl Diagnostic for ItemTreeDiagnosticWrapped<'_> {
             } => {
                 let range = self.ast_id_map.get_syntax(*ast_id).range();
                 let span = self.parse.to_file_span(range, self.sm);
+                // `from` and `exclude` need different English: "its declared range
+                // exclude 5 forbids" is not a sentence.
+                let (msg, label) = match constraint.strip_prefix("exclude ") {
+                    Some(v) => (
+                        format!(
+                            "paramset assigns '{name}' the value {value}, which its \
+                             declaration excludes"
+                        ),
+                        format!("excluded by `exclude {v}`"),
+                    ),
+                    None => (
+                        format!(
+                            "paramset assigns '{name}' the value {value}, which its declared \
+                             range {constraint} forbids"
+                        ),
+                        format!("outside {constraint}"),
+                    ),
+                };
                 Report::error()
-                    .with_message(format!(
-                        "paramset assigns '{name}' the value {value}, which its declared \
-                         range {constraint} forbids"
-                    ))
+                    .with_message(msg)
                     .with_labels(vec![Label {
                         style: LabelStyle::Primary,
                         file_id: span.file,
                         range: span.range.into(),
-                        message: format!("outside {constraint}"),
+                        message: label,
                     }])
                     .with_notes(vec![
                         "every other way of supplying this value is range-checked -- a model \

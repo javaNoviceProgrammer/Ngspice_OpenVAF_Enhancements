@@ -355,9 +355,21 @@ impl Ctx {
         }
     }
 
+    /// Render a declared range the way the model wrote it.
+    ///
+    /// A bound that is not a numeric literal -- `inf`, `-inf`, a parameter, an
+    /// expression -- falls back to its SOURCE TEXT rather than a placeholder, so
+    /// `from (0:inf)` reads as `(0:inf)` and not `(0:?)`. Such a bound is still
+    /// not *checked* (an unfoldable bound constrains nothing here, which for
+    /// `inf` is exactly right), but the message must still quote the range the
+    /// reader has to go and look at.
     fn range_text(r: &ast::Range) -> String {
-        let f = |e: Option<ast::Expr>| {
-            e.and_then(|e| Self::const_num(&e)).map(|v| format!("{v}")).unwrap_or("?".to_owned())
+        let f = |e: Option<ast::Expr>| match e {
+            None => "?".to_owned(),
+            Some(e) => match Self::const_num(&e) {
+                Some(v) => format!("{v}"),
+                None => e.syntax().text().to_string().split_whitespace().collect::<String>(),
+            },
         };
         format!(
             "{}{}:{}{}",
