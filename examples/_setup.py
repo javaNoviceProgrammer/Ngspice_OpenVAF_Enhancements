@@ -3,8 +3,15 @@
 Python counterpart of the `*_examples/_setup.sh` shell helper: it resolves the
 two toolchain binaries for the current machine using the committed, CI-built
 `bin/<os>/<arch>/` matrix. As a convenience for local development it first
-prefers a locally-built binary (`OpenVAF-master-20260610/target/release/…`,
+prefers a locally-built binary (`OpenVAF-master-20260610/target/opt/…`,
 `ngspice-46/build/src/…`) if one exists, and otherwise falls back to `bin/`.
+
+The compiler is taken from the **`opt`** profile, which is what ships (CI builds
+`bin/` with it) -- deliberately NOT `target/release/`. The two profiles differ by
+roughly 40-55% in model compile time, so verifying against a `release` build and
+comparing with the shipped binary reports a large regression that is nothing but
+the profile. Build it with
+`cargo build --profile opt --features llvm18 --bin openvaf-r`.
 
 Usage from an example script (which lives in `examples/<name>_examples/`):
 
@@ -65,7 +72,7 @@ def _resolve(local_parts, name, env):
     return os.path.join(_ROOT, "bin", _bin_subdir(), name + _EXE)
 
 
-VAF = _resolve(("OpenVAF-master-20260610", "target", "release", "openvaf-r"),
+VAF = _resolve(("OpenVAF-master-20260610", "target", "opt", "openvaf-r"),
                "openvaf-r", "OPENVAF_BIN")
 NG = _resolve(("ngspice-46", "build", "src", "ngspice"), "ngspice", "NGSPICE_BIN")
 
