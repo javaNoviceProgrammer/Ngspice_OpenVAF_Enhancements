@@ -349,7 +349,10 @@ flattening and with declarations interleaved between blocks.
 ### 5.2 Contribution statements (LRM 5.6) — ✅
 
 Direct contributions with accumulation semantics, switch branches
-(V-then-I), **indirect branch assignment** (the LRM's ideal-op-amp
+(the two kinds on mutually exclusive conditional paths — contributing
+both with no condition between them keeps only the last, which
+[E-400](../../enhancements_doc/Enhancement-400.md) reports),
+**indirect branch assignment** (the LRM's ideal-op-amp
 construct), and **port-flow probes**:
 
 ```verilog

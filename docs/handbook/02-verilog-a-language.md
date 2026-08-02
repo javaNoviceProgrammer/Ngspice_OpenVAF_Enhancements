@@ -122,7 +122,7 @@ the actual construct and suggest hoisting or `generate` unrolling
 
 | Feature | Notes | Since |
 |---|---|---|
-| `V(a,b) <+` / `I(a,b) <+` contributions | Including switch branches (V-then-I) and accumulation across statements, loops, and multiple analog blocks. | — |
+| `V(a,b) <+` / `I(a,b) <+` contributions | Including switch branches and accumulation across statements, loops, and multiple analog blocks. A switch branch contributes the two kinds on **mutually exclusive conditional paths**; contributing both with no condition between them keeps only the last one and is reported by the `discarded_contribution` lint. | [E-400](../../enhancements_doc/Enhancement-400.md) |
 | Indirect branch assignment | `V(out): V(x) == 0;` — the LRM's ideal-opamp construct, one implicit equation per statement. `examples/indirect_assignment_examples/` | [E-2](../../enhancements_doc/Enhancement-2.md) |
 | Port-flow probes `I(<p>)` | Reading the total flow through a port (previously returned 0). `examples/portflow_examples/` | [E-29](../../enhancements_doc/Enhancement-29.md) |
 | Probe-only branches | Probing a branch that is never contributed to reads its actual flow (an ideal ammeter) instead of 0 + open circuit; makes flow-only signal-flow disciplines work. `examples/portflow_examples/`, `examples/signalflow_examples/` | [E-36](../../enhancements_doc/Enhancement-36.md) |
