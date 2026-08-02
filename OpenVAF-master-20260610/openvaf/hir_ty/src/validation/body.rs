@@ -110,7 +110,10 @@ pub enum BodyValidationDiagnostic {
     UnknownAnalysisName {
         name: Box<str>,
         builtin: Box<str>,
-        expr: ExprId,
+        /// `None` for an `@(initial_step("..."))` phase filter: the phase list is
+        /// lowered to bare strings with no span of their own, so the report is
+        /// anchored on the event statement instead.
+        expr: Option<ExprId>,
         stmt: StmtId,
     },
     /// Enhancement-396: a builtin was handed a compile-time-constant argument
@@ -454,6 +457,27 @@ impl BodyValidator<'_> {
 
     fn validate_event(&mut self, event: &Event, stmt: StmtId) {
         match *event {
+            // Enhancement-399: `@(initial_step("tarn"))` never fires -- the phase
+            // filter is matched by the same fixed name set as `analysis()`, so a
+            // typo turns the whole initialisation block into dead code, silently.
+            Event::Global { kind, ref phases } => {
+                let form = match kind {
+                    hir_def::expr::GlobalEvent::InitialStep => "@(initial_step)",
+                    hir_def::expr::GlobalEvent::FinalStep => "@(final_step)",
+                };
+                for ph in phases.iter() {
+                    if !ExprValidator::ANALYSIS_NAMES.contains(&&**ph) {
+                        self.diagnostics.push(
+                            BodyValidationDiagnostic::UnknownAnalysisName {
+                                name: ph.clone().into_boxed_str(),
+                                builtin: form.to_owned().into_boxed_str(),
+                                expr: None,
+                                stmt,
+                            },
+                        );
+                    }
+                }
+            }
             Event::Timer { t0, period, tol, ref surplus } => {
                 if !self.check_event_arg_present("@(timer)", t0, stmt) {
                     return;
@@ -1837,7 +1861,7 @@ impl ExprValidator<'_, '_> {
                 self.report(BodyValidationDiagnostic::UnknownAnalysisName {
                     name: name.to_string().into_boxed_str(),
                     builtin: builtin.to_owned().into_boxed_str(),
-                    expr,
+                    expr: Some(expr),
                     stmt: self.stmt,
                 })
             }

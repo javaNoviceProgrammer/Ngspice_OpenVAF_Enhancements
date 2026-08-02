@@ -761,8 +761,16 @@ impl Diagnostic for BodyValidationDiagnosticWrapped<'_> {
                         "help: Verilog-A analog functions must not be recursive (LRM 4.7); rewrite the computation as a loop".to_owned(),
                     ])
             }
-            BodyValidationDiagnostic::UnknownAnalysisName { ref name, ref builtin, expr, .. } => {
-                let FileSpan { range, file } = self.expr_src(expr);
+            BodyValidationDiagnostic::UnknownAnalysisName {
+                ref name,
+                ref builtin,
+                expr,
+                stmt,
+            } => {
+                let FileSpan { range, file } = match expr {
+                    Some(expr) => self.expr_src(expr),
+                    None => self.stmt_src(stmt),
+                };
                 Report::warning()
                     .with_message(format!(
                         "{builtin} names the analysis \"{name}\", which no analysis \

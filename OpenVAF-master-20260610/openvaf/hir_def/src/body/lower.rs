@@ -244,10 +244,18 @@ impl LowerCtx<'_> {
             condition: Option<ast::Expr>,
         }
         let mut units: Vec<Unit> = vec![Unit::default()];
+        // Enhancement-399: stop at the closing paren of the EVENT LIST, not at
+        // the first `)` seen. `initial_step`/`final_step` are keyword tokens, so
+        // their phase list's parentheses appear at this level too -- breaking on
+        // the first one truncated the whole `or` list after any member that took
+        // arguments. `@(initial_step("dc") or final_step)` silently became
+        // `@(initial_step("dc"))`, so the final_step half never fired at all.
+        let mut depth: u32 = 0;
         for child in event_stmt.syntax().children_with_tokens() {
             match &child {
                 syntax::NodeOrToken::Token(tok) => match tok.kind() {
                     SyntaxKind::OR_KW => units.push(Unit::default()),
+                    SyntaxKind::L_PAREN => depth += 1,
                     SyntaxKind::INITIAL_STEP_KW => {
                         units.last_mut().unwrap().step = Some(GlobalEvent::InitialStep)
                     }
@@ -259,7 +267,12 @@ impl LowerCtx<'_> {
                             units.last_mut().unwrap().phases.push(lit.unescaped_value());
                         }
                     }
-                    SyntaxKind::R_PAREN => break,
+                    SyntaxKind::R_PAREN => {
+                        depth = depth.saturating_sub(1);
+                        if depth == 0 {
+                            break;
+                        }
+                    }
                     _ => (),
                 },
                 syntax::NodeOrToken::Node(node) => {
