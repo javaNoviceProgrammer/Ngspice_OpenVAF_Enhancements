@@ -303,11 +303,18 @@ impl<'a> Builder<'a> {
         derivative_info: &KnownDerivatives,
         derivatives: &HashMap<(Value, Unknown), Value, BuildHasherDefault<FxHasher>>,
     ) {
-        self.system.jacobian =
-            TiVec::with_capacity(self.system.unknowns.len() * self.system.unknowns.len());
+        // Enhancement-404: the jacobian is sparse, so reserving `unknowns^2` entries here
+        // asked for a dense matrix that is never built -- 4.3e9 entries for a module with
+        // a `[65535:0]` bus. The diagonal is a sane lower bound to start from.
+        self.system.jacobian = TiVec::with_capacity(self.system.unknowns.len());
 
         //  construct the matrix by creating a dense row and then sparsifying
         let mut dense_row = TiVec::from(vec![(F_ZERO, F_ZERO); self.system.unknowns.len()]);
+        // Enhancement-404: columns `add_residual` reached in the current row. Scanning the
+        // whole dense row per row was O(unknowns^2); a row only ever touches the columns
+        // listed here. Sorted before use, so entries still come out in ascending column
+        // order and the emitted matrix is byte-identical to the full scan.
+        let mut touched: Vec<SimUnknown> = Vec::new();
         let mut add = |matrix_entry: &mut Value, residual, unknown, negate| {
             if let Some(ddx) = derivatives.get(&(residual, unknown)).copied() {
                 add(&mut self.cursor, matrix_entry, ddx, negate)
@@ -322,6 +329,7 @@ impl<'a> Builder<'a> {
                 } else {
                     return;
                 };
+                touched.push(sim_unknown);
                 let (resist, react) = &mut dense_row[sim_unknown];
                 if let Some(lim_vals) = self.intern.lim_state.raw.get(&unknown) {
                     for (val, negate_lim) in lim_vals {
@@ -365,7 +373,10 @@ impl<'a> Builder<'a> {
             }
 
             // sparsify the row
-            for (col, (resist, react)) in &mut dense_row.iter_mut_enumerated() {
+            touched.sort_unstable();
+            touched.dedup();
+            for col in touched.drain(..) {
+                let (resist, react) = &mut dense_row[col];
                 if *resist == F_ZERO && *react == F_ZERO {
                     continue;
                 }

@@ -21,6 +21,7 @@ use crate::db::HirDefDB;
 use crate::item_tree::AliasParam;
 use crate::types::AsType;
 use crate::{LocalFunctionArgId, LocalNodeId, Path, Type};
+use rustc_hash::FxHashMap;
 
 /// Tries to constant-fold a `[msb:lsb]` width clause into two integers.
 /// Only literal integers (optionally unary-negated) are supported, matching
@@ -640,6 +641,8 @@ impl Ctx {
         let ast_id = self.source_ast_id_map.ast_id(&decl);
 
         let mut nodes = TiVec::new();
+        // Enhancement-404: name -> first node id, so per-bit lookups are O(1)
+        let mut node_index: FxHashMap<Name, LocalNodeId> = FxHashMap::default();
         let mut items = Vec::new();
         let mut buses = Vec::new();
         let mut var_arrays = Vec::new();
@@ -650,13 +653,21 @@ impl Ctx {
         // header-port order. Pre-scan the body port declarations for widths.
         let port_widths = Self::prescan_body_port_widths(decl.module_items());
         if let Some(ports) = decl.module_ports() {
-            self.lower_module_ports(ports, &mut nodes, &mut items, &mut buses, &port_widths);
+            self.lower_module_ports(
+                ports,
+                &mut nodes,
+                &mut node_index,
+                &mut items,
+                &mut buses,
+                &port_widths,
+            );
         }
 
         let num_ports = nodes.len() as u32;
         self.lower_module_items(
             decl.module_items(),
             &mut nodes,
+            &mut node_index,
             &mut items,
             &mut buses,
             &mut var_arrays,
@@ -700,6 +711,7 @@ impl Ctx {
         &mut self,
         items: ast::AstChildren<ast::ModuleItem>,
         nodes: &mut TiVec<LocalNodeId, Node>,
+        node_index: &mut FxHashMap<Name, LocalNodeId>,
         dst: &mut Vec<ModuleItem>,
         buses: &mut Vec<BusDecl>,
         var_arrays: &mut Vec<BusDecl>,
@@ -709,11 +721,11 @@ impl Ctx {
             match item {
                 ast::ModuleItem::BodyPortDecl(decl) => {
                     if let Some(decl) = decl.port_decl() {
-                        self.lower_port_decl(decl, nodes, dst, buses);
+                        self.lower_port_decl(decl, nodes, node_index, dst, buses);
                     }
                 }
                 ast::ModuleItem::NetDecl(decl) => {
-                    self.lower_net_decl(decl, nodes, dst, buses);
+                    self.lower_net_decl(decl, nodes, node_index, dst, buses);
                 }
                 ast::ModuleItem::AnalogBehaviour(behaviour) => {
                     if let Some(stmt) = behaviour.stmt() {
@@ -1130,6 +1142,7 @@ impl Ctx {
         &mut self,
         ports: ast::ModulePorts,
         nodes: &mut TiVec<LocalNodeId, Node>,
+        node_index: &mut FxHashMap<Name, LocalNodeId>,
         dst: &mut Vec<ModuleItem>,
         buses: &mut Vec<BusDecl>,
         port_widths: &[(Name, ast::Range)],
@@ -1139,7 +1152,7 @@ impl Ctx {
             match port.kind() {
                 ast::ModulePortKind::Name(name) => {
                     let name = name.as_name();
-                    if nodes.iter().all(|node| node.name != name) {
+                    if !node_index.contains_key(&name) {
                         // Enhancement-90: a non-ANSI header port whose width is
                         // declared in the body. Pre-expand the bus here, in
                         // header order, so its bits stay contiguous. Without
@@ -1162,7 +1175,7 @@ impl Ctx {
                                     ast_id: ast_id.into(),
                                     size: (msb as i64 - lsb as i64).abs() + 1,
                                 });
-                                let node = nodes.push_and_get_key(Node {
+                                let node = Self::push_node(nodes, node_index, Node {
                                     name,
                                     is_port: true,
                                     ast_id: ast_id.into(),
@@ -1174,7 +1187,7 @@ impl Ctx {
                                 let (lo, hi) =
                                     if msb >= lsb { (lsb, msb) } else { (msb, lsb) };
                                 for bit in lo..=hi {
-                                    let node = nodes.push_and_get_key(Node {
+                                    let node = Self::push_node(nodes, node_index, Node {
                                         name: super::bus_bit_name(&name, bit),
                                         is_port: true,
                                         ast_id: ast_id.into(),
@@ -1184,7 +1197,7 @@ impl Ctx {
                                 }
                             }
                             None => {
-                                let node = nodes.push_and_get_key(Node {
+                                let node = Self::push_node(nodes, node_index, Node {
                                     name,
                                     is_port: true,
                                     ast_id: ast_id.into(),
@@ -1196,7 +1209,7 @@ impl Ctx {
                     }
                 }
                 ast::ModulePortKind::PortDecl(decl) => {
-                    self.lower_port_decl(decl, nodes, dst, buses);
+                    self.lower_port_decl(decl, nodes, node_index, dst, buses);
                 }
             }
         }
@@ -1268,24 +1281,62 @@ impl Ctx {
     /// Finds the node a declared name should attach to: an exact match, or (for the first bit
     /// of a bus) a still-unresolved module-head port placeholder declared under the bus's bare
     /// base name.
+    ///
+    /// Enhancement-404: `index` maps a node name to the FIRST node carrying it, which is what
+    /// the linear `find` this replaces would have returned. Both lookups here used to be
+    /// `nodes.iter()` scans run once per declared bit, so a `[N:0]` bus cost O(N^2) -- 32 s for
+    /// `[65535:0]`. The scans remain as a fallback for the one case the index cannot answer:
+    /// a duplicate name whose first node is already claimed, where the old code would keep
+    /// looking for a later unclaimed one. That cannot arise from well-formed input, so the
+    /// fallback never runs in practice, but it keeps the semantics identical either way.
     fn find_node_for_decl<'n>(
         nodes: &'n mut TiVec<LocalNodeId, Node>,
+        index: &mut FxHashMap<Name, LocalNodeId>,
         name: &Name,
         merge_base: &Option<Name>,
     ) -> Option<&'n mut Node> {
-        if nodes.iter().any(|node| &node.name == name) {
-            return nodes.iter_mut().find(|node| &node.name == name);
+        if let Some(&id) = index.get(name) {
+            debug_assert_eq!(&nodes[id].name, name);
+            return Some(&mut nodes[id]);
         }
         let base = merge_base.as_ref()?;
-        let node = nodes.iter_mut().find(|node| &node.name == base && node.decls.is_empty())?;
-        node.name = name.clone();
-        Some(node)
+        let id = match index.get(base) {
+            // the placeholder is still unclaimed -- the common case, and the only one a
+            // well-formed header can produce
+            Some(&id) if nodes[id].decls.is_empty() => id,
+            // a first node under this name exists but is already claimed; fall back to the
+            // original scan so a duplicate-name header behaves exactly as it used to
+            Some(_) => nodes
+                .iter_enumerated()
+                .find(|(_, node)| &node.name == base && node.decls.is_empty())
+                .map(|(id, _)| id)?,
+            None => return None,
+        };
+        // the placeholder is renamed, so the index must follow it
+        index.remove(base);
+        index.entry(name.clone()).or_insert(id);
+        nodes[id].name = name.clone();
+        Some(&mut nodes[id])
+    }
+
+    /// Enhancement-404: push a node and keep the name index in step. `or_insert` preserves
+    /// "first node wins", matching the `find` semantics the index stands in for.
+    fn push_node(
+        nodes: &mut TiVec<LocalNodeId, Node>,
+        index: &mut FxHashMap<Name, LocalNodeId>,
+        node: Node,
+    ) -> LocalNodeId {
+        let name = node.name.clone();
+        let id = nodes.push_and_get_key(node);
+        index.entry(name).or_insert(id);
+        id
     }
 
     fn lower_port_decl(
         &mut self,
         decl: ast::PortDecl,
         nodes: &mut TiVec<LocalNodeId, Node>,
+        node_index: &mut FxHashMap<Name, LocalNodeId>,
         dst: &mut Vec<ModuleItem>,
         buses: &mut Vec<BusDecl>,
     ) {
@@ -1306,10 +1357,10 @@ impl Ctx {
                 is_gnd,
             });
 
-            match Self::find_node_for_decl(nodes, &name, &merge_base) {
+            match Self::find_node_for_decl(nodes, node_index, &name, &merge_base) {
                 Some(node) => node.decls.push(id.into()),
                 None => {
-                    let node = nodes.push_and_get_key(Node {
+                    let node = Self::push_node(nodes, node_index, Node {
                         name,
                         is_port: true,
                         ast_id: ast_id.into(),
@@ -1325,6 +1376,7 @@ impl Ctx {
         &mut self,
         decl: ast::NetDecl,
         nodes: &mut TiVec<LocalNodeId, Node>,
+        node_index: &mut FxHashMap<Name, LocalNodeId>,
         dst: &mut Vec<ModuleItem>,
         buses: &mut Vec<BusDecl>,
     ) {
@@ -1380,10 +1432,10 @@ impl Ctx {
                 nodeset: nodeset.map(OrderedFloat),
             });
 
-            match Self::find_node_for_decl(nodes, &name, &merge_base) {
+            match Self::find_node_for_decl(nodes, node_index, &name, &merge_base) {
                 Some(node) => node.decls.push(id.into()),
                 None => {
-                    let node = nodes.push_and_get_key(Node {
+                    let node = Self::push_node(nodes, node_index, Node {
                         name,
                         is_port: false,
                         ast_id: ast_id.into(),
