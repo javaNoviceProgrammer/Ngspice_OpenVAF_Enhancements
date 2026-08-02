@@ -180,11 +180,29 @@ pub enum Event {
     /// any other argument (constant-ness is checked, not assumed, by
     /// `hir_ty::validation`, consistent with how e.g. `laplace`'s
     /// tolerance/nature argument is handled).
-    Cross { expr: ExprId, dir: Option<ExprId> },
+    ///
+    /// Enhancement-399: the LRM's optional TOLERANCE arguments are carried here
+    /// too, along with any `surplus` beyond what the form accepts. They were
+    /// previously dropped on the floor by an unconsumed argument iterator, so
+    /// `@(cross(e,0,1e-9,1e-6,1,2))` lowered identically to `@(cross(e,0))` and
+    /// a negative tolerance was never seen by any check. Lowering still ignores
+    /// them; `hir_ty::validation` is what reads them.
+    Cross {
+        expr: ExprId,
+        dir: Option<ExprId>,
+        time_tol: Option<ExprId>,
+        expr_tol: Option<ExprId>,
+        surplus: Box<[ExprId]>,
+    },
     /// `@(above(expr))`.
-    Above { expr: ExprId },
+    Above { expr: ExprId, tol: Option<ExprId>, surplus: Box<[ExprId]> },
     /// `@(timer(t0, period))` -- `period` absent means a one-shot timer.
-    Timer { t0: ExprId, period: Option<ExprId> },
+    Timer {
+        t0: ExprId,
+        period: Option<ExprId>,
+        tol: Option<ExprId>,
+        surplus: Box<[ExprId]>,
+    },
     /// Enhancement-59: `@(ev1 or ev2 [or ...])` (LRM 5.10 event `or` list) --
     /// the body fires when ANY member event fires. Members may mix
     /// `initial_step`/`final_step` (with phase filters) with
@@ -203,17 +221,31 @@ impl Event {
     fn walk_child_exprs_dyn(&self, f: &mut dyn FnMut(ExprId)) {
         match *self {
             Event::Global { .. } => {}
-            Event::Cross { expr, dir } => {
+            Event::Cross { expr, dir, time_tol, expr_tol, ref surplus } => {
                 f(expr);
-                if let Some(dir) = dir {
-                    f(dir);
+                for e in [dir, time_tol, expr_tol].into_iter().flatten() {
+                    f(e);
+                }
+                for &e in surplus.iter() {
+                    f(e);
                 }
             }
-            Event::Above { expr } => f(expr),
-            Event::Timer { t0, period } => {
+            Event::Above { expr, tol, ref surplus } => {
+                f(expr);
+                if let Some(tol) = tol {
+                    f(tol);
+                }
+                for &e in surplus.iter() {
+                    f(e);
+                }
+            }
+            Event::Timer { t0, period, tol, ref surplus } => {
                 f(t0);
-                if let Some(period) = period {
-                    f(period);
+                for e in [period, tol].into_iter().flatten() {
+                    f(e);
+                }
+                for &e in surplus.iter() {
+                    f(e);
                 }
             }
             Event::Or(ref events) => {

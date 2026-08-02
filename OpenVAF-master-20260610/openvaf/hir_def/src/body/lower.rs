@@ -325,19 +325,43 @@ impl LowerCtx<'_> {
         let mut args = call.arg_list().map(|list| list.args()).into_iter().flatten();
 
         let event = match name.as_deref() {
+            // Enhancement-399: every argument is collected now. Previously the
+            // iterator was simply abandoned after the modelled ones, so surplus
+            // arguments vanished without a word, and a MISSING first argument
+            // (`@(cross())`) made this function return None -- which degrades the
+            // whole event control to an unconditional body, so the guarded
+            // statement ran on every evaluation. A missing first argument is
+            // recorded as `Expr::Missing` instead, leaving a real event for
+            // `hir_ty::validation` to reject.
             Some("cross") => {
-                let expr = self.collect_expr(args.next()?);
+                let expr = match args.next() {
+                    Some(e) => self.collect_expr(e),
+                    None => self.missing_expr(),
+                };
                 let dir = args.next().map(|e| self.collect_expr(e));
-                Event::Cross { expr, dir }
+                let time_tol = args.next().map(|e| self.collect_expr(e));
+                let expr_tol = args.next().map(|e| self.collect_expr(e));
+                let surplus: Box<[_]> = args.map(|e| self.collect_expr(e)).collect();
+                Event::Cross { expr, dir, time_tol, expr_tol, surplus }
             }
             Some("above") => {
-                let expr = self.collect_expr(args.next()?);
-                Event::Above { expr }
+                let expr = match args.next() {
+                    Some(e) => self.collect_expr(e),
+                    None => self.missing_expr(),
+                };
+                let tol = args.next().map(|e| self.collect_expr(e));
+                let surplus: Box<[_]> = args.map(|e| self.collect_expr(e)).collect();
+                Event::Above { expr, tol, surplus }
             }
             Some("timer") => {
-                let t0 = self.collect_expr(args.next()?);
+                let t0 = match args.next() {
+                    Some(e) => self.collect_expr(e),
+                    None => self.missing_expr(),
+                };
                 let period = args.next().map(|e| self.collect_expr(e));
-                Event::Timer { t0, period }
+                let tol = args.next().map(|e| self.collect_expr(e));
+                let surplus: Box<[_]> = args.map(|e| self.collect_expr(e)).collect();
+                Event::Timer { t0, period, tol, surplus }
             }
             _ => return None,
         };

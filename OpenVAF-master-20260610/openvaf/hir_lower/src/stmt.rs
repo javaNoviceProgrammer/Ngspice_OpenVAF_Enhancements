@@ -206,9 +206,9 @@ impl BodyLoweringCtx<'_, '_, '_> {
                     None => step,
                 }
             }
-            Event::Cross { expr, dir } => self.lower_cross(*expr, *dir),
-            Event::Above { expr } => self.lower_above(*expr),
-            Event::Timer { t0, period } => self.lower_timer(*t0, *period),
+            Event::Cross { expr, dir, .. } => self.lower_cross(*expr, *dir),
+            Event::Above { expr, .. } => self.lower_above(*expr),
+            Event::Timer { t0, period, .. } => self.lower_timer(*t0, *period),
             // Enhancement-59: `@(ev1 or ev2 ...)` fires when ANY member fires.
             // Each member keeps its own event state/phase machinery; the fired
             // bools simply OR together.

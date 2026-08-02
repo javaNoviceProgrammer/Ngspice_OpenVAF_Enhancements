@@ -184,5 +184,6 @@ pub mod builtin {
         pub const reserved_module_name = LintData{default_lvl: Warn, documentation_id: 18};
         pub const rng_in_loop = LintData{default_lvl: Warn, documentation_id: 19};
         pub const unknown_limit_function = LintData{default_lvl: Warn, documentation_id: 20};
+        pub const unknown_analysis_name = LintData{default_lvl: Warn, documentation_id: 21};
     }
 }

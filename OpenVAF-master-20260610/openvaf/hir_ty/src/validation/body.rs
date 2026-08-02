@@ -103,6 +103,16 @@ pub enum BodyValidationDiagnostic {
         expr: ExprId,
         stmt: StmtId,
     },
+    /// Enhancement-399: an analysis-name string that no analysis can ever match.
+    /// `analysis("tarn")` is false in every analysis and
+    /// `@(initial_step("tarn"))` never fires -- silently, so a typo turns a whole
+    /// branch or initialisation block into dead code.
+    UnknownAnalysisName {
+        name: Box<str>,
+        builtin: Box<str>,
+        expr: ExprId,
+        stmt: StmtId,
+    },
     /// Enhancement-396: a builtin was handed a compile-time-constant argument
     /// that its own definition forbids (a non-positive period, a direction that
     /// is not -1/0/+1, a malformed `noise_table` array, ...).
@@ -404,9 +414,50 @@ impl BodyValidator<'_> {
     /// computed as `1/freq` with `freq = 0` silently turned a sampler into a
     /// per-iteration event. `@(cross(expr, dir))` likewise accepted any integer
     /// as the direction, where only -1, 0 and +1 mean anything.
+    /// Enhancement-399: an event form was handed more arguments than it takes.
+    /// They used to be dropped by an unconsumed iterator, so `@(cross(e,0,t,x,1,2))`
+    /// behaved exactly like `@(cross(e,0))` and nothing said so.
+    fn check_event_surplus(&mut self, form: &str, takes: usize, surplus: &[ExprId], stmt: StmtId) {
+        if let Some(&first) = surplus.first() {
+            let mut v =
+                ExprValidator { parent: self, cond_diagnostic_sink: None, write: false, stmt };
+            v.bad_arg(
+                form,
+                "the argument list",
+                format!(
+                    "has {} argument(s) more than the {takes} this event form \
+                     takes; the surplus is ignored entirely",
+                    surplus.len()
+                ),
+                first,
+            );
+        }
+    }
+
+    /// Enhancement-399: the event's required first argument is absent
+    /// (`@(cross())`). This used to make `event_from_condition` bail, which
+    /// degrades the WHOLE event control to an unconditional body -- so the
+    /// guarded statement ran on every evaluation instead of on the event. It is
+    /// recorded as `Expr::Missing` now, and must be rejected HERE: lowering
+    /// panics on a missing expression (hir/src/body.rs), so leaving it to reach
+    /// codegen would trade a wrong answer for a compiler crash.
+    fn check_event_arg_present(&mut self, form: &str, expr: ExprId, stmt: StmtId) -> bool {
+        if matches!(self.body.exprs[expr], Expr::Missing) {
+            let mut v =
+                ExprValidator { parent: self, cond_diagnostic_sink: None, write: false, stmt };
+            v.bad_arg(form, "the argument list", "is empty; this event form \
+                 requires at least the expression it watches".to_owned(), expr);
+            return false;
+        }
+        true
+    }
+
     fn validate_event(&mut self, event: &Event, stmt: StmtId) {
         match *event {
-            Event::Timer { t0, period } => {
+            Event::Timer { t0, period, tol, ref surplus } => {
+                if !self.check_event_arg_present("@(timer)", t0, stmt) {
+                    return;
+                }
                 let mut v = ExprValidator {
                     parent: self,
                     cond_diagnostic_sink: None,
@@ -417,8 +468,59 @@ impl BodyValidator<'_> {
                 if let Some(period) = period {
                     v.require_positive("@(timer)", "the period", period);
                 }
+                // Enhancement-399: the tolerance was previously discarded, so a
+                // negative one reached nothing and was reported by no one.
+                if let Some(tol) = tol {
+                    v.require_non_negative("@(timer)", "the time tolerance", tol);
+                }
+                self.check_event_surplus("@(timer)", 3, surplus, stmt);
             }
-            Event::Cross { expr: _, dir: Some(dir) } => {
+            Event::Above { expr, tol, ref surplus } => {
+                if !self.check_event_arg_present("@(above)", expr, stmt) {
+                    return;
+                }
+                if let Some(tol) = tol {
+                    let mut v = ExprValidator {
+                        parent: self,
+                        cond_diagnostic_sink: None,
+                        write: false,
+                        stmt,
+                    };
+                    v.require_non_negative("@(above)", "the tolerance", tol);
+                }
+                self.check_event_surplus("@(above)", 2, surplus, stmt);
+            }
+            Event::Cross { expr, dir: _, time_tol, expr_tol, ref surplus } => {
+                if !self.check_event_arg_present("@(cross)", expr, stmt) {
+                    return;
+                }
+                let mut v = ExprValidator {
+                    parent: self,
+                    cond_diagnostic_sink: None,
+                    write: false,
+                    stmt,
+                };
+                if let Some(t) = time_tol {
+                    v.require_non_negative("@(cross)", "the time tolerance", t);
+                }
+                if let Some(t) = expr_tol {
+                    v.require_non_negative("@(cross)", "the expression tolerance", t);
+                }
+                self.check_event_surplus("@(cross)", 4, surplus, stmt);
+                self.validate_event_cross_dir(event, stmt);
+            }
+            Event::Or(ref events) => {
+                for ev in events.iter() {
+                    self.validate_event(ev, stmt);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn validate_event_cross_dir(&mut self, event: &Event, stmt: StmtId) {
+        match *event {
+            Event::Cross { dir: Some(dir), .. } => {
                 let v = ExprValidator {
                     parent: self,
                     cond_diagnostic_sink: None,
@@ -443,11 +545,7 @@ impl BodyValidator<'_> {
                     }
                 }
             }
-            Event::Or(ref events) => {
-                for ev in events.iter() {
-                    self.validate_event(ev, stmt);
-                }
-            }
+            // only ever called with a Cross event, from validate_event
             _ => {}
         }
     }
@@ -1062,6 +1160,12 @@ impl ExprValidator<'_, '_> {
                             }
                         }
                         if *builtin == BuiltIn::table_model && args.len() >= 2 {
+                            // Enhancement-399: a concatenation is neither an array
+                            // literal nor an array-variable reference, so it fell
+                            // through `inline` below to the file branch, found no
+                            // string literal to complain about, and returned 0.0
+                            // from an empty table.
+                            self.require_array_arg("$table_model", "the table data", args[1]);
                             // Mirror `lower_table_model`'s own rule for WHICH argument
                             // is the data file. Inline data -- an array literal or a
                             // bare array-variable reference (Enhancement-389) -- means
@@ -1450,6 +1554,9 @@ impl ExprValidator<'_, '_> {
                 // reached the runtime and produced the same spectrum as its
                 // positive twin, so the sign was quietly discarded.
                 let name = "noise_table";
+                // Enhancement-399: a concatenation here skipped every check below
+                // and produced a device that contributed no noise at all.
+                self.require_array_arg(name, "the table", args[0]);
                 if let Expr::Array(ref elems) = self.parent.body.exprs[args[0]] {
                     let elems = elems.clone();
                     if elems.is_empty() {
@@ -1469,6 +1576,17 @@ impl ExprValidator<'_, '_> {
                 }
                 self.validate_const_expr(args[0])
             }
+            // Enhancement-399: an analysis name is matched by string against a
+            // fixed set (osdi/stdlib.c `analysis()`); anything else is false in
+            // every analysis, so `analysis("tarn")` silently disables the branch
+            // it guards. Reported as a lint, not an error, because the set is
+            // simulator-defined and another OSDI consumer may match more.
+            (BuiltIn::analysis, _) => {
+                for &arg in args {
+                    self.check_analysis_name("analysis()", arg);
+                }
+            }
+
             (func @ (BuiltIn::simparam | BuiltIn::simparam_str), _) => {
                 if self.parent.ctx == BodyCtx::Const {
                     let known = if let Expr::Literal(Literal::String(name)) =
@@ -1624,6 +1742,13 @@ impl ExprValidator<'_, '_> {
                 // ordinary MIR value, not constant-folded. Only the optional trailing
                 // tolerance/nature argument (unused, see Enhancement-4.md §1.3) still must be
                 // constant.
+                // Enhancement-399: num/den must be an array literal or an array
+                // variable -- a concatenation is neither, and produced an empty
+                // filter rather than a diagnostic.
+                if args.len() >= 3 {
+                    self.require_array_arg("laplace", "the numerator", args[1]);
+                    self.require_array_arg("laplace", "the denominator", args[2]);
+                }
                 if let [_in, _num, _den, const_args @ ..] = args {
                     args = &args[..3];
                     for arg in const_args {
@@ -1665,6 +1790,57 @@ impl ExprValidator<'_, '_> {
                 self.const_num(inner).map(|v| -v)
             }
             _ => None,
+        }
+    }
+
+    /// Enhancement-399: `{a, b}` is a CONCATENATION; the array literal the LRM
+    /// requires in these positions is `'{a, b}`. They differ by one character,
+    /// both parse, and the wrong one was accepted in silence -- the builtin then
+    /// behaved as though handed an EMPTY table. `$table_model(2.0, {..})`
+    /// returned 0.0 where the array literal gave 20.0, and `noise_table({..})`
+    /// contributed exactly no noise while its `'{..}` twin worked. Nothing was
+    /// reported at compile time or at run time.
+    ///
+    /// The rule is not new: initialising a parameter array from a concatenation
+    /// is already rejected. These builtins simply never applied it, because
+    /// every check here was written as `if let Expr::Array(..)` and a
+    /// concatenation is a different variant, so the whole check was skipped.
+    ///
+    /// ONLY a concatenation is rejected. A bare reference to an array VARIABLE
+    /// is legitimate in these positions (Enhancement-4) and must keep working,
+    /// so this must not become "anything that is not an array literal".
+    fn require_array_arg(&mut self, builtin: &str, what: &str, expr: ExprId) {
+        if let Expr::Concat { .. } = self.parent.body.exprs[expr] {
+            self.bad_arg(
+                builtin,
+                what,
+                "is a concatenation `{...}`, but an array literal `'{...}` is \
+                 required here; as written the table is empty and the call \
+                 contributes nothing"
+                    .to_owned(),
+                expr,
+            )
+        }
+    }
+
+    /// Enhancement-399: the analysis names the simulator can actually match,
+    /// taken from `osdi/stdlib.c`'s `analysis()`. A name outside this set makes
+    /// `analysis(...)` false in every analysis and `@(initial_step(...))` fire
+    /// never -- dead code, reported nowhere.
+    const ANALYSIS_NAMES: [&'static str; 7] =
+        ["ac", "dc", "ic", "nodeset", "noise", "static", "tran"];
+
+    fn check_analysis_name(&mut self, builtin: &str, expr: ExprId) {
+        if let Expr::Literal(Literal::String(ref name)) = self.parent.body.exprs[expr] {
+            let name = name.clone();
+            if !Self::ANALYSIS_NAMES.contains(&&*name) {
+                self.report(BodyValidationDiagnostic::UnknownAnalysisName {
+                    name: name.to_string().into_boxed_str(),
+                    builtin: builtin.to_owned().into_boxed_str(),
+                    expr,
+                    stmt: self.stmt,
+                })
+            }
         }
     }
 

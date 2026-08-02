@@ -1,6 +1,7 @@
 use basedb::diagnostics::{Diagnostic, Label, LabelStyle, Report};
 use basedb::lints::builtin::{
-    const_simparam, rng_in_loop, trivial_probe, unknown_limit_function, variant_const_simparam,
+    const_simparam, rng_in_loop, trivial_probe, unknown_analysis_name, unknown_limit_function,
+    variant_const_simparam,
 };
 use basedb::lints::{self, Lint, LintSrc};
 use basedb::{AstIdMap, BaseDB, FileId};
@@ -152,6 +153,10 @@ impl Diagnostic for BodyValidationDiagnosticWrapped<'_> {
             BodyValidationDiagnostic::UnknownLimitFunction { stmt, .. } => {
                 let src = self.body_sm.lint_src(stmt, unknown_limit_function);
                 Some((unknown_limit_function, src))
+            }
+            BodyValidationDiagnostic::UnknownAnalysisName { stmt, .. } => {
+                let src = self.body_sm.lint_src(stmt, unknown_analysis_name);
+                Some((unknown_analysis_name, src))
             }
             _ => None,
         }
@@ -754,6 +759,28 @@ impl Diagnostic for BodyValidationDiagnosticWrapped<'_> {
                     .with_notes(vec![
                         format!("info: call cycle: {chain}"),
                         "help: Verilog-A analog functions must not be recursive (LRM 4.7); rewrite the computation as a loop".to_owned(),
+                    ])
+            }
+            BodyValidationDiagnostic::UnknownAnalysisName { ref name, ref builtin, expr, .. } => {
+                let FileSpan { range, file } = self.expr_src(expr);
+                Report::warning()
+                    .with_message(format!(
+                        "{builtin} names the analysis \"{name}\", which no analysis \
+                         can ever match"
+                    ))
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: file,
+                        range: range.into(),
+                        message: "not an analysis name".to_owned(),
+                    }])
+                    .with_notes(vec![
+                        "the simulator matches these names: ac, dc, ic, nodeset, noise, \
+                         static, tran"
+                            .to_owned(),
+                        "as written this is dead code -- the branch is never taken and \
+                         the event never fires"
+                            .to_owned(),
                     ])
             }
             BodyValidationDiagnostic::UnknownLimitFunction { ref name, nargs, expr, .. } => {
