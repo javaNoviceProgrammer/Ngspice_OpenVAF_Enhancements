@@ -147,13 +147,19 @@ KLU_XFAIL = frozenset()
 # PSS decks.)
 SPARSE_ONLY = frozenset({"highsigma", "yield", "cmcsweep"})
 
-# Examples excluded from the routine full-regression sweep (run_regression.py)
-# because they are too slow to be worth running every time -- they still work and
-# can be run directly (or with `run_regression.py --all` / NG_RUN_ALL=1).
+# Examples excluded from the routine full-regression sweep (run_regression.py).
+# They still work and can be run directly (or with `run_regression.py --all` /
+# NG_RUN_ALL=1).
 # (rfanalyses and rfpss were excluded here until Enhancement-176: the driven-mode
 # PSS cut their runtimes from minutes to fractions of a second, so the whole RF
 # periodic small-signal suite E-117..126 is now guarded on every sweep.)
-REGRESSION_EXCLUDE = frozenset({"cmcsweep"})
+#
+#   cmcsweep     -- too slow to be worth running every time.
+#   filterforms  -- Enhancement-405. NOT excluded for speed: it runs in about two
+#                   seconds. It is held out of the routine sweep deliberately, so
+#                   the reason is recorded here rather than left to be inferred
+#                   from this set's original "too slow" rationale.
+REGRESSION_EXCLUDE = frozenset({"cmcsweep", "filterforms"})
 
 
 def klu_enabled(script=None):

@@ -1,0 +1,176 @@
+// filter_forms.va -- Enhancement-405: every analog filter operator, in every
+// form the LRM provides, expressing the SAME filter.
+//
+// laplace_nd/np/zd/zp and zi_nd/np/zd/zp differ only in whether the numerator
+// and denominator arrive as ascending-power COEFFICIENTS or as ROOTS (given as
+// (real, imaginary) PAIRS). Four spellings of one filter must therefore give
+// one answer -- which is the property that failed before Enhancement-405, when
+// the z-domain root forms reciprocated every pole and zero.
+//
+// Each module drives its probe port `o` so that V(o,c) equals the filter output
+// applied to V(a,c), which makes the response readable as a node voltage in dc,
+// ac and tran alike.
+`include "disciplines.vams"
+
+// ---------------------------------------------------------------------------
+// lap1: 1-pole
+// ---------------------------------------------------------------------------
+module lap1_nd(a, c, o);
+    inout a, c, o;
+    electrical a, c, o;
+    analog I(o,c) <+ V(o,c) - (laplace_nd(V(a,c), '{1.0}, '{1.0, 1e-06}));
+endmodule
+
+module lap1_np(a, c, o);
+    inout a, c, o;
+    electrical a, c, o;
+    analog I(o,c) <+ V(o,c) - (laplace_np(V(a,c), '{1.0}, '{-1000000.0, 0.0}));
+endmodule
+
+module lap1_zd(a, c, o);
+    inout a, c, o;
+    electrical a, c, o;
+    analog I(o,c) <+ V(o,c) - (laplace_zd(V(a,c), '{}, '{1.0, 1e-06}));
+endmodule
+
+module lap1_zp(a, c, o);
+    inout a, c, o;
+    electrical a, c, o;
+    analog I(o,c) <+ V(o,c) - (laplace_zp(V(a,c), '{}, '{-1000000.0, 0.0}));
+endmodule
+
+// ---------------------------------------------------------------------------
+// lap2: zero+pole
+// ---------------------------------------------------------------------------
+module lap2_nd(a, c, o);
+    inout a, c, o;
+    electrical a, c, o;
+    analog I(o,c) <+ V(o,c) - (laplace_nd(V(a,c), '{1.0, 2.5e-07}, '{1.0, 1e-06}));
+endmodule
+
+module lap2_np(a, c, o);
+    inout a, c, o;
+    electrical a, c, o;
+    analog I(o,c) <+ V(o,c) - (laplace_np(V(a,c), '{1.0, 2.5e-07}, '{-1000000.0, 0.0}));
+endmodule
+
+module lap2_zd(a, c, o);
+    inout a, c, o;
+    electrical a, c, o;
+    analog I(o,c) <+ V(o,c) - (laplace_zd(V(a,c), '{-4000000.0, 0.0}, '{1.0, 1e-06}));
+endmodule
+
+module lap2_zp(a, c, o);
+    inout a, c, o;
+    electrical a, c, o;
+    analog I(o,c) <+ V(o,c) - (laplace_zp(V(a,c), '{-4000000.0, 0.0}, '{-1000000.0, 0.0}));
+endmodule
+
+// ---------------------------------------------------------------------------
+// lap3: conj-pole-pair
+// ---------------------------------------------------------------------------
+module lap3_nd(a, c, o);
+    inout a, c, o;
+    electrical a, c, o;
+    analog I(o,c) <+ V(o,c) - (laplace_nd(V(a,c), '{1.0}, '{1.0, 8e-07, 7.999999999999999e-13}));
+endmodule
+
+module lap3_np(a, c, o);
+    inout a, c, o;
+    electrical a, c, o;
+    analog I(o,c) <+ V(o,c) - (laplace_np(V(a,c), '{1.0}, '{-500000.0, 1000000.0, -500000.0, -1000000.0}));
+endmodule
+
+module lap3_zd(a, c, o);
+    inout a, c, o;
+    electrical a, c, o;
+    analog I(o,c) <+ V(o,c) - (laplace_zd(V(a,c), '{}, '{1.0, 8e-07, 7.999999999999999e-13}));
+endmodule
+
+module lap3_zp(a, c, o);
+    inout a, c, o;
+    electrical a, c, o;
+    analog I(o,c) <+ V(o,c) - (laplace_zp(V(a,c), '{}, '{-500000.0, 1000000.0, -500000.0, -1000000.0}));
+endmodule
+
+// ---------------------------------------------------------------------------
+// zi1: 1-pole z=0.5
+// ---------------------------------------------------------------------------
+module zi1_nd(a, c, o);
+    inout a, c, o;
+    electrical a, c, o;
+    analog I(o,c) <+ V(o,c) - (zi_nd(V(a,c), '{1.0}, '{1.0, -0.5}, 1e-06, 0.0));
+endmodule
+
+module zi1_np(a, c, o);
+    inout a, c, o;
+    electrical a, c, o;
+    analog I(o,c) <+ V(o,c) - (zi_np(V(a,c), '{1.0}, '{0.5, 0.0}, 1e-06, 0.0));
+endmodule
+
+module zi1_zd(a, c, o);
+    inout a, c, o;
+    electrical a, c, o;
+    analog I(o,c) <+ V(o,c) - (zi_zd(V(a,c), '{}, '{1.0, -0.5}, 1e-06, 0.0));
+endmodule
+
+module zi1_zp(a, c, o);
+    inout a, c, o;
+    electrical a, c, o;
+    analog I(o,c) <+ V(o,c) - (zi_zp(V(a,c), '{}, '{0.5, 0.0}, 1e-06, 0.0));
+endmodule
+
+// ---------------------------------------------------------------------------
+// zi2: zero .25 pole .5
+// ---------------------------------------------------------------------------
+module zi2_nd(a, c, o);
+    inout a, c, o;
+    electrical a, c, o;
+    analog I(o,c) <+ V(o,c) - (zi_nd(V(a,c), '{1.0, -0.25}, '{1.0, -0.5}, 1e-06, 0.0));
+endmodule
+
+module zi2_np(a, c, o);
+    inout a, c, o;
+    electrical a, c, o;
+    analog I(o,c) <+ V(o,c) - (zi_np(V(a,c), '{1.0, -0.25}, '{0.5, 0.0}, 1e-06, 0.0));
+endmodule
+
+module zi2_zd(a, c, o);
+    inout a, c, o;
+    electrical a, c, o;
+    analog I(o,c) <+ V(o,c) - (zi_zd(V(a,c), '{0.25, 0.0}, '{1.0, -0.5}, 1e-06, 0.0));
+endmodule
+
+module zi2_zp(a, c, o);
+    inout a, c, o;
+    electrical a, c, o;
+    analog I(o,c) <+ V(o,c) - (zi_zp(V(a,c), '{0.25, 0.0}, '{0.5, 0.0}, 1e-06, 0.0));
+endmodule
+
+// ---------------------------------------------------------------------------
+// zi3: conj pole pair
+// ---------------------------------------------------------------------------
+module zi3_nd(a, c, o);
+    inout a, c, o;
+    electrical a, c, o;
+    analog I(o,c) <+ V(o,c) - (zi_nd(V(a,c), '{1.0}, '{1.0, -0.8, 0.25}, 1e-06, 0.0));
+endmodule
+
+module zi3_np(a, c, o);
+    inout a, c, o;
+    electrical a, c, o;
+    analog I(o,c) <+ V(o,c) - (zi_np(V(a,c), '{1.0}, '{0.4, 0.3, 0.4, -0.3}, 1e-06, 0.0));
+endmodule
+
+module zi3_zd(a, c, o);
+    inout a, c, o;
+    electrical a, c, o;
+    analog I(o,c) <+ V(o,c) - (zi_zd(V(a,c), '{}, '{1.0, -0.8, 0.25}, 1e-06, 0.0));
+endmodule
+
+module zi3_zp(a, c, o);
+    inout a, c, o;
+    electrical a, c, o;
+    analog I(o,c) <+ V(o,c) - (zi_zp(V(a,c), '{}, '{0.4, 0.3, 0.4, -0.3}, 1e-06, 0.0));
+endmodule
+

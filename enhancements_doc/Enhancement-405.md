@@ -181,6 +181,21 @@ binary, so it predates this release; it is recorded for its own investigation.
   zero-at-origin roots; parameter-array indexing correct in 1-D and 2-D;
   `vaflaplace_examples` 15/15; `lrm_examples` 7/7 on both solvers.
 
+## The example
+
+`examples/filterforms_examples/` writes all three filters in all eight forms —
+24 modules — and checks each in **dc, ac and tran** against closed form, plus the
+convention-free cross-form agreement. 85 checks, about two seconds.
+
+It is **not** part of the routine regression sweep (`_setup.REGRESSION_EXCLUDE`),
+and deliberately so rather than for speed; the reason is recorded next to the
+entry. Run it directly, or with `run_regression.py --all`.
+
+Against the shipped binary from before this release it gives **58 pass / 27
+fail**, exit 1, and the failures are exactly the root-taking z-forms — with zero
+`laplace_*` failures, the same conclusion the corpus differential reached from
+the other direction.
+
 **The regression earned its keep twice.** It caught a first draft rejecting an
 empty numerator, which is a documented `H = 0` case the example suite asserts —
 and then caught the order helper computing `0 - 1` on a `usize`, which is the

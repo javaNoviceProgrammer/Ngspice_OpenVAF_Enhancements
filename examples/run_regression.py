@@ -12,9 +12,10 @@ Two registries in `_setup.py` shape the sweep:
                         merely slow (KLU re-factors every PSS step); they run
                         Sparse-only here and report `klu=SKIP`. `NG_SLOW_KLU=1`
                         forces the KLU pass back on.
-  * REGRESSION_EXCLUDE — examples too slow to be worth the routine sweep at all
-                        (the PSS-based `rfanalyses` + `rfpss` suites, minutes each
-                        even Sparse-only). They are skipped here but remain runnable
+  * REGRESSION_EXCLUDE — examples held out of the routine sweep. Usually because
+                        they are too slow to be worth it every time, but not
+                        always: see the per-entry reasons in `_setup.py`. They
+                        are skipped here but remain runnable
                         directly. `--all` (or NG_RUN_ALL=1) includes them.
 
 Usage:
@@ -60,7 +61,8 @@ def main(argv):
         todo.append(s)
 
     if excluded:
-        print(f"Excluding (too slow; use --all to include): {', '.join(sorted(set(excluded)))}\n")
+        print(f"Excluding (not in the routine sweep; use --all to include): "
+              f"{', '.join(sorted(set(excluded)))}\n")
 
     results = []
     t0 = time.time()
