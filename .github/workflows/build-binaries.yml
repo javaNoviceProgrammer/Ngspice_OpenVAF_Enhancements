@@ -188,7 +188,11 @@ jobs:
 
       - name: Build openvaf-r
         working-directory: ${{ env.OPENVAF_DIR }}
-        run: cargo build --release --features llvm18 --bin openvaf-r
+        # `opt` (fat LTO, one codegen unit, no incremental), not `release`:
+        # 12.9% faster compiles over the VA_TEST corpus for a ~4x longer build,
+        # byte-identical output. See the profile's comment in Cargo.toml for the
+        # measurement and its baseline. Output lands in target/opt/, not release/.
+        run: cargo build --profile opt --features llvm18 --bin openvaf-r
 
       - name: Build ngspice
         working-directory: ${{ env.NGSPICE_DIR }}
@@ -206,7 +210,7 @@ jobs:
       - name: Stage binaries
         run: |
           mkdir -p "out/bin/${{ matrix.bin }}"
-          cp "$OPENVAF_DIR/target/release/openvaf-r" "out/bin/${{ matrix.bin }}/"
+          cp "$OPENVAF_DIR/target/opt/openvaf-r" "out/bin/${{ matrix.bin }}/"
           cp "$NGSPICE_DIR/ci-build/src/ngspice"     "out/bin/${{ matrix.bin }}/"
           # XSPICE code models: ngspice builds them (xspice is default-on) under
           # ci-build/src/xspice/icm/*/*.cm. Ship them plus a portable spinit that
@@ -365,14 +369,17 @@ jobs:
           CARGO_NET_GIT_FETCH_WITH_CLI: "true"
         run: |
           clang --version
-          cargo build --release --features llvm18 --bin openvaf-r
+          # `opt`, matching the other platforms -- see Cargo.toml's profile comment.
+          cargo build --profile opt --features llvm18 --bin openvaf-r
 
       - name: Stage openvaf-r.exe
         shell: pwsh
         run: |
           # ngspice.exe + its DLLs were already staged by the MSYS2 bundle step.
           # Add openvaf-r.exe if the build succeeded.
-          Copy-Item "$env:OPENVAF_DIR\target\release\openvaf-r.exe" out\bin\windows\intel\ -ErrorAction SilentlyContinue
+          # NOTE: SilentlyContinue means a wrong path ships NOTHING without failing
+          # the job -- keep this in step with the profile in the build step above.
+          Copy-Item "$env:OPENVAF_DIR\target\opt\openvaf-r.exe" out\bin\windows\intel\ -ErrorAction SilentlyContinue
           Write-Host "=== Final bin/windows/intel contents ==="
           Get-ChildItem out\bin\windows\intel\
 

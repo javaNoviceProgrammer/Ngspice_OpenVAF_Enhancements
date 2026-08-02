@@ -9,9 +9,33 @@ lto = "off"
 incremental = true
 debug = true
 
+# The profile CI ships binaries with. `release` stays the fast edit-test loop
+# (~11s rebuild); this one trades build time (~45s) for compile speed.
+#
+# Measured over the 124-model VA_TEST corpus, fresh builds, min of 3 runs, on
+# the same rustc CI uses: 134.5s -> 117.2s, a 12.9% reduction. It scales with
+# model size -- +1.2% on a 42-line model, +15.3% on bsim4 (9723 lines) -- so
+# the large CMC models gain nearly all of it. Output is unchanged: 107 models
+# compiled by both, 0 return-code and 0 byte differences (compared at the SAME
+# -o path, because an .osdi embeds its own output path).
+#
+# That baseline is `release` built with CARGO_INCREMENTAL=0, which is what CI
+# actually produces -- the toolchain action sets it, overriding the profile's
+# `incremental = true`. Measure against a plain local `cargo build --release`
+# instead and this profile looks like a 28% win; it is not. A local release
+# binary is ~25% slower than the shipped one for that reason alone, which is
+# worth knowing before timing anything against it.
+#
+# `panic` is deliberately NOT set to "abort" here. It was, and it earns
+# nothing: built both ways against a common baseline, the two were within
+# run-to-run noise of each other, so abort buys 0.9MB of binary and no speed
+# at all. Unwinding is worth keeping -- codegen runs on a rayon pool, so a
+# worker panic propagates to the join point instead of taking the process down
+# on SIGABRT; Drop still cleans up the intermediate objects and TMPDIR; and an
+# internal error stays a normal exit status (101) rather than arriving as a
+# signal, which is what test harnesses read.
 [profile.opt]
 inherits = "release"
-panic = "abort"
 lto = "fat"
 codegen-units = 1
 opt-level = 3
