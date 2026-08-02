@@ -32,7 +32,7 @@ KELVIN = 273.15
 
 
 def find_vaf():
-    local = os.path.join(ROOT, "OpenVAF-master-20260610/target/release/openvaf-r")
+    local = os.path.join(ROOT, "OpenVAF-master-20260610/target/opt/openvaf-r")
     if os.path.exists(local):
         return local
     for sub in ("macos/apple-silicon", "macos/intel", "linux/intel", "linux/arm"):

@@ -5,7 +5,7 @@ operators** `<<<` (left) and `>>>` (right, sign-extending) added in
 Enhancement-6, covering **DC**, **AC**, and **Transient** analysis.
 Everything here uses the **version7** toolchain:
 
-- compiler : `../OpenVAF-master-20260610/target/release/openvaf-r`
+- compiler : `../OpenVAF-master-20260610/target/opt/openvaf-r`
 - simulator: `../ngspice-46/build/src/ngspice`
 
 See `../Enhancement-6.md` (§2) for the full implementation writeup,
@@ -67,7 +67,7 @@ shift_examples/
 ## Reproduce
 
 ```bash
-OPENVAF=../OpenVAF-master-20260610/target/release/openvaf-r
+OPENVAF=../OpenVAF-master-20260610/target/opt/openvaf-r
 NGSPICE=../ngspice-46/build/src/ngspice
 
 $OPENVAF shift_demo.va -o shift_demo.osdi

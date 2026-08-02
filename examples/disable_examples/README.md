@@ -28,8 +28,8 @@ OpenVAF in Enhancement-9. Verilog-A has no `break`/`continue` keywords —
 ## Running
 
 ```sh
-../OpenVAF-master/target/release/openvaf-r break_demo.va    -o break_demo.osdi
-../OpenVAF-master/target/release/openvaf-r continue_demo.va -o continue_demo.osdi
+../OpenVAF-master-20260610/target/opt/openvaf-r break_demo.va    -o break_demo.osdi
+../OpenVAF-master-20260610/target/opt/openvaf-r continue_demo.va -o continue_demo.osdi
 python3 verify_disable.py
 ```
 

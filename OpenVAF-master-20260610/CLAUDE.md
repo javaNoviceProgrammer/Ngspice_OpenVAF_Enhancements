@@ -17,15 +17,20 @@ The project is a fork of Pascal Kuthe's original OpenVAF compiler, maintained by
 
 ### Building the Compiler
 ```bash
-# Build release version (recommended)
-cargo build --release --bin openvaf-r
+# Build the shipping profile (ALWAYS use this one)
+cargo build --profile opt --features llvm18 --bin openvaf-r
 
 # Build debug version
 cargo build --bin openvaf-r
 
 # The binaries are output to:
-# - target/release/openvaf-r (release)
+# - target/opt/openvaf-r (opt -- what ships, and what examples/_setup.py picks up)
 # - target/debug/openvaf-r (debug)
+#
+# Do NOT use `--release` here: `opt` is fat-LTO + codegen-units=1 and is the
+# profile CI builds bin/ with. The two differ by ~40-55% in MODEL COMPILE TIME,
+# so timing a release build against the shipped binary reports a large
+# regression that is nothing but the profile.
 ```
 
 ### Testing

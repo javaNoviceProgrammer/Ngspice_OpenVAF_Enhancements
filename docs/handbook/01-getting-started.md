@@ -53,8 +53,8 @@ sudo apt-get install llvm-18-dev libpolly-18-dev libzstd-dev
 export LLVM_SYS_181_PREFIX=/usr/lib/llvm-18
 
 cd OpenVAF-master-20260610
-cargo build --release --bin openvaf-r --features openvaf-driver/llvm18
-# → target/release/openvaf-r
+cargo build --profile opt --features llvm18 --bin openvaf-r
+# → target/opt/openvaf-r
 ```
 
 **ngspice** is a standard autotools build. The configuration used throughout
@@ -152,7 +152,7 @@ python3 examples/noise_examples/verify_noise.py
 ```
 
 The scripts resolve the toolchain through `examples/_setup.py`: a locally
-built binary (`OpenVAF-master-20260610/target/release/openvaf-r`,
+built binary (`OpenVAF-master-20260610/target/opt/openvaf-r`,
 `ngspice-46/build/src/ngspice`) is preferred if present, otherwise the
 committed `bin/<os>/<arch>/` prebuilt for your machine is used — so the
 suites run on a fresh clone with no configuration.

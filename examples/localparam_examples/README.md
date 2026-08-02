@@ -31,7 +31,7 @@ analog I(p, n) <+ GAIN * G * V(p, n);
 ## Running
 
 ```sh
-../OpenVAF-master/target/release/openvaf-r rdiv.va -o rdiv.osdi
+../OpenVAF-master-20260610/target/opt/openvaf-r rdiv.va -o rdiv.osdi
 python3 verify_localparam.py
 ```
 

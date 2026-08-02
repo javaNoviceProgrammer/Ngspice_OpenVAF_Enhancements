@@ -32,7 +32,7 @@ node — i.e. a resistor to ground.
 ## Running
 
 ```sh
-../OpenVAF-master/target/release/openvaf-r rgnd.va -o rgnd.osdi
+../OpenVAF-master-20260610/target/opt/openvaf-r rgnd.va -o rgnd.osdi
 python3 verify_ground.py
 ```
 

@@ -30,7 +30,7 @@ esac
 # Prefer the locally-built binaries when present (matching _setup.py), else
 # fall back to the committed CI-built bin/<os>/<arch>/ matrix.
 NG="$_ROOT_DIR/ngspice-46/build/src/ngspice"
-VAF="$_ROOT_DIR/OpenVAF-master-20260610/target/release/openvaf-r"
+VAF="$_ROOT_DIR/OpenVAF-master-20260610/target/opt/openvaf-r"
 [ -x "$NG" ]  || NG="$_BIN_DIR/$_os/$_arch/ngspice"
 [ -x "$VAF" ] || VAF="$_BIN_DIR/$_os/$_arch/openvaf-r"
 

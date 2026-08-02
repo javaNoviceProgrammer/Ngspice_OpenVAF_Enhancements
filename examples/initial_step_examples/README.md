@@ -4,7 +4,7 @@ Self-contained correctness example for the Enhancement-7 fix to Verilog-A
 `@(initial_step)` event gating, covering **DC**, **AC**, and **Transient**
 analysis. Everything here uses the **version8** toolchain:
 
-- compiler : `../OpenVAF-master/target/release/openvaf-r`
+- compiler : `../OpenVAF-master-20260610/target/opt/openvaf-r`
 - simulator: `../ngspice-46/build/src/ngspice`
 
 See `../Enhancement-7.md` for the full writeup. Before this fix,
@@ -76,7 +76,7 @@ initial_step_examples/
 ## Reproduce
 
 ```bash
-OPENVAF=../OpenVAF-master/target/release/openvaf-r
+OPENVAF=../OpenVAF-master-20260610/target/opt/openvaf-r
 NGSPICE=../ngspice-46/build/src/ngspice
 
 $OPENVAF initial_step_demo.va -o initial_step_demo.osdi

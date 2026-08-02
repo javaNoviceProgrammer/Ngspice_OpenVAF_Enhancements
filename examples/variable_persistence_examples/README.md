@@ -5,7 +5,7 @@ ordinary Verilog-A `real`/`integer` analog-block variables genuine
 persistence across evaluations, covering **DC**, **AC**, and **Transient**
 analysis. Everything here uses the **version8** toolchain:
 
-- compiler : `../OpenVAF-master/target/release/openvaf-r`
+- compiler : `../OpenVAF-master-20260610/target/opt/openvaf-r`
 - simulator: `../ngspice-46/build/src/ngspice`
 
 See `../Enhancement-7.md` for the full writeup. This is the deeper of the
@@ -66,7 +66,7 @@ variable_persistence_examples/
 ## Reproduce
 
 ```bash
-OPENVAF=../OpenVAF-master/target/release/openvaf-r
+OPENVAF=../OpenVAF-master-20260610/target/opt/openvaf-r
 NGSPICE=../ngspice-46/build/src/ngspice
 
 $OPENVAF persist_demo.va -o persist_demo.osdi

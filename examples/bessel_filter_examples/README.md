@@ -6,7 +6,7 @@ filter** operator support (`laplace_nd`, Enhancement-4 Part 1): a genuine
 (no RLC network in the model), cross-checked against the same coefficients'
 analytical response computed independently in Python (`scipy.signal`).
 
-- compiler : `../OpenVAF-master-20260610/target/release/openvaf-r` (or `../bin/macos/apple-silicon/openvaf-r`)
+- compiler : `../OpenVAF-master-20260610/target/opt/openvaf-r` (or `../bin/macos/apple-silicon/openvaf-r`)
 - simulator: `../bin/macos/apple-silicon/ngspice`
 
 See `../Enhancement-4.md` for the Laplace-operator implementation writeup,

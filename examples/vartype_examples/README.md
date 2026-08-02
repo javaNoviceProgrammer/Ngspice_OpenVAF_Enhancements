@@ -22,7 +22,7 @@ declared without an initializer and therefore defaulting to `""`).
 ## Running
 
 ```sh
-../OpenVAF-master/target/release/openvaf-r vartypes.va -o vartypes.osdi
+../OpenVAF-master-20260610/target/opt/openvaf-r vartypes.va -o vartypes.osdi
 python3 verify_vartypes.py
 ```
 

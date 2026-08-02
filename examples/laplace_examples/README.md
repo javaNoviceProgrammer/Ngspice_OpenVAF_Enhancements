@@ -5,7 +5,7 @@ transform filter** operator support (`laplace_nd`/`laplace_np`/
 `laplace_zd`/`laplace_zp`), covering **DC**, **AC**, and **transient**
 analysis. Everything here uses the **version5** toolchain:
 
-- compiler : `../OpenVAF-master-20260610/target/release/openvaf-r` (or `../bin/macos/apple-silicon/openvaf-r`)
+- compiler : `../OpenVAF-master-20260610/target/opt/openvaf-r` (or `../bin/macos/apple-silicon/openvaf-r`)
 - simulator: `../bin/macos/apple-silicon/ngspice`
 
 See `../Enhancement-4.md` (Part 1) for the full implementation writeup.

@@ -5,7 +5,7 @@ and **`@(cross(expr, dir))`** event-control support (Enhancement-8, Feature
 A), covering **DC**, **AC**, and **transient** analysis. Uses the
 **version9** toolchain:
 
-- compiler : `../OpenVAF-master/target/release/openvaf-r` (built with `--features openvaf-driver/llvm18`)
+- compiler : `../OpenVAF-master-20260610/target/opt/openvaf-r` (built with `--features openvaf-driver/llvm18`)
 - simulator: `../ngspice-46/build/src/ngspice` (locally built, OSDI-capable — not the system-wide `ngspice`)
 
 See `../Enhancement-8.md` for the full implementation writeup.
@@ -29,8 +29,8 @@ see "Known limitations" below for the (now-fixed) root cause.
 ## Running
 
 ```sh
-../OpenVAF-master/target/release/openvaf-r above_demo.va -o above_demo.osdi
-../OpenVAF-master/target/release/openvaf-r cross_demo.va -o cross_demo.osdi
+../OpenVAF-master-20260610/target/opt/openvaf-r above_demo.va -o above_demo.osdi
+../OpenVAF-master-20260610/target/opt/openvaf-r cross_demo.va -o cross_demo.osdi
 ../ngspice-46/build/src/ngspice -b dc_sim_above.cir
 ../ngspice-46/build/src/ngspice -b ac_sim_above.cir
 ../ngspice-46/build/src/ngspice -b tran_above.cir

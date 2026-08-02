@@ -4,7 +4,7 @@ Self-contained correctness example for OpenVAF's new **`@(timer(t0, period))`**
 event-control support (Enhancement-8, Feature A), covering **DC**, **AC**,
 and **transient** analysis. Uses the **version9** toolchain:
 
-- compiler : `../OpenVAF-master/target/release/openvaf-r` (built with `--features openvaf-driver/llvm18`)
+- compiler : `../OpenVAF-master-20260610/target/opt/openvaf-r` (built with `--features openvaf-driver/llvm18`)
 - simulator: `../ngspice-46/build/src/ngspice` (locally built, OSDI-capable — not the system-wide `ngspice`)
 
 See `../Enhancement-8.md` for the full implementation writeup, and
@@ -21,7 +21,7 @@ persistent tick counter exposed on `V(out)`. Also reports each firing via
 ## Running
 
 ```sh
-../OpenVAF-master/target/release/openvaf-r timer_demo.va -o timer_demo.osdi
+../OpenVAF-master-20260610/target/opt/openvaf-r timer_demo.va -o timer_demo.osdi
 ../ngspice-46/build/src/ngspice -b dc_sim_timer.cir
 ../ngspice-46/build/src/ngspice -b ac_sim_timer.cir
 ../ngspice-46/build/src/ngspice -b tran_timer.cir

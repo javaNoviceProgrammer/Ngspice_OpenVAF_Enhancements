@@ -5,7 +5,7 @@ Self-contained correctness example for the Verilog-A `zi_nd`/`zi_np`/
 **DC**, **AC**, and **Transient** analysis. Everything here uses the
 **version7** toolchain:
 
-- compiler : `../OpenVAF-master-20260610/target/release/openvaf-r`
+- compiler : `../OpenVAF-master-20260610/target/opt/openvaf-r`
 - simulator: `../ngspice-46/build/src/ngspice`
 
 See `../Enhancement-6.md` (§4) for the full implementation writeup.
@@ -63,7 +63,7 @@ zi_examples/
 ## Reproduce
 
 ```bash
-OPENVAF=../OpenVAF-master-20260610/target/release/openvaf-r
+OPENVAF=../OpenVAF-master-20260610/target/opt/openvaf-r
 NGSPICE=../ngspice-46/build/src/ngspice
 
 $OPENVAF zi_lpf.va -o zi_lpf.osdi

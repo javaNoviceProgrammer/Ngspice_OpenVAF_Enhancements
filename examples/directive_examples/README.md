@@ -7,7 +7,7 @@ directives** added in Enhancement-6 (`` `default_discipline ``,
 `` `undefineall ``, `` `default_nettype ``), covering **DC**, **AC**, and
 **Transient** analysis. Everything here uses the **version7** toolchain:
 
-- compiler : `../OpenVAF-master-20260610/target/release/openvaf-r`
+- compiler : `../OpenVAF-master-20260610/target/opt/openvaf-r`
 - simulator: `../ngspice-46/build/src/ngspice`
 
 See `../Enhancement-6.md` (§1) for the full implementation writeup — before
@@ -67,7 +67,7 @@ directive_examples/
 ## Reproduce
 
 ```bash
-OPENVAF=../OpenVAF-master-20260610/target/release/openvaf-r
+OPENVAF=../OpenVAF-master-20260610/target/opt/openvaf-r
 NGSPICE=../ngspice-46/build/src/ngspice
 
 $OPENVAF directive_demo.va -o directive_demo.osdi

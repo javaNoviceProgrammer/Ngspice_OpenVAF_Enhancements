@@ -4,7 +4,7 @@ Self-contained correctness examples for OpenVAF/ngspice **indirect branch
 assignment** support (`<lhs> : <rhs> == <expr>;`), covering **DC**, **AC**,
 and **transient** analysis. Everything here uses the **version3** toolchain:
 
-- compiler : `../OpenVAF-master/target/release/openvaf-r` (or `../bin/macos/apple-silicon/openvaf-r`)
+- compiler : `../OpenVAF-master-20260610/target/opt/openvaf-r` (or `../bin/macos/apple-silicon/openvaf-r`)
 - simulator: `../bin/macos/apple-silicon/ngspice`
 
 See `../Enhancement-2.md` for the full implementation writeup.

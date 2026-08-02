@@ -5,7 +5,7 @@ declaration** support (`<type> [msb:lsb] name;`, with indexed read/write
 `name[i]` access via a compile-time-constant `i`). Everything here uses
 the **version5** toolchain:
 
-- compiler : `../OpenVAF-master-20260610/target/release/openvaf-r` (or `../bin/macos/apple-silicon/openvaf-r`)
+- compiler : `../OpenVAF-master-20260610/target/opt/openvaf-r` (or `../bin/macos/apple-silicon/openvaf-r`)
 - simulator: `../bin/macos/apple-silicon/ngspice`
 
 See `../Enhancement-4.md` (Part 2) for the full implementation writeup,

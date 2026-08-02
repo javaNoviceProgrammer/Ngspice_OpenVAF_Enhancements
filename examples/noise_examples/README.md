@@ -12,7 +12,7 @@ Self-contained, analytically-verified examples for OpenVAF's Verilog-A
 
 Toolchain (version10, as required):
 
-- compiler : `../OpenVAF-master/target/release/openvaf-r`
+- compiler : `../OpenVAF-master-20260610/target/opt/openvaf-r`
 - simulator: `../ngspice-46/build/src/ngspice` (locally built, OSDI-capable)
 
 See `../Enhancement-9.md` for the full implementation write-up. In particular,
@@ -54,10 +54,10 @@ behaves identically to the file form (see `../Enhancement-9.md`).
 ## Running
 
 ```sh
-../OpenVAF-master/target/release/openvaf-r thermal_noise.va    -o thermal_noise.osdi
-../OpenVAF-master/target/release/openvaf-r flicker_noise.va    -o flicker_noise.osdi
-../OpenVAF-master/target/release/openvaf-r table_noise.va      -o table_noise.osdi
-../OpenVAF-master/target/release/openvaf-r table_noise_log.va  -o table_noise_log.osdi
+../OpenVAF-master-20260610/target/opt/openvaf-r thermal_noise.va    -o thermal_noise.osdi
+../OpenVAF-master-20260610/target/opt/openvaf-r flicker_noise.va    -o flicker_noise.osdi
+../OpenVAF-master-20260610/target/opt/openvaf-r table_noise.va      -o table_noise.osdi
+../OpenVAF-master-20260610/target/opt/openvaf-r table_noise_log.va  -o table_noise_log.osdi
 ../ngspice-46/build/src/ngspice -b thermal.cir     # -> thermal_onoise.txt
 ../ngspice-46/build/src/ngspice -b flicker.cir     # -> flicker_onoise.txt
 ../ngspice-46/build/src/ngspice -b table.cir       # -> table_onoise.txt

@@ -4,7 +4,7 @@ Self-contained correctness examples for OpenVAF **module instantiation**
 support, covering **DC**, **AC**, and **transient** analysis. Uses the
 **version6** toolchain:
 
-- compiler : `../OpenVAF-master/target/release/openvaf-r` (built with `--features llvm18`)
+- compiler : `../OpenVAF-master-20260610/target/opt/openvaf-r` (built with `--features llvm18`)
 - simulator: `../ngspice-46/build/src/ngspice` (locally built, OSDI-capable — not the system-wide `ngspice`)
 
 See `../Enhancement-5.md` for the full implementation writeup.

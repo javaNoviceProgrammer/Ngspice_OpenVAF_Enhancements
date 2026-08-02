@@ -4,7 +4,7 @@ Self-contained correctness example for the Verilog-A `last_crossing(expr,
 dir)` operator added in Enhancement-6, covering **DC**, **AC**, and
 **Transient** analysis. Everything here uses the **version7** toolchain:
 
-- compiler : `../OpenVAF-master-20260610/target/release/openvaf-r`
+- compiler : `../OpenVAF-master-20260610/target/opt/openvaf-r`
 - simulator: `../ngspice-46/build/src/ngspice` — **must** be this patched
   build; a stock ngspice will not export the `OsdiLastCrossingInfo`
   symbols/runtime this example depends on.
@@ -64,7 +64,7 @@ last_crossing_examples/
 ## Reproduce
 
 ```bash
-OPENVAF=../OpenVAF-master-20260610/target/release/openvaf-r
+OPENVAF=../OpenVAF-master-20260610/target/opt/openvaf-r
 NGSPICE=../ngspice-46/build/src/ngspice   # must be this patched build
 
 $OPENVAF last_crossing_demo.va -o last_crossing_demo.osdi

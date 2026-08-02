@@ -20,7 +20,7 @@ between its terminals.
 ## Running
 
 ```sh
-../OpenVAF-master/target/release/openvaf-r repeat_demo.va -o repeat_demo.osdi
+../OpenVAF-master-20260610/target/opt/openvaf-r repeat_demo.va -o repeat_demo.osdi
 python3 verify_repeat.py
 ```
 

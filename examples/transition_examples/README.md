@@ -4,7 +4,7 @@ Self-contained correctness example for the Verilog-A `transition(x, td,
 trise, tfall)` operator added in Enhancement-6, covering **DC**, **AC**, and
 **Transient** analysis. Everything here uses the **version7** toolchain:
 
-- compiler : `../OpenVAF-master-20260610/target/release/openvaf-r`
+- compiler : `../OpenVAF-master-20260610/target/opt/openvaf-r`
 - simulator: `../ngspice-46/build/src/ngspice`
 
 See `../Enhancement-6.md` (§3) for the full implementation writeup.
@@ -59,7 +59,7 @@ transition_examples/
 ## Reproduce
 
 ```bash
-OPENVAF=../OpenVAF-master-20260610/target/release/openvaf-r
+OPENVAF=../OpenVAF-master-20260610/target/opt/openvaf-r
 NGSPICE=../ngspice-46/build/src/ngspice
 
 $OPENVAF transition_demo.va -o transition_demo.osdi

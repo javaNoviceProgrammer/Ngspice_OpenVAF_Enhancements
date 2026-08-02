@@ -26,7 +26,7 @@ if not os.path.isfile(NG):
     NG = os.path.join(ROOT, "ngspice-46", "build", "src", "ngspice")
 
 # openvaf-r, to compile the Verilog-A models for the OSDI example
-VAF = os.path.join(ROOT, "OpenVAF-master-20260610", "target", "release", "openvaf-r")
+VAF = os.path.join(ROOT, "OpenVAF-master-20260610", "target", "opt", "openvaf-r")
 if not os.path.isfile(VAF):
     VAF = os.path.join(ROOT, "bin", "macos", "apple-silicon", "openvaf-r")
 OPT_EX = os.path.join(ROOT, "examples", "optimize_examples")
