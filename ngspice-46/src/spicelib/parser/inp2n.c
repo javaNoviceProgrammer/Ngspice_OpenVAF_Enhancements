@@ -103,6 +103,38 @@ void INP2N(CKTcircuit *ckt, INPtables *tab, struct card *current) {
     return;
   }
 
+  /* Enhancement-402: FEWER nodes than the device has terminals is legal -- it is
+   * how a netlist leaves an optional terminal (a thermal or body node) absent, and
+   * the model reads that back through $port_connected. But nothing distinguished it
+   * from a TYPO, and nothing was reported either way: the missing terminals were
+   * bound to -1 below and the device silently simulated a different circuit.
+   *
+   * Say so. An omitted terminal DANGLES -- it is not grounded -- so every branch
+   * touching it carries no current; spelling that out matters because the natural
+   * assumption is the opposite. Warn rather than reject: rejecting would break the
+   * $port_connected idiom that BSIMSOI, BSIM-CMG/IMG/BULK, BSIM6 and PSP-HV rely
+   * on, and a dangling node is NOT a substitute (it reports $port_connected == 1). */
+  if (numnodes < *dev->terms) {
+    int missing;
+    fprintf(stderr,
+            "\nWarning: instance %s: %d of the %d terminals of model type '%s' "
+            "are not connected.\n",
+            name, *dev->terms - numnodes, *dev->terms, dev->name);
+    for (missing = numnodes; missing < *dev->terms; missing++) {
+      const char *tname = (dev->termNames && dev->numNames &&
+                           missing < *dev->numNames && dev->termNames[missing])
+                              ? dev->termNames[missing]
+                              : "?";
+      fprintf(stderr, "         terminal %d ('%s') is absent\n", missing + 1, tname);
+    }
+    fprintf(stderr,
+            "         The model sees $port_connected() = 0 for these, and any branch\n"
+            "         to them carries no current. They are NOT grounded -- connect\n"
+            "         them to 0 explicitly if that is what you meant.\n"
+            "         Line: %s\n\n",
+            current->line);
+  }
+
   IFC(newInstance, (ckt, mdfast, &fast, name));
 
   /* Rescan to process nodes. */
