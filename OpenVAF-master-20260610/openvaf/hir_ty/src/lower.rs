@@ -70,10 +70,29 @@ impl NatureTy {
         NatureTy::obtain(db, *nature, false)
     }
 
+    /// Enhancement-399: two natures that BOTH omit `units` are not compatible
+    /// merely because their units strings are equally absent.
+    ///
+    /// This compared `Option<String>` directly, and `None == None` is true, so
+    /// any two natures that left `units` out matched each other. `units` is an
+    /// LRM-required nature attribute but omitting it is accepted here, so the
+    /// combination was reachable from ordinary source: two unrelated natures,
+    /// neither declaring units, and a branch spanning their two disciplines
+    /// compiled silently. Declaring DIFFERENT units was correctly rejected, and
+    /// so was one-declares/one-omits -- only the both-omit case fell through.
+    ///
+    /// An absent units string proves nothing, so it must not be used as
+    /// evidence of compatibility. Fall back to the LRM's actual rule in that
+    /// case -- same base nature (`related`) -- which keeps a nature compatible
+    /// with itself and with anything derived from it, while two unrelated
+    /// natures now differ as they should.
     pub fn compatible(db: &dyn HirTyDB, nature1: NatureId, nature2: NatureId) -> bool {
         let nature1_info = db.nature_info(nature1);
         let nature2_info = db.nature_info(nature2);
-        nature1_info.units == nature2_info.units
+        match (&nature1_info.units, &nature2_info.units) {
+            (Some(units1), Some(units2)) => units1 == units2,
+            _ => nature1_info.base_nature == nature2_info.base_nature,
+        }
     }
 
     pub fn related(db: &dyn HirTyDB, nature1: NatureId, nature2: NatureId) -> bool {

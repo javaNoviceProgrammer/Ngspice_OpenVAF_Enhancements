@@ -173,7 +173,15 @@ impl Diagnostic for PreprocessorDiagnostic {
                         | '\u{2033}' | '\u{2036}' | '\u{3003}' | '\u{FF02}' => '"',
                         '\u{0660}' | '\u{06F0}' | '\u{0701}' | '\u{0702}' | '\u{2024}'
                         | '\u{A4F8}' | '\u{A60E}' | '\u{10A50}' | '\u{1D16D}' => '.',
-                        '\u{0060}' | '\u{00B4}' | '\u{02B9}' | '\u{02BB}' | '\u{02BC}'
+                        // Enhancement-399: U+0060 is the ASCII backtick ITSELF and must
+                        // not be in this table. Listing it made every plain ASCII `
+                        // count as a lookalike of itself, so a stray `endif produced
+                        //     help: characters that look similar to ascii: ` instead of `
+                        //     info: replacing these lookalikes yields '`endif'
+                        // -- advising a replacement of a character with itself, on text
+                        // that is byte-identical to the input, while never naming the
+                        // real problem (a conditional directive with no `ifdef).
+                        '\u{00B4}' | '\u{02B9}' | '\u{02BB}' | '\u{02BC}'
                         | '\u{02BD}' | '\u{02BE}' | '\u{02C8}' | '\u{02CA}' | '\u{02CB}'
                         | '\u{02F4}' | '\u{0374}' | '\u{0384}' | '\u{055A}' | '\u{055D}'
                         | '\u{05D9}' | '\u{05F3}' | '\u{07F4}' | '\u{07F5}' | '\u{144A}'
