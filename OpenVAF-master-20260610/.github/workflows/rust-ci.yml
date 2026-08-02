@@ -191,12 +191,16 @@ jobs:
 
     - name: Build
       run: |
+        # `opt` (fat LTO, one codegen unit), never `release`: it is the profile
+        # this project ships and the one bin/ is built with, and models compile
+        # ~40-55% faster under it -- timing a `release` build against a shipped
+        # binary reports a regression that is nothing but the profile.
         # Build specific packages to avoid workspace feature unification issues
         # that cause multiple llvm-sys versions to be compiled
-        cargo build --release --package openvaf-driver ${{ matrix.cargo_features }}
-        cargo build --release --package openvaf ${{ matrix.cargo_features }}
-        cargo build --release --package osdi ${{ matrix.cargo_features }}
-        cargo build --release --package mir_llvm ${{ matrix.cargo_features }}
+        cargo build --profile opt --package openvaf-driver ${{ matrix.cargo_features }}
+        cargo build --profile opt --package openvaf ${{ matrix.cargo_features }}
+        cargo build --profile opt --package osdi ${{ matrix.cargo_features }}
+        cargo build --profile opt --package mir_llvm ${{ matrix.cargo_features }}
 
     - name: Show sccache stats
       if: github.event_name != 'release' && github.event_name != 'workflow_dispatch'
@@ -209,13 +213,13 @@ jobs:
     - name: Run tests
       run: |
         # Run tests for specific packages to avoid workspace feature unification issues
-        cargo test --release --package openvaf-driver ${{ matrix.cargo_features }}
-        cargo test --release --package openvaf ${{ matrix.cargo_features }}
-        cargo test --release --package osdi ${{ matrix.cargo_features }}
-        cargo test --release --package mir_llvm ${{ matrix.cargo_features }}
+        cargo test --profile opt --package openvaf-driver ${{ matrix.cargo_features }}
+        cargo test --profile opt --package openvaf ${{ matrix.cargo_features }}
+        cargo test --profile opt --package osdi ${{ matrix.cargo_features }}
+        cargo test --profile opt --package mir_llvm ${{ matrix.cargo_features }}
 
     - name: Run integration tests
-      run: cargo test --release --package openvaf --test integration ${{ matrix.cargo_features }}
+      run: cargo test --profile opt --package openvaf --test integration ${{ matrix.cargo_features }}
 
   msys2-build-test:
     strategy:
@@ -281,7 +285,7 @@ jobs:
 
     - name: Run cargo
       shell: msys2 {0}
-      run: cargo build --release --features llvm21
+      run: cargo build --profile opt --features llvm21
     #- name: Show sccache stats
     #  if: github.event_name != 'release' && github.event_name != 'workflow_dispatch'
     #  shell: msys2 {0}
@@ -289,7 +293,7 @@ jobs:
 
     - name: Run tests
       shell: msys2 {0}
-      run: cargo test --release --features llvm21
+      run: cargo test --profile opt --features llvm21
 
   macos-build-test:
     strategy:
@@ -344,13 +348,13 @@ jobs:
         restore-keys: ${{ runner.os }}-${{runner.arch}}-llvm-cargo-
 
     - name: Build
-      run: cargo build --release --features llvm21
+      run: cargo build --profile opt --features llvm21
 
     - name: Run tests
-      run: cargo test --release --features llvm21
+      run: cargo test --profile opt --features llvm21
 
     - name: Run integration tests
-      run: cargo test --release --features llvm21 --test integration
+      run: cargo test --profile opt --features llvm21 --test integration
 
   purge-caches:
     runs-on: ubuntu-latest
