@@ -14,7 +14,8 @@ use crate::topology::Topology;
 
 fn run_test(src: &str) {
     let db = CompilationDB::new_virtual(src).unwrap();
-    let module = crate::collect_modules(&db, false, &mut ConsoleSink::new(&db)).unwrap().remove(0);
+    let mut sink = ConsoleSink::new(&db);
+    let module = crate::collect_modules(&db, false, &mut sink).unwrap().remove(0);
     let mut literals = Rodeo::new();
     let mut cx = Context::new(&db, &mut literals, &module);
     cx.compute_outputs(true);
@@ -22,7 +23,7 @@ fn run_test(src: &str) {
     cx.optimize(OptimiziationStage::Initial);
 
     let topology = Topology::new(&mut cx);
-    let mut dae_system = DaeSystem::new(&mut cx, topology);
+    let mut dae_system = DaeSystem::new(&mut cx, topology, &mut sink);
 
     cx.compute_cfg();
     let gvn = cx.optimize(OptimiziationStage::PostDerivative);

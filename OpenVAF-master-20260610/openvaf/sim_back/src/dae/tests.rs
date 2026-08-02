@@ -1,6 +1,7 @@
 use std::fs;
 
 use expect_test::expect_file;
+use hir::diagnostics::sink::Buffer;
 use hir::diagnostics::ConsoleSink;
 use hir::CompilationDB;
 use indoc::indoc;
@@ -13,14 +14,15 @@ use crate::topology;
 
 fn run_test(src: &str) {
     let db = CompilationDB::new_virtual(src).unwrap();
-    let module = crate::collect_modules(&db, false, &mut ConsoleSink::new(&db)).unwrap().remove(0);
+    let mut sink = ConsoleSink::new(&db);
+    let module = crate::collect_modules(&db, false, &mut sink).unwrap().remove(0);
     let mut literals = Rodeo::new();
     let mut context = Context::new(&db, &mut literals, &module);
     context.compute_outputs(true);
     context.compute_cfg();
     context.optimize(OptimiziationStage::Initial);
     let topology = topology::Topology::new(&mut context);
-    let mut dae_system = DaeSystem::new(&mut context, topology);
+    let mut dae_system = DaeSystem::new(&mut context, topology, &mut sink);
     context.compute_cfg();
     context.optimize(OptimiziationStage::Final);
     dae_system.sparsify(&mut context);
@@ -188,4 +190,74 @@ fn bus_input_port_order() {
         endmodule
     "#};
     run_test(src);
+}
+
+/// Enhancement-400: the DAE build reports a branch that is written as both a potential
+/// and a flow source with nothing conditional between the two -- one of the contributions
+/// is dropped, and which one depends purely on statement order.
+///
+/// Both orderings must be reported and the switch-branch idiom must not be, which is the
+/// entire discrimination: only the DAE build can tell them apart, because only there is
+/// `is_voltage_src` known to be a constant rather than a runtime value.
+fn diagnostics_of(src: &str) -> String {
+    let db = CompilationDB::new_virtual(src).unwrap();
+    let mut buf = Buffer::no_color();
+    {
+        let mut sink = ConsoleSink::buffer(&db, &mut buf);
+        sink.annonymize_paths();
+        let module = crate::collect_modules(&db, false, &mut sink).unwrap().remove(0);
+        let mut literals = Rodeo::new();
+        let mut context = Context::new(&db, &mut literals, &module);
+        context.compute_outputs(true);
+        context.compute_cfg();
+        context.optimize(OptimiziationStage::Initial);
+        let topology = topology::Topology::new(&mut context);
+        DaeSystem::new(&mut context, topology, &mut sink);
+    }
+    String::from_utf8(buf.into_inner()).unwrap()
+}
+
+fn dut(body: &str) -> String {
+    format!(
+        "`include \"disciplines.vams\"\n\
+         module dut(a, b);\n\
+         inout a, b;\n\
+         electrical a, b;\n\
+         parameter real sw = 1.0;\n\
+         analog begin\n{body}end\n\
+         endmodule\n"
+    )
+}
+
+#[test]
+fn discarded_contribution() {
+    // potential first: the branch ends up a flow source, the potential is dropped
+    let diag = diagnostics_of(&dut("V(a, b) <+ 0.4;\nI(a, b) <+ 1e-3;\n"));
+    assert!(diag.contains("L022"), "{diag}");
+    assert!(
+        diag.contains("branch (a,b) is contributed as both a potential and a flow source"),
+        "{diag}"
+    );
+    assert!(diag.contains("this potential contribution is discarded"), "{diag}");
+    assert!(diag.contains("the branch is a flow source here"), "{diag}");
+
+    // flow first: the mirror image, same branch, opposite verdict
+    let diag = diagnostics_of(&dut("I(a, b) <+ 1e-3;\nV(a, b) <+ 0.4;\n"));
+    assert!(diag.contains("this flow contribution is discarded"), "{diag}");
+    assert!(diag.contains("the branch is a potential source here"), "{diag}");
+
+    // a switch branch contributes both too, but each on its own path: nothing is dropped
+    let diag =
+        diagnostics_of(&dut("if (sw != 0)\nV(a, b) <+ 0.4;\nelse\nI(a, b) <+ 1e-3;\n"));
+    assert_eq!(diag, "");
+
+    // neither is a single-kind branch, whichever kind that is
+    assert_eq!(diagnostics_of(&dut("V(a, b) <+ 0.4;\n")), "");
+    assert_eq!(diagnostics_of(&dut("I(a, b) <+ 1e-3;\n")), "");
+
+    // an explicit allow silences it
+    let diag = diagnostics_of(&dut(
+        "(* openvaf_allow=\"discarded_contribution\" *) V(a, b) <+ 0.4;\nI(a, b) <+ 1e-3;\n",
+    ));
+    assert_eq!(diag, "");
 }

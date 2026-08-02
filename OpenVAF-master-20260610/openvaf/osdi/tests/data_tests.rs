@@ -13,7 +13,8 @@ use target::spec::Target;
 fn test_compile(root_file: &Path) {
     let root_file = AbsPathBuf::assert(root_file.canonicalize().unwrap());
     let db = CompilationDB::new_fs(root_file, &[], &[], &[]).unwrap();
-    let modules = collect_modules(&db, false, &mut ConsoleSink::new(&db)).unwrap();
+    let mut sink = ConsoleSink::new(&db);
+    let modules = collect_modules(&db, false, &mut sink).unwrap();
     let target = Target::host_target().expect(
         "Failed to determine host target. This architecture may not be supported by OpenVAF. \
          Supported targets include: x86_64-unknown-linux, aarch64-unknown-linux, riscv64-unknown-linux, etc."
@@ -32,6 +33,7 @@ fn test_compile(root_file: &Path) {
         false,
         false,
         false,
+        &mut sink,
     );
 }
 

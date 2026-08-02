@@ -184,8 +184,14 @@ pub fn compile(opts: &Opts) -> Result<CompilationTermination> {
         CompilationDestination::Path { lib_file } => lib_file.clone(),
     };
 
+    // Enhancement-400: one sink for the whole compilation, so the backend can report
+    // through the very channel the frontend uses instead of inventing one. `sim_back`
+    // raises the DAE-build diagnostics (a contribution written and then discarded) while
+    // `osdi::compile` walks the modules.
+    let mut sink = ConsoleSink::new(&db);
+
     // Lowering of natures from AST into HIR happens here
-    let modules = if let Some(modules) = collect_modules(&db, false, &mut ConsoleSink::new(&db)) {
+    let modules = if let Some(modules) = collect_modules(&db, false, &mut sink) {
         modules
     } else {
         return Ok(CompilationTermination::FatalDiagnostic);
@@ -208,7 +214,17 @@ pub fn compile(opts: &Opts) -> Result<CompilationTermination> {
         opts.dump_unopt_mir,
         opts.dump_ir,
         opts.dump_unopt_ir,
+        &mut sink,
     );
+
+    // A backend diagnostic raised to `deny` is fatal like any other: drop the object
+    // files the codegen already wrote and stop before linking an `.osdi` nobody asked for.
+    if sink.summary(&opts.input.file_name().unwrap()) {
+        for obj_file in paths {
+            let _ = remove_file(obj_file);
+        }
+        return Ok(CompilationTermination::FatalDiagnostic);
+    }
 
     // Dump natures, disciplines, and their attributes
     /*

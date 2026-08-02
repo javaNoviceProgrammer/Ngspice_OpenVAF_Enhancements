@@ -14,6 +14,7 @@ use std::sync::Arc;
 use basedb::diagnostics::sink::Buffer;
 use basedb::diagnostics::ConsoleSink;
 pub use basedb::diagnostics::DiagnosticSink;
+pub use basedb::lints;
 use basedb::{BaseDB, FileId};
 pub use hir_def::body::{ConstraintValue, ParamConstraint};
 use hir_def::db::HirDefDB;
@@ -39,8 +40,8 @@ pub use syntax::name::Name;
 
 pub use crate::attributes::AstCache;
 pub use crate::body::{
-    ArrayAssignElem, AssignmentLhs, Body, BodyRef, ContributeKind, Event, Expr, ExprId, Ref,
-    ResolvedFun, Stmt, StmtId,
+    ArrayAssignElem, AssignmentLhs, Body, BodyRef, ContributeKind, ContributionMap,
+    ContributionSite, Event, Expr, ExprId, Ref, ResolvedFun, Stmt, StmtId,
 };
 pub use hir_def::expr::GlobalEvent;
 pub use crate::db::CompilationDB;
@@ -175,6 +176,19 @@ impl Module {
 
     pub fn analog_block(&self, db: &CompilationDB) -> Body {
         Body::new(DefWithBodyId::ModuleId { initial: false, module: self.id }, db)
+    }
+
+    /// Enhancement-400: every contribution statement in this module's analog blocks,
+    /// bucketed by branch, each with its source range and lint anchor.
+    ///
+    /// A contribution that a later contribution of the other kind overwrites is gone by
+    /// the time the backend sees it -- `hir_lower::stmt::contribute_value` resets the
+    /// opposite place to zero -- and MIR carries no source positions anyway. Both facts
+    /// survive here, in the HIR. Node order and an explicit ground reference are
+    /// normalised the way `hir_lower` normalises them, so `I(a,b)` and `V(b,a)`, or
+    /// `V(a,gnd)` and `V(a)`, resolve to the same branch.
+    pub fn contribution_sites(self, db: &CompilationDB, lint: lints::Lint) -> ContributionMap {
+        body::collect_contributions(db, self.id, lint)
     }
 
     // todo: just temporary for VAE, this needs to be cleaned up

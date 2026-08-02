@@ -1,5 +1,7 @@
 use std::hash::BuildHasherDefault;
+use std::mem::take;
 
+use hir::diagnostics::{ConsoleSink, DiagnosticSink};
 use indexmap::IndexSet;
 use mir::{strip_optbarrier, Value, F_ZERO};
 use rustc_hash::FxHasher;
@@ -54,7 +56,12 @@ pub struct DaeSystem {
 }
 
 impl DaeSystem {
-    pub(crate) fn new(ctx: &mut Context, contributions: topology::Topology) -> DaeSystem {
+    pub(crate) fn new(
+        ctx: &mut Context,
+        contributions: topology::Topology,
+        sink: &mut ConsoleSink,
+    ) -> DaeSystem {
+        let db = ctx.db;
         // Topology is consumed here.
         let mut builder =
             Builder::new(ctx).with_small_signal_network(contributions.small_signal_vals);
@@ -70,6 +77,16 @@ impl DaeSystem {
                 eprintln!("DAEDBG implicit {eq:?}: {contributions:?}");
             }
         }
+
+        // Enhancement-400: the DAE build is the first stage that knows a branch's final
+        // type, and so the first that can tell a discarded contribution from a switch
+        // branch. Report through the same sink the frontend and `collect_modules` use.
+        let discarded = take(&mut builder.discarded_contributions);
+        let root_file = db.compilation_unit().root_file();
+        for diagnostic in &discarded {
+            sink.add_diagnostic(diagnostic, root_file, db);
+        }
+
         let sys = builder.finish();
         if std::env::var("OPENVAF_DAE_DEBUG").is_ok() {
             for (u, r) in sys.unknowns.iter_enumerated().zip(&sys.residual).map(|((u, k), r)| ((u, k), r)) {

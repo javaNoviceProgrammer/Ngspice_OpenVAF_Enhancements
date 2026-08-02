@@ -1,14 +1,16 @@
 use std::sync::Arc;
 
+use basedb::lints::{Lint, LintSrc};
 use hir_def::db::HirDefDB;
 pub use hir_def::expr::Event;
-use hir_def::DefWithBodyId;
+use hir_def::{DefWithBodyId, ModuleId};
 pub use hir_def::{/*expr::CaseCond,*/ BuiltIn, Case, CaseKind, ExprId, Literal, ParamSysFun, StmtId, Type,};
 use hir_ty::db::HirTyDB;
 use hir_ty::inference;
 use hir_ty::types::{Signature, Ty};
 pub use syntax::ast::{BinaryOp, UnaryOp};
 pub use syntax::name::Name;
+use syntax::TextRange;
 
 use crate::{
     Branch, BranchWrite, CompilationDB, Function, FunctionArg, NatureAttribute, Node, Parameter,
@@ -27,6 +29,152 @@ impl Body {
 
     pub fn borrow(&self) -> BodyRef<'_> {
         BodyRef { body: &self.body, infere: &self.infere }
+    }
+}
+
+/// Enhancement-400: one contribution statement, as written in the source.
+///
+/// Produced by [`crate::Module::contribution_sites`] so that a diagnostic raised in the
+/// backend -- which only sees MIR values -- can still point at the statement that wrote
+/// the contribution and honour a lint attribute placed on it.
+#[derive(Debug, Clone, Copy)]
+pub struct ContributionSite {
+    /// `true` for a potential contribution (`V(..) <+ ..`), `false` for a flow one.
+    pub potential: bool,
+    /// `true` for the indirect form (`V(out) : V(a,b) == 0;`).
+    pub indirect: bool,
+    /// `true` when the contributed expression is a literal zero. Such a contribution
+    /// carries no value: `V(a,b) <+ 0` is a node-collapse request, delivered by a
+    /// `CollapseHint` callback rather than by the branch's residual, and `I(a,b) <+ 0`
+    /// is a no-op. Discarding one discards nothing.
+    pub zero: bool,
+    /// Source range of the whole statement.
+    pub range: TextRange,
+    /// Lint anchor of the statement, so `(* openvaf_allow=".." *)` on it (or on any
+    /// enclosing scope) is honoured.
+    pub lint_src: LintSrc,
+}
+
+/// Every contribution statement of a module's analog blocks, bucketed by the branch it
+/// writes.
+///
+/// Built once per module (see [`crate::Module::contribution_sites`]) and then queried per
+/// branch, so a backend that walks every branch does not re-walk the body every time.
+#[derive(Debug, Default)]
+pub struct ContributionMap {
+    branches: Vec<(BranchWrite, Vec<ContributionSite>)>,
+}
+
+impl ContributionMap {
+    /// The contributions written to `branch`, in source order; empty if there are none.
+    pub fn get(&self, db: &CompilationDB, branch: BranchWrite) -> &[ContributionSite] {
+        self.branches
+            .iter()
+            .find(|(candidate, _)| same_branch(db, branch, *candidate))
+            .map_or(&[], |(_, sites)| sites.as_slice())
+    }
+
+    /// Adds every contribution found in `def`'s body.
+    ///
+    /// Reads `assignment_destination` directly rather than going through
+    /// [`BodyRef::get_stmt`]: it must stay total over every statement it meets, and both
+    /// the direct (`<+`) and the indirect (`:`) form land in that one map -- the indirect
+    /// form contributes too, since `hir_lower::stmt::indirect_contribute` feeds its fresh
+    /// implicit unknown through the very same `contribute_value`.
+    fn collect_body(&mut self, db: &CompilationDB, def: DefWithBodyId, lint: Lint) {
+        let body = db.body(def);
+        let sm = db.body_source_map(def);
+        let infere = db.inference_result(def);
+
+        for (&stmt, dst) in infere.assignment_destination.iter() {
+            let (potential, write) = match *dst {
+                inference::AssignDst::Potential(write) => (true, write),
+                inference::AssignDst::Flow(write) => (false, write),
+                _ => continue,
+            };
+            let range = match sm.stmt_map_back[stmt].as_ref() {
+                Some(ptr) => ptr.range(),
+                // a statement with no source position has nothing to point at; leave it
+                // out rather than pointing at offset 0
+                None => continue,
+            };
+            // the same literal-zero test `hir_lower::stmt::contribute` applies when it
+            // decides a contribution is a collapse request
+            let zero = match body.stmts[stmt] {
+                hir_def::Stmt::Assignment { val, .. } => match body.exprs[val] {
+                    hir_def::Expr::Literal(ref lit) => lit.is_zero(),
+                    _ => false,
+                },
+                _ => false,
+            };
+            let site = ContributionSite {
+                potential,
+                indirect: infere.indirect_branch_constraints.contains_key(&stmt),
+                zero,
+                range,
+                lint_src: sm.lint_src(stmt, lint),
+            };
+            let write: BranchWrite = write.into();
+            match self.branches.iter_mut().find(|(branch, _)| same_branch(db, write, *branch)) {
+                Some((_, sites)) => sites.push(site),
+                None => self.branches.push((write, vec![site])),
+            }
+        }
+    }
+
+    /// `assignment_destination` is a hash map, so both the bucket order and the order
+    /// within a bucket are arbitrary. Only the latter is observable (a report lists a
+    /// bucket's sites), so sort each bucket into source order.
+    fn sort(&mut self) {
+        for (_, sites) in &mut self.branches {
+            sites.sort_by_key(|site| site.range.start());
+        }
+    }
+}
+
+pub(crate) fn collect_contributions(
+    db: &CompilationDB,
+    module: ModuleId,
+    lint: Lint,
+) -> ContributionMap {
+    let mut res = ContributionMap::default();
+    for initial in [true, false] {
+        res.collect_body(db, DefWithBodyId::ModuleId { initial, module }, lint);
+    }
+    res.sort();
+    res
+}
+
+/// Do two branch writes name the same branch?
+///
+/// `hir_lower::stmt::lower_contribute_unnamed_branch` drops ground references and folds
+/// `(lo,hi)` onto an already-seen `(hi,lo)`, so the branch the backend reports may be
+/// spelled differently from the statement that wrote it. Compare the way lowering does:
+/// ground-free, order-free.
+fn same_branch(db: &CompilationDB, a: BranchWrite, b: BranchWrite) -> bool {
+    match (a, b) {
+        (BranchWrite::Named(a), BranchWrite::Named(b)) => a == b,
+        (
+            BranchWrite::Unnamed { hi: a_hi, lo: a_lo },
+            BranchWrite::Unnamed { hi: b_hi, lo: b_lo },
+        ) => {
+            let nodes = |hi: Node, lo: Option<Node>| {
+                let mut res: Vec<Node> = Vec::with_capacity(2);
+                for node in [Some(hi), lo].into_iter().flatten() {
+                    if !node.is_gnd(db) {
+                        res.push(node)
+                    }
+                }
+                res
+            };
+            let (a, b) = (nodes(a_hi, a_lo), nodes(b_hi, b_lo));
+            match (a.len(), b.len()) {
+                (1, 1) => a[0] == b[0],
+                (2, 2) => (a[0] == b[0] && a[1] == b[1]) || (a[0] == b[1] && a[1] == b[0]),
+                _ => false,
+            }
+        }
+        _ => false,
     }
 }
 

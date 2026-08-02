@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
 use bitset::{BitSet, SparseBitMatrix};
-use hir::{CompilationDB, Variable};
+use hir::{BranchWrite, CompilationDB, Variable};
 use hir_lower::{CallBackKind, HirInterner, MirBuilder, ParamKind, PlaceKind};
 use lasso::Rodeo;
 use mir::{Block, ControlFlowGraph, DominatorTree, Function, Inst, Value};
@@ -12,6 +12,7 @@ use mir_opt::{
 };
 use stdx::packed_option::PackedOption;
 
+use crate::util::strip_optbarrier_if_const;
 use crate::ModuleInfo;
 
 pub(crate) struct Context<'a> {
@@ -24,6 +25,10 @@ pub(crate) struct Context<'a> {
     pub(crate) output_values: BitSet<Value>,
     pub(crate) op_dependent_insts: BitSet<Inst>,
     pub(crate) op_dependent_vals: Vec<Value>,
+    /// Enhancement-400: branches whose potential/flow character is already decided in the
+    /// unoptimized MIR -- the model contributes only one kind to them, on every path it
+    /// wrote. See [`Context::new`] for why this cannot be asked later.
+    pub(crate) unconditional_branch_kind: HashSet<BranchWrite>,
 }
 
 #[derive(PartialEq, Eq, Debug)]
@@ -91,6 +96,29 @@ impl<'a> Context<'a> {
         .build(literals);
         intern.insert_var_init(db, &mut func, literals);
 
+        // Enhancement-400: which branches are a single kind of source *as the model
+        // writes them*, before any optimization runs. Read here and nowhere later,
+        // because the answer changes: constant propagation folds an `if` whose condition
+        // is a configuration constant, and a branch the author wrote as a proper switch
+        // then looks exactly like one written as a plain source with a stray contribution
+        // of the other kind. Lowering has already dropped a phi whose arms agree, so a
+        // branch that is the same kind on every path still reads constant here.
+        let unconditional_branch_kind = intern
+            .outputs
+            .iter()
+            .filter_map(|(kind, val)| {
+                let branch = match *kind {
+                    PlaceKind::IsVoltageSrc(branch) => branch,
+                    _ => return None,
+                };
+                match strip_optbarrier_if_const(&func, val.expand()?) {
+                    mir::TRUE => Some(branch),
+                    mir::FALSE => Some(branch),
+                    _ => None,
+                }
+            })
+            .collect();
+
         Context {
             output_values: BitSet::new_empty(func.dfg.num_values()),
             func,
@@ -101,6 +129,7 @@ impl<'a> Context<'a> {
             module,
             op_dependent_insts: BitSet::new_empty(0),
             op_dependent_vals: Vec::new(),
+            unconditional_branch_kind,
         }
     }
 

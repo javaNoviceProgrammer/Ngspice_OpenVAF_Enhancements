@@ -1,5 +1,6 @@
 use bitset::BitSet;
-use hir::{BranchWrite, CompilationDB, Node, ParamSysFun};
+use hir::lints::builtin::discarded_contribution;
+use hir::{BranchWrite, CompilationDB, ContributionMap, Node, ParamSysFun};
 use hir_lower::{CurrentKind, HirInterner, ImplicitEquation, ParamKind};
 use indexmap::IndexSet;
 use mir::builder::InstBuilder;
@@ -10,7 +11,7 @@ use mir::{
 };
 use mir_autodiff::auto_diff;
 use rustc_hash::FxHasher;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::hash::BuildHasherDefault;
 use std::mem::replace;
 use std::vec;
@@ -20,10 +21,11 @@ use crate::context::Context;
 use crate::dae::{
     DaeSystem, MatrixEntry, Residual, ResidualNatureKind, SimUnknown,
 };
+use crate::diagnostics::DiscardedContribution;
 use crate::noise::{NoiseSource, NoiseSourceKind};
 use crate::topology::{BranchInfo, Contribution};
 use crate::util::{add, is_op_dependent, update_optbarrier};
-use crate::SimUnknownKind;
+use crate::{ModuleInfo, SimUnknownKind};
 
 impl Residual {
     fn add(&mut self, cursor: &mut FuncCursor, negate: bool, mut val: Value) {
@@ -60,11 +62,21 @@ pub(super) struct Builder<'a> {
     pub(super) system: DaeSystem,
     pub(super) cursor: FuncCursor<'a>,
     pub(super) db: &'a CompilationDB,
+    pub(super) module: &'a ModuleInfo,
     pub(super) intern: &'a mut HirInterner,
     pub(super) cfg: &'a mut ControlFlowGraph,
     pub(super) dom_tree: &'a mut DominatorTree,
     pub(super) op_dependent_insts: &'a BitSet<Inst>,
     pub(super) output_values: &'a mut BitSet<Value>,
+    /// Enhancement-400: see [`Context::unconditional_branch_kind`].
+    pub(super) unconditional_branch_kind: &'a HashSet<BranchWrite>,
+    /// Enhancement-400: this module's contribution statements bucketed by branch, built
+    /// from the HIR on first use (every module has branches, but a module with no analog
+    /// block at all should not pay for the walk).
+    pub(super) contribution_sites: Option<ContributionMap>,
+    /// Enhancement-400: branches written as both a potential and a flow source, collected
+    /// here and reported by [`DaeSystem::new`] once the whole system is built.
+    pub(super) discarded_contributions: Vec<DiscardedContribution>,
 }
 
 impl<'a> Builder<'a> {
@@ -74,11 +86,15 @@ impl<'a> Builder<'a> {
             system: DaeSystem::default(),
             cursor: FuncCursor::new(&mut ctx.func).at_exit(),
             db: ctx.db,
+            module: ctx.module,
             intern: &mut ctx.intern,
             cfg: &mut ctx.cfg,
             dom_tree: &mut ctx.dom_tree,
             op_dependent_insts: &ctx.op_dependent_insts,
             output_values: &mut ctx.output_values,
+            unconditional_branch_kind: &ctx.unconditional_branch_kind,
+            contribution_sites: None,
+            discarded_contributions: Vec::new(),
         };
 
         // ensure ports are the first unknowns and always have an unknown
@@ -409,12 +425,64 @@ impl<'a> Builder<'a> {
         res
     }
 
+    /// Enhancement-400: `is_voltage_src` is a CONSTANT here, so on every path the last
+    /// contribution to `branch` was of the kind named by `kept_potential`, and the branch
+    /// is built as a plain potential or flow source. If the module *also* contributes the
+    /// other kind to it, that contribution can never take effect: its value reaches
+    /// neither the residual nor the Jacobian, and nothing said so.
+    ///
+    /// No single stage can answer this. The DAE build knows the branch is not a switch --
+    /// a genuine switch branch has a runtime `is_voltage_src` and lands in the `_` arm
+    /// below, where both kinds stay live -- but it cannot see the discarded contribution
+    /// at all, because `hir_lower::stmt::contribute_value` resets the opposite place to
+    /// zero as it writes, so `BranchInfo` reports it as trivially zero exactly like a
+    /// contribution that was never written. The HIR still has both statements, so ask it;
+    /// and the unoptimized MIR (below) decides whether the model or the optimizer made
+    /// the branch single-kind.
+    fn check_discarded_contribution(&mut self, branch: BranchWrite, kept_potential: bool) {
+        // ... but only if the model itself decided the branch's kind. Optimization can
+        // also make `is_voltage_src` constant, by folding an `if` whose condition is a
+        // configuration constant -- a `\`ifdef`-driven mode selector, say. The surviving
+        // arm of a correctly written switch branch is not a discarded contribution, it is
+        // the configuration doing its job, so ask the unoptimized MIR instead.
+        if !self.unconditional_branch_kind.contains(&branch) {
+            return;
+        }
+        let db = self.db;
+        let sites = self
+            .contribution_sites
+            .get_or_insert_with(|| {
+                self.module.module.contribution_sites(db, discarded_contribution)
+            })
+            .get(db, branch);
+        if !sites.iter().any(|site| site.potential != kept_potential && !site.zero) {
+            return;
+        }
+        let name = match branch {
+            BranchWrite::Named(branch) => branch.name(db),
+            BranchWrite::Unnamed { hi, lo: Some(lo) } => {
+                format!("({},{})", hi.name(db), lo.name(db))
+            }
+            BranchWrite::Unnamed { hi, lo: None } => format!("({})", hi.name(db)),
+        };
+        let sites = sites.to_vec();
+        self.discarded_contributions.push(DiscardedContribution {
+            branch: name,
+            module: self.module.module.name(db),
+            kept_potential,
+            sites,
+        });
+    }
+
     pub(super) fn build_branch(&mut self, branch: BranchWrite, contributions: &BranchInfo) {
         let current = branch.into();
         // contributions.is_voltage_src is a Value that is used for choosing the branch type (voltage, current)
         match contributions.is_voltage_src {
             // If it is constant FALSE; this is a current branch
             FALSE => {
+                // Enhancement-400: a flow branch the module also contributes a
+                // potential to -- that potential value is computed and thrown away.
+                self.check_discarded_contribution(branch, false);
                 // if the current of the branch is probed we need to create an extra
                 // branch
                 let requires_unknown =
@@ -439,6 +507,9 @@ impl<'a> Builder<'a> {
             }
             // If it is constant TRUE; this is a voltage branch
             TRUE => {
+                // Enhancement-400: the mirror image -- a potential branch the module
+                // also contributes a flow to.
+                self.check_discarded_contribution(branch, true);
                 // branches only used for node collapsing look like pure current
                 // sources, make sure to ignore these branches
                 let requires_unknown =

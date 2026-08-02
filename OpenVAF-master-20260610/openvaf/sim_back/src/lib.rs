@@ -1,3 +1,4 @@
+use hir::diagnostics::ConsoleSink;
 use hir::{BranchWrite, CompilationDB, Node, ParamSysFun};
 use hir_lower::{CurrentKind, HirInterner, ImplicitEquation, ParamKind};
 use lasso::Rodeo;
@@ -14,6 +15,7 @@ use crate::topology::Topology;
 
 mod context;
 pub mod dae;
+mod diagnostics;
 pub mod init;
 mod module_info;
 pub mod node_collapse;
@@ -159,6 +161,7 @@ impl<'a> CompiledModule<'a> {
         literals: &mut Rodeo,
         dump_unopt_mir: bool,
         dump_mir: bool,
+        sink: &mut ConsoleSink,
     ) -> CompiledModule<'a> {
         // Build MIR for the module
         let mut cx = Context::new(db, literals, module);
@@ -178,7 +181,7 @@ impl<'a> CompiledModule<'a> {
         let topology = Topology::new(&mut cx);
         debug_assert!(cx.func.validate());
         let _t0 = std::time::Instant::now();
-        let mut dae_system = DaeSystem::new(&mut cx, topology);
+        let mut dae_system = DaeSystem::new(&mut cx, topology, sink);
         if std::env::var("PHASE_PROF").is_ok() {
             eprintln!("PHASE dae+tensors {:?}  insts={}", _t0.elapsed(), cx.func.dfg.num_insts());
         }
