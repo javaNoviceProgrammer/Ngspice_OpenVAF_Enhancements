@@ -304,6 +304,55 @@ impl Ctx {
     /// This does NOT conflict with Enhancement-56, which refuses to range-check a
     /// parameter's DEFAULT: a paramset override is a supplied value, not a
     /// default, and is exactly what a range is meant to bind.
+    /// Enhancement-399: a declared range that no value can satisfy.
+    ///
+    /// `from [3:1]` (inverted) and `from (1:1)` (open and degenerate) were both
+    /// accepted. The consequence is not cosmetic: the DEFAULT bypasses range
+    /// checking by design (Enhancement-56), so the parameter still reads its
+    /// default, but EVERY value supplied from a netlist is rejected at run time.
+    /// The parameter is silently unsettable, and the declaration -- which is
+    /// where the mistake is -- said nothing.
+    ///
+    /// Only literal bounds are folded, deliberately: a bound built from another
+    /// parameter is not knowable here, and `inf` does not fold, so `from (0:inf)`
+    /// is untouched.
+    fn check_param_range_satisfiable(
+        &mut self,
+        name: &Name,
+        param_ast: &ast::Param,
+        ast_id: ErasedAstId,
+    ) {
+        for c in param_ast.constraints() {
+            if c.kind() != Some(ConstraintKind::From) {
+                continue;
+            }
+            let Some(ast::ConstraintValue::Range(r)) = c.val() else { continue };
+            let (Some(lo), Some(hi)) =
+                (r.start().and_then(|e| Self::const_num(&e)), r.end().and_then(|e| Self::const_num(&e)))
+            else {
+                continue;
+            };
+            let why = if lo > hi {
+                Some(format!("its lower bound {lo} is above its upper bound {hi}"))
+            } else if lo == hi && !(r.start_inclusive() && r.end_inclusive()) {
+                Some(format!(
+                    "both bounds are {lo} and at least one of them is exclusive"
+                ))
+            } else {
+                None
+            };
+            if let Some(why) = why {
+                self.tree.diagnostics.push(ItemTreeDiagnostic::ParamRangeEmpty {
+                    ast_id,
+                    name: name.clone(),
+                    constraint: Self::range_text(&r).into_boxed_str(),
+                    why: why.into_boxed_str(),
+                });
+                return;
+            }
+        }
+    }
+
     fn check_paramset_range(
         &mut self,
         name: &Name,
@@ -1564,6 +1613,7 @@ impl Ctx {
             let Some(name) = param.name() else { continue };
             let base_name = name.as_name();
             let ast_id = self.source_ast_id_map.ast_id(&param);
+            self.check_param_range_satisfiable(&base_name, &param, ast_id.into());
             // Enhancement-102: prefer the shared decl-level dims; otherwise fall
             // back to this name's own name-then-range dims (empty for a scalar).
             let widths: Vec<ast::Range> =

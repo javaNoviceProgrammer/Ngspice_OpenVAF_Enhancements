@@ -102,6 +102,15 @@ pub enum ItemTreeDiagnostic {
         value: Box<str>,
         constraint: Box<str>,
     },
+    /// Enhancement-399: a parameter's own declared range can never hold any
+    /// value, so the parameter is unsettable -- every supplied value is rejected
+    /// at run time and nothing said so at compile time.
+    ParamRangeEmpty {
+        ast_id: ErasedAstId,
+        name: Name,
+        constraint: Box<str>,
+        why: Box<str>,
+    },
     /// Enhancement-396: a bus port whose DIRECTION declaration and NET
     /// declaration state different ranges (`inout [0:2] b; electrical [0:4] b;`).
     /// The direction range silently won and the net's extra bits were discarded,

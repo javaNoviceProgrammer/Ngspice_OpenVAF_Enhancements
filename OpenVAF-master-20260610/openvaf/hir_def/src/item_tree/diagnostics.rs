@@ -161,6 +161,26 @@ impl Diagnostic for ItemTreeDiagnosticWrapped<'_> {
                         "the FIRST assignment is the one that takes effect".to_owned(),
                     ])
             }
+            ItemTreeDiagnostic::ParamRangeEmpty { ast_id, name, constraint, why } => {
+                let range = self.ast_id_map.get_syntax(*ast_id).range();
+                let span = self.parse.to_file_span(range, self.sm);
+                Report::error()
+                    .with_message(format!(
+                        "parameter '{name}' declares the range {constraint}, which no \
+                         value can satisfy"
+                    ))
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: span.file,
+                        range: span.range.into(),
+                        message: format!("empty range: {why}"),
+                    }])
+                    .with_notes(vec![
+                        "the parameter keeps its default, but every value supplied from a \
+                         netlist is rejected at run time"
+                            .to_owned(),
+                    ])
+            }
             ItemTreeDiagnostic::ParamsetOverrideOutOfRange {
                 ast_id, name, value, constraint,
             } => {
