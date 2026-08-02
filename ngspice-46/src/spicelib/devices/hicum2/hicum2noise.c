@@ -128,7 +128,14 @@ HICUMnoise (int mode, int operation, GENmodel *genmodel, CKTcircuit *ckt, Ndata 
                 case N_DENS:
 
                     if (here->HICUMtempGiven)
-                        dtemp = here->HICUMtemp - ckt->CKTtemp + (model->HICUMtnom-CONSTCtoK);
+                        /* Enhancement-403: `param2` of NevalSrcInstanceTemp is a
+                         * DELTA -- it computes 4kT(CKTtemp + param2)G -- so it must be
+                         * the device temperature MINUS the circuit temperature and
+                         * nothing else. The `+ (tnom - CONSTCtoK)` that used to sit
+                         * here added the NOMINAL temperature expressed in CELSIUS (27
+                         * by default) to that delta, inflating thermal noise power by
+                         * ~9%% at room temperature for any instance carrying temp=. */
+                        dtemp = here->HICUMtemp - ckt->CKTtemp;
                     else
                         dtemp = here->HICUMdtemp;
 

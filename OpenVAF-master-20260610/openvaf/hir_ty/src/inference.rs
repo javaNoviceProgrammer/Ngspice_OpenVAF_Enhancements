@@ -1941,10 +1941,20 @@ impl Ctx<'_> {
                         .map_or(false, |req| ty.satisfies_with_conversion(req))
                 });
                 if new_candidates.is_empty() {
-                    let candidate_types: Vec<TyRequirement> = candidates
-                        .iter()
-                        .filter_map(|candidate| signatures[*candidate].args.get(i).cloned())
-                        .collect();
+                    // Enhancement-403: one entry per surviving CANDIDATE SIGNATURE, but
+                    // several signatures of the same builtin often want the SAME type at
+                    // a given position -- `ac_stim`'s three argument-taking forms all
+                    // start with a string literal -- and the renderer joins the list
+                    // verbatim. Undeduplicated that reads "expected string literal,
+                    // string literal or string literal". Keep first-seen order.
+                    let mut candidate_types: Vec<TyRequirement> = Vec::new();
+                    for candidate in &candidates {
+                        if let Some(req) = signatures[*candidate].args.get(i) {
+                            if !candidate_types.contains(req) {
+                                candidate_types.push(req.clone());
+                            }
+                        }
+                    }
                     debug_assert_ne!(&candidate_types, &[]);
                     errors.push(TypeMismatch {
                         expected: Cow::from(candidate_types),

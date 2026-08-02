@@ -90,7 +90,14 @@ RESnoise(int mode, int operation, GENmodel*genmodel, CKTcircuit *ckt,
                 case N_DENS:
 
                     if (inst->REStempGiven)
-                        dtemp = inst->REStemp - ckt->CKTtemp + (model->REStnom-CONSTCtoK);
+                        /* Enhancement-403: `param2` of NevalSrcInstanceTemp is a
+                         * DELTA -- it computes 4kT(CKTtemp + param2)G -- so it must be
+                         * the device temperature MINUS the circuit temperature and
+                         * nothing else. The `+ (tnom - CONSTCtoK)` that used to sit
+                         * here added the NOMINAL temperature expressed in CELSIUS (27
+                         * by default) to that delta, inflating thermal noise power by
+                         * ~9%% at room temperature for any instance carrying temp=. */
+                        dtemp = inst->REStemp - ckt->CKTtemp;
                     else
                         dtemp = inst->RESdtemp;
 
