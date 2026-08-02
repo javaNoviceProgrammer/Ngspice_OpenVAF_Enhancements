@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use arena::IdxRange;
 use basedb::{AstId, AstIdMap, ErasedAstId, FileId};
-use syntax::ast::{self, ParamRef, PathSegmentKind};
+use syntax::ast::{self, BinaryOp, ParamRef, PathSegmentKind, UnaryOp};
 use syntax::name::{kw, AsIdent, AsName, Name};
 use syntax::ast::ConstraintKind;
 use syntax::{match_ast, AstNode, ConstExprValue, WalkEvent};
@@ -42,13 +42,53 @@ fn array_elem_count(dims: &[(i32, i32)]) -> Option<i64> {
     (n <= MAX_ARRAY_ELEMS).then_some(n)
 }
 
-fn fold_width_range(range: &ast::Range) -> Option<(i32, i32)> {
-    let msb = range.start()?.as_constexprval()?;
-    let lsb = range.end()?.as_constexprval()?;
-    match (msb, lsb) {
-        (ConstExprValue::Int(msb), ConstExprValue::Int(lsb)) => Some((msb, lsb)),
-        _ => None,
+/// Enhancement-405: folds an integer CONSTANT EXPRESSION appearing in a `[msb:lsb]` bound.
+///
+/// `as_constexprval` sees only a literal with an optional unary sign, so `[0:3-1]` was
+/// rejected as "not a constant expression", and so was `` [0:`N-1] `` -- the ordinary way to
+/// size an array from a `define`. Even `[(0):(2)]` was rejected, while a *named* parameter
+/// bound `[0:P]` worked, because named bounds are resolved on a different path (E-92). The
+/// LRM asks for a constant expression here, not a literal.
+///
+/// This is deliberately a small SYNTACTIC folder and not `const_int_expr`: it runs in the
+/// item tree, BEFORE name resolution, so it cannot and must not try to resolve names -- a
+/// name still folds to `None` and takes the existing path. Division and remainder by zero
+/// fold to `None` rather than panicking, and every step is checked so an overflowing bound is
+/// reported as non-constant instead of wrapping.
+fn fold_const_int(expr: &ast::Expr) -> Option<i32> {
+    match expr {
+        ast::Expr::ParenExpr(e) => fold_const_int(&e.expr()?),
+        ast::Expr::PrefixExpr(e) => {
+            let val = fold_const_int(&e.expr()?)?;
+            match e.op_kind()? {
+                UnaryOp::Neg => val.checked_neg(),
+                UnaryOp::Identity => Some(val),
+                _ => None,
+            }
+        }
+        ast::Expr::BinExpr(e) => {
+            let lhs = fold_const_int(&e.lhs()?)?;
+            let rhs = fold_const_int(&e.rhs()?)?;
+            match e.op_details()?.1 {
+                BinaryOp::Addition => lhs.checked_add(rhs),
+                BinaryOp::Subtraction => lhs.checked_sub(rhs),
+                BinaryOp::Multiplication => lhs.checked_mul(rhs),
+                BinaryOp::Division => lhs.checked_div(rhs),
+                BinaryOp::Remainder => lhs.checked_rem(rhs),
+                BinaryOp::LeftShift => u32::try_from(rhs).ok().and_then(|s| lhs.checked_shl(s)),
+                BinaryOp::RightShift => u32::try_from(rhs).ok().and_then(|s| lhs.checked_shr(s)),
+                _ => None,
+            }
+        }
+        _ => match expr.as_constexprval()? {
+            ConstExprValue::Int(v) => Some(v),
+            _ => None,
+        },
     }
+}
+
+fn fold_width_range(range: &ast::Range) -> Option<(i32, i32)> {
+    Some((fold_const_int(&range.start()?)?, fold_const_int(&range.end()?)?))
 }
 
 /// Folds every `[msb:lsb]` width clause of an array declaration into a per-dimension
@@ -282,6 +322,7 @@ impl Ctx {
             buses: target.buses.clone(),
             var_arrays: target.var_arrays.clone(),
             param_arrays,
+            genvars: target.genvars.clone(),
         };
         Some(self.tree.data.modules.push_and_get_key(twin))
     }
@@ -647,6 +688,7 @@ impl Ctx {
         let mut buses = Vec::new();
         let mut var_arrays = Vec::new();
         let mut param_arrays = Vec::new();
+        let mut genvars = Vec::new();
         // Enhancement-90: for non-ANSI headers (`module m(in, y);` with the
         // width in a body declaration), we need each bus port's width *before*
         // creating its header placeholder so the bits stay contiguous in
@@ -672,6 +714,7 @@ impl Ctx {
             &mut buses,
             &mut var_arrays,
             &mut param_arrays,
+            &mut genvars,
         );
 
         // Enhancement-396: a bus port states its range twice -- once on the
@@ -703,7 +746,7 @@ impl Ctx {
         self.check_branch_bus_refs(&items, &buses);
 
         let res =
-            Module { name, nodes, items, ast_id, num_ports, buses, var_arrays, param_arrays };
+            Module { name, nodes, items, ast_id, num_ports, buses, var_arrays, param_arrays, genvars };
         Some(self.tree.data.modules.push_and_get_key(res))
     }
 
@@ -716,6 +759,7 @@ impl Ctx {
         buses: &mut Vec<BusDecl>,
         var_arrays: &mut Vec<BusDecl>,
         param_arrays: &mut Vec<BusDecl>,
+        genvars: &mut Vec<Name>,
     ) {
         for item in items {
             match item {
@@ -750,7 +794,11 @@ impl Ctx {
                 // Reaching here means elaboration bailed out (e.g. a loop
                 // bound that didn't constant-fold); drop the construct and
                 // leave a diagnostic rather than silently miscompiling.
-                ast::ModuleItem::GenvarDecl(_) => {}
+                ast::ModuleItem::GenvarDecl(ref decl) => {
+                    // Enhancement-405: remember the names so an unresolved reference to one
+                    // can say what it actually is.
+                    genvars.extend(decl.names().map(|n| n.as_name()));
+                }
                 ast::ModuleItem::GenerateFor(gen) => {
                     let ast_id = self.source_ast_id_map.ast_id(&gen);
                     self.tree

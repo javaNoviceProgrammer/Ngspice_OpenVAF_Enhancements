@@ -220,6 +220,17 @@ impl<'a> BodyRef<'a> {
         Some((elems, d.dims.clone(), d.indices.clone()))
     }
 
+    /// Enhancement-405: same as [`Self::dynamic_index`], for a `parameter`/`localparam`
+    /// array. Read-only by construction -- there is no assignment counterpart.
+    pub fn dynamic_param_index(
+        &self,
+        expr: ExprId,
+    ) -> Option<(Vec<Parameter>, Vec<(i32, i32)>, Vec<ExprId>)> {
+        let d = self.infere.dynamic_param_index_refs.get(&expr)?;
+        let elems = d.elems.iter().map(|&id| Parameter { id }).collect();
+        Some((elems, d.dims.clone(), d.indices.clone()))
+    }
+
     fn resolve_path(&self, expr: ExprId) -> Ref {
         match self.infere.expr_types[expr] {
             Ty::Var(_, id) => Ref::Variable(Variable { id }),
@@ -321,7 +332,9 @@ impl<'a> BodyRef<'a> {
         // resolved"). Answer the SHAPE question here instead, which keeps `get_expr`
         // total for every caller; the value itself is still lowered by `lower_expr`'s
         // `dynamic_index()` short-circuit, exactly as before.
-        if self.infere.dynamic_index_refs.contains_key(&expr) {
+        if self.infere.dynamic_index_refs.contains_key(&expr)
+            || self.infere.dynamic_param_index_refs.contains_key(&expr)
+        {
             return Expr::DynIndexRead;
         }
         match self.body.exprs[expr] {

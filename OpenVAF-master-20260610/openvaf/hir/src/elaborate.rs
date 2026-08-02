@@ -1352,6 +1352,34 @@ fn check_genvar_collisions(module_ast: &ast::ModuleDecl) -> anyhow::Result<()> {
             );
         }
     }
+
+    // Enhancement-405: a genvar referenced from an `analog` block.
+    //
+    // Elaboration ERASES genvar declarations textually, so such a reference reached name
+    // resolution against a source where the declaration no longer existed and was reported
+    // as "'g' was not found in the current scope" -- the message for a name that was never
+    // declared, in front of a user looking straight at the declaration. Only `analog` items
+    // are searched, which is where the mistake is made; a reference from inside a `generate`
+    // construct is the genvar doing its job and is untouched.
+    if !genvars.is_empty() {
+        for item in module_ast.module_items() {
+            let ast::ModuleItem::AnalogBehaviour(analog) = item else { continue };
+            for tok in analog.syntax().descendants_with_tokens().filter_map(|it| it.into_token()) {
+                if tok.kind() != syntax::SyntaxKind::IDENT {
+                    continue;
+                }
+                let text = tok.text();
+                if genvars.iter().any(|g| g == text) {
+                    anyhow::bail!(
+                        "genvar '{text}' cannot be used inside an analog block: a genvar is the \
+                         loop index of a `generate for`, unrolled at elaboration time, and holds \
+                         no value during simulation -- declare an `integer` to count in an \
+                         analog block, or move the loop into a `generate` block"
+                    );
+                }
+            }
+        }
+    }
     Ok(())
 }
 

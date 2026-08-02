@@ -362,6 +362,15 @@ pub struct Module {
     /// resolve bit-select expressions (`c[i]`) into the expanded per-element parameters, exactly
     /// as `var_arrays` does for array variables. See Enhancement-14.
     pub param_arrays: Vec<BusDecl>,
+    /// Enhancement-405: names declared `genvar` in this module.
+    ///
+    /// `genvar`/`generate for` are elaborated away before the item tree is built, so a
+    /// genvar declaration used to be dropped here without a trace. A leftover reference to
+    /// one -- `genvar g;` and then `for (g = 0; ...)` inside an `analog` block -- therefore
+    /// failed to resolve with the message used for a name that was never declared at all,
+    /// which is the one thing the user could see was untrue. Kept only so that diagnostic
+    /// can tell the two apart; nothing resolves through this list.
+    pub genvars: Vec<Name>,
 }
 
 /// A vectored net/port declaration (e.g. `electrical [3:0] bus;`), or an

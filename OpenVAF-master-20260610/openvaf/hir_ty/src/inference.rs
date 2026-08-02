@@ -16,7 +16,8 @@ use hir_def::nameres::diagnostics::PathResolveError;
 use hir_def::nameres::{NatureAccess, ResolvedPath, ScopeDefItem, ScopeDefItemKind};
 use hir_def::{
     function_array_arg_vars, BranchId, BuiltIn, BusDecl, DefWithBodyId, Expr, ExprId,
-    FunctionArgLoc, FunctionId, LocalFunctionArgId, Lookup, NatureId, NodeId, ParamSysFun, Path,
+    FunctionArgLoc, FunctionId, LocalFunctionArgId, Lookup, NatureId, NodeId, ParamId,
+    ParamSysFun, Path,
     Stmt, StmtId, Type, VarId,
 };
 use stdx::impl_from;
@@ -110,6 +111,18 @@ pub struct DynArrayIndex {
     pub indices: Vec<ExprId>,
 }
 
+/// Enhancement-405: a dynamic-index READ of a `parameter`/`localparam` array.
+///
+/// Deliberately separate from [`DynArrayIndex`], which is shared with the dynamic-index
+/// WRITE path: a parameter array is read-only, and reusing that type would have made
+/// `p[i] = v` look expressible.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DynParamArrayIndex {
+    pub elems: Vec<ParamId>,
+    pub dims: Vec<(i32, i32)>,
+    pub indices: Vec<ExprId>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DynArrayIndexAssign {
     pub target: DynArrayIndex,
@@ -157,6 +170,8 @@ pub struct InferenceResult {
     pub dynamic_index_refs: AHashMap<ExprId, DynArrayIndex>,
     /// Dynamic array-element *writes* `c[i] = v` (non-constant `i`). See `DynArrayIndexAssign`.
     pub dynamic_index_assignments: AHashMap<StmtId, DynArrayIndexAssign>,
+    /// Enhancement-405: dynamic-index reads of a *parameter* array, `p[i]`.
+    pub dynamic_param_index_refs: AHashMap<ExprId, DynParamArrayIndex>,
     pub diagnostics: Vec<InferenceDiagnostic>,
 }
 
@@ -2081,6 +2096,19 @@ impl Ctx<'_> {
         let resolved_path = match self.body.stmt_scopes[stmt].resolve_path(self.db.upcast(), path) {
             Ok(resolved_path) => resolved_path,
             Err(err) => {
+                // Enhancement-405: `genvar g;` is elaborated away with the `generate for` it
+                // belongs to, so a leftover reference to one reported "was not found in the
+                // current scope" -- the same words as for a name that was never declared. The
+                // user has the declaration in front of them, so that message reads as a
+                // compiler fault rather than as their mistake. Say what it actually is.
+                if let Some(name) = path.as_ident() {
+                    if self.module_genvars().iter().any(|g| *g == name) {
+                        self.result
+                            .diagnostics
+                            .push(InferenceDiagnostic::GenvarNotUsable { expr, name });
+                        return None;
+                    }
+                }
                 self.result.diagnostics.push(InferenceDiagnostic::PathResolveError { err, expr });
                 return None;
             }
@@ -2510,6 +2538,14 @@ impl Ctx<'_> {
     }
 
     /// Like `find_var_array`, but for array-valued *parameters* (`parameter real [msb:lsb] c`).
+    /// Enhancement-405: the `genvar` names declared by the enclosing module, if any.
+    fn module_genvars(&self) -> Vec<Name> {
+        let DefWithBodyId::ModuleId { module, .. } = self.owner else { return Vec::new() };
+        let loc = module.lookup(self.db.upcast());
+        let tree = loc.item_tree(self.db.upcast());
+        tree[loc.id].genvars.clone()
+    }
+
     fn find_param_array(&self, name: &Name) -> Option<BusDecl> {
         let DefWithBodyId::ModuleId { module, .. } = self.owner else { return None };
         let loc = module.lookup(self.db.upcast());
@@ -2568,7 +2604,23 @@ impl Ctx<'_> {
             let has_bad_literal = indices
                 .iter()
                 .any(|&i| self.const_int_index(stmt, i).is_none() && self.is_literal_index(i));
-            if is_net || has_bad_literal || self.find_var_array(&base_name).is_none() {
+            // Enhancement-405: a PARAMETER array accepts a runtime index too. Its elements
+            // are ordinary MIR values, exactly like a variable array's, so `for (k=0;k<3;k=k+1)
+            // y = y + ap[k];` -- the obvious way to walk a parameter array -- had no reason to
+            // be refused. It was, with a message about a "bus bit-select" needing "a constant
+            // integer literal", for something that is neither a bus nor a literal. A vectored
+            // NET still needs constant indices (its bits are distinct simulator unknowns), and
+            // a bad literal is still a bad constant rather than a runtime index.
+            if is_net || has_bad_literal {
+                self.result
+                    .diagnostics
+                    .push(InferenceDiagnostic::NonConstantBitSelectIndex { expr });
+                return None;
+            }
+            if self.find_var_array(&base_name).is_none() {
+                if self.find_param_array(&base_name).is_some() {
+                    return self.infere_dynamic_param_bit_select(stmt, expr, &bus, indices);
+                }
                 self.result
                     .diagnostics
                     .push(InferenceDiagnostic::NonConstantBitSelectIndex { expr });
@@ -2609,6 +2661,35 @@ impl Ctx<'_> {
     /// A dynamic-index array *read* `c[i]` (non-constant `i`, `c` a variable array): records the
     /// element `VarId`s + index in `dynamic_index_refs` for the runtime select chain built by HIR
     /// lowering, and types the access as the element type. The index is coerced to an integer.
+    /// Enhancement-405: the parameter-array twin of [`Self::infere_dynamic_bit_select`].
+    fn infere_dynamic_param_bit_select(
+        &mut self,
+        stmt: StmtId,
+        expr: ExprId,
+        arr: &BusDecl,
+        indices: &[ExprId],
+    ) -> Option<Ty> {
+        let mut elems = Vec::with_capacity(arr.elem_count());
+        for idx in arr.index_tuples() {
+            let synth = Path::new_ident(arr.elem_name(&idx));
+            match self.resolve_path(stmt, expr, &synth)? {
+                ScopeDefItem::ParamId(param) => elems.push(param),
+                _ => return None,
+            }
+        }
+        let elem_ty = self.db.param_data(elems[0]).ty.clone()?;
+        for &index in indices {
+            if self.result.expr_types[index].to_value() != Some(Type::Integer) {
+                self.result.casts.insert(index, Type::Integer);
+            }
+        }
+        self.result.dynamic_param_index_refs.insert(
+            expr,
+            DynParamArrayIndex { elems, dims: arr.dims.clone(), indices: indices.to_vec() },
+        );
+        Some(Ty::Val(elem_ty))
+    }
+
     fn infere_dynamic_bit_select(
         &mut self,
         stmt: StmtId,
@@ -2741,6 +2822,11 @@ pub enum InferenceDiagnostic {
     },
 
     /// A bus bit-select index was not a compile-time-constant integer literal.
+    /// Enhancement-405: a `genvar` referenced where a value is expected.
+    GenvarNotUsable {
+        expr: ExprId,
+        name: Name,
+    },
     NonConstantBitSelectIndex {
         expr: ExprId,
     },

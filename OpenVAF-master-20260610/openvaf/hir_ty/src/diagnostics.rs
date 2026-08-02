@@ -292,7 +292,7 @@ impl Diagnostic for InferenceDiagnosticWrapped<'_> {
                     }])
                     .with_message("invalid unknown was supplied to the ddx operator")
                     .with_notes(vec![
-                        "help: expected one of the following\nbranch current access: I(branch), I(a,b)\nnode voltage: V(x)\nexplicit voltage: V(x,y)\ntemperature: $temperature".to_owned(),
+                        "help: expected one of the following\nbranch current access: I(name) for a branch declared `branch (a,b) name;` -- not I(a,b)\nnode voltage: V(x)\nexplicit voltage: V(x,y)\ntemperature: $temperature".to_owned(),
                     ])
             }
             InferenceDiagnostic::NonStandardUnknown { e, .. } => {
@@ -310,7 +310,7 @@ impl Diagnostic for InferenceDiagnosticWrapped<'_> {
                     .with_message("unknown supplied to the ddx operator is not standard compliant")
                     .with_notes(vec![
                         "note: this functionality is fully supported by openvaf\nbut other Verilog-A compilers might not support it".to_owned(),
-                        "help: expected one of the following\nbranch current access: I(branch), I(a,b)\nnode voltage: V(x)".to_owned(),
+                        "help: expected one of the following\nbranch current access: I(name) for a branch declared `branch (a,b) name;` -- not I(a,b)\nnode voltage: V(x)".to_owned(),
                     ])
             }
             InferenceDiagnostic::ExpectedProbe { e } => {
@@ -362,6 +362,26 @@ impl Diagnostic for InferenceDiagnosticWrapped<'_> {
                     .with_message("invalid bus bit-select")
                     .with_notes(vec![
                         "help: a bit-select base must be a simple bus name, e.g. `bus[2]`"
+                            .to_owned(),
+                    ])
+            }
+            InferenceDiagnostic::GenvarNotUsable { expr, ref name } => {
+                let src = self.parse.to_file_span(self.expr_range(expr), self.sm);
+                Report::error()
+                    .with_message(format!("`{name}` is a genvar and cannot be used here"))
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: src.file,
+                        range: src.range.into(),
+                        message: "genvar used as an ordinary variable".to_owned(),
+                    }])
+                    .with_notes(vec![
+                        "a genvar exists only as the loop index of a `generate for`, which is \
+                         unrolled at elaboration time; it is not a variable and holds no value \
+                         during simulation"
+                            .to_owned(),
+                        "help: to count inside an `analog` block declare an `integer` instead; \
+                         to unroll structure, put the loop in a `generate` block"
                             .to_owned(),
                     ])
             }

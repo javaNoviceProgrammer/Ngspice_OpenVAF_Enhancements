@@ -1773,7 +1773,8 @@ impl ExprValidator<'_, '_> {
                 // mishandle it (they yield an EMPTY table), so only they reject
                 // it. The rule is "reject what is silently wrong", not "reject
                 // everything that is not an array literal".
-                if let [_in, _num, _den, const_args @ ..] = args {
+                if let [_in, num, den, const_args @ ..] = args {
+                    self.check_filter_orders(call, *num, *den);
                     args = &args[..3];
                     for arg in const_args {
                         self.validate_const_expr(*arg)
@@ -1786,6 +1787,9 @@ impl ExprValidator<'_, '_> {
                 Some(_),
             ) => {
                 if let [_expr, const_args @ ..] = args {
+                    if let [num, den, ..] = const_args {
+                        self.check_filter_orders(call, *num, *den);
+                    }
                     args = &args[..1];
                     for arg in const_args {
                         self.validate_const_expr(*arg)
@@ -1864,6 +1868,95 @@ impl ExprValidator<'_, '_> {
                     expr: Some(expr),
                     stmt: self.stmt,
                 })
+            }
+        }
+    }
+
+    /// Enhancement-405: the numerator and denominator orders of a `laplace_*`/`zi_*` filter.
+    ///
+    /// Two things were silently wrong. An EMPTY coefficient list -- `zi_nd(x, '{1.0}, '{}, T, 0)`
+    /// -- underflowed `den.len() - 1` in lowering and hung the compiler at tens of GB of RSS.
+    /// And a numerator of HIGHER order than the denominator was silently TRUNCATED: the
+    /// controllable-canonical realization can only carry a direct feedthrough term, so
+    /// `laplace_nd(x, '{1.0, tau}, '{1.0})` quietly became the constant 1, and the pure
+    /// differentiator `'{0.0, tau}` over `'{1.0}` became identically ZERO.
+    ///
+    /// An improper transfer function has unbounded gain as frequency grows and has no
+    /// state-space realization, so it is rejected rather than approximated -- `ddt` is the
+    /// spelling for a genuine derivative. Lengths are only known for a written-out array, so a
+    /// runtime array variable is left alone, matching every other check here.
+    fn check_filter_orders(&mut self, builtin: BuiltIn, num: ExprId, den: ExprId) {
+        let name = match builtin {
+            BuiltIn::laplace_nd => "laplace_nd",
+            BuiltIn::laplace_np => "laplace_np",
+            BuiltIn::laplace_zd => "laplace_zd",
+            BuiltIn::laplace_zp => "laplace_zp",
+            BuiltIn::zi_nd => "zi_nd",
+            BuiltIn::zi_np => "zi_np",
+            BuiltIn::zi_zd => "zi_zd",
+            BuiltIn::zi_zp => "zi_zp",
+            _ => return,
+        };
+        let num_is_roots = matches!(
+            builtin,
+            BuiltIn::laplace_zd | BuiltIn::laplace_zp | BuiltIn::zi_zd | BuiltIn::zi_zp
+        );
+        let den_is_roots = matches!(
+            builtin,
+            BuiltIn::laplace_np | BuiltIn::laplace_zp | BuiltIn::zi_np | BuiltIn::zi_zp
+        );
+
+        // a written-out list; anything else is a runtime value whose length is not known here
+        let len = |this: &Self, e: ExprId| match this.parent.body.exprs[e] {
+            Expr::Array(ref elems) => Some(elems.len()),
+            _ => None,
+        };
+        // Roots arrive as (real, imaginary) pairs, a trailing unpaired element being real.
+        // `saturating_sub`, not `- 1`: an empty coefficient list is legal for the numerator
+        // (H = 0) and `0 - 1` on a usize is exactly the underflow this release is fixing in
+        // `lower_zi` -- it wrapped to usize::MAX and reported an order of 1.8e19.
+        let order =
+            |n: usize, is_roots: bool| if is_roots { n.div_ceil(2) } else { n.saturating_sub(1) };
+
+        let (num_len, den_len) = (len(self, num), len(self, den));
+
+        // an empty ROOT list is legitimate ("no zeros"); an empty COEFFICIENT list is not
+        if den_len == Some(0) && !den_is_roots {
+            self.bad_arg(
+                name,
+                "the denominator",
+                "is an empty coefficient list; it needs at least a constant term".to_owned(),
+                den,
+            );
+            return;
+        }
+        // An empty NUMERATOR is deliberately supported and means H = 0 -- examples/
+        // vaflaplace_examples asserts it compiles. Only the denominator was ever the
+        // problem, and only because `den.len() - 1` underflowed on it.
+
+        // ONLY the s-domain. In `z^-1` a numerator of higher order than the denominator is an
+        // ordinary FIR filter -- more delay taps, causal and realizable -- and `lower_zi`
+        // already pads both polynomials to `max(num, den)` before the bilinear transform, so
+        // nothing is dropped there. Rejecting it would have broken working filters; the
+        // truncation being fixed is specific to the controllable-canonical s-domain form.
+        let s_domain = matches!(
+            builtin,
+            BuiltIn::laplace_nd | BuiltIn::laplace_np | BuiltIn::laplace_zd | BuiltIn::laplace_zp
+        );
+        // an empty numerator is H = 0 and has no order to compare
+        if let (Some(n @ 1..), Some(d), true) = (num_len, den_len, s_domain) {
+            let (no, do_) = (order(n, num_is_roots), order(d, den_is_roots));
+            if no > do_ {
+                self.bad_arg(
+                    name,
+                    "the numerator",
+                    format!(
+                        "is order {no} against a denominator of order {do_}; such a filter has \
+                         unbounded gain at high frequency and no state-space realization, and \
+                         the extra terms would be silently dropped -- use ddt() for a derivative"
+                    ),
+                    num,
+                );
             }
         }
     }

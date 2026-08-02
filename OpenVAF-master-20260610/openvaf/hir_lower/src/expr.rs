@@ -120,6 +120,16 @@ impl BodyLoweringCtx<'_, '_, '_> {
 
         // A dynamic-index array read `c[i]` / `m[i][j]` (non-constant indices) has no single
         // backing variable; it lowers to a runtime select over the array's element variables.
+        // Enhancement-405: the same runtime select chain over a PARAMETER array's elements.
+        if let Some((elems, dims, indices)) = self.body.dynamic_param_index(expr) {
+            let mut res = self.lower_dynamic_param_index_read(&elems, &dims, &indices);
+            if let Some((src, dst)) = self.body.needs_cast(expr) {
+                res = self.ctx.insert_cast(res, &src, dst);
+            }
+            self.ctx.set_srcloc(old_loc);
+            return res;
+        }
+
         if let Some((elems, dims, indices)) = self.body.dynamic_index(expr) {
             let mut res = self.lower_dynamic_index_read(&elems, &dims, &indices);
             if let Some((src, dst)) = self.body.needs_cast(expr) {
@@ -271,6 +281,26 @@ impl BodyLoweringCtx<'_, '_, '_> {
     /// Lowers a dynamic-index array read `c[i]` / `m[i][j]` to a runtime select chain over the
     /// element variables: `elems[0]` is the default and each `elems[k]` is chosen when the flat
     /// runtime position equals `k`.
+    /// Enhancement-405: parameter-array twin of [`Self::lower_dynamic_index_read`]. A
+    /// parameter reads as an ordinary MIR value, so the select chain is identical apart
+    /// from how each element is obtained.
+    fn lower_dynamic_param_index_read(
+        &mut self,
+        elems: &[hir::Parameter],
+        dims: &[(i32, i32)],
+        indices: &[ExprId],
+    ) -> Value {
+        let flat = self.lower_flat_array_index(dims, indices);
+        let mut res = self.ctx.use_param(ParamKind::Param(elems[0]));
+        for (k, &param) in elems.iter().enumerate().skip(1) {
+            let target = self.ctx.iconst(k as i32);
+            let is_k = self.ctx.ins().binary1(Opcode::Ieq, flat, target);
+            let elem_val = self.ctx.use_param(ParamKind::Param(param));
+            res = self.ctx.make_select(is_k, move |_ctx, branch| if branch { elem_val } else { res });
+        }
+        res
+    }
+
     fn lower_dynamic_index_read(
         &mut self,
         elems: &[hir::Variable],
@@ -2826,7 +2856,12 @@ impl BodyLoweringCtx<'_, '_, '_> {
     }
 
     /// Expands a list of **complex** roots into ascending-power *real* polynomial coefficients
-    /// of `Π_k (s - r_k)`, i.e. `poly[i]` is the coefficient of `s^i`.
+    /// of `Π_k (1 - s/r_k)`, i.e. `poly[i]` is the coefficient of `s^i`.
+    ///
+    /// This is the LAPLACE normalisation, in which the root DIVIDES. The z-domain forms need
+    /// `Π_k (1 - rho_k * z^-1)`, in which it MULTIPLIES -- see [`Self::zi_roots_to_poly`].
+    /// Enhancement-405: this header used to say `Π (s - r_k)`, describing behaviour that
+    /// E-395 had already replaced one comment further down.
     ///
     /// Enhancement-31: per the Verilog-AMS LRM the pole/zero vectors of the `*_zp`/`*_np`/`*_zd`
     /// forms hold **(real, imaginary) pairs** -- element `2k` is the real part and `2k+1` the
@@ -2856,9 +2891,14 @@ impl BodyLoweringCtx<'_, '_, '_> {
             // -- for a single pole at -1e4 the DC gain was 1e4x too small, and
             // for two poles 2e8x. `laplace_nd` was unaffected (it takes
             // coefficients, so no normalization question arises), which is why
-            // only the three ROOT-taking forms were wrong. The `zi_*` family is
-            // separate and already correct: the z-domain form is `1 - z^-1*rho`,
-            // where the root MULTIPLIES rather than divides.
+            // only the three ROOT-taking forms were wrong. The z-domain form is
+            // `1 - z^-1*rho`, where the root MULTIPLIES rather than divides.
+            //
+            // Enhancement-405: that last sentence used to end "The `zi_*` family
+            // is separate and already correct" -- but `lower_zi` called straight
+            // into THIS function, so every zi_np/zi_zp pole and every zi_zd/zi_zp
+            // zero came out RECIPROCATED (a pole written 0.5 landed at z=2, DC
+            // gain -1 against 2). They use `zi_roots_to_poly` now.
             //
             // The LRM's own exception is handled too: "If a root is zero, then
             // the term associated with it is implemented as s, rather than
@@ -2917,12 +2957,67 @@ impl BodyLoweringCtx<'_, '_, '_> {
         re
     }
 
+    /// Enhancement-405: expands **complex** z-domain roots into ascending-power *real*
+    /// coefficients of `Π_k (1 - rho_k * w)`, where `w = z^-1`.
+    ///
+    /// The z-domain counterpart of [`Self::laplace_roots_to_poly`], differing in the one way
+    /// that matters: the root **multiplies** `z^-1` rather than dividing `s`. Calling the
+    /// Laplace version here -- which is what `lower_zi` used to do -- reciprocates every pole
+    /// and zero, so `zi_zp` given a pole at 0.5 built a filter with its pole at z = 2 (DC gain
+    /// -1, where the same filter written with `zi_nd` coefficients gives 2).
+    ///
+    /// Roots arrive as `(real, imaginary)` pairs exactly as in the Laplace form, and a trailing
+    /// unpaired element is a purely real root. Only the real parts of the product are returned;
+    /// for a physical filter the roots come in conjugate pairs and the imaginary parts cancel.
+    ///
+    /// There is deliberately no zero-root special case. The LRM's `(1 - s/r)` exception exists
+    /// because that form divides by the root; `(1 - rho*w)` does not, and at `rho = 0` it is
+    /// simply `1`.
+    fn zi_roots_to_poly(&mut self, roots: &[Value]) -> Vec<Value> {
+        // coefficients as (real, imaginary), ascending powers of w; start at `1 + 0j`
+        let mut re = vec![F_ONE];
+        let mut im = vec![F_ZERO];
+        let mut k = 0;
+        while k < roots.len() {
+            let rr = roots[k];
+            let ri = if k + 1 < roots.len() { roots[k + 1] } else { F_ZERO };
+            k += 2;
+
+            let n = re.len();
+            let mut nre = vec![F_ZERO; n + 1];
+            let mut nim = vec![F_ZERO; n + 1];
+            for i in 0..n {
+                // P[i] carries down unchanged ...
+                nre[i] = self.ctx.ins().fadd(nre[i], re[i]);
+                nim[i] = self.ctx.ins().fadd(nim[i], im[i]);
+
+                // ... and -(rho * P[i]) carries up one degree in w
+                let a = self.ctx.ins().fmul(rr, re[i]);
+                let b = self.ctx.ins().fmul(ri, im[i]);
+                let q_re = self.ctx.ins().fsub(a, b);
+                let c = self.ctx.ins().fmul(rr, im[i]);
+                let d = self.ctx.ins().fmul(ri, re[i]);
+                let q_im = self.ctx.ins().fadd(c, d);
+
+                let up_re = self.ctx.ins().fneg(q_re);
+                let up_im = self.ctx.ins().fneg(q_im);
+                nre[i + 1] = self.ctx.ins().fadd(nre[i + 1], up_re);
+                nim[i + 1] = self.ctx.ins().fadd(nim[i + 1], up_im);
+            }
+            re = nre;
+            im = nim;
+        }
+        re
+    }
+
     /// Builds a controllable-canonical-form state-space realization of `H(s) = num(s)/den(s)`
     /// (both ascending-power coefficient lists, `den` non-empty) driven by `input`, and returns
     /// the algebraic output value `y`.
     fn laplace_state_space(&mut self, input: Value, num: &[Value], den: &[Value]) -> Value {
-        let n = den.len() - 1;
-        let a_n = den[n];
+        // Enhancement-405: the `den` non-empty precondition above is enforced by hir_ty, but
+        // an unguarded `- 1` here is one caller away from the underflow that hung `lower_zi`.
+        let n = den.len().saturating_sub(1);
+        let a_n = den.get(n).copied().unwrap_or(F_ONE);
 
         if n == 0 {
             // No dynamics: H(s) is a constant gain num[0]/den[0].
@@ -3014,14 +3109,19 @@ impl BodyLoweringCtx<'_, '_, '_> {
         let num = self.lower_coeff_elems(args[1]);
         let den = self.lower_coeff_elems(args[2]);
 
-        let num = if num_is_roots { self.laplace_roots_to_poly(&num) } else { num };
-        let den = if den_is_roots { self.laplace_roots_to_poly(&den) } else { den };
+        let num = if num_is_roots { self.zi_roots_to_poly(&num) } else { num };
+        let den = if den_is_roots { self.zi_roots_to_poly(&den) } else { den };
 
         let t = self.lower_expr(args[3]);
         let f_half = self.ctx.fconst(0.5);
         let half_t = self.ctx.ins().fmul(t, f_half);
 
-        let n = (den.len() - 1).max(num.len().saturating_sub(1));
+        // Enhancement-405: `den.len() - 1` UNDERFLOWED to usize::MAX on an empty denominator
+        // (`zi_nd(x, '{1.0}, '{}, T, 0)`), and the bilinear expansion below then looped over
+        // 0..=usize::MAX -- an unbounded hang that reached tens of GB of RSS before being
+        // killed. `num` beside it was already saturating. hir_ty rejects an empty coefficient
+        // list with a real diagnostic now; this keeps lowering itself total either way.
+        let n = den.len().saturating_sub(1).max(num.len().saturating_sub(1));
         let num_s = self.bilinear_transform(&num, n, half_t);
         let den_s = self.bilinear_transform(&den, n, half_t);
 
