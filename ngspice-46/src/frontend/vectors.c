@@ -860,9 +860,26 @@ vec_get(const char *vec_name) {
             ;
 
         if (*param) {
+            /* Enhancement-408: a parameter NAME may itself contain brackets --
+             * `@nd1[i_a[0]]` (a bus terminal current, E-394) or `@nd1[ap[0]]`
+             * (an element of an array parameter). Terminating at the FIRST ']'
+             * cut the name to `i_a[0`, and the accessor then reported "no such
+             * parameter i_a[0." -- so every bracketed name was unreachable for
+             * read, `alter` and `dc` sweep (the sweep aborting with a fatal
+             * error), even though `show ... : all` listed it with the right
+             * value and the instance line could set it. Stop at the ']' that
+             * matches the opening '[' instead. */
+            int brdepth = 1;
             *param++ = '\0';
-            for (s = param; *s && *s != ']'; s++)
-                ;
+            for (s = param; *s; s++) {
+                if (*s == '[') {
+                    brdepth++;
+                }
+                else if (*s == ']') {
+                    if (--brdepth == 0)
+                        break;
+                }
+            }
             *s = '\0';
         } else {
             param = NULL;

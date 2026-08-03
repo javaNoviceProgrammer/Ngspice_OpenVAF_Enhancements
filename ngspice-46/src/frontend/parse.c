@@ -932,6 +932,7 @@ int PPlex(YYSTYPE *lvalp, struct PPltype *llocp, char **line)
         }
         else {
             int atsign = 0;
+            int brdepth = 0;
             char *start = sbuf;
             /* It is bad how we have to recognise '[' -- sometimes
              * it is part of a word, when it defines a parameter
@@ -941,15 +942,31 @@ int PPlex(YYSTYPE *lvalp, struct PPltype *llocp, char **line)
              *   foo  dc1.foo  dc1.@m1[vth]
              *   vthing#branch
              *   i(vthing)
+             *
+             * Enhancement-408: a parameter NAME may itself contain brackets --
+             * `@nd1[i_a[0]]` (a bus terminal current, E-394) or `@nd1[ap[0]]`
+             * (an element of an array parameter). Stopping at the FIRST ']'
+             * truncated the token to `@nd1[i_a[0`, and the accessor then
+             * reported "no such parameter i_a[0." -- so every bracketed name was
+             * unreachable for read, `alter` and `dc` sweep (which aborted with a
+             * fatal error), even though `show` listed it and the instance line
+             * could set it. Track the depth and stop at the ']' that closes the
+             * `@dev[` bracket instead.
              */
             for (; *sbuf && !strchr(specials, *sbuf); sbuf++) {
                 if (*sbuf == '@') {
                     atsign = 1;
                 }
-                else if (!atsign && *sbuf == '[') {
-                    break;
+                else if (*sbuf == '[') {
+                    if (!atsign)
+                        break;
+                    brdepth++;
                 }
                 else if (*sbuf == ']') {
+                    if (atsign && brdepth > 1) {
+                        brdepth--;      /* an inner ']' -- part of the name */
+                        continue;
+                    }
                     if (atsign) {
                         sbuf++;
                     }

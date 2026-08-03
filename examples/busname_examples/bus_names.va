@@ -1,0 +1,21 @@
+// Enhancement-408: a bus device whose names are the ones the simulator has to
+// resolve -- a 4-wide terminal bus (so Enhancement-394 gives it the terminal
+// currents i_a[0]..i_a[3]) and an array instance parameter (so it has the
+// settable elements ap[0]..ap[2]).  Both spellings put BRACKETS INSIDE the
+// parameter name, which is what `@nd1[i_a[0]]` has to survive.
+`include "disciplines.vams"
+
+module busnames(a, c);
+    inout [0:3] a;
+    inout c;
+    electrical [0:3] a;
+    electrical c;
+    (* type="instance" *) parameter real ap[0:2] = '{1e-3, 2e-3, 3e-3};
+    (* type="instance" *) parameter real gs = 1e-3;
+    analog begin
+        I(a[0],c) <+ 1e-3*V(a[0],c);
+        I(a[1],c) <+ 2e-3*V(a[1],c);
+        I(a[2],c) <+ 3e-3*V(a[2],c);
+        I(a[3],c) <+ (4e-3+ap[0]+gs)*V(a[3],c);
+    end
+endmodule

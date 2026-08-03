@@ -2382,6 +2382,69 @@ static char *readline(FILE *fd)
  */
 #define BUS_MAX_WIDTH 8192 /* refuse absurd ranges; the device parser then errors */
 
+/* Enhancement-408: canonicalise the index of a whole node token `base[<int>]`.
+ *
+ * E-221's contract, stated above, is that "a bus a[0:1] and an explicit a[0] denote the
+ * same node" -- the bracket names a bus BIT, so `n[01]` and `n[1]` are the same bit and
+ * must be the same node. They were not: the netlist kept them as two distinct nodes,
+ * while every QUERY path canonicalises through an integer (E-224 rebuilds the name with
+ * `tprintf("%s[%d]", base, idx)`), so `print v(n[01])` silently returned n[1]'s voltage.
+ * Distinct nodes, one reachable name, no diagnostic.
+ *
+ * Canonicalising here makes the two halves agree: the netlist now has one node per bit,
+ * spelled the way the query path spells it. A token whose index is already canonical is
+ * left byte-identical, so this is a no-op for every ordinary netlist.
+ *
+ * Returns TRUE and appends the canonical form if `tok` is `base[<int>]` with a
+ * non-canonical index; otherwise leaves `ds` unchanged and returns FALSE. */
+static bool inp_canon_bus_index_token(DSTRING *ds, const char *tok, size_t len)
+{
+    if (len < 4 || tok[len - 1] != ']')
+        return FALSE;
+    const char *lb = memchr(tok, '[', len);
+    if (!lb || lb == tok)
+        return FALSE;
+    const char *p;
+    for (p = tok; p < lb; p++) /* the base must be a plain node name */
+        if (*p == '[' || *p == ']' || *p == '(' || *p == ')' ||
+                *p == ',' || *p == '%' || *p == '=')
+            return FALSE;
+
+    const char *end = tok + len - 1;      /* the closing ']' */
+    const char *ix = lb + 1;
+    if (ix >= end)
+        return FALSE;
+    /* a plain optionally-signed integer filling the brackets, nothing else --
+       a range `lo:hi` is the expander's job, not this one */
+    const char *q = ix;
+    if (*q == '+' || *q == '-')
+        q++;
+    if (q >= end)
+        return FALSE;
+    for (p = q; p < end; p++)
+        if (!isdigit_c(*p))
+            return FALSE;
+
+    char *ep;
+    errno = 0;
+    long idx = strtol(ix, &ep, 10);
+    if (ep != end || errno == ERANGE)
+        return FALSE;
+
+    /* already canonical?  then emit nothing and let the caller copy it verbatim */
+    char canon[64];
+    (void) snprintf(canon, sizeof canon, "%ld", idx);
+    const size_t clen = strlen(canon);
+    if (clen == (size_t) (end - ix) && memcmp(canon, ix, clen) == 0)
+        return FALSE;
+
+    ds_cat_mem(ds, tok, (size_t) (lb - tok));
+    ds_cat_char(ds, '[');
+    ds_cat_mem(ds, canon, clen);
+    ds_cat_char(ds, ']');
+    return TRUE;
+}
+
 /* If [tok, tok+len) is exactly base[lo:hi], append its expansion to `ds` and
    return TRUE; otherwise leave `ds` unchanged and return FALSE. */
 static bool inp_expand_bus_token(DSTRING *ds, const char *tok, size_t len)
@@ -2449,6 +2512,86 @@ static bool inp_expand_bus_token(DSTRING *ds, const char *tok, size_t len)
     return TRUE;
 }
 
+/* Enhancement-408: rewrite a bus reference that sits INSIDE a wrapper, such as
+   `v(a[0:3])` on a .print card or `v(a[0:3])=0` on a .ic card.  The bare
+   node-list form is handled by inp_expand_bus_token above, whose guards
+   deliberately reject anything parenthesised because an element line's fields
+   are plain node names.  Output and IC cards never carry bare node lists, so
+   they get this form instead; it also accepts the unwrapped spelling, which is
+   legal on .save.
+
+   Finds the token's single bracket group and either expands `lo:hi` into one
+   copy of the WHOLE token per index -- so the wrapper and any `=value` suffix
+   ride along -- or canonicalises a lone index written with redundant leading
+   zeros, so `.print v(n[01])` names the node the instance line created.
+   Returns TRUE and appends the rewrite, or FALSE leaving `ds` untouched. */
+static bool inp_bus_rewrite_wrapped(DSTRING *ds, const char *tok, size_t len)
+{
+    const char *lb = memchr(tok, '[', len);
+    if (!lb || lb == tok) /* no '[', or nothing to name */
+        return FALSE;
+    const char *rb = memchr(lb, ']', (size_t) (tok + len - lb));
+    if (!rb || rb == lb + 1) /* unterminated, or an empty index */
+        return FALSE;
+    /* Exactly one bracket group.  A differential probe naming two buses,
+       `v(a[0:1],b[0:1])`, has no single unambiguous expansion -- pairing them
+       elementwise is a guess -- so it is left literal and still reported. */
+    if (memchr(lb + 1, '[', (size_t) (rb - lb - 1)))
+        return FALSE;
+    if (memchr(rb + 1, '[', (size_t) (tok + len - rb - 1)))
+        return FALSE;
+
+    const size_t plen = (size_t) (lb - tok) + 1; /* through the '[' */
+    const char *suffix = rb;                     /* from the ']' onward */
+    const size_t slen = (size_t) (tok + len - rb);
+
+    char *ep;
+    errno = 0;
+    long lo = strtol(lb + 1, &ep, 10);
+    if (ep == lb + 1 || errno == ERANGE)
+        return FALSE;
+
+    if (*ep == ':') { /* a range: one copy of the token per index */
+        const char *hi_start = ep + 1;
+        errno = 0;
+        long hi = strtol(hi_start, &ep, 10);
+        if (ep == hi_start || ep != rb || errno == ERANGE)
+            return FALSE;
+        /* unsigned span, for the same overflow reason as Enhancement-338 */
+        unsigned long span = (hi >= lo) ? ((unsigned long) hi - (unsigned long) lo)
+                                        : ((unsigned long) lo - (unsigned long) hi);
+        if (span >= (unsigned long) BUS_MAX_WIDTH)
+            return FALSE;
+        const long step = (hi >= lo) ? 1 : -1;
+        long i = lo;
+        for (;;) {
+            if (i != lo)
+                ds_cat_char(ds, ' ');
+            ds_cat_mem(ds, tok, plen);
+            ds_cat_printf(ds, "%ld", i);
+            ds_cat_mem(ds, suffix, slen);
+            if (i == hi)
+                break;
+            i += step;
+        }
+        return TRUE;
+    }
+
+    if (ep != rb) /* not a plain integer index */
+        return FALSE;
+    char canon[32];
+    int clen = snprintf(canon, sizeof canon, "%ld", lo);
+    if (clen <= 0 || (size_t) clen >= sizeof canon)
+        return FALSE;
+    if ((size_t) clen == (size_t) (rb - lb - 1)
+            && memcmp(canon, lb + 1, (size_t) clen) == 0)
+        return FALSE; /* already canonical -- a byte-identical no-op */
+    ds_cat_mem(ds, tok, plen);
+    ds_cat_mem(ds, canon, (size_t) clen);
+    ds_cat_mem(ds, suffix, slen);
+    return TRUE;
+}
+
 static void inp_expand_buses(struct card *deck)
 {
     struct card *c;
@@ -2471,12 +2614,21 @@ static void inp_expand_buses(struct card *deck)
         if (in_control)
             continue;
 
-        /* only element instances (first char a letter) and subcircuit
-           definitions carry node fields; skip .model/.param/other dot cards */
-        if (!(isalpha_c(*line) || ciprefix(".subckt", line)))
+        /* Element instances (first char a letter) and subcircuit definitions
+           carry bare node fields.  Enhancement-408 adds the cards that NAME
+           nodes rather than connect them -- output and initial-condition cards
+           -- where the reference is wrapped, `v(a[0:3])`.  Everything else
+           (.model, .param, ...) is still skipped. */
+        const bool wrapped = ciprefix(".save", line) || ciprefix(".print", line)
+                || ciprefix(".plot", line) || ciprefix(".probe", line)
+                || ciprefix(".ic", line) || ciprefix(".nodeset", line);
+        if (!(isalpha_c(*line) || ciprefix(".subckt", line) || wrapped))
             continue;
         if (!strchr(line, '[')) /* fast path: nothing to expand */
             continue;
+        /* `.ic v(a[0:3]) = 0` must give every expanded node the value, so the
+           `= value` is kept attached to the reference it initialises */
+        const bool ic_card = ciprefix(".ic", line) || ciprefix(".nodeset", line);
 
         {
             DS_CREATE(newline, 256);
@@ -2491,9 +2643,29 @@ static void inp_expand_buses(struct card *deck)
                 const char *start = s;
                 while (*s && !isspace_c(*s))
                     s++;
+                if (ic_card) { /* absorb a spaced `= value` into the token */
+                    const char *q = s;
+                    while (isspace_c(*q))
+                        q++;
+                    if (*q == '=') {
+                        q++;
+                        while (isspace_c(*q))
+                            q++;
+                        while (*q && !isspace_c(*q))
+                            q++;
+                        s = q;
+                    }
+                }
                 const size_t tlen = (size_t) (s - start);
-                if (inp_expand_bus_token(&newline, start, tlen))
+                if (wrapped) {
+                    if (inp_bus_rewrite_wrapped(&newline, start, tlen))
+                        changed = TRUE; /* Enhancement-408 */
+                    else
+                        ds_cat_mem(&newline, start, tlen);
+                } else if (inp_expand_bus_token(&newline, start, tlen))
                     changed = TRUE;
+                else if (inp_canon_bus_index_token(&newline, start, tlen))
+                    changed = TRUE; /* Enhancement-408 */
                 else
                     ds_cat_mem(&newline, start, tlen);
             }

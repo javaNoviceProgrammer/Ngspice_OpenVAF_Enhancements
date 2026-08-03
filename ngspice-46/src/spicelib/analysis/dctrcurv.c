@@ -54,7 +54,23 @@ DCTfindInstParam(CKTcircuit *ckt, const char *name, GENinstance **instOut,
         return E_NODEV;
     strcpy(buf, name + 1);
     lbrack = strchr(buf, '[');
-    rbrack = lbrack ? strchr(lbrack, ']') : NULL;
+    /* Enhancement-408: match the CLOSING bracket, so a parameter whose own
+       name contains brackets -- a bus terminal current i_a[0], an array
+       parameter element ap[0] -- resolves instead of being truncated at the
+       inner ']' and reported as "no such parameter". */
+    rbrack = NULL;
+    if (lbrack) {
+        char *s;
+        int brdepth = 0;
+        for (s = lbrack; *s; s++) {
+            if (*s == '[') {
+                brdepth++;
+            } else if (*s == ']' && --brdepth == 0) {
+                rbrack = s;
+                break;
+            }
+        }
+    }
     if (!lbrack || !rbrack || rbrack <= lbrack + 1 || lbrack == buf)
         return E_NODEV;
     *lbrack = '\0';

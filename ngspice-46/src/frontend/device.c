@@ -1422,7 +1422,26 @@ com_alter_common(wordlist *wl, int do_model)
             if (p) {
                 *p++ = '\0';
                 param = p;
-                p = strchr(p, ']');
+                /* Enhancement-408: a parameter NAME may itself contain
+                   brackets -- a bus terminal current i_a[0], an array
+                   parameter element ap[0] -- so stop at the ']' that MATCHES
+                   the opening one rather than at the first one seen.  The
+                   Enhancement-269 wildcard alias `@*[[param]]` deliberately
+                   relies on the first-']' split leaving `[param`, so a name
+                   that starts with '[' keeps the original behaviour. */
+                if (*param == '[') {
+                    p = strchr(param, ']');
+                } else {
+                    int brdepth = 1;
+                    for (p = param; *p; p++) {
+                        if (*p == '[')
+                            brdepth++;
+                        else if (*p == ']' && --brdepth == 0)
+                            break;
+                    }
+                    if (!*p)
+                        p = NULL;
+                }
                 if (p)
                     *p = '\0';
             }
