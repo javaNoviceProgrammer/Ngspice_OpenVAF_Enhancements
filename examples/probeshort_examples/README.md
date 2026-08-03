@@ -44,7 +44,43 @@ Suppress with `--allow probe_only_branch_short`, or
 `(* openvaf_allow="probe_only_branch_short" *)` on the probing statement or any
 enclosing scope; `--deny` makes it an error.
 
+## The four controlled sources
+
+`controlled_sources.va` pins the families where a false positive would hurt most.
+VCVS and VCCS use *voltage* probes, so neither lint can apply. CCVS and CCCS
+**must** probe a branch current, so every ordinary spelling of them is here.
+
+| model | works? | L023 | L017 |
+| --- | --- | --- | --- |
+| `va_vcvs`, `va_vccs` | ✅ 10.0 / −1.0 | silent | silent |
+| `ccvs_shorted`, `ccvs_pair` | ✅ 0.1 V | silent | silent |
+| `ccvs_bare` | ✅ 0.1 V | silent | fires |
+| `cccs_shorted`, `cccs_pair` | ✅ −100 V | silent | silent |
+| `cccs_bare` | ✅ −100 V | silent | fires |
+| `cccs_port`, `cccs_portbranch` | — | silent | silent |
+| **`cccs_mixed`** | ❌ **DC solve fails** | **fires** | silent |
+
+**L023 fires on exactly one module, and that module is broken.** `cccs_mixed`
+drives the node pair with `V(ps,ns) <+ 0` and probes the declared branch with
+`I(sense)` — two 0 V sources in parallel across the same nodes. It does not merely
+answer wrong; it does not solve.
+
+`ccvs_bare` and `cccs_bare` (a sense branch with no explicit short) **work**, and
+draw the advisory `trivial_probe` (L017) saying the probe is what shorts the
+branch. That is exactly where the old L017 wording was worst: it told the author
+of a working current-controlled source that the probe *"always returns zero"*,
+while the model demonstrably delivered `rm · I_sense` and `β · I_sense`.
+
+> The voltage-controlled pair is named `va_vcvs`/`va_vccs` on purpose. ngspice
+> registers **built-in** `vcvs`/`vccs`/`ccvs`/`cccs` devices, so an OSDI module of
+> the same name is refused at load (*"device is already registered; keeping the
+> existing device"*) and the instance line fails with *"incorrect model type!"*.
+> openvaf's `reserved_module_name` lint (**L018**) catches this at compile time and
+> its help text predicts that exact failure; the verify script asserts the file is
+> L018-clean.
+
 | File | What |
 | --- | --- |
 | `probe_short.va` | `trap` (reported), `ok` (correct spelling), `sense_ok` (deliberate ammeter) |
-| `verify_probeshort.py` | checks the report, the numeric consequence, and the suppression controls |
+| `controlled_sources.va` | VCVS / VCCS / CCVS / CCCS in every ordinary spelling, plus the one broken form |
+| `verify_probeshort.py` | checks the reports, the numeric consequences, and the suppression controls |

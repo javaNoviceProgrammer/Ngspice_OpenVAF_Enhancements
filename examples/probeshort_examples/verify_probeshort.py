@@ -112,8 +112,107 @@ def main():
                        capture_output=True, text=True, timeout=600)
     check("--deny turns it into an error", r.returncode != 0, f"rc={r.returncode}")
 
+    check_controlled_sources()
+
     print(f"\n{passed}/{checks} checks passed")
     return 0 if passed == checks else 1
+
+
+CS_OSDI = os.path.join(tempfile.gettempdir(), "controlled_sources.osdi")
+
+# (module, ports on the instance line, expected v(out), expected lint)
+#
+# Stimulus: the sense port is driven at exactly 1 mA (1 V through 1 k) and the
+# output works into 1 k.  CCVS rm=100 => V(p,n) = 0.1 V.  CCCS beta=100 => 100 mA
+# into 1 k.  VCVS gain=10 and VCCS gm=1e-3 see 1 V on their (high-impedance)
+# control port.
+CONTROLLED = [
+    ("va_vcvs",        "out 0 ps 0",  10.0,   None),
+    ("va_vccs",        "out 0 ps 0",  -1.0,   None),
+    ("ccvs_shorted",   "out 0 ps 0",   0.1,   None),
+    ("ccvs_bare",      "out 0 ps 0",   0.1,   "L017"),
+    ("ccvs_pair",      "out 0 ps 0",   0.1,   None),
+    ("cccs_shorted",   "out 0 ps 0", -100.0,  None),
+    ("cccs_bare",      "out 0 ps 0", -100.0,  "L017"),
+    ("cccs_pair",      "out 0 ps 0", -100.0,  None),
+    ("cccs_port",      "out 0 ps",     None,  None),
+    ("cccs_portbranch", "out 0 ps",    None,  None),
+    ("cccs_mixed",     "out 0 ps 0",   None,  "L023"),   # broken: the solve fails
+]
+
+
+def cs_out(model, nodes):
+    path = os.path.join(tempfile.gettempdir(), f"cs_{model}.cir")
+    with open(path, "w") as fh:
+        fh.write(f"""* controlled source {model}
+v1 vs 0 dc 1
+r1 vs ps 1k
+rout out 0 1k
+nd1 {nodes} m{model}
+.model m{model} {model}()
+.control
+pre_osdi {CS_OSDI}
+op
+print v(out)
+.endc
+.end
+""")
+    out = subprocess.run([NGSPICE, "-b", path], capture_output=True, text=True,
+                         timeout=120).stdout
+    m = re.findall(r"v\(out\)\s*=\s*(-?[\d.eE+-]+)", out)
+    return float(m[0]) if m else None
+
+
+def check_controlled_sources():
+    """Enhancement-406: the four controlled sources are where a false positive
+    would hurt most -- CCVS and CCCS MUST probe a branch current. Every ordinary
+    spelling of all four has to stay silent under L023, and keep working."""
+    print("\ncontrolled sources (VCVS / VCCS / CCVS / CCCS)")
+    src = os.path.join(HERE, "controlled_sources.va")
+    r = subprocess.run([OPENVAF, src, "-o", CS_OSDI], capture_output=True, text=True,
+                       timeout=600)
+    log = r.stdout + r.stderr
+    if not check("controlled_sources.va compiles", r.returncode == 0 and os.path.exists(CS_OSDI)):
+        return
+
+    # L023 must name exactly one module, and it must be the broken one
+    l023 = [l for l in log.splitlines() if "L023" in l]
+    check("L023 fires exactly once across all four families", len(l023) == 1,
+          f"{len(l023)} firings")
+    check("...and only on the deliberately broken cccs_mixed",
+          len(l023) == 1 and "cccs_mixed" in l023[0])
+    for m, _, _, want in CONTROLLED:
+        if want != "L023":
+            check(f"L023 silent on {m}", not any(f"`{m}`" in l for l in l023))
+
+    for model, nodes, want_v, want_lint in CONTROLLED:
+        got = cs_out(model, nodes)
+        if want_v is None:
+            # cccs_mixed cannot solve; the port forms need no numeric pin here
+            if model == "cccs_mixed":
+                check("cccs_mixed does not solve -- the lint reports a real failure",
+                      got is None, f"v(out)={got}")
+            continue
+        check(f"{model} works: v(out) = {want_v}",
+              got is not None and abs(got - want_v) <= 1e-6 * max(1.0, abs(want_v)),
+              f"got {got}")
+
+    # `va_` prefixes, because ngspice registers built-in vcvs/vccs/ccvs/cccs devices.
+    # openvaf's reserved_module_name lint (L018) catches the collision and its help
+    # text predicts the exact failure -- "may silently bind to ngspice's built-in
+    # device instead of this OSDI module". Naming them plainly made ngspice refuse
+    # the OSDI registration and the instance line fail with "incorrect model type!".
+    check("no reserved-name collisions (L018) in this file", "L018" not in log,
+          [l for l in log.splitlines() if "L018" in l][:1])
+
+    # the bare sense-branch forms work AND draw the advisory L017 -- the message
+    # Enhancement-406 corrected, because the old text called such a probe dead
+    l017 = [l for l in log.splitlines() if "L017" in l]
+    check("the two bare sense-branch forms draw L017", len(l017) == 2, f"{len(l017)} firings")
+    check("L017 no longer claims the probe returns zero",
+          all("returns zero" not in l for l in l017))
+    check("L017 says the probe shorts the branch",
+          all("shorts it" in l for l in l017))
 
 
 if __name__ == "__main__":

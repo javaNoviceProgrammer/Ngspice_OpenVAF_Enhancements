@@ -1,0 +1,128 @@
+// controlled_sources.va -- Enhancement-406: the four controlled sources, as
+// pinned coverage for the two branch-probe lints.
+//
+// VCVS and VCCS are voltage-controlled, so neither lint can apply: only a FLOW
+// probe can synthesise an ammeter. CCVS and CCCS are current-controlled and must
+// probe a branch current, which is exactly where a false positive would hurt --
+// so every ordinary spelling of them is here and must stay silent under L023.
+//
+// The last module is the one shape that is genuinely broken, and is the only one
+// L023 reports.
+`include "disciplines.vams"
+
+// ---------------------------------------------------------------- voltage-controlled
+// Named `va_*` deliberately: ngspice already registers built-in devices called
+// `vcvs` and `vccs`, and an OSDI module of the same name is refused at load time
+// ("device is already registered; keeping the existing device and ignoring this
+// one") -- the instance line then fails with "incorrect model type!".
+module va_vcvs(p, n, ps, ns);
+    inout p, n, ps, ns;
+    electrical p, n, ps, ns;
+    parameter real gain = 10.0;
+    analog V(p,n) <+ gain * V(ps,ns);
+endmodule
+
+module va_vccs(p, n, ps, ns);
+    inout p, n, ps, ns;
+    electrical p, n, ps, ns;
+    parameter real gm = 1e-3;
+    analog I(p,n) <+ gm * V(ps,ns);
+endmodule
+
+// ---------------------------------------------------------------- current-controlled
+// The textbook form: an explicit 0 V source on the sense branch, then probe it.
+module ccvs_shorted(p, n, ps, ns);
+    inout p, n, ps, ns;
+    electrical p, n, ps, ns;
+    parameter real rm = 100.0;
+    branch (ps,ns) sense;
+    analog begin
+        V(sense) <+ 0;
+        V(p,n) <+ rm * I(sense);
+    end
+endmodule
+
+// No explicit short: the probe alone is meant to be the ammeter. This WORKS, and
+// draws the advisory `trivial_probe` (L017) saying so -- which is the message
+// Enhancement-406 corrected, because the old text claimed the probe "always
+// returns zero" on a source that demonstrably delivers rm * I_sense.
+module ccvs_bare(p, n, ps, ns);
+    inout p, n, ps, ns;
+    electrical p, n, ps, ns;
+    parameter real rm = 100.0;
+    branch (ps,ns) sense;
+    analog V(p,n) <+ rm * I(sense);
+endmodule
+
+// The same thing spelled with the node pair rather than a declared branch.
+module ccvs_pair(p, n, ps, ns);
+    inout p, n, ps, ns;
+    electrical p, n, ps, ns;
+    parameter real rm = 100.0;
+    analog begin
+        V(ps,ns) <+ 0;
+        V(p,n) <+ rm * I(ps,ns);
+    end
+endmodule
+
+module cccs_shorted(p, n, ps, ns);
+    inout p, n, ps, ns;
+    electrical p, n, ps, ns;
+    parameter real beta = 100.0;
+    branch (ps,ns) sense;
+    analog begin
+        V(sense) <+ 0;
+        I(p,n) <+ beta * I(sense);
+    end
+endmodule
+
+module cccs_bare(p, n, ps, ns);
+    inout p, n, ps, ns;
+    electrical p, n, ps, ns;
+    parameter real beta = 100.0;
+    branch (ps,ns) sense;
+    analog I(p,n) <+ beta * I(sense);
+endmodule
+
+module cccs_pair(p, n, ps, ns);
+    inout p, n, ps, ns;
+    electrical p, n, ps, ns;
+    parameter real beta = 100.0;
+    analog begin
+        V(ps,ns) <+ 0;
+        I(p,n) <+ beta * I(ps,ns);
+    end
+endmodule
+
+// Port-flow forms. Skipped by the L023 collector by construction: lowering routes
+// a port branch to the port's own flow, so it can never be probe-only.
+module cccs_port(p, n, ps);
+    inout p, n, ps;
+    electrical p, n, ps;
+    parameter real beta = 100.0;
+    analog I(p,n) <+ beta * I(<ps>);
+endmodule
+
+module cccs_portbranch(p, n, ps);
+    inout p, n, ps;
+    electrical p, n, ps;
+    parameter real beta = 100.0;
+    branch (<ps>) pb;
+    analog I(p,n) <+ beta * I(pb);
+endmodule
+
+// THE BROKEN ONE. `V(ps,ns) <+ 0` drives the NODE PAIR; `I(sense)` probes the
+// DECLARED branch, which nothing contributes to, so it gets an ammeter of its
+// own -- two 0 V sources in parallel across the same node pair. This does not
+// merely answer wrong: the DC solve fails. It is the only module here that L023
+// reports.
+module cccs_mixed(p, n, ps, ns);
+    inout p, n, ps, ns;
+    electrical p, n, ps, ns;
+    parameter real beta = 100.0;
+    branch (ps,ns) sense;
+    analog begin
+        V(ps,ns) <+ 0;
+        I(p,n) <+ beta * I(sense);
+    end
+endmodule

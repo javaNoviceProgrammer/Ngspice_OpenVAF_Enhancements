@@ -122,6 +122,40 @@ directly across the shorted branch. In an ordinary topology nothing fails — th
 answer is simply wrong, which is strictly worse and is why this got a lint rather
 than a footnote. The E-405 write-up is corrected accordingly.
 
+## The four controlled sources
+
+VCVS, VCCS, CCVS and CCCS are where a false positive would hurt most — the two
+current-controlled families **must** probe a branch current. Every ordinary
+spelling of all four is pinned in `examples/probeshort_examples/`:
+
+| model | works? | L023 | L017 |
+| --- | --- | --- | --- |
+| `va_vcvs`, `va_vccs` | ✅ 10.0 / −1.0 | silent | silent |
+| `ccvs_shorted`, `ccvs_pair` | ✅ 0.1 V | silent | silent |
+| `ccvs_bare` | ✅ 0.1 V | silent | fires |
+| `cccs_shorted`, `cccs_pair` | ✅ −100 V | silent | silent |
+| `cccs_bare` | ✅ −100 V | silent | fires |
+| `cccs_port`, `cccs_portbranch` | — | silent | silent |
+| **`cccs_mixed`** | ❌ **DC solve fails** | **fires** | silent |
+
+**L023 fires on exactly one module, and that module is broken** — `cccs_mixed`
+drives the node pair with `V(ps,ns) <+ 0` and probes the declared branch, which is
+two 0 V sources in parallel across the same nodes. Zero false positives, one true
+positive.
+
+The bare sense-branch forms **work** and draw the advisory L017, which is exactly
+where the old wording was worst: it told the author of a working
+current-controlled source that the probe *"always returns zero"*, while the model
+delivered `rm · I_sense` and `β · I_sense`.
+
+One trap found while writing this, and not a compiler defect: naming the modules
+plainly made ngspice refuse them, because it registers **built-in**
+`vcvs`/`vccs`/`ccvs`/`cccs` devices — *"device is already registered; keeping the
+existing device"*, then *"incorrect model type!"* on the instance line. openvaf's
+`reserved_module_name` lint (**L018**) had said so at compile time, and its help
+text predicted that precise failure; it was missed only because the first sweep
+grepped for L017 and L023 alone. The example now asserts the file is L018-clean.
+
 ## The neighbouring message was stale too
 
 The deliberate sense-ammeter case draws `trivial_probe` (**L017**), which read:
