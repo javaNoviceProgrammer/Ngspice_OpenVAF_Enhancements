@@ -162,11 +162,14 @@ byte-identical output. That is not a clean, local change, so it is recorded here
 rather than attempted. No real model is affected: bsim4, with about a thousand
 parameters, compiles in 1.5 s.
 
-## Also found, not fixed
+## Also found
 
-Probing `I(br)` on a **named branch that also carries a contribution** inserts an
-ammeter that shorts the branch, and the DC solve fails. Identical on the shipped
-binary, so it predates this release; it is recorded for its own investigation.
+Probing `I(br)` on a **named branch that also carries a contribution under the
+node-pair spelling** inserts an ideal ammeter that shorts the branch. Identical on
+the shipped binary, so it predates this release. Investigated and fixed in
+[Enhancement-406](Enhancement-406.md) — where the description above turned out to
+be wrong in the direction that matters: it does not generally fail the DC solve,
+it silently doubles the current.
 
 ## Verification
 
