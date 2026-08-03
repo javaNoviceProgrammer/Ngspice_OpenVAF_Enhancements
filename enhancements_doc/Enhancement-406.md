@@ -122,8 +122,53 @@ directly across the shorted branch. In an ordinary topology nothing fails — th
 answer is simply wrong, which is strictly worse and is why this got a lint rather
 than a footnote. The E-405 write-up is corrected accordingly.
 
-Also observed while measuring, and **not** addressed here: the deliberate
-sense-ammeter case draws `trivial_probe` (**L017**, *"Current probe always returns
-zero"*), whose message predates E-36 giving such a probe its true flow. The
-wording looks stale, but it is a separate question with its own history and is
-left alone rather than changed in passing.
+## The neighbouring message was stale too
+
+The deliberate sense-ammeter case draws `trivial_probe` (**L017**), which read:
+
+```
+Current probe always returns zero
+   |
+   = info: branches are open circuted by default: I(sense) <+ 0
+```
+
+Both claims describe the behaviour **Enhancement-36 replaced**. A branch nothing
+contributes to is no longer an open circuit reading zero: probing its flow
+synthesises the LRM's 0 V source, so it is an ideal ammeter — a short — and the
+probe reads whatever current then flows. Measured: **1.0e-3 A** through such a
+branch while the message insisted it was zero. It reads zero only when no current
+can flow, which is the isolated case, not the general one.
+
+```
+warning[L017]: branch (mid, a) has no contributions, so probing its flow shorts it
+   |
+11 |         iprobe = I(sense);
+   |                  ^^^^^^^^ this probe makes the branch an ideal ammeter
+   |
+   = info: probing the flow of a branch nothing contributes to synthesises an ideal
+     ammeter -- a 0 V source (LRM 5.4.2) -- so the branch is a SHORT across its nodes,
+     and the probe reads the current that then flows through it; it reads zero only
+     when no current can flow
+   = help: to model an open circuit instead, contribute nothing and do not probe;
+     to model a device, contribute to it -- e.g. I(mid, a) <+ ...
+```
+
+Only the wording changed. The firing condition is untouched, and the corpus fires
+it the same 9 times across 5 files — including Enhancement-36's own
+`signalflow_demo`, where the new text finally describes what that example
+demonstrates.
+
+**Why the two lints do not overlap.** L017 keys its bookkeeping on the node pair:
+`hir_ty`'s validator reduces a named branch to `BranchWrite::Unnamed { hi, lo }`
+before recording it, so a node-pair contribution marks the declared branch
+non-trivial and L017 stays silent on the trap. The DAE does the opposite, keeping
+`Named` and `Unnamed` distinct — which is what creates the phantom ammeter in the
+first place. The two lints therefore partition the space exactly: **L017** when
+nothing anywhere drives the node pair (the deliberate ammeter), **L023** when
+something drives it through the other spelling (the mistake). Neither
+double-fires.
+
+That frontend/backend disagreement about branch identity is left as it is. Both
+models are self-consistent and each is right for what it does, the DAE's is the
+documented one, and changing either would move behaviour rather than wording —
+which is not what this release is for.

@@ -880,18 +880,39 @@ impl Diagnostic for BodyValidationDiagnosticWrapped<'_> {
                     BranchWrite::Unnamed { .. } => &branch_name[1..branch_name.len() - 1],
                 };
 
+                // Enhancement-406: this used to read "Current probe always returns zero",
+                // with a note that "branches are open circuted by default: I(x) <+ 0".
+                // Both described the behaviour Enhancement-36 replaced. A branch nothing
+                // contributes to is no longer an open circuit that reads zero: probing its
+                // flow synthesises the LRM's 0 V source, so it is an ideal AMMETER -- a
+                // SHORT across its nodes -- and the probe reads whatever current then
+                // flows. Measured: 1.0e-3 A through such a branch while the message
+                // claimed zero. It reads zero only when the short carries no current,
+                // which is the isolated case and no longer the general one.
                 let mut res = Report::error()
-                    .with_message("Current probe always returns zero".to_owned())
+                    .with_message(format!(
+                        "branch {branch_name} has no contributions, so probing its flow \
+                         shorts it"
+                    ))
                     .with_labels(vec![Label {
                         style: LabelStyle::Primary,
                         file_id: file,
                         range: range.into(),
-                        message: "always returns zero".to_owned(),
+                        message: "this probe makes the branch an ideal ammeter".to_owned(),
                     }]);
 
                 res = res.with_notes(vec![
-                    format!("help: there are no contributions to branch {branch_name}",),
-                    format!("info: branches are open circuted by default: I({branch_probe}) <+ 0"),
+                    format!("help: there are no contributions to branch {branch_name}"),
+                    "info: probing the flow of a branch nothing contributes to synthesises \
+                     an ideal ammeter -- a 0 V source (LRM 5.4.2) -- so the branch is a \
+                     SHORT across its nodes, and the probe reads the current that then \
+                     flows through it; it reads zero only when no current can flow"
+                        .to_owned(),
+                    format!(
+                        "help: to model an open circuit instead, contribute nothing and do \
+                         not probe; to model a device, contribute to it -- e.g. \
+                         I({branch_probe}) <+ ..."
+                    ),
                 ]);
 
                 res
