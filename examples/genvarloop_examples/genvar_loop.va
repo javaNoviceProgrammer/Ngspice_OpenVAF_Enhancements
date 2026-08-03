@@ -1,0 +1,73 @@
+// genvar_loop.va -- Enhancement-407: a `genvar` for-loop inside an `analog`
+// block, unrolled at elaboration.
+//
+// The loop exists because a vectored net's bit-select must be a CONSTANT: each
+// bit is its own simulator unknown, so `V(out[i]) <+ ..` over a run-time
+// `integer` is rejected outright. Unrolling turns the index into a literal.
+//
+// `rolled` and `unrolled` below are the same 4-bit weighted sum written both
+// ways, exactly as the LRM's page 117 ships `dac` beside a hand-written `dac8`.
+// They must give identical results.
+`include "disciplines.vams"
+
+module rolled(out, in);
+    output out;
+    input [0:3] in;
+    electrical out;
+    electrical [0:3] in;
+    genvar i;
+    real acc;
+    analog begin
+        acc = 0.0;
+        for (i = 0; i <= 3; i = i + 1) begin
+            acc = acc + V(in[i]) / pow(2, i + 1);
+        end
+        V(out) <+ acc;
+    end
+endmodule
+
+module unrolled(out, in);
+    output out;
+    input [0:3] in;
+    electrical out;
+    electrical [0:3] in;
+    real acc;
+    analog begin
+        acc = 0.0;
+        acc = acc + V(in[0]) / pow(2, 0 + 1);
+        acc = acc + V(in[1]) / pow(2, 1 + 1);
+        acc = acc + V(in[2]) / pow(2, 2 + 1);
+        acc = acc + V(in[3]) / pow(2, 3 + 1);
+        V(out) <+ acc;
+    end
+endmodule
+
+// A descending loop that CONTRIBUTES per bit -- the shape that cannot be
+// written with an `integer` at all, since each `out[i]` is a distinct unknown.
+module fanout(out, in);
+    output [0:3] out;
+    input in;
+    electrical [0:3] out;
+    electrical in;
+    genvar k;
+    analog begin
+        for (k = 3; k >= 0; k = k - 1)
+            V(out[k]) <+ V(in) * (k + 1);
+    end
+endmodule
+
+// The loop bound may come from a `localparam`, and from a `parameter` that has
+// been frozen by shaping a declaration width (E-92) -- which is what makes the
+// LRM's own `out[0:bits-1]` examples work.
+module sized(out, in);
+    parameter integer bits = 4;
+    output [0:bits-1] out;
+    input in;
+    electrical [0:bits-1] out;
+    electrical in;
+    genvar i;
+    analog begin
+        for (i = 0; i < bits; i = i + 1)
+            V(out[i]) <+ V(in) / (i + 1);
+    end
+endmodule

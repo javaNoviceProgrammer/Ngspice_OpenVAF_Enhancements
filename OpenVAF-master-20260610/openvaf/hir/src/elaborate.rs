@@ -1164,6 +1164,290 @@ fn unroll_first_legacy_generate(text: &str) -> anyhow::Result<Option<String>> {
 /// by `[<literal>]` (a bus bit-select requires a literal index, not a
 /// constant expression). Non-folding indices (dynamic array access) are left
 /// untouched.
+/// Enhancement-407: evaluates a genvar loop CONDITION over a token range, as 1 or 0.
+///
+/// [`eval_const_int_with_params`] is an arithmetic evaluator -- it has no relational
+/// operators, because every existing caller folds a width or an index, never a predicate.
+/// A loop condition is exactly a predicate (`i >= 0`, `k <= width`), so split it on its
+/// single top-level relational operator and fold each side with the existing evaluator.
+fn eval_const_cond(
+    text: &str,
+    spans: &[Tok],
+    lo: usize,
+    hi: usize,
+    env: &HashMap<String, i32>,
+) -> Option<i32> {
+    let mut depth = 0i32;
+    let mut split: Option<(usize, &'static str, usize)> = None;
+    let mut j = lo;
+    while j < hi {
+        match spans[j].kind {
+            TokenKind::OpenParen | TokenKind::OpenBracket => depth += 1,
+            TokenKind::CloseParen | TokenKind::CloseBracket => depth -= 1,
+            _ if depth == 0 => {
+                // A two-character operator may arrive either as ONE token (`<=`) or as two
+                // adjacent ones (`<` then `=`), depending on how the raw lexer split it.
+                // Handle both: matching only the split form silently missed every `<=`
+                // and `>=`, which is most real loop conditions.
+                let raw = &text[spans[j].start..spans[j].end];
+                if let Some(op) = ["<=", ">=", "==", "!="].into_iter().find(|o| *o == raw) {
+                    split = Some((j, op, 1));
+                    break;
+                }
+                let next = spans.get(j + 1).map(|t| &text[t.start..t.end]);
+                let adjacent = spans.get(j + 1).is_some_and(|t| t.start == spans[j].end);
+                let two = match (raw, next, adjacent) {
+                    ("<", Some("="), true) => Some("<="),
+                    (">", Some("="), true) => Some(">="),
+                    ("=", Some("="), true) => Some("=="),
+                    ("!", Some("="), true) => Some("!="),
+                    _ => None,
+                };
+                if let Some(op) = two {
+                    split = Some((j, op, 2));
+                    break;
+                }
+                if raw == "<" || raw == ">" {
+                    split = Some((j, if raw == "<" { "<" } else { ">" }, 1));
+                    break;
+                }
+            }
+            _ => {}
+        }
+        j += 1;
+    }
+    let (at, op, ntok) = split?;
+    let rhs_start = at + ntok;
+    let l = eval_const_int_with_params(text, spans, lo, at, env)?;
+    let r = eval_const_int_with_params(text, spans, rhs_start, hi, env)?;
+    let res = match op {
+        "<" => l < r,
+        "<=" => l <= r,
+        ">" => l > r,
+        ">=" => l >= r,
+        "==" => l == r,
+        "!=" => l != r,
+        _ => return None,
+    };
+    Some(res as i32)
+}
+
+/// Enhancement-407: how many statement copies one analog genvar loop may expand to.
+///
+/// The same reasoning as E-148's array cap: each iteration is a full copy of the body, so
+/// an unbounded loop bound would exhaust memory in the elaborator before the compiler ever
+/// saw the result. Real uses are small -- the LRM's own DAC allows `width from [2:24]`.
+const MAX_ANALOG_UNROLL: i32 = 4096;
+
+/// Enhancement-407: unrolls every `for` loop in one `analog` block whose index is a
+/// declared `genvar`.
+///
+/// A genvar loop in an analog block is not a run-time loop. It exists because a vectored
+/// net's bit-select must be a CONSTANT -- each bit is a distinct simulator unknown, so
+/// `V(out[i]) <+ ..` over an `integer` is rejected outright -- and unrolling turns the
+/// index into a literal. The LRM's page-117 example ships the hand-unrolled `dac8` beside
+/// the rolled `dac`, which is the semantics written out.
+///
+/// Purely textual, like the rest of this module: the body is repeated verbatim with the
+/// genvar replaced by each successive literal, reusing [`substitute_index`] so the
+/// bit-select brackets fold in the same pass. Loops are unrolled outermost-first and the
+/// scan restarts after each rewrite, so a nested genvar loop is handled by the next round
+/// once its enclosing loop has been expanded.
+///
+/// Bounds must fold to integers against `env`, which holds the module's localparams --
+/// including any `parameter` that `fold_parameter_widths` (E-92) has already frozen for
+/// shaping a declaration width. That is exactly the case the LRM examples need: `bits`
+/// sizes `out[0:bits-1]`, so it is structural, frozen, and constant here. A bound that
+/// does not fold is an error rather than a silent miscompile.
+fn unroll_analog_genvar_loops(
+    src: &str,
+    genvars: &[String],
+    env: &HashMap<String, i32>,
+) -> anyhow::Result<String> {
+    let mut text = src.to_owned();
+    // one rewrite per pass, rescanning afterwards: the replacement changes every offset,
+    // and an unrolled body may itself contain a further genvar loop
+    for _ in 0..MAX_ANALOG_UNROLL {
+        match unroll_first_analog_genvar_loop(&text, genvars, env)? {
+            Some(next) => text = next,
+            None => return Ok(text),
+        }
+    }
+    anyhow::bail!("analog genvar loops nested deeper than {MAX_ANALOG_UNROLL} levels")
+}
+
+/// Expands the first analog genvar `for` in `text`, or `None` when there is none left.
+fn unroll_first_analog_genvar_loop(
+    text: &str,
+    genvars: &[String],
+    env: &HashMap<String, i32>,
+) -> anyhow::Result<Option<String>> {
+    let spans = tok_spans(text);
+    let sig: Vec<usize> = (0..spans.len()).filter(|&i| !is_trivia(spans[i].kind)).collect();
+    let raw = |i: usize| &text[spans[i].start..spans[i].end];
+
+    for w in 0..sig.len() {
+        if raw(sig[w]) != "for" {
+            continue;
+        }
+        // `for` `(` <genvar> `=` ...
+        let Some(&open) = sig.get(w + 1) else { continue };
+        if spans[open].kind != TokenKind::OpenParen {
+            continue;
+        }
+        let Some(&name_i) = sig.get(w + 2) else { continue };
+        let gv = raw(name_i).to_owned();
+        if !genvars.iter().any(|g| *g == gv) {
+            continue;   // an ordinary run-time `for`, left exactly as written
+        }
+
+        let close = {
+            let mut depth = 0i32;
+            let mut j = open;
+            loop {
+                if j >= spans.len() {
+                    anyhow::bail!("genvar for loop `{gv}`: unbalanced `(` in the loop header")
+                }
+                match spans[j].kind {
+                    TokenKind::OpenParen => depth += 1,
+                    TokenKind::CloseParen => {
+                        depth -= 1;
+                        if depth == 0 {
+                            break j;
+                        }
+                    }
+                    _ => {}
+                }
+                j += 1;
+            }
+        };
+        // split the header on its two top-level `;`
+        let mut semis = Vec::new();
+        let mut depth = 0i32;
+        for j in (open + 1)..close {
+            match spans[j].kind {
+                TokenKind::OpenParen | TokenKind::OpenBracket => depth += 1,
+                TokenKind::CloseParen | TokenKind::CloseBracket => depth -= 1,
+                _ if depth == 0 && &text[spans[j].start..spans[j].end] == ";" => semis.push(j),
+                _ => {}
+            }
+        }
+        if semis.len() != 2 {
+            anyhow::bail!(
+                "genvar for loop `{gv}`: expected `for (init; condition; step)`"
+            )
+        }
+        let (s1, s2) = (semis[0], semis[1]);
+
+        // init: `<gv> = <expr>`  -- the `=` is the token after the name
+        let eq = (name_i + 1..s1)
+            .find(|&j| &text[spans[j].start..spans[j].end] == "=")
+            .ok_or_else(|| anyhow::anyhow!("genvar for loop `{gv}`: no `=` in the initializer"))?;
+        let mut value = eval_const_int_with_params(text, &spans, eq + 1, s1, env).ok_or_else(
+            || anyhow::anyhow!(
+                "genvar for loop `{gv}`: the initial value is not a compile-time constant \
+                 integer -- a genvar loop is unrolled at elaboration, so its bounds must be \
+                 known then (a `parameter` only counts once it has been frozen by shaping a \
+                 declaration width)"
+            ),
+        )?;
+
+        // step: `<gv> = <expr>` between the second `;` and `)`
+        let step_eq = (s2 + 1..close)
+            .find(|&j| &text[spans[j].start..spans[j].end] == "=")
+            .ok_or_else(|| anyhow::anyhow!("genvar for loop `{gv}`: no `=` in the step"))?;
+
+        // body: everything after `)` up to the end of one statement
+        let body_start = close + 1;
+        let (body_lo, body_hi) = statement_extent(text, &spans, body_start).ok_or_else(|| {
+            anyhow::anyhow!("genvar for loop `{gv}`: could not find the loop body")
+        })?;
+        let body = &text[spans[body_lo].start..spans[body_hi - 1].end];
+
+        let mut outp = String::from("begin\n");
+        let mut iters = 0i32;
+        loop {
+            let mut it_env = env.clone();
+            it_env.insert(gv.clone(), value);
+            let cond = eval_const_cond(text, &spans, s1 + 1, s2, &it_env).ok_or_else(
+                || anyhow::anyhow!(
+                    "genvar for loop `{gv}`: the loop condition is not a compile-time \
+                     constant integer"
+                ),
+            )?;
+            if cond == 0 {
+                break;
+            }
+            iters += 1;
+            if iters > MAX_ANALOG_UNROLL {
+                anyhow::bail!(
+                    "genvar for loop `{gv}`: expands to more than {MAX_ANALOG_UNROLL} \
+                     statement copies"
+                )
+            }
+            outp.push_str(&substitute_index(body, &gv, value));
+            outp.push('\n');
+            value = eval_const_int_with_params(text, &spans, step_eq + 1, close, &it_env)
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "genvar for loop `{gv}`: the step is not a compile-time constant integer"
+                    )
+                })?;
+        }
+        outp.push_str("end");
+
+        let lo = spans[sig[w]].start;
+        let hi = spans[body_hi - 1].end;
+        return Ok(Some(format!("{}{}{}", &text[..lo], outp, &text[hi..])));
+    }
+    Ok(None)
+}
+
+/// The token range of one statement starting at `from`: a `begin`..`end` block, or
+/// everything through the next top-level `;`.
+fn statement_extent(text: &str, spans: &[Tok], from: usize) -> Option<(usize, usize)> {
+    let mut i = from;
+    while i < spans.len() && is_trivia(spans[i].kind) {
+        i += 1;
+    }
+    if i >= spans.len() {
+        return None;
+    }
+    if &text[spans[i].start..spans[i].end] == "begin" {
+        let mut depth = 0i32;
+        let mut j = i;
+        while j < spans.len() {
+            match &text[spans[j].start..spans[j].end] {
+                "begin" | "case" | "casex" | "casez" => depth += 1,
+                "end" | "endcase" => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some((i, j + 1));
+                    }
+                }
+                _ => {}
+            }
+            j += 1;
+        }
+        return None;
+    }
+    // a single statement: run to the next `;` at paren/bracket depth zero
+    let mut depth = 0i32;
+    let mut j = i;
+    while j < spans.len() {
+        match spans[j].kind {
+            TokenKind::OpenParen | TokenKind::OpenBracket => depth += 1,
+            TokenKind::CloseParen | TokenKind::CloseBracket => depth -= 1,
+            _ if depth == 0 && &text[spans[j].start..spans[j].end] == ";" => {
+                return Some((i, j + 1))
+            }
+            _ => {}
+        }
+        j += 1;
+    }
+    None
+}
+
 fn substitute_index(body: &str, name: &str, value: i32) -> String {
     // pass 1: whole-identifier substitution of `name` -> value
     let spans = tok_spans(body);
@@ -1353,31 +1637,37 @@ fn check_genvar_collisions(module_ast: &ast::ModuleDecl) -> anyhow::Result<()> {
         }
     }
 
-    // Enhancement-405: a genvar referenced from an `analog` block.
-    //
-    // Elaboration ERASES genvar declarations textually, so such a reference reached name
-    // resolution against a source where the declaration no longer existed and was reported
-    // as "'g' was not found in the current scope" -- the message for a name that was never
-    // declared, in front of a user looking straight at the declaration. Only `analog` items
-    // are searched, which is where the mistake is made; a reference from inside a `generate`
-    // construct is the genvar doing its job and is untouched.
-    if !genvars.is_empty() {
-        for item in module_ast.module_items() {
-            let ast::ModuleItem::AnalogBehaviour(analog) = item else { continue };
-            for tok in analog.syntax().descendants_with_tokens().filter_map(|it| it.into_token()) {
-                if tok.kind() != syntax::SyntaxKind::IDENT {
-                    continue;
-                }
-                let text = tok.text();
-                if genvars.iter().any(|g| g == text) {
-                    anyhow::bail!(
-                        "genvar '{text}' cannot be used inside an analog block: a genvar is the \
-                         loop index of a `generate for`, unrolled at elaboration time, and holds \
-                         no value during simulation -- declare an `integer` to count in an \
-                         analog block, or move the loop into a `generate` block"
-                    );
-                }
-            }
+    Ok(())
+}
+
+/// Enhancement-405/407: a genvar still referenced in an analog block AFTER unrolling.
+///
+/// E-405 added this check because elaboration ERASES genvar declarations textually, so
+/// such a reference reached name resolution against a source where the declaration no
+/// longer existed and was reported as "'g' was not found in the current scope" -- the
+/// message for a name that was never declared, in front of a user looking straight at it.
+///
+/// E-407 moved it AFTER [`unroll_analog_genvar_loops`]. Driving an analog `for` with a
+/// genvar is the LRM's own idiom (pages 91, 117 and 134) and is now unrolled rather than
+/// rejected, so the check has to run on the result: a genvar the unroller consumed leaves
+/// no trace, and one that survives is a genuine misuse -- reading it as a value, say.
+fn check_no_genvar_left_in_analog(rendered: &str, genvars: &[String]) -> anyhow::Result<()> {
+    if genvars.is_empty() {
+        return Ok(());
+    }
+    let spans = tok_spans(rendered);
+    for tok in &spans {
+        if tok.kind != TokenKind::SimpleIdent {
+            continue;
+        }
+        let name = &rendered[tok.start..tok.end];
+        if genvars.iter().any(|g| g == name) {
+            anyhow::bail!(
+                "genvar '{name}' cannot be used inside an analog block except as the index \
+                 of a `for` loop that is unrolled at elaboration time: a genvar holds no \
+                 value during simulation. Use it as `for ({name} = <const>; ...)`, declare \
+                 an `integer` to count at run time, or move the loop into a `generate` block"
+            );
         }
     }
     Ok(())
@@ -1400,6 +1690,18 @@ fn render_module_with_generates(module_ast: &ast::ModuleDecl) -> anyhow::Result<
     // a constant in every other position: array bounds, bus port widths, parameter
     // defaults, `repeat` counts.
     let const_env = module_localparam_env(module_ast);
+    // Enhancement-407: the genvars this module declares, so an `analog` `for` driven by
+    // one can be recognised and unrolled below.
+    let genvar_names: Vec<String> = module_ast
+        .module_items()
+        .filter_map(|it| match it {
+            ast::ModuleItem::GenvarDecl(decl) => {
+                Some(decl.names().map(|n| n.syntax().text().to_string()).collect::<Vec<_>>())
+            }
+            _ => None,
+        })
+        .flatten()
+        .collect();
     let mut out = String::new();
     for item in module_ast.module_items() {
         match item {
@@ -1414,6 +1716,19 @@ fn render_module_with_generates(module_ast: &ast::ModuleDecl) -> anyhow::Result<
             }
             ast::ModuleItem::GenerateCase(gen_case) => {
                 out.push_str(&render_generate_case(&gen_case, &const_env, "", &Scope::default())?);
+            }
+            // Enhancement-407: an `analog` block may drive a genvar `for` loop. Unlike a
+            // module-level `generate for`, which repeats declarations, this one repeats
+            // STATEMENTS -- and it exists because a vectored net's bit-select must be a
+            // constant (each bit is its own simulator unknown), so `V(out[i]) <+ ..` over
+            // a run-time `integer` is rejected. Unrolling here is what makes it legal, and
+            // the LRM's own page-117 example ships the unrolled `dac8` beside the rolled
+            // `dac` to say exactly that.
+            ast::ModuleItem::AnalogBehaviour(_) if !genvar_names.is_empty() => {
+                let src = item.syntax().text().to_string();
+                let rendered = unroll_analog_genvar_loops(&src, &genvar_names, &const_env)?;
+                check_no_genvar_left_in_analog(&rendered, &genvar_names)?;
+                out.push_str(&rendered);
             }
             other => out.push_str(&other.syntax().text().to_string()),
         }

@@ -61,6 +61,12 @@
       "note": ""
     },
     {
+      "file": "lrm_p091_1.va",
+      "block": "block_091_1",
+      "page": 91,
+      "note": "8-bit ADC: param-dependent bus width folds (E-91) and the analog-block genvar for-loop is unrolled at elaboration (E-407)"
+    },
+    {
       "file": "lrm_p092_1.va",
       "block": "block_092_1",
       "page": 92,
@@ -91,6 +97,12 @@
       "note": ""
     },
     {
+      "file": "lrm_p117_1.va",
+      "block": "block_117_1",
+      "page": 117,
+      "note": "DAC: the genvar loop is unrolled (E-407); the LRM's own hand-unrolled `dac8` sits beside it in this file and gives the identical output"
+    },
+    {
       "file": "lrm_p118_1.va",
       "block": "block_118_1",
       "page": 118,
@@ -101,6 +113,12 @@
       "block": "block_119_1",
       "page": 119,
       "note": "hierarchical net + named-branch probes from sibling modules (V(top.drv.a), V(top.a1.b)); parse/elaboration added by E-86; trailing branch()-fragment section trimmed"
+    },
+    {
+      "file": "lrm_p134_1.va",
+      "block": "block_134_1",
+      "page": 134,
+      "note": "genvar expression indexing a vectored net; unrolled at elaboration (E-407)"
     },
     {
       "file": "lrm_p138_1.va",
@@ -282,32 +300,11 @@
       "expect": "refers to module 'gen'"
     },
     {
-      "file": "lrm_p091_1.va",
-      "block": "block_091_1",
-      "page": 91,
-      "note": "param-dependent bus width now folds (E-91); still blocked on the genvar for-loop used *inside* the analog block (analog-block genvar unrolling is unsupported)",
-      "expect": "genvar 'i' cannot be used inside an analog block"
-    },
-    {
       "file": "lrm_p112_1.va",
       "block": "block_112_1",
       "page": 112,
       "note": "block-scoped parameters WORK (E-87); this file is correctly rejected only because it also demos the LRM's own `#(.myscope.p2(4)) // error` case, now a clean targeted diagnostic (was a parser cascade)",
       "expect": "hierarchical/block-scoped parameter"
-    },
-    {
-      "file": "lrm_p117_1.va",
-      "block": "block_117_1",
-      "page": 117,
-      "note": "param-dependent bus width now folds (E-91); still blocked on the analog-block genvar for-loop",
-      "expect": "genvar 'i' cannot be used inside an analog block"
-    },
-    {
-      "file": "lrm_p134_1.va",
-      "block": "block_134_1",
-      "page": 134,
-      "note": "param-dependent bus width now folds (E-91); still blocked on the analog-block genvar for-loop",
-      "expect": "genvar 'k' cannot be used inside an analog block"
     },
     {
       "file": "lrm_p155_3.va",
