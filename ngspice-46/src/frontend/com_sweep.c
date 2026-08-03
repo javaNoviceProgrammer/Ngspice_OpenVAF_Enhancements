@@ -286,6 +286,49 @@ static void sw_set_inplace(int kind, const char *name, double val)
 }
 
 
+/* Enhancement-409: classify a WILDCARD knob and extract the parameter it names.
+ *
+ *   `@*[p]`    -> every MODEL     that has `p`   (Enhancement-268, do_model = 1)
+ *   `@#*[p]`   -> every INSTANCE  that has `p`   (Enhancement-269, do_model = 0)
+ *   `@*[[p]]`  -> every INSTANCE  that has `p`   (Enhancement-269 alias)
+ *
+ * The name is lowercased, because that is how the device tables store a keyword
+ * and how `alter_set` matches it (Enhancement-284). Returns 1 for a wildcard.
+ */
+static int sw_wildcard_knob(const char *name, char *param, size_t plen,
+                            int *do_model)
+{
+    const char *p, *end;
+    size_t i, n;
+
+    if (!name || name[0] != '@' || !param || plen == 0 || !do_model)
+        return 0;
+    p = name + 1;
+    if (p[0] == '#' && p[1] == '*' && p[2] == '[') {
+        *do_model = 0;
+        p += 3;
+    } else if (p[0] == '*' && p[1] == '[' && p[2] == '[') {
+        *do_model = 0;
+        p += 3;
+    } else if (p[0] == '*' && p[1] == '[') {
+        *do_model = 1;
+        p += 2;
+    } else {
+        return 0;
+    }
+    end = strchr(p, ']');
+    if (!end || end == p)
+        return 0;
+    n = (size_t) (end - p);
+    if (n >= plen)
+        return 0;
+    for (i = 0; i < n; i++)
+        param[i] = (char) tolower((unsigned char) p[i]);
+    param[n] = '\0';
+    return 1;
+}
+
+
 /* Enhancement-385: read an `alter`/`altermod` knob's CURRENT value, reporting
  * whether the read actually succeeded.
  *
@@ -308,6 +351,25 @@ static double sw_read_knob(const char *name, int *ok)
     *ok = 0;
     if (!name)
         return 0.0;
+    /* Enhancement-409: a wildcard names MANY parameters at once, so it is not a
+     * readable vector and must never reach the expression parser. Doing so only
+     * produced a diagnostic that looked like a broken parameter name --
+     *
+     *     Error: no such device or model name
+     *     PPerror: syntax error in line segment
+     *        @*[wavelength_nm]
+     *     near
+     *           wavelength_nm]
+     *
+     * -- because the lexer's `specials` set contains '*', so `@*[p]` cannot lex
+     * as a single token and the leftover text is reported with a stray ']'.
+     * Wildcards are captured per target by if_saveparam_wildcard() instead. */
+    {
+        char pbuf[128];
+        int dm;
+        if (sw_wildcard_knob(name, pbuf, sizeof pbuf, &dm))
+            return 0.0;                  /* *ok stays 0 -- read via the backend */
+    }
     (void) snprintf(buf, sizeof buf, "%s", name);
     for (i = 0; buf[i]; i++)
         buf[i] = (char) tolower((unsigned char) buf[i]);
@@ -1368,9 +1430,20 @@ void com_sweep(wordlist *wl)
      * 1800 2200 3` left r1 at 2199 and the next `op` was 3.8% off. */
     double  inplace_nominal[SW_MAXKNOB];
     int     ninplace_nominal = 0;
+    /* Enhancement-409: a WILDCARD knob overwrites many targets whose nominals all
+     * differ, so one number cannot undo it. These hold the per-target capture;
+     * wild_nominal[j] != NULL marks knob j as the wildcard kind. wild_ckt[j]
+     * pins the circuit the readings came from, so a `.param` co-knob that
+     * re-sources the deck cannot make them be replayed onto a different one. */
+    double *wild_nominal[SW_MAXKNOB];
+    int     wild_n[SW_MAXKNOB], wild_domodel[SW_MAXKNOB];
+    char    wild_param[SW_MAXKNOB][128];
+    void   *wild_ckt[SW_MAXKNOB];
 
     for (j = 0; j < SW_MAXKNOB; j++) {
         kname[j] = NULL; kvals[j] = NULL; kscname[j] = NULL;
+        wild_nominal[j] = NULL; wild_n[j] = 0; wild_domodel[j] = 0;
+        wild_param[j][0] = '\0'; wild_ckt[j] = NULL;
     }
 
     if (sweep_active)                /* re-entered via a .param re-source */
@@ -1518,6 +1591,23 @@ void com_sweep(wordlist *wl)
                 double v;
                 if (kkind[j] == SW_DECK)
                     continue;
+                /* Enhancement-409: a wildcard is captured per target through the
+                 * device tables, since it has no single readable value. */
+                if (sw_wildcard_knob(kname[j], wild_param[j],
+                                     sizeof wild_param[j], &wild_domodel[j])) {
+                    if (!ft_curckt || !ft_curckt->ci_ckt ||
+                            !if_saveparam_wildcard(ft_curckt->ci_ckt,
+                                                   wild_param[j],
+                                                   wild_domodel[j],
+                                                   &wild_nominal[j],
+                                                   &wild_n[j])) {
+                        allok = 0;
+                        break;
+                    }
+                    wild_ckt[j] = (void *) ft_curckt->ci_ckt;
+                    inplace_nominal[nin++] = 0.0;   /* keeps the indices aligned */
+                    continue;
+                }
                 v = sw_read_knob(kname[j], &ok);
                 if (!ok) { allok = 0; break; }
                 inplace_nominal[nin++] = v;
@@ -1779,8 +1869,23 @@ cleanup:
         for (j = 0; j < nknob; j++) {
             if (kkind[j] == SW_DECK)
                 continue;
-            if (nin < ninplace_nominal)
-                sw_set_inplace(kkind[j], kname[j], inplace_nominal[nin]);
+            if (nin < ninplace_nominal) {
+                if (wild_nominal[j]) {
+                    /* Enhancement-409: replay the per-target nominals, but only
+                     * onto the circuit they were read from -- if a `.param`
+                     * co-knob re-sourced the deck, every model is already back
+                     * at its deck value and these readings no longer apply. */
+                    if (ft_curckt && ft_curckt->ci_ckt &&
+                            (void *) ft_curckt->ci_ckt == wild_ckt[j])
+                        (void) if_restoreparam_wildcard(ft_curckt->ci_ckt,
+                                                        wild_param[j],
+                                                        wild_domodel[j],
+                                                        wild_nominal[j],
+                                                        wild_n[j]);
+                } else {
+                    sw_set_inplace(kkind[j], kname[j], inplace_nominal[nin]);
+                }
+            }
             nin++;
         }
     }
@@ -1794,6 +1899,7 @@ cleanup:
     tfree(ovx); tfree(ovy); tfree(ovlen); tfree(scwavename);
     for (j = 0; j < SW_MAXKNOB; j++) {
         tfree(kname[j]); tfree(kvals[j]); tfree(kscname[j]);
+        tfree(wild_nominal[j]);          /* Enhancement-409 */
     }
     tfree(analysis); tfree(scname);
     tfree(data);

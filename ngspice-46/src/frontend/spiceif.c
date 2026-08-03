@@ -1119,6 +1119,196 @@ if_hasparam_wildcard(CKTcircuit *ckt, char *param, int do_model)
 }
 
 
+/* Enhancement-409: read one target's scalar value into vals[*n]. Returns 0 --
+ * refusing the whole capture -- for anything that is not a plain number, since a
+ * vector-valued parameter cannot be put back from a single reading. */
+static int
+wild_ask_scalar(CKTcircuit *ckt, int typecode, GENinstance *dev, GENmodel *mod,
+                IFparm *opt, double *vals, int *n, int cap)
+{
+    IFvalue *pv;
+
+    if (*n >= cap)
+        return 0;
+    pv = doask(ckt, typecode, dev, mod, opt, 0);
+    if (!pv)
+        return 0;
+    switch (opt->dataType & IF_VARTYPES) {
+    case IF_REAL:
+        vals[(*n)++] = pv->rValue;
+        return 1;
+    case IF_FLAG:
+    case IF_INTEGER:
+        vals[(*n)++] = (double) pv->iValue;
+        return 1;
+    default:
+        return 0;
+    }
+}
+
+
+/* Enhancement-409: write one target's scalar value back through the same `doset`
+ * path a plain `alter`/`altermod` uses. */
+static int
+wild_set_scalar(CKTcircuit *ckt, int typecode, GENinstance *dev, GENmodel *mod,
+                IFparm *opt, double value)
+{
+    struct dvec v;
+    double d = value;
+
+    /* The capture refuses anything vector-valued, so the set side should never
+       see one; refuse rather than hand doset a one-element vector if the set and
+       ask entries for a keyword ever disagree about the shape. */
+    if (opt->dataType & IF_VECTOR)
+        return E_UNSUPP;
+
+    memset(&v, 0, sizeof v);
+    v.v_realdata = &d;
+    v.v_length = 1;
+    v.v_flags = VF_REAL;
+    return doset(ckt, typecode, dev, mod, opt, &v);
+}
+
+
+/* Enhancement-409: capture, and later put back, the PER-TARGET nominal values a
+ * wildcard knob overwrites.
+ *
+ * `@*[p]` and `@#*[p]` set EVERY matching model (or instance) to ONE value, but
+ * the values they overwrite can all differ -- two `.model` cards of the same type
+ * routinely carry different numbers -- so undoing the change needs one reading
+ * per target, not a single number. That is why `sweep` could not restore a
+ * wildcard knob through Enhancement-385's scalar path.
+ *
+ * These walk exactly the same targets in exactly the same order as
+ * if_setparam_wildcard{,_instance} above -- same device-type loop, same model and
+ * instance chains, selected by the same `parmlookup(..., inout=set)` predicate --
+ * so index i of the saved array names the same target on the way out as on the
+ * way in.
+ *
+ * Saving is ALL-OR-NOTHING: a parameter that is settable but not askable, or one
+ * that is not a plain number, cannot be undone, and a partially restored circuit
+ * is harder to reason about than an untouched one (the rule Enhancement-385
+ * already applies to concrete knobs). Returns the number of targets saved, or 0.
+ */
+int
+if_saveparam_wildcard(CKTcircuit *ckt, char *param, int do_model,
+                      double **valsOut, int *nOut)
+{
+    int typecode, n = 0, cap;
+    double *vals;
+
+    if (valsOut)
+        *valsOut = NULL;
+    if (nOut)
+        *nOut = 0;
+    if (!param || !*param || !ckt || !valsOut || !nOut)
+        return 0;
+
+    cap = if_hasparam_wildcard(ckt, param, do_model);
+    if (cap <= 0)
+        return 0;
+    vals = TMALLOC(double, cap);
+    if (!vals)
+        return 0;
+
+    for (typecode = 0; typecode < ft_sim->numDevices; typecode++) {
+        IFdevice    *device = ft_sim->devices[typecode];
+        GENinstance *sdummy = NULL, *admy = NULL;
+        GENmodel    *mod;
+        IFparm      *aopt;
+
+        if (!device || !ckt->CKThead[typecode])
+            continue;
+        if (!parmlookup(device, &sdummy, param, do_model, 1 /*inout=set*/))
+            continue;               /* not a target of this wildcard */
+        /* the READABLE twin of the same parameter -- a set-only parameter
+           cannot be undone at all, so refuse the whole capture */
+        admy = NULL;
+        aopt = parmlookup(device, &admy, param, do_model, 0 /*inout=ask*/);
+        if (!aopt)
+            goto fail;
+        for (mod = ckt->CKThead[typecode]; mod; mod = mod->GENnextModel) {
+            if (do_model) {
+                if (!wild_ask_scalar(ckt, typecode, NULL, mod, aopt, vals, &n, cap))
+                    goto fail;
+            } else {
+                GENinstance *inst;
+                for (inst = mod->GENinstances; inst; inst = inst->GENnextInstance)
+                    if (!wild_ask_scalar(ckt, typecode, inst, NULL, aopt,
+                                         vals, &n, cap))
+                        goto fail;
+            }
+        }
+    }
+
+    if (n != cap)               /* the two walks disagreed -- do not risk it */
+        goto fail;
+
+    *valsOut = vals;
+    *nOut = n;
+    return n;
+
+fail:
+    tfree(vals);
+    return 0;
+}
+
+
+/* Enhancement-409: put back what if_saveparam_wildcard() captured. Returns the
+ * number of targets restored. */
+int
+if_restoreparam_wildcard(CKTcircuit *ckt, char *param, int do_model,
+                         const double *vals, int n)
+{
+    int typecode, i = 0, count = 0;
+
+    if (!param || !*param || !ckt || !vals || n <= 0)
+        return 0;
+
+    for (typecode = 0; typecode < ft_sim->numDevices; typecode++) {
+        IFdevice    *device = ft_sim->devices[typecode];
+        GENinstance *dummy  = NULL;
+        GENmodel    *mod;
+        IFparm      *opt;
+
+        if (!device || !ckt->CKThead[typecode])
+            continue;
+        opt = parmlookup(device, &dummy, param, do_model, 1 /*inout=set*/);
+        if (!opt)
+            continue;
+        for (mod = ckt->CKThead[typecode]; mod; mod = mod->GENnextModel) {
+            if (do_model) {
+                if (i >= n)
+                    goto done;
+                if (wild_set_scalar(ckt, typecode, NULL, mod, opt, vals[i++]) == OK)
+                    count++;
+            } else {
+                GENinstance *inst;
+                for (inst = mod->GENinstances; inst; inst = inst->GENnextInstance) {
+                    if (i >= n)
+                        goto done;
+                    if (wild_set_scalar(ckt, typecode, inst, NULL, opt,
+                                        vals[i++]) == OK)
+                        count++;
+                }
+            }
+        }
+    }
+
+done:
+    /* mirror if_setparam_wildcard: propagate to instances mid-run */
+    if (count > 0 && ckt->CKTtime > 0) {
+        int error = CKTtemp(ckt);
+        if (error) {
+            fprintf(stderr, "Error while restoring wildcard parameter!\n");
+            controlled_exit(1);
+        }
+    }
+
+    return count;
+}
+
+
 /* Make a linked list where the first node is a CP_LIST variable
  * pointing to the different values of the vector variables.
  *

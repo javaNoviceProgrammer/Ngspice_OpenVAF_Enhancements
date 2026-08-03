@@ -319,6 +319,10 @@ extern void if_setparam(CKTcircuit *ckt, char **name, char *param, struct dvec *
 extern int if_setparam_wildcard(CKTcircuit *ckt, char *param, struct dvec *val);   /* Enhancement-268 */
 extern int if_setparam_wildcard_instance(CKTcircuit *ckt, char *param, struct dvec *val);  /* Enhancement-269 */
 extern int if_hasparam_wildcard(CKTcircuit *ckt, char *param, int do_model);
+extern int if_saveparam_wildcard(CKTcircuit *ckt, char *param, int do_model,
+                                 double **valsOut, int *nOut);            /* Enhancement-409 */
+extern int if_restoreparam_wildcard(CKTcircuit *ckt, char *param, int do_model,
+                                    const double *vals, int n);           /* Enhancement-409 */
 extern struct variable *if_getstat(CKTcircuit *ckt, char *name);
 extern int ft_find_analysis(char *name);
 extern IFparm *ft_find_analysis_parm(int which, char *name);

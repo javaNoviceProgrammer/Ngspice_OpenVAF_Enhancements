@@ -28,7 +28,7 @@ https://ngspice.sourceforge.io/
 
 ## The Enhancements
 
-Four hundred and eight enhancements so far — language features, correctness fixes, systematic audits, and simulator-side workflow tooling, each verified end-to-end by a committed example suite and released with a detailed write-up.
+Four hundred and nine enhancements so far — language features, correctness fixes, systematic audits, and simulator-side workflow tooling, each verified end-to-end by a committed example suite and released with a detailed write-up.
 
 **🗂️ Browse them all in the [live feature catalog](https://javanoviceprogrammer.github.io/Ngspice_OpenVAF_Enhancements/)** — every enhancement grouped into 19 feature areas across the compiler and the simulator, searchable, with each entry linking to its write-up.
 
@@ -452,6 +452,7 @@ The index: **Doc** links each enhancement's detailed write-up, **Examples** link
 | 406 | fix: a flow probe on a declared branch silently shorted the branch that was driven — new `probe_only_branch_short` lint | openvaf&#8209;r | [doc](enhancements_doc/Enhancement-406.md) | [probeshort](examples/probeshort_examples/) |
 | 407 | feat: a `genvar` for-loop inside an `analog` block is unrolled at elaboration — three LRM examples now compile | openvaf&#8209;r | [doc](enhancements_doc/Enhancement-407.md) | [genvarloop](examples/genvarloop_examples/) |
 | 408 | fix: bracketed names missed their target -- a leading-zero node index, a parameter name containing brackets, a bus range on an output or IC card | ngspice | [doc](enhancements_doc/Enhancement-408.md) | [busname](examples/busname_examples/) |
+| 409 | fix: a wildcard `sweep` knob was never put back, and printed a parser error that looked like a bad parameter name | ngspice | [doc](enhancements_doc/Enhancement-409.md) | [wildrestore](examples/wildrestore_examples/) |
 
 </details>
 

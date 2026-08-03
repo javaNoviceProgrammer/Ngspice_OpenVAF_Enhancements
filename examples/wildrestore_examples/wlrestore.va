@@ -1,0 +1,19 @@
+// wlrestore.va -- Enhancement-409 demo model (same shape as E-268/-269's
+// wlmodel.va, renamed so the two examples cannot collide in the OSDI registry).
+//
+// A two-terminal element whose resistance is R = wavelength * scale * 1k, with:
+//   * `wavelength` -- a MODEL parameter (settable on the .model card),
+//   * `scale`      -- an INSTANCE parameter (settable per device instance).
+// So `@*[wavelength]` (E-268, model wildcard) co-varies the model parameter across
+// every .model card, and `@#*[scale]` / `@*[[scale]]` (E-269, instance wildcard)
+// co-vary the instance parameter across every device instance. `scale` defaults
+// to 1, so with no scale set R = wavelength * 1k.
+`include "disciplines.vams"
+
+module wlrestore(p, n);
+    inout p, n;
+    electrical p, n;
+    parameter real wavelength = 1.0;                    // model parameter
+    (* type = "instance" *) parameter real scale = 1.0; // instance parameter
+    analog V(p, n) <+ I(p, n) * wavelength * scale * 1000.0;
+endmodule
