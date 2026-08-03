@@ -629,6 +629,59 @@ if_errstring(int code)
 }
 
 
+/* Enhancement-410: find an instance whose name was written WITHOUT the
+ * device-type letter that subcircuit flattening prepends.
+ *
+ * ngspice flattens a subcircuit by rewriting its cards back into the deck and
+ * re-parsing them as ordinary element lines, and the parser takes the device
+ * type from the FIRST CHARACTER of the card (inppas2.c). So the flattened refdes
+ * has to keep a type letter in front: `r1` inside `x1` becomes `r.x1.r1`, or the
+ * card `x1.r1 a m 1k` would be re-read as another subcircuit call. That is also
+ * why translate_inst_name() exempts `x` devices -- their name already starts
+ * with the right letter -- and why NODES, which have no type, keep plain
+ * hierarchical paths (`x1.m`).
+ *
+ * The consequence is that `@x1.r1[resistance]` names nothing, while the node
+ * beside it is spelled `x1.m`. This restores the symmetry, and the mapping needs
+ * no search: the letter flattening prepends is literally the local name's own
+ * first character (`bxx_putc(buffer, *name)`), and ngspice already requires a
+ * device's name to begin with its type letter -- so `x1.r1` can only ever mean
+ * `r.x1.r1`. Two device types cannot share a local name.
+ *
+ * STRICTLY A FALLBACK: the caller looks the exact name up first, so every name
+ * that resolves today resolves to exactly what it does today. This is only
+ * consulted after that fails.
+ */
+GENinstance *
+if_find_instance_hier(CKTcircuit *ckt, const char *name)
+{
+    GENinstance *inst;
+    const char *local;
+    char *buf;
+    size_t n;
+
+    if (!ckt || !name || !*name)
+        return NULL;
+    local = strrchr(name, '.');
+    if (!local || !local[1])
+        return NULL;            /* not hierarchical -- nothing to reconstruct */
+    local++;                    /* the leaf instance name */
+    if (tolower_c(*local) == 'x')
+        return NULL;            /* an X instance carries no prefix to restore */
+
+    n = strlen(name);
+    buf = TMALLOC(char, n + 3);
+    if (!buf)
+        return NULL;
+    buf[0] = *local;
+    buf[1] = '.';
+    memcpy(buf + 2, name, n + 1);
+    inst = ft_sim->findInstance(ckt, buf);
+    tfree(buf);
+    return inst;
+}
+
+
 /* Get pointers to a device, its model, and its type number given the name. If
  * there is no such device, try to find a model with that name
  * device_or_model says if we are referencing a device or a model.
@@ -656,6 +709,14 @@ finddev_special(
     if (*modptr) {
         *device_or_model = 1;
         return (*modptr)->GENmodType;
+    }
+
+    /* Enhancement-410: only now, after both exact lookups have failed, try the
+       hierarchical name written without its device-type letter */
+    *devptr = if_find_instance_hier(ckt, name);
+    if (*devptr) {
+        *device_or_model = 0;
+        return (*devptr)->GENmodPtr->GENmodType;
     }
 
     *device_or_model = 2;
@@ -1582,6 +1643,12 @@ finddev(CKTcircuit *ckt, char *name, GENinstance **devptr, GENmodel **modptr)
     *modptr = ft_sim->findModel (ckt, name);
     if (*modptr)
         return (*modptr)->GENmodType;
+
+    /* Enhancement-410: only now, after both exact lookups have failed, try the
+       hierarchical name written without its device-type letter */
+    *devptr = if_find_instance_hier(ckt, name);
+    if (*devptr)
+        return (*devptr)->GENmodPtr->GENmodType;
 
     return (-1);
 }

@@ -13,6 +13,40 @@
 static void dgen_next(dgen **dgx);
 
 
+/* Enhancement-410: does `word` name `dev_name` with the device-type letter that
+ * subcircuit flattening prepends left off?  `show x1.r1` should reach the same
+ * instance `@x1.r1[..]` now does, namely `r.x1.r1`.
+ *
+ * This is a WHOLE-WORD alternative to the type/subcircuit/device decomposition
+ * in dgen_next(), which cannot express the spelling: that grammar takes the
+ * query's FIRST CHARACTER as the device-type selector (`type = *word++`) and
+ * uses ':' or '#' -- not '.' -- as its subcircuit delimiter, so `x1.r1` parses
+ * as "type x" and can never match a resistor.  Rather than change that grammar,
+ * this is consulted alongside it and can only ADD a match.
+ *
+ * Exact, not a search: the letter flattening prepends is the leaf name's own
+ * first character, and a device name must already begin with its type letter.
+ * Requires a '.' in the query, so a bare name keeps its existing meaning, and a
+ * flattened `<letter>.<path>` device name, so top-level devices are untouched.
+ */
+static int
+dgen_hier_match(const char *word, const char *dev_name)
+{
+    const char *leaf;
+
+    if (!word || !dev_name || !dev_name[0] || dev_name[1] != '.')
+        return 0;                   /* not a flattened `<letter>.<path>` name */
+    if (!strchr(word, '.'))
+        return 0;                   /* a bare name keeps its old meaning */
+    leaf = strrchr(word, '.');
+    if (!leaf || !leaf[1])
+        return 0;
+    if (tolower_c(leaf[1]) != tolower_c(dev_name[0]))
+        return 0;                   /* leaf letter must be the type letter */
+    return cieq((char *) word, (char *) (dev_name + 2));
+}
+
+
 void
 wl_forall(wordlist *wl, void (*fn)(wordlist*, dgen*), dgen *data)
 {
@@ -250,6 +284,17 @@ dgen_next(dgen **dgx)
                 mod_name = dg->model->GENmodName;
             else
                 mod_name = NULL;
+
+            /* Enhancement-410: accept the flattened hierarchical name written
+               without its device-type letter, before the decomposition below --
+               which cannot express that spelling. `done` is still 1 here, so
+               breaking out accepts this instance; every other query falls
+               through to the unchanged grammar. */
+            if (dev_name && dgen_hier_match(w->wl_word, dev_name)) {
+                need |= DGEN_INSTANCE;
+                done = 1;
+                break;
+            }
 
             if (type) {
                 if (!dev_name) {

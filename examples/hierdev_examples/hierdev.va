@@ -1,0 +1,15 @@
+// hierdev.va -- Enhancement-410: an OSDI device to instantiate inside a
+// subcircuit, so the hierarchical ACCESSOR is exercised on an `n`-prefixed
+// device as well as on ngspice's built-ins.
+//
+// Not to be confused with hiername_examples, which is Enhancement-49 and
+// concerns hierarchical names INSIDE Verilog-A (`V(u1.m)`, `$root`). This one
+// is about ngspice's `@x1.r1[param]` device accessor.
+`include "disciplines.vams"
+
+module hierdev(p, n);
+    inout p, n;
+    electrical p, n;
+    (* type = "instance" *) parameter real rval = 5000.0;
+    analog V(p, n) <+ I(p, n) * rval;
+endmodule

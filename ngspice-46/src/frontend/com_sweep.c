@@ -683,23 +683,46 @@ static void sw_fp_resolve(CKTcircuit *ckt, struct sw_fp_bind *b)
         return;
     }
 
-    for (type = 0; type < DEVmaxnum; type++) {
-        if (!DEVices[type])
-            continue;
-        for (m = ckt->CKThead[type]; m; m = m->GENnextModel)
-            for (inst = m->GENinstances; inst; inst = inst->GENnextInstance)
-                if (inst->GENname && cieq(inst->GENname, b->name)) {
-                    IFdevice *dev = &DEVices[type]->DEVpublic;
-                    if (sw_fp_find_parm(dev->instanceParms,
-                                        dev->numInstanceParms
-                                            ? *dev->numInstanceParms : 0,
-                                        b->param, &b->parmid)) {
-                        b->inst = inst;
-                        b->devtype = type;
-                        b->rok = 1;
-                    }
-                    return;                 /* instance found, settable or not */
-                }
+    /* Enhancement-410: the EXACT name first, then the hierarchical spelling
+       written without the device-type letter subcircuit flattening prepends
+       (`x1.r1` -> `r.x1.r1`), so a swept knob accepts the same name the
+       accessor does. */
+    {
+        char alt[512];
+        int pass;
+
+        for (pass = 0; pass < 2; pass++) {
+            const char *want = b->name;
+
+            if (pass == 1) {
+                const char *local = b->name ? strrchr(b->name, '.') : NULL;
+                if (!local || !local[1] || local[1] == 'x' || local[1] == 'X')
+                    break;
+                if (strlen(b->name) + 3 > sizeof alt)
+                    break;
+                (void) snprintf(alt, sizeof alt, "%c.%s", local[1], b->name);
+                want = alt;
+            }
+
+            for (type = 0; type < DEVmaxnum; type++) {
+                if (!DEVices[type])
+                    continue;
+                for (m = ckt->CKThead[type]; m; m = m->GENnextModel)
+                    for (inst = m->GENinstances; inst; inst = inst->GENnextInstance)
+                        if (inst->GENname && cieq(inst->GENname, want)) {
+                            IFdevice *dev = &DEVices[type]->DEVpublic;
+                            if (sw_fp_find_parm(dev->instanceParms,
+                                                dev->numInstanceParms
+                                                    ? *dev->numInstanceParms : 0,
+                                                b->param, &b->parmid)) {
+                                b->inst = inst;
+                                b->devtype = type;
+                                b->rok = 1;
+                            }
+                            return;         /* instance found, settable or not */
+                        }
+            }
+        }
     }
 }
 

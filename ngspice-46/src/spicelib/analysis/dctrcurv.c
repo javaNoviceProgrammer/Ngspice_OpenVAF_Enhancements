@@ -44,11 +44,12 @@ DCTfindInstParam(CKTcircuit *ckt, const char *name, GENinstance **instOut,
                  int *typeOut, int *parmOut)
 {
     char buf[1024];
+    char alt[1026];                     /* Enhancement-410: `<letter>.` + buf */
     char *lbrack, *rbrack, *parname;
     GENmodel *model;
     GENinstance *inst;
     IFdevice *dev;
-    int type, k;
+    int type, k, pass;
 
     if (!name || name[0] != '@' || strlen(name) >= sizeof(buf))
         return E_NODEV;
@@ -77,26 +78,45 @@ DCTfindInstParam(CKTcircuit *ckt, const char *name, GENinstance **instOut,
     *rbrack = '\0';
     parname = lbrack + 1;
 
-    for (type = 0; type < DEVmaxnum; type++) {
-        if (!DEVices[type])
-            continue;
-        for (model = ckt->CKThead[type]; model; model = model->GENnextModel)
-            for (inst = model->GENinstances; inst; inst = inst->GENnextInstance)
-                if (inst->GENname && cieq(inst->GENname, buf)) {
-                    dev = &DEVices[type]->DEVpublic;
-                    for (k = 0; dev->instanceParms && k < *dev->numInstanceParms; k++) {
-                        IFparm *prm = dev->instanceParms + k;
-                        if ((prm->dataType & IF_SET)
-                            && (prm->dataType & IF_VARTYPES) == IF_REAL
-                            && cieq(prm->keyword, parname)) {
-                            *instOut = inst;
-                            *typeOut = type;
-                            *parmOut = prm->id;
-                            return OK;
+    /* Enhancement-410: two passes -- the EXACT name first, so every spelling
+       that resolves today keeps resolving to exactly the same instance, then
+       the hierarchical form written without the device-type letter that
+       subcircuit flattening prepends (`x1.r1` -> `r.x1.r1`). The letter is the
+       leaf name's own first character, so no search is needed. */
+    for (pass = 0; pass < 2; pass++) {
+        const char *want = buf;
+
+        if (pass == 1) {
+            const char *local = strrchr(buf, '.');
+            if (!local || !local[1] || local[1] == 'x' || local[1] == 'X')
+                break;                  /* nothing to reconstruct */
+            if (strlen(buf) + 3 > sizeof alt)
+                break;
+            (void) snprintf(alt, sizeof alt, "%c.%s", local[1], buf);
+            want = alt;
+        }
+
+        for (type = 0; type < DEVmaxnum; type++) {
+            if (!DEVices[type])
+                continue;
+            for (model = ckt->CKThead[type]; model; model = model->GENnextModel)
+                for (inst = model->GENinstances; inst; inst = inst->GENnextInstance)
+                    if (inst->GENname && cieq(inst->GENname, want)) {
+                        dev = &DEVices[type]->DEVpublic;
+                        for (k = 0; dev->instanceParms && k < *dev->numInstanceParms; k++) {
+                            IFparm *prm = dev->instanceParms + k;
+                            if ((prm->dataType & IF_SET)
+                                && (prm->dataType & IF_VARTYPES) == IF_REAL
+                                && cieq(prm->keyword, parname)) {
+                                *instOut = inst;
+                                *typeOut = type;
+                                *parmOut = prm->id;
+                                return OK;
+                            }
                         }
+                        return E_BADPARM;
                     }
-                    return E_BADPARM;
-                }
+        }
     }
     return E_NODEV;
 }
