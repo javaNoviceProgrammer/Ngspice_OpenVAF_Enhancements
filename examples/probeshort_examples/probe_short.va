@@ -1,0 +1,52 @@
+// probe_short.va -- Enhancement-406: a flow probe that silently shorts the
+// branch it was meant to measure.
+//
+// Two 1 kOhm sections in series between the terminals. `trap` contributes
+// through the NODE PAIR (a,mid) and probes through the DECLARED branch `br`.
+// Those are two different branches over the same node pair, so `br` carries no
+// contribution -- and probing the flow of a branch nothing contributes to makes
+// it an ideal ammeter (a 0 V source, E-36). That ammeter lands in parallel with
+// the real branch and shorts the first resistor: the terminal current DOUBLES.
+//
+// `ok` is the same circuit with the probe written the same way as the
+// contribution. Nothing else differs.
+`include "disciplines.vams"
+
+module trap(a, c);
+    inout a, c;
+    electrical a, c;
+    electrical mid;
+    branch (a,mid) br;
+    (* desc="probed branch current", units="A" *) real iprobe;
+    analog begin
+        I(a,mid) <+ 1e-3 * V(a,mid);
+        I(mid,c) <+ 1e-3 * V(mid,c);
+        iprobe = I(br);          // <-- probes a DIFFERENT branch than the one driven
+    end
+endmodule
+
+module ok(a, c);
+    inout a, c;
+    electrical a, c;
+    electrical mid;
+    (* desc="probed branch current", units="A" *) real iprobe;
+    analog begin
+        I(a,mid) <+ 1e-3 * V(a,mid);
+        I(mid,c) <+ 1e-3 * V(mid,c);
+        iprobe = I(a,mid);       // <-- same spelling as the contribution
+    end
+endmodule
+
+// The deliberate ideal-ammeter idiom: nothing else drives (a,mid), so the short
+// IS the intended circuit. This must NOT be reported.
+module sense_ok(a, c);
+    inout a, c;
+    electrical a, c;
+    electrical mid;
+    branch (a,mid) sense;
+    (* desc="sensed current", units="A" *) real iprobe;
+    analog begin
+        I(mid,c) <+ 1e-3 * V(mid,c);
+        iprobe = I(sense);
+    end
+endmodule

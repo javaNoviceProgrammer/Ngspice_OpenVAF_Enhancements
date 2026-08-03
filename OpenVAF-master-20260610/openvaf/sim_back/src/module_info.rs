@@ -13,6 +13,8 @@ use syntax::ast::{self, Expr};
 use syntax::sourcemap::FileSpan;
 use syntax::AstNode;
 
+use crate::diagnostics::ProbeOnlyBranchShort;
+
 #[cfg(test)]
 mod tests;
 
@@ -66,6 +68,8 @@ impl ModuleInfo {
             IndexMap::default();
 
         let ast = cu.ast(db);
+
+        check_probe_only_branch_shorts(db, cu, module, sink);
 
         let mut resolved_attrs = AHashSet::new();
         let mut declarations = module.rec_declarations(db);
@@ -264,4 +268,68 @@ pub struct ParamInfo {
 pub struct OpVar {
     pub unit: String,
     pub description: String,
+}
+
+
+/// Enhancement-406: report a branch whose flow is probed, which nothing contributes to,
+/// and whose node pair IS driven through a different branch.
+///
+/// Needs no MIR: the two facts are both in the HIR, and a branch appearing among the flow
+/// probes but nowhere in the contribution map is exactly the probe-only case the DAE would
+/// later hand an ideal ammeter (E-36). Doing it here also means the report can point at the
+/// probe itself rather than at the correct code around it.
+fn check_probe_only_branch_shorts(
+    db: &CompilationDB,
+    cu: CompilationUnit,
+    module: Module,
+    sink: &mut ConsoleSink,
+) {
+    let lint = hir::lints::builtin::probe_only_branch_short;
+    let probes = module.flow_probe_sites(db, lint);
+    if probes.is_empty() {
+        return;
+    }
+    let contributions = module.contribution_sites(db, lint);
+
+    let spell = |branch: hir::BranchWrite| -> String {
+        match branch {
+            hir::BranchWrite::Named(br) => br.name(db),
+            hir::BranchWrite::Unnamed { hi, lo: Some(lo) } => {
+                format!("({},{})", hi.name(db), lo.name(db))
+            }
+            hir::BranchWrite::Unnamed { hi, lo: None } => format!("({})", hi.name(db)),
+        }
+    };
+
+    let mut reported: Vec<hir::BranchWrite> = Vec::new();
+    for probe in &probes {
+        // a branch that IS contributed to is not probe-only; nothing is inserted for it
+        if !contributions.get(db, probe.branch).is_empty() {
+            continue;
+        }
+        // ... and a probe-only branch nothing else drives is the deliberate ammeter idiom
+        let Some((driven, sites)) = contributions.other_branch_over_same_nodes(db, probe.branch)
+        else {
+            continue;
+        };
+        if reported.contains(&probe.branch) {
+            continue;
+        }
+        reported.push(probe.branch);
+
+        let (hi, lo) = probe.branch.nodes(db);
+        let nodes = match lo {
+            Some(lo) => format!("({},{})", hi.name(db), lo.name(db)),
+            None => format!("({})", hi.name(db)),
+        };
+        let diag = ProbeOnlyBranchShort {
+            probed: spell(probe.branch),
+            driven: spell(driven),
+            nodes,
+            module: module.name(db),
+            probes: probes.iter().filter(|p| p.branch == probe.branch).cloned().collect(),
+            sites: sites.to_vec(),
+        };
+        sink.add_diagnostic(&diag, cu.root_file(), db);
+    }
 }

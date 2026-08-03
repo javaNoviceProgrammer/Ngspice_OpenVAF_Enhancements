@@ -13,9 +13,10 @@ pub use syntax::name::Name;
 use syntax::TextRange;
 
 use crate::{
-    Branch, BranchWrite, CompilationDB, Function, FunctionArg, NatureAttribute, Node, Parameter,
-    Variable,
+    Branch, BranchKind, BranchWrite, CompilationDB, Function, FunctionArg, NatureAttribute, Node,
+    Parameter, Variable,
 };
+use hir_ty::builtin::{NATURE_ACCESS_BRANCH, NATURE_ACCESS_NODES, NATURE_ACCESS_NODE_GND};
 
 #[derive(Debug, Clone)]
 pub struct Body {
@@ -74,6 +75,31 @@ impl ContributionMap {
             .map_or(&[], |(_, sites)| sites.as_slice())
     }
 
+    /// Enhancement-406: a DIFFERENT branch that spans the same nodes as `branch` and
+    /// does carry contributions, if there is one.
+    ///
+    /// Used to tell the deliberate ideal-ammeter idiom (a sense branch nothing else
+    /// drives -- supported since E-36 and documented) from the mistake it looks like
+    /// (the same node pair driven through the other spelling, so the ammeter shorts it).
+    pub fn other_branch_over_same_nodes(
+        &self,
+        db: &CompilationDB,
+        branch: BranchWrite,
+    ) -> Option<(BranchWrite, &[ContributionSite])> {
+        let want = branch_node_set(db, branch);
+        if want.is_empty() {
+            return None;
+        }
+        self.branches
+            .iter()
+            .find(|(candidate, sites)| {
+                !sites.is_empty()
+                    && !same_branch(db, branch, *candidate)
+                    && branch_node_set(db, *candidate) == want
+            })
+            .map(|(b, sites)| (*b, sites.as_slice()))
+    }
+
     /// Adds every contribution found in `def`'s body.
     ///
     /// Reads `assignment_destination` directly rather than going through
@@ -130,6 +156,111 @@ impl ContributionMap {
             sites.sort_by_key(|site| site.range.start());
         }
     }
+}
+
+/// Enhancement-406: a place where a branch's FLOW is read (`I(br)`, `I(a,b)`).
+///
+/// Only flow probes are collected. A potential probe cannot change the circuit, but a
+/// flow probe on a branch nothing contributes to becomes an ideal ammeter -- a 0 V
+/// source -- which SHORTS the branch's nodes.
+#[derive(Debug, Clone)]
+pub struct FlowProbeSite {
+    pub branch: BranchWrite,
+    /// Source range of the probe expression.
+    pub range: TextRange,
+    /// Lint anchor, so `(* openvaf_allow=".." *)` on an enclosing scope is honoured.
+    pub lint_src: LintSrc,
+}
+
+/// The ground-free, order-free node set a branch spans, as the DAE sees it.
+///
+/// Enhancement-406: this is deliberately NOT [`same_branch`]. That answers "are these the
+/// same branch object", where a declared `branch (a,b) br` and the node pair `(a,b)` are
+/// DIFFERENT branches -- which is correct, and what the DAE, the E-400 contribution map
+/// and the LRM compliance notes all agree on. This answers the other question: "do these
+/// two different branches span the same two nodes", which is what makes one of them
+/// shorting the other a surprise rather than a parallel network.
+fn branch_node_set(db: &CompilationDB, branch: BranchWrite) -> Vec<Node> {
+    let (hi, lo) = branch.nodes(db);
+    let mut res: Vec<Node> = [Some(hi), lo]
+        .into_iter()
+        .flatten()
+        .filter(|node| !node.is_gnd(db))
+        .collect();
+    res.sort_by_key(|n| format!("{:?}", n));
+    res.dedup();
+    res
+}
+
+/// Enhancement-406: every flow probe in a module's bodies.
+///
+/// Mirrors the branch resolution `hir_lower::expr` performs for `BuiltIn::flow`, so a
+/// probe is attributed to exactly the branch the backend will key its unknown on: a
+/// declared branch stays `Named`, a node pair stays `Unnamed`, and the two are NOT folded
+/// together -- that separation is the whole point of the check.
+///
+/// A named branch declared over a PORT (`branch (<p>) name;`) is skipped: lowering routes
+/// it to the port's own flow, which `build_port_flow_equations` defines, so it is never a
+/// probe-only branch and can never short anything.
+pub(crate) fn collect_flow_probes(
+    db: &CompilationDB,
+    module: ModuleId,
+    lint: Lint,
+) -> Vec<FlowProbeSite> {
+    let mut res = Vec::new();
+    for initial in [true, false] {
+        let def = DefWithBodyId::ModuleId { initial, module };
+        let body = db.body(def);
+        let sm = db.body_source_map(def);
+        let infere = db.inference_result(def);
+
+        for (expr, call) in infere.resolved_calls.iter() {
+            if !matches!(call, inference::ResolvedFun::BuiltIn(BuiltIn::flow)) {
+                continue;
+            }
+            let Some(&signature) = infere.resolved_signatures.get(expr) else { continue };
+            let hir_def::Expr::Call { ref args, .. } = body.exprs[*expr] else { continue };
+            let bodyref = BodyRef { body: &body, infere: &infere };
+
+            let branch = if signature == NATURE_ACCESS_BRANCH {
+                let branch = bodyref.into_branch(args[0]);
+                // a port branch is the port's flow, never a probe-only branch
+                if matches!(branch.kind(db), BranchKind::PortFlow(_)) {
+                    continue;
+                }
+                BranchWrite::Named(branch)
+            } else if signature == NATURE_ACCESS_NODES {
+                BranchWrite::Unnamed {
+                    hi: bodyref.into_node(args[0]),
+                    lo: Some(bodyref.into_node(args[1])),
+                }
+            } else if signature == NATURE_ACCESS_NODE_GND {
+                BranchWrite::Unnamed { hi: bodyref.into_node(args[0]), lo: None }
+            } else {
+                // NATURE_ACCESS_PORT_FLOW -- `I(<p>)`, defined by the port flow equations
+                continue;
+            };
+
+            let Some(ptr) = sm.expr_map_back[*expr].as_ref() else { continue };
+            let range = ptr.range();
+            // Lint attributes attach to STATEMENTS, not expressions, so anchor the probe
+            // on the innermost statement containing it. That makes
+            // `(* openvaf_allow="probe_only_branch_short" *)` work on the probing
+            // statement and on every enclosing scope, exactly as it does elsewhere.
+            let mut lint_src = LintSrc::GLOBAL;
+            let mut best: Option<TextRange> = None;
+            for (stmt, ptr) in sm.stmt_map_back.iter_enumerated() {
+                let Some(sr) = ptr.as_ref().map(|p| p.range()) else { continue };
+                if sr.contains_range(range) && best.map_or(true, |b| sr.len() < b.len()) {
+                    best = Some(sr);
+                    lint_src = sm.lint_src(stmt, lint);
+                }
+            }
+            res.push(FlowProbeSite { branch, range, lint_src });
+        }
+    }
+    res.sort_by_key(|p| p.range.start());
+    res
 }
 
 pub(crate) fn collect_contributions(

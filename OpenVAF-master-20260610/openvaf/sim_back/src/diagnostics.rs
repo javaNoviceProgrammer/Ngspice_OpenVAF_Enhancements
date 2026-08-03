@@ -8,8 +8,8 @@
 //! later by the same sink.
 
 use hir::diagnostics::{BaseDB, Diagnostic, FileId, Label, LabelStyle, Report};
-use hir::lints::{builtin::discarded_contribution, Lint, LintSrc};
-use hir::ContributionSite;
+use hir::lints::{builtin::discarded_contribution, builtin::probe_only_branch_short, Lint, LintSrc};
+use hir::{ContributionSite, FlowProbeSite};
 use syntax::sourcemap::FileSpan;
 
 /// How many source lines a single report is willing to point at per label style.
@@ -128,6 +128,107 @@ impl Diagnostic for DiscardedContribution {
             .with_message(format!(
                 "branch {} is contributed as both a potential and a flow source",
                 self.branch
+            ))
+            .with_labels(labels)
+            .with_notes(notes)
+    }
+}
+
+
+/// Enhancement-406: a branch whose flow is probed but which nothing contributes to, while
+/// a DIFFERENT branch spanning the same two nodes IS contributed to.
+///
+/// Probing the flow of a branch with no contribution makes it an ideal ammeter -- a 0 V
+/// source (E-36, and a documented feature). That is exactly right for a deliberate sense
+/// branch, where nothing else drives the node pair. It is a trap when the node pair IS
+/// driven, through the other spelling: a declared `branch (a,b) br` and the node pair
+/// `(a,b)` are DIFFERENT branches, so the ammeter lands in parallel with the real one and
+/// SHORTS it. Measured on two 1 kOhm sections in series, `I(a,mid) <+ ..` contributed and
+/// `I(br)` probed doubles the terminal current -- silently, rc=0.
+///
+/// Deliberately not reported when nothing else drives the pair: that is the ammeter idiom
+/// working as documented, and six branches in the shipped corpus rely on it.
+pub(crate) struct ProbeOnlyBranchShort {
+    /// The probed branch, as spelled: `br` or `(a,b)`.
+    pub probed: String,
+    /// The branch that carries the contributions, as spelled.
+    pub driven: String,
+    /// The node pair both span.
+    pub nodes: String,
+    pub module: String,
+    /// Where the flow is probed.
+    pub probes: Vec<FlowProbeSite>,
+    /// Where the other branch is contributed to.
+    pub sites: Vec<ContributionSite>,
+}
+
+impl Diagnostic for ProbeOnlyBranchShort {
+    fn lint(&self, _root_file: FileId, _db: &dyn BaseDB) -> Option<(Lint, LintSrc)> {
+        // anchor on the probe, which is the statement to annotate or change
+        let src = self.probes.first().map_or(LintSrc::GLOBAL, |p| p.lint_src);
+        Some((probe_only_branch_short, src))
+    }
+
+    fn build_report(&self, root_file: FileId, db: &dyn BaseDB) -> Report {
+        let parse = db.parse(root_file);
+        let sm = db.sourcemap(root_file);
+
+        let mut labels = Vec::new();
+        let mut hidden = 0;
+        for (i, probe) in self.probes.iter().enumerate() {
+            if i >= MAX_LABELS {
+                hidden += 1;
+                continue;
+            }
+            let FileSpan { range, file } = parse.to_file_span(probe.range, &sm);
+            labels.push(Label {
+                style: LabelStyle::Primary,
+                file_id: file,
+                range: range.into(),
+                message: format!("`{}` is probed here, but never contributed to", self.probed),
+            });
+        }
+        for (i, site) in self.sites.iter().enumerate() {
+            if i >= MAX_LABELS {
+                hidden += 1;
+                continue;
+            }
+            let FileSpan { range, file } = parse.to_file_span(site.range, &sm);
+            labels.push(Label {
+                style: LabelStyle::Secondary,
+                file_id: file,
+                range: range.into(),
+                message: format!("`{}` spans the same nodes and is driven here", self.driven),
+            });
+        }
+
+        let mut notes = vec![
+            format!(
+                "probing the flow of a branch nothing contributes to makes it an ideal \
+                 ammeter -- a 0 V source -- so `{}` is a SHORT across {}, in parallel with \
+                 `{}`",
+                self.probed, self.nodes, self.driven
+            ),
+            format!(
+                "a declared branch and the node pair it spans are DIFFERENT branches, so \
+                 `{}` and `{}` do not refer to the same thing",
+                self.probed, self.driven
+            ),
+            format!(
+                "help: probe the branch that is driven -- write the flow probe with the same \
+                 spelling used to contribute -- or contribute to `{}` as well if the short \
+                 is intended",
+                self.probed
+            ),
+        ];
+        if hidden != 0 {
+            notes.push(format!("... and {hidden} further site(s) not shown"));
+        }
+
+        Report::warning()
+            .with_message(format!(
+                "in module `{}`: branch `{}` is probe-only and shorts `{}`",
+                self.module, self.probed, self.driven
             ))
             .with_labels(labels)
             .with_notes(notes)

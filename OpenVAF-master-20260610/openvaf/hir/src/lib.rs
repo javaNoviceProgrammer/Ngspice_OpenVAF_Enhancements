@@ -41,7 +41,7 @@ pub use syntax::name::Name;
 pub use crate::attributes::AstCache;
 pub use crate::body::{
     ArrayAssignElem, AssignmentLhs, Body, BodyRef, ContributeKind, ContributionMap,
-    ContributionSite, Event, Expr, ExprId, Ref, ResolvedFun, Stmt, StmtId,
+    ContributionSite, Event, Expr, ExprId, FlowProbeSite, Ref, ResolvedFun, Stmt, StmtId,
 };
 pub use hir_def::expr::GlobalEvent;
 pub use crate::db::CompilationDB;
@@ -189,6 +189,15 @@ impl Module {
     /// `V(a,gnd)` and `V(a)`, resolve to the same branch.
     pub fn contribution_sites(self, db: &CompilationDB, lint: lints::Lint) -> ContributionMap {
         body::collect_contributions(db, self.id, lint)
+    }
+
+    /// Enhancement-406: every place this module reads a branch FLOW (`I(br)`, `I(a,b)`).
+    ///
+    /// Paired with [`Self::contribution_sites`], this is enough to spot a probe-only
+    /// branch shorting a driven one without involving the DAE at all: a branch that
+    /// appears here and nowhere in the contribution map IS the probe-only case.
+    pub fn flow_probe_sites(self, db: &CompilationDB, lint: lints::Lint) -> Vec<FlowProbeSite> {
+        body::collect_flow_probes(db, self.id, lint)
     }
 
     // todo: just temporary for VAE, this needs to be cleaned up
