@@ -2446,8 +2446,13 @@ static bool inp_canon_bus_index_token(DSTRING *ds, const char *tok, size_t len)
 }
 
 /* If [tok, tok+len) is exactly base[lo:hi], append its expansion to `ds` and
-   return TRUE; otherwise leave `ds` unchanged and return FALSE. */
-static bool inp_expand_bus_token(DSTRING *ds, const char *tok, size_t len)
+   return TRUE; otherwise leave `ds` unchanged and return FALSE.
+
+   Enhancement-411: `*descending`, when non-NULL, reports whether the range ran
+   msb-first (hi < lo), so the caller can warn about a reversed node binding.
+   It is only meaningful when this returns TRUE. */
+static bool inp_expand_bus_token(DSTRING *ds, const char *tok, size_t len,
+                                 bool *descending)
 {
     if (len < 6 || tok[len - 1] != ']')
         return FALSE;
@@ -2500,6 +2505,8 @@ static bool inp_expand_bus_token(DSTRING *ds, const char *tok, size_t len)
     const long step = (hi >= lo) ? 1 : -1;
     const size_t blen = (size_t) (lb - tok);
     long i = lo;
+    if (descending)
+        *descending = (hi < lo);   /* Enhancement-411 */
     for (;;) {
         if (i != lo)
             ds_cat_char(ds, ' ');
@@ -2596,6 +2603,9 @@ static void inp_expand_buses(struct card *deck)
 {
     struct card *c;
     bool in_control = FALSE;
+    /* Enhancement-411: read once -- the warning is per token, the opt-out is
+       per deck. */
+    const bool nobusdirwarn = cp_getvar("nobusdirwarn", CP_BOOL, NULL, 0);
 
     for (c = deck; c; c = c->nextcard) {
         char *line = c->line;
@@ -2629,6 +2639,7 @@ static void inp_expand_buses(struct card *deck)
         /* `.ic v(a[0:3]) = 0` must give every expanded node the value, so the
            `= value` is kept attached to the reference it initialises */
         const bool ic_card = ciprefix(".ic", line) || ciprefix(".nodeset", line);
+        bool desc = FALSE;              /* Enhancement-411 */
 
         {
             DS_CREATE(newline, 256);
@@ -2662,9 +2673,36 @@ static void inp_expand_buses(struct card *deck)
                         changed = TRUE; /* Enhancement-408 */
                     else
                         ds_cat_mem(&newline, start, tlen);
-                } else if (inp_expand_bus_token(&newline, start, tlen))
+                } else if (inp_expand_bus_token(&newline, start, tlen, &desc)) {
                     changed = TRUE;
-                else if (inp_canon_bus_index_token(&newline, start, tlen))
+                    /* Enhancement-411: a descending range binds the nodes to
+                       the device's terminals in REVERSE order, and a Verilog-A
+                       bus port declares its terminals in ASCENDING bit order
+                       whichever direction it is written with. So `[3:0]` on
+                       both sides is a reversal, not a match -- and it is
+                       otherwise silent. Only element instance lines are
+                       reported: on a `.subckt` port list a descending bus is a
+                       deliberate interface choice (Enhancement-221 documents
+                       and tests it), and on an output or IC card the order does
+                       not bind anything. */
+                    if (desc && isalpha_c(*line) && !nobusdirwarn) {
+                        fprintf(cp_err,
+                                "Warning: descending bus range \"%.*s\" binds "
+                                "nodes to terminals in REVERSE order\n"
+                                "    in line: %s\n"
+                                "  a Verilog-A bus port declares its terminals "
+                                "in ascending bit order whatever\n"
+                                "  direction it is written with, so [hi:lo] on "
+                                "both sides is a reversal, not a match;\n"
+                                "  write the ascending form or list the nodes "
+                                "explicitly\n"
+                                "  (`set nobusdirwarn` in .spiceinit silences "
+                                "this; a `set` inside .control is too late,\n"
+                                "  because bus ranges expand while the netlist "
+                                "is read)\n",
+                                (int) tlen, start, line);
+                    }
+                } else if (inp_canon_bus_index_token(&newline, start, tlen))
                     changed = TRUE; /* Enhancement-408 */
                 else
                     ds_cat_mem(&newline, start, tlen);

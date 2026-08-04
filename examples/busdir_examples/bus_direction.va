@@ -1,0 +1,34 @@
+// bus_direction.va -- Enhancement-411.
+//
+// Two modules differing ONLY in how the bus port is written: [3:0] and [0:3].
+// Each BIT carries a distinct conductance -- a[k] -> (k+1) mS -- so measuring
+// the current at a netlist node tells you which bit that node actually landed
+// on, rather than which one it was meant to.
+//
+// The point of the pair is that the two declarations behave IDENTICALLY: a
+// Verilog-A bus port declares its terminals in ascending bit order whichever
+// direction it is written with. Only the netlist side honours direction, which
+// is what makes `nd1 d[3:0] 0 mm` on a [3:0] model a silent reversal.
+`include "disciplines.vams"
+
+module busdesc(a, c);          // declared [3:0] -- msb first
+    inout [3:0] a;  inout c;
+    electrical [3:0] a;  electrical c;
+    analog begin
+        I(a[0],c) <+ 1e-3*V(a[0],c);
+        I(a[1],c) <+ 2e-3*V(a[1],c);
+        I(a[2],c) <+ 3e-3*V(a[2],c);
+        I(a[3],c) <+ 4e-3*V(a[3],c);
+    end
+endmodule
+
+module busasc(a, c);           // declared [0:3] -- lsb first
+    inout [0:3] a;  inout c;
+    electrical [0:3] a;  electrical c;
+    analog begin
+        I(a[0],c) <+ 1e-3*V(a[0],c);
+        I(a[1],c) <+ 2e-3*V(a[1],c);
+        I(a[2],c) <+ 3e-3*V(a[2],c);
+        I(a[3],c) <+ 4e-3*V(a[3],c);
+    end
+endmodule

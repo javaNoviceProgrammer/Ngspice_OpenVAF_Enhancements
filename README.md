@@ -28,7 +28,7 @@ https://ngspice.sourceforge.io/
 
 ## The Enhancements
 
-Four hundred and ten enhancements so far — language features, correctness fixes, systematic audits, and simulator-side workflow tooling, each verified end-to-end by a committed example suite and released with a detailed write-up.
+Four hundred and eleven enhancements so far — language features, correctness fixes, systematic audits, and simulator-side workflow tooling, each verified end-to-end by a committed example suite and released with a detailed write-up.
 
 **🗂️ Browse them all in the [live feature catalog](https://javanoviceprogrammer.github.io/Ngspice_OpenVAF_Enhancements/)** — every enhancement grouped into 19 feature areas across the compiler and the simulator, searchable, with each entry linking to its write-up.
 
@@ -454,6 +454,7 @@ The index: **Doc** links each enhancement's detailed write-up, **Examples** link
 | 408 | fix: bracketed names missed their target -- a leading-zero node index, a parameter name containing brackets, a bus range on an output or IC card | ngspice | [doc](enhancements_doc/Enhancement-408.md) | [busname](examples/busname_examples/) |
 | 409 | fix: a wildcard `sweep` knob was never put back, and printed a parser error that looked like a bad parameter name | ngspice | [doc](enhancements_doc/Enhancement-409.md) | [wildrestore](examples/wildrestore_examples/) |
 | 410 | feat: `@x1.r1[param]` names a subcircuit device without its flattening type letter, in every accessor and in `show` | ngspice | [doc](enhancements_doc/Enhancement-410.md) | [hierdev](examples/hierdev_examples/) |
+| 411 | feat: a descending netlist bus range binds terminals in reverse and is now reported -- silent until now | ngspice | [doc](enhancements_doc/Enhancement-411.md) | [busdir](examples/busdir_examples/) |
 
 </details>
 
