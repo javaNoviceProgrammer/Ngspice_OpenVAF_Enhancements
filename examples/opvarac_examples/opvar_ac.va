@@ -1,0 +1,42 @@
+// opvar_ac.va -- Enhancement-412.
+//
+// Operating-point variables that are deliberately trivial functions of the bias,
+// so that a wrong reading is unambiguous rather than a matter of interpretation:
+//
+//     vplain  = V(a,c)              -- must equal the dc bias
+//     vaffine = 3*V(a,c) + 1        -- separates "recomputed" from "aliased"
+//     vsq     = V(a,c)^2
+//     kconst  = 42                  -- must never move at all
+//
+// The device is deliberately REACTIVE. With a purely resistive device the dc
+// solution and the ac solution coincide, and the defect this file pins is
+// invisible -- that is exactly how it survived: the natural small test cannot
+// see it.
+//
+// A `@(final_step("ac"))` strobe is included because the fix had to keep it
+// working: the post-analysis evaluation that corrupted these opvars is the same
+// one that fires the event (Enhancement-53), so it could not simply be skipped.
+`include "disciplines.vams"
+
+module opvar_ac(a, c);
+    inout a, c;
+    electrical a, c;
+
+    parameter real g0  = 1e-3;
+    parameter real cap = 1e-9;
+
+    (* desc="bias voltage" *)  real vplain;
+    (* desc="3V+1" *)          real vaffine;
+    (* desc="V squared" *)     real vsq;
+    (* desc="a constant" *)    real kconst;
+
+    analog begin
+        vplain  = V(a, c);
+        vaffine = 3.0*V(a, c) + 1.0;
+        vsq     = V(a, c)*V(a, c);
+        kconst  = 42.0;
+        I(a, c) <+ g0*V(a, c) + ddt(cap*V(a, c));
+        @(final_step("ac")) $strobe("FS_AC fired");
+        @(final_step("noise")) $strobe("FS_NOISE fired");
+    end
+endmodule

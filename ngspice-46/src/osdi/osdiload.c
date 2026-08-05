@@ -854,6 +854,10 @@ int OSDIpendingRequests(CKTcircuit *ckt) {
  * (`@(final_step("tran"))`) match via the stdlib analysis() callback. */
 int OSDIfinalStep(CKTcircuit *ckt) {
   bool is_tran = ckt->CKTmode & MODETRAN;
+  /* Enhancement-412: see the snapshot below. AC and NOISE end on a
+   * small-signal solution, so this evaluation must not be allowed to leave its
+   * results in the instance. */
+  bool preserve_op = (ckt->CKTmode & (MODEAC | MODEACNOISE)) != 0;
 
   OsdiSimInfo sim_info = {
       .paras = get_simparams(ckt),
@@ -895,7 +899,41 @@ int OSDIfinalStep(CKTcircuit *ckt) {
         void *inst = osdi_instance_data(entry, gen_inst);
         OsdiExtraInstData *extra_inst_data =
             osdi_extra_instance_data(entry, gen_inst);
+
+        /* Enhancement-412: in AC and NOISE, `prev_solve` (CKTrhsOld) holds the
+         * SMALL-SIGNAL solution at the last swept frequency, not a bias point.
+         * Evaluating the model against it recomputes every operating-point
+         * variable from a complex response -- so `@nd1[gm]` read after an `.ac`
+         * returned a frequency-dependent number instead of the operating point,
+         * silently. (Built-in devices are unaffected: they have no such
+         * post-analysis evaluation.)
+         *
+         * The eval still has to happen, because it is the only thing that fires
+         * `@(final_step)`, and `@(final_step("ac"))` / the noise variant are
+         * supported and tested (finalstep_examples). So the instance data is
+         * snapshotted around it and put back afterwards: the event bodies run
+         * and their side effects ($strobe, $fdisplay) stand, while everything
+         * the evaluation wrote into the instance -- opvars included -- is
+         * discarded. Discarding is precisely correct here, since the results of
+         * this evaluation are deliberately never loaded into the matrix or RHS.
+         *
+         * DC, DCTRANCURVE and TRAN are deliberately NOT snapshotted: there the
+         * final solution IS a real operating point, so the values that
+         * evaluation leaves behind are the ones a reader should see. */
+        char *op_snapshot = NULL;
+        if (preserve_op && descr->instance_size > 0) {
+          op_snapshot = TMALLOC(char, descr->instance_size);
+          if (op_snapshot) {
+            memcpy(op_snapshot, inst, descr->instance_size);
+          }
+        }
+
         eval(descr, gen_inst, inst, extra_inst_data, model, &sim_info);
+
+        if (op_snapshot) {
+          memcpy(inst, op_snapshot, descr->instance_size);
+          txfree(op_snapshot);
+        }
       }
     }
   }
