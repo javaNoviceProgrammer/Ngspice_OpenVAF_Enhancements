@@ -130,6 +130,35 @@ def main():
           (num(out2, "length(@nd1[i])") or 0) > 1,
           f"length={num(out2, 'length(@nd1[i])')}")
 
+    print("\n  a BUS terminal current, whose name itself contains brackets")
+    # `.save @nd1[i_a[1]]` was dropped SILENTLY -- no vector, no diagnostic --
+    # because the output path split `@dev[param]` at the FIRST ']', leaving
+    # `i_a[1`. The scalar read of the same name was always correct, which is
+    # exactly what hid it. Guarded here because Enhancement-413 is what makes
+    # these names reachable from savecurrents in the first place.
+    BUS = """v0 n[0] 0 pulse(0 1 0 1n 1n 10u 20u)
+v1 n[1] 0 dc 1
+v2 n[2] 0 dc 1
+v3 n[3] 0 dc 1
+nd1 n[0:3] 0 mbus
+.model mbus savecur_bus()
+.options savecurrents reltol=1e-11"""
+    out = run("bus", BUS, "tran 200n 2u\n"
+              + "\n".join(f"print length(@nd1[i_a[{k}]])" for k in range(4))
+              + "\nprint length(@nd1[i_c])\nprint @nd1[i_a[1]][3]")
+    for k in range(4):
+        n = num(out, f"length(@nd1[i_a[{k}]])")
+        check(f"@nd1[i_a[{k}]] is a waveform", n is not None and n > 1, f"length={n}")
+    check("the scalar terminal @nd1[i_c] is saved too",
+          (num(out, "length(@nd1[i_c])") or 0) > 1)
+    check("and its value is right (bit 1 at 1 V -> 2 mA)",
+          abs((num(out, "@nd1[i_a[1]][3]") or 0) - 2e-3) < 1e-12,
+          f"got {num(out, '@nd1[i_a[1]][3]')}")
+    out = run("busx", BUS.replace(".options savecurrents", ".save @nd1[i_a[2]] all\n.options"),
+              "tran 200n 2u\nprint length(@nd1[i_a[2]])")
+    check("an explicit .save of a bracketed name works",
+          (num(out, "length(@nd1[i_a[2]])") or 0) > 1)
+
     print("\n  explicit .save still works, and is not disturbed")
     out3 = run("expl", FOUR.replace(".options savecurrents", ".save @nd1[i_d] all\n.options"),
                "tran 200n 4u\nprint length(@nd1[i_d])")

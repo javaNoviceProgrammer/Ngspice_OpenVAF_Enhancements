@@ -1,6 +1,6 @@
 // savecur.va -- Enhancement-413.
 //
-// Two compact models that differ only in TERMINAL COUNT, because that is the
+// Three compact models. The first two differ only in TERMINAL COUNT, because that is the
 // whole variable: `.options savecurrents` is a textual pre-pass over the deck,
 // so it cannot know a model's terminal names and emits the bare `@dev[i]` that
 // R/C/L use. Enhancement-394 defines that alias only for TWO-terminal devices,
@@ -28,5 +28,18 @@ module savecur4(d, g, s, b);           // four terminals: the case that did not
         I(d, s) <+ gd*V(d, s);
         I(g, s) <+ gg*V(g, s);
         I(b, s) <+ gb*V(b, s);
+    end
+endmodule
+
+module savecur_bus(a, c);              // BUS terminals: names contain brackets
+    inout [3:0] a;
+    inout c;
+    electrical [3:0] a;
+    electrical c;
+    analog begin
+        I(a[0], c) <+ 1e-3*V(a[0], c);
+        I(a[1], c) <+ 2e-3*V(a[1], c);
+        I(a[2], c) <+ 3e-3*V(a[2], c);
+        I(a[3], c) <+ 4e-3*V(a[3], c);
     end
 endmodule

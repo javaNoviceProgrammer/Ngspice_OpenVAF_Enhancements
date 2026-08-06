@@ -1440,8 +1440,36 @@ parseSpecial(char *name, char *dev, char *param, char *ind)
     name++;
 
     s = param;
-    while (*name && (*name != ',') && (*name != ']'))
-        *s++ = *name++;
+    if (*name == '[') {
+        /* Enhancement-269's wildcard alias `@*[[param]]` depends on the
+           original first-']' split leaving `[param`, so a name that starts
+           with '[' keeps exactly the old behaviour. */
+        while (*name && (*name != ',') && (*name != ']'))
+            *s++ = *name++;
+    } else {
+        /* A parameter NAME may itself contain brackets: a bus terminal current
+           `i_a[1]` (Enhancement-394) or an element of an array parameter
+           `ap[0]`. Stopping at the FIRST ']' truncated the name to `i_a[1`, so
+           parseSpecial reported failure and the save was dropped SILENTLY --
+           `.save @nd1[i_a[1]]` produced no vector and no diagnostic, while
+           `.save @nd1[i_c]` beside it worked, and `.options savecurrents` on a
+           bus-terminal device therefore captured only its scalar terminals.
+           The scalar read of the same name was always correct
+           (Enhancement-408), which is what made the gap invisible.
+
+           Track the bracket depth and stop at the ']' that closes the `@dev[`
+           bracket; a ',' still separates the optional index at depth 0. */
+        int brdepth = 0;
+        while (*name) {
+            if (brdepth == 0 && (*name == ']' || *name == ','))
+                break;
+            if (*name == '[')
+                brdepth++;
+            else if (*name == ']')
+                brdepth--;
+            *s++ = *name++;
+        }
+    }
     *s = '\0';
 
     if (*name == ']')
