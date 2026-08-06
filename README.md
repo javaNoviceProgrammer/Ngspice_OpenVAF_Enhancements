@@ -526,7 +526,7 @@ sudo apt-get install libreadline8 libx11-6 libxaw7 libxft2 libxext6   # ngspice
 sudo apt-get install libllvm18                                        # openvaf-r (Ubuntu 24.04+ / Debian 13+)
 ```
 
-On Ubuntu 22.04 / Debian 12, whose repos stop at older LLVM versions, get `openvaf-r`'s LLVM 18 runtime from [apt.llvm.org](https://apt.llvm.org/):
+On Ubuntu 22.04 / Debian 12, whose repos stop at older LLVM versions, get `openvaf-r`'s LLVM 18 runtime from [apt.llvm.org](https://apt.llvm.org/) — which is also the exact build these binaries were linked against:
 ```bash
 wget https://apt.llvm.org/llvm.sh && chmod +x llvm.sh && sudo ./llvm.sh 18
 ```
@@ -536,6 +536,36 @@ wget https://apt.llvm.org/llvm.sh && chmod +x llvm.sh && sudo ./llvm.sh 18
 sudo dnf install readline libX11 libXaw libXft libXext   # ngspice
 sudo dnf install llvm18-libs                             # openvaf-r
 ```
+
+> **`openvaf-r` needs one exact library *filename*, not merely the right LLVM
+> version.** It links LLVM dynamically, and the recorded dependency is the
+> SONAME **`libLLVM-18.so.18.1`**. The dynamic linker matches that string
+> literally — there is no prefix or version-range matching — so a perfectly good
+> LLVM 18.1 installed under a *different name* does not satisfy it:
+>
+> ```
+> openvaf-r: error while loading shared libraries: libLLVM-18.so.18.1:
+>            cannot open shared object file: No such file or directory
+> ```
+>
+> Debian and apt.llvm.org use that spelling; several other packagings ship the
+> same library as `libLLVM.so.18.1`, without the `-18` infix. (The binaries carry
+> no `RUNPATH`, so only `ld.so.cache`, the standard directories and
+> `LD_LIBRARY_PATH` are searched.) Check what you have, and if only the name
+> differs, supply the name the loader asks for:
+>
+> ```bash
+> ldd bin/linux/intel/openvaf-r | grep -i llvm                             # what is missing
+> ls /usr/lib/*/libLLVM*18* /usr/lib/llvm-18/lib/libLLVM*.so* 2>/dev/null   # what you have
+>
+> have=/usr/lib/$(uname -m)-linux-gnu/libLLVM.so.18.1      # ...whatever the line above found
+> sudo ln -s "$have" "$(dirname "$have")/libLLVM-18.so.18.1" && sudo ldconfig
+> ```
+>
+> Use a **symlink, not a copy**: libLLVM is ~120 MB, and a copy silently goes
+> stale the next time LLVM is updated. Keep it pointing at an **18.1.x** library
+> — LLVM's C++ ABI is not stable across releases, so aliasing a different version
+> turns a clean load error into a crash.
 
 After that, mark the binaries executable and run:
 ```bash
