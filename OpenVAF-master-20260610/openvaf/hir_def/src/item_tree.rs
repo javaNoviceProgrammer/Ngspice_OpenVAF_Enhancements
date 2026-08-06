@@ -111,6 +111,16 @@ pub enum ItemTreeDiagnostic {
         constraint: Box<str>,
         why: Box<str>,
     },
+    /// Enhancement-414: an `aliasparam` chain that closes on itself
+    /// (`aliasparam pp = pp;`, or any longer cycle). The alias can never resolve
+    /// to a parameter, and the resolver's salsa cycle recovery reported that by
+    /// returning "no target" -- which every consumer then unwrapped, so the
+    /// compiler aborted with a crash dump and no diagnostic at all.
+    AliasParamCycle {
+        ast_id: ErasedAstId,
+        name: Name,
+        chain: Box<str>,
+    },
     /// Enhancement-396: a bus port whose DIRECTION declaration and NET
     /// declaration state different ranges (`inout [0:2] b; electrical [0:4] b;`).
     /// The direction range silently won and the net's extra bits were discarded,

@@ -1,0 +1,5 @@
+# a usable two-column noise table: <frequency> <power>
+1.0     1e-16
+10.0    1e-16
+100.0   1e-16
+1000.0  1e-16

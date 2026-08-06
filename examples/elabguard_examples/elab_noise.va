@@ -1,0 +1,25 @@
+// elab_noise.va -- Enhancement-414: a `noise_table` data FILE is validated like a
+// `$table_model` one.
+//
+// The inline form has been checked since Enhancement-396. The file form was not
+// checked at all: the reader runs during LOWERING, which has no diagnostic
+// channel, so a missing, empty or unparseable file yielded an EMPTY table -- and
+// an empty noise table contributes NOTHING. The output spectrum came out
+// bit-for-bit identical to a model with no noise source, which is exactly why a
+// mistyped filename could not be noticed.
+`include "disciplines.vams"
+
+module noisefile(a, c);
+    inout a, c;
+    electrical a, c;
+    analog begin
+        I(a, c) <+ 1e-3 * V(a, c);
+        I(a, c) <+ noise_table("elab_noise.tbl");
+    end
+endmodule
+
+module nonoise(a, c);
+    inout a, c;
+    electrical a, c;
+    analog I(a, c) <+ 1e-3 * V(a, c);
+endmodule

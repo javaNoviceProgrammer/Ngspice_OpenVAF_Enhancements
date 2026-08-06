@@ -744,10 +744,68 @@ impl Ctx {
         }
 
         self.check_branch_bus_refs(&items, &buses);
+        self.check_alias_cycles(decl.module_items());
 
         let res =
             Module { name, nodes, items, ast_id, num_ports, buses, var_arrays, param_arrays, genvars };
         Some(self.tree.data.modules.push_and_get_key(res))
+    }
+
+    /// Enhancement-414: reports an `aliasparam` chain that closes on itself.
+    ///
+    /// `aliasparam pp = pp;` -- and any longer cycle -- crashed the compiler. The alias
+    /// resolver is a salsa query whose cycle recovery yields "no target", and every
+    /// consumer of `AliasParameter::resolve` unwrapped that, so the run ended in a crash
+    /// dump with no diagnostic of any kind. Which alias points at which is a purely
+    /// syntactic property of the module's own declarations, so the cycle is caught here,
+    /// where the whole chain can be named.
+    ///
+    /// A target that is a system parameter, or a name that is not another alias, always
+    /// terminates the chain and is left entirely alone.
+    fn check_alias_cycles(&mut self, items: ast::AstChildren<ast::ModuleItem>) {
+        let mut targets: FxHashMap<Name, (Name, ErasedAstId)> = FxHashMap::default();
+        let mut order: Vec<Name> = Vec::new();
+        for item in items {
+            let ast::ModuleItem::AliasParam(decl) = item else { continue };
+            let (Some(name), Some(ParamRef::Path(path))) = (decl.name(), decl.src()) else {
+                continue;
+            };
+            let Some(target) = Path::resolve(path) else { continue };
+            if target.is_root_path || target.segments.len() != 1 {
+                continue;
+            }
+            let name = name.as_name();
+            let ast_id: ErasedAstId = self.source_ast_id_map.ast_id(&decl).into();
+            order.push(name.clone());
+            targets.insert(name, (target.segments[0].clone(), ast_id));
+        }
+
+        let mut reported: Vec<Name> = Vec::new();
+        for start in &order {
+            if reported.contains(start) {
+                continue;
+            }
+            // Walk the chain from `start`. A name seen twice on one walk closes a cycle;
+            // a name with no alias target ends the walk with nothing to report.
+            let mut seen: Vec<Name> = vec![start.clone()];
+            let mut cur = start.clone();
+            while let Some((target, ast_id)) = targets.get(&cur) {
+                if let Some(pos) = seen.iter().position(|n| n == target) {
+                    let mut chain: Vec<String> =
+                        seen[pos..].iter().map(|n| n.to_string()).collect();
+                    chain.push(target.to_string());
+                    reported.extend_from_slice(&seen[pos..]);
+                    self.tree.diagnostics.push(ItemTreeDiagnostic::AliasParamCycle {
+                        ast_id: *ast_id,
+                        name: start.clone(),
+                        chain: chain.join(" -> ").into_boxed_str(),
+                    });
+                    break;
+                }
+                seen.push(target.clone());
+                cur = target.clone();
+            }
+        }
     }
 
     fn lower_module_items(

@@ -181,6 +181,26 @@ impl Diagnostic for ItemTreeDiagnosticWrapped<'_> {
                             .to_owned(),
                     ])
             }
+            ItemTreeDiagnostic::AliasParamCycle { ast_id, name, chain } => {
+                let range = self.ast_id_map.get_syntax(*ast_id).range();
+                let span = self.parse.to_file_span(range, self.sm);
+                Report::error()
+                    .with_message(format!(
+                        "aliasparam '{name}' never reaches a parameter: its target \
+                         chain closes on itself"
+                    ))
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: span.file,
+                        range: span.range.into(),
+                        message: format!("cycle: {chain}"),
+                    }])
+                    .with_notes(vec![
+                        "an aliasparam must name a parameter (or a system parameter), \
+                         directly or through other aliases"
+                            .to_owned(),
+                    ])
+            }
             ItemTreeDiagnostic::ParamsetOverrideOutOfRange {
                 ast_id, name, value, constraint,
             } => {

@@ -602,6 +602,17 @@ pub(crate) fn fold_parameter_widths(db: &mut CompilationDB) -> anyhow::Result<()
             if spans[bi].kind != TokenKind::OpenBracket {
                 continue;
             }
+            // Enhancement-414: `from [lo:hi]` / `exclude [lo:hi]` bound a parameter's
+            // VALUE; they are not declaration widths and must never be folded here.
+            // Reading one as a width had two consequences, both silent: the parameter
+            // named inside it was marked structural and frozen into a localparam by
+            // pass 3 -- so `.model … (aa=5)` did nothing at all, with no diagnostic --
+            // and pass 3's rewrite of that declaration then overlapped the one pass 2
+            // had already queued for the same text, which panicked the compiler
+            // outright when a parameter's range mentioned the parameter itself.
+            if is_param_constraint_bracket(&text, &spans, bi) {
+                continue;
+            }
             let Some(cj) = match_bracket(bi) else { continue };
             // find the range colon at the bracket's own depth, and collect any
             // inner identifiers that are known parameters
@@ -733,6 +744,13 @@ pub(crate) fn fold_parameter_widths(db: &mut CompilationDB) -> anyhow::Result<()
     let mut out = String::with_capacity(text.len());
     let mut prev = 0usize;
     for (s, e, rep) in rewrites {
+        // Enhancement-414: spans are applied by byte offset, so an overlapping pair
+        // used to panic on the slice. Overlap means two passes claimed the same text
+        // and the second cannot be applied on top of the first -- drop it rather than
+        // abort the compiler.
+        if s < prev {
+            continue;
+        }
         out.push_str(&text[prev..s]);
         out.push_str(&rep);
         prev = e;
@@ -1364,7 +1382,13 @@ fn unroll_first_analog_genvar_loop(
         })?;
         let body = &text[spans[body_lo].start..spans[body_hi - 1].end];
 
-        let mut outp = String::from("begin\n");
+        // Enhancement-414: the FIRST copy keeps the body's own line breaks, so a
+        // diagnostic inside the loop still reports the line the user wrote; the
+        // remaining copies are folded onto one line and the whole replacement is
+        // padded back to the line count of the text it replaces. Without that the
+        // expansion shifted every later line -- an error ten lines below a loop was
+        // reported a hundred-odd lines away, in a file that does not exist on disk.
+        let mut outp = String::from("begin ");
         let mut iters = 0i32;
         loop {
             let mut it_env = env.clone();
@@ -1385,8 +1409,17 @@ fn unroll_first_analog_genvar_loop(
                      statement copies"
                 )
             }
-            outp.push_str(&substitute_index(body, &gv, value));
-            outp.push('\n');
+            // Enhancement-414: a `begin : name` block inside the body would be copied
+            // name and all, and N copies of one name collide -- "'blk' was already
+            // declared in this scope" for a loop that is perfectly legal. Each copy
+            // gets its own suffix, the way a generate block is indexed.
+            let copy = rename_named_blocks(&substitute_index(body, &gv, value), value);
+            if iters == 1 {
+                outp.push_str(&copy);
+            } else {
+                outp.push_str(&collapse_newlines(&copy));
+            }
+            outp.push(' ');
             value = eval_const_int_with_params(text, &spans, step_eq + 1, close, &it_env)
                 .ok_or_else(|| {
                     anyhow::anyhow!(
@@ -1398,54 +1431,224 @@ fn unroll_first_analog_genvar_loop(
 
         let lo = spans[sig[w]].start;
         let hi = spans[body_hi - 1].end;
+        let replaced_lines = text[lo..hi].matches('\n').count();
+        let emitted_lines = outp.matches('\n').count();
+        for _ in emitted_lines..replaced_lines {
+            outp.push('\n');
+        }
         return Ok(Some(format!("{}{}{}", &text[..lo], outp, &text[hi..])));
     }
     Ok(None)
 }
 
-/// The token range of one statement starting at `from`: a `begin`..`end` block, or
-/// everything through the next top-level `;`.
-fn statement_extent(text: &str, spans: &[Tok], from: usize) -> Option<(usize, usize)> {
-    let mut i = from;
-    while i < spans.len() && is_trivia(spans[i].kind) {
-        i += 1;
+/// Index of the next non-trivia token at or after `j`.
+fn skip_trivia(spans: &[Tok], mut j: usize) -> usize {
+    while j < spans.len() && is_trivia(spans[j].kind) {
+        j += 1;
     }
-    if i >= spans.len() {
+    j
+}
+
+/// One past a balanced `(`..`)` group that must start at `j`.
+fn skip_paren_group(spans: &[Tok], mut j: usize) -> Option<usize> {
+    if j >= spans.len() || spans[j].kind != TokenKind::OpenParen {
         return None;
     }
-    if &text[spans[i].start..spans[i].end] == "begin" {
-        let mut depth = 0i32;
-        let mut j = i;
-        while j < spans.len() {
-            match &text[spans[j].start..spans[j].end] {
-                "begin" | "case" | "casex" | "casez" => depth += 1,
-                "end" | "endcase" => {
-                    depth -= 1;
-                    if depth == 0 {
-                        return Some((i, j + 1));
-                    }
-                }
-                _ => {}
-            }
-            j += 1;
-        }
-        return None;
-    }
-    // a single statement: run to the next `;` at paren/bracket depth zero
     let mut depth = 0i32;
-    let mut j = i;
     while j < spans.len() {
         match spans[j].kind {
-            TokenKind::OpenParen | TokenKind::OpenBracket => depth += 1,
-            TokenKind::CloseParen | TokenKind::CloseBracket => depth -= 1,
-            _ if depth == 0 && &text[spans[j].start..spans[j].end] == ";" => {
-                return Some((i, j + 1))
+            TokenKind::OpenParen => depth += 1,
+            TokenKind::CloseParen => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(j + 1);
+                }
             }
             _ => {}
         }
         j += 1;
     }
     None
+}
+
+/// Enhancement-414: is this `[` the opening bracket of a parameter's `from`/`exclude`
+/// VALUE constraint, rather than a declaration width? The width-folding passes must
+/// leave the former alone -- see the call site for what reading one as a width cost.
+fn is_param_constraint_bracket(text: &str, spans: &[Tok], bi: usize) -> bool {
+    let mut k = bi;
+    while k > 0 {
+        k -= 1;
+        if is_trivia(spans[k].kind) {
+            continue;
+        }
+        return matches!(&text[spans[k].start..spans[k].end], "from" | "exclude");
+    }
+    false
+}
+
+/// Enhancement-414: folds one unrolled copy onto a single line so it occupies no
+/// source lines of its own. Line comments are dropped rather than collapsed -- a `//`
+/// would otherwise swallow every copy that follows it -- and newlines inside block
+/// comments become spaces, which keeps them terminated.
+fn collapse_newlines(src: &str) -> String {
+    let mut out = String::with_capacity(src.len());
+    for t in tok_spans(src) {
+        if t.kind == TokenKind::LineComment {
+            out.push(' ');
+            continue;
+        }
+        let piece = &src[t.start..t.end];
+        if piece.contains(['\n', '\r']) {
+            out.extend(piece.chars().map(|c| if c == '\n' || c == '\r' { ' ' } else { c }));
+        } else {
+            out.push_str(piece);
+        }
+    }
+    out
+}
+
+/// Enhancement-414: suffixes every `begin : label` (and matching `end : label`) in one
+/// unrolled copy with the iteration index, the way a generate block is indexed.
+///
+/// The unroll is textual, so without this the block's NAME is copied verbatim too and
+/// the copies collide -- `'blk' was already declared in this scope` for a loop that is
+/// perfectly legal Verilog-AMS. A negative index spells itself `n1`, since `blk_-1` is
+/// not an identifier.
+fn rename_named_blocks(src: &str, index: i32) -> String {
+    if !src.contains("begin") {
+        return src.to_owned();
+    }
+    let suffix = if index < 0 {
+        format!("_n{}", (index as i64).unsigned_abs())
+    } else {
+        format!("_{index}")
+    };
+    let spans = tok_spans(src);
+    let mut out = String::with_capacity(src.len() + 8);
+    let mut prev = 0usize;
+    for k in 0..spans.len() {
+        if !matches!(&src[spans[k].start..spans[k].end], "begin" | "end") {
+            continue;
+        }
+        let c = skip_trivia(&spans, k + 1);
+        if c >= spans.len() || &src[spans[c].start..spans[c].end] != ":" {
+            continue;
+        }
+        let n = skip_trivia(&spans, c + 1);
+        if n >= spans.len() || spans[n].kind != TokenKind::SimpleIdent {
+            continue;
+        }
+        out.push_str(&src[prev..spans[n].end]);
+        out.push_str(&suffix);
+        prev = spans[n].end;
+    }
+    out.push_str(&src[prev..]);
+    out
+}
+
+/// The token range of one statement starting at `from`.
+///
+/// Enhancement-414: this used to recognise exactly two shapes -- a `begin`..`end` block,
+/// and "everything through the next top-level `;`" -- so every *other* statement was cut
+/// short at the first `;` that happened to fall inside it. A `case`..`endcase` body kept
+/// only its first item; `if (c) begin a; b; end` kept only `a;`. Whatever was left over
+/// stayed behind, spliced after the generated block.
+///
+/// Usually that produced a spurious parse error pointing at `endmodule`, but one shape
+/// was worse: for `if (c) x = ..; else y = ..;` the orphaned `else` re-attached to an
+/// ENCLOSING `if`, so the loop compiled clean and computed a different program. The body
+/// is therefore scanned by statement shape now, recursively, which is the only way to
+/// know that an `else` belongs to the body rather than to the statement around it.
+fn statement_extent(text: &str, spans: &[Tok], from: usize) -> Option<(usize, usize)> {
+    let i = skip_trivia(spans, from);
+    if i >= spans.len() {
+        return None;
+    }
+    let tok = |j: usize| &text[spans[j].start..spans[j].end];
+
+    match tok(i) {
+        // `begin`..`end`, counting nested block and case openers alike
+        "begin" | "case" | "casex" | "casez" => {
+            let mut depth = 0i32;
+            let mut j = i;
+            while j < spans.len() {
+                match tok(j) {
+                    "begin" | "case" | "casex" | "casez" => depth += 1,
+                    "end" | "endcase" => {
+                        depth -= 1;
+                        if depth == 0 {
+                            return Some((i, j + 1));
+                        }
+                    }
+                    _ => {}
+                }
+                j += 1;
+            }
+            None
+        }
+        // `if (cond) <stmt> [else <stmt>]` -- the else clause is PART of this statement
+        "if" => {
+            let after_cond = skip_paren_group(spans, skip_trivia(spans, i + 1))?;
+            let (_, then_hi) = statement_extent(text, spans, after_cond)?;
+            let e = skip_trivia(spans, then_hi);
+            if e < spans.len() && tok(e) == "else" {
+                let (_, else_hi) = statement_extent(text, spans, e + 1)?;
+                return Some((i, else_hi));
+            }
+            Some((i, then_hi))
+        }
+        // header in parentheses, then one body statement
+        "while" | "repeat" | "for" => {
+            let after_head = skip_paren_group(spans, skip_trivia(spans, i + 1))?;
+            let (_, hi) = statement_extent(text, spans, after_head)?;
+            Some((i, hi))
+        }
+        // `do <stmt> while (cond);`
+        "do" => {
+            let (_, body_hi) = statement_extent(text, spans, i + 1)?;
+            let w = skip_trivia(spans, body_hi);
+            if w < spans.len() && tok(w) == "while" {
+                let after = skip_paren_group(spans, skip_trivia(spans, w + 1))?;
+                let s = skip_trivia(spans, after);
+                if s < spans.len() && tok(s) == ";" {
+                    return Some((i, s + 1));
+                }
+                return Some((i, after));
+            }
+            Some((i, body_hi))
+        }
+        // event control: `@(event) <stmt>` or `@ident <stmt>`
+        "@" => {
+            let p = skip_trivia(spans, i + 1);
+            let after = if p < spans.len() && spans[p].kind == TokenKind::OpenParen {
+                skip_paren_group(spans, p)?
+            } else {
+                p + 1
+            };
+            let (_, hi) = statement_extent(text, spans, after)?;
+            Some((i, hi))
+        }
+        // the empty statement
+        ";" => Some((i, i + 1)),
+        // anything else is a simple statement: run to the next `;` at bracket depth zero
+        _ => {
+            let mut depth = 0i32;
+            let mut j = i;
+            while j < spans.len() {
+                match spans[j].kind {
+                    TokenKind::OpenParen | TokenKind::OpenBracket => depth += 1,
+                    TokenKind::CloseParen | TokenKind::CloseBracket => depth -= 1,
+                    _ if depth == 0 && tok(j) == ";" => return Some((i, j + 1)),
+                    // a block closer before any `;` means the source is malformed --
+                    // stop rather than swallowing the rest of the module
+                    _ if depth == 0 && matches!(tok(j), "end" | "endcase") => return None,
+                    _ => {}
+                }
+                j += 1;
+            }
+            None
+        }
+    }
 }
 
 fn substitute_index(body: &str, name: &str, value: i32) -> String {

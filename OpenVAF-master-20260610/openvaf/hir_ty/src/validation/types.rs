@@ -34,6 +34,12 @@ pub enum TypeValidationDiagnostic {
     NodeWithoutDiscipline { decl: ErasedAstId, name: Name },
     ExpectedPort { node: NodeId, src: ErasedAstId },
     IncompatibleBranch { branch: BranchId, node1: NodeId, node2: NodeId },
+    /// Enhancement-414: `branch (a,a)` -- both endpoints are the SAME node.
+    /// The potential across it is identically zero and every flow contributed to
+    /// it is discarded, so the branch does nothing at all. A one-character slip
+    /// (`branch (a,a)` for `branch (a,c)`) therefore produced a device that
+    /// contributed nothing, silently.
+    DegenerateBranch { branch: BranchId, node: NodeId, src: ErasedAstId },
 }
 
 impl TypeValidationDiagnostic {
@@ -170,6 +176,16 @@ impl TypeValidationCtx<'_> {
                 } else {
                     return;
                 };
+
+                // Enhancement-414: both endpoints the same node -- see DegenerateBranch.
+                if node1 == node2 {
+                    let src = branch.ast_id(self.db.upcast()).into();
+                    self.report(TypeValidationDiagnostic::DegenerateBranch {
+                        branch: branch_,
+                        node: node1,
+                        src,
+                    });
+                }
 
                 let discipline1 = self.db.node_discipline(node1);
                 let discipline2 = self.db.node_discipline(node2);

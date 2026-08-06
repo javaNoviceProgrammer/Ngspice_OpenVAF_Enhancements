@@ -13,7 +13,8 @@ use syntax::name::{AsIdent, Name};
 
 use crate::builtin::{
     ABSDELAY_MAX, DDT_TOL, IDT_IC_ASSERT_TOL, NATURE_ACCESS_BRANCH, NATURE_ACCESS_NODES,
-    NATURE_ACCESS_NODE_GND, NATURE_ACCESS_PORT_FLOW, NOISE_TABLE_INLINE, NOISE_TABLE_INLINE_NAME,
+    NATURE_ACCESS_NODE_GND, NATURE_ACCESS_PORT_FLOW, NOISE_TABLE_FILE, NOISE_TABLE_FILE_NAME,
+    NOISE_TABLE_INLINE, NOISE_TABLE_INLINE_NAME,
     TRANSITION_DELAY_RISET_FALLT_TOL,
 };
 use crate::db::HirTyDB;
@@ -56,6 +57,15 @@ pub enum BodyValidationDiagnostic {
     /// did nothing. Whether the file is usable is decided when the report is built,
     /// where the root file and the VFS are both in hand.
     TableFileUnusable { expr: ExprId, path: Box<str> },
+
+    /// Enhancement-414: a `noise_table`/`noise_table_log` DATA FILE that could not be
+    /// used. Exactly the `$table_model` story above, in the one place it was not
+    /// checked: a missing, empty or unparseable file yielded an EMPTY table, and an
+    /// empty noise table contributes nothing, so the noise source vanished. The output
+    /// spectrum was then bit-for-bit identical to a model with no noise source at all,
+    /// which is why a mistyped filename could not be noticed. The INLINE form has been
+    /// validated since Enhancement-396; the file form reached the runtime unexamined.
+    NoiseTableFileUnusable { expr: ExprId, path: Box<str> },
 
     /// Enhancement-395: a `$table_model` control-string code that is not
     /// implemented, or not a control code at all.
@@ -154,6 +164,19 @@ pub enum BodyValidationDiagnostic {
         def: ParamId,
         expr: ExprId,
         param: ParamId,
+    },
+
+    /// Enhancement-414: a parameter (or localparam) whose own default expression reads
+    /// itself -- `parameter real p = p;`, `localparam real ls = ls + 1;`.
+    ///
+    /// The forward-reference check beside this one compares declaration order with `<`,
+    /// so a self-reference (the same declaration) fell through it. The value that came
+    /// out was not merely undefined but an artefact: the initializer was folded TWICE, so
+    /// `ls = ls + 1` yielded 2 and `l2 = l2*3 + 7` yielded 28 -- silently, with the
+    /// declaration that contains the mistake saying nothing.
+    SelfReferentialParam {
+        def: ParamId,
+        expr: ExprId,
     },
 
     IllegalCtxAccess(IllegalCtxAccess),
@@ -1310,7 +1333,13 @@ impl ExprValidator<'_, '_> {
                     }
                     Ty::Param(_, param) => {
                         if let DefWithBodyId::ParamId(def) = self.parent.owner {
-                            if def.lookup(self.parent.db.upcast()).id
+                            // Enhancement-414: the same declaration -- a self-reference.
+                            if def == param {
+                                self.report(BodyValidationDiagnostic::SelfReferentialParam {
+                                    def,
+                                    expr,
+                                })
+                            } else if def.lookup(self.parent.db.upcast()).id
                                 < param.lookup(self.parent.db.upcast()).id
                             {
                                 self.report(BodyValidationDiagnostic::IllegalParamAccess {
@@ -1563,6 +1592,33 @@ impl ExprValidator<'_, '_> {
                 if !(node_data.is_input | node_data.is_output) {
                     self.report(BodyValidationDiagnostic::ExpectedPort { node, expr })
                 }
+            }
+
+            // Enhancement-414: the FILE form of the same builtin -- see
+            // `NoiseTableFileUnusable`. Whether the file is usable is decided when the
+            // report is built, which is the first point holding the root file and VFS.
+            (
+                BuiltIn::noise_table | BuiltIn::noise_table_log,
+                Some(NOISE_TABLE_FILE | NOISE_TABLE_FILE_NAME),
+            ) => {
+                if let Expr::Literal(Literal::String(ref path)) = self.parent.body.exprs[args[0]] {
+                    let path = path.clone();
+                    self.report(BodyValidationDiagnostic::NoiseTableFileUnusable {
+                        expr: args[0],
+                        path,
+                    });
+                }
+            }
+
+            // Enhancement-414: a negative noise POWER is not a noise power. It reached
+            // the runtime and produced exactly the spectrum of its positive twin, so the
+            // sign was discarded in silence. `noise_table`'s inline entries have been
+            // checked since Enhancement-396; these two were not checked at all.
+            (BuiltIn::white_noise, _) => {
+                self.require_non_negative("white_noise", "the noise power", args[0]);
+            }
+            (BuiltIn::flicker_noise, _) => {
+                self.require_non_negative("flicker_noise", "the noise power", args[0]);
             }
 
             (

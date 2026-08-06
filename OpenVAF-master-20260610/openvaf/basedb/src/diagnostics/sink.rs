@@ -86,6 +86,9 @@ pub struct ConsoleSink<'a> {
     db: &'a dyn BaseDB,
     dst: Box<dyn WriteColor + 'a>,
     anon_paths: bool,
+    /// Enhancement-414: set when a diagnostic was reported against one of the
+    /// synthesised elaboration buffers, so the summary can explain the position.
+    saw_elaborated_buffer: bool,
 }
 
 impl<'a> ConsoleSink<'a> {
@@ -98,6 +101,21 @@ impl<'a> ConsoleSink<'a> {
     }
 
     pub fn summary(&mut self, target_name: &impl Display) -> bool {
+        // Enhancement-414: see `add_report`. A `…__generated.va` / `…__paramwidth.va`
+        // position is a location in an internally elaborated copy of the source, not in
+        // any file on disk; say so once rather than leaving the reader to discover it.
+        if self.saw_elaborated_buffer {
+            self.saw_elaborated_buffer = false;
+            self.print_simple_message(
+                Severity::Note,
+                "some positions above are in an elaborated copy of the source (a name \
+                 ending `__generated.va`, `__paramwidth.va`, ...): the compiler rewrote \
+                 the file to expand a generate/genvar construct or a parameter-shaped \
+                 width. Those line numbers are the copy's own -- match the quoted code, \
+                 not the line number, against your source"
+                    .to_owned(),
+            );
+        }
         if self.error_cnt != 0 {
             let warn = if self.warning_cnt != 0 {
                 format!("; {} warning emitted", self.warning_cnt)
@@ -150,7 +168,7 @@ impl<'a> ConsoleSink<'a> {
         config.styles.primary_label_warning.set_bold(true);
         config.styles.secondary_label.set_bold(true);
 
-        ConsoleSink { warning_cnt: 0, error_cnt: 0, config, db, dst, anon_paths: false }
+        ConsoleSink { warning_cnt: 0, error_cnt: 0, config, db, dst, anon_paths: false, saw_elaborated_buffer: false }
     }
 
     /// only print the filename instead of the full path, this is useful for UI tests where we do not want to expose the full path
@@ -183,6 +201,22 @@ impl<'a> ConsoleSink<'a> {
 /// "too many errors" behaviour of rustc/clang.
 const MAX_RENDERED_DIAGNOSTICS: usize = 128;
 
+/// Enhancement-414: the names `hir::elaborate` gives the buffers it synthesises, each
+/// `<original>.va__<pass>.va`. Matched by suffix rather than by "is this path virtual",
+/// because ordinary test fixtures are virtual too and are NOT elaborated copies.
+const ELABORATION_BUFFER_SUFFIXES: [&str; 6] = [
+    "__generated.va",
+    "__paramwidth.va",
+    "__namerange.va",
+    "__legacygen.va",
+    "__srcloc.va",
+    "__elaborated.va",
+];
+
+fn is_elaboration_buffer_name(name: &str) -> bool {
+    ELABORATION_BUFFER_SUFFIXES.iter().any(|s| name.ends_with(s))
+}
+
 impl DiagnosticSink for ConsoleSink<'_> {
     fn add_report(&mut self, report: Report) {
         match report.severity {
@@ -205,6 +239,25 @@ impl DiagnosticSink for ConsoleSink<'_> {
                 );
             }
             return;
+        }
+
+        // Enhancement-414: a diagnostic can land in one of the ELABORATED buffers the
+        // generate/parameter-width passes synthesise, whose name is virtual and whose
+        // line numbers are its own -- the buffer is re-rendered after preprocessing, so
+        // an expanded `include shifts every line below it. Reporting `foo.va__generated
+        // .va:143` for a mistake on line 9 of a twelve-line file sent the reader to a
+        // path that does not exist, hunting a line that does not either. The position
+        // cannot be mapped back without a real span map, so say what it is instead of
+        // presenting it as a location in the user's file.
+        if report.labels.iter().any(|l| {
+            self.db
+                .vfs()
+                .read()
+                .file_path(l.file_id)
+                .name()
+                .is_some_and(|n| is_elaboration_buffer_name(&n))
+        }) {
+            self.saw_elaborated_buffer = true;
         }
 
         emit(

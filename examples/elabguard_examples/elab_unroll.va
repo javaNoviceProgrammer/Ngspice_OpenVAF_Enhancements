@@ -1,0 +1,127 @@
+// elab_unroll.va -- Enhancement-414: every statement shape as the body of an
+// analog `genvar` for-loop, and the one shape that used to change the answer.
+//
+// The unroll is TEXTUAL (hir::elaborate): the body is copied once per iteration
+// with the genvar replaced by a literal. Finding the body meant finding where one
+// statement ends, and that used to recognise exactly two shapes -- a `begin`..`end`
+// block, and "everything through the next top-level `;`". Every other statement
+// was therefore cut at the first `;` inside it, and the remainder was left behind,
+// spliced in after the generated block.
+//
+// `dangle_gv` below is why this is a correctness fix and not a convenience one.
+// The loop body is `if (cc > 0.5) .. else ..`; the `else` fell outside the copied
+// text and re-attached to the ENCLOSING `if (d > 0.5)`, so the module compiled
+// clean, reported nothing, and computed a different program. `dangle_int` is the
+// same source with an `integer` loop index -- not unrolled, so it is the oracle.
+`include "disciplines.vams"
+
+// ---------------------------------------------------------------------------
+// every compound statement, as an unbraced loop body
+// ---------------------------------------------------------------------------
+module shapes(a, c);
+    inout a, c;
+    electrical a, c;
+    (* desc="case body sum" *)     real s_case;
+    (* desc="if/begin sum" *)      real s_ifb;
+    (* desc="if/else sum" *)       real s_ifelse;
+    (* desc="while sum" *)         real s_while;
+    (* desc="repeat sum" *)        real s_repeat;
+    (* desc="nested for sum" *)    real s_for;
+    (* desc="named block sum" *)   real s_named;
+    (* desc="nested genvar sum" *) real s_nest;
+    integer k;
+    genvar i, j;
+    analog begin
+        s_case = 0.0; s_ifb = 0.0; s_ifelse = 0.0; s_while = 0.0;
+        s_repeat = 0.0; s_for = 0.0; s_named = 0.0; s_nest = 0.0;
+
+        // a bare `case` -- ends in `endcase`, not `;`
+        for (i = 0; i < 3; i = i + 1)
+            case (i)
+                0: s_case = s_case + 1.0;
+                1: s_case = s_case + 10.0;
+                default: s_case = s_case + 100.0;
+            endcase
+
+        // a bare `if` whose branch is a block -- the first `;` is INSIDE it
+        for (i = 0; i < 2; i = i + 1)
+            if (i >= 0) begin
+                s_ifb = s_ifb + 1.0;
+                s_ifb = s_ifb + 2.0;
+            end
+
+        // a bare `if`/`else`: the else clause belongs to the BODY
+        for (i = 0; i < 3; i = i + 1)
+            if (i == 1) s_ifelse = s_ifelse + 10.0;
+            else        s_ifelse = s_ifelse + 1.0;
+
+        // `while`, `repeat`, and a nested integer `for`, each with a block body
+        for (i = 0; i < 2; i = i + 1)
+            while (s_while < 3.0) begin
+                s_while = s_while + 1.0;
+                s_while = s_while + 0.5;
+            end
+
+        for (i = 0; i < 2; i = i + 1)
+            repeat (3) begin
+                s_repeat = s_repeat + 1.0;
+            end
+
+        for (i = 0; i < 2; i = i + 1)
+            for (k = 0; k < 3; k = k + 1) begin
+                s_for = s_for + 1.0;
+            end
+
+        // a NAMED block: its label is copied too, so the copies used to collide
+        for (i = 0; i < 3; i = i + 1) begin : blk
+            real t;
+            t = (i + 1) * (i + 1);
+            s_named = s_named + t;
+        end
+
+        // nested genvar loops with a block body
+        for (i = 0; i < 2; i = i + 1)
+            for (j = 0; j < 3; j = j + 1) begin
+                s_nest = s_nest + 1.0;
+            end
+
+        I(a, c) <+ 1e-3 * V(a, c);
+    end
+endmodule
+
+// ---------------------------------------------------------------------------
+// the dangling `else`, unrolled and not unrolled
+// ---------------------------------------------------------------------------
+module dangle_gv(a, c);
+    inout a, c;
+    electrical a, c;
+    parameter real d  = 1.0;
+    parameter real cc = 1.0;
+    (* desc="accumulator" *) real x;
+    genvar i;
+    analog begin
+        x = 0.0;
+        if (d > 0.5)
+            for (i = 0; i < 2; i = i + 1)
+                if (cc > 0.5) x = x + 1.0;
+                else          x = x + 10.0;
+        I(a, c) <+ 1e-3 * V(a, c);
+    end
+endmodule
+
+module dangle_int(a, c);
+    inout a, c;
+    electrical a, c;
+    parameter real d  = 1.0;
+    parameter real cc = 1.0;
+    (* desc="accumulator" *) real x;
+    integer i;
+    analog begin
+        x = 0.0;
+        if (d > 0.5)
+            for (i = 0; i < 2; i = i + 1)
+                if (cc > 0.5) x = x + 1.0;
+                else          x = x + 10.0;
+        I(a, c) <+ 1e-3 * V(a, c);
+    end
+endmodule

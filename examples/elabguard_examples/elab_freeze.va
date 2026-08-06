@@ -1,0 +1,29 @@
+// elab_freeze.va -- Enhancement-414: a parameter named inside ANOTHER parameter's
+// `from` range must stay a parameter.
+//
+// Enhancement-92 freezes a parameter that shapes a declaration WIDTH into a
+// localparam, because the OSDI descriptor has one fixed node/array count and the
+// value must not change at simulation time. The pass that finds those widths
+// scanned for `[ .. : .. ]` groups mentioning a parameter -- and a parameter's
+// `from [lo:hi]` VALUE constraint is spelled with exactly the same brackets.
+//
+// `bb`'s range mentions `aa`, so `aa` was declared structural and frozen: the
+// model card `aa=5` was accepted and did NOTHING, silently. Worse, the freeze
+// rewrote `aa`'s declaration over text the range fold had already claimed, and
+// two overlapping rewrites panicked the compiler outright -- which is what a
+// range that mentions its OWN parameter (`from [p:8]`) did every time.
+`include "disciplines.vams"
+
+module freeze(a, c);
+    inout a, c;
+    electrical a, c;
+    parameter integer aa = 2;
+    parameter integer bb = 4 from [aa:8];
+    (* desc="aa as the model sees it" *) real seen_aa;
+    (* desc="bb as the model sees it" *) real seen_bb;
+    analog begin
+        seen_aa = aa;
+        seen_bb = bb;
+        I(a, c) <+ 1e-3 * aa * V(a, c) + 1e-9 * bb * V(a, c);
+    end
+endmodule

@@ -10,7 +10,12 @@ fn git_version() -> String {
             let s = s.trim();
             s.strip_prefix('_').unwrap_or(s).to_string()
         }
-        _ => "unknown".to_string(),
+        // Enhancement-414: fall back to the crate version rather than the literal
+        // string "unknown". `git describe` finds no `_*` tag when the compiler is
+        // built from a source drop, a tarball, or a vendored subdirectory, so
+        // `openvaf-r --version` printed "OpenVAF-Reloaded unknown" while the crash
+        // handler beside it reported a real version from CARGO_PKG_VERSION.
+        _ => std::env::var("CARGO_PKG_VERSION").unwrap_or_else(|_| "unknown".to_string()),
     }
 }
 

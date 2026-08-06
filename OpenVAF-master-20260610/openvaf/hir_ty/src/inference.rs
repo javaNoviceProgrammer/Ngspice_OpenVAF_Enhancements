@@ -929,7 +929,12 @@ impl Ctx<'_> {
 
         if info.max_args.map_or(false, |max_args| max_args < args.len()) {
             self.result.diagnostics.push(InferenceDiagnostic::ArgCntMismatch {
-                expected: info.min_args,
+                // Enhancement-414: this is the TOO MANY branch, so the bound to quote is
+                // the maximum. Reporting `min_args` told the reader that `absdelay` takes
+                // "at most 2" arguments when three are perfectly legal, and that `idt`
+                // takes "at most 1" when it takes four -- a diagnostic that contradicts
+                // the compiler's own acceptance.
+                expected: info.max_args.unwrap_or(info.min_args),
                 found: args.len(),
                 expr,
                 exact,

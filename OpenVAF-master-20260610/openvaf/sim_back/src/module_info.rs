@@ -189,13 +189,18 @@ impl ModuleInfo {
                     );
                 }
 
-                ScopeDef::AliasParameter(alias) => match alias.resolve(db).unwrap() {
-                    ResolvedAliasParameter::Parameter(param) => {
+                // Enhancement-414: an alias that resolves to NOTHING is a cycle
+                // (`aliasparam pp = pp;`), which `hir_def` now reports as a real error.
+                // This used to `unwrap()` it, so the compiler aborted with a crash dump
+                // and no diagnostic; skip it and let the diagnostic do the talking.
+                ScopeDef::AliasParameter(alias) => match alias.resolve(db) {
+                    Some(ResolvedAliasParameter::Parameter(param)) => {
                         params.entry(param).or_default().alias.push(declarations.to_path(name))
                     }
-                    ResolvedAliasParameter::SystemParameter(sys_fun) => {
+                    Some(ResolvedAliasParameter::SystemParameter(sys_fun)) => {
                         sys_fun_alias.entry(sys_fun).or_default().push(declarations.to_path(name))
                     }
+                    None => (),
                 },
 
                 _ => (),

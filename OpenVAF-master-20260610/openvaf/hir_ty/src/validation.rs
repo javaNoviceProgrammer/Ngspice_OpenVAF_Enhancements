@@ -302,6 +302,28 @@ impl Diagnostic for BodyValidationDiagnosticWrapped<'_> {
                             .to_owned(),
                     ])
             }
+            // Enhancement-414: as TableFileUnusable, for a noise data file.
+            BodyValidationDiagnostic::NoiseTableFileUnusable { expr, ref path } => {
+                let FileSpan { range, file } = self.expr_src(expr);
+                Report::error()
+                    .with_message(format!("cannot use '{path}' as noise_table data"))
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: file,
+                        range: range.into(),
+                        message: "missing, unreadable, or contains no usable table data"
+                            .to_owned(),
+                    }])
+                    .with_notes(vec![
+                        "the path is resolved relative to the directory of the file being \
+                         compiled"
+                            .to_owned(),
+                        "an unusable file used to yield an EMPTY noise table, and an empty \
+                         table contributes NO NOISE -- the output spectrum came out identical \
+                         to a model with no noise source at all, with nothing reported"
+                            .to_owned(),
+                    ])
+            }
             // Enhancement-390: only reached when the file is genuinely unusable --
             // `to_report` filters out the readable, parseable ones.
             BodyValidationDiagnostic::TableFileUnusable { expr, ref path } => {
@@ -517,6 +539,27 @@ impl Diagnostic for BodyValidationDiagnosticWrapped<'_> {
                         message: "write to input argument".to_owned(),
                     }])
                     .with_notes(vec![format!("help: change direction of '{}' to inout", arg_name)])
+            }
+            BodyValidationDiagnostic::SelfReferentialParam { def, expr } => {
+                let FileSpan { range, file } = self.expr_src(expr);
+                let (def_name, _) = self.lookup(def);
+                Report::error()
+                    .with_message(format!(
+                        "definition of '{def_name}' references itself"
+                    ))
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: file,
+                        range: range.into(),
+                        message: format!("'{def_name}' has no value here -- it is the \
+                                          declaration being defined"),
+                    }])
+                    .with_notes(vec![
+                        "the initializer used to be folded twice, so a self-reference \
+                         produced an arbitrary value (`p = p + 1` gave 2) with nothing \
+                         reported"
+                            .to_owned(),
+                    ])
             }
             BodyValidationDiagnostic::IllegalParamAccess { def, expr, param } => {
                 let FileSpan { range, file } = self.expr_src(expr);
@@ -929,6 +972,13 @@ impl Diagnostic for BodyValidationDiagnosticWrapped<'_> {
                 return None;
             }
         }
+        // Enhancement-414: a noise data file is judged by the same rule -- readable, and
+        // holding at least one finite pair.
+        if let BodyValidationDiagnostic::NoiseTableFileUnusable { ref path, .. } = *self.diag {
+            if table_file_is_usable(root_file, db, path) {
+                return None;
+            }
+        }
         if let Some((lint, lint_src)) = self.lint(root_file, db) {
             let (lvl, is_default) = match lint_src.overwrite {
                 Some(lvl) => (lvl, false),
@@ -1078,6 +1128,29 @@ impl Diagnostic for TypeValidationDiagnosticWrapped<'_> {
                         "if port_without_direction is set to warn/allow the direciton will be set to 'inout'.".to_owned(), 
                         "note: port directions are always required by the language standard.".to_owned()])
             }
+            TypeValidationDiagnostic::DegenerateBranch { branch, node, src } => {
+                let src = self.parse.to_file_span(self.map.get_syntax(src).range(), self.sm);
+                let bname = self.db.branch_data(branch).name.clone();
+                let nname = self.db.node_data(node).name.clone();
+                Report::warning()
+                    .with_message(format!(
+                        "branch '{bname}' names the same node '{nname}' twice"
+                    ))
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: src.file,
+                        range: src.range.into(),
+                        message: "both endpoints are the same node".to_owned(),
+                    }])
+                    .with_notes(vec![
+                        format!(
+                            "the potential across it is identically zero, and every flow \
+                             contributed to it is DISCARDED -- `I({bname}) <+ ..` adds \
+                             nothing to the system"
+                        ),
+                        "if a second terminal was meant, name it here".to_owned(),
+                    ])
+            }
             TypeValidationDiagnostic::ExpectedPort { node, src } => {
                 let src = self.parse.to_file_span(self.map.get_syntax(src).range(), self.sm);
                 let decl = node.lookup(self.db.upcast()).ast_id(self.db.upcast());
@@ -1144,6 +1217,10 @@ impl Diagnostic for TypeValidationDiagnosticWrapped<'_> {
         match *self.diag {
             TypeValidationDiagnostic::PortWithoutDirection { decl, .. } => {
                 Some((lints::builtin::port_without_direction, LintSrc::item(decl)))
+            }
+            // Enhancement-414
+            TypeValidationDiagnostic::DegenerateBranch { src, .. } => {
+                Some((lints::builtin::degenerate_branch, LintSrc::item(src)))
             }
             _ => None,
         }

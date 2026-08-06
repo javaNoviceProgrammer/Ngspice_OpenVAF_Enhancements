@@ -187,5 +187,6 @@ pub mod builtin {
         pub const unknown_analysis_name = LintData{default_lvl: Warn, documentation_id: 21};
         pub const discarded_contribution = LintData{default_lvl: Warn, documentation_id: 22};
         pub const probe_only_branch_short = LintData{default_lvl: Warn, documentation_id: 23};
+        pub const degenerate_branch = LintData{default_lvl: Warn, documentation_id: 24};
     }
 }
