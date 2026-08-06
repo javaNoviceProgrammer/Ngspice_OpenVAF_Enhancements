@@ -10,6 +10,7 @@ Author: 1985 Wayne A. Christopher, U. C. Berkeley CAD Group
 #include "ngspice/ngspice.h"
 #include "ngspice/cpdefs.h"
 #include "ngspice/ftedefs.h"
+#include "ngspice/osdiitf.h"   /* Enhancement-413 */
 #include "ngspice/dvec.h"
 #include "ngspice/ftedebug.h"
 #include "breakp2.h"
@@ -121,6 +122,52 @@ settrace(wordlist *wl, int what, char *name)
 }
 
 
+/* Enhancement-413: is this save the bare `@<dev>[i]` of an OSDI instance that
+ * does NOT define it? `.options savecurrents` is a textual pre-pass over the
+ * deck (inp_savecurrents), so it cannot know a compact model's terminal names
+ * and emits the same bare `i` that R/C/L use. Enhancement-394 defines that
+ * alias only for TWO-terminal devices, so for anything wider the save named a
+ * parameter that does not exist: the vector was registered and stayed EMPTY,
+ * with no diagnostic, while a built-in BJT beside it produced @q1[ic]/[ib]/...
+ *
+ * Returns the terminal names when the entry should be expanded, else 0. The
+ * two-terminal case is left exactly as it was, since `@dev[i]` works there. */
+static int
+osdi_expand_save(const char *nm, char ***names, int *count)
+{
+    const char *lb, *rb;
+    char *dev;
+    int n;
+
+    if (names) *names = NULL;
+    if (count) *count = 0;
+    if (!nm || nm[0] != '@' || !ft_curckt || !ft_curckt->ci_ckt)
+        return 0;
+    lb = strchr(nm, '[');
+    if (!lb || lb == nm + 1)
+        return 0;
+    rb = strchr(lb, ']');
+    if (!rb || rb[1] != '\0')
+        return 0;
+    if (rb - lb != 2 || (lb[1] != 'i' && lb[1] != 'I'))
+        return 0;                       /* not the bare `i` */
+
+    dev = copy_substring(nm + 1, lb);
+    n = OSDIterminalNames(ft_curckt->ci_ckt, dev, names, count);
+    tfree(dev);
+    if (n == 2) {                       /* `@dev[i]` is defined there */
+        int k;
+        for (k = 0; k < n; k++)
+            tfree((*names)[k]);
+        tfree(*names);
+        *names = NULL;
+        *count = 0;
+        return 0;
+    }
+    return n;
+}
+
+
 /* retrieve the save nodes from dbs into an array */
 int
 ft_getSaves(struct save_info **savesp)
@@ -131,8 +178,21 @@ ft_getSaves(struct save_info **savesp)
     struct save_info *array;
 
     for (d = dbs; d; d = d->db_next)
-        if (d->db_type == DB_SAVE)
-            count++;
+        if (d->db_type == DB_SAVE) {
+            char **tn = NULL;
+            int nt = 0;
+            /* Enhancement-413: one entry per terminal for an OSDI device whose
+               bare `i` does not exist */
+            if (osdi_expand_save(d->db_nodename1, &tn, &nt) > 0) {
+                int k;
+                count += nt;
+                for (k = 0; k < nt; k++)
+                    tfree(tn[k]);
+                tfree(tn);
+            } else {
+                count++;
+            }
+        }
 
     if (!count)
         return (0);
@@ -141,12 +201,28 @@ ft_getSaves(struct save_info **savesp)
 
     for (d = dbs; d; d = d->db_next)
         if (d->db_type == DB_SAVE) {
-            array[i].used = 0;
-            if (d->db_analysis)
-                array[i].analysis = copy(d->db_analysis);
-            else
-                array[i].analysis = NULL;
-            array[i++].name = copy(d->db_nodename1);
+            char **tn = NULL;
+            int nt = 0, k;
+            char *dev;
+            const char *lb;
+
+            if (osdi_expand_save(d->db_nodename1, &tn, &nt) <= 0) {
+                array[i].used = 0;
+                array[i].analysis = d->db_analysis ? copy(d->db_analysis) : NULL;
+                array[i++].name = copy(d->db_nodename1);
+                continue;
+            }
+
+            lb = strchr(d->db_nodename1, '[');
+            dev = copy_substring(d->db_nodename1 + 1, lb);
+            for (k = 0; k < nt; k++) {
+                array[i].used = 0;
+                array[i].analysis = d->db_analysis ? copy(d->db_analysis) : NULL;
+                array[i++].name = tprintf("@%s[i_%s]", dev, tn[k]);
+                tfree(tn[k]);
+            }
+            tfree(dev);
+            tfree(tn);
         }
 
     return (count);

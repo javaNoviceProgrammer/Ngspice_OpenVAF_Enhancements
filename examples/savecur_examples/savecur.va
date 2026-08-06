@@ -1,0 +1,32 @@
+// savecur.va -- Enhancement-413.
+//
+// Two compact models that differ only in TERMINAL COUNT, because that is the
+// whole variable: `.options savecurrents` is a textual pre-pass over the deck,
+// so it cannot know a model's terminal names and emits the bare `@dev[i]` that
+// R/C/L use. Enhancement-394 defines that alias only for TWO-terminal devices,
+// so the wide one named a parameter that does not exist and its vector stayed
+// empty -- with no diagnostic.
+//
+// Each terminal draws a DISTINCT current so a saved waveform identifies which
+// terminal it belongs to, and the four must sum to zero by KCL.
+`include "disciplines.vams"
+
+module savecur2(a, c);                 // two terminals: the case that worked
+    inout a, c;
+    electrical a, c;
+    parameter real g = 1e-3;
+    analog I(a, c) <+ g*V(a, c);
+endmodule
+
+module savecur4(d, g, s, b);           // four terminals: the case that did not
+    inout d, g, s, b;
+    electrical d, g, s, b;
+    parameter real gd = 1e-3;
+    parameter real gg = 2e-3;
+    parameter real gb = 4e-3;
+    analog begin
+        I(d, s) <+ gd*V(d, s);
+        I(g, s) <+ gg*V(g, s);
+        I(b, s) <+ gb*V(b, s);
+    end
+endmodule

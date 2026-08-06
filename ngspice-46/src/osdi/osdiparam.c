@@ -257,6 +257,53 @@ extern int OSDIask(CKTcircuit *ckt, GENinstance *instPtr, int id,
   return osdi_read_param(src, value, id, descr);
 }
 
+/* Enhancement-413: the terminal names of an OSDI instance, or 0 if `name` is
+ * not one. Needed because `.options savecurrents` runs as a TEXTUAL pre-pass
+ * over the deck, long before any `.osdi` is loaded, so it cannot know a compact
+ * model's terminal names -- it emits the bare `@dev[i]` that R/C/L use, which
+ * Enhancement-394 only defines for TWO-terminal devices. For anything wider the
+ * save named a parameter that does not exist and the vector stayed empty. The
+ * expansion therefore has to happen once the descriptor is known; ft_getSaves()
+ * calls this at analysis start, when the circuit is set up.
+ *
+ * `*names` is filled with `*count` freshly allocated strings; the caller frees
+ * both the strings and the array. */
+int OSDIterminalNames(CKTcircuit *ckt, const char *name, char ***names,
+                      int *count) {
+  GENinstance *inst;
+  int type;
+
+  if (names)
+    *names = NULL;
+  if (count)
+    *count = 0;
+  if (!ckt || !name || !*name || !names || !count)
+    return 0;
+
+  inst = ft_sim->findInstance(ckt, (char *)name);
+  if (!inst || !inst->GENmodPtr)
+    return 0;
+  type = inst->GENmodPtr->GENmodType;
+  if (!osdi_devtype_is_osdi(type))
+    return 0;
+
+  {
+    OsdiRegistryEntry *entry = osdi_reg_entry_inst(inst);
+    const OsdiDescriptor *descr = entry ? entry->descriptor : NULL;
+    uint32_t t;
+    if (!descr || descr->num_terminals == 0)
+      return 0;
+    *names = TMALLOC(char *, descr->num_terminals);
+    if (!*names)
+      return 0;
+    for (t = 0; t < descr->num_terminals; t++)
+      (*names)[t] = copy(descr->nodes[t].name);
+    *count = (int)descr->num_terminals;
+    return *count;
+  }
+}
+
+
 extern int OSDImAsk(CKTcircuit *ckt, GENmodel *modelPtr, int id,
                    IFvalue *value) {
 

@@ -90,3 +90,9 @@ extern int OSDIpendingRequests(CKTcircuit *ckt);
  * converged final solution. Results are not loaded into the matrix/RHS.
  * Defined in src/osdi/osdiload.c. */
 extern int OSDIfinalStep(CKTcircuit *ckt);
+
+/* Enhancement-413: terminal names of an OSDI instance (0 if it is not one), so
+ * `.options savecurrents` can be expanded per terminal once the descriptor is
+ * known. Defined in src/osdi/osdiparam.c. */
+extern int OSDIterminalNames(CKTcircuit *ckt, const char *name, char ***names,
+                             int *count);
