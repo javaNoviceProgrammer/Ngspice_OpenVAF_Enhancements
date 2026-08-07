@@ -46,7 +46,20 @@ static double *noise_im = NULL;
 static char *noise_grouped = NULL;
 static uint32_t noise_dense_len = 0;
 
-#define nVar(i, j) noise_vals[i * descr->num_noise_src + j]
+/* Enhancement-415: the stride is num_noise_src + 1, not num_noise_src.
+ *
+ * Each of the NSTATVARS state variables needs one slot per noise SOURCE plus one
+ * for the whole-device total, which is accumulated at index `num_noise_src` --
+ * and `osdi_registry.c` allocates exactly that: NSTATVARS * (num_noise_src + 1).
+ * Indexing with the short stride made the device's OUT total alias the FIRST
+ * source's IN total: with n sources, nVar(OUTNOIZ, n) = noise_vals[1*n + n] and
+ * nVar(INNOIZ, 0) = noise_vals[2*n + 0] are the same address. So
+ * `onoise_total_<dev>` came out bit-identical to `inoise_total_<dev>_<first src>`
+ * -- an INPUT-referred, single-source number reported as the device's
+ * OUTPUT-referred total, while every built-in device's total matched its own
+ * components exactly. The spectra and the grand totals were never affected.
+ */
+#define nVar(i, j) noise_vals[i * (descr->num_noise_src + 1) + j]
 /*
  * HICUMnoise (mode, operation, firstModel, ckt, data, OnDens)
  *

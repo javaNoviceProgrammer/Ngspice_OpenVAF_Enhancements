@@ -356,6 +356,34 @@ impl BodyLoweringCtx<'_, '_, '_> {
         let new_next = self.ctx.make_select(fired, |_, branch| if branch { rescheduled } else { next });
 
         self.ctx.def_place(PlaceKind::EventState(idx), new_next);
+
+        // Enhancement-415: stop the solver stepping OVER the event.
+        //
+        // A timer has no signal to watch, so unlike `cross`/`above` -- where a sign
+        // change across an accepted interval is still noticed -- an event the solver
+        // never stops near simply never happens. The simulator is not told when the
+        // next one is due, and a compact model cannot register a breakpoint, so a
+        // 10 ns timer in a run whose natural step is 1 us fired 109 times out of
+        // 1000: 891 events silently dropped, and a model implementing a clock or a
+        // sampled system ran at whatever rate the step controller happened to pick.
+        //
+        // The step bound already plumbed through for `$bound_step` (Enhancement-24)
+        // is exactly the channel needed: asking for at most `next_event - now`
+        // makes the following timepoint land on the event. Combined with `min` --
+        // never a bare overwrite -- so a model's own `$bound_step`, and a second
+        // timer, both still hold. A pending time of INFINITY (a one-shot that has
+        // already fired) is not smaller than the incumbent bound and so changes
+        // nothing.
+        let zero = self.ctx.fconst(0.0);
+        let dt = self.ctx.ins().fsub(new_next, abstime);
+        let ahead = self.ctx.ins().fgt(dt, zero);
+        let inf = self.ctx.fconst(f64::INFINITY);
+        let cand = self.ctx.make_select(ahead, |_, branch| if branch { dt } else { inf });
+        let cur = self.ctx.use_place(PlaceKind::BoundStep);
+        let tighter = self.ctx.ins().flt(cand, cur);
+        let bound = self.ctx.make_select(tighter, |_, branch| if branch { cand } else { cur });
+        self.ctx.def_place(PlaceKind::BoundStep, bound);
+
         fired
     }
 

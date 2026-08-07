@@ -1,0 +1,29 @@
+// evt_noise.va -- Enhancement-415: the per-device noise summary rollup.
+//
+// `.noise ... <ptspersum>` reports, per device, one integrated figure per noise
+// SOURCE plus a whole-device total. For an OSDI device the device total came out
+// bit-identical to the FIRST source's INPUT-referred figure -- an input-referred,
+// single-source number presented as the device's output-referred total.
+//
+// The cause was a stride: each of the NSTATVARS state variables needs one slot
+// per source PLUS one for the device total (which is what the registry
+// allocates), but the indexing macro used the source count alone, so
+// nVar(OUTNOIZ, n) and nVar(INNOIZ, 0) resolved to the same address.
+//
+// Two sources four orders of magnitude apart, so "which number landed where" is
+// unambiguous. The device is a 1 kS-equivalent conductance and the spectra were
+// never wrong -- only the summary.
+`include "disciplines.vams"
+
+module evt_noise(a, c);
+    inout a, c;
+    electrical a, c;
+    parameter real g     = 1e-3   from (0:inf);
+    parameter real pbig  = 1e-22  from [0:inf);
+    parameter real psmall= 1e-26  from [0:inf);
+    analog begin
+        I(a, c) <+ g * V(a, c);
+        I(a, c) <+ white_noise(pbig,   "big");
+        I(a, c) <+ white_noise(psmall, "small");
+    end
+endmodule

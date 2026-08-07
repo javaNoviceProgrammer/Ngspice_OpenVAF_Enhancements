@@ -1,0 +1,20 @@
+// evt_mult.va -- Enhancement-415: `m` and `$mfactor` are one knob, and `sens`
+// must list it once.
+//
+// ngspice registers `m` as an alias of the model's `$mfactor` with the SAME
+// parameter id. Anything that WALKS the parameter table therefore saw the
+// multiplier twice: `sens` reported both `<inst>_m` and `<inst>__mfactor` with
+// identical non-zero sensitivities, so summing the table double-counted it.
+// Built-in devices mark their alias keywords IF_REDUNDANT and list them once.
+`include "disciplines.vams"
+
+module evt_mult(a, c);
+    inout a, c;
+    electrical a, c;
+    parameter real g = 1e-3 from (0:inf);
+    (* desc="current", units="A" *) real ii;
+    analog begin
+        ii = g * V(a, c);
+        I(a, c) <+ ii;
+    end
+endmodule

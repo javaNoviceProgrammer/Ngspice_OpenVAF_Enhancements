@@ -204,6 +204,27 @@ static int set_param(sgen *sg)
 		(sg->ptable[sg->param].dataType & (IF_AC | IF_AC_ONLY)))
 		return 0;
 
+	/* Enhancement-415: two keywords can name ONE parameter. An OSDI device
+	 * registers `m` as an alias of the model's `$mfactor` with the same
+	 * parameter id (osdi/osdiinit.c), so walking the table perturbed the
+	 * multiplier twice and reported it twice -- `<inst>_m` and
+	 * `<inst>__mfactor` carried identical non-zero sensitivities, and summing
+	 * the table double-counted it. Built-in devices flag such an alias
+	 * IF_REDUNDANT, but that also hides the keyword from `show`, which lists
+	 * `m` by design (Enhancement-397); de-duplicating by id here keeps the
+	 * listing intact and fixes the only place the repeat actually mattered.
+	 * The first spelling in the table wins. */
+	{
+		int dup;
+		for (dup = 0; dup < sg->param; dup++)
+			if (sg->ptable[dup].keyword
+				&& sg->ptable[dup].id == sg->ptable[sg->param].id
+				&& (sg->ptable[dup].dataType &
+					(IF_SET|IF_ASK|IF_REAL|IF_VECTOR|IF_REDUNDANT|IF_NONSENSE))
+					== (IF_SET|IF_ASK|IF_REAL))
+				return 0;
+	}
+
 	if (sens_getp(sg, sg->ckt, &ifval))
 		return 0;
 

@@ -1,0 +1,31 @@
+// evt_timer.va -- Enhancement-415: a @(timer) event must happen even when the
+// step controller would step straight over it.
+//
+// `cross` and `above` watch a SIGNAL, so a sign change across an accepted
+// interval is still noticed and the event is merely reported late. A timer
+// watches nothing: if the solver never stops near the scheduled instant, the
+// event does not happen at all. Nothing told the simulator when the next one was
+// due -- a compact model cannot register a breakpoint -- so a 10 ns timer in a
+// run whose natural step was 1 us fired 109 times out of 1000.
+//
+// `n` counts the events; a 10 us run of a 10 ns timer starting at 1 ns owes
+// exactly 1000. The source is a plain DC value on purpose: nothing else in the
+// deck forces small steps, so the count measures the timer alone.
+`include "disciplines.vams"
+
+module evt_timer(a, c);
+    inout a, c;
+    electrical a, c;
+    parameter real start  = 1e-9  from (0:inf);
+    parameter real period = 1e-8  from (0:inf);
+    parameter real bstep  = 0.0   from [0:inf);   // the model's OWN step bound
+    (* desc="events seen", units="" *) integer n;
+    analog begin
+        @(initial_step) n = 0;
+        @(timer(start, period)) n = n + 1;
+        // Enhancement-415 must combine with this by min, not overwrite it.
+        if (bstep > 0.0)
+            $bound_step(bstep);
+        I(a, c) <+ 1e-3 * V(a, c);
+    end
+endmodule

@@ -458,6 +458,7 @@ The index: **Doc** links each enhancement's detailed write-up, **Examples** link
 | 412 | fix: an OSDI operating-point variable read after `.ac`/`.noise` returned the small-signal solution, and changed with frequency | ngspice | [doc](enhancements_doc/Enhancement-412.md) | [opvarac](examples/opvarac_examples/) |
 | 413 | fix: `.options savecurrents` registered an empty vector for a multi-terminal OSDI device; now one waveform per terminal | ngspice | [doc](enhancements_doc/Enhancement-413.md) | [savecur](examples/savecur_examples/) |
 | 414 | fix: a genvar loop body of any statement shape now unrolls, and a dangling `else` no longer re-binds to an enclosing `if`; a parameter named in another's `from` range stays settable | openvaf-r | [doc](enhancements_doc/Enhancement-414.md) | [elabguard](examples/elabguard_examples/) |
+| 415 | fix: an OSDI `@(timer)` event is no longer stepped over and lost; the per-device noise summary total is the device's own, not the first source's input-referred figure | both | [doc](enhancements_doc/Enhancement-415.md) | [evtnoise](examples/evtnoise_examples/) |
 
 </details>
 
