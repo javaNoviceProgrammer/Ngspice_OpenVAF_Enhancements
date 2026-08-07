@@ -189,9 +189,10 @@ extern int OSDIask(CKTcircuit *ckt, GENinstance *instPtr, int id,
   /* Enhancement-394: ids past the descriptor's parameter/opvar space are the
    * synthesized terminal currents declared in osdiinit.c.
    *
-   * The current into terminal t is what the device stamped into that node's
-   * KCL row: the resistive residual, plus -- in a transient -- the integrated
-   * derivative of the reactive residual (the charge), which OSDIload places in
+   * The current into terminal t is what the device stamped into the KCL row
+   * that terminal's collapse GROUP shares (see Enhancement-416 below): the
+   * resistive residual, plus -- in a transient -- the integrated derivative of
+   * the reactive residual (the charge), which OSDIload places in
    * CKTstate0[state+1] while walking the reactive nodes in descriptor order.
    * The same walk is repeated here so the two agree exactly; outside a
    * transient there is no reactive contribution, matching the DC stamp. */
@@ -229,22 +230,58 @@ extern int OSDIask(CKTcircuit *ckt, GENinstance *instPtr, int id,
     if (t >= descr->num_terminals) {
       return (E_BADPARM);
     }
+
+    /* Enhancement-416: sum the terminal's whole COLLAPSE GROUP, not just its
+     * own node.
+     *
+     * `if (rd == 0) V(d,di) <+ 0; else I(d,di) <+ V(d,di)/rd;` is the standard
+     * compact-model idiom for an optional series resistance, and rd = 0 is the
+     * shipped default of most real models. On that path terminal d is collapsed
+     * onto internal node di, and the model writes its current into di's
+     * residual -- d's own slot stays zero. Reading d alone therefore reported
+     * exactly 0.0 for a terminal that was carrying the device's full current.
+     * With rd and rs both zero, every terminal carrying only the through
+     * current read 0.0, and in DC the reported currents then summed to zero --
+     * so a KCL check did not flag it either. A terminal with a contribution of
+     * its own (a gate charge, a leakage path) still read correctly, which is
+     * part of why this went unnoticed.
+     *
+     * The loader has always stamped the group as one row
+     * (`CKTrhs[node_mapping[i]] -= ...` in osdiload.c), which is why the
+     * SOLUTION was right throughout -- only this readback was wrong. Summing
+     * the group is precisely the quantity the loader puts into that row: the
+     * current the device presents at the node the terminal connects to.
+     *
+     * owner[i] == t + 1 marks node i as belonging to terminal t (see
+     * osdi_collapse_owner). An uncollapsed terminal owns only itself, so the
+     * sum reduces to what this code read before. */
+    const uint32_t *owner = osdi_collapse_owner(entry, instPtr);
+    bool tran = ckt && (ckt->CKTmode & MODETRAN) && ckt->CKTstates[0];
+    int state = instPtr->GENstate + (int)descr->num_states;
     double cur = 0.0;
-    if (descr->nodes[t].resist_residual_off != UINT32_MAX) {
-      cur = *((double *)(((char *)inst) + descr->nodes[t].resist_residual_off));
-    }
-    if (ckt && (ckt->CKTmode & MODETRAN) && ckt->CKTstates[0]) {
-      int state = instPtr->GENstate + (int)descr->num_states;
-      for (uint32_t i = 0; i < descr->num_nodes; i++) {
-        if (descr->nodes[i].react_residual_off == UINT32_MAX)
-          continue;
-        if (i == t) {
-          cur += ckt->CKTstate0[state + 1];
-          break;
+
+    for (uint32_t i = 0; i < descr->num_nodes; i++) {
+      bool has_react = descr->nodes[i].react_residual_off != UINT32_MAX;
+
+      if (owner[i] == t + 1) {
+        uint32_t off = descr->nodes[i].resist_residual_off;
+        if (off != UINT32_MAX) {
+          cur += *((double *)(((char *)inst) + off));
         }
+        if (tran && has_react) {
+          cur += ckt->CKTstate0[state + 1];
+        }
+      }
+
+      /* Advance for EVERY reactive node, in the group or not: this walks the
+       * same state cursor osdiload.c does, and there it steps on each node with
+       * a reactive residual regardless of anything else. Skipping a non-member
+       * would desynchronize the two and charge the wrong node's dQ/dt. */
+      if (has_react) {
         state += 2;
       }
     }
+
     value->rValue = cur;
     return (OK);
   }

@@ -268,8 +268,13 @@ extern SPICEdev *osdi_create_spicedev(const OsdiRegistryEntry *entry) {
   size_t inst_off = entry->inst_offset;
 
   int *inst_size = TMALLOC(int, 1);
-  *inst_size =
-      (int)(inst_off + descr->instance_size + sizeof(OsdiExtraInstData));
+  /* Enhancement-416: one uint32_t per descriptor node trails the extra data --
+   * the collapse-owner map, see osdi_collapse_owner(). num_nodes is a
+   * per-descriptor constant, so the instance block stays a fixed size for the
+   * device type, exactly as DEVinstSize requires. */
+  *inst_size = (int)(inst_off + descr->instance_size +
+                     sizeof(OsdiExtraInstData) +
+                     (size_t)descr->num_nodes * sizeof(uint32_t));
   OSDIinfo->DEVinstSize = inst_size;
 
   size_t model_off = osdi_model_data_off();

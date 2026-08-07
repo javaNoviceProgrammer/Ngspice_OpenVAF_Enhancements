@@ -1,0 +1,46 @@
+// Enhancement-416 -- a collapse CHAIN, and a collapse to ground.
+//
+// Two shapes the single-pair case does not cover:
+//
+//   * `chain`: terminal a collapses onto n1, and n1 collapses onto n2, so one
+//     collapse group holds THREE descriptor nodes. The terminal current has to
+//     gather the whole group, not just the node named in one collapse pair.
+//
+//   * `tognd`: an internal node collapsed to GROUND (`V(x) <+ 0`) sitting in a
+//     deck whose other terminal is itself tied to ground. Both end up at global
+//     node 0 without being in the same collapse group, so a fix that grouped by
+//     the global node index would fold this internal node's residual into the
+//     grounded terminal's current. It must not.
+`include "disciplines.vams"
+
+module coll_chain(a, c);
+   inout a, c;
+   electrical a, c;
+   electrical n1, n2;
+   electrical x;
+
+   parameter real g     = 1e-3 from (0:inf);
+   parameter real chain = 1.0;   // != 0 => a-n1 and n1-n2 both collapse
+   parameter real tognd = 0.0;   // != 0 => x is collapsed to ground
+
+   analog begin
+      if (chain != 0.0) begin
+         V(a, n1) <+ 0.0;
+         V(n1, n2) <+ 0.0;
+      end else begin
+         I(a, n1) <+ V(a, n1) * 1e4;
+         I(n1, n2) <+ V(n1, n2) * 1e4;
+      end
+
+      I(n2, c) <+ g * V(n2, c);
+
+      // A second, independent branch whose internal node may be collapsed onto
+      // ground. Its current must never appear in a terminal's reported current.
+      if (tognd != 0.0)
+         V(x) <+ 0.0;
+      else
+         I(x, c) <+ V(x, c) * 1e-3;
+
+      I(a, x) <+ (V(a, x)) * 1e-4;
+   end
+endmodule

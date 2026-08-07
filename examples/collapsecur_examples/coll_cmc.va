@@ -1,0 +1,48 @@
+// Enhancement-416 -- the conditional node collapse every compact model uses.
+//
+// `if (rd == 0) V(d,di) <+ 0; else I(d,di) <+ V(d,di)/rd;` is the standard CMC
+// idiom for an optional series resistance, and rd = 0 is the shipped default of
+// most real models (BSIM `rdsmod=0`, HICUM `re=0`). On that default path the
+// terminal is COLLAPSED onto the internal node, and the model writes its
+// current into the internal node's residual -- terminal `d`'s own residual
+// stays zero.
+//
+// `rd` and `rs` select the collapse independently, so one deck can compare all
+// four combinations of collapsed / not-collapsed against each other and against
+// the source current, which is the same in every combination.
+`include "disciplines.vams"
+
+module coll_cmc(d, g, s);
+   inout d, g, s;
+   electrical d, g, s;
+   electrical di, si;
+
+   parameter real gm  = 1e-3 from (0:inf);
+   parameter real gds = 1e-6 from [0:inf);
+   parameter real rd  = 0.0  from [0:inf);   // 0 => terminal d collapses onto di
+   parameter real rs  = 0.0  from [0:inf);   // 0 => terminal s collapses onto si
+   parameter real cgs = 0.0  from [0:inf);   // charge on the UNcollapsed gate terminal
+   parameter real cds = 0.0  from [0:inf);   // charge on the COLLAPSED internal node
+
+   analog begin
+      if (rd == 0.0)
+         V(d, di) <+ 0.0;
+      else
+         I(d, di) <+ V(d, di) / rd;
+
+      if (rs == 0.0)
+         V(s, si) <+ 0.0;
+      else
+         I(s, si) <+ V(s, si) / rs;
+
+      I(di, si) <+ gm * V(g, si) + gds * V(di, si);
+      I(g, si)  <+ ddt(cgs * V(g, si));
+
+      // The charge that makes the reactive half of the readback load-bearing:
+      // it sits on `di`, so when rd = 0 the current through terminal `d` is
+      // dQ/dt of a node the terminal was collapsed onto. During a fast ramp it
+      // dominates, and a fix that summed only the resistive residuals would be
+      // wrong by orders of magnitude rather than slightly.
+      I(di, si) <+ ddt(cds * V(di, si));
+   end
+endmodule

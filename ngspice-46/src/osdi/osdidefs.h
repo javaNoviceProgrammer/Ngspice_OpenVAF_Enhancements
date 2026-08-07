@@ -209,6 +209,8 @@ extern double **osdi_instance_matrix_ptr(const OsdiRegistryEntry *entry,
 #endif
 extern OsdiExtraInstData *
 osdi_extra_instance_data(const OsdiRegistryEntry *entry, GENinstance *inst);
+extern uint32_t *osdi_collapse_owner(const OsdiRegistryEntry *entry,
+                                     GENinstance *inst);
 extern size_t osdi_model_data_off(void);
 extern void *osdi_model_data(GENmodel *model);
 extern void *osdi_model_data_from_inst(GENinstance *inst);

@@ -349,6 +349,44 @@ int OSDIsetup(SMPmatrix *matrix, GENmodel *inModel, CKTcircuit *ckt,
           descr, inst, connected_terminals,
           (const OsdiTermShortInfo *)entry->term_short_infos,
           entry->num_term_shorts, terminals);
+
+      /* Enhancement-416: record which terminal each descriptor node was
+       * collapsed onto, while the LOCAL mapping still says so. Further down,
+       * before the matrix is built, write_node_mapping() overwrites this same
+       * array with global node numbers and the grouping is gone for good.
+       *
+       * A group holds at most one connected terminal. The guard in
+       * collapse_nodes tests the CURRENT mapped value, not the raw endpoint, so
+       * it blocks chains (a-x then x-b) as well as a direct terminal-terminal
+       * pair -- once a terminal is in a group, no second terminal can join.
+       *
+       * Terminals past connected_terminals are deliberately left unowned. Such
+       * a terminal is not a circuit node at all, so there is no external
+       * current to report; and the guard above is written in terms of connected
+       * terminals only, so it would not keep two of them out of one group.
+       *
+       * The scan is O(connected_terminals x descr->num_nodes) once per instance
+       * per setup, its body a single compare -- negligible beside init_matrix()
+       * below, which does a hash insert per Jacobian entry. */
+      {
+        uint32_t *owner = osdi_collapse_owner(entry, gen_inst);
+        const uint32_t *local_map =
+            (const uint32_t *)(((char *)inst) + descr->node_mapping_offset);
+        for (uint32_t i = 0; i < descr->num_nodes; i++) {
+          owner[i] = 0;
+        }
+        for (uint32_t t = 0; t < connected_terminals; t++) {
+          if (local_map[t] == UINT32_MAX) {
+            continue; /* cannot happen for a connected terminal; be safe */
+          }
+          for (uint32_t i = 0; i < descr->num_nodes; i++) {
+            if (local_map[i] == local_map[t]) {
+              owner[i] = t + 1;
+            }
+          }
+        }
+      }
+
       /* copy terminals */
       memcpy(node_ids, gen_inst + 1, sizeof(int) * connected_terminals);
       /* Enhancement-45: a terminal net with a nodeset initializer

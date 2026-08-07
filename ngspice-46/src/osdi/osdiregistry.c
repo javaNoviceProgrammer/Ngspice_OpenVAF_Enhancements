@@ -722,6 +722,32 @@ osdi_extra_instance_data(const OsdiRegistryEntry *entry, GENinstance *inst) {
                                descr->instance_size);
 }
 
+/* Enhancement-416: the collapse-owner map, one entry per descriptor node,
+ * trailing OsdiExtraInstData in the same instance block (sized in osdiinit.c).
+ *
+ * Entry i holds `t + 1` when descriptor node i ended up on the same simulator
+ * node as connected terminal t, and 0 when no terminal owns it. The +1 is
+ * deliberate: the instance block comes from a calloc, so a device whose setup
+ * has not run yet reads 0 everywhere and reports no current -- which is what it
+ * did before this map existed. A plain terminal index could not distinguish
+ * "owned by terminal 0" from "never filled in".
+ *
+ * The map is written by OSDIsetup from the LOCAL node mapping, the only place
+ * collapse groups are still visible: write_node_mapping() immediately replaces
+ * that mapping with global node numbers, and those cannot express a group --
+ * two terminals wired to one net share a global number without being collapsed,
+ * and ground (0) additionally collects grounded terminals, nodes collapsed to
+ * ground, Enhancement-116's decoupled internal nodes and Enhancement-401's
+ * dropped term-short flow nodes. */
+inline uint32_t *osdi_collapse_owner(const OsdiRegistryEntry *entry,
+                                     GENinstance *inst) {
+  /* Immediately after the extra data, which is itself OSDI_ALIGN(MAX_ALIGN) --
+   * so the array is suitably aligned by construction, and only two places
+   * spell the block's layout: osdiinit.c sizes it and the line below locates
+   * it. */
+  return (uint32_t *)(osdi_extra_instance_data(entry, inst) + 1);
+}
+
 inline size_t osdi_model_data_off(void) {
   return offsetof(OsdiModelData, data);
 }
