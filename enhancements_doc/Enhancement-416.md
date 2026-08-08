@@ -134,14 +134,21 @@ would notice. Nothing in the regression suite does.
 
 ## Noted, and deliberately not changed
 
-* **A transient terminal current disagrees with the source current by ~2e-3
-  relative.** This is an Enhancement-394 property that has nothing to do with
-  collapsing: a plain two-terminal `R‖C` OSDI device with no collapse anywhere
-  shows the same 2.1e-3 gap, bit-identically before and after this change, and it
-  does not shrink with `reltol` (so it is not Newton convergence). The DC
-  readback is exact to 1e-12. Recorded here because it was measured while
-  verifying the transient half; it is a separate question and no evidence was
-  gathered about its cause.
+* ~~**A transient terminal current disagrees with the source current by ~2e-3
+  relative.** … a plain two-terminal `R‖C` OSDI device with no collapse anywhere
+  shows the same 2.1e-3 gap … and it does not shrink with `reltol` (so it is not
+  Newton convergence).~~
+  **CORRECTED by Enhancement-417 — both halves of that claim were wrong, and the
+  measurement behind them was a harness error.** `.options savecurrents` on a
+  *two-terminal* device saves only the bare `@n1[i]`, so `@n1[i_p]` was a
+  length-1 **scalar** being compared against a waveform; that is where the
+  "2.1e-3" came from. With the vector that is actually saved, the plain `R‖C`
+  agrees to **1.31e-15**. The gap that does exist on a *multi-terminal* model
+  **is** Newton convergence: on HICUM/L2 with proper 1032-point waveforms it goes
+  from 4.73e-04 at the default `reltol=1e-3` to **7.9e-15** at `reltol=1e-6` —
+  eight orders of magnitude. Enhancement-417 also removes the underlying
+  inconsistency, so `savecurrents` now expands per-terminal names at every
+  terminal count.
 * **A collapse hint to ground on a node that a later hint also merges** is a
   shape the ordering logic in `collapse_nodes` handles by comparing a raw index
   against a mapped one. A deck built specifically to hit it produced physically

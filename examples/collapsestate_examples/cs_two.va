@@ -1,0 +1,25 @@
+// Enhancement-417 -- a plain TWO-terminal device.
+//
+// `.options savecurrents` expanded per-terminal current vectors for three or
+// more terminals but not for two, where it left only the bare `@dev[i]`. A deck
+// asking for `@dev[i_p]` therefore got a length-1 SCALAR with no diagnostic --
+// and `meas`/`plot` silently used that single point, which is exactly the shape
+// Enhancement-413 was written to remove.
+//
+// The capacitor makes the terminal current a waveform worth capturing: a 1 ns
+// edge on 1 nF is ~1 A of displacement current riding on 1 mA of conduction, so
+// a scalar snapshot of the settled value is obviously the wrong quantity.
+`include "disciplines.vams"
+
+module cs_two(p, n);
+   inout p, n;
+   electrical p, n;
+
+   parameter real r = 1000.0 from (0:inf);
+   parameter real c = 1e-9   from [0:inf);
+
+   analog begin
+      I(p, n) <+ V(p, n) / r;
+      I(p, n) <+ ddt(c * V(p, n));
+   end
+endmodule

@@ -271,10 +271,15 @@ extern SPICEdev *osdi_create_spicedev(const OsdiRegistryEntry *entry) {
   /* Enhancement-416: one uint32_t per descriptor node trails the extra data --
    * the collapse-owner map, see osdi_collapse_owner(). num_nodes is a
    * per-descriptor constant, so the instance block stays a fixed size for the
-   * device type, exactly as DEVinstSize requires. */
+   * device type, exactly as DEVinstSize requires.
+   *
+   * Enhancement-417 appends a second trailing array: one bool per collapsible
+   * pair, the collapse set the mapping above was actually built from. Both are
+   * per-descriptor constants, so the block stays a fixed size. */
   *inst_size = (int)(inst_off + descr->instance_size +
                      sizeof(OsdiExtraInstData) +
-                     (size_t)descr->num_nodes * sizeof(uint32_t));
+                     (size_t)descr->num_nodes * sizeof(uint32_t) +
+                     (size_t)descr->num_collapsible * sizeof(bool));
   OSDIinfo->DEVinstSize = inst_size;
 
   size_t model_off = osdi_model_data_off();

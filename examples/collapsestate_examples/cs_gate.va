@@ -1,0 +1,44 @@
+// Enhancement-417 -- a node collapse that can be re-decided after setup.
+//
+// The collapse of terminal `d` onto internal node `di` is gated two ways:
+//
+//   * by `rd`, the ordinary compact-model idiom. `sens` perturbs parameters, so
+//     perturbing `rd` off zero moves the collapse -- and the perturbed device
+//     then stamps a topology the matrix was not built for.
+//
+//   * by `$temperature`, which a `.dc temp` sweep changes AFTER setup. Nothing
+//     downstream of setup can be rebuilt, so the sweep runs the whole range on
+//     whichever topology the ambient happened to select.
+//
+// `gsr` is the series conductance that exists only when the collapse is NOT
+// taken, so the two topologies differ by a measurable amount rather than by a
+// rounding error: with g = gsr the uncollapsed device is two 1k in series.
+`include "disciplines.vams"
+
+module cs_gate(d, s);
+   inout d, s;
+   electrical d, s;
+   electrical di;
+
+   parameter real g    = 1e-3 from (0:inf);
+   parameter real gsr  = 1e-3 from (0:inf);
+   parameter real rd   = 0.0  from [0:inf);   // 0 => collapse (unless tsw is used)
+   parameter real tsw  = 0.0  from [0:inf);   // >0 => the collapse follows temperature
+   parameter real hot  = 1.0;                 // !=0 => collapse when HOT, else when COLD
+
+   analog begin
+      if (tsw > 0.0) begin
+         if ((hot != 0.0) ? ($temperature > tsw) : ($temperature < tsw))
+            V(d, di) <+ 0.0;
+         else
+            I(d, di) <+ V(d, di) * gsr;
+      end else begin
+         if (rd == 0.0)
+            V(d, di) <+ 0.0;
+         else
+            I(d, di) <+ V(d, di) / rd;
+      end
+
+      I(di, s) <+ g * V(di, s);
+   end
+endmodule

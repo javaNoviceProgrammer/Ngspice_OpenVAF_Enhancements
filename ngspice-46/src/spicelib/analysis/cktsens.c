@@ -14,6 +14,7 @@ Modified: 2000 AlanFixes
 #include "ngspice/smpdefs.h"
 #include "ngspice/sensdefs.h"
 #include "ngspice/sensgen.h"
+#include "ngspice/osdiitf.h"
 
 /* #define ASDEBUG */
 #ifdef ASDEBUG
@@ -615,6 +616,45 @@ int sens_sens(CKTcircuit* ckt, int restart)
 
             /* XXX swap back to temp states ??   Naw ... */
             (void)sens_temp(sg, ckt);
+
+            /* Enhancement-417: if perturbing this parameter moved a Verilog-A
+             * node collapse, the perturbed device stamps a topology the matrix
+             * does not implement -- the collapsed pair still shares one matrix
+             * element, so the branch's +g and -g land on the same diagonal and
+             * cancel. What survives is the roundoff of that cancellation,
+             * divided by the perturbation, which is `eps*E/(Y*delta^2)`: a
+             * number with no relation to the derivative, and whose SIGN moves
+             * with unrelated parameters.
+             *
+             * DEVsetup runs only at the base value (and must, since re-running
+             * it here would allocate nodes and trip the CKTlastNode guard
+             * above), so the mapping cannot be rebuilt. Report the parameter as
+             * insensitive and say so, rather than print the roundoff. */
+            if (OSDIcollapseChanged(sg->instance)) {
+                fprintf(stderr,
+                        "Warning: sens: %s:%s changes the model's node collapse "
+                        "when perturbed, so its sensitivity cannot be computed "
+                        "on the matrix built at setup; reported as 0.\n",
+                        sg->instance->GENname, sg->ptable[sg->param].keyword);
+
+                /* Put the parameter back, exactly as the normal path does. The
+                 * restoring setup_instance re-decides the collapse a second
+                 * time -- back to the setup value -- so clear the flag again
+                 * afterwards or the NEXT parameter inherits it. */
+                value.rValue = sg->value;
+                sens_setp(sg, ckt, &value);
+                (void)sens_temp(sg, ckt);
+                (void)OSDIcollapseChanged(sg->instance);
+
+                if (is_dc) {
+                    output_values[n] = 0.0;
+                } else {
+                    output_cvalues[n].real = 0.0;
+                    output_cvalues[n].imag = 0.0;
+                }
+                n += 1;         /* keep step with output_names[] */
+                continue;
+            }
 
 #ifdef ASDEBUG
             DEBUG(1) {

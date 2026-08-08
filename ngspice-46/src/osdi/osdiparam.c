@@ -305,6 +305,34 @@ extern int OSDIask(CKTcircuit *ckt, GENinstance *instPtr, int id,
  *
  * `*names` is filled with `*count` freshly allocated strings; the caller frees
  * both the strings and the array. */
+/* Enhancement-417: did the last setup_instance re-decide this instance's node
+ * collapse away from the one the matrix was built for? Consumed (and cleared)
+ * by cktsens.c, which perturbs a parameter and then calls DEVtemperature: if
+ * the perturbation moved the collapse, the perturbed device stamps a topology
+ * the matrix does not have, and the difference it computes is roundoff rather
+ * than a derivative.
+ *
+ * Returns 0 for anything that is not an OSDI instance, so the caller needs no
+ * device-type test of its own. */
+int OSDIcollapseChanged(GENinstance *instPtr) {
+  OsdiRegistryEntry *entry;
+  OsdiExtraInstData *xtra;
+  int changed;
+
+  if (!instPtr || !instPtr->GENmodPtr)
+    return 0;
+  if (!osdi_devtype_is_osdi(instPtr->GENmodPtr->GENmodType))
+    return 0;
+
+  entry = osdi_reg_entry_inst(instPtr);
+  if (!entry)
+    return 0;
+  xtra = osdi_extra_instance_data(entry, instPtr);
+  changed = xtra->collapse_changed ? 1 : 0;
+  xtra->collapse_changed = false;
+  return changed;
+}
+
 int OSDIterminalNames(CKTcircuit *ckt, const char *name, char ***names,
                       int *count) {
   GENinstance *inst;

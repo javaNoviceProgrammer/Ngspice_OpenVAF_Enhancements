@@ -96,3 +96,9 @@ extern int OSDIfinalStep(CKTcircuit *ckt);
  * known. Defined in src/osdi/osdiparam.c. */
 extern int OSDIterminalNames(CKTcircuit *ckt, const char *name, char ***names,
                              int *count);
+
+/* Enhancement-417: 1 if the last setup_instance re-decided this instance's node
+ * collapse away from the one the matrix was built for, else 0 (including for
+ * every non-OSDI instance). Reading it clears it. Defined in
+ * src/osdi/osdiparam.c. */
+extern int OSDIcollapseChanged(GENinstance *instPtr);

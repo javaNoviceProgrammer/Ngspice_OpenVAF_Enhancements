@@ -177,6 +177,19 @@ typedef struct OsdiExtraInstData {
   uint32_t *int_node_ids;   /* [int_node_count], NULL before the first setup */
   uint32_t int_node_count;
 
+  /* Enhancement-417: the node collapse is decided ONCE, in OSDIsetup, and the
+   * node mapping, the matrix pointers and Enhancement-416's collapse-owner map
+   * are all built from that decision. OSDItemp re-runs setup_instance -- which
+   * re-decides the collapse -- but cannot rebuild any of them, so a model whose
+   * collapse condition depends on temperature (or on a parameter `alter` moved)
+   * silently ends up with a topology the matrix does not implement.
+   *
+   * Set when the re-decided collapse differs from the one the matrix was built
+   * from. Consumers: OSDItemp warns, and cktsens.c refuses to report a
+   * sensitivity derived from the mismatched stamp. */
+  bool collapse_changed;
+  bool collapse_warned;     /* warn once per instance, not once per temperature */
+
 } OSDI_ALIGN(MAX_ALIGN) OsdiExtraInstData;
 
 /* Enhancement-7: extra bit in the eval() `flags` input (see
@@ -209,6 +222,8 @@ extern double **osdi_instance_matrix_ptr(const OsdiRegistryEntry *entry,
 #endif
 extern OsdiExtraInstData *
 osdi_extra_instance_data(const OsdiRegistryEntry *entry, GENinstance *inst);
+extern bool *osdi_collapse_snapshot(const OsdiRegistryEntry *entry,
+                                    GENinstance *inst);
 extern uint32_t *osdi_collapse_owner(const OsdiRegistryEntry *entry,
                                      GENinstance *inst);
 extern size_t osdi_model_data_off(void);

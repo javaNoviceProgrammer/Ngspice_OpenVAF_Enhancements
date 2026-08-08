@@ -387,6 +387,20 @@ int OSDIsetup(SMPmatrix *matrix, GENmodel *inModel, CKTcircuit *ckt,
         }
       }
 
+      /* Enhancement-417: remember the collapse set this mapping was built from,
+       * so OSDItemp can tell whether a later re-decision still matches the
+       * matrix. Taken here, beside the owner map, because both describe the same
+       * single decision. */
+      {
+        const bool *collapsed =
+            (const bool *)(((char *)inst) + descr->collapsed_offset);
+        bool *snap = osdi_collapse_snapshot(entry, gen_inst);
+        for (uint32_t i = 0; i < descr->num_collapsible; i++) {
+          snap[i] = collapsed[i];
+        }
+        extra_inst_data->collapse_changed = false;
+      }
+
       /* copy terminals */
       memcpy(node_ids, gen_inst + 1, sizeof(int) * connected_terminals);
       /* Enhancement-45: a terminal net with a nodeset initializer
@@ -638,14 +652,64 @@ extern int OSDItemp(GENmodel *inModel, CKTcircuit *ckt) {
         }
       }
 
-      descr->setup_instance((void *)&handle, inst, model, temp,
-                            connected_terminals, sim_params, &init_info);
-      res = handle_init_info(init_info, descr);
-      if (res) {
-        errRtn = "OSDI setup_instance (OSDItemp)";
-        continue;
+      /* Enhancement-417: setup_instance re-decides the node collapse, but this
+       * routine cannot rebuild anything that was derived from the first
+       * decision -- the node mapping, the matrix element pointers, the state
+       * layout and Enhancement-416's owner map are all fixed. Clearing the
+       * flags first is what makes the re-decision observable at all: OpenVAF's
+       * collapse callback only ever STORES TRUE (sim_back writes the hint, it
+       * never retracts one), so without the memset a collapse that stopped
+       * happening still reads `true` and only the opposite direction would be
+       * caught -- which is the direction this defect does NOT take. */
+      {
+        bool *collapsed = (bool *)(((char *)inst) + descr->collapsed_offset);
+        const bool *snap = osdi_collapse_snapshot(entry, gen_inst);
+        bool differs = false;
+
+        for (uint32_t i = 0; i < descr->num_collapsible; i++) {
+          collapsed[i] = false;
+        }
+
+        descr->setup_instance((void *)&handle, inst, model, temp,
+                              connected_terminals, sim_params, &init_info);
+        res = handle_init_info(init_info, descr);
+
+        for (uint32_t i = 0; i < descr->num_collapsible; i++) {
+          if (collapsed[i] != snap[i]) {
+            differs = true;
+          }
+          /* Restore unconditionally, and BEFORE the error check below: the
+           * matrix implements the snapshot, so every consumer downstream --
+           * including the error path's `continue` -- has to keep seeing it. */
+          collapsed[i] = snap[i];
+        }
+
+        if (res) {
+          errRtn = "OSDI setup_instance (OSDItemp)";
+          continue;
+        }
+
+        if (differs) {
+          extra_inst_data->collapse_changed = true;
+          /* Under `sens` the trigger is a parameter perturbation, not the
+           * temperature, and cktsens.c reports it per parameter with the right
+           * wording -- so stay quiet here and do NOT burn the once-per-instance
+           * warning, which a later temperature sweep still needs. JOBtype 9 is
+           * the sensitivity job, the same test the dtemp message above uses. */
+          if (!extra_inst_data->collapse_warned &&
+              !(ckt->CKTcurJob && ckt->CKTcurJob->JOBtype == 9)) {
+            extra_inst_data->collapse_warned = true;
+            fprintf(stderr,
+                    "Warning: %s: node collapse of model type '%s' changed at "
+                    "%.4g K, but the matrix was built for the collapse decided "
+                    "at setup and cannot be rebuilt here.\n"
+                    "         Results for this device are NOT trustworthy at "
+                    "this temperature. Run each temperature as its own analysis "
+                    "(.temp / set temp), which re-does the setup.\n",
+                    gen_inst->GENname, descr->name, temp);
+          }
+        }
       }
-      // TODO check that there are no changes in node collapse?
     }
   }
   return res;

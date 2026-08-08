@@ -748,6 +748,16 @@ inline uint32_t *osdi_collapse_owner(const OsdiRegistryEntry *entry,
   return (uint32_t *)(osdi_extra_instance_data(entry, inst) + 1);
 }
 
+/* Enhancement-417: the collapse set the node mapping was built from, trailing
+ * the owner map in the same block. `collapsed[]` inside the OSDI instance data
+ * is re-decided every time setup_instance runs; this is the copy that says what
+ * the matrix actually implements, so the two can be compared. */
+inline bool *osdi_collapse_snapshot(const OsdiRegistryEntry *entry,
+                                    GENinstance *inst) {
+  OsdiDescriptor *descr = (OsdiDescriptor *)entry->descriptor;
+  return (bool *)(osdi_collapse_owner(entry, inst) + descr->num_nodes);
+}
+
 inline size_t osdi_model_data_off(void) {
   return offsetof(OsdiModelData, data);
 }

@@ -130,8 +130,15 @@ settrace(wordlist *wl, int what, char *name)
  * parameter that does not exist: the vector was registered and stayed EMPTY,
  * with no diagnostic, while a built-in BJT beside it produced @q1[ic]/[ib]/...
  *
- * Returns the terminal names when the entry should be expanded, else 0. The
- * two-terminal case is left exactly as it was, since `@dev[i]` works there. */
+ * Returns the terminal names when the entry should be expanded, else 0.
+ *
+ * Enhancement-417: this used to bail out for a TWO-terminal device, on the
+ * grounds that `@dev[i]` already works there. It does -- but `@dev[i_p]` did
+ * not, so the same option gave per-terminal waveforms at three terminals and a
+ * length-1 SCALAR at two, silently, which is the very shape Enhancement-413
+ * existed to remove. The expansion is now unconditional and ft_getSaves keeps
+ * the bare name as well, so two-terminal decks gain `i_<term>` without losing
+ * the `i` that Enhancement-394 defines for them. */
 static int
 osdi_expand_save(const char *nm, char ***names, int *count)
 {
@@ -155,18 +162,20 @@ osdi_expand_save(const char *nm, char ***names, int *count)
     dev = copy_substring(nm + 1, lb);
     n = OSDIterminalNames(ft_curckt->ci_ckt, dev, names, count);
     tfree(dev);
-    if (n == 2) {                       /* `@dev[i]` is defined there */
-        int k;
-        for (k = 0; k < n; k++)
-            tfree((*names)[k]);
-        tfree(*names);
-        *names = NULL;
-        *count = 0;
-        return 0;
-    }
     return n;
 }
 
+
+/* Enhancement-417: is `nm` already among the first `n` entries? */
+static int
+save_already_present(const struct save_info *array, int n, const char *nm)
+{
+    int q;
+    for (q = 0; q < n; q++)
+        if (array[q].name && eq(array[q].name, (char *)nm))
+            return 1;
+    return 0;
+}
 
 /* retrieve the save nodes from dbs into an array */
 int
@@ -185,7 +194,10 @@ ft_getSaves(struct save_info **savesp)
                bare `i` does not exist */
             if (osdi_expand_save(d->db_nodename1, &tn, &nt) > 0) {
                 int k;
-                count += nt;
+                /* Enhancement-417: at two terminals the bare `i` exists as an
+                 * alias of the first terminal's current and decks rely on it,
+                 * so it is KEPT beside the expansion rather than replaced. */
+                count += nt + (nt == 2 ? 1 : 0);
                 for (k = 0; k < nt; k++)
                     tfree(tn[k]);
                 tfree(tn);
@@ -199,6 +211,13 @@ ft_getSaves(struct save_info **savesp)
 
     *savesp = array = TMALLOC(struct save_info, count);
 
+    /* Enhancement-417: the expansion can now synthesize a name the deck also
+     * asked for explicitly (`.save @n1[i_p]` beside `.options savecurrents`),
+     * which would register the same vector twice. The pre-existing dedup at the
+     * top of this file runs on db_nodename1 at INSERT time and so cannot see
+     * anything produced here. `count` is an upper bound; the real length is
+     * returned. */
+
     for (d = dbs; d; d = d->db_next)
         if (d->db_type == DB_SAVE) {
             char **tn = NULL;
@@ -207,25 +226,42 @@ ft_getSaves(struct save_info **savesp)
             const char *lb;
 
             if (osdi_expand_save(d->db_nodename1, &tn, &nt) <= 0) {
-                array[i].used = 0;
-                array[i].analysis = d->db_analysis ? copy(d->db_analysis) : NULL;
-                array[i++].name = copy(d->db_nodename1);
+                if (!save_already_present(array, i, d->db_nodename1)) {
+                    array[i].used = 0;
+                    array[i].analysis =
+                        d->db_analysis ? copy(d->db_analysis) : NULL;
+                    array[i++].name = copy(d->db_nodename1);
+                }
                 continue;
             }
 
             lb = strchr(d->db_nodename1, '[');
             dev = copy_substring(d->db_nodename1 + 1, lb);
             for (k = 0; k < nt; k++) {
+                char *nm = tprintf("@%s[i_%s]", dev, tn[k]);
+                if (save_already_present(array, i, nm)) {
+                    tfree(nm);
+                } else {
+                    array[i].used = 0;
+                    array[i].analysis =
+                        d->db_analysis ? copy(d->db_analysis) : NULL;
+                    array[i++].name = nm;
+                }
+                tfree(tn[k]);
+            }
+            if (nt == 2 && !save_already_present(array, i, d->db_nodename1)) {
+                /* Enhancement-417: the original spelling, copied rather than
+                 * re-synthesized, so the bare entry stays byte-identical to
+                 * what the deck (or inp_savecurrents) wrote. */
                 array[i].used = 0;
                 array[i].analysis = d->db_analysis ? copy(d->db_analysis) : NULL;
-                array[i++].name = tprintf("@%s[i_%s]", dev, tn[k]);
-                tfree(tn[k]);
+                array[i++].name = copy(d->db_nodename1);
             }
             tfree(dev);
             tfree(tn);
         }
 
-    return (count);
+    return (i);
 }
 
 
