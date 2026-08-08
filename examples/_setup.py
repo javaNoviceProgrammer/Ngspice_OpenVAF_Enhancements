@@ -28,6 +28,31 @@ Exposes module-level `VAF` (openvaf-r) and `NG` (ngspice) absolute paths, plus
 import os
 import platform
 
+# ---------------------------------------------------------------------------
+# stdin hygiene
+# ---------------------------------------------------------------------------
+# Point fd 0 at /dev/null for this process and therefore for every child it
+# spawns. Nothing in the example suite reads stdin, and leaving it connected is
+# actively harmful: on a machine with DISPLAY set, an ngspice that reaches the
+# interactive prompt busy-polls the X11 event queue through readline with NO
+# sleep -- about 53% CPU each, indefinitely. `-b` does not prevent that. With
+# stdin inherited the process never receives EOF, so it waits at the prompt,
+# the parent moves on, and the child is orphaned to PPID 1 still spinning.
+# Twelve such orphans were seen on 2026-08-08 at ~640% CPU, load average 10.5 --
+# which also silently corrupts any wall-clock timing measured while they run.
+#
+# Done here, once, rather than as `stdin=DEVNULL` on each of the ~717
+# subprocess call sites across ~389 files: fd 0 is inherited, so this covers
+# them all including any added later, and it cannot drift out of sync. The
+# handful of scripts that legitimately drive ngspice with `input=` are
+# unaffected -- subprocess replaces fd 0 with its own pipe in that case.
+try:
+    _devnull_fd = os.open(os.devnull, os.O_RDONLY)
+    os.dup2(_devnull_fd, 0)
+    os.close(_devnull_fd)
+except OSError:
+    pass    # a platform without a usable /dev/null is not worth failing over
+
 # This file lives in `examples/`; the repo root (which holds
 # `OpenVAF-master-20260610/`, `ngspice-46/`, and `bin/`) is one level up.
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -325,7 +350,7 @@ def check_both_solvers(script=None):
         try:
             r = _subprocess.run([sys.executable, script] + sys.argv[1:],
                                 env=env, capture_output=True, text=True,
-                                timeout=1800)
+                                stdin=_subprocess.DEVNULL, timeout=1800)
             out, rc = r.stdout + r.stderr, r.returncode
         except _subprocess.TimeoutExpired as e:
             out, rc = (e.stdout or "") + "\n[TIMEOUT]", 124

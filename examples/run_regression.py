@@ -71,8 +71,11 @@ def main(argv):
         d = os.path.dirname(s)
         ts = time.time()
         try:
+            # stdin=DEVNULL so no test can inherit a live stdin and leave an
+            # ngspice spinning at the interactive prompt (see _setup.py).
             r = subprocess.run([sys.executable, os.path.basename(s)], cwd=d,
-                               capture_output=True, text=True, timeout=1200)
+                               capture_output=True, text=True,
+                               stdin=subprocess.DEVNULL, timeout=1200)
             out, rc = r.stdout + r.stderr, r.returncode
         except subprocess.TimeoutExpired as e:
             out = (e.stdout or "") if isinstance(e.stdout, str) else ""
