@@ -121,6 +121,13 @@ pub enum SyntaxError {
         range: TextRange,
         ty: TextRange,
     },
+    /// Enhancement-421: IEEE 1364-2005 9.5 -- "use of multiple default
+    /// statements in one case statement shall be illegal". Two `default` arms
+    /// were accepted in silence; the first wins, so the extra one is dead code.
+    MultipleCaseDefaults {
+        first: TextRange,
+        extra: TextRange,
+    },
 }
 
 use SyntaxError::*;
@@ -152,5 +159,6 @@ impl_display! {
         IllegalNetType{found,..} => "{} nets are currently not supported!",found;
         RangeConstraintForNonNumericParameter{param,..} => "non-numeric parameter '{}' has range bounds", param;
         PortNotDeclaredInModule{name,..} => "port '{name}' was not declared in the module head";
+        MultipleCaseDefaults{..} => "a case statement has more than one `default` arm";
     }
 }

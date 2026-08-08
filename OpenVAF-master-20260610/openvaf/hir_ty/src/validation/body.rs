@@ -14,7 +14,7 @@ use syntax::name::{AsIdent, Name};
 use crate::builtin::{
     ABSDELAY_MAX, DDT_TOL, IDT_IC_ASSERT_TOL, NATURE_ACCESS_BRANCH, NATURE_ACCESS_NODES,
     NATURE_ACCESS_NODE_GND, NATURE_ACCESS_PORT_FLOW, NOISE_TABLE_FILE, NOISE_TABLE_FILE_NAME,
-    NOISE_TABLE_INLINE, NOISE_TABLE_INLINE_NAME,
+    NOISE_TABLE_INLINE, NOISE_TABLE_INLINE_NAME, SIMPARAM_NO_DEFAULT,
     TRANSITION_DELAY_RISET_FALLT_TOL,
 };
 use crate::db::HirTyDB;
@@ -124,6 +124,18 @@ pub enum BodyValidationDiagnostic {
         /// lowered to bare strings with no span of their own, so the report is
         /// anchored on the event statement instead.
         expr: Option<ExprId>,
+        stmt: StmtId,
+    },
+    /// Enhancement-421: a `$simparam`/`$simparam$str` name the simulator cannot
+    /// resolve. Unlike its siblings this one is FATAL at run time -- the model
+    /// aborts the analysis -- and nothing was said at compile time.
+    UnknownSimparam {
+        name: Box<str>,
+        builtin: Box<str>,
+        /// true for `$simparam`, which has a non-fatal two-argument form to
+        /// suggest; `$simparam$str` has no such form.
+        has_default_form: bool,
+        expr: ExprId,
         stmt: StmtId,
     },
     /// Enhancement-396: a builtin was handed a compile-time-constant argument
@@ -1667,6 +1679,33 @@ impl ExprValidator<'_, '_> {
             }
 
             (func @ (BuiltIn::simparam | BuiltIn::simparam_str), _) => {
+                // Enhancement-421: check the NAME, which nothing did.
+                //
+                // `$simparam` is the third of a family and was the only one left
+                // unchecked -- `analysis("nosuch")` warns (L021, E-399),
+                // `$limit(.., "nosuchlim", ..)` warns (L020, E-396), `ac_stim("nosuch")`
+                // warns (L021, E-420). It is also the only one whose bad name is
+                // FATAL: `simparam`/`simparam_str` in osdi/stdlib.c set
+                // EVAL_RET_FLAG_FATAL and the analysis dies, where the other three
+                // merely go quiet. The severity ordering was exactly inverted.
+                //
+                // `$simparam(name, default)` is the non-fatal form and is left
+                // alone -- returning the default for a name this simulator does
+                // not serve is precisely what it is for, and is how a model stays
+                // portable across simulators. `$simparam$str` has no such form
+                // (SIMPARAM_STR is a single one-argument signature), so every
+                // unresolvable name there is fatal.
+                let has_default_form = func == BuiltIn::simparam;
+                let checkable = !has_default_form || signature == Some(SIMPARAM_NO_DEFAULT);
+                if checkable {
+                    if let Some(&arg) = args.first() {
+                        self.check_simparam_name(
+                            if has_default_form { "$simparam" } else { "$simparam$str" },
+                            has_default_form,
+                            arg,
+                        );
+                    }
+                }
                 if self.parent.ctx == BodyCtx::Const {
                     let known = if let Expr::Literal(Literal::String(name)) =
                         &self.parent.body.exprs[args[0]]
@@ -2004,6 +2043,62 @@ impl ExprValidator<'_, '_> {
                     stmt: self.stmt,
                 })
             }
+        }
+    }
+
+    /// Enhancement-421: the simulator parameters ngspice actually serves, taken
+    /// from `src/osdi/osdiload.c` (`sim_params` and `sim_params_str`).
+    ///
+    /// Deliberately NOT the LRM's list. The LRM names `minr`, `imelt`, `shrink`,
+    /// `imax` and `rthresh`, and ngspice serves none of them -- a model using one
+    /// dies. For `$simparam$str` the two sets do not intersect at all: the LRM
+    /// names `cwd`, `module`, `instance` and `path`; ngspice serves
+    /// `analysis_name` and `simulator`. Listing the LRM's names here would warn
+    /// on the names that work and stay silent on the ones that abort.
+    const SIMPARAM_NAMES: [&'static str; 14] = [
+        "abstime",
+        "abstol",
+        "epsmin",
+        "gdev",
+        "gmin",
+        "iniLim",
+        "iteration",
+        "reltol",
+        "scale",
+        "simulatorSubversion",
+        "simulatorVersion",
+        "sourceScaleFactor",
+        "tnom",
+        "vntol",
+    ];
+    const SIMPARAM_STR_NAMES: [&'static str; 2] = ["analysis_name", "simulator"];
+
+    fn check_simparam_name(&mut self, builtin: &str, numeric: bool, expr: ExprId) {
+        let Expr::Literal(Literal::String(ref name)) = self.parent.body.exprs[expr] else {
+            return;
+        };
+        let name = name.clone();
+        // Enhancement-215 serves command-line plusargs through this same channel
+        // under generated `$test$plusargs$<x>` / `$valset$...` / `$valnum$...`
+        // keys. They are meant to be reached through `$test$plusargs` and
+        // `$value$plusargs`, but a name spelled with a `$` is plainly reaching for
+        // that channel and is not this check's business.
+        if name.contains('$') {
+            return;
+        }
+        let known = if numeric {
+            Self::SIMPARAM_NAMES.contains(&&*name)
+        } else {
+            Self::SIMPARAM_STR_NAMES.contains(&&*name)
+        };
+        if !known {
+            self.report(BodyValidationDiagnostic::UnknownSimparam {
+                name: name.to_string().into_boxed_str(),
+                builtin: builtin.to_owned().into_boxed_str(),
+                has_default_form: numeric,
+                expr,
+                stmt: self.stmt,
+            })
         }
     }
 

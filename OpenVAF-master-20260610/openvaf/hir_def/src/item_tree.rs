@@ -111,6 +111,25 @@ pub enum ItemTreeDiagnostic {
         constraint: Box<str>,
         why: Box<str>,
     },
+    /// Enhancement-421: an `exclude` interval that no value can satisfy, so it
+    /// excludes NOTHING. The mirror of `ParamRangeEmpty`: the same inverted
+    /// bounds that make a `from` range unsatisfiable make an `exclude` a no-op,
+    /// and only the `from` spelling was ever reported.
+    ParamExcludeEmpty {
+        ast_id: ErasedAstId,
+        name: Name,
+        constraint: Box<str>,
+        why: Box<str>,
+    },
+    /// Enhancement-421: the `exclude` constraints together cover every value the
+    /// `from` range allows, so the parameter is unsettable -- the same end state
+    /// `ParamRangeEmpty` reports, reached by a different spelling.
+    ParamExcludeCoversRange {
+        ast_id: ErasedAstId,
+        name: Name,
+        from: Box<str>,
+        excluded: Box<str>,
+    },
     /// Enhancement-414: an `aliasparam` chain that closes on itself
     /// (`aliasparam pp = pp;`, or any longer cycle). The alias can never resolve
     /// to a parameter, and the resolver's salsa cycle recovery reported that by

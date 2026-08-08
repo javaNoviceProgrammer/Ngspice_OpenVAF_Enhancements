@@ -181,6 +181,47 @@ impl Diagnostic for ItemTreeDiagnosticWrapped<'_> {
                             .to_owned(),
                     ])
             }
+            ItemTreeDiagnostic::ParamExcludeEmpty { ast_id, name, constraint, why } => {
+                let range = self.ast_id_map.get_syntax(*ast_id).range();
+                let span = self.parse.to_file_span(range, self.sm);
+                Report::error()
+                    .with_message(format!(
+                        "parameter '{name}' declares {constraint}, which excludes nothing"
+                    ))
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: span.file,
+                        range: span.range.into(),
+                        message: format!("empty exclusion: {why}"),
+                    }])
+                    .with_notes(vec![
+                        "no value is kept out, so every value the declaration appears to \
+                         forbid is accepted"
+                            .to_owned(),
+                        "the same bounds written as a `from` range are rejected; this \
+                         spelling was not"
+                            .to_owned(),
+                    ])
+            }
+            ItemTreeDiagnostic::ParamExcludeCoversRange { ast_id, name, from, excluded } => {
+                let range = self.ast_id_map.get_syntax(*ast_id).range();
+                let span = self.parse.to_file_span(range, self.sm);
+                Report::error()
+                    .with_message(format!(
+                        "parameter '{name}' excludes every value its range allows"
+                    ))
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: span.file,
+                        range: span.range.into(),
+                        message: format!("{from} is covered by {excluded}"),
+                    }])
+                    .with_notes(vec![
+                        "the parameter keeps its default, but every value supplied from a \
+                         netlist is rejected at run time"
+                            .to_owned(),
+                    ])
+            }
             ItemTreeDiagnostic::AliasParamCycle { ast_id, name, chain } => {
                 let range = self.ast_id_map.get_syntax(*ast_id).range();
                 let span = self.parse.to_file_span(range, self.sm);

@@ -24,8 +24,32 @@ pub(crate) fn validate(root: &SyntaxNode, errors: &mut Vec<SyntaxError>) {
                 ast::Name(name) => validate_name(name,errors),
                 ast::ModuleDecl(module) => validate_module(module,errors),
                 ast::ParamDecl(param) => validate_param(param, errors),
+                ast::CaseStmt(stmt) => validate_case_stmt(stmt, errors),
                 _ => validate_net_type_token(node,errors)
             }
+        }
+    }
+}
+
+/// Enhancement-421: IEEE 1364-2005 9.5 makes more than one `default` arm in a
+/// single case statement illegal. openvaf accepted them without a word.
+///
+/// The behaviour is not wrong -- lowering keeps the arms in order and the first
+/// `default` is the one that runs -- which is exactly why this is worth saying:
+/// the second arm is unreachable code that looks like it does something. Checked
+/// here rather than in the body lowering because this is where the `default`
+/// TOKENS are, so the report can point at the offending arm and back at the one
+/// that wins.
+fn validate_case_stmt(stmt: ast::CaseStmt, errors: &mut Vec<SyntaxError>) {
+    let mut first = None;
+    for case in stmt.cases() {
+        let Some(tok) = case.default_token() else { continue };
+        match first {
+            None => first = Some(tok.text_range()),
+            Some(first) => errors.push(SyntaxError::MultipleCaseDefaults {
+                first,
+                extra: tok.text_range(),
+            }),
         }
     }
 }

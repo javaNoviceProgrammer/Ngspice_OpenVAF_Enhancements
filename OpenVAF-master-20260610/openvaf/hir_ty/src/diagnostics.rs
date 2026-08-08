@@ -224,7 +224,10 @@ impl Diagnostic for InferenceDiagnosticWrapped<'_> {
                     notes.extend(err.signatures.iter().map(|sig| format!("expected {}", sig)));
 
                     Report::error()
-                        .with_message("typed mismatch invalid function arguments".to_owned())
+                        // Enhancement-421: was "typed mismatch invalid function
+                        // arguments" -- two sentences run together with a typo in
+                        // the first.
+                        .with_message("type mismatch: invalid function arguments".to_owned())
                         .with_labels(labels)
                         .with_notes(notes)
                 };

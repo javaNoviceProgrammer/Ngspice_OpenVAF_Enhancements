@@ -393,6 +393,141 @@ impl Ctx {
                 return;
             }
         }
+        self.check_param_excludes(name, param_ast, ast_id);
+    }
+
+    /// Enhancement-421: the same two questions as `check_param_range_satisfiable`,
+    /// asked of `exclude` instead of `from`.
+    ///
+    /// Enhancement-399 rejected a `from` range no value can satisfy. It did not
+    /// look at `exclude`, and the identical bounds spelled there fail in two
+    /// ways that were both silent:
+    ///
+    ///   * `exclude [3:1]` -- an INVERTED interval excludes NOTHING. The author
+    ///     wrote "keep 1 through 3 out" with the bounds the wrong way round and
+    ///     every value in that band is accepted, with nothing said. The exact
+    ///     same bounds as `from [3:1]` are a compile error.
+    ///   * `from [0:10] exclude [0:10]` -- the exclusions between them cover the
+    ///     whole range, so the parameter is UNSETTABLE. That is precisely the
+    ///     end state Enhancement-399 reports for an empty `from`: the default
+    ///     still reads (Enhancement-56 exempts it), and every netlist-supplied
+    ///     value aborts the analysis with "Parameter x is out of bounds!".
+    ///     Reached by the plausible route too -- an exclude WIDER than the range
+    ///     it guards, or two excludes that happen to tile it.
+    ///
+    /// Literal bounds only, like every neighbouring check: one unfoldable bound
+    /// anywhere in the exclusion set and the cover question is unanswerable, so
+    /// nothing is said. `inf` does not fold either, so `from [0:inf)` is left
+    /// alone exactly as Enhancement-399 leaves it.
+    fn check_param_excludes(
+        &mut self,
+        name: &Name,
+        param_ast: &ast::Param,
+        ast_id: ErasedAstId,
+    ) {
+        // --- an exclusion that excludes nothing -----------------------------
+        for c in param_ast.constraints() {
+            if c.kind() != Some(ConstraintKind::Exclude) {
+                continue;
+            }
+            let Some(ast::ConstraintValue::Range(r)) = c.val() else { continue };
+            let (Some(lo), Some(hi)) = (
+                r.start().and_then(|e| Self::const_num(&e)),
+                r.end().and_then(|e| Self::const_num(&e)),
+            ) else {
+                continue;
+            };
+            let why = if lo > hi {
+                Some(format!("its lower bound {lo} is above its upper bound {hi}"))
+            } else if lo == hi && !(r.start_inclusive() && r.end_inclusive()) {
+                Some(format!("both bounds are {lo} and at least one of them is exclusive"))
+            } else {
+                None
+            };
+            if let Some(why) = why {
+                self.tree.diagnostics.push(ItemTreeDiagnostic::ParamExcludeEmpty {
+                    ast_id,
+                    name: name.clone(),
+                    constraint: format!("exclude {}", Self::range_text(&r)).into_boxed_str(),
+                    why: why.into_boxed_str(),
+                });
+                return;
+            }
+        }
+
+        // --- do the exclusions cover the whole range? -----------------------
+        // Exactly ONE `from` is handled. Several `from` clauses are a UNION, and
+        // answering the cover question over a union is not what the mistake this
+        // catches looks like; an unbounded (absent) `from` can never be covered.
+        let mut from = None;
+        for c in param_ast.constraints() {
+            if c.kind() != Some(ConstraintKind::From) {
+                continue;
+            }
+            if from.is_some() {
+                return;
+            }
+            let Some(ast::ConstraintValue::Range(r)) = c.val() else { return };
+            let (Some(lo), Some(hi)) = (
+                r.start().and_then(|e| Self::const_num(&e)),
+                r.end().and_then(|e| Self::const_num(&e)),
+            ) else {
+                return;
+            };
+            from = Some((
+                Ival {
+                    lo: Bound { v: lo, closed: r.start_inclusive() },
+                    hi: Bound { v: hi, closed: r.end_inclusive() },
+                },
+                Self::range_text(&r),
+            ));
+        }
+        let Some((from, from_text)) = from else { return };
+
+        let mut excl: Vec<Ival> = Vec::new();
+        let mut excl_text: Vec<String> = Vec::new();
+        for c in param_ast.constraints() {
+            if c.kind() != Some(ConstraintKind::Exclude) {
+                continue;
+            }
+            match c.val() {
+                Some(ast::ConstraintValue::Range(r)) => {
+                    let (Some(lo), Some(hi)) = (
+                        r.start().and_then(|e| Self::const_num(&e)),
+                        r.end().and_then(|e| Self::const_num(&e)),
+                    ) else {
+                        return;
+                    };
+                    excl.push(Ival {
+                        lo: Bound { v: lo, closed: r.start_inclusive() },
+                        hi: Bound { v: hi, closed: r.end_inclusive() },
+                    });
+                    excl_text.push(format!("exclude {}", Self::range_text(&r)));
+                }
+                // a single excluded VALUE is the degenerate closed interval [v:v]
+                Some(ast::ConstraintValue::Val(e)) => {
+                    let Some(v) = Self::const_num(&e) else { return };
+                    excl.push(Ival {
+                        lo: Bound { v, closed: true },
+                        hi: Bound { v, closed: true },
+                    });
+                    excl_text.push(format!("exclude {v}"));
+                }
+                None => return,
+            }
+        }
+        if excl.is_empty() {
+            return;
+        }
+
+        if Ival::covered_by(&from, &mut excl) {
+            self.tree.diagnostics.push(ItemTreeDiagnostic::ParamExcludeCoversRange {
+                ast_id,
+                name: name.clone(),
+                from: from_text.into_boxed_str(),
+                excluded: excl_text.join(" ").into_boxed_str(),
+            });
+        }
     }
 
     fn check_paramset_range(
@@ -454,6 +589,7 @@ impl Ctx {
     /// not *checked* (an unfoldable bound constrains nothing here, which for
     /// `inf` is exactly right), but the message must still quote the range the
     /// reader has to go and look at.
+    #[allow(clippy::wrong_self_convention)]
     fn range_text(r: &ast::Range) -> String {
         let f = |e: Option<ast::Expr>| match e {
             None => "?".to_owned(),
@@ -1905,5 +2041,110 @@ impl Ctx {
             let param = self.tree.data.alias_parameters.push_and_get_key(param);
             dst.push(param.into())
         }
+    }
+}
+
+/// Enhancement-421: just enough interval arithmetic to answer "do these
+/// `exclude` clauses cover the whole `from` range?".
+///
+/// Endpoints carry their inclusivity, because that is where every interesting
+/// case lives: `from [0:10] exclude (0:10)` leaves exactly the two endpoints
+/// settable and must NOT be reported, while `exclude [0:10]` leaves nothing and
+/// must be.
+#[derive(Clone, Copy)]
+struct Bound {
+    v: f64,
+    closed: bool,
+}
+
+#[derive(Clone, Copy)]
+struct Ival {
+    lo: Bound,
+    hi: Bound,
+}
+
+/// A place on the number line that a sweep can stand: either a value itself, or
+/// the values immediately above it (which is what "just past an open endpoint"
+/// means and what no single float can represent).
+#[derive(Clone, Copy, PartialEq)]
+struct Pos {
+    v: f64,
+    /// true  -> the point `v`
+    /// false -> the values immediately above `v`
+    at_value: bool,
+}
+
+impl Pos {
+    /// `at_value` sorts before `just above` at the same value.
+    fn le(self, other: Pos) -> bool {
+        self.v < other.v || (self.v == other.v && (self.at_value || !other.at_value))
+    }
+}
+
+impl Ival {
+    fn start(&self) -> Pos {
+        Pos { v: self.lo.v, at_value: self.lo.closed }
+    }
+
+    /// The first position NOT covered by this interval.
+    fn past_end(&self) -> Pos {
+        Pos { v: self.hi.v, at_value: !self.hi.closed }
+    }
+
+    fn contains(&self, p: Pos) -> bool {
+        if p.at_value {
+            (self.lo.v < p.v || (self.lo.v == p.v && self.lo.closed))
+                && (self.hi.v > p.v || (self.hi.v == p.v && self.hi.closed))
+        } else {
+            // the values immediately above `p.v`
+            self.lo.v <= p.v && self.hi.v > p.v
+        }
+    }
+
+    fn ends_at_or_before(&self, p: Pos) -> bool {
+        self.past_end().le(p)
+    }
+
+    /// Is every value of `self` excluded by some interval in `excl`?
+    ///
+    /// A left-to-right sweep: hold the lowest position not yet known to be
+    /// covered, and walk the exclusions in ascending order. An exclusion that
+    /// ends before that position is spent; one that starts after it proves a gap
+    /// and answers no; one that contains it pushes it past that exclusion's end.
+    fn covered_by(&self, excl: &mut [Ival]) -> bool {
+        excl.sort_by(|a, b| {
+            a.lo.v
+                .partial_cmp(&b.lo.v)
+                .unwrap_or(core::cmp::Ordering::Equal)
+                // at equal value a CLOSED start comes first: it begins earlier
+                .then(b.lo.closed.cmp(&a.lo.closed))
+        });
+        let mut cur = self.start();
+        let end = self.past_end();
+        if end.le(cur) {
+            // an empty `from` range -- already reported by ParamRangeEmpty
+            return false;
+        }
+        for e in excl.iter() {
+            if cur.le(end) && !end.le(cur) {
+                // still inside the range
+            } else {
+                break;
+            }
+            if e.contains(cur) {
+                let nxt = e.past_end();
+                if cur.le(nxt) {
+                    cur = nxt;
+                }
+                if end.le(cur) {
+                    return true;
+                }
+            } else if e.ends_at_or_before(cur) {
+                continue; // spent
+            } else {
+                return false; // a gap the exclusions do not reach
+            }
+        }
+        end.le(cur)
     }
 }

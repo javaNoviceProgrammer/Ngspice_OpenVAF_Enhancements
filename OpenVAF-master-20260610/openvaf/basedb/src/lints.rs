@@ -188,5 +188,10 @@ pub mod builtin {
         pub const discarded_contribution = LintData{default_lvl: Warn, documentation_id: 22};
         pub const probe_only_branch_short = LintData{default_lvl: Warn, documentation_id: 23};
         pub const degenerate_branch = LintData{default_lvl: Warn, documentation_id: 24};
+        // Enhancement-421: a `$simparam`/`$simparam$str` name the simulator cannot
+        // resolve. Warn, not deny, for the same reason as `unknown_limit_function`
+        // and `unknown_analysis_name`: the name set is simulator-defined and
+        // another OSDI consumer may serve more.
+        pub const unknown_simparam = LintData{default_lvl: Warn, documentation_id: 25};
     }
 }

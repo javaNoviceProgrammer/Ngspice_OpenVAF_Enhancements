@@ -570,6 +570,33 @@ impl Diagnostic for SyntaxError {
                     message: "unsupported net type".to_owned(),
                 }])
             }
+            SyntaxError::MultipleCaseDefaults { first, extra } => {
+                let (file_id, [extra, first]) =
+                    text_ranges_to_unified_spans(&sm, &parse, [extra, first]);
+                Report::error()
+                    .with_labels(vec![
+                        Label {
+                            style: LabelStyle::Primary,
+                            file_id,
+                            range: extra.into(),
+                            message: "second `default` arm".to_owned(),
+                        },
+                        Label {
+                            style: LabelStyle::Secondary,
+                            file_id,
+                            range: first.into(),
+                            message: "help: the first `default` is here".to_owned(),
+                        },
+                    ])
+                    .with_notes(vec![
+                        "IEEE 1364-2005 9.5: at most one `default` arm per case \
+                         statement"
+                            .to_owned(),
+                        "the FIRST `default` is the one that runs, so the later arm is \
+                         unreachable"
+                            .to_owned(),
+                    ])
+            }
             SyntaxError::RangeConstraintForNonNumericParameter { range, ty, .. } => {
                 let (file_id, [range, ty]) = text_ranges_to_unified_spans(&sm, &parse, [range, ty]);
                 Report::error().with_labels(vec![

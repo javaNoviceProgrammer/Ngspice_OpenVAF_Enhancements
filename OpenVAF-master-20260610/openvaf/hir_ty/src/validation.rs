@@ -1,6 +1,7 @@
 use basedb::diagnostics::{Diagnostic, Label, LabelStyle, Report};
 use basedb::lints::builtin::{
     const_simparam, rng_in_loop, trivial_probe, unknown_analysis_name, unknown_limit_function,
+    unknown_simparam,
     variant_const_simparam,
 };
 use basedb::lints::{self, Lint, LintSrc};
@@ -157,6 +158,10 @@ impl Diagnostic for BodyValidationDiagnosticWrapped<'_> {
             BodyValidationDiagnostic::UnknownAnalysisName { stmt, .. } => {
                 let src = self.body_sm.lint_src(stmt, unknown_analysis_name);
                 Some((unknown_analysis_name, src))
+            }
+            BodyValidationDiagnostic::UnknownSimparam { stmt, .. } => {
+                let src = self.body_sm.lint_src(stmt, unknown_simparam);
+                Some((unknown_simparam, src))
             }
             _ => None,
         }
@@ -688,7 +693,7 @@ impl Diagnostic for BodyValidationDiagnosticWrapped<'_> {
 
                 if !known {
                     res = res.with_notes(vec![
-                        "help: the value of paramaeters like \"gmin\' or \"sourceScaleFactor\" may vary between iterations"
+                        "help: the value of parameters like \"gmin\" or \"sourceScaleFactor\" may vary between iterations"
                             .to_owned(),
                     ])
                 }
@@ -843,6 +848,47 @@ impl Diagnostic for BodyValidationDiagnosticWrapped<'_> {
                                 .to_owned()
                         },
                     ])
+            }
+            BodyValidationDiagnostic::UnknownSimparam {
+                ref name,
+                ref builtin,
+                has_default_form,
+                expr,
+                ..
+            } => {
+                let FileSpan { range, file } = self.expr_src(expr);
+                let served = if has_default_form {
+                    "abstime, abstol, epsmin, gdev, gmin, iniLim, iteration, reltol, \
+                     scale, simulatorSubversion, simulatorVersion, sourceScaleFactor, \
+                     tnom, vntol"
+                } else {
+                    "analysis_name, simulator"
+                };
+                let mut notes = vec![
+                    format!("the simulator serves these names: {served}"),
+                    "an unresolvable name is FATAL at run time -- the model aborts the \
+                     analysis, it does not merely read zero"
+                        .to_owned(),
+                ];
+                if has_default_form {
+                    notes.push(
+                        format!("help: `$simparam(\"{name}\", <default>)` returns the \
+                                 default instead of aborting, which is how a model stays \
+                                 portable across simulators"),
+                    );
+                }
+                Report::warning()
+                    .with_message(format!(
+                        "{builtin} names the simulator parameter \"{name}\", which this \
+                         simulator does not provide"
+                    ))
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: file,
+                        range: range.into(),
+                        message: "unknown simulator parameter".to_owned(),
+                    }])
+                    .with_notes(notes)
             }
             BodyValidationDiagnostic::UnknownLimitFunction { ref name, nargs, expr, .. } => {
                 let FileSpan { range, file } = self.expr_src(expr);
