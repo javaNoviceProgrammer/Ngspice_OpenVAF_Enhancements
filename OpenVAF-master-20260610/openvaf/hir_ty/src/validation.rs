@@ -331,7 +331,7 @@ impl Diagnostic for BodyValidationDiagnosticWrapped<'_> {
             }
             // Enhancement-390: only reached when the file is genuinely unusable --
             // `to_report` filters out the readable, parseable ones.
-            BodyValidationDiagnostic::TableFileUnusable { expr, ref path } => {
+            BodyValidationDiagnostic::TableFileUnusable { expr, ref path, .. } => {
                 let FileSpan { range, file } = self.expr_src(expr);
                 Report::error()
                     .with_message(format!("cannot use '{path}' as $table_model data"))
@@ -1043,15 +1043,18 @@ impl Diagnostic for BodyValidationDiagnosticWrapped<'_> {
         // Enhancement-390: a `$table_model` data file is reported only when it
         // cannot actually be used. The check lives here because this is the first
         // point with both the root file (to resolve a relative path) and the VFS.
-        if let BodyValidationDiagnostic::TableFileUnusable { ref path, .. } = *self.diag {
-            if table_file_is_usable(root_file, db, path) {
+        if let BodyValidationDiagnostic::TableFileUnusable { ref path, ndim, .. } = *self.diag {
+            if table_file_is_usable(root_file, db, path, ndim) {
                 return None;
             }
         }
         // Enhancement-414: a noise data file is judged by the same rule -- readable, and
         // holding at least one finite pair.
+        // Enhancement-425: a noise data file is ALWAYS the one-dimensional
+        // two-column form -- `read_noise_table_file` reads the first two tokens of
+        // each line -- so it is checked with ndim = 1 unconditionally.
         if let BodyValidationDiagnostic::NoiseTableFileUnusable { ref path, .. } = *self.diag {
-            if table_file_is_usable(root_file, db, path) {
+            if table_file_is_usable(root_file, db, path, 1) {
                 return None;
             }
         }
@@ -1409,58 +1412,110 @@ impl Diagnostic for TypeValidationDiagnosticWrapped<'_> {
     }
 }
 
-/// Enhancement-390: can this `$table_model` data file actually be read and does it
-/// contain at least one usable number?
+/// Enhancement-390: can this `$table_model` / `noise_table` data file actually be
+/// used, given the dimensionality of the call that names it?
 ///
-/// Deliberately permissive -- it answers "is this file usable at all", not "is the
-/// grid well formed". The lowering code owns the format; this only distinguishes a
-/// real data file from a mistyped name, an empty file, or prose. Anything it lets
-/// through behaves exactly as before.
-fn table_file_is_usable(root_file: FileId, db: &dyn BaseDB, path: &str) -> bool {
+/// Enhancement-425 gave this the CALL'S `ndim` and split it into the two grammars
+/// the readers actually implement, because a single "count the numbers" rule could
+/// not express either of them.
+///
+/// Formerly the only shape check was global token-count PARITY (`nums.len() % 2 ==
+/// 0`) over the whole file, with non-numeric tokens silently discarded. Detection
+/// was therefore luck: a corrupt row that dropped TWO tokens (`N/A N/A`) kept the
+/// count even and sailed through, while one that dropped ONE was caught. Measured
+/// on a table `(0,0) (1,100) (2,20)` queried at x=0.5: 50 with the row intact, 5
+/// with it corrupted -- a tenfold wrong answer, silently.
+///
+/// The N-dimensional case was strictly worse. Corrupting one token in
+/// examples/mdtable_examples/mos_iv.tbl leaves 50 numbers -- even, so parity
+/// accepted it -- `read_table_grid_nd` then returns `None` and `lower_table_model`
+/// does `return F_ZERO`, so the whole table contributes EXACTLY ZERO. Measured:
+/// drain current -3.2e-04 to 0.0, with a clean compile.
+///
+/// WHY `ndim` HAD TO COME FROM THE CALL. The two forms cannot be told apart by
+/// looking at the file: `2 3 / 4 5 / 6 7` is a perfectly good 1-D table whose
+/// leading numbers also read as a 2-dimensional header. Guessing from the content
+/// -- which is what the old `let d = nums[0]` branch did -- false-positives on real
+/// 1-D data.
+fn table_file_is_usable(root_file: FileId, db: &dyn BaseDB, path: &str, ndim: usize) -> bool {
     let Some(dir) = db.file_path(root_file).parent() else { return true };
     let Some(full) = dir.join(path) else { return true };
     let Some(abs) = full.as_path() else { return true };
     let Ok(content) = std::fs::read_to_string(abs) else { return false };
-    // Comment lines are skipped by the readers, so skip them here too.
-    let nums: Vec<f64> = content
-        .lines()
-        .map(str::trim)
-        .filter(|l| !(l.is_empty() || l.starts_with('#') || l.starts_with("//") || l.starts_with('*')))
-        .flat_map(|l| l.split_ascii_whitespace())
-        .filter_map(|tok| tok.parse::<f64>().ok())
-        .collect();
-    if nums.len() < 2 {
-        return false;
-    }
-    // Enhancement-396: `f64::from_str` accepts "nan", "inf", "-infinity", and it
-    // returns an INFINITY rather than an error for an overflowing exponent like
-    // 1e400. A non-numeric token such as "abc" was already rejected, so a file
-    // holding a missing-data marker -- which is exactly how measured data files
-    // spell one -- slipped through and poisoned the ENTIRE table: every query,
-    // including points that should interpolate between valid rows, returned NaN
-    // with no diagnostic. The readers in hir_lower apply the same rule.
-    if nums.iter().any(|v| !v.is_finite()) {
-        return false;
-    }
-    // The N-dimensional form is `ndim / sizes[ndim] / axes... / values`; the
-    // one-dimensional form is a flat list of (x, y) PAIRS. Accept a file that fits
-    // either shape exactly, which is what distinguishes a real table from a stray
-    // column of numbers -- the case that used to interpolate an empty table and
-    // contribute zero.
-    let d = nums[0];
-    if d.fract() == 0.0 && (1.0..=8.0).contains(&d) && nums.len() > 1 + d as usize {
-        let ndim = d as usize;
-        let sizes: Vec<usize> = nums[1..1 + ndim]
-            .iter()
-            .map(|v| if v.fract() == 0.0 && *v >= 1.0 { *v as usize } else { 0 })
-            .collect();
-        if sizes.iter().all(|&s| s > 0) {
-            let axes: usize = sizes.iter().sum();
-            let vals: usize = sizes.iter().product();
-            if nums.len() == 1 + ndim + axes + vals {
-                return true;
+    // Whole-line comments only, exactly as all three readers in `hir_lower` do it.
+    // Inline comments are deliberately NOT stripped here: no reader strips them
+    // either, so stripping them would make this check disagree with the code that
+    // consumes the file -- and the invariant that the validator and the readers
+    // apply the same rule is what Enhancement-396 relied on.
+    let lines = || {
+        content
+            .lines()
+            .map(str::trim)
+            .filter(|l| {
+                !(l.is_empty()
+                    || l.starts_with('#')
+                    || l.starts_with("//")
+                    || l.starts_with('*'))
+            })
+    };
+
+    if ndim <= 1 {
+        // The one-dimensional form is ONE PAIR PER LINE -- not a flat stream of
+        // numbers. `read_noise_table_file` reads `it.next(), it.next()` and
+        // discards the remainder of the line, and the 1-D `$table_model` file form
+        // calls that same reader, so this is the readers' own grammar.
+        //
+        // Requiring exactly two finite numbers per line catches BOTH faces of the
+        // defect: a corrupt row (`N/A N/A`, `abc def`, a missing-data marker), and
+        // a surplus third column, which the reader silently drops.
+        let mut rows = 0usize;
+        for line in lines() {
+            let mut it = line.split_ascii_whitespace();
+            let (Some(a), Some(b), None) = (it.next(), it.next(), it.next()) else { return false };
+            // Enhancement-396: `f64::from_str` accepts "nan", "inf", "-infinity",
+            // and returns an INFINITY rather than an error for an overflowing
+            // exponent like 1e400 -- exactly how a measured data file spells a
+            // missing value. The readers in hir_lower apply the same rule.
+            let (Ok(x), Ok(y)) = (a.parse::<f64>(), b.parse::<f64>()) else { return false };
+            if !x.is_finite() || !y.is_finite() {
+                return false;
             }
+            rows += 1;
+        }
+        return rows > 0;
+    }
+
+    // The N-dimensional form is free-form whitespace across lines -- grid4.tbl puts
+    // its entire 36-value tensor on one line -- so it gets a token rule, not a line
+    // rule. Every token must be a finite number (no silent skipping, which is what
+    // let a corrupt token through), and the self-describing header must account for
+    // the count EXACTLY. `read_table_grid_nd` consumes the stream positionally and
+    // ignores anything left over, so a surplus token is a real defect too.
+    let mut nums: Vec<f64> = Vec::new();
+    for line in lines() {
+        for tok in line.split_ascii_whitespace() {
+            let Ok(v) = tok.parse::<f64>() else { return false };
+            if !v.is_finite() {
+                return false;
+            }
+            nums.push(v);
         }
     }
-    nums.len() % 2 == 0
+    if nums.len() < 1 + ndim {
+        return false;
+    }
+    // The file's own leading `ndim` must agree with the call's.
+    if nums[0].fract() != 0.0 || nums[0] != ndim as f64 {
+        return false;
+    }
+    let sizes: Vec<usize> = nums[1..1 + ndim]
+        .iter()
+        .map(|v| if v.fract() == 0.0 && *v >= 1.0 { *v as usize } else { 0 })
+        .collect();
+    if sizes.iter().any(|&s| s == 0) {
+        return false;
+    }
+    let axes: usize = sizes.iter().sum();
+    let vals: usize = sizes.iter().product();
+    nums.len() == 1 + ndim + axes + vals
 }

@@ -352,6 +352,45 @@ impl Diagnostic for SyntaxError {
                 Report::error().with_labels(labels).with_notes(vec![hint.to_owned()])
             }
             // Enhancement-387: the expression-depth guard, reported as itself.
+            SyntaxError::RealLiteralOverflow { span, negative } => {
+                let FileSpan { range, file: file_id } = parse.to_file_span(span, &sm);
+                Report::error()
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id,
+                        range: range.into(),
+                        message: format!(
+                            "this is {}infinity as a double, not a number",
+                            if negative { "negative " } else { "" }
+                        ),
+                    }])
+                    .with_notes(vec![
+                        "a double holds magnitudes up to about 1.8e308; a larger literal \
+                         becomes an infinity and every value computed from it follows"
+                            .to_owned(),
+                        "help: only the LITERAL is checked -- an expression that overflows \
+                         at run time, such as `1e308*10.0`, is the model's own business"
+                            .to_owned(),
+                    ])
+            }
+            SyntaxError::ZeroWidthLiteral { span } => {
+                let FileSpan { range, file: file_id } = parse.to_file_span(span, &sm);
+                Report::error()
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id,
+                        range: range.into(),
+                        message: "size must be greater than zero".to_owned(),
+                    }])
+                    .with_notes(vec![
+                        "IEEE 1364-2005 3.5.1: the size of a based literal shall be a \
+                         non-zero unsigned decimal number"
+                            .to_owned(),
+                        "the size was being clamped to one bit, so the value bore no \
+                         relation to the digits written -- `0'd5` evaluated to 1"
+                            .to_owned(),
+                    ])
+            }
             SyntaxError::CommaExpr { span } => {
                 let FileSpan { range, file: file_id } = parse.to_file_span(span, &sm);
                 Report::error()

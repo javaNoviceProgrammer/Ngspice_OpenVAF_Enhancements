@@ -63,7 +63,14 @@ pub enum BodyValidationDiagnostic {
     /// was reported at compile time and nothing was odd at run time; the model just
     /// did nothing. Whether the file is usable is decided when the report is built,
     /// where the root file and the VFS are both in hand.
-    TableFileUnusable { expr: ExprId, path: Box<str> },
+    /// Enhancement-425: `ndim` is the DIMENSIONALITY OF THE CALL -- the number of
+    /// input arguments before the data argument, exactly as `lower_table_model`
+    /// computes it. The validator cannot infer it from the file: a perfectly good
+    /// 1-D file such as `2 3 / 4 5 / 6 7` begins with numbers that read as a
+    /// 2-dimensional header, so guessing from the content false-positives. The two
+    /// forms have genuinely different grammars, so the check needs to know which
+    /// one it is looking at.
+    TableFileUnusable { expr: ExprId, path: Box<str>, ndim: usize },
 
     /// Enhancement-414: a `noise_table`/`noise_table_log` DATA FILE that could not be
     /// used. Exactly the `$table_model` story above, in the one place it was not
@@ -1243,14 +1250,21 @@ impl ExprValidator<'_, '_> {
                                 Expr::Array(_)
                             ) || self.parent.infer.array_var_refs.contains_key(&args[1]);
                             if !inline {
-                                for &arg in args[1..].iter() {
+                                for (i, &arg) in args[1..].iter().enumerate() {
                                     if let Expr::Literal(Literal::String(ref path)) =
                                         self.parent.body.exprs[arg]
                                     {
+                                        // Enhancement-425: the data file is preceded by
+                                        // `1 + i` input arguments, which IS the call's
+                                        // dimensionality -- the same quantity
+                                        // `lower_table_model` derives from the index of
+                                        // the first string literal. Carry it so the file
+                                        // check can apply the right grammar.
                                         self.parent.diagnostics.push(
                                             BodyValidationDiagnostic::TableFileUnusable {
                                                 expr: arg,
                                                 path: path.clone(),
+                                                ndim: i + 1,
                                             },
                                         );
                                         break;

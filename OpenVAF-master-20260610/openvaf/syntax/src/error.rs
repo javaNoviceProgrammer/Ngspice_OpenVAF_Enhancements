@@ -28,6 +28,18 @@ pub enum SyntaxError {
     CommaExpr {
         span: TextRange,
     },
+    /// Enhancement-425: a real literal whose value does not fit in a double and
+    /// silently became an infinity.
+    RealLiteralOverflow {
+        span: TextRange,
+        negative: bool,
+    },
+    /// Enhancement-425: a based integer literal with a ZERO size. IEEE 1364-2005
+    /// 3.5.1 requires a non-zero size; `parse_based_int_masked` clamped it to 1,
+    /// so `0'd5` evaluated to 1.
+    ZeroWidthLiteral {
+        span: TextRange,
+    },
     MissingToken {
         expected: SyntaxKind,
         span: TextRange,
@@ -142,6 +154,8 @@ impl_display! {
         SurplusToken {found,..} => "unexpected token {}", found;
         ExprTooDeep{..} => "expression nests too deeply";
         CommaExpr{..} => "a parenthesised list is not an expression";
+        RealLiteralOverflow{..} => "real literal is too large to represent";
+        ZeroWidthLiteral{..} => "a sized literal must have a non-zero size";
         MissingToken{expected, ..} => "unexpected token; expected {}", expected;
         IllegalRootSegment { ..} =>  "$root is only allowed as a prefix";
         BlockItemsAfterStmt{..}  => "declarations in blocks are only allowed before the first stmt";

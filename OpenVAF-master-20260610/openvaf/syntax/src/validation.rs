@@ -186,10 +186,72 @@ fn validate_nature_attr(attr: ast::NatureAttr, errors: &mut Vec<SyntaxError>) {
 }
 
 fn validate_literal(literal: ast::Literal, errors: &mut Vec<SyntaxError>) {
-    if literal.kind() == ast::LiteralKind::Inf
-        && !literal.syntax.parent().map_or(true, is_valid_inf_position)
-    {
-        errors.push(SyntaxError::IllegalInfToken { range: literal.syntax().text_range() });
+    let range = literal.syntax().text_range();
+    match literal.kind() {
+        ast::LiteralKind::Inf => {
+            if !literal.syntax.parent().map_or(true, is_valid_inf_position) {
+                errors.push(SyntaxError::IllegalInfToken { range });
+            }
+        }
+
+        // Enhancement-425: a real literal that does not fit in a double.
+        //
+        // `StdRealNumber::value` is `src.parse().unwrap()` and `SiRealNumber::value`
+        // multiplies that by its scale factor. `f64::from_str` does not fail on an
+        // overflowing exponent -- it returns an INFINITY -- so `r = 1e309;` compiled
+        // clean and the model returned INF at run time, poisoning everything
+        // downstream as INF/NaN.
+        //
+        // This compiler has already decided twice that an overflowing literal is a
+        // mistake worth reporting: Enhancement-396 refuses `1e400` inside a
+        // `$table_model` data file (its comment names this exact `from_str`
+        // behaviour), and Enhancement-422 refuses `abstol = 1e400` on a nature. A
+        // bare literal in an expression is the same mistake in the same compiler.
+        //
+        // ONLY the literal. `1e308*10.0` is also an infinity, but that is ARITHMETIC
+        // overflow -- a runtime property of the expression, not a mis-written
+        // constant -- and Enhancement-396 drew exactly that line. Underflow is left
+        // alone too: `1e-320` is a denormal and `1e-400` is 0.0, both of which IEEE
+        // 754 defines and neither of which destroys the rest of the computation.
+        ast::LiteralKind::StdRealNumber(lit) => {
+            let v = lit.value();
+            if v.is_infinite() {
+                errors.push(SyntaxError::RealLiteralOverflow { span: range, negative: v < 0.0 });
+            }
+        }
+        ast::LiteralKind::SiRealNumber(lit) => {
+            let v = lit.value();
+            if v.is_infinite() {
+                errors.push(SyntaxError::RealLiteralOverflow { span: range, negative: v < 0.0 });
+            }
+        }
+
+        // Enhancement-425: a based literal with a ZERO size.
+        //
+        // IEEE 1364-2005 3.5.1: the size "shall be a non-zero unsigned decimal
+        // number". `parse_based_int_masked` ends with `.clamp(1, 32)`, so a zero
+        // size silently became ONE BIT and the literal's value bore no relation to
+        // its digits: `0'd5` evaluated to 1 (5 masked to one bit), `0'h1` to 1.
+        //
+        // Checked here rather than in `parse_based_int_masked`: that returns
+        // `Option` and `IntNumber::value`'s own documentation says a `None` makes
+        // callers fall back to reading the text as a REAL, which would turn one
+        // silent wrong answer into another. The clamp's upper bound is left as it
+        // is -- a size above 32 truncates, which 3.5.1 explicitly permits (`4'hFF`
+        // is 15) and which Verilog-A's 32-bit `integer` makes the only sane reading.
+        ast::LiteralKind::IntNumber(lit) => {
+            let text = lit.syntax.text();
+            if let Some((size, _)) = text.split_once('\'') {
+                let size = size.trim();
+                if !size.is_empty() && size.bytes().all(|b| b.is_ascii_digit())
+                    && size.bytes().all(|b| b == b'0')
+                {
+                    errors.push(SyntaxError::ZeroWidthLiteral { span: range });
+                }
+            }
+        }
+
+        ast::LiteralKind::String(_) => (),
     }
 }
 
