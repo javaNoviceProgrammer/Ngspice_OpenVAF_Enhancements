@@ -1,0 +1,88 @@
+// Enhancement-418 -- an analog operator whose result is only OBSERVED.
+//
+// `absdelay()` and `last_crossing()` are the only two analog operators whose
+// OUTPUT row the compiler deliberately leaves empty: OpenVAF emits no residual
+// for it, because the simulator is what fills that row from its own history
+// buffer. Every other operator (ddt, idt, transition, slew, laplace_nd) is a
+// pure function of existing unknowns and reads correctly however it is used.
+//
+// Because that row is empty, the output node appeared in no descriptor Jacobian
+// entry, Enhancement-116 concluded it was structurally decoupled and tied it to
+// ground, and eval() then read node 0 -- exactly 0.0, forever. The value came
+// out right only when the model also CONTRIBUTED it somewhere, since that
+// contribution is what put the node into a Jacobian entry.
+//
+// FOUR SEPARATE MODULES, deliberately. Jacobian entries are a property of the
+// DESCRIPTOR, not of a parameter value, so a single module with the contribution
+// hidden behind `if (mode == 3)` would carry the entry in every mode and could
+// never show the defect. Each way of consuming the value needs its own module.
+`include "disciplines.vams"
+
+// (1) the value is computed and never used again
+module sg_obs(a, c, o);
+   inout a, c, o;
+   electrical a, c, o;
+   parameter real td = 1e-7 from (0:inf);
+   parameter real thr = 0.5;
+   (*desc="delayed input"*) real dv;
+   (*desc="last crossing"*) real lc;
+   analog begin
+      dv = absdelay(V(a, c), td);
+      lc = last_crossing(V(a, c) - thr, 0);
+      I(o, c) <+ 1e-9 * V(o, c);
+      I(a, c) <+ 1e-6 * V(a, c);
+   end
+endmodule
+
+// (2) live only in an `if` condition that selects a contribution
+module sg_cond(a, c, o);
+   inout a, c, o;
+   electrical a, c, o;
+   parameter real td = 1e-7 from (0:inf);
+   parameter real thr = 0.5;
+   (*desc="delayed input"*) real dv;
+   (*desc="last crossing"*) real lc;
+   analog begin
+      dv = absdelay(V(a, c), td);
+      lc = last_crossing(V(a, c) - thr, 0);
+      if (dv > 1e9 || lc > 1e9)
+         I(o, c) <+ 1e-9 * V(o, c);
+      else
+         I(o, c) <+ 2e-9 * V(o, c);
+      I(a, c) <+ 1e-6 * V(a, c);
+   end
+endmodule
+
+// (3) live only through another operating-point variable
+module sg_opvar(a, c, o);
+   inout a, c, o;
+   electrical a, c, o;
+   parameter real td = 1e-7 from (0:inf);
+   parameter real thr = 0.5;
+   (*desc="delayed input"*) real dv;
+   (*desc="last crossing"*) real lc;
+   (*desc="copy"*) real dcopy;
+   analog begin
+      dv = absdelay(V(a, c), td);
+      lc = last_crossing(V(a, c) - thr, 0);
+      dcopy = dv + lc;
+      I(o, c) <+ 1e-9 * V(o, c);
+      I(a, c) <+ 1e-6 * V(a, c);
+   end
+endmodule
+
+// (4) contributed -- the path that always worked, kept as the control
+module sg_contrib(a, c, o);
+   inout a, c, o;
+   electrical a, c, o;
+   parameter real td = 1e-7 from (0:inf);
+   parameter real thr = 0.5;
+   (*desc="delayed input"*) real dv;
+   (*desc="last crossing"*) real lc;
+   analog begin
+      dv = absdelay(V(a, c), td);
+      lc = last_crossing(V(a, c) - thr, 0);
+      I(o, c) <+ 1e-3 * dv + 1e-3 * lc;
+      I(a, c) <+ 1e-6 * V(a, c);
+   end
+endmodule

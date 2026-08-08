@@ -1,0 +1,18 @@
+// Enhancement-418 -- a plain two-terminal device for the `.save` name tests.
+//
+// The capacitor gives the terminal current a waveform worth capturing, so a
+// vector that comes back empty or one point long is obvious rather than subtle.
+`include "disciplines.vams"
+
+module sg_two(p, n);
+   inout p, n;
+   electrical p, n;
+
+   parameter real r = 1000.0 from (0:inf);
+   parameter real c = 1e-9   from [0:inf);
+
+   analog begin
+      I(p, n) <+ V(p, n) / r;
+      I(p, n) <+ ddt(c * V(p, n));
+   end
+endmodule

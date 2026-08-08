@@ -437,6 +437,47 @@ int OSDIsetup(SMPmatrix *matrix, GENmodel *inModel, CKTcircuit *ckt,
         if (un != UINT32_MAX && un < num_nodes)
           node_used[un] = true;
       }
+      /* Enhancement-418: the scan above can only see coupling the COMPILER
+       * declared. `absdelay()` and `last_crossing()` are the two analog
+       * operators whose output row the compiler deliberately leaves empty --
+       * OpenVAF emits no residual for it, because ngspice is the one that fills
+       * that row, from its own history buffer, in absdelay_stamp_tran() /
+       * last_crossing_stamp() (osdiload.c) via matrix elements this routine
+       * allocates further down. So the output node appears in no descriptor
+       * Jacobian entry, Enhancement-116 concluded it was decoupled and tied it
+       * to ground, and eval() then read CKTrhsOld[0] -- structurally 0.0,
+       * forever. The delayed value was correct only when the model also
+       * CONTRIBUTED it somewhere, because that contribution is what put the node
+       * into a Jacobian entry.
+       *
+       * These nodes are coupled, just not by the descriptor. Mark them used.
+       * For a model that contributes the value the flags are already true, so
+       * this is idempotent and changes nothing.
+       *
+       * THE RULE, for whoever adds the next simulator-stamped row: a node that
+       * is coupled only by ngspice-side stamping has to be marked here, or
+       * Enhancement-116 will ground it. */
+      if (entry->num_absdelays > 0 && entry->absdelay_infos) {
+        const OsdiAbsDelayInfo *dinfo =
+            (const OsdiAbsDelayInfo *)entry->absdelay_infos;
+        for (uint32_t k = 0; k < entry->num_absdelays; k++) {
+          uint32_t y = node_mapping[dinfo[k].y_node];
+          uint32_t z = node_mapping[dinfo[k].z_node];
+          if (y != UINT32_MAX && y < num_nodes)
+            node_used[y] = true;
+          if (z != UINT32_MAX && z < num_nodes)
+            node_used[z] = true;
+        }
+      }
+      if (entry->num_last_crossings > 0 && entry->last_crossing_infos) {
+        const OsdiLastCrossingInfo *linfo =
+            (const OsdiLastCrossingInfo *)entry->last_crossing_infos;
+        for (uint32_t k = 0; k < entry->num_last_crossings; k++) {
+          uint32_t z = node_mapping[linfo[k].z_node];
+          if (z != UINT32_MAX && z < num_nodes)
+            node_used[z] = true;
+        }
+      }
       /* Enhancement-351: reuse the internal nodes if this instance already has
        * them. `sens` calls DEVsetup() a second time on a circuit that is still
        * set up, purely to stamp the perturbation matrix, and requires that no

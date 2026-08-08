@@ -551,6 +551,83 @@ beginPlot(JOB *analysisPtr, CKTcircuit *circuitPtr, char *cktName, char *analNam
                 }
             }
 
+            /* Enhancement-418: resolve the device name, and say so when it does
+             * not resolve.
+             *
+             * Nothing between `settrace` and the PER-POINT `INPaName` ever
+             * looked a saved `@dev[param]` name up. `addSpecialDesc` only
+             * interns the string, and `getSpecial`'s caller discards
+             * INPaName's E_NODEV/E_BADPARM -- so a misspelled device, a bogus
+             * parameter or an unexpanded wildcard produced a registered vector
+             * that stayed 0 long, silently, while `print`, `meas` and `wrdata`
+             * all report the same name loudly.
+             *
+             * Two things happen here. A hierarchical spelling is REWRITTEN to
+             * the form that resolves: `@x1.r1[i]` is what Enhancement-410 made
+             * work for `print`, `alter` and `show`, but the saved name needs
+             * ngspice's flattened `r.x1.r1`, so the display name stays the
+             * user's and only the lookup name changes. Anything still
+             * unresolvable is WARNED about -- and then added anyway, because a
+             * bracket-less `@name` is a simulator statistic served by a
+             * different path and dropping entries here would change what the
+             * plot contains. */
+            if (*namebuf && *parambuf && circuitPtr &&
+                ft_sim && ft_sim->findInstance) {
+                if (strpbrk(namebuf, "*?")) {
+                    fprintf(cp_err,
+                            "Warning: save '%s': a wildcard device name is not "
+                            "expanded here, so this vector will stay empty.\n"
+                            "         Name each device, or use "
+                            "`.options savecurrents` for every terminal current.\n",
+                            saves[i].name);
+                } else {
+                    /* INPaName is the very routine the per-point read uses, so
+                     * asking it here validates the device AND the parameter by
+                     * exactly the rule that will apply later -- rather than
+                     * duplicating a weaker test. Its E_NODEV/E_BADPARM is what
+                     * getSpecial's caller has always thrown away. */
+                    IFvalue tmpval;
+                    GENinstance *tfast = NULL;
+                    int tdev = -1, tdtype = 0, err;
+
+                    err = INPaName(parambuf, &tmpval, circuitPtr, &tdev,
+                                   namebuf, &tfast, ft_sim, &tdtype, NULL);
+
+                    if (err != OK) {
+                        /* Enhancement-410's reconstruction: an instance inside a
+                         * subcircuit is flattened to `<type>.<path>`, the type
+                         * letter being the first character of the LOCAL name.
+                         * Retry there before giving up. */
+                        const char *local = strrchr(namebuf, '.');
+                        char hbuf[BSIZE_SP];
+
+                        if (local && local[1] && tolower_c(local[1]) != 'x' &&
+                            snprintf(hbuf, sizeof hbuf, "%c.%s", local[1],
+                                     namebuf) < (int) sizeof hbuf) {
+                            tfast = NULL;
+                            tdev = -1;
+                            if (INPaName(parambuf, &tmpval, circuitPtr, &tdev,
+                                         hbuf, &tfast, ft_sim, &tdtype,
+                                         NULL) == OK) {
+                                strncpy(namebuf, hbuf, BSIZE_SP - 1);
+                                namebuf[BSIZE_SP - 1] = '\0';
+                                err = OK;
+                            }
+                        }
+                    }
+
+                    if (err == E_NODEV)
+                        fprintf(cp_err,
+                                "Warning: save '%s': no such device, so this "
+                                "vector will stay empty.\n", saves[i].name);
+                    else if (err != OK)
+                        fprintf(cp_err,
+                                "Warning: save '%s': device has no parameter "
+                                "'%s', so this vector will stay empty.\n",
+                                saves[i].name, parambuf);
+                }
+            }
+
             addSpecialDesc(run, saves[i].name, namebuf, parambuf, depind, initmem);
         }
 

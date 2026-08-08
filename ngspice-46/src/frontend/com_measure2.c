@@ -553,8 +553,13 @@ com_measure_when(
         }
 
         /* if 'dc': reset first if scale jumps back to origin */
+        /* Enhancement-418: reset to 0, not 1. At a sweep restart prevValue and
+         * prevScaleValue still hold the LAST POINT OF THE PREVIOUS SWEEP, so
+         * treating the restart sample as "sample 1" offers the interpolator a
+         * bracketing pair that spans the discontinuity between sweeps. Going to
+         * 0 makes the restart sample the new sample 0, exactly as at tstart. */
         if ((first > 1) && (dc_check && (meas->m_td == scaleValue)))
-            first = 1;
+            first = 0;
 
         if (first == 1) {
             if (has_d2) {
@@ -562,15 +567,21 @@ com_measure_when(
                 crossCnt = 0;
                 if (value < value2) {
                     section = S_BELOW_VAL;
+                    /* Enhancement-418: DO NOT count a crossing here. The
+                     * first "interval" runs from the OPERATING POINT to the
+                     * first timepoint, so it routinely straddles a threshold
+                     * for reasons that have nothing to do with the waveform's
+                     * dynamics -- which is why the evaluation below deliberately
+                     * starts at `first > 1`. Counting it left a count behind
+                     * that the loop then applied to a later, crossing-free
+                     * interval. Classify the section only. */
                     if (prevValue >= prevValue2) {
-                        fallCnt = 1;
-                        crossCnt = 1;
+                        /* section already set; no count */
                     }
                 } else {
                     section = S_ABOVE_VAL;
                     if (prevValue < prevValue2) {
-                        riseCnt = 1;
-                        crossCnt = 1;
+                        /* section already set; no count -- see above */
                     }
                 }
                 fflush(stdout);
@@ -579,15 +590,21 @@ com_measure_when(
                 crossCnt = 0;
                 if (value < meas->m_val) {
                     section = S_BELOW_VAL;
+                    /* Enhancement-418: DO NOT count a crossing here. The
+                     * first "interval" runs from the OPERATING POINT to the
+                     * first timepoint, so it routinely straddles a threshold
+                     * for reasons that have nothing to do with the waveform's
+                     * dynamics -- which is why the evaluation below deliberately
+                     * starts at `first > 1`. Counting it left a count behind
+                     * that the loop then applied to a later, crossing-free
+                     * interval. Classify the section only. */
                     if (prevValue >= meas->m_val) {
-                        fallCnt = 1;
-                        crossCnt = 1;
+                        /* section already set; no count */
                     }
                 } else {
                     section = S_ABOVE_VAL;
                     if (prevValue < meas->m_val) {
-                        riseCnt = 1;
-                        crossCnt = 1;
+                        /* section already set; no count -- see above */
                     }
                 }
                 fflush(stdout);
@@ -595,6 +612,17 @@ com_measure_when(
         }
 
         if (first > 1) {
+            /* Enhancement-418: a crossing exists in [prev, cur] only if the two
+             * samples straddle the target. Every interpolation below is gated on
+             * this. Without it, a count left over from an interval this loop
+             * never evaluated was applied to a LATER interval containing no
+             * crossing at all, dividing by a difference that was exactly zero or
+             * a single ULP -- which is where -inf, 1.15292e+05 s and negative
+             * times came from. */
+            bool bracketed = has_d2
+                ? (((prevValue - prevValue2) * (value - value2)) <= 0.0)
+                : (((prevValue - meas->m_val) * (value - meas->m_val)) <= 0.0);
+
             if (has_d2) {
                 if ((section == S_BELOW_VAL) && (value >= value2)) {
                     section = S_ABOVE_VAL;
@@ -617,14 +645,14 @@ com_measure_when(
                     }
                 }
 
-                if  ((crossCnt == meas->m_cross) || (riseCnt == meas->m_rise) || (fallCnt == meas->m_fall)) {
+                if  (bracketed && ((crossCnt == meas->m_cross) || (riseCnt == meas->m_rise) || (fallCnt == meas->m_fall))) {
                     /* user requested an exact match of cross, rise, or fall
                      * exit when we meet condition */
 //                meas->m_measured = prevScaleValue + (value2 - prevValue) * (scaleValue - prevScaleValue) / (value - prevValue);
                     meas->m_measured = prevScaleValue + (prevValue2 - prevValue) * (scaleValue - prevScaleValue) / (value - prevValue - value2 + prevValue2);
                     return MEASUREMENT_OK;
                 }
-                if  (measurement_pending) {
+                if  (measurement_pending && bracketed) {
                     if ((meas->m_cross == MEASURE_DEFAULT) && (meas->m_rise == MEASURE_DEFAULT) && (meas->m_fall == MEASURE_DEFAULT)) {
                         /* user didn't request any option, return the first possible case */
                         meas->m_measured = prevScaleValue + (prevValue2 - prevValue) * (scaleValue - prevScaleValue) / (value - prevValue - value2 + prevValue2);
@@ -658,13 +686,13 @@ com_measure_when(
                     }
                 }
 
-                if  ((crossCnt == meas->m_cross) || (riseCnt == meas->m_rise) || (fallCnt == meas->m_fall)) {
+                if  (bracketed && ((crossCnt == meas->m_cross) || (riseCnt == meas->m_rise) || (fallCnt == meas->m_fall))) {
                     /* user requested an exact match of cross, rise, or fall
                      * exit when we meet condition */
                     meas->m_measured = prevScaleValue + (meas->m_val - prevValue) * (scaleValue - prevScaleValue) / (value - prevValue);
                     return MEASUREMENT_OK;
                 }
-                if  (measurement_pending) {
+                if  (measurement_pending && bracketed) {
                     if ((meas->m_cross == MEASURE_DEFAULT) && (meas->m_rise == MEASURE_DEFAULT) && (meas->m_fall == MEASURE_DEFAULT)) {
                         /* user didn't request any option, return the first possible case */
                         meas->m_measured = prevScaleValue + (meas->m_val - prevValue) * (scaleValue - prevScaleValue) / (value - prevValue);
