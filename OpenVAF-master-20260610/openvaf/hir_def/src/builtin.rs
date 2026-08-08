@@ -199,6 +199,26 @@ impl BuiltIn {
             _ => false,
         }
     }
+    /// Enhancement-424: the builtins that create a SMALL-SIGNAL SOURCE -- an
+    /// entry in the OSDI noise-source or `ac_stim`-source table.
+    ///
+    /// Deliberately NOT folded into `is_analog_operator`. That predicate also
+    /// drives the "not allowed in a conditional" and "only in the main analog
+    /// block" checks, and a noise source inside an `if`/`case` is legitimate and
+    /// works correctly today -- gating noise on a mode flag is ordinary compact-
+    /// model practice. Only the LOOP restriction applies to these.
+    #[allow(clippy::match_like_matches_macro)]
+    pub fn is_small_signal_source(self) -> bool {
+        matches!(
+            self,
+            BuiltIn::white_noise
+                | BuiltIn::flicker_noise
+                | BuiltIn::noise_table
+                | BuiltIn::noise_table_log
+                | BuiltIn::ac_stim
+        )
+    }
+
     #[allow(clippy::match_like_matches_macro)]
     pub fn is_analog_operator_sysfun(self) -> bool {
         match self {

@@ -26,6 +26,13 @@ use crate::types::{BuiltinInfo, Signature, Ty};
 pub enum IllegalCtxAccessKind {
     NatureAccess,
     AnalogOperator { name: Name, is_standard: bool, non_const_dominator: Box<[ExprId]> },
+    /// Enhancement-424: a noise or `ac_stim` source inside a run-time loop.
+    ///
+    /// Its own kind rather than `AnalogOperator` because the restriction is
+    /// narrower: these are legal in a conditional (and work correctly there),
+    /// only a loop is the problem. And because the message should say what they
+    /// are -- "analog operator 'white_noise'" would be wrong twice over.
+    SmallSignalSourceInLoop { name: Name },
     AnalysisFun { name: Name },
     Var(VarId),
 }
@@ -1446,6 +1453,33 @@ impl ExprValidator<'_, '_> {
                 }
             }
 
+            // Enhancement-424: a noise source contributed inside a run-time loop
+            // registered NO SOURCE AT ALL and contributed exactly nothing --
+            // `onoise_total` came back bit-identical to a model with no noise in
+            // it, and nothing was said, not even under `-E all`. `ac_stim` rides
+            // the same pipeline (Enhancement-51) and vanished the same way: 500
+            // to 0.
+            //
+            // Every OTHER member of this family was already rejected here --
+            // `ddt`, `idt`, `absdelay`, `transition`, `laplace_*` all report
+            // "analog operator 'X' is not allowed in loops". The noise builtins
+            // are not in `is_analog_operator()`, so they fell past this arm and
+            // were dropped further down instead. Rejecting them is what the
+            // evidence supports: the sibling behaviour is already an error, and
+            // the LRM restriction (4.5.1) is the same one.
+            //
+            // A genvar loop is unrolled before this runs and keeps working --
+            // it creates one source per iteration, which is what a model that
+            // wants per-finger noise should write.
+            _ if call.is_small_signal_source() && self.parent.loop_depth != 0 => {
+                if let Some(name) = name.as_ref().and_then(|p| p.as_ident()) {
+                    self.report_illegal_access(
+                        IllegalCtxAccessKind::SmallSignalSourceInLoop { name },
+                        expr,
+                    )
+                }
+            }
+
             _ if (call.is_analog_operator() || call.is_analog_operator_sysfun())
                 && self.parent.loop_depth != 0 =>
             {
@@ -1767,6 +1801,32 @@ impl ExprValidator<'_, '_> {
                             expr,
                             stmt: self.stmt,
                         });
+                    }
+                }
+            }
+
+            // Enhancement-424: IEEE 1364-2005 17.1.2 gives `$finish`/`$stop` one
+            // optional argument with exactly three meanings -- 0, 1 and 2 select
+            // how much diagnostic information the simulator prints. Anything else
+            // selects nothing. Same shape as the `last_crossing` direction
+            // Enhancement-420 rejected, and checked the same way: literals only.
+            (func @ (BuiltIn::finish | BuiltIn::stop), _) => {
+                if let [code] = args {
+                    if let Some(v) = self.const_num(*code) {
+                        if v != 0.0 && v != 1.0 && v != 2.0 {
+                            let name =
+                                if func == BuiltIn::finish { "$finish" } else { "$stop" };
+                            self.bad_arg(
+                                name,
+                                "the diagnostic level",
+                                format!(
+                                    "is {v}; it must be 0 (print nothing), 1 (print the \
+                                     time and location) or 2 (print time, location and \
+                                     statistics)"
+                                ),
+                                *code,
+                            );
+                        }
                     }
                 }
             }

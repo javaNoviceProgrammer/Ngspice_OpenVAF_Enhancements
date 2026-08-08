@@ -656,6 +656,26 @@ impl Diagnostic for BodyValidationDiagnosticWrapped<'_> {
                         ))
                         .with_notes(notes)
                     }
+                    IllegalCtxAccessKind::SmallSignalSourceInLoop { name } => res
+                        .with_message(format!(
+                            "'{}' creates a small-signal source, which is not allowed in \
+                             loops",
+                            name
+                        ))
+                        .with_notes(vec![
+                            "the source was silently DROPPED: the device registered no \
+                             source at all and contributed exactly nothing"
+                                .to_owned(),
+                            "help: analog operators (ddt, idt, laplace_*, ...) have always \
+                             been rejected here for the same reason (LRM 4.5.1); noise and \
+                             ac_stim sources reached the same code path and were discarded \
+                             instead of reported"
+                                .to_owned(),
+                            "help: hoist it out of the loop, or unroll with `generate` -- a \
+                             genvar loop creates one source per iteration, which is what a \
+                             per-finger or per-segment model wants"
+                                .to_owned(),
+                        ]),
                     IllegalCtxAccessKind::AnalysisFun { name } => res.with_message(format!(
                         "analysis function '{}' is not allowed in constants",
                         name
