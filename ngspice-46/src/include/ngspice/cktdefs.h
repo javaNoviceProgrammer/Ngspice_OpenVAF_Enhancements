@@ -107,11 +107,59 @@ struct CKTcircuit {
     int CKTmaxOrder;            /* maximum integration method order */
     int CKTintegrateMethod;     /* the integration method to be used */
     double CKTxmu;              /* for trapezoidal method */
+    /* Enhancement-419: TR-BDF2 sub-step bookkeeping. `CKTtrStage` is 0 outside
+     * a composite step, 1 while the trapezoidal sub-step is being solved and 2
+     * while the BDF2 sub-step is. `CKTtrGamma` is the split point (2-sqrt(2));
+     * it is a field rather than a constant so the tests can sweep it and show
+     * that any other value costs a matrix refactorization between stages. */
+    int CKTtrStage;
+    double CKTtrGamma;
+    int CKTsdirkStage;          /* Enhancement-419: 1..s, 0 outside a step */
+    int CKTsdirkStages;
+    double CKTsdirkGamma;
     int CKTindverbosity;        /* control check of inductive couplings */
 
 /* known integration methods */
 #define TRAPEZOIDAL 1
 #define GEAR 2
+/* Enhancement-419: TR-BDF2, a one-step COMPOSITE method -- a trapezoidal
+ * sub-step over [t, t+gamma*h] followed by a BDF2 step across t, t+gamma*h and
+ * t+h. With gamma = 2-sqrt(2) both sub-steps have the SAME leading coefficient
+ *      2/(gamma*h)  ==  (2-gamma)/((1-gamma)*h)  ==  3.4142135.../h
+ * (the root of gamma^2 - 4*gamma + 2), so the Jacobian scaling is identical
+ * across the step and the conductance conditioning does not change between
+ * stages. Second order and L-stable: unlike trapezoidal it damps rather than
+ * rings at a sharp transition, and unlike Gear it does not pay accuracy for it.
+ *
+ * Neither sub-step needs a new integration formula. Stage 1 is exactly the
+ * existing TRAPEZOIDAL order-2 form evaluated at delta = gamma*h; stage 2 is
+ * the GEAR order-2 shape (ag[0]*q0 + ag[1]*q1 + ag[2]*q2) with the unequal-step
+ * BDF2 coefficients and the state slots rotated once mid-step, so that q1 holds
+ * the stage-1 charge and q2 the charge at t. */
+#define TRBDF2 3
+/* Enhancement-419: a general singly-diagonally-implicit Runge-Kutta driver.
+ * Restricted to STIFFLY ACCURATE tableaux (a[s][j] == b[j], so c[s] == 1 and
+ * the final stage IS the solution). That restriction is what lets RK fit
+ * ngspice at all: without it the step would end with a weighted COMBINATION of
+ * stage values, which nothing could write into the state vector -- every value
+ * a device stores has to come out of a solve, not out of an assignment.
+ *
+ * Each stage is one ordinary implicit solve with ag[0] = 1/(h*gamma); a single
+ * gamma on the diagonal means every stage presents the solver with the same
+ * conductance scaling, exactly as in TR-BDF2. Shipped tableau: Alexander's
+ * 3-stage order-3 L-stable SDIRK, gamma the root of g^3-3g^2+3g/2-1/6. */
+#define SDIRK 4
+/* Enhancement-419: Adams-Moulton, the implicit multistep family, of order
+ * `maxord`. AM2 IS the trapezoidal rule, so `method=adams maxord=2` must
+ * reproduce `method=trap` bit for bit -- the example suite asserts exactly
+ * that, which is what validates the coefficient generator.
+ *
+ * NOT STIFFLY STABLE ABOVE ORDER 2. The Adams stability region shrinks with
+ * order instead of opening out to the left half-plane the way BDF's does; that
+ * is precisely why SPICE standardised on Gear. AM3+ is here to be measured, and
+ * for genuinely non-stiff circuits -- it will lose to Gear on anything with a
+ * wide spread of time constants, and the campaign is expected to show it. */
+#define ADAMS 5
 
     SMPmatrix *CKTmatrix;       /* pointer to sparse matrix */
     int CKTniState;             /* internal state */
@@ -543,6 +591,11 @@ extern int NIconvTest(CKTcircuit *);
 extern void NIdestroy(CKTcircuit *);
 extern int NIinit(CKTcircuit  *);
 extern int NIintegrate(CKTcircuit *, double *, double *, double , int);
+/* Enhancement-419: the SDIRK tableau lives in niinteg.c, next to the only
+ * formula that needs the full a[i][j]; dctran needs just the stage count, the
+ * diagonal and the abscissae. */
+extern void NIsdirkInfo(int *stages, double *gamma);
+extern double NIsdirkC(int stage);
 extern int NIiter(CKTcircuit * , int);
 extern void NIresetwarnmsg(void);
 extern int NIpzMuller(PZtrial **, PZtrial *);

@@ -146,6 +146,7 @@ enum {
     OPT_PTCONT,         /* Enhancement-127: pseudo-transient continuation */
     OPT_DYNORDER,       /* Enhancement-128: LTE-based dynamic integration order */
     OPT_ORDFIX,         /* Enhancement-181: fixed integration order (verification) */
+    OPT_TRGAMMA,        /* Enhancement-419: TR-BDF2 sub-step split point */
     OPT_CONVHELP,       /* Enhancement-204: auto-escalating DC convergence aids */
 };
 

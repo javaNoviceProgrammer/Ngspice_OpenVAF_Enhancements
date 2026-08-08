@@ -860,7 +860,107 @@ resume:
         }
 #endif
         /* Central solver step */
-        converged = NIiter(ckt,ckt->CKTtranMaxIter);
+        if (ckt->CKTintegrateMethod == TRBDF2) {
+            /* Enhancement-419: one composite step = two implicit solves.
+             *
+             * Stage 1 is trapezoidal over [t, t+gamma*h]; stage 2 is BDF2
+             * across t, t+gamma*h and t+h. The BDF2 needs BOTH earlier charges
+             * at once, so between the stages the state slots are rotated once,
+             * which is what puts q(t+gamma*h) in state1 and q(t) in state2 --
+             * exactly the operands the Gear-2 formula already reads. The extra
+             * slot is then spliced back out (below) so the accepted history the
+             * rest of dctran, CKTterr and NIpred see contains only real
+             * timepoints and never the interior stage value.
+             *
+             * The method is genuinely self-starting: stage 2 reads only state1
+             * and state2, both of which this step produced, so no order-1
+             * starter and none of the O(h^2) starter floor E-181 measured. */
+            int i;
+            double *tmpstate;
+            double t_full = ckt->CKTtime;
+            double g = ckt->CKTtrGamma;
+
+            /* The composite step is second order by construction -- there is
+             * no order-1 variant to fall back to. dctran drops CKTorder to 1
+             * at breakpoints and on the first step; for TR-BDF2 that would only
+             * mislead CKTterr, which reads CKTorder to pick both the divided
+             * difference depth and the root it takes of the error ratio. */
+            ckt->CKTorder = 2;
+
+            ckt->CKTtrStage = 1;
+            NIcomCof(ckt);
+            /* Solve the interior stage AT ITS OWN TIME, so time-dependent
+             * sources are sampled at t+gamma*h and not at the endpoint. */
+            ckt->CKTtime = t_full - (1.0 - g) * ckt->CKTdelta;
+            converged = NIiter(ckt, ckt->CKTtranMaxIter);
+            ckt->CKTtime = t_full;
+
+            if (converged == 0) {
+                tmpstate = ckt->CKTstates[ckt->CKTmaxOrder+1];
+                for (i = ckt->CKTmaxOrder; i >= 0; i--)
+                    ckt->CKTstates[i+1] = ckt->CKTstates[i];
+                ckt->CKTstates[0] = tmpstate;
+
+                ckt->CKTtrStage = 2;
+                NIcomCof(ckt);
+                converged = NIiter(ckt, ckt->CKTtranMaxIter);
+
+                /* Splice the interior stage back out, whether or not stage 2
+                 * converged: on failure the step is retried or the delta cut,
+                 * and either path must start from an untouched history. */
+                tmpstate = ckt->CKTstates[1];
+                for (i = 1; i <= ckt->CKTmaxOrder; i++)
+                    ckt->CKTstates[i] = ckt->CKTstates[i+1];
+                ckt->CKTstates[ckt->CKTmaxOrder+1] = tmpstate;
+            }
+            ckt->CKTtrStage = 0;
+        } else if (ckt->CKTintegrateMethod == SDIRK) {
+            /* Enhancement-419: s sequential implicit solves, one per stage.
+             * The tableau is stiffly accurate, so the LAST stage is the step's
+             * answer and there is no combination step -- which is the whole
+             * reason RK fits here: every value a device holds still arrives
+             * through a solve.
+             *
+             * Same slot discipline as TR-BDF2, just repeated: rotate once per
+             * completed stage so stage i sees its predecessors in state[1..i-1]
+             * and the values at t in state[i], then splice all s-1 interior
+             * stages back out so the accepted history holds only real
+             * timepoints. */
+            int i, r, stage;
+            double *tmpstate;
+            double t_full = ckt->CKTtime;
+            int s = ckt->CKTsdirkStages;
+
+            ckt->CKTorder = 3;
+            converged = 0;
+            for (stage = 1; stage <= s; stage++) {
+                ckt->CKTsdirkStage = stage;
+                NIcomCof(ckt);
+                ckt->CKTtime = t_full -
+                    (1.0 - NIsdirkC(stage)) * ckt->CKTdelta;
+                converged = NIiter(ckt, ckt->CKTtranMaxIter);
+                ckt->CKTtime = t_full;
+                if (converged != 0)
+                    break;
+                if (stage < s) {
+                    tmpstate = ckt->CKTstates[ckt->CKTmaxOrder+1];
+                    for (i = ckt->CKTmaxOrder; i >= 0; i--)
+                        ckt->CKTstates[i+1] = ckt->CKTstates[i];
+                    ckt->CKTstates[0] = tmpstate;
+                }
+            }
+            /* Unwind exactly as many rotations as were made, so a stage that
+             * failed to converge leaves the history untouched for the retry. */
+            for (r = 0; r < (stage > s ? s : stage) - 1; r++) {
+                tmpstate = ckt->CKTstates[1];
+                for (i = 1; i <= ckt->CKTmaxOrder; i++)
+                    ckt->CKTstates[i] = ckt->CKTstates[i+1];
+                ckt->CKTstates[ckt->CKTmaxOrder+1] = tmpstate;
+            }
+            ckt->CKTsdirkStage = 0;
+        } else {
+            converged = NIiter(ckt,ckt->CKTtranMaxIter);
+        }
 
         ckt->CKTstat->STATtimePts ++;
         ckt->CKTmode = (ckt->CKTmode&MODEUIC)|MODETRAN | MODEINITPRED;

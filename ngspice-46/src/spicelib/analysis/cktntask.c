@@ -41,6 +41,7 @@ CKTnewTask(CKTcircuit *ckt, TSKtask **taskPtr, IFuid taskName, TSKtask **defPtr)
         tsk->TSKintegrateMethod = def->TSKintegrateMethod;
         tsk->TSKindverbosity    = def->TSKindverbosity;
         tsk->TSKxmu             = def->TSKxmu;
+        tsk->TSKtrGamma         = def->TSKtrGamma;  /* Enhancement-419 */
         tsk->TSKbypass          = def->TSKbypass;
         tsk->TSKdcMaxIter       = def->TSKdcMaxIter;
         tsk->TSKdcTrcvMaxIter   = def->TSKdcTrcvMaxIter;
@@ -129,6 +130,10 @@ CKTnewTask(CKTcircuit *ckt, TSKtask **taskPtr, IFuid taskName, TSKtask **defPtr)
          *   xmu=0.49: good damping of current ringing, e.g. in R.O.s.
          */
         tsk->TSKxmu             = 0.5;
+        /* Enhancement-419: 2-sqrt(2) is the root of g^2-4g+2, the unique
+         * split that makes both TR-BDF2 sub-steps share one Jacobian
+         * coefficient. Settable so a test can show what any other value costs. */
+        tsk->TSKtrGamma         = 0.5857864376269050;
         tsk->TSKnumSrcSteps     = 1;
         tsk->TSKnumGminSteps    = 1;
         tsk->TSKgminFactor      = 10;

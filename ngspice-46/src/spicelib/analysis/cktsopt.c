@@ -174,6 +174,14 @@ CKTsetOpt(CKTcircuit *ckt, JOB *anal, int opt, IFvalue *val)
     case OPT_XMU:
         task->TSKxmu = val->rValue;
         break;
+    case OPT_TRGAMMA:   /* Enhancement-419 */
+        if (val->rValue <= 0.0 || val->rValue >= 1.0) {
+            fprintf(stderr, "\nWarning -- option trgamma must lie in (0,1); "
+                            "keeping %g\n\n", task->TSKtrGamma);
+            break;
+        }
+        task->TSKtrGamma = val->rValue;
+        break;
     case OPT_MAXORD:
         task->TSKmaxOrder = val->iValue;
         /* Check options method and maxorder for consistency */
@@ -193,8 +201,16 @@ CKTsetOpt(CKTcircuit *ckt, JOB *anal, int opt, IFvalue *val)
         task->TSKminBreak = val->rValue;
         break;
     case OPT_METHOD:
-        if(strncmp(val->sValue,"trap", 4)==0)
+        /* Enhancement-419: `trbdf2` is tested BEFORE the `trap` prefix, which
+         * matches on four characters and would otherwise swallow it. */
+        if (strcmp(val->sValue, "trbdf2") == 0)
+            task->TSKintegrateMethod=TRBDF2;
+        else if(strncmp(val->sValue,"trap", 4)==0)
             task->TSKintegrateMethod=TRAPEZOIDAL;
+        else if (strcmp(val->sValue, "adams") == 0)
+            task->TSKintegrateMethod=ADAMS;
+        else if (strcmp(val->sValue, "sdirk") == 0)
+            task->TSKintegrateMethod=SDIRK;
         else if (strcmp(val->sValue,"gear")==0)
             task->TSKintegrateMethod=GEAR;
         else return(E_METHOD);
@@ -428,6 +444,7 @@ static IFparm OPTtbl[] = {
  { "maxord", OPT_MAXORD, IF_SET|IF_INTEGER,"Maximum integration order" },
  { "indverbosity", OPT_INDVERBOSITY, IF_SET|IF_INTEGER,"Control Inductive Systems Check (coupling)" },
  { "xmu", OPT_XMU, IF_SET|IF_REAL,"Coefficient for trapezoidal method" },
+ { "trgamma", OPT_TRGAMMA, IF_SET|IF_REAL,"TR-BDF2 sub-step split point" },
  { "defm", OPT_DEFM,IF_SET|IF_REAL,"Default MOSfet Multiplier" },
  { "defl", OPT_DEFL,IF_SET|IF_REAL,"Default MOSfet length" },
  { "defw", OPT_DEFW,IF_SET|IF_REAL,"Default MOSfet width" },

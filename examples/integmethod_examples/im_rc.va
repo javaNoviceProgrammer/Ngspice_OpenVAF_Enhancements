@@ -1,0 +1,23 @@
+// Enhancement-419: a minimal reactive OSDI device for the integration-method
+// suite. It exists to prove one specific thing: OSDI loads its Jacobian with
+// ckt->CKTag[0] ALONE, while TR-BDF2's second sub-step and Adams at order >= 3
+// need ag[1] and ag[2] as well. Had OSDI bypassed NIintegrate, every new method
+// would have been silently wrong for Verilog-A devices -- the exact class this
+// project exists to serve -- while looking perfectly healthy on built-in R/L/C.
+//
+// It does not: OSDI routes its reactive residual through the charge state and
+// then integrates it like any other device. A resistor in parallel with a
+// capacitor is enough to detect the difference, because the capacitive branch
+// is what carries the integration history.
+`include "disciplines.vams"
+
+module im_rc(p, n);
+   inout p, n;
+   electrical p, n;
+   parameter real r = 1000 from (0:inf);
+   parameter real c = 1e-9 from [0:inf);
+   analog begin
+      I(p, n) <+ V(p, n) / r;
+      I(p, n) <+ ddt(c * V(p, n));
+   end
+endmodule

@@ -55,6 +55,17 @@ CKTdoJob(CKTcircuit* ckt, int reset, TSKtask* task)
     ckt->CKTintegrateMethod = task->TSKintegrateMethod;
     ckt->CKTindverbosity = task->TSKindverbosity;
     ckt->CKTxmu = task->TSKxmu;
+    ckt->CKTtrGamma = task->TSKtrGamma;   /* Enhancement-419 */
+    ckt->CKTtrStage = 0;
+    NIsdirkInfo(&ckt->CKTsdirkStages, &ckt->CKTsdirkGamma);
+    ckt->CKTsdirkStage = 0;
+    /* Enhancement-419: the SDIRK tableau is order 3, so CKTterr walks divided
+     * differences down to CKTstates[4] and the step needs one slot per stage
+     * plus the value at t. Both are bounded by CKTmaxOrder, whose default is 2
+     * -- leaving it there would have CKTterr read a slot the rotation never
+     * refreshes, i.e. a stale LTE built from another timepoint entirely. */
+    if (ckt->CKTintegrateMethod == SDIRK && ckt->CKTmaxOrder < 3)
+        ckt->CKTmaxOrder = 3;
     ckt->CKTbypass = task->TSKbypass;
     ckt->CKTdcMaxIter = task->TSKdcMaxIter;
     ckt->CKTdcTrcvMaxIter = task->TSKdcTrcvMaxIter;
