@@ -190,6 +190,13 @@ typedef struct OsdiExtraInstData {
   bool collapse_changed;
   bool collapse_warned;     /* warn once per instance, not once per temperature */
 
+  /* Enhancement-418: `pz` linearizes an absdelay slot as a zero-delay wire,
+   * because e^{-s*td} is transcendental -- it has infinitely many roots, while
+   * CKTpzFindZeros searches for a finite set, and across pz's own search range
+   * (|s| up to 1e35) the exponential overflows. Warn once per instance, not
+   * once per pz trial: OSDIpzLoad runs hundreds of times per analysis. */
+  bool pz_delay_warned;
+
 } OSDI_ALIGN(MAX_ALIGN) OsdiExtraInstData;
 
 /* Enhancement-7: extra bit in the eval() `flags` input (see

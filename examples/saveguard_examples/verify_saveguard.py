@@ -33,6 +33,17 @@ applied the leftover count to a LATER, crossing-free interval, dividing by a
 difference that was exactly zero or a single ULP. Out came `-inf`,
 `1.15292e+05` seconds in a 3 us run, and negative times, with no diagnostic.
 
+[4] AND THE SAME EMPTY ROW BROKE `pz`. Because those rows are filled by the
+simulator rather than by the descriptor, every load path has to fill them --
+osdiload.c does for dc/tran and osdiacld.c for ac, but osdipzld.c did for
+neither. The row was therefore identically zero, the matrix singular at EVERY
+trial `s`, and every trial looked like a root, so pz blamed the netlist: "the
+input signal is shorted on the way to the output". That predates [1] for a model
+that CONTRIBUTES the value (its row was already live), and [1] would have widened
+it to every observed-only model. pz cannot stamp the delay exactly the way ac
+does -- e^-s*td overflows across pz's own search range and a transport delay has
+infinitely many roots -- so it stamps the zero-delay wire and says so.
+
 Exit code 0 = pass.
 """
 import os
@@ -200,6 +211,34 @@ def main():
     v = meas_val(out, "m")
     check("a smooth crossing is unchanged",
           v is not None and abs(float(v) - 1.5e-6) < 1e-8, f"m={v}")
+
+    # ------------------------------------------------------------------ [4] pz
+    print("\n    [4] `pz` on a simulator-stamped row")
+    print("        Those rows live in no descriptor Jacobian entry, and pz filled")
+    print("        them nowhere -- so the row was identically zero, the matrix was")
+    print("        singular at EVERY trial s, every trial looked like a root, and")
+    print("        pz blamed the netlist: \"the input signal is shorted on the way")
+    print("        to the output\". Two of these three aborted before E-418 too.")
+
+    PZ = ("v1 a 0 dc 0.5 ac 1\nn1 a 0 out mm\nro out 0 1k\nco out 0 1n\n"
+          ".model mm {}({})")
+    PZC = "op\npz a 0 out 0 cur pol\nprint all"
+    for mod, args, want_warn in (("sg_contrib", "td=1e-7 thr=0.5", True),
+                                 ("sg_obs", "td=1e-7 thr=0.5", True),
+                                 ("sg_cond", "td=1e-7 thr=0.5", True),
+                                 ("sg_lcross", "thr=0.5", False)):
+        out = run("pz" + mod, PZ.format(mod, args), PZC, osdi_d)
+        broke = "shorted on the way" in out or "aborted" in out
+        check(f"{mod}: pz completes instead of blaming the netlist", not broke,
+              "aborted" if broke else "ran")
+        # the delay-free pole is -G/C at `out`; G is 1/ro plus whatever small
+        # conductance the module itself contributes there.
+        pole = num(out, "all")
+        check(f"{mod}: reports the delay-free pole -1/(ro*co)",
+              pole is not None and abs(pole + 1e6) / 1e6 < 1e-3, f"pole={pole}")
+        n = len([ln for ln in out.splitlines() if "as a ZERO delay" in ln])
+        check(f"{mod}: {'warns once' if want_warn else 'does NOT warn'} about the delay",
+              n == (1 if want_warn else 0), f"{n} warnings")
 
     print(f"\n{passed}/{checks} checks passed")
     return 0 if passed == checks else 1

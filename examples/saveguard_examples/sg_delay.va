@@ -71,6 +71,22 @@ module sg_opvar(a, c, o);
    end
 endmodule
 
+// (5) last_crossing WITHOUT absdelay -- the pz control. `pz` stamps this row
+// exactly (the crossing time is a function of the whole past trajectory, so its
+// small-signal sensitivity is zero) and must NOT warn; only absdelay is
+// linearized to a zero delay there, and only absdelay is warned about.
+module sg_lcross(a, c, o);
+   inout a, c, o;
+   electrical a, c, o;
+   parameter real thr = 0.5;
+   (*desc="last crossing"*) real lc;
+   analog begin
+      lc = last_crossing(V(a, c) - thr, 0);
+      I(o, c) <+ 1e-3 * lc;
+      I(a, c) <+ 1e-6 * V(a, c);
+   end
+endmodule
+
 // (4) contributed -- the path that always worked, kept as the control
 module sg_contrib(a, c, o);
    inout a, c, o;

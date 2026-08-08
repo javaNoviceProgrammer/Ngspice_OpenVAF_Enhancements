@@ -1,7 +1,8 @@
-# Enhancement-418 — three things nobody checked
+# Enhancement-418 — four things nobody checked
 
-Three defects that share a shape: something was accepted, or counted, or
-concluded, and never verified.
+Four defects that share a shape: something was accepted, or counted, or
+concluded, and never verified. The fourth was found by fixing the first, and
+is older than it.
 
 ## 1. An operator whose value was structurally zero
 
@@ -45,7 +46,8 @@ it does.
 
 The rule is now written at the site, because the next simulator-stamped row will
 hit the same trap: *a node coupled only by ngspice-side stamping has to be marked
-here, or Enhancement-116 will ground it.*
+here, or Enhancement-116 will ground it.* Marking them used also exposed a fourth
+defect, in `pz`, which is item 4 below.
 
 ## 2. `.save` never validated a device name
 
@@ -144,10 +146,52 @@ Reporting failure is the same answer the neighbouring case already gives for an
 unreachable target, and `cross=1` improves outright: instead of garbage it now
 finds the genuine crossing further along.
 
+## 4. `pz` filled that same row nowhere, and blamed the netlist
+
+Because those two rows are the *simulator's* to fill, every load path has to fill
+them. `osdiload.c` does, for dc and tran; `osdiacld.c` does, for ac; `osdipzld.c`
+did for neither — it only replayed the descriptor's own Jacobian entries. So the
+row was identically zero, the matrix was singular at **every** trial `s`, every
+trial looked like a root, and `CKTpzFindZeros` reached its `NZeros >= Seq_Num - 1`
+exit and reported:
+
+```
+doAnalyses: The input signal is shorted on the way to the output
+```
+
+which names neither the cause nor the device. This is **older than item 1**: a
+model that *contributes* the delayed value already had a live row, so it already
+aborted. Item 1 would have widened it to every observed-only model as well.
+
+| deck | pre-418 | item 1 alone | with item 4 |
+| --- | --- | --- | --- |
+| `absdelay` contributed | **aborts** | aborts | pole −1000000 ✓, warns |
+| `absdelay` observed only | runs (value was 0.0) | **aborts** | pole −1000001 ✓, warns |
+| `last_crossing` only | **aborts** | aborts | pole −1000000 ✓, silent |
+
+The AC stamp cannot simply be reused. There `e^{-j\omega t_d}` is both exact and
+bounded — `|e^{-j\omega t_d}| = 1` for real ω. In pz, `s` is complex and sweeps
+pz's own search interval, where `e^{-s t_d}` overflows to `inf` and poisons the
+determinant; and more fundamentally a transport delay is transcendental, with
+infinitely many poles and zeros, so there is no finite set for a root search to
+find. So `absdelay` is stamped as the zero-delay wire `V(z) − V(y) = 0` — exactly
+the linearization `absdelay_stamp_dc` already uses for the operating point — and
+the user is **told, once per instance**, since `OSDIpzLoad` runs hundreds of times
+per analysis.
+
+`last_crossing` gets no such caveat and no warning: the crossing time is a
+function of the whole past trajectory, so its small-signal sensitivity is exactly
+zero, and pinning the diagonal is the same row `osdiacld.c` stamps. A decoupled
+`−1` on the diagonal only flips the sign of the determinant, adding no root.
+
+The reported poles are the check that this is right rather than merely quiet:
+−1000000, −1000001 and −1000002 for the three modules, each the delay-free
+`−G/C` at the output node including that module's own conductance there.
+
 ## Verification
 
-* **`examples/saveguard_examples` 26/26**, and **12/26 on the pre-418 binaries** —
-  fourteen checks flip. Both solvers.
+* **`examples/saveguard_examples` 38/38**, and **17/38 on the pre-418 binaries** —
+  twenty-one checks flip. Both solvers.
 * The absdelay mechanism is asserted directly, not just its symptom: the suite
   checks that `n1#implicit_equation_*` exists as a circuit node.
 * The contributed path is pinned as a negative control, since it is the one that
@@ -160,7 +204,14 @@ finds the genuine crossing further along.
   bit-identical, plus the eight measure-bearing example suites the change could
   reach (`opvar`, `stdaudit`, `defaulttransition`, `idtassert`, `acmargin`,
   `measovf`, and `crashfix3`/`castguard`, which assert *failure*).
-* **Full regression 334/334.**
+* The `pz` fix is pinned on all three absdelay modules and on a
+  `last_crossing`-only module, asserting the pole value rather than just the
+  absence of the abort, that the warning fires exactly once, and that the
+  `last_crossing`-only case is never warned about. Both solvers — the KLU path
+  needed nothing new, since `OSDIupdateCSC` already switches the delay
+  pointers to the complex array and `cktpzset.c` already calls
+  `DEVbindCSCComplex`.
+* **Full regression 335/335.**
 
 ## Found by
 
