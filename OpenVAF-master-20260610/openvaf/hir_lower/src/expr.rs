@@ -392,6 +392,13 @@ impl BodyLoweringCtx<'_, '_, '_> {
             BinaryOp::Remainder => {
                 match_signature!(signature: INT_OP => Opcode::Irem, REAL_OP => Opcode::Frem)
             }
+            // Enhancement-420: two integer operands make `**` an integer expression
+            // (IEEE 1364-2005 5.1.5). See `lower_int_pow`.
+            BinaryOp::Power if signature == INT_OP => {
+                let base = self.lower_expr(lhs);
+                let exp = self.lower_expr(rhs);
+                return self.lower_int_pow(base, exp);
+            }
             BinaryOp::Power => Opcode::Pow,
 
             BinaryOp::LeftShift => Opcode::Ishl,
@@ -416,6 +423,68 @@ impl BodyLoweringCtx<'_, '_, '_> {
         let lhs_ = self.lower_expr(lhs);
         let rhs_ = self.lower_expr(rhs);
         self.ctx.ins().binary1(op, lhs_, rhs_)
+    }
+
+    /// Enhancement-420: `base ** exp` with two INTEGER operands, per IEEE
+    /// 1364-2005 Table 5-6.
+    ///
+    /// `**` used to be typed real unconditionally, so both operands were promoted
+    /// to float, `llvm.pow.f64` ran, and the real result was rounded back away
+    /// from zero wherever an integer was wanted. For a NEGATIVE exponent that is
+    /// wrong every time the base is not 1 or -1: the true value is a fraction, the
+    /// standard says the integer result is 0, and rounding away from zero gave
+    /// `2 ** -1` = 1 -- off by a whole unit, silently, from source that compiled
+    /// clean.
+    ///
+    /// Table 5-6 for a negative exponent: 1 when the base is 1; 1 or -1 for a base
+    /// of -1 as the exponent is even or odd; 0 otherwise. A base of 0 is `'x`
+    /// there, which is 0 in an integer context -- the same answer the `otherwise`
+    /// arm already gives.
+    ///
+    /// Written branchless on purpose. A phi would be correct too, but every
+    /// operand here is a comparison or a multiply by 0/1, so the constant folder
+    /// collapses the whole thing when the operands are literals -- and, more
+    /// importantly, the float `pow` never sees the negative exponent at all. That
+    /// matters: `0 ** -1` is infinity in floating point, and `llvm.lround` of an
+    /// infinity is undefined. Clamping the exponent the float path sees keeps the
+    /// dead branch harmless rather than merely unused.
+    fn lower_int_pow(&mut self, base: Value, exp: Value) -> Value {
+        let zero = self.ctx.iconst(0);
+        let one = self.ctx.iconst(1);
+        let two = self.ctx.iconst(2);
+        let minus_one = self.ctx.iconst(-1);
+
+        // 1 when the exponent is negative, 0 otherwise
+        let is_neg = self.ctx.ins().binary1(Opcode::Ilt, exp, zero);
+        let neg = self.ctx.ins().bicast(is_neg);
+        let not_neg = self.ctx.ins().binary1(Opcode::Isub, one, neg);
+
+        // non-negative exponent: the float path, unchanged in value. The exponent
+        // is forced to 0 when it is negative so `pow` cannot produce an infinity
+        // that `ficast` would then have to round.
+        let safe_exp = self.ctx.ins().binary1(Opcode::Imul, exp, not_neg);
+        let fbase = self.ctx.ins().ifcast(base);
+        let fexp = self.ctx.ins().ifcast(safe_exp);
+        let fpow = self.ctx.ins().binary1(Opcode::Pow, fbase, fexp);
+        let pos_res = self.ctx.ins().ficast(fpow);
+
+        // negative exponent: Table 5-6. The two base tests are mutually exclusive,
+        // so summing the two contributions is a select.
+        let base_is_one = self.ctx.ins().binary1(Opcode::Ieq, base, one);
+        let base_is_one = self.ctx.ins().bicast(base_is_one);
+        let base_is_m1 = self.ctx.ins().binary1(Opcode::Ieq, base, minus_one);
+        let base_is_m1 = self.ctx.ins().bicast(base_is_m1);
+        // `exp & 1` is 1 for an odd exponent of either sign in two's complement
+        let odd = self.ctx.ins().binary1(Opcode::Iand, exp, one);
+        // odd -> -1, even -> +1
+        let m1_res = self.ctx.ins().binary1(Opcode::Imul, two, odd);
+        let m1_res = self.ctx.ins().binary1(Opcode::Isub, one, m1_res);
+        let m1_res = self.ctx.ins().binary1(Opcode::Imul, base_is_m1, m1_res);
+        let neg_res = self.ctx.ins().binary1(Opcode::Iadd, base_is_one, m1_res);
+
+        let lo = self.ctx.ins().binary1(Opcode::Imul, neg, neg_res);
+        let hi = self.ctx.ins().binary1(Opcode::Imul, not_neg, pos_res);
+        self.ctx.ins().binary1(Opcode::Iadd, lo, hi)
     }
 
     fn lower_user_fun(&mut self, fun: hir::Function, lim: bool, args: &[ExprId]) -> Value {

@@ -1738,6 +1738,75 @@ impl ExprValidator<'_, '_> {
                 }
             }
 
+            // Enhancement-420: the degree of a discontinuity is the order of the
+            // derivative that jumps -- 0 for the value itself, 1 for its slope,
+            // and so on. Below that only -1 means anything: it is the LRM's
+            // marker for a limiting discontinuity, written inside a `$limit`
+            // function to say the iterate was moved (the LRM's own page-261
+            // `spicepnjlim` diode does exactly this, and `lower_builtin` routes
+            // it to `LimDiscontinuity`). Anything below -1 names nothing at all
+            // and was silently treated as an ordinary non-negative degree.
+            //
+            // Deliberately NOT `require_non_negative`. That was the first shape
+            // of this check and it rejected the LRM's own example -- caught by
+            // examples/lrm_examples, which compiles page 261 verbatim.
+            (BuiltIn::discontinuity, _) => {
+                if let [degree] = args {
+                    if let Some(v) = self.const_num(*degree) {
+                        if v < -1.0 || !v.is_finite() {
+                            self.bad_arg(
+                                "$discontinuity",
+                                "the degree",
+                                format!(
+                                    "is {v}; it must be 0 for the value, 1 for the first \
+                                     derivative and so on, or -1 for a limiting \
+                                     discontinuity inside a $limit function -- nothing \
+                                     below -1 names a discontinuity, and it was being \
+                                     treated as an ordinary one"
+                                ),
+                                *degree,
+                            );
+                        }
+                    }
+                }
+            }
+
+            // Enhancement-420: `ac_stim` names an analysis exactly as `analysis()`
+            // does, and ngspice gates the source on `strcmp(src->analysis, "ac")`
+            // (osdiacld.c). A name outside the matchable set leaves the stimulus
+            // PERMANENTLY INACTIVE -- the model has an AC source that never
+            // sources anything. `analysis("nosuch")` has warned since
+            // Enhancement-399 and `$limit(.., "nosuchlimit", ..)` since
+            // Enhancement-396; `ac_stim` was the one sibling left unchecked, the
+            // shape this project keeps finding.
+            (BuiltIn::ac_stim, _) => {
+                if let Some(&name) = args.first() {
+                    self.check_analysis_name("ac_stim", name);
+                }
+            }
+
+            // Enhancement-420: the LRM defines exactly three directions for
+            // `last_crossing` -- +1 rising, -1 falling, 0 either. Anything else
+            // was accepted and behaved as 0, so `last_crossing(V(a) - 0.5, 7)`
+            // returned the same time as the `either` form with nothing said. A
+            // direction is a spelled-out constant in every real model, so the
+            // typo is catchable here.
+            (BuiltIn::last_crossing, _) if args.len() >= 2 => {
+                if let Some(v) = self.const_num(args[1]) {
+                    if v != -1.0 && v != 0.0 && v != 1.0 {
+                        self.bad_arg(
+                            "last_crossing",
+                            "the direction",
+                            format!(
+                                "is {v}; it must be +1 (rising), -1 (falling) or 0 (either), \
+                                 and any other value is silently treated as 0"
+                            ),
+                            args[1],
+                        );
+                    }
+                }
+            }
+
             (BuiltIn::absdelay, _) if args.len() >= 2 => {
                 self.require_non_negative("absdelay", "the delay", args[1]);
                 if args.len() >= 3 {
@@ -1846,6 +1915,16 @@ impl ExprValidator<'_, '_> {
                     if let [num, den, ..] = const_args {
                         self.check_filter_orders(call, *num, *den);
                     }
+                    // Enhancement-420: the sampling period T is what the whole
+                    // z-domain filter is defined against; `zi_nd(x, '{1}, '{1}, 0.0, 0.0)`
+                    // compiled, ran, and returned the INPUT UNCHANGED (y = 1.0 for a
+                    // unit input) -- a filter that is not a filter, reported nowhere.
+                    // A negative period is no better defined than a zero one.
+                    if let ([_num, _den, period, ..], Some(name)) =
+                        (const_args, Self::filter_name(call))
+                    {
+                        self.require_positive(name, "the sampling period", *period);
+                    }
                     args = &args[..1];
                     for arg in const_args {
                         self.validate_const_expr(*arg)
@@ -1941,8 +2020,9 @@ impl ExprValidator<'_, '_> {
     /// state-space realization, so it is rejected rather than approximated -- `ddt` is the
     /// spelling for a genuine derivative. Lengths are only known for a written-out array, so a
     /// runtime array variable is left alone, matching every other check here.
-    fn check_filter_orders(&mut self, builtin: BuiltIn, num: ExprId, den: ExprId) {
-        let name = match builtin {
+    /// The spelling of a `laplace_*`/`zi_*` builtin, for diagnostics.
+    fn filter_name(builtin: BuiltIn) -> Option<&'static str> {
+        Some(match builtin {
             BuiltIn::laplace_nd => "laplace_nd",
             BuiltIn::laplace_np => "laplace_np",
             BuiltIn::laplace_zd => "laplace_zd",
@@ -1951,7 +2031,14 @@ impl ExprValidator<'_, '_> {
             BuiltIn::zi_np => "zi_np",
             BuiltIn::zi_zd => "zi_zd",
             BuiltIn::zi_zp => "zi_zp",
-            _ => return,
+            _ => return None,
+        })
+    }
+
+    fn check_filter_orders(&mut self, builtin: BuiltIn, num: ExprId, den: ExprId) {
+        let name = match Self::filter_name(builtin) {
+            Some(name) => name,
+            None => return,
         };
         let num_is_roots = matches!(
             builtin,
@@ -1989,6 +2076,42 @@ impl ExprValidator<'_, '_> {
         // An empty NUMERATOR is deliberately supported and means H = 0 -- examples/
         // vaflaplace_examples asserts it compiles. Only the denominator was ever the
         // problem, and only because `den.len() - 1` underflowed on it.
+
+        // Enhancement-420: a denominator that is IDENTICALLY ZERO -- every
+        // coefficient written out as the literal 0 -- makes the transfer function
+        // num/0. `laplace_nd(V(a), '{1}, '{0})` compiled clean and then killed the
+        // operating point with "Transient op failed, timestep too small", which
+        // names neither the model nor the call, so the author debugs the netlist.
+        //
+        // Only a COEFFICIENT list is checked. An all-zero ROOT list (`laplace_np`,
+        // `laplace_zp`, `zi_np`, `zi_zp`) means poles at the origin -- a pure
+        // integrator, perfectly legitimate.
+        //
+        // A single zero coefficient is not the target either: `'{0.0, 1.0}` is the
+        // denominator `s`, again an integrator. Only every element being zero is
+        // the degenerate case, and only when every element FOLDS -- one runtime
+        // expression in the list and this says nothing, matching the rule the
+        // laplace arm states: reject what is silently wrong, not everything that
+        // is not an array literal.
+        if !den_is_roots {
+            if let Expr::Array(ref elems) = self.parent.body.exprs[den] {
+                let elems = elems.clone();
+                if !elems.is_empty()
+                    && elems.iter().all(|&e| self.const_num(e) == Some(0.0))
+                {
+                    self.bad_arg(
+                        name,
+                        "the denominator",
+                        "is identically zero, so the transfer function is a division by \
+                         zero; the filter cannot be realized and the analysis fails with \
+                         an error that names neither this model nor this call"
+                            .to_owned(),
+                        den,
+                    );
+                    return;
+                }
+            }
+        }
 
         // ONLY the s-domain. In `z^-1` a numerator of higher order than the denominator is an
         // ordinary FIR filter -- more delay taps, causal and realizable -- and `lower_zi`

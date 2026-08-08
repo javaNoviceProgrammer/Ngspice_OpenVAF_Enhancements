@@ -829,9 +829,19 @@ impl Diagnostic for BodyValidationDiagnosticWrapped<'_> {
                         "the simulator matches these names: ac, dc, ic, nodeset, noise, \
                          static, tran"
                             .to_owned(),
-                        "as written this is dead code -- the branch is never taken and \
-                         the event never fires"
-                            .to_owned(),
+                        // Enhancement-420: `ac_stim` reaches this diagnostic too, and
+                        // its consequence is a different one -- the source is still
+                        // built, it just never becomes active.
+                        if &**builtin == "ac_stim" {
+                            "as written this stimulus is permanently inactive -- the \
+                             simulator gates the source on this name, so it sources \
+                             nothing in any analysis"
+                                .to_owned()
+                        } else {
+                            "as written this is dead code -- the branch is never taken \
+                             and the event never fires"
+                                .to_owned()
+                        },
                     ])
             }
             BodyValidationDiagnostic::UnknownLimitFunction { ref name, nargs, expr, .. } => {

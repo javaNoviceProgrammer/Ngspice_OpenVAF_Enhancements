@@ -1925,7 +1925,15 @@ impl Ctx<'_> {
             | BinaryOp::BitwiseEq
             | BinaryOp::BitwiseOr
             | BinaryOp::BitwiseAnd => &[SignatureData::INT_BIN_OP],
-            BinaryOp::Power => &[SignatureData::REAL_BIN_OP],
+            // Enhancement-420: `**` is an INTEGER expression when both operands are
+            // integers (IEEE 1364-2005 5.1.5; the result is real only if either
+            // operand is real). It was typed real unconditionally, so both operands
+            // were promoted to float, `pow` ran in floating point and the result was
+            // rounded back away from zero on the way into an integer -- which turned
+            // `2 ** -1` into 1 where the standard's Table 5-6 says 0. The lowering
+            // must implement the integer branch as well; a signature change alone
+            // would leave the same float `pow` behind an integer type.
+            BinaryOp::Power => SignatureData::NUMERIC_BIN_OP,
             BinaryOp::EqualityTest | BinaryOp::NegatedEqualityTest => SignatureData::ANY_COMPARISON,
         };
         let signatures = Cow::Borrowed(TiSlice::from_ref(signatures));
