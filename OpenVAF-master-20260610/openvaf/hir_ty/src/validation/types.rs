@@ -9,11 +9,12 @@ use hir_def::{
     NodeTypeDecl, Path, ScopeId,
 };
 use syntax::ast::ArgListOwner;
-use syntax::name::Name;
+use syntax::name::{kw, Name};
 use syntax::{ast, AstNode, SyntaxNodePtr};
 use typed_index_collections::TiSlice;
 
 use crate::db::HirTyDB;
+use crate::lower::lookup_nature;
 
 #[derive(PartialEq, Eq, Clone, Debug)]
 pub struct DuplicateItem<Item, Def> {
@@ -40,6 +41,33 @@ pub enum TypeValidationDiagnostic {
     /// (`branch (a,a)` for `branch (a,c)`) therefore produced a device that
     /// contributed nothing, silently.
     DegenerateBranch { branch: BranchId, node: NodeId, src: ErasedAstId },
+    /// Enhancement-422: a `nature`/`discipline` reference that does not resolve
+    /// to a nature. Nothing checked these: `lookup_nature(..).ok()` threw the
+    /// error away, so a mistyped `parent` reached OSDI codegen and hard-panicked
+    /// the compiler, while a mistyped `ddt_nature`/`idt_nature` was silently
+    /// dropped and a mistyped discipline `potential`/`flow` was reported only
+    /// later, against the model body.
+    UnresolvedNatureRef {
+        owner: Name,
+        /// "parent nature", "ddt_nature", "idt_nature", "potential", "flow"
+        what: &'static str,
+        referenced: Name,
+        err: PathResolveError,
+        src: ErasedAstId,
+    },
+    /// Enhancement-422: a nature whose parent chain closes on itself. Salsa
+    /// recovers from the query cycle by dropping the parent, so the nature
+    /// silently becomes its own base nature -- which changes units inheritance
+    /// and therefore discipline compatibility.
+    NatureCycle { name: Name, chain: Vec<Name>, src: ErasedAstId },
+    /// Enhancement-422: an `abstol` that is not a usable absolute tolerance.
+    BadAbstol { name: Name, value: Box<str>, src: ErasedAstId },
+    /// Enhancement-422: an `abstol` written but SILENTLY DISCARDED because its
+    /// value did not fold to a real constant. The lowering only stores `abstol`
+    /// when `as_constexprval().as_real()` succeeds, so `abstol = 1.0/0.0`,
+    /// `abstol = 1e-6+0.0` and even `abstol = "abc"` left the nature with no
+    /// abstol at all, and said nothing.
+    NonConstantAbstol { name: Name, src: ErasedAstId },
 }
 
 impl TypeValidationDiagnostic {
@@ -308,6 +336,29 @@ impl TypeValidationCtx<'_> {
             discipline,
             TypeValidationDiagnostic::DuplicateDisciplineAttr,
         );
+
+        // Enhancement-422: a `potential`/`flow` naming something that is not a
+        // nature used to be reported only much later and against the MODEL BODY
+        // -- "illegal access of branch '(p, p)'", which names neither the
+        // discipline nor the missing nature. Say it at the declaration.
+        let loc = discipline.lookup(self.db.upcast());
+        let src: ErasedAstId = self.tree[loc.id].ast_id.into();
+        let name = data.name.clone();
+        for (what, nature_ref) in
+            [("potential", &data.potential), ("flow", &data.flow)]
+        {
+            if let Some(nature_ref) = nature_ref {
+                if let Err(err) = lookup_nature(self.def_map, nature_ref, self.db) {
+                    self.report(TypeValidationDiagnostic::UnresolvedNatureRef {
+                        owner: name.clone(),
+                        what,
+                        referenced: nature_ref.name.clone(),
+                        err,
+                        src,
+                    })
+                }
+            }
+        }
     }
 
     fn verify_nature(&mut self, nature: NatureId) {
@@ -319,6 +370,99 @@ impl TypeValidationCtx<'_> {
             nature,
             TypeValidationDiagnostic::DuplicateNatureAttr,
         );
+
+        let loc = nature.lookup(self.db.upcast());
+        let src: ErasedAstId = self.tree[loc.id].ast_id.into();
+        let name = data.name.clone();
+
+        // Enhancement-422: THE CRASH. `parent` was resolved with
+        // `lookup_nature(..).ok()` in `hir_ty::lower`, which throws the error
+        // away, and `osdi::ndatable::resolve_nature_ref` then `.unwrap()`ed the
+        // missing name-map entry -- so `nature Vd : Vbaze;`, one character
+        // wrong, aborted the compiler with a crash report. It did not even have
+        // to be USED: a stray nature declaration in an included header killed
+        // every build that included it.
+        //
+        // `ddt_nature`/`idt_nature` sit right beside it and merely went silent,
+        // because Enhancement-39 hardened THEIR codegen path
+        // (`unwrap_or(u32::MAX)`) without adding a diagnostic. Same reference,
+        // same mistake, three different outcomes; now one.
+        for (what, nature_ref) in [
+            ("parent nature", &data.parent),
+            ("ddt_nature", &data.ddt_nature),
+            ("idt_nature", &data.idt_nature),
+        ] {
+            if let Some(nature_ref) = nature_ref {
+                if let Err(err) = lookup_nature(self.def_map, nature_ref, self.db) {
+                    self.report(TypeValidationDiagnostic::UnresolvedNatureRef {
+                        owner: name.clone(),
+                        what,
+                        referenced: nature_ref.name.clone(),
+                        err,
+                        src,
+                    })
+                }
+            }
+        }
+
+        // Enhancement-422: an inheritance CYCLE. Salsa recovers from the query
+        // cycle by re-running `NatureTy::obtain` with `resolve_parent = false`,
+        // so nothing crashes and nothing is said -- the nature just silently
+        // becomes its own `base_nature`, losing the units it meant to inherit
+        // and therefore changing which disciplines it is compatible with.
+        // Parameter cycles, `aliasparam` cycles and analog-function recursion
+        // are all rejected by name; this was the one that was not.
+        //
+        // The walk uses `nature_data` + `lookup_nature` rather than
+        // `nature_info`, precisely so it sees the cycle instead of salsa's
+        // recovery. Reported only from the member the walk returns to, so an
+        // N-cycle produces N reports and not N^2.
+        let mut chain = vec![name.clone()];
+        let mut cur = nature;
+        loop {
+            let Some(parent_ref) = self.db.nature_data(cur).parent.clone() else { break };
+            let Ok(parent) = lookup_nature(self.def_map, &parent_ref, self.db) else { break };
+            chain.push(self.db.nature_data(parent).name.clone());
+            if parent == nature {
+                self.report(TypeValidationDiagnostic::NatureCycle {
+                    name: name.clone(),
+                    chain,
+                    src,
+                });
+                break;
+            }
+            // a cycle that does not pass through `nature` is reported by its own
+            // members; stop rather than spin
+            if chain.len() > self.def_map[self.def_map.root()].declarations.len() + 2 {
+                break;
+            }
+            cur = parent;
+        }
+
+        // Enhancement-422: `abstol` is an ABSOLUTE TOLERANCE -- the size below
+        // which the solver stops caring about a difference. Zero, negative,
+        // infinite and NaN are all meaningless, all compiled silently, and all
+        // reached the OSDI nature descriptor. Same class as the tolerance
+        // constants Enhancement-396 hardened on the builtins.
+        if data.abstol.is_none()
+            && data.attrs.iter().any(|attr| attr.name == kw::abstol)
+        {
+            self.report(TypeValidationDiagnostic::NonConstantAbstol {
+                name: name.clone(),
+                src,
+            })
+        }
+        if let Some((abstol, _)) = data.abstol {
+            let v = *abstol;
+            if !(v > 0.0) || !v.is_finite() {
+                // formatted here: the diagnostic enum derives Eq and f64 does not
+                self.report(TypeValidationDiagnostic::BadAbstol {
+                    name,
+                    value: format!("{v}").into_boxed_str(),
+                    src,
+                })
+            }
+        }
     }
 
     fn verify_unique_attributes<Attr: From<usize> + PartialEq, Def: Copy>(

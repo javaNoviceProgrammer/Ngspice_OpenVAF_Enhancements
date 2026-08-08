@@ -1116,6 +1116,112 @@ impl Diagnostic for TypeValidationDiagnosticWrapped<'_> {
                     }])
                     .with_message(err.to_string())
             }
+            TypeValidationDiagnostic::UnresolvedNatureRef {
+                ref owner,
+                what,
+                ref referenced,
+                ref err,
+                src,
+            } => {
+                let span = self.parse.to_file_span(self.map.get_syntax(src).range(), self.sm);
+                let (kind, of) = if what == "potential" || what == "flow" {
+                    ("discipline", "attribute")
+                } else {
+                    ("nature", "attribute")
+                };
+                Report::error()
+                    .with_message(format!(
+                        "{kind} '{owner}' names '{referenced}' as its {what}, which is not \
+                         a nature"
+                    ))
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: span.file,
+                        range: span.range.into(),
+                        message: format!("unresolved {what} {of}"),
+                    }])
+                    .with_notes(vec![
+                        err.message(),
+                        match what {
+                            "parent nature" => {
+                                "this used to abort the compiler with a crash report \
+                                 during code generation, whether or not the nature was \
+                                 ever used"
+                                    .to_owned()
+                            }
+                            "potential" | "flow" => format!(
+                                "the discipline has no {what} nature; every access \
+                                 through it was previously reported against the model \
+                                 body instead of here"
+                            ),
+                            _ => format!(
+                                "the {what} was silently discarded, so the nature behaved \
+                                 as though it had none"
+                            ),
+                        },
+                    ])
+            }
+            TypeValidationDiagnostic::NatureCycle { ref name, ref chain, src } => {
+                let span = self.parse.to_file_span(self.map.get_syntax(src).range(), self.sm);
+                let chain =
+                    chain.iter().map(|it| it.to_string()).collect::<Vec<_>>().join(" -> ");
+                Report::error()
+                    .with_message(format!(
+                        "nature '{name}' inherits from itself: its parent chain closes on \
+                         itself"
+                    ))
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: span.file,
+                        range: span.range.into(),
+                        message: "cyclic parent nature".to_owned(),
+                    }])
+                    .with_notes(vec![
+                        format!("info: cycle: {chain}"),
+                        "the cycle was silently broken, leaving the nature as its own base \
+                         nature -- it inherited no units, which changes which disciplines \
+                         it is compatible with"
+                            .to_owned(),
+                    ])
+            }
+            TypeValidationDiagnostic::NonConstantAbstol { ref name, src } => {
+                let span = self.parse.to_file_span(self.map.get_syntax(src).range(), self.sm);
+                Report::error()
+                    .with_message(format!(
+                        "nature '{name}' declares an abstol that is not a real constant"
+                    ))
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: span.file,
+                        range: span.range.into(),
+                        message: "abstol must be a real constant".to_owned(),
+                    }])
+                    .with_notes(vec![
+                        "the value was discarded, so the nature ended up with no abstol at \
+                         all -- which is not what the declaration says"
+                            .to_owned(),
+                    ])
+            }
+            TypeValidationDiagnostic::BadAbstol { ref name, ref value, src } => {
+                let span = self.parse.to_file_span(self.map.get_syntax(src).range(), self.sm);
+                Report::error()
+                    .with_message(format!(
+                        "nature '{name}' declares abstol = {value}, which is not a usable \
+                         absolute tolerance"
+                    ))
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: span.file,
+                        range: span.range.into(),
+                        message: "abstol must be finite and greater than zero".to_owned(),
+                    }])
+                    .with_notes(vec![
+                        "abstol is the size below which the solver stops distinguishing two \
+                         values; zero, negative, infinite and NaN all reach the simulator \
+                         unchallenged"
+                            .to_owned(),
+                    ])
+            }
             TypeValidationDiagnostic::DuplicateDisciplineAttr(ref info) => {
                 let discipline = &self.item_tree[info.src.lookup(self.db.upcast()).id];
                 let labels = self.build_duplicate_item(info, |attr| {

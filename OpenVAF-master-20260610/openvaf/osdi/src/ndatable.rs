@@ -71,25 +71,36 @@ impl OsdiAttribute {
     }
 }
 
+/// Enhancement-422: the `parent` of a nature, as a (type-tag, index) pair.
+///
+/// These three lookups used to `.unwrap()`. Nothing validated the name --
+/// `hir_ty::lower` resolves it with `lookup_nature(..).ok()`, discarding the
+/// error -- so `nature Vd : Vbaze;`, one character wrong, reached here and
+/// aborted the compiler with a crash report, whether or not the nature was ever
+/// used. Enhancement-422 diagnoses the name in `hir_ty`, so a bad reference no
+/// longer arrives; this returns `NATREF_NONE` rather than panicking if one ever
+/// does again.
+///
+/// Note the contrast with `resolve_nature_index` directly below, which
+/// Enhancement-39 already wrote as `unwrap_or(u32::MAX)` for the
+/// `ddt_nature`/`idt_nature` references. Same reference, same mistake -- one
+/// side hardened, the other left to crash.
 fn resolve_nature_ref(nature_ref: Option<&NatureRef>, nda_table: &NDATable) -> (u32, u32) {
-    if let Some(natref) = nature_ref {
-        match natref.kind {
-            NatureRefKind::Nature => (
-                NATREF_NATURE,
-                nda_table.nature_name_map.get(&natref.name.to_string()).unwrap().into_raw(),
-            ),
-            NatureRefKind::DisciplineFlow => (
-                NATREF_DISCIPLINE_FLOW,
-                nda_table.discipline_name_map.get(&natref.name.to_string()).unwrap().into_raw(),
-            ),
-            NatureRefKind::DisciplinePotential => (
-                NATREF_DISCIPLINE_POTENTIAL,
-                nda_table.discipline_name_map.get(&natref.name.to_string()).unwrap().into_raw(),
-            ),
+    let Some(natref) = nature_ref else { return (NATREF_NONE, u32::MAX) };
+    let name = natref.name.to_string();
+    let idx = match natref.kind {
+        NatureRefKind::Nature => nda_table.nature_name_map.get(&name).map(|it| it.into_raw()),
+        NatureRefKind::DisciplineFlow | NatureRefKind::DisciplinePotential => {
+            nda_table.discipline_name_map.get(&name).map(|it| it.into_raw())
         }
-    } else {
-        (NATREF_NONE, u32::MAX)
-    }
+    };
+    let Some(idx) = idx else { return (NATREF_NONE, u32::MAX) };
+    let kind = match natref.kind {
+        NatureRefKind::Nature => NATREF_NATURE,
+        NatureRefKind::DisciplineFlow => NATREF_DISCIPLINE_FLOW,
+        NatureRefKind::DisciplinePotential => NATREF_DISCIPLINE_POTENTIAL,
+    };
+    (kind, idx)
 }
 
 /// Enhancement-39: resolves a `ddt_nature`/`idt_nature` reference to a concrete
