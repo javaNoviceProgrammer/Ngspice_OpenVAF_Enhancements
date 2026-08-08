@@ -352,6 +352,26 @@ impl Diagnostic for SyntaxError {
                 Report::error().with_labels(labels).with_notes(vec![hint.to_owned()])
             }
             // Enhancement-387: the expression-depth guard, reported as itself.
+            SyntaxError::CommaExpr { span } => {
+                let FileSpan { range, file: file_id } = parse.to_file_span(span, &sm);
+                Report::error()
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id,
+                        range: range.into(),
+                        message: "expected ')' -- Verilog-A has no comma expression"
+                            .to_owned(),
+                    }])
+                    .with_notes(vec![
+                        "only the FIRST element was ever used; everything after the comma \
+                         was discarded before it could be checked, so an undeclared name \
+                         or a wrong argument count hiding in one was never reported"
+                            .to_owned(),
+                        "help: if a sum was intended, write '+' -- a comma where an \
+                         operator was meant silently drops the rest of the expression"
+                            .to_owned(),
+                    ])
+            }
             SyntaxError::ExprTooDeep { span } => {
                 let FileSpan { range, file: file_id } = parse.to_file_span(span, &sm);
                 Report::error()

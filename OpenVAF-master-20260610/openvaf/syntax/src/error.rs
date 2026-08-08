@@ -24,6 +24,10 @@ pub enum SyntaxError {
     ExprTooDeep {
         span: TextRange,
     },
+    /// Enhancement-423: a parenthesised comma list used as an expression.
+    CommaExpr {
+        span: TextRange,
+    },
     MissingToken {
         expected: SyntaxKind,
         span: TextRange,
@@ -137,6 +141,7 @@ impl_display! {
         UnexpectedToken {expected,found,..} => "unexpected token {}; expected {}", found, expected;
         SurplusToken {found,..} => "unexpected token {}", found;
         ExprTooDeep{..} => "expression nests too deeply";
+        CommaExpr{..} => "a parenthesised list is not an expression";
         MissingToken{expected, ..} => "unexpected token; expected {}", expected;
         IllegalRootSegment { ..} =>  "$root is only allowed as a prefix";
         BlockItemsAfterStmt{..}  => "declarations in blocks are only allowed before the first stmt";

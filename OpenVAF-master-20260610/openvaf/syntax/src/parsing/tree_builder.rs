@@ -108,6 +108,19 @@ impl<'a> SyntaxTreeBuilder<'a> {
         // token, so it gets its span here and is pushed directly; everything
         // below is written for UnexpectedToken and stays as it was.
         let (expected, found) = match error {
+            // Enhancement-423: same shape as ExprTooDeep -- carries no token, so
+            // it takes its span here and is pushed directly.
+            parser::SyntaxError::CommaExpr => {
+                let span = if self.token_pos + n_trivia == self.tokens.len() {
+                    TextRange::at(self.text_pos, 0.into())
+                } else {
+                    TextRange::at(pos, self.tokens[self.token_pos + n_trivia].span.range.len())
+                };
+                if !mem::replace(&mut self.panic, true) && self.last_error.is_none() {
+                    self.errors.push(SyntaxError::CommaExpr { span });
+                }
+                return;
+            }
             parser::SyntaxError::ExprTooDeep => {
                 let span = if self.token_pos + n_trivia == self.tokens.len() {
                     TextRange::at(self.text_pos, 0.into())

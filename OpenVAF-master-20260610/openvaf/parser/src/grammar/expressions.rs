@@ -2,7 +2,7 @@ use super::*;
 use crate::grammar::call::{call, sys_fun_call};
 use crate::grammar::paths::path;
 
-const EXPR_EXPECTED: &[SyntaxKind] =
+pub(super) const EXPR_EXPECTED: &[SyntaxKind] =
     &[T!['('], T!["'{"], T!['{'], SYSFUN, NAME, LITERAL, T![~], T![!], T![+], T![-]];
 
 pub(super) fn expr(p: &mut Parser) -> Option<CompletedMarker> {
@@ -245,15 +245,23 @@ fn paren_expr(p: &mut Parser) -> CompletedMarker {
         return m.complete(p, PAREN_EXPR);
     }
 
-    while !p.at(EOF) && !p.at(T![')']) {
-        // test tuple_attrs
-        // const A: (i64, i64) = (1, #[cfg(test)] 2);
-        if expr(p).is_none() {
-            break;
-        }
-
-        if !p.at(T![')']) {
-            p.expect(T![,]);
+    // Enhancement-423: exactly ONE expression, not a tuple.
+    //
+    // This loop came from rust-analyzer and still carried its Rust test comment
+    // (`const A: (i64, i64) = (1, #[cfg(test)] 2);`). Verilog-A has no comma
+    // expression, but the loop happily parsed `(a, b, c)`, lowering kept only
+    // the first child, and the rest were discarded before the HIR existed -- so
+    // an undeclared name, a wrong arity or a type error inside one of them was
+    // completely invisible. A `,` written where a `+` was meant, in a
+    // parenthesised sum split across lines, silently dropped a whole term.
+    if expr(p).is_some() && p.at(T![,]) {
+        p.error(crate::SyntaxError::CommaExpr);
+        // consume the rest of the list so the caller resynchronises on `)`
+        // instead of reporting a cascade of unexpected-token errors
+        while p.eat(T![,]) {
+            if expr(p).is_none() {
+                break;
+            }
         }
     }
     p.expect(T![')']);
