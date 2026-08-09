@@ -321,6 +321,8 @@ extern int if_setparam_wildcard_instance(CKTcircuit *ckt, char *param, struct dv
 extern int if_hasparam_wildcard(CKTcircuit *ckt, char *param, int do_model);
 extern GENinstance *if_find_instance_hier(CKTcircuit *ckt, const char *name); /* Enhancement-410 */
 extern GENmodel *if_find_model_hier(CKTcircuit *ckt, const char *name);
+extern int if_setparam_wildcard_model_named(CKTcircuit *ckt, const char *leaf, char *param, struct dvec *val); /* Enhancement-436 */
+extern int if_hasmodel_named(CKTcircuit *ckt, const char *leaf);
 extern char *cp_hier_devname(const char *word); /* Enhancement-428 */
 extern int if_saveparam_wildcard(CKTcircuit *ckt, char *param, int do_model,
                                  double **valsOut, int *nOut);            /* Enhancement-409 */

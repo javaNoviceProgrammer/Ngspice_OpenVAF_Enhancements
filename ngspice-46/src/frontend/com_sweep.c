@@ -205,6 +205,12 @@ static int sw_kind(const char *name)
         if ((mod[0] == '*' && mod[1] == '\0') ||
             (mod[0] == '#' && mod[1] == '*' && mod[2] == '\0'))
             return SW_MODEL;
+        /* Enhancement-436: `@*:rmod[param]` / `@*.rmod[param]` -- one model
+         * name, every instance path including none. Classified as a model knob
+         * so sw_set_inplace issues `altermod`, which is where the matching
+         * lives. */
+        if (mod[0] == '*' && (mod[1] == ':' || mod[1] == '.') && mod[2])
+            return SW_MODEL;
         /* Enhancement-435: ...and a subcircuit-local model written the way the
          * rest of the hierarchy is written. Expansion renames a `.model rmod`
          * inside instance x1 to `x1:rmod` (levels joined with '.', the model

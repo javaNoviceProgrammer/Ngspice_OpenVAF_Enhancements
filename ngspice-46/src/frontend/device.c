@@ -1282,6 +1282,24 @@ alter_set(char *dev, char *param, struct dvec *dv, int do_model)
                 fprintf(cp_err, "Warning: no loaded instance has parameter '%s'.\n",
                         iparam);
         }
+    } else if (dev && dev[0] == '*' && (dev[1] == ':' || dev[1] == '.') && dev[2]) {
+        /* Enhancement-436: `@*:rmod[param]` -- the model called `rmod`, wherever
+         * it lives. `*` stands for the instance path and matches ANY path
+         * INCLUDING NONE, so the top-level card is covered alongside every
+         * `<path>:rmod` copy. The dotted `@*.rmod[param]` is accepted too, since
+         * E-433/435 taught that spelling everywhere else. */
+        const char *leaf = dev + 2;
+        int n = if_setparam_wildcard_model_named(ft_curckt->ci_ckt, leaf, param, dv);
+        if (n == 0) {
+            const char *pn = param ? param : "";
+            if (if_hasmodel_named(ft_curckt->ci_ckt, leaf) > 0)
+                fprintf(cp_err, "Warning: no model named '%s' has parameter "
+                        "'%s'.\n", leaf, pn);
+            else
+                fprintf(cp_err, "Warning: no loaded model is named '%s' "
+                        "(a model inside a subcircuit is flattened to "
+                        "<instance>:%s).\n", leaf, leaf);
+        }
     } else if (dev && dev[0] == '*' && dev[1] == '\0') {
         int n = if_setparam_wildcard(ft_curckt->ci_ckt, param, dv);
         if (n == 0) {
@@ -1295,7 +1313,23 @@ alter_set(char *dev, char *param, struct dvec *dv, int do_model)
                 fprintf(cp_err, "Warning: no loaded model has parameter '%s'.\n", pn);
         }
     } else {
+        /* Enhancement-436: a concrete `@rmod[param]` names the TOP-LEVEL card
+         * only -- subcircuit copies were renamed `<instance-path>:rmod` by
+         * expansion. That is the right behaviour (targeting one card is exactly
+         * what mismatch work needs, and broadening it would silently change
+         * every deck that relies on it), but it is easy to write while meaning
+         * "the model", so say when copies were left untouched. */
+        int others = 0;
+        if (do_model && dev && !strchr(dev, ':') && !strchr(dev, '*'))
+            others = if_hasmodel_named(ft_curckt->ci_ckt, dev);
+
         if_setparam(ft_curckt->ci_ckt, &dev, param, dv, do_model);
+
+        if (others > 1)
+            fprintf(cp_err, "Note: %d models are named '%s' (the top-level card "
+                    "and %d flattened subcircuit cop%s); only the top-level one "
+                    "was changed -- use '@*:%s[...]' for all of them.\n",
+                    others, dev, others - 1, others == 2 ? "y" : "ies", dev);
     }
 }
 

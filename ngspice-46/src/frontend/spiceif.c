@@ -1113,6 +1113,93 @@ if_setparam(CKTcircuit *ckt, char **name, char *param, struct dvec *val, int do_
  * per type decides whether that type's models carry `param`; matching models are
  * then set with `doset` (the same path a plain `altermod @model[param]=` uses).
  * Returns the number of models set. */
+/* Enhancement-436: the model wildcard, narrowed to ONE model name.
+ *
+ * `@*[param]` sets every model that has `param`, which is usually far more than
+ * intended: with an `rmod` in a subcircuit and an unrelated `omod` elsewhere,
+ * both move. The other extreme, `@rmod[param]`, reaches only the top-level card,
+ * because subcircuit expansion renamed every in-subcircuit copy to
+ * `<instance-path>:rmod` -- so a deck with `rmod` in both places silently
+ * adjusts one of them and leaves the instance copies at their old value.
+ *
+ * `@*:rmod[param]` is the missing middle: the model called `rmod`, wherever it
+ * lives. The `*` stands for the instance path and matches ANY path INCLUDING
+ * NONE, so the top-level card is included -- which is the whole point, since a
+ * model usually exists at top level and in subcircuits at once.
+ *
+ * Matching is on the LEAF name: everything after the last ':' if there is one,
+ * the whole name otherwise. That makes it depth-independent -- `rmod`,
+ * `x1:rmod` and `x1.x2:rmod` all match -- without introducing pattern syntax.
+ * Deliberately not a glob: E-269's wildcards are a small fixed token set, and a
+ * mistyped pattern would match nothing silently. */
+static const char *model_leaf(const char *name)
+{
+    const char *c = name ? strrchr(name, ':') : NULL;
+    return c ? c + 1 : name;
+}
+
+
+int
+if_setparam_wildcard_model_named(CKTcircuit *ckt, const char *leaf, char *param,
+                                 struct dvec *val)
+{
+    int typecode, count = 0;
+
+    if (!leaf || !*leaf || !param || !*param || !ckt)
+        return 0;
+
+    for (typecode = 0; typecode < ft_sim->numDevices; typecode++) {
+        IFdevice    *device = ft_sim->devices[typecode];
+        GENinstance *dummy  = NULL;
+        GENmodel    *mod;
+        IFparm      *opt;
+
+        if (!device || !ckt->CKThead[typecode])
+            continue;
+        opt = parmlookup(device, &dummy, param, 1 /*do_model*/, 1 /*inout=set*/);
+        if (!opt)
+            continue;
+        for (mod = ckt->CKThead[typecode]; mod; mod = mod->GENnextModel) {
+            const char *nm = mod->GENmodName;
+            if (!nm || !eq(model_leaf(nm), leaf))
+                continue;
+            doset(ckt, typecode, NULL, mod, opt, val);
+            count++;
+        }
+    }
+
+    /* same mid-run propagation as if_setparam_wildcard below */
+    if (count > 0 && ckt->CKTtime > 0) {
+        int error = CKTtemp(ckt);
+        if (error) {
+            fprintf(stderr, "Error during wildcard model-parameter change!\n");
+            controlled_exit(1);
+        }
+    }
+    return count;
+}
+
+
+/* Enhancement-436: does any loaded model carry this leaf name at all? Used to
+ * tell "no model called that" apart from "that model has no such parameter". */
+int
+if_hasmodel_named(CKTcircuit *ckt, const char *leaf)
+{
+    int typecode, count = 0;
+    if (!leaf || !*leaf || !ckt)
+        return 0;
+    for (typecode = 0; typecode < ft_sim->numDevices; typecode++) {
+        GENmodel *mod;
+        if (!ft_sim->devices[typecode] || !ckt->CKThead[typecode])
+            continue;
+        for (mod = ckt->CKThead[typecode]; mod; mod = mod->GENnextModel)
+            if (mod->GENmodName && eq(model_leaf(mod->GENmodName), leaf))
+                count++;
+    }
+    return count;
+}
+
+
 int
 if_setparam_wildcard(CKTcircuit *ckt, char *param, struct dvec *val)
 {
