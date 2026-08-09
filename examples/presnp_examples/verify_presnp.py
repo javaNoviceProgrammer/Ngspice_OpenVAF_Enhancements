@@ -114,6 +114,32 @@ def cleanup(*names):
             os.remove(p)
 
 
+# Everything this suite writes, in one place. `pre_snp` derives the .va/.osdi --
+# and openvaf's per-codegen-unit objects .o/.o1../.o4 -- from the .s?p basename,
+# so naming the touchstone file with a leading underscore carries the prefix
+# through to every artifact. That matters because the repo's convention is that
+# a leading underscore means "generated": without it these were indistinguishable
+# from tracked inputs in `git status`, and after an interrupted run they simply
+# looked like new source files.
+GENERATED = ["_t.cir", "_o.dat"]
+for _b, _e in (("_resonator", "s2p"), ("_star", "s3p"),
+               ("_ladder4", "s4p"), ("_ladder8", "s8p")):
+    GENERATED += [f"{_b}.{_e}", f"{_b}.va", f"{_b}.osdi", f"{_b}.o"]
+    GENERATED += [f"{_b}.o{_i}" for _i in range(1, 9)]
+
+
+def tidy_all():
+    cleanup(*GENERATED)
+
+
+# Registered so an early exception, a failed check that raises, or a Ctrl-C
+# still leaves the directory clean -- the old cleanup was the last statement in
+# the file and ran only when the suite got that far. The compiler objects were
+# never in the list at all.
+import atexit                                    # noqa: E402
+atexit.register(tidy_all)
+
+
 # ================= 2-port resonant R-L-C =================
 # Same series-R-L-C with shunt caps as the E-199 truth network: a transmission
 # peak the fit must reproduce. pre_snp does convert+compile+load in one command.
@@ -127,7 +153,7 @@ def Y2(f):
 
 
 freqs2 = [10 ** (5 + 4 * k / 300) for k in range(301)]      # 100 kHz .. 1 GHz
-write_snp(os.path.join(HERE, "resonator.s2p"), freqs2, Y2, 2)
+write_snp(os.path.join(HERE, "_resonator.s2p"), freqs2, Y2, 2)
 
 # The original network, built from discretes, for the reference response.
 ACT2 = ("Rser p1 a 5\nL1 a b 1e-7\nCser b p2 1e-11\n"
@@ -138,8 +164,8 @@ NP2 = "N1 p1 p2 0 mm\n.model mm rez\n"   # E-243: explicit ref terminal (0 = gro
 
 def two_port_ac(dut, presnp=False, swap=False):
     if presnp:
-        pre = ("pre_osdi resonator.osdi\npre_snp resonator.s2p rez" if swap
-               else "pre_snp resonator.s2p rez\npre_osdi resonator.osdi")
+        pre = ("pre_osdi _resonator.osdi\npre_snp _resonator.s2p rez" if swap
+               else "pre_snp _resonator.s2p rez\npre_osdi _resonator.osdi")
     else:
         pre = ""
     return run(f"""* 2-port AC
@@ -155,12 +181,12 @@ wrdata _o.dat v(p2)
 """)
 
 
-cleanup("resonator.va", "resonator.osdi")
+cleanup("_resonator.va", "_resonator.osdi")
 ra, _ = two_port_ac(ACT2)
 rn, out = two_port_ac(NP2, presnp=True)
 
-made_va = os.path.exists(os.path.join(HERE, "resonator.va"))
-made_osdi = os.path.exists(os.path.join(HERE, "resonator.osdi"))
+made_va = os.path.exists(os.path.join(HERE, "_resonator.va"))
+made_osdi = os.path.exists(os.path.join(HERE, "_resonator.osdi"))
 check("[command] `pre_snp` reads the .s2p, vector-fits it, writes the .va, and "
       "compiles it to .osdi -- all inside ngspice", made_va and made_osdi,
       f"(.va {'ok' if made_va else 'MISSING'}, .osdi {'ok' if made_osdi else 'MISSING'})")
@@ -185,7 +211,7 @@ else:
 
 # ================= ordering guarantee: pre_osdi listed BEFORE pre_snp =============
 # The deck writes pre_osdi first; pre_snp must still run first so the .osdi exists.
-cleanup("resonator.va", "resonator.osdi")
+cleanup("_resonator.va", "_resonator.osdi")
 rs, out_s = two_port_ac(NP2, presnp=True, swap=True)
 if ra and rs:
     errs = relerr(ra, rs)
@@ -200,7 +226,7 @@ else:
 
 # ================= transient (one model, AC + transient) =========================
 def two_port_tran(dut, presnp=False):
-    pre = "pre_snp resonator.s2p rez\npre_osdi resonator.osdi" if presnp else ""
+    pre = "pre_snp _resonator.s2p rez\npre_osdi _resonator.osdi" if presnp else ""
     return run(f"""* 2-port transient
 Vs in 0 pulse(0 1 5n 0.2n 0.2n 40n 80n)
 Rs in p1 50
@@ -214,7 +240,7 @@ wrdata _o.dat v(p2)
 """)
 
 
-cleanup("resonator.va", "resonator.osdi")
+cleanup("_resonator.va", "_resonator.osdi")
 ta, _ = two_port_tran(ACT2)
 tn, out_t = two_port_tran(NP2, presnp=True)
 if ta and tn:
@@ -253,13 +279,13 @@ def Y3(f):
 
 
 freqs3 = [10 ** (6 + 3 * k / 200) for k in range(201)]
-write_snp(os.path.join(HERE, "star.s3p"), freqs3, Y3, 3)
+write_snp(os.path.join(HERE, "_star.s3p"), freqs3, Y3, 3)
 ACT3 = "Rp1 p1 c 10\nRp2 p2 c 20\nRp3 p3 c 30\nCc c 0 1p\n"
 NP3 = "N1 p1 p2 p3 0 ms\n.model ms star3\n"   # E-243: explicit ref terminal
 
 
 def three_port(dut, presnp=False):
-    pre = "pre_snp star.s3p star3\npre_osdi star.osdi" if presnp else ""
+    pre = "pre_snp _star.s3p star3\npre_osdi _star.osdi" if presnp else ""
     return run(f"""* 3-port AC
 Vs in 0 dc 0 ac 1
 Rs in p1 50
@@ -274,7 +300,7 @@ wrdata _o.dat v(p2) v(p3)
 """)
 
 
-cleanup("star.va", "star.osdi")
+cleanup("_star.va", "_star.osdi")
 a3, _ = three_port(ACT3)
 n3, out3 = three_port(NP3, presnp=True)
 if a3 and n3:
@@ -316,7 +342,7 @@ def Ylad4(f):
 
 
 freqsL4 = [10 ** (6 + 3.5 * k / 160) for k in range(161)]      # 1 MHz .. ~3.2 GHz
-write_snp(os.path.join(HERE, "ladder4.s4p"), freqsL4, Ylad4, 4)
+write_snp(os.path.join(HERE, "_ladder4.s4p"), freqsL4, Ylad4, 4)
 LADSUB = ("Rs1 p1 na 30\nRp1 na 0 150\nCa na 0 2e-12\n"
           "Rs2 p2 nb 30\nRp2 nb 0 150\nCb nb 0 2e-12\n"
           "Rs3 p3 nc 30\nRp3 nc 0 150\nCcc nc 0 2e-12\n"
@@ -326,7 +352,7 @@ NPL4 = "N1 p1 p2 p3 p4 0 mm\n.model mm lad4\n"   # E-243: explicit ref terminal
 
 
 def lad_tran(dut, presnp=False):
-    pre = "pre_snp ladder4.s4p lad4\npre_osdi ladder4.osdi" if presnp else ""
+    pre = "pre_snp _ladder4.s4p lad4\npre_osdi _ladder4.osdi" if presnp else ""
     return run(f"""* 4-port ladder transient
 Vs in 0 pulse(0 1 1n 0.1n 0.1n 4n 8n)
 Rs in p1 50
@@ -342,10 +368,10 @@ wrdata _o.dat v(p2) v(p3)
 """)
 
 
-cleanup("ladder4.va", "ladder4.osdi")
+cleanup("_ladder4.va", "_ladder4.osdi")
 la4, _ = lad_tran(LADSUB)                       # discrete reference
 ln4, outl = lad_tran(NPL4, presnp=True)         # the pre_snp OSDI model
-made_l = os.path.exists(os.path.join(HERE, "ladder4.osdi"))
+made_l = os.path.exists(os.path.join(HERE, "_ladder4.osdi"))
 check("[order] `pre_snp` compiles a 4-port coupled ladder whose fit climbs past two "
       "pole orders (order-selection buffer reuse would double-free before the fix)",
       made_l, "(.osdi ok)" if made_l else "(.osdi MISSING -- pre_snp crashed)")
@@ -398,7 +424,7 @@ def Yladn(f, n):
 NB = 8
 NODES = "abcdefgh"
 freqsL8 = [10 ** (6 + 3.5 * k / 140) for k in range(141)]
-write_snp(os.path.join(HERE, "ladder8.s8p"), freqsL8, lambda f: Yladn(f, NB), NB)
+write_snp(os.path.join(HERE, "_ladder8.s8p"), freqsL8, lambda f: Yladn(f, NB), NB)
 conn8 = " ".join(f"p{i+1}" for i in range(NB))
 loads8 = "".join(f"Rl{i+1} p{i+1} 0 50\n" for i in range(1, NB))
 
@@ -429,19 +455,19 @@ wrdata _o.dat {pr8}
 """)
 
 
-cleanup("ladder8.va", "ladder8.osdi")
+cleanup("_ladder8.va", "_ladder8.osdi")
 t0 = time.time()
-run("* convert 8-port\nRd 1 0 1k\n.control\npre_snp ladder8.s8p lad8\n.endc\n.end\n")
+run("* convert 8-port\nRd 1 0 1k\n.control\npre_snp _ladder8.s8p lad8\n.endc\n.end\n")
 tconv = time.time() - t0
-made8 = os.path.exists(os.path.join(HERE, "ladder8.osdi"))
-nlap = sum(l.count("laplace_nd") for l in open(os.path.join(HERE, "ladder8.va"))) if \
-    os.path.exists(os.path.join(HERE, "ladder8.va")) else 0
+made8 = os.path.exists(os.path.join(HERE, "_ladder8.osdi"))
+nlap = sum(l.count("laplace_nd") for l in open(os.path.join(HERE, "_ladder8.va"))) if \
+    os.path.exists(os.path.join(HERE, "_ladder8.va")) else 0
 check("[scalability] `pre_snp` converts an 8-port coupled network with the fast "
       "vector fit + shared-pole realization (dense O(N^4) pole solve took ~190s before)",
       made8, f"(convert+compile {tconv:.1f}s, {nlap} laplace_nd for {NB} ports)")
 
 a8, _ = ac8(ladsub8())
-n8, _ = ac8("N1 " + conn8 + " 0 mm\n.model mm lad8\n", "pre_osdi ladder8.osdi")   # E-243: +ref
+n8, _ = ac8("N1 " + conn8 + " 0 mm\n.model mm lad8\n", "pre_osdi _ladder8.osdi")   # E-243: +ref
 if made8 and a8 and n8:
     m = min(len(a8), len(n8))
     e8 = 0.0
@@ -457,11 +483,8 @@ else:
     check("[scalability] the 8-port shared-realization device matches in AC", False)
 
 
-# tidy
-cleanup("_t.cir", "resonator.s2p", "resonator.va", "resonator.osdi",
-        "star.s3p", "star.va", "star.osdi",
-        "ladder4.s4p", "ladder4.va", "ladder4.osdi",
-        "ladder8.s8p", "ladder8.va", "ladder8.osdi")
+# tidy -- see tidy_all() above; the atexit hook makes this idempotent.
+tidy_all()
 
 print(f"\n{passed} passed, {failed} failed")
 raise SystemExit(1 if failed else 0)
