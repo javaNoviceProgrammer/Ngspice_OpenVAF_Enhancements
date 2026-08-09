@@ -10,6 +10,7 @@ Author: 1988 Thomas L. Quarles
 #include "ngspice/ifsim.h"
 #include "ngspice/sperror.h"
 #include "ngspice/smpdefs.h"
+#include "ngspice/inpdefs.h"
 #include "ngspice/tfdefs.h"
 
 
@@ -73,6 +74,28 @@ TFanal(CKTcircuit *ckt, int restart)
         SPfrontEnd->IFerrorf(ERR_WARNING,
                              "Transfer function output node %s is not connected"
                              " to any device", job->TFoutName);
+        return E_NOTFOUND;
+    }
+
+    /* Enhancement-429: ...and the same node named by a `.tf` CARD rather than a
+     * .control command. The bounds test above only fires when the invented
+     * node's equation number lands PAST the matrix, which happens on the
+     * command path (the node is created after CKTsetup has sized everything).
+     * A card is parsed BEFORE setup, so its phantom is inside the matrix, the
+     * test never fired, and every unknown output node -- a plain typo, or a
+     * device-internal node that no card can name -- was answered with a
+     * confident `transfer_function = 0.000000e+00` and no diagnostic at all.
+     *
+     * Creating the node at parse time has to stay allowed: a `.tf` card may
+     * legitimately precede the devices that define its nodes, which is
+     * Enhancement-349's case and is pinned in examples/. So the question is not
+     * "does this node exist" but "did anything other than this card ever refer
+     * to it", which is what devRef records. */
+    if (job->TFoutIsV
+        && (CKTnodePhantom(job->TFoutPos) || CKTnodePhantom(job->TFoutNeg))) {
+        SPfrontEnd->IFerrorf(ERR_WARNING,
+                             "Transfer function output node %s does not exist "
+                             "(no device connects to it)", job->TFoutName);
         return E_NOTFOUND;
     }
 

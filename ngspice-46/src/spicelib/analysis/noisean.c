@@ -14,6 +14,7 @@ Modified: 2001 AlansFixes
 #include "ngspice/acdefs.h"
 #include "ngspice/cktdefs.h"
 #include "ngspice/smpdefs.h"
+#include "ngspice/inpdefs.h"
 #include "ngspice/iferrmsg.h"
 #include "ngspice/cpextern.h"
 #include "ngspice/noisedef.h"
@@ -93,6 +94,16 @@ NOISEan(CKTcircuit* ckt, int restart)
         negOutNode > SMPmatSize(ckt->CKTmatrix)) {
         SPfrontEnd->IFerrorf(ERR_WARNING,
             "Noise output node is not connected to any device\n");
+        return(E_NOTFOUND);
+    }
+
+    /* Enhancement-429: as in tfanal.c -- a `.noise` CARD invents its output node
+     * before CKTsetup, so the phantom lands INSIDE the matrix and the bounds
+     * test above cannot see it. devRef says whether anything but the card ever
+     * referred to the node. */
+    if (CKTnodePhantom(job->output) || CKTnodePhantom(job->outputRef)) {
+        SPfrontEnd->IFerrorf(ERR_WARNING,
+            "Noise output node does not exist (no device connects to it)\n");
         return(E_NOTFOUND);
     }
 

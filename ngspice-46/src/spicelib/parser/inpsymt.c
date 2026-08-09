@@ -16,6 +16,7 @@ Author: 1985 Wayne A. Christopher, U. C. Berkeley CAD Group
 #include "ngspice/inpdefs.h"
 #include "ngspice/cpstd.h"
 #include "ngspice/fteext.h"
+#include "ngspice/cktdefs.h"   /* Enhancement-429: CKTnode::devRef */
 #include "inpxx.h"
 
 
@@ -51,6 +52,10 @@ int INPtermInsert(CKTcircuit *ckt, char **token, INPtables * tab, CKTnode **node
         if (!strcmp(*token, t->t_ent)) {
             FREE(*token);
             *token = t->t_ent;
+            /* Enhancement-429: a device card naming this node is what makes it
+             * real -- even if an analysis card invented it first. */
+            if (t->t_node)
+                t->t_node->devRef = 1;
             if (node)
                 *node = t->t_node;
             return (E_EXISTS);
@@ -63,6 +68,8 @@ int INPtermInsert(CKTcircuit *ckt, char **token, INPtables * tab, CKTnode **node
     error = ft_sim->newNode (ckt, &(t->t_node), *token);
     if (error)
         return (error);
+    if (t->t_node)
+        t->t_node->devRef = 1;          /* Enhancement-429 */
     if (node)
         *node = t->t_node;
     t->t_ent = *token;
@@ -98,6 +105,8 @@ int INPmkTerm(CKTcircuit *ckt, char **token, INPtables * tab, CKTnode **node)
         return (E_NOMEM);
     ZERO(t, struct INPnTab);
     t->t_node = *node;
+    if (t->t_node)
+        t->t_node->devRef = 1;          /* Enhancement-429: simulator-made */
     t->t_ent = *token;
     t->t_next = tab->INPtermsymtab[key];
     tab->INPtermsymtab[key] = t;
@@ -129,6 +138,8 @@ int INPgndInsert(CKTcircuit *ckt, char **token, INPtables * tab, CKTnode **node)
     error = ft_sim->groundNode (ckt, &(t->t_node), *token);
     if (error)
         return (error);
+    if (t->t_node)
+        t->t_node->devRef = 1;          /* Enhancement-429: ground is real */
     if (node)
         *node = t->t_node;
     t->t_ent = *token;

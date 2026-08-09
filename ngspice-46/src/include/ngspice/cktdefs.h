@@ -54,6 +54,14 @@ struct CKTnode {
     CKTnode *next;              /* pointer to the next node */
     unsigned int icGiven:1;     /* FLAG ic given */
     unsigned int nsGiven:1;     /* FLAG nodeset given */
+    /* Enhancement-429: was this node ever named by a DEVICE card, or created by
+     * the simulator itself?  Every real creation path sets it; only
+     * inp_analysis_node() -- which invents a node so that a `.tf`/`.sens`
+     * card may legitimately precede the devices defining its nodes -- clears
+     * it. A node still unset once the deck is parsed was named by an analysis
+     * card and by nothing else, i.e. it is a typo, and the analysis would
+     * otherwise report it as a perfectly good 0 V. */
+    unsigned int devRef:1;      /* FLAG named by a device / made by the simulator */
 };
 
 /* defines for node parameters */

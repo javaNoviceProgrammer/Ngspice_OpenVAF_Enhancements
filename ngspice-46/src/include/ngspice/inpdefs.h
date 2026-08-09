@@ -146,6 +146,8 @@ void INPpas2(CKTcircuit *, struct card *, INPtables *, TSKtask *);
  * synthesised from a .control command. Such a card is never deck parsing, so
  * an analysis card naming an unknown node is a typo even before CKTsetup(). */
 extern int INPanalysisCardFromCommand;
+/* Enhancement-429: a node an analysis card invented and nothing else uses. */
+int CKTnodePhantom(CKTnode *node);
 void INPpas3(
         CKTcircuit *, struct card *, INPtables *, TSKtask *, IFparm *, int);
 void INPpas4(CKTcircuit *, INPtables *);

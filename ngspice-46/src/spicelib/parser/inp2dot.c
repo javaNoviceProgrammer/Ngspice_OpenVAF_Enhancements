@@ -58,7 +58,25 @@ inp_analysis_node(void *ckt, char **token, INPtables *tab, CKTnode **node)
     if (c && c->CKTisSetup)
         return E_NOTFOUND;                /* deck parsing is over -- a typo */
     INPtermInsert(c, token, tab, node);   /* card ahead of its own devices */
+    /* Enhancement-429: this node was INVENTED by an analysis card. That is
+     * legitimate while the deck is still being read -- a `.tf` card may sit
+     * ahead of the devices that define its nodes -- but nothing has actually
+     * referenced it yet. Clear the mark that INPtermInsert just set; a later
+     * device card naming the same node sets it again. Whatever is still
+     * unmarked once the deck is parsed was named by an analysis card and by
+     * nothing else, and the analysis would report it as a perfectly good 0 V.
+     * See CKTnodePhantom(). */
+    if (node && *node)
+        (*node)->devRef = 0;
     return OK;
+}
+
+/* Enhancement-429: did an analysis card invent this node and nothing else ever
+ * refer to it? Ground (node 0) is never phantom. */
+int
+CKTnodePhantom(CKTnode *node)
+{
+    return node && node->number != 0 && !node->devRef;
 }
 
 /* Enhancement-426: does a numeric value actually appear next on the card?

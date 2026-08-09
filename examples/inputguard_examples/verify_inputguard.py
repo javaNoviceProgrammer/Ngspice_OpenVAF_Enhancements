@@ -471,8 +471,34 @@ def main():
     OOB = "I1 0 a dc 1m ac 1\nR1 a 0 1k\n"
     rc, out = run("* ig\n" + OOB + ".tf v(nosuch) i1\n.print tf all\n.end\n")
     check("a .tf DECK card on an unstamped node is refused, not answered with heap garbage",
-          "not connected to any device" in out and "3.999110e+252" not in out,
+          ("not connected to any device" in out or "does not exist" in out)
+          and "3.999110e+252" not in out,
           out[-140:].replace("\n", " "))
+
+    # Enhancement-429: the bounds test above only fires when the invented node's
+    # equation number lands PAST the matrix, which happens on the .control
+    # command path. A CARD is parsed before CKTsetup, so its phantom sits INSIDE
+    # the matrix and every unknown output node was answered `0.000000e+00` with
+    # no diagnostic at all. `devRef` records whether anything other than the card
+    # itself ever referred to the node.
+    DIV = "V1 a 0 dc 1\nR1 a b 1k\nR2 b 0 3k\n"
+    for card, label in ((".tf v(nosuch) i1", "a plain typo"),
+                        (".tf v(x1.n1#mid) i1", "a device-internal node")):
+        rc, out = run("* ig\nV1 a 0 dc 1\nR1 a b 1k\nR2 b 0 3k\n"
+                      + card.replace("i1", "v1") + "\n.print tf all\n.end\n")
+        check(f"a .tf CARD naming {label} is refused (was 0.0, silent)",
+              "does not exist" in out and "transfer_function" not in out,
+              out[-140:].replace("\n", " "))
+    rc, out = run("* ig\n" + DIV + ".tf v(b) v1\n.print tf all\n.end\n")
+    check("...while a real node still answers 0.75",
+          "7.500000e-01" in out, out[-120:].replace("\n", " "))
+    rc, out = run("* ig\n.tf v(b) v1\n" + DIV + ".print tf all\n.end\n")
+    check("...and E-349's case -- the card BEFORE its devices -- still answers",
+          "7.500000e-01" in out, out[-120:].replace("\n", " "))
+    rc, out = run("* ig\n" + DIV + ".noise v(nosuch) v1 dec 5 1k 10k\n"
+                  ".control\noption noacct\nrun\n.endc\n.end\n")
+    check("a .noise CARD naming a node that does not exist is refused",
+          "does not exist" in out, out[-120:].replace("\n", " "))
     rc, out = run("* ig\n" + OOB + ".noise v(nosuch) i1 dec 5 1k 10k\n.end\n")
     check("a .noise DECK card on an unstamped node is refused",
           "not connected to any device" in out or "incomplete or empty netlist" in out)
