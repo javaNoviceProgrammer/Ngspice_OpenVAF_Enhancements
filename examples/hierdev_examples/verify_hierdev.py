@@ -182,6 +182,64 @@ def main():
     check("hierarchical NODES keep working (they never had a letter)",
           last_val(out) is not None)
 
+    # ------------------------------------------------------------------
+    # The same asymmetry, one level further in: a `.model` declared INSIDE a
+    # subcircuit. subckt expansion renames it `<instance-path>:<model>` --
+    # modtranslate() builds tprintf("%s:%s", scname, model_name) -- so a model in
+    # x1 becomes `x1:rmod` and one in x1/x2 becomes `x1.x2:rmod`: levels joined by
+    # '.', the model itself by ':'. Nothing else in the hierarchy is spelled that
+    # way, so `@x1.rmod[res]` was answered "no such device or model name" and the
+    # colon had to be discovered. The last '.' IS the instance-path/model
+    # boundary at any depth, so the dotted spelling maps onto the real one.
+    #
+    # Same discipline as the device fallback above: tried only after the exact
+    # instance and model lookups have failed, and skipped entirely for a name that
+    # already contains ':'.
+    print("\nA subcircuit-local .model written with a dot instead of its colon")
+
+    MDECK = "\n".join([
+        "v1 in 0 dc 1", "x1 in out outer", "r2 out 0 1k",
+        ".subckt outer a b", "x2 a b inner", ".ends",
+        ".subckt inner p q", "rx p q rmod", ".model rmod r (res=1000)", ".ends"])
+
+    def mrun(name, ctrl):
+        path = os.path.join(tempfile.gettempdir(), f"hd_mod_{name}.cir")
+        with open(path, "w") as fh:
+            fh.write(f"* hierdev model {name}\n{MDECK}\n.control\noption noacct\n"
+                     f"{ctrl}\n.endc\n.end\n")
+        r = subprocess.run([NGSPICE, "-b", path], capture_output=True, text=True,
+                           timeout=300)
+        return r.stdout + r.stderr
+
+    # v(out) = 1k / (res + 1k):  res=1000 -> 0.5, res=3000 -> 0.25
+    out = mrun("dotted", "op\nprint @x1.x2.rmod[res]")
+    check("[model] the dotted spelling resolves",
+          last_val(out) == 1000.0, str(last_val(out)))
+    out = mrun("colon", "op\nprint @x1.x2:rmod[res]")
+    check("[model] ...to the same model as the real colon spelling",
+          last_val(out) == 1000.0, str(last_val(out)))
+
+    out = mrun("altermod", "op\naltermod @x1.x2.rmod[res]=3000\nop\nprint v(out)")
+    check("[model] altermod drives it, and the circuit follows",
+          last_val(out) is not None and abs(last_val(out) - 0.25) < 1e-9,
+          str(last_val(out)))
+
+    out = mrun("optimize", "optimize -mparam @x1.x2.rmod[res] 1000 100 10000 "
+                           "-analysis op -target v(out) 0.25 -maxiter 40\n"
+                           "print @x1.x2.rmod[res]")
+    check("[model] optimize -mparam reaches it and finds res=3000",
+          "converged" in out and last_val(out) == 3000.0,
+          f"{last_val(out)} {out[-80:]}".replace("\n", " "))
+
+    # and the boundaries: a name matching nothing must still fail, and E-410's
+    # device resolution must not be shadowed by the new model fallback.
+    out = mrun("nomodel", "op\nprint @x1.x2.nosuchmodel[res]")
+    check("[model] a model name matching nothing is still reported",
+          "no such device or model name" in out or "not available" in out)
+    out = mrun("stilldev", "op\nprint @x1.x2.rx[resistance]")
+    check("[model] a hierarchical DEVICE still resolves as a device",
+          last_val(out) == 1000.0, str(last_val(out)))
+
     print(f"\n{passed}/{checks} checks passed")
     return 0 if passed == checks else 1
 

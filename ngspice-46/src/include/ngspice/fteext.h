@@ -320,6 +320,7 @@ extern int if_setparam_wildcard(CKTcircuit *ckt, char *param, struct dvec *val);
 extern int if_setparam_wildcard_instance(CKTcircuit *ckt, char *param, struct dvec *val);  /* Enhancement-269 */
 extern int if_hasparam_wildcard(CKTcircuit *ckt, char *param, int do_model);
 extern GENinstance *if_find_instance_hier(CKTcircuit *ckt, const char *name); /* Enhancement-410 */
+extern GENmodel *if_find_model_hier(CKTcircuit *ckt, const char *name);
 extern char *cp_hier_devname(const char *word); /* Enhancement-428 */
 extern int if_saveparam_wildcard(CKTcircuit *ckt, char *param, int do_model,
                                  double **valsOut, int *nOut);            /* Enhancement-409 */

@@ -689,6 +689,49 @@ if_find_instance_hier(CKTcircuit *ckt, const char *name)
 }
 
 
+/* A `.model` declared inside a subcircuit is renamed by subckt expansion to
+ * `<instance-path>:<model>` -- modtranslate() in subckt.c builds it as
+ * tprintf("%s:%s", scname, model_name), and scname is the instance path, so a
+ * model in x1 becomes `x1:rmod` and one in x1/x2 becomes `x1.x2:rmod`. Levels
+ * are separated by '.', the model itself by ':'.
+ *
+ * Nothing else in the hierarchy is spelled that way. Devices are `@x1.rx[p]`
+ * (Enhancement-410) and nodes are `v(x1.mid)`, so a user who writes the model
+ * the same way -- `@x1.rmod[res]` -- got "no such device or model name" and had
+ * to discover the colon. This maps the dotted spelling onto the real one by
+ * turning the LAST '.' into ':', which is exactly the instance-path/model
+ * boundary at any nesting depth.
+ *
+ * STRICTLY A FALLBACK, and tried after Enhancement-410's: the caller has already
+ * failed the exact instance and model lookups, so every name that resolves today
+ * still resolves to exactly what it does today. A name that already contains ':'
+ * was spelled the real way and was handled by the exact lookup.
+ */
+GENmodel *
+if_find_model_hier(CKTcircuit *ckt, const char *name)
+{
+    GENmodel *mod;
+    char *buf, *dot;
+
+    if (!ckt || !name || !*name)
+        return NULL;
+    if (strchr(name, ':'))
+        return NULL;            /* already the real spelling -- exact lookup ran */
+    buf = copy(name);
+    if (!buf)
+        return NULL;
+    dot = strrchr(buf, '.');
+    if (!dot || !dot[1]) {      /* not hierarchical -- nothing to reconstruct */
+        tfree(buf);
+        return NULL;
+    }
+    *dot = ':';
+    mod = ft_sim->findModel(ckt, buf);
+    tfree(buf);
+    return mod;
+}
+
+
 /* Get pointers to a device, its model, and its type number given the name. If
  * there is no such device, try to find a model with that name
  * device_or_model says if we are referencing a device or a model.
@@ -724,6 +767,13 @@ finddev_special(
     if (*devptr) {
         *device_or_model = 0;
         return (*devptr)->GENmodPtr->GENmodType;
+    }
+
+    /* ...and a subcircuit-local model written with a dot instead of its colon */
+    *modptr = if_find_model_hier(ckt, name);
+    if (*modptr) {
+        *device_or_model = 1;
+        return (*modptr)->GENmodType;
     }
 
     *device_or_model = 2;
@@ -1656,6 +1706,11 @@ finddev(CKTcircuit *ckt, char *name, GENinstance **devptr, GENmodel **modptr)
     *devptr = if_find_instance_hier(ckt, name);
     if (*devptr)
         return (*devptr)->GENmodPtr->GENmodType;
+
+    /* ...and a subcircuit-local model written with a dot instead of its colon */
+    *modptr = if_find_model_hier(ckt, name);
+    if (*modptr)
+        return (*modptr)->GENmodType;
 
     return (-1);
 }
