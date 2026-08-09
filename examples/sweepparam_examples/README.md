@@ -16,7 +16,7 @@ changed shape once they were measured properly, and one was withdrawn outright.
 | 1 | `dc @n1[r] -2000 -1000 500` on `r ... from (0:inf)` | three rows at R = **−2000, −1500, −1000**, rc = 0 |
 | 2 | `dc @n1[k] 0 1 0.25` on `k ... from [0:1]` | five correct rows **plus** a spurious "out of bounds" |
 | 3 | `@(timer(0,1e-8))` over `tran ... 1e-6` | **100** ticks where 101 were due |
-| 4 | `dc @n1[n] 1 4 1` on `parameter integer n` | *"…named "@n1[n]" is not in the circuit"* — every clause false |
+| 4 | `dc @n1[n] 1 4 1` on `parameter integer n` | *"…named "`@n1[n]`" is not in the circuit"* — every clause false |
 
 ## The two that are easy to get wrong
 

@@ -121,10 +121,10 @@ depend on `trtol` being calibrated alike):
 
 | circuit | winner | runner-up |
 | --- | --- | --- |
-| rc_step @181 it | **trap 6.75e−05** | adams3 2.29e−04 |
-| stiff_2scale @312 it | **trap 3.35e−05** | gear 9.92e−05 |
-| diode_clamp @2791 it | **gear 2.65e−03** | adams3 9.93e−03 |
-| rlc_ring @12799 it | **adams3 3.20e−04** | sdirk 1.19e−02 |
+| rc_step `@181` it | **trap 6.75e−05** | adams3 2.29e−04 |
+| stiff_2scale `@312` it | **trap 3.35e−05** | gear 9.92e−05 |
+| diode_clamp `@2791` it | **gear 2.65e−03** | adams3 9.93e−03 |
+| rlc_ring `@12799` it | **adams3 3.20e−04** | sdirk 1.19e−02 |
 
 Trapezoidal or Gear wins three of four. **Adams-3 wins the oscillatory
 non-stiff case by ~100×**, exactly where Adams theory says it should and where

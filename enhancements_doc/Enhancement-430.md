@@ -73,7 +73,7 @@ Warning: .probe accepts v(...), i(...), p(...) or alli -- ignoring ".probe @r1[i
 
 ## Found by
 
-Checking a claim rather than hunting: *".probe rejects @dev[param] outright (even
+Checking a claim rather than hunting: *".probe rejects `@dev[param]` outright (even
 valid ones) with a warning — a capability gap, though the message misspells
 'ignored'."* Both observations were right; the diagnosis was not, and the manual
 settled it. The correct fix was the message, not the behaviour — a case where

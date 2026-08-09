@@ -77,7 +77,7 @@ With PSD `1e-12` sources on a unity-transfer series chain (`sqrt`-PSD amplitude
 | same name, one negated | 1.414e-6 | **0** (anti-phase cancels) |
 | `2*wn(S,"n") + wn(S,"n")` | 2.236e-6 | **3e-6** (linear weights) |
 | same name, two instances | 2.828e-6 | 2.828e-6 (unchanged) |
-| white + flicker, one name | 1.414e-6 @1Hz | **2e-6** (kind-agnostic) |
+| white + flicker, one name | 1.414e-6 `@1Hz` | **2e-6** (kind-agnostic) |
 
 `verify_noisecorr.py`: 7/7 PASS. Full version11 regression: 38/38 suites PASS
 (including the Enhancement-9 noise_table suite, byte-identical results — all
