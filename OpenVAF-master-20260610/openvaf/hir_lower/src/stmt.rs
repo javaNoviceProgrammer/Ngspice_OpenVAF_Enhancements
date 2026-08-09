@@ -345,7 +345,28 @@ impl BodyLoweringCtx<'_, '_, '_> {
         let next = self.ctx.make_select(is_initial, |_, branch| if branch { t0 } else { raw_next });
 
         let abstime = self.ctx.use_param(ParamKind::Abstime);
-        let fired = self.ctx.ins().fge(abstime, next);
+
+        // Enhancement-427: compare with a relative tolerance, not exactly.
+        //
+        // `next` is built by REPEATED ADDITION (`fadd` below, once per fire), so
+        // after N periods it has accumulated N roundings and is a couple of ULP
+        // away from the exact N*period. When a run's `tstop` is an exact
+        // multiple of the period -- the ordinary case, `tran 2n 1u` with a 10 ns
+        // timer -- the schedule lands just PAST tstop and the last event never
+        // fires: 100 ticks instead of 101, silently. Measured for dt = 1e-8,
+        // 2e-8, 3e-8 and 4e-8 (over by 3e-22..6e-22), while 5e-9, 1e-7 and 1e-9
+        // happen to accumulate at or below tstop and were correct -- which is
+        // why it looked sporadic. `@(final_step)` fires at that same instant, so
+        // the timepoint IS reached; only this comparison rejects it.
+        //
+        // 1e-12 relative is ~4 orders of magnitude above the observed drift and
+        // far below any physical timescale (1 ps early on a 1 s period). Written
+        // as a MULTIPLY rather than `next - eps` so that a one-shot timer that
+        // has already fired -- `next` is INFINITY -- stays INFINITY instead of
+        // becoming INF-INF = NaN. A `next` of exactly 0 (t0 = 0) is unmoved.
+        let tol = self.ctx.fconst(1.0 - 1e-12);
+        let threshold = self.ctx.ins().fmul(next, tol);
+        let fired = self.ctx.ins().fge(abstime, threshold);
 
         let rescheduled = if let Some(period) = period {
             let period = self.lower_expr(period);

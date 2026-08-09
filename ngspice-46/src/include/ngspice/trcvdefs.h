@@ -48,6 +48,9 @@ typedef struct {
     int TRCVvType[TRCVNESTLEVEL];   /* type of element being varied */
     int TRCVvParmId[TRCVNESTLEVEL]; /* Enhancement-62: IFparm id for a
                                      * PARAM_CODE (@inst[param]) sweep */
+    int TRCVvParmType[TRCVNESTLEVEL]; /* Enhancement-427: IF_REAL or IF_INTEGER
+                                       * -- decides which member of the IFvalue
+                                       * union DCTsetInstParam writes */
     double TRCVvNow[TRCVNESTLEVEL]; /* Enhancement-62: current value of a
                                      * PARAM_CODE sweep (devices have no
                                      * generic readback field to consult) */

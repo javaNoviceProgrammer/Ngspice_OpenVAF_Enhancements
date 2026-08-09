@@ -41,7 +41,7 @@ static double actval, actdiff;
    cannot be used). */
 static int
 DCTfindInstParam(CKTcircuit *ckt, const char *name, GENinstance **instOut,
-                 int *typeOut, int *parmOut)
+                 int *typeOut, int *parmOut, int *dtypeOut)
 {
     char buf[1024];
     char alt[1026];                     /* Enhancement-410: `<letter>.` + buf */
@@ -105,12 +105,22 @@ DCTfindInstParam(CKTcircuit *ckt, const char *name, GENinstance **instOut,
                         dev = &DEVices[type]->DEVpublic;
                         for (k = 0; dev->instanceParms && k < *dev->numInstanceParms; k++) {
                             IFparm *prm = dev->instanceParms + k;
+                            int vt = prm->dataType & IF_VARTYPES;
+                            /* Enhancement-427: INTEGER instance parameters are
+                             * sweepable too. Only IF_REAL matched before, so
+                             * `dc @n1[n] 1 4 1` over `parameter integer n`
+                             * fell through to E_BADPARM and was reported with
+                             * the generic "not in the circuit" message -- while
+                             * `alter @n1[n]=2.7` and the instance line both set
+                             * the same parameter happily (rounding to 3). */
                             if ((prm->dataType & IF_SET)
-                                && (prm->dataType & IF_VARTYPES) == IF_REAL
+                                && (vt == IF_REAL || vt == IF_INTEGER)
                                 && cieq(prm->keyword, parname)) {
                                 *instOut = inst;
                                 *typeOut = type;
                                 *parmOut = prm->id;
+                                if (dtypeOut)
+                                    *dtypeOut = vt;
                                 return OK;
                             }
                         }
@@ -125,17 +135,68 @@ DCTfindInstParam(CKTcircuit *ckt, const char *name, GENinstance **instOut,
    device (DEVtemperature re-runs per-model/per-instance setup -- for OSDI
    devices that is exactly the parameter-change path `alter` + a fresh
    analysis would take). */
-static void
+/* Enhancement-427: this used to be `void` and threw away BOTH return values.
+ *
+ * The range a Verilog-A model declares -- `parameter real r = 1000 from
+ * (0:inf)` -- is not checked when the value is WRITTEN. It is checked when the
+ * device is set up again, i.e. inside DEVtemperature (OSDItemp ->
+ * setup_instance, which prints "Parameter r is out of bounds!"). Both returns
+ * were discarded, so `dc @n1[r] -2000 -1000 500` printed that message four
+ * times and then published THREE data rows computed at R = -2000, -1500 and
+ * -1000, exiting 0. Every other route to the same parameter refuses it: the
+ * instance line, `alter` and the `sweep` command all abort.
+ *
+ * The test is deliberately "the DEVICE rejected this value", never "the value
+ * looks wrong". A negative resistance is legitimate for a built-in resistor --
+ * resparam.c has an explicit branch for one -- so a sign test here would break
+ * decks that sweep a resistor negative on purpose. Only a device that says no
+ * stops the sweep. */
+static int
 DCTsetInstParam(CKTcircuit *ckt, TRCV *job, int i, double val)
 {
     IFvalue v;
     int type = job->TRCVvElt[i]->GENmodPtr->GENmodType;
+    int err;
 
-    v.rValue = val;
-    DEVices[type]->DEVparam(job->TRCVvParmId[i], &v, job->TRCVvElt[i], NULL);
+    /* Enhancement-427: an INTEGER parameter needs iValue, not rValue -- writing
+     * the wrong union member would hand the device the bit pattern of a double.
+     * Rounding matches what `alter` and the instance line already do (2.7 -> 3). */
+    if (job->TRCVvParmType[i] == IF_INTEGER)
+        v.iValue = (int) floor(val + 0.5);
+    else
+        v.rValue = val;
+    err = DEVices[type]->DEVparam(job->TRCVvParmId[i], &v, job->TRCVvElt[i], NULL);
+    if (err)
+        return err;
     job->TRCVvNow[i] = val;
-    if (DEVices[type]->DEVtemperature)
-        DEVices[type]->DEVtemperature(ckt->CKThead[type], ckt);
+    if (DEVices[type]->DEVtemperature) {
+        err = DEVices[type]->DEVtemperature(ckt->CKThead[type], ckt);
+        if (err)
+            return err;
+    }
+    return OK;
+}
+
+/* Enhancement-427: is this sweep endpoint a whole number? */
+static int
+DCTisWhole(double v)
+{
+    return v == floor(v) && fabs(v) < 2147483000.0;
+}
+
+/* Report a START value the device refused. Used only before the plot is opened
+ * and before any device state has been changed, so there is nothing to restore;
+ * the mid-sweep case exits through osdi_finish instead. The device has already
+ * said WHAT is wrong ("Parameter r is out of bounds!"); this adds which sweep
+ * and which value, which the bare message does not carry. */
+static int
+DCTrejected(TRCV *job, int i, double val)
+{
+    SPfrontEnd->IFerrorf(ERR_WARNING,
+        "DC sweep %d: the device refused %s = %g -- the same value is refused "
+        "on the instance line and by `alter`; sweep not started\n",
+        i + 1, job->TRCVvName[i] ? job->TRCVvName[i] : "?", val);
+    return E_PARMVAL;
 }
 
 
@@ -157,6 +218,13 @@ DCtrCurv(CKTcircuit *ckt, int restart)
     int numNames;
     int firstTime = 1;
     static runDesc *plot = NULL;
+    /* Enhancement-427: a sweep point the device refused aborts the analysis,
+     * but through the restore path below -- returning bare would leave the
+     * instance holding the rejected value, the E-381/E-382/E-385
+     * state-restoration class. */
+    int dctrc = OK;
+    double dct_rejected_val = 0.0;
+    int dct_rejected_lvl = -1;
 
 #ifdef WANT_SENSE2
     long save;
@@ -348,23 +416,62 @@ DCtrCurv(CKTcircuit *ckt, int restart)
         }
 
         /* Enhancement-62: `.dc @inst[param] start stop step` -- sweep any
-           settable real instance parameter of any device (incl. OSDI). */
+           settable real instance parameter of any device (incl. OSDI).
+           Enhancement-427: integer parameters too. */
         if (job->TRCVvName[i] && job->TRCVvName[i][0] == '@') {
             GENinstance *pinst;
-            int ptype, pid;
-            if (DCTfindInstParam(ckt, job->TRCVvName[i], &pinst, &ptype, &pid) == OK) {
+            int ptype, pid, pdtype = IF_REAL;
+            int perr = DCTfindInstParam(ckt, job->TRCVvName[i], &pinst, &ptype,
+                                        &pid, &pdtype);
+            if (perr == OK) {
                 IFvalue old_v;
                 job->TRCVvElt[i] = pinst;
                 job->TRCVvType[i] = PARAM_CODE;
                 job->TRCVvParmId[i] = pid;
+                job->TRCVvParmType[i] = pdtype;
                 if (DEVices[ptype]->DEVask
                     && DEVices[ptype]->DEVask(ckt, pinst, pid, &old_v, NULL) == OK)
-                    job->TRCVvSave[i] = old_v.rValue;
+                    job->TRCVvSave[i] = (pdtype == IF_INTEGER)
+                                            ? (double) old_v.iValue
+                                            : old_v.rValue;
                 else
                     job->TRCVvSave[i] = job->TRCVvStart[i];
                 job->TRCVgSave[i] = 1;
-                DCTsetInstParam(ckt, job, i, job->TRCVvStart[i]);
+                /* Enhancement-427: an INTEGER parameter may only be swept over
+                 * whole numbers. Rounding happens at the DEVparam boundary, but
+                 * the sweep ACCUMULATOR has to stay real (a rounded accumulator
+                 * plus a 0.25 step never advances -- the non-advancing-loop
+                 * class E-362 and E-426 already had to guard here). Allowing a
+                 * fractional sweep would therefore publish duplicate operating
+                 * points under an abscissa that disagrees with the value the
+                 * device actually saw: the `sweep` command does exactly that
+                 * today, writing 0, 0.25, 0.5, 0.75, 1 while the device saw
+                 * 0, 0, 1, 1, 1. Refusing is the honest option. */
+                if (pdtype == IF_INTEGER
+                    && !(DCTisWhole(job->TRCVvStart[i])
+                         && DCTisWhole(job->TRCVvStop[i])
+                         && DCTisWhole(job->TRCVvStep[i]))) {
+                    SPfrontEnd->IFerrorf(ERR_FATAL,
+                        "DC sweep %d: %s is an integer parameter -- start, stop "
+                        "and step must be whole numbers (got %g %g %g)",
+                        i + 1, job->TRCVvName[i], job->TRCVvStart[i],
+                        job->TRCVvStop[i], job->TRCVvStep[i]);
+                    return(E_PARMVAL);
+                }
+                if (DCTsetInstParam(ckt, job, i, job->TRCVvStart[i]) != OK)
+                    return DCTrejected(job, i, job->TRCVvStart[i]);
                 goto found;
+            }
+            /* Enhancement-427: the device WAS found, the parameter was not.
+               Saying "no such source" for that sends the reader looking in the
+               wrong place -- it is the same message E_NODEV gets. */
+            if (perr == E_BADPARM) {
+                SPfrontEnd->IFerrorf (ERR_FATAL,
+                        "DC sweep: %s names a device that exists, but not a "
+                        "sweepable parameter of it (it must be a settable real "
+                        "or integer instance parameter)",
+                        job->TRCVvName[i]);
+                return(E_BADPARM);
             }
         }
 
@@ -512,7 +619,8 @@ DCtrCurv(CKTcircuit *ckt, int restart)
                 RESupdate_conduct((RESinstance *)(job->TRCVvElt[i]), FALSE);
                 DEVices[rcode]->DEVload(job->TRCVvElt[i]->GENmodPtr, ckt);
             } else if (job->TRCVvType[i] == PARAM_CODE) {
-                DCTsetInstParam(ckt, job, i, job->TRCVvStart[i]);
+                if (DCTsetInstParam(ckt, job, i, job->TRCVvStart[i]) != OK)
+                    return DCTrejected(job, i, job->TRCVvStart[i]);
             }
 
         /* Rotate state vectors. */
@@ -721,8 +829,27 @@ DCtrCurv(CKTcircuit *ckt, int restart)
             RESupdate_conduct((RESinstance *)(job->TRCVvElt[i]), FALSE);
             DEVices[rcode]->DEVload(job->TRCVvElt[i]->GENmodPtr, ckt);
         } else if (job->TRCVvType[i] == PARAM_CODE) { /* @inst[param] */
-            DCTsetInstParam(ckt, job, i,
-                            job->TRCVvNow[i] + job->TRCVvStep[i]);
+            double next_ = job->TRCVvNow[i] + job->TRCVvStep[i];
+            /* Enhancement-427: the loop top discards this point when it is past
+             * `stop`, so do NOT hand it to the device first. The sweep has
+             * always computed one value beyond the end -- harmless while
+             * failures were ignored, but it means a sweep that legitimately
+             * ENDS AT the edge of a model's `from` range steps one point
+             * outside it. `parameter real k = 0.5 from [0:1]` with
+             * `.dc @n1[k] 0 1 0.25` printed "Parameter k is out of bounds!"
+             * once even before this enhancement, while producing five correct
+             * rows; refusing that would have broken a valid sweep. The
+             * TEMP_CODE arm just below already declines its own overshoot for
+             * exactly this reason. */
+            if (SGN(job->TRCVvStep[i]) * (next_ - job->TRCVvStop[i])
+                    > DBL_EPSILON * 1e+03) {
+                job->TRCVvNow[i] = next_;      /* advance; the point is dropped */
+            } else if (DCTsetInstParam(ckt, job, i, next_) != OK) {
+                dct_rejected_val = next_;
+                dct_rejected_lvl = i;
+                dctrc = E_PARMVAL;
+                goto osdi_finish;   /* abort THROUGH the restore path */
+            }
         } else if (job->TRCVvType[i] == TEMP_CODE) { /* temperature */
             ckt->CKTtemp += job->TRCVvStep[i];
 
@@ -757,9 +884,13 @@ DCtrCurv(CKTcircuit *ckt, int restart)
 
     /* all done, lets put everything back */
 
-#ifdef OSDI
+/* Enhancement-427: no longer inside #ifdef OSDI. The label was added by E-55 for
+ * the OSDI-only $finish/$stop exit, but the sweep-value rejection below reaches
+ * it from the PARAM_CODE arm, which is not OSDI-gated -- so a --disable-osdi
+ * build failed with "use of undeclared label 'osdi_finish'". Reaching the
+ * restore path is the whole point of jumping here: returning where the
+ * rejection happens would leave the instance holding the refused value. */
 osdi_finish:
-#endif
     for (i = 0; i <= job->TRCVnestLevel; i++)
         if (job->TRCVvType[i] == vcode) {   /* voltage source */
             ((VSRCinstance*)(job->TRCVvElt[i]))->VSRCdcValue = job->TRCVvSave[i];
@@ -778,8 +909,12 @@ osdi_finish:
             CKTtemp(ckt);
         } else if (job->TRCVvType[i] == PARAM_CODE) {
             /* value restored; the parameter stays marked "given" (the
-               generic DEVparam interface has no way to clear that) */
-            DCTsetInstParam(ckt, job, i, job->TRCVvSave[i]);
+               generic DEVparam interface has no way to clear that).
+               Enhancement-427: deliberately NOT checked -- the sweep is over,
+               its results are already published, and failing here would turn a
+               completed analysis into an error. The value being put back was
+               accepted once, so a refusal would itself be the anomaly. */
+            (void) DCTsetInstParam(ckt, job, i, job->TRCVvSave[i]);
         }
 
 #ifdef OSDI
@@ -789,5 +924,15 @@ osdi_finish:
 #endif
     SPfrontEnd->OUTendPlot (plot);
 
-    return(OK);
+    if (dct_rejected_lvl >= 0)
+        SPfrontEnd->IFerrorf(ERR_WARNING,
+            "DC sweep %d: the device refused %s = %g -- the same value is "
+            "refused on the instance line and by `alter`; sweep abandoned "
+            "there\n",
+            dct_rejected_lvl + 1,
+            job->TRCVvName[dct_rejected_lvl]
+                ? job->TRCVvName[dct_rejected_lvl] : "?",
+            dct_rejected_val);
+
+    return(dctrc);
 }
