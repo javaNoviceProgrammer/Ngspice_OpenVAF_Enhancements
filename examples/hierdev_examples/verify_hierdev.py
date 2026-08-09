@@ -240,6 +240,50 @@ def main():
     check("[model] a hierarchical DEVICE still resolves as a device",
           last_val(out) == 1000.0, str(last_val(out)))
 
+    # ------------------------------------------------------------------
+    # Enhancement-435: `sweep` resolves knob names on its OWN path (sw_kind
+    # calls findModel directly) and so did not inherit E-434's dotted-name
+    # fallback, unlike altermod / optimize -mparam / @-readback. The failure was
+    # not a refusal: an unrecognised name falls through to the instance branch,
+    # `alter` reports "no such parameter" for a model parameter, and the sweep
+    # runs on with a knob that never moved -- a full set of points, rc=0, and a
+    # plottable FLAT curve. v(out) = 1k/(res+1k), so a working sweep over
+    # res = 1k,2k,3k must give 0.5, 0.3333, 0.25 and a broken one gives 0.5 x3.
+    print("\nSweeping a subcircuit-local model parameter")
+
+    SWEEPDECK = "\n".join([
+        "* sweep a subckt model param", "V1 in 0 dc 1", "X1 in out sub",
+        "R2 out 0 1k", ".subckt sub a b", "Rx a b rmod",
+        ".model rmod r (res=1000)", ".ends"])
+    NESTDECK = SWEEPDECK.replace("X1 in out sub", "X1 in out outer").replace(
+        ".subckt sub a b", ".subckt outer a b\nX2 a b sub\n.ends\n.subckt sub a b")
+
+    def swept(deck, knob, tag):
+        path = os.path.join(tempfile.gettempdir(), f"hd_sw_{tag}.cir")
+        with open(path, "w") as fh:
+            fh.write(f"{deck}\n.control\noption noacct\n"
+                     f"sweep {knob} 1k 3k 1k -analysis op -output v(out)\n"
+                     f"print v(out)\n.endc\n.end\n")
+        r = subprocess.run([NGSPICE, "-b", path], capture_output=True,
+                           text=True, timeout=300)
+        return rows(r.stdout + r.stderr)
+
+    EXPECT = ["5.000000e-01", "3.333333e-01", "2.500000e-01"]
+    for label, deck, knob in (
+            ("dotted @x1.rmod[res]",       SWEEPDECK, "@x1.rmod[res]"),
+            ("colon  @x1:rmod[res]",       SWEEPDECK, "@x1:rmod[res]"),
+            ("nested @x1.x2.rmod[res]",    NESTDECK,  "@x1.x2.rmod[res]"),
+            ("nested @x1.x2:rmod[res]",    NESTDECK,  "@x1.x2:rmod[res]")):
+        got = swept(deck, knob, label.split()[0] + knob[2:6])
+        check(f"[sweep] {label} actually moves the knob",
+              got == EXPECT, f"{got} (a flat 0.5 x3 means the knob never moved)")
+
+    # a top-level model is unaffected by the new fallback
+    FLAT = "\n".join(["* top-level model", "V1 in 0 dc 1", "Rx in out rmod",
+                       "R2 out 0 1k", ".model rmod r (res=1000)"])
+    check("[sweep] a plain top-level model still sweeps",
+          swept(FLAT, "@rmod[res]", "flat") == EXPECT, str(swept(FLAT, "@rmod[res]", "flat2")))
+
     print(f"\n{passed}/{checks} checks passed")
     return 0 if passed == checks else 1
 

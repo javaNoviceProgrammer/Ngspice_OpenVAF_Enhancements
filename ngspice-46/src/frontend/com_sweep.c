@@ -205,8 +205,22 @@ static int sw_kind(const char *name)
         if ((mod[0] == '*' && mod[1] == '\0') ||
             (mod[0] == '#' && mod[1] == '*' && mod[2] == '\0'))
             return SW_MODEL;
+        /* Enhancement-435: ...and a subcircuit-local model written the way the
+         * rest of the hierarchy is written. Expansion renames a `.model rmod`
+         * inside instance x1 to `x1:rmod` (levels joined with '.', the model
+         * attached with ':'), and Enhancement-433 taught the name funnels to
+         * accept the dotted `@x1.rmod[res]` that users actually type. `sweep`
+         * missed that fix because it does not go through those funnels -- it
+         * calls findModel itself, right here.
+         *
+         * The consequence was worse than a refusal: an unrecognised name falls
+         * through to SW_ALTER, `alter` then reports "no such parameter" for a
+         * MODEL parameter, and the sweep runs on with a knob that never moved --
+         * producing a full set of points, rc=0, and a perfectly plottable FLAT
+         * curve. Same shape as the zero column Enhancement-431 removed. */
         if (*mod && ft_curckt && ft_curckt->ci_ckt &&
-            ft_sim->findModel(ft_curckt->ci_ckt, (IFuid) mod))
+            (ft_sim->findModel(ft_curckt->ci_ckt, (IFuid) mod) ||
+             if_find_model_hier(ft_curckt->ci_ckt, mod)))
             return SW_MODEL;
         return SW_ALTER;
     } else {
