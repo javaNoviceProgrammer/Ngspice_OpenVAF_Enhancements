@@ -1430,6 +1430,39 @@ static void sw_add_bare_output(char **outname, char **outexpr, int *pnout,
 }
 
 
+/* Enhancement-432: the option flags `sweep` itself knows, used to decide where a
+ * variadic `-output` list ends. A leading `-` on its own cannot end the list:
+ * `-v(a)` is a legitimate (negated) output expression and the old single-token
+ * form accepted it, so only a flag this command actually recognizes stops the
+ * scan. A mistyped flag is therefore read as an expression -- and Enhancement-431
+ * then names it in full when it fails to resolve. */
+static int sw_is_optflag(const char *w)
+{
+    return w && (eq(w, "-analysis") || eq(w, "-a") ||
+                 eq(w, "-overlay")  || eq(w, "-ov") ||
+                 eq(w, "-vs")       || eq(w, "-family") ||
+                 eq(w, "-output")   || eq(w, "-o"));
+}
+
+
+/* Enhancement-432: add ONE `-output` token. `name=expr` keeps the given name
+ * verbatim (no bus expansion, so `ph=v(a)` is a name and not a bus base);
+ * anything else goes through the bare form. Caller guarantees the room. */
+static void sw_add_output_token(char **outname, char **outexpr, int *pnout,
+                                const char *tok)
+{
+    const char *eqp = strchr(tok, '=');
+    if (eqp && eqp != tok) {
+        outname[*pnout] = copy(tok);
+        outname[*pnout][eqp - tok] = '\0';
+        outexpr[*pnout] = copy(eqp + 1);
+        (*pnout)++;
+        return;
+    }
+    sw_add_bare_output(outname, outexpr, pnout, tok);
+}
+
+
 /* Guards against re-entrancy: a `.param` knob re-sources the deck (`reset`),
  * which re-runs a `.sweep` card -- that nested invocation must be a no-op or the
  * sweep would recurse forever. */
@@ -1444,6 +1477,7 @@ void com_sweep(wordlist *wl)
      * at. An output that never resolved is a typo, not data, and must not be
      * emitted as a flat zero curve. */
     int outbad[SW_MAXOUT];
+    int outfull = 0;                 /* Enhancement-432: SW_MAXOUT warned once  */
     double *data = NULL;
     int nout = 0, i, k, p, j;
     int save_optimizing = ft_optimizing;
@@ -1544,23 +1578,28 @@ void com_sweep(wordlist *wl)
                 nknob++;
             }
         } else if (eq(w, "-output") || eq(w, "-o")) {
-            if (wl->wl_next && nout < SW_MAXOUT) {
-                /* accept `name=expr` (clean vector name) or a bare `expr` */
-                char *tok = wl->wl_next->wl_word, *eqp = strchr(tok, '=');
-                if (eqp && eqp != tok) {
-                    /* explicit name=expr: use the given name verbatim, no bus expansion */
-                    outname[nout] = copy(tok);
-                    outname[nout][eqp - tok] = '\0';
-                    outexpr[nout] = copy(eqp + 1);
-                    nout++;
-                } else {
-                    /* bare token: expand a bus range `base[lo:hi]`, else add as-is */
-                    sw_add_bare_output(outname, outexpr, &nout, tok);
+            /* Enhancement-432: consume every expression up to the next option
+             * flag, so `-output v(a) v(b)` records both. The usage line has
+             * always advertised `-output <expr> ...`, but only the first token
+             * was ever read and the rest fell through to `unrecognized token`,
+             * which left the sweep running with a silently shorter output list. */
+            int ntok = 0;
+            wl = wl->wl_next;
+            while (wl && wl->wl_word && !sw_is_optflag(wl->wl_word)) {
+                if (nout < SW_MAXOUT) {
+                    /* `name=expr` (clean vector name) or a bare `expr` */
+                    sw_add_output_token(outname, outexpr, &nout, wl->wl_word);
+                } else if (!outfull) {
+                    fprintf(cp_err, "sweep: at most %d outputs "
+                                    "(ignoring '%s' and anything after it)\n",
+                            SW_MAXOUT, wl->wl_word);
+                    outfull = 1;
                 }
-                wl = wl->wl_next->wl_next;
-            } else {
-                wl = wl->wl_next ? wl->wl_next->wl_next : NULL;
+                ntok++;
+                wl = wl->wl_next;
             }
+            if (!ntok)
+                fprintf(cp_err, "sweep: %s needs an expression\n", w);
         } else {
             fprintf(cp_err, "sweep: unrecognized token '%s'\n", w);
             wl = wl->wl_next;
@@ -1682,7 +1721,12 @@ void com_sweep(wordlist *wl)
      * so point p = outer_combo * nv0 + inner_index) --- */
     sweep_active = 1;                                /* block re-source recursion */
     ft_optimizing = TRUE;                            /* silence per-point chatter */
-    for (k = 0; k < nout; k++)
+    /* Enhancement-432: zero the WHOLE array, not just the `nout` entries known
+     * here. With no `-output` the outputs are auto-collected inside the point
+     * loop below, so `nout` is still 0 at this line and every auto-collected
+     * output inherited stack garbage -- which E-431 then read as a resolve
+     * failure and used to drop perfectly good curves. */
+    for (k = 0; k < SW_MAXOUT; k++)
         outbad[k] = 0;                           /* Enhancement-431 */
 
     for (p = 0; p < npt; p++) {

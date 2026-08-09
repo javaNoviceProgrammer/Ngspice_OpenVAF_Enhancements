@@ -186,6 +186,110 @@ def main():
           "never resolved" not in out and "zed" in " ".join(vecs),
           f"{vecs} {out[-120:]}".replace("\n", " "))
 
+    # ---------------------------------------------------------------------
+    # Enhancement-432: `-output` is variadic. The usage line has always read
+    # `[-output <expr> ...]`, but only the FIRST token after the flag was read;
+    # every one after it fell through to the `unrecognized token` branch and the
+    # sweep ran on with a silently shorter output list.
+    print("\nEnhancement-432: -output takes every expression up to the next flag")
+
+    out, vecs = sweepout("sweep @rs[resistance] 1k 3k 1k -output v(d) i(v1)\ndisplay",
+                         "m_two")
+    check("[E-432] a second -output expression is recorded",
+          "v(d)" in vecs and "i(v1)" in vecs, str(vecs))
+    check("[E-432] ...and is not reported as an unrecognized token",
+          "unrecognized token" not in out, out[-160:].replace("\n", " "))
+
+    # the variadic form must agree exactly with the one-flag-each form it replaces
+    o1, _ = sweepout("sweep @rs[resistance] 1k 3k 1k -output v(d) i(v1)\n"
+                     "print v(d) i(v1)", "m_var")
+    o2, _ = sweepout("sweep @rs[resistance] 1k 3k 1k -output v(d) -output i(v1)\n"
+                     "print v(d) i(v1)", "m_rep")
+    nums = lambda s: re.findall(r"-?\d+\.\d+e[-+]\d+", s)
+    check("[E-432] variadic and repeated-flag forms give identical data",
+          nums(o1) == nums(o2) and len(nums(o1)) >= 6,
+          f"{nums(o1)[:3]} vs {nums(o2)[:3]}")
+
+    out, vecs = sweepout("sweep @rs[resistance] 1k 3k 1k -output vd=v(d) vin=v(in)\ndisplay",
+                         "m_named")
+    check("[E-432] name=expr works for every element of the list",
+          "vd" in vecs and "vin" in vecs, str(vecs))
+
+    # THE reason a bare `-` cannot end the list: a negated expression looks
+    # exactly like a flag, and the old single-token form accepted it.
+    out, vecs = sweepout("sweep @rs[resistance] 1k 3k 1k -output -v(d)\ndisplay", "m_neg")
+    check("[E-432] a negated expression is still an expression, not a flag",
+          "-v(d)" in vecs, str(vecs))
+
+    # ...so the list is ended by the flags `sweep` actually knows, and each of
+    # them must still be parsed as a flag when it follows an output list.
+    out, vecs = sweepout("sweep @rs[resistance] 1k 3k 1k -output v(d) "
+                         "-vs @rl[resistance] 1meg 2meg 1meg\ndisplay", "m_vs")
+    check("[E-432] -vs ends the list and is honoured as an outer knob",
+          sum(1 for v in vecs if v.startswith("v(d)__rl_resistance")) == 2, str(vecs))
+
+    out, vecs = sweepout("sweep @rs[resistance] 1k 3k 1k -output v(d) i(v1) "
+                         "-analysis op\ndisplay", "m_an")
+    check("[E-432] -analysis ends the list",
+          "v(d)" in vecs and "i(v1)" in vecs and "unrecognized token" not in out,
+          str(vecs))
+
+    out, vecs = sweepout("sweep @rs[resistance] 1k 3k 1k -output v(d) i(v1) "
+                         "-overlay\ndisplay", "m_ov")
+    check("[E-432] -overlay ends the list",
+          "v(d)" in vecs and "i(v1)" in vecs and "unrecognized token" not in out,
+          str(vecs))
+
+    # a flag directly after `-output` is a missing expression, not an output
+    # named `-vs`: the outer knob must still take effect.
+    out, vecs = sweepout("sweep @rs[resistance] 1k 3k 1k -output "
+                         "-vs @rl[resistance] 1meg 2meg 1meg\ndisplay", "m_empty")
+    check("[E-432] an empty -output is diagnosed",
+          "-output needs an expression" in out, out[-160:].replace("\n", " "))
+    check("[E-432] ...and the flag after it is not swallowed as an output",
+          any("rl_resistance" in v for v in vecs), str(vecs))
+
+    # Enhancement-267's bus expansion has to survive being a NON-FIRST element:
+    # `base[lo:hi]` becomes one output per index, so a three-wide range in second
+    # position must produce three separately-named outputs (here they resolve to
+    # nothing, which is exactly what makes each expanded name visible).
+    out, vecs = sweepout("sweep @rs[resistance] 1k 3k 1k -output v(d) nosuchbus[0:2]\n"
+                         "display", "m_bus")
+    check("[E-432] a bus range expands from a non-first list position",
+          all("nosuchbus[%d] never resolved" % i in out for i in range(3)),
+          out[-200:].replace("\n", " "))
+    check("[E-432] ...without costing the element before it", "v(d)" in vecs, str(vecs))
+
+    # ---------------------------------------------------------------------
+    # Enhancement-432, second half: `outbad[]` was zeroed over the `nout` known
+    # at parse time, but with no `-output` at all the outputs are auto-collected
+    # INSIDE the point loop, so `nout` was still 0 there and every auto-collected
+    # output inherited stack garbage. Enhancement-431 then read that garbage as a
+    # resolve failure -- warning about good curves and DELETING the ones whose
+    # garbage happened to reach the point count. This is the default invocation,
+    # so it needs a deck wide enough for the garbage to land on something.
+    print("\nEnhancement-432: auto-collected outputs must not inherit stack garbage")
+
+    wide = ["auto-collect width", "V1 n0 0 dc 1"]
+    wide += ["R%d n%d n%d 1k" % (i, i - 1, i) for i in range(1, 25)]
+    wide += ["Rend n24 0 1k", ".control", "option noacct",
+             "sweep @r1[resistance] 1k 2k 1k -analysis op", "display",
+             ".endc", ".end"]
+    p = os.path.join(HERE, "_sg_autocollect.cir")
+    with open(p, "w") as f:
+        f.write("\n".join(wide) + "\n")
+    r = subprocess.run([NGSPICE, "-b", os.path.basename(p)], cwd=HERE,
+                       capture_output=True, text=True, timeout=60, errors="replace")
+    out = r.stdout + r.stderr
+    got = [l.split(":")[0].strip() for l in out.splitlines()
+           if ":" in l and ("real" in l or "notype" in l)]
+    missing = [n for n in ("n%d" % i for i in range(25)) if n not in got]
+    check("[E-432] a plain sweep records every node it collected",
+          not missing, "missing %s" % missing if missing else "25 nodes + scale")
+    check("[E-432] ...and reports no resolve failure against them",
+          "never resolved" not in out and "did not resolve" not in out,
+          out[-200:].replace("\n", " "))
+
     for junk in os.listdir(HERE):
         if junk.startswith("_sg_"):
             os.remove(os.path.join(HERE, junk))
