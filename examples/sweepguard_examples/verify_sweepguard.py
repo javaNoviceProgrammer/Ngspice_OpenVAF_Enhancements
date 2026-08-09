@@ -144,6 +144,48 @@ def main():
     check("ordinary sweeps are unaffected", not bad,
           "%d analyses run clean" % len(NORMAL) if not bad else str(bad))
 
+
+    # ---------------------------------------------------------------------
+    # Enhancement-431: a `sweep -output` naming something that does not exist
+    # used to fill a whole column with zeros -- a clean, plottable, entirely
+    # fictional flat line -- behind nothing louder than a `checkvalid` warning.
+    # sw_eval_expr() returns 0.0 on failure, which is indistinguishable from an
+    # expression that is legitimately zero; Enhancement-385 hit the same thing
+    # for knob restore and added the same `ok` out-param.
+    print("\nEnhancement-431: a -output that never resolves is reported, not zero-filled")
+
+    def sweepout(ctl, tag):
+        rc, out = run(ctl, tag)
+        vecs = [l.split(":")[0].strip() for l in out.splitlines()
+                if ":" in l and ("real" in l or "notype" in l)]
+        return out, vecs
+
+    out, vecs = sweepout("sweep @rs[resistance] 1k 3k 1k -output v(d)\ndisplay", "o_ok")
+    check("[E-431] a real -output is recorded", "v(d)" in vecs, str(vecs))
+    check("[E-431] ...and draws no complaint", "never resolved" not in out)
+
+    out, vecs = sweepout("sweep @rs[resistance] 1k 3k 1k -output v(nosuch)\ndisplay", "o_bad")
+    check("[E-431] a bad -output is reported by name",
+          "sweep -output v(nosuch) never resolved" in out,
+          out[-160:].replace("\n", " "))
+    check("[E-431] ...and its fictional zero column is NOT recorded",
+          "v(nosuch)" not in vecs, str(vecs))
+
+    out, vecs = sweepout("sweep @rs[resistance] 1k 3k 1k -output v(d) -output v(nosuch) "
+                         "-output i(v1)\ndisplay", "o_mix")
+    check("[E-431] a bad -output does not cost the good ones",
+          "v(d)" in vecs and "i(v1)" in vecs and "v(nosuch)" not in vecs, str(vecs))
+
+    # a legitimately ZERO output must still be recorded -- the whole point of
+    # distinguishing "did not resolve" from "resolved to zero"
+    # `v(d)-v(d)` resolves fine and is exactly 0.0 -- the case the old code could
+    # not tell apart from a name that does not exist, since both returned 0.0.
+    out, vecs = sweepout("sweep @rs[resistance] 1k 3k 1k -output zed=v(d)-v(d)\n"
+                         "display\nprint zed", "o_zero")
+    check("[E-431] an output that legitimately evaluates to ZERO is still recorded",
+          "never resolved" not in out and "zed" in " ".join(vecs),
+          f"{vecs} {out[-120:]}".replace("\n", " "))
+
     for junk in os.listdir(HERE):
         if junk.startswith("_sg_"):
             os.remove(os.path.join(HERE, junk))

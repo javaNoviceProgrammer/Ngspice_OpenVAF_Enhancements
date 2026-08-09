@@ -91,14 +91,25 @@ static double sw_num(const char *w)
 
 
 /* evaluate an ngspice expression on the current plot, returning its LAST value
- * (magnitude if complex), or 0 on failure */
-static double sw_eval_expr(const char *expr)
+ * (magnitude if complex), or 0 on failure.
+ *
+ * Enhancement-431: `*ok` (may be NULL) reports whether the expression actually
+ * RESOLVED, because the returned 0.0 cannot say so -- it is indistinguishable
+ * from an expression that is legitimately zero. Enhancement-385 hit exactly this
+ * and added the same out-param to sw_read_knob() for the knob-restore case; a
+ * `-output` that never resolves has the same problem and a worse symptom, since
+ * it fills a whole column with zeros and plots as a clean flat line. */
+static double sw_eval_expr_ok(const char *expr, int *ok)
 {
     struct pnode *pn = ft_getpnames_from_string(expr, TRUE);
     double f = 0.0;
+    if (ok)
+        *ok = 0;
     if (pn) {
         struct dvec *v = ft_evaluate(pn);
         if (v && v->v_length >= 1) {
+            if (ok)
+                *ok = 1;
             if (isreal(v))
                 f = v->v_realdata[v->v_length - 1];
             else
@@ -112,6 +123,12 @@ static double sw_eval_expr(const char *expr)
         free_pnode(pn);
     }
     return f;
+}
+
+/* The historic spelling: every caller that only wants the value. */
+static double sw_eval_expr(const char *expr)
+{
+    return sw_eval_expr_ok(expr, NULL);
 }
 
 /* Enhancement-189: linear interpolation of (x[],y[]) at xq, flat outside the
@@ -1423,6 +1440,10 @@ void com_sweep(wordlist *wl)
     char *analysis = NULL, *scname = NULL;
     const char *swplotname = "sweep";  /* Enhancement-367: the real plot name */
     char *outname[SW_MAXOUT], *outexpr[SW_MAXOUT];
+    /* Enhancement-431: how many sweep points each -output failed to resolve
+     * at. An output that never resolved is a typo, not data, and must not be
+     * emitted as a flat zero curve. */
+    int outbad[SW_MAXOUT];
     double *data = NULL;
     int nout = 0, i, k, p, j;
     int save_optimizing = ft_optimizing;
@@ -1661,6 +1682,9 @@ void com_sweep(wordlist *wl)
      * so point p = outer_combo * nv0 + inner_index) --- */
     sweep_active = 1;                                /* block re-source recursion */
     ft_optimizing = TRUE;                            /* silence per-point chatter */
+    for (k = 0; k < nout; k++)
+        outbad[k] = 0;                           /* Enhancement-431 */
+
     for (p = 0; p < npt; p++) {
         int idx[SW_MAXKNOB], rem = p, anyDeck = 0, deckChanged = 0, resetNeeded;
         double curval[SW_MAXKNOB];
@@ -1731,8 +1755,14 @@ void com_sweep(wordlist *wl)
                 ovy[(size_t) p * (size_t) nout + (size_t) k] = yk;
                 data[(size_t) p * (size_t) nout + (size_t) k] =
                     (nk > 0 && yk) ? yk[nk - 1] : 0.0;   /* last value from waveform */
+                if (nk <= 0 || !yk)
+                    outbad[k]++;                         /* Enhancement-431 */
             } else {
-                data[(size_t) p * (size_t) nout + (size_t) k] = sw_eval_expr(outexpr[k]);
+                int okk = 0;
+                data[(size_t) p * (size_t) nout + (size_t) k] =
+                    sw_eval_expr_ok(outexpr[k], &okk);
+                if (!okk)
+                    outbad[k]++;                         /* Enhancement-431 */
             }
         }
     }
@@ -1757,7 +1787,24 @@ void com_sweep(wordlist *wl)
                         (short) (VF_REAL | VF_PERMANENT), nv0, NULL);
         for (i = 0; i < nv0; i++) sc->v_realdata[i] = kvals[0][i];
         vec_new(sc);                                 /* first permanent -> scale */
-        for (k = 0; k < nout; k++)
+        for (k = 0; k < nout; k++) {
+            /* Enhancement-431: an output that resolved at NO sweep point is a
+             * typo, not data. It used to be emitted anyway, as a column of
+             * zeros -- a clean, plottable, entirely fictional flat line, behind
+             * nothing louder than a `checkvalid` warning. Say so, and do not
+             * emit the curve. A PARTIAL failure still gets its curve: the points
+             * that did resolve are real, and dropping them would lose data. */
+            if (outbad[k] >= npt) {
+                fprintf(cp_err,
+                        "Error: sweep -output %s never resolved -- no such "
+                        "vector; that curve is not recorded.\n", outexpr[k]);
+                continue;
+            }
+            if (outbad[k] > 0)
+                fprintf(cp_err,
+                        "Warning: sweep -output %s did not resolve at %d of %d "
+                        "points; those entries are zero.\n",
+                        outexpr[k], outbad[k], npt);
             for (c = 0; c < ncomb; c++) {
                 int idx[SW_MAXKNOB], cc = c;
                 struct dvec *v;
@@ -1770,6 +1817,7 @@ void com_sweep(wordlist *wl)
                              * (size_t) nout + (size_t) k];
                 vec_new(v);
             }
+        }
     }
     if (nknob == 1)
         /* Enhancement-367: name the plot the user can actually select. This
