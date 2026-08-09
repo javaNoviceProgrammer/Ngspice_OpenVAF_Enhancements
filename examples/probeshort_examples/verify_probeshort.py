@@ -214,6 +214,72 @@ def check_controlled_sources():
     check("L017 says the probe shorts the branch",
           all("shorts it" in l for l in l017))
 
+    check_probe_diagnostic()
+
+
+
+def check_probe_diagnostic():
+    """Enhancement-430: what `.probe` says when it refuses a token.
+
+    `.probe` and `.save` are deliberately different mechanisms, not two
+    spellings of one thing. Per the manual (11.7.1) `.probe` MEASURES a current
+    by placing a voltage source in series with the device's node -- which is why
+    its results come out as `<inst>#branch` -- while `@device[param]` is read out
+    of the device, needs no extra node, and is a `.save` item (11.7.3 describes
+    `.options savecurrents` as generating `.save @r1[i]` lines).
+
+    So the refusal is correct and stays. What was wrong was the message: it named
+    neither the accepted forms nor the right tool, printed TWICE for one bad
+    token, and misspelled "ignored" as "ingnored".
+    """
+    print("\nEnhancement-430: the .probe refusal names the accepted forms and the right tool")
+
+    def run_probe(card):
+        path = os.path.join(HERE, "_probe_msg.cir")
+        with open(path, "w") as fh:
+            fh.write(f"""* probe message
+v1 a 0 dc 1
+r1 a b 1k
+r2 b 0 3k
+{card}
+.tran 1u 5u
+.control
+run
+.endc
+.end
+""")
+        r = subprocess.run([NGSPICE, "-b", path], capture_output=True, text=True,
+                           timeout=120)
+        os.remove(path)
+        return (r.stdout or "") + (r.stderr or "")
+
+    out = run_probe(".probe @r1[i]")
+    check("an @device[param] token is refused exactly ONCE",
+          out.count("Warning: .probe accepts") == 1,
+          f"{out.count('Warning: .probe accepts')} warnings")
+    check("...the message names what .probe does accept",
+          "v(...), i(...), p(...) or alli" in out)
+    check("...and points at the tool that handles it",
+          ".save @r1[i]" in out and "savecurrents" in out,
+          out[-200:].replace("\n", " "))
+    check("...echoing the card as the user wrote it, not as '*probe'",
+          '".probe @r1[i]"' in out and '"*probe' not in out)
+    check('the misspelling "ingnored" is gone', "ingnored" not in out)
+
+    out = run_probe(".probe nonsense")
+    check("a non-@ bad token is refused once, without the .save hint",
+          out.count("Warning: .probe accepts") == 1
+          and "belongs to .save" not in out)
+
+    # the forms .probe is FOR must stay silent and keep working
+    for card, vec in ((".probe i(r1)", "r1#branch"),
+                      (".probe alli", "r1#branch"),
+                      (".probe v(b)", None)):
+        out = run_probe(card)
+        check(f"`{card}` draws no warning", "Warning: .probe accepts" not in out)
+        if vec:
+            check(f"`{card}` still produces {vec}", vec in out,
+                  out[-160:].replace("\n", " "))
 
 if __name__ == "__main__":
     sys.exit(main())

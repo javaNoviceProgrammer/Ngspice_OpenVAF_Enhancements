@@ -24,6 +24,44 @@ static char* get_terminal_name(char* element, char* numberstr, NGHASHPTR instanc
 static char* get_terminal_number(char* element, char* numberstr);
 static int setallvsources(struct card* tmpcard, NGHASHPTR instances, char* instname, int numnodes, bool haveall, bool power);
 
+/* Enhancement-430: say what `.probe` actually accepts, and where an
+ * `@device[param]` belongs.
+ *
+ * The old text was "Warning: Strange parameter in line %s, ingnored" -- it named
+ * neither the accepted forms nor the right tool, and it printed TWICE for one
+ * bad token (the type test below warns and advances, then the `!nextnode` test
+ * warns again on the wreckage).
+ *
+ * `.probe` and `.save` are deliberately different mechanisms, not two spellings
+ * of one thing, and the message now says so rather than looking like an
+ * oversight. Per the manual (11.7.1) `.probe` MEASURES a current by placing a
+ * voltage source in series with the device's node, which is why its results
+ * appear as `<inst>#branch`; `@device[param]` is read out of the device
+ * instead, needs no extra node, and is a `.save` item (11.7.3, where
+ * `.options savecurrents` is described precisely as generating `.save @r1[i]`
+ * lines). So a token starting with '@' gets pointed at the tool that handles
+ * it, not merely refused. */
+static void
+probe_reject_token(const char *line, const char *tok)
+{
+    /* The wordlist holds the card in its consumed form, `*probe ...`; echo it
+     * back the way the user wrote it. */
+    const char *shown = line;
+    if (shown && *shown == '*')
+        shown++;
+    fprintf(stderr,
+            "Warning: .probe accepts v(...), i(...), p(...) or alli -- ignoring "
+            "\".%s\"\n", shown);
+    if (tok && *tok == '@')
+        fprintf(stderr,
+                "    `@device[param]` is read from the device rather than measured "
+                "with an added\n"
+                "    source, so it belongs to .save: use `.save %s`, or "
+                "`.options savecurrents`\n"
+                "    for every device terminal current.\n", tok);
+}
+
+
 static int check_for_nodes(char* instance, int numnodes);
 
 /* Find any line starting with .probe: assemble all parameters like
@@ -118,15 +156,22 @@ void inp_probe(struct card* deck)
         }
 
         tmpstr = skip_ws(tmpstr);
-        if (!strchr("vipVIP", *tmpstr)) {
-            fprintf(stderr, "Warning: Strange parameter in line %s, ingnored\n", wltmp->wl_word);
-            tmpstr = nexttok(tmpstr);
-        }
-        nextnode = gettok_char(&tmpstr, ')', TRUE, FALSE);
+        {
+            /* Enhancement-430: one message per bad token, not two. */
+            bool rejected = FALSE;
 
-        if (haveall == FALSE && !nextnode) {
-            fprintf(stderr, "Warning: Strange parameter in line %s, ingnored\n", wltmp->wl_word);
-            continue;
+            if (!strchr("vipVIP", *tmpstr)) {
+                probe_reject_token(wltmp->wl_word, tmpstr);
+                rejected = TRUE;
+                tmpstr = nexttok(tmpstr);
+            }
+            nextnode = gettok_char(&tmpstr, ')', TRUE, FALSE);
+
+            if (haveall == FALSE && !nextnode) {
+                if (!rejected)
+                    probe_reject_token(wltmp->wl_word, tmpstr);
+                continue;
+            }
         }
 
         while (nextnode && (*nextnode != '\0')) {

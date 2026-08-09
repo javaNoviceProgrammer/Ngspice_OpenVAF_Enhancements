@@ -1472,7 +1472,7 @@ static struct inp_read_t inp_read(FILE* fp, int call_depth, const char* dir_name
 
         if (ciprefix(".hdl", buffer)) {
             if (!hdlwarn) {
-                fprintf(cp_err, "Warning: Dot command .hdl is not supported, ingnored\n");
+                fprintf(cp_err, "Warning: Dot command .hdl is not supported, ignored\n");
                 fprintf(cp_err, "    line no. %d, %s", line_number, buffer);
                 fprintf(cp_err, "    file %s\n", file_name);
                 fprintf(cp_err, "    This message will be posted only once!\n\n");
@@ -1483,7 +1483,7 @@ static struct inp_read_t inp_read(FILE* fp, int call_depth, const char* dir_name
         }
         if (ciprefix(".biaschk", buffer)) {
             if (!biaswarn) {
-                fprintf(cp_err, "Warning: Dot command .biaschk is not supported, ingnored\n");
+                fprintf(cp_err, "Warning: Dot command .biaschk is not supported, ignored\n");
                 fprintf(cp_err, "    This message will be posted only once!\n\n");
                 biaswarn = TRUE;
             }

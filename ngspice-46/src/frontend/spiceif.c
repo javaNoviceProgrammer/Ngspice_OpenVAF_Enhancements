@@ -2106,7 +2106,7 @@ void com_snsave(wordlist *wl)
 #ifdef XSPICE
     if (ckt->CKTadevFlag == 1) {
         fprintf(cp_err, "Warning: snsave not implemented for XSPICE A devices.\n");
-        fprintf(cp_err, "    Command 'snsave' will be ingnored!\n");
+        fprintf(cp_err, "    Command 'snsave' will be ignored!\n");
         return;
     }
 #endif

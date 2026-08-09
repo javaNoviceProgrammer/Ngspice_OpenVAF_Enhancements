@@ -91,7 +91,7 @@ void com_optran(wordlist* wl) {
     }
     else if (!ft_curckt && !dataset && wl == NULL) {
         fprintf(stderr, "Warning: syntax error with command 'optran'!\n");
-        fprintf(stderr, "    Command ingnored\n");
+        fprintf(stderr, "    Command ignored\n");
         return;
     }
     else if (ft_curckt && !dataset && wl == NULL) {

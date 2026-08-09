@@ -703,7 +703,7 @@ inp_spsource(FILE *fp, bool comfile, char *filename, bool intfile)
         }
 #endif
         /* Process each command, except 'option' which is assembled
-           in a list and ingnored here */
+           in a list and ignored here */
 
         for (dd = deck; dd; dd = ld) {
             ld = dd->nextcard;
