@@ -1,0 +1,58 @@
+# An `@token` outside a code span is rendered by GitHub as a user MENTION: it
+# links a real account, lists it under "Contributors" on a release page, and
+# emails the owner. Every `@token` this project writes is a SPICE accessor
+# (`@r1[i]`, `@x1.rmod[res]`) or a shorthand for "at N" (`@181 it`) -- never a
+# person -- so any unquoted one is a mistake. Enhancements 419, 427 and 430 each
+# shipped one and notified an uninvolved stranger before this check existed.
+#
+# TWO TRIGGERS, because the two places it can go wrong are different. Repository
+# Markdown is caught on push; a RELEASE BODY never exists in the repository at
+# all -- it is passed to `gh release create --notes-file` from outside -- so it
+# has to be checked from the release event itself.
+name: check for accidental @-mentions
+
+on:
+  push:
+    branches: [main]
+    paths: ['**.md', 'docs/check_mentions.py', '.github/workflows/check-mentions.yml']
+  pull_request:
+    paths: ['**.md', 'docs/check_mentions.py', '.github/workflows/check-mentions.yml']
+  release:
+    types: [published, edited]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  markdown:
+    if: github.event_name != 'release'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - name: scan tracked Markdown
+        run: python3 docs/check_mentions.py
+
+  release-notes:
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - name: scan the release body
+        # The body is untrusted text: it goes through the environment, never
+        # through ${{ }} interpolation into the shell, which would let its
+        # contents run as script.
+        env:
+          BODY: ${{ github.event.release.body }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          printf '%s' "$BODY" | python3 docs/check_mentions.py --stdin || {
+            echo "::error title=Release $TAG mentions a GitHub user::Edit the notes and re-check: gh release edit $TAG --notes-file <fixed>"
+            exit 1
+          }
