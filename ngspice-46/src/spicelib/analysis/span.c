@@ -416,8 +416,23 @@ SPan(CKTcircuit* ckt, int restart)
 
     /* start at beginning */
     if (job->SPsaveFreq == 0 || restart) {
-        if (job->SPnumberSteps < 1)
-            job->SPnumberSteps = 1;
+        /* Enhancement-426: these two were silent. An inverted range produced an
+         * EMPTY frequency vector with no diagnostic, and a non-positive point
+         * count was clamped to 1 -- `sp dec 0 1k 100k` quietly ran 3 points
+         * where 21 were asked for. `.ac` and `.noise` now both report the same
+         * two mistakes; sp had no validation at all. `<`, not `<=`: nine cards
+         * in examples/ are `lin 1 1meg 1meg`, a legitimate single frequency. */
+        if (job->SPstopFreq < job->SPstartFreq) {
+            fprintf(stderr, "ERROR: SP stop frequency %g is less than the "
+                    "start frequency %g\n",
+                    job->SPstopFreq, job->SPstartFreq);
+            return(E_PARMVAL);
+        }
+        if (job->SPnumberSteps < 1) {
+            fprintf(stderr, "ERROR: SP number of points is invalid, must be "
+                    "greater than zero\n");
+            return(E_PARMVAL);
+        }
 
         switch (job->SPstepType) {
 

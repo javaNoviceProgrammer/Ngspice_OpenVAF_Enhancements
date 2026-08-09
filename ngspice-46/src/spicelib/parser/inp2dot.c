@@ -31,7 +31,21 @@ Modified: 2000 AlansFixes
  *
  * Deck order still has to work -- a .tf card may sit ahead of the devices that
  * define its nodes -- so creating is left alone while the circuit is not yet
- * set up. Once it is, deck parsing is over and an unknown name is a typo. */
+ * set up. Once it is, deck parsing is over and an unknown name is a typo.
+ *
+ * Enhancement-426: CKTisSetup was the wrong proxy for "deck parsing is over".
+ * It is false for the FIRST analysis of a .control session -- nothing has run,
+ * so CKTsetup() has not run either -- and the typo was still invented as a
+ * node there. `tf v(nosuch) v1` as the first command returned a confident
+ * transfer_function of 0, `tf v(a,nosuch) v1` returned exactly 1.0, `sens
+ * v(nosuch)` printed every sensitivity as -0.0 and `noise v(nosuch) ...`
+ * reported onoise_total = 0. The same typo after any `op` was diagnosed
+ * correctly, which is what hid this.
+ *
+ * A card synthesised by if_run() is by construction NOT deck parsing, whatever
+ * CKTsetup() has or has not done, so that path now says so explicitly. */
+int INPanalysisCardFromCommand = 0;
+
 static int
 inp_analysis_node(void *ckt, char **token, INPtables *tab, CKTnode **node)
 {
@@ -39,10 +53,33 @@ inp_analysis_node(void *ckt, char **token, INPtables *tab, CKTnode **node)
 
     if (INPtermSearch(c, token, tab, node) == E_EXISTS)
         return OK;                        /* the ordinary case: a real node */
+    if (INPanalysisCardFromCommand)
+        return E_NOTFOUND;                /* typed at a command -- a typo */
     if (c && c->CKTisSetup)
         return E_NOTFOUND;                /* deck parsing is over -- a typo */
     INPtermInsert(c, token, tab, node);   /* card ahead of its own devices */
     return OK;
+}
+
+/* Enhancement-426: does a numeric value actually appear next on the card?
+ *
+ * The tests this replaces were written as
+ *     (*line != '.' && !isdigit(*line)) || (*line == '.' && !isdigit(line[1]))
+ * which has no notion of a sign, so a value that WAS written down but was
+ * negative -- `.ac dec 10 -1k 100k` -- was classified as MISSING and quietly
+ * replaced by a default. That is the one reading under which the substitution
+ * looks reasonable, and it is why a negative start frequency was never
+ * reported. A leading '+' or '-' is part of the number. */
+static int
+inp_value_present(const char *s)
+{
+    while (*s == ' ' || *s == '\t')
+        s++;
+    if (*s == '+' || *s == '-')
+        s++;
+    if (isdigit_c(*s))
+        return 1;
+    return (*s == '.' && isdigit_c(s[1]));
 }
 
 /* Report an analysis card that names a node which does not exist, and abandon
@@ -228,6 +265,7 @@ dot_ac(char *line, CKTcircuit *ckt, INPtables *tab, struct card *current,
     int which;			/* which analysis we are performing */
     char *steptype;		/* ac analysis, type of stepping function */
     bool pdef = FALSE;  /* issue a warning if default parameters are used */
+    bool missing = FALSE; /* Enhancement-426: this value was not written down */
     char* mline = line; /* for debug printout */
     double startval, stopval;
 
@@ -249,32 +287,51 @@ dot_ac(char *line, CKTcircuit *ckt, INPtables *tab, struct card *current,
     GCA(INPapName, (ckt, which, foo, steptype, &ptemp));
     tfree(steptype);
 
+    /* Enhancement-426: a value that is present but out of range used to be
+     * REPLACED by a default, so ngspice ran a different sweep than the one
+     * asked for and said only "assumes default parameter(s)". `ac dec 10 100k
+     * 1k` silently became 1e5..1e8 (31 points), `ac dec 10 -1k 100k` became
+     * 1..1e5 (51 points). .tran diagnoses each of its bad values by name, and
+     * this card already does so for one case ("AC startfreq <= 0"), so the
+     * remaining three are errors now too.
+     *
+     * A value that is MISSING is a different matter and still defaults: that
+     * is the documented convenience for a truncated card, and pdef below
+     * still reports it -- now naming what was supplied. */
     parm = INPgetValue(ckt, &line, IF_INTEGER, tab); /* number of points */
     if (parm->iValue < 1) {
-        pdef = TRUE;
-        parm->iValue = 10;
+        LITERR("AC number of points is invalid, must be greater than zero.\n");
+        return (0);
     }
     GCA(INPapName, (ckt, which, foo, "numsteps", parm));
 
-    if((*line != '.' && !isdigit(*line)) || (*line == '.' && !isdigit(*(line+1))))
-        pdef = TRUE;
+    /* `missing` is per value: a truncated card still defaults, a value that is
+     * WRITTEN DOWN and out of range is an error. */
+    missing = !inp_value_present(line);
     parm = INPgetValue(ckt, &line, IF_REAL, tab);	/* fstart */
     startval = parm->rValue;
     if (startval < 0) {
-        pdef = TRUE;
+        if (!missing) {
+            LITERR("AC start frequency is invalid, must not be negative.\n");
+            return (0);
+        }
         startval = parm->rValue = 1.;
     }
     GCA(INPapName, (ckt, which, foo, "start", parm));
+    pdef = missing;
 
-    if((*line != '.' && !isdigit(*line)) || (*line == '.' && !isdigit(*(line+1))))
-        pdef = TRUE;
+    missing = !inp_value_present(line);
     parm = INPgetValue(ckt, &line, IF_REAL, tab);	/* fstop */
     stopval = parm->rValue;
     if (stopval < startval) {
-        pdef = TRUE;
+        if (!missing) {
+            LITERR("AC stop frequency is invalid, must not be less than the start frequency.\n");
+            return (0);
+        }
         parm->rValue = 1000. * startval;
     }
     GCA(INPapName, (ckt, which, foo, "stop", parm));
+    pdef = pdef || missing;
 
     if (pdef) {
         fprintf(stderr, "Warning, ngspice assumes default parameter(s) for ac simulation\n");

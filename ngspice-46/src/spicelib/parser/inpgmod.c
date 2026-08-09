@@ -208,7 +208,30 @@ create_model(CKTcircuit *ckt, INPmodel *modtmp, INPtables *tab)
             /* no instance parameter default for level and multiplier */
             /* just grab the number and throw away */
             /* since we already have that info from pass1 */
-            INPgetValue(ckt, &line, IF_REAL, tab);
+            IFvalue *thrown = INPgetValue(ckt, &line, IF_REAL, tab);
+
+            /* Enhancement-426: `m` written on a .model card is discarded here,
+             * silently, while EVERY other instance parameter on a .model card
+             * DOES become an instance default -- and for an OSDI model the
+             * other spelling of the same slot, `_mfactor=`, works. Measured:
+             * `.model nm nres(r=2k m=3)` gives @n1[m] = 1.0 and no message,
+             * `.model nm nres(r=2k _mfactor=3)` gives 3.0 and 3x the current.
+             *
+             * The discard is NOT changed -- making it work would silently
+             * multiply any deck that has carried a stray `m=` for years, which
+             * is far wider than the evidence. It is only made audible, in the
+             * style nport uses for this same parameter. `level` stays silent:
+             * it is genuinely consumed in pass 1. */
+            if (strcmp(parm, "m") == 0 &&
+                find_instance_parameter("m", device) != NULL)
+                fprintf(stderr,
+                        "Warning: %s: `m` on a .model card is ignored; the "
+                        "multiplier is an instance parameter -- write it on "
+                        "the instance line%s.\n",
+                        device->name,
+                        device->registry_entry
+                            ? " (or as `_mfactor` on the model card)" : "");
+            NG_IGNORE(thrown);
         
         } else {
 

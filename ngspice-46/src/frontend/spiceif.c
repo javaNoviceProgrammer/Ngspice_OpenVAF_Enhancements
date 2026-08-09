@@ -330,7 +330,14 @@ if_run(CKTcircuit *ckt, char *what, wordlist *args, INPtables *tab)
 
         /*CDHW ci_curTask and ci_specTask point to the interactive task AAA CDHW*/
 
+        /* Enhancement-426: this card was synthesised above from a .control
+         * command, so it is not deck parsing and a node it names must already
+         * exist -- see inp_analysis_node() in inp2dot.c. CKTisSetup cannot
+         * stand in for that: it is still 0 when this is the session's first
+         * analysis, which is exactly when the check was being skipped. */
+        INPanalysisCardFromCommand = 1;
         INPpas2(ckt, &deck, tab, ft_curckt->ci_specTask);
+        INPanalysisCardFromCommand = 0;
 
         if (deck.error) {
             fprintf(cp_err, "Error: %sin   %s\n\n", deck.error, deck.line);

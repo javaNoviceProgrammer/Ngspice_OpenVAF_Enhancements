@@ -186,6 +186,19 @@ DCop(CKTcircuit *ckt, int notused)
         /* Enhancement-53: an operating point is both the first and the last
            point of its analysis -- fire `@(final_step)` blocks. */
         OSDIfinalStep(ckt);
+
+        /* Enhancement-426: report a deferred $finish/$stop here too. Unlike
+         * .ac and .noise the request is NOT acted on: an operating point is a
+         * single point, there is no sweep left to truncate, and the solution
+         * has already been computed and dumped -- discarding it would delete a
+         * legitimate result. Saying nothing at all, which is what happened
+         * before, left the user's explicit stop request invisible. */
+        {
+            int osdi_req = OSDIpendingRequests(ckt);
+            if (osdi_req & (OSDI_REQ_FINISH | OSDI_REQ_STOP))
+                fprintf(stdout, "\nNote: %s requested by a Verilog-A device during the operating point; the operating point is complete and is reported.\n",
+                        (osdi_req & OSDI_REQ_FINISH) ? "$finish" : "$stop");
+        }
 #endif
     } else {
          fprintf(stderr,"error: circuit reload failed.\n");

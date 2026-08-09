@@ -34,9 +34,29 @@ int INPmakeMod(char *token, int type, struct card *line)
        modtabhash = nghash_init(NGHASH_MIN_SIZE);
        nghash_unique(modtabhash, TRUE);
    }
-   /* If the model is already there, just return. */
-   else if (nghash_find(modtabhash, token))
+   /* If the model is already there, just return -- but say so.
+    *
+    * Enhancement-426: two `.model` cards with the same name were silently
+    * reduced to one and the FIRST card won: `.model dm d(is=1e-14)` followed by
+    * `.model dm d(is=1e-9)` gave the 1e-14 answer with no diagnostic, and
+    * reversing the two cards changed the result. The "model type mismatch"
+    * warning elsewhere is NOT a duplicate detector -- it checks the INSTANCE
+    * line's device letter. WARNING, not error: three of ngspice's own shipped
+    * example decks carry byte-identical duplicate `.model` cards (harmless
+    * copy-paste), while two others carry duplicates with DIFFERENT values where
+    * the second is plainly the intended one and is silently discarded. House
+    * precedent is the osdi loader's "device is already registered; keeping the
+    * existing device". */
+   else if (nghash_find(modtabhash, token)) {
+       INPmodel *dup = (INPmodel *) nghash_find(modtabhash, token);
+       fprintf(stderr,
+               "Warning: model \"%s\" is already defined%s; keeping the first "
+               "definition and ignoring the later one.\n",
+               token,
+               (dup && dup->INPmodType != type)
+                   ? " with a DIFFERENT device type" : "");
        return (OK);
+   }
 
    /* Model name was not already in model table. Therefore stick
       it in the front of the model table, also into the model hash table.

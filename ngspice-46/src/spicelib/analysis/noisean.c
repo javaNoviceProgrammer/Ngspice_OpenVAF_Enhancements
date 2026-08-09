@@ -13,6 +13,7 @@ Modified: 2001 AlansFixes
 #include "ngspice/ngspice.h"
 #include "ngspice/acdefs.h"
 #include "ngspice/cktdefs.h"
+#include "ngspice/smpdefs.h"
 #include "ngspice/iferrmsg.h"
 #include "ngspice/cpextern.h"
 #include "ngspice/noisedef.h"
@@ -83,6 +84,32 @@ NOISEan(CKTcircuit* ckt, int restart)
 
     posOutNode = (job->output)->number;
     negOutNode = (job->outputRef)->number;
+
+    /* Enhancement-426: as in tfanal.c -- an output node that no device stamped
+     * has an equation number past the end of CKTrhsOld/CKTirhsOld. ASAN reports
+     * a heap-buffer-overflow read at noisean.c:465 for it. The input SOURCE is
+     * already checked a few lines below; this is the output half. */
+    if (posOutNode > SMPmatSize(ckt->CKTmatrix) ||
+        negOutNode > SMPmatSize(ckt->CKTmatrix)) {
+        SPfrontEnd->IFerrorf(ERR_WARNING,
+            "Noise output node is not connected to any device\n");
+        return(E_NOTFOUND);
+    }
+
+    /* Enhancement-426: an inverted range published onoise_total = 0.0 rather
+     * than nothing -- the sweep loop below never executed, so data->outNoiz
+     * was still at its initialiser when the Integrated Noise plot was opened.
+     * A script or a .meas reading onoise_total saw a clean zero, not an error.
+     * This sits beside two neighbouring checks that ARE precise, which is what
+     * makes the omission a defect. `<`, not `<=`: equal endpoints are a
+     * legitimate single-frequency noise measurement, handled just below, and
+     * four decks in examples/ use them. */
+    if (job->NstopFreq < job->NstartFreq) {
+        SPfrontEnd->IFerrorf(ERR_WARNING,
+            "Noise stop frequency %g is less than the start frequency %g\n",
+            job->NstopFreq, job->NstartFreq);
+        return(E_PARMVAL);
+    }
 
     if (job->NnumSteps < 1) {
         SPfrontEnd->IFerrorf(ERR_WARNING,

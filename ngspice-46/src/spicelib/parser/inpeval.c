@@ -119,6 +119,16 @@ INPevaluate(char **line, int *error, int gobble)
     /* now look for "E","e",etc to indicate an exponent */
     if ((*here == 'E') || (*here == 'e') || (*here == 'D') || (*here == 'd')) {
 
+        /* Enhancement-426: remember where the marker was. If no exponent digit
+         * follows it, this is not an exponent at all and the marker has to go
+         * back to being ordinary trailing text -- src/ngspice.txt:499 says
+         * "letters immediately following a number that are not scale factors
+         * are ignored". Swallowing it instead let the NEXT letter be read as a
+         * scale factor, so `10Emitter` came out as 1.000000e-02 (the `m` taken
+         * as milli) and `1em` as 1.000000e-03, both contradicting that rule. */
+        char *expmark = here;
+        int expdigits = 0;
+
         /* have an exponent, so skip the e */
         here++;
 
@@ -132,8 +142,26 @@ INPevaluate(char **line, int *error, int gobble)
         }
 
         while (isdigit_c(*here)) {
-            expo2 = 10 * expo2 + *here - '0';
+            /* Enhancement-426: saturate rather than wrap. expo2 is a plain int,
+             * so `1e2147483648` was signed overflow -- undefined behaviour that
+             * happened to yield pow(10, INT_MIN) == 0, and `1e21474836480`
+             * wrapped to exactly 0 and returned the bare mantissa. Both were
+             * silent. 100000 is far outside the double range, so no
+             * representable value changes; the digits are still consumed so
+             * `here` lands correctly, and the finite-but-huge exponent then
+             * trips the representability check below with a real message.
+             * Deliberately NOT clamped to 308: that would turn an overflow into
+             * a plausible finite answer, the mistake E-361/362 recorded. */
+            if (expo2 < 100000)
+                expo2 = 10 * expo2 + *here - '0';
             here++;
+            expdigits++;
+        }
+
+        if (expdigits == 0) {
+            here = expmark;     /* not an exponent -- ignorable trailing text */
+            expsgn = 1;
+            expo2 = 0;
         }
     }
 
@@ -192,14 +220,46 @@ INPevaluate(char **line, int *error, int gobble)
         break;
     }
 
-    if (gobble) {
-        FREE(token);
-    } else {
-        *line = here;
-    }
+    /* Enhancement-426: a netlist literal that overflows a double was returned
+     * as +-inf -- `r1 in a 1e400` made a resistor an open circuit in silence --
+     * and `0e400` produced NaN, after which the OP failed five levels away with
+     * "Dynamic gmin stepping failed" and printed nan for every node.
+     *
+     * This product has already ruled on exactly this twice: Enhancement-425
+     * refuses `r = 1e309;` in Verilog-A source and Enhancement-396 refuses
+     * `1e400` in a $table_model data file, both because a LITERAL that cannot
+     * be represented is a mis-written constant. A netlist literal is the same
+     * mistake. Underflow stays untouched, as E-425 also decided: `1e-400` is
+     * 0.0 and `1e-320` is a subnormal, and both are defined by IEEE 754. */
+    {
+        double result = sign * mantis *
+                        pow(10.0, (double) (expo1 + expsgn * expo2));
 
-    return (sign * mantis *
-            pow(10.0, (double) (expo1 + expsgn * expo2)));
+        if (!isfinite(result)) {
+            fprintf(stderr,
+                    "Error: '%s' is not a representable number (overflows to "
+                    "%s)\n",
+                    token, (result != result) ? "NaN" : "infinity");
+            *error = 1;
+            /* back out the 'gettok' exactly as the "just a sign" branch above
+             * does, so an unrepresentable literal is refused by the same route
+             * as any other malformed value at the same call site -- otherwise
+             * `1e400` merely warned and fell through to the device's
+             * value-not-given default while `abc` and `--5` aborted. */
+            if (gobble)
+                FREE(token);
+            *line = tmpline;
+            return (0.0);
+        }
+
+        if (gobble) {
+            FREE(token);
+        } else {
+            *line = here;
+        }
+
+        return result;
+    }
 }
 
 

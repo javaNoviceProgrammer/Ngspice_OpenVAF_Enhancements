@@ -205,16 +205,21 @@ def run_deck(txt):
     os.remove(p)
     return r.stdout + r.stderr
 
-# a driven diode rectifier -> harmonics with clearly non-trivial phase
+# a driven diode rectifier -> harmonics with clearly non-trivial phase.
+# Enhancement-426: the oscillator node here read `1`, which is not a node of this
+# circuit (its nodes are in/a/out/0). ngspice invented it, and the PSS retained
+# op-point self-check had been printing "osc-node swing [0, 0]" -- a flat zero --
+# ever since, unnoticed because this check only asserts that the card auto-runs.
+# E-426 refuses the phantom node, which is what surfaced it. The node is `out`.
 _diode = ("* e210\nV1 in 0 SIN(0 1 1meg)\nR1 in a 100\nD1 a out DMOD\n"
           "Rl out 0 1k\n.model DMOD D(IS=1e-12 N=1.2)\n")
 
-a = run_deck(_diode + ".pss 1meg 20u 1 1024 8 50 5m uic\n.end\n")
+a = run_deck(_diode + ".pss 1meg 20u out 1024 8 50 5m uic\n.end\n")
 check("[E-210] `.pss` dot-card auto-runs in batch (no `.control run` needed)",
       "Convergence reached" in a and "no simulations run" not in a,
       "did not auto-run in batch")
 
-b = run_deck(_diode + ".pss 1meg 20u 1 1024 8 50 5m uic\n.control\n"
+b = run_deck(_diode + ".pss 1meg 20u out 1024 8 50 5m uic\n.control\n"
              "print vm(out) vp(out)\n.endc\n.end\n")
 rowvals = {}
 for line in b.splitlines():

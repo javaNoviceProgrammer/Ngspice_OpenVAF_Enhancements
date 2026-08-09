@@ -156,6 +156,24 @@ ACan(CKTcircuit* ckt, int restart)
         error = CKTload(ckt);
         if (error) return(error);
 
+#ifdef OSDI
+        /* Enhancement-426: E-55 defers $finish/$stop to an analysis boundary
+         * and E-56 taught the NOISE analysis to honour them at its operating
+         * point -- but .ac was never given the same check, so a model that
+         * explicitly asked the simulation to stop had its request dropped in
+         * SILENCE and the whole frequency sweep ran to completion (10 of 10
+         * points, rc=0, nothing on stdout or stderr). Same block as
+         * noisean.c's, same return convention. */
+        {
+            int osdi_req = OSDIpendingRequests(ckt);
+            if (osdi_req & (OSDI_REQ_FINISH | OSDI_REQ_STOP)) {
+                fprintf(stdout, "\nNote: %s requested by a Verilog-A device during the AC operating point; aborting the AC analysis.\n",
+                        (osdi_req & OSDI_REQ_FINISH) ? "$finish" : "$stop");
+                return (osdi_req & OSDI_REQ_FINISH) ? OK : E_PAUSE;
+            }
+        }
+#endif
+
         error = CKTnames(ckt, &numNames, &nameList);
         if (error) return(error);
 

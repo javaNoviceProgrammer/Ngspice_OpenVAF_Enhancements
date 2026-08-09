@@ -4,6 +4,29 @@ Author: 1985 Thomas L. Quarles
 Modified: 2000 AlansFixes
 **********/
 
+/* Enhancement-426: several numeric options were stored with no range check at
+ * all, and every consequence was then misattributed. A tolerance <= 0 makes the
+ * convergence test unsatisfiable and the run blames the CIRCUIT ("Dynamic gmin
+ * stepping failed", "Timestep too small"); an ambient temperature at or below
+ * absolute zero becomes a NEGATIVE Kelvin value and ckttemp.c turns it straight
+ * into a negative thermal voltage, so a Verilog-A model reads $vt = -0.0195 V
+ * and returns numbers like -5.4e+20 A without one word of diagnostic.
+ *
+ * Warn-and-keep, never clamp and never fail the run: that is what this file
+ * already does for out-of-range options (OPT_MAXORD clamps+warns, OPT_TRGAMMA
+ * keeps the old value and warns, OPT_ENH_RSHUNT ignores and warns), and there
+ * is no defensible value to clamp a sub-absolute-zero temperature to. Returning
+ * an error instead would surface only as inpdoopt.c's uninformative "can't set
+ * option", which is strictly worse than an explicit message here. */
+/* Evaluates to 1 when the option is refused, so each case writes
+ *     if (E426_BAD_OPT(...)) break;
+ * and the `break` lands in the SWITCH. Putting the break inside a
+ * do{}while(0) wrapper instead would leave the MACRO, not the case, and the
+ * rejected value would be assigned anyway one line after the warning printed. */
+#define E426_BAD_OPT(cond, fmt, ...)                                    \
+    ((cond) ? (fprintf(stderr, "\nWarning -- " fmt "\n\n", __VA_ARGS__), 1) : 0)
+
+
     /*
      *  CKTsetOpt(ckt,opt,value)
      *  set the specified 'opt' to have value 'value' in the
@@ -94,22 +117,42 @@ CKTsetOpt(CKTcircuit *ckt, JOB *anal, int opt, IFvalue *val)
         task->TSKgshunt = val->rValue;
         break;
     case OPT_RELTOL:
+        if (E426_BAD_OPT(val->rValue <= 0.0,
+            "Option reltol = %g must be greater than zero; ignored, keeping %g",
+            val->rValue, task->TSKreltol))
+            break;
         task->TSKreltol = val->rValue;
         task->TSKtolGiven |= ERRP_RELTOL;
         break;
     case OPT_ABSTOL:
+        if (E426_BAD_OPT(val->rValue <= 0.0,
+            "Option abstol = %g must be greater than zero; ignored, keeping %g",
+            val->rValue, task->TSKabstol))
+            break;
         task->TSKabstol = val->rValue;
         task->TSKtolGiven |= ERRP_ABSTOL;
         break;
     case OPT_VNTOL:
+        if (E426_BAD_OPT(val->rValue <= 0.0,
+            "Option vntol = %g must be greater than zero; ignored, keeping %g",
+            val->rValue, task->TSKvoltTol))
+            break;
         task->TSKvoltTol = val->rValue;
         task->TSKtolGiven |= ERRP_VNTOL;
         break;
     case OPT_TRTOL:
+        if (E426_BAD_OPT(val->rValue <= 0.0,
+            "Option trtol = %g must be greater than zero; ignored, keeping %g",
+            val->rValue, task->TSKtrtol))
+            break;
         task->TSKtrtol = val->rValue;
         task->TSKtolGiven |= ERRP_TRTOL;
         break;
     case OPT_CHGTOL:
+        if (E426_BAD_OPT(val->rValue <= 0.0,
+            "Option chgtol = %g must be greater than zero; ignored, keeping %g",
+            val->rValue, task->TSKchgtol))
+            break;
         task->TSKchgtol = val->rValue;
         task->TSKtolGiven |= ERRP_CHGTOL;
         break;
@@ -120,21 +163,50 @@ CKTsetOpt(CKTcircuit *ckt, JOB *anal, int opt, IFvalue *val)
         task->TSKpivotRelTol = val->rValue;
         break;
     case OPT_TNOM:
+        if (E426_BAD_OPT(val->rValue + CONSTCtoK <= 0.0,
+            "Option tnom = %g C is at or below absolute zero (-273.15 C);"
+            " ignored, keeping %g C",
+            val->rValue, task->TSKnomTemp - CONSTCtoK))
+            break;
         task->TSKnomTemp = val->rValue + CONSTCtoK; /* Centegrade to Kelvin */
         break;
     case OPT_TEMP:
+        /* the funnel for .options temp=, the .temp card, `option temp=` and
+         * `set temp=`. -25 C is perfectly ordinary and one example deck uses
+         * it; the line is absolute zero, not freezing. */
+        if (E426_BAD_OPT(val->rValue + CONSTCtoK <= 0.0,
+            "Option temp = %g C is at or below absolute zero (-273.15 C);"
+            " ignored, keeping %g C",
+            val->rValue, task->TSKtemp - CONSTCtoK))
+            break;
         task->TSKtemp = val->rValue + CONSTCtoK; /* Centegrade to Kelvin */
         break;
     case OPT_ITL1:
+        /* NB: NIiter floors every iteration limit at 100, so a value below that
+         * is stored and reported but never reached -- see Enhancement-426. That
+         * floor is upstream and deliberate and is NOT changed here; this guard
+         * only refuses a limit that is not a count at all. */
+        if (E426_BAD_OPT(val->iValue <= 0,
+            "Option itl1 = %d must be greater than zero; ignored, keeping %d",
+            val->iValue, task->TSKdcMaxIter))
+            break;
         task->TSKdcMaxIter = val->iValue;
         task->TSKtolGiven |= ERRP_ITL1;
         break;
     case OPT_ITL2:
+        if (E426_BAD_OPT(val->iValue <= 0,
+            "Option itl2 = %d must be greater than zero; ignored, keeping %d",
+            val->iValue, task->TSKdcTrcvMaxIter))
+            break;
         task->TSKdcTrcvMaxIter = val->iValue;
         break;
     case OPT_ITL3:
         break;
     case OPT_ITL4:
+        if (E426_BAD_OPT(val->iValue <= 0,
+            "Option itl4 = %d must be greater than zero; ignored, keeping %d",
+            val->iValue, task->TSKtranMaxIter))
+            break;
         task->TSKtranMaxIter = val->iValue;
         break;
     case OPT_ITL5:

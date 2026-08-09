@@ -32,6 +32,29 @@ IFparm RESpTable[] = { /* parameters */
     "flag to request sensitivity WRT resistance"),
     OP(    "i",            RES_CURRENT,         IF_REAL,    "Current"),
     OP(    "p",            RES_POWER,           IF_REAL,    "Power"),
+    /* Enhancement-426: the temperature-scaled value the device actually stamps
+     * had NO accessor at all. With .model rm r(tc1=0.001) and .options
+     * temp=227 the device stamps 1200 ohm -- i(v1) says so -- while
+     * @r1[resistance] and @r1[ac] both read the nominal 1000, because they are
+     * SETTABLE parameters and correctly return what was written (manual 27.1:
+     * "their output simply returns the previously input value ... internally
+     * derived values are output only").
+     *
+     * The handlers for these two already existed in resask.c and were simply
+     * absent from this table, i.e. dead code. Read the effective resistance as
+     * 1/@r1[conductance] (= 1200.0 exactly for that deck). Note RESconduct
+     * folds in m and scale, so it describes the WHOLE device -- which is the
+     * right quantity for "what does this instance stamp".
+     *
+     * Deliberately NOT done: making @r1[resistance] return the scaled value.
+     * The capacitor does exactly that and it CORRUPTS the round trip -- with
+     * tc1=0.001 at 227 C, sweeping @c1[capacitance] applies the temperature
+     * factor a second time (1n -> 1.2n -> 1.44n, permanently). Read-only is the
+     * house pattern for a derived quantity (dio.c's "gd", mos1.c's "vdsat"). */
+    OP(    "conductance",  RES_CONDUCT,         IF_REAL,
+    "Effective conductance actually stamped (includes m, scale and temperature)"),
+    OPU(   "acconduct",    RES_ACCONDUCT,       IF_REAL,
+    "Effective AC conductance actually stamped"),
     OPU(   "sens_dc",      RES_QUEST_SENS_DC,   IF_REAL,    "dc sensitivity "),
     OPU(   "sens_real",    RES_QUEST_SENS_REAL, IF_REAL,
     "dc sensitivity and real part of ac sensitivity"),

@@ -142,6 +142,10 @@ int INPmakeMod(char *, int, struct card *);
 char *INPmkTemp(char *);
 void INPpas1(CKTcircuit *, struct card *, INPtables *);
 void INPpas2(CKTcircuit *, struct card *, INPtables *, TSKtask *);
+/* Enhancement-426: set while INPpas2() is handed a card that if_run()
+ * synthesised from a .control command. Such a card is never deck parsing, so
+ * an analysis card naming an unknown node is a typo even before CKTsetup(). */
+extern int INPanalysisCardFromCommand;
 void INPpas3(
         CKTcircuit *, struct card *, INPtables *, TSKtask *, IFparm *, int);
 void INPpas4(CKTcircuit *, INPtables *);

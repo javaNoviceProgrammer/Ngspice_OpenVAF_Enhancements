@@ -205,6 +205,24 @@ DCtrCurv(CKTcircuit *ckt, int restart)
          * span, which the point count above cannot see. */
         if (job->TRCVvStart[i] + step_ == job->TRCVvStart[i])
             return(E_PARMVAL);
+        /* Enhancement-426: ...and it has to move TOWARDS stop. `dc v1 0.6 0.4
+         * 0.05` and its mirror `dc v1 0.4 0.6 -0.05` computed no points at all
+         * and said nothing -- not an empty plot the caller could notice, but a
+         * vector that never came into existence.
+         *
+         * The strict `< 0` product is the whole fix boundary. It is FALSE when
+         * start == stop (product 0), which is the single-point sweep 13 decks
+         * in examples/ rely on, and FALSE for a genuine descending sweep
+         * (negative times negative) such as `dc v1 2 0 -0.001`. Only a step
+         * pointing away from stop is refused. The step is NOT auto-negated:
+         * guessing here would silently answer a question nobody asked. */
+        if ((job->TRCVvStop[i] - job->TRCVvStart[i]) * step_ < 0.0) {
+            SPfrontEnd->IFerrorf(ERR_WARNING,
+                "DC sweep %d: step %g moves away from stop %g (start %g)"
+                " -- no points would be computed\n",
+                i + 1, step_, job->TRCVvStop[i], job->TRCVvStart[i]);
+            return(E_PARMVAL);
+        }
     }
 
     ckt->CKTtime = 0;
@@ -306,6 +324,21 @@ DCtrCurv(CKTcircuit *ckt, int restart)
         }
 
         if (cieq(job->TRCVvName[i], "temp")) {
+            /* Enhancement-426: a `.dc temp` sweep writes ckt->CKTtemp directly
+             * and so never passes the CKTsetOpt funnel that guards `.options
+             * temp`. `dc temp -600 100 100` walked straight through absolute
+             * zero and produced eight fully-formed rows without a word. Both
+             * endpoints have to be physical -- -25 C is ordinary, -300 C is
+             * not. Checked here rather than in the range loop above because
+             * TRCVvType is not assigned until this point. */
+            if (job->TRCVvStart[i] + CONSTCtoK <= 0.0 ||
+                job->TRCVvStop[i] + CONSTCtoK <= 0.0) {
+                SPfrontEnd->IFerrorf(ERR_WARNING,
+                    "DC sweep %d: temperature range %g C .. %g C reaches at or"
+                    " below absolute zero (-273.15 C)\n",
+                    i + 1, job->TRCVvStart[i], job->TRCVvStop[i]);
+                return(E_PARMVAL);
+            }
             job->TRCVvSave[i] = ckt->CKTtemp; /* Saves the old circuit temperature */
             job->TRCVvType[i] = TEMP_CODE;    /* Set the sweep type code */
             ckt->CKTtemp = job->TRCVvStart[i] + CONSTCtoK; /* Set the new circuit temp */

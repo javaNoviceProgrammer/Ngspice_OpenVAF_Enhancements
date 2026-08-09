@@ -54,6 +54,28 @@ TFanal(CKTcircuit *ckt, int restart)
     if (converged)
         return converged;
 
+    /* Enhancement-426: the SOURCE was checked (just below) and the OUTPUT NODE
+     * was not -- and the consequence is worse than a wrong number. A node that
+     * no device ever stamped still owns an equation number drawn from
+     * CKTmaxEqNum, while CKTrhs/CKTrhsOld are sized from SMPmatSize(); indexing
+     * the second with the first reads (and at :153-154 WRITES) off the end of
+     * the heap block. Confirmed under ASAN as a heap-buffer-overflow at
+     * tfanal.c:121 against the buffer allocated in nireinit.c:37; the shipped
+     * binary printed the garbage it read as `transfer_function = 3.999110e+252`.
+     *
+     * The parser refuses such a name for a .control command (inp2dot.c), but a
+     * DECK card may legitimately precede the devices that define its nodes, so
+     * creation cannot be refused there -- which leaves this as the last line of
+     * defence for a name no device ever defines. */
+    if (job->TFoutIsV &&
+        (job->TFoutPos->number > SMPmatSize(ckt->CKTmatrix) ||
+         job->TFoutNeg->number > SMPmatSize(ckt->CKTmatrix))) {
+        SPfrontEnd->IFerrorf(ERR_WARNING,
+                             "Transfer function output node %s is not connected"
+                             " to any device", job->TFoutName);
+        return E_NOTFOUND;
+    }
+
     ptr = CKTfndDev(ckt, job->TFinSrc);
 
     if (!ptr || ptr->GENmodPtr->GENmodType < 0) {

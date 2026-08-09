@@ -411,6 +411,45 @@ measure_extract_variables(char *line)
  * Function: process a WHEN measurement statement which has been
  * parsed into a measurement structure.
  * ----------------------------------------------------------------- */
+
+/* Enhancement-426: a `meas` over an analysis pairs the measured vector with the
+ * sweep scale point by point, so the two have to be the same length. Nothing
+ * checked, and the loops are all `for (i = 0; i < d->v_length; i++)`.
+ *
+ * An `@device[param]` vector that was never named in a `.save` is a LENGTH-1
+ * scalar snapshot -- that is documented (manual ch. 27.1: "available for the
+ * most recent point computed or, if specified in a .save statement, for an
+ * entire simulation"), and `save all` deliberately does not cover it. So the
+ * snapshot is right; consuming it as a waveform is the defect. The loop ran
+ * exactly once and MAX/MIN/PP/INTEG reported that one sample as the extremum,
+ * silently: `meas tran m MAX @rs[i]` printed 0.00000e+00 at= 0.00000e+00 where
+ * the answer was 5.0e-04 at 4 us. The `at= 0` was the tell -- the scale was
+ * only ever read at index 0. A vector of length 0 (E-418 warns at save time
+ * when the parameter does not exist) reported a measurement of exactly zero.
+ *
+ * XSPICE event vectors legitimately carry their own, differently-sized time
+ * base in d->v_scale (evtplot.c), so they are exempt. */
+static int
+measure_check_len(MEASUREPTR meas, struct dvec *d, struct dvec *dScale)
+{
+    if (d == NULL || dScale == NULL)
+        return MEASUREMENT_OK;
+    if (d->v_scale || d->v_length > 1 || dScale->v_length <= 1)
+        return MEASUREMENT_OK;
+
+    fprintf(cp_err,
+            "Error: meas %s %s: '%s' holds %d point(s) but the analysis "
+            "produced %d.\n"
+            "       An @device[param] vector is only the most recent point "
+            "computed unless\n"
+            "       it is named in a .save -- e.g. `.save all %s`. Note that "
+            "`.save all`\n"
+            "       on its own does NOT include @device[param] vectors.\n",
+            meas->m_analysis ? meas->m_analysis : "", meas->result ? meas->result : "",
+            meas->m_vec, d->v_length, dScale->v_length, meas->m_vec);
+    return MEASUREMENT_FAILURE;
+}
+
 static int
 com_measure_when(
     MEASUREPTR meas     /* in : parsed measurement structure */
@@ -462,6 +501,12 @@ com_measure_when(
         fprintf(cp_err, "Error: scale vector time, frequency or dc has no data.\n");
         return MEASUREMENT_FAILURE;
     }
+
+    /* Enhancement-426 */
+    if (measure_check_len(meas, d, dScale) != MEASUREMENT_OK)
+        return MEASUREMENT_FAILURE;
+    if (has_d2 && measure_check_len(meas, d2, dScale) != MEASUREMENT_OK)
+        return MEASUREMENT_FAILURE;
 
     prevValue = 0.;
     prevValue2 = 0.;
@@ -762,6 +807,10 @@ measure_at(
         return MEASUREMENT_FAILURE;
     }
 
+    /* Enhancement-426 */
+    if (measure_check_len(meas, d, dScale) != MEASUREMENT_OK)
+        return MEASUREMENT_FAILURE;
+
     /* -----------------------------------------------------------------
      * Take the string tests outside of the loop for speed.
      * ----------------------------------------------------------------- */
@@ -861,6 +910,10 @@ measure_deriv_at(
         fprintf(cp_err, "Error: scale vector time, frequency or dc has no data.\n");
         return MEASUREMENT_FAILURE;
     }
+
+    /* Enhancement-426 */
+    if (measure_check_len(meas, d, dScale) != MEASUREMENT_OK)
+        return MEASUREMENT_FAILURE;
 
     if (cieq(meas->m_analysis, "ac"))
         ac_check = TRUE;
@@ -1019,6 +1072,10 @@ measure_minMaxAvg(
         fprintf(cp_err, "Error: scale vector time, frequency or ?-sweep has no data.\n");
         return MEASUREMENT_FAILURE;
     }
+
+    /* Enhancement-426 */
+    if (measure_check_len(meas, d, dScale) != MEASUREMENT_OK)
+        return MEASUREMENT_FAILURE;
 
     for (i = 0; i < d->v_length; i++) {
         if (ac_check) {
@@ -1429,10 +1486,26 @@ measure_rms_integral(
         return MEASUREMENT_FAILURE;
     }
 
-    /* Allocate buffers for calculation. */
-    x     = TMALLOC(double, xScale->v_length);
-    y     = TMALLOC(double, xScale->v_length);
-    width = TMALLOC(double, xScale->v_length + 1);
+    /* Enhancement-426 */
+    if (measure_check_len(meas, d, xScale) != MEASUREMENT_OK)
+        return MEASUREMENT_FAILURE;
+
+    /* Allocate buffers for calculation.
+     *
+     * Enhancement-426: these were sized from the SCALE but are filled from the
+     * DATA vector -- the loop below runs to d->v_length and appends
+     * unconditionally, so a measured vector longer than the scale wrote past
+     * the end of all three. Reachable with a cross-plot measurement such as
+     * `setplot tran1` followed by `meas tran m RMS tran2.v(b)`. Sizing from
+     * whichever is longer makes the append unable to overflow; for every
+     * well-formed deck the two are equal and nothing changes. */
+    {
+        int nbuf = (d->v_length > xScale->v_length)
+                       ? d->v_length : xScale->v_length;
+        x     = TMALLOC(double, nbuf);
+        y     = TMALLOC(double, nbuf);
+        width = TMALLOC(double, nbuf + 1);
+    }
 
     xy_size = 0;
     toVal = -1;

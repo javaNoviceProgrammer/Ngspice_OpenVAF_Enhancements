@@ -33,6 +33,67 @@ find_instance_parameter(char *name, IFdevice *device)
 }
 
 
+
+/* Enhancement-426: the instance multiplier was never checked. A NEGATIVE m does
+ * not merely scale a device, it INVERTS it -- `R1 a 0 2k m=-1` stamps -2000 ohm
+ * and a passive device becomes active, silently -- and on an OSDI device it
+ * additionally poisons noise with a NaN, because the compiled model takes
+ * sqrt($mfactor) (onoise_spectrum 3.324262e-09 -> nan). A non-finite m gives
+ * @r1[m] = inf and a five-message convergence cascade that never names `m`.
+ *
+ * Identified by parameter ID, not by keyword. For an OSDI device `m` and
+ * `_mfactor` are two spellings of one slot, so a keyword test on "m" would miss
+ * `_mfactor=-1`; and a Verilog-A model that declares its OWN `m` gets a
+ * different id, whose range OpenVAF's `from` clause already enforces.
+ *
+ * WARNING, and the value is left exactly as written. ngspice deliberately
+ * supports negative resistors (resparam.c has an explicit branch for one), so
+ * "this makes a passive device active" is not by itself grounds for refusing a
+ * value here; and E-361/362 recorded that clamping a bad number can be worse
+ * than the number. m == 0 is NOT diagnosed: it is the ordinary "disable this
+ * instance" idiom and behaves cleanly. */
+static int
+e426_multiplier_id(IFdevice *device)
+{
+    int i;
+
+    if (!device || !device->instanceParms)
+        return -1;
+    for (i = 0; i < *(device->numInstanceParms); i++) {
+        const char *kw = device->instanceParms[i].keyword;
+        if (!kw)
+            continue;
+        if (device->registry_entry ? cieq(kw, "_mfactor") : cieq(kw, "m"))
+            return device->instanceParms[i].id;
+    }
+    return -1;
+}
+
+static void
+e426_check_multiplier(IFdevice *device, GENinstance *fast, IFparm *p,
+                      IFvalue *val, int mult_id)
+{
+    double v;
+
+    if (!p || !val || mult_id < 0 || p->id != mult_id)
+        return;
+    v = ((p->dataType & IF_VARTYPES) == IF_INTEGER) ? (double) val->iValue
+                                                    : val->rValue;
+    if (!isfinite(v))
+        fprintf(stderr,
+                "Warning: %s: multiplier %s=%g is not a finite number; the "
+                "operating point cannot converge.\n",
+                fast && fast->GENname ? fast->GENname : device->name,
+                p->keyword, v);
+    else if (v < 0.0)
+        fprintf(stderr,
+                "Warning: %s: multiplier %s=%g is negative; the device's "
+                "contribution is sign-inverted (a passive device becomes "
+                "active) and any noise contribution becomes NaN.\n",
+                fast && fast->GENname ? fast->GENname : device->name,
+                p->keyword, v);
+}
+
 char *
 INPdevParse(char **line, CKTcircuit *ckt, int dev, GENinstance *fast,
             double *leading, int *waslead, INPtables *tab)
@@ -104,6 +165,7 @@ INPdevParse(char **line, CKTcircuit *ckt, int dev, GENinstance *fast,
             goto quit;
         }
 
+        e426_check_multiplier(device, fast, p, val, e426_multiplier_id(device));
         error = ft_sim->setInstanceParm (ckt, fast, p->id, val, NULL);
         if (error) {
             rtn = INPerror(error);
@@ -177,6 +239,7 @@ INPdevParse(char **line, CKTcircuit *ckt, int dev, GENinstance *fast,
             rtn = INPerror(E_PARMVAL);
             goto quit;
         }
+        e426_check_multiplier(device, fast, p, val, e426_multiplier_id(device));
         error = ft_sim->setInstanceParm (ckt, fast, p->id, val, NULL);
         if (error) {
             rtn = INPerror(error);

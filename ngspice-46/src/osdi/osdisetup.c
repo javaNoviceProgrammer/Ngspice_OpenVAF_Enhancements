@@ -250,6 +250,16 @@ int OSDIsetup(SMPmatrix *matrix, GENmodel *inModel, CKTcircuit *ckt,
   OsdiInitInfo init_info;
   OsdiNgspiceHandle handle;
   GENmodel *gen_model;
+  /* Enhancement-426: a model whose setup_model FAILED used to have its error
+   * overwritten by the next model's success, so this function returned OK while
+   * that model's instances were never set up. ngspice then loaded them and
+   * dereferenced a NULL jacobian pointer: two .model cards, the good one first
+   * and a `r=-5` out-of-range one second, gave rc=139 (SIGSEGV) and ZERO bytes
+   * of output. Putting the bad card first instead gave a clean "Parameter r is
+   * out of bounds!" -- the deck ORDER decided crash versus diagnostic. Same
+   * signature class as E-396's $limit NULL func_ptr. `continue` is kept so the
+   * remaining models are still reported; only the propagation was broken. */
+  int first_err = (OK);
   int res = (OK);
   int error;
   CKTnode *tmp;
@@ -281,6 +291,8 @@ int OSDIsetup(SMPmatrix *matrix, GENmodel *inModel, CKTcircuit *ckt,
     res = handle_init_info(init_info, descr);
     if (res) {
       errRtn = "OSDI setup_model";
+      if (first_err == OK)
+        first_err = res;                     /* Enhancement-426 */
       continue;
     }
 
@@ -318,6 +330,23 @@ int OSDIsetup(SMPmatrix *matrix, GENmodel *inModel, CKTcircuit *ckt,
       } else if (extra_inst_data->dt_given) {
         temp += extra_inst_data->dt;
       }
+
+      /* Enhancement-426: the composed instance temperature had no lower bound.
+       * `dtemp=-300` handed the model $temperature = 0.15 K and `dtemp=-1000`
+       * handed it -699.85 K, so $vt went NEGATIVE and the model returned
+       * -5.4e+20 A with no diagnostic on any channel. The ambient options are
+       * guarded at the CKTsetOpt funnel, but dtemp is composed per device and
+       * never passes through it. Refuse the offset and keep the ambient rather
+       * than clamping: there is no defensible temperature to invent, and the
+       * device is still simulable at the circuit temperature. */
+      if (temp <= 0.0) {
+        printf("%s: instance temperature %g K is at or below absolute zero"
+               " (temp=%g C, dtemp=%g); the offset is ignored\n",
+               gen_inst->GENname, temp, ckt->CKTtemp - CONSTCtoK,
+               extra_inst_data->dt);
+        temp = ckt->CKTtemp;
+      }
+
       extra_inst_data->has_evaluated = false;
 
       /* find number of connected ports to allow evaluation of $port_connected
@@ -340,6 +369,8 @@ int OSDIsetup(SMPmatrix *matrix, GENmodel *inModel, CKTcircuit *ckt,
       res = handle_init_info(init_info, descr);
       if (res) {
         errRtn = "OSDI setup_instance";
+        if (first_err == OK)
+          first_err = res;                   /* Enhancement-426 */
         continue;
       }
 
@@ -612,7 +643,9 @@ int OSDIsetup(SMPmatrix *matrix, GENmodel *inModel, CKTcircuit *ckt,
 
   free(node_ids);
 
-  return res;
+  /* Enhancement-426: the FIRST failure, not whatever the last model happened to
+   * return -- see the note at first_err's declaration. */
+  return first_err != OK ? first_err : res;
 }
 
 /* OSDI does not differentiate between setup and temperature update so we just
@@ -624,6 +657,7 @@ extern int OSDItemp(GENmodel *inModel, CKTcircuit *ckt) {
   OsdiNgspiceHandle handle;
   GENmodel *gen_model;
   int res = (OK);
+  int first_err = (OK);                      /* Enhancement-426, as OSDIsetup */
   GENinstance *gen_inst;
 
   OsdiRegistryEntry *entry = osdi_reg_entry_model(inModel);
@@ -641,6 +675,8 @@ extern int OSDItemp(GENmodel *inModel, CKTcircuit *ckt) {
     res = handle_init_info(init_info, descr);
     if (res) {
       errRtn = "OSDI setup_model (OSDItemp)";
+      if (first_err == OK)
+        first_err = res;                     /* Enhancement-426 */
       continue;
     }
 
@@ -727,6 +763,8 @@ extern int OSDItemp(GENmodel *inModel, CKTcircuit *ckt) {
 
         if (res) {
           errRtn = "OSDI setup_instance (OSDItemp)";
+          if (first_err == OK)
+            first_err = res;                 /* Enhancement-426 */
           continue;
         }
 
@@ -753,7 +791,7 @@ extern int OSDItemp(GENmodel *inModel, CKTcircuit *ckt) {
       }
     }
   }
-  return res;
+  return first_err != OK ? first_err : res;   /* Enhancement-426 */
 }
 
 /* delete internal nodes
