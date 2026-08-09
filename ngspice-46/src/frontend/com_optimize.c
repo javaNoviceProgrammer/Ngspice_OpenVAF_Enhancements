@@ -1275,16 +1275,21 @@ static int is_number_token(const char *w)
 
 
 /* collect tokens from *pwl up to the next flag, joined with single spaces */
+/* Each token is cp_unquote()d: ngspice's lexer strips `'...'` itself but keeps
+ * the characters of `"..."` in the word (parser/lexical.c), leaving each command
+ * to remove them. Kept identical to the copy in com_sweep.c. */
 static char *collect_until_flag(wordlist **pwl)
 {
     char *acc = NULL;
     wordlist *wl = *pwl;
     while (wl && !is_flag(wl->wl_word)) {
+        char *tok = cp_unquote(wl->wl_word);   /* fresh memory */
         if (!acc) {
-            acc = copy(wl->wl_word);
+            acc = tok;
         } else {
-            char *j = tprintf("%s %s", acc, wl->wl_word);
+            char *j = tprintf("%s %s", acc, tok);
             tfree(acc);
+            tfree(tok);
             acc = j;
         }
         wl = wl->wl_next;

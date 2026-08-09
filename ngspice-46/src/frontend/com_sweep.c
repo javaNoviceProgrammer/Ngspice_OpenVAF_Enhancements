@@ -1202,17 +1202,31 @@ static int sw_isfinitenum(const char *w, double *out)
 }
 
 
-/* collect tokens up to the next flag, joined with single spaces */
+/* collect tokens up to the next flag, joined with single spaces.
+ *
+ * Each token is cp_unquote()d first. ngspice's lexer treats the two quote
+ * characters differently and says so in its own comments (parser/lexical.c):
+ * `'...'` forms one word WITHOUT the quotes, while `"..."` forms one word
+ * INCLUDING them, leaving each command to strip the survivors with
+ * cp_unquote() -- which most of the frontend does and this file did not. So
+ * `-analysis "tran 1n 20n"` reached the command lookup with its quotes still
+ * attached and failed as `unknown command '"tran 1n 20n"'`, while the single
+ * quoted spelling worked.
+ *
+ * Unquoting per TOKEN rather than on the joined result matters: stripping one
+ * outer pair from `"tran" "1n" "20n"` would eat the wrong two characters. */
 static char *collect_until_flag(wordlist **pwl)
 {
     char *acc = NULL;
     wordlist *wl = *pwl;
     while (wl && !is_flag(wl->wl_word)) {
+        char *tok = cp_unquote(wl->wl_word);   /* fresh memory */
         if (!acc) {
-            acc = copy(wl->wl_word);
+            acc = tok;
         } else {
-            char *j = tprintf("%s %s", acc, wl->wl_word);
+            char *j = tprintf("%s %s", acc, tok);
             tfree(acc);
+            tfree(tok);
             acc = j;
         }
         wl = wl->wl_next;
@@ -1586,15 +1600,17 @@ void com_sweep(wordlist *wl)
             int ntok = 0;
             wl = wl->wl_next;
             while (wl && wl->wl_word && !sw_is_optflag(wl->wl_word)) {
+                char *tok = cp_unquote(wl->wl_word);   /* see collect_until_flag */
                 if (nout < SW_MAXOUT) {
                     /* `name=expr` (clean vector name) or a bare `expr` */
-                    sw_add_output_token(outname, outexpr, &nout, wl->wl_word);
+                    sw_add_output_token(outname, outexpr, &nout, tok);
                 } else if (!outfull) {
                     fprintf(cp_err, "sweep: at most %d outputs "
                                     "(ignoring '%s' and anything after it)\n",
-                            SW_MAXOUT, wl->wl_word);
+                            SW_MAXOUT, tok);
                     outfull = 1;
                 }
+                tfree(tok);
                 ntok++;
                 wl = wl->wl_next;
             }
@@ -2104,11 +2120,18 @@ void com_highsigma(wordlist *wl)
             if (!wl->wl_next) { fprintf(cp_err, "highsigma: -min needs a value\n"); return; }
             wl = wl->wl_next; lo = sw_num(wl->wl_word); have_min = 1; wl = wl->wl_next;
         } else if (eq(w, "-analysis")) {
+            /* `is_flag()`, not a bare leading '-': an analysis argument may be
+             * negative (`disto lin 3 1e5 1e6 -0.5`), and stopping at any '-'
+             * ended the list there and left `-0.5` to be reported as an
+             * unexpected token. Tokens are cp_unquote()d as in
+             * collect_until_flag(), which `sweep` and `optimize` use. */
             analysis[0] = '\0';
             wl = wl->wl_next;
-            while (wl && wl->wl_word && wl->wl_word[0] != '-') {
+            while (wl && wl->wl_word && !is_flag(wl->wl_word)) {
+                char *tok = cp_unquote(wl->wl_word);
                 if (analysis[0]) strncat(analysis, " ", sizeof(analysis) - strlen(analysis) - 1);
-                strncat(analysis, wl->wl_word, sizeof(analysis) - strlen(analysis) - 1);
+                strncat(analysis, tok, sizeof(analysis) - strlen(analysis) - 1);
+                tfree(tok);
                 wl = wl->wl_next;
             }
         } else if (eq(w, "-metric")) {
@@ -2252,11 +2275,18 @@ void com_montecarlo(wordlist *wl)
             if (!wl->wl_next) { fprintf(cp_err, "montecarlo: -seed needs a value\n"); return; }
             wl = wl->wl_next; seed = (unsigned) strtoul(wl->wl_word, NULL, 10); wl = wl->wl_next;
         } else if (eq(w, "-analysis")) {
+            /* `is_flag()`, not a bare leading '-': an analysis argument may be
+             * negative (`disto lin 3 1e5 1e6 -0.5`), and stopping at any '-'
+             * ended the list there and left `-0.5` to be reported as an
+             * unexpected token. Tokens are cp_unquote()d as in
+             * collect_until_flag(), which `sweep` and `optimize` use. */
             analysis[0] = '\0';
             wl = wl->wl_next;
-            while (wl && wl->wl_word && wl->wl_word[0] != '-') {
+            while (wl && wl->wl_word && !is_flag(wl->wl_word)) {
+                char *tok = cp_unquote(wl->wl_word);
                 if (analysis[0]) strncat(analysis, " ", sizeof(analysis) - strlen(analysis) - 1);
-                strncat(analysis, wl->wl_word, sizeof(analysis) - strlen(analysis) - 1);
+                strncat(analysis, tok, sizeof(analysis) - strlen(analysis) - 1);
+                tfree(tok);
                 wl = wl->wl_next;
             }
         } else if (eq(w, "-spec")) {
@@ -2471,10 +2501,18 @@ void com_wcd(wordlist *wl)
             wl = wl->wl_next; lo = sw_num(wl->wl_word); hasmin = 1; wl = wl->wl_next;
         } else if (eq(w, "-analysis")) {
             if (!wl->wl_next) { fprintf(cp_err, "wcd: -analysis needs a command\n"); return; }
+            /* the same multi-token collection its siblings use. This copied ONE
+             * token, so `-analysis tran 1n 20n` kept `tran` and then rejected
+             * `1n` as an unknown option -- wcd alone required quoting. */
+            analysis[0] = '\0';
             wl = wl->wl_next;
-            strncpy(analysis, wl->wl_word, sizeof(analysis) - 1);
-            analysis[sizeof(analysis) - 1] = '\0';
-            wl = wl->wl_next;
+            while (wl && wl->wl_word && !is_flag(wl->wl_word)) {
+                char *tok = cp_unquote(wl->wl_word);
+                if (analysis[0]) strncat(analysis, " ", sizeof(analysis) - strlen(analysis) - 1);
+                strncat(analysis, tok, sizeof(analysis) - strlen(analysis) - 1);
+                tfree(tok);
+                wl = wl->wl_next;
+            }
         } else if (eq(w, "-maxiter")) {
             if (!wl->wl_next) { fprintf(cp_err, "wcd: -maxiter needs a value\n"); return; }
             wl = wl->wl_next; maxiter = atoi(wl->wl_word); wl = wl->wl_next;

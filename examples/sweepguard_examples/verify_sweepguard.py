@@ -290,6 +290,87 @@ def main():
           "never resolved" not in out and "did not resolve" not in out,
           out[-200:].replace("\n", " "))
 
+    # ---------------------------------------------------------------------
+    # Quoting. ngspice's lexer treats the two quote characters differently and
+    # says so in its own comments (parser/lexical.c): `'...'` forms one word
+    # WITHOUT the quotes, `"..."` forms one word INCLUDING them, leaving each
+    # command to strip the survivors with cp_unquote(). Most of the frontend
+    # does; com_sweep.c did not, so `-analysis "tran 1n 20n"` reached the command
+    # lookup with its quotes attached and died as `unknown command '"tran..."'`
+    # while the single-quoted spelling worked.
+    print("\nQuoting: both quote styles reach the command already unquoted")
+
+    def analysis_of(ctl, tag):
+        _, out = run(ctl, tag)
+        m = re.search(r"analysis '([^']*)'", out)
+        return (m.group(1) if m else None), out
+
+    for style, ctl in (("bare",   "-analysis tran 1n 20n"),
+                       ("single", "-analysis 'tran 1n 20n'"),
+                       ("double", '-analysis "tran 1n 20n"')):
+        got, out = analysis_of("sweep @rs[resistance] 1k 2k 1k %s -output v(d)" % ctl,
+                               "q_sweep_" + style)
+        check("[quote] sweep -analysis, %s-quoted" % style,
+              got == "tran 1n 20n" and "unknown command" not in out,
+              f"{got!r} {out[-90:]}".replace("\n", " "))
+
+    # the same for -output, where a surviving quote was worse than a hard error:
+    # `"v(d)"` recorded a vector literally NAMED with quotes, and `"gain=v(d)"`
+    # split at the wrong '=' so the expression never resolved.
+    out, vecs = sweepout('sweep @rs[resistance] 1k 3k 1k -output "v(d)"\ndisplay', "q_out")
+    check("[quote] -output \"v(d)\" records v(d), not a quoted name",
+          "v(d)" in vecs and not any(v.startswith('"') for v in vecs), str(vecs))
+
+    out, vecs = sweepout('sweep @rs[resistance] 1k 3k 1k -output "gain=v(d)"\ndisplay', "q_outn")
+    check("[quote] -output \"name=expr\" splits at the right '='",
+          "gain" in vecs and "never resolved" not in out, str(vecs))
+
+    # The sibling commands documented with the same `-analysis <cmd>` notation
+    # each collected it differently. montecarlo/highsigma stopped at ANY leading
+    # '-', so an analysis argument that is legitimately negative ended the list
+    # and was then reported as an unexpected token.
+    print("\nQuoting: the sibling commands collect -analysis the same way")
+
+    NEG = "disto lin 3 1e5 1e6 -0.5"
+    for cmd, tail in (("montecarlo 2", " -spec v(d) -max 9"),
+                      ("highsigma 2",  " -metric v(d) -max 9")):
+        name = cmd.split()[0]
+        got, out = analysis_of(f"{cmd} -analysis {NEG}{tail}", "q_neg_" + name)
+        check("[quote] %s -analysis keeps a negative argument" % name,
+              got == NEG and "unexpected token" not in out,
+              f"{got!r} {out[-90:]}".replace("\n", " "))
+        got, out = analysis_of(f'{cmd} -analysis "tran 1n 20n"{tail}', "q_dq_" + name)
+        check("[quote] %s -analysis, double-quoted" % name,
+              got == "tran 1n 20n" and "unknown command" not in out,
+              f"{got!r} {out[-90:]}".replace("\n", " "))
+
+    # wcd copied ONE token, so it alone REQUIRED quoting: `-analysis tran 1n 20n`
+    # kept `tran` and then rejected `1n` as an unknown option. It needs a deck
+    # with a Gaussian .param actually used by a device, or it stops before the
+    # line that echoes the analysis.
+    WCD_DECK = "\n".join([
+        "wcd quoting", "V1 in 0 dc 1 ac 1", "Rs in d {pg}", "C1 d 0 1n",
+        "Rl d 0 1meg", ".param pg=agauss(1000,50,1)", ".control", "option noacct",
+        "{ctl}", ".endc", ".end", ""])
+
+    def wcd_analysis(ctl, tag):
+        p = os.path.join(HERE, "_sg_%s.cir" % tag)
+        with open(p, "w") as f:
+            f.write(WCD_DECK.replace("{ctl}", ctl))
+        r = subprocess.run([NGSPICE, "-b", os.path.basename(p)], cwd=HERE,
+                           capture_output=True, text=True, timeout=120, errors="replace")
+        out = r.stdout + r.stderr
+        m = re.search(r"analysis '([^']*)'", out)
+        return (m.group(1) if m else None), out
+
+    for style, ctl in (("bare",   "-analysis tran 1n 20n"),
+                       ("single", "-analysis 'tran 1n 20n'"),
+                       ("double", '-analysis "tran 1n 20n"')):
+        got, out = wcd_analysis("wcd -metric v(d) -max 9 %s -maxiter 1" % ctl,
+                                "q_wcd_" + style)
+        check("[quote] wcd -analysis collects every token, %s-quoted" % style,
+              got == "tran 1n 20n", f"{got!r} {out[-90:]}".replace("\n", " "))
+
     for junk in os.listdir(HERE):
         if junk.startswith("_sg_"):
             os.remove(os.path.join(HERE, junk))
