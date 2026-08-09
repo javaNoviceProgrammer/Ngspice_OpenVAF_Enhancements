@@ -149,6 +149,59 @@ static enum ALL_TYPE_ENUM get_all_type(const char *word)
 
 /* Find a named vector in a plot. We are careful to copy the vector if
  * v_link2 is set, because otherwise we will get screwed up.  */
+
+/* Enhancement-428: reconstruct the device-letter spelling of an INTERNAL-NODE
+ * vector name.  `x1.n1#mid` -> `n.x1.n1#mid`.
+ *
+ * A device inside a subcircuit is flattened to `n.x1.n1` -- the type letter is
+ * there because expansion re-parses the emitted card and dispatches on its
+ * FIRST CHARACTER (Enhancement-410 documents this). Its internal nodes are then
+ * named `<flattened instance>#<node>`, so the letter leaks into a NODE name,
+ * which is the one place users never expect it: the node beside it is plain
+ * `x1.m`. `v(n.x1.n1#mid)` worked and `v(x1.n1#mid)` did not.
+ *
+ * The reconstruction needs no search and cannot be ambiguous. The letter is
+ * literally the leaf instance name's own first character, and ngspice requires a
+ * device's name to begin with its type letter -- so `x1.n1` can only ever mean
+ * `n.x1.n1`. An `x` instance is exempt: it already starts with the right letter
+ * and carries no prefix (subckt.c's translate_inst_name exempts it too).
+ *
+ * STRICTLY A FALLBACK -- consulted only after the exact lookups have failed, so
+ * every name that resolves today resolves to exactly what it does today.
+ *
+ * Returns a tmalloc'd string, or NULL when the name is not of this shape.
+ * Shared with outitf.c's name_eq(): `.save` matches names on a different
+ * path, and Enhancement-408's lesson is that these paths drift apart.
+ */
+char *cp_hier_devname(const char *word)
+{
+    const char *hash, *p, *leaf = NULL;
+    char *buf;
+    size_t n;
+
+    if (!word || !*word)
+        return NULL;
+    hash = strchr(word, '#');
+    if (!hash || hash == word)
+        return NULL;                    /* not an internal-node name */
+    for (p = word; p < hash; p++)       /* last '.' BEFORE the '#' */
+        if (*p == '.')
+            leaf = p + 1;
+    if (!leaf || leaf >= hash)
+        return NULL;                    /* not hierarchical */
+    if (tolower_c(*leaf) == 'x')
+        return NULL;                    /* an X instance carries no prefix */
+
+    n = strlen(word);
+    buf = TMALLOC(char, n + 3);
+    if (!buf)
+        return NULL;
+    buf[0] = *leaf;
+    buf[1] = '.';
+    memcpy(buf + 2, word, n + 1);
+    return buf;
+}
+
 static struct dvec *findvec(char *word, struct plot *pl)
 {
     /* If no plot, cannot find */
@@ -204,6 +257,29 @@ static struct dvec *findvec(char *word, struct plot *pl)
         }
         char * const node_name = ds_get_buf(&dbuf);
         d = find_permanent_vector_by_name(pl_lookup_table, node_name);
+    }
+
+    /* Enhancement-428: an internal node of a device inside a subcircuit is
+     * named with the flattened device's type letter (`n.x1.n1#mid`). Accept the
+     * spelling users actually write, `x1.n1#mid`, after the exact lookups have
+     * failed. */
+    if (!d) {
+        char *alt = cp_hier_devname(word);
+        if (alt) {
+            ds_clear(&dbuf);
+            if (ds_cat_str_case(&dbuf, alt, ds_case_lower) == DS_E_OK)
+                d = find_permanent_vector_by_name(pl_lookup_table,
+                                                  ds_get_buf(&dbuf));
+            if (!d) {
+                ds_clear(&dbuf);
+                if (ds_cat_str(&dbuf, "v(") == DS_E_OK
+                    && ds_cat_str_case(&dbuf, alt, ds_case_lower) == DS_E_OK
+                    && ds_cat_char(&dbuf, ')') == DS_E_OK)
+                    d = find_permanent_vector_by_name(pl_lookup_table,
+                                                      ds_get_buf(&dbuf));
+            }
+            tfree(alt);
+        }
     }
 
     ds_free(&dbuf);

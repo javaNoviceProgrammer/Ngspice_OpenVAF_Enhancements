@@ -1590,7 +1590,28 @@ name_eq(char *n1, char *n2)
         n2 = buf2;
     }
 
-    return (strcmp(n1, n2) ? FALSE : TRUE);
+    if (strcmp(n1, n2) == 0)
+        return TRUE;
+
+    /* Enhancement-428: accept the obvious spelling of an internal node inside a
+     * subcircuit. `.save v(x1.n1#mid)` names the same vector the simulator calls
+     * `n.x1.n1#mid`; without this the save silently matched nothing and the run
+     * ended with "no data saved for Transient analysis" -- the whole plot lost,
+     * not just that one vector. `findvec` accepts the same spelling; this is the
+     * second, independent resolution path (the Enhancement-408 lesson). */
+    {
+        bool eq = FALSE;
+        char *alt = cp_hier_devname(n1);
+        if (alt) {
+            eq = (strcmp(alt, n2) == 0);
+            tfree(alt);
+        }
+        if (!eq && (alt = cp_hier_devname(n2)) != NULL) {
+            eq = (strcmp(n1, alt) == 0);
+            tfree(alt);
+        }
+        return eq;
+    }
 }
 
 

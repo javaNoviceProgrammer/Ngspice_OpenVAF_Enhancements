@@ -1,0 +1,27 @@
+// Enhancement-428: a device with an INTERNAL node, for reaching it by name
+// from a subcircuit.
+//
+// `mid` is not a terminal -- it exists only inside the model, and ngspice names
+// it after the flattened instance: `n1#mid` at the top level, and
+// `n.x1.n1#mid` once the device sits inside a subcircuit, because subcircuit
+// expansion prepends the device TYPE LETTER to the instance name (see
+// Enhancement-410 for why that letter is there at all).
+//
+// A 1k/3k divider, so the internal node sits at a value nothing else in the
+// circuit takes: v(mid) = 0.75 * v(a) with c grounded. That makes a wrong
+// resolution visible rather than plausible.
+`include "disciplines.vams"
+
+module hiernode(a, c);
+    inout a, c;
+    electrical a, c;
+    electrical mid;
+
+    parameter real r1 = 1k from (0:inf);
+    parameter real r2 = 3k from (0:inf);
+
+    analog begin
+        I(a, mid) <+ V(a, mid) / r1;
+        I(mid, c) <+ V(mid, c) / r2;
+    end
+endmodule
