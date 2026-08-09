@@ -2129,6 +2129,19 @@ void com_highsigma(wordlist *wl)
             wl = wl->wl_next;
             while (wl && wl->wl_word && !is_flag(wl->wl_word)) {
                 char *tok = cp_unquote(wl->wl_word);
+                /* Enhancement-434: refuse rather than truncate. `analysis` is a
+                 * fixed 512-byte buffer and strncat simply stopped at the end,
+                 * so a longer command lost its tail SILENTLY and a DIFFERENT
+                 * command ran. sweep/optimize build the same string with
+                 * tprintf and have no limit; these three could not, so they at
+                 * least have to say so. */
+                if (strlen(analysis) + strlen(tok) + 2 > sizeof(analysis)) {
+                    fprintf(cp_err, "%s: -analysis command is too long "
+                                    "(limit %d characters)\n",
+                            "highsigma", (int) sizeof(analysis) - 1);
+                    tfree(tok);
+                    return;
+                }
                 if (analysis[0]) strncat(analysis, " ", sizeof(analysis) - strlen(analysis) - 1);
                 strncat(analysis, tok, sizeof(analysis) - strlen(analysis) - 1);
                 tfree(tok);
@@ -2284,6 +2297,19 @@ void com_montecarlo(wordlist *wl)
             wl = wl->wl_next;
             while (wl && wl->wl_word && !is_flag(wl->wl_word)) {
                 char *tok = cp_unquote(wl->wl_word);
+                /* Enhancement-434: refuse rather than truncate. `analysis` is a
+                 * fixed 512-byte buffer and strncat simply stopped at the end,
+                 * so a longer command lost its tail SILENTLY and a DIFFERENT
+                 * command ran. sweep/optimize build the same string with
+                 * tprintf and have no limit; these three could not, so they at
+                 * least have to say so. */
+                if (strlen(analysis) + strlen(tok) + 2 > sizeof(analysis)) {
+                    fprintf(cp_err, "%s: -analysis command is too long "
+                                    "(limit %d characters)\n",
+                            "montecarlo", (int) sizeof(analysis) - 1);
+                    tfree(tok);
+                    return;
+                }
                 if (analysis[0]) strncat(analysis, " ", sizeof(analysis) - strlen(analysis) - 1);
                 strncat(analysis, tok, sizeof(analysis) - strlen(analysis) - 1);
                 tfree(tok);
@@ -2508,6 +2534,19 @@ void com_wcd(wordlist *wl)
             wl = wl->wl_next;
             while (wl && wl->wl_word && !is_flag(wl->wl_word)) {
                 char *tok = cp_unquote(wl->wl_word);
+                /* Enhancement-434: refuse rather than truncate. `analysis` is a
+                 * fixed 512-byte buffer and strncat simply stopped at the end,
+                 * so a longer command lost its tail SILENTLY and a DIFFERENT
+                 * command ran. sweep/optimize build the same string with
+                 * tprintf and have no limit; these three could not, so they at
+                 * least have to say so. */
+                if (strlen(analysis) + strlen(tok) + 2 > sizeof(analysis)) {
+                    fprintf(cp_err, "%s: -analysis command is too long "
+                                    "(limit %d characters)\n",
+                            "wcd", (int) sizeof(analysis) - 1);
+                    tfree(tok);
+                    return;
+                }
                 if (analysis[0]) strncat(analysis, " ", sizeof(analysis) - strlen(analysis) - 1);
                 strncat(analysis, tok, sizeof(analysis) - strlen(analysis) - 1);
                 tfree(tok);

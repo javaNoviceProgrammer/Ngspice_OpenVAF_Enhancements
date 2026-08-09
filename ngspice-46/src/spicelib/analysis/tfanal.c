@@ -12,6 +12,9 @@ Author: 1988 Thomas L. Quarles
 #include "ngspice/smpdefs.h"
 #include "ngspice/inpdefs.h"
 #include "ngspice/tfdefs.h"
+#ifdef OSDI
+#include "ngspice/osdiitf.h"
+#endif
 
 
 /* ARGSUSED */
@@ -222,6 +225,23 @@ done:
     refval.rValue = 0;
     SPfrontEnd->OUTpData (plotptr, &refval, &outdata);
     SPfrontEnd->OUTendPlot (plotptr);
+#ifdef OSDI
+    /* Enhancement-434: `.tf` computes an operating point and reports a result,
+     * so it owes the user the same notice the operating point itself gives.
+     * Enhancement-426 added that notice to dcop.c, and dctrcurv/acan/noisean/
+     * dctran each have their own; tfanal was the analysis that produces a
+     * result and says nothing, so a model's explicit stop request vanished.
+     *
+     * As in dcop.c the request is reported but NOT acted on: the transfer
+     * function is a single computed point, there is no sweep left to truncate,
+     * and discarding it would delete a legitimate result. */
+    {
+        int osdi_req = OSDIpendingRequests(ckt);
+        if (osdi_req & (OSDI_REQ_FINISH | OSDI_REQ_STOP))
+            fprintf(stdout, "\nNote: %s requested by a Verilog-A device during the transfer-function operating point; the result is complete and is reported.\n",
+                    (osdi_req & OSDI_REQ_FINISH) ? "$finish" : "$stop");
+    }
+#endif
     return(OK);
 }
 

@@ -309,13 +309,27 @@ static void last_crossing_stamp(void *inst, OsdiExtraInstData *extra,
  * `$simparam("iteration")` -- no default argument -- aborts the whole run with
  * OSDI(fatal), so a model ported from another simulator did not degrade, it
  * died. The three added here are exactly the ones where ngspice had the answer
- * all along. */
-#define NUM_SIM_PARAMS 14
+ * all along.
+ *
+ * Enhancement-434: `temp` joins them, by exactly the same test. ngspice kept
+ * `tnom` in this list but not `temp`, though it has had `ckt->CKTtemp` all
+ * along -- so `$simparam("temp")`, which is how a model ported from Spectre
+ * asks for the simulation temperature, either returned the caller's default
+ * (silently the wrong temperature) or, with no default, killed the run with
+ * OSDI(fatal). It is returned in CELSIUS, matching `tnom` beside it.
+ *
+ * `temperature` is deliberately NOT added: no simulator supplies that spelling,
+ * and the LRM's own way to ask is `$temperature`, which already works. Likewise
+ * `timestep`, `maxstep` and `freq` stay out -- ngspice has values that resemble
+ * them, but they are not names any simulator answers, so supplying them would
+ * be inventing an interface rather than completing one. */
+#define NUM_SIM_PARAMS 15
 char *sim_params[NUM_SIM_PARAMS + 1] = {
     "iniLim", "gmin", "gdev", "tnom",
     "simulatorVersion", "sourceScaleFactor",
     "epsmin", "reltol", "vntol", "abstol", "scale",
     "iteration", "abstime", "simulatorSubversion",
+    "temp",
     NULL};
 /* Enhancement-25: string simulator parameters returned by $simparam$str.
  * "analysis_name" mirrors the analysis() naming ("dc"/"ac"/"tran"/"noise");
@@ -460,8 +474,15 @@ OsdiSimParas get_simparams(const CKTcircuit *ckt) {
       ckt->CKTepsmin, ckt->CKTreltol, ckt->CKTvoltTol, ckt->CKTabstol, geom_scale,
       /* Enhancement-399 */
       (ckt->CKTstat != NULL) ? (double)ckt->CKTstat->STATnumIter : 0.0,
-      ckt->CKTtime,
-      0.0 };
+      /* Enhancement-434: abstime is a TIME, and `ckt->CKTtime` only holds one
+       * during a transient. `.dc` reuses the same field as its sweep abscissa,
+       * so this handed the model the swept VOLTAGE as though it were a time
+       * (`dc V1 0 5 1` -> abstime 5.0). Outside a transient there is no
+       * simulation time, and 0.0 is the honest answer. */
+      (ckt->CKTmode & MODETRAN) ? ckt->CKTtime : 0.0,
+      0.0,
+      /* Enhancement-434: temp, in Celsius like tnom above it */
+      ckt->CKTtemp - CONSTCtoK };
   memcpy(&sim_param_vals, &sim_param_vals_, sizeof(double) * NUM_SIM_PARAMS);
 
   /* Enhancement-25: current analysis name for $simparam$str("analysis_name"),

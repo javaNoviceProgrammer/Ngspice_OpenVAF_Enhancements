@@ -1,0 +1,21 @@
+// silentloss.va -- Enhancement-434. Exposes the two $simparam values the fixes
+// concern as operating-point variables so the suite can read them back, and
+// raises $finish from the analog block so the deferred-request notice can be
+// exercised from a `.tf`.
+`include "disciplines.vams"
+module silentloss(a, c);
+    inout a, c;
+    electrical a, c;
+    parameter real trip = 1e30;          // default: never trips
+    (* desc="simparam temp"    *) real p_temp;
+    (* desc="simparam abstime" *) real p_abstime;
+    (* desc="simparam tnom"    *) real p_tnom;
+    analog begin
+        p_temp    = $simparam("temp", -999.0);
+        p_abstime = $simparam("abstime", -999.0);
+        p_tnom    = $simparam("tnom", -999.0);
+        if (V(a,c) > trip)
+            $finish(1);
+        I(a,c) <+ V(a,c) / 1000.0;
+    end
+endmodule
