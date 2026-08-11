@@ -619,6 +619,49 @@ SMPluFac (SMPmatrix *Matrix, double PivTol, double Gmin)
             }
             return 1 ;
         } else {
+            /* Enhancement-439: a SUCCESSFUL klu_refactor is not necessarily a
+             * USABLE factorization.
+             *
+             * klu_refactor reuses the pivot ordering chosen by the last full
+             * klu_factor and only refills the values -- it performs no pivoting
+             * and no singularity test. When the values have since drifted to a
+             * numerically singular configuration it fills the LU with zero (or
+             * Inf/NaN) pivots, returns SUCCESS, and leaves status = KLU_OK. The
+             * next klu_solve then returns NaN, and NaN neither converges nor
+             * trips any singularity check, so the Newton loop and every rung of
+             * CKTop's homotopy ladder run to their full iteration budgets on a
+             * factorization that was already useless.
+             *
+             * Measured on a node with no DC path (the midpoint of two series
+             * capacitors, whose row has NO diagonal entry at all so Gmin can
+             * never be applied to it): once gmin stepping reached 1e-12 the
+             * refactor reported ret=1/status=0 while the solve returned
+             * non-finite values -- then 33,835 further non-finite solves, with
+             * refactor reporting OK 33,191 times, ending in a "timestep too
+             * small" message that names neither the node nor the cause. SPARSE
+             * solves the same circuit because its refactor path DOES detect the
+             * zero pivot and forces a full reorder.
+             *
+             * klu_rcond is the cheap, exact test for this: it walks diag(U) and
+             * sets rcond = 0 with status = KLU_SINGULAR the moment it finds a
+             * zero or NaN pivot. Reporting E_SINGULAR here routes the caller
+             * into the reorder-and-factor-again path it already has, which
+             * pivots properly -- the same recovery SPARSE performs. */
+            if (Matrix->SMPkluMatrix->KLUmatrixNumeric != NULL &&
+                Matrix->SMPkluMatrix->KLUmatrixSymbolic != NULL &&
+                Matrix->SMPkluMatrix->KLUmatrixCommon != NULL)
+            {
+                klu_rcond (Matrix->SMPkluMatrix->KLUmatrixSymbolic,
+                           Matrix->SMPkluMatrix->KLUmatrixNumeric,
+                           Matrix->SMPkluMatrix->KLUmatrixCommon) ;
+                if (Matrix->SMPkluMatrix->KLUmatrixCommon->rcond == 0.0) {
+                    if (ft_ngdebug)
+                        fprintf (stderr, "Warning (ReFactor): reuse of the existing "
+                                 "pivot order produced a singular U; forcing a "
+                                 "full factorization\n") ;
+                    return E_SINGULAR ;
+                }
+            }
             return 0 ;
         }
     } else {
