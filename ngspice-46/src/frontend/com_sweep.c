@@ -79,6 +79,31 @@ static void sw_run_cmd(const char *cmdstr)
 }
 
 
+/* Enhancement-438: did the analysis just run by sw_run_cmd() actually produce a
+ * solution?
+ *
+ * WHY THIS IS NEEDED. Every command in this file drives an analysis in a loop
+ * and then reads a metric back out of the resulting plot. When the analysis
+ * FAILS -- a DC solution that will not converge, a sample whose parameters the
+ * device refuses -- ngspice prints "DC solution failed" and still leaves a plot
+ * in place, so the read-back succeeds and returns whatever is there. Nothing
+ * downstream could tell a failed point from a real one, which is how
+ * `montecarlo` came to report 100% yield on a run where 14 of 20 samples never
+ * solved.
+ *
+ * The signal already exists: runcoms.c sets the shell variable `sim_status` to
+ * 0 before each run and to 1 when if_run() reports aborted (2) or not-started
+ * (3). Reading it is exact, costs nothing, and needs no new plumbing through
+ * the analysis layer. */
+static int sw_run_failed(void)
+{
+    int st = 0;
+    if (cp_getvar("sim_status", CP_NUM, &st, sizeof st))
+        return st != 0;
+    return 0;                    /* variable absent -- assume the run was fine */
+}
+
+
 /* parse a SPICE-style number (k / meg / u / n / p suffixes) */
 static double sw_num(const char *w)
 {
@@ -1571,6 +1596,7 @@ void com_sweep(wordlist *wl)
     char   *kscname[SW_MAXKNOB];
     double  prevval[SW_MAXKNOB];
     int     nknob = 0, npt = 1, nv0 = 0, ncomb = 1, havePrev = 0;
+    int     nptfail = 0;             /* Enhancement-438: points that never solved */
     char   *deck_fp_names[SW_MAXKNOB];   /* Enhancement-320: swept .param names   */
     int     ndeck_fp = 0, fast_fp = 0;   /* .param fast-sweep arm state           */
     /* Enhancement-350: nominal value of each swept `.param`, captured before the
@@ -1584,6 +1610,7 @@ void com_sweep(wordlist *wl)
      * 1800 2200 3` left r1 at 2199 and the next `op` was 3.8% off. */
     double  inplace_nominal[SW_MAXKNOB];
     int     ninplace_nominal = 0;
+    int     inplace_ok[SW_MAXKNOB];  /* Enhancement-438: per-knob capture flag */
     /* Enhancement-409: a WILDCARD knob overwrites many targets whose nominals all
      * differ, so one number cannot undo it. These hold the per-target capture;
      * wild_nominal[j] != NULL marks knob j as the wildcard kind. wild_ckt[j]
@@ -1602,7 +1629,7 @@ void com_sweep(wordlist *wl)
         kname[j] = NULL; kvals[j] = NULL; kscname[j] = NULL;
         wild_nominal[j] = NULL; wild_n[j] = 0; wild_domodel[j] = 0;
         wild_param[j][0] = '\0'; wild_ckt[j] = NULL;
-        wild_leaf[j][0] = '\0';
+        wild_leaf[j][0] = '\0'; inplace_ok[j] = 0;
     }
 
     if (sweep_active)                /* re-entered via a .param re-source */
@@ -1747,9 +1774,21 @@ void com_sweep(wordlist *wl)
             ndeck_fp_nominal = 0;       /* all or nothing -- never a partial undo */
 
         /* Enhancement-385: and the nominal of every in-place (`alter`/`altermod`)
-         * knob, read from the LIVE circuit before the first point moves it. Same
-         * all-or-nothing rule: a partially restored circuit is harder to reason
-         * about than an untouched one. */
+         * knob, read from the LIVE circuit before the first point moves it.
+         *
+         * Enhancement-438: this used to be ALL-OR-NOTHING -- one knob whose
+         * nominal could not be read cancelled the restore for EVERY knob. The
+         * stated reason was that a partly restored circuit is harder to reason
+         * about than an untouched one, but that premise does not hold when the
+         * knob that failed is a DIFFERENT knob from the one that moved: the
+         * circuit is not untouched, it is left at the last swept value.
+         * `sweep @r1[resistance] 1k 2k 1k -vs @nosuchdev[res] 1k 2k 1k` left r1
+         * at 2000 and the next `op` read 0.3333 instead of 0.5 -- a 33% error,
+         * silently, from a typo in an unrelated knob name.
+         *
+         * So capture per knob and put back exactly what was captured. A knob
+         * that could not be read is named at the end rather than quietly taking
+         * the others down with it. */
         {
             int nin = 0, allok = 1;
             for (j = 0; j < nknob; j++) {
@@ -1781,18 +1820,35 @@ void com_sweep(wordlist *wl)
                                                     &wild_nominal[j],
                                                     &wild_n[j]);
                     if (!got) {
+                        /* Enhancement-438: record the miss and carry on, so a
+                         * knob listed AFTER this one is still captured. The
+                         * slot is always consumed, which is what keeps this
+                         * array index-aligned with the restore walk below. */
                         allok = 0;
-                        break;
+                        inplace_ok[nin] = 0;
+                        inplace_nominal[nin++] = 0.0;
+                        continue;
                     }
                     wild_ckt[j] = (void *) ft_curckt->ci_ckt;
+                    inplace_ok[nin] = 1;
                     inplace_nominal[nin++] = 0.0;   /* keeps the indices aligned */
                     continue;
                 }
                 v = sw_read_knob(kname[j], &ok);
-                if (!ok) { allok = 0; break; }
+                if (!ok) {
+                    allok = 0;
+                    inplace_ok[nin] = 0;
+                    inplace_nominal[nin++] = 0.0;
+                    continue;
+                }
+                inplace_ok[nin] = 1;
                 inplace_nominal[nin++] = v;
             }
-            ninplace_nominal = allok ? nin : 0;
+            ninplace_nominal = nin;      /* Enhancement-438: keep what we got */
+            if (!allok)
+                fprintf(cp_err, "sweep: warning -- at least one knob's original "
+                                "value could not be read; the knobs that could "
+                                "be read will still be restored.\n");
         }
         fast_fp = (ndeck_fp > 0) ? sw_fp_build(deck_fp_names, ndeck_fp) : 0;
         if (fast_fp) {
@@ -1859,6 +1915,16 @@ void com_sweep(wordlist *wl)
         for (j = 0; j < nknob; j++) prevval[j] = curval[j];
         havePrev = 1;
         sw_run_cmd(analysis);
+        /* Enhancement-438: a point whose analysis never solved still contributes
+         * a value to every output curve -- ngspice leaves a plot behind, so the
+         * read-back returns something, and for a failed operating point that
+         * something is exactly 0.0. Plotted or written with `wrdata`, it is
+         * indistinguishable from a real zero, and the "DC solution failed"
+         * messages scroll past in the middle of the run. Count them so the sweep
+         * can say so at the end; the curve keeps its shape (dropping points
+         * would silently misalign every output against the sweep scale). */
+        if (sw_run_failed())
+            nptfail++;
 
         if (p == 0 && nout == 0) {
             /* no -output given: record every node voltage of the analysis */
@@ -1973,6 +2039,12 @@ void com_sweep(wordlist *wl)
                         "`plot <output>_...` to view the family vs %s.\n",
                 ncomb, ncomb == 1 ? "" : "s", nout, nout == 1 ? "" : "s",
                 swplotname, overlay ? "" : " (now current)", scname);
+    /* Enhancement-438: say it once, at the end, where it cannot scroll past. */
+    if (nptfail)
+        fprintf(cp_out, "sweep: WARNING -- %d of %d point%s did not converge; "
+                        "their output values are NOT valid results (a failed "
+                        "operating point reads back as 0).\n",
+                nptfail, npt, nptfail == 1 ? "" : "s");
 
     /* --- Enhancement-189/190: -overlay plot of every run's full waveform, one
      * vector per (output, cartesian point) resampled onto a common grid. The
@@ -2081,7 +2153,7 @@ cleanup:
         for (j = 0; j < nknob; j++) {
             if (kkind[j] == SW_DECK)
                 continue;
-            if (nin < ninplace_nominal) {
+            if (nin < ninplace_nominal && inplace_ok[nin]) {
                 if (wild_nominal[j]) {
                     /* Enhancement-409: replay the per-target nominals, but only
                      * onto the circuit they were read from -- if a `.param`
@@ -2465,6 +2537,7 @@ void com_montecarlo(wordlist *wl)
                 " no per-sample reset)\n", sw_fp_nrnd, sw_fp_nrnd == 1 ? "" : "s");
 
     long npass = 0;
+    long nfailed = 0;            /* Enhancement-438: samples that never solved */
     ft_optimizing = TRUE;
     /* Enhancement-188: warm-start each sample's DC bias point from the previous
      * converged solution (opt-in). Only the iteration count changes; the
@@ -2478,6 +2551,17 @@ void com_montecarlo(wordlist *wl)
         else
             sw_run_cmd("reset");
         sw_run_cmd(analysis);
+        /* Enhancement-438: a sample whose analysis never solved has no metric to
+         * judge. It used to fall through with pass still 1 -- ngspice leaves the
+         * previous sample's plot in place, so the read-back quietly returned a
+         * stale value and the sample was COUNTED AS PASSING. A yield of 100% was
+         * reported for runs where most samples never converged. Such a sample is
+         * neither a pass nor a spec violation; it is missing data, so it leaves
+         * the yield population entirely and is reported on its own line. */
+        if (sw_run_failed()) {
+            nfailed++;
+            continue;
+        }
         int pass = 1;
         for (s = 0; s < nspec; s++) {
             double m = sw_eval_expr(metric[s]);
@@ -2496,23 +2580,44 @@ void com_montecarlo(wordlist *wl)
     if (uselhs)
         mc_sss_off();
 
-    /* yield and a Wilson 95% score interval for the pass proportion */
-    double p = (double) npass / (double) nsamp;
-    const double z = 1.959964, z2 = z * z;
-    double denom = 1.0 + z2 / nsamp;
-    double center = (p + z2 / (2.0 * nsamp)) / denom;
-    double half = z * sqrt(p * (1.0 - p) / nsamp + z2 / (4.0 * nsamp * nsamp)) / denom;
+    /* Enhancement-438: the yield is over the samples that actually produced a
+     * solution. Quoting a percentage of the requested count when some never ran
+     * states more than was measured. */
+    long nvalid = (long) nsamp - nfailed;
+    if (nvalid <= 0) {
+        fprintf(cp_out, "\n  yield  : not available -- all %d sample%s failed to "
+                        "simulate\n", nsamp, nsamp == 1 ? "" : "s");
+        for (s = 0; s < nspec; s++)
+            fprintf(cp_out, "  spec %d (%s): no valid samples\n", s + 1, metric[s]);
+        hs_set_result("montecarlo_nfailed", (double) nfailed);
+        hs_set_result("montecarlo_nvalid", 0.0);
+        hs_set_result("montecarlo_n", (double) nsamp);
+        return;
+    }
 
-    fprintf(cp_out, "\n  yield  : %.3f%%  (%ld / %d pass)\n"
+    /* yield and a Wilson 95% score interval for the pass proportion */
+    double p = (double) npass / (double) nvalid;
+    const double z = 1.959964, z2 = z * z;
+    double denom = 1.0 + z2 / nvalid;
+    double center = (p + z2 / (2.0 * nvalid)) / denom;
+    double half = z * sqrt(p * (1.0 - p) / nvalid + z2 / (4.0 * nvalid * nvalid)) / denom;
+
+    fprintf(cp_out, "\n  yield  : %.3f%%  (%ld / %ld pass)\n"
                     "  95%% CI : [%.3f%%, %.3f%%]  (Wilson score)\n",
-            100.0 * p, npass, nsamp,
+            100.0 * p, npass, nvalid,
             100.0 * (center - half), 100.0 * (center + half));
+    if (nfailed)
+        fprintf(cp_out, "  NOTE   : %ld of %d sample%s failed to simulate and are "
+                        "EXCLUDED from the yield above\n",
+                nfailed, nsamp, nfailed == 1 ? "" : "s");
     for (s = 0; s < nspec; s++)
         fprintf(cp_out, "  spec %d (%s): %ld violation%s\n",
                 s + 1, metric[s], specfail[s], specfail[s] == 1 ? "" : "s");
 
     hs_set_result("montecarlo_yield", p);
     hs_set_result("montecarlo_npass", (double) npass);
+    hs_set_result("montecarlo_nfailed", (double) nfailed);
+    hs_set_result("montecarlo_nvalid", (double) nvalid);
     hs_set_result("montecarlo_n", (double) nsamp);
 }
 

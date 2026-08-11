@@ -71,6 +71,11 @@ enum {
     PARM_NODETYPE,
 };
 
+/* Enhancement-438: `.option warn_physics` -- set by the frontend, read by the
+ * device layer where a physical constraint needs both a parameter and its
+ * context (the coupling coefficient needs the two inductances). */
+extern int ng_warn_physics;
+
 struct CKTcircuit {
 
 /* gtri - begin - wbk - change declaration to allow dynamic sizing */
@@ -126,6 +131,7 @@ struct CKTcircuit {
     int CKTsdirkStages;
     double CKTsdirkGamma;
     int CKTindverbosity;        /* control check of inductive couplings */
+
 
 /* known integration methods */
 #define TRAPEZOIDAL 1

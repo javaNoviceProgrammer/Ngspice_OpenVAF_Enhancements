@@ -162,10 +162,20 @@ com_hb(wordlist *wl)
         struct hbspectrum sp;
         memset(&sp, 0, sizeof sp);
         err = HBanalyze(ckt, f0, K, P, maxiter, tol, verbose ? 1 : 0, &sp);
-        if (err != OK)
+        if (err != OK) {
             fprintf(cp_err, "hb: harmonic balance did not complete (error %d).\n", err);
-        else
+        } else {
             hb_publish(ckt, &sp);
+            /* Enhancement-438: tell batch mode that an analysis really ran.
+             * main.c decides "did anything simulate?" from `sim_status`, which
+             * runcoms.c publishes for the analyses that go through if_run().
+             * `hb` drives the solver itself and never set it, so a perfectly
+             * good harmonic-balance run in `ngspice -b` exited 1 with
+             * "Error: incomplete or empty netlist" -- every successful HB run
+             * looked like a failure to any script checking the exit code. */
+            int ok = 0;
+            cp_vset("sim_status", CP_NUM, &ok);
+        }
         FREE(sp.Vr);
         FREE(sp.Vi);
     }

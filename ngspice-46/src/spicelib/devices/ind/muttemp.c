@@ -50,6 +50,22 @@ MUTtemp(GENmodel *inModel, CKTcircuit *ckt)
             double ind1 = here->MUTind1->INDinduct;
             double ind2 = here->MUTind2->INDinduct;
 
+            /* Enhancement-438: `.option warn_physics` -- |k| <= 1 is a hard
+             * physical bound, not a convention: above it the inductance matrix
+             * is no longer positive semi-definite and the coupled pair can
+             * GENERATE energy. Measured on a 1:1 transformer at k = 1.5, ngspice
+             * reports |v(secondary)| = 1.178 against |v(primary)| = 0.9986 --
+             * impossible for any real pair, and reported with no diagnostic.
+             * Left legal by default (behavioural models do stranger things) and
+             * checked only when asked; the check lives here because it is the
+             * one place that has the coefficient AND both inductances. */
+            if (ng_warn_physics && fabs(here->MUTcoupling) > 1.0)
+                fprintf(stderr,
+                        "Warning: coupling '%s' has k = %g -- |k| > 1 is not "
+                        "physical (the coupled pair can generate energy).\n",
+                        here->MUTname ? here->MUTname : "?",
+                        here->MUTcoupling);
+
             /*           _______
              * M = k * \/L1 * L2
              */

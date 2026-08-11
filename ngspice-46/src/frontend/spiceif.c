@@ -438,6 +438,44 @@ static char *obsolete[] = {
 };
 
 
+
+/* Enhancement-438: does this name denote a simulator option at all?
+ *
+ * NOT a diagnostic in itself -- if_option() above is called by cp_usrset() for
+ * EVERY shell variable that gets set, precisely to discover whether the name is
+ * a simulator option, so an unrecognised name there is entirely normal and must
+ * stay silent. (Warning inside if_option() makes ngspice complain about its own
+ * `rndseed` on every run.)
+ *
+ * On a `.options` CARD the name is unambiguously meant to be an option, so the
+ * deck path in inp.c can use this to say so. Without it a misspelling was
+ * silently inert: `.options reltoll=1e-12` left reltol at its default while the
+ * user believed the tolerance had been tightened. */
+int
+if_is_option(const char *name)
+{
+    static const char *const specials[] = {
+        "acct", "noacct", "noinit", "norefvalue", "list", "node", "opts",
+        "nopage", "nomod",
+        "warn_physics",              /* Enhancement-438 */
+        NULL
+    };
+    const char *const *sp;
+    int which;
+    IFparm *if_parm;
+
+    if (!name || !*name)
+        return 0;
+    for (sp = specials; *sp; sp++)
+        if (eq((char *) name, (char *) *sp))
+            return 1;
+    which = ft_find_analysis("options");
+    if (which == -1)
+        return 1;                /* cannot tell -- do not accuse the user */
+    if_parm = ft_find_analysis_parm(which, (char *) name);
+    return (if_parm && (if_parm->dataType & IF_SET)) ? 1 : 0;
+}
+
 int
 if_option(CKTcircuit *ckt, char *name, enum cp_types type, void *value)
 {
@@ -473,6 +511,10 @@ if_option(CKTcircuit *ckt, char *name, enum cp_types type, void *value)
         return 0;
     } else if (eq(name, "nomod")) {
         ft_nomod = TRUE;
+        return 0;
+    } else if (eq(name, "warn_physics")) {
+        /* Enhancement-438: consumed by if_check_physics() via cp_getvar; the
+           .options machinery has already published it as a variable. */
         return 0;
     }
 
@@ -1513,6 +1555,150 @@ done:
     return count;
 }
 
+
+
+/* ------------------------------------------------------------------------
+ * Enhancement-438: `.option warn_physics` -- an OPT-IN check that device
+ * parameters lie inside their physically meaningful domain.
+ *
+ * WHY OPT-IN. Every value flagged here is one a simulator has good reason to
+ * accept by default: a negative resistance is a standard small-signal
+ * equivalent, a negative capacitance appears in de-embedding, and behavioural
+ * modelling deliberately uses non-physical elements. Refusing them outright
+ * would break working decks. But when a value is a MISTAKE it is currently
+ * silent, and the results stay plausible rather than obviously wrong:
+ *
+ *   K1 L1 L2 1.5     a coupling coefficient above 1 makes the inductance matrix
+ *                    indefinite -- the pair GENERATES energy. Measured on a 1:1
+ *                    transformer: |v(secondary)| = 1.178 while
+ *                    |v(primary)| = 0.9986, which |k| <= 1 makes impossible.
+ *   .model sw sw ron=-1     a switch that is a -1 ohm resistor when closed;
+ *                    a passive divider then reports a NEGATIVE node voltage.
+ *   M1 ... l=-1u     a MOSFET with negative channel length sources current and
+ *                    pushes a node ABOVE the supply rail (1.0306 V from 1 V).
+ *
+ * So the values stay legal and the check is something you ask for. It runs over
+ * the same device-type / model / instance walk the wildcard accessors use, so it
+ * needs no per-device code and picks up any device exposing these parameter
+ * names.
+ *
+ * Deliberately NOT flagged: `is`. The name collides -- it is the diode/BJT
+ * SATURATION CURRENT on a model card but the SOURCE CURRENT on a MOSFET
+ * instance, where a negative value is the normal operating point. (ngspice
+ * already clamps a negative diode `is` to 1e-28, so nothing is lost.) This is
+ * the hazard of matching on parameter NAME across every device, and the reason
+ * every rule here is checked against a clean multi-device deck before shipping.
+ *
+ * Deliberately NOT flagged: `res`/`capacitance`/`inductance` sign. Negative
+ * passives are the very idiom this project's own examples use for equivalent
+ * circuits, and flagging them would make the option too noisy to leave on.
+ */
+int ng_warn_physics = 0;         /* Enhancement-438 */
+
+enum phys_rule { PHYS_NONNEG, PHYS_ABS_LE1 };
+
+static const struct {
+    const char *param;
+    enum phys_rule rule;
+    const char *why;
+} phys_rules[] = {
+    { "k",    PHYS_ABS_LE1, "a coupling coefficient outside [-1,1] makes the "
+                            "inductance matrix indefinite (the coupled pair can "
+                            "generate energy)" },
+    { "ron",  PHYS_NONNEG,  "a switch's closed resistance cannot be negative" },
+    { "roff", PHYS_NONNEG,  "a switch's open resistance cannot be negative" },
+    { "l",    PHYS_NONNEG,  "a channel length cannot be negative" },
+    { "w",    PHYS_NONNEG,  "a channel width cannot be negative" },
+    { "area", PHYS_NONNEG,  "an area factor cannot be negative" },
+    { "bf",   PHYS_NONNEG,  "a forward current gain cannot be negative" },
+    { "br",   PHYS_NONNEG,  "a reverse current gain cannot be negative" },
+    { NULL, PHYS_NONNEG, NULL }
+};
+
+/* Enhancement-438: only a STRICTLY NEGATIVE value is flagged, never zero.
+ * These parameter names are shared across devices where zero is the ordinary
+ * "not specified" default -- a resistor model carries `l`, a diode carries `l`,
+ * and both sit at 0 in every normal deck. Flagging zero made the option warn
+ * six times on a circuit with nothing wrong with it, which is the fastest way
+ * to get a diagnostic switched off and ignored. Every finding this was written
+ * for (ron=-1, l=-1u, is<0, bf<0, |k|>1) is caught by the negative test. */
+static int phys_bad(double v, enum phys_rule r)
+{
+    switch (r) {
+    case PHYS_NONNEG:   return v < 0.0;
+    case PHYS_ABS_LE1:  return !(v >= -1.0 && v <= 1.0);
+    }
+    return 0;
+}
+
+/* Ask one target's scalar value; returns 0 if it is not a plain number. */
+static int phys_ask(CKTcircuit *ckt, int typecode, GENinstance *dev,
+                    GENmodel *mod, IFparm *opt, double *out)
+{
+    IFvalue *pv = doask(ckt, typecode, dev, mod, opt, 0);
+    if (!pv)
+        return 0;
+    switch (opt->dataType & IF_VARTYPES) {
+    case IF_REAL:                *out = pv->rValue;          return 1;
+    case IF_INTEGER: case IF_FLAG: *out = (double) pv->iValue; return 1;
+    default:                     return 0;
+    }
+}
+
+int
+if_check_physics(CKTcircuit *ckt)
+{
+    int typecode, r, nbad = 0;
+
+    if (!ckt)
+        return 0;
+
+    for (r = 0; phys_rules[r].param; r++) {
+        char pname[64];
+        (void) snprintf(pname, sizeof pname, "%s", phys_rules[r].param);
+        for (typecode = 0; typecode < ft_sim->numDevices; typecode++) {
+            IFdevice *device = ft_sim->devices[typecode];
+            GENinstance *dummy = NULL;
+            GENmodel *mod;
+            IFparm *mopt, *iopt;
+            double v;
+
+            if (!device || !ckt->CKThead[typecode])
+                continue;
+            dummy = NULL;
+            mopt = parmlookup(device, &dummy, pname, 1 /*model*/, 0 /*ask*/);
+            dummy = NULL;
+            iopt = parmlookup(device, &dummy, pname, 0 /*instance*/, 0 /*ask*/);
+            if (!mopt && !iopt)
+                continue;
+
+            for (mod = ckt->CKThead[typecode]; mod; mod = mod->GENnextModel) {
+                if (mopt && phys_ask(ckt, typecode, NULL, mod, mopt, &v) &&
+                    phys_bad(v, phys_rules[r].rule)) {
+                    fprintf(cp_err, "Warning: model '%s' has %s = %g -- %s.\n",
+                            mod->GENmodName ? mod->GENmodName : "?",
+                            pname, v, phys_rules[r].why);
+                    nbad++;
+                }
+                if (iopt) {
+                    GENinstance *inst;
+                    for (inst = mod->GENinstances; inst;
+                         inst = inst->GENnextInstance) {
+                        if (phys_ask(ckt, typecode, inst, NULL, iopt, &v) &&
+                            phys_bad(v, phys_rules[r].rule)) {
+                            fprintf(cp_err,
+                                    "Warning: instance '%s' has %s = %g -- %s.\n",
+                                    inst->GENname ? inst->GENname : "?",
+                                    pname, v, phys_rules[r].why);
+                            nbad++;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return nbad;
+}
 
 /* Enhancement-437: the save/restore twins of if_setparam_wildcard_model_named.
  *

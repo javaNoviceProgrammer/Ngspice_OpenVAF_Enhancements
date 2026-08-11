@@ -2428,7 +2428,19 @@ err_ret2:
             goto err_ret3;
         }
 
-        com_measure_when(meas);
+        /* Enhancement-438: com_measure_when() reports MEASUREMENT_FAILURE when
+         * the vector cannot be resolved, and that verdict used to be thrown
+         * away -- only isnan() was consulted. `meas->m_measured` starts at
+         * zero, so a WHEN whose expression did not resolve printed a clean
+         * "0.00000e+00" formatted exactly like a successful measurement: in an
+         * AC run, `meas ac f WHEN mag(v(nb))=0.707` recorded 0 Hz as the -3 dB
+         * point. The sibling FIND already failed loudly on the same input. */
+        if (com_measure_when(meas) == MEASUREMENT_FAILURE) {
+            snprintf(errbuf, MEAS_ERRBUF_SIZE,
+                     "could not evaluate the WHEN expression\n");
+            measure_errMessage(mName, mFunction, "WHEN", errbuf, autocheck);
+            goto err_ret3;
+        }
 
         if (isnan(meas->m_measured)) {
             snprintf(errbuf, MEAS_ERRBUF_SIZE, "out of interval\n");

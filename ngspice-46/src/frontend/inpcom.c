@@ -9589,7 +9589,15 @@ static void inp_check_syntax(struct card *deck)
     if (check_if != 0) {
         fprintf(cp_err, "\nError: Mismatch of .if ... .endif statements!\n");
         fprintf(stderr, "    in file %s\n", bugcard->linesource);
-        fprintf(cp_err, "    This may cause subsequent errors.\n\n");
+        fprintf(cp_err, "    This will cause subsequent errors.\n\n");
+        /* Enhancement-438: exit, as the .subckt/.ends sibling twelve lines above
+         * already does. Both report the same class of structural damage in
+         * almost the same words, but only one of them set the exit status: an
+         * unmatched .if printed "Error:" and then returned 0 with a full set of
+         * results, so a script or CI step checking the exit code saw a clean
+         * run. With the conditional unterminated every following card sits in an
+         * indeterminate branch, so continuing cannot be trusted. */
+        controlled_exit(EXIT_BAD);
     }
 }
 

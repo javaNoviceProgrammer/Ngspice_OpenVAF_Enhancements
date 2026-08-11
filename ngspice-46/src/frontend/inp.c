@@ -1683,6 +1683,15 @@ inp_dodeck(
         */
         for (eev = ct->ci_vars; eev; eev = eev->va_next) {
             bool one = TRUE;   /* FIXME, actually eev->va_bool should be TRUE anyway */
+            /* Enhancement-438: on a `.options` card the name is meant to BE an
+             * option, so an unrecognised one is a user error rather than the
+             * ordinary shell-variable miss that if_option() has to tolerate.
+             * A misspelling used to be silently inert -- `.options reltoll=`
+             * left reltol at its default with nothing on stderr, while the
+             * correctly spelled option demonstrably changes the answer. */
+            if (!if_is_option(eev->va_name))
+                fprintf(cp_err, "Warning: unknown option '%s' on a .options "
+                                "card; ignored.\n", eev->va_name);
             switch (eev->va_type) {
             case CP_BOOL:
                 if_option(ct->ci_ckt, eev->va_name, eev->va_type, &one);

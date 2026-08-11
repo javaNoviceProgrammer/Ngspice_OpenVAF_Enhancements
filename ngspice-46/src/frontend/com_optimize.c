@@ -139,6 +139,7 @@ struct optctx {
     double tol;
     int verbose;
     int nevals;
+    int nfailed;                         /* Enhancement-438: evals whose analysis never solved */
     int swarmsize;                       /* Enhancement-194: PSO population (0=auto)*/
     unsigned long seed;                  /* Enhancement-194: PSO RNG seed          */
 
@@ -201,6 +202,25 @@ static void opt_run_cmd(const char *cmdstr)
     else
         fprintf(cp_err, "optimize: unknown command '%s'\n", wl->wl_word);
     wl_free(wl);
+}
+
+
+/* Enhancement-438: did the analysis just run actually solve?
+ *
+ * An optimizer that cannot tell a failed evaluation from a real one will walk
+ * straight into the region where the model refuses its parameters, read the
+ * previous point's plot back as if it were this point's answer, and then report
+ * that it CONVERGED there. `optimize -param @n1[area] 1 -5 5` against a model
+ * declaring `area from (0:inf)` did exactly that: 21 failed evaluations, no
+ * mention of them, and a confident "converged" at area = 1.1e-15.
+ *
+ * runcoms.c already publishes the verdict in the `sim_status` shell variable. */
+static int opt_run_failed(void)
+{
+    int st = 0;
+    if (cp_getvar("sim_status", CP_NUM, &st, sizeof st))
+        return st != 0;
+    return 0;
 }
 
 
@@ -479,6 +499,11 @@ static double opt_eval(struct optctx *c, const double *u, double *resid)
          * while that stage's plot is still current */
         for (s = 0; s < c->ns; s++) {
             opt_run_cmd(c->analysis[s]);
+            if (opt_run_failed()) {         /* Enhancement-438 */
+                c->nfailed++;
+                cost = OPT_PENALTY;
+                break;
+            }
             for (i = 0; i < c->nt; i++) {
                 if (c->tgt[i].stage != s)
                     continue;
@@ -496,7 +521,14 @@ static double opt_eval(struct optctx *c, const double *u, double *resid)
     } else {
         /* scalar objective evaluated after the (single) analysis stage */
         opt_run_cmd(c->analysis[0]);
-        cost = opt_eval_expr(c->objective);
+        if (opt_run_failed()) {
+            /* Enhancement-438: no solution -> no objective. Penalise so the
+             * search moves away, instead of scoring the previous point's plot. */
+            c->nfailed++;
+            cost = OPT_PENALTY;
+        } else {
+            cost = opt_eval_expr(c->objective);
+        }
     }
 
     ft_optimizing = FALSE;
@@ -1661,6 +1693,15 @@ void com_optimize(wordlist *wl)
     else
         fprintf(cp_out, "optimize: converged, objective = %.6g after %d evaluations\n",
                 fbest, c.nevals);
+    /* Enhancement-438: failed evaluations were silently absorbed -- a search
+     * whose range reaches into a region the model refuses would report a
+     * confident "converged" without ever mentioning that a third of its
+     * evaluations produced no solution. Say so, and point at the usual cause. */
+    if (c.nfailed)
+        fprintf(cp_out, "optimize: NOTE -- %d of %d evaluation%s did not solve and "
+                        "were scored as worst-case; check that the search range "
+                        "stays inside every parameter's legal domain.\n",
+                c.nfailed, c.nevals, c.nfailed == 1 ? "" : "s");
     for (k = 0; k < c.np; k++) {
         double val = c.lo[k] + ubest[k] * (c.hi[k] - c.lo[k]);
         fprintf(cp_out, "    %s = %.6g\n", c.name[k], val);

@@ -332,7 +332,19 @@ static int dosim(
         /* Do a run of the circuit */
     }
     else {
+        /* Enhancement-438: publish the opt-in flag before the run so device
+           code that needs a parameter IN CONTEXT can check it too -- the
+           coupling coefficient is only meaningful next to the two inductances,
+           which only the mutual device can see. */
+        ng_warn_physics = cp_getvar("warn_physics", CP_BOOL, NULL, 0) ? 1 : 0;
         err = if_run(ft_curckt->ci_ckt, what, ww, ft_curckt->ci_symtab);
+        /* Enhancement-438: opt-in physical-domain check. Run AFTER if_run so
+           every model and instance list is built and its parameters are
+           readable -- before setup the device tables a first analysis needs are
+           not yet linked, and the walk silently found nothing. Running here also
+           means values changed by `alter`/`altermod` are covered. */
+        if (cp_getvar("warn_physics", CP_BOOL, NULL, 0))
+            (void) if_check_physics(ft_curckt->ci_ckt);
         if (err == 1) {
             /* The circuit was interrupted somewhere. */
             fprintf(cp_err, "%s simulation interrupted\n", what);

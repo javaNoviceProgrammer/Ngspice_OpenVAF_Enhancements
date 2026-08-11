@@ -1,0 +1,15 @@
+// Enhancement-438: a model with a declared parameter range, so that a search
+// straying outside it produces a genuine failed evaluation rather than a
+// clamped one. Built-in ngspice devices clamp instead of refusing, which is why
+// the optimize/montecarlo failure paths need a Verilog-A model to exercise.
+`include "disciplines.vams"
+module optfail(a, c);
+    inout a, c;
+    electrical a, c;
+    (* type="instance" *) parameter real area = 1.0 from (0:inf);
+    parameter real is0 = 1e-14 from (0:inf);
+    analog begin
+        I(a,c) <+ area * is0 * (limexp(V(a,c)/$vt) - 1.0);
+        I(a,c) <+ V(a,c)/1e9;
+    end
+endmodule

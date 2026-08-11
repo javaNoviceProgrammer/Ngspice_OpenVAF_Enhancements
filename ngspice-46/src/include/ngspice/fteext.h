@@ -328,6 +328,8 @@ extern int if_saveparam_wildcard(CKTcircuit *ckt, char *param, int do_model,
                                  double **valsOut, int *nOut);            /* Enhancement-409 */
 extern int if_restoreparam_wildcard(CKTcircuit *ckt, char *param, int do_model,
                                     const double *vals, int n);           /* Enhancement-409 */
+extern int if_is_option(const char *name);
+extern int if_check_physics(CKTcircuit *ckt);                              /* Enhancement-438 */                                 /* Enhancement-438 */
 extern int if_saveparam_wildcard_model_named(CKTcircuit *ckt, const char *leaf,
                                              char *param, double **valsOut,
                                              int *nOut);                  /* Enhancement-437 */
