@@ -371,6 +371,76 @@ def main():
         check("[quote] wcd -analysis collects every token, %s-quoted" % style,
               got == "tran 1n 20n", f"{got!r} {out[-90:]}".replace("\n", " "))
 
+    # ------------------------------------------------------------ E-437 -----
+    # A `.temp` card with NO value was applied SILENTLY AS 0 C: strtod("")
+    # returns 0.0 and leaves the parse pointer at the start, so the
+    # trailing-garbage test that catches `.temp abc` saw a clean parse. The
+    # circuit then ran 27 K cold with nothing on stderr. Its own sibling
+    # `.options temp=` already refused the same mistake, and of every
+    # value-taking dot card `.temp` was the only one whose missing value both
+    # went undiagnosed AND could change the answer -- a lone gap, not a class.
+    #
+    # The divider below carries tc1 on R1, so temperature is visible in v(nb):
+    # 27 C reads exactly 0.5, and the silent 0 C read 0.5780 -- 15.6% wrong.
+    TEMP_DECK = "\n".join([
+        "temp card guard",
+        "V1 in 0 dc 1",
+        "R1 in nb 1k tc1=0.01",
+        "R2 nb 0 1k",
+        "{card}",
+        ".control",
+        "option noacct",
+        "set numdgt=12",
+        "op",
+        "print v(nb)",
+        ".endc",
+        ".end",
+        "",
+    ])
+
+    def temp_run(card, tag):
+        p = os.path.join(HERE, "_sg_%s.cir" % tag)
+        with open(p, "w") as f:
+            f.write(TEMP_DECK.replace("{card}", card))
+        r = subprocess.run([NGSPICE, "-b", os.path.basename(p)], cwd=HERE,
+                           capture_output=True, text=True, timeout=60,
+                           errors="replace")
+        out = r.stdout + r.stderr
+        mv = re.search(r"v\(nb\) = (\S+)", out)
+        mt = re.search(r"TEMP = ([-\d.]+)", out)
+        warned = bool(re.search(r"(?i)^\s*warning", out, re.M))
+        return (float(mv.group(1)) if mv else None,
+                float(mt.group(1)) if mt else None, warned, out)
+
+    v, t, warned, out = temp_run(".temp", "temp_bare")
+    check("[E-437] a `.temp` with no value is diagnosed, not applied as 0 C",
+          warned and t == 27.0, f"TEMP={t} warned={warned}")
+    check("[E-437] ...and the answer is the 27 C one, not the 0 C one",
+          v is not None and abs(v - 0.5) < 1e-9, f"v(nb)={v}")
+    check("[E-437] ...with a message naming the actual mistake",
+          "carries no temperature value" in out,
+          "; ".join(l.strip() for l in out.splitlines()
+                    if "arning" in l)[:90])
+
+    # positive control: `.temp` must still SET the temperature. A fix that
+    # simply ignored the card would satisfy every check above.
+    v125, t125, _, _ = temp_run(".temp 125", "temp_125")
+    check("[E-437] a `.temp` WITH a value still sets it (positive control)",
+          t125 == 125.0 and v125 is not None and abs(v125 - 0.5) > 1e-3,
+          f"TEMP={t125} v(nb)={v125}")
+    v27, t27, w27, _ = temp_run(".temp 27", "temp_27")
+    check("[E-437] ...and a good value stays quiet",
+          t27 == 27.0 and not w27, f"TEMP={t27} warned={w27}")
+
+    # the neighbours this fix must not disturb
+    for card, tag in ((".temp abc", "temp_abc"), (".temp 75 125", "temp_multi")):
+        vv, tt, ww, _ = temp_run(card, tag)
+        check(f"[E-437] `{card}` still warns and keeps 27 C",
+              ww and tt == 27.0, f"TEMP={tt} warned={ww}")
+    vo, to, _, outo = temp_run(".options temp=", "temp_opt")
+    check("[E-437] the sibling `.options temp=` is unchanged",
+          to == 27.0 and "equals what" in outo, f"TEMP={to}")
+
     for junk in os.listdir(HERE):
         if junk.startswith("_sg_"):
             os.remove(os.path.join(HERE, junk))

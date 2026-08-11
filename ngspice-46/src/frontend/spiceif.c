@@ -1514,6 +1514,146 @@ done:
 }
 
 
+/* Enhancement-437: the save/restore twins of if_setparam_wildcard_model_named.
+ *
+ * Enhancement-436 gave `@*:rmod[param]` its own dispatch for SETTING, but not
+ * for the capture/replay that `sweep` needs to put a knob back. Without them a
+ * sweep over `@*:rmod[res]` left every matched model at the LAST swept value --
+ * the same defect Enhancement-409 fixed for `@*[param]`, reappearing for the
+ * newer spelling because it did not route into E-409's path.
+ *
+ * As with E-409, these must walk EXACTLY the targets, in EXACTLY the order, that
+ * if_setparam_wildcard_model_named walks -- same device-type loop, same model
+ * chain, same `eq(model_leaf(nm), leaf)` predicate -- so index i names the same
+ * model on the way out as on the way in. The leaf filter is the only difference
+ * from if_{save,restore}param_wildcard. */
+static int
+if_hasparam_wildcard_model_named(CKTcircuit *ckt, const char *leaf, char *param)
+{
+    int typecode, count = 0;
+
+    if (!leaf || !*leaf || !param || !*param || !ckt)
+        return 0;
+
+    for (typecode = 0; typecode < ft_sim->numDevices; typecode++) {
+        IFdevice    *device = ft_sim->devices[typecode];
+        GENinstance *dummy  = NULL;
+        GENmodel    *mod;
+
+        if (!device || !ckt->CKThead[typecode])
+            continue;
+        if (!parmlookup(device, &dummy, param, 1 /*do_model*/, 1 /*inout=set*/))
+            continue;
+        for (mod = ckt->CKThead[typecode]; mod; mod = mod->GENnextModel)
+            if (mod->GENmodName && eq(model_leaf(mod->GENmodName), leaf))
+                count++;
+    }
+    return count;
+}
+
+
+int
+if_saveparam_wildcard_model_named(CKTcircuit *ckt, const char *leaf, char *param,
+                                  double **valsOut, int *nOut)
+{
+    int typecode, n = 0, cap;
+    double *vals;
+
+    if (valsOut)
+        *valsOut = NULL;
+    if (nOut)
+        *nOut = 0;
+    if (!leaf || !*leaf || !param || !*param || !ckt || !valsOut || !nOut)
+        return 0;
+
+    cap = if_hasparam_wildcard_model_named(ckt, leaf, param);
+    if (cap <= 0)
+        return 0;
+    vals = TMALLOC(double, cap);
+    if (!vals)
+        return 0;
+
+    for (typecode = 0; typecode < ft_sim->numDevices; typecode++) {
+        IFdevice    *device = ft_sim->devices[typecode];
+        GENinstance *sdummy = NULL, *admy = NULL;
+        GENmodel    *mod;
+        IFparm      *aopt;
+
+        if (!device || !ckt->CKThead[typecode])
+            continue;
+        if (!parmlookup(device, &sdummy, param, 1 /*do_model*/, 1 /*inout=set*/))
+            continue;
+        /* the READABLE twin -- a set-only parameter cannot be undone at all, so
+           refuse the whole capture (E-409's all-or-nothing rule) */
+        admy = NULL;
+        aopt = parmlookup(device, &admy, param, 1 /*do_model*/, 0 /*inout=ask*/);
+        if (!aopt)
+            goto fail;
+        for (mod = ckt->CKThead[typecode]; mod; mod = mod->GENnextModel) {
+            if (!mod->GENmodName || !eq(model_leaf(mod->GENmodName), leaf))
+                continue;
+            if (!wild_ask_scalar(ckt, typecode, NULL, mod, aopt, vals, &n, cap))
+                goto fail;
+        }
+    }
+
+    if (n != cap)               /* the two walks disagreed -- do not risk it */
+        goto fail;
+
+    *valsOut = vals;
+    *nOut = n;
+    return n;
+
+fail:
+    tfree(vals);
+    return 0;
+}
+
+
+int
+if_restoreparam_wildcard_model_named(CKTcircuit *ckt, const char *leaf,
+                                     char *param, const double *vals, int n)
+{
+    int typecode, i = 0, count = 0;
+
+    if (!leaf || !*leaf || !param || !*param || !ckt || !vals || n <= 0)
+        return 0;
+
+    for (typecode = 0; typecode < ft_sim->numDevices; typecode++) {
+        IFdevice    *device = ft_sim->devices[typecode];
+        GENinstance *dummy  = NULL;
+        GENmodel    *mod;
+        IFparm      *opt;
+
+        if (!device || !ckt->CKThead[typecode])
+            continue;
+        opt = parmlookup(device, &dummy, param, 1 /*do_model*/, 1 /*inout=set*/);
+        if (!opt)
+            continue;
+        for (mod = ckt->CKThead[typecode]; mod; mod = mod->GENnextModel) {
+            if (!mod->GENmodName || !eq(model_leaf(mod->GENmodName), leaf))
+                continue;
+            if (i >= n)
+                goto done;
+            if (wild_set_scalar(ckt, typecode, NULL, mod, opt, vals[i++]) == OK)
+                count++;
+        }
+    }
+
+done:
+    /* mirror if_setparam_wildcard_model_named: propagate to instances mid-run */
+    if (count > 0 && ckt->CKTtime > 0) {
+        int error = CKTtemp(ckt);
+        if (error) {
+            fprintf(stderr, "Error while restoring wildcard parameter!\n");
+            controlled_exit(1);
+        }
+    }
+
+    return count;
+}
+
+
 /* Make a linked list where the first node is a CP_LIST variable
  * pointing to the different values of the vector variables.
  *

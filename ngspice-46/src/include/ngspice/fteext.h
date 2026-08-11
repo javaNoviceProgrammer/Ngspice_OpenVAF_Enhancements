@@ -328,6 +328,12 @@ extern int if_saveparam_wildcard(CKTcircuit *ckt, char *param, int do_model,
                                  double **valsOut, int *nOut);            /* Enhancement-409 */
 extern int if_restoreparam_wildcard(CKTcircuit *ckt, char *param, int do_model,
                                     const double *vals, int n);           /* Enhancement-409 */
+extern int if_saveparam_wildcard_model_named(CKTcircuit *ckt, const char *leaf,
+                                             char *param, double **valsOut,
+                                             int *nOut);                  /* Enhancement-437 */
+extern int if_restoreparam_wildcard_model_named(CKTcircuit *ckt, const char *leaf,
+                                                char *param, const double *vals,
+                                                int n);                   /* Enhancement-437 */
 extern struct variable *if_getstat(CKTcircuit *ckt, char *name);
 extern int ft_find_analysis(char *name);
 extern IFparm *ft_find_analysis_parm(int which, char *name);

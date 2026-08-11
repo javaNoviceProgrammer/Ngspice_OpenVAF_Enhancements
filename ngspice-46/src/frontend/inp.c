@@ -1242,11 +1242,33 @@ inp_spsource(FILE *fp, bool comfile, char *filename, bool intfile)
            so we can do it only here because the circuit has to be already existing */
         if (temperature) {
             char *endstr;
-            temperature_value = strtod(temperature, &endstr);
+            char *tstart = skip_ws(temperature);
+            temperature_value = strtod(tstart, &endstr);
             /* number strngs from numparam may contain trailing spaces */
             endstr = skip_ws(endstr);
+            /* Enhancement-437: a `.temp` card with NO value used to be applied
+             * SILENTLY AS 0 C. strtod("") returns 0.0 and leaves endstr at the
+             * start of the string, so the trailing-garbage test below -- which
+             * catches `.temp abc` -- saw a clean parse and let 0 C through. The
+             * whole circuit then ran 27 K cold with nothing on stderr but the
+             * routine "TEMP = 0.000000" line: a two-resistor divider with
+             * tc1=0.01 answers 0.5780 instead of 0.5000, 15.6% wrong, rc=0.
+             *
+             * Its own sibling already got this right -- `.options temp=` with no
+             * value says "temp equals what?." and keeps 27 C -- and of every
+             * value-taking dot card, `.temp` was the only one whose missing
+             * value was both undiagnosed AND able to change the answer
+             * (`.tnom`/`.include`/`.lib` abort, `.four`/`.print`/`.plot` warn,
+             * and `.ic`/`.nodeset`/`.save`/`.param`/`.global` are inert). So
+             * this is a lone gap, not a class: two messages for the two
+             * distinct mistakes, both keeping the 27 C default. */
+            if (*tstart == '\0') {
+                fprintf(stderr, "Warning: .temp card carries no temperature value\n"
+                                "   Set to default 27 C instead.\n");
+                temperature_value = 27;
+            }
             /* if endstr contains characters, temperature has not been a pure number string */
-            if (*endstr != '\0') {
+            else if (*endstr != '\0') {
                 fprintf(stderr, "Warning: Could not set temperature to %s\n   Set to default 27 C instead.\n", temperature);
                 temperature_value = 27;
             }

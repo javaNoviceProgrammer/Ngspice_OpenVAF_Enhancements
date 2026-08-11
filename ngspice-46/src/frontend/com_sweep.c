@@ -333,11 +333,13 @@ static void sw_set_inplace(int kind, const char *name, double val)
  * and how `alter_set` matches it (Enhancement-284). Returns 1 for a wildcard.
  */
 static int sw_wildcard_knob(const char *name, char *param, size_t plen,
-                            int *do_model)
+                            int *do_model, char *leaf, size_t llen)
 {
     const char *p, *end;
     size_t i, n;
 
+    if (leaf && llen)
+        leaf[0] = '\0';
     if (!name || name[0] != '@' || !param || plen == 0 || !do_model)
         return 0;
     p = name + 1;
@@ -350,6 +352,46 @@ static int sw_wildcard_knob(const char *name, char *param, size_t plen,
     } else if (p[0] == '*' && p[1] == '[') {
         *do_model = 1;
         p += 2;
+    } else if (p[0] == '*' && (p[1] == ':' || p[1] == '.') &&
+               p[2] && p[2] != '[') {
+        /* Enhancement-437: `@*:rmod[param]` / `@*.rmod[param]`, the named-model
+         * wildcard Enhancement-436 added. It belongs here for the same two
+         * reasons the older spellings do, and E-436 gave it neither:
+         *
+         *   1. sw_read_knob() must not try to read it as a scalar. `*` is in the
+         *      lexer's `specials` set, so PPparse cannot lex the name and emits
+         *      the stray-']' pair documented above -- which is exactly the
+         *      spurious "no such device or model name" + "PPerror: syntax error"
+         *      that a `sweep @*:rmod[res]` printed while otherwise working.
+         *   2. It has no single readable value, so it must be captured
+         *      per target for the restore -- without that the sweep left every
+         *      matched model at the last swept value.
+         *
+         * The leaf name is reported separately so the caller can use the
+         * name-filtered capture/replay rather than the match-everything one. */
+        const char *lp = p + 2;
+        const char *lend = strchr(lp, '[');
+        size_t ln;
+        if (!lend || lend == lp || !leaf || llen == 0)
+            return 0;
+        ln = (size_t) (lend - lp);
+        if (ln >= llen)
+            return 0;
+        for (i = 0; i < ln; i++)
+            leaf[i] = (char) tolower((unsigned char) lp[i]);
+        leaf[ln] = '\0';
+        *do_model = 1;
+        p = lend + 1;
+        end = strchr(p, ']');
+        if (!end || end == p)
+            return 0;
+        n = (size_t) (end - p);
+        if (n >= plen)
+            return 0;
+        for (i = 0; i < n; i++)
+            param[i] = (char) tolower((unsigned char) p[i]);
+        param[n] = '\0';
+        return 1;
     } else {
         return 0;
     }
@@ -402,9 +444,9 @@ static double sw_read_knob(const char *name, int *ok)
      * as a single token and the leftover text is reported with a stray ']'.
      * Wildcards are captured per target by if_saveparam_wildcard() instead. */
     {
-        char pbuf[128];
+        char pbuf[128], lbuf[128];
         int dm;
-        if (sw_wildcard_knob(name, pbuf, sizeof pbuf, &dm))
+        if (sw_wildcard_knob(name, pbuf, sizeof pbuf, &dm, lbuf, sizeof lbuf))
             return 0.0;                  /* *ok stays 0 -- read via the backend */
     }
     (void) snprintf(buf, sizeof buf, "%s", name);
@@ -1551,11 +1593,16 @@ void com_sweep(wordlist *wl)
     int     wild_n[SW_MAXKNOB], wild_domodel[SW_MAXKNOB];
     char    wild_param[SW_MAXKNOB][128];
     void   *wild_ckt[SW_MAXKNOB];
+    /* Enhancement-437: non-empty for the `@*:rmod[param]` kind -- the model leaf
+     * name whose copies this knob drives, so the capture/replay can be filtered
+     * to them instead of hitting every model that has the parameter. */
+    char    wild_leaf[SW_MAXKNOB][128];
 
     for (j = 0; j < SW_MAXKNOB; j++) {
         kname[j] = NULL; kvals[j] = NULL; kscname[j] = NULL;
         wild_nominal[j] = NULL; wild_n[j] = 0; wild_domodel[j] = 0;
         wild_param[j][0] = '\0'; wild_ckt[j] = NULL;
+        wild_leaf[j][0] = '\0';
     }
 
     if (sweep_active)                /* re-entered via a .param re-source */
@@ -1713,13 +1760,27 @@ void com_sweep(wordlist *wl)
                 /* Enhancement-409: a wildcard is captured per target through the
                  * device tables, since it has no single readable value. */
                 if (sw_wildcard_knob(kname[j], wild_param[j],
-                                     sizeof wild_param[j], &wild_domodel[j])) {
-                    if (!ft_curckt || !ft_curckt->ci_ckt ||
-                            !if_saveparam_wildcard(ft_curckt->ci_ckt,
-                                                   wild_param[j],
-                                                   wild_domodel[j],
-                                                   &wild_nominal[j],
-                                                   &wild_n[j])) {
+                                     sizeof wild_param[j], &wild_domodel[j],
+                                     wild_leaf[j], sizeof wild_leaf[j])) {
+                    int got;
+                    if (!ft_curckt || !ft_curckt->ci_ckt) {
+                        allok = 0;
+                        break;
+                    }
+                    /* Enhancement-437: a named-model wildcard captures only the
+                     * models carrying that leaf name; the older spellings still
+                     * capture every target that has the parameter. */
+                    if (wild_leaf[j][0])
+                        got = if_saveparam_wildcard_model_named(
+                                  ft_curckt->ci_ckt, wild_leaf[j],
+                                  wild_param[j], &wild_nominal[j], &wild_n[j]);
+                    else
+                        got = if_saveparam_wildcard(ft_curckt->ci_ckt,
+                                                    wild_param[j],
+                                                    wild_domodel[j],
+                                                    &wild_nominal[j],
+                                                    &wild_n[j]);
+                    if (!got) {
                         allok = 0;
                         break;
                     }
@@ -2027,12 +2088,19 @@ cleanup:
                      * co-knob re-sourced the deck, every model is already back
                      * at its deck value and these readings no longer apply. */
                     if (ft_curckt && ft_curckt->ci_ckt &&
-                            (void *) ft_curckt->ci_ckt == wild_ckt[j])
-                        (void) if_restoreparam_wildcard(ft_curckt->ci_ckt,
-                                                        wild_param[j],
-                                                        wild_domodel[j],
-                                                        wild_nominal[j],
-                                                        wild_n[j]);
+                            (void *) ft_curckt->ci_ckt == wild_ckt[j]) {
+                        if (wild_leaf[j][0])     /* Enhancement-437 */
+                            (void) if_restoreparam_wildcard_model_named(
+                                       ft_curckt->ci_ckt, wild_leaf[j],
+                                       wild_param[j], wild_nominal[j],
+                                       wild_n[j]);
+                        else
+                            (void) if_restoreparam_wildcard(ft_curckt->ci_ckt,
+                                                            wild_param[j],
+                                                            wild_domodel[j],
+                                                            wild_nominal[j],
+                                                            wild_n[j]);
+                    }
                 } else {
                     sw_set_inplace(kkind[j], kname[j], inplace_nominal[nin]);
                 }

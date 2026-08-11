@@ -144,6 +144,65 @@ check("[E-436] a real model with an unknown parameter is a different message",
       "no model named 'rmod' has parameter 'nosuchp'" in out,
       out[-110:].replace("\n", " "))
 
+
+# ---------------------------------------------------------------- E-437 ------
+# Enhancement-436 gave `@*:rmod[param]` a SET path but never routed it into the
+# capture/replay Enhancement-409 built for `@*[param]`, so a sweep over it left
+# every matched model at the LAST swept value -- and, because the name then went
+# to the scalar reader, printed the stray-']' pair E-409's guard exists to
+# suppress. Both are one omission; both are checked here.
+MODELS = ("@rmod[res]", "@x1:rmod[res]", "@x2:rmod[res]", "@x3:omod[res]")
+READ = "\n".join(f"print {m}" for m in MODELS)
+
+
+def around(cmd, tag):
+    """Model values before and after `cmd`, plus the raw output."""
+    out = run(f"{READ}\n{cmd}\n{READ}", tag)
+    got = {}
+    for m in MODELS:
+        v = re.findall(re.escape(m) + r"\s*=\s*(-?[\d.eE+-]+)", out)
+        got[m] = (float(v[0]), float(v[-1])) if len(v) >= 2 else (None, None)
+    return got, out
+
+
+print("\nEnhancement-437: a swept model wildcard is put back")
+for spelling in ("@*:rmod[res]", "@*.rmod[res]"):
+    got, out = around(f"sweep {spelling} 1k 3k 1k -analysis op -output v(a)",
+                      "r" + spelling[2:6])
+    check(f"[E-437] sweep {spelling} restores every model it moved",
+          all(b == a for b, a in got.values()),
+          " ".join(f"{m.split('[')[0][1:]}:{b}->{a}" for m, (b, a) in got.items()))
+    check(f"[E-437] ...and prints no spurious parse diagnostic for {spelling}",
+          not re.search(r"(?i)no such device or model name|PPerror", out),
+          "; ".join(l.strip() for l in out.splitlines()
+                    if re.search(r"(?i)error|pperror", l))[:110])
+
+# The restore walks models filtered by leaf name. If it walked ALL models
+# instead, index i on the way out would name a different model than on the way
+# in and the decoy would be overwritten with a value that was never its own.
+# Moving omod off its nominal first makes that misalignment visible.
+got, _ = around("altermod @*:omod[res]=7000\n"
+                "sweep @*:rmod[res] 1k 3k 1k -analysis op -output v(a)", "align")
+check("[E-437] the replay is filtered by leaf name -- the decoy keeps ITS value",
+      got["@x3:omod[res]"][1] == 7000.0,
+      f"omod={got['@x3:omod[res]'][1]}")
+check("[E-437] ...while the rmod copies still come back to their own nominal",
+      all(got[m][1] == 1000.0 for m in MODELS[:3]),
+      " ".join(f"{m.split('[')[0][1:]}={got[m][1]}" for m in MODELS[:3]))
+
+print("\nthe forms that already restored still do (no-regression controls)")
+for spelling in ("@*[res]", "@x1:rmod[res]", "@rmod[res]"):
+    got, out = around(f"sweep {spelling} 1k 3k 1k -analysis op -output v(a)",
+                      "c" + re.sub(r"\W", "", spelling)[:5])
+    check(f"[E-437] sweep {spelling} still restores",
+          all(b == a for b, a in got.values()),
+          " ".join(f"{m.split('[')[0][1:]}:{b}->{a}" for m, (b, a) in got.items()))
+
+# The fix must change restoration and diagnostics only -- never an answer.
+out = run("sweep @*:rmod[res] 1k 3k 1k -analysis op -output v(a)\nprint v(a)", "curve")
+check("[E-437] the swept curve itself is unchanged by the restore fix",
+      rows(out) == ["5.000000e-01", "3.333333e-01", "2.500000e-01"], str(rows(out)))
+
 for junk in os.listdir(HERE):
     if junk.startswith("_mw_"):
         os.remove(os.path.join(HERE, junk))
