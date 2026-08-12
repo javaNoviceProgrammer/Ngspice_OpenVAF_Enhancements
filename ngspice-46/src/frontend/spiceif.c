@@ -458,6 +458,7 @@ if_is_option(const char *name)
         "acct", "noacct", "noinit", "norefvalue", "list", "node", "opts",
         "nopage", "nomod",
         "warn_physics",              /* Enhancement-438 */
+        "autobus",                   /* Enhancement-444 */
         NULL
     };
     const char *const *sp;
@@ -515,6 +516,9 @@ if_option(CKTcircuit *ckt, char *name, enum cp_types type, void *value)
     } else if (eq(name, "warn_physics")) {
         /* Enhancement-438: consumed by if_check_physics() via cp_getvar; the
            .options machinery has already published it as a variable. */
+        return 0;
+    } else if (eq(name, "autobus")) {
+        /* Enhancement-444: consumed by INP2N via cp_getvar, likewise. */
         return 0;
     }
 

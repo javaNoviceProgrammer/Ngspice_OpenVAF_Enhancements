@@ -1,0 +1,14 @@
+`include "disciplines.vams"
+module bustwo(a, b, c);
+    inout [0:1] a;  electrical [0:1] a;
+    inout [0:2] b;  electrical [0:2] b;
+    inout c;        electrical c;
+    parameter real r = 1e3 from (0:inf);
+    analog begin
+        I(a[0], c) <+ V(a[0], c) / r;
+        I(a[1], c) <+ V(a[1], c) / (2*r);
+        I(b[0], c) <+ V(b[0], c) / (4*r);
+        I(b[1], c) <+ V(b[1], c) / (8*r);
+        I(b[2], c) <+ V(b[2], c) / (16*r);
+    end
+endmodule

@@ -1,0 +1,17 @@
+`include "disciplines.vams"
+
+module busdev(a, b);
+    inout [0:4] a;
+    electrical [0:4] a;
+    inout b;
+    electrical b;
+    parameter real r = 1e3 from (0:inf);
+
+    analog begin
+        I(a[0], b) <+ V(a[0], b) / r;
+        I(a[1], b) <+ V(a[1], b) / (2*r);
+        I(a[2], b) <+ V(a[2], b) / (4*r);
+        I(a[3], b) <+ V(a[3], b) / (8*r);
+        I(a[4], b) <+ V(a[4], b) / (16*r);
+    end
+endmodule

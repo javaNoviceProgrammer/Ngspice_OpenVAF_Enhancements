@@ -1,0 +1,10 @@
+`include "disciplines.vams"
+module busopt(a, b, t);
+    inout a, b, t;                 // three SCALAR ports; t is optional
+    electrical a, b, t;
+    parameter real r = 1e3 from (0:inf);
+    analog begin
+        I(a, b) <+ V(a, b) / r;
+        if ($port_connected(t)) I(t, b) <+ V(t, b) / r;
+    end
+endmodule
