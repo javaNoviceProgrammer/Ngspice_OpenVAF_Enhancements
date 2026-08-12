@@ -172,6 +172,47 @@ static char inp_get_elem_ident(char *type);
 static void rem_mfg_from_models(struct card *start_card);
 static void inp_fix_macro_param_func_paren_io(struct card *begin_card);
 static void inp_fix_gnd_name(struct card *deck);
+/* Enhancement-443: does this token LOOK like an index list but fail to parse?
+ *
+ * A malformed list is not harmless. `R2 a[1,] 0 1k` is not merely left as an
+ * oddly named node -- the stray comma re-tokenises the line, and ngspice went
+ * on to build a resistor with no value ("Value of resistor r2 is too small, set
+ * to 1e-12") from a deck the user believed named two nodes. Saying so costs one
+ * line and turns a silent miswire into a question.
+ *
+ * The test is deliberately tight, so it cannot fire on an exotic-but-deliberate
+ * node name: the base must be a plain name and the bracket contents must be
+ * made only of the characters an index list is written with. A lone `a[2]` is
+ * excluded because that is a scalar bus BIT, which is not a list and never was.
+ */
+static bool inp_bus_looks_malformed(const char *tok, size_t len)
+{
+    const char *lb, *end, *p;
+    bool plain_int = TRUE;
+
+    if (len < 3 || tok[len - 1] != ']')
+        return FALSE;
+    lb = memchr(tok, '[', len);
+    if (!lb || lb == tok)
+        return FALSE;
+    for (p = tok; p < lb; p++)
+        if (*p == '[' || *p == ']' || *p == '(' || *p == ')' ||
+                *p == ',' || *p == '%' || *p == '=')
+            return FALSE;
+
+    end = tok + len - 1;
+    if (lb + 1 >= end)
+        return TRUE;                    /* `a[]` -- nothing between brackets */
+
+    for (p = lb + 1; p < end; p++) {
+        if (*p == ',' || *p == ':')
+            plain_int = FALSE;
+        else if (!isdigit_c(*p) && *p != '+' && *p != '-')
+            return FALSE;               /* some other name entirely */
+    }
+    return !plain_int;                  /* a scalar bit is not malformed */
+}
+
 static void inp_expand_buses(struct card *deck);
 static int inp_expand_array_instances(struct card *deck);    /* Enhancement-441 */
 static void inp_chk_for_e_source_to_xspice(struct card *deck, int *line_number);
@@ -2488,91 +2529,171 @@ static bool inp_canon_bus_index_token(DSTRING *ds, const char *tok, size_t len)
  * On success fills *baselen (the length of the part before '['), *lo and *hi.
  * The BUS_MAX_WIDTH span check is the caller's, since the two passes want
  * different behaviour when it trips. */
-static bool inp_bus_range_parse(const char *tok, size_t len,
-                                size_t *baselen, long *lo_out, long *hi_out)
+/* Enhancement-443: the shared reader for a bracketed INDEX LIST.
+ *
+ * Three spellings, and the third is just the first two written together:
+ *
+ *     base[lo:hi]        a range          a[0:3]   -> 0 1 2 3
+ *     base[i,j,k]        an explicit list a[1,3,5] -> 1 3 5
+ *     base[lo:hi,k,...]  both             a[0:1,7] -> 0 1 7
+ *
+ * The indices are returned in WRITTEN order, so a descending range still
+ * descends and a list is taken exactly as spelled -- neither is sorted, because
+ * the order is what binds nodes to terminals.
+ *
+ * A lone `base[2]` is deliberately NOT a list. It is a scalar bus BIT and must
+ * stay a node name (Enhancement-221's contract is that `a[0:1]` and an explicit
+ * `a[0]` denote the same node), so a single item with no range and no comma is
+ * refused here. That one rule is what keeps every existing netlist reading the
+ * way it always did.
+ *
+ * Both consumers use this: inp_expand_bus_token, which turns a list into a
+ * SEQUENCE of node tokens, and inp_expand_array_instances, which turns a list
+ * on an INSTANCE NAME into a sequence of cards. Keeping one reader keeps the
+ * two agreeing on what a list is; in particular an XSPICE port group `[d1 d2]`
+ * has no base and is refused here, so neither pass touches it.
+ */
+struct bus_idx {
+    long *idx;                  /* the expanded indices, in written order */
+    int n;
+    bool simple_desc;           /* a lone `lo:hi` with hi < lo (E-411's warning) */
+};
+
+static void bus_idx_free(struct bus_idx *b)
 {
-    if (len < 6 || tok[len - 1] != ']')
+    tfree(b->idx);
+    b->idx = NULL;
+    b->n = 0;
+}
+
+/* The contents between '[' and ']'. Shared so that a bare node token and a
+   wrapped reference (`v(a[1,3])`, Enhancement-408) cannot disagree about what
+   an index list is. */
+static bool inp_bus_indices(const char *p, const char *end, struct bus_idx *out)
+{
+    long *idx = NULL;
+    int n = 0, cap = 0, nitem = 0;
+    bool any_range = FALSE;
+
+    out->idx = NULL;
+    out->n = 0;
+    out->simple_desc = FALSE;
+
+    if (p >= end)                         /* `a[]` */
         return FALSE;
-    const char *lb = memchr(tok, '[', len);
-    if (!lb || lb == tok) /* no '[', or an empty base */
+
+    while (p < end) {
+        char *ep;
+        long a, b, step, i;
+        unsigned long span;
+
+        errno = 0;
+        a = strtol(p, &ep, 10);
+        if (ep == p || errno == ERANGE)
+            goto reject;
+        p = ep;
+        b = a;
+        if (p < end && *p == ':') {
+            p++;
+            errno = 0;
+            b = strtol(p, &ep, 10);
+            if (ep == p || errno == ERANGE)
+                goto reject;
+            p = ep;
+            any_range = TRUE;
+        }
+
+        /* Enhancement-338's overflow note applies to every item: compute the
+           span unsigned, because `b - a + 1` overflows a signed long for a
+           full-range span and the guard would never see the real width. */
+        span = (b >= a) ? ((unsigned long) b - (unsigned long) a)
+                        : ((unsigned long) a - (unsigned long) b);
+        if (span >= (unsigned long) BUS_MAX_WIDTH)
+            goto reject;
+        step = (b >= a) ? 1 : -1;
+        for (i = a; ; i += step) {
+            if (n == cap) {
+                cap = cap ? cap * 2 : 8;
+                idx = TREALLOC(long, idx, cap);
+            }
+            idx[n++] = i;
+            if (n > BUS_MAX_WIDTH)        /* the WHOLE list is capped too */
+                goto reject;
+            if (i == b)
+                break;
+        }
+        nitem++;
+
+        if (p < end) {
+            if (*p != ',')
+                goto reject;
+            p++;
+            if (p >= end)                 /* a trailing comma */
+                goto reject;
+        }
+    }
+
+    /* a lone plain index is a scalar bit, not a list -- see the note above */
+    if (nitem == 1 && !any_range)
+        goto reject;
+
+    out->idx = idx;
+    out->n = n;
+    out->simple_desc = (nitem == 1 && any_range && idx[0] > idx[n - 1]);
+    return TRUE;
+
+reject:
+    tfree(idx);
+    return FALSE;
+}
+
+/* A whole token `base[<list>]`. */
+static bool inp_bus_index_parse(const char *tok, size_t len, size_t *baselen,
+                                struct bus_idx *out)
+{
+    const char *lb, *p;
+
+    out->idx = NULL;
+    out->n = 0;
+    out->simple_desc = FALSE;
+
+    if (len < 4 || tok[len - 1] != ']')   /* `a[1:2]` / `a[1,2]` are the shortest */
         return FALSE;
-    const char *p;
-    for (p = tok; p < lb; p++) /* the base must be a plain node name */
+    lb = memchr(tok, '[', len);
+    if (!lb || lb == tok)                 /* no '[', or an empty base */
+        return FALSE;
+    for (p = tok; p < lb; p++)            /* the base must be a plain node name */
         if (*p == '[' || *p == ']' || *p == '(' || *p == ')' ||
                 *p == ',' || *p == '%' || *p == '=')
             return FALSE;
 
-    const char *end = tok + len - 1; /* the closing ']' */
-    char *ep;
-    const char *lo_start = lb + 1;
-    errno = 0;
-    long lo = strtol(lo_start, &ep, 10);
-    if (ep == lo_start || *ep != ':') /* need <int> ':' */
-        return FALSE;
-    if (errno == ERANGE) /* endpoint does not even fit a long -- see below */
-        return FALSE;
-    const char *hi_start = ep + 1;
-    errno = 0;
-    long hi = strtol(hi_start, &ep, 10);
-    if (ep == hi_start || ep != end) /* need <int> filling the rest before ']' */
-        return FALSE;
-    if (errno == ERANGE)
+    if (!inp_bus_indices(lb + 1, tok + len - 1, out))
         return FALSE;
 
     *baselen = (size_t) (lb - tok);
-    *lo_out = lo;
-    *hi_out = hi;
     return TRUE;
-}
-
-/* The unsigned span (width - 1) of a range; see the overflow note below. */
-static unsigned long inp_bus_span(long lo, long hi)
-{
-    return (hi >= lo) ? ((unsigned long) hi - (unsigned long) lo)
-                      : ((unsigned long) lo - (unsigned long) hi);
 }
 
 static bool inp_expand_bus_token(DSTRING *ds, const char *tok, size_t len,
                                  bool *descending)
 {
     size_t blen;
-    long lo, hi;
+    struct bus_idx b;
+    int k;
 
-    if (!inp_bus_range_parse(tok, len, &blen, &lo, &hi))
+    if (!inp_bus_index_parse(tok, len, &blen, &b))
         return FALSE;
 
-    /* Enhancement-338: compute the span in UNSIGNED arithmetic.
-     *
-     * `hi - lo + 1` OVERFLOWS a signed long for a full-range span such as
-     * a[-9223372036854775808:9223372036854775807]: the overflow wrapped to a
-     * small value, sailed past the BUS_MAX_WIDTH guard, and the loop below then
-     * stepped from LONG_MIN toward LONG_MAX -- about 1.8e19 iterations, each
-     * appending to `ds`. ngspice hung and grew without bound (7.6 GB after 9 s)
-     * on a single netlist line. Signed overflow is undefined behaviour, so the
-     * guard could not be relied on to see the real width at all.
-     *
-     * The unsigned difference is exact for every pair of longs, and comparing
-     * the SPAN (width - 1) against the limit also avoids the `+ 1` overflowing.
-     * strtol saturates at LONG_MIN/LONG_MAX and sets ERANGE, so an endpoint too
-     * large to represent is rejected above rather than silently clamped into a
-     * range that looks acceptable. */
-    unsigned long span = inp_bus_span(lo, hi);
-    if (span >= (unsigned long) BUS_MAX_WIDTH)
-        return FALSE; /* leave it literal; the device parser reports the error */
-
-    const long step = (hi >= lo) ? 1 : -1;
-    long i = lo;
     if (descending)
-        *descending = (hi < lo);   /* Enhancement-411 */
-    for (;;) {
-        if (i != lo)
+        *descending = b.simple_desc;    /* Enhancement-411 */
+
+    for (k = 0; k < b.n; k++) {
+        if (k)
             ds_cat_char(ds, ' ');
         ds_cat_mem(ds, tok, blen);
-        ds_cat_printf(ds, "[%ld]", i);
-        if (i == hi)
-            break;
-        i += step;
+        ds_cat_printf(ds, "[%ld]", b.idx[k]);
     }
+    bus_idx_free(&b);
     return TRUE;
 }
 
@@ -2609,38 +2730,34 @@ static bool inp_bus_rewrite_wrapped(DSTRING *ds, const char *tok, size_t len)
     const char *suffix = rb;                     /* from the ']' onward */
     const size_t slen = (size_t) (tok + len - rb);
 
+    /* Enhancement-443: one copy of the whole token per index, for every list
+       spelling -- `v(a[0:3])`, `v(a[1,3,5])` and `v(a[0:1,7])` alike. The
+       indices come from the same reader the bare-token path uses, so a wrapped
+       reference and a node field cannot disagree about what a list is. */
+    {
+        struct bus_idx b;
+        if (inp_bus_indices(lb + 1, rb, &b)) {
+            int k;
+            for (k = 0; k < b.n; k++) {
+                if (k)
+                    ds_cat_char(ds, ' ');
+                ds_cat_mem(ds, tok, plen);
+                ds_cat_printf(ds, "%ld", b.idx[k]);
+                ds_cat_mem(ds, suffix, slen);
+            }
+            bus_idx_free(&b);
+            return TRUE;
+        }
+    }
+
     char *ep;
     errno = 0;
     long lo = strtol(lb + 1, &ep, 10);
     if (ep == lb + 1 || errno == ERANGE)
         return FALSE;
 
-    if (*ep == ':') { /* a range: one copy of the token per index */
-        const char *hi_start = ep + 1;
-        errno = 0;
-        long hi = strtol(hi_start, &ep, 10);
-        if (ep == hi_start || ep != rb || errno == ERANGE)
-            return FALSE;
-        /* unsigned span, for the same overflow reason as Enhancement-338 */
-        unsigned long span = (hi >= lo) ? ((unsigned long) hi - (unsigned long) lo)
-                                        : ((unsigned long) lo - (unsigned long) hi);
-        if (span >= (unsigned long) BUS_MAX_WIDTH)
-            return FALSE;
-        const long step = (hi >= lo) ? 1 : -1;
-        long i = lo;
-        for (;;) {
-            if (i != lo)
-                ds_cat_char(ds, ' ');
-            ds_cat_mem(ds, tok, plen);
-            ds_cat_printf(ds, "%ld", i);
-            ds_cat_mem(ds, suffix, slen);
-            if (i == hi)
-                break;
-            i += step;
-        }
-        return TRUE;
-    }
-
+    /* What remains is a single plain index: canonicalise it (Enhancement-408),
+       so `v(n[01])` and `v(n[1])` name the same bit. A list never reaches here. */
     if (ep != rb) /* not a plain integer index */
         return FALSE;
     char canon[32];
@@ -2699,7 +2816,7 @@ static int inp_expand_array_instances(struct card *deck)
     for (c = deck; c; c = c->nextcard) {
         char *line = c->line;
         size_t nbase;
-        long nlo, nhi;
+        struct bus_idx nb;
 
         if (!line || *line == '*')
             continue;
@@ -2725,8 +2842,7 @@ static int inp_expand_array_instances(struct card *deck)
         while (*s && !isspace_c(*s))
             s++;
 
-        if (!inp_bus_range_parse(nstart, (size_t) (s - nstart), &nbase,
-                                 &nlo, &nhi))
+        if (!inp_bus_index_parse(nstart, (size_t) (s - nstart), &nbase, &nb))
             continue;                   /* an ordinary instance -- E-221's job */
 
         /* An XSPICE code-model instance already spells its port groups with
@@ -2743,20 +2859,12 @@ static int inp_expand_array_instances(struct card *deck)
                     "so \"%.*s\" is ambiguous;\n"
                     "  write the instances out individually\n",
                     line, (int) (s - nstart), nstart);
+            bus_idx_free(&nb);
             errors++;
             continue;
         }
 
-        const unsigned long nspan = inp_bus_span(nlo, nhi);
-        if (nspan >= (unsigned long) BUS_MAX_WIDTH) {
-            fprintf(cp_err, "Error: array instance \"%.*s\" is wider than %d\n"
-                            "    in line: %s\n",
-                    (int) (s - nstart), nstart, BUS_MAX_WIDTH, line);
-            errors++;
-            continue;
-        }
-        const long nstep = (nhi >= nlo) ? 1 : -1;
-        const long nwidth = (long) nspan + 1;
+        const long nwidth = nb.n;
 
         /* First pass over the remaining tokens: every range must either match
            the instance width or be reported. Checking before building anything
@@ -2773,28 +2881,31 @@ static int inp_expand_array_instances(struct card *deck)
                 while (*t && !isspace_c(*t))
                     t++;
                 size_t tbase;
-                long tlo, thi;
-                if (inp_bus_range_parse(tstart, (size_t) (t - tstart), &tbase,
-                                        &tlo, &thi)) {
-                    const unsigned long tspan = inp_bus_span(tlo, thi);
-                    if (tspan != nspan) {
+                struct bus_idx tb;
+                if (inp_bus_index_parse(tstart, (size_t) (t - tstart), &tbase,
+                                        &tb)) {
+                    const int tn = tb.n;
+                    bus_idx_free(&tb);
+                    if (tn != nwidth) {
                         fprintf(cp_err,
                                 "Error: array instance \"%.*s\" has %ld elements "
-                                "but \"%.*s\" has %lu\n"
+                                "but \"%.*s\" has %d\n"
                                 "    in line: %s\n"
-                                "  on an array instance a node range is taken in "
+                                "  on an array instance a node list is taken in "
                                 "step with the instance index,\n"
-                                "  so the two must be the same width\n",
+                                "  so the two must be the same length\n",
                                 (int) (s - nstart), nstart, nwidth,
-                                (int) (t - tstart), tstart, tspan + 1, line);
+                                (int) (t - tstart), tstart, tn, line);
                         bad = TRUE;
                         errors++;
                         break;
                     }
                 }
             }
-            if (bad)
+            if (bad) {
+                bus_idx_free(&nb);
                 continue;
+            }
         }
 
         /* Build every element's line BEFORE touching this card.
@@ -2808,11 +2919,10 @@ static int inp_expand_array_instances(struct card *deck)
         struct card *tail = c;
         long i;
         for (i = 0; i < nwidth; i++) {
-            const long nidx = nlo + i * nstep;
             DS_CREATE(out, 128);
 
             ds_cat_mem(&out, nstart, nbase);
-            ds_cat_printf(&out, "[%ld]", nidx);
+            ds_cat_printf(&out, "[%ld]", nb.idx[i]);
 
             const char *t = s;
             while (*t) {
@@ -2825,13 +2935,13 @@ static int inp_expand_array_instances(struct card *deck)
                     t++;
                 const size_t tlen = (size_t) (t - tstart);
                 size_t tbase;
-                long tlo, thi;
+                struct bus_idx tb;
 
                 ds_cat_char(&out, ' ');
-                if (inp_bus_range_parse(tstart, tlen, &tbase, &tlo, &thi)) {
-                    const long tstep = (thi >= tlo) ? 1 : -1;
+                if (inp_bus_index_parse(tstart, tlen, &tbase, &tb)) {
                     ds_cat_mem(&out, tstart, tbase);
-                    ds_cat_printf(&out, "[%ld]", tlo + i * tstep);
+                    ds_cat_printf(&out, "[%ld]", tb.idx[i]);
+                    bus_idx_free(&tb);
                 } else {
                     /* a scalar node, a model name, a parameter -- every element
                        gets it verbatim, which is what makes `R[0:3] a b r=1k`
@@ -2850,6 +2960,7 @@ static int inp_expand_array_instances(struct card *deck)
             tail = insert_new_line(tail, lines[i], c->linenum,
                                    c->linenum_orig, c->linesource);
         tfree(lines);
+        bus_idx_free(&nb);
         c = tail;               /* nothing produced here needs re-examining */
     }
 
@@ -2978,8 +3089,18 @@ static void inp_expand_buses(struct card *deck)
                     }
                 } else if (inp_canon_bus_index_token(&newline, start, tlen))
                     changed = TRUE; /* Enhancement-408 */
-                else
+                else {
+                    if (inp_bus_looks_malformed(start, tlen))
+                        fprintf(cp_err,
+                                "Warning: \"%.*s\" looks like an index list but "
+                                "is not one, so it is being used as a plain node "
+                                "name\n"
+                                "    in line: %s\n"
+                                "  an index list is written base[lo:hi], "
+                                "base[i,j,k] or the two together, e.g. a[0:1,7]\n",
+                                (int) tlen, start, line);
                     ds_cat_mem(&newline, start, tlen);
+                }
             }
             if (changed) {
                 tfree(c->line);
