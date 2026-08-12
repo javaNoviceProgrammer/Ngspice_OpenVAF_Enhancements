@@ -33,8 +33,15 @@ CAPask(CKTcircuit *ckt, GENinstance *inst, int which, IFvalue *value,
             value->rValue = here->CAPdtemp;
             return(OK);
         case CAP_CAP:
+            /* Enhancement-446: report the capacitance this instance was GIVEN,
+               not the m-multiplied total. `@c1[capacitance]` folded m in while
+               `@r1[resistance]` reported the written value, so the same accessor
+               idiom meant two different things depending on device type and a
+               script reading a deck back got 2u for `C1 a b 1u m=2`.
+
+               The simulation is untouched: capload.c applies m to the matrix
+               stamps itself, so this is purely what the query reports. */
             value->rValue=here->CAPcapac;
-            value->rValue *= here->CAPm;
             return(OK);
         case CAP_IC:
             value->rValue = here->CAPinitCond;

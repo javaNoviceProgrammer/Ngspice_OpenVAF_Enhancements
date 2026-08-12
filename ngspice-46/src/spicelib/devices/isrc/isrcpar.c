@@ -109,6 +109,18 @@ ISRCparam(int param, IFvalue *value, GENinstance *inst, IFvalue *select)
         case ISRC_PWL:
             if(value->v.numValue < 2)
                 return(E_BADPARM);
+            /* Enhancement-446: see vsrcpar.c. An odd token count leaves one point
+               without a value; this source used to consume the stray token AS a
+               value and hold it for the rest of the run, while the voltage source
+               invented a 0 instead. Both were guesses, so refuse it. */
+            if (value->v.numValue % 2) {
+                fprintf(stderr,
+                        "\nError: current source %s: pwl needs time/value PAIRS, "
+                        "but %d values were given.\n"
+                        "       The last point is missing its value.\n\n",
+                        here->ISRCname, value->v.numValue);
+                return(E_BADPARM);
+            }
             here->ISRCfunctionType = PWL;
             here->ISRCfuncTGiven = TRUE;
             copy_coeffs(here, value);

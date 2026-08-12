@@ -103,6 +103,24 @@ VSRCparam(int param, IFvalue *value, GENinstance *inst, IFvalue *select)
         case VSRC_PWL:
             if(value->v.numValue < 2)
                 return(E_BADPARM);
+            /* Enhancement-446: a PWL list is TIME/VALUE pairs, so an odd token
+               count means one point is incomplete -- the easiest typo to make in
+               a long list. It used to be accepted in silence and a value was
+               invented for the dangling time: `pwl(0 0 1m 1 2m)` became exactly
+               `pwl(0 0 1m 1 2m 0)`, ramping the stimulus to zero at a time the
+               user never assigned a value to. The current source fabricated
+               differently again, consuming the stray token as a value. Since the
+               two readings disagree and both are guesses, refuse it. The
+               non-increasing-times check below already warns about a related
+               mistake; this one was the gap. */
+            if (value->v.numValue % 2) {
+                fprintf(stderr,
+                        "\nError: voltage source %s: pwl needs time/value PAIRS, "
+                        "but %d values were given.\n"
+                        "       The last point is missing its value.\n\n",
+                        here->VSRCname, value->v.numValue);
+                return(E_BADPARM);
+            }
             here->VSRCfunctionType = PWL;
             here->VSRCfuncTGiven = TRUE;
             copy_coeffs(here, value);

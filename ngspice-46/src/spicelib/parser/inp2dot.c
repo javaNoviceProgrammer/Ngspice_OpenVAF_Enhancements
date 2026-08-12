@@ -355,6 +355,16 @@ dot_ac(char *line, CKTcircuit *ckt, INPtables *tab, struct card *current,
         fprintf(stderr, "Warning, ngspice assumes default parameter(s) for ac simulation\n");
         fprintf(stderr, "    Check your input line '.ac %s'\n\n", mline);
     }
+    /* Enhancement-446: a surplus argument used to be dropped in silence -- any
+       number of them, numeric or not, gave byte-identical output. `.tran` and
+       `.dc` both refuse what they cannot use, so this card does now too. */
+    while (*line == ' ' || *line == '\t')
+        line++;
+    if (*line) {
+        LITERR("AC takes {dec|oct|lin} <points> <fstart> <fstop>; "
+               "surplus arguments given.\n");
+        return (0);
+    }
     return (0);
 }
 
@@ -461,6 +471,20 @@ dot_dc(char *line, CKTcircuit *ckt, INPtables *tab, struct card *current,
         if (parm->rValue == 0)
             return 1;
         GCA(INPapName, (ckt, which, foo, "step2", parm));
+    }
+    /* Enhancement-446: `.dc` nests at most two sources. A third specification
+       used to be neither run nor refused -- the analysis produced the 2-D grid
+       and left the third variable pinned at its DC value, with nothing printed.
+       A user writing a 3-D corner sweep got a 2-D result that looked complete. */
+    while (*line == ' ' || *line == '\t')
+        line++;
+    if (*line) {
+        fprintf(stderr,
+                "\nError: .dc sweeps at most two sources, but more were given:\n"
+                "       \"%s\" is left over.\n"
+                "       Nest the extra sweep outside .dc (for example with the "
+                "`sweep` command).\n\n", line);
+        return 1;
     }
     return 0;
 }

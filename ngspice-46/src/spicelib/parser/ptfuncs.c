@@ -82,6 +82,33 @@ static double pt_pow_guard(double arg1, double arg2, int *guarded)
     return *guarded ? HUGE : 0.0;
 }
 
+/* Enhancement-446: the default `**`, `^` and pow() evaluated pow(fabs(x), y),
+ * which DROPS THE SIGN of a negative base. `(-2)**3` came out +8, and `(-2)**1`
+ * came out +2 -- raising to the first power did not return the base. Odd
+ * exponents were wrong and even ones coincided, so it was silent on half the
+ * inputs.
+ *
+ * Everything else in this simulator disagreed with it: `pwr(-2,3)` returns -8
+ * (PTpwr below negates explicitly), a Verilog-A model's own pow(-2,3) returns
+ * -8, and BOTH the LTspice and HSPICE compatibility branches above preserve the
+ * sign. Only PSPICE mode agreed, and there |x|^y is that dialect's documented
+ * PWR convention. Enhancement-399's rule applies: an expression must not mean
+ * different things depending on whether the netlist or the model computed it.
+ *
+ * For a negative base the real-valued answer exists only when the exponent is
+ * an integer, and there it is returned with its proper sign. When it is not an
+ * integer there IS no real result; the historical magnitude is kept rather than
+ * returning NaN, because a NaN here poisons the Newton Jacobian -- the same
+ * reasoning E-256 and E-440 used for pwr() and pow(0,-1). */
+static double pt_pow_default(double arg1, double arg2)
+{
+    if (arg1 >= 0.0)
+        return pow(arg1, arg2);
+    if (AlmostEqualUlps(nearbyint(arg2), arg2, 10))
+        return pow(arg1, nearbyint(arg2));
+    return pow(fabs(arg1), arg2);
+}
+
 double
 PTpower(double arg1, double arg2)
 {
@@ -107,7 +134,7 @@ PTpower(double arg1, double arg2)
         }
     }
     else
-        res = pow(fabs(arg1), arg2);
+        res = pt_pow_default(arg1, arg2);   /* Enhancement-446 */
     return res;
 }
 
@@ -147,7 +174,7 @@ PTpowerH(double arg1, double arg2)
         }
     }
     else
-        res = pow(fabs(arg1), arg2);
+        res = pt_pow_default(arg1, arg2);   /* Enhancement-446 */
     return res;
 }
 

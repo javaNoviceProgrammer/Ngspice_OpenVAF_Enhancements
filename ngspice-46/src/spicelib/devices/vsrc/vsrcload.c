@@ -120,9 +120,16 @@ VSRCload(GENmodel *inModel, CKTcircuit *ckt)
                         PW = here->VSRCfunctionOrder > 5
                            && here->VSRCcoeffs[5] >= 0.0
                            ? here->VSRCcoeffs[5] : 0.0;
+                        /* Enhancement-446: an explicitly written PER=0 cannot mean
+                           "repeat every 0 seconds". It used to fall through to
+                           TR+TF+PW, i.e. repeat back-to-back with no gap, while the
+                           current source read the same spec as a single pulse. Take
+                           it as "do not repeat", matching isrcload.c. An OMITTED
+                           period keeps TR+TF+PW so no existing deck changes. */
                         PER = here->VSRCfunctionOrder > 6
-                           && here->VSRCcoeffs[6] > 0.0
-                           ? here->VSRCcoeffs[6] : TR + TF + PW;
+                           ? (here->VSRCcoeffs[6] > 0.0
+                              ? here->VSRCcoeffs[6] : ckt->CKTfinalTime)
+                           : TR + TF + PW;
 
                         /* shift time by delay time TD */
                         time -=  TD;
@@ -207,17 +214,27 @@ VSRCload(GENmodel *inModel, CKTcircuit *ckt)
 
                         V1  = here->VSRCcoeffs[0];
                         V2  = here->VSRCcoeffs[1];
+                        /* Enhancement-446: the DELAYS are selected on whether the
+                           argument was supplied, not on whether it is non-zero.
+                           `!= 0.0` made an explicitly written TD1=0 -- the natural
+                           way to say "start at t=0" -- indistinguishable from
+                           omitted, so it was replaced by CKTstep and the whole
+                           waveform started one timestep late. That made the result
+                           depend on the timestep: ~4% error on a 0-to-1 stimulus at
+                           a 100us step, and writing 1e-30 instead of 0 "fixed" it.
+
+                           The TIME CONSTANTS keep a zero guard, because they are
+                           divisors below and a zero there is not a value the user
+                           can have meant. */
                         TD1 = here->VSRCfunctionOrder > 2
-                           && here->VSRCcoeffs[2] != 0.0
                            ? here->VSRCcoeffs[2] : ckt->CKTstep;
                         TAU1 = here->VSRCfunctionOrder > 3
-                           && here->VSRCcoeffs[3] != 0.0
+                           && here->VSRCcoeffs[3] > 0.0
                            ? here->VSRCcoeffs[3] : ckt->CKTstep;
                         TD2  = here->VSRCfunctionOrder > 4
-                           && here->VSRCcoeffs[4] != 0.0
                            ? here->VSRCcoeffs[4] : TD1 + ckt->CKTstep;
                         TAU2 = here->VSRCfunctionOrder > 5
-                           && here->VSRCcoeffs[5]
+                           && here->VSRCcoeffs[5] > 0.0
                            ? here->VSRCcoeffs[5] : ckt->CKTstep;
 
                         if(time <= TD1)  {

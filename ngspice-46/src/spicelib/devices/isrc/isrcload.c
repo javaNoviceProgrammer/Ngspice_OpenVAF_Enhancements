@@ -82,17 +82,34 @@ ISRCload(GENmodel *inModel, CKTcircuit *ckt)
                         V2 = here->ISRCcoeffs[1];
                         TD = here->ISRCfunctionOrder > 2
                            ? here->ISRCcoeffs[2] : 0.0;
+                        /* Enhancement-446: `!= 0.0` made an explicitly written zero
+                           mean "not given", and the voltage source did NOT read it
+                           that way -- so the same PULSE spec produced different
+                           waveforms from a V source and an I source. With PW=0 the
+                           V source emitted no pulse while this one emitted a pulse
+                           that never ended.
+
+                           A zero rise/fall time still falls back to CKTstep, which
+                           is the documented SPICE reading and is what vsrcload.c
+                           does. A zero PULSE WIDTH is a real (degenerate) request
+                           and is now honoured. A zero PERIOD cannot mean "repeat
+                           every 0 seconds", so it means "do not repeat" -- the
+                           same value used when PER is omitted.
+
+                           The OMITTED-argument defaults are deliberately left as
+                           they were, so no deck that leaves an argument out changes
+                           meaning. */
                         TR = here->ISRCfunctionOrder > 3
-                           && here->ISRCcoeffs[3] != 0.0
+                           && here->ISRCcoeffs[3] > 0.0
                            ? here->ISRCcoeffs[3] : ckt->CKTstep;
                         TF = here->ISRCfunctionOrder > 4
-                           && here->ISRCcoeffs[4] != 0.0
+                           && here->ISRCcoeffs[4] > 0.0
                            ? here->ISRCcoeffs[4] : ckt->CKTstep;
                         PW = here->ISRCfunctionOrder > 5
-                           && here->ISRCcoeffs[5] != 0.0
+                           && here->ISRCcoeffs[5] >= 0.0
                            ? here->ISRCcoeffs[5] : ckt->CKTfinalTime;
                         PER = here->ISRCfunctionOrder > 6
-                           && here->ISRCcoeffs[6] != 0.0
+                           && here->ISRCcoeffs[6] > 0.0
                            ? here->ISRCcoeffs[6] : ckt->CKTfinalTime;
 
                         /* shift time by delay time TD */
@@ -179,17 +196,19 @@ ISRCload(GENmodel *inModel, CKTcircuit *ckt)
 
                         V1  = here->ISRCcoeffs[0];
                         V2  = here->ISRCcoeffs[1];
+                        /* Enhancement-446: see vsrcload.c -- an explicitly written
+                           TD1=0 was read as "not given" and replaced by CKTstep,
+                           starting the waveform one timestep late. The time
+                           constants keep their zero guard (they are divisors). */
                         TD1 = here->ISRCfunctionOrder > 2
-                           && here->ISRCcoeffs[2] != 0.0
                            ? here->ISRCcoeffs[2] : ckt->CKTstep;
                         TAU1 = here->ISRCfunctionOrder > 3
-                           && here->ISRCcoeffs[3] != 0.0
+                           && here->ISRCcoeffs[3] > 0.0
                            ? here->ISRCcoeffs[3] : ckt->CKTstep;
                         TD2  = here->ISRCfunctionOrder > 4
-                           && here->ISRCcoeffs[4] != 0.0
                            ? here->ISRCcoeffs[4] : TD1 + ckt->CKTstep;
                         TAU2 = here->ISRCfunctionOrder > 5
-                           && here->ISRCcoeffs[5]
+                           && here->ISRCcoeffs[5] > 0.0
                            ? here->ISRCcoeffs[5] : ckt->CKTstep;
 
                         if(time <= TD1)  {
