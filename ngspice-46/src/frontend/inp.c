@@ -146,12 +146,307 @@ Xprintf(FILE *fdst, const char *fmt, ...)
 }
 
 
-/* Do a listing. Use is listing [expanded] [logical] [physical] [deck] [runnable] */
+/* Enhancement-442: `listing tree` -- the subcircuit hierarchy, drawn.
+ *
+ * `listing e` answers "what is actually simulated" and is exactly the wrong
+ * shape for "what does this design contain": a flat wall of `r.x1.x3.r[0]`
+ * lines, one per device, with the structure only implicit in the dotted names.
+ * On anything with more than a couple of levels the structure is what you want
+ * first, and reconstructing it by eye from the flattened names does not scale.
+ *
+ * The walk is over `ci_origdeck` -- the deck as read, with `.subckt` blocks
+ * still intact -- because that is the only form that still knows which
+ * subcircuit each `X` instantiates. Array instances (Enhancement-441) are
+ * already expanded there, so `X[0:3]` shows as four instances, which is what
+ * the design really contains.
+ */
+#define TREE_MAX_DEPTH 64       /* also the recursion guard */
+
+struct tree_sub {               /* one `.subckt` definition */
+    char *name;
+    struct card *first;         /* card after the `.subckt` line */
+    struct card *end;           /* the matching `.ends` */
+    struct tree_sub *next;
+};
+
+/* the leading token of a card, lower-cased, tmalloc'd */
+static char *tree_tok(const char *line, int which)
+{
+    const char *s = line;
+    char *out;
+    int i;
+
+    for (i = 0; i <= which; i++) {
+        while (*s && isspace_c(*s))
+            s++;
+        if (!*s)
+            return NULL;
+        if (i == which)
+            break;
+        while (*s && !isspace_c(*s))
+            s++;
+    }
+    {
+        const char *e = s;
+        while (*e && !isspace_c(*e))
+            e++;
+        out = TMALLOC(char, (size_t) (e - s) + 1);
+        memcpy(out, s, (size_t) (e - s));
+        out[e - s] = '\0';
+    }
+    strtolower(out);
+    return out;
+}
+
+/* Collect every `.subckt` definition, honouring nesting so an inner block does
+ * not truncate the outer one. Definitions are keyed by name alone: ngspice's
+ * own scoping is finer than that, but a listing that resolved shadowed names
+ * differently from the expander would be worse than one that says so. */
+static struct tree_sub *tree_collect(struct card *deck)
+{
+    struct tree_sub *head = NULL;
+    struct card *c;
+
+    for (c = deck; c; c = c->nextcard) {
+        if (!c->line || !ciprefix(".subckt", c->line))
+            continue;
+        {
+            struct tree_sub *t = TMALLOC(struct tree_sub, 1);
+            struct card *d;
+            int depth = 1;
+
+            t->name = tree_tok(c->line, 1);
+            t->first = c->nextcard;
+            t->end = NULL;
+            for (d = c->nextcard; d; d = d->nextcard) {
+                if (!d->line)
+                    continue;
+                if (ciprefix(".subckt", d->line))
+                    depth++;
+                else if (ciprefix(".ends", d->line) && --depth == 0) {
+                    t->end = d;
+                    break;
+                }
+            }
+            t->next = head;
+            head = t;
+        }
+    }
+    return head;
+}
+
+static struct tree_sub *tree_find(struct tree_sub *subs, const char *name)
+{
+    if (name)
+        for (; subs; subs = subs->next)
+            if (subs->name && eq(subs->name, (char *) name))
+                return subs;
+    return NULL;
+}
+
+/* Is this card an element instance at this level (not a dot card, comment or a
+ * card belonging to a nested `.subckt`)? */
+static bool tree_is_element(const struct card *c)
+{
+    return c->line && isalpha_c(c->line[0]);
+}
+
+struct tree_stats {
+    long instances;             /* X instances */
+    long devices;               /* everything else */
+    int maxdepth;
+};
+
+static void tree_walk(FILE *fp, struct tree_sub *subs, struct card *first,
+                      struct card *end, const char *prefix, int depth,
+                      struct tree_stats *st, char **stack)
+{
+    struct card *c;
+
+    if (depth > st->maxdepth)
+        st->maxdepth = depth;
+
+    for (c = first; c && c != end; c = c->nextcard) {
+        struct card *skip_to;
+
+        if (!c->line)
+            continue;
+        /* a .control block's commands begin with a letter and would otherwise
+           be counted as devices (`option`, `listing`, ...) */
+        if (ciprefix(".control", c->line)) {
+            for (skip_to = c->nextcard; skip_to; skip_to = skip_to->nextcard)
+                if (skip_to->line && ciprefix(".endc", skip_to->line))
+                    break;
+            c = skip_to ? skip_to : c;
+            continue;
+        }
+        /* step over a nested definition; its body is printed where it is
+           INSTANTIATED, not where it is written */
+        if (ciprefix(".subckt", c->line)) {
+            struct tree_sub *nested = tree_find(subs, NULL);
+            int d = 1;
+            NG_IGNORE(nested);
+            for (skip_to = c->nextcard; skip_to; skip_to = skip_to->nextcard) {
+                if (!skip_to->line)
+                    continue;
+                if (ciprefix(".subckt", skip_to->line))
+                    d++;
+                else if (ciprefix(".ends", skip_to->line) && --d == 0)
+                    break;
+            }
+            c = skip_to ? skip_to : c;
+            continue;
+        }
+        if (!tree_is_element(c))
+            continue;
+
+        {
+            char *nm = tree_tok(c->line, 0);
+            bool last;
+            struct card *n;
+
+            /* is any FURTHER element at this level still to come? */
+            last = TRUE;
+            {
+                int d = 0;
+                bool inctrl = FALSE;
+                for (n = c->nextcard; n && n != end; n = n->nextcard) {
+                    if (!n->line)
+                        continue;
+                    /* a .control command begins with a letter; without this the
+                       last child of the top level never got its `-' corner */
+                    if (ciprefix(".control", n->line)) { inctrl = TRUE; continue; }
+                    if (ciprefix(".endc", n->line)) { inctrl = FALSE; continue; }
+                    if (inctrl)
+                        continue;
+                    if (ciprefix(".subckt", n->line)) { d++; continue; }
+                    if (ciprefix(".ends", n->line)) { if (d) d--; continue; }
+                    if (d)
+                        continue;
+                    if (tree_is_element(n)) { last = FALSE; break; }
+                }
+            }
+
+            if (nm && (nm[0] == 'x')) {
+                /* Which token is the subcircuit name?
+                 *
+                 * "the last one before the parameters" does not survive
+                 * contact with the deck: numparam rewrites
+                 * `X1 in 0 sub PARAMS: rv=2k` into `x1 in 0 sub 2k` before this
+                 * runs, so the marker is gone and the tail looks like an
+                 * ordinary node. Resolving against the definitions we collected
+                 * is unambiguous where counting tokens is not -- take the LAST
+                 * token that names a `.subckt`, since the name follows the
+                 * nodes. Only if nothing resolves do we fall back to the last
+                 * bare token, so an undefined subcircuit is still reported by
+                 * the name the user wrote. */
+                char *sub = NULL;
+                {
+                    char *fallback = NULL;
+                    int i;
+                    for (i = 1; ; i++) {
+                        char *t = tree_tok(c->line, i);
+                        if (!t)
+                            break;
+                        if (tree_find(subs, t)) {
+                            tfree(sub);
+                            sub = copy(t);
+                        }
+                        if (!strchr(t, '=')) {
+                            tfree(fallback);
+                            fallback = copy(t);
+                        }
+                        tfree(t);
+                    }
+                    if (!sub)
+                        sub = fallback;
+                    else
+                        tfree(fallback);
+                }
+                {
+                    struct tree_sub *def = tree_find(subs, sub);
+                    bool cycle = FALSE;
+                    int i;
+
+                    for (i = 0; i < depth; i++)
+                        if (stack[i] && sub && eq(stack[i], sub))
+                            cycle = TRUE;
+
+                    fprintf(fp, "%s%s %s : %s%s\n", prefix,
+                            last ? "`-" : "+-", nm, sub ? sub : "?",
+                            !def ? "   (undefined)" : cycle ? "   (recursive)" : "");
+                    st->instances++;
+
+                    if (def && !cycle && depth + 1 < TREE_MAX_DEPTH) {
+                        char *np = tprintf("%s%s", prefix, last ? "   " : "|  ");
+                        stack[depth] = sub;
+                        tree_walk(fp, subs, def->first, def->end, np,
+                                  depth + 1, st, stack);
+                        stack[depth] = NULL;
+                        tfree(np);
+                    }
+                }
+                tfree(sub);
+            } else {
+                fprintf(fp, "%s%s %s\n", prefix, last ? "`-" : "+-", nm);
+                st->devices++;
+            }
+            tfree(nm);
+        }
+    }
+}
+
+static void tree_free(struct tree_sub *subs)
+{
+    while (subs) {
+        struct tree_sub *n = subs->next;
+        tfree(subs->name);
+        tfree(subs);
+        subs = n;
+    }
+}
+
+static void inp_list_tree(FILE *fp, struct card *deck)
+{
+    struct tree_sub *subs;
+    struct tree_stats st;
+    char *stack[TREE_MAX_DEPTH];
+    struct card *first = deck;
+    int i;
+
+    if (!deck) {
+        fprintf(cp_err, "Error: no deck to list.\n");
+        return;
+    }
+    /* the first card is the title */
+    fprintf(fp, "%s\n", first->line ? first->line : "");
+    first = first->nextcard;
+
+    subs = tree_collect(deck);
+    st.instances = st.devices = 0;
+    st.maxdepth = 0;
+    for (i = 0; i < TREE_MAX_DEPTH; i++)
+        stack[i] = NULL;
+
+    tree_walk(fp, subs, first, NULL, "", 0, &st, stack);
+
+    fprintf(fp, "\n%ld subcircuit instance%s, %ld device%s, %d level%s deep\n",
+            st.instances, st.instances == 1 ? "" : "s",
+            st.devices, st.devices == 1 ? "" : "s",
+            st.maxdepth + 1, st.maxdepth == 0 ? "" : "s");
+    /* No "unused subcircuit" report: ngspice comments a definition nothing
+       instantiates out of the deck (`*subckt spare ...`) long before this runs,
+       so such a report could never fire. */
+    tree_free(subs);
+}
+
+
+/* Do a listing. Use is listing [expanded] [logical] [physical] [deck] [runnable] [tree] */
 void
 com_listing(wordlist *wl)
 {
     int type = LS_LOGICAL;
-    bool expand = FALSE, do_param_listing = FALSE;
+    bool expand = FALSE, do_param_listing = FALSE, do_tree = FALSE;
     char *s;
 
     if (ft_curckt) {  /* if there is a current circuit . . . .  */
@@ -159,6 +454,8 @@ com_listing(wordlist *wl)
             s = wl->wl_word;
             if (strcmp(s, "param") == 0) {
                 do_param_listing = TRUE;
+            } else if (strcmp(s, "tree") == 0) {
+                do_tree = TRUE;         /* Enhancement-442 */
             } else {
                 switch (*s) {
                 case 'l':
@@ -182,6 +479,10 @@ com_listing(wordlist *wl)
                     expand = TRUE;
                     type = LS_RUNNABLE;
                     break;
+                case 't':
+                case 'T':
+                    do_tree = TRUE;     /* Enhancement-442: `listing t` too */
+                    break;
                 default:
                     fprintf(cp_err, "Error: bad listing type %s\n", s);
                     return; /* SJB - don't go on after an error */
@@ -192,6 +493,10 @@ com_listing(wordlist *wl)
 
         if (do_param_listing) {
             nupa_list_params(cp_out);
+        } else if (do_tree) {
+            /* Enhancement-442: the ORIGINAL deck -- the expanded one no longer
+               knows which subcircuit each instance came from. */
+            inp_list_tree(cp_out, ft_curckt->ci_origdeck);
         } else {
             if (type != LS_DECK && type != LS_RUNNABLE)
                 fprintf(cp_out, "\t%s\n\n", ft_curckt->ci_name);
