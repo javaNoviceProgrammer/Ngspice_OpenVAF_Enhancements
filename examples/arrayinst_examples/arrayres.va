@@ -1,0 +1,11 @@
+// A two-terminal linear resistor, used by verify_arrayinst.py to check that an
+// array of Verilog-A instances connects exactly like an array of resistors.
+`include "disciplines.vams"
+
+module arrayres(a, c);
+    inout a, c;
+    electrical a, c;
+    parameter real r = 1e3 from (0:inf);
+
+    analog I(a, c) <+ V(a, c) / r;
+endmodule

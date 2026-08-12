@@ -942,6 +942,7 @@ int PPlex(YYSTYPE *lvalp, struct PPltype *llocp, char **line)
         else {
             int atsign = 0;
             int brdepth = 0;
+            const char *grp = NULL;     /* Enhancement-441 */
             char *start = sbuf;
             /* It is bad how we have to recognise '[' -- sometimes
              * it is part of a word, when it defines a parameter
@@ -969,6 +970,8 @@ int PPlex(YYSTYPE *lvalp, struct PPltype *llocp, char **line)
                 else if (*sbuf == '[') {
                     if (!atsign)
                         break;
+                    if (brdepth == 0)
+                        grp = sbuf;     /* Enhancement-441: this group's '[' */
                     brdepth++;
                 }
                 else if (*sbuf == ']') {
@@ -977,6 +980,28 @@ int PPlex(YYSTYPE *lvalp, struct PPltype *llocp, char **line)
                         continue;
                     }
                     if (atsign) {
+                        /* Enhancement-441: an ARRAY INSTANCE is named `r[2]`,
+                         * so `@r[2][resistance]` carries two bracket groups and
+                         * the token must not end at the first ']'. It ended
+                         * there, leaving `[resistance]` behind as a separate
+                         * token, and the accessor then looked for a device `r`
+                         * with a parameter `2`. Only an integer group followed
+                         * immediately by another '[' continues the token, so
+                         * `@nd1[i_a[0]]` (E-408) and `@*[[p]]` (E-269) are
+                         * unaffected, and a lone `@r[2]` still means what it
+                         * always did. */
+                        if (sbuf[1] == '[' && grp) {
+                            const char *q = grp + 1;
+                            if (*q == '+' || *q == '-')
+                                q++;
+                            const char *d = q;
+                            while (d < sbuf && isdigit_c(*d))
+                                d++;
+                            if (d == sbuf && d > q) {
+                                brdepth = 0;    /* name's index group closed */
+                                continue;       /* the next '[' is the param */
+                            }
+                        }
                         sbuf++;
                     }
                     break;

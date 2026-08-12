@@ -92,9 +92,16 @@ bad = {
 for name, deck in bad.items():
     out, rc = run(deck)
     crashed = is_crash(rc)
-    # a clean rejection either names it as not-a-code-model or otherwise errors out
+    # a clean rejection either names it as not-a-code-model or otherwise errors
+    # out. Enhancement-441 added the last phrase: an A-device whose NAME carries
+    # a range (`a[0:0] D1 a b dm`) is now refused while the netlist is read,
+    # because XSPICE already spells its port groups with brackets, so the name is
+    # ambiguous. The deck is still cleanly rejected with no crash -- just earlier,
+    # and naming the actual problem with that line rather than the model it
+    # eventually failed to bind.
     named = ("not a code model" in out) or ("unable to find definition" in out) or \
-            ("Invalid model type" in out) or ("Unknown device type" in out)
+            ("Invalid model type" in out) or ("Unknown device type" in out) or \
+            ("array instances are not available" in out)
     check(f"[crash-guard] {name} -> clean error, no crash",
           (not crashed) and named, f"rc={rc}, no-diag" if not named else f"rc={rc}")
 

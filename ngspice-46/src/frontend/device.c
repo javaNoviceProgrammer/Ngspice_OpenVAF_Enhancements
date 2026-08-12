@@ -1452,7 +1452,10 @@ com_alter_common(wordlist *wl, int do_model)
             param = words->wl_word;
         } else if (*p == '@' || *p == '#') {
             dev = p + 1;
-            p = strchr(p, '[');
+            /* Enhancement-441: the NAME may carry an array index of its own,
+               `@r[2][resistance]`; the helper skips that group so `alter` sees
+               the device `r[2]` rather than a device `r` with a parameter `2`. */
+            p = ft_accessor_param_start(dev);
             if (p) {
                 *p++ = '\0';
                 param = p;

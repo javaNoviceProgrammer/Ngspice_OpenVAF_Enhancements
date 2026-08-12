@@ -842,6 +842,45 @@ struct dvec *vec_fromplot(char *word, struct plot *plot) {
  * name, it is considered the plot, otherwise the current plot is used.
  */
 
+
+/* Enhancement-441: find where the PARAMETER of an `@name[param]` accessor
+ * starts, given that the NAME may now contain brackets of its own.
+ *
+ * Array instances are named `r[2]`, so `@r[2][resistance]` has two bracket
+ * groups and the old split -- everything before the FIRST '[' is the name --
+ * read it as device `r`, parameter `2`, and reported "no such device or model
+ * name r". `show r[2]` had no such trouble, so the element was visible but not
+ * addressable.
+ *
+ * The rule is deliberately narrow: a bracket group holding nothing but an
+ * integer AND immediately followed by another '[' belongs to the name. That
+ * leaves the two established readings alone --
+ *   `@nd1[i_a[0]]`  the bracket group is not an integer (Enhancement-408), and
+ *   `@*[[param]]`   it starts with '[' (Enhancement-269) --
+ * and it leaves a lone `@r[2]` meaning what it always did, device `r`
+ * parameter `2`, since nothing follows the group.
+ *
+ * Returns a pointer to the parameter's '[', or NULL if there is none. */
+char *ft_accessor_param_start(char *name)
+{
+    char *p = strchr(name, '[');
+
+    while (p) {
+        char *q = p + 1;
+        if (*q == '+' || *q == '-')
+            q++;
+        if (!isdigit_c(*q))
+            break;                      /* not an index -- this is the param */
+        while (isdigit_c(*q))
+            q++;
+        if (*q != ']' || q[1] != '[')
+            break;                      /* nothing follows: the old reading */
+        p = q + 1;                      /* the group was part of the name */
+    }
+
+    return p;
+}
+
 #define SPECCHAR '@'
 
 struct dvec *
@@ -932,8 +971,9 @@ vec_get(const char *vec_name) {
 
         whole = copy(word);
         name = ++word;
-        for (param = name; *param && (*param != '['); param++)
-            ;
+        param = ft_accessor_param_start(name);
+        if (!param)
+            param = name + strlen(name);        /* point at the '\0' */
 
         if (*param) {
             /* Enhancement-408: a parameter NAME may itself contain brackets --

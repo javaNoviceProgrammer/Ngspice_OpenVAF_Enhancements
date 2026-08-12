@@ -173,6 +173,7 @@ static void rem_mfg_from_models(struct card *start_card);
 static void inp_fix_macro_param_func_paren_io(struct card *begin_card);
 static void inp_fix_gnd_name(struct card *deck);
 static void inp_expand_buses(struct card *deck);
+static int inp_expand_array_instances(struct card *deck);    /* Enhancement-441 */
 static void inp_chk_for_e_source_to_xspice(struct card *deck, int *line_number);
 static void inp_add_control_section(struct card *deck, int *line_number);
 static char *get_quoted_token(char *string, char **token);
@@ -1136,14 +1137,38 @@ struct card *inp_readall(FILE *fp, const char *dir_name, const char* file_name,
 
         inp_remove_excess_ws(working);
 
+        /* Enhancement-441: an array INSTANCE (`R[0:3] a b r=1k`) becomes one
+           card per element FIRST, so that the node ranges it consumes are gone
+           before E-221 gets to the line -- the two readings of a range must not
+           both apply. */
+        if (inp_expand_array_instances(working)) {
+            /* Order matters: inp_rem_levels() walks `p->line->level`, i.e. into
+             * the CARDS, so the scope tree has to go before the deck does.
+             * Freeing the deck first is a use-after-free -- it crashed here
+             * with EXC_BAD_ACCESS at offset 8 (the `level` member) the first
+             * time this rejection path was actually taken. The
+             * inp_poly_2g6_compat site below has the two in this order; the
+             * inp_vdmos_model site above has them the other way round and is
+             * the same latent bug, unfired only because nothing reaches it. */
+            inp_rem_levels(root);
+            line_free_x(cc, TRUE);
+            return NULL;
+        }
+
         /* Enhancement-221: expand array/bus node ranges (a[0:1] -> a[0] a[1])
            before subcircuit expansion and device parsing, so every consumer
            sees the scalar node list. */
         inp_expand_buses(working);
 
         if(inp_vdmos_model(working)) {
-            line_free_x(cc, TRUE);
+            /* Enhancement-441: same ordering fix as the array-instance site
+               above -- inp_rem_levels() reads `p->line->level`, so the deck
+               must outlive the scope tree. This site had the two reversed and
+               was a use-after-free waiting for its first caller; the identical
+               sequence crashed with EXC_BAD_ACCESS at the `level` member as
+               soon as the new rejection path was actually reached. */
             inp_rem_levels(root);
+            line_free_x(cc, TRUE);
             return NULL;
         }
 
@@ -2451,8 +2476,20 @@ static bool inp_canon_bus_index_token(DSTRING *ds, const char *tok, size_t len)
    Enhancement-411: `*descending`, when non-NULL, reports whether the range ran
    msb-first (hi < lo), so the caller can warn about a reversed node binding.
    It is only meaningful when this returns TRUE. */
-static bool inp_expand_bus_token(DSTRING *ds, const char *tok, size_t len,
-                                 bool *descending)
+/* Enhancement-441: the shared reader for a `base[lo:hi]` token.
+ *
+ * Both range consumers need exactly this parse with exactly these guards --
+ * inp_expand_bus_token below, which turns a range into a SEQUENCE of node
+ * tokens, and inp_expand_array_instances, which turns a range on an INSTANCE
+ * NAME into a sequence of cards. Keeping one reader keeps the two passes
+ * agreeing on what a range is; in particular an XSPICE port group `[d1 d2]`
+ * has no base and is refused here, so neither pass touches it.
+ *
+ * On success fills *baselen (the length of the part before '['), *lo and *hi.
+ * The BUS_MAX_WIDTH span check is the caller's, since the two passes want
+ * different behaviour when it trips. */
+static bool inp_bus_range_parse(const char *tok, size_t len,
+                                size_t *baselen, long *lo_out, long *hi_out)
 {
     if (len < 6 || tok[len - 1] != ']')
         return FALSE;
@@ -2482,6 +2519,28 @@ static bool inp_expand_bus_token(DSTRING *ds, const char *tok, size_t len,
     if (errno == ERANGE)
         return FALSE;
 
+    *baselen = (size_t) (lb - tok);
+    *lo_out = lo;
+    *hi_out = hi;
+    return TRUE;
+}
+
+/* The unsigned span (width - 1) of a range; see the overflow note below. */
+static unsigned long inp_bus_span(long lo, long hi)
+{
+    return (hi >= lo) ? ((unsigned long) hi - (unsigned long) lo)
+                      : ((unsigned long) lo - (unsigned long) hi);
+}
+
+static bool inp_expand_bus_token(DSTRING *ds, const char *tok, size_t len,
+                                 bool *descending)
+{
+    size_t blen;
+    long lo, hi;
+
+    if (!inp_bus_range_parse(tok, len, &blen, &lo, &hi))
+        return FALSE;
+
     /* Enhancement-338: compute the span in UNSIGNED arithmetic.
      *
      * `hi - lo + 1` OVERFLOWS a signed long for a full-range span such as
@@ -2497,13 +2556,11 @@ static bool inp_expand_bus_token(DSTRING *ds, const char *tok, size_t len,
      * strtol saturates at LONG_MIN/LONG_MAX and sets ERANGE, so an endpoint too
      * large to represent is rejected above rather than silently clamped into a
      * range that looks acceptable. */
-    unsigned long span = (hi >= lo) ? ((unsigned long) hi - (unsigned long) lo)
-                                    : ((unsigned long) lo - (unsigned long) hi);
+    unsigned long span = inp_bus_span(lo, hi);
     if (span >= (unsigned long) BUS_MAX_WIDTH)
         return FALSE; /* leave it literal; the device parser reports the error */
 
     const long step = (hi >= lo) ? 1 : -1;
-    const size_t blen = (size_t) (lb - tok);
     long i = lo;
     if (descending)
         *descending = (hi < lo);   /* Enhancement-411 */
@@ -2599,6 +2656,210 @@ static bool inp_bus_rewrite_wrapped(DSTRING *ds, const char *tok, size_t len)
     return TRUE;
 }
 
+/* Enhancement-441: array INSTANCES -- `R[0:3] a b r=1k` is four resistors.
+ *
+ * Schematic tools write a repeated device as one symbol with a range on its
+ * reference designator, and the netlist that falls out of that is
+ *
+ *     R[0:3]  a b        r=1k        -> R[0] a b r=1k ... R[3] a b r=1k
+ *     N[0:3]  a[0:3] b   model       -> N[0] a[0] b model ... N[3] a[3] b model
+ *     N[0:3]  a[0:3] a[1:4] model    -> N[0] a[0] a[1] model ... N[3] a[3] a[4] model
+ *
+ * The range on the instance NAME is what selects this reading, and that is the
+ * whole of the rule. Enhancement-221 already gave a range in a NODE field a
+ * different and equally useful meaning -- one device with a wide port,
+ * `X1 bus[0:3] sub` -> `X1 bus[0] bus[1] bus[2] bus[3] sub` -- and decks rely
+ * on it, so it has to keep working untouched. The two cannot both apply to one
+ * line, and the instance name decides which:
+ *
+ *   name is a range  -> N cards, and a node range is indexed IN STEP with the
+ *                       instance (element i takes the i-th bit)
+ *   name is scalar   -> one card, and a node range EXPANDS IN PLACE into
+ *                       consecutive terminals, exactly as before
+ *
+ * So `R1 a[0:3] b` is still a four-terminal connection of one device, and
+ * `R[0:3] a[0:3] b` is four two-terminal devices. Nothing that parses today
+ * changes meaning, because today an instance name carrying `[lo:hi]` is not a
+ * usable device name at all.
+ *
+ * Widths must agree. `N[0:3] a[0:1] b` has no sensible reading -- pairing four
+ * devices with two nodes is a mistake, not a shorthand -- and is refused by
+ * name rather than half-expanded into something that parses.
+ *
+ * Runs BEFORE inp_expand_buses so the cards it produces still carry any node
+ * ranges that belong to the OTHER reading (a scalar-named device inside the
+ * array line, say), and those are then expanded normally.
+ */
+static int inp_expand_array_instances(struct card *deck)
+{
+    struct card *c;
+    bool in_control = FALSE;
+    int errors = 0;
+
+    for (c = deck; c; c = c->nextcard) {
+        char *line = c->line;
+        size_t nbase;
+        long nlo, nhi;
+
+        if (!line || *line == '*')
+            continue;
+        if (ciprefix(".control", line)) {
+            in_control = TRUE;
+            continue;
+        }
+        if (ciprefix(".endc", line)) {
+            in_control = FALSE;
+            continue;
+        }
+        if (in_control)
+            continue;
+        /* Element instance lines only. A `.subckt` port list, an output card
+           and a `.model` are all scalar-named by construction. */
+        if (!isalpha_c(*line) || !strchr(line, '['))
+            continue;
+
+        const char *s = line;
+        while (isspace_c(*s))
+            s++;
+        const char *nstart = s;
+        while (*s && !isspace_c(*s))
+            s++;
+
+        if (!inp_bus_range_parse(nstart, (size_t) (s - nstart), &nbase,
+                                 &nlo, &nhi))
+            continue;                   /* an ordinary instance -- E-221's job */
+
+        /* An XSPICE code-model instance already spells its port groups with
+           brackets (`A1 [d1 d2] m`), so a bracket on the NAME is ambiguous by
+           construction and its connection parser rejects the expanded name
+           outright ("Scalar connection expected, [ found"). Say so here rather
+           than emit cards that fail with a message about something else. */
+        if (*nstart == 'a' || *nstart == 'A') {
+            fprintf(cp_err,
+                    "Error: array instances are not available for XSPICE "
+                    "code-model devices\n"
+                    "    in line: %s\n"
+                    "  an A-device already uses brackets for its port groups, "
+                    "so \"%.*s\" is ambiguous;\n"
+                    "  write the instances out individually\n",
+                    line, (int) (s - nstart), nstart);
+            errors++;
+            continue;
+        }
+
+        const unsigned long nspan = inp_bus_span(nlo, nhi);
+        if (nspan >= (unsigned long) BUS_MAX_WIDTH) {
+            fprintf(cp_err, "Error: array instance \"%.*s\" is wider than %d\n"
+                            "    in line: %s\n",
+                    (int) (s - nstart), nstart, BUS_MAX_WIDTH, line);
+            errors++;
+            continue;
+        }
+        const long nstep = (nhi >= nlo) ? 1 : -1;
+        const long nwidth = (long) nspan + 1;
+
+        /* First pass over the remaining tokens: every range must either match
+           the instance width or be reported. Checking before building anything
+           means a bad line is left exactly as written. */
+        {
+            const char *t = s;
+            bool bad = FALSE;
+            while (*t) {
+                while (isspace_c(*t))
+                    t++;
+                if (!*t)
+                    break;
+                const char *tstart = t;
+                while (*t && !isspace_c(*t))
+                    t++;
+                size_t tbase;
+                long tlo, thi;
+                if (inp_bus_range_parse(tstart, (size_t) (t - tstart), &tbase,
+                                        &tlo, &thi)) {
+                    const unsigned long tspan = inp_bus_span(tlo, thi);
+                    if (tspan != nspan) {
+                        fprintf(cp_err,
+                                "Error: array instance \"%.*s\" has %ld elements "
+                                "but \"%.*s\" has %lu\n"
+                                "    in line: %s\n"
+                                "  on an array instance a node range is taken in "
+                                "step with the instance index,\n"
+                                "  so the two must be the same width\n",
+                                (int) (s - nstart), nstart, nwidth,
+                                (int) (t - tstart), tstart, tspan + 1, line);
+                        bad = TRUE;
+                        errors++;
+                        break;
+                    }
+                }
+            }
+            if (bad)
+                continue;
+        }
+
+        /* Build every element's line BEFORE touching this card.
+         *
+         * `nstart`, `s` and the token cursor below all point into c->line, so
+         * replacing that line while still reading from it is a use-after-free:
+         * element 0 came out right and every later element then read recycled
+         * memory (the first node field simply vanished). Collect first, install
+         * afterwards. */
+        char **lines = TMALLOC(char *, nwidth);
+        struct card *tail = c;
+        long i;
+        for (i = 0; i < nwidth; i++) {
+            const long nidx = nlo + i * nstep;
+            DS_CREATE(out, 128);
+
+            ds_cat_mem(&out, nstart, nbase);
+            ds_cat_printf(&out, "[%ld]", nidx);
+
+            const char *t = s;
+            while (*t) {
+                while (isspace_c(*t))
+                    t++;
+                if (!*t)
+                    break;
+                const char *tstart = t;
+                while (*t && !isspace_c(*t))
+                    t++;
+                const size_t tlen = (size_t) (t - tstart);
+                size_t tbase;
+                long tlo, thi;
+
+                ds_cat_char(&out, ' ');
+                if (inp_bus_range_parse(tstart, tlen, &tbase, &tlo, &thi)) {
+                    const long tstep = (thi >= tlo) ? 1 : -1;
+                    ds_cat_mem(&out, tstart, tbase);
+                    ds_cat_printf(&out, "[%ld]", tlo + i * tstep);
+                } else {
+                    /* a scalar node, a model name, a parameter -- every element
+                       gets it verbatim, which is what makes `R[0:3] a b r=1k`
+                       four resistors in parallel */
+                    ds_cat_mem(&out, tstart, tlen);
+                }
+            }
+
+            lines[i] = copy(ds_get_buf(&out));
+            ds_free(&out);
+        }
+
+        tfree(c->line);         /* now that nothing points into it */
+        c->line = lines[0];
+        for (i = 1; i < nwidth; i++)
+            tail = insert_new_line(tail, lines[i], c->linenum,
+                                   c->linenum_orig, c->linesource);
+        tfree(lines);
+        c = tail;               /* nothing produced here needs re-examining */
+    }
+
+    /* Enhancement-441: a refused line must not be left to the device parser.
+     * A mismatched `R[0:3] a[0:1] 0 1k` still parses -- as ONE resistor named
+     * `r[0:3]` -- so the run continued past the error with a circuit nobody
+     * described. Reject the deck instead, the way inp_vdmos_model does. */
+    return errors;
+}
+
 static void inp_expand_buses(struct card *deck)
 {
     struct card *c;
@@ -2641,6 +2902,15 @@ static void inp_expand_buses(struct card *deck)
         const bool ic_card = ciprefix(".ic", line) || ciprefix(".nodeset", line);
         bool desc = FALSE;              /* Enhancement-411 */
 
+        /* Enhancement-441: the first token of an element line is the instance
+           NAME, and a range there is never a node list -- expanding it turned
+           `R[0:3] a[0:1] 0 1k` into `r[0] r[1] r[2] r[3] a[0] a[1] 0 1k` and
+           buried the real complaint under a message about a device called
+           `r[3]`. Names are the array-instance pass's business (above); if a
+           range still has one here, that pass declined the line and said why. */
+        const bool skip_name = isalpha_c(*line);
+        bool at_first_token = TRUE;
+
         {
             DS_CREATE(newline, 256);
             bool changed = FALSE;
@@ -2668,7 +2938,11 @@ static void inp_expand_buses(struct card *deck)
                     }
                 }
                 const size_t tlen = (size_t) (s - start);
-                if (wrapped) {
+                const bool is_name = at_first_token;
+                at_first_token = FALSE;
+                if (skip_name && is_name) {
+                    ds_cat_mem(&newline, start, tlen);   /* Enhancement-441 */
+                } else if (wrapped) {
                     if (inp_bus_rewrite_wrapped(&newline, start, tlen))
                         changed = TRUE; /* Enhancement-408 */
                     else

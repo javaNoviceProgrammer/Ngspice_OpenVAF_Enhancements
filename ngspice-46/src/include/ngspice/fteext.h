@@ -389,3 +389,7 @@ extern bool ft_setflag;
 
 
 #endif
+
+/* Enhancement-441: split an `@name[param]` accessor when the NAME itself
+   carries a bracketed array index (`@r[2][resistance]`). */
+extern char *ft_accessor_param_start(char *name);
