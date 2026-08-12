@@ -54,7 +54,15 @@ DCTfindInstParam(CKTcircuit *ckt, const char *name, GENinstance **instOut,
     if (!name || name[0] != '@' || strlen(name) >= sizeof(buf))
         return E_NODEV;
     strcpy(buf, name + 1);
-    lbrack = strchr(buf, '[');
+    /* Enhancement-441: the fourth place the `@name[param]` split lives, and the
+       one the array-instance work first missed. An array instance is named
+       `r[2]`, so `@r[2][resistance]` has two bracket groups; splitting at the
+       first '[' looked for a device `r` with a parameter `2`, and `.dc` failed
+       fatally with "not in the circuit" -- for the CARD and the command alike --
+       while `print`, `alter` and `sweep` had already been taught the name.
+       ft_accessor_param_start() is the shared rule; the closing-bracket match
+       below is Enhancement-408's and is unchanged. */
+    lbrack = ft_accessor_param_start(buf);
     /* Enhancement-408: match the CLOSING bracket, so a parameter whose own
        name contains brackets -- a bus terminal current i_a[0], an array
        parameter element ap[0] -- resolves instead of being truncated at the

@@ -231,6 +231,65 @@ rc, out = run(BASE, "sweep @r[0][resistance] 1k 1meg 999k -analysis op -output v
 check("[E-441] sweep @r[0][resistance] runs over the element",
       rc == 0 and "over 2 points" in out, f"rc={rc}")
 
+# ------------------------------------------------------- deeper hierarchy ----
+print("\nsubcircuit hierarchy")
+rc, out = run("V1 in 0 dc 1\nRs in a 125\nX1 a 0 sub\nX2 a 0 sub\n"
+              ".subckt sub p n\nR[0:3] p n 1k\n.ends",
+              "listing e\nop\nprint v(a)", "twice")
+L = cards(out)
+check("[E-441] a subckt containing an array, instantiated twice, gives 8 "
+      "uniquely-named devices",
+      sum(1 for ln in L if re.match(r"r\.x[12]\.r\[\d\] a 0 1k", ln)) == 8,
+      f"{len([ln for ln in L if ln.startswith('r.x')])} cards")
+check("[E-441] ...and 8x1k in parallel (125) against Rs=125 reads 0.5",
+      v(out, "a") is not None and abs(v(out, "a") - 0.5) < 1e-9, f"v(a)={v(out,'a')}")
+
+rc, out = run("V1 in 0 dc 1\nRs in a 125\nX1 a 0 outer\n"
+              ".subckt outer p n\nX[0:1] p n inner\n.ends\n"
+              ".subckt inner p n\nR[0:1] p n 1k\n.ends",
+              "listing e\nop\nprint v(a)", "nested")
+L = cards(out)
+check("[E-441] arrays nest: an array of subckts each containing an array",
+      sum(1 for ln in L if re.match(r"r\.x1\.x\[\d\]\.r\[\d\] a 0 1k", ln)) == 4,
+      f"{[ln for ln in L if ln.startswith('r.x1')]}")
+check("[E-441] ...and 4x1k (250) against Rs=125 reads 2/3",
+      v(out, "a") is not None and abs(v(out, "a") - 2.0/3.0) < 1e-9,
+      f"v(a)={v(out,'a')}")
+
+HIER = ("V1 in 0 dc 1\nRs in a 250\nX1 a 0 sub\n"
+        ".subckt sub p n\nR[0:3] p mid[0:3] 1k\nRt[0:3] mid[0:3] n 1k\n.ends")
+rc, out = run(HIER, "op\nprint v(x1.mid[2]) @r.x1.r[2][resistance]", "hieracc")
+m = re.search(r"@r\.x1\.r\[2\]\[resistance\]\s*=\s*(\S+)", out, re.I)
+check("[E-441] an array element's internal node reads hierarchically",
+      v(out, "x1.mid[2]") is not None
+      and abs(v(out, "x1.mid[2]") - 1.0/3.0) < 1e-9, f"{v(out,'x1.mid[2]')}")
+check("[E-441] and so does its parameter, as @r.x1.r[2][resistance]",
+      bool(m) and abs(float(m.group(1)) - 1000.0) < 1e-6,
+      f"{m.group(1) if m else None}")
+
+# ------------------------------------------- the rest of the .control surface -
+print("\nthe remaining .control paths that split @name[param]")
+# .dc on an array element -- the CARD and the command both failed fatally with
+# "not in the circuit" until the split was taught the bracketed name
+DCB = "V1 in 0 dc 1\nRs in x 250\nR[0:3] x 0 1k"
+rc, out = run(DCB, "dc @r[3][resistance] 1k 9k 4k\nprint v(x)", "dcsweep")
+rows = re.findall(r"^\d+\s+\S+\s+(\S+)", out, re.M)
+# three fixed 1k beside the swept one, against Rs = 250
+wants = [1.0/(3/1000. + 1/r3) for r3 in (1000., 5000., 9000.)]
+wants = [w/(250.0 + w) for w in wants]
+check("[E-441] dc sweeping an array element runs and moves only that element",
+      len(rows) >= 3 and all(abs(float(rows[i]) - wants[i]) < 1e-7 for i in range(3)),
+      f"{rows[:3]} want {[f'{w:.8f}' for w in wants]}")
+rc, out = run(DCB.replace("R[0:3] x 0 1k", "R1 x 0 1k\nR[0:3] x 0 4k"),
+              "save @r[1][i] @r1[i] v(x)\nop\nprint @r[1][i] @r1[i] v(x)", "save")
+# a save list that matches nothing loses the WHOLE plot, so this must resolve
+rp = 1.0/(1/1000. + 4/4000.)
+vx = rp/(250.0 + rp)
+m1 = re.search(r"@r\[1\]\[i\]\s*=\s*(\S+)", out, re.I)
+check("[E-441] save @r[1][i] resolves (an unresolved save loses the whole plot)",
+      bool(m1) and abs(abs(float(m1.group(1))) - vx/4000.) < 1e-12,
+      f"{m1.group(1) if m1 else None}")
+
 # --------------------------------------------------------------- controls ----
 print("\nCONTROLS -- the established accessor forms and plain decks")
 rc, out = run("V1 in 0 dc 1\nR1 in nb 1k\nR2 nb 0 1k",

@@ -1507,10 +1507,23 @@ parseSpecial(char *name, char *dev, char *param, char *ind)
         return FALSE;
     name++;
 
-    s = dev;
-    while (*name && (*name != '['))
-        *s++ = *name++;
-    *s = '\0';
+    /* Enhancement-441: the save side of the `@name[param]` split, and the last
+     * of the five places it lives. An array instance is named `r[2]`, so
+     * `save @r[2][i]` has two bracket groups; taking everything before the
+     * first '[' as the device gave device `r`, parameter `2`, which matched no
+     * produced vector -- and because a save list that matches nothing loses the
+     * WHOLE plot, `save @r[1][i]` ended the run with "no data saved ... analysis
+     * not run" rather than merely dropping that one vector.
+     *
+     * ft_accessor_param_start() is the shared rule; when it finds no parameter
+     * bracket at all the whole token is the device name, as before. */
+    {
+        char *pstart = ft_accessor_param_start(name);
+        s = dev;
+        while (*name && name != pstart)
+            *s++ = *name++;
+        *s = '\0';
+    }
 
     if (!*name)
         return TRUE;

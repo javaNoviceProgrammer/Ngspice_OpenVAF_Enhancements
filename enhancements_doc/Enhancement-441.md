@@ -64,7 +64,21 @@ alone — `@nd1[i_a[0]]` (Enhancement-408: the group is not an integer) and
 `@*[[param]]` (Enhancement-269: it starts with `[`) — and a lone `@r[2]` still
 means what it always did, device `r`, parameter `2`.
 
-`print`, `alter` and `sweep` all reach a single element now.
+The split lives in **five** places, not the two the first round found. Verifying
+the feature against subcircuit hierarchy and the whole `.control` surface turned
+up the other three:
+
+| path | symptom before |
+|---|---|
+| `parse.c` lexer | the token ended at the first `]`, so the accessor never saw the name |
+| `vectors.c` | `print`, `let` |
+| `device.c` | `alter`, `altermod` |
+| `dctrcurv.c` | **`.dc` failed fatally** — "not in the circuit", card and command alike |
+| `outitf.c` `parseSpecial` | **`save` lost the WHOLE plot**: a save list that matches nothing takes every vector with it, so `save @r[1][i]` ended the run with "no data saved … analysis not run" rather than dropping one vector |
+
+`print`, `let`, `alter`, `altermod`, `sweep`, `dc`, `save`, `show`, `showmod`,
+`meas` and `wrdata` all reach a single element now, flat or hierarchical
+(`@r.x1.r[2][resistance]`).
 
 ## What is refused
 
@@ -100,7 +114,7 @@ a use-after-free waiting for its first caller.
 
 ## Verification
 
-* **`examples/arrayinst_examples` — 27/27, both solvers.** Every structural
+* **`examples/arrayinst_examples` — 36/36, both solvers.** Every structural
   check is paired with an electrical one computed by hand, because a wrong
   expansion still simulates — it just answers a different question. Four 1k in
   parallel against a 250 Ω source read exactly 0.5 where a single one reads 0.8;
@@ -109,6 +123,12 @@ a use-after-free waiting for its first caller.
   **bit-identical** answers to the resistor array, which is the right cross-check
   since `arrayres` with `r=1k` *is* a 1 kΩ resistor. Controls pin E-221's wide
   port, an ordinary `@dev[param]`, and a scalar bus bit.
+* **Subcircuit hierarchy.** A subckt containing an array, instantiated twice,
+  yields eight uniquely named devices (`r.x1.r[0]` … `r.x2.r[3]`) reading 0.5;
+  arrays nest (`r.x1.x[0].r[0]`) and read 2/3; and an element's internal node and
+  its parameter are both reachable hierarchically.
+* **The `.control` surface** command by command, including the `.dc` and `save`
+  paths above with their values checked analytically.
 * **Full regression 353/353**, both solvers.
 
 `xspicemodel`'s crash-guard list gained one accepted phrase: its fuzz deck
