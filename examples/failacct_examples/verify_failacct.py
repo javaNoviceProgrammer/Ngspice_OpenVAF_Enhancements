@@ -101,8 +101,15 @@ rc, out = run(SW.replace("{spec}", "-2 2 1"), "sw_bad")
 check("[E-438] a sweep whose points fail says so, naming how many",
       re.search(r"sweep: WARNING -- \d+ of \d+ points? did not converge", out) is not None,
       "; ".join(l.strip() for l in out.splitlines() if "WARNING" in l)[:96])
-check("[E-438] ...and explains that a failed point reads back as 0",
-      "reads back as 0" in out)
+# Enhancement-445 changed what a failed point CONTAINS. E-438 counted them and
+# said so, but the value left behind was whatever the read-back returned -- the
+# PREVIOUS solution, since a failed run leaves the earlier plot in place. That
+# is now NaN, so the message no longer says "reads back as 0" and the data is
+# self-describing rather than a plausible-looking stale number.
+# (that the values really are NaN is checked in guardgaps_examples, which prints
+#  the swept vector and reads the wrdata file back)
+check("[E-445] ...and says the failed points are recorded as NaN",
+      "recorded as NaN" in out)
 rc, out = run(SW.replace("{spec}", "1 3 1"), "sw_ok")
 check("[E-438] a sweep with every point converging stays quiet",
       "did not converge" not in out)

@@ -56,6 +56,44 @@ static size_t autobus_base(const char *nm, bool *indexed)
     return lb ? (size_t) (lb - nm) : (nm ? strlen(nm) : 0);
 }
 
+/* Enhancement-445: whether a netlist token may be given a bit index.
+ *
+ * The expansion appended the model's own bracket text to whatever token the
+ * user wrote, without asking whether that token could carry an index:
+ *
+ *   N1 0    b bd   ->  0[0] .. 0[4]      five ordinary FLOATING nodes, not ground
+ *   N1 a[0] b bd   ->  a[0][0] .. a[0][4]
+ *
+ * Both left the device contributing nothing at all, rc=0, with no diagnostic --
+ * while the identical line with the option OFF is reported by E-402's
+ * under-connected warning further down. Refusing here restores that warning as
+ * well as explaining the real problem.
+ *
+ * Ground is the case that matters in practice: tying a bus off is routine, and
+ * `0[i]` can never be ground no matter how it is spelled ("gnd" has already
+ * been rewritten to "0" by this point). Only BUS ports are checked -- a scalar
+ * port is never indexed, so `0` or `a[0]` on one of those stays legal.
+ */
+static bool autobus_token_ok(const char *tok, const char *instname,
+                             const char *portterm)
+{
+    if (strchr(tok, '[')) {
+        fprintf(stderr,
+                "\nWarning: instance %s: \"%s\" already carries an index, so it "
+                "cannot be\n         expanded as the bus port '%s'; write the "
+                "bits out individually.\n", instname, tok, portterm);
+        return FALSE;
+    }
+    if (strcmp(tok, "0") == 0) {
+        fprintf(stderr,
+                "\nWarning: instance %s: ground cannot be indexed, so it cannot "
+                "be expanded\n         as the bus port '%s'; tie the bits off "
+                "individually (e.g. \"0 0 0\").\n", instname, portterm);
+        return FALSE;
+    }
+    return TRUE;
+}
+
 /* Group terminals into ports. Returns the port count, or -1 if the table is
    unusable. start[p] is the first terminal of port p, cnt[p] its width. */
 static int autobus_ports(IFdevice *dev, int *start, int *cnt, int maxp)
@@ -203,12 +241,21 @@ void INP2N(CKTcircuit *ckt, INPtables *tab, struct card *current) {
       DS_CREATE(nl, 128);
       char *scan = line;
       int p;
+      bool badtok = FALSE;              /* Enhancement-445 */
 
       for (p = 0; p < np; p++) {
         char *tok = gettok_instance(&scan);
         int k;
         if (!tok)
           break;
+        /* Enhancement-445: only a BUS port indexes its token, so only those
+           need the token to be indexable. */
+        if (pcnt[p] > 1 &&
+            !autobus_token_ok(tok, name, dev->termNames[pstart[p]])) {
+          badtok = TRUE;
+          tfree(tok);
+          break;
+        }
         for (k = 0; k < pcnt[p]; k++) {
           const char *tn = dev->termNames[pstart[p] + k];
           const char *lb = strchr(tn, '[');
@@ -220,7 +267,7 @@ void INP2N(CKTcircuit *ckt, INPtables *tab, struct card *current) {
         }
         tfree(tok);
       }
-      if (p == np) {                    /* every port got a token */
+      if (p == np && !badtok) {         /* every port got a usable token */
         ds_cat_char(&nl, ' ');
         ds_cat_str(&nl, scan);          /* the model name and any parameters */
         autobus_line = copy(ds_get_buf(&nl));

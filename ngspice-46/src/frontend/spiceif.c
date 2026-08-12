@@ -459,6 +459,19 @@ if_is_option(const char *name)
         "nopage", "nomod",
         "warn_physics",              /* Enhancement-438 */
         "autobus",                   /* Enhancement-444 */
+        /* Enhancement-445: the `.four` analysis controls. Each is read by
+           fourier() through cp_getvar and each demonstrably takes effect when
+           set on a `.options` line -- `fourgridsize=10` moves the reported grid
+           from 200 to 10 -- yet all four were reported as unknown options. A
+           warning that fires on a setting the run then honours is worse than no
+           warning: it teaches the user to ignore the check E-438 added.
+
+           Scope is deliberately just these. Most `cp_getvar` names are shell
+           variables whose documented home is `set` in .control (editor,
+           helppath, the pyplot_* family); warning about THOSE on a .options
+           line is defensible. These four control an analysis, belong with the
+           deck, and are documented alongside `.four`. */
+        "nfreqs", "nperiods", "polydegree", "fourgridsize",
         NULL
     };
     const char *const *sp;
@@ -519,6 +532,10 @@ if_option(CKTcircuit *ckt, char *name, enum cp_types type, void *value)
         return 0;
     } else if (eq(name, "autobus")) {
         /* Enhancement-444: consumed by INP2N via cp_getvar, likewise. */
+        return 0;
+    } else if (eq(name, "nfreqs") || eq(name, "nperiods") ||
+               eq(name, "polydegree") || eq(name, "fourgridsize")) {
+        /* Enhancement-445: consumed by fourier() via cp_getvar, likewise. */
         return 0;
     }
 

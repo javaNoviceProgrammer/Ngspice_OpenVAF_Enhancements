@@ -135,7 +135,15 @@ void INP2L(CKTcircuit *ckt, INPtables * tab, struct card *current)
     IFC(bindNode, (ckt, fast, 1, node1));
     IFC(bindNode, (ckt, fast, 2, node2));
     PARSECALL((&line, ckt, type, fast, &leadval, &waslead, tab));
-    if (waslead) {
+    /* Enhancement-445: see inp2r.c -- a value in the value position AND a
+     * trailing unlabeled number is a contradiction, not an override. */
+    if (waslead && error1 == 0) {
+      fprintf(stderr,
+              "\nWarning: inductor '%s': value given twice; \"%g\" is used and "
+              "the trailing\n         number \"%g\" is ignored. Note ',' "
+              "separates fields, so \"1,5m\" is\n         two values, not "
+              "1.5m.\n\n", name, val, leadval);
+    } else if (waslead) {
       ptemp.rValue = leadval;
       GCA(INPpName, ("inductance", &ptemp, ckt, type, fast));
     }

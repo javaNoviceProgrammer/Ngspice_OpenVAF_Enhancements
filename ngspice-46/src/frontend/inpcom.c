@@ -2842,8 +2842,29 @@ static int inp_expand_array_instances(struct card *deck)
         while (*s && !isspace_c(*s))
             s++;
 
-        if (!inp_bus_index_parse(nstart, (size_t) (s - nstart), &nbase, &nb))
+        if (!inp_bus_index_parse(nstart, (size_t) (s - nstart), &nbase, &nb)) {
+            /* Enhancement-445: an instance NAME that reads as an index range
+               but could not be expanded -- over BUS_MAX_WIDTH, `r[]`, a
+               trailing comma -- used to fall through here and be emitted as a
+               single device literally called `r[0:8192]`, silently giving a
+               circuit 8192 times smaller than written.  The identical token in
+               a NODE field already gets E-443's warning; only this position
+               was quiet, because E-441 made inp_expand_buses skip an element
+               line's first token so the malformed check never saw it.
+               `inp_bus_looks_malformed` is deliberately tight: a scalar bit
+               `r[2]` is NOT a list and stays an ordinary instance name. */
+            if (inp_bus_looks_malformed(nstart, (size_t) (s - nstart))) {
+                fprintf(cp_err,
+                        "Error: \"%.*s\" reads as an array instance but is not "
+                        "a usable index range\n"
+                        "    in line: %s\n"
+                        "  an array instance may span at most %d elements; "
+                        "check the range bounds\n",
+                        (int) (s - nstart), nstart, line, BUS_MAX_WIDTH);
+                errors++;
+            }
             continue;                   /* an ordinary instance -- E-221's job */
+        }
 
         /* An XSPICE code-model instance already spells its port groups with
            brackets (`A1 [d1 d2] m`), so a bracket on the NAME is ambiguous by

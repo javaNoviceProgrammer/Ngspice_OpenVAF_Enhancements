@@ -26,6 +26,31 @@ Modified: 2000 AlansFixes
 #define E426_BAD_OPT(cond, fmt, ...)                                    \
     ((cond) ? (fprintf(stderr, "\nWarning -- " fmt "\n\n", __VA_ARGS__), 1) : 0)
 
+/* Enhancement-445: NIiter (maths/ni/niiter.c) raises any iteration limit below
+ * NI_MIN_MAXITER to NI_MIN_MAXITER -- "some convergence issues that get
+ * resolved by increasing max iter". Enhancement-426 found that floor, judged it
+ * deliberate and upstream, and left it alone; that judgement stands here.
+ *
+ * What was missing is that the user was never told. The value is stored, the
+ * `option` command echoes it back verbatim, and nothing in the run reflects it:
+ * setting itl1=3 on a circuit that needs 13 Newton iterations still takes 13 and
+ * converges. Raising a limit is the standard first move against a stubborn
+ * operating point, and lowering one is how a runtime budget is imposed on a
+ * large design -- both silently did nothing.
+ *
+ * So: keep the floor, and say when it applies. Note the shipped defaults itl2=50
+ * and itl4=10 are themselves below it, so this deliberately fires only for a
+ * limit the user set explicitly, never for a default. */
+#define NI_MIN_MAXITER 100
+#define E445_ITL_FLOOR(name, v)                                              \
+    do {                                                                     \
+        if ((v) < NI_MIN_MAXITER)                                            \
+            fprintf(stderr, "\nWarning -- option %s = %d is below the "      \
+                    "solver's minimum of %d;\n"                              \
+                    "           %d iterations will be used instead.\n\n",    \
+                    (name), (v), NI_MIN_MAXITER, NI_MIN_MAXITER);            \
+    } while (0)
+
 /* Enhancement-440: the absolute-zero guard above is one-sided.
  *
  * Below -273.15 C is physically impossible, so it is refused. Above, nothing
@@ -210,11 +235,13 @@ CKTsetOpt(CKTcircuit *ckt, JOB *anal, int opt, IFvalue *val)
         /* NB: NIiter floors every iteration limit at 100, so a value below that
          * is stored and reported but never reached -- see Enhancement-426. That
          * floor is upstream and deliberate and is NOT changed here; this guard
-         * only refuses a limit that is not a count at all. */
+         * only refuses a limit that is not a count at all. Enhancement-445 adds
+         * the missing notice when the floor will override what was asked for. */
         if (E426_BAD_OPT(val->iValue <= 0,
             "Option itl1 = %d must be greater than zero; ignored, keeping %d",
             val->iValue, task->TSKdcMaxIter))
             break;
+        E445_ITL_FLOOR("itl1", val->iValue);
         task->TSKdcMaxIter = val->iValue;
         task->TSKtolGiven |= ERRP_ITL1;
         break;
@@ -223,6 +250,7 @@ CKTsetOpt(CKTcircuit *ckt, JOB *anal, int opt, IFvalue *val)
             "Option itl2 = %d must be greater than zero; ignored, keeping %d",
             val->iValue, task->TSKdcTrcvMaxIter))
             break;
+        E445_ITL_FLOOR("itl2", val->iValue);
         task->TSKdcTrcvMaxIter = val->iValue;
         break;
     case OPT_ITL3:
@@ -232,6 +260,7 @@ CKTsetOpt(CKTcircuit *ckt, JOB *anal, int opt, IFvalue *val)
             "Option itl4 = %d must be greater than zero; ignored, keeping %d",
             val->iValue, task->TSKtranMaxIter))
             break;
+        E445_ITL_FLOOR("itl4", val->iValue);
         task->TSKtranMaxIter = val->iValue;
         break;
     case OPT_ITL5:

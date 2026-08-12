@@ -220,7 +220,27 @@ void INP2R(CKTcircuit *ckt, INPtables * tab, struct card *current)
     IFC(bindNode, (ckt, fast, 1, node1));
     IFC(bindNode, (ckt, fast, 2, node2));
     PARSECALL((&line, ckt, type, fast, &leadval, &waslead, tab));
-    if (waslead) {
+    /* Enhancement-445: an unlabeled trailing number is how `R1 a b rmod 1k`
+     * gives its value, and that is legitimate -- there, the value position held
+     * a MODEL name, so error1 != 0 and nothing was read above.
+     *
+     * When a value WAS read above, a second unlabeled number is a contradiction
+     * rather than an override, and silently overriding is what made a comma so
+     * dangerous: `,` is a token separator, so `R1 a b 1,5k` parses as the value
+     * `1` followed by a stray unlabeled `5k`, and the resistor came out 5 kOhm
+     * -- not 1.5 k as a European decimal comma intends, and not 1 k either.
+     * Every other separator (`1;5`, `1:5`, `1_000`) is ignored as trailing text
+     * per ngspice's documented rule; only the comma reached this overwrite.
+     *
+     * Keep the value written in the value position and say the rest was not
+     * understood, rather than choose silently between two readings. */
+    if (waslead && error1 == 0) {
+      fprintf(stderr,
+              "\nWarning: resistor '%s': value given twice; \"%g\" is used and "
+              "the trailing\n         number \"%g\" is ignored. Note ',' "
+              "separates fields, so \"1,5k\" is\n         two values, not "
+              "1.5k.\n\n", name, val, leadval);
+    } else if (waslead) {
       ptemp.rValue = leadval;
       GCA(INPpName, ("resistance", &ptemp, ckt, type, fast));
     }

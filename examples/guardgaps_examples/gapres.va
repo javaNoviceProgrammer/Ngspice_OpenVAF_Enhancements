@@ -1,0 +1,14 @@
+`include "disciplines.vams"
+module gapres(a, c);
+    inout a, c; electrical a, c;
+    parameter real r = 1e3 from (0:inf);
+    parameter real tc = 0.0;
+    parameter integer n = 1 from [1:inf);
+    (*desc="branch current"*) real iout;
+    (*desc="effective resistance"*) real reff;
+    analog begin
+        reff = r * (1 + tc*($temperature - 300.15)) / n;
+        iout = V(a,c)/reff;
+        I(a,c) <+ iout;
+    end
+endmodule

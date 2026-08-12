@@ -1597,6 +1597,7 @@ void com_sweep(wordlist *wl)
     double  prevval[SW_MAXKNOB];
     int     nknob = 0, npt = 1, nv0 = 0, ncomb = 1, havePrev = 0;
     int     nptfail = 0;             /* Enhancement-438: points that never solved */
+    int     ptfailed = 0;            /* Enhancement-445: ...and whether THIS one did */
     char   *deck_fp_names[SW_MAXKNOB];   /* Enhancement-320: swept .param names   */
     int     ndeck_fp = 0, fast_fp = 0;   /* .param fast-sweep arm state           */
     /* Enhancement-350: nominal value of each swept `.param`, captured before the
@@ -1923,7 +1924,10 @@ void com_sweep(wordlist *wl)
          * messages scroll past in the middle of the run. Count them so the sweep
          * can say so at the end; the curve keeps its shape (dropping points
          * would silently misalign every output against the sweep scale). */
-        if (sw_run_failed())
+        /* Enhancement-445: remember it per point, so the reads below can be
+           marked rather than silently kept. */
+        ptfailed = sw_run_failed();
+        if (ptfailed)
             nptfail++;
 
         if (p == 0 && nout == 0) {
@@ -1971,6 +1975,21 @@ void com_sweep(wordlist *wl)
                 if (!okk)
                     outbad[k]++;                         /* Enhancement-431 */
             }
+            /* Enhancement-445: a point whose analysis never solved has no
+               result to report. E-438 counted these and said so at the end,
+               but the VALUE was still whatever the read-back returned -- and
+               that is the PREVIOUS solution, because a failed run leaves the
+               earlier plot in place. Three different priors produced three
+               different "results", each a flat, plausible shelf; `wrdata`
+               wrote them with no marker at all, so a downstream reader could
+               not tell them from measurements.
+
+               NaN is the marker: it keeps the array shape (so every output
+               stays aligned against the sweep scale, which is why E-438
+               declined to drop the points), plots as a gap, and writes as
+               `nan` instead of a number that looks real. */
+            if (ptfailed)
+                data[(size_t) p * (size_t) nout + (size_t) k] = NAN;
         }
     }
     ft_optimizing = save_optimizing;
@@ -2042,8 +2061,8 @@ void com_sweep(wordlist *wl)
     /* Enhancement-438: say it once, at the end, where it cannot scroll past. */
     if (nptfail)
         fprintf(cp_out, "sweep: WARNING -- %d of %d point%s did not converge; "
-                        "their output values are NOT valid results (a failed "
-                        "operating point reads back as 0).\n",
+                        "those points are recorded as NaN, not as results "
+                        "(Enhancement-445).\n",
                 nptfail, npt, nptfail == 1 ? "" : "s");
 
     /* --- Enhancement-189/190: -overlay plot of every run's full waveform, one

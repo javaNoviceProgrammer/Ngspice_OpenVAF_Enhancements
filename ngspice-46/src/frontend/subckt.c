@@ -419,7 +419,13 @@ find_ends(struct card *l)
 }
 
 
-#define MAXNEST 21
+/* Enhancement-445: was 21, which refused a perfectly legal 20-deep hierarchy --
+   and blamed it on "infinite subckt recursion", which such a deck does not have.
+   Real hierarchical designs reach that depth. A finite hierarchy costs exactly
+   its own depth in passes (the loop stops as soon as a pass expands nothing),
+   so the headroom is only ever paid for by a pathological deck, and genuine
+   runaway recursion is still bounded by MAX_SUBST below. */
+#define MAXNEST 256
 /*-------------------------------------------------------------------*/
 /*  doit does the actual substitution of .subckts.                   */
 /*  It takes two passes:  the first extracts .subckts                */
@@ -789,7 +795,15 @@ doit(struct card *deck, wordlist *modnames) {
 
 
     if (!numpasses) {
-        fprintf(cp_err, "Error: infinite subckt recursion\n");
+        /* Enhancement-445: this is reached both by a recursive subcircuit and
+           by a legal hierarchy deeper than the limit, and the old wording
+           asserted the first without being able to tell them apart. */
+        fprintf(cp_err,
+                "Error: subcircuit nesting exceeded %d levels.\n"
+                "       Either a subcircuit instantiates itself (recursive "
+                "subcircuit),\n"
+                "       or the hierarchy is genuinely deeper than the limit.\n",
+                MAXNEST);
         error = 1;
     }
 

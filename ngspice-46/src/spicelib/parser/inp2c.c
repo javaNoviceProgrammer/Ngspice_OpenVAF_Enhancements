@@ -137,7 +137,17 @@ void INP2C(CKTcircuit *ckt, INPtables * tab, struct card *current)
     IFC(bindNode, (ckt, fast, 1, node1));
     IFC(bindNode, (ckt, fast, 2, node2));
     PARSECALL((&line, ckt, type, fast, &leadval, &waslead, tab));
-    if (waslead) {
+    /* Enhancement-445: see inp2r.c -- a value in the value position AND a
+     * trailing unlabeled number is a contradiction, not an override. `,` is a
+     * token separator, so `C1 a b 1,5u` read as `1` then a stray `5u` and the
+     * capacitor silently came out 5 uF. */
+    if (waslead && error1 == 0) {
+      fprintf(stderr,
+              "\nWarning: capacitor '%s': value given twice; \"%g\" is used and "
+              "the trailing\n         number \"%g\" is ignored. Note ',' "
+              "separates fields, so \"1,5u\" is\n         two values, not "
+              "1.5u.\n\n", name, val, leadval);
+    } else if (waslead) {
       ptemp.rValue = leadval;
       GCA(INPpName, ("capacitance", &ptemp, ckt, type, fast));
     }

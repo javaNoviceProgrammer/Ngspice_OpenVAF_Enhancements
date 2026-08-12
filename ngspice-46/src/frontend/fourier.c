@@ -59,6 +59,17 @@ fourier(wordlist *wl, struct plot *current_plot)
     if (!current_plot)
         return 1;
 
+    /* Enhancement-445: a bare `.four` card (no arguments at all) reached here
+     * with a NULL wordlist and the fundamental-frequency read below
+     * dereferenced it -- a hard SIGSEGV.  dotcards.c warns "no nodes given"
+     * and declines to save anything, but it does not drop the card, so the
+     * empty command still arrives.  Refuse it here, which also covers the
+     * `fourier` command form. */
+    if (!wl || !wl->wl_word) {
+        fprintf(cp_err, "Error: fourier: no fundamental frequency given\n");
+        return 1;
+    }
+
     sprintf(xbuf, "%1.1e", 0.0);
     shift = (int) strlen(xbuf) - 7;
     if (!current_plot || !current_plot->pl_scale) {
@@ -83,7 +94,13 @@ fourier(wordlist *wl, struct plot *current_plot)
         return 1;
     }
     s = wl->wl_word;
-    if (ft_numparse(&s, FALSE, &fundfreq) < 0 || fundfreq <= 0.0) {
+    /* Enhancement-445: `!isfinite` closes the overflow hole.  A literal `inf`
+     * or `nan` was already refused, and `1e-400` underflows to 0.0 and is
+     * caught by `<= 0.0` -- but `1e400` overflows to +INF, which is neither
+     * <= 0 nor a parse failure, so it was accepted and produced a full report
+     * with every harmonic frequency printed as `inf` and a meaningless THD. */
+    if (ft_numparse(&s, FALSE, &fundfreq) < 0 || fundfreq <= 0.0 ||
+        !isfinite(fundfreq)) {
         fprintf(cp_err, "Error: bad fundamental freq %s\n", wl->wl_word);
         return 1;
     }
