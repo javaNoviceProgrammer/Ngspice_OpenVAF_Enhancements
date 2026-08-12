@@ -45,6 +45,7 @@ typedef struct sASRCinstance {
                                 * in the sparce matrix */
     double ASRCprev_value;     /* Previous value for the convergence test */
     double *ASRCacValues;      /* Store rhs and derivatives for ac anal */
+    int ASRCnonfiniteSaid;     /* Enhancement-440: warned about inf/NaN once */
 
     unsigned ASRCtempGiven : 1;       /* indicates temperature specified */
     unsigned ASRCdtempGiven : 1;      /* indicates delta-temp specified  */

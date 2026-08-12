@@ -25,6 +25,89 @@ static int Sens_Debug = 0;
 static double Sens_Delta = 0.000001;
 static double Sens_Abs_Delta = 0.000001;
 
+/* Enhancement-440: a model snapshot taken before the perturbation loop.
+ *
+ * `sens_setp` perturbs a parameter and then writes the original value back,
+ * which restores the NUMBER but not the model's "given" state: every device
+ * setter marks its parameter as supplied, and there is no un-set. For any
+ * model whose behaviour is selected by whether a parameter was given -- rather
+ * than by its value -- the model is left permanently reinterpreted.
+ *
+ * The BJT is the sharp case. `ibe`/`ibc` default to 0 and ungiven, and
+ * bjttemp.c keys off `BJTBEsatCurGiven && BJTBCsatCurGiven`: ungiven, the
+ * junction saturation currents fall back to `is`; given, they are taken
+ * literally -- and `sens` had just made them given with the value 0. That
+ * leaves BJTBEtSatCur = 0, i.e. a transistor with no saturation current at
+ * all, so every later analysis in the session solves a dead device (measured
+ * 12.8% wrong on a single stage, 101% on a differential pair, silently).
+ *
+ * Restoring the numeric value cannot fix this, because the damage is in the
+ * given-bits, and no device API exposes them. Snapshotting the model structs
+ * and putting them back does, generically, for every device type: parameters,
+ * given-flags and cached model state all return to what the netlist set up.
+ * Instances are NOT snapshotted -- their derived values are rebuilt by the
+ * CKTtemp() that follows the restore.
+ */
+struct sens_modsave {
+    GENmodel *model;
+    void *copy;
+    size_t size;
+    struct sens_modsave *next;
+};
+
+static struct sens_modsave *
+sens_save_models(CKTcircuit *ckt)
+{
+    struct sens_modsave *head = NULL;
+    int type;
+
+    for (type = 0; type < DEVmaxnum; type++) {
+        GENmodel *m;
+
+        if (!ckt->CKThead || !ckt->CKThead[type] || !DEVices[type] ||
+                !DEVices[type]->DEVmodSize)
+            continue;
+
+        for (m = ckt->CKThead[type]; m; m = m->GENnextModel) {
+            struct sens_modsave *s = TMALLOC(struct sens_modsave, 1);
+            s->size = (size_t) *DEVices[type]->DEVmodSize;
+            s->model = m;
+            s->copy = tmalloc(s->size);
+            memcpy(s->copy, m, s->size);
+            s->next = head;
+            head = s;
+        }
+    }
+
+    return head;
+}
+
+/* Put the models back and rebuild every instance's derived values from them.
+ * Safe to call with a NULL list. */
+static void
+sens_restore_models(CKTcircuit *ckt, struct sens_modsave *list)
+{
+    int restored = 0;
+
+    while (list) {
+        struct sens_modsave *next = list->next;
+
+        if (memcmp(list->model, list->copy, list->size) != 0) {
+            memcpy(list->model, list->copy, list->size);
+            restored++;
+        }
+        FREE(list->copy);
+        FREE(list);
+        list = next;
+    }
+
+    /* Derived per-instance quantities (tSatCur and friends) were computed from
+     * the altered models, so they have to be recomputed from the restored
+     * ones. Only worth the pass if something actually changed. */
+    if (restored)
+        (void) CKTtemp(ckt);
+}
+
 static int sens_setp(sgen* sg, CKTcircuit* ckt, IFvalue* val);
 static int sens_load(sgen* sg, CKTcircuit* ckt, int is_dc);
 static int sens_temp(sgen* sg, CKTcircuit* ckt);
@@ -120,6 +203,7 @@ int sens_sens(CKTcircuit* ckt, int restart)
     double* output_values;
     IFcomplex* output_cvalues;
     double delta_var;
+    struct sens_modsave *saved_models = NULL;   /* Enhancement-440 */
     int    (*fn) (SMPmatrix*, GENmodel*, CKTcircuit*, int*);
     static int	is_dc;
     int k, j, n;
@@ -284,6 +368,11 @@ int sens_sens(CKTcircuit* ckt, int restart)
             FREE(vec_names);
         if (error) {
         err:
+            /* Enhancement-440: the error paths leave through here too, and a
+             * half-finished perturbation loop is exactly when the models are
+             * most likely to be left altered. */
+            sens_restore_models(ckt, saved_models);
+            saved_models = NULL;
             FREE(output_names);
             return error;
         }
@@ -354,6 +443,9 @@ int sens_sens(CKTcircuit* ckt, int restart)
         ckt->CKTstates[j] = NULL;
     }
 #endif
+
+    /* Enhancement-440: snapshot the models before anything is perturbed. */
+    saved_models = sens_save_models(ckt);
 
     for (i = 0; i < nfreqs; i++) {
         /* XXX handle restart */
@@ -836,6 +928,11 @@ int sens_sens(CKTcircuit* ckt, int restart)
         freq = inc_freq(freq, job->step_type, step_size);
 
     }
+    /* Enhancement-440: put the models back before returning to the shell, so
+     * the next analysis in the session sees the circuit the netlist described. */
+    sens_restore_models(ckt, saved_models);
+    saved_models = NULL;
+
     FREE(output_names);
 
     SPfrontEnd->OUTendPlot(sen_data);

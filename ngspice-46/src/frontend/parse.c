@@ -494,7 +494,15 @@ struct pnode *PP_mkfnode(const char *func, struct pnode *arg)
     struct dvec *d;
     char buf[BSIZE_SP];
 
-    (void) strcpy(buf, func);
+    /* Enhancement-440: `func` comes straight from the input, and both this copy
+     * and the sprintf below wrote into a fixed BSIZE_SP buffer with no bound.
+     * A function name longer than the buffer smashed the stack -- reachable
+     * from ordinary commands (`fourier 1k <600-char-name>(v(a))` and the same
+     * through `meas` died on the fortify check, i.e. the overflow was real and
+     * not merely theoretical). Truncate instead; an over-long name cannot match
+     * a built-in or a user-defined function anyway, so the only behavioural
+     * change is that the error message names a shortened function. */
+    (void) snprintf(buf, sizeof(buf), "%s", func);
     strtolower(buf);  /* Make sure the case is ok. */
 
     for (f = &ft_funcs[0]; f->fu_name; f++) {
@@ -517,7 +525,8 @@ struct pnode *PP_mkfnode(const char *func, struct pnode *arg)
 
     if ((f->fu_name == NULL) && arg->pn_value) {
         /* Kludge -- maybe it is really a variable name. */
-        (void) sprintf(buf, "%s(%s)", func, arg->pn_value->v_name);
+        (void) snprintf(buf, sizeof(buf), "%s(%s)",
+                        func, arg->pn_value->v_name);   /* Enhancement-440 */
         free_pnode(arg);
         d = vec_get(buf);
         if (d == NULL) {

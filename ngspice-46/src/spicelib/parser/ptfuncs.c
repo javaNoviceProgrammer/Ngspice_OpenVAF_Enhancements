@@ -65,10 +65,31 @@ PTdivide(double arg1, double arg2)
     return (arg1 / arg2);
 }
 
+/* Enhancement-440: 0 raised to a negative power is +inf, and every OTHER route
+ * to a singular value in this file is clamped to HUGE instead -- PTdivide for
+ * x/0, PTsqrt for sqrt(negative), PTln/PTlog for log(0), and PTpwr for exactly
+ * this case since Enhancement-256. `pow()` and `**` were the two that were not,
+ * so `B1 nb 0 v='pow(0,-1)'` put a raw inf on a node: the operating point
+ * "converged" and reported v(nb) = inf with no diagnostic, and a transient then
+ * carried it through to maximum(v(nb)) = inf.
+ *
+ * Clamping keeps the Jacobian finite, which is what lets NIiter's
+ * false-convergence guard notice the pinned point and reach for gmin or source
+ * stepping, exactly as E-256 reasoned for pwr(). */
+static double pt_pow_guard(double arg1, double arg2, int *guarded)
+{
+    *guarded = (arg1 == 0.0 && arg2 < 0.0);
+    return *guarded ? HUGE : 0.0;
+}
+
 double
 PTpower(double arg1, double arg2)
 {
     double res;
+    int guarded;
+    res = pt_pow_guard(arg1, arg2, &guarded);
+    if (guarded)
+        return res;
     if (newcompat.lt) {
         if (arg1 == 0)
             res = 0;
@@ -94,6 +115,11 @@ double
 PTpowerH(double arg1, double arg2)
 {
     double res;
+    int guarded;
+
+    res = pt_pow_guard(arg1, arg2, &guarded);   /* Enhancement-440 */
+    if (guarded)
+        return res;
 
     if (newcompat.hs) {
         if (arg1 < 0)

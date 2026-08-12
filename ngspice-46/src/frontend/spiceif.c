@@ -1631,6 +1631,55 @@ static int phys_bad(double v, enum phys_rule r)
     return 0;
 }
 
+/* Enhancement-440: say each thing once.
+ *
+ * The check runs from dosim(), i.e. once per ANALYSIS RUN -- which is right for
+ * `op`, `dc` and `tran` (one command, one run) but wrong for the drivers that
+ * loop: `montecarlo 20` and a 6-point `sweep` each re-run the analysis and so
+ * repeated the identical warning 20 and 6 times, for one unchanged bad
+ * parameter. A diagnostic that scrolls the real output off the screen is one
+ * users turn off.
+ *
+ * The value is part of the key on purpose: a sweep that walks a knob THROUGH a
+ * non-physical range should report each distinct bad value, because those are
+ * genuinely different findings. Only the unchanged repeat is suppressed.
+ *
+ * The memo is per circuit; a different circuit pointer clears it, so re-sourcing
+ * a deck reports afresh. */
+static const CKTcircuit *phys_memo_ckt = NULL;
+static char **phys_memo = NULL;
+static int phys_memo_n = 0, phys_memo_max = 0;
+
+static int phys_seen(const CKTcircuit *ckt, const char *kind, const char *name,
+                     const char *param, double v)
+{
+    char key[512];
+    int i;
+
+    if (ckt != phys_memo_ckt) {
+        for (i = 0; i < phys_memo_n; i++)
+            tfree(phys_memo[i]);
+        tfree(phys_memo);
+        phys_memo = NULL;
+        phys_memo_n = phys_memo_max = 0;
+        phys_memo_ckt = ckt;
+    }
+
+    (void) snprintf(key, sizeof key, "%s|%s|%s|%.17g", kind, name, param, v);
+
+    for (i = 0; i < phys_memo_n; i++)
+        if (eq(phys_memo[i], key))
+            return 1;
+
+    if (phys_memo_n == phys_memo_max) {
+        phys_memo_max = phys_memo_max ? phys_memo_max * 2 : 8;
+        phys_memo = TREALLOC(char *, phys_memo, phys_memo_max);
+    }
+    phys_memo[phys_memo_n++] = copy(key);
+
+    return 0;
+}
+
 /* Ask one target's scalar value; returns 0 if it is not a plain number. */
 static int phys_ask(CKTcircuit *ckt, int typecode, GENinstance *dev,
                     GENmodel *mod, IFparm *opt, double *out)
@@ -1675,9 +1724,11 @@ if_check_physics(CKTcircuit *ckt)
             for (mod = ckt->CKThead[typecode]; mod; mod = mod->GENnextModel) {
                 if (mopt && phys_ask(ckt, typecode, NULL, mod, mopt, &v) &&
                     phys_bad(v, phys_rules[r].rule)) {
-                    fprintf(cp_err, "Warning: model '%s' has %s = %g -- %s.\n",
-                            mod->GENmodName ? mod->GENmodName : "?",
-                            pname, v, phys_rules[r].why);
+                    const char *mn = mod->GENmodName ? mod->GENmodName : "?";
+                    if (!phys_seen(ckt, "model", mn, pname, v))
+                        fprintf(cp_err,
+                                "Warning: model '%s' has %s = %g -- %s.\n",
+                                mn, pname, v, phys_rules[r].why);
                     nbad++;
                 }
                 if (iopt) {
@@ -1686,10 +1737,11 @@ if_check_physics(CKTcircuit *ckt)
                          inst = inst->GENnextInstance) {
                         if (phys_ask(ckt, typecode, inst, NULL, iopt, &v) &&
                             phys_bad(v, phys_rules[r].rule)) {
-                            fprintf(cp_err,
-                                    "Warning: instance '%s' has %s = %g -- %s.\n",
-                                    inst->GENname ? inst->GENname : "?",
-                                    pname, v, phys_rules[r].why);
+                            const char *in = inst->GENname ? inst->GENname : "?";
+                            if (!phys_seen(ckt, "instance", in, pname, v))
+                                fprintf(cp_err,
+                                        "Warning: instance '%s' has %s = %g -- %s.\n",
+                                        in, pname, v, phys_rules[r].why);
                             nbad++;
                         }
                     }

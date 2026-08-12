@@ -20,6 +20,54 @@ Author: 1985 Wayne A. Christopher, U. C. Berkeley CAD Group
 #include "variable.h"
 #include "control.h"
 #include "spiceif.h"
+#include "plotting/plotting.h"     /* Enhancement-440: constantplot */
+
+/* Enhancement-440: assign one of the current plot's descriptive strings.
+ *
+ * Two things went wrong at the three call sites this replaces.
+ *
+ * `unset` reaches cp_usrset() the same way `set` does, with isset = FALSE, and
+ * the old code ignored that flag: `unset curplotname` performed the assignment
+ * anyway, so an unset silently RENAMED the plot instead of doing nothing.
+ *
+ * Worse, the assignment began with FREE(plot_cur->pl_name). Before the first
+ * analysis plot_cur is `constantplot`, a statically initialised struct whose
+ * pl_title/pl_date/pl_name are string LITERALS -- so the free was of a pointer
+ * malloc never returned, and ngspice died with a heap abort ("pointer being
+ * freed was not allocated") and no diagnostic. `set curplotname=x` at the top
+ * of a .control block or in .spiceinit was enough to trigger it.
+ */
+static int
+set_cur_plot_string(char **field, const char *what,
+                    const struct variable *var, bool isset)
+{
+    if (!isset)
+        return US_DONTRECORD;   /* an unset assigns nothing */
+
+    if (!plot_cur) {
+        fprintf(cp_err, "Error: can't set plot %s: there is no current plot.\n",
+                what);
+        return US_DONTRECORD;
+    }
+
+    if (plot_cur == &constantplot) {
+        fprintf(cp_err, "Error: can't set plot %s: the current plot is the "
+                "built-in 'constants' plot, whose %s is static. Run an "
+                "analysis first.\n", what, what);
+        return US_DONTRECORD;
+    }
+
+    if (var->va_type != CP_STRING) {
+        fprintf(cp_err, "Error: can't set plot %s: value is not a string.\n",
+                what);
+        return US_DONTRECORD;
+    }
+
+    FREE(*field);
+    *field = copy(var->va_string);
+
+    return US_DONTRECORD;
+}
 
 /* Enhancement-279: a `set` value is rounded with (int)floor(x + 0.5); that cast is
  * undefined behaviour for a value outside int range (`set numdgt=1e30`, inf, NaN).
@@ -465,29 +513,14 @@ cp_usrset(struct variable *var, bool isset)
             fprintf(cp_err, "Error: plot name not a string\n");
         return (US_DONTRECORD);
     } else if (eq(var->va_name, "curplotname")) {
-        if (plot_cur && (var->va_type == CP_STRING)) {
-            FREE(plot_cur->pl_name);
-            plot_cur->pl_name = copy(var->va_string);
-        }
-        else
-            fprintf(cp_err, "Error: can't set plot name\n");
-        return (US_DONTRECORD);
+        return set_cur_plot_string(plot_cur ? &plot_cur->pl_name : NULL,
+                                   "name", var, isset);
     } else if (eq(var->va_name, "curplottitle")) {
-        if (plot_cur && (var->va_type == CP_STRING)) {
-            FREE(plot_cur->pl_title);
-            plot_cur->pl_title = copy(var->va_string);
-        }
-        else
-            fprintf(cp_err, "Error: can't set plot title\n");
-        return (US_DONTRECORD);
+        return set_cur_plot_string(plot_cur ? &plot_cur->pl_title : NULL,
+                                   "title", var, isset);
     } else if (eq(var->va_name, "curplotdate")) {
-        if (plot_cur && (var->va_type == CP_STRING)) {
-            FREE(plot_cur->pl_date);
-            plot_cur->pl_date = copy(var->va_string);
-        }
-        else
-            fprintf(cp_err, "Error: can't set plot date\n");
-        return (US_DONTRECORD);
+        return set_cur_plot_string(plot_cur ? &plot_cur->pl_date : NULL,
+                                   "date", var, isset);
     } else if (eq(var->va_name, "plots")) {
         return (US_READONLY);
     }

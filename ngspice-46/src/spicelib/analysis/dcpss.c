@@ -3478,6 +3478,32 @@ DCpss(CKTcircuit *ckt,
                 ckt->CKTharms) ;
         return E_PARMVAL ;
     }
+    /* Enhancement-440: the three arguments Enhancement-348 did not reach.
+     *
+     * A negative stabilization time is the worst of them: CKTfinalTime is set
+     * from it below, so the stabilization transient is asked to integrate
+     * BACKWARDS to a final time it has already passed. It never arrives, and
+     * `pss 1k -1m 0 1024 5 50 1u` ran unbounded -- past 100 s with no output
+     * and no diagnostic at all. Every other analysis in ngspice rejects a
+     * negative argument (tran, ac, dc, hb, sp and noise each name the offending
+     * value); pss was the one that did not. A negative shooting-iteration limit
+     * and a non-positive steady coefficient were likewise accepted in silence,
+     * the latter sizing the forced-breakpoint grid used by the autonomous path. */
+    if (ckt->CKTstabTime < 0.0) {
+        fprintf(stderr, "ERROR: .pss stabtime must be >= 0 (got %g)\n",
+                ckt->CKTstabTime) ;
+        return E_PARMVAL ;
+    }
+    if (ckt->CKTsc_iter < 1) {
+        fprintf(stderr, "ERROR: .pss sc_iter must be >= 1 (got %d)\n",
+                ckt->CKTsc_iter) ;
+        return E_PARMVAL ;
+    }
+    if (ckt->CKTsteady_coeff <= 0.0) {
+        fprintf(stderr, "ERROR: .pss steady_coeff must be > 0 (got %g)\n",
+                ckt->CKTsteady_coeff) ;
+        return E_PARMVAL ;
+    }
 
     /* Enhancement-176: DRIVEN-mode detection. The Lannutti shooting was built
      * for autonomous oscillators: it hunts the fundamental frequency through a

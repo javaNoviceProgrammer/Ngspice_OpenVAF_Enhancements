@@ -82,6 +82,28 @@ ASRCload(GENmodel *inModel, CKTcircuit *ckt)
                 return(E_BADPARM);
             }
 
+            /* Enhancement-440: an expression that overflows to infinity (or
+             * evaluates to NaN) used to be stamped into the matrix in silence.
+             * The singular cases this file's helpers know about are clamped --
+             * x/0, sqrt(-x), log(0), pow(0,-1) -- but ordinary arithmetic that
+             * simply runs out of double range is not: `v='1e300*1e300'` put inf
+             * on a node, the operating point reported success, and a transient
+             * carried it all the way to maximum(v(nb)) = inf.
+             *
+             * The value is deliberately NOT clamped. Unlike the singular cases
+             * there is no defensible finite substitute for an arbitrary user
+             * expression, and inventing one would change results that today are
+             * merely reported. Saying it once per source removes the silence,
+             * which is the actual defect, and leaves the arithmetic alone. */
+            if (!here->ASRCnonfiniteSaid && !isfinite(rhs)) {
+                here->ASRCnonfiniteSaid = 1;
+                fprintf(stderr,
+                        "Warning: %s: expression evaluated to %s; this value is "
+                        "being stamped into the matrix and will propagate to "
+                        "every result derived from it.\n",
+                        here->gen.GENname, isnan(rhs) ? "NaN" : "infinity");
+            }
+
             /* The convergence test */
             here->ASRCprev_value = rhs;
 

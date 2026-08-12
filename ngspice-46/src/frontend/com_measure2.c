@@ -50,6 +50,11 @@ typedef struct measure
     double m_at;          // measure at the specified time
     double m_measured;    // what we measured
     double m_measured_at; // what we measured at the given time
+    /* Enhancement-440: 0.0 is both the default for m_from/m_to and a legal
+     * window edge, so an explicit "TO=0" was indistinguishable from "no TO
+     * given" and silently ignored. Record what the user actually wrote. */
+    bool m_from_given;
+    bool m_to_given;
 
 } MEASURE, *MEASUREPTR;
 
@@ -1846,8 +1851,10 @@ measure_parse_stdParams(
             meas->m_td = engVal1;
         } else if (strcasecmp(pName, "FROM") == 0) {
             meas->m_from = engVal1;
+            meas->m_from_given = TRUE;      /* Enhancement-440 */
         } else if (strcasecmp(pName, "TO") == 0) {
             meas->m_to = engVal1;
+            meas->m_to_given = TRUE;        /* Enhancement-440 */
         } else if (strcasecmp(pName, "AT") == 0) {
             meas->m_at = engVal1;
         } else {
@@ -1880,11 +1887,40 @@ measure_parse_stdParams(
             return MEASUREMENT_FAILURE;
         }
 
-    /* dc: make m_from always less than m_to */
-    if (cieq("dc", meas->m_analysis))
+    /* dc: make m_from always less than m_to.
+     * A dc sweep may legitimately run downward, so for dc an inverted window is
+     * normalised rather than refused -- but say so, because it is just as often
+     * a typo (Enhancement-440). */
+    if (cieq("dc", meas->m_analysis)) {
         if (meas->m_to < meas->m_from) {
+            if (meas->m_from_given && meas->m_to_given)
+                fprintf(cp_err,
+                        "Warning: measure: FROM=%g is above TO=%g; "
+                        "treating the window as [%g, %g].\n",
+                        meas->m_from, meas->m_to, meas->m_to, meas->m_from);
             SWAP(double, meas->m_from, meas->m_to);
         }
+    }
+    /* Enhancement-440: for every other analysis the scale only ever runs
+     * upward, so FROM above TO describes a window that cannot contain a single
+     * point. It was accepted silently and then quietly reinterpreted: because
+     * m_to == 0.0 doubles as "no upper limit", `FROM=1m TO=0` measured
+     * [1m, end-of-sweep] and returned a confident number for a window the user
+     * never asked for. Refuse it, and refuse the zero-width window too. */
+    else if (meas->m_from_given && meas->m_to_given) {
+        if (meas->m_from > meas->m_to) {
+            snprintf(errbuf, MEAS_ERRBUF_SIZE,
+                     "FROM=%g is above TO=%g, so the measurement window is "
+                     "empty\n", meas->m_from, meas->m_to);
+            return MEASUREMENT_FAILURE;
+        }
+        if (meas->m_from == meas->m_to) {
+            snprintf(errbuf, MEAS_ERRBUF_SIZE,
+                     "FROM and TO are both %g, so the measurement window has "
+                     "zero width\n", meas->m_from);
+            return MEASUREMENT_FAILURE;
+        }
+    }
 
     return MEASUREMENT_OK;
 }
@@ -1914,6 +1950,8 @@ measure_parse_find(
     meas->m_td = 0;
     meas->m_from = 0.0e0;
     meas->m_to = 0.0e0;
+    meas->m_from_given = FALSE;     /* Enhancement-440 */
+    meas->m_to_given = FALSE;       /* Enhancement-440 */
     meas->m_at = 1e99;
 
     /* for DC, set new outer limits for 'from' and 'to'
@@ -1988,6 +2026,8 @@ measure_parse_when(
     meas->m_td = 0;
     meas->m_from = 0.0e0;
     meas->m_to = 0.0e0;
+    meas->m_from_given = FALSE;     /* Enhancement-440 */
+    meas->m_to_given = FALSE;       /* Enhancement-440 */
     meas->m_at = 1e99;
 
 
@@ -2069,6 +2109,8 @@ measure_parse_trigtarg(
     meas->m_td = 0;
     meas->m_from = 0.0e0;
     meas->m_to = 0.0e0;
+    meas->m_from_given = FALSE;     /* Enhancement-440 */
+    meas->m_to_given = FALSE;       /* Enhancement-440 */
     meas->m_at = 1e99;
 
     /* for DC, set new outer limits for 'from' and 'to'

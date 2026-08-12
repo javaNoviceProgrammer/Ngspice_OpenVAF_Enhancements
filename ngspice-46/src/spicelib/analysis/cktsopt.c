@@ -26,6 +26,19 @@ Modified: 2000 AlansFixes
 #define E426_BAD_OPT(cond, fmt, ...)                                    \
     ((cond) ? (fprintf(stderr, "\nWarning -- " fmt "\n\n", __VA_ARGS__), 1) : 0)
 
+/* Enhancement-440: the absolute-zero guard above is one-sided.
+ *
+ * Below -273.15 C is physically impossible, so it is refused. Above, nothing
+ * was checked at all: `.temp 1e6` was accepted in silence and a plain diode
+ * divider then answered -2.7e-15 V, a number with no meaning that arrives with
+ * no hint that anything is unusual.
+ *
+ * A high temperature is not impossible the way a negative absolute one is, so
+ * this warns and still applies the value -- the user may be deliberately
+ * extrapolating. The threshold is set far above any real simulation (the
+ * hottest ordinary device work is automotive/space at a few hundred C, and
+ * silicon melts at 1414 C), so it cannot fire on a legitimate deck. */
+#define CKT_TEMP_SANE_MAX 1000.0
 
     /*
      *  CKTsetOpt(ckt,opt,value)
@@ -42,6 +55,16 @@ Modified: 2000 AlansFixes
 #include "ngspice/sperror.h"
 
 #include "analysis.h"
+
+/* Enhancement-440: see CKT_TEMP_SANE_MAX above. */
+static void ckt_temp_sanity(const char *what, double celsius)
+{
+    if (celsius > CKT_TEMP_SANE_MAX)
+        fprintf(stderr,
+                "\nWarning -- Option %s = %g C is far above the range any "
+                "device model is fitted for; results are extrapolation, not "
+                "physics.\n\n", what, celsius);
+}
 
 #ifdef XSPICE
 #include "ngspice/evt.h"
@@ -168,6 +191,7 @@ CKTsetOpt(CKTcircuit *ckt, JOB *anal, int opt, IFvalue *val)
             " ignored, keeping %g C",
             val->rValue, task->TSKnomTemp - CONSTCtoK))
             break;
+        ckt_temp_sanity("tnom", val->rValue);   /* Enhancement-440 */
         task->TSKnomTemp = val->rValue + CONSTCtoK; /* Centegrade to Kelvin */
         break;
     case OPT_TEMP:
@@ -179,6 +203,7 @@ CKTsetOpt(CKTcircuit *ckt, JOB *anal, int opt, IFvalue *val)
             " ignored, keeping %g C",
             val->rValue, task->TSKtemp - CONSTCtoK))
             break;
+        ckt_temp_sanity("temp", val->rValue);   /* Enhancement-440 */
         task->TSKtemp = val->rValue + CONSTCtoK; /* Centegrade to Kelvin */
         break;
     case OPT_ITL1:
