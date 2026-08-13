@@ -1,0 +1,60 @@
+reading a Verilog-A device's INTERNAL node
+
+* hiernode.va declares an internal node `mid` that is NOT a port:
+*
+*     inout a, c;  electrical a, c;
+*     electrical mid;                  <- internal
+*     I(a, mid) <+ V(a, mid) / r1;     r1 = 1k
+*     I(mid, c) <+ V(mid, c) / r2;     r2 = 3k
+*
+* so with 1 V across the device and c grounded, mid sits at 3k/(1k+3k) = 0.75 V.
+* Nothing else in this circuit takes that value, so a mis-resolved name shows up
+* as a wrong number rather than a plausible one.
+*
+* ngspice names an internal node after the instance that owns it:
+* <instance>#<node>. Inside a subcircuit the flattened instance name carries a
+* device TYPE LETTER, so the raw vector is `n.x1.n1#mid` -- but the obvious
+* spelling `x1.n1#mid` resolves too (Enhancement-428).
+
+.model hiernode hiernode r1=1k r2=3k
+
+V1 a 0 dc 1
+
+* (1) at the top level
+N1 a 0 hiernode
+
+* (2) the same device inside a subcircuit
+.subckt blk p n
+N1 p n hiernode
+.ends
+X1 a 0 blk
+
+* (3) two levels down
+.subckt outer p n
+X2 p n blk
+.ends
+X3 a 0 outer
+
+.control
+pre_osdi hiernode.osdi
+set numdgt=8
+op
+
+echo
+echo "  every internal node ngspice created:"
+display
+
+echo
+echo "  top level ....................... v(n1#mid)"
+print v(n1#mid)
+echo "  in a subcircuit, obvious form ... v(x1.n1#mid)"
+print v(x1.n1#mid)
+echo "  in a subcircuit, raw form ....... v(n.x1.n1#mid)"
+print v(n.x1.n1#mid)
+echo "  two levels down ................. v(x3.x2.n1#mid)"
+print v(x3.x2.n1#mid)
+echo
+echo "  all four are the same node value: 0.75 V"
+.endc
+
+.end

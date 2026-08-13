@@ -174,6 +174,19 @@ def main():
     check("an ordinary HIERARCHICAL node is untouched (no letter, as always)",
           close(scalar(out, "v(x1.m)"), 0.0, 1e-3), str(scalar(out, "v(x1.m)")))
 
+    # ---------------------------------------------------------------------
+    # [6] the committed demo deck. internalnode.cir is the end-user shape of
+    # everything above -- one runnable file showing the same internal node read
+    # at the top level, inside a subcircuit (both spellings) and two levels
+    # down. Checked here so it cannot rot: all four must give the divider's
+    # 0.75 V, a value nothing else in that circuit takes.
+    print("\n[6] the committed demo deck internalnode.cir")
+    rc, out = run(open(os.path.join(HERE, "internalnode.cir")).read(), "_hn_demo.cir")
+    got = [scalar(out, e) for e in ("v(n1#mid)", "v(x1.n1#mid)",
+                                    "v(n.x1.n1#mid)", "v(x3.x2.n1#mid)")]
+    check("internalnode.cir: all four spellings read 0.75 V",
+          rc == 0 and all(close(g, 0.75, 1e-6) for g in got), str(got))
+
     for j in os.listdir(HERE):
         if j.startswith("_hn") or j.endswith(".osdi"):
             p = os.path.join(HERE, j)
