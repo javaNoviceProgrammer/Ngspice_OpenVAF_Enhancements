@@ -147,6 +147,41 @@ def main():
           r.returncode == 0 and v is not None and abs(v - NOMINAL) < 1e-9,
           f"rc={r.returncode} v(out)={v}")
 
+    # ---- [7] a BARE device knob is captured and restored too ----------------
+    # `sweep V1 0 5 1` sets the knob through `alter V1=<val>`, which resolves a
+    # NULL parameter to the device's IF_PRINCIPAL one. The capture side read the
+    # name as a VECTOR expression instead, which only `@v1[dc]` satisfies -- so
+    # the bare spelling could be set but never read back, the sweep ran to the
+    # end, and the device was left at its LAST swept value. The same guard, and
+    # one spelling that never reached it (the E-437 shape).
+    print("\n[7] a bare device knob is restored, not left at the last point")
+    ELEM = ("sweeprestore-elem\nV1 in 0 dc 1\nR1 in out 1k\nR2 out 0 3k\n"
+            "I1 0 out dc 0\n")
+    for knob, rng, probe, want in (("V1", "0 5 1", "@v1[dc]", 1.0),
+                                   ("R1", "1k 5k 1k", "@r1[resistance]", 1000.0),
+                                   ("I1", "0 1m 0.5m", "@i1[dc]", 0.0)):
+        rc, out = run(f"op\nsweep {knob} {rng} -analysis op -output v(out)\n"
+                      f"setplot new\nop\nprint {probe}", deck=ELEM)
+        got = last_val(out, probe)
+        check(f"bare `{knob}` is put back ({probe} = {want:g})",
+              rc == 0 and got is not None and abs(got - want) <= 1e-9 * max(1.0, abs(want)),
+              f"got {got}")
+        check(f"...and `sweep {knob}` no longer warns it could not be read",
+              "could not be read" not in out)
+    # the spelling that always worked must keep working
+    rc, out = run("op\nsweep @v1[dc] 0 5 1 -analysis op -output v(out)\n"
+                  "setplot new\nop\nprint @v1[dc]", deck=ELEM)
+    check("the @v1[dc] spelling still restores (control)",
+          rc == 0 and (last_val(out, "@v1[dc]") or 0) == 1.0,
+          f"{last_val(out, '@v1[dc]')}")
+    # and the sweep's own OUTPUT is unchanged: v(out) = V1 * 3k/4k
+    rc, out = run("sweep V1 0 4 1 -analysis op -output vo=v(out)\nprint vo",
+                  deck=ELEM)
+    rows = re.findall(r"^\s*\d+\t(\S+)", out, re.M)
+    check("the swept values themselves are still right (0 .. 3 V)",
+          rc == 0 and len(rows) == 5 and abs(float(rows[-1]) - 3.0) < 1e-6,
+          f"{rows}")
+
     for junk in os.listdir(HERE):
         if junk.startswith("_"):
             os.remove(os.path.join(HERE, junk))

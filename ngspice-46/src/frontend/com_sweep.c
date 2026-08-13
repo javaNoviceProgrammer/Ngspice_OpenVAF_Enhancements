@@ -49,6 +49,7 @@ analyses is suppressed via `ft_optimizing`.
 #include "ngspice/randnumb.h"
 #include "ngspice/devdefs.h"      /* Enhancement-320: DEVices[]/DEVmaxnum direct set */
 #include "com_sweep.h"
+#include "variable.h"       /* struct variable: sw_read_knob reads a bare knob's principal value */
 
 #define SW_ALTER   0             /* alter     -- device / instance / source      */
 #define SW_MODEL   1             /* altermod  -- .model-card parameter            */
@@ -433,6 +434,53 @@ static int sw_wildcard_knob(const char *name, char *param, size_t plen,
 }
 
 
+
+/* The keyword of `name`'s principal parameter -- the one `alter <dev>=<val>`
+   writes when no parameter is named -- or NULL. Instance first, then model,
+   the same order sw_fp_resolve() and `alter` use. The returned pointer is into
+   the static device tables and outlives the caller. */
+static const char *sw_principal_keyword(CKTcircuit *ckt, const char *name)
+{
+    int type, i;
+    GENmodel *m;
+    GENinstance *inst;
+
+    if (!ckt || !name || !*name)
+        return NULL;
+
+    for (type = 0; type < DEVmaxnum; type++) {
+        if (!DEVices[type])
+            continue;
+        for (m = ckt->CKThead[type]; m; m = m->GENnextModel)
+            for (inst = m->GENinstances; inst; inst = inst->GENnextInstance)
+                if (inst->GENname && cieq(inst->GENname, name)) {
+                    IFdevice *dev = &DEVices[type]->DEVpublic;
+                    int n = dev->numInstanceParms ? *dev->numInstanceParms : 0;
+                    for (i = 0; i < n; i++)
+                        if ((dev->instanceParms[i].dataType & IF_PRINCIPAL) &&
+                            (dev->instanceParms[i].dataType & IF_ASK))
+                            return dev->instanceParms[i].keyword;
+                    return NULL;
+                }
+    }
+    for (type = 0; type < DEVmaxnum; type++) {
+        if (!DEVices[type])
+            continue;
+        for (m = ckt->CKThead[type]; m; m = m->GENnextModel)
+            if (m->GENmodName && cieq(m->GENmodName, name)) {
+                IFdevice *dev = &DEVices[type]->DEVpublic;
+                int n = dev->numModelParms ? *dev->numModelParms : 0;
+                for (i = 0; i < n; i++)
+                    if ((dev->modelParms[i].dataType & IF_PRINCIPAL) &&
+                        (dev->modelParms[i].dataType & IF_ASK))
+                        return dev->modelParms[i].keyword;
+                return NULL;
+            }
+    }
+    return NULL;
+}
+
+
 /* Enhancement-385: read an `alter`/`altermod` knob's CURRENT value, reporting
  * whether the read actually succeeded.
  *
@@ -491,6 +539,49 @@ static double sw_read_knob(const char *name, int *ok)
         if (!pn->pn_value && v)
             vec_free(v);
         free_pnode(pn);
+    }
+
+    /* A BARE device or model name -- `sweep V1 0 5 1` rather than
+     * `sweep @v1[dc] 0 5 1` -- is not a readable vector, so the evaluation
+     * above fails and the nominal cannot be captured. The sweep then ran to the
+     * end and left the device at its LAST swept value: after `sweep V1 0 5 1`
+     * the source sat at 5 V and every later analysis in the session used it,
+     * `sweep R1 1k 5k 1k` left the resistor at 5k, and the only hint was
+     *
+     *     sweep: warning -- at least one knob's original value could not be read
+     *
+     * which names neither the knob nor what it costs. `@v1[dc]` -- the same
+     * knob, spelled so it evaluates -- was captured and restored correctly, so
+     * the guard was there and one spelling never reached it (Enhancement-437
+     * recorded that shape).
+     *
+     * The APPLY path has no such trouble: sw_set_inplace() issues
+     * `alter <dev>=<val>`, and a NULL parameter name resolves to the device's
+     * IF_PRINCIPAL parameter in parmlookup(). Read it back the same way, so the
+     * value captured is by construction the one the sweep is about to
+     * overwrite. Instance first, then model, matching how `show` and
+     * `alter`/`altermod` disambiguate a bare name. */
+    if (!*ok && buf[0] != '@' && !strchr(buf, '[') &&
+        ft_curckt && ft_curckt->ci_ckt) {
+        const char *kw = sw_principal_keyword(ft_curckt->ci_ckt, buf);
+        if (kw) {
+            char q[600];
+            (void) snprintf(q, sizeof q, "@%s[%s]", buf, kw);
+            pn = ft_getpnames_from_string(q, TRUE);
+            if (pn) {
+                struct dvec *v = ft_evaluate(pn);
+                if (v && v->v_length >= 1 && isreal(v)) {
+                    double g = v->v_realdata[v->v_length - 1];
+                    if (finite(g)) {
+                        f = g;
+                        *ok = 1;
+                    }
+                }
+                if (!pn->pn_value && v)
+                    vec_free(v);
+                free_pnode(pn);
+            }
+        }
     }
     return f;
 }
