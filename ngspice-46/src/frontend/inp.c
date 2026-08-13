@@ -1294,6 +1294,36 @@ inp_spsource(FILE *fp, bool comfile, char *filename, bool intfile)
                 }
             }
 
+            /* Enhancement-449: tell the subcircuit expander whether
+               `.option autobus` is in force. It cannot find out for itself: the
+               option variable is not published until inp_dodeck() runs, which
+               is after expansion, and the `.option` cards have already been
+               split out of the deck into these lists. Read the same way `scale`
+               is read above. */
+            {
+                struct card *scan;
+                bool ab = FALSE;
+                int lst;
+                for (lst = 0; lst < 2 && !ab; lst++)
+                    for (scan = lst ? options : com_options; scan;
+                         scan = scan->nextcard) {
+                        const char *l = scan->line, *q;
+                        if (!l)
+                            continue;
+                        for (q = l; (q = strstr(q, "autobus")) != NULL; q += 7) {
+                            char b = (q == l) ? ' ' : q[-1], a = q[7];
+                            if (!isalnum_c(b) && b != '_' &&
+                                !isalnum_c(a) && a != '_') {
+                                ab = TRUE;
+                                break;
+                            }
+                        }
+                        if (ab)
+                            break;
+                    }
+                inp_set_autobus(ab);
+            }
+
             /* Parsing the circuit 4.
                This is the next major step:
                Expand subcircuit macros and substitute numparams.*/

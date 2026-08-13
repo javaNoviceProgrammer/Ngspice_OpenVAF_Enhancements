@@ -210,6 +210,7 @@ inp_subcktexpand(struct card *deck) {
     struct card *c;
     wordlist *modnames = NULL;
 
+
     if (!cp_getvar("substart", CP_STRING, start, sizeof(start)))
         strcpy(start, ".subckt");
     if (!cp_getvar("subend", CP_STRING, sbend, sizeof(sbend)))
@@ -1146,6 +1147,124 @@ bxx_buffer(struct bxx_buffer *t)
  * subname = copy of the subcircuit name
  *-------------------------------------------------------------------------------------------*/
 
+/* Enhancement-449: `.option autobus` across a subcircuit boundary.
+ *
+ * Enhancement-444 lets one node name stand for a whole Verilog-A bus port, and
+ * does it in INP2N because that is where the model -- and so the bus width --
+ * is known. Inside a `.subckt` that is too late. Subcircuit flattening has
+ * already run by then, and it substitutes FORMALS: a definition declaring
+ * `a[0:4]` has the five formals a[0]..a[4], so a device line writing the bare
+ * `a` matches none of them and becomes the local node `x1.a`. INP2N then
+ * expands that into x1.a[0]..x1.a[4] -- five fresh floating nodes, with the
+ * device fully "connected" to nothing.
+ *
+ * Nothing was reported, because every terminal DID get a node, so E-402's
+ * under-connected warning had nothing to say. Turning the option ON therefore
+ * removed the diagnostic the same deck gets with it off -- the shape
+ * Enhancement-445 recorded when autobus indexed ground.
+ *
+ * The fix is at the substitution: a token that is not a formal, but for which
+ * formals `token[i]` exist, expands to those formals' actuals. It needs no
+ * model, only the .subckt line, so it works at flattening time. Order comes
+ * from the DECLARATION, so a port declared `[4:0]` binds in that order --
+ * Enhancement-411's direction rule, inherited rather than re-invented.
+ *
+ * Restricted to OSDI instance lines. A bare `a` on an R/C/L line inside the
+ * same subcircuit is an ordinary local node and must stay one; only a
+ * Verilog-A device can have a bus port at all.
+ */
+#define E449_MAXBITS 1024
+static bool sc_autobus = FALSE;
+
+/* `.option autobus` is not published as a variable at flattening time -- and by
+   then the `.option` cards are no longer in the deck either, having been split
+   into the option lists. inp.c reads them there and calls this, the same way it
+   already reads `scale` from those lists before expanding. A `set autobus` from
+   .spiceinit is picked up through cp_getvar. */
+void
+inp_set_autobus(bool onoff)
+{
+    sc_autobus = onoff || cp_getvar("autobus", CP_BOOL, NULL, 0);
+}
+
+
+/* Emit the actuals of every formal spelled `name[...]`, ordered by ascending
+   BIT INDEX (see below -- that is the order the compiled model uses, and the
+   device line is positional). Returns FALSE, having emitted nothing, when
+   `name` is not such a bus base. */
+static bool
+e449_expand_bus_port(struct bxx_buffer *buffer, const char *name,
+                     const char *name_e)
+{
+    size_t len;
+    int i, n = 0;
+
+    if (!table || !name)
+        return FALSE;
+    if (!name_e)
+        name_e = strchr(name, '\0');
+    len = (size_t) (name_e - name);
+    /* an already-indexed token is a plain node, not a bus base */
+    if (len == 0 || memchr(name, '[', len))
+        return FALSE;
+
+    /* a formal of exactly that name wins -- it is an ordinary port */
+    for (i = 0; table[i].t_old; i++)
+        if (strlen(table[i].t_old) == len &&
+            strncmp(name, table[i].t_old, len) == 0)
+            return FALSE;
+
+    /* Collect the bits, then emit them by ASCENDING BIT INDEX -- not in the
+       order the .subckt line happens to list them. The compiled model always
+       orders a bus port's terminals by ascending index, whatever direction the
+       Verilog-A declared: `inout [4:0] a` still yields terminals a[0], a[1],
+       ... a[4]. The device line is positional, so the bits have to leave here
+       in that order. A DESCENDING .subckt declaration therefore binds in
+       reverse, which is Enhancement-411's rule -- the written order decides --
+       applied one level up. */
+    {
+        struct { long idx; const char *act; } bit[E449_MAXBITS];
+
+        for (i = 0; table[i].t_old; i++) {
+            const char *o = table[i].t_old;
+            char *endp;
+            long idx;
+            if (strncmp(o, name, len) != 0 || o[len] != '[' || !table[i].t_new)
+                continue;
+            idx = strtol(o + len + 1, &endp, 10);
+            if (endp == o + len + 1 || *endp != ']')
+                continue;               /* not a plain bit index */
+            if (n >= E449_MAXBITS)
+                return FALSE;           /* implausible width: leave it alone */
+            bit[n].idx = idx;
+            bit[n].act = table[i].t_new;
+            n++;
+        }
+        if (n == 0)
+            return FALSE;
+
+        /* insertion sort: a bus is short, and this keeps equal keys stable */
+        for (i = 1; i < n; i++) {
+            int j = i - 1;
+            long k = bit[i].idx;
+            const char *a = bit[i].act;
+            while (j >= 0 && bit[j].idx > k) {
+                bit[j + 1] = bit[j];
+                j--;
+            }
+            bit[j + 1].idx = k;
+            bit[j + 1].act = a;
+        }
+        for (i = 0; i < n; i++) {
+            if (i)
+                bxx_putc(buffer, ' ');
+            bxx_put_cstring(buffer, bit[i].act);
+        }
+    }
+    return TRUE;
+}
+
+
 static void
 translate_node_name(struct bxx_buffer *buffer, const char *scname, const char *name, const char *name_e)
 {
@@ -1500,17 +1619,25 @@ translate(struct card *deck, char *formal, int flen, char *actual, char *scname,
             bxx_putc(&buffer, ' ');
 
             nnodes = numnodes(c->line, subs);
-            while (--nnodes >= 0) {
-                name = gettok_node(&s);
-                if (name == NULL) {
-                    fprintf(cp_err, "Error: too few nodes: %s\n", c->line);
-                    fprintf(cp_err, "    line no. %d from file %s\n", c->linenum_orig, c->linesource);
-                    goto quit;
-                }
+            {
+                /* Enhancement-449: only an OSDI instance can carry a bus port,
+                   so only there may one token stand for several nodes. */
+                const bool osdi_line = (tolower_c(c->line[0]) == 'n');
 
-                translate_node_name(&buffer, scname, name, NULL);
-                tfree(name);
-                bxx_putc(&buffer, ' ');
+                while (--nnodes >= 0) {
+                    name = gettok_node(&s);
+                    if (name == NULL) {
+                        fprintf(cp_err, "Error: too few nodes: %s\n", c->line);
+                        fprintf(cp_err, "    line no. %d from file %s\n", c->linenum_orig, c->linesource);
+                        goto quit;
+                    }
+
+                    if (!(sc_autobus && osdi_line &&
+                          e449_expand_bus_port(&buffer, name, NULL)))
+                        translate_node_name(&buffer, scname, name, NULL);
+                    tfree(name);
+                    bxx_putc(&buffer, ' ');
+                }
             }
 
             /* Now translate any devices (i.e. controlling sources).
