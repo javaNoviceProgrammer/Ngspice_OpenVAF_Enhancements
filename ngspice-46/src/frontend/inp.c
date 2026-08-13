@@ -728,6 +728,66 @@ inp_remove_recent(void) {
 }
 
 
+
+/* Enhancement-451: locate an option on an option line by WHOLE TOKEN.
+ *
+ * `seed=` and `cshunt=` were found with a bare strstr over the line, so any
+ * option whose NAME MERELY ENDED in the watched text was taken as that option:
+ *
+ *     .options seed=7        sets the RNG seed   (correct)
+ *     .options myseed=7      sets it too
+ *     .options noseed=7      sets it too -- the spelling that reads as "off"
+ *     .options xseed=7       sets it too
+ *
+ * and for cshunt the answer moves by six orders of magnitude -- a divider node
+ * reading 1.0 V goes to 6.92e-07 under `.options nocshunt=1e-6`. Each of these
+ * also prints "Warning: unknown option 'nocshunt'", which makes it worse rather
+ * than better: the user is told the option was NOT recognised, and it changes
+ * the answer anyway.
+ *
+ * Enhancement-450 fixed the same shape for `savecurrents`. The boundary test is
+ * the same one: the character before the name must not be part of an
+ * identifier, so `seed` matches but `myseed`, `noseed` and `xseed` do not.
+ * `seedinfo` is likewise matched only as a whole token, so it is no longer
+ * triggered by `noseedinfo`, and `seed=` no longer sees the `seed` inside it. */
+static int e451_tok_boundary(const char *line, const char *p)
+{
+    char before = (p == line) ? ' ' : p[-1];
+    return !isalnum_c(before) && before != '_' && before != '.';
+}
+
+/* value of `name=` as a pointer just past the '=', or NULL */
+static char *e451_opt_value(char *line, const char *name)
+{
+    size_t n = strlen(name);
+    char *p = line;
+
+    while ((p = strstr(p, name)) != NULL) {
+        char *q = p + n;
+        if (*q == '=' && e451_tok_boundary(line, p))
+            return q + 1;
+        p += 1;
+    }
+    return NULL;
+}
+
+/* whether the bare flag `name` is present as a whole token */
+static int e451_opt_flag(char *line, const char *name)
+{
+    size_t n = strlen(name);
+    char *p = line;
+
+    while ((p = strstr(p, name)) != NULL) {
+        char after = p[n];
+        if (!isalnum_c(after) && after != '_' && after != '=' &&
+            e451_tok_boundary(line, p))
+            return 1;
+        p += 1;
+    }
+    return 0;
+}
+
+
 /* Check for .option seed=[val|random] and set the random number generator.
    Check for .option cshunt=val and set a global variable
    Input is the option deck (already sorted for .option) */
@@ -741,11 +801,9 @@ eval_opt(struct card* deck)
     for (card = deck; card; card = card->nextcard) {
         char* line = card->line;
 
-        if (strstr(line, "seedinfo"))
+        if (e451_opt_flag(line, "seedinfo"))
             setseedinfo();
-        char* begtok = strstr(line, "seed=");
-        if (begtok)
-            begtok = &begtok[5]; /*skip seed=*/
+        char* begtok = e451_opt_value(line, "seed");
         if (begtok) {
             if (has_seed)
                 fprintf(cp_err, "Warning: Multiple 'option seed=val|random' found!\n");
@@ -774,9 +832,7 @@ eval_opt(struct card* deck)
             tfree(token);
         }
 
-        begtok = strstr(line, "cshunt=");
-        if (begtok)
-            begtok = &begtok[7]; /*skip cshunt=*/
+        begtok = e451_opt_value(line, "cshunt");
         if (begtok) {
             int err = 0;
             if (has_cshunt)

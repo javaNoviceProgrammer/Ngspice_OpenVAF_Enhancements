@@ -480,6 +480,24 @@ if_is_option(const char *name)
            of its own, E-413). `seed` and `numdgt` are read out of the deck's
            own `.option` cards by eval_opt()/the frontend. */
         "savecurrents", "seed", "numdgt",
+        /* Enhancement-451: three more in exactly that case, found by asking
+           which flagged names DEMONSTRABLY change a run.
+
+             .options scale=2      @m1[w]      1e-6 -> 2e-6
+             .options rseries=100  v(out)[10]  moves
+             .options autostop     tran rows   567  -> 2
+
+           `autostop` is the clearest: it truncates a transient to a fortieth of
+           its length while being reported as a name ngspice does not know.
+           `scale` and `rseries` are read out of the deck's own option cards --
+           `scale` by inp.c before subcircuit expansion, `rseries` by
+           inp_add_series_resistor() -- so, like `seed` above, they never reach
+           the `.options` parameter table the check consults.
+
+           `scalm` is flagged too and is deliberately NOT added: it could not be
+           shown to change anything here, and E-447's rule is that this list is
+           for options that demonstrably take effect. */
+        "scale", "rseries", "autostop",
         NULL
     };
     const char *const *sp;
