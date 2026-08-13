@@ -133,6 +133,18 @@ apart — `@dev[param]` was split across four commands and behaved differently i
 each. It is now a single `e448_literal_index()` in `evaluate.c`, declared in
 `evaluate.h` so `parse.c` shares it rather than re-deriving it.
 
+The three places that still turn a double index into the `[%d]` text — the
+helper itself, the ambiguity warning in `op_ind()`, and `apply_func()`'s
+reconstruction of the name for the `v()` form — round through
+[E-274](Enhancement-274.md)'s `idx_floor()` rather than a bare `(int)` cast.
+That cast is undefined behaviour for `1e308`, `inf` and `NaN`, which is why
+E-274 introduced the clamp in this same file; and the helper and `apply_func()`
+build the *same* name, one to validate it and one to resolve it, so rounding
+them differently would mean the name checked is not the name looked up. No
+behaviour changes: sixteen index expressions — including `q[1e308]`, `q[0/0]`,
+`q[2147483648]`, and `q[0.4]`/`q[0.6]` either side of the rounding boundary —
+give identical values and exit codes before and after.
+
 ## A deliberate change of meaning
 
 Where **both** a vector `x` and a vector literally named `x[0]` exist, `x[0]`

@@ -762,8 +762,12 @@ e448_literal_index(struct pnode *base, struct pnode *idx)
         !idx->pn_value->v_realdata)
         return (NULL);
 
+    /* idx_floor(), not a bare (int) cast: Enhancement-274 added it because that
+       cast is undefined behaviour for 1e308/inf/NaN, and every place that builds
+       this name has to round identically or they can disagree about which vector
+       `name[x]` means. */
     name = tprintf("%s[%d]", base->pn_value->v_name,
-                   (int) floor(idx->pn_value->v_realdata[0] + 0.5));
+                   idx_floor(idx->pn_value->v_realdata[0]));
     lit = vec_get(name);
     tfree(name);
     return (lit);
@@ -803,7 +807,7 @@ op_ind(struct pnode *arg1, struct pnode *arg2)
                never a competing answer. */
             if (arg1->pn_value != NULL && arg1->pn_value->v_length > 1 &&
                 arg1->pn_value->v_name != NULL) {
-                int k = (int) floor(arg2->pn_value->v_realdata[0] + 0.5);
+                int k = idx_floor(arg2->pn_value->v_realdata[0]);
                 fprintf(cp_err,
                         "Warning: '%s[%d]' is itself a vector, so it is read as "
                         "that vector rather than as element %d of '%s'; copy "
@@ -1029,7 +1033,9 @@ apply_func(struct func *func, struct pnode *arg)
             arg->pn_left && arg->pn_left->pn_value &&
             arg->pn_left->pn_value->v_name &&
             e448_literal_index(arg->pn_left, arg->pn_right) != NULL) {
-            int e224_idx = (int) floor(arg->pn_right->pn_value->v_realdata[0] + 0.5);
+            /* idx_floor(): must round exactly as e448_literal_index() did, or
+               the name validated above is not the name resolved below. */
+            int e224_idx = idx_floor(arg->pn_right->pn_value->v_realdata[0]);
             e224_node = tprintf("%s[%d]", arg->pn_left->pn_value->v_name, e224_idx);
         }
         if (!e224_node && !arg->pn_value /* || (arg->pn_value->v_length != 1) XXX */) {
