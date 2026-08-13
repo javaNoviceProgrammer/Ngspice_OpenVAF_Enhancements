@@ -1,0 +1,17 @@
+`include "constants.vams"
+`include "disciplines.vams"
+
+
+module va_res (p) ;
+
+inout [0:1] p ;
+electrical [0:1] p ;
+
+parameter real R_ohm = 1k ;
+
+analog
+	begin
+		V(p[0],p[1]) <+ R_ohm * I(p[0],p[1]) ;
+	end
+
+endmodule

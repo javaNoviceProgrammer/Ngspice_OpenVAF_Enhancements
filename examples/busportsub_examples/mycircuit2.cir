@@ -1,0 +1,22 @@
+.title examlpe autobus binding
+
+.option autobus
+
+.include ./mysub2.subckt
+
+V1 a 0 DC 1.0
+X1 a b mysub2
+X2 b 0 mysub2
+
+
+
+.control
+pre_osdi ./va_res.osdi
+
+dc V1 0.0 10.0 1
+
+print V(a) V(b)
+
+.endc
+
+.end

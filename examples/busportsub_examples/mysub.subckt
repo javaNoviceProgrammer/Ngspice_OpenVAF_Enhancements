@@ -1,0 +1,8 @@
+
+.subckt mysub q[0] q[1]
+
+.model va_res va_res R_ohm=1k
+
+N1 q va_res
+
+.ends mysub
