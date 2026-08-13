@@ -39,6 +39,17 @@ DIOsetup(SMPmatrix *matrix, GENmodel *inModel, CKTcircuit *ckt, int *states)
             SPfrontEnd->IFerrorf(ERR_FATAL,
                 "%s: Diode model level 2 is not supported.", model->DIOmodName);
             return(E_BADPARM);
+        } else if (model->DIOlevel != 1 && model->DIOlevel != 3) {
+            /* Enhancement-447: level 2 -- a level this model knows about but
+               does not implement -- was refused loudly, while a level that is
+               not a level at all was accepted without a word and silently
+               behaved as level 1. `level=99` and `level=-1` both ran and gave
+               exactly the level-1 current. The check existed; it just did not
+               cover out-of-range values. */
+            SPfrontEnd->IFerrorf(ERR_FATAL,
+                "%s: Diode model level %d does not exist (use 1 or 3).",
+                model->DIOmodName, model->DIOlevel);
+            return(E_BADPARM);
         }
         if(!model->DIOemissionCoeffGiven) {
             model->DIOemissionCoeff = 1;

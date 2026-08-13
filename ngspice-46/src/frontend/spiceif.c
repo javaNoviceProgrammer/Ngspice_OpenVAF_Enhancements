@@ -472,6 +472,14 @@ if_is_option(const char *name)
            line is defensible. These four control an analysis, belong with the
            deck, and are documented alongside `.four`. */
         "nfreqs", "nperiods", "polydegree", "fourgridsize",
+        /* Enhancement-447: three more that are genuine `.options` keywords
+           rather than shell variables, so E-446's "they belong to `set`"
+           reasoning does not cover them. `savecurrents` demonstrably works in
+           the very run that called it unknown -- without it `@r1[i]` is a
+           scalar, with it a full transient waveform (and it has an enhancement
+           of its own, E-413). `seed` and `numdgt` are read out of the deck's
+           own `.option` cards by eval_opt()/the frontend. */
+        "savecurrents", "seed", "numdgt",
         NULL
     };
     const char *const *sp;
@@ -536,6 +544,10 @@ if_option(CKTcircuit *ckt, char *name, enum cp_types type, void *value)
     } else if (eq(name, "nfreqs") || eq(name, "nperiods") ||
                eq(name, "polydegree") || eq(name, "fourgridsize")) {
         /* Enhancement-445: consumed by fourier() via cp_getvar, likewise. */
+        return 0;
+    } else if (eq(name, "savecurrents") || eq(name, "seed") ||
+               eq(name, "numdgt")) {
+        /* Enhancement-447: real .options keywords, consumed elsewhere. */
         return 0;
     }
 

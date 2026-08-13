@@ -25,6 +25,12 @@ IFparm ISRCpTable[] = { /* parameters */
  IOP ("am",      ISRC_AM,        IF_REALVEC,"Amplitude modulation description"),
  IOP ("trnoise", ISRC_TRNOISE,   IF_REALVEC,"Transient noise description"),
  IOP ("trrandom", ISRC_TRRANDOM, IF_REALVEC,"random source description"),
+ /* Enhancement-447: `r` and `td` are voltage-source-only pwl options. They were
+    not declared here at all, so `I1 0 a pwl(... r=0)` failed with the generic
+    "unknown parameter (r)" -- which reads like a typo rather than a feature that
+    exists for V and not for I. Declared so the parse can say exactly that. */
+ IOP ("r",       ISRC_R,         IF_REAL,   "pwl repeat (voltage sources only)"),
+ IOP ("td",      ISRC_TD,        IF_REAL,   "pwl delay (voltage sources only)"),
 #ifdef SHARED_MODULE
  IOP ("external", ISRC_EXTERNAL, IF_STRING,"external source description"),
 #endif

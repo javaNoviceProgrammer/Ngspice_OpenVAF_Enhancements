@@ -106,6 +106,21 @@ ISRCparam(int param, IFvalue *value, GENinstance *inst, IFvalue *select)
             copy_coeffs(here, value);
             break;
 
+        case ISRC_R:
+        case ISRC_TD:
+            /* Enhancement-447: the voltage source implements a repeating and a
+               delayed pwl (VSRC_R / VSRC_TD); the current source's pwl evaluator
+               is a different, older implementation with no support for either.
+               Refuse it with a message that names the reason, rather than the
+               generic "unknown parameter". */
+            fprintf(stderr,
+                    "\nError: current source %s: pwl `%s=` is not supported "
+                    "for current sources.\n"
+                    "       The repeat (r) and delay (td) pwl options exist for "
+                    "VOLTAGE sources only.\n\n",
+                    here->ISRCname, (param == ISRC_R) ? "r" : "td");
+            return(E_UNSUPP);
+
         case ISRC_PWL:
             if(value->v.numValue < 2)
                 return(E_BADPARM);
@@ -241,6 +256,21 @@ ISRCparam(int param, IFvalue *value, GENinstance *inst, IFvalue *select)
             copy_coeffs(here, value);
 
             rndtype = (int)here->ISRCcoeffs[0]; // type of random function
+            /* Enhancement-447: TYPE selects the distribution -- 1 uniform,
+               2 gaussian, 3 exponential, 4 poisson. Anything else fell through
+               the generator's switch and left the source at a flat zero for the
+               whole run: 0, 5, 9, -1 and 100 all produced rms 0.0 with rc=0 and
+               no message, so a typo'd type number silently removed the stimulus
+               from the circuit. */
+            if (rndtype < 1 || rndtype > 4) {
+                fprintf(stderr,
+                        "\nError: current source %s: trrandom type %d is not a "
+                        "distribution.\n"
+                        "       Use 1 (uniform), 2 (gaussian), 3 (exponential) "
+                        "or 4 (poisson).\n\n",
+                        here->ISRCname, rndtype);
+                return(E_BADPARM);
+            }
             TS = here->ISRCcoeffs[1]; // time step
             if (here->ISRCfunctionOrder > 2)
                 TD = here->ISRCcoeffs[2]; // delay

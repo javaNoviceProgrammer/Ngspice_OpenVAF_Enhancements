@@ -92,6 +92,11 @@ e426_check_multiplier(IFdevice *device, GENinstance *fast, IFparm *p,
                 "active) and any noise contribution becomes NaN.\n",
                 fast && fast->GENname ? fast->GENname : device->name,
                 p->keyword, v);
+    /* Enhancement-447 considered warning on m=0 as well, since zero deletes the
+       instance outright while a NEGATIVE multiplier was already reported. It is
+       deliberately left silent: Enhancement-426 established m=0 as the
+       "disable this instance" idiom and its suite asserts the silence, so a
+       warning here would fire on decks that mean exactly what they wrote. */
 }
 
 char *

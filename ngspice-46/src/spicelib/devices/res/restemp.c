@@ -106,6 +106,18 @@ RESupdate_conduct(RESinstance *here, bool spill_warnings)
 
     if (!here->RESscaleGiven)
         here->RESscale = 1;
+    /* Enhancement-447: `scale` multiplies this instance's own resistance, so a
+       zero or negative one is not a small resistor -- zero makes it a dead
+       short and negative makes it an active element. A resistance WRITTEN as 0
+       is caught and clamped with "Value of resistor is too small", but the same
+       zero reached through `scale=0` was silent and unclamped (the divider read
+       exactly 0.0), and `scale=-1` only surfaced later as "singular matrix". */
+    if (here->RESscaleGiven && here->RESscale <= 0.0) {
+        fprintf(stderr,
+                "Warning: %s: scale=%g is not positive; ignored, using 1.\n",
+                here->RESname, here->RESscale);
+        here->RESscale = 1;
+    }
 
     here->RESconduct = here->RESm / (here->RESresist * factor * here->RESscale);
 

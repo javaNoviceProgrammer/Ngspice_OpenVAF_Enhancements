@@ -19,6 +19,24 @@ Author: 1987 Thomas L. Quarles
 #include "ngspice/suffix.h"
 
 
+/* Enhancement-447: which waveform a given query parameter belongs to, so an ask
+   for one waveform's coefficients can be refused when a DIFFERENT waveform is
+   the one actually declared. Returns 0 for anything that is not a waveform. */
+static int VSRCfnTypeOf(int which)
+{
+    switch (which) {
+    case VSRC_PULSE:    return PULSE;
+    case VSRC_SINE:     return SINE;
+    case VSRC_EXP:      return EXP;
+    case VSRC_PWL:      return PWL;
+    case VSRC_SFFM:     return SFFM;
+    case VSRC_AM:       return AM;
+    case VSRC_TRNOISE:  return TRNOISE;
+    case VSRC_TRRANDOM: return TRRANDOM;
+    default:            return 0;
+    }
+}
+
 /* ARGSUSED */
 int
 VSRCask(CKTcircuit *ckt, GENinstance *inst, int which, IFvalue *value, IFvalue *select)
@@ -48,6 +66,25 @@ VSRCask(CKTcircuit *ckt, GENinstance *inst, int which, IFvalue *value, IFvalue *
         case VSRC_AM:
         case VSRC_TRNOISE:
         case VSRC_TRRANDOM:
+            /* Enhancement-447: every waveform shares one VSRCcoeffs array, and
+               all eight of these used to answer from it unconditionally. So
+               `show v1` on a source declared only `sin(0 2 3k)` reported the
+               coefficients 0/2/3000 EIGHT times -- once under `sin` and once
+               under each of pulse, exp, pwl, sffm, am, trnoise and trrandom --
+               positively asserting seven stimuli the source does not have.
+               `show` could not be used to find out which waveform a source
+               actually had. Only the ACTIVE function answers now; the generic
+               VSRC_FCN_COEFFS query below still returns the raw array. */
+            if (VSRCfnTypeOf(which) != here->VSRCfunctionType) {
+                /* Report it as EMPTY rather than as an error: `show` then
+                   renders a bare "-" for it, exactly as it already does for a
+                   source with no transient waveform at all, instead of a column
+                   of "<<NAN, error>>". */
+                value->v.numValue = 0;
+                value->v.vec.rVec = NULL;
+                return (OK);
+            }
+            /* FALLTHROUGH */
         case VSRC_FCN_COEFFS:
             temp = value->v.numValue = here->VSRCfunctionOrder;
             v = value->v.vec.rVec = TMALLOC(double, here->VSRCfunctionOrder);

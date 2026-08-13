@@ -40,6 +40,15 @@ RESask(CKTcircuit *ckt, GENinstance *inst, int which, IFvalue *value,
         value->rValue = fast->RESconduct;
         return(OK);
     case RES_RESIST:
+        /* Enhancement-447 considered reporting the EFFECTIVE resistance here
+           (restemp.c folds the temperature factor and `scale` into RESconduct
+           and leaves RESresist nominal, so this answers 1000 for a `1k
+           tc1=0.001` that behaves as 1073 at 100 C). It is deliberately left
+           NOMINAL: Enhancement-426 settled this convention and documents
+           `1/@r1[conductance]` as the way to read what is actually stamped --
+           its suite asserts both halves. @c[capacitance] and @l[inductance]
+           fold their temperature in, so the three devices do disagree, but that
+           is a settled convention rather than a defect to flip here. */
         value->rValue = fast->RESresist;
         return(OK);
     case RES_ACCONDUCT:

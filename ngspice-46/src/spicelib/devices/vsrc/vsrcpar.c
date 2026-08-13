@@ -285,6 +285,21 @@ VSRCparam(int param, IFvalue *value, GENinstance *inst, IFvalue *select)
             copy_coeffs(here, value);
 
             rndtype = (int)here->VSRCcoeffs[0]; // type of random function
+            /* Enhancement-447: TYPE selects the distribution -- 1 uniform,
+               2 gaussian, 3 exponential, 4 poisson. Anything else fell through
+               the generator's switch and left the source at a flat zero for the
+               whole run: 0, 5, 9, -1 and 100 all produced rms 0.0 with rc=0 and
+               no message, so a typo'd type number silently removed the stimulus
+               from the circuit. */
+            if (rndtype < 1 || rndtype > 4) {
+                fprintf(stderr,
+                        "\nError: voltage source %s: trrandom type %d is not a "
+                        "distribution.\n"
+                        "       Use 1 (uniform), 2 (gaussian), 3 (exponential) "
+                        "or 4 (poisson).\n\n",
+                        here->VSRCname, rndtype);
+                return(E_BADPARM);
+            }
             TS = here->VSRCcoeffs[1]; // time step
             if (here->VSRCfunctionOrder > 2)
                 TD = here->VSRCcoeffs[2]; // delay

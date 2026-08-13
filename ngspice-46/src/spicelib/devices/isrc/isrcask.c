@@ -19,6 +19,25 @@ Author: 1988 Thomas L. Quarles
 #include "ngspice/suffix.h"
 
 
+/* Enhancement-447: see vsrcask.c -- every waveform shares one ISRCcoeffs array,
+   so all eight queries used to answer from it and `show i1` claimed the source
+   had every transient waveform at once. Map a query parameter to the waveform
+   it belongs to; 0 for anything that is not one. */
+static int ISRCfnTypeOf(int which)
+{
+    switch (which) {
+    case ISRC_PULSE:    return PULSE;
+    case ISRC_SINE:     return SINE;
+    case ISRC_EXP:      return EXP;
+    case ISRC_PWL:      return PWL;
+    case ISRC_SFFM:     return SFFM;
+    case ISRC_AM:       return AM;
+    case ISRC_TRNOISE:  return TRNOISE;
+    case ISRC_TRRANDOM: return TRRANDOM;
+    default:            return 0;
+    }
+}
+
 /* ARGSUSED */
 int
 ISRCask(CKTcircuit *ckt, GENinstance *inst, int which, IFvalue *value, IFvalue *select)
@@ -51,6 +70,17 @@ ISRCask(CKTcircuit *ckt, GENinstance *inst, int which, IFvalue *value, IFvalue *
         case ISRC_AM:
         case ISRC_TRNOISE:
         case ISRC_TRRANDOM:
+            /* Enhancement-447: only the ACTIVE waveform answers. */
+            if (ISRCfnTypeOf(which) != here->ISRCfunctionType) {
+                /* Report it as EMPTY rather than as an error: `show` then
+                   renders a bare "-" for it, exactly as it already does for a
+                   source with no transient waveform at all, instead of a column
+                   of "<<NAN, error>>". */
+                value->v.numValue = 0;
+                value->v.vec.rVec = NULL;
+                return (OK);
+            }
+            /* FALLTHROUGH */
         case ISRC_FCN_COEFFS:
             temp = value->v.numValue = here->ISRCfunctionOrder;
             v = value->v.vec.rVec = TMALLOC(double, here->ISRCfunctionOrder);

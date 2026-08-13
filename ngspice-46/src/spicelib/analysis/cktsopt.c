@@ -78,6 +78,7 @@ Modified: 2000 AlansFixes
 #include "ngspice/ifsim.h"
 #include "ngspice/cktdefs.h"
 #include "ngspice/sperror.h"
+#include "ngspice/fteext.h"    /* Enhancement-447: ft_curckt, for the cshunt notice */
 
 #include "analysis.h"
 
@@ -159,9 +160,26 @@ CKTsetOpt(CKTcircuit *ckt, JOB *anal, int opt, IFvalue *val)
         task->TSKnoOpIter = (val->iValue != 0);
         break;
     case OPT_GMIN:
+        /* Enhancement-447: gmin is the conductance added across every nonlinear
+         * junction to keep the Jacobian well conditioned. A NEGATIVE one is not
+         * a smaller conductance, it is a negative one, and it silently wrecked
+         * the answer -- a diode's 0.63 V drop became -0.001 V at gmin=-1 and
+         * -1e-9 at gmin=-1e6, with nothing printed. Every sibling tolerance
+         * (reltol, abstol, vntol, chgtol, trtol, maxord, temp) was already
+         * guarded here; gmin was the hole. Zero stays legal -- it means "no
+         * gmin" and is a documented thing to ask for. */
+        if (E426_BAD_OPT(val->rValue < 0.0,
+            "Option gmin = %g must not be negative; ignored, keeping %g",
+            val->rValue, task->TSKgmin))
+            break;
         task->TSKgmin = val->rValue;
         break;
      case OPT_GSHUNT:
+        /* Enhancement-447: likewise a conductance to ground. */
+        if (E426_BAD_OPT(val->rValue < 0.0,
+            "Option gshunt = %g must not be negative; ignored, keeping %g",
+            val->rValue, task->TSKgshunt))
+            break;
         task->TSKgshunt = val->rValue;
         break;
     case OPT_RELTOL:
@@ -388,6 +406,27 @@ CKTsetOpt(CKTcircuit *ckt, JOB *anal, int opt, IFvalue *val)
         task->TSKepsmin = val->rValue;
         break;
     case OPT_CSHUNT:
+        /* Enhancement-447: cshunt is applied by adding a capacitor to every
+         * voltage node, and that happens once while the circuit is being set up
+         * -- INPpas4() consumes the `cshunt_value` variable that eval_opt()
+         * scans out of the netlist's own `.option` cards. Setting it from
+         * `.control` stores a value here that nothing ever reads, so the option
+         * had no effect and said nothing about it.
+         *
+         * It is the only one of nineteen options tested that behaves this way;
+         * rshunt, gmin, temp, tnom, reltol, trtol, method, noopiter and autostop
+         * all work from either form. Keep the behaviour -- the capacitors cannot
+         * be inserted after setup -- and say so. */
+        /* eval_opt() scans the deck's own `.option` cards and publishes
+           `cshunt_value`, which is what INPpas4 acts on. If that variable is
+           absent, no card supplied it and this call can only have come from a
+           .control `option` -- too late for the node capacitors to be added. */
+        if (!cp_getvar("cshunt_value", CP_REAL, NULL, 0))
+            fprintf(stderr,
+                    "\nWarning -- option cshunt must be given as a `.option` "
+                    "card in the netlist.\n"
+                    "           Set from a .control block it is too late to add "
+                    "the node capacitors, and is ignored.\n\n");
         task->TSKcshunt = val->rValue;
         break;
     case OPT_ERRPRESET: /* Enhancement-110 */

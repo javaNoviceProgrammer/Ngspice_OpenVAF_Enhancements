@@ -154,7 +154,11 @@ struct comm spcp_coms[] = {
     { "snload", com_snload, FALSE, TRUE,
       { 1, 040000, 040000, 040000 }, E_DEFHMASK, 2, 2,
       NULL,
-      "file : Load a snapshot." } ,
+      /* Enhancement-447: the help named one file while the command has always
+         required exactly two (the min/max above), so the documented form
+         answered "snload: too few args." com_snload sources the netlist and
+         then overlays the saved state, hence both names. */
+      "netlist snapshot : Load a snapshot (needs BOTH the circuit file and the snapshot)." } ,
     { "circbyline", com_circbyline, FALSE, TRUE,
       { 1, 040000, 040000, 040000 }, E_DEFHMASK, 1, LOTS,
       NULL,

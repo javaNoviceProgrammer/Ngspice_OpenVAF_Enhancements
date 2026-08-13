@@ -129,6 +129,8 @@ enum {
 enum {
     ISRC_TRNOISE = 25,
     ISRC_TRRANDOM,
+    ISRC_R,             /* Enhancement-447: pwl repeat -- diagnosed, not implemented */
+    ISRC_TD,            /* Enhancement-447: pwl delay  -- diagnosed, not implemented */
     ISRC_EXTERNAL,
 };
 
