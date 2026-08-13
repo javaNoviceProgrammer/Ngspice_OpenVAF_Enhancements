@@ -265,26 +265,32 @@ checkvalid(struct pnode *pn)
                 return (FALSE);
         } else if (pn->pn_op && pn->pn_op->op_num == PT_OP_INDX &&
                    pn->pn_left && pn->pn_left->pn_value &&
-                   pn->pn_left->pn_value->v_length == 0 &&
                    pn->pn_left->pn_value->v_name &&
                    pn->pn_right && pn->pn_right->pn_value &&
                    pn->pn_right->pn_value->v_length >= 1 &&
-                   pn->pn_right->pn_value->v_realdata) {
-            /* Enhancement-224: "a[0]" over an UNRESOLVED base name "a" may name
-             * an array/bus node "a[0]" (Enhancement-221) rather than index 0 of
-             * a vector "a". Accept it here when that literal node vector exists
-             * (op_ind() then resolves it); otherwise it is genuinely invalid. */
-            int idx = (int) floor(pn->pn_right->pn_value->v_realdata[0] + 0.5);
-            char *litname = tprintf("%s[%d]", pn->pn_left->pn_value->v_name, idx);
-            struct dvec *lit = vec_get(litname);
-            tfree(litname);
-            if (lit == NULL) {
-                fprintf(cp_err,
-                        "Warning from checkvalid: vector %s is not available or has zero length.\n",
-                        pn->pn_left->pn_value->v_name);
-                return (FALSE);
-            }
+                   pn->pn_right->pn_value->v_realdata &&
+                   e448_literal_index(pn->pn_left, pn->pn_right) != NULL) {
+            /* Enhancement-224: "a[0]" may name an array/bus node "a[0]"
+             * (Enhancement-221) rather than index 0 of a vector "a". Accept it
+             * here when that literal node vector exists; op_ind() then resolves
+             * it the same way.
+             *
+             * Enhancement-448: the base used to have to be UNRESOLVED, which
+             * excluded every bus bit named after a constant (`c[0]`); the test
+             * is now the literal vector's existence, matching op_ind(). An
+             * INDX whose literal does not exist falls through to the ordinary
+             * arity-2 validation below, which is what plain indexing needs. */
             /* valid array-node reference -- fall through to pn_next */
+        } else if (pn->pn_op && pn->pn_op->op_num == PT_OP_INDX &&
+                   pn->pn_left && pn->pn_left->pn_value &&
+                   pn->pn_left->pn_value->v_length == 0 &&
+                   pn->pn_left->pn_value->v_name) {
+            /* An index over a base that resolves to nothing and spells no
+             * literal vector either: genuinely invalid, as before. */
+            fprintf(cp_err,
+                    "Warning from checkvalid: vector %s is not available or has zero length.\n",
+                    pn->pn_left->pn_value->v_name);
+            return (FALSE);
         } else if (pn->pn_op && (pn->pn_op->op_arity == 2)) {
             if (!checkvalid(pn->pn_left))
                 return (FALSE);

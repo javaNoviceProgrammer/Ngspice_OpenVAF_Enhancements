@@ -926,8 +926,41 @@ vec_get(const char *vec_name) {
 
     if (pl) {
         d = vec_fromplot(word, pl);
-        if (!d)
+        if (!d) {
             d = vec_fromplot(word, &constantplot);
+            /* Enhancement-448: this fallback is how a bare `pi` or `boltz`
+             * resolves, and it must stay. But it also silently answers a name
+             * the user meant as a NODE: with the current plot switched away (or
+             * before any analysis has run), `print c` hands back 2.9979e+08
+             * rather than the node voltage, and the eleven other constant names
+             * are worse than the speed of light because they look like results
+             * -- `no` is 0.0, and `i`, `yes` and `TRUE` are 1.0.
+             *
+             * v(c) and c[0] can no longer reach this (a node context refuses
+             * the constant outright, and a bracketed name prefers the literal
+             * vector), so what is left is a BARE name, which is genuinely
+             * ambiguous -- the constant plot exists precisely so that bare
+             * `pi` works. Resolve it as before and say so, but only when the
+             * name also exists as a vector somewhere else, i.e. only when the
+             * user plausibly meant that one. A deck with no such node -- every
+             * ordinary use of a constant -- stays silent. */
+            if (d) {
+                struct plot *op;
+                for (op = plot_list; op; op = op->pl_next) {
+                    if (op == &constantplot || !op->pl_typename ||
+                        cieq(op->pl_typename, "const"))
+                        continue;
+                    if (vec_fromplot(word, op)) {
+                        fprintf(cp_err,
+                                "Warning: '%s' resolved to the built-in "
+                                "constant, but plot %s has a vector of that "
+                                "name; write %s.%s for it.\n",
+                                word, op->pl_typename, op->pl_typename, word);
+                        break;
+                    }
+                }
+            }
+        }
     } else {
         for (pl = plot_list; pl; pl = pl->pl_next) {
             if (cieq(pl->pl_typename, "const"))

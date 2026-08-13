@@ -716,6 +716,60 @@ idx_floor(double x)
     return (int) f;
 }
 
+/* Enhancement-448: the vector a bracketed expression may name LITERALLY.
+ *
+ * `name[k]` is ambiguous. It can mean index k of a vector called `name`, or it
+ * can be the literal name of an array/bus node -- `a[0]` (Enhancement-221/224),
+ * the terminals `.option autobus` generates (Enhancement-444), the instances
+ * Enhancement-441 builds. Enhancement-224 resolved that ambiguity in favour of
+ * the literal name only when the base was an UNRESOLVED zero-length
+ * placeholder, i.e. only when nothing called `name` existed.
+ *
+ * That gate leaves a hole, because for twelve names a vector called `name`
+ * ALWAYS exists: the constant plot's c, e, i, pi, kelvin, boltz, echarge,
+ * planck, TRUE, FALSE, yes and no. A node named `c[0]` -- precisely what
+ * `.option autobus` builds for a bus called `c` -- was therefore unreachable.
+ * `print c[0]` answered "indexing a scalar (c)" and `print v(c[0])` answered
+ * "bad v() syntax", while `display` listed the node and `print all` printed it
+ * with the correct value. Every bit of a five-bit bus named `c` was unreadable;
+ * the same deck with the bus named `a` read all five.
+ *
+ * Worse, the hole is not limited to constants. Whenever the base resolved to a
+ * LONGER vector -- any circuit node in a tran run -- the index was in range and
+ * the wrong vector's element came back SILENTLY: a circuit holding both a node
+ * `q` and a bus bit `q[0]` answered `print q[0]` with node q's first sample.
+ *
+ * The gate is now the literal vector's OWN existence: if a vector spelled
+ * exactly `name[k]` is there, that is what `name[k]` means. Ordinary indexing
+ * is untouched, because no vector is named `myvec[3]`; the only references that
+ * change are the ones that previously errored or returned another vector's
+ * data. Enhancement-433's quoting (`"c[0]"`) keeps working and remains the way
+ * to be explicit.
+ *
+ * Returns the literal vector, or NULL when there is none. Used by op_ind() and
+ * apply_func() here and by checkvalid() in parse.c, so the four places that
+ * re-derive this name agree -- Enhancement-408 recorded what happens when they
+ * do not. */
+struct dvec *
+e448_literal_index(struct pnode *base, struct pnode *idx)
+{
+    struct dvec *lit;
+    char *name;
+
+    if (!base || !base->pn_value || !base->pn_value->v_name)
+        return (NULL);
+    if (!idx || !idx->pn_value || idx->pn_value->v_length < 1 ||
+        !idx->pn_value->v_realdata)
+        return (NULL);
+
+    name = tprintf("%s[%d]", base->pn_value->v_name,
+                   (int) floor(idx->pn_value->v_realdata[0] + 0.5));
+    lit = vec_get(name);
+    tfree(name);
+    return (lit);
+}
+
+
 /* This is another operation we do specially -- if the argument is a vector of
  * dimension n, n > 0, the result will be either a vector of dimension n - 1,
  * or a vector of dimension n with only a certain range of vectors present.
@@ -731,20 +785,32 @@ op_ind(struct pnode *arg1, struct pnode *arg2)
 
     /* Enhancement-224: array/bus node names (Enhancement-221) carry literal
      * brackets, e.g. the node "a[0]". The expression parser reads "a[0]" as
-     * index 0 of a vector named "a"; when the base is an UNRESOLVED name (a
-     * zero-length placeholder) and the index is a constant, try the literal
-     * vector name "a[0]" so `print a[0]` / `plot a[0]` reach array nodes. Done
-     * before evaluating the bare base so no spurious "no such vector a" is
-     * emitted; ordinary vector indexing (realvec[3], base resolves) is
-     * unaffected because that placeholder has non-zero length. */
-    if (arg1->pn_value != NULL && arg1->pn_value->v_length == 0 &&
-        arg1->pn_value->v_name != NULL && arg2->pn_value != NULL &&
-        arg2->pn_value->v_length >= 1 && arg2->pn_value->v_realdata != NULL) {
-        int lit_idx = (int) floor(arg2->pn_value->v_realdata[0] + 0.5);
-        char *lit_name = tprintf("%s[%d]", arg1->pn_value->v_name, lit_idx);
-        struct dvec *lit = vec_get(lit_name);
-        tfree(lit_name);
+     * index 0 of a vector named "a"; try the literal vector name "a[0]" first so
+     * `print a[0]` / `plot a[0]` reach array nodes. Done before evaluating the
+     * bare base so no spurious "no such vector a" is emitted.
+     *
+     * Enhancement-448 widened the gate from "the base is unresolved" to "the
+     * literal vector exists" -- see e448_literal_index(). Ordinary indexing
+     * (realvec[3]) is unaffected because nothing is named "realvec[3]". */
+    {
+        struct dvec *lit = e448_literal_index(arg1, arg2);
         if (lit != NULL) {
+            /* Enhancement-448: when a vector called `name` ALSO exists and is
+               long enough to index, both readings were meaningful and the old
+               code silently chose the other one. Name the ambiguity rather than
+               changing the answer in silence. A one-element base (every
+               constant-plot name) is not reported: indexing it was an error,
+               never a competing answer. */
+            if (arg1->pn_value != NULL && arg1->pn_value->v_length > 1 &&
+                arg1->pn_value->v_name != NULL) {
+                int k = (int) floor(arg2->pn_value->v_realdata[0] + 0.5);
+                fprintf(cp_err,
+                        "Warning: '%s[%d]' is itself a vector, so it is read as "
+                        "that vector rather than as element %d of '%s'; copy "
+                        "'%s' to a temporary to index it.\n",
+                        arg1->pn_value->v_name, k, k, arg1->pn_value->v_name,
+                        arg1->pn_value->v_name);
+            }
             res = vec_copy(lit);
             vec_new(res);
             return (res);
@@ -952,15 +1018,17 @@ apply_func(struct func *func, struct pnode *arg)
         /* Enhancement-224: v(a[0]) where a[0] is an array/bus node
          * (Enhancement-221). The argument parses as an index op INDX(name "a", 0)
          * that has no pn_value, so the plain path below fails with "bad v()
-         * syntax"; reconstruct the literal node name "a[0]" and resolve that. */
+         * syntax"; reconstruct the literal node name "a[0]" and resolve that.
+         *
+         * Enhancement-448: the base used to have to be an UNRESOLVED name, so
+         * `v(c[0])` -- a bus bit named after a constant-plot name -- fell
+         * through to "bad v() syntax" even though the node was right there.
+         * Gate on the literal vector existing instead. */
         if (!arg->pn_value && arg->pn_op && arg->pn_op->op_name &&
             eq(arg->pn_op->op_name, "[") &&
             arg->pn_left && arg->pn_left->pn_value &&
-            arg->pn_left->pn_value->v_length == 0 &&
             arg->pn_left->pn_value->v_name &&
-            arg->pn_right && arg->pn_right->pn_value &&
-            arg->pn_right->pn_value->v_length >= 1 &&
-            arg->pn_right->pn_value->v_realdata) {
+            e448_literal_index(arg->pn_left, arg->pn_right) != NULL) {
             int e224_idx = (int) floor(arg->pn_right->pn_value->v_realdata[0] + 0.5);
             e224_node = tprintf("%s[%d]", arg->pn_left->pn_value->v_name, e224_idx);
         }
@@ -971,7 +1039,19 @@ apply_func(struct func *func, struct pnode *arg)
         /* try not using the current plot, but the plot set in the arg... vector */
         if (e224_node)
             t = vec_fromplot(e224_node, plot_cur);
-        else if(arg->pn_value->v_plot && arg->pn_value->v_plot->pl_typename)
+        /* Enhancement-448: v(X) asks for a NODE VOLTAGE, and a constant is never
+         * one. vec_get() falls back to the constant plot when the current plot
+         * has no such vector, which bound `c` in `v(c)` to the speed of light:
+         * a deck whose node was renamed, or simply mistyped, answered
+         * 2.9979e+08 instead of failing. In `sweep` that was drawn as a flat
+         * curve and it defeated Enhancement-431's "-output never resolved"
+         * refusal, which correctly rejects any other unknown name. Names that
+         * collide with the other eleven constants are worse than the speed of
+         * light, not better: `v(no)` gave a flat 0.0 and `v(i)`, `v(yes)` and
+         * `v(TRUE)` a flat 1.0 -- values indistinguishable from real results.
+         * Resolve from the current plot instead and let the caller report it. */
+        else if (arg->pn_value->v_plot && arg->pn_value->v_plot->pl_typename &&
+                 !cieq(arg->pn_value->v_plot->pl_typename, "const"))
             t = vec_fromplot(arg->pn_value->v_name, get_plot(arg->pn_value->v_plot->pl_typename));
         else
             t = vec_fromplot(arg->pn_value->v_name, plot_cur);

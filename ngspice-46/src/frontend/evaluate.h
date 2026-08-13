@@ -26,6 +26,10 @@ struct dvec *op_and(struct pnode *arg1, struct pnode *arg2);
 struct dvec *op_or(struct pnode *arg1, struct pnode *arg2);
 struct dvec *op_range(struct pnode *arg1, struct pnode *arg2);
 struct dvec *op_ind(struct pnode *arg1, struct pnode *arg2);
+/* Enhancement-448: the vector `name[k]` may name literally, or NULL. Shared by
+   op_ind()/apply_func() in evaluate.c and checkvalid() in parse.c so the places
+   that re-derive this name cannot drift apart. */
+struct dvec *e448_literal_index(struct pnode *base, struct pnode *idx);
 struct dvec *op_uminus(struct pnode *arg);
 struct dvec *op_not(struct pnode *arg);
 
