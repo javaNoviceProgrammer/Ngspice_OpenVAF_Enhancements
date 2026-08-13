@@ -1,0 +1,10 @@
+`include "disciplines.vams"
+module savecuroff(p,n);
+    inout p,n;   electrical p,n;
+    electrical mid;              // INTERNAL node -- not a port
+    parameter real r = 1e3;
+    analog begin
+        I(p,mid) <+ V(p,mid)/r;
+        I(mid,n) <+ V(mid,n)/r;
+    end
+endmodule

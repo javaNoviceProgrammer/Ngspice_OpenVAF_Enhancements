@@ -2836,15 +2836,114 @@ void inp_evaluate_temper(struct circ *circ)
  * statements to 'wl' for all of their current vectors.
  */
 
+
+/* Enhancement-450: `savecurrents` was decided by a bare substring search --
+ *
+ *     if (strstr(options->line, "savecurrents"))
+ *
+ * so EVERY option line merely CONTAINING the word switched it on, whatever the
+ * line actually said. The two spellings a user reaches for to turn it OFF both
+ * turned it on instead:
+ *
+ *     .options savecurrents=0      -> ON     (says off, does on)
+ *     .options savecurrents=false  -> ON
+ *     .options nosavecurrents      -> ON     (ngspice's own no<opt> convention,
+ *                                             as in noacct/noinit/nomod/nopage)
+ *     .options mysavecurrentsxyz   -> ON     (any containing identifier)
+ *
+ * and once on there was no way back: the feature could be requested but never
+ * declined. Silent in every case, because a deck that quietly saves every
+ * terminal current still simulates correctly -- it just carries vectors the
+ * user asked not to have.
+ *
+ * The line is now read as TOKENS. A token is one of the family when it is
+ * exactly `savecurrents` or begins `savecurrents_` (the declared variants are
+ * savecurrents_bsim3, savecurrents_bsim4 and savecurrents_mos1), so an
+ * unrelated identifier that merely contains the word no longer matches. A `no`
+ * prefix, or a false-looking value, turns it off; the later card wins, matching
+ * how a repeated `.param` or `.options` value behaves.
+ *
+ * WHICH card is returned matters and is deliberately unchanged: the caller
+ * re-searches that one line for `savecurrents_bsim3`/`_bsim4`/`_mos1` to pick
+ * the MOS current set, so the FIRST enabling card is returned exactly as the old
+ * first-match did. Splitting the family across two cards behaves as it always
+ * has. */
+static bool
+e450_sc_token(const char *tok, bool *on)
+{
+    const char *eq = strchr(tok, '=');
+    size_t n = eq ? (size_t)(eq - tok) : strlen(tok);
+    bool neg = FALSE;
+
+    if (n > 2 && strncmp(tok, "no", 2) == 0) {
+        neg = TRUE;
+        tok += 2;
+        n -= 2;
+    }
+    /* exactly `savecurrents`, or one of the `savecurrents_<variant>` names --
+       NOT any identifier that happens to contain the word */
+    if (!((n == 12 && strncmp(tok, "savecurrents", 12) == 0) ||
+          (n > 13 && strncmp(tok, "savecurrents_", 13) == 0)))
+        return FALSE;
+
+    *on = !neg;
+    if (eq) {
+        const char *v = eq + 1;
+        /* An explicit false value turns it off. A `no` prefix AND a value is
+           left off rather than double-negated back on: nobody writes
+           `nosavecurrents=0` meaning "on". */
+        if (cieq(v, "0") || cieq(v, "false") || cieq(v, "no") || cieq(v, "off"))
+            *on = FALSE;
+    }
+    return TRUE;
+}
+
+static struct card *
+e450_savecurrents_card(struct card *options)
+{
+    struct card *first_on = NULL;
+    bool state = FALSE;
+
+    for (; options; options = options->nextcard) {
+        const char *s = options->line;
+        bool carries_on = FALSE;
+
+        if (!s)
+            continue;
+        while (*s && !isspace_c(*s))    /* step over .option / .options */
+            s++;
+        while (*s) {
+            char tok[128];
+            size_t n = 0;
+            bool on;
+
+            while (*s && isspace_c(*s))
+                s++;
+            while (*s && !isspace_c(*s)) {
+                if (n < sizeof(tok) - 1)
+                    tok[n++] = *s;
+                s++;
+            }
+            tok[n] = '\0';
+            if (n && e450_sc_token(tok, &on)) {
+                state = on;
+                carries_on = carries_on || on;
+            }
+        }
+        if (carries_on && !first_on)
+            first_on = options;
+    }
+    return state ? first_on : NULL;
+}
+
+
 static wordlist *
 inp_savecurrents(struct card *deck, struct card *options, wordlist *wl, wordlist *controls)
 {
     wordlist *p;
 
-    /* check if option 'savecurrents' is set */
-    for (; options; options = options->nextcard)
-        if (strstr(options->line, "savecurrents"))
-            break;
+    /* Enhancement-450: which card, if any, switches `savecurrents` ON. */
+    options = e450_savecurrents_card(options);
 
     if (!options)
         return wl;
