@@ -32,6 +32,29 @@ impl LowerCtx<'_> {
         }
     }
 
+    /// Enhancement-457: the repetition count of a replication used as an
+    /// assignment-pattern element, when it is a usable compile-time constant.
+    ///
+    /// `None` for anything this cannot answer -- a non-constant count, a negative
+    /// one, or a count so large the expansion would be implausible. The element
+    /// is then left as an ordinary `Expr::Concat` and reported through the paths
+    /// that already exist for a bad concatenation, rather than silently producing
+    /// an array of the wrong length. The cap mirrors the one Enhancement-34 put
+    /// on `{n{...}}` for the same reason: a replication count is a size, and a
+    /// size read from source has to be bounded before it is acted on.
+    fn pattern_rep_count(rep: &ast::ReplicationExpr) -> Option<u32> {
+        /// far above any real coefficient vector or coupling matrix, far below
+        /// anything that could exhaust memory during lowering
+        const MAX_PATTERN_REP: i64 = 1 << 20;
+
+        let count = rep.count()?;
+        let n = match count.as_constexprval()? {
+            syntax::ast::ConstExprValue::Int(i) => i as i64,
+            _ => return None,
+        };
+        (0..=MAX_PATTERN_REP).contains(&n).then_some(n as u32)
+    }
+
     pub fn collect_expr(&mut self, expr: ast::Expr) -> ExprId {
         let e = match &expr {
             ast::Expr::PrefixExpr(e) => {
@@ -74,9 +97,42 @@ impl LowerCtx<'_> {
 
             ast::Expr::ParenExpr(e) => return self.collect_opt_expr(e.expr()),
 
+            // Enhancement-457: an assignment-pattern element may be a REPLICATION
+            // (`'{ 3{0.0} }`), which the LRM uses in its own examples. It is
+            // expanded here, where the count is still an AST expression and can be
+            // folded: `3{0.0}` becomes three copies of `0.0`, so everything
+            // downstream -- parameter arrays, laplace coefficient vectors,
+            // variable-array assignment -- keeps seeing a plain element list and
+            // needs no change.
+            //
+            // Each replicated element is collected ONCE and its id repeated. That
+            // keeps the AST-to-HIR source map single-valued (collecting the same
+            // AST node twice would register two entries for one node) and matches
+            // what replication means: the same value, n times.
+            //
+            // A count that will not fold, is negative, or is implausibly large is
+            // left as a single `Expr::Concat`, which is what an array element of
+            // that shape was before -- inference then reports it through the paths
+            // that already exist for a bad concatenation rather than a silently
+            // mis-sized array.
             ast::Expr::ArrayExpr(e) => {
-                let vals = e.exprs().map(|expr| self.collect_expr(expr)).collect();
-                Expr::Array(vals)
+                let mut vals: Vec<ExprId> = Vec::new();
+                for elem in e.exprs() {
+                    match &elem {
+                        ast::Expr::ReplicationExpr(rep) => match Self::pattern_rep_count(rep) {
+                            Some(n) => {
+                                let ids: Vec<ExprId> =
+                                    rep.elems().map(|it| self.collect_expr(it)).collect();
+                                for _ in 0..n {
+                                    vals.extend(ids.iter().copied());
+                                }
+                            }
+                            None => vals.push(self.collect_expr(elem)),
+                        },
+                        _ => vals.push(self.collect_expr(elem)),
+                    }
+                }
+                Expr::Array(vals.into_boxed_slice().into_vec())
             }
 
             // Enhancement-34: `{...}` concatenation / `{n{...}}` replication

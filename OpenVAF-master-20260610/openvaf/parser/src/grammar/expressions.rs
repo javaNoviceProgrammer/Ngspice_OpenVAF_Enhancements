@@ -272,8 +272,44 @@ fn array_expr(p: &mut Parser) -> CompletedMarker {
     let m = p.start();
     p.bump(T!["'{"]);
     while !p.at(EOF) && !p.at(T!['}']) {
+        // Enhancement-457: an element of an assignment pattern may itself be a
+        // REPLICATION -- `count{ e0, e1, ... }` -- which the LRM uses in its own
+        // examples:
+        //
+        //     real distort[0:2][0:2] = '{ 3{ '{3{0.0}}}};
+        //     ("all elements are initialized to 0.0 using an assignment pattern
+        //       and replication operator")
+        //
+        // This loop read a plain comma-separated list, so it parsed the count as
+        // an element, expected `,` or `}` next, met `{` and stopped:
+        // "unexpected token '{'; expected ','". Note the replication that DOES
+        // work, `{4{0}}`, is the CONCATENATION operator (Enhancement-34) -- a
+        // different construct one apostrophe away, which LRM 4.2.13 warns is
+        // easily confused with this one.
+        //
+        // The node built here has the same shape `concat_expr` produces for
+        // `{n{...}}`: children `[count, elem0, elem1, ...]`, so `ReplicationExpr`
+        // reads its `count()` and `elems()` unchanged. Expansion happens at HIR
+        // lowering, where the count can be folded.
+        let elem = p.start();
         if expr(p).is_none() {
+            elem.abandon(p);
             break;
+        }
+        if p.at(T!['{']) {
+            p.bump(T!['{']);
+            while !p.at(EOF) && !p.at(T!['}']) {
+                if expr(p).is_none() {
+                    break;
+                }
+                if !p.at(T!['}']) && !p.expect(T![,]) {
+                    break;
+                }
+            }
+            p.expect(T!['}']);
+            elem.complete(p, REPLICATION_EXPR);
+        } else {
+            elem.abandon(p);
         }
 
         if !p.at(T!['}']) && !p.expect(T![,]) {

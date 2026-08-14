@@ -152,15 +152,10 @@ impl Body {
                     // the whole aggregate against the element's scalar type once per element.
                     match tree[item_tree].array_index {
                         Some(pos) => {
-                            fn flatten(expr: ast::Expr) -> Vec<ast::Expr> {
-                                match expr {
-                                    ast::Expr::ArrayExpr(arr) => {
-                                        arr.exprs().flat_map(flatten).collect()
-                                    }
-                                    other => vec![other],
-                                }
-                            }
-                            let elem = flatten(expr).into_iter().nth(pos as usize);
+                            // Enhancement-457: expands replication elements too
+                            let elem = crate::item_tree::flatten_pattern(expr)
+                                .into_iter()
+                                .nth(pos as usize);
                             ctx.collect_opt_expr(elem)
                         }
                         None => ctx.collect_expr(expr),
@@ -285,14 +280,11 @@ impl Body {
         // flattened row-major before indexing.
         let default = match tree[item_tree].array_index {
             Some(pos) => {
-                fn flatten(expr: ast::Expr) -> Vec<ast::Expr> {
-                    match expr {
-                        ast::Expr::ArrayExpr(arr) => arr.exprs().flat_map(flatten).collect(),
-                        other => vec![other],
-                    }
-                }
-                let elem =
-                    ast.default().map(flatten).and_then(|f| f.into_iter().nth(pos as usize));
+                // Enhancement-457: expands replication elements too
+                let elem = ast
+                    .default()
+                    .map(crate::item_tree::flatten_pattern)
+                    .and_then(|f| f.into_iter().nth(pos as usize));
                 ctx.collect_opt_expr(elem)
             }
             None => ctx.collect_opt_expr(ast.default()),

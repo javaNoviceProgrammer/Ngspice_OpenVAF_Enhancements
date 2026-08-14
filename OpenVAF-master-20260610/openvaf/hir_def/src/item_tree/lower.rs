@@ -98,10 +98,11 @@ fn fold_width_range(range: &ast::Range) -> Option<(i32, i32)> {
 /// variable/parameter initializer against the declared element count
 /// (Enhancement-43) before the per-element bodies index into it.
 fn count_literal_leaves(expr: &ast::Expr) -> u32 {
-    match expr {
-        ast::Expr::ArrayExpr(arr) => arr.exprs().map(|e| count_literal_leaves(&e)).sum(),
-        _ => 1,
-    }
+    // Enhancement-457: counted through the same walker the per-element extractors
+    // use, so a replication (`3{0.0}`) contributes three leaves here exactly as it
+    // yields three elements there. Counting it as one leaf made every expanded
+    // pattern fail the declared-size check.
+    crate::item_tree::flatten_pattern(expr.clone()).len() as u32
 }
 
 fn fold_width_ranges<'a>(widths: impl Iterator<Item = ast::Range>) -> Option<Vec<(i32, i32)>> {

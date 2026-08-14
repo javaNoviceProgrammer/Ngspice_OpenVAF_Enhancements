@@ -22,6 +22,54 @@ use std::sync::Arc;
 
 use ordered_float::OrderedFloat;
 
+/// Enhancement-457: flatten an assignment pattern into its leaf expressions,
+/// expanding any REPLICATION element (`3{0.0}`) into that many copies.
+///
+/// The LRM uses replication in its own initializer examples
+/// (`real distort[0:2][0:2] = '{ 3{ '{3{0.0}}}};`). Three places walk a `'{...}`
+/// literal -- the leaf COUNT checked against the declared size, and the two
+/// per-element extractors for array variables and array parameters -- and each
+/// counted a replication as a single leaf, so an expanded pattern came out the
+/// wrong length. They all go through here now, so the count and the elements
+/// cannot disagree.
+///
+/// A count that will not fold, is negative, or is implausibly large leaves the
+/// element unexpanded: it then reads as one leaf and the ordinary
+/// length-mismatch diagnostic reports it, rather than a silently mis-sized array.
+pub(crate) fn flatten_pattern(expr: syntax::ast::Expr) -> Vec<syntax::ast::Expr> {
+    use syntax::ast;
+
+    /// far above any real coefficient vector or coupling matrix, far below
+    /// anything that could exhaust memory during lowering
+    const MAX_PATTERN_REP: i64 = 1 << 20;
+
+    fn rep_count(rep: &ast::ReplicationExpr) -> Option<u32> {
+        let n = match rep.count()?.as_constexprval()? {
+            ast::ConstExprValue::Int(i) => i as i64,
+            _ => return None,
+        };
+        (0..=MAX_PATTERN_REP).contains(&n).then_some(n as u32)
+    }
+
+    match expr {
+        ast::Expr::ArrayExpr(arr) => arr.exprs().flat_map(flatten_pattern).collect(),
+        ast::Expr::ReplicationExpr(ref rep) => match rep_count(rep) {
+            Some(n) => {
+                let elems: Vec<_> = rep.elems().flat_map(flatten_pattern).collect();
+                let mut out = Vec::with_capacity(elems.len() * n as usize);
+                for _ in 0..n {
+                    out.extend(elems.iter().cloned());
+                }
+                out
+            }
+            None => vec![expr],
+        },
+        other => vec![other],
+    }
+}
+
+
+
 use ahash::AHashMap;
 use arena::{Arena, Idx, IdxRange};
 use basedb::{AstId, ErasedAstId, FileId};

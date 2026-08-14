@@ -1,0 +1,54 @@
+// Enhancement-457 -- replication inside an assignment pattern, `'{ n{expr} }`.
+//
+// The LRM uses this in its own initializer examples, with the comment "all
+// elements are initialized to 0.0 using an assignment pattern and replication
+// operator":
+//
+//     real distort[0:2][0:2] = '{ 3{ '{3{0.0}}}};
+//
+// openvaf-r rejected every such form at parse time -- "unexpected token '{';
+// expected ','" -- because the pattern parser read a plain comma-separated list
+// and met `{` where it wanted a separator. Note the replication that always
+// worked, `{4{0}}`, is the CONCATENATION operator: a different construct one
+// apostrophe away, which LRM 4.2.13 warns is easily confused with this one.
+//
+// The values matter as much as the shapes here. A pattern that expands to the
+// right LENGTH but the wrong CONTENTS would satisfy the declared-size check and
+// still be wrong, so every array below carries distinct, checkable numbers.
+
+`include "disciplines.vams"
+
+module patternrep(a, b);
+    inout a, b;
+    electrical a, b;
+
+    // 1-D: four copies of one value
+    parameter real quad[0:3] = '{4{2.5}};
+
+    // mixed: literals either side of a replication
+    parameter real mixed[0:3] = '{1.0, 2{3.0}, 4.0};
+
+    // a replication of SEVERAL elements: 2 x (1.0, 2.0)
+    parameter real pairs[0:3] = '{2{1.0, 2.0}};
+
+    // the LRM's nested form -- a 3x3 initialised through two replications
+    real grid[0:2][0:2] = '{ 3{ '{3{0.5}}}};
+
+    // an array VARIABLE initialiser, not just a parameter
+    real vals[0:3] = '{4{1.5}};
+
+    (* desc="q" *) real q;      // quad[0] + quad[3]      -> 5.0
+    (* desc="mx" *) real mx;      // mixed[1] + mixed[2]    -> 6.0
+    (* desc="p" *) real p;      // pairs[0..3] summed     -> 6.0
+    (* desc="g" *) real g;      // grid[0][0]+grid[2][2]  -> 1.0
+    (* desc="v" *) real v;      // vals[0] + vals[3]      -> 3.0
+
+    analog begin
+        q = quad[0]  + quad[3];
+        mx = mixed[1] + mixed[2];
+        p = pairs[0] + pairs[1] + pairs[2] + pairs[3];
+        g = grid[0][0] + grid[2][2];
+        v = vals[0] + vals[3];
+        I(a, b) <+ V(a, b) * 1e-3;
+    end
+endmodule
