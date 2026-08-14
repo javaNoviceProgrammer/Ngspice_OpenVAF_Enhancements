@@ -16,6 +16,80 @@ use crate::cli_def::{
 };
 use crate::{CompilationDestination, Opts};
 
+
+/// Enhancement-452: reject an unusable `-o` destination up front.
+///
+/// Three ways a destination went wrong, all of them reaching the backend and
+/// failing there rather than being reported here:
+///
+///   * `-o` naming the INPUT file. The compiled module was written straight over
+///     the source and the run reported success -- `openvaf-r m.va -o m.va`
+///     exited 0 with "Finished building" while turning a 111-byte Verilog-A file
+///     into a 36 KB shared object. The source is simply gone. Reachable from a
+///     shell loop whose output variable is the input one.
+///
+///   * an EMPTY `-o`. `dst.file_stem()` in osdi::compile is an `.expect()`, so
+///     it panicked: exit 101, a crash banner, a crash-log file and a request to
+///     open a GitHub issue -- for a typo.
+///
+///   * an UNWRITABLE directory. `emit_object` returns an error, and the caller
+///     wraps it in `assert_eq!(.., Ok(()))`, so a permission problem panicked the
+///     same way.
+///
+/// An ordinary user error should cost one line, not a crash report. The checks
+/// live here because this is the last point that still knows both the input and
+/// the requested output, and it runs before any parsing.
+fn validate_output(lib_file: &Utf8PathBuf, input: &Utf8PathBuf) -> Result<()> {
+    if lib_file.as_str().is_empty() || lib_file.file_name().is_none() {
+        bail!(
+            "the output path '{lib_file}' does not name a file\n\
+             help: give -o a file name, for example -o model.osdi"
+        );
+    }
+
+    // Writing the module over its own source destroys it. Compare resolved paths
+    // where both exist, so `./m.va` and `m.va` are recognised as the same file.
+    let same = match (input.canonicalize(), lib_file.canonicalize()) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => input == lib_file,
+    };
+    if same {
+        bail!(
+            "the output path '{lib_file}' is the input file\n\
+             help: the compiled module would be written over the source and the \
+             source would be lost; choose a different -o"
+        );
+    }
+
+    let dir = match lib_file.parent() {
+        Some(p) if !p.as_str().is_empty() => p.to_owned(),
+        _ => Utf8PathBuf::from("."),
+    };
+    if !dir.is_dir() {
+        bail!(
+            "the output directory '{dir}' does not exist\n\
+             help: create it, or give -o a path inside an existing directory"
+        );
+    }
+
+    // The backend writes the module AND one object file per module beside it, so
+    // prove the directory is writable rather than discovering it at link time.
+    let probe = dir.join(format!(".openvaf-write-probe-{}", std::process::id()));
+    match std::fs::File::create(&probe) {
+        Ok(_) => {
+            let _ = std::fs::remove_file(&probe);
+        }
+        Err(err) => {
+            bail!(
+                "cannot write to the output directory '{dir}': {err}\n\
+                 help: choose a directory you can write to with -o"
+            );
+        }
+    }
+
+    Ok(())
+}
+
 pub fn matches_to_opts(matches: ArgMatches) -> Result<Opts> {
     if matches.get_flag(LINTS) {
         print_lints();
@@ -66,6 +140,9 @@ pub fn matches_to_opts(matches: ArgMatches) -> Result<Opts> {
         } else {
             input.with_extension("osdi")
         };
+
+        // Enhancement-452: check the destination BEFORE any compilation work.
+        validate_output(&lib_file, &input)?;
 
         CompilationDestination::Path { lib_file }
     };
