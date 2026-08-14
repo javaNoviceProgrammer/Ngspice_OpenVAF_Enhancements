@@ -609,10 +609,45 @@ impl Ctx {
 
     /// The numeric value of a literal expression (with an optional leading `-`).
     fn const_num(e: &ast::Expr) -> Option<f64> {
+        // Enhancement-455: `inf` folds too, as +/- infinity.
+        //
+        // It used not to, so the emptiness check saw a bound it could not read
+        // and gave up. That let every reversed range spelled with `inf` through
+        // -- `from (inf:0)`, `(0:-inf)`, `(inf:-inf)`, `(-inf:-inf)`,
+        // `(inf:inf)` -- and such a parameter then enforces NOTHING: -5, 0 and 5
+        // all pass a range that admits no value. `from (inf:0)` is one
+        // transposition away from `from (0:inf)`, and it silently removes the
+        // very check the author was asking for.
+        //
+        // Folding it is strictly better rather than riskier: `from (0:inf)` has
+        // lo < hi and stays accepted, exactly as before.
+        if let Some(inf) = Self::const_inf(e) {
+            return Some(inf);
+        }
         match e.as_constexprval()? {
             ConstExprValue::Int(i) => Some(i as f64),
             ConstExprValue::Float(f) => Some(*f),
             ConstExprValue::String(_) => None,
+        }
+    }
+
+    /// `inf` / `+inf` / `-inf` as a bound, in any of its spellings. `inf` is a
+    /// LITERAL token (`LiteralKind::Inf`), not an identifier, and
+    /// `as_constexprval` has no case for it -- which is why it never folded.
+    fn const_inf(e: &ast::Expr) -> Option<f64> {
+        match e {
+            ast::Expr::Literal(lit) => {
+                matches!(lit.kind(), syntax::ast::LiteralKind::Inf).then_some(f64::INFINITY)
+            }
+            ast::Expr::PrefixExpr(p) => {
+                let inner = Self::const_inf(&p.expr()?)?;
+                match p.op_kind()? {
+                    syntax::ast::UnaryOp::Neg => Some(-inner),
+                    syntax::ast::UnaryOp::Identity => Some(inner),
+                    _ => None,
+                }
+            }
+            _ => None,
         }
     }
 
@@ -686,6 +721,25 @@ impl Ctx {
                 }
             }
         }
+        // Enhancement-455: `potential` and `flow` must name DIFFERENT natures. A
+        // discipline giving both the same one compiled with nothing said, and the
+        // device it produced was nonsense: a node using it carried no distinct
+        // across/through pair, so `Zp(a,b) <+ Zp(a,b)*1e-3` contributed nothing at
+        // all (the well-formed twin gave the right answer), and forcing a
+        // contribution produced a node voltage of -999.
+        // The two `NatureRef`s carry different `kind`s (DisciplinePotential vs
+        // DisciplineFlow), so they never compare equal as a whole -- it is the
+        // NAME that has to match.
+        if let (Some((ref p, _)), Some((ref f, _))) = (&potential, &flow) {
+            if p.name == f.name {
+                self.tree.diagnostics.push(ItemTreeDiagnostic::DisciplinePotentialIsFlow {
+                    ast_id: ast_id.into(),
+                    name: name.clone(),
+                    nature: p.name.clone(),
+                });
+            }
+        }
+
         let attr_end = self.tree.data.discipline_attrs.next_key();
         let res = Discipline {
             ast_id,
@@ -1177,6 +1231,18 @@ impl Ctx {
         if let Some(name) = fun.name() {
             let base_name = name.as_name();
             let ty = fun.ty().map_or(Type::Real, |ty| ty.as_type());
+
+            // Enhancement-455: LRM 4.7.1 lists what an analog function "shall"
+            // do, and one of them is "shall have at least one formal argument
+            // declared". A function with none compiled and returned its value,
+            // so a declaration the LRM forbids was accepted in silence.
+            if args.is_empty() {
+                let fun_ast_id = self.source_ast_id_map.ast_id(&fun);
+                self.tree.diagnostics.push(ItemTreeDiagnostic::FunctionWithoutArgs {
+                    ast_id: fun_ast_id.into(),
+                    name: base_name.clone(),
+                });
+            }
 
             // Array return `analog function real[0:n] f;` (Enhancement-23): expand the return into
             // element variables `f[i]` (a var_array named after the function, so its elements

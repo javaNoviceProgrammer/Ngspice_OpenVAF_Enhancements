@@ -368,6 +368,24 @@ impl Diagnostic for InferenceDiagnosticWrapped<'_> {
                             .to_owned(),
                     ])
             }
+            InferenceDiagnostic::NotIndexable { expr, ref name } => {
+                let src = self
+                    .parse
+                    .to_file_span(self.expr_range(expr), self.sm);
+
+                Report::error()
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: src.file,
+                        range: src.range.into(),
+                        message: format!("'{name}' is not an array"),
+                    }])
+                    .with_message(format!("'{name}' cannot be indexed"))
+                    .with_notes(vec![format!(
+                        "help: only a vectored net/port or an array can be indexed; '{name}' \
+                         holds a single value"
+                    )])
+            }
             InferenceDiagnostic::GenvarNotUsable { expr, ref name } => {
                 let src = self.parse.to_file_span(self.expr_range(expr), self.sm);
                 Report::error()

@@ -33,6 +33,45 @@ impl Diagnostic for ItemTreeDiagnosticWrapped<'_> {
                             .to_owned(),
                     ])
             }
+            ItemTreeDiagnostic::DisciplinePotentialIsFlow { ast_id, name, nature } => {
+                let range = self.ast_id_map.get_syntax(*ast_id).range();
+                let span = self.parse.to_file_span(range, self.sm);
+                Report::error()
+                    .with_message(format!(
+                        "discipline '{name}' uses nature '{nature}' for both potential and flow"
+                    ))
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: span.file,
+                        range: span.range.into(),
+                        message: "potential and flow name the same nature".to_owned(),
+                    }])
+                    .with_notes(vec![
+                        "help: the two must be different natures; a node using this discipline \
+                         has no distinct across/through quantity, so contributions to it are \
+                         discarded"
+                            .to_owned(),
+                    ])
+            }
+            ItemTreeDiagnostic::FunctionWithoutArgs { ast_id, name } => {
+                let range = self.ast_id_map.get_syntax(*ast_id).range();
+                let span = self.parse.to_file_span(range, self.sm);
+                Report::error()
+                    .with_message(format!(
+                        "analog function '{name}' declares no arguments"
+                    ))
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: span.file,
+                        range: span.range.into(),
+                        message: "no formal argument".to_owned(),
+                    }])
+                    .with_notes(vec![
+                        "help: an analog function shall have at least one formal argument \
+                         (LRM 4.7.1); give it the value it operates on"
+                            .to_owned(),
+                    ])
+            }
             ItemTreeDiagnostic::ArrayTooLarge { ast_id, size } => {
                 let range = self.ast_id_map.get_syntax(*ast_id).range();
                 let span = self.parse.to_file_span(range, self.sm);

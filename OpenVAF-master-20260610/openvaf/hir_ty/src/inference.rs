@@ -2626,7 +2626,17 @@ impl Ctx<'_> {
         let Some(bus) = bus else {
             // Not a known bus/array: resolve normally so an ordinary "unresolved identifier"
             // diagnostic is produced (e.g. for a genuine typo), rather than a bus-specific one.
+            //
+            // Enhancement-455: but a base that RESOLVES and simply is not indexable -- a real,
+            // an integer, a string, a scalar parameter -- left no diagnostic at all. The
+            // expression's type became `Err` and lowering then hit
+            // `panic!("invalid HIR: path {:?} was not resolved")`, so `r[0]` on a scalar exited
+            // 101 with a crash banner and a request to open a GitHub issue. Every scalar kind
+            // and every index form did it, in expression and assignment-target position alike.
             self.resolve_path(stmt, expr, base)?;
+            self.result
+                .diagnostics
+                .push(InferenceDiagnostic::NotIndexable { expr, name: base_name.clone() });
             return None;
         };
 
@@ -2872,6 +2882,15 @@ pub enum InferenceDiagnostic {
     /// A bus bit-select (`bus[i]`) was used but `bus` is not a known vectored net/port.
     InvalidBusReference {
         expr: ExprId,
+    },
+
+    /// Enhancement-455: `name[..]` where `name` resolves but is a SCALAR -- a real, integer,
+    /// string or scalar parameter. Nothing reported this, so the expression's type became
+    /// `Err` and the lowering panicked on it (exit 101 with a crash report) for what is an
+    /// ordinary typo.
+    NotIndexable {
+        expr: ExprId,
+        name: Name,
     },
 
     /// A bus bit-select index was not a compile-time-constant integer literal.

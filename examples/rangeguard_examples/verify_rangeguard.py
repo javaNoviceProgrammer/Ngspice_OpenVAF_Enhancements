@@ -197,8 +197,21 @@ def main():
           pmod(" parameter real x = 1.0 from [0:10] exclude 99;"), "ok_out")
     clean("`exclude` with no `from` at all",
           pmod(" parameter real x = 1.0 exclude 0;"), "ok_nofrom")
-    clean("an unbounded range -- `inf` does not fold, as E-399 leaves it",
-          pmod(" parameter real x = 1.0 from [0:inf) exclude [0:inf);"), "ok_inf")
+    # Enhancement-455: `inf` now FOLDS as a bound, so this case is answerable and
+    # is answered. It was pinned as clean here only because the folder had no
+    # case for the `inf` token -- the label said so ("`inf` does not fold") -- and
+    # that limitation also let every reversed range spelled with `inf` through
+    # (`from (inf:0)` was accepted and then enforced nothing at all). Excluding
+    # `[0:inf)` from `[0:inf)` leaves no settable value, which is exactly what
+    # this check exists to report. Partial excludes over an infinite range are
+    # unaffected and still compile -- pinned directly below.
+    rejected("`exclude` covering an UNBOUNDED range is now reported (E-455)",
+             pmod(" parameter real x = 1.0 from [0:inf) exclude [0:inf);"), "ok_inf",
+             "excludes every value its range allows")
+    clean("...while a PARTIAL exclude over an unbounded range still compiles",
+          pmod(" parameter real x = 9.0 from [0:inf) exclude [0:5];"), "ok_inf_part")
+    clean("...and an unbounded range with no exclude is untouched",
+          pmod(" parameter real x = 1.0 from [0:inf);"), "ok_inf_plain")
     clean("a RUNTIME bound makes the question unanswerable, so nothing is said",
           pmod(" parameter real x = 1.0 from [0:10] exclude [0:y];",
                extra=" parameter real y = 5.0;\n"), "ok_rt")

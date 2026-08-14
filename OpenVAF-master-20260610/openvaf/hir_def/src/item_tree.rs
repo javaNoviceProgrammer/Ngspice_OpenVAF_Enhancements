@@ -79,6 +79,15 @@ pub enum ItemTreeDiagnostic {
     /// `real x[0:100000000]`). Reported instead of exhausting memory; the
     /// declaration is treated as a single scalar so compilation proceeds.
     ArrayTooLarge { ast_id: ErasedAstId, size: i64 },
+    /// Enhancement-455: LRM 4.7.1 -- an analog function "shall have at least one
+    /// formal argument declared". A function with none compiled and returned its
+    /// value, so a declaration the LRM forbids was accepted in silence.
+    FunctionWithoutArgs { ast_id: ErasedAstId, name: Name },
+    /// Enhancement-455: a discipline naming the SAME nature for `potential` and
+    /// `flow`. Accepted in silence, it produced a device that contributed nothing
+    /// where a well-formed discipline gave the right answer, and a nonsense node
+    /// voltage when a contribution was forced.
+    DisciplinePotentialIsFlow { ast_id: ErasedAstId, name: Name, nature: Name },
     /// The `'{...}` initializer of an array variable or array parameter has a
     /// different number of leaf elements than the array's declared size
     /// (Enhancement-43). Previously a too-short literal crashed the compiler

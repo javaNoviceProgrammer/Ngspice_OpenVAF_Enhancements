@@ -1674,6 +1674,75 @@ impl ExprValidator<'_, '_> {
             // the runtime and produced exactly the spectrum of its positive twin, so the
             // sign was discarded in silence. `noise_table`'s inline entries have been
             // checked since Enhancement-396; these two were not checked at all.
+            // Enhancement-455: a CONSTANT argument outside the function's domain.
+            //
+            // `sqrt(-1.0)`, `ln(-1.0)`, `asin(2.0)` and friends folded to NaN with
+            // no diagnostic at all, and the model then failed at simulation with
+            // "Transient op failed, timestep too small" -- a convergence message
+            // for a NaN written literally in the source. Integer `1/0` and `5 % 0`
+            // have always been compile errors; the same mistake in a real-valued
+            // call said nothing.
+            //
+            // Only CONSTANT arguments are judged, exactly as for the guards above:
+            // a run-time value going out of domain is the model's own business,
+            // and a parameter may be overridden.
+            (
+                BuiltIn::sqrt
+                | BuiltIn::ln
+                | BuiltIn::log
+                | BuiltIn::asin
+                | BuiltIn::acos
+                | BuiltIn::acosh
+                | BuiltIn::atanh,
+                _,
+            ) if !args.is_empty() => {
+                if let Some(v) = self.const_num(args[0]) {
+                    let (name, ok, domain) = match call {
+                        BuiltIn::sqrt => ("sqrt", v >= 0.0, "values >= 0"),
+                        BuiltIn::ln => ("ln", v > 0.0, "values > 0"),
+                        BuiltIn::log => ("log", v > 0.0, "values > 0"),
+                        BuiltIn::asin => ("asin", (-1.0..=1.0).contains(&v), "values in [-1, 1]"),
+                        BuiltIn::acos => ("acos", (-1.0..=1.0).contains(&v), "values in [-1, 1]"),
+                        BuiltIn::acosh => ("acosh", v >= 1.0, "values >= 1"),
+                        _ => ("atanh", (-1.0..1.0).contains(&v.abs()), "values in (-1, 1)"),
+                    };
+                    if !ok {
+                        self.bad_arg(
+                            name,
+                            "the argument",
+                            format!(
+                                "is {v}, which is outside the domain of {name} ({domain}); \
+                                 the result would be NaN"
+                            ),
+                            args[0],
+                        )
+                    }
+                }
+            }
+
+            // Enhancement-455: LRM 9.13.2 -- "In $rdist_uniform, the start and end
+            // arguments are real inputs which bound the values returned. The start
+            // value shall be smaller than the end value." Reversed bounds were
+            // accepted and returned exactly what the correct ordering returns, so
+            // the mistake produced plausible numbers and said nothing.
+            (BuiltIn::rdist_uniform | BuiltIn::dist_uniform, _) if args.len() >= 3 => {
+                if let (Some(start), Some(end)) =
+                    (self.const_num(args[1]), self.const_num(args[2]))
+                {
+                    if start >= end {
+                        self.bad_arg(
+                            "$rdist_uniform",
+                            "the bounds",
+                            format!(
+                                "must have the start below the end, but the start is \
+                                 {start} and the end is {end}"
+                            ),
+                            args[1],
+                        )
+                    }
+                }
+            }
+
             (BuiltIn::white_noise, _) => {
                 self.require_non_negative("white_noise", "the noise power", args[0]);
             }
@@ -2058,12 +2127,46 @@ impl ExprValidator<'_, '_> {
     /// point is to catch the spelled-out mistake (`$bound_step(0)`,
     /// `@(timer(0, 0))`) without pretending to know what a runtime expression
     /// will evaluate to.
+    /// Enhancement-455: fold a CONSTANT ARITHMETIC EXPRESSION, not just a literal.
+    ///
+    /// Every value guard below is built on this, and it used to see through a
+    /// literal and a unary minus and nothing else. So each guard caught exactly
+    /// one spelling of a bad value and missed the identical value written as an
+    /// expression:
+    ///
+    ///     white_noise(-1e-18)     -> refused
+    ///     white_noise(0-1e-18)    -> ACCEPTED, and produced the same output noise
+    ///                                as the positive power, silently
+    ///
+    /// The same gap let `$bound_step(1-1)`, `transition(x,0,0-1n,1n)` and
+    /// `@(cross(e, 3+4))` through. It was not even consistent across the
+    /// compiler: the array-bounds and integer-division checks fold first and DO
+    /// catch `arr[2+3]` and `1/(1-1)`.
+    ///
+    /// A PARAMETER is deliberately still not folded. Its default may be
+    /// overridden on the instance or model card, so refusing a model at compile
+    /// time for a default that will never be used would be wrong -- the same
+    /// reasoning that keeps a parameter's default out of its own range check.
     fn const_num(&self, expr: ExprId) -> Option<f64> {
         match self.parent.body.exprs[expr] {
             Expr::Literal(Literal::Float(v)) => Some(f64::from(v)),
             Expr::Literal(Literal::Int(v)) => Some(v as f64),
             Expr::UnaryOp { expr: inner, op: UnaryOp::Neg } => {
                 self.const_num(inner).map(|v| -v)
+            }
+            Expr::UnaryOp { expr: inner, op: UnaryOp::Identity } => self.const_num(inner),
+            Expr::BinaryOp { lhs, rhs, op: Some(op) } => {
+                let (l, r) = (self.const_num(lhs)?, self.const_num(rhs)?);
+                match op {
+                    BinaryOp::Addition => Some(l + r),
+                    BinaryOp::Subtraction => Some(l - r),
+                    BinaryOp::Multiplication => Some(l * r),
+                    // A zero divisor is left to the division checks, which
+                    // report it themselves; folding it here would hand the
+                    // caller an inf and produce a second, confusing complaint.
+                    BinaryOp::Division if r != 0.0 => Some(l / r),
+                    _ => None,
+                }
             }
             _ => None,
         }
