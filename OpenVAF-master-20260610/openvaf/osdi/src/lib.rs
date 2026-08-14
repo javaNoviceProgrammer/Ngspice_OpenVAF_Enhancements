@@ -61,7 +61,14 @@ use llvm_sys::target::{LLVM_InitializeNativeAsmPrinter, LLVM_InitializeNativeTar
 
 static LLVM_INIT: Once = Once::new();
 
-fn initialize_llvm() {
+/// Registers the LLVM code generator. Only the NATIVE target is registered, so
+/// this binary can generate code for the host architecture and nothing else --
+/// see `LLVMBackend::target_available` (Enhancement-453), which is what turns a
+/// request for a foreign target into a diagnostic instead of a panic.
+///
+/// Idempotent; callers outside codegen use it to make the target registry
+/// available before probing it.
+pub fn initialize_llvm() {
     LLVM_INIT.call_once(|| unsafe {
         if LLVM_InitializeNativeTarget() != 0 {
             panic!("Failed to initialize native target");

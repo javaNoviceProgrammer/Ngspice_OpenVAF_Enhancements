@@ -22,7 +22,33 @@ pub(super) fn arg_list(p: &mut Parser) {
     let m = p.start();
     p.eat(T!['(']);
     while !p.at(T![')']) && !p.at(EOF) {
-        if expr(p).is_none() {
+        // Enhancement-453: the LRM's NULL ARGUMENT -- "two adjacent commas (,,)
+        // in the argument list" (LRM 4.5.11 for the Laplace filters, 4.5.12 for
+        // the Z-transform filters, both saying "the zeros argument may be
+        // represented as a null argument"). The LRM's own worked example
+        //
+        //     V(out) <+ laplace_zp(white_noise(k), , '{1,0,1,0,-1,0,-1,0});
+        //
+        // did not compile: `expr` returned None on the empty slot and the loop
+        // broke, reporting "unexpected token ','" and then a bogus arity ("at
+        // least 3 arguments but found 1").
+        //
+        // An empty slot becomes an empty ARRAY_EXPR -- the very node `'{}`
+        // produces, which the filters already accept and lower to a filter with
+        // no zeros. The parser sees token KINDS only, never text, so it cannot
+        // tell which function is being called; legality is therefore left to
+        // type inference, where the builtin is known. Everywhere a vector is not
+        // expected the empty array is a type error, which is what a null
+        // argument outside the filters should be (LRM 4.6: "It is illegal to
+        // specify a null argument in the argument list of an analog operator,
+        // except as specified elsewhere").
+        //
+        // Only an INTERIOR or LEADING slot is a null argument. A TRAILING comma
+        // is still the Enhancement-423 error, handled at the bottom of the loop.
+        if p.at(T![,]) {
+            let null_arg = p.start();
+            null_arg.complete(p, ARRAY_EXPR);
+        } else if expr(p).is_none() {
             break;
         }
         if p.at(T![')']) {

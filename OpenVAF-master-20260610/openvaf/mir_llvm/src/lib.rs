@@ -194,6 +194,42 @@ impl<'t> LLVMBackend<'t> {
         ModuleLlvm::new(name, self.target, &self.target_cpu, &self.features, opt_lvl)
     }
 
+    /// Enhancement-453: does this binary actually have a code generator for the
+    /// configured target?
+    ///
+    /// `initialize_llvm` registers only the NATIVE LLVM target, so every foreign
+    /// architecture fails inside `create_target` with "No available targets are
+    /// compatible with triple ...". That failure surfaced as
+    /// `back.new_module(..).unwrap()` on a rayon worker -- exit 101, a crash
+    /// banner and a request to file a bug, for asking a mac binary to build for
+    /// Linux.
+    ///
+    /// Probing here answers the same question the codegen would, using the same
+    /// triple, cpu and features, but before any work is spawned. LLVM must
+    /// already be initialized (see `osdi::initialize_llvm`).
+    ///
+    /// # Safety
+    ///
+    /// This function calls the LLVM-C Api which may not be entirely safe.
+    /// Exercise caution!
+    pub unsafe fn target_available(&self) -> Result<(), String> {
+        let tm = create_target(
+            &self.target.llvm_target,
+            &self.target_cpu,
+            &self.features,
+            LLVMCodeGenOptLevel::LLVMCodeGenLevelNone,
+            llvm_sys::target_machine::LLVMRelocMode::LLVMRelocPIC,
+            llvm_sys::target_machine::LLVMCodeModel::LLVMCodeModelDefault,
+        );
+        match tm {
+            Ok(tm) => {
+                llvm_sys::target_machine::LLVMDisposeTargetMachine(tm);
+                Ok(())
+            }
+            Err(err) => Err(err.to_string()),
+        }
+    }
+
     /// # Safety
     ///
     /// This function calls the LLVM-C Api which may not be entirely safe.

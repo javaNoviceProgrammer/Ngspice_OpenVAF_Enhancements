@@ -12,7 +12,7 @@ use std::fs::{create_dir_all, remove_file};
 use std::io::Write;
 use std::time::Instant;
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use basedb::diagnostics::{ConsoleSink, DiagnosticSink};
 pub use basedb::lints::{builtin as builtin_lints, LintLevel};
 use basedb::BaseDB;
@@ -198,6 +198,35 @@ pub fn compile(opts: &Opts) -> Result<CompilationTermination> {
     };
 
     let back = LLVMBackend::new(&opts.codegen_opts, &opts.target, opts.target_cpu.clone(), &[]);
+
+    // Enhancement-453: refuse a target this binary cannot generate code for,
+    // here, instead of letting it reach `new_module(..).unwrap()` on a rayon
+    // worker and abort with a crash report. `--supported-targets` lists what the
+    // *driver* knows; only LLVM knows which of those it can actually emit, and
+    // it is initialized with the native target alone.
+    osdi::initialize_llvm();
+    if let Err(err) = unsafe { back.target_available() } {
+        let usable: Vec<_> = get_target_names()
+            .filter(|name| {
+                Target::search(name).map_or(false, |target| {
+                    let probe = LLVMBackend::new(&[], &target, "generic".to_owned(), &[]);
+                    unsafe { probe.target_available() }.is_ok()
+                })
+            })
+            .collect();
+        bail!(
+            "cannot generate code for target '{}': {}\n\
+             help: this binary has a code generator for {}",
+            opts.target.llvm_target,
+            err.trim(),
+            if usable.is_empty() {
+                "no target at all".to_owned()
+            } else {
+                usable.join(", ")
+            }
+        );
+    }
+
     if opts.dry_run {
         return Ok(CompilationTermination::Compiled { lib_file });
     }

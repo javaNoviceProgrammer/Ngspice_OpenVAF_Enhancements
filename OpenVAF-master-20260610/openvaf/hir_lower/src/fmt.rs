@@ -172,6 +172,12 @@ impl BodyLoweringCtx<'_, '_, '_> {
                         fmt_lit.push(' ');
                         continue;
                     }
+                    // Enhancement-453: reachable until inference started
+                    // checking arguments that no conversion consumes -- a Bool
+                    // (`$strobe("x", 1 > 0)`) or an array literal landed here
+                    // and crashed the compiler. `check_display_arg_default`
+                    // now casts a Bool to an integer and rejects anything with
+                    // no default rendering, so only the arms above arrive.
                     _ => unreachable!(),
                 }
 

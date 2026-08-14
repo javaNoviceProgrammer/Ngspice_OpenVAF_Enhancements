@@ -1143,10 +1143,50 @@ impl Ctx<'_> {
         }
     }
 
+    /// Enhancement-453: an argument that no `%` conversion consumes is rendered
+    /// from its own type by `hir_lower::fmt` (`%g` for a real, `%d` for an
+    /// integer, `%s` for a string). Nothing checked that the type was one of
+    /// those, and the lowering's fallback arm is `unreachable!()`, so any other
+    /// type CRASHED the compiler -- exit 101, crash banner, "please open an
+    /// issue":
+    ///
+    ///     $strobe("x", 1 > 0);          // a comparison -- Bool
+    ///     $strobe("x", '{1.0, 2.0});    // an array literal
+    ///
+    /// A named array was already caught ("requires a bit-select"); these were
+    /// not. `$strobe("%d", 1 > 0)` has always worked, because the `%d` path
+    /// casts the Bool to an integer -- so a Bool IS printable, it just never
+    /// reached a cast on the default path. It gets one here.
+    ///
+    /// An array has no default rendering and is reported instead.
+    fn check_display_arg_default(&mut self, arg: ExprId) {
+        match self.result.expr_types[arg].to_value() {
+            // exactly what hir_lower::fmt can render, plus Err (already reported)
+            Some(Type::Real | Type::Integer | Type::String | Type::Void | Type::Err) => (),
+            // printable, but only once it is an integer
+            Some(Type::Bool) => {
+                self.result.casts.insert(arg, Type::Integer);
+            }
+            _ => self.result.diagnostics.push(InferenceDiagnostic::TypeMismatch(TypeMismatch {
+                expected: Cow::Owned(vec![
+                    TyRequirement::Val(Type::Real),
+                    TyRequirement::Val(Type::Integer),
+                    TyRequirement::Val(Type::String),
+                ]),
+                found_ty: self.result.expr_types[arg].clone(),
+                expr: arg,
+            })),
+        }
+    }
+
     fn infere_display(&mut self, stmt: StmtId, args: &[ExprId]) {
         let mut i = 0;
         while let Some(fmt_expr) = args.get(i) {
             i += 1;
+            if !matches!(self.body.exprs[*fmt_expr], Expr::Literal(Literal::String(_))) {
+                // Enhancement-453: not a format string, so it is printed by type.
+                self.check_display_arg_default(*fmt_expr);
+            }
             if let Expr::Literal(Literal::String(ref lit)) = self.body.exprs[*fmt_expr] {
                 let mut chars = lit.char_indices();
                 while let Some((start, c)) = chars.next() {

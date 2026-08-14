@@ -1,0 +1,64 @@
+// Enhancement-453 -- the LRM's NULL ARGUMENT, and printing a comparison.
+//
+// LRM 4.5.11 (Laplace filters) and 4.5.12 (Z-transform filters) both say:
+//
+//     "The zeros argument may be represented as a null argument. The null
+//      argument is characterized by two adjacent commas (,,) in the argument
+//      list."
+//
+// and the LRM's own worked example for laplace_zp writes it exactly that way.
+// openvaf-r rejected the spelling outright ("unexpected token ','"), so a model
+// written against the LRM -- or ported from a simulator that accepts it -- did
+// not compile. The three filters below are one transfer function, 1/(1+s/1e4),
+// written the two ways that mean "no zeros": the null argument and the empty
+// vector `'{}`. They must agree with each other and with the closed form.
+//
+// `disp` prints a COMPARISON. `$strobe("x", 1 > 0)` used to crash the compiler
+// (exit 101 with a crash report): an argument that no % conversion consumes is
+// rendered from its own type, and a Bool had no case there. `$strobe("%d", ...)`
+// always worked, because that path casts to an integer -- which is what the
+// default path does now.
+
+`include "disciplines.vams"
+
+// H(s) = 1/(1 + s/1e4), zeros given as a NULL ARGUMENT
+module nullarg_demo(in, out);
+    inout in, out;
+    electrical in, out;
+    analog begin
+        V(out) <+ laplace_zp(V(in), , '{-1e4, 0});
+    end
+endmodule
+
+// the same filter, zeros given as an EMPTY VECTOR
+module nullarg_ref(in, out);
+    inout in, out;
+    electrical in, out;
+    analog begin
+        V(out) <+ laplace_zp(V(in), '{}, '{-1e4, 0});
+    end
+endmodule
+
+// the same filter again, denominator as COEFFICIENTS (laplace_zd)
+module nullarg_zd(in, out);
+    inout in, out;
+    electrical in, out;
+    analog begin
+        V(out) <+ laplace_zd(V(in), , '{1, 1e-4});
+    end
+endmodule
+
+// printing values that no conversion specifier consumes
+module nullarg_disp(a, b);
+    inout a, b;
+    electrical a, b;
+    parameter real g = 1e-3;
+    analog begin
+        $strobe("cmp_true=", 1 > 0);
+        $strobe("cmp_false=", 1 < 0);
+        $strobe("real=", 1.5);
+        $strobe("int=", 7);
+        $strobe("str=", "s");
+        I(a, b) <+ V(a, b) * g;
+    end
+endmodule
