@@ -581,8 +581,47 @@ impl<'a> MirBuilder<'a> {
         let mut body_ctx =
             BodyLoweringCtx { ctx: &mut ctx, body: analog_initial_body.borrow(), path: &path };
 
-        // lower analog initial blocks first
-        body_ctx.lower_entry_stmts();
+        // Enhancement-456: `analog initial` runs ONCE, not on every evaluation.
+        //
+        // LRM 5.2: "The analog initial block is executed once for each analysis".
+        // Its statements used to be lowered straight into the front of the eval
+        // function -- concatenated with the main analog block -- so they re-ran on
+        // every evaluation and overwrote whatever the model had accumulated. That
+        // silently destroyed the one thing the construct exists for: a variable
+        // initialised there could no longer hold state.
+        //
+        //     real peak;
+        //     analog initial begin peak = 0.0; end          // <- breaks it
+        //     analog begin
+        //       if (V(in) > peak) peak = V(in);             // never holds a peak;
+        //       V(out) <+ peak;                             //   follows the input
+        //     end                                           //   back down instead
+        //
+        // The identical model with the initialisation removed, or written as
+        // `@(initial_step) peak = 0.0;` inside the main block, worked correctly --
+        // which is exactly the gate used here. `ParamKind::IsInitialStep` is true
+        // on an instance's first evaluation of an analysis (once per analysis per
+        // instance: once for a whole dc sweep, twice for `op` then `dc`), which is
+        // the LRM's baseline rule.
+        //
+        // Statements still lower in source order and still run BEFORE the main
+        // block, so multiple `analog initial` blocks compose exactly as before --
+        // they are simply no longer re-applied afterwards.
+        // Emitted ONLY when there is something to gate. A module with no `analog
+        // initial` block must lower exactly as before -- otherwise every model in
+        // the corpus picks up an `IsInitialStep` parameter and an empty
+        // conditional it never asked for, which showed up immediately as a
+        // 32-byte change in a MEXTRAM model that has no initial block at all.
+        if !body_ctx.body.entry().is_empty() {
+            let is_initial = body_ctx.ctx.use_param(ParamKind::IsInitialStep);
+            body_ctx.ctx.make_cond(is_initial, |ctx, branch| {
+                if branch {
+                    BodyLoweringCtx { ctx, body: analog_initial_body.borrow(), path: &path }
+                        .lower_entry_stmts();
+                }
+            });
+        }
+
         // ... and normal analog blocks afterwards
         body_ctx.body = analog_body.borrow();
         body_ctx.lower_entry_stmts();

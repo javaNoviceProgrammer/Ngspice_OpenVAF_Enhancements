@@ -1,0 +1,112 @@
+// Enhancement-456 -- `analog initial` runs ONCE, not on every evaluation.
+//
+// Each module here holds STATE across timesteps. That is the whole point of the
+// construct: LRM 5.2 says "The analog initial block is executed once for each
+// analysis", and a one-time initialisation is what a peak detector or a counter
+// needs before it can accumulate anything.
+//
+// The initial block used to be lowered straight into the front of the eval
+// function, concatenated with the main analog block, so its statements re-ran on
+// every evaluation and overwrote whatever the model had accumulated. The peak
+// detector followed its input back DOWN instead of holding the peak, and the
+// counter never left zero -- silently, and only when the author used the
+// construct designed for exactly this.
+//
+// The `_ref` twins initialise under `@(initial_step)` inside the main block
+// instead. That always worked, and it is the reference the fixed behaviour must
+// reproduce: same model, same numbers.
+
+`include "disciplines.vams"
+
+// ---------------------------------------------------------------- peak hold --
+module peak_init(in, out);
+    inout in, out;
+    electrical in, out;
+    real peak;
+
+    analog initial begin
+        peak = 0.0;
+    end
+
+    analog begin
+        if (V(in) > peak)
+            peak = V(in);
+        V(out) <+ peak;
+    end
+endmodule
+
+module peak_ref(in, out);
+    inout in, out;
+    electrical in, out;
+    real peak;
+
+    analog begin
+        @(initial_step) peak = 0.0;
+        if (V(in) > peak)
+            peak = V(in);
+        V(out) <+ peak;
+    end
+endmodule
+
+// ------------------------------------------------------------------ counter --
+module count_init(in, out);
+    inout in, out;
+    electrical in, out;
+    real cnt;
+
+    analog initial begin
+        cnt = 0.0;
+    end
+
+    analog begin
+        @(timer(1u, 1u)) cnt = cnt + 1.0;
+        V(out) <+ cnt;
+    end
+endmodule
+
+module count_ref(in, out);
+    inout in, out;
+    electrical in, out;
+    real cnt;
+
+    analog begin
+        @(initial_step) cnt = 0.0;
+        @(timer(1u, 1u)) cnt = cnt + 1.0;
+        V(out) <+ cnt;
+    end
+endmodule
+
+// ------------------------------------- the initial value reaches the body ----
+// `x` is set once and never written again; `y` is derived from it every
+// evaluation. Both must read as though the initialisation happened.
+module carry_init(in, out);
+    inout in, out;
+    electrical in, out;
+    (* desc="x" *) real x;
+    (* desc="y" *) real y;
+
+    analog initial begin
+        x = 5.0;
+    end
+
+    analog begin
+        y = x * 2.0;
+        I(in, out) <+ V(in, out) * 1e-3;
+    end
+endmodule
+
+// ------------------------------- multiple initial blocks still compose --------
+// LRM 5.2: "If there are multiple analog initial blocks, they are executed as if
+// concatenated." Two of them, in source order, leave g at exactly 2 mS.
+module order_init(in, out);
+    inout in, out;
+    electrical in, out;
+    (* desc="g" *) real g;
+
+    analog initial g = 1e-3;
+    analog initial g = g + 1e-3;
+
+    analog begin
+        I(in, out) <+ g * V(in, out);
+    end
+endmodule
