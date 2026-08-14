@@ -1,0 +1,25 @@
+// Enhancement-454 -- the model the autobus option checks drive.
+//
+// Five bus bits, each through a different resistance, so every bit carries a
+// DIFFERENT voltage. That matters: a check that only asks "did it simulate"
+// passes even when the bus is bound in the wrong order, or bound to nodes
+// nobody else touches. Distinct per-bit values make a wrong binding show up as
+// a wrong number.
+
+`include "disciplines.vams"
+
+module autobusopt(a, b);
+    inout [0:4] a;
+    electrical [0:4] a;
+    inout b;
+    electrical b;
+    parameter real r = 1e3 from (0:inf);
+
+    analog begin
+        I(a[0], b) <+ V(a[0], b) / r;
+        I(a[1], b) <+ V(a[1], b) / (2*r);
+        I(a[2], b) <+ V(a[2], b) / (4*r);
+        I(a[3], b) <+ V(a[3], b) / (8*r);
+        I(a[4], b) <+ V(a[4], b) / (16*r);
+    end
+endmodule

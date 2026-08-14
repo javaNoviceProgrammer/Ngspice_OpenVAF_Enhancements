@@ -48,6 +48,34 @@ Modified: 2001 Paolo Nenzi (Cider Integration)
  */
 #define AUTOBUS_MAXPORT 1024
 
+/* Enhancement-454: is `.option autobus` in force?
+ *
+ * The spelling decides the TYPE the options machinery publishes: a bare
+ * `.option autobus` becomes a BOOL, `autobus=1` a NUMBER and `autobus=true` a
+ * STRING. Asking only for CP_BOOL therefore saw the bare form and nothing else,
+ * so `.option autobus=1` -- an ordinary way to write a boolean option, and not
+ * reported as unknown -- silently left a bus port unbound HERE, while the
+ * subcircuit path (which reads the option cards directly) honoured it.
+ *
+ * Every spelling is accepted, and the off-words are honoured, matching
+ * `e454_value_is_off` in frontend/inp.c. The two readers are unavoidably
+ * separate -- this one runs after the variable is published, that one before --
+ * so they are kept to the same word list by hand; change both together. */
+static bool autobus_enabled(void)
+{
+    double d;
+    char s[64];
+
+    if (cp_getvar("autobus", CP_BOOL, NULL, 0))
+        return TRUE;
+    if (cp_getvar("autobus", CP_REAL, &d, 0))
+        return d != 0.0;
+    if (cp_getvar("autobus", CP_STRING, s, sizeof(s)))
+        return !(cieq(s, "0") || cieq(s, "false") ||
+                 cieq(s, "no") || cieq(s, "off"));
+    return FALSE;
+}
+
 /* the base name of a terminal, and whether it carried an index */
 static size_t autobus_base(const char *nm, bool *indexed)
 {
@@ -233,7 +261,7 @@ void INP2N(CKTcircuit *ckt, INPtables *tab, struct card *current) {
   /* Enhancement-444: with `.option autobus`, one token per PORT expands to one
      per TERMINAL using the model's own bit indices. Done before the warning
      below, so a line that expands is not also reported as under-connected. */
-  if (numnodes < *dev->terms && cp_getvar("autobus", CP_BOOL, NULL, 0)) {
+  if (numnodes < *dev->terms && autobus_enabled()) {
     int pstart[AUTOBUS_MAXPORT], pcnt[AUTOBUS_MAXPORT];
     int np = autobus_ports(dev, pstart, pcnt, AUTOBUS_MAXPORT);
 

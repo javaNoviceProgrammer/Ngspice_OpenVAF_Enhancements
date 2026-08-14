@@ -756,6 +756,102 @@ static int e451_tok_boundary(const char *line, const char *p)
     return !isalnum_c(before) && before != '_' && before != '.';
 }
 
+
+/* Enhancement-454: the ONE place that decides whether an option's VALUE spells
+ * "off". Shared by `savecurrents` (Enhancement-450) and `autobus`, because two
+ * boolean options that mean the same thing by the same words must not each
+ * decide for themselves -- which is precisely how `autobus=0` came to mean ON
+ * while `savecurrents=0` correctly meant off. */
+static bool
+e454_value_is_off(const char *v)
+{
+    return cieq(v, "0") || cieq(v, "false") || cieq(v, "no") || cieq(v, "off");
+}
+
+
+/* Enhancement-454: a `set autobus` from .spiceinit, in any spelling.
+ *
+ * The spelling decides the published TYPE -- `set autobus` is a BOOL,
+ * `set autobus=1` a NUMBER, `set autobus=true` a STRING -- so a CP_BOOL-only
+ * query saw only the first. Matches `autobus_enabled` in
+ * spicelib/parser/inp2n.c, which asks the same question after the variable is
+ * published; the two readers cannot be merged (this one runs BEFORE
+ * publication, that one after), so change them together. */
+static bool
+e454_autobus_var(void)
+{
+    double d;
+    char s[64];
+
+    if (cp_getvar("autobus", CP_BOOL, NULL, 0))
+        return TRUE;
+    if (cp_getvar("autobus", CP_REAL, &d, 0))
+        return d != 0.0;
+    if (cp_getvar("autobus", CP_STRING, s, sizeof(s)))
+        return !e454_value_is_off(s);
+    return FALSE;
+}
+
+
+/* Enhancement-454: does this option card set `name` on or off?
+ *
+ * Returns TRUE if the option appears at all, with *on set accordingly, and
+ * scans the WHOLE card so a later token wins -- the same rule
+ * `e450_savecurrents_card` applies. Recognises the bare flag, `name=value`, and
+ * the `noname` spelling; a value from `e454_value_is_off` turns it off.
+ *
+ * `autobus` previously used a bare `strstr` with only a token-boundary test, so
+ * it correctly ignored `noautobus` and `myautobus` but accepted `=` as a mere
+ * terminator and NEVER LOOKED AT THE VALUE: `.option autobus=0` switched the
+ * feature ON, silently. */
+static bool
+e454_opt_onoff(const char *line, const char *name, bool *on)
+{
+    size_t nlen = strlen(name);
+    const char *s = line;
+    bool seen = FALSE;
+
+    while (*s && !isspace_c(*s))        /* step over .option / .options */
+        s++;
+    while (*s) {
+        char tok[128];
+        size_t n = 0, tn;
+        const char *t, *eq;
+        bool neg = FALSE;
+
+        while (*s && isspace_c(*s))
+            s++;
+        while (*s && !isspace_c(*s)) {
+            if (n < sizeof(tok) - 1)
+                tok[n++] = *s;
+            s++;
+        }
+        if (!n)
+            continue;
+        tok[n] = '\0';
+
+        t = tok;
+        eq = strchr(t, '=');
+        tn = eq ? (size_t)(eq - t) : n;
+        /* `noname` is the off spelling; `no` alone is not a prefix of anything */
+        if (tn > 2 && strncmp(t, "no", 2) == 0) {
+            neg = TRUE;
+            t += 2;
+            tn -= 2;
+        }
+        if (tn != nlen || strncmp(t, name, nlen) != 0)
+            continue;
+
+        *on = !neg;
+        /* An explicit false value turns it off. A `no` prefix AND a false value
+           is left off rather than double-negated back on, as for savecurrents. */
+        if (eq && e454_value_is_off(eq + 1))
+            *on = FALSE;
+        seen = TRUE;
+    }
+    return seen;
+}
+
 /* value of `name=` as a pointer just past the '=', or NULL */
 static char *e451_opt_value(char *line, const char *name)
 {
@@ -1356,28 +1452,31 @@ inp_spsource(FILE *fp, bool comfile, char *filename, bool intfile)
                is after expansion, and the `.option` cards have already been
                split out of the deck into these lists. Read the same way `scale`
                is read above. */
+            /* Enhancement-454: read it the way `savecurrents` is read -- whole
+               tokens, the `no` spelling, and the VALUE. The old scan stopped at
+               the first token boundary and never looked past the `=`, so every
+               spelling that means off (`autobus=0`, `=false`, `=no`) switched
+               the feature ON here, while the top-level path (INP2N, which reads
+               the published variable) treated the very same cards as off. One
+               deck, two answers, decided by whether the device sat inside a
+               subcircuit. */
             {
                 struct card *scan;
-                bool ab = FALSE;
+                bool ab = FALSE, spoke = FALSE;
                 int lst;
-                for (lst = 0; lst < 2 && !ab; lst++)
+                for (lst = 0; lst < 2; lst++)
                     for (scan = lst ? options : com_options; scan;
                          scan = scan->nextcard) {
-                        const char *l = scan->line, *q;
-                        if (!l)
-                            continue;
-                        for (q = l; (q = strstr(q, "autobus")) != NULL; q += 7) {
-                            char b = (q == l) ? ' ' : q[-1], a = q[7];
-                            if (!isalnum_c(b) && b != '_' &&
-                                !isalnum_c(a) && a != '_') {
-                                ab = TRUE;
-                                break;
-                            }
+                        bool on;
+                        if (scan->line &&
+                            e454_opt_onoff(scan->line, "autobus", &on)) {
+                            ab = on;    /* a later card wins */
+                            spoke = TRUE;
                         }
-                        if (ab)
-                            break;
                     }
-                inp_set_autobus(ab);
+                /* A deck card decides; only when no card mentions `autobus` at
+                   all does a `set autobus` from .spiceinit still apply. */
+                inp_set_autobus(spoke ? ab : e454_autobus_var());
             }
 
             /* Parsing the circuit 4.
@@ -2944,11 +3043,12 @@ e450_sc_token(const char *tok, bool *on)
 
     *on = !neg;
     if (eq) {
-        const char *v = eq + 1;
         /* An explicit false value turns it off. A `no` prefix AND a value is
            left off rather than double-negated back on: nobody writes
-           `nosavecurrents=0` meaning "on". */
-        if (cieq(v, "0") || cieq(v, "false") || cieq(v, "no") || cieq(v, "off"))
+           `nosavecurrents=0` meaning "on". Enhancement-454 moved the list of
+           off-words to `e454_value_is_off`, so autobus answers by the same
+           words this does. */
+        if (e454_value_is_off(eq + 1))
             *on = FALSE;
     }
     return TRUE;

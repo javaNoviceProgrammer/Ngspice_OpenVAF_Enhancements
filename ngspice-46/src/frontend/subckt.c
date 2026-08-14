@@ -1181,18 +1181,27 @@ static bool sc_autobus = FALSE;
    into the option lists. inp.c reads them there and calls this, the same way it
    already reads `scale` from those lists before expanding. A `set autobus` from
    .spiceinit is picked up through cp_getvar. */
+/* Enhancement-454: the caller now resolves the whole question -- option cards
+   first, and only if no card mentions `autobus` does a `set autobus` from
+   .spiceinit decide. It used to be OR'd here, so a deck saying
+   `.option autobus=0` could not switch off what an init file had turned on. */
 void
 inp_set_autobus(bool onoff)
 {
-    sc_autobus = onoff || cp_getvar("autobus", CP_BOOL, NULL, 0);
+    sc_autobus = onoff;
 }
 
 
 /* Emit the actuals of every formal spelled `name[...]`, ordered by ascending
    BIT INDEX (see below -- that is the order the compiled model uses, and the
-   device line is positional). Returns FALSE, having emitted nothing, when
-   `name` is not such a bus base. */
-static bool
+   device line is positional).
+
+   Enhancement-454: returns the NUMBER of actuals emitted, and 0 (having emitted
+   nothing) when `name` is not such a bus base. An X line needs the count: unlike
+   an OSDI line, whose node budget is the number of TOKENS written, a subcircuit
+   call's budget is the callee's formal count, so one token standing for five
+   nodes has to spend five of it. */
+static int
 e449_expand_bus_port(struct bxx_buffer *buffer, const char *name,
                      const char *name_e)
 {
@@ -1200,19 +1209,19 @@ e449_expand_bus_port(struct bxx_buffer *buffer, const char *name,
     int i, n = 0;
 
     if (!table || !name)
-        return FALSE;
+        return 0;
     if (!name_e)
         name_e = strchr(name, '\0');
     len = (size_t) (name_e - name);
     /* an already-indexed token is a plain node, not a bus base */
     if (len == 0 || memchr(name, '[', len))
-        return FALSE;
+        return 0;
 
     /* a formal of exactly that name wins -- it is an ordinary port */
     for (i = 0; table[i].t_old; i++)
         if (strlen(table[i].t_old) == len &&
             strncmp(name, table[i].t_old, len) == 0)
-            return FALSE;
+            return 0;
 
     /* Collect the bits, then emit them by ASCENDING BIT INDEX -- not in the
        order the .subckt line happens to list them. The compiled model always
@@ -1235,13 +1244,13 @@ e449_expand_bus_port(struct bxx_buffer *buffer, const char *name,
             if (endp == o + len + 1 || *endp != ']')
                 continue;               /* not a plain bit index */
             if (n >= E449_MAXBITS)
-                return FALSE;           /* implausible width: leave it alone */
+                return 0;           /* implausible width: leave it alone */
             bit[n].idx = idx;
             bit[n].act = table[i].t_new;
             n++;
         }
         if (n == 0)
-            return FALSE;
+            return 0;
 
         /* insertion sort: a bus is short, and this keeps equal keys stable */
         for (i = 1; i < n; i++) {
@@ -1261,7 +1270,7 @@ e449_expand_bus_port(struct bxx_buffer *buffer, const char *name,
             bxx_put_cstring(buffer, bit[i].act);
         }
     }
-    return TRUE;
+    return n;
 }
 
 
@@ -1620,11 +1629,24 @@ translate(struct card *deck, char *formal, int flen, char *actual, char *scname,
 
             nnodes = numnodes(c->line, subs);
             {
-                /* Enhancement-449: only an OSDI instance can carry a bus port,
-                   so only there may one token stand for several nodes. */
-                const bool osdi_line = (tolower_c(c->line[0]) == 'n');
+                /* Enhancement-449: an OSDI instance can carry a bus port, so one
+                   token may stand for several nodes.
+                   Enhancement-454: so can a SUBCIRCUIT CALL whose callee declares
+                   a bus port -- `Xi a b inner` for `.subckt inner a[0:4] b`.
+                   Without it a bus could be bound by name at the level that
+                   declared it but not passed down, which failed with "too few
+                   nodes" one level in.
 
-                while (--nnodes >= 0) {
+                   The two spend their node budget differently. `numnodes` for an
+                   OSDI line counts the TOKENS written, so each token costs one
+                   whatever it expands to; for an X line it is the callee's formal
+                   count, so an expanded token costs as many as it emitted. */
+                const bool osdi_line = (tolower_c(c->line[0]) == 'n');
+                const bool x_line = (tolower_c(c->line[0]) == 'x');
+
+                while (nnodes > 0) {
+                    int emitted = 0;
+
                     name = gettok_node(&s);
                     if (name == NULL) {
                         fprintf(cp_err, "Error: too few nodes: %s\n", c->line);
@@ -1632,9 +1654,13 @@ translate(struct card *deck, char *formal, int flen, char *actual, char *scname,
                         goto quit;
                     }
 
-                    if (!(sc_autobus && osdi_line &&
-                          e449_expand_bus_port(&buffer, name, NULL)))
+                    if (sc_autobus && (osdi_line || x_line))
+                        emitted = e449_expand_bus_port(&buffer, name, NULL);
+                    if (emitted == 0) {
                         translate_node_name(&buffer, scname, name, NULL);
+                        emitted = 1;
+                    }
+                    nnodes -= x_line ? emitted : 1;
                     tfree(name);
                     bxx_putc(&buffer, ' ');
                 }
