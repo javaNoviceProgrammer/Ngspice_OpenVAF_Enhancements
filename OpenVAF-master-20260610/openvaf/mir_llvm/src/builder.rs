@@ -1027,6 +1027,10 @@ impl<'ll> Builder<'_, '_, 'll> {
             Opcode::Cos => NonNull::from(self.intrinsic(args, "llvm.cos.f64")).as_ptr(),
             Opcode::Tan => NonNull::from(self.intrinsic(args, "tan")).as_ptr(),
             Opcode::Hypot => NonNull::from(self.intrinsic(args, "hypot")).as_ptr(),
+            // libm log1p/expm1, NOT `ln(1+x)`/`exp(x)-1`: the precision near
+            // zero is the entire reason LRM Table 4-14 lists these separately.
+            Opcode::Ln1p => NonNull::from(self.intrinsic(args, "log1p")).as_ptr(),
+            Opcode::Expm1 => NonNull::from(self.intrinsic(args, "expm1")).as_ptr(),
             Opcode::Asin => NonNull::from(self.intrinsic(args, "asin")).as_ptr(),
             Opcode::Acos => NonNull::from(self.intrinsic(args, "acos")).as_ptr(),
             Opcode::Atan => NonNull::from(self.intrinsic(args, "atan")).as_ptr(),
@@ -1069,6 +1073,8 @@ impl<'ll> Builder<'_, '_, 'll> {
                 | Opcode::Sqrt
                 | Opcode::Exp
                 | Opcode::Ln
+                | Opcode::Ln1p
+                | Opcode::Expm1
                 | Opcode::Log
                 | Opcode::Clog2
                 | Opcode::Floor

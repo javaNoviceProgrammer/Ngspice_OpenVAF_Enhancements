@@ -342,6 +342,14 @@ impl<'a> BodyRef<'a> {
         Some(ids.iter().map(|&id| Variable { id }).collect())
     }
 
+    /// The parameter-array twin of [`Self::array_var_ref`]: LRM 4.5.1 allows an array
+    /// PARAMETER wherever an array variable is allowed as a filter / `noise_table`
+    /// argument.
+    pub fn array_param_ref(&self, expr: ExprId) -> Option<Vec<Parameter>> {
+        let ids = self.infere.array_param_refs.get(&expr)?;
+        Some(ids.iter().map(|&id| Parameter { id }).collect())
+    }
+
     /// For a dynamic-index array *read* `c[i]` / `m[i][j]` (non-constant indices): the element
     /// variables flattened in declaration order, the per-dimension `(msb, lsb)` bounds, and one
     /// index expression per dimension. HIR lowering computes the flat position at runtime.

@@ -167,6 +167,17 @@ macro_rules! keywords {
 }
 
 pub mod kw {
+    // LRM Table 4-14 lists `ln1p`/`expm1` among the built-in math functions, but
+    // they are deliberately NOT in the `keywords!` list below -- that list is what
+    // `is_reserved` answers with, and reserving these two names broke eight shipping
+    // industry models: HiSIM-SOI and HiSIM-SOTB each declare their own
+    // `analog function real expm1`, which had compiled for years. Declared here, the
+    // names still resolve to the builtins in the base scope, and a module that
+    // defines a function of the same name simply shadows them.
+    #[allow(bad_style, dead_code)]
+    pub const ln1p: super::Name = super::Name::new_inline("ln1p");
+    #[allow(bad_style, dead_code)]
+    pub const expm1: super::Name = super::Name::new_inline("expm1");
     #[allow(bad_style, dead_code)]
     pub const use_: super::Name = super::Name::new_inline("use");
     #[allow(bad_style, dead_code)]
@@ -516,8 +527,10 @@ pub mod sysfun {
         abs,
         clog2,
         ln,
+        ln1p,
         log10,
         exp,
+        expm1,
         sqrt,
         pow,
         floor,

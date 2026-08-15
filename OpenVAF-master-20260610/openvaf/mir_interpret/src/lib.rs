@@ -139,6 +139,8 @@ impl<'a> Interpreter<'a> {
             mir::Opcode::Sqrt => f64::sqrt(args(0).f64()).into(),
             mir::Opcode::Exp => f64::exp(args(0).f64()).into(),
             mir::Opcode::Ln => f64::ln(args(0).f64()).into(),
+            mir::Opcode::Ln1p => f64::ln_1p(args(0).f64()).into(),
+            mir::Opcode::Expm1 => f64::exp_m1(args(0).f64()).into(),
             mir::Opcode::Log => f64::log10(args(0).f64()).into(),
             mir::Opcode::Clog2 => {
                 // Enhancement-101: $clog2(n) = ceil(log2 n) per IEEE 1800 -- the

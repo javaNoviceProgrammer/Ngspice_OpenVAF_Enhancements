@@ -470,6 +470,10 @@ impl<'a, 'u> DerivativeBuilder<'a, 'u> {
             Opcode::Hypot => res,
             // ln(x) -> 1/x
             Opcode::Ln => arg0,
+            // ln1p(x) -> 1/(1+x) -- the divide group caches the DENOMINATOR
+            Opcode::Ln1p => self.ins().fadd(arg0, F_ONE),
+            // expm1(x) -> exp(x); the multiply group caches the factor itself
+            Opcode::Expm1 => self.ins().exp(arg0),
             // log(x) -> log(e)/x
             Opcode::Log => self.ins().fdiv(F_LOG10_E, arg0),
             // sin(x) -> cos(x)
@@ -792,6 +796,7 @@ impl<'a, 'u> DerivativeBuilder<'a, 'u> {
             Opcode::Fdiv => gen_div_derivative(self, arg0, arg1, false),
 
             Opcode::Exp
+            | Opcode::Expm1
             | Opcode::Log
             | Opcode::Sin
             | Opcode::Cos
@@ -808,6 +813,7 @@ impl<'a, 'u> DerivativeBuilder<'a, 'u> {
             }
 
             Opcode::Ln
+            | Opcode::Ln1p
             |Opcode::Sqrt
             | Opcode::Asin
             | Opcode::Acos

@@ -137,6 +137,12 @@ pub enum BuiltIn {
     fgetc = 115u8,
     // Enhancement-108: $ungetc(c, fd) -- push a character back for the next read.
     ungetc = 116u8,
+    // LRM Table 4-14 / A.8.2 `analog_built_in_function_name`. Appended at the
+    // END, like every builtin added since the generator went stale: the
+    // BUILTIN_INFO array in hir_ty is indexed by this discriminant, and
+    // inserting in alphabetical order would renumber every builtin after it.
+    ln1p = 117u8,
+    expm1 = 118u8,
 }
 #[derive(Eq, PartialEq, Copy, Clone, Hash, Debug)]
 #[allow(nonstandard_style, unreachable_pub)]
@@ -311,6 +317,8 @@ pub fn insert_builtin_scope(dst: &mut IndexMap<Name, ScopeDefItem, BuildHasherDe
     dst.insert(kw::potential, BuiltIn::potential.into());
     dst.insert(kw::hypot, BuiltIn::hypot.into());
     dst.insert(kw::ln, BuiltIn::ln.into());
+    dst.insert(kw::ln1p, BuiltIn::ln1p.into());
+    dst.insert(kw::expm1, BuiltIn::expm1.into());
     dst.insert(kw::log, BuiltIn::log.into());
     dst.insert(kw::max, BuiltIn::max.into());
     dst.insert(kw::min, BuiltIn::min.into());
@@ -373,6 +381,15 @@ pub fn insert_builtin_scope(dst: &mut IndexMap<Name, ScopeDefItem, BuildHasherDe
     dst.insert(sysfun::rdist_t, BuiltIn::rdist_t.into());
     dst.insert(sysfun::clog2, BuiltIn::clog2.into());
     dst.insert(sysfun::ln, BuiltIn::ln.into());
+    dst.insert(sysfun::ln1p, BuiltIn::ln1p.into());
+    dst.insert(sysfun::expm1, BuiltIn::expm1.into());
+    // LRM Table 4-14 gives EVERY math function both a `$name` and a bare
+    // `name` spelling and encourages the `$` one. These three were the only
+    // ones whose `$` spelling was never registered, so `$abs`/`$min`/`$max`
+    // failed to resolve while `$ln`, `$sqrt`, `$pow` and 20 others worked.
+    dst.insert(sysfun::abs, BuiltIn::abs.into());
+    dst.insert(sysfun::min, BuiltIn::min.into());
+    dst.insert(sysfun::max, BuiltIn::max.into());
     dst.insert(sysfun::log10, BuiltIn::log10.into());
     dst.insert(sysfun::exp, BuiltIn::exp.into());
     dst.insert(sysfun::sqrt, BuiltIn::sqrt.into());

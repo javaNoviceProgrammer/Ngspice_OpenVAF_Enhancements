@@ -1787,6 +1787,22 @@ impl ExprValidator<'_, '_> {
                 // Enhancement-399: a concatenation here skipped every check below
                 // and produced a device that contributed no noise at all.
                 self.require_array_arg(name, "the table", args[0]);
+                // LRM 4.5.1 allows an array IDENTIFIER for this argument, but the
+                // table here is materialised at COMPILE time (`noise_table_data`
+                // reads the literal elements or the data file), and a parameter or
+                // variable array only has values at run time. Accepting one would
+                // hand the builtin an EMPTY table -- exactly the silent
+                // no-noise-at-all failure Enhancement-399 fixed for `{...}` -- so it
+                // is refused, and refused with the reason rather than with the
+                // "requires a bit-select [i]" that a bare array reference otherwise
+                // collects from the generic argument path.
+                if self.is_bare_array_ref_expr(args[0]) {
+                    self.bad_arg(name, "the table",
+                        "is an array parameter or variable, whose values are only \
+                         known at run time; this table is built when the model is \
+                         compiled, so it must be an array literal `'{...}` or a data \
+                         file name".to_owned(), args[0]);
+                }
                 if let Expr::Array(ref elems) = self.parent.body.exprs[args[0]] {
                     let elems = elems.clone();
                     if elems.is_empty() {
@@ -2192,6 +2208,25 @@ impl ExprValidator<'_, '_> {
             }
             _ => None,
         }
+    }
+
+    /// Is this expression a bare reference to an array PARAMETER or array VARIABLE
+    /// (an `array_identifier` in LRM 4.5.1 terms)?
+    ///
+    /// Checked against the module's declared arrays rather than by expression shape,
+    /// because a bare path is also how a legal STRING PARAMETER file name is written
+    /// (`parameter string f = "n.tbl"; ... noise_table(f)`) and that one must keep
+    /// working.
+    fn is_bare_array_ref_expr(&self, expr: ExprId) -> bool {
+        let Expr::Path { ref path, port: false } = self.parent.body.exprs[expr] else {
+            return false;
+        };
+        let Some(name) = path.as_ident() else { return false };
+        let DefWithBodyId::ModuleId { module, .. } = self.parent.owner else { return false };
+        let loc = module.lookup(self.parent.db.upcast());
+        let tree = loc.item_tree(self.parent.db.upcast());
+        tree[loc.id].param_arrays.iter().any(|arr| arr.base_name == name)
+            || tree[loc.id].var_arrays.iter().any(|arr| arr.base_name == name)
     }
 
     /// Enhancement-399: `{a, b}` is a CONCATENATION; the array literal the LRM

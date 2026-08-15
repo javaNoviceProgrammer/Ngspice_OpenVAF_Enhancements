@@ -30,6 +30,7 @@ use typed_index_collections::{TiSlice, TiVec};
 use crate::builtin::{
     DDX_FLOW, DDX_POT, DDX_POT_DIFF, DDX_TEMP, LAPALCE_TOL, LAPLACE_NATURE_TOL, LAPLACE_NO_TOL,
     LIMIT_BUILTIN_FUNCTION, LIMIT_USER_FUNCTION, NATURE_ACCESS_BRANCH, NATURE_ACCESS_NODES,
+    NOISE_TABLE_INLINE, NOISE_TABLE_INLINE_NAME,
     NATURE_ACCESS_NODE_GND, NATURE_ACCESS_PORT_FLOW,
 };
 use crate::db::{Alias, HirTyDB};
@@ -162,6 +163,14 @@ pub struct InferenceResult {
     /// literal: the variable's expanded scalar `VarId`s, in ascending declared-index order
     /// (`coeffs[0]`, `coeffs[1]`, ...). See `infere_array_arg`.
     pub array_var_refs: AHashMap<ExprId, Vec<VarId>>,
+    /// The parameter-array twin of [`Self::array_var_refs`]. LRM 4.5.1 says an array
+    /// argument to a Laplace/Z filter or `noise_table` may be "an array_identifier
+    /// (e.g. an array parameter or an array variable)", and Syntax 4-3 lists
+    /// `parameter_identifier` FIRST among the filter argument forms -- but only the
+    /// variable half existed, so the spelling the LRM writes first was rejected with
+    /// "requires a bit-select [i]". Read-only, so it is deliberately separate from
+    /// `array_var_refs` rather than a shared map that would make a write expressible.
+    pub array_param_refs: AHashMap<ExprId, Vec<ParamId>>,
     /// For a whole-array assignment statement (`c = '{...}` or `c = d`): the decomposed
     /// per-element assignments. When present, this statement is a `Stmt::ArrayAssignment` in the
     /// HIR (and `assignment_destination` carries no entry for it). See `try_infere_array_assignment`.
@@ -506,7 +515,9 @@ impl Ctx<'_> {
                 // A whole-array reference pre-resolved as a function-call array argument
                 // (Enhancement-18): return its already-recorded array type instead of the
                 // bare-array error.
-                if self.result.array_var_refs.contains_key(&expr) {
+                if self.result.array_var_refs.contains_key(&expr)
+                    || self.result.array_param_refs.contains_key(&expr)
+                {
                     return Some(self.result.expr_types[expr].clone());
                 }
                 if let Some(name) = path.as_ident() {
@@ -969,6 +980,60 @@ impl Ctx<'_> {
             BuiltIn::laplace_nd | BuiltIn::laplace_np | BuiltIn::laplace_zd
             | BuiltIn::laplace_zp => {
                 return self.infere_laplace(stmt, expr, builtin, args);
+            }
+
+            // `noise_table`'s array argument is resolved here rather than left to the
+            // generic path, which would reject a bare array reference with "requires a
+            // bit-select [i]" -- a message that describes neither the LRM rule nor the
+            // real constraint. Resolving it lets body validation refuse it with the
+            // actual reason (the table is built at COMPILE time, so a parameter or
+            // variable array cannot supply it); validation only runs on a body that
+            // type-checked, so the good message is unreachable unless inference passes
+            // the call through first. The refusal itself is not optional: an
+            // unresolvable table silently contributes NO NOISE, which is the exact
+            // failure Enhancement-399 fixed for `{...}`.
+            BuiltIn::noise_table | BuiltIn::noise_table_log
+                if !args.is_empty() && self.is_bare_array_ref(args[0]) =>
+            {
+                self.infere_array_arg(stmt, args[0]);
+                let sig = if args.len() > 1 {
+                    if let Some(ty) = self.infere_expr(stmt, args[1]) {
+                        self.expect::<false>(
+                            args[1],
+                            None,
+                            ty,
+                            Cow::Borrowed(&[TyRequirement::Literal(Type::String)]),
+                        );
+                    }
+                    NOISE_TABLE_INLINE_NAME
+                } else {
+                    NOISE_TABLE_INLINE
+                };
+                // Recording the signature is what makes body validation's
+                // `NOISE_TABLE_INLINE` arm -- which carries the diagnostic -- reachable.
+                self.result.resolved_signatures.insert(expr, sig);
+                return (Some(Ty::Val(Type::Real)), true);
+            }
+
+            // The Z-transform filters take the SAME coefficient vectors as their
+            // Laplace twins (LRM Syntax 4-3), but they have no dedicated arm and the
+            // generic path calls `infere_expr` on every argument, which rejects a bare
+            // array reference with "requires a bit-select" before `infere_array_arg`
+            // can resolve it. Pre-resolving args[1..3] here records the element
+            // Var/ParamIds and types both as arrays, so the ordinary signature match
+            // below then succeeds -- `zi_*`'s trailing T/t0/tol arguments keep going
+            // through the generic path, which is why this pre-resolves rather than
+            // borrowing `infere_laplace` (whose args[3] is a tolerance, not a period).
+            BuiltIn::zi_nd | BuiltIn::zi_np | BuiltIn::zi_zd | BuiltIn::zi_zp
+                if args.len() >= 3
+                    && (self.is_bare_array_ref(args[1]) || self.is_bare_array_ref(args[2])) =>
+            {
+                for &arg in &args[1..3] {
+                    if self.is_bare_array_ref(arg) {
+                        self.infere_array_arg(stmt, arg);
+                    }
+                }
+                Cow::Borrowed(TiSlice::from_ref(info.signatures))
             }
 
             BuiltIn::limit => {
@@ -1530,7 +1595,8 @@ impl Ctx<'_> {
     fn is_bare_array_ref(&mut self, arg: ExprId) -> bool {
         if let Expr::Path { ref path, port: false } = self.body.exprs[arg] {
             if let Some(name) = path.as_ident() {
-                return self.find_var_array(&name).is_some();
+                return self.find_var_array(&name).is_some()
+                    || self.find_param_array(&name).is_some();
             }
         }
         false
@@ -1646,6 +1712,29 @@ impl Ctx<'_> {
                     // ("invalid int operation feq" panic in const-eval).
                     let elem_ty = self.db.var_data(vars[0]).ty.clone();
                     self.result.array_var_refs.insert(arg, vars);
+                    let ty = Ty::Val(Type::Array { ty: Box::new(elem_ty), len });
+                    self.result.expr_types[arg] = ty.clone();
+                    return Some(ty);
+                }
+                // LRM 4.5.1 / Syntax 4-3: an array PARAMETER is equally a legal
+                // array argument. Elements are resolved exactly as
+                // `infere_dynamic_param_bit_select` does, so a parameter array and a
+                // variable array reach lowering through the same shape.
+                if let Some(arr) = self.find_param_array(&name) {
+                    let mut params = Vec::with_capacity(arr.elem_count());
+                    for idx in arr.index_tuples() {
+                        let synth = Path::new_ident(arr.elem_name(&idx));
+                        match self.resolve_path(stmt, arg, &synth)? {
+                            ScopeDefItem::ParamId(param) => params.push(param),
+                            _ => return None,
+                        }
+                    }
+                    if params.is_empty() {
+                        return None;
+                    }
+                    let len = params.len() as u32;
+                    let elem_ty = self.db.param_data(params[0]).ty.clone()?;
+                    self.result.array_param_refs.insert(arg, params);
                     let ty = Ty::Val(Type::Array { ty: Box::new(elem_ty), len });
                     self.result.expr_types[arg] = ty.clone();
                     return Some(ty);

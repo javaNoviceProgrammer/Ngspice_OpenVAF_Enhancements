@@ -662,8 +662,11 @@ impl BodyLoweringCtx<'_, '_, '_> {
                 nums.chunks_exact(2).map(|c| (c[0], c[1])).collect()
             }
             NOISE_TABLE_FILE | NOISE_TABLE_FILE_NAME => {
-                let fname = self.body.as_literal(args[0]).unwrap().unwrap_str();
-                self.read_noise_table_file(fname)
+                // Defensive: inference now requires a string LITERAL here, so this
+                // cannot be reached with anything else. It used to be an `unwrap()`
+                // that panicked the whole compiler on a string parameter.
+                let Some(lit) = self.body.as_literal(args[0]) else { return Vec::new() };
+                self.read_noise_table_file(lit.unwrap_str())
             }
             _ => Vec::new(),
         }
@@ -1643,6 +1646,17 @@ impl BodyLoweringCtx<'_, '_, '_> {
             BuiltIn::ln => {
                 let arg0 = self.lower_expr(args[0]);
                 self.ctx.ins().ln(arg0)
+            }
+            // LRM 4.3.1: ln1p(x) = ln(1+x) and expm1(x) = e^x - 1, each with its
+            // own opcode so the libm routine keeps the precision near x=0 that is
+            // the reason the LRM lists them apart from ln/exp.
+            BuiltIn::ln1p => {
+                let arg0 = self.lower_expr(args[0]);
+                self.ctx.ins().ln1p(arg0)
+            }
+            BuiltIn::expm1 => {
+                let arg0 = self.lower_expr(args[0]);
+                self.ctx.ins().expm1(arg0)
             }
             BuiltIn::sin => {
                 let arg0 = self.lower_expr(args[0]);
@@ -2865,6 +2879,22 @@ impl BodyLoweringCtx<'_, '_, '_> {
         // per LRM 9.19, and its inference records no cast).
         let coerce_real = coerce_real
             || matches!(self.body.needs_cast(expr), Some((_, dst)) if *dst.base_type() == Type::Real);
+
+        // An array PARAMETER argument (LRM 4.5.1) -- the read-only twin of the
+        // array-variable case below. Elements are parameter reads rather than
+        // variable reads; everything downstream sees the same flat value list.
+        if let Some(params) = self.body.array_param_ref(expr) {
+            let mut res = Vec::with_capacity(params.len());
+            for param in params {
+                let val = self.ctx.use_param(ParamKind::Param(param));
+                res.push(if coerce_real && param.ty(self.ctx.db) == Type::Integer {
+                    self.ctx.ins().ifcast(val)
+                } else {
+                    val
+                });
+            }
+            return res;
+        }
 
         if let Some(vars) = self.body.array_var_ref(expr) {
             let mut res = Vec::with_capacity(vars.len());

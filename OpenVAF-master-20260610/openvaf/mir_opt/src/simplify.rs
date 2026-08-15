@@ -139,6 +139,12 @@ impl<'a, FP: Arithmetic, M: Fn(Value, &Function) -> Value> SimplifyCtx<'a, FP, M
             Opcode::Exp | Opcode::Ln | Opcode::Cosh | Opcode::Sinh | Opcode::Asinh => {
                 return None
             }
+            // `ln1p`/`expm1` invert each other exactly, but cancelling them is the
+            // same overflow mistake as `ln(exp x)` above: expm1 overflows to inf for
+            // large x, so ln1p(expm1(x)) is inf, not x. The match below ends in
+            // `unreachable!()`, so a new unary opcode MUST appear here or the
+            // simplifier panics the moment a model uses it.
+            Opcode::Ln1p | Opcode::Expm1 => return None,
             Opcode::Log => return None,
             Opcode::Floor | Opcode::Ceil => {
                 if matches!(

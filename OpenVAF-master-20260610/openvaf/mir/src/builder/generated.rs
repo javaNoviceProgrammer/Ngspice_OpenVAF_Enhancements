@@ -210,6 +210,14 @@ pub trait InstBuilder<'f>: InstBuilderBase<'f> {
         let (inst, dfg) = self.unary(Opcode::Atanh, arg0);
         dfg.first_result(inst)
     }
+    fn ln1p(self, arg0: Value) -> Value {
+        let (inst, dfg) = self.unary(Opcode::Ln1p, arg0);
+        dfg.first_result(inst)
+    }
+    fn expm1(self, arg0: Value) -> Value {
+        let (inst, dfg) = self.unary(Opcode::Expm1, arg0);
+        dfg.first_result(inst)
+    }
     fn iadd(self, arg0: Value, arg1: Value) -> Value {
         let (inst, dfg) = self.binary(Opcode::Iadd, arg0, arg1);
         dfg.first_result(inst)

@@ -214,11 +214,18 @@ bultins! {
     }
 
 
+    // The data-file name is `Literal(String)`, not `Val(String)`: the table is read
+    // when the model is COMPILED, so the name has to be known then. Typed as a plain
+    // value, a string PARAMETER type-checked and the lowering's
+    // `as_literal(..).unwrap()` then panicked the compiler outright (exit 101, no
+    // diagnostic). `$table_model`, whose file name is read the same way, already
+    // required a literal and rejected the identical model with a clean type error --
+    // this is that sibling's rule applied here.
     NOISE_TABLE = const {
         fn NOISE_TABLE_INLINE(ArrayAnyLength{ty: Real}) -> Real;
-        fn NOISE_TABLE_FILE(Val(String)) -> Real;
+        fn NOISE_TABLE_FILE(Literal(String)) -> Real;
         fn NOISE_TABLE_INLINE_NAME(ArrayAnyLength{ty: Real},Literal(String)) -> Real;
-        fn NOISE_TABLE_FILE_NAME(Val(String),Literal(String)) -> Real;
+        fn NOISE_TABLE_FILE_NAME(Literal(String),Literal(String)) -> Real;
     }
 
     DDT = const {
@@ -317,12 +324,16 @@ bultins! {
         fn FINISH_NUM(Val(Integer)) -> Void;
     }
 
+    // LRM 9-10: "The argument param_name is a string value, either a string
+    // literal, string parameter, or a string variable." `Literal(String)` allowed
+    // only the first of the three. The name is passed to the SimParam callback as
+    // an ordinary lowered value, so `Val(String)` needs nothing else to work.
     SIMPARAM = const {
-        fn SIMPARAM_NO_DEFAULT(Literal(String)) -> Real;
-        fn SIMPARAM_DEFAULT(Literal(String),Val(Real)) -> Real;
+        fn SIMPARAM_NO_DEFAULT(Val(String)) -> Real;
+        fn SIMPARAM_DEFAULT(Val(String),Val(Real)) -> Real;
     }
 
-    const fn SIMPARAM_STR(Literal(String)) -> String;
+    const fn SIMPARAM_STR(Val(String)) -> String;
 
     RANDOM = const {
         fn RANDOM_NO_SEED() -> Integer;
@@ -531,8 +542,17 @@ const SSCANF_FUN: BuiltinInfo = BuiltinInfo::varargs(
     &[SignatureData { args: Cow::Borrowed(&[Val(String)]), return_ty: Type::Integer }],
     true,
 );
+// LRM Syntax 9-7: `$fatal [ ( finish_number [ , message ... ] ) ]` -- the whole
+// parenthesised group is optional, exactly as it is for `$error`/`$warning`/
+// `$info`, which already accepted the bare form. Only `$fatal` demanded an
+// argument, so the one spelling the LRM writes first was the one refused. The
+// empty signature is what lowers `min_args` to 0; the formatting loop is already
+// index-safe (it skips arg 0 for Fatal via `args.get(i)`).
 const FATAL: BuiltinInfo = BuiltinInfo::varargs(
-    &[SignatureData { args: Cow::Borrowed(&[Val(Integer)]), return_ty: Type::Void }],
+    &[
+        SignatureData { args: Cow::Borrowed(&[Val(Integer)]), return_ty: Type::Void },
+        SignatureData { args: Cow::Borrowed(&[]), return_ty: Type::Void },
+    ],
     true,
 );
 
@@ -559,6 +579,8 @@ copied_builtins! {
     LOG10 = REAL_MATH_1
     CEIL = REAL_MATH_1
     LIMEXP = REAL_MATH_1
+    LN1P = REAL_MATH_1
+    EXPM1 = REAL_MATH_1
     SIN = REAL_MATH_1
     SINH = REAL_MATH_1
     SQRT = REAL_MATH_1

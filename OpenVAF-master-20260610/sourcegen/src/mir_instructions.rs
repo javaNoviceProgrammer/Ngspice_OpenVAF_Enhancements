@@ -94,6 +94,12 @@ opcodes! {
         Asinh
         Acosh
         Atanh
+        // LRM Table 4-14 lists ln1p/expm1 beside ln/exp. They are their own
+        // opcodes rather than `ln(1+x)`/`exp(x)-1` because that is their entire
+        // reason to exist: near x=0 the naive spelling loses most of its
+        // significant digits, and libm's log1p/expm1 do not.
+        Ln1p
+        Expm1
     }
 
     Binary(2) -> 1{
