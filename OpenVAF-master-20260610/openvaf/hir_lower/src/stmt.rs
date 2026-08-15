@@ -370,7 +370,21 @@ impl BodyLoweringCtx<'_, '_, '_> {
 
         let rescheduled = if let Some(period) = period {
             let period = self.lower_expr(period);
-            self.ctx.ins().fadd(next, period)
+            // LRM 5.10.3.3: "If the period expression evaluates to a value less
+            // than or equal to 0.0, the timer shall trigger only once at the
+            // specified start_time." A non-positive period is not an error -- it
+            // is how a ONE-SHOT is written when the period is computed rather
+            // than omitted. `@(timer(t0))` already means exactly that, and this
+            // routes to the same INFINITY sentinel.
+            //
+            // Decided at RUN TIME rather than by folding, because the LRM speaks
+            // of what the expression "evaluates to": `@(timer(t0, p))` with a
+            // parameter `p` must fire once when p <= 0 and repeat when it is
+            // raised, without recompiling.
+            let zero = self.ctx.fconst(0.0);
+            let repeats = self.ctx.ins().fgt(period, zero);
+            let periodic = self.ctx.ins().fadd(next, period);
+            self.ctx.make_select(repeats, |_, branch| if branch { periodic } else { INFINITY })
         } else {
             INFINITY
         };

@@ -538,9 +538,16 @@ impl BodyValidator<'_> {
                     stmt,
                 };
                 v.require_non_negative("@(timer)", "the start time", t0);
-                if let Some(period) = period {
-                    v.require_positive("@(timer)", "the period", period);
-                }
+                // A NON-POSITIVE PERIOD IS LEGAL. LRM 5.10.3.3: "If the period
+                // expression evaluates to a value less than or equal to 0.0, the
+                // timer shall trigger only once at the specified start_time." It
+                // used to be refused ("the period must be greater than zero"),
+                // which rejected the way a one-shot is written when the period is
+                // computed rather than omitted -- while `@(timer(t0))`, the same
+                // request spelled differently, was accepted and did exactly that.
+                // The lowering now routes a non-positive period to the same
+                // fire-once path, so nothing here needs to constrain it.
+                let _ = period;
                 // Enhancement-399: the tolerance was previously discarded, so a
                 // negative one reached nothing and was reported by no one.
                 if let Some(tol) = tol {

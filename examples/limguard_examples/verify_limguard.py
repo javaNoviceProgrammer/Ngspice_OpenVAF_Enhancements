@@ -264,11 +264,37 @@ endmodule
         check(f"{label} is {'accepted' if ok else 'rejected'}", (rc2 == 0) == ok,
               (o2.strip().splitlines() or [""])[0][:52])
 
+    # ---- [5] a degenerate period must fire ONCE, not once per evaluation ----
+    # This is the invariant finding [5] actually cared about: a period of zero
+    # used to give 120 events over a 10 us run, one per timestep.
+    for lbl, per, want in [("period 0", "0", 1), ("period -1us", "-1e-6", 1),
+                           ("period 1us", "1e-6", 11), ("no period", None, 1)]:
+        ev = f"@(timer(0, {per}))" if per is not None else "@(timer(0))"
+        d, rc, _ = build(mod(f'{ev} $strobe("TK"); I(p,n) <+ V(p,n)*1e-3;'), "tk")
+        if rc != 0:
+            check(f"[E-445] timer {lbl} compiles", False, f"rc={rc}")
+            continue
+        _, out = run(d, deck(body="tran 1u 10u"))
+        n = len(re.findall("TK", out))
+        check(f"[E-445] timer {lbl} fires {want}x, not once per timestep",
+              n == want, f"fired {n}x")
+
     # ================================================== [5]/[6]/[10] constants
     print("\n  -- [5] @(timer), [6] $bound_step, [10] operator arguments --")
     ARG_CASES = [
-        ("@(timer) period 0", " integer c;", "@(timer(0, 0)) c = c+1;", False),
-        ("@(timer) period negative", " integer c;", "@(timer(0, -1e-6)) c = c+1;", False),
+        # A NON-POSITIVE PERIOD IS LEGAL, and now fires exactly ONCE.
+        # LRM 5.10.3.3: "If the period expression evaluates to a value less than
+        # or equal to 0.0, the timer shall trigger only once at the specified
+        # start_time." Finding [5] was that such a period fired on EVERY
+        # evaluation (120 events over a 10 us run); refusing it at compile time
+        # cured that, but also refused the way a one-shot is written when the
+        # period is COMPUTED rather than omitted -- while `@(timer(t0))`, the same
+        # request spelled differently, was accepted and did exactly that. The
+        # lowering now routes a non-positive period to the same fire-once path, so
+        # finding [5]'s invariant is kept by the firing COUNT pinned below rather
+        # than by a compile error.
+        ("@(timer) period 0", " integer c;", "@(timer(0, 0)) c = c+1;", True),
+        ("@(timer) period negative", " integer c;", "@(timer(0, -1e-6)) c = c+1;", True),
         ("@(timer) start negative", " integer c;", "@(timer(-1.0, 1e-6)) c = c+1;", False),
         ("@(timer) period 1us", " integer c;", "@(timer(0, 1e-6)) c = c+1;", True),
         ("@(timer) with only a start", " integer c;", "@(timer(0)) c = c+1;", True),
