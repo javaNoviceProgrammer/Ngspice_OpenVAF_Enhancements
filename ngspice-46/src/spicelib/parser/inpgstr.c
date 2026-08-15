@@ -39,6 +39,17 @@ int INPgetStr(char **line, char **token, int gobble)
     *line = point;
     /* now find all good characters */
     for (point = *line; *point != '\0'; point++) {
+	/* Enhancement-461: inside quotes ONLY the closing quote ends the token.
+	 * The separator was honoured for its own character but the whitespace and
+	 * punctuation tests below still fired inside it, so a quoted string
+	 * parameter was truncated at its first space: `ty="with space"` reached
+	 * the model as `with`. A quoted value is one token by definition -- that
+	 * is what the quotes are for. */
+	if (separator) {
+	    if (*point == separator)
+		break;
+	    continue;
+	}
 	if ((*point == ' ') ||
 	    (*point == '\t') ||
 	    (*point == '=') ||

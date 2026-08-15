@@ -293,16 +293,36 @@ impl Body {
 
         let bounds = ast
             .constraints()
-            .filter_map(|constraint| {
-                let kind = constraint.kind()?;
-                let val = match constraint.val()? {
-                    ast::ConstraintValue::Val(val) => {
+            .flat_map(|constraint| {
+                let Some(kind) = constraint.kind() else { return Vec::new() };
+                // Enhancement-461: a SET constraint -- `from '{"a","b","c"}` (LRM
+                // 3.4.2) -- becomes ONE ParamConstraint PER MEMBER. `check_param`
+                // already gives a list of them exactly the right meaning: `From`
+                // branches to the ok-exit on any match and calls `invalid` only on
+                // fallthrough, `Exclude` calls `invalid` on any match. Collecting
+                // only `constraint.val()` here kept just the first member, so a
+                // `from` set rejected every other legal value and an `exclude` set
+                // silently ACCEPTED every forbidden value after the first.
+                if constraint.range().is_none() {
+                    return constraint
+                        .vals()
+                        .map(|val| {
+                            let val = ctx.collect_expr(val);
+                            let stmt = ctx.alloc_stmt_desugared(Stmt::Expr(val));
+                            entry_stmts.push(stmt);
+                            ParamConstraint { kind, val: ConstraintValue::Value(val) }
+                        })
+                        .collect();
+                }
+                let val = match constraint.val() {
+                    None => return Vec::new(),
+                    Some(ast::ConstraintValue::Val(val)) => {
                         let val = ctx.collect_expr(val);
                         let stmt = ctx.alloc_stmt_desugared(Stmt::Expr(val));
                         entry_stmts.push(stmt);
                         ConstraintValue::Value(val)
                     }
-                    ast::ConstraintValue::Range(range) => {
+                    Some(ast::ConstraintValue::Range(range)) => {
                         let start = ctx.collect_opt_expr(range.start());
                         let stmt = ctx.alloc_stmt_desugared(Stmt::Expr(start));
                         entry_stmts.push(stmt);
@@ -319,7 +339,7 @@ impl Body {
                         })
                     }
                 };
-                Some(ParamConstraint { kind, val })
+                vec![ParamConstraint { kind, val }]
             })
             .collect();
 

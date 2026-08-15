@@ -307,6 +307,53 @@ static char *keep_case_of_cider_param(char *buffer)
     return s;
 }
 
+/* Enhancement-461: is this line a comment or blank? The existing
+ * `is_comment_or_blank` is compiled only under CIDER, and the `.model` case
+ * retention below is needed in every build.
+ */
+static int is_comment_or_blank_461(char *buffer)
+{
+    switch (buffer[0]) {
+    case '*':
+    case '$':
+    case '#':
+    case '\n':
+    case '\0':
+        return 1;
+    default:
+        return 0;
+    }
+}
+
+/* Enhancement-461: lower-case a line but KEEP the text inside double quotes.
+ *
+ * `keep_case_of_cider_param` above only preserves when a line holds EXACTLY one
+ * pair of quotes, which is enough for Cider's one filename but not for a
+ * `.model` card carrying several string parameters. This handles any number of
+ * pairs, and is what OSDI model cards use: a quoted value there is DATA -- a
+ * selector compared with `==`, a file name, a `from '{"a","b"}` set member --
+ * not an identifier SPICE may case-fold.
+ *
+ * Before this, `.model m dut(ty="PMOS")` reached the Verilog-A model as `pmos`,
+ * so a string parameter could never match a mixed-case value and a `from` set
+ * written in upper case rejected every one of its own members.
+ */
+static char *keep_case_in_quotes(char *buffer)
+{
+    char *s;
+    int in_quotes = 0;
+    for (s = buffer; *s && (*s != '\n'); s++) {
+        if (*s == '"') {
+            in_quotes = !in_quotes;
+            continue; /* the quote itself needs no folding */
+        }
+        if (!in_quotes) {
+            *s = tolower_c(*s);
+        }
+    }
+    return s;
+}
+
 static char* make_lower_case_copy(char* inbuf)
 {
     char* s = NULL;
@@ -1430,6 +1477,9 @@ static struct inp_read_t inp_read(FILE* fp, int call_depth, const char* dir_name
 #ifdef CIDER
     static int in_cider_model = 0;
 #endif
+    /* Enhancement-461: a `.model` card and its `+` continuations keep the case of
+     * anything in double quotes -- see `keep_case_in_quotes`. */
+    static int in_model_card = 0;
 
     if (intfile)
         sourcelineinfo = copy("circbyline");
@@ -1770,6 +1820,14 @@ static struct inp_read_t inp_read(FILE* fp, int call_depth, const char* dir_name
          * double quotes are printed. */
         {
             char* s;
+            /* Enhancement-461: track whether we are inside a `.model` card, so its
+             * `+` continuation lines keep quoted case too. Any line that is not a
+             * continuation ends the card. */
+            if (ciprefix(".model", buffer)) {
+                in_model_card = 1;
+            } else if (buffer[0] != '+' && !is_comment_or_blank_461(buffer)) {
+                in_model_card = 0;
+            }
 #ifdef CIDER
             if (ciprefix(".model", buffer)) {
                 in_cider_model = is_cider_model(buffer);
@@ -1880,6 +1938,24 @@ static struct inp_read_t inp_read(FILE* fp, int call_depth, const char* dir_name
                 s = keep_case_of_cider_param(buffer);
             }
 #endif
+            /* Enhancement-461: every other `.model` card (an OSDI/Verilog-A model
+             * among them) keeps the case of quoted text. A quoted value on a model
+             * card is DATA -- a string parameter's selector, file name or `from`
+             * set member -- and folding it silently changed the model's behaviour:
+             * `ty="PMOS"` arrived as `pmos`. */
+            else if (in_model_card && !is_comment_or_blank_461(buffer)) {
+                s = keep_case_in_quotes(buffer);
+            }
+            /* Enhancement-461: a DEVICE INSTANCE line that assigns a quoted value
+             * keeps that value's case, for the same reason a `.model` card does --
+             * `N1 a 0 mm ty="PMOS"` sets a string parameter, and folding it to
+             * `pmos` changed what the model computed. Only lines that actually
+             * contain `="` are affected, and control-section commands are handled
+             * by the branch below, which this one deliberately does not precede. */
+            else if (!is_control && !comfile && isalpha_c(buffer[0])
+                     && strstr(buffer, "=\"")) {
+                s = keep_case_in_quotes(buffer);
+            }
             /* no lower case letters for lines beginning with: */
             else if (!(ciprefix(".lib", buffer) || ciprefix(".inc", buffer) ||
                 ((comfile || is_control) && (
@@ -4247,6 +4323,15 @@ void inp_casefix(char *string)
         keepquotes = keepquotes || (ciprefix(".subckt", string) && (strstr(string, "=\"")));
         /* Keep quoted strings in X lines */
         keepquotes = keepquotes || (*string == 'x' && strchr(string, '\"'));
+        /* Enhancement-461: keep them on a `.model` card and on a device instance
+         * line too. Without this the quotes became SPACES here, so a Verilog-A
+         * string parameter was cut at its first space -- `ty="with space"` reached
+         * the model as `with`, and the remainder was then reported as an
+         * "unrecognized parameter (space)". The `="` test mirrors the `.subckt`
+         * rule directly above: only a line that actually assigns a quoted value is
+         * affected. */
+        keepquotes = keepquotes || (ciprefix(".model", string) && strstr(string, "=\""));
+        keepquotes = keepquotes || (isalpha_c(*string) && strstr(string, "=\""));
 
         while (*string) {
 #ifdef XSPICE
@@ -4265,6 +4350,13 @@ void inp_casefix(char *string)
             if (*string == '"') {
                 if (!keepquotes)
                     *string++ = ' ';
+                else
+                    /* Enhancement-461: step PAST the opening quote even when it is
+                     * kept. Without this the skip loop below starts ON the quote,
+                     * exits immediately, and the quoted text is then lower-cased one
+                     * character at a time by the tail of this loop -- keeping the
+                     * quotes but losing the case they exist to protect. */
+                    string++;
                 while (*string && *string != '"')
                     string++;
                 if (*string == '\0')

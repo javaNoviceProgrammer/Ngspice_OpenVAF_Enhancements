@@ -353,6 +353,21 @@ impl Constraint {
             Some(ConstraintValue::Val(self.expr()?))
         }
     }
+
+    /// EVERY value of a set constraint, not just the first.
+    ///
+    /// `from '{"a","b","c"}` (LRM 3.4.2, the string-parameter form) parses all
+    /// three expressions as children of this node, but `val()` above returns
+    /// `support::child` -- the FIRST one -- so elements 2..n were parsed, attached
+    /// to the tree and then silently dropped. Only the first member of the set was
+    /// ever enforced: `from` rejected every other legal value, and `exclude`
+    /// ACCEPTED every forbidden value after the first.
+    ///
+    /// A range constraint keeps its bounds inside its own `RANGE` node, so this
+    /// yields nothing for one and `val()` stays the accessor for that case.
+    pub fn vals(&self) -> AstChildren<Expr> {
+        support::children(self.syntax())
+    }
 }
 
 impl Function {
