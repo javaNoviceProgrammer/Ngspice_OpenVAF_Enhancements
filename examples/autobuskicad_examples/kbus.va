@@ -1,0 +1,44 @@
+// Enhancement-462: models for the `.option autobus=kicad` spelling.
+// Each leg has a different conductance, so a mis-ordered or mis-indexed
+// expansion cannot pass by coincidence.
+`include "disciplines.vams"
+
+// a five-bit bus and a scalar
+module kbus(a, b);
+    inout [0:4] a; inout b;
+    electrical [0:4] a; electrical b;
+    parameter real r = 1e3 from (0:inf);
+    genvar k;
+    analog for (k = 0; k <= 4; k = k + 1)
+        I(a[k], b) <+ V(a[k], b) / (r * (k + 1));
+endmodule
+
+// TWO bus ports: eight terminals, two ports -- the KiCad two-pin symbol case
+module kbus2(a, b);
+    inout [0:3] a; inout [0:3] b;
+    electrical [0:3] a; electrical [0:3] b;
+    parameter real r = 1e3 from (0:inf);
+    genvar k;
+    analog for (k = 0; k <= 3; k = k + 1)
+        I(a[k], b[k]) <+ V(a[k], b[k]) / (r * (k + 1));
+endmodule
+
+// twelve bits, so the index text is MULTI-DIGIT: a[10], a[11]
+module kwide(a, b);
+    inout [0:11] a; inout b;
+    electrical [0:11] a; electrical b;
+    parameter real r = 1e3 from (0:inf);
+    genvar k;
+    analog for (k = 0; k <= 11; k = k + 1)
+        I(a[k], b) <+ V(a[k], b) / (r * (k + 1));
+endmodule
+
+// declared [4:1] -- the indices are the MODEL's, not 0..n-1
+module koff(a, b);
+    inout [4:1] a; inout b;
+    electrical [4:1] a; electrical b;
+    parameter real r = 1e3 from (0:inf);
+    genvar k;
+    analog for (k = 1; k <= 4; k = k + 1)
+        I(a[k], b) <+ V(a[k], b) / (r * k);
+endmodule

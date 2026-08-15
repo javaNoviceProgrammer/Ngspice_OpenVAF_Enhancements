@@ -76,6 +76,59 @@ static bool autobus_enabled(void)
     return FALSE;
 }
 
+/* Enhancement-462: which SPELLING does an expanded bit node get?
+ *
+ * `.option autobus` names bit k of port `a` as `a[k]`, copying the bracket text
+ * from the model's own terminal name. KiCad cannot write that: its SPICE
+ * exporter rewrites every `[` and `]` in a net name to `_`, so a sheet that
+ * labels a wire `AA[0]` puts `/AA_0_` in the netlist -- measured, including
+ * multi-digit indices (`ZA[10]` -> `/ZA_10_`). The two spellings never unify,
+ * so under KiCad the bits of a bus port could not be labelled, plotted from the
+ * signal list, or wired to ordinary parts.
+ *
+ * `.option autobus=kicad` switches the generated spelling to KiCad's, and
+ * nothing else -- the indices still come from the model's terminal names, so a
+ * port declared `[4:1]` still expands 1..4.
+ *
+ * Only this expansion is affected. The subcircuit path (`e449_expand_bus_port`
+ * in frontend/subckt.c) maps a bus base onto the FORMALS the .subckt line
+ * already declares rather than synthesising any name, so it has no spelling to
+ * choose; the suite pins that a subcircuit still behaves identically. */
+static bool autobus_kicad_style(void)
+{
+    static char warned[64] = "";
+    char s[64];
+
+    if (!cp_getvar("autobus", CP_STRING, s, sizeof(s)))
+        return FALSE;               /* bare flag, or `=1`: a NUMBER, not a string */
+    if (cieq(s, "kicad"))
+        return TRUE;
+    /* The on-words: the feature is on, in the default spelling. Anything else is
+       a style that does not exist, and silently falling back to the default is
+       how a KiCad sheet would come out floating with nothing said -- the shape
+       Enhancements 447/451/455 each had to go back and fix. Say so, once per
+       distinct spelling so a deck does not repeat it per device line. */
+    if (!cieq(s, "true") && !cieq(s, "yes") && !cieq(s, "on") &&
+        strcmp(s, warned) != 0) {
+        fprintf(stderr, "Warning: unknown autobus style '%s'; expected 'kicad'. "
+                        "Using the default a[k] spelling.\n", s);
+        strncpy(warned, s, sizeof(warned) - 1);
+        warned[sizeof(warned) - 1] = '\0';
+    }
+    return FALSE;
+}
+
+/* append the model's own index, in the chosen spelling: `[3]` or `_3_` */
+static void autobus_cat_index(DSTRINGPTR nl, const char *lb, bool kicad)
+{
+    if (!kicad) {
+        ds_cat_str(nl, lb);
+        return;
+    }
+    for (; *lb; lb++)
+        ds_cat_char(nl, (*lb == '[' || *lb == ']') ? '_' : *lb);
+}
+
 /* the base name of a terminal, and whether it carried an index */
 static size_t autobus_base(const char *nm, bool *indexed)
 {
@@ -270,6 +323,7 @@ void INP2N(CKTcircuit *ckt, INPtables *tab, struct card *current) {
       char *scan = line;
       int p;
       bool badtok = FALSE;              /* Enhancement-445 */
+      bool kicad = autobus_kicad_style();  /* Enhancement-462 */
 
       for (p = 0; p < np; p++) {
         char *tok = gettok_instance(&scan);
@@ -291,7 +345,7 @@ void INP2N(CKTcircuit *ckt, INPtables *tab, struct card *current) {
             ds_cat_char(&nl, ' ');
           ds_cat_str(&nl, tok);
           if (lb)                       /* copy the model's own index */
-            ds_cat_str(&nl, lb);
+            autobus_cat_index(&nl, lb, kicad);   /* Enhancement-462 */
         }
         tfree(tok);
       }
