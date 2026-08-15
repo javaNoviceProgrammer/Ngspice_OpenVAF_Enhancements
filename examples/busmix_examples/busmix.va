@@ -1,0 +1,22 @@
+// Enhancement-464: an OSDI instance line that mixes an expanded bus FORMAL
+// with a LOCAL bus port. Channel k is r0*(k+1) so every bit differs.
+`include "disciplines.vams"
+
+module chan(a, b);
+    inout [0:3] a; inout [0:3] b;
+    electrical [0:3] a; electrical [0:3] b;
+    parameter real r0 = 1e3 from (0:inf);
+    genvar k;
+    analog for (k = 0; k <= 3; k = k + 1)
+        I(a[k], b[k]) <+ V(a[k], b[k]) / (r0 * (k + 1));
+endmodule
+
+// a bus port and a SCALAR port, to pin the scalar case on a mixed line
+module busscal(a, s);
+    inout [0:3] a; inout s;
+    electrical [0:3] a; electrical s;
+    parameter real r0 = 1e3 from (0:inf);
+    genvar k;
+    analog for (k = 0; k <= 3; k = k + 1)
+        I(a[k], s) <+ V(a[k], s) / (r0 * (k + 1));
+endmodule

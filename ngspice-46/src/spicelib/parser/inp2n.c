@@ -94,7 +94,7 @@ static bool autobus_enabled(void)
  * in frontend/subckt.c) maps a bus base onto the FORMALS the .subckt line
  * already declares rather than synthesising any name, so it has no spelling to
  * choose; the suite pins that a subcircuit still behaves identically. */
-static bool autobus_kicad_style(void)
+int INPbusKicadStyle(void)
 {
     static char warned[64] = "";
     char s[64];
@@ -119,14 +119,25 @@ static bool autobus_kicad_style(void)
 }
 
 /* append the model's own index, in the chosen spelling: `[3]` or `_3_` */
+/* Enhancement-464: the ONE place the bit spelling is decided, in a form the
+   subcircuit expander can call too -- a plain buffer, so no dstring type has to
+   cross the header. Duplicating three lines instead would be exactly the
+   two-readers-of-one-rule shape E-454 had to repair in this same option. */
+void INPbusBitSuffix(const char *lb, int kicad, char *out, size_t n)
+{
+    size_t i = 0;
+
+    for (; *lb && i + 1 < n; lb++)
+        out[i++] = (kicad && (*lb == '[' || *lb == ']')) ? '_' : *lb;
+    out[i] = '\0';
+}
+
 static void autobus_cat_index(DSTRINGPTR nl, const char *lb, bool kicad)
 {
-    if (!kicad) {
-        ds_cat_str(nl, lb);
-        return;
-    }
-    for (; *lb; lb++)
-        ds_cat_char(nl, (*lb == '[' || *lb == ']') ? '_' : *lb);
+    char buf[64];
+
+    INPbusBitSuffix(lb, kicad, buf, sizeof buf);
+    ds_cat_str(nl, buf);
 }
 
 /* the base name of a terminal, and whether it carried an index */
@@ -177,7 +188,7 @@ static bool autobus_token_ok(const char *tok, const char *instname,
 
 /* Group terminals into ports. Returns the port count, or -1 if the table is
    unusable. start[p] is the first terminal of port p, cnt[p] its width. */
-static int autobus_ports(IFdevice *dev, int *start, int *cnt, int maxp)
+int INPbusPorts(IFdevice *dev, int *start, int *cnt, int maxp)
 {
     int t, np = 0;
 
@@ -316,14 +327,14 @@ void INP2N(CKTcircuit *ckt, INPtables *tab, struct card *current) {
      below, so a line that expands is not also reported as under-connected. */
   if (numnodes < *dev->terms && autobus_enabled()) {
     int pstart[AUTOBUS_MAXPORT], pcnt[AUTOBUS_MAXPORT];
-    int np = autobus_ports(dev, pstart, pcnt, AUTOBUS_MAXPORT);
+    int np = INPbusPorts(dev, pstart, pcnt, AUTOBUS_MAXPORT);
 
     if (np == numnodes && np < *dev->terms) {
       DS_CREATE(nl, 128);
       char *scan = line;
       int p;
       bool badtok = FALSE;              /* Enhancement-445 */
-      bool kicad = autobus_kicad_style();  /* Enhancement-462 */
+      bool kicad = INPbusKicadStyle();  /* Enhancement-462 */
 
       for (p = 0; p < np; p++) {
         char *tok = gettok_instance(&scan);
@@ -585,7 +596,7 @@ INPadapt(CKTcircuit *ckt, struct card *deck, INPtables *tab)
                             "OSDI device.\n", amodel);
             return;
         }
-        anp = autobus_ports(adev, astart, acnt, AUTOBUS_MAXPORT);
+        anp = INPbusPorts(adev, astart, acnt, AUTOBUS_MAXPORT);
         if (anp != 2 || acnt[0] < 2 || acnt[1] < 2 || acnt[0] != acnt[1]) {
             fprintf(stderr, "Error: autoadapt: adapter model '%s' must have "
                     "exactly two bus ports of equal width (found %d port(s), "
@@ -627,7 +638,7 @@ INPadapt(CKTcircuit *ckt, struct card *deck, INPtables *tab)
         if (!thismodel) { tfree(mname); continue; }
         dev = ft_sim->devices[thismodel->INPmodType];
         if (!dev || !dev->registry_entry) { tfree(mname); continue; }
-        np = autobus_ports(dev, pstart, pcnt, AUTOBUS_MAXPORT);
+        np = INPbusPorts(dev, pstart, pcnt, AUTOBUS_MAXPORT);
         /* An instance OF THE ADAPTER is not a candidate: otherwise a deck that
            already carries adapters -- hand-written, or from an earlier run of
            this pass -- gets them adapted in turn, `b_f` becoming `b_f_f`/`b_f_r`

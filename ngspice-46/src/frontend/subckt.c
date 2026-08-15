@@ -205,8 +205,11 @@ free_global_nodes(void)
   it returns a pointer to the same deck after the new subcircuits
   are spliced in.
   -------------------------------------------------------------------*/
+static struct card *e464_deck = NULL;  /* E-464: set here, read by e464_port_widths */
+
 struct card *
 inp_subcktexpand(struct card *deck) {
+    e464_deck = deck;   /* Enhancement-464: for .model lookups */
     struct card *c;
     wordlist *modnames = NULL;
 
@@ -1175,6 +1178,14 @@ bxx_buffer(struct bxx_buffer *t)
  */
 #define E449_MAXBITS 1024
 static bool sc_autobus = FALSE;
+/* Enhancement-464: the SPELLING must travel with the flag. `INPbusKicadStyle()`
+   reads the published `autobus` variable, which does not exist yet at flattening
+   time -- the very reason inp_set_autobus() exists. Calling it here silently
+   returned "brackets" for a `.option autobus=kicad` deck, so a mixed line's
+   local bus expanded to `x1.b[k]` while every `b_0_` written beside it became a
+   different node, and the bits floated. Exactly the two-readers-of-one-option
+   split E-454 had to repair. */
+static bool sc_autobus_kicad = FALSE;
 
 /* `.option autobus` is not published as a variable at flattening time -- and by
    then the `.option` cards are no longer in the deck either, having been split
@@ -1186,11 +1197,112 @@ static bool sc_autobus = FALSE;
    .spiceinit decide. It used to be OR'd here, so a deck saying
    `.option autobus=0` could not switch off what an init file had turned on. */
 void
-inp_set_autobus(bool onoff)
+inp_set_autobus(bool onoff, bool kicad)
 {
     sc_autobus = onoff;
+    sc_autobus_kicad = kicad;
 }
 
+
+
+/* Enhancement-464: the port widths of an OSDI instance line's model.
+ *
+ * Subcircuit flattening runs long before the model table exists, so the widths
+ * cannot be read from `modtab` here. They can still be reached: `pre_osdi` has
+ * already loaded and REGISTERED the module, and the deck's own `.model` cards
+ * map a model name onto that module name. So `.model mymodel1 chan r0=1k` plus
+ * `INPtypelook("chan")` gives the IFdevice, and `INPbusPorts` -- the same
+ * grouping INP2N uses, exported rather than copied so the two cannot drift --
+ * gives the ports.
+ *
+ * Returns the port count, or -1 when the model cannot be resolved (a built-in
+ * device, a model defined elsewhere, an .osdi not yet loaded): callers then
+ * behave exactly as before.
+ */
+static int
+e464_port_widths(const char *modelname, int *start, int *cnt, int maxp,
+                 IFdevice **devout)
+{
+    struct card *c;
+    char *module = NULL;
+    int type, np;
+    IFdevice *dev;
+
+    if (!modelname || !e464_deck)
+        return -1;
+    for (c = e464_deck; c; c = c->nextcard) {
+        char *line = c->line, *tok;
+        if (!line || !ciprefix(".model", line))
+            continue;
+        tok = gettok(&line);                    /* .model */
+        tfree(tok);
+        tok = gettok(&line);                    /* the model name */
+        if (tok && cieq(tok, modelname)) {
+            tfree(tok);
+            module = gettok(&line);             /* the module/device type */
+            break;
+        }
+        tfree(tok);
+    }
+    if (!module)
+        return -1;
+    type = INPtypelook(module);
+    tfree(module);
+    if (type < 0 || !ft_sim->devices[type] || !ft_sim->devices[type]->registry_entry)
+        return -1;
+    dev = ft_sim->devices[type];
+    np = INPbusPorts(dev, start, cnt, maxp);
+    if (devout)
+        *devout = dev;
+    return np;
+}
+
+/* Does `name` stand for a set of formals `name[i]`? The same question
+   e449_expand_bus_port asks before expanding, asked without emitting. */
+static bool
+e464_is_formal_bus(const char *name)
+{
+    size_t len;
+    int i;
+
+    if (!table || !name)
+        return FALSE;
+    len = strlen(name);
+    if (len == 0 || memchr(name, '[', len))
+        return FALSE;
+    for (i = 0; table[i].t_old; i++)
+        if (strlen(table[i].t_old) == len &&
+            strncmp(name, table[i].t_old, len) == 0)
+            return FALSE;               /* an ordinary formal of that exact name */
+    for (i = 0; table[i].t_old; i++) {
+        const char *o = table[i].t_old;
+        if (strncmp(o, name, len) == 0 && o[len] == '[')
+            return TRUE;
+    }
+    return FALSE;
+}
+
+/* the model name of an instance line: the last token that is not `k=v` */
+static char *
+e464_model_of(const char *line)
+{
+    char *c = (char *) line, *tok, *last = NULL, *skip;
+
+    skip = gettok_instance(&c);
+    tfree(skip);
+    while (*c) {
+        tok = gettok_instance(&c);
+        if (!tok)
+            break;
+        if (strchr(tok, '=')) {
+            tfree(tok);
+            break;
+        }
+        tfree(last);
+        last = tok;
+    }
+    return last;
+}
 
 /* Emit the actuals of every formal spelled `name[...]`, ordered by ascending
    BIT INDEX (see below -- that is the order the compiled model uses, and the
@@ -1644,6 +1756,55 @@ translate(struct card *deck, char *formal, int flen, char *actual, char *scname,
                 const bool osdi_line = (tolower_c(c->line[0]) == 'n');
                 const bool x_line = (tolower_c(c->line[0]) == 'x');
 
+                /* Enhancement-464: a line that mixes an expanded bus FORMAL
+                   with a LOCAL bus port.
+
+                   E-449 expands `a` into the caller's four actuals because the
+                   formals a[0]..a[3] exist; a local `b` has no formals, so it
+                   stayed ONE token. The line then carried five node tokens where
+                   autobus needs two (one per port) or eight (one per terminal),
+                   so INP2N expanded nothing and the tokens bound POSITIONALLY --
+                   a[0..3] correctly, `x1.b` onto b[0], the top three bits
+                   dangling. It warned about the missing terminals but answered
+                   1.0 where the same circuit flattened by hand answers 0.5238.
+
+                   Once ANY port on the line has been expanded from formals the
+                   line cannot still be in shorthand, so every remaining bus port
+                   is expanded here too -- to `x1.b[k]`, exactly the node INP2N
+                   would have produced and the same one a `b[0]` written
+                   elsewhere in the subcircuit translates to. The bit spelling
+                   comes from INPbusCatIndex, so `.option autobus=kicad` (E-462)
+                   stays consistent.
+
+                   Only mixed lines change: with no formal expanded, or a model
+                   that cannot be resolved here, the old path runs untouched. */
+                int pw_start[E449_MAXBITS], pw_cnt[E449_MAXBITS], pw_np = -1;
+                IFdevice *pw_dev = NULL;
+                bool e464_mixed = FALSE;
+                if (sc_autobus && osdi_line) {
+                    char *mdl = e464_model_of(c->line);
+                    char *scan = s;
+                    int p, formals = 0, localbus = 0;
+                    pw_np = e464_port_widths(mdl, pw_start, pw_cnt, E449_MAXBITS,
+                                             &pw_dev);
+                    tfree(mdl);
+                    if (pw_np == nnodes) {          /* the line IS in shorthand */
+                        for (p = 0; p < pw_np; p++) {
+                            char *tk = gettok_node(&scan);
+                            if (!tk)
+                                break;
+                            if (e464_is_formal_bus(tk))
+                                formals++;
+                            else if (pw_cnt[p] > 1)
+                                localbus++;
+                            tfree(tk);
+                        }
+                        e464_mixed = (formals > 0 && localbus > 0);
+                    }
+                }
+
+                {
+                int port = 0;
                 while (nnodes > 0) {
                     int emitted = 0;
 
@@ -1656,15 +1817,35 @@ translate(struct card *deck, char *formal, int flen, char *actual, char *scname,
 
                     if (sc_autobus && (osdi_line || x_line))
                         emitted = e449_expand_bus_port(&buffer, name, NULL);
+                    if (emitted == 0 && e464_mixed && port < pw_np &&
+                        pw_cnt[port] > 1 && pw_dev) {
+                        int t;
+                        for (t = 0; t < pw_cnt[port]; t++) {
+                            const char *tn = pw_dev->termNames[pw_start[port] + t];
+                            const char *lb = tn ? strchr(tn, '[') : NULL;
+                            char sfx[64], *bit;
+                            INPbusBitSuffix(lb ? lb : "", sc_autobus_kicad,
+                                            sfx, sizeof sfx);
+                            bit = tprintf("%s%s", name, sfx);
+                            if (t)
+                                bxx_putc(&buffer, ' ');
+                            translate_node_name(&buffer, scname, bit, NULL);
+                            tfree(bit);
+                        }
+                        emitted = pw_cnt[port];
+                    }
                     if (emitted == 0) {
                         translate_node_name(&buffer, scname, name, NULL);
                         emitted = 1;
                     }
                     nnodes -= x_line ? emitted : 1;
+                    port++;
                     tfree(name);
                     bxx_putc(&buffer, ' ');
                 }
+                }
             }
+
 
             /* Now translate any devices (i.e. controlling sources).
              * This may be superfluous because we handle dependent

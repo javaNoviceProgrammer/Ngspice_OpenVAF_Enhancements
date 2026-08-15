@@ -144,6 +144,14 @@ void INPpas1(CKTcircuit *, struct card *, INPtables *);
 void INPpas2(CKTcircuit *, struct card *, INPtables *, TSKtask *);
 /* PROTOTYPE: autoadapt -- runs between pas1 and pas2, see inp2n.c */
 void INPadapt(CKTcircuit *, struct card *, INPtables *);
+
+/* Enhancement-464: bus-port grouping, shared so the subcircuit expander and
+   INP2N cannot disagree about what a port is or how a bit is spelled.
+   Defined in spicelib/parser/inp2n.c. */
+struct IFdevice;
+int INPbusPorts(struct IFdevice *dev, int *start, int *cnt, int maxp);
+int INPbusKicadStyle(void);       /* 0/1 -- `bool` is not in scope here */
+void INPbusBitSuffix(const char *lb, int kicad, char *out, size_t n);
 /* Enhancement-426: set while INPpas2() is handed a card that if_run()
  * synthesised from a .control command. Such a card is never deck parsing, so
  * an analysis card naming an unknown node is a typo even before CKTsetup(). */

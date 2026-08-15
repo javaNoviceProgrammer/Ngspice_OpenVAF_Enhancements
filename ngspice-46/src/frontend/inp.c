@@ -1476,7 +1476,37 @@ inp_spsource(FILE *fp, bool comfile, char *filename, bool intfile)
                     }
                 /* A deck card decides; only when no card mentions `autobus` at
                    all does a `set autobus` from .spiceinit still apply. */
-                inp_set_autobus(spoke ? ab : e454_autobus_var());
+                /* Enhancement-464: the style travels with the flag, resolved
+                   with the same precedence -- a deck card wins, otherwise a
+                   `set autobus=kicad` from .spiceinit. */
+                {
+                    bool kic = FALSE;
+                    char sv[64];
+                    if (spoke) {
+                        for (lst = 0; lst < 2; lst++)
+                            for (scan = lst ? options : com_options; scan;
+                                 scan = scan->nextcard) {
+                                char *v;
+                                if (!scan->line)
+                                    continue;
+                                v = e451_opt_value(scan->line, "autobus");
+                                if (v) {
+                                    char w[64];
+                                    int n = 0;
+                                    while (v[n] && !isspace_c(v[n]) &&
+                                           n < (int) sizeof(w) - 1) {
+                                        w[n] = v[n];
+                                        n++;
+                                    }
+                                    w[n] = '\0';
+                                    kic = cieq(w, "kicad");
+                                }
+                            }
+                    } else if (cp_getvar("autobus", CP_STRING, sv, sizeof(sv))) {
+                        kic = cieq(sv, "kicad");
+                    }
+                    inp_set_autobus(spoke ? ab : e454_autobus_var(), kic);
+                }
             }
 
             /* Parsing the circuit 4.
