@@ -468,11 +468,28 @@ impl Ctx<'_> {
     /// (`infere_array_arg`). `Event::Global` carries no exprs and is
     /// a no-op here.
     fn infere_event_control(&mut self, stmt: StmtId, event: &Event) {
+        // LRM 5.10.3: the trailing `enable` is the one argument that is NOT a
+        // real-valued quantity -- it is a condition, "the event is enabled when
+        // the expression is non-zero". Requiring it as a real would cast a
+        // literal `1` to 1.0 and leave the lowering to compare a float against
+        // an integer zero; `Condition` casts it to `Type::Bool` the same way an
+        // `if` condition is cast, so the lowering gets an i1 to combine.
+        // `walk_enables`, not a match on this event's own variants: an
+        // `@(a or b)` is an `Event::Or` whose members carry the enables, and
+        // matching here saw only the `Or` and typed every member's enable as a
+        // real.
+        let mut enables = Vec::new();
+        event.walk_enables(&mut |e| enables.push(e));
         let mut exprs = Vec::new();
         event.walk_child_exprs(|e| exprs.push(e));
         for expr in exprs {
             if let Some(ty) = self.infere_expr(stmt, expr) {
-                self.expect::<false>(expr, None, ty, Cow::Borrowed(&[TyRequirement::Val(Type::Real)]));
+                let req: Cow<[TyRequirement]> = if enables.contains(&expr) {
+                    Cow::Borrowed(&[TyRequirement::Condition])
+                } else {
+                    Cow::Borrowed(&[TyRequirement::Val(Type::Real)])
+                };
+                self.expect::<false>(expr, None, ty, req);
             }
         }
     }

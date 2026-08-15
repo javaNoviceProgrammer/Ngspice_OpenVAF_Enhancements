@@ -206,9 +206,25 @@ impl BodyLoweringCtx<'_, '_, '_> {
                     None => step,
                 }
             }
-            Event::Cross { expr, dir, .. } => self.lower_cross(*expr, *dir),
-            Event::Above { expr, .. } => self.lower_above(*expr),
-            Event::Timer { t0, period, .. } => self.lower_timer(*t0, *period),
+            // LRM 5.10.3: every monitored event takes an optional trailing
+            // `enable` -- "the enable argument, if specified, shall evaluate to an
+            // integer" -- and the event is live only while it is non-zero. It used
+            // to be parsed as surplus and rejected, so an event could not be gated
+            // at all. Wrapping the BODY in an `if` is not equivalent: the event
+            // still fires and still controls the timestep. Gating the FIRED bool
+            // leaves the event itself dormant.
+            Event::Cross { expr, dir, enable, .. } => {
+                let fired = self.lower_cross(*expr, *dir);
+                self.gate_on_enable(fired, *enable)
+            }
+            Event::Above { expr, enable, .. } => {
+                let fired = self.lower_above(*expr);
+                self.gate_on_enable(fired, *enable)
+            }
+            Event::Timer { t0, period, enable, .. } => {
+                let fired = self.lower_timer(*t0, *period);
+                self.gate_on_enable(fired, *enable)
+            }
             // Enhancement-59: `@(ev1 or ev2 ...)` fires when ANY member fires.
             // Each member keeps its own event state/phase machinery; the fired
             // bools simply OR together.
@@ -338,6 +354,28 @@ impl BodyLoweringCtx<'_, '_, '_> {
     /// exact forced breakpoint; see `Enhancement-8.md`'s known limitations for why exact
     /// breakpoint-forcing (`CKTsetBreak`) was descoped in favor of this simpler, still-real
     /// mechanism.
+    /// LRM 5.10.3: `enable` is an integer expression; the event is live only
+    /// while it is non-zero. Absent, the event is always live.
+    ///
+    /// Combined with `bool_and`, NOT a raw `iand`. Both operands are i1 values
+    /// and a literal `enable` const-folds -- and the const evaluator has no Bool
+    /// arm for `iand`, so folding one crashed the compiler outright. That is the
+    /// same reason `Event::Or` below uses `bool_or` rather than a raw `ior`.
+    ///
+    /// The gate is applied to the FIRED bool rather than to the event's internal
+    /// state, so a disabled event keeps its schedule rather than restarting: a
+    /// `@(timer)` held low resumes on its original grid, and a `@(cross)` keeps
+    /// tracking the sign of its expression, so re-enabling never replays a
+    /// crossing that happened while it was disabled -- only crossings that occur
+    /// while enabled fire, which is what LRM 5.10.3.2 asks for.
+    fn gate_on_enable(&mut self, fired: Value, enable: Option<ExprId>) -> Value {
+        let Some(enable) = enable else { return fired };
+        // Already an i1: inference requires `enable` as a `Condition`, so the
+        // non-zero test is the cast to `Type::Bool` it inserted.
+        let live = self.lower_expr(enable);
+        bool_and(self.ctx, fired, live)
+    }
+
     fn lower_timer(&mut self, t0: ExprId, period: Option<ExprId>) -> Value {
         let t0 = self.lower_expr(t0);
         let (raw_next, idx) = self.new_event_state();

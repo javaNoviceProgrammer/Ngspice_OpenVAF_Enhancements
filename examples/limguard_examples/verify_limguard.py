@@ -279,6 +279,136 @@ endmodule
         check(f"[E-445] timer {lbl} fires {want}x, not once per timestep",
               n == want, f"fired {n}x")
 
+    # ---- the LRM's trailing `enable`, on all three monitored events ----
+    # LRM 5.10.3: cross/above/timer each end in an optional `enable`, and the
+    # event is live only while it is non-zero. It used to be counted as a
+    # SURPLUS argument and rejected, so an event could not be gated at all --
+    # and wrapping the event's BODY in an `if` is not the same thing, because
+    # the event still fires and still drags the timestep to its schedule.
+    #
+    # The gate is applied to the FIRED flag, not to the event's own state, so a
+    # disabled event keeps its schedule instead of restarting. Both halves are
+    # pinned: the timer fires on the SAME grid it would have used ungated, and a
+    # crossing that happens while disabled is not replayed when the enable
+    # returns -- only crossings that occur while enabled fire, per 5.10.3.2.
+    print("\n  -- LRM 5.10.3 `enable` on @(cross)/@(above)/@(timer) --")
+    for lbl, ev, want in [
+        ("@(timer) enable 1", "timer(1e-6, 2e-6, 0, 1)", True),
+        ("@(timer) enable 0", "timer(1e-6, 2e-6, 0, 0)", False),
+        ("@(timer) enable 7 (any non-zero)", "timer(1e-6, 2e-6, 0, 7)", True),
+        ("@(timer) enable -1 (any non-zero)", "timer(1e-6, 2e-6, 0, -1)", True),
+        ("@(above) enable 1", "above(V(p,n)-0.5, 1e-9, 1e-6, 1)", True),
+        ("@(above) enable 0", "above(V(p,n)-0.5, 1e-9, 1e-6, 0)", False),
+        ("@(cross) enable 1", "cross(V(p,n)-0.5, 0, 1e-9, 1e-6, 1)", True),
+        ("@(cross) enable 0", "cross(V(p,n)-0.5, 0, 1e-9, 1e-6, 0)", False),
+    ]:
+        d, rc, o2 = build(mod(f'@({ev}) $strobe("TK"); I(p,n) <+ V(p,n)*1e-3;'), "en")
+        if rc != 0:
+            check(f"{lbl} compiles", False, (o2.strip().splitlines() or [""])[0][:52])
+            continue
+        _, out = run(d, deck(src="V1 a 0 PWL(0 0 10u 2)",
+                             body="tran 0.25u 10u", card="dut()"))
+        n = len(re.findall("TK", out))
+        check(f"{lbl} -> the event {'fires' if want else 'stays silent'}",
+              (n > 0) == want, f"fired {n}x")
+
+    # a runtime enable, decided by a .model parameter rather than a literal
+    for lbl, ev in [("@(timer)", "timer(1e-6, 2e-6, 0, en)"),
+                    ("@(above)", "above(V(p,n)-0.5, 1e-9, 1e-6, en)"),
+                    ("@(cross)", "cross(V(p,n)-0.5, 0, 1e-9, 1e-6, en)")]:
+        d, rc, o2 = build(mod(f'@({ev}) $strobe("TK"); I(p,n) <+ V(p,n)*1e-3;',
+                              decl=" parameter integer en = 1;"), "enp")
+        if rc != 0:
+            check(f"{lbl} with a parameter enable compiles", False,
+                  (o2.strip().splitlines() or [""])[0][:52])
+            continue
+        got = []
+        for val in ("1", "0"):
+            _, out = run(d, deck(src="V1 a 0 PWL(0 0 10u 2)", body="tran 0.25u 10u",
+                                 card=f"dut() en={val}"))
+            got.append(len(re.findall("TK", out)))
+        check(f"{lbl} enable from a .model parameter: en=1 fires, en=0 silent",
+              got[0] > 0 and got[1] == 0, f"en=1 -> {got[0]}x, en=0 -> {got[1]}x")
+
+    # a TIME-VARYING enable: the gate rises at 4us, and the timer must resume on
+    # its original 1us grid rather than restarting from the moment it went live
+    GATE = "electrical p,n,g;"
+    src = (HDR + "module dut(p,n,g);\n inout p,n; input g; " + GATE + "\n"
+           ' analog begin @(timer(0, 1e-6, 0, V(g) > 0.5)) $strobe("TK %g", $abstime);\n'
+           "  I(p,n) <+ V(p,n)*1e-3; end\nendmodule\n")
+    d, rc, o2 = build(src, "engate")
+    if rc != 0:
+        check("a time-varying enable compiles", False,
+              (o2.strip().splitlines() or [""])[0][:52])
+    else:
+        _, out = run(d, deck(net="N1 a 0 g mm", src="V1 a 0 PWL(0 0 10u 2)",
+                             extra="Vg g 0 PWL(0 0 3.99u 0 4.01u 1 10u 1)",
+                             body="tran 0.2u 10u"))
+        ts = [float(x) for x in re.findall(r"TK (\S+)", out)]
+        check("a timer gated by a signal fires only while the signal is high",
+              len(ts) > 0 and all(t > 3.99e-6 for t in ts), f"{len(ts)} fires: {ts[:3]}")
+        check("and resumes on its ORIGINAL 1us grid, it does not restart",
+              len(ts) > 0 and all(abs(t / 1e-6 - round(t / 1e-6)) < 1e-3 for t in ts),
+              f"{[round(t*1e6, 3) for t in ts]}")
+
+    # a crossing that happens while DISABLED is not replayed on re-enable.
+    # v(a) ramps 0->2 over 10us, so V(p,n)-0.5 crosses zero once, near 2.5us.
+    for lbl, gate, want in [
+        ("enabled only after the crossing", "PWL(0 0 6.99u 0 7.01u 1 10u 1)", 0),
+        ("enabled only before the crossing", "PWL(0 1 0.99u 1 1.01u 0 10u 0)", 0),
+        ("enabled across the crossing", "PWL(0 0 0.99u 0 1.01u 1 10u 1)", 1),
+    ]:
+        src = (HDR + "module dut(p,n,g);\n inout p,n; input g; electrical p,n,g;\n"
+               ' analog begin @(cross(V(p,n)-0.5, 0, 1e-9, 1e-6, V(g) > 0.5))'
+               ' $strobe("TK");\n  I(p,n) <+ V(p,n)*1e-3; end\nendmodule\n')
+        d, rc, o2 = build(src, "encr")
+        if rc != 0:
+            check(f"@(cross) {lbl} compiles", False,
+                  (o2.strip().splitlines() or [""])[0][:52])
+            continue
+        _, out = run(d, deck(net="N1 a 0 g mm", src="V1 a 0 PWL(0 0 10u 2)",
+                             extra=f"Vg g 0 {gate}", body="tran 0.2u 10u"))
+        n = len(re.findall("TK", out))
+        check(f"@(cross) {lbl} -> {want} event(s)", n == want, f"fired {n}x")
+
+    # an event LIST must respect EACH member's own enable. `@(a or b)` is one
+    # Event::Or whose members hold the enables, so a type rule written against
+    # the event's own variants saw only the Or and typed every member's enable
+    # as a real -- which cast it int-to-real and then merged it with an i1. That
+    # survived lowering intact and hung LLVM's type legalizer at codegen, so
+    # every one of these forms crashed or spun the compiler.  The counts below
+    # are exact, because "it compiles" would not have caught the gate being
+    # applied to the wrong member.
+    for lbl, ev, want in [
+        ("timer(en=1) or cross", "timer(1e-6,2e-6,0,1) or cross(V(p,n)-0.5,0)", 6),
+        ("timer(en=0) or cross -> the cross alone",
+         "timer(1e-6,2e-6,0,0) or cross(V(p,n)-0.5,0)", 1),
+        ("timer or cross(en=0) -> the timer alone",
+         "timer(1e-6,2e-6) or cross(V(p,n)-0.5,0,1e-9,1e-6,0)", 5),
+        ("both gated off -> nothing fires",
+         "timer(1e-6,2e-6,0,0) or cross(V(p,n)-0.5,0,1e-9,1e-6,0)", 0),
+        ("initial_step or timer(en=0) -> initial_step alone",
+         "initial_step or timer(1e-6,2e-6,0,0)", 1),
+        ("three members, the middle one gated off",
+         "initial_step or timer(1e-6,2e-6,0,0) or above(V(p,n)-0.5,1e-9,1e-6,1)", 2),
+    ]:
+        d, rc, o2 = build(mod(f'@({ev}) $strobe("TK"); I(p,n) <+ V(p,n)*1e-3;'), "enor")
+        if rc != 0:
+            check(f"or-list: {lbl} compiles", False,
+                  (o2.strip().splitlines() or [""])[0][:52])
+            continue
+        _, out = run(d, deck(src="V1 a 0 PWL(0 0 10u 2)", body="tran 0.25u 10u"))
+        n = len(re.findall("TK", out))
+        check(f"or-list: {lbl} -> {want} event(s)", n == want, f"fired {n}x")
+
+    # one argument PAST the LRM arity is still refused, for each event
+    for lbl, ev in [("@(timer) 5 args", "timer(1e-6, 2e-6, 0, 1, 9)"),
+                    ("@(above) 5 args", "above(V(p,n)-0.5, 1e-9, 1e-6, 1, 9)"),
+                    ("@(cross) 6 args", "cross(V(p,n)-0.5, 0, 1e-9, 1e-6, 1, 9)")]:
+        _d, rc2, o2 = build(mod(f"@({ev}) I(p,n) <+ V(p,n)*1e-3;"), "ensur")
+        check(f"{lbl} is still rejected as surplus", rc2 != 0 and rc2 != 101,
+              (o2.strip().splitlines() or [""])[0][:52])
+
     # ================================================== [5]/[6]/[10] constants
     print("\n  -- [5] @(timer), [6] $bound_step, [10] operator arguments --")
     ARG_CASES = [

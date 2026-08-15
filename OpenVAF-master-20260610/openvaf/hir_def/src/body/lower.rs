@@ -410,8 +410,10 @@ impl LowerCtx<'_> {
                 let dir = args.next().map(|e| self.collect_expr(e));
                 let time_tol = args.next().map(|e| self.collect_expr(e));
                 let expr_tol = args.next().map(|e| self.collect_expr(e));
+                // LRM 5.10.3.1: cross(expr [, dir [, time_tol [, expr_tol [, enable]]]])
+                let enable = args.next().map(|e| self.collect_expr(e));
                 let surplus: Box<[_]> = args.map(|e| self.collect_expr(e)).collect();
-                Event::Cross { expr, dir, time_tol, expr_tol, surplus }
+                Event::Cross { expr, dir, time_tol, expr_tol, enable, surplus }
             }
             Some("above") => {
                 let expr = match args.next() {
@@ -420,8 +422,10 @@ impl LowerCtx<'_> {
                 };
                 let time_tol = args.next().map(|e| self.collect_expr(e));
                 let expr_tol = args.next().map(|e| self.collect_expr(e));
+                // LRM 5.10.3.2: above(expr [, time_tol [, expr_tol [, enable]]])
+                let enable = args.next().map(|e| self.collect_expr(e));
                 let surplus: Box<[_]> = args.map(|e| self.collect_expr(e)).collect();
-                Event::Above { expr, time_tol, expr_tol, surplus }
+                Event::Above { expr, time_tol, expr_tol, enable, surplus }
             }
             Some("timer") => {
                 let t0 = match args.next() {
@@ -430,8 +434,10 @@ impl LowerCtx<'_> {
                 };
                 let period = args.next().map(|e| self.collect_expr(e));
                 let tol = args.next().map(|e| self.collect_expr(e));
+                // LRM 5.10.3.3: timer(start [, period [, time_tol [, enable]]])
+                let enable = args.next().map(|e| self.collect_expr(e));
                 let surplus: Box<[_]> = args.map(|e| self.collect_expr(e)).collect();
-                Event::Timer { t0, period, tol, surplus }
+                Event::Timer { t0, period, tol, enable, surplus }
             }
             _ => return None,
         };

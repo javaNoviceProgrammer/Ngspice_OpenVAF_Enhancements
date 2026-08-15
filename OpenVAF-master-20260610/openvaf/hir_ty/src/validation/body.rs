@@ -527,7 +527,7 @@ impl BodyValidator<'_> {
                     }
                 }
             }
-            Event::Timer { t0, period, tol, ref surplus } => {
+            Event::Timer { t0, period, tol, enable, ref surplus } => {
                 if !self.check_event_arg_present("@(timer)", t0, stmt) {
                     return;
                 }
@@ -553,9 +553,14 @@ impl BodyValidator<'_> {
                 if let Some(tol) = tol {
                     v.require_non_negative("@(timer)", "the time tolerance", tol);
                 }
-                self.check_event_surplus("@(timer)", 3, surplus, stmt);
+                // Nothing to constrain: LRM 5.10.3.3's `enable` argument enables
+                // the event for ANY non-zero value, so no range applies. Inference
+                // types it as a condition and the lowering gates the event on it;
+                // it is named here only so the arity below counts it.
+                let _ = enable;
+                self.check_event_surplus("@(timer)", 4, surplus, stmt);
             }
-            Event::Above { expr, time_tol, expr_tol, ref surplus } => {
+            Event::Above { expr, time_tol, expr_tol, enable, ref surplus } => {
                 if !self.check_event_arg_present("@(above)", expr, stmt) {
                     return;
                 }
@@ -567,9 +572,14 @@ impl BodyValidator<'_> {
                 if let Some(t) = expr_tol {
                     v.require_non_negative("@(above)", "the expression tolerance", t);
                 }
-                self.check_event_surplus("@(above)", 3, surplus, stmt);
+                // Nothing to constrain: LRM 5.10.3.2's `enable` argument enables
+                // the event for ANY non-zero value, so no range applies. Inference
+                // types it as a condition and the lowering gates the event on it;
+                // it is named here only so the arity below counts it.
+                let _ = enable;
+                self.check_event_surplus("@(above)", 4, surplus, stmt);
             }
-            Event::Cross { expr, dir: _, time_tol, expr_tol, ref surplus } => {
+            Event::Cross { expr, dir: _, time_tol, expr_tol, enable, ref surplus } => {
                 if !self.check_event_arg_present("@(cross)", expr, stmt) {
                     return;
                 }
@@ -585,7 +595,12 @@ impl BodyValidator<'_> {
                 if let Some(t) = expr_tol {
                     v.require_non_negative("@(cross)", "the expression tolerance", t);
                 }
-                self.check_event_surplus("@(cross)", 4, surplus, stmt);
+                // Nothing to constrain: LRM 5.10.3.1's `enable` argument enables
+                // the event for ANY non-zero value, so no range applies. Inference
+                // types it as a condition and the lowering gates the event on it;
+                // it is named here only so the arity below counts it.
+                let _ = enable;
+                self.check_event_surplus("@(cross)", 5, surplus, stmt);
                 self.validate_event_cross_dir(event, stmt);
             }
             Event::Or(ref events) => {

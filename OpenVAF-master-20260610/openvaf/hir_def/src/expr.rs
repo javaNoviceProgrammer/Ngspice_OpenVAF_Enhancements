@@ -192,6 +192,9 @@ pub enum Event {
         dir: Option<ExprId>,
         time_tol: Option<ExprId>,
         expr_tol: Option<ExprId>,
+        /// LRM 5.10.3: the optional trailing `enable` argument -- the event
+        /// is live only while it is non-zero.
+        enable: Option<ExprId>,
         surplus: Box<[ExprId]>,
     },
     /// `@(above(expr))`.
@@ -199,6 +202,9 @@ pub enum Event {
         expr: ExprId,
         time_tol: Option<ExprId>,
         expr_tol: Option<ExprId>,
+        /// LRM 5.10.3: the optional trailing `enable` argument -- the event
+        /// is live only while it is non-zero.
+        enable: Option<ExprId>,
         surplus: Box<[ExprId]>,
     },
     /// `@(timer(t0, period))` -- `period` absent means a one-shot timer.
@@ -206,6 +212,9 @@ pub enum Event {
         t0: ExprId,
         period: Option<ExprId>,
         tol: Option<ExprId>,
+        /// LRM 5.10.3: the optional trailing `enable` argument -- the event
+        /// is live only while it is non-zero.
+        enable: Option<ExprId>,
         surplus: Box<[ExprId]>,
     },
     /// Enhancement-59: `@(ev1 or ev2 [or ...])` (LRM 5.10 event `or` list) --
@@ -226,27 +235,27 @@ impl Event {
     fn walk_child_exprs_dyn(&self, f: &mut dyn FnMut(ExprId)) {
         match *self {
             Event::Global { .. } => {}
-            Event::Cross { expr, dir, time_tol, expr_tol, ref surplus } => {
+            Event::Cross { expr, dir, time_tol, expr_tol, enable, ref surplus } => {
                 f(expr);
-                for e in [dir, time_tol, expr_tol].into_iter().flatten() {
+                for e in [dir, time_tol, expr_tol, enable].into_iter().flatten() {
                     f(e);
                 }
                 for &e in surplus.iter() {
                     f(e);
                 }
             }
-            Event::Above { expr, time_tol, expr_tol, ref surplus } => {
+            Event::Above { expr, time_tol, expr_tol, enable, ref surplus } => {
                 f(expr);
-                for e in [time_tol, expr_tol].into_iter().flatten() {
+                for e in [time_tol, expr_tol, enable].into_iter().flatten() {
                     f(e);
                 }
                 for &e in surplus.iter() {
                     f(e);
                 }
             }
-            Event::Timer { t0, period, tol, ref surplus } => {
+            Event::Timer { t0, period, tol, enable, ref surplus } => {
                 f(t0);
-                for e in [period, tol].into_iter().flatten() {
+                for e in [period, tol, enable].into_iter().flatten() {
                     f(e);
                 }
                 for &e in surplus.iter() {
@@ -258,6 +267,34 @@ impl Event {
                     ev.walk_child_exprs_dyn(f);
                 }
             }
+        }
+    }
+
+    /// Visits every `enable` expression in this event, DESCENDING INTO `Or`
+    /// lists -- which is the whole reason it exists. `walk_child_exprs` flattens
+    /// an `@(a or b)` into one undifferentiated stream of child expressions, so
+    /// a caller that needs to treat `enable` differently from the real-valued
+    /// arguments cannot recover which member each expression came from. Type
+    /// inference needs exactly that: `enable` is a condition and everything else
+    /// is a real. Matching on the event's own variants got that right for a lone
+    /// event and silently wrong for every `Or` member -- the enable was cast
+    /// int-to-real and then phi'd together with an i1, which held up through
+    /// lowering and hung LLVM's type legalizer at codegen.
+    pub fn walk_enables(&self, f: &mut dyn FnMut(ExprId)) {
+        match *self {
+            Event::Cross { enable, .. }
+            | Event::Above { enable, .. }
+            | Event::Timer { enable, .. } => {
+                if let Some(enable) = enable {
+                    f(enable)
+                }
+            }
+            Event::Or(ref events) => {
+                for ev in events.iter() {
+                    ev.walk_enables(f);
+                }
+            }
+            Event::Global { .. } => (),
         }
     }
 }
