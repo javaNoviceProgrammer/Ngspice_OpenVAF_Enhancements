@@ -56,10 +56,10 @@ so they are not "fixed" later by mistake:
      no-noise-at-all failure Enhancement-399 fixed for `{...}`. It is refused
      with that reason spelled out instead of the old "requires a bit-select [i]".
 
-KNOWN REMAINING GAP, pinned as rejected: `parameter_identifier[msb:lsb]`, the
-second filter-argument form in Syntax 4-3. A range select is not distinguishable
-from multi-dimensional indexing in the current syntax tree, so supporting it is a
-separate change rather than part of this one.
+The one form this suite originally recorded as a gap -- `parameter_identifier
+[msb:lsb]`, the second filter-argument form in Syntax 4-3 -- was closed by
+Enhancement-459; it is pinned here as accepted, and exercised in full by
+`partselect_examples`.
 """
 import math
 import os
@@ -404,10 +404,13 @@ d, rc, o = build(mod('I(p,n) <+ V(p,n)/1e3; I(p,n) <+ noise_table(fn);',
                      ' parameter string fn = "n.tbl";\n', dc=False), "Rstr")
 chk("refused", "noise_table(string PARAMETER) [was a PANIC]", rc != 0 and not crashy(rc),
     "rc=%d" % rc)
+# Enhancement-459 closed the last gap this suite recorded: `param[msb:lsb]`, the
+# second `analog_filter_function_arg` form in Syntax 4-3, is now accepted. The
+# form-coverage claim above is what is pinned here; the values, the slice ORDER
+# and the range checks live in `partselect_examples`.
 P4 = " parameter real cf[0:3] = '{1.0, 0.0, 0.0, 0.0};\n"
 d, rc, o = build(mod("I(p,n) <+ laplace_nd(V(p,n), cf[0:1], cf);", P4, dc=False), "Rslice")
-chk("refused", "laplace_nd(x, param[msb:lsb], d) [known gap]", rc != 0 and not crashy(rc),
-    "rc=%d" % rc)
+chk("ops", "laplace_nd(x, param[msb:lsb], d)  [LRM Syntax 4-3 form 2]", rc == 0, "rc=%d" % rc)
 d, rc, o = build(mod("r = max(1.0, 2.0,);", ' (*desc="r"*) real r;\n'), "Rtc")
 chk("refused", "max(1.0, 2.0,) trailing comma still refused", rc != 0 and not crashy(rc),
     "rc=%d" % rc)

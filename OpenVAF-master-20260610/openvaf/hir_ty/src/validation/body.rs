@@ -322,7 +322,17 @@ impl BodyValidationDiagnostic {
         // Enhancement-85: part-selects (`v[msb:lsb]`) are only legal in
         // instance port connections, which elaboration consumes textually --
         // one that reached body lowering is behavioral-code misuse.
+        //
+        // Enhancement-458: except as a filter coefficient vector, which is the
+        // second `analog_filter_function_arg` form in LRM Syntax 4-3. Inference
+        // resolves that one into its element slice, so a part select recorded in
+        // either whole-array map was consumed legitimately and is not stray.
         for &expr in &body.stray_part_selects {
+            if infere.array_var_refs.contains_key(&expr)
+                || infere.array_param_refs.contains_key(&expr)
+            {
+                continue;
+            }
             validator.diagnostics.push(BodyValidationDiagnostic::StrayPartSelect { expr });
         }
 

@@ -573,6 +573,18 @@ impl Ctx<'_> {
             }
 
             Expr::BitSelect { ref base, ref indices } => {
+                // A part select already resolved as a whole-array argument keeps the
+                // array type recorded for it. Without this the generic argument path
+                // re-infers the expression, `infere_bit_select` counts the two range
+                // bounds as two indices into a 1-D array and reports "wrong number of
+                // array indices" -- which is what happened to `zi_*` (it pre-resolves
+                // then falls through to the generic signature match) while
+                // `laplace_*`, which never re-infers, worked.
+                if self.result.array_var_refs.contains_key(&expr)
+                    || self.result.array_param_refs.contains_key(&expr)
+                {
+                    return Some(self.result.expr_types[expr].clone());
+                }
                 self.infere_bit_select(stmt, expr, base, indices)?
             }
 
@@ -1599,6 +1611,15 @@ impl Ctx<'_> {
                     || self.find_param_array(&name).is_some();
             }
         }
+        // A part select of an array is equally an array argument (LRM Syntax 4-3).
+        if let Expr::BitSelect { ref base, ref indices } = self.body.exprs[arg] {
+            if indices.len() == 2 && self.body.stray_part_selects.contains(&arg) {
+                if let Some(name) = base.as_ident() {
+                    return self.find_var_array(&name).is_some()
+                        || self.find_param_array(&name).is_some();
+                }
+            }
+        }
         false
     }
 
@@ -1680,6 +1701,79 @@ impl Ctx<'_> {
         (Some(Ty::Val(Type::Real)), valid)
     }
 
+    /// Resolves `arr[msb:lsb]` used as a whole-array argument into the selected
+    /// element slice, in the order written: `cf[0:1]` is `{cf[0], cf[1]}` and
+    /// `cf[1:0]` is `{cf[1], cf[0]}`. Order is not cosmetic here -- a Laplace
+    /// coefficient k multiplies s^k, so a reversed slice is a different filter.
+    fn infere_array_part_select(
+        &mut self,
+        stmt: StmtId,
+        arg: ExprId,
+        arr: &BusDecl,
+        indices: &[ExprId],
+    ) -> Option<Ty> {
+        for &index in indices {
+            self.infere_expr(stmt, index);
+        }
+        // Both bounds are constant expressions per the LRM's own spelling
+        // (`msb_constant_expression`). A non-constant one falls through to the
+        // ordinary diagnostic rather than being silently treated as a range.
+        let hi = self.const_int_index(stmt, indices[0])?;
+        let lo = self.const_int_index(stmt, indices[1])?;
+        let (min, max) = arr.min_max();
+        for bound in [hi, lo] {
+            if bound < min || bound > max {
+                self.result.diagnostics.push(InferenceDiagnostic::BitSelectOutOfRange {
+                    expr: arg,
+                    index: bound,
+                    msb: arr.msb,
+                    lsb: arr.lsb,
+                });
+                return None;
+            }
+        }
+        let step: i32 = if hi <= lo { 1 } else { -1 };
+        let mut bits = Vec::new();
+        let mut bit = hi;
+        loop {
+            bits.push(bit);
+            if bit == lo {
+                break;
+            }
+            bit += step;
+        }
+        let is_param = self.find_param_array(&arr.base_name).is_some();
+        let mut vars = Vec::with_capacity(bits.len());
+        let mut params = Vec::with_capacity(bits.len());
+        for bit in bits {
+            let synth = Path::new_ident(arr.bit_name(bit));
+            match self.resolve_path(stmt, arg, &synth)? {
+                ScopeDefItem::VarId(var) => vars.push(var),
+                ScopeDefItem::ParamId(param) => params.push(param),
+                _ => return None,
+            }
+        }
+        let (len, elem_ty) = if is_param {
+            if params.is_empty() {
+                return None;
+            }
+            (params.len() as u32, self.db.param_data(params[0]).ty.clone()?)
+        } else {
+            if vars.is_empty() {
+                return None;
+            }
+            (vars.len() as u32, self.db.var_data(vars[0]).ty.clone())
+        };
+        if is_param {
+            self.result.array_param_refs.insert(arg, params);
+        } else {
+            self.result.array_var_refs.insert(arg, vars);
+        }
+        let ty = Ty::Val(Type::Array { ty: Box::new(elem_ty), len });
+        self.result.expr_types[arg] = ty.clone();
+        Some(ty)
+    }
+
     fn infere_array_arg(&mut self, stmt: StmtId, arg: ExprId) -> Option<Ty> {
         if let Expr::Array(ref elems) = self.body.exprs[arg] {
             let elems = elems.clone();
@@ -1690,6 +1784,31 @@ impl Ctx<'_> {
             };
             self.result.expr_types[arg] = ty.clone();
             return Some(ty);
+        }
+
+        // LRM Syntax 4-3's SECOND `analog_filter_function_arg` form:
+        //
+        //     parameter_identifier [ msb_constant_expression : lsb_constant_expression ]
+        //
+        // a PART SELECT of an array used as a coefficient vector. The parser already
+        // keeps the `:` in the tree (Enhancement-85) and body lowering records the
+        // expression in `stray_part_selects`, so the two bounds are distinguishable
+        // from Enhancement-15's multi-dimensional `[i][j]` -- which is what made this
+        // resolvable here instead of needing new syntax. Consuming the expression is
+        // also what makes it legal: Enhancement-85 reports every part select left in
+        // a body, and body validation skips the ones that land in these maps.
+        if let Expr::BitSelect { ref base, ref indices } = self.body.exprs[arg] {
+            let indices = indices.clone();
+            if indices.len() == 2 && self.body.stray_part_selects.contains(&arg) {
+                if let Some(name) = base.as_ident() {
+                    let arr = self
+                        .find_var_array(&name)
+                        .or_else(|| self.find_param_array(&name));
+                    if let Some(arr) = arr.filter(|a| a.ndim() == 1) {
+                        return self.infere_array_part_select(stmt, arg, &arr, &indices);
+                    }
+                }
+            }
         }
 
         if let Expr::Path { ref path, port: false } = self.body.exprs[arg] {
