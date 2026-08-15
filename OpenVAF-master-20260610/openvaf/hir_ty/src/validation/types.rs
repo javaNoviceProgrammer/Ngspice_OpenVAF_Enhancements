@@ -387,6 +387,26 @@ impl TypeValidationCtx<'_> {
         // because Enhancement-39 hardened THEIR codegen path
         // (`unwrap_or(u32::MAX)`) without adding a diagnostic. Same reference,
         // same mistake, three different outcomes; now one.
+        // NOT checked, twice over, and both were written and then WITHDRAWN:
+        //
+        //  * a BASE nature that omits `abstol` or `access`. LRM 3.6.1.2 says of each
+        //    "This attribute is required for all base natures", but Enhancement-422
+        //    decided the opposite deliberately -- its suite pins "a nature with NO
+        //    abstol attribute at all stays legal" -- and neither omission produces a
+        //    wrong answer, only a spec-conformance nit. (E-422's stated reason, that
+        //    "the LRM makes it optional", does not survive reading 3.6.1.2; the
+        //    DECISION still stands, and reversing it is a call for the project, not a
+        //    side effect of a bug hunt.)
+        //
+        //  * a DERIVED nature that declares its own `access`. LRM 3.6.1.2 calls that
+        //    illegal, but Enhancement-39 supports it ON PURPOSE: its example
+        //    `derivednature_demo.va` derives `Current2` with a fresh access function,
+        //    and Enhancement-422's suite builds every derived nature that way.
+        //
+        // Both rules were implemented, and the two suites caught them within one
+        // regression sweep. They are recorded here so the next reader finds the
+        // decision rather than the idea.
+
         for (what, nature_ref) in [
             ("parent nature", &data.parent),
             ("ddt_nature", &data.ddt_nature),

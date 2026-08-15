@@ -151,9 +151,19 @@ pub fn matches_to_opts(matches: ArgMatches) -> Result<Opts> {
         .get_many::<String>(CODEGEN)
         .map_or_else(Vec::new, |values| values.cloned().collect());
 
-    let defines = matches
+    // Enhancement-460: `-D =1` names no macro. It was accepted and then silently
+    // dropped, so the build behaved as though the define had never been passed and the
+    // model failed later with "macro `FOO` has not been declared" -- pointing at the
+    // source rather than at the command line that was wrong.
+    let defines: Vec<String> = matches
         .get_many::<String>(DEFINE)
         .map_or_else(Vec::new, |values| values.cloned().collect());
+    for def in &defines {
+        let name = def.split_once('=').map_or(def.as_str(), |(name, _)| name);
+        if name.trim().is_empty() {
+            bail!("invalid value '{def}' for '-D <MACRO[=VALUE]>': the macro name is empty");
+        }
+    }
 
     let include: Result<_> = matches.get_many::<Utf8PathBuf>(INCLUDE).map_or_else(
         || Ok(Vec::new()),

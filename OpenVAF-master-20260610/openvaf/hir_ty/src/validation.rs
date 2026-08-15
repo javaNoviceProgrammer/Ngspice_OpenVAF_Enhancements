@@ -217,6 +217,22 @@ impl Diagnostic for BodyValidationDiagnosticWrapped<'_> {
                             .to_owned(),
                     ])
             }
+            BodyValidationDiagnostic::IllegalEventControl { stmt, ctx } => {
+                let FileSpan { range, file } = self.stmt_src(stmt);
+                Report::error()
+                    .with_message(format!("event control statements are not allowed in {ctx}"))
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: file,
+                        range: range.into(),
+                        message: "this event control cannot be used here".to_owned(),
+                    }])
+                    .with_notes(vec![
+                        "help: the statement it guards would never run; move the event \
+                         control into the analog block, where events are evaluated"
+                            .to_owned(),
+                    ])
+            }
             BodyValidationDiagnostic::StrayPartSelect { expr } => {
                 let FileSpan { range, file } = self.expr_src(expr);
                 Report::error()

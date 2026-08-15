@@ -566,7 +566,21 @@ impl Ctx<'_> {
                     }
                 }
                 ScopeDefItem::NatureAttrId(attr) => {
-                    Ty::NatureAttr(self.db.nature_attr_ty(attr)?, attr)
+                    // An attribute whose value is not a constant expression (`access`,
+                    // `ddt_nature`, `idt_nature`) has no value type. Reporting it here is
+                    // what keeps it out of the lowering, which panics on an unresolved
+                    // path rather than diagnosing it.
+                    match self.db.nature_attr_ty(attr) {
+                        Some(ty) => Ty::NatureAttr(ty, attr),
+                        None => {
+                            let loc = attr.lookup(self.db.upcast());
+                            let name = self.db.nature_data(loc.nature).attrs[loc.id].name.clone();
+                            self.result
+                                .diagnostics
+                                .push(InferenceDiagnostic::NonConstNatureAttr { expr, attr: name });
+                            return None;
+                        }
+                    }
                 }
                 ScopeDefItem::ParamSysFun(_) => Ty::Val(Type::Real),
                 }
@@ -3116,6 +3130,18 @@ pub enum InferenceDiagnostic {
     NotIndexable {
         expr: ExprId,
         name: Name,
+    },
+
+    /// Enhancement-460: `net.potential.access` and friends. LRM Syntax 5-4: "This syntax
+    /// shall not be used for the `access`, `ddt_nature`, or `idt_nature` attributes of a
+    /// nature, nor any other attribute whose value is not a constant expression." Those
+    /// attributes hold an IDENTIFIER (an access function name, a nature name), so
+    /// `nature_attr_ty` finds no value type and returned `None` -- which pushed no
+    /// diagnostic, left the expression typed `Err`, and panicked the lowering
+    /// ("invalid HIR: path .. was not resolved"). Exactly Enhancement-455's shape.
+    NonConstNatureAttr {
+        expr: ExprId,
+        attr: Name,
     },
 
     /// A bus bit-select index was not a compile-time-constant integer literal.

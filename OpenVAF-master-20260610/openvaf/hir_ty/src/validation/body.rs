@@ -248,6 +248,19 @@ pub enum BodyValidationDiagnostic {
         cycle: Vec<Name>,
     },
 
+    /// Enhancement-460: an event control statement where the LRM forbids one.
+    ///
+    /// LRM 5.2.1 lists three things an `analog initial` block "shall not contain":
+    /// statements with access functions or analog operators, contribution statements,
+    /// and EVENT CONTROL STATEMENTS. LRM 4.7.1 forbids the same three in an analog
+    /// function. The first two were enforced in both; the third was accepted in both,
+    /// and the guarded statement was then silently DROPPED -- an initialisation that
+    /// looks careful and does nothing.
+    IllegalEventControl {
+        stmt: StmtId,
+        ctx: BodyCtx,
+    },
+
     /// Enhancement-85: a part-select (`v[msb:lsb]`) anywhere other than an
     /// instance port connection (which elaboration consumes textually).
     StrayPartSelect {
@@ -671,6 +684,15 @@ impl BodyValidator<'_> {
                 return;
             }
             Stmt::EventControl { ref event, body } => {
+                // LRM 5.2.1 / 4.7.1: neither an analog initial block nor an analog
+                // function may contain an event control statement. Checked on the
+                // STATEMENT rather than on what it guards, because the guarded body is
+                // exactly what used to disappear without a word.
+                if matches!(self.ctx, BodyCtx::AnalogInitialBlock | BodyCtx::Function) {
+                    let ctx = self.ctx;
+                    self.diagnostics
+                        .push(BodyValidationDiagnostic::IllegalEventControl { stmt, ctx });
+                }
                 self.validate_event(event, stmt);
                 event.walk_child_exprs(|e| self.validate_expr(e, stmt));
                 let old = replace(&mut self.ctx, BodyCtx::EventControl);

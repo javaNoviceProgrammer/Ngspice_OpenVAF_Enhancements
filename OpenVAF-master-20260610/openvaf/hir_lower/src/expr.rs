@@ -715,18 +715,72 @@ impl BodyLoweringCtx<'_, '_, '_> {
         if it.next()? as usize != ndim {
             return None;
         }
-        let sizes: Vec<usize> =
+        let mut sizes: Vec<usize> =
             (0..ndim).map(|_| it.next().map(|v| v as usize)).collect::<Option<_>>()?;
         if sizes.iter().any(|&s| s == 0) {
             return None;
         }
-        let mut axes = Vec::with_capacity(ndim);
+        let mut axes: Vec<Vec<f64>> = Vec::with_capacity(ndim);
         for &sz in &sizes {
             axes.push((0..sz).map(|_| it.next()).collect::<Option<Vec<f64>>>()?);
         }
         let total: usize = sizes.iter().product();
-        let tensor = (0..total).map(|_| it.next()).collect::<Option<Vec<f64>>>()?;
+        let mut tensor = (0..total).map(|_| it.next()).collect::<Option<Vec<f64>>>()?;
+        // Enhancement-460: `interp_1d_values` below states its precondition -- "`grid` is
+        // ascending" -- and this reader was the one path that never established it. The
+        // 1-D forms (inline pairs and the two-column file) sort and de-duplicate their
+        // breakpoints; a multi-dimensional grid did not, so a file whose axis ran
+        // downwards, out of order, or repeated a coordinate was accepted in silence and
+        // interpolated to garbage: with f(x,y)=x^2+y sampled on x=[0,1,2], writing that
+        // axis as `2 1 0` returned 0.5, 4.5, 4.5 over x = 0, 0.5, 1 -- which matches NO
+        // reading of the file, since taking it at its word (row k belongs to axis[k])
+        // gives 4.5, 3.0, 1.5 and the ascending function gives 0.5, 1.0, 1.5. The
+        // interpolation simply clamped. Normalising here makes every form of the table
+        // behave identically, and the grid mean what the file says.
+        for d in 0..ndim {
+            Self::normalize_grid_axis(&mut sizes, &mut axes, &mut tensor, d);
+        }
         Some((axes, tensor))
+    }
+
+    /// Sorts axis `d` ascending and drops repeated coordinates, permuting the row-major
+    /// value tensor to match. Keeping the FIRST of a repeated coordinate is what
+    /// `dedup_by` does on the 1-D path, so both agree on the same data.
+    fn normalize_grid_axis(
+        sizes: &mut [usize],
+        axes: &mut [Vec<f64>],
+        tensor: &mut Vec<f64>,
+        d: usize,
+    ) {
+        let sz = sizes[d];
+        let mut ord: Vec<usize> = (0..sz).collect();
+        ord.sort_by(|&i, &j| {
+            axes[d][i].partial_cmp(&axes[d][j]).unwrap_or(std::cmp::Ordering::Equal)
+        });
+        let mut kept: Vec<usize> = Vec::with_capacity(sz);
+        for &i in &ord {
+            if kept.last().map_or(true, |&p| axes[d][p] != axes[d][i]) {
+                kept.push(i);
+            }
+        }
+        // already strictly ascending: nothing to permute
+        if kept.len() == sz && kept.iter().enumerate().all(|(k, &i)| k == i) {
+            return;
+        }
+        let new_sz = kept.len();
+        let stride: usize = sizes[d + 1..].iter().product();
+        let outer: usize = sizes[..d].iter().product();
+        let mut out = Vec::with_capacity(outer * new_sz * stride);
+        for o in 0..outer {
+            for &i in &kept {
+                let base = (o * sz + i) * stride;
+                out.extend_from_slice(&tensor[base..base + stride]);
+            }
+        }
+        let coords: Vec<f64> = kept.iter().map(|&i| axes[d][i]).collect();
+        axes[d] = coords;
+        sizes[d] = new_sz;
+        *tensor = out;
     }
 
     /// One-dimensional piecewise-linear interpolation of runtime `vals` (one per `grid` point) at

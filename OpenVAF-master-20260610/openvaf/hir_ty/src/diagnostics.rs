@@ -386,6 +386,24 @@ impl Diagnostic for InferenceDiagnosticWrapped<'_> {
                          holds a single value"
                     )])
             }
+            InferenceDiagnostic::NonConstNatureAttr { expr, ref attr } => {
+                let src = self.parse.to_file_span(self.expr_range(expr), self.sm);
+                Report::error()
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: src.file,
+                        range: src.range.into(),
+                        message: format!("'{attr}' is not a constant"),
+                    }])
+                    .with_message(format!(
+                        "the '{attr}' attribute cannot be read with an attribute reference"
+                    ))
+                    .with_notes(vec![format!(
+                        "help: LRM 5-4 allows this syntax only for attributes whose value is a \
+                         constant expression, which excludes 'access', 'ddt_nature' and \
+                         'idt_nature'; '{attr}' names an identifier, not a value"
+                    )])
+            }
             InferenceDiagnostic::GenvarNotUsable { expr, ref name } => {
                 let src = self.parse.to_file_span(self.expr_range(expr), self.sm);
                 Report::error()
