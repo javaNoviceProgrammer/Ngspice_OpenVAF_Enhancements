@@ -1049,7 +1049,7 @@ dependencies = [
 
 [[package]]
 name = "openvaf-driver"
-version = "23.5.0"
+version = "23.6.0"
 dependencies = [
  "anyhow",
  "backtrace",
