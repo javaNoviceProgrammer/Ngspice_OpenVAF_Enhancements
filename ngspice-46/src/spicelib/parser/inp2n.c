@@ -401,3 +401,381 @@ void INP2N(CKTcircuit *ckt, INPtables *tab, struct card *current) {
     LITERR(" error:  no unlabeled parameter permitted on osdi devices\n");
   tfree(autobus_line);                  /* Enhancement-444 */
 }
+
+/* ===========================================================================
+ * PROTOTYPE (Enhancement-463 candidate): `.option autoadapt adapter=<model>`
+ *
+ * Inject a two-bus-port adapter between two OSDI devices that share a bus node:
+ *
+ *     N1 a b mymodel1                 N1 a b_f mymodel1
+ *     N2 b c mymodel2      ->         N2 b_r c mymodel2
+ *                                     N_a1_ b_f b_r <adapter>
+ *
+ * WHERE THIS RUNS, AND WHY. Between INPpas1 and INPpas2 (see spiceif.c):
+ *   - pas1 has filled the model table, so a line's PORT STRUCTURE is knowable --
+ *     which is what "is this token a bus node?" needs. A textual pass earlier in
+ *     inpcom.c cannot answer that.
+ *   - subcircuits are long since flattened, so "inside a subcircuit" needs no
+ *     separate path (and no second implementation to keep in step, which is the
+ *     bill Enhancement-449 paid for autobus).
+ *   - INP2N has NOT run, so the rewrite is at the TOKEN level and `.option
+ *     autobus` then expands all three lines. Bus handling is not extra work
+ *     here; it is the consequence of picking this seam.
+ *
+ * Rules (all deliberate, see the enhancement discussion):
+ *   - a candidate token must occur EXACTLY TWICE in the whole deck, and both
+ *     occurrences must be bus-port tokens on OSDI lines of equal width;
+ *   - the device whose port INDEX is higher gets `_f`. Not deck order: a SPICE
+ *     deck is order-independent and must stay that way;
+ *   - both occurrences on ONE device is an ERROR, not a self-loop;
+ *   - everything that does not qualify is REPORTED, never silently skipped.
+ */
+extern struct card *insert_new_line(struct card *card, char *line, int linenum,
+                                    int linenum_orig, char *lineinfo);
+
+#define ADAPT_MAXCAND 4096
+
+struct adapt_use {
+    struct card *card;
+    int tokidx;                 /* which node token on the line */
+    int port;                   /* port index within the model */
+    int width;                  /* bits in that port */
+    char *inst;
+};
+
+struct adapt_cand {
+    char *node;
+    int nuse;
+    struct adapt_use use[2];
+    int extra;                  /* uses beyond two, or non-OSDI sightings */
+};
+
+/* Is `node` named on a `.adapt` card? Whole tokens only -- a substring test
+   would make `.adapt bb` silently select `b`. A flattened node carries its
+   subcircuit path (`x1.b`), so the trailing component is accepted too, letting
+   one `.adapt b` cover the same local node in every instance of a subcircuit. */
+static bool adapt_listed(const char *list, const char *node, bool *hit)
+{
+    const char *p = list;
+    const char *tail = strrchr(node, '.');
+    tail = tail ? tail + 1 : node;
+
+    while (*p) {
+        size_t n = 0;
+        while (*p && (isspace_c(*p) || *p == ','))
+            p++;
+        while (p[n] && !isspace_c(p[n]) && p[n] != ',')
+            n++;
+        if (n) {
+            if ((strlen(node) == n && strncmp(p, node, n) == 0) ||
+                (strlen(tail) == n && strncmp(p, tail, n) == 0)) {
+                if (hit)
+                    *hit = TRUE;
+                return TRUE;
+            }
+        }
+        p += n;
+    }
+    return FALSE;
+}
+
+/* whole-word occurrences of `tok` among the NODE positions of instance lines */
+static int adapt_count_occurrences(struct card *deck, const char *tok)
+{
+    struct card *c;
+    size_t n = strlen(tok);
+    int total = 0;
+
+    for (c = deck; c; c = c->nextcard) {
+        char *p = c->line;
+        if (!p || !*p || *p == '*' || *p == '.')
+            continue;
+        while ((p = strstr(p, tok)) != NULL) {
+            char before = (p == c->line) ? ' ' : p[-1];
+            const char *after = p + n;
+            if (isspace_c(before) || before == '(') {
+                /* the bus itself ... */
+                if (*after == '\0' || isspace_c(*after) || *after == ')') {
+                    total++;
+                /* ... or one of its BITS. A reference to `b[0]` is a use of the
+                   bus just as much as `b` is: split the bus and that resistor is
+                   left on an orphan node, silently. Both spellings count --
+                   `b[0]` and, under `.option autobus=kicad`, `b_0_`. */
+                } else if (*after == '[') {
+                    total++;
+                } else if (*after == '_' && isdigit_c(after[1])) {
+                    const char *q = after + 1;
+                    while (isdigit_c(*q))
+                        q++;
+                    if (*q == '_' && (q[1] == '\0' || isspace_c(q[1]) || q[1] == ')'))
+                        total++;
+                }
+            }
+            p += n;
+        }
+    }
+    return total;
+}
+
+/* the model name is the last token that is not a `k=v` parameter */
+static char *adapt_model_of(char *line, int *ntok)
+{
+    char *c = line, *tok, *last = NULL, *skip;
+    int i = 0;
+
+    skip = gettok_instance(&c);                 /* the instance name */
+    tfree(skip);
+    while (*c) {
+        tok = gettok_instance(&c);
+        if (!tok)
+            break;
+        if (strchr(tok, '=')) {                 /* a parameter: stop */
+            tfree(tok);
+            break;
+        }
+        tfree(last);
+        last = tok;
+        i++;
+    }
+    *ntok = i;                                  /* nodes + the model name */
+    return last;
+}
+
+void
+INPadapt(CKTcircuit *ckt, struct card *deck, INPtables *tab)
+{
+    static struct adapt_cand cand[ADAPT_MAXCAND];
+    int ncand = 0, i, made = 0, adapt_width = 0;
+    char amodel[128], *only = NULL;
+    struct card *c;
+    bool want;
+
+    /* ---- the option, and the two ways it can be wrong ------------------- */
+    want = cp_getvar("autoadapt", CP_BOOL, NULL, 0) ||
+           cp_getvar("autoadapt", CP_STRING, amodel, sizeof(amodel));
+    if (!want)
+        return;
+    if (!cp_getvar("adapter", CP_STRING, amodel, sizeof(amodel)) || !amodel[0]) {
+        fprintf(stderr, "Error: .option autoadapt needs an adapter model: "
+                        "`.option autoadapt adapter=<modelname>`\n");
+        return;
+    }
+    if (!autobus_enabled()) {
+        fprintf(stderr, "Error: .option autoadapt requires .option autobus; "
+                        "without it a bus node is not a single token and "
+                        "nothing would be adapted.\n");
+        return;
+    }
+
+    /* ---- the adapter model must exist and be exactly two bus ports ------ */
+    {
+        INPmodel *am = NULL;
+        IFdevice *adev;
+        int astart[AUTOBUS_MAXPORT], acnt[AUTOBUS_MAXPORT], anp;
+
+        txfree(INPgetMod(ckt, amodel, &am, tab));
+        if (!am) {
+            fprintf(stderr, "Error: autoadapt: adapter model '%s' is not "
+                            "defined in this deck.\n", amodel);
+            return;
+        }
+        adev = ft_sim->devices[am->INPmodType];
+        if (!adev || !adev->registry_entry) {
+            fprintf(stderr, "Error: autoadapt: adapter model '%s' is not an "
+                            "OSDI device.\n", amodel);
+            return;
+        }
+        anp = autobus_ports(adev, astart, acnt, AUTOBUS_MAXPORT);
+        if (anp != 2 || acnt[0] < 2 || acnt[1] < 2 || acnt[0] != acnt[1]) {
+            fprintf(stderr, "Error: autoadapt: adapter model '%s' must have "
+                    "exactly two bus ports of equal width (found %d port(s), "
+                    "widths %d/%d).\n", amodel, anp,
+                    anp > 0 ? acnt[0] : 0, anp > 1 ? acnt[1] : 0);
+            return;
+        }
+        adapt_width = acnt[0];
+    }
+
+    /* ---- an optional `.adapt n1, n2, ...` restricts the node set --------- */
+    for (c = deck; c; c = c->nextcard)
+        if (c->line && ciprefix(".adapt", c->line)) {
+            char *rest = c->line + 6;
+            if (!only) {
+                only = copy(rest);
+            } else {
+                char *j = tprintf("%s %s", only, rest);
+                tfree(only);
+                only = j;
+            }
+            *(c->line) = '*';                   /* consumed */
+        }
+
+    /* ---- collect every bus-port token on every OSDI line ---------------- */
+    for (c = deck; c; c = c->nextcard) {
+        char *line = c->line, *mname, *scan, *inst;
+        int ntok, np, t, p;
+        int pstart[AUTOBUS_MAXPORT], pcnt[AUTOBUS_MAXPORT];
+        INPmodel *thismodel = NULL;
+        IFdevice *dev;
+
+        if (!line || (tolower_c(*line) != 'n'))
+            continue;
+        mname = adapt_model_of(line, &ntok);
+        if (!mname)
+            continue;
+        txfree(INPgetMod(ckt, mname, &thismodel, tab));
+        if (!thismodel) { tfree(mname); continue; }
+        dev = ft_sim->devices[thismodel->INPmodType];
+        if (!dev || !dev->registry_entry) { tfree(mname); continue; }
+        np = autobus_ports(dev, pstart, pcnt, AUTOBUS_MAXPORT);
+        /* An instance OF THE ADAPTER is not a candidate: otherwise a deck that
+           already carries adapters -- hand-written, or from an earlier run of
+           this pass -- gets them adapted in turn, `b_f` becoming `b_f_f`/`b_f_r`
+           with a second adapter between. Measured before this guard existed. */
+        if (cieq(mname, amodel)) { tfree(mname); continue; }
+        tfree(mname);
+        if (np <= 0 || np != ntok - 1)          /* not the one-token-per-port form */
+            continue;
+
+        scan = line;
+        inst = gettok_instance(&scan);
+        for (p = 0; p < np; p++) {
+            char *tok = gettok_instance(&scan);
+            if (!tok)
+                break;
+            if (pcnt[p] > 1) {                  /* a BUS port only */
+                for (i = 0; i < ncand; i++)
+                    if (strcmp(cand[i].node, tok) == 0)
+                        break;
+                if (i == ncand && ncand < ADAPT_MAXCAND) {
+                    cand[ncand].node = copy(tok);
+                    cand[ncand].nuse = 0;
+                    cand[ncand].extra = 0;
+                    ncand++;
+                }
+                if (i < ncand) {
+                    if (cand[i].nuse < 2) {
+                        cand[i].use[cand[i].nuse].card = c;
+                        cand[i].use[cand[i].nuse].tokidx = p;
+                        cand[i].use[cand[i].nuse].port = p;
+                        cand[i].use[cand[i].nuse].width = pcnt[p];
+                        cand[i].use[cand[i].nuse].inst = copy(inst);
+                        cand[i].nuse++;
+                    } else {
+                        cand[i].extra++;
+                    }
+                }
+            }
+            tfree(tok);
+        }
+        tfree(inst);
+        (void) t;
+    }
+
+    /* ---- qualify, then inject ------------------------------------------- */
+    for (i = 0; i < ncand; i++) {
+        struct adapt_cand *k = &cand[i];
+        struct adapt_use *f, *rr;
+        int occ;
+        char *nf, *nr, *aline;
+
+        if (only && !adapt_listed(only, k->node, NULL))
+            continue;
+        if (k->nuse < 2)
+            continue;
+        if (k->extra) {
+            fprintf(stderr, "Warning: autoadapt: bus node '%s' is used by more "
+                    "than two OSDI ports; not adapted.\n", k->node);
+            continue;
+        }
+        if (k->use[0].card == k->use[1].card) {
+            fprintf(stderr, "Error: autoadapt: bus node '%s' appears on both "
+                    "ports of instance %s; an adapter cannot be inserted into a "
+                    "device's own two ports.\n", k->node, k->use[0].inst);
+            continue;
+        }
+        if (k->use[0].width != k->use[1].width) {
+            fprintf(stderr, "Error: autoadapt: bus node '%s' is %d bits on %s "
+                    "but %d bits on %s; not adapted.\n", k->node,
+                    k->use[0].width, k->use[0].inst,
+                    k->use[1].width, k->use[1].inst);
+            continue;
+        }
+        if (k->use[0].width != adapt_width) {
+            fprintf(stderr, "Error: autoadapt: bus node '%s' is %d bits but the "
+                    "adapter model '%s' has %d-bit ports; not adapted.\n",
+                    k->node, k->use[0].width, amodel, adapt_width);
+            continue;
+        }
+        occ = adapt_count_occurrences(deck, k->node);
+        if (occ != 2) {
+            fprintf(stderr, "Warning: autoadapt: node '%s' occurs %d times in "
+                    "the deck, not exactly twice; not adapted.\n", k->node, occ);
+            continue;
+        }
+        /* the HIGHER port index is the forward side -- intrinsic, so that
+           reordering the deck cannot change the circuit */
+        if (k->use[0].port > k->use[1].port) {
+            f = &k->use[0]; rr = &k->use[1];
+        } else if (k->use[1].port > k->use[0].port) {
+            f = &k->use[1]; rr = &k->use[0];
+        } else {
+            f = &k->use[0]; rr = &k->use[1];
+            fprintf(stderr, "Warning: autoadapt: node '%s' sits at port %d on "
+                    "both %s and %s; falling back to deck order for _f/_r.\n",
+                    k->node, f->port, f->inst, rr->inst);
+        }
+        nf = tprintf("%s_f", k->node);
+        nr = tprintf("%s_r", k->node);
+        if (adapt_count_occurrences(deck, nf) ||
+            adapt_count_occurrences(deck, nr)) {
+            fprintf(stderr, "Error: autoadapt: cannot split '%s' -- '%s' or "
+                    "'%s' already exists in the deck.\n", k->node, nf, nr);
+            tfree(nf); tfree(nr);
+            continue;
+        }
+
+        /* rewrite the two lines, token by token */
+        {
+            struct adapt_use *u;
+            int w;
+            for (w = 0; w < 2; w++) {
+                char *scan, *tk;
+                int p = 0;
+                DS_CREATE(nl, 128);
+                u = (w == 0) ? f : rr;
+                scan = u->card->line;
+                tk = gettok_instance(&scan);
+                ds_cat_str(&nl, tk); tfree(tk);
+                while (*scan) {
+                    tk = gettok_instance(&scan);
+                    if (!tk)
+                        break;
+                    ds_cat_char(&nl, ' ');
+                    ds_cat_str(&nl, (p == u->tokidx) ? (w == 0 ? nf : nr) : tk);
+                    tfree(tk);
+                    p++;
+                }
+                tfree(u->card->line);
+                u->card->line = copy(ds_get_buf(&nl));
+                ds_free(&nl);
+            }
+        }
+        aline = tprintf("n_adapt%d_ %s %s %s", ++made, nf, nr, amodel);
+        insert_new_line(f->card, aline, 0, f->card->linenum_orig,
+                        f->card->linesource);
+        fprintf(stdout, "autoadapt: %s split -> %s (%s port %d) / %s (%s port "
+                "%d), %d bits, adapter n_adapt%d_ %s\n",
+                k->node, nf, f->inst, f->port, nr, rr->inst, rr->port,
+                f->width, made, amodel);
+        tfree(nf); tfree(nr);
+    }
+
+    for (i = 0; i < ncand; i++) {
+        int u;
+        for (u = 0; u < cand[i].nuse; u++)
+            tfree(cand[i].use[u].inst);
+        tfree(cand[i].node);
+    }
+    tfree(only);
+}

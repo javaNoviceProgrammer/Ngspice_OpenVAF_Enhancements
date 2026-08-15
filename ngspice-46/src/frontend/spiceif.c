@@ -176,6 +176,13 @@ if_inpdeck(struct card *deck, INPtables **tab)
     ft_curckt->ci_modtab = modtab;
     ft_curckt->ci_modtabhash = modtabhash;
 
+    /* PROTOTYPE: `.option autoadapt` -- inject a two-bus-port adapter between
+       two OSDI devices sharing a bus node. It runs HERE, between pas1 and pas2,
+       because it needs the model table pas1 just built (to know which tokens
+       are bus ports) but must rewrite the cards before pas2 binds them -- and
+       before INP2N, so `.option autobus` expands the injected line too. */
+    INPadapt(ckt, deck->nextcard, *tab);
+
     /* Parsing the circuit 8.
        This is the next major step:
        Scan through the instance lines and parse the circuit.
@@ -459,6 +466,7 @@ if_is_option(const char *name)
         "nopage", "nomod",
         "warn_physics",              /* Enhancement-438 */
         "autobus",                   /* Enhancement-444 */
+        "autoadapt", "adapter",      /* PROTOTYPE: autoadapt */
         /* Enhancement-445: the `.four` analysis controls. Each is read by
            fourier() through cp_getvar and each demonstrably takes effect when
            set on a `.options` line -- `fourgridsize=10` moves the reported grid
@@ -558,6 +566,9 @@ if_option(CKTcircuit *ckt, char *name, enum cp_types type, void *value)
         return 0;
     } else if (eq(name, "autobus")) {
         /* Enhancement-444: consumed by INP2N via cp_getvar, likewise. */
+        return 0;
+    } else if (eq(name, "autoadapt") || eq(name, "adapter")) {
+        /* PROTOTYPE: consumed by INPadapt via cp_getvar, likewise. */
         return 0;
     } else if (eq(name, "nfreqs") || eq(name, "nperiods") ||
                eq(name, "polydegree") || eq(name, "fourgridsize")) {

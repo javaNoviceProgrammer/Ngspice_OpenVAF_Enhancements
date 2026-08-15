@@ -142,6 +142,8 @@ int INPmakeMod(char *, int, struct card *);
 char *INPmkTemp(char *);
 void INPpas1(CKTcircuit *, struct card *, INPtables *);
 void INPpas2(CKTcircuit *, struct card *, INPtables *, TSKtask *);
+/* PROTOTYPE: autoadapt -- runs between pas1 and pas2, see inp2n.c */
+void INPadapt(CKTcircuit *, struct card *, INPtables *);
 /* Enhancement-426: set while INPpas2() is handed a card that if_run()
  * synthesised from a .control command. Such a card is never deck parsing, so
  * an analysis card naming an unknown node is a typo even before CKTsetup(). */

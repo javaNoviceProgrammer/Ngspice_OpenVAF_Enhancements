@@ -10536,6 +10536,42 @@ void inp_rem_unused_models(struct nscope *root, struct card *deck)
         }
     }
 
+    /* PROTOTYPE (autoadapt): the adapter model is referenced by NOTHING at this
+       point -- the instance that will use it does not exist yet, because the
+       injection pass runs after INPpas1, which is far later than this cull. So
+       protect the model named by `.option ... adapter=<name>` from being
+       commented out as unused. Without this the injected line later fails with
+       "Unable to find definition of model", pointing at the instance rather
+       than at the card that was silently removed here. */
+    {
+        char aname[128] = "";
+        struct card *c;
+        for (c = deck; c; c = c->nextcard) {
+            char *q;
+            if (!c->line || *c->line != '.' || !ciprefix(".option", c->line))
+                continue;
+            q = strstr(c->line, "adapter=");
+            if (q) {
+                int n = 0;
+                q += 8;
+                while (*q && !isspace_c(*q) && n < (int) sizeof(aname) - 1)
+                    aname[n++] = *q++;
+                aname[n] = '\0';
+            }
+        }
+        if (aname[0])
+            for (c = deck; c; c = c->nextcard)
+                if (c->line && ciprefix(".model", c->line) && c->level) {
+                    char *mn = get_subckt_model_name(c->line);
+                    struct modellist *m;
+                    if (mn && cieq(mn, aname))
+                        for (m = c->level->models; m; m = m->next)
+                            if (m->modelname && cieq(m->modelname, aname))
+                                m->used = TRUE;
+                    tfree(mn);
+                }
+    }
+
     // disable unused .model lines, and free the models assoc lists
     rem_unused_xxx(root);
 }
