@@ -28,7 +28,7 @@ static double Sens_Abs_Delta = 0.000001;
 
 /* Enhancement-468: replace a non-finite sensitivity with zero, once per name. */
 static void
-e468_undefined_sens(sgen *sg, double *rval, SPcomplex *cval)
+e468_undefined_sens(sgen *sg, double *rval, IFcomplex *cval)
 {
     static char warned[128] = "";
     const char *pname = (sg && sg->ptable && sg->param >= 0)
