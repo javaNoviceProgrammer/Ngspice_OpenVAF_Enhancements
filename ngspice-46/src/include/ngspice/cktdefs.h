@@ -450,6 +450,7 @@ extern int CKTdltAnal(void *, void *, void *);
 extern int CKTdltInst(CKTcircuit *, void *);
 extern int CKTdltMod(CKTcircuit *, GENmodel *);
 extern int CKTdltNNum(CKTcircuit *, int);
+extern int CKTdltNodeSet(CKTcircuit *, const char *, int);  /* Enhancement-470 */
 extern int CKTdltNod(CKTcircuit *, CKTnode *);
 extern int CKTdoJob(CKTcircuit *, int , TSKtask *);
 extern void CKTdump(CKTcircuit *, double, runDesc *);

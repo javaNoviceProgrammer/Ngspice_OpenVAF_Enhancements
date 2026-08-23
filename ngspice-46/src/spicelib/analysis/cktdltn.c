@@ -58,3 +58,63 @@ CKTdltNNum(CKTcircuit* ckt, int num)
 
     return error;
 }
+
+
+/* Enhancement-470: delete a SET of device-local nodes in ONE pass.
+ *
+ * CKTdltNNum() finds its node by scanning the circuit's node list from the
+ * head, so unsetting a device that owns k internal nodes costs O(k*N). A
+ * profile of a 1001-point parameter sweep over a 2448-unknown circuit spent
+ * 77% of the entire run inside it -- not in the solve, not in setup, but in
+ * tearing the circuit down between points, once per point:
+ *
+ *     10083 com_sweep -> sw_run_cmd -> dosim -> if_run
+ *       8092 CKTdoJob
+ *         8083 CKTunsetup
+ *           8056 OSDIunsetup
+ *             7808 CKTdltNNum          <- 77% of total
+ *
+ * and the quadratic shows in the wall clock: 1.6 / 4.1 / 31 ms per sweep point
+ * for 5 / 10 / 25 stack periods, growing faster than the circuit does.
+ *
+ * The caller knows every number it wants gone before it deletes any of them, so
+ * it can mark them and let one walk of the list remove them all: O(N) for the
+ * whole unsetup instead of O(k*N). `del` is indexed by node number and `maxnum`
+ * is its highest valid index, taken before any deletion since CKTmaxEqNum moves
+ * as nodes go.
+ *
+ * Nodes at or below `prev_CKTlastNode` are external and are skipped, the same
+ * boundary CKTdltNNum enforces with a fatal error; a caller that marks one is
+ * simply ignored here rather than killing the run mid-teardown. */
+int
+CKTdltNodeSet(CKTcircuit *ckt, const char *del, int maxnum)
+{
+    CKTnode *n, *next, *prev = NULL;
+    int error = OK;
+    int floor_num;
+
+    if (!ckt || !del)
+        return OK;
+    floor_num = ckt->prev_CKTlastNode ? ckt->prev_CKTlastNode->number : 0;
+
+    for (n = ckt->CKTnodes; n; n = next) {
+        next = n->next;
+        if (n->number > floor_num && n->number <= maxnum && del[n->number]) {
+            int e;
+            if (prev)
+                prev->next = next;
+            else
+                ckt->CKTnodes = next;
+            if (n == ckt->CKTlastNode)
+                ckt->CKTlastNode = prev;
+            ckt->CKTmaxEqNum -= 1;
+            e = SPfrontEnd->IFdelUid(ckt, n->name, UID_SIGNAL);
+            if (e && !error)
+                error = e;
+            tfree(n);
+        } else {
+            prev = n;
+        }
+    }
+    return error;
+}

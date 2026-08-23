@@ -800,6 +800,29 @@ extern int OSDIunsetup(GENmodel *inModel, CKTcircuit *ckt) {
   GENmodel *gen_model;
   GENinstance *gen_inst;
   int num;
+  /* Enhancement-470: mark every internal node first, delete them in one pass.
+   * Deleting them one at a time cost O(k*N) -- CKTdltNNum scans the node list
+   * from the head for each -- and a profile of a 1001-point sweep over a
+   * 2448-unknown circuit spent 77% of the whole run there, tearing the circuit
+   * down between points. `maxnum` is taken now because CKTmaxEqNum moves as
+   * nodes are removed. */
+  int e470_maxnum = 0;
+  char *e470_del;
+  int e470_rc;
+  {
+    /* The bound is the highest node number PRESENT, not CKTmaxEqNum: this
+     * function runs once per model type, and CKTmaxEqNum shrinks as each call
+     * deletes, so a later type's nodes would sit above it and fall back to the
+     * per-node path -- which is exactly what a second profile caught, with
+     * CKTdltNNum still at 64% after the first attempt. */
+    CKTnode *e470_n;
+    for (e470_n = ckt->CKTnodes; e470_n; e470_n = e470_n->next)
+      if (e470_n->number > e470_maxnum)
+        e470_maxnum = e470_n->number;
+  }
+  e470_del = (e470_maxnum > 0) ? TMALLOC(char, (size_t)e470_maxnum + 1) : NULL;
+  if (e470_del)
+    memset(e470_del, 0, (size_t)e470_maxnum + 1);
 
   OsdiRegistryEntry *entry = osdi_reg_entry_model(inModel);
   const OsdiDescriptor *descr = entry->descriptor;
@@ -846,12 +869,23 @@ extern int OSDIunsetup(GENmodel *inModel, CKTcircuit *ckt) {
         // an internal node
         if (ckt->prev_CKTlastNode->number &&
             num > ckt->prev_CKTlastNode->number) {
-          CKTdltNNum(ckt, num);
+          /* Enhancement-470: mark now, delete once below. Marking twice is
+             as harmless as the repeated CKTdltNNum() this replaces -- the
+             comment above explains why a node can be named more than once. */
+          if (e470_del && num >= 0 && num <= e470_maxnum)
+            e470_del[num] = 1;
+          else
+            CKTdltNNum(ckt, num);
         }
       }
     }
   }
-  return (OK);
+  e470_rc = OK;
+  if (e470_del) {
+    e470_rc = CKTdltNodeSet(ckt, e470_del, e470_maxnum);
+    FREE(e470_del);
+  }
+  return (e470_rc);
 }
 #ifdef KLU
 #include "ngspice/klu-binding.h"
