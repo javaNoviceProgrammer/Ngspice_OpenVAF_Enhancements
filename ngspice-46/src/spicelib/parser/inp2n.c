@@ -552,6 +552,49 @@ static char *adapt_model_of(char *line, int *ntok)
     return last;
 }
 
+/* Enhancement-466: is `.option autoadapt` on, and how loud?
+ *
+ *   0  off        1  on, QUIET (the default)        2  on, reporting
+ *
+ * QUIET IS THE DEFAULT because the reporting is per NODE: a deck with many
+ * shared bus nodes printed a line for every split and another for every node
+ * that did not qualify, which buried the run's real output. `=debug` asks for
+ * it back. Genuine ERRORS -- a missing or wrong-shaped adapter model, a name
+ * collision, `autoadapt` without `autobus` -- are never silenced; they mean the
+ * option cannot do what the deck asked for.
+ *
+ * The off-words are honoured here for the first time. `.option autoadapt=0`,
+ * `=false`, `=no` and `=off` ALL TURNED THE FEATURE ON in Enhancement-463: the
+ * value was never looked at, only its presence. That is the same defect
+ * Enhancements 450, 451 and 454 each had to repair in a sibling option, so the
+ * word list is the one they share (`e454_value_is_off` in frontend/inp.c). */
+static int autoadapt_mode(void)
+{
+    static char warned[64] = "";
+    double d;
+    char s[64];
+
+    if (cp_getvar("autoadapt", CP_BOOL, NULL, 0))
+        return 1;                       /* the bare flag */
+    if (cp_getvar("autoadapt", CP_REAL, &d, 0))
+        return d != 0.0 ? 1 : 0;
+    if (!cp_getvar("autoadapt", CP_STRING, s, sizeof s))
+        return 0;                       /* not given at all */
+    if (cieq(s, "0") || cieq(s, "false") || cieq(s, "no") || cieq(s, "off"))
+        return 0;
+    if (cieq(s, "debug"))
+        return 2;
+    if (cieq(s, "true") || cieq(s, "yes") || cieq(s, "on"))
+        return 1;
+    if (strcmp(s, warned) != 0) {
+        fprintf(stderr, "Warning: unknown autoadapt value '%s'; expected "
+                        "'debug'. Proceeding quietly.\n", s);
+        strncpy(warned, s, sizeof warned - 1);
+        warned[sizeof warned - 1] = '\0';
+    }
+    return 1;
+}
+
 void
 INPadapt(CKTcircuit *ckt, struct card *deck, INPtables *tab)
 {
@@ -559,13 +602,13 @@ INPadapt(CKTcircuit *ckt, struct card *deck, INPtables *tab)
     int ncand = 0, i, made = 0, adapt_width = 0;
     char amodel[128], *only = NULL;
     struct card *c;
-    bool want;
+    int verbose;
 
     /* ---- the option, and the two ways it can be wrong ------------------- */
-    want = cp_getvar("autoadapt", CP_BOOL, NULL, 0) ||
-           cp_getvar("autoadapt", CP_STRING, amodel, sizeof(amodel));
-    if (!want)
+    verbose = autoadapt_mode();
+    if (!verbose)
         return;
+    verbose = (verbose == 2);           /* 2 = report, 1 = quiet */
     if (!cp_getvar("adapter", CP_STRING, amodel, sizeof(amodel)) || !amodel[0]) {
         fprintf(stderr, "Error: .option autoadapt needs an adapter model: "
                         "`.option autoadapt adapter=<modelname>`\n");
@@ -695,7 +738,8 @@ INPadapt(CKTcircuit *ckt, struct card *deck, INPtables *tab)
         if (k->nuse < 2)
             continue;
         if (k->extra) {
-            fprintf(stderr, "Warning: autoadapt: bus node '%s' is used by more "
+            if (verbose)
+                fprintf(stderr, "Warning: autoadapt: bus node '%s' is used by more "
                     "than two OSDI ports; not adapted.\n", k->node);
             continue;
         }
@@ -720,7 +764,8 @@ INPadapt(CKTcircuit *ckt, struct card *deck, INPtables *tab)
         }
         occ = adapt_count_occurrences(deck, k->node);
         if (occ != 2) {
-            fprintf(stderr, "Warning: autoadapt: node '%s' occurs %d times in "
+            if (verbose)
+                fprintf(stderr, "Warning: autoadapt: node '%s' occurs %d times in "
                     "the deck, not exactly twice; not adapted.\n", k->node, occ);
             continue;
         }
@@ -732,7 +777,8 @@ INPadapt(CKTcircuit *ckt, struct card *deck, INPtables *tab)
             f = &k->use[1]; rr = &k->use[0];
         } else {
             f = &k->use[0]; rr = &k->use[1];
-            fprintf(stderr, "Warning: autoadapt: node '%s' sits at port %d on "
+            if (verbose)
+                fprintf(stderr, "Warning: autoadapt: node '%s' sits at port %d on "
                     "both %s and %s; falling back to deck order for _f/_r.\n",
                     k->node, f->port, f->inst, rr->inst);
         }
@@ -775,7 +821,8 @@ INPadapt(CKTcircuit *ckt, struct card *deck, INPtables *tab)
         aline = tprintf("n_adapt%d_ %s %s %s", ++made, nf, nr, amodel);
         insert_new_line(f->card, aline, 0, f->card->linenum_orig,
                         f->card->linesource);
-        fprintf(stdout, "autoadapt: %s split -> %s (%s port %d) / %s (%s port "
+        if (verbose)
+            fprintf(stdout, "autoadapt: %s split -> %s (%s port %d) / %s (%s port "
                 "%d), %d bits, adapter n_adapt%d_ %s\n",
                 k->node, nf, f->inst, f->port, nr, rr->inst, rr->port,
                 f->width, made, amodel);

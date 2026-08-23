@@ -104,7 +104,10 @@ check("[E-463] the Verilog-A models compile",
       r.returncode == 0 and os.path.isfile(os.path.join(HERE, "adapt.osdi")),
       (r.stdout + r.stderr).strip()[:60])
 
-AUTO = ".option autoadapt adapter=amod\n"
+# Enhancement-466: the per-node reporting is opt-in now, so the checks below
+# that read what the feature DID ask for it explicitly. The quiet default
+# and the off-words are covered by adaptquiet_examples.
+AUTO = ".option autoadapt=debug adapter=amod\n"
 
 # ------------------------------------------------- the differential ----------
 print("\nthe injected deck is the hand-written one")
