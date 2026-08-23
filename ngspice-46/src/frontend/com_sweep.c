@@ -1024,6 +1024,446 @@ static int sw_fp_cmp_expr(const void *a, const void *b)
     return strcmp(ba->expr, bb->expr);
 }
 
+
+
+#define SW_FP_MAXCL 64
+#define SW_SC_MAXP  64          /* params / local .params per subckt */
+#define SW_SC_DEPTH 8           /* nesting depth resolved */
+
+/* ---------------------------------------------------------------------------
+ * PROTOTYPE: resolve a subcircuit-local value expression to GLOBAL names.
+ *
+ * `X1 a 0 sub r={rv}` binds the local `r` PER INSTANCE, so the flattened devices
+ * `r.x1.r1` and `r.x2.r1` share one template (`{r}`, keyed by source line) but
+ * need different values -- a single global nupa_eval_expr("r") cannot serve both.
+ *
+ * Rather than evaluate per instance at run time, each captured expression is
+ * rewritten ONCE at build time into global names, by walking the instance's
+ * scope chain outward exactly as numparam would: a subckt's own `.param` lines
+ * first (they may reference its formals), then the formals themselves (bound to
+ * the call's actuals, or the header default when the call omits them), then the
+ * enclosing frame, and so on to the top level. `{r}` becomes `{(rv)}`,
+ * `{rl}` where `.param rl={rv*2}` becomes `{((rv*2))}`, and a local `.param rv`
+ * SHADOWING the swept name resolves to its own constant -- which is what makes
+ * the shadow case correct rather than merely refused.
+ *
+ * Note numparam has already rewritten the call by the time ci_origdeck is
+ * readable: `r={rv}` arrives as a POSITIONAL `{rv}`, so the header supplies the
+ * parameter ORDER (Enhancement-442 met the same rewrite from the other side).
+ * ------------------------------------------------------------------------- */
+struct sw_sub {                          /* a `.subckt` definition */
+    char *name;
+    char *parm[SW_SC_MAXP];              /* formal names, in order */
+    char *dflt[SW_SC_MAXP];              /* their default expressions */
+    int   nparm;
+    char *lpn[SW_SC_MAXP];               /* local `.param` names */
+    char *lpe[SW_SC_MAXP];               /* local `.param` expressions */
+    int   nlp;
+    struct sw_sub *next;
+};
+struct sw_call {                         /* an `X` line */
+    char *inst;                          /* "x2" */
+    char *parent;                        /* enclosing subckt, "" at top level */
+    char *callee;                        /* "inner" */
+    char *act[SW_SC_MAXP];               /* positional actual expressions */
+    int   nact;
+    struct sw_call *next;
+};
+static struct sw_sub  *sw_sub_list;
+static struct sw_call *sw_call_list;
+static int sw_ib_ok;                     /* 0 = something unrepresentable -> disarm */
+
+static void sw_ib_free(void)
+{
+    struct sw_sub *d = sw_sub_list, *dn;
+    struct sw_call *k = sw_call_list, *kn;
+    int i;
+    while (d) {
+        dn = d->next;
+        for (i = 0; i < d->nparm; i++) { tfree(d->parm[i]); tfree(d->dflt[i]); }
+        for (i = 0; i < d->nlp; i++) { tfree(d->lpn[i]); tfree(d->lpe[i]); }
+        tfree(d->name); tfree(d); d = dn;
+    }
+    sw_sub_list = NULL;
+    while (k) {
+        kn = k->next;
+        for (i = 0; i < k->nact; i++) tfree(k->act[i]);
+        tfree(k->inst); tfree(k->parent); tfree(k->callee); tfree(k); k = kn;
+    }
+    sw_call_list = NULL;
+}
+
+/* read one value token: `{expr}` or a bare word. Returns 0 on unbalanced brace. */
+static int sw_val_tok(const char **pq, const char **vb, const char **ve)
+{
+    const char *q = *pq;
+    while (*q && isspace((unsigned char) *q)) q++;
+    if (!*q) { *pq = q; return -1; }
+    if (*q == '{') {
+        int b = 1;
+        *vb = ++q;
+        while (*q && b) { if (*q == '{') b++; else if (*q == '}') b--; if (b) q++; }
+        if (b) return 0;
+        *ve = q;
+        if (*q == '}') q++;
+    } else {
+        *vb = q;
+        while (*q && !isspace((unsigned char) *q)) q++;
+        *ve = q;
+    }
+    *pq = q;
+    return 1;
+}
+
+static struct sw_sub *sw_sub_find(const char *nm, size_t n)
+{
+    struct sw_sub *d;
+    for (d = sw_sub_list; d; d = d->next)
+        if (strlen(d->name) == n && strncasecmp(d->name, nm, n) == 0)
+            return d;
+    return NULL;
+}
+
+static void sw_ib_build(void)
+{
+    struct card *deck = ft_curckt ? ft_curckt->ci_origdeck : NULL;
+    struct card *c;
+    char scope[SW_SC_DEPTH][128];
+    int depth = 0;
+
+    sw_ib_free();
+    sw_ib_ok = 1;
+    if (deck)
+        deck = deck->nextcard;     /* the first card is the TITLE, not an element */
+
+    /* ---- pass A: subckt headers (formals + defaults) and their local .params */
+    {
+        struct sw_sub *cur = NULL;
+        int d2 = 0;
+        for (c = deck; c; c = c->nextcard) {
+            const char *p = c->line, *q;
+            if (!p) continue;
+            while (*p && isspace((unsigned char) *p)) p++;
+            if (!*p || *p == '*') continue;
+            if (strncasecmp(p, ".subckt", 7) == 0) {
+                d2++;
+                if (d2 == 1) {
+                    struct sw_sub *d = TMALLOC(struct sw_sub, 1);
+                    d->nparm = d->nlp = 0;
+                    q = p + 7;
+                    while (*q && isspace((unsigned char) *q)) q++;
+                    { const char *nb = q;
+                      while (*q && !isspace((unsigned char) *q)) q++;
+                      d->name = tprintf("%.*s", (int)(q - nb), nb);
+                      strtolower(d->name); }
+                    while (*q) {
+                        const char *nb, *ne, *vb, *ve;
+                        while (*q && isspace((unsigned char) *q)) q++;
+                        if (!*q) break;
+                        nb = q;
+                        while (*q && sw_ident_ch((unsigned char) *q)) q++;
+                        ne = q;
+                        if (*q == '=') {
+                            q++;
+                            if (sw_val_tok(&q, &vb, &ve) <= 0) { sw_ib_ok = 0; break; }
+                            if (d->nparm < SW_SC_MAXP) {
+                                d->parm[d->nparm] = tprintf("%.*s", (int)(ne - nb), nb);
+                                strtolower(d->parm[d->nparm]);
+                                d->dflt[d->nparm] = tprintf("%.*s", (int)(ve - vb), vb);
+                                d->nparm++;
+                            } else sw_ib_ok = 0;
+                        } else {
+                            while (*q && !isspace((unsigned char) *q)) q++;   /* a node */
+                        }
+                    }
+                    d->next = sw_sub_list; sw_sub_list = d; cur = d;
+                }
+                continue;
+            }
+            if (strncasecmp(p, ".ends", 5) == 0 || strncasecmp(p, ".eom", 4) == 0) {
+                if (d2 > 0) d2--;
+                if (d2 == 0) cur = NULL;
+                continue;
+            }
+            if (d2 == 1 && cur && strncasecmp(p, ".param", 6) == 0) {
+                q = p + 6;
+                while (*q) {                       /* each `name = expr` */
+                    const char *nb, *ne, *vb, *ve;
+                    while (*q && (isspace((unsigned char) *q) || *q == ',')) q++;
+                    if (!*q) break;
+                    nb = q;
+                    while (*q && sw_ident_ch((unsigned char) *q)) q++;
+                    ne = q;
+                    while (*q && isspace((unsigned char) *q)) q++;
+                    if (*q != '=') { q++; continue; }
+                    q++;
+                    if (sw_val_tok(&q, &vb, &ve) <= 0) { sw_ib_ok = 0; break; }
+                    if (cur->nlp < SW_SC_MAXP) {
+                        cur->lpn[cur->nlp] = tprintf("%.*s", (int)(ne - nb), nb);
+                        strtolower(cur->lpn[cur->nlp]);
+                        cur->lpe[cur->nlp] = tprintf("%.*s", (int)(ve - vb), vb);
+                        cur->nlp++;
+                    } else sw_ib_ok = 0;
+                }
+            }
+        }
+    }
+
+    /* ---- pass B: every X line, at any depth, with its enclosing scope ---- */
+    for (c = deck; c; c = c->nextcard) {
+        const char *p = c->line, *q, *ib, *ie;
+        struct sw_sub *d = NULL;
+        struct sw_call *k;
+        if (!p) continue;
+        while (*p && isspace((unsigned char) *p)) p++;
+        if (!*p || *p == '*') continue;
+        if (strncasecmp(p, ".subckt", 7) == 0) {
+            q = p + 7;
+            while (*q && isspace((unsigned char) *q)) q++;
+            { const char *nb = q;
+              while (*q && !isspace((unsigned char) *q)) q++;
+              if (depth < SW_SC_DEPTH) {
+                  (void) snprintf(scope[depth], sizeof scope[0], "%.*s", (int)(q - nb), nb);
+                  strtolower(scope[depth]);
+              } else sw_ib_ok = 0; }
+            depth++;
+            continue;
+        }
+        if (strncasecmp(p, ".ends", 5) == 0 || strncasecmp(p, ".eom", 4) == 0) {
+            if (depth > 0) depth--;
+            continue;
+        }
+        if (*p != 'x' && *p != 'X') continue;
+        if (depth >= SW_SC_DEPTH) { sw_ib_ok = 0; continue; }
+        ib = p; q = p;
+        while (*q && !isspace((unsigned char) *q)) q++;
+        ie = q;
+        while (*q) {                       /* the token naming a known subckt */
+            const char *tb, *te;
+            while (*q && isspace((unsigned char) *q)) q++;
+            if (!*q) break;
+            tb = q;
+            while (*q && !isspace((unsigned char) *q)) q++;
+            te = q;
+            d = sw_sub_find(tb, (size_t)(te - tb));
+            if (d) break;
+        }
+        if (!d) { sw_ib_ok = 0; continue; }
+        k = TMALLOC(struct sw_call, 1);
+        k->inst = tprintf("%.*s", (int)(ie - ib), ib);   strtolower(k->inst);
+        k->parent = tprintf("%s", depth > 0 ? scope[depth - 1] : "");
+        k->callee = tprintf("%s", d->name);
+        k->nact = 0;
+        while (*q && k->nact < SW_SC_MAXP) {             /* positional actuals */
+            const char *vb, *ve;
+            int r = sw_val_tok(&q, &vb, &ve);
+            if (r < 0) break;
+            if (r == 0) { sw_ib_ok = 0; break; }
+            k->act[k->nact++] = tprintf("%.*s", (int)(ve - vb), vb);
+        }
+        k->next = sw_call_list; sw_call_list = k;
+    }
+}
+
+/* the subcircuit path of a flattened name: `r.x1.x2.r1` -> "x1.x2" */
+static int sw_ib_path(const char *flatname, char *out, size_t olen)
+{
+    const char *first = strchr(flatname, '.');
+    const char *last = strrchr(flatname, '.');
+    if (!first || !last || last <= first)
+        return 0;
+    (void) snprintf(out, olen, "%.*s", (int)(last - first - 1), first + 1);
+    strtolower(out);
+    return 1;
+}
+
+static struct sw_call *sw_call_find(const char *parent, const char *inst, size_t n)
+{
+    struct sw_call *k;
+    for (k = sw_call_list; k; k = k->next)
+        if (strcmp(k->parent, parent) == 0 &&
+            strlen(k->inst) == n && strncasecmp(k->inst, inst, n) == 0)
+            return k;
+    return NULL;
+}
+
+/* one substitution sweep over the braces of `in`, using a name->expr callback */
+static int sw_subst_pass(const char *in, char *out, size_t olen,
+                         char *const *nm, char *const *ex, int n)
+{
+    size_t o = 0;
+    const char *p = in;
+    int inbrace = 0, changed = 0, i;
+
+    while (*p && o + 2 < olen) {
+        if (*p == '{') inbrace++;
+        else if (*p == '}' && inbrace) inbrace--;
+        if (inbrace && sw_ident_ch((unsigned char) *p) &&
+            (p == in || !sw_ident_ch((unsigned char) p[-1]))) {
+            const char *ib = p;
+            while (*p && sw_ident_ch((unsigned char) *p)) p++;
+            for (i = 0; i < n; i++)
+                if (strlen(nm[i]) == (size_t)(p - ib) &&
+                    strncasecmp(nm[i], ib, (size_t)(p - ib)) == 0)
+                    break;
+            if (i < n) {
+                int w = snprintf(out + o, olen - o, "(%s)", ex[i]);
+                if (w < 0 || (size_t) w >= olen - o) return -1;
+                o += (size_t) w; changed = 1;
+            } else {
+                if (o + (size_t)(p - ib) + 1 >= olen) return -1;
+                memcpy(out + o, ib, (size_t)(p - ib));
+                o += (size_t)(p - ib);
+            }
+            continue;
+        }
+        out[o++] = *p++;
+    }
+    if (*p) return -1;
+    out[o] = '\0';
+    return changed;
+}
+
+/* Rewrite `tmpl` into global names for the instance at `path` ("x1" / "x1.x2"),
+ * walking the scope chain from the innermost frame outward. */
+static int sw_ib_subst(const char *path, const char *tmpl, char *out, size_t olen)
+{
+    struct sw_call *frame[SW_SC_DEPTH];
+    struct sw_sub  *callee[SW_SC_DEPTH];
+    char parent[128] = "";
+    char bufA[4096], bufB[4096];
+    const char *p = path;
+    int nf = 0, i, any = 0;
+
+    while (*p && nf < SW_SC_DEPTH) {             /* resolve the path outward-in */
+        const char *e = strchr(p, '.');
+        size_t n = e ? (size_t)(e - p) : strlen(p);
+        struct sw_call *k = sw_call_find(parent, p, n);
+        if (!k)
+            return -1;                            /* unknown instance */
+        frame[nf] = k;
+        callee[nf] = sw_sub_find(k->callee, strlen(k->callee));
+        if (!callee[nf])
+            return -1;
+        (void) snprintf(parent, sizeof parent, "%s", k->callee);
+        nf++;
+        if (!e) break;
+        p = e + 1;
+    }
+    if (!nf || (*p && nf >= SW_SC_DEPTH))
+        return -1;
+
+    (void) snprintf(bufA, sizeof bufA, "%s", tmpl);
+    for (i = nf - 1; i >= 0; i--) {               /* innermost frame first */
+        struct sw_sub *d = callee[i];
+        struct sw_call *k = frame[i];
+        char *nm[SW_SC_MAXP], *ex[SW_SC_MAXP];
+        int j, n, r, guard;
+
+        /* (a) the subckt's own `.param`s -- they may chain, so iterate */
+        for (j = 0; j < d->nlp; j++) { nm[j] = d->lpn[j]; ex[j] = d->lpe[j]; }
+        for (guard = 0; guard < SW_SC_MAXP; guard++) {
+            r = sw_subst_pass(bufA, bufB, sizeof bufB, nm, ex, d->nlp);
+            if (r < 0) return -1;
+            if (!r) break;
+            any = 1;
+            (void) snprintf(bufA, sizeof bufA, "%s", bufB);
+        }
+        /* (b) the formals, bound to this call's actuals or the header default */
+        n = 0;
+        for (j = 0; j < d->nparm && n < SW_SC_MAXP; j++) {
+            nm[n] = d->parm[j];
+            ex[n] = (j < k->nact) ? k->act[j] : d->dflt[j];
+            n++;
+        }
+        r = sw_subst_pass(bufA, bufB, sizeof bufB, nm, ex, n);
+        if (r < 0) return -1;
+        if (r) { any = 1; (void) snprintf(bufA, sizeof bufA, "%s", bufB); }
+    }
+    if (strlen(bufA) >= olen)
+        return -1;
+    (void) snprintf(out, olen, "%s", bufA);
+    return any;
+}
+
+/* PROTOTYPE (sweep teardown): the transitive closure of `.param` names that
+ * depend on a swept name.
+ *
+ * The fast path captured only device lines that MENTION a swept param, so
+ * `.param rd={rv*2}` + `Ra a 0 {rd}` left Ra uncaptured and frozen while the
+ * sweep ran -- a full set of flat curves. numparam already refreshes the derived
+ * VALUES in place (nupa_recompute_params), so the only thing missing was knowing
+ * which device lines to re-push. That is this closure.
+ *
+ * Top level only: a `.param` inside a subcircuit is expanded per instance rather
+ * than kept as a dicoS 'P' line, so the closure refresh does not reach it and
+ * pass 1 still disarms there. Returns the total count (swept names first).
+ */
+static int
+sw_fp_closure(char *const *sw, int nsw, char cl[][128], int maxcl)
+{
+    struct card *deck = ft_curckt ? ft_curckt->ci_origdeck : NULL;
+    int n = 0, i, added = 1, depth = 0;
+    char *clp[SW_FP_MAXCL];       /* pointers -- sw_line_has_swept wants char*[] */
+
+    for (i = 0; i < nsw && n < maxcl; i++)
+        (void) snprintf(cl[n++], 128, "%s", sw[i]);
+    if (!deck)
+        return n;
+
+    while (added && n < maxcl) {           /* fixpoint over the derived chain */
+        struct card *c;
+        added = 0;
+        depth = 0;
+        for (c = deck; c; c = c->nextcard) {
+            const char *p = c->line, *q;
+            if (!p)
+                continue;
+            while (*p && isspace((unsigned char) *p)) p++;
+            if (!*p || *p == '*')
+                continue;
+            if (strncasecmp(p, ".subckt", 7) == 0) { depth++; continue; }
+            if (strncasecmp(p, ".ends", 5) == 0 || strncasecmp(p, ".eom", 4) == 0) {
+                if (depth > 0) depth--;
+                continue;
+            }
+            if (depth > 0 || strncasecmp(p, ".param", 6) != 0)
+                continue;
+            q = p + 6;
+            while (*q) {                   /* each `name = expr` on the card */
+                const char *nb, *ne, *rb, *re;
+                int k, known = 0;
+                while (*q && (isspace((unsigned char) *q) || *q == ',')) q++;
+                if (!*q) break;
+                nb = q;
+                while (*q && sw_ident_ch((unsigned char) *q)) q++;
+                ne = q;
+                while (*q && isspace((unsigned char) *q)) q++;
+                if (*q != '=') { q++; continue; }
+                q++;
+                while (*q && isspace((unsigned char) *q)) q++;
+                rb = q;
+                while (*q && *q != ',' && !isspace((unsigned char) *q)) q++;
+                re = q;
+                for (k = 0; k < n; k++)
+                    if (strlen(cl[k]) == (size_t)(ne - nb) &&
+                        strncmp(nb, cl[k], (size_t)(ne - nb)) == 0)
+                        known = 1;
+                if (known)
+                    continue;              /* already in the closure */
+                for (k = 0; k < n; k++)
+                    clp[k] = cl[k];
+                if (sw_line_has_swept(rb, re, (char *const *) clp, n) &&
+                    n < maxcl) {
+                    (void) snprintf(cl[n++], 128, "%.*s", (int)(ne - nb), nb);
+                    added = 1;
+                }
+            }
+        }
+    }
+    return n;
+}
+
 /* Build the fast-path binding list from the ORIGINAL (pre-expansion) deck for
  * the given swept `.param` names. Returns 1 and sets sw_fp_armed if every swept
  * occurrence is an addressable top-level device/model value; otherwise frees any
@@ -1032,6 +1472,9 @@ int sw_fp_build(char *const *sw, int nsw)
 {
     struct card *deck, *c;
     int subckt_depth = 0, control_depth = 0;
+    static char clbuf[SW_FP_MAXCL][128];
+    char *cl[SW_FP_MAXCL];
+    int ncl = 0, ci;
 
     sw_fp_free();
     /* Enhancement-346: nsw == 0 is legitimate -- Monte Carlo has no swept knob,
@@ -1043,6 +1486,16 @@ int sw_fp_build(char *const *sw, int nsw)
     deck = ft_curckt->ci_origdeck;
     if (!deck)
         return 0;
+
+    /* PROTOTYPE: match lines against the swept names AND every `.param` that
+     * transitively derives from them, so a device carrying `{rd}` where
+     * `.param rd={rv*2}` is captured and re-pushed instead of freezing. The
+     * VALUES of those derived params are refreshed by nupa_recompute_params()
+     * in sw_fp_apply(); this only decides which lines to capture. */
+    ncl = sw_fp_closure(sw, nsw, clbuf, SW_FP_MAXCL);
+    for (ci = 0; ci < ncl; ci++)
+        cl[ci] = clbuf[ci];
+    sw_ib_build();          /* PROTOTYPE: per-instance subckt param bindings */
 
     /* ---- Pass 1: DISARM on any use of a swept param the fast path cannot
      * represent, scanning the ORIGINAL deck including subckt bodies. Device
@@ -1070,7 +1523,7 @@ int sw_fp_build(char *const *sw, int nsw)
         is_subckt = (strncasecmp(p, ".subckt", 7) == 0);
         is_ends = (strncasecmp(p, ".ends", 5) == 0 ||
                    strncasecmp(p, ".eom", 4) == 0);
-        has = sw_line_has_swept(p, e, sw, nsw);
+        has = sw_line_has_swept(p, e, (char *const *) cl, ncl);
         /* Enhancement-346: a random draw is a varying value too, so a line that
          * calls one gets the same structural scrutiny as one naming a swept
          * param. `.param` is exempt: numparam inlines those into the device
@@ -1080,7 +1533,12 @@ int sw_fp_build(char *const *sw, int nsw)
             has = 1;
 
         if (is_subckt) {
-            if (has) goto disarm;   /* swept param in a subckt header default */
+            /* PROTOTYPE: a header DEFAULT that references a swept param is now
+             * representable -- sw_ib_build() records the default expression and
+             * sw_ib_subst() uses it for any instance whose call omits that
+             * argument, so the value resolves to global names like any other. */
+            if (has && !sw_ib_ok)
+                goto disarm;        /* swept param in a subckt header default */
             subckt_depth++;
             continue;
         }
@@ -1117,16 +1575,45 @@ int sw_fp_build(char *const *sw, int nsw)
                             strncmp(nb2, sw[k], (size_t)(ne2 - nb2)) == 0)
                             lhs_swept = 1;
                     if (lhs_swept) {
-                        if (subckt_depth > 0) goto disarm;   /* local shadow */
-                    } else if (sw_line_has_swept(rb, re, sw, nsw)) {
-                        goto disarm;                         /* derived-from-swept */
+                        /* PROTOTYPE: a subckt-local `.param` SHADOWING the swept
+                         * name is recorded as a local binding, so `{rv}` inside
+                         * that subckt resolves to the shadow's own expression --
+                         * correctly constant -- rather than to the sweep. */
+                        if (subckt_depth > 0 && !sw_ib_ok)
+                            goto disarm;                     /* local shadow */
+                    } else if (sw_line_has_swept(rb, re, (char *const *) cl, ncl)) {
+                        /* PROTOTYPE (sweep teardown): a TOP-LEVEL derived
+                         * `.param` no longer disarms. sw_fp_apply() already
+                         * calls nupa_recompute_params(), which re-evaluates
+                         * every 'P' line in source order against the overridden
+                         * swept values -- so a device value that references the
+                         * derived param evaluates correctly with no re-source.
+                         * That closure refresh is E-320's own machinery; this
+                         * disarm simply predated it.
+                         *
+                         * Inside a subcircuit the definition is expanded
+                         * per-instance rather than kept as a dicoS 'P' line, so
+                         * the closure refresh does not reach it -- still disarm. */
+                        /* PROTOTYPE: a derived `.param` INSIDE a subckt is a
+                         * recorded local binding too, substituted per instance
+                         * before the formals, so it may reference the subckt's
+                         * own arguments and still resolve to global names. */
+                        if (subckt_depth > 0 && !sw_ib_ok)
+                            goto disarm;                     /* derived, in subckt */
                     }
                 }
             } else {
                 goto disarm;        /* structural dot-card (.if/.temp/.tran/...) */
             }
         } else if (*p == 'x' || *p == 'X') {
-            goto disarm;            /* subckt call passing a swept param */
+            /* PROTOTYPE: a top-level subckt call is now representable -- its
+             * bindings were captured by sw_ib_build() and are substituted into
+             * the instance's device templates in pass 2, so the values become
+             * global expressions and need no re-source. Anything sw_ib_build()
+             * could not parse (nested calls, unbalanced braces) clears
+             * sw_ib_ok and still disarms here. */
+            if (!sw_ib_ok)
+                goto disarm;        /* subckt call passing a swept param */
         }
         /* other element lines: the swept param is a device value or a structural
          * device use -- both are decided in pass 2 from the flattened card. */
@@ -1141,6 +1628,7 @@ int sw_fp_build(char *const *sw, int nsw)
     for (c = ft_curckt->ci_deck; c; c = c->nextcard) {
         const char *fl = c->line, *tmpl, *tp;
         char nm[256];
+        static char substbuf[2048];   /* holds a rewritten template for this card */
         if (!fl)
             continue;
         tp = fl;
@@ -1157,9 +1645,38 @@ int sw_fp_build(char *const *sw, int nsw)
          * `.param rv = agauss(...)` + `R2 a b {rv}` arrives here as
          * `r2 a b {(agauss(...))}` -- and skipping it is exactly what left such
          * a value frozen on the fast path while a reset re-drew it. */
-        if (!sw_line_has_swept(tmpl, tmpl + strlen(tmpl), sw, nsw) &&
-            !sw_expr_is_random(tmpl))
-            continue;
+        /* PROTOTYPE: express this card's braces in GLOBAL names first, so an
+         * instance-local subckt param (`{r}`) becomes `{(rv)}` and the ordinary
+         * closure match and global evaluation both work per bind. */
+        {
+            char fname[256], path[256];
+            const char *ne0 = tp;
+            while (*ne0 && !isspace((unsigned char) *ne0)) ne0++;
+            (void) snprintf(fname, sizeof fname, "%.*s", (int) (ne0 - tp), tp);
+            if (sw_ib_path(fname, path, sizeof path)) {
+                int rr = sw_ib_subst(path, tmpl, substbuf, sizeof substbuf);
+                if (rr < 0)
+                    goto disarm;                  /* could not rewrite safely */
+                if (rr > 0)
+                    tmpl = substbuf;
+            }
+        }
+
+        /* PROTOTYPE: skip the leading INSTANCE/MODEL NAME token before matching.
+         * A device called `Rd` lowercases to `rd`, which collides with a
+         * `.param rd` in the closure -- the line then "mentions" a swept name by
+         * its NAME rather than by a value, and pass 2 disarms on a line that
+         * carries no value at all. The swept-name-only matching this replaces was
+         * exposed to the same thing, just far less often. */
+        {
+            const char *scan = tmpl;
+            while (*scan && isspace((unsigned char) *scan)) scan++;
+            while (*scan && !isspace((unsigned char) *scan)) scan++;
+            if (!sw_line_has_swept(scan, scan + strlen(scan),
+                                   (char *const *) cl, ncl) &&
+                !sw_expr_is_random(tmpl))
+                continue;
+        }
 
         if (*tp == '.') {
             if (strncasecmp(tp, ".model", 6) == 0) {
@@ -1170,7 +1687,7 @@ int sw_fp_build(char *const *sw, int nsw)
                 ne = np;
                 if (ne == nb) goto disarm;
                 (void) snprintf(nm, sizeof nm, "%.*s", (int) (ne - nb), nb);
-                if (!sw_fp_scan_valueline(tmpl, nm, 1, sw, nsw, fl))
+                if (!sw_fp_scan_valueline(tmpl, nm, 1, (char *const *) cl, ncl, fl))
                     goto disarm;
             }
             /* other flattened dot-cards were classified in pass 1 */
@@ -1178,7 +1695,7 @@ int sw_fp_build(char *const *sw, int nsw)
             const char *nb = tp, *ne = tp;
             while (*ne && !isspace((unsigned char) *ne)) ne++;
             (void) snprintf(nm, sizeof nm, "%.*s", (int) (ne - nb), nb);
-            if (!sw_fp_scan_valueline(tmpl, nm, 0, sw, nsw, fl))
+            if (!sw_fp_scan_valueline(tmpl, nm, 0, (char *const *) cl, ncl, fl))
                 goto disarm;
         }
     }
@@ -1243,6 +1760,7 @@ int sw_fp_build(char *const *sw, int nsw)
     return 1;
 
 disarm:
+    sw_ib_free();
     sw_fp_free();
     return 0;
 }
@@ -2250,8 +2768,21 @@ cleanup:
          * @r2[resistance] = 5000, and the next `op` was 19% off. Push the
          * nominals back exactly the way each point was pushed. This must precede
          * sw_fp_free() below, which drops the binds it needs. */
-        if (fast_fp)
+        if (fast_fp) {
             sw_fp_apply(deck_fp_names, deck_fp_nominal, ndeck_fp);
+        } else {
+            /* PROTOTYPE (reset-path restore): the same hole E-385 closed for the
+             * fast path was left open here. On the RESET path `alterparam` above
+             * rewrites the DECK TEXT only -- the live circuit still holds the
+             * last point's values until something re-sources it, which is
+             * exactly what the point loop does after each sw_set_deck(). So a
+             * `sweep` that fell back to the reset path left the devices at the
+             * final swept value: measured `@rtop[resistance] = 1100` after
+             * `sweep rv 900 1100`, where the fast path correctly leaves 1000.
+             * The in-place restore below already expects this path to reset. */
+            sw_run_cmd("reset");
+            ft_optimizing = TRUE;            /* reset clears it */
+        }
     }
 
     /* Enhancement-385: put the `alter`/`altermod` knobs back too. This runs
