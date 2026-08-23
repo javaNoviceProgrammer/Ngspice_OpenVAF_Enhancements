@@ -78,6 +78,21 @@ INPpas3(CKTcircuit *ckt, struct card *data, INPtables *tab, TSKtask *task,
                    except for ground node at node->number 0 */
                 if ( cieq(name, "all")) {
                     ptemp.rValue = INPevaluate(&line,&error,1);
+                    /* Enhancement-468: a card naming a node but giving NO
+                     * VALUE was dropped in total silence -- `.ic v(out)` and
+                     * `.nodeset v(out)` produced no Note, Warning or Error of
+                     * any kind, while a bad NODE NAME in the same card has
+                     * always been reported and a bare `.probe` says what it
+                     * assumed. INPevaluate already returns the error; nothing
+                     * had ever read it. */
+                    if (error) {
+                        fprintf(stderr,
+                                "Warning: .nodeset/.ic (all): no value given after the node; "
+                                "this entry is ignored.\n   Please check line "
+                                "%s\n\n", current->line);
+                        FREE(name);
+                        break;
+                    }
                     for (node1 = ckt->CKTnodes; node1 != NULL; node1 = node1->next) {
                         if ((node1->type == SP_VOLTAGE) && (node1->number > 0))
                             IFC(setNodeParm, (ckt, node1, which, &ptemp, NULL));
@@ -102,6 +117,21 @@ INPpas3(CKTcircuit *ckt, struct card *data, INPtables *tab, TSKtask *task,
                         continue;
                     }
                     ptemp.rValue = INPevaluate(&line,&error,1);
+                    /* Enhancement-468: a card naming a node but giving NO
+                     * VALUE was dropped in total silence -- `.ic v(out)` and
+                     * `.nodeset v(out)` produced no Note, Warning or Error of
+                     * any kind, while a bad NODE NAME in the same card has
+                     * always been reported and a bare `.probe` says what it
+                     * assumed. INPevaluate already returns the error; nothing
+                     * had ever read it. */
+                    if (error) {
+                        fprintf(stderr,
+                                "Warning: .nodeset: no value given after the node; "
+                                "this entry is ignored.\n   Please check line "
+                                "%s\n\n", current->line);
+                        FREE(name);
+                        continue;
+                    }
                     IFC(setNodeParm, (ckt, node1, which, &ptemp, NULL));
                     FREE(name);
                     continue;
@@ -153,6 +183,21 @@ INPpas3(CKTcircuit *ckt, struct card *data, INPtables *tab, TSKtask *task,
                         continue;
                     }
                     ptemp.rValue = INPevaluate(&line,&error,1);
+                    /* Enhancement-468: a card naming a node but giving NO
+                     * VALUE was dropped in total silence -- `.ic v(out)` and
+                     * `.nodeset v(out)` produced no Note, Warning or Error of
+                     * any kind, while a bad NODE NAME in the same card has
+                     * always been reported and a bare `.probe` says what it
+                     * assumed. INPevaluate already returns the error; nothing
+                     * had ever read it. */
+                    if (error) {
+                        fprintf(stderr,
+                                "Warning: .ic: no value given after the node; "
+                                "this entry is ignored.\n   Please check line "
+                                "%s\n\n", current->line);
+                        FREE(name);
+                        continue;
+                    }
                     IFC(setNodeParm, (ckt, node1, which, &ptemp, NULL));
                     FREE(name);
                     continue;

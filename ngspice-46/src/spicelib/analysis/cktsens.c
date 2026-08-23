@@ -25,6 +25,30 @@ static int Sens_Debug = 0;
 static double Sens_Delta = 0.000001;
 static double Sens_Abs_Delta = 0.000001;
 
+
+/* Enhancement-468: replace a non-finite sensitivity with zero, once per name. */
+static void
+e468_undefined_sens(sgen *sg, double *rval, SPcomplex *cval)
+{
+    static char warned[128] = "";
+    const char *pname = (sg && sg->ptable && sg->param >= 0)
+                        ? sg->ptable[sg->param].keyword : "?";
+
+    if (rval)
+        *rval = 0.0;
+    if (cval)
+        cval->real = cval->imag = 0.0;
+
+    if (pname && strcmp(pname, warned) != 0) {
+        fprintf(stderr,
+                "Warning: sens: the sensitivity to '%s' is not a number at this "
+                "operating point (the parameter is inactive at its present "
+                "value); reported as 0.\n", pname);
+        strncpy(warned, pname, sizeof warned - 1);
+        warned[sizeof warned - 1] = '\0';
+    }
+}
+
 /* Enhancement-440: a model snapshot taken before the perturbation loop.
  *
  * `sens_setp` perturbs a parameter and then writes the original value back,
@@ -909,6 +933,33 @@ int sens_sens(CKTcircuit* ckt, int restart)
                 output_cvalues[n].real /= delta_var;
                 output_cvalues[n].imag /= delta_var;
             }
+            /* Enhancement-468: never hand back a non-finite sensitivity.
+             *
+             * The engine perturbs every settable parameter by a relative step,
+             * or by Sens_Abs_Delta when the value is zero. Zero is also how
+             * several models spell "this effect is switched off", so the
+             * perturbation can switch a branch ON with a degenerate parameter
+             * and the resulting derivative is not a number: `sens v(mid)` on an
+             * ordinary diode reported `d1:ikf = nan` for EVERY model that does
+             * not set ikf -- that is, the default. It was the only non-finite
+             * number produced across op, dc, ac, tran, noise, disto, tf and
+             * sens, and across eight device types.
+             *
+             * A NaN here is worse than a missing number: it propagates through
+             * any sum or plot the user builds from the table, and it reads as a
+             * modelling result rather than an undefined derivative. Report zero
+             * -- the parameter has no defined influence at this operating point
+             * -- and say so once, naming the parameter, so the reader knows the
+             * entry was not measured rather than measured as zero. */
+            if (is_dc) {
+                if (!finite(output_values[n]))
+                    e468_undefined_sens(sg, &output_values[n], NULL);
+            } else {
+                if (!finite(output_cvalues[n].real) ||
+                    !finite(output_cvalues[n].imag))
+                    e468_undefined_sens(sg, NULL, &output_cvalues[n]);
+            }
+
             n += 1;
         }
 

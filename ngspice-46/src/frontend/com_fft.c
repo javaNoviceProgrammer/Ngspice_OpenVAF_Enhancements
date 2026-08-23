@@ -265,7 +265,7 @@ com_psd(wordlist *wl)
     struct dvec  *f, *vlist, *lv = NULL, *vec;
     struct pnode *pn, *names = NULL;
     char   window[BSIZE_SP];
-    double maxt, intres;
+    double maxt, intres, wpower;
 
 #ifdef HAVE_LIBFFTW3
     double *in = NULL;
@@ -332,6 +332,34 @@ com_psd(wordlist *wl)
 
     if (fft_windows(window, win, time, length, maxt, span, order) == 0)
         goto done;
+
+    /* Enhancement-468: the window's POWER gain, for the PSD normalisation below.
+     *
+     * `fft_windows` scales every window for unit COHERENT gain, so that a
+     * sinusoid keeps its amplitude in `fft`/`spec` -- which is what those two
+     * commands want. A PSD sums SQUARED bins, and a squared unit-coherent-gain
+     * window has power gain sum(w^2)/length, not 1. Normalising the sum by
+     * length^2 therefore reported a total power too large by exactly that
+     * factor: measured on a constant 1 V signal (true power 1 V^2 exactly),
+     *
+     *     specwindow=none      1.000000   (rectangular: sum(w^2)/length == 1)
+     *     specwindow=hanning   1.499908   (the default)
+     *     specwindow=hamming   1.362744
+     *     specwindow=blackman  1.726652
+     *     specwindow=gaussian  1.215261
+     *
+     * each matching sum(w^2)/length to five figures. Zero padding multiplied
+     * the error again by N/length, so the SAME signal reported 1.5 V^2 at one
+     * stop time and 3.0 V^2 at another -- a total power that depended on the
+     * simulation's end point. */
+    {
+        int wj;
+        wpower = 0.0;
+        for (wj = 0; wj < length; wj++)
+            wpower += win[wj] * win[wj];
+        if (wpower <= 0.0)              /* cannot happen for a real window */
+            wpower = (double) length;
+    }
 
     names = ft_getpnames_quotes(wl, TRUE);
     vlist = NULL;
@@ -425,7 +453,9 @@ com_psd(wordlist *wl)
 
         fftw_execute(plan_forward);
 
-        intres = (double)length * (double)length;
+        /* Enhancement-468: length (the transform size here) * the window's
+           power gain sum -- see the note where `wpower` is computed. */
+        intres = (double)length * wpower;
         fdvec[i][0].cx_real = out[0][0]*out[0][0]/intres;
         fdvec[i][0].cx_imag = 0;
         noipower = fdvec[i][0].cx_real;
@@ -466,7 +496,12 @@ com_psd(wordlist *wl)
         /* E-241: normalize the PSD by length^2 (the actual sample count), not the
          * zero-padded FFT size N^2 -- matching the FFTW path above.  Using N^2 made
          * the PSD of a non-power-of-two-length record too small by (length/N)^2. */
-        intres = (double)length * (double)length;
+        /* Enhancement-468: N (the PADDED transform size) * the window's power
+           gain sum. E-241 corrected this from N^2 to length^2 so that a
+           non-power-of-two record was not scaled down; the padding factor it
+           removed belongs on ONE of the two lengths, not neither -- Parseval
+           over the padded sequence gives sum|X|^2 = N * sum (x*w)^2. */
+        intres = (double)N * wpower;
         fdvec[i][0].cx_real = reald[0]*reald[0]/intres;
         fdvec[i][0].cx_imag = 0;
         noipower = fdvec[i][0].cx_real;

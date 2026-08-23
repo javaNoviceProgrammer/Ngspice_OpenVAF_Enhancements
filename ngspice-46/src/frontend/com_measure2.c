@@ -1018,9 +1018,71 @@ e467_dc_scale(struct dvec *d)
     if (!s) s = vec_get("temp-sweep");
     if (!s) s = vec_get("res-sweep");
     if (!s) s = vec_get("param-sweep");
-    if (!s && d) s = d->v_scale;
-    if (!s && plot_cur) s = plot_cur->pl_scale;
+
+    /* Enhancement-468: the fallback must stay INSIDE a dc plot.
+     *
+     * E-467 added it so that a sweep kind named none of the above would still
+     * be measurable, but it asked only "is there a default scale?" -- which is
+     * true of every plot. So `meas dc` stopped refusing a transient or ac plot
+     * and silently measured it instead, returning exactly what `meas tran`
+     * returns; the mirror cases (`meas tran` / `meas ac` over a dc plot) went on
+     * refusing correctly, so one of four analysis names had quietly become
+     * "measure whatever is current". Naming the wrong analysis is a mistake in
+     * the deck, and the message it used to get was the useful answer. */
+    if (!s && plot_cur && plot_cur->pl_typename &&
+        ciprefix("dc", plot_cur->pl_typename)) {
+        if (d && d->v_scale)
+            s = d->v_scale;
+        else
+            s = plot_cur->pl_scale;
+    }
     return s;
+}
+
+
+/* Enhancement-468: does this dc scale run one way?
+ *
+ * A NESTED `.dc` (`dc V1 0 2 1 @r1[resistance] 1k 3k 1k`) restarts its inner
+ * variable at every step of the outer one, so the scale reads 0,1,2,0,1,2,...
+ * The window measurements integrate along that scale with a signed trapezoid,
+ * and every restart subtracts what the previous curve added: measured on a 3x3
+ * sweep, INTEG returned 0.5 and AVG 0.25 -- neither the value of any single
+ * curve (0.5 / 0.3333 / 0.25) nor the mean of the nine points (0.3611). RMS on
+ * the SAME plot already failed, with "out of interval", so one plot produced a
+ * silent wrong number, a refusal, and correct MAX/MIN, three different answers
+ * from one code path.
+ *
+ * There is no defensible single number here -- an average "over the sweep" has
+ * to say which sweep -- so all three integrating measurements now refuse, and
+ * say why. MIN/MAX are well defined over the whole set and are left working. */
+static int
+e468_dc_scale_monotonic(struct dvec *s)
+{
+    int i, up = 0, down = 0;
+
+    if (!s || !s->v_realdata || s->v_length < 3)
+        return 1;
+    for (i = 1; i < s->v_length; i++) {
+        double d = s->v_realdata[i] - s->v_realdata[i - 1];
+        if (d > 0.0)
+            up = 1;
+        else if (d < 0.0)
+            down = 1;
+        if (up && down)
+            return 0;
+    }
+    return 1;
+}
+
+
+static void
+e468_nested_complaint(const char *what)
+{
+    fprintf(cp_err,
+            "Error: meas dc %s: this is a NESTED dc sweep -- its scale restarts "
+            "at every step of the outer variable, so an average, rms or integral "
+            "along it is not defined (the restarts cancel real data). Measure a "
+            "single sweep, or use max/min, which are well defined here.\n", what);
 }
 
 
@@ -1099,6 +1161,13 @@ measure_minMaxAvg(
 
     if (dScale->v_realdata == NULL && dScale->v_compdata == NULL) {
         fprintf(cp_err, "Error: scale vector time, frequency or ?-sweep has no data.\n");
+        return MEASUREMENT_FAILURE;
+    }
+
+    /* Enhancement-468 */
+    if (dc_check && mFunctionType == AT_AVG &&
+        !e468_dc_scale_monotonic(dScale)) {
+        e468_nested_complaint("avg");
         return MEASUREMENT_FAILURE;
     }
 
@@ -1504,6 +1573,12 @@ measure_rms_integral(
 
     if (xScale->v_realdata == NULL && xScale->v_compdata == NULL) {
         fprintf(cp_err, "Error: scale vector time, frequency or ?-sweep has no data.\n");
+        return MEASUREMENT_FAILURE;
+    }
+
+    /* Enhancement-468 */
+    if (dc_check && !e468_dc_scale_monotonic(xScale)) {
+        e468_nested_complaint(mFunctionType == AT_RMS ? "rms" : "integ");
         return MEASUREMENT_FAILURE;
     }
 

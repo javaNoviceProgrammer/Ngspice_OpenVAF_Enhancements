@@ -161,16 +161,38 @@ create_model(CKTcircuit *ckt, INPmodel *modtmp, INPtables *tab)
      * spaces, so they are tracked separately. OSDI only. */
     int n_mtrack = 0, n_itrack = 0;
     char **mseen = NULL, **iseen = NULL;
-#ifdef OSDI
-    if (is_osdi) {
+    /* Enhancement-468: track repeats for EVERY device, not only OSDI ones.
+     *
+     * E-395 built this to catch an OSDI `aliasparam` written twice on one line,
+     * and scoped it there because aliasparam is a Verilog-A construct. But the
+     * defect it protects against is not Verilog-A's: a built-in `.model` card
+     * that sets one parameter twice took the last value in silence, and the
+     * consequence is a different circuit --
+     *
+     *     .model dm d is=1e-14 is=9e-14     ->  i(v1) -5.67e-03 becomes -5.10e-02
+     *
+     * with nothing said, while a duplicate `.model` CARD is reported ("model
+     * 'dm' is already defined") and a duplicate `.subckt` is reported too. The
+     * id-based test is right for built-ins as well: their aliases (`r` for
+     * `resistance`, `tc` for `tc1`) share an id, so writing both really is
+     * writing one slot twice, and E-395's message already distinguishes the
+     * same-keyword case from the alias case. */
+    /* Built-in parameter ids are ENUM TAGS, not dense indices -- a diode's
+     * model ids start at DIO_MOD_LEVEL = 100 -- so the id-indexed array E-395
+     * used for OSDI silently tracked nothing here. Keep a short list of the
+     * ids already written and search it; a card carries tens of parameters, so
+     * the linear scan costs nothing and does not care how the ids are numbered. */
+    int *mid = NULL, *iid = NULL, nmid = 0, niid = 0;
+    if (device->numModelParms && device->numInstanceParms) {
         n_mtrack = *(device->numModelParms);
         n_itrack = *(device->numInstanceParms);
         mseen = TMALLOC(char *, n_mtrack);
         iseen = TMALLOC(char *, n_itrack);
+        mid = TMALLOC(int, n_mtrack);
+        iid = TMALLOC(int, n_itrack);
         memset(mseen, 0, (size_t)n_mtrack * sizeof(char *));
         memset(iseen, 0, (size_t)n_itrack * sizeof(char *));
     }
-#endif
 
     while (*line) {
         INPgetTok(&line, &parm, 1);
@@ -191,17 +213,25 @@ create_model(CKTcircuit *ckt, INPmodel *modtmp, INPtables *tab)
                 ++line;
             }
 #endif
-            if (mseen && p->id >= 0 && p->id < n_mtrack) {
-                if (mseen[p->id])
-                    inp_warn_dup_param(device->name, mseen[p->id], p->keyword);
-                else
-                    mseen[p->id] = p->keyword;
+            if (mseen && nmid < n_mtrack) {
+                int q, hit = -1;
+                for (q = 0; q < nmid; q++)
+                    if (mid[q] == p->id) { hit = q; break; }
+                if (hit >= 0)
+                    inp_warn_dup_param(device->name, mseen[hit], p->keyword);
+                else {
+                    mid[nmid] = p->id;
+                    mseen[nmid] = p->keyword;
+                    nmid++;
+                }
             }
             IFvalue *val = INPgetValue(ckt, &line, p->dataType, tab);
             error = ft_sim->setModelParm(ckt, modtmp->INPmodfast, p->id, val, NULL);
             if (error) {
                 FREE(mseen);
                 FREE(iseen);
+                FREE(mid);
+                FREE(iid);
                 return error;
             }
         } else if ((strcmp(parm, "level") == 0) || (strcmp(parm, "m") == 0)) {
@@ -241,12 +271,20 @@ create_model(CKTcircuit *ckt, INPmodel *modtmp, INPtables *tab)
                 char *value;
 
                 INPgetTok(&line, &value, 1);
-                if (iseen && p->id >= 0 && p->id < n_itrack) {
-                    if (iseen[p->id])
-                        inp_warn_dup_param(device->name, iseen[p->id],
-                                           p->keyword);
-                    else
-                        iseen[p->id] = p->keyword;
+                if (iseen) {
+                    if (1) {
+                        int q, hit = -1;
+                        for (q = 0; q < niid; q++)
+                            if (iid[q] == p->id) { hit = q; break; }
+                        if (hit >= 0)
+                            inp_warn_dup_param(device->name, iseen[hit],
+                                               p->keyword);
+                        else if (niid < n_itrack) {
+                            iid[niid] = p->id;
+                            iseen[niid] = p->keyword;
+                            niid++;
+                        }
+                    }
                 }
                 if (p->dataType & IF_SET) {
                     modtmp->INPmodfast->defaults =
@@ -281,6 +319,8 @@ create_model(CKTcircuit *ckt, INPmodel *modtmp, INPtables *tab)
 
     FREE(mseen);
     FREE(iseen);
+    FREE(mid);
+    FREE(iid);
     modtmp->INPmodLine->error = err;
     return 0;
 }

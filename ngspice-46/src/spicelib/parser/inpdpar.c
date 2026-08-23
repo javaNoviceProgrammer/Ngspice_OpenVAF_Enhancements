@@ -191,7 +191,11 @@ INPdevParse(char **line, CKTcircuit *ckt, int dev, GENinstance *fast,
      * and an instance line overriding one of them is legitimate, not a repeat.
      * `alter` does not come through here, so re-setting a parameter after the
      * deck is parsed stays silent, as it should. */
-    const int track_repeats = (device->registry_entry != NULL);
+    /* Enhancement-468: every device, not only OSDI -- a built-in instance line
+     * that set one parameter twice took the last value in silence
+     * (`D1 in 0 dm area=1 area=4` quadrupled the current with no diagnostic),
+     * while the same repeat on an OSDI line has been reported since E-395. */
+    const int track_repeats = 1;
     const int n_track = track_repeats ? *(device->numInstanceParms) : 0;
     char **seen_as = n_track ? TMALLOC(char *, n_track) : NULL;
     if (seen_as)

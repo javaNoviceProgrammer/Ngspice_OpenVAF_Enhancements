@@ -850,7 +850,31 @@ operate(char op, double x, double y)
             }
         }
         else {
-            x = pow(fabs(x), y);
+            /* Enhancement-468: the DEFAULT branch evaluated pow(fabs(x), y),
+             * dropping the sign of a negative base -- `.param q={(-2)**1}`
+             * returned +2, so raising to the first power did not return the
+             * base, and `{(-2)**3}` returned +8. Odd exponents were wrong and
+             * even ones coincided, so it was silent on half its inputs.
+             *
+             * Enhancement-446 fixed exactly this for the OTHER expression
+             * evaluator (spicelib/parser/ptfuncs.c, `pt_pow_default`) after the
+             * same measurement, but its suite builds only `B1 nb 0 v={expr}`
+             * decks, so this evaluator was never reached: the same simulator
+             * answered -8 for a B-source and +8 for a `.param`. Both compat
+             * branches above already preserve the sign, and `pow()` in THIS
+             * evaluator does too -- only the operator disagreed.
+             *
+             * The rule is E-446's, copied deliberately so the two evaluators
+             * cannot drift: a negative base has a real answer only for an
+             * integer exponent, and there it keeps its sign; for a non-integer
+             * exponent the historical magnitude is returned rather than NaN,
+             * because a NaN here poisons the Newton Jacobian. */
+            if (x >= 0.0)
+                x = pow(x, y);
+            else if (AlmostEqualUlps(nearbyint(y), y, 10))
+                x = pow(x, nearbyint(y));
+            else
+                x = pow(fabs(x), y);
         }
         break;
     case 'A':                   /* && */

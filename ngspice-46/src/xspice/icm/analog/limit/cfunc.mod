@@ -115,6 +115,12 @@ void cm_limit(ARGS)  /* structure holding parms,
     double out_lower_limit;   /* output lower limit */
 	double out_upper_limit;   /* output upper limit */
 	double limit_range;       /* upper and lower limit smoothing range */
+    /* Enhancement-468 */
+    static char *limit_negative_error =
+        "\n**** ERROR ****\n* LIMIT limit_range is negative: it would widen the linear\n"
+        "* region past the limits and stop limiting. Clamped to zero. *\n";
+    static char *limit_order_error =
+        "\n**** ERROR ****\n* LIMIT out_upper_limit is below out_lower_limit. *\n";
 	double gain;              /* gain */
     double threshold_upper;   /* value above which smoothing takes place */
 	double threshold_lower;   /* value below which smoothing takes place */
@@ -139,6 +145,31 @@ void cm_limit(ARGS)  /* structure holding parms,
               (out_upper_limit - out_lower_limit);
 
 
+
+    /* Enhancement-468: check the range, as the CLIMIT sibling already does.
+     *
+     * A NEGATIVE limit_range widens the linear region instead of narrowing it:
+     * with out_lower_limit=-1, out_upper_limit=1 and limit_range=-5 the
+     * thresholds became -6 and +6, so an input of 1.5 passed straight through
+     * and the block STOPPED LIMITING -- silently, while still declaring an
+     * upper limit of 1. Ranges of 0.01, 0.1, 0 and -0.01 all clamp correctly,
+     * so it was silent on everything except a value large enough to swallow
+     * the limits. An INVERTED pair (lower above upper) was accepted too.
+     *
+     * CLIMIT tests its linear range and refuses; LIMIT tested nothing. A
+     * negative range is clamped to zero -- hard limiting at the bounds the
+     * deck asked for, the only reading that still honours them -- and both
+     * faults are reported with CLIMIT's message convention, whose INIT/TIME
+     * guard keeps it quiet on the first pass when every input is still zero. */
+    if (limit_range < 0.0) {
+        if ((INIT != 1) && (0.0 != TIME))
+            cm_message_send(limit_negative_error);
+        limit_range = 0.0;
+    }
+    if (out_upper_limit < out_lower_limit) {
+        if ((INIT != 1) && (0.0 != TIME))
+            cm_message_send(limit_order_error);
+    }
 
     threshold_upper = out_upper_limit -   /* Set Upper Threshold */
                          limit_range;
