@@ -172,7 +172,19 @@ static void e469_scan_refs(const char *line, wordlist **wl)
                     if (n < sizeof buf) {
                         memcpy(buf, p, n);
                         buf[n] = '\0';
-                        e469_add(wl, buf);
+                        /* Enhancement-469 fix: a WILDCARD accessor is a sweep or
+                         * alter KNOB, not an output vector -- `sweep
+                         * @*[wavelength_nm] ...` is the commonest form there is.
+                         * `save` cannot expand one, and handing it over produced
+                         * "a wildcard device name is not expanded here, so this
+                         * vector will stay empty" once per sweep point. The
+                         * results were right and the noise was the whole defect,
+                         * but it is noise this feature invented. A NAMED
+                         * accessor is still collected: `@r1[resistance]` is a
+                         * perfectly good thing to save, whatever command it
+                         * appeared on. */
+                        if (!strchr(buf, '*') && !strchr(buf, '?'))
+                            e469_add(wl, buf);
                     }
                     p = q + 1;
                     continue;

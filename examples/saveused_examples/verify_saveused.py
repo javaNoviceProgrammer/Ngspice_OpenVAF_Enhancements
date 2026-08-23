@@ -145,6 +145,20 @@ check("[4] an explicit `save` wins, and saveused changes nothing",
 n, names = kept(run(".save v(mid)\n.option saveused", WR, "savecard"))
 check("[4] ...and so does a `.save` card", names == ["mid"], f"{names}")
 
+# ------------------------------------------------- a knob is not an output ---
+print("\na wildcard accessor is a KNOB, not a vector to save")
+o = run(".option saveused",
+        "alter @#*[resistance]=1.5k\n" + WR, "wild")
+check("[4] a wildcard accessor draws no 'stays empty' warning",
+      "wildcard device name" not in o, "")
+n, names = kept(o)
+check("[4] ...and the block's real vector is still the only one kept",
+      names == ["out"], f"{names}")
+o = run(".option saveused",
+        "alter @r1[resistance]=1.5k\n" + WR, "named")
+check("[4] a NAMED accessor is still collected -- it is saveable",
+      "wildcard device name" not in o and "out" in names, "")
+
 # ------------------------------------------------------------- spellings ---
 print("\nevery spelling of the option, on and off")
 for spell, want_on in ((".option saveused", True), (".option saveused=1", True),

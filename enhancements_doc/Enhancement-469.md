@@ -5,28 +5,45 @@ Save only the vectors the control block actually reads.
 ## Why
 
 An analysis stores every node at every point unless a `save` says otherwise. On
-a small circuit that costs nothing. On a large one it is the run:
+a small circuit that costs nothing; on a large one it can be the run.
 
-| a 2448-unknown dielectric stack, 201-point parameter sweep | |
+**The headline figure this shipped with has since been superseded, and the
+honest account matters more than the number.** As measured on a 2448-unknown
+dielectric stack over a 201-point parameter sweep, a hand-written `save` of the
+four written vectors took the run from 104.73 s to 7.22 s — a factor of 14.5 —
+and `.option saveused` reproduced it exactly with no `save` line at all.
+
+**Enhancement-470 then removed the cause.** That 14.5× was not the cost of
+*storing* vectors; it was the quadratic node teardown between sweep points,
+which E-470 fixed properly. On the same deck today, at 1001 points:
+
+| | time | peak RSS |
+|---|---|---|
+| hand-written `save` | 6.67 s | 88.4 MB |
+| `.option saveused` | 6.71 s | 83.6 MB |
+| no save at all | 6.72 s | 86.6 MB |
+
+Identical at 5001 points too. **For a sweep, this option now buys nothing** —
+E-470 subsumed it.
+
+Where it still earns its keep is a **transient**, where every timepoint
+accumulates into one plot rather than being torn down. A 601-node chain over
+20001 timepoints:
+
+| | peak RSS |
 |---|---|
-| no `save` | **104.73 s** — 521 ms/point |
-| hand-written `save pin[2] pin[3] pout[2] pout[3]` | **7.22 s** — 35.9 ms/point |
+| no save | **56.6 MB** |
+| hand-written `save` | 9.2 MB |
+| **`.option saveused`** | **9.3 MB** |
 
-A factor of **14.5**, from one line the author has to remember to write, and
-then to keep in step with the `wrdata` beside it. Nothing warns when the two
-drift apart; the deck simply gets slow again.
-
-With the option on:
+Six times less memory, matching a hand-written save exactly, and it scales with
+nodes × timepoints — on a long run that is the difference between fitting in RAM
+and not. That is the benefit that survives, and the one to reach for the option
+for.
 
 ```
 .option saveused        (or `set saveused` from .spiceinit)
 ```
-
-| the same deck, no `save` line at all | |
-|---|---|
-| `.option saveused` | **7.08 s** — 35.2 ms/point |
-
-and the written results are **byte-identical** to the hand-saved run.
 
 ## What is collected
 
@@ -49,6 +66,25 @@ that worked before would stop working. **Under-saving turns a performance
 option into a wrong answer**, so the scan errs the other way: over-saving costs
 a little memory, under-saving costs the run. The suite pins this case
 explicitly.
+
+## A wildcard accessor is a knob, not a vector
+
+The scan takes `@dev[param]` references from every line, and the commonest such
+reference in a control block is a **sweep knob**:
+
+```
+sweep @*[wavelength_nm] lin 1001 1308.0 1313.0
+```
+
+`save` cannot expand a wildcard device name, so handing it one produced
+*"a wildcard device name is not expanded here, so this vector will stay empty"*
+— once per sweep point. The results were right; the noise was entirely this
+feature's invention, and it appeared the moment a real deck dropped its `save`
+line, which is exactly what the option is for.
+
+Wildcard accessors (`@*[...]`, `@#*[...]`) are no longer collected. A **named**
+accessor still is: `@r1[resistance]` is a perfectly good thing to save, whatever
+command it appeared on.
 
 ## When it stands aside
 
@@ -110,7 +146,7 @@ complete before it is needed.
 
 ## Verification
 
-`examples/saveused_examples/verify_saveused.py` — **23/23**, both solvers. The
+`examples/saveused_examples/verify_saveused.py` — **26/26**, both solvers. The
 observable is the set of vectors in the resulting plot, read with `display`, and
 names are compared rather than counted so a check cannot pass on the right
 number of the wrong vectors.
