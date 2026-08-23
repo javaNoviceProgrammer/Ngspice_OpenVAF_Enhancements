@@ -5,18 +5,31 @@ again for each point, even though only a parameter *value* had changed. `.dc`
 has never done that — including the parameter sweeps of Enhancement-427, it
 sets the circuit up once and walks its points inside the analysis.
 
+**This is on by default**: every `sweep` gets it, and `.option reusesetup=0`
+opts out. That is why the guards below matter — node collapse is re-decided at
+every point, a built-in device declines the reuse for the whole circuit, and a
+point whose analysis failed never hands its state on.
+
 Enhancement-470 removed the quadratic teardown that dominated that rebuild.
 What remained was still most of the run:
 
-| 1001-point sweep, 2448 unknowns | |
-|---|---|
-| rebuild every point | 6.33 s |
-| keep the setup | **1.34 s** |
+| 1001-point sweep, 2448 unknowns | rebuild every point | keep the setup | |
+|---|---|---|---|
+| SPARSE 1.3 | 7.24 s | **0.57 s** | **12.8×** |
+| KLU | 6.35 s | 1.38 s | 4.6× |
 
-**4.7×.** One number of 5005 differs, by 4.7e-09 relative: the LU ordering is
-reused across points exactly as `.dc` has always reused it, so a solve can land
-on a slightly different Newton path. That is five orders of magnitude inside
-`reltol`.
+Reusing the setup also reuses the matrix ordering, so a solve can land on a
+slightly different Newton path — exactly as it can under `.dc`, which has always
+reused both. On this deck that happened **only under KLU**, where it moved one
+number of 5005 by 4.7e-09 relative, five orders of magnitude inside `reltol`.
+**Under SPARSE the results are byte-identical** with the reuse on and off, all
+5005 of them.
+
+Note which way round the two solvers now are. Before this change KLU was the
+faster of them here — 6.35 s against 7.24 s. Reuse lets SPARSE skip the
+`spOrderAndFactor` that Enhancement-470's profile left dominating at 51%, and
+KLU gains less from the same trick, so SPARSE is now **2.4× the faster of the
+two**. Together with Enhancement-470 this deck went **29.78 s → 0.57 s**.
 
 ## Why this could not simply be done
 

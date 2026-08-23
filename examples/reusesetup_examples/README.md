@@ -13,19 +13,26 @@ again for every point, even though only a parameter **value** had changed.
 `.dc` — including the parameter sweeps of Enhancement-427 — has never done
 that: it sets up once and walks its points inside the analysis.
 
+The reuse is **on by default**, which is why the guards below carry the weight.
+
 After Enhancement-470 removed the quadratic teardown, what was left of that
 per-point rebuild was still most of the run. On a 2448-unknown dielectric
 stack, 1001 points:
 
-| | |
-|---|---|
-| rebuild every point | 6.33 s |
-| keep the setup | **1.34 s** |
+| | rebuild every point | keep the setup | |
+|---|---|---|---|
+| SPARSE 1.3 | 7.24 s | **0.57 s** | **12.8×** |
+| KLU | 6.35 s | 1.38 s | 4.6× |
 
-**4.7×**, with one number of 5005 differing, by 4.7e-09 relative — the LU
-ordering is reused across points exactly as `.dc` has always reused it, so a
-solve can land on a slightly different Newton path. That is five orders of
-magnitude inside `reltol`.
+Reusing the setup also reuses the matrix ordering, so a solve can land on a
+slightly different Newton path — exactly as it can under `.dc`, which has always
+reused both. On this deck that happened **only under KLU**, moving one number of
+5005 by 4.7e-09 relative, five orders of magnitude inside `reltol`. **Under
+SPARSE the results are byte-identical**, all 5005 of them.
+
+KLU was the faster solver on this deck before the change (6.35 s against
+7.24 s); reuse lets SPARSE skip the `spOrderAndFactor` that Enhancement-470 left
+dominating at 51%, so SPARSE is now 2.4× the faster of the two.
 
 ## Why it could not simply be done
 
