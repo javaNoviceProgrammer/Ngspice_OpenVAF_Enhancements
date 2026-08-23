@@ -2085,6 +2085,62 @@ static char *sw_familyname(const char *base, char *const *kscname,
  * `_<value>` segment for EVERY knob (inner first). Only the appended segments are
  * sanitized (Enhancement-267); the base name is preserved. A single knob yields
  * `<base>_<value>` (the E-189 name). */
+
+/* Enhancement-471: ask CKTdoJob to keep the circuit standing for the next
+ * point instead of tearing it down and building it again. Only ever a
+ * REQUEST -- CKTdoJob re-decides node collapse and rebuilds for real if the
+ * topology moved, and declines outright for any device type whose topology it
+ * cannot re-check. Never asked for after the deck was re-sourced, where there
+ * is no previous setup to keep. */
+static bool
+e471_value_is_off(const char *v)
+{
+    return cieq(v, "0") || cieq(v, "false") || cieq(v, "no") || cieq(v, "off");
+}
+
+/* Enhancement-471: the escape hatch, default ON.
+ *
+ * Reuse changes nothing a user can see except the time, but it does reuse the
+ * LU ordering across points the way `.dc` always has, so a solve can land on a
+ * different Newton path and move a value by a few ulp. `reusesetup=0` turns it
+ * off, which makes "is this difference the reuse?" a one-line experiment.
+ *
+ * EVERY spelling that means off must mean off. Enhancements 450, 451, 454 and
+ * 466 each shipped an option here where it did not -- `savecurrents=0`,
+ * `nosavecurrents` and `adaptquiet=0` all turned the feature ON -- so the
+ * value is read as a NUMBER and a STRING before CP_BOOL (a bare `set` publishes
+ * a bool, `=0` a number, `=false` a string, and a CP_BOOL-first cascade
+ * short-circuits on all three), the `no` prefix is honoured, and the suite
+ * tests each spelling rather than trusting this comment. */
+static bool
+e471_reuse_enabled(void)
+{
+    double d;
+    char s[64];
+
+    if (cp_getvar("noreusesetup", CP_REAL, &d, 0))
+        return d == 0.0;
+    if (cp_getvar("noreusesetup", CP_STRING, s, sizeof(s)))
+        return e471_value_is_off(s);
+    if (cp_getvar("noreusesetup", CP_BOOL, NULL, 0))
+        return FALSE;
+
+    if (cp_getvar("reusesetup", CP_REAL, &d, 0))
+        return d != 0.0;
+    if (cp_getvar("reusesetup", CP_STRING, s, sizeof(s)))
+        return !e471_value_is_off(s);
+    if (cp_getvar("reusesetup", CP_BOOL, NULL, 0))
+        return TRUE;
+
+    return TRUE;                        /* not mentioned at all: on */
+}
+
+static void sw_request_reuse(void)
+{
+    if (ft_curckt && ft_curckt->ci_ckt && e471_reuse_enabled())
+        ((CKTcircuit *) ft_curckt->ci_ckt)->CKTreuseSetup = 1;
+}
+
 static char *sw_pointname(const char *base, double *const *kvals,
                           const int *idx, int nknob)
 {
@@ -2205,6 +2261,7 @@ void com_sweep(wordlist *wl)
     char   *kscname[SW_MAXKNOB];
     double  prevval[SW_MAXKNOB];
     int     nknob = 0, npt = 1, nv0 = 0, ncomb = 1, havePrev = 0;
+    int     prevFailed = 0;                          /* Enhancement-471 */
     int     nptfail = 0;             /* Enhancement-438: points that never solved */
     int     ptfailed = 0;            /* Enhancement-445: ...and whether THIS one did */
     char   *deck_fp_names[SW_MAXKNOB];   /* Enhancement-320: swept .param names   */
@@ -2494,6 +2551,7 @@ void com_sweep(wordlist *wl)
 
     for (p = 0; p < npt; p++) {
         int idx[SW_MAXKNOB], rem = p, anyDeck = 0, deckChanged = 0, resetNeeded;
+        int reuseOK;
         double curval[SW_MAXKNOB];
         for (j = 0; j < nknob; j++) {
             idx[j] = rem % knv[j];
@@ -2506,6 +2564,15 @@ void com_sweep(wordlist *wl)
                 if (!havePrev || curval[j] != prevval[j]) deckChanged = 1;
             }
         resetNeeded = (!havePrev) || deckChanged;
+        /* Enhancement-471: read before havePrev is updated below. The first
+           point has nothing to reuse, and a re-sourced deck has thrown the
+           old circuit away. */
+        /* Enhancement-471: and never after a point whose analysis FAILED. A
+           failed solve leaves the circuit in a state nothing downstream can
+           characterise -- a matrix factored to NaN, a rejected operating point,
+           states half-written -- and reusing it carries the wreckage into every
+           later point instead of confining it to the point that earned it. */
+        reuseOK = havePrev && !prevFailed;
         if (resetNeeded && anyDeck) {
             if (fast_fp) {                           /* Enhancement-320: no reset */
                 double dvals[SW_MAXKNOB];
@@ -2517,6 +2584,7 @@ void com_sweep(wordlist *wl)
                 for (j = 0; j < nknob; j++)
                     if (kkind[j] == SW_DECK) sw_set_deck(kname[j], curval[j]);
                 sw_run_cmd("reset");
+                reuseOK = 0;                         /* Enhancement-471 */
                 ft_optimizing = TRUE;                /* reset clears it */
             }
         }
@@ -2524,7 +2592,25 @@ void com_sweep(wordlist *wl)
             if (kkind[j] != SW_DECK) sw_set_inplace(kkind[j], kname[j], curval[j]);
         for (j = 0; j < nknob; j++) prevval[j] = curval[j];
         havePrev = 1;
+        if (p == 0 && ft_curckt && ft_curckt->ci_ckt) {   /* Enhancement-471 */
+            ((CKTcircuit *) ft_curckt->ci_ckt)->CKTreuseKept = 0;
+            ((CKTcircuit *) ft_curckt->ci_ckt)->CKTreuseRebuilt = 0;
+        }
+        if (reuseOK)
+            sw_request_reuse();                      /* Enhancement-471 */
         sw_run_cmd(analysis);
+        /* Enhancement-471: say what actually happened, so the decision is
+           observable rather than inferred from a stopwatch. A rebuilt point is
+           one where an OSDI device re-decided its node collapse and the matrix
+           had to be built again -- exactly the case that makes naive reuse
+           draw a frozen curve. */
+        if (ft_ngdebug && p == npt - 1 && ft_curckt && ft_curckt->ci_ckt) {
+            CKTcircuit *rck = (CKTcircuit *) ft_curckt->ci_ckt;
+            fprintf(stdout,
+                    "sweep: setup reused at %d of %d points, %d rebuilt after "
+                    "a node collapse moved\n",
+                    rck->CKTreuseKept, npt, rck->CKTreuseRebuilt);
+        }
         /* Enhancement-438: a point whose analysis never solved still contributes
          * a value to every output curve -- ngspice leaves a plot behind, so the
          * read-back returns something, and for a failed operating point that
@@ -2538,6 +2624,7 @@ void com_sweep(wordlist *wl)
         ptfailed = sw_run_failed();
         if (ptfailed)
             nptfail++;
+        prevFailed = ptfailed;                       /* Enhancement-471 */
 
         if (p == 0 && nout == 0) {
             /* no -output given: record every node voltage of the analysis */

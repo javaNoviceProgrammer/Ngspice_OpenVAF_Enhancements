@@ -1,0 +1,17 @@
+// Enhancement-470: a device with INTERNAL nodes, so that setting the circuit
+// up and tearing it down actually has nodes to create and delete. Each
+// instance owns one internal node `mid`, so a chain of N instances adds N
+// nodes for OSDIunsetup to remove between analyses.
+`include "disciplines.vams"
+
+module rint(p, n);
+    inout p, n;
+    electrical p, n;
+    electrical mid;
+    parameter real r1 = 1e3 from (0:inf);
+    parameter real r2 = 1e3 from (0:inf);
+    analog begin
+        I(p, mid) <+ V(p, mid) / r1;
+        I(mid, n) <+ V(mid, n) / r2;
+    end
+endmodule

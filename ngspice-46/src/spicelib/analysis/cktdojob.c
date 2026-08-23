@@ -12,6 +12,7 @@ Modified: 2000 AlansFixes
 #include "ngspice/fteext.h"
 
 #include "analysis.h"
+#include "ngspice/osdiitf.h"   /* Enhancement-471 */
 
 #ifdef XSPICE
 /* gtri - add - wbk - 11/26/90 - add include for MIF and EVT global data */
@@ -24,6 +25,64 @@ Modified: 2000 AlansFixes
 #endif
 
 extern SPICEanalysis* analInfo[];
+
+/* Enhancement-471 -------------------------------------------------------------
+ *
+ * A repeated analysis (`sweep`, `optimize`, `montecarlo`) tears the whole
+ * circuit down and builds it again for every point, even though only a
+ * parameter VALUE changed. `.dc` -- including the parameter sweeps of
+ * Enhancement-427 -- has never done that: it sets the circuit up once and walks
+ * its points inside the analysis. This lets the repeated analyses do the same.
+ *
+ * The reason it cannot simply be done is NODE COLLAPSE. A device may decide, at
+ * setup and from its parameters, to merge two of its nodes; the matrix is then
+ * built for that topology. Reuse the setup and the topology is frozen at
+ * whatever the first point decided, and the sweep quietly draws a flat line.
+ *
+ * Two things make it safe here:
+ *
+ *   - For an OSDI device the collapse is RE-DECIDED on every CKTtemp and
+ *     compared against the snapshot the matrix was built from
+ *     (Enhancement-417). Until now a mismatch could only be reported --
+ *     "the matrix was built for the collapse decided at setup and cannot be
+ *     rebuilt here". CKTdoJob now does exactly what that message said was
+ *     impossible: it notices and rebuilds for real.
+ *
+ *   - A built-in device decides its collapse in DEVsetup and nowhere else, so
+ *     there is nothing to re-check. Rather than guess, reuse is offered only to
+ *     circuits built entirely from device types whose topology is known to be
+ *     fixed: the linear elements and sources below, which create their branch
+ *     equations unconditionally, plus OSDI. Anything else keeps the old
+ *     behaviour exactly. The list grows as a type is verified, never by
+ *     assumption.
+ */
+static const char * const e471_fixed_topology[] = {
+    "Resistor", "Capacitor", "Inductor", "mutual",
+    "Vsource", "Isource", "VCVS", "VCCS", "CCCS", "CCVS", "ASRC",
+    NULL
+};
+
+static int
+e471_reuse_safe(CKTcircuit *ckt)
+{
+    int i, k;
+
+    for (i = 0; i < DEVmaxnum; i++) {
+        if (!DEVices[i] || !ckt->CKThead[i])
+            continue;                        /* type not present in this deck */
+        if (DEVices[i]->DEVpublic.registry_entry)
+            continue;                        /* OSDI: collapse is re-checked */
+        if (!DEVices[i]->DEVpublic.name)
+            return 0;
+        for (k = 0; e471_fixed_topology[k]; k++)
+            if (!strcmp(DEVices[i]->DEVpublic.name, e471_fixed_topology[k]))
+                break;
+        if (!e471_fixed_topology[k])
+            return 0;                        /* unverified type -- do not reuse */
+    }
+    return 1;
+}
+
 
 int
 CKTdoJob(CKTcircuit* ckt, int reset, TSKtask* task)
@@ -153,6 +212,9 @@ CKTdoJob(CKTcircuit* ckt, int reset, TSKtask* task)
 
     error = 0;
 
+    if (!reset)
+        ckt->CKTreuseSetup = 0;   /* Enhancement-471: never outlives its job */
+
     if (reset) {
 
         ckt->CKTdelta = 0.0;
@@ -178,15 +240,50 @@ CKTdoJob(CKTcircuit* ckt, int reset, TSKtask* task)
         /* make sure this is either up do date or NULL */
         ckt->CKTcurJob = NULL;
 
-        /* normal reset */
-        if (!error)
-            error = CKTunsetup(ckt);
+        /* normal reset -- unless Enhancement-471's reuse was requested and the
+           circuit is still standing from the previous job */
+        {
+            int reuse = ckt->CKTreuseSetup && ckt->CKTisSetup
+                        && e471_reuse_safe(ckt);
 
-        if (!error)
-            error = CKTsetup(ckt);
+            if (!reuse) {
+                ckt->CKTreuseSetup = 0;
+                if (!error)
+                    error = CKTunsetup(ckt);
 
-        if (!error)
-            error = CKTtemp(ckt);
+                if (!error)
+                    error = CKTsetup(ckt);
+            }
+
+            /* Run CKTtemp either way: for an OSDI device this is what
+               re-decides the node collapse, which is the whole basis for
+               reuse being safe. While the request is still set, OSDItemp
+               keeps quiet about a mismatch instead of warning that the
+               matrix cannot be rebuilt -- because here it can be. */
+            if (!error)
+                error = CKTtemp(ckt);
+
+            if (reuse) {
+                ckt->CKTreuseSetup = 0;      /* a request is good for one job */
+
+                ckt->CKTreuseKept++;
+
+                if (!error && OSDIanyCollapseChanged(ckt)) {
+                    ckt->CKTreuseKept--;
+                    ckt->CKTreuseRebuilt++;
+                    /* The topology moved under us. The reused matrix is the
+                       wrong shape, so build it again properly -- and let this
+                       second CKTtemp warn if it still disagrees. */
+                    error = CKTunsetup(ckt);
+
+                    if (!error)
+                        error = CKTsetup(ckt);
+
+                    if (!error)
+                        error = CKTtemp(ckt);
+                }
+            }
+        }
 
         if (error) {
             return error;

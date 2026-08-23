@@ -775,7 +775,12 @@ extern int OSDItemp(GENmodel *inModel, CKTcircuit *ckt) {
            * wording -- so stay quiet here and do NOT burn the once-per-instance
            * warning, which a later temperature sweep still needs. JOBtype 9 is
            * the sensitivity job, the same test the dtemp message above uses. */
-          if (!extra_inst_data->collapse_warned &&
+          /* Enhancement-471: while a reuse request is live this CKTtemp is a
+           * TRIAL -- CKTdoJob is about to see the flag and rebuild the matrix
+           * for real, so the message would be both wrong and noisy. Do not
+           * burn `collapse_warned` on it either; a later temperature sweep
+           * with no reuse still needs it. */
+          if (!extra_inst_data->collapse_warned && !ckt->CKTreuseSetup &&
               !(ckt->CKTcurJob && ckt->CKTcurJob->JOBtype == 9)) {
             extra_inst_data->collapse_warned = true;
             fprintf(stderr,

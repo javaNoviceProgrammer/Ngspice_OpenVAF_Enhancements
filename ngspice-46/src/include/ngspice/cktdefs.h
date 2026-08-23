@@ -312,6 +312,17 @@ struct CKTcircuit {
                                    point brute force, but to use gmin stepping
                                    first */
     unsigned int CKTisSetup:1;  /* flag to indicate if CKTsetup done */
+    /* Enhancement-471: reuse the existing setup for the next analysis instead
+       of tearing the circuit down and rebuilding it. Only ever a REQUEST --
+       CKTdoJob still re-decides node collapse through CKTtemp and rebuilds for
+       real if it moved. */
+    unsigned int CKTreuseSetup:1;
+    /* Enhancement-471: how the last repeated analysis actually went -- points
+       whose setup was kept, and points where the node collapse moved and the
+       circuit had to be rebuilt after all. Reported under `set ngdebug`, which
+       is what makes the decision observable instead of inferred from a clock. */
+    int CKTreuseKept;
+    int CKTreuseRebuilt;
     /* Enhancement-365: set when an analysis has REPLACED ckt->CKTmatrix while
      * leaving CKTisSetup asserted, so every device's cached matrix-element
      * pointer now dangles. `pz` does exactly this (CKTpzSetup destroys and

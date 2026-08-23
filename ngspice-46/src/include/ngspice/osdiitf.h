@@ -102,3 +102,4 @@ extern int OSDIterminalNames(CKTcircuit *ckt, const char *name, char ***names,
  * every non-OSDI instance). Reading it clears it. Defined in
  * src/osdi/osdiparam.c. */
 extern int OSDIcollapseChanged(GENinstance *instPtr);
+extern int OSDIanyCollapseChanged(CKTcircuit *ckt);   /* Enhancement-471 */

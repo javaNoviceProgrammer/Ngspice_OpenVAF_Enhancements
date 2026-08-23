@@ -333,6 +333,36 @@ int OSDIcollapseChanged(GENinstance *instPtr) {
   return changed;
 }
 
+/* Enhancement-471: did ANY OSDI instance's node collapse move?
+ *
+ * OSDItemp already re-decides the collapse of every instance and records a
+ * mismatch against the snapshot the matrix was built from (Enhancement-417).
+ * Until now that could only be reported -- "the matrix was built for the
+ * collapse decided at setup and cannot be rebuilt here". CKTdoJob uses this to
+ * do exactly what that message said was impossible: notice the change and
+ * rebuild.
+ *
+ * Every instance is visited and its flag consumed, with no early exit, so one
+ * changed device cannot leave another's flag set for a later analysis to
+ * misread. */
+int OSDIanyCollapseChanged(CKTcircuit *ckt) {
+  int type, changed = 0;
+  GENmodel *model;
+  GENinstance *inst;
+
+  if (!ckt)
+    return 0;
+  for (type = 0; type < DEVmaxnum; type++) {
+    if (!ckt->CKThead[type] || !osdi_devtype_is_osdi(type))
+      continue;
+    for (model = ckt->CKThead[type]; model; model = model->GENnextModel)
+      for (inst = model->GENinstances; inst; inst = inst->GENnextInstance)
+        if (OSDIcollapseChanged(inst))
+          changed = 1;
+  }
+  return changed;
+}
+
 int OSDIterminalNames(CKTcircuit *ckt, const char *name, char ***names,
                       int *count) {
   GENinstance *inst;
