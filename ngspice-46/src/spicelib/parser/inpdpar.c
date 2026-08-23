@@ -15,6 +15,7 @@ Author: 1985 Thomas L. Quarles
 #include <stdio.h>
 #include "ngspice/ifsim.h"
 #include "ngspice/inpdefs.h"
+#include "ngspice/cktdefs.h"   /* Enhancement-467: CKTtemp for the dtemp guard */
 #include "ngspice/iferrmsg.h"
 #include "ngspice/cpdefs.h"
 #include "ngspice/fteext.h"
@@ -99,6 +100,71 @@ e426_check_multiplier(IFdevice *device, GENinstance *fast, IFparm *p,
        warning here would fire on decks that mean exactly what they wrote. */
 }
 
+/* Enhancement-467: instance-level value guards, the siblings of the option-level
+ * ones in spicelib/analysis/cktsopt.c.
+ *
+ * `.option temp=-300` has warned since Enhancement-426 that it is at or below
+ * absolute zero, and osdi/osdisetup.c makes the same check for an OSDI
+ * instance. The per-instance knob on a BUILT-IN device had no guard at all:
+ * `R1 in out 1k tc1=0.01 temp=-300` was accepted silently and answered
+ * v(out) = -0.998 from a +1 V source -- a negative absolute temperature drives
+ * the temperature factor negative, so the resistance goes negative and a
+ * network of three positive-valued parts delivers a negative voltage.
+ * `temp=-1e6` did the same, and `dtemp=-400` reached it by the other road.
+ *
+ * WARN and ignore the value, keeping what the device already had -- the same
+ * contract E426_BAD_OPT uses at option level, so the two levels answer alike.
+ *
+ * Deliberately NOT extended to a negative `w`/`l`: Enhancement-438's
+ * `.option warn_physics` already reports those and keeps the value, which is
+ * its established contract, and ignoring the value here silenced it. */
+static int
+e467_bad_instance_value(CKTcircuit *ckt, IFdevice *device, GENinstance *fast,
+                        IFparm *p, IFvalue *val)
+{
+    const char *who;
+    double v;
+
+    if (!p || !p->keyword || !val)
+        return 0;
+    if ((p->dataType & IF_VARTYPES) != IF_REAL)
+        return 0;
+
+    v = val->rValue;
+    who = (fast && fast->GENname) ? fast->GENname
+                                  : (device ? device->name : "device");
+
+    if (cieq(p->keyword, "temp")) {
+        if (v + CONSTCtoK <= 0.0) {
+            fprintf(stderr,
+                    "\nWarning: %s: temp = %g C is at or below absolute zero "
+                    "(-273.15 C); ignored, the circuit temperature is used "
+                    "instead.\n\n", who, v);
+            return 1;
+        }
+        return 0;
+    }
+
+    if (cieq(p->keyword, "dtemp")) {
+        /* dtemp is a DELTA, so it is unphysical only together with an ambient.
+         * `ckt->CKTtemp` is the ambient in force as this card is parsed; a
+         * `.option temp` card ahead of the devices (the ordinary layout) has
+         * already been applied. */
+        double amb = ckt ? ckt->CKTtemp - CONSTCtoK : 27.0;
+        if (amb + v + CONSTCtoK <= 0.0) {
+            fprintf(stderr,
+                    "\nWarning: %s: dtemp = %g C puts the device at %g C, at "
+                    "or below absolute zero (-273.15 C); ignored.\n\n",
+                    who, v, amb + v);
+            return 1;
+        }
+        return 0;
+    }
+
+    return 0;
+}
+
+
 char *
 INPdevParse(char **line, CKTcircuit *ckt, int dev, GENinstance *fast,
             double *leading, int *waslead, INPtables *tab)
@@ -171,7 +237,9 @@ INPdevParse(char **line, CKTcircuit *ckt, int dev, GENinstance *fast,
         }
 
         e426_check_multiplier(device, fast, p, val, e426_multiplier_id(device));
-        error = ft_sim->setInstanceParm (ckt, fast, p->id, val, NULL);
+        error = e467_bad_instance_value(ckt, device, fast, p, val)
+                    ? 0
+                    : ft_sim->setInstanceParm (ckt, fast, p->id, val, NULL);
         if (error) {
             rtn = INPerror(error);
             if (rtn && error == E_BADPARM) {
@@ -245,7 +313,9 @@ INPdevParse(char **line, CKTcircuit *ckt, int dev, GENinstance *fast,
             goto quit;
         }
         e426_check_multiplier(device, fast, p, val, e426_multiplier_id(device));
-        error = ft_sim->setInstanceParm (ckt, fast, p->id, val, NULL);
+        error = e467_bad_instance_value(ckt, device, fast, p, val)
+                    ? 0
+                    : ft_sim->setInstanceParm (ckt, fast, p->id, val, NULL);
         if (error) {
             rtn = INPerror(error);
             goto quit;

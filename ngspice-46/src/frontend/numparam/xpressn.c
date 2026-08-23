@@ -622,6 +622,32 @@ keyword(const char *keys, const char *s, const char *s_end)
 }
 
 
+/* Enhancement-467: is `name` one of the built-in expression functions?
+ *
+ * `.func` registers a user function without ever asking whether the name is
+ * already taken, so `.func sqrt(x) {x*2}` silently REPLACED the built-in for
+ * every expression in the deck: `sqrt(500)*100` evaluated to 100000 instead of
+ * 2236.07, `.func ln(x) {x*3}` turned 621.46 into 150000, and
+ * `.func abs(x) {x+1}` turned +1000 into -998. No diagnostic at any point, and
+ * the deck still runs -- so a name collision reads as a modelling result.
+ *
+ * The user function still wins, because refusing would break any deck that
+ * deliberately overrides one, and Enhancement-399 established that a fix must
+ * be no wider than its evidence. What was missing is being told.
+ *
+ * Exported rather than copied: `fmathS` is the one list the evaluator itself
+ * consults, and a second copy in inpcom.c would be exactly the two-readers-of-
+ * one-rule shape that Enhancements 454/464/467 each had to repair. */
+int
+nupa_is_mathfunction(const char *name)
+{
+    if (!name || !*name)
+        return 0;
+    return keyword(fmathS, name, name + strlen(name)) != 0;
+}
+
+
+
 static double
 parseunit(const char *s)
 /* the Spice suffixes */

@@ -28,6 +28,7 @@ Author: 1985 Wayne A. Christopher
 #include "ngspice/fteext.h"
 #include "ngspice/fteinp.h"
 #include "numparam/general.h"
+#include "numparam/numpaif.h"   /* Enhancement-467: nupa_is_mathfunction */
 
 #include "com_set.h"
 
@@ -5331,7 +5332,21 @@ static void inp_get_func_from_line(struct function_env *env, char *line)
     while (*end && !isspace_c(*end) && *end != '(')
         end++;
 
-    function = new_function(env, copy_substring(line, end));
+    {
+        char *fname = copy_substring(line, end);
+
+        /* Enhancement-467: a `.func` whose name is already a built-in silently
+         * replaced it for the whole deck -- see nupa_is_mathfunction(). Warn
+         * and keep the user's definition, which is what already happened; the
+         * point is that it no longer happens unannounced. */
+        if (nupa_is_mathfunction(fname))
+            fprintf(stderr,
+                    "\nWarning: .func %s() redefines the built-in function "
+                    "'%s'; every expression in this deck will use your "
+                    "definition instead of the built-in.\n\n", fname, fname);
+
+        function = new_function(env, fname);
+    }
 
     end = skip_ws(end);
 

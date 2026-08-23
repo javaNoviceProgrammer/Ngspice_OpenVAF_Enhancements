@@ -1257,6 +1257,75 @@ e464_port_widths(const char *modelname, int *start, int *cnt, int maxp,
     return np;
 }
 
+/* Enhancement-467: the bit spelling has to be asked, not assumed.
+ *
+ * Enhancement-462 made `.option autobus=kicad` spell a bit `a_0_` instead of
+ * `a[0]`, because KiCad's SPICE exporter rewrites every bracket in a net name
+ * to an underscore. INP2N was taught the new spelling; the SUBCIRCUIT formal
+ * detection here was not, and it tests `o[len] == '['` in two places. So a
+ * subcircuit whose formals are written the way KiCad actually emits them --
+ * `.subckt s a_0_ a_1_ a_2_ a_3_ ...` -- matched nothing, the bare `a` on the
+ * device line stayed one token, and the device bound positionally with most of
+ * its terminals floating. Measured: v = 1.0 where the bracket spelling of the
+ * same circuit gives 0.5238095, and with no "not connected" warning, because
+ * every terminal WAS connected -- to nodes nothing else drives.
+ *
+ * That is the same failure E-462 set out to remove, surviving in the one place
+ * the option's own style never reached: two readers of one rule, the third time
+ * in this feature (E-454, E-464, here). Both readers now ask this function. */
+static long
+e467_bus_bit_index(const char *o, const char *name, size_t len)
+{
+    const char *p;
+    char *endp;
+    long idx;
+
+    if (!o || !name || strncmp(o, name, len) != 0)
+        return -1;
+    p = o + len;
+
+    /* The bracket spelling is ALWAYS accepted: `autobus=kicad` decides what
+       INP2N GENERATES, not how the user wrote the `.subckt` line, and E-462's
+       suite pins a bracket-spelled subcircuit working under the kicad option.
+       The underscore spelling is accepted only when that option is on, so an
+       ordinary node called `foo_1_` is never mistaken for a bus bit by a deck
+       that never asked for the KiCad convention. */
+    if (*p == '[') {
+        idx = strtol(p + 1, &endp, 10);
+        if (endp == p + 1 || endp[0] != ']' || endp[1] != '\0')
+            return -1;
+        return idx;
+    }
+    if (sc_autobus_kicad && *p == '_') {
+        idx = strtol(p + 1, &endp, 10);
+        if (endp == p + 1 || endp[0] != '_' || endp[1] != '\0')
+            return -1;
+        return idx;
+    }
+    return -1;
+}
+
+/* Is this token already a single bit, rather than a bus base? `a[0]` in the
+   default spelling, `a_0_` under `autobus=kicad`. */
+static bool
+e467_token_is_indexed(const char *name, size_t len)
+{
+    if (!name || len == 0)
+        return FALSE;
+    if (memchr(name, '[', len))
+        return TRUE;
+    if (sc_autobus_kicad && name[len - 1] == '_') {
+        /* ..._<digits>_ */
+        size_t i = len - 1;
+        size_t digits = 0;
+        while (i > 0 && isdigit_c(name[i - 1])) { i--; digits++; }
+        if (digits && i > 1 && name[i - 1] == '_')
+            return TRUE;
+    }
+    return FALSE;
+}
+
+
 /* Does `name` stand for a set of formals `name[i]`? The same question
    e449_expand_bus_port asks before expanding, asked without emitting. */
 static bool
@@ -1268,17 +1337,15 @@ e464_is_formal_bus(const char *name)
     if (!table || !name)
         return FALSE;
     len = strlen(name);
-    if (len == 0 || memchr(name, '[', len))
+    if (len == 0 || e467_token_is_indexed(name, len))
         return FALSE;
     for (i = 0; table[i].t_old; i++)
         if (strlen(table[i].t_old) == len &&
             strncmp(name, table[i].t_old, len) == 0)
             return FALSE;               /* an ordinary formal of that exact name */
-    for (i = 0; table[i].t_old; i++) {
-        const char *o = table[i].t_old;
-        if (strncmp(o, name, len) == 0 && o[len] == '[')
+    for (i = 0; table[i].t_old; i++)
+        if (e467_bus_bit_index(table[i].t_old, name, len) >= 0)
             return TRUE;
-    }
     return FALSE;
 }
 
@@ -1326,7 +1393,7 @@ e449_expand_bus_port(struct bxx_buffer *buffer, const char *name,
         name_e = strchr(name, '\0');
     len = (size_t) (name_e - name);
     /* an already-indexed token is a plain node, not a bus base */
-    if (len == 0 || memchr(name, '[', len))
+    if (len == 0 || e467_token_is_indexed(name, len))
         return 0;
 
     /* a formal of exactly that name wins -- it is an ordinary port */
@@ -1348,13 +1415,12 @@ e449_expand_bus_port(struct bxx_buffer *buffer, const char *name,
 
         for (i = 0; table[i].t_old; i++) {
             const char *o = table[i].t_old;
-            char *endp;
             long idx;
-            if (strncmp(o, name, len) != 0 || o[len] != '[' || !table[i].t_new)
+            if (!table[i].t_new)
                 continue;
-            idx = strtol(o + len + 1, &endp, 10);
-            if (endp == o + len + 1 || *endp != ']')
-                continue;               /* not a plain bit index */
+            idx = e467_bus_bit_index(o, name, len);
+            if (idx < 0)
+                continue;               /* not a bit of this bus */
             if (n >= E449_MAXBITS)
                 return 0;           /* implausible width: leave it alone */
             bit[n].idx = idx;

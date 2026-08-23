@@ -24,6 +24,7 @@ extern void   nupa_add_param(char *param_name, double value);
 extern double nupa_eval_expr(const char *expr, int *found);            /* Enhancement-320 */
 extern void   nupa_recompute_params(char *const *swept, int nswept);   /* Enhancement-320 */
 extern const char *nupa_get_dynref(int linenum);                       /* Enhancement-321 */
+extern int    nupa_is_mathfunction(const char *name);                  /* Enhancement-467 */
 extern void   nupa_copy_inst_dico(void);
 extern void   nupa_del_dicoS(void);
 extern int    nupa_add_dicoslist(void);

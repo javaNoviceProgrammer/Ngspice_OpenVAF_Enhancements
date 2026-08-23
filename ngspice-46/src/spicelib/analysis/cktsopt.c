@@ -307,7 +307,19 @@ CKTsetOpt(CKTcircuit *ckt, JOB *anal, int opt, IFvalue *val)
         task->TSKdefaultMosAD = val->rValue;
         break;
     case OPT_DEFAS:
-        task->TSKdefaultMosAD = val->rValue;
+        /* Enhancement-467: this wrote TSKdefaultMosAD -- one word, and the
+         * consequence is that `.option defas=` could NEVER set the source area
+         * (TSKdefaultMosAS stayed at its 0 initialiser) while silently
+         * overwriting the DRAIN area instead. Measured: `.option defas=7e-10`
+         * gave @m1[ad] = 7e-10 and @m1[as] = 0. The field is real, is copied
+         * per-task in cktntask.c and is printed by `option` in com_option.c --
+         * only this assignment named the wrong one.
+         *
+         * A NEGATIVE default geometry is deliberately not refused here:
+         * Enhancement-438's `.option warn_physics` already reports the instance
+         * value it produces, and keeping the value is that mechanism's
+         * contract. */
+        task->TSKdefaultMosAS = val->rValue;
         break;
     case OPT_BYPASS:
         task->TSKbypass = val->iValue;

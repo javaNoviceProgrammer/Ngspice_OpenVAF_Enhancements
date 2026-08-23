@@ -574,12 +574,24 @@ static int autoadapt_mode(void)
     double d;
     char s[64];
 
-    if (cp_getvar("autoadapt", CP_BOOL, NULL, 0))
-        return 1;                       /* the bare flag */
+    /* Enhancement-467: ask the MOST SPECIFIC type first.
+     *
+     * This cascade used to lead with CP_BOOL to mean "was the bare flag
+     * given?", which worked only because cp_getvar refused to coerce anything
+     * else to CP_BOOL. E-467 gave it that coercion -- so that `set interp=1`
+     * and its ~110 siblings stop being ignored -- and a CP_BOOL probe now
+     * answers TRUE for `=debug` too, which swallowed the debug mode and the
+     * unknown-value warning before either could be seen. The string is the
+     * only spelling that carries a MODE, so it must be read first. */
+    if (cp_getvar("autoadapt", CP_STRING, s, sizeof s))
+        goto have_string;
     if (cp_getvar("autoadapt", CP_REAL, &d, 0))
         return d != 0.0 ? 1 : 0;
-    if (!cp_getvar("autoadapt", CP_STRING, s, sizeof s))
-        return 0;                       /* not given at all */
+    if (cp_getvar("autoadapt", CP_BOOL, NULL, 0))
+        return 1;                       /* the bare flag */
+    return 0;                           /* not given at all */
+
+have_string:
     if (cieq(s, "0") || cieq(s, "false") || cieq(s, "no") || cieq(s, "off"))
         return 0;
     if (cieq(s, "debug"))
@@ -686,7 +698,24 @@ INPadapt(CKTcircuit *ckt, struct card *deck, INPtables *tab)
            already carries adapters -- hand-written, or from an earlier run of
            this pass -- gets them adapted in turn, `b_f` becoming `b_f_f`/`b_f_r`
            with a second adapter between. Measured before this guard existed. */
-        if (cieq(mname, amodel)) { tfree(mname); continue; }
+        if (cieq(mname, amodel)) {
+            /* Enhancement-467: distinguish OUR OWN injected adapters, which
+             * must stay silent for idempotency, from a USER device that happens
+             * to use the adapter model. The latter disabled adaptation for that
+             * line with nothing said: `.option autoadapt adapter=m1` where `m1`
+             * is also a device model answered the UNADAPTED number (0.7560976
+             * instead of 0.7590361) and printed nothing at all. Naming a model
+             * that is in use is a deck mistake, not a preference, so this is
+             * reported at Error level like the other adapter-model checks and
+             * is not silenced by the quiet default (Enhancement-466). */
+            if (!ciprefix("n_adapt", line))
+                fprintf(stderr, "Error: autoadapt: the adapter model '%s' is "
+                        "also used by device %.*s in this deck; that line "
+                        "cannot be adapted. Give the adapter its own .model "
+                        "card.\n", amodel, (int) strcspn(line, " \t"), line);
+            tfree(mname);
+            continue;
+        }
         tfree(mname);
         if (np <= 0 || np != ntok - 1)          /* not the one-token-per-port form */
             continue;
@@ -827,6 +856,52 @@ INPadapt(CKTcircuit *ckt, struct card *deck, INPtables *tab)
                 k->node, nf, f->inst, f->port, nr, rr->inst, rr->port,
                 f->width, made, amodel);
         tfree(nf); tfree(nr);
+    }
+
+    /* Enhancement-467: a `.adapt` member that selected no shared bus node.
+     *
+     * The adapter MODEL name was validated ("is not defined in this deck", "is
+     * not an OSDI device"); the NODE list beside it was not checked at all. So
+     * `.adapt nosuchnode` -- one typo -- silently switched the whole feature
+     * off and the deck answered the unadapted number (0.7560976 where the
+     * adapted circuit gives 0.7590361), with no diagnostic of any kind. A bare
+     * `.adapt` and a `.adapt 42` did the same.
+     *
+     * Reported per member, so `.adapt b, nosuchnode` still adapts `b` and says
+     * exactly which name went nowhere. Error level, never silenced by the quiet
+     * default (Enhancement-466): this is a mistake in the deck, not a
+     * preference about how much to print. */
+    if (only) {
+        const char *q = only;
+        int reported = 0;
+
+        while (*q) {
+            size_t n = 0;
+            while (*q && (isspace_c(*q) || *q == ','))
+                q++;
+            while (q[n] && !isspace_c(q[n]) && q[n] != ',')
+                n++;
+            if (n) {
+                char *m = copy_substring(q, q + n);
+                int j, found = 0;
+                for (j = 0; j < ncand; j++)
+                    if (adapt_listed(m, cand[j].node, NULL)) {
+                        found = 1;
+                        break;
+                    }
+                if (!found)
+                    fprintf(stderr, "Error: autoadapt: .adapt names '%s', which "
+                            "is not a bus node shared by two OSDI devices here; "
+                            "nothing was adapted for it.\n", m);
+                tfree(m);
+                reported++;
+            }
+            q += n;
+        }
+        if (!reported)
+            fprintf(stderr, "Error: autoadapt: a `.adapt` card with no node "
+                    "names selects nothing, so no adapter was inserted. Omit "
+                    "the card to adapt every shared bus node.\n");
     }
 
     for (i = 0; i < ncand; i++) {

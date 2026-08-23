@@ -1180,10 +1180,31 @@ if_setparam(CKTcircuit *ckt, char **name, char *param, struct dvec *val, int do_
     device = ft_sim->devices[typecode];
     opt = parmlookup(device, &dev, param, do_model, 1);
     if (!opt) {
-        if (param)
+        /* Enhancement-467: say what is actually wrong.
+         *
+         * `alter @dm[is]=4e-14` answered "no such parameter is." -- but `is`
+         * plainly exists: `altermod @dm[is]` sets it and `@dm[is]` reads it
+         * back. The name `dm` is a MODEL, and `alter` looks only at instance
+         * parameters, so the lookup failed for a reason the message never
+         * mentioned. Blaming the parameter sends the reader off checking
+         * spelling and letter-case for something that is spelled correctly --
+         * the same shape of misdirection Enhancement-464 had to fix in the
+         * bus warning and Enhancement-418 in `pz`. */
+        if (param && !dev && mod) {
+            GENinstance *dummy = NULL;
+            if (parmlookup(device, &dummy, param, 1 /*model*/, 1))
+                fprintf(cp_err, "Error: '%s' is a MODEL parameter of model "
+                        "'%s'; `alter` sets instance parameters. Use "
+                        "`altermod %s %s=...` instead.\n",
+                        param, *name, *name, param);
+            else
+                fprintf(cp_err, "Error: model '%s' has no parameter %s.\n",
+                        *name, param);
+        } else if (param) {
             fprintf(cp_err, "Error: no such parameter %s.\n", param);
-        else
+        } else {
             fprintf(cp_err, "Error: no default parameter.\n");
+        }
         return;
     }
     if (do_model && !mod) {

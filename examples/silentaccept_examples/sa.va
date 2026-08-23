@@ -1,0 +1,43 @@
+// Enhancement-463: models for `.option autoadapt`.
+// Channel k has resistance r0*(k+1), so every bit reads differently and a
+// mis-paired, reversed or dropped adapter cannot pass by coincidence.
+`include "disciplines.vams"
+
+module chan(a, b);
+    inout [0:3] a; inout [0:3] b;
+    electrical [0:3] a; electrical [0:3] b;
+    parameter real r0 = 1e3 from (0:inf);
+    genvar k;
+    analog for (k = 0; k <= 3; k = k + 1)
+        I(a[k], b[k]) <+ V(a[k], b[k]) / (r0 * (k + 1));
+endmodule
+
+// the adapter: two four-bit bus ports, one resistance per bit
+module adapter(p, q);
+    inout [0:3] p; inout [0:3] q;
+    electrical [0:3] p; electrical [0:3] q;
+    parameter real ra = 50.0 from (0:inf);
+    genvar k;
+    analog for (k = 0; k <= 3; k = k + 1)
+        I(p[k], q[k]) <+ V(p[k], q[k]) / ra;
+endmodule
+
+// two bits, for the width-mismatch check
+module chan2(a, b);
+    inout [0:1] a; inout [0:1] b;
+    electrical [0:1] a; electrical [0:1] b;
+    parameter real r0 = 1e3 from (0:inf);
+    genvar k;
+    analog for (k = 0; k <= 1; k = k + 1)
+        I(a[k], b[k]) <+ V(a[k], b[k]) / (r0 * (k + 1));
+endmodule
+
+// one bus port and one SCALAR port: a scalar shared node must never adapt
+module mixed(a, s);
+    inout [0:3] a; inout s;
+    electrical [0:3] a; electrical s;
+    parameter real r0 = 1e3 from (0:inf);
+    genvar k;
+    analog for (k = 0; k <= 3; k = k + 1)
+        I(a[k], s) <+ V(a[k], s) / (r0 * (k + 1));
+endmodule

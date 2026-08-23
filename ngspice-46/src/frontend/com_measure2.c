@@ -992,6 +992,38 @@ measure_deriv_at(
  * the value here when we have m_from and m_to constraints * so this
  * function is slightly wrong.   Need to fix in future rev.
  * ----------------------------------------------------------------- */
+/* Enhancement-467: the scale vector of a `dc` measurement.
+ *
+ * The lookup was a fixed list of four names -- v-sweep, i-sweep, temp-sweep,
+ * res-sweep -- and a `.dc` of a DEVICE PARAMETER (Enhancement-427) names its
+ * scale `param-sweep`, so it matched none of them. Every WINDOW function was
+ * lost on such a plot: max, min, avg, rms and integ all failed with
+ * "out of interval", at any value range and even with an explicit from/to,
+ * while the POINT functions (find ... when, when) worked on the very same data
+ * -- so the sweep was plainly usable and only the interval setup could not
+ * find its axis. The plot itself was never in doubt: `display` marks
+ * `param-sweep` as the [default scale].
+ *
+ * Adding the fifth name would fix today's case and leave the next sweep kind to
+ * fail the same way, so the fixed list is now a fast path with the plot's own
+ * default scale behind it. Written once and called from both dc branches: the
+ * list previously appeared twice, which is how one of them could have been
+ * updated alone. */
+static struct dvec *
+e467_dc_scale(struct dvec *d)
+{
+    struct dvec *s = vec_get("v-sweep");
+
+    if (!s) s = vec_get("i-sweep");
+    if (!s) s = vec_get("temp-sweep");
+    if (!s) s = vec_get("res-sweep");
+    if (!s) s = vec_get("param-sweep");
+    if (!s && d) s = d->v_scale;
+    if (!s && plot_cur) s = plot_cur->pl_scale;
+    return s;
+}
+
+
 static int
 measure_minMaxAvg(
     MEASUREPTR meas,                /* in : parsed measurement data request */
@@ -1054,18 +1086,10 @@ measure_minMaxAvg(
             return MEASUREMENT_FAILURE;
         }
     } else if (dc_check) {
-        dScale = vec_get("v-sweep");
-        if (!dScale) {
-            dScale = vec_get("i-sweep");
-            if (!dScale) {
-                dScale = vec_get("temp-sweep");
-                if (!dScale)
-                    dScale = vec_get("res-sweep");
-            }
-        }
+        dScale = e467_dc_scale(d);
         if (dScale == NULL) {
             fprintf(cp_err, "Error: meas %s ...\n", meas->m_analysis);
-            fprintf(cp_err, " no such scale vector as v-sweep, i-sweep, temp-sweep, or res-sweep.\n");
+            fprintf(cp_err, " no such scale vector as v-sweep, i-sweep, temp-sweep, res-sweep or param-sweep.\n");
             return MEASUREMENT_FAILURE;
         }
     } else {                    /* error */
@@ -1467,18 +1491,10 @@ measure_rms_integral(
             return MEASUREMENT_FAILURE;
         }
     } else if (dc_check) {
-        xScale = vec_get("v-sweep");
-        if (!xScale) {
-            xScale = vec_get("i-sweep");
-            if (!xScale) {
-                xScale = vec_get("temp-sweep");
-                if (!xScale)
-                    xScale = vec_get("res-sweep");
-            }
-        }
+        xScale = e467_dc_scale(d);
         if (xScale == NULL) {
             fprintf(cp_err, "Error: meas %s ...\n", meas->m_analysis);
-            fprintf(cp_err, " no such scale vector as v-sweep, i-sweep, temp-sweep, or res-sweep.\n");
+            fprintf(cp_err, " no such scale vector as v-sweep, i-sweep, temp-sweep, res-sweep or param-sweep.\n");
             return MEASUREMENT_FAILURE;
         }
     } else {                      /* error */

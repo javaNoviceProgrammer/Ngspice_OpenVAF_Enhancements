@@ -832,6 +832,54 @@ cp_getvar(char *name, enum cp_types type, void *retval, size_t rsize)
         return (TRUE);
     }
 
+    /* Enhancement-467: coerce a set-but-differently-typed variable to CP_BOOL.
+     *
+     * The SPELLING decides the published TYPE -- `set interp` is a BOOL,
+     * `set interp=1` a NUMBER, `set interp=true` a STRING -- but the coercion
+     * table below had no CP_BOOL case at all, so every one of the ~110
+     * `cp_getvar(..., CP_BOOL, NULL, 0)` readers saw only the bare spelling and
+     * silently ignored the ordinary `=1`. Measured: `set sqrnoise=1` reported
+     * V/sqrt(Hz) where the bare word gives V^2/Hz, `set interp=1` left 165 rows
+     * where the bare word interpolates to 101, and `set autostop=1` ran a
+     * transient to the end where the bare word stops at the measurement.
+     *
+     * This is the ROOT of the class that Enhancements 450/451/454/466 each
+     * patched at ONE call site: e454_autobus_var() and autoadapt_mode() ask
+     * exactly this question by hand. Answering it here fixes every reader at
+     * once and keeps the two spellings of one option from disagreeing again.
+     *
+     * A number is on when non-zero, so `=0` stays FALSE exactly as before -- the
+     * change is confined to values that mean ON. A string is off only for the
+     * four established off-words (the same set E-454 published), and any other
+     * string means the variable is set, matching `set x=anything`. */
+    if (type == CP_BOOL) {
+        bool on;
+
+        switch (v->va_type) {
+        case CP_NUM:
+            on = (v->va_num != 0);
+            break;
+        case CP_REAL:
+            on = (v->va_real != 0.0);
+            break;
+        case CP_STRING: {
+            char *s = cp_unquote(v->va_string);
+            on = !(cieq(s, "0") || cieq(s, "false") ||
+                   cieq(s, "no") || cieq(s, "off"));
+            tfree(s);
+            break;
+        }
+        default:
+            free_struct_variable(uv1);
+            return (FALSE);
+        }
+
+        if (retval)
+            *(bool *) retval = on ? TRUE : FALSE;
+        free_struct_variable(uv1);
+        return (on ? TRUE : FALSE);
+    }
+
     /* Try to coerce it.. */
     if ((type == CP_NUM) && (v->va_type == CP_REAL)) {
         *(int *) retval = (int) v->va_real;
