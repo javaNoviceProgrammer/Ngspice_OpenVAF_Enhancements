@@ -1,0 +1,34 @@
+// Enhancement-472 -- a node collapse that a RANDOM DRAW or a SEARCH STEP can move.
+//
+// Enhancement-417's cs_gate collapses at exactly `rd == 0`, which a sweep can
+// step onto deliberately but a Monte Carlo draw or an optimizer step will never
+// land on. To test that `montecarlo` and `optimize` rebuild when the topology
+// moves under them, the collapse has to be gated on a THRESHOLD instead: any
+// value below `rth` collapses `d` onto `di`, anything above does not. A
+// distribution or a search range straddling `rth` then moves the collapse on
+// its own, which is exactly the case naive setup reuse gets wrong -- it freezes
+// whatever the first sample or first evaluation happened to decide.
+//
+// `gsr` is the series conductance that exists only when the collapse is NOT
+// taken, so the two topologies differ by a measurable amount rather than by a
+// rounding error.
+`include "disciplines.vams"
+
+module cs_thresh(d, s);
+   inout d, s;
+   electrical d, s;
+   electrical di;
+
+   parameter real g   = 1e-3 from (0:inf);
+   parameter real rd  = 0.0  from [0:inf);   // < rth => collapse
+   parameter real rth = 100.0 from (0:inf);  // the threshold itself
+
+   analog begin
+      if (rd < rth)
+         V(d, di) <+ 0.0;
+      else
+         I(d, di) <+ V(d, di) / rd;
+
+      I(di, s) <+ g * V(di, s);
+   end
+endmodule

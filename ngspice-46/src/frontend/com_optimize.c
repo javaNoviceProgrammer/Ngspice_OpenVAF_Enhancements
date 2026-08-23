@@ -139,6 +139,12 @@ struct optctx {
     double tol;
     int verbose;
     int nevals;
+    /* Enhancement-472: reuse bookkeeping. `reuse_ready` says a circuit is
+       standing that this evaluation did not re-source; `reuse_failed` remembers
+       that the last analysis produced no solution, whose leftover state nothing
+       downstream can characterise. */
+    int reuse_ready;
+    int reuse_failed;
     int nfailed;                         /* Enhancement-438: evals whose analysis never solved */
     int swarmsize;                       /* Enhancement-194: PSO population (0=auto)*/
     unsigned long seed;                  /* Enhancement-194: PSO RNG seed          */
@@ -215,6 +221,25 @@ static void opt_run_cmd(const char *cmdstr)
  * mention of them, and a confident "converged" at area = 1.1e-15.
  *
  * runcoms.c already publishes the verdict in the `sim_status` shell variable. */
+/* Enhancement-472: ask for the circuit to be kept for this analysis.
+ *
+ * The optimizer's ordinary evaluation path never re-sources the deck: -param
+ * and -mparam knobs are pushed in place, and with Enhancement-322's fast path
+ * armed so are -dparam ones. It then paid for a full teardown and rebuild
+ * anyway, once per evaluation -- and a fit runs hundreds of them.
+ *
+ * Ask only when a circuit is actually standing (`reuse_ready`, cleared by any
+ * re-source), and never after an analysis that failed. `-center` is excluded
+ * outright: its inner Monte-Carlo resets per sample, so there is nothing to
+ * keep and the flag would be stale. The request is still only a request --
+ * CKTdoJob re-decides node collapse and rebuilds for real if the topology
+ * moved, and declines for any device whose collapse it cannot re-check. */
+static void opt_reuse_ask(struct optctx *c)
+{
+    if (c->reuse_ready && !c->reuse_failed && !c->center)
+        sw_request_reuse();
+}
+
 static int opt_run_failed(void)
 {
     int st = 0;
@@ -479,6 +504,7 @@ static double opt_eval(struct optctx *c, const double *u, double *resid)
                 opt_run_cmd(cmd);
             }
             opt_run_cmd("reset");
+            c->reuse_ready = 0;            /* Enhancement-472: circuit is new */
             ft_optimizing = !c->verbose;   /* re-assert: re-source cleared it */
         }
     }
@@ -498,8 +524,11 @@ static double opt_eval(struct optctx *c, const double *u, double *resid)
         /* least-squares: each stage's analysis, then its targets, evaluated
          * while that stage's plot is still current */
         for (s = 0; s < c->ns; s++) {
+            opt_reuse_ask(c);               /* Enhancement-472 */
             opt_run_cmd(c->analysis[s]);
-            if (opt_run_failed()) {         /* Enhancement-438 */
+            c->reuse_failed = opt_run_failed();
+            c->reuse_ready = 1;
+            if (c->reuse_failed) {          /* Enhancement-438 */
                 c->nfailed++;
                 cost = OPT_PENALTY;
                 break;
@@ -520,8 +549,11 @@ static double opt_eval(struct optctx *c, const double *u, double *resid)
         }
     } else {
         /* scalar objective evaluated after the (single) analysis stage */
+        opt_reuse_ask(c);                   /* Enhancement-472 */
         opt_run_cmd(c->analysis[0]);
-        if (opt_run_failed()) {
+        c->reuse_failed = opt_run_failed();
+        c->reuse_ready = 1;
+        if (c->reuse_failed) {
             /* Enhancement-438: no solution -> no objective. Penalise so the
              * search moves away, instead of scoring the previous point's plot. */
             c->nfailed++;
@@ -1338,6 +1370,7 @@ void com_optimize(wordlist *wl)
     int k, use_lm, use_pso, use_de, use_sa;
 
     memset(&c, 0, sizeof c);
+    sw_reuse_report(NULL, NULL);        /* Enhancement-472: zero the tally */
     c.maxiter = 100;
     c.tol = 1e-6;
 
@@ -1680,6 +1713,16 @@ void com_optimize(wordlist *wl)
     c.verbose = !c.center;
     (void) opt_eval(&c, ubest, NULL);
 
+    /* Enhancement-472: say what the reuse actually did. The evaluation count
+       above is the honest place to look for a behaviour change, so the decision
+       has to be visible next to it. */
+    if (ft_ngdebug) {
+        int rk = 0, rr = 0;
+        if (sw_reuse_report(&rk, &rr))
+            fprintf(cp_out, "optimize: setup reused at %d of %d analyses, %d "
+                            "rebuilt after a node collapse moved\n",
+                    rk, c.nevals, rr);
+    }
     if (c.center) {
         fprintf(cp_out, "optimize: centered -- worst-case Cpk = %.4g, yield = %.2f%% "
                         "(%d MC samples), after %d evaluations\n",

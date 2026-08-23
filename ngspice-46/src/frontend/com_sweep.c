@@ -2135,10 +2135,31 @@ e471_reuse_enabled(void)
     return TRUE;                        /* not mentioned at all: on */
 }
 
-static void sw_request_reuse(void)
+void sw_request_reuse(void)
 {
     if (ft_curckt && ft_curckt->ci_ckt && e471_reuse_enabled())
         ((CKTcircuit *) ft_curckt->ci_ckt)->CKTreuseSetup = 1;
+}
+
+
+/* Enhancement-472: read -- or, with NULLs, clear -- the running tally of what
+ * the reuse actually did. Reported under `set ngdebug` by every command that
+ * asks for it, because the decision has to be OBSERVABLE: a build where the
+ * reuse silently never engaged would pass every same-answer check there is. */
+int sw_reuse_report(int *kept, int *rebuilt)
+{
+    CKTcircuit *ckt = ft_curckt ? (CKTcircuit *) ft_curckt->ci_ckt : NULL;
+
+    if (!ckt)
+        return 0;
+    if (!kept || !rebuilt) {
+        ckt->CKTreuseKept = 0;
+        ckt->CKTreuseRebuilt = 0;
+        return 1;
+    }
+    *kept = ckt->CKTreuseKept;
+    *rebuilt = ckt->CKTreuseRebuilt;
+    return 1;
 }
 
 static char *sw_pointname(const char *base, double *const *kvals,
@@ -3272,6 +3293,22 @@ void com_montecarlo(wordlist *wl)
      * converged point -- and thus the yield -- is identical to the cold path. */
     if (usewarm)
         CKTsetWarmStart(1);
+    /* Enhancement-472: `montecarlo` is DELIBERATELY NOT given the setup reuse,
+     * though its fast path already leaves the circuit standing between samples
+     * and would gain as much as the optimizer does.
+     *
+     * The fast path can arm while a random `.param` still has a use it cannot
+     * push: a B-source's value is substituted textually at parse time, so
+     * nothing short of a re-source moves it. The per-sample teardown and
+     * rebuild is what accidentally limits the damage today. Reusing the setup
+     * removes that accident and makes the frozen value depend on whatever state
+     * survives -- the same deck and the same seed returned a 100% yield on one
+     * run and 0% on the next.
+     *
+     * The arming check is what has to be fixed first, and it is wrong on its
+     * own account: that deck already reports 0% where re-sourcing every sample
+     * reports the correct 45%, with no reuse involved. Until it is fixed there
+     * is nothing safe here to build on, so this loop is left as it was. */
     for (int i = 0; i < nsamp; i++) {
         ft_optimizing = TRUE;
         if (fast_mc)
