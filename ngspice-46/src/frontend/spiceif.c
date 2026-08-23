@@ -466,6 +466,7 @@ if_is_option(const char *name)
         "nopage", "nomod",
         "warn_physics",              /* Enhancement-438 */
         "autobus",                   /* Enhancement-444 */
+        "saveused",                  /* Enhancement-469 */
         "autoadapt", "adapter",      /* PROTOTYPE: autoadapt */
         /* Enhancement-445: the `.four` analysis controls. Each is read by
            fourier() through cp_getvar and each demonstrably takes effect when

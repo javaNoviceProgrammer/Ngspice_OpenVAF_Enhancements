@@ -76,6 +76,257 @@ ft_dotsaves(void)
 }
 
 
+/* ---------------------------------------------------------------------------
+ * Enhancement-469: `.option saveused` -- save only what the control block reads.
+ *
+ * A sweep or a long transient stores every node at every point. On a circuit
+ * with a few thousand unknowns that dominates the run: the dielectric-stack
+ * deck this was written for costs 512 ms per sweep point with everything
+ * stored and 29.7 ms with a hand-written `save` of the four vectors it
+ * actually plots -- a factor of 17, from one line the author has to remember
+ * to write and to keep in step with the `wrdata` beside it.
+ *
+ * With the option on, the control block is read before it runs and every
+ * vector it mentions is saved; nothing else is.
+ *
+ * WHAT IS COLLECTED, and why it is deliberately more than the letter of the
+ * request. Scanning only the arguments of `wrdata`/`plot`/`pyplot` would miss
+ *
+ *     let r = v(pin[2]) / v(pin[3])
+ *     plot r
+ *
+ * -- `r` is not a node, and the two vectors that build it would go unsaved,
+ * so the deck would fail where before it worked. Under-saving turns a
+ * performance option into a correctness bug, so the scan takes every
+ * `v(...)`, `i(...)` and `@dev[param]` reference ANYWHERE in the block,
+ * whatever command it belongs to, plus the plain node names given to the
+ * output commands. Over-saving costs a little memory; under-saving costs the
+ * answer.
+ *
+ * WHEN IT STANDS ASIDE:
+ *   - any explicit `save`/`.save` in the deck -- the author has already said
+ *     what they want, and silently adding to it would make their line mean
+ *     something different from what it says;
+ *   - `all` as an argument to an output command, which asks for everything;
+ *   - a control block with no output command at all, where there is nothing
+ *     to infer from.
+ * In each case the run is left exactly as it would have been.
+ */
+
+static const char *e469_out_cmds[] = {
+    "wrdata", "write", "plot", "pyplot", "gnuplot", "hardcopy", "print",
+    "wrs2p", "fourier", "four", "fft", "psd", "spec", "meas", "measure",
+    NULL
+};
+
+/* commands whose FIRST argument is a file name, not a vector */
+static const char *e469_file_first[] = { "wrdata", "write", "hardcopy",
+                                         "wrs2p", NULL };
+
+static int e469_in_list(const char *w, const char **list)
+{
+    int i;
+    for (i = 0; list[i]; i++)
+        if (cieq(w, list[i]))
+            return 1;
+    return 0;
+}
+
+static int e469_enabled = 0;        /* set from the option cards, see inp.c */
+
+void inp_set_saveused(bool onoff)
+{
+    e469_enabled = onoff ? 1 : 0;
+}
+
+/* append `tok` to *wl unless it is already there */
+static void e469_add(wordlist **wl, const char *tok)
+{
+    wordlist *w;
+    if (!tok || !*tok)
+        return;
+    for (w = *wl; w; w = w->wl_next)
+        if (cieq(w->wl_word, tok))
+            return;
+    *wl = wl_append(*wl, wl_cons(copy(tok), NULL));
+}
+
+/* Collect every v(...)/i(...)/@dev[param] reference in `line`. The scan is
+   textual and bracket-counted, so `mag(v(a))`, `v(a)-v(b)` and `v(pin[2])`
+   all yield the inner reference itself. */
+static void e469_scan_refs(const char *line, wordlist **wl)
+{
+    const char *p = line;
+
+    while (*p) {
+        if (*p == '@') {
+            const char *q = p + 1;
+            while (*q && *q != '[' && !isspace_c(*q))
+                q++;
+            if (*q == '[') {
+                while (*q && *q != ']')
+                    q++;
+                if (*q == ']') {
+                    char buf[256];
+                    size_t n = (size_t) (q + 1 - p);
+                    if (n < sizeof buf) {
+                        memcpy(buf, p, n);
+                        buf[n] = '\0';
+                        e469_add(wl, buf);
+                    }
+                    p = q + 1;
+                    continue;
+                }
+            }
+            p++;
+            continue;
+        }
+        /* v( or i( preceded by a non-identifier character */
+        if ((*p == 'v' || *p == 'V' || *p == 'i' || *p == 'I') &&
+            p[1] == '(' &&
+            (p == line || (!isalnum_c(p[-1]) && p[-1] != '_'))) {
+            const char *q = p + 2;
+            int depth = 1;
+            while (*q && depth) {
+                if (*q == '(')
+                    depth++;
+                else if (*q == ')')
+                    depth--;
+                if (depth)
+                    q++;
+            }
+            if (*q == ')') {
+                char buf[256];
+                size_t n = (size_t) (q + 1 - p);
+                if (n < sizeof buf) {
+                    memcpy(buf, p, n);
+                    buf[n] = '\0';
+                    e469_add(wl, buf);
+                }
+                p = q + 1;
+                continue;
+            }
+        }
+        p++;
+    }
+}
+
+/* Plain node names written as bare words to an output command. Numbers,
+   switches and the leading file name of `wrdata`-style commands are skipped;
+   so is anything containing an operator, which belongs to an expression the
+   reference scan above has already covered. */
+static int e469_scan_bare(const char *line, wordlist **wl)
+{
+    char *c = (char *) line, *tok;
+    char cmd[64];
+    int argno = 0, filefirst, saw_all = 0;
+
+    tok = gettok(&c);
+    if (!tok)
+        return 0;
+    (void) strncpy(cmd, tok, sizeof cmd - 1);
+    cmd[sizeof cmd - 1] = '\0';
+    tfree(tok);
+    if (!e469_in_list(cmd, e469_out_cmds))
+        return 0;
+    filefirst = e469_in_list(cmd, e469_file_first);
+
+    while ((tok = gettok(&c)) != NULL) {
+        argno++;
+        if (cieq(tok, "all")) {
+            saw_all = 1;
+            tfree(tok);
+            break;
+        }
+        if (filefirst && argno == 1) {          /* the output file */
+            tfree(tok);
+            continue;
+        }
+        if (tok[0] == '-' || tok[0] == '>' || tok[0] == '<') {
+            tfree(tok);
+            continue;
+        }
+        if (isdigit_c(tok[0]) || tok[0] == '.' || tok[0] == '+') {
+            tfree(tok);                          /* a number, not a vector */
+            continue;
+        }
+        if (strpbrk(tok, "()[]@=*/+-,'\"")) {    /* handled by the ref scan */
+            tfree(tok);
+            continue;
+        }
+        e469_add(wl, tok);
+        tfree(tok);
+    }
+    return saw_all;
+}
+
+/* TRUE when the deck already says what to save, in which case autosave keeps
+   out of the way. */
+static int e469_user_saved(wordlist *controls)
+{
+    wordlist *w;
+
+    if (ft_curckt)
+        for (w = ft_curckt->ci_commands; w; w = w->wl_next)
+            if (w->wl_word && ciprefix(".save", w->wl_word))
+                return 1;
+    for (w = controls; w; w = w->wl_next) {
+        char *l = w->wl_word;
+        if (!l)
+            continue;
+        while (*l && isspace_c(*l))
+            l++;
+        if (ciprefix("save", l) && (!l[4] || isspace_c(l[4])))
+            return 1;
+    }
+    return 0;
+}
+
+void ft_saveused(wordlist *controls)
+{
+    wordlist *w, *saves = NULL;
+    int any_out = 0, saw_all = 0;
+
+    if (!e469_enabled || !controls || !ft_curckt)
+        return;
+    if (e469_user_saved(controls))
+        return;
+
+    for (w = controls; w; w = w->wl_next) {
+        char *l = w->wl_word, *first;
+        if (!l)
+            continue;
+        while (*l && isspace_c(*l))
+            l++;
+        {
+            char *c = l;
+            first = gettok(&c);
+        }
+        if (first) {
+            if (e469_in_list(first, e469_out_cmds)) {
+                any_out = 1;
+                if (e469_scan_bare(l, &saves))
+                    saw_all = 1;
+            }
+            tfree(first);
+        }
+        /* references are collected from EVERY line, not only output ones --
+           see the note above about `let` */
+        e469_scan_refs(l, &saves);
+    }
+
+    if (saw_all || !any_out || !saves) {
+        wl_free(saves);
+        return;
+    }
+
+    com_save(saves);
+    if (ft_ngdebug)
+        fprintf(stdout, "saveused: %d vector(s) kept\n", wl_length(saves));
+    wl_free(saves);
+}
+
+
 /* Go through the dot lines given and make up a big "save" command with
  * all the node names mentioned. Note that if a node is requested for
  * one analysis, it is saved for all of them.

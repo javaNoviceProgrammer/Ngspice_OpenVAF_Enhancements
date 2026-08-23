@@ -1507,6 +1507,39 @@ inp_spsource(FILE *fp, bool comfile, char *filename, bool intfile)
                     }
                     inp_set_autobus(spoke ? ab : e454_autobus_var(), kic);
                 }
+
+            /* Enhancement-469: `.option saveused`, read here for the same
+               reason `autobus` is -- the option variable is not published
+               until inp_dodeck() runs, and these cards have already been split
+               out of the deck. Off-words are honoured through the shared
+               reader, so `saveused=0`, `=false`, `=no`, `=off` and
+               `nosaveused` all mean off, and a `set saveused` from .spiceinit
+               applies only when no card mentions it.
+
+               NOT called `autosave`: Enhancement-192 already owns that name for
+               a different thing -- `set autosave=<file>` names a checkpoint to
+               write when a transient is interrupted. A filename is a string
+               that is not an off-word, so reading `autosave` as a boolean here
+               would have switched vector filtering on for every deck using
+               E-192's checkpointing. */
+            {
+                struct card *scan;
+                bool as = FALSE, aspoke = FALSE;
+                int lst;
+                for (lst = 0; lst < 2; lst++)
+                    for (scan = lst ? options : com_options; scan;
+                         scan = scan->nextcard) {
+                        bool on;
+                        if (scan->line &&
+                            e454_opt_onoff(scan->line, "saveused", &on)) {
+                            as = on;    /* a later card wins */
+                            aspoke = TRUE;
+                        }
+                    }
+                if (!aspoke)
+                    as = cp_getvar("saveused", CP_BOOL, NULL, 0) ? TRUE : FALSE;
+                inp_set_saveused(as);
+                }
             }
 
             /* Parsing the circuit 4.
@@ -1856,6 +1889,12 @@ inp_spsource(FILE *fp, bool comfile, char *filename, bool intfile)
            Do this here before controls are run: .save is thus recognized even if
            .control is used */
         ft_dotsaves();
+
+        /* Enhancement-469: and, with `.option saveused`, the vectors the
+           control block itself reads. Must follow ft_dotsaves() so that an
+           explicit `.save` is seen first, and precede the controls so the
+           save list is complete before any analysis runs. */
+        ft_saveused(controls);
 
         /* Now that the deck is loaded, do the commands, if there are any */
         controls = wl_reverse(controls);
