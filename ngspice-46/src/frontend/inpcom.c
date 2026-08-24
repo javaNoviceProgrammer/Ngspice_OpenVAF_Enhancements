@@ -216,6 +216,7 @@ static bool inp_bus_looks_malformed(const char *tok, size_t len)
 
 static void inp_expand_buses(struct card *deck);
 static int inp_expand_array_instances(struct card *deck);    /* Enhancement-441 */
+static int inp_expand_for_loops(struct card *deck);           /* Enhancement-474 */
 static void inp_chk_for_e_source_to_xspice(struct card *deck, int *line_number);
 static void inp_add_control_section(struct card *deck, int *line_number);
 static char *get_quoted_token(char *string, char **token);
@@ -1199,6 +1200,18 @@ struct card *inp_readall(FILE *fp, const char *dir_name, const char* file_name,
 #ifndef EXT_ASC
         utf8_syntax_check(working);
 #endif		
+
+        /* Enhancement-474: `.for` / `.endfor` produce ordinary netlist lines and
+           nothing else, so they are expanded HERE -- before the syntax check,
+           before the scope tree, before numparam, before bus and subcircuit
+           expansion. Every later stage then sees exactly what the user would
+           have typed out by hand, and no stage has to know the construct
+           exists. It also means `{{ }}` is gone by the time numparam looks for
+           its own single braces. */
+        if (inp_expand_for_loops(working)) {
+            line_free_x(cc, TRUE);
+            return NULL;
+        }
 
         /* some syntax checks, excluding title line */
         inp_check_syntax(working);
@@ -2507,6 +2520,640 @@ static char *readline(FILE *fd)
 /* Replace "gnd" by " 0 "
    Delimiters of gnd may be ' ' or ',' or '(' or ')',
    may be disabled by setting variable no_auto_gnd */
+
+/* Enhancement-474: `.for` / `.endfor`, a netlist-level repetition construct.
+ *
+ * Many decks need a run of near-identical instance lines that differ only by an
+ * index -- a ladder, a stack of periodic sections, a bank of taps. Written out
+ * by hand they are long, and wrong in ways that are hard to see: one node name
+ * out of step in the middle of forty lines still parses.
+ *
+ *     .for i in range(1,4)
+ *     XP{{i}} P{{i}} P{{i+1}} hl_periodic n1={nL}
+ *     .endfor
+ *
+ * expands, before anything else looks at the deck, to
+ *
+ *     XP1 P1 P2 hl_periodic n1={nL}
+ *     XP2 P2 P3 hl_periodic n1={nL}
+ *     XP3 P3 P4 hl_periodic n1={nL}
+ *     XP4 P4 P5 hl_periodic n1={nL}
+ *
+ * WHY `{{ }}` AND NOT `{ }`. numparam already owns single braces, and the body
+ * above deliberately carries both: `{{i}}` is this construct's and `{nL}` is
+ * numparam's. Doubling the brace keeps the two apart with no ordering rule for
+ * the user to remember, and this pass removes every `{{ }}` it introduces, so
+ * numparam never sees one.
+ *
+ * WHY THIS RUNS FIRST. It produces ordinary netlist lines and nothing else, so
+ * every later stage -- the syntax check, scope building, numparam, bus
+ * expansion, subcircuit expansion -- sees exactly what the user would have
+ * typed. That also means the loop bounds cannot be `.param`s: numparam has not
+ * run yet, and reordering that to suit a text macro would put the whole deck's
+ * evaluation order at risk. A non-literal bound is rejected with a message
+ * saying so, rather than silently misread.
+ *
+ * `range(a,b)` INCLUDES BOTH BOUNDS, which is not what Python's range does.
+ * That is deliberate -- an index range in a netlist reads as "1 through 4" --
+ * and it is the first thing the error messages and the documentation say.
+ */
+
+/* --------------------------------------------------------------------------
+ * A tiny integer expression evaluator.
+ *
+ * By the time this runs every bound loop variable has already been replaced by
+ * its value, so the grammar needs numbers, parentheses and the five operators
+ * and nothing else. Anything left that is not one of those is a name we cannot
+ * resolve, and the caller turns that into an error.
+ * ------------------------------------------------------------------------ */
+
+struct for_expr {
+    const char *p;
+    int bad;
+};
+
+static long for_expr_add(struct for_expr *x);
+
+static long for_expr_primary(struct for_expr *x)
+{
+    long v = 0;
+
+    while (isspace_c(*x->p))
+        x->p++;
+    if (*x->p == '(') {
+        x->p++;
+        v = for_expr_add(x);
+        while (isspace_c(*x->p))
+            x->p++;
+        if (*x->p == ')')
+            x->p++;
+        else
+            x->bad = 1;
+        return v;
+    }
+    if (*x->p == '-') {
+        x->p++;
+        return -for_expr_primary(x);
+    }
+    if (*x->p == '+') {
+        x->p++;
+        return for_expr_primary(x);
+    }
+    if (!isdigit_c(*x->p)) {
+        x->bad = 1;
+        return 0;
+    }
+    while (isdigit_c(*x->p)) {
+        /* a bound well below LONG_MAX: an index that overflows is a mistake,
+           and wrapping silently would produce a plausible-looking node name */
+        if (v > 100000000L) {
+            x->bad = 1;
+            return 0;
+        }
+        v = v * 10 + (*x->p - '0');
+        x->p++;
+    }
+    return v;
+}
+
+static long for_expr_mul(struct for_expr *x)
+{
+    long v = for_expr_primary(x);
+
+    for (;;) {
+        while (isspace_c(*x->p))
+            x->p++;
+        if (*x->p == '*') {
+            x->p++;
+            v *= for_expr_primary(x);
+        } else if (*x->p == '/' || *x->p == '%') {
+            const char op = *x->p;
+            long d;
+            x->p++;
+            d = for_expr_primary(x);
+            if (d == 0) {
+                x->bad = 1;
+                return 0;
+            }
+            v = (op == '/') ? v / d : v % d;
+        } else {
+            return v;
+        }
+    }
+}
+
+static long for_expr_add(struct for_expr *x)
+{
+    long v = for_expr_mul(x);
+
+    for (;;) {
+        while (isspace_c(*x->p))
+            x->p++;
+        if (*x->p == '+') {
+            x->p++;
+            v += for_expr_mul(x);
+        } else if (*x->p == '-') {
+            x->p++;
+            v -= for_expr_mul(x);
+        } else {
+            return v;
+        }
+    }
+}
+
+/* Evaluate [b,e) as an integer expression. Returns 0 if it is not one. */
+static int for_eval(const char *b, const char *e, long *out)
+{
+    char *tmp = copy_substring(b, e);
+    struct for_expr x;
+    long v;
+
+    x.p = tmp;
+    x.bad = 0;
+    v = for_expr_add(&x);
+    while (isspace_c(*x.p))
+        x.p++;
+    if (*x.p != '\0')
+        x.bad = 1;
+    tfree(tmp);
+    if (x.bad)
+        return 0;
+    *out = v;
+    return 1;
+}
+
+
+/* --------------------------------------------------------------------------
+ * `{{ ... }}` substitution.
+ *
+ * One binding is applied at a time, outermost loop first, so a nested body is
+ * rewritten in stages: with `i` bound to 2, `{{i+j}}` becomes `{{2+j}}` and
+ * waits for the inner loop to supply `j`. That is why an expression whose
+ * names are not all bound yet is LEFT as `{{ }}` rather than being an error
+ * here -- the error for one that is never resolved is raised at the end, when
+ * no `.for` is left to bind it.
+ * ------------------------------------------------------------------------ */
+
+/* whole-identifier replacement of `name` by `val` within [b,e) */
+static void for_subst_var(DSTRING *out, const char *b, const char *e,
+                          const char *name, long val)
+{
+    const size_t n = strlen(name);
+    const char *p = b;
+
+    while (p < e) {
+        if (strncmp(p, name, n) == 0 &&
+            (p == b || !(isalnum_c(p[-1]) || p[-1] == '_')) &&
+            (p + n >= e || !(isalnum_c(p[n]) || p[n] == '_'))) {
+            ds_cat_printf(out, "%ld", val);
+            p += n;
+            continue;
+        }
+        ds_cat_char(out, *p);
+        p++;
+    }
+}
+
+/* Rewrite every `{{ }}` in `line` with `name` bound to `val`.
+ * Returns a fresh string; *unclosed is set if a `{{` has no `}}`. */
+static char *for_apply(const char *line, const char *name, long val,
+                       int *unclosed)
+{
+    DS_CREATE(out, 128);
+    const char *p = line;
+
+    *unclosed = 0;
+    while (*p) {
+        const char *open, *close;
+        if (p[0] != '{' || p[1] != '{') {
+            ds_cat_char(&out, *p);
+            p++;
+            continue;
+        }
+        open = p + 2;
+        close = strstr(open, "}}");
+        if (!close) {
+            *unclosed = 1;
+            ds_cat_str(&out, p);
+            break;
+        }
+        {
+            DS_CREATE(sub, 64);
+            long v;
+            for_subst_var(&sub, open, close, name, val);
+            if (for_eval(ds_get_buf(&sub), ds_get_buf(&sub) +
+                         ds_get_length(&sub), &v))
+                ds_cat_printf(&out, "%ld", v);        /* fully resolved */
+            else
+                ds_cat_printf(&out, "{{%s}}", ds_get_buf(&sub));  /* nested */
+            ds_free(&sub);
+        }
+        p = close + 2;
+    }
+    {
+        char *r = copy(ds_get_buf(&out));
+        ds_free(&out);
+        return r;
+    }
+}
+
+
+/* --------------------------------------------------------------------------
+ * The pass itself.
+ * ------------------------------------------------------------------------ */
+
+#define FOR_MAX_ITER  100000    /* one loop */
+#define FOR_MAX_CARDS 2000000   /* one deck, all loops together */
+
+/* Parse the value list of a `.for` header. `p` points just past `in`.
+ * Returns the count, or -1 on a syntax error (already reported). */
+static long for_values(const char *p, const char *line, long **out)
+{
+    long *v = NULL;
+    long n = 0, cap = 0;
+
+    while (isspace_c(*p))
+        p++;
+
+    if (ciprefix("range", p) ) {
+        const char *q = p + 5;
+        long a[3];
+        int na = 0;
+        while (isspace_c(*q))
+            q++;
+        if (*q != '(') {
+            fprintf(cp_err, "Error: .for: `range` must be followed by "
+                            "`(first,last)` or `(first,last,step)`\n"
+                            "    in line: %s\n", line);
+            return -1;
+        }
+        q++;
+        for (;;) {
+            const char *b = q;
+            int depth = 0;
+            while (*q && !(depth == 0 && (*q == ',' || *q == ')'))) {
+                if (*q == '(')
+                    depth++;
+                else if (*q == ')')
+                    depth--;
+                q++;
+            }
+            if (!*q) {
+                fprintf(cp_err, "Error: .for: `range(` is never closed\n"
+                                "    in line: %s\n", line);
+                return -1;
+            }
+            if (na >= 3) {
+                fprintf(cp_err, "Error: .for: `range` takes at most three "
+                                "values (first, last, step)\n"
+                                "    in line: %s\n", line);
+                return -1;
+            }
+            if (!for_eval(b, q, &a[na])) {
+                fprintf(cp_err,
+                        "Error: .for: \"%.*s\" is not a whole number\n"
+                        "    in line: %s\n"
+                        "  the bounds are read before `.param` values exist, "
+                        "so they must be written out;\n"
+                        "  an expression over an enclosing loop's index, "
+                        "spelled {{...}}, is fine\n",
+                        (int) (q - b), b, line);
+                return -1;
+            }
+            na++;
+            if (*q == ')') {
+                q++;
+                break;
+            }
+            q++;                                /* the comma */
+        }
+        while (isspace_c(*q))
+            q++;
+        if (*q != '\0') {
+            fprintf(cp_err, "Error: .for: trailing text after `range(...)`: "
+                            "\"%s\"\n    in line: %s\n", q, line);
+            return -1;
+        }
+        if (na < 2) {
+            fprintf(cp_err, "Error: .for: `range` needs a first and a last "
+                            "value\n    in line: %s\n", line);
+            return -1;
+        }
+        {
+            const long first = a[0], last = a[1];
+            const long step = (na == 3) ? a[2] : (last >= first ? 1 : -1);
+            long i;
+            if (step == 0) {
+                fprintf(cp_err, "Error: .for: `range` step is zero\n"
+                                "    in line: %s\n", line);
+                return -1;
+            }
+            if ((step > 0 && last < first) || (step < 0 && last > first)) {
+                fprintf(cp_err,
+                        "Error: .for: `range(%ld,%ld,%ld)` covers no values\n"
+                        "    in line: %s\n"
+                        "  both bounds are INCLUSIVE, so a loop from %ld to "
+                        "%ld needs a %s step\n",
+                        first, last, step, line, first, last,
+                        step > 0 ? "negative" : "positive");
+                return -1;
+            }
+            for (i = first; step > 0 ? i <= last : i >= last; i += step) {
+                if (n >= FOR_MAX_ITER) {
+                    fprintf(cp_err, "Error: .for: more than %d iterations\n"
+                                    "    in line: %s\n",
+                            FOR_MAX_ITER, line);
+                    tfree(v);
+                    return -1;
+                }
+                if (n >= cap) {
+                    cap = cap ? cap * 2 : 16;
+                    v = TREALLOC(long, v, cap);
+                }
+                v[n++] = i;
+            }
+        }
+    } else if (*p == '[') {
+        const char *q = p + 1;
+        for (;;) {
+            const char *b;
+            long val;
+            while (isspace_c(*q))
+                q++;
+            if (*q == ']' && n == 0) {
+                fprintf(cp_err, "Error: .for: the list is empty\n"
+                                "    in line: %s\n", line);
+                return -1;
+            }
+            b = q;
+            while (*q && *q != ',' && *q != ']')
+                q++;
+            if (!*q) {
+                fprintf(cp_err, "Error: .for: the list is never closed with "
+                                "`]`\n    in line: %s\n", line);
+                tfree(v);
+                return -1;
+            }
+            if (!for_eval(b, q, &val)) {
+                fprintf(cp_err,
+                        "Error: .for: \"%.*s\" is not a whole number\n"
+                        "    in line: %s\n"
+                        "  a list holds indices, written out;\n"
+                        "  an expression over an enclosing loop's index, "
+                        "spelled {{...}}, is fine\n",
+                        (int) (q - b), b, line);
+                tfree(v);
+                return -1;
+            }
+            if (n >= cap) {
+                cap = cap ? cap * 2 : 16;
+                v = TREALLOC(long, v, cap);
+            }
+            v[n++] = val;
+            if (*q == ']') {
+                q++;
+                break;
+            }
+            q++;
+        }
+        while (isspace_c(*q))
+            q++;
+        if (*q != '\0') {
+            fprintf(cp_err, "Error: .for: trailing text after the list: "
+                            "\"%s\"\n    in line: %s\n", q, line);
+            tfree(v);
+            return -1;
+        }
+    } else {
+        fprintf(cp_err,
+                "Error: .for: expected `range(first,last)` or a list like "
+                "`[1,2,3]` after `in`\n    in line: %s\n", line);
+        return -1;
+    }
+
+    *out = v;
+    return n;
+}
+
+
+/* Enhancement-474: neutralise a `.for` block whose HEADER was rejected.
+ *
+ * Without this the walk goes on to meet the block's own `.endfor` and reports
+ * "\.endfor without a matching .for" as well -- a second error, about a line
+ * that is perfectly correct, pointing away from the mistake. One fault should
+ * produce one message. */
+static void for_retire_block(struct card *c)
+{
+    struct card *b;
+    int depth = 1;
+
+    for (b = c->nextcard; b; b = b->nextcard) {
+        const char *t = b->line;
+        if (!t || *t == '*')
+            continue;
+        if (ciprefix(".for", t) && (t[4] == '\0' || isspace_c(t[4])))
+            depth++;
+        else if (ciprefix(".endfor", t) && --depth == 0) {
+            tfree(b->line);
+            b->line = copy("*");
+            break;
+        }
+    }
+    tfree(c->line);
+    c->line = copy("*");
+}
+
+
+/* Expand every `.for` block in the deck. Returns the number of errors; a
+ * non-zero result means the deck must not be simulated, because a `.for` left
+ * unexpanded would otherwise reach the device parser as a card.
+ *
+ * ONE FORWARD PASS IS ENOUGH, and that is worth spelling out. The copies are
+ * appended AFTER the closing `.endfor` -- never in the middle of the body the
+ * loop is still reading from -- and the walk then continues into them, so a
+ * `.for` nested in the body is reached, and expanded, later in the same pass
+ * with the outer index already substituted into it. Inserting the copies after
+ * the `.for` card instead would splice new cards in front of the body and the
+ * body pointer would walk into them: the same use-after-modify that
+ * Enhancement-441 records for the array-instance expander.
+ */
+static int inp_expand_for_loops(struct card *deck)
+{
+    int errors = 0;
+    long added = 0;
+    struct card *c;
+    bool in_control = FALSE;
+
+    for (c = deck; c; c = c->nextcard) {
+        char *line = c->line;
+        const char *p;
+        char name[128];
+        size_t nlen;
+        long *vals = NULL;
+        long nvals, k;
+        struct card *body_end, *b, *tail;
+        int depth;
+
+        if (!line || *line == '*')
+            continue;
+        if (ciprefix(".control", line)) {
+            in_control = TRUE;
+            continue;
+        }
+        if (ciprefix(".endc", line)) {
+            in_control = FALSE;
+            continue;
+        }
+        if (in_control)
+            continue;                   /* `.control` has its own `foreach` */
+
+        if (ciprefix(".endfor", line)) {
+            fprintf(cp_err, "Error: .endfor without a matching .for\n"
+                            "    in line: %s\n", line);
+            errors++;
+            continue;
+        }
+        if (!ciprefix(".for", line) || (line[4] && !isspace_c(line[4])))
+            continue;
+
+        /* ---- header: .for <name> in <values> ---- */
+        p = line + 4;
+        while (isspace_c(*p))
+            p++;
+        if (!isalpha_c(*p) && *p != '_') {
+            fprintf(cp_err, "Error: .for: expected a loop variable name\n"
+                            "    in line: %s\n"
+                            "  the form is `.for i in range(1,4)` or "
+                            "`.for i in [1,2,3,4]`\n", line);
+            errors++;
+            for_retire_block(c);
+            continue;
+        }
+        nlen = 0;
+        while ((isalnum_c(*p) || *p == '_') && nlen < sizeof name - 1)
+            name[nlen++] = *p++;
+        name[nlen] = '\0';
+        /* `.for in range(1,3)` parses `in` as the variable and then complains
+           that `in` is missing, which points at the wrong half of the line.
+           The user left the variable out; say that. */
+        if (cieq(name, "in")) {
+            fprintf(cp_err, "Error: .for: expected a loop variable name "
+                            "before `in`\n    in line: %s\n"
+                            "  the form is `.for i in range(1,4)` or "
+                            "`.for i in [1,2,3,4]`\n", line);
+            errors++;
+            for_retire_block(c);
+            continue;
+        }
+        while (isspace_c(*p))
+            p++;
+        if (!(ciprefix("in", p) && (p[2] == '\0' || isspace_c(p[2])))) {
+            fprintf(cp_err, "Error: .for: expected `in` after the loop "
+                            "variable \"%s\"\n    in line: %s\n", name, line);
+            errors++;
+            for_retire_block(c);
+            continue;
+        }
+        p += 2;
+
+        nvals = for_values(p, line, &vals);
+        if (nvals < 0) {
+            errors++;
+            for_retire_block(c);
+            continue;
+        }
+
+        /* ---- find the matching .endfor ---- */
+        depth = 1;
+        body_end = NULL;
+        for (b = c->nextcard; b; b = b->nextcard) {
+            const char *t = b->line;
+            if (!t || *t == '*')
+                continue;
+            if (ciprefix(".for", t) && (t[4] == '\0' || isspace_c(t[4])))
+                depth++;
+            else if (ciprefix(".endfor", t)) {
+                if (--depth == 0) {
+                    body_end = b;
+                    break;
+                }
+            }
+        }
+        if (!body_end) {
+            fprintf(cp_err, "Error: .for has no matching .endfor\n"
+                            "    in line: %s\n", line);
+            errors++;
+            tfree(vals);
+            continue;
+        }
+
+        /* ---- one copy of the body per value, appended after the .endfor ---- */
+        tail = body_end;
+        for (k = 0; k < nvals; k++) {
+            for (b = c->nextcard; b != body_end; b = b->nextcard) {
+                char *nl;
+                int unclosed = 0;
+                if (!b->line || *b->line == '*')
+                    continue;
+                if (++added > FOR_MAX_CARDS) {
+                    fprintf(cp_err, "Error: .for: expansion exceeds %d lines\n"
+                                    "    in line: %s\n", FOR_MAX_CARDS, line);
+                    tfree(vals);
+                    return errors + 1;
+                }
+                nl = for_apply(b->line, name, vals[k], &unclosed);
+                if (unclosed && k == 0) {       /* once per line, not per pass */
+                    fprintf(cp_err, "Error: .for: `{{` without a closing "
+                                    "`}}`\n    in line: %s\n", b->line);
+                    errors++;
+                }
+                tail = insert_new_line(tail, nl, b->linenum,
+                                       b->linenum_orig, b->linesource);
+            }
+        }
+        tfree(vals);
+
+        /* ---- retire the template ---- */
+        for (b = c->nextcard; b != body_end; b = b->nextcard) {
+            tfree(b->line);
+            b->line = copy("*");
+        }
+        tfree(body_end->line);
+        body_end->line = copy("*");
+        tfree(c->line);
+        c->line = copy("*");
+
+        /* Resume at the closing card: everything this loop produced sits just
+           after it, so a nested `.for` among the copies is the next thing the
+           walk meets. */
+        c = body_end;
+    }
+
+    /* A `{{ }}` that never got bound would reach numparam as a stray brace and
+       be blamed on something else, so name it here. */
+    if (errors == 0) {
+        bool inc = FALSE;
+        for (c = deck; c; c = c->nextcard) {
+            if (!c->line || *c->line == '*')
+                continue;
+            if (ciprefix(".control", c->line)) { inc = TRUE; continue; }
+            if (ciprefix(".endc", c->line)) { inc = FALSE; continue; }
+            if (inc)
+                continue;
+            if (strstr(c->line, "{{")) {
+                fprintf(cp_err,
+                        "Error: {{...}} outside any .for loop\n"
+                        "    in line: %s\n"
+                        "  {{...}} is substituted only inside a "
+                        ".for/.endfor body\n", c->line);
+                errors++;
+            }
+        }
+    }
+
+    return errors;
+}
+
 
 /*
  * Enhancement-221: expand array/bus node ranges in the netlist.
