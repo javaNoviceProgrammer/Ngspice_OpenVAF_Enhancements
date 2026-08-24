@@ -22,6 +22,48 @@ use crate::inference::{BranchWrite, InferenceResult, ResolvedFun};
 use crate::lower::BranchKind;
 use crate::types::{BuiltinInfo, Signature, Ty};
 
+/// Enhancement-421: the simulator parameters ngspice actually serves, taken
+/// from `src/osdi/osdiload.c` (`sim_params` and `sim_params_str`).
+///
+/// Deliberately NOT the LRM's list. The LRM names `minr`, `imelt`, `shrink`,
+/// `imax` and `rthresh`, and ngspice serves none of them -- a model using one
+/// dies. For `$simparam$str` the two sets do not intersect at all: the LRM
+/// names `cwd`, `module`, `instance` and `path`; ngspice serves
+/// `analysis_name` and `simulator`. Listing the LRM's names here would warn
+/// on the names that work and stay silent on the ones that abort.
+///
+/// Enhancement-476: `temp` was missing, and these lists are now module-level
+/// so that the diagnostic in `validation.rs` can be BUILT from them instead of
+/// repeating them.
+///
+/// Enhancement-434 added `temp` to ngspice's `sim_params[]` -- it is how a
+/// model ported from Spectre asks for the simulation temperature -- and did
+/// not add it here. The compiler therefore warned on the exact call that
+/// enhancement exists to serve, and the note beside the warning told the
+/// author the name is fatal at run time when in fact it returns the ambient.
+/// The diagnostic's own copy of the list had drifted the same way, which is
+/// why both now come from here.
+pub(crate) const SIMPARAM_NAMES: [&'static str; 15] = [
+    "abstime",
+    "abstol",
+    "epsmin",
+    "gdev",
+    "gmin",
+    "iniLim",
+    "iteration",
+    "reltol",
+    "scale",
+    "simulatorSubversion",
+    "simulatorVersion",
+    "sourceScaleFactor",
+    "temp",
+    "tnom",
+    "vntol",
+];
+
+/// The `$simparam$str` channel; see [`SIMPARAM_NAMES`].
+pub(crate) const SIMPARAM_STR_NAMES: [&'static str; 2] = ["analysis_name", "simulator"];
+
 #[derive(PartialEq, Eq, Clone, Debug)]
 pub enum IllegalCtxAccessKind {
     NatureAccess,
@@ -2312,33 +2354,6 @@ impl ExprValidator<'_, '_> {
         }
     }
 
-    /// Enhancement-421: the simulator parameters ngspice actually serves, taken
-    /// from `src/osdi/osdiload.c` (`sim_params` and `sim_params_str`).
-    ///
-    /// Deliberately NOT the LRM's list. The LRM names `minr`, `imelt`, `shrink`,
-    /// `imax` and `rthresh`, and ngspice serves none of them -- a model using one
-    /// dies. For `$simparam$str` the two sets do not intersect at all: the LRM
-    /// names `cwd`, `module`, `instance` and `path`; ngspice serves
-    /// `analysis_name` and `simulator`. Listing the LRM's names here would warn
-    /// on the names that work and stay silent on the ones that abort.
-    const SIMPARAM_NAMES: [&'static str; 14] = [
-        "abstime",
-        "abstol",
-        "epsmin",
-        "gdev",
-        "gmin",
-        "iniLim",
-        "iteration",
-        "reltol",
-        "scale",
-        "simulatorSubversion",
-        "simulatorVersion",
-        "sourceScaleFactor",
-        "tnom",
-        "vntol",
-    ];
-    const SIMPARAM_STR_NAMES: [&'static str; 2] = ["analysis_name", "simulator"];
-
     fn check_simparam_name(&mut self, builtin: &str, numeric: bool, expr: ExprId) {
         let Expr::Literal(Literal::String(ref name)) = self.parent.body.exprs[expr] else {
             return;
@@ -2353,9 +2368,9 @@ impl ExprValidator<'_, '_> {
             return;
         }
         let known = if numeric {
-            Self::SIMPARAM_NAMES.contains(&&*name)
+            SIMPARAM_NAMES.contains(&&*name)
         } else {
-            Self::SIMPARAM_STR_NAMES.contains(&&*name)
+            SIMPARAM_STR_NAMES.contains(&&*name)
         };
         if !known {
             self.report(BodyValidationDiagnostic::UnknownSimparam {

@@ -1,0 +1,33 @@
+// Enhancement-476: operating-point variables, and the states in which they
+// must NOT answer with a number.
+//
+// `rbad` exists only so a deck can force `setup_model` to fail without any
+// syntax error: it is declared `from (0:inf)`, so `rbad=0` is refused after the
+// instance exists but before anything evaluates -- which is exactly the state
+// in which the opvar storage still holds its calloc'd zeros.
+`include "disciplines.vams"
+module rg_probe(p, n);
+   inout p, n;
+   electrical p, n;
+   electrical mid;                                  // an internal node
+
+   parameter real r     = 1k  from (0:inf);         // model scope
+   (*type="instance"*) parameter real mul = 1.0 from (0:inf);
+   parameter real rbad  = 1.0 from (0:inf);         // the abort lever
+   parameter real rcol  = 0.0 from [0:inf);         // 0 => collapse mid onto p
+
+   (* desc="effective resistance" *) real op_r;
+   (* desc="mid voltage"          *) real op_vmid;
+
+   analog begin
+      if (rcol == 0.0)
+         V(p, mid) <+ 0.0;
+      else
+         I(p, mid) <+ V(p, mid) / rcol;
+
+      I(mid, n) <+ V(mid, n) / (r * mul * rbad);
+
+      op_r    = r * mul * rbad;
+      op_vmid = V(mid, n);
+   end
+endmodule

@@ -1,0 +1,30 @@
+// Enhancement-476: a device with two DISTINCT named noise sources, so the
+// per-source vectors, the device total and the grand total are all separately
+// checkable. Shot noise is exactly 2*q*|I| and the junction is a plain
+// exponential, so every quantity has a closed form.
+`include "disciplines.vams"
+`include "constants.vams"
+module rg_noise(a, c);
+   inout a, c;
+   electrical a, c;
+
+   parameter real is = 1e-14 from (0:inf);
+   parameter real kf = 0.0   from [0:inf);
+
+   real vt, id;
+   (* desc="diode current" *) real op_id;
+   (* desc="conductance"   *) real op_gd;
+
+   analog begin
+      vt = `P_K * $temperature / `P_Q;
+      id = is * (limexp(V(a, c) / vt) - 1.0);
+      I(a, c) <+ id;
+
+      op_id = id;
+      op_gd = is / vt * limexp(V(a, c) / vt);
+
+      I(a, c) <+ white_noise(2.0 * `P_Q * abs(id), "shot");
+      if (kf > 0.0)
+         I(a, c) <+ flicker_noise(kf * abs(id), 1.0, "flicker");
+   end
+endmodule

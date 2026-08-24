@@ -91,6 +91,46 @@ extern int OSDIparam(int param, IFvalue *value, GENinstance *instPtr,
   if (param >= (int)descr->num_instance_params) {
     // special handling for temperature parameters
     OsdiExtraInstData *inst = osdi_extra_instance_data(entry, instPtr);
+
+    /* Enhancement-476: refuse an instance-scope write to a MODEL-scope
+     * parameter that Enhancement-397 routed onto this knob.
+     *
+     * When a model declares `dtemp` (or `temperature`) itself,
+     * osdi_create_registry_entry sets entry->dt (entry->temp) to THAT
+     * parameter's id instead of the id it synthesizes -- deliberate, because
+     * the industry corpus (PSP, MEXTRAM, VBIC, HiSIM, BSIM) declares `dtemp`
+     * and the model's own parameter must win.
+     *
+     * The routing also puts the name in the INSTANCE parameter table, so
+     * `alter @n1[dtemp]=20` found it, fell into the branch below and stored
+     * the value in the loader's `inst->dt` -- which nothing reads once the
+     * model owns the name. The write was accepted, changed nothing, and said
+     * nothing, while `@n1[dtemp]` went on reporting the old value. Every
+     * OTHER model-scope parameter reaching this setter already returns
+     * E_BADPARM (the fall-through below), so `alter @n1[r1]` has always been
+     * refused honestly; only the two routed names were silent.
+     *
+     * `param < num_params` is what separates the two cases: a routed id is a
+     * real declared parameter, the loader's own ids are allocated above the
+     * parameter, opvar and terminal ranges (osdiregistry.c). A model that
+     * declares `dtemp` as an INSTANCE parameter never reaches here at all --
+     * its id is below num_instance_params -- and keeps working, which is the
+     * case the corpus actually uses.
+     *
+     * doset() discards the setter's return code at the `alter` call site, so
+     * the diagnostic has to be issued here to be issued at all; the wording
+     * matches Enhancement-467's for the same mistake. */
+    if (param < (int)descr->num_params) {
+      fprintf(stderr,
+              "Error: '%s' is a MODEL parameter of model '%s'; `alter` sets "
+              "instance parameters. Use `altermod %s %s=...` instead.\n",
+              descr->param_opvar[param].name[0],
+              (char *)instPtr->GENmodPtr->GENmodName,
+              (char *)instPtr->GENmodPtr->GENmodName,
+              descr->param_opvar[param].name[0]);
+      return (E_BADPARM);
+    }
+
     if (param == (int)entry->dt) {
       inst->dt = value->rValue;
       inst->dt_given = true;
@@ -285,6 +325,39 @@ extern int OSDIask(CKTcircuit *ckt, GENinstance *instPtr, int id,
     value->rValue = cur;
     return (OK);
   }
+  /* Enhancement-476: an operating-point variable is an OUTPUT, and must not
+   * answer with a number when nothing has computed it.
+   *
+   * The opvar storage lives in the calloc'd instance block, so before any
+   * evaluation it reads a clean 0.0 -- and 0.0 is a perfectly plausible
+   * current, voltage or conductance. `print @n1[op_id]` after
+   * `op simulation(s) aborted`, or with no analysis run at all, therefore
+   * handed back a number indistinguishable from a real result, while `i(v1)`
+   * in the same `print` honestly reported "vector ... is not available" and
+   * the equivalent built-in read yielded nothing.
+   *
+   * Parameters are deliberately NOT gated: they are INPUTS and are readable
+   * the moment the deck is parsed, which is what `@n1[r1]` and every suite
+   * that reads a parameter before running rely on. Terminal currents are
+   * handled above and already report 0.0 from an unfilled block by design
+   * (Enhancement-416).
+   *
+   * E_NOTFOUND rather than E_BADPARM: the parameter exists, it just has no
+   * value yet, and spiceif.c's doask() uses that distinction to skip the
+   * entry in a `show` dump instead of calling it an internal error. */
+  if (id >= (int)descr->num_params && id < (int)cur_base) {
+    OsdiExtraInstData *xtra = osdi_extra_instance_data(entry, instPtr);
+    if (!xtra->opvars_valid) {
+      fprintf(stderr,
+              "Warning: @%s[%s] is an operating-point variable and no "
+              "operating point has been computed for %s, so it has no "
+              "value.\n",
+              instPtr->GENname, descr->param_opvar[id].name[0],
+              instPtr->GENname);
+      return (E_NOTFOUND);
+    }
+  }
+
   uint32_t flags = ACCESS_FLAG_READ;
   if (id < (int)descr->num_instance_params) {
     flags |= ACCESS_FLAG_INSTANCE;

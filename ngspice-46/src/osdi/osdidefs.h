@@ -81,6 +81,13 @@ typedef struct OsdiExtraInstData {
   double temp;
   bool temp_given;
   bool dt_given;
+  /* Enhancement-476: has this instance ever been evaluated without raising
+   * $fatal? Operating-point variables are OUTPUTS -- they exist only once the
+   * model has run. The instance block is calloc'd, so this reads false for a
+   * device whose analysis never started or whose setup failed, which is
+   * exactly when the opvar storage still holds its initial zeros. Set in the
+   * single eval() funnel in osdiload.c; read by OSDIask. */
+  bool opvars_valid;
   uint32_t eval_flags;
 
   /* Waveform history for absdelay — one row per slot, indexed by timepoint. */

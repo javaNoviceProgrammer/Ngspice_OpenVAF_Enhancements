@@ -1,0 +1,13 @@
+// Enhancement-476: no colliding declaration, so ngspice's OWN dt/dtemp/temp
+// knobs are synthesized. `tc` makes the device temperature visible in the
+// current, which is how the checks tell a real temperature change from a
+// no-op.
+`include "disciplines.vams"
+module rg_temp(p, n);
+   inout p, n;
+   electrical p, n;
+   parameter real r  = 1k  from (0:inf);
+   parameter real tc = 0.01;
+   analog
+      I(p, n) <+ V(p, n) / (r * (1.0 + tc * ($temperature - 300.15)));
+endmodule

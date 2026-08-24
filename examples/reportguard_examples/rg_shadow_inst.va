@@ -1,0 +1,12 @@
+// Enhancement-476: the same collision at INSTANCE scope -- the spelling the
+// industry corpus actually uses (PSP, MEXTRAM, VBIC, HiSIM, BSIM all declare
+// `dtemp`). This one must keep working exactly as before.
+`include "disciplines.vams"
+module rg_shadow_inst(p, n);
+   inout p, n;
+   electrical p, n;
+   (*type="instance"*) parameter real dtemp = 2.0;
+   parameter real base = 1k from (0:inf);
+   analog
+      I(p, n) <+ V(p, n) / (base * dtemp);
+endmodule

@@ -86,6 +86,7 @@ static IFparm *parmlookup(IFdevice *dev, GENinstance **inptr, char *param,
                            int do_model, int inout);
 static IFvalue *doask(CKTcircuit *ckt, int typecode, GENinstance *dev, GENmodel *mod,
                        IFparm *opt, int ind);
+
 static int doset(CKTcircuit *ckt, int typecode, GENinstance *dev, GENmodel *mod,
                  IFparm *opt, struct dvec *val);
 static int finddev(CKTcircuit *ckt, char *name, GENinstance **devptr, GENmodel **modptr);
@@ -2157,7 +2158,19 @@ doask(CKTcircuit *ckt, int typecode, GENinstance *dev, GENmodel *mod, IFparm *op
         err = ft_sim->askModelQuest (ckt, mod, opt->id, &pv, NULL);
 
     if (err != OK) {
-        ft_sperror(err, "if_getparam");
+        /* Enhancement-476: E_NOTFOUND means "this parameter exists, it just has
+         * no value right now" -- an OSDI operating-point variable read before
+         * anything has computed one (osdiparam.c). The handler has already
+         * named the quantity and said why, so rendering a second, vaguer line
+         * here would only bury it. Every other code still reports.
+         *
+         * The `show` path needs nothing: param_forall() in device.c already
+         * skips an ask-only parameter unless `ckt->CKTrhsOld` exists, so a
+         * device with no solution behind it is never asked for one. That guard
+         * is the same rule this enhancement adds to the direct `@dev[opvar]`
+         * read, which was the one path without it. */
+        if (err != E_NOTFOUND)
+            ft_sperror(err, "if_getparam");
         return (NULL);
     }
 

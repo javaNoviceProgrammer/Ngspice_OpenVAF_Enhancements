@@ -19,7 +19,9 @@ pub use types::TypeValidationDiagnostic;
 
 use crate::db::HirTyDB;
 use crate::inference::BranchWrite;
-use crate::validation::body::{BodyCtx, IllegalCtxAccess, IllegalCtxAccessKind};
+use crate::validation::body::{
+    BodyCtx, IllegalCtxAccess, IllegalCtxAccessKind, SIMPARAM_NAMES, SIMPARAM_STR_NAMES,
+};
 use crate::validation::types::DuplicateItem;
 
 mod body;
@@ -893,12 +895,15 @@ impl Diagnostic for BodyValidationDiagnosticWrapped<'_> {
                 ..
             } => {
                 let FileSpan { range, file } = self.expr_src(expr);
+                /* Enhancement-476: built from the same arrays the check uses.
+                 * This note used to be a second, hand-written copy of the list,
+                 * and it drifted: `temp` was served by ngspice (Enhancement-434)
+                 * yet appeared in neither, so the warning fired on a name that
+                 * works and then told the author it was fatal. */
                 let served = if has_default_form {
-                    "abstime, abstol, epsmin, gdev, gmin, iniLim, iteration, reltol, \
-                     scale, simulatorSubversion, simulatorVersion, sourceScaleFactor, \
-                     tnom, vntol"
+                    SIMPARAM_NAMES.join(", ")
                 } else {
-                    "analysis_name, simulator"
+                    SIMPARAM_STR_NAMES.join(", ")
                 };
                 let mut notes = vec![
                     format!("the simulator serves these names: {served}"),

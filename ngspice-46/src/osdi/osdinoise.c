@@ -133,11 +133,29 @@ int OSDInoise(int mode, int operation, GENmodel *inModel, CKTcircuit *ckt,
               NOISE_ADD_OUTVAR(ckt, data, "inoise_total_%s_%s",
                                gen_inst->GENname, descr->noise_sources[i].name);
             }
-            // TOTAL noise
+            /* TOTAL noise.
+             *
+             * Enhancement-476: the suffix is "", not " ".
+             *
+             * `tprintf("onoise_total_%s%s", "n1", " ")` names the vector
+             * `onoise_total_n1 ` -- with a trailing blank. `display` pads the
+             * name column, so the blank is invisible and the vector looks
+             * present and "1 long"; every attempt to READ it fails, because
+             * `print onoise_total_n1` and `length(onoise_total_n1)` match the
+             * name literally. The device-level total was therefore advertised
+             * and unreachable for every OSDI instance, while its own
+             * per-source children (`..._n1_shot`) and the grand
+             * `onoise_total` were fine.
+             *
+             * The N_DENS sibling eleven lines above already passes "" for the
+             * same purpose, and every built-in passes a names array whose
+             * element 0 is "" (resnoise.c, bjtnoise.c, mos1noi.c ...) -- so
+             * the built-ins' `onoise_total_r9` reads back and only OSDI's did
+             * not. */
             NOISE_ADD_OUTVAR(ckt, data, "onoise_total_%s%s", gen_inst->GENname,
-                             " ");
+                             "");
             NOISE_ADD_OUTVAR(ckt, data, "inoise_total_%s%s", gen_inst->GENname,
-                             " ");
+                             "");
             break;
           }
         }

@@ -1,0 +1,14 @@
+// Enhancement-476: a model that declares `dtemp` and `temperature` at MODEL
+// scope. Enhancement-397 routes ngspice's own dt/dtemp/temp knobs onto them,
+// which also puts the names in the INSTANCE parameter table -- so `alter`
+// found them and quietly threw the value away.
+`include "disciplines.vams"
+module rg_shadow_model(p, n);
+   inout p, n;
+   electrical p, n;
+   parameter real dtemp       = 2.0;
+   parameter real temperature = 3.0;
+   parameter real base        = 1k from (0:inf);
+   analog
+      I(p, n) <+ V(p, n) / (base * dtemp * temperature);
+endmodule

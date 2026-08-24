@@ -544,6 +544,19 @@ static void eval(const OsdiDescriptor *descr, const GENinstance *gen_inst,
       (OsdiNgspiceHandle){.kind = 3, .name = gen_inst->GENname};
   /* TODO initial conditions? */
   extra_inst_data->eval_flags = descr->eval(&handle, inst, model, sim_info);
+
+  /* Enhancement-476: this is the ONE funnel every evaluation passes through
+   * (the three load sites and OSDIfinalStep all call it), so it is the only
+   * place that has to record that the instance's operating-point variables
+   * now hold computed values.
+   *
+   * Gated on $fatal because an evaluation that raised it was abandoned
+   * part-way: `$simparam("GMIN")` kills the run, and the opvars assigned
+   * before that line would otherwise read back as though the analysis had
+   * succeeded. Each OpenMP task writes only its own instance's field. */
+  if (!(extra_inst_data->eval_flags & EVAL_RET_FLAG_FATAL)) {
+    extra_inst_data->opvars_valid = true;
+  }
 }
 
 static void load(CKTcircuit *ckt, const GENinstance *gen_inst, void *model,
