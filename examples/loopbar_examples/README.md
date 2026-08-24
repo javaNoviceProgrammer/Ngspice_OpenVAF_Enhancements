@@ -107,3 +107,28 @@ That check first passed **vacuously**: the suite's own `run()` sets
 so both sides read zero tables. It now builds its deck without `option noacct`
 and asserts the *3 vs 0* difference — a "pass" where both sides are empty proves
 nothing.
+
+## The first frame, and two ways a check can be blind
+
+The frame for point 1 is deliberately **not** drawn. A frame ends with `\r` and
+fills the line to a constant width, so the solver announcement — printed by the
+first analysis and shorter than a frame — overwrote only its leading columns and
+left the rest as a tail:
+
+```
+Using SPARSE 1.3 as Direct Linear Solver          ]   0%
+```
+
+`[20]` pins the whole class rather than that one banner: for each physical line
+it asks what a terminal would actually show, and bar residue may appear only on a
+bar line. Getting that check to *fail* on the broken build took two attempts:
+
+- the residue **does not exist in the byte stream** — the text after the last
+  `\r` is just the banner. `\r` means "cursor to column 0", so the check has to
+  composite the line the way a terminal does;
+- and `subprocess(text=True)` applies **universal newline translation**, turning
+  every `\r` into `\n` before the check can see it. It reads raw bytes instead.
+
+Both earlier versions passed against the build that had the bug. A check that
+cannot be made to fail on the defect it targets is not evidence of anything.
+

@@ -292,5 +292,76 @@ check("[19] `set noinit` removes the per-point tables, leaving the line clean",
       and frames(o2, "sweep"),
       f"tables without={o.count('Initial Transient Solution')} with=0")
 
+# ---------------------------------------------------------------------------
+print("\n[20] no frame may be left as a TAIL on somebody else's line")
+# ---------------------------------------------------------------------------
+# A frame ends with '\r' and fills the line to a constant width, so anything
+# printed before the next redraw overwrites only its LEADING columns and the
+# rest survives. That is what the first frame did to the solver announcement:
+#
+#   Using SPARSE 1.3 as Direct Linear Solver          ]   0%
+#
+# The frame for point 1 is therefore not drawn at all -- every later point is
+# safe because its frame follows the preceding analysis's output. This check is
+# written against the CLASS, not that one banner: for each physical line, only
+# the text after the last '\r' is visible, and if that text carries bar residue
+# it must be a bar line and nothing else.
+def render(physical):
+    """What a terminal actually shows for one physical line.
+
+    The residue does NOT exist in the byte stream -- taking the text after the
+    last '\r' yields just the banner, and an earlier version of this check
+    passed against the very build that had the bug. '\r' means "cursor to
+    column 0", so a short line printed after a long one leaves the long one's
+    tail on screen. That has to be composited to be seen.
+    """
+    buf, col = [], 0
+    for ch in physical:
+        if ch == "\r":
+            col = 0
+        else:
+            if col < len(buf):
+                buf[col] = ch
+            else:
+                buf.append(ch)
+            col += 1
+    return "".join(buf)
+
+
+def residue(out):
+    bad = []
+    for physical in out.split("\n"):
+        visible = render(physical)
+        if re.search(r"\]\s*\d+%", visible) and not re.match(r"\s*\w+: (point|sample|iteration)", visible):
+            bad.append(visible[:70])
+    return bad
+
+def run_bytes(body, ctl, tag):
+    """Capture stdout with NO newline translation.
+
+    subprocess(text=True) opens the pipe with universal newlines, which turns
+    every '\r' into '\n' -- so the physical-line structure this check depends
+    on is gone before it can look, and an earlier version passed against the
+    build that had the bug. Decode the bytes instead.
+    """
+    deck = f"loopbar\n{body}.control\n{ctl}\n.endc\n.end\n"
+    q = os.path.join(HERE, f"_lb_{tag}.cir")
+    with open(q, "w") as f:
+        f.write(deck)
+    r = subprocess.run([NGSPICE, "-b", os.path.basename(q)], cwd=HERE,
+                       capture_output=True, timeout=900)
+    try:
+        os.remove(q)
+    except OSError:
+        pass
+    return (r.stdout + r.stderr).decode("utf-8", "replace")
+
+o = run_bytes(RC, "set loopbar\nsweep @r1[resistance] lin 3 500 4k "
+                  "-analysis \"tran 50u 0.35\" -output v(b)", "res1")
+o2 = run_bytes(DIV, "set loopbar\n" + SW, "res2")
+found = residue(o) + residue(o2)
+check("[20] no bar residue survives on a non-bar line",
+      not found, f"damaged lines: {found[:2]}")
+
 print(f"\n=== {passed}/{checks} checks passed ===")
 sys.exit(0 if passed == checks else 1)

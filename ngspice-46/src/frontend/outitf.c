@@ -384,8 +384,18 @@ outp_loop_begin(const char *label, const char *noun, int total, int mode)
     if (orflag || ft_norefprint || cp_background)
         outp_loop_show = 0;             /* same three mutes as the analysis bar */
 
-    if (outp_loop_show)
-        outp_loop_draw(0, 0.0, NULL);   /* show point 1 before it is solved */
+    /* Deliberately NO draw here, and none for the first point either (see
+     * outp_loop_point). A frame ends with '\r' and leaves the cursor at column
+     * 0 of a line it has filled to OUTP_LOOP_WIDTH. Anything printed before the
+     * next redraw overwrites only its LEADING columns and the rest of the frame
+     * survives as a tail -- and the first analysis of a run prints the solver
+     * announcement, which is shorter than the frame:
+     *
+     *   Using SPARSE 1.3 as Direct Linear Solver          ]   0%
+     *
+     * Every later point is safe because its frame is drawn AFTER the preceding
+     * analysis has finished printing. Only the first one has nothing in front
+     * of it, so it is the one that must wait. */
 #else
     NG_IGNORE(label); NG_IGNORE(noun); NG_IGNORE(total); NG_IGNORE(mode);
 #endif
@@ -399,6 +409,12 @@ outp_loop_point(int index)
         return;
     outp_loop_index = index;
     if (!outp_loop_show)
+        return;
+    /* The first point's frame would be drawn before ANY analysis has run, so
+     * the solver announcement lands on top of it (see outp_loop_begin). Skip
+     * it: the bar appears either from the first intra-point refresh, or at the
+     * second point's boundary, both of which follow that output. */
+    if (index == 0)
         return;
     /* Throttled like the analysis bar: a sweep may run up to SW_MAXPTS points
      * and one write per point would cost more than the solve on a fast deck.

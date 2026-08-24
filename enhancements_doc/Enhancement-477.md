@@ -74,6 +74,28 @@ Its line is released immediately after the loop rather than at the
 runs at the end of the function — so the loop's last frame printed *underneath*
 the worst-case distance it was supposed to precede.
 
+## The first point's frame is not drawn
+
+A frame ends with `\r`, leaving the cursor at column 0 of a line it has filled to
+a constant width. Anything printed before the next redraw therefore overwrites
+only its *leading* columns, and the rest of the frame survives as a tail. The
+first analysis of a run prints the solver announcement, which is shorter than a
+frame:
+
+```
+Using SPARSE 1.3 as Direct Linear Solver          ]   0%
+```
+
+Every later point is safe, because its frame is drawn *after* the preceding
+analysis has finished printing — only the first has nothing in front of it. So
+it waits: the bar appears from the first intra-point refresh, or at the second
+point's boundary, both of which follow that output.
+
+The line is also padded **and** truncated to one constant width. Padding stops
+`\r` leaving stale characters from a longer previous frame; truncating stops the
+line exceeding the width, because a wrapped line puts the cursor on the second
+row and `\r` would then redraw only that row, leaving the first stuck on screen.
+
 ## The switch
 
 Auto by default: drawn only when stdout is a terminal. The line is redrawn with
