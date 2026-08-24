@@ -223,9 +223,29 @@ CKTsetOpt(CKTcircuit *ckt, JOB *anal, int opt, IFvalue *val)
         task->TSKtolGiven |= ERRP_CHGTOL;
         break;
     case OPT_PIVTOL:
+        /* Enhancement-475: the two pivot thresholds were the only members of
+         * this tolerance family with no check at all -- reltol, abstol, vntol,
+         * trtol and chgtol all refuse a value <= 0 a few lines below, and
+         * gmin/gshunt refuse a negative one. A pivot magnitude must be
+         * positive to mean anything; zero or negative disables the very test
+         * it names. */
+        if (E426_BAD_OPT(val->rValue <= 0.0,
+            "Option pivtol = %g must be greater than zero; ignored, keeping %g",
+            val->rValue, task->TSKpivotAbsTol))
+            break;
         task->TSKpivotAbsTol = val->rValue;
         break;
     case OPT_PIVREL:
+        /* Enhancement-475: pivrel is a RELATIVE threshold -- the fraction of
+         * the largest candidate a pivot must reach -- so it lives in (0,1].
+         * Sparse itself clamps anything outside that back to its own default
+         * (spfactor.c: `if (RelThreshold > 1.0) RelThreshold = ...`), which is
+         * exactly the silent substitution the user should be told about. */
+        if (E426_BAD_OPT(val->rValue <= 0.0 || val->rValue > 1.0,
+            "Option pivrel = %g must be greater than zero and at most one; "
+            "ignored, keeping %g",
+            val->rValue, task->TSKpivotRelTol))
+            break;
         task->TSKpivotRelTol = val->rValue;
         break;
     case OPT_TNOM:
@@ -284,10 +304,22 @@ CKTsetOpt(CKTcircuit *ckt, JOB *anal, int opt, IFvalue *val)
     case OPT_ITL5:
         break;
     case OPT_SRCSTEPS:
+        /* Enhancement-475: a count of homotopy steps, and the sibling counts
+         * itl1/itl2/itl4 already refuse a negative one. Zero stays legal -- it
+         * is how source stepping is turned off. */
+        if (E426_BAD_OPT(val->iValue < 0,
+            "Option srcsteps = %d must not be negative; ignored, keeping %d",
+            val->iValue, task->TSKnumSrcSteps))
+            break;
         task->TSKnumSrcSteps = val->iValue;
         task->TSKtolGiven |= ERRP_SRCSTEPS;
         break;
     case OPT_GMINSTEPS:
+        /* Enhancement-475: likewise; zero disables gmin stepping. */
+        if (E426_BAD_OPT(val->iValue < 0,
+            "Option gminsteps = %d must not be negative; ignored, keeping %d",
+            val->iValue, task->TSKnumGminSteps))
+            break;
         task->TSKnumGminSteps = val->iValue;
         task->TSKtolGiven |= ERRP_GMINSTEPS;
         break;
@@ -354,6 +386,14 @@ CKTsetOpt(CKTcircuit *ckt, JOB *anal, int opt, IFvalue *val)
         task->TSKfixLimit = (val->iValue != 0);
         break;
     case OPT_MINBREAK:
+        /* Enhancement-475: the minimum spacing the integrator will allow
+         * between breakpoints. A negative spacing has no reading, and this was
+         * the last unguarded member of the transient-control group. Zero is
+         * left legal: it is the documented way to say "no minimum". */
+        if (E426_BAD_OPT(val->rValue < 0.0,
+            "Option minbreak = %g must not be negative; ignored, keeping %g",
+            val->rValue, task->TSKminBreak))
+            break;
         task->TSKminBreak = val->rValue;
         break;
     case OPT_METHOD:
@@ -530,6 +570,13 @@ CKTsetOpt(CKTcircuit *ckt, JOB *anal, int opt, IFvalue *val)
         break;
 
     case OPT_ENH_RAMPTIME:
+        /* Enhancement-475: negative has no reading here. The two use sites
+         * (dctran.c, dcpss.c) already gate on `ramptime > 0.0`, so a negative
+         * one was inert -- but silently so, which is how a typo survives. */
+        if (E426_BAD_OPT(val->rValue < 0.0,
+            "Option ramptime = %g must not be negative; ignored, keeping %g",
+            val->rValue, ckt->enh->ramp.ramptime))
+            break;
         ckt->enh->ramp.ramptime = val->rValue;
         break;
 

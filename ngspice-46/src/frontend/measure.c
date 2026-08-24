@@ -174,6 +174,21 @@ com_meas(wordlist *wl)
 
     if (fail) {
         fprintf(stdout, " meas %s failed!\n\n", line_in);
+        /* Enhancement-475: a failed measurement used to return leaving whatever
+         * the output name held BEFORE it. In a loop -- which is where `meas`
+         * mostly lives -- that is the previous iteration's answer, and the
+         * script reads a plausible number for a measurement that did not
+         * happen. The "failed!" line scrolls past, and there is nothing to
+         * test: `sim_status` (Enhancement-438) is not set by `meas`.
+         *
+         * The name is dropped instead, so a read after a failure reports
+         * "vector ... is not available" -- which is exactly what already
+         * happens when the measurement fails the FIRST time and the name was
+         * never set. This makes the two cases agree; before, only the
+         * never-set one was honest. Same family as Enhancement-438, where a
+         * failed sample left the previous plot behind and Monte Carlo counted
+         * it as a pass. */
+        vec_remove(outvar);
         tfree(line_in);
         return;
     }

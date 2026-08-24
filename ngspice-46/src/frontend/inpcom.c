@@ -2714,10 +2714,26 @@ static void for_subst_var(DSTRING *out, const char *b, const char *e,
     }
 }
 
+/* Enhancement-475: does [b,e) still contain an identifier?
+ *
+ * This is what separates "waiting for an inner loop to supply j" from "this
+ * can never evaluate". `{{i+j}}` with only `i` bound still holds a name and is
+ * left alone; `{{1/0}}`, `{{1+}}` and `{{}}` hold none, so no amount of further
+ * binding will help and the fault can be named where it is. */
+static int for_has_name(const char *b, const char *e)
+{
+    const char *p;
+    for (p = b; p < e; p++)
+        if (isalpha_c(*p) || *p == '_')
+            return 1;
+    return 0;
+}
+
+
 /* Rewrite every `{{ }}` in `line` with `name` bound to `val`.
  * Returns a fresh string; *unclosed is set if a `{{` has no `}}`. */
 static char *for_apply(const char *line, const char *name, long val,
-                       int *unclosed)
+                       int *unclosed, char *badexpr, size_t badsz, int *hasbad)
 {
     DS_CREATE(out, 128);
     const char *p = line;
@@ -2742,10 +2758,26 @@ static char *for_apply(const char *line, const char *name, long val,
             long v;
             for_subst_var(&sub, open, close, name, val);
             if (for_eval(ds_get_buf(&sub), ds_get_buf(&sub) +
-                         ds_get_length(&sub), &v))
+                         ds_get_length(&sub), &v)) {
                 ds_cat_printf(&out, "%ld", v);        /* fully resolved */
-            else
+            } else {
+                /* Enhancement-475: if nothing is left that a later binding
+                 * could fill in, this expression is simply bad -- say so here
+                 * rather than let it survive to the end-of-pass sweep, which
+                 * used to report every one of them as "{{...}} outside any
+                 * .for loop". They were all INSIDE a loop; the message named
+                 * the wrong fault and sent the reader looking for a missing
+                 * `.for`. */
+                if (badexpr && hasbad && !*hasbad &&
+                    !for_has_name(ds_get_buf(&sub),
+                                  ds_get_buf(&sub) + ds_get_length(&sub))) {
+                    /* an EMPTY {{}} is a bad expression too, so the flag is
+                       separate from the text -- "" must not read as "unset" */
+                    (void) snprintf(badexpr, badsz, "%s", ds_get_buf(&sub));
+                    *hasbad = 1;
+                }
                 ds_cat_printf(&out, "{{%s}}", ds_get_buf(&sub));  /* nested */
+            }
             ds_free(&sub);
         }
         p = close + 2;
@@ -2983,6 +3015,7 @@ static int inp_expand_for_loops(struct card *deck)
     long added = 0;
     struct card *c;
     bool in_control = FALSE;
+    bool saw_for = FALSE;       /* Enhancement-475: which message to give */
 
     for (c = deck; c; c = c->nextcard) {
         char *line = c->line;
@@ -3015,6 +3048,7 @@ static int inp_expand_for_loops(struct card *deck)
         }
         if (!ciprefix(".for", line) || (line[4] && !isspace_c(line[4])))
             continue;
+        saw_for = TRUE;
 
         /* ---- header: .for <name> in <values> ---- */
         p = line + 4;
@@ -3070,8 +3104,34 @@ static int inp_expand_for_loops(struct card *deck)
             const char *t = b->line;
             if (!t || *t == '*')
                 continue;
-            if (ciprefix(".for", t) && (t[4] == '\0' || isspace_c(t[4])))
+            if (ciprefix(".for", t) && (t[4] == '\0' || isspace_c(t[4]))) {
+                /* Enhancement-475: a nested loop that reuses this loop's index
+                 * shadows it. The outer pass substitutes the name first, so the
+                 * inner body comes out with the SAME text on every inner
+                 * iteration -- duplicate device names, and the deck died with
+                 * "device already exists", which names the symptom and not the
+                 * cause. Refuse it here, where the cause is still visible. */
+                const char *v = t + 4;
+                size_t vl = 0;
+                while (isspace_c(*v))
+                    v++;
+                while ((isalnum_c(v[vl]) || v[vl] == '_'))
+                    vl++;
+                if (vl == nlen && strncasecmp(v, name, nlen) == 0) {
+                    fprintf(cp_err,
+                            "Error: .for: nested loop reuses the index "
+                            "\"%s\"\n    in line: %s\n"
+                            "  the enclosing .for already binds it, so every "
+                            "inner pass would repeat the same text;\n"
+                            "  give the inner loop its own name\n",
+                            name, b->line);
+                    errors++;
+                    tfree(vals);
+                    for_retire_block(c);
+                    goto next_card;
+                }
                 depth++;
+            }
             else if (ciprefix(".endfor", t)) {
                 if (--depth == 0) {
                     body_end = b;
@@ -3101,10 +3161,25 @@ static int inp_expand_for_loops(struct card *deck)
                     tfree(vals);
                     return errors + 1;
                 }
-                nl = for_apply(b->line, name, vals[k], &unclosed);
+                char badexpr[128];
+                int hasbad = 0;
+                badexpr[0] = '\0';
+                nl = for_apply(b->line, name, vals[k], &unclosed,
+                               badexpr, sizeof badexpr, &hasbad);
                 if (unclosed && k == 0) {       /* once per line, not per pass */
                     fprintf(cp_err, "Error: .for: `{{` without a closing "
                                     "`}}`\n    in line: %s\n", b->line);
+                    errors++;
+                }
+                if (hasbad && k == 0) {         /* Enhancement-475 */
+                    fprintf(cp_err,
+                            "Error: .for: `{{%s}}` is not a whole-number "
+                            "expression\n    in line: %s\n"
+                            "  {{...}} takes the loop index and + - * / %% with "
+                            "parentheses;\n"
+                            "  every name in it must be a loop variable in "
+                            "scope\n",
+                            badexpr, b->line);
                     errors++;
                 }
                 tail = insert_new_line(tail, nl, b->linenum,
@@ -3127,6 +3202,7 @@ static int inp_expand_for_loops(struct card *deck)
            after it, so a nested `.for` among the copies is the next thing the
            walk meets. */
         c = body_end;
+next_card: ;
     }
 
     /* A `{{ }}` that never got bound would reach numparam as a stray brace and
@@ -3141,11 +3217,29 @@ static int inp_expand_for_loops(struct card *deck)
             if (inc)
                 continue;
             if (strstr(c->line, "{{")) {
-                fprintf(cp_err,
-                        "Error: {{...}} outside any .for loop\n"
-                        "    in line: %s\n"
-                        "  {{...}} is substituted only inside a "
-                        ".for/.endfor body\n", c->line);
+                /* Enhancement-475: two different faults used to share this one
+                 * message. If the deck never had a `.for` at all, "outside any
+                 * .for loop" is right. If it did, this `{{ }}` was inside one
+                 * and simply never resolved -- almost always a name that is not
+                 * a loop variable -- and saying "outside any .for loop" points
+                 * at the wrong thing entirely. */
+                if (saw_for) {
+                    const char *ob = strstr(c->line, "{{");
+                    const char *oe = strstr(ob + 2, "}}");
+                    int olen = (int) (oe ? (oe + 2) - ob : (int) strlen(ob));
+                    fprintf(cp_err,
+                            "Error: .for: `%.*s` was never resolved\n"
+                            "    in line: %s\n"
+                            "  every name inside {{...}} must be the index of "
+                            "an enclosing .for\n",
+                            olen, ob, c->line);
+                }
+                else
+                    fprintf(cp_err,
+                            "Error: {{...}} outside any .for loop\n"
+                            "    in line: %s\n"
+                            "  {{...}} is substituted only inside a "
+                            ".for/.endfor body\n", c->line);
                 errors++;
             }
         }
@@ -5869,6 +5963,47 @@ static void inp_fix_inst_calls_for_numparam(
                             subckt_param_names, subckt_param_values);
                     int num_inst_params = inp_get_params(
                             inst_line, inst_param_names, inst_param_values);
+
+                    /* Enhancement-475: a name on the CALL that the `.subckt`
+                     * never declared is silently dropped, and the formal keeps
+                     * its default -- so `X1 a 0 div rr=5k` against
+                     * `.subckt div p n r=1k` builds a 1k divider, exactly as if
+                     * nothing had been passed. One transposed character and the
+                     * circuit is not the one that was written, with nothing on
+                     * stderr.
+                     *
+                     * The two sibling constructs that take `name=value` both
+                     * say something: an unknown parameter on a `.model` warns,
+                     * and one on a device instance is a hard error. Only the
+                     * subcircuit call was quiet.
+                     *
+                     * It stays a WARNING rather than an error: the name is not
+                     * usable inside the body either way, so nothing that works
+                     * today stops working, and decks do carry harmless extra
+                     * names. `m` is exempt -- the multiplier is added to the
+                     * subcircuit automatically by the pass above. */
+                    for (i = 0; i < num_inst_params; i++) {
+                        int j, known = 0;
+                        if (cieq(inst_param_names[i], "m"))
+                            continue;
+                        for (j = 0; j < num_subckt_params; j++)
+                            if (cieq(inst_param_names[i], subckt_param_names[j])) {
+                                known = 1;
+                                break;
+                            }
+                        if (!known) {
+                            const char *ne = inst_line;
+                            while (*ne && !isspace_c(*ne))
+                                ne++;
+                            fprintf(cp_err,
+                                    "Warning: %.*s: \"%s\" is not a parameter "
+                                    "of .subckt %s; ignored, so the default is "
+                                    "used\n    in line: %s\n",
+                                    (int) (ne - inst_line), inst_line,
+                                    inst_param_names[i], subckt_name,
+                                    inst_line);
+                        }
+                    }
 
                     c->line = inp_fix_inst_line(inst_line, num_subckt_params,
                             subckt_param_names, subckt_param_values,

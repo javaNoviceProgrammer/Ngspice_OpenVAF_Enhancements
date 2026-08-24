@@ -46,6 +46,20 @@ TRANsetParm(CKTcircuit *ckt, JOB *anal, int which, IFvalue *value)
         job->TRANinitTime = value->rValue;
         break;
     case TRAN_TMAX:
+        /* Enhancement-475: TMAX was the one `tran` argument with no check at
+         * all, and its failure mode pointed away from the mistake: a negative
+         * TMAX reached the integrator and came back as
+         * "singular matrix: check node b" -- blaming the user's circuit for
+         * what is an invalid argument, on a divider that solves fine with any
+         * other TMAX. TSTEP, TSTOP and TSTART all say so plainly; this now
+         * does too. Zero stays legal, because zero is how TMAX is spelled
+         * when you want the default. */
+        if (value->rValue < 0.0) {
+            errMsg = copy("TMAX is invalid, must not be negative "
+                          "(use 0 for the default).");
+            job->TRANmaxStep = 0.0;
+            return(E_PARMVAL);
+        }
         job->TRANmaxStep = value->rValue;
         break;
     case TRAN_UIC:

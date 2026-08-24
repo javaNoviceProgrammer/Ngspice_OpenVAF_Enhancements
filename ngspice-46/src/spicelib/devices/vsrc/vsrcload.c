@@ -191,8 +191,17 @@ VSRCload(GENmodel *inModel, CKTcircuit *ckt)
 
                         VO = here->VSRCcoeffs[0];
                         VA = here->VSRCcoeffs[1];
+                        /* Enhancement-475: `functionOrder > 2` already asks the only
+                         * question that matters -- was a frequency SUPPLIED? The
+                         * `!= 0.0` that used to stand here made an EXPLICIT zero fall
+                         * through to 1/TSTOP as though nothing had been written, so
+                         * `sin(0 1 0)` produced one cycle per simulation and its
+                         * waveform moved when the run was lengthened. Unlike a zero
+                         * rise time, a zero frequency is meaningful -- it is DC -- and
+                         * TD and THETA immediately below already test only whether the
+                         * argument was given. PULSE documents its own zero
+                         * substitutions in a comment; this one was undocumented. */
                         FREQ =  here->VSRCfunctionOrder > 2
-                           && here->VSRCcoeffs[2] != 0.0
                            ? here->VSRCcoeffs[2] : (1/ckt->CKTfinalTime);
                         TD = here->VSRCfunctionOrder > 3
                            ? here->VSRCcoeffs[3] : 0.0;
