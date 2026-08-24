@@ -2134,6 +2134,38 @@ e471_value_is_off(const char *v)
     return cieq(v, "0") || cieq(v, "false") || cieq(v, "no") || cieq(v, "off");
 }
 
+/* Enhancement-477: should the loop commands draw a progress line?
+ *
+ * Returns 1 forced on, 0 forced off, -1 auto (draw only when stdout is a
+ * terminal). Auto is the default: the line is redrawn with '\r', so a
+ * redirected run would otherwise collect one enormous line of bar frames.
+ *
+ * Spelled through the same three lookups as the reuse switch below, for the
+ * same reason -- Enhancements 450, 451, 454, 466 and 467 each shipped an
+ * option here where a spelling that means OFF turned the feature ON. */
+static int
+sw_loopbar_mode(void)
+{
+    double d;
+    char s[64];
+
+    if (cp_getvar("noloopbar", CP_REAL, &d, 0))
+        return d == 0.0 ? -1 : 0;
+    if (cp_getvar("noloopbar", CP_STRING, s, sizeof(s)))
+        return e471_value_is_off(s) ? -1 : 0;
+    if (cp_getvar("noloopbar", CP_BOOL, NULL, 0))
+        return 0;
+
+    if (cp_getvar("loopbar", CP_REAL, &d, 0))
+        return d != 0.0 ? 1 : 0;
+    if (cp_getvar("loopbar", CP_STRING, s, sizeof(s)))
+        return e471_value_is_off(s) ? 0 : 1;
+    if (cp_getvar("loopbar", CP_BOOL, NULL, 0))
+        return 1;
+
+    return -1;                          /* not mentioned at all: auto */
+}
+
 /* Enhancement-471: the escape hatch, default ON.
  *
  * Reuse changes nothing a user can see except the time, but it does reuse the
@@ -2606,8 +2638,13 @@ void com_sweep(wordlist *wl)
     for (k = 0; k < SW_MAXOUT; k++)
         outbad[k] = 0;                           /* Enhancement-431 */
 
+    /* Enhancement-477: `npt` is the exact number of analyses this loop runs,
+     * so the bar is determinate. */
+    outp_loop_begin("sweep", "point", npt, sw_loopbar_mode());
+
     for (p = 0; p < npt; p++) {
         int idx[SW_MAXKNOB], rem = p, anyDeck = 0, deckChanged = 0, resetNeeded;
+        outp_loop_point(p);
         int reuseOK;
         double curval[SW_MAXKNOB];
         for (j = 0; j < nknob; j++) {
@@ -2695,6 +2732,7 @@ void com_sweep(wordlist *wl)
                         nout++;
                     }
             if (nout == 0) {
+                outp_loop_end();          /* Enhancement-477 */
                 ft_optimizing = save_optimizing;
                 fprintf(cp_err, "sweep: no outputs (give -output <expr>)\n");
                 goto cleanup;
@@ -2745,6 +2783,7 @@ void com_sweep(wordlist *wl)
                 data[(size_t) p * (size_t) nout + (size_t) k] = NAN;
         }
     }
+    outp_loop_end();          /* Enhancement-477 */
     ft_optimizing = save_optimizing;
 
     /* --- emit the summary plot: the inner knob is the x-scale, and each
@@ -2968,6 +3007,7 @@ cleanup:
 
     sw_fp_free();                        /* Enhancement-320: drop fast-path binds */
     sweep_active = 0;
+    outp_loop_end();          /* Enhancement-477 */
     ft_optimizing = save_optimizing;
     for (k = 0; k < nout; k++) { tfree(outname[k]); tfree(outexpr[k]); }
     if (ovx) for (p = 0; p < npt; p++) tfree(ovx[p]);
@@ -3140,7 +3180,9 @@ void com_highsigma(wordlist *wl)
     long nfail = 0;
 
     ft_optimizing = TRUE;
+    outp_loop_begin("highsigma", "sample", nsamp, sw_loopbar_mode());   /* Enhancement-477 */
     for (int i = 0; i < nsamp; i++) {
+        outp_loop_point(i);
         ft_optimizing = TRUE;               /* reset re-source may clear it */
         sw_run_cmd("reset");                /* redraws the lambda-inflated .params */
         sw_run_cmd(analysis);
@@ -3152,6 +3194,7 @@ void com_highsigma(wordlist *wl)
         sum_w2f2 += x * x;
         if (f != 0.0) nfail++;
     }
+    outp_loop_end();          /* Enhancement-477 */
     ft_optimizing = save_optimizing;
     mc_sss_off();
 
@@ -3361,7 +3404,10 @@ void com_montecarlo(wordlist *wl)
     int mc_prev_failed = 0;
     sw_reuse_report(NULL, NULL);                 /* zero the tally */
 
+    outp_loop_begin("montecarlo", "sample", nsamp, sw_loopbar_mode());  /* Enhancement-477 */
+
     for (int i = 0; i < nsamp; i++) {
+        outp_loop_point(i);
         ft_optimizing = TRUE;
         if (fast_mc)
             sw_fp_apply(NULL, NULL, 0);   /* re-draw + push in place, no reset */
@@ -3394,6 +3440,7 @@ void com_montecarlo(wordlist *wl)
     }
     if (usewarm)
         CKTsetWarmStart(0);
+    outp_loop_end();          /* Enhancement-477 */
     ft_optimizing = save_optimizing;
     /* Enhancement-473: say what the reuse actually did, in the sweep's wording */
     if (ft_ngdebug) {
@@ -3629,6 +3676,7 @@ void com_wcd(wordlist *wl)
     if (ndim < 1) {
         fprintf(cp_err, "wcd: the deck draws no Gaussian .params -- nothing to "
                         "search over (use agauss/gauss in a .param)\n");
+        outp_loop_end();          /* Enhancement-477 */
         ft_optimizing = save_optimizing;
         mc_wcd_off();
         return;
@@ -3636,6 +3684,7 @@ void com_wcd(wordlist *wl)
     if (ndim > WCD_MAXDIM) {
         fprintf(cp_err, "wcd: %d statistical dimensions exceeds the limit of %d\n",
                 ndim, WCD_MAXDIM);
+        outp_loop_end();          /* Enhancement-477 */
         ft_optimizing = save_optimizing;
         mc_wcd_off();
         return;
@@ -3653,8 +3702,15 @@ void com_wcd(wordlist *wl)
                         "        worst-case distance is reported as a NEGATIVE margin.\n");
 
     /* --- Hasofer-Lind / Rackwitz-Fiessler iteration ---------------------- */
+    /* Enhancement-477: indeterminate (total 0). This loop stops when the
+     * Hasofer-Lind iteration converges, usually well before `maxiter`, so a bar
+     * drawn against maxiter would sit at 30% and then jump to done -- a counter
+     * is the honest display. */
+    outp_loop_begin("wcd", "iteration", 0, sw_loopbar_mode());
+
     for (it = 0; it < maxiter; it++) {
         double g = wcd_margin(u, ndim, analysis, metric, hi, lo, hasmax, hasmin);
+        outp_loop_point(it);
         double gn2 = 0.0, gdotu = 0.0, dnorm = 0.0, unorm = 0.0;
 
         /* forward-difference gradient: D extra evaluations */
@@ -3671,6 +3727,7 @@ void com_wcd(wordlist *wl)
         if (gn2 <= 0.0) {
             fprintf(cp_err, "wcd: the metric does not respond to any statistical "
                             "parameter (zero gradient) -- cannot locate an MPFP\n");
+            outp_loop_end();          /* Enhancement-477 */
             ft_optimizing = save_optimizing;
             mc_wcd_off();
             return;
@@ -3694,6 +3751,10 @@ void com_wcd(wordlist *wl)
             break;
         }
     }
+    /* Enhancement-477: release the line HERE, not at the ft_optimizing restore
+     * at the end of the function -- that one runs after the results are
+     * printed, which put the loop's last frame below them. */
+    outp_loop_end();
 
     if (!converged)
         fprintf(cp_out, "  warning: MPFP search did not converge in %d iterations "
@@ -3759,5 +3820,6 @@ void com_wcd(wordlist *wl)
     }
 
     mc_wcd_off();
+    outp_loop_end();          /* Enhancement-477 */
     ft_optimizing = save_optimizing;
 }

@@ -148,6 +148,14 @@ extern bool ft_noacctprint;
 extern bool ft_noinitprint;
 extern bool ft_norefprint;
 extern bool ft_optimizing;      /* Enhancement-130 */
+
+/* Enhancement-477: outer progress for the loop commands (outitf.c).
+ * mode: 1 = forced on, 0 = forced off, -1 = auto (only when stdout is a tty).
+ * total <= 0 means indeterminate -- a counter is shown instead of a bar. */
+extern void outp_loop_begin(const char *label, const char *noun,
+                            int total, int mode);
+extern void outp_loop_point(int index);
+extern void outp_loop_end(void);
 extern bool ft_listprint;
 extern bool ft_nopage;
 extern bool ft_nomod;

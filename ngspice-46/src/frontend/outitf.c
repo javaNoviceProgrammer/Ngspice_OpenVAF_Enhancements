@@ -152,6 +152,119 @@ outp_progress_frac(runDesc *run, double refval)
     return -1.0;
 }
 
+/* Enhancement-477: outer progress for the commands that run N analyses in a
+ * loop -- sweep, montecarlo, highsigma, wcd.
+ *
+ * Those commands set `ft_optimizing` to silence per-point chatter (see the
+ * early return in outp_print_reference below, Enhancement-130), so until now a
+ * long sweep printed its banner and then nothing at all. The inner analysis's
+ * own bar is the wrong thing to show: it runs 0 -> 100% for EVERY point, so on
+ * a 40-point sweep it resets forty times and never says how far the sweep is,
+ * and it redraws the same terminal line with '\r', so an outer bar and the
+ * inner bar would overwrite each other.
+ *
+ * So one line carries both -- the outer point counter and bar, plus the inner
+ * analysis's own fraction as a secondary field:
+ *
+ *     sweep: point  7/40  [=========               ]  17%   (tran 63%)
+ *
+ * BOTH DRIVERS ARE NEEDED. While a point runs, the loop command is blocked
+ * inside the analysis and cannot refresh anything, so the intra-point updates
+ * have to come from here, off the analysis's own data path. But the DEFAULT
+ * analysis is `op`, which produces no swept data points at all and therefore
+ * never reaches this code -- so the loop command also draws at each point
+ * boundary. Neither alone covers both regimes: many fast points, or few slow
+ * ones.
+ *
+ * `total <= 0` means indeterminate -- `wcd` iterates to convergence and has no
+ * count known in advance, so it gets a counter and no percentage rather than a
+ * bar against `maxiter` that would finish early and read as wrong. */
+#define OUTP_LOOP_WIDTH 76
+
+static const char *outp_loop_label = NULL;
+static const char *outp_loop_noun = NULL;   /* "point" / "sample" / ... */
+static int outp_loop_total = 0;         /* <= 0: indeterminate */
+static int outp_loop_index = 0;
+static int outp_loop_digits = 1;
+static int outp_loop_active = 0;
+static int outp_loop_show = 0;          /* resolved once in outp_loop_begin */
+static int outp_loop_drawn = 0;
+static clock_t outp_loop_lastdraw = 0;
+
+/* The running analysis's name, lower-cased for display ("tran", "ac", ...). */
+static const char *
+outp_loop_inner_name(runDesc *run, char *buf, size_t len)
+{
+    CKTcircuit *ckt = run ? run->circuit : NULL;
+    const char *raw;
+    size_t i;
+
+    if (!ckt || !ckt->CKTcurJob)
+        return NULL;
+    raw = spice_analysis_get_name(ckt->CKTcurJob->JOBtype);
+    if (!raw)
+        return NULL;
+    for (i = 0; i + 1 < len && raw[i]; i++)
+        buf[i] = (char) tolower((unsigned char) raw[i]);
+    buf[i] = '\0';
+    return buf[0] ? buf : NULL;
+}
+
+static void
+outp_loop_draw(int have_inner, double inner, const char *iname)
+{
+    char bar[OUTP_BARLEN + 1];
+    char line[OUTP_LOOP_WIDTH + 64];
+    int k, filled, n;
+
+    if (!outp_loop_active || !outp_loop_show)
+        return;
+    if (have_inner) {
+        if (inner < 0.0)
+            inner = 0.0;
+        if (inner > 1.0)
+            inner = 1.0;
+    }
+
+    if (outp_loop_total > 0) {
+        /* The inner fraction advances the OUTER bar within the point, so the
+         * bar moves smoothly instead of stepping once per analysis. */
+        double done = (double) outp_loop_index + (have_inner ? inner : 0.0);
+        double frac = done / (double) outp_loop_total;
+
+        if (frac < 0.0)
+            frac = 0.0;
+        if (frac > 1.0)
+            frac = 1.0;
+        filled = (int) (frac * OUTP_BARLEN + 0.5);
+        for (k = 0; k < OUTP_BARLEN; k++)
+            bar[k] = (k < filled) ? '=' : ' ';
+        bar[OUTP_BARLEN] = '\0';
+        n = snprintf(line, sizeof line, " %s: %s %*d/%d  [%s] %3.0f%%",
+                     outp_loop_label, outp_loop_noun, outp_loop_digits,
+                     outp_loop_index + 1, outp_loop_total, bar, frac * 100.0);
+    } else {
+        n = snprintf(line, sizeof line, " %s: %s %d",
+                     outp_loop_label, outp_loop_noun, outp_loop_index + 1);
+    }
+
+    if (have_inner && iname && n > 0 && n < (int) sizeof line)
+        (void) snprintf(line + n, sizeof line - (size_t) n, "   (%s %3.0f%%)",
+                        iname, inner * 100.0);
+
+    /* Padded AND truncated to one constant width. Padding stops '\r' leaving
+     * stale tail characters from a longer previous line; truncating stops the
+     * line exceeding it, which matters because a wrapped line puts the cursor
+     * on the second row and '\r' would then redraw only that row, leaving the
+     * first stuck on screen. " montecarlo: sample 100000/100000  [...] 100%
+     * (tran 100%)" is about 80 characters, so this is reachable, and the inner
+     * field is the part that gets clipped -- the right thing to lose. */
+    fprintf(stdout, "%-*.*s\r", OUTP_LOOP_WIDTH, OUTP_LOOP_WIDTH, line);
+    fflush(stdout);
+    outp_loop_drawn = 1;
+    outp_loop_lastdraw = clock();
+}
+
 /* Print the throttled "Reference value" status line, with a progress bar
  * appended when the sweep fraction is known. Redraws in place via '\r', like
  * the original line, and keeps a constant width so no stale characters remain. */
@@ -159,6 +272,21 @@ static void
 outp_print_reference(runDesc *run, double refval)
 {
     double frac;
+
+    /* Enhancement-477: inside a loop command this is the only code that runs
+     * while a point is in progress, so it drives the intra-point refresh.
+     * Deliberately BEFORE the ft_optimizing return -- the loop commands set
+     * that flag, and it is what used to make a sweep silent. `outp_bar_shown`
+     * is left alone on purpose, so outp_finish_reference() stays a no-op and
+     * cannot stamp a stray 100% "Reference value" line over the loop line at
+     * the end of every point. */
+    if (outp_loop_active) {
+        char nm[16];
+        const char *iname = outp_loop_inner_name(run, nm, sizeof nm);
+        double ifrac = outp_progress_frac(run, refval);
+        outp_loop_draw(ifrac >= 0.0, ifrac, iname);
+        return;
+    }
 
     if (ft_optimizing)          /* Enhancement-130: quiet during optimizer iterations */
         return;
@@ -224,6 +352,89 @@ outp_finish_reference(runDesc *run)
     fflush(stdout);
 }
 #endif
+
+/* Enhancement-477: the loop-progress entry points, called by the commands in
+ * com_sweep.c. Defined unconditionally so the Windows GUI build still links;
+ * there the status bar is fed by SetAnalyse() and this line has no place to go.
+ *
+ * `mode` is tri-state: 1 forced on, 0 forced off, -1 auto. Auto means "only
+ * when stdout is a terminal", because the line is redrawn with '\r' and a
+ * redirected run would otherwise collect one enormous line of bar frames in
+ * the file. The existing per-analysis bar does NOT make that distinction --
+ * that is why capturing a plain `tran` to a file yields a screenful of
+ * "Reference value" frames -- but repeating the behaviour in new output is not
+ * an improvement, and the regression suites capture stdout. */
+void
+outp_loop_begin(const char *label, const char *noun, int total, int mode)
+{
+#ifndef HAS_WINGUI
+    int d = 1, t = total;
+
+    outp_loop_label = label ? label : "loop";
+    outp_loop_noun = noun ? noun : "point";
+    outp_loop_total = total;
+    outp_loop_index = 0;
+    outp_loop_active = 1;
+    outp_loop_drawn = 0;
+    outp_loop_lastdraw = 0;
+    while (t >= 10) { t /= 10; d++; }
+    outp_loop_digits = d;
+
+    outp_loop_show = (mode > 0) || (mode < 0 && isatty(fileno(stdout)));
+    if (orflag || ft_norefprint || cp_background)
+        outp_loop_show = 0;             /* same three mutes as the analysis bar */
+
+    if (outp_loop_show)
+        outp_loop_draw(0, 0.0, NULL);   /* show point 1 before it is solved */
+#else
+    NG_IGNORE(label); NG_IGNORE(noun); NG_IGNORE(total); NG_IGNORE(mode);
+#endif
+}
+
+void
+outp_loop_point(int index)
+{
+#ifndef HAS_WINGUI
+    if (!outp_loop_active)
+        return;
+    outp_loop_index = index;
+    if (!outp_loop_show)
+        return;
+    /* Throttled like the analysis bar: a sweep may run up to SW_MAXPTS points
+     * and one write per point would cost more than the solve on a fast deck.
+     * The index is recorded above regardless, so the next draw is current. */
+    if (outp_loop_drawn &&
+        (clock() - outp_loop_lastdraw) < (clock_t) (0.25 * CLOCKS_PER_SEC))
+        return;
+    outp_loop_draw(0, 0.0, NULL);
+#else
+    NG_IGNORE(index);
+#endif
+}
+
+void
+outp_loop_end(void)
+{
+#ifndef HAS_WINGUI
+    if (!outp_loop_active)
+        return;                         /* idempotent: every abort path may call */
+    if (outp_loop_show) {
+        if (outp_loop_total > 0) {
+            outp_loop_index = outp_loop_total - 1;
+            outp_loop_draw(1, 1.0, NULL);   /* finish at a full bar, not 97% */
+        } else {
+            outp_loop_draw(0, 0.0, NULL);
+        }
+        fputc('\n', stdout);            /* release the line for what follows */
+        fflush(stdout);
+    }
+    outp_loop_active = 0;
+    outp_loop_show = 0;
+    outp_loop_drawn = 0;
+    outp_loop_label = NULL;
+    outp_loop_noun = NULL;
+#endif
+}
 
 // fixme
 //   ugly hack to work around missing api to specify the "type" of signals
