@@ -310,6 +310,15 @@ for i, spell in enumerate(("reusesetup=1", "reusesetup=true", "reusesetup",
     check(f"[{21+i}] `.option {spell}` leaves it on",
           decision(o) == (4, 0), f"{decision(o)}")
 
+# The option is honoured off a `.options` card, so it must not also be reported
+# as an unknown one and "ignored" -- a warning that fires on a setting the run
+# then honours teaches the user to ignore the check (Enhancement-445's note on
+# that list). This shipped wrong in E-471 and the deck timing is what exposed it.
+for spell in ("reusesetup=0", "noreusesetup", "reusesetup=1"):
+    o = run(deck(CS, CSD % "1k 5k", opt=f".option {spell}\n"), f"unk{spell[:12]}")
+    check(f"[24-{spell}] `.option {spell}` is not called an unknown option",
+          "unknown option" not in o, "")
+
 o, _ = run(deck(CS, CSD % "1k 5k", dbg=True).replace("set ngdebug",
                                                      "set ngdebug\nset reusesetup=0"),
            "sv")

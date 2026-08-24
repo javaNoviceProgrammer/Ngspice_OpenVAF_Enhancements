@@ -4,7 +4,7 @@
 python3 verify_reusesetup.py
 ```
 
-34 checks, both linear solvers.
+37 checks, both linear solvers.
 
 ## What was wrong
 

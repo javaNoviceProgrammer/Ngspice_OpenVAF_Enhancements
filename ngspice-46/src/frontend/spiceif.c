@@ -467,6 +467,15 @@ if_is_option(const char *name)
         "warn_physics",              /* Enhancement-438 */
         "autobus",                   /* Enhancement-444 */
         "saveused",                  /* Enhancement-469 */
+        /* Enhancements 471/473: `reusesetup` is read through cp_getvar by
+           sw_request_reuse(), so a `.option reusesetup=0` card WORKS -- the
+           deck it was added to went 0.55 s to 6.81 s, which is the option
+           doing exactly what was asked. It was still reported as an unknown
+           option and "ignored", which is the failure E-445's note above
+           describes: a warning that fires on a setting the run then honours
+           teaches the user to ignore the check. The `no` prefix is a spelling
+           of the same option and gets the same treatment. */
+        "reusesetup", "noreusesetup",
         "autoadapt", "adapter",      /* PROTOTYPE: autoadapt */
         /* Enhancement-445: the `.four` analysis controls. Each is read by
            fourier() through cp_getvar and each demonstrably takes effect when

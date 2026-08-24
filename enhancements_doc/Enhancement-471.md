@@ -132,7 +132,7 @@ and each spelling is a check rather than a claim.
 
 ## Verification
 
-`examples/reusesetup_examples/verify_reusesetup.py` — **34/34**, both solvers.
+`examples/reusesetup_examples/verify_reusesetup.py` — **37/37**, both solvers.
 
 Comparing the same deck with the reuse on and off is the strongest assertion
 available, but a build where the reuse never engaged would pass every such

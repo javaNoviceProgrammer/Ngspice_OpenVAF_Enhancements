@@ -44,7 +44,36 @@ def stem_of(path):
     return d[:-len("_examples")] if d.endswith("_examples") else d
 
 
+def preflight():
+    """Fail fast if this interpreter cannot run the suites.
+
+    Several suites need numpy/matplotlib. Run under an interpreter without them
+    -- most easily by putting /usr/bin ahead of the real python3 on PATH -- and
+    they do not report that: they exit rc=1 in 0.0s, and the sweep ends with a
+    couple of dozen unrelated-looking FAILUREs (every pyplot suite, plus a few
+    that import numpy directly). That has cost a full 13-minute run more than
+    once. One clear line beats twenty misleading ones.
+    """
+    missing = []
+    for mod in ("numpy", "matplotlib"):
+        try:
+            __import__(mod)
+        except ImportError:
+            missing.append(mod)
+    if missing:
+        print(f"run_regression: this python3 ({sys.executable}) cannot import "
+              f"{', '.join(missing)}.\n"
+              f"                Several suites need them and would fail with "
+              f"rc=1 in 0.0s, which looks like a regression and is not.\n"
+              f"                Check PATH -- putting /usr/bin first selects a "
+              f"python3 without them.", file=sys.stderr)
+        return False
+    return True
+
+
 def main(argv):
+    if not preflight():
+        return 2
     include_all = "--all" in argv or os.environ.get("NG_RUN_ALL") == "1"
     only = {a for a in argv if not a.startswith("-")}
 
