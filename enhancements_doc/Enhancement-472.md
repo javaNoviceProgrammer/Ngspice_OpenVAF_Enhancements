@@ -60,7 +60,10 @@ that agree to 1e-12 and its damping `λ` diverged (0.0014 against 5e+03) on the
 strength of noise. The optimum is the same; the path to it is not meaningful in
 that regime either way.
 
-## Why `montecarlo` is not in this change
+## Why `montecarlo` was not in this change
+
+> **Enhancement-473 closed the hole described below and then gave `montecarlo`
+> the reuse.** This section is kept as the record of why it was held back.
 
 Its fast path (Enhancement-346) also leaves the circuit standing between
 samples, and would gain as much. It was implemented, measured at 1.29× on a
@@ -90,10 +93,10 @@ does so today.
 
 Seeding the fast path's closure from the random `.param` names — which is what
 makes the equivalent sweep disarm and take the reset path — was tried and did
-**not** disarm the deck, so the real fix lies further in, in what pass 2 will
-accept as a capture. That is its own change with its own evidence, and until it
-lands there is nothing safe here to build on. `montecarlo` is left exactly as it
-was, which the suite asserts so it cannot be switched on by accident.
+**not** disarm the deck. Enhancement-473 found why: only a **braced** expression
+is ever captured, and numparam writes no braces for a bare `v=rv`, so the line
+was walked past entirely. A random draw outside any braces is now ineligible,
+and with arming honest `montecarlo` was given the reuse.
 
 `highsigma` and `wcd` are a different case and are untouched on purpose: they
 re-source every sample by design, each redrawing its `.param`s, so there is
@@ -102,6 +105,9 @@ never a setup to keep.
 ## Verification
 
 `examples/reuseloops_examples/verify_reuseloops.py` — **17/17**, both solvers.
+
+(Its two `montecarlo` checks originally asserted that the command never takes
+the reuse; Enhancement-473 changed that, and they now assert that it does.)
 
 The decisive checks are the ones where ngspice's own report says a rebuild fired
 *while* the answer is unchanged, which is what distinguishes a working guard

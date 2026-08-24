@@ -22,15 +22,15 @@ The decisive checks are the ones where the report says a rebuild fired WHILE the
 answer is unchanged -- proving the guard did work, rather than that the test
 never exercised it.
 
-WHY `montecarlo` IS NOT HERE. Its fast path (Enhancement-346) also leaves the
-circuit standing between samples and would gain as much. It is deliberately
-excluded, because that fast path can arm while a random `.param` still has a use
-it cannot push -- a B-source's value is substituted textually at parse time, so
-nothing short of a re-source moves it. That is already a live defect without any
-reuse: such a deck reports a 100%/0% yield, flipping between runs of the SAME
-deck and seed, where re-sourcing every sample reports the correct 45%. The
-arming check has to be fixed before there is anything safe to build on, so
-`montecarlo` is left exactly as it was -- which checks [15] and [16] assert.
+WHY `montecarlo` WAS NOT IN THIS ONE. Its fast path (Enhancement-346) also
+leaves the circuit standing between samples and gains as much, but it could arm
+while a random `.param` still had a use it could not push -- a B-source's value
+is substituted textually at parse time, so nothing short of a re-source moves
+it. That was a live defect without any reuse: such a deck reported a 100%/0%
+yield, flipping between runs of the SAME deck and seed, where re-sourcing every
+sample gives the correct ~45%. Enhancement-473 closed that hole and then gave
+`montecarlo` the reuse; checks [15] and [16] here track it, and
+examples/mcarming_examples covers it properly.
 """
 import atexit
 import os
@@ -165,12 +165,12 @@ for i, spell in enumerate(("reusesetup=0", "reusesetup=false", "reusesetup=no",
           decision(a) == (0, 0), f"{decision(a)}")
 
 # ------------------------------------------------------------- montecarlo ----
-# Deliberately untouched -- see the module docstring. These two checks are what
-# stop it being switched on by accident.
-print("\nmontecarlo is deliberately left alone")
+# Given the reuse by Enhancement-473, once its arming check stopped accepting a
+# draw it could not push. Kept here so the two commands cannot drift apart.
+print("\nmontecarlo has it too, since Enhancement-473")
 MC_BODY = ("V1 in 0 dc 1\nNcgm in out cgm\nRl out 0 1k\n"
            ".param rv=agauss(100,60,3)\n.model cgm cs_thresh rd='rv' rth=1e9\n")
-MC = "montecarlo 20 -seed 7 -analysis op -spec v(out) -min 0 -max 1"
+MC = "montecarlo 20 -seed 7 -analysis op -spec v(out) -min 0 -max 1 -warm"
 a, b = run(MC_BODY, MC, "mc1"), run(MC_BODY, MC, "mc1o", off=True)
 
 
@@ -179,8 +179,10 @@ def yields(out):
     return m.group(0) if m else None
 
 
-check("[15] montecarlo never asks for the reuse",
-      "setup reused" not in a and "fast path armed" in a, "")
+check("[15] montecarlo under -warm keeps every sample after the first",
+      "fast path armed" in a
+      and re.search(r"montecarlo: setup reused at 19 of 20 samples", a) is not None,
+      re.search(r"setup reused at [^\n]*", a).group(0) if "setup reused" in a else "no report")
 check("[16] ...and answers identically whichever way the option is set",
       yields(a) is not None and yields(a) == yields(b),
       f"{yields(a)} vs {yields(b)}")

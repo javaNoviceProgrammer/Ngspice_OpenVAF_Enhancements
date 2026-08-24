@@ -675,6 +675,27 @@ static int sw_expr_is_random(const char *e)
     return 0;
 }
 
+/* Enhancement-473: is the identifier [b,e) one of the random-draw functions,
+ * and is it actually CALLED (an open paren follows)? Used to spot a draw that
+ * sits OUTSIDE any {} braces, which the fast path cannot capture. */
+static int sw_tok_is_random_call(const char *b, const char *e, const char *after)
+{
+    static const char *const rf[] = { "agauss", "gauss", "unif", "aunif",
+                                      "limit", "mvnorm", NULL };
+    size_t n = (size_t) (e - b);
+    int i;
+
+    while (*after && isspace((unsigned char) *after))
+        after++;
+    if (*after != '(')
+        return 0;
+    for (i = 0; rf[i]; i++)
+        if (strlen(rf[i]) == n && strncasecmp(b, rf[i], n) == 0)
+            return 1;
+    return 0;
+}
+
+
 /* range form of sw_expr_is_random for un-terminated brace contents */
 static int sw_expr_is_random_range(const char *b, const char *e)
 {
@@ -998,6 +1019,21 @@ static int sw_fp_scan_valueline(const char *line, const char *name, int mod,
             const char *w = p;
             while (*p && sw_ident_ch((unsigned char) *p)) p++;
             if (sw_line_has_swept(w, p, sw, nsw))
+                return 0;
+            /* Enhancement-473: a RANDOM DRAW OUTSIDE ANY BRACES is ineligible.
+             *
+             * Only a braced expression is captured above, and numparam decides
+             * the braces: a quoted reference `rd='rv'` arrives as
+             * `rd={(agauss(...))}` and is captured, but a BARE one -- a
+             * B-source's `v=rv`, say -- arrives as `v= ( agauss(...) )` with no
+             * braces at all. That fell through this walk and the line was
+             * reported ELIGIBLE while its draw was never captured, so the fast
+             * path armed and froze the value at the first sample: a 40-sample
+             * Monte Carlo reported a yield of 100% or 0%, differing between runs
+             * of the same deck and seed, where re-sourcing every sample gives
+             * the correct 45%. Nothing short of a re-source can move it, so the
+             * honest answer is to disarm and let the reset path run. */
+            if (sw_tok_is_random_call(w, p, p))
                 return 0;
             continue;
         }
@@ -3293,28 +3329,46 @@ void com_montecarlo(wordlist *wl)
      * converged point -- and thus the yield -- is identical to the cold path. */
     if (usewarm)
         CKTsetWarmStart(1);
-    /* Enhancement-472: `montecarlo` is DELIBERATELY NOT given the setup reuse,
-     * though its fast path already leaves the circuit standing between samples
-     * and would gain as much as the optimizer does.
+    /* Enhancement-473: keep the circuit standing between samples -- but ONLY
+     * under `-warm`.
      *
-     * The fast path can arm while a random `.param` still has a use it cannot
-     * push: a B-source's value is substituted textually at parse time, so
-     * nothing short of a re-source moves it. The per-sample teardown and
-     * rebuild is what accidentally limits the damage today. Reusing the setup
-     * removes that accident and makes the frozen value depend on whatever state
-     * survives -- the same deck and the same seed returned a 100% yield on one
-     * run and 0% on the next.
+     * The fast path already leaves the deck un-re-sourced and then paid for a
+     * full teardown and rebuild anyway, once per sample, so the reuse of
+     * Enhancements 471/472 applies here as soon as arming is honest (which is
+     * the other half of this change).
      *
-     * The arming check is what has to be fixed first, and it is wrong on its
-     * own account: that deck already reports 0% where re-sourcing every sample
-     * reports the correct 45%, with no reuse involved. Until it is fixed there
-     * is nothing safe here to build on, so this loop is left as it was. */
+     * WHAT STOPS IT BEING UNCONDITIONAL is that not tearing the circuit down
+     * also leaves the previous sample's SOLUTION in place, which warm-starts
+     * the next one. Enhancement-188 made that opt-in, and deliberately: it
+     * keeps its guess in a buffer OUTSIDE the CKTcircuit precisely because a
+     * reset destroys the solution, and `DCop` asks for MODEINITJCT rather than
+     * MODEINITFLOAT when it is off. Measured on E-188's own suite, reuse cut
+     * the COLD path from 20606 to 1416 iterations per sample -- the homotopy it
+     * exists to avoid, avoided without being asked. The yields were identical,
+     * but a starting point is not nothing: on a circuit with more than one
+     * operating point it decides which one a sample finds, and Monte Carlo
+     * samples are meant to be independent.
+     *
+     * Silently turning an opt-in on is the fault Enhancements 450, 451, 454 and
+     * 466 each shipped once already. So the reuse is offered exactly where the
+     * user has already asked for state to carry between samples: under `-warm`
+     * it is pure speed on top of what was requested, and without it nothing
+     * changes at all.
+     *
+     * Otherwise on the sweep's terms: never on the first sample (nothing to
+     * keep), never on the reset path (the re-source threw the old circuit
+     * away), and never after a sample whose analysis failed. */
+    int mc_prev_failed = 0;
+    sw_reuse_report(NULL, NULL);                 /* zero the tally */
+
     for (int i = 0; i < nsamp; i++) {
         ft_optimizing = TRUE;
         if (fast_mc)
             sw_fp_apply(NULL, NULL, 0);   /* re-draw + push in place, no reset */
         else
             sw_run_cmd("reset");
+        if (i > 0 && fast_mc && usewarm && !mc_prev_failed)
+            sw_request_reuse();                  /* Enhancement-473 */
         sw_run_cmd(analysis);
         /* Enhancement-438: a sample whose analysis never solved has no metric to
          * judge. It used to fall through with pass still 1 -- ngspice leaves the
@@ -3323,7 +3377,8 @@ void com_montecarlo(wordlist *wl)
          * reported for runs where most samples never converged. Such a sample is
          * neither a pass nor a spec violation; it is missing data, so it leaves
          * the yield population entirely and is reported on its own line. */
-        if (sw_run_failed()) {
+        mc_prev_failed = sw_run_failed();        /* Enhancement-473 */
+        if (mc_prev_failed) {
             nfailed++;
             continue;
         }
@@ -3340,6 +3395,14 @@ void com_montecarlo(wordlist *wl)
     if (usewarm)
         CKTsetWarmStart(0);
     ft_optimizing = save_optimizing;
+    /* Enhancement-473: say what the reuse actually did, in the sweep's wording */
+    if (ft_ngdebug) {
+        int rk = 0, rr = 0;
+        if (sw_reuse_report(&rk, &rr))
+            fprintf(stdout, "montecarlo: setup reused at %d of %d samples, %d "
+                            "rebuilt after a node collapse moved\n",
+                    rk, nsamp, rr);
+    }
     if (fast_mc)
         sw_fp_free();                     /* Enhancement-346: drop the binds */
     if (uselhs)

@@ -52,7 +52,9 @@ unreachable, search pinned at a bound — took 8 evaluations with the reuse and 
 without, reaching the same residual to ten digits, because LM's accept/reject
 test was comparing costs that agree to 1e-12 and its damping diverged on noise.
 
-## Why `montecarlo` is not here
+## Why `montecarlo` was not here
+
+> **Enhancement-473 closed the hole below and then gave `montecarlo` the reuse.**
 
 It was built, measured at 1.29×, verified to rebuild correctly when a draw moved
 a node collapse (11 rebuilds in 20 samples, the collapse-sensitive yield
@@ -64,8 +66,10 @@ is already a live defect with no reuse involved: such a deck reports 100% or 0%,
 *differing between runs of the same deck and seed*, where re-sourcing every
 sample reports the correct 45%. The arming check has to be fixed first.
 
-Checks `[15]`/`[16]` assert `montecarlo` neither asks for the reuse nor changes
-its answer, so it cannot be switched on by accident.
+Checks `[15]`/`[16]` originally asserted `montecarlo` never asks for the reuse;
+since Enhancement-473 they assert that it does, and that the yield is unchanged,
+so the two commands cannot drift apart. `examples/mcarming_examples` covers it
+properly.
 
 `highsigma` and `wcd` re-source every sample by design, so there is never a
 setup to keep.
