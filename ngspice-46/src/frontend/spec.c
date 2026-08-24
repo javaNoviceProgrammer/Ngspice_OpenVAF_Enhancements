@@ -59,7 +59,20 @@ com_spec(wordlist *wl)
 
     wl = wl->wl_next;
     s = wl->wl_word;
-    if (ft_numparse(&s, FALSE, &stepf) < 0 || stepf > stopf - startf) {
+    /* Enhancement-478: `stepf <= 0.0` was missing, and only the UPPER bound
+     * was checked.
+     *
+     * A negative step makes `fpts = (stopf - startf)/stepf + 1` negative, and
+     * that count is handed straight to the allocator: `spec 100 10k -100 v(b)`
+     * printed "can't allocate -784 bytes", and `spec 100 10k -1e9 v(b)` took
+     * the returned NULL into the fill loop and SEGFAULTED (EXC_BAD_ACCESS at
+     * 0x0 in com_spec). Deterministic, and present in the shipped binary.
+     *
+     * Zero is refused with it: a zero step is an infinite point count, and the
+     * "time span limits step freq" branch below only catches it by arithmetic
+     * accident. The upper-bound test is kept exactly as it was. */
+    if (ft_numparse(&s, FALSE, &stepf) < 0 || !isfinite(stepf) ||
+        stepf <= 0.0 || stepf > stopf - startf) {
         fprintf(cp_err, "Error: bad step freq %s\n", wl->wl_word);
         goto done;
     }

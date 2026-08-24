@@ -190,6 +190,20 @@ static int outp_loop_active = 0;
 static int outp_loop_show = 0;          /* resolved once in outp_loop_begin */
 static int outp_loop_drawn = 0;
 static clock_t outp_loop_lastdraw = 0;
+/* Enhancement-478: how many loop commands are nested INSIDE the one that owns
+ * the line. A loop command can run another as its `-analysis`
+ * (`sweep ... -analysis "montecarlo ..."`), and this state is a single set of
+ * statics: the inner begin() overwrote the outer's label, total and index, and
+ * the inner end() cleared `outp_loop_active` for both. The outer sweep's bar
+ * then vanished for the rest of the run, and the line was left reading
+ * `montecarlo: sample 6/6 [====] 100%` while the outer sweep still had points
+ * to go -- a completed bar for work that was not finished.
+ *
+ * The OUTER loop is the one worth showing, for exactly the reason this feature
+ * does not reuse the per-analysis bar: the inner loop restarts from zero at
+ * every outer point. So a nested begin() is counted and ignored, its end()
+ * decrements, and the outer keeps the line throughout. */
+static int outp_loop_nested = 0;
 
 /* The running analysis's name, lower-cased for display ("tran", "ac", ...). */
 static const char *
@@ -370,6 +384,11 @@ outp_loop_begin(const char *label, const char *noun, int total, int mode)
 #ifndef HAS_WINGUI
     int d = 1, t = total;
 
+    if (outp_loop_active) {             /* Enhancement-478: nested -- see above */
+        outp_loop_nested++;
+        return;
+    }
+
     outp_loop_label = label ? label : "loop";
     outp_loop_noun = noun ? noun : "point";
     outp_loop_total = total;
@@ -432,6 +451,10 @@ void
 outp_loop_end(void)
 {
 #ifndef HAS_WINGUI
+    if (outp_loop_nested > 0) {         /* Enhancement-478: an inner loop ended */
+        outp_loop_nested--;
+        return;
+    }
     if (!outp_loop_active)
         return;                         /* idempotent: every abort path may call */
     if (outp_loop_show) {
@@ -449,6 +472,7 @@ outp_loop_end(void)
     outp_loop_drawn = 0;
     outp_loop_label = NULL;
     outp_loop_noun = NULL;
+    outp_loop_nested = 0;
 #endif
 }
 

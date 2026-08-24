@@ -1934,6 +1934,45 @@ static int sw_isfinitenum(const char *w, double *out)
 }
 
 
+/* Enhancement-478: read a COUNT argument.
+ *
+ * THE BUG THIS CLOSES: a count was VALIDATED with a float parser and then
+ * CONSUMED with atoi(), which stops at the first non-digit. `sw_isfinitenum`
+ * accepted `2e2` as 200 and `1e6` as 1000000; atoi then returned 2 and 1, and
+ * the float the validator had already computed was thrown away. So
+ * `sweep lin 2e2` ran 2 points, `montecarlo 2e2` drew 2 samples and reported a
+ * yield computed from them, and `sweep lin 1e6` ran ONE point while the SAME
+ * number spelled `1000000` was correctly refused as too many. `0x10` gave 1.
+ *
+ * Reading the value the validator produced fixes all of it: `2e2` is 200,
+ * `1e6` is 1000000 and meets the existing cap, and a fractional or
+ * out-of-range count is named rather than silently rewritten. */
+static int
+sw_count_arg(const char *tok, int lo, int hi, const char *cmd,
+             const char *what, int *out)
+{
+    double d;
+
+    if (!sw_isfinitenum(tok, &d)) {
+        fprintf(cp_err, "%s: %s must be a finite number (got '%s')\n",
+                cmd, what, tok);
+        return 0;
+    }
+    if (d != floor(d)) {
+        fprintf(cp_err, "%s: %s must be a whole number (got '%s')\n",
+                cmd, what, tok);
+        return 0;
+    }
+    if (d < (double) lo || d > (double) hi) {
+        fprintf(cp_err, "%s: %s must be in [%d, %d] (got '%s')\n",
+                cmd, what, lo, hi, tok);
+        return 0;
+    }
+    *out = (int) d;
+    return 1;
+}
+
+
 /* collect tokens up to the next flag, joined with single spaces.
  *
  * Each token is cp_unquote()d first. ngspice's lexer treats the two quote
@@ -1998,17 +2037,35 @@ static int sw_parse_spec(wordlist **pwl, double **pvals, int *pnv)
                     wl->wl_word);
             return 0;
         }
-        n = atoi(a->wl_word);
-        wl = c->wl_next;
-        if (n < 1) n = 1;
+        /* Enhancement-478: take the value `sw_isfinitenum` already parsed
+         * (`dn`) rather than atoi(a->wl_word), which stopped at the 'e' and
+         * turned `2e2` into 2 and `1e6` into 1 -- silently, and in the second
+         * case slipping under the cap that the same number written out in full
+         * correctly trips. And refuse a count below 1 instead of rewriting it:
+         * `lin 0` and `lin -5` became a 1-point run, and for dec/oct that
+         * silently changed the SPACING, not just the count. Every sibling
+         * refuses this -- `ac` ("number of points is invalid"), `dc`, `tran`,
+         * montecarlo, highsigma, wcd and `.for` all name it. */
+        if (dn != floor(dn)) {
+            fprintf(cp_err, "sweep: %s needs a whole number of points (got '%s')\n",
+                    wl->wl_word, a->wl_word);
+            return 0;
+        }
+        if (dn < 1.0) {
+            fprintf(cp_err, "sweep: %s needs at least 1 point (got '%s')\n",
+                    wl->wl_word, a->wl_word);
+            return 0;
+        }
         /* Enhancement-270: an absurd point count used to be silently clamped to
          * SW_MAXPTS (for lin, not even that -> a multi-GB alloc), so a huge <N>
          * or a tiny dec/oct spacing ran 100000 analyses (an apparent hang).
          * Reject it up front; a bounded <N> also keeps the dec/oct ratio > 1. */
-        if (n > SW_MAXPTS) {
-            fprintf(cp_err, "sweep: too many points (N=%d > %d)\n", n, SW_MAXPTS);
+        if (dn > (double) SW_MAXPTS) {
+            fprintf(cp_err, "sweep: too many points (N=%.0f > %d)\n", dn, SW_MAXPTS);
             return 0;
         }
+        n = (int) dn;
+        wl = c->wl_next;
         if (mode == 0) {                             /* lin: N points */
             nv = n;
             vals = TMALLOC(double, nv);
@@ -3082,10 +3139,9 @@ void com_highsigma(wordlist *wl)
         return;
     }
 
-    nsamp = atoi(wl->wl_word);
-    if (nsamp < 2 || nsamp > HS_MAXN) {
-        fprintf(cp_err, "highsigma: sample count must be in [2, %d] (got '%s')\n",
-                HS_MAXN, wl->wl_word);
+    /* Enhancement-478: atoi() read `2e2` as 2 -- 200 samples became 2, and the
+     * equivalent sigma was reported from them. */
+    if (!sw_count_arg(wl->wl_word, 2, HS_MAXN, "highsigma", "sample count", &nsamp)) {
         return;
     }
     wl = wl->wl_next;
@@ -3259,9 +3315,9 @@ void com_montecarlo(wordlist *wl)
                         "(-spec <metric> [-max <hi>] [-min <lo>])...\n");
         return;
     }
-    nsamp = atoi(wl->wl_word);
-    if (nsamp < 2) {
-        fprintf(cp_err, "montecarlo: sample count must be >= 2 (got '%s')\n", wl->wl_word);
+    /* Enhancement-478: atoi() read `2e2` as 2, so a 200-sample run drew 2 and
+     * still printed a yield. `1e6` became 1 and was caught only by luck. */
+    if (!sw_count_arg(wl->wl_word, 2, SW_MAXPTS, "montecarlo", "sample count", &nsamp)) {
         return;
     }
     wl = wl->wl_next;
@@ -3622,7 +3678,10 @@ void com_wcd(wordlist *wl)
             }
         } else if (eq(w, "-maxiter")) {
             if (!wl->wl_next) { fprintf(cp_err, "wcd: -maxiter needs a value\n"); return; }
-            wl = wl->wl_next; maxiter = atoi(wl->wl_word); wl = wl->wl_next;
+            wl = wl->wl_next;                       /* Enhancement-478 */
+            if (!sw_count_arg(wl->wl_word, 1, 1000, "wcd", "-maxiter", &maxiter))
+                return;
+            wl = wl->wl_next;
         } else if (eq(w, "-tol")) {
             if (!wl->wl_next) { fprintf(cp_err, "wcd: -tol needs a value\n"); return; }
             wl = wl->wl_next; tol = sw_num(wl->wl_word); wl = wl->wl_next;
@@ -3631,7 +3690,10 @@ void com_wcd(wordlist *wl)
             wl = wl->wl_next; step = sw_num(wl->wl_word); wl = wl->wl_next;
         } else if (eq(w, "-is")) {
             if (!wl->wl_next) { fprintf(cp_err, "wcd: -is needs a sample count\n"); return; }
-            wl = wl->wl_next; nis = atoi(wl->wl_word); wl = wl->wl_next;
+            wl = wl->wl_next;                       /* Enhancement-478 */
+            if (!sw_count_arg(wl->wl_word, 1, SW_MAXPTS, "wcd", "-is", &nis))
+                return;
+            wl = wl->wl_next;
         } else if (eq(w, "-seed")) {
             if (!wl->wl_next) { fprintf(cp_err, "wcd: -seed needs a value\n"); return; }
             wl = wl->wl_next; seed = (unsigned) strtoul(wl->wl_word, NULL, 10); wl = wl->wl_next;

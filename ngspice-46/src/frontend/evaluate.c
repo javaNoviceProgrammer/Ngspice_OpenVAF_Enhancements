@@ -758,6 +758,30 @@ e448_literal_index(struct pnode *base, struct pnode *idx)
 
     if (!base || !base->pn_value || !base->pn_value->v_name)
         return (NULL);
+
+    /* Enhancement-478: never probe this for a `@dev[param]` base.
+     *
+     * The probe builds the name `<base>[<k>]` and asks vec_get() for it. For an
+     * ordinary base that is a clean miss, which is the whole design -- nothing
+     * is called `myvec[3]`, so ordinary indexing falls through untouched. But
+     * vec_get() answers a name beginning with '@' from the DEVICE, not from the
+     * plot: `@c1[i][50]` was read as "parameter i of device c1", the trailing
+     * index discarded, and the device's LIVE value returned. So every element
+     * of a saved device-parameter waveform read back as the same number -- the
+     * value after the run -- and `@c1[i][50]` and `@c1[i][218]` were equal.
+     * A plausible number, silently, for any index.
+     *
+     * `length()`, `maximum()` and `wrdata` were unaffected: they take the
+     * vector whole and never build this name. `let z=@c1[i]` then `z[50]` also
+     * worked, because `z[50]` is not an '@' name -- which is the workaround
+     * this removes the need for.
+     *
+     * No vector is ever NAMED `@dev[param][k]`, so nothing legitimate is lost.
+     * Enhancement-441's array instance `@r[2][resistance]` is unaffected: the
+     * lexer keeps that spelling in ONE token, so it never reaches an index
+     * operator at all. */
+    if (base->pn_value->v_name[0] == '@')
+        return (NULL);
     if (!idx || !idx->pn_value || idx->pn_value->v_length < 1 ||
         !idx->pn_value->v_realdata)
         return (NULL);

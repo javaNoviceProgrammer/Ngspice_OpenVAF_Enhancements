@@ -140,6 +140,32 @@ fourier(wordlist *wl, struct plot *current_plot)
                 continue;
             }
 
+            /* Enhancement-478: say so when the fundamental is finer than the
+             * data can resolve.
+             *
+             * Only the LOW end was guarded -- a wavelength longer than the time
+             * span is refused a few lines below. There was no upper test, so
+             * `fourier 1e30 v(b)` narrowed the window to 1e-30 s, interpolated
+             * constant data across it, and printed a full report whose every
+             * normalised magnitude was `nan` and whose summary read
+             * "THD: nan %", with no diagnostic at all.
+             *
+             * This WARNS rather than refuses on purpose: Enhancement-445 fixed
+             * the overflow hole here (`1e400` -> +INF is refused) and its suite
+             * pins that a large but FINITE fundamental still runs. Refusing
+             * would break that recorded decision, so the run stands and the
+             * nan is explained instead of unexplained. */
+            if (time->v_length > 1 && fundfreq > 0.0) {
+                double *mm = ft_minmax(time, TRUE);
+                double dt_data = (mm[1] - mm[0]) / (double) (time->v_length - 1);
+                if (dt_data > 0.0 && (1.0 / fundfreq) < 2.0 * dt_data)
+                    fprintf(cp_err,
+                            "Warning: fundamental %g Hz has a period of %g s, "
+                            "below the %g s this data samples -- the harmonics "
+                            "are not measurable and may read 0 or nan\n",
+                            fundfreq, 1.0 / fundfreq, dt_data);
+            }
+
             if (polydegree) {
                 double *dp, d;
                 /* Get fourgridsize points per period */
