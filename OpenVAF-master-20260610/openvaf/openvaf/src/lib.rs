@@ -197,6 +197,26 @@ pub fn compile(opts: &Opts) -> Result<CompilationTermination> {
         return Ok(CompilationTermination::FatalDiagnostic);
     };
 
+    // A build that defines no module is not a build. It used to print "Finished
+    // building" in green, exit 0, and write a 35 KB .osdi holding nothing at
+    // all, so the mistake surfaced much later and somewhere else -- as the
+    // simulator's "Unable to find definition of model", which points at the
+    // netlist rather than at the file that failed to define anything.
+    //
+    // The most common way to arrive here is an unterminated `/*`: it swallows
+    // the rest of the file, module included, and the lexer's own
+    // "UnterminatedBlockComment" never reaches a diagnostic because comment
+    // tokens are trivia the preprocessor skips without converting. Whatever the
+    // cause, having nothing to compile is worth one line here.
+    if modules.is_empty() {
+        bail!(
+            "{} defines no module\n\
+             help: a module is what gets compiled; if the file looks like it has \
+             one, check for an unterminated /* comment or an `ifdef that excludes it",
+            opts.input.file_name().unwrap()
+        );
+    }
+
     let back = LLVMBackend::new(&opts.codegen_opts, &opts.target, opts.target_cpu.clone(), &[]);
 
     // Enhancement-453: refuse a target this binary cannot generate code for,

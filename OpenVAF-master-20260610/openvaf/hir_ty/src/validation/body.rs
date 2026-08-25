@@ -1839,6 +1839,44 @@ impl ExprValidator<'_, '_> {
                 }
             }
 
+            // LRM 9.13.2 gives every distribution in this family a shape
+            // argument that "shall be positive". Only `$rdist_uniform` above was
+            // ever checked, so the other six accepted a degenerate shape and
+            // returned a plausible finite number from a distribution that cannot
+            // exist -- `$rdist_exponential(s, -1.0)` handed back -1.735, a
+            // NEGATIVE sample from a distribution whose support is [0, inf).
+            // Nothing was reported at compile time or at run time.
+            (BuiltIn::rdist_normal | BuiltIn::dist_normal, _) if args.len() >= 3 => {
+                // The mean is unconstrained; only the spread has to be real.
+                self.require_non_negative("$rdist_normal", "the standard deviation", args[2]);
+            }
+            (BuiltIn::rdist_exponential | BuiltIn::dist_exponential, _) if args.len() >= 2 => {
+                self.require_positive("$rdist_exponential", "the mean", args[1]);
+            }
+            (BuiltIn::rdist_poisson | BuiltIn::dist_poisson, _) if args.len() >= 2 => {
+                self.require_positive("$rdist_poisson", "the mean", args[1]);
+            }
+            (BuiltIn::rdist_chi_square | BuiltIn::dist_chi_square, _) if args.len() >= 2 => {
+                self.require_positive("$rdist_chi_square", "the degrees of freedom", args[1]);
+            }
+            (BuiltIn::rdist_t | BuiltIn::dist_t, _) if args.len() >= 2 => {
+                self.require_positive("$rdist_t", "the degrees of freedom", args[1]);
+            }
+            (BuiltIn::rdist_erlang | BuiltIn::dist_erlang, _) if args.len() >= 3 => {
+                self.require_positive("$rdist_erlang", "the k stage", args[1]);
+                self.require_positive("$rdist_erlang", "the mean", args[2]);
+            }
+
+            // `$vt(T)` is kT/q at the ABSOLUTE temperature T, so T must be above
+            // absolute zero. `$vt(-300)` returned a negative thermal voltage --
+            // every current built on it came out sign-flipped -- and `$vt(0)` put
+            // a NaN straight into the solution, which the simulator then printed
+            // as a converged answer. The sibling constraint was already enforced
+            // for a `nature`'s `abstol`.
+            (BuiltIn::vt, _) if args.len() >= 1 => {
+                self.require_positive("$vt", "the absolute temperature", args[0]);
+            }
+
             (BuiltIn::white_noise, _) => {
                 self.require_non_negative("white_noise", "the noise power", args[0]);
             }
@@ -1857,7 +1895,14 @@ impl ExprValidator<'_, '_> {
                 // and is not. A negative power is not a noise power at all: it
                 // reached the runtime and produced the same spectrum as its
                 // positive twin, so the sign was quietly discarded.
-                let name = "noise_table";
+                // `noise_table_log` shares this arm, and the name was hardcoded, so
+                // a `noise_table_log` call was reported as "noise_table:" -- pointing
+                // the author at a function their source does not mention.
+                let name = if call == BuiltIn::noise_table_log {
+                    "noise_table_log"
+                } else {
+                    "noise_table"
+                };
                 // Enhancement-399: a concatenation here skipped every check below
                 // and produced a device that contributed no noise at all.
                 self.require_array_arg(name, "the table", args[0]);
@@ -2166,6 +2211,31 @@ impl ExprValidator<'_, '_> {
             | (BuiltIn::ddt, Some(DDT_TOL))
             | (BuiltIn::idt | BuiltIn::idtmod, Some(IDT_IC_ASSERT_TOL)) => {
                 if let [other_args @ .., const_expr] = args {
+                    // For `ddt`/`idt` this trailing argument is an ABSOLUTE
+                    // TOLERANCE, and a tolerance is a magnitude: a negative one
+                    // is meaningless. The same quantity is already refused when
+                    // it is written as a `nature`'s `abstol` ("not a usable
+                    // absolute tolerance"), but supplied inline here it was
+                    // accepted without a word. `absdelay` and `transition` are
+                    // deliberately excluded -- their trailing constants are the
+                    // maximum delay and the time tolerance, both already checked
+                    // above, and repeating it here would report them twice.
+                    //
+                    // A `nature` identifier is the other legal spelling of this
+                    // argument; it does not fold to a number, so it passes
+                    // through untouched.
+                    match call {
+                        BuiltIn::ddt => {
+                            self.require_positive("ddt", "the absolute tolerance", *const_expr)
+                        }
+                        BuiltIn::idt => {
+                            self.require_positive("idt", "the absolute tolerance", *const_expr)
+                        }
+                        BuiltIn::idtmod => {
+                            self.require_positive("idtmod", "the absolute tolerance", *const_expr)
+                        }
+                        _ => {}
+                    }
                     // Do not type check const expr twice
                     args = other_args;
                     self.validate_const_expr(*const_expr);
@@ -2260,28 +2330,7 @@ impl ExprValidator<'_, '_> {
     /// time for a default that will never be used would be wrong -- the same
     /// reasoning that keeps a parameter's default out of its own range check.
     fn const_num(&self, expr: ExprId) -> Option<f64> {
-        match self.parent.body.exprs[expr] {
-            Expr::Literal(Literal::Float(v)) => Some(f64::from(v)),
-            Expr::Literal(Literal::Int(v)) => Some(v as f64),
-            Expr::UnaryOp { expr: inner, op: UnaryOp::Neg } => {
-                self.const_num(inner).map(|v| -v)
-            }
-            Expr::UnaryOp { expr: inner, op: UnaryOp::Identity } => self.const_num(inner),
-            Expr::BinaryOp { lhs, rhs, op: Some(op) } => {
-                let (l, r) = (self.const_num(lhs)?, self.const_num(rhs)?);
-                match op {
-                    BinaryOp::Addition => Some(l + r),
-                    BinaryOp::Subtraction => Some(l - r),
-                    BinaryOp::Multiplication => Some(l * r),
-                    // A zero divisor is left to the division checks, which
-                    // report it themselves; folding it here would hand the
-                    // caller an inf and produce a second, confusing complaint.
-                    BinaryOp::Division if r != 0.0 => Some(l / r),
-                    _ => None,
-                }
-            }
-            _ => None,
-        }
+        const_num_in(self.parent.db, self.parent.body, self.parent.infer, expr, 0)
     }
 
     /// Is this expression a bare reference to an array PARAMETER or array VARIABLE
@@ -2498,6 +2547,57 @@ impl ExprValidator<'_, '_> {
             builtin,
             BuiltIn::laplace_nd | BuiltIn::laplace_np | BuiltIn::laplace_zd | BuiltIn::laplace_zp
         );
+        // A denominator whose HIGHEST-order coefficient is zero. `'{1.0, 0.0}` is
+        // the polynomial 1 + 0*s -- mathematically identical to `'{1.0}` -- but
+        // the order above is taken from the LIST LENGTH, so this reads as order 1
+        // and the controllable-canonical realization divides through by that
+        // leading zero. The result was a filter with no output at all: `'{1.0}`
+        // gave a gain of 1 and `'{1.0, 0.0}` gave 0, over the whole frequency
+        // sweep, after a burst of "singular matrix: check node
+        // n1#implicit_equation_0" that names an internal node rather than the
+        // call. Padding a coefficient vector to a fixed length is an ordinary
+        // thing to write when the top term is switched off.
+        //
+        // The z-domain twins are deliberately excluded: `lower_zi` pads both
+        // polynomials to `max(num, den)` before the bilinear transform and
+        // handles a trailing zero correctly -- `zi_nd`, `zi_zd` and `zi_np` all
+        // return the right gain for exactly this input.
+        //
+        // Roots are excluded for the same reason as the all-zero check above: a
+        // zero ROOT is a pole at the origin, which is a legitimate integrator.
+        if s_domain && !den_is_roots {
+            if let Expr::Array(ref elems) = self.parent.body.exprs[den] {
+                let elems = elems.clone();
+                // `> 1` leaves the identically-zero single `'{0}` to the check
+                // above, which explains that case better.
+                if elems.len() > 1 {
+                    if let Some(&last) = elems.last() {
+                        if self.const_num(last) == Some(0.0)
+                            && !elems.iter().all(|&e| self.const_num(e) == Some(0.0))
+                        {
+                            self.bad_arg(
+                                name,
+                                "the denominator",
+                                format!(
+                                    "has a highest-order coefficient of zero, so its \
+                                     effective order is {} rather than the {} its length \
+                                     implies; the realization divides by that coefficient \
+                                     and the filter produces no output at all -- drop the \
+                                     trailing zero",
+                                    elems
+                                        .iter()
+                                        .rposition(|&e| self.const_num(e) != Some(0.0))
+                                        .unwrap_or(0),
+                                    elems.len() - 1
+                                ),
+                                den,
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
         // an empty numerator is H = 0 and has no order to compare
         if let (Some(n @ 1..), Some(d), true) = (num_len, den_len, s_domain) {
             let (no, do_) = (order(n, num_is_roots), order(d, den_is_roots));
@@ -2706,4 +2806,86 @@ fn table_ctrl_problem(ctrl: &str) -> Option<String> {
 
 fn hir_lower_max_runtime_table() -> usize {
     256
+}
+
+/// Fold `expr` to a number if its value is fixed at compile time.
+///
+/// Every value guard in this file asks this question, and until now the answer
+/// was "only if it is spelled as a literal". A `localparam` is a compile-time
+/// constant that the LRM forbids from being overridden, so the compiler knows
+/// its value exactly -- yet naming one bypassed every check. The same bad
+/// value, six ways:
+///
+/// ```verilog
+/// white_noise(-1e-12)                          // rejected
+/// white_noise(-1e-12*1.0)                      // rejected -- folding IS applied
+/// localparam real q = -1e-12; white_noise(q)   // accepted, silently
+/// ```
+///
+/// That gap is not academic: models name their constants. It reached
+/// `$bound_step`, `@(timer)`, `@(cross)`, `transition`, `absdelay`, `zi_nd`,
+/// `last_crossing`, `white_noise`, `flicker_noise` and the parameter-range
+/// emptiness check -- eleven guard sites, one cause.
+///
+/// A `parameter` is deliberately NOT folded. Its declared value is a DEFAULT
+/// that the model card may override, so it is not what the model will run with,
+/// and refusing a module because of its default would police a value no
+/// simulation need ever use. That is the same rule under which a parameter's
+/// default is not checked against its own `from`/`exclude` range.
+fn const_num_in(
+    db: &dyn HirTyDB,
+    body: &Body,
+    infer: &InferenceResult,
+    expr: ExprId,
+    depth: u32,
+) -> Option<f64> {
+    // A localparam may be defined in terms of another; the chain is finite
+    // (cycles are rejected before this runs) but bound the recursion anyway so
+    // a malformed tree cannot blow the stack while diagnostics are being built.
+    if depth > 32 {
+        return None;
+    }
+    match body.exprs[expr] {
+        Expr::Literal(Literal::Float(v)) => Some(f64::from(v)),
+        Expr::Literal(Literal::Int(v)) => Some(v as f64),
+        Expr::UnaryOp { expr: inner, op: UnaryOp::Neg } => {
+            const_num_in(db, body, infer, inner, depth).map(|v| -v)
+        }
+        Expr::UnaryOp { expr: inner, op: UnaryOp::Identity } => {
+            const_num_in(db, body, infer, inner, depth)
+        }
+        Expr::BinaryOp { lhs, rhs, op: Some(op) } => {
+            let l = const_num_in(db, body, infer, lhs, depth)?;
+            let r = const_num_in(db, body, infer, rhs, depth)?;
+            match op {
+                BinaryOp::Addition => Some(l + r),
+                BinaryOp::Subtraction => Some(l - r),
+                BinaryOp::Multiplication => Some(l * r),
+                // A zero divisor is left to the division checks, which
+                // report it themselves; folding it here would hand the
+                // caller an inf and produce a second, confusing complaint.
+                BinaryOp::Division if r != 0.0 => Some(l / r),
+                _ => None,
+            }
+        }
+        Expr::Path { port: false, .. } => match infer.expr_types[expr] {
+            Ty::Param(_, param) => const_param_value(db, param, depth + 1),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// The compile-time value of a `localparam`, or `None` for anything the
+/// compiler cannot pin down (an overridable `parameter` included -- see
+/// [`const_num_in`]).
+fn const_param_value(db: &dyn HirTyDB, param: ParamId, depth: u32) -> Option<f64> {
+    if depth > 32 || !db.param_data(param).is_local {
+        return None;
+    }
+    let owner = DefWithBodyId::ParamId(param);
+    let body = db.body(owner);
+    let infer = db.inference_result(owner);
+    let default = db.param_exprs(param).default;
+    const_num_in(db, &body, &infer, default, depth)
 }

@@ -322,7 +322,17 @@ impl<'a, FP: Arithmetic, M: Fn(Value, &Function) -> Value> SimplifyCtx<'a, FP, M
             return Some(val);
         }
 
-        if rhs == A::ZERO {
+        // `x + 0 -> x` is exact for integers, and for floats it is exact for
+        // every value EXCEPT negative zero: (-0.0) + 0.0 is +0.0, not -0.0. That
+        // one case is not academic here -- it is the only arithmetic that
+        // normalises a negative zero, and `abs()` needs it, because `x < 0 ? -x
+        // : x` lets -0.0 through unchanged. With this fold unconditional,
+        // `abs(-0.0)` returned -0.0 and `1.0/abs(-0.0)` gave -inf, while the
+        // compiler's own constant folding of the SAME expression gave +inf.
+        // Unlike `x * 0` (Enhancement-337), adding a literal zero is not an
+        // idiom compact models rely on, so gating this costs a stray `fadd` in
+        // rare code rather than changing any model's answer.
+        if rhs == A::ZERO && A::EXACT_ALGEBRA {
             return Some(lhs);
         }
 

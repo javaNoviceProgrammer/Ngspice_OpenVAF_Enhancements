@@ -14,7 +14,7 @@ use hir::signatures::{
     TRANSITION_DELAY, TRANSITION_DELAY_RISET, TRANSITION_DELAY_RISET_FALLT,
     TRANSITION_DELAY_RISET_FALLT_TOL, TRANSITION_NO_ARGS,
 };
-use hir::{Body, BuiltIn, Expr, ExprId, Literal, /*ParamSysFun,*/ Ref, ResolvedFun, Type};
+use hir::{Body, BodyRef, BuiltIn, CompilationDB, Expr, ExprId, Literal, /*ParamSysFun,*/ Ref, ResolvedFun, Type};
 use mir::builder::InstBuilder;
 use mir::{InstructionData, Opcode, Value, FALSE, F_ONE, F_ZERO, GRAVESTONE, INFINITY, TRUE, ZERO};
 use stdx::iter::zip;
@@ -598,21 +598,25 @@ impl BodyLoweringCtx<'_, '_, '_> {
     /// with a leading unary `+`/`-`). Used to read the `noise_table` inline
     /// data array, whose elements must all be constants per the LRM.
     fn eval_const_real(&self, expr: ExprId) -> Option<f64> {
-        if let Some(lit) = self.body.as_literal(expr) {
-            return match lit {
-                Literal::Float(f) => Some((*f).into()),
-                Literal::Int(i) => Some(*i as f64),
-                _ => None,
-            };
-        }
-        match self.body.get_expr(expr) {
-            Expr::UnaryOp { expr: inner, op } => match op {
-                UnaryOp::Neg => Some(-self.eval_const_real(inner)?),
-                UnaryOp::Identity => self.eval_const_real(inner),
-                _ => None,
-            },
-            _ => None,
-        }
+        self.eval_const_real_at(expr, 0)
+    }
+
+    /// Fold `expr` to a number if its value is fixed when the model is compiled.
+    ///
+    /// The tables built from this (`noise_table`, the inline `$table_model`) are
+    /// materialised at COMPILE time, and the caller turns a `None` into `0.0`.
+    /// Only literals and unary minus were folded here, so every other spelling
+    /// of a constant silently became a zero ENTRY in the table: the same table,
+    /// with one value written as `20.0` and as a `localparam` holding 20.0, gave
+    /// `$table_model` 15 and 5 -- a plausible, smooth, wrong curve -- and cost
+    /// `noise_table` its noise entirely. A constant-folded expression such as
+    /// `1e-12*1.0` was dropped the same way.
+    ///
+    /// A `parameter` is deliberately not folded: it is overridable, so its value
+    /// is not known here. Validation refuses such an entry outright rather than
+    /// letting it reach the `unwrap_or(0.0)`.
+    fn eval_const_real_at(&self, expr: ExprId, depth: u32) -> Option<f64> {
+        const_real_in_body(self.ctx.db, self.body, expr, depth)
     }
 
     /// Read a whitespace-separated two-column `<freq> <power>` noise table
@@ -1598,9 +1602,9 @@ impl BodyLoweringCtx<'_, '_, '_> {
         let signature = self.body.get_call_signature(expr);
         match builtin {
             BuiltIn::abs => {
-                let (negate, comparison, zero) = match_signature!(signature:
-                    ABS_REAL => (Opcode::Fneg, Opcode::Flt,  F_ZERO),
-                    ABS_INT => (Opcode::Ineg, Opcode::Ilt, ZERO)
+                let (negate, comparison, zero, is_real) = match_signature!(signature:
+                    ABS_REAL => (Opcode::Fneg, Opcode::Flt,  F_ZERO, true),
+                    ABS_INT => (Opcode::Ineg, Opcode::Ilt, ZERO, false)
                 );
                 let val = self.lower_expr(args[0]);
                 let (inst, dfg) = self.ctx.ins().binary(comparison, val, zero);
@@ -1612,7 +1616,23 @@ impl BodyLoweringCtx<'_, '_, '_> {
                         let (inst, dfg) = sel.ctx.ins().unary(negate, val);
                         dfg.first_result(inst)
                     },
-                    |_| val,
+                    // `x < 0 ? -x : x` is |x| for every real EXCEPT negative
+                    // zero: `-0.0 < 0.0` is false, so -0.0 fell through the
+                    // else branch unchanged and `abs(-0.0)` came out NEGATIVE.
+                    // That is observable -- `1.0/abs(-0.0)` gave -inf where the
+                    // compiler's own constant folding gave +inf for the same
+                    // expression, so the two disagreed on the sign of infinity.
+                    // Adding +0.0 normalises it: (-0.0) + 0.0 is +0.0 under
+                    // round-to-nearest, and `x + 0.0` is x for every other
+                    // value, NaN and the infinities included. (LLVM cannot fold
+                    // this add away for exactly the reason it is here.)
+                    |sel| {
+                        if is_real {
+                            sel.ctx.ins().fadd(val, F_ZERO)
+                        } else {
+                            val
+                        }
+                    },
                 )
             }
             BuiltIn::acos => {
@@ -3539,4 +3559,58 @@ fn batcher_network(n: usize) -> Vec<(usize, usize)> {
         p *= 2;
     }
     pairs
+}
+
+/// Fold `expr` to a number if its value is fixed when the model is compiled,
+/// following `localparam` references into their own bodies.
+///
+/// See `BodyLoweringCtx::eval_const_real_at` for why this matters: the callers
+/// build compile-time tables and turn `None` into `0.0`, so anything this
+/// cannot fold becomes a silent zero entry.
+fn const_real_in_body(
+    db: &CompilationDB,
+    body: BodyRef<'_>,
+    expr: ExprId,
+    depth: u32,
+) -> Option<f64> {
+    if depth > 32 {
+        return None;
+    }
+    if let Some(lit) = body.as_literal(expr) {
+        return match lit {
+            Literal::Float(f) => Some((*f).into()),
+            Literal::Int(i) => Some(*i as f64),
+            _ => None,
+        };
+    }
+    match body.get_expr(expr) {
+        Expr::UnaryOp { expr: inner, op } => match op {
+            UnaryOp::Neg => Some(-const_real_in_body(db, body, inner, depth)?),
+            UnaryOp::Identity => const_real_in_body(db, body, inner, depth),
+            _ => None,
+        },
+        Expr::BinaryOp { lhs, rhs, op } => {
+            let l = const_real_in_body(db, body, lhs, depth)?;
+            let r = const_real_in_body(db, body, rhs, depth)?;
+            match op {
+                BinaryOp::Addition => Some(l + r),
+                BinaryOp::Subtraction => Some(l - r),
+                BinaryOp::Multiplication => Some(l * r),
+                BinaryOp::Division if r != 0.0 => Some(l / r),
+                _ => None,
+            }
+        }
+        // A `localparam` is fixed at compile time and never externally
+        // overridable, so its default IS its value. A `parameter` is not folded:
+        // the model card may replace it.
+        Expr::Read(Ref::Parameter(param)) => {
+            if !param.is_local(db) {
+                return None;
+            }
+            let init = param.init(db);
+            let default = param.default(db);
+            const_real_in_body(db, init.borrow(), default, depth + 1)
+        }
+        _ => None,
+    }
 }
