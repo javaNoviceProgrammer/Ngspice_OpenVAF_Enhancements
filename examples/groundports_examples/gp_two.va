@@ -1,0 +1,21 @@
+`include "disciplines.vams"
+// TWO optional terminals, to pin that the option grounds EVERY terminal the line
+// left out and not merely the last one. The warning counts them together
+// ("2 of the 4 terminals ... are not connected"), so a fix that handled only one
+// would still silence the message and still leave a floating node behind.
+module gp_two(p, n, t, b);
+    inout p, n, t, b;
+    electrical p, n, b;
+    thermal t;
+    parameter real r = 1k;
+    parameter real rb = 10k;
+    (* desc="1 when the thermal terminal reached the model as connected" *) real pct;
+    (* desc="1 when the bulk terminal reached the model as connected" *) real pcb;
+    analog begin
+        pct = $port_connected(t);
+        pcb = $port_connected(b);
+        I(p, n) <+ V(p, n) / r;
+        I(p, b) <+ V(p, b) / rb;
+        Pwr(t)  <+ Temp(t) / 100.0 - V(p, n) * V(p, n) / r;
+    end
+endmodule

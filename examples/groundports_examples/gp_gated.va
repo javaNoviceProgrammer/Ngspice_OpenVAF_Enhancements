@@ -1,0 +1,30 @@
+`include "disciplines.vams"
+// The same device with the thermal branch GATED on $port_connected -- the shape
+// ten of the twelve corpus models that declare an optional pin actually use
+// (BSIM6, BSIM-BULK, BSIM-SOI, asmhemt, mvsg_cmc, PSP-HV ...).
+//
+// With `t` absent nothing is contributed to it at all, so the private node
+// ngspice makes for it floats and the operating point dies on
+// `singular matrix: check node n1#t`. That is Enhancement-402's decided
+// territory, and its answer has always been to write `0` for the pin.
+//
+// `.option silentports` writes that `0`. This model is the suite's proof that
+// the option repairs the circuit rather than merely hiding the warning about it:
+// grounded, $port_connected(t) reads 1, the thermal branch IS built, and the
+// deck that could not reach an operating point now reaches the same one as a
+// netlist that spelled the pin out by hand.
+module gp_gated(p, n, t);
+    inout p, n, t;
+    electrical p, n;
+    thermal t;
+    parameter real r = 1k;
+    parameter real rth0 = 1e4;
+    parameter real tc = 0.01;
+    (* desc="1 when the terminal reached the model as connected" *) real pc;
+    analog begin
+        pc = $port_connected(t);
+        I(p, n) <+ V(p, n) / (r * (1.0 + tc * Temp(t)));
+        if ($port_connected(t))
+            Pwr(t) <+ Temp(t) / rth0 - V(p, n) * V(p, n) / r;
+    end
+endmodule

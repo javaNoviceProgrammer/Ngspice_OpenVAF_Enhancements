@@ -1,0 +1,33 @@
+`include "disciplines.vams"
+// A resistor with an OPTIONAL thermal port, wired so the model stays WELL POSED
+// when `t` is absent: the thermal network is contributed unconditionally, so the
+// private node ngspice makes for a missing terminal still has a conductance to
+// ground and the operating point converges either way.
+//
+// That is what makes this model the ORACLE for what `.option silentports` does.
+// It converges in both configurations, so the two can be compared directly:
+//
+//   default            `t` dangles on its own node -> $port_connected(t) = 0,
+//                      the device heats that node, Temp(t) settles at rth0*P;
+//   .option silentports `t` is bound to ground     -> $port_connected(t) = 1,
+//                      Temp(t) is pinned at 0 and the device cannot self-heat.
+//
+// `r` is deliberately temperature dependent so the difference is visible in the
+// terminal current and not only in the thermal node. See gp_gated.va for the
+// shape that does not converge at all until the option grounds the pin.
+module gp_rth(p, n, t);
+    inout p, n, t;
+    electrical p, n;
+    thermal t;
+    parameter real r = 1k;
+    parameter real rth0 = 1e4;
+    parameter real tc = 0.01;
+    (* desc="1 when the terminal reached the model as connected" *) real pc;
+    (* desc="temperature rise on the thermal node" *) real trise;
+    analog begin
+        pc    = $port_connected(t);
+        trise = Temp(t);
+        I(p, n) <+ V(p, n) / (r * (1.0 + tc * Temp(t)));
+        Pwr(t)  <+ Temp(t) / rth0 - V(p, n) * V(p, n) / r;
+    end
+endmodule

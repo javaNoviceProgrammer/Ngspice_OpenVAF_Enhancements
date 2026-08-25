@@ -40,6 +40,12 @@ A front end that generates netlists but cannot edit them can ship
 
 ## What it deliberately does NOT do
 
+> **Superseded in part by [Enhancement-482](Enhancement-482.md).** Everything below
+> still describes `.option silentports` exactly — the bare card is unchanged, and
+> this suite still scores 24/24. E-482 adds `.option silentports=ground`, which
+> *does* repair the circuit described here by binding the omitted terminals to
+> node 0, and leaves the bare card alone.
+
 **It silences a warning. It does not make an ill-posed circuit well posed.**
 
 Measured on `misc/bsimbulk_thermal_repro`, the reproducer E-402 was decided on:

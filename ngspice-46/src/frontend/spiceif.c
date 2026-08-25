@@ -580,7 +580,11 @@ if_option(CKTcircuit *ckt, char *name, enum cp_types type, void *value)
         /* Enhancement-444: consumed by INP2N via cp_getvar, likewise. */
         return 0;
     } else if (eq(name, "silentports")) {
-        /* Enhancement-481: consumed by INP2N's silentports_enabled(), likewise.
+        /* Enhancement-481: consumed by INP2N's silentports_mode(), likewise.
+           Three-valued -- the bare card (and `=dangle`/`=quiet`) only silences
+           the report, while `=ground` also binds the omitted terminals -- but
+           the VALUE is decided there, not here; this dispatch answers only what
+           TYPE the name publishes.
            Registered in BOTH places -- the name list above and this dispatch --
            because a name known to only one of them either warns on a setting the
            run honours (E-445's note) or is honoured while being reported as

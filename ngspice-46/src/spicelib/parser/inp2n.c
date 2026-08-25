@@ -61,35 +61,94 @@ Modified: 2001 Paolo Nenzi (Cider Integration)
  * `e454_value_is_off` in frontend/inp.c. The two readers are unavoidably
  * separate -- this one runs after the variable is published, that one before --
  * so they are kept to the same word list by hand; change both together. */
-/* Enhancement-481: `.option silentports` -- restore the pre-E-402 silence about
- * an absent terminal.
+/* Enhancement-481: `.option silentports` -- what to do with a terminal the
+ * instance line left out. THREE states, because silencing the report and
+ * repairing the circuit are genuinely different requests:
  *
- * E-402 made an omitted terminal audible, and that is the right default: it is
- * how a TYPO looks, and an omitted terminal DANGLES rather than grounding, so
- * the natural assumption is the wrong one. But a schematic front end can emit
- * the short form for every instance of a model with an optional thermal port,
- * and then the warning is five lines per device about a choice the user did not
- * make and cannot change from the schematic. KiCad's exporter is the case that
- * prompted this.
+ *   (unset)                 warn, and leave the terminal dangling. The default,
+ *                           and E-402's decision: an omitted terminal looks
+ *                           exactly like a typo, so it gets said out loud.
+ *   silentports  (bare)     no warning; the terminal STILL DANGLES. What the
+ *   silentports=dangle      option's own name promises, and nothing more, so a
+ *   silentports=quiet       deck that reads `$port_connected` on purpose -- the
+ *                           LRM optional-terminal idiom -- keeps working exactly
+ *                           as it did, just without the message. `dangle` and
+ *                           `quiet` are synonyms; `1`, `true`, `yes` and `on`
+ *                           mean the bare card, so they land here too.
+ *   silentports=ground      no warning, and the terminal is BOUND TO GROUND.
+ *                           Asked for explicitly, because it CHANGES THE CIRCUIT.
  *
- * Opt-IN silence, never the default: a deck that does not ask keeps the warning.
- * The spelling test is `autobus_enabled`'s, because a plain `cp_getvar(..,
- * CP_BOOL, ..)` treats `silentports=0`, `=false`, `=no` and `=off` as the
- * variable being PRESENT and therefore true -- the defect Enhancements 450,
- * 451, 454, 466 and 467 each shipped once. */
-static bool silentports_enabled(void)
+ * Why grounding has to be asked for by name: an omitted terminal is not grounded
+ * by ngspice -- it gets a private node `<inst>#<term>` (`osdi/osdisetup.c` builds
+ * one for every terminal past the last connected one), and that is upstream
+ * behaviour, not E-402's. For the ten corpus models that pin an optional pin with
+ * a POTENTIAL contribution (`Temp(t) <+ 0.0`: BSIM6, BSIM-BULK, BSIM-SOI, asmhemt,
+ * mvsg_cmc, PSP-HV ...) that private node has nothing driving it, so the operating
+ * point dies on `singular matrix: check node <inst>#t` -- diagnosed and accepted
+ * under E-402, whose user-facing answer has always been "write `0` for it".
+ * `=ground` writes the `0`, so a schematic front end that hides a thermal pin --
+ * KiCad's exporter is the case that prompted this -- simulates instead of
+ * aborting. But it makes the model read `$port_connected() == 1` and build the
+ * branches it would otherwise skip, with the node held at 0, so it is a different
+ * circuit from the one the netlist describes. A word the user typed is the right
+ * gate for that; the bare card is not.
+ *
+ * The value test is `autobus_enabled`'s, because a plain `cp_getvar(.., CP_BOOL,
+ * ..)` treats `silentports=0`, `=false`, `=no` and `=off` as the variable being
+ * PRESENT and therefore true -- the defect Enhancements 450, 451, 454, 466 and
+ * 467 each shipped once. E-454's other half applies too: the SPELLING decides the
+ * published type, so the bare form arrives as a CP_BOOL, `=1`/`=0` as a CP_REAL
+ * and every word form as a CP_STRING, and all three have to be asked.
+ *
+ * ASK FOR THE STRING FIRST. Since Enhancement-467 gave `cp_getvar` a CP_BOOL
+ * COERCION, a CP_BOOL query answers TRUE for any value that is not one of the
+ * off-words -- which is right for a two-state option and fatal for a three-state
+ * one: it would swallow `ground` and every misspelling and report them all as
+ * plain "on". The word has to be read before anything coerces it. CP_REAL next
+ * for `=1`/`=0`, and CP_BOOL last, where it means only what it is now asked: the
+ * bare card, with no value at all.
+ *
+ * An unrecognised word is REPORTED and then ignored, leaving the default in
+ * place, which follows ngspice's own handling of a bad enumerated option value
+ * (`.options method=banana` -> "unsupported integration method", run continues).
+ * Falling back to the default rather than to any ON state is the safe direction:
+ * a typo must not be what silently drops a diagnostic or changes a circuit.
+ * Reported once per distinct bad word, since this runs per instance line and a
+ * hundred devices should not produce a hundred copies. */
+typedef enum {
+    SP_OFF = 0,   /* warn; terminal dangles */
+    SP_QUIET,     /* silent; terminal dangles -- the bare card */
+    SP_GROUND     /* silent; terminal bound to node 0 -- `=ground` only */
+} SPmode;
+
+static SPmode silentports_mode(void)
 {
+    static char badval[64] = "";
     double d;
     char s[64];
 
-    if (cp_getvar("silentports", CP_BOOL, NULL, 0))
-        return TRUE;
+    if (cp_getvar("silentports", CP_STRING, s, sizeof(s))) {
+        if (cieq(s, "0") || cieq(s, "false") || cieq(s, "no") || cieq(s, "off"))
+            return SP_OFF;
+        if (cieq(s, "ground"))
+            return SP_GROUND;
+        if (cieq(s, "dangle") || cieq(s, "quiet") || cieq(s, "1") ||
+            cieq(s, "true") || cieq(s, "yes") || cieq(s, "on"))
+            return SP_QUIET;
+        if (strcmp(s, badval) != 0) {           /* once per distinct bad word */
+            strncpy(badval, s, sizeof(badval) - 1);
+            badval[sizeof(badval) - 1] = '\0';
+            fprintf(stderr,
+                    "\nWarning: unsupported value '%s' for option silentports; "
+                    "expected 'dangle' (or 'quiet') or 'ground'. Ignored.\n\n", s);
+        }
+        return SP_OFF;
+    }
     if (cp_getvar("silentports", CP_REAL, &d, 0))
-        return d != 0.0;
-    if (cp_getvar("silentports", CP_STRING, s, sizeof(s)))
-        return !(cieq(s, "0") || cieq(s, "false") ||
-                 cieq(s, "no") || cieq(s, "off"));
-    return FALSE;
+        return (d != 0.0) ? SP_QUIET : SP_OFF;  /* `=1` / `=0` */
+    if (cp_getvar("silentports", CP_BOOL, NULL, 0))
+        return SP_QUIET;                        /* bare `.option silentports` */
+    return SP_OFF;
 }
 
 static bool autobus_enabled(void)
@@ -265,6 +324,7 @@ void INP2N(CKTcircuit *ckt, INPtables *tab, struct card *current) {
   char        *name;      /* Device instance name. */
   int          error;     /* Temporary error code. */
   int          numnodes;  /* Flag indicating 4 or 5 (or 6 or 7) nodes. */
+  SPmode       sp_mode;   /* Enhancement-481: `.option silentports` */
   GENinstance *fast;      /* Pointer to the actual instance. */
   int          waslead;   /* Funny unlabeled number was found. */
   double       leadval;   /* Value of unlabeled number. */
@@ -402,7 +462,12 @@ void INP2N(CKTcircuit *ckt, INPtables *tab, struct card *current) {
     }
   }
 
-  if (numnodes < *dev->terms && !silentports_enabled()) {
+  /* Enhancement-481: one lookup decides BOTH the message and the binding below.
+   * Reading the variable twice would let a `.control` block that changes it
+   * mid-parse warn about a terminal it then grounds, or the reverse. */
+  sp_mode = silentports_mode();
+
+  if (numnodes < *dev->terms && sp_mode == SP_OFF) {
     int missing;
     fprintf(stderr,
             "\nWarning: instance %s: %d of the %d terminals of model type '%s' "
@@ -430,6 +495,17 @@ void INP2N(CKTcircuit *ckt, INPtables *tab, struct card *current) {
   for (i = 0; i < *dev->terms; i++) {
       if (i < numnodes) {
           token = gettok_instance(&line);
+          INPtermInsert(ckt, &token, tab, &node); // Consumes token
+          IFC(bindNode, (ckt, fast, i + 1, node));
+      } else if (sp_mode == SP_GROUND) {
+          /* Enhancement-481: `.option silentports` -- bind what the line left
+           * out to node 0. `copy` because INPtermInsert consumes the token:
+           * it either takes ownership or frees it against the existing entry,
+           * and "0" always resolves to the ground node. Binding here rather
+           * than leaving -1 is what makes osdisetup.c count the terminal as
+           * connected, so `$port_connected()` reports 1 and no `<inst>#<term>`
+           * node is created. */
+          token = copy("0");
           INPtermInsert(ckt, &token, tab, &node); // Consumes token
           IFC(bindNode, (ckt, fast, i + 1, node));
       } else {
