@@ -1701,6 +1701,16 @@ static const struct {
                             "generate energy)" },
     { "ron",  PHYS_NONNEG,  "a switch's closed resistance cannot be negative" },
     { "roff", PHYS_NONNEG,  "a switch's open resistance cannot be negative" },
+    /* Enhancement-480: `vh` sat beside `ron`/`roff` in the same switch model and
+     * was the only one of the three not checked. Hysteresis is a half-width
+     * about the threshold, so a negative one moves the switching point the
+     * WRONG WAY -- with vt=0.5 the switch closed at 0.4 instead of 0.6 -- and a
+     * value wider than the control range silently leaves the switch open for
+     * every input it will ever see. */
+    { "vh",   PHYS_NONNEG,  "a switch's hysteresis is a half-width about the "
+                            "threshold and cannot be negative" },
+    { "ih",   PHYS_NONNEG,  "a current switch's hysteresis is a half-width "
+                            "about the threshold and cannot be negative" },
     { "l",    PHYS_NONNEG,  "a channel length cannot be negative" },
     { "w",    PHYS_NONNEG,  "a channel width cannot be negative" },
     { "area", PHYS_NONNEG,  "an area factor cannot be negative" },

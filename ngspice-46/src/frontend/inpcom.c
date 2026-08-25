@@ -5982,6 +5982,36 @@ static void inp_fix_inst_calls_for_numparam(
                      * today stops working, and decks do carry harmless extra
                      * names. `m` is exempt -- the multiplier is added to the
                      * subcircuit automatically by the pass above. */
+                    /* Enhancement-480: the same name given TWICE on one call.
+                     * E-475 (below) reports a name the `.subckt` never declared,
+                     * but two copies of a name it DID declare went through in
+                     * silence and the last one won:
+                     *
+                     *     X1 mid 0 s rv=4k rv=8k   ->  8k, nothing said
+                     *
+                     * The same mistake is reported on a `.model` card and on a
+                     * device instance line; this was the one caller that took
+                     * it quietly. Reported once per repeat, naming the value
+                     * that takes effect, since unlike a `.model` card there is
+                     * no split here between model and instance replay order. */
+                    for (i = 0; i < num_inst_params; i++) {
+                        int j;
+                        for (j = 0; j < i; j++)
+                            if (cieq(inst_param_names[i], inst_param_names[j])) {
+                                const char *ne = inst_line;
+                                while (*ne && !isspace_c(*ne))
+                                    ne++;
+                                fprintf(cp_err,
+                                        "Warning: %.*s: parameter \"%s\" is set "
+                                        "more than once on this line; the last "
+                                        "value (%s) is used\n    in line: %s\n",
+                                        (int) (ne - inst_line), inst_line,
+                                        inst_param_names[i],
+                                        inst_param_values[i], inst_line);
+                                break;
+                            }
+                    }
+
                     for (i = 0; i < num_inst_params; i++) {
                         int j, known = 0;
                         if (cieq(inst_param_names[i], "m"))

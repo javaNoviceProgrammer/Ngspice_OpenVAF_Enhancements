@@ -1959,6 +1959,33 @@ measure_parse_stdParams(
             }
         }
 
+        /* Enhancement-480: an edge COUNT written negative collides with the
+         * sentinels this struct uses for "not given" (-1) and "LAST" (-2), so
+         * the number the user wrote was read as a request for something else
+         * entirely -- and the collision is silent because the value is a legal
+         * int:
+         *
+         *     fall=-1   -> read as "no fall given", so the FIRST CROSSING is
+         *                  returned; on a triangle that is the RISING edge at
+         *                  0.5 ms where fall=1 correctly gives 1.5 ms
+         *     cross=-2  -> read as CROSS=LAST
+         *     cross=-3  -> matches no crossing, so the measure just fails
+         *
+         * There is no reading under which a negative count means anything: the
+         * n-th crossing is counted from one. Refuse it here, before it can be
+         * mistaken for a sentinel. The test is on the TOKEN the user wrote,
+         * not on the converted number: by this point `LAST` has already become
+         * -2, so comparing against the sentinel value would have let a written
+         * `cross=-2` through as though it said LAST. */
+        if ((strcasecmp(pName, "RISE") == 0 || strcasecmp(pName, "FALL") == 0 ||
+             strcasecmp(pName, "CROSS") == 0) &&
+            strcasecmp(pValue, "LAST") != 0 && meas_int(engVal1) < 1) {
+            snprintf(errbuf, MEAS_ERRBUF_SIZE,
+                     "%s=%d is not a valid edge count; it counts from 1, or use "
+                     "%s=LAST\n", pName, meas_int(engVal1), pName);
+            return MEASUREMENT_FAILURE;
+        }
+
         if (strcasecmp(pName, "RISE") == 0) {
             meas->m_rise = meas_int(engVal1);
             meas->m_fall = -1;

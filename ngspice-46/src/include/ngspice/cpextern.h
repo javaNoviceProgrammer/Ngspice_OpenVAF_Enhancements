@@ -73,6 +73,7 @@ extern char *cp_csep;
 extern char * get_alt_prompt(void);
 extern int cp_evloop(char *string);
 extern void cp_resetcontrol(bool warn);
+bool cp_block_open(void);   /* Enhancement-480 */
 extern void cp_toplevel(void);
 extern void cp_popcontrol(void);
 extern void cp_pushcontrol(void);

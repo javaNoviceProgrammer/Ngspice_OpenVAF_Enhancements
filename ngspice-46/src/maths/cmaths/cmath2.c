@@ -800,14 +800,26 @@ void *cx_mod(void *data1, void *data2, short int datatype1, short int datatype2,
 
         int i;
         for (i = 0; i < length; i++) {
-            /* Enhancement-273: range-check before the (int) cast -- (int) of a
-             * value outside int range (1e30, inf, NaN) is undefined behaviour. */
-            const double a1 = floor(fabs(dd1[i]));
-            const double a2 = floor(fabs(dd2[i]));
-            rcheck(a1 <= (double) INT_MAX, "mod");
-            rcheck(a2 >= 1.0 && a2 <= (double) INT_MAX, "mod");
-            const int r3 = (int) a1 % (int) a2;
-            d[i] = (double) r3;
+            /* Enhancement-480: `%` is REAL modulo, as `fmod()` computes it and
+             * as the other two evaluators in this simulator already did.
+             *
+             * This used to take `floor(fabs())` of BOTH operands and do an
+             * integer `%`, so it discarded the fractional part and the sign of
+             * the dividend -- and disagreed with `.param` and a B-source, which
+             * both call fmod, on the same written expression:
+             *
+             *     (0.5) % 3     .param 0.5    let 0      (the value vanished)
+             *     (5.5) % 3     .param 2.5    let 2
+             *     (-5) % 3      .param -2     let 2
+             *
+             * The manual lists `%` as "modulo" and gives a SEPARATE operator,
+             * `\`, for "integer divide", so integer truncation was never what
+             * this one meant. A zero divisor stays an error, as before; the
+             * old `>= 1.0` test also rejected every fractional divisor, which
+             * `fmod` handles perfectly well. */
+            rcheck(fabs(dd1[i]) <= (double) INT_MAX, "mod");
+            rcheck(dd2[i] != 0.0 && fabs(dd2[i]) <= (double) INT_MAX, "mod");
+            d[i] = fmod(dd1[i], dd2[i]);
         }
     }
     else {
@@ -831,19 +843,14 @@ void *cx_mod(void *data1, void *data2, short int datatype1, short int datatype2,
             } else {
                 c2 = cc2[i];
             }
-            /* Enhancement-273: range-check before the (int) casts (see above). */
-            const double ar1 = floor(fabs(realpart(c1)));
-            const double ar2 = floor(fabs(realpart(c2)));
-            const double ai1 = floor(fabs(imagpart(c1)));
-            const double ai2 = floor(fabs(imagpart(c2)));
-            rcheck(ar1 <= (double) INT_MAX, "mod");
-            rcheck(ar2 >= 1.0 && ar2 <= (double) INT_MAX, "mod");
-            rcheck(ai1 <= (double) INT_MAX, "mod");
-            rcheck(ai2 >= 1.0 && ai2 <= (double) INT_MAX, "mod");
-            const int r3 = (int) ar1 % (int) ar2;
-            const int i3 = (int) ai1 % (int) ai2;
-            realpart(c[i]) = (double) r3;
-            imagpart(c[i]) = (double) i3;
+            /* Enhancement-480: real modulo per component -- see the real
+             * branch above for why the integer truncation is gone. */
+            rcheck(fabs(realpart(c1)) <= (double) INT_MAX, "mod");
+            rcheck(fabs(imagpart(c1)) <= (double) INT_MAX, "mod");
+            rcheck(realpart(c2) != 0.0 && fabs(realpart(c2)) <= (double) INT_MAX, "mod");
+            rcheck(imagpart(c2) != 0.0 && fabs(imagpart(c2)) <= (double) INT_MAX, "mod");
+            realpart(c[i]) = fmod(realpart(c1), realpart(c2));
+            imagpart(c[i]) = fmod(imagpart(c1), imagpart(c2));
         }
     }
 

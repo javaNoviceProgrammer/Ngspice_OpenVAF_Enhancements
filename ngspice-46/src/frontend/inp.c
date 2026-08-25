@@ -1899,6 +1899,15 @@ inp_spsource(FILE *fp, bool comfile, char *filename, bool intfile)
         /* Now that the deck is loaded, do the commands, if there are any */
         controls = wl_reverse(controls);
 
+        /* Enhancement-480: was a control block already open before this section
+         * was fed? `reset` inside a running `dowhile` re-enters this function,
+         * and at that moment a block IS legitimately open -- the loop running
+         * the `reset` is that block. Comparing the state before and after tells
+         * the two apart, where asking only afterwards tore down a live loop.
+         * (examples/lhs_examples hung on its sampling loop when it did.) */
+        {
+            bool block_open_before = cp_block_open();
+
         /* statistics for preparing the deck */
         endTime = seconds();
         if (ft_curckt) {
@@ -1932,6 +1941,26 @@ inp_spsource(FILE *fp, bool comfile, char *filename, bool intfile)
         }
 #endif
         wl_free(controls);
+        /* Enhancement-480: the section has been fed line by line; if a block is
+         * still open, its contents were collected and never run. That used to
+         * pass in complete silence with rc 0 -- an `if` missing its `end`
+         * swallowed every command after it, so a script that did nothing at
+         * all looked like one that worked. A stray `end` has always been
+         * reported ("no block to end"); this is the same imbalance from the
+         * other side. Reported once, and the half-built structures dropped so
+         * the next section starts clean. */
+        if (!block_open_before && cp_block_open()) {
+            fprintf(cp_err,
+                    "Error: a control block was not terminated before .endc; "
+                    "an `end` is missing, and the commands inside it did not "
+                    "run.\n");
+            /* Reported only. Tearing the structures down here (`cp_resetcontrol`)
+             * left `stackp` at 0 for a later `cp_popcontrol`, which then
+             * complained "Internal Error: stack empty" -- trading a silent
+             * failure for a confusing one. The normal teardown that follows
+             * handles the half-built block. */
+        }
+        }   /* block_open_before scope */
 #ifdef OSDI
             inputdir = NULL;
 #endif

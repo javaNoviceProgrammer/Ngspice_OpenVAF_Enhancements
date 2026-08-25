@@ -974,3 +974,15 @@ cp_free_control(void)
     control[0] = cend[0] = NULL;
     stackp = 0;
 }
+
+/* Enhancement-480: is a control block (`if`, `while`, `repeat`, `foreach`,
+ * `dowhile`) still open?
+ *
+ * `cp_evloop` is called once per line of a `.control` section, so its own
+ * end-of-input check never sees the end of the SECTION -- an unterminated
+ * block therefore swallowed every command after it, in silence, and ngspice
+ * exited 0. The caller asks here once the section has been fed. */
+bool cp_block_open(void)
+{
+    return cend[stackp] && cend[stackp]->co_parent;
+}

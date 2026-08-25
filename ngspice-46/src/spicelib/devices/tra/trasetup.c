@@ -97,6 +97,45 @@ do { if((here->ptr = SMPmakeElt(matrix, here->first, here->second)) == NULL){\
             if(!here->TRAfGiven) {
                 here->TRAf = 1e9;
             }
+
+            /* Enhancement-480: the delay of a lossless line is either given
+             * outright (`td`) or derived as `nl/f`, and nothing checked the
+             * inputs to that division. `f=0` made the delay non-finite and the
+             * whole AC analysis came back as a table of `nan` -- printed as an
+             * ordinary result, every row, with rc 0 and no diagnostic. A
+             * negative `z0` or `td` was taken at face value the same way.
+             *
+             * These are properties of a physical line: a frequency has to be
+             * positive for `nl/f` to be a time, an impedance has to be positive
+             * (the load stamps `1/z0`), and a delay cannot run backwards. */
+            if (here->TRAimped <= 0.0 || !isfinite(here->TRAimped)) {
+                SPfrontEnd->IFerrorf(ERR_FATAL,
+                    "%s: z0 = %g is not a usable characteristic impedance; it "
+                    "must be greater than zero", here->TRAname, here->TRAimped);
+                return(E_PARMVAL);
+            }
+            if (here->TRAtdGiven) {
+                if (here->TRAtd <= 0.0 || !isfinite(here->TRAtd)) {
+                    SPfrontEnd->IFerrorf(ERR_FATAL,
+                        "%s: td = %g is not a usable delay; it must be greater "
+                        "than zero", here->TRAname, here->TRAtd);
+                    return(E_PARMVAL);
+                }
+            } else {
+                if (!(here->TRAf > 0.0) || !isfinite(here->TRAf)) {
+                    SPfrontEnd->IFerrorf(ERR_FATAL,
+                        "%s: f = %g has no wavelength, so the delay nl/f cannot "
+                        "be formed; give a positive f, or give td directly",
+                        here->TRAname, here->TRAf);
+                    return(E_PARMVAL);
+                }
+                if (!(here->TRAnl > 0.0) || !isfinite(here->TRAnl)) {
+                    SPfrontEnd->IFerrorf(ERR_FATAL,
+                        "%s: nl = %g is not a usable normalized length; it must "
+                        "be greater than zero", here->TRAname, here->TRAnl);
+                    return(E_PARMVAL);
+                }
+            }
             if(!here->TRAreltolGiven) {
                 here->TRAreltol = 1;
             }

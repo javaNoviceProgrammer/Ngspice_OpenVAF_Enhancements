@@ -292,6 +292,24 @@ DCtrCurv(CKTcircuit *ckt, int restart)
          * (negative times negative) such as `dc v1 2 0 -0.001`. Only a step
          * pointing away from stop is refused. The step is NOT auto-negated:
          * guessing here would silently answer a question nobody asked. */
+        /* Enhancement-480: the step points the right way but is LARGER than the
+         * span, so the sweep cannot take even one step and the analysis
+         * produces no rows at all -- `dc v1 0 0.1 1` printed an empty table and
+         * exited 0. That is a plausible typo (a step and a stop transposed, or
+         * a unit slipped) and it is indistinguishable from a working run unless
+         * the reader counts the rows.
+         *
+         * A WARNING, not a refusal: the sweep is well-formed, and the start
+         * point is arguably a legitimate single sample. `start == stop` is
+         * deliberately NOT included -- E-426 records that 13 decks in examples/
+         * depend on it being accepted, and this must not change what they do. */
+        if (job->TRCVvStop[i] != job->TRCVvStart[i] &&
+            fabs(job->TRCVvStop[i] - job->TRCVvStart[i]) < fabs(step_)) {
+            SPfrontEnd->IFerrorf(ERR_WARNING,
+                "DC sweep %d: step %g is larger than the span %g to %g,"
+                " so no points are computed\n",
+                i + 1, step_, job->TRCVvStart[i], job->TRCVvStop[i]);
+        }
         if ((job->TRCVvStop[i] - job->TRCVvStart[i]) * step_ < 0.0) {
             SPfrontEnd->IFerrorf(ERR_WARNING,
                 "DC sweep %d: step %g moves away from stop %g (start %g)"

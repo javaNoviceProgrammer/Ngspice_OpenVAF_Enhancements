@@ -161,13 +161,24 @@ void cm_limit(ARGS)  /* structure holding parms,
      * deck asked for, the only reading that still honours them -- and both
      * faults are reported with CLIMIT's message convention, whose INIT/TIME
      * guard keeps it quiet on the first pass when every input is still zero. */
+    /* Enhancement-480: report these ONCE, at INIT, in every analysis.
+     *
+     * Both faults are properties of the model card and cannot change during a
+     * run, but the guard they carried -- borrowed from CLIMIT, where it keeps a
+     * SIGNAL-dependent message quiet while the inputs are still zero -- tests
+     * `TIME != 0`, which is never true in an `op` or a `dc` sweep. So a limiter
+     * whose limits were written the wrong way round said nothing at all in
+     * those analyses (`out_lower_limit=5 out_upper_limit=-5` produced the
+     * transfer curve 5, 5, 5, 5, -5 in silence), and said it 214 times in a
+     * transient -- once per timestep. Firing at INIT gives one message per
+     * instance, wherever the instance is used. */
     if (limit_range < 0.0) {
-        if ((INIT != 1) && (0.0 != TIME))
+        if (INIT == 1)
             cm_message_send(limit_negative_error);
         limit_range = 0.0;
     }
     if (out_upper_limit < out_lower_limit) {
-        if ((INIT != 1) && (0.0 != TIME))
+        if (INIT == 1)
             cm_message_send(limit_order_error);
     }
 

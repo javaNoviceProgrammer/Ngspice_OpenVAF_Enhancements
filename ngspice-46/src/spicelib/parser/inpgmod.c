@@ -194,6 +194,15 @@ create_model(CKTcircuit *ckt, INPmodel *modtmp, INPtables *tab)
         memset(iseen, 0, (size_t)n_itrack * sizeof(char *));
     }
 
+    /* Enhancement-480: 1 while the model TYPE token is still to be seen. An
+     * OSDI card had its type consumed above, so its first token really is a
+     * parameter and nothing is skipped there. */
+#ifdef OSDI
+    int first_tok = is_osdi ? 0 : 1;
+#else
+    int first_tok = 1;
+#endif
+
     while (*line) {
         INPgetTok(&line, &parm, 1);
         if (!*parm) {
@@ -213,18 +222,48 @@ create_model(CKTcircuit *ckt, INPmodel *modtmp, INPtables *tab)
                 ++line;
             }
 #endif
-            if (mseen && nmid < n_mtrack) {
+            /* Enhancement-480: the FIRST token of a built-in `.model` card is
+             * the device TYPE, not a parameter, and it is deliberately left in
+             * `line` for the parse (only an OSDI card has its type thrown away
+             * above). For most devices that is harmless here because the type
+             * name is not also a parameter name -- `d` is not a diode
+             * parameter, so `.model dm d(is=1e-14)` was clean. But `r`, `c` and
+             * `l` ARE parameters of the resistor, capacitor and inductor, so
+             * the type token was recorded as a first sighting and the real
+             * assignment right after it looked like a repeat:
+             *
+             *     .model rmod r(r=1k)   ->  "parameter 'r' is set more than
+             *                               once on this model card"
+             *
+             * on the most ordinary model card there is, telling the author to
+             * remove one of the two things they wrote once. `r(res=1k)`
+             * collected the aliasparam wording for the same reason. Skip the
+             * type token for tracking only; the parse is untouched, so a
+             * genuine `r(r=1k r=4k)` still reports exactly once. */
+            /* Enhancement-480: `nmid < n_mtrack` used to gate the whole block,
+             * so once the list was full -- every distinct model parameter seen
+             * once -- a repeat was never even LOOKED UP. A device with a single
+             * model parameter could therefore never report one:
+             *
+             *     .model mm dut(r=1k r=4k)   ->  4k silently wins
+             *
+             * for an OSDI model whose only model parameter is `r`. The
+             * instance-default branch below has always had this right: it
+             * searches unconditionally and bounds only the INSERT. Do the same
+             * here, so the bound protects the array rather than the check. */
+            if (mseen && !first_tok) {
                 int q, hit = -1;
                 for (q = 0; q < nmid; q++)
                     if (mid[q] == p->id) { hit = q; break; }
                 if (hit >= 0)
                     inp_warn_dup_param(device->name, mseen[hit], p->keyword);
-                else {
+                else if (nmid < n_mtrack) {
                     mid[nmid] = p->id;
                     mseen[nmid] = p->keyword;
                     nmid++;
                 }
             }
+            first_tok = 0;
             IFvalue *val = INPgetValue(ckt, &line, p->dataType, tab);
             error = ft_sim->setModelParm(ckt, modtmp->INPmodfast, p->id, val, NULL);
             if (error) {

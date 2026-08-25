@@ -280,6 +280,8 @@ void cm_pwl(ARGS)  /* structure holding parms,
     char *allocation_error="\n***ERROR***\nPWL: Allocation calloc failed!\n";
     char *limit_error="\n***ERROR***\nPWL: Violation of 50% rule in breakpoints!\n";
     char *size_error="\n***ERROR***\nPWL: x_array and y_array must have the same length!\n";
+    /* Enhancement-480 */
+    char *order_error="\n***ERROR***\nPWL: x_array must increase monotonically!\n";
 
     /* Retrieve frequently used parameters... */
 
@@ -327,6 +329,23 @@ void cm_pwl(ARGS)  /* structure holding parms,
         for (i=1; i<size-1; i++) {
             x[i] = PARAM(x_array[i - 1]);
             y[i] = PARAM(y_array[i - 1]);
+        }
+
+        /* Enhancement-480: the breakpoints have to ascend. This model
+         * interpolates by walking the array and it builds its leading and
+         * trailing extrapolation points from the first and last two entries,
+         * so an out-of-order x_array is not a table it can read -- yet
+         * `x_array=[0 2 1]` was accepted in silence and answered 4.0. The
+         * length mismatch beside it has been reported since the model was
+         * written, and the SOURCE `pwl(...)` warns about exactly this mistake
+         * ("has non-increasing PWL time points"); only this one was quiet.
+         * Equal neighbours are refused too: a zero-width segment is a division
+         * by zero in the slope. */
+        for (i = 1; i < size - 2; i++) {
+            if (!(x[i + 1] > x[i])) {
+                cm_message_send(order_error);
+                break;
+            }
         }
         /* Add additional leading and trailing values */
         x[0] = 2. * x[1] - x[2];
