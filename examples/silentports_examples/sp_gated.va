@@ -1,0 +1,19 @@
+`include "disciplines.vams"
+// The same device with the thermal branch GATED on $port_connected. With `t`
+// absent nothing is contributed to it at all, so the node floats and the OP hits
+// a singular matrix -- Enhancement-402's decided territory, where the answer is
+// to write `0` for the pin. Present here so the suite can pin that
+// `.option silentports` does NOT change it: it silences one warning, it does not
+// make an ill-posed circuit well posed.
+module sp_gated(p, n, t);
+    inout p, n, t;
+    electrical p, n;
+    thermal t;
+    parameter real r = 1k;
+    parameter real rth0 = 100;
+    analog begin
+        I(p, n) <+ V(p, n) / r;
+        if ($port_connected(t))
+            Pwr(t) <+ Temp(t) / rth0 - V(p, n) * V(p, n) / r;
+    end
+endmodule

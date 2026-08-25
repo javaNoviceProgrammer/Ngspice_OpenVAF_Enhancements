@@ -467,6 +467,7 @@ if_is_option(const char *name)
         "nopage", "nomod",
         "warn_physics",              /* Enhancement-438 */
         "autobus",                   /* Enhancement-444 */
+        "silentports",               /* Enhancement-481 */
         "saveused",                  /* Enhancement-469 */
         /* Enhancements 471/473: `reusesetup` is read through cp_getvar by
            sw_request_reuse(), so a `.option reusesetup=0` card WORKS -- the
@@ -577,6 +578,13 @@ if_option(CKTcircuit *ckt, char *name, enum cp_types type, void *value)
         return 0;
     } else if (eq(name, "autobus")) {
         /* Enhancement-444: consumed by INP2N via cp_getvar, likewise. */
+        return 0;
+    } else if (eq(name, "silentports")) {
+        /* Enhancement-481: consumed by INP2N's silentports_enabled(), likewise.
+           Registered in BOTH places -- the name list above and this dispatch --
+           because a name known to only one of them either warns on a setting the
+           run honours (E-445's note) or is honoured while being reported as
+           ignored (E-451). */
         return 0;
     } else if (eq(name, "autoadapt") || eq(name, "adapter")) {
         /* PROTOTYPE: consumed by INPadapt via cp_getvar, likewise. */

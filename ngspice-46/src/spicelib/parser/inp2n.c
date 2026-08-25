@@ -61,6 +61,37 @@ Modified: 2001 Paolo Nenzi (Cider Integration)
  * `e454_value_is_off` in frontend/inp.c. The two readers are unavoidably
  * separate -- this one runs after the variable is published, that one before --
  * so they are kept to the same word list by hand; change both together. */
+/* Enhancement-481: `.option silentports` -- restore the pre-E-402 silence about
+ * an absent terminal.
+ *
+ * E-402 made an omitted terminal audible, and that is the right default: it is
+ * how a TYPO looks, and an omitted terminal DANGLES rather than grounding, so
+ * the natural assumption is the wrong one. But a schematic front end can emit
+ * the short form for every instance of a model with an optional thermal port,
+ * and then the warning is five lines per device about a choice the user did not
+ * make and cannot change from the schematic. KiCad's exporter is the case that
+ * prompted this.
+ *
+ * Opt-IN silence, never the default: a deck that does not ask keeps the warning.
+ * The spelling test is `autobus_enabled`'s, because a plain `cp_getvar(..,
+ * CP_BOOL, ..)` treats `silentports=0`, `=false`, `=no` and `=off` as the
+ * variable being PRESENT and therefore true -- the defect Enhancements 450,
+ * 451, 454, 466 and 467 each shipped once. */
+static bool silentports_enabled(void)
+{
+    double d;
+    char s[64];
+
+    if (cp_getvar("silentports", CP_BOOL, NULL, 0))
+        return TRUE;
+    if (cp_getvar("silentports", CP_REAL, &d, 0))
+        return d != 0.0;
+    if (cp_getvar("silentports", CP_STRING, s, sizeof(s)))
+        return !(cieq(s, "0") || cieq(s, "false") ||
+                 cieq(s, "no") || cieq(s, "off"));
+    return FALSE;
+}
+
 static bool autobus_enabled(void)
 {
     double d;
@@ -371,7 +402,7 @@ void INP2N(CKTcircuit *ckt, INPtables *tab, struct card *current) {
     }
   }
 
-  if (numnodes < *dev->terms) {
+  if (numnodes < *dev->terms && !silentports_enabled()) {
     int missing;
     fprintf(stderr,
             "\nWarning: instance %s: %d of the %d terminals of model type '%s' "

@@ -1,0 +1,17 @@
+`include "disciplines.vams"
+// A resistor with an OPTIONAL thermal port, wired so the model stays WELL POSED
+// when `t` is absent: the thermal network is contributed unconditionally, so the
+// private node ngspice makes for the missing terminal still has a conductance to
+// ground. This is the shape for which silencing the warning gives a fully clean
+// run -- see sp_gated.va for the shape where it does not.
+module sp_rth(p, n, t);
+    inout p, n, t;
+    electrical p, n;
+    thermal t;
+    parameter real r = 1k;
+    parameter real rth0 = 100;
+    analog begin
+        I(p, n) <+ V(p, n) / r;
+        Pwr(t)  <+ Temp(t) / rth0 - V(p, n) * V(p, n) / r;
+    end
+endmodule
