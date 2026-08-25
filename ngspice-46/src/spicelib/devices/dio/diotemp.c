@@ -285,6 +285,22 @@ DIOtemp(GENmodel *inModel, CKTcircuit *ckt)
     /*  loop through all the diode models */
     for( ; model != NULL; model = DIOnextModel(model)) {
 
+        /* `rs` is turned into the conductance the load
+         * actually stamps by DIOsetup, and DIOsetup runs once. The
+         * sensitivity analysis perturbs parameters and re-runs only
+         * DEVtemperature and DEVload -- it cannot re-run setup, which
+         * allocates nodes -- so a perturbed `rs` never reached the stamp and
+         * `sens` reported the series resistance as having no effect at all.
+         * Redo the plain conversion here, where the perturbation is visible.
+         * This is a no-op in normal operation: setup has already left the two
+         * consistent, in the compatibility path included (it stores rsdiode in
+         * DIOresist and 1/rsdiode in DIOconductance), and the case setup
+         * leaves at zero conductance is the one the guard below skips. */
+        if (model->DIOresistGiven && model->DIOresist != 0.0)
+            model->DIOconductance = 1.0 / model->DIOresist;
+        if (model->DIOresistSWGiven && model->DIOresistSW != 0.0)
+            model->DIOconductanceSW = 1.0 / model->DIOresistSW;
+
         /* loop through all the instances */
         for(here=DIOinstances(model);here;here=DIOnextInstance(here)) {
 

@@ -228,6 +228,8 @@ int sens_sens(CKTcircuit* ckt, int restart)
     IFcomplex* output_cvalues;
     double delta_var;
     struct sens_modsave *saved_models = NULL;   /* Enhancement-440 */
+    void *mod_buf = NULL;                       /* per-parameter model snapshot */
+    size_t mod_cap = 0, mod_size = 0;
     int    (*fn) (SMPmatrix*, GENmodel*, CKTcircuit*, int*);
     static int	is_dc;
     int k, j, n;
@@ -397,6 +399,7 @@ int sens_sens(CKTcircuit* ckt, int restart)
              * most likely to be left altered. */
             sens_restore_models(ckt, saved_models);
             saved_models = NULL;
+            FREE(mod_buf);
             FREE(output_names);
             return error;
         }
@@ -709,6 +712,31 @@ int sens_sens(CKTcircuit* ckt, int restart)
                 printf("New value: %g\n", nvalue.rValue);
 #endif
 
+            /* The device's own setter marks the parameter
+             * GIVEN as a side effect, and writing the original value back does
+             * not clear that flag. Where a model's defaults key off the flag
+             * rather than off the value, the model's meaning changes for good:
+             * once `ibe` and `ibc` have both been visited, bjttemp stops
+             * falling back to `BJTtSatCur` and computes
+             * BEtSatCur = area * BEsatCur * factor with BEsatCur back at 0, so
+             * the transistor conducts nothing and EVERY parameter visited
+             * after those two reports a sensitivity of exactly zero -- bf, nf
+             * and vaf among them. Enhancement-440 already snapshots the
+             * models, but only around the analysis as a whole, which protects
+             * the session and not the rest of this loop. Snapshot the one
+             * model being perturbed here and put it back byte for byte below,
+             * so each parameter is measured against the model the user wrote. */
+            mod_size = 0;
+            if (DEVices[sg->dev]->DEVmodSize) {
+                size_t mod_need = (size_t) *DEVices[sg->dev]->DEVmodSize;
+                if (mod_need > mod_cap) {
+                    mod_buf = TREALLOC(char, mod_buf, mod_need);
+                    mod_cap = mod_need;
+                }
+                memcpy(mod_buf, sg->model, mod_need);
+                mod_size = mod_need;
+            }
+
             sens_setp(sg, ckt, &nvalue);
             if (error && error != E_BADPARM)
                 goto err;
@@ -759,6 +787,10 @@ int sens_sens(CKTcircuit* ckt, int restart)
                  * afterwards or the NEXT parameter inherits it. */
                 value.rValue = sg->value;
                 sens_setp(sg, ckt, &value);
+                if (mod_size) {                 /* undo the setter's side effects */
+                    memcpy(sg->model, mod_buf, mod_size);
+                    mod_size = 0;
+                }
                 (void)sens_temp(sg, ckt);
                 (void)OSDIcollapseChanged(sg->instance);
 
@@ -800,6 +832,10 @@ int sens_sens(CKTcircuit* ckt, int restart)
 
             value.rValue = sg->value;
             sens_setp(sg, ckt, &value);
+            if (mod_size) {                     /* undo the setter's side effects */
+                memcpy(sg->model, mod_buf, mod_size);
+                mod_size = 0;
+            }
             (void)sens_temp(sg, ckt); /* XXX is this necessary? */
 
             /* Back to business . . . */
@@ -1008,6 +1044,7 @@ int sens_sens(CKTcircuit* ckt, int restart)
     FREE(delta_iI_delta_Y);
 
     ckt->CKTbypass = bypass;
+    FREE(mod_buf);
 
 #ifdef notdef
     for (j = 0; j <= ckt->CKTmaxOrder + 1; j++) {

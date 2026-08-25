@@ -1355,6 +1355,26 @@ measure_minMaxAvg(
         }
     }
 
+    /* A window that no sample falls in is NOT a measurement.
+     *
+     * `first` is still 0 here when nothing was accumulated, and the switch below
+     * then published the untouched accumulator: AVG divided 0 by 1, and
+     * MIN/MAX/PP handed back `mValue`, which is initialised to 0. So
+     * `meas tran x MAX v(a) FROM=20m TO=30m` on data that ends at 12 ms
+     * reported MAX = 0 for a signal swinging -1..+1 -- a legal-looking number,
+     * with no diagnostic, in tran, ac and dc alike.
+     *
+     * The caller already handles this: every dispatcher arm tests
+     * `isnan(m_measured)` and reports "out of interval". m_measured was set to
+     * NAN at the top of this function precisely so that would fire; the switch
+     * overwrote it. Returning early leaves it, and PP inherits the fix because
+     * it is built from two measure_minMaxAvg() calls that each check isnan.
+     *
+     * RMS already failed here, but only by arithmetic accident -- see the
+     * matching guard in measure_rms_integral(). */
+    if (first == 0)
+        return MEASUREMENT_OK;              /* m_measured is still NAN */
+
     switch (mFunctionType)
     {
     case AT_AVG: {
@@ -1726,6 +1746,21 @@ measure_rms_integral(
        SMALLEST scale value, not the last one traversed), and the `value`/`xvalue` reads
        that used to sit here indexed with the integration loop's counter -- past the end
        of the data -- into variables nothing reads again. Both are gone. */
+    /* Fewer than two in-window samples is not an integral.
+     *
+     * RMS already ended up NAN for an empty window, but only because it divides
+     * by `(toVal - m_measured_at)`, and both are NAN when nothing was collected
+     * -- 0/NAN. INTEG has no such division, so it published a clean 0.0 for a
+     * window containing no data at all. Saying so explicitly makes the two
+     * agree for the same reason rather than by accident, and leaves m_measured
+     * NAN so the caller's "out of interval" fires. */
+    if (xy_size < 2) {
+        txfree(x);
+        txfree(y);
+        txfree(width);
+        return MEASUREMENT_OK;              /* m_measured is still NAN */
+    }
+
     if (toVal < 0.0)
         toVal = (xy_size > 0) ? x[xy_size-1] : meas->m_measured_at;
     meas->m_from = meas->m_measured_at;

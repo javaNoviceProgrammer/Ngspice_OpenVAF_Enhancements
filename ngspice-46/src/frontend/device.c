@@ -1501,7 +1501,18 @@ com_alter_common(wordlist *wl, int do_model)
 
     words = eqword->wl_next;
     /* skip next line if words is a vector */
-    if (!eq(words->wl_word, "["))
+    /* The list form was recognised only when the opening
+     * bracket stood as a word of its own, so `alter @v1[sin]=[ 0 2 1k ]`
+     * applied the new values and `alter @v1[sin]=[0 2 1k]` did not: it went to
+     * the expression parser instead, which printed "syntax error in line
+     * segment" -- a message that never mentions spacing -- and left the source
+     * at its old value. One space decided whether the command did anything.
+     * Test the first character, and strip the bracket below wherever it sits. */
+    if (!words) {
+        fprintf(cp_err, "Error: no value given for %s.\n", param ? param : dev);
+        return;
+    }
+    if (words->wl_word[0] != '[')
         names = ft_getpnames_quotes(words, FALSE);
     else
         names = NULL;
@@ -1518,7 +1529,16 @@ com_alter_common(wordlist *wl, int do_model)
         /* move beyond '[' to allow INPevaluate() */
         if (eq(words->wl_word, "["))
             words = words->wl_next;
+        if (!words) {
+            fprintf(cp_err, "Error: cannot evaluate new parameter value.\n");
+            return;
+        }
         xsbuf = rem_xsbuf = wl_flatten(words);
+        /* ... and beyond one glued to the first value. */
+        while (*xsbuf == ' ' || *xsbuf == '\t')
+            xsbuf++;
+        if (*xsbuf == '[')
+            xsbuf++;
         /* fprintf(cp_err, "Chain    converted  %s \n", xsbuf); */
 
         for (i = 0, list = NULL;;) {
