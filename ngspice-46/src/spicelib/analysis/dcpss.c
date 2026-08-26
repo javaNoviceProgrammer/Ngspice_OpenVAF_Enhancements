@@ -2154,6 +2154,14 @@ qp_synth(const double *Vr, const double *Vi, int N, int K1, int K2,
 }
 
 int
+/* Enhancement-483: Newton stall thresholds. An iterate that improves the
+ * residual by less than 0.1% has not improved it; QP_STALL_RUN of those in a
+ * row is a stall; and a stalled residual is accepted as the answer only if it
+ * sits at least QP_STALL_ACCEPT below the residual the level opened with. */
+#define QP_STALL_RATIO  0.999
+#define QP_STALL_RUN    4
+#define QP_STALL_ACCEPT 1e-6
+
 QPSShb(CKTcircuit *ckt, double f1, double f2, int K1, int K2, int P1, int P2,
        int maxiter, double tol, int verbose)
 {
@@ -2273,6 +2281,13 @@ QPSShb(CKTcircuit *ckt, double f1, double f2, int K1, int K2, int P1, int P2,
     double lambda = 0.0, dlambda = 1.0, fnorm = 0.0;
     double *Vsr = TMALLOC(double, Ntot), *Vsi = TMALLOC(double, Ntot);
     int iter, nlevels = 0, nnewton = 0, hard_err = 0;
+    /* Enhancement-483: Newton stall detection. `f0` is this level's opening
+     * residual, `fprev` the previous iterate's, `nstall` the run of iterates
+     * that failed to improve on it, and `stall_accept` records whether the
+     * level that finally converged did so on the stall test rather than on
+     * `tol` -- so the closing message can say which. */
+    double f0 = 0.0, fprev = 0.0;
+    int nstall = 0, stall_accept = 0;
     memcpy(Vsr, Vr, (size_t)Ntot*sizeof(double));
     memcpy(Vsi, Vi, (size_t)Ntot*sizeof(double));
 
@@ -2280,6 +2295,7 @@ QPSShb(CKTcircuit *ckt, double f1, double f2, int K1, int K2, int P1, int P2,
         double target = lambda + dlambda;
         int conv = 0;
         if (target > 1.0) target = 1.0;
+        f0 = fprev = 0.0; nstall = 0;      /* Enhancement-483: per level */
 
         for (iter = 0; iter < maxiter; iter++) {
             qp_synth(Vr, Vi, N, K1, K2, P1, P2, vsamp);
@@ -2340,10 +2356,40 @@ QPSShb(CKTcircuit *ckt, double f1, double f2, int K1, int K2, int P1, int P2,
                 fprintf(stderr, "QPSS-HB lambda=%.4f iter %2d: |F| = %.6e\n", target, iter, fnorm);
             if (isnan(fnorm) || fnorm > 1e300) break;
 
+            /* Enhancement-483: a residual that has stopped moving will not
+             * start again. `tol` is an ABSOLUTE bound on |F|, and what a given
+             * circuit can reach is set by its own device evaluation -- an
+             * amplifier carrying tens of mA floors around 1e-8 where a diode
+             * carrying microamps reaches 1e-15. Without this test the solver
+             * spends every remaining iteration on a residual that is flat to
+             * seven digits, then walks the continuation ladder back down to
+             * lambda=0 and reports a bare iteration limit, discarding a
+             * perfectly good answer it found in five iterations. */
+            if (iter == 0) {
+                f0 = fnorm; nstall = 0;
+            } else if (fnorm >= fprev * QP_STALL_RATIO) {
+                nstall++;
+            } else {
+                nstall = 0;
+            }
+            fprev = fnorm;
+
             for (i = 0; i < Ntot; i++) { Fr[i] = -Fr[i]; Fi[i] = -Fi[i]; }
             if (pss_csolve(Ntot, Jr, Ji, Fr, Fi)) break;
             for (i = 0; i < Ntot; i++) { Vr[i] += Fr[i]; Vi[i] += Fi[i]; }
-            if (fnorm < tol) { conv = 1; break; }
+            if (fnorm < tol) { conv = 1; stall_accept = 0; break; }
+            if (nstall >= QP_STALL_RUN) {
+                /* Accept only a residual that actually solved the problem:
+                 * QP_STALL_ACCEPT orders of reduction from this level's own
+                 * opening norm. A stall at a residual that never came down is
+                 * a real failure and still falls through to the continuation
+                 * ladder -- which now reaches that verdict in a few iterations
+                 * instead of `maxiter`. */
+                if (f0 > 0.0 && fnorm <= f0 * QP_STALL_ACCEPT) {
+                    conv = 1; stall_accept = 1;
+                }
+                break;
+            }
         }
 
         if (hard_err) break;
@@ -2365,7 +2411,13 @@ QPSShb(CKTcircuit *ckt, double f1, double f2, int K1, int K2, int P1, int P2,
             }
         }
     }
-    if (rc == OK)
+    if (rc == OK && stall_accept)
+        fprintf(stdout, "QPSS-HB: converged in %d iterations, %d continuation step%s "
+                        "(|F| = %.3e, STALLED above tol = %.1e after a %.0fx "
+                        "reduction -- accepted; `set qpss_tol` to change the "
+                        "bound).\n", nnewton, nlevels, nlevels == 1 ? "" : "s",
+                        fnorm, tol, f0 > 0.0 && fnorm > 0.0 ? f0 / fnorm : 0.0);
+    else if (rc == OK)
         fprintf(stdout, "QPSS-HB: converged in %d iterations, %d continuation step%s "
                         "(|F| = %.3e).\n", nnewton, nlevels, nlevels == 1 ? "" : "s", fnorm);
     FREE(Vsr); FREE(Vsi);

@@ -86,6 +86,45 @@ static double real_gcd(double a, double b)
     return a;
 }
 
+/* Enhancement-483: `set qpss_tol` / `set qpss_maxiter` -- the harmonic-balance
+ * convergence bound and iteration cap, which were compiled in at 1e-10 and 60
+ * with no way to reach them from a deck.
+ *
+ * `tol` is an ABSOLUTE bound on |F|, so what is reachable depends on the
+ * circuit: a diode carrying microamps settles at 1e-15, while an amplifier
+ * carrying tens of milliamps floors around 1e-8 and could never satisfy 1e-10
+ * however many iterations it was given.
+ *
+ * Read like `qpss_verbose` beside it, but as a VALUE, so both published types
+ * have to be asked: Enhancement-454's lesson is that the spelling decides the
+ * type -- `set qpss_tol=1e-8` arrives as a CP_REAL and `set qpss_tol = 1e-8`
+ * can arrive as a CP_STRING. `strtod` and not `atoi`, so `qpss_maxiter=2e2`
+ * means 200 and not 2 (Enhancement-478's trap). A value that is present but
+ * unusable is REPORTED and the default kept -- never silently dropped. */
+static double qpss_knob(const char *name, double dflt)
+{
+    double d;
+    char s[64];
+
+    if (cp_getvar(name, CP_REAL, &d, 0)) {
+        if (d > 0.0)
+            return d;
+        fprintf(cp_err, "Warning: %s must be positive; %g ignored.\n", name, d);
+        return dflt;
+    }
+    if (cp_getvar(name, CP_STRING, s, sizeof(s))) {
+        char *end;
+        d = strtod(s, &end);
+        while (*end == ' ' || *end == '\t')
+            end++;
+        if (*end == '\0' && d > 0.0)
+            return d;
+        fprintf(cp_err, "Warning: %s: '%s' is not a positive number; ignored.\n",
+                name, s);
+    }
+    return dflt;
+}
+
 
 void
 com_qpss(wordlist *wl)
@@ -167,7 +206,12 @@ com_qpss(wordlist *wl)
                 verbose = cp_getvar("qpss_verbose", CP_BOOL, NULL, 0);
                 ft_curckt->ci_curTask = ft_curckt->ci_defTask;
                 ckt->CKTcurJob = ft_curckt->ci_defTask ? ft_curckt->ci_defTask->jobs : NULL;
-                err = QPSShb(ckt, f1, f2, K1, K2, 0, 0, 60, 1e-10, verbose ? 1 : 0);
+                {   /* Enhancement-483: both were compiled-in constants */
+                    double hbtol = qpss_knob("qpss_tol", 1e-10);
+                    int hbmax = (int) qpss_knob("qpss_maxiter", 60.0);
+                    err = QPSShb(ckt, f1, f2, K1, K2, 0, 0, hbmax, hbtol,
+                                 verbose ? 1 : 0);
+                }
                 if (err != OK)
                     fprintf(cp_err, "qpss hb: harmonic balance did not complete "
                                     "(error %d).\n", err);
