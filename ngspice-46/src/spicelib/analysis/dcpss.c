@@ -2162,6 +2162,15 @@ int
 #define QP_STALL_RUN    4
 #define QP_STALL_ACCEPT 1e-6
 
+/* Enhancement-484: the reduction below which an ACCEPTED solution is called out
+ * as untrustworthy. Deliberately a different number from QP_STALL_ACCEPT, which
+ * decides whether to accept at all -- this one decides whether to believe it.
+ * Calibrated on measurement, not taste: on the two-tone FET amplifier a 101x
+ * reduction put the third-order products 6 dB out, while a 55345x reduction
+ * agreed with the K=2 answer to 0.01 dB. A warning that fires on a good answer
+ * is a warning people learn to ignore, so the bar sits between the two. */
+#define QP_LOWRED_WARN 1e-4
+
 QPSShb(CKTcircuit *ckt, double f1, double f2, int K1, int K2, int P1, int P2,
        int maxiter, double tol, int verbose)
 {
@@ -2411,6 +2420,19 @@ QPSShb(CKTcircuit *ckt, double f1, double f2, int K1, int K2, int P1, int P2,
             }
         }
     }
+    /* Enhancement-484: a converged flag is not a correct answer. `tol` is
+     * absolute, so a deck that loosens it far enough gets its solution accepted
+     * on a residual that never really came down -- measured on a two-tone FET
+     * amplifier at K=4, `set qpss_tol=1e-1` accepts a 108x reduction and the
+     * third-order products come out 6 dB wrong, silently. The stall path already
+     * says what it settled for; say it on the ordinary path too whenever the
+     * reduction from the level's opening residual is small. */
+    if (rc == OK && !stall_accept && f0 > 0.0 && fnorm > 0.0
+        && fnorm > f0 * QP_LOWRED_WARN)
+        fprintf(stderr, "QPSS-HB: WARNING -- accepted at |F| = %.3e, only a %.0fx "
+                        "reduction from %.3e. tol = %.1e was loose enough to stop "
+                        "early; the harmonics may be badly wrong. Tighten "
+                        "qpss_tol, or reduce K1/K2.\n", fnorm, f0 / fnorm, f0, tol);
     if (rc == OK && stall_accept)
         fprintf(stdout, "QPSS-HB: converged in %d iterations, %d continuation step%s "
                         "(|F| = %.3e, STALLED above tol = %.1e after a %.0fx "

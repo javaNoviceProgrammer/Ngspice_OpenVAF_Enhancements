@@ -101,7 +101,11 @@ static double real_gcd(double a, double b)
  * can arrive as a CP_STRING. `strtod` and not `atoi`, so `qpss_maxiter=2e2`
  * means 200 and not 2 (Enhancement-478's trap). A value that is present but
  * unusable is REPORTED and the default kept -- never silently dropped. */
-static double qpss_knob(const char *name, double dflt)
+/* `char *` and not `const char *`: `cp_getvar` takes a non-const name, and a
+ * const parameter here would discard qualifiers at both call sites. String
+ * literals are `char[]` in C, so the two callers pass theirs directly -- the
+ * same shape as the `cp_getvar("qpss_verbose", ..)` call beside them. */
+static double qpss_knob(char *name, double dflt)
 {
     double d;
     char s[64];
