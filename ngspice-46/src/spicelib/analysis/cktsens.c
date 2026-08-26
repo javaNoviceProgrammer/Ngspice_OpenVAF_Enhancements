@@ -135,7 +135,8 @@ sens_restore_models(CKTcircuit *ckt, struct sens_modsave *list)
 static int sens_setp(sgen* sg, CKTcircuit* ckt, IFvalue* val);
 static int sens_load(sgen* sg, CKTcircuit* ckt, int is_dc);
 static int sens_temp(sgen* sg, CKTcircuit* ckt);
-static int count_steps(int type, double low, double high, int steps, double* stepsize);
+static int count_steps(int type, double low, double high, int steps, double* stepsize,
+                       int* errp);
 static double inc_freq(double freq, int type, double step_size);
 
 char **Sens_filter;
@@ -277,7 +278,9 @@ int sens_sens(CKTcircuit* ckt, int restart)
         is_dc = (job->step_type == SENS_DC);
         nfreqs = count_steps(job->step_type, job->start_freq,
             job->stop_freq, job->n_freq_steps,
-            &step_size);
+            &step_size, &error);
+        if (error)
+            return error;
 
         if (!is_dc)
             freq = job->start_freq;
@@ -1096,14 +1099,46 @@ next_freq(int type, double freq, double stepsize)
     return s;
 }
 */
+/* Enhancement-486: this function is declared to return a POINT COUNT, but
+ * Enhancement-362's overflow guard signalled failure with `return(E_PARMVAL)`.
+ * E_PARMVAL is 11, and the sole caller assigned the result straight to nfreqs
+ * with no error test -- so an "impossible" sweep silently ran ELEVEN points.
+ * Worse, that early return happened before `*stepsize = s`, so the step size was
+ * never written and every frequency after the first collapsed to zero. An error
+ * return that is indistinguishable from a valid answer is not a guard at all;
+ * errors now travel out of band in *errp and the count stays a count.
+ *
+ * The two silent repairs were the other half. A DEC/OCT sweep starting at 0 Hz
+ * had `low` rewritten to 1e-3, and a stop at or below the start had `high`
+ * rewritten to a decade (or octave) above it. Both replaced a value the USER
+ * STATED, and both wrote only the LOCAL copy: the count came from the repaired
+ * bounds while the sweep itself still ran from job->start_freq, so with a start
+ * of 0 `freq *= s` held every point at 0 Hz. `.sens ac dec 5 0 1meg` printed a
+ * full table of 0 Hz rows, and `.sens ac dec 5 1k 1k` swept a full decade past
+ * the stop that was asked for. .ac, .noise, .disto and .sp all get both cases
+ * right, so the rules below are .ac's own (acan.c): refuse a logarithmic sweep
+ * that starts at or below 0, treat stop == start as the single point .ac
+ * produces, and let a LINEAR sweep start at 0 Hz, because there 0 Hz is a
+ * legitimate DC point rather than log(0). */
 int
-count_steps(int type, double low, double high, int steps, double* stepsize)
+count_steps(int type, double low, double high, int steps, double* stepsize,
+            int* errp)
 {
     double	s;
     int	n;
 
+    if (errp)
+        *errp = OK;
+
     if (steps < 1)
         steps = 1;
+
+    /* A stop below the start never describes a sweep, whatever the type. */
+    if (type != SENS_DC && high < low) {
+        fprintf(stderr, "ERROR: SENS AC stop frequency %g is below the start "
+                        "frequency %g\n", high, low);
+        goto bad;
+    }
 
     switch (type) {
     default:
@@ -1113,38 +1148,51 @@ count_steps(int type, double low, double high, int steps, double* stepsize)
         break;
 
     case SENS_LINEAR:
-        n = steps;
-        s = (high - low) / steps;
+        if (high == low) {
+            n = 1;              /* the single point .ac produces */
+            s = 0.0;
+        } else {
+            n = steps;
+            s = (high - low) / steps;
+        }
         break;
 
     case SENS_DECADE:
-        if (low <= 0.0)
-            low = 1e-3;
-        if (high <= low)
-            high = 10.0 * low;
-        {   /* Enhancement-362: same family as distoan.c -- this count is cast to
-             * int and drives the sweep; `steps` is unbounded and low can be zero,
-             * so the product reaches +-inf or exceeds INT_MAX. */
-            double n_ = steps * log10(high / low) + 1.01;
-            if (!(n_ == n_) || n_ < 1.0 || n_ > 2147483000.0)
-                return(E_PARMVAL);
-            n = (int)n_;
+        if (low <= 0.0) {
+            fprintf(stderr, "ERROR: SENS AC startfreq <= 0\n");
+            goto bad;
         }
         s = pow(10.0, 1.0 / steps);
+        if (high == low) {
+            n = 1;
+        } else {
+            double n_ = steps * log10(high / low) + 1.01;
+            if (!(n_ == n_) || n_ < 1.0 || n_ > 2147483000.0) {
+                fprintf(stderr, "ERROR: SENS AC number of points is not "
+                                "representable\n");
+                goto bad;
+            }
+            n = (int)n_;
+        }
         break;
 
     case SENS_OCTAVE:
-        if (low <= 0.0)
-            low = 1e-3;
-        if (high <= low)
-            high = 2.0 * low;
-        {   /* Enhancement-362: as above, for the octave sweep. */
-            double n_ = steps * log(high / low) / M_LOG2E + 1.01;
-            if (!(n_ == n_) || n_ < 1.0 || n_ > 2147483000.0)
-                return(E_PARMVAL);
-            n = (int)n_;
+        if (low <= 0.0) {
+            fprintf(stderr, "ERROR: SENS AC startfreq <= 0\n");
+            goto bad;
         }
         s = pow(2.0, 1.0 / steps);
+        if (high == low) {
+            n = 1;
+        } else {
+            double n_ = steps * log(high / low) / M_LOG2E + 1.01;
+            if (!(n_ == n_) || n_ < 1.0 || n_ > 2147483000.0) {
+                fprintf(stderr, "ERROR: SENS AC number of points is not "
+                                "representable\n");
+                goto bad;
+            }
+            n = (int)n_;
+        }
         break;
     }
 
@@ -1153,6 +1201,12 @@ count_steps(int type, double low, double high, int steps, double* stepsize)
 
     *stepsize = s;
     return n;
+
+bad:
+    if (errp)
+        *errp = E_PARMVAL;
+    *stepsize = 0.0;            /* never leave the caller's step uninitialised */
+    return 0;
 }
 
 static int

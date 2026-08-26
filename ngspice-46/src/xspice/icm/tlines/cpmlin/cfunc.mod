@@ -115,7 +115,39 @@ void cm_cpmline (ARGS)
 	double rho   = PARAM(rho);
 	double D     = PARAM(d);
 
-    if(INIT) {
+	if(INIT) {
+        /* Enhancement-486: the same unguarded geometry the sibling MLIN model
+         * carried. MLIN is where the consequence was measured (a negative length
+         * returning a plausible but different answer, and l = 0 / rho = -1
+         * returning a bare nan); these parameters are the same physical
+         * quantities under different names, so they get the same refusal rather
+         * than being left as a fresh instance of the very asymmetry this fixes.
+         * The built-in T device sets the precedent: "td = 0 is not a usable
+         * value". !(v > 0.0) rejects NaN as well. */
+        struct { const char *name; double val; int allow_zero; } geom[] = {
+            { "l",    l,    0 }, { "w",    W,    0 },
+            { "s",    s,    0 }, { "er",   er,   0 },
+            { "h",    h,    0 }, { "t",    t,    1 },
+            { "rho",  rho,  0 }, { "tand", tand, 1 },
+            { "d",    D,    1 },
+        };
+        unsigned int k;
+        int bad = 0;
+
+        for (k = 0; k < sizeof geom / sizeof geom[0]; k++) {
+            double v = geom[k].val;
+
+            if (geom[k].allow_zero ? (v < 0.0) : !(v > 0.0)) {
+                cm_message_printf("CPMLIN: %s = %g is not a usable value; it "
+                        "must be %s.", geom[k].name, v,
+                        geom[k].allow_zero ? "zero or greater"
+                                           : "greater than zero");
+                bad = 1;
+            }
+        }
+        if (bad)
+            cm_cexit(1);
+
         CALLBACK = cm_cpmline_callback;
         STATIC_VAR(sim_points_data) = NULL;
 	}

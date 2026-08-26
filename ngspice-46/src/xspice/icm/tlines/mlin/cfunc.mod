@@ -108,6 +108,47 @@ void cm_mlin (ARGS)
 
 	/* Initialize/access instance specific storage for capacitor voltage */
 	if(INIT) {
+        /* Enhancement-486: none of the substrate or strip geometry carried any
+         * declared Limits, so physically impossible values were simply computed
+         * with. A NEGATIVE length is the clearest case: l = -1e-2 produced
+         * max|v(b)| = 0.5011 against 0.4992 for the same line at +1e-2 -- not a
+         * failure the user could notice, but a real, different, entirely
+         * plausible answer from a geometry that cannot exist. l = 0 and rho = -1
+         * returned a bare `nan`, and w/er/h/t at or below zero surfaced only as
+         * "AC operating point failed", which never named the parameter that
+         * caused it. The built-in lossless T device is the precedent for the
+         * shape of this refusal: "Fatal error: t1: td = 0 is not a usable value".
+         *
+         * Dimensions and permittivity must be strictly positive; thickness,
+         * resistivity, loss tangent and roughness may be zero (a zero-thickness
+         * strip is an ordinary idealisation) but never negative. Resistivity is
+         * NOT among them: rho = 0 returns a bare NaN from this model's own skin-
+         * depth term (measured), so a "perfect conductor" is not something it can
+         * express and rho must be strictly positive. The !(v > 0.0) spelling also
+         * rejects NaN. */
+        struct { const char *name; double val; int allow_zero; } geom[] = {
+            { "l",    l,    0 }, { "w",    W,    0 },
+            { "er",   er,   0 }, { "h",    h,    0 },
+            { "t",    t,    1 }, { "rho",  rho,  0 },
+            { "tand", tand, 1 }, { "d",    D,    1 },
+        };
+        unsigned int k;
+        int bad = 0;
+
+        for (k = 0; k < sizeof geom / sizeof geom[0]; k++) {
+            double v = geom[k].val;
+
+            if (geom[k].allow_zero ? (v < 0.0) : !(v > 0.0)) {
+                cm_message_printf("MLIN: %s = %g is not a usable value; it must "
+                        "be %s.", geom[k].name, v,
+                        geom[k].allow_zero ? "zero or greater"
+                                           : "greater than zero");
+                bad = 1;
+            }
+        }
+        if (bad)
+            cm_cexit(1);
+
         CALLBACK = cm_mline_callback;
         STATIC_VAR(sim_points_data) = NULL;
 	}

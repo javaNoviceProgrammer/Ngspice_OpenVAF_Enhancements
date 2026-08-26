@@ -48,6 +48,27 @@ void cm_capacitor (ARGS)
     double      ramp_factor;
     double      *vc;
 
+    static char *c_zero_error =
+        "\n***ERROR***\nCAPACITOR: c = 0 is not a usable value "
+        "(the model divides by it).\n";
+
+    /* Enhancement-486: PARAM(c) is a divisor both in AC (-1/w/c) and in the
+     * transient integrator below, so c = 0 is a division by zero. It reached the
+     * user as "TRAN: Timestep too small; cause unrecorded" -- a message that
+     * names neither the parameter nor the model, and that is indistinguishable
+     * from an ordinary convergence failure. The built-in C device treats C = 0 as
+     * the open circuit it is, but this model's `hd` port answers with a VOLTAGE
+     * for a given current and an open circuit has no finite voltage to return,
+     * so it cannot follow the built-in; it refuses by name instead.
+     *
+     * A NEGATIVE c is deliberately NOT guarded. The built-in C device accepts a
+     * negative capacitance and produces exactly the sign-inverted response this
+     * model produces (verified against C = -1u), so a negative capacitance is a
+     * legitimate equivalent-circuit element here, not a value to be rejected. */
+    if (PARAM(c) == 0.0) {
+        cm_message_send(c_zero_error);
+        cm_cexit(1);
+    }
 
     /* Get the ramp factor from the .option ramptime */
     ramp_factor = cm_analog_ramp_factor();

@@ -801,6 +801,34 @@ static Table3_Data_t *init_local_data(const char *filename, int interporder)
         }
     } /* end of loop over characters read from file */
 
+    /* Enhancement-486: the two loops above are bounded by iz and iy, which is
+     * exactly why a file carrying MORE data than its header declares never
+     * overran anything here (the sibling table2D, whose loop was driven by the
+     * file instead, segfaulted on the same shape). But the surplus was dropped
+     * without a word, so a file whose header and body disagree was indistinguish-
+     * able from a correct one. table2D now refuses that mismatch in both
+     * directions; warn about it here, in the direction this model is already safe
+     * against, so the two siblings say the same thing about the same file. */
+    {
+        char *pRest = cThisPtr;
+
+        while (*pRest) {
+            while (*pRest == '\n' || *pRest == '\r' ||
+                   *pRest == ' '  || *pRest == '\t')
+                ++pRest;
+            if (!*pRest)
+                break;
+            if (*pRest != '*') {
+                cm_message_printf("Warning: file %s carries data past the %d "
+                        "tables of %d rows its header declares; the surplus is "
+                        "ignored.", filename, iz, iy);
+                break;
+            }
+            while (*pRest && *pRest != '\n')
+                ++pRest;
+        }
+    }
+
     /* fill table data into eno3 structure */
     sf_eno3_set(loc->newtable, table_data /* data [n3][n2][n1] */);
 

@@ -100,7 +100,7 @@ Parameter_Name:     rise_delay                      fall_delay
 Description:        "output delay from trigger"     "output delay from pw"
 Data_Type:          real                            real
 Default_Value:      1.0e-9                          1.0e-9
-Limits:             -                               -
+Limits:              [0 -]                   [0 -]
 Vector:             no                              no
 Vector_Bounds:      -                               -
 Null_Allowed:       yes                             yes

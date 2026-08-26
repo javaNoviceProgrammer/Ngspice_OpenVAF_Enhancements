@@ -36,7 +36,7 @@ Parameter_Name:        delay            ic
 Description:           "delay"          "initial condition"
 Data_Type:             real             real
 Default_Value:         1.0e-9           0.0
-Limits:                -                -
+Limits:              [1e-15 -]               -
 Vector:                no               no
 Vector_Bounds:         -                -
 Null_Allowed:          yes              yes

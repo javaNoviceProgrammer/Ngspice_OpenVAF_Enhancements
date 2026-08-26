@@ -47,6 +47,26 @@ void cm_inductor (ARGS)
     double      ramp_factor;
     double      *li;
 
+    static char *l_zero_error =
+        "\n***ERROR***\nINDUCTOR: l = 0 is not a usable value "
+        "(the model divides by it).\n";
+
+    /* Enhancement-486: the transient integrator below divides by PARAM(l), so
+     * l = 0 is a division by zero that surfaced only as "TRAN: Timestep too
+     * small; cause unrecorded", naming neither the parameter nor the model. The
+     * built-in L device treats L = 0 as the short it is; this model's `hd` port
+     * cannot express that, so it refuses by name. The sibling capacitor model
+     * carries the same guard for the same reason.
+     *
+     * A NEGATIVE l is deliberately NOT guarded: the built-in L device accepts it
+     * and diverges in exactly the same way this model does (7.5e+288 against
+     * 1.8e+285, both ending in the same timestep abort), so the two agree and
+     * there is nothing here that the built-in device treats as an error. */
+    if (PARAM(l) == 0.0) {
+        cm_message_send(l_zero_error);
+        cm_cexit(1);
+    }
+
     /* Get the ramp factor from the .option ramptime */
     ramp_factor = cm_analog_ramp_factor();
 

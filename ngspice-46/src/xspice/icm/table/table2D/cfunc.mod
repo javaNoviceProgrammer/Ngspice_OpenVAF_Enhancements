@@ -701,6 +701,23 @@ static Table2_Data_t *init_local_data(const char *filename, int order)
             lLineCount--;   /* we count only real lines */
             continue;
         }
+        /* Enhancement-486: this loop is driven by the FILE (`while (*cThisPtr)`)
+         * and wrote table_data[lLineCount - 1] with no upper bound, while every
+         * OTHER dimension of the same file was checked -- the x row, the y row,
+         * the width of each individual data row, and even a premature EOF inside
+         * the comment block. A file declaring 3 y values and supplying 5 data
+         * rows therefore indexed two rows past the allocation and SEGFAULTED
+         * (EXC_BAD_ACCESS at 0x0 in cm_table2D), silently, with rc = 0 and not
+         * one diagnostic. Enhancement-247 already repaired the OOB READ and the
+         * degenerate/too-small cases in this very file; the WRITE and the
+         * too-many-rows case were left. */
+        if (lLineCount > iy) {
+            cm_message_printf("Too many data rows in file %s: the header "
+                    "declares %d, and row %d is past the end.",
+                    filename, iy, lLineCount);
+            xrc = -1;
+            goto EXITPOINT;
+        }
         token = CNVgettok(&cThisLinePtr);
         {
             int i = 0;
@@ -728,6 +745,20 @@ static Table2_Data_t *init_local_data(const char *filename, int order)
             }
         }
     } /* end of loop over characters read from file */
+
+    /* Enhancement-486: the mirror of the bound above. A file that stops early
+     * left the remaining rows as the zeros calloc had supplied, and the table was
+     * handed to sf_eno2_set as if it were complete: a probe in the missing region
+     * returned 0.0 -- a perfectly plausible "no current" -- with rc = 0 and no
+     * diagnostic. table3D already refuses this case ("Not enough data in file"),
+     * so the two siblings disagreed about the same malformed file. */
+    if (lLineCount != iy) {
+        cm_message_printf("Not enough data rows in file %s: the header "
+                "declares %d, but only %d were supplied.",
+                filename, iy, lLineCount);
+        xrc = -1;
+        goto EXITPOINT;
+    }
 
     /* fill table data into eno2 structure */
     sf_eno2_set(loc->newtable, table_data /* data [n2][n1] */);

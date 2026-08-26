@@ -256,6 +256,20 @@ cm_core(ARGS)
         area = PARAM(area);
         length = PARAM(length);
 
+        /* Enhancement-486: H_array and B_array are independent vector
+         * parameters, each allocated to its own length, and this was the only
+         * PARAM_SIZE call in the file -- B[] is then indexed with H's size (see
+         * the B[size-1]/B[size-2] extrapolation below), so a shorter B_array was
+         * read out of bounds and a mismatched pair drew no diagnostic at all.
+         * The sibling pwl model has carried exactly this check for both of its
+         * paired arrays; core simply never got it. */
+        if (PARAM_SIZE(H_array) != PARAM_SIZE(B_array)) {
+            cm_message_printf("CORE: h_array and b_array must have the same "
+                    "length, but h_array has %d entries and b_array has %d.",
+                    PARAM_SIZE(H_array), PARAM_SIZE(B_array));
+            cm_cexit(1);
+        }
+
         size = PARAM_SIZE(H_array);
 
         H = (Mif_Value_t*) &PARAM(H_array[0]);

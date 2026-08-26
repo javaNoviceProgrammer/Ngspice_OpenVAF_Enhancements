@@ -158,6 +158,22 @@ int MIFmParam(
                     param_info->name,
                     inModel->GENmodName,
                     target ? "overwriting" : "fatal");
+            /* Enhancement-486: a model named "a$poly$<name>" is the expansion of
+             * a SPICE2 poly() source, and for those this message routinely blames
+             * the wrong half of the card. enhtrans.c takes the first 2*dim tokens
+             * after the output nodes as the input connections and cannot tell a
+             * node name from a coefficient -- a bare number is a legal node name
+             * -- so a card supplying too FEW node pairs has its leading
+             * coefficients eaten as nodes, and the shortfall arrives here as a
+             * missing coefficient. The ambiguity is real and cannot be resolved
+             * from the card alone, but it can be stated instead of letting the
+             * user chase the count that is not actually wrong. */
+            if (strstr(inModel->GENmodName, "$poly$"))
+                fprintf(stderr,
+                        "        This is a poly() source: check the number of "
+                        "INPUT NODE PAIRS as well -- poly(n) needs exactly n of "
+                        "them, and any that are missing are consumed from the "
+                        "coefficients.\n");
             if (!target)
                  return E_BADPARM;
         } else if (param_info->has_upper_bound &&

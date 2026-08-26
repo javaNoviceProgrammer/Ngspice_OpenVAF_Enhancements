@@ -232,8 +232,50 @@ void cm_xfer(ARGS)  /* structure holding parms, inputs, outputs, etc.     */
                 ri = MIF_FALSE;
                 file_data = read_file(PARAM(file), span, offset,
                                       &size, &ri, &db);
-                if (file_data == NULL)
+                if (file_data == NULL) {
+                    /* Enhancement-486: read_file() has already named the reason.
+                     * Say what it COSTS as well: this return leaves the instance
+                     * with no table at all, so it contributes nothing and the
+                     * run continues to completion with rc = 0 and a transfer
+                     * function of zero. d_source sets the precedent for stating
+                     * the consequence ("dsource will return only its initial
+                     * state") rather than leaving the user to infer it. */
+                    cm_message_printf("XFER: instance has no usable table; it "
+                            "will contribute nothing for the whole run.");
                     return;
+                }
+
+                /* Enhancement-486: the `table` parameter path a few lines above
+                 * validates its frequency column -- it refuses a negative
+                 * frequency and refuses one lower than its predecessor
+                 * ("Error: badly formed table."). The `file` path, in this same
+                 * function, validated nothing at all, so a Touchstone file whose
+                 * frequencies ran out of order, repeated, or went negative was
+                 * accepted in silence and answered from: max|v(out)| moved from
+                 * 40.0 to 20.0 with rc = 0 and not one diagnostic. The test below
+                 * is deliberately the SAME rule the table path already applies --
+                 * >= 0 and non-decreasing -- so the two paths of one model stop
+                 * disagreeing about the same data. (Equal successive frequencies
+                 * stay legal here because the table path allows them; that is its
+                 * decision, not an oversight of this fix.) */
+                {
+                    int k;
+
+                    for (k = 0; k < size; k++) {
+                        if (file_data[3 * k] < 0.0 ||
+                            (k > 0 &&
+                             file_data[3 * k] < file_data[3 * (k - 1)])) {
+                            cm_message_printf("Error: badly formed frequency "
+                                    "column in file %s: entry %d is %g. "
+                                    "Frequencies must be non-negative and must "
+                                    "not decrease. The instance will contribute "
+                                    "nothing.", PARAM(file), k,
+                                    file_data[3 * k]);
+                            free(file_data);
+                            return;
+                        }
+                    }
+                }
                 span = 3;
                 rad = MIF_FALSE;
 

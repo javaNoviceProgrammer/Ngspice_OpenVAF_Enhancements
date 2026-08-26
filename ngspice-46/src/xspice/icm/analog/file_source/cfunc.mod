@@ -331,6 +331,34 @@ void cm_filesource(ARGS)   /* structure holding parms, inputs, outputs, etc.    
         }
         loc->indata->maxoccupied = count;
 
+        /* Enhancement-486: file_source is the file-driven sibling of pwl, and pwl
+         * requires its x_array to increase monotonically (Enhancement-480, moved
+         * beside the size check by Enhancement-485). This model had no such check
+         * at all: its only guards were "cannot open file", "cannot allocate
+         * enough memory", and two "some error occurred" warnings that name
+         * nothing. The interpolation below walks the time column in one direction
+         * only -- `while (TIME > timeinterval[1]) actpointer += stepsize` -- so a
+         * column that steps backwards, repeats a value, or starts below zero
+         * silently produced a DIFFERENT waveform with no diagnostic: a file whose
+         * first two times were 0.0 then -1e-6 started the output at 0.667 instead
+         * of 0.0. All three of those malformed shapes are the same fault, so one
+         * strict-increase test covers them. */
+        {
+            int t_i;
+
+            for (t_i = stepsize; t_i < count; t_i += stepsize) {
+                if (!(loc->indata->datavec[t_i] >
+                      loc->indata->datavec[t_i - stepsize])) {
+                    cm_message_printf("FILE_SOURCE: the time column of file %s "
+                            "must increase monotonically, but entry %d is %g "
+                            "after %g.", PARAM(file), t_i / stepsize,
+                            loc->indata->datavec[t_i],
+                            loc->indata->datavec[t_i - stepsize]);
+                    cm_cexit(1);
+                }
+            }
+        }
+
         if(loc->state->fp) {
             fclose(loc->state->fp);
             loc->state->fp = NULL;

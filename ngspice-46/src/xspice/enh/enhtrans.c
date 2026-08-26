@@ -368,11 +368,35 @@ static char *two2three_translate(
 
     if(num_coefs < 1) {
         char *errmsg;
-        fprintf(stderr, "ERROR - Number of connections differs from poly dimension\n");
+
+        /* Enhancement-486: this branch is reached when the COEFFICIENTS run out
+         * (num_coefs < 1), yet it announced "Number of connections differs from
+         * poly dimension" -- and the errmsg it returned was copy-pasted from the
+         * branch above, claiming the argument to poly() was not an integer. Both
+         * name something other than what happened. The complementary card, one
+         * with too few node connections, is not caught here at all: its shortfall
+         * surfaces downstream in mifmpara.c as "Too few values for parameter
+         * 'coef'". So each of the two faults was reported with the other's
+         * message.
+         *
+         * All this code can actually see is a token total, so it cannot tell
+         * which half the user got wrong -- and it should not guess, which is what
+         * the old wording did. It prints the arithmetic instead and names both
+         * candidates, so the numbers show which side is short. */
+        fprintf(stderr,
+                "ERROR - poly(%d) needs %d input node connection%s plus at least "
+                "one coefficient, but this card leaves only %d coefficient%s.\n",
+                dim, num_conns, (num_conns == 1) ? "" : "s",
+                num_coefs, (num_coefs == 1) ? "" : "s");
+        fprintf(stderr, "        Check BOTH the number of node connections and "
+                        "the number of coefficients.\n");
         fprintf(stderr, "       while parsing: %s\n", orig_card);
-        errmsg = copy("ERROR in two2three_translate -- Argument to poly() is not an integer\n");
-        *inst_card = copy("* ERROR - Number of connections differs from poly dimension\n");
-        *mod_card  = copy(" * ERROR - Number of connections differs from poly dimension\n");
+        errmsg = copy("ERROR in two2three_translate -- poly() needs more node "
+                      "connections or more coefficients\n");
+        *inst_card = copy("* ERROR - poly() needs more node connections or more "
+                          "coefficients\n");
+        *mod_card  = copy(" * ERROR - poly() needs more node connections or more "
+                          "coefficients\n");
         return(errmsg);
     }
     /* Split card into name, output connections, input connections, */

@@ -613,6 +613,11 @@ NON-STANDARD FEATURES
 ************************************************/
 
 
+/* Enhancement-486: cm_set_indices() returns TRUE for a non-contiguous state and
+ * FALSE for success, which left no way to say "that state does not exist at all".
+ * CM_SI_STATE_NOT_FOUND is that third answer. */
+#define CM_SI_STATE_NOT_FOUND 2
+
 static int cm_set_indices(Dynamic_State_t *states, State_Table_t *table)
 {             
     int i,           /* indexing variable */
@@ -650,6 +655,19 @@ static int cm_set_indices(Dynamic_State_t *states, State_Table_t *table)
             }
         }
     } 
+
+    /* Enhancement-486: index0 and indexN were preset to 0 above, so when NOTHING
+     * in the table matched current_state this fell straight through and returned
+     * FALSE -- "no error" -- leaving the machine pointed at ROW 0. A transition
+     * naming a state that the file never defines therefore ran the first row of
+     * the table instead, silently: with row 0 declaring outputs "0s 0s" the
+     * outputs sat at 0 forever, and with row 0 declaring "1z 1z" they sat at 1,
+     * following row 0 exactly and reporting nothing. The one diagnostic this
+     * function could produce covered only the NON-CONTIGUOUS case, so a state
+     * that simply did not exist had no message at all. */
+    if ( 0 == index0_set )
+        return CM_SI_STATE_NOT_FOUND;
+
     return FALSE;
 }                                    
 
@@ -1825,8 +1843,13 @@ void cm_d_state(ARGS)
         
         /* set indices for this state   */
         err = cm_set_indices(states, table);
-        if (err == TRUE) {
-            cm_message_send(index_error);
+        if (err) {
+            if (err == CM_SI_STATE_NOT_FOUND)
+                cm_message_printf("\nERROR\n  D_STATE: no row of the state "
+                        "file defines state %d, which a transition names as "
+                        "its next state.\n", states->current_state);
+            else
+                cm_message_send(index_error);
             return;
         }
 
@@ -1865,8 +1888,13 @@ void cm_d_state(ARGS)
 
                 /* set indices for this state   */
                 err = cm_set_indices(states, table);
-                if ( err == TRUE ) {
-                    cm_message_send(index_error);
+                if (err) {
+                    if (err == CM_SI_STATE_NOT_FOUND)
+                        cm_message_printf("\nERROR\n  D_STATE: no row of the state "
+                                "file defines state %d, which a transition names as "
+                                "its next state.\n", states->current_state);
+                    else
+                        cm_message_send(index_error);
                     return;
                 }
 
@@ -1948,8 +1976,13 @@ void cm_d_state(ARGS)
     
                             /* set indices for this new state   */
                             err = cm_set_indices(states, table);
-                            if ( err == TRUE ) {
-                                cm_message_send(index_error);
+                            if (err) {
+                                if (err == CM_SI_STATE_NOT_FOUND)
+                                    cm_message_printf("\nERROR\n  D_STATE: no row of the state "
+                                            "file defines state %d, which a transition names as "
+                                            "its next state.\n", states->current_state);
+                                else
+                                    cm_message_send(index_error);
                                 return;
                             }
                     
