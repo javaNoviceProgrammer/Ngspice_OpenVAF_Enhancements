@@ -121,6 +121,10 @@ void cm_limit(ARGS)  /* structure holding parms,
         "* region past the limits and stop limiting. Clamped to zero. *\n";
     static char *limit_order_error =
         "\n**** ERROR ****\n* LIMIT out_upper_limit is below out_lower_limit. *\n";
+    /* Enhancement-485 */
+    static char *limit_range_error =
+        "\n**** ERROR ****\n* LIMIT limit_range leaves no linear region between the\n"
+        "* limits; clamped to half the limit span. *\n";
 	double gain;              /* gain */
     double threshold_upper;   /* value above which smoothing takes place */
 	double threshold_lower;   /* value below which smoothing takes place */
@@ -180,6 +184,33 @@ void cm_limit(ARGS)  /* structure holding parms,
     if (out_upper_limit < out_lower_limit) {
         if (INIT == 1)
             cm_message_send(limit_order_error);
+    }
+
+    /* Enhancement-485: a limit_range wider than HALF the limit span crosses the
+     * two thresholds below, and the parabolic smoothing then runs over an
+     * inverted region and carries the output straight past the limits this block
+     * exists to enforce: with out_lower_limit=-1, out_upper_limit=1 and an input
+     * of 0.5, limit_range=5 gave 1.1125, limit_range=99 gave 24.5057 and
+     * limit_range=1e6 gave 249999.75 -- unbounded, and silent.
+     *
+     * E-468 added the negative-range and inverted-limits checks above, modelled
+     * on CLIMIT ("as the CLIMIT sibling already does"). It did not port CLIMIT's
+     * OWN guard, which is exactly this one: CLIMIT computes
+     * `linear_range = threshold_upper - threshold_lower` and refuses when it goes
+     * negative. `limit` never computed linear_range at all, and neither do `int`
+     * or `d_dt`, which carry the same parameter pair.
+     *
+     * Clamp rather than refuse: at half the span the thresholds coincide, which
+     * is hard limiting exactly at the bounds the deck asked for -- the only
+     * reading that still honours them. Reported at INIT, once per instance,
+     * following E-480. */
+    {
+        double half_span = 0.5 * (out_upper_limit - out_lower_limit);
+        if (half_span > 0.0 && limit_range > half_span) {
+            if (INIT == 1)
+                cm_message_send(limit_range_error);
+            limit_range = half_span;
+        }
     }
 
     threshold_upper = out_upper_limit -   /* Set Upper Threshold */

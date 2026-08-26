@@ -159,6 +159,12 @@ NON-STANDARD FEATURES
 void cm_hyst(ARGS)  /* structure holding parms, 
                                        inputs, outputs, etc.     */
 {
+    /* Enhancement-485 */
+    static char *hyst_order_error =
+        "\n**** ERROR ****\n* HYST in_high is below in_low; the pair was swapped. *\n";
+    static char *hyst_range_error =
+        "\n**** ERROR ****\n* HYST hyst is wider than half the in_low..in_high span;\n* clamped to half the span. *\n";
+
     double        in, /* input to hysteresis block      */
                  out, /* output from hysteresis block   */
               in_low, /* lower input value for hyst=0 at which 
@@ -204,6 +210,40 @@ void cm_hyst(ARGS)  /* structure holding parms,
     out_lower_limit = PARAM(out_lower_limit);
     out_upper_limit = PARAM(out_upper_limit);                         
     input_domain = PARAM(input_domain);
+
+    /* Enhancement-485: two shapes that produced a dead block in silence.
+     *
+     * (1) An INVERTED threshold pair. `in_low=0.8 in_high=0.2` gave a constant
+     *     0.0 for every input and said nothing. `limit` refuses exactly this
+     *     shape for its out_lower/out_upper pair (E-468's limit_order_error);
+     *     hyst's pair is the same thing and had no check. A `Limits:` range in
+     *     ifspec.ifs cannot express a relationship between two parameters, which
+     *     is why the declared limits do not catch it.
+     *
+     * (2) A half-width WIDER THAN THE SPAN. The derived breakpoints are
+     *     in_low +/- hyst and in_high +/- hyst; once hyst exceeds half the
+     *     in_low..in_high span the rise and fall curves cross and the block
+     *     latches at 0.0 whatever the input does. `hyst=99` on a 0.2..0.8 span
+     *     did exactly that, silently. Legal per its Limits: [0 -], which only
+     *     bounds it from below.
+     *
+     * Both are reported once at INIT and repaired to the nearest sane reading --
+     * the pair is swapped, the half-width clamped -- so the block keeps
+     * switching at the thresholds the deck asked for. */
+    if (in_high < in_low) {
+        double e485_tmp;
+        if (INIT == 1)
+            cm_message_send(hyst_order_error);
+        e485_tmp = in_low; in_low = in_high; in_high = e485_tmp;
+    }
+    {
+        double e485_half = 0.5 * (in_high - in_low);
+        if (e485_half > 0.0 && hyst > e485_half) {
+            if (INIT == 1)
+                cm_message_send(hyst_range_error);
+            hyst = e485_half;
+        }
+    }
 
                         
 

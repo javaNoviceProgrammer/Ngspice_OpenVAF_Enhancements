@@ -114,6 +114,55 @@ inp_value_present(const char *s)
         }                                                               \
     } while(0)
 
+/* Enhancement-485: one frequency-sweep validator for the cards that were not
+ * getting one.
+ *
+ * `.ac` (dot_ac) checks its number of points and its frequency range and names
+ * whichever is wrong -- Enhancement-426's work. `.sp` and `.noise` do the same
+ * from their own analysis code. `.disto` and `.sens ... ac` take the SAME
+ * `<type> <points> <fstart> <fstop>` arguments and neither checked anything:
+ *
+ *   sens v(out) ac dec 0 1 1k     accepted in silence, four rows of output
+ *   sens v(out) ac dec 10 1meg 1  accepted in silence, and then swept a
+ *                                 FABRICATED decade 1e6 -> 1e7 ASCENDING,
+ *                                 nothing like the range the deck asked for
+ *   disto dec 0 1 1k              refused, but reporting "no such parameter on
+ *   disto dec 10 1k 1             this device or parameter is missing" -- a
+ *                                 DEVICE fault it does not have, and the same
+ *                                 text for both faults
+ *
+ * `which` names the card so the message says which one is wrong. Returns 0 when
+ * the arguments are usable and -1 when the caller should abandon the card; the
+ * message is already emitted in that case. */
+static int
+inp_sweep_args_ok(struct card *current, const char *card,
+                  int numsteps, double fstart, double fstop)
+{
+    char msg[128];
+
+    if (numsteps < 1) {
+        snprintf(msg, sizeof msg,
+                 "%s number of points is invalid, must be greater than zero.\n", card);
+        LITERR(msg);
+        return -1;
+    }
+    if (fstart < 0.0) {
+        snprintf(msg, sizeof msg,
+                 "%s start frequency is invalid, must not be negative.\n", card);
+        LITERR(msg);
+        return -1;
+    }
+    if (fstop < fstart) {
+        snprintf(msg, sizeof msg,
+                 "%s stop frequency is invalid, must not be less than the start "
+                 "frequency.\n", card);
+        LITERR(msg);
+        return -1;
+    }
+    return 0;
+}
+
+
 static int
 dot_noise(char *line, CKTcircuit *ckt, INPtables *tab, struct card *current,
           TSKtask *task, CKTnode *gnode, JOB *foo)
@@ -259,12 +308,25 @@ dot_disto(char *line, CKTcircuit *ckt, INPtables *tab, struct card *current,
     INPgetTok(&line, &steptype, 1);	/* get DEC, OCT, or LIN */
     ptemp.iValue = 1;
     GCA(INPapName, (ckt, which, foo, steptype, &ptemp));
-    parm = INPgetValue(ckt, &line, IF_INTEGER, tab);	/* number of points */
-    GCA(INPapName, (ckt, which, foo, "numsteps", parm));
-    parm = INPgetValue(ckt, &line, IF_REAL, tab);	/* fstart */
-    GCA(INPapName, (ckt, which, foo, "start", parm));
-    parm = INPgetValue(ckt, &line, IF_REAL, tab);	/* fstop */
-    GCA(INPapName, (ckt, which, foo, "stop", parm));
+    /* Enhancement-485: read all three, then validate together, so the message
+       names the offending argument instead of the analysis reporting a device
+       fault it does not have. */
+    {
+        int e485_np;
+        double e485_start, e485_stop;
+
+        parm = INPgetValue(ckt, &line, IF_INTEGER, tab);	/* number of points */
+        e485_np = parm->iValue;
+        GCA(INPapName, (ckt, which, foo, "numsteps", parm));
+        parm = INPgetValue(ckt, &line, IF_REAL, tab);	/* fstart */
+        e485_start = parm->rValue;
+        GCA(INPapName, (ckt, which, foo, "start", parm));
+        parm = INPgetValue(ckt, &line, IF_REAL, tab);	/* fstop */
+        e485_stop = parm->rValue;
+        GCA(INPapName, (ckt, which, foo, "stop", parm));
+        if (inp_sweep_args_ok(current, "DISTO", e485_np, e485_start, e485_stop) != 0)
+            return (0);
+    }
     if (*line) {
         parm = INPgetValue(ckt, &line, IF_REAL, tab);	/* f1phase */
         GCA(INPapName, (ckt, which, foo, "f2overf1", parm));
@@ -708,15 +770,28 @@ dot_sens(char *line, CKTcircuit *ckt, INPtables *tab, struct card *current,
     }
 
     if (name && !strcmp(name, "ac")) {
+        /* Enhancement-485: these three went straight to INPapName unchecked,
+           while `.ac` -- in this same file -- rejects both a non-positive point
+           count and a reversed range by name. `sens v(out) ac dec 0 1 1k` was
+           accepted silently, and `sens v(out) ac dec 10 1meg 1` silently swept
+           1e6 -> 1e7 ASCENDING, a decade the deck never asked for. */
+        int e485_np;
+        double e485_start, e485_stop;
+
         INPgetTok(&line, &steptype, 1);	/* get DEC, OCT, or LIN */
         ptemp.iValue = 1;
         GCA(INPapName, (ckt, which, foo, steptype, &ptemp));
         parm = INPgetValue(ckt, &line, IF_INTEGER, tab); /* number of points */
+        e485_np = parm->iValue;
         GCA(INPapName, (ckt, which, foo, "numsteps", parm));
         parm = INPgetValue(ckt, &line, IF_REAL, tab); /* fstart */
+        e485_start = parm->rValue;
         GCA(INPapName, (ckt, which, foo, "start", parm));
         parm = INPgetValue(ckt, &line, IF_REAL, tab); /* fstop */
+        e485_stop = parm->rValue;
         GCA(INPapName, (ckt, which, foo, "stop", parm));
+        if (inp_sweep_args_ok(current, "SENS AC", e485_np, e485_start, e485_stop) != 0)
+            return (0);
         return (0);
     } else if (name && *name && strcmp(name, "dc")) {
         /* Bad flag */

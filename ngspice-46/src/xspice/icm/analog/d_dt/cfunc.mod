@@ -121,6 +121,12 @@ NON-STANDARD FEATURES
 void cm_d_dt(ARGS)   
 
 {
+    /* Enhancement-485: reported once at INIT when limit_range is wider than
+     * half the limit span; see the clamp below. */
+    static char *e485_range_error =
+        "\n**** ERROR ****\n* limit_range leaves no linear region between the limits;\n"
+        "* clamped to half the limit span. *\n";
+
 
     double        *in, /* current input value   */
               *in_old, /* previous input value  */
@@ -161,6 +167,23 @@ void cm_d_dt(ARGS)
         out_lower_limit = PARAM(out_lower_limit);
         out_upper_limit = PARAM(out_upper_limit);                         
         limit_range = PARAM(limit_range);
+
+        /* Enhancement-485: the smoothing regions below are
+         * [out_lower_limit +/- limit_range] and [out_upper_limit +/- limit_range].
+         * Once 2*limit_range exceeds the limit span they OVERLAP and the smoothed
+         * output leaves the limits entirely -- with limits of +/-1 and a ramp
+         * input, limit_range=99 drove `int` to 95.04 and `d_dt` to 24.25, in
+         * silence. Clamp to half the span (regions meeting at the midpoint =
+         * hard limiting at the declared bounds) and say so once. Same repair as
+         * `limit` and the shared cm_climit_fcn helper. */
+        {
+            double e485_half = 0.5 * (out_upper_limit - out_lower_limit);
+            if (e485_half > 0.0 && limit_range > e485_half) {
+                if (INIT == 1)
+                    cm_message_send(e485_range_error);
+                limit_range = e485_half;
+            }
+        }
 
 
         /** Test for INIT; if so, allocate storage, otherwise, retrieve

@@ -292,8 +292,36 @@ void cm_pwl(ARGS)  /* structure holding parms,
        size, so a shorter y_array would be read out of bounds.  Require equal
        lengths (as the sibling models oneshot / multi_input_pwl already do). */
     if (PARAM_SIZE(x_array) != PARAM_SIZE(y_array)) {
-        cm_message_send(size_error);
+        /* Enhancement-485: gated on INIT for the same reason E-480 gated LIMIT's
+         * messages -- this returns on EVERY evaluation, so an ungated send cost
+         * eight copies for a single `op`. */
+        if (INIT == 1)
+            cm_message_send(size_error);
         return;
+    }
+
+    /* Enhancement-485: the monotonicity check Enhancement-480 added sits further
+     * down, inside the INIT block, and ends in `break` -- which leaves only the
+     * CHECKING loop. The code then fell straight through and built the
+     * interpolation table from the data it had just declared unusable, so the
+     * model announced "x_array must increase monotonically!" and answered from it
+     * anyway: x=[0 2 1] y=[0 1 4] at an input of 0.5 returned 5.5, above the
+     * table's entire y range.
+     *
+     * It cannot simply `return` where it stands: x and y are STATIC_VAR-owned and
+     * released by the callback, so freeing there would double-free, and returning
+     * without freeing would leave a half-built table (the leading and trailing
+     * extrapolation points are written just after) for every later evaluation to
+     * read. So the test moves HERE, beside the size check it belongs with --
+     * before any allocation, reading the parameter directly, refusing on every
+     * evaluation exactly as a length mismatch is refused. The message is gated on
+     * INIT so a rejected table costs one line, not one per iteration. */
+    for (i = 1; i < PARAM_SIZE(x_array); i++) {
+        if (!(PARAM(x_array[i]) > PARAM(x_array[i - 1]))) {
+            if (INIT == 1)
+                cm_message_send(order_error);
+            return;
+        }
     }
 
     /* size including space for two additional x,y pairs */

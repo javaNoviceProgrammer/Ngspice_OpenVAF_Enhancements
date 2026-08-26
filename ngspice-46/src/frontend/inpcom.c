@@ -1708,6 +1708,31 @@ static struct inp_read_t inp_read(FILE* fp, int call_depth, const char* dir_name
                     }
                 }
 
+                /* Enhancement-485: `fopen()` on a DIRECTORY succeeds on macOS,
+                 * the BSDs and glibc -- the read then yields nothing (EISDIR) --
+                 * so `.include <a directory>` passed both checks here and
+                 * contributed an empty file in total silence. The deck went on to
+                 * solve a DIFFERENT CIRCUIT: a divider whose second resistor lived
+                 * in the include read v(out)=1.0 instead of 0.5, with no
+                 * diagnostic anywhere in the output. A missing file was already
+                 * caught above; `.lib` refuses a directory outright. Test that the
+                 * resolved path is a REGULAR FILE, which is the property both of
+                 * those checks assume. */
+                {
+                    struct stat e485_st;
+                    if (stat(y_resolved, &e485_st) == 0 &&
+                        !S_ISREG(e485_st.st_mode)) {
+                        fprintf(cp_err, "Error: .include %s is not a regular file.\n",
+                                y_resolved);
+                        if (intfile)
+                            fprintf(cp_err, "    While reading the netlist sent by the calling program\n");
+                        else if (sourcelineinfo)
+                            fprintf(cp_err, "    While reading %s\n", sourcelineinfo);
+                        tfree(buffer);
+                        controlled_exit(EXIT_FAILURE);
+                    }
+                }
+
                 newfp = fopen(y_resolved, "r");
 
                 if (!newfp) {

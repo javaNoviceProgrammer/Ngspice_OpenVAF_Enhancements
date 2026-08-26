@@ -204,7 +204,9 @@ void cm_climit_fcn(
 
 /* Define error message string constants */
 
-char *climit_range_error = "\n**** ERROR ****\n* CLIMIT function linear range less than zero. *\n";
+/* Enhancement-485: was "CLIMIT function ..." -- this helper serves `climit` AND
+ * `ilimit`, so an `ilimit` deck with no CLIMIT in it was told about CLIMIT. */
+char *climit_range_error = "\n**** ERROR ****\n* Limiter: limit_range leaves no linear region between the limits;\n* clamped to half the limit span. *\n";
 
 
 double threshold_upper,threshold_lower,linear_range,
@@ -230,15 +232,38 @@ double threshold_upper,threshold_lower,linear_range,
     linear_range = threshold_upper - threshold_lower;
 
     
-    /* Test the linear region & make sure there IS one... */
+    /* Test the linear region & make sure there IS one...
+     *
+     * Enhancement-485: this block DETECTED the fault, printed, and then used the
+     * bad value anyway -- the five lines that gave the detection meaning were
+     * commented out. They could not simply be restored: they assign the LOCALS
+     * and `return`, while the out-parameters are written at the end of the
+     * function, so an early return would have left *out_final uninitialised.
+     * That is very likely why they were disabled rather than fixed.
+     *
+     * Repair the input instead of abandoning the evaluation. `limit_range` is a
+     * SMOOTHING width; when twice it exceeds the limit span the two thresholds
+     * cross and the parabolic arithmetic below runs over an inverted region,
+     * which is how the block came to answer 24.5 with limits of +/-1. Clamping
+     * it to half the span leaves the thresholds coincident -- hard limiting at
+     * exactly the bounds the deck asked for, the only reading that still honours
+     * them -- and every downstream branch stays valid.
+     *
+     * Reported ONCE per run, not per iteration: this is a raw printf with no
+     * instance context (cm_message_send is not reachable here), and the site was
+     * emitting 26 copies for a single `op`. That is the defect Enhancement-480
+     * fixed for LIMIT's own messages; the shared helper was never covered. */
     if (linear_range < 0.0) {
-        printf("%s\n",climit_range_error);                   
-/*        limited_out = 0.0;
-        pout_pin = 0.0;  
-        pout_pcntl_lower = 0.0;
-        pout_pcntl_upper = 0.0;
-        return;
-*/    }
+        static int reported = 0;
+        if (!reported) {
+            printf("%s\n",climit_range_error);
+            reported = 1;
+        }
+        limit_range = 0.5 * (out_upper_limit - out_lower_limit);
+        threshold_upper = out_upper_limit - limit_range;
+        threshold_lower = out_lower_limit + limit_range;
+        linear_range = 0.0;
+    }
 
     /* Compute Un-Limited Output */
     out = gain * (in_offset + in); 

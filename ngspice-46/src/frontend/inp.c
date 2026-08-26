@@ -9,6 +9,7 @@ Author: 1985 Wayne A. Christopher
  */
 
 #include "ngspice/ngspice.h"
+#include <sys/stat.h>   /* Enhancement-485: S_ISREG */
 
 #include "ngspice/cktdefs.h"
 #include "ngspice/cpdefs.h"
@@ -2637,6 +2638,27 @@ com_source(wordlist *wl)
         }
         fseek(fp, 0L, SEEK_SET);
     } else {
+        /* Enhancement-485: `fopen()` on a DIRECTORY succeeds on macOS, the BSDs
+         * and glibc, so `source <a directory>` opened it, read nothing, and
+         * returned in silence -- the same defect fixed for `.include` in
+         * inpcom.c. A missing path is already reported below; refuse a path that
+         * exists but is not a regular file. */
+        struct stat e485_st;
+        if (stat(wl->wl_word, &e485_st) == 0 && !S_ISREG(e485_st.st_mode)) {
+            fprintf(cp_err, "Command 'source' failed:\n");
+            fprintf(cp_err, "%s: not a regular file\n", wl->wl_word);
+            fprintf(cp_err, "    Simulation interrupted due to error!\n\n");
+            cp_interactive = TRUE;
+#ifdef SHARED_MODULE
+            controlled_exit(1);
+#else
+            if (cp_getvar("interactive", CP_BOOL, NULL, 0))
+                cp_evloop(NULL);
+            else
+                controlled_exit(1);
+#endif
+            return;
+        }
         fp = inp_pathopen(wl->wl_word, "r");
     }
 

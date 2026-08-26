@@ -127,6 +127,10 @@ NON-STANDARD FEATURES
 void cm_slew(ARGS)   
 
 {
+    /* Enhancement-485 */
+    static char *slew_slope_error =
+        "\n**** ERROR ****\n* SLEW rise_slope/fall_slope must be positive; the magnitude\n* was used (a zero slope falls back to the default). *\n";
+
     double *ins;        /* input value                            */
 	double *in_old;     /* previous input value                   */
 	double *outs;       /* output value                           */
@@ -143,6 +147,12 @@ void cm_slew(ARGS)
    /** Retrieve frequently used parameters (used by all analyses)... **/
 
    if (INIT == 1) { 
+
+       /* Enhancement-485: report the slope fault HERE, in the INIT block that
+        * runs for every analysis, because the repair below sits inside the
+        * MIF_TRAN branch where INIT is already past. */
+       if (PARAM(rise_slope) <= 0.0 || PARAM(fall_slope) <= 0.0)
+           cm_message_send(slew_slope_error);
 
 		/* First pass...allocate storage for previous state.   */
     
@@ -179,6 +189,25 @@ void cm_slew(ARGS)
 
         slope_rise = PARAM(rise_slope);
         slope_fall = PARAM(fall_slope);
+
+        /* Enhancement-485: a slew rate is a magnitude. A NEGATIVE one made the
+         * output ramp AWAY from its input -- rise_slope=-1e3 on a 0->1 pulse drove
+         * the output to -2.0 -- and a ZERO one disabled the limiting altogether so
+         * the block passed its input straight through, both in silence and both
+         * legal per ifspec.ifs, which declares no Limits for either parameter.
+         * Report once at INIT and use the magnitude; zero is refused outright by
+         * falling back to the model's own default, since a zero slew rate has no
+         * meaningful reading. */
+        if (slope_rise <= 0.0 || slope_fall <= 0.0) {
+            /* The report lives in the INIT block above, not here: this branch is
+             * only entered for MIF_TRAN, by which time INIT has long passed, so a
+             * gate placed here never fires -- the same shape as the `TIME != 0`
+             * gate Enhancement-480 had to move out of LIMIT. */
+            if (slope_rise < 0.0) slope_rise = -slope_rise;
+            if (slope_fall < 0.0) slope_fall = -slope_fall;
+            if (slope_rise == 0.0) slope_rise = 1.0e9;
+            if (slope_fall == 0.0) slope_fall = 1.0e9;
+        }
 
         /* Allocation not necessary...retrieve previous values */
 

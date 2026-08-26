@@ -2060,6 +2060,22 @@ measure_parse_stdParams(
      * m_to == 0.0 doubles as "no upper limit", `FROM=1m TO=0` measured
      * [1m, end-of-sweep] and returned a confident number for a window the user
      * never asked for. Refuse it, and refuse the zero-width window too. */
+    /* Enhancement-485: the window was guarded at the TOP and not at the BOTTOM.
+     * `FROM=50u TO=60u` past the end of a 20us run is refused ("out of
+     * interval"), and an over-range TO is clamped with the ECHO CORRECTED to the
+     * value actually used. A negative FROM was neither: `FROM=-1 TO=5u` was
+     * accepted, silently clamped to the start of the data -- the number returned
+     * is right -- and then REPORTED as
+     *     neg  =  8.01248e-01 from=  -1.00000e+00 to=  5.00000e-06
+     * a window the measurement never used. The value is the user's to fix, so
+     * clamp it here, where m_from is what the report prints, and say so. */
+    if (meas->m_from_given && meas->m_from < 0.0) {
+        fprintf(cp_err,
+                "Warning: measure: FROM=%g is before the start of the data; "
+                "clamped to 0.\n", meas->m_from);
+        meas->m_from = 0.0;
+    }
+
     else if (meas->m_from_given && meas->m_to_given) {
         if (meas->m_from > meas->m_to) {
             snprintf(errbuf, MEAS_ERRBUF_SIZE,
