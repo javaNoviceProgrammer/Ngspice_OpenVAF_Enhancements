@@ -44,6 +44,7 @@ analyses is suppressed via `ft_optimizing`.
 #include "ngspice/cpextern.h"
 #include "ngspice/dvec.h"
 #include "ngspice/sim.h"
+#include "ngspice/const.h"   /* Enhancement-488: CONSTCtoK for the `temp` knob */
 
 #include "numparam/numpaif.h"
 #include "ngspice/randnumb.h"
@@ -54,6 +55,7 @@ analyses is suppressed via `ft_optimizing`.
 #define SW_ALTER   0             /* alter     -- device / instance / source      */
 #define SW_MODEL   1             /* altermod  -- .model-card parameter            */
 #define SW_DECK    2             /* alterparam + reset -- symbolic `.param`       */
+#define SW_TEMP    3             /* Enhancement-488: the GLOBAL circuit temperature */
 #define SW_MAXOUT  256           /* max recorded output vectors                   */
 #define SW_MAXPTS  100000        /* sanity cap on sweep points                    */
 #define SW_MAXKNOB 4             /* Enhancement-190: inner + up to 3 `-vs` knobs  */
@@ -258,7 +260,22 @@ static int sw_kind(const char *name)
     } else {
         int found = 0;
         (void) nupa_get_param(name, &found);
-        return found ? SW_DECK : SW_ALTER;
+        if (found)
+            return SW_DECK;
+        /* Enhancement-488: `sweep temp` is the GLOBAL circuit temperature, the
+         * same knob `.dc temp` sweeps. Without this it fell through to SW_ALTER,
+         * `alter temp=...` found no such device, and the sweep ran to completion
+         * over a knob that never moved -- a full set of points, rc = 0, and a
+         * perfectly plottable FLAT curve. That is precisely the shape
+         * Enhancement-435 describes a few lines above for subcircuit-local model
+         * names, and that Enhancement-431 removed for an unresolved `-output`.
+         *
+         * A deck `.param temp` is tested FIRST and still wins, so this is purely
+         * additive: a deck that defines and references its own `temp` parameter
+         * sweeps exactly as it did before. */
+        if (cieq(name, "temp"))
+            return SW_TEMP;
+        return SW_ALTER;
     }
 }
 
@@ -281,6 +298,8 @@ static const char *sw_knobdesc(const char *name, int kind)
         if (p[0] == '*' && p[1] == '[')
             return "model param, wildcard";
     }
+    if (kind == SW_TEMP)
+        return "global temperature";     /* Enhancement-488 */
     return kind == SW_MODEL ? "model param" : "instance/device";
 }
 
@@ -338,11 +357,49 @@ static void sw_set_deck(const char *name, double val)
     sw_run_cmd(cmd);
 }
 
+/* Enhancement-488: set the global circuit temperature.
+ *
+ * `.dc temp` writes ckt->CKTtemp directly and calls CKTtemp(), which works there
+ * because its whole sweep runs INSIDE one CKTdoJob. `sweep` runs a fresh
+ * analysis command per point, and CKTdoJob opens with
+ *
+ *     ckt->CKTtemp = task->TSKtemp;                     (cktdojob.c)
+ *
+ * so a direct write to CKTtemp is discarded before the very next point is
+ * solved -- measured: the knob was applied and every point still came back at
+ * the nominal temperature. The task is what has to move.
+ *
+ * Issuing `option temp=` is how the frontend already moves it, and it is the
+ * same shape as the `alter`/`altermod` this file uses for every other knob. It
+ * also means the value passes the guarded OPT_TEMP funnel in cktsopt.c rather
+ * than going around it, so `sweep temp` inherits Enhancement-426's absolute-zero
+ * refusal and Enhancement-440's sanity check instead of needing its own copy. */
+static void sw_set_temp(double celsius)
+{
+    char cmd[128];
+
+    (void) snprintf(cmd, sizeof cmd, "option temp=%.10g", celsius);
+    sw_run_cmd(cmd);
+}
+
+/* Read the global circuit temperature back, in Celsius. */
+static double sw_get_temp(void)
+{
+    CKTcircuit *ckt = (ft_curckt && ft_curckt->ci_ckt) ? ft_curckt->ci_ckt : NULL;
+
+    return ckt ? ckt->CKTtemp - CONSTCtoK : 0.0;
+}
+
 /* Set an `alter` / `altermod` knob in place. These are applied AFTER any reset,
  * because reset re-sources the deck and drops in-place alters. */
 static void sw_set_inplace(int kind, const char *name, double val)
 {
     char cmd[512];
+
+    if (kind == SW_TEMP) {              /* Enhancement-488 */
+        sw_set_temp(val);
+        return;
+    }
     (void) snprintf(cmd, sizeof cmd, "%s %s=%.10g",
                     kind == SW_MODEL ? "altermod" : "alter", name, val);
     sw_run_cmd(cmd);
@@ -2542,6 +2599,25 @@ void com_sweep(wordlist *wl)
     for (j = 0; j < nknob; j++) {
         kkind[j] = sw_kind(kname[j]);
         kscname[j] = sw_scalename(kname[j]);
+        /* Enhancement-488: refuse an unphysical temperature UP FRONT, the way
+         * `.dc temp` does (dctrcurv.c, Enhancement-426), rather than letting the
+         * OPT_TEMP funnel ignore the bad points one at a time. Ignoring them is
+         * worse than it sounds: the rejected value is dropped but the axis still
+         * carries it, so `sweep temp lin 3 -600 100` produced a row LABELLED
+         * -600 C holding the answer for whatever temperature was in force
+         * (27 C), which is a mislabelled point rather than a missing one. */
+        if (kkind[j] == SW_TEMP) {
+            int b;
+
+            for (b = 0; b < knv[j]; b++) {
+                if (kvals[j][b] + CONSTCtoK <= 0.0) {
+                    fprintf(cp_err, "sweep: temperature %g C is at or below "
+                            "absolute zero (-273.15 C); nothing swept.\n",
+                            kvals[j][b]);
+                    goto cleanup;
+                }
+            }
+        }
         npt *= knv[j];
     }
     if (npt > SW_MAXPTS) {
@@ -2645,6 +2721,16 @@ void com_sweep(wordlist *wl)
                     wild_ckt[j] = (void *) ft_curckt->ci_ckt;
                     inplace_ok[nin] = 1;
                     inplace_nominal[nin++] = 0.0;   /* keeps the indices aligned */
+                    continue;
+                }
+                /* Enhancement-488: the global temperature is not a readable
+                 * vector, so it must not reach the expression parser -- the same
+                 * reason the wildcard knobs are captured out of band just above.
+                 * Read it straight off the circuit instead, in Celsius, so the
+                 * restore below hands it back through sw_set_inplace(SW_TEMP). */
+                if (kkind[j] == SW_TEMP) {
+                    inplace_ok[nin] = 1;
+                    inplace_nominal[nin++] = sw_get_temp();
                     continue;
                 }
                 v = sw_read_knob(kname[j], &ok);
@@ -2858,7 +2944,12 @@ void com_sweep(wordlist *wl)
         /* Enhancement-367: remember the real name so the summary below can quote
          * something `setplot` accepts. `pl` is block-scoped. */
         swplotname = pl->pl_typename;
-        sc = dvec_alloc(copy(scname), SV_NOTYPE,
+        /* Enhancement-488: a sweep axis is usually an arbitrary knob value with no
+         * matching simulation_types member, so SV_NOTYPE is the honest answer --
+         * but the temperature axis has one, and `.dc temp` already types its own
+         * scale that way. Give it the same type so `plot` labels the two alike. */
+        sc = dvec_alloc(copy(scname),
+                        (kkind[0] == SW_TEMP) ? SV_TEMP : SV_NOTYPE,
                         (short) (VF_REAL | VF_PERMANENT), nv0, NULL);
         for (i = 0; i < nv0; i++) sc->v_realdata[i] = kvals[0][i];
         vec_new(sc);                                 /* first permanent -> scale */
