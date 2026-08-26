@@ -261,6 +261,11 @@ def main():
         # every name in the tree that reaches plot_alloc(), literal or via a
         # helper. "transient"/"unknown" legitimately map to a different string.
         NAMES = {"envelope": "envelope", "eye": "eye", "hb": "hb",
+                 # Enhancement-487: hbosc and phasenoise publish their own plots
+                 # now. Both are shadowed by an existing pattern -- "hbosc"
+                 # contains "hb", "phasenoise" contains "noise" -- so they are
+                 # exactly the shape this invariant exists to catch.
+                 "hbosc": "hbosc", "phasenoise": "phasenoise",
                  "loadpull": "loadpull", "qpac": "qpac", "qpnoise": "qpnoise",
                  "qpxf": "qpxf", "rfstab": "rfstab", "sp": "sp",
                  "spectrum": "spect", "stb": "stb", "sweep": "sweep",

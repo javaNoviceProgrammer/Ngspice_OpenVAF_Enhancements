@@ -402,15 +402,24 @@ void com_loadpull(wordlist *wl)
             pl->pl_title = copy(ft_curckt->ci_name ? ft_curckt->ci_name : "loadpull");
             plot_new(pl);
             plot_setcur(pl->pl_typename);
-#define LP_VEC(nm, arr) \
-            d = dvec_alloc(copy(nm), SV_NOTYPE, (short)(VF_REAL|VF_PERMANENT), k, NULL); \
+            /* Enhancement-487: every vector here was created SV_NOTYPE, including
+               the two that have a real type available. gamma_re/gamma_im are a
+               dimensionless reflection coefficient and pae/eff are dimensionless
+               ratios, so those stay untyped -- there is no enum member for either
+               and inventing one would be worse than none. pout_dbm and gain_db are
+               dB quantities and SV_DB exists, so they carry it and `display` now
+               names them instead of showing four identical "notype" rows. */
+#define LP_VEC_T(nm, arr, ty) \
+            d = dvec_alloc(copy(nm), ty, (short)(VF_REAL|VF_PERMANENT), k, NULL); \
             for (i = 0; i < k; i++) d->v_realdata[i] = (arr)[i]; vec_new(d);
+#define LP_VEC(nm, arr) LP_VEC_T(nm, arr, SV_NOTYPE)
             LP_VEC("gamma_re", gre)      /* first permanent -> scale */
             LP_VEC("gamma_im", gim)
-            LP_VEC("pout_dbm", poutv)
-            LP_VEC("gain_db",  gainv)
+            LP_VEC_T("pout_dbm", poutv, SV_DB)
+            LP_VEC_T("gain_db",  gainv, SV_DB)
             if (supply) { LP_VEC("pae", paev) LP_VEC("eff", effv) }
 #undef LP_VEC
+#undef LP_VEC_T
             {
                 double br, bx;
                 lp_gamma_to_z(bestgr, bestgi, z0, &br, &bx);

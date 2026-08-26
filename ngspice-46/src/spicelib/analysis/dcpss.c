@@ -3212,7 +3212,8 @@ static int     osc_node = 0, osc_valid = 0;
 
 int
 HBOSCanalyze(CKTcircuit *ckt, int oscNode, int K, int Pin, double f0seed,
-             double ampseed, int maxiter, double tol, int verbose)
+             double ampseed, int maxiter, double tol, int verbose,
+             struct hbspectrum *out)
 {
     int N = SMPmatSize(ckt->CKTmatrix);
     int P = Pin > 0 ? Pin : ((8*K < 32) ? 32 : 8*K);
@@ -3342,6 +3343,20 @@ HBOSCanalyze(CKTcircuit *ckt, int oscNode, int K, int Pin, double f0seed,
             }
         }
         if (nameList) tfree(nameList);
+
+        /* Enhancement-487: hand the converged spectrum to the frontend, exactly as
+           Enhancement-209 already did for the driven HBanalyze above, so `hbosc`
+           can publish nutmeg vectors instead of only printing this table. The two
+           routines produce the same (2K+1)*N two-sided layout, so they share one
+           publisher in the frontend and cannot drift apart again. Ownership of
+           Vr/Vi passes to the caller; NULL them so the cleanup below does not free
+           them. f0 is the CONVERGED oscillation frequency, which for an autonomous
+           circuit is itself part of the answer rather than an input. */
+        if (out) {
+            out->N = N; out->K = K; out->f0 = f0;
+            out->Vr = Vr; out->Vi = Vi;
+            Vr = NULL; Vi = NULL;
+        }
     } else {
         if (have_hd) pac_free_harmonics(&hd);
         if (rc != OK)
@@ -3354,12 +3369,18 @@ HBOSCanalyze(CKTcircuit *ckt, int oscNode, int K, int Pin, double f0seed,
 }
 
 int
-PhaseNoiseAnalyze(CKTcircuit *ckt, double fstart, double fstop, int npts, int verbose)
+PhaseNoiseAnalyze(CKTcircuit *ckt, double fstart, double fstop, int npts, int verbose,
+                  struct pnspectrum *out)
 {
     struct pac_harm *hd = &osc_hd;
     int    N, M, Ntot, i, j, k, rc = OK, onode, ni, mi, ei;
     double f0 = osc_f0;
     double *Psr, *Psi, Pcar, freq, mult;
+    /* Enhancement-487: collected alongside the printed table so the frontend can
+       publish the curve as nutmeg vectors. npts is the upper bound; `ncoll` is what
+       was actually produced (the npts == 1 case breaks out after one point). */
+    double *coll_f = NULL, *coll_l = NULL;
+    int     ncoll = 0;
     NOISEAN nj; Ndata data; JOB *oldJob;
 
     if (!osc_valid) {
@@ -3401,6 +3422,10 @@ PhaseNoiseAnalyze(CKTcircuit *ckt, double fstart, double fstop, int npts, int ve
     fprintf(stdout, "\nPhaseNoise: oscillator phase noise (f0 = %.9g Hz, carrier power %.4e)\n"
                     "  offset [Hz]        L(df) [dBc/Hz]\n", f0, Pcar);
     mult = (npts > 1) ? pow(fstop/fstart, 1.0/(double)(npts-1)) : 1.0;
+    if (out && npts > 0) {
+        coll_f = TMALLOC(double, npts);
+        coll_l = TMALLOC(double, npts);
+    }
 
     for (freq = fstart, i = 0; i < npts; i++, freq *= mult) {
         /* adjoint of H at OFFSET f_in = df, unit at the CARRIER sideband (m=1) of the
@@ -3454,11 +3479,28 @@ PhaseNoiseAnalyze(CKTcircuit *ckt, double fstart, double fstop, int npts, int ve
             }
         }
         FREE(Ar); FREE(Ai);
-        fprintf(stdout, "  %14.6e   %12.4f\n", freq, 10.0*log10(Sv / Pcar));
+        {
+            double ldbc = 10.0*log10(Sv / Pcar);
+
+            fprintf(stdout, "  %14.6e   %12.4f\n", freq, ldbc);
+            if (coll_f && coll_l && ncoll < npts) {
+                coll_f[ncoll] = freq;
+                coll_l[ncoll] = ldbc;
+                ncoll++;
+            }
+        }
         if (npts == 1) break;
     }
     ckt->CKTcurJob = oldJob;
     (void) verbose;
+
+    /* Enhancement-487: ownership of the collected curve passes to the caller. */
+    if (out && ncoll > 0) {
+        out->n = ncoll; out->f0 = f0;
+        out->foff = coll_f; out->ldbc = coll_l;
+        coll_f = NULL; coll_l = NULL;
+    }
+    FREE(coll_f); FREE(coll_l);
 
     FREE(Psr); FREE(Psi);
     return rc;

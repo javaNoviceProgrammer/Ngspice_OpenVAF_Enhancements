@@ -98,6 +98,11 @@ static struct plotab plotabs[NUMPLOTTYPES] = {
     { "qpnoise", "qpnoise", FALSE, FALSE },
     { "phasenoise", "phasenoise", FALSE, FALSE },
     { "pnoise", "pnoise", FALSE, FALSE },
+    /* Enhancement-487: "phasenoise" contains "noise", so it must precede that
+     * entry or the oscillator phase-noise curve would be abbreviated `noise1` and
+     * collide with an ordinary .noise run in the same session. Same rule as the
+     * qpxf/pxf and spectrum/sp pairs below. */
+    { "phasenoise", "phasenoise", FALSE, FALSE },
     { "noise", "noise", FALSE, FALSE },
     { "sens", "sens", FALSE, FALSE },
     { "sens", "sensitivity", FALSE, FALSE },
@@ -150,6 +155,10 @@ static struct plotab plotabs[NUMPLOTTYPES] = {
      * every name in the tree that reaches plot_alloc(). */
     { "sweepwave", "sweepwave", FALSE, FALSE },
     { "sweep", "sweep", FALSE, FALSE },
+    /* Enhancement-487: "hbosc" contains "hb" -- without this entry the autonomous
+     * oscillator spectrum was abbreviated `hb1`, indistinguishable from a driven
+     * `hb` run in the same session. It must precede { "hb", "hb" }. */
+    { "hbosc", "hbosc", FALSE, FALSE },
     { "hb", "hb", FALSE, FALSE },
     { "eye", "eye", FALSE, FALSE },
     { "loadpull", "loadpull", FALSE, FALSE },

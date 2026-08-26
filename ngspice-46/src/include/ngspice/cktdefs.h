@@ -588,10 +588,20 @@ extern int QPACsweep(CKTcircuit *, int stepType, int np, double fstart, double f
 extern int QPnoiseSweep(CKTcircuit *, int outNode, int stepType, int np, double fstart, double fstop, double *freqs, double *data); /* E-142 */
 extern int QPXFsweep(CKTcircuit *, int outNode, int stepType, int np, double fstart, double fstop, double *freqs, double *data); /* E-142 */
 extern int QPnoiseAnalyze(CKTcircuit *, int outNode, double f_in, int cyclo, int verbose); /* E-138 / -139 */
-extern int HBOSCanalyze(CKTcircuit *, int oscNode, int K, int P, double f0seed, double ampseed, int maxiter, double tol, int verbose); /* E-140 */
+extern int HBOSCanalyze(CKTcircuit *, int oscNode, int K, int P, double f0seed, double ampseed, int maxiter, double tol, int verbose, struct hbspectrum *out); /* E-140; E-487 out */
 extern int EFanalysis(CKTcircuit *, int obsNode, double fc, double tstop, int nppp, int M0, int Mmax, double reltol, double *o_time, double *o_amp, double *o_dc, double *o_re, double *o_im, int maxpts); /* E-154 envelope following */
 extern int CKTreduceRC(CKTcircuit *, double fmax, double factor, int maxdeg, int *keep, int nkeep, const char *fname, const char *subname); /* E-155/156 sparse TICER RC reduction */
-extern int PhaseNoiseAnalyze(CKTcircuit *, double fstart, double fstop, int npts, int verbose); /* E-140 */
+/* Enhancement-487: the phase-noise sweep hands its curve back the same way
+   HBanalyze hands back a spectrum, so `com_phasenoise` can publish it as nutmeg
+   vectors instead of only printing a table. Ownership of foff/ldbc passes to the
+   caller; pass NULL for the old printed-table-only behaviour. */
+struct pnspectrum {
+    int     n;          /* number of offset points */
+    double  f0;         /* carrier frequency (Hz) */
+    double *foff;       /* [n] offset frequency (Hz) */
+    double *ldbc;       /* [n] L(df) in dBc/Hz */
+};
+extern int PhaseNoiseAnalyze(CKTcircuit *, double fstart, double fstop, int npts, int verbose, struct pnspectrum *out); /* E-140; E-487 out */
 #endif
 
 #ifdef RFSPICE

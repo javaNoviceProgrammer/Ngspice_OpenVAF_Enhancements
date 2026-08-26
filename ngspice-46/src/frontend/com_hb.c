@@ -37,8 +37,10 @@ static double hbnum(const char *w)
    `hbfrequency` (0, f0, 2f0, ..., K f0) and one COMPLEX vector per node, carrying
    the single-sided amplitude (|.| and phase match the printed table). The plot is
    left current, so `plot mag(out)` / `print out` / `wrdata sp v(out)` work at once. */
-static void
-hb_publish(CKTcircuit *ckt, const struct hbspectrum *sp)
+void
+hb_publish_spectrum(CKTcircuit *ckt, const struct hbspectrum *sp,
+                    const char *plotname, const char *plotdesc,
+                    const char *cmd, int withf0)
 {
     int numNames = 0, error, j, k, nv = 0;
     int N = sp->N, K = sp->K;
@@ -55,9 +57,9 @@ hb_publish(CKTcircuit *ckt, const struct hbspectrum *sp)
         return;
     }
 
-    pl = plot_alloc("hb");
-    pl->pl_name  = copy("Harmonic Balance");
-    pl->pl_title = copy((ft_curckt && ft_curckt->ci_name) ? ft_curckt->ci_name : "hb");
+    pl = plot_alloc((char *) plotname);
+    pl->pl_name  = copy(plotdesc);
+    pl->pl_title = copy((ft_curckt && ft_curckt->ci_name) ? ft_curckt->ci_name : plotname);
     plot_new(pl);
     plot_setcur(pl->pl_typename);
 
@@ -84,9 +86,19 @@ hb_publish(CKTcircuit *ckt, const struct hbspectrum *sp)
     }
     tfree(nameList);
 
-    fprintf(cp_out, "hb: spectrum stored in the current 'hb' plot -- 'hbfrequency' + "
-                    "%d node vector%s (try  plot mag(<node>)  or  wrdata out <node>).\n",
-            nv, nv == 1 ? "" : "s");
+    if (withf0) {
+        /* the converged oscillation frequency, as a one-point vector so it can be
+           read back with `print oscfreq` the same way any other result is */
+        struct dvec *f0v = dvec_alloc(copy("oscfreq"), SV_FREQUENCY,
+                                      (short) (VF_REAL | VF_PERMANENT), 1, NULL);
+        f0v->v_realdata[0] = sp->f0;
+        vec_new(f0v);
+    }
+
+    fprintf(cp_out, "%s: spectrum stored in the current '%s' plot -- 'hbfrequency' + "
+                    "%d node vector%s%s (try  plot mag(<node>)  or  wrdata out <node>).\n",
+            cmd, plotname, nv, nv == 1 ? "" : "s",
+            withf0 ? " + 'oscfreq'" : "");
 }
 
 void
@@ -165,7 +177,7 @@ com_hb(wordlist *wl)
         if (err != OK) {
             fprintf(cp_err, "hb: harmonic balance did not complete (error %d).\n", err);
         } else {
-            hb_publish(ckt, &sp);
+            hb_publish_spectrum(ckt, &sp, "hb", "Harmonic Balance", "hb", 0);
             /* Enhancement-438: tell batch mode that an analysis really ran.
              * main.c decides "did anything simulate?" from `sim_status`, which
              * runcoms.c publishes for the analyses that go through if_run().

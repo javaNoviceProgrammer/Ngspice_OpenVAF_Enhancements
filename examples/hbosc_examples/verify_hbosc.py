@@ -128,6 +128,57 @@ def main():
           a_hb is not None and a_hb > 0.1,
           "|V1| = %.4g V (a dead solution reports ~1e-15)" % a_hb if a_hb else "none")
 
+    # ---- Enhancement-487: the results have to be REACHABLE, not just printed ----
+    # hbosc and phasenoise each printed a table and stored nothing, so the current
+    # plot was left as hbosc's own startup transient: the numbers could be read on
+    # screen but not plotted, printed, wrdata'd or compared against anything.
+    out = run("hbosc a 5 5e6 100u\n"
+              "setplot\n"
+              "print oscfreq\n"
+              "print mag(a)\n", "pub")
+    check("[4] hbosc leaves its OWN plot current, not its startup transient",
+          re.search(r"^Current\s+hbosc\d+", out, re.M) is not None,
+          (re.search(r"^Current\s+\S+", out, re.M) or ["no Current line"])[0])
+    check("[5] ...abbreviated 'hbosc', not shadowed by the 'hb' pattern",
+          re.search(r"^Current\s+hbosc\d+", out, re.M) is not None
+          and not re.search(r"^Current\s+hb\d+", out, re.M),
+          "plotabs[] ordering")
+    m_f0 = re.search(r"^oscfreq\s*=\s*([-+0-9.eE]+)", out, re.M)
+    check("[6] the converged oscillation frequency is stored as 'oscfreq'",
+          m_f0 is not None, m_f0.group(1) if m_f0 else "missing")
+    # the published spectrum must equal the printed table, not merely exist
+    tbl = {}
+    for mm in re.finditer(r"^\s+a\s+(\d+)\s+\S+\s+([-+0-9.eE]+)\s+\S+\s*$", out, re.M):
+        tbl[int(mm.group(1))] = float(mm.group(2))
+    vec = [float(mm.group(1)) for mm in
+           re.finditer(r"^\d+\t([-+0-9.eE]+)\t*\s*$", out, re.M)]
+    agree = (len(vec) >= 2 and 1 in tbl
+             and abs(vec[1] - tbl[1]) <= 1e-6 * max(1.0, abs(tbl[1])))
+    check("[7] the stored spectrum equals the printed table",
+          agree, "vector[1]=%.8g table[1]=%.8g" % (vec[1], tbl[1])
+                 if (len(vec) > 1 and 1 in tbl) else "could not compare")
+
+    out = run("hbosc a 5 5e6 100u\n"
+              "phasenoise 1e3 1e6 5\n"
+              "setplot\n"
+              "display\n", "pn")
+    check("[8] phasenoise leaves its own plot current",
+          re.search(r"^Current\s+phasenoise\d+", out, re.M) is not None,
+          (re.search(r"^Current\s+\S+", out, re.M) or ["no Current line"])[0])
+    check("[9] ...carrying the offset scale, the curve and the carrier frequency",
+          all(v in out for v in ("offsetfreq", "phasenoise", "carrierfreq")),
+          "offsetfreq/phasenoise/carrierfreq")
+    check("[10] L(df) is typed as a dB quantity, not left untyped",
+          re.search(r"phasenoise\s*:\s*decibel", out) is not None,
+          "decibel")
+
+    # the control: the DRIVEN hb still publishes exactly as it did before, since
+    # both commands now go through one shared publisher
+    out = run("hb 1.5809e6 5\nsetplot\n", "drv")
+    check("[11] the driven `hb` still publishes its own 'hb' plot",
+          re.search(r"^Current\s+hb\d+", out, re.M) is not None,
+          (re.search(r"^Current\s+\S+", out, re.M) or ["none"])[0])
+
     for j in os.listdir(HERE):
         if j.startswith("_hb_"):
             os.remove(os.path.join(HERE, j))

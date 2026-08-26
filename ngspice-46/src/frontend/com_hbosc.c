@@ -23,6 +23,7 @@ are in spicelib/analysis/dcpss.c.
 
 #include "circuits.h"
 #include "com_hbosc.h"
+#include "com_hb.h"      /* Enhancement-487: the shared spectrum publisher */
 
 static void hbosc_run_cmd(const char *cmdstr)
 {
@@ -135,9 +136,27 @@ com_hbosc(wordlist *wl)
     }
 
     verbose = cp_getvar("hbosc_verbose", CP_BOOL, NULL, 0);
-    err = HBOSCanalyze(ckt, oscNode, K, 0, f0est, ampseed, 60, 1e-11, verbose ? 1 : 0);
-    if (err != OK)
-        fprintf(cp_err, "hbosc: autonomous harmonic balance did not complete (error %d).\n", err);
+
+    /* Enhancement-487: hbosc printed its harmonic table and stored NOTHING, so the
+       session was left with its own startup transient as the current plot -- the
+       numbers could be read on screen but not plotted, printed, wrdata'd or diffed.
+       The driven `hb` has published a nutmeg plot since E-209; this is the same
+       spectrum in the same layout, so it goes through the same publisher. */
+    {
+        struct hbspectrum sp;
+
+        memset(&sp, 0, sizeof sp);
+        err = HBOSCanalyze(ckt, oscNode, K, 0, f0est, ampseed, 60, 1e-11,
+                           verbose ? 1 : 0, &sp);
+        if (err != OK) {
+            fprintf(cp_err, "hbosc: autonomous harmonic balance did not complete (error %d).\n", err);
+        } else if (sp.Vr && sp.Vi) {
+            hb_publish_spectrum(ckt, &sp, "hbosc", "Harmonic Balance (oscillator)",
+                                "hbosc", 1);
+        }
+        FREE(sp.Vr);
+        FREE(sp.Vi);
+    }
 }
 
 void
@@ -167,7 +186,54 @@ com_phasenoise(wordlist *wl)
     if (npts < 1) npts = 1;
 
     verbose = cp_getvar("phasenoise_verbose", CP_BOOL, NULL, 0);
-    err = PhaseNoiseAnalyze(ckt, fstart, fstop, npts, verbose ? 1 : 0);
-    if (err != OK)
-        fprintf(cp_err, "phasenoise: did not complete (error %d).\n", err);
+
+    /* Enhancement-487: as for hbosc above, the curve was printed and then lost.
+       L(df) is a dB quantity and the offset is a frequency, so both carry a real
+       type rather than being dumped as untyped columns. */
+    {
+        struct pnspectrum pn;
+
+        memset(&pn, 0, sizeof pn);
+        err = PhaseNoiseAnalyze(ckt, fstart, fstop, npts, verbose ? 1 : 0, &pn);
+        if (err != OK) {
+            fprintf(cp_err, "phasenoise: did not complete (error %d).\n", err);
+        } else if (pn.n > 0 && pn.foff && pn.ldbc) {
+            struct plot *pl;
+            struct dvec *fv, *lv;
+            int i;
+
+            pl = plot_alloc("phasenoise");
+            pl->pl_name  = copy("Oscillator Phase Noise");
+            pl->pl_title = copy((ft_curckt && ft_curckt->ci_name)
+                                ? ft_curckt->ci_name : "phasenoise");
+            plot_new(pl);
+            plot_setcur(pl->pl_typename);
+
+            /* the offset scale first, so it becomes the plot's default scale */
+            fv = dvec_alloc(copy("offsetfreq"), SV_FREQUENCY,
+                            (short) (VF_REAL | VF_PERMANENT), pn.n, NULL);
+            for (i = 0; i < pn.n; i++)
+                fv->v_realdata[i] = pn.foff[i];
+            vec_new(fv);
+
+            lv = dvec_alloc(copy("phasenoise"), SV_DB,
+                            (short) (VF_REAL | VF_PERMANENT), pn.n, NULL);
+            for (i = 0; i < pn.n; i++)
+                lv->v_realdata[i] = pn.ldbc[i];
+            vec_new(lv);
+
+            {
+                struct dvec *cv = dvec_alloc(copy("carrierfreq"), SV_FREQUENCY,
+                                             (short) (VF_REAL | VF_PERMANENT), 1, NULL);
+                cv->v_realdata[0] = pn.f0;
+                vec_new(cv);
+            }
+
+            fprintf(cp_out, "phasenoise: curve stored in the current 'phasenoise' plot "
+                            "-- 'offsetfreq' + 'phasenoise' (dBc/Hz) + 'carrierfreq' "
+                            "(try  plot phasenoise  or  wrdata pn phasenoise).\n");
+        }
+        FREE(pn.foff);
+        FREE(pn.ldbc);
+    }
 }
