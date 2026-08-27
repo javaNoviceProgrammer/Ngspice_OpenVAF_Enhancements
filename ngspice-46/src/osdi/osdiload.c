@@ -14,7 +14,12 @@
 #include "ngspice/ngspice.h"
 #include "ngspice/typedefs.h"
 
+#include "ngspice/cktdefs.h"   /* Enhancement-492: CKTvaFatalRaised */
 #include "ngspice/osdiitf.h"
+
+/* Enhancement-492: defined here because this file owns the only place a
+   Verilog-A $fatal is actually detected. See cktdefs.h. */
+int CKTvaFatalRaised = 0;
 
 #include "osdi.h"
 #include "osdidefs.h"
@@ -823,6 +828,12 @@ extern int OSDIload(GENmodel *inModel, CKTcircuit *ckt) {
 
   /* call to $fatal in Verilog-A abort simulation!*/
   if (eval_flags & EVAL_RET_FLAG_FATAL) {
+    /* Enhancement-492: record that it was THIS -- a device actually raising
+       $fatal -- and not one of E_PANIC's other producers. CKTop reports the
+       abort, and its message names Verilog-A; without this it named Verilog-A
+       for any E_PANIC that reached it, including decks with no Verilog-A device
+       in them at all. */
+    CKTvaFatalRaised = 1;
     return E_PANIC;
   }
 

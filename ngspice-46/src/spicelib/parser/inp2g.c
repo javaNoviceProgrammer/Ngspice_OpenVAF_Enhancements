@@ -6,6 +6,8 @@ Author: 1988 Thomas L. Quarles
 #include "ngspice/ngspice.h"
 #include <stdio.h>
 #include "ngspice/ifsim.h"
+#include "ngspice/iferrmsg.h"   /* Enhancement-492: E_EXISTS */
+#include "ngspice/cktdefs.h"    /* Enhancement-492: CKTnode::devRef */
 #include "ngspice/inpdefs.h"
 #include "ngspice/inpmacs.h"
 #include "ngspice/fteext.h"
@@ -47,9 +49,21 @@ void INP2G(CKTcircuit *ckt, INPtables * tab, struct card *current)
     INPgetNetTok(&line, &nname2, 1);
     INPtermInsert(ckt, &nname2, tab, &node2);
     INPgetNetTok(&line, &nname3, 1);
-    INPtermInsert(ckt, &nname3, tab, &node3);
+    /* Enhancement-492: a CONTROL reference does not make a node real. Leave
+       it unmarked when this card is what created it, so a node connected
+       nowhere else is still phantom in pass 3; INPtermInsert re-marks it the
+       moment any other position names it. */
+    if (INPtermInsert(ckt, &nname3, tab, &node3) != E_EXISTS && node3)
+        node3->devRef = 0;
+    INPnoteCtrlNode(name, nname3, node3);
     INPgetNetTok(&line, &nname4, 1);
-    INPtermInsert(ckt, &nname4, tab, &node4);
+    /* Enhancement-492: a CONTROL reference does not make a node real. Leave
+       it unmarked when this card is what created it, so a node connected
+       nowhere else is still phantom in pass 3; INPtermInsert re-marks it the
+       moment any other position names it. */
+    if (INPtermInsert(ckt, &nname4, tab, &node4) != E_EXISTS && node4)
+        node4->devRef = 0;
+    INPnoteCtrlNode(name, nname4, node4);
     if (!tab->defGmod) {
 	/* create default G model */
 	IFnewUid(ckt, &uid, NULL, "G", UID_MODEL, NULL);

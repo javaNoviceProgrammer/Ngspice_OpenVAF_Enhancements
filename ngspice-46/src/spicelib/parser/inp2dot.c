@@ -79,6 +79,87 @@ CKTnodePhantom(CKTnode *node)
     return node && node->number != 0 && !node->devRef;
 }
 
+
+/* Enhancement-492: a node named only in a device's CONTROL position.
+ *
+ * `E`, `G` and `S` take a controlling node PAIR. Those two names were bound the
+ * same way the output pair is -- INPtermInsert, which CREATES the node -- so a
+ * typo simply invented a node and the run continued against it. For `E` and `G`
+ * the invented node has no path to ground, the matrix goes singular, and the
+ * user is told "singular matrix: check node <typo>": a node they never wrote,
+ * reported as a fault in their circuit. `S` is worse, because a switch only
+ * READS its control voltage to decide open/closed and stamps nothing for it --
+ * the matrix stays non-singular, the solve succeeds, and the answer is silently
+ * wrong. Measured: `S1 a b nosuch 0 sw` with the switch's control at 1 V left it
+ * OPEN, giving v(b) = 9.99999e-07 where the correct answer is 0.999001.
+ *
+ * Every other route already answers this question. `.ic` and `.nodeset` report
+ * "IC on non-existent node - %s, ignored"; `F`, `H`, `W` and a B-source's `i()`
+ * all report "unknown controlling source"; and every output construct names a
+ * vector that does not exist. Only the controlling-node pair skipped it.
+ *
+ * The mechanism is Enhancement-429's, unchanged: a control reference does not
+ * make a node real, so it does not set `devRef`, and whatever is still unmarked
+ * once the deck is parsed was named in a control position and nowhere else.
+ * Marking is left to INPtermInsert for every other position, so a control node
+ * that IS connected somewhere -- including one that is the source's own output,
+ * `E1 out 0 out 0 2` -- stays marked and is never reported.
+ *
+ * The check runs in pass 3 for the same reason `.ic`'s does: only once every
+ * device card has been read is "did anything connect to this?" answerable. */
+
+struct ctrlref {
+    struct ctrlref *next;
+    char *inst;                 /* owned */
+    char *nodename;             /* owned */
+    CKTnode *node;              /* not owned */
+};
+
+static struct ctrlref *ctrlrefs;
+
+void INPnoteCtrlNode(const char *inst, const char *nodename, CKTnode *node)
+{
+    struct ctrlref *r;
+
+    if (!node || node->number == 0)     /* ground is never a typo */
+        return;
+    r = TMALLOC(struct ctrlref, 1);
+    if (!r)
+        return;
+    r->inst = copy(inst ? inst : "?");
+    r->nodename = copy(nodename ? nodename : "?");
+    r->node = node;
+    r->next = ctrlrefs;
+    ctrlrefs = r;
+}
+
+
+int INPreportCtrlNodes(void)
+{
+    struct ctrlref *r, *nx;
+    int bad = 0;
+
+    for (r = ctrlrefs; r; r = nx) {
+        nx = r->next;
+        if (CKTnodePhantom(r->node)) {
+            fprintf(stderr,
+                    "\nError: instance %s: the controlling node '%s' does not "
+                    "exist -- no device\n       connects to it, so nothing ever "
+                    "drives it. This is a typo, not a\n       circuit: reading it "
+                    "yields 0 V, which for a switch means permanently\n       open "
+                    "and for a controlled source means a singular matrix reported "
+                    "against\n       a node you never wrote.\n\n",
+                    r->inst, r->nodename);
+            bad++;
+        }
+        tfree(r->inst);
+        tfree(r->nodename);
+        tfree(r);
+    }
+    ctrlrefs = NULL;
+    return bad;
+}
+
 /* Enhancement-426: does a numeric value actually appear next on the card?
  *
  * The tests this replaces were written as

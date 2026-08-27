@@ -38,6 +38,14 @@
 #endif
 
 
+/* Enhancement-492: set by the OSDI load path when a Verilog-A device actually
+ * raised $fatal, and by nothing else. CKTop's abort test used to read E_PANIC
+ * alone, but E_PANIC has around ten producers -- circuit setup, OSDI parameter
+ * and setup errors, PSS, pole-zero, expression evaluation, CIDER and the KLU
+ * empty-matrix path -- so a deck containing no Verilog-A device at all was
+ * told one had raised $fatal. */
+extern int CKTvaFatalRaised;
+
 struct CKTnode {
     IFuid name;
     int type;

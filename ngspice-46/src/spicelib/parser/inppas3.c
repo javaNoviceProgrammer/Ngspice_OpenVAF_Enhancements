@@ -209,6 +209,21 @@ INPpas3(CKTcircuit *ckt, struct card *data, INPtables *tab, TSKtask *task,
         }
     }
 quit:
+    /* Enhancement-492: every device card has now been read, so "did anything
+       connect to this node?" is finally answerable. Report any node that was
+       named only in a controlling position -- see INPnoteCtrlNode().
+
+       REFUSE rather than warn. `E` and `G` already fail on their own, because
+       the invented node makes the matrix singular; a switch does not, because it
+       only READS its control voltage and stamps nothing for it -- so it would
+       otherwise carry on and answer from a node that is not in the circuit. That
+       is the detect-announce-then-use-it-anyway shape Enhancement-485 had to undo
+       eight times in one round, and a typo'd control node has no reading under
+       which the deck is what the user wrote. */
+    if (INPreportCtrlNodes() > 0 && data)
+        data->error = INPerrCat(data->error,
+                                INPmkTemp("a controlling node does not exist; "
+                                          "see the message above"));
     FREE(token);
     return;
 }

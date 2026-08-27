@@ -25,6 +25,36 @@ extern double logb(double);
 #include "ngspice/mif.h"
 #include "ngspice/evt.h"
 
+/* Enhancement-492: an EMPTY matrix is a legitimate state, not an error.
+ *
+ * PreOrder already says so -- "XSPICE pure digital circuits produce empty KLU
+ * matrix" -- and returns success for it; Factor returns success too. But all
+ * three sites printed "Error (...): KLU Matrix is empty" every time they were
+ * reached, and Solve then followed it with "KLUnumeric object is NULL" and
+ * "KLUsymbolic object is NULL", which are CONSEQUENCES of the same empty matrix
+ * rather than separate faults. Because the solve is re-entered per Newton
+ * iteration, one such circuit produced nine or more lines, none of which named
+ * what had actually happened.
+ *
+ * Say it once, in words that describe the state, and suppress the NULL-object
+ * messages when an empty matrix is the reason those objects are NULL. The
+ * counter is reset in PreOrder, which runs once per setup, so a second circuit
+ * in the same session reports again. */
+static int klu_empty_reported = 0;
+
+static void klu_report_empty (void)
+{
+    if (!klu_empty_reported) {
+        klu_empty_reported = 1 ;
+        fprintf (stderr,
+                 "\nNote: this circuit has no matrix to solve -- every node is "
+                 "either grounded or\n      driven only by sources that "
+                 "contribute nothing to the matrix. KLU has\n      nothing to "
+                 "factor, so no node voltage can be computed for it.\n\n") ;
+    }
+}
+
+
 static int
 CircuitIsDigital (void)
 {
@@ -553,10 +583,10 @@ SMPcLUfac (SMPmatrix *Matrix, double PivTol)
             }
             if (Matrix->SMPkluMatrix->KLUmatrixCommon->status == KLU_EMPTY_MATRIX)
             {
-                fprintf (stderr, "Error (ReFactor Complex): KLU Matrix is empty\n") ;
+                klu_report_empty () ;
                 return 0 ;
             }
-            if (Matrix->SMPkluMatrix->KLUmatrixNumeric == NULL) {
+            if (!klu_empty_reported && Matrix->SMPkluMatrix->KLUmatrixNumeric == NULL) {
                 fprintf (stderr, "Error (ReFactor Complex): KLUnumeric object is NULL. A problem occurred\n") ;
             }
             return 1 ;
@@ -611,10 +641,10 @@ SMPluFac (SMPmatrix *Matrix, double PivTol, double Gmin)
             }
             if (Matrix->SMPkluMatrix->KLUmatrixCommon->status == KLU_EMPTY_MATRIX)
             {
-                fprintf (stderr, "Error (ReFactor): KLU Matrix is empty\n") ;
+                klu_report_empty () ;
                 return 0 ;
             }
-            if (Matrix->SMPkluMatrix->KLUmatrixNumeric == NULL) {
+            if (!klu_empty_reported && Matrix->SMPkluMatrix->KLUmatrixNumeric == NULL) {
                 fprintf (stderr, "Error (ReFactor): KLUnumeric object is NULL. A problem occurred\n") ;
             }
             return 1 ;
@@ -721,10 +751,10 @@ SMPluFacKLUforCIDER (SMPmatrix *Matrix)
             }
             if (Matrix->SMPkluMatrix->KLUmatrixCommon->status == KLU_EMPTY_MATRIX)
             {
-                fprintf (stderr, "Error (ReFactor for CIDER): KLU Matrix is empty\n") ;
+                klu_report_empty () ;
                 return 0 ;
             }
-            if (Matrix->SMPkluMatrix->KLUmatrixNumeric == NULL) {
+            if (!klu_empty_reported && Matrix->SMPkluMatrix->KLUmatrixNumeric == NULL) {
                 fprintf (stderr, "Error (ReFactor for CIDER): KLUnumeric object is NULL. A problem occurred\n") ;
             }
             return 1 ;
@@ -794,10 +824,10 @@ SMPcReorder (SMPmatrix *Matrix, double PivTol, double PivRel, int *NumSwaps)
                 return E_SINGULAR ;
             }
             if (Matrix->SMPkluMatrix->KLUmatrixCommon->status == KLU_EMPTY_MATRIX) {
-                fprintf (stderr, "Error (Factor Complex): KLU Matrix is empty\n") ;
+                klu_report_empty () ;
                 return 0 ;
             }
-            if (Matrix->SMPkluMatrix->KLUmatrixSymbolic == NULL) {
+            if (!klu_empty_reported && Matrix->SMPkluMatrix->KLUmatrixSymbolic == NULL) {
                 fprintf (stderr, "Error (Factor Complex): KLUsymbolic object is NULL. A problem occurred\n") ;
             }
             return 1 ;
@@ -857,10 +887,10 @@ SMPreorder (SMPmatrix *Matrix, double PivTol, double PivRel, double Gmin)
                 return E_SINGULAR ;
             }
             if (Matrix->SMPkluMatrix->KLUmatrixCommon->status == KLU_EMPTY_MATRIX) {
-                fprintf (stderr, "Error (Factor): KLU Matrix is empty\n") ;
+                klu_report_empty () ;
                 return 0 ;
             }
-            if (Matrix->SMPkluMatrix->KLUmatrixSymbolic == NULL) {
+            if (!klu_empty_reported && Matrix->SMPkluMatrix->KLUmatrixSymbolic == NULL) {
                 fprintf (stderr, "Error (Factor): KLUsymbolic object is NULL. A problem occurred\n") ;
             }
             return 1 ;
@@ -928,10 +958,10 @@ SMPreorderKLUforCIDER (SMPmatrix *Matrix)
                 fprintf (stderr, "Error (Factor for CIDER): KLUcommon object is NULL. A problem occurred\n") ;
             }
             if (Matrix->SMPkluMatrix->KLUmatrixCommon->status == KLU_EMPTY_MATRIX) {
-                fprintf (stderr, "Error (Factor for CIDER): KLU Matrix is empty\n") ;
+                klu_report_empty () ;
                 return 0 ;
             }
-            if (Matrix->SMPkluMatrix->KLUmatrixSymbolic == NULL) {
+            if (!klu_empty_reported && Matrix->SMPkluMatrix->KLUmatrixSymbolic == NULL) {
                 fprintf (stderr, "Error (Factor for CIDER): KLUnumeric object is NULL. A problem occurred\n") ;
                 fprintf (stderr, "Error (Factor for CIDER): KLUsymbolic object is NULL. A problem occurred\n") ;
             }
@@ -1049,6 +1079,7 @@ SMPcSolve (SMPmatrix *Matrix, double RHS[], double iRHS[], double Spare[], doubl
 void
 SMPsolve (SMPmatrix *Matrix, double RHS[], double Spare[])
 {
+    int empty_matrix = 0 ;   /* Enhancement-492: see klu_report_empty() */
     int ret ;
     unsigned int i ;
 
@@ -1085,13 +1116,17 @@ SMPsolve (SMPmatrix *Matrix, double RHS[], double Spare[])
                 }
                 if (Matrix->SMPkluMatrix->KLUmatrixCommon->status == KLU_EMPTY_MATRIX)
                 {
-                    fprintf (stderr, "Error (Solve): KLU Matrix is empty\n") ;
+                    klu_report_empty () ;
+                    empty_matrix = 1 ;
                 }
             }
-            if (Matrix->SMPkluMatrix->KLUmatrixNumeric == NULL) {
+            /* Enhancement-492: when the matrix is empty these two objects are
+               NULL BECAUSE of that, so reporting them as separate faults told
+               the reader three things about one condition. */
+            if (!empty_matrix && Matrix->SMPkluMatrix->KLUmatrixNumeric == NULL) {
                 fprintf (stderr, "Error (Solve): KLUnumeric object is NULL. A problem occurred\n") ;
             }
-            if (Matrix->SMPkluMatrix->KLUmatrixSymbolic == NULL) {
+            if (!empty_matrix && Matrix->SMPkluMatrix->KLUmatrixSymbolic == NULL) {
                 fprintf (stderr, "Error (Solve): KLUsymbolic object is NULL. A problem occurred\n") ;
             }
         }
@@ -1423,6 +1458,7 @@ SMPdestroyKLUforCIDER (SMPmatrix *Matrix)
  * SMPpreOrder()
  */
 
+
 int
 SMPpreOrder (SMPmatrix *Matrix)
 {
@@ -1440,7 +1476,7 @@ SMPpreOrder (SMPmatrix *Matrix)
         {
             if (Matrix->SMPkluMatrix->KLUmatrixCommon->status == KLU_EMPTY_MATRIX)
             {
-                fprintf (stderr, "Error (PreOrder): KLU Matrix is empty\n") ;
+                klu_report_empty () ;
                 return 0 ;
             } else {
                 fprintf (stderr, "Error (PreOrder): KLUsymbolic object is NULL. A problem occurred\n") ;

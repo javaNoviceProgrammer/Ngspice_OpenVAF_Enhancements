@@ -49,6 +49,13 @@ CKTop (CKTcircuit *ckt, long int firstmode, long int continuemode,
 
     ckt->CKTmode = firstmode;
 
+    /* Enhancement-492: this operating point has not seen a Verilog-A $fatal yet.
+       Clear it here rather than trusting it to be clean: CKTop runs once per
+       analysis, and a fatal raised by an earlier analysis in the same session
+       would otherwise still be set and make the NEXT unrelated abort claim a
+       $fatal that belonged to a previous run. */
+    CKTvaFatalRaised = 0;
+
     if (ckt->CKTconvhelp)       /* Enhancement-204: globalize the op-point Newton */
         ckt->CKTlinesearch = 1;
 
@@ -201,12 +208,38 @@ CKTop (CKTcircuit *ckt, long int firstmode, long int continuemode,
      * non-convergence code E_ITERLIM (E_PRIVATE+3 = 103) are distinct values, so
      * this test is exact -- it cannot mistake a stalled Newton solve for a fatal.
      */
-    fprintf(cp_err,
-            "\nError: a Verilog-A device raised $fatal during the operating point;"
-            " aborting.\n"
-            "       This is not a convergence failure -- see the OSDI(fatal)"
-            " message above for the cause.\n");
+    /* Enhancement-492: say which of the two it actually was.
+     *
+     * The test that reaches this label is `converged == E_PANIC`, and E-378's
+     * comment justified it as exact because E_PANIC (1) and E_ITERLIM (103) are
+     * distinct values -- true, but the invariant this message relies on is not
+     * "E_PANIC is not non-convergence", it is "E_PANIC means a Verilog-A device
+     * raised $fatal". That one is false: E_PANIC has around ten producers
+     * (cktsetup's missing model and device lists, osdiparam, osdiload, osdisetup,
+     * dcpss, cktpzstr, ifeval's bad node type, CIDER's twosolve) and the KLU
+     * solver reaches it too. Measured: `.option klu` with a netlist whose matrix
+     * has only current sources -- no Verilog-A device anywhere in the deck --
+     * printed "a Verilog-A device raised $fatal" and told the reader to look for
+     * an OSDI(fatal) message that does not exist, through op, dc, ac and tran
+     * alike, since each calls CKTop for its operating point.
+     *
+     * CKTvaFatalRaised is set only where a $fatal is actually detected, so the
+     * two cases can now be told apart and each says what it knows. */
     ckt->CKTlinesearch = ls_saved;
+    if (CKTvaFatalRaised) {
+        fprintf(cp_err,
+                "\nError: a Verilog-A device raised $fatal during the operating"
+                " point; aborting.\n"
+                "       This is not a convergence failure -- see the OSDI(fatal)"
+                " message above for the cause.\n");
+    } else {
+        fprintf(cp_err,
+                "\nError: the operating point was abandoned by a fault outside the"
+                " Newton solve.\n       This is not a convergence failure, and no"
+                " Verilog-A device raised $fatal:\n       the cause is whatever was"
+                " reported immediately above -- commonly the linear\n       solver"
+                " refusing the matrix, or a device rejecting its parameters.\n");
+    }
     return E_PANIC;
 
  done:

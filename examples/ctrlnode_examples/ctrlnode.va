@@ -1,0 +1,17 @@
+// Enhancement-492: a Verilog-A device that really does raise $fatal.
+//
+// CKTop's abort message names Verilog-A, and it used to name Verilog-A for ANY
+// E_PANIC that reached it -- including decks containing no Verilog-A device at
+// all. This model is the control for the other half of that test: when a $fatal
+// IS raised, the message must still say so.
+`include "disciplines.vams"
+
+module vfatal(p, n);
+    inout p, n;  electrical p, n;
+    parameter real trip = 0.5;
+    analog begin
+        if (V(p, n) > trip)
+            $fatal(0, "control voltage above trip");
+        I(p, n) <+ V(p, n) / 1k;
+    end
+endmodule
