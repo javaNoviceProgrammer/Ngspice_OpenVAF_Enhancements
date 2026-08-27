@@ -1,0 +1,43 @@
+// Enhancement-495: two models for the two halves of the enhancement.
+//
+// `binstale` is a Verilog-A model written the way a PDK writes a binned one --
+// a plain compact model whose bin limits live on the .model card. Before this
+// change no OSDI model could be binned at all.
+//
+// `collstale` collapses its internal node when rs is zero and does not when it
+// is not, so a sweep of rs crosses a structural boundary. That is the case a
+// `.dc` sweep used to answer with a flat line.
+`include "disciplines.vams"
+
+module binstale(d, g, s);
+    inout d, g, s;
+    electrical d, g, s;
+
+    (*type="instance"*) parameter real l = 1u from (0:inf);
+    (*type="instance"*) parameter real w = 1u from (0:inf);
+    parameter real gain = 1e-3 from (0:inf);
+
+    (*desc="gain as bound"*) real gout;
+
+    analog begin
+        gout = gain;
+        I(d, s) <+ V(d, s) * gain;
+    end
+endmodule
+
+module collstale(p, n);
+    inout p, n;
+    electrical p, n;
+    electrical mid;
+
+    (*type="instance"*) parameter real rs = 0.0 from [0:inf);
+    parameter real g = 1e-3 from (0:inf);
+
+    analog begin
+        if (rs == 0.0)
+            V(p, mid) <+ 0.0;          // internal node collapses onto p
+        else
+            I(p, mid) <+ V(p, mid) / rs;
+        I(mid, n) <+ V(mid, n) * g;
+    end
+endmodule

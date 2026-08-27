@@ -26,9 +26,21 @@ extern IFsimulator SIMinfo;
 static void fixdims(struct dvec *v, char *s);
 
 
-int raw_prec = -1;        /* How many sigfigs to use, default 15 (max).  */
+int raw_prec = -1;        /* How many sigfigs to use; see DEFPREC below. */
 
-#define DEFPREC 15
+/* Enhancement-495: 15 was one digit short of a double, and called itself the max.
+ *
+ * The value is the precision of a `%.*e`, so 15 emitted SIXTEEN significant
+ * digits -- and seventeen are needed before an IEEE754 double reads back as
+ * itself. So `write` followed by `load` on an ascii rawfile silently changed
+ * values in the last ulp (0.15717672547758987 came back ...985), while the
+ * binary format, which stores the bits, was exact. Measured over 200000 random
+ * doubles: `%.15e` fails to round-trip 51390 of them, `%.16e` none.
+ *
+ * 16 it is. `set rawfileprec` still overrides, and a wider setting was already
+ * accepted -- it simply should not have been necessary to get the number back.
+ * The old comment's "(max)" was wrong twice: not a maximum, and not enough. */
+#define DEFPREC 16
 
 #ifdef HAS_WINGUI
 #undef fscanf             /* redo I/O from WINMAIN.C here

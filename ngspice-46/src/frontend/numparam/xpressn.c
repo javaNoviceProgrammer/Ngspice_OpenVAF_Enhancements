@@ -59,12 +59,64 @@ mc_unif_draw(void)
 }
 
 
+/* Enhancement-495: a degenerate distribution spec was silently flattened.
+ *
+ * The guard below is right to refuse a variation or a sigma that is zero or
+ * negative -- one would divide by zero, the other has no meaning -- but it did
+ * it without a word, and the result is not a failure the user can see. Every
+ * draw returns the nominal, so a Monte Carlo run over a parameter that never
+ * moves reports a YIELD OF 100%:
+ *
+ *     .param vo = agauss(1000, 100, 3)   ->  yield 0.12 over a [995,1005] spec
+ *     .param vo = agauss(1000, 100, 0)   ->  yield 1.00, silently
+ *
+ * one character apart. That is Enhancement-485's shape -- detect, then use the
+ * bad value anyway -- with the added trap that the wrong answer looks like the
+ * good news. The behaviour is unchanged, because a deck may legitimately set a
+ * variation to zero to disable it; it is only made audible. Once per run per
+ * function, since these are called once per draw.
+ *
+ * `unif`, `aunif` and `limit` are deliberately left alone: they have no such
+ * guard, and a negative variation there describes the same symmetric interval
+ * as its absolute value, so nothing is discarded and nothing is wrong. */
+static void
+mc_warn_flat(const char *fn, const char *what, double variation, double sigma)
+{
+    fprintf(stderr,
+            "Warning: %s(nominal, %g, %g) has %s, so every sample equals the "
+            "nominal value -- this parameter will not vary, and a montecarlo "
+            "or yield run over it reports success for a circuit that was never "
+            "perturbed.\n",
+            fn, variation, sigma, what);
+}
+
+
+static const char *
+mc_degenerate(double variation, double sigma)
+{
+    if (variation < 0)
+        return "a negative variation";
+    if (variation == 0)
+        return "a variation of zero";
+    if (sigma < 0)
+        return "a negative sigma";
+    return "a sigma of zero";      /* sigma == 0 */
+}
+
+
 static double
 agauss(double nominal_val, double abs_variation, double sigma)
 {
     double stdvar;
-    if (abs_variation <= 0 || sigma <= 0)
+    if (abs_variation <= 0 || sigma <= 0) {
+        static int warned = 0;
+        if (!warned) {
+            warned = 1;
+            mc_warn_flat("agauss", mc_degenerate(abs_variation, sigma),
+                         abs_variation, sigma);
+        }
         return nominal_val;
+    }
     stdvar = abs_variation / sigma;
     return (nominal_val + stdvar * mc_gauss_draw());
 }
@@ -74,8 +126,15 @@ static double
 gauss(double nominal_val, double rel_variation, double sigma)
 {
     double stdvar;
-    if (rel_variation <= 0 || sigma <= 0)
+    if (rel_variation <= 0 || sigma <= 0) {
+        static int warned = 0;
+        if (!warned) {
+            warned = 1;
+            mc_warn_flat("gauss", mc_degenerate(rel_variation, sigma),
+                         rel_variation, sigma);
+        }
         return nominal_val;
+    }
     stdvar = nominal_val * rel_variation / sigma;
     return (nominal_val + stdvar * mc_gauss_draw());
 }

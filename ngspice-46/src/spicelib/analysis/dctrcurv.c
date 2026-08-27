@@ -15,6 +15,10 @@ Modified: 1999 Paolo Nenzi
 #include "ngspice/sperror.h"
 #include "ngspice/fteext.h"
 #include "ngspice/compatmode.h"
+#include "ngspice/devdefs.h"
+#ifdef OSDI
+#include "ngspice/osdiitf.h"   /* Enhancement-495: OSDIanyCollapseChanged */
+#endif
 
 #ifdef XSPICE
 #include "ngspice/evt.h"
@@ -159,12 +163,146 @@ DCTfindInstParam(CKTcircuit *ckt, const char *name, GENinstance **instOut,
  * resparam.c has an explicit branch for one -- so a sign test here would break
  * decks that sweep a resistor negative on purpose. Only a device that says no
  * stops the sweep. */
+/* Enhancement-495 ---------------------------------------------------------
+ *
+ * `.dc` sets the circuit up ONCE and walks its points inside the analysis --
+ * Enhancement-471's own comment says so, and says what follows from it: reuse
+ * the setup and "the topology is frozen at whatever the first point decided,
+ * and the sweep quietly draws a flat line". E-471 gave the `sweep` command the
+ * machinery to notice and rebuild. `.dc` never got it, so a device-parameter
+ * sweep that moves a device across a structural boundary is silently wrong:
+ *
+ *   - a swept `l` or `w` that leaves the model bin the device was PARSED into
+ *     keeps the old bin, and every point past the boundary is computed with the
+ *     wrong model (measured 2.9x out);
+ *   - a swept parameter that changes an OSDI device's node collapse keeps the
+ *     matrix built for the old topology, and the sweep returns a FLAT LINE at
+ *     the value the first point decided.
+ *
+ * `alter` and `sweep` both get these right -- `alter` re-selects the bin through
+ * if_set_binned_model(), and `sweep` runs a whole job per point -- which is the
+ * same siblings-disagree shape Enhancement-427 recorded two comments above.
+ *
+ * Rebuilding the matrix in the middle of a running analysis is a far larger
+ * change than the evidence supports, and the correct command already exists. So
+ * `.dc` now REFUSES the point it cannot compute, and says which command does it,
+ * rather than publishing a number that is wrong without saying so -- E-485's
+ * rule that a wrong answer is worse than a refusal.
+ *
+ * The check is "did the DEVICE's structure actually move", never "does this
+ * value look odd": a sweep that stays inside one bin, or never changes a
+ * collapse, is untouched and costs nothing but the comparison. */
+
+/* read a real MODEL parameter by keyword; 0 if the device has no such parameter */
 static int
-DCTsetInstParam(CKTcircuit *ckt, TRCV *job, int i, double val)
+DCTmodelReal(CKTcircuit *ckt, GENmodel *mod, const char *key, double *out)
+{
+    SPICEdev *sdev;
+    IFdevice *dev;
+    int k;
+
+    if (!mod)
+        return 0;
+    sdev = DEVices[mod->GENmodType];
+    if (!sdev || !sdev->DEVmodAsk)
+        return 0;
+    dev = &sdev->DEVpublic;
+    if (!dev->modelParms || !dev->numModelParms)
+        return 0;
+    for (k = 0; k < *dev->numModelParms; k++) {
+        IFparm *prm = dev->modelParms + k;
+        IFvalue v;
+        if (!prm->keyword || !cieq(prm->keyword, (char *) key))
+            continue;
+        if (sdev->DEVmodAsk(ckt, mod, prm->id, &v) != OK)
+            return 0;
+        *out = v.rValue;
+        return 1;
+    }
+    return 0;
+}
+
+
+/* read a real INSTANCE parameter by keyword; 0 if there is no such parameter */
+static int
+DCTinstReal(CKTcircuit *ckt, GENinstance *inst, const char *key, double *out)
+{
+    SPICEdev *sdev;
+    IFdevice *dev;
+    int k;
+
+    if (!inst || !inst->GENmodPtr)
+        return 0;
+    sdev = DEVices[inst->GENmodPtr->GENmodType];
+    if (!sdev || !sdev->DEVask)
+        return 0;
+    dev = &sdev->DEVpublic;
+    if (!dev->instanceParms || !dev->numInstanceParms)
+        return 0;
+    for (k = 0; k < *dev->numInstanceParms; k++) {
+        IFparm *prm = dev->instanceParms + k;
+        IFvalue v;
+        if (!prm->keyword || !cieq(prm->keyword, (char *) key))
+            continue;
+        if (sdev->DEVask(ckt, inst, prm->id, &v, NULL) != OK)
+            return 0;
+        *out = v.rValue;
+        return 1;
+    }
+    return 0;
+}
+
+
+/* Has the instance been swept out of the bin its model card describes?
+ *
+ * Only a model that was chosen by binning is asked -- INPgetModBin binds the
+ * `<base>.<n>` card, so the dot is the marker -- and only when that card states
+ * all four limits. Anything else answers "no" and the sweep proceeds exactly as
+ * before. The rule matches INPgetModBin's strict pass: min <= value < max. */
+static int
+DCTleftItsBin(CKTcircuit *ckt, GENinstance *inst)
+{
+    double l, w, lmin, lmax, wmin, wmax;
+    GENmodel *mod;
+
+    if (!inst || !inst->GENmodPtr)
+        return 0;
+    mod = inst->GENmodPtr;
+    if (!mod->GENmodName || !strchr(mod->GENmodName, '.'))
+        return 0;                       /* not a binned model card */
+
+    if (!DCTmodelReal(ckt, mod, "lmin", &lmin) ||
+        !DCTmodelReal(ckt, mod, "lmax", &lmax) ||
+        !DCTmodelReal(ckt, mod, "wmin", &wmin) ||
+        !DCTmodelReal(ckt, mod, "wmax", &wmax))
+        return 0;                       /* no limits to be outside of */
+    if (lmax <= lmin || wmax <= wmin)
+        return 0;                       /* degenerate card -- not ours to judge */
+
+    if (!DCTinstReal(ckt, inst, "l", &l) || !DCTinstReal(ckt, inst, "w", &w))
+        return 0;
+
+    return !(l >= lmin && l < lmax && w >= wmin && w < wmax);
+}
+
+
+/* Enhancement-495: set when the refusal came from the topology/bin check
+ * below rather than from the device. Enhancement-427's message says "the
+ * device refused ... the same value is refused on the instance line and by
+ * `alter`", and here that would be false on both counts: the device took the
+ * value, and `alter` computes this case correctly. The caller reads this to
+ * leave the specific message standing on its own. */
+static int dct_topology_refusal = 0;
+
+
+static int
+DCTsetInstParam(CKTcircuit *ckt, TRCV *job, int i, double val, int check)
 {
     IFvalue v;
     int type = job->TRCVvElt[i]->GENmodPtr->GENmodType;
     int err;
+
+    dct_topology_refusal = 0;
 
     /* Enhancement-427: an INTEGER parameter needs iValue, not rValue -- writing
      * the wrong union member would hand the device the bit pattern of a double.
@@ -181,6 +319,39 @@ DCTsetInstParam(CKTcircuit *ckt, TRCV *job, int i, double val)
         err = DEVices[type]->DEVtemperature(ckt->CKThead[type], ckt);
         if (err)
             return err;
+    }
+
+    /* Enhancement-495: the DEVtemperature above is exactly where an OSDI device
+     * re-decides its node collapse and records a mismatch against the snapshot
+     * the matrix was built from (Enhancement-417). The flag was being set all
+     * along and nobody asked. Consume it even when not reporting, so a restore
+     * cannot leave it set for a later analysis to misread. */
+    {
+        int moved = 0;
+#ifdef OSDI
+        moved = OSDIanyCollapseChanged(ckt);
+#endif
+        if (check && moved) {
+            SPfrontEnd->IFerrorf(ERR_WARNING,
+                "DC sweep %d: %s = %g changes this device's node collapse, and "
+                "the matrix was built for the collapse decided at setup -- the "
+                "remaining points would be computed for the wrong topology. Use "
+                "the `sweep` command, which rebuilds for each point\n",
+                i + 1, job->TRCVvName[i] ? job->TRCVvName[i] : "?", val);
+            dct_topology_refusal = 1;
+            return E_PARMVAL;
+        }
+        if (check && DCTleftItsBin(ckt, job->TRCVvElt[i])) {
+            SPfrontEnd->IFerrorf(ERR_WARNING,
+                "DC sweep %d: %s = %g takes the device outside model bin %s, and "
+                "`.dc` selects the bin once, at parse time -- the remaining "
+                "points would be computed with the wrong model. Use the `sweep` "
+                "command, which re-selects the bin for each point\n",
+                i + 1, job->TRCVvName[i] ? job->TRCVvName[i] : "?", val,
+                job->TRCVvElt[i]->GENmodPtr->GENmodName);
+            dct_topology_refusal = 1;
+            return E_PARMVAL;
+        }
     }
     return OK;
 }
@@ -233,6 +404,7 @@ DCtrCurv(CKTcircuit *ckt, int restart)
     int dctrc = OK;
     double dct_rejected_val = 0.0;
     int dct_rejected_lvl = -1;
+    int dct_rejected_topo = 0;   /* Enhancement-495 */
 
 #ifdef WANT_SENSE2
     long save;
@@ -484,8 +656,10 @@ DCtrCurv(CKTcircuit *ckt, int restart)
                         job->TRCVvStop[i], job->TRCVvStep[i]);
                     return(E_PARMVAL);
                 }
-                if (DCTsetInstParam(ckt, job, i, job->TRCVvStart[i]) != OK)
-                    return DCTrejected(job, i, job->TRCVvStart[i]);
+                if (DCTsetInstParam(ckt, job, i, job->TRCVvStart[i], 1) != OK)
+                    return dct_topology_refusal
+                        ? E_PARMVAL       /* Enhancement-495 already said why */
+                        : DCTrejected(job, i, job->TRCVvStart[i]);
                 goto found;
             }
             /* Enhancement-427: the device WAS found, the parameter was not.
@@ -645,8 +819,10 @@ DCtrCurv(CKTcircuit *ckt, int restart)
                 RESupdate_conduct((RESinstance *)(job->TRCVvElt[i]), FALSE);
                 DEVices[rcode]->DEVload(job->TRCVvElt[i]->GENmodPtr, ckt);
             } else if (job->TRCVvType[i] == PARAM_CODE) {
-                if (DCTsetInstParam(ckt, job, i, job->TRCVvStart[i]) != OK)
-                    return DCTrejected(job, i, job->TRCVvStart[i]);
+                if (DCTsetInstParam(ckt, job, i, job->TRCVvStart[i], 1) != OK)
+                    return dct_topology_refusal
+                        ? E_PARMVAL       /* Enhancement-495 already said why */
+                        : DCTrejected(job, i, job->TRCVvStart[i]);
             }
 
         /* Rotate state vectors. */
@@ -870,9 +1046,12 @@ DCtrCurv(CKTcircuit *ckt, int restart)
             if (SGN(job->TRCVvStep[i]) * (next_ - job->TRCVvStop[i])
                     > DBL_EPSILON * 1e+03) {
                 job->TRCVvNow[i] = next_;      /* advance; the point is dropped */
-            } else if (DCTsetInstParam(ckt, job, i, next_) != OK) {
+            } else if (DCTsetInstParam(ckt, job, i, next_, 1) != OK) {
                 dct_rejected_val = next_;
                 dct_rejected_lvl = i;
+                /* Enhancement-495: the restore below clears the flag, so keep
+                 * what caused THIS refusal before it goes. */
+                dct_rejected_topo = dct_topology_refusal;
                 dctrc = E_PARMVAL;
                 goto osdi_finish;   /* abort THROUGH the restore path */
             }
@@ -940,7 +1119,7 @@ osdi_finish:
                its results are already published, and failing here would turn a
                completed analysis into an error. The value being put back was
                accepted once, so a refusal would itself be the anomaly. */
-            (void) DCTsetInstParam(ckt, job, i, job->TRCVvSave[i]);
+            (void) DCTsetInstParam(ckt, job, i, job->TRCVvSave[i], 0);
         }
 
 #ifdef OSDI
@@ -950,7 +1129,7 @@ osdi_finish:
 #endif
     SPfrontEnd->OUTendPlot (plot);
 
-    if (dct_rejected_lvl >= 0)
+    if (dct_rejected_lvl >= 0 && !dct_rejected_topo)
         SPfrontEnd->IFerrorf(ERR_WARNING,
             "DC sweep %d: the device refused %s = %g -- the same value is "
             "refused on the instance line and by `alter`; sweep abandoned "

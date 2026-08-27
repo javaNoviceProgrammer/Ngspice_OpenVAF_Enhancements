@@ -14,6 +14,9 @@ Modified: 2001 Paolo Nenzi (Cider Integration)
 #include "ngspice/fteext.h"
 #include "ngspice/compatmode.h"
 #include "ngspice/devdefs.h"
+#ifdef OSDI
+#include "ngspice/osdiitf.h"   /* Enhancement-495: osdi_devtype_is_osdi */
+#endif
 #include "inpxx.h"
 #include <errno.h>
 #include <stdio.h>
@@ -273,7 +276,15 @@ create_model(CKTcircuit *ckt, INPmodel *modtmp, INPtables *tab)
                 FREE(iid);
                 return error;
             }
-        } else if ((strcmp(parm, "level") == 0) || (strcmp(parm, "m") == 0)) {
+        } else if ((strcmp(parm, "level") == 0) || (strcmp(parm, "m") == 0) ||
+                   /* Enhancement-495: the four bin limits are consumed the way
+                    * `level` is. On a BSIM card they are real model parameters
+                    * and are matched above, so this is reached only for a type
+                    * that has no such parameter -- an OSDI model, which may now
+                    * be binned and therefore may carry them. Without this the
+                    * selected bin's own card reported four unknown parameters. */
+                   (strcmp(parm, "lmin") == 0) || (strcmp(parm, "lmax") == 0) ||
+                   (strcmp(parm, "wmin") == 0) || (strcmp(parm, "wmax") == 0)) {
             /* no instance parameter default for level and multiplier */
             /* just grab the number and throw away */
             /* since we already have that info from pass1 */
@@ -402,18 +413,100 @@ parse_line(char *line, char *tokens[], int num_tokens, double values[], bool fou
 }
 
 
+/* Enhancement-495: the tolerance was ABSOLUTE, and these are METRES.
+ *
+ * `fabs(a - b) < 1e-9` on a channel length is a slop of one NANOMETRE, applied
+ * whatever the geometry. A device up to 1 nm outside EVERY declared bin was
+ * silently placed in one -- `l=31n` with bins reaching 30n bound to the 20n-30n
+ * bin, while `l=31.1n` was refused, so the edge really was the fixed 1e-9. As a
+ * fraction of the device the slop grows without bound as processes shrink: 0.03%
+ * of a 3 um width, but 5% of a 20 nm channel.
+ *
+ * A bin limit is a number the model card states exactly, so what is wanted is
+ * "the same number", not "within a nanometre". Scale the comparison to the
+ * values themselves. 1e-12 relative is far tighter than any slop a card
+ * intends and still absorbs the decimal-to-binary error in `1u` vs `1e-6`. */
+#define BIN_RTOL 1.0e-12
+
 static bool
 is_equal(double result, double expectedResult)
 {
-    return fabs(result - expectedResult) < 1e-9;
+    double a = fabs(result), b = fabs(expectedResult);
+    double scale = (a > b) ? a : b;
+
+    return fabs(result - expectedResult) <= BIN_RTOL * scale;
 }
 
 
+/* Enhancement-495: the comment below stated the rule the code did not follow.
+ *
+ * `min <= value < max` is what it says; accepting `is_equal(value, max)` as well
+ * makes the interval CLOSED, so adjacent bins overlap at every shared boundary
+ * and a device sitting on one matches both. Which one it got was then decided by
+ * the order the `.model` cards happen to appear in -- reversing two cards moved
+ * `l=2u` between bins and changed i(V1) by 2.95x on an otherwise identical deck.
+ *
+ * The strict rule is what selection now asks first. The closed reading is kept
+ * as a SECOND pass, used only when the strict one matched nothing, because it is
+ * what admits a device sitting exactly on the top bin's `lmax` -- there is no
+ * bin above it, and refusing it would break decks that work today. That is the
+ * Enhancement-493 shape: the existing reading still runs, but only where the
+ * correct one found nothing, so nothing that already selected a bin can move. */
 static bool
 in_range(double value, double min, double max)
 {
     /* the standard binning rule is: min <= value < max */
-    return is_equal(value, min)  || is_equal(value, max) || (min < value && value < max);
+    return (is_equal(value, min) || value > min)
+        && value < max && !is_equal(value, max);
+}
+
+
+/* the historical reading -- both ends inclusive -- kept for the fallback pass */
+static bool
+in_range_closed(double value, double min, double max)
+{
+    return is_equal(value, min) || is_equal(value, max) ||
+           (min < value && value < max);
+}
+
+
+/* Enhancement-495: which model types may be binned.
+ *
+ * The list was eleven hardcoded built-ins, so a Verilog-A model compiled through
+ * OSDI -- the way a modern PDK ships a compact model -- could not be binned at
+ * all. Written exactly as a BSIM PDK writes it, with `nv.1`/`nv.2` and
+ * lmin/lmax/wmin/wmax, it failed with
+ *
+ *     Unable to find definition of model nv
+ *
+ * for a model defined twice: the symptom, not the cause, and the same shape as
+ * the resistor named `r` in Enhancement-493.
+ *
+ * OSDI devices are asked by the predicate Enhancement-323 already provides,
+ * rather than by name, so every model any .osdi file defines is covered without
+ * a list to maintain. The four bin limits are not Verilog-A parameters, so
+ * INPgetMod below consumes them the way it consumes `level`. */
+static bool
+type_is_binnable(int type)
+{
+    static const char * const binnable[] = {
+        "BSIM3", "BSIM3v32", "BSIM3v0", "BSIM3v1",
+        "BSIM4", "BSIM4v5", "BSIM4v6", "BSIM4v7",
+        "HiSIM2", "HiSIMHV1", "HiSIMHV2",
+        NULL
+    };
+    int k;
+
+    for (k = 0; binnable[k]; k++)
+        if (type == INPtypelook((char *) binnable[k]))
+            return TRUE;
+
+#ifdef OSDI
+    if (type >= 0 && osdi_devtype_is_osdi(type))
+        return TRUE;
+#endif
+
+    return FALSE;
 }
 
 
@@ -428,6 +521,7 @@ INPgetModBin(CKTcircuit *ckt, char *name, INPmodel **model, INPtables *tab, char
     static char *model_tokens[]    = { "lmin", "lmax", "wmin", "wmax" };
     double       scale;
     int          wnflag;
+    int          pass;
 
     if (!cp_getvar("scale", CP_REAL, &scale, 0))
         scale = 1;
@@ -468,49 +562,56 @@ INPgetModBin(CKTcircuit *ckt, char *name, INPmodel **model, INPtables *tab, char
     l = parse_values[0] * scale;
     w = parse_values[1] / parse_values[2] * scale;
 
-    for (modtmp = modtab; modtmp; modtmp = modtmp->INPnextModel) {
+    /* Enhancement-495: two passes.
+     *
+     * Pass 0 asks the documented half-open rule, `min <= value < max`, under
+     * which the bins of a well-formed card set do not overlap -- so a device on
+     * a shared boundary belongs to exactly one of them and the order the cards
+     * were written stops mattering.
+     *
+     * Pass 1 asks the historical closed reading, and runs ONLY if pass 0
+     * matched nothing. That is what still admits a device sitting exactly on
+     * the top bin's `lmax`, which no half-open bin can contain and which decks
+     * rely on today. Because it never runs when the strict rule already found a
+     * bin, no selection that works today can move. */
+    for (pass = 0; pass < 2; pass++) {
 
-        if (model_name_match(name, modtmp->INPmodName) < 2)
-            continue;
+        for (modtmp = modtab; modtmp; modtmp = modtmp->INPnextModel) {
 
-        /* skip if not binnable */
-        if (modtmp->INPmodType != INPtypelook("BSIM3") &&
-            modtmp->INPmodType != INPtypelook("BSIM3v32") &&
-            modtmp->INPmodType != INPtypelook("BSIM3v0") &&
-            modtmp->INPmodType != INPtypelook("BSIM3v1") &&
-            modtmp->INPmodType != INPtypelook("BSIM4") &&
-            modtmp->INPmodType != INPtypelook("BSIM4v5") &&
-            modtmp->INPmodType != INPtypelook("BSIM4v6") &&
-            modtmp->INPmodType != INPtypelook("BSIM4v7") &&
-            modtmp->INPmodType != INPtypelook("HiSIM2") &&
-            modtmp->INPmodType != INPtypelook("HiSIMHV1") &&
-            modtmp->INPmodType != INPtypelook("HiSIMHV2"))
-        {
-            continue;
-        }
+            if (model_name_match(name, modtmp->INPmodName) < 2)
+                continue;
 
-        /* if illegal device type */
-        if (modtmp->INPmodType < 0) {
-            *model = NULL;
-            return tprintf("Unknown device type for model %s\n", name);
-        }
+            /* skip if not binnable */
+            if (!type_is_binnable(modtmp->INPmodType))
+                continue;
 
-        if (!parse_line(modtmp->INPmodLine->line, model_tokens, 4, parse_values, parse_found))
-            continue;
-
-        lmin = parse_values[0]; lmax = parse_values[1];
-        wmin = parse_values[2]; wmax = parse_values[3];
-
-        if (in_range(l, lmin, lmax) && in_range(w, wmin, wmax)) {
-            /* create unless model is already defined */
-            if (!modtmp->INPmodfast) {
-                int error = create_model(ckt, modtmp, tab);
-                if (error)
-                    return NULL;
+            /* if illegal device type */
+            if (modtmp->INPmodType < 0) {
+                *model = NULL;
+                return tprintf("Unknown device type for model %s\n", name);
             }
 
-            *model = modtmp;
-            return NULL;
+            if (!parse_line(modtmp->INPmodLine->line, model_tokens, 4,
+                            parse_values, parse_found))
+                continue;
+
+            lmin = parse_values[0]; lmax = parse_values[1];
+            wmin = parse_values[2]; wmax = parse_values[3];
+
+            if (pass == 0
+                ? (in_range(l, lmin, lmax) && in_range(w, wmin, wmax))
+                : (in_range_closed(l, lmin, lmax) &&
+                   in_range_closed(w, wmin, wmax))) {
+                /* create unless model is already defined */
+                if (!modtmp->INPmodfast) {
+                    int error = create_model(ckt, modtmp, tab);
+                    if (error)
+                        return NULL;
+                }
+
+                *model = modtmp;
+                return NULL;
+            }
         }
     }
 
