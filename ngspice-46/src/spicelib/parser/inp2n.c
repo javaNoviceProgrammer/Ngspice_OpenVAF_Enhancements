@@ -198,7 +198,13 @@ int INPbusKicadStyle(void)
        how a KiCad sheet would come out floating with nothing said -- the shape
        Enhancements 447/451/455 each had to go back and fix. Say so, once per
        distinct spelling so a deck does not repeat it per device line. */
-    if (!cieq(s, "true") && !cieq(s, "yes") && !cieq(s, "on") &&
+    /* Enhancement-490: `1` belongs on this list too. It is the mirror of the
+       `0` in the off-word list above and `autobus_enabled` already honours it,
+       but the comment on the early return -- "`=1`: a NUMBER, not a string" --
+       was only true of `set autobus=1`. A deck `.option autobus=1` card
+       publishes a STRING, so it reached here and a perfectly good on-word was
+       reported as a style that does not exist. */
+    if (!cieq(s, "1") && !cieq(s, "true") && !cieq(s, "yes") && !cieq(s, "on") &&
         strcmp(s, warned) != 0) {
         fprintf(stderr, "Warning: unknown autobus style '%s'; expected 'kicad'. "
                         "Using the default a[k] spelling.\n", s);
@@ -220,6 +226,36 @@ void INPbusBitSuffix(const char *lb, int kicad, char *out, size_t n)
     for (; *lb && i + 1 < n; lb++)
         out[i++] = (kicad && (*lb == '[' || *lb == ']')) ? '_' : *lb;
     out[i] = '\0';
+}
+
+/* Enhancement-490: is this token already a single BIT rather than a bus base?
+   `a[0]` in the default spelling, `a_0_` under `.option autobus=kicad`.
+
+   Shared for the same reason INPbusBitSuffix is. subckt.c asks it of a
+   `.subckt` formal; INP2N now asks it of an instance token, because a line that
+   MIXES the two ways of writing a bus port is read by the answer. Two copies of
+   the rule would be free to disagree about the KiCad spelling -- exactly the
+   two-readers-of-one-rule shape E-454 had to repair in this same option.
+
+   The bracket spelling is always a bit. The underscore spelling counts only
+   while `autobus=kicad` is on, so an ordinary node called `foo_1_` is never
+   mistaken for one in a deck that never asked for the KiCad convention. */
+int INPbusTokenIndexed(const char *name, size_t len, int kicad)
+{
+    if (!name || len == 0)
+        return 0;
+    if (memchr(name, '[', len))
+        return 1;
+    if (kicad && name[len - 1] == '_') {
+        size_t i = len - 1, digits = 0;
+        while (i > 0 && isdigit_c(name[i - 1])) {
+            i--;
+            digits++;
+        }
+        if (digits && i > 1 && name[i - 1] == '_')
+            return 1;
+    }
+    return 0;
 }
 
 static void autobus_cat_index(DSTRINGPTR nl, const char *lb, bool kicad)
@@ -259,6 +295,20 @@ static size_t autobus_base(const char *nm, bool *indexed)
 static bool autobus_token_ok(const char *tok, const char *instname,
                              const char *portterm)
 {
+    /* Enhancement-490: name the PORT, not its first terminal. The caller has
+       only the terminal name to hand, so `b[0:2]` was reported as "the bus port
+       'b[0]'" -- an index the user never wrote and could not act on. */
+    char port[64];
+    const char *lb = portterm ? strchr(portterm, '[') : NULL;
+    size_t bl = lb ? (size_t) (lb - portterm)
+                   : (portterm ? strlen(portterm) : 1);
+
+    if (bl >= sizeof port)
+        bl = sizeof port - 1;
+    memcpy(port, portterm ? portterm : "?", bl);
+    port[bl] = '\0';
+    portterm = port;
+
     if (strchr(tok, '[')) {
         fprintf(stderr,
                 "\nWarning: instance %s: \"%s\" already carries an index, so it "
@@ -459,6 +509,155 @@ void INP2N(CKTcircuit *ckt, INPtables *tab, struct card *current) {
         numnodes = *dev->terms;
       }
       ds_free(&nl);
+    }
+    /* Enhancement-490: a line that MIXES the two forms -- one bus port left in
+       shorthand while another port's bits are written out:
+
+           N1 a b[0:2] busdev        for  inout [0:4] a;  inout [0:2] b;
+
+       The branch above fires only on a token count equal to the PORT count, and
+       positional binding covers a count equal to the TERMINAL count. A mixed
+       line is neither, so it used to fall through both and bind POSITIONALLY
+       against the flat terminal list: `a` onto a[0], then `b[0]` onto a[1],
+       `b[1]` onto a[2] -- every node one or more terminals off. The only thing
+       said was E-402's warning about the terminals left over at the tail, which
+       names the symptom and not the cause; a user who adds the two nodes it
+       asks for still has a circuit wired entirely wrong. Worse, E-445's
+       autobus_token_ok exists to explain this exact mistake and sits inside the
+       count check, so it could never reach the line that needed it.
+
+       There is nothing ambiguous to resolve. Walk the ports left to right and
+       let each token say which form it is in: a bare name on a bus port is
+       shorthand for that port's bits, anything already carrying an index -- or
+       ground, which E-445 established can never be indexed -- means this port
+       was written out, so take as many tokens as it has bits. `N1 a 0 0 0 bd`
+       reads correctly under the same rule.
+
+       Accept the rewrite only when the walk consumes exactly the tokens the
+       line has. Anything else means the written-out bits do not match the width
+       the model declares, which no reading can repair -- refuse it there, where
+       the port and both widths are still in hand to say so, rather than let the
+       old silent misbinding through. */
+    else if (np > 0 && np < numnodes && numnodes < *dev->terms) {
+      DS_CREATE(nl, 128);
+      char *scan = line;
+      char *tok = NULL;
+      const char *shortport = NULL;
+      int p, used = 0, emitted = 0, expanded = 0, shortbits = 0;
+      bool ranout = FALSE;
+      bool kicad = INPbusKicadStyle();  /* Enhancement-462 */
+
+      for (p = 0; p < np; p++) {
+        int k;
+
+        /* Never read past the node tokens: gettok_instance cannot tell where
+           they end, so without this a port claiming more bits than the line has
+           left would swallow the model name and report against it. */
+        if (used >= numnodes) {
+          ranout = TRUE;
+          break;
+        }
+        tok = gettok_instance(&scan);
+        if (!tok) {
+          ranout = TRUE;
+          break;
+        }
+
+        if (pcnt[p] > 1 && strcmp(tok, "0") != 0 &&
+            !INPbusTokenIndexed(tok, strlen(tok), kicad)) {
+          /* shorthand: this one token stands for the whole port */
+          for (k = 0; k < pcnt[p]; k++) {
+            const char *tn = dev->termNames[pstart[p] + k];
+            const char *lb = strchr(tn, '[');
+            if (emitted)
+              ds_cat_char(&nl, ' ');
+            ds_cat_str(&nl, tok);
+            if (lb)                     /* copy the model's own index */
+              autobus_cat_index(&nl, lb, kicad);
+            emitted++;
+          }
+          if (!expanded) {              /* remember the first, to name it */
+            shortport = dev->termNames[pstart[p]];
+            shortbits = pcnt[p];
+          }
+          used++;
+          expanded++;
+          tfree(tok);
+          tok = NULL;
+        } else {
+          /* written out: this port takes one token per bit */
+          for (k = 0; k < pcnt[p]; k++) {
+            if (k) {
+              if (used >= numnodes) {
+                ranout = TRUE;
+                break;
+              }
+              tok = gettok_instance(&scan);
+              if (!tok) {
+                ranout = TRUE;
+                break;
+              }
+            }
+            if (emitted)
+              ds_cat_char(&nl, ' ');
+            ds_cat_str(&nl, tok);
+            emitted++;
+            used++;
+            tfree(tok);
+            tok = NULL;
+          }
+          if (ranout)
+            break;
+        }
+      }
+      tfree(tok);
+
+      if (expanded > 0 && !ranout && used == numnodes) {
+        ds_cat_char(&nl, ' ');
+        ds_cat_str(&nl, scan);          /* the model name and any parameters */
+        autobus_line = copy(ds_get_buf(&nl));
+        line = autobus_line;
+        numnodes = *dev->terms;
+        ds_free(&nl);
+      } else if (expanded > 0) {
+        char msg[256], pbase[64];
+        const char *lb = shortport ? strchr(shortport, '[') : NULL;
+        size_t bl = lb ? (size_t) (lb - shortport)
+                       : (shortport ? strlen(shortport) : 1);
+
+        ds_free(&nl);
+        if (bl >= sizeof pbase)
+          bl = sizeof pbase - 1;
+        memcpy(pbase, shortport ? shortport : "?", bl);
+        pbase[bl] = '\0';
+
+        fprintf(stderr,
+                "\nError: instance %s: this line mixes a bus port written in "
+                "shorthand with\n       another port's bits written out, and the "
+                "two do not add up.\n"
+                "       Model '%s' has %d terminals in %d ports, and the line "
+                "writes %d node\n       tokens. Reading them port by port -- "
+                "'%s' in shorthand for its %d bits,\n       then one token per "
+                "bit for each port written out -- %s.\n"
+                "       Write every bus port the same way: %d tokens (each bus "
+                "in shorthand)\n       or %d (every bit written out). A range "
+                "written here may also be the\n       wrong width for the port "
+                "it feeds.\n"
+                "       Line: %s\n\n",
+                name, dev->name, *dev->terms, np, numnodes,
+                pbase, shortbits,
+                ranout ? "runs out before every port is fed"
+                       : "uses only some of them",
+                np, *dev->terms, current->line);
+        snprintf(msg, sizeof msg,
+                 "instance %s mixes a shorthand bus port with written-out bits; "
+                 "the token count matches neither %d (all shorthand) nor %d "
+                 "(all bits)", name, np, *dev->terms);
+        LITERR(msg);
+        return;
+      } else {
+        ds_free(&nl);                   /* nothing in shorthand: unchanged */
+      }
     }
   }
 

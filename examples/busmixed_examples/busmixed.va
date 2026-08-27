@@ -1,0 +1,45 @@
+// Enhancement-490: an OSDI instance line that MIXES the two ways of writing a
+// bus port -- one port left in shorthand, another port's bits written out.
+//
+// Two bus ports of DIFFERENT widths, plus a scalar, and every bit given its own
+// conductance: a misbinding by one terminal changes every current, so a
+// differential against the same circuit written out in full cannot miss it.
+`include "disciplines.vams"
+
+module bmix(a, b);
+    inout [0:4] a;  electrical [0:4] a;
+    inout [0:2] b;  electrical [0:2] b;
+    parameter real r0 = 1e3 from (0:inf);
+    genvar k;
+    analog begin
+        for (k = 0; k <= 4; k = k + 1)
+            I(a[k]) <+ V(a[k]) / (r0 * (k + 1));
+        for (k = 0; k <= 2; k = k + 1)
+            I(b[k]) <+ V(b[k]) / (r0 * (k + 7));
+    end
+endmodule
+
+// a bus port beside a SCALAR port: the scalar must still take exactly one token
+module bscal(a, s);
+    inout [0:4] a;  electrical [0:4] a;
+    inout s;        electrical s;
+    parameter real r0 = 1e3 from (0:inf);
+    genvar k;
+    analog for (k = 0; k <= 4; k = k + 1)
+        I(a[k], s) <+ V(a[k], s) / (r0 * (k + 1));
+endmodule
+
+// indices that are neither zero-based nor ascending: the generated bits must
+// come from the model's own terminal names, in the mixed form too
+module bdesc(p, q);
+    inout [4:0] p;  electrical [4:0] p;
+    inout [1:3] q;  electrical [1:3] q;
+    parameter real r0 = 1e3 from (0:inf);
+    genvar k;
+    analog begin
+        for (k = 0; k <= 4; k = k + 1)
+            I(p[k]) <+ V(p[k]) / (r0 * (k + 1));
+        for (k = 1; k <= 3; k = k + 1)
+            I(q[k]) <+ V(q[k]) / (r0 * (k + 7));
+    end
+endmodule

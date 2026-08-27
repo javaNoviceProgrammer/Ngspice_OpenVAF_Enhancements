@@ -1306,23 +1306,15 @@ e467_bus_bit_index(const char *o, const char *name, size_t len)
 }
 
 /* Is this token already a single bit, rather than a bus base? `a[0]` in the
-   default spelling, `a_0_` under `autobus=kicad`. */
+   default spelling, `a_0_` under `autobus=kicad`.
+
+   Enhancement-490 moved the rule itself to INPbusTokenIndexed so INP2N, which
+   now has to ask the same question of an instance token, cannot answer it
+   differently. */
 static bool
 e467_token_is_indexed(const char *name, size_t len)
 {
-    if (!name || len == 0)
-        return FALSE;
-    if (memchr(name, '[', len))
-        return TRUE;
-    if (sc_autobus_kicad && name[len - 1] == '_') {
-        /* ..._<digits>_ */
-        size_t i = len - 1;
-        size_t digits = 0;
-        while (i > 0 && isdigit_c(name[i - 1])) { i--; digits++; }
-        if (digits && i > 1 && name[i - 1] == '_')
-            return TRUE;
-    }
-    return FALSE;
+    return INPbusTokenIndexed(name, len, sc_autobus_kicad) ? TRUE : FALSE;
 }
 
 

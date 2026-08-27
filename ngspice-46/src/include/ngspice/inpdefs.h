@@ -152,6 +152,8 @@ struct IFdevice;
 int INPbusPorts(struct IFdevice *dev, int *start, int *cnt, int maxp);
 int INPbusKicadStyle(void);       /* 0/1 -- `bool` is not in scope here */
 void INPbusBitSuffix(const char *lb, int kicad, char *out, size_t n);
+/* Enhancement-490: does this token already carry a bit index? */
+int INPbusTokenIndexed(const char *name, size_t len, int kicad);
 /* Enhancement-426: set while INPpas2() is handed a card that if_run()
  * synthesised from a .control command. Such a card is never deck parsing, so
  * an analysis card naming an unknown node is a typo even before CKTsetup(). */
