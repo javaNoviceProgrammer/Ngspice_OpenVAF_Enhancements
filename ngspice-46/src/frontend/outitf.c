@@ -882,6 +882,55 @@ beginPlot(JOB *analysisPtr, CKTcircuit *circuitPtr, char *cktName, char *analNam
             addSpecialDesc(run, saves[i].name, namebuf, parambuf, depind, initmem);
         }
 
+        /* Enhancement-493: a saved name that matched nothing was dropped in
+         * silence.
+         *
+         * Pass 1 walks each `.save`/`.probe` item against the analysis's own
+         * vector names and marks the ones it places; anything it fails to match
+         * simply stayed unmarked, and the run continued without it. So
+         * `.save v(n) v(nosuch)` recorded v(n), dropped the typo and said
+         * nothing -- the analysis succeeded and the vector the user asked for
+         * was merely absent. `.probe v(nosuch)` reaches the same path, which is
+         * why a mistyped node there was silent while a mistyped SOURCE in the
+         * same card is reported by the measure-source pass ("Could not find the
+         * instance line for ...").
+         *
+         * Enhancement-418 already says this for the `@dev[param]` spelling --
+         * "no such device, so this vector will stay empty" -- so the plain node
+         * spelling was the one route left quiet. Warn rather than refuse: an
+         * absent vector is not a wrong answer, and a deck that saves a node it
+         * does not always build is a real idiom. */
+        if (numsaves) {
+            for (i = 0; i < numsaves; i++) {
+                bool matched;
+
+                if (!saves[i].name || strchr(saves[i].name, '@') ||
+                    strchr(saves[i].name, '['))
+                    continue;           /* E-418 already speaks for these */
+
+                /* savesused[] is already set for the items the loop above
+                   consumed -- the `all`/`allv` keywords themselves, and anything
+                   belonging to another analysis -- so honour it first in either
+                   mode. Under `save all`, which `.probe` turns on, Pass 1 never
+                   runs, so an explicit name still has to be matched here;
+                   everything real is saved in that mode, so a name matching
+                   nothing is genuinely absent either way. */
+                matched = savesused[i];
+                if (!matched && (saveall || savenosub || savenointernals)) {
+                    matched = (refName && name_eq(saves[i].name, refName));
+                    for (j = 0; !matched && j < numNames; j++)
+                        if (name_eq(saves[i].name, dataNames[j]))
+                            matched = TRUE;
+                }
+
+                if (!matched)
+                    fprintf(cp_err,
+                            "Warning: save '%s': nothing of that name is in this "
+                            "analysis,\n         so no such vector is produced.\n",
+                            saves[i].name);
+            }
+        }
+
         if (numsaves) {
             for (i = 0; i < numsaves; i++) {
                 tfree(saves[i].analysis);

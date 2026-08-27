@@ -1,0 +1,14 @@
+// Enhancement-493: an OSDI model, to show that `showmod <model name>` reaching
+// its model is not a built-in-device special case.
+//
+// `showmod mm` reported "No matching instances or models" for this model too,
+// while `showmod n1` -- the DEVICE name -- printed it. The defect was in the
+// device generator's name grammar, so it was never device-type specific.
+`include "disciplines.vams"
+
+module nlk(p, n);
+    inout p, n;  electrical p, n;
+    parameter real rm = 2k from (0:inf);
+    (* type="instance" *) parameter real ri = 1k from (0:inf);
+    analog I(p, n) <+ V(p, n) / ri;
+endmodule

@@ -159,7 +159,25 @@ void INP2R(CKTcircuit *ckt, INPtables * tab, struct card *current)
 
     INPgetNetTok(&line, &model, 1);
 
-    if (*model && (strcmp(model, "r") != 0)) {
+    /* Enhancement-493: `r` was excluded from being a model name outright.
+     *
+     * The exclusion is there for `R1 a b r=1k`, where `r` is the keyword that
+     * writes the resistance and must not be read as a model. But it also locked
+     * out a model actually CALLED `r`: `.model r r rsh=1k` with `R1 a 0 r l=1u
+     * w=1u` bound no model and no value, so the device fell through to the
+     * default and came out as 1 mOhm with "resistance too low or not given" --
+     * a message about the symptom, when the cause is that the model named on the
+     * line was never looked up. Every other name works, including every other
+     * resistor keyword (`rsh`, `l`, `w`, `tc1`, `temp`, `m`, `scale`); only this
+     * one letter was unreachable.
+     *
+     * The two spellings are distinguishable by what FOLLOWS the token: the
+     * keyword form is `r=`, a model name is not. Ask that instead, so `r=1k`
+     * keeps its meaning and a model called `r` becomes reachable. A deck with no
+     * such model is unaffected -- INPlookMod fails and the existing else branch
+     * restores the line and builds the default model, exactly as for any other
+     * unrecognised token. */
+    if (*model && (strcmp(model, "r") != 0 || *skip_ws(line) != '=')) {
       /* token isn't null */
       if (INPlookMod(model)) {
           /* If this is a valid model connect it */

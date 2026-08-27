@@ -27,7 +27,7 @@ Modified: 2000 AlansFixes
 
 static wordlist *devexpand(char *name);
 static void all_show(wordlist *wl, int mode);
-static void all_show_old(wordlist *wl, int mode);
+static int  all_show_old(wordlist *wl, int mode, int quiet);
 static void com_alter_mod(wordlist *wl);
 static void if_set_binned_model(CKTcircuit *, char *, char *, struct dvec *);
 
@@ -360,13 +360,65 @@ printdesc(IFparm p, bool print_type, bool print_flags, bool csv)
 
 static int count;
 
+/* Enhancement-493: `showmod <model name>` could not find the model.
+ *
+ * The device generator's grammar reads a bare word as an INSTANCE name, and only
+ * a `#`-prefixed one as a MODEL name. So with `.model dm d` used by `D1`,
+ * `showmod d1` printed the model while `showmod dm` answered "No matching
+ * instances or models" -- of a model that plainly exists and that `showmod #dm`
+ * displays. The command's own help calls its argument "models", and its write
+ * sibling takes the model name directly (`altermod dm is=...` works), so the one
+ * command dedicated to models was the one that could not be handed one.
+ *
+ * RETRY rather than reinterpret. The bare-name-is-an-instance reading runs first
+ * and unchanged, so `showmod d1` -- and any name that is both a device and a
+ * model -- behaves exactly as before. Only when NOTHING matched is each bare word
+ * retried with the `#` the grammar wants, and a name that is neither ends at the
+ * same message it always did. */
+static wordlist *e493_as_models(wordlist *wl)
+{
+    wordlist *out = NULL, *tail = NULL, *w;
+
+    for (w = wl; w; w = w->wl_next) {
+        char *t = w->wl_word;
+        wordlist *n;
+        char *nw;
+
+        /* the grammar's own punctuation, and an explicit #model, stay as-is */
+        if (!t || !*t || *t == '#' || eq(t, ":") || eq(t, ";") || eq(t, ",") ||
+            eq(t, "+") || eq(t, "*"))
+            nw = copy(t ? t : "");
+        else
+            nw = tprintf("#%s", t);
+
+        n = wl_cons(nw, NULL);
+        if (tail) {
+            tail->wl_next = n;
+            n->wl_prev = tail;
+        } else {
+            out = n;
+        }
+        tail = n;
+    }
+    return out;
+}
+
+
 void
 com_showmod(wordlist *wl)
 {
-    if (cp_getvar("altshow", CP_BOOL, NULL, 0))
+    if (cp_getvar("altshow", CP_BOOL, NULL, 0)) {
         all_show(wl, 1);
-    else
-        all_show_old(wl, 1);
+        return;
+    }
+    /* stay quiet on the first pass only when there is something to retry with */
+    if (all_show_old(wl, 1, wl ? 1 : 0) == 0 && wl) {
+        wordlist *as_mod = e493_as_models(wl);
+
+        if (all_show_old(as_mod, 1, 1) == 0)
+            printf("No matching instances or models\n");
+        wl_free(as_mod);
+    }
 }
 
 
@@ -376,7 +428,7 @@ com_show(wordlist *wl)
     if (cp_getvar("altshow", CP_BOOL, NULL, 0))
         all_show(wl, 0);
     else
-        all_show_old(wl, 0);
+        all_show_old(wl, 0, 0);
 }
 
 
@@ -542,8 +594,8 @@ all_show(wordlist *wl, int mode)
 }
 
 
-static void
-all_show_old(wordlist *wl, int mode)
+static int
+all_show_old(wordlist *wl, int mode, int quiet)
 {
     wordlist    *params, *nextgroup, *thisgroup;
     wordlist    *prev, *next, *w;
@@ -555,12 +607,12 @@ all_show_old(wordlist *wl, int mode)
 
     if (!ft_curckt || !ft_curckt->ci_ckt) {
         fprintf(cp_err, "Error: no circuit loaded\n");
-        return;
+        return 0;   /* Enhancement-493 */
     }
 
     if (wl && wl->wl_word && eq(wl->wl_word, "-v")) {
         old_show(wl->wl_next);
-        return;
+        return 1;   /* Enhancement-493: -v handled it */
     }
 
     if (!cp_getvar("width", CP_NUM, &screen_width, 0))
@@ -711,7 +763,7 @@ all_show_old(wordlist *wl, int mode)
 
     } while (wl);
 
-    if (!n) {
+    if (!n && !quiet) {
         if (instances == 0)
             printf("No matching instances or models\n");
         else if (instances == 1)
@@ -719,6 +771,7 @@ all_show_old(wordlist *wl, int mode)
         else
             printf("No matching elements\n");
     }
+    return n;
 }
 
 
