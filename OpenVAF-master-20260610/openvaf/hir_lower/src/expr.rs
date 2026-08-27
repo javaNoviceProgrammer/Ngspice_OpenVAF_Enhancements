@@ -281,6 +281,27 @@ impl BodyLoweringCtx<'_, '_, '_> {
     /// Lowers a dynamic-index array read `c[i]` / `m[i][j]` to a runtime select chain over the
     /// element variables: `elems[0]` is the default and each `elems[k]` is chosen when the flat
     /// runtime position equals `k`.
+    ///
+    /// Enhancement-489: an index that matches no `k` therefore reads `elems[0]`, and that
+    /// is DELIBERATE and load-bearing, not an accident of how the chain is built. A select
+    /// chain has no pointer arithmetic, so an out-of-range index cannot read out of bounds
+    /// at any value -- which is the whole reason the read is lowered this way rather than
+    /// as an indexed load.
+    ///
+    /// A CONSTANT out-of-range index never gets here: a literal, a localparam and a derived
+    /// constant expression are all rejected up front ("bus bit-select index out of range").
+    /// What reaches this code is a value the compiler cannot pin down -- an overridable
+    /// parameter, or a variable computed while solving -- and for those the project's rule
+    /// is the one Enhancement-455 states for the domain guards: a run-time value out of
+    /// range is the model's own business, because a parameter may be overridden and a
+    /// variable may pass through any value on its way to the solution.
+    ///
+    /// Returning NaN instead was considered and rejected. It would turn a silent wrong
+    /// element into a loud failure for the parameter case, where the index is fixed at
+    /// setup -- but the variable case shares this lowering, and there an index can be
+    /// transiently out of range mid-solve, so a NaN would poison the iteration and break
+    /// models that converge today. Splitting the two would leave the same operation judged
+    /// by two different rules, which is the drift this project keeps having to undo.
     /// Enhancement-405: parameter-array twin of [`Self::lower_dynamic_index_read`]. A
     /// parameter reads as an ordinary MIR value, so the select chain is identical apart
     /// from how each element is obtained.

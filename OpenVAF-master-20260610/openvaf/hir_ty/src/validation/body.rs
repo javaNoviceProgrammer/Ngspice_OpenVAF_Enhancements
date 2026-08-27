@@ -1441,6 +1441,48 @@ impl ExprValidator<'_, '_> {
                 return;
             }
 
+            // Enhancement-489: `x ** y` is `pow(x, y)` written as an operator, and it
+            // reaches code generation by a different path -- `BinaryOp::Power`, not
+            // `BuiltIn::pow` -- so the guard added to the call form above does not see
+            // it. Judging only one spelling of the same operation is how the two
+            // drift apart, so both are judged here on the same rule.
+            Expr::BinaryOp { lhs, rhs, op: Some(BinaryOp::Power) } => {
+                // ...but ONLY for the REAL operation. Enhancement-420 implements an
+                // INTEGER `**` per IEEE 1364-2005 Table 5-6, where a negative exponent
+                // is fully defined -- `2 ** -1` is 0, `-1 ** -3` is -1 -- and a base of
+                // 0 is `'x`, which is 0 in an integer context. Those are correct
+                // answers, not NaNs, and vafdegen_examples asserts every one of them.
+                // Judging them by the real domain rule rejected valid models; the first
+                // version of this arm did exactly that and E-420's suite caught it.
+                if self.parent.infer.expr_types[expr].to_value() == Some(Type::Integer) {
+                    return;
+                }
+                if let (Some(base), Some(exp)) = (self.const_num(lhs), self.const_num(rhs)) {
+                    if base < 0.0 && exp.fract() != 0.0 {
+                        self.bad_arg(
+                            "**",
+                            "the base",
+                            format!(
+                                "is {base} with the fractional exponent {exp}, which is \
+                                 outside the domain of ** (a negative base needs an \
+                                 integer exponent); the result would be NaN"
+                            ),
+                            lhs,
+                        )
+                    } else if base == 0.0 && exp < 0.0 {
+                        self.bad_arg(
+                            "**",
+                            "the base",
+                            format!(
+                                "is 0 with the negative exponent {exp}, which is outside \
+                                 the domain of **; the result would be infinite"
+                            ),
+                            lhs,
+                        )
+                    }
+                }
+            }
+
             Expr::Path { port: false, .. } => {
                 match self.parent.infer.expr_types[expr] {
                     Ty::FunctionVar { arg: Some(arg), fun, .. } => {
@@ -1809,6 +1851,50 @@ impl ExprValidator<'_, '_> {
                             format!(
                                 "is {v}, which is outside the domain of {name} ({domain}); \
                                  the result would be NaN"
+                            ),
+                            args[0],
+                        )
+                    }
+                }
+            }
+
+            // Enhancement-489: `pow(x,y)` and its `**` spelling are the one member of
+            // the family above that the guard left out, and they are the SAME mistake:
+            // pow(-2.0, 0.5) IS sqrt(-2.0). Measured before the fix, it compiled clean
+            // and the model then failed at simulation with
+            //     "Error: Transient op failed, timestep too small"
+            // which is exactly the outcome Enhancement-455's comment above cites as the
+            // reason that guard exists -- a convergence message for a NaN written
+            // literally in the source.
+            //
+            // Two constant shapes have no value. A negative base with a fractional
+            // exponent is NaN (there is no real root). A zero base with a negative
+            // exponent is a division by zero and is infinite. Both are judged only when
+            // BOTH arguments are constant, exactly as the unary domains are judged: a
+            // run-time value is the model's own business and a parameter may be
+            // overridden.
+            (BuiltIn::pow, _) if args.len() >= 2 => {
+                if let (Some(base), Some(exp)) =
+                    (self.const_num(args[0]), self.const_num(args[1]))
+                {
+                    if base < 0.0 && exp.fract() != 0.0 {
+                        self.bad_arg(
+                            "pow",
+                            "the base",
+                            format!(
+                                "is {base} with the fractional exponent {exp}, which is \
+                                 outside the domain of pow (a negative base needs an \
+                                 integer exponent); the result would be NaN"
+                            ),
+                            args[0],
+                        )
+                    } else if base == 0.0 && exp < 0.0 {
+                        self.bad_arg(
+                            "pow",
+                            "the base",
+                            format!(
+                                "is 0 with the negative exponent {exp}, which is outside \
+                                 the domain of pow; the result would be infinite"
                             ),
                             args[0],
                         )
