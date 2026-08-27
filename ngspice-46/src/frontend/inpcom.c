@@ -163,6 +163,7 @@ static void inp_meas_current(struct card *card);
 static void inp_meas_control(struct card *card);
 static void inp_dot_if(struct card *deck);
 static char *inp_modify_exp(char *expression);
+static char *inp_num_text(double dvalue);
 static struct func_temper *inp_new_func(char *funcname, char *funcbody,
         struct card *card, int *sub_count, int subckt_depth);
 static void inp_delete_funcs(struct func_temper *funcs);
@@ -9260,6 +9261,38 @@ static bool inp_temper_compat(struct card *card)
  * and other keywords like TEMPER. --> Only parameter replacement in numparam
  */
 
+/* Enhancement-494: the shortest decimal text that reads back as exactly this
+ * double.
+ *
+ * inp_modify_exp() rewrites every numeric literal in a B source expression, and
+ * the text it produces is read back by INPevaluate(), which accumulates the
+ * mantissa by hand as `mantis = 10 * mantis + digit` and therefore loses a bit
+ * once that accumulator passes 2^53. Emitting MORE digits than the value needs
+ * is not free: a fixed "%.17g" turns the sixteen digits of 0.7853981633974483
+ * into the seventeen of 0.78539816339744828 and comes back 1 ulp out, while the
+ * user's own text would have survived.
+ *
+ * So try 15, 16, then 17 significant digits and keep the first that round-trips.
+ * That reproduces the literal the user wrote whenever it was itself minimal, and
+ * never emits more precision than the value carries. 17 digits always suffice
+ * for an IEEE754 double, so the loop cannot fall out without an exact match for
+ * a finite value; for inf/nan the final "%.17g" text is used as-is. The width
+ * preserves the leading blank the previous "%18.10e" format produced. */
+static char *inp_num_text(double dvalue)
+{
+    char buf[64];
+    int prec;
+
+    for (prec = 15; prec <= 17; prec++) {
+        (void) snprintf(buf, sizeof buf, "%.*g", prec, dvalue);
+        if (strtod(buf, NULL) == dvalue)
+            break;
+    }
+
+    return tprintf("%25s", buf);
+}
+
+
 static char *inp_modify_exp(/* NOT CONST */ char *expr)
 {
     char *s;
@@ -9301,7 +9334,13 @@ static char *inp_modify_exp(/* NOT CONST */ char *expr)
                     s++;
                 }
                 else {
-                    wl->wl_word = tprintf("%18.10e", dvalue);
+                    /* Enhancement-494: %18.10e kept only 11 significant
+                     * digits, so every numeric literal in a B source expression
+                     * was silently rounded here -- v=1.2345678901234567 reached
+                     * the parser as 1.2345678901e+00 (relative error 1.9e-11)
+                     * while the SAME literal on an R, C, .param or OSDI .model
+                     * line kept all 17. See inp_num_text() above. */
+                    wl->wl_word = inp_num_text(dvalue);
                     /* skip the `unit', FIXME INPevaluate() should do this */
                     while (isalpha_c(*s))
                         s++;
@@ -9386,7 +9425,7 @@ static char *inp_modify_exp(/* NOT CONST */ char *expr)
             int error1;
             /* allow 100p, 5MEG etc. */
             double dvalue = INPevaluate(&s, &error1, 0);
-            wl->wl_word = tprintf("%18.10e", dvalue);
+            wl->wl_word = inp_num_text(dvalue);
             /* skip the `unit', FIXME INPevaluate() should do this */
             while (isalpha_c(*s)) {
                 s++;

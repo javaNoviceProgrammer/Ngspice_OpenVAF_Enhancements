@@ -1,0 +1,21 @@
+// Enhancement-494: an oracle for the value a parameter actually carries.
+//
+// The OSDI parameter path keeps every digit of the literal written on the
+// .model card, so `kout` read back through @n1[kout] is the yardstick the
+// B source expression path is measured against.
+`include "disciplines.vams"
+
+module bexprvalue(p, n);
+    inout p, n;
+    electrical p, n;
+
+    parameter real k = 1.0;
+    parameter real g = 1e-3 from (0:inf);
+
+    (*desc="the k parameter exactly as stored"*) real kout;
+
+    analog begin
+        kout = k;
+        I(p, n) <+ V(p, n) * g;
+    end
+endmodule

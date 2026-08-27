@@ -83,10 +83,24 @@ double
  * the default gmin's 1e-32, so no deck that was already correct changes. */
 #define PTDIV_EPS 1.0e-32       /* the historical gmin(1e-12) * 1e-20 */
 
+/* Enhancement-494: the sign of the nudge was chosen from the NUMERATOR, which
+ * inverted the sign of the QUOTIENT. Enhancement-491 wrote
+ *
+ *     arg2 = (arg1 >= 0.0) ? PTDIV_EPS : -PTDIV_EPS;
+ *
+ * intending to keep the sign of arg1, but a negative arg1 was then divided by a
+ * NEGATIVE epsilon, so every x/0 came out POSITIVE: `B0 b0 0 v=v(p)/0` with
+ * v(p) = -3 returned +3e+32 instead of -3e+32.
+ *
+ * A divisor of exactly zero has no sign to recover, so pick one convention and
+ * apply it unconditionally: approach zero from the POSITIVE side. The quotient
+ * then keeps the sign of the numerator, which is the limit of x/eps as eps->0+
+ * and what the E-491 comment above describes. Decks whose numerator is positive
+ * -- every case E-491 measured -- are unchanged. */
 PTdivide(double arg1, double arg2)
 {
     if (arg2 == 0.0)
-        arg2 = (arg1 >= 0.0) ? PTDIV_EPS : -PTDIV_EPS;
+        arg2 = PTDIV_EPS;
 
     return (arg1 / arg2);
 }
