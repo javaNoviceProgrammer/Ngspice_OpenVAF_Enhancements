@@ -53,6 +53,8 @@ struct dbcomm {
     double db_value1;   /* If this is DB_STOPWHEN. */
     double db_value2;   /* If this is DB_STOPWHEN. */
     int db_graphid; /* If iplot, id of graph. */
+    int db_auto;    /* Enhancement-496: this save was inferred by
+                       `.option saveused`, not written by the user. */
     struct dbcomm *db_also; /* Link for conjunctions. */
     struct dbcomm *db_next; /* List of active debugging commands. */
 } ;

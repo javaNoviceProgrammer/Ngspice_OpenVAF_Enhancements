@@ -31,6 +31,28 @@ static char *copynode(char* s);
 
 /* Save a vector. */
 
+/* Enhancement-496: are the saves being registered right now INFERRED rather
+ * than written by the user?
+ *
+ * `.option saveused` reads the control block and saves what it thinks is
+ * mentioned there (Enhancement-469). It deliberately over-collects, because
+ * under-saving would cost the answer -- but that means it registers names the
+ * user never wrote, and Enhancement-493's "nothing of that name is in this
+ * analysis" warning exists precisely to catch a name the user DID write and got
+ * wrong. Reporting an inferred name tells the author their deck is missing a
+ * vector they never asked for, and points at a plot keyword as the culprit.
+ *
+ * The flag is set only around ft_saveused()'s own com_save() call, so every
+ * other route -- `.save`, `save`, `.probe`, savecurrents -- is unaffected and
+ * still reports an unmatched name exactly as before. */
+static int save_auto_mark = 0;
+
+void ft_save_mark_auto(int onoff)
+{
+    save_auto_mark = onoff ? 1 : 0;
+}
+
+
 void
 com_save(wordlist *wl)
 {
@@ -109,6 +131,7 @@ settrace(wordlist *wl, int what, char *name)
         d->db_type = db_type;
         d->db_nodename1 = db_nodename1;
         d->db_number = debugnumber++;
+        d->db_auto = save_auto_mark;   /* Enhancement-496 */
 
         if (last)
             last->db_next = d;
@@ -228,6 +251,7 @@ ft_getSaves(struct save_info **savesp)
             if (osdi_expand_save(d->db_nodename1, &tn, &nt) <= 0) {
                 if (!save_already_present(array, i, d->db_nodename1)) {
                     array[i].used = 0;
+                    array[i].autosaved = d->db_auto;   /* Enhancement-496 */
                     array[i].analysis =
                         d->db_analysis ? copy(d->db_analysis) : NULL;
                     array[i++].name = copy(d->db_nodename1);
@@ -243,6 +267,7 @@ ft_getSaves(struct save_info **savesp)
                     tfree(nm);
                 } else {
                     array[i].used = 0;
+                    array[i].autosaved = d->db_auto;   /* Enhancement-496 */
                     array[i].analysis =
                         d->db_analysis ? copy(d->db_analysis) : NULL;
                     array[i++].name = nm;
@@ -254,6 +279,7 @@ ft_getSaves(struct save_info **savesp)
                  * re-synthesized, so the bare entry stays byte-identical to
                  * what the deck (or inp_savecurrents) wrote. */
                 array[i].used = 0;
+                array[i].autosaved = d->db_auto;   /* Enhancement-496 */
                 array[i].analysis = d->db_analysis ? copy(d->db_analysis) : NULL;
                 array[i++].name = copy(d->db_nodename1);
             }

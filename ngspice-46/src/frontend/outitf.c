@@ -923,7 +923,13 @@ beginPlot(JOB *analysisPtr, CKTcircuit *circuitPtr, char *cktName, char *analNam
                             matched = TRUE;
                 }
 
-                if (!matched)
+                /* Enhancement-496: an INFERRED save is never reported.
+                 * `.option saveused` registers what it believes the control
+                 * block mentions, and deliberately over-collects; a name it
+                 * guessed wrong is not something the author wrote, so telling
+                 * them a vector is missing names a plot keyword as a signal.
+                 * A name the deck really did write still reports, unchanged. */
+                if (!matched && !saves[i].autosaved)
                     fprintf(cp_err,
                             "Warning: save '%s': nothing of that name is in this "
                             "analysis,\n         so no such vector is produced.\n",

@@ -123,6 +123,39 @@ static const char *e469_out_cmds[] = {
 static const char *e469_file_first[] = { "wrdata", "write", "hardcopy",
                                          "wrs2p", NULL };
 
+/* Enhancement-496: words that are the PLOT COMMAND'S OWN GRAMMAR, not vectors.
+ *
+ * The bare-word scan below took every argument that was not a number, a
+ * redirection or an expression as a vector name, so `plot v(a) xlabel 'x'`
+ * registered a save for `xlabel`. That was harmless to the answer -- an
+ * unmatched save produces nothing -- but from Enhancement-493 onward it printed
+ * "save 'xlabel': nothing of that name is in this analysis", telling the author
+ * a signal was missing and naming a keyword as the signal.
+ *
+ * The list mirrors CT_PLOTKEYWORDS in cpitf.c, which cannot be reused because
+ * it is a tab-completion table built only for an interactive session. A
+ * keyword missing from this copy costs nothing but the old noise for that one
+ * word -- the save itself was always a no-op -- which is why the marking in
+ * ft_saveused() below, and not this list, is what actually fixes the report. */
+static const char *e469_plot_kw[] = {
+    "xlimit", "ylimit", "vs", "xindices", "xcompress", "xdelta", "ydelta",
+    "lingrid", "loglog", "linear", "xlog", "ylog", "polar", "smith",
+    "smithgrid", "nointerp", "nogrid", "title", "xlabel", "ylabel",
+    "linplot", "combplot", "pointplot", "samep", "retraceplot",
+    NULL
+};
+
+/* commands whose bare words are grammar rather than vectors. `meas` names its
+ * analysis, its result and its function as bare words -- `meas tran m1 FIND
+ * v(b) AT 50u` offered `tran`, `m1`, `find` and `at` -- while the vectors it
+ * reads arrive as v(...)/i(...) and are already taken by the reference scan,
+ * which runs over EVERY line whatever command it belongs to. */
+static const char *e469_no_bare[] = { "meas", "measure", NULL };
+
+/* commands that accept the plot grammar */
+static const char *e469_plot_cmds[] = { "plot", "pyplot", "gnuplot",
+                                        "hardcopy", NULL };
+
 static int e469_in_list(const char *w, const char **list)
 {
     int i;
@@ -231,7 +264,7 @@ static int e469_scan_bare(const char *line, wordlist **wl)
 {
     char *c = (char *) line, *tok;
     char cmd[64];
-    int argno = 0, filefirst, saw_all = 0;
+    int argno = 0, filefirst, saw_all = 0, plotcmd;
 
     tok = gettok(&c);
     if (!tok)
@@ -241,7 +274,10 @@ static int e469_scan_bare(const char *line, wordlist **wl)
     tfree(tok);
     if (!e469_in_list(cmd, e469_out_cmds))
         return 0;
+    if (e469_in_list(cmd, e469_no_bare))     /* Enhancement-496 */
+        return 0;
     filefirst = e469_in_list(cmd, e469_file_first);
+    plotcmd = e469_in_list(cmd, e469_plot_cmds);
 
     while ((tok = gettok(&c)) != NULL) {
         argno++;
@@ -264,6 +300,10 @@ static int e469_scan_bare(const char *line, wordlist **wl)
         }
         if (strpbrk(tok, "()[]@=*/+-,'\"")) {    /* handled by the ref scan */
             tfree(tok);
+            continue;
+        }
+        if (plotcmd && e469_in_list(tok, e469_plot_kw)) {
+            tfree(tok);                          /* Enhancement-496: grammar */
             continue;
         }
         e469_add(wl, tok);
@@ -332,7 +372,12 @@ void ft_saveused(wordlist *controls)
         return;
     }
 
+    /* Enhancement-496: everything registered here was INFERRED from the
+     * control block, not written by the user. Marking it keeps E-493's
+     * unmatched-name warning for the names a deck actually asked for. */
+    ft_save_mark_auto(1);
     com_save(saves);
+    ft_save_mark_auto(0);
     if (ft_ngdebug)
         fprintf(stdout, "saveused: %d vector(s) kept\n", wl_length(saves));
     wl_free(saves);

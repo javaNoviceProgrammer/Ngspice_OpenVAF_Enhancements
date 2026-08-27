@@ -25,6 +25,7 @@ struct save_info {
     char    *name;
     IFuid   analysis;
     int     used;
+    int     autosaved;  /* Enhancement-496: inferred by `.option saveused` */
 };
 
 

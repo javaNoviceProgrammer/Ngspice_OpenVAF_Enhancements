@@ -165,6 +165,7 @@ extern int ft_cktcoms(bool terse);
 extern void ft_dotsaves(void);
 extern void ft_saveused(wordlist *controls);    /* Enhancement-469 */
 extern void inp_set_saveused(bool onoff);        /* Enhancement-469 */
+extern void ft_save_mark_auto(int onoff);        /* Enhancement-496 */
 extern int ft_savedotargs(void);
 
 /* error.c */
