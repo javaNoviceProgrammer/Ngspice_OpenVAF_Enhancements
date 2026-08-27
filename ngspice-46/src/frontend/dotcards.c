@@ -505,7 +505,7 @@ ft_cktcoms(bool terse)
                         continue;
                     }
                     if ((v->v_type == SV_VOLTAGE) && (*(v->v_name) != '@')) {
-                        printnum(numbuf, v->v_realdata[0]);
+                        printnum(numbuf, sizeof numbuf, v->v_realdata[0]);
                         fprintf(cp_out, "\t%-30s%15s\n", v->v_name, numbuf);
                     }
                 }
@@ -513,7 +513,7 @@ ft_cktcoms(bool terse)
                 fprintf(cp_out, "\t------\t-------\n\n");
                 for (v = plot_cur->pl_dvecs; v; v = v->v_next)
                     if (v->v_type == SV_CURRENT) {
-                        printnum(numbuf, v->v_realdata[0]);
+                        printnum(numbuf, sizeof numbuf, v->v_realdata[0]);
                         fprintf(cp_out, "\t%-30s%15s\n", v->v_name, numbuf);
                     }
                 fprintf(cp_out, "\n");

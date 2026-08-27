@@ -170,6 +170,47 @@ com_meas(wordlist *wl)
     }
     outvar = wl_count->wl_word;
 
+    /* Enhancement-491: the analysis name must match the plot being measured.
+     *
+     * The `.meas` CARD already enforces this -- do_measure() skips any card
+     * whose analysis token differs from the analysis that just ran -- and for
+     * INTERVAL measurements the interactive command enforced it too, which is
+     * what Enhancement-468 restored when it kept the dc scale fallback inside a
+     * dc plot. The POINT measurements never reached that check: their scale
+     * comes straight from the vector, so `meas tran m FIND v(n) AT=0.5` read a
+     * DC SWEEP as though it were a transient and answered from it, and
+     * `meas dc`/`meas ac`/`meas sp` each answered from a transient the same way.
+     * One command, one keyword, enforced for avg/rms/max/min/integ and ignored
+     * for find/when.
+     *
+     * Check it once here, for every measurement type, so the two halves of the
+     * command agree with each other and with the card. `op` is left to the
+     * existing "measure limited to tran, dc, sp, or ac analysis" message, which
+     * already says the right thing. */
+    if (plot_cur && plot_cur->pl_typename && wl->wl_word) {
+        const char *want = wl->wl_word;
+        const char *have = plot_cur->pl_typename;
+
+        if ((cieq((char *) want, "tran") || cieq((char *) want, "dc") ||
+             cieq((char *) want, "ac")   || cieq((char *) want, "sp")) &&
+            !ciprefix("op", have) && !ciprefix(want, have)) {
+            fprintf(cp_err,
+                    "\nError: meas %s: the current plot is '%s', not a %s "
+                    "analysis.\n       Measuring it under the wrong analysis "
+                    "name reads the right numbers\n       off the wrong axis. "
+                    "Run the analysis you named, or name the one you ran.\n\n",
+                    want, have, want);
+            /* Refuse the way every other refused measurement does: the
+               "failed!" line is the contract a script tests on, and dropping
+               the output name is Enhancement-475's guarantee that a failed
+               measurement leaves no stale value behind for the next read. */
+            fprintf(stdout, " meas %s failed!\n\n", line_in);
+            vec_remove(outvar);
+            tfree(line_in);
+            return;
+        }
+    }
+
     fail = get_measure2(wl, &result, NULL, 0, FALSE);
 
     if (fail) {

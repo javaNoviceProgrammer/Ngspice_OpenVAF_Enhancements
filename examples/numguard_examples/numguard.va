@@ -1,0 +1,14 @@
+// Enhancement-491: the third evaluator in the cross-check.
+//
+// ngspice computes expressions in three places -- the B-source parse tree, the
+// numparam preprocessor, and a compiled Verilog-A model. `sin(1e20)` disagreed
+// between them: numparam and this module both returned libm's answer while the
+// B-source returned one of the opposite sign. This model is the Verilog-A leg
+// of that comparison.
+`include "disciplines.vams"
+
+module vsin(p, n);
+    inout p, n;  electrical p, n;
+    parameter real x = 1.0;
+    analog I(p, n) <+ sin(x);
+endmodule

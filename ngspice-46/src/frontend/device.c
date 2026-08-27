@@ -870,6 +870,16 @@ listparam(wordlist *p, dgen *dg)
             } while (k > 0);
         }
     } else {
+        /* Enhancement-491: `found` is false -- this device has no parameter of
+           that name. Every other command says so (`print @n1[nosuch]`, `alter`,
+           `altermod`, `wrdata` and `sweep` all report "no such parameter"); this
+           one printed a row of question marks and left the reader to guess
+           whether the parameter was unknown, unset, or merely unprintable. Say
+           which, once, and still print the row so the table keeps its shape. */
+        fprintf(cp_err, "Warning: show: %s has no parameter '%s'.\n",
+                dg->instance ? dg->instance->GENname
+                             : (dg->model ? dg->model->GENmodName : "device"),
+                p->wl_word);
         j = 0;
         do {
             if (!j)

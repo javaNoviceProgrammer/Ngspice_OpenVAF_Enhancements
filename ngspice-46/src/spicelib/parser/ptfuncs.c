@@ -19,7 +19,20 @@ Author: 1987 Wayne A. Christopher, U. C. Berkeley CAD Group
 
 double PTfudge_factor;
 
-#define MODULUS(NUM,LIMIT) ((NUM) - ((int) ((NUM) / (LIMIT))) * (LIMIT))
+/* Enhancement-491: the range reduction this macro performed was both undefined
+ * and less accurate than the libm it fed.
+ *
+ * `(int)(NUM/LIMIT)` overflows a signed int once |NUM| exceeds 2^31 * 2*pi
+ * (~1.35e10), which is undefined behaviour; past that the reduced argument was
+ * arbitrary. `sin(1e20)` in a B-source returned +0.9993 where the answer is
+ * -0.6453 -- wrong sign, wrong magnitude, no diagnostic. Even inside int range
+ * the naive subtraction lost ~1e-7 against libm, which does Payne-Hanek.
+ *
+ * BOTH other expression evaluators in this simulator were already right:
+ * numparam and a Verilog-A model's own sin() each match libm exactly. Only the
+ * B-source disagreed, which is precisely what Enhancement-399 forbids -- an
+ * expression must not mean different things depending on who computed it. libm
+ * reduces correctly for every finite double, so the reduction is simply gone. */
 
 double
 PTabs(double arg)
@@ -52,30 +65,58 @@ PTtimes(double arg1, double arg2)
 }
 
 double
+/* Enhancement-491: the nudge is a guard against dividing by EXACTLY zero, and
+ * it was being applied to every divisor.
+ *
+ * PTfudge_factor is gmin * 1e-20, so it was not even a fixed perturbation: it
+ * scaled with an unrelated convergence option. Adding it to an ordinary small
+ * divisor moved the answer by the ratio of the two, silently --
+ * `B0 n 0 V=1/1.38064852e-23` (one over Boltzmann's constant, an everyday
+ * quantity) came out 42% low under `.option gmin=1e-3` and 88% low under
+ * `gmin=1e-2`, while `1/0` returned 1e26, 1e32 or 1e50 depending on gmin alone.
+ * A deck's arithmetic must not move because the user reached for a convergence
+ * aid.
+ *
+ * Nudge only the case the guard exists for. A non-zero divisor is now used
+ * exactly as written, and an exact zero gets a FIXED epsilon rather than a
+ * gmin-derived one, so `1/0` is the same number in every deck. The value keeps
+ * the default gmin's 1e-32, so no deck that was already correct changes. */
+#define PTDIV_EPS 1.0e-32       /* the historical gmin(1e-12) * 1e-20 */
+
 PTdivide(double arg1, double arg2)
 {
-    if (arg2 >= 0.0)
-        arg2 += PTfudge_factor;
-    else
-        arg2 -= PTfudge_factor;
-
     if (arg2 == 0.0)
-        return (HUGE);
+        arg2 = (arg1 >= 0.0) ? PTDIV_EPS : -PTDIV_EPS;
 
     return (arg1 / arg2);
 }
 
-/* Enhancement-440: 0 raised to a negative power is +inf, and every OTHER route
- * to a singular value in this file is clamped to HUGE instead -- PTdivide for
- * x/0, PTsqrt for sqrt(negative), PTln/PTlog for log(0), and PTpwr for exactly
- * this case since Enhancement-256. `pow()` and `**` were the two that were not,
- * so `B1 nb 0 v='pow(0,-1)'` put a raw inf on a node: the operating point
+/* Enhancement-440: 0 raised to a negative power is +inf, and `pow()`/`**` were
+ * the two routes to a singular value here that did not say so, so
+ * `B1 nb 0 v='pow(0,-1)'` put a raw inf on a node: the operating point
  * "converged" and reported v(nb) = inf with no diagnostic, and a transient then
  * carried it through to maximum(v(nb)) = inf.
  *
- * Clamping keeps the Jacobian finite, which is what lets NIiter's
- * false-convergence guard notice the pinned point and reach for gmin or source
- * stepping, exactly as E-256 reasoned for pwr(). */
+ * Enhancement-491 corrected what this comment used to claim about the outcome,
+ * because the claim did not match the code. It said the other singular routes
+ * "clamp to HUGE" and that clamping "keeps the Jacobian finite, which is what
+ * lets NIiter reach for gmin or source stepping". Neither is what happens:
+ *
+ *   - PTeval() in ifeval.c treats a result equal to HUGE as an ERROR FLAG, not
+ *     as a value -- it reports "out of range for pow" and returns E_PARMVAL, so
+ *     returning HUGE ABORTS the analysis rather than letting it continue. That
+ *     is a defensible outcome, and better than the silent inf this replaced,
+ *     but it is the opposite of what was written here.
+ *   - The routes are not uniform either. PTsqrt(negative) and PTpwr do return
+ *     HUGE and so abort. PTln/PTlog return -1e99 for log(0) -- not HUGE -- and
+ *     the analysis runs on with that sentinel on the node. PTdivide no longer
+ *     returns HUGE at all: E-491 made it nudge only an exact zero, so x/0 is a
+ *     large finite number and the run continues.
+ *
+ * Recorded rather than unified: making log(0) abort, or making pow(0,-1) not
+ * abort, would each change the answer a working deck gets today. What was wrong
+ * was the description, and a reader trusting it would have drawn exactly the
+ * wrong conclusion about which of these keeps a simulation alive. */
 static double pt_pow_guard(double arg1, double arg2, int *guarded)
 {
     *guarded = (arg1 == 0.0 && arg2 < 0.0);
@@ -322,7 +363,7 @@ PTuramp(double arg)
 double
 PTcos(double arg)
 {
-    return (cos(MODULUS(arg, 2 * M_PI)));
+    return (cos(arg));
 }
 
 double
@@ -371,7 +412,7 @@ PTlog10(double arg)
 double
 PTsin(double arg)
 {
-    return (sin(MODULUS(arg, 2 * M_PI)));
+    return (sin(arg));
 }
 
 double
@@ -391,7 +432,7 @@ PTsqrt(double arg)
 double
 PTtan(double arg)
 {
-    return (tan(MODULUS(arg, M_PI)));
+    return (tan(arg));
 }
 
 double

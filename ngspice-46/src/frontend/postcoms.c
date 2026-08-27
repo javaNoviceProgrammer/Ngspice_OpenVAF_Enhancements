@@ -229,11 +229,11 @@ com_print(wordlist *wl)
             if (v->v_rlength == 0) {
                 if (v->v_length == 1) {
                     if (isreal(v)) {
-                        printnum(numbuf, *v->v_realdata);
+                        printnum(numbuf, sizeof numbuf, *v->v_realdata);
                         out_printf("%s = %s\n", buf, numbuf);
                     } else {
-                        printnum(numbuf, realpart(v->v_compdata[0]));
-                        printnum(numbuf2, imagpart(v->v_compdata[0]));
+                        printnum(numbuf, sizeof numbuf, realpart(v->v_compdata[0]));
+                        printnum(numbuf2, sizeof numbuf2, imagpart(v->v_compdata[0]));
                         out_printf("%s = %s,%s\n", buf, numbuf, numbuf2);
                     }
                 } else {
@@ -241,7 +241,7 @@ com_print(wordlist *wl)
                     for (i = 0; i < v->v_length; i++)
                         if (isreal(v)) {
 
-                            printnum(numbuf, v->v_realdata[i]);
+                            printnum(numbuf, sizeof numbuf, v->v_realdata[i]);
                             (void) strcpy(buf, numbuf);
                             out_send(buf);
                             ll += (int) strlen(buf);
@@ -255,8 +255,8 @@ com_print(wordlist *wl)
                             }
                         } else {
                             /*DG*/
-                            printnum(numbuf, realpart(v->v_compdata[i]));
-                            printnum(numbuf2, imagpart(v->v_compdata[i]));
+                            printnum(numbuf, sizeof numbuf, realpart(v->v_compdata[i]));
+                            printnum(numbuf2, sizeof numbuf2, imagpart(v->v_compdata[i]));
                             (void) sprintf(buf, "%s,%s", numbuf, numbuf2);
                             out_send(buf);
                             ll += (int) strlen(buf);
@@ -384,18 +384,18 @@ com_print(wordlist *wl)
                         out_send("\t\t\t\t");
                 } else {
                     if (isreal(v)) {
-                        printnum(numbuf, v->v_realdata[j]);
+                        printnum(numbuf, sizeof numbuf, v->v_realdata[j]);
                         out_printf("%s\t", numbuf);
                     } else {
                         /* In case of a single frequency and have a real part avoids print imaginary part equals 0. */
                         if (eq(v->v_name, "frequency") &&
                             imagpart(v->v_compdata[j]) == 0.0)
                         {
-                            printnum(numbuf, realpart(v->v_compdata[j]));
+                            printnum(numbuf, sizeof numbuf, realpart(v->v_compdata[j]));
                             out_printf("%s\t", numbuf);
                         } else {
-                            printnum(numbuf, realpart(v->v_compdata[j]));
-                            printnum(numbuf2, imagpart(v->v_compdata[j]));
+                            printnum(numbuf, sizeof numbuf, realpart(v->v_compdata[j]));
+                            printnum(numbuf2, sizeof numbuf2, imagpart(v->v_compdata[j]));
                             out_printf("%s,\t%s\t", numbuf, numbuf2);
                         }
                     }

@@ -1679,7 +1679,12 @@ void free_tree(INPparseNode *pt)
         break;
 
     default:
-        printf("oops ");
+        /* Enhancement-491: a parse-tree node this walker does not know about.
+           It printed the word "oops" to STDOUT, with no node type, no context
+           and nothing a reader could act on -- and users met it: a deck as
+           ordinary as `.param p={ln(0)}` reaches here. */
+        fprintf(stderr, "Internal error: unhandled parse-tree node type %d "
+                        "while releasing an expression.\n", (int) pt->type);
         break;
     }
 
@@ -1816,7 +1821,11 @@ void printTree(INPparseNode * pt)
         break;
 
     default:
-        printf("oops ");
+        /* Enhancement-491: the tree printer is what the "internal check of
+           parse tree ... failed" diagnostic uses to SHOW the user the offending
+           expression, so a node it cannot render turned that message into the
+           word "oops". Name the node instead. */
+        printf("<unprintable node type %d>", (int) pt->type);
         break;
     }
     return;

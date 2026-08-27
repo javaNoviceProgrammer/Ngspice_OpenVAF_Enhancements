@@ -381,11 +381,17 @@ static void print_data(
         preci = cp_numdgt;
     else
         preci = 9;
+    /* Enhancement-491: bound it to what step_str can hold. `cp_numdgt` is
+       whatever the user typed, and this buffer is 100 bytes, so `set numdgt=94`
+       wrote past its end and trapped on the stack guard -- reachable from a
+       plain batch deck with `eprint`. The same clamp printnum() uses, so the
+       two printing paths agree on how wide a number may be. */
+    preci = printnum_fit(preci, sizeof step_str);
 
     if(dcop)
         strcpy(step_str, "DCOP            ");
     else
-        sprintf(step_str, "%.*e", preci, step);
+        snprintf(step_str, sizeof step_str, "%.*e", preci, step);
 
     out_printf("%s", step_str);
     for(i = 0; i < nargs; i++)

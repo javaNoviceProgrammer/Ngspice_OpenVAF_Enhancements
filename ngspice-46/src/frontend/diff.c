@@ -284,11 +284,11 @@ com_diff(wordlist *wl)
                     d2 = v2->v_realdata[i];
                     if (MAX(fabs(d1), fabs(d2)) * reltol +
                         tol < fabs(d1 - d2)) {
-                        printnum(numbuf, d1);
+                        printnum(numbuf, sizeof numbuf, d1);
                         fprintf(cp_out,
                                 "%s.%s[%d] = %-15s ",
                                 p1->pl_typename, v1->v_name, i, numbuf);
-                        printnum(numbuf, d2);
+                        printnum(numbuf, sizeof numbuf, d2);
                         fprintf(cp_out,
                                 "%s.%s[%d] = %s\n",
                                 p2->pl_typename, v2->v_name, i, numbuf);
@@ -304,10 +304,10 @@ com_diff(wordlist *wl)
                     cmax = MAX(cm1, cm2);
                     if (cmax * reltol + tol < cmag(c3)) {
 
-                        printnum(numbuf, realpart(c1));
-                        printnum(numbuf2, imagpart(c1));
-                        printnum(numbuf3, realpart(c2));
-                        printnum(numbuf4, imagpart(c2));
+                        printnum(numbuf, sizeof numbuf, realpart(c1));
+                        printnum(numbuf2, sizeof numbuf2, imagpart(c1));
+                        printnum(numbuf3, sizeof numbuf3, realpart(c2));
+                        printnum(numbuf4, sizeof numbuf4, imagpart(c2));
 
                         fprintf(cp_out,
                                 "%s.%s[%d] = %-10s, %-10s %s.%s[%d] = %-10s, %s\n",

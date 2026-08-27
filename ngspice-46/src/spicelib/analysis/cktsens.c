@@ -365,6 +365,46 @@ int sens_sens(CKTcircuit* ckt, int restart)
             vec_names = output_names;
         } else {
             if (!num_vars) {
+                /* Enhancement-491: this returned OK having produced no plot and
+                   said nothing.
+                 
+                   The trailing words on a `sens` line are FILTER patterns
+                   naming which parameters to vary -- `sens v(b) r8` is a
+                   legitimate restriction and works. When no pattern matches
+                   anything, the analysis has nothing to compute, so it built no
+                   plot, reported success, and left whatever plot was current in
+                   place: a following `print` silently answered from the
+                   PREVIOUS analysis. A mistyped or over-narrow filter was
+                   indistinguishable from a filter that did its job.
+                 
+                   Say which patterns matched nothing. The run still ends
+                   without a sensitivity plot -- there is nothing to put in one
+                   -- but the reason is now on screen. */
+                if (Sens_filter) {
+                    char **pp;
+
+                    fprintf(stderr,
+                            "\nError: sens: no parameter of this circuit matches "
+                            "the filter");
+                    fprintf(stderr, "%s", Sens_filter[1] ? "s " : " ");
+                    for (pp = Sens_filter; *pp; pp++)
+                        fprintf(stderr, "%s'%s'", pp == Sens_filter ? "" : ", ",
+                                *pp);
+                    fprintf(stderr,
+                            ",\n       so there is nothing to analyse and no "
+                            "sensitivity plot is produced.\n"
+                            "       A filter matches a parameter name as it "
+                            "appears in the output:\n"
+                            "       'r8' for the device's own value, 'r8:r' for "
+                            "a model parameter,\n"
+                            "       'r8_temp' for an instance parameter. Omit "
+                            "the filter to vary them all.\n\n");
+                } else {
+                    fprintf(stderr,
+                            "\nWarning: sens: this circuit has no parameter that "
+                            "can be varied,\n         so no sensitivity plot is "
+                            "produced.\n\n");
+                }
                 FREE(output_names);
                 return OK;
             }

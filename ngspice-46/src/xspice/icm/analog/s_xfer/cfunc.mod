@@ -263,8 +263,44 @@ void cm_s_xfer(ARGS)  /* structure holding parms, inputs, outputs, etc.     */
     }
 
     if ( num_size > den_size ) {
+        /* Enhancement-491: this detected the fault, announced it, and then
+           returned WITHOUT contributing anything -- once per evaluation. Over a
+           30-step transient the same six lines appeared 172 times and over 300
+           steps 1238 times, the run ended rc=0, and the device held its output
+           at 0 throughout. A transfer function with more zeros than poles is
+           not realisable and no later timepoint can make it so, so there is
+           nothing to wait for: say it once and stop, the way file_source does
+           when its file will not open. */
         cm_message_send(num_size_error);
+        cm_cexit(1);
         return;
+    }
+
+    /* Enhancement-491: a denominator that is entirely zero.
+     
+       Nothing checked it, so the integrator chain was built with a zero leading
+       coefficient, the node went to NaN on the first solve, and what the user
+       was told was "Dynamic gmin stepping failed / True gmin stepping failed" --
+       a convergence complaint for a transfer function that has no denominator.
+       The deck is not hard to converge; it is not a transfer function. This is
+       knowable here, from the parameters alone, before any solve. */
+    {
+        int e491_i;
+        int e491_nonzero = 0;
+
+        for (e491_i = 0; e491_i < den_size; e491_i++)
+            if (PARAM(den_coeff[e491_i]) != 0.0) {
+                e491_nonzero = 1;
+                break;
+            }
+        if (den_size > 0 && !e491_nonzero) {
+            cm_message_send("\n***ERROR***\nS_XFER: every denominator "
+                            "coefficient is zero, so this is not a transfer\n"
+                            "function -- it has no poles. Give den_coeff at "
+                            "least one non-zero term.\n");
+            cm_cexit(1);
+            return;
+        }
     }
 
     /** Test for INIT; if so, allocate storage, otherwise, retrieve previous       **/

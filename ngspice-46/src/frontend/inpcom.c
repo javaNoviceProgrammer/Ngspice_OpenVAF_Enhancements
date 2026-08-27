@@ -6182,6 +6182,18 @@ static void inp_get_func_from_line(struct function_env *env, char *line)
                     "'%s'; every expression in this deck will use your "
                     "definition instead of the built-in.\n\n", fname, fname);
 
+        /* Enhancement-491: the same warning is owed for a USER function. E-467
+           covered the built-in case and left this one, so two `.func f(x)`
+           cards -- easily two includes that each define a helper -- silently
+           kept the LAST and used it everywhere, with no hint that the first had
+           been displaced. The behaviour is unchanged; it is now announced, as
+           its sibling already is. */
+        else if (find_function(env, fname))
+            fprintf(stderr,
+                    "\nWarning: .func %s() is defined more than once in this "
+                    "deck; the last\n         definition is the one every "
+                    "expression will use.\n\n", fname);
+
         function = new_function(env, fname);
     }
 

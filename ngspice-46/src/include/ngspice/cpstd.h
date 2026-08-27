@@ -26,8 +26,12 @@ Author: 1986 Wayne A. Christopher, U. C. Berkeley CAD Group
 
 /* Externs defined in std.c */
 
-extern void printnum(char *buf, double num);
+/* Enhancement-491: `size` is the capacity of `buf`. The precision is clamped to
+   what fits rather than overrunning it -- an unbounded `numdgt` used to write
+   past the end of every caller's BSIZE_SP buffer. */
+extern void printnum(char *buf, size_t size, double num);
 int printnum_ds(DSTRING *p_ds, double num);
+extern int printnum_fit(int n, size_t size);
 extern int cp_numdgt;
 
 extern void cp_printword(char *string, FILE *fp);
