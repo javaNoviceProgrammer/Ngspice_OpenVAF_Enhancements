@@ -250,3 +250,112 @@ static int get_decimal_number(const char **p_str, double *p_val)
 
 
 
+
+
+/* ------------------------------------------------------------------------
+ * Enhancement-502: validated command arguments.
+ *
+ * Round 60 swept the commands that produce a REPORT -- emir, eye, reduce,
+ * envelope, qpss, hbosc -- and found the same guard in every one of them:
+ *
+ *     if (x <= 0.0) { refuse; }
+ *
+ * Every comparison with NaN is false, so that test refuses the wrong value and
+ * ADMITS NaN. It is one `!` away from correct, and what walked through it was
+ * not harmless: `emir jmax nan` reported "0 segments over Jmax" on a grid with
+ * two genuine violations, `reduce nan` reported "26 nodes -> 26 nodes (1.0x)"
+ * and wrote a reduced netlist that reduced nothing, `qpss ... maxorder nan`
+ * silently dropped every intermodulation product, and `envelope <n> nan <t>`
+ * built an internal `tran nan nan 0 nan`, which ngspice refuses -- leaving the
+ * matrix unbuilt for a SIGSEGV one call later.
+ *
+ * These three take the raw token so the diagnostic can name what the user
+ * actually typed, and they parse with ft_numparse rather than strtod, because
+ * these are SPICE numbers: `-ui 0.5n`, `thick 0.5u`, `jmax 3.5e11` are how the
+ * documentation writes them, and a check built on strtod would refuse the
+ * documented spelling (Enhancement-501 shipped exactly that mistake and the
+ * aging suite caught it).
+ * ------------------------------------------------------------------------ */
+
+/* Parse `tok` whole, with SPICE suffixes. 0 on junk or trailing text. */
+static int arg_parse(const char *tok, double *out)
+{
+    char *s = (char *) tok;
+    double v = 0.0;
+
+    if (!tok || !*tok)
+        return 0;
+    if (ft_numparse(&s, FALSE, &v) < 0)
+        return 0;
+    while (*s == ' ' || *s == '\t')
+        s++;
+    if (*s)                              /* trailing junk: `5x`, `2e2q` */
+        return 0;
+    *out = v;
+    return 1;
+}
+
+
+/* A number that must be POSITIVE and FINITE. */
+int ft_argpos(const char *cmd, const char *what, const char *tok, double *out)
+{
+    double v;
+
+    if (!arg_parse(tok, &v)) {
+        fprintf(cp_err, "%s: %s must be a number, not '%s'\n", cmd, what,
+                tok ? tok : "");
+        return 0;
+    }
+    if (!(v > 0.0) || !finite(v)) {       /* NOT `v <= 0.0`: that admits NaN */
+        fprintf(cp_err, "%s: %s must be a positive finite number (got %s)\n",
+                cmd, what, tok);
+        return 0;
+    }
+    *out = v;
+    return 1;
+}
+
+
+/* A number that may be negative or zero but must be FINITE -- a limit, a
+ * threshold, a start time. A non-finite one is never exceeded and never
+ * reached, so it is indistinguishable from having supplied nothing. */
+int ft_argfinite(const char *cmd, const char *what, const char *tok, double *out)
+{
+    double v;
+
+    if (!arg_parse(tok, &v)) {
+        fprintf(cp_err, "%s: %s must be a number, not '%s'\n", cmd, what,
+                tok ? tok : "");
+        return 0;
+    }
+    if (!finite(v)) {
+        fprintf(cp_err, "%s: %s must be finite (got %s)\n", cmd, what, tok);
+        return 0;
+    }
+    *out = v;
+    return 1;
+}
+
+
+/* A COUNT: an integer in [lo, hi]. Casting a double to int is undefined when
+ * the value is NaN or out of range, so the value is checked BEFORE the cast --
+ * `emir top nan` used to land on 1 through that undefined conversion, and
+ * `compose lin=1e12` clamped to INT_MAX and really allocated 17 GB. */
+int ft_argcount(const char *cmd, const char *what, const char *tok,
+                int lo, int hi, int *out)
+{
+    double v;
+
+    if (!arg_parse(tok, &v)) {
+        fprintf(cp_err, "%s: %s must be a number, not '%s'\n", cmd, what,
+                tok ? tok : "");
+        return 0;
+    }
+    if (!finite(v) || v < (double) lo || v > (double) hi) {
+        fprintf(cp_err, "%s: %s must be a whole number between %d and %d "
+                        "(got %s)\n", cmd, what, lo, hi, tok);
+        return 0;
+    }
+    *out = (int) v;
+    return 1;
+}

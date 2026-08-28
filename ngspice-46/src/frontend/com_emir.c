@@ -43,6 +43,8 @@ it reads a DC solution and per-resistor currents/widths.
 #include "ngspice/gendefs.h"
 #include "ngspice/cktdefs.h"
 
+#include "../spicelib/devices/res/resdefs.h"   /* Enhancement-502: RESwidthGiven */
+
 #include "com_emir.h"
 
 /* Run one command synchronously through the command table (com_optimize's
@@ -62,15 +64,10 @@ static void emir_run_cmd(const char *cmdstr)
     wl_free(wl);
 }
 
-/* parse a SPICE-style number (k/meg/u/n/p ... suffixes) */
-static double emir_num(const char *w)
-{
-    char *s = (char *) w;
-    double v = 0.0;
-    if (ft_numparse(&s, FALSE, &v) < 0)
-        v = atof(w);
-    return v;
-}
+/* Enhancement-502: emir_num() is gone. It parsed a SPICE number and handed it
+ * over unexamined, which is how `jmax nan` reached a `<= 0.0` guard that admits
+ * NaN. Arguments now go through ft_argpos/ft_argfinite/ft_argcount, which parse
+ * with the same ft_numparse (so `thick 0.5u` still works) and then say no. */
 
 /* Evaluate an ngspice expression, returning the LAST value (magnitude if
  * complex), or NaN if it cannot be evaluated. */
@@ -118,27 +115,39 @@ void com_emir(wordlist *wl)
     int top = 10, verbose = 0, user_rail = 0;
 
     IRrec *ir = NULL; int nir = 0, nircap = 0;
-    EMrec *em = NULL; int nem = 0, nemcap = 0, nskip = 0;
+    EMrec *em = NULL; int nem = 0, nemcap = 0, nnowidth = 0, nbadwidth = 0;
     struct dvec *d;
     int t, k, ir_viol = 0, em_viol = 0;
 
     /* --- parse --- */
     while (wl) {
         const char *w = wl->wl_word;
+        /* Enhancement-502: every one of these was taken on trust. `thick` and
+         * `jmax` had a `<= 0.0` guard, which admits NaN and then reported "0
+         * segments over Jmax" on a grid with two genuine violations; the rest
+         * had no check at all, so `rail nan` printed "worst drop nan V" and
+         * `top nan` reached 1 through an undefined double->int conversion. */
         if (eq(w, "rail") && wl->wl_next) {
-            rail = emir_num(wl->wl_next->wl_word); user_rail = 1; wl = wl->wl_next->wl_next;
+            if (!ft_argfinite("emir", "rail", wl->wl_next->wl_word, &rail)) return;
+            user_rail = 1; wl = wl->wl_next->wl_next;
         } else if (eq(w, "thresh") && wl->wl_next) {
-            thresh = emir_num(wl->wl_next->wl_word); wl = wl->wl_next->wl_next;
+            if (!ft_argpos("emir", "thresh", wl->wl_next->wl_word, &thresh)) return;
+            wl = wl->wl_next->wl_next;
         } else if (eq(w, "thick") && wl->wl_next) {
-            thick = emir_num(wl->wl_next->wl_word); wl = wl->wl_next->wl_next;
+            if (!ft_argpos("emir", "thick", wl->wl_next->wl_word, &thick)) return;
+            wl = wl->wl_next->wl_next;
         } else if (eq(w, "jmax") && wl->wl_next) {
-            jmax = emir_num(wl->wl_next->wl_word); wl = wl->wl_next->wl_next;
+            if (!ft_argpos("emir", "jmax", wl->wl_next->wl_word, &jmax)) return;
+            wl = wl->wl_next->wl_next;
         } else if (eq(w, "n") && wl->wl_next) {
-            nexp = emir_num(wl->wl_next->wl_word); wl = wl->wl_next->wl_next;
+            if (!ft_argpos("emir", "n", wl->wl_next->wl_word, &nexp)) return;
+            wl = wl->wl_next->wl_next;
         } else if (eq(w, "tref") && wl->wl_next) {
-            tref = emir_num(wl->wl_next->wl_word); wl = wl->wl_next->wl_next;
+            if (!ft_argpos("emir", "tref", wl->wl_next->wl_word, &tref)) return;
+            wl = wl->wl_next->wl_next;
         } else if (eq(w, "top") && wl->wl_next) {
-            top = (int) emir_num(wl->wl_next->wl_word); wl = wl->wl_next->wl_next;
+            if (!ft_argcount("emir", "top", wl->wl_next->wl_word, 1, 1000000, &top)) return;
+            wl = wl->wl_next->wl_next;
         } else if (eq(w, "verbose") || eq(w, "-verbose") || eq(w, "-v")) {
             verbose = 1; wl = wl->wl_next;
         } else {
@@ -147,11 +156,14 @@ void com_emir(wordlist *wl)
         }
     }
 
-    if (thick <= 0.0 || jmax <= 0.0) {
+    if (!(thick > 0.0) || !(jmax > 0.0)) {   /* NOT `<= 0`: that admits NaN */
         fprintf(cp_err, "emir: thick and jmax must be positive\n");
         return;
     }
-    if (top < 1) top = 1;
+    if (thresh > 1.0)
+        fprintf(cp_err, "emir: warning: thresh is a FRACTION of the rail, so %g "
+                        "means %g%% -- no node can be that far down\n",
+                thresh, 100.0 * thresh);
     if (!ft_curckt || !ft_curckt->ci_ckt) {
         fprintf(cp_err, "emir: no circuit loaded\n");
         return;
@@ -201,7 +213,17 @@ void com_emir(wordlist *wl)
                 cur = fabs(emir_eval(e));
                 (void) snprintf(e, sizeof e, "@%s[w]", nm);
                 wid = emir_eval(e);
-                if (!finite(cur) || !finite(wid) || wid <= 0.0) { nskip++; continue; }
+                /* Enhancement-502: `@r[w]` answers with the resistor's DEFAULT
+                 * width (1e-5 m) when the deck never gave one, and emir could
+                 * not tell that from a width the user wrote. So an
+                 * undimensioned segment -- the one most likely to be the
+                 * oversight -- was analysed as a comfortable 10 um wire and
+                 * reported `ok`, while the header of this file says such
+                 * segments are skipped. Ask the instance whether the width was
+                 * given, as rcreduce.c already reads resistor internals for the
+                 * `reduce` command. */
+                if (!((RESinstance *) inst)->RESwidthGiven) { nnowidth++; continue; }
+                if (!finite(cur) || !finite(wid) || wid <= 0.0) { nbadwidth++; continue; }
                 area = wid * thick;
                 jj = cur / area;
                 if (nem >= nemcap) {
@@ -256,9 +278,18 @@ void com_emir(wordlist *wl)
                     em[k].name, em[k].i, em[k].w, em[k].j, em[k].mttf,
                     em[k].fail ? "FAIL" : "ok");
     }
-    if (nskip)
-        fprintf(cp_out, "  (%d resistor%s skipped for EM: no width given)\n",
-                nskip, nskip == 1 ? "" : "s");
+    /* Enhancement-502: report the two reasons separately. The old message said
+     * "no width given" for BOTH, so a resistor written `w=-0.5u` was reported
+     * as missing the width its author had just supplied. */
+    if (nnowidth)
+        fprintf(cp_out, "  (%d resistor%s skipped for EM: no width given -- add "
+                        "`w=<m>` to check %s for electromigration)\n",
+                nnowidth, nnowidth == 1 ? "" : "s",
+                nnowidth == 1 ? "it" : "them");
+    if (nbadwidth)
+        fprintf(cp_out, "  (%d resistor%s skipped for EM: the width given is not "
+                        "a positive finite number)\n",
+                nbadwidth, nbadwidth == 1 ? "" : "s");
 
     for (k = 0; k < nir; k++) tfree(ir[k].name);
     for (k = 0; k < nem; k++) tfree(em[k].name);

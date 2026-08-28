@@ -152,8 +152,14 @@ com_qpss(wordlist *wl)
     }
 
     expr = wl->wl_word;
-    f1 = qpssnum(wl->wl_next->wl_word);
-    f2 = qpssnum(wl->wl_next->wl_next->wl_word);
+    /* Enhancement-502: the `f1 <= 0.0 || f2 <= 0.0 || f1 == f2` guard below
+     * catches 0, a negative tone and two equal tones -- and admits NaN, because
+     * every comparison with NaN is false. `qpss v(o) nan 1.1e6` then printed a
+     * 25-row spectrum in which every frequency, magnitude and phase was `nan`,
+     * and exited 0. Refuse the token instead. */
+    if (!ft_argpos("qpss", "<f1>", wl->wl_next->wl_word, &f1) ||
+        !ft_argpos("qpss", "<f2>", wl->wl_next->wl_next->wl_word, &f2))
+        return;
 
     /* Enhancement-136: `qpss <expr> <f1> <f2> hb [K1] [K2]` selects the
      * frequency-domain two-tone Harmonic Balance engine -- the true,
@@ -166,7 +172,7 @@ com_qpss(wordlist *wl)
             if (strcasecmp(w->wl_word, "hb") == 0) {
                 CKTcircuit *ckt = ft_curckt->ci_ckt;
                 int K1 = 3, K2 = 3, verbose, err;
-                if (f1 <= 0.0 || f2 <= 0.0 || f1 == f2) {
+                if (f1 == f2) {   /* Enhancement-502: positivity is checked above */
                     fprintf(cp_err, "Error: qpss hb: need two distinct positive tone "
                                     "frequencies.\n");
                     return;
@@ -224,16 +230,24 @@ com_qpss(wordlist *wl)
     }
 
     if (wl->wl_next->wl_next->wl_next) {
-        periods = (int) qpssnum(wl->wl_next->wl_next->wl_next->wl_word);
+        /* Enhancement-502: these reached their `< 1` clamps through an undefined
+         * double->int conversion, so `maxorder nan` quietly became `order <= 1`
+         * -- dropping every intermodulation product, which is the entire reason
+         * this command exists -- and `periods nan` became a single beat period.
+         * Both printed a full, plausible table and exited 0. */
+        if (!ft_argcount("qpss", "<periods>", wl->wl_next->wl_next->wl_next->wl_word,
+                         1, 1000000, &periods))
+            return;
         if (wl->wl_next->wl_next->wl_next->wl_next)
-            maxorder = (int) qpssnum(wl->wl_next->wl_next->wl_next->wl_next->wl_word);
+            if (!ft_argcount("qpss", "<maxorder>",
+                             wl->wl_next->wl_next->wl_next->wl_next->wl_word,
+                             1, 1000, &maxorder))
+                return;
     }
-    if (f1 <= 0.0 || f2 <= 0.0 || f1 == f2) {
+    if (f1 == f2) {
         fprintf(cp_err, "Error: qpss: need two distinct positive tone frequencies.\n");
         return;
     }
-    if (periods < 1) periods = 1;
-    if (maxorder < 1) maxorder = 1;
 
     fb = real_gcd(f1, f2);
     if (fb <= 0.0) {

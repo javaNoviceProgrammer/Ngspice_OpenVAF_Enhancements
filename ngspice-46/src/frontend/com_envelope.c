@@ -121,23 +121,27 @@ com_envelope(wordlist *wl)
     }
 
     nodename = wl->wl_word;
-    fc    = envnum(wl->wl_next->wl_word);
-    tstop = envnum(wl->wl_next->wl_next->wl_word);
-    if (fc <= 0.0 || tstop <= 0.0) {
-        fprintf(cp_err, "Error: envelope: fc and tstop must be positive.\n");
+    /* Enhancement-502: `fc <= 0.0 || tstop <= 0.0` admitted NaN -- every
+     * comparison with NaN is false -- and a NaN carrier gave T = 1/fc = NaN,
+     * an internal `tran nan nan 0 nan` that ngspice REFUSES, and a SIGSEGV one
+     * call later when EFanalysis dereferenced the matrix that was never built. */
+    if (!ft_argpos("envelope", "<fc>", wl->wl_next->wl_word, &fc) ||
+        !ft_argpos("envelope", "<tstop>", wl->wl_next->wl_next->wl_word, &tstop))
         return;
-    }
     T = 1.0 / fc;
     settle = 2.0 * T;                      /* default: settle two carrier periods */
 
     /* optional keyword arguments */
     for (w = wl->wl_next->wl_next->wl_next; w && w->wl_next; w = w->wl_next->wl_next) {
         const char *k = w->wl_word, *v = w->wl_next->wl_word;
-        if      (strcasecmp(k, "nppp")   == 0) nppp   = (int) envnum(v);
-        else if (strcasecmp(k, "m")      == 0) M0     = (int) envnum(v);
-        else if (strcasecmp(k, "maxm")   == 0) Mmax   = (int) envnum(v);
-        else if (strcasecmp(k, "reltol") == 0) reltol = envnum(v);
-        else if (strcasecmp(k, "settle") == 0) settle = envnum(v);
+        /* Enhancement-502: each of these used to reach its clamp through an
+         * undefined double->int conversion, so `nppp nan` and `reltol nan`
+         * silently changed the sample count instead of being refused. */
+        if      (strcasecmp(k, "nppp")   == 0) { if (!ft_argcount("envelope", "nppp", v, 8, 1000000, &nppp)) return; }
+        else if (strcasecmp(k, "m")      == 0) { if (!ft_argcount("envelope", "m", v, 1, 100000, &M0)) return; }
+        else if (strcasecmp(k, "maxm")   == 0) { if (!ft_argcount("envelope", "maxm", v, 1, 1000000, &Mmax)) return; }
+        else if (strcasecmp(k, "reltol") == 0) { if (!ft_argpos("envelope", "reltol", v, &reltol)) return; }
+        else if (strcasecmp(k, "settle") == 0) { if (!ft_argpos("envelope", "settle", v, &settle)) return; }
         else fprintf(cp_err, "Warning: envelope: unknown option '%s' ignored.\n", k);
     }
     if (nppp < 8)   nppp = 8;
@@ -162,6 +166,20 @@ com_envelope(wordlist *wl)
      * fast dynamics; leaves CKTtime = Tsettle and the state vector at that instant. */
     (void) snprintf(cmd, sizeof cmd, "tran %.10g %.10g 0 %.10g", tstep, Tsettle, tstep);
     envelope_run_cmd(cmd);
+    /* Enhancement-502: and CHECK it ran. The guard above now keeps a NaN out of
+     * this command line, but any refused transient -- a step the circuit cannot
+     * take, an unconvergeable bias point -- leaves CKTmatrix unbuilt, and
+     * EFanalysis below walks straight into it. A command must never use the
+     * result of an internal analysis without asking whether it happened; the
+     * same shape as Enhancement-438, where a failed sample kept the previous
+     * plot and was counted as a pass. */
+    if (!ft_curckt || !ft_curckt->ci_ckt || !ft_curckt->ci_ckt->CKTmatrix) {
+        fprintf(cp_err, "Error: envelope: the settling transient did not run, "
+                        "so there is no state to follow (check the deck's "
+                        "operating point and time step).\n");
+        return;
+    }
+    ckt = ft_curckt->ci_ckt;
 
     maxpts = (long) floor(tstop * fc + 0.5) + 8;   /* worst case: one sample per period */
     if (maxpts < 8) maxpts = 8;

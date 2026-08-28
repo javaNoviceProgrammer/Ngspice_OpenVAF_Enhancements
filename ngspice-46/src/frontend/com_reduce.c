@@ -65,18 +65,29 @@ com_reduce(wordlist *wl)
         return;
     }
 
-    fmax = rednum(wl->wl_word);
-    if (fmax <= 0.0) {
-        fprintf(cp_err, "Error: reduce: <fmax> (band of interest, Hz) must be positive.\n");
+    /* Enhancement-502: the `<= 0.0` test caught 0, a negative band and junk --
+     * and admitted NaN and inf, because every comparison with NaN is false and
+     * inf is genuinely > 0. Either one then made every TICER time constant
+     * compare false, so nothing was eliminated: `reduce nan` reported
+     * "26 nodes -> 26 nodes (1.0x)" and wrote a file called reduced.sp that
+     * reduced nothing, with no error and no hint that the band was the problem. */
+    if (!ft_argpos("reduce", "<fmax> (band of interest, Hz)", wl->wl_word, &fmax))
         return;
-    }
 
     for (w = wl->wl_next; w; w = w->wl_next) {
         const char *k = w->wl_word;
         if (strcasecmp(k, "factor") == 0 && w->wl_next) {
-            factor = rednum(w->wl_next->wl_word); w = w->wl_next;
+            /* Enhancement-502: `factor nan` left the comparison false and
+             * reduced nothing; `factor 0` and `factor -2` were clamped up to
+             * 1.0 and reduced MORE aggressively than the default (13.0x against
+             * 8.7x) -- in silence, in both directions. */
+            if (!ft_argpos("reduce", "factor", w->wl_next->wl_word, &factor))
+                return;
+            w = w->wl_next;
         } else if (strcasecmp(k, "maxdeg") == 0 && w->wl_next) {
-            maxdeg = (int) rednum(w->wl_next->wl_word); w = w->wl_next;
+            if (!ft_argcount("reduce", "maxdeg", w->wl_next->wl_word, 3, 100000, &maxdeg))
+                return;
+            w = w->wl_next;
         } else if (strcasecmp(k, "file") == 0 && w->wl_next) {
             fname = w->wl_next->wl_word; w = w->wl_next;
         } else if (strcasecmp(k, "name") == 0 && w->wl_next) {
@@ -99,8 +110,12 @@ com_reduce(wordlist *wl)
             fprintf(cp_err, "Warning: reduce: unknown option '%s' ignored.\n", k);
         }
     }
-    if (factor < 1.0) factor = 1.0;
-    if (maxdeg < 3) maxdeg = 3;
+    if (factor < 1.0) {
+        fprintf(cp_err, "Error: reduce: factor is the time-constant ratio a node "
+                        "must beat to be eliminated and must be >= 1 (got %g); "
+                        "1 eliminates the most, larger values fewer\n", factor);
+        return;
+    }
 
     r = CKTreduceRC(ckt, fmax, factor, maxdeg, keep, nkeep, fname, subname);
     if (r < 0)

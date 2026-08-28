@@ -15,6 +15,11 @@
 #include "com_compose.h"
 #include "completion.h"
 
+/* Enhancement-502: the largest vector `compose` will build. 2^27 doubles is
+ * 1 GB -- generous for a plot axis, and small enough that a typo cannot
+ * quietly commit the machine to tens of gigabytes. */
+#define COMPOSE_MAXPTS  (1 << 27)
+
 
 /* Copy the data from a vector into a buffer with larger dimensions. */
 static void
@@ -493,6 +498,19 @@ com_compose(wordlist *wl)
             if (lin <= 0) {
                 fprintf(cp_err,
                         "Error: compose -> The number of linearly spaced points, lin, must be positive.\n");
+                goto done;
+            }
+            /* Enhancement-502: `lin=1e12` used to reach `(int)lin` as undefined
+             * behaviour, land on INT_MAX, and really allocate 17 GB -- the
+             * vector was genuine, v[2147483000] read back correctly -- after a
+             * pause long enough to look like a hang. A point count larger than
+             * a vector can hold is a typo, not a request; say so instead of
+             * silently building something else. */
+            if (lin > (double) COMPOSE_MAXPTS) {
+                fprintf(cp_err,
+                        "Error: compose -> lin = %g is more points than a vector "
+                        "can hold (max %d); that is %.0f GB of doubles.\n",
+                        lin, COMPOSE_MAXPTS, lin * 8.0 / 1e9);
                 goto done;
             }
             length = (int)lin;

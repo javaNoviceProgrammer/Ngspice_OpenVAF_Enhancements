@@ -83,13 +83,22 @@ com_hbosc(wordlist *wl)
         return;
     }
     oscname = wl->wl_word;
-    K = (int) hboscnum(wl->wl_next->wl_word);
+    if (!ft_argcount("hbosc", "<K>", wl->wl_next->wl_word, 1, 1000, &K))
+        return;
+    /* Enhancement-502: `<= 0.0` here means "not supplied, use a default", which
+     * is the documented behaviour and stays. But NaN also passed it -- every
+     * comparison with NaN is false -- so fguess stayed NaN, tstab became
+     * 300/NaN, and the internal `tran` was refused with "TSTEP is invalid",
+     * naming a parameter the user never typed. A value that IS supplied must be
+     * usable; only an absent one falls back. */
     if (wl->wl_next->wl_next) {
-        fguess = hboscnum(wl->wl_next->wl_next->wl_word);
+        if (!ft_argpos("hbosc", "<fguess>", wl->wl_next->wl_next->wl_word, &fguess))
+            return;
         if (wl->wl_next->wl_next->wl_next)
-            tstab = hboscnum(wl->wl_next->wl_next->wl_next->wl_word);
+            if (!ft_argpos("hbosc", "<tstab>",
+                           wl->wl_next->wl_next->wl_next->wl_word, &tstab))
+                return;
     }
-    if (K < 1) { fprintf(cp_err, "Error: hbosc: need K >= 1.\n"); return; }
     if (fguess <= 0.0) fguess = 1e6;                 /* a default if none given */
     if (tstab <= 0.0) tstab = 300.0 / fguess;        /* ~300 periods to settle */
 

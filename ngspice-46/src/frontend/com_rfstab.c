@@ -94,6 +94,14 @@ void com_rfstab(wordlist *wl)
             e12 = wl->wl_next->wl_word;
             e21 = wl->wl_next->wl_next->wl_word;
             e22 = wl->wl_next->wl_next->wl_next->wl_word;
+            /* Enhancement-502: two or three names give a usage message, so five
+             * silently dropping the extra one was the odd case out. */
+            if (wl->wl_next->wl_next->wl_next->wl_next) {
+                fprintf(cp_err, "rfstab: expected four S-parameter names, got "
+                                "more (starting at '%s')\n",
+                        wl->wl_next->wl_next->wl_next->wl_next->wl_word);
+                return;
+            }
         } else {
             fprintf(cp_err, "usage: rfstab [S11 S12 S21 S22]\n"
                     "  with no args, the .sp defaults S_1_1 S_1_2 S_2_1 S_2_2 "

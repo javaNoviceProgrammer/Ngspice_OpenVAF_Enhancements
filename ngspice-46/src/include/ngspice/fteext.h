@@ -242,6 +242,11 @@ extern void ft_polyderiv(double *coeffs, int degree);
 
 extern bool ft_strictnumparse;
 int ft_numparse(char **s, bool whole, double *p_val);
+/* Enhancement-502: validated command arguments -- see frontend/parser/numparse.c */
+int ft_argpos(const char *cmd, const char *what, const char *tok, double *out);
+int ft_argfinite(const char *cmd, const char *what, const char *tok, double *out);
+int ft_argcount(const char *cmd, const char *what, const char *tok,
+                int lo, int hi, int *out);
 
 /* options.c */
 

@@ -74,22 +74,46 @@ void com_eye(wordlist *wl)
         const char *w = wl->wl_word;
         if (eq(w, "-ui")) {
             if (!wl->wl_next) { fprintf(cp_err, "eye: -ui needs a value\n"); goto done; }
-            wl = wl->wl_next; ui = eye_num(wl->wl_word); wl = wl->wl_next;
+            /* Enhancement-502: `-ui nan` walked through the `<= 0` test below
+             * and reported an eye HEIGHT OF 0 -- a fully closed link -- with a
+             * `nan` width. `-tstart nan` was worse: it was never checked at
+             * all, and since the "skip samples before tstart" test is also a
+             * comparison, NaN never skipped, so the startup transient the flag
+             * exists to exclude was folded into the eye and RMS jitter came
+             * back 660x larger, with no diagnostic. */
+            wl = wl->wl_next;
+            if (!ft_argpos("eye", "-ui", wl->wl_word, &ui)) goto done;
+            wl = wl->wl_next;
         } else if (eq(w, "-tstart")) {
             if (!wl->wl_next) { fprintf(cp_err, "eye: -tstart needs a value\n"); goto done; }
-            wl = wl->wl_next; tstart = eye_num(wl->wl_word); wl = wl->wl_next;
+            wl = wl->wl_next;
+            if (!ft_argfinite("eye", "-tstart", wl->wl_word, &tstart)) goto done;
+            wl = wl->wl_next;
         } else if (eq(w, "-threshold") || eq(w, "-thresh")) {
             if (!wl->wl_next) { fprintf(cp_err, "eye: -threshold needs a value\n"); goto done; }
-            wl = wl->wl_next; thresh = eye_num(wl->wl_word); have_thresh = 1; wl = wl->wl_next;
+            wl = wl->wl_next;
+            if (!ft_argfinite("eye", "-threshold", wl->wl_word, &thresh)) goto done;
+            have_thresh = 1; wl = wl->wl_next;
         } else if (eq(w, "-window")) {
             if (!wl->wl_next) { fprintf(cp_err, "eye: -window needs a value\n"); goto done; }
-            wl = wl->wl_next; window = eye_num(wl->wl_word); wl = wl->wl_next;
+            wl = wl->wl_next;
+            if (!ft_argpos("eye", "-window", wl->wl_word, &window)) goto done;
+            wl = wl->wl_next;
         } else {
             fprintf(cp_err, "eye: unexpected token '%s'\n", w); goto done;
         }
     }
-    if (ui <= 0.0) { fprintf(cp_err, "eye: -ui <bit period> is required (and > 0)\n"); goto done; }
-    if (window <= 0.0 || window >= 0.5) window = 0.05;
+    if (!(ui > 0.0)) { fprintf(cp_err, "eye: -ui <bit period> is required (and > 0)\n"); goto done; }
+    /* Enhancement-502: a window outside (0, 0.5) silently became the default,
+     * so `-window 5` and `-window -1` measured the eye at 5% and said nothing.
+     * The clamp stays -- it is the documented behaviour for the DEFAULT -- but
+     * a value the user actually wrote and that cannot be used is now named. */
+    if (!(window > 0.0) || window >= 0.5) {
+        fprintf(cp_err, "eye: -window is the fraction of the UI sampled at the "
+                        "eye centre and must be in (0, 0.5); using the default "
+                        "0.05 instead of %g\n", window);
+        window = 0.05;
+    }
 
     /* ---- read the waveform (values) and its time scale ---- */
     struct pnode *pn = ft_getpnames_from_string(expr, TRUE);
