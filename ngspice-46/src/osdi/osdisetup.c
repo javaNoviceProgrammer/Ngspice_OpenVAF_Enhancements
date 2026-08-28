@@ -688,6 +688,27 @@ extern int OSDItemp(GENmodel *inModel, CKTcircuit *ckt) {
       double temp = ckt->CKTtemp;
       OsdiExtraInstData *extra_inst_data =
           osdi_extra_instance_data(entry, gen_inst);
+
+      /* Enhancement-498: re-arm the last_crossing cache -- the same class of
+       * defect as VSRCbreak_time, on the OSDI path.
+       *
+       * crossing_time[] is per-RUN state. OSDIaccept deliberately leaves it
+       * unchanged until a qualifying crossing is seen, so that V(z) keeps
+       * reporting the time of the LAST crossing per the LRM; the contract
+       * osdiaccept.c states is that it "starts at 0.0 ... before any crossing
+       * has been observed". Only OSDIsetup seeded it, and Enhancement-471's
+       * setup reuse skips OSDIsetup, so every reused sweep point began holding
+       * the PREVIOUS point's crossing time. A 100 kHz sine over 40 us made
+       * `last_crossing(V(in),1)` read 3e-05 at t=0 of points 2..5 instead of
+       * 0 -- a model asking "has it crossed yet?" was answered with another
+       * run's crossing. Reset it here, where CKTtemp runs once per job on
+       * both the reuse and the rebuild path. */
+      if (extra_inst_data->crossing_time) {
+        uint32_t k_lc;
+        for (k_lc = 0; k_lc < entry->num_last_crossings; k_lc++)
+          extra_inst_data->crossing_time[k_lc] = 0.0;
+      }
+
       /* Enhancement-394: `temp` OVERRIDES, it does not stack with `dtemp`.
        * Every built-in works that way -- restemp.c forces `RESdtemp = 0` when
        * `temp` is given and warns that dtemp is ignored, and diotemp.c only

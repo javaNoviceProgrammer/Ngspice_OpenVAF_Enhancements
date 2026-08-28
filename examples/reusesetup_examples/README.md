@@ -30,6 +30,13 @@ reused both. On this deck that happened **only under KLU**, moving one number of
 5005 by 4.7e-09 relative, five orders of magnitude inside `reltol`. **Under
 SPARSE the results are byte-identical**, all 5005 of them.
 
+> **That measurement holds for this deck, and is not the general bound.** This
+> deck's sources register no breakpoints. Where one does — a `PULSE` or `PWL`
+> source — reuse left the source's breakpoint cursor holding the previous run's
+> value, so it scheduled none at all and the transient answer moved by up to
+> 106 %. See [Enhancement-498](../../enhancements_doc/Enhancement-498.md) and
+> `examples/reusestate_examples/`.
+
 KLU was the faster solver on this deck before the change (6.35 s against
 7.24 s); reuse lets SPARSE skip the `spOrderAndFactor` that Enhancement-470 left
 dominating at 51%, so SPARSE is now 2.4× the faster of the two.

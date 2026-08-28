@@ -35,6 +35,33 @@ VSRCtemp(GENmodel *inModel, CKTcircuit *ckt)
         for (here = VSRCinstances(model); here != NULL ;
                 here=VSRCnextInstance(here)) {
 
+            /* Enhancement-498: re-arm the transient breakpoint schedule.
+             *
+             * VSRCbreak_time is per-RUN state, not topology: VSRCaccept walks
+             * it forward across a transient and only schedules the next edge
+             * when `CKTtime >= VSRCbreak_time`. VSRCsetup seeds it to -1.0 so
+             * the first accepted point arms the first edge.
+             *
+             * Enhancement-471's setup-reuse fast path skips CKTunsetup/CKTsetup
+             * between sweep points, so the seed never ran again and the instance
+             * carried the PREVIOUS run's break time -- a value at or past that
+             * run's TSTOP. At t=0 of the next run the test was false, and it
+             * stayed false for the whole run: a PULSE or PWL source scheduled
+             * NO breakpoints at all and the stepper walked straight over every
+             * edge. A 5-point sweep of an RC driven by a narrow PWL pulse put
+             * `maximum(v(n))` 44% out (106% at other spacings) while reporting
+             * nothing, and `optimize` fitted a parameter 13% wrong and called
+             * it converged. Sources with no breakpoints (SIN, EXP, dc) and
+             * every non-transient analysis were unaffected, which is why the
+             * reuse suites -- none of which contain a PULSE or PWL source --
+             * stayed green.
+             *
+             * CKTtemp runs once per job on BOTH paths (the reuse branch calls
+             * it explicitly, to re-decide OSDI node collapse), and does not run
+             * on a `resume`, so this re-arms exactly when a new analysis starts
+             * and leaves a continued run alone. */
+            here->VSRCbreak_time = -1.0;
+
             if(here->VSRCacGiven && !here->VSRCacMGiven) {
                 here->VSRCacMag = 1;
             }

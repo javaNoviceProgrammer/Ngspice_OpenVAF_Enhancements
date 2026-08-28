@@ -1,0 +1,14 @@
+`include "disciplines.vams"
+
+// Demonstrates the Enhancement-6 last_crossing() operator (OSDI ABI
+// extension + ngspice-46 runtime patch): V(out) reports the simulation
+// time of the most recent rising (dir>0) zero-crossing of V(in)'s
+// accepted-timepoint history.
+module rs_cross(in, out);
+    inout in, out;
+    electrical in, out;
+    parameter integer dir = 1 from [-1:1];
+    analog begin
+        V(out) <+ last_crossing(V(in), dir);
+    end
+endmodule
