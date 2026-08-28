@@ -80,6 +80,93 @@ static void age_run_cmd(const char *cmdstr)
 }
 
 
+/* Enhancement-501: does this token read as a number end to end? Used to decide
+ * whether `dynamic`'s next token is its stop time or the next option. */
+/* Is this whole token a number `aging` would accept? ft_numparse, NOT strtod:
+ * the stop time is a SPICE number and `dynamic 20u 0.05u` is how it is written
+ * everywhere -- strtod stops at the `u` and would refuse the documented form. */
+static int age_looks_numeric(const char *w)
+{
+    char *s = (char *) w;
+    double v = 0.0;
+
+    if (!w || !*w)
+        return 0;
+    if (ft_numparse(&s, FALSE, &v) < 0)
+        return 0;
+    while (*s == ' ' || *s == '\t')
+        s++;
+    return (*s == '\0');
+}
+
+
+/* Enhancement-501: remember what `aging` wrote, so a per-sample `reset` inside a
+ * statistical command does not silently un-age the circuit.
+ *
+ * `age` is written into the instance at run time and has no representation in
+ * the deck text, so re-sourcing the deck discards it. `montecarlo` escapes that
+ * because Enhancement-346's fast path skips the per-sample reset whenever a
+ * random value binds -- but `wcd`, `highsigma` and `optimize -center` have no
+ * such path and re-source every evaluation, so they analysed FRESH devices after
+ * the user had aged the circuit. Measured on the agestate suite's deck: a
+ * 95-year dose moves the worst-case distance from 8.66 sigma to 1.81 sigma, and
+ * `wcd` reported 8.66 for both -- a reliability margin that had not moved at
+ * all, which is the one number such a run exists to produce.
+ *
+ * Enhancement-157 states the contract this restores: aging "re-stamps the
+ * circuit -- so any analysis run afterwards (op, dc, tran, ac, ...) sees the
+ * aged devices".
+ *
+ * Only the INTERNAL resets replay: a `reset` the user types still means "back to
+ * the deck", which is what reset has always meant -- otherwise there is no way
+ * back to a fresh device short of reloading the file. */
+
+/* Nonzero while a loop command issues its own internal `reset`; com_rset() drops
+ * the recorded doses only when this is clear. */
+int aging_internal_reset = 0;
+
+static char **age_writes = NULL;
+static int    age_nwrites = 0;
+
+static void age_forget(void)
+{
+    int k;
+    for (k = 0; k < age_nwrites; k++)
+        tfree(age_writes[k]);
+    tfree(age_writes);
+    age_writes = NULL;
+    age_nwrites = 0;
+}
+
+
+static void age_remember(const char *cmd)
+{
+    age_writes = TREALLOC(char *, age_writes, age_nwrites + 1);
+    age_writes[age_nwrites++] = copy(cmd);
+}
+
+
+/* Re-apply the last `aging` result. Silent, and a no-op when nothing was aged. */
+/* Called from com_rset(): a user-typed `reset` forgets the accumulated dose. */
+void aging_forget_writes(void)
+{
+    age_forget();
+}
+
+
+void aging_replay(void)
+{
+    int k, save;
+    if (age_nwrites <= 0)
+        return;
+    save = ft_optimizing;
+    ft_optimizing = TRUE;            /* keep `alter` quiet, as the writer does */
+    for (k = 0; k < age_nwrites; k++)
+        age_run_cmd(age_writes[k]);
+    ft_optimizing = save;
+}
+
+
 /* parse a SPICE-style number (understands k / meg / u / n / p ... suffixes) */
 static double age_num(const char *w)
 {
@@ -173,6 +260,7 @@ void com_aging(wordlist *wl)
     const char *agepar  = "age";
     double t_target = 0.0, tstop = 0.0, tstep = 0.0;
     int dynamic = 0, verbose = 0, got_t = 0;
+    const char *dyn_bad = NULL;                  /* Enhancement-501 */
 
     char **name = NULL;
     double *rate = NULL, *dose = NULL;
@@ -188,7 +276,17 @@ void com_aging(wordlist *wl)
             agepar = wl->wl_next->wl_word; wl = wl->wl_next->wl_next; continue;
         } else if (eq(w, "dynamic")) {
             dynamic = 1;
-            if (wl->wl_next && wl->wl_next->wl_word[0] != '-') {
+            /* Enhancement-501: the token after `dynamic` is its tstop only if it
+               LOOKS like a number. It used to be taken whenever it did not start
+               with '-', so `aging 3.15e8 dynamic verbose` read "verbose" as the
+               stop time, failed with "dynamic mode needs a positive <tstop>",
+               and aged nothing; `dynamic rate agerate` reported the perfectly
+               good `agerate` as an unrecognized token. The tstep test one line
+               below already required a digit -- the two halves of one option
+               disagreed about what a number looks like. */
+            if (wl->wl_next && !age_looks_numeric(wl->wl_next->wl_word))
+                dyn_bad = wl->wl_next->wl_word;   /* Enhancement-501: name it below */
+            if (wl->wl_next && age_looks_numeric(wl->wl_next->wl_word)) {
                 tstop = age_num(wl->wl_next->wl_word);
                 wl = wl->wl_next->wl_next;
                 if (wl && wl->wl_word[0] != '-' &&
@@ -210,12 +308,19 @@ void com_aging(wordlist *wl)
         }
     }
 
-    if (!got_t || t_target <= 0.0) {
+    /* Enhancement-501: `!(x > 0)` rather than `x <= 0`, because every comparison
+       with NaN is false -- `aging nan` sailed through the old test and reported
+       "aged to t = nan s (nan years)". The same shape let `highsigma -scale nan`
+       past `lambda <= 1.0`. `sweep` has always demanded a finite number here. */
+    if (!got_t || !(t_target > 0.0) || !finite(t_target)) {
         fprintf(cp_err, "usage: aging <t_target> [rate <opvar>] [param <ageparam>] "
                         "[dynamic <tstop> [tstep]] [verbose]\n");
         return;
     }
-    if (dynamic && tstop <= 0.0) {
+    if (dynamic && (!(tstop > 0.0) || !finite(tstop))) {   /* Enhancement-501 */
+        if (dyn_bad)
+            fprintf(cp_err, "aging: `dynamic` needs a stop time, and '%s' is not "
+                            "a number -- write `dynamic <tstop> [tstep]`\n", dyn_bad);
         fprintf(cp_err, "aging: dynamic mode needs a positive <tstop>\n");
         return;
     }
@@ -227,11 +332,29 @@ void com_aging(wordlist *wl)
 
     /* --- collect instances of every ageable device type (has both the rate
      * opvar and the age parameter) --- */
+    int agepar_warned = 0;       /* Enhancement-501: warn once, not per type */
     for (t = 0; t < DEVmaxnum; t++) {
         if (!DEVices[t] || !ckt->CKThead[t])
             continue;
         if (!type_has_param(t, ratevar) || !type_has_param(t, agepar))
             continue;
+        /* Enhancement-501: `param <name>` picks WHERE the accumulated dose is
+         * written. Any writable parameter of the right type accepts it, so a
+         * mistyped or misremembered name lands the dose in something that is
+         * not an aging state at all -- `param w` writes seconds of stress into
+         * a MOSFET's WIDTH and the run continues, reporting devices aged. The
+         * name is the user's to choose (some models spell their aging state
+         * differently), so this warns and proceeds rather than refusing; but
+         * when the very same device also exposes a plain `age`, choosing a
+         * different parameter is far more likely a slip than an intent. */
+        if (!agepar_warned && strcasecmp(agepar, "age") != 0 &&
+            type_has_param(t, "age")) {
+            fprintf(cp_err, "aging: writing the dose into '%s', but this device "
+                            "also has an 'age' parameter -- if '%s' is not an "
+                            "aging state, the dose is being written into an "
+                            "unrelated device parameter\n", agepar, agepar);
+            agepar_warned = 1;
+        }
         for (mod = ckt->CKThead[t]; mod; mod = mod->GENnextModel)
             for (inst = mod->GENinstances; inst; inst = inst->GENnextInstance) {
                 if (ndev >= ncap) {
@@ -283,6 +406,7 @@ void com_aging(wordlist *wl)
     }
 
     /* --- accumulate dose and write it back --- */
+    age_forget();                                /* Enhancement-501: this run replaces the last */
     for (k = 0; k < ndev; k++) {
         char cmd[256];
         if (!finite(rate[k]) || rate[k] < 0.0)
@@ -290,6 +414,7 @@ void com_aging(wordlist *wl)
         dose[k] = rate[k] * t_target;
         (void) snprintf(cmd, sizeof cmd, "alter @%s[%s] = %.10g", name[k], agepar, dose[k]);
         age_run_cmd(cmd);
+        age_remember(cmd);                       /* Enhancement-501 */
         aged++;
     }
 

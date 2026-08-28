@@ -18,6 +18,7 @@ Author: 1985 Wayne A. Christopher, U. C. Berkeley CAD Group
 
 #include "circuits.h"
 #include "runcoms2.h"
+#include "com_aging.h"
 #include "runcoms.h"
 #include "variable.h"
 #include "breakp2.h"
@@ -181,6 +182,13 @@ com_rset(wordlist *wl)
         fprintf(cp_err, "    Command 'reset' is ignored.\n");
         return;
     }
+    /* Enhancement-501: `reset` means "the deck as written". Enhancement-157's
+     * accumulated aging doses are re-applied after the INTERNAL resets that the
+     * statistical loop commands issue between samples, but a reset the user
+     * asked for must drop them -- otherwise there is no way back to a fresh
+     * device short of reloading the file. */
+    if (!aging_internal_reset)
+        aging_forget_writes();
     com_remcirc(NULL);
     inp_source_recent();
 }

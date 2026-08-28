@@ -88,6 +88,7 @@ ft_optimizing) unless `-verbose`.
 #include "ngspice/randnumb.h"    /* Enhancement-206: inner Monte-Carlo sampling */
 
 #include "com_optimize.h"
+#include "com_aging.h"      /* Enhancement-501: aging_replay() */
 #include "com_sweep.h"           /* Enhancement-322: shared .param fast-path engine */
 #include "ngspice/cktdefs.h"     /* Enhancement-323: CKTcircuit->CKThead[] */
 #include "ngspice/devdefs.h"     /* Enhancement-323: DEVices[] / DEVmaxnum   */
@@ -207,8 +208,24 @@ static void opt_run_cmd(const char *cmdstr)
     for (i = 0; cp_coms[i].co_comname; i++)
         if (strcasecmp(cp_coms[i].co_comname, wl->wl_word) == 0)
             break;
-    if (cp_coms[i].co_comname && cp_coms[i].co_func)
+    if (cp_coms[i].co_comname && cp_coms[i].co_func) {
+        /* Enhancement-501: an INTERNAL `reset` exists to redraw the random
+           parameters, not to un-age the circuit. `age` is written at run time
+           and has no deck representation, so re-sourcing drops it -- which left
+           wcd, highsigma and optimize -center reporting a FRESH device's
+           reliability for a circuit the user had aged. Mark the reset as ours
+           so com_rset keeps the record, then put the doses back. A `reset` the
+           USER types is not marked, drops the record, and still means what it
+           always did. */
+        int agereset = (strcasecmp(wl->wl_word, "reset") == 0);
+        if (agereset)
+            aging_internal_reset++;
         cp_coms[i].co_func(wl->wl_next);
+        if (agereset) {
+            aging_internal_reset--;
+            aging_replay();
+        }
+    }
     else
         fprintf(cp_err, "optimize: unknown command '%s'\n", wl->wl_word);
     wl_free(wl);
@@ -320,6 +337,30 @@ static int opt_intopt(const char *w, const char *what, int lo, int *out)
         return 0;
     }
     *out = (int) v;
+    return 1;
+}
+
+
+/* Enhancement-501: a SPEC LIMIT, which may legitimately be negative but must be
+ * finite -- a non-finite limit is never violated, so the spec silently does not
+ * exist. (opt_realopt below refuses negatives; that is right for `-tol`, wrong
+ * for a bound.) */
+static int opt_boundopt(const char *w, const char *what, double *out)
+{
+    double v;
+
+    if (!opt_strictnum(w, &v)) {
+        fprintf(cp_err, "optimize: %s needs a number, not '%s'\n", what,
+                w ? w : "");
+        return 0;
+    }
+    if (!finite(v)) {
+        fprintf(cp_err, "optimize: %s must be finite (got %s); a non-finite limit "
+                        "is never violated, so the spec would silently not exist\n",
+                what, w);
+        return 0;
+    }
+    *out = v;
     return 1;
 }
 
@@ -1653,12 +1694,19 @@ void com_optimize(wordlist *wl)
             if (c.nspec == 0) { fprintf(cp_err, "optimize: -max before any -spec\n"); goto cleanup; }
             if (!wl->wl_next) { fprintf(cp_err, "optimize: -max needs a value\n"); goto cleanup; }
             wl = wl->wl_next;
-            c.spec[c.nspec - 1].hi = optnum(wl->wl_word); c.spec[c.nspec - 1].hasmax = 1;
+            /* Enhancement-501: same rule as montecarlo/wcd/highsigma -- a spec
+               limit must be finite, or it is never violated and silently does not
+               exist. A NaN lower bound here reported Cpk = 1e+30 (OPT_PENALTY). */
+            if (!opt_boundopt(wl->wl_word, "-spec -max", &c.spec[c.nspec - 1].hi))
+                goto cleanup;
+            c.spec[c.nspec - 1].hasmax = 1;
             wl = wl->wl_next;
         } else if (eq(w, "-min") && c.nspec > 0) {
             if (!wl->wl_next) { fprintf(cp_err, "optimize: -min needs a value\n"); goto cleanup; }
             wl = wl->wl_next;
-            c.spec[c.nspec - 1].lo = optnum(wl->wl_word); c.spec[c.nspec - 1].hasmin = 1;
+            if (!opt_boundopt(wl->wl_word, "-spec -min", &c.spec[c.nspec - 1].lo))
+                goto cleanup;                                    /* Enhancement-501 */
+            c.spec[c.nspec - 1].hasmin = 1;
             wl = wl->wl_next;
         } else {
             fprintf(cp_err, "optimize: unrecognized token '%s'\n", w);
@@ -1894,8 +1942,18 @@ void com_optimize(wordlist *wl)
                         "stays inside every parameter's legal domain.\n",
                 c.nfailed, c.nevals, c.nfailed == 1 ? "" : "s");
     for (k = 0; k < c.np; k++) {
+        char rname[128];
         double val = c.lo[k] + ubest[k] * (c.hi[k] - c.lo[k]);
         fprintf(cp_out, "    %s = %.6g\n", c.name[k], val);
+        /* Enhancement-501: the answer was printed but not readable. `optimize`
+         * already publishes what it SCORED (dcenter_yield, dcenter_cpk) yet not
+         * what it SOLVED FOR, so a script -- or the shipped dcenter demo, whose
+         * `print xc` asked for a `.param` as if it were a vector -- had no name
+         * to fetch the centred knob by. A `-dparam` in particular is a numparam
+         * symbol that never becomes a vector, so printing it was never going to
+         * work. Publish each knob's final value under `optimize_<name>`. */
+        (void) snprintf(rname, sizeof rname, "optimize_%s", c.name[k]);
+        dc_set_result(rname, val);
     }
 
 cleanup:

@@ -50,6 +50,7 @@ analyses is suppressed via `ft_optimizing`.
 #include "ngspice/randnumb.h"
 #include "ngspice/devdefs.h"      /* Enhancement-320: DEVices[]/DEVmaxnum direct set */
 #include "com_sweep.h"
+#include "com_aging.h"      /* Enhancement-501: aging_replay() */
 #include "variable.h"       /* struct variable: sw_read_knob reads a bare knob's principal value */
 
 #define SW_ALTER   0             /* alter     -- device / instance / source      */
@@ -74,8 +75,24 @@ static void sw_run_cmd(const char *cmdstr)
     for (i = 0; cp_coms[i].co_comname; i++)
         if (strcasecmp(cp_coms[i].co_comname, wl->wl_word) == 0)
             break;
-    if (cp_coms[i].co_comname && cp_coms[i].co_func)
+    if (cp_coms[i].co_comname && cp_coms[i].co_func) {
+        /* Enhancement-501: an INTERNAL `reset` exists to redraw the random
+           parameters, not to un-age the circuit. `age` is written at run time
+           and has no deck representation, so re-sourcing drops it -- which left
+           wcd, highsigma and optimize -center reporting a FRESH device's
+           reliability for a circuit the user had aged. Mark the reset as ours
+           so com_rset keeps the record, then put the doses back. A `reset` the
+           USER types is not marked, drops the record, and still means what it
+           always did. */
+        int agereset = (strcasecmp(wl->wl_word, "reset") == 0);
+        if (agereset)
+            aging_internal_reset++;
         cp_coms[i].co_func(wl->wl_next);
+        if (agereset) {
+            aging_internal_reset--;
+            aging_replay();
+        }
+    }
     else
         fprintf(cp_err, "sweep: unknown command '%s'\n", wl->wl_word);
     wl_free(wl);
@@ -434,6 +451,56 @@ static double sw_get_temp(void)
  *
  * Refuse the command instead: a seed exists to make a run repeatable, and a
  * silently different seed defeats the only reason to give one. */
+/* Enhancement-501: a spec bound / tolerance must be a FINITE number.
+ *
+ * These went through sw_num(), which falls back to atof() -- so `abc` became 0
+ * and `nan` sailed straight through. A NaN bound is worse than a wrong one: every
+ * comparison against NaN is false, so the limit silently does not exist at all.
+ * `-max nan` was provably identical to omitting `-max` (30/40 pass either way).
+ *
+ * What that produced: `montecarlo` quietly reported a different yield (40% ->
+ * 75%); `optimize -center` reported Cpk = 2.007, and a NaN *lower* bound gave
+ * Cpk = 1e+30 -- OPT_PENALTY, an internal sentinel, printed as a design-centring
+ * result and published into `dcenter_cpk`; `highsigma` reported
+ * P(fail) = 0.0000e+00 +/- 0.00e+00, which is the most reassuring number a
+ * rare-event run can produce. Only `wcd` marked its answer `[not converged]`.
+ *
+ * Refuse rather than repair: a spec limit IS the question being asked. */
+static int sw_boundarg(const char *w, const char *cmd, const char *what, double *out)
+{
+    char *end;
+    double v;
+
+    if (!w || !*w) {
+        fprintf(cp_err, "%s: %s needs a value\n", cmd, what);
+        return 0;
+    }
+    /* ft_numparse, NOT strtod: these bounds are SPICE numbers and `-max 1m`,
+     * `-tol 500u`, `-step 2meg` are exactly how the rest of the command's
+     * numbers are already written. A whole-token check built on strtod would
+     * refuse the suffix spellings and turn a guard into a regression. */
+    end = (char *) w;
+    if (ft_numparse(&end, FALSE, &v) < 0) {
+        fprintf(cp_err, "%s: %s '%s' is not a number\n", cmd, what, w);
+        return 0;
+    }
+    while (*end == ' ' || *end == '\t')
+        end++;
+    if (*end) {                              /* trailing junk: `5x`, `2e2q` */
+        fprintf(cp_err, "%s: %s '%s' is not a number\n", cmd, what, w);
+        return 0;
+    }
+    if (!finite(v)) {
+        fprintf(cp_err, "%s: %s must be finite (got %s); a non-finite limit is "
+                        "never violated, so the spec would silently not exist\n",
+                cmd, what, w);
+        return 0;
+    }
+    *out = v;
+    return 1;
+}
+
+
 static int sw_seedarg(const char *w, const char *cmd, unsigned int *out)
 {
     char *end;
@@ -3450,7 +3517,9 @@ void com_highsigma(wordlist *wl)
         const char *w = wl->wl_word;
         if (eq(w, "-scale") || eq(w, "scale")) {
             if (!wl->wl_next) { fprintf(cp_err, "highsigma: -scale needs a value\n"); return; }
-            wl = wl->wl_next; lambda = atof(wl->wl_word); wl = wl->wl_next;
+            wl = wl->wl_next;
+            if (!sw_boundarg(wl->wl_word, "highsigma", "-scale", &lambda)) return;   /* E-501 */
+            wl = wl->wl_next;
         } else if (eq(w, "-seed") || eq(w, "seed")) {
             if (!wl->wl_next) { fprintf(cp_err, "highsigma: -seed needs a value\n"); return; }
             wl = wl->wl_next;
@@ -3458,10 +3527,14 @@ void com_highsigma(wordlist *wl)
             wl = wl->wl_next;
         } else if (eq(w, "-max")) {
             if (!wl->wl_next) { fprintf(cp_err, "highsigma: -max needs a value\n"); return; }
-            wl = wl->wl_next; hi = sw_num(wl->wl_word); have_max = 1; wl = wl->wl_next;
+            wl = wl->wl_next;
+            if (!sw_boundarg(wl->wl_word, "highsigma", "-max", &hi)) return;   /* E-501 */
+            have_max = 1; wl = wl->wl_next;
         } else if (eq(w, "-min")) {
             if (!wl->wl_next) { fprintf(cp_err, "highsigma: -min needs a value\n"); return; }
-            wl = wl->wl_next; lo = sw_num(wl->wl_word); have_min = 1; wl = wl->wl_next;
+            wl = wl->wl_next;
+            if (!sw_boundarg(wl->wl_word, "highsigma", "-min", &lo)) return;   /* E-501 */
+            have_min = 1; wl = wl->wl_next;
         } else if (eq(w, "-analysis")) {
             /* `is_flag()`, not a bare leading '-': an analysis argument may be
              * negative (`disto lin 3 1e5 1e6 -0.5`), and stopping at any '-'
@@ -3675,11 +3748,15 @@ void com_montecarlo(wordlist *wl)
         } else if (eq(w, "-max")) {
             if (nspec == 0) { fprintf(cp_err, "montecarlo: -max before any -spec\n"); return; }
             if (!wl->wl_next) { fprintf(cp_err, "montecarlo: -max needs a value\n"); return; }
-            wl = wl->wl_next; hi[nspec - 1] = sw_num(wl->wl_word); hasmax[nspec - 1] = 1; wl = wl->wl_next;
+            wl = wl->wl_next;
+            if (!sw_boundarg(wl->wl_word, "montecarlo", "-max", &hi[nspec - 1])) return;   /* E-501 */
+            hasmax[nspec - 1] = 1; wl = wl->wl_next;
         } else if (eq(w, "-min")) {
             if (nspec == 0) { fprintf(cp_err, "montecarlo: -min before any -spec\n"); return; }
             if (!wl->wl_next) { fprintf(cp_err, "montecarlo: -min needs a value\n"); return; }
-            wl = wl->wl_next; lo[nspec - 1] = sw_num(wl->wl_word); hasmin[nspec - 1] = 1; wl = wl->wl_next;
+            wl = wl->wl_next;
+            if (!sw_boundarg(wl->wl_word, "montecarlo", "-min", &lo[nspec - 1])) return;   /* E-501 */
+            hasmin[nspec - 1] = 1; wl = wl->wl_next;
         } else {
             fprintf(cp_err, "montecarlo: unexpected token '%s'\n", w);
             return;
@@ -3726,6 +3803,9 @@ void com_montecarlo(wordlist *wl)
 
     long npass = 0;
     long nfailed = 0;            /* Enhancement-438: samples that never solved */
+    /* Enhancement-501: spread of the spec metrics over the whole sample set */
+    int mc_seen = 0;
+    double mc_lo = 0.0, mc_hi = 0.0;
     ft_optimizing = TRUE;
     /* Enhancement-188: warm-start each sample's DC bias point from the previous
      * converged solution (opt-in). Only the iteration count changes; the
@@ -3791,6 +3871,17 @@ void com_montecarlo(wordlist *wl)
         int pass = 1;
         for (s = 0; s < nspec; s++) {
             double m = sw_eval_expr(metric[s]);
+            /* Enhancement-501: remember the spread each metric actually showed.
+             * A yield is a statement about VARIATION; if nothing varied, the
+             * sample set is one point measured nsamp times and the percentage
+             * (and its confidence interval) describe the RNG's absence, not the
+             * circuit. That happens whenever no drawn value reaches the value
+             * being measured -- no random .param at all, a random .param the
+             * metric does not depend on, or draws that never got pushed. */
+            if (!mc_seen) { mc_lo = mc_hi = m; }
+            else if (m < mc_lo) mc_lo = m;
+            else if (m > mc_hi) mc_hi = m;
+            mc_seen = 1;
             if ((hasmax[s] && m > hi[s]) || (hasmin[s] && m < lo[s])) {
                 pass = 0;
                 specfail[s]++;
@@ -3848,6 +3939,16 @@ void com_montecarlo(wordlist *wl)
     for (s = 0; s < nspec; s++)
         fprintf(cp_out, "  spec %d (%s): %ld violation%s\n",
                 s + 1, metric[s], specfail[s], specfail[s] == 1 ? "" : "s");
+    /* Enhancement-501: a yield computed from samples that never differed is a
+     * measurement of nothing repeated nvalid times -- always 0% or 100%, with a
+     * confidence interval that looks tight precisely because every sample was
+     * the same sample. Say so, because the number itself cannot. */
+    if (mc_seen && nvalid > 1 && mc_lo == mc_hi)
+        fprintf(cp_out, "  NOTE   : every sample gave the SAME value (%s = %g); "
+                        "nothing in this deck varied, so the yield and its CI "
+                        "describe one point measured %ld times, not a "
+                        "distribution\n",
+                metric[0], mc_lo, nvalid);
 
     hs_set_result("montecarlo_yield", p);
     hs_set_result("montecarlo_npass", (double) npass);
@@ -3949,10 +4050,14 @@ void com_wcd(wordlist *wl)
             have_metric = 1; wl = wl->wl_next;
         } else if (eq(w, "-max")) {
             if (!wl->wl_next) { fprintf(cp_err, "wcd: -max needs a value\n"); return; }
-            wl = wl->wl_next; hi = sw_num(wl->wl_word); hasmax = 1; wl = wl->wl_next;
+            wl = wl->wl_next;
+            if (!sw_boundarg(wl->wl_word, "wcd", "-max", &hi)) return;   /* E-501 */
+            hasmax = 1; wl = wl->wl_next;
         } else if (eq(w, "-min")) {
             if (!wl->wl_next) { fprintf(cp_err, "wcd: -min needs a value\n"); return; }
-            wl = wl->wl_next; lo = sw_num(wl->wl_word); hasmin = 1; wl = wl->wl_next;
+            wl = wl->wl_next;
+            if (!sw_boundarg(wl->wl_word, "wcd", "-min", &lo)) return;   /* E-501 */
+            hasmin = 1; wl = wl->wl_next;
         } else if (eq(w, "-analysis")) {
             if (!wl->wl_next) { fprintf(cp_err, "wcd: -analysis needs a command\n"); return; }
             /* the same multi-token collection its siblings use. This copied ONE
@@ -3988,10 +4093,14 @@ void com_wcd(wordlist *wl)
             wl = wl->wl_next;
         } else if (eq(w, "-tol")) {
             if (!wl->wl_next) { fprintf(cp_err, "wcd: -tol needs a value\n"); return; }
-            wl = wl->wl_next; tol = sw_num(wl->wl_word); wl = wl->wl_next;
+            wl = wl->wl_next;
+            if (!sw_boundarg(wl->wl_word, "wcd", "-tol", &tol)) return;   /* E-501 */
+            wl = wl->wl_next;
         } else if (eq(w, "-step")) {
             if (!wl->wl_next) { fprintf(cp_err, "wcd: -step needs a value\n"); return; }
-            wl = wl->wl_next; step = sw_num(wl->wl_word); wl = wl->wl_next;
+            wl = wl->wl_next;
+            if (!sw_boundarg(wl->wl_word, "wcd", "-step", &step)) return;   /* E-501 */
+            wl = wl->wl_next;
         } else if (eq(w, "-is")) {
             if (!wl->wl_next) { fprintf(cp_err, "wcd: -is needs a sample count\n"); return; }
             wl = wl->wl_next;                       /* Enhancement-478 */

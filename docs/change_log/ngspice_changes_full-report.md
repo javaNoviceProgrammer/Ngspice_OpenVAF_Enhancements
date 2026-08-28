@@ -1,3 +1,4 @@
+| [E-501](../../enhancements_doc/Enhancement-501.md) | src/frontend/com_aging.c, src/frontend/com_aging.h, src/frontend/com_sweep.c, src/frontend/com_optimize.c, src/frontend/runcoms2.c, examples/dcenter_examples/dcenter_demo.cir, examples/agestate_examples/ (new) | **THE AGED DEVICE CAME BACK FRESH.** `aging` (**E-157**) writes an accumulated dose into each device's `age` with `alter` and leaves the circuit standing. That dose lives ONLY in the running circuit -- it was never in the deck -- so every command that re-sources between evaluations threw it away on the first one and ran the rest of the loop on a FRESH circuit, silently: `wcd`, `highsigma`, `optimize -center`. A 95-year dose moves the worst-case distance **8.66 sigma -> 1.81 sigma**; `wcd` printed 8.66 for both. `montecarlo` escaped by accident -- **E-346**'s fast path arms whenever a random value binds and does *no per-sample reset*. Doses are now recorded as written and replayed after an INTERNAL reset; a `reset` the USER types drops the record, because that is what `reset` means. **`aging` ACCEPTED TARGETS IT COULD NOT AGE TO**: `aging nan` wrote NaN doses and reported them aged (every comparison with NaN is false, so `t <= 0` let it through), `aging abc` aged to 0 s, `dynamic verbose` ate `verbose` as the stop time then blamed `agerate` -- **E-497**'s shape. **A NaN SPEC BOUND IS NEVER VIOLATED**, so it is identical to omitting it: `montecarlo -max nan` reported 100% yield with a Wilson interval. `-max`/`-min`/`-tol`/`-step`/`-scale` now parsed across all four statistical commands -- with `ft_numparse`, NOT `strtod`: the first guard refused `dynamic 20u`, E-157's own documented spelling, and the existing `aging` suite caught it. A NEGATIVE bound stays legal, which is why these are not **E-499**'s `-tol` reader. **A YIELD FROM SAMPLES THAT NEVER VARIED** is one point measured N times; **E-495** warns per `agauss` call, this is the whole-run version. **`optimize` PUBLISHED THE SCORE BUT NOT THE ANSWER** -- `dcenter_yield`/`dcenter_cpk` but never the centred knob, so the shipped dcenter demo printed *checkvalid: vector xc is not available* on every run since it shipped; now `optimize_<name>`. **`aging 1e8 param w`** wrote 4.095e8 into a MOSFET WIDTH (409,500 km), reported 1 device aged, rc=0 -- warns and proceeds when the device also has an `age`. Verified `agestate` **30/30** both solvers, **19 fail pre-fix**, regression **415/415**. **No openvaf-r change.** |
 # ngspice-46 — Full Change Report
 
 **Every modification applied to ngspice-46 in this project, with its
@@ -1871,6 +1872,69 @@ returns a large finite number so the solve continues; interval measurements keep
 E-468's behaviour; a `sens` run with no filter or with one that matches; and
 `.func` still resolves to the last definition -- only the silence is gone.
 
+
+### `frontend/com_aging.c`, `frontend/com_sweep.c`, `frontend/com_optimize.c`, `frontend/runcoms2.c` — aged state across an internal reset, and what the loop commands claim ([E-501](../../enhancements_doc/Enhancement-501.md))
+
+**The aged device came back fresh.** `aging` ([E-157](../../enhancements_doc/Enhancement-157.md)) writes an
+accumulated dose into each device's `age` parameter with `alter`, then leaves the circuit standing so the analyses
+that follow see the degraded part. That dose lives **only in the running circuit** — it has no deck representation,
+because it was never in the deck. So every command that re-sources the deck between evaluations threw it away on the
+first one and ran the rest of the loop on a fresh circuit, in silence.
+
+That is `wcd`, `highsigma` and `optimize -center`: the three commands whose entire purpose is to characterise a part
+were the three that could not characterise an *aged* one. On the suite's deck a 95-year dose moves the worst-case
+distance from **8.66 sigma to 1.81 sigma** — a part that sits comfortably inside its limit when new and barely inside
+it at end of life — and `wcd` printed 8.66 for both, with nothing in its output to say which circuit it had measured.
+
+`montecarlo` escaped, but only by accident: [E-346](../../enhancements_doc/Enhancement-346.md)'s fast path arms
+whenever a random value binds — and prints *"no per-sample reset"* when it does — so the usual Monte Carlo never
+re-sourced at all. Its fallback path re-sources like the others.
+
+`aging` already issues its writes as ordinary `alter` commands, so it now records them as it writes them, and the loop
+commands replay that record after their internal `reset`. The record is per-run — `aging` clears it before writing —
+which preserves E-157's stated property that a dose is an *absolute* target and calling it twice is idempotent. A
+`reset` the **user** types must still mean "the deck as written", or there is no way back to a fresh device short of
+reloading the file; so the internal resets are marked as internal, `com_rset` drops the record when it is not marked,
+and only the marked ones replay.
+
+**`aging` accepted targets it could not age to.** Its numbers went through a bare `atof()` and its guard was
+`t_target <= 0`. Every comparison with NaN is false, so `aging nan` walked through it and wrote NaN doses into every
+device while reporting them aged; `aging abc` aged to 0 s; and `dynamic`'s stop time was never checked to be a number
+at all, so `aging 1e8 dynamic verbose` consumed `verbose` as the stop time and then complained about `agerate`, a
+token the user had never typed. The guards are now written `!(t > 0.0) || !finite(t)`, and the stop time is checked
+before it is consumed so the message names what was actually typed. This is the shape
+[E-497](../../enhancements_doc/Enhancement-497.md) fixed in `setseed` and `disto`.
+
+**A spec bound that is never violated.** A limit is only ever used in a comparison, so a NaN limit is not a strict
+limit — it is *no limit at all*, indistinguishable from omitting the flag. `montecarlo ... -max nan` reported
+`yield : 100.000%` with a Wilson interval. `montecarlo -spec -max/-min`, `wcd -max/-min/-tol/-step`, `highsigma
+-max/-min/-scale` and `optimize -spec -max/-min` are now parsed the way the rest of each command's numbers already
+were — with `ft_numparse`, **not** `strtod`: the first version of this guard used `strtod` end to end and refused
+`dynamic 20u`, the documented spelling in E-157's own example, which the existing `aging` suite caught. A **negative**
+bound stays legal, which is why the spec readers are not E-499's `-tol` reader; that one refuses negatives, correctly
+for a tolerance and wrongly for a limit.
+
+**A yield with nothing behind it.** A yield is a statement about variation. A deck with no random parameter — or with
+one the metric does not depend on — produced 50 identical samples and reported `100.000% (50/50)` with a 95% CI of
+`[92.865%, 100.000%]`: an interval that looks tight precisely because every sample was the same sample.
+[E-495](../../enhancements_doc/Enhancement-495.md) warns when an individual `agauss(...)` call is degenerate; this is
+the whole-run version, and it catches what no per-call check can.
+
+**`optimize` published the score but not the answer.** `optimize -center` published `dcenter_yield` and `dcenter_cpk`
+— what it *scored* — but never the centred knob value, the thing the command exists to find. A `-dparam` is a numparam
+symbol that never becomes a vector, so the shipped `dcenter_demo.cir` asked for it as one and printed
+`Warning from checkvalid: vector xc is not available` on every run since the example shipped. Knob values are now
+published as `optimize_<name>`, and the demo prints `optimize_xc = 5.0022` — the design centre its own comments
+predict.
+
+**`aging param` aimed somewhere odd.** `aging 1e8 param w` wrote **4.095e8** into a MOSFET's *width* — a transistor
+409,500 km across — reported *"1 device aged"*, and exited 0, because `aging` selects devices that *have* the named
+parameter and a width qualifies. The name stays the user's to choose, since models spell their aging state
+differently, so this warns and proceeds; but when the same device also exposes a plain `age`, choosing something else
+is far more likely a slip than an intent.
+
+Verified by `examples/agestate_examples/verify_agestate.py` — 30 checks under both linear solvers, 19 of which fail on
+the shipped binary.
 
 ### `frontend/com_dl.c`, `frontend/inp.c`, `frontend/com_presnp.c`, `osdi/` — `pre_osdi -va` compiles Verilog-A and loads it in one step ([E-500](../../enhancements_doc/Enhancement-500.md))
 

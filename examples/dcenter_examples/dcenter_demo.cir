@@ -19,6 +19,6 @@ R1 out 0 1k
   montecarlo 200 -lhs -analysis op -spec v(out) -max 6 -min 4 -seed 3
   * centre the design: maximize worst-case Cpk / yield under the process variation
   optimize -dparam xc 4.0 3 7 -center -lhs -samples 200 -analysis op -spec v(out) -max 6 -min 4 -seed 3
-  print xc dcenter_yield dcenter_cpk
+  print optimize_xc dcenter_yield dcenter_cpk
 .endc
 .end
