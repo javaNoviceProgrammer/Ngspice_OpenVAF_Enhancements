@@ -1,0 +1,7 @@
+`include "disciplines.vams"
+// deliberately does not compile: the suite checks that the failure is REPORTED
+module bad(a, b);
+    inout a, b;
+    electrical a, b;
+    analog I(a,b) <+ this_is_not_a_function(;
+endmodule

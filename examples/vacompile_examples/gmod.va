@@ -1,0 +1,8 @@
+`include "disciplines.vams"
+// a conductance, used as the SECOND model so a mixed deck has two device types
+module gmod(a, b);
+    inout a, b;
+    electrical a, b;
+    parameter real g0 = 1e-3 from (0:inf);
+    analog I(a,b) <+ g0 * V(a,b);
+endmodule

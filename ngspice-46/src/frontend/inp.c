@@ -1345,6 +1345,53 @@ inp_spsource(FILE *fp, bool comfile, char *filename, bool intfile)
             }
         }  /* end for (dd = deck->nextcard . . . .  */
 
+#ifdef OSDI
+        /* Enhancement-500: `.option osdicache` decides whether `pre_osdi -va`
+         * may skip a Verilog-A source whose object is already up to date.
+         *
+         * Read from the OPTIONS CARDS, not through cp_getvar: pre_ commands run
+         * before the circuit is set up, so no option has been published yet and
+         * cp_getvar would answer for the previous deck or for nothing at all --
+         * the trap Enhancement-464 recorded for `autobus`. The cards themselves
+         * are already separated out by inp_getopts() above, which is also why
+         * scanning `deck` finds nothing by this point.
+         *
+         * Matched as a whole WORD rather than with strstr, because
+         * Enhancement-451 shipped an option whose name was decided by a
+         * substring search and `myseed`/`noseed`/`xseed` all set the seed; and
+         * every spelling that means off must mean off (Enhancements 450, 451,
+         * 454, 466). */
+        osdi_va_cache = 0;
+        {
+            struct card *oc;
+            for (oc = options; oc; oc = oc->nextcard) {
+                char *tok = oc->line;
+                if (!tok)
+                    continue;
+                while (*tok) {
+                    char word[64];
+                    size_t n = 0;
+                    while (*tok && isspace_c(*tok))
+                        tok++;
+                    while (*tok && !isspace_c(*tok) && n + 1 < sizeof word)
+                        word[n++] = *tok++;
+                    while (*tok && !isspace_c(*tok))
+                        tok++;
+                    word[n] = '\0';
+                    if (!n)
+                        continue;
+                    if (cieq(word, "osdicache"))
+                        osdi_va_cache = 1;
+                    else if (ciprefix("osdicache=", word)) {
+                        const char *v = word + 10;
+                        osdi_va_cache = !(cieq(v, "0") || cieq(v, "false") ||
+                                          cieq(v, "no") || cieq(v, "off"));
+                    }
+                }
+            }
+        }
+#endif
+
         /* Now that the deck is loaded, do the pre commands, if there are any,
            before the circuit structure is set up */
         if (pre_controls) {

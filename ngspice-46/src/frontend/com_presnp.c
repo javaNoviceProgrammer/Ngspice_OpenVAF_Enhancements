@@ -25,8 +25,10 @@ static int file_exists(const char *p)
     return stat(p, &st) == 0;
 }
 
-/* Locate the openvaf-r compiler. Returns a malloc'd string (copy()). */
-static char *find_openvaf(void)
+/* Locate the openvaf-r compiler. Returns a malloc'd string (copy()).
+ * Enhancement-500: exported (was static) so `pre_osdi -va` uses the same
+ * lookup policy rather than inventing a second one. */
+char *osdi_find_openvaf(void)
 {
     char var[1024];
     char *e;
@@ -133,7 +135,7 @@ void com_pre_snp(wordlist *wl)
     fprintf(cp_out, "pre_snp: %s -> %s  (%s, module '%s')\n", snp, va, msg, module);
 
     /* 2. compile with openvaf-r -> .osdi */
-    ovf = find_openvaf();
+    ovf = osdi_find_openvaf();
     cmdlen = strlen(ovf) + strlen(va) + strlen(osdi) + 32;
     cmd = TMALLOC(char, cmdlen);
     (void) snprintf(cmd, cmdlen, "\"%s\" \"%s\" -o \"%s\"", ovf, va, osdi);

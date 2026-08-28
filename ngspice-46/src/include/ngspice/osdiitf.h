@@ -75,6 +75,24 @@ extern void ngspice_register_plusarg(const char *arg);
 
 extern char *inputdir;
 
+/* Enhancement-500: `pre_osdi -va file.va ...` compiles Verilog-A in place.
+ *
+ * osdi_find_openvaf() is com_presnp.c's compiler lookup, exported so both
+ * generators use one policy: the `openvaf` ngspice variable, then $OPENVAF,
+ * then $SPICE_LIB_DIR/openvaf-r (the prebuilt binary this tree ships), then
+ * PATH. A bare PATH search would miss the shipped compiler, which is exactly
+ * where it lives for anyone using the bundle.
+ *
+ * osdi_va_cache is `.option osdicache`, read from the DECK CARDS rather than
+ * through cp_getvar: pre_ commands run before the circuit is set up, so no
+ * option has been published yet -- the trap Enhancement-464 recorded for
+ * `autobus`. Default OFF: recompiling every time is the only safe default
+ * while openvaf-r itself is under development, because the `.va` timestamp
+ * says nothing about the COMPILER having changed (Enhancement-453's cache key
+ * omitted its codegen settings and was wrong the same way). */
+extern int osdi_va_cache;
+extern char *osdi_find_openvaf(void);
+
 /* Enhancement-55: deferred $finish/$stop requests. OSDIload latches the
  * eval-return flags per timepoint attempt; the analyses check at the
  * ACCEPTED-point boundary (acting mid-Newton-iteration breaks timestep

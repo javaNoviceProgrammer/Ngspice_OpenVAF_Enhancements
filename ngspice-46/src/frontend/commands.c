@@ -328,7 +328,10 @@ struct comm spcp_coms[] = {
     { "osdi", com_osdi, FALSE, TRUE,
       { 040000, 040000, 040000, 040000 }, E_BEGINNING, 1, LOTS,
       NULL,
-      "[-f] library library ... : Loads one or more OSDI libraries (use as `pre_osdi file.osdi`). "
+      "[-f] [-va] library ... : Loads one or more OSDI libraries (use as `pre_osdi file.osdi`). "
+      "With -va, a `.va` argument is compiled by openvaf-r into an `osdi/` directory beside "
+      "the netlist and the object it produces is loaded; recompiled every run unless the deck "
+      "carries `.option osdicache`. "
       "With -f, force-reloads an already-loaded file so a recompiled model is picked up without restarting." } ,
 #endif
     { "snp", com_pre_snp, FALSE, TRUE,          /* Enhancement-200 (use as `pre_snp`) */

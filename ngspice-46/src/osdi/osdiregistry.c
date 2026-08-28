@@ -45,6 +45,7 @@ static void free_dlerr_msg(char *msg);
 #endif /* ifndef HAS_WINGUI */
 
 char *inputdir = NULL;
+int osdi_va_cache = 0;          /* Enhancement-500: `.option osdicache` */
 
 /* Returns true if path is an absolute path and false if it is a
  * relative path. No check is done for the existance of the path. */
