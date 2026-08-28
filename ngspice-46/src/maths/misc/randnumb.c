@@ -295,10 +295,20 @@ extern void destroy_wallace(void);   /* Enhancement-374 */
 extern void initw(void);
 #endif
 
+/* Enhancement-497: is anything but blanks left after the integer? */
+static int seed_tail_is_junk(const char *p)
+{
+    while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')
+        p++;
+    return *p != '\0';
+}
+
+
 void
 com_sseed(wordlist *wl)
 {
     int newseed;
+    int nread = -1;             /* Enhancement-497 */
 
     if (wl == NULL) {
         if (!cp_getvar("rndseed", CP_NUM, &newseed, 0)) {
@@ -308,7 +318,17 @@ com_sseed(wordlist *wl)
         srand((unsigned int)newseed);
         TausSeed();
     }
-    else if ((sscanf(wl->wl_word, " %d ", &newseed) != 1) ||
+    /* Enhancement-497: `%d` stops at the first character it cannot use, so
+     * "2.5" scanned as 2 and returned 1 -- the trailing ".5" was dropped and
+     * the run silently used seed 2. Every OTHER bad spelling is named here
+     * ("Cannot use 0 / -3 / abc as seed!"), and the sibling command `repeat`
+     * names a fractional count outright ("bad repeat argument 3.7"), so this
+     * was the one way to be wrong quietly. The manual asks for "an integer
+     * greater than 0". Require the whole token to be that integer: %n reports
+     * how far the scan reached, and anything but trailing blanks after it means
+     * the user wrote something the seed cannot represent. */
+    else if ((sscanf(wl->wl_word, " %d %n", &newseed, &nread) != 1) ||
+        nread < 0 || seed_tail_is_junk(wl->wl_word + nread) ||
         (newseed <= 0) || (newseed > INT_MAX))
     {
         fprintf(cp_err,

@@ -276,6 +276,36 @@ void cm_s_xfer(ARGS)  /* structure holding parms, inputs, outputs, etc.     */
         return;
     }
 
+    /* Enhancement-497: int_ic is indexed by the WRONG array's size.
+     *
+     * The initialisation loop below reads PARAM(int_ic[den_size - 2 - i]) --
+     * den_size being PARAM_SIZE(den_coeff) -- and nothing anywhere consults
+     * PARAM_SIZE(int_ic). The manual states the relationship ("int_ic ... must
+     * be of size one less as the array of values specified for den_coeff"), so
+     * a mismatch is a stated error, and it is a silent one: too short and the
+     * initial conditions the array does not reach read as zero, which took
+     * v(out) at 10 us from 7.00005 to 4.99995e-05 on a second-order section;
+     * too long and the surplus is never looked at.
+     *
+     * Checked here rather than at the read, and refused the way E-491's two
+     * guards above refuse: the size cannot become right at a later timepoint. */
+    if ( ! PARAM_NULL(int_ic) ) {
+        int e497_want = den_size - 1;
+        int e497_have = PARAM_SIZE(int_ic);
+
+        if (e497_have != e497_want) {
+            char e497_msg[256];
+            (void) snprintf(e497_msg, sizeof e497_msg,
+                "\n***ERROR***\nS_XFER: int_ic has %d value(s) but den_coeff "
+                "has %d, so int_ic\nneeds exactly %d -- one initial condition "
+                "per integrator. The missing\nones would silently read zero.\n",
+                e497_have, den_size, e497_want);
+            cm_message_send(e497_msg);
+            cm_cexit(1);
+            return;
+        }
+    }
+
     /* Enhancement-491: a denominator that is entirely zero.
      
        Nothing checked it, so the integrator chain was built with a zero leading

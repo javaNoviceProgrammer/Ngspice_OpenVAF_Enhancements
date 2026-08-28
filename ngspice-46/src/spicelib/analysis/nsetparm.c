@@ -61,7 +61,9 @@ NsetParm(CKTcircuit *ckt, JOB *anal, int which, IFvalue *value)
     case N_STOP:
 	if (value->rValue <= 0.0) {
 	    errMsg = copy("Frequency of 0 is invalid");
-            job->NstartFreq = 1.0;
+            /* Enhancement-497: was NstartFreq -- the START frequency -- on a
+             * refused STOP frequency. Same copy-paste as dsetparm.c's D_STOP. */
+            job->NstopFreq = 1.0;
 	    return(E_PARMVAL);
 	}
 

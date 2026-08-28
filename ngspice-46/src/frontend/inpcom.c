@@ -6257,6 +6257,109 @@ Lerror:
  * grab functions at the current .subckt nesting level
  */
 
+/* Enhancement-497: a `.param` redefinition is the only one of its family that
+ * happens in silence.
+ *
+ *     .func   f(x)   redefined  ->  "is defined more than once"   (E-491)
+ *     .model  m      redefined  ->  "is already defined; keeping ..."
+ *     .subckt s      redefined  ->  "redefinition of .subckt s, ignored"
+ *     .param  a      redefined  ->  nothing at all
+ *
+ * and it resolves the OTHER WAY from two of them: `.model` and `.subckt` keep
+ * the FIRST definition, `.param` takes the LAST. So two included files that
+ * each set `vdd` agree or disagree purely by include ORDER, and a `.param` the
+ * author wrote in their own deck is silently displaced by a library included
+ * after it. Nothing about which value wins is changed here -- decks depend on
+ * last-wins -- it is only made audible, exactly as E-491 did for `.func`.
+ *
+ * Scoped to TOP-LEVEL cards by the caller's `.subckt` nesting count, because a
+ * subcircuit's own parameters are legitimately redefined once per instance. */
+
+struct e497_seen {
+    char *name;
+    struct e497_seen *next;
+};
+
+static struct e497_seen *e497_params = NULL;
+
+static void e497_param_forget(void)
+{
+    while (e497_params) {
+        struct e497_seen *n = e497_params->next;
+        tfree(e497_params->name);
+        tfree(e497_params);
+        e497_params = n;
+    }
+}
+
+/* Note every name a top-level `.param` card assigns, and report a repeat. The
+ * card reads `ident = expr [ident = expr ...]`, so each name is the token that
+ * precedes an `=`. */
+static void e497_param_note(const char *line)
+{
+    const char *p = line;
+
+    while (*p && *p != ' ' && *p != '\t')        /* step over ".param" */
+        p++;
+
+    while (*p) {
+        const char *beg, *end;
+        struct e497_seen *w;
+        char *nm;
+
+        while (*p == ' ' || *p == '\t' || *p == ',')
+            p++;
+        if (!*p)
+            break;
+
+        beg = p;
+        while (*p && *p != '=' && *p != ' ' && *p != '\t' && *p != ',')
+            p++;
+        end = p;
+        while (*p == ' ' || *p == '\t')
+            p++;
+
+        if (*p != '=' || end == beg) {           /* not `name =` -- skip ahead */
+            while (*p && *p != ' ' && *p != '\t')
+                p++;
+            continue;
+        }
+        p++;                                      /* step over the '=' */
+
+        nm = copy_substring(beg, end);
+        for (w = e497_params; w; w = w->next)
+            if (cieq(w->name, nm))
+                break;
+        if (w) {
+            fprintf(stderr,
+                    "\nWarning: .param %s is defined more than once in this "
+                    "deck; the last\n         definition is the one every "
+                    "expression will use.\n\n", nm);
+            tfree(nm);
+        } else {
+            w = TMALLOC(struct e497_seen, 1);
+            w->name = nm;
+            w->next = e497_params;
+            e497_params = w;
+        }
+
+        /* skip the value: to the next unbracketed, unquoted blank */
+        {
+            int depth = 0;
+            while (*p) {
+                if (*p == '{' || *p == '(')
+                    depth++;
+                else if (*p == '}' || *p == ')')
+                    depth--;
+                else if ((*p == ' ' || *p == '\t') && depth <= 0)
+                    break;
+                p++;
+            }
+        }
+    }
+}
+
+
 static void inp_grab_func(struct function_env *env, struct card *c)
 {
     int nesting = 0;
@@ -6281,7 +6384,14 @@ static void inp_grab_func(struct function_env *env, struct card *c)
             inp_get_func_from_line(env, c->line);
             *c->line = '*';
         }
+
+        /* Enhancement-497: the same courtesy for `.param`. Top level only --
+         * `nesting > 0` has already sent a subcircuit's own cards away above. */
+        if (ciprefix(".param", c->line))
+            e497_param_note(c->line);
     }
+
+    e497_param_forget();
 }
 
 

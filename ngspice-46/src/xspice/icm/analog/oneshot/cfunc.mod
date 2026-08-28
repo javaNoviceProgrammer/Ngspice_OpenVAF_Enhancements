@@ -251,7 +251,13 @@ void cm_oneshot(ARGS)  /* structure holding parms,
     /* the control array must be the same size as the pulse-width array */
 
     if(cntl_size != pw_size) {
+        /* Enhancement-497: announced and returned without an output, on every
+         * evaluation -- the same shape as sine/square/triangle above and as the
+         * one E-491 named in s_xfer. The check sits before the INIT block, so
+         * it repeats for the whole run while the device contributes nothing.
+         * Two arrays of different length stay that way: say it once and stop. */
         cm_message_send(oneshot_array_error);
+        cm_cexit(1);
         return;
     }
 

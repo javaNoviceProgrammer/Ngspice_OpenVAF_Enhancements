@@ -195,7 +195,17 @@ cm_square(ARGS)
        same size as the frequency array */
 
     if (cntl_size != freq_size) {
+        /* Enhancement-497: this announced the fault and returned
+         * WITHOUT setting an output -- on EVERY evaluation. The run
+         * ended rc=0 with the source held at zero throughout, and the
+         * same two lines appeared 2025 times over a 2 ms transient
+         * (it scales with the run: a 1 s sweep prints about a million).
+         * Two arrays of different length cannot become the same length
+         * at a later timepoint, so there is nothing to wait for. This
+         * is the shape E-491 fixed in s_xfer's cfunc.mod and named
+         * there: say it once and stop. */
         cm_message_send(square_array_error);
+        cm_cexit(1);
         return;
     }
 

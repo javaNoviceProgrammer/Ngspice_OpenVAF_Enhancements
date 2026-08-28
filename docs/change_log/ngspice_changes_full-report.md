@@ -1872,6 +1872,89 @@ E-468's behaviour; a `sens` run with no filter or with one that matches; and
 `.func` still resolves to the last definition -- only the silence is gone.
 
 
+### `analysis/dsetparm.c`, `analysis/nsetparm.c`, `maths/misc/randnumb.c`, `frontend/inpcom.c` + five XSPICE models — constraints the documentation states and the code did not check ([E-497](../../enhancements_doc/Enhancement-497.md))
+
+Round 56 tried a technique worth keeping: mine the manual for stated numeric
+constraints, then ask of each whether anything enforces it. Three of the five
+findings came out of one `pdftotext ngspice-manual.pdf | grep -E "must be|should be"`.
+
+**THE `disto` TWO-TONE RATIO WAS UNVALIDATED.** The manual is explicit --
+f2overf1 *"should be a real number between (and not equal to) 0.0 and 1.0"* --
+and the ratio is not decorative, because it sets the second tone. Measured on a
+reactive circuit, the 2F1-F2 product read **1.695** at ratio 0, **1.630** at 1,
+**1.477** at 1.5 and **1.580** at -0.5, against 1.711 for a legal 0.5. At ratio 1
+F2 equals F1, so the plot ngspice still labels *"IM: f1-f2"* holds a product at
+**DC**; at a negative ratio the second tone sits at a negative frequency. All
+accepted in silence, and the numbers look ordinary either way.
+
+**Both neighbouring cases in the SAME switch** already test their value and
+return `E_PARMVAL`; `D_F2OVRF1` was a bare `job->Df2ovrF1 = value->rValue;`.
+**Refused rather than clamped**: the ratio IS the experiment being asked for, and
+any substitute would answer a different question without saying so.
+
+**The guard is NARROWER than the manual, and deliberately so.** The first
+version took the manual at its word and refused everything outside (0,1);
+[E-255](../../enhancements_doc/Enhancement-255.md)'s suite caught it in the very
+next regression. That suite measures the two-tone IM3 at f1 = 1.0 GHz and
+**f2 = 1.3 GHz** and proves the result machine-exact against an independent QPSS
+harmonic-balance engine, so F2 above F1 leaves all three products at distinct
+non-zero frequencies and is well posed -- keeping F2 below F1 is a convention,
+and a working verified deck is better evidence than the sentence in the manual.
+Refused now: only `<= 0` (the second tone at DC or a negative frequency) and
+`== 1` (F1-F2 would be DC and 2F1-F2 would be F1, so the plots would not hold
+intermodulation products at all).
+
+**`setseed` SILENTLY TRUNCATED A FRACTIONAL SEED.** `%d` stops at the first
+character it cannot use, so `2.5` scanned as **2**. Every other bad spelling is
+named (*"Cannot use 0 / -3 / abc as seed!"*) and the sibling command `repeat`
+names a fractional count outright (*"bad repeat argument 3.7"*), so this was the
+one way to be wrong quietly.
+
+**`s_xfer` INDEXED `int_ic` BY THE WRONG ARRAY'S SIZE.** The initialisation loop
+reads `PARAM(int_ic[den_size - 2 - i])` -- `den_size` being
+`PARAM_SIZE(den_coeff)` -- and **nothing anywhere consults `PARAM_SIZE(int_ic)`**,
+though the manual states int_ic "must be of size one less as the array of values
+specified for den_coeff". Too short and the initial conditions the array does not
+reach read as zero, taking v(out) at 10 us from **7.00005 to 4.99995e-05**; too
+long and the surplus was never looked at.
+
+**THE OSCILLATOR FAMILY WENT SILENTLY DEAD.** `sine`, `square`, `triangle` and
+`oneshot` each announced a control/frequency array mismatch and returned WITHOUT
+SETTING AN OUTPUT, on every evaluation: **rc=0**, the source held at zero all
+run, and **2025 message blocks over a 2 ms transient** -- about a million for a
+1 s run. This is precisely the shape
+[E-491](../../enhancements_doc/Enhancement-491.md) fixed in `s_xfer`'s
+`cfunc.mod` and explained there (*"say it once and stop, the way file_source does
+when its file will not open"*); four models were left doing the old thing.
+`d_osc` and `d_pwm` perform the same check inside their `INIT` block and so
+already say it once -- deliberately untouched.
+
+**A DUPLICATE `.param` WAS THE ONLY ONE OF ITS FAMILY TO PASS IN SILENCE.**
+`.func` has been reported since E-491, `.model` and `.subckt` long before that,
+`.param` not at all -- and it resolves the OTHER WAY from two of them, taking the
+**LAST** definition where `.model`/`.subckt` keep the **FIRST**. So two included
+files that each set `vdd` agree or disagree purely by **include ORDER**, and a
+`.param` written in the deck is silently displaced by a library included after
+it; both measured. Which value wins is **not** changed -- decks depend on
+last-wins -- it is only made audible, scoped to TOP-LEVEL cards by the same
+`.subckt` nesting count that already governs the `.func` scan, because a
+subcircuit's own parameters are legitimately redefined once per instance.
+
+**Also corrected, with no demonstrated consequence:** `dsetparm.c`'s `D_STOP` and
+`nsetparm.c`'s `N_STOP` each reset the **start** frequency field when it was the
+**stop** frequency that was refused. Both return `E_PARMVAL` before either field
+is read, so nothing observable followed -- but the line said the opposite of what
+it did.
+
+**Deliberately unchanged:** every meaningful disto ratio -- 0.001 to 0.999 AND
+above 1, including E-255's 1.3 -- and single-tone `disto`, plus the neighbouring points/start/stop checks; `setseed` with an
+integer, with surrounding blanks, and its existing messages; `s_xfer` with a
+correct `int_ic`, with none at all, and E-491's num>den guard firing first; a
+matching `cntl_array`/`freq_array` on all three oscillators; a single `.param`,
+two names on one card, a subcircuit's own parameters (three shapes), and the
+`.func`/`.model`/`.subckt` messages.
+
+
 ### `frontend/dotcards.c`, `frontend/breakp2.c`, `frontend/outitf.c` + three headers — a plot keyword is not a signal name ([E-496](../../enhancements_doc/Enhancement-496.md))
 
 Reported from use, not from a hunt. With `.option saveused` in the deck,
@@ -2882,3 +2965,4 @@ industry-model corpus at the time it landed.
 | [E-494](../../enhancements_doc/Enhancement-494.md) | src/spicelib/parser/ptfuncs.c, src/frontend/inpcom.c, examples/bexprvalue_examples/ (new) | **TWO WAYS A B SOURCE EXPRESSION DISAGREED WITH EVERY OTHER VALUE PATH.** Round 54 compared the B source path against the paths that read the *same number on the same deck*. **`x/0` LOST ITS SIGN**: E-491 replaced a gmin-derived fudge factor in `PTdivide` with a fixed epsilon and wrote the nudge as `arg2 = (arg1 >= 0.0) ? PTDIV_EPS : -PTDIV_EPS;`, meaning to keep the sign of the numerator -- but a negative numerator was then divided by a **NEGATIVE** epsilon, so the quotient came out **POSITIVE** either way. `v(p)/0` with v(p) = -3 returned **+3e+32** instead of -3e+32, and `-1/0`, `(0-2)/0`, `-1.0/0.0`, `-1/(1-1)` and `E0 b0 0 vol='-1/0'` were all positive too. **Every case E-491 measured had a positive numerator**, which is why its own suite did not see it. A divisor of exactly zero carries no sign to recover, so the side zero is approached from is now chosen **ONCE** rather than per operand: the epsilon is unconditionally positive, and the quotient keeps the numerator's sign -- the limit of `x/eps` as `eps` tends to zero from above, and what the comment E-491 left in place already described. **NUMERIC LITERALS WERE ROUNDED TO 11 SIGNIFICANT DIGITS**: every B line is rewritten before parsing by `inp_modify_exp()`, which re-emitted each literal with `"%18.10e"`, so `v=1.2345678901234567` reached the parser as `1.2345678901e+00` -- a relative error of **1.9e-11** -- while the same literal on an `R`, `C` or `V` card, in a `.param`, or as an **OSDI `.model` parameter** kept all seventeen. The B source was the only path in the simulator that could not carry a double, and it reached the arithmetic rather than just the printout: `tan(1.5707963267948966)` returned **-1.96e11** against libm's **1.633123935319537e+16**, so the tangent was right and its argument was not. **MORE DIGITS WOULD NOT HAVE FIXED IT**: `INPevaluate()` reads the text back and accumulates the mantissa as `mantis = 10 * mantis + digit`, losing a bit past 2^53, so a fixed `"%.17e"` turns the sixteen digits of `0.7853981633974483` into eighteen and brings it back **1 ulp out** when the user's own text would have survived -- the new `inp_num_text()` emits the **SHORTEST** text that round-trips, trying 15 then 16 then 17 digits. **DELIBERATELY NOT WIDENED**: `INPevaluate`'s own scaling still costs 1-2 ulp, but a `V` source shows it identically on the same literals, so the suite pins **parity and a 2 ulp bound** rather than bit-exactness, against an 11-digit rounding that had put those values **1.0e5-1.6e5 ulp** out; and `mkb()` in `inpptree.c` folds a constant `/` with a raw division and no zero guard, bypassing `PTdivide`, but probed from `B`, `E` and `G` in constant, parenthesised, nested and mixed forms it **never produced an infinity**, so it appears unreachable from user input and was left alone rather than fixed past the evidence. **UNCHANGED**: E-491's magnitude and gmin independence; ordinary divisors; the SPICE suffixes, leading-dot and exponent forms; `pwl` B sources, which `inp_bsource_compat()` excludes from the rewrite; current B sources, node references mixed with literals, and the value surviving a transient; and `E`/`G` expressions, which never passed through `inp_modify_exp()` at all since only `b` lines do. Verified `bexprvalue` **63/63** (37/63 pre-fix, 26 discriminating), regression **408/408**. **No openvaf-r change.** |
 | [E-495](../../enhancements_doc/Enhancement-495.md) | src/spicelib/parser/inpgmod.c, src/spicelib/analysis/dctrcurv.c, src/frontend/numparam/xpressn.c, src/frontend/rawfile.c, examples/binstale_examples/ (new) | **SEVEN WAYS A DECISION MADE ONCE WAS NEVER REVISITED.** Round 55 probed MOSFET **model binning**, untouched by any earlier round, and the shape it exposed led into the DC sweep. **THE TOLERANCE WAS ABSOLUTE**: `is_equal` tested `fabs(a-b) < 1e-9` on values in **metres** -- a fixed **one-nanometre** slop -- so a device up to 1 nm outside *every* declared bin was silently placed in one (`l=31n` bound to a bin reaching 30n; `31.1n` refused, so the edge really was the constant). The magnitude does not scale, so as a *fraction* it grows without bound: 0.03% of a 3 um width but **5% of a 20 nm channel**. Now relative. **ADJACENT BINS OVERLAPPED**: `in_range`'s own comment states `min <= value < max` while the code also accepted `is_equal(value,max)`, closing the interval, so a device on a shared boundary matched both neighbours and **`.model` declaration order decided** -- reversing two cards moved `l=1.999u`, unambiguously inside the LOWER bin, into the upper one and changed i(V1) by **2.95x**. Selection now runs the strict rule first and the closed one only where it matched nothing, which keeps the top bin's `lmax` binding and means nothing that works today moves. **AN OSDI MODEL COULD NOT BE BINNED**: the set was eleven hardcoded built-ins, so a Verilog-A model written as a PDK writes one died with *Unable to find definition of model nv* for a model defined twice; OSDI is now asked through **E-323**'s predicate and the four bin limits consumed like `level`. **A DEGENERATE `agauss`/`gauss` WAS SILENTLY FLAT**: a zero or negative variation or sigma returns the nominal for every draw, so a montecarlo over a parameter that never moves reported **100% yield** where the real spec gave 12% -- one character apart, silent under `warn_physics`. Now audible; behaviour unchanged; `unif`/`aunif`/`limit` deliberately untouched. **`.dc` NEVER REVISITED WHAT SETUP DECIDED**: **E-471**'s own comment says `.dc` *sets the circuit up once and walks its points inside the analysis* and that a frozen topology makes *the sweep quietly draw a flat line* -- it gave `sweep` the machinery to rebuild and `.dc` never got it, so a swept `l`/`w` leaving its bin kept the parse-time model (**2.9x out**) and a swept parameter changing an OSDI node collapse kept the old matrix (**a flat line**: -1.000e-03 at rs = 0, 500, 1000 where the answers are -1e-3, -6.67e-4, -5e-4). `alter` and `sweep` both get these right, so `.dc` now **REFUSES** the point it cannot compute and names `sweep` (E-485's rule). Detection is free when nothing moves: the collapse is read from a flag `OSDItemp` **already** sets and `CKTdoJob` already consumes (**E-417**) -- `DCTsetInstParam` calls `DEVtemperature` and never asked -- and the bin from the four limits on the bound model. The refusal deliberately does NOT borrow E-427's *the device refused ... also refused by `alter`*, false on both counts here. **THE ASCII RAWFILE WAS ONE DIGIT SHORT**: `DEFPREC 15` emits sixteen significant digits where a double needs seventeen, so `write`+`load` changed the last ulp while the BINARY format was exact (`%.15e` fails to round-trip 51390 of 200000 random doubles, `%.16e` none). **UNCHANGED**: bin selection that works today in either card order incl. the top `lmax`; `alter`; `sweep`; `unif`/`aunif`/`limit`; a genuine device refusal; source and `m` sweeps; an unbinned model's sweep; the binary rawfile and an explicit `rawfileprec`. Verified `binstale` **64/64** (40/64 pre-fix, 24 discriminating), regression **409/409**. **No openvaf-r change.** |
 | [E-496](../../enhancements_doc/Enhancement-496.md) | src/frontend/dotcards.c, src/frontend/breakp2.c, src/frontend/outitf.c, src/include/ngspice/ftedebug.h, src/include/ngspice/ftedefs.h, src/include/ngspice/fteext.h, examples/savekw_examples/ (new) | **A PLOT KEYWORD IS NOT A SIGNAL NAME.** Reported from use: with `.option saveused`, `pyplot v(a[0]) xlabel 'something'` printed *save 'xlabel': nothing of that name is in this analysis*. **E-469**'s bare-word scan took EVERY argument of an output command that was not a number, a redirection or an expression, with no knowledge of those commands' own keywords -- all **22 plot keywords**, `hardcopy` likewise, and `meas` worst (`meas tran m1 FIND v(b) AT 50u` offered `tran`, `m1`, `find`, `at`). **THE ANSWER WAS NEVER AFFECTED**: E-469 over-collects deliberately (its own comment says under-saving would cost the answer) and a save matching nothing produces nothing -- the vector asked for returns bit-identical either way. The names were gathered in SILENCE until **E-493** added the unmatched-save warning, which **exposed** the flaw rather than causing it. **FIXED IN TWO PARTS, THE OBVIOUS ONE SECOND.** (1) **An INFERRED save is never reported**: E-493's warning exists to catch a name the AUTHOR wrote and got wrong, so registration records which is which (`db_auto` -> `save_info.autosaved`) and the warning skips what `saveused` guessed; the flag is set only around `ft_saveused`'s own `com_save`, leaving `.save`, `save`, `.probe` and savecurrents untouched. This covers every keyword of every command, present and future. (2) The plot family now knows its own grammar and `meas` contributes no bare words (its vectors arrive as `v(...)`/`i(...)`, already taken by the reference scan) -- but alone that would be the **E-487** trap, a hand-maintained list that rots invisibly (it mirrors `CT_PLOTKEYWORDS`, unusable here because it is a tab-completion table built only in an interactive session), which is why (1) answers the report. **UNCHANGED**: everything about WHAT IS SAVED, pinned against the same run without the option (plain plot, plot with keywords, `plot ... vs ...`, `meas` then plot, `let` then plot); `all` still means everything; `wrdata`'s file name is still not a vector; an explicit `.save` still makes saveused stand aside; a node genuinely named `title` or `vs` keeps its value; `.save`/`.probe` of a name matching nothing still warns. Verified `savekw` **46/46** (15/46 pre-fix, 31 discriminating), regression **410/410**. **No openvaf-r change.** |
+| [E-497](../../enhancements_doc/Enhancement-497.md) | src/spicelib/analysis/dsetparm.c, src/spicelib/analysis/nsetparm.c, src/maths/misc/randnumb.c, src/frontend/inpcom.c, src/xspice/icm/analog/{s_xfer,sine,square,triangle,oneshot}/cfunc.mod, examples/argcheck_examples/ (new) | **CONSTRAINTS THE DOCUMENTATION STATES AND THE CODE DID NOT CHECK.** Round 56 mined the manual for stated numeric constraints; three of five findings came from one grep. **`disto`'s f2overf1 was unvalidated** -- the manual says *between (and not equal to) 0.0 and 1.0*, yet 0, 1, 1.5, 2 and -0.5 were accepted in silence and **move the answer** (2F1-F2 read 1.695 / 1.630 / 1.477 / 1.580 vs 1.711 for a legal 0.5); at ratio 1 the plot labelled *IM: f1-f2* holds a product at **DC**, at a negative ratio the second tone is at a negative frequency. **Both neighbouring cases in the SAME switch** already return `E_PARMVAL`. **Refused, not clamped** -- the ratio IS the experiment. **`setseed` truncated a fractional seed**: `%d` stops at the first unusable character so `2.5` became **2**, while `0`/`-3`/`abc` are each named and sibling `repeat` names a fractional count. **`s_xfer` indexed `int_ic` by the WRONG array's size** -- `PARAM(int_ic[den_size - 2 - i])` with nothing consulting `PARAM_SIZE(int_ic)`: too short and the unreached ICs read zero, v(out)@10us **7.00005 -> 4.99995e-05**. **The oscillator family went SILENTLY DEAD** -- `sine`/`square`/`triangle`/`oneshot` announced an array mismatch and returned **without setting an output, every evaluation**: rc=**0**, source at zero, **2025 message blocks per 2 ms** (~1e6 for 1 s). Exactly the shape **E-491** fixed in `s_xfer` and named there; `d_osc`/`d_pwm` check inside `INIT` and are untouched. **A duplicate `.param` was the only one of its family to pass in silence** -- `.func` (E-491), `.model` and `.subckt` all warn -- and it takes the **LAST** where they keep the **FIRST**, so two includes that each set `vdd` resolve by **include ORDER** and a deck's own `.param` is displaced by a later library. Which value wins is unchanged; only made audible, scoped to top-level cards so subcircuit parameters are not mistaken for duplicates. Also: `D_STOP`/`N_STOP` reset the **start** field on a refused **stop** frequency (no observable consequence). **UNCHANGED**: legal ratios and single-tone `disto`; `setseed` with an integer or blanks; `s_xfer` correct/absent `int_ic` and E-491's num>den guard; matching oscillator arrays; a single `.param`, two names on one card, subcircuit parameters, and the `.func`/`.model`/`.subckt` messages. Verified `argcheck` **52/52** (33/52 pre-fix, 19 discriminating), regression **411/411**. **No openvaf-r change.** |
