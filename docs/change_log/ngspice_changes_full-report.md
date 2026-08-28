@@ -1872,6 +1872,77 @@ E-468's behaviour; a `sens` run with no filter or with one that matches; and
 `.func` still resolves to the last definition -- only the silence is gone.
 
 
+### `maths/KLU/klusmp.c`, `frontend/com_optimize.c`, `frontend/com_sweep.c` — loop-command arguments, verdicts, and a KLU refactor kind ([E-499](../../enhancements_doc/Enhancement-499.md))
+
+Round 58 re-probed the `sweep` / `optimize` fast path after
+[E-498](../../enhancements_doc/Enhancement-498.md) fixed the transient side. The reuse arithmetic was clean this time.
+What was wrong was everything around it — the arguments the commands accept and the verdict they print — and, underneath
+both, one genuine memory bug that setup reuse made reachable.
+
+**A complex refactor handed a real factorisation.** `klu_z_refactor` refills an existing factorisation *in place*,
+walking the L and U index arrays that `klu_z_factor` built. Handed a **real** `Numeric` object it walks half-sized
+arrays with complex strides: it reads and writes past their ends, and a later `klu_free_numeric` frees whatever it
+scribbled. The malloc abort names object `0x3ff0000000000000` — the IEEE-754 bit pattern of the double **1.0**, a matrix
+*value* being freed as a pointer. The mismatch is reachable because a `Numeric` outlives the analysis that built it:
+every AC/SP/NOISE run is preceded by a real operating point, and E-471's setup reuse keeps the matrix standing between
+sweep points, so the second and later points arrived holding the operating point's real factorisation. Under
+`.option klu`, `sweep -analysis ac` and `-analysis noise` returned **0.0 at every reused point**,
+`optimize -analysis ac` fitted a parameter **10x wrong** while reporting *converged*, and `-analysis sp` **crashed on 9
+of 10 runs**. SPARSE was never affected, and neither was any analysis that stays real — `op`, `dc`, `tran`, `tf`, `pz`
+and `disto` were correct throughout, which is what kept the scope narrow enough to miss. The matrix now records which
+kind of factorisation its `Numeric` holds and a kind change forces a full factorisation; both directions are guarded,
+because a real refactor of a complex `Numeric` is wrong the same way round.
+
+**Four arguments parsed by a weaker parser than the one in the same file.** `com_optimize.c` has always had `optnum()`
+— built on `ft_numparse`, so it reads SPICE suffixes *and* scientific notation — and uses it for the bounds, `-target`
+and `-spec`. Its integer options did not: `-maxiter`, `-samples` and `-swarmsize` called `atoi()` and `-tol` called
+`atof()`, which stop at the first character they cannot use. So **`1k` meant 1000 in a bound and 1 in `-maxiter` on the
+same command line**: `-maxiter 1k` and `-maxiter 2e2` ran one or two iterations and returned 1495 where `-maxiter 1000`
+returns exactly 1500, and `-samples 2e2` ran **2** Monte-Carlo samples while design centering still printed a yield and
+a Wilson confidence interval computed from them. `abc` was 0 in all four, in silence. `sweep lin 2e2` (200 points) and
+`montecarlo 2e2` (200 samples) were already right — and `sweep` had grown a strict count parser in E-478 for exactly
+this reason. All four now parse strictly and refuse a value they cannot use, because a count or a tolerance *is* the
+request. `-seed` had the matching hole: E-497 taught the `setseed` **command** to refuse `3.7`, but the **option**
+spelling truncated it without a word, and `-seed 0` / `-seed -3` left the run unseeded and **not reproducible** while
+the author had asked in writing for a fixed seed. All four `-seed` sites now apply the command's rule.
+
+**"converged" when nothing was optimised.** The word describes the search stopping, not the answer being the one the
+author wanted. A parameter the objective cannot depend on — or a name that does not resolve at all — ends after three
+evaluations with the **starting value handed back as the fit** (1 k, 5 k and 9 k returned 1000, 5000 and 9000, each
+labelled converged); `-target x 0.4 0` printed `sum-sq residual = 0`, the most convincing number the command can
+produce, for a fit that never happened; and an answer pressed against a search bound was not distinguished from a
+minimum. The objective's spread across the run, and the answer's position relative to its bounds, were both available
+and unused. Said now, as E-438 already says it for failed evaluations and as QPSS-HB says *STALLED above tol —
+accepted*.
+
+**A knob that names nothing.** `sw_kind()` falls through to `SW_ALTER` for any name it does not recognise, and the
+comment on that fallback already describes what follows: `alter` reports "no such device", the sweep runs anyway over a
+knob that never moves, and the user gets a full set of points, `rc = 0`, and a plottable **flat curve whose x-axis is
+named after the typo**. E-435 removed that shape for a subcircuit-local model name and E-488 for `temp`; this removes
+it for every remaining spelling, exactly as E-431 did for an unresolved `-output`. A malformed `list` value did the same
+on a smaller scale — `list 1k inf 2k 3k` ran **one** point and called `inf`, `2k` and `3k` unrecognised, though
+`list 1k 2k 3k` proves the last two are read without complaint. The list check is deliberately narrow, firing only for a
+token that reads as a number and is still unusable, because the token after a list is very often the next knob.
+
+**`-overlay` discarded the timepoints the solver chose.** It resampled onto a **uniform** grid of the same point count
+as the longest run. A transient places its points where the waveform moves, so keeping the count and throwing away the
+placement is exactly backwards: the overlay of an RC driven by a 0.2 us pulse reported a peak of `0.244` where every one
+of its own runs, and a standalone run, said `0.402` — **39% low**, from the same 121 points. It now uses the **union**
+of the runs' own timepoints, bounded to a small multiple of the old size, and says which grid it used. Its per-point
+vector names were formatted with `%g`, six significant digits, so `list 1000.0001 1000.0002 1000.0003` produced **three
+vectors all called `vn_1000`** of which only one was addressable; they now carry the shortest text that reads back as
+the exact value, as E-494 settled for the same class of defect.
+
+**Two warnings that contradicted each other.** A point whose analysis did not converge is recorded as `NaN` (E-445) and
+*was also* counted as an unresolved output, so one run said both *recorded as NaN, not as results* (true) and *those
+entries are zero* (false) about the same points. An output is now counted as unresolved only where the analysis
+converged.
+
+**Unchanged**: a real fit is not annotated; every legitimate knob spelling (bare device, `@dev[param]`, `temp`, deck
+`.param`), a good `list` and a two-knob sweep still parse; a transient sweep and the reuse tally are untouched, so the
+KLU guard cannot be mistaken for disabling refactoring; and a legal `-seed` still pins the run.
+
+
 ### `devices/vsrc/vsrctemp.c`, `osdi/osdisetup.c` — per-run state left stale by the setup-reuse fast path ([E-498](../../enhancements_doc/Enhancement-498.md))
 
 [E-471](../../enhancements_doc/Enhancement-471.md) lets `sweep`, `optimize` and `montecarlo -warm` keep a circuit
@@ -3031,3 +3102,4 @@ industry-model corpus at the time it landed.
 | [E-497](../../enhancements_doc/Enhancement-497.md) | src/spicelib/analysis/dsetparm.c, src/spicelib/analysis/nsetparm.c, src/maths/misc/randnumb.c, src/frontend/inpcom.c, src/xspice/icm/analog/{s_xfer,sine,square,triangle,oneshot}/cfunc.mod, examples/argcheck_examples/ (new) | **CONSTRAINTS THE DOCUMENTATION STATES AND THE CODE DID NOT CHECK.** Round 56 mined the manual for stated numeric constraints; three of five findings came from one grep. **`disto`'s f2overf1 was unvalidated** -- the manual says *between (and not equal to) 0.0 and 1.0*, yet 0, 1, 1.5, 2 and -0.5 were accepted in silence and **move the answer** (2F1-F2 read 1.695 / 1.630 / 1.477 / 1.580 vs 1.711 for a legal 0.5); at ratio 1 the plot labelled *IM: f1-f2* holds a product at **DC**, at a negative ratio the second tone is at a negative frequency. **Both neighbouring cases in the SAME switch** already return `E_PARMVAL`. **Refused, not clamped** -- the ratio IS the experiment. **`setseed` truncated a fractional seed**: `%d` stops at the first unusable character so `2.5` became **2**, while `0`/`-3`/`abc` are each named and sibling `repeat` names a fractional count. **`s_xfer` indexed `int_ic` by the WRONG array's size** -- `PARAM(int_ic[den_size - 2 - i])` with nothing consulting `PARAM_SIZE(int_ic)`: too short and the unreached ICs read zero, `v(out)` at 10 us **7.00005 -> 4.99995e-05**. **The oscillator family went SILENTLY DEAD** -- `sine`/`square`/`triangle`/`oneshot` announced an array mismatch and returned **without setting an output, every evaluation**: rc=**0**, source at zero, **2025 message blocks per 2 ms** (~1e6 for 1 s). Exactly the shape **E-491** fixed in `s_xfer` and named there; `d_osc`/`d_pwm` check inside `INIT` and are untouched. **A duplicate `.param` was the only one of its family to pass in silence** -- `.func` (E-491), `.model` and `.subckt` all warn -- and it takes the **LAST** where they keep the **FIRST**, so two includes that each set `vdd` resolve by **include ORDER** and a deck's own `.param` is displaced by a later library. Which value wins is unchanged; only made audible, scoped to top-level cards so subcircuit parameters are not mistaken for duplicates. Also: `D_STOP`/`N_STOP` reset the **start** field on a refused **stop** frequency (no observable consequence). **UNCHANGED**: legal ratios and single-tone `disto`; `setseed` with an integer or blanks; `s_xfer` correct/absent `int_ic` and E-491's num>den guard; matching oscillator arrays; a single `.param`, two names on one card, subcircuit parameters, and the `.func`/`.model`/`.subckt` messages. Verified `argcheck` **52/52** (33/52 pre-fix, 19 discriminating), regression **411/411**. **No openvaf-r change.** |
 
 | [E-498](../../enhancements_doc/Enhancement-498.md) | src/spicelib/devices/vsrc/vsrctemp.c, src/osdi/osdisetup.c, examples/reusestate_examples/ (new) | **PER-RUN STATE LEFT STALE BY THE SETUP-REUSE FAST PATH.** E-471 keeps a circuit standing between points -- `CKTdoJob` skips `CKTunsetup`/`CKTsetup` and re-runs only `CKTtemp`. That reasoning was about **topology** and for topology it is right; what was never asked is which state `DEVsetup` initialises that is **not topology at all**. **A VOLTAGE SOURCE STOPPED SCHEDULING BREAKPOINTS ENTIRELY** -- `VSRCbreak_time` is the source's breakpoint cursor, armed only when `CKTtime >= VSRCbreak_time` and seeded to -1.0 in `vsrcset.c`; reused, the instance carried the PREVIOUS run's break time, at or past that run's TSTOP, so the test was false at time zero and stayed false, and a PULSE or PWL source armed **no breakpoints at all** (**0 of 5** PWL corners landed on, against 5 of 5; 81 native timepoints against 103). Against a standalone run of the identical circuit `maximum(v(n))` -- grid-INDEPENDENT, so a different ANSWER not a different sampling -- was **+16%, +44%, -10%** across five points and **106%** at other spacings, in silence; a **0.3 ppm** change of the swept value sufficed, since the schedule is either armed or it is not. Only the FIRST point of a sweep kept a correct schedule, so the same resistance gave **two different answers by direction of travel** (R=1000: 0.40217511 up, 0.33963131 down). **`optimize` RETURNED A WRONG FIT AND CALLED IT CONVERGED** -- fitting R for `maximum(v(n))=0.20` gave 2501.777336 with reuse off (peak 0.2000000003) against **2156.690117** with it on (peak 0.2264, **13% out**), in 106 evaluations rather than 67. Contradicts E-471's own comment that reuse *changes nothing a user can see except the time ... a few ulp*, whose stated cause is refuted too: KLU and Sparse give bit-identical deviations. **OSDI's `last_crossing` CACHE** -- per-run state whose contract `osdiaccept.c` states outright, *starts at 0.0 before any crossing has been observed*; only `OSDIsetup` seeded it, so a reused point held the previous point's crossing and a 100 kHz sine over 40 us read **3e-05 at time zero** of points 2 to 5 instead of 0. Sibling `absdelay` was already right, re-seeding on `is_init_tran`. **Both re-armed in `DEVtemperature`**, which `CKTtemp` runs once per job on BOTH paths and which does NOT run on a `resume`. Suites stayed green because `reusesetup_examples` and `reuseloops_examples` contain **no PULSE or PWL source** and the two shipped sweep+tran+PULSE examples use `-overlay`, whose resampling damps the error below their tolerances -- both moved when this was fixed. **UNCHANGED**: the fast path itself (still reused at 4 of 5 points, 0 rebuilt), sources registering no breakpoints (`SIN`, `EXP`, dc-only), a PULSE **current** source (`ISRC` recomputes from `CKTtime` and keeps no cursor), and `op`/`ac`/`tf`/`noise`. **REPORTED, NOT FIXED**: under KLU, `sweep -analysis ac` with reuse returns 0.0 for reused points and **crashes in about one run in ten**, non-deterministically -- a different defect in a different layer, reproducing on the shipped binary. Verified `reusestate` **34/34** both solvers (17/34 pre-fix, 17 discriminating), regression **412/412**. **No openvaf-r change.** |
+| [E-499](../../enhancements_doc/Enhancement-499.md) | src/maths/KLU/klusmp.c, src/include/ngspice/klu.h, src/frontend/com_optimize.c, src/frontend/com_sweep.c, examples/loopguard_examples/ (new) | **LOOP-COMMAND ARGUMENTS, VERDICTS, AND A KLU REFACTOR KIND.** Round 58 re-probed the fast path after E-498; the reuse arithmetic was clean, everything around it was not. **A COMPLEX REFACTOR HANDED A REAL FACTORISATION** -- `klu_z_refactor` refills in place, walking the L/U index arrays `klu_z_factor` built; given a REAL `Numeric` it walks half-sized arrays with complex strides and a later `klu_free_numeric` frees what it scribbled (malloc names object **0x3ff0000000000000**, the bit pattern of the double **1.0** -- a matrix VALUE freed as a pointer). Reachable because every AC/SP/NOISE run follows a real operating point and E-471's reuse keeps the matrix standing: under `.option klu`, `sweep -analysis ac`/`noise` gave **0.0 at every reused point**, `optimize -analysis ac` fitted **10x wrong** saying *converged*, `sp` **SIGSEGV'd 9 of 10 runs**. SPARSE and every real analysis were always fine; both directions now check the kind. **FOUR ARGUMENTS PARSED BY A WEAKER PARSER THAN THE ONE IN THE SAME FILE** -- `optnum()` served bounds/`-target`/`-spec` while `-maxiter`/`-samples`/`-swarmsize` used bare `atoi` and `-tol` bare `atof`, so **`1k` meant 1000 in a bound and 1 in `-maxiter` on one line**; `-samples 2e2` ran **2** MC samples yet design centering printed a yield and a Wilson interval. `sweep lin 2e2` and `montecarlo 2e2` were already right, and `sweep` grew a strict count parser in E-478. **`-seed`** had the matching hole: E-497 guarded the COMMAND, the OPTION truncated `3.7` silently and `0`/`-3` left the run **unseeded and NOT reproducible**; all four sites now apply the rule. **CONVERGED WHEN NOTHING WAS OPTIMISED** -- a parameter the objective cannot depend on, or one that does not resolve, hands the **STARTING value back** after 3 evaluations; `-target x 0.4 0` printed *residual = 0* for a fit that never happened; a bound-pinned answer was not distinguished from a minimum. **A KNOB THAT NAMES NOTHING** fell through `sw_kind`'s `SW_ALTER` fallback to a full set of points, rc=0 and a plottable **FLAT curve named after the typo** (the shape E-435/E-488/E-431 each removed elsewhere); `list 1k inf 2k 3k` ran ONE point calling the valid `2k`/`3k` unrecognized. **`-overlay` DISCARDED THE SOLVER'S TIMEPOINTS** -- a UNIFORM grid of the same count reported a peak **39% low** (0.244 vs 0.402) from the same 121 points; now the **union** of the runs' own points, bounded, and it says which grid. Its `%g` names collided (three vectors all `vn_1000`), now shortest-round-trip per E-494. **TWO WARNINGS CONTRADICTED EACH OTHER**: *recorded as NaN* (true) and *those entries are zero* (false). **UNCHANGED**: a real fit is not annotated; every legitimate knob spelling, a good `list` and a two-knob sweep still parse; a transient sweep and the reuse tally are untouched; a legal `-seed` still pins the run. Verified `loopguard` **49/49** both solvers (18/49 pre-fix sparse, 13/49 klu -- 31 and 36 discriminating), regression **413/413**. **No openvaf-r change.** |

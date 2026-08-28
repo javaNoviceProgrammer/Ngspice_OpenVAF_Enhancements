@@ -564,8 +564,45 @@ SMPcLUfac (SMPmatrix *Matrix, double PivTol)
           return 0 ;
         }
 
-        ret = klu_z_refactor (Matrix->SMPkluMatrix->KLUmatrixAp, Matrix->SMPkluMatrix->KLUmatrixAi, Matrix->SMPkluMatrix->KLUmatrixAxComplex,
-                              Matrix->SMPkluMatrix->KLUmatrixSymbolic, Matrix->SMPkluMatrix->KLUmatrixNumeric, Matrix->SMPkluMatrix->KLUmatrixCommon) ;
+        /* Enhancement-499: refactor only a Numeric that is already COMPLEX.
+         *
+         * klu_z_refactor refills an existing factorisation in place, walking the
+         * L and U index arrays that klu_z_factor built. Handed a REAL Numeric it
+         * walks half-sized arrays with complex strides: it reads and writes past
+         * the ends, and a later klu_free_numeric frees whatever it scribbled --
+         * the malloc abort names object 0x3ff0000000000000, the bit pattern of
+         * the double 1.0, a matrix VALUE being freed as a pointer.
+         *
+         * The mismatch is reachable because a Numeric outlives the analysis that
+         * built it. Every AC/SP/NOISE run is preceded by a real operating point,
+         * and Enhancement-471's setup reuse keeps the matrix standing between
+         * sweep points instead of rebuilding it -- so the second and later points
+         * of `sweep -analysis ac` arrived here with the operating point's REAL
+         * Numeric. Without reuse CKTsetup rebuilt the matrix and SMPcReorder did
+         * a full complex factorisation first, which is why this was invisible.
+         *
+         * Symptoms: `sweep`/`optimize -analysis ac|noise|sp` under `.option klu`
+         * returned 0.0 for every reused point, fitted a parameter 10x wrong while
+         * reporting "converged", and crashed outright (SIGSEGV in klu_z_refactor)
+         * on 9 of 10 `sp` runs. SPARSE was never affected. */
+        if (Matrix->SMPkluMatrix->KLUmatrixNumeric == NULL ||
+            !Matrix->SMPkluMatrix->KLUmatrixNumericIsComplex)
+        {
+            if (Matrix->SMPkluMatrix->KLUmatrixNumeric != NULL)
+                klu_free_numeric (&(Matrix->SMPkluMatrix->KLUmatrixNumeric),
+                                  Matrix->SMPkluMatrix->KLUmatrixCommon) ;
+            Matrix->SMPkluMatrix->KLUmatrixNumeric =
+                klu_z_factor (Matrix->SMPkluMatrix->KLUmatrixAp, Matrix->SMPkluMatrix->KLUmatrixAi,
+                              Matrix->SMPkluMatrix->KLUmatrixAxComplex,
+                              Matrix->SMPkluMatrix->KLUmatrixSymbolic,
+                              Matrix->SMPkluMatrix->KLUmatrixCommon) ;
+            Matrix->SMPkluMatrix->KLUmatrixNumericIsComplex =
+                (Matrix->SMPkluMatrix->KLUmatrixNumeric != NULL) ? 1 : 0 ;
+            ret = (Matrix->SMPkluMatrix->KLUmatrixNumeric != NULL) ;
+        } else {
+            ret = klu_z_refactor (Matrix->SMPkluMatrix->KLUmatrixAp, Matrix->SMPkluMatrix->KLUmatrixAi, Matrix->SMPkluMatrix->KLUmatrixAxComplex,
+                                  Matrix->SMPkluMatrix->KLUmatrixSymbolic, Matrix->SMPkluMatrix->KLUmatrixNumeric, Matrix->SMPkluMatrix->KLUmatrixCommon) ;
+        }
 
         if (ret == 0)
         {
@@ -622,8 +659,27 @@ SMPluFac (SMPmatrix *Matrix, double PivTol, double Gmin)
             LoadGmin_CSC (Matrix->SMPkluMatrix->KLUmatrixDiag, Matrix->SMPkluMatrix->KLUmatrixN, Gmin) ;
         }
 
-        ret = klu_refactor (Matrix->SMPkluMatrix->KLUmatrixAp, Matrix->SMPkluMatrix->KLUmatrixAi, Matrix->SMPkluMatrix->KLUmatrixAx,
-                            Matrix->SMPkluMatrix->KLUmatrixSymbolic, Matrix->SMPkluMatrix->KLUmatrixNumeric, Matrix->SMPkluMatrix->KLUmatrixCommon) ;
+        /* Enhancement-499: the mirror of the guard in SMPcLUfac -- a real
+         * refactor of a COMPLEX Numeric is wrong the same way round. Reachable
+         * whenever a transient or operating point follows an AC on a circuit
+         * whose matrix was kept standing. */
+        if (Matrix->SMPkluMatrix->KLUmatrixNumeric == NULL ||
+            Matrix->SMPkluMatrix->KLUmatrixNumericIsComplex)
+        {
+            if (Matrix->SMPkluMatrix->KLUmatrixNumeric != NULL)
+                klu_free_numeric (&(Matrix->SMPkluMatrix->KLUmatrixNumeric),
+                                  Matrix->SMPkluMatrix->KLUmatrixCommon) ;
+            Matrix->SMPkluMatrix->KLUmatrixNumeric =
+                klu_factor (Matrix->SMPkluMatrix->KLUmatrixAp, Matrix->SMPkluMatrix->KLUmatrixAi,
+                            Matrix->SMPkluMatrix->KLUmatrixAx,
+                            Matrix->SMPkluMatrix->KLUmatrixSymbolic,
+                            Matrix->SMPkluMatrix->KLUmatrixCommon) ;
+            Matrix->SMPkluMatrix->KLUmatrixNumericIsComplex = 0 ;
+            ret = (Matrix->SMPkluMatrix->KLUmatrixNumeric != NULL) ;
+        } else {
+            ret = klu_refactor (Matrix->SMPkluMatrix->KLUmatrixAp, Matrix->SMPkluMatrix->KLUmatrixAi, Matrix->SMPkluMatrix->KLUmatrixAx,
+                                Matrix->SMPkluMatrix->KLUmatrixSymbolic, Matrix->SMPkluMatrix->KLUmatrixNumeric, Matrix->SMPkluMatrix->KLUmatrixCommon) ;
+        }
 
         if (ret == 0)
         {
@@ -808,6 +864,7 @@ SMPcReorder (SMPmatrix *Matrix, double PivTol, double PivRel, int *NumSwaps)
         Matrix->SMPkluMatrix->KLUmatrixNumeric = klu_z_factor (Matrix->SMPkluMatrix->KLUmatrixAp, Matrix->SMPkluMatrix->KLUmatrixAi,
                                                                Matrix->SMPkluMatrix->KLUmatrixAxComplex, Matrix->SMPkluMatrix->KLUmatrixSymbolic,
                                                                Matrix->SMPkluMatrix->KLUmatrixCommon) ;
+        Matrix->SMPkluMatrix->KLUmatrixNumericIsComplex = 1 ;   /* Enhancement-499 */
 
         if (Matrix->SMPkluMatrix->KLUmatrixNumeric == NULL)
         {
@@ -871,6 +928,7 @@ SMPreorder (SMPmatrix *Matrix, double PivTol, double PivRel, double Gmin)
         Matrix->SMPkluMatrix->KLUmatrixNumeric = klu_factor (Matrix->SMPkluMatrix->KLUmatrixAp, Matrix->SMPkluMatrix->KLUmatrixAi,
                                                              Matrix->SMPkluMatrix->KLUmatrixAx, Matrix->SMPkluMatrix->KLUmatrixSymbolic,
                                                              Matrix->SMPkluMatrix->KLUmatrixCommon) ;
+        Matrix->SMPkluMatrix->KLUmatrixNumericIsComplex = 0 ;   /* Enhancement-499 */
 
         if (Matrix->SMPkluMatrix->KLUmatrixNumeric == NULL)
         {
@@ -925,6 +983,7 @@ SMPreorderKLUforCIDER (SMPmatrix *Matrix)
             Matrix->SMPkluMatrix->KLUmatrixNumeric = klu_z_factor (Matrix->SMPkluMatrix->KLUmatrixAp, Matrix->SMPkluMatrix->KLUmatrixAi,
                                                                    Matrix->SMPkluMatrix->KLUmatrixAxComplex, Matrix->SMPkluMatrix->KLUmatrixSymbolic,
                                                                    Matrix->SMPkluMatrix->KLUmatrixCommon) ;
+            Matrix->SMPkluMatrix->KLUmatrixNumericIsComplex = 1 ;   /* Enhancement-499 */
         } else {
             /* Allocate the Real Matrix */
             KLUmatrixAx = (double *) malloc (Matrix->SMPkluMatrix->KLUmatrixNZ * sizeof(double)) ;
@@ -938,6 +997,7 @@ SMPreorderKLUforCIDER (SMPmatrix *Matrix)
             Matrix->SMPkluMatrix->KLUmatrixNumeric = klu_factor (Matrix->SMPkluMatrix->KLUmatrixAp, Matrix->SMPkluMatrix->KLUmatrixAi,
                                                                  KLUmatrixAx, Matrix->SMPkluMatrix->KLUmatrixSymbolic,
                                                                  Matrix->SMPkluMatrix->KLUmatrixCommon) ;
+            Matrix->SMPkluMatrix->KLUmatrixNumericIsComplex = 0 ;   /* Enhancement-499 */
 
             /* Free the Real Matrix Storage */
             free (KLUmatrixAx) ;
@@ -1293,6 +1353,7 @@ SMPnewMatrix (SMPmatrix *Matrix, int size)
         Matrix->SMPkluMatrix->KLUmatrixCommon = (klu_common *) malloc (sizeof (klu_common)) ; ;
         Matrix->SMPkluMatrix->KLUmatrixSymbolic = NULL ;
         Matrix->SMPkluMatrix->KLUmatrixNumeric = NULL ;
+        Matrix->SMPkluMatrix->KLUmatrixNumericIsComplex = 0 ;   /* Enhancement-499 */
         Matrix->SMPkluMatrix->KLUmatrixAp = NULL ;
         Matrix->SMPkluMatrix->KLUmatrixAi = NULL ;
         Matrix->SMPkluMatrix->KLUmatrixAx = NULL ;
@@ -1341,6 +1402,7 @@ SMPnewMatrixKLUforCIDER (SMPmatrix *Matrix, int size, unsigned int KLUmatrixIsCo
         Matrix->SMPkluMatrix->KLUmatrixCommon = (klu_common *) malloc (sizeof (klu_common)) ; ;
         Matrix->SMPkluMatrix->KLUmatrixSymbolic = NULL ;
         Matrix->SMPkluMatrix->KLUmatrixNumeric = NULL ;
+        Matrix->SMPkluMatrix->KLUmatrixNumericIsComplex = 0 ;   /* Enhancement-499 */
         Matrix->SMPkluMatrix->KLUmatrixAp = NULL ;
         Matrix->SMPkluMatrix->KLUmatrixAi = NULL ;
         Matrix->SMPkluMatrix->KLUmatrixAxComplex = NULL ;

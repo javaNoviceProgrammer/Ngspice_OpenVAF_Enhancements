@@ -162,6 +162,33 @@ static double sw_eval_expr(const char *expr)
 /* Enhancement-189: linear interpolation of (x[],y[]) at xq, flat outside the
  * data range; x[] is assumed monotonic increasing. Used to resample per-point
  * waveforms onto a common scale for the `-overlay` family plot. */
+static int sw_is_optflag(const char *w);   /* Enhancement-499: used by sw_parse_spec */
+
+/* Enhancement-499: a token that READS as a number but that the sweep's own
+ * value scanner refuses -- `inf`, `nan`. Anything else that ends a list is the
+ * next knob or the next option, and must be left alone: a two-knob sweep is
+ * spelled `sweep @r1[r] list 1k 3k @c1[c] list 1n 2n ...`, so the token after a
+ * list is very often a knob name. */
+static int sw_looks_numeric(const char *w)
+{
+    char *end;
+    if (!w || !*w)
+        return 0;
+    (void) strtod(w, &end);
+    while (*end == ' ' || *end == '\t')
+        end++;
+    return (end != w && *end == '\0');
+}
+
+
+/* Enhancement-499: ascending compare for the overlay's union grid */
+static int sw_dcmp(const void *a, const void *b)
+{
+    double x = *(const double *) a, y = *(const double *) b;
+    return (x < y) ? -1 : (x > y) ? 1 : 0;
+}
+
+
 static double sw_interp(const double *x, const double *y, int len, double xq)
 {
     int lo, hi, mid;
@@ -392,6 +419,53 @@ static double sw_get_temp(void)
 
 /* Set an `alter` / `altermod` knob in place. These are applied AFTER any reset,
  * because reset re-sources the deck and drops in-place alters. */
+/* Enhancement-499: validate a `-seed` the way `setseed` validates its own
+ * argument.
+ *
+ * Enhancement-497 made the COMMAND refuse a seed it cannot use --
+ * `setseed 3.7` answers "Cannot use 3.7 as seed!" and is ignored -- but the
+ * OPTION spelling of the same argument went straight to strtoul, which stops at
+ * the first character it cannot use. So `-seed 3.7` was silently the same run as
+ * `-seed 3`, with no message; and `-seed 0` / `-seed -3` reached setseed as a
+ * value it refuses, so the seed was never applied at all and the run was NOT
+ * reproducible -- while the author had asked, in writing, for a fixed seed.
+ * The only visible trace was a bare "Command 'setseed 0' ignored.", which names
+ * neither `-seed` nor reproducibility.
+ *
+ * Refuse the command instead: a seed exists to make a run repeatable, and a
+ * silently different seed defeats the only reason to give one. */
+static int sw_seedarg(const char *w, const char *cmd, unsigned int *out)
+{
+    char *end;
+    double d;
+
+    if (!w || !*w) {
+        fprintf(cp_err, "%s: -seed needs a value\n", cmd);
+        return 0;
+    }
+    d = strtod(w, &end);
+    while (*end == ' ' || *end == '\t')
+        end++;
+    if (*end) {
+        fprintf(cp_err, "%s: -seed '%s' is not a number\n", cmd, w);
+        return 0;
+    }
+    if (d != floor(d)) {
+        fprintf(cp_err, "%s: -seed must be a whole number, not %s "
+                        "(a fractional seed used to be truncated in silence)\n",
+                cmd, w);
+        return 0;
+    }
+    if (d < 1.0 || d > 4294967295.0) {
+        fprintf(cp_err, "%s: -seed must be between 1 and 4294967295 (got %s); "
+                        "the run would not have been reproducible\n", cmd, w);
+        return 0;
+    }
+    *out = (unsigned int) d;
+    return 1;
+}
+
+
 static void sw_set_inplace(int kind, const char *name, double val)
 {
     char cmd[512];
@@ -2150,6 +2224,22 @@ static int sw_parse_spec(wordlist **pwl, double **pvals, int *pnv)
         {   /* count then fill */
             wordlist *p = wl;
             while (p && is_number_token(p->wl_word)) { nv++; p = p->wl_next; }
+            /* Enhancement-499: a token that is neither a value nor the next
+             * option ENDS the list here, and every remaining value then fell
+             * through to the argument loop and was reported as an
+             * "unrecognized token" -- including the perfectly good ones.
+             * `list 1k inf 2k 3k` ran ONE point and called `inf`, `2k` and
+             * `3k` unrecognized, though `list 1k 2k 3k` proves the last two
+             * are read without complaint. The sweep then went ahead with a
+             * silently shorter list. Name the offending token and refuse,
+             * rather than run something the author did not ask for. */
+            if (p && p->wl_word && !sw_is_optflag(p->wl_word) &&
+                sw_looks_numeric(p->wl_word)) {
+                fprintf(cp_err, "sweep: '%s' is not a value that `list` can use; "
+                                "the %d value%s after it would have been dropped\n",
+                        p->wl_word, nv, nv == 1 ? "" : "s");
+                return 0;
+            }
         }
         if (nv < 1) { fprintf(cp_err, "sweep: list needs values\n"); return 0; }
         vals = TMALLOC(double, nv);
@@ -2344,13 +2434,41 @@ int sw_reuse_report(int *kept, int *rebuilt)
     return 1;
 }
 
+/* Enhancement-499: name a sweep point by a value that identifies it.
+ *
+ * The per-point overlay vectors were named with "%g", which is SIX significant
+ * digits, so every knob value agreeing to six figures produced the SAME name:
+ * `sweep @r1[resistance] list 1000.0001 1000.0002 1000.0003 ... -overlay` made
+ * three vectors all called `vn_1000`. They were not dropped -- `display` listed
+ * three -- but only one could be printed or plotted, so two thirds of a
+ * fine-grained overlay was unreachable, in silence. The same shape as
+ * Enhancement-494's `%18.10e`, which truncated B-source literals to 11 digits.
+ *
+ * Emit the SHORTEST text that reads back as this exact double, exactly as E-494
+ * settled on: distinct values then always get distinct names, while the ordinary
+ * `1000` / `2.5e-09` cases keep the short form they have always had. */
+static char *sw_valuetext(double v)
+{
+    static char buf[64];
+    int p;
+
+    for (p = 6; p < 17; p++) {
+        (void) snprintf(buf, sizeof buf, "%.*g", p, v);
+        if (strtod(buf, NULL) == v)
+            return buf;
+    }
+    (void) snprintf(buf, sizeof buf, "%.17g", v);
+    return buf;
+}
+
+
 static char *sw_pointname(const char *base, double *const *kvals,
                           const int *idx, int nknob)
 {
     char *s = copy(base);
     int j;
     for (j = 0; j < nknob; j++)
-        s = sw_append_sanitized(s, tprintf("_%g", kvals[j][idx[j]]));
+        s = sw_append_sanitized(s, tprintf("_%s", sw_valuetext(kvals[j][idx[j]])));
     return s;
 }
 
@@ -2598,6 +2716,37 @@ void com_sweep(wordlist *wl)
     nv0 = knv[0];
     for (j = 0; j < nknob; j++) {
         kkind[j] = sw_kind(kname[j]);
+        /* Enhancement-499: a knob that names NOTHING is a typo, not a sweep.
+         *
+         * sw_kind() falls through to SW_ALTER for any name it does not
+         * recognise, and the comment on that fallback already describes what
+         * follows: `alter` reports "no such device or model name", the sweep
+         * runs anyway over a knob that never moves, and the user is handed a
+         * full set of points, rc = 0, and a perfectly plottable FLAT curve
+         * whose x-axis is named after the typo. Enhancement-435 removed that
+         * shape for a subcircuit-local model name and Enhancement-488 for
+         * `temp`; this is the same shape for every remaining spelling, and the
+         * same one Enhancement-431 removed for an unresolved `-output` --
+         * "a typo, not data ... do not emit the curve".
+         *
+         * A bare name is a device or model only if the principal-parameter
+         * lookup finds it -- the very lookup the restore path already uses a
+         * few hundred lines above to capture the nominal. An `@dev[param]`
+         * spelling must evaluate. Everything else has already been classified
+         * (SW_DECK for a `.param`, SW_MODEL for a model, SW_TEMP for `temp`),
+         * so reaching SW_ALTER with neither a readable value nor a principal
+         * keyword means the name resolves to nothing at all. */
+        if (kkind[j] == SW_ALTER && ft_curckt && ft_curckt->ci_ckt) {
+            int rok = 0;
+            (void) sw_read_knob(kname[j], &rok);
+            if (!rok && !(kname[j][0] != '@' && !strchr(kname[j], '[') &&
+                          sw_principal_keyword(ft_curckt->ci_ckt, kname[j]))) {
+                fprintf(cp_err, "sweep: '%s' names no device, model, .param or "
+                                "temp that can be swept; nothing would have "
+                                "moved\n", kname[j]);
+                goto cleanup;
+            }
+        }
         kscname[j] = sw_scalename(kname[j]);
         /* Enhancement-488: refuse an unphysical temperature UP FRONT, the way
          * `.dc temp` does (dctrcurv.c, Enhancement-426), rather than letting the
@@ -2900,13 +3049,21 @@ void com_sweep(wordlist *wl)
                 ovy[(size_t) p * (size_t) nout + (size_t) k] = yk;
                 data[(size_t) p * (size_t) nout + (size_t) k] =
                     (nk > 0 && yk) ? yk[nk - 1] : 0.0;   /* last value from waveform */
-                if (nk <= 0 || !yk)
+                /* Enhancement-499: count an output as unresolved only where the
+                   ANALYSIS itself converged. A point that never solved has its
+                   value replaced by NaN a few lines below (Enhancement-445), so
+                   counting it here made the two warnings contradict each other
+                   about the same points -- "recorded as NaN, not as results"
+                   from E-445, and "those entries are zero" from E-431, of which
+                   only the first was true. A reader filtering for zeros would
+                   have missed them. */
+                if ((nk <= 0 || !yk) && !ptfailed)
                     outbad[k]++;                         /* Enhancement-431 */
             } else {
                 int okk = 0;
                 data[(size_t) p * (size_t) nout + (size_t) k] =
                     sw_eval_expr_ok(outexpr[k], &okk);
-                if (!okk)
+                if (!okk && !ptfailed)                   /* Enhancement-499 */
                     outbad[k]++;                         /* Enhancement-431 */
             }
             /* Enhancement-445: a point whose analysis never solved has no
@@ -3011,7 +3168,7 @@ void com_sweep(wordlist *wl)
      * `<output>_<val>` exactly as in E-189. --- */
     if (overlay && ovy) {
         double xmin = HUGE_VAL, xmax = -HUGE_VAL;
-        int ncommon = 0, jj;
+        int ncommon = 0, jj, overlay_union = 0;      /* Enhancement-499 */
         for (p = 0; p < npt; p++) {
             if (ovlen[p] < 1) continue;
             if (ovx[p][0] < xmin) xmin = ovx[p][0];
@@ -3025,10 +3182,59 @@ void com_sweep(wordlist *wl)
             pw->pl_title = copy(kname[0]);
             plot_new(pw);
             plot_setcur(pw->pl_typename);
-            xs = dvec_alloc(copy(scwavename ? scwavename : "x"), SV_NOTYPE,
-                            (short) (VF_REAL | VF_PERMANENT), ncommon, NULL);
-            for (jj = 0; jj < ncommon; jj++)
-                xs->v_realdata[jj] = xmin + (xmax - xmin) * jj / (ncommon - 1);
+            /* Enhancement-499: resample onto the UNION of the runs' own
+             * timepoints, not onto a uniform grid of the same size.
+             *
+             * A transient chooses its timepoints adaptively: it puts them where
+             * the waveform moves. Replacing them with `xmin + (xmax-xmin)*jj/
+             * (ncommon-1)` kept the COUNT and threw away the PLACEMENT, which
+             * is exactly backwards -- the overlay of an RC driven by a 0.2 us
+             * PWL pulse reported a peak of 0.244 where every one of its own
+             * runs, and a standalone run, said 0.402: 39% low, from the same
+             * 121 points. The message said "resampled", so the interpolation
+             * was disclosed; losing a feature that is present in every input
+             * was not.
+             *
+             * The union carries every sample any run actually took, so no run's
+             * extremum can fall between grid points. It is bounded to a small
+             * multiple of the old size: past that the uniform grid is used as
+             * before and the message says which, because the alternative is an
+             * allocation that grows with the number of sweep points. */
+            {
+                int cap = ncommon * 4 + 64, ntot = 0, nu = 0, q;
+                double *all;
+                for (p = 0; p < npt; p++)
+                    if (ovlen[p] > 0) ntot += ovlen[p];
+                all = (ntot > 0 && ntot <= cap) ? TMALLOC(double, ntot) : NULL;
+                if (all) {
+                    for (p = 0; p < npt; p++)
+                        for (q = 0; q < ovlen[p]; q++)
+                            all[nu++] = ovx[p][q];
+                    qsort(all, (size_t) nu, sizeof(double), sw_dcmp);
+                    {   /* unique, keeping ties within a relative epsilon */
+                        int w = 0;
+                        double eps = (xmax > xmin) ? (xmax - xmin) * 1e-12 : 0.0;
+                        for (q = 0; q < nu; q++)
+                            if (w == 0 || all[q] - all[w - 1] > eps)
+                                all[w++] = all[q];
+                        nu = w;
+                    }
+                    if (nu > 1)
+                        ncommon = nu;
+                    else { tfree(all); all = NULL; }
+                }
+                xs = dvec_alloc(copy(scwavename ? scwavename : "x"), SV_NOTYPE,
+                                (short) (VF_REAL | VF_PERMANENT), ncommon, NULL);
+                if (all) {
+                    for (jj = 0; jj < ncommon; jj++)
+                        xs->v_realdata[jj] = all[jj];
+                    tfree(all);
+                    overlay_union = 1;
+                } else {
+                    for (jj = 0; jj < ncommon; jj++)
+                        xs->v_realdata[jj] = xmin + (xmax - xmin) * jj / (ncommon - 1);
+                }
+            }
             vec_new(xs);                             /* first permanent -> scale */
             for (k = 0; k < nout; k++)
                 for (p = 0; p < npt; p++) {
@@ -3045,9 +3251,12 @@ void com_sweep(wordlist *wl)
                     vec_new(v);
                 }
             fprintf(cp_out, "sweep: overlay of %d waveform%s per output resampled "
-                            "to %d points in the 'sweepwave' plot '%s' (now current); "
+                            "to %d points%s in the 'sweepwave' plot '%s' (now current); "
                             "`plot <output>_<val> ...` to view.\n",
-                    npt, npt == 1 ? "" : "s", ncommon, pw->pl_typename);
+                    npt, npt == 1 ? "" : "s", ncommon,
+                    overlay_union ? " (the union of their own timepoints)"
+                                  : " (uniform: the union would be too large)",
+                    pw->pl_typename);
         } else {
             fprintf(cp_out, "sweep: -overlay ignored (analysis '%s' has no waveform "
                             "to overlay).\n", analysis);
@@ -3244,7 +3453,9 @@ void com_highsigma(wordlist *wl)
             wl = wl->wl_next; lambda = atof(wl->wl_word); wl = wl->wl_next;
         } else if (eq(w, "-seed") || eq(w, "seed")) {
             if (!wl->wl_next) { fprintf(cp_err, "highsigma: -seed needs a value\n"); return; }
-            wl = wl->wl_next; seed = (unsigned) strtoul(wl->wl_word, NULL, 10); wl = wl->wl_next;
+            wl = wl->wl_next;
+            if (!sw_seedarg(wl->wl_word, "highsigma", &seed)) return;   /* Enhancement-499 */
+            wl = wl->wl_next;
         } else if (eq(w, "-max")) {
             if (!wl->wl_next) { fprintf(cp_err, "highsigma: -max needs a value\n"); return; }
             wl = wl->wl_next; hi = sw_num(wl->wl_word); have_max = 1; wl = wl->wl_next;
@@ -3421,7 +3632,9 @@ void com_montecarlo(wordlist *wl)
             usewarm = 1; wl = wl->wl_next;
         } else if (eq(w, "-seed") || eq(w, "seed")) {
             if (!wl->wl_next) { fprintf(cp_err, "montecarlo: -seed needs a value\n"); return; }
-            wl = wl->wl_next; seed = (unsigned) strtoul(wl->wl_word, NULL, 10); wl = wl->wl_next;
+            wl = wl->wl_next;
+            if (!sw_seedarg(wl->wl_word, "montecarlo", &seed)) return;   /* Enhancement-499 */
+            wl = wl->wl_next;
         } else if (eq(w, "-analysis")) {
             /* `is_flag()`, not a bare leading '-': an analysis argument may be
              * negative (`disto lin 3 1e5 1e6 -0.5`), and stopping at any '-'
@@ -3787,7 +4000,9 @@ void com_wcd(wordlist *wl)
             wl = wl->wl_next;
         } else if (eq(w, "-seed")) {
             if (!wl->wl_next) { fprintf(cp_err, "wcd: -seed needs a value\n"); return; }
-            wl = wl->wl_next; seed = (unsigned) strtoul(wl->wl_word, NULL, 10); wl = wl->wl_next;
+            wl = wl->wl_next;
+            if (!sw_seedarg(wl->wl_word, "wcd", &seed)) return;   /* Enhancement-499 */
+            wl = wl->wl_next;
         } else {
             fprintf(cp_err, "wcd: unknown option '%s'\n", w);
             return;

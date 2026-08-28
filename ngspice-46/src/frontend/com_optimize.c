@@ -146,6 +146,10 @@ struct optctx {
     int reuse_ready;
     int reuse_failed;
     int nfailed;                         /* Enhancement-438: evals whose analysis never solved */
+    /* Enhancement-499: the spread of objective values actually observed, so the
+       final report can tell a search that MOVED from one that never could. */
+    double fseen_lo, fseen_hi;
+    int    fseen_n;
     int swarmsize;                       /* Enhancement-194: PSO population (0=auto)*/
     unsigned long seed;                  /* Enhancement-194: PSO RNG seed          */
 
@@ -257,6 +261,85 @@ static double optnum(const char *w)
     if (ft_numparse(&s, FALSE, &v) < 0)
         v = atof(w);
     return v;
+}
+
+
+/* Enhancement-499: parse a NUMERIC OPTION the way this command already parses
+ * every other number it is given.
+ *
+ * The bounds, `-target` values and weights, and `-spec` limits all go through
+ * optnum() above, which understands SPICE suffixes and scientific notation.
+ * `-maxiter`, `-samples`, `-swarmsize` and `-tol` did not: they called atoi()
+ * and atof() directly, which stop at the first character they cannot use and
+ * return 0 for text. So `1k` meant 1000 in a bound and 1 in `-maxiter` ON THE
+ * SAME COMMAND LINE; `-maxiter 2e2` ran 2 iterations, not 200, and returned a
+ * worse fit while still reporting "converged"; `-samples 2e2` ran 2 Monte-Carlo
+ * samples and design centering still printed a yield with a confidence
+ * interval; and `abc` was accepted everywhere as 0, in silence. `sweep lin 2e2`
+ * (200 points) and `montecarlo 2e2` (200 samples) were already right, so this
+ * was the odd one of the three loop commands.
+ *
+ * Refused rather than repaired: a count or a tolerance IS the request, and
+ * substituting one would answer a different question without saying so. */
+static int opt_strictnum(const char *w, double *out)
+{
+    char *s = (char *) w;
+    double v = 0.0;
+
+    if (!w || !*w)
+        return 0;
+    if (ft_numparse(&s, FALSE, &v) < 0)
+        return 0;
+    while (*s == ' ' || *s == '\t')
+        s++;
+    if (*s)                             /* trailing junk: `5x`, `2e2q` */
+        return 0;
+    if (!(v == v))                      /* NaN */
+        return 0;
+    *out = v;
+    return 1;
+}
+
+
+/* an integer-valued option: strict, whole-token, and at least `lo` */
+static int opt_intopt(const char *w, const char *what, int lo, int *out)
+{
+    double v;
+
+    if (!opt_strictnum(w, &v)) {
+        fprintf(cp_err, "optimize: %s needs a number, not '%s'\n", what,
+                w ? w : "");
+        return 0;
+    }
+    if (v != floor(v)) {
+        fprintf(cp_err, "optimize: %s must be a whole number, not %s\n", what, w);
+        return 0;
+    }
+    if (v < (double) lo || v > 2147483647.0) {
+        fprintf(cp_err, "optimize: %s must be %d or more (got %s)\n", what, lo, w);
+        return 0;
+    }
+    *out = (int) v;
+    return 1;
+}
+
+
+/* a real-valued option: strict, whole-token, finite, and not negative */
+static int opt_realopt(const char *w, const char *what, double *out)
+{
+    double v;
+
+    if (!opt_strictnum(w, &v)) {
+        fprintf(cp_err, "optimize: %s needs a number, not '%s'\n", what,
+                w ? w : "");
+        return 0;
+    }
+    if (v < 0.0) {
+        fprintf(cp_err, "optimize: %s must not be negative (got %s)\n", what, w);
+        return 0;
+    }
+    *out = v;
+    return 1;
 }
 
 
@@ -564,6 +647,13 @@ static double opt_eval(struct optctx *c, const double *u, double *resid)
     }
 
     ft_optimizing = FALSE;
+    /* Enhancement-499: remember the spread, for the verdict printed at the end */
+    if (cost == cost) {                       /* ignore NaN */
+        if (c->fseen_n == 0 || cost < c->fseen_lo) c->fseen_lo = cost;
+        if (c->fseen_n == 0 || cost > c->fseen_hi) c->fseen_hi = cost;
+        c->fseen_n++;
+    }
+
     return cost;
 }
 
@@ -1498,17 +1588,37 @@ void com_optimize(wordlist *wl)
                 wl = NULL;
             }
         } else if (eq(w, "-swarmsize") || eq(w, "-swarm") || eq(w, "-npart")) {
-            if (wl->wl_next) { c.swarmsize = atoi(wl->wl_next->wl_word); wl = wl->wl_next->wl_next; }
+            if (wl->wl_next) {
+                if (!opt_intopt(wl->wl_next->wl_word, "-swarmsize", 1, &c.swarmsize))
+                    goto cleanup;                        /* Enhancement-499 */
+                wl = wl->wl_next->wl_next;
+            }
             else wl = NULL;
         } else if (eq(w, "-seed")) {
-            if (wl->wl_next) { c.seed = (unsigned long) strtoul(wl->wl_next->wl_word, NULL, 10);
-                               wl = wl->wl_next->wl_next; }
+            if (wl->wl_next) {
+                /* Enhancement-499: same rule as montecarlo's -seed and as
+                   Enhancement-497 gave `setseed` -- a seed that cannot be used
+                   must be refused, not truncated or dropped in silence. */
+                int sv;
+                if (!opt_intopt(wl->wl_next->wl_word, "-seed", 1, &sv))
+                    goto cleanup;
+                c.seed = (unsigned long) sv;
+                wl = wl->wl_next->wl_next;
+            }
             else wl = NULL;
         } else if (eq(w, "-maxiter") || eq(w, "-n")) {
-            if (wl->wl_next) { c.maxiter = atoi(wl->wl_next->wl_word); wl = wl->wl_next->wl_next; }
+            if (wl->wl_next) {
+                if (!opt_intopt(wl->wl_next->wl_word, "-maxiter", 1, &c.maxiter))
+                    goto cleanup;                        /* Enhancement-499 */
+                wl = wl->wl_next->wl_next;
+            }
             else wl = NULL;
         } else if (eq(w, "-tol") || eq(w, "-t")) {
-            if (wl->wl_next) { c.tol = atof(wl->wl_next->wl_word); wl = wl->wl_next->wl_next; }
+            if (wl->wl_next) {
+                if (!opt_realopt(wl->wl_next->wl_word, "-tol", &c.tol))
+                    goto cleanup;                        /* Enhancement-499 */
+                wl = wl->wl_next->wl_next;
+            }
             else wl = NULL;
         } else if (eq(w, "-verbose") || eq(w, "-v")) {
             c.verbose = 1;
@@ -1517,7 +1627,11 @@ void com_optimize(wordlist *wl)
             c.center = 1;
             wl = wl->wl_next;
         } else if (eq(w, "-samples") || eq(w, "-nsamp")) {
-            if (wl->wl_next) { c.nsamples = atoi(wl->wl_next->wl_word); wl = wl->wl_next->wl_next; }
+            if (wl->wl_next) {
+                if (!opt_intopt(wl->wl_next->wl_word, "-samples", 1, &c.nsamples))
+                    goto cleanup;                        /* Enhancement-499 */
+                wl = wl->wl_next->wl_next;
+            }
             else wl = NULL;
         } else if (eq(w, "-lhs")) {
             c.lhs = 1;
@@ -1736,6 +1850,40 @@ void com_optimize(wordlist *wl)
     else
         fprintf(cp_out, "optimize: converged, objective = %.6g after %d evaluations\n",
                 fbest, c.nevals);
+    /* Enhancement-499: "converged" describes the SEARCH stopping, not the answer
+     * being the one the author wanted, and three ordinary situations produced a
+     * confident "converged" with nothing to show for it:
+     *
+     *   - the objective never moved. A parameter the objective does not depend
+     *     on -- one outside the signal path, or a name that does not resolve at
+     *     all, which prints an error and then optimises nothing -- ends after
+     *     three evaluations with the STARTING value handed back as the fit. So
+     *     did `-target v(out) 0.4 0`, whose zero weight makes the residual
+     *     identically 0: the most convincing number the command can print.
+     *   - the answer sits on a search bound, so the real optimum is outside the
+     *     range and the reported value is a wall, not a minimum.
+     *
+     * Both are visible here and neither was said. This is the same duty
+     * Enhancement-438 discharged for failed evaluations just below, and that
+     * QPSS-HB discharges when it prints "STALLED above tol -- accepted". */
+    if (c.fseen_n > 1 && c.fseen_hi == c.fseen_lo)
+        fprintf(cp_out, "optimize: NOTE -- the objective was %.6g at every one of "
+                        "the %d evaluations, so nothing was optimised and the "
+                        "reported value is the starting value; check that the "
+                        "objective actually depends on the parameter%s.\n",
+                c.fseen_lo, c.nevals, c.np == 1 ? "" : "s");
+    else {
+        int nb = 0, kk;
+        for (kk = 0; kk < c.np; kk++)
+            if (c.hi[kk] > c.lo[kk] &&
+                (ubest[kk] <= 1e-12 || ubest[kk] >= 1.0 - 1e-12))
+                nb++;
+        if (nb)
+            fprintf(cp_out, "optimize: NOTE -- %d of %d parameter%s finished ON a "
+                            "search bound; the optimum may lie outside the range "
+                            "given.\n", nb, c.np, nb == 1 ? "" : "s");
+    }
+
     /* Enhancement-438: failed evaluations were silently absorbed -- a search
      * whose range reaches into a region the model refuses would report a
      * confident "converged" without ever mentioning that a third of its

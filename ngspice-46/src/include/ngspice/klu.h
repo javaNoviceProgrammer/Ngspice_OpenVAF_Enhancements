@@ -973,6 +973,14 @@ typedef struct sKLUmatrix {
     unsigned int KLUmatrixIsComplex:1 ;             /* KLU Matrix Is Complex Flag */
     #define KLUmatrixReal 0                         /* KLU Matrix Real definition */
     #define KLUMatrixComplex 1                      /* KLU Matrix Complex definition */
+    /* Enhancement-499: which KIND of factorisation the Numeric object above
+       holds. KLUmatrixIsComplex describes the VALUE ARRAYS; this describes the
+       factorisation, and the two can disagree -- an operating point leaves a
+       REAL Numeric behind, and the AC that follows converts the value arrays to
+       complex. klu_z_refactor must never be handed a real Numeric (nor
+       klu_refactor a complex one): it reads and writes through L/U index arrays
+       sized for the other kind. See SMPcLUfac / SMPluFac. */
+    unsigned int KLUmatrixNumericIsComplex:1 ;      /* kind of KLUmatrixNumeric */
     double *KLUmatrixIntermediate ;                 /* KLU RHS Intermediate for Solve Real Step */
     double *KLUmatrixIntermediateComplex ;          /* KLU iRHS Intermediate for Solve Complex Step */
     unsigned int KLUmatrixN ;                       /* KLU N */
