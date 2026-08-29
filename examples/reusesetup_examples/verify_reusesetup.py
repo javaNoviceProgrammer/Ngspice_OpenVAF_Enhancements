@@ -278,17 +278,31 @@ check("[13] with the reuse off, no point is kept",
       decision(o) == (0, 0), f"{decision(o)}")
 
 # THE GATE: a built-in device decides its collapse in DEVsetup and cannot be
-# re-checked, so its presence must decline reuse for the whole circuit. Nothing
-# but this report can show that -- the answer is the same either way.
+# re-checked afterwards, so reuse turns on WHICH parameters the sweep is moving.
+#
+# Enhancement-503 narrowed this from a per-type refusal to a per-parameter one.
+# A BJT builds its internal collector, base and emitter nodes from `rc`, `rb`,
+# `re` and `rco` and from nothing else, so a sweep of `bf` cannot move the
+# topology and the setup is reused; a sweep of `rc` still cannot be reused and
+# still is not. Checks [14] and [15] asserted the older, broader refusal --
+# before E-503 both reported (0, 0) -- and now pin the narrower contract, with
+# [14b] holding the safety property the original pair existed to protect.
+# Nothing but this report can show any of it: the answer is the same either way,
+# which is the point.
 o, _ = run(deck(BJT, "sweep @qmod[bf] lin 5 50 150 -output i(v1)", osdi=(),
                 dbg=True), "d4")
-check("[14] a built-in device declines the reuse for the whole circuit",
+check("[14] a built-in device reuses when the swept knob cannot move a node",
+      decision(o) == (4, 0), f"{decision(o)}")
+
+o, _ = run(deck(BJT, "sweep @qmod[rc] lin 5 0 10 -output i(v1)", osdi=(),
+                dbg=True), "d4b")
+check("[14b] ...and still declines when the swept knob DOES build a node",
       decision(o) == (0, 0), f"{decision(o)}")
 
 o, _ = run(deck(BJT + "Ncgm n1 0 cgm\n.model cgm cs_gate rd=1k\n",
                 "sweep @cgm[rd] lin 5 1k 5k -output v(n1)", dbg=True), "d5")
-check("[15] ...even when OSDI devices are in the same circuit",
-      decision(o) == (0, 0), f"{decision(o)}")
+check("[15] ...and reuses with OSDI devices in the same circuit",
+      decision(o) == (4, 0), f"{decision(o)}")
 
 # ------------------------------------------------------------- the switch ----
 # Enhancements 450, 451, 454 and 466 each shipped an option here whose

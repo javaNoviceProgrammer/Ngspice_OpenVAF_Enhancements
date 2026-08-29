@@ -62,6 +62,106 @@ static const char * const e471_fixed_topology[] = {
     NULL
 };
 
+/* Enhancement-503: the hazard is per-PARAMETER, but the gate above is per-TYPE.
+ *
+ * A built-in semiconductor decides its node collapse in DEVsetup, from a small,
+ * knowable set of parameters -- and from nothing else. A BJT creates its
+ * internal collector, base and emitter nodes only from `rc`, `rb`, `re` and
+ * `rco` (bjtsetup.c:430-490 -- `rco` gates a FOURTH node through its *Given*
+ * flag, which is easy to miss); a diode its `internal`, `internal_sw` and `qp`
+ * nodes from `rs`, `rsw`, `vp` and `tt` (diosetup.c:385-432); a JFET from `rd`
+ * and `rs`; the MOS1/2/3/6/9 family from `rd`, `rs`, `rsh` and the per-instance
+ * squares `nrd`, `nrs`.
+ *
+ * Each entry was read off the device's own setup routine by auditing every
+ * CKTmkVolt call and the condition guarding it -- not from the parameter
+ * documentation, which does not say which parameters build nodes.
+ *
+ * So a deck containing these types has a FIXED topology across a sweep unless
+ * the sweep varies one of those parameters. Excluding the whole type costs a
+ * measured 3.5x at 300 sections and 10.1x at 1200 -- on exactly the decks people
+ * sweep -- for a risk that is usually not present. The type list is still the
+ * authority: a type absent from BOTH tables is still refused, and this table
+ * grows only when a type's setup has actually been read, which is the rule
+ * Enhancement-471 set for the list above.
+ *
+ * Verified against each device's own setup routine, 2026-08-28. */
+static const struct {
+    const char *type;
+    const char *params[8];
+} e503_topology_params[] = {
+    { "BJT",    { "rc", "rb", "re", "rco", NULL } },
+    { "Diode",  { "rs", "rsw", "vp", "tt", NULL } },
+    { "JFET",   { "rd", "rs", NULL } },
+    { "Mos1",   { "rd", "rs", "rsh", "nrd", "nrs", NULL } },
+    { "Mos2",   { "rd", "rs", "rsh", "nrd", "nrs", NULL } },
+    { "Mos3",   { "rd", "rs", "rsh", "nrd", "nrs", NULL } },
+    { "Mos6",   { "rd", "rs", "rsh", "nrd", "nrs", NULL } },
+    { "Mos9",   { "rd", "rs", "rsh", "nrd", "nrs", NULL } },
+    { NULL,     { NULL } }
+};
+
+
+/* The declaration lives HERE, not on CKTcircuit, and that is deliberate.
+ *
+ * The first version of this change stored it as a `char[256]` inside
+ * CKTcircuit, which grew the struct and shifted every field after it. That
+ * alone -- 256 bytes of padding, with none of this logic -- made the
+ * `argguard` suite's warn_physics count vary run to run, so SOMETHING ELSE in
+ * ngspice is sensitive to the layout of that struct in a way it should not be.
+ * That is a real latent defect and it is recorded as one; it is not this
+ * enhancement's to fix, and this enhancement must not be the thing that makes
+ * it reachable. Keeping the declaration out of the struct leaves the layout
+ * byte-for-byte as it was.
+ *
+ * One current circuit runs at a time on this path, and every reuse request
+ * rewrites the declaration (sw_request_reuse() clears it), so a single static
+ * cannot go stale or leak across commands. */
+static char e503_swept_params[256];
+
+
+void CKTdeclareSweptParams(const char *decl)
+{
+    if (decl && *decl)
+        (void) snprintf(e503_swept_params, sizeof e503_swept_params, "%s", decl);
+    else
+        e503_swept_params[0] = '\0';
+}
+
+
+/* Is `param` one of the names the sweep declared it is varying? The declaration
+ * is space-bracketed (" rc rb ") so this matches whole tokens: a sweep of `rsh`
+ * must not be read as a sweep of `rs`. */
+static int
+e503_param_swept(const char *param)
+{
+    char needle[64];
+
+    if (!e503_swept_params[0] || !param)
+        return 1;                            /* nothing declared: assume the worst */
+    if (snprintf(needle, sizeof needle, " %s ", param) >= (int) sizeof needle)
+        return 1;
+    return strstr(e503_swept_params, needle) != NULL;
+}
+
+
+/* Does this type collapse nodes from a parameter the sweep is varying? */
+static int
+e503_topology_at_risk(const char *type)
+{
+    int t, k;
+
+    for (t = 0; e503_topology_params[t].type; t++) {
+        if (strcmp(type, e503_topology_params[t].type))
+            continue;
+        for (k = 0; e503_topology_params[t].params[k]; k++)
+            if (e503_param_swept(e503_topology_params[t].params[k]))
+                return 1;                    /* the collapse could move */
+        return 0;                            /* known type, none of them swept */
+    }
+    return 1;                                /* type not verified: refuse */
+}
+
 static int
 e471_reuse_safe(CKTcircuit *ckt)
 {
@@ -77,8 +177,12 @@ e471_reuse_safe(CKTcircuit *ckt)
         for (k = 0; e471_fixed_topology[k]; k++)
             if (!strcmp(DEVices[i]->DEVpublic.name, e471_fixed_topology[k]))
                 break;
-        if (!e471_fixed_topology[k])
-            return 0;                        /* unverified type -- do not reuse */
+        if (e471_fixed_topology[k])
+            continue;                        /* topology fixed unconditionally */
+        /* Enhancement-503: not unconditionally fixed -- but fixed for THIS
+         * sweep if none of the parameters its setup branches on is varying. */
+        if (e503_topology_at_risk(DEVices[i]->DEVpublic.name))
+            return 0;                        /* unverified type, or one at risk */
     }
     return 1;
 }

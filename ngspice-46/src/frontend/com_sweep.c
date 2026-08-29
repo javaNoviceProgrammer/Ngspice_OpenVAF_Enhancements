@@ -2476,8 +2476,82 @@ e471_reuse_enabled(void)
 
 void sw_request_reuse(void)
 {
-    if (ft_curckt && ft_curckt->ci_ckt && e471_reuse_enabled())
+    /* Enhancement-503: an undeclared request keeps Enhancement-471's original,
+     * stricter gate -- the circuit must be built entirely from types whose
+     * topology is fixed unconditionally. Clearing the declaration here rather
+     * than leaving whatever the last caller wrote is what makes that safe: a
+     * caller that does not know which parameters it varies cannot inherit a
+     * previous caller's promise. */
+    if (ft_curckt && ft_curckt->ci_ckt && e471_reuse_enabled()) {
         ((CKTcircuit *) ft_curckt->ci_ckt)->CKTreuseSetup = 1;
+        CKTdeclareSweptParams(NULL);
+    }
+}
+
+
+/* Enhancement-503: request reuse AND declare the parameters being varied, so
+ * CKTdoJob can tell a deck whose topology is merely CONDITIONALLY fixed (a BJT,
+ * a diode, a MOSFET) from one where the condition is actually in play. `decl`
+ * is a lowercase, space-bracketed list -- " rc rb " -- or NULL for none. */
+void sw_request_reuse_params(const char *decl)
+{
+    if (ft_curckt && ft_curckt->ci_ckt && e471_reuse_enabled()) {
+        ((CKTcircuit *) ft_curckt->ci_ckt)->CKTreuseSetup = 1;
+        CKTdeclareSweptParams(decl);
+    }
+}
+
+
+/* The bracketed parameter of a knob name, lowercased: `@r0[resistance]` ->
+ * "resistance", `@#*[w]` -> "w", `@*[[w]]` -> "w". Returns 0 for a name with no
+ * bracket at all (`temp`, or a bare `.param`). */
+static int sw_knob_param(const char *name, char *out, size_t n)
+{
+    const char *b, *e;
+    size_t k = 0;
+
+    if (!name || !out || n == 0)
+        return 0;
+    b = strchr(name, '[');
+    e = strrchr(name, ']');
+    if (!b || !e || e <= b)
+        return 0;
+    for (b++; b < e && k + 1 < n; b++)
+        if (*b != '[' && *b != ']')
+            out[k++] = (char) tolower((unsigned char) *b);
+    out[k] = '\0';
+    return k > 0;
+}
+
+
+/* Build the declaration for a whole knob set. Returns 0 -- meaning "declare
+ * nothing", so the strict gate applies -- if any knob is a deck `.param`,
+ * because a `.param` reaches a model parameter through an expression this code
+ * cannot see, and could be feeding the very `rc` that decides a node collapse. */
+static int sw_build_swept_decl(char * const *kname, const int *kkind, int nknob,
+                               char *out, size_t n)
+{
+    int j;
+    size_t used = 1;
+
+    if (n < 2)
+        return 0;
+    out[0] = ' ';
+    out[1] = '\0';
+    for (j = 0; j < nknob; j++) {
+        char prm[64];
+        if (kkind[j] == SW_DECK)
+            return 0;                        /* opaque: could be anything */
+        if (kkind[j] == SW_TEMP)
+            continue;                        /* temperature creates no nodes */
+        if (!sw_knob_param(kname[j], prm, sizeof prm))
+            return 0;                        /* unrecognised shape: be strict */
+        if (used + strlen(prm) + 2 >= n)
+            return 0;
+        (void) snprintf(out + used, n - used, "%s ", prm);
+        used += strlen(prm) + 1;
+    }
+    return 1;
 }
 
 
@@ -3049,8 +3123,17 @@ void com_sweep(wordlist *wl)
             ((CKTcircuit *) ft_curckt->ci_ckt)->CKTreuseKept = 0;
             ((CKTcircuit *) ft_curckt->ci_ckt)->CKTreuseRebuilt = 0;
         }
-        if (reuseOK)
-            sw_request_reuse();                      /* Enhancement-471 */
+        if (reuseOK) {
+            /* Enhancement-503: say WHAT is being varied. With a declaration a
+             * deck containing a BJT, diode or MOSFET can reuse its setup too,
+             * provided the sweep is not touching a parameter that decides a
+             * node collapse. Without one the original gate applies unchanged. */
+            char decl[256];
+            if (sw_build_swept_decl(kname, kkind, nknob, decl, sizeof decl))
+                sw_request_reuse_params(decl);       /* Enhancement-503 */
+            else
+                sw_request_reuse();                  /* Enhancement-471 */
+        }
         sw_run_cmd(analysis);
         /* Enhancement-471: say what actually happened, so the decision is
            observable rather than inferred from a stopwatch. A rebuilt point is

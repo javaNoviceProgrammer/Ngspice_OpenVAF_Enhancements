@@ -63,11 +63,20 @@ Two things make reuse safe:
   therefore always re-decided, never assumed.
 
 * A **built-in** device decides its collapse in `DEVsetup` and nowhere else, so
-  there is nothing to re-check. Rather than guess, reuse is offered only to
-  circuits built entirely from device types whose topology is known to be
+  there is nothing to re-check afterwards. Rather than guess, reuse was offered
+  only to circuits built entirely from device types whose topology is known to be
   fixed — the linear elements and sources, which create their branch equations
-  unconditionally — plus OSDI. Anything else keeps the old behaviour exactly.
+  unconditionally — plus OSDI. Anything else kept the old behaviour exactly.
   The list grows as a type is verified, never by assumption.
+
+  [Enhancement-503](../../enhancements_doc/Enhancement-503.md) later narrowed
+  that from a per-**type** refusal to a per-**parameter** one: a BJT builds its
+  internal nodes from `rc`, `rb`, `re` and `rco` and from nothing else, so a
+  sweep of `bf` cannot move its topology. The sweep now declares which
+  parameters it varies, and a deck holding a built-in semiconductor reuses its
+  setup unless one of those parameters is a node-building one. A caller that
+  declares nothing — Monte Carlo, or a `.param` knob — still gets the refusal
+  described above.
 
 ## A failed point hands nothing on
 
@@ -106,9 +115,10 @@ sweep: setup reused at 3 of 5 points, 1 rebuilt after a node collapse moved
 so checks `[11]`–`[15]` pin the decision exactly: a sweep whose collapse never
 moves keeps every point after the first `(4, 0)`; one whose collapse moves once
 rebuilds exactly that point `(3, 1)`; with the reuse off nothing is kept
-`(0, 0)`; and a circuit holding a **built-in** device declines reuse entirely
-`(0, 0)` — which nothing but this report can show, since the answer is the same
-either way.
+`(0, 0)`; a circuit holding a **built-in** device reuses `(4, 0)` when the swept
+knob cannot build a node and still declines `(0, 0)` when it can (E-503) — none
+of which anything but this report can show, since the answer is the same either
+way.
 
 The circuits here are far too small for timing to separate the two paths, which
 is why no check uses a clock.

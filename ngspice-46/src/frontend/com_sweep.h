@@ -17,6 +17,7 @@ void com_sweep(wordlist *wl);
  * re-sourced the deck since the last analysis, and not after one that failed.
  * Shared with the optimizer, which has its own no-reset evaluation paths. */
 void sw_request_reuse(void);
+void sw_request_reuse_params(const char *decl);   /* Enhancement-503 */
 int  sw_reuse_report(int *kept, int *rebuilt);
 
 int  sw_fp_build(char *const *names, int n);

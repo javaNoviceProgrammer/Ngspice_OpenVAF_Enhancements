@@ -472,6 +472,7 @@ extern int CKTdltNNum(CKTcircuit *, int);
 extern int CKTdltNodeSet(CKTcircuit *, const char *, int);  /* Enhancement-470 */
 extern int CKTdltNod(CKTcircuit *, CKTnode *);
 extern int CKTdoJob(CKTcircuit *, int , TSKtask *);
+extern void CKTdeclareSweptParams(const char *decl);   /* Enhancement-503 */
 extern void CKTdump(CKTcircuit *, double, runDesc *);
 extern int CKTsoaInit(void);
 extern int CKTsoaCheck(CKTcircuit *);
