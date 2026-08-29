@@ -1,0 +1,16 @@
+`include "disciplines.vams"
+// Enhancement-508: a `parameter` as a noise_table entry.
+//
+// The table is materialised when the model is COMPILED and the folder turns
+// anything it cannot fold into 0.0, so this entry became a silent ZERO -- its
+// default ignored, and the deck's value ignored with it. Measured before the
+// fix: q=1e-18 and q=4e-18 both gave 4.870871387826e-05, which is exactly the
+// figure for a literal zero power.
+module bad_ntlog_param(p, n);
+  inout p, n; electrical p, n;
+  parameter real q = 1e-18;
+  analog begin
+    I(p, n) <+ V(p, n) / 1e3;
+    I(p, n) <+ noise_table_log('{1, q, 1e3, 1e-18});
+  end
+endmodule

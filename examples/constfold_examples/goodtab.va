@@ -1,0 +1,27 @@
+`include "disciplines.vams"
+// Enhancement-508: what a COMPILE-TIME table may be built from.
+//
+// A literal folds. A `localparam` folds too -- it is fixed when the model is
+// compiled and can never be overridden, so its default IS its value
+// (Enhancement-479 taught the guards to see one). Both must keep working
+// unchanged; only an overridable `parameter` cannot be folded, and that is what
+// this enhancement refuses rather than silently zeroing.
+module goodtab(p, n);
+  inout p, n;
+  electrical p, n;
+
+  localparam real lp_pwr  = 1e-18;
+  localparam real lp_ord  = 100.0;
+  localparam real lp_half = lp_ord / 2.0;   // a localparam chain folds too
+
+  (*desc="table_model at x=0.5, ordinate from a localparam"*) real tm_lp;
+  (*desc="table_model at x=0.5, ordinate from a derived localparam"*) real tm_chain;
+
+  analog begin
+    I(p, n) <+ V(p, n) / 1e3;
+    // a noise table whose power entry is a localparam
+    I(p, n) <+ noise_table('{1, lp_pwr, 1e3, lp_pwr});
+    tm_lp    = $table_model(0.5, '{0, 0, 1, lp_ord},  "1L");
+    tm_chain = $table_model(0.5, '{0, 0, 1, lp_half}, "1L");
+  end
+endmodule

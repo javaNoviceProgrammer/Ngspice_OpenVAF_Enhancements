@@ -2484,13 +2484,53 @@ impl BodyLoweringCtx<'_, '_, '_> {
                 // hir_lower/src/expr.rs. The arity table permits zero arguments,
                 // so validation never caught it. Omitting the degree means 0,
                 // the LRM's default: a step discontinuity in the value itself.
+                // Enhancement-508: fold a named constant, and honour a run-time one.
+                //
+                // `as_literalsignedint` reads a LITERAL and nothing else, so a
+                // `localparam integer d = -1;` did not fold -- and -1 is
+                // Enhancement-24's sentinel for *no discontinuity*, so the branch
+                // below took the announce path instead of the do-nothing one and
+                // bounded the timestep on every crossing (168 output rows against
+                // 132). `eval_const_real` folds the localparam chain.
+                //
+                // A `parameter` degree cannot be folded at all, and REFUSING one
+                // would be wrong: Enhancement-504's own model writes
+                // `parameter integer disc = -1; ... if (disc >= 0)
+                // $discontinuity(disc);`, which is the deck-supplied route working
+                // as designed. The degree only selects a branch, and that branch
+                // can be selected at RUN TIME -- which is this audit's own rule: a
+                // value that feeds a runtime decision may be a parameter, only a
+                // COMPILE-TIME ARTIFACT may not. So a non-constant degree emits the
+                // announcement under a run-time `degree != -1` test rather than
+                // unconditionally.
                 let degree = if args.is_empty() {
                     Some(0)
                 } else {
-                    self.body.as_literalsignedint(&args[0])
+                    self.body
+                        .as_literalsignedint(&args[0])
+                        .or_else(|| self.eval_const_real(args[0]).map(|v| v as i32))
                 };
                 if self.ctx.inside_lim && Some(-1) == degree {
                     self.ctx.call(CallBackKind::LimDiscontinuity, &[]);
+                } else if degree.is_none() && !self.ctx.inside_lim {
+                    // Enhancement-508: the degree is only known at run time. Announce
+                    // exactly when it is not the -1 sentinel. `SetRetFlag` inside a
+                    // conditional is the shape Enhancement-505 made op-dependent and
+                    // Enhancement-506's `runtime_fatal` already relies on.
+                    let deg = self.lower_expr(args[0]);
+                    let deg = match self.body.expr_type(args[0]) {
+                        Type::Integer => self.ctx.ins().ifcast(deg),
+                        _ => deg,
+                    };
+                    let minus_one = self.ctx.fconst(-1.0);
+                    let announce = self.ctx.ins().fne(deg, minus_one);
+                    self.ctx.make_cond(announce, |ctx, is_announce| {
+                        if is_announce {
+                            let sentinel = ctx.fconst(-1.0);
+                            ctx.def_place(PlaceKind::BoundStep, sentinel);
+                            ctx.call(CallBackKind::SetRetFlag(RetFlag::Discont), &[]);
+                        }
+                    });
                 } else if degree != Some(-1) {
                     // `$discontinuity(n)` for n >= 0 (Enhancement-24): announce a discontinuity of
                     // degree `n` so the simulator limits the transient timestep rather than

@@ -1,0 +1,11 @@
+`include "disciplines.vams"
+// Enhancement-508: and the ABSCISSA has the same hole.
+module bad_tm_absc(p, n);
+  inout p, n; electrical p, n;
+  parameter real q = 1;
+  real v;
+  analog begin
+    I(p, n) <+ V(p, n) / 1e3;
+    v = $table_model(0.5, '{0, 0, q, 100}, "1L");
+  end
+endmodule

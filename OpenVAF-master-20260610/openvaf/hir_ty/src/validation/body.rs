@@ -1343,6 +1343,16 @@ impl ExprValidator<'_, '_> {
                             // string literal to complain about, and returned 0.0
                             // from an empty table.
                             self.require_array_arg("$table_model", "the table data", args[1]);
+                            // Enhancement-508: an inline table is built at COMPILE
+                            // time, so each entry must fold. Checked on every array
+                            // LITERAL argument rather than a fixed position, so the
+                            // N-dimensional forms are covered too; a bare array
+                            // VARIABLE reference is the legitimate RUN-TIME table
+                            // (Enhancement-389) and is deliberately left alone.
+                            for &a in args {
+                                self.require_const_elems(
+                                    "$table_model", "the table data", a);
+                            }
                             // Mirror `lower_table_model`'s own rule for WHICH argument
                             // is the data file. Inline data -- an array literal or a
                             // bare array-variable reference (Enhancement-389) -- means
@@ -2163,6 +2173,9 @@ impl ExprValidator<'_, '_> {
                         // and a zero entry is fine there, so only the log form is
                         // tightened; 1e-300 is accepted by both, which is what
                         // makes this a guard about zero and not about smallness.
+                        // Enhancement-508: and every entry has to be foldable at
+                        // all -- a `parameter` entry became a silent 0.
+                        self.require_const_elems(name, "the table", args[0]);
                         let log = call == BuiltIn::noise_table_log;
                         for (i, &e) in elems.iter().enumerate() {
                             let what = if i % 2 == 0 { "frequency" } else { "noise power" };
@@ -2865,6 +2878,52 @@ impl ExprValidator<'_, '_> {
                     ),
                     num,
                 );
+            }
+        }
+    }
+
+    /// Enhancement-508: every element of an array literal that becomes a
+    /// COMPILE-TIME table must actually be foldable.
+    ///
+    /// `noise_table` and `$table_model` materialise their inline data when the
+    /// model is COMPILED, and the folder they use turns anything it cannot fold
+    /// into `0.0` -- `const_real_in_body`'s own comment says so: *"the callers
+    /// build compile-time tables and turn `None` into `0.0`, so anything this
+    /// cannot fold becomes a silent zero entry"*. A `localparam` folds and is
+    /// fine. An overridable `parameter` deliberately does NOT fold (the model
+    /// card may replace it), so it became a **zero entry**, its default ignored
+    /// and its deck value ignored with it -- a table that looks present and is
+    /// partly zero.
+    ///
+    /// The whole-array form of the same mistake is already refused, and says
+    /// exactly why ("materialised at COMPILE time"); the guard simply checked the
+    /// ARRAY and not its ELEMENTS.
+    ///
+    /// `const_num` and `hir_lower`'s `const_real_in_body` fold the same set --
+    /// literals, unary +/-, the four arithmetic operators with a non-zero
+    /// divisor, and a `localparam` chain, but never a `parameter` -- so a value
+    /// this accepts is a value lowering can fold. That agreement is what makes
+    /// the check exact rather than approximate; keep them in step.
+    fn require_const_elems(&mut self, builtin: &str, what: &str, expr: ExprId) {
+        let elems = match self.parent.body.exprs[expr] {
+            Expr::Array(ref e) => e.clone(),
+            _ => return,
+        };
+        for (i, &e) in elems.iter().enumerate() {
+            if self.const_num(e).is_none() {
+                self.bad_arg(
+                    builtin,
+                    what,
+                    format!(
+                        "entry {i} is not a compile-time constant, and this table is \
+                         built when the model is compiled -- the entry would silently \
+                         become 0. A `localparam` works here; an overridable \
+                         `parameter` cannot, because the model card may replace it \
+                         after the table has been built"
+                    ),
+                    e,
+                );
+                break; // one message names the table; listing every entry adds nothing
             }
         }
     }

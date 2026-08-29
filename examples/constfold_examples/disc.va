@@ -1,0 +1,21 @@
+`include "disciplines.vams"
+// Enhancement-508: -1 is Enhancement-24's sentinel for NO discontinuity, and
+// lowering read the degree with `as_literalsignedint` -- a LITERAL only, which
+// does not even fold a localparam. So a -1 written as a named constant was
+// misread as an ordinary announcement and bounded the timestep on every
+// crossing. `sel` picks which spelling this instance uses.
+module disc(p, n, o);
+  inout p, n, o;
+  electrical p, n, o;
+  parameter integer sel = 0;
+  localparam integer d_none = -1;
+  localparam integer d_step = 0;
+  analog begin
+    if (sel == 0)      @(cross(V(p, n) - 0.5, 0)) $discontinuity(-1);
+    else if (sel == 1) @(cross(V(p, n) - 0.5, 0)) $discontinuity(0);
+    else if (sel == 2) @(cross(V(p, n) - 0.5, 0)) $discontinuity(d_none);
+    else               @(cross(V(p, n) - 0.5, 0)) $discontinuity(d_step);
+    V(o) <+ V(p, n);
+    I(p, n) <+ V(p, n) / 1e3;
+  end
+endmodule

@@ -1,0 +1,14 @@
+`include "disciplines.vams"
+// Enhancement-508: a `parameter` as a $table_model ORDINATE. The table
+// 0->0, 1->q with q=100 read 0 at x=0.5 instead of 50 -- a smooth, plausible,
+// wrong curve, which is the shape Enhancement-479's comment described for a
+// localparam and whose `parameter` half was left.
+module bad_tm_ord(p, n);
+  inout p, n; electrical p, n;
+  parameter real q = 100;
+  real v;
+  analog begin
+    I(p, n) <+ V(p, n) / 1e3;
+    v = $table_model(0.5, '{0, 0, 1, q}, "1L");
+  end
+endmodule

@@ -1,0 +1,12 @@
+`include "disciplines.vams"
+// Enhancement-508: the $discontinuity degree may come from the DECK. It only
+// selects a branch, and that branch is now selected at run time, so -1 keeps
+// meaning "no discontinuity" however it arrives.
+module disc_param(p, n);
+  inout p, n; electrical p, n;
+  parameter integer d = -1;
+  analog begin
+    @(cross(V(p, n) - 0.5, 0)) $discontinuity(d);
+    I(p, n) <+ V(p, n) / 1e3;
+  end
+endmodule
