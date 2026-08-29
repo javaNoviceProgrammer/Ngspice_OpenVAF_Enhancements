@@ -1,0 +1,9 @@
+`include "disciplines.vams"
+// Enhancement-506: and the log variant's stricter rule reaches the file form too.
+module bad_ntfile_log(a, b);
+  inout a, b; electrical a, b;
+  analog begin
+    I(a, b) <+ V(a, b) / 1e3;
+    I(a, b) <+ noise_table_log("nt_zerofreq.tbl");
+  end
+endmodule

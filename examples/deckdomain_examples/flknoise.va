@@ -1,0 +1,15 @@
+`include "disciplines.vams"
+// Enhancement-506: `flicker_noise(pwr, exp)` has two arguments and only the
+// first was guarded, at either compile or run time. A NaN exponent made
+// `pwr/f^exp` NaN at every frequency. A noise contribution cannot fail to
+// converge the way a value contribution does, so this printed
+// `onoise_total = nan` and exited 0.
+module flknoise(a, b);
+  inout a, b;
+  electrical a, b;
+  parameter real p = 1.0;
+  analog begin
+    I(a, b) <+ V(a, b) / 1e3;
+    I(a, b) <+ flicker_noise(1e-18, sqrt(p));
+  end
+endmodule

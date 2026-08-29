@@ -1,0 +1,10 @@
+`include "disciplines.vams"
+// Enhancement-506: the same rule applies to the POWER column -- log-log
+// interpolation takes log10 of both.
+module bad_ntlog_pwr(a, b);
+  inout a, b; electrical a, b;
+  analog begin
+    I(a, b) <+ V(a, b) / 1e3;
+    I(a, b) <+ noise_table_log('{1, 0, 1e3, 1e-18});
+  end
+endmodule

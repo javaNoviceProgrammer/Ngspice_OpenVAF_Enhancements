@@ -1,0 +1,12 @@
+`include "disciplines.vams"
+// Enhancement-506: `last_crossing` takes the same direction argument as
+// `@(cross)` and had the same hole; both use the shared guard.
+module lcdir(a, b, o);
+  inout a, b, o;
+  electrical a, b, o;
+  parameter integer dir = 1;
+  analog begin
+    V(o) <+ last_crossing(V(a) - 0.5, dir);
+    I(a, b) <+ V(a, b) / 1e3;
+  end
+endmodule

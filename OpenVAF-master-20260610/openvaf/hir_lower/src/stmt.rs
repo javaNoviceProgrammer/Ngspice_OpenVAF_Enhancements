@@ -4,7 +4,7 @@ use hir::{
 };
 use mir::builder::InstBuilder;
 use mir::cursor::{Cursor, FuncCursor};
-use mir::{Opcode, Value, FALSE, F_ZERO, INFINITY, TRUE};
+use mir::{Opcode, Value, FALSE, F_ONE, F_ZERO, INFINITY, TRUE};
 
 use crate::body::BodyLoweringCtx;
 use crate::ctx::LoweringCtx;
@@ -310,6 +310,42 @@ impl BodyLoweringCtx<'_, '_, '_> {
     /// falling only, `> 0`: rising only, `== 0`/absent: either -- `dir` is read as an
     /// ordinary runtime `Value`, not assumed constant, mirroring how `last_crossing`'s own
     /// `dir` argument is handled in `hir_lower::expr::lower_last_crossing`).
+        // Enhancement-506: the direction is dispatched by SIGN, and nothing
+        // checked that it is one of the three values the LRM defines.
+        //
+        // hir_ty refuses a literal ("the direction must be -1 (falling), 0
+        // (either) or +1 (rising)") but sees only a literal or a localparam. From
+        // the deck the same value went unexamined and was simply interpreted: a
+        // direction of 7 fired on RISING edges and -3 on FALLING ones, each giving
+        // a plausible count from a spec the compiler calls an outright error, and
+        // a NaN direction made every comparison false so the event went silently
+        // DEAD. Sign is not a projection of {-1, 0, +1} -- it is a guess at what a
+        // seventh direction might have meant -- so the run time says what the
+        // compiler says and aborts.
+    ///
+    /// Shared by `@(cross)` and `last_crossing`, which take the same argument and
+    /// had the same hole.
+    pub(crate) fn guard_event_direction(&mut self, name: &str, dir: Value) -> Value {
+        let minus_one = self.ctx.fconst(-1.0);
+        let is_rising = self.ctx.ins().feq(dir, F_ONE);
+        let is_falling = self.ctx.ins().feq(dir, minus_one);
+        let is_either = self.ctx.ins().feq(dir, F_ZERO);
+        // Every comparison is false for NaN, so NaN lands in the refusing branch.
+        let ok = bool_or(self.ctx, is_rising, is_falling);
+        let ok = bool_or(self.ctx, ok, is_either);
+        let msg = format!(
+            "{name}: the direction must be -1 (falling), 0 (either) or +1 (rising), but is"
+        );
+        self.ctx.make_select(ok, |ctx, branch| {
+            if branch {
+                dir
+            } else {
+                ctx.runtime_fatal(&msg, Some(dir));
+                F_ZERO
+            }
+        })
+    }
+
     fn lower_cross(&mut self, expr: ExprId, dir: Option<ExprId>) -> Value {
         let current = self.lower_expr(expr);
         let (raw_prev, idx) = self.new_event_state();
@@ -328,6 +364,7 @@ impl BodyLoweringCtx<'_, '_, '_> {
 
         let fired = if let Some(dir) = dir {
             let dir = self.lower_expr(dir);
+            let dir = self.guard_event_direction("@(cross)", dir);
             let dir_pos = self.ctx.ins().fgt(dir, F_ZERO);
             let dir_neg = self.ctx.ins().flt(dir, F_ZERO);
             let fired_pos = bool_and(self.ctx, dir_pos, rising);

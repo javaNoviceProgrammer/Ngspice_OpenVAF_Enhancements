@@ -1,0 +1,16 @@
+`include "disciplines.vams"
+// Enhancement-506: the sampling period of a discrete filter, from the deck.
+//
+// hir_ty refuses a literal `T <= 0` (Enhancement-420) but sees only a literal or
+// a localparam. Overridden from the deck -- the ordinary route -- a negative
+// period inverted the bilinear map, reflected every pole across the imaginary
+// axis and ran to 1.2e+240 over 60 ns, with exit code 0 and no diagnostic.
+module zifilt(a, b, o);
+  inout a, b, o;
+  electrical a, b, o;
+  parameter real T = 1e-9;
+  analog begin
+    V(o) <+ zi_nd(V(a), '{1}, '{1, 0.5}, T, 0);
+    I(a, b) <+ V(a, b) / 1e3;
+  end
+endmodule

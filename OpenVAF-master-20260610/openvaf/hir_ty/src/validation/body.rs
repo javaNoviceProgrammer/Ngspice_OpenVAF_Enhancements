@@ -121,7 +121,7 @@ pub enum BodyValidationDiagnostic {
     /// spectrum was then bit-for-bit identical to a model with no noise source at all,
     /// which is why a mistyped filename could not be noticed. The INLINE form has been
     /// validated since Enhancement-396; the file form reached the runtime unexamined.
-    NoiseTableFileUnusable { expr: ExprId, path: Box<str> },
+    NoiseTableFileUnusable { expr: ExprId, path: Box<str>, log: bool },
 
     /// Enhancement-395: a `$table_model` control-string code that is not
     /// implemented, or not a control code at all.
@@ -1801,9 +1801,13 @@ impl ExprValidator<'_, '_> {
             ) => {
                 if let Expr::Literal(Literal::String(ref path)) = self.parent.body.exprs[args[0]] {
                     let path = path.clone();
+                    // Enhancement-506: `log` selects the VALUE rule applied to the
+                    // file's entries -- see `noise_table_file_bad_value`. The file
+                    // form was checked for STRUCTURE only.
                     self.report(BodyValidationDiagnostic::NoiseTableFileUnusable {
                         expr: args[0],
                         path,
+                        log: call == BuiltIn::noise_table_log,
                     });
                 }
             }
@@ -1913,7 +1917,7 @@ impl ExprValidator<'_, '_> {
                 {
                     if start >= end {
                         self.bad_arg(
-                            "$rdist_uniform",
+                            rng_builtin_name(call),
                             "the bounds",
                             format!(
                                 "must have the start below the end, but the start is \
@@ -1925,6 +1929,14 @@ impl ExprValidator<'_, '_> {
                 }
             }
 
+            // Enhancement-506: these arms serve BOTH families -- one arm matches
+            // `rdist_normal | dist_normal` -- and the name was hardcoded to the
+            // `$rdist_*` spelling, so a `$dist_normal(s, 0, -1)` call was reported
+            // as "$rdist_normal: the standard deviation must not be negative".
+            // The author greps their source for the function the compiler named
+            // and does not find it. Exactly the defect Enhancement-396 fixed for
+            // `noise_table_log` in the `noise_table` arm below.
+            //
             // LRM 9.13.2 gives every distribution in this family a shape
             // argument that "shall be positive". Only `$rdist_uniform` above was
             // ever checked, so the other six accepted a degenerate shape and
@@ -1934,23 +1946,23 @@ impl ExprValidator<'_, '_> {
             // Nothing was reported at compile time or at run time.
             (BuiltIn::rdist_normal | BuiltIn::dist_normal, _) if args.len() >= 3 => {
                 // The mean is unconstrained; only the spread has to be real.
-                self.require_non_negative("$rdist_normal", "the standard deviation", args[2]);
+                self.require_non_negative(rng_builtin_name(call), "the standard deviation", args[2]);
             }
             (BuiltIn::rdist_exponential | BuiltIn::dist_exponential, _) if args.len() >= 2 => {
-                self.require_positive("$rdist_exponential", "the mean", args[1]);
+                self.require_positive(rng_builtin_name(call), "the mean", args[1]);
             }
             (BuiltIn::rdist_poisson | BuiltIn::dist_poisson, _) if args.len() >= 2 => {
-                self.require_positive("$rdist_poisson", "the mean", args[1]);
+                self.require_positive(rng_builtin_name(call), "the mean", args[1]);
             }
             (BuiltIn::rdist_chi_square | BuiltIn::dist_chi_square, _) if args.len() >= 2 => {
-                self.require_positive("$rdist_chi_square", "the degrees of freedom", args[1]);
+                self.require_positive(rng_builtin_name(call), "the degrees of freedom", args[1]);
             }
             (BuiltIn::rdist_t | BuiltIn::dist_t, _) if args.len() >= 2 => {
-                self.require_positive("$rdist_t", "the degrees of freedom", args[1]);
+                self.require_positive(rng_builtin_name(call), "the degrees of freedom", args[1]);
             }
             (BuiltIn::rdist_erlang | BuiltIn::dist_erlang, _) if args.len() >= 3 => {
-                self.require_positive("$rdist_erlang", "the k stage", args[1]);
-                self.require_positive("$rdist_erlang", "the mean", args[2]);
+                self.require_positive(rng_builtin_name(call), "the k stage", args[1]);
+                self.require_positive(rng_builtin_name(call), "the mean", args[2]);
             }
 
             // `$vt(T)` is kT/q at the ABSOLUTE temperature T, so T must be above
@@ -2019,9 +2031,24 @@ impl ExprValidator<'_, '_> {
                              so the count must be even", elems.len(),
                             if elems.len() == 1 { "y" } else { "ies" }), args[0]);
                     } else {
+                        // Enhancement-506: `noise_table_log` interpolates in
+                        // log-log space, so ZERO is as unrepresentable as a
+                        // negative -- log10(0) is -inf and the whole spectrum came
+                        // back NaN, at every frequency, with exit code 0 and no
+                        // diagnostic. Both variants shared `require_non_negative`,
+                        // which admits exactly the one value the log variant
+                        // cannot take. Plain `noise_table` interpolates linearly
+                        // and a zero entry is fine there, so only the log form is
+                        // tightened; 1e-300 is accepted by both, which is what
+                        // makes this a guard about zero and not about smallness.
+                        let log = call == BuiltIn::noise_table_log;
                         for (i, &e) in elems.iter().enumerate() {
                             let what = if i % 2 == 0 { "frequency" } else { "noise power" };
-                            self.require_non_negative(name, what, e);
+                            if log {
+                                self.require_positive(name, what, e);
+                            } else {
+                                self.require_non_negative(name, what, e);
+                            }
                         }
                     }
                 }
@@ -2992,4 +3019,29 @@ fn const_param_value(db: &dyn HirTyDB, param: ParamId, depth: u32) -> Option<f64
     let infer = db.inference_result(owner);
     let default = db.param_exprs(param).default;
     const_num_in(db, &body, &infer, default, depth)
+}
+
+/// Enhancement-506: the `$dist_*`/`$rdist_*` spelling the AUTHOR wrote.
+///
+/// The validation arms above deliberately serve both families at once -- the LRM
+/// domain rule is the same for `$dist_normal` and `$rdist_normal`, and checking
+/// them together is what keeps the two spellings from drifting apart. The
+/// diagnostic, though, has to name the call that is actually in the source.
+fn rng_builtin_name(call: BuiltIn) -> &'static str {
+    match call {
+        BuiltIn::dist_uniform => "$dist_uniform",
+        BuiltIn::dist_normal => "$dist_normal",
+        BuiltIn::dist_exponential => "$dist_exponential",
+        BuiltIn::dist_poisson => "$dist_poisson",
+        BuiltIn::dist_chi_square => "$dist_chi_square",
+        BuiltIn::dist_t => "$dist_t",
+        BuiltIn::dist_erlang => "$dist_erlang",
+        BuiltIn::rdist_uniform => "$rdist_uniform",
+        BuiltIn::rdist_normal => "$rdist_normal",
+        BuiltIn::rdist_exponential => "$rdist_exponential",
+        BuiltIn::rdist_poisson => "$rdist_poisson",
+        BuiltIn::rdist_chi_square => "$rdist_chi_square",
+        BuiltIn::rdist_t => "$rdist_t",
+        _ => "$rdist_erlang",
+    }
 }

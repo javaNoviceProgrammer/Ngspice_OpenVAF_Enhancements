@@ -169,7 +169,8 @@ impl Diagnostic for BodyValidationDiagnosticWrapped<'_> {
         }
     }
 
-    fn build_report(&self, _root_file: basedb::FileId, _db: &dyn basedb::BaseDB) -> Report {
+    fn build_report(&self, root_file: basedb::FileId, db: &dyn basedb::BaseDB) -> Report {
+        let _ = (root_file, db);
         match *self.diag {
             BodyValidationDiagnostic::ExpectedPort { expr, node } => {
                 let FileSpan { range, file } = self.expr_src(expr);
@@ -326,25 +327,49 @@ impl Diagnostic for BodyValidationDiagnosticWrapped<'_> {
                     ])
             }
             // Enhancement-414: as TableFileUnusable, for a noise data file.
-            BodyValidationDiagnostic::NoiseTableFileUnusable { expr, ref path } => {
+            BodyValidationDiagnostic::NoiseTableFileUnusable { expr, ref path, log } => {
                 let FileSpan { range, file } = self.expr_src(expr);
+                // Enhancement-506: the file form validated STRUCTURE and not VALUES.
+                // When the structure is fine and only a value is out of domain, say
+                // which value -- the inline form has named it since Enhancement-396.
+                let bad = noise_table_file_bad_value(root_file, db, path, log);
+                let (label, extra) = match bad {
+                    Some((v, what)) if log => (
+                        format!("holds a {what} of {v}; noise_table_log needs every entry > 0"),
+                        "log-log interpolation takes log10 of BOTH columns, so a zero entry \
+                         is as unrepresentable as a negative one and made the whole output \
+                         spectrum NaN -- at every frequency, with nothing reported"
+                            .to_owned(),
+                    ),
+                    Some((v, what)) => (
+                        format!("holds a {what} of {v}; every entry must be >= 0"),
+                        "a negative entry reached the runtime and produced exactly the \
+                         spectrum of its positive twin, so the sign was discarded in \
+                         silence -- the same defect Enhancement-396 fixed for an inline \
+                         table, which this form did not share"
+                            .to_owned(),
+                    ),
+                    None => (
+                        "missing, unreadable, or contains no usable table data".to_owned(),
+                        "an unusable file used to yield an EMPTY noise table, and an empty \
+                         table contributes NO NOISE -- the output spectrum came out identical \
+                         to a model with no noise source at all, with nothing reported"
+                            .to_owned(),
+                    ),
+                };
                 Report::error()
                     .with_message(format!("cannot use '{path}' as noise_table data"))
                     .with_labels(vec![Label {
                         style: LabelStyle::Primary,
                         file_id: file,
                         range: range.into(),
-                        message: "missing, unreadable, or contains no usable table data"
-                            .to_owned(),
+                        message: label,
                     }])
                     .with_notes(vec![
                         "the path is resolved relative to the directory of the file being \
                          compiled"
                             .to_owned(),
-                        "an unusable file used to yield an EMPTY noise table, and an empty \
-                         table contributes NO NOISE -- the output spectrum came out identical \
-                         to a model with no noise source at all, with nothing reported"
-                            .to_owned(),
+                        extra,
                     ])
             }
             // Enhancement-390: only reached when the file is genuinely unusable --
@@ -1074,8 +1099,13 @@ impl Diagnostic for BodyValidationDiagnosticWrapped<'_> {
         // Enhancement-425: a noise data file is ALWAYS the one-dimensional
         // two-column form -- `read_noise_table_file` reads the first two tokens of
         // each line -- so it is checked with ndim = 1 unconditionally.
-        if let BodyValidationDiagnostic::NoiseTableFileUnusable { ref path, .. } = *self.diag {
-            if table_file_is_usable(root_file, db, path, 1) {
+        // Enhancement-506: and by the same VALUE rule the inline form has applied
+        // since Enhancement-396 -- structure alone let a negative frequency or
+        // power through, and a zero through to `noise_table_log`.
+        if let BodyValidationDiagnostic::NoiseTableFileUnusable { ref path, log, .. } = *self.diag {
+            if table_file_is_usable(root_file, db, path, 1)
+                && noise_table_file_bad_value(root_file, db, path, log).is_none()
+            {
                 return None;
             }
         }
@@ -1539,4 +1569,45 @@ fn table_file_is_usable(root_file: FileId, db: &dyn BaseDB, path: &str, ndim: us
     let axes: usize = sizes.iter().sum();
     let vals: usize = sizes.iter().product();
     nums.len() == 1 + ndim + axes + vals
+}
+
+/// Enhancement-506: the first out-of-domain entry of a noise data file, if any.
+///
+/// `table_file_is_usable` judges a noise file's STRUCTURE -- readable, one
+/// `(frequency, power)` pair per line, every token finite. Its VALUES were judged
+/// nowhere, so a file was accepted that the identical table written inline is
+/// refused for: a frequency of -1 produced output bit-identical to +1 (the sign
+/// quietly discarded), and a zero handed to `noise_table_log` made the entire
+/// spectrum NaN.
+///
+/// The rule is the inline rule, so that which of the two forms the author chose
+/// cannot change whether the table is legal: entries must be non-negative, and
+/// strictly positive for the log variant, whose log-log interpolation cannot
+/// represent a zero. Reading is deliberately the same whole-line-comment grammar
+/// the readers in `hir_lower` use -- the invariant that the validator and the
+/// readers agree is what Enhancement-396 relied on.
+fn noise_table_file_bad_value(
+    root_file: FileId,
+    db: &dyn BaseDB,
+    path: &str,
+    log: bool,
+) -> Option<(f64, &'static str)> {
+    let dir = db.file_path(root_file).parent()?;
+    let full = dir.join(path)?;
+    let abs = full.as_path()?;
+    let content = std::fs::read_to_string(abs).ok()?;
+    for line in content.lines().map(str::trim).filter(|l| {
+        !(l.is_empty() || l.starts_with('#') || l.starts_with("//") || l.starts_with('*'))
+    }) {
+        let mut it = line.split_ascii_whitespace();
+        let (Some(a), Some(b)) = (it.next(), it.next()) else { continue };
+        let (Ok(f), Ok(p)) = (a.parse::<f64>(), b.parse::<f64>()) else { continue };
+        for (v, what) in [(f, "frequency"), (p, "noise power")] {
+            let ok = if log { v > 0.0 } else { v >= 0.0 };
+            if !ok {
+                return Some((v, what));
+            }
+        }
+    }
+    None
 }

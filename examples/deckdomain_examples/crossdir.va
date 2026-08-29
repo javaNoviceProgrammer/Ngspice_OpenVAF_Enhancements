@@ -1,0 +1,17 @@
+`include "disciplines.vams"
+// Enhancement-506: the event direction, from the deck. Dispatched by SIGN, so a
+// direction of 7 fired on rising edges and -3 on falling ones -- each a
+// plausible count from a spec the compiler calls an outright error -- and a NaN
+// direction made every comparison false, so the event went silently dead.
+module crossdir(a, b, o);
+  inout a, b, o;
+  electrical a, b, o;
+  parameter integer dir = 1;
+  integer cnt;
+  analog begin
+    @(initial_step) cnt = 0;
+    @(cross(V(a) - 0.5, dir, 1e-12, 1e-9)) cnt = cnt + 1;
+    V(o) <+ cnt;
+    I(a, b) <+ V(a, b) / 1e3;
+  end
+endmodule

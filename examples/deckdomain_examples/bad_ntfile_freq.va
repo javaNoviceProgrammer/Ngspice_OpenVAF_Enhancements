@@ -1,0 +1,11 @@
+`include "disciplines.vams"
+// Enhancement-506: the FILE form validated STRUCTURE and not VALUES, so a
+// negative frequency gave output bit-identical to its positive twin -- the sign
+// quietly discarded, the very defect Enhancement-396 fixed for the inline form.
+module bad_ntfile_freq(a, b);
+  inout a, b; electrical a, b;
+  analog begin
+    I(a, b) <+ V(a, b) / 1e3;
+    I(a, b) <+ noise_table("nt_negfreq.tbl");
+  end
+endmodule

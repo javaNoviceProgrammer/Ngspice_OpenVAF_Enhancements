@@ -1,0 +1,17 @@
+`include "disciplines.vams"
+// Enhancement-506: the leading denominator coefficient, from the deck.
+//
+// Written as a literal the compiler names the fault exactly ("the denominator
+// has a highest-order coefficient of zero"). Written as `'{1, d1}` with `d1` a
+// deck-set parameter it compiled clean, divided by zero building the state
+// space, and the user got gmin- and source-stepping failures ending in
+// "Timestep too small; cause unrecorded".
+module lapfilt(a, b, o);
+  inout a, b, o;
+  electrical a, b, o;
+  parameter real d1 = 1e-9;
+  analog begin
+    V(o) <+ laplace_nd(V(a), '{1}, '{1, d1});
+    I(a, b) <+ V(a, b) / 1e3;
+  end
+endmodule

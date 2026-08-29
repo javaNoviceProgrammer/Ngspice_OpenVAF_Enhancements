@@ -1,0 +1,27 @@
+`include "disciplines.vams"
+// Enhancement-506: Enhancement-505 clamped the real `$rdist_*` family at run
+// time; the integer `$dist_*` siblings were left unclamped. hir_ty validates the
+// two spellings together, so only a deck-supplied value reached the gap.
+//
+// The seed varies with $abstime, which is constant within a Newton loop, so each
+// timepoint draws once and the solve still converges.
+module distfam(a, b, o);
+  inout a, b, o;
+  electrical a, b, o;
+  parameter integer sdev = 1;
+  parameter integer mean = 1;
+  parameter integer hi   = 20;
+  parameter integer pick = 0;
+  analog begin
+    begin : blk
+      integer sd;
+      real d;
+      sd = 1 + $abstime * 1e12;
+      if (pick == 0)      d = $dist_exponential(sd, mean);
+      else if (pick == 1) d = $dist_normal(sd, 0, sdev);
+      else                d = $dist_uniform(sd, 10, hi);
+      V(o) <+ d;
+    end
+    I(a, b) <+ V(a, b) / 1e3;
+  end
+endmodule

@@ -8,9 +8,10 @@ use mir::{
 use mir_build::{FuncInstBuilder, FunctionBuilder, Place};
 use typed_indexmap::TiSet;
 
+use crate::fmt::{DisplayKind, FmtArg};
 use crate::{
     CallBackKind, HirInterner, ImplicitEquation, ImplicitEquationKind, LimitState, ParamKind,
-    PlaceKind,
+    PlaceKind, PrintDst, RetFlag,
 };
 
 pub struct LoweringCtx<'a, 'c> {
@@ -157,6 +158,50 @@ impl<'a, 'c> LoweringCtx<'a, 'c> {
             self.intern.callback_uses[func].push(res)
         }
         res
+    }
+
+    /// Enhancement-506: emits a `$fatal`-equivalent from lowering itself, for a
+    /// RUN-TIME value that the compile-time guards cannot see.
+    ///
+    /// Every value guard in `hir_ty` judges a CONSTANT: it sees a literal or a
+    /// localparam and nothing else. The ordinary case is a model whose
+    /// `parameter real T = 1n` is overridden from the deck, which the compiler
+    /// deliberately does not refuse (a default is the author's business) and which
+    /// nothing checked afterwards -- so a value the compiler calls an outright
+    /// error was accepted in silence when it arrived by the ordinary route.
+    ///
+    /// Enhancement-504 closed that gap wherever the domain has a natural
+    /// projection (a negative rise time becomes zero, an unusable noise power
+    /// becomes zero). Where it has none -- a sampling period that must be
+    /// positive, a denominator whose leading coefficient must be non-zero, an
+    /// event direction that must be one of three values -- there is nothing
+    /// honest to substitute, so the run time says exactly what the compiler would
+    /// have said and aborts, instead of continuing into a wrong answer.
+    ///
+    /// Shape follows `$fatal` (Enhancement-324): print, then RAISE A FLAG and
+    /// CONTINUE. The OSDI eval function has a mandatory epilogue that the ABI
+    /// requires to run, and every ret-flag is only a flag the simulator inspects
+    /// after eval returns -- none of them can longjmp out of the middle of an
+    /// evaluation, so terminating the MIR function early here would strand the
+    /// epilogue in a block with no incoming edges.
+    /// `val`, when given, is appended to the message as `%g` -- the run time can
+    /// name the offending NUMBER, which is the half the compile-time diagnostic
+    /// gets for free and the half a user actually needs to find the deck line.
+    pub fn runtime_fatal(&mut self, msg: &str, val: Option<Value>) {
+        let (fmt_lit, arg_tys): (String, Vec<FmtArg>) = match val {
+            Some(_) => (format!("{msg} %g\n"), vec![Type::Real.into()]),
+            None => (format!("{msg}\n"), Vec::new()),
+        };
+        let fmt = self.sconst(&fmt_lit);
+        let mut call_args = vec![fmt];
+        call_args.extend(val);
+        let cb = CallBackKind::Print {
+            kind: DisplayKind::Fatal,
+            arg_tys: arg_tys.into_boxed_slice(),
+            dst: PrintDst::Console,
+        };
+        self.call(cb, &call_args);
+        self.call(CallBackKind::SetRetFlag(RetFlag::Abort), &[]);
     }
 
     pub fn dec_callback(&mut self, kind: CallBackKind) -> FuncRef {

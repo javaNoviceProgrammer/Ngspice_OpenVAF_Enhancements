@@ -1,0 +1,13 @@
+`include "disciplines.vams"
+// The real sibling must still be named `$rdist_normal` -- the fix names the
+// call that is in the source, it does not rename the family.
+module bad_rdistnormal(a, b, o);
+  inout a, b, o; electrical a, b, o;
+  analog begin
+    begin : blk
+      integer sd; sd = 1;
+      V(o) <+ $rdist_normal(sd, 0, -1);
+    end
+    I(a, b) <+ V(a, b) / 1e3;
+  end
+endmodule

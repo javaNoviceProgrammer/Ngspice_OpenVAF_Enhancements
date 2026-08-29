@@ -1,0 +1,14 @@
+`include "disciplines.vams"
+// Enhancement-506: the diagnostic must name the function the AUTHOR wrote. One
+// validation arm serves `rdist_normal | dist_normal`, and the name was hardcoded
+// to the `$rdist_*` spelling.
+module bad_distnormal(a, b, o);
+  inout a, b, o; electrical a, b, o;
+  analog begin
+    begin : blk
+      integer sd; sd = 1;
+      V(o) <+ $dist_normal(sd, 0, -1);
+    end
+    I(a, b) <+ V(a, b) / 1e3;
+  end
+endmodule

@@ -330,6 +330,40 @@ impl BodyLoweringCtx<'_, '_, '_> {
         self.ctx.make_select(ok, |_, branch| if branch { pwr } else { zero })
     }
 
+    /// Enhancement-506: `flicker_noise(pwr, exp)` has TWO arguments and only the
+    /// first was guarded.
+    ///
+    /// `hir_ty` validates `args[0]` alone (`require_non_negative`, the noise
+    /// power) and Enhancement-504's `lower_noise_power` above clamps that same
+    /// argument at run time. The EXPONENT was checked nowhere, at either time, so
+    /// a NaN reaching it -- `flicker_noise(1e-18, sqrt(p))` with a deck-set
+    /// negative `p`, the ordinary route -- made `pwr/f^exp` NaN at every
+    /// frequency and the device's whole contribution NaN with it.
+    ///
+    /// A noise contribution cannot fail to converge the way a value contribution
+    /// does: `sqrt(p)` in a `V(o) <+` aborts the operating point loudly, but the
+    /// same NaN in a noise source just prints `onoise_total = nan` and exits 0.
+    /// That is why this one went unnoticed while its value-path twin did not.
+    ///
+    /// Only NaN is refused. Every finite exponent is meaningful (0 is white
+    /// noise, negative shapes the other way), and both infinities saturate
+    /// `f^-exp` to 0 or +inf per frequency rather than poisoning the spectrum.
+    /// The projection follows `lower_noise_power` exactly -- an unusable spec
+    /// makes the SOURCE INERT rather than the answer wrong -- so that the two
+    /// arguments of one builtin cannot disagree about what a bad value means.
+    ///
+    /// BOTH arguments have to be neutralised, not just the power: the runtime
+    /// evaluates `pwr / f**exp`, and `0 / f**NaN` is still NaN. Zeroing the power
+    /// alone left the spectrum exactly as poisoned as before -- the fix has to
+    /// reach the argument that is actually unusable.
+    fn guard_flicker_args(&mut self, pwr: Value, exp: Value) -> (Value, Value) {
+        let zero = self.ctx.fconst(0.0);
+        let ok = self.ctx.ins().feq(exp, exp); // false only for NaN
+        let pwr = self.ctx.make_select(ok, |_, branch| if branch { pwr } else { zero });
+        let exp = self.ctx.make_select(ok, |_, branch| if branch { exp } else { zero });
+        (pwr, exp)
+    }
+
     /// Lowers a dynamic-index array read `c[i]` / `m[i][j]` to a runtime select chain over the
     /// element variables: `elems[0]` is the default and each `elems[k]` is chosen when the flat
     /// runtime position equals `k`.
@@ -2161,6 +2195,7 @@ impl BodyLoweringCtx<'_, '_, '_> {
                 };
                 let pwr = self.lower_noise_power(args[0]);
                 let exp = self.lower_expr(args[1]);
+                let (pwr, exp) = self.guard_flicker_args(pwr, exp); // Enhancement-506
                 self.ctx.call1(CallBackKind::FlickerNoise { name, idx }, &[pwr, exp])
             }
             BuiltIn::noise_table | BuiltIn::noise_table_log => {
@@ -2547,10 +2582,22 @@ impl BodyLoweringCtx<'_, '_, '_> {
                 let b = self.clamp_upper_bound(a, b);          // Enhancement-505
                 self.lower_rng(expr, RngFun::Uniform, seed, &[a, b])
             }
+            // Enhancement-506: the INTEGER siblings below take Enhancement-505's
+            // clamps too. `hir_ty` validates the two spellings together -- one arm
+            // serves `rdist_normal | dist_normal` -- so a LITERAL out-of-domain
+            // argument was refused for both, and only the ordinary deck-supplied
+            // route reached the run time. There the clamps had gone to the
+            // `$rdist_*` arms alone, so `$dist_exponential(seed, mean)` with a
+            // deck-set mean of -1 returned deviates in -10..0: every sample
+            // NEGATIVE, from a distribution whose support is [0, inf), while its
+            // real sibling clamped to 0. `$dist_normal` returned the exact
+            // NEGATION of the correct distribution and `$dist_uniform(s, 10, 0)`
+            // drew from reversed bounds that `$rdist_uniform` refuses.
             BuiltIn::dist_uniform => {
                 let seed = self.lower_expr(args[0]);
                 let a = self.lower_num_as_real(args[1]);
                 let b = self.lower_num_as_real(args[2]);
+                let b = self.clamp_upper_bound(a, b);          // Enhancement-506
                 // `UniformInt` already returns an integral (but real) value.
                 let r = self.lower_rng(expr, RngFun::UniformInt, seed, &[a, b]);
                 self.ctx.ins().ficast(r)
@@ -2566,6 +2613,7 @@ impl BodyLoweringCtx<'_, '_, '_> {
                 let seed = self.lower_expr(args[0]);
                 let mean = self.lower_num_as_real(args[1]);
                 let sdev = self.lower_num_as_real(args[2]);
+                let sdev = self.clamp_non_negative(sdev);      // Enhancement-506
                 let r = self.lower_rng(expr, RngFun::Normal, seed, &[mean, sdev]);
                 let rr = self.rng_round_real(r);
                 self.ctx.ins().ficast(rr)
@@ -2579,6 +2627,7 @@ impl BodyLoweringCtx<'_, '_, '_> {
             BuiltIn::dist_exponential => {
                 let seed = self.lower_expr(args[0]);
                 let mean = self.lower_num_as_real(args[1]);
+                let mean = self.clamp_non_negative(mean);      // Enhancement-506
                 let r = self.lower_rng(expr, RngFun::Exponential, seed, &[mean]);
                 let rr = self.rng_round_real(r);
                 self.ctx.ins().ficast(rr)
@@ -2593,6 +2642,7 @@ impl BodyLoweringCtx<'_, '_, '_> {
             BuiltIn::dist_poisson => {
                 let seed = self.lower_expr(args[0]);
                 let mean = self.lower_num_as_real(args[1]);
+                let mean = self.clamp_non_negative(mean);      // Enhancement-506
                 // `Poisson` already returns an integral (but real) count.
                 let r = self.lower_rng(expr, RngFun::Poisson, seed, &[mean]);
                 self.ctx.ins().ficast(r)
@@ -2780,7 +2830,8 @@ impl BodyLoweringCtx<'_, '_, '_> {
             // `Real`-typed (like all other simulator-read instance-data fields),
             // so it needs an explicit int->real cast here.
             let dir_int = self.lower_expr(args[1]);
-            self.ctx.ins().ifcast(dir_int)
+            let dir = self.ctx.ins().ifcast(dir_int);
+            self.guard_event_direction("last_crossing", dir) // Enhancement-506
         } else {
             debug_assert_eq!(signature, LAST_CROSSING_NO_DIRECTION);
             F_ZERO
@@ -3019,6 +3070,25 @@ impl BodyLoweringCtx<'_, '_, '_> {
     /// The optional trailing tolerance/nature argument is accepted for signature compatibility
     /// but has no effect: the realization is an exact algebraic transformation, not an
     /// approximation that could benefit from an error tolerance.
+    /// Enhancement-506: the spelling the AUTHOR used, for a run-time diagnostic.
+    /// `laplace_state_space` is shared by all four `laplace_*` forms and, through
+    /// `lower_zi`, by all four `zi_*` forms, so a hardcoded name would point the
+    /// author at a function their source does not mention -- the defect
+    /// Enhancement-396 fixed for `noise_table_log` and Enhancement-506 fixes for
+    /// the `$dist_*` family.
+    fn filter_builtin_name(kind: BuiltIn) -> &'static str {
+        match kind {
+            BuiltIn::laplace_nd => "laplace_nd",
+            BuiltIn::laplace_np => "laplace_np",
+            BuiltIn::laplace_zd => "laplace_zd",
+            BuiltIn::laplace_zp => "laplace_zp",
+            BuiltIn::zi_nd => "zi_nd",
+            BuiltIn::zi_np => "zi_np",
+            BuiltIn::zi_zd => "zi_zd",
+            _ => "zi_zp",
+        }
+    }
+
     fn lower_laplace(&mut self, kind: BuiltIn, args: &[ExprId]) -> Value {
         let input = self.lower_expr(args[0]);
 
@@ -3031,7 +3101,7 @@ impl BodyLoweringCtx<'_, '_, '_> {
         let num = if num_is_roots { self.laplace_roots_to_poly(&num) } else { num };
         let den = if den_is_roots { self.laplace_roots_to_poly(&den) } else { den };
 
-        self.laplace_state_space(input, &num, &den)
+        self.laplace_state_space(Self::filter_builtin_name(kind), input, &num, &den)
     }
 
     /// Lowers an array-valued expression to its element `Value`s, in ascending order. Used by
@@ -3316,7 +3386,13 @@ impl BodyLoweringCtx<'_, '_, '_> {
     /// Builds a controllable-canonical-form state-space realization of `H(s) = num(s)/den(s)`
     /// (both ascending-power coefficient lists, `den` non-empty) driven by `input`, and returns
     /// the algebraic output value `y`.
-    fn laplace_state_space(&mut self, input: Value, num: &[Value], den: &[Value]) -> Value {
+    fn laplace_state_space(
+        &mut self,
+        name: &str,
+        input: Value,
+        num: &[Value],
+        den: &[Value],
+    ) -> Value {
         // Enhancement-405: the `den` non-empty precondition above is enforced by hir_ty, but
         // an unguarded `- 1` here is one caller away from the underflow that hung `lower_zi`.
         let n = den.len().saturating_sub(1);
@@ -3328,6 +3404,39 @@ impl BodyLoweringCtx<'_, '_, '_> {
             let gain = self.ctx.ins().fdiv(b0, a_n);
             return self.ctx.ins().fmul(gain, input);
         }
+
+        // Enhancement-506: `a_n` divides every coefficient below, and nothing
+        // checked it once it came from the deck.
+        //
+        // hir_ty refuses a literal whose highest-order denominator coefficient is
+        // zero -- "the denominator has a highest-order coefficient of zero, so its
+        // effective order is 0 rather than N" -- but it sees only a literal or a
+        // localparam. Written as `'{1, d1}` with `d1` a deck-set parameter, the
+        // same filter compiled clean and then divided by zero here, so every
+        // normalized coefficient became inf or NaN and the user got six lines of
+        // gmin- and source-stepping failure ending in "Timestep too small; cause
+        // unrecorded" -- a convergence report for a structurally invalid filter
+        // the compiler can already name exactly.
+        //
+        // The order `n` is fixed when the state space is built, so the effective
+        // order cannot be reduced here; substituting a small epsilon would only
+        // hide the mistake behind a stiff parasitic pole. The run time therefore
+        // says what the compiler says and aborts, and substitutes 1 purely so this
+        // one evaluation stamps finite numbers into the matrix -- the flag is
+        // inspected after eval returns, never in the middle of it.
+        let a_n_abs = self.lower_fabs(a_n);
+        let a_n_ok = self.ctx.ins().fgt(a_n_abs, F_ZERO); // false for 0 and NaN
+        let a_n_msg = format!(
+            "{name}: the denominator's highest-order coefficient must not be zero, but is"
+        );
+        let a_n = self.ctx.make_select(a_n_ok, |ctx, branch| {
+            if branch {
+                a_n
+            } else {
+                ctx.runtime_fatal(&a_n_msg, Some(a_n));
+                F_ONE
+            }
+        });
 
         // Normalized (monic) denominator coefficients a_bar_i = den[i] / a_n, i in 0..n.
         let a_bar: Vec<Value> =
@@ -3415,7 +3524,35 @@ impl BodyLoweringCtx<'_, '_, '_> {
         let num = if num_is_roots { self.zi_roots_to_poly(&num) } else { num };
         let den = if den_is_roots { self.zi_roots_to_poly(&den) } else { den };
 
+        // Enhancement-506: the sampling period decides the whole bilinear map, and
+        // nothing checked it once it came from the deck.
+        //
+        // hir_ty refuses a literal `T <= 0` ("the sampling period must be greater
+        // than zero", Enhancement-420) but sees only a literal or a localparam. A
+        // model whose `parameter real T = 1n` is overridden to a negative value --
+        // the ordinary route -- reached `w = (1 - s*T/2)/(1 + s*T/2)` with the map
+        // INVERTED, which reflects every pole across the imaginary axis: the filter
+        // became unstable and ran to 1.2e+240 over 60 ns, with exit code 0 and not
+        // one diagnostic. A bounded-but-wrong substitute would only trade a visibly
+        // absurd number for an invisibly wrong one, and there is no honest value to
+        // project a non-positive sampling period onto, so the run time says exactly
+        // what the compiler says and aborts.
         let t = self.lower_expr(args[3]);
+        let t_ok = self.ctx.ins().fgt(t, F_ZERO); // false for 0, negatives and NaN
+        let t_msg = format!(
+            "{}: the sampling period must be greater than zero, but is",
+            Self::filter_builtin_name(kind)
+        );
+        let t = self.ctx.make_select(t_ok, |ctx, branch| {
+            if branch {
+                t
+            } else {
+                ctx.runtime_fatal(&t_msg, Some(t));
+                // Finite, so this one evaluation stamps sane numbers; the flag is
+                // inspected after eval returns (Enhancement-324).
+                F_ONE
+            }
+        });
         let f_half = self.ctx.fconst(0.5);
         let half_t = self.ctx.ins().fmul(t, f_half);
 
@@ -3428,7 +3565,7 @@ impl BodyLoweringCtx<'_, '_, '_> {
         let num_s = self.bilinear_transform(&num, n, half_t);
         let den_s = self.bilinear_transform(&den, n, half_t);
 
-        self.laplace_state_space(input, &num_s, &den_s)
+        self.laplace_state_space(Self::filter_builtin_name(kind), input, &num_s, &den_s)
     }
 
     /// Converts the coefficients (ascending powers of `w = z^-1`, LRM order) of a degree-`n`

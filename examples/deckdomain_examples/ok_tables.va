@@ -1,0 +1,15 @@
+`include "disciplines.vams"
+// Enhancement-506 tightens the LOG variant only. Plain `noise_table`
+// interpolates linearly and a zero entry is fine there; `noise_table_log` with
+// 1e-300 is fine too, which is what makes this a guard about zero and not about
+// smallness.
+module ok_tables(a, b);
+  inout a, b; electrical a, b;
+  parameter integer pick = 0;
+  analog begin
+    I(a, b) <+ V(a, b) / 1e3;
+    if (pick == 0)      I(a, b) <+ noise_table('{0, 1e-18, 1e3, 1e-18});
+    else if (pick == 1) I(a, b) <+ noise_table_log('{1e-300, 1e-18, 1e3, 1e-18});
+    else                I(a, b) <+ noise_table("nt_ok.tbl");
+  end
+endmodule

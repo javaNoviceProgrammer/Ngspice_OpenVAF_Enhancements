@@ -1,0 +1,12 @@
+`include "disciplines.vams"
+// Enhancement-506: `noise_table_log` interpolates in log-log space, so a ZERO
+// entry is as unrepresentable as a negative one -- log10(0) is -inf and the
+// whole spectrum came back NaN. Both variants shared `require_non_negative`,
+// which admits exactly the one value the log form cannot take.
+module bad_ntlog_freq(a, b);
+  inout a, b; electrical a, b;
+  analog begin
+    I(a, b) <+ V(a, b) / 1e3;
+    I(a, b) <+ noise_table_log('{0, 1e-18, 1e3, 1e-18});
+  end
+endmodule
