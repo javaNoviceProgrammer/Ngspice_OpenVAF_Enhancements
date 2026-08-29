@@ -12,6 +12,10 @@
 #include "ngspice/cktdefs.h"
 #include "osdidefs.h"
 
+/* Enhancement-504: the most steps a MODEL may force across one analysis
+   window through $bound_step. Not a limit on ngspice's own stepping. */
+#define E504_MAX_MODEL_STEPS 1.0e6
+
 int OSDItrunc(GENmodel *in_model, CKTcircuit *ckt, double *timestep) {
   OsdiRegistryEntry *entry = osdi_reg_entry_model(in_model);
   const OsdiDescriptor *descr = entry->descriptor;
@@ -54,11 +58,66 @@ int OSDItrunc(GENmodel *in_model, CKTcircuit *ckt, double *timestep) {
            * the last accepted step, so the event is resolved rather than
            * extrapolated across. CKTdeltaOld[0] is the most recent accepted delta. */
           double last = ckt->CKTdeltaOld[0];
+          /* Enhancement-504: floor this branch too. A model that announces a
+             discontinuity on EVERY evaluation -- `$discontinuity(0)` outside
+             any conditional -- pins the step to the last accepted delta and it
+             can never grow again, so once the retry above has cut it the
+             transient crawls for the rest of the analysis and never returns.
+             E-55 already made the RETRY edge-triggered for exactly this reason;
+             the cap needs the same protection. */
+          double dfloor = (ckt->CKTfinalTime - ckt->CKTinitTime) / E504_MAX_MODEL_STEPS;
+          if (dfloor > 0.0 && last > 0.0 && last < dfloor) {
+            if (!extra_inst_data->boundstep_floored) {
+              extra_inst_data->boundstep_floored = true;
+              fprintf(stderr,
+                      "Warning: %s: announcing a discontinuity on every "
+                      "evaluation has pinned the timestep to %g; holding it at "
+                      "%g. Guard the $discontinuity with the condition it "
+                      "belongs to.\n",
+                      inst->GENname, last, dfloor);
+            }
+            last = dfloor;
+          }
           if (last > 0.0 && last < *timestep) {
             *timestep = last;
           }
         } else if (*del < *timestep) {
-          *timestep = *del;
+          /* Enhancement-504: honour the model's bound, but not to the point
+             of an unbounded run.
+
+             `$bound_step(1e-18)` is a perfectly LEGAL positive request and the
+             transient took it literally: >150 s of wall clock with no output,
+             no error and no "timestep too small". That check compares against
+             CKTdelmin, which for a 12 ns analysis is ~5e-20 -- far BELOW the
+             1e-18 being asked for -- so nothing ever fired. The step was not
+             too small for the solver; it was too small to finish.
+
+             No clamp value makes 1.2e10 steps work, so the rule is stated in
+             the only terms that bound the run: a model may not force more than
+             E504_MAX_MODEL_STEPS steps across the analysis window. Beyond that
+             the bound is clamped and the model is named once. A model asking
+             for genuinely fine resolution is unaffected -- one million steps is
+             already far more than any transient here needs -- and ngspice's own
+             adaptive stepping is untouched, since this bounds only what a
+             DEVICE may demand. */
+          double req = *del;
+          double span = ckt->CKTfinalTime - ckt->CKTinitTime;
+          double floor_step = (span > 0.0) ? span / E504_MAX_MODEL_STEPS : 0.0;
+          if (floor_step > 0.0 && req < floor_step) {
+            if (!extra_inst_data->boundstep_floored) {
+              extra_inst_data->boundstep_floored = true;
+              fprintf(stderr,
+                      "Warning: %s: $bound_step(%g) would need %.3g steps to "
+                      "cross this analysis; using %g (%g steps) instead. A "
+                      "device cannot demand an unbounded step count.\n",
+                      inst->GENname, req, span / req, floor_step,
+                      E504_MAX_MODEL_STEPS);
+            }
+            req = floor_step;
+          }
+          if (req < *timestep) {
+            *timestep = req;
+          }
         }
       }
 

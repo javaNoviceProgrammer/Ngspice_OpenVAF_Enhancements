@@ -167,6 +167,10 @@ typedef struct OsdiExtraInstData {
    * delta floor. Updated in OSDIaccept. */
   uint32_t prev_point_eval_flags;
   bool discont_retry;
+  /* Enhancement-504: latched once an impossible $bound_step has been
+     reported for this instance, so the warning names the model once rather
+     than on every timepoint. */
+  bool boundstep_floored;
 
   /* Enhancement-351: the global node numbers this instance's INTERNAL nodes
    * were given, so a SECOND DEVsetup() on an already-set-up circuit reuses them

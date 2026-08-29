@@ -278,6 +278,28 @@ impl BodyLoweringCtx<'_, '_, '_> {
         flat.unwrap_or_else(|| self.ctx.iconst(0))
     }
 
+    /// Enhancement-504: a noise POWER the model supplies must not be negative.
+    ///
+    /// A power is a variance and cannot be negative; hir_ty refuses one it can
+    /// SEE, but only a literal or a localparam -- the ordinary case is a
+    /// `parameter` overridden from the deck, which the compiler cannot refuse.
+    /// What reached the simulator then was `sqrt(fabs(pwr))`, so
+    /// `white_noise(-1e-20)` produced noise BIT-IDENTICAL to `white_noise(1e-20)`
+    /// and the sign was simply gone.
+    ///
+    /// Clamped here, at the USER's argument, and deliberately not in ngspice:
+    /// the power that reaches osdinoise.c has already had the contribution
+    /// factor folded into it as `fac*|fac|`, and Enhancement-42 uses that SIGN
+    /// to sum same-named sources coherently. Rejecting a negative there would
+    /// break correlated noise; rejecting it here cannot, because this runs
+    /// before the fold.
+    fn lower_noise_power(&mut self, expr: ExprId) -> Value {
+        let pwr = self.lower_expr(expr);
+        let zero = self.ctx.fconst(0.0);
+        let ok = self.ctx.ins().fgt(pwr, zero); // false for 0, negatives and NaN
+        self.ctx.make_select(ok, |_, branch| if branch { pwr } else { zero })
+    }
+
     /// Lowers a dynamic-index array read `c[i]` / `m[i][j]` to a runtime select chain over the
     /// element variables: `elems[0]` is the default and each `elems[k]` is chosen when the flat
     /// runtime position equals `k`.
@@ -2093,7 +2115,7 @@ impl BodyLoweringCtx<'_, '_, '_> {
                     let name = format!("unnamed{idx}");
                     self.ctx.func.interner.get_or_intern(name)
                 };
-                let pwr = self.lower_expr(args[0]);
+                let pwr = self.lower_noise_power(args[0]);
                 self.ctx.call1(CallBackKind::WhiteNoise { name, idx }, &[pwr])
             }
             BuiltIn::flicker_noise => {
@@ -2107,7 +2129,7 @@ impl BodyLoweringCtx<'_, '_, '_> {
                     let name = format!("unnamed{idx}");
                     self.ctx.func.interner.get_or_intern(name)
                 };
-                let pwr = self.lower_expr(args[0]);
+                let pwr = self.lower_noise_power(args[0]);
                 let exp = self.lower_expr(args[1]);
                 self.ctx.call1(CallBackKind::FlickerNoise { name, idx }, &[pwr, exp])
             }
@@ -2335,8 +2357,31 @@ impl BodyLoweringCtx<'_, '_, '_> {
                 self.ctx.use_param(ParamKind::PortConnected { port: self.body.into_node(args[0]) })
             }
             BuiltIn::bound_step => {
+                // Enhancement-504: a non-positive step bound must never be written.
+                //
+                // The field this writes is shared with Enhancement-24's sentinel,
+                // where a NEGATIVE value does not mean "bound the step to this"
+                // but "a $discontinuity happened here". A model that passes a
+                // negative to $bound_step therefore did not merely ask for
+                // something meaningless -- it announced a discontinuity on every
+                // evaluation, and the transient never returned.
+                //
+                // hir_ty's require_positive refuses a negative it can SEE, but it
+                // only sees a literal or a localparam; the ordinary case is a
+                // `parameter` overridden from the deck, which the compiler cannot
+                // refuse. So a non-positive or non-finite bound is dropped here
+                // and the incumbent bound stands, which is what "no constraint
+                // from this call" has always meant (the place defaults to
+                // INFINITY). Zero is dropped for the same reason: a zero-length
+                // step is not a bound a solver can honour.
                 let step_size = self.lower_expr(args[0]);
-                self.ctx.def_place(PlaceKind::BoundStep, step_size);
+                let zero = self.ctx.fconst(0.0);
+                let usable = self.ctx.ins().fgt(step_size, zero); // false for 0, <0 and NaN
+                let cur = self.ctx.use_place(PlaceKind::BoundStep);
+                let bound = self
+                    .ctx
+                    .make_select(usable, |_, branch| if branch { step_size } else { cur });
+                self.ctx.def_place(PlaceKind::BoundStep, bound);
                 GRAVESTONE
             }
 
@@ -2849,6 +2894,36 @@ impl BodyLoweringCtx<'_, '_, '_> {
                     || signature == TRANSITION_DELAY_RISET_FALLT_TOL
             );
             self.lower_expr(args[3])
+        };
+        // Enhancement-504: a negative rise/fall time must not reach the reciprocal.
+        //
+        // `pos_max` is 1/trise and bounds `dy/dt` from ABOVE in the tracking loop
+        // below; with a negative trise that bound goes negative and the clamp is
+        // inverted, so the loop integrates AWAY from the input instead of towards
+        // it. A 0->1 signal then reached -24 V, and it is unbounded -- -120 V over
+        // a longer run, and larger still as |trise| shrinks, because the runaway
+        // rate is 1/|trise|.
+        //
+        // hir_ty's require_non_negative already refuses a negative it can SEE, but
+        // it only sees a literal or a localparam. The ordinary case is a model
+        // whose `parameter real tr = 0.5n` is overridden from the deck, which the
+        // compiler cannot refuse (a default is the author's business) and which
+        // nothing checked afterwards.
+        //
+        // Clamped to zero rather than to |trise|: zero is the projection onto the
+        // domain the LRM states, it is already what `transition` means with the
+        // argument omitted, and 1/0 = +inf disables the rate limit exactly as an
+        // instantaneous transition should. Guessing that a negative time "meant"
+        // its magnitude would be inventing intent. `slew` needs no such clamp --
+        // it applies lower_fabs to both rates just above, for its own reasons.
+        let t_zero = self.ctx.fconst(0.0);
+        let trise = {
+            let pos = self.ctx.ins().fgt(trise, t_zero);   // false for 0 and for NaN
+            self.ctx.make_select(pos, |_, branch| if branch { trise } else { t_zero })
+        };
+        let tfall = {
+            let pos = self.ctx.ins().fgt(tfall, t_zero);
+            self.ctx.make_select(pos, |_, branch| if branch { tfall } else { t_zero })
         };
         let f_one = self.ctx.fconst(1.0);
         let pos_max = self.ctx.ins().fdiv(f_one, trise);
@@ -3475,7 +3550,20 @@ impl BodyLoweringCtx<'_, '_, '_> {
             let whole = self.ctx.ins().floor(quot);
             let whole_mod = self.ctx.ins().fmul(whole, modulus);
             let rem = self.ctx.ins().fsub(shifted, whole_mod);
-            self.ctx.ins().fadd(rem, offset)
+            let wrapped = self.ctx.ins().fadd(rem, offset);
+            // Enhancement-504: a modulus that is not strictly positive wraps
+            // nothing. hir_ty refuses one it can SEE ("the modulus must be
+            // greater than zero"), but only a literal or a localparam; from a
+            // deck-overridden `parameter` a zero modulus reached the division
+            // above, made the returned value NaN, and took the whole analysis
+            // down with "Timestep too small; cause unrecorded" -- a message
+            // naming neither this model nor this call. Fall back to the
+            // UNWRAPPED integral, which is exactly what `idtmod` means with no
+            // modulus supplied, so the model keeps running and the value stays
+            // finite.
+            let zero = self.ctx.fconst(0.0);
+            let usable = self.ctx.ins().fgt(modulus, zero); // false for 0, <0 and NaN
+            self.ctx.make_select(usable, |_, branch| if branch { wrapped } else { val })
         } else {
             val
         }

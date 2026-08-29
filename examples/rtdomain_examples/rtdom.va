@@ -1,0 +1,31 @@
+`include "disciplines.vams"
+
+// Enhancement-504: every domain-constrained argument here is a `parameter`, so
+// the deck supplies it and the compiler cannot fold it. That is the whole point:
+// hir_ty refuses a literal or a localparam out of domain, and this file exercises
+// the route it cannot see.
+module rtdom(a, b, o);
+    inout a, b, o;
+    electrical a, b, o;
+
+    parameter real tr  = 0.5n;      // transition rise
+    parameter real tf  = 0.5n;      // transition fall
+    parameter real bs  = 1n;        // $bound_step
+    parameter real md  = 1n;        // idtmod modulus
+    parameter real npw = 1e-20;     // white_noise power
+    parameter integer disc = -1;    // $discontinuity degree, -1 = none
+    parameter integer mode = 0;     // 0 transition, 1 bound_step, 2 idtmod, 3 noise
+
+    analog begin
+        if (mode == 1) $bound_step(bs);
+        if (disc >= 0) $discontinuity(disc);
+
+        if (mode == 2)
+            V(o) <+ idtmod(V(a, b), 0, md);
+        else
+            V(o) <+ transition(V(a, b) > 0.5 ? 1.0 : 0.0, 0, tr, tf);
+
+        I(a, b) <+ V(a, b) / 1e3;
+        if (mode == 3) I(a, b) <+ white_noise(npw, "wn");
+    end
+endmodule
