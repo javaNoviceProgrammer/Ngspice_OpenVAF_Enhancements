@@ -333,18 +333,73 @@ impl<'a> Context<'a> {
                 }
             }
         }
+        // Enhancement-505: and mark them in EVERY block, not only the
+        // op-controlled ones.
+        //
+        // Enhancement-55 (above) marked a side-effecting callback op-dependent
+        // when an op-dependent branch controlled it. That covered the case it
+        // was chasing and left the opposite one open: a callback under NO
+        // condition at all is in no op-controlled block, so it stayed
+        // op-INdependent -- its arguments are constants and nothing else makes
+        // it vary -- and was hoisted into the instance-init split, which runs
+        // once at setup instead of on every evaluation.
+        //
+        // The symptoms did not look related to each other. A bare `$stop;` was
+        // silently inert (eval_flags stayed 0 for the whole analysis, while the
+        // same `$stop` under a run-time condition set flag 8 immediately), and
+        // a bare `$strobe` printed TWICE across a 146-point transient where the
+        // conditional form printed 294 times. `$finish` appeared to work only
+        // because ngspice checks FATAL|FINISH at setup (osdisetup.c), which is
+        // exactly where the hoisted call had gone.
+        //
+        // A statement under no condition executes on every evaluation by
+        // definition, so there is no case in which hoisting one of these out of
+        // eval is right. The op_controlled set is still computed above: it is
+        // what makes the CONTROLLED case work, and this loop now covers the
+        // uncontrolled remainder.
         for bb in self.func.layout.blocks() {
-            if !op_controlled.contains(bb) {
-                continue;
-            }
+            let controlled = op_controlled.contains(bb);
             let mut cursor = self.func.layout.block_inst_cursor(bb);
             while let Some(inst) = cursor.next(&self.func.layout) {
                 if let mir::InstructionData::Call { func_ref, .. } = self.func.dfg.insts[inst] {
-                    if matches!(
-                        self.intern.callbacks[func_ref],
-                        CallBackKind::SetRetFlag(_) | CallBackKind::Print { .. }
-                    ) {
-                        self.op_dependent_insts.insert(inst);
+                    match self.intern.callbacks[func_ref] {
+                        // Enhancement-505: a return-flag callback belongs in eval
+                        // whether or not a condition controls it.
+                        //
+                        // Enhancement-55 marked these only inside an op-controlled
+                        // block, which left the UNCONDITIONAL case op-independent --
+                        // its arguments are constants and nothing else makes it vary
+                        // -- so it was hoisted into the instance-init split, which
+                        // runs once at setup instead of on every evaluation. A bare
+                        // `$stop;` was therefore inert: eval_flags stayed 0 for the
+                        // whole analysis, while the same `$stop` under a run-time
+                        // condition set flag 8 at the first point. `$finish` only
+                        // appeared to work because ngspice also tests FATAL|FINISH
+                        // at setup (osdisetup.c), which is exactly where the hoisted
+                        // call had gone.
+                        //
+                        // A statement under no condition executes on every
+                        // evaluation by definition, so hoisting one out of eval is
+                        // never right. These take no arguments, so relocating them
+                        // cannot strand an operand.
+                        CallBackKind::SetRetFlag(_) => {
+                            self.op_dependent_insts.insert(inst);
+                        }
+                        // Enhancement-505: `Print` is deliberately NOT included.
+                        // Its arguments are real values, and an unconditional print
+                        // whose operands are computed in the init split does not
+                        // dominate its new position once the call is moved to eval
+                        // -- codegen then reads a `BuilderVal::Undef` and the
+                        // compiler aborts (mir_llvm/builder.rs:143). Measured on
+                        // examples/concat_examples, whose `$sformat` machinery this
+                        // crashed outright. An unconditional `$strobe` consequently
+                        // still runs at init rather than per evaluation; moving it
+                        // safely means moving its operands too, which is a larger
+                        // change than this one and is recorded as an open finding.
+                        CallBackKind::Print { .. } if controlled => {
+                            self.op_dependent_insts.insert(inst);
+                        }
+                        _ => {}
                     }
                 }
             }

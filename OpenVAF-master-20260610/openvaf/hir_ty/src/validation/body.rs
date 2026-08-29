@@ -2560,9 +2560,19 @@ impl ExprValidator<'_, '_> {
             BuiltIn::laplace_np | BuiltIn::laplace_zp | BuiltIn::zi_np | BuiltIn::zi_zp
         );
 
-        // a written-out list; anything else is a runtime value whose length is not known here
+        // a written-out list; anything else is a runtime value whose length is not known here.
+        //
+        // Enhancement-505: a bare concatenation counts as written out. `laplace_*`
+        // accepts BOTH `'{1.0, tau}` and `{1.0, tau}` and lowers them identically
+        // (Enhancement-399 measured that and deliberately allows the second), so a
+        // check that reads only `Expr::Array` sees half the models -- one
+        // apostrophe apart, the same split Enhancement-457 found in `'{4{0}}` vs
+        // `{4{0}}`. A REPLICATION (`{4{0}}`, `rep: Some(..)`) is left alone here:
+        // its length is the repetition count times the element count, which is not
+        // this function's question.
         let len = |this: &Self, e: ExprId| match this.parent.body.exprs[e] {
             Expr::Array(ref elems) => Some(elems.len()),
+            Expr::Concat { rep: None, ref elems } => Some(elems.len()),
             _ => None,
         };
         // Roots arrive as (real, imaginary) pairs, a trailing unpaired element being real.
@@ -2605,8 +2615,16 @@ impl ExprValidator<'_, '_> {
         // laplace arm states: reject what is silently wrong, not everything that
         // is not an array literal.
         if !den_is_roots {
-            if let Expr::Array(ref elems) = self.parent.body.exprs[den] {
-                let elems = elems.clone();
+            // Enhancement-505: `'{0}` was refused here and `{0}` was not, though
+            // `laplace_*` accepts both. The concatenation form compiled clean and
+            // returned a silent ZERO -- the opposite of the division by zero it
+            // actually is -- so the model looked dead rather than wrong.
+            let written_out = match self.parent.body.exprs[den] {
+                Expr::Array(ref elems) => Some(elems.clone()),
+                Expr::Concat { rep: None, ref elems } => Some(elems.clone()),
+                _ => None,
+            };
+            if let Some(elems) = written_out {
                 if !elems.is_empty()
                     && elems.iter().all(|&e| self.const_num(e) == Some(0.0))
                 {

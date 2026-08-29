@@ -1,0 +1,39 @@
+`include "disciplines.vams"
+
+// Enhancement-505: four things the compiler's own machinery discarded.
+// `mode` selects which one this instance exercises, so one model file covers
+// the whole enhancement and the suite's decks stay readable.
+module dropg(a, b, o);
+    inout a, b, o;
+    electrical a, b, o;
+
+    parameter integer mode = 0;   // 0 plain, 1 rdist, 2 laplace
+    parameter integer dist = 0;   // 0 normal, 1 exponential, 2 poisson, 3 uniform
+    parameter real p    = 1;      // the deck-supplied distribution argument
+    parameter integer stopmode = 0;  // 0 none, 1 bare $stop, 2 $stop under a run-time cond
+
+    (*desc="drawn value"*) real drawn;
+    integer seed;
+
+    analog begin
+        seed = 1;
+        drawn = 0;
+
+        if (stopmode == 1) $stop;
+        if (stopmode == 2 && $abstime > 3n) $stop;
+
+        if (mode == 1) begin
+            if (dist == 0) drawn = $rdist_normal(seed, 0, p);
+            else if (dist == 1) drawn = $rdist_exponential(seed, p);
+            else if (dist == 2) drawn = $rdist_poisson(seed, p);
+            else drawn = $rdist_uniform(seed, 0, p);
+        end
+
+        if (mode == 2)
+            V(o) <+ laplace_nd(V(a, b), {1}, {1, 1u});   // concatenation form
+        else
+            V(o) <+ V(a, b);
+
+        I(a, b) <+ V(a, b) / 1e3;
+    end
+endmodule

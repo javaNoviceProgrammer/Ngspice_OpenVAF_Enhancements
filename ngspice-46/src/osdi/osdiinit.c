@@ -209,6 +209,55 @@ extern SPICEdev *osdi_create_spicedev(const OsdiRegistryEntry *entry) {
   write_param_info(&dst, descr, descr->num_params,
                    descr->num_params + descr->num_opvars, true);
 
+  /* Enhancement-505: say so when one of the model's own names is unreachable.
+   *
+   * The simulator-supplied instance parameters above -- `m`, `temp`, `dtemp`,
+   * `dt` -- are written into this table FIRST, so a lookup finds them before
+   * anything the model declared. A model with an operating-point variable named
+   * `temp` therefore assigned it and read back the ambient temperature, and one
+   * named `m` read back the multiplier: the value was computed on every
+   * evaluation and could never be seen. Nothing said a word, in the compiler or
+   * here, and the name is legal Verilog-A.
+   *
+   * The collision is not worth refusing the model over -- the rest of it works,
+   * and refusing would break a model that runs today for the sake of a name it
+   * never reads -- so this names the parameter, the model and the winner, once
+   * per descriptor at load time. */
+  {
+    static const char *const injected[] = {"m", "temp", "dtemp", "dt", NULL};
+    for (uint32_t i = 0; i < descr->num_instance_params + descr->num_opvars; i++) {
+      uint32_t idx = (i < descr->num_instance_params)
+                         ? i
+                         : descr->num_params + (i - descr->num_instance_params);
+      const char *nm = descr->param_opvar[idx].name[0];
+      /* OPERATING-POINT VARIABLES ONLY. A model may legitimately declare `m` or
+       * `dtemp` as its own instance PARAMETER -- that is what Enhancement-394's
+       * `has_m` exists for, a CMC-style model scales by its own `m`, and the
+       * loader routes the deck's value into it, so nothing is shadowed and
+       * limguard_examples asserts there is no warning. An opvar is read-only:
+       * nothing routes into it, the simulator's parameter wins the lookup, and
+       * the model's value can never be read back. */
+      if ((descr->param_opvar[idx].flags & (uint32_t)PARA_KIND_OPVAR) == 0) {
+        continue;
+      }
+      for (int k = 0; injected[k]; k++) {
+        int supplied =
+            (!strcmp(injected[k], "m") && !entry->has_m) ||
+            (!strcmp(injected[k], "temp") && entry->temp != UINT32_MAX) ||
+            ((!strcmp(injected[k], "dtemp") || !strcmp(injected[k], "dt")) &&
+             entry->dt != UINT32_MAX);
+        if (supplied && !strcasecmp(nm, injected[k])) {
+          fprintf(stderr,
+                  "Warning: %s: the operating-point variable '%s' has the "
+                  "same name as the simulator's own instance parameter '%s', "
+                  "which wins the lookup -- `@<inst>[%s]` reads the simulator's "
+                  "value, not the model's. Rename it in the Verilog-A source.\n",
+                  descr->name, nm, injected[k], nm);
+        }
+      }
+    }
+  }
+
   /* Enhancement-394: terminal currents occupy ids just past the descriptor's
    * own parameter/opvar space; OSDIask recognises that range. Two-terminal
    * devices additionally answer to the bare `i`, matching what R, C and L use,

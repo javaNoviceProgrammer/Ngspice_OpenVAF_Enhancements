@@ -1,0 +1,15 @@
+`include "disciplines.vams"
+
+// Enhancement-505: an operating-point variable whose name the simulator also
+// supplies as an instance parameter. Legal Verilog-A, and unreadable.
+module shadow(a, b);
+    inout a, b;
+    electrical a, b;
+    (*desc="shadowed by the multiplier"*)  real m;
+    (*desc="shadowed by the temperature"*) real temp;
+    (*desc="not shadowed"*)                real ok;
+    analog begin
+        m = 9; temp = 9; ok = 9;
+        I(a, b) <+ V(a, b) / 1e3;
+    end
+endmodule

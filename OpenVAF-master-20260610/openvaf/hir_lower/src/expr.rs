@@ -278,6 +278,36 @@ impl BodyLoweringCtx<'_, '_, '_> {
         flat.unwrap_or_else(|| self.ctx.iconst(0))
     }
 
+    /// Enhancement-505: clamp a distribution argument that cannot be negative.
+    ///
+    /// hir_ty refuses an out-of-domain CONSTANT ("the standard deviation must not
+    /// be negative"), but only a literal or a localparam; the ordinary case is a
+    /// `parameter` overridden from the deck, which the compiler cannot refuse.
+    /// What got through was not merely odd, it was impossible:
+    /// `$rdist_normal(seed, 0, -1)` returned exactly the NEGATION of the `+1`
+    /// deviate -- the sign was used, not validated -- and
+    /// `$rdist_exponential(seed, -1)` returned a NEGATIVE deviate, which the
+    /// exponential distribution has no values of.
+    ///
+    /// Zero is the projection onto the domain and is a distribution the RNG can
+    /// actually produce: a zero standard deviation is the mean with certainty, a
+    /// zero exponential/poisson mean is zero with certainty.
+    fn clamp_non_negative(&mut self, v: Value) -> Value {
+        let zero = self.ctx.fconst(0.0);
+        let ok = self.ctx.ins().fgt(v, zero); // false for 0, negatives and NaN
+        self.ctx.make_select(ok, |_, branch| if branch { v } else { zero })
+    }
+
+    /// Enhancement-505: `$rdist_uniform`'s bounds, ordered. The LRM requires the
+    /// start below the end and hir_ty refuses a constant pair that is not; from
+    /// the deck an inverted pair sampled an inverted range in silence. The high
+    /// bound is raised to the low one, which degenerates the distribution to a
+    /// point rather than inventing the user's intent by swapping them.
+    fn clamp_upper_bound(&mut self, lo: Value, hi: Value) -> Value {
+        let ok = self.ctx.ins().fgt(hi, lo);
+        self.ctx.make_select(ok, |_, branch| if branch { hi } else { lo })
+    }
+
     /// Enhancement-504: a noise POWER the model supplies must not be negative.
     ///
     /// A power is a variance and cannot be negative; hir_ty refuses one it can
@@ -2514,6 +2544,7 @@ impl BodyLoweringCtx<'_, '_, '_> {
                 let seed = self.lower_expr(args[0]);
                 let a = self.lower_expr(args[1]);
                 let b = self.lower_expr(args[2]);
+                let b = self.clamp_upper_bound(a, b);          // Enhancement-505
                 self.lower_rng(expr, RngFun::Uniform, seed, &[a, b])
             }
             BuiltIn::dist_uniform => {
@@ -2528,6 +2559,7 @@ impl BodyLoweringCtx<'_, '_, '_> {
                 let seed = self.lower_expr(args[0]);
                 let mean = self.lower_expr(args[1]);
                 let sdev = self.lower_expr(args[2]);
+                let sdev = self.clamp_non_negative(sdev);      // Enhancement-505
                 self.lower_rng(expr, RngFun::Normal, seed, &[mean, sdev])
             }
             BuiltIn::dist_normal => {
@@ -2541,6 +2573,7 @@ impl BodyLoweringCtx<'_, '_, '_> {
             BuiltIn::rdist_exponential => {
                 let seed = self.lower_expr(args[0]);
                 let mean = self.lower_expr(args[1]);
+                let mean = self.clamp_non_negative(mean);      // Enhancement-505
                 self.lower_rng(expr, RngFun::Exponential, seed, &[mean])
             }
             BuiltIn::dist_exponential => {
@@ -2553,6 +2586,7 @@ impl BodyLoweringCtx<'_, '_, '_> {
             BuiltIn::rdist_poisson => {
                 let seed = self.lower_expr(args[0]);
                 let mean = self.lower_expr(args[1]);
+                let mean = self.clamp_non_negative(mean);      // Enhancement-505
                 // stays REAL: $rdist_* is the real-valued family (Enhancement-376)
                 self.lower_rng(expr, RngFun::Poisson, seed, &[mean])
             }

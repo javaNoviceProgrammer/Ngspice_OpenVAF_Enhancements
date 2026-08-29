@@ -1,0 +1,13 @@
+`include "disciplines.vams"
+
+// Enhancement-505: the case that must NOT warn. A CMC-style model declares `m`
+// and `dtemp` as its own instance PARAMETERS and scales by them -- that is what
+// Enhancement-394's `has_m` exists for, and the loader routes the deck's value
+// into them, so nothing is shadowed. Only a read-only opvar is.
+module cmcstyle(p, n);
+    inout p, n;
+    electrical p, n;
+    (*type="instance"*) parameter real m = 1.0;
+    (*type="instance"*) parameter real dtemp = 0.0;
+    analog I(p, n) <+ m * V(p, n) * 1e-3;
+endmodule
