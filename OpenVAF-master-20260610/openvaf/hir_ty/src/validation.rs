@@ -1,7 +1,7 @@
 use basedb::diagnostics::{Diagnostic, Label, LabelStyle, Report};
 use basedb::lints::builtin::{
-    const_simparam, rng_in_loop, trivial_probe, unknown_analysis_name, unknown_limit_function,
-    unknown_simparam,
+    const_simparam, rng_in_loop, runtime_format_string, trivial_probe, unknown_analysis_name,
+    unknown_limit_function, unknown_simparam,
     variant_const_simparam,
 };
 use basedb::lints::{self, Lint, LintSrc};
@@ -164,6 +164,10 @@ impl Diagnostic for BodyValidationDiagnosticWrapped<'_> {
             BodyValidationDiagnostic::UnknownSimparam { stmt, .. } => {
                 let src = self.body_sm.lint_src(stmt, unknown_simparam);
                 Some((unknown_simparam, src))
+            }
+            BodyValidationDiagnostic::RuntimeFormatString { stmt, .. } => {
+                let src = self.body_sm.lint_src(stmt, runtime_format_string);
+                Some((runtime_format_string, src))
             }
             _ => None,
         }
@@ -910,6 +914,31 @@ impl Diagnostic for BodyValidationDiagnosticWrapped<'_> {
                              and the event never fires"
                                 .to_owned()
                         },
+                    ])
+            }
+            BodyValidationDiagnostic::RuntimeFormatString { ref builtin, expr, .. } => {
+                let FileSpan { range, file } = self.expr_src(expr);
+                Report::warning()
+                    .with_message(format!(
+                        "{builtin}: this format string is not a literal, so it is printed \
+                         rather than interpreted"
+                    ))
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: file,
+                        range: range.into(),
+                        message: "printed as a value; the arguments after it are appended"
+                            .to_owned(),
+                    }])
+                    .with_notes(vec![
+                        "a format is read when the model is COMPILED, to fix each \
+                         conversion's argument type; a string only known at run time \
+                         cannot be read then, so `%g` and friends reach the output \
+                         verbatim"
+                            .to_owned(),
+                        "help: write the format as a literal, or build the whole message \
+                         with $sformat and print that"
+                            .to_owned(),
                     ])
             }
             BodyValidationDiagnostic::UnknownSimparam {

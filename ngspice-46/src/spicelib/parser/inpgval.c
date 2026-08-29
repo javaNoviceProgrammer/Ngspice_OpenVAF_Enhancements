@@ -12,6 +12,29 @@ Author: 1985 Thomas L. Quarles
 
 extern bool ft_ngdebug;
 
+/* Enhancement-507: whether the SCALAR numeric conversion in the most recent
+ * INPgetValue() call failed.
+ *
+ * The IF_REALVEC path already tests INPevaluate's `error` and refuses the value.
+ * The IF_REAL and IF_INTEGER paths took the same `error` and threw it away, so a
+ * token INPevaluate cannot parse became 0 and was applied as if the deck had
+ * asked for zero. That is reachable from an ordinary netlist: numparam
+ * substitutes the TEXT of an expression, and `{1/0}` substitutes `inf`, which is
+ * not a number this parser accepts. `.model nm nmos ... kp={1/0}` therefore set
+ * kp = 0 -- a transistor that conducts nothing, drain current 1e-12 against
+ * 1.25e-4, exit code 0, no diagnostic. Writing `inf` or `nan` DIRECTLY on the
+ * same card is refused, and so is `{1/0}` on an instance line or as a built-in
+ * device's value; only the model card took it.
+ *
+ * INPgetValue cannot simply return NULL for these types the way the vector path
+ * does: none of its ~40 call sites test for NULL, so that would trade a wrong
+ * number for a null dereference. The failure is recorded here instead and the
+ * model-card path asks for it, which is the one caller that had no other way to
+ * find out. */
+static int inp_scalar_value_error;
+
+int INPlastValueError(void) { return inp_scalar_value_error; }
+
 IFvalue *
 INPgetValue(CKTcircuit *ckt, char **line, int type, INPtables *tab)
 {
@@ -26,8 +49,10 @@ INPgetValue(CKTcircuit *ckt, char **line, int type, INPtables *tab)
 
     /* make sure we get rid of extra bits in type */
     type &= IF_VARTYPES;
+    inp_scalar_value_error = 0;                 /* Enhancement-507 */
     if (type == IF_INTEGER) {
         tmp = INPevaluate(line, &error, 1);
+        inp_scalar_value_error = error;         /* Enhancement-507 */
         /* Enhancement-399: round half AWAY FROM ZERO, not half up.
          *
          * `floor(0.5 + x)` rounds .5 toward +infinity, which is asymmetric:
@@ -50,6 +75,7 @@ INPgetValue(CKTcircuit *ckt, char **line, int type, INPtables *tab)
         /* printf(" returning integer value %d\n",temp.iValue); */
     } else if (type == IF_REAL) {
         temp.rValue = INPevaluate(line, &error, 1);
+        inp_scalar_value_error = error;         /* Enhancement-507 */
         /* printf(" returning real value %e\n",temp.rValue); */
     } else if (type == IF_REALVEC) {
         /* read until error occurs. If error, and first

@@ -208,7 +208,9 @@ pub enum CallBackKind {
     /// Begin a `$sscanf`/`$fscanf` parse over the given input string; resets the
     /// runtime scan cursor and match count. Args: `(input: ptr)`.
     ScanBegin,
-    /// Pull the next field from the scan cursor (see `ScanKind`).
+    /// Pull the next field from the scan cursor (see `ScanKind`). Args: the
+    /// destination's current value, returned unchanged if nothing converts
+    /// (Enhancement-507).
     Scan(ScanKind),
     /// The number of successful conversions since the last `ScanBegin`
     /// (the `$sscanf`/`$fscanf` return value).
@@ -344,8 +346,10 @@ impl CallBackKind {
                 has_sideeffects: true,
             },
             CallBackKind::Scan(kind) => FunctionSignature {
+                // Enhancement-507: the one parameter is the destination's CURRENT
+                // value, handed back unchanged when the field does not convert.
                 name: format!("scan_{:?}", kind),
-                params: 0,
+                params: 1,
                 returns: 1,
                 has_sideeffects: true,
             },

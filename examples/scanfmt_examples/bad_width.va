@@ -1,0 +1,11 @@
+`include "disciplines.vams"
+// Enhancement-507: a field width. The scanner reads the whole token, so `%2d`
+// against "1234" returned 1234 where C returns 12.
+module bad_width(p, n);
+  inout p, n; electrical p, n;
+  integer nm, v;
+  analog begin
+    I(p, n) <+ V(p, n) / 1e3;
+    nm = $sscanf("1234", "%2d", v);
+  end
+endmodule

@@ -1658,6 +1658,17 @@ void free_tree(INPparseNode *pt)
     /* FALLTHROUGH added to suppress GCC warning due to
      * -Wimplicit-fallthrough flag */
     switch (pt->type) {
+    /* Enhancement-507: PT_PLACEHOLDER is a LEAF, not an unknown type.
+     *
+     * It is node type 0 and a perfectly ordinary node (`inpptree.h`: "for
+     * i(something)"), but it was missing from this list, so freeing one fell to
+     * the `default` arm and printed "Internal error: unhandled parse-tree node
+     * type 0 while releasing an expression". That reached users on an ERROR
+     * path, where a partially built tree is released: `B1 a 0 v={z}` with
+     * `.param z={1/0}` substitutes the text `inf`, the expression fails to
+     * parse, and the cleanup then announced an internal fault before the real,
+     * correct diagnostic. Like every other leaf it has no child to release. */
+    case PT_PLACEHOLDER:
     case PT_TIME:
     case PT_TEMPERATURE:
     case PT_FREQUENCY:

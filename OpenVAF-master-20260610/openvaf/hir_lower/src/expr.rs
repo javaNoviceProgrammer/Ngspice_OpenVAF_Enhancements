@@ -2714,6 +2714,21 @@ impl BodyLoweringCtx<'_, '_, '_> {
             _ => Vec::new(),
         };
         for (i, &arg) in var_args.iter().enumerate() {
+            // Enhancement-507: the value the destination already holds. It is
+            // passed INTO the scanner, which hands it straight back when the
+            // field does not convert, so an unmatched argument is left alone as
+            // C and IEEE 1364 require.
+            //
+            // It must be read with `read_variable`, the same call an ordinary
+            // variable read lowers to. The destination arrives here as an OUTPUT
+            // reference, so `lower_expr` on it is not a read at all and produced
+            // a module that segfaulted the simulator the moment the variable had
+            // not already been assigned; `use_place(PlaceKind::Var)` did the
+            // same. The value is passed as an ARGUMENT rather than selected on a
+            // separate "did it match" callback: that version needed two extra
+            // blocks per destination and had the same fault, which is E-505's
+            // lesson about adding control flow around a call whose operands live
+            // elsewhere.
             let var = self.body.into_variable(arg);
             let kind = match self.body.expr_type(arg) {
                 Type::Integer => match convs.get(i) {
@@ -2728,7 +2743,25 @@ impl BodyLoweringCtx<'_, '_, '_> {
                 Type::String => ScanKind::Str,
                 ty => unreachable!("invalid $sscanf target type {ty:?}"),
             };
-            let val = self.ctx.call1(CallBackKind::Scan(kind), &[]);
+            // The fallback is the destination's current value -- but ONLY when
+            // the variable already has one in this function. Reading a variable
+            // that has never been assigned declares `PlaceKind::Var`, whose
+            // initialiser is `ParamKind::HiddenState`: it turns the destination
+            // into persistent instance state the backend does not provide for a
+            // scanf target, and the generated module segfaults the simulator the
+            // first time such a model is evaluated. `get_place` answers exactly
+            // the question that distinguishes the two, and where there is no
+            // prior definition the "previous value" IS the implicit zero, so
+            // handing the scanner a zero is not an approximation.
+            let prev = match self.ctx.get_place(PlaceKind::Var(var)) {
+                Some(place) => self.ctx.func.use_var(place),
+                None => match kind {
+                    ScanKind::Real => F_ZERO,
+                    ScanKind::Str => self.ctx.sconst(""),
+                    _ => self.ctx.iconst(0),
+                },
+            };
+            let val = self.ctx.call1(CallBackKind::Scan(kind), &[prev]);
             self.ctx.def_place(PlaceKind::Var(var), val);
         }
         self.ctx.call1(CallBackKind::ScanCount, &[])

@@ -193,5 +193,11 @@ pub mod builtin {
         // and `unknown_analysis_name`: the name set is simulator-defined and
         // another OSDI consumer may serve more.
         pub const unknown_simparam = LintData{default_lvl: Warn, documentation_id: 25};
+        // Enhancement-507: a display/format task handed a format string that is
+        // not a literal. Warn rather than deny: printing the string as a plain
+        // value is a defined fallback (Enhancement-453) and is exactly what a
+        // model that means to print a message wants -- it is only wrong when
+        // OPERANDS follow, which is what the check requires.
+        pub const runtime_format_string = LintData{default_lvl: Warn, documentation_id: 26};
     }
 }

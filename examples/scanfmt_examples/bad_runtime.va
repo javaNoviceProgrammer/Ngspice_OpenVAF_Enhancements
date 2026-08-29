@@ -1,0 +1,14 @@
+`include "disciplines.vams"
+// Enhancement-507: a format known only at run time. The conversion BASE is read
+// when the model is compiled, so `%o` in a runtime string silently scanned as
+// decimal -- "777" returned 777 rather than 511, reporting success.
+module bad_runtime(p, n);
+  inout p, n; electrical p, n;
+  integer nm, v;
+  string f;
+  analog begin
+    I(p, n) <+ V(p, n) / 1e3;
+    f = "%o";
+    nm = $sscanf("777", f, v);
+  end
+endmodule

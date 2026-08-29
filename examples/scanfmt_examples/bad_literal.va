@@ -1,0 +1,12 @@
+`include "disciplines.vams"
+// Enhancement-507: literal text in a scan format. The scanner splits the input
+// on whitespace and reads one token per destination, so `v=%d` against "v=42"
+// converted NOTHING while reporting a plausible zero.
+module bad_literal(p, n);
+  inout p, n; electrical p, n;
+  integer nm, v;
+  analog begin
+    I(p, n) <+ V(p, n) / 1e3;
+    nm = $sscanf("v=42", "v=%d", v);
+  end
+endmodule

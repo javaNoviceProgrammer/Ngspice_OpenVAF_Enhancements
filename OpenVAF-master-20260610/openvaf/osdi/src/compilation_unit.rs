@@ -373,23 +373,23 @@ pub fn general_callbacks<'ll>(
                     let (name, arg_tys, ret): (&str, Vec<_>, _) = match call {
                         CallBackKind::ScanBegin => ("osdi_scanf_begin", vec![ptr_ty], cx.ty_void()),
                         CallBackKind::Scan(hir_lower::ScanKind::Int) => {
-                            ("osdi_scan_int", vec![], int)
+                            ("osdi_scan_int", vec![int], int)
                         }
                         // Enhancement-105: base-specific integer scanners.
                         CallBackKind::Scan(hir_lower::ScanKind::IntHex) => {
-                            ("osdi_scan_hex", vec![], int)
+                            ("osdi_scan_hex", vec![int], int)
                         }
                         CallBackKind::Scan(hir_lower::ScanKind::IntOct) => {
-                            ("osdi_scan_oct", vec![], int)
+                            ("osdi_scan_oct", vec![int], int)
                         }
                         CallBackKind::Scan(hir_lower::ScanKind::IntBin) => {
-                            ("osdi_scan_bin", vec![], int)
+                            ("osdi_scan_bin", vec![int], int)
                         }
                         CallBackKind::Scan(hir_lower::ScanKind::Real) => {
-                            ("osdi_scan_real", vec![], dbl)
+                            ("osdi_scan_real", vec![dbl], dbl)
                         }
                         CallBackKind::Scan(hir_lower::ScanKind::Str) => {
-                            ("osdi_scan_str", vec![], ptr_ty)
+                            ("osdi_scan_str", vec![ptr_ty], ptr_ty)
                         }
                         CallBackKind::ScanCount => ("osdi_scanf_count", vec![], int),
                         CallBackKind::Fgets => ("osdi_fgets", vec![int], ptr_ty),

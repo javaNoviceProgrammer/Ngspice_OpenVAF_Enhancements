@@ -268,6 +268,27 @@ create_model(CKTcircuit *ckt, INPmodel *modtmp, INPtables *tab)
             }
             first_tok = 0;
             IFvalue *val = INPgetValue(ckt, &line, p->dataType, tab);
+            /* Enhancement-507: a value that did not parse is not a value.
+             *
+             * INPgetValue's scalar paths returned 0 for a token INPevaluate
+             * rejects and said nothing, so the model ran with that parameter set
+             * to ZERO. numparam makes this ordinary rather than exotic: it
+             * substitutes the TEXT of a `{...}` expression, and `{1/0}` becomes
+             * `inf`, which this parser does not accept. `.model nm nmos ...
+             * kp={1/0}` therefore built a transistor with kp = 0 and conducted
+             * 1e-12 instead of 1.25e-4, with exit code 0. The same value written
+             * as `inf` on the same card is refused, as is `{1/0}` on an instance
+             * line, so this was the one path that took it. */
+            if (val && INPlastValueError()) {
+                err = INPerrCat(err,
+                    tprintf("Error on .model %s : parameter (%s) is not a number "
+                            "this parser accepts - a `{...}` expression that "
+                            "evaluates to inf or nan arrives here as that literal "
+                            "text, and would otherwise be applied as ZERO",
+                            modtmp->INPmodName, p->keyword));
+                FREE(parm);
+                continue;               /* do NOT apply it */
+            }
             error = ft_sim->setModelParm(ckt, modtmp->INPmodfast, p->id, val, NULL);
             if (error) {
                 FREE(mseen);

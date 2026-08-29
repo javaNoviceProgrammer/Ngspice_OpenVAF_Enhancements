@@ -185,6 +185,15 @@ pub enum BodyValidationDiagnostic {
     /// Enhancement-421: a `$simparam`/`$simparam$str` name the simulator cannot
     /// resolve. Unlike its siblings this one is FATAL at run time -- the model
     /// aborts the analysis -- and nothing was said at compile time.
+    /// Enhancement-507: a `$display`-family format argument that is not a string
+    /// LITERAL, with operands after it. `hir_lower::fmt` reads a format only when
+    /// it is a literal; anything else is rendered as a plain value, so the
+    /// conversions are printed verbatim and the operands appended.
+    RuntimeFormatString {
+        builtin: Box<str>,
+        expr: ExprId,
+        stmt: StmtId,
+    },
     UnknownSimparam {
         name: Box<str>,
         builtin: Box<str>,
@@ -1975,6 +1984,119 @@ impl ExprValidator<'_, '_> {
                 self.require_positive("$vt", "the absolute temperature", args[0]);
             }
 
+            // Enhancement-507: a format the compiler cannot read is not a format.
+            //
+            // `hir_lower::fmt` treats a string argument as a format ONLY when it
+            // is a literal (Enhancement-453 records the fallback: anything else
+            // is "printed by type"). That fallback is right for `$strobe(msg)`,
+            // which is how a model prints a message it built -- but when
+            // OPERANDS follow, the author plainly meant a format, and what they
+            // get is the format text itself with the operands appended:
+            //
+            //     f = "MARK %g";  $strobe(f, 2.5);   ->   MARK %g 2.5
+            //
+            // The conversions cannot be honoured because each one fixes its
+            // argument's TYPE in the callback signature, which is built at
+            // compile time. So this is a warning with the fallback named, not a
+            // refusal: printing the string is still what a one-argument call
+            // wants.
+            (
+                BuiltIn::display
+                | BuiltIn::strobe
+                | BuiltIn::write
+                | BuiltIn::monitor
+                | BuiltIn::debug
+                | BuiltIn::error
+                | BuiltIn::warning
+                | BuiltIn::info
+                | BuiltIn::fdisplay
+                | BuiltIn::fwrite
+                | BuiltIn::fstrobe
+                | BuiltIn::fmonitor
+                | BuiltIn::fdebug
+                | BuiltIn::swrite
+                | BuiltIn::sformat,
+                _,
+            ) => {
+                let name = format!("${builtin_name}", builtin_name = display_builtin_name(call));
+                // `$sformat`/`$swrite` take the DESTINATION string first; it is a
+                // variable by definition and is not a format. (The `$f*` variants
+                // lead with an integer descriptor, which the String test below
+                // skips on its own.)
+                let first = usize::from(matches!(call, BuiltIn::sformat | BuiltIn::swrite));
+                for (i, &arg) in args.iter().enumerate().skip(first) {
+                    if i + 1 >= args.len() {
+                        break; // nothing follows: printing it is exactly right
+                    }
+                    if self.const_str(arg).is_some() {
+                        continue; // a literal IS read as a format
+                    }
+                    if matches!(
+                        self.parent.infer.expr_types[arg].to_value(),
+                        Some(Type::String)
+                    ) {
+                        self.report(BodyValidationDiagnostic::RuntimeFormatString {
+                            builtin: name.clone().into_boxed_str(),
+                            expr: arg,
+                            stmt: self.stmt,
+                        });
+                        break;
+                    }
+                }
+            }
+
+            // Enhancement-507: say so when the format asks for something the
+            // scanner does not do.
+            //
+            // The scanner is a whitespace-delimited tokenizer (Enhancement-11
+            // says so at the site): it reads the format ONLY to pick an integer
+            // base per conversion (Enhancement-105) and then pulls one token per
+            // DESTINATION. Everything else in a C format was therefore ignored in
+            // silence, and ignoring it does not merely lose a feature -- it
+            // returns the WRONG FIELD:
+            //
+            //     $sscanf("v=42",  "v=%d",     x)  ->  0 conversions   (C: 42)
+            //     $sscanf("1234",  "%2d",      x)  ->  1234            (C: 12)
+            //     $sscanf("12 34", "%*d %d",   x)  ->  12              (C: 34)
+            //
+            // The last is the worst: `%*d` means DISCARD this field, so the value
+            // the model gets is the one the author asked to throw away, with the
+            // match count agreeing. Each of these is now named at compile time
+            // rather than producing a plausible wrong number.
+            (BuiltIn::sscanf | BuiltIn::fscanf, _) if args.len() >= 2 => {
+                // args[0] is the input (or the descriptor); args[1] is the format
+                let fmt = args[1];
+                match self.const_str(fmt) {
+                    Some(f) => {
+                        if let Some(why) = scanf_format_problem(&f) {
+                            self.bad_arg(
+                                if call == BuiltIn::sscanf { "$sscanf" } else { "$fscanf" },
+                                "the format",
+                                why,
+                                fmt,
+                            )
+                        }
+                    }
+                    // A format that is not a literal cannot be read for its
+                    // conversion bases, so `%o`/`%b`/`%h` silently degraded to
+                    // strtol's base-0 auto-detection: `$sscanf("777", f, x)` with
+                    // f = "%o" returned 777 rather than 511 AND reported one
+                    // successful conversion. Every other builtin that needs a
+                    // compile-time string refuses a run-time one ("expected
+                    // string literal"); these two accepted and misread it.
+                    None => self.bad_arg(
+                        if call == BuiltIn::sscanf { "$sscanf" } else { "$fscanf" },
+                        "the format",
+                        "must be a string literal: it is read when the model is \
+                         compiled to choose each field's conversion base, so a \
+                         run-time string would silently scan %o, %b and %h as \
+                         plain decimal"
+                            .to_owned(),
+                        fmt,
+                    ),
+                }
+            }
+
             (BuiltIn::white_noise, _) => {
                 self.require_non_negative("white_noise", "the noise power", args[0]);
             }
@@ -2747,6 +2869,14 @@ impl ExprValidator<'_, '_> {
         }
     }
 
+    /// Enhancement-507: a string LITERAL argument's text, if it is one.
+    fn const_str(&self, expr: ExprId) -> Option<String> {
+        match self.parent.body.exprs[expr] {
+            Expr::Literal(Literal::String(ref s)) => Some(s.to_string()),
+            _ => None,
+        }
+    }
+
     fn bad_arg(&mut self, builtin: &str, what: &str, why: String, expr: ExprId) {
         self.report(BodyValidationDiagnostic::InvalidBuiltinArg {
             builtin: builtin.to_owned().into_boxed_str(),
@@ -3043,5 +3173,90 @@ fn rng_builtin_name(call: BuiltIn) -> &'static str {
         BuiltIn::rdist_chi_square => "$rdist_chi_square",
         BuiltIn::rdist_t => "$rdist_t",
         _ => "$rdist_erlang",
+    }
+}
+
+/// Enhancement-507: the first element of a `$sscanf`/`$fscanf` format the
+/// whitespace-delimited scanner cannot honour, if any.
+///
+/// Accepted: whitespace, `%%`, and a bare conversion whose letter the runtime
+/// implements. Refused: literal text (the scanner never matches it), a field
+/// width (it reads the whole token), `*` assignment suppression (it would return
+/// the discarded field), and any other conversion letter.
+fn scanf_format_problem(f: &str) -> Option<String> {
+    let mut it = f.chars().peekable();
+    while let Some(c) = it.next() {
+        if c.is_whitespace() {
+            continue;
+        }
+        if c != '%' {
+            return Some(format!(
+                "contains the literal character '{c}', which the scanner cannot match: it \
+                 splits the input on whitespace and reads one token per destination, so a \
+                 format with literal text converts nothing at all"
+            ));
+        }
+        match it.peek().copied() {
+            Some('%') => {
+                it.next();
+            }
+            Some('*') => {
+                return Some(
+                    "uses '%*' assignment suppression, which the scanner does not implement: \
+                     the field would be stored into the next destination instead of \
+                     discarded, so the model receives the value the format asked to throw \
+                     away"
+                        .to_owned(),
+                )
+            }
+            Some(d) if d.is_ascii_digit() => {
+                return Some(format!(
+                    "gives a field width ('%{d}...'), which the scanner does not implement: \
+                     it reads the whole whitespace-delimited token, so a narrower field \
+                     would return more digits than the format asks for"
+                ))
+            }
+            Some(l) => {
+                it.next();
+                if !matches!(
+                    l,
+                    'd' | 'D' | 'i' | 'u' | 'g' | 'G' | 'e' | 'E' | 'f' | 'F' | 's' | 'S'
+                        | 'h' | 'H' | 'x' | 'X' | 'o' | 'O' | 'b' | 'B'
+                ) {
+                    return Some(format!(
+                        "uses the conversion '%{l}', which the scanner does not implement \
+                         (it reads whitespace-delimited tokens as integer, real or string)"
+                    ));
+                }
+            }
+            None => {
+                return Some(
+                    "ends with a bare '%', which is not a conversion".to_owned()
+                )
+            }
+        }
+    }
+    None
+}
+
+/// Enhancement-507: the `$`-less name of a display-family builtin, for a
+/// diagnostic that has to name the call the author wrote.
+fn display_builtin_name(call: BuiltIn) -> &'static str {
+    match call {
+        BuiltIn::display => "display",
+        BuiltIn::strobe => "strobe",
+        BuiltIn::write => "write",
+        BuiltIn::monitor => "monitor",
+        BuiltIn::debug => "debug",
+        BuiltIn::error => "error",
+        BuiltIn::warning => "warning",
+        BuiltIn::info => "info",
+        BuiltIn::fdisplay => "fdisplay",
+        BuiltIn::fwrite => "fwrite",
+        BuiltIn::fstrobe => "fstrobe",
+        BuiltIn::fmonitor => "fmonitor",
+        BuiltIn::fdebug => "fdebug",
+        BuiltIn::swrite => "swrite",
+        _ => "sformat",
     }
 }

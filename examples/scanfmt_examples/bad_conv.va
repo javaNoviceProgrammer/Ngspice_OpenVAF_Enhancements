@@ -1,0 +1,10 @@
+`include "disciplines.vams"
+// Enhancement-507: a conversion the scanner does not implement.
+module bad_conv(p, n);
+  inout p, n; electrical p, n;
+  integer nm, v;
+  analog begin
+    I(p, n) <+ V(p, n) / 1e3;
+    nm = $sscanf("A", "%c", v);
+  end
+endmodule

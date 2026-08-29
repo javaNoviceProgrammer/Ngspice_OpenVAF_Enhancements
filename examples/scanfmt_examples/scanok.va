@@ -1,0 +1,53 @@
+`include "disciplines.vams"
+// Enhancement-507: the formats the whitespace-delimited scanner CAN honour, and
+// the destination-preserving rule, exercised together.
+//
+// `pre_*` are assigned before the scan, so a conversion that does not happen
+// must leave them at their seeded value. `raw_*` are never assigned, so their
+// "previous value" is the implicit zero and the scanner's own zero is correct.
+module scanok(p, n);
+  inout p, n;
+  electrical p, n;
+
+  (*desc="count of a fully matching scan"*)  integer n_ok;
+  (*desc="count when nothing converts"*)     integer n_none;
+  (*desc="count of a partial scan"*)         integer n_part;
+  (*desc="hex via %h"*)   integer hex_v;
+  (*desc="octal via %o"*) integer oct_v;
+  (*desc="binary via %b"*) integer bin_v;
+  (*desc="seeded, scan fails -> keeps -999"*)   integer pre_fail;
+  (*desc="seeded, scan succeeds -> 42"*)        integer pre_ok;
+  (*desc="second target of a partial scan"*)    integer part_2nd;
+  (*desc="seeded real, scan fails -> -7.5"*)    real    pre_real;
+  (*desc="never assigned, scan fails -> 0"*)    integer raw_fail;
+
+  analog begin
+    I(p, n) <+ V(p, n) / 1e3;
+
+    hex_v = 0; oct_v = 0; bin_v = 0;
+    n_ok = $sscanf("a0 ff", "%h %h", hex_v, oct_v);
+    oct_v = 0;
+    n_ok = $sscanf("17", "%o", oct_v);
+    bin_v = 0;
+    n_ok = $sscanf("1010", "%b", bin_v);
+
+    // a fully matching scan
+    n_ok = $sscanf("7 8.5", "%d %g", pre_ok, pre_real);
+
+    // nothing converts: the seeded values must survive
+    pre_fail = -999;
+    n_none = $sscanf("abc", "%d", pre_fail);
+
+    // seeded real, nothing converts
+    pre_real = -7.5;
+    n_none = $sscanf("zz", "%g", pre_real);
+
+    // partial: the first target takes 7, the second is left alone
+    pre_ok = -1;
+    part_2nd = -999;
+    n_part = $sscanf("7 zz", "%d %d", pre_ok, part_2nd);
+
+    // never assigned before the scan: the implicit zero is the previous value
+    n_none = $sscanf("abc", "%d", raw_fail);
+  end
+endmodule

@@ -867,14 +867,34 @@ beginPlot(JOB *analysisPtr, CKTcircuit *circuitPtr, char *cktName, char *analNam
                         }
                     }
 
+                    /* Enhancement-507: only E_BADPARM means the name is not
+                     * one the device has.
+                     *
+                     * INPaName both FINDS the name and asks the device for its
+                     * value, and any failure of the second half arrived here as
+                     * the first half's message. An operating-point variable is
+                     * registered IF_ASK like any other askable parameter, so the
+                     * name resolves -- but at `save` time no analysis has run, so
+                     * the ask fails and the user was told "device has no
+                     * parameter 'gv'" about a name the device does have and that
+                     * `print` and `meas` both resolve. The netlist `.save` form
+                     * reported the same case correctly, so the two spellings of
+                     * one request disagreed. */
                     if (err == E_NODEV)
                         fprintf(cp_err,
                                 "Warning: save '%s': no such device, so this "
                                 "vector will stay empty.\n", saves[i].name);
-                    else if (err != OK)
+                    else if (err == E_BADPARM)
                         fprintf(cp_err,
                                 "Warning: save '%s': device has no parameter "
                                 "'%s', so this vector will stay empty.\n",
+                                saves[i].name, parambuf);
+                    else if (err != OK)
+                        fprintf(cp_err,
+                                "Warning: save '%s': '%s' has no value yet -- it "
+                                "is an operating-point variable and no analysis "
+                                "has computed one. It is recorded per point once "
+                                "an analysis runs.\n",
                                 saves[i].name, parambuf);
                 }
             }

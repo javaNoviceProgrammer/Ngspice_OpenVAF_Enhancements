@@ -681,6 +681,24 @@ char *osdi_ferror_msg(int fd) {
 
 static const char *volatile osdi_scan_cursor;
 static int volatile osdi_scan_matches;
+/* Enhancement-507: a field that does not convert must leave its destination
+ * ALONE.
+ *
+ * Each scanner used to return 0 / 0.0 / "" when nothing parsed and the lowering
+ * stored that unconditionally, so a failed conversion DESTROYED the value the
+ * variable already held -- `$sscanf("abc", "%d", x)` set x to 0, and a partial
+ * parse zeroed every destination past the last match. C leaves an unmatched
+ * argument untouched and IEEE 1364 follows it, which is what makes the ordinary
+ * idiom work:
+ *
+ *     x = fallback;
+ *     if ($sscanf(line, "%d", x) < 1)  // x is still fallback
+ *
+ * The destination's CURRENT value is passed in and handed straight back when the
+ * field does not convert. Passing it as an argument rather than branching in the
+ * generated code keeps the callers branch-free: an earlier version selected on a
+ * separate "did it match" callback and the extra blocks produced a module that
+ * segfaulted in the simulator. */
 
 static int osdi_is_ws(char c) {
   return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f' || c == '\v';
@@ -700,7 +718,7 @@ void osdi_scanf_begin(const char *input) {
 }
 
 OSDI_NOINLINE
-int osdi_scan_int(void) {
+int osdi_scan_int(int fallback) {
   const char *p = osdi_skip_ws(osdi_scan_cursor);
   char *end;
   long v = strtol(p, &end, 0);
@@ -710,7 +728,7 @@ int osdi_scan_int(void) {
     return (int)v;
   }
   osdi_scan_cursor = p;
-  return 0;
+  return fallback;
 }
 
 // Enhancement-105: base-specific integer scanners for the `%h`/`%o`/`%b`
@@ -718,7 +736,7 @@ int osdi_scan_int(void) {
 // the input's own prefix), these force the base named by the format specifier,
 // so `$sscanf("ff", "%h", x)` yields 255 and `$sscanf("17", "%o", x)` yields 15.
 OSDI_NOINLINE
-int osdi_scan_hex(void) {
+int osdi_scan_hex(int fallback) {
   const char *p = osdi_skip_ws(osdi_scan_cursor);
   char *end;
   long v = strtol(p, &end, 16);
@@ -728,11 +746,11 @@ int osdi_scan_hex(void) {
     return (int)v;
   }
   osdi_scan_cursor = p;
-  return 0;
+  return fallback;
 }
 
 OSDI_NOINLINE
-int osdi_scan_oct(void) {
+int osdi_scan_oct(int fallback) {
   const char *p = osdi_skip_ws(osdi_scan_cursor);
   char *end;
   long v = strtol(p, &end, 8);
@@ -742,11 +760,11 @@ int osdi_scan_oct(void) {
     return (int)v;
   }
   osdi_scan_cursor = p;
-  return 0;
+  return fallback;
 }
 
 OSDI_NOINLINE
-int osdi_scan_bin(void) {
+int osdi_scan_bin(int fallback) {
   const char *p = osdi_skip_ws(osdi_scan_cursor);
   char *end;
   long v = strtol(p, &end, 2);
@@ -756,11 +774,11 @@ int osdi_scan_bin(void) {
     return (int)v;
   }
   osdi_scan_cursor = p;
-  return 0;
+  return fallback;
 }
 
 OSDI_NOINLINE
-double osdi_scan_real(void) {
+double osdi_scan_real(double fallback) {
   const char *p = osdi_skip_ws(osdi_scan_cursor);
   char *end;
   double v = strtod(p, &end);
@@ -770,11 +788,11 @@ double osdi_scan_real(void) {
     return v;
   }
   osdi_scan_cursor = p;
-  return 0.0;
+  return fallback;
 }
 
 OSDI_NOINLINE
-char *osdi_scan_str(void) {
+char *osdi_scan_str(char *fallback) {
   const char *start = osdi_skip_ws(osdi_scan_cursor);
   const char *p = start;
   while (*p && !osdi_is_ws(*p)) {
@@ -787,12 +805,14 @@ char *osdi_scan_str(void) {
   }
   memcpy(res, start, len);
   res[len] = '\0';
-  if (len > 0) {
-    osdi_scan_cursor = p;
-    osdi_scan_matches++;
+  if (len == 0) {
+    return fallback ? fallback : "";
   }
+  osdi_scan_cursor = p;
+  osdi_scan_matches++;
   return res;
 }
 
 OSDI_NOINLINE
 int osdi_scanf_count(void) { return osdi_scan_matches; }
+

@@ -1,0 +1,18 @@
+`include "disciplines.vams"
+// Enhancement-507: a display format that is not a literal, WITH operands after
+// it. `hir_lower::fmt` reads a format only when it is a literal, so this printed
+// "MARK %g| 2.5" -- the conversion verbatim, the operand appended.
+//
+// The one-argument form is deliberately silent: printing a string a model built
+// is exactly what it is for.
+module fmtwarn(p, n);
+  inout p, n; electrical p, n;
+  string f, g;
+  analog begin
+    I(p, n) <+ V(p, n) / 1e3;
+    f = "MARK %g|";
+    $sformat(g, "built=%g", 1.5);   // literal format: silent
+    $strobe(g);                     // one argument: silent
+    $strobe(f, 2.5);                // runtime format + operand: warns
+  end
+endmodule

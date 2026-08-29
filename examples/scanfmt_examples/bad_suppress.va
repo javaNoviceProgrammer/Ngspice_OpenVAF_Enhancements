@@ -1,0 +1,12 @@
+`include "disciplines.vams"
+// Enhancement-507: assignment suppression. `%*d` means DISCARD this field, so
+// `"%*d %d"` against "12 34" must yield 34 -- it yielded 12, the value the
+// author asked to throw away, with the match count agreeing.
+module bad_suppress(p, n);
+  inout p, n; electrical p, n;
+  integer nm, v;
+  analog begin
+    I(p, n) <+ V(p, n) / 1e3;
+    nm = $sscanf("12 34", "%*d %d", v);
+  end
+endmodule
