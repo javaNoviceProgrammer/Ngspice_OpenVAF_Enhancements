@@ -266,6 +266,20 @@ create_model(CKTcircuit *ckt, INPmodel *modtmp, INPtables *tab)
                     nmid++;
                 }
             }
+            /* Enhancement-510: the FIRST token on a .model card is the model
+               TYPE, and a type name can collide with a real parameter name --
+               ngspice's resistor model has a parameter `r`, so `.model mm r`
+               and `.model mm res` matched the type token as a parameter, called
+               INPgetValue on what followed, and failed to parse a value there.
+               The value checks below then reported
+
+                 Error on .model mm : parameter (r) is not a number ...
+
+               on every resistor model card in every deck. The simulation was
+               right and the message was not. `first_tok` already exists for
+               exactly this collision (it gates the duplicate-parameter warning
+               above); the checks added since simply never consulted it. */
+            int was_first_tok = first_tok;
             first_tok = 0;
             IFvalue *val = INPgetValue(ckt, &line, p->dataType, tab);
             /* Enhancement-507: a value that did not parse is not a value.
@@ -279,7 +293,7 @@ create_model(CKTcircuit *ckt, INPmodel *modtmp, INPtables *tab)
              * 1e-12 instead of 1.25e-4, with exit code 0. The same value written
              * as `inf` on the same card is refused, as is `{1/0}` on an instance
              * line, so this was the one path that took it. */
-            if (val && INPlastRangeError()) {
+            if (val && !was_first_tok && INPlastRangeError()) {
                 err = INPerrCat(err,
                     tprintf("Error on .model %s : parameter (%s) does not fit an "
                             "integer parameter, and would otherwise be applied as "
@@ -289,7 +303,7 @@ create_model(CKTcircuit *ckt, INPmodel *modtmp, INPtables *tab)
                 FREE(parm);
                 continue;               /* do NOT apply it */
             }
-            if (val && INPlastValueError()) {
+            if (val && !was_first_tok && INPlastValueError()) {
                 err = INPerrCat(err,
                     tprintf("Error on .model %s : parameter (%s) is not a number "
                             "this parser accepts - a `{...}` expression that "

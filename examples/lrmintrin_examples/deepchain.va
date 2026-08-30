@@ -1,0 +1,26 @@
+`include "disciplines.vams"
+// Enhancement-510: a `localparam` chain longer than the fold recursion bound is
+// still a compile-time constant. 40 links is well past the old limit of 32.
+module deepchain(p, n);
+  inout p, n; electrical p, n;
+  localparam real c0 = 100.0;
+  localparam real c1 = c0;   localparam real c2 = c1;   localparam real c3 = c2;
+  localparam real c4 = c3;   localparam real c5 = c4;   localparam real c6 = c5;
+  localparam real c7 = c6;   localparam real c8 = c7;   localparam real c9 = c8;
+  localparam real c10 = c9;  localparam real c11 = c10; localparam real c12 = c11;
+  localparam real c13 = c12; localparam real c14 = c13; localparam real c15 = c14;
+  localparam real c16 = c15; localparam real c17 = c16; localparam real c18 = c17;
+  localparam real c19 = c18; localparam real c20 = c19; localparam real c21 = c20;
+  localparam real c22 = c21; localparam real c23 = c22; localparam real c24 = c23;
+  localparam real c25 = c24; localparam real c26 = c25; localparam real c27 = c26;
+  localparam real c28 = c27; localparam real c29 = c28; localparam real c30 = c29;
+  localparam real c31 = c30; localparam real c32 = c31; localparam real c33 = c32;
+  localparam real c34 = c33; localparam real c35 = c34; localparam real c36 = c35;
+  localparam real c37 = c36; localparam real c38 = c37; localparam real c39 = c38;
+  localparam real c40 = c39;
+  (* desc="tm" *) real tm;
+  analog begin
+    tm = $table_model(V(p, n), '{0.0, 0.0, 1.0, c40}, "1L");
+    I(p, n) <+ V(p, n) / 1e3;
+  end
+endmodule

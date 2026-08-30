@@ -65,6 +65,16 @@ impl<'a, 'll> CodegenCx<'a, 'll> {
         ifn!("acosh", fn(t_f64) -> t_f64);
         ifn!("asinh", fn(t_f64) -> t_f64);
         ifn!("atanh", fn(t_f64) -> t_f64);
+        // Enhancement-510: `log1p`/`expm1` are REQUESTED by the builder
+        // (`Opcode::Ln1p`/`Opcode::Expm1`) but were never declared here, so
+        // `cx.intrinsic("log1p")` returned None and codegen hit its own
+        // `unreachable!("intrinsic log1p not found")`. Any `ln1p(x)`/`expm1(x)`
+        // whose argument is not constant-folded away CRASHED the compiler
+        // outright -- both spellings, in every context. The LRM lists these
+        // apart from ln/exp precisely for their precision near zero, which is
+        // why the builder asks for libm rather than `ln(1+x)`/`exp(x)-1`.
+        ifn!("log1p", fn(t_f64) -> t_f64);
+        ifn!("expm1", fn(t_f64) -> t_f64);
 
         if name == "hypot" {
             let name = if self.target.options.is_like_windows { "_hypot" } else { "hypot" };

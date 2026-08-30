@@ -4110,7 +4110,8 @@ fn param_derived_in_body(
     expr: ExprId,
     depth: u32,
 ) -> Option<bool> {
-    if depth > 32 {
+    // Enhancement-510: see hir_ty -- the two folders must accept the same set.
+    if depth > 512 {
         return None;
     }
     if let Some(lit) = body.as_literal(expr) {
@@ -4151,7 +4152,8 @@ fn const_real_in_body(
     expr: ExprId,
     depth: u32,
 ) -> Option<f64> {
-    if depth > 32 {
+    // Enhancement-510: see hir_ty -- the two folders must accept the same set.
+    if depth > 512 {
         return None;
     }
     if let Some(lit) = body.as_literal(expr) {

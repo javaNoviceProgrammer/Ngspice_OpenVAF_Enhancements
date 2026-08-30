@@ -168,6 +168,20 @@ static char *va_compile(const char *va, bool force)
     (void) snprintf(cmd, cmdlen, "\"%s\" \"%s\" -o \"%s\"", ovf, src, osdi);
     rc = system(cmd);
     tfree(cmd);
+    /* Enhancement-510: `system()` returns a WAIT STATUS, not an exit code, so
+       the compiler's 101 was reported as 25856 (101 << 8) and a 2 as 512. The
+       comment above this block quotes "exit 512" as if it were an exit code,
+       which is exactly that encoding gone unnoticed. Decode it, and name a
+       signal death as such rather than printing a status word. */
+#ifdef WIFEXITED
+    if (rc != -1 && WIFEXITED(rc))
+        rc = WEXITSTATUS(rc);
+    else if (rc != -1 && WIFSIGNALED(rc)) {
+        fprintf(cp_err, "pre_osdi: openvaf-r was killed by signal %d compiling %s.\n",
+                WTERMSIG(rc), src);
+        return NULL;
+    }
+#endif
     if (rc != 0) {
         fprintf(cp_err, "pre_osdi: openvaf-r failed (exit %d) compiling %s.\n"
                         "  Set the compiler with `set openvaf=/path/to/openvaf-r`, the OPENVAF\n"

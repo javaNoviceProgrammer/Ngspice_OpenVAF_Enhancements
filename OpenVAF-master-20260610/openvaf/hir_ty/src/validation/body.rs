@@ -3162,7 +3162,13 @@ fn const_num_in(
     // A localparam may be defined in terms of another; the chain is finite
     // (cycles are rejected before this runs) but bound the recursion anyway so
     // a malformed tree cannot blow the stack while diagnostics are being built.
-    if depth > 32 {
+    // Enhancement-510: this bound exists to stop runaway recursion, not to
+    // decide what counts as a constant -- but it only counts PARAMETER hops, so
+    // a `localparam` chain 32 links long was reported as "not a compile-time
+    // constant" when it plainly is one, while the same chain used as an ordinary
+    // value worked at any depth. 32 is far below anything a generated model
+    // might produce; 512 keeps the runaway guard and stops refusing real code.
+    if depth > 512 {
         return None;
     }
     match body.exprs[expr] {
@@ -3200,7 +3206,7 @@ fn const_num_in(
 /// compiler cannot pin down (an overridable `parameter` included -- see
 /// [`const_num_in`]).
 fn const_param_value(db: &dyn HirTyDB, param: ParamId, depth: u32) -> Option<f64> {
-    if depth > 32 || !db.param_data(param).is_local {
+    if depth > 512 || !db.param_data(param).is_local {
         return None;
     }
     let owner = DefWithBodyId::ParamId(param);

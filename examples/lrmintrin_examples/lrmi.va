@@ -1,0 +1,19 @@
+`include "disciplines.vams"
+// Enhancement-510: `ln1p`/`expm1` with an argument that is NOT constant-folded
+// away. Every such call crashed the compiler outright.
+module lrmi(p, n);
+  inout p, n; electrical p, n;
+  parameter integer sel = 0;
+  parameter real q = 1e-10;
+  (* desc="y" *) real y;
+  analog begin
+    y = 0.0;
+    if (sel == 0) y = ln1p(q);            // parameter -> reaches codegen
+    if (sel == 1) y = expm1(q);
+    if (sel == 2) y = $ln1p(q);           // the $-spelling, same path
+    if (sel == 3) y = $expm1(q);
+    if (sel == 4) y = ln1p(V(p, n));      // a run-time probe
+    if (sel == 5) y = expm1(V(p, n));
+    I(p, n) <+ V(p, n) / 1e3;
+  end
+endmodule

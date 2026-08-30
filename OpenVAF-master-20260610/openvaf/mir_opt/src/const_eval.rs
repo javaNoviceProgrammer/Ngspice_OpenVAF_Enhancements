@@ -143,7 +143,16 @@ pub fn eval_unary(func: &mut Function, op: Opcode, val: Const) -> Option<Value> 
                 Opcode::Tanh => func.dfg.f64const(val.tanh()),
                 Opcode::Asinh => func.dfg.f64const(val.asinh()),
                 Opcode::Acosh => func.dfg.f64const(val.acosh()),
-                Opcode::Atanh => func.dfg.f64const(val.atanh()),
+                // Enhancement-510: Rust's `f64::atanh` loses accuracy for a
+                // NEGATIVE argument approaching -1, where the run-time (libm)
+                // path is exact -- so the same call folded and evaluated
+                // disagreed, by 1.3e-10 relative at -0.9999999 and growing
+                // toward the boundary. atanh is ODD, and the positive side is
+                // accurate, so fold the negative side through it.
+                Opcode::Atanh => {
+                    let r = if val < 0.0 { -(-val).atanh() } else { val.atanh() };
+                    func.dfg.f64const(r)
+                }
                 Opcode::FIcast => func.dfg.iconst(val.round() as i32),
                 Opcode::FBcast => (val.abs() != 0.0).into(),
                 Opcode::Fneg => func.dfg.f64const(-val),
