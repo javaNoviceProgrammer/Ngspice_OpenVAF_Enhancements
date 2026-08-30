@@ -360,16 +360,43 @@ V(out) <+ ac_stim("ac", 1.0, 90.0);        // module AS the AC stimulus
   limiting. Documented decision with the failing evidence preserved.
 
 - ⚠️ **`transition` and `slew`** are implemented as a **rate-limited tracking
-  loop**, not as a piecewise-linear waveform generator. The *timing* matches the
-  LRM — the delay is honoured and the ramp crosses its midpoint at
-  delay + rise/2, which is what `defaulttransition` pins — but the approach to
-  the final value is asymptotic rather than terminating exactly at
-  delay + rise. The piecewise-linear form was built first and abandoned: its
-  clamp has a zero derivative when saturated, which makes the DC operating point
-  singular whenever the input starts a full swing away from the filter state, so
-  a deck without `uic` produced a garbage transient. In DC the filter is the
-  LRM's static identity `y = x`, selected through the integration-enable
-  parameter. Documented decision with the failing evidence preserved
+  loop**, not as a piecewise-linear waveform generator:
+
+  ```
+  dy/dt = clamp( K·(x − y),  −1/tfall,  +1/trise ),   K = 1e9 s⁻¹ (fixed)
+  ```
+
+  While the clamp is saturated this is an exact linear ramp at the LRM's rate.
+  It releases once the remaining gap falls below `1/(K·trise)`, and the last
+  part of the swing is a first-order tail with τ = 1/K = 1 ns. **The delay and
+  the midpoint crossing are exact at every speed**; the error is in the
+  approach to the final value, and because `K` is a fixed absolute constant it
+  depends entirely on how fast the transition is:
+
+  | `trise` | linear part of the swing | value at delay + trise (LRM: 1.0) |
+  |---:|---:|---:|
+  | 3 ns | 66.7% | 0.8774 |
+  | 30 ns | 96.7% | 0.9873 |
+  | 300 ns | 99.7% | 0.99948 |
+  | 3 µs | ~100% | 1.000039 |
+  | 30 µs | ~100% | 0.999979 |
+
+  The shortfall at the nominal end of the ramp is `e⁻¹/(K·trise)` to within a
+  few parts in 10⁵ (measured 0.877382 against 0.877374 predicted at 3 ns). So
+  the operator is **effectively exact for transitions slower than about a
+  microsecond and materially wrong below about 100 ns** — which is worth knowing,
+  because nanosecond edges are exactly where `transition` is most used.
+  `defaulttransition` pins the 1 µs case, deep inside the correct region, which
+  is why the deviation did not surface there.
+
+  The piecewise-linear form was built first and abandoned: its clamp has a zero
+  derivative when saturated, which makes the DC operating point singular whenever
+  the input starts a full swing away from the filter state, so a deck without
+  `uic` produced a garbage transient. In DC the filter is now the LRM's static
+  identity `y = x`, selected through the integration-enable parameter — so the
+  DC objection is handled separately from the transient shape, and scaling `K`
+  with `1/trise` (with the step bounding that a stiffer loop then needs) is the
+  route to closing the transient gap. Recorded rather than fixed
   ([E-47](../../enhancements_doc/Enhancement-47.md)).
 
 **Out-of-domain operator arguments from the deck** (E-504/E-506). The same
