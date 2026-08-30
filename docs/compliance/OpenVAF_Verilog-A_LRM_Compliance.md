@@ -256,7 +256,32 @@ across a −50…150 °C sweep), `$vt` and `$vt(T)`, `$abstime`, `$realtime`
 `$simparam$str`, `$param_given`, `$port_connected`, `$mfactor` and the
 position hidden parameters.
 
-### 4.3 Analog operators (LRM 4.5) — ✅ (one documented deviation)
+`ln1p` and `expm1` (LRM Table 4-14 and Annex A.8.2) are present in both the
+bare and `$`-prefixed spellings, and lower to libm's `log1p`/`expm1` rather
+than to `ln(1+x)`/`exp(x)−1` — the precision near zero is the entire reason the
+standard lists them separately, and `ln1p(1e-18)` returns `1e-18` where the
+naive identity returns 0. They were added by
+[E-458](../../enhancements_doc/Enhancement-458.md) and made *usable* only by
+[E-510](../../enhancements_doc/Enhancement-510.md): the code generator asked for
+those two libm routines by name and the intrinsic registry declared neither, so
+every call whose argument was not constant-folded away crashed the compiler. The
+gap survived because the suite that introduced them tests `$ln1p(0.5)` — a
+literal, which folds before code generation, so the intrinsic is never emitted.
+`lrmintrin` now exercises both spellings with a parameter and with a probe.
+
+**Domain errors are refused, by whichever route the value arrives.** An
+out-of-domain *constant* — `sqrt(-4)`, `ln(0)`, `asin(2)`, `acosh(0.5)`,
+`atanh(1)`, `pow` with a negative base and a fractional exponent — is a
+compile-time error naming the builtin, the value and the domain
+(E-455/479/489/508). The identical value supplied from a **model card** is an
+overridable `parameter`, which the compiler deliberately does not fold, and it
+used to reach the maths library untouched and return `nan`/`inf` silently;
+[E-509](../../enhancements_doc/Enhancement-509.md) refuses it at run time with
+the same information. A genuine *run-time* argument is deliberately left alone:
+`sqrt(V(p,n))` legitimately sees a negative argument during Newton iteration,
+and refusing that would break working models.
+
+### 4.3 Analog operators (LRM 4.5) — ✅ (two documented deviations)
 
 Every analog operator produces exact Jacobian contributions via
 autodiff. The full argument surface (trailing tolerances, optional
@@ -334,9 +359,42 @@ V(out) <+ ac_stim("ac", 1.0, 90.0);        // module AS the AC stimulus
   `limexp`'s derived argument. `$limit` provides genuine iteration
   limiting. Documented decision with the failing evidence preserved.
 
+- ⚠️ **`transition` and `slew`** are implemented as a **rate-limited tracking
+  loop**, not as a piecewise-linear waveform generator. The *timing* matches the
+  LRM — the delay is honoured and the ramp crosses its midpoint at
+  delay + rise/2, which is what `defaulttransition` pins — but the approach to
+  the final value is asymptotic rather than terminating exactly at
+  delay + rise. The piecewise-linear form was built first and abandoned: its
+  clamp has a zero derivative when saturated, which makes the DC operating point
+  singular whenever the input starts a full swing away from the filter state, so
+  a deck without `uic` produced a garbage transient. In DC the filter is the
+  LRM's static identity `y = x`, selected through the integration-enable
+  parameter. Documented decision with the failing evidence preserved
+  ([E-47](../../enhancements_doc/Enhancement-47.md)).
+
+**Out-of-domain operator arguments from the deck** (E-504/E-506). The same
+literal-versus-deck split described for the built-in functions in §4.2 applies
+to the operators' own numeric arguments, and each case is resolved by what the
+argument *means* rather than by a blanket rule:
+
+- a `zi_*` **sampling period** ≤ 0 inverts the bilinear map and reflects every
+  pole across the imaginary axis; there is no honest value to project it onto,
+  so the run time says what the compiler says and aborts, naming the value;
+- a `laplace_*` **leading denominator coefficient** of zero is a division by
+  zero and aborts the same way;
+- an `idtmod` **modulus** ≤ 0 falls back to the **unwrapped** integral, because
+  that is exactly what `idtmod` means with no modulus supplied — the model keeps
+  running and the value stays finite;
+- the `$rdist_*` family **clamps** onto the nearest distribution it can actually
+  produce (a negative standard deviation behaves as 0), rather than returning
+  the exact negation of the valid deviate as it once did.
+
 **Restrictions enforced as the LRM demands** (4.5.1): analog operators
 inside loops or solution-dependent conditionals are rejected with
-diagnostics that name the actual construct and cite the clause.
+diagnostics that name the actual construct and cite the clause. The
+conditional rule is applied as the LRM states it — only a condition that
+depends on an **analog signal** is refused, so the common idiom of gating an
+operator on a `parameter` (`if (SELFHEATING) ... ddt(...)`) compiles.
 
 ## 5. Analog behavior (LRM 5)
 
@@ -507,7 +565,20 @@ $strobe("Vth=%7.4f V  region=%2d  id=%r  name=%s", vth, reg, id, name);
 $ftell/$fseek/$rewind/$feof/$ferror/$fgetc/$ungetc` (single-character read
 and one-character pushback, E-107/E-108) and `$swrite/$sformat/$sscanf/
 $fgets/$fscanf`. `$sscanf`/`$fscanf` honour the format conversion base —
-`%h`/`%x` hex, `%o` octal, `%b` binary, `%d` decimal (E-105):
+`%h`/`%x` hex, `%o` octal, `%b` binary, `%d` decimal (E-105).
+
+**The scan format is read only when it is a literal**
+([E-507](../../enhancements_doc/Enhancement-507.md)). The scanners are chosen at
+compile time from the format text, so a format that is not a literal cannot
+select them: such a call used to read the *text of the format itself* as data
+and report success. It is refused now, as every other builtin needing a
+compile-time string already did. Within a literal format, the parts that the
+scanners cannot honour are refused with a reason rather than silently ignored —
+literal characters between conversions, a field width, `%*` assignment
+suppression (which returned the very field it asks to discard), and unsupported
+conversion characters. A conversion that does not match leaves its destination
+**unchanged** rather than zeroing it, so a scan into a variable that already
+holds a value is non-destructive:
 
 ```verilog
 integer fd;
@@ -612,8 +683,8 @@ connected port.)*
 | 3.2–3.3 Value types, variables, persistence | ✅ | `vartype`, `variable_persistence`, `intstate`, `varinit` |
 | 3.4 Parameters (ranges, localparam, aliasparam, arrays incl. name-then-range, paramset, block-scoped) | ✅ (default-exemption ⚠️ documented) | `paramrange`, `localparam`, `array`, `paramarray`, `paramset`, `paramsethsp`, `blockparam` |
 | 3.5–3.7 Natures, disciplines, nets, buses, nodesets | ✅ | `derivednature`, `domainbind`, `bus`, `netinit`, `ground`, `signalflow` |
-| 4.1–4.3 Operators (incl. string relational), precedence, functions (`$clog2`, `$rtoi`/`$itor`) | ✅ (audited) | `operator`, `precedence`, `shift`, `concat`, `stringcmp`, `clog2`, `convert`, `ceil` |
-| 4.5 Analog operators (all) | ✅ (`limexp` stateless ⚠️ documented) | `absdelay`, `laplace`, `zi`, `slew`, `transition`, `idt*`, `ddx`, `opargs`, `discontinuity`, `last_crossing` |
+| 4.1–4.3 Operators (incl. string relational), precedence, functions (`$clog2`, `$rtoi`/`$itor`, `ln1p`/`expm1`, domain diagnostics both routes) | ✅ (audited) | `operator`, `precedence`, `shift`, `concat`, `stringcmp`, `clog2`, `convert`, `ceil`, `lrmfuncs`, `lrmintrin`, `domainrt` |
+| 4.5 Analog operators (all) | ✅ (`limexp` stateless, `transition`/`slew` tracking loop — both ⚠️ documented) | `absdelay`, `laplace`, `zi`, `slew`, `transition`, `idt*`, `ddx`, `opargs`, `discontinuity`, `last_crossing`, `defaulttransition`, `rtdomain`, `deckdomain` |
 | 4.6 Noise (incl. correlation 4.6.4; `noise_table` linear-in-f, `noise_table_log` log-log) | ✅ | `noise`, `noisetable`, `noisecorr`, `noisejw` |
 | 5.2/6.2 Analog blocks (multiple) | ✅ | `multianalog` |
 | 5.6 Contributions, indirect assignment, port flow (incl. named port branches) | ✅ | `indirect_assignment`, `portflow`, `signalflow`, `lrm` |
@@ -622,7 +693,7 @@ connected port.)*
 | 5.10 Events (steps, cross/above/timer, OR lists, phase lists) | ✅ | `initial_step`, `finalstep`, `cross`, `timer`, `lrmcorner` |
 | 5.11 Analog functions (arrays in/out/return) | ✅ | `funcarray`, `arrayout`, `arrayret` |
 | 6 Hierarchy (instantiation, generate incl. legacy analog-block form, defparam, $root, part-select connections, hierarchical branch probes) | ✅ (param-shaped structure ⚠️ explained) | `instantiation`, `generate`, `legacygen`, `defparam`, `hiername`, `implicitnet`, `partselect`, `hierbranch` |
-| 9.4–9.8 Display, file/string I/O (incl. `$fgetc`/`$ungetc`, `$sscanf` base) | ✅ | `display`, `fileio`, `stringio`, `fgetc`, `ungetc`, `sscanf` |
+| 9.4–9.8 Display, file/string I/O (incl. `$fgetc`/`$ungetc`, `$sscanf` base, literal-only scan formats) | ✅ | `display`, `fileio`, `stringio`, `fgetc`, `ungetc`, `sscanf`, `scanfmt` |
 | 9.13 Random/distributions | ✅ (deterministic seed ⚠️ documented) | `rng`, `montecarlo` |
 | 9 misc ($finish family, $simparam, attributes) | ✅ | `simctrl`, `simparamstr`, `opvar` |
 | plusargs (`$test`/`$value`) | ✅ ([E-215](../../enhancements_doc/Enhancement-215.md)) | `plusargs` |
@@ -653,8 +724,22 @@ or mishandled, found only after the construct-level suites above were all green:
   ([E-363](../../enhancements_doc/Enhancement-363.md)) — LRM 5.7/5.9 constructs that are individually
   covered by the `arraycase` and `dowhile` suites, but had never been *composed*.
 
-Both came from a generator that emits valid-by-construction programs combining
-features developed in isolation, which is a different instrument from the
+- **Two standard functions crashed the compiler, while passing their own test**
+  ([E-510](../../enhancements_doc/Enhancement-510.md)). `ln1p` and `expm1` (LRM
+  Table 4-14) lower to libm routines the code generator requests by name, and the
+  intrinsic registry declared neither — so every call whose argument was not
+  constant-folded away aborted the compiler. The suite that introduced them
+  tested `$ln1p(0.5)`, and a **literal folds before code generation**, so the
+  intrinsic was never emitted and the test could not reach the broken path. This
+  is worth recording as a methodology point rather than a bug: for anything that
+  lowers to a call, a literal argument does not exercise code generation, and a
+  construct-level suite written only with literals can be green over a feature
+  that no user can use. The fix was two declarations; finding it took fuzzing
+  2 089 constant-folded expressions and noticing that exactly two crashed for
+  *every* argument.
+
+Both of the first two came from a generator that emits valid-by-construction
+programs combining features developed in isolation, which is a different instrument from the
 mutation fuzzing used earlier: mutants die at the parser, so they never reach the
 semantics. One defect from the same round was left open at the time — a provably
 non-terminating analog loop — and is now **closed by
