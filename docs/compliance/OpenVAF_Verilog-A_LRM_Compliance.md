@@ -319,6 +319,32 @@ V(out) <+ ac_stim("ac", 1.0, 90.0);        // module AS the AC stimulus
   `zi_nd/np/zd/zp` via bilinear transform, both with **complex
   pole/zero pairs** per the LRM's (re, im) vector convention and
   parameter-dependent coefficients: ✅
+
+  Verified against closed-form `H(s)`: all four `laplace_*` forms agree with the
+  analytic one-pole response to **4.7e-16** over four decades, a complex pair
+  (`wn = 1/tau`, `Q = 1`) written as `zp`, `np` and `nd` coefficients agrees to
+  **4.6e-15**, and all four `zi_*` forms agree with the bilinear `H(z⁻¹)` to
+  **1e-15** out to `wT = 1`.
+
+  **A complex root must be written together with its conjugate** — the model's
+  duty, not the compiler's. LRM 4.5.11.1 states it directly:
+
+  > If a root is real, the imaginary part shall be specified as zero (0). If a
+  > root is complex, its conjugate shall also be present.
+
+  The roots are expanded as `∏(1 − s/r)` exactly as the clause's formula shows
+  (including its exception that a root of zero contributes `s` rather than
+  `1 − s/r`), and the coefficients' imaginary parts cancel *because* the
+  conjugate is there. Writing one root of a pair is therefore a model error, and
+  it does not fail loudly: the imaginary parts no longer cancel, the real part is
+  taken, and a **different, physically real filter** is built. A `Q = 1` pole pair
+  written as the single root `'{-0.5/tau, 0.866/tau}` becomes one real pole at
+  `2/tau` — a 20 kHz first-order rolloff in place of a 10 kHz resonant pair, with
+  no diagnostic.
+
+  ⚠️ **Open:** that is a detectable mistake for constant roots, which is how they
+  are almost always written, and nothing currently checks it. Recorded here rather
+  than fixed.
 - `last_crossing` with simulator-side waveform history: ✅
 - **noise sources** (LRM 4.6): `white_noise`, `flicker_noise`,
   `noise_table`, `noise_table_log` (inline or file data);
