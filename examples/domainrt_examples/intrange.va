@@ -1,0 +1,15 @@
+`include "disciplines.vams"
+// Enhancement-509: `from [0:2147483647]` is the idiomatic way to say "any
+// non-negative integer". A deck value that overflows an int saturated onto that
+// upper bound and passed the range check.
+module intrange(p, n);
+  inout p, n; electrical p, n;
+  parameter integer ip = 1 from [0:2147483647];
+  parameter integer sp = 1 from [0:100];
+  (* desc="ip" *) integer si;
+  (* desc="sp" *) integer ss;
+  analog begin
+    si = ip; ss = sp;
+    I(p, n) <+ V(p, n) / 1e3;
+  end
+endmodule

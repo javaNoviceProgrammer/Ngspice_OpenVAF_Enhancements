@@ -1,0 +1,8 @@
+`include "disciplines.vams"
+// The compile-time half, unchanged: a literal and a localparam are still refused
+// where the compiler can see them.
+module litdom(p, n);
+  inout p, n; electrical p, n;
+  localparam real lq = -4.0;
+  analog I(p, n) <+ V(p, n) / 1e3 + sqrt(-4.0) + ln(0.0) + asin(2.0) + sqrt(lq);
+endmodule

@@ -247,14 +247,14 @@ FLK, _ = build("flknoise.va", "fk")
 check("flknoise.va compiles", FLK is not None)
 if FLK:
     CTL = (f"pre_osdi {os.path.basename(FLK)}\nnoise v(a) V1 dec 5 1 1e4\nprint onoise_total")
-    rc, out = run(NOISE_DECK.format(model="flknoise", card="p=-1"), CTL, "fkn")
+    rc, out = run(NOISE_DECK.format(model="flknoise", card="p=0 q=0"), CTL, "fkn")
     got = scalar(out, "onoise_total")
     check("a NaN exponent leaves the spectrum finite",
           got is not None and got == got and got < 1e-3, f"{got}")
     check("  ... and the source goes inert rather than poisoning it",
           got is not None and abs(got - 2.035584e-07) / 2.035584e-07 < 1e-3, f"{got}")
 
-    rc, out = run(NOISE_DECK.format(model="flknoise", card="p=1"), CTL, "fkg")
+    rc, out = run(NOISE_DECK.format(model="flknoise", card="p=1 q=1"), CTL, "fkg")
     got = scalar(out, "onoise_total")
     check("  ... while a usable exponent is untouched",
           got is not None and got > 1e-6, f"{got}")

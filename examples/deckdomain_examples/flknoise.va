@@ -4,12 +4,21 @@
 // `pwr/f^exp` NaN at every frequency. A noise contribution cannot fail to
 // converge the way a value contribution does, so this printed
 // `onoise_total = nan` and exited 0.
+//
+// The NaN exponent used to be built with `sqrt(p)`, p = -1. Enhancement-509
+// now refuses a deck-supplied `sqrt` argument outside the domain at its
+// SOURCE, with a message naming sqrt and the value -- strictly earlier and
+// more informative, but it means that spelling no longer reaches this
+// contribution. The exponent is built by an unguarded route instead (0/0 at
+// run time), so what is asserted below is unchanged: a NaN exponent must
+// leave the spectrum finite and the source inert.
 module flknoise(a, b);
   inout a, b;
   electrical a, b;
   parameter real p = 1.0;
+  parameter real q = 1.0;
   analog begin
     I(a, b) <+ V(a, b) / 1e3;
-    I(a, b) <+ flicker_noise(1e-18, sqrt(p));
+    I(a, b) <+ flicker_noise(1e-18, p / q);
   end
 endmodule

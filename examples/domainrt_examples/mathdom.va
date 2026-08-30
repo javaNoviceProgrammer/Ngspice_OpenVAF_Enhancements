@@ -1,0 +1,23 @@
+`include "disciplines.vams"
+// Enhancement-509: every one of these arguments is a `parameter`, so it is fixed
+// once the model card has been read -- and the compiler refuses the identical
+// value when it is written as a literal.
+module mathdom(p, n);
+  inout p, n; electrical p, n;
+  parameter integer sel = 0;
+  parameter real q = 1.0;
+  (* desc="result" *) real y;
+  analog begin
+    y = 0.0;
+    if (sel == 0) y = sqrt(q);
+    if (sel == 1) y = ln(q);
+    if (sel == 2) y = log(q);
+    if (sel == 3) y = asin(q);
+    if (sel == 4) y = acos(q);
+    if (sel == 5) y = acosh(q);
+    if (sel == 6) y = atanh(q);
+    if (sel == 7) y = q ** 0.5;
+    if (sel == 8) y = pow(q, 0.5);
+    I(p, n) <+ V(p, n) / 1e3;
+  end
+endmodule

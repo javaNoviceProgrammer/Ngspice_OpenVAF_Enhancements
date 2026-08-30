@@ -506,7 +506,15 @@ impl BodyLoweringCtx<'_, '_, '_> {
                 let exp = self.lower_expr(rhs);
                 return self.lower_int_pow(base, exp);
             }
-            BinaryOp::Power => Opcode::Pow,
+            // Enhancement-509: `**` reaches the same two domain holes as `pow`,
+            // through this separate path (Enhancement-489's lesson: an operator
+            // spelling needs its own guard).
+            BinaryOp::Power => {
+                let base = self.lower_expr(lhs);
+                let exp = self.lower_expr(rhs);
+                let base = self.guard_pow_base(lhs, rhs, base, exp);
+                return self.ctx.ins().pow(base, exp);
+            }
 
             BinaryOp::LeftShift => Opcode::Ishl,
             BinaryOp::RightShift => Opcode::Ishr,
@@ -1744,14 +1752,29 @@ impl BodyLoweringCtx<'_, '_, '_> {
             }
             BuiltIn::acos => {
                 let arg0 = self.lower_expr(args[0]);
+                let mag = self.lower_fabs(arg0);
+                let ok = self.ctx.ins().fle(mag, F_ONE);
+                let not_nan = self.ctx.ins().feq(arg0, arg0);
+                let ok = self.ctx.ins().iand(ok, not_nan);
+                let arg0 =
+                    self.guard_arg_domain("acos", "values in [-1, 1]", args[0], arg0, ok, F_ZERO);
                 self.ctx.ins().acos(arg0)
             }
             BuiltIn::acosh => {
                 let arg0 = self.lower_expr(args[0]);
+                let ok = self.ctx.ins().fge(arg0, F_ONE);
+                let arg0 =
+                    self.guard_arg_domain("acosh", "values >= 1", args[0], arg0, ok, F_ONE);
                 self.ctx.ins().acosh(arg0)
             }
             BuiltIn::asin => {
                 let arg0 = self.lower_expr(args[0]);
+                let mag = self.lower_fabs(arg0);
+                let ok = self.ctx.ins().fle(mag, F_ONE);
+                let not_nan = self.ctx.ins().feq(arg0, arg0);
+                let ok = self.ctx.ins().iand(ok, not_nan);
+                let arg0 =
+                    self.guard_arg_domain("asin", "values in [-1, 1]", args[0], arg0, ok, F_ZERO);
                 self.ctx.ins().asin(arg0)
             }
             BuiltIn::asinh => {
@@ -1769,6 +1792,12 @@ impl BodyLoweringCtx<'_, '_, '_> {
             }
             BuiltIn::atanh => {
                 let arg0 = self.lower_expr(args[0]);
+                let mag = self.lower_fabs(arg0);
+                let ok = self.ctx.ins().flt(mag, F_ONE);
+                let not_nan = self.ctx.ins().feq(arg0, arg0);
+                let ok = self.ctx.ins().iand(ok, not_nan);
+                let arg0 =
+                    self.guard_arg_domain("atanh", "values in (-1, 1)", args[0], arg0, ok, F_ZERO);
                 self.ctx.ins().atanh(arg0)
             }
             BuiltIn::cos => {
@@ -1826,6 +1855,9 @@ impl BodyLoweringCtx<'_, '_, '_> {
             }
             BuiltIn::ln => {
                 let arg0 = self.lower_expr(args[0]);
+                let ok = self.ctx.ins().fgt(arg0, F_ZERO);
+                let arg0 =
+                    self.guard_arg_domain("ln", "values > 0", args[0], arg0, ok, F_ONE);
                 self.ctx.ins().ln(arg0)
             }
             // LRM 4.3.1: ln1p(x) = ln(1+x) and expm1(x) = e^x - 1, each with its
@@ -1849,6 +1881,9 @@ impl BodyLoweringCtx<'_, '_, '_> {
             }
             BuiltIn::sqrt => {
                 let arg0 = self.lower_expr(args[0]);
+                let ok = self.ctx.ins().fge(arg0, F_ZERO);
+                let arg0 =
+                    self.guard_arg_domain("sqrt", "values >= 0", args[0], arg0, ok, F_ZERO);
                 self.ctx.ins().sqrt(arg0)
             }
             BuiltIn::tan => {
@@ -1865,6 +1900,9 @@ impl BodyLoweringCtx<'_, '_, '_> {
             }
             BuiltIn::log10 | BuiltIn::log => {
                 let arg0 = self.lower_expr(args[0]);
+                let ok = self.ctx.ins().fgt(arg0, F_ZERO);
+                let name = if builtin == BuiltIn::log { "log" } else { "log10" };
+                let arg0 = self.guard_arg_domain(name, "values > 0", args[0], arg0, ok, F_ONE);
                 self.ctx.ins().log(arg0)
             }
             BuiltIn::ceil => {
@@ -1889,6 +1927,7 @@ impl BodyLoweringCtx<'_, '_, '_> {
             BuiltIn::pow => {
                 let arg0 = self.lower_expr(args[0]);
                 let arg1 = self.lower_expr(args[1]);
+                let arg0 = self.guard_pow_base(args[0], args[1], arg0, arg1);
                 self.ctx.ins().pow(arg0, arg1)
             }
 
@@ -2330,7 +2369,30 @@ impl BodyLoweringCtx<'_, '_, '_> {
 
                 let fac = self.ctx.fconst(KB / Q);
                 let temp = match args.get(0) {
-                    Some(temp) => self.lower_expr(*temp),
+                    Some(temp) => {
+                        // Enhancement-509: an explicit absolute temperature from the
+                        // deck. hir_ty refuses a literal `$vt(-300)` ("the absolute
+                        // temperature must be greater than zero"); the same value as a
+                        // `parameter` produced a NEGATIVE thermal voltage, which
+                        // inverts every exponential built on it -- a conducting diode
+                        // (-1.207e-04 A) became an open circuit (-6.0e-07 A, the shunt
+                        // alone), silently and with exit code 0.
+                        //
+                        // The no-argument form is NOT guarded here: it reads the
+                        // simulator's temperature, which ngspice already refuses below
+                        // absolute zero ("Option temp = -300 C is at or below absolute
+                        // zero; ignored, keeping 27 C").
+                        let t = self.lower_expr(*temp);
+                        let ok = self.ctx.ins().fgt(t, F_ZERO);
+                        self.guard_arg_domain(
+                            "$vt",
+                            "an absolute temperature > 0",
+                            *temp,
+                            t,
+                            ok,
+                            F_ONE,
+                        )
+                    }
                     None => self.ctx.use_param(ParamKind::Temperature),
                 };
 
@@ -2991,6 +3053,99 @@ impl BodyLoweringCtx<'_, '_, '_> {
     }
 
     /// |x| via neg/lt/select (MIR has no fabs instruction).
+    /// Is this argument fixed for the whole run (Enhancement-509)?
+    fn is_param_derived(&self, expr: ExprId) -> bool {
+        param_derived_in_body(self.ctx.db, self.body, expr, 0) == Some(true)
+    }
+
+    /// Enhancement-509: refuse an out-of-domain argument that came from the DECK.
+    ///
+    /// `hir_ty` refuses these domains when it can SEE the value -- a literal or a
+    /// `localparam` -- with a message that names the builtin, the value and the
+    /// domain. The identical value written on a model card is a `parameter`,
+    /// which is deliberately not folded (Enhancement-426: the deck may replace
+    /// it), so it reached libm untouched and came back `nan`/`inf`. In an
+    /// operating-point variable that is silent with exit code 0; in a residual it
+    /// surfaces as "Timestep too small; cause unrecorded" -- naming neither this
+    /// model nor this call, which is the same complaint Enhancement-504 records.
+    ///
+    /// `ok` must be FALSE for NaN as well (`fgt`/`fge` both are, `flt` negated is
+    /// not -- Enhancement-502's trap), and `safe` is substituted only so this one
+    /// evaluation stamps finite numbers; the abort flag is read after eval
+    /// returns (Enhancement-324).
+    ///
+    /// Only emitted for a parameter-derived argument. A runtime quantity is left
+    /// alone on purpose: `sqrt(V(p,n))` goes briefly negative during Newton
+    /// iteration in working models, and refusing that would break them.
+    fn guard_arg_domain(
+        &mut self,
+        name: &str,
+        domain: &str,
+        arg: ExprId,
+        val: Value,
+        ok: Value,
+        safe: Value,
+    ) -> Value {
+        if !self.is_param_derived(arg) {
+            return val;
+        }
+        let msg = format!("{name}: the argument is outside the domain of {name} ({domain}); it is");
+        self.ctx.make_select(ok, |ctx, branch| {
+            if branch {
+                val
+            } else {
+                ctx.runtime_fatal(&msg, Some(val));
+                safe
+            }
+        })
+    }
+
+    /// Enhancement-509: the two real-`pow` domain holes, guarded for a
+    /// deck-supplied base/exponent.
+    ///
+    /// `hir_ty` refuses both for a value it can see: a negative base with a
+    /// fractional exponent (no real root) and a zero base with a negative
+    /// exponent (a division by zero). Enhancement-489 added the same pair for the
+    /// `**` spelling because it lowers through a DIFFERENT path; both call this.
+    /// Returns a safe base, so the exponent is left exactly as written.
+    fn guard_pow_base(&mut self, base_e: ExprId, exp_e: ExprId, base: Value, exp: Value) -> Value {
+        // BOTH operands have to be fixed for the run (the condition tests them
+        // together), and at least one has to carry a deck value -- `pow(q, 0.5)`
+        // with a parameter base and a literal exponent is the ordinary spelling
+        // of the finding, so requiring a parameter on both sides would miss it.
+        let (b, e) = (
+            param_derived_in_body(self.ctx.db, self.body, base_e, 0),
+            param_derived_in_body(self.ctx.db, self.body, exp_e, 0),
+        );
+        let guard = match (b, e) {
+            (Some(b_param), Some(e_param)) => b_param || e_param,
+            _ => false,
+        };
+        if !guard {
+            return base;
+        }
+        let base_neg = self.ctx.ins().flt(base, F_ZERO);
+        let exp_floor = self.ctx.ins().floor(exp);
+        let exp_frac = self.ctx.ins().fne(exp_floor, exp);
+        let bad_root = self.ctx.ins().iand(base_neg, exp_frac);
+
+        let base_zero = self.ctx.ins().feq(base, F_ZERO);
+        let exp_neg = self.ctx.ins().flt(exp, F_ZERO);
+        let bad_div = self.ctx.ins().iand(base_zero, exp_neg);
+
+        let bad = self.ctx.ins().ior(bad_root, bad_div);
+        let ok = self.ctx.ins().inot(bad);
+        let msg = "pow: the base has no real power for this exponent; the base is";
+        self.ctx.make_select(ok, |ctx, branch| {
+            if branch {
+                base
+            } else {
+                ctx.runtime_fatal(msg, Some(base));
+                F_ONE
+            }
+        })
+    }
+
     fn lower_fabs(&mut self, x: Value) -> Value {
         let neg = self.ctx.ins().fneg(x);
         let is_neg = self.ctx.ins().flt(x, F_ZERO);
@@ -3920,6 +4075,76 @@ fn batcher_network(n: usize) -> Vec<(usize, usize)> {
 /// See `BodyLoweringCtx::eval_const_real_at` for why this matters: the callers
 /// build compile-time tables and turn `None` into `0.0`, so anything this
 /// cannot fold becomes a silent zero entry.
+/// Is `expr` fixed for the whole run, and does it involve a DECK-overridable
+/// parameter?
+///
+/// * `None`          -- not fixed for the run (a probe, a variable, time, ...)
+/// * `Some(false)`   -- fixed, but built only from literals and `localparam`s
+/// * `Some(true)`    -- fixed, and an overridable `parameter` takes part
+///
+/// Enhancement-509 emits a domain check only for `Some(true)`, and the three
+/// cases are all load-bearing:
+///
+/// `None` must not be guarded. `sqrt(V(p,n))` legitimately sees a negative
+/// argument during Newton iteration, and refusing that would break working
+/// models -- the overreach Enhancement-508 had to take back on
+/// `$discontinuity`.
+///
+/// `Some(false)` must not be guarded either. `hir_ty` already refuses those at
+/// compile time with a better message, so a run-time check adds nothing -- and
+/// emitting one folds the whole condition to a constant, which is how this first
+/// version CRASHED the compiler: `mir_opt`'s constant evaluator has no case for
+/// `iand`/`ior` on two constant booleans (fixed alongside, but the guard should
+/// not be creating that shape in the first place).
+///
+/// `Some(true)` is precisely the route the compiler cannot see: the value is
+/// unknown when the model is compiled and fixed once the card has been read, so
+/// a check on it tests the same number at every evaluation and cannot misfire.
+///
+/// Deliberately the same shape as `const_real_in_body`, one step weaker: that
+/// folds what is known when the model is COMPILED (so never a `parameter`), this
+/// accepts anything constant once the model card is READ.
+fn param_derived_in_body(
+    db: &CompilationDB,
+    body: BodyRef<'_>,
+    expr: ExprId,
+    depth: u32,
+) -> Option<bool> {
+    if depth > 32 {
+        return None;
+    }
+    if let Some(lit) = body.as_literal(expr) {
+        return matches!(lit, Literal::Float(_) | Literal::Int(_)).then_some(false);
+    }
+    match body.get_expr(expr) {
+        Expr::UnaryOp { expr: inner, op } => {
+            if matches!(op, UnaryOp::Neg | UnaryOp::Identity) {
+                param_derived_in_body(db, body, inner, depth + 1)
+            } else {
+                None
+            }
+        }
+        Expr::BinaryOp { lhs, rhs, op } => {
+            if !matches!(
+                op,
+                BinaryOp::Addition
+                    | BinaryOp::Subtraction
+                    | BinaryOp::Multiplication
+                    | BinaryOp::Division
+            ) {
+                return None;
+            }
+            let l = param_derived_in_body(db, body, lhs, depth + 1)?;
+            let r = param_derived_in_body(db, body, rhs, depth + 1)?;
+            Some(l || r)
+        }
+        // A `localparam` is fixed at compile time, so it carries no deck value; a
+        // `parameter` is the one the model card may replace.
+        Expr::Read(Ref::Parameter(param)) => Some(!param.is_local(db)),
+        _ => None,
+    }
+}
+
 fn const_real_in_body(
     db: &CompilationDB,
     body: BodyRef<'_>,

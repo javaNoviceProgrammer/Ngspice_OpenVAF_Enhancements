@@ -95,6 +95,19 @@ pub fn eval_binary(func: &mut Function, op: Opcode, lhs: Const, rhs: Const) -> O
                 _ => unreachable!("invalid real operation  {}", op,),
             }
         }
+        // Enhancement-509: the boolean connectives were missing here, so folding
+        // any `iand`/`ior`/`ixor` whose BOTH operands were constant booleans hit
+        // the `unreachable!` below and crashed the compiler. Nothing generated
+        // that shape until a guard built its condition out of constants; the
+        // operation itself is ordinary and has an obvious value.
+        (mir::Const::Bool(lhs), mir::Const::Bool(rhs)) => match op {
+            Opcode::Beq => (lhs == rhs).into(),
+            Opcode::Bne => (lhs != rhs).into(),
+            Opcode::Iand => (lhs && rhs).into(),
+            Opcode::Ior => (lhs || rhs).into(),
+            Opcode::Ixor => (lhs ^ rhs).into(),
+            _ => unreachable!("invalid boolean operation {} {:?} {:?}", op, lhs, rhs),
+        },
         _ => match op {
             Opcode::Seq | Opcode::Beq => (lhs == rhs).into(),
             Opcode::Sne | Opcode::Bne => (lhs != rhs).into(),

@@ -1,0 +1,18 @@
+`include "disciplines.vams"
+// Enhancement-509: the same builtins with a RUN-TIME argument. A node voltage
+// leaves these domains routinely during Newton iteration, so none of this may be
+// refused -- that is the half of the rule the guard must not overreach on.
+module rtarg(p, n, o);
+  inout p, n, o; electrical p, n, o;
+  parameter integer sel = 0;
+  real y;
+  analog begin
+    y = 0.0;
+    if (sel == 0) y = sqrt(V(p, n) * V(p, n));      // always legal, must run
+    if (sel == 1) y = ln(1.0 + V(p, n) * V(p, n));  // always legal, must run
+    if (sel == 2) y = sqrt(V(p, n));                // NEGATIVE part of the time
+    if (sel == 3) y = V(p, n) ** 0.5;               // NEGATIVE part of the time
+    V(o) <+ y;
+    I(p, n) <+ V(p, n) / 1e3;
+  end
+endmodule

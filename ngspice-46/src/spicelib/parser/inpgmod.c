@@ -279,6 +279,16 @@ create_model(CKTcircuit *ckt, INPmodel *modtmp, INPtables *tab)
              * 1e-12 instead of 1.25e-4, with exit code 0. The same value written
              * as `inf` on the same card is refused, as is `{1/0}` on an instance
              * line, so this was the one path that took it. */
+            if (val && INPlastRangeError()) {
+                err = INPerrCat(err,
+                    tprintf("Error on .model %s : parameter (%s) does not fit an "
+                            "integer parameter, and would otherwise be applied as "
+                            "the saturated value 2147483647 -- which can even pass "
+                            "a `from [0:2147483647]` range check",
+                            modtmp->INPmodName, p->keyword));
+                FREE(parm);
+                continue;               /* do NOT apply it */
+            }
             if (val && INPlastValueError()) {
                 err = INPerrCat(err,
                     tprintf("Error on .model %s : parameter (%s) is not a number "

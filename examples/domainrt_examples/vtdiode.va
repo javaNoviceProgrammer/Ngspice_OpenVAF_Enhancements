@@ -1,0 +1,10 @@
+`include "disciplines.vams"
+// Enhancement-509: a diode whose thermal voltage comes from the model card. With
+// a negative absolute temperature the exponential inverts and the device stops
+// being a diode -- silently, with exit code 0.
+module vtdiode(a, c);
+  inout a, c; electrical a, c;
+  parameter real tabs = 300.0;
+  parameter real is = 1e-14;
+  analog I(a, c) <+ is * (limexp(V(a, c) / $vt(tabs)) - 1.0);
+endmodule

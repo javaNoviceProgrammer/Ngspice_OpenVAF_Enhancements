@@ -134,6 +134,7 @@ void INPfreeTree(IFparseTree *);
 IFvalue *INPgetValue(CKTcircuit *, char **, int, INPtables *);
 /* Enhancement-507: did the last INPgetValue() scalar conversion fail? */
 int INPlastValueError(void);
+int INPlastRangeError(void);   /* Enhancement-509 */
 int INPgndInsert(CKTcircuit *, char **, INPtables *, CKTnode **);
 int INPinsertNofree(char **token, INPtables *tab);
 int INPinsert(char **, INPtables *);

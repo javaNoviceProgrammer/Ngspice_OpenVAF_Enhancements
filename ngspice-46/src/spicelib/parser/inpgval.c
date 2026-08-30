@@ -5,6 +5,7 @@ Author: 1985 Thomas L. Quarles
 
 #include "ngspice/ngspice.h"
 #include <stdio.h>
+#include <limits.h>
 #include "ngspice/ifsim.h"
 #include "ngspice/inpdefs.h"
 #include "ngspice/inpptree.h"
@@ -32,8 +33,10 @@ extern bool ft_ngdebug;
  * model-card path asks for it, which is the one caller that had no other way to
  * find out. */
 static int inp_scalar_value_error;
+static int inp_scalar_range_error;   /* Enhancement-509 */
 
 int INPlastValueError(void) { return inp_scalar_value_error; }
+int INPlastRangeError(void) { return inp_scalar_range_error; }
 
 IFvalue *
 INPgetValue(CKTcircuit *ckt, char **line, int type, INPtables *tab)
@@ -50,6 +53,7 @@ INPgetValue(CKTcircuit *ckt, char **line, int type, INPtables *tab)
     /* make sure we get rid of extra bits in type */
     type &= IF_VARTYPES;
     inp_scalar_value_error = 0;                 /* Enhancement-507 */
+    inp_scalar_range_error = 0;                 /* Enhancement-509 */
     if (type == IF_INTEGER) {
         tmp = INPevaluate(line, &error, 1);
         inp_scalar_value_error = error;         /* Enhancement-507 */
@@ -71,7 +75,35 @@ INPgetValue(CKTcircuit *ckt, char **line, int type, INPtables *tab)
          * negative half-integers, which no built-in device uses as a meaningful
          * parameter value, and where the old result was the surprising one.
          */
-        temp.iValue = (int) round(tmp);
+        /* Enhancement-509: a value that does not FIT an integer parameter.
+         *
+         * `(int) round(tmp)` is undefined behaviour once the rounded value is
+         * outside the integer range; on this target it saturates, so a model
+         * card saying `n=1e300` silently applied 2147483647 -- 291 orders of
+         * magnitude from what was written, with no diagnostic.
+         *
+         * The saturation also happened BEFORE the parameter's own range check,
+         * which is what made it dangerous rather than merely surprising: a
+         * parameter declared `from [0:2147483647]` -- the idiomatic way to say
+         * "any non-negative integer" -- accepted 1e300, because the clamped
+         * value landed exactly on the upper bound and passed. `n=200` against
+         * `[0:100]` was refused correctly the whole time; only the values that
+         * overflowed slipped through, and those are the absurd ones.
+         *
+         * Flag it instead, the same way Enhancement-507 flags a `{...}` that
+         * evaluates non-finite: the model-card path reports it and keeps the
+         * parameter's default rather than applying a fabricated number. The
+         * comparison is written so that a NaN fails it too.
+         */
+        {
+            double rounded = round(tmp);
+            if (rounded >= (double) INT_MIN && rounded <= (double) INT_MAX) {
+                temp.iValue = (int) rounded;
+            } else {
+                inp_scalar_range_error = 1;
+                temp.iValue = 0;
+            }
+        }
         /* printf(" returning integer value %d\n",temp.iValue); */
     } else if (type == IF_REAL) {
         temp.rValue = INPevaluate(line, &error, 1);
