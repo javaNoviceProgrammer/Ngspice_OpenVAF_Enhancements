@@ -19,7 +19,8 @@ device instances, for an identical answer. See [Performance](#performance--the-d
 | **Availability in this build** | Compiled in (SuiteSparse, statically linked — 45 `klu_*` symbols in the binary) | Always present (ngspice's own solver) |
 | **Default?** | No | **Yes** — this build defaults to Sparse 1.3 |
 | **How to select** | `.option klu` | `.option sparse` (or just the default) |
-| **Cost on large circuits** | ✅ ~linear in circuit size | ❌ steeply superlinear — **68× slower** at 380 OSDI instances ([below](#performance--the-default-is-not-the-fast-one)) |
+| **Cost on DENSELY COUPLED circuits** | ✅ ~linear in circuit size | ❌ steeply superlinear — **68× slower** at 380 OSDI instances ([below](#performance--the-default-is-not-the-fast-one)) |
+| **Cost on CHAIN-LIKE circuits** (ladder, filter chain, RC string) | ❌ ~5–8% slower at every size — the ordering machinery is pure overhead with no fill-in to avoid | ✅ slightly faster ([below](#topology-decides-not-node-count)) |
 | **DC op / DC sweep** | ✅ correct | ✅ correct |
 | **AC** | ✅ correct | ✅ correct |
 | **Transient** | ✅ correct (one caveat below) | ✅ correct |
@@ -129,6 +130,12 @@ On the committed `bin/` binary this reports **`Sparse 1.3`** for a bare deck and
 for `.option sparse`, and **`KLU`** only when `.option klu` is given —
 confirming Sparse 1.3 is the default here.
 
+**The `run` in that block matters.** `option` reports the *circuit's* live
+`CKTkluMODE`, and the circuit is not set up until an analysis has run. Query it
+before any analysis and it reports `Sparse 1.3` **whatever the deck asked for** —
+which reads exactly like `.option klu` being ignored, and is not. Always run the
+analysis first, then `option`.
+
 ## Performance — the default is not the fast one
 
 Everything above is about *correctness*, where the two solvers now agree
@@ -152,15 +159,25 @@ deviation of **3.8e-07** across all outputs, so this compares like with like.
 
 KLU is essentially **linear** in circuit size — each doubling roughly doubles its
 runtime. Sparse 1.3 is steeply **superlinear**: each doubling multiplies its
-runtime by 4.6–13×. The crossover is early, around a hundred instances, and there
-is no size at which Sparse wins.
+runtime by 4.6–13×. The crossover is early, around a hundred instances, and on
+**this** circuit family there is no size at which Sparse wins.
+
+That last clause used to read "there is no size at which Sparse wins", full stop.
+It is not true in general: on a near-tridiagonal topology Sparse wins by a few
+percent at every size — see
+[Topology decides, not node count](#topology-decides-not-node-count) below.
 
 **It is not an artifact of the benchmark's structure.** N independent opamps form a
 block-diagonal matrix, which is the ideal case for KLU's block-triangular-form
 permutation, so the same sweep was repeated with the opamps wired into a
 **connected cascade** (each stage buffering the previous one's output): **63.7×** at
-380 instances, essentially unchanged. The gap is a property of the solvers, not of
-the topology.
+380 instances, essentially unchanged. So the gap is not an artifact of
+block-triangular form.
+
+It is, however, a property of the topology in a broader sense than that test could
+show: both variants are made of 19-transistor opamps, which are densely coupled
+*locally* whichever way the stages are wired. A genuinely sparse, near-tridiagonal
+circuit behaves differently — see the next section.
 
 **Where the time goes.** Sampling the 380-instance run under the default solver:
 
@@ -184,6 +201,56 @@ linked-list structures and Markowitz re-pivoting on every factorization versus
 KLU's fixed symbolic ordering and cache-friendly compressed-column refactor — but
 the exact ratio on a given circuit will differ. Measure your own deck; the two
 solvers agree on the answer, so switching costs nothing but the flag.
+
+## Topology decides, not node count
+
+User-reported, and worth stating plainly because it contradicts the natural reading
+of the benchmark above: **on a chain-like circuit Sparse 1.3 is faster than KLU at
+every size, and the gap does not close as the circuit grows.**
+
+The question came from someone sweeping a large circuit and finding Sparse
+consistently ahead. That is real, and it is not a defect.
+
+Matched node counts, same deck generator, `sweep` on the
+[Enhancement-471](../../../enhancements_doc/Enhancement-471.md) fast path:
+
+| topology | nodes | Sparse 1.3 | KLU | result |
+|---|---:|---:|---:|---|
+| mesh 35×35 | 1 225 | 0.73 s | 0.43 s | KLU **1.7×** faster |
+| mesh 50×50 | 2 500 | 2.29 s | 1.01 s | KLU **2.3×** faster |
+| mesh 70×70 | 4 900 | 7.08 s | 2.52 s | KLU **2.8×** faster |
+| ladder / chain | 1 225 | 0.32 s | 0.34 s | Sparse 1.05× |
+| ladder / chain | 2 500 | 0.64 s | 0.70 s | Sparse 1.08× |
+| ladder / chain | 4 900 | 1.40 s | 1.49 s | Sparse 1.07× |
+
+Same node counts, opposite verdicts. The mesh ratio **grows** with size; the ladder
+ratio is **flat** at 5–8% in Sparse's favour no matter how far it is pushed.
+
+**Why.** The deciding quantity is fill-in, not node count. A ladder, filter chain,
+RC string or delay line produces an essentially tridiagonal matrix: there is no
+fill-in for a good ordering to avoid, both solvers are effectively O(N), and KLU's
+symbolic analysis, BTF permutation and compressed-column machinery are pure
+overhead — which is what the steady few percent is. A mesh (substrate grid, power
+grid, coupled array, or a densely coupled compact-model cascade) generates real
+fill-in, and there Sparse's Markowitz re-pivoting on every factorization loses to
+KLU's fixed ordering, increasingly so with size.
+
+So "large" in the 68× benchmark above means **densely coupled**, not "many nodes".
+Both statements are true at once:
+
+* a 4 900-node ladder runs *faster* under the default Sparse;
+* a 4 900-node mesh runs 2.8× faster under KLU, and a 380-instance opamp cascade
+  68× faster.
+
+**On the sweep fast path specifically**, KLU's advantage is slightly smaller than
+on a bare `op` — 2.3× versus 3.1× at 2 500 mesh nodes. That is expected rather
+than a fast-path defect: setup reuse removes the setup cost, so factorization is a
+smaller share of what remains. It narrows KLU's lead; it does not reverse it.
+
+**How to decide for your own deck.** Time it under both solvers at two sizes. If
+the ratio is flat as you scale, the circuit is chain-like and the default is
+already the right choice. If the ratio grows, switch to `.option klu`. The two
+solvers agree on the answer, so the only cost is the flag.
 
 ## Noise and pole-zero under KLU (Enhancement-113)
 
