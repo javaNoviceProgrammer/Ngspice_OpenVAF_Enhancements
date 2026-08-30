@@ -60,6 +60,7 @@ typedef struct sISRCinstance {
     unsigned ISRCacMGiven    :1 ;  /* flag to indicate ac magnitude given */
     unsigned ISRCacPGiven    :1 ;  /* flag to indicate ac phase given */
     unsigned ISRCfuncTGiven  :1 ;  /* flag to indicate function type given */
+    unsigned ISRCdcNoteDone :1 ;  /* Enhancement-513: the op/t=0 note was said */
     unsigned ISRCcoeffsGiven :1 ;  /* flag to indicate function coeffs given */
     unsigned ISRCdGiven      :1 ;  /* flag to indicate source is a distortion input */
     unsigned ISRCdF1given    :1 ;  /* flag to indicate source is an f1 distortion input */

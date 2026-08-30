@@ -86,6 +86,7 @@ typedef struct sVSRCinstance {
     unsigned VSRCacMGiven    :1 ;  /* flag to indicate ac magnitude given */
     unsigned VSRCacPGiven    :1 ;  /* flag to indicate ac phase given */
     unsigned VSRCfuncTGiven  :1 ;  /* flag to indicate function type given */
+    unsigned VSRCdcNoteDone :1 ;  /* Enhancement-513: the op/t=0 note was said */
     unsigned VSRCcoeffsGiven :1 ;  /* flag to indicate function coeffs given */
     unsigned VSRCdGiven      :1 ;  /* flag to indicate source is a distortion input */
     unsigned VSRCdF1given    :1 ;  /* flag to indicate source is an f1 distortion input */

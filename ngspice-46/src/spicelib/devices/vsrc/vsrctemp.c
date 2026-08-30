@@ -86,7 +86,17 @@ VSRCtemp(GENmodel *inModel, CKTcircuit *ckt)
                 else
                     time0value = here->VSRCcoeffs[0];
                 /* No warning issued if DC value and transient time 0 value are the same */
-                if (!AlmostEqualUlps(time0value, here->VSRCdcValue, 3)) {
+    /* Enhancement-513: this note describes a STATIC property of the deck -- the
+     * source carries both a DC value and a transient function whose t=0 value
+     * differs -- but it was emitted from VSRCTEMP, which CKTdoJob runs once per
+     * ANALYSIS. A loop command therefore repeated it once per point: a 100-sample
+     * `montecarlo` printed it 100 times, and because Enhancement-477's progress
+     * line redraws with '\r', each copy landed on the bar and mangled both
+     * ("...time=0 value.ran  47%)"). Latched per instance, so it is said once per
+     * deck load and again after a re-source, which rebuilds the instances. */
+                if (!AlmostEqualUlps(time0value, here->VSRCdcValue, 3)
+                        && !here->VSRCdcNoteDone) {
+                    here->VSRCdcNoteDone = 1;
                     SPfrontEnd->IFerrorf(ERR_INFO,
                         "%s: dc value used for op instead of transient time=0 value.",
                         here->VSRCname);
