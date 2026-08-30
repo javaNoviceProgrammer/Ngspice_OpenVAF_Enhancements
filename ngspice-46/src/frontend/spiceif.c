@@ -469,6 +469,17 @@ if_is_option(const char *name)
         "autobus",                   /* Enhancement-444 */
         "silentports",               /* Enhancement-481 */
         "saveused",                  /* Enhancement-469 */
+        /* Two more that the run demonstrably HONOURS while reporting them
+           unknown -- the exact failure the notes below describe.
+           `osdicache` (Enhancement-500) is read straight off the option
+           cards by inp.c, because `pre_osdi -va` runs before any option has
+           been published and cp_getvar would answer for the previous deck;
+           with it a second run prints "is up to date" and skips the
+           compile, without it the model is rebuilt. `seedinfo` is read the
+           same way at inp.c and calls setseedinfo(), which randnumb.c acts
+           on. Both were absent from this list only because neither reaches
+           the simulator option table at all. */
+        "osdicache", "seedinfo",
         /* Enhancements 471/473: `reusesetup` is read through cp_getvar by
            sw_request_reuse(), so a `.option reusesetup=0` card WORKS -- the
            deck it was added to went 0.55 s to 6.81 s, which is the option
