@@ -1,0 +1,18 @@
+`include "disciplines.vams"
+// Enhancement-512: `transition` must reach its final value AT delay+rise, at
+// every speed. The tracking gain used to be a fixed 1e9/s, so the fraction of
+// the swing that was a true linear ramp depended on how fast the edge was:
+// 66.7% at trise = 3 ns and ~100% at 3 us.
+module tedge(a, o);
+  inout a, o; electrical a, o;
+  parameter real td = 1e-12;
+  parameter real tr = 3e-9;
+  parameter integer sel = 0;
+  real y;
+  analog begin
+    if (sel == 0) y = transition(V(a) > 0.5, td, tr, tr);
+    if (sel == 1) y = slew(V(a), 1.0 / tr, -1.0 / tr);
+    V(o) <+ y;
+    I(a) <+ V(a) * 1e-12;
+  end
+endmodule

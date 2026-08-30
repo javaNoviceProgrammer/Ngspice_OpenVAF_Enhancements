@@ -3256,12 +3256,81 @@ impl BodyLoweringCtx<'_, '_, '_> {
         neg_max: Value,
         kind: ImplicitEquationKind,
     ) -> Value {
-        // Large but finite tracking gain (1/s); see `lower_slew` doc comment.
-        const TRACK_GAIN: f64 = 1.0e9;
+        // Enhancement-512: the tracking gain is RELATIVE to the transition rate,
+        // not a fixed absolute constant.
+        //
+        // The loop is `dy/dt = clamp(K*(x-y), -neg_max, +pos_max)`. While the
+        // clamp is saturated this is an exact linear ramp at the LRM's rate; it
+        // releases once the remaining gap falls below `rate/K`, and the rest of
+        // the swing is a first-order tail with tau = 1/K. With K a fixed 1e9/s
+        // that gap was `1/(K*trise)` -- which depends on how fast the transition
+        // is, so the operator was effectively exact for a microsecond edge and
+        // materially wrong for a nanosecond one:
+        //
+        //     trise    linear part    value at delay+trise  (LRM: 1.0)
+        //      3 ns       66.7%            0.8774
+        //     30 ns       96.7%            0.9873
+        //      3 us      ~100%             1.000039
+        //
+        // (the shortfall is e^-1/(K*trise), measured 0.877382 against 0.877374
+        // predicted at 3 ns). `default_transition` pins the 1 us case, deep
+        // inside the correct region, which is why it never surfaced there.
+        //
+        // Setting K = TRACK_C * rate makes the released gap `1/TRACK_C` at EVERY
+        // speed, so the linear fraction is scale-invariant and the tail is a
+        // fixed fraction of the transition rather than a fixed 1 ns.
+        //
+        // TRACK_C is 1e3 by measurement, not by taste, and the trade-off is real
+        // in BOTH directions. The released gap 1/TRACK_C bounds the endpoint
+        // error, so a larger constant looks better in isolation -- but it also
+        // shortens the tail's time constant (tau = trise/TRACK_C) and a stiffer
+        // loop costs accuracy at a realistic timestep, through truncation error
+        // at the corner where the ramp meets the tail. Measured on
+        // Enhancement-47's plateau check, which samples three arities at once:
+        //
+        //     TRACK_C     plateau (want 0.875)
+        //       1e3           0.875      (passes, 1e-6 tolerance)
+        //       1e4           0.874940
+        //       1e5           0.874766
+        //
+        // So it gets WORSE above 1e3, not better. At 1e3 the endpoint error is
+        // 2e-5..4e-4 across five decades of trise (it was 12.3% at 3 ns), the
+        // settled value is exactly 1.0, and timepoint counts and runtime are
+        // unchanged. Do not raise this without re-running `defaulttransition`.
+        const TRACK_C: f64 = 1.0e3;
+        // Enhancement-504 clamps a negative rise/fall time to ZERO, whose
+        // reciprocal is +inf -- that is how an instantaneous transition disables
+        // the rate limit. `TRACK_C * inf` is inf, and `inf * 0.0` is NaN, so the
+        // gain has to stay finite for that case: it falls back to the fixed
+        // 1e9/s this loop used before, which is exactly the behaviour E-504's
+        // suite measured for an instantaneous transition. A merely FAST finite
+        // rate is far below the guard (trise = 1 ps gives 1e15) and is untouched.
+        const TRACK_GAIN_INF: f64 = 1.0e9;
+        const HUGE: f64 = 1.0e300;
 
         let (eq, y) = self.ctx.implicit_equation(kind);
-        let gain = self.ctx.fconst(TRACK_GAIN);
+        let c = self.ctx.fconst(TRACK_C);
+        let huge = self.ctx.fconst(HUGE);
+        let g_inf = self.ctx.fconst(TRACK_GAIN_INF);
         let diff = self.ctx.ins().fsub(x, y);
+        let finite_gain = |s: &mut Self, k: Value| {
+            let ok = s.ctx.ins().flt(k, huge);      // false for +inf and for NaN
+            s.lower_select_with(ok, |_| k, |_| g_inf)
+        };
+        // ONE gain for both directions, taken from the FASTER rate. A gain that
+        // switched with the sign of `x - y` was tried and rejected: it makes the
+        // loop dynamics jump exactly at the crossing point, and an asymmetric
+        // `transition(x, td, 0.5n, -0.5n)` -- one edge instantaneous, the other
+        // finite -- then overshot to 1.01 and recovered on the far slower
+        // fallback gain, which is a regression against Enhancement-504's suite.
+        // Taking the faster rate makes the slower direction stiffer than it
+        // needs to be, which costs the integrator nothing measurable here and
+        // *reduces* overshoot, since the ringing amplitude is bounded by the gap
+        // at which the clamp releases (`rate/K`).
+        let faster = self.ctx.ins().fgt(pos_max, neg_max);
+        let rate_max = self.lower_select_with(faster, |_| pos_max, |_| neg_max);
+        let gain = self.ctx.ins().fmul(c, rate_max);
+        let gain = finite_gain(self, gain);
         let rate = self.ctx.ins().fmul(gain, diff);
 
         let neg_max = self.ctx.ins().fneg(neg_max);

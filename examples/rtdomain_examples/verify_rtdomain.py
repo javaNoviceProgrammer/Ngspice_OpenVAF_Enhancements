@@ -145,7 +145,12 @@ rc, o_zero, _ = run("tr=0 tf=0", "run\nprint v(o)", "t5", ".tran 0.1n 8n\n")
 rc, o_pos, _ = run("tr=2n tf=2n", "run\nprint v(o)", "t6", ".tran 0.1n 8n\n")
 n, z, p = wave(o_neg), wave(o_zero), wave(o_pos)
 same_zero = len(n) == len(z) and all(abs(x - y) < 1e-9 for x, y in zip(n, z))
-diff_pos = len(n) == len(p) and any(abs(x - y) > 1e-6 for x, y in zip(n, p))
+# Enhancement-512: differing LENGTHS are themselves proof the waveforms
+# differ -- requiring equal lengths first made this check report "the
+# same" the moment a real rate-limited ramp needed more timepoints than
+# the instantaneous case (102 vs 119). The assertion is unchanged: a
+# negative rise must not behave like a positive one.
+diff_pos = len(n) != len(p) or any(abs(x - y) > 1e-6 for x, y in zip(n, p))
 check("[5] a negative rise means ZERO (instantaneous), not its magnitude",
       same_zero and diff_pos,
       f"== tr=0: {same_zero}, != tr=+2n: {diff_pos}")
