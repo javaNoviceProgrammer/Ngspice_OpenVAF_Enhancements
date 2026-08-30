@@ -628,7 +628,11 @@ int OSDIsetup(SMPmatrix *matrix, GENmodel *inModel, CKTcircuit *ckt,
           extra->crossing_jac_z_csc[k] = NULL;
           extra->crossing_jac_z_cx[k] = NULL;
           extra->crossing_hist[k] = NULL;
-          extra->crossing_time[k] = 0.0;
+          /* LRM 4.5.10: "Before the expression crosses zero (0) for the first
+           * time, the last_crossing() function returns a NEGATIVE value." It is
+           * the only way a model can tell "no crossing yet" from "crossed at
+           * t = 0", which is what `if (last_crossing(...) < 0)` tests for. */
+          extra->crossing_time[k] = OSDI_LAST_CROSSING_NONE;
           if (!extra->crossing_jac_z[k])
             return E_NOMEM;
         }
@@ -695,8 +699,9 @@ extern int OSDItemp(GENmodel *inModel, CKTcircuit *ckt) {
        * crossing_time[] is per-RUN state. OSDIaccept deliberately leaves it
        * unchanged until a qualifying crossing is seen, so that V(z) keeps
        * reporting the time of the LAST crossing per the LRM; the contract
-       * osdiaccept.c states is that it "starts at 0.0 ... before any crossing
-       * has been observed". Only OSDIsetup seeded it, and Enhancement-471's
+       * osdiaccept.c states is that it starts at the LRM's negative
+       * "no crossing yet" sentinel before any crossing has been observed.
+       * Only OSDIsetup seeded it, and Enhancement-471's
        * setup reuse skips OSDIsetup, so every reused sweep point began holding
        * the PREVIOUS point's crossing time. A 100 kHz sine over 40 us made
        * `last_crossing(V(in),1)` read 3e-05 at t=0 of points 2..5 instead of
@@ -706,7 +711,7 @@ extern int OSDItemp(GENmodel *inModel, CKTcircuit *ckt) {
       if (extra_inst_data->crossing_time) {
         uint32_t k_lc;
         for (k_lc = 0; k_lc < entry->num_last_crossings; k_lc++)
-          extra_inst_data->crossing_time[k_lc] = 0.0;
+          extra_inst_data->crossing_time[k_lc] = OSDI_LAST_CROSSING_NONE;
       }
 
       /* Enhancement-394: `temp` OVERRIDES, it does not stack with `dtemp`.

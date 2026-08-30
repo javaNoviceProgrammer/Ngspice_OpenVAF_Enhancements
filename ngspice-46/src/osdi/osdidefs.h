@@ -121,6 +121,11 @@ typedef struct OsdiExtraInstData {
   /* Cached last-known crossing time per slot; persists across accept()
    * calls, only updated when a new qualifying crossing is found. Initialized
    * to 0.0 (== "no crossing observed yet"). */
+  /* Value reported by last_crossing() before any qualifying crossing has been
+  * observed. LRM 4.5.10 requires a NEGATIVE value here so that "not yet" is
+  * distinguishable from "crossed at t = 0"; this used to be 0.0, which made a
+  * model's `last_crossing(...) < 0` test read a crossing that never happened. */
+#define OSDI_LAST_CROSSING_NONE (-1.0)
   double *crossing_time;        /* [num_last_crossings] */
 
   /* Pre-allocated KLU/sparse matrix pointer for each slot's z-row diagonal

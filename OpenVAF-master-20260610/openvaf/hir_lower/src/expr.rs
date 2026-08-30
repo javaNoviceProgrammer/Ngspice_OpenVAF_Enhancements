@@ -2627,10 +2627,32 @@ impl BodyLoweringCtx<'_, '_, '_> {
                 let y_expr = self.lower_expr(args[0]);
                 let mut td = self.lower_expr(args[1]);
                 if signature == ABSDELAY_MAX {
+                    // LRM 4.5.7: "If td becomes greater than maxdelay, maxdelay
+                    // will be used as a substitute for td."
                     let tdmax = self.lower_expr(args[2]);
                     let use_td = self.ctx.ins().fle(td, tdmax);
                     td = self.lower_select_with(use_td, |_| td, |_| tdmax);
                 }
+                // LRM 4.5.7 also says: "If maxdelay is not specified, the value of
+                // td when the absdelay() is first evaluated shall be used and any
+                // future changes to td shall be ignored." That is NOT implemented,
+                // deliberately, and the reason is worth recording.
+                //
+                // The only "first evaluation" flag a model can see is
+                // `IsInitialStep`, and at that flag the circuit solution is still
+                // the zero initial guess -- a probe read inside `@(initial_step)`
+                // returns 0, measurably (V(ctl,c) reads 1.0 outside it and 0
+                // inside). Latching there stores 0, which is worse than tracking.
+                // And for the case that actually occurs -- `td` a parameter --
+                // freezing is indistinguishable from not freezing, because a
+                // parameter cannot change during an analysis anyway.
+                //
+                // Doing it correctly means latching on the SIMULATOR side at
+                // MODEINITTRAN, where the operating point has converged (the same
+                // place `absdelay_stamp_tran` now seeds the history from
+                // CKTrhsOld). That needs a per-slot "this delay is fixed" flag in
+                // OsdiAbsDelayInfo, i.e. a descriptor/ABI addition, which is not
+                // worth pairing with the fixes in this enhancement.
                 self.lower_delay(y_expr, td)
             }
             BuiltIn::limit => self.lower_expr(args[0]),
@@ -3349,8 +3371,31 @@ impl BodyLoweringCtx<'_, '_, '_> {
         let identity = self.ctx.ins().fsub(y, x);
         let resist = self.lower_select_with(enable_integration, |_| track, |_| identity);
         self.ctx.def_resist_residual(resist, eq);
-        let react = self.lower_select_with(enable_integration, |_cx| y, |cx| cx.ctx.fconst(0.0));
-        self.ctx.def_react_residual(react, eq);
+        // The REACT residual is `y` unconditionally -- it must NOT be gated on
+        // `enable_integration` the way the resistive one is.
+        //
+        // ngspice stores the react residual as this equation's charge state and,
+        // at MODEINITTRAN, seeds the previous state from it
+        // (`CKTstate1[state] = residual_react` in osdiload.c). Zeroing it at DC
+        // therefore left the stored charge at 0 while the operating point had
+        // solved `y = x`, so the first transient step saw `dy/dt = (y - 0)/h`,
+        // the clamp bounded it, and the output RAMPED UP FROM ZERO at exactly
+        // the slew rate -- for `slew` that lasts |V_bias|/rate (2.5 us for a
+        // 2.5 V rail at 1 V/us), which is precisely the timescale the operator
+        // exists to impose. LRM 4.5.9: "If the rate of change of expr is less
+        // than the specified maximum slew rates, slew() returns the value of
+        // expr", and a constant input has rate of change zero.
+        //
+        // The DC SOLUTION is unaffected: `CALC_REACT_JACOBIAN` is clear at the
+        // operating point, so the reactive term contributes nothing to the
+        // residual or the Jacobian there -- it is only *stored*. Enhancement-47's
+        // reason for switching the RESISTIVE residual at DC (a saturated clamp
+        // has zero derivative w.r.t. `y`, so the DC Jacobian diagonal vanished)
+        // does not apply to the reactive one, which is `y` with derivative 1.
+        // Every sibling that gets this right -- `laplace_*`'s state-space
+        // realization, and a hand-written `ddt(V(o,c))` -- defines its react
+        // residual unconditionally.
+        self.ctx.def_react_residual(y, eq);
 
         y
     }

@@ -16,13 +16,20 @@
 `include "disciplines.vams"
 `default_transition 1u
 
-// bare transition(): rise/fall = the directive's 1u
+// bare transition(): rise/fall = the directive's 1u.
+//
+// Enhancement-514: the flip is at 0.5u, not 0. `@(timer(0, ...))` fires during
+// the DC solve, so with a flip at t=0 the input has ALREADY changed by the time
+// the operating point is computed -- the OP holds 1, and a transient starting
+// from it correctly stays at 1 with nothing left to ramp. This module exists to
+// check the DIRECTIVE'S RAMP TIME, so the flip belongs inside the transient,
+// exactly as dt_delay below already arranges for its own reason.
 module dt_bare(a, c);
   inout a, c;
   electrical a, c;
   integer s;
   analog begin
-    @(timer(0, 4u)) s = 1 - s;
+    @(timer(0.5u, 4u)) s = 1 - s;
     V(a,c) <+ transition(s);
   end
 endmodule
@@ -47,7 +54,7 @@ module dt_forms(a, c);
   electrical a, c;
   integer s;
   analog begin
-    @(timer(0, 4u)) s = 1 - s;
+    @(timer(0.5u, 4u)) s = 1 - s;   // Enhancement-514: see dt_bare
     V(a,c) <+ 0.125*transition(s, 0, 2u)
             + 0.25*transition(s, 0, 2u, 3u)
             + 0.5*transition(s, 0, 2u, 3u, 1e-4);

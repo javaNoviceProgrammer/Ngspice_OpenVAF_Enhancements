@@ -248,7 +248,7 @@ bultins! {
         fn IDTMOD_IC_MODULUS(Val(Real),Val(Real),Val(Real)) -> Real;
         fn IDTMOD_IC_MODULUS_OFFSET(Val(Real),Val(Real),Val(Real),Val(Real)) -> Real;
         fn IDTMOD_IC_MODULUS_OFFSET_TOL(Val(Real),Val(Real),Val(Real),Val(Real), Val(Real)) -> Real;
-        fn IDTMOD_IC_MODULUS_OFFSET_NATURE(Val(Real),Val(Real),Val(Real),Val(Real), Val(Real)) -> Real;
+        fn IDTMOD_IC_MODULUS_OFFSET_NATURE(Val(Real),Val(Real),Val(Real),Val(Real), Nature) -> Real;
     }
 
     // all laplace filters have the same signature

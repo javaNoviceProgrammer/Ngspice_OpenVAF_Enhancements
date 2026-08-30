@@ -345,7 +345,35 @@ V(out) <+ ac_stim("ac", 1.0, 90.0);        // module AS the AC stimulus
   ⚠️ **Open:** that is a detectable mistake for constant roots, which is how they
   are almost always written, and nothing currently checks it. Recorded here rather
   than fixed.
-- `last_crossing` with simulator-side waveform history: ✅
+- `last_crossing` with simulator-side waveform history: ✅ — and, per
+  LRM 4.5.10, **negative until the expression has actually crossed**
+  ([E-514](../../enhancements_doc/Enhancement-514.md)); it returned `0.0`, which a
+  model testing `last_crossing(...) < 0` for *not yet* read as a crossing at
+  t = 0. For an expression already above zero the zero-seeded crossing history
+  also faked a crossing at the first accepted point, so both the sentinel and the
+  history are now seeded from the operating point.
+
+### Analog-operator state at the start of a transient (E-514)
+
+LRM 4.5.7 defines `absdelay` as `Output(t) = Input(max(t - td, 0))`, so before one
+delay has elapsed the output is `Input(0)` — the operating point, **not zero**.
+LRM 4.5.9 says `slew` *"returns the value of expr"* whenever the input is not
+moving faster than the rate limit, which a constant input never is. Both were
+violated the same way: the transient's state arrays were seeded with zero, so
+`slew`/`transition` ramped up from 0 at exactly the rate limit and `absdelay`
+read 0 for its whole first delay before stepping to the bias. Both now seed from
+the converged operating point. LRM 4.5.15's *"no state history prior to
+time t == 0"* is what `max(·, 0)` accommodates; it does not make the value zero.
+
+⚠️ **Deviation, deliberate.** LRM 4.5.7 also says that with no `maxdelay`, *"the
+value of td when the absdelay() is first evaluated shall be used and any future
+changes to td shall be ignored"*. A time-varying `td` is still tracked. The only
+first-evaluation flag a model can observe is `IsInitialStep`, and at that flag the
+circuit solution is still the zero initial guess — a probe read inside
+`@(initial_step)` returns 0 — so latching there would store 0, which is worse than
+tracking; and where `td` is a parameter, freezing and not freezing are
+indistinguishable. Fixing it properly requires the simulator to latch at
+`MODEINITTRAN`, i.e. a per-slot flag in `OsdiAbsDelayInfo`.
 - **noise sources** (LRM 4.6): `white_noise`, `flicker_noise`,
   `noise_table`, `noise_table_log` (inline or file data);
   operating-point-dependent factors and `ddt()`-shaped noise are exact
@@ -722,7 +750,7 @@ connected port.)*
 | 3.4 Parameters (ranges, localparam, aliasparam, arrays incl. name-then-range, paramset, block-scoped) | ✅ (default-exemption ⚠️ documented) | `paramrange`, `localparam`, `array`, `paramarray`, `paramset`, `paramsethsp`, `blockparam` |
 | 3.5–3.7 Natures, disciplines, nets, buses, nodesets | ✅ | `derivednature`, `domainbind`, `bus`, `netinit`, `ground`, `signalflow` |
 | 4.1–4.3 Operators (incl. string relational), precedence, functions (`$clog2`, `$rtoi`/`$itor`, `ln1p`/`expm1`, domain diagnostics both routes) | ✅ (audited) | `operator`, `precedence`, `shift`, `concat`, `stringcmp`, `clog2`, `convert`, `ceil`, `lrmfuncs`, `lrmintrin`, `domainrt` |
-| 4.5 Analog operators (all) | ✅ (`limexp` stateless ⚠️ documented) | `absdelay`, `laplace`, `zi`, `slew`, `transition`, `idt*`, `ddx`, `opargs`, `discontinuity`, `last_crossing`, `defaulttransition`, `transedge`, `rtdomain`, `deckdomain` |
+| 4.5 Analog operators (all), **clause-by-clause audit 4.5.1–4.5.15** ([E-514](../../enhancements_doc/Enhancement-514.md)) | ✅ (`limexp` stateless ⚠️ documented; `absdelay` frozen-`td` ⚠️ below) | `absdelay`, `laplace`, `zi`, `slew`, `transition`, `idt*`, `ddx`, `opargs`, `discontinuity`, `last_crossing`, `defaulttransition`, `transedge`, `rtdomain`, `deckdomain` |
 | 4.6 Noise (incl. correlation 4.6.4; `noise_table` linear-in-f, `noise_table_log` log-log) | ✅ | `noise`, `noisetable`, `noisecorr`, `noisejw` |
 | 5.2/6.2 Analog blocks (multiple) | ✅ | `multianalog` |
 | 5.6 Contributions, indirect assignment, port flow (incl. named port branches) | ✅ | `indirect_assignment`, `portflow`, `signalflow`, `lrm` |

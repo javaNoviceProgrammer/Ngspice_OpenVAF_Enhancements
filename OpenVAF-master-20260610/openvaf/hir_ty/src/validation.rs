@@ -1009,10 +1009,10 @@ impl Diagnostic for BodyValidationDiagnosticWrapped<'_> {
             }
 
             BodyValidationDiagnostic::InvalidBuiltinArg {
-                ref builtin, ref what, ref why, expr,
+                ref builtin, ref what, ref why, expr, warn,
             } => {
                 let FileSpan { range, file } = self.expr_src(expr);
-                Report::error()
+                if warn { Report::warning() } else { Report::error() }
                     .with_message(format!("{builtin}: {what} {why}"))
                     .with_labels(vec![Label {
                         style: LabelStyle::Primary,

@@ -35,8 +35,12 @@
  * so, linearly interpolate the crossing time within that step and cache it
  * in crossing_time[k]. The cache is left unchanged when no new qualifying
  * crossing is found (so V(z) keeps returning the time of the LAST crossing,
- * per the LRM), and starts at 0.0 (set at slot allocation in OSDIsetup)
- * before any crossing has been observed.
+ * per the LRM), and starts at OSDI_LAST_CROSSING_NONE -- the NEGATIVE sentinel
+ * LRM 4.5.10 requires before any crossing has been observed (set at slot
+ * allocation in OSDIsetup and re-armed in OSDItemp). The history's [0] entry is
+ * seeded from the converged operating point in last_crossing_stamp: left at 0
+ * it made an expression that is already positive at the operating point look
+ * like a rising edge at the first accepted point, faking a crossing at t = 0.
  */
 static void last_crossing_accept(CKTcircuit *ckt, GENmodel *inModel,
                                   OsdiRegistryEntry *entry, int ti) {

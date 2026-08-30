@@ -1,0 +1,35 @@
+`include "disciplines.vams"
+
+// Enhancement-514: the analog operators audited against Accellera VAMS-2023 4.5.
+//
+// Every operator here is exercised around a NON-ZERO bias, which is the one
+// condition under which the state-initialisation defects are visible: a state
+// seeded with 0 is indistinguishable from a correct one when the waveform
+// starts at 0, and every stimulus in the pre-existing absdelay/slew/transedge/
+// defaulttransition suites starts at 0.
+
+module lrmops(a, c, o);
+    inout a, c, o;
+    electrical a, c, o;
+
+    (* type="instance" *) parameter real rate = 1e5   from (0:inf);
+    (* type="instance" *) parameter real td   = 1e-6  from [0:inf);
+    (* type="instance" *) parameter integer dir = 1;
+
+    (* desc="slew output" *)        real y_slew;
+    (* desc="transition output" *)  real y_tran;
+    (* desc="absdelay output" *)    real y_del;
+    (* desc="last_crossing time" *) real t_cross;
+    (* desc="idtmod nature form" *) real y_imod;
+
+    analog begin
+        y_slew  = slew(V(a, c), rate, -rate);
+        y_tran  = transition(V(a, c), 0.0, 1e-6, 1e-6, 0.0);   // time_tol 0: LRM 4.5.8
+        y_del   = absdelay(V(a, c), td, 1e-4);
+        t_cross = last_crossing(V(a, c) - 0.5, dir);
+        y_imod  = idtmod(V(a, c), 1.0, 10.0, -5.0, Voltage);   // LRM Table 4-19
+
+        I(a, c) <+ V(a, c) * 1e-9;
+        V(o, c) <+ y_slew;
+    end
+endmodule

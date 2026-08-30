@@ -211,6 +211,10 @@ pub enum BodyValidationDiagnostic {
         what: Box<str>,
         why: Box<str>,
         expr: ExprId,
+        /// Report as a warning rather than an error. For an argument the LRM
+        /// gives a DEFINED meaning to, where the spelled-out constant is still
+        /// almost certainly a mistake worth pointing at.
+        warn: bool,
     },
     PotentialOfPortFlow {
         expr: ExprId,
@@ -718,11 +722,54 @@ impl BodyValidator<'_> {
         }
     }
 
+    /// LRM 4.5.12: "If the transition time is specified as zero (0), then the
+    /// output is abruptly discontinuous. A Z-filter with zero (0) transition
+    /// time shall not be directly assigned to a branch."
+    ///
+    /// Deliberately the LRM's own literal reading -- the contributed expression
+    /// IS the z-filter call. A looser rule ("a zi with a zero transition time
+    /// appears anywhere under the contribution") would fire on
+    /// `I(a,c) <+ zi_nd(...)*gain`, where the author has done nothing the LRM
+    /// forbids, and a lint that cries wolf on ordinary code is worse than none.
+    /// Warn rather than deny: the discontinuity is well defined, it is the
+    /// solver that dislikes it.
+    fn check_zi_zero_transition_contribute(&mut self, val: ExprId) {
+        let Some(ResolvedFun::BuiltIn(builtin)) = self.infer.resolved_calls.get(&val) else {
+            return;
+        };
+        let name = match builtin {
+            BuiltIn::zi_nd => "zi_nd",
+            BuiltIn::zi_np => "zi_np",
+            BuiltIn::zi_zd => "zi_zd",
+            BuiltIn::zi_zp => "zi_zp",
+            _ => return,
+        };
+        let Expr::Call { ref args, .. } = self.body.exprs[val] else { return };
+        // zi_*(expr, num, den, T [, transition_time [, t0 ]])
+        let Some(&transit) = args.get(4) else { return };
+        if const_num_in(self.db, self.body, self.infer, transit, 0) == Some(0.0) {
+            self.diagnostics.push(BodyValidationDiagnostic::InvalidBuiltinArg {
+                builtin: name.to_owned().into_boxed_str(),
+                what: "the transition time".to_owned().into_boxed_str(),
+                why: "is zero, so the output is abruptly discontinuous; LRM 4.5.12 says such \
+                      a filter shall not be contributed directly to a branch -- assign it to \
+                      a variable first, or give it a non-zero transition time"
+                    .to_owned()
+                    .into_boxed_str(),
+                expr: transit,
+                warn: true,
+            });
+        }
+    }
+
     fn validate_stmt(&mut self, stmt: StmtId) {
         let cond = match self.body.stmts[stmt] {
             Stmt::Assignment { dst, val, assignment_kind } => {
                 self.validate_expr(val, stmt);
 
+                if assignment_kind == AssignOp::Contribute {
+                    self.check_zi_zero_transition_contribute(val);
+                }
                 if assignment_kind == AssignOp::Contribute && !self.ctx.allow_contribute() {
                     self.diagnostics
                         .push(BodyValidationDiagnostic::IllegalContribute { stmt, ctx: self.ctx })
@@ -2400,8 +2447,16 @@ impl ExprValidator<'_, '_> {
                     self.require_positive("absdelay", "the maximum delay", args[2]);
                     if let (Some(d), Some(m)) = (self.const_num(args[1]), self.const_num(args[2])) {
                         if d > m {
-                            self.bad_arg("absdelay", "the delay", format!(
-                                "is {d}, which exceeds the declared maximum delay {m}"), args[1]);
+                            // LRM 4.5.7 defines what happens: "If td becomes
+                            // greater than maxdelay, maxdelay will be used as a
+                            // substitute for td." That is a substitution, not an
+                            // error, so refusing the model rejected a conformant
+                            // program. Still worth saying when BOTH are constants,
+                            // because then the declared delay can never be the one
+                            // that is used.
+                            self.warn_arg("absdelay", "the delay", format!(
+                                "is {d}, which exceeds the declared maximum delay {m}; \
+                                 LRM 4.5.7 substitutes {m}"), args[1]);
                         }
                     }
                 }
@@ -2421,8 +2476,13 @@ impl ExprValidator<'_, '_> {
                         self.require_non_negative("transition", what, a);
                     }
                 }
+                // LRM 4.5.8 states a MEANING for zero: "If a time_tol value of zero
+                // (0.0) is specified, the simulator shall apply a suitable value."
+                // Refusing it rejected a conformant model. Only a negative tolerance
+                // is undefined, and 4.5.8 lists time_tol with td/rise/fall as the
+                // arguments that "shall be non-negative".
                 if let Some(&a) = args.get(4) {
-                    self.require_positive("transition", "the time tolerance", a);
+                    self.require_non_negative("transition", "the time tolerance", a);
                 }
                 if let [other_args @ .., const_expr] = args {
                     if signature == Some(TRANSITION_DELAY_RISET_FALLT_TOL) {
@@ -2536,6 +2596,16 @@ impl ExprValidator<'_, '_> {
                         (const_args, Self::filter_name(call))
                     {
                         self.require_positive(name, "the sampling period", *period);
+                    }
+                    // LRM 4.5.12: "[the transition time] is optional, and shall be
+                    // nonnegative." Only the period was checked; the sibling rule for
+                    // `transition`'s rise/fall time has been enforced since
+                    // Enhancement-504, so a negative z-filter transition time was the
+                    // one spelling of "a negative time" that still compiled in silence.
+                    if let ([_num, _den, _period, transit, ..], Some(name)) =
+                        (const_args, Self::filter_name(call))
+                    {
+                        self.require_non_negative(name, "the transition time", *transit);
                     }
                     args = &args[..1];
                     for arg in const_args {
@@ -2937,11 +3007,23 @@ impl ExprValidator<'_, '_> {
     }
 
     fn bad_arg(&mut self, builtin: &str, what: &str, why: String, expr: ExprId) {
+        self.arg_diag(builtin, what, why, expr, false)
+    }
+
+    /// Like [`Self::bad_arg`] but advisory. Used where the LRM DEFINES the
+    /// behaviour, so refusing the program would be wrong, yet the constant is
+    /// still worth pointing at.
+    fn warn_arg(&mut self, builtin: &str, what: &str, why: String, expr: ExprId) {
+        self.arg_diag(builtin, what, why, expr, true)
+    }
+
+    fn arg_diag(&mut self, builtin: &str, what: &str, why: String, expr: ExprId, warn: bool) {
         self.report(BodyValidationDiagnostic::InvalidBuiltinArg {
             builtin: builtin.to_owned().into_boxed_str(),
             what: what.to_owned().into_boxed_str(),
             why: why.into_boxed_str(),
             expr,
+            warn,
         })
     }
 

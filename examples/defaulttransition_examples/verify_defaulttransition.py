@@ -88,7 +88,7 @@ def main():
                  "meas tran t_half WHEN v(out)=0.5 CROSS=1\n"
                  "meas tran v_top FIND v(out) AT=2.5u"), "t_half", "v_top")
     check("no singular matrix", v["_singular"], 0.0, 0.5)
-    check("half-cross at 0.5u (1u ramp)", v["t_half"], 0.5e-6, 3e-8)
+    check("half-cross at 1.0u (flip 0.5u + 1u ramp)", v["t_half"], 1.0e-6, 3e-8)
     check("plateau = 1", v["v_top"], 1.0, 1e-6)
 
     print("[2] transition(s, 0.2u): delay + the 1u default ramp (flip at 1u)")
@@ -100,7 +100,7 @@ def main():
     v = run(deck("dt_forms", "dtdemo.osdi",
                  "meas tran t_half WHEN v(out)=0.4375 CROSS=1\n"
                  "meas tran v_top FIND v(out) AT=2.9u"), "t_half", "v_top")
-    check("half-amplitude at 1.0u (2u ramp)", v["t_half"], 1.0e-6, 5e-8)
+    check("half-amplitude at 1.5u (flip 0.5u + 2u ramp)", v["t_half"], 1.5e-6, 5e-8)
     check("plateau = 0.875 (all arities live)", v["v_top"], 0.875, 1e-6)
 
     print("[4] no directive: bare transition() stays instantaneous")

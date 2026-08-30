@@ -182,13 +182,23 @@ static void absdelay_stamp_tran(CKTcircuit *ckt, GENinstance *gen_inst,
     if (extra->delay_hist_cap < cap) {
       absdelay_grow_hist(extra, n, cap);
     }
-    /* Initialize hist[k][0] to 0.0 (V_y at t=0 before the transient begins).
-     * CKTtimePoints[0] was set to 0.0 by absdelay_ensure_timepoints.
-     * OSDIaccept() will update hist[k][ti] for ti >= 1 as timepoints are
-     * accepted.  For the very first timestep, the output is forced to track
-     * the input (pass-through IC) so the matrix is non-singular.          */
+    /* Seed hist[k][0] with V_y at t=0 -- the CONVERGED OPERATING POINT, not 0.
+     *
+     * LRM 4.5.7 defines the operator as Output(t) = Input(max(t - td, 0)), so
+     * for t < td the output is Input(0): the input's value at time zero. This
+     * used to store a literal 0.0, so an absdelay around any non-zero bias
+     * reported 0 for the whole first `td` of every transient and then STEPPED
+     * to the bias -- a full-swing glitch in a model that was merely sitting at
+     * its operating point. (LRM 4.5.15's "no state history prior to t == 0" is
+     * exactly what the max(.,0) accommodates; it does not make the value 0.)
+     *
+     * is_init_tran runs after the operating point has converged, so CKTrhsOld
+     * holds it. OSDIaccept() updates hist[k][ti] for ti >= 1 thereafter. The
+     * pass-through Jacobian below is unchanged: the first timestep still forces
+     * the output to track the input so the matrix is non-singular.          */
     for (uint32_t k = 0; k < n; k++) {
-      extra->delay_hist[k][0] = 0.0;
+      uint32_t y_mapped = node_mapping[infos[k].y_node];
+      extra->delay_hist[k][0] = ckt->CKTrhsOld ? ckt->CKTrhsOld[y_mapped] : 0.0;
       *(extra->delay_jac_y[k]) += 1.0;
       *(extra->delay_jac_z[k]) += -1.0;
     }
@@ -249,24 +259,24 @@ static void absdelay_stamp_tran(CKTcircuit *ckt, GENinstance *gen_inst,
  * Valid in both DC/OP and TRAN modes -- unlike absdelay, no distinction is
  * needed since the crossing-time output has no y-coupling: it is just
  * `V(z) = crossing_time[k]`, an ordinary Dirichlet-style row seeded by
- * whatever last_crossing_accept() has cached (0.0 until the first qualifying
- * crossing is observed).  Called after the standard OSDI load() for each
+ * whatever last_crossing_accept() has cached (the LRM's negative sentinel until
+ * the first qualifying crossing is observed).  Called after the standard OSDI load() for each
  * evaluation, mirroring absdelay_stamp_dc/absdelay_stamp_tran.
  */
 static void last_crossing_stamp(void *inst, OsdiExtraInstData *extra,
                                  const OsdiRegistryEntry *entry,
                                  const OsdiDescriptor *descr,
-                                 CKTcircuit *ckt, bool is_tran) {
+                                 CKTcircuit *ckt, bool is_tran,
+                                 bool is_init_tran) {
   uint32_t n = entry->num_last_crossings;
   if (n == 0)
     return;
 
-  /* Unlike absdelay, last_crossing needs no per-instance history seeding on
-   * the first transient call -- but if NO absdelay is also present in this
-   * circuit, ckt->CKTtimePoints/CKTtimeIndex (the shared accepted-timepoint
-   * timeline consumed by OSDIaccept) would otherwise never get initialized,
-   * since that only happens inside absdelay_stamp_tran. Ensure it here too;
-   * this call is idempotent (see absdelay_ensure_timepoints). */
+  /* If NO absdelay is also present in this circuit, ckt->CKTtimePoints /
+   * CKTtimeIndex (the shared accepted-timepoint timeline consumed by
+   * OSDIaccept) would never get initialized, since that only happens inside
+   * absdelay_stamp_tran. Ensure it here too; the call is idempotent (see
+   * absdelay_ensure_timepoints). */
   if (is_tran) {
     absdelay_ensure_timepoints(ckt);
   }
@@ -275,6 +285,36 @@ static void last_crossing_stamp(void *inst, OsdiExtraInstData *extra,
       (const OsdiLastCrossingInfo *)entry->last_crossing_infos;
   uint32_t *node_mapping =
       (uint32_t *)(((char *)inst) + descr->node_mapping_offset);
+
+  /* This used to say last_crossing "needs no per-instance history seeding on
+   * the first transient call". It does, for the same reason absdelay does.
+   *
+   * crossing_hist[k][0] is the value the FIRST crossing test compares against
+   * (`v0` in last_crossing_accept). Left at its allocated 0.0 while the
+   * operating point had solved the watched expression to something POSITIVE,
+   * the very first accepted point looked like a rising edge from 0 -- so
+   * last_crossing reported a crossing at t = 0 that never happened, and the
+   * LRM 4.5.10 "negative until it has crossed" sentinel was overwritten before
+   * a model could ever read it. Seeding from the converged operating point
+   * (CKTrhsOld at MODEINITTRAN) is exactly what absdelay_stamp_tran does for
+   * its own history. */
+  if (is_init_tran && extra->crossing_hist) {
+    uint32_t needed = (uint32_t)(ckt->CKTtimeListSize > 0
+                                     ? (uint32_t)ckt->CKTtimeListSize
+                                     : 256) + 64;
+    if (extra->crossing_hist_cap < needed) {
+      for (uint32_t k = 0; k < n; k++) {
+        extra->crossing_hist[k] =
+            TREALLOC(double, extra->crossing_hist[k], needed);
+      }
+      extra->crossing_hist_cap = needed;
+    }
+    for (uint32_t k = 0; k < n; k++) {
+      uint32_t y_mapped = node_mapping[infos[k].y_node];
+      extra->crossing_hist[k][0] =
+          ckt->CKTrhsOld ? ckt->CKTrhsOld[y_mapped] : 0.0;
+    }
+  }
 
   for (uint32_t k = 0; k < n; k++) {
     uint32_t z_mapped = node_mapping[infos[k].z_node];
@@ -760,7 +800,8 @@ extern int OSDIload(GENmodel *inModel, CKTcircuit *ckt) {
       } else if (entry->num_absdelays > 0) {
         absdelay_stamp_dc(inst, extra_inst_data, entry, descr);
       }
-      last_crossing_stamp(inst, extra_inst_data, entry, descr, ckt, is_tran);
+      last_crossing_stamp(inst, extra_inst_data, entry, descr, ckt, is_tran,
+                          is_init_tran);
       /* Enhancement-364: inject Verilog-A noise sources into the transient
          right-hand side. No-op unless the circuit has transient noise. */
       osdi_trnoise_stamp(ckt, inst, model, extra_inst_data, descr, is_tran);
@@ -809,7 +850,8 @@ extern int OSDIload(GENmodel *inModel, CKTcircuit *ckt) {
         } else if (entry->num_absdelays > 0) {
           absdelay_stamp_dc(inst, extra_inst_data, entry, descr);
         }
-        last_crossing_stamp(inst, extra_inst_data, entry, descr, ckt, is_tran);
+        last_crossing_stamp(inst, extra_inst_data, entry, descr, ckt, is_tran,
+                          is_init_tran);
         /* Enhancement-364: inject Verilog-A noise sources into the transient
            right-hand side. No-op unless the circuit has transient noise. */
         osdi_trnoise_stamp(ckt, inst, model, extra_inst_data, descr, is_tran);

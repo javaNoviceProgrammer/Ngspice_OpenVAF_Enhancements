@@ -363,9 +363,13 @@ if built:
     a = run(LC % "" + ctl(CMD), "lc1")
     b = run(LC % ".option reusesetup=0\n" + ctl(CMD), "lc2")
     ca = [r[1:] for r in rows(a)]
-    check("[16] last_crossing starts each reused run at 0, not the previous "
-          "run's crossing",
-          len(ca) == 5 and all(abs(float(v)) < 1e-15 for r_ in ca for v in r_),
+    # Enhancement-514: the "no crossing yet" value is the LRM 4.5.10 NEGATIVE
+    # sentinel, not 0.0 -- 0.0 could not be told apart from a crossing at t=0.
+    # What this check is about is unchanged: each reused point must start FRESH
+    # rather than inheriting the previous point's crossing time.
+    check("[16] last_crossing starts each reused run at the no-crossing "
+          "sentinel, not the previous run's crossing",
+          len(ca) == 5 and all(float(v) < 0.0 for r_ in ca for v in r_),
           f"{ca}")
     check("[17] ...and matches the run with reuse turned off",
           ca == [r[1:] for r in rows(b)] and len(ca) == 5)

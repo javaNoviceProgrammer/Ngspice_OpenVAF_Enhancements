@@ -451,7 +451,12 @@ endmodule
         ("idtmod modulus negative", "", "I(p,n) <+ idtmod(V(p,n), 0.0, -1.0, 0.0)*0.0;", False),
         ("idtmod modulus positive", "", "I(p,n) <+ idtmod(V(p,n), 0.0, 1.0, 0.0)*0.0;", True),
         ("absdelay negative delay", "", "I(p,n) <+ absdelay(V(p,n), -1e-6)*0.0;", False),
-        ("absdelay delay > maxdelay", "", "I(p,n) <+ absdelay(V(p,n), 1e-3, 1e-9)*0.0;", False),
+        # Enhancement-514: NOT rejected any more. LRM 4.5.7 DEFINES what happens
+        # -- "If td becomes greater than maxdelay, maxdelay will be used as a
+        # substitute for td" -- so refusing the model rejected a conformant
+        # program. It warns instead, and the substitution happens; the warning is
+        # asserted separately in examples/lrmops_examples/.
+        ("absdelay delay > maxdelay", "", "I(p,n) <+ absdelay(V(p,n), 1e-3, 1e-9)*0.0;", True),
         ("absdelay delay <= maxdelay", "", "I(p,n) <+ absdelay(V(p,n), 1e-7, 1e-6)*0.0;", True),
     ]
     for label, decl, body, ok in ARG_CASES:
