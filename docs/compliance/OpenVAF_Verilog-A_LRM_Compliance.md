@@ -281,7 +281,7 @@ the same information. A genuine *run-time* argument is deliberately left alone:
 `sqrt(V(p,n))` legitimately sees a negative argument during Newton iteration,
 and refusing that would break working models.
 
-### 4.3 Analog operators (LRM 4.5) — ✅ (two documented deviations)
+### 4.3 Analog operators (LRM 4.5) — ✅ (one documented deviation)
 
 Every analog operator produces exact Jacobian contributions via
 autodiff. The full argument surface (trailing tolerances, optional
@@ -359,44 +359,29 @@ V(out) <+ ac_stim("ac", 1.0, 90.0);        // module AS the AC stimulus
   `limexp`'s derived argument. `$limit` provides genuine iteration
   limiting. Documented decision with the failing evidence preserved.
 
-- ⚠️ **`transition` and `slew`** are implemented as a **rate-limited tracking
-  loop**, not as a piecewise-linear waveform generator:
+- **`transition` and `slew`** reach their final value at `delay + trise`, at
+  every speed — fixed in [E-512](../../enhancements_doc/Enhancement-512.md), and
+  worth recording here because this section previously carried it as a deviation.
 
-  ```
-  dy/dt = clamp( K·(x − y),  −1/tfall,  +1/trise ),   K = 1e9 s⁻¹ (fixed)
-  ```
+  Both are one rate-limited tracking loop,
+  `dy/dt = clamp(K·(x − y), −1/tfall, +1/trise)`. While the clamp is saturated
+  that is an exact linear ramp at the LRM's rate; it releases once the remaining
+  gap falls below `rate/K`, leaving a first-order tail with τ = 1/K. `K` was a
+  **fixed** 1e9 s⁻¹, so the released gap was `1/(K·trise)` and the linear
+  fraction depended on how fast the edge was: at `trise = 3 ns` only 66.7% of the
+  swing was a ramp and the output reached **0.8774** instead of 1.0, while at
+  3 µs it was correct. Refining the timestep 100× converged to 0.8776 — to the
+  *wrong* value.
 
-  While the clamp is saturated this is an exact linear ramp at the LRM's rate.
-  It releases once the remaining gap falls below `1/(K·trise)`, and the last
-  part of the swing is a first-order tail with τ = 1/K = 1 ns. **The delay and
-  the midpoint crossing are exact at every speed**; the error is in the
-  approach to the final value, and because `K` is a fixed absolute constant it
-  depends entirely on how fast the transition is:
+  `K` is proportional to the transition rate now, so the released gap is a fixed
+  fraction at every speed, the endpoint error is 2e-5…4e-4 across five decades of
+  rise time, and the settled value is exactly 1.0. `transedge` spans those five
+  decades and checks the quarter points of the ramp; `defaulttransition` pinned
+  only the 1 µs case, which is why the deviation went unseen for so long.
 
-  | `trise` | linear part of the swing | value at delay + trise (LRM: 1.0) |
-  |---:|---:|---:|
-  | 3 ns | 66.7% | 0.8774 |
-  | 30 ns | 96.7% | 0.9873 |
-  | 300 ns | 99.7% | 0.99948 |
-  | 3 µs | ~100% | 1.000039 |
-  | 30 µs | ~100% | 0.999979 |
-
-  The shortfall at the nominal end of the ramp is `e⁻¹/(K·trise)` to within a
-  few parts in 10⁵ (measured 0.877382 against 0.877374 predicted at 3 ns). So
-  the operator is **effectively exact for transitions slower than about a
-  microsecond and materially wrong below about 100 ns** — which is worth knowing,
-  because nanosecond edges are exactly where `transition` is most used.
-  `defaulttransition` pins the 1 µs case, deep inside the correct region, which
-  is why the deviation did not surface there.
-
-  The piecewise-linear form was built first and abandoned: its clamp has a zero
-  derivative when saturated, which makes the DC operating point singular whenever
-  the input starts a full swing away from the filter state, so a deck without
-  `uic` produced a garbage transient. In DC the filter is now the LRM's static
-  identity `y = x`, selected through the integration-enable parameter — so the
-  DC objection is handled separately from the transient shape, and scaling `K`
-  with `1/trise` (with the step bounding that a stiffer loop then needs) is the
-  route to closing the transient gap. Recorded rather than fixed
+  In DC the filter remains the LRM's static identity `y = x`, selected through
+  the integration-enable parameter — that is what makes the operating point
+  well-posed, and it is independent of the transient shape
   ([E-47](../../enhancements_doc/Enhancement-47.md)).
 
 **Out-of-domain operator arguments from the deck** (E-504/E-506). The same
@@ -711,7 +696,7 @@ connected port.)*
 | 3.4 Parameters (ranges, localparam, aliasparam, arrays incl. name-then-range, paramset, block-scoped) | ✅ (default-exemption ⚠️ documented) | `paramrange`, `localparam`, `array`, `paramarray`, `paramset`, `paramsethsp`, `blockparam` |
 | 3.5–3.7 Natures, disciplines, nets, buses, nodesets | ✅ | `derivednature`, `domainbind`, `bus`, `netinit`, `ground`, `signalflow` |
 | 4.1–4.3 Operators (incl. string relational), precedence, functions (`$clog2`, `$rtoi`/`$itor`, `ln1p`/`expm1`, domain diagnostics both routes) | ✅ (audited) | `operator`, `precedence`, `shift`, `concat`, `stringcmp`, `clog2`, `convert`, `ceil`, `lrmfuncs`, `lrmintrin`, `domainrt` |
-| 4.5 Analog operators (all) | ✅ (`limexp` stateless, `transition`/`slew` tracking loop — both ⚠️ documented) | `absdelay`, `laplace`, `zi`, `slew`, `transition`, `idt*`, `ddx`, `opargs`, `discontinuity`, `last_crossing`, `defaulttransition`, `rtdomain`, `deckdomain` |
+| 4.5 Analog operators (all) | ✅ (`limexp` stateless ⚠️ documented) | `absdelay`, `laplace`, `zi`, `slew`, `transition`, `idt*`, `ddx`, `opargs`, `discontinuity`, `last_crossing`, `defaulttransition`, `transedge`, `rtdomain`, `deckdomain` |
 | 4.6 Noise (incl. correlation 4.6.4; `noise_table` linear-in-f, `noise_table_log` log-log) | ✅ | `noise`, `noisetable`, `noisecorr`, `noisejw` |
 | 5.2/6.2 Analog blocks (multiple) | ✅ | `multianalog` |
 | 5.6 Contributions, indirect assignment, port flow (incl. named port branches) | ✅ | `indirect_assignment`, `portflow`, `signalflow`, `lrm` |
