@@ -1,0 +1,8 @@
+`include "disciplines.vams"
+module indirect_mix(out, pin, nin);
+  inout out, pin, nin; electrical out, pin, nin;
+  analog begin
+    V(out): V(pin,nin) == 0;
+    V(out) <+ 1.0;
+  end
+endmodule

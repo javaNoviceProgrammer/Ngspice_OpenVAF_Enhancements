@@ -64,7 +64,15 @@ typedef struct OsdiAbsDelayInfo {
     uint32_t y_node;      /* OSDI node index for the synthetic input y_synth  */
     uint32_t z_node;      /* OSDI node index for the output node z             */
     uint32_t td_offset;   /* byte offset into OSDI instance data for td value  */
+    uint32_t flags;       /* OSDI_ABSDELAY_* bits below                        */
 } OsdiAbsDelayInfo;
+
+/* LRM 4.5.7 (analog-operators audit): the absdelay has NO maxdelay, so "the
+ * value of td when the absdelay() is first evaluated shall be used and any
+ * future changes to td shall be ignored" -- absdelay_stamp_tran latches td at
+ * MODEINITTRAN (where the operating point has converged) and reads the
+ * latched value for the rest of the transient. */
+#define OSDI_ABSDELAY_TD_FROZEN 1u
 
 /* Per-last_crossing slot descriptor read from the .osdi binary at load time.
  * See openvaf/osdi/header/osdi_0_4_enhancement2.h for the full ABI writeup. */
@@ -93,6 +101,9 @@ typedef struct OsdiExtraInstData {
   /* Waveform history for absdelay — one row per slot, indexed by timepoint. */
   double **delay_hist;        /* [num_absdelays][capacity]  */
   uint32_t delay_hist_cap;    /* allocated timepoints in each row  */
+  /* td latched at MODEINITTRAN for OSDI_ABSDELAY_TD_FROZEN slots (LRM
+   * 4.5.7's no-maxdelay rule); NULL until the first transient. */
+  double *delay_td_frozen;
 
   /* Pre-allocated KLU/sparse matrix pointers for the delay equation rows.
    * delay_jac_y[k] points to the (z_row, y_synth_col) entry,

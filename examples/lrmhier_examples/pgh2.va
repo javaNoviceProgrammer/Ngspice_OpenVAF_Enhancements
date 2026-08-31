@@ -1,0 +1,12 @@
+`include "disciplines.vams"
+module leafg2(a, b);
+    inout a, b;
+    electrical a, b;
+    parameter real p1 = 1e-3;
+    analog I(a,b) <+ ($param_given(p1) ? p1 : 99e-3) * V(a,b);
+endmodule
+module pgh2(p, n);
+    inout p, n;
+    electrical p, n;
+    leafg2 #(.p1(7e-3)) u1 (p, n);  // if $param_given true: 7 mA; if false: 99 mA... but p1 value itself?
+endmodule

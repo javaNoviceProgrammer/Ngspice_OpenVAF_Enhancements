@@ -1,0 +1,17 @@
+`include "disciplines.vams"
+module leafw(a, b);
+    inout a, b;
+    electrical a, b;
+    parameter real g = 1e-3;
+    analog I(a,b) <+ g*V(a,b);
+endmodule
+module dfgen2(p, n);
+    inout p, n;
+    electrical p, n;
+    generate
+        if (1) begin : blk
+            leafw u (p, n);
+            defparam u.g = 7e-3;
+        end
+    endgenerate
+endmodule

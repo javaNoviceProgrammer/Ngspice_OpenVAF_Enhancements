@@ -1,0 +1,18 @@
+`include "disciplines.vams"
+module leafz(a, b);
+    inout a, b;
+    electrical a, b;
+    parameter real g = 1e-3;
+    analog I(a,b) <+ g*V(a,b);
+endmodule
+module dfgen(p, n);
+    inout p, n;
+    electrical p, n;
+    genvar i;
+    generate
+        for (i = 1; i <= 2; i = i + 1) begin : blk
+            leafz u (p, n);
+            defparam u.g = 2e-3 * i;   // defparam inside generate block, local target: legal
+        end
+    endgenerate
+endmodule

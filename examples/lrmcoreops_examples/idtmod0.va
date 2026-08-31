@@ -1,0 +1,6 @@
+`include "disciplines.vams"
+module vaim0(in, o);
+  inout in, o;
+  electrical in, o;
+  analog V(o) <+ idtmod(V(in));
+endmodule

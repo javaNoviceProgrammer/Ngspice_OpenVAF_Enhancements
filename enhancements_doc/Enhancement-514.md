@@ -134,10 +134,14 @@ inside events, refused in `while` / `repeat` / non-genvar `for`, refused in
 user-defined functions, and null arguments refused outside the laplace/zi zeros
 exemption.
 
-Table 4-20's constant/dynamic split is honoured — and it **validates**
-[Enhancement-509](Enhancement-509.md)'s rule: the arguments openvaf declines to
-refuse at compile time (slew rates, transition times, `absdelay`'s `td`) are
-exactly the ones the LRM classes as *dynamic expressions*.
+Table 4-20's constant/dynamic split is honoured for the arguments audited
+here — and it **validates** [Enhancement-509](Enhancement-509.md)'s rule: the
+arguments openvaf declines to refuse at compile time (slew rates, transition
+times, `absdelay`'s `td`) are exactly the ones the LRM classes as *dynamic
+expressions*. (One counterexample surfaced in the later filter-operators
+audit: dynamic `laplace_*` coefficient vectors — constant-class per the
+table — are accepted and TRACK; they draw a warning now, and the compliance
+doc's §4.3 records the deviation.)
 
 Also checked and correct: `ddt` (DC returns 0, both optional forms), all five
 `idt` signatures, `idtmod` wrapping into `[0, modulus)` and

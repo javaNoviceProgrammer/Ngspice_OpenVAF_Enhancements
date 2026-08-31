@@ -18,7 +18,7 @@ use crate::builtin::{
     TRANSITION_DELAY_RISET_FALLT_TOL,
 };
 use crate::db::HirTyDB;
-use crate::inference::{BranchWrite, InferenceResult, ResolvedFun};
+use crate::inference::{AssignDst, BranchWrite, InferenceResult, ResolvedFun};
 use crate::lower::BranchKind;
 use crate::types::{BuiltinInfo, Signature, Ty};
 
@@ -235,6 +235,27 @@ pub enum BodyValidationDiagnostic {
         stmt: StmtId,
         ctx: BodyCtx,
     },
+    /// LRM 5.6.7 / 5.6.5 (behavior audit): "Indirect branch contributions
+    /// shall not be used in conditional or looping statements, unless the
+    /// conditional expression is a constant expression" -- and an event
+    /// control forbids contributions entirely. The ctx only becomes
+    /// Conditional/Loop when the controlling expression is NON-constant, so
+    /// the LRM's constant-expression carve-out passes untouched. A guarded
+    /// indirect assignment used to compile silently and leave its implicit
+    /// equation as 0 = 0 on the not-taken path: a singular matrix at runtime.
+    IllegalIndirectContribute {
+        stmt: StmtId,
+        ctx: BodyCtx,
+    },
+    /// LRM 5.6.7.2 (behavior audit): "Once a value is indirectly assigned to
+    /// a branch, it cannot be contributed to using the branch contribution
+    /// operator `<+`." Both used to lower onto one branch, where the
+    /// constraint equation pinned the value and the direct contribution was
+    /// silently absorbed by the implicit unknown.
+    MixedIndirectContribute {
+        direct: StmtId,
+        indirect: StmtId,
+    },
 
     WriteToInputArg {
         expr: ExprId,
@@ -319,6 +340,15 @@ pub enum BodyValidationDiagnostic {
         expr: ExprId,
         form: &'static str,
         what: &'static str,
+    },
+    /// LRM 4.5.14 / Table 4-20 (filter-operators audit): a solution-dependent
+    /// expression in a laplace_* coefficient vector -- constant-class per the
+    /// LRM (dynamic values freeze at analysis start), but re-evaluated every
+    /// iteration here, so it TRACKS.
+    DynamicFilterCoeff {
+        stmt: StmtId,
+        expr: ExprId,
+        form: &'static str,
     },
     /// VAMS-2023 (LRM 5.11): `break`/`continue` outside any runtime loop --
     /// including inside a genvar `analog_for`, which 5.9.3 excludes from jump
@@ -438,6 +468,51 @@ impl BodyValidationDiagnostic {
 
         for stmt in &*body.entry_stmts {
             validator.validate_stmt(*stmt)
+        }
+
+        // LRM 5.6.7.2 (behavior audit): a branch may be a direct-contribution
+        // target or an indirect-assignment target, never both -- the indirect
+        // constraint pins the branch value, so a `<+` onto the same branch is
+        // silently absorbed by the implicit unknown. Branch identity is the
+        // resolved `BranchWrite` with unnamed node pairs normalized for
+        // orientation (`V(a,b)` and `V(b,a)` write the same branch). Scope:
+        // one body -- a mix split across separate analog blocks (rare;
+        // concatenated per 6.9.1) is not caught here. A named branch and an
+        // unnamed pair over the same nodes stay distinct identities.
+        {
+            let normalize = |dst: &AssignDst| match *dst {
+                AssignDst::Flow(w) | AssignDst::Potential(w) => match w {
+                    BranchWrite::Unnamed { hi, lo: Some(lo) } if lo < hi => {
+                        Some(BranchWrite::Unnamed { hi: lo, lo: Some(hi) })
+                    }
+                    w => Some(w),
+                },
+                _ => None,
+            };
+            let mut indirect: Vec<(BranchWrite, StmtId)> = Vec::new();
+            let mut direct: Vec<(BranchWrite, StmtId)> = Vec::new();
+            for (stmt, s) in body.stmts.iter_enumerated() {
+                let Stmt::Assignment { assignment_kind, .. } = *s else { continue };
+                let Some(dst) = infere.assignment_destination.get(&stmt) else { continue };
+                let Some(key) = normalize(dst) else { continue };
+                match assignment_kind {
+                    AssignOp::IndirectBranch => indirect.push((key, stmt)),
+                    AssignOp::Contribute => direct.push((key, stmt)),
+                    _ => {}
+                }
+            }
+            for &(key, direct_stmt) in &direct {
+                if let Some(&(_, indirect_stmt)) =
+                    indirect.iter().find(|(k, _)| *k == key)
+                {
+                    validator.diagnostics.push(
+                        BodyValidationDiagnostic::MixedIndirectContribute {
+                            direct: direct_stmt,
+                            indirect: indirect_stmt,
+                        },
+                    );
+                }
+            }
         }
 
         // Enhancement-78: every don't-care literal that survived collection
@@ -858,6 +933,24 @@ impl BodyValidator<'_> {
                 if assignment_kind == AssignOp::Contribute && !self.ctx.allow_contribute() {
                     self.diagnostics
                         .push(BodyValidationDiagnostic::IllegalContribute { stmt, ctx: self.ctx })
+                }
+                // LRM 5.6.7/5.6.5: an indirect branch assignment is stricter
+                // than `<+` -- illegal under any non-constant conditional, any
+                // runtime loop, and any event control (`ctx` reaches
+                // Conditional/Loop only for non-constant controlling
+                // expressions, so the constant carve-out passes). The guarded
+                // form's implicit equation degenerates to 0 = 0 whenever the
+                // guard is off: a singular matrix, not a model.
+                else if assignment_kind == AssignOp::IndirectBranch
+                    && matches!(
+                        self.ctx,
+                        BodyCtx::Conditional | BodyCtx::Loop | BodyCtx::EventControl
+                    )
+                {
+                    self.diagnostics.push(BodyValidationDiagnostic::IllegalIndirectContribute {
+                        stmt,
+                        ctx: self.ctx,
+                    })
                 }
                 // avoid duplicate errors
                 else if self.infer.assignment_destination.contains_key(&stmt) {
@@ -2766,6 +2859,25 @@ impl ExprValidator<'_, '_> {
                 // everything that is not an array literal".
                 if let [_in, num, den, const_args @ ..] = args {
                     self.check_filter_orders(call, *num, *den);
+                    // LRM 4.5.14 / Table 4-20 (filter-operators audit): the
+                    // zero/pole/coefficient vectors are CONSTANT-class
+                    // arguments -- a dynamic expression there takes its value
+                    // at the start of the analysis and further changes "shall
+                    // be ignored". This implementation re-evaluates the
+                    // vectors every iteration, so a solution-dependent
+                    // coefficient TRACKS and the filter becomes time-varying;
+                    // warn so the author knows the LRM freeze is not applied.
+                    for &vec_arg in &[*num, *den] {
+                        if self.expr_is_op_dependent(vec_arg) {
+                            let stmt = self.stmt;
+                            self.report(BodyValidationDiagnostic::DynamicFilterCoeff {
+                                expr: vec_arg,
+                                stmt,
+                                form: Self::filter_name(call).unwrap_or("laplace_*"),
+                            });
+                            break;
+                        }
+                    }
                     args = &args[..3];
                     for arg in const_args {
                         self.validate_const_expr(*arg)
@@ -3234,6 +3346,33 @@ impl ExprValidator<'_, '_> {
                 self.bad_arg(builtin, what, format!("must be greater than zero, but is {v}"), expr)
             }
         }
+    }
+
+    /// Does this expression read the SOLUTION or the environment -- a
+    /// potential/flow probe, `$temperature`, `$vt`, `$abstime`? Used to warn
+    /// where LRM 4.5.14 classes an argument as a constant expression whose
+    /// dynamic value would be frozen at analysis start.
+    fn expr_is_op_dependent(&self, expr: ExprId) -> bool {
+        if let Some(ResolvedFun::BuiltIn(b)) = self.parent.infer.resolved_calls.get(&expr) {
+            if matches!(
+                b,
+                BuiltIn::potential
+                    | BuiltIn::flow
+                    | BuiltIn::temperature
+                    | BuiltIn::vt
+                    | BuiltIn::abstime
+                    | BuiltIn::realtime
+            ) {
+                return true;
+            }
+        }
+        let mut found = false;
+        self.parent.body.exprs[expr].walk_child_exprs(|e| {
+            if !found && self.expr_is_op_dependent(e) {
+                found = true;
+            }
+        });
+        found
     }
 
     fn require_non_negative(&mut self, builtin: &str, what: &str, expr: ExprId) {

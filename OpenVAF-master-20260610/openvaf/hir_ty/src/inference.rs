@@ -1545,6 +1545,17 @@ impl Ctx<'_> {
                 }
                 (BuiltIn::potential, NATURE_ACCESS_NODE_GND) => DDX_POT,
                 (BuiltIn::flow, NATURE_ACCESS_BRANCH) => DDX_FLOW,
+                // LRM 4.5.6 with Table 4-16 (analog-operators audit): the ddx
+                // unknown may be "the flow through a branch", and I(n1,n2) IS
+                // the flow of the unnamed branch between n1 and n2 -- unnamed
+                // branches are branches. The form was refused ("invalid
+                // unknown ... declare a named branch"); no lint, because
+                // unlike the potential-difference extension above this is
+                // inside the LRM surface. The lowering already handles every
+                // shape the probe lowers to: a Param (forward orientation),
+                // fneg(Param) (reversed -- derivative negated), or a constant
+                // when the flow is not a system unknown (derivative 0).
+                (BuiltIn::flow, NATURE_ACCESS_NODES) => DDX_FLOW,
                 (BuiltIn::temperature, _) => {
                     self.result
                         .diagnostics

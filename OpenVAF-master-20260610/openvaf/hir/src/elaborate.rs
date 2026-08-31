@@ -52,7 +52,8 @@ use basedb::{AstId, AstIdMap, BaseDB, VfsStorage};
 use hir_def::db::HirDefDB;
 use hir_def::item_tree::{bus_bit_name, BusDecl, ItemTree, Module as TreeModule, ModuleItem};
 use hir_def::nameres::diagnostics::DefDiagnostic;
-use hir_def::ItemTreeId;
+use hir_def::{ItemTreeId, ParamSysFun};
+use syntax::ast::ArgListOwner;
 use syntax::name::{AsName, Name};
 use syntax::{ast, AstNode, ConstExprValue, Parse, SourceFile, TextRange, TextSize};
 use tokens::lexer::TokenKind;
@@ -552,8 +553,25 @@ pub(crate) fn fold_parameter_widths(db: &mut CompilationDB) -> anyhow::Result<()
         None
     };
 
+    // Vectored-net base names per module, in source order, for pass 2b (the
+    // LRM 5.5.2 net-bit-select index fold). The textual module regions and
+    // the item tree's modules line up 1:1 exactly when both count the same;
+    // when they do not (malformed source, unusual nesting), pass 2b simply
+    // stays off and the existing literal-only rule applies.
+    let item_tree = db.item_tree(root_file);
+    let module_buses: Vec<HashSet<String>> = if item_tree.data.modules.len() == regions.len() {
+        item_tree
+            .data
+            .modules
+            .iter()
+            .map(|m| m.buses.iter().map(|b| b.base_name.to_string()).collect())
+            .collect()
+    } else {
+        Vec::new()
+    };
+
     let mut rewrites: Vec<(usize, usize, String)> = Vec::new();
-    for (rs, re) in regions {
+    for (region_idx, &(rs, re)) in regions.iter().enumerate() {
         // pass 1: collect integer parameter defaults in this module
         let mut decls: Vec<(String, usize, usize, bool)> = Vec::new();
         let mut p = rs;
@@ -658,6 +676,91 @@ pub(crate) fn fold_parameter_widths(db: &mut CompilationDB) -> anyhow::Result<()
             frozen.extend(names_here);
         }
 
+        // pass 2b (behavior audit, LRM 5.5.2): a single-index bit-select on a
+        // VECTOR NET is a signal access -- "The index must be a constant
+        // expression", and a constant_expression includes parameters, so
+        // `V(in[width-2])` is legal Verilog-A. The index selects a NODE of
+        // the OSDI descriptor, which makes any parameter it reads structural:
+        // fold the index here and freeze the parameter, exactly as a
+        // parameter-shaped declaration width is folded and frozen. Only
+        // brackets whose base identifier names one of this module's vectored
+        // NETS are touched -- an array VARIABLE's `arr[k]` stays a runtime
+        // access, and a plain parameter used there is still overridable.
+        if let Some(buses) = module_buses.get(region_idx) {
+            let plain_params: HashSet<&String> =
+                decls.iter().filter(|(_, _, _, is_local)| !is_local).map(|(n, ..)| n).collect();
+            for p in (rs + 1)..re {
+                let bi = sig[p];
+                if spans[bi].kind != TokenKind::OpenBracket {
+                    continue;
+                }
+                let prev = sig[p - 1];
+                if spans[prev].kind != TokenKind::SimpleIdent
+                    || !buses.contains(&text[spans[prev].start..spans[prev].end])
+                {
+                    continue;
+                }
+                let Some(cj) = match_bracket(bi) else { continue };
+                let mut has_colon = false;
+                let mut names_here: Vec<String> = Vec::new();
+                let mut depth = 0i32;
+                for j in (bi + 1)..cj {
+                    match spans[j].kind {
+                        TokenKind::OpenBracket | TokenKind::OpenParen => depth += 1,
+                        TokenKind::CloseBracket | TokenKind::CloseParen => depth -= 1,
+                        TokenKind::Colon if depth == 0 => has_colon = true,
+                        TokenKind::SimpleIdent
+                            if map.contains_key(&text[spans[j].start..spans[j].end]) =>
+                        {
+                            names_here.push(text[spans[j].start..spans[j].end].to_owned())
+                        }
+                        _ => {}
+                    }
+                }
+                // literal-only indices need no fold, and range/part-selects are
+                // pass 2's business
+                if has_colon || names_here.is_empty() {
+                    continue;
+                }
+                if rewrites.iter().any(|(s, e, _)| *s <= spans[bi].start && spans[cj].end <= *e)
+                {
+                    continue;
+                }
+                let Some(idx) = eval_const_int_with_params(&text, &spans, bi + 1, cj, &map)
+                else {
+                    continue;
+                };
+                rewrites.push((spans[bi].start, spans[cj].end, format!("[{idx}]")));
+                // Freeze the TRANSITIVE parameter support of the index: a
+                // localparam in it may be built from a plain parameter, and
+                // baking its value while leaving that parameter overridable
+                // would silently ignore the override -- the very trap pass 4's
+                // seed rule guards against.
+                let mut work = names_here;
+                let mut seen: HashSet<String> = HashSet::new();
+                while let Some(n) = work.pop() {
+                    if !seen.insert(n.clone()) {
+                        continue;
+                    }
+                    if plain_params.contains(&n) {
+                        frozen.insert(n.clone());
+                    }
+                    if let Some((_, lo, hi, _)) =
+                        decls.iter().find(|(d, ..)| *d == n)
+                    {
+                        for j in *lo..*hi {
+                            if spans.get(j).map(|s| s.kind) == Some(TokenKind::SimpleIdent) {
+                                let t = &text[spans[j].start..spans[j].end];
+                                if map.contains_key(t) {
+                                    work.push(t.to_owned());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // pass 3 (Enhancement-92): a parameter that shaped a declaration width
         // is *structural* -- the OSDI descriptor has one fixed node/array count,
         // so the value must not change at simulation time. Rewrite its
@@ -691,7 +794,10 @@ pub(crate) fn fold_parameter_widths(db: &mut CompilationDB) -> anyhow::Result<()
         // are already elaboration-constant, so such a chain never resolves. Baking a
         // parameter's default into a node selection would silently ignore an
         // override from the model card. This mirrors, and must keep mirroring, the
-        // rule `hir_ty` applies to body indices.
+        // rule `hir_ty` applies to body indices. (Vectored-NET indices are wider:
+        // pass 2b above folds a plain-parameter index there and FREEZES its
+        // transitive parameter support, which preserves the same invariant --
+        // the baked selection can never diverge from the card.)
         let mut const_map: HashMap<String, i32> = HashMap::new();
         loop {
             let mut changed = false;
@@ -1920,20 +2026,32 @@ fn render_module_with_generates(module_ast: &ast::ModuleDecl) -> anyhow::Result<
         })
         .flatten()
         .collect();
-    let mut out = String::new();
+    // Replace ONLY the generate-machinery items in place, keeping every
+    // other byte of the module verbatim. The previous item-by-item splice
+    // rebuilt the whole item region from the typed `module_items()` list --
+    // and `defparam` is deliberately NOT a typed `ast::ModuleItem` (it is
+    // consumed by the E-58 machinery in the instantiation pass, which scans
+    // raw DEFPARAM nodes), so any module containing a generate construct
+    // silently dropped every one of its module-scope `defparam`s before
+    // that pass could ever see them (LRM 6.3.1).
+    let base = module_ast.syntax().text_range().start();
+    let full = module_ast.syntax().text().to_string();
+    let mut repls: Vec<(Range<usize>, String)> = Vec::new();
     for item in module_ast.module_items() {
+        let range = rel_range(base, item.syntax().text_range());
         match item {
             ast::ModuleItem::GenvarDecl(_) => {
                 // Compile-time-only; dropped entirely, never reaches `hir_def`.
+                repls.push((range, String::new()));
             }
             ast::ModuleItem::GenerateFor(gen_for) => {
-                out.push_str(&render_generate_for(&gen_for, &const_env, "", &Scope::default())?);
+                repls.push((range, render_generate_for(&gen_for, &const_env, "", &Scope::default())?));
             }
             ast::ModuleItem::GenerateIf(gen_if) => {
-                out.push_str(&render_generate_if(&gen_if, &const_env, "", &Scope::default())?);
+                repls.push((range, render_generate_if(&gen_if, &const_env, "", &Scope::default())?));
             }
             ast::ModuleItem::GenerateCase(gen_case) => {
-                out.push_str(&render_generate_case(&gen_case, &const_env, "", &Scope::default())?);
+                repls.push((range, render_generate_case(&gen_case, &const_env, "", &Scope::default())?));
             }
             // Enhancement-407: an `analog` block may drive a genvar `for` loop. Unlike a
             // module-level `generate for`, which repeats declarations, this one repeats
@@ -1946,19 +2064,16 @@ fn render_module_with_generates(module_ast: &ast::ModuleDecl) -> anyhow::Result<
                 let src = item.syntax().text().to_string();
                 let rendered = unroll_analog_genvar_loops(&src, &genvar_names, &const_env)?;
                 check_no_genvar_left_in_analog(&rendered, &genvar_names)?;
-                out.push_str(&rendered);
+                repls.push((range, rendered));
             }
-            other => out.push_str(&other.syntax().text().to_string()),
+            _ => {}
         }
-        out.push('\n');
     }
-
-    let items: Vec<_> = module_ast.module_items().collect();
-    let base = module_ast.syntax().text_range().start();
-    let full = module_ast.syntax().text().to_string();
-    let rel_start = rel_range(base, items.first().unwrap().syntax().text_range()).start;
-    let rel_end = rel_range(base, items.last().unwrap().syntax().text_range()).end;
-    Ok(format!("{}{}{}", &full[..rel_start], out, &full[rel_end..]))
+    let mut out = full;
+    for (range, text) in repls.into_iter().rev() {
+        out.replace_range(range, &text);
+    }
+    Ok(out)
 }
 
 /// Enhancement-392: a module's `localparam` names bound to their integer values.
@@ -2183,7 +2298,21 @@ fn render_generate_block(
     }
 
     let mut out = String::new();
-    for item in block.items() {
+    for child in block.syntax().children() {
+        let Some(item) = ast::ModuleItem::cast(child.clone()) else {
+            // `defparam` is deliberately not a typed `ast::ModuleItem` (see
+            // `render_module_with_generates`), so the typed iteration used
+            // to skip it here and a `defparam` written inside a generate
+            // block vanished without a diagnostic. Render it like any other
+            // plain item: the genvar folds into its value expression and the
+            // per-iteration rename rewrites its target instance name, so the
+            // E-58 collection in the instantiation pass picks it up.
+            if child.kind() == syntax::SyntaxKind::DEFPARAM {
+                out.push_str(&render_generate_item(&child, env, &scope));
+                out.push('\n');
+            }
+            continue;
+        };
         match item {
             ast::ModuleItem::GenvarDecl(_) => {}
             ast::ModuleItem::GenerateFor(inner) => {
@@ -2515,6 +2644,14 @@ pub(crate) fn elaborate_instantiations(db: &mut CompilationDB) -> anyhow::Result
         hier_param_errors: Vec::new(),
         abs_prefixes: Rc::new(AbsPrefixes::default()),
         port_ammeters: HashMap::new(),
+        flow_access: flow_access_names(&tree),
+        access_names: tree
+            .data
+            .natures
+            .iter()
+            .filter_map(|n| n.access.as_ref().map(|(a, _)| a.to_string()))
+            .collect(),
+        params_given_in_va: HashSet::new(),
     };
 
     // Enhancement-86: a module whose body holds ABSOLUTE hierarchical
@@ -2597,6 +2734,15 @@ pub(crate) fn elaborate_instantiations(db: &mut CompilationDB) -> anyhow::Result
         );
     }
 
+    // LRM 6.3.5/9.19: a parameter overridden from inside the hierarchy (an
+    // instance `#(...)` value or a `defparam`) IS "given" -- but flattening
+    // bakes the override in as the parameter's new default, which OSDI
+    // would report as "not given" unless the netlist repeated it. Rewrite
+    // `$param_given(<flat>)` for exactly those parameters to a true literal.
+    let mut given_in_va = ctx.params_given_in_va.clone();
+    given_in_va.extend(ctx.defparam_applied.iter().cloned());
+    let out = resolve_param_given(&out, &given_in_va);
+
     // Enhancement-58: name the synthetic file by BASENAME only. The VFS holds
     // the canonicalized absolute root path, and this name is embedded in the
     // compiled .osdi as source-file provenance -- an absolute path would leak
@@ -2669,6 +2815,299 @@ struct ElabCtx<'a> {
     /// `<chain>.branch(<port>)` — collected by a pre-scan over every
     /// module's text before the top module renders.
     port_ammeters: HashMap<String, BTreeSet<String>>,
+    /// Access-function names of every FLOW nature (`I` for `Current`, plus
+    /// any derived nature whose parent chain reaches one), resolved from the
+    /// item tree's discipline `flow` bindings. Used by the `#(.$mfactor(n))`
+    /// child-instance transform, which must scale exactly the flow
+    /// contributions/probes of the scaled instance (LRM 6.3.6).
+    flow_access: HashSet<String>,
+    /// Access-function names of EVERY nature (`V`, `I`, `Pwr`, ...). Used by
+    /// the LRM 5.6.8.1 hierarchical-contribution transform to recognise
+    /// probe calls that reference the same hierarchical node pair a
+    /// contribution targets.
+    access_names: HashSet<String>,
+    /// FINAL flattened names of every parameter that received a value from
+    /// inside the Verilog-A hierarchy (an instance `#(...)` override; a
+    /// `defparam` target lands in `defparam_applied` instead). LRM 6.3.5:
+    /// such a parameter IS "given", so `$param_given(<flat>)` calls in the
+    /// rendered output are rewritten to a true constant -- compile-time
+    /// flattening otherwise bakes the override in as the parameter's new
+    /// default and OSDI reports "not given" unless the netlist repeats it.
+    params_given_in_va: HashSet<String>,
+}
+
+/// Access-function names of every FLOW nature (`I` for `Current`), resolved
+/// from the item tree: each discipline's `flow` binding names a root nature
+/// (possibly through `<discipline>.flow`/`.potential` indirections), and any
+/// nature whose parent chain reaches such a root contributes its `access`
+/// name. Used by the `#(.$mfactor(n))` instance transform, which must scale
+/// exactly the flow contributions/probes of the scaled child (LRM 6.3.6).
+fn flow_access_names(tree: &ItemTree) -> HashSet<String> {
+    use hir_def::item_tree::{NatureRef, NatureRefKind};
+
+    fn resolve_root(tree: &ItemTree, mut cur: Option<NatureRef>) -> Option<Name> {
+        for _ in 0..8 {
+            let r = cur?;
+            match r.kind {
+                NatureRefKind::Nature => return Some(r.name),
+                NatureRefKind::DisciplineFlow => {
+                    cur = tree
+                        .data
+                        .disciplines
+                        .iter()
+                        .find(|d| d.name == r.name)
+                        .and_then(|d| d.flow.as_ref().map(|(r, _)| r.clone()));
+                }
+                NatureRefKind::DisciplinePotential => {
+                    cur = tree
+                        .data
+                        .disciplines
+                        .iter()
+                        .find(|d| d.name == r.name)
+                        .and_then(|d| d.potential.as_ref().map(|(r, _)| r.clone()));
+                }
+            }
+        }
+        None
+    }
+
+    let flow_roots: HashSet<Name> = tree
+        .data
+        .disciplines
+        .iter()
+        .filter_map(|d| resolve_root(tree, d.flow.as_ref().map(|(r, _)| r.clone())))
+        .collect();
+
+    let mut out = HashSet::new();
+    for nature in tree.data.natures.iter() {
+        let mut cur = Some(nature.name.clone());
+        let mut is_flow = false;
+        for _ in 0..8 {
+            let Some(name) = cur else { break };
+            if flow_roots.contains(&name) {
+                is_flow = true;
+                break;
+            }
+            cur = tree
+                .data
+                .natures
+                .iter()
+                .find(|n| n.name == name)
+                .and_then(|n| n.parent.as_ref())
+                .and_then(|p| match p.kind {
+                    NatureRefKind::Nature => Some(p.name.clone()),
+                    _ => resolve_root(tree, Some(p.clone())),
+                });
+        }
+        if is_flow {
+            if let Some((access, _)) = &nature.access {
+                out.insert(access.to_string());
+            }
+        }
+    }
+    out
+}
+
+/// Composes the hierarchical system parameter overrides inherited from
+/// enclosing instances with an instance's own `#(.$mfactor(...))` list:
+/// multiplicative parameters ($mfactor/$hflip/$vflip) multiply down the
+/// hierarchy, additive ones ($xposition/$yposition/$angle) sum (LRM 6.3.6).
+/// Both sides hold FINAL (rename-applied) expression text, so the composed
+/// text splices verbatim into any inlined body.
+fn merge_sys_overrides(
+    outer: &[(ParamSysFun, String)],
+    inner: &[(ParamSysFun, String)],
+) -> Vec<(ParamSysFun, String)> {
+    let mut out = outer.to_vec();
+    for (sys, v) in inner {
+        match out.iter_mut().find(|(s, _)| s == sys) {
+            Some((_, existing)) => {
+                let op = if sys.composes_multiplicatively() { '*' } else { '+' };
+                *existing = format!("({existing}){op}({v})");
+            }
+            None => out.push((*sys, v.clone())),
+        }
+    }
+    out
+}
+
+/// Builds the `render_with_holes` holes that apply a child instance's
+/// hierarchical system parameter overrides (`#(.$mfactor(4))`, LRM 6.3.6)
+/// to one of its `analog` blocks or functions.
+///
+/// Reads compose: every `$mfactor`-family SYSFUN token in the body is
+/// replaced by `($mfactor*(<ov>))` (multiplicative) or `($xposition+(<ov>))`
+/// (additive), so the child sees the effective value.
+///
+/// `$mfactor` additionally applies the standard multiplicity transform --
+/// the child stands for `m` identical copies in parallel, solved as one:
+/// every FLOW contribution's RHS is scaled by `m` (`<+ (m)*(...)`), every
+/// flow PROBE is divided by `m` (reading the per-copy current back out of
+/// the scaled system), and every noise call's amplitude is divided by
+/// `sqrt(m)` (so a flow-contributed noise POWER scales by `m·` after the
+/// RHS scaling, and a potential-contributed one by `1/m` -- both the
+/// parallel-combination results). All edits are single-token holes
+/// (the `<+` operator, the statement's `;`, a callee name, a closing
+/// paren), so they never nest and the flat hole machinery applies them in
+/// one pass. Probe references that must stay bare probes (`ddx`'s second
+/// argument, `$limit`'s first) are exempted from the division.
+///
+/// Deliberately NOT handled: indirect contributions (`V(x): I(x) == 0`) and
+/// noise calls routed through variables keep their unscaled form.
+fn hier_sys_override_holes(
+    item: &syntax::SyntaxNode,
+    sys: &[(ParamSysFun, String)],
+    flow_access: &HashSet<String>,
+    excluded: &[Range<usize>],
+) -> Vec<(Range<usize>, String)> {
+    let base = item.text_range().start();
+    let m_text =
+        sys.iter().find(|(s, _)| *s == ParamSysFun::mfactor).map(|(_, v)| v.clone());
+    let mut holes: Vec<(Range<usize>, String)> = Vec::new();
+
+    let callee = |call: &ast::Call| -> Option<(String, Range<usize>)> {
+        match call.function_ref()? {
+            ast::FunctionRef::Path(p) => {
+                let tok = p.as_raw_ident()?;
+                Some((tok.text().to_string(), rel_range(base, tok.text_range())))
+            }
+            ast::FunctionRef::SysFun(s) => {
+                let tok = s.sysfun_token()?;
+                Some((tok.text().to_string(), rel_range(base, tok.text_range())))
+            }
+        }
+    };
+
+    if let Some(m) = &m_text {
+        // flow contributions: `I(...) <+ rhs;` becomes `I(...) <+ (m)*(rhs);`
+        let mut lhs_ranges: Vec<Range<usize>> = Vec::new();
+        for node in item.descendants() {
+            let Some(assign) = ast::Assign::cast(node) else { continue };
+            if assign.op() != Some(ast::AssignOp::Contribute) {
+                continue;
+            }
+            let Some(ast::Expr::Call(target)) = assign.lval() else { continue };
+            lhs_ranges.push(rel_range(base, target.syntax().text_range()));
+            let is_flow = callee(&target).is_some_and(|(n, _)| flow_access.contains(&n));
+            if !is_flow {
+                continue;
+            }
+            let op_tok = assign
+                .syntax()
+                .children_with_tokens()
+                .filter_map(|el| el.into_token())
+                .find(|t| t.kind() == syntax::SyntaxKind::CONTR);
+            let semi = assign
+                .syntax()
+                .parent()
+                .and_then(ast::AssignStmt::cast)
+                .and_then(|s| s.semicolon_token());
+            let (Some(op_tok), Some(semi)) = (op_tok, semi) else { continue };
+            holes.push((rel_range(base, op_tok.text_range()), format!("<+ ({m})*(")));
+            holes.push((rel_range(base, semi.text_range()), ");".to_owned()));
+        }
+        // probe references that must stay bare probes -- exempt from division
+        let mut skip: Vec<Range<usize>> = Vec::new();
+        for node in item.descendants() {
+            let Some(call) = ast::Call::cast(node) else { continue };
+            let Some((name, _)) = callee(&call) else { continue };
+            let Some(args) = call.arg_list() else { continue };
+            match name.as_str() {
+                "ddx" => {
+                    if let Some(arg) = args.args().nth(1) {
+                        skip.push(rel_range(base, arg.syntax().text_range()));
+                    }
+                }
+                "$limit" => {
+                    if let Some(arg) = args.args().next() {
+                        skip.push(rel_range(base, arg.syntax().text_range()));
+                    }
+                }
+                _ => {}
+            }
+        }
+        // flow probes divide by m; noise calls divide by sqrt(m)
+        for node in item.descendants() {
+            let Some(call) = ast::Call::cast(node) else { continue };
+            let Some((name, name_range)) = callee(&call) else { continue };
+            let Some(rp) = call.arg_list().and_then(|a| a.r_paren_token()) else { continue };
+            let range = rel_range(base, call.syntax().text_range());
+            // a call the LRM 5.6.8.1 hierarchical-contribution transform
+            // already rewrote holds holes of its own; leave it alone
+            if excluded.iter().any(|r| *r == range) {
+                continue;
+            }
+            let is_noise = matches!(
+                name.as_str(),
+                "white_noise" | "flicker_noise" | "noise_table" | "noise_table_log"
+            );
+            let is_flow_probe = flow_access.contains(&name)
+                && !lhs_ranges.contains(&range)
+                && !skip.iter().any(|s| s.start <= range.start && range.end <= s.end);
+            let divisor = match (is_flow_probe, is_noise) {
+                (true, _) => format!(")/({m}))"),
+                (_, true) => format!(")/sqrt({m}))"),
+                _ => continue,
+            };
+            holes.push((name_range, format!("({name}")));
+            holes.push((rel_range(base, rp.text_range()), divisor));
+        }
+    }
+
+    // reads of every overridden system parameter compose with the outer value
+    for el in item.descendants_with_tokens() {
+        let Some(tok) = el.into_token() else { continue };
+        if tok.kind() != syntax::SyntaxKind::SYSFUN {
+            continue;
+        }
+        let Some(sys_fn) = ParamSysFun::from_sysfun_text(tok.text()) else { continue };
+        let Some((_, v)) = sys.iter().find(|(s, _)| *s == sys_fn) else { continue };
+        let op = if sys_fn.composes_multiplicatively() { '*' } else { '+' };
+        holes.push((rel_range(base, tok.text_range()), format!("({}{op}({v}))", tok.text())));
+    }
+    holes.sort_by_key(|(r, _)| r.start);
+    holes
+}
+
+/// Rewrites `$param_given(<name>)` calls whose argument is in `given` --
+/// the FINAL flattened names of parameters overridden from inside the
+/// Verilog-A hierarchy (instance `#(...)` values and applied `defparam`
+/// targets) -- to the literal `(1)`: LRM 6.3.5/9.19, such a parameter IS
+/// given, but compile-time flattening bakes the override in as the new
+/// default, which OSDI would report as "not given". Same textual post-pass
+/// shape as `resolve_port_connected` below.
+fn resolve_param_given(body: &str, given: &HashSet<String>) -> String {
+    const NEEDLE: &str = "$param_given";
+    if given.is_empty() || !body.contains(NEEDLE) {
+        return body.to_string();
+    }
+    let is_ident_char = |c: char| c.is_ascii_alphanumeric() || c == '_' || c == '$';
+    let mut out = String::with_capacity(body.len());
+    let mut rest = body;
+    while let Some(pos) = rest.find(NEEDLE) {
+        let after = &rest[pos + NEEDLE.len()..];
+        let open = after.trim_start();
+        let replacement = open.strip_prefix('(').and_then(|inner| {
+            let inner = inner.trim_start();
+            let end = inner.find(|c: char| !is_ident_char(c)).unwrap_or(inner.len());
+            let ident = &inner[..end];
+            let close = inner[end..].trim_start().strip_prefix(')')?;
+            given.contains(ident).then_some(("(1)", close))
+        });
+        match replacement {
+            Some((lit, remainder)) => {
+                out.push_str(&rest[..pos]);
+                out.push_str(lit);
+                rest = remainder;
+            }
+            None => {
+                out.push_str(&rest[..pos + NEEDLE.len()]);
+                rest = after;
+            }
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 /// Rewrites `$port_connected(<name>)` calls in an already-rendered instance
@@ -3387,9 +3826,20 @@ fn find_matching_caller_bus_covering(caller: &TreeModule, base: &str, lo: i32, h
 /// as written in the instantiating module `caller`), producing either a
 /// single scalar binding, or -- if `port_name` names a bus in `target` --
 /// one binding per bit, sliced from a same-width bus named `net_text` in
-/// `caller` if one exists (see `find_matching_caller_bus`), else
-/// `net_text` broadcast verbatim to every bit as a best-effort fallback.
-fn bind_port(result: &mut HashMap<Name, PortBinding>, target: &TreeModule, caller: &TreeModule, port_name: &Name, net_text: &str) {
+/// `caller` (see `find_matching_caller_bus`). An actual that resolves to
+/// no matching-width source for a multi-bit port is a size-mismatch error
+/// (LRM 6.5.7.1: "The sizes of the ports and net need to match") -- it
+/// used to be broadcast verbatim onto every bit as a best-effort fallback,
+/// so a scalar net on a 2-bit port silently wired the same net to both
+/// bits.
+fn bind_port(
+    result: &mut HashMap<Name, PortBinding>,
+    target: &TreeModule,
+    caller: &TreeModule,
+    port_name: &Name,
+    net_text: &str,
+    errors: &mut Vec<String>,
+) {
     let bus = target.buses.iter().chain(target.var_arrays.iter()).find(|b| &b.base_name == port_name);
     let Some(bus) = bus else {
         // A width-1 part-select onto a scalar port degrades to the single
@@ -3424,10 +3874,24 @@ fn bind_port(result: &mut HashMap<Name, PortBinding>, target: &TreeModule, calle
             return;
         }
         // width mismatch / unknown base: fall through to the ordinary path,
-        // whose broadcast produces the standard downstream diagnostics
+        // whose size check below produces the diagnostic
     }
 
     let caller_bus = find_matching_caller_bus(caller, net_text, width);
+    if caller_bus.is_none() && width > 1 {
+        // A width-1 bus port still takes a scalar actual (sizes match); a
+        // wider one must connect to something that actually has its width.
+        errors.push(format!(
+            "port '{port_name}' of module '{}' is {width} bits wide but its connection \
+             '{}' is not a matching {width}-bit source in module '{}' (LRM 6.5.7.1: the \
+             sizes of the port and the net shall match; connect a {width}-bit bus, a \
+             matching part-select, or a '{{...}}' concatenation)",
+            target.name,
+            net_text.trim(),
+            caller.name,
+        ));
+        return;
+    }
 
     let mut bits = BTreeMap::new();
     for bit in lo..=hi {
@@ -3589,7 +4053,14 @@ impl ElabCtx<'_> {
         if let ast::Expr::ConcatExpr(concat) = net {
             self.bind_port_concat(result, target, caller, port_name, concat);
         } else {
-            bind_port(result, target, caller, port_name, &net.syntax().text().to_string());
+            bind_port(
+                result,
+                target,
+                caller,
+                port_name,
+                &net.syntax().text().to_string(),
+                &mut self.port_conn_errors,
+            );
         }
     }
 
@@ -3676,9 +4147,10 @@ impl ElabCtx<'_> {
         &mut self,
         target: &TreeModule,
         overrides: Option<ast::ParamOverrides>,
-    ) -> HashMap<Name, String> {
+    ) -> (HashMap<Name, String>, Vec<(ParamSysFun, String)>) {
         let mut result = HashMap::new();
-        let Some(overrides) = overrides else { return result };
+        let mut sys_overrides: Vec<(ParamSysFun, String)> = Vec::new();
+        let Some(overrides) = overrides else { return (result, sys_overrides) };
         let assigns: Vec<_> = overrides.param_assigns().collect();
         let param_names: Vec<Name> = target
             .items
@@ -3696,13 +4168,25 @@ impl ElabCtx<'_> {
         // mistake ("defparam target(s) did not resolve" /
         // "unrecognized parameter (zz) - ignored"); this brings the instance
         // override into line with them.
-        // A SYSTEM parameter override (`#(.$mfactor(2))`, LRM 6.3.4) is written with
-        // a dot but carries no NAME child, because `$mfactor` is not an ordinary
-        // identifier. It names nothing the target declares and never will, so it is
-        // neither counted as positional nor checked against `param_names` -- it is
-        // passed over exactly as before. Keying "is this named?" off the DOT rather
-        // than off `name()` is what keeps it out of the positional branch.
+        // A SYSTEM parameter override (`#(.$mfactor(2))`, LRM 6.3.6) is written
+        // with a dot and a NAME wrapping a SYSFUN token (see `param_assign` in
+        // the parser). It names nothing the target declares, so it is handled
+        // first in the named branch below -- collected into `sys_overrides`
+        // rather than checked against `param_names`. Keying "is this named?"
+        // off the DOT keeps it out of the positional branch.
         let inst_of = format!("of module '{}'", target.name);
+        // The LRM's parameter_value_assignment grammar (Syntax 6-2) makes the
+        // list ALL-ordered or ALL-named; a mixed list used to bind only the
+        // named half while the positional values were silently dropped (the
+        // equivalent mixing for PORT connections was already rejected).
+        let n_positional = assigns.iter().filter(|a| a.dot_token().is_none()).count();
+        if n_positional != 0 && n_positional != assigns.len() {
+            self.hier_param_errors.push(format!(
+                "instance parameter overrides {} mix positional and named forms in one \
+                 '#(...)' list; the LRM (6.3.2/6.3.3) allows one form or the other, not both",
+                inst_of,
+            ));
+        }
         if assigns.iter().all(|a| a.dot_token().is_none()) {
             if assigns.len() > param_names.len() {
                 self.hier_param_errors.push(format!(
@@ -3724,6 +4208,31 @@ impl ElabCtx<'_> {
             // won, so the result depended on the order the two were written.
             let mut seen_params: Vec<Name> = Vec::with_capacity(assigns.len());
             for assign in &assigns {
+                // `.$mfactor(4)` / `.$xposition(...)`: a hierarchical system
+                // parameter override (LRM 6.3.6). Collected separately -- it
+                // binds no declared parameter; `render_instance_content`
+                // applies it as the LRM's multiplicity/geometry transform.
+                if let Some(tok) = assign.name().and_then(|n| n.sysfun_token()) {
+                    match ParamSysFun::from_sysfun_text(tok.text()) {
+                        Some(sys) => {
+                            if sys_overrides.iter().any(|(s, _)| *s == sys) {
+                                self.hier_param_errors.push(format!(
+                                    "instance parameter '.{}' is overridden more than once",
+                                    tok.text(),
+                                ));
+                            } else if let Some(val) = assign.val() {
+                                sys_overrides.push((sys, val.syntax().text().to_string()));
+                            }
+                        }
+                        None => self.hier_param_errors.push(format!(
+                            "'.{}' names no overridable hierarchical system parameter; only \
+                             $mfactor, $xposition, $yposition, $angle, $hflip and $vflip may \
+                             be overridden on an instance (LRM 6.3.6)",
+                            tok.text(),
+                        )),
+                    }
+                    continue;
+                }
                 if let Some(nm) = assign.name() {
                     let pname = nm.as_name();
                     if seen_params.contains(&pname) {
@@ -3822,7 +4331,7 @@ impl ElabCtx<'_> {
                 }
             }
         }
-        result
+        (result, sys_overrides)
     }
 
     /// Builds the "flatten this module's own declarations, in order,
@@ -3861,6 +4370,242 @@ impl ElabCtx<'_> {
             out.insert(chain_key.clone(), pfx.clone());
             self.collect_inst_prefixes(target, &pfx, &chain_key, out);
         }
+    }
+
+    /// Resolves a dotted instance path (`c1.c2.mid`) starting at `module`,
+    /// walking instantiations by name, and answers whether the FINAL member
+    /// is a net of the target module (`Some(true)`), one of its named
+    /// branches (`Some(false)`), or neither/unresolvable (`None`).
+    fn hier_member_is_net(
+        &self,
+        module: ItemTreeId<TreeModule>,
+        path: &str,
+    ) -> Option<bool> {
+        let path = path.trim();
+        let segs: Vec<&str> = path.split('.').collect();
+        if segs.len() < 2 {
+            return None;
+        }
+        let ident_ish = |s: &str| {
+            !s.is_empty()
+                && s.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '$' | '[' | ']'))
+        };
+        if !segs.iter().all(|s| ident_ish(s)) {
+            return None;
+        }
+        let mut cur = module;
+        for seg in &segs[..segs.len() - 1] {
+            let mut next = None;
+            for item in &self.tree[cur].items {
+                let ModuleItem::Instantiation(id) = item else { continue };
+                let inst = &self.tree[*id];
+                if inst.name.to_string() == *seg {
+                    next = self.by_name.get(&inst.module).copied();
+                    break;
+                }
+            }
+            cur = next?;
+        }
+        let mem = segs[segs.len() - 1];
+        let mem_base = mem.split('[').next().unwrap_or(mem);
+        let m = &self.tree[cur];
+        for item in &m.items {
+            if let ModuleItem::Branch(id) = item {
+                if self.tree[*id].name.to_string() == mem_base {
+                    return Some(false);
+                }
+            }
+        }
+        // A PORT member is excluded: after flattening a port is renamed to
+        // whatever net it is BOUND to, not to a prefixed name of its own, so
+        // a hierarchical reference to it cannot resolve at all -- that is the
+        // documented "hierarchical access to child port nets" gap, and the
+        // ordinary rename path keeps its honest located error.
+        let is_port_name = m.nodes.iter().any(|n| {
+            n.is_port && n.name.to_string().split('[').next() == Some(mem_base)
+        });
+        if is_port_name {
+            return None;
+        }
+        let is_net = m.nodes.iter().any(|n| {
+            let s = n.name.to_string();
+            s == mem || s.split('[').next() == Some(mem_base)
+        }) || m.buses.iter().any(|b| b.base_name.to_string() == mem_base);
+        is_net.then_some(true)
+    }
+
+    /// LRM 5.6.8.1 with 5.5.4 (behavior audit): a direct (or indirect)
+    /// contribution whose target references a HIERARCHICAL net -- e.g.
+    /// `V(p, c1.mid) <+ 0.5;` -- creates a NEW unnamed branch in the module
+    /// containing the contribution, distinct from any branch the child
+    /// itself has between the same nodes. The plain textual rewrite aliased
+    /// `c1.mid` to the child's net, so the parent's contribution landed on
+    /// the child's own unnamed branch: the potential/flow retention rule
+    /// then discarded the child's flow contribution (warning L022 on fully
+    /// legal code) and the child's probes of its branch read the merged
+    /// current.
+    ///
+    /// The fix gives each such target its own NAMED branch -- named branches
+    /// are distinct identities even over the same node pair -- by declaring
+    /// `branch (<final args>) <prefix>__hierbrN;` and splicing the branch
+    /// name over the call's argument list. Probes in the same module whose
+    /// argument pair textually matches a contributed pair are aliased onto
+    /// the same branch (same order directly, reversed order negated), which
+    /// is 5.5.4's same-module-same-branch rule. Hierarchical references to a
+    /// child's NAMED branch are left alone: 5.6.8.2 says those merge.
+    ///
+    /// Returns the holes plus the touched call ranges (so the `$mfactor`
+    /// transform skips its probe wrapping there). Not handled: contributed
+    /// and probed orders never seen together accumulate on two branches
+    /// instead of one, probes textually preceding the module's only
+    /// contribution in a LATER analog block keep the aliased-net read, and
+    /// an aliased probe inside an `#(.$mfactor(n))` child skips the
+    /// per-copy division.
+    fn hier_contrib_holes(
+        &self,
+        item: &syntax::SyntaxNode,
+        module: ItemTreeId<TreeModule>,
+        scope: &Scope,
+        prefix: &str,
+        decls: &mut Vec<String>,
+        branches: &mut HashMap<String, String>,
+        pairs: &mut Vec<(Vec<String>, String)>,
+    ) -> (Vec<(Range<usize>, String)>, Vec<Range<usize>>) {
+        let base = item.text_range().start();
+        let mut holes: Vec<(Range<usize>, String)> = Vec::new();
+        let mut touched: Vec<Range<usize>> = Vec::new();
+
+        let norm = |e: &ast::Expr| e.syntax().text().to_string().split_whitespace().collect::<String>();
+        // (normalized raw arg texts, splice range over the argument list, final renamed args)
+        let analyze = |call: &ast::Call| -> Option<(Vec<String>, Range<usize>, Vec<String>)> {
+            let args: Vec<ast::Expr> = call.arg_list()?.args().collect();
+            if args.is_empty() || args.len() > 2 {
+                return None;
+            }
+            let mut any_hier = false;
+            for arg in &args {
+                let txt = arg.syntax().text().to_string();
+                if txt.contains(".branch(") || txt.contains('<') {
+                    return None;
+                }
+                if !find_instance_path_holes(&txt, &scope.inst_prefixes, &scope.abs).is_empty() {
+                    // only a hierarchical NET reference creates the new branch;
+                    // a child's named branch merges (5.6.8.2), and anything
+                    // unresolvable keeps its existing diagnostics
+                    if self.hier_member_is_net(module, txt.trim()) != Some(true) {
+                        return None;
+                    }
+                    any_hier = true;
+                }
+            }
+            if !any_hier {
+                return None;
+            }
+            let splice = rel_range(
+                base,
+                TextRange::new(
+                    args.first().unwrap().syntax().text_range().start(),
+                    args.last().unwrap().syntax().text_range().end(),
+                ),
+            );
+            let final_args: Vec<String> = args
+                .iter()
+                .map(|a| {
+                    let t = a.syntax().text().to_string();
+                    apply_rename(t.trim(), scope)
+                })
+                .collect();
+            Some((args.iter().map(norm).collect(), splice, final_args))
+        };
+
+        // pass 1: contribution targets
+        for node in item.descendants() {
+            let Some(assign) = ast::Assign::cast(node) else { continue };
+            if !matches!(
+                assign.op(),
+                Some(ast::AssignOp::Contribute | ast::AssignOp::IndirectBranch)
+            ) {
+                continue;
+            }
+            let Some(ast::Expr::Call(target)) = assign.lval() else { continue };
+            let Some((raw, splice, final_args)) = analyze(&target) else { continue };
+            let key = final_args.join(",");
+            let name = match branches.get(&key) {
+                Some(n) => n.clone(),
+                None => {
+                    let name = format!("{prefix}__hierbr{}", branches.len());
+                    decls.push(format!(
+                        "branch ({}) {}; // LRM 5.6.8.1 hierarchical-contribution branch",
+                        final_args.join(", "),
+                        name,
+                    ));
+                    branches.insert(key, name.clone());
+                    name
+                }
+            };
+            holes.push((splice, name.clone()));
+            touched.push(rel_range(base, target.syntax().text_range()));
+            if !pairs.iter().any(|(r, _)| *r == raw) {
+                pairs.push((raw, name));
+            }
+        }
+        if pairs.is_empty() {
+            return (holes, touched);
+        }
+
+        // pass 2: probes of a contributed pair alias onto the same branch
+        for node in item.descendants() {
+            let Some(call) = ast::Call::cast(node) else { continue };
+            let is_access = match call.function_ref() {
+                Some(ast::FunctionRef::Path(p)) => p
+                    .as_raw_ident()
+                    .is_some_and(|t| self.access_names.contains(t.text())),
+                _ => false,
+            };
+            if !is_access {
+                continue;
+            }
+            let call_range = rel_range(base, call.syntax().text_range());
+            if touched.iter().any(|r| *r == call_range) {
+                continue; // a contribution target already rewritten above
+            }
+            let Some(args) = call.arg_list() else { continue };
+            let probe_args: Vec<String> = args.args().map(|a| norm(&a)).collect();
+            if probe_args.is_empty() || probe_args.len() > 2 {
+                continue;
+            }
+            let matched = pairs.iter().find_map(|(raw, name)| {
+                if *raw == probe_args {
+                    Some((name.clone(), false))
+                } else if raw.len() == 2
+                    && probe_args.len() == 2
+                    && raw[0] == probe_args[1]
+                    && raw[1] == probe_args[0]
+                {
+                    Some((name.clone(), true))
+                } else {
+                    None
+                }
+            });
+            let Some((name, reversed)) = matched else { continue };
+            let access = call
+                .function_ref()
+                .and_then(|f| match f {
+                    ast::FunctionRef::Path(p) => {
+                        p.as_raw_ident().map(|t| t.text().to_string())
+                    }
+                    _ => None,
+                })
+                .unwrap_or_default();
+            let replacement = if reversed {
+                format!("(-{access}({name}))")
+            } else {
+                format!("{access}({name})")
+            };
+            holes.push((call_range.clone(), replacement));
+            touched.push(call_range);
+        }
+        (holes, touched)
     }
 
     /// Enhancement-58: scan one module's `defparam` statements and record each
@@ -3914,6 +4659,7 @@ impl ElabCtx<'_> {
         param_binding: &HashMap<Name, String>,
         port_names: &HashSet<Name>,
         prefix: &str,
+        sys_overrides: &[(ParamSysFun, String)],
     ) -> String {
         let target_ast = self.module_ast(self.tree[target_id].ast_id);
         // Enhancement-58: collect this module's `defparam` overrides before
@@ -3926,6 +4672,11 @@ impl ElabCtx<'_> {
         // this module's instantiation connections, prepended to the rendered body
         // so they precede every use.
         let mut implicit_decls = Vec::new();
+        // LRM 5.6.8.1: named branches synthesised for hierarchical
+        // contribution targets, shared across this module's analog blocks
+        // (key: final renamed argument pair -> branch name).
+        let mut hier_branches: HashMap<String, String> = HashMap::new();
+        let mut hier_pairs: Vec<(Vec<String>, String)> = Vec::new();
 
         for item in target_ast.module_items() {
             match item {
@@ -3955,7 +4706,45 @@ impl ElabCtx<'_> {
                         scope,
                         prefix,
                         &mut implicit_decls,
+                        sys_overrides,
                     ));
+                }
+                // An analog block gets the LRM 5.6.8.1 hierarchical-
+                // contribution branch transform; a body under
+                // `#(.$mfactor(n))`-family overrides additionally gets the
+                // LRM 6.3.6 transform (reads compose; flow contributions,
+                // probes and noise scale). Both splice in as holes.
+                ref body @ (ast::ModuleItem::AnalogBehaviour(_) | ast::ModuleItem::Function(_)) => {
+                    let node = body.syntax();
+                    let mut holes = Vec::new();
+                    let mut excluded = Vec::new();
+                    if matches!(body, ast::ModuleItem::AnalogBehaviour(_)) {
+                        let (h, ex) = self.hier_contrib_holes(
+                            node,
+                            target_id,
+                            scope,
+                            prefix,
+                            &mut implicit_decls,
+                            &mut hier_branches,
+                            &mut hier_pairs,
+                        );
+                        holes.extend(h);
+                        excluded = ex;
+                    }
+                    if !sys_overrides.is_empty() {
+                        holes.extend(hier_sys_override_holes(
+                            node,
+                            sys_overrides,
+                            &self.flow_access,
+                            &excluded,
+                        ));
+                    }
+                    if holes.is_empty() {
+                        out.push_str(&apply_rename(&node.text().to_string(), scope));
+                    } else {
+                        holes.sort_by_key(|(r, _)| r.start);
+                        out.push_str(&render_with_holes(&node.text().to_string(), &holes, scope));
+                    }
                 }
                 ast::ModuleItem::ParamDecl(decl) => {
                     let base = decl.syntax().text_range().start();
@@ -4062,6 +4851,7 @@ impl ElabCtx<'_> {
         scope: &Scope,
         prefix: &str,
         implicit_decls: &mut Vec<String>,
+        inherited_sys: &[(ParamSysFun, String)],
     ) -> String {
         let Some(module_name) = inst.module().map(|n| n.as_name()) else { return String::new() };
         let Some(&target_id) = self.by_name.get(&module_name) else {
@@ -4113,9 +4903,16 @@ impl ElabCtx<'_> {
         let target_ast = self.module_ast(target.ast_id);
         let parent = self.tree[parent_id].clone();
 
-        let param_raw = self.resolve_param_bindings(&target, inst.param_overrides());
+        let (param_raw, sys_raw) = self.resolve_param_bindings(&target, inst.param_overrides());
         let param_binding: HashMap<Name, String> =
             param_raw.into_iter().map(|(k, v)| (k, apply_rename(&v, scope))).collect();
+        // The instance's own `.$mfactor(...)`-family overrides (rename-applied
+        // to final text), composed with the ones inherited from every
+        // enclosing instance -- a grandchild under `.$mfactor(2)` inside a
+        // child under `.$mfactor(4)` is effectively scaled by 8 (LRM 6.3.6).
+        let own_sys: Vec<(ParamSysFun, String)> =
+            sys_raw.into_iter().map(|(s, v)| (s, apply_rename(&v, scope))).collect();
+        let sys_binding = merge_sys_overrides(inherited_sys, &own_sys);
 
         let mut out = String::new();
         for unit in inst.instance_units() {
@@ -4246,6 +5043,7 @@ impl ElabCtx<'_> {
                     &child_prefix,
                     &port_binding,
                     &param_binding,
+                    &sys_binding,
                 ));
                 out.push('\n');
             }
@@ -4264,6 +5062,7 @@ impl ElabCtx<'_> {
         prefix: &str,
         port_binding: &HashMap<Name, PortBinding>,
         param_binding: &HashMap<Name, String>,
+        sys_binding: &[(ParamSysFun, String)],
     ) -> String {
         let target = self.tree[target_id].clone();
         let mut scope = Scope::default();
@@ -4441,7 +5240,17 @@ impl ElabCtx<'_> {
             scope.subst.insert(branch_name.clone(), format!("{prefix}pflow__{port}"));
         }
 
-        let body = self.render_items(target_id, &scope, param_binding, &port_names, prefix);
+        // A parameter overridden by this instance's `#(...)` list IS "given"
+        // (LRM 6.3.5); record its FINAL flattened name for the
+        // `$param_given` rewrite that runs over the finished output.
+        for name in param_binding.keys() {
+            if let Some(flat) = scope.subst.get(&name.to_string()) {
+                self.params_given_in_va.insert(flat.clone());
+            }
+        }
+
+        let body =
+            self.render_items(target_id, &scope, param_binding, &port_names, prefix, sys_binding);
 
         // `$port_connected(p)` must be decided HERE, where the binding is
         // known: after flattening, an open port is just a synthesized local
@@ -4539,7 +5348,8 @@ impl ElabCtx<'_> {
             }
         }
 
-        let body = self.render_items(module_id, &scope, &HashMap::new(), &Default::default(), "");
+        let body =
+            self.render_items(module_id, &scope, &HashMap::new(), &Default::default(), "", &[]);
         format!("{}{}{}", &full[..rel_start], body, &full[rel_end..])
     }
 }

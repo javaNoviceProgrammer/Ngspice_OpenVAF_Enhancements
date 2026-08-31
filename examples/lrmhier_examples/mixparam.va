@@ -1,0 +1,13 @@
+`include "disciplines.vams"
+module leaf(a, b);
+    inout a, b;
+    electrical a, b;
+    parameter real g1 = 1e-3;
+    parameter real g2 = 2e-3;
+    analog I(a,b) <+ (g1+g2) * V(a,b);
+endmodule
+module mixparam(p, n);
+    inout p, n;
+    electrical p, n;
+    leaf #(5e-3, .g2(7e-3)) u1 (p, n);   // MIXED ordered+named param assignment: illegal grammar
+endmodule

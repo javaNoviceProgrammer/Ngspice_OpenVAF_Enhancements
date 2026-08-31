@@ -195,10 +195,15 @@ def main():
         if resolvable:
             check(f"{label}: simulates", rcs == 0 and cur(o) is not None, f"rc={rcs}")
         else:
-            # the crash was rc = -11 (SIGSEGV) with zero bytes of output
-            check(f"{label}: refuses to load instead of crashing",
-                  rcs > 0 and "$limit" in o, f"rc={rcs}")
-            check(f"{label}: the error names the supported set",
+            # Enhancement-520 (LRM 9.17.3): an unresolvable name no longer
+            # refuses the load (E-396's stopgap for the NULL-pointer SIGSEGV,
+            # rc=-11 with zero output) -- the slot binds a pass-through, a
+            # WARNING names the function, and the model runs without limiting,
+            # "just as if no string had been supplied".
+            check(f"{label}: loads with the 9.17.3 fallback and simulates",
+                  rcs == 0 and "$limit" in o and "no limiting" in o
+                  and cur(o) is not None, f"rc={rcs}")
+            check(f"{label}: the warning names the supported set",
                   "pnjlim" in o and "fetlim" in o, "")
 
     # ============================================ [2]/[3] parameter collisions

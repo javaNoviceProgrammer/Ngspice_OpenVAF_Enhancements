@@ -130,8 +130,10 @@ expect("[E-455] a real array, constant index",
 expect("[E-455] a real array, runtime index",
        H + M + ' real arr[0:2]; integer k;\n (* desc="d" *) real d;\n analog begin k=1; arr[k]=1.0; d = arr[k];' + TAIL,
        "ok2", reject=False)
+# (the literals are spelled 1.0/2.0/3.0 -- `1.` became the LRM A.8.7 lexer
+# error in the E-517 datatypes audit, and this check is about arrays, not that)
 expect("[E-455] a parameter array",
-       H + M + ' parameter real pa[0:2] = \'{1.,2.,3.};\n (* desc="d" *) real d;\n analog begin d = pa[1];' + TAIL,
+       H + M + ' parameter real pa[0:2] = \'{1.0,2.0,3.0};\n (* desc="d" *) real d;\n analog begin d = pa[1];' + TAIL,
        "ok3", reject=False)
 
 # ------------------------------------- the same bad value, spelled two ways ---

@@ -1,0 +1,10 @@
+`include "disciplines.vams"
+module dowhile(p, n);
+  inout p, n; electrical p, n;
+  integer k; real y;
+  analog begin
+    y = 8.0; k = 0;
+    do begin y = y/2; k = k+1; end while (y > 1);
+    I(p,n) <+ k*1m*V(p,n);
+  end
+endmodule

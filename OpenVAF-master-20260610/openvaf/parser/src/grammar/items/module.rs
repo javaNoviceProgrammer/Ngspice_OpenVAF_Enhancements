@@ -421,6 +421,24 @@ fn instantiation(p: &mut Parser, m: Marker) {
 fn param_assign(p: &mut Parser) {
     let m = p.start();
     if p.eat(T![.]) {
+        // A hierarchical system parameter override (`#(.$mfactor(4))`,
+        // LRM 6.3.6): a SYSFUN token wrapped in the same NAME node an
+        // ordinary parameter name gets, so downstream accessors see one
+        // shape (the paramset override grammar does the same with
+        // NAME_REF). Used to fall into `name_r`'s error recovery, which
+        // swallowed the token into an ERROR node -- and because that
+        // parse error is only attached to the pre-elaboration tree, the
+        // override was dropped without any diagnostic at all.
+        if p.at(SYSFUN) {
+            let name = p.start();
+            p.bump(SYSFUN);
+            name.complete(p, NAME);
+            p.expect(T!['(']);
+            expr(p);
+            p.expect(T![')']);
+            m.complete(p, PARAM_ASSIGN);
+            return;
+        }
         name_r(p, TokenSet::new(&[T!['('], T![.]]));
         // Enhancement-87: a hierarchical override target (`.blk.p(...)`, e.g.
         // an attempt to reach a block-scoped parameter). The LRM only permits
@@ -649,6 +667,23 @@ fn generate_block(p: &mut Parser) {
                 p.eat(INITIAL_KW);
                 stmt_with_attrs(p);
                 m.complete(p, ANALOG_BEHAVIOUR);
+            }
+            // `defparam u.g = 2e-3 * i;` targeting an instance declared in
+            // this (or an enclosing) generate block is legal (LRM 6.3.1,
+            // "defparam statements in the same module ... including
+            // generate blocks"). It used to fall into the recovery below --
+            // and because elaboration re-renders the generate region from
+            // its syntax tree, the parse error was swallowed and the
+            // override silently vanished (same failure shape as the
+            // Enhancement-390 `analog` arm above).
+            DEFPARAM_KW => {
+                defparam_decl(p, m);
+            }
+            BRANCH_KW => {
+                branch_decl(p, m);
+            }
+            ALIASPARAM_KW => {
+                alias_parameter_decl(p, m);
             }
             _ => {
                 m.abandon(p);

@@ -1,0 +1,6 @@
+`include "disciplines.vams"
+module vtd(in, ctl, o);
+  inout in, ctl, o;
+  electrical in, ctl, o;
+  analog V(o) <+ absdelay(V(in), 1m + 1m*V(ctl)); // NO maxdelay: LRM says td frozen at first eval
+endmodule

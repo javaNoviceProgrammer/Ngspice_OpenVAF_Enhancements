@@ -1,0 +1,14 @@
+`include "disciplines.vams"
+module leafz2(a, b);
+    inout a, b; electrical a, b;
+    analog I(a,b) <+ 1e-3*V(a,b);
+endmodule
+module midz(a, b);
+    inout a, b; electrical a, b;
+    leafz2 #(.$mfactor(2)) u (a, b);
+    analog I(a,b) <+ $mfactor*1e-6*V(a,b); // mid's own read: outer only
+endmodule
+module mnest(p, n);
+    inout p, n; electrical p, n;
+    midz #(.$mfactor(4)) u1 (p, n);
+endmodule

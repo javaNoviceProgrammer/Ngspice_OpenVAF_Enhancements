@@ -1,0 +1,13 @@
+`include "disciplines.vams"
+module twobit(v2, c);
+    input [0:1] v2;
+    electrical [0:1] v2;
+    inout c;
+    electrical c;
+    analog I(c) <+ 1e-3*V(v2[0]) + 2e-3*V(v2[1]);
+endmodule
+module vcon(p, q, o);
+    inout p, q, o;
+    electrical p, q, o;
+    twobit u1 ({p, q}, o);   // concatenation as port actual
+endmodule

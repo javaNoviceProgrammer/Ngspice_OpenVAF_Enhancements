@@ -1,0 +1,21 @@
+`include "disciplines.vams"
+module leafpx(a, b, c);
+    inout a, b, c;
+    electrical a, b, c;
+    branch (a, b) br;
+    analog begin
+        I(br) <+ V(br)/1000.0;
+        V(c) <+ I(br)*100.0;     // per-copy mirror: must stay 0.1 under mfactor
+    end
+endmodule
+module leafrd(a, b);
+    inout a, b;
+    electrical a, b;
+    analog I(a,b) <+ $mfactor*1e-3*V(a,b);   // read composes: 4*1e-3, scaled x4 = 16 mA
+endmodule
+module mxform(p, n, c, q);
+    inout p, n, c, q;
+    electrical p, n, c, q;
+    leafpx #(.$mfactor(4)) u1 (p, n, c);
+    leafrd #(.$mfactor(4)) u2 (p, q);
+endmodule

@@ -1,0 +1,11 @@
+`include "disciplines.vams"
+module leafm(a, b);
+    inout a, b;
+    electrical a, b;
+    analog I(a,b) <+ V(a,b)/1000.0;
+endmodule
+module mchild(p, n);
+    inout p, n;
+    electrical p, n;
+    leafm #(.$mfactor(4)) u1 (p, n);
+endmodule

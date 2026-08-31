@@ -1,0 +1,15 @@
+// LRM 4.5.8: transition "forces all positive transitions of expr to occur
+// over rise_time" -- the ramp DURATION is rise_time, independent of amplitude.
+// Input steps 0 -> 2 at t=1u with trise=1u: output must reach 2.0 at t=2u.
+`include "disciplines.vams"
+
+module trans_amp(in, out, gnd);
+    inout in, out, gnd;
+    electrical in, out, gnd;
+    real s;
+
+    analog begin
+        s = (V(in, gnd) > 0.5) ? 2.0 : 0.0;
+        V(out, gnd) <+ transition(s, 0.0, 1u);
+    end
+endmodule

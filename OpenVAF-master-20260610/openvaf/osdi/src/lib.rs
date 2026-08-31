@@ -292,10 +292,13 @@ pub fn compile<'a>(
         let cx = new_codegen(back, &llmod, &literals);
         let tys = OsdiTys::new(&cx, NonNull::from(target_data).as_ptr());
 
-        // { y_node: u32, z_node: u32, td_offset: u32 }
+        // { y_node: u32, z_node: u32, td_offset: u32, flags: u32 }
+        // flags bit 0 (LRM 4.5.7, analog-operators audit): td is FROZEN --
+        // the absdelay has no maxdelay, so the simulator latches td at
+        // MODEINITTRAN and ignores later changes.
         let absdelay_info_ty = cx.ty_struct(
             "OsdiAbsDelayInfo",
-            &[cx.ty_int(), cx.ty_int(), cx.ty_int()],
+            &[cx.ty_int(), cx.ty_int(), cx.ty_int(), cx.ty_int()],
         );
 
         let mut absdelay_counts: Vec<u32> = Vec::new();
@@ -330,7 +333,7 @@ pub fn compile<'a>(
                 // Collect absdelay metadata for this module
                 let n = module.intern.absdelay_equations.len() as u32;
                 absdelay_counts.push(n);
-                for (i, &(eq_y, eq_z)) in
+                for (i, &(eq_y, eq_z, frozen_td)) in
                     module.intern.absdelay_equations.iter().enumerate()
                 {
                     let find_node = |eq: ImplicitEquation| -> u32 {
@@ -350,6 +353,7 @@ pub fn compile<'a>(
                             cx.const_unsigned_int(y_node),
                             cx.const_unsigned_int(z_node),
                             cx.const_unsigned_int(td_off),
+                            cx.const_unsigned_int(u32::from(frozen_td)),
                         ],
                     );
                     absdelay_infos_ll.push(info);

@@ -78,13 +78,13 @@ in place -- it was the project's own suites that caught them.
 
 DELIBERATELY NOT CHANGED, and pinned below so the decision is recorded:
 
-  -- `5.` as a real literal. LRM A.8.7 requires digits on both sides of the dot
-     in every `real_number` alternative, so it is malformed -- but its value is
-     always correct (5.0), no corpus model writes one, and making a LEXER rule
-     stricter is exactly what broke eight shipping models earlier the same day
-     (Enhancement-458 reserved `expm1`, which HiSIM-SOI and HiSIM-SOTB declare
-     as their own function). A syntax break with no wrong-answer to prevent is
-     not worth that risk.
+  -- `5.` as a real literal: the "keep accepting it" decision recorded here
+     was SUPERSEDED by the E-517 datatypes audit, which made every malformed
+     real form (`1.`, `.5`, exponent+scale-factor mixes) the LRM A.8.7 lexer
+     error -- after re-checking that no corpus model writes one (the 13 big
+     CMC models compile warning-free under the stricter rule, unlike the
+     Enhancement-458 incident this note originally guarded against). The pin
+     below now records the refusal.
 
   -- Named blocks inside an analog function. LRM 4.7.1 forbids them; openvaf
      supports them and they work correctly, so rejecting them would break
@@ -286,10 +286,11 @@ for j in ("_d.va", "_d.osdi"):
     if os.path.exists(p):
         os.remove(p)
 
-print("\n[6] deliberately unchanged (see the header)")
+print("\n[6] superseded by the E-517 datatypes audit (see the header)")
 _d, rc, _o = build(HDR + "module m(a,b); inout a,b; electrical a,b; (*desc=\"y\"*) real y;\n"
                    " analog begin y = 5.; I(a,b) <+ V(a,b)*1e-3; end\nendmodule\n", "dot")
-check("`5.` is still accepted (value is correct)", rc == 0, "rc=%d" % rc)
+check("`5.` is refused per LRM A.8.7 (E-517)",
+      rc != 0 and "digit on each side" in _o, "rc=%d" % rc)
 
 for j in os.listdir(HERE):
     if j.startswith("_w_"):

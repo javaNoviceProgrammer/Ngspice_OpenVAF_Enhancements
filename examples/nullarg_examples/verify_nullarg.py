@@ -175,13 +175,20 @@ for label, body, extra in [
     ("max(1,,2)", "I(in,out) <+ max(1.0,,2.0);", ""),
     ("max(1,2,)  [E-423 trailing comma]", "I(in,out) <+ max(1.0,2.0,);", ""),
     ("ddt(,)", "I(in,out) <+ ddt(,);", ""),
-    ('$strobe("a",,"b")', '$strobe("a",,"b"); I(in,out) <+ V(in,out)*1e-3;', ""),
     ("laplace_zp(, zeros, poles)", "V(out) <+ laplace_zp(, '{-1e5,0}, '{-1e4,0});", ""),
 ]:
     tag = re.sub(r"[^a-z0-9]", "", label.lower())[:10]
     rc, out, _ = compile_src(module(body, extra=extra), tag)
     check(f"[E-453] {label} is refused", rc != 0, f"rc={rc}")
     check(f"[E-453] ...and does not crash the compiler", not crashed(rc, out), f"rc={rc}")
+
+# A null DISPLAY argument is a different story: LRM 9.4.1 (via IEEE 1364
+# 17.1.1.2) makes `$strobe("a",,"b")` legal -- the empty slot renders as a
+# single space. E-516's display audit implemented exactly that, so the old
+# "is refused" pin here inverted into an acceptance check.
+rc, out, _ = compile_src(module('$strobe("a",,"b"); I(in,out) <+ V(in,out)*1e-3;'), "strobenull")
+check('[E-516] $strobe("a",,"b") compiles (9.4.1: null argument renders one space)',
+      rc == 0 and not crashed(rc, out), f"rc={rc}")
 
 # ------------------------------------------------- printing by value type ---
 print("\nan argument no conversion consumes is printed, or refused -- never a crash")
@@ -198,13 +205,20 @@ for label, body in [
 
 for label, body in [
     ('$strobe("x", \'{1.0})', "$strobe(\"x\", '{1.0}); I(in,out) <+ V(in,out)*1e-3;"),
-    ('$display("x", \'{})', "$display(\"x\", '{}); I(in,out) <+ V(in,out)*1e-3;"),
     ('$fatal(0, "x", \'{1.0})', "$fatal(0, \"x\", '{1.0}); I(in,out) <+ V(in,out)*1e-3;"),
 ]:
     tag = re.sub(r"[^a-z0-9]", "", label.lower())[:10]
     rc, out, _ = compile_src(module(body), tag)
     check(f"[E-453] an ARRAY at {label} is refused", rc != 0, f"rc={rc}")
     check(f"[E-453] ...and does not crash the compiler", not crashed(rc, out), f"rc={rc}")
+
+# An EMPTY array literal `'{}` at a display argument is token-identical to the
+# LRM 9.4.1 null argument (the parser records both as an empty ARRAY_EXPR), so
+# since E-516 it compiles and renders as the single space 9.4.1 specifies --
+# it is no longer distinguishable from `$display("x",,)`-style null slots.
+rc, out, _ = compile_src(module("$display(\"x\", '{}); I(in,out) <+ V(in,out)*1e-3;"), "dispempty")
+check("[E-516] an EMPTY array at $display(\"x\", '{}) compiles as a 9.4.1 null argument",
+      rc == 0 and not crashed(rc, out), f"rc={rc}")
 
 # ------------------------------------- and the Bool prints the RIGHT value ---
 print("\nthe printed comparison carries the right value")

@@ -1,0 +1,9 @@
+`include "disciplines.vams"
+module ddxu3(a, b);
+  inout a, b; electrical a, b;
+  (*desc="current-defined branch: flow is no unknown -> 0"*) real gz;
+  analog begin
+    I(a,b) <+ V(a,b)/1e3;                 // current-defined: I(a,b) is NOT a system unknown
+    gz = ddx(V(a,b)*V(a,b), I(a,b));
+  end
+endmodule

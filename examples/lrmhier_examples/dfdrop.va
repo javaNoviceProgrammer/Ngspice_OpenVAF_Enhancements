@@ -1,0 +1,19 @@
+`include "disciplines.vams"
+module leafq(a, b);
+    inout a, b;
+    electrical a, b;
+    parameter real g = 1e-3;
+    analog I(a,b) <+ g*V(a,b);
+endmodule
+module dfdrop(p, n);
+    inout p, n;
+    electrical p, n;
+    genvar i;
+    leafq u1 (p, n);
+    defparam u1.g = 7e-3;          // module-scope defparam
+    generate
+        for (i = 0; i < 1; i = i + 1) begin : blk
+            leafq u2 (p, n);       // unrelated generate in same module
+        end
+    endgenerate
+endmodule

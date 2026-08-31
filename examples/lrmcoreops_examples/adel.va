@@ -1,0 +1,9 @@
+`include "disciplines.vams"
+module vadel(in, o1, o2);
+  inout in, o1, o2;
+  electrical in, o1, o2;
+  analog begin
+    V(o1) <+ absdelay(V(in), 1m);
+    V(o2) <+ absdelay(V(in), 2m, 1m); // td > maxdelay: LRM substitutes maxdelay
+  end
+endmodule

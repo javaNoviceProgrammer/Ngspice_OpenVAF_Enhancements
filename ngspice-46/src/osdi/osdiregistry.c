@@ -533,8 +533,11 @@ extern OsdiObjectFile load_object_file(const char *input) {
   OsdiRegistryEntry *dst = TMALLOC(OsdiRegistryEntry, OSDI_NUM_DESCRIPTORS);
 
   /* Size of one OsdiAbsDelayInfo struct as exported from OpenVAF:
-   * { y_node: u32, z_node: u32, td_offset: u32 } = 12 bytes */
-  const size_t absdelay_info_size = 12;
+   * { y_node: u32, z_node: u32, td_offset: u32, flags: u32 } = 16 bytes
+   * (flags added by the analog-operators audit for the LRM 4.5.7 frozen-td
+   * rule; the compiler and this loader ship together, per the OSDI pairing
+   * policy). */
+  const size_t absdelay_info_size = 16;
   uint32_t absdelay_info_offset = 0;
 
   /* Size of one OsdiLastCrossingInfo struct as exported from OpenVAF:

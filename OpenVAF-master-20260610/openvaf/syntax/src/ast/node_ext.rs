@@ -385,6 +385,16 @@ impl ast::NameRef {
     }
 }
 
+impl ast::Name {
+    /// An instance parameter override may bind a hierarchical system
+    /// parameter (`#(.$mfactor(4))`, LRM 6.3.6), in which case the NAME
+    /// wraps a SYSFUN token instead of an IDENT -- the instance-override
+    /// counterpart of `NameRef::sysfun_token` above.
+    pub fn sysfun_token(&self) -> Option<SyntaxToken> {
+        support::token(&self.syntax, crate::SyntaxKind::SYSFUN)
+    }
+}
+
 impl ast::NetDecl {
     /// Enhancement-45: pairs each declared net name with its optional nodeset
     /// initializer (`electrical a = 5.0, b;`, LRM 3.6.3.2). The initializer

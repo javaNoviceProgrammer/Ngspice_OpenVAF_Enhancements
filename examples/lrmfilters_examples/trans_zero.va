@@ -1,0 +1,17 @@
+// LRM 4.5.8: "If neither rise_time nor fall_time are specified or are equal
+// to zero (0.0), the rise and fall time default to the value defined by
+// `default_transition."  Here rise_time is an explicit 0.0 and
+// `default_transition is 1u -> the LRM ramp takes 1u.
+`default_transition 1u
+`include "disciplines.vams"
+
+module trans_zero(in, out, gnd);
+    inout in, out, gnd;
+    electrical in, out, gnd;
+    real s;
+
+    analog begin
+        s = (V(in, gnd) > 0.5) ? 1.0 : 0.0;
+        V(out, gnd) <+ transition(s, 0.0, 0.0);
+    end
+endmodule

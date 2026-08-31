@@ -28,8 +28,8 @@ WHAT IT PINS
       `$mfactor` keeps its default and stays reachable as `_mfactor`.
 
       The consequence is that the two MULTIPLY. `m=3 _mfactor=2` is 6x on a model
-      that owns `m`, and 2x on one that does not (same slot, last write wins --
-      which Enhancement-395's duplicate-write check reports).
+      that owns `m`; on one that does not they are one slot (aliasparam), and
+      setting both on one line is refused per LRM 3.4.7.
 
   [3] A model that declares one of these names OWNS IT. ngspice hands over the
       netlist value and applies nothing of its own, for `m`, `temp`, `dtemp` and
@@ -300,8 +300,7 @@ def main():
     du = build("own_m_used")[0]
     for tag, dd, cases in [
         ("plain model: `m` is an ALIAS of $mfactor (one slot)", dp,
-         [("m=3", "N1 a 0 mm m=3", 3.0), ("_mfactor=2", "N1 a 0 mm _mfactor=2", 2.0),
-          ("m=3 _mfactor=2 -> last write wins", "N1 a 0 mm m=3 _mfactor=2", 2.0)]),
+         [("m=3", "N1 a 0 mm m=3", 3.0), ("_mfactor=2", "N1 a 0 mm _mfactor=2", 2.0)]),
         ("model owns `m`: the two are independent and MULTIPLY", du,
          [("m=3", "N1 a 0 mm m=3", 3.0), ("_mfactor=2", "N1 a 0 mm _mfactor=2", 2.0),
           ("m=3 _mfactor=2 -> 6x", "N1 a 0 mm m=3 _mfactor=2", 6.0)]),
@@ -312,10 +311,13 @@ def main():
             check(f"  {label}", close(r["i"], -1e-3 * mult),
                   f"i={r['i']} $mfactor={r['mfact']} own_m={r['ownm']}")
 
+    # On a plain model `m` and `_mfactor` are one slot (aliasparam), and LRM
+    # 3.4.7 makes setting both on one line an ERROR -- the run refuses instead
+    # of the old "last write wins" warning.
     r = osdi(dp, "N1 a 0 mm m=3 _mfactor=2", cards=MODEL)
-    check("writing `m` and `_mfactor` on one line is reported (E-395)",
-          any("same parameter" in ln for ln in r["out"].splitlines()),
-          [ln.strip()[:56] for ln in r["out"].splitlines() if ln.startswith("Warning")][:1])
+    check("writing `m` and `_mfactor` on one line is refused (LRM 3.4.7)",
+          r["i"] is None and any("same parameter" in ln for ln in r["out"].splitlines()),
+          [ln.strip()[:56] for ln in r["out"].splitlines() if "same parameter" in ln][:1])
 
     # ------------------------------------------- [3] a model that owns `m`
     print("\n  -- [3] a model that declares one of these names owns it --")

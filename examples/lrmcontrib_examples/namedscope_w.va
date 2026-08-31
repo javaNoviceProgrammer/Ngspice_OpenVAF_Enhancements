@@ -1,0 +1,12 @@
+`include "disciplines.vams"
+module namedscope_w(p, n);
+  inout p, n; electrical p, n;
+  analog begin
+    begin : sc
+      real lv;
+      lv = 2.0;
+    end
+    sc.lv = 3.0;
+    I(p,n) <+ 1m * V(p,n) * sc.lv;
+  end
+endmodule

@@ -1,0 +1,13 @@
+`include "disciplines.vams"
+module leafg(a, b);
+    inout a, b;
+    electrical a, b;
+    parameter real p1 = 1e-3;
+    analog I(a,b) <+ ($param_given(p1) ? 10e-3 : p1) * V(a,b);
+endmodule
+module pgh(p, n);
+    inout p, n;
+    electrical p, n;
+    leafg #(.p1(1e-3)) u1 (p, n);  // given (same value): expect 10e-3
+    leafg u2 (p, n);               // not given: 1e-3  --> total 11 mA
+endmodule

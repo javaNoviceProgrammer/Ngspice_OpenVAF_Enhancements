@@ -218,9 +218,12 @@ def main():
            " core #(.$mfactor(7)) C1(p, n);\nendmodule\n")
     d, rc, out = build(src, "mfac")
     got = sim(d) if rc == 0 else None
-    check("a `$mfactor` override compiles and does NOT leak into the first parameter",
-          rc == 0 and got is not None and abs(got + 1.0) < 1e-9,
-          f"rc={rc} i(v1)={got} (leak would give -1/7 = -0.1428571)")
+    # The override is HONORED per LRM 6.3.6 (the child stands for 7 parallel
+    # copies: I = 7 * V/r = 7 A at V=1, r=1) -- it used to be silently ignored
+    # (-1.0), and before that risked zipping onto the first parameter (-1/7).
+    check("a `$mfactor` override is honored and does NOT leak into the first parameter",
+          rc == 0 and got is not None and abs(got + 7.0) < 1e-9,
+          f"rc={rc} i(v1)={got} (ignored would give -1.0; leak -1/7 = -0.1428571)")
 
     # ---- [2] generate renames block labels and function names --------------
     src = (HDR + "module top(p, n);\n inout p, n; electrical p, n;\n genvar i;\n"

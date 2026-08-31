@@ -37,11 +37,16 @@ same way. Only what is fixed before the OSDI descriptor exists:
     declaration width -- indexing the very bus that parameter sized is then
     consistent by construction.
 
-A plain `parameter` is refused, and so is a localparam whose value is built from
-one: a parameter binds at simulation time, and baking its default into a node
-selection would silently ignore an override from the model card. The semantic
-folder gets this right structurally -- folding such a localparam requires folding
-the parameter, which it will not do, so the whole chain fails.
+A plain `parameter` used to be refused outright. Since the E-526 behavior
+audit (LRM 5.5.2: a signal-access index "must be a constant expression",
+which includes parameters), a vectored-NET index that reads a parameter --
+directly or through a derived localparam -- FOLDS, and every parameter in
+its transitive support is frozen structural (netlist overrides refused
+with the standard fixed-localparam warning). That keeps the original
+invariant by the other route: the value baked into the node selection can
+never silently diverge from the card. Array-VARIABLE indices are
+untouched: a parameter there stays overridable and the access stays
+runtime.
 
 WHAT THE ACCEPT HALF IS GUARDING. A genuine RUNTIME index into a variable array
 (`arr[i]`, `i` a variable) must stay dynamic, a runtime index into a vectored NET
@@ -203,28 +208,50 @@ def main():
         "localparam integer K = 3; real m2[0:2][0:3];",
         "  m2[1][3] = 40.0;\n  I(a,b) <+ m2[K-2][K]*1e-3;", "m2k", -0.04)
 
-    # ======================= REJECT HALF ====================================
-    # A `parameter` binds at simulation time. Folding its default into a node
-    # selection would silently ignore an override from the model card.
-    body_p = (HDR + "module m(a, b);\n inout a, b; electrical a, b;\n"
-              " parameter integer P = 3;\n electrical [0:3] n;\n analog begin\n" + LADDER +
-              "  V(b, n[P]) <+ 0.0;\n end\nendmodule\n")
-    rejected("a plain `parameter` index is STILL rejected", body_p, "rp",
-             "bit-select index must be a constant")
+    # ================== PARAMETER INDICES FREEZE (E-526) ====================
+    # LRM 5.5.2: a vector signal-access index "must be a constant expression"
+    # -- which INCLUDES parameters. Since the E-526 behavior audit these
+    # forms fold at elaboration; because the index selects a node of the
+    # frozen OSDI descriptor, the parameters it reads become structural
+    # (frozen to localparam), so a model-card override is refused with the
+    # standard warning instead of being silently ignored.
+    def frozen_tap(label, decls, index, tag, want, knob):
+        src = (HDR + "module m(a, b);\n inout a, b; electrical a, b;\n"
+               f" {decls}\n electrical [0:3] n;\n analog begin\n" + LADDER +
+               f"  V(b, n[{index}]) <+ 0.0;\n end\nendmodule\n")
+        d, rc, out = build(src, tag)
+        got = sim(d) if rc == 0 else None
+        check(label, got is not None and abs(got - want) < 1e-12,
+              f"rc={rc} i(v1)={got} want={want} "
+              + (out.strip().splitlines() or [""])[0][:40])
+        if rc == 0:
+            open(os.path.join(d, "q.cir"), "w").write(
+                "q\n.control\npre_osdi m.osdi\n.endc\n"
+                f"V1 a 0 dc 1\nN1 a 0 m\n.model m m({knob}=1)\n"
+                ".control\noption noacct\nop\nprint i(v1)\n.endc\n.end\n")
+            r = subprocess.run(["perl", "-e", "alarm 30; exec @ARGV", NGSPICE,
+                                "-b", "q.cir"], cwd=d, capture_output=True,
+                               text=True, errors="replace")
+            check(f"  ...and overriding {knob}= on the card is refused as frozen",
+                  "fixed (localparam)" in (r.stdout + r.stderr),
+                  next((l.strip()[:60] for l in (r.stdout + r.stderr).splitlines()
+                        if "localparam" in l), ""))
 
-    body_l = (HDR + "module m(a, b);\n inout a, b; electrical a, b;\n"
-              " parameter integer P = 3;\n localparam integer L = P;\n"
-              " electrical [0:3] n;\n analog begin\n" + LADDER +
-              "  V(b, n[L]) <+ 0.0;\n end\nendmodule\n")
-    rejected("a localparam DERIVED FROM a parameter is STILL rejected", body_l, "rl",
-             "bit-select index must be a constant")
+    frozen_tap("a plain `parameter` index n[P] folds and freezes P (LRM 5.5.2)",
+               "parameter integer P = 3;", "P", "rp", -1.0 / 3000, "P")
+    frozen_tap("a localparam DERIVED from a parameter folds and freezes the "
+               "parameter underneath", "parameter integer P = 3;\n"
+               " localparam integer L = P;", "L", "rl", -1.0 / 3000, "P")
 
     src = (HDR + "module m(a, b);\n inout a, b; electrical a, b;\n"
            " parameter integer P = 3;\n electrical [0:3] n;\n"
            " branch (n[P], n[0]) br;\n analog begin\n" + LADDER +
            "  I(br) <+ V(br)/1000;\n  V(b, n[3]) <+ 0.0;\n end\nendmodule\n")
-    rejected("a plain `parameter` BRANCH endpoint is STILL rejected", src, "rbr",
-             "bit-select index is not a constant")
+    d, rc, out = build(src, "rbr")
+    got = sim(d) if rc == 0 else None
+    check("a `parameter` BRANCH endpoint folds too: br parallels the ladder "
+          "(-4/3000)", got is not None and abs(got + 4.0 / 3000) < 1e-12,
+          f"rc={rc} i(v1)={got}")
 
     # out of range is reported as out of range, not as "not a constant"
     src = (HDR + "module m(a, b);\n inout a, b; electrical a, b;\n"

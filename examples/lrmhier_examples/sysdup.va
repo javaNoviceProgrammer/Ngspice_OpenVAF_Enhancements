@@ -1,0 +1,9 @@
+`include "disciplines.vams"
+module leafd(a, b);
+    inout a, b; electrical a, b;
+    analog I(a,b) <+ 1e-3*V(a,b);
+endmodule
+module sysdup(p, n);
+    inout p, n; electrical p, n;
+    leafd #(.$mfactor(2), .$mfactor(3)) u1 (p, n);
+endmodule

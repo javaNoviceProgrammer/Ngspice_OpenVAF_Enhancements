@@ -1,0 +1,11 @@
+`include "disciplines.vams"
+module ddxu2(a, b);
+  inout a, b; electrical a, b;
+  (*desc="ddx(I(a,b)^2, I(b,a)) = -2*I"*) real grev;
+  (*desc="current-defined: dI/dI-not-unknown = 0"*) real gz;
+  analog begin
+    V(a,b) <+ 1e3 * I(a,b);
+    grev = ddx(I(a,b)*I(a,b), I(b,a));   // reversed orientation: negated
+    gz   = ddx(V(a,b)*V(a,b), I(a,b));   // wait -- V-defined, I IS unknown; use a separate current-defined pair below
+  end
+endmodule

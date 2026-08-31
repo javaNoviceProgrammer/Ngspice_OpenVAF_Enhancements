@@ -2377,7 +2377,9 @@ impl BodyLoweringCtx<'_, '_, '_> {
 
             BuiltIn::idt | BuiltIn::idtmod if self.ctx.no_equations => {
                 match signature {
-                    IDT_NO_IC => F_ZERO, // fair enough approximation
+                    // IDTMOD_NO_IC: the ic defaults to 0 (LRM 4.5.5), so 0 is
+                    // exact here, and args has no [1] to read anyway.
+                    IDT_NO_IC | IDTMOD_NO_IC => F_ZERO,
                     _ => self.lower_expr(args[1]),
                 }
             }
@@ -2397,7 +2399,18 @@ impl BodyLoweringCtx<'_, '_, '_> {
             BuiltIn::idtmod => {
                 let kind = match_signature! {
                     signature:
-                        IDTMOD_NO_IC => IdtKind::Basic,
+                        // LRM 4.5.5 (analog-operators audit): "If the initial
+                        // condition is not specified, it defaults to zero (0).
+                        // Regardless, the initial condition shall force the DC
+                        // solution to the system." The no-ic form used to
+                        // lower exactly like a no-ic idt -- DC forces expr = 0
+                        // and demands external feedback, going SINGULAR
+                        // without it. Table 4-19's row reads that way, but the
+                        // paragraph's "shall" is the normative sentence, and
+                        // the ic=0 default also makes the operator well-posed
+                        // standalone. (idt itself keeps the
+                        // feedback-determined DC: 4.5.4 has no such default.)
+                        IDTMOD_NO_IC => IdtKind::Ic,
                         IDTMOD_IC => IdtKind::Ic,
                         IDTMOD_IC_MODULUS => IdtKind::Modulus,
                         // we currently do not support tolerance
@@ -2730,27 +2743,15 @@ impl BodyLoweringCtx<'_, '_, '_> {
                     let use_td = self.ctx.ins().fle(td, tdmax);
                     td = self.lower_select_with(use_td, |_| td, |_| tdmax);
                 }
-                // LRM 4.5.7 also says: "If maxdelay is not specified, the value of
-                // td when the absdelay() is first evaluated shall be used and any
-                // future changes to td shall be ignored." That is NOT implemented,
-                // deliberately, and the reason is worth recording.
-                //
-                // The only "first evaluation" flag a model can see is
-                // `IsInitialStep`, and at that flag the circuit solution is still
-                // the zero initial guess -- a probe read inside `@(initial_step)`
-                // returns 0, measurably (V(ctl,c) reads 1.0 outside it and 0
-                // inside). Latching there stores 0, which is worse than tracking.
-                // And for the case that actually occurs -- `td` a parameter --
-                // freezing is indistinguishable from not freezing, because a
-                // parameter cannot change during an analysis anyway.
-                //
-                // Doing it correctly means latching on the SIMULATOR side at
-                // MODEINITTRAN, where the operating point has converged (the same
-                // place `absdelay_stamp_tran` now seeds the history from
-                // CKTrhsOld). That needs a per-slot "this delay is fixed" flag in
-                // OsdiAbsDelayInfo, i.e. a descriptor/ABI addition, which is not
-                // worth pairing with the fixes in this enhancement.
-                self.lower_delay(y_expr, td)
+                // LRM 4.5.7 also says: "If maxdelay is not specified, the value
+                // of td when the absdelay() is first evaluated shall be used and
+                // any future changes to td shall be ignored." Implemented as
+                // E-514's own analysis prescribed: the frozen-td flag travels in
+                // OsdiAbsDelayInfo and NGSPICE latches td at MODEINITTRAN, where
+                // the operating point has converged (a model-visible
+                // IsInitialStep latch would store the zero initial guess). With
+                // a maxdelay present the LRM wants td TRACKED (clamped above).
+                self.lower_delay(y_expr, td, signature != ABSDELAY_MAX)
             }
             BuiltIn::limit => self.lower_expr(args[0]),
 
@@ -3110,7 +3111,15 @@ impl BodyLoweringCtx<'_, '_, '_> {
     /// `V(y_synth) = y_expr`, and an output node whose equation row is stamped entirely by
     /// the simulator via history lookup at `now - td`. Shared by `absdelay()` directly and by
     /// `transition()`'s delay stage.
-    fn lower_delay(&mut self, y_expr: Value, td: Value) -> Value {
+    /// `frozen_td` (LRM 4.5.7, analog-operators audit): true for an
+    /// `absdelay` WITHOUT a maxdelay -- "the value of td when the absdelay()
+    /// is first evaluated shall be used and any future changes to td shall be
+    /// ignored". The flag travels through `OsdiAbsDelayInfo` and the
+    /// SIMULATOR latches td at MODEINITTRAN, where the operating point has
+    /// converged -- the model-visible IsInitialStep flag still sees the zero
+    /// initial guess, which is why latching cannot happen in compiled code
+    /// (the reason E-514 recorded for deferring this fix).
+    fn lower_delay(&mut self, y_expr: Value, td: Value, frozen_td: bool) -> Value {
         let delay_idx = self.ctx.intern.absdelay_equations.len() as u32;
 
         // Synthetic input node: equation V(y_synth) = y_expr
@@ -3120,7 +3129,7 @@ impl BodyLoweringCtx<'_, '_, '_> {
         let (eq_z, z_val) =
             self.ctx.implicit_equation(ImplicitEquationKind::AbsDelayOutput(delay_idx));
 
-        self.ctx.intern.absdelay_equations.push((eq_y, eq_z));
+        self.ctx.intern.absdelay_equations.push((eq_y, eq_z, frozen_td));
 
         // Resistive residual for eq_y: y_expr - V(y_synth) = 0
         let resist_y = self.ctx.ins().fsub(y_expr, y_val);
@@ -3319,10 +3328,19 @@ impl BodyLoweringCtx<'_, '_, '_> {
         // switching instantaneously (0, the LRM default without a directive).
         let t_default = self.ctx.db.default_transition();
         if signature == TRANSITION_NO_ARGS {
-            if t_default <= 0.0 {
-                return x;
-            }
-            let rate = self.ctx.fconst(1.0 / t_default);
+            // LRM 4.5.8 (filter-operators audit): with no directive, "forcing
+            // a zero-duration transition is undesirable ... Instead, a
+            // negligible, but non-zero, transition time is used." This used to
+            // return the bare input -- an exactly zero-duration transition --
+            // while an EXPLICIT zero rise time got the negligible-non-zero
+            // tracking loop; the two spellings of "no transition time" now
+            // share the same 1e9/s fallback path (an infinite rate trips
+            // `finite_gain` below, tau ~ 1 ns).
+            let rate = if t_default > 0.0 {
+                self.ctx.fconst(1.0 / t_default)
+            } else {
+                self.ctx.fconst(f64::INFINITY)
+            };
             let idx = self.ctx.intern.implicit_equations.len() as u32;
             return self.lower_rate_limited_track(
                 x,
@@ -3333,12 +3351,16 @@ impl BodyLoweringCtx<'_, '_, '_> {
         }
 
         let td = self.lower_expr(args[1]);
-        let delayed = self.lower_delay(x, td);
+        // transition's internal delay is an ARGUMENT of the operator, not an
+        // absdelay: its td legitimately tracks (LRM 4.5.8), so never frozen.
+        let delayed = self.lower_delay(x, td, false);
         if signature == TRANSITION_DELAY {
-            if t_default <= 0.0 {
-                return delayed;
-            }
-            let rate = self.ctx.fconst(1.0 / t_default);
+            // same negligible-non-zero rule as TRANSITION_NO_ARGS above
+            let rate = if t_default > 0.0 {
+                self.ctx.fconst(1.0 / t_default)
+            } else {
+                self.ctx.fconst(f64::INFINITY)
+            };
             let idx = self.ctx.intern.implicit_equations.len() as u32;
             return self.lower_rate_limited_track(
                 delayed,
@@ -3387,6 +3409,26 @@ impl BodyLoweringCtx<'_, '_, '_> {
         let tfall = {
             let pos = self.ctx.ins().fgt(tfall, t_zero);
             self.ctx.make_select(pos, |_, branch| if branch { tfall } else { t_zero })
+        };
+        // LRM 4.5.8 (filter-operators audit): "If neither rise_time nor
+        // fall_time are specified OR ARE EQUAL TO ZERO (0.0), the rise and
+        // fall time default to the value defined by `default_transition."
+        // The directive was honored only when the arguments were textually
+        // absent; an explicit 0.0 clamped to zero, whose reciprocal disabled
+        // the rate limit -- an instantaneous switch where the LRM mandates
+        // the directive's ramp. Selected at RUNTIME, because the zero may
+        // arrive through a deck-overridden parameter.
+        let (trise, tfall) = if t_default > 0.0 {
+            let tdef = self.ctx.fconst(t_default);
+            let rise_pos = self.ctx.ins().fgt(trise, t_zero);
+            let trise =
+                self.ctx.make_select(rise_pos, |_, branch| if branch { trise } else { tdef });
+            let fall_pos = self.ctx.ins().fgt(tfall, t_zero);
+            let tfall =
+                self.ctx.make_select(fall_pos, |_, branch| if branch { tfall } else { tdef });
+            (trise, tfall)
+        } else {
+            (trise, tfall)
         };
         let f_one = self.ctx.fconst(1.0);
         let pos_max = self.ctx.ins().fdiv(f_one, trise);
@@ -4086,10 +4128,14 @@ impl BodyLoweringCtx<'_, '_, '_> {
                 // self-resetting integrators (`idt(1, 0, V(out) > 1)`) ring
                 // and run away. Keep the charge SMOOTH instead: the reactive
                 // residual is always `val`, and reset is a stiff first-order
-                // decay toward `ic` (`dval/dt = -K*(val - ic)`, K = 1e9 --
-                // the slew/transition tracking gain), so both the reset onset
-                // and the release are continuous in the stored charge.
-                // Decay gain: tau = 1/K = 10us reset time constant. The
+                // decay toward `ic` (`dval/dt = -K*(val - ic)`, K =
+                // RESET_GAIN below), so both the reset onset and the release
+                // are continuous in the stored charge.
+                // Decay gain: tau = 1/K = 10us reset time constant -- a
+                // DOCUMENTED deviation from LRM 4.5.4's instantaneous
+                // "returns the initial conditions ... whenever assert is
+                // nonzero" (see the compliance doc); ~90% of the deviation
+                // from ic remains 1us into a reset, gone by ~5 tau. The
                 // conditional bound_step below keeps the transient integrator
                 // inside the decay's stability region (lambda*h ~ 2, where the
                 // trapezoidal method is deadbeat rather than ringing); once the
@@ -4166,7 +4212,9 @@ impl BodyLoweringCtx<'_, '_, '_> {
                     // condition was applied at DC but silently lost in transient (the ramp started from
                     // 0 instead of `ic`). Storing charge = `ic` makes the transient continue from `ic`
                     // (and an `assert` reset likewise restores the integrator to `ic`).
-                    let ic = ctx.lower_expr(args[1]);
+                    // A no-ic idtmod has no args[1]: its ic is the LRM 4.5.5
+                    // default of 0.
+                    let ic = if args.len() > 1 { ctx.lower_expr(args[1]) } else { F_ZERO };
                     [ctx.ctx.ins().fsub(val, ic), ic]
                 }
             })

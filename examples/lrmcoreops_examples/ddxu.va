@@ -1,0 +1,11 @@
+`include "disciplines.vams"
+module ddxu(a, b);
+  inout a, b; electrical a, b;
+  (*desc="ddx(I^2, I) = 2*I"*) real g;
+  (*desc="the current itself"*) real ii;
+  analog begin
+    V(a,b) <+ 1e3 * I(a,b);            // voltage-defined: I(a,b) IS an unknown
+    g  = ddx(I(a,b)*I(a,b), I(a,b));
+    ii = I(a,b);
+  end
+endmodule

@@ -13,8 +13,11 @@ two still compiled with exit 0 and killed ngspice with SIGTRAP:
 Both are now clean compile errors.
 
   [1] `i32::MIN / -1` is a clean compile error naming the overflow
-  [2] an out-of-range shift distance is a clean compile error naming the distance
-  [3] neither leaves a model that can be simulated (nothing to trap)
+  [2] an out-of-range shift distance is reported with the distance -- since the
+      E-518 expressions audit as a WARNING, because LRM 4.2.11 gives it a
+      defined value (distance is unsigned; every bit shifts out -> 0)
+  [3] neither leaves anything for codegen to trap on (the div errors out; the
+      shift folds to its defined value)
   [4] legal shifts, runtime distances and parameter/localparam operands STILL
       compile and simulate -- the guard is constant-operand-only on purpose
 
@@ -62,8 +65,13 @@ def main():
           rc == 65, f"rc={rc}")
     check("`i32::MIN / -1` is reported as an overflow",
           "overflow" in out, (out.strip().splitlines() or ["no output"])[0][:60])
+    # E-518 (expressions audit) UPDATE: LRM 4.2.11 treats the shift distance as
+    # unsigned over a 32-bit integer, so an out-of-range distance has a DEFINED
+    # value (every bit shifted out -> 0; `>>>` -> the sign fill) rather than
+    # being UB. The old hard error became a warning that still names the
+    # distance -- and the folded 0 leaves no poison for codegen to trap on.
     check("the out-of-range shift is reported with its distance",
-          "shift distance out of range" in out and "40" in out,
+          "shift distance outside 0..=31" in out and "shift distance is 40" in out,
           next((l for l in out.splitlines() if "shift" in l), "")[:60])
 
     # [5] E-392: the INT_MIN LITERAL spelling reaches the same guard. Before E-392

@@ -1,0 +1,16 @@
+`include "disciplines.vams"
+module leafn(a, b);
+    inout a, b;
+    electrical a, b;
+    analog I(a,b) <+ white_noise(4e-20, "wn") + 1e-6*V(a,b);
+endmodule
+module mnoise2(p, n);
+    inout p, n;
+    electrical p, n;
+    leafn #(.$mfactor(4)) u1 (p, n);
+endmodule
+module mnoise1(p, n);
+    inout p, n;
+    electrical p, n;
+    leafn u1 (p, n);
+endmodule

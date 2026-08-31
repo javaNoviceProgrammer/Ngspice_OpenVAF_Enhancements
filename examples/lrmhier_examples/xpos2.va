@@ -1,0 +1,11 @@
+`include "disciplines.vams"
+module leafp(a, b);
+    inout a, b;
+    electrical a, b;
+    analog I(a,b) <+ (1e-3 + $xposition) * V(a,b);
+endmodule
+module xpos2(p, n);
+    inout p, n;
+    electrical p, n;
+    leafp #(.$xposition(0.005)) u1 (p, n);   // expect g = 1e-3 + 5e-3 = 6e-3
+endmodule

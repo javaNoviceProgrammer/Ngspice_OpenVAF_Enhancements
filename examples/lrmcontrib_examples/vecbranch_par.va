@@ -1,0 +1,9 @@
+`include "disciplines.vams"
+module vecbranch_par(out, in);
+  parameter integer width = 4;
+  output out; input [0:3] in;
+  electrical out; electrical [0:3] in;
+  analog begin
+    V(out) <+ V(in[width-2]);
+  end
+endmodule

@@ -1,0 +1,8 @@
+`include "disciplines.vams"
+module indirect_cond(out, pin, nin);
+  inout out, pin, nin; electrical out, pin, nin;
+  analog begin
+    if (V(pin) > 0.5)
+      V(out): V(pin,nin) == 0;
+  end
+endmodule

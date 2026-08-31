@@ -1,0 +1,20 @@
+`include "disciplines.vams"
+module gleaf(x, y);
+  inout x, y; electrical x, y;
+  electrical q;
+  analog begin
+    I(x, q) <+ 2e-3*V(x, q);
+    I(q, y) <+ 2e-3*V(q, y);
+  end
+endmodule
+module gmid(a, b);
+  inout a, b; electrical a, b;
+  gleaf g1(a, b);
+  analog begin
+    V(a, g1.q) <+ 0.25;        // hierarchical contribution inside a scaled child
+  end
+endmodule
+module mfhier(p, n);
+  inout p, n; electrical p, n;
+  gmid #(.$mfactor(2)) u1 (p, n);
+endmodule

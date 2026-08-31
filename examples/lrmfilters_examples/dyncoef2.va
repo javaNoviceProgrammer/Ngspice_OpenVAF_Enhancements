@@ -1,0 +1,9 @@
+// LRM 4.5.14: laplace coefficient vectors are CONSTANT-expression arguments;
+// a dynamic expression passed there shall be frozen at the start of the
+// analysis and "any further change in value of that expression is ignored".
+`include "disciplines.vams"
+module dyncoef2(in, ctl, out, gnd);
+    inout in, ctl, out, gnd;
+    electrical in, ctl, out, gnd;
+    analog V(out, gnd) <+ laplace_nd(V(in, gnd), '{V(ctl, gnd)}, '{1.0, 1.59155e-7});
+endmodule

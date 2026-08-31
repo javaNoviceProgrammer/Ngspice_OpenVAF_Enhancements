@@ -1,0 +1,13 @@
+`include "disciplines.vams"
+module twobitb(v2, c);
+    input [0:1] v2;
+    electrical [0:1] v2;
+    inout c;
+    electrical c;
+    analog I(c) <+ 1e-3*V(v2[0]) + 2e-3*V(v2[1]);
+endmodule
+module vbad(p, o);
+    inout p, o;
+    electrical p, o;
+    twobitb u2 (p, o);        // scalar onto 2-bit port: size mismatch, shall error (6.5.7.1)
+endmodule

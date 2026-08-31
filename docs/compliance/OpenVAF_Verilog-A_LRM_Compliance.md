@@ -441,16 +441,47 @@ V(out) <+ ac_stim("ac", 1.0, 90.0);        // module AS the AC stimulus
 
 - `ddt`, `idt` (with initial conditions that survive into transient, and
   the assert/reset forms stable enough for relaxation oscillators),
-  `idtmod` (integrates unbounded internally, wraps the returned value),
-  `ddx` with respect to potentials *and flows*: ✅
+  `idtmod` (integrates unbounded internally, wraps the returned value; a
+  **no-ic `idtmod` defaults its initial condition to 0** and pins the DC
+  solution per 4.5.5's normative sentence — it used to demand external
+  feedback like a no-ic `idt` and went *singular* without it; Table
+  4-19's "determined by the simulator" row reads the other way, and the
+  paragraph's "shall" wins),
+  `ddx` with respect to potentials *and flows* — **including the
+  unnamed-branch flow `ddx(f, I(a,b))`** (Table 4-16 makes `I(n1,n2)` a
+  branch flow, so it is inside 4.5.6's surface; verified `2·I` exact,
+  the reversed orientation `I(b,a)` negated, and 0 when the flow is not
+  a system unknown): ✅
 - `absdelay` (+`maxdelay`), `transition` (3/4/5-argument,
-  `` `default_transition `` defaults, DC well-posed), `slew` (honoring
-  the LRM's *negative* `max_neg_slew_rate` — the sign defect that made
-  it ignore its input was found in the audit): ✅
+  `` `default_transition `` defaults — including for an **explicit zero**
+  rise/fall time, the LRM's own wording "specified or are equal to zero",
+  which used to switch instantaneously; and with *no* directive, the 1-
+  and 2-argument forms now take the LRM's "negligible, but non-zero"
+  transition instead of an exact identity — DC well-posed), `slew`
+  (honoring the LRM's *negative* `max_neg_slew_rate` — the sign defect
+  that made it ignore its input was found in the audit): ✅
 - `laplace_nd/np/zd/zp` via exact state-space realization and
   `zi_nd/np/zd/zp` via bilinear transform, both with **complex
   pole/zero pairs** per the LRM's (re, im) vector convention and
   parameter-dependent coefficients: ✅
+
+  Three approximations in this group are deliberate and now stated
+  plainly. ⚠️ `transition`/`slew` are one **rate-limited tracking loop**
+  at the fixed rate `1/trise`: exact for the comparator-style
+  unit-amplitude input they are written for, while an amplitude-A step
+  completes in `A·trise` (the LRM's per-transition scheduling, where
+  every transition takes exactly `trise`, is not modeled) — and the
+  small-signal transfer is a first-order lowpass with corner
+  `1000/trise` rad/s rather than the LRM's approximate unity at all
+  frequencies. ⚠️ `zi_*` transient behavior is the **continuous bilinear
+  image** of `H(z)`, not discrete-time sample-and-hold: a unity z-filter
+  is a wire, no staircase exists, and the `tau`/`t0` arguments of the
+  6-argument form are accepted but ignored (true sampling needs
+  simulator-side breakpoints). ⚠️ A **solution-dependent `laplace_*`
+  coefficient TRACKS** — LRM 4.5.14 classes the vectors as constant
+  expressions whose dynamic value freezes at analysis start — and now
+  draws a compile-time warning saying so (a dynamic `zi_*` constant slot
+  stays refused outright, the over-strict-but-safe reading).
 
   Verified against closed-form `H(s)`: all four `laplace_*` forms agree with the
   analytic one-pole response to **4.7e-16** over four decades, a complex pair
@@ -497,15 +528,27 @@ read 0 for its whole first delay before stepping to the bias. Both now seed from
 the converged operating point. LRM 4.5.15's *"no state history prior to
 time t == 0"* is what `max(·, 0)` accommodates; it does not make the value zero.
 
-⚠️ **Deviation, deliberate.** LRM 4.5.7 also says that with no `maxdelay`, *"the
-value of td when the absdelay() is first evaluated shall be used and any future
-changes to td shall be ignored"*. A time-varying `td` is still tracked. The only
-first-evaluation flag a model can observe is `IsInitialStep`, and at that flag the
-circuit solution is still the zero initial guess — a probe read inside
-`@(initial_step)` returns 0 — so latching there would store 0, which is worse than
-tracking; and where `td` is a parameter, freezing and not freezing are
-indistinguishable. Fixing it properly requires the simulator to latch at
-`MODEINITTRAN`, i.e. a per-slot flag in `OsdiAbsDelayInfo`.
+**The frozen-`td` rule is implemented now** (analog-operators audit closing
+E-514's deferred item, by exactly the mechanism its analysis prescribed): with
+no `maxdelay`, *"the value of td when the absdelay() is first evaluated shall
+be used and any future changes to td shall be ignored"* — a per-slot flag in
+`OsdiAbsDelayInfo` marks the no-`maxdelay` form, and ngspice latches `td` at
+`MODEINITTRAN`, where the operating point has converged (the model-visible
+`IsInitialStep` flag still sees the zero initial guess, which is why compiled
+code cannot latch it). Verified on a ramp with `td = 1ms + 1ms·V(ctl)`
+stepping mid-run: the no-`maxdelay` form answers with the frozen 1 ms delay
+(4.99 V, previously 3.99), while the `maxdelay` form tracks as the LRM asks.
+
+Two smaller honesty items from the same audit: ⚠️ the `idt` **assert/reset is
+a stiff first-order decay toward `ic`** (τ = 10 µs; ~90 % of the deviation
+remains 1 µs into a reset, gone by ~5 τ) rather than the LRM's instantaneous
+return — E-52's deliberate choice, because the algebraic pin made the
+transient integrator see an impulse and self-resetting integrators ring; and
+⚠️ the **`abstol`/nature tolerance arguments** of `ddt`/`idt`/`idtmod` are
+parsed and validated (positive, a real nature) but **do not influence
+simulator convergence tolerances** — the OSDI ABI has no per-equation
+tolerance channel, so ngspice applies its global `abstol`/`reltol` to the
+implicit-equation unknowns.
 - **noise sources** (LRM 4.6): `white_noise`, `flicker_noise`,
   `noise_table`, `noise_table_log` (inline or file data);
   operating-point-dependent factors and `ddt()`-shaped noise are exact
@@ -629,6 +672,47 @@ adc2 hi (out[3:2], in);        // positional slice
 adc2 lo (.out(out[1:0]), .in(r)); // named slice
 ```
 
+**Indirect-assignment placement rules hold** (behavior audit): LRM 5.6.7
+forbids an indirect branch assignment in conditional or looping
+statements unless the controlling expression is constant, and 5.6.5
+forbids contributions inside event controls — a guarded-off indirect
+assignment leaves its constraint as `0 = 0`, a singular matrix, so all
+three placements are compile errors (the constant-condition carve-out
+passes untouched). LRM 5.6.7.2's incompatibility rule is enforced in the
+same pass: a direct `<+` onto a branch that is also the target of an
+indirect assignment is an error naming both statements — it used to
+compile and be silently absorbed by the implicit unknown. ⚠️ The
+equality's left side accepts any real expression
+(`V(out): 2*V(a,b) + 1 == 1;`), a deliberate generalized-implicit-
+equation extension beyond Syntax 5-6's access-function-only LHS (the
+LRM's tolerance-selection intent is honored only for the access-function
+forms).
+
+**Hierarchical contributions create their own branch** (LRM 5.6.8.1 with
+5.5.4): `V(p, c1.mid) <+ 0.5;` in the parent synthesizes a distinct
+named branch over the flattened node pair instead of aliasing onto the
+child's own unnamed branch — the child's flow contribution between the
+same nodes is no longer discarded by the retention rule (a spurious
+L022 on fully legal code), and the child's probes read its own branch.
+Probes in the contributing module over the same hierarchical pair alias
+onto the contribution's branch (5.5.4's same-module rule); hierarchical
+references to a child's *named* branch keep merging, which is exactly
+5.6.8.2. Upward/absolute paths out of the compiled design
+(`V(top.drv.a)` from a sibling tree) remain out of scope for the
+single-design OSDI target — a located resolution error, not a silent
+drop.
+
+**Vector signal-access indices take parameter expressions** (LRM 5.5.2):
+`V(in[width-2])` folds at elaboration; because the index selects a node
+of the frozen OSDI descriptor, the parameters it reads become structural
+(frozen to `localparam`, netlist overrides refused with the standard
+warning) — the same rule parameter-shaped port widths already follow.
+Genvar and literal-expression indices work as before; an array
+*variable*'s index stays a runtime access and its parameters stay
+overridable. ⚠️ Reading both the potential and the flow of a
+never-contributed probe branch — illegal per 5.4.2.1 — is accepted with
+flow-probe semantics and warning L017 rather than rejected.
+
 ### 5.3 Procedural statements (LRM 5.7–5.9, 5.11) — ✅
 
 `if`/`else`; `case` over integers, reals, strings, and **arrays**
@@ -665,6 +749,17 @@ outside an analog function are targeted errors. The keywords are
 **contextual**: pre-2023 source that used `break` or `return` as an
 identifier still compiles, flagged by the L012 keyword-compat lint like
 the other VAMS reserved words.
+
+Two deliberate relaxations in this clause (behavior audit): ⚠️
+**contribution statements are allowed inside runtime `repeat`/`while`/
+`for` loops**, which LRM 5.9 forbids (only the genvar `analog_for` may
+contain them) — the extension is coherent (each executed iteration
+accumulates, noise handled per E-424) and widely useful, but a model
+relying on it is not portable LRM Verilog-A; analog filter functions and
+event controls inside runtime loops stay refused exactly as the LRM
+demands. ⚠️ **`do … while`** parses and runs — a SystemVerilog-style
+loop that Annex A.6.8's `analog_loop_statement` does not include
+(`repeat`/`while`/`for` only), supported as a non-LRM extension.
 
 ### 5.4 `casex` / `casez` — ⚠️ extension beyond Annex C
 
@@ -807,8 +902,11 @@ Module instantiation with named and positional ports and parameter
 overrides, open ports, **instance arrays**, arbitrary nesting, across
 `` `include `` boundaries; **`generate`** in all three forms with genvars
 usable in any expression; **`defparam`** with its LRM precedence over
-instance overrides; **hierarchical names** and `$root`; **implicit
-nets**; net **concatenation in port connections**:
+instance overrides — including `defparam` written *inside* a generate
+block (targeting the per-iteration instance) and module-scope `defparam`
+coexisting with generate constructs, both of which used to be silently
+dropped by the generate-rewriting pass; **hierarchical names** and
+`$root`; **implicit nets**; net **concatenation in port connections**:
 
 ```verilog
 // genvars usable in any expression, e.g. a parameter override
@@ -818,6 +916,7 @@ module gpexpr(a, c);
     generate
         for (i = 0; i < 3; i = i + 1) begin : g
             res #(.r(1e3*(i+1))) ri (a, c);   // 1k || 2k || 3k
+            defparam ri.tc = 1e-4*i;          // per-iteration target: legal (6.3.1)
         end
     endgenerate
 endmodule
@@ -826,6 +925,36 @@ defparam u1.r = 2e3;               // hierarchical override
 defparam u1.u2.r = 4e3;            // two levels down; wins over #(...)
 ```
 
+**Hierarchical system parameters on child instances** (LRM 6.3.6):
+`leaf #(.$mfactor(4)) u1 (p, n);` applies the full multiplicity
+transform to the inlined child — reads of `$mfactor` compose
+multiplicatively with the netlist-level instance value (and
+`$xposition`/`$yposition`/`$angle` additively, `$hflip`/`$vflip`
+multiplicatively), the child's flow contributions scale by *m*, its flow
+probes read the per-copy current back out, and its noise scales as the
+parallel combination demands (contributed-current noise power ×*m*,
+contributed-voltage noise power ÷*m*). Overrides compose down the
+hierarchy (`.$mfactor(2)` inside `.$mfactor(4)` is ×8) and with the
+netlist `m=`. ⚠️ Two forms inside a scaled child keep their unscaled
+shape: indirect contributions (`V(x): I(x) == 0`) and noise routed
+through a variable rather than contributed directly.
+
+**`$param_given` sees hierarchy overrides** (LRM 6.3.5/9.19): a child
+parameter set by an instance `#(...)` value or a `defparam` reports
+*given*, even though flattening bakes the value in as the parameter's
+new default (netlist `.model` overrides of the flattened name keep
+their native OSDI given-flag path).
+
+**Connection-size checking** (LRM 6.5.7.1): a scalar net — or any
+actual that does not resolve to a matching-width source — connected to a
+multi-bit port is a compile error citing the clause (it used to be
+silently replicated onto every bit). Matching-width buses,
+part-selects, and `{...}` concatenations connect bit-per-bit as before.
+Mixing positional and named forms in one `#(...)` parameter list is
+likewise an error (Syntax 6-2 makes the list all-ordered or all-named;
+the positional half used to be silently dropped), matching the existing
+check for port connections.
+
 One boundary the OSDI target makes explicit (and the compiler explains in
 its diagnostic): **structure binds at compile time** — a `generate`
 condition or bound may depend on genvars and literals but not on module
@@ -833,6 +962,20 @@ condition or bound may depend on genvars and literals but not on module
 time, after structure is frozen. Loop trip counts and `if` arms, being
 behavior, may depend on parameters freely. ⚠️ documented deviation with
 rationale.
+
+Remaining §6 gaps, all **refused with targeted diagnostics** rather than
+silently misbehaving: several generate constructs in one
+`generate…endgenerate` region (separate regions work), descending or
+general genvar loops (`i>=0; i=i-1` — only `<`/`<=` with an ascending
+`+` step unroll), hierarchical references into generate-block instances
+(`g[2].gg`), `macromodule`, paramset overloading and paramset output
+variables, and hierarchical access to a child's *port* nets
+(`V(u1.a, u1.b)`; child internal nets and `$root` paths work). Two
+behaviors are ⚠️ accepted extensions: named-block variables are
+readable *and writable* through hierarchical names (the LRM makes the
+analog-variable assignment an error), and the LRM 6.3.6 double-scaling
+misuse (a module dividing by `$mfactor` itself while the simulator also
+scales it) runs without the diagnostic the LRM shows.
 
 ## 7. System tasks and functions (LRM 9)
 
@@ -1003,15 +1146,15 @@ connected port.)*
 | 3.4 Parameters (ranges, localparam, aliasparam incl. 3.4.7 error rules, arrays incl. whole-array instantiation override, paramset, block-scoped) | ✅ (default-exemption ⚠️ and frozen-type-of-untyped ⚠️ documented) | `paramrange`, `localparam`, `array`, `paramarray`, `paramset`, `paramsethsp`, `blockparam`, `alias` |
 | 3.5–3.13 Natures, disciplines, nets, buses, nodesets, 3.11.1 compatibility (signal-flow/natureless/domainless), nature-attribute validation, NIST2018 constants | ✅ (base-nature attr omission ⚠️ and derived-access extension ⚠️ documented; vector branches ✖ rejected) | `derivednature`, `domainbind`, `bus`, `netinit`, `ground`, `signalflow` |
 | 4.1–4.4 Operators (incl. string relational, `===`/`!==` as 2-state `==`/`!=`), precedence, functions (`$clog2`, `$rtoi`/`$itor`, `ln1p`/`expm1`, domain diagnostics both routes, `%`-by-deck-zero fatal, same-node `V(a,a)`/`I(a,a)` rejected) | ✅ (`<<<`/`>>>` extension ⚠️ warned; runtime-probe domain policy ⚠️ documented) | `operator`, `precedence`, `shift`, `concat`, `stringcmp`, `clog2`, `convert`, `ceil`, `lrmfuncs`, `lrmintrin`, `domainrt` |
-| 4.5 Analog operators (all), **clause-by-clause audit 4.5.1–4.5.15** ([E-514](../../enhancements_doc/Enhancement-514.md)) | ✅ (`limexp` stateless ⚠️ documented; `absdelay` frozen-`td` ⚠️ below) | `absdelay`, `laplace`, `zi`, `slew`, `transition`, `idt*`, `ddx`, `opargs`, `discontinuity`, `last_crossing`, `defaulttransition`, `transedge`, `rtdomain`, `deckdomain` |
+| 4.5 Analog operators (all), **clause-by-clause audit 4.5.1–4.5.15** ([E-514](../../enhancements_doc/Enhancement-514.md)); frozen-`td` absdelay implemented, ddx over unnamed-branch flows, no-ic `idtmod` pins DC at 0, `default_transition` honored for explicit zeros | ✅ (`limexp` stateless ⚠️, idt-reset τ=10µs ⚠️, ddt/idt tolerances not plumbed ⚠️, transition amplitude approximation ⚠️, zi continuous-bilinear ⚠️, dynamic laplace coeffs track+warn ⚠️ — all documented) | `absdelay`, `laplace`, `zi`, `slew`, `transition`, `idt*`, `ddx`, `opargs`, `discontinuity`, `last_crossing`, `defaulttransition`, `transedge`, `rtdomain`, `deckdomain` |
 | 4.6 Noise (incl. correlation 4.6.4; `noise_table` linear-in-f, `noise_table_log` log-log) | ✅ | `noise`, `noisetable`, `noisecorr`, `noisejw` |
 | 5.2/6.2 Analog blocks (multiple) | ✅ | `multianalog` |
-| 5.6 Contributions, indirect assignment, port flow (incl. named port branches) | ✅ | `indirect_assignment`, `portflow`, `signalflow`, `lrm` |
-| 5.7–5.9, 5.11 Procedural statements, loops, disable, jump statements (`break`/`continue`/`return`, contextual keywords, genvar-for exclusion enforced) | ✅ | `analogloop`, `dowhile`, `repeat`, `disable`, `arraycase` |
+| 5.6 Contributions, indirect assignment (placement rules and the 5.6.7.2 direct/indirect incompatibility enforced; generalized equality LHS ⚠️ extension), hierarchical-contribution branch identity (5.6.8.1), parameter vector indices (5.5.2), port flow (incl. named port branches) | ✅ | `indirect_assignment`, `portflow`, `signalflow`, `lrm` |
+| 5.7–5.9, 5.11 Procedural statements, loops, disable, jump statements (`break`/`continue`/`return`, contextual keywords, genvar-for exclusion enforced) | ✅ (contributions in runtime loops ⚠️ and `do…while` ⚠️ are documented non-LRM extensions) | `analogloop`, `dowhile`, `repeat`, `disable`, `arraycase` |
 | casex/casez | ⚠️ extension beyond Annex C (C.7 excludes them from Verilog-A) | `casexz` |
 | 5.10 Events (steps with Table 5-1 exact per analysis, cross/above/timer, cross DC/t=0 gating, above init event, OR lists incl. comma, phase lists, placement rules enforced, invalid events rejected) | ✅ (cross/above tolerances ⚠️ warned not honored; strict out-of-range dir ⚠️ documented) | `initial_step`, `finalstep`, `cross`, `timer`, `lrmcorner` |
 | 4.7 Analog functions (arrays in/out/return incl. the LRM's Example 3 spelling; VAMS-2023 string return & args; function-local `parameter`s with shadowing; output-array zero-init; `return` statement) | ✅ (named blocks in bodies ⚠️ and const-context calls ⚠️ documented relaxations) | `funcarray`, `arrayout`, `arrayret` |
-| 6 Hierarchy (instantiation, generate incl. the legacy analog-block form — obsolete per G.2.3/C.20, kept as a compat extension ⚠️ — defparam, $root, part-select connections, hierarchical branch probes) | ✅ (param-shaped structure ⚠️ explained) | `instantiation`, `generate`, `legacygen`, `defparam`, `hiername`, `implicitnet`, `partselect`, `hierbranch` |
+| 6 Hierarchy (instantiation, generate incl. the legacy analog-block form — obsolete per G.2.3/C.20, kept as a compat extension ⚠️ — defparam incl. inside/beside generate, `#(.$mfactor(n))`-family child overrides with the full multiplicity transform, `$param_given` through hierarchy overrides, connection-size and mixed-override checking, $root, part-select connections, hierarchical branch probes) | ✅ (param-shaped structure ⚠️ explained) | `instantiation`, `generate`, `legacygen`, `defparam`, `hiername`, `implicitnet`, `partselect`, `hierbranch` |
 | 9.4–9.8 Display, file/string I/O (incl. 9.4.6/9.5.9 accepted-iteration deferral, `$monitor` change detection, `%r`, 9.5.1.1 append, pre-opened fds) | ✅ ([E-516](../../enhancements_doc/Enhancement-516.md) audit; MCD/`$fmonitor` ⚠️) | `display`, `fileio`, `stringio`, `fgetc`, `ungetc`, `sscanf`, `scanfmt`, `lrmsysio` |
 | 9.13 Random/distributions | ✅ (deterministic seed ⚠️ documented) | `rng`, `montecarlo` |
 | 9.17.3 / Annex E.3.4 `$limit` | ✅ (unknown name falls back to no limiting with a warning, per 9.17.3; `vdslim` = Table E.2's preferred spelling of `limvds`) | `fetlim`, `lrm` |

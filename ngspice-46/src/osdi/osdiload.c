@@ -196,9 +196,23 @@ static void absdelay_stamp_tran(CKTcircuit *ckt, GENinstance *gen_inst,
      * holds it. OSDIaccept() updates hist[k][ti] for ti >= 1 thereafter. The
      * pass-through Jacobian below is unchanged: the first timestep still forces
      * the output to track the input so the matrix is non-singular.          */
+    /* LRM 4.5.7 (analog-operators audit): "If maxdelay is not specified,
+     * the value of td when the absdelay() is first evaluated shall be used
+     * and any future changes to td shall be ignored." This is that first
+     * evaluation with a CONVERGED solution behind it (the model-visible
+     * IsInitialStep flag still sees the zero initial guess, which is why the
+     * latch lives here and not in compiled code -- E-514's own analysis).
+     * Latched per transient: a later transient re-latches at its own init. */
+    if (extra->delay_td_frozen == NULL && n > 0) {
+      extra->delay_td_frozen = TMALLOC(double, n);
+    }
     for (uint32_t k = 0; k < n; k++) {
       uint32_t y_mapped = node_mapping[infos[k].y_node];
       extra->delay_hist[k][0] = ckt->CKTrhsOld ? ckt->CKTrhsOld[y_mapped] : 0.0;
+      if (extra->delay_td_frozen) {
+        double td0 = *((double *)(((char *)inst) + infos[k].td_offset));
+        extra->delay_td_frozen[k] = (td0 < 0.0) ? 0.0 : td0;
+      }
       *(extra->delay_jac_y[k]) += 1.0;
       *(extra->delay_jac_z[k]) += -1.0;
     }
@@ -219,10 +233,16 @@ static void absdelay_stamp_tran(CKTcircuit *ckt, GENinstance *gen_inst,
     uint32_t y_mapped = node_mapping[infos[k].y_node];
     uint32_t z_mapped = node_mapping[infos[k].z_node];
 
-    /* Read td from OSDI instance data */
-    double td = *((double *)(((char *)inst) + infos[k].td_offset));
-    if (td < 0.0)
-      td = 0.0;
+    /* Read td from OSDI instance data -- or, for a frozen slot (no maxdelay,
+     * LRM 4.5.7), the value latched at this transient's MODEINITTRAN. */
+    double td;
+    if ((infos[k].flags & OSDI_ABSDELAY_TD_FROZEN) && extra->delay_td_frozen) {
+      td = extra->delay_td_frozen[k];
+    } else {
+      td = *((double *)(((char *)inst) + infos[k].td_offset));
+      if (td < 0.0)
+        td = 0.0;
+    }
 
     double V_y_old = ckt->CKTrhsOld[y_mapped];
     double V_z_old = ckt->CKTrhsOld[z_mapped];

@@ -1,0 +1,19 @@
+`include "disciplines.vams"
+module hchild(a, b, cout);
+  inout a, b, cout; electrical a, b, cout;
+  electrical mid;
+  analog begin
+    I(a, mid) <+ 1m*V(a, mid);     // branch r1: child's own unnamed branch (a,mid)
+    I(mid, b) <+ 2m*V(mid, b);     // branch r2
+    I(cout)   <+ I(a, mid);        // mirror the flow of child's (a,mid) branch
+  end
+endmodule
+module hier3(p, n, m);
+  inout p, n, m; electrical p, n, m;
+  hchild c1(p, n, m);
+  analog begin
+    // LRM 5.6.8.1: this creates a NEW unnamed branch in hier3 between p and
+    // c1.mid -- distinct from the child's own (a,mid) branch.
+    V(p, c1.mid) <+ 0.5;
+  end
+endmodule

@@ -295,7 +295,10 @@ pub struct HirInterner {
     pub implicit_equations: TiVec<ImplicitEquation, ImplicitEquationKind>,
     pub lim_state: TiMap<LimitState, Value, Vec<(Value, bool)>>,
     /// Per absdelay slot: (eq_y = synthetic input node, eq_z = output node).
-    pub absdelay_equations: Vec<(ImplicitEquation, ImplicitEquation)>,
+    /// One entry per `absdelay`: the synthetic-input and output implicit
+    /// equations, plus the frozen-td flag (LRM 4.5.7: no maxdelay means the
+    /// simulator latches td at its first transient evaluation).
+    pub absdelay_equations: Vec<(ImplicitEquation, ImplicitEquation, bool)>,
     /// Per last_crossing slot: (eq_y = synthetic input node, eq_z = output node).
     pub last_crossing_equations: Vec<(ImplicitEquation, ImplicitEquation)>,
     /// Per indirect branch assignment slot: the free unknown's implicit equation.

@@ -575,6 +575,76 @@ impl Diagnostic for BodyValidationDiagnosticWrapped<'_> {
                             .to_owned(),
                     ])
             }
+            BodyValidationDiagnostic::IllegalIndirectContribute { stmt, ctx } => {
+                let FileSpan { range, file } = self.parse.to_file_span(
+                    self.body_sm.stmt_map_back[stmt]
+                        .as_ref()
+                        .map_or_else(TextRange::default, |it| it.range()),
+                    self.sm,
+                );
+
+                Report::error()
+                    .with_message(format!(
+                        "indirect branch contributions are not allowed in {}",
+                        ctx
+                    ))
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Secondary,
+                        file_id: file,
+                        range: range.into(),
+                        message: "not allowed here".to_owned(),
+                    }])
+                    .with_notes(vec![
+                        "help: LRM 5.6.7 forbids indirect branch contributions in conditional \
+                         or looping statements unless the controlling expression is a constant \
+                         expression, and 5.6.5 forbids contributions inside event controls; a \
+                         guarded-off indirect assignment leaves its constraint equation as \
+                         0 = 0 -- a singular matrix"
+                            .to_owned(),
+                    ])
+            }
+            BodyValidationDiagnostic::MixedIndirectContribute { direct, indirect } => {
+                let FileSpan { range, file } = self.parse.to_file_span(
+                    self.body_sm.stmt_map_back[direct]
+                        .as_ref()
+                        .map_or_else(TextRange::default, |it| it.range()),
+                    self.sm,
+                );
+                let ind_span = self.parse.to_file_span(
+                    self.body_sm.stmt_map_back[indirect]
+                        .as_ref()
+                        .map_or_else(TextRange::default, |it| it.range()),
+                    self.sm,
+                );
+
+                Report::error()
+                    .with_message(
+                        "direct contribution to a branch that is the target of an indirect \
+                         branch assignment"
+                            .to_owned(),
+                    )
+                    .with_labels(vec![
+                        Label {
+                            style: LabelStyle::Primary,
+                            file_id: file,
+                            range: range.into(),
+                            message: "this `<+` contribution targets the branch".to_owned(),
+                        },
+                        Label {
+                            style: LabelStyle::Secondary,
+                            file_id: ind_span.file,
+                            range: ind_span.range.into(),
+                            message: "the branch is indirectly assigned here".to_owned(),
+                        },
+                    ])
+                    .with_notes(vec![
+                        "help: LRM 5.6.7.2 -- once a value is indirectly assigned to a branch \
+                         it cannot be contributed to with `<+`; the constraint equation pins \
+                         the branch value and the direct contribution would be silently \
+                         absorbed by the implicit unknown"
+                            .to_owned(),
+                    ])
+            }
             BodyValidationDiagnostic::WriteToInputArg { expr, arg } => {
                 let FileSpan { range, file } = self.expr_src(expr);
                 let arg_name = arg.name(self.db.upcast());
@@ -952,6 +1022,27 @@ impl Diagnostic for BodyValidationDiagnosticWrapped<'_> {
                         message: "unrecognized event expression".to_owned(),
                     }])
                     .with_notes(vec![help])
+            }
+            BodyValidationDiagnostic::DynamicFilterCoeff { expr, form, .. } => {
+                let FileSpan { range, file } = self.expr_src(expr);
+                Report::warning()
+                    .with_message(format!(
+                        "{form}: a coefficient depends on the solution and will TRACK"
+                    ))
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: file,
+                        range: range.into(),
+                        message: "solution-dependent filter coefficient".to_owned(),
+                    }])
+                    .with_notes(vec![
+                        "help: LRM 4.5.14 / Table 4-20 class the zero/pole/coefficient \
+                         vectors as constant expressions: a dynamic value would take its \
+                         value at the start of the analysis and further changes 'shall be \
+                         ignored'. This implementation re-evaluates the vectors every \
+                         iteration, so the filter becomes time-varying instead"
+                            .to_owned(),
+                    ])
             }
             BodyValidationDiagnostic::EventTolIgnored { expr, form, what, .. } => {
                 let FileSpan { range, file } = self.expr_src(expr);

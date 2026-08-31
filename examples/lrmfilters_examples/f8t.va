@@ -1,0 +1,5 @@
+`include "disciplines.vams"
+module f8t(i, o);
+  inout i, o; electrical i, o;
+  analog V(o) <+ transition(V(i));   // no rise/fall, no directive
+endmodule

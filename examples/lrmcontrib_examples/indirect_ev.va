@@ -1,0 +1,8 @@
+`include "disciplines.vams"
+module indirect_ev(out, pin, nin);
+  inout out, pin, nin; electrical out, pin, nin;
+  analog begin
+    @(initial_step)
+      V(out): V(pin,nin) == 0;
+  end
+endmodule
