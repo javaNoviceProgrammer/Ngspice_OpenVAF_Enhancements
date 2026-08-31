@@ -313,6 +313,22 @@ impl Diagnostic for PreprocessorDiagnostic {
                             .to_owned(),
                     ])
             }
+            PreprocessorDiagnostic::AmsOnlyDirective { span, .. } => {
+                let span = span.to_file_span(&sm);
+                Report::warning()
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: span.file,
+                        range: span.range.into(),
+                        message: "directive ignored".to_owned(),
+                    }])
+                    .with_notes(vec![
+                        "help: Annex C.4 excludes this directive from Verilog-A; an \
+                         implicit net takes its discipline from the connected port \
+                         instead (declare disciplines explicitly to be portable)"
+                            .to_owned(),
+                    ])
+            }
             PreprocessorDiagnostic::ReservedMacroName { span, .. } => {
                 let span = span.to_file_span(&sm);
                 Report::warning()

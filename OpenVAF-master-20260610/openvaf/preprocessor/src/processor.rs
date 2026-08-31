@@ -450,6 +450,16 @@ impl<'a> Processor<'a> {
                     p.skip_rest_of_line(err);
                 }
                 CompilerDirective::DefaultDiscipline => {
+                    // Annex C.4: "the `default_discipline compiler directive is
+                    // not supported in Verilog-A" -- and this compiler never
+                    // consumes it (implicit nets take their discipline from the
+                    // connected port instead). Silently swallowing it meant a
+                    // VAMS source relying on the directive compiled with
+                    // different net-discipline resolution and no hint; say so.
+                    err.push(PreprocessorDiagnostic::AmsOnlyDirective {
+                        name: "default_discipline".to_owned(),
+                        span: p.current_span(),
+                    });
                     self.default_discipline = p.bump_directive_and_capture_ident(err);
                     p.skip_rest_of_line(err);
                 }

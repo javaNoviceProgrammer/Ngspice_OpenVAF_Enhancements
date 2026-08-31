@@ -110,6 +110,10 @@ pub enum TokenKind {
     /// '{
     ArrStart,
 
+    /// === (case equality, LRM 4.2.6)
+    Eq3,
+    /// !== (case inequality)
+    Neq2,
     /// ==
     Eq2,
     /// !=

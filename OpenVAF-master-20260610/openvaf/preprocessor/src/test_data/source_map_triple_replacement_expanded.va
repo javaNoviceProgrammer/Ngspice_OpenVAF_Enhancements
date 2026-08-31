@@ -10,7 +10,7 @@
 // (ipr-chair@lists.accellera.org).
 // All other rights reserved
 //
-// Version 2.4.0
+// VAMS-2023
 //
 
 // Mathematical and physical constants
@@ -32,9 +32,11 @@
 
 
 
-// The following constants have been taken from http://physics.nist.gov
+// The following constants have been taken from:
+// https://physics.nist.gov/cuu/Constants
 // P_ is a physical constant
 // charge of electron in Coulombs
+
 
 
 
@@ -46,7 +48,9 @@
 
 
 
+
 // Planck's constant in Joules*second
+
 
 
 
@@ -56,7 +60,9 @@
 
 
 
+
 // permeability of vacuum in Henrys/meter
+
 
 // zero Celsius in Kelvin
 

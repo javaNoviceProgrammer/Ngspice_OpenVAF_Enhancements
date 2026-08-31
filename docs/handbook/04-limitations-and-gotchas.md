@@ -20,6 +20,11 @@ out of scope, most notably:
   the connected port — [E-41](../../enhancements_doc/Enhancement-41.md).)
 - **discrete-domain disciplines** — `domain discrete` combined with natures
   is rejected with a proper error per LRM 3.6.2.2.
+- **vector branches** (LRM 3.12: `branch (a,b) br;` over whole vector
+  nets) — rejected with a located diagnostic; declare per-bit branches
+  (`branch (a[i],b[i]) bri;`) instead. Likewise **out-of-module
+  discipline declarations** (`electrical top.other.net;`, LRM 3.10),
+  which have no meaning in a single-module OSDI compile.
 
 When in doubt whether a construct is Verilog-A or AMS-only, Annex C of the
 LRM (in [`docs/`](..)) is the authority the compiler follows.
@@ -49,6 +54,14 @@ The single most useful mental model for this toolchain:
   expressions may depend on parameters (and the solution) freely — a
   model-card override genuinely changes how many times a `for` loop runs
   ([E-70](../../enhancements_doc/Enhancement-70.md)).
+- **Untyped parameters take their default's type at compile time.**
+  `parameter untyped = 1;` compiles as an *integer* parameter, so a
+  netlist override of `2.5` is rounded to that frozen type. LRM 3.4.1
+  says the type follows the *final overridden value*, but a compiled
+  OSDI descriptor declares exactly one type per parameter, so
+  override-dependent typing cannot exist here. Write `parameter real`
+  when real overrides are expected; ngspice warns when an override is
+  rounded this way.
 
 ## 4.4 Documented design decisions
 

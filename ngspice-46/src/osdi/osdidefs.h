@@ -276,6 +276,8 @@ double osdi_limitlog(bool init, bool *icheck, double vnew, double vold,
                      double LIM_TOL);
 double osdi_fetlim(bool init, bool *icheck, double vnew, double vold,
                    double vto);
+/* LRM 9.17.3: pass-through bound to any unknown/unsupported $limit name. */
+double osdi_limit_unknown(bool init, bool *icheck, double vnew, double vold);
 
 /* Enhancement-364: transient noise for OSDI devices (osditrnoise.c). */
 double osdi_trnoise_ts(CKTcircuit *ckt);

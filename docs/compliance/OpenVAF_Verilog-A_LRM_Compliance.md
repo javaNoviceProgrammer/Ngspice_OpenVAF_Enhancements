@@ -80,6 +80,11 @@ next to the contiguous forms. A spaced literal whose digits are illegal
 for its base is a located error. Two illegal forms that used to compile
 in silence are errors now: `1.` (LRM 2.6.2 requires a digit on each side
 of the decimal point) and a string spanning a raw newline (LRM 2.7).
+A backslash immediately before the newline is a **line continuation**
+instead: the backslash–newline pair contributes nothing to the string
+(SystemVerilog 5.9 semantics and de-facto Verilog-A practice — BSIM4
+splits its long `$strobe` messages exactly this way), so only an
+unescaped newline is refused.
 `assert`, `root` and `do` — none of them reserved by Annex B — are legal
 identifiers again (`do` contextually, so do-while still parses), and
 attribute instances parse in the expression positions of LRM 2.9, with
@@ -119,13 +124,26 @@ real x = 2.0 * gain;
 real taps[0:3] = '{0.1, 0.2, 0.3, 0.4};
 ```
 
+A **string literal** assigned to an `integer` converts per LRM 3.3: the
+characters are treated as a packed byte vector, right-justified and
+truncated on the left / zero-filled to 32 bits (`"A"` is 65, `"AB"` is
+16706 = 0x4142, `"ABCDE"` keeps its last four bytes). Only the *literal*
+converts — a string **value** still cannot be assigned to an integral
+type, exactly as the LRM words it.
+
 ### 3.2 Parameters (LRM 3.4) — ✅
 
 Ranges and exclusions enforced on user-given values; `localparam`
 genuinely non-overridable; `aliasparam` including `$param_given` through
-the alias; **string parameters** (usable in `case` dispatch); **array
+the alias — with both of LRM 3.4.7's error rules enforced: naming the
+alias **and** its target on one `.model`/instance line is an error (in
+the ngspice netlist parser and in the OSDI `setup_model` path both), and
+referencing the alias anywhere in the module body is a targeted compile
+error; **string parameters** (usable in `case` dispatch); **array
 parameters of any dimensionality**, expanded to per-element OSDI
-parameters that are individually overridable from SPICE:
+parameters that are individually overridable from SPICE and overridable
+**whole** at instantiation (`leaf #(.w('{1,2,3})) l1(a,b);`, with the
+element count checked against the declaration):
 
 ```verilog
 parameter real r = 1k from (0:inf) exclude 1e6;
@@ -134,6 +152,17 @@ localparam real g = 1.0 / r;              // tracks r, not overridable
 parameter real w[0:1][0:2] = '{'{1,2,3}, '{4,5,6}};
 // SPICE: .model m dev(w[1][2]=9.5)
 ```
+
+Two typing edges are deliberate deviations, documented in the
+[handbook's limitations chapter](../handbook/04-limitations-and-gotchas.md):
+an **untyped parameter's type is frozen at compile time** from its
+default (`parameter untyped = 1;` is an integer parameter, and a real
+override is rounded — with an ngspice warning — where LRM 3.4.1 would
+re-type the parameter from the final overridden value; a compiled OSDI
+descriptor declares exactly one type per parameter). ⚠️ And in the
+lenient direction, an untyped **string or array** parameter is accepted
+with its type inferred from the default, although LRM 3.4.1 makes the
+type mandatory for those two kinds.
 
 One deliberate reading of the LRM, matching industry practice (the CMC
 convention): a parameter's **default is exempt** from its own range —
@@ -161,7 +190,7 @@ that depend on it. The LRM's `#(.blk.p(4))` instance override of a
 block-scoped parameter is illegal (LRM 6.3.2) and rejected with a targeted
 diagnostic.
 
-**`paramset`** blocks (a Verilog-AMS 3.4.6 feature adopted because real
+**`paramset`** blocks (a Verilog-AMS 6.4 feature adopted because real
 model libraries use them) work, including hidden-system-parameter
 assignments:
 
@@ -217,6 +246,55 @@ including **probe-only branches** — probing a branch that is never
 contributed to reads its true flow (an ideal ammeter) instead of the
 0-and-open-circuit a naive topology gives.
 
+**Discipline compatibility implements all of LRM 3.11.1** (natures audit):
+a branch — declared or unnamed — between a conservative net and a
+signal-flow net of the same potential nature is legal (the LRM's own
+worked example declares `electrical` and `sig_flow_v` compatible: "the
+nature for flow does not exist in sig_flow_v"), a **natureless**
+discipline is compatible with its whole domain, and a **domainless** one
+with everything. The previous rule demanded every nature binding
+both-present-or-both-absent, rejecting exactly those pairings — and the
+diagnostic's help text stated a units-only rule that was never the LRM's.
+A mixed branch takes the discipline that actually has the natures, so
+`I(br)` across `electrical`/`voltage` works. Genuinely incompatible
+pairings (`electrical` vs `rotational`) are still rejected.
+
+**Nature attribute forms are validated again** (the checks existed but
+iterated the wrong accessor and never ran): `access = "SA"` or
+`access = 3.0` (LRM 3.6.1.2 requires a raw identifier) and a
+`ddt_nature`/`idt_nature` value that is not a nature name are located
+errors at the declaration, instead of being silently dropped — which used
+to leave the nature with no access function and only a baffling
+"not found in the current scope" error at the first use. Two more 3.6.1.2
+rules are **warnings**: a *derived* nature declaring `units` (the declared
+value is ignored — the parent's units always win — so saying nothing hid
+a modelling error), and an `idt_nature`/`ddt_nature` override unrelated
+(no shared base nature) to the link the parent uses.
+
+Two deliberate deviations stand, now recorded here: ⚠️ a **base nature may
+omit** the `abstol`/`access`/`units` attributes 3.6.1.2 requires (E-422's
+pinned decision — omission produces no wrong answer), and ⚠️ a **derived
+nature may declare its own access function** (E-39 supports it on
+purpose: `nature Current2 : Current; access = J;` gives a working `J()`
+— the LRM calls this illegal). Two constructs are **not supported** and
+rejected with located diagnostics: **vector branches** (LRM 3.12's
+`branch (a,b) br1;` over whole vector nets — use per-bit branches
+`branch (a[i],b[i])`), and **out-of-module discipline declarations**
+(LRM 3.10's `electrical top.other.net;` — meaningless in a
+single-module OSDI compile).
+
+The shipped **`constants.vams` is the VAMS-2023 Annex D.2 file**: defining
+`` `PHYSICAL_CONSTANTS_NIST2018 `` before the include selects the exact
+2019-SI values (`P_Q` = 1.602176634e-19, `P_K` = 1.380649e-23, `P_H`,
+`P_EPS0`, and the measured `P_U0` = 1.25663706212e-6); the default
+without the define stays NIST1998 for backward compatibility, exactly as
+the 2023 LRM specifies. (The 2.4.0 file shipped before had no NIST2018
+set, so opting in silently produced NIST1998 values.) The OSDI 0.4
+nature descriptors are also exact now: every nature's `num_attr` claimed
+one attribute more than it owned (a consumer walking the range read the
+next nature's first attribute), verified fixed by a dlopen dump of the
+emitted `OSDI_NATURES` table.
+
 **Named port branches** (LRM 3.7.2) work as of E-84 and carry the same
 defining equation as a direct port-flow probe; contributing to one is a
 proper diagnostic (port branches are probe-only per the LRM):
@@ -242,7 +320,7 @@ I(top.d1.branch(<p>))    // d1's own current into its port p
 ### 4.1 Operators and precedence (LRM 4.1, Table 4-2) — ✅
 
 The full operator surface — arithmetic (incl. `**`), comparison, logical,
-bitwise, shifts (`<<`/`>>` and arithmetic `<<<`/`>>>`), ternary
+bitwise, shifts, ternary
 (including over strings), concatenation `{a,b}` and replication
 `{n{x}}` — was **audited operator-by-operator and level-by-level against
 Table 4-2** with self-checking bitmask modules whose failure modes are
@@ -254,6 +332,39 @@ including `2**3**2 = 64` (left-associative per Verilog) and unary binding
 above `**` (`-2**2 = 4`). String comparison covers both equality
 (`==`/`!=`) and the relational operators (`<`/`<=`/`>`/`>=`), the latter a
 lexicographic (`strcmp`) comparison (E-106).
+
+The **arithmetic shifts `<<<`/`>>>` are a flagged extension**: LRM 4.2.11
+bars them from analog blocks, so every use draws a warning naming the
+rule — but they keep working, because `>>>` is Verilog's only spelling of
+a sign-extending right shift (`<<<` is identical to `<<`). ⚠️ The **case
+(in)equality operators `===`/`!==`** (LRM 4.2.6) lex and evaluate with
+`==`/`!=` semantics — exact in a 2-state analog world, which has no x/z
+bits for them to distinguish (they previously died with a generic parse
+error that never named the operator). A **compile-time shift distance
+outside 0..=31** is a warning plus the LRM-defined value — the distance
+is unsigned (LRM 4.2.11), so `1<<32` is 0 and `-8>>>34` is the sign fill,
+exactly what a run-time distance computes; it used to be a hard error,
+internally inconsistent with that run-time path. And integer `/` and `%`
+are now **fully defined at the code-generation level**: divide-by-zero
+yields 0 and `INT_MIN/-1` wraps to `INT_MIN`, where LLVM's raw `sdiv`/
+`srem` were undefined behaviour that could SIGFPE an x86 host the moment
+a runtime divisor crossed zero.
+
+**Same-node branch access is an error** (LRM 4.4, Table 4-16): `V(a,a)`
+and `I(a,a)` no longer compile — "the operands of an expression shall be
+unique to define a valid branch", and the table marks both forms Error.
+`V(a,a)` used to compile with no diagnostic at all and silently read 0.
+A *named* degenerate branch declaration (`branch (a,a) b;`) keeps its
+E-414 warning: declaring one is survivable, accessing it is not.
+
+**`%` by a deck-supplied zero is a run-time error** (LRM 4.2.4: "It shall
+be an error to pass zero (0) as the second argument to the modulus
+operator"): a literal zero divisor was already a compile error; a zero
+arriving through a model card now aborts the analysis with
+`OSDI(fatal) … %: the second operand (the modulus divisor) is zero`
+instead of a silent NaN and a generic convergence failure — the same
+three-route policy as the math builtins (E-509). A genuinely runtime
+divisor is deliberately left unguarded and evaluates to the defined 0.
 
 ### 4.2 Built-in and environment functions (LRM 4.3, 9.7) — ✅
 
@@ -293,7 +404,14 @@ used to reach the maths library untouched and return `nan`/`inf` silently;
 [E-509](../../enhancements_doc/Enhancement-509.md) refuses it at run time with
 the same information. A genuine *run-time* argument is deliberately left alone:
 `sqrt(V(p,n))` legitimately sees a negative argument during Newton iteration,
-and refusing that would break working models.
+and refusing that would break working models. ⚠️ That last route is a
+documented deviation from LRM 4.3.2's unqualified "input values outside of the
+valid range for the operator shall report an error". One scoping note on the
+claim above: `0**0` and `pow(0,0)` evaluate to **1.0** — the near-universal
+convention, and IEEE 1364's integer-power table says the same — although
+Table 4-14's `pow` domain (`x = 0` requires `y > 0`) reads the point out; the
+guards flag `0**negative` and a negative base with a fractional exponent, not
+`0**0`.
 
 ### 4.3 Analog operators (LRM 4.5) — ✅ (one documented deviation)
 
@@ -511,30 +629,49 @@ adc2 hi (out[3:2], in);        // positional slice
 adc2 lo (.out(out[1:0]), .in(r)); // named slice
 ```
 
-### 5.3 Procedural statements (LRM 5.7–5.9) — ✅
+### 5.3 Procedural statements (LRM 5.7–5.9, 5.11) — ✅
 
 `if`/`else`; `case` over integers, reals, strings, and **arrays**
 (element-wise); all four loops with runtime trip counts that honor
-model-card parameter overrides; `disable` as the LRM's early-exit
-(Verilog-A has no `break`/`continue`, and the compiler says so with the
-`disable` idiom in the diagnostic):
+model-card parameter overrides; `disable` as the LRM's named-block early
+exit; and the **VAMS-2023 jump statements** `break`/`continue`/`return`
+(LRM 5.11, Annex-C audit): `break`/`continue` act on the innermost
+runtime loop of any kind (`for`'s `continue` re-enters at the increment,
+`repeat`'s still counts the iteration), `return [expr]` exits an analog
+function — from arbitrarily nested statements — after optionally setting
+its return value:
 
 ```verilog
-for (i = 0; i < n; i = i + 1) acc = acc + w[i] * x[i];
-repeat (4) y = f(y);
-do begin y = y/2; end while (y > 1);   // post-test: body runs once
-
-begin : scan
-    integer k;
-    for (k = 0; k < 8; k = k + 1)
-        if (v[k] > vth) disable scan;  // the break idiom
+for (i = 0; i < n; i = i + 1) begin
+    if (w[i] == 0.0) continue;         // skip, increment still runs
+    if (i == cutoff) break;
+    acc = acc + w[i] * x[i];
 end
+
+analog function real findk;
+    input lim; integer lim; integer k;
+    begin
+        findk = -1.0;
+        for (k = 0; k < 10; k = k + 1)
+            if (k == lim) return k;    // early exit, value set
+    end
+endfunction
 ```
 
-### 5.4 `casex` / `casez` — ✅
+Position rules are enforced: `break`/`continue` outside a runtime loop —
+including inside a genvar `analog_for`, which LRM 5.9.3 excludes from
+jump statements (those loops unroll at elaboration) — and `return`
+outside an analog function are targeted errors. The keywords are
+**contextual**: pre-2023 source that used `break` or `return` as an
+identifier still compiles, flagged by the L012 keyword-compat lint like
+the other VAMS reserved words.
 
-The don't-care case variants, with the 2-state semantics the analog
-subset implies: `x`/`z`/`?` digits of a based literal written directly as
+### 5.4 `casex` / `casez` — ⚠️ extension beyond Annex C
+
+The don't-care case variants are legal in full Verilog-AMS but **Annex
+C.7 excludes them from Verilog-A** ("casex and casez are not supported in
+Verilog-A"); this compiler supports them anyway as a deliberate superset
+extension, with 2-state semantics: `x`/`z`/`?` digits of a based literal written directly as
 an item form a comparison mask — the arm matches on every *care* bit.
 `casex` treats x/z/? as don't-cares, `casez` only z/?. The classic
 priority-encoder idiom (from the committed
@@ -738,8 +875,10 @@ using them run predictably instead of being rejected.
 
 ### 7.6 Attributes as simulator metadata — ✅
 
-`(* desc="…" *)` on a variable exposes it as an operating-point variable
-(`print @n1[gm]`, `.save`, `.meas`); `(* type="instance" *)` on a
+`(* desc="…" *)` on a **module-scope** variable exposes it as an
+operating-point variable (`print @n1[gm]`, `.save`, `.meas`) — a
+described variable declared inside a named block is local to that block
+(LRM 3.2.1) and is no longer exported as a phantom op-var; `(* type="instance" *)` on a
 parameter puts it on the instance line and under `alter`/`.dc` sweeps;
 `desc`/`units` on parameters populate the OSDI descriptor.
 
@@ -790,20 +929,22 @@ connected port.)*
 |---|---|---|
 | 2 Lexical (identifiers, numbers, strings, attributes, three-token based literals, expression-position attrs) | ✅ ([E-515](../../enhancements_doc/Enhancement-515.md) audit) | `escid`, `stresc`, `comment`, `lrmlex` |
 | 3.2–3.3 Value types, variables, persistence | ✅ | `vartype`, `variable_persistence`, `intstate`, `varinit` |
-| 3.4 Parameters (ranges, localparam, aliasparam, arrays incl. name-then-range, paramset, block-scoped) | ✅ (default-exemption ⚠️ documented) | `paramrange`, `localparam`, `array`, `paramarray`, `paramset`, `paramsethsp`, `blockparam` |
-| 3.5–3.7 Natures, disciplines, nets, buses, nodesets | ✅ | `derivednature`, `domainbind`, `bus`, `netinit`, `ground`, `signalflow` |
-| 4.1–4.3 Operators (incl. string relational), precedence, functions (`$clog2`, `$rtoi`/`$itor`, `ln1p`/`expm1`, domain diagnostics both routes) | ✅ (audited) | `operator`, `precedence`, `shift`, `concat`, `stringcmp`, `clog2`, `convert`, `ceil`, `lrmfuncs`, `lrmintrin`, `domainrt` |
+| 3.4 Parameters (ranges, localparam, aliasparam incl. 3.4.7 error rules, arrays incl. whole-array instantiation override, paramset, block-scoped) | ✅ (default-exemption ⚠️ and frozen-type-of-untyped ⚠️ documented) | `paramrange`, `localparam`, `array`, `paramarray`, `paramset`, `paramsethsp`, `blockparam`, `alias` |
+| 3.5–3.13 Natures, disciplines, nets, buses, nodesets, 3.11.1 compatibility (signal-flow/natureless/domainless), nature-attribute validation, NIST2018 constants | ✅ (base-nature attr omission ⚠️ and derived-access extension ⚠️ documented; vector branches ✖ rejected) | `derivednature`, `domainbind`, `bus`, `netinit`, `ground`, `signalflow` |
+| 4.1–4.4 Operators (incl. string relational, `===`/`!==` as 2-state `==`/`!=`), precedence, functions (`$clog2`, `$rtoi`/`$itor`, `ln1p`/`expm1`, domain diagnostics both routes, `%`-by-deck-zero fatal, same-node `V(a,a)`/`I(a,a)` rejected) | ✅ (`<<<`/`>>>` extension ⚠️ warned; runtime-probe domain policy ⚠️ documented) | `operator`, `precedence`, `shift`, `concat`, `stringcmp`, `clog2`, `convert`, `ceil`, `lrmfuncs`, `lrmintrin`, `domainrt` |
 | 4.5 Analog operators (all), **clause-by-clause audit 4.5.1–4.5.15** ([E-514](../../enhancements_doc/Enhancement-514.md)) | ✅ (`limexp` stateless ⚠️ documented; `absdelay` frozen-`td` ⚠️ below) | `absdelay`, `laplace`, `zi`, `slew`, `transition`, `idt*`, `ddx`, `opargs`, `discontinuity`, `last_crossing`, `defaulttransition`, `transedge`, `rtdomain`, `deckdomain` |
 | 4.6 Noise (incl. correlation 4.6.4; `noise_table` linear-in-f, `noise_table_log` log-log) | ✅ | `noise`, `noisetable`, `noisecorr`, `noisejw` |
 | 5.2/6.2 Analog blocks (multiple) | ✅ | `multianalog` |
 | 5.6 Contributions, indirect assignment, port flow (incl. named port branches) | ✅ | `indirect_assignment`, `portflow`, `signalflow`, `lrm` |
-| 5.7–5.9 Procedural statements, loops, disable | ✅ | `analogloop`, `dowhile`, `repeat`, `disable`, `arraycase` |
-| casex/casez | ✅ | `casexz` |
+| 5.7–5.9, 5.11 Procedural statements, loops, disable, jump statements (`break`/`continue`/`return`, contextual keywords, genvar-for exclusion enforced) | ✅ | `analogloop`, `dowhile`, `repeat`, `disable`, `arraycase` |
+| casex/casez | ⚠️ extension beyond Annex C (C.7 excludes them from Verilog-A) | `casexz` |
 | 5.10 Events (steps, cross/above/timer, OR lists, phase lists) | ✅ | `initial_step`, `finalstep`, `cross`, `timer`, `lrmcorner` |
-| 5.11 Analog functions (arrays in/out/return) | ✅ | `funcarray`, `arrayout`, `arrayret` |
-| 6 Hierarchy (instantiation, generate incl. legacy analog-block form, defparam, $root, part-select connections, hierarchical branch probes) | ✅ (param-shaped structure ⚠️ explained) | `instantiation`, `generate`, `legacygen`, `defparam`, `hiername`, `implicitnet`, `partselect`, `hierbranch` |
+| 4.7 Analog functions (arrays in/out/return; VAMS-2023 string return & args; `return` statement) | ✅ | `funcarray`, `arrayout`, `arrayret` |
+| 6 Hierarchy (instantiation, generate incl. the legacy analog-block form — obsolete per G.2.3/C.20, kept as a compat extension ⚠️ — defparam, $root, part-select connections, hierarchical branch probes) | ✅ (param-shaped structure ⚠️ explained) | `instantiation`, `generate`, `legacygen`, `defparam`, `hiername`, `implicitnet`, `partselect`, `hierbranch` |
 | 9.4–9.8 Display, file/string I/O (incl. 9.4.6/9.5.9 accepted-iteration deferral, `$monitor` change detection, `%r`, 9.5.1.1 append, pre-opened fds) | ✅ ([E-516](../../enhancements_doc/Enhancement-516.md) audit; MCD/`$fmonitor` ⚠️) | `display`, `fileio`, `stringio`, `fgetc`, `ungetc`, `sscanf`, `scanfmt`, `lrmsysio` |
 | 9.13 Random/distributions | ✅ (deterministic seed ⚠️ documented) | `rng`, `montecarlo` |
+| 9.17.3 / Annex E.3.4 `$limit` | ✅ (unknown name falls back to no limiting with a warning, per 9.17.3; `vdslim` = Table E.2's preferred spelling of `limvds`) | `fetlim`, `lrm` |
+| Annex E SPICE primitives (E.2/E.3, Table E.1) | ✖ not supported: `resistor`/`capacitor`/`bjt`/… cannot be instantiated from Verilog-A source (clean error); instantiate SPICE devices at netlist level instead | — |
 | 9 misc ($finish family, $simparam, attributes) | ✅ | `simctrl`, `simparamstr`, `opvar` |
 | plusargs (`$test`/`$value`) | ✅ ([E-215](../../enhancements_doc/Enhancement-215.md)) | `plusargs` |
 | simprobe / node aliases | ⚠️ LRM fallbacks | `alias` |
@@ -812,9 +953,10 @@ connected port.)*
 
 As of E-84 the standard's own examples are a compliance suite: every
 code example in the LRM 2023 PDF is extracted and compiled
-(`examples/lrm_examples/` — 42 compile, 17 documented limitations pinned
-to their diagnostics, 21 correctly rejected as mixed-signal), and the
-146 non-module fragments double as a no-crash fuzz corpus.
+(`examples/lrm_examples/` — per its `manifest.json`: 47 compile, 12
+documented limitations pinned to their diagnostics, 21 correctly rejected
+as mixed-signal), and the 146 non-module fragments double as a no-crash
+fuzz corpus.
 
 Two later findings are worth recording here because both were *compliance*
 failures rather than robustness ones — legal Verilog-A that the compiler refused

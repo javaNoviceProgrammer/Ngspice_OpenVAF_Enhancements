@@ -73,6 +73,34 @@ impl InferenceDiagnosticWrapped<'_> {
 impl Diagnostic for InferenceDiagnosticWrapped<'_> {
     fn build_report(&self, _root_file: FileId, _db: &dyn BaseDB) -> Report {
         match *self.diag {
+            InferenceDiagnostic::AliasRefInModule { expr, alias } => {
+                let src = self.parse.to_file_span(self.expr_range(expr), self.sm);
+                let loc = alias.lookup(self.db.upcast());
+                let tree = loc.item_tree(self.db.upcast());
+                let alias_name = tree[loc.id].name.clone();
+                let target = tree[loc.id]
+                    .src
+                    .as_ref()
+                    .map(|p| {
+                        p.segments.iter().map(|n| n.to_string()).collect::<Vec<_>>().join(".")
+                    })
+                    .unwrap_or_else(|| "the original parameter".to_owned());
+                Report::error()
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: src.file,
+                        range: src.range.into(),
+                        message: "alias used inside the module".to_owned(),
+                    }])
+                    .with_message(format!(
+                        "parameter alias '{alias_name}' referenced inside the module body"
+                    ))
+                    .with_notes(vec![
+                        format!(
+                            "help: LRM 3.4.7: an aliasparam is an override spelling only --                              'the equations in the module shall reference the parameter by                              its original name'; write '{target}' here"
+                        ),
+                    ])
+            }
             InferenceDiagnostic::InvalidAssignDst {
                 e,
                 maybe_different_operand,
@@ -495,7 +523,7 @@ impl Diagnostic for InferenceDiagnosticWrapped<'_> {
                 let src = self.parse.to_file_span(self.expr_range(expr), self.sm);
                 let at = self.parse.to_file_span(self.expr_range(rhs), self.sm);
 
-                Report::error()
+                Report::warning()
                     .with_labels(vec![
                         Label {
                             style: LabelStyle::Primary,
@@ -510,13 +538,35 @@ impl Diagnostic for InferenceDiagnosticWrapped<'_> {
                             message: "in this shift".to_owned(),
                         },
                     ])
-                    .with_message("shift distance out of range")
+                    .with_message("shift distance outside 0..=31 shifts every bit out")
                     .with_notes(vec![
-                        "help: a Verilog-A `integer` is 32 bits, so the shift distance \
-                         must be 0..=31; the generated code would trap and take the \
-                         simulator with it"
+                        "help: a Verilog-A `integer` is 32 bits and LRM 4.2.11 treats \
+                         the distance as unsigned, so this evaluates to 0 (`>>>`: to \
+                         the sign fill) -- the same value a run-time distance gives"
                             .to_owned(),
                     ])
+            }
+            InferenceDiagnostic::AnalogArithShift { expr, is_left } => {
+                let src = self.parse.to_file_span(self.expr_range(expr), self.sm);
+                let (op, alt) = if is_left {
+                    ("<<<", "identical to `<<` (left shifts always zero-fill)")
+                } else {
+                    (">>>", "the sign-extending right shift")
+                };
+                Report::warning()
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: src.file,
+                        range: src.range.into(),
+                        message: format!("`{op}` used in an analog context"),
+                    }])
+                    .with_message(format!(
+                        "arithmetic shift `{op}` in an analog block is an openvaf extension"
+                    ))
+                    .with_notes(vec![format!(
+                        "help: LRM 4.2.11 does not allow `{op}` in an analog block; \
+                         here it is {alt}"
+                    )])
             }
             InferenceDiagnostic::BitSelectOutOfRange { expr, index, msb, lsb } => {
                 let src = self

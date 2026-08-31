@@ -188,7 +188,12 @@ pub fn nda_arrays(
                 attr_vec.push(osdi_attr);
             }
         }
-        let i2 = attr_vec.len() + 1;
+        // NOT len()+1: the end index is one PAST the last attribute already.
+        // The +1 made every nature's num_attr claim one attribute more than it
+        // owns, so a consumer walking attrs[attr_start..attr_start+num_attr]
+        // read the first attribute of the NEXT nature (and past the region for
+        // the last one). The discipline path below computes it correctly.
+        let i2 = attr_vec.len();
         let (pt, pi) = resolve_nature_ref(nature.parent.as_ref(), &nda_table);
         // Enhancement-39: `ddt_nature`/`idt_nature` are encoded as bare nature
         // indices, so discipline-qualified references are resolved to their

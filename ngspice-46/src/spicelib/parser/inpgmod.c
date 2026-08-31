@@ -89,20 +89,29 @@ find_instance_parameter(const char *name, IFdevice *device)
  * pushed onto `INPmodfast->defaults` with wl_cons and therefore replayed in
  * reverse, so the FIRST one on the card wins. Stating a rule here would be
  * wrong half the time; the actionable advice is to remove one of them. The
- * instance line has no such split and its message does say which wins. */
-static void inp_warn_dup_param(const char *dev, const char *first,
-                               const char *second)
+ * instance line has no such split and its message does say which wins.
+ *
+ * Enhancement-517: the ALIAS spelling is an ERROR, not a warning -- LRM 3.4.7:
+ * "it shall be an error to specify an override for a parameter by its original
+ * name and one or more aliases, or by more than one alias, regardless of how
+ * the override is done". Returns nonzero for that case so the caller can
+ * refuse the model card; the SAME name written twice stays a warning (a
+ * netlist-level habit outside 3.4.7's rule). */
+static int inp_warn_dup_param(const char *dev, const char *first,
+                              const char *second)
 {
-    if (strcmp(first, second) == 0)
+    if (strcmp(first, second) == 0) {
         fprintf(stderr,
                 "Warning: %s: parameter '%s' is set more than once on this "
                 "model card; only one value takes effect -- remove one.\n",
                 dev, first);
-    else
-        fprintf(stderr,
-                "Warning: %s: '%s' and '%s' are the same parameter "
-                "(aliasparam) and both are set on this model card; only one "
-                "value takes effect -- remove one.\n", dev, first, second);
+        return 0;
+    }
+    fprintf(stderr,
+            "Error: %s: '%s' and '%s' are the same parameter (aliasparam) "
+            "and both are set on this model card; LRM 3.4.7 makes that an "
+            "error -- remove one.\n", dev, first, second);
+    return 1;
 }
 
 static int
@@ -258,8 +267,10 @@ create_model(CKTcircuit *ckt, INPmodel *modtmp, INPtables *tab)
                 int q, hit = -1;
                 for (q = 0; q < nmid; q++)
                     if (mid[q] == p->id) { hit = q; break; }
-                if (hit >= 0)
-                    inp_warn_dup_param(device->name, mseen[hit], p->keyword);
+                if (hit >= 0) {
+                    if (inp_warn_dup_param(device->name, mseen[hit], p->keyword))
+                        return E_PARMVAL;
+                }
                 else if (nmid < n_mtrack) {
                     mid[nmid] = p->id;
                     mseen[nmid] = p->keyword;
@@ -312,6 +323,18 @@ create_model(CKTcircuit *ckt, INPmodel *modtmp, INPtables *tab)
                             modtmp->INPmodName, p->keyword));
                 FREE(parm);
                 continue;               /* do NOT apply it */
+            }
+            if (val && !was_first_tok && INPlastRoundWarn()) {
+                /* Applied anyway (the LRM's own round-to-nearest), but no
+                 * longer in silence: for a compiled Verilog-A model this is
+                 * usually an UNTYPED parameter whose type froze as integer
+                 * from its default (LRM 3.4.1 would have re-typed it from the
+                 * override; one fixed type per OSDI parameter cannot). */
+                fprintf(stderr,
+                        "Warning: .model %s: parameter (%s) is an integer; the "
+                        "given non-integral value was rounded to the nearest "
+                        "integer.\n",
+                        modtmp->INPmodName, p->keyword);
             }
             error = ft_sim->setModelParm(ckt, modtmp->INPmodfast, p->id, val, NULL);
             if (error) {
@@ -371,9 +394,11 @@ create_model(CKTcircuit *ckt, INPmodel *modtmp, INPtables *tab)
                         int q, hit = -1;
                         for (q = 0; q < niid; q++)
                             if (iid[q] == p->id) { hit = q; break; }
-                        if (hit >= 0)
-                            inp_warn_dup_param(device->name, iseen[hit],
-                                               p->keyword);
+                        if (hit >= 0) {
+                            if (inp_warn_dup_param(device->name, iseen[hit],
+                                                   p->keyword))
+                                return E_PARMVAL;
+                        }
                         else if (niid < n_itrack) {
                             iid[niid] = p->id;
                             iseen[niid] = p->keyword;

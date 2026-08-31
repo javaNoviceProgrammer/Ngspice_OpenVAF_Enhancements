@@ -223,6 +223,23 @@ double osdi_limvds(bool init, bool *check, double vnew, double vold) {
   return res;
 }
 
+/* LRM 9.17.3 fallback: "If the string refers to an unknown or unsupported
+ * function, the simulator is responsible for determining the appropriate
+ * limiting algorithm, just as if no string had been supplied." Bound (with a
+ * load-time warning) when $limit names a function this table does not
+ * provide; it applies no limiting -- the access-function value passes
+ * through. Any extra arguments the model passes are simply never read, which
+ * the C calling convention permits, so one adapter serves every arity. */
+double osdi_limit_unknown(bool init, bool *check, double vnew, double vold) {
+  (void)vold;
+  if (init) {
+    *check = true;
+    return vnew;
+  }
+  *check = false;
+  return vnew;
+}
+
 double osdi_fetlim(bool init, bool *check, double vnew, double vold,
                    double vto) {
   if (init) {

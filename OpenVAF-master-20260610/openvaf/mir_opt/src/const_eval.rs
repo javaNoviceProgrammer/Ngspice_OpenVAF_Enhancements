@@ -20,26 +20,40 @@ pub fn eval_binary(func: &mut Function, op: Opcode, lhs: Const, rhs: Const) -> O
             // compiler: `i = 5 / 0` reported an internal error and produced no output.
             // openvaf already accepts a *runtime* zero divisor, so decline to fold and
             // leave the instruction on exactly that path.
+            // The out-of-range cases fold to exactly what the mir_llvm runtime
+            // guards produce, so a value is the same whether it was folded here
+            // or computed by the compiled model:
+            //   x / 0 => 0, INT_MIN / -1 => INT_MIN (2's-complement wrap)
+            //   x % 0 => 0, INT_MIN % -1 => 0 (the true remainder)
+            // (Enhancement-286 declined to fold these because they were poison
+            // downstream; the LLVM lowering pins them now.)
             Opcode::Idiv => {
-                if rhs == 0 || (lhs == i32::MIN && rhs == -1) {
-                    return None;
+                if rhs == 0 {
+                    func.dfg.iconst(0)
+                } else if lhs == i32::MIN && rhs == -1 {
+                    func.dfg.iconst(i32::MIN)
+                } else {
+                    func.dfg.iconst(lhs / rhs)
                 }
-                func.dfg.iconst(lhs / rhs)
             }
             Opcode::Irem => {
                 if rhs == 0 || (lhs == i32::MIN && rhs == -1) {
-                    return None;
+                    func.dfg.iconst(0)
+                } else {
+                    func.dfg.iconst(lhs % rhs)
                 }
-                func.dfg.iconst(lhs % rhs)
             }
 
-            // Enhancement-286: a shift distance outside 0..32 is poison in LLVM and
-            // panics in Rust -- decline rather than invent a value.
+            // IEEE 1364: the shift distance is UNSIGNED, so a distance outside
+            // 0..=31 (including any negative one) shifts every bit out -- 0 for
+            // the zero-filling shifts, all sign bits for `>>>`. Matches the
+            // Enhancement-335 runtime guards in mir_llvm.
             Opcode::Ishl => {
                 if !(0..32).contains(&rhs) {
-                    return None;
+                    func.dfg.iconst(0)
+                } else {
+                    func.dfg.iconst(lhs << rhs)
                 }
-                func.dfg.iconst(lhs << rhs)
             }
             // Enhancement-37: `Ishr` is the LOGICAL (zero-fill) right shift (`>>`);
             // Rust's `>>` on a signed i32 sign-extends, which is `Iashr`'s (`>>>`)
@@ -47,16 +61,18 @@ pub fn eval_binary(func: &mut Function, op: Opcode, lhs: Const, rhs: Const) -> O
             // (matches the LLVMBuildLShr the runtime path emits).
             Opcode::Ishr => {
                 if !(0..32).contains(&rhs) {
-                    return None;
+                    func.dfg.iconst(0)
+                } else {
+                    func.dfg.iconst(((lhs as u32) >> rhs) as i32)
                 }
-                func.dfg.iconst(((lhs as u32) >> rhs) as i32)
             }
             // `>>` on a signed value is already an arithmetic (sign-extending) shift.
             Opcode::Iashr => {
                 if !(0..32).contains(&rhs) {
-                    return None;
+                    func.dfg.iconst(lhs >> 31)
+                } else {
+                    func.dfg.iconst(lhs >> rhs)
                 }
-                func.dfg.iconst(lhs >> rhs)
             }
             Opcode::Ixor => func.dfg.iconst(lhs ^ rhs),
             Opcode::Iand => func.dfg.iconst(lhs & rhs),

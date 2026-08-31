@@ -185,6 +185,21 @@ impl Cursor<'_> {
                     },
                 }
             }
+            // case (in)equality before the two-char forms, the way <<< is
+            // matched before << above (LRM 4.2.6; in this 2-state analog
+            // subset they carry ==/!= semantics)
+            '=' if self.first() == '=' && self.second() == '=' => {
+                self.bump();
+                self.bump();
+                Eq3
+            }
+
+            '!' if self.first() == '=' && self.second() == '=' => {
+                self.bump();
+                self.bump();
+                Neq2
+            }
+
             '=' if self.first() == '=' => {
                 self.bump();
                 Eq2

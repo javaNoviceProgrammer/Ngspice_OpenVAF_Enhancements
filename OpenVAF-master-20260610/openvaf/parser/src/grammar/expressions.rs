@@ -35,6 +35,9 @@ fn current_op(p: &Parser) -> (u8, SyntaxKind) {
         
         T![==]  => (8,   T![==]),
         T![!=]  => (8,   T![!=]),
+        // case (in)equality: same level as ==/!= per LRM Table 4-2
+        T![===] => (8,   T![===]),
+        T![!==] => (8,   T![!==]),
 
         T![>=]  => (9,   T![>=]),
         T![>]   => (9,   T![>]),

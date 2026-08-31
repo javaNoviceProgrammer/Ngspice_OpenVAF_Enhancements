@@ -34,9 +34,16 @@ extern bool ft_ngdebug;
  * find out. */
 static int inp_scalar_value_error;
 static int inp_scalar_range_error;   /* Enhancement-509 */
+/* LRM-audit (3.4.1): a non-integral value given to an integer parameter is
+ * rounded per the LRM rule and applied -- but silently, which hid the case of
+ * an untyped Verilog-A parameter whose type froze as integer from its default
+ * (`parameter untyped = 1;` given `untyped=2.5` simulated with 3). The round
+ * still happens; this flag lets the parameter-applying call sites SAY so. */
+static int inp_scalar_round_warn;
 
 int INPlastValueError(void) { return inp_scalar_value_error; }
 int INPlastRangeError(void) { return inp_scalar_range_error; }
+int INPlastRoundWarn(void) { return inp_scalar_round_warn; }
 
 IFvalue *
 INPgetValue(CKTcircuit *ckt, char **line, int type, INPtables *tab)
@@ -54,6 +61,7 @@ INPgetValue(CKTcircuit *ckt, char **line, int type, INPtables *tab)
     type &= IF_VARTYPES;
     inp_scalar_value_error = 0;                 /* Enhancement-507 */
     inp_scalar_range_error = 0;                 /* Enhancement-509 */
+    inp_scalar_round_warn = 0;
     if (type == IF_INTEGER) {
         tmp = INPevaluate(line, &error, 1);
         inp_scalar_value_error = error;         /* Enhancement-507 */
@@ -99,6 +107,8 @@ INPgetValue(CKTcircuit *ckt, char **line, int type, INPtables *tab)
             double rounded = round(tmp);
             if (rounded >= (double) INT_MIN && rounded <= (double) INT_MAX) {
                 temp.iValue = (int) rounded;
+                if (rounded != tmp)
+                    inp_scalar_round_warn = 1;
             } else {
                 inp_scalar_range_error = 1;
                 temp.iValue = 0;

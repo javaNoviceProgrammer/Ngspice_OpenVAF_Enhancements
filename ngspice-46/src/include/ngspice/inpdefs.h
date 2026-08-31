@@ -135,6 +135,7 @@ IFvalue *INPgetValue(CKTcircuit *, char **, int, INPtables *);
 /* Enhancement-507: did the last INPgetValue() scalar conversion fail? */
 int INPlastValueError(void);
 int INPlastRangeError(void);   /* Enhancement-509 */
+int INPlastRoundWarn(void);    /* non-integral value rounded into an integer parameter */
 int INPgndInsert(CKTcircuit *, char **, INPtables *, CKTnode **);
 int INPinsertNofree(char **token, INPtables *tab);
 int INPinsert(char **, INPtables *);

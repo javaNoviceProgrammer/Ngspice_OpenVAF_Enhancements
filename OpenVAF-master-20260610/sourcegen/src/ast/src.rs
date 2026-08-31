@@ -43,6 +43,10 @@ pub(crate) const KINDS_SRC: KindsSrc = KindsSrc {
         (".", "DOT"),
         (":", "COLON"),
         ("=", "EQ"),
+        // case (in)equality (LRM 4.2.6) -- three chars, listed before the
+        // two-char forms the way <<< precedes <<
+        ("===", "EQ3"),
+        ("!==", "NEQ2"),
         ("==", "EQ2"),
         ("!", "BANG"),
         ("!=", "NEQ"),
@@ -110,6 +114,12 @@ pub(crate) const KINDS_SRC: KindsSrc = KindsSrc {
         "endparamset",
         "defparam",
         "or",
+        // VAMS-2023 jump statements (LRM 5.11); demoted to IDENT outside
+        // statement positions in syntax/src/parsing.rs so legacy identifier
+        // uses keep compiling (with the L012 keyword-compat lint).
+        "break",
+        "continue",
+        "return",
     ],
     // `root` is a legal identifier (LRM Annex B does not reserve it); ROOT_KW
     // is produced only for the `$root` spelling (tokens/src/lib.rs).
@@ -188,6 +198,7 @@ pub(crate) const KINDS_SRC: KindsSrc = KindsSrc {
         "REPEAT_STMT",
         "DO_WHILE_STMT",
         "DISABLE_STMT",
+        "JUMP_STMT",
         "EMPTY_STMT",
         "EXPR_STMT",
         "PORT_FLOW",

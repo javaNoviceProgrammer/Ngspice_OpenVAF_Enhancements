@@ -297,8 +297,9 @@ impl<'a, FP: Arithmetic, M: Fn(Value, &Function) -> Value> SimplifyCtx<'a, FP, M
     ) -> Option<Value> {
         if let ValueDef::Const(lhs_) = self.func.dfg.value_def(*lhs) {
             if let ValueDef::Const(rhs_) = self.func.dfg.value_def(*rhs) {
-                // Enhancement-286: eval_binary now declines (None) when there is no
-                // fold matching the generated code (div/rem by zero, bad shift).
+                // The formerly-declined cases (div/rem by zero, out-of-range
+                // shift) now fold to the exact values the mir_llvm guards
+                // compute at run time, so folding is always safe here.
                 return eval_binary(self.func, op, lhs_, rhs_);
             }
 

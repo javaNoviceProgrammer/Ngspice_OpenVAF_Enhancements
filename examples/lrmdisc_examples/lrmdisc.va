@@ -1,0 +1,17 @@
+// Enhancement-519: natures, disciplines and branches, audited against
+// Accellera VAMS-2023 clauses 3.6-3.13 (and Annex D) and fixed.
+//
+// LRM 3.11.1's own worked example (printed p.47): "electrical and sig_flow_v
+// are compatible disciplines because the nature for potential is same for
+// both disciplines and the nature for flow does not exist in sig_flow_v."
+// The stock signal-flow discipline `voltage` IS sig_flow_v, so this branch
+// is legal -- and it takes electrical's natures, so I(br) works.
+`include "disciplines.vams"
+
+module lrmdisc(a, b);
+  inout a, b;
+  electrical a;
+  voltage b;            // signal-flow: potential Voltage, no flow nature
+  branch (a, b) br;
+  analog I(br) <+ V(br)/1e3;   // a 1k element across the mixed branch
+endmodule

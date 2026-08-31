@@ -68,6 +68,8 @@ impl lexer::TokenKind {
             AttrOpenParen => T!["(*"],
             AttrCloseParen => T!["*)"],
             ArrStart => T!["'{"],
+            Eq3 => T![===],
+            Neq2 => T![!==],
             Eq2 => T![==],
             Neq => T![!=],
             Leq => T![<=],

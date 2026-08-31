@@ -1,0 +1,10 @@
+// Enhancement-520: Annex E.3.4 / Table E.2 -- "vdslim" is the LRM's
+// preferred name for the drain-source limiter this tree spells "limvds";
+// both now bind to the same implementation, so a model written against the
+// LRM's own table compiles without a lint and runs.
+`include "disciplines.vams"
+
+module lrmjump_lim(a, b);
+  inout a, b; electrical a, b;
+  analog I(a,b) <+ 1e-3 * $limit(V(a,b), "vdslim");
+endmodule

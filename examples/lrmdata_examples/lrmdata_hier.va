@@ -1,0 +1,26 @@
+// Enhancement-517: LRM 3.4.4/3.4.8 -- overriding a whole array parameter at
+// module instantiation with an assignment pattern ("the sizes shall match").
+// The 3.4.8 example does exactly this with a multi-dimensional array.
+`include "disciplines.vams"
+
+module lrmdata_leaf(a, b);
+  inout a, b; electrical a, b;
+  parameter real cf[0:2] = '{1.0, 2.0, 3.0};
+  analog I(a,b) <+ V(a,b) * (cf[0]*100.0 + cf[1]*10.0 + cf[2]);
+endmodule
+
+module lrmdata_top(a, b);
+  inout a, b; electrical a, b;
+  lrmdata_leaf #(.cf('{9.0, 8.0, 7.0})) l1(a, b);   // -> 987 * V
+endmodule
+
+module lrmdata_leafmd(a, b);
+  inout a, b; electrical a, b;
+  parameter real c[0:1][0:2] = '{'{1.0,2.0,3.0}, '{4.0,5.0,6.0}};
+  analog I(a,b) <+ V(a,b) * (c[0][0]*1e5 + c[0][2]*1e4 + c[1][0]*1e3 + c[1][2]*1e2);
+endmodule
+
+module lrmdata_topmd(a, b);
+  inout a, b; electrical a, b;
+  lrmdata_leafmd #(.c('{'{9.0,8.0,7.0}, '{6.0,5.0,4.0}})) l1(a, b);  // -> 976400 * V
+endmodule

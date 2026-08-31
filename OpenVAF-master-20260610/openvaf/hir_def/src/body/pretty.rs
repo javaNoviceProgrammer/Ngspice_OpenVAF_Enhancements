@@ -77,6 +77,16 @@ impl Printer<'_> {
             Stmt::Disable { ref name } => {
                 wln!(self, "disable {};", name);
             }
+            Stmt::Break => wln!(self, "break;"),
+            Stmt::Continue => wln!(self, "continue;"),
+            Stmt::Return { expr } => {
+                w!(self, "return");
+                if let Some(expr) = expr {
+                    w!(self, " ");
+                    self.pretty_print_expr(expr);
+                }
+                wln!(self, ";");
+            }
             Stmt::Block { ref body, .. } => {
                 w!(self, "begin");
                 if let Some(first) = body.iter().next() {

@@ -162,6 +162,12 @@ pub enum Stmt {
     /// times. Lowered to a counted loop in `hir_lower`.
     Repeat { count: ExprId, body: StmtId },
     Case { kind: CaseKind, discr: ExprId, case_arms: Vec<Case> }, // TODO lint on unreachable
+    /// VAMS-2023 jump statements (LRM 5.11). `break`/`continue` act on the
+    /// innermost enclosing RUNTIME loop; `return [expr]` exits an analog
+    /// function (optionally setting its return value first).
+    Break,
+    Continue,
+    Return { expr: Option<ExprId> },
 }
 
 #[derive(Debug, Eq, PartialEq, Hash, Clone, Copy)]
@@ -339,7 +345,14 @@ impl Stmt {
     #[inline]
     pub fn walk_child_exprs(&self, mut f: impl FnMut(ExprId)) {
         match *self {
-            Stmt::Empty | Stmt::Missing | Stmt::Block { .. } | Stmt::Disable { .. } => (),
+            Stmt::Empty
+            | Stmt::Missing
+            | Stmt::Block { .. }
+            | Stmt::Disable { .. }
+            | Stmt::Break
+            | Stmt::Continue
+            | Stmt::Return { expr: None } => (),
+            Stmt::Return { expr: Some(expr) } => f(expr),
             Stmt::EventControl { ref event, .. } => event.walk_child_exprs(&mut f),
             Stmt::If { cond: expr, .. }
             | Stmt::ForLoop { cond: expr, .. }
@@ -371,7 +384,10 @@ impl Stmt {
             | Stmt::Assignment { .. }
             | Stmt::Missing
             | Stmt::Empty
-            | Stmt::Disable { .. } => (),
+            | Stmt::Disable { .. }
+            | Stmt::Break
+            | Stmt::Continue
+            | Stmt::Return { .. } => (),
             Stmt::WhileLoop { body, .. }
             | Stmt::DoWhile { body, .. }
             | Stmt::Repeat { body, .. }

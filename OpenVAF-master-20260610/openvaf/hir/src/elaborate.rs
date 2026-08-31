@@ -3757,7 +3757,48 @@ impl ElabCtx<'_> {
                 }
                 if let (Some(name), Some(val)) = (assign.name(), assign.val()) {
                     let pname = name.as_name();
+                    // LRM 3.4.4/3.4.8: a whole ARRAY parameter may be overridden at
+                    // instantiation with an assignment pattern of matching size
+                    // (`leaf #(.cf('{9.0, 8.0, 7.0})) ...`). The item tree splits an
+                    // array parameter into per-element scalars (`cf[0]`, ...), so the
+                    // base name is not in `param_names` -- but the RENDERED module
+                    // still declares the array with its `'{...}` default, and the
+                    // default-replacement below keys on the base name, so binding the
+                    // base name to the pattern text is all that is needed.
                     if !param_names.contains(&pname) {
+                        if let Some(arr) =
+                            target.param_arrays.iter().find(|b| b.base_name == pname)
+                        {
+                            // compare against the OUTERMOST dimension: a flat 1-D
+                            // pattern lists that many elements, and a multi-dim
+                            // pattern lists that many nested sub-patterns
+                            let (msb, lsb) = arr.dims[0];
+                            let want = ((msb - lsb).unsigned_abs() as usize) + 1;
+                            let elems = ast::ArrayExpr::cast(val.syntax().clone())
+                                .map(|a| a.syntax().children().count());
+                            match elems {
+                                Some(got) if got == want => {
+                                    result.insert(pname, val.syntax().text().to_string());
+                                }
+                                Some(got) => {
+                                    self.hier_param_errors.push(format!(
+                                        "instance parameter override '.{}' supplies {} element(s) \
+                                         but the array parameter has {} (LRM 3.4.4: the sizes \
+                                         shall match)",
+                                        pname, got, want,
+                                    ));
+                                }
+                                None => {
+                                    self.hier_param_errors.push(format!(
+                                        "instance parameter override '.{}' targets an array \
+                                         parameter; use an assignment pattern of {} element(s), \
+                                         e.g. .{}('{{...}})",
+                                        pname, want, pname,
+                                    ));
+                                }
+                            }
+                            continue;
+                        }
                         self.hier_param_errors.push(format!(
                             "instance parameter override '.{}' names no parameter of module                              '{}'{}",
                             pname,

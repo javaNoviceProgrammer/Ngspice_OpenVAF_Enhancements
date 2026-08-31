@@ -1,0 +1,22 @@
+// Enhancement-519: Annex D.2 -- constants.vams is the VAMS-2023 file, so
+// defining PHYSICAL_CONSTANTS_NIST2018 before the include selects the exact
+// 2019-SI values. (The shipped 2.4.0 file had no NIST2018 set at all: the
+// opt-in silently produced NIST1998 values.)
+`define PHYSICAL_CONSTANTS_NIST2018
+`include "disciplines.vams"
+`include "constants.vams"
+
+module lrmdisc_c2023(a);
+  inout a; electrical a;
+  (* desc="P_Q * 1e19 (exact-SI 1.602176634)" *) real pq;
+  (* desc="P_K * 1e23 (exact-SI 1.380649)"    *) real pk;
+  (* desc="P_H * 1e34 (exact-SI 6.62607015)"  *) real ph;
+  (* desc="P_U0 * 1e6 (measured 1.25663706212)" *) real pu;
+  analog begin
+    pq = `P_Q * 1e19;
+    pk = `P_K * 1e23;
+    ph = `P_H * 1e34;
+    pu = `P_U0 * 1e6;
+    V(a) <+ 1.0;
+  end
+endmodule

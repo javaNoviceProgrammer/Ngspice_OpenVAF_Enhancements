@@ -198,6 +198,20 @@ impl DisableStmt {
     pub fn name(&self) -> Option<Name> { support::child(&self.syntax) }
 }
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct JumpStmt {
+    pub(crate) syntax: SyntaxNode,
+}
+impl ast::AttrsOwner for JumpStmt {}
+impl JumpStmt {
+    pub fn break_token(&self) -> Option<SyntaxToken> { support::token(&self.syntax, T![break]) }
+    pub fn continue_token(&self) -> Option<SyntaxToken> {
+        support::token(&self.syntax, T![continue])
+    }
+    pub fn return_token(&self) -> Option<SyntaxToken> { support::token(&self.syntax, T![return]) }
+    pub fn expr(&self) -> Option<Expr> { support::child(&self.syntax) }
+    pub fn semicolon_token(&self) -> Option<SyntaxToken> { support::token(&self.syntax, T![;]) }
+}
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Assign {
     pub(crate) syntax: SyntaxNode,
 }
@@ -803,6 +817,7 @@ pub enum Stmt {
     EventStmt(EventStmt),
     BlockStmt(BlockStmt),
     DisableStmt(DisableStmt),
+    JumpStmt(JumpStmt),
 }
 impl ast::AttrsOwner for Stmt {}
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -1048,6 +1063,17 @@ impl AstNode for BlockStmt {
 }
 impl AstNode for DisableStmt {
     fn can_cast(kind: SyntaxKind) -> bool { kind == DISABLE_STMT }
+    fn cast(syntax: SyntaxNode) -> Option<Self> {
+        if Self::can_cast(syntax.kind()) {
+            Some(Self { syntax })
+        } else {
+            None
+        }
+    }
+    fn syntax(&self) -> &SyntaxNode { &self.syntax }
+}
+impl AstNode for JumpStmt {
+    fn can_cast(kind: SyntaxKind) -> bool { kind == JUMP_STMT }
     fn cast(syntax: SyntaxNode) -> Option<Self> {
         if Self::can_cast(syntax.kind()) {
             Some(Self { syntax })
@@ -1765,11 +1791,15 @@ impl From<BlockStmt> for Stmt {
 impl From<DisableStmt> for Stmt {
     fn from(node: DisableStmt) -> Stmt { Stmt::DisableStmt(node) }
 }
+impl From<JumpStmt> for Stmt {
+    fn from(node: JumpStmt) -> Stmt { Stmt::JumpStmt(node) }
+}
 impl AstNode for Stmt {
     fn can_cast(kind: SyntaxKind) -> bool {
         match kind {
             EMPTY_STMT | ASSIGN_STMT | EXPR_STMT | IF_STMT | WHILE_STMT | DO_WHILE_STMT
-            | REPEAT_STMT | FOR_STMT | CASE_STMT | EVENT_STMT | BLOCK_STMT | DISABLE_STMT => true,
+            | REPEAT_STMT | FOR_STMT | CASE_STMT | EVENT_STMT | BLOCK_STMT | DISABLE_STMT
+            | JUMP_STMT => true,
             _ => false,
         }
     }
@@ -1787,6 +1817,7 @@ impl AstNode for Stmt {
             EVENT_STMT => Stmt::EventStmt(EventStmt { syntax }),
             BLOCK_STMT => Stmt::BlockStmt(BlockStmt { syntax }),
             DISABLE_STMT => Stmt::DisableStmt(DisableStmt { syntax }),
+            JUMP_STMT => Stmt::JumpStmt(JumpStmt { syntax }),
             _ => return None,
         };
         Some(res)
@@ -1805,6 +1836,7 @@ impl AstNode for Stmt {
             Stmt::EventStmt(it) => &it.syntax,
             Stmt::BlockStmt(it) => &it.syntax,
             Stmt::DisableStmt(it) => &it.syntax,
+            Stmt::JumpStmt(it) => &it.syntax,
         }
     }
 }
@@ -2215,6 +2247,11 @@ impl std::fmt::Display for BlockStmt {
     }
 }
 impl std::fmt::Display for DisableStmt {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(self.syntax(), f)
+    }
+}
+impl std::fmt::Display for JumpStmt {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         std::fmt::Display::fmt(self.syntax(), f)
     }

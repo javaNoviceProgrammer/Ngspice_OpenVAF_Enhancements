@@ -182,7 +182,21 @@ impl BodyLoweringCtx<'_, '_, '_> {
                 self.lower_string_concat(rep, elems)
             }
             Expr::Literal(lit) => match *lit {
-                Literal::String(ref str) => self.ctx.sconst(str),
+                Literal::String(ref str) => {
+                    // LRM 3.3: a string literal assigned to an integral type is
+                    // its packed 8-bit character codes, right justified --
+                    // truncated on the left to the 32-bit integer ("ABCDE"
+                    // keeps "BCDE") or zero filled ("A" is 0x41 = 65).
+                    if let Some((Type::String, &Type::Integer)) = self.body.needs_cast(expr) {
+                        let mut packed: u32 = 0;
+                        for b in str.bytes() {
+                            packed = (packed << 8) | u32::from(b);
+                        }
+                        self.ctx.set_srcloc(old_loc);
+                        return self.ctx.iconst(packed as i32);
+                    }
+                    self.ctx.sconst(str)
+                }
                 Literal::Int(val) => self.ctx.iconst(val),
                 Literal::Float(val) => self.ctx.fconst(val.into()),
                 Literal::Inf => {
@@ -497,7 +511,17 @@ impl BodyLoweringCtx<'_, '_, '_> {
                 match_signature!(signature: INT_OP => Opcode::Idiv, REAL_OP => Opcode::Fdiv)
             }
             BinaryOp::Remainder => {
-                match_signature!(signature: INT_OP => Opcode::Irem, REAL_OP => Opcode::Frem)
+                // LRM 4.2.4: "It shall be an error to pass zero (0) as the
+                // second argument to the modulus operator." A literal zero is
+                // refused at compile time; a DECK-supplied one is reported
+                // here at run time (same three-route policy as `**` above).
+                let is_int =
+                    match_signature!(signature: INT_OP => true, REAL_OP => false);
+                let lhs_ = self.lower_expr(lhs);
+                let rhs_ = self.lower_expr(rhs);
+                let rhs_ = self.guard_rem_divisor(rhs, rhs_, is_int);
+                let op = if is_int { Opcode::Irem } else { Opcode::Frem };
+                return self.ctx.ins().binary1(op, lhs_, rhs_);
             }
             // Enhancement-420: two integer operands make `**` an integer expression
             // (IEEE 1364-2005 5.1.5). See `lower_int_pow`.
@@ -664,6 +688,10 @@ impl BodyLoweringCtx<'_, '_, '_> {
                 match &arg.ty(self.ctx.db) {
                     Type::Real => F_ZERO,
                     Type::Integer => ZERO,
+                    // VAMS-2023 (Mantis 7808): string-typed analog-function
+                    // arguments; 4.7.2.3 initializes output args to "".
+                    // Used to be an unreachable!() that ICEd the compiler.
+                    Type::String => self.ctx.sconst(""),
                     ty => unreachable!("invalid function arg type {:?}", ty),
                 }
             };
@@ -674,12 +702,26 @@ impl BodyLoweringCtx<'_, '_, '_> {
         let init = match &fun.return_ty(self.ctx.db) {
             Type::Real => F_ZERO,
             Type::Integer => ZERO,
+            // VAMS-2023 (Mantis 7808): a string analog function; 4.7.2.1 says
+            // the implicit return variable initializes to the empty string.
+            Type::String => self.ctx.sconst(""),
             ty => unreachable!("invalid function return type {:?}", ty),
         };
         self.ctx.def_place(PlaceKind::FunctionReturn(fun), init);
 
+        // VAMS-2023 `return [expr];` (LRM 5.11): the inlined body gets an exit
+        // block a `return` can jump to; sealed only after the body is lowered,
+        // when every return-edge into it is known.
+        let fun_exit = self.ctx.create_block();
+        self.ctx.return_scopes.push((fun, fun_exit));
+
         let body = fun.body(self.ctx.db);
         BodyLoweringCtx { body: body.borrow(), path: self.path, ctx: self.ctx }.lower_entry_stmts();
+
+        self.ctx.return_scopes.pop();
+        self.ctx.ins().jump(fun_exit);
+        self.ctx.seal_block(fun_exit);
+        self.ctx.switch_to_block(fun_exit);
 
         // write outputs back to the caller (including any required cast).
         for (arg, &expr) in args {
@@ -3179,6 +3221,37 @@ impl BodyLoweringCtx<'_, '_, '_> {
         let neg = self.ctx.ins().fneg(x);
         let is_neg = self.ctx.ins().flt(x, F_ZERO);
         self.lower_select_with(is_neg, |_| neg, |_| x)
+    }
+
+    /// LRM 4.2.4: a zero second operand of `%` is an error. `hir_ty` refuses a
+    /// literal/localparam zero it can see; a deck-supplied zero (a `parameter`)
+    /// used to reach Irem/Frem unguarded, so the analysis just died with a
+    /// generic convergence error naming neither the operator nor the value
+    /// (real path: NaN; integer path: whatever the target's srem gives).
+    /// Same three-route policy as the math builtins (Enhancement-509): a
+    /// genuinely runtime divisor is deliberately left alone -- the mir_llvm
+    /// Idiv/Irem guards keep that case defined (0) instead of UB.
+    fn guard_rem_divisor(&mut self, rhs: ExprId, val: Value, is_int: bool) -> Value {
+        if !self.is_param_derived(rhs) {
+            return val;
+        }
+        // the leading %% is a literal '%' once the fmt string is rendered
+        let msg = "%%: the second operand (the modulus divisor) is zero, \
+                   which LRM 4.2.4 makes an error";
+        let (ok, safe) = if is_int {
+            let zero = self.ctx.iconst(0);
+            (self.ctx.ins().ine(val, zero), self.ctx.iconst(1))
+        } else {
+            (self.ctx.ins().fne(val, F_ZERO), F_ONE)
+        };
+        self.ctx.make_select(ok, |ctx, branch| {
+            if branch {
+                val
+            } else {
+                ctx.runtime_fatal(msg, None);
+                safe
+            }
+        })
     }
 
     /// Lowers `transition(x[, td[, trise[, tfall[, tol]]]])` as a delayed

@@ -1,0 +1,41 @@
+// Enhancement-517: data types and parameters, audited against Accellera
+// VAMS-2023 clauses 3.1-3.5 and fixed. This module pins the value-level
+// findings; lrmdata_hier.va pins the instantiation-time array overrides.
+`include "disciplines.vams"
+
+module lrmdata(a, b);
+  inout a, b;
+  electrical a, b;
+
+  // LRM 3.4.1 (documented deviation): an untyped parameter's type freezes
+  // from its default -- integer here. A netlist override of 2.5 is rounded,
+  // and ngspice now WARNS about the lossy round (both .model and instance).
+  parameter ip = 1;
+  (* type="instance" *) parameter integer sel = 1;
+
+  // LRM 3.3: a string LITERAL assigned to an integral type is its packed
+  // character codes, right justified, truncated on the left / zero filled.
+  (* desc="decl-init 'A'"   *) integer i0 = "A";
+  (* desc="'A'  = 65"       *) integer i1;
+  (* desc="'AB' = 0x4142"   *) integer i2;
+  (* desc="'ABCDE' truncates" *) integer i3;
+
+  // LRM 3.2.1: a desc/units variable at MODULE scope is an output variable;
+  // one inside a named block is block-local and shall NOT be exported.
+  (* desc="module-scope opvar" *) real gmod;
+
+  analog begin : blk
+    (* desc="block-scope var (must not be an opvar)" *) real gblk;
+    i1 = "A";
+    i2 = "AB";
+    i3 = "ABCDE";
+    gblk = 2.0;
+    gmod = 3.0;
+    // LRM 2.7 (E-515) + practice: backslash-newline inside a string literal
+    // is a LINE CONTINUATION contributing nothing (BSIM4 splits its $strobe
+    // messages this way); a bare newline stays an error (pinned by lrmlex).
+    @(initial_step) $strobe("part one \
+and part two as ONE line");
+    I(a,b) <+ 1e-3 * V(a,b) * sel * ip;
+  end
+endmodule

@@ -94,7 +94,7 @@ MANUAL = {
         note="attribute-section pseudo-code (<rest_of_case_statement>); crashes the compiler - finding F2"),
     "block_045_4": dict(fp="crosstalk", cls="limitation",
         expect="refers to module 'gen'",
-        note="name-then-range array ports (input in[0:2]) now supported (E-89); still a limitation on the undefined gen/sink modules + the multi-dimensional parameter-array literal override"),
+        note="name-then-range array ports (input in[0:2]) supported (E-89) and the multi-dimensional parameter-array literal override #(.c('{...})) now distributes to the per-element parameters; the remaining limitation is only the undefined gen/sink modules the example instantiates"),
     "block_048_2": dict(fp="ttl_curr", cls="ok",
         trim_after=("endnature", 3),
         no_include=True,  # ttl_curr declares access=I, which collides with disciplines.vams Current

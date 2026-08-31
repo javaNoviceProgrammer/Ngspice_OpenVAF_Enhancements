@@ -1,5 +1,5 @@
 use ahash::AHashSet;
-use hir::{CompilationDB, Name, Node, Type, Variable};
+use hir::{CompilationDB, Function, Name, Node, Type, Variable};
 use mir::builder::{InsertBuilder, InstBuilder};
 use mir::{
     Block, DataFlowGraph, FuncRef, Inst, Opcode, Param, SourceLoc, Value, FALSE, F_ZERO, INFINITY,
@@ -33,6 +33,16 @@ pub struct LoweringCtx<'a, 'c> {
     /// `break`). Pushed when a named `begin : name ... end` is entered, popped
     /// when it is left.
     pub disable_scopes: Vec<(Name, Block)>,
+    /// Stack of enclosing RUNTIME loops for the VAMS-2023 jump statements
+    /// (LRM 5.11): `(continue_target, break_target)` -- `continue` jumps to
+    /// the condition re-test (while/do-while), the increment (for), or the
+    /// counter decrement (repeat); `break` jumps to the loop's exit block.
+    pub loop_scopes: Vec<(Block, Block)>,
+    /// Stack of inlined analog-function bodies for `return [expr];`: the
+    /// function (whose `FunctionReturn` place the value is written to) and
+    /// the exit block the jump targets. Innermost last, matching the
+    /// recursive inlining in `lower_user_fun_impl`.
+    pub return_scopes: Vec<(Function, Block)>,
     /// True while lowering the body of an event-controlled statement
     /// (`@(initial_step) ...`). Display statements lowered here are tagged
     /// LOG_FLAG_IMMEDIATE: they fire on the event's own Newton iteration, so
@@ -58,6 +68,8 @@ impl<'a, 'c> LoweringCtx<'a, 'c> {
             intern,
             num_noise_sources: 0,
             disable_scopes: Vec::new(),
+            loop_scopes: Vec::new(),
+            return_scopes: Vec::new(),
             in_event_ctx: false,
         }
     }

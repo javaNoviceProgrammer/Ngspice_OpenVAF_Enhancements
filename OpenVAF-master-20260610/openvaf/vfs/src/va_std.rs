@@ -11,7 +11,7 @@ const CONSTANTS_SRC: &str = r#"
 // (ipr-chair@lists.accellera.org).
 // All other rights reserved
 //
-// Version 2.4.0
+// VAMS-2023
 //
 
 // Mathematical and physical constants
@@ -35,13 +35,15 @@ const CONSTANTS_SRC: &str = r#"
 `define    M_SQRT2            1.41421356237309504880
 `define    M_SQRT1_2          0.70710678118654752440
 
-// The following constants have been taken from http://physics.nist.gov
+// The following constants have been taken from:
+// https://physics.nist.gov/cuu/Constants
 // P_ is a physical constant
 // charge of electron in Coulombs
 `define    P_Q_SPICE          1.60219e-19
 `define    P_Q_OLD            1.6021918e-19
 `define    P_Q_NIST1998       1.602176462e-19
 `define    P_Q_NIST2010       1.602176565e-19
+`define    P_Q_NIST2018       1.602176634e-19
 // speed of light in vacuum in meters/second
 `define    P_C                2.99792458e8
 // Boltzmann's constant in Joules/Kelvin
@@ -49,21 +51,34 @@ const CONSTANTS_SRC: &str = r#"
 `define    P_K_OLD            1.3806226e-23
 `define    P_K_NIST1998       1.3806503e-23
 `define    P_K_NIST2010       1.3806488e-23
+`define    P_K_NIST2018       1.380649e-23
 // Planck's constant in Joules*second
 `define    P_H_SPICE          6.62620e-34
 `define    P_H_OLD            6.6260755e-34
 `define    P_H_NIST1998       6.62606876e-34
 `define    P_H_NIST2010       6.62606957e-34
+`define    P_H_NIST2018       6.62607015e-34
 // permittivity of vacuum in Farads/meter
 `define    P_EPS0_SPICE       8.854214871e-12
 `define    P_EPS0_OLD         8.85418792394420013968e-12
 `define    P_EPS0_NIST1998    8.854187817e-12
 `define    P_EPS0_NIST2010    8.854187817e-12
+`define    P_EPS0_NIST2018    8.8541878128e-12
 // permeability of vacuum in Henrys/meter
-`define    P_U0               (4.0e-7 * `M_PI)
+`define    P_U0_OLD           (4.0e-7 * `M_PI)
+`define    P_U0_NIST2018      1.25663706212e-6
 // zero Celsius in Kelvin
 `define    P_CELSIUS0         273.15
 
+`ifdef PHYSICAL_CONSTANTS_NIST2018
+`define    P_Q                `P_Q_NIST2018
+`define    P_K                `P_K_NIST2018
+`define    P_H                `P_H_NIST2018
+`define    P_EPS0             `P_EPS0_NIST2018
+`define    P_U0               `P_U0_NIST2018
+
+`else
+`define    P_U0               `P_U0_OLD
 `ifdef PHYSICAL_CONSTANTS_SPICE
 // from UC Berkeley SPICE 3F5
 `define    P_Q                `P_Q_SPICE
@@ -95,6 +110,7 @@ const CONSTANTS_SRC: &str = r#"
 `endif
 `endif
 `endif
+`endif
 
 `endif
 
@@ -111,7 +127,8 @@ const DISCIPLINCES_SRC: &str = r#"
 // (ipr-chair@lists.accellera.org).
 // All other rights reserved.
 //
-// Version 2.4.0
+// VAMS-2023 (contents audited identical to the 2.4.0 file this tree
+// previously shipped; Annex D.1 did not change between the two)
 
 `ifdef DISCIPLINES_VAMS
 `else

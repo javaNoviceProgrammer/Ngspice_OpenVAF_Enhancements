@@ -3,12 +3,12 @@ use super::*;
 pub(super) const STMT_TS: TokenSet = TokenSet::new(&[
     IF_KW, WHILE_KW, REPEAT_KW, DO_KW, DISABLE_KW, FOR_KW, CASE_KW, CASEX_KW, CASEZ_KW,
     BEGIN_KW, T![;], IDENT, SYSFUN,
-    T![@],
+    T![@], BREAK_KW, CONTINUE_KW, RETURN_KW,
 ]);
 pub(super) const STMT_RECOVER: TokenSet = TokenSet::new(&[EOF, ENDMODULE_KW, T![;]]);
 
 pub(super) const STMT_ATTR_RECOVER: TokenSet =
-    TokenSet::new(&[IF_KW, WHILE_KW, REPEAT_KW, DO_KW, DISABLE_KW, FOR_KW, CASE_KW, CASEX_KW, CASEZ_KW, BEGIN_KW, T![;]])
+    TokenSet::new(&[IF_KW, WHILE_KW, REPEAT_KW, DO_KW, DISABLE_KW, FOR_KW, CASE_KW, CASEX_KW, CASEZ_KW, BEGIN_KW, T![;], BREAK_KW, CONTINUE_KW, RETURN_KW])
         .union(STMT_RECOVER);
 
 pub(super) fn stmt_with_attrs(p: &mut Parser) {
@@ -28,6 +28,9 @@ pub(super) fn stmt(p: &mut Parser, m: Marker, expected: TokenSet, recover: Token
         CASE_KW | CASEX_KW | CASEZ_KW => case_stmt(p, m),
         BEGIN_KW => block_stmt(p, m),
         T![@] => event_stmt(p, m),
+        // VAMS-2023 jump statements (LRM 5.11). The tokens only survive the
+        // contextual demotion in syntax/src/parsing.rs in statement shape.
+        BREAK_KW | CONTINUE_KW | RETURN_KW => jump_stmt(p, m),
         IDENT | SYSFUN => expr_or_assign_stmt::<true>(p, m),
         _ => {
             m.abandon(p);
@@ -149,6 +152,17 @@ fn disable_stmt(p: &mut Parser, m: Marker) {
     name(p);
     p.expect(T![;]);
     m.complete(p, DISABLE_STMT);
+}
+
+// `break;` / `continue;` / `return [expr];` (LRM 5.11)
+fn jump_stmt(p: &mut Parser, m: Marker) {
+    let is_return = p.at(RETURN_KW);
+    p.bump_any();
+    if is_return && !p.at(T![;]) {
+        expr(p);
+    }
+    p.expect(T![;]);
+    m.complete(p, JUMP_STMT);
 }
 
 fn for_stmt(p: &mut Parser, m: Marker) {

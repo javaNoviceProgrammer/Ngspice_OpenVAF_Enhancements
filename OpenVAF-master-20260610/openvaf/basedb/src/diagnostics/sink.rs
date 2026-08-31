@@ -213,7 +213,7 @@ const ELABORATION_BUFFER_SUFFIXES: [&str; 6] = [
     "__elaborated.va",
 ];
 
-fn is_elaboration_buffer_name(name: &str) -> bool {
+pub fn is_elaboration_buffer_name(name: &str) -> bool {
     ELABORATION_BUFFER_SUFFIXES.iter().any(|s| name.ends_with(s))
 }
 

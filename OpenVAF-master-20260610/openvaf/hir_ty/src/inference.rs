@@ -15,8 +15,8 @@ use hir_def::expr::{CaseCond, Event, Literal};
 use hir_def::nameres::diagnostics::PathResolveError;
 use hir_def::nameres::{NatureAccess, ResolvedPath, ScopeDefItem, ScopeDefItemKind};
 use hir_def::{
-    function_array_arg_vars, BranchId, BuiltIn, BusDecl, DefWithBodyId, Expr, ExprId,
-    FunctionArgLoc, FunctionId, LocalFunctionArgId, Lookup, NatureId, NodeId, ParamId,
+    function_array_arg_vars, AliasParamId, BranchId, BuiltIn, BusDecl, DefWithBodyId, Expr,
+    ExprId, FunctionArgLoc, FunctionId, LocalFunctionArgId, Lookup, NatureId, NodeId, ParamId,
     ParamSysFun, Path,
     Stmt, StmtId, Type, VarId,
 };
@@ -257,6 +257,20 @@ impl Ctx<'_> {
 
             Stmt::EventControl { ref event, .. } => self.infere_event_control(stmt, event),
 
+            // VAMS-2023 `return [expr];` (LRM 5.11): the expression coerces to
+            // the enclosing analog function's return type, exactly as an
+            // assignment to the function-name variable would. Outside a
+            // function body the position error comes from validation; the
+            // expression is still typed so its own errors surface.
+            Stmt::Return { expr: Some(expr) } => {
+                let dst_ty = if let DefWithBodyId::FunctionId(fun) = self.owner {
+                    Some(self.db.function_data(fun).return_ty.clone())
+                } else {
+                    None
+                };
+                self.infere_assignment(stmt, expr, dst_ty);
+            }
+
             Stmt::Case { discr, ref case_arms, .. } => {
                 // Enhancement-33: infer the discriminant and case items with the
                 // array-aware helper, so whole-array variable references are accepted
@@ -292,7 +306,14 @@ impl Ctx<'_> {
         if let Some(val_ty) = self.infere_expr(stmt, val) {
             if let Some(value_ty) = val_ty.to_value() {
                 if let Some(dst_ty) = dst_ty {
-                    if dst_ty.is_assignable_to(&value_ty) {
+                    // LRM 3.3: "A string literal can be assigned to a string or
+                    // an integral type" -- the LITERAL is a packed byte vector
+                    // ("A" is 65, "AB" is 0x4142, truncated on the left /
+                    // zero-filled as sizes differ). Only the literal converts:
+                    // a string VALUE "cannot be assigned to an integral type".
+                    if dst_ty == Type::Integer && matches!(val_ty, Ty::Literal(Type::String)) {
+                        self.result.casts.insert(val, Type::Integer);
+                    } else if dst_ty.is_assignable_to(&value_ty) {
                         if dst_ty != value_ty {
                             self.result.casts.insert(val, dst_ty);
                         }
@@ -542,7 +563,20 @@ impl Ctx<'_> {
                 ScopeDefItem::ParamId(param) => Ty::Param(self.db.param_ty(param), param),
                 ScopeDefItem::AliasParamId(param) => match self.db.resolve_alias(param)? {
                     Alias::Cycel => return None,
-                    Alias::Param(param) => Ty::Param(self.db.param_ty(param), param),
+                    Alias::Param(target) => {
+                        // LRM 3.4.7: "The alias_identifier shall not occur
+                        // anywhere else in the module; ... the equations in
+                        // the module shall reference the parameter by its
+                        // original name, not the alias." An alias exists only
+                        // as an override spelling. (An alias of a SYSTEM
+                        // parameter is this compiler's own extension and is
+                        // exempt.) Typing continues with the target so one
+                        // located error does not cascade.
+                        self.result
+                            .diagnostics
+                            .push(InferenceDiagnostic::AliasRefInModule { expr, alias: param });
+                        Ty::Param(self.db.param_ty(target), target)
+                    }
                     Alias::ParamSysFun(param) => {
                         self.result.resolved_calls.insert(expr, ResolvedFun::Param(param));
                         Ty::Val(Type::Real)
@@ -659,10 +693,25 @@ impl Ctx<'_> {
                     | BinaryOp::RightShift
                     | BinaryOp::ArithmeticLeftShift
                     | BinaryOp::ArithmeticRightShift => {
-                        // A Verilog-A `integer` is 32 bit, so only 0..=31 is meaningful;
-                        // anything else is poison in LLVM. (At RUNTIME the same distance
-                        // is silently masked to 5 bits instead -- a separate wrong-answer
-                        // defect that this check does not address.)
+                        if matches!(
+                            op,
+                            BinaryOp::ArithmeticLeftShift | BinaryOp::ArithmeticRightShift
+                        ) {
+                            self.result.diagnostics.push(
+                                InferenceDiagnostic::AnalogArithShift {
+                                    expr,
+                                    is_left: matches!(op, BinaryOp::ArithmeticLeftShift),
+                                },
+                            );
+                        }
+                        // A Verilog-A `integer` is 32 bit, so only 0..=31 keeps any
+                        // bits. LRM 4.2.11 places no bound on the distance (it is
+                        // "always treated as an unsigned number"), so `1<<32` is legal
+                        // and equals 0 -- which is what both the Enhancement-335
+                        // runtime guards and the mir_opt const fold now produce. The
+                        // diagnostic is a WARNING: almost certainly a typo, but
+                        // rejecting a legal constant the runtime path computes fine
+                        // was an internal inconsistency (LRM audit, expressions e5).
                         if let Some(dist) = self.const_int_expr(rhs, CONST_FOLD_DEPTH) {
                             if !(0..32).contains(&dist) {
                                 self.result.diagnostics.push(
@@ -3109,6 +3158,12 @@ fn const_int_elab(
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InferenceDiagnostic {
+    /// LRM 3.4.7: an `aliasparam` name referenced inside the module body
+    /// (equations, `$param_given`, ...). Aliases are override spellings only.
+    AliasRefInModule {
+        expr: ExprId,
+        alias: AliasParamId,
+    },
     InvalidAssignDst {
         e: ExprId,
         maybe_different_operand: Option<ast::AssignOp>,
@@ -3191,6 +3246,15 @@ pub enum InferenceDiagnostic {
         expr: ExprId,
         rhs: ExprId,
         dist: i32,
+    },
+
+    /// LRM 4.2.11: "The arithmetic shift operators, <<< and >>>, can not be
+    /// used in an analog block." Kept as an extension (`>>>` is the only
+    /// spelling of a sign-extending shift), but called out so a
+    /// conformance-minded author sees the deviation (LRM audit, expressions e3).
+    AnalogArithShift {
+        expr: ExprId,
+        is_left: bool,
     },
 
     /// A bus bit-select index was outside the bus's declared `[msb:lsb]` width.

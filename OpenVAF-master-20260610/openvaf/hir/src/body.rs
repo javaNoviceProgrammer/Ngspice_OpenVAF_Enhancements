@@ -653,6 +653,10 @@ impl<'a> BodyRef<'a> {
             hir_def::Stmt::Case { kind, discr, ref case_arms } => {
                 Some(Stmt::Case { kind, discr, case_arms })
             }
+            // VAMS-2023 jump statements (LRM 5.11)
+            hir_def::Stmt::Break => Some(Stmt::Break),
+            hir_def::Stmt::Continue => Some(Stmt::Continue),
+            hir_def::Stmt::Return { expr } => Some(Stmt::Return { expr }),
         }
     }
 }
@@ -712,6 +716,10 @@ pub enum Stmt<'a> {
     DoWhile { cond: ExprId, body: StmtId },
     Repeat { count: ExprId, body: StmtId },
     Case { kind: CaseKind, discr: ExprId, case_arms: &'a [Case] }, // TODO lint on unreachable
+    /// VAMS-2023 jump statements (LRM 5.11)
+    Break,
+    Continue,
+    Return { expr: Option<ExprId> },
 }
 impl Stmt<'_> {
     #[inline]

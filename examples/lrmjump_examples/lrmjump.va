@@ -1,0 +1,114 @@
+// Enhancement-520: the Annex C/E boundary, audited and fixed. This module
+// pins the VAMS-2023 jump statements (LRM 5.11) -- break/continue in every
+// loop kind and return in analog functions -- plus the string-typed analog
+// functions of 4.7.1 (Mantis 7808), all checked numerically at run time.
+`include "disciplines.vams"
+
+module lrmjump(a, b);
+  inout a, b; electrical a, b;
+  integer i, j;
+  string s;
+  (* desc="while+break: 0+1+2 = 3"                *) integer w;
+  (* desc="do-while+continue skips odd: 0+2+4 = 6" *) integer d;
+  (* desc="repeat+continue still counts: 102"     *) integer r;
+  (* desc="repeat+break: 2"                       *) integer rb;
+  (* desc="nested: inner break only: 3"           *) integer n;
+  (* desc="fn early return: 7"                    *) real f1;
+  (* desc="fn return from inside a loop: 4"       *) real f2;
+  (* desc="fname then bare return: 5"             *) real f3;
+  (* desc="string fn output arg worked: 1"        *) integer sok;
+
+  analog function real early;
+    input x; real x;
+    begin
+      if (x > 0) return 7.0;   // exits before the fallthrough below
+      early = 9.0;
+    end
+  endfunction
+
+  analog function real findk;
+    input lim; integer lim;
+    integer k;
+    begin
+      findk = -1.0;
+      for (k = 0; k < 10; k = k + 1) begin
+        if (k == lim) return k;   // return crosses the loop boundary
+      end
+    end
+  endfunction
+
+  analog function real fname_ret;
+    input x; real x;
+    begin
+      fname_ret = 5.0;
+      if (x > 0) return;          // bare return keeps the value already set
+      fname_ret = 8.0;
+    end
+  endfunction
+
+  // VAMS-2023 4.7.1: string return type and string output arguments
+  // (this exact shape ICEd the compiler: "invalid function return type
+  // String" at hir_lower).
+  analog function string pick;
+    input sel; integer sel;
+    begin
+      if (sel > 0) pick = "pos"; else pick = "neg";
+    end
+  endfunction
+
+  analog function integer tag3;
+    input v; real v;
+    output t; string t;
+    begin
+      if (v > 0.5) t = "high"; else t = "low";
+      tag3 = 1;
+    end
+  endfunction
+
+  analog begin
+    w = 0; i = 0;
+    while (i < 10) begin
+      if (i == 3) break;
+      w = w + i;
+      i = i + 1;
+    end
+
+    d = 0; i = 0;
+    do begin
+      i = i + 1;
+      if ((i-1) % 2 == 1) continue;   // re-tests the condition
+      d = d + (i-1);
+    end while (i < 6);
+
+    r = 0; i = 0;
+    repeat (5) begin
+      i = i + 1;
+      if (i > 2) continue;            // the iteration still counts
+      r = r + 1;
+    end
+    r = r + (i == 5 ? 100 : 0);       // proves all five iterations ran
+
+    rb = 0;
+    repeat (5) begin
+      if (rb == 2) break;
+      rb = rb + 1;
+    end
+
+    n = 0;
+    for (i = 0; i < 3; i = i + 1) begin
+      for (j = 0; j < 5; j = j + 1) begin
+        if (j == 1) break;            // breaks the INNER loop only
+        n = n + 10*j + 1;
+      end
+    end
+
+    f1 = early(1.0);
+    f2 = findk(4);
+    f3 = fname_ret(1.0);
+
+    sok = tag3(0.7, s);
+    @(initial_step) $strobe("pick=%s tag=%s", pick(1), s);
+
+    I(a,b) <+ 1e-3*V(a,b);
+  end
+endmodule

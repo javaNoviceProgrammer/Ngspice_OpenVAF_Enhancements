@@ -1,0 +1,38 @@
+// Enhancement-518: expressions and math, audited against Accellera VAMS-2023
+// clauses 4.1-4.4 and fixed. Every value below is checked at RUN time.
+`include "disciplines.vams"
+
+module lrmexpr(a, b);
+  inout a, b; electrical a, b;
+  parameter integer z9 = 9;
+  parameter integer zm = -1;
+  parameter integer sh = 40;
+  (* desc="1<<32 literal (dist unsigned -> 0)" *)  integer s1;
+  (* desc="-8>>>34 literal (sign fill -> -1)"  *)  integer s2;
+  (* desc="1<<sh with sh=40 (runtime path)"    *)  integer s3;
+  (* desc="=== and !== as 2-state == / !="     *)  integer c1;
+  (* desc="=== over reals"                     *)  integer c2;
+  (* desc="-8>>>1 (arith shift extension)"     *)  integer a1;
+  (* desc="-8<<<1 (identical to <<)"           *)  integer a2;
+  (* desc="10%9 (normal modulus untouched)"    *)  integer m1;
+  (* desc="10/9 (normal division untouched)"   *)  integer d1;
+  (* desc="INT_MIN/-1 wraps, no SIGFPE"        *)  integer d2;
+  (* desc="7/(param-derived 0) defined -> 0"   *)  integer d3;
+  (* desc="7%(runtime 0) defined -> 0"         *)  integer m3;
+
+  analog begin
+    s1 = 1 << 32;
+    s2 = -8 >>> 34;
+    s3 = 1 << sh;
+    c1 = (3 === 3) + (3 !== 4);            // both true -> 2
+    c2 = (2.5 === 2.5);
+    a1 = -8 >>> 1;
+    a2 = -8 <<< 1;
+    m1 = 10 % z9;
+    d1 = 10 / z9;
+    d2 = (-2147483647 - 1) / zm;
+    d3 = 7 / (z9 - 9);
+    m3 = 7 % $rtoi(V(a,b) - V(a,b));       // genuinely runtime zero divisor
+    I(a,b) <+ 1e-3*V(a,b);
+  end
+endmodule

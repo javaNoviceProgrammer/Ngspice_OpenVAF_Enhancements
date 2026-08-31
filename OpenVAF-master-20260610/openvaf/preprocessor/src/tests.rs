@@ -171,7 +171,6 @@ fn misc_directives() {
     check_prepocessor_single_file(
         r#"
 `celldefine
-`default_discipline electrical
 `default_nettype wire
 `unconnected_drive pull1
 `nounconnected_drive
@@ -186,6 +185,26 @@ endmodule
 "#,
         "misc_directives",
     )
+}
+
+/// Annex C.4 excludes `` `default_discipline `` from Verilog-A; it is
+/// recognized, WARNED about (LRM audit, annexes area), and ignored.
+#[test]
+fn default_discipline_warns() {
+    let sources = TestSourceProvider::new(vec![]);
+    let file = sources.vfs.borrow_mut().add_virt_file(
+        "/default_discipline_test.va",
+        "\n`default_discipline electrical\nmodule test();\nendmodule\n".to_owned().into(),
+    );
+    let Preprocess { diagnostics, .. } = preprocess(&sources, file);
+    assert!(
+        matches!(
+            diagnostics.as_slice(),
+            [crate::diagnostics::PreprocessorDiagnostic::AmsOnlyDirective { name, .. }]
+                if name == "default_discipline"
+        ),
+        "expected exactly the AmsOnlyDirective warning, got {diagnostics:?}"
+    );
 }
 
 #[test]

@@ -1,0 +1,15 @@
+// Enhancement-519: without the define, the default stays NIST1998 -- exactly
+// the backward compatibility the 2023 LRM specifies.
+`include "disciplines.vams"
+`include "constants.vams"
+
+module lrmdisc_cdef(a);
+  inout a; electrical a;
+  (* desc="P_Q * 1e19 (NIST1998 1.602176462)" *) real pq;
+  (* desc="P_U0 * 1e6 (4*pi*0.1)"             *) real pu;
+  analog begin
+    pq = `P_Q * 1e19;
+    pu = `P_U0 * 1e6;
+    V(a) <+ 1.0;
+  end
+endmodule

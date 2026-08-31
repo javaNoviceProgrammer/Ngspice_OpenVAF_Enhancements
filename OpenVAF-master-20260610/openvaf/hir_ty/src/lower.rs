@@ -163,6 +163,11 @@ pub fn lookup_nature(
 pub struct DisciplineTy {
     pub flow: Option<NatureId>,
     pub potential: Option<NatureId>,
+    /// The declared `domain` attribute; `None` when not written. Resolution of
+    /// the EFFECTIVE domain (LRM 3.6.2.2/3.6.2.3: natures default it to
+    /// continuous, no-natures-no-domain is "domainless") is in
+    /// [`Self::resolved_domain`].
+    pub domain: Option<hir_def::item_tree::Domain>,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -181,6 +186,7 @@ impl DisciplineTy {
                 .potential
                 .as_ref()
                 .and_then(|potential| lookup_nature(&def_map, potential, db).ok()),
+            domain: data.domain,
         })
     }
 
@@ -211,28 +217,59 @@ impl DisciplineTy {
         }
     }
 
+    /// The discipline's effective domain (LRM 3.6.2.2/3.6.2.3): the declared
+    /// `domain` attribute; else continuous when there is any nature binding;
+    /// else `None` -- a "domainless" discipline.
+    pub fn resolved_domain(&self) -> Option<hir_def::item_tree::Domain> {
+        self.domain.or_else(|| {
+            (self.flow.is_some() || self.potential.is_some())
+                .then_some(hir_def::item_tree::Domain::Continuous)
+        })
+    }
+
+    /// LRM 3.11.1 discipline compatibility, all six rules:
+    /// self / natureless (same domain) / domainless (always) / domain
+    /// incompatibility / potential incompatibility / flow incompatibility.
+    /// The nature-level Non-Existent Binding Rule makes a binding present on
+    /// one side and absent on the other COMPATIBLE -- the LRM's own worked
+    /// example (printed p.47) declares `electrical` and the signal-flow
+    /// discipline `sig_flow_v` compatible, so a branch between an `electrical`
+    /// net and a stock `voltage` net is legal. The previous implementation
+    /// required both-present or both-absent, rejecting exactly that pairing
+    /// (and every natureless connection with it).
     pub fn compatible(&self, other: DisciplineId, db: &dyn HirTyDB) -> bool {
         let other = db.discipline_info(other);
-        match (self.flow, other.flow) {
-            (Some(flow1), Some(flow2)) => {
-                if !NatureTy::compatible(db, flow1, flow2) {
-                    return false;
-                }
-            }
-            (None, None) => (),
-            _ => return false,
-        }
 
-        match (self.potential, other.potential) {
-            (Some(pot1), Some(pot2)) => {
-                if !NatureTy::compatible(db, pot1, pot2) {
-                    return false;
-                }
-            }
-            (None, None) => (),
-            _ => return false,
+        // Domainless Discipline Rule ("compatible with all disciplines as
+        // there is no nature or domain conflict" -- a domainless discipline
+        // has no natures either, by definition).
+        let (dom1, dom2) = match (self.resolved_domain(), other.resolved_domain()) {
+            (None, _) | (_, None) => return true,
+            (Some(d1), Some(d2)) => (d1, d2),
+        };
+        // Domain Incompatibility Rule.
+        if dom1 != dom2 {
+            return false;
         }
-
+        // Natureless Discipline Rule: compatible with all disciplines of the
+        // same domain.
+        if (self.flow.is_none() && self.potential.is_none())
+            || (other.flow.is_none() && other.potential.is_none())
+        {
+            return true;
+        }
+        // Flow/Potential Incompatibility Rules, with the Non-Existent Binding
+        // Rule for the one-sided cases.
+        if let (Some(flow1), Some(flow2)) = (self.flow, other.flow) {
+            if !NatureTy::compatible(db, flow1, flow2) {
+                return false;
+            }
+        }
+        if let (Some(pot1), Some(pot2)) = (self.potential, other.potential) {
+            if !NatureTy::compatible(db, pot1, pot2) {
+                return false;
+            }
+        }
         true
     }
 }
@@ -248,8 +285,6 @@ impl BranchKind {
     pub fn discipline(&self, db: &dyn HirTyDB) -> Option<DisciplineId> {
         match *self {
             // standard dictates that the disciplines of the two nodes need to be compatible
-            // compatible disciplines behave identical during type checking
-            // so we just use the discipline of the first node here
             BranchKind::PortFlow(node) | BranchKind::NodeGnd(node) => db.node_discipline(node),
             BranchKind::Nodes(node1, node2) => {
                 let discipline1 = db.node_discipline(node1);
@@ -265,7 +300,23 @@ impl BranchKind {
                 };
 
                 if db.discipline_info(discipline1).compatible(discipline2, db) {
-                    Some(discipline1)
+                    // Compatible disciplines used to behave identically during
+                    // type checking, so the first one was picked arbitrarily.
+                    // With the LRM 3.11.1 Non-Existent Binding Rule they no
+                    // longer do: a branch between `electrical` and the
+                    // signal-flow `voltage` is legal, and the branch must take
+                    // the discipline that actually HAS the natures -- picking
+                    // `voltage` would leave `I(br)` with no flow nature.
+                    let info1 = db.discipline_info(discipline1);
+                    let info2 = db.discipline_info(discipline2);
+                    let bindings = |d: &DisciplineTy| {
+                        d.flow.is_some() as u8 + d.potential.is_some() as u8
+                    };
+                    if bindings(&info2) > bindings(&info1) {
+                        Some(discipline2)
+                    } else {
+                        Some(discipline1)
+                    }
                 } else {
                     None
                 }

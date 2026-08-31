@@ -14,7 +14,7 @@ use syntax::{ast, AstNode, SyntaxNodePtr};
 use typed_index_collections::TiSlice;
 
 use crate::db::HirTyDB;
-use crate::lower::lookup_nature;
+use crate::lower::{lookup_nature, NatureTy};
 
 #[derive(PartialEq, Eq, Clone, Debug)]
 pub struct DuplicateItem<Item, Def> {
@@ -53,6 +53,25 @@ pub enum TypeValidationDiagnostic {
         what: &'static str,
         referenced: Name,
         err: PathResolveError,
+        src: ErasedAstId,
+    },
+    /// LRM 3.6.1.2: "It is illegal for a derived nature to define or change
+    /// the units; the derived nature always inherits its parent nature units."
+    /// The declared value is DROPPED by `NatureTy::obtain` (units resolve from
+    /// the base nature), so accepting it silently can hide a modelling error
+    /// -- `nature FunnyV : Voltage; units = "furlong";` stayed 'V'. Warning,
+    /// not error, matching this project's permissive derived-nature stance.
+    DerivedNatureUnits { nature: NatureId, attr: LocalNatureAttrId },
+    /// LRM 3.6.1.2: an `idt_nature`/`ddt_nature` override in a derived nature
+    /// "shall be related (share the same base nature) to the nature the parent
+    /// uses for its idt_nature/ddt_nature". An unrelated link only mis-selects
+    /// idt/ddt tolerance metadata, so this too is a warning.
+    UnrelatedIdtDdtOverride {
+        nature: NatureId,
+        /// "ddt_nature" or "idt_nature"
+        what: &'static str,
+        own: NatureId,
+        parent_link: NatureId,
         src: ErasedAstId,
     },
     /// Enhancement-422: a nature whose parent chain closes on itself. Salsa
@@ -421,6 +440,48 @@ impl TypeValidationCtx<'_> {
                         err,
                         src,
                     })
+                }
+            }
+        }
+
+        // LRM audit (disciplines n6/n9): two rules on DERIVED natures.
+        if let Some(parent) =
+            data.parent.as_ref().and_then(|p| lookup_nature(self.def_map, p, self.db).ok())
+        {
+            // units on a derived nature: declared value is silently ignored.
+            if data.units.is_some() {
+                if let Some((attr, _)) = data
+                    .attrs
+                    .iter_enumerated()
+                    .find(|(_, attr)| attr.name.to_string() == "units")
+                {
+                    self.report(TypeValidationDiagnostic::DerivedNatureUnits { nature, attr });
+                }
+            }
+            // idt_nature/ddt_nature override must be RELATED (same base nature)
+            // to the nature the parent uses for that link. The parent's link
+            // defaulting to the parent itself means nothing was declared up the
+            // chain -- no link to be related to, so nothing to check.
+            let parent_info = self.db.nature_info(parent);
+            for (what, declared, parent_link) in [
+                ("ddt_nature", &data.ddt_nature, parent_info.ddt_nature),
+                ("idt_nature", &data.idt_nature, parent_info.idt_nature),
+            ] {
+                if parent_link == parent {
+                    continue;
+                }
+                if let Some(own) =
+                    declared.as_ref().and_then(|r| lookup_nature(self.def_map, r, self.db).ok())
+                {
+                    if !NatureTy::related(self.db, own, parent_link) {
+                        self.report(TypeValidationDiagnostic::UnrelatedIdtDdtOverride {
+                            nature,
+                            what,
+                            own,
+                            parent_link,
+                            src,
+                        });
+                    }
                 }
             }
         }

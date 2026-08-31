@@ -281,6 +281,16 @@ impl LowerCtx<'_> {
             ast::Stmt::CaseStmt(stmt) => self.collect_case_stmt(stmt),
             ast::Stmt::EventStmt(stmt) => return self.collect_event_stmt(stmt),
             ast::Stmt::BlockStmt(stmt) => self.collect_block(stmt),
+            // VAMS-2023 jump statements (LRM 5.11)
+            ast::Stmt::JumpStmt(stmt) => {
+                if stmt.break_token().is_some() {
+                    Stmt::Break
+                } else if stmt.continue_token().is_some() {
+                    Stmt::Continue
+                } else {
+                    Stmt::Return { expr: stmt.expr().map(|e| self.collect_expr(e)) }
+                }
+            }
         };
         self.alloc_stmt(s, AstPtr::new(&stmt), stmt.attrs())
     }

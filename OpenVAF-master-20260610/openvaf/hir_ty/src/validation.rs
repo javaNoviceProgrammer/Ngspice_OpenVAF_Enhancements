@@ -81,7 +81,12 @@ impl IncompatibleBranchDiagnostic {
                     }])
                     .with_message(msg)
                     .with_notes(vec![
-                        format!("help: disciplines are compatible if their potential and flow natures have the same 'units' attribute"),
+                        "help: LRM 3.11.1: disciplines of one domain are compatible when \
+                         every nature binding PRESENT ON BOTH sides is compatible (same \
+                         base nature or same 'units'); a binding absent on one side is \
+                         no conflict, and a natureless discipline is compatible with its \
+                         whole domain"
+                            .to_owned(),
                     ])
     }
 }
@@ -856,6 +861,80 @@ impl Diagnostic for BodyValidationDiagnosticWrapped<'_> {
                 }
                 .into_report(self.db, self.parse, self.map, self.sm)
             }
+            BodyValidationDiagnostic::RealtimeInAnalog { expr, .. } => {
+                let FileSpan { range, file } = self.expr_src(expr);
+                Report::warning()
+                    .with_message(
+                        "$realtime in the analog context is deprecated by VAMS-2023",
+                    )
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: file,
+                        range: range.into(),
+                        message: "behaves as $abstime here".to_owned(),
+                    }])
+                    .with_notes(vec![
+                        "help: Table 9-7 removes $realtime from the analog context; this \
+                         compiler keeps it as an alias of $abstime -- absolute SECONDS, \
+                         ignoring any `timescale (VAMS 2.0-2.4 scaled it to `timescale \
+                         units instead). Use $abstime"
+                            .to_owned(),
+                    ])
+            }
+            BodyValidationDiagnostic::JumpOutsideLoop { stmt, is_break } => {
+                let kw = if is_break { "break" } else { "continue" };
+                let FileSpan { range, file } = self.stmt_src(stmt);
+                Report::error()
+                    .with_message(format!("`{kw}` outside a loop"))
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: file,
+                        range: range.into(),
+                        message: "no enclosing runtime loop".to_owned(),
+                    }])
+                    .with_notes(vec![format!(
+                        "help: LRM 5.11: `{kw}` acts on the innermost enclosing loop; \
+                         a genvar analog for-loop does not count (5.9.3 excludes jump \
+                         statements there)"
+                    )])
+            }
+            BodyValidationDiagnostic::ReturnOutsideFunction { stmt } => {
+                let FileSpan { range, file } = self.stmt_src(stmt);
+                Report::error()
+                    .with_message("`return` outside an analog function")
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: file,
+                        range: range.into(),
+                        message: "not inside an analog function body".to_owned(),
+                    }])
+                    .with_notes(vec![
+                        "help: LRM 5.11: `return` exits an analog user-defined function; \
+                         in a module's analog block use `disable <block>` to leave a \
+                         named block early"
+                            .to_owned(),
+                    ])
+            }
+            BodyValidationDiagnostic::SameNodeBranchAccess { access, node, is_pot } => {
+                let name = &self.db.node_data(node).name;
+                let acc = if is_pot { "potential" } else { "flow" };
+                let FileSpan { range, file } = self.expr_src(access);
+                Report::error()
+                    .with_message(format!(
+                        "both arguments of the {acc} access name the same net '{name}'"
+                    ))
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: file,
+                        range: range.into(),
+                        message: format!("({name}, {name}) does not define a branch"),
+                    }])
+                    .with_notes(vec![
+                        "help: LRM 4.4 (Table 4-16): the two nets of a branch access must \
+                         be distinct -- V(n,n) and I(n,n) are errors"
+                            .to_owned(),
+                    ])
+            }
             BodyValidationDiagnostic::RecursiveFunctionCall { expr, ref cycle } => {
                 let FileSpan { range, file } = self.expr_src(expr);
                 let name = &cycle[0];
@@ -1000,10 +1079,11 @@ impl Diagnostic for BodyValidationDiagnosticWrapped<'_> {
                     }])
                     .with_notes(vec![
                         "ngspice provides pnjlim (2 extra args), fetlim (1), limitlog (1) \
-                         and limvds (0)"
+                         and limvds/vdslim (0)"
                             .to_owned(),
-                        "a name or argument count it cannot resolve makes the .osdi file \
-                         refuse to load; it used to crash the simulator outright"
+                        "a name or argument count ngspice cannot resolve falls back to NO \
+                         limiting at load time, with a warning (LRM 9.17.3: an unknown \
+                         function behaves as if no string had been supplied)"
                             .to_owned(),
                     ])
             }
@@ -1353,6 +1433,65 @@ impl Diagnostic for TypeValidationDiagnosticWrapped<'_> {
                 Report::error()
                     .with_labels(labels)
                     .with_message(format!("nature attribute '{}' was defined multiple times", name))
+            }
+            TypeValidationDiagnostic::DerivedNatureUnits { nature, attr } => {
+                let nature_ = &self.item_tree[nature.lookup(self.db.upcast()).id];
+                let id = u32::from(nature_.attrs.start()) + u32::from(attr);
+                let id = NatureAttr::lookup(self.item_tree, id.into()).ast_id();
+                let range = self.map.get(id).range();
+                let FileSpan { file, range } = self.parse.to_file_span(range, self.sm);
+                let name = self.db.nature_data(nature).name.clone();
+                let inherited = self
+                    .db
+                    .nature_info(nature)
+                    .units
+                    .clone()
+                    .unwrap_or_default();
+                Report::warning()
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: file,
+                        range: range.into(),
+                        message: "this units value is ignored".to_owned(),
+                    }])
+                    .with_message(format!(
+                        "derived nature '{name}' declares units; the inherited value \
+                         \"{inherited}\" is used instead"
+                    ))
+                    .with_notes(vec![
+                        "help: LRM 3.6.1.2: it is illegal for a derived nature to define or \
+                         change the units -- it always inherits its parent nature's units"
+                            .to_owned(),
+                    ])
+            }
+            TypeValidationDiagnostic::UnrelatedIdtDdtOverride {
+                nature,
+                what,
+                own,
+                parent_link,
+                src,
+            } => {
+                let range = self.map.get_syntax(src).range();
+                let FileSpan { file, range } = self.parse.to_file_span(range, self.sm);
+                let name = self.db.nature_data(nature).name.clone();
+                let own_name = self.db.nature_data(own).name.clone();
+                let link_name = self.db.nature_data(parent_link).name.clone();
+                Report::warning()
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: file,
+                        range: range.into(),
+                        message: format!("{what} override is '{own_name}'"),
+                    }])
+                    .with_message(format!(
+                        "derived nature '{name}' overrides {what} with '{own_name}', which is \
+                         unrelated to the parent's '{link_name}'"
+                    ))
+                    .with_notes(vec![format!(
+                        "help: LRM 3.6.1.2: a {what} override in a derived nature shall be \
+                         related (share the same base nature) to the nature the parent uses; \
+                         only idt/ddt tolerance selection is affected"
+                    )])
             }
             TypeValidationDiagnostic::MultipleDirections(ref info) => {
                 let labels = self.build_duplicate_item(info, |id| self.map.get(id).range());

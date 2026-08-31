@@ -25,6 +25,9 @@ pub enum PreprocessorDiagnostic {
     /// LRM 10.4: `` `undef `` shall have no effect on predefined Verilog-AMS
     /// macros; the simulator may issue a warning for the attempt.
     UndefPredefined { name: String, span: CtxSpan },
+    /// Annex C.4: a directive that exists only in full Verilog-AMS
+    /// (`` `default_discipline ``) -- recognized, warned about, and ignored.
+    AmsOnlyDirective { name: String, span: CtxSpan },
     /// LRM 10.4: a user `` `define `` whose name begins with `__VAMS_` collides
     /// with the reserved predefined-macro namespace.
     ReservedMacroName { name: String, span: CtxSpan },
@@ -55,6 +58,7 @@ impl_display! {
         UnexpectedToken(_) => "encountered unexpected token!";
         MacroOverwritten { name, .. } => "macro '`{}' was overwritten", name;
         UndefPredefined { name, .. } => "'`undef' has no effect on the predefined macro '`{}'", name;
+        AmsOnlyDirective { name, .. } => "'`{}' is an AMS-only directive and is ignored in Verilog-A", name;
         ReservedMacroName { name, .. } => "macro name '{}' lies in the reserved '__VAMS_' namespace", name;
         UnknownKeywordSet { name, .. } => "unknown '`begin_keywords' version specifier \"{}\"", name;
         KeywordSetNotSwitched { name, .. } => "keyword set \"{}\" is treated as \"VAMS-2023\"", name;

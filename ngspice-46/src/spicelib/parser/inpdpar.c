@@ -239,6 +239,14 @@ INPdevParse(char **line, CKTcircuit *ckt, int dev, GENinstance *fast,
             rtn = INPerror(E_PARMVAL);
             goto quit;
         }
+        if (INPlastRoundWarn()) {
+            /* same warning inpgmod.c gives on a .model card */
+            fprintf(stderr,
+                    "Warning: %s: parameter (%s) is an integer; the given "
+                    "non-integral value was rounded to the nearest integer.\n",
+                    fast && fast->GENname ? fast->GENname : device->name,
+                    p->keyword);
+        }
 
         e426_check_multiplier(device, fast, p, val, e426_multiplier_id(device));
         error = e467_bad_instance_value(ckt, device, fast, p, val)
@@ -300,12 +308,18 @@ INPdevParse(char **line, CKTcircuit *ckt, int dev, GENinstance *fast,
                             "Warning: %s: parameter '%s' is set more than once "
                             "on this line; the last value is used.\n",
                             device->name, p->keyword);
-                else
-                    fprintf(stderr,
-                            "Warning: %s: '%s' and '%s' are the same parameter "
-                            "(aliasparam); both are set on this line and the "
-                            "last value is used.\n",
-                            device->name, seen_as[p->id], p->keyword);
+                else {
+                    /* Enhancement-517 / LRM 3.4.7: an override through the
+                     * original name AND an alias (or two aliases) "shall be
+                     * an error", however the override is written. */
+                    errbuf = tprintf("  '%s' and '%s' are the same parameter "
+                                     "(aliasparam) and both are set on this "
+                                     "line; LRM 3.4.7 makes that an error -- "
+                                     "remove one.\n",
+                                     seen_as[p->id], p->keyword);
+                    rtn = errbuf;
+                    goto quit;
+                }
             } else {
                 seen_as[p->id] = p->keyword;
             }
@@ -315,6 +329,14 @@ INPdevParse(char **line, CKTcircuit *ckt, int dev, GENinstance *fast,
         if (!val) {
             rtn = INPerror(E_PARMVAL);
             goto quit;
+        }
+        if (INPlastRoundWarn()) {
+            /* same warning inpgmod.c gives on a .model card */
+            fprintf(stderr,
+                    "Warning: %s: parameter (%s) is an integer; the given "
+                    "non-integral value was rounded to the nearest integer.\n",
+                    fast && fast->GENname ? fast->GENname : device->name,
+                    p->keyword);
         }
         e426_check_multiplier(device, fast, p, val, e426_multiplier_id(device));
         error = e467_bad_instance_value(ckt, device, fast, p, val)

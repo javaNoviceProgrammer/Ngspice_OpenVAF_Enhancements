@@ -468,39 +468,45 @@ extern OsdiObjectFile load_object_file(const char *input) {
   /* Enhancement-396: an unresolved $limit entry used to leave `func_ptr` NULL
    * and merely print "ignoring..." -- but the compiled model still CALLS that
    * pointer, so the very next evaluation dereferenced NULL and the process died
-   * with SIGSEGV and no output at all. The warning never reached the user
-   * either: it went to stdout and was destroyed, unflushed, by the crash it was
-   * warning about.
+   * with SIGSEGV and no output at all.
    *
-   * There is no safe way to continue: the model's `$limit` call site is already
-   * compiled to an indirect call. So a mismatch is now a hard load failure with
-   * a message that names the function, both arities, and the supported set --
-   * and it goes to stderr, which is not buffered away by a later abort. */
+   * LRM-audit update (9.17.3): the LRM mandates graceful fallback -- an
+   * unknown or unsupported name shall behave "just as if no string had been
+   * supplied". So instead of E-396's hard load failure, the slot is bound to
+   * osdi_limit_unknown (a pass-through: no limiting) and a WARNING that names
+   * the function, the arity, and the supported set goes to stderr. The model
+   * loads and runs; only its convergence aid is absent -- exactly the
+   * no-string behavior. The NULL-pointer SIGSEGV E-396 fixed stays fixed:
+   * every slot now always gets a real function. "vdslim" is Annex E Table
+   * E.2's preferred name for the drain-source limiter this tree spells
+   * "limvds"; both bind to the same implementation. */
   for (uint32_t i = 0; i < lim_table_len; i++) {
     int expected_args = -1;
     IS_LIM_FUN("pnjlim", 2, osdi_pnjlim)
     IS_LIM_FUN("limvds", 0, osdi_limvds)
+    IS_LIM_FUN("vdslim", 0, osdi_limvds)
     IS_LIM_FUN("fetlim", 1, osdi_fetlim)
     IS_LIM_FUN("limitlog", 1, osdi_limitlog)
     if (expected_args == -1) {
       fprintf(stderr,
-              "Error: \"%s\": $limit() names the limiting function \"%s\", which "
-              "this simulator does not provide.\n"
-              "       Supported: pnjlim (2 args), fetlim (1), limitlog (1), "
-              "limvds (0).\n",
+              "Warning: \"%s\": $limit() names the limiting function \"%s\", "
+              "which this simulator does not provide; per LRM 9.17.3 it is "
+              "treated as if no function had been named (no limiting).\n"
+              "         Supported: pnjlim (2 args), fetlim (1), limitlog (1), "
+              "limvds/vdslim (0).\n",
               path, lim_table[i].name);
     } else {
       fprintf(stderr,
-              "Error: \"%s\": $limit(..., \"%s\", ...) was given %u extra "
-              "argument%s but this simulator's \"%s\" takes %i.\n"
-              "       Supported: pnjlim (2 args), fetlim (1), limitlog (1), "
-              "limvds (0).\n",
+              "Warning: \"%s\": $limit(..., \"%s\", ...) was given %u extra "
+              "argument%s but this simulator's \"%s\" takes %i; treated as if "
+              "no function had been named (no limiting, LRM 9.17.3).\n"
+              "         Supported: pnjlim (2 args), fetlim (1), limitlog (1), "
+              "limvds/vdslim (0).\n",
               path, lim_table[i].name, lim_table[i].num_args,
               lim_table[i].num_args == 1 ? "" : "s", lim_table[i].name,
               expected_args);
     }
-    txfree(path);
-    return INVALID_OBJECT;
+    lim_table[i].func_ptr = (void *)osdi_limit_unknown;
   }
 
   /* Optional: absdelay descriptor arrays */

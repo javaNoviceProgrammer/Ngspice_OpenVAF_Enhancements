@@ -291,6 +291,36 @@ pub enum BodyValidationDiagnostic {
         node2: NodeId,
     },
 
+    /// VAMS-2023 (LRM 5.11): `break`/`continue` outside any runtime loop --
+    /// including inside a genvar `analog_for`, which 5.9.3 excludes from jump
+    /// statements (those loops are unrolled at elaboration, so their bodies
+    /// reach here loop-less).
+    JumpOutsideLoop {
+        stmt: StmtId,
+        is_break: bool,
+    },
+    /// VAMS-2023 (LRM 5.11): `return` anywhere but an analog function body.
+    ReturnOutsideFunction {
+        stmt: StmtId,
+    },
+    /// VAMS-2023 Table 9-7 / 9.10 NOTE: `$realtime` is deprecated in the
+    /// analog context; here it behaves as `$abstime` (absolute seconds, no
+    /// `timescale scaling).
+    RealtimeInAnalog {
+        expr: ExprId,
+        stmt: StmtId,
+    },
+
+    /// LRM 4.4 / Table 4-16: `V(n1,n1)` and `I(n1,n1)` are Errors -- "the
+    /// operands of an expression shall be unique to define a valid branch",
+    /// and for flow access the two net expressions "shall not evaluate to the
+    /// same signal". Before this check `V(a,a)` compiled silently and read 0.
+    SameNodeBranchAccess {
+        access: ExprId,
+        node: NodeId,
+        is_pot: bool,
+    },
+
     /// Enhancement-59: a cycle in the analog-function call graph
     /// (`f1` calls `f2` calls `f1`). The LRM forbids recursion; without this
     /// check the recursive inlining in lowering overflows the compiler stack.
@@ -796,6 +826,30 @@ impl BodyValidator<'_> {
                 let old = replace(&mut self.ctx, BodyCtx::EventControl);
                 self.validate_stmt(body);
                 self.ctx = old;
+                return;
+            }
+            // VAMS-2023 jump statements (LRM 5.11): break/continue belong to a
+            // RUNTIME loop (a genvar analog_for is unrolled at elaboration, so
+            // a jump inside one correctly lands here with loop_depth == 0 --
+            // 5.9.3 excludes jump statements from those loops); return belongs
+            // to an analog function body.
+            Stmt::Break | Stmt::Continue => {
+                if self.loop_depth == 0 {
+                    self.diagnostics.push(BodyValidationDiagnostic::JumpOutsideLoop {
+                        stmt,
+                        is_break: matches!(self.body.stmts[stmt], Stmt::Break),
+                    });
+                }
+                return;
+            }
+            Stmt::Return { expr } => {
+                if !matches!(self.owner, DefWithBodyId::FunctionId(_)) {
+                    self.diagnostics
+                        .push(BodyValidationDiagnostic::ReturnOutsideFunction { stmt });
+                }
+                if let Some(expr) = expr {
+                    self.validate_expr(expr, stmt);
+                }
                 return;
             }
             Stmt::Block { ref name, ref body } => {
@@ -1314,7 +1368,9 @@ impl ExprValidator<'_, '_> {
 
             Some(NATURE_ACCESS_NODES) => {
                 let node1 = match self.parent.infer.expr_types[args[0]] { Ty::Node(id) => id, _ => return };
-                let node2 = match self.parent.infer.expr_types[args[0]] { Ty::Node(id) => id, _ => return };
+                // was args[0] twice: node2 compared node1 with itself, so the
+                // incompatible-discipline arm below could never fire
+                let node2 = match self.parent.infer.expr_types[args[1]] { Ty::Node(id) => id, _ => return };
                 if let Some(discipline1) = self.parent.db.node_discipline(node1) {
                     if let Some(discipline2) = self.parent.db.node_discipline(node2) {
                         let discipline2 = self.parent.db.discipline_info(discipline2);
@@ -1747,13 +1803,42 @@ impl ExprValidator<'_, '_> {
                 let lo = match self.parent.infer.expr_types[args[1]] { Ty::Node(id) => id, _ => return };
                 // Enhancement-97: contributing to a branch whose endpoints are
                 // both `ground` (e.g. `V(gnd, gnd) <+ ...`) has no unknown to
-                // stamp and used to panic during lowering.
+                // stamp and used to panic during lowering. Checked before the
+                // same-node rule so that source line keeps the more actionable
+                // ground-specific message.
                 if self.write
                     && self.parent.db.node_data(hi).is_gnd
                     && self.parent.db.node_data(lo).is_gnd
                 {
                     self.report(BodyValidationDiagnostic::ContributeToGround { expr });
                     return;
+                }
+                // LRM 4.4 / Table 4-16: both arguments naming the same net is
+                // an Error, for potential and flow access alike. EXCEPT inside
+                // an elaboration buffer: a flattened instantiation legally ties
+                // two formal terminals to one node (a diode-connected
+                // transistor -- the LRM's own ECP oscillator does it), and the
+                // flattener then renders V(s,c) as V(out,out). That access
+                // keeps the pre-elaboration semantics (reads 0, contributes a
+                // net nothing), so only user-written source gets the error --
+                // recognized the way the diagnostics sink recognizes those
+                // buffers, by the synthesized file name.
+                if hi == lo {
+                    let file = self.parent.owner.file(self.parent.db.upcast());
+                    let user_source = !self
+                        .parent
+                        .db
+                        .file_path(file)
+                        .name()
+                        .is_some_and(|n| basedb::diagnostics::is_elaboration_buffer_name(&n));
+                    if user_source {
+                        self.report(BodyValidationDiagnostic::SameNodeBranchAccess {
+                            access: expr,
+                            node: hi,
+                            is_pot: call == BuiltIn::potential,
+                        });
+                        return;
+                    }
                 }
                 let branch = if hi >= lo {
                     BranchWrite::Unnamed { hi, lo: Some(lo) }
@@ -2319,15 +2404,35 @@ impl ExprValidator<'_, '_> {
             //
             // A lint rather than an error: the set is simulator-defined, so a
             // different OSDI consumer may legitimately provide more.
+            // VAMS-2023 Table 9-7 removes $realtime from the analog context
+            // (the 9.10 NOTE deprecates it). Kept as a backward-compat alias
+            // of $abstime -- absolute seconds, no `timescale scaling -- but no
+            // longer silently: OVI Verilog-A 1.0 used seconds, while VAMS
+            // 2.0-2.4 scaled to `timescale units (default 1ns), so legacy
+            // source written against the latter reads values 1e9 off.
+            (BuiltIn::realtime, _) => {
+                self.report(BodyValidationDiagnostic::RealtimeInAnalog {
+                    expr,
+                    stmt: self.stmt,
+                });
+            }
+
             (BuiltIn::limit, _) if args.len() >= 2 => {
                 if let Expr::Literal(Literal::String(ref name)) =
                     self.parent.body.exprs[args[1]]
                 {
                     let name = name.clone();
                     let nargs = args.len() - 2;
+                    // "vdslim" is Annex E Table E.2's preferred name for the
+                    // drain-source limiter this tree spells "limvds"; ngspice
+                    // binds both to the same implementation.
                     let known = matches!(
                         (&*name, nargs),
-                        ("pnjlim", 2) | ("fetlim", 1) | ("limitlog", 1) | ("limvds", 0)
+                        ("pnjlim", 2)
+                            | ("fetlim", 1)
+                            | ("limitlog", 1)
+                            | ("limvds", 0)
+                            | ("vdslim", 0)
                     );
                     if !known {
                         self.report(BodyValidationDiagnostic::UnknownLimitFunction {

@@ -817,15 +817,60 @@ impl<'ll> Builder<'_, '_, 'll> {
                 let rhs = NonNull::from(self.values[args[1]].get(self)).as_ptr();
                 llvm_sys::core::LLVMBuildMul(self.llbuilder, lhs, rhs, UNNAMED)
             }
-            Opcode::Idiv => {
+            // A zero divisor (and INT_MIN with divisor -1) is UB in LLVM's
+            // sdiv/srem -- poison for the optimizer, and a hardware trap
+            // (SIGFPE) on x86 -- so a runtime-valued divisor passing through
+            // zero could crash the simulator outright. Same policy as the
+            // Enhancement-335 shift guards below: pin a definite result
+            // instead of trusting the target.
+            //   x / 0        => 0
+            //   INT_MIN / -1 => INT_MIN (2's-complement wrap, like Iadd)
+            //   x % 0        => 0
+            //   INT_MIN % -1 => 0      (the true remainder)
+            // A DECK-supplied zero divisor for `%` never gets here: hir_lower
+            // reports it as a runtime fatal per LRM 4.2.4.
+            Opcode::Idiv | Opcode::Irem => {
+                let is_div = matches!(self.func.dfg.insts[inst].opcode(), Opcode::Idiv);
                 let lhs = NonNull::from(self.values[args[0]].get(self)).as_ptr();
                 let rhs = NonNull::from(self.values[args[1]].get(self)).as_ptr();
-                llvm_sys::core::LLVMBuildSDiv(self.llbuilder, lhs, rhs, UNNAMED)
-            }
-            Opcode::Irem => {
-                let lhs = NonNull::from(self.values[args[0]].get(self)).as_ptr();
-                let rhs = NonNull::from(self.values[args[1]].get(self)).as_ptr();
-                llvm_sys::core::LLVMBuildSRem(self.llbuilder, lhs, rhs, UNNAMED)
+                let zero = NonNull::from(self.cx.const_int(0)).as_ptr();
+                let one = NonNull::from(self.cx.const_int(1)).as_ptr();
+                let int_min = NonNull::from(self.cx.const_int(i32::MIN)).as_ptr();
+                let neg_one = NonNull::from(self.cx.const_int(-1)).as_ptr();
+                let eq = llvm_sys::LLVMIntPredicate::LLVMIntEQ;
+                let div_by_zero =
+                    llvm_sys::core::LLVMBuildICmp(self.llbuilder, eq, rhs, zero, UNNAMED);
+                let lhs_min =
+                    llvm_sys::core::LLVMBuildICmp(self.llbuilder, eq, lhs, int_min, UNNAMED);
+                let rhs_m1 =
+                    llvm_sys::core::LLVMBuildICmp(self.llbuilder, eq, rhs, neg_one, UNNAMED);
+                let ovf = llvm_sys::core::LLVMBuildAnd(self.llbuilder, lhs_min, rhs_m1, UNNAMED);
+                let bad = llvm_sys::core::LLVMBuildOr(self.llbuilder, div_by_zero, ovf, UNNAMED);
+                let safe_rhs =
+                    llvm_sys::core::LLVMBuildSelect(self.llbuilder, bad, one, rhs, UNNAMED);
+                let raw = if is_div {
+                    llvm_sys::core::LLVMBuildSDiv(self.llbuilder, lhs, safe_rhs, UNNAMED)
+                } else {
+                    llvm_sys::core::LLVMBuildSRem(self.llbuilder, lhs, safe_rhs, UNNAMED)
+                };
+                if is_div {
+                    let with_ovf = llvm_sys::core::LLVMBuildSelect(
+                        self.llbuilder,
+                        ovf,
+                        int_min,
+                        raw,
+                        UNNAMED,
+                    );
+                    llvm_sys::core::LLVMBuildSelect(
+                        self.llbuilder,
+                        div_by_zero,
+                        zero,
+                        with_ovf,
+                        UNNAMED,
+                    )
+                } else {
+                    llvm_sys::core::LLVMBuildSelect(self.llbuilder, bad, zero, raw, UNNAMED)
+                }
             }
             // Enhancement-335: a shift distance outside 0..=31 is POISON in LLVM, and at
             // run time the hardware supplies its own answer instead of Verilog's -- on

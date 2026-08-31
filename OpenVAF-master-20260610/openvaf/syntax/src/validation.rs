@@ -275,10 +275,31 @@ fn validate_literal(literal: ast::Literal, errors: &mut Vec<SyntaxError>) {
 
         // LRM 2.7: a string shall be contained on a single line. The lexer
         // consumes a raw newline inside a string without complaint, silently
-        // accepting the illegal form.
+        // accepting the illegal form. A backslash-escaped newline is a line
+        // continuation (SystemVerilog 5.9 semantics; BSIM4 and other CMC
+        // models rely on it), so only an UNESCAPED newline is flagged.
         ast::LiteralKind::String(lit) => {
-            if lit.syntax.text().contains('\n') {
-                errors.push(SyntaxError::MultilineStringLiteral { span: range });
+            let bytes = lit.syntax.text().as_bytes();
+            let mut i = 0;
+            while i < bytes.len() {
+                match bytes[i] {
+                    b'\\' => {
+                        i += 1;
+                        if i < bytes.len() {
+                            // an escaped CRLF is one continuation, not an
+                            // escaped CR followed by a bare LF
+                            if bytes[i] == b'\r' && bytes.get(i + 1) == Some(&b'\n') {
+                                i += 1;
+                            }
+                            i += 1;
+                        }
+                    }
+                    b'\r' | b'\n' => {
+                        errors.push(SyntaxError::MultilineStringLiteral { span: range });
+                        break;
+                    }
+                    _ => i += 1,
+                }
             }
         }
     }
@@ -411,6 +432,11 @@ fn validate_name(name: Name, errors: &mut Vec<SyntaxError>) {
                 return
             }
             ident if kw::is_reserved(ident) => false,
+            // VAMS-2023 Annex B additions (jump statements, LRM 5.11). In
+            // statement shape they parse as real jump statements; identifier
+            // uses are contextually demoted (syntax/src/parsing.rs) and land
+            // here so L012 flags them like the other VAMS keywords.
+            "break" | "continue" | "return" => true,
             ident if kw_comp::is_reserved(ident) => true,
             _ => return,
         };
@@ -472,7 +498,13 @@ fn validate_nature_decl(nature: ast::NatureDecl, errors: &mut Vec<SyntaxError>) 
     if let Some(parent) = nature.parent() {
         check_nature_path(&parent, errors)
     }
-    for attr in nature.attrs() {
+    // nature_attrs(), NOT attrs(): attrs() is the AttrsOwner accessor for
+    // `(* ... *)` annotation attributes, of which a nature declaration has
+    // none -- iterating it visited zero items, so these checks were dead code
+    // and an illegal `access = "SA"` / `ddt_nature = 3.0` compiled silently
+    // (item-tree lowering then dropped the value, leaving the nature with no
+    // access function and only an unhelpful not-found error at the use site).
+    for attr in nature.nature_attrs() {
         if let (Some(name), Some(val)) = (attr.name(), attr.val()) {
             let name_text = name.syntax().text();
             if name_text == "ddt_nature" || name_text == "idt_nature" {

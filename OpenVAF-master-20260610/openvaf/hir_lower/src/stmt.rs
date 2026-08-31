@@ -152,16 +152,39 @@ impl BodyLoweringCtx<'_, '_, '_> {
                 }
             }
             Stmt::ForLoop { init, cond, incr, body } => {
-                self.lower_stmt(init);
-                self.lower_loop(cond, |s| {
-                    s.lower_stmt(body);
-                    s.lower_stmt(incr);
-                });
+                self.lower_for(init, cond, incr, body);
             }
             Stmt::WhileLoop { cond, body } => self.lower_loop(cond, |s| s.lower_stmt(body)),
             Stmt::DoWhile { cond, body } => self.lower_do_while(cond, |s| s.lower_stmt(body)),
             Stmt::Repeat { count, body } => self.lower_repeat(count, body),
             Stmt::Case { kind, discr, case_arms } => self.lower_case(kind, discr, case_arms),
+            // VAMS-2023 jump statements (LRM 5.11). Same shape as `disable`:
+            // jump to the recorded target and continue lowering into a fresh
+            // block with no incoming edges (removed from the MIR). Validation
+            // has already errored when no enclosing scope exists; degrade to a
+            // no-op here like an unresolved `disable`.
+            Stmt::Break | Stmt::Continue => {
+                let is_break = matches!(stmnt, Stmt::Break);
+                if let Some(&(continue_target, break_target)) = self.ctx.loop_scopes.last() {
+                    let target = if is_break { break_target } else { continue_target };
+                    self.ctx.ins().jump(target);
+                    let unreachable_bb = self.ctx.create_block();
+                    self.ctx.switch_to_block(unreachable_bb);
+                    self.ctx.seal_block(unreachable_bb);
+                }
+            }
+            Stmt::Return { expr } => {
+                if let Some(&(fun, exit)) = self.ctx.return_scopes.last() {
+                    if let Some(expr) = expr {
+                        let val = self.lower_expr(expr);
+                        self.ctx.def_place(PlaceKind::FunctionReturn(fun), val);
+                    }
+                    self.ctx.ins().jump(exit);
+                    let unreachable_bb = self.ctx.create_block();
+                    self.ctx.switch_to_block(unreachable_bb);
+                    self.ctx.seal_block(unreachable_bb);
+                }
+            }
         }
     }
 
@@ -638,6 +661,10 @@ impl BodyLoweringCtx<'_, '_, '_> {
         self.ctx.switch_to_block(end);
     }
 
+    /// Lowers `while (cond) body`. `loop_end` and `loop_cond_head` are sealed
+    /// only AFTER the body is lowered: a `break` adds an edge into `loop_end`
+    /// and a `continue` into `loop_cond_head` (LRM 5.11), and sealing a block
+    /// declares its predecessor set final.
     fn lower_loop(&mut self, cond: ExprId, lower_body: impl FnOnce(&mut Self)) {
         let loop_cond_head = self.ctx.create_block();
         let loop_body_head = self.ctx.create_block();
@@ -649,13 +676,50 @@ impl BodyLoweringCtx<'_, '_, '_> {
         let cond = self.lower_expr(cond);
         self.ctx.ins().br_loop(cond, loop_body_head, loop_end);
         self.ctx.seal_block(loop_body_head);
-        self.ctx.seal_block(loop_end);
 
         self.ctx.switch_to_block(loop_body_head);
+        self.ctx.loop_scopes.push((loop_cond_head, loop_end));
         lower_body(self);
+        self.ctx.loop_scopes.pop();
         self.ctx.ins().jump(loop_cond_head);
 
         self.ctx.seal_block(loop_cond_head);
+        self.ctx.seal_block(loop_end);
+
+        self.ctx.switch_to_block(loop_end);
+    }
+
+    /// Lowers `for (init; cond; incr) body` with the increment in its own
+    /// block, so `continue` re-enters at the increment (LRM 5.11) rather than
+    /// skipping it into an infinite loop.
+    fn lower_for(&mut self, init: StmtId, cond: ExprId, incr: StmtId, body: StmtId) {
+        self.lower_stmt(init);
+
+        let loop_cond_head = self.ctx.create_block();
+        let loop_body_head = self.ctx.create_block();
+        let loop_incr_head = self.ctx.create_block();
+        let loop_end = self.ctx.create_block();
+
+        self.ctx.ins().jump(loop_cond_head);
+        self.ctx.switch_to_block(loop_cond_head);
+
+        let cond = self.lower_expr(cond);
+        self.ctx.ins().br_loop(cond, loop_body_head, loop_end);
+        self.ctx.seal_block(loop_body_head);
+
+        self.ctx.switch_to_block(loop_body_head);
+        self.ctx.loop_scopes.push((loop_incr_head, loop_end));
+        self.lower_stmt(body);
+        self.ctx.loop_scopes.pop();
+        self.ctx.ins().jump(loop_incr_head);
+        self.ctx.seal_block(loop_incr_head);
+
+        self.ctx.switch_to_block(loop_incr_head);
+        self.lower_stmt(incr);
+        self.ctx.ins().jump(loop_cond_head);
+
+        self.ctx.seal_block(loop_cond_head);
+        self.ctx.seal_block(loop_end);
 
         self.ctx.switch_to_block(loop_end);
     }
@@ -671,7 +735,10 @@ impl BodyLoweringCtx<'_, '_, '_> {
         // enter the body unconditionally
         self.ctx.ins().jump(loop_body_head);
         self.ctx.switch_to_block(loop_body_head);
+        // `continue` re-tests the condition, `break` leaves (LRM 5.11)
+        self.ctx.loop_scopes.push((loop_cond_head, loop_end));
         lower_body(self);
+        self.ctx.loop_scopes.pop();
         self.ctx.ins().jump(loop_cond_head);
 
         // then test the condition and loop back to the body if true
@@ -707,6 +774,9 @@ impl BodyLoweringCtx<'_, '_, '_> {
 
         let cond_head = self.ctx.create_block();
         let body_head = self.ctx.create_block();
+        // The decrement lives in its own latch block so `continue` still
+        // counts the iteration (LRM 5.11) instead of looping forever.
+        let latch = self.ctx.create_block();
         let loop_end = self.ctx.create_block();
 
         self.ctx.ins().jump(cond_head);
@@ -719,23 +789,28 @@ impl BodyLoweringCtx<'_, '_, '_> {
         let cond = self.ctx.ins().binary1(Opcode::Igt, counter, zero);
         self.ctx.ins().br_loop(cond, body_head, loop_end);
         self.ctx.seal_block(body_head);
-        self.ctx.seal_block(loop_end);
 
         self.ctx.switch_to_block(body_head);
+        self.ctx.loop_scopes.push((latch, loop_end));
         self.lower_stmt(body);
+        self.ctx.loop_scopes.pop();
+        self.ctx.ins().jump(latch);
+        self.ctx.seal_block(latch);
+
+        self.ctx.switch_to_block(latch);
         let one = self.ctx.iconst(1);
         let dec = self.ctx.ins().binary1(Opcode::Isub, counter, one);
-        let body_tail = self.ctx.current_block();
         self.ctx.ins().jump(cond_head);
         self.ctx.seal_block(cond_head);
+        self.ctx.seal_block(loop_end);
 
-        // counter = phi [ (entry, n), (body_tail, dec) ], inserted at the top of
+        // counter = phi [ (entry, n), (latch, dec) ], inserted at the top of
         // the loop header so it dominates the `counter > 0` test above.
         FuncCursor::new(&mut self.ctx.func.func)
             .at_first_inst(cond_head)
             .ins()
             .with_result(counter)
-            .phi(&[(entry, n), (body_tail, dec)]);
+            .phi(&[(entry, n), (latch, dec)]);
 
         self.ctx.switch_to_block(loop_end);
     }

@@ -197,6 +197,10 @@ impl ast::BinExpr {
                 T![&&] => BinaryOp::BooleanAnd,
                 T![==] => BinaryOp::EqualityTest,
                 T![!=] => BinaryOp::NegatedEqualityTest,
+                // LRM 4.2.6 case (in)equality: in this 2-state analog subset
+                // there are no x/z bits, so === degenerates to == exactly
+                T![===] => BinaryOp::EqualityTest,
+                T![!==] => BinaryOp::NegatedEqualityTest,
                 T![<=] => BinaryOp::LesserEqualTest,
                 T![>=] => BinaryOp::GreaterEqualTest,
                 T![<] => BinaryOp::LesserTest,
@@ -567,7 +571,10 @@ impl ast::StrLit {
     /// Processes the string literal's escape sequences in a single left-to-right
     /// pass (Enhancement-48): `\n`, `\t`, `\\`, `\"`, and `\ddd` (one to three
     /// octal digits, LRM 2.7.1). A backslash before a (possibly CRLF) newline
-    /// keeps the newline (line continuation, tolerated as an extension); any
+    /// is a line continuation contributing NOTHING to the value (SystemVerilog
+    /// 5.9 semantics -- BSIM4 splits long `$strobe` messages this way and ends
+    /// the message with an explicit `\n`, so keeping the raw newline would cut
+    /// the message mid-sentence); any
     /// other unknown escape is preserved verbatim. The previous implementation
     /// chained sequential `str::replace` calls, which mis-unescaped overlapping
     /// sequences (`a\\nb` -- a literal backslash followed by `n` -- became a
@@ -600,14 +607,11 @@ impl ast::StrLit {
                 }
                 Some('\n') => {
                     chars.next();
-                    out.push('\n');
                 }
                 Some('\r') => {
                     chars.next();
-                    out.push('\r');
                     if chars.peek() == Some(&'\n') {
                         chars.next();
-                        out.push('\n');
                     }
                 }
                 Some('0'..='7') => {

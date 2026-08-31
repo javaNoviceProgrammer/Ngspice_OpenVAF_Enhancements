@@ -94,12 +94,19 @@ impl ModuleInfo {
                         continue;
                     }
 
-                    // check that we are not in a block
-                    let name_len = name.len();
-                    let path = declarations.to_path(name);
-                    if path.len() != name_len {
+                    // LRM 3.2.1: only MODULE-scope variables become output
+                    // variables; "Units and descriptions specified for
+                    // block-level variables shall be ignored by the
+                    // simulator". The old check compared to_path(name)
+                    // against the bare name, but block names are never pushed
+                    // onto the iterator's path (block-scoped parameters
+                    // depend on keeping short names), so it never fired --
+                    // two named blocks declaring `(*desc*) real t` both
+                    // exported a colliding instance parameter `t`.
+                    if declarations.in_block() {
                         continue;
                     }
+                    let path = declarations.to_path(name);
                     let units = units
                         .and_then(|attr| {
                             let lit = attr.val().and_then(|e| e.as_str_literal());

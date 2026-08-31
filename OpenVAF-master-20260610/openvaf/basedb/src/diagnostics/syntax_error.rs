@@ -430,7 +430,8 @@ impl Diagnostic for SyntaxError {
                         message: "string spans more than one line".to_owned(),
                     }])
                     .with_notes(vec![
-                        "help: LRM 2.7: a string shall be contained on a single line; use \\n                          for a line break"
+                        "help: LRM 2.7: a string shall be contained on a single line; use \\n \
+                         for a line break, or end the line with a backslash to continue it"
                             .to_owned(),
                     ])
             }

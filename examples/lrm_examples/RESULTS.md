@@ -1,12 +1,14 @@
 # Results — LRM 2023 example sweep vs openvaf-r
 
 **Summary: 231 code blocks extracted from the 442-page LRM PDF. Of the
-complete-module examples, 42 compile cleanly, 17 hit documented
+complete-module examples (current counts live in `manifest.json`, the
+executable ground truth), 47 compile cleanly, 12 hit documented
 openvaf-r limitations (each pinned to its exact diagnostic), 21 use the
 mixed-signal subset a Verilog-A compiler correctly rejects. The sweep
 exposed eight compiler defects — all eight are now fixed (six in
-Enhancement-84, the final two in Enhancement-85). Two errors were found
-in the LRM's own examples.**
+Enhancement-84, the final two in Enhancement-85); later LRM-audit fixes
+kept moving examples from the limitations list into the compiling set.
+Two errors were found in the LRM's own examples.**
 
 ## Defect findings
 
@@ -34,7 +36,7 @@ defects must compile, open gaps must keep their exact diagnostic.
    deny-level lint (L016); the affected files compile with
    `-W port_without_direction`.
 
-## In-scope examples that compile (44)
+## In-scope examples that compile (47 as of the LRM audit — `manifest.json` is the ground truth; the annotated rows below are the original sweep's)
 
 | File | LRM page | Notes |
 |---|---|---|

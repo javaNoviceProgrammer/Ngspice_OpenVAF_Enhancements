@@ -54,12 +54,18 @@ EmptyStmt
 | EventStmt
 | BlockStmt
 | DisableStmt
+| JumpStmt
 
 EmptyStmt = AttrList* ';'
 
 // `disable <block>;` (LRM 5.4) -- Verilog-A's loop/block early exit.
 DisableStmt =
   AttrList* 'disable' Name
+
+// VAMS-2023 jump statements (LRM 5.11): `break;`/`continue;` in runtime
+// loops, `return [expr];` in analog functions.
+JumpStmt =
+  AttrList* ('break' | 'continue' | 'return') Expr? ';'
 
 ExprStmt =
   AttrList* Expr ';'?

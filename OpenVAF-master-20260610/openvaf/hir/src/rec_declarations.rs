@@ -52,6 +52,17 @@ impl<'a> RecDeclarations<'a> {
     pub fn current_path(&self) -> &[Name] {
         &self.path
     }
+
+    /// True while the iterator is inside a named block's scope (LRM 3.2.1
+    /// cares: only MODULE-scope variables with desc/units become output
+    /// variables -- "Units and descriptions specified for block-level
+    /// variables shall be ignored by the simulator"). The `path` vector is
+    /// not usable for this test: block names are never pushed onto it (block
+    /// parameters rely on that to keep their short, netlist-settable names),
+    /// so `to_path` never lengthens.
+    pub fn in_block(&self) -> bool {
+        self.stack.len() > 1
+    }
 }
 
 impl Iterator for RecDeclarations<'_> {

@@ -45,6 +45,8 @@ therefore resolved at **compile time**.
 | Nature-attribute access | `net.potential.abstol`, `branch.potential.abstol` readable in expressions. | [E-45](../../enhancements_doc/Enhancement-45.md), [E-59](../../enhancements_doc/Enhancement-59.md) |
 | Domain binding | `domain continuous` accepted; `domain discrete` on a discipline with natures is a proper two-label error (LRM 3.6.2.2). `examples/domainbind_examples/` | [E-50](../../enhancements_doc/Enhancement-50.md) |
 | Signal-flow / flow-only disciplines | Disciplines with only a flow (or only a potential) nature work, including probe-only usage (§2.7). `examples/signalflow_examples/` | [E-36](../../enhancements_doc/Enhancement-36.md) |
+| Discipline compatibility (LRM 3.11.1) | The full rule set: a branch between a conservative net and a signal-flow net of the same potential nature is legal (`electrical`/`voltage`), natureless disciplines match their whole domain, domainless ones match everything; genuinely incompatible pairs (`electrical`/`rotational`) still refused. | — |
+| NIST2018 physical constants | `constants.vams` is the VAMS-2023 Annex D.2 file: `` `define PHYSICAL_CONSTANTS_NIST2018 `` before the include selects the exact 2019-SI values; the default stays NIST1998 per the LRM. | — |
 
 ## 2.3 Data types, variables, and arrays
 
@@ -64,8 +66,8 @@ therefore resolved at **compile time**.
 |---|---|---|
 | Ranges and excludes | `from (0:inf)`, `exclude 0`, etc., enforced on user-given values. Per the CMC convention, a parameter's **default is exempt** from its own range — industry models use an out-of-range default as the "feature disabled" state. | [E-56](../../enhancements_doc/Enhancement-56.md) |
 | `localparam` | Non-overridable per the LRM; derived localparams (`localparam G = 1/R`) track their inputs. `examples/localparam_examples/` | [E-9](../../enhancements_doc/Enhancement-9.md) |
-| `aliasparam` | Works, including `$param_given` queried through the alias. | [E-59](../../enhancements_doc/Enhancement-59.md) |
-| Array-valued parameters | `parameter real [0:3] w = '{…};` (any dimensionality) expands to one scalar OSDI parameter per element, each individually overridable from SPICE: `.model m dev(w[1][1]=0.9)`. | [E-14](../../enhancements_doc/Enhancement-14.md), [E-15](../../enhancements_doc/Enhancement-15.md) |
+| `aliasparam` | Works, including `$param_given` queried through the alias. LRM 3.4.7's error rules are enforced: setting a parameter by its original name **and** an alias on one card/line is a netlist error, and referencing the alias in module equations is a compile error. | [E-59](../../enhancements_doc/Enhancement-59.md) |
+| Array-valued parameters | `parameter real [0:3] w = '{…};` (any dimensionality) expands to one scalar OSDI parameter per element, each individually overridable from SPICE: `.model m dev(w[1][1]=0.9)`. The whole array can also be overridden at instantiation with an assignment pattern — `leaf #(.w('{…})) l1(a,b);` — checked against the declared element count (LRM 3.4.4/3.4.8). | [E-14](../../enhancements_doc/Enhancement-14.md), [E-15](../../enhancements_doc/Enhancement-15.md) |
 | String parameters | Including `case` dispatch on a string parameter. | [E-59](../../enhancements_doc/Enhancement-59.md) |
 | Hidden system parameters | `$mfactor` (device multiplicity — automatically scales flows, noise, and Jacobians) and the position parameters, readable in the model and settable per instance (`n1 a b mod m=4`). | [E-44](../../enhancements_doc/Enhancement-44.md) |
 | Instance-line parameters | `(* type="instance" *)` on a parameter exposes it on the instance line and to `alter @n1[p]` / `.dc @n1[p]` (see [§3.3](03-ngspice-workflows.md#33-parameter-access-alter-and-sweeps)). | [E-62](../../enhancements_doc/Enhancement-62.md) |
@@ -81,7 +83,8 @@ modules whose failure modes are numerically visible.
 |---|---|---|
 | Arithmetic, comparison, logical, bitwise operators | Audited; fixes included `~` (was arithmetic negate) and const-folded unsigned `>>`. `examples/operator_examples/` | [E-37](../../enhancements_doc/Enhancement-37.md) |
 | Precedence and associativity | Audited against LRM Table 4-2; `%` now binds like `*`/`/`, `2**3**2 = 64` (left-assoc), unary binds above `**`. `examples/precedence_examples/` | [E-38](../../enhancements_doc/Enhancement-38.md) |
-| Arithmetic shifts `<<<` / `>>>` | `examples/shift_examples/` | [E-6](../../enhancements_doc/Enhancement-6.md) |
+| Arithmetic shifts `<<<` / `>>>` | A flagged extension: LRM 4.2.11 bars them from analog blocks, so each use draws a warning, but `>>>` is the only spelling of a sign-extending shift. A shift distance outside 0..=31 (any spelling) warns and yields the LRM-defined value (`1<<32` is 0 — the distance is unsigned). `examples/shift_examples/` | [E-6](../../enhancements_doc/Enhancement-6.md) |
+| Case (in)equality `===` / `!==` | Lex and evaluate as `==`/`!=` — exact in a 2-state analog world (no x/z bits to distinguish). | — |
 | Ternary `?:` | Including over string operands. | [E-37](../../enhancements_doc/Enhancement-37.md) |
 | Based integer literals | `'h1F`, `'b101`, `'o17`, `'d42`, with underscores and explicit widths. `examples/escid_examples/` | [E-46](../../enhancements_doc/Enhancement-46.md) |
 | Escaped identifiers | `\my-net!` per the LRM, everywhere identifiers appear. | [E-46](../../enhancements_doc/Enhancement-46.md) |
@@ -155,7 +158,8 @@ the actual construct and suggest hoisting or `generate` unrolling
 |---|---|---|
 | `if`/`else`, `case`, `casex`/`casez` | `case` works on strings and arrays; `casex`/`casez` treat `x`/`z`/`?` digits of item literals as comparison masks (the priority-encoder idiom), with don't-care literals rejected everywhere else. `examples/casexz_examples/` | [E-33](../../enhancements_doc/Enhancement-33.md), [E-59](../../enhancements_doc/Enhancement-59.md), [E-78](../../enhancements_doc/Enhancement-78.md) |
 | `for`, `while`, `repeat(n)`, `do…while` | All four, audited: nesting, loops over arrays, solution-dependent conditions, contributions accumulating inside loops. Parameter-dependent trip counts honor **model-card overrides at simulation time**. `examples/analogloop_examples/`, `examples/dowhile_examples/`, `examples/repeat_examples/` | [E-9](../../enhancements_doc/Enhancement-9.md), [E-19](../../enhancements_doc/Enhancement-19.md), [E-70](../../enhancements_doc/Enhancement-70.md) |
-| `disable <block>;` | Verilog-A's early exit — the idiom from which `break`/`continue` are built (the language has neither keyword). `examples/disable_examples/` | [E-9](../../enhancements_doc/Enhancement-9.md) |
+| `disable <block>;` | Named-block early exit. `examples/disable_examples/` | [E-9](../../enhancements_doc/Enhancement-9.md) |
+| `break` / `continue` / `return` | The VAMS-2023 jump statements (LRM 5.11): `break`/`continue` in any runtime loop (`continue` re-enters a `for` at its increment), `return [expr]` exits an analog function early. Contextual keywords — legacy identifiers named `break` etc. still compile, with the L012 lint. Not allowed in genvar for-loops (LRM 5.9.3), and enforced. | — |
 
 ## 2.11 System tasks and functions
 
