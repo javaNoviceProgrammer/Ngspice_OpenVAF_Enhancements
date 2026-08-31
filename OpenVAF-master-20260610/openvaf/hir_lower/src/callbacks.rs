@@ -204,7 +204,15 @@ pub enum CallBackKind {
     /// (`fmt::ins_display`, `osdi::print_callback`); `dst` selects the sink:
     /// console (`osdi_log`), file (`osdi_fputs`, with a leading descriptor arg),
     /// or a returned string (`$swrite`/`$sformat`).
-    Print { kind: DisplayKind, arg_tys: Box<[FmtArg]>, dst: PrintDst },
+    Print {
+        kind: DisplayKind,
+        arg_tys: Box<[FmtArg]>,
+        dst: PrintDst,
+        /// Lowered inside an event-controlled block: the statement fires on
+        /// the event's own iteration, so the simulator prints it right away
+        /// instead of deferring it to the accepted iteration (LRM 9.4.6).
+        immediate: bool,
+    },
     /// Begin a `$sscanf`/`$fscanf` parse over the given input string; resets the
     /// runtime scan cursor and match count. Args: `(input: ptr)`.
     ScanBegin,
@@ -318,7 +326,7 @@ impl CallBackKind {
                 returns: 0,
                 has_sideeffects: true,
             },
-            CallBackKind::Print { kind, arg_tys: args, dst } => FunctionSignature {
+            CallBackKind::Print { kind, arg_tys: args, dst, .. } => FunctionSignature {
                 name: format!("{:?}[{:?}])", kind, dst),
                 // format string + the formatted args, plus (file only) the
                 // leading descriptor argument.

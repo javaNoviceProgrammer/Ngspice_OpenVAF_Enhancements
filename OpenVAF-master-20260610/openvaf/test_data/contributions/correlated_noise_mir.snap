@@ -1,20 +1,41 @@
-function %(v16, v18, v19, v22, v27) {
+function %(v16, v20, v21, v26, v46) {
     inst0 = const fn %white_noise(Spur(1))(1) -> 1
     inst1 = const fn %white_noise(Spur(2))(1) -> 1
     v3 = fconst 0.0
 
+                                block8:
+@0003                               v17 = fgt v16, v3
+@0003                               br v17, block2, block3
+
                                 block2:
-@000a                               v21 = fadd v19, v3
-@000d                               v23 = fmul v22, v3
-                                    v33 = fmul v22, v27
-@000e                               v24 = fadd v21, v23
-                                    v25 = optbarrier v24
-                                    v26 = optbarrier v3
-                                    v28 = fneg v3
-                                    v32 = fneg v27
-                                    v29 = optbarrier v16
-                                    v30 = optbarrier v16
-                                    v34 = optbarrier v33
-                                    v35 = optbarrier v27
-                                    v36 = optbarrier v32
+@0003                               jmp block4
+
+                                block3:
+@0003                               jmp block4
+
+                                block4:
+@0003                               v18 = phi [v16, block2], [v3, block3]
+@0009                               br v17, block5, block6
+
+                                block5:
+@0009                               jmp block7
+
+                                block6:
+@0009                               jmp block7
+
+                                block7:
+@0009                               v23 = phi [v16, block5], [v3, block6]
+@000a                               v25 = fadd v21, v3
+@000d                               v30 = fmul v26, v3
+                                    v58 = fmul v26, v46
+@000e                               v31 = fadd v25, v30
+                                    v44 = optbarrier v31
+                                    v45 = optbarrier v3
+                                    v50 = fneg v3
+                                    v57 = fneg v46
+                                    v54 = optbarrier v18
+                                    v55 = optbarrier v23
+                                    v59 = optbarrier v58
+                                    v60 = optbarrier v46
+                                    v61 = optbarrier v57
 }

@@ -284,3 +284,21 @@ void osdi_trnoise_free(OsdiExtraInstData *extra);
 void osdi_trnoise_stamp(CKTcircuit *ckt, void *inst, void *model,
                         OsdiExtraInstData *extra, const OsdiDescriptor *descr,
                         bool is_tran);
+
+/* LRM 9.4.6 / 9.5.9 deferred output (audit 2026-08-31, sysio fixes).
+ *
+ * Display tasks (and un-gated file writes inside the compiled model) must not
+ * produce output unless the Newton iteration is accepted. The display side is
+ * buffered here in ngspice (all of it funnels through osdi_log); the file side
+ * is buffered inside each loaded .osdi's runtime, driven through the optional
+ * osdi_io_iter_begin/osdi_io_flush hooks that osdiregistry.c resolves at load
+ * time. OSDIload announces the start of each Newton iteration (dropping the
+ * superseded iteration's output), OSDIaccept and OSDIfinalStep flush, and the
+ * sweep analyses flush per converged point. Messages carrying
+ * LOG_FLAG_IMMEDIATE (event-gated statements, $debug/$fdebug, severity tasks)
+ * bypass the buffer. */
+void osdi_display_iter_begin(void);
+void osdi_display_flush(void);
+void osdi_register_io_hooks(void *lib_handle, void *(*get_sym)(void *, const char *));
+void osdi_io_hooks_iter_begin(void);
+void osdi_io_hooks_flush(void);

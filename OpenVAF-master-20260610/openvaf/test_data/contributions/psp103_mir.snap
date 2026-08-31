@@ -1,49 +1,120 @@
-function %(v16, v17, v20, v22, v25, v33, v40, v41, v44, v46, v48, v49, v52) {
+function %(v16, v17, v25, v30, v36, v47, v62, v72, v77, v79, v81, v94, v97) {
     inst0 = const fn %white_noise(Spur(1))(1) -> 1
     inst1 = const fn %ddt(1) -> 1
-    inst2 = const fn %white_noise(Spur(2))(1) -> 1
+    inst2 = fn %Fatal[Console])(2) -> 0
+    inst3 = fn %SetRetFlag[abort](0) -> 0
+    inst4 = const fn %white_noise(Spur(3))(1) -> 1
     v3 = fconst 0.0
     v6 = fconst 0x1.0000000000000p0
-    v27 = fconst 0x1.0000000000000p-1
+    v38 = sconst "<DUMMY>"
+    v41 = fconst 0x1.0000000000000p-1
+
+                                block17:
+@0005                               v18 = fdiv v16, v17
+@0006                               v19 = fgt v18, v3
+@0006                               br v19, block2, block3
 
                                 block2:
-@0005                               v18 = fdiv v16, v17
-@000c                               v21 = fdiv v3, v17
-                                    v77 = fdiv v20, v17
-@0012                               v23 = fmul v22, v3
-                                    v76 = fmul v22, v20
-@0018                               v26 = sqrt v25
-@001a                               v28 = fmul v26, v27
-@001c                               v29 = fmul v28, v22
-@001f                               v30 = fmul v29, v3
-                                    v74 = fmul v29, v20
-@0021                               v32 = fneg v3
-                                    v64 = fneg v30
-                                    v75 = fneg v74
-@0036                               v43 = fmul v41, v26
-@0038                               v45 = fmul v43, v44
-@003b                               v47 = fmul v45, v3
-                                    v71 = fmul v45, v46
-@0041                               v50 = fmul v25, v49
-@0043                               v51 = fmul v50, v49
-@0047                               v53 = fmul v52, v52
-@0048                               v54 = fsub v6, v53
-@0049                               v55 = fmul v51, v54
-                                    v57 = fadd v47, v3
-                                    v58 = optbarrier v3
-                                    v59 = optbarrier v21
-                                    v60 = optbarrier v3
-                                    v61 = optbarrier v32
-                                    v62 = optbarrier v32
-                                    v63 = optbarrier v57
-                                    v65 = optbarrier v18
-                                    v66 = optbarrier v55
-                                    v67 = optbarrier v23
-                                    v68 = optbarrier v64
-                                    v69 = optbarrier v64
-                                    v72 = optbarrier v71
-                                    v78 = optbarrier v77
-                                    v79 = optbarrier v76
-                                    v80 = optbarrier v75
-                                    v81 = optbarrier v75
+@0006                               jmp block4
+
+                                block3:
+@0006                               jmp block4
+
+                                block4:
+@0006                               v20 = phi [v18, block2], [v3, block3]
+@000c                               v26 = fdiv v3, v17
+                                    v295 = fdiv v25, v17
+@0012                               v31 = fmul v30, v3
+                                    v294 = fmul v30, v25
+@0018                               v37 = fge v36, v3
+@0018                               br v37, block5, block6
+
+                                block5:
+@0018                               jmp block7
+
+                                block6:
+@0018                               call inst2(v38, v36)
+@0018                               call inst3()
+@0018                               jmp block7
+
+                                block7:
+@0018                               v39 = phi [v36, block5], [v3, block6]
+@0018                               v40 = sqrt v39
+@001a                               v42 = fmul v40, v41
+@001c                               v43 = fmul v42, v30
+@001f                               v44 = fmul v43, v3
+                                    v292 = fmul v43, v25
+@0021                               v46 = fneg v3
+                                    v267 = fneg v44
+                                    v293 = fneg v292
+@0026                               br v37, block8, block9
+
+                                block8:
+@0026                               jmp block10
+
+                                block9:
+@0026                               call inst2(v38, v36)
+@0026                               call inst3()
+@0026                               jmp block10
+
+                                block10:
+@0026                               v55 = phi [v36, block8], [v3, block9]
+@0026                               v56 = sqrt v55
+@0028                               v57 = fmul v56, v41
+@002a                               v58 = fmul v57, v30
+@002d                               v59 = fmul v58, v3
+                                    v290 = fmul v58, v25
+@002f                               v61 = fneg v3
+                                    v268 = fneg v59
+                                    v291 = fneg v290
+@0035                               br v37, block11, block12
+
+                                block11:
+@0035                               jmp block13
+
+                                block12:
+@0035                               call inst2(v38, v36)
+@0035                               call inst3()
+@0035                               jmp block13
+
+                                block13:
+@0035                               v74 = phi [v36, block11], [v3, block12]
+@0035                               v75 = sqrt v74
+@0036                               v76 = fmul v72, v75
+@0038                               v78 = fmul v76, v77
+@003b                               v80 = fmul v78, v3
+                                    v287 = fmul v78, v79
+@0041                               v95 = fmul v36, v94
+@0043                               v96 = fmul v95, v94
+@0047                               v98 = fmul v97, v97
+@0048                               v99 = fsub v6, v98
+@0049                               v100 = fmul v96, v99
+@004a                               v101 = fgt v100, v3
+@004a                               br v101, block14, block15
+
+                                block14:
+@004a                               jmp block16
+
+                                block15:
+@004a                               jmp block16
+
+                                block16:
+@004a                               v102 = phi [v100, block14], [v3, block15]
+                                    v107 = fadd v80, v3
+                                    v144 = optbarrier v3
+                                    v181 = optbarrier v26
+                                    v218 = optbarrier v3
+                                    v246 = optbarrier v46
+                                    v265 = optbarrier v61
+                                    v266 = optbarrier v107
+                                    v281 = optbarrier v20
+                                    v282 = optbarrier v102
+                                    v283 = optbarrier v31
+                                    v284 = optbarrier v267
+                                    v285 = optbarrier v268
+                                    v288 = optbarrier v287
+                                    v296 = optbarrier v295
+                                    v297 = optbarrier v294
+                                    v298 = optbarrier v293
+                                    v299 = optbarrier v291
 }

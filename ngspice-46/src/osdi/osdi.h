@@ -87,6 +87,14 @@
 #define LOG_LVL_WARN 3
 #define LOG_LVL_ERR 4
 #define LOG_LVL_FATAL 5
+/* $monitor: display-class output; the simulator prints it at accepted-point
+ * flush time only when its text changed since the last accepted point
+ * (LRM 9.4.1). */
+#define LOG_LVL_MONITOR 6
+/* Display output lowered inside an event-controlled block: fires on the
+ * event's own Newton iteration, so it must print immediately instead of being
+ * deferred to the accepted iteration (LRM 9.4.6 deferral). */
+#define LOG_FLAG_IMMEDIATE 8
 #define LOG_FMT_ERR 16
 
 #define INIT_ERR_OUT_OF_BOUNDS 1

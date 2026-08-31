@@ -1,0 +1,43 @@
+// lrmsysio.va -- Enhancement-516: display and file-I/O system tasks, audited
+// and fixed against Accellera VAMS-2023 clauses 9.4 and 9.5.
+//
+// One diode-ish device whose output surface exercises everything at once:
+//   * un-gated $strobe/$display -> LRM 9.4.6: printed once per ACCEPTED
+//     solution point, never per Newton iteration,
+//   * $debug -> the clause's one exemption, still per iteration,
+//   * @(initial_step) $strobe -> event-gated output prints exactly once,
+//   * $monitor -> LRM 9.4.1 change detection at accepted points,
+//   * %r -> engineering notation with the LRM's scale factors,
+//   * a null argument (two adjacent commas) -> one space,
+//   * an un-gated $fdisplay -> LRM 9.5.9: file writes deferred to the
+//     accepted iteration (one line per .op, holding the CONVERGED value).
+`include "disciplines.vams"
+
+module lrmsysio(a, c);
+    inout a, c;
+    electrical a, c;
+    parameter real is_ = 1e-14 from (0:inf);
+    integer fd;
+    integer kmon;
+
+    analog begin
+        I(a, c) <+ is_ * (exp(V(a, c) / $vt) - 1);
+
+        @(initial_step)
+            $strobe("GATED once per analysis");
+
+        $strobe("STROBE v=%e", V(a, c));
+        $display("DISPLAY v=%e", V(a, c));
+        $debug("DEBUG v=%e", V(a, c));
+
+        kmon = ($abstime >= 0.5) ? 1 : 0;
+        $monitor("MON k=%d", kmon);
+
+        $strobe("ENG r1=[%r] r2=[%r] r3=[%r] r4=[%r]", 1.0e3, 1.0e-9, 0.036, 2.2e4);
+        $strobe("NULLARG:",,"end");
+
+        fd = $fopen("lrmsysio_op.txt", "w");
+        $fdisplay(fd, "CONVERGED v=%g", V(a, c));
+        $fclose(fd);
+    end
+endmodule

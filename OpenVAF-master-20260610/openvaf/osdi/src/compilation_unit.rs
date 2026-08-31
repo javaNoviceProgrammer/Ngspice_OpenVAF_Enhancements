@@ -24,8 +24,8 @@ use typed_indexmap::TiSet;
 
 use crate::inst_data::OsdiInstanceData;
 use crate::metadata::osdi_0_4::{
-    stdlib_bitcode, OsdiTys, LOG_FMT_ERR, LOG_LVL_DEBUG, LOG_LVL_DISPLAY, LOG_LVL_ERR,
-    LOG_LVL_FATAL, LOG_LVL_INFO, LOG_LVL_WARN,
+    stdlib_bitcode, OsdiTys, LOG_FLAG_IMMEDIATE, LOG_FMT_ERR, LOG_LVL_DEBUG, LOG_LVL_DISPLAY,
+    LOG_LVL_ERR, LOG_LVL_FATAL, LOG_LVL_INFO, LOG_LVL_MONITOR, LOG_LVL_WARN,
 };
 use crate::metadata::OsdiLimFunction;
 use crate::model_data::OsdiModelData;
@@ -57,6 +57,27 @@ pub fn new_codegen<'a, 'll>(
         unsafe {
             // LLVMPurgeAttrs(fun);
             if LLVMIsDeclaration(fun) != 0 as i32 {
+                continue;
+            }
+
+            // The deferred-I/O lifecycle hooks are called by the simulator
+            // via dlsym (osdi_io_iter_begin / osdi_io_flush): keep them
+            // visible with weak-ODR linkage (the stdlib bitcode is linked
+            // into every codegen unit, so plain external linkage would be a
+            // duplicate-symbol error). Every other stdlib function stays
+            // internal per unit -- the MUTABLE state they touch is declared
+            // `__attribute__((weak))` in stdlib.c, so all per-unit copies
+            // (including LLVM's specialized clones) share one instance of the
+            // descriptor tables, deferred-write buffer, and scan cursor.
+            let mut name_len = 0usize;
+            let name = llvm_sys::core::LLVMGetValueName2(fun, &mut name_len);
+            let name = std::slice::from_raw_parts(name as *const u8, name_len);
+            if name == b"osdi_io_iter_begin" || name == b"osdi_io_flush" {
+                LLVMSetLinkage(fun, LLVMLinkage::LLVMWeakODRLinkage);
+                llvm_sys::core::LLVMSetDLLStorageClass(
+                    fun,
+                    llvm_sys::LLVMDLLStorageClass::LLVMDLLExportStorageClass,
+                );
                 continue;
             }
 
@@ -278,8 +299,9 @@ pub fn general_callbacks<'ll>(
                 | CallBackKind::AcStim { .. }
                 | CallBackKind::TimeDerivative => return None,
 
-                CallBackKind::Print { kind, arg_tys, dst } => {
-                    let (fun, fun_ty) = print_callback(builder.cx, *kind, arg_tys, *dst);
+                CallBackKind::Print { kind, arg_tys, dst, immediate } => {
+                    let (fun, fun_ty) =
+                        print_callback(builder.cx, *kind, arg_tys, *dst, *immediate);
                     CallbackFun::Prebuilt(BuiltCallbackFun {
                         fun_ty,
                         fun,
@@ -477,6 +499,7 @@ fn print_callback<'ll>(
     kind: hir_lower::fmt::DisplayKind,
     arg_tys: &[FmtArg],
     dst: PrintDst,
+    immediate: bool,
 ) -> (&'ll llvm_sys::LLVMValue, &'ll llvm_sys::LLVMType) {
     // Parameters: (handle, fmt_string, [fd if File], formatted args...). The
     // file variant carries the integer descriptor right after the format string
@@ -602,12 +625,28 @@ fn print_callback<'ll>(
                     let num = LLVMBuildFMul(llbuilder, val, exp, UNNAMED);
                     args.push(&*num);
                     let mut idx_array = vec![cx.const_int(0), &*idx];
-                    let scale_char = LLVMBuildInBoundsGEP2(
+                    let scale_char_ptr = LLVMBuildInBoundsGEP2(
                         llbuilder,
                         NonNull::from(char_table_ty).as_ptr(),
                         NonNull::from(char_table).as_ptr(),
                         idx_array.as_mut_ptr() as *mut *mut _,
                         2,
+                        UNNAMED,
+                    );
+                    // The GEP yields a POINTER into FMT_CHARS; snprintf's %c
+                    // wants the character VALUE (promoted to int per C
+                    // varargs). Passing the pointer printed a garbage byte for
+                    // every %r conversion.
+                    let scale_char = LLVMBuildLoad2(
+                        llbuilder,
+                        NonNull::from(cx.ty_char()).as_ptr(),
+                        scale_char_ptr,
+                        UNNAMED,
+                    );
+                    let scale_char = llvm_sys::core::LLVMBuildZExt(
+                        llbuilder,
+                        scale_char,
+                        NonNull::from(cx.ty_int()).as_ptr(),
                         UNNAMED,
                     );
                     args.push(&*scale_char);
@@ -704,12 +743,19 @@ fn print_callback<'ll>(
         let flags = LLVMBuildPhi(llbuilder, NonNull::from(cx.ty_int()).as_ptr(), UNNAMED);
         let lvl = match kind {
             DisplayKind::Debug => LOG_LVL_DEBUG,
-            DisplayKind::Display | DisplayKind::Monitor => LOG_LVL_DISPLAY,
+            DisplayKind::Display => LOG_LVL_DISPLAY,
+            // LRM 9.4.1: $monitor gets change-detection semantics, applied by
+            // the simulator when the accepted iteration's output is flushed.
+            DisplayKind::Monitor => LOG_LVL_MONITOR,
             DisplayKind::Info => LOG_LVL_INFO,
             DisplayKind::Warn => LOG_LVL_WARN,
             DisplayKind::Error => LOG_LVL_ERR,
             DisplayKind::Fatal => LOG_LVL_FATAL,
         };
+        // Event-gated display statements fire on the event's own iteration
+        // (e.g. @(initial_step)); the simulator must print them right away
+        // rather than defer them to the accepted iteration (LRM 9.4.6).
+        let lvl = if immediate { lvl | LOG_FLAG_IMMEDIATE } else { lvl };
         let lvl_and_err = lvl | LOG_FMT_ERR;
         let lvl = cx.const_unsigned_int(lvl);
         let lvl_and_err = cx.const_unsigned_int(lvl_and_err);
@@ -739,14 +785,20 @@ fn print_callback<'ll>(
                 let fputs = cx
                     .get_func_by_name("osdi_fputs")
                     .expect("stdlib function osdi_fputs is missing");
-                let fputs_ty = cx.ty_func(&[cx.ty_int(), cx.ty_ptr()], cx.ty_void());
-                let mut args = [fd, msg];
+                let fputs_ty = cx.ty_func(&[cx.ty_int(), cx.ty_ptr(), cx.ty_int()], cx.ty_void());
+                // Event-gated file writes print immediately; the rest are
+                // buffered by the runtime until the iteration is accepted
+                // (LRM 9.5.9, which exempts exactly $fdebug).
+                let imm = immediate || matches!(kind, DisplayKind::Debug);
+                let imm = cx.const_int(imm as i32);
+                let imm = NonNull::from(imm).as_ptr();
+                let mut args = [fd, msg, imm];
                 LLVMBuildCall2(
                     llbuilder,
                     NonNull::from(fputs_ty).as_ptr(),
                     NonNull::from(fputs).as_ptr(),
                     args.as_mut_ptr(),
-                    2,
+                    3,
                     UNNAMED,
                 );
                 llvm_sys::core::LLVMBuildRetVoid(llbuilder);

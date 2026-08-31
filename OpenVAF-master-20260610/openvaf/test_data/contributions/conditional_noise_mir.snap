@@ -3,23 +3,34 @@ function %(v16, v17, v20, v21) {
     v3 = fconst 0.0
     v6 = fconst 0x1.0000000000000p0
 
-                                block5:
+                                block8:
 @0009                               v19 = flt v16, v3
                                     br v19, block2, block3
 
                                 block2:
 @000f                               v22 = fmul v20, v21
-                                    v25 = fadd v16, v3
+@0010                               v23 = fgt v22, v3
+@0010                               br v23, block5, block6
+
+                                block5:
+@0010                               jmp block7
+
+                                block6:
+@0010                               jmp block7
+
+                                block7:
+@0010                               v24 = phi [v22, block5], [v3, block6]
+                                    v30 = fadd v16, v3
                                     jmp block4
 
                                 block3:
                                     jmp block4
 
                                 block4:
-                                    v35 = phi [v22, block2], [v3, block3]
-                                    v30 = phi [v25, block2], [v16, block3]
-                                    v33 = phi [v6, block2], [v3, block3]
-                                    v32 = optbarrier v30
-                                    v34 = optbarrier v33
+                                    v40 = phi [v3, block3], [v24, block7]
+                                    v35 = phi [v16, block3], [v30, block7]
+                                    v38 = phi [v3, block3], [v6, block7]
                                     v37 = optbarrier v35
+                                    v39 = optbarrier v38
+                                    v42 = optbarrier v40
 }

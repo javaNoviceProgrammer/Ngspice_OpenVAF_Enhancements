@@ -1,50 +1,67 @@
-function %_init(v17, v18, v25, v28, v30, v44, v37, v33, v39, v53) {
-    inst0 = fn %collapse_node3_Some(node1)(0) -> 0
-    inst1 = fn %collapse_node2_None(0) -> 0
+function %_init(v17, v18, v25, v28, v30, v53, v46, v33, v48, v62) {
+    inst0 = fn %Fatal[Console])(2) -> 0
+    inst1 = fn %collapse_node3_Some(node1)(0) -> 0
+    inst2 = fn %collapse_node2_None(0) -> 0
     // v1 = bconst false
     // v2 = bconst true
     v3 = fconst 0.0
     v6 = fconst 0x1.0000000000000p0
     v7 = fconst -0x1.0000000000000p0
     v14 = fconst 0x1.8000000000000p1
+    v41 = sconst "<DUMMY>"
 
-                                block20:
+                                block35:
 @0003                               v16 = fgt v17, v18
 @0052                               v32 = fdiv v7, v33
-@0053                               v34 = pow v14, v32
-@0054                               v35 = fsub v6, v34
-@0058                               v36 = fmul v37, v35
-                                    v62 = optbarrier v36
-                                    v43 = fgt v44, v18
-@0098                               br v43, block13, block12
+@0052                               v34 = floor v32
+@0052                               v35 = fne v34, v32
+@0052                               v36 = iand v1, v35
+@0052                               v37 = flt v32, v3
+@0052                               v38 = iand v1, v37
+@0052                               v39 = ior v36, v38
+@0052                               v40 = inot v39
+@0052                               br v40, block10, block9
 
-                                block12:
-                                    call inst0()
-@00a8                               jmp block13
+                                block9:
+@0052                               call inst0(v41, v14)
+@0052                               jmp block10
 
-                                block13:
-                                    v45 = phi [v3, block12], [v6, block20]
-@00ac                               br v16, block16, block15
+                                block10:
+@0052                               v42 = phi [v6, block9], [v14, block35]
+@0053                               v43 = pow v42, v32
+@0054                               v44 = fsub v6, v43
+@0058                               v45 = fmul v46, v44
+                                    v71 = optbarrier v45
+                                    v52 = fgt v53, v18
+@0098                               br v52, block25, block24
 
-                                block15:
-@00c7                               call inst1()
-@00cc                               jmp block16
+                                block24:
+                                    call inst1()
+@00a8                               jmp block25
 
-                                block16:
-                                    v47 = phi [v1, block13], [v2, block15]
-                                    v63 = optbarrier v47
-                                    v49 = optbarrier v45
-                                    v52 = sqrt v53
-                                    v65 = optbarrier v52
-                                    v54 = fmul v49, v52
-                                    v66 = optbarrier v54
-                                    br v47, block21, block22
+                                block25:
+                                    v54 = phi [v6, block10], [v3, block24]
+@00ac                               br v16, block31, block30
 
-                                block21:
-                                    jmp block22
+                                block30:
+@00c7                               call inst2()
+@00cc                               jmp block31
 
-                                block22:
-                                    v56 = phi [v6, block16], [v3, block21]
-                                    v57 = fsub v3, v56
-                                    v64 = optbarrier v57
+                                block31:
+                                    v56 = phi [v1, block25], [v2, block30]
+                                    v72 = optbarrier v56
+                                    v58 = optbarrier v54
+                                    v61 = sqrt v62
+                                    v74 = optbarrier v61
+                                    v63 = fmul v58, v61
+                                    v75 = optbarrier v63
+                                    br v56, block36, block37
+
+                                block36:
+                                    jmp block37
+
+                                block37:
+                                    v65 = phi [v6, block31], [v3, block36]
+                                    v66 = fsub v3, v65
+                                    v73 = optbarrier v66
 }

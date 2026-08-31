@@ -662,9 +662,47 @@ static void load(CKTcircuit *ckt, const GENinstance *gen_inst, void *model,
   }
 }
 
+/* LRM 9.4.6/9.5.9: a new Newton iteration's output supersedes the previous,
+ * unaccepted iteration's. Detected per (circuit, iteration-counter) pair; the
+ * counter alone would go stale across a re-run of the same circuit. */
+static void osdi_note_iteration(CKTcircuit *ckt) {
+  /* STATnumIter is only bulk-updated when NIiter returns, so it cannot tell
+   * the iterations of one solve apart. NIiter swaps CKTrhs/CKTrhsOld once per
+   * iteration, so the CKTrhsOld pointer alternates -- adjacent iterations
+   * always differ in the composite key below (and solves/points differ in
+   * time, mode, or the iteration total). */
+  static CKTcircuit *last_ckt;
+  static int last_iter = -1;
+  static double *last_rhs_old;
+  static double last_time = -1.0;
+  static long last_mode = -1;
+  int it = (ckt->CKTstat != NULL) ? ckt->CKTstat->STATnumIter : -1;
+  if (ckt != last_ckt || it != last_iter || ckt->CKTrhsOld != last_rhs_old ||
+      ckt->CKTtime != last_time || (long)ckt->CKTmode != last_mode) {
+    last_ckt = ckt;
+    last_iter = it;
+    last_rhs_old = ckt->CKTrhsOld;
+    last_time = ckt->CKTtime;
+    last_mode = (long)ckt->CKTmode;
+    osdi_display_iter_begin();
+    osdi_io_hooks_iter_begin();
+  }
+}
+
+/* Flush the just-converged/accepted point's deferred display and file output.
+ * Called from OSDIaccept (transient points), OSDIfinalStep (analysis ends),
+ * and the sweep analyses (per swept point). */
+extern void OSDIpendingFlush(CKTcircuit *ckt) {
+  NG_IGNORE(ckt);
+  osdi_display_flush();
+  osdi_io_hooks_flush();
+}
+
 extern int OSDIload(GENmodel *inModel, CKTcircuit *ckt) {
   GENmodel *gen_model;
   GENinstance *gen_inst;
+
+  osdi_note_iteration(ckt);
 
   bool is_init_smsig = ckt->CKTmode & MODEINITSMSIG;
   bool is_dc = ckt->CKTmode & (MODEDCOP | MODEDCTRANCURVE);
@@ -940,6 +978,10 @@ int OSDIpendingRequests(CKTcircuit *ckt) {
  * OSDIload's mapping so that phase-qualified events
  * (`@(final_step("tran"))`) match via the stdlib analysis() callback. */
 int OSDIfinalStep(CKTcircuit *ckt) {
+  /* The analysis just completed: whatever the final converged iteration
+   * deferred belongs to an accepted solution -- flush it before the
+   * final_step evaluations produce their own (immediate-tagged) output. */
+  OSDIpendingFlush(ckt);
   bool is_tran = ckt->CKTmode & MODETRAN;
   /* Enhancement-412: see the snapshot below. AC and NOISE end on a
    * small-signal solution, so this evaluation must not be allowed to leave its

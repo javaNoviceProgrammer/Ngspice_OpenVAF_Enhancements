@@ -185,11 +185,17 @@ impl BodyLoweringCtx<'_, '_, '_> {
     fn lower_event_control(&mut self, event: &Event, body: StmtId) {
         let fired = self.lower_event_fired(event);
 
+        // Display statements inside the event body are tagged immediate: the
+        // event fires on its own Newton iteration, so deferring their output
+        // to the accepted iteration (LRM 9.4.6) would drop it entirely.
+        let outer = self.ctx.in_event_ctx;
+        self.ctx.in_event_ctx = true;
         self.ctx.make_cond(fired, |ctx, branch| {
             if branch {
                 BodyLoweringCtx { ctx, body: self.body, path: self.path }.lower_stmt(body);
             }
         });
+        self.ctx.in_event_ctx = outer;
     }
 
     /// Lowers one event (or an `or` list of them, Enhancement-59) to its

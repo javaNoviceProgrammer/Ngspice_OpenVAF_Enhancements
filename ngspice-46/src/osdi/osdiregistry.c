@@ -335,6 +335,12 @@ static size_t calc_osdi_noise_off(const OsdiDescriptor *descr) {
 
 static NGHASHPTR known_object_files = NULL;
 #define DUMMYDATA ((void *)42)
+
+/* Function-pointer adapter over the platform GET_SYM macro, handed to
+ * osdi_register_io_hooks (osdicallbacks.c). */
+static void *reg_get_sym(void *lib, const char *sym) {
+  return GET_SYM(lib, sym);
+}
 /**
  * Loads an object file from the hard drive with the platform equivalent of
  * dlopen. This function checks that the OSDI version of the object file is
@@ -684,6 +690,11 @@ extern OsdiObjectFile load_object_file(const char *input) {
         .term_short_infos = term_shorts_ptr,
     };
   }
+
+  /* LRM 9.5.9 deferred file writes: resolve this object's optional
+   * osdi_io_iter_begin/osdi_io_flush lifecycle hooks (absent in .osdi files
+   * built by older compilers -- then the runtime writes through as before). */
+  osdi_register_io_hooks(handle, reg_get_sym);
 
   txfree(path);
   return (OsdiObjectFile){

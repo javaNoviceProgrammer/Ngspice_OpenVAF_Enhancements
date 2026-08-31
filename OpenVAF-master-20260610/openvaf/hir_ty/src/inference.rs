@@ -1268,6 +1268,21 @@ impl Ctx<'_> {
     ///
     /// An array has no default rendering and is reported instead.
     fn check_display_arg_default(&mut self, arg: ExprId) {
+        // LRM 9.4.1 (IEEE 1364 17.1.1.2): a null (empty) display argument --
+        // two adjacent commas, `$strobe("a",,"b")` -- is legal and produces a
+        // single space character. The parser records the empty slot as an
+        // empty ARRAY_EXPR (Enhancement-453's null-argument form); typing it
+        // Void routes it to the lowering's space-rendering arm instead of a
+        // type-mismatch error.
+        let is_null_arg = match self.body.exprs[arg] {
+            Expr::Missing => true,
+            Expr::Array(ref elems) => elems.is_empty(),
+            _ => false,
+        };
+        if is_null_arg {
+            self.result.casts.insert(arg, Type::Void);
+            return;
+        }
         match self.result.expr_types[arg].to_value() {
             // exactly what hir_lower::fmt can render, plus Err (already reported)
             Some(Type::Real | Type::Integer | Type::String | Type::Void | Type::Err) => (),

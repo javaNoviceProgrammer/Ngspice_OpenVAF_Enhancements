@@ -160,6 +160,12 @@ impl BodyLoweringCtx<'_, '_, '_> {
                 }
             } else {
                 let ty = self.resolved_ty(expr);
+                // LRM 9.4.1: a null (empty) argument produces exactly ONE
+                // space -- before the auto-separator logic below adds its own.
+                if ty == Type::Void {
+                    fmt_lit.push(' ');
+                    continue;
+                }
                 let has_whitespace = fmt_lit.chars().last().map_or(false, |c| c.is_whitespace());
                 if !has_whitespace {
                     fmt_lit.push(' ')
@@ -190,7 +196,12 @@ impl BodyLoweringCtx<'_, '_, '_> {
         }
 
         call_args[0] = self.ctx.sconst(&fmt_lit);
-        let cb = CallBackKind::Print { kind, arg_tys: arg_tys.into_boxed_slice(), dst };
+        let cb = CallBackKind::Print {
+            kind,
+            arg_tys: arg_tys.into_boxed_slice(),
+            dst,
+            immediate: self.ctx.in_event_ctx,
+        };
         if dst == PrintDst::String {
             // The callback returns the formatted string.
             Some(self.ctx.call1(cb, &call_args))
@@ -227,6 +238,8 @@ impl BodyLoweringCtx<'_, '_, '_> {
             kind: DisplayKind::Display,
             arg_tys: arg_tys.into_boxed_slice(),
             dst: PrintDst::String,
+            // String formatting never reaches the log; the flag is inert.
+            immediate: true,
         };
         self.ctx.call1(cb, &call_args)
     }

@@ -983,6 +983,14 @@ DCtrCurv(CKTcircuit *ckt, int restart)
 
         CKTdump(ckt,ckt->CKTtime,plot);
 
+#ifdef OSDI
+        /* LRM 9.4.6/9.5.9: this sweep point converged -- flush the deferred
+           Verilog-A display/file output of its final iteration (each point of
+           a .dc sweep is an accepted solution; Table 4-22 treats every point
+           as its own operating point). */
+        OSDIpendingFlush(ckt);
+#endif
+
         if (ckt->CKTsoaCheck)
             error = CKTsoaCheck(ckt);
 

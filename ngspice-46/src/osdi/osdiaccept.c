@@ -107,6 +107,11 @@ static void last_crossing_accept(CKTcircuit *ckt, GENmodel *inModel,
 int OSDIaccept(CKTcircuit *ckt, GENmodel *inModel) {
   OsdiRegistryEntry *entry = osdi_reg_entry_model(inModel);
 
+  /* LRM 9.4.6/9.5.9: the timepoint was accepted -- flush the deferred display
+   * and file output of its converged iteration. Runs once per accept in
+   * practice: the second model's call finds the buffers empty. */
+  OSDIpendingFlush(ckt);
+
   bool is_tran = (bool)(ckt->CKTmode & MODETRAN);
   if (!is_tran)
     return OK;

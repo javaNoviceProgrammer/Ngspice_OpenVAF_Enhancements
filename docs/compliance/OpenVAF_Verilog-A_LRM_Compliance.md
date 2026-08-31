@@ -634,7 +634,19 @@ All five kinds (`$strobe`, `$display`, `$write`, `$monitor`, `$debug`)
 with the complete format surface — `[flags][width][.precision]` on every
 conversion, dynamic `*` widths, `%e/f/g/r` (engineering notation),
 `%d/h/o/b/c/s`, `%m`, `%%` — verified against exact printf output.
-verified against exact printf output:
+As of [E-516](../../enhancements_doc/Enhancement-516.md) the LRM 9.4.6
+timing rule holds: display output is buffered per Newton iteration and
+printed only for the **accepted** point (`$debug` keeps the clause's
+exemption and still prints per iteration; statements inside
+event-controlled blocks print immediately, since they fire on the
+event's own iteration). `$monitor` implements 9.4.1's change detection —
+one line per change of its argument list at accepted points (a
+`$abstime` argument defeats the text comparison — documented). `%r`
+engineering notation, which printed garbage for every input, is exact:
+`1e3 → 1.000000k`, `1e-9 → 1.000000n`, `0.036 → 36.000000m`. A null
+argument (two adjacent commas) renders as the single space 9.4.1
+specifies. A constant-argument display hoisted to instance
+initialization still executes there (⚠️ documented at the split):
 
 ```verilog
 $strobe("Vth=%7.4f V  region=%2d  id=%r  name=%s", vth, reg, id, name);
@@ -645,7 +657,17 @@ $strobe("Vth=%7.4f V  region=%2d  id=%r  name=%s", vth, reg, id, name);
 `$fopen/$fclose/$fdisplay/$fwrite/$fstrobe/$fmonitor/$fdebug/$fflush/
 $ftell/$fseek/$rewind/$feof/$ferror/$fgetc/$ungetc` (single-character read
 and one-character pushback, E-107/E-108) and `$swrite/$sformat/$sscanf/
-$fgets/$fscanf`. `$sscanf`/`$fscanf` honour the format conversion base —
+$fgets/$fscanf`. The 9.5 lifecycle rules hold as of
+[E-516](../../enhancements_doc/Enhancement-516.md): un-gated file writes
+are deferred to the accepted iteration (9.5.9, with readable streams
+rewound to their accepted baseline each iteration for the read replay);
+a `"w"`-mode reopen in a following analysis **appends** (9.5.1.1); the
+open-write-close idiom in the analog body writes its line (an
+instance-setup `$fclose` defers so the descriptor survives for eval);
+a re-run of the instance initialization reproduces `$rewind`/`$fseek`
+files byte-exactly; and the pre-opened descriptors `32'h8000_0000/1/2`
+reach stdin/stdout/stderr. Full one-hot multichannel descriptors and
+`$fmonitor` change detection remain ⚠️ documented gaps. `$sscanf`/`$fscanf` honour the format conversion base —
 `%h`/`%x` hex, `%o` octal, `%b` binary, `%d` decimal (E-105).
 
 **The scan format is read only when it is a literal**
@@ -780,7 +802,7 @@ connected port.)*
 | 5.10 Events (steps, cross/above/timer, OR lists, phase lists) | ✅ | `initial_step`, `finalstep`, `cross`, `timer`, `lrmcorner` |
 | 5.11 Analog functions (arrays in/out/return) | ✅ | `funcarray`, `arrayout`, `arrayret` |
 | 6 Hierarchy (instantiation, generate incl. legacy analog-block form, defparam, $root, part-select connections, hierarchical branch probes) | ✅ (param-shaped structure ⚠️ explained) | `instantiation`, `generate`, `legacygen`, `defparam`, `hiername`, `implicitnet`, `partselect`, `hierbranch` |
-| 9.4–9.8 Display, file/string I/O (incl. `$fgetc`/`$ungetc`, `$sscanf` base, literal-only scan formats) | ✅ | `display`, `fileio`, `stringio`, `fgetc`, `ungetc`, `sscanf`, `scanfmt` |
+| 9.4–9.8 Display, file/string I/O (incl. 9.4.6/9.5.9 accepted-iteration deferral, `$monitor` change detection, `%r`, 9.5.1.1 append, pre-opened fds) | ✅ ([E-516](../../enhancements_doc/Enhancement-516.md) audit; MCD/`$fmonitor` ⚠️) | `display`, `fileio`, `stringio`, `fgetc`, `ungetc`, `sscanf`, `scanfmt`, `lrmsysio` |
 | 9.13 Random/distributions | ✅ (deterministic seed ⚠️ documented) | `rng`, `montecarlo` |
 | 9 misc ($finish family, $simparam, attributes) | ✅ | `simctrl`, `simparamstr`, `opvar` |
 | plusargs (`$test`/`$value`) | ✅ ([E-215](../../enhancements_doc/Enhancement-215.md)) | `plusargs` |

@@ -1935,8 +1935,15 @@ impl BodyLoweringCtx<'_, '_, '_> {
                 self.ins_display(DisplayKind::Display, false, args, PrintDst::Console, None);
                 GRAVESTONE
             }
-            BuiltIn::display | BuiltIn::strobe | BuiltIn::monitor => {
+            BuiltIn::display | BuiltIn::strobe => {
                 self.ins_display(DisplayKind::Display, true, args, PrintDst::Console, None);
+                GRAVESTONE
+            }
+            // LRM 9.4.1: $monitor prints only when an argument changed since
+            // the last accepted step. Lowered with its own level so the
+            // simulator can apply the change detection at flush time.
+            BuiltIn::monitor => {
+                self.ins_display(DisplayKind::Monitor, true, args, PrintDst::Console, None);
                 GRAVESTONE
             }
             BuiltIn::debug => {

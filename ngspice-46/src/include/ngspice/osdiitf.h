@@ -109,6 +109,12 @@ extern int OSDIpendingRequests(CKTcircuit *ckt);
  * Defined in src/osdi/osdiload.c. */
 extern int OSDIfinalStep(CKTcircuit *ckt);
 
+/* Deferred display/file output (LRM 9.4.6/9.5.9): flush the just-converged
+ * point's buffered output. Called per accepted/converged solution point by the
+ * analyses that solve a SEQUENCE of points without CKTaccept (.dc sweeps);
+ * transient points flush from OSDIaccept and analysis ends from OSDIfinalStep. */
+extern void OSDIpendingFlush(CKTcircuit *ckt);
+
 /* Enhancement-413: terminal names of an OSDI instance (0 if it is not one), so
  * `.options savecurrents` can be expanded per terminal once the descriptor is
  * known. Defined in src/osdi/osdiparam.c. */

@@ -33,6 +33,12 @@ pub struct LoweringCtx<'a, 'c> {
     /// `break`). Pushed when a named `begin : name ... end` is entered, popped
     /// when it is left.
     pub disable_scopes: Vec<(Name, Block)>,
+    /// True while lowering the body of an event-controlled statement
+    /// (`@(initial_step) ...`). Display statements lowered here are tagged
+    /// LOG_FLAG_IMMEDIATE: they fire on the event's own Newton iteration, so
+    /// the simulator prints them right away instead of deferring them to the
+    /// accepted iteration (LRM 9.4.6 deferral, audit 2026-08-31).
+    pub in_event_ctx: bool,
 }
 
 impl<'a, 'c> LoweringCtx<'a, 'c> {
@@ -52,6 +58,7 @@ impl<'a, 'c> LoweringCtx<'a, 'c> {
             intern,
             num_noise_sources: 0,
             disable_scopes: Vec::new(),
+            in_event_ctx: false,
         }
     }
 
@@ -199,6 +206,7 @@ impl<'a, 'c> LoweringCtx<'a, 'c> {
             kind: DisplayKind::Fatal,
             arg_tys: arg_tys.into_boxed_slice(),
             dst: PrintDst::Console,
+            immediate: true,
         };
         self.call(cb, &call_args);
         self.call(CallBackKind::SetRetFlag(RetFlag::Abort), &[]);

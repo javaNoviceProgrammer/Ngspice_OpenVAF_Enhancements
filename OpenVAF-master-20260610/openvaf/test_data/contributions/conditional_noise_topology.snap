@@ -19,7 +19,7 @@ Topology {
                 },
                 current_src: Contribution {
                     unknown: None,
-                    resist: v32,
+                    resist: v37,
                     react: v3,
                     resist_small_signal: v3,
                     react_small_signal: v3,
@@ -27,9 +27,9 @@ Topology {
                         Noise {
                             name: Spur(1),
                             kind: WhiteNoise {
-                                pwr: v37,
+                                pwr: v42,
                             },
-                            factor: v34,
+                            factor: v39,
                             factor_react: v3,
                         },
                     ],

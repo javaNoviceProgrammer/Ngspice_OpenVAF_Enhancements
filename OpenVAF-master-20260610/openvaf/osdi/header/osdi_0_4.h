@@ -72,6 +72,8 @@
 #define LOG_LVL_WARN 3
 #define LOG_LVL_ERR 4
 #define LOG_LVL_FATAL 5
+#define LOG_LVL_MONITOR 6
+#define LOG_FLAG_IMMEDIATE 8
 #define LOG_FMT_ERR 16
 
 #define INIT_ERR_OUT_OF_BOUNDS 1

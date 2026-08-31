@@ -1,20 +1,31 @@
-function %(v16, v17, v20, v26) {
+function %(v16, v17, v25, v31) {
     inst0 = const fn %white_noise(Spur(1))(1) -> 1
     v3 = fconst 0.0
     v6 = fconst 0x1.0000000000000p0
     v11 = fconst 0x1.0000000000000p1
 
+                                block5:
+@0006                               v18 = fgt v17, v3
+@0006                               br v18, block2, block3
+
                                 block2:
-@0007                               v19 = fsub v3, v3
-                                    v29 = fneg v6
-@000f                               v21 = fdiv v20, v17
-@0013                               v24 = fmul v11, v3
-                                    v33 = fmul v11, v16
-@0014                               v25 = fadd v21, v24
-                                    v27 = optbarrier v19
-                                    v30 = optbarrier v29
-                                    v28 = optbarrier v25
-                                    v31 = optbarrier v17
-                                    v34 = optbarrier v16
-                                    v35 = optbarrier v33
+@0006                               jmp block4
+
+                                block3:
+@0006                               jmp block4
+
+                                block4:
+@0006                               v19 = phi [v17, block2], [v3, block3]
+@0007                               v21 = fsub v3, v3
+                                    v37 = fneg v6
+@000f                               v26 = fdiv v25, v17
+@0013                               v29 = fmul v11, v3
+                                    v41 = fmul v11, v16
+@0014                               v30 = fadd v26, v29
+                                    v35 = optbarrier v21
+                                    v38 = optbarrier v37
+                                    v36 = optbarrier v30
+                                    v39 = optbarrier v19
+                                    v42 = optbarrier v16
+                                    v43 = optbarrier v41
 }

@@ -1,0 +1,36 @@
+// lrmsysio_files.va -- the file-I/O lifecycle rules of LRM 9.5:
+//   * 9.5.1.1: a "w"-mode reopen in a FOLLOWING analysis appends to what the
+//     earlier analysis wrote (it truncated),
+//   * $rewind/$fseek overwrite semantics survive the fact that ngspice runs
+//     the instance initialization more than once (setup + temperature),
+//   * the pre-opened descriptors of 9.5.1 reach the standard streams.
+`include "disciplines.vams"
+
+module lrmsysio_files(a, c);
+    inout a, c;
+    electrical a, c;
+    integer fd, fs, rc;
+
+    analog begin
+        V(a, c) <+ 1.0;
+
+        @(initial_step) begin
+            // append-across-analyses: one RUN line per analysis in ONE process
+            fd = $fopen("lrmsysio_runs.txt", "w");
+            $fdisplay(fd, "RUN");
+            $fclose(fd);
+            // pre-opened STDOUT descriptor (LRM 9.5.1)
+            $fdisplay(32'h8000_0001, "TO_STDOUT_FD");
+        end
+
+        // parameter-only file work runs in the instance initialization; a
+        // re-run must produce the same bytes, not append a second copy
+        fs = $fopen("lrmsysio_seek.txt", "w");
+        $fwrite(fs, "0123456789");
+        rc = $rewind(fs);
+        $fwrite(fs, "XY");
+        rc = $fseek(fs, 5, 0);
+        $fwrite(fs, "**");
+        $fclose(fs);
+    end
+endmodule

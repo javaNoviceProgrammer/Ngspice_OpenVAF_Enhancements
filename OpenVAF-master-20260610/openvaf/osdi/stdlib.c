@@ -34,12 +34,41 @@ extern int ungetc(int, void *);
 extern char *fgets(char *, int, void *);
 extern long strtol(const char *, char **, int);
 extern double strtod(const char *, char **);
+extern char *strchr(const char *, int);
+extern void *freopen(const char *, const char *, void *);
+extern double fabs(double);
+extern double floor(double);
+extern double log10(double);
 #define NULL ((void*)0)
+#define SEEK_SET 0
+/* The C standard streams are macros over platform-specific symbols; name the
+ * real symbol per target (the bitcode is compiled once per target triple, so
+ * the right branch is baked in). Needed for the LRM 9.5.1 pre-opened
+ * descriptors. */
+#if defined(__APPLE__)
+extern void *__stdinp, *__stdoutp, *__stderrp;
+#define OSDI_STDIN __stdinp
+#define OSDI_STDOUT __stdoutp
+#define OSDI_STDERR __stderrp
+#elif defined(_WIN32)
+extern void *__acrt_iob_func(unsigned);
+#define OSDI_STDIN (__acrt_iob_func(0))
+#define OSDI_STDOUT (__acrt_iob_func(1))
+#define OSDI_STDERR (__acrt_iob_func(2))
+#else
+extern void *stdin, *stdout, *stderr;
+#define OSDI_STDIN stdin
+#define OSDI_STDOUT stdout
+#define OSDI_STDERR stderr
+#endif
 #else
 #include <math.h>
 #include <stdio.h>
 #include "stdlib.h"
 #include "string.h"
+#define OSDI_STDIN stdin
+#define OSDI_STDOUT stdout
+#define OSDI_STDERR stderr
 #endif
 
 #ifndef OSDI_0_4
@@ -220,9 +249,21 @@ const char FMT_CHARS[NUM_FMT] = {'a', 'f', 'p', 'n', 'u', 'm',
                                  ' ', 'k', 'M', 'G', 'T'};
 const double EXP[NUM_FMT] = {1e18, 1e15, 1e12, 1e9,  1e6,  1e3,
                              1,    1e-3, 1e-6, 1e-9, 1e-12};
+/* %r/%R engineering notation (LRM 9.4.3): pick the SI scale character so the
+ * printed mantissa is val * EXP[idx]. Index FMT_OFF (' ') is the unit scale;
+ * each step of 3 decades moves one entry ('k' at 1e3 is FMT_OFF+1 with
+ * multiplier 1e-3, 'n' at 1e-9 is FMT_OFF-3 with multiplier 1e9).
+ *
+ * The original computed `((int)log(val))/3` -- the NATURAL log, truncated
+ * toward zero, never offset by FMT_OFF -- so every value picked a wrong (or
+ * out-of-range) scale and %r printed garbage for all inputs. */
 int fmt_char_idx(double val) {
-  int exp = ((int)log(val)) / 3;
-  int pos = exp + NUM_FMT;
+  double a = fabs(val);
+  if (a == 0.0 || a != a || a > 1.7e308) {
+    return FMT_OFF; /* 0, NaN, inf: print as-is with the unit scale */
+  }
+  double e = floor(log10(a) / 3.0);
+  int pos = FMT_OFF + (int)e;
 
   if (pos < 0) {
     return 0;
@@ -497,19 +538,141 @@ double osdi_rng_erlang(int32_t seed, int32_t salt, double k_in, double mean) {
 // to be a real runtime load/store and defeats that mis-specialisation. The
 // `noinline` on the entry points keeps them from being inlined and re-analysed
 // at each call site.
-static void *volatile osdi_file_table[OSDI_MAX_FILES];
+#define OSDI_SHARED __attribute__((weak))
+OSDI_SHARED void *volatile osdi_file_table[OSDI_MAX_FILES];
+// Name each slot was opened under (for the same-name dedup below).
+OSDI_SHARED char *volatile osdi_file_names[OSDI_MAX_FILES];
+// Opened with a readable mode ('r' or '+'): only these streams take part in
+// the read-position rewind below -- rewinding a write-only stream would make
+// later writes overwrite what an accepted iteration already wrote.
+OSDI_SHARED char volatile osdi_file_readable[OSDI_MAX_FILES];
+// $fclose seen while the deferral is not yet managed (i.e. during instance
+// setup, where the compiler hoists parameter-only file code): the close is
+// postponed so the descriptor stays valid for the eval function's deferred
+// writes (the open-write-close idiom, LRM 9.5) and executed at the next
+// accepted-iteration flush.
+OSDI_SHARED char volatile osdi_file_close_req[OSDI_MAX_FILES];
+// Read-position baseline per slot: `osdi_io_iter_begin` rewinds every stream
+// here, and `osdi_io_flush` (accepted iteration) advances it -- so the reads
+// of a rejected/superseded Newton iteration are replayed and the accepted
+// iteration's reads stick (LRM 9.5.9).
+OSDI_SHARED long volatile osdi_file_basepos[OSDI_MAX_FILES];
+
+// File names written earlier in this simulator process: a "w"-mode reopen of
+// such a name APPENDS instead of truncating, so a later analysis in the same
+// process extends the earlier one's output (LRM 9.5.1.1).
+#define OSDI_MAX_WRITTEN 128
+OSDI_SHARED char *volatile osdi_written_names[OSDI_MAX_WRITTEN];
+
+// Writes of the current Newton iteration, buffered until the iteration is
+// accepted (LRM 9.5.9; the $fdebug/event-gated paths bypass this with
+// immediate=1). The simulator drives the lifecycle through the exported
+// osdi_io_iter_begin / osdi_io_flush below; a simulator that never calls them
+// (an older ngspice) still gets every write, at flush-by-next-iteration
+// granularity... except it never clears -- so writes fall through immediately
+// when the buffer is unmanaged (osdi_io_managed stays 0).
+typedef struct {
+  int fd;
+  char *s;
+} OsdiPendingWrite;
+OSDI_SHARED OsdiPendingWrite *volatile osdi_pending_writes;
+OSDI_SHARED int volatile osdi_pending_len;
+OSDI_SHARED int volatile osdi_pending_cap;
+OSDI_SHARED int volatile osdi_io_managed;
 
 #define OSDI_NOINLINE __attribute__((noinline))
+#define OSDI_EXPORT __attribute__((visibility("default")))
 
 static void *osdi_file_lookup(int fd) {
+  // LRM 9.5.1: pre-opened descriptors for the standard streams.
+  unsigned u = (unsigned)fd;
+  if (u == 0x80000000u) {
+    return OSDI_STDIN;
+  }
+  if (u == 0x80000001u) {
+    return OSDI_STDOUT;
+  }
+  if (u == 0x80000002u) {
+    return OSDI_STDERR;
+  }
   if (fd < 1 || fd >= OSDI_MAX_FILES) {
     return NULL;
   }
   return osdi_file_table[fd];
 }
 
+static int osdi_name_was_written(const char *name) {
+  for (int i = 0; i < OSDI_MAX_WRITTEN; i++) {
+    if (osdi_written_names[i] && strcmp(osdi_written_names[i], name) == 0) {
+      return 1;
+    }
+  }
+  return 0;
+}
+
+static void osdi_record_written(const char *name) {
+  if (osdi_name_was_written(name)) {
+    return;
+  }
+  for (int i = 0; i < OSDI_MAX_WRITTEN; i++) {
+    if (osdi_written_names[i] == NULL) {
+      size_t n = strlen(name) + 1;
+      char *copy = malloc(n);
+      if (copy) {
+        memcpy(copy, name, n);
+        osdi_written_names[i] = copy;
+      }
+      return;
+    }
+  }
+}
+
 // $fopen(name, mode) -> descriptor (0 on failure).
 OSDI_NOINLINE int osdi_fopen(const char *name, const char *mode) {
+  // Same-name dedup: an $fopen of a file that is already open returns the
+  // existing descriptor instead of burning a new slot. This keeps the
+  // per-evaluation open-write-close idiom (LRM statements execute per
+  // evaluation) from exhausting the table when the model omits the $fclose.
+  for (int i = 1; i < OSDI_MAX_FILES; i++) {
+    if (osdi_file_table[i] != NULL && osdi_file_names[i] != NULL &&
+        strcmp((const char *)osdi_file_names[i], name) == 0) {
+      if (!osdi_io_managed && osdi_file_close_req[i]) {
+        // The instance initialization re-ran (ngspice executes it for both
+        // setup and temperature): the previous run already open-...-closed
+        // this file, so behave like the first run's fresh open -- honoring
+        // the requested mode (truncating for "w") -- instead of continuing
+        // at the previous run's position.
+        void *nf = freopen(name, mode, osdi_file_table[i]);
+        if (nf == NULL) {
+          osdi_file_table[i] = NULL;
+          if (osdi_file_names[i]) {
+            free(osdi_file_names[i]);
+            osdi_file_names[i] = NULL;
+          }
+          osdi_file_close_req[i] = 0;
+          continue;
+        }
+        osdi_file_table[i] = nf;
+        osdi_file_readable[i] = (mode[0] == 'r' || strchr(mode, '+') != NULL);
+        osdi_file_basepos[i] = ftell(nf);
+      }
+      osdi_file_close_req[i] = 0;
+      return i;
+    }
+  }
+  // LRM 9.5.1.1: a "w"-mode reopen of a file already written in this
+  // simulator process appends rather than truncating.
+  char mode_buf[8];
+  if (mode[0] == 'w' && osdi_name_was_written(name)) {
+    size_t n = strlen(mode);
+    if (n >= sizeof(mode_buf)) {
+      n = sizeof(mode_buf) - 1;
+    }
+    memcpy(mode_buf, mode, n);
+    mode_buf[n] = '\0';
+    mode_buf[0] = 'a';
+    mode = mode_buf;
+  }
   for (int i = 1; i < OSDI_MAX_FILES; i++) {
     if (osdi_file_table[i] == NULL) {
       void *f = fopen(name, mode);
@@ -517,29 +680,161 @@ OSDI_NOINLINE int osdi_fopen(const char *name, const char *mode) {
         return 0;
       }
       osdi_file_table[i] = f;
+      size_t n = strlen(name) + 1;
+      char *copy = malloc(n);
+      if (copy) {
+        memcpy(copy, name, n);
+      }
+      osdi_file_names[i] = copy;
+      osdi_file_readable[i] = (mode[0] == 'r' || strchr(mode, '+') != NULL);
+      osdi_file_close_req[i] = 0;
+      osdi_file_basepos[i] = ftell(f);
+      if (mode[0] == 'w' || mode[0] == 'a' || strchr(mode, '+')) {
+        osdi_record_written(name);
+      }
       return i;
     }
   }
   return 0; // table full
 }
 
-// Sink for the $fdisplay/$fwrite/... formatted string (see print_callback).
-OSDI_NOINLINE void osdi_fputs(int fd, const char *s) {
+static void osdi_fputs_now(int fd, const char *s) {
   void *f = osdi_file_lookup(fd);
   if (f != NULL) {
     fputs(s, f);
   }
 }
 
-// $fclose(fd)
-OSDI_NOINLINE int osdi_fclose(int fd) {
+static int osdi_fclose_now(int fd);
+
+// Sink for the $fdisplay/$fwrite/... formatted string (see print_callback).
+// `immediate` is set for $fdebug and for writes inside event-controlled
+// blocks; everything else is deferred until the iteration is accepted
+// (LRM 9.5.9) -- when the simulator manages the buffer.
+OSDI_NOINLINE void osdi_fputs(int fd, const char *s, int immediate) {
+  if (immediate || !osdi_io_managed) {
+    osdi_fputs_now(fd, s);
+    return;
+  }
+  if (osdi_pending_len >= osdi_pending_cap) {
+    int cap = osdi_pending_cap ? 2 * osdi_pending_cap : 16;
+    OsdiPendingWrite *grown =
+        realloc(osdi_pending_writes, (size_t)cap * sizeof(OsdiPendingWrite));
+    if (grown == NULL) {
+      osdi_fputs_now(fd, s); // out of memory: write through
+      return;
+    }
+    osdi_pending_writes = grown;
+    osdi_pending_cap = cap;
+  }
+  size_t n = strlen(s) + 1;
+  char *copy = malloc(n);
+  if (copy == NULL) {
+    osdi_fputs_now(fd, s);
+    return;
+  }
+  memcpy(copy, s, n);
+  osdi_pending_writes[osdi_pending_len].fd = fd;
+  osdi_pending_writes[osdi_pending_len].s = copy;
+  osdi_pending_len++;
+}
+
+// Exported to the simulator (looked up with dlsym, optional): a new Newton
+// iteration starts -- drop the previous iteration's deferred writes and
+// rewind every stream's read position to its accepted baseline (LRM 9.5.9).
+OSDI_EXPORT void osdi_io_iter_begin(void) {
+  osdi_io_managed = 1;
+  for (int i = 0; i < osdi_pending_len; i++) {
+    if (osdi_pending_writes[i].s != NULL) {
+      free(osdi_pending_writes[i].s);
+    }
+  }
+  osdi_pending_len = 0;
+  for (int i = 1; i < OSDI_MAX_FILES; i++) {
+    void *f = osdi_file_table[i];
+    if (f != NULL && osdi_file_readable[i]) {
+      fseek(f, osdi_file_basepos[i], SEEK_SET);
+    }
+  }
+}
+
+// Exported to the simulator: the iteration was accepted -- perform its
+// deferred writes and advance the read baselines.
+OSDI_EXPORT void osdi_io_flush(void) {
+  for (int i = 0; i < osdi_pending_len; i++) {
+    if (osdi_pending_writes[i].s != NULL) {
+      osdi_fputs_now(osdi_pending_writes[i].fd, osdi_pending_writes[i].s);
+      free(osdi_pending_writes[i].s);
+    } else {
+      osdi_fclose_now(osdi_pending_writes[i].fd); // deferred $fclose
+    }
+  }
+  osdi_pending_len = 0;
+  for (int i = 1; i < OSDI_MAX_FILES; i++) {
+    void *f = osdi_file_table[i];
+    if (f != NULL && osdi_file_readable[i]) {
+      osdi_file_basepos[i] = ftell(f);
+    }
+    if (f != NULL && osdi_file_close_req[i]) {
+      osdi_file_close_req[i] = 0;
+      osdi_fclose_now(i);
+    }
+  }
+}
+
+static int osdi_fclose_now(int fd) {
   void *f = osdi_file_lookup(fd);
   if (f == NULL) {
     return -1;
   }
   int r = fclose(f);
   osdi_file_table[fd] = NULL;
+  if (osdi_file_names[fd]) {
+    free(osdi_file_names[fd]);
+    osdi_file_names[fd] = NULL;
+  }
   return r;
+}
+
+// $fclose(fd). Under the simulator-managed deferral (LRM 9.5.9) the close
+// itself is deferred as a pending entry with s == NULL: the accepted
+// iteration's flush performs the writes and then the close, while a
+// superseded iteration's close is simply dropped (the file stays open and the
+// next iteration's $fopen returns the same descriptor via the name dedup).
+OSDI_NOINLINE int osdi_fclose(int fd) {
+  // Closing a pre-opened standard stream is a no-op.
+  unsigned u = (unsigned)fd;
+  if (u == 0x80000000u || u == 0x80000001u || u == 0x80000002u) {
+    return 0;
+  }
+  if (!osdi_io_managed) {
+    // Instance-setup close: keep the stream open for eval's deferred writes
+    // and close it at the first accepted-iteration flush instead.
+    if (osdi_file_lookup(fd) == NULL) {
+      return -1;
+    }
+    if (fd >= 1 && fd < OSDI_MAX_FILES) {
+      osdi_file_close_req[fd] = 1;
+    }
+    return 0;
+  }
+  if (osdi_file_lookup(fd) == NULL) {
+    return -1;
+  }
+  if (osdi_pending_len >= osdi_pending_cap) {
+    int cap = osdi_pending_cap ? 2 * osdi_pending_cap : 16;
+    OsdiPendingWrite *grown =
+        realloc(osdi_pending_writes, (size_t)cap * sizeof(OsdiPendingWrite));
+    if (grown == NULL) {
+      return osdi_fclose_now(fd);
+    }
+    osdi_pending_writes = grown;
+    osdi_pending_cap = cap;
+  }
+  osdi_pending_writes[osdi_pending_len].fd = fd;
+  osdi_pending_writes[osdi_pending_len].s = NULL; // close marker
+  osdi_pending_len++;
+  return 0;
 }
 
 // $fflush(fd)
@@ -679,8 +974,8 @@ char *osdi_ferror_msg(int fd) {
   return ferror(f) ? "I/O error" : "";
 }
 
-static const char *volatile osdi_scan_cursor;
-static int volatile osdi_scan_matches;
+OSDI_SHARED const char *volatile osdi_scan_cursor;
+OSDI_SHARED int volatile osdi_scan_matches;
 /* Enhancement-507: a field that does not convert must leave its destination
  * ALONE.
  *
