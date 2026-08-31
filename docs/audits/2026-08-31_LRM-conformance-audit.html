@@ -1,0 +1,443 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>openvaf-r vs VAMS-2023</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Serif:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+</head>
+<body>
+<style>
+  :root {
+    --paper: #F7F7F4;
+    --surface: #FFFFFF;
+    --ink: #21262D;
+    --muted: #5C6470;
+    --faint: #8A919C;
+    --line: #E2E3DE;
+    --accent: #0E5E68;
+    --accent-soft: #E3EEEF;
+    --sev-bug: #B23A2E;
+    --sev-bug-bg: #F9ECEA;
+    --sev-dev: #96690F;
+    --sev-dev-bg: #F8F1E1;
+    --sev-miss: #6F58B8;
+    --sev-miss-bg: #EFECF8;
+    --sev-doc: #31699E;
+    --sev-doc-bg: #E8F0F8;
+    --sev-ok: #2E7D4F;
+    --sev-ok-bg: #E8F3EC;
+    --code-bg: #EFF0EC;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #14171C;
+      --surface: #1C2026;
+      --ink: #E5E7EA;
+      --muted: #9AA1AB;
+      --faint: #6E7681;
+      --line: #2C313A;
+      --accent: #57B2BC;
+      --accent-soft: #16333A;
+      --sev-bug: #E58074;
+      --sev-bug-bg: #3A211E;
+      --sev-dev: #D9A94E;
+      --sev-dev-bg: #362B14;
+      --sev-miss: #AC9AE3;
+      --sev-miss-bg: #292239;
+      --sev-doc: #7FAEDA;
+      --sev-doc-bg: #1C2B3A;
+      --sev-ok: #74BD92;
+      --sev-ok-bg: #1B3126;
+      --code-bg: #262B33;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #14171C;
+    --surface: #1C2026;
+    --ink: #E5E7EA;
+    --muted: #9AA1AB;
+    --faint: #6E7681;
+    --line: #2C313A;
+    --accent: #57B2BC;
+    --accent-soft: #16333A;
+    --sev-bug: #E58074;
+    --sev-bug-bg: #3A211E;
+    --sev-dev: #D9A94E;
+    --sev-dev-bg: #362B14;
+    --sev-miss: #AC9AE3;
+    --sev-miss-bg: #292239;
+    --sev-doc: #7FAEDA;
+    --sev-doc-bg: #1C2B3A;
+    --sev-ok: #74BD92;
+    --sev-ok-bg: #1B3126;
+    --code-bg: #262B33;
+  }
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+    font-size: 16px;
+    line-height: 1.6;
+    margin: 0;
+  }
+  .wrap { max-width: 860px; margin: 0 auto; padding: 48px 24px 96px; }
+  header.masthead { border-bottom: 3px solid var(--ink); padding-bottom: 28px; margin-bottom: 36px; }
+  .eyebrow {
+    font-family: "IBM Plex Mono", monospace; font-size: 12px; letter-spacing: 0.14em;
+    text-transform: uppercase; color: var(--accent); margin-bottom: 14px;
+  }
+  h1 {
+    font-family: "IBM Plex Serif", Georgia, serif; font-weight: 600;
+    font-size: clamp(30px, 5vw, 44px); line-height: 1.12; margin: 0 0 14px; text-wrap: balance;
+  }
+  .standfirst { font-size: 17.5px; color: var(--muted); max-width: 64ch; margin: 0; }
+  .metaline { font-family: "IBM Plex Mono", monospace; font-size: 12.5px; color: var(--faint); margin-top: 18px; }
+  h2 {
+    font-family: "IBM Plex Serif", Georgia, serif; font-weight: 600; font-size: 25px;
+    margin: 56px 0 6px; text-wrap: balance;
+  }
+  h2 .secno { color: var(--faint); font-family: "IBM Plex Mono", monospace; font-size: 15px; margin-right: 10px; }
+  h3 { font-size: 17px; font-weight: 600; margin: 34px 0 12px; }
+  p { max-width: 70ch; }
+  p.lede { color: var(--muted); margin-top: 0; }
+  a { color: var(--accent); }
+  code, .mono { font-family: "IBM Plex Mono", monospace; font-size: 0.86em; }
+  code { background: var(--code-bg); padding: 1px 5px; border-radius: 3px; }
+  /* scoreboard */
+  .score { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; margin: 30px 0 8px; }
+  .scard { background: var(--surface); border: 1px solid var(--line); border-top: 3px solid var(--sc, var(--accent)); padding: 14px 16px 12px; }
+  .scard .n { font-family: "IBM Plex Serif", Georgia, serif; font-size: 34px; font-weight: 600; line-height: 1; color: var(--sc, var(--ink)); font-variant-numeric: tabular-nums; }
+  .scard .l { font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin-top: 6px; }
+  .scorenote { font-size: 13.5px; color: var(--faint); margin-top: 10px; }
+  /* findings */
+  .finding {
+    background: var(--surface); border: 1px solid var(--line);
+    border-left: 4px solid var(--fc, var(--accent));
+    padding: 14px 18px 13px; margin: 0 0 10px;
+  }
+  .f-bug { --fc: var(--sev-bug); }
+  .f-dev { --fc: var(--sev-dev); }
+  .f-miss { --fc: var(--sev-miss); }
+  .f-doc { --fc: var(--sev-doc); }
+  .f-ok { --fc: var(--sev-ok); }
+  .finding .head { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: baseline; }
+  .finding .t { font-weight: 600; font-size: 15.5px; }
+  .chip {
+    font-family: "IBM Plex Mono", monospace; font-size: 10.5px; letter-spacing: 0.08em;
+    text-transform: uppercase; padding: 2px 8px; border-radius: 999px; white-space: nowrap;
+    background: var(--cbg); color: var(--cfg);
+  }
+  .c-bug { --cbg: var(--sev-bug-bg); --cfg: var(--sev-bug); }
+  .c-dev { --cbg: var(--sev-dev-bg); --cfg: var(--sev-dev); }
+  .c-miss { --cbg: var(--sev-miss-bg); --cfg: var(--sev-miss); }
+  .c-doc { --cbg: var(--sev-doc-bg); --cfg: var(--sev-doc); }
+  .c-ok { --cbg: var(--sev-ok-bg); --cfg: var(--sev-ok); }
+  .lrm { font-family: "IBM Plex Mono", monospace; font-size: 11.5px; color: var(--faint); white-space: nowrap; }
+  .finding .d { font-size: 14.5px; color: var(--muted); margin-top: 5px; max-width: 76ch; }
+  .finding .d strong { color: var(--ink); font-weight: 600; }
+  .finding .ev {
+    font-family: "IBM Plex Mono", monospace; font-size: 12.5px; color: var(--muted);
+    background: var(--code-bg); border-radius: 4px; padding: 7px 10px; margin-top: 9px;
+    overflow-x: auto; white-space: pre; line-height: 1.55;
+  }
+  /* tables */
+  .tblwrap { overflow-x: auto; border: 1px solid var(--line); background: var(--surface); }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  th { font-size: 11.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); text-align: left; }
+  th, td { padding: 9px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  td.mono { font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .oklist { padding-left: 0; list-style: none; max-width: 78ch; }
+  .oklist li { padding: 7px 0 7px 26px; position: relative; border-bottom: 1px dashed var(--line); font-size: 14.5px; }
+  .oklist li::before { content: "✓"; position: absolute; left: 2px; color: var(--sev-ok); font-weight: 600; }
+  .toc { background: var(--surface); border: 1px solid var(--line); padding: 18px 22px; margin-top: 30px; }
+  .toc ol { margin: 8px 0 0; padding-left: 22px; columns: 2; column-gap: 40px; font-size: 14.5px; }
+  .toc ol li { margin-bottom: 5px; }
+  @media (max-width: 640px) { .toc ol { columns: 1; } }
+  .callout { background: var(--accent-soft); border-left: 4px solid var(--accent); padding: 14px 18px; margin: 22px 0; font-size: 15px; max-width: 76ch; }
+  .refuted { opacity: 0.85; }
+  footer { margin-top: 64px; border-top: 1px solid var(--line); padding-top: 18px; font-size: 13px; color: var(--faint); }
+</style>
+
+<div class="wrap">
+<header class="masthead">
+  <div class="eyebrow">Conformance audit · Accellera VAMS-2023 · Verilog-A analog subset (Annex C)</div>
+  <h1>openvaf-r vs VAMS-2023</h1>
+  <p class="standfirst">A clause-by-clause audit of the <strong>openvaf-r</strong> compiler and the <strong>ngspice-46 OSDI</strong> layer against the Verilog-AMS 2023 Language Reference Manual — every finding grounded in the LRM's normative text and verified by running the committed binaries.</p>
+  <div class="metaline">2026-08-31 · LRM: docs/VAMS-LRM-2023.pdf (442 pp) · compiler: OpenVAF-master-20260610 · simulator: ngspice-46 · binaries: bin/macos/apple-silicon</div>
+</header>
+
+<div class="score">
+  <div class="scard" style="--sc: var(--sev-bug)"><div class="n">39</div><div class="l">Bugs</div></div>
+  <div class="scard" style="--sc: var(--sev-dev)"><div class="n">28</div><div class="l">Deviations</div></div>
+  <div class="scard" style="--sc: var(--sev-miss)"><div class="n">24</div><div class="l">Missing</div></div>
+  <div class="scard" style="--sc: var(--sev-doc)"><div class="n">9</div><div class="l">Doc mismatches</div></div>
+  <div class="scard" style="--sc: var(--sev-ok)"><div class="n">219</div><div class="l">Verified conformant</div></div>
+</div>
+<p class="scorenote">15 audit areas · ~140 behavioral micro-tests compiled &amp; simulated · 34 additional low-severity notes · 1 candidate finding refuted and withdrawn. “Verified conformant” counts load-bearing requirements positively confirmed by test or code read, not paper claims.</p>
+
+<div class="toc">
+  <strong>Contents</strong>
+  <ol>
+    <li><a href="#verdict">The verdict</a></li>
+    <li><a href="#method">How the audit ran</a></li>
+    <li><a href="#bugs">Bugs — behavior contradicts the LRM</a></li>
+    <li><a href="#deviations">Deviations — intentional differences</a></li>
+    <li><a href="#missing">Missing — rejected with diagnostics</a></li>
+    <li><a href="#docs">Compliance-doc mismatches</a></li>
+    <li><a href="#refuted">Refuted finding</a></li>
+    <li><a href="#conformant">What is solidly conformant</a></li>
+    <li><a href="#coverage">Coverage map</a></li>
+  </ol>
+</div>
+
+<h2 id="verdict"><span class="secno">1</span>The verdict</h2>
+<p class="lede">The core is genuinely strong; the edges are rougher than the compliance doc admits.</p>
+<p>The heart of a compact-model compiler — contributions, probes, automatic differentiation, the DAE the simulator solves — checks out quantitatively everywhere it was measured: <code>$mfactor</code> scaling follows all four normative rules to machine precision, noise densities match hand-computed physics, laplace/zi filters match closed-form responses, and parameter override order, dependence, and range enforcement behave per the letter of clause 3 and 6. That is the hard part, and it is right.</p>
+<p>The confirmed bugs cluster at the <em>simulation-lifecycle boundary</em> — where language semantics meet the Newton loop. Display and file I/O run on every solver iteration instead of accepted steps (LRM 9.4.6/9.5.9); the <code>analysis()</code>/event machinery misreports which phase is running (Table 4-22, Table 5-1); <code>cross()</code>/<code>above()</code> ignore their normative timing rules; and several silent no-ops in hierarchy elaboration (<code>defparam</code> next to <code>generate</code>, <code>.$mfactor()</code> child overrides, <code>$param_given</code> on flattened children) produce <strong>wrong numbers with no diagnostic</strong> — the most dangerous class in this report.</p>
+<div class="callout">The single most consequential group: <strong>silent wrong answers</strong>. A model that compiles clean and runs is trusted. Eleven confirmed findings produce numerically wrong results or dead code with zero warnings — they are marked <strong>silent</strong> below and are the recommended first fixes.</div>
+
+<h2 id="method"><span class="secno">2</span>How the audit ran</h2>
+<p>Fifteen areas were audited against assigned page ranges of the LRM (chapters 2–6, 9, 10 and annexes B/C/D/E — the Verilog-A analog subset per Annex C; digital/mixed-signal clauses were checked only for clean rejection). For each area: the normative text was read first, then the implementation (<code>lexer → preprocessor → parser → hir_def/hir_ty → hir_lower → mir/sim_back → osdi</code>, plus <code>ngspice-46/src/osdi/*.c</code>), then behavioral micro-tests were compiled with the committed <code>openvaf-r</code> and simulated with the committed <code>ngspice</code>. Roughly 140 test decks were written and 530+ Verilog-A files compiled.</p>
+<p>Every non-note finding was then <strong>adversarially re-verified</strong>: the cited LRM pages were re-read from the PDF (never from memory), the cited code re-read, and the behavior re-reproduced; claims of outright bugs got two independent verification passes (LRM-interpretation lens and code-behavior lens). One candidate finding failed re-verification and was withdrawn (§7). The repo's own compliance document, <code>docs/compliance/OpenVAF_Verilog-A_LRM_Compliance.md</code>, was treated as an audit target, not a source of truth.</p>
+
+<h2 id="bugs"><span class="secno">3</span>Bugs — behavior contradicts the LRM <span class="chip c-bug" style="vertical-align:middle">39 confirmed</span></h2>
+<p class="lede">Implemented, but the observed behavior violates normative text. Grouped by subsystem; “silent” marks findings with no diagnostic on any channel.</p>
+
+<h3>Compiler crashes</h3>
+<div class="finding f-bug"><div class="head"><span class="chip c-bug">bug · ICE</span><span class="t">Analog function with <code>string</code> return type or argument crashes the compiler</span><span class="lrm">LRM 4.7.1 p.92</span></div>
+<div class="d">Syntax 4-5 makes <code>string</code> a legal <code>analog_function_type</code>. openvaf-r panics instead of compiling or cleanly rejecting.</div></div>
+<div class="finding f-bug"><div class="head"><span class="chip c-bug">bug · ICE</span><span class="t">Function-local <code>parameter</code> declaration crashes codegen</span><span class="lrm">LRM 4.7.1 p.92</span></div>
+<div class="d"><code>parameter_declaration</code> is a legal analog-function item per Syntax 4-5; declaring one inside an analog function takes the compiler down.</div></div>
+
+<h3>Silent wrong results — hierarchy &amp; elaboration</h3>
+<div class="finding f-bug"><div class="head"><span class="chip c-bug">bug · silent</span><span class="t"><code>defparam</code> silently dropped in any module containing a generate construct</span><span class="lrm">LRM 6.3.1 p.138</span></div>
+<div class="d">A module-scope <code>defparam</code> works in plain modules (verified to two levels, winning over instance overrides) — but the moment the same module contains any generate construct, every <code>defparam</code> (module-scope or inside generate blocks) is dropped by the generate-rewriting pass with no diagnostic.</div>
+<div class="ev">defparam u1.g=7e-3 + unrelated generate:  expected 8 mA → observed 2 mA (default applied)</div></div>
+<div class="finding f-bug"><div class="head"><span class="chip c-bug">bug · silent</span><span class="t"><code>#(.$mfactor(n))</code> / <code>.$xposition(...)</code> child-instance overrides compile clean and do nothing</span><span class="lrm">LRM 6.3.6 p.141</span></div>
+<div class="d">Hierarchical system parameters may be overridden "using … module instance parameter value assignment by name". The paramset path works (<code>.$mfactor = 4;</code> inside a paramset scales correctly), and <code>defparam u1.$mfactor</code> at least errors — but the instance-override spelling is silently ignored.</div>
+<div class="ev">child #(.$mfactor(4)):  expected −4 mA → observed −1 mA;  #(.$xposition(0.005)): expected −6 mA → −1 mA</div></div>
+<div class="finding f-bug"><div class="head"><span class="chip c-bug">bug · silent</span><span class="t"><code>$param_given()</code> is always false for parameters overridden inside the VA hierarchy</span><span class="lrm">LRM 6.3.5 / 9.19 p.141</span></div>
+<div class="d">Compile-time flattening bakes a child-instance override in as the parameter's new <em>default</em>, so <code>$param_given</code> reports "not given". Netlist-level (<code>.model</code>) overrides report correctly.</div>
+<div class="ev">leafg #(.p1(7e-3)) with ($param_given(p1) ? p1 : 99e-3):  expected −7 mA → observed −99 mA</div></div>
+<div class="finding f-bug"><div class="head"><span class="chip c-bug">bug · silent</span><span class="t">Scalar net connected to a vector port is accepted and wired to every bit</span><span class="lrm">LRM 6.5.7.1 p.152</span></div>
+<div class="d">"The sizes of the ports and net need to match." A scalar actual on a 2-bit port compiles, elaborates, and simulates with the scalar replicated onto both bits.</div>
+<div class="ev">twobit u2 (p, o) with p scalar:  ran; both v2[0] and v2[1] read V(p) → v(out2) = −3 V</div></div>
+<div class="finding f-bug"><div class="head"><span class="chip c-bug">bug · silent</span><span class="t">Mixed ordered + named parameter overrides accepted; the positional part is dropped</span><span class="lrm">LRM 6.3.2/6.3.3 (Syntax 6-2) p.136</span></div>
+<div class="d">The grammar makes the list all-ordered or all-named. <code>#(5e-3, .g2(7e-3))</code> compiles without diagnostic and applies only the named half. (The equivalent mixing for <em>ports</em> is correctly rejected with a model error message.)</div>
+<div class="ev">#(5e-3, .g2(7e-3)):  expected −12 mA (or an error) → observed −8 mA (g1 kept its default)</div></div>
+<div class="finding f-bug"><div class="head"><span class="chip c-bug">bug</span><span class="t">Hierarchical contribution merges into the child's unnamed branch instead of creating a new one</span><span class="lrm">LRM 5.6.8.1 p.116</span></div>
+<div class="d">"A <strong>new</strong> unnamed branch is created in the module containing the direct contribution statements." The parent's <code>V(p, c1.mid) &lt;+ 0.5</code> instead merges with the child's own source branch, corrupting the child's flow mirror.</div>
+<div class="ev">child mirror of I(a,mid):  LRM-required 0.5 mA → observed 1.0 mA (merged-branch current)</div></div>
+
+<h3>Silent wrong results — events &amp; analysis state</h3>
+<div class="finding f-bug"><div class="head"><span class="chip c-bug">bug · silent</span><span class="t">Unrecognized event expressions silently degrade to "run always"</span><span class="lrm">LRM 5.10 / Annex C.7 p.122, 390</span></div>
+<div class="d">Any <code>@(…)</code> whose expression isn't a recognized event — <code>absdelta</code> (digital-only, must be rejected), a named event, or a simple typo like <code>cros</code> — drops the event control entirely and runs the guarded statement on <em>every</em> evaluation.</div>
+<div class="ev">@(absdelta(V(p,n),0.1)) na=na+1:  expected never (rejection) → na=120 in a 10-point transient</div></div>
+<div class="finding f-bug"><div class="head"><span class="chip c-bug">bug</span><span class="t"><code>cross()</code> fires during DC sweeps and at t=0</span><span class="lrm">LRM 5.10.3.2 p.128</span></div>
+<div class="d">"cross() can only generate an event after the simulation time has advanced from zero" and "will not generate events for non-transient analyses, such as ac, dc, or noise". Pure sign-change detection fires it in <code>.dc</code> and during the t=0 operating-point Newton walk.</div></div>
+<div class="finding f-bug"><div class="head"><span class="chip c-bug">bug</span><span class="t"><code>above()</code> misses its mandatory initialization event</span><span class="lrm">LRM 5.10.3.2 p.128</span></div>
+<div class="d">"If the expression is positive at the conclusion of the initial condition analysis … above() <strong>shall</strong> generate an event." The previous-value state is seeded with the current value at initial-step, so an always-positive expression never fires.</div>
+<div class="ev">@(above(V+0.5)), V=1.0, .tran:  expected 1 event → observed 0</div></div>
+<div class="finding f-bug"><div class="head"><span class="chip c-bug">bug</span><span class="t"><code>initial_step</code>/<code>final_step</code> analysis lists fire for the wrong analyses</span><span class="lrm">LRM 5.10.2 Table 5-1 p.124</span></div>
+<div class="d">During <code>.ac</code>, both <code>initial_step("ac")</code> and <code>initial_step("dc")</code> fire (Table 5-1: dc = 0 in every AC column); during <code>.noise</code>, <code>initial_step("dc")</code> and <code>final_step("ac")</code> fire alongside the correct noise events. Cause: the OP phase carries both DC and parent-analysis flags (ngspice <code>osdiload.c</code>).</div></div>
+<div class="finding f-bug"><div class="head"><span class="chip c-bug">bug</span><span class="t">Event placement restrictions unenforced: nested <code>@</code>, cross under non-genvar <code>if</code>/<code>while</code>, filters in event expressions</span><span class="lrm">LRM 5.10/5.10.3.1 p.123, 128</span></div>
+<div class="d">All three normative prohibitions compile silently. Nested <code>@(initial_step) @(final_step)</code> lowers to an AND-gate that can never fire — a silently dead statement. (The body-side check exists: <code>ddt</code> in an event <em>body</em> is caught.)</div></div>
+<div class="finding f-bug"><div class="head"><span class="chip c-bug">bug</span><span class="t"><code>analysis("ic")</code>/<code>analysis("static")</code> window displaced from the transient OP to the first timestep</span><span class="lrm">LRM 4.6.1 Table 4-22 p.87</span></div>
+<div class="d">At the t=0 transient operating point both must return 1 (and 0 at timesteps). Observed: 0 at t=0, then 1 on the first evaluation at the first timestep — exactly one phase late.</div>
+<div class="ev">t=0: ic=0 static=0   |   first step t=3e-10: ic=1 static=1   (LRM: the reverse)</div></div>
+<div class="finding f-bug"><div class="head"><span class="chip c-bug">bug · silent</span><span class="t"><code>ac_stim()</code> is active during <code>.noise</code>, poisoning input-referred noise</span><span class="lrm">LRM 4.6.3 p.88</span></div>
+<div class="d">ac_stim must return 0 "on all small-signal analyses using names which do not match analysis_name". ngspice's noise analysis reuses the AC loader, which activates every stim matching the literal "ac".</div>
+<div class="ev">inoise with an ac_stim module present: 5.752e-12 vs 5.758e-9 control — 1000× wrong, no warning</div></div>
+
+<h3>Silent wrong results — display, file I/O, kernel tasks</h3>
+<div class="finding f-bug"><div class="head"><span class="chip c-bug">bug</span><span class="t">Display tasks fire on every Newton iteration, not only accepted ones</span><span class="lrm">LRM 9.4.6 p.228</span></div>
+<div class="d">"All the display tasks, except $debug, shall not display output unless an iteration has been accepted." <code>$strobe</code>/<code>$display</code>/<code>$write</code> print from inside eval() unconditionally — 15 lines for a single <code>.op</code>.</div></div>
+<div class="finding f-bug"><div class="head"><span class="chip c-bug">bug</span><span class="t"><code>$monitor</code> has no change-detection; identical to <code>$display</code></span><span class="lrm">LRM 9.4.1 p.226</span></div>
+<div class="d">Must print only when an argument changed since the last accepted step. Prints 120 lines over a 59-point transient with a value that changes once.</div></div>
+<div class="finding f-bug"><div class="head"><span class="chip c-bug">bug</span><span class="t"><code>%r</code>/<code>%R</code> engineering notation prints garbage for every value</span><span class="lrm">LRM 9.4.3 p.227</span></div>
+<div class="d">Scale index computed with natural log instead of log10, the offset macro defined but never applied, and the scale <em>pointer</em> (not character) passed to <code>%c</code> — three compounding defects in <code>osdi/stdlib.c</code>.</div>
+<div class="ev">$strobe("%r", 1e3):  expected 1.000000k → observed 0.000000&#65533;</div></div>
+<div class="finding f-bug"><div class="head"><span class="chip c-bug">bug</span><span class="t">File writes not deferred to accepted iterations; no read-pointer reset on rejection</span><span class="lrm">LRM 9.5.9 p.235</span></div>
+<div class="d">Writes go straight to <code>fputs</code> on every evaluation (5 lines for one <code>.op</code>, including the unconverged first iterate), and rejected iterations never rewind read pointers.</div></div>
+<div class="finding f-bug"><div class="head"><span class="chip c-bug">bug</span><span class="t">Reopening a file for write in a later analysis truncates instead of appending</span><span class="lrm">LRM 9.5.1.1 p.230</span></div>
+<div class="d">Within one simulation process, a "w" reopen must append to earlier analyses' content. The mode is handed straight to libc <code>fopen</code>, so the second <code>op</code> wipes the first's output.</div></div>
+<div class="finding f-bug"><div class="head"><span class="chip c-bug">bug</span><span class="t"><code>$bound_step</code>: last call wins instead of smallest active bound</span><span class="lrm">LRM 9.17.2 p.246</span></div>
+<div class="d">"The next time step taken is no larger than the <strong>smallest</strong> $bound_step() argument currently active." Two calls in one block: only the textually last one binds.</div>
+<div class="ev">$bound_step(1e-6); $bound_step(1e-4);  → max dt observed 1e-4 (LRM: 1e-6)</div></div>
+<div class="finding f-bug"><div class="head"><span class="chip c-bug">bug</span><span class="t"><code>$table_model</code> default extrapolation clamps; LRM default is linear</span><span class="lrm">LRM 9.21.2 Table 9-31 p.259</span></div>
+<div class="d">"When no extrapolation method character is given, the linear extrapolation method will be used for both ends as default." With no control string, lookups clamp to the endpoint value; explicit "1L" produces the correct linear result, proving only the default is wrong.</div>
+<div class="ev">y=2x over [1,3], query x=4:  expected 8.0 → observed 6.0 (clamp);  with "1L": 8.0 ✓</div></div>
+<div class="finding f-bug"><div class="head"><span class="chip c-bug">bug · silent</span><span class="t"><code>$table_model</code> per-dimension control strings silently collapsed to one</span><span class="lrm">LRM 9.21.2 p.258</span></div>
+<div class="d">"1C,1L" on a 2-D table must apply C to the first dimension and L to the second; the last sub-string is applied to every dimension, with no diagnostic.</div></div>
+<div class="finding f-bug"><div class="head"><span class="chip c-bug">bug · silent</span><span class="t"><code>$rdist_*</code> domain violations silent at runtime; Erlang returns impossible negative deviates</span><span class="lrm">LRM 9.13.2 p.239</span></div>
+<div class="d">"mean, degree_of_freedom, and k_stage shall be greater than zero (0). <strong>Otherwise an error shall be reported.</strong>" Deck-supplied violations run silently; <code>$rdist_erlang(s,−2,−1)</code> returns −0.634 from a distribution supported on [0,∞).</div></div>
+
+<h3>Natures, disciplines, expressions</h3>
+<div class="finding f-bug"><div class="head"><span class="chip c-bug">bug</span><span class="t">Discipline compatibility rejects LRM-compatible signal-flow and natureless connections</span><span class="lrm">LRM 3.11.1 p.46</span></div>
+<div class="d">The Non-Existent Binding Rule and Natureless Discipline Rule make <code>electrical</code>↔<code>voltage</code> (sig_flow_v) and natureless-continuous connections compatible — the LRM works this exact example. <code>DisciplineTy::compatible</code> returns false whenever one side lacks a nature the other has (<code>_ =&gt; return false</code>).</div></div>
+<div class="finding f-bug"><div class="head"><span class="chip c-bug">bug</span><span class="t">Nature attribute validation is dead code; illegal forms accepted and silently dropped</span><span class="lrm">LRM 3.6.1.2 p.36</span></div>
+<div class="d">The intended checks iterate <code>nature.attrs()</code> — the <code>(* *)</code> annotation accessor — instead of the actual nature items, so they never run. <code>access = "SA"</code> (a string, illegal) compiles clean and the access function silently doesn't exist.</div></div>
+<div class="finding f-bug"><div class="head"><span class="chip c-bug">bug</span><span class="t">OSDI natures table: <code>num_attr</code> off by one for every nature</span><span class="lrm">OSDI 0.4 export of LRM 3.6.1.2</span></div>
+<div class="d"><code>let i2 = attr_vec.len() + 1;</code> inflates every nature's attribute count; consumers walk into the next nature's attributes (or out of bounds for the last). Latent in ngspice (which doesn't read the table), live for any other OSDI consumer.</div></div>
+<div class="finding f-bug"><div class="head"><span class="chip c-bug">bug</span><span class="t">Same-node signal access <code>V(a,a)</code>/<code>I(a,a)</code> accepted; Table 4-16 marks it Error</span><span class="lrm">LRM 4.4 Table 4-16 p.64</span></div>
+<div class="d">Compiles and yields constant 0 / branch short instead of the mandated error.</div></div>
+<div class="finding f-bug"><div class="head"><span class="chip c-bug">bug · silent</span><span class="t">Modulus by deck-supplied zero is silent NaN</span><span class="lrm">LRM 4.2.4 p.55</span></div>
+<div class="d">"It shall be an error to pass zero (0) as the second argument to the modulus operator." A compile-time literal zero is caught; a model-card-supplied zero propagates NaN with no report.</div></div>
+<div class="finding f-bug"><div class="head"><span class="chip c-bug">bug</span><span class="t"><code>transition()</code> with explicit zero rise/fall ignores <code>`default_transition</code></span><span class="lrm">LRM 4.5.8 p.73</span></div>
+<div class="d">"If neither rise_time nor fall_time are specified <strong>or are equal to zero</strong>, the rise and fall time default to the value" of the directive. Explicit zeros bypass the directive path.</div></div>
+<div class="finding f-bug"><div class="head"><span class="chip c-bug">bug</span><span class="t">Block-level variables with desc/units become output variables, colliding across blocks</span><span class="lrm">LRM 3.2.1 p.25</span></div>
+<div class="d">Output variables are module-scope declarations with descriptions. Two named blocks each declaring <code>(*desc*) real t</code> both export as instance parameter <code>t</code>; ngspice warns it "cannot tell the names apart".</div></div>
+
+<h3>Lexer &amp; preprocessor</h3>
+<div class="finding f-bug"><div class="head"><span class="chip c-bug">bug</span><span class="t"><code>`undef</code> removes predefined Verilog-AMS macros</span><span class="lrm">LRM 10.4 p.270</span></div>
+<div class="d">"The `undef compiler directive shall have no effect on predefined Verilog-AMS macros." Verified removed: an <code>`ifdef __VAMS_COMPACT_MODELING__</code> after the `undef takes the else branch.</div></div>
+<div class="finding f-bug"><div class="head"><span class="chip c-bug">bug</span><span class="t">White-space-separated and macro-substituted based literals rejected</span><span class="lrm">LRM 2.6.1 p.13</span></div>
+<div class="d"><code>5 'D 3</code> is the LRM's own Example 2, and "It shall be legal to macro substitute these three tokens" — both fail with token errors. Contiguous forms work and evaluate correctly.</div></div>
+<div class="finding f-bug"><div class="head"><span class="chip c-bug">bug</span><span class="t">Using <code>`__FILE__</code>/<code>`__LINE__</code> anywhere breaks relative <code>`include</code> resolution</span><span class="lrm">LRM 10.7 p.273</span></div>
+<div class="d">The source-location rewrite loses the including file's directory: the identical include chain compiles without the macro and fails with it (<code>-I .</code> works around it).</div></div>
+<div class="finding f-bug"><div class="head"><span class="chip c-bug">bug</span><span class="t">Non-LRM words <code>assert</code>, <code>root</code>, <code>do</code> reserved; legal VAMS identifiers rejected</span><span class="lrm">LRM 2.8.2 / Annex B p.17, 387</span></div>
+<div class="d">None of the three appear in Table B.1. <code>real assert;</code> — legal Verilog-AMS — is a reserved-keyword error.</div></div>
+<div class="finding f-bug"><div class="head"><span class="chip c-bug">bug · silent</span><span class="t">Duplicate attribute name resolves to the first value; LRM requires the last</span><span class="lrm">LRM 2.9 p.19</span></div>
+<div class="d">"The last attribute value shall be used and a tool can give a warning." Both lookup paths take the first match, no warning.</div></div>
+
+<h3>ngspice OSDI layer</h3>
+<div class="finding f-bug"><div class="head"><span class="chip c-bug">bug · silent</span><span class="t">OSDI 0.3 objects accepted, then misread through the extended 0.7 layout — metadata garbage and SIGSEGV</span><span class="lrm">OSDI spec v0.3 §5.1/5.4 (docs/osdi_v0p3.pdf)</span></div>
+<div class="d">The 0.7 path is sound (version-gated with a clear recompile message). But the legacy path accepts any object reporting v0.3 and reads it with the in-repo struct — whose <code>OsdiNode</code> stride grew from 48 to 56 bytes (nodeset field), whose descriptor gained ac_stim/noise fields read unconditionally, and whose <code>load_noise</code> signature changed. A spec-conformant 0.3 object loads silently, shows a terminal named <code>i_V</code> (the units field read as a name), and dies with SIGSEGV (exit 139). Dropping 0.3 support is fine — but it must be a clean rejection, and it is nowhere documented.</div>
+<div class="ev">devhelp: "1  i_V  out  terminal current" + "0  (null)  out  n.a." · deck with tran: exit 139</div></div>
+<div class="finding f-bug"><div class="head"><span class="chip c-bug">bug</span><span class="t">Phantom uninitialized IFparm slot when a descriptor lacks <code>$mfactor</code></span><span class="lrm">ngspice osdiinit.c:171</span></div>
+<div class="d">The <code>!has_m</code> extra slot is counted into the name table but never written for this path, leaving a <code>(null)</code> row visible in devhelp — an uninitialized-memory read away from a crash.</div></div>
+
+<h2 id="deviations"><span class="secno">4</span>Deviations — intentional differences <span class="chip c-dev" style="vertical-align:middle">28 confirmed</span></h2>
+<p class="lede">Deliberate design choices that differ from normative text. Several are disclosed in the compliance doc (marked ⊙); the rest are undocumented outside source comments.</p>
+<div class="tblwrap"><table>
+<tr><th>Deviation</th><th>LRM</th><th>What happens instead</th></tr>
+<tr><td><strong>limexp is stateless</strong> ⊙</td><td class="mono">4.5.13 p.85</td><td>Exact <code>exp</code>; no iteration-to-iteration limiting state. Final values correct; convergence aid absent.</td></tr>
+<tr><td><strong>zi_* filters are continuous bilinear approximations</strong> ⊙</td><td class="mono">4.5.12 p.82</td><td>Not discrete-time sample-and-hold; matches bilinear H(z⁻¹) to 1e-15, not LRM sampling semantics.</td></tr>
+<tr><td><strong>transition ramp rate fixed at 1/trise</strong></td><td class="mono">4.5.8 p.73</td><td>Duration scales with step amplitude: a 2 V step takes 2·trise. LRM: completes at td + trise regardless.</td></tr>
+<tr><td><strong>Dynamic laplace/filter coefficients track</strong></td><td class="mono">4.5.14 Table 4-20 p.85</td><td>Constant-class arguments accept live expressions and follow them instead of erroring/freezing.</td></tr>
+<tr><td><strong>absdelay with no maxdelay tracks a varying td</strong></td><td class="mono">4.5.7 p.71</td><td>LRM: td fixed at its initial value when maxdelay is absent.</td></tr>
+<tr><td><strong>idt assert-reset decays to ic (~10 µs first-order)</strong></td><td class="mono">4.5.4 p.66</td><td>LRM: output equals ic while assert is nonzero, instantly.</td></tr>
+<tr><td><strong>ddt/idt tolerance arguments validated then discarded</strong></td><td class="mono">4.5.2 p.65</td><td>abstol/nature accepted, never reach the solver.</td></tr>
+<tr><td><strong>cross/above tolerances parsed, ignored; no timestep control</strong></td><td class="mono">5.10.3.1 p.126</td><td>Event fires at the first eval past the crossing: measured 5.6 µs error vs requested 1 ns time_tol. (timer places points to 1e-18.)</td></tr>
+<tr><td><strong>Out-of-range cross dir aborts via $fatal</strong></td><td class="mono">5.10.3.1 p.126</td><td>LRM defines dir∉{−1,0,1} as "no event"; deck-supplied dir=7 kills the whole simulation.</td></tr>
+<tr><td><strong>analysis("dc") true at AC/noise operating points</strong></td><td class="mono">4.6.1 Table 4-22 p.87</td><td>Table row: dc = 0 there (static = 1 is correct and present).</td></tr>
+<tr><td><strong>Same-named noise calls perfectly correlated</strong></td><td class="mono">4.6.4.6 p.92</td><td>Two distinct calls sharing a label cancel (measured 0.0); LRM: labels group reporting, sources stay uncorrelated.</td></tr>
+<tr><td><strong>$limit with unknown function name refuses to load</strong></td><td class="mono">9.17.3 p.247</td><td>LRM: fall back to unlimited evaluation; ngspice aborts the load with a (good) message. Same policy at three sites.</td></tr>
+<tr><td><strong>Random seed is not inout</strong></td><td class="mono">9.13.1 p.238</td><td>Successive same-seed calls return identical deviates; seed variable never updated.</td></tr>
+<tr><td><strong>$simprobe without default returns 0.0</strong></td><td class="mono">9.16 p.243</td><td>LRM: unresolvable probe without default is an error.</td></tr>
+<tr><td><strong>Untyped parameter type frozen from default</strong></td><td class="mono">3.4.1 p.28</td><td><code>parameter p = 1</code> overridden with 2.5 → rounds to integer; LRM types it from the final value.</td></tr>
+<tr><td><strong>Parameter default exempt from its own range</strong> ⊙</td><td class="mono">3.4.2 p.29</td><td><code>real d = −1 from (0:inf)</code> runs un-overridden; the same value from the netlist is rejected.</td></tr>
+<tr><td><strong>Alias + original both set: warning, not error</strong></td><td class="mono">3.4.7 p.31</td><td>Netlist setting <code>trise</code> and <code>dtemp</code> together warns and picks one; LRM requires an error.</td></tr>
+<tr><td><strong>Alias usable inside module equations</strong></td><td class="mono">3.4.7 p.31</td><td><code>aliasparam</code> name works as an expression operand; LRM restricts aliases to override sites.</td></tr>
+<tr><td><strong>Array size not changeable via its size parameter</strong></td><td class="mono">3.4.4 p.30</td><td>Size-parameter override refused (treated as fixed); LRM allows re-sizing at elaboration.</td></tr>
+<tr><td><strong>Base natures may omit abstol/access/units</strong></td><td class="mono">3.6.1.2 p.36</td><td>"Required for all base natures" — accepted empty by deliberate decision (E-422).</td></tr>
+<tr><td><strong>Derived nature may declare its own access</strong> / units silently dropped</td><td class="mono">3.6.1.2 p.36</td><td>Both "illegal for a derived nature" — one works as an extension, the other is discarded without diagnostic.</td></tr>
+<tr><td><strong>Contributions inside non-genvar loops</strong></td><td class="mono">5.9 p.120</td><td>Runtime-count loops with <code>&lt;+</code> compile and produce coherent extended semantics; LRM forbids.</td></tr>
+<tr><td><strong>Named-block variables writable from outside</strong></td><td class="mono">6.7.1 p.161</td><td><code>sc.lv = 3.0</code> — hierarchical analog-variable assignment "shall be an error"; accepted and effective. Reads likewise accepted.</td></tr>
+<tr><td><strong>$mfactor double-scaling misuse undiagnosed</strong></td><td class="mono">6.3.6 p.141</td><td>The LRM's own <code>badres</code> example ("the simulator will generate an error") runs silently and double-scales exactly as predicted.</td></tr>
+<tr><td><strong>Paramset override of a non-paramset parameter warns + ignores</strong></td><td class="mono">6.4 p.144</td><td>LRM: "would generate an error"; ngspice warns "fixed (localparam) value" and runs with the default.</td></tr>
+<tr><td><strong>$realtime accepted, `timescale ignored</strong> ⊙</td><td class="mono">9.6 / Table 9-7 p.221</td><td>Treated as $abstime in seconds regardless of timescale.</td></tr>
+<tr><td><strong>&lt;&lt;&lt; / &gt;&gt;&gt; accepted in analog context</strong>; constant shift &gt;31 hard error</td><td class="mono">4.2.11 p.58</td><td>Arithmetic shifts are digital-only per 4.2.1; and the LRM defines out-of-range shifts as producing 0, not an error.</td></tr>
+<tr><td><strong>Math-domain violations from live signals unreported</strong></td><td class="mono">4.3.2 p.63</td><td><code>ln</code>/<code>sqrt</code>/<code>asin</code> of out-of-range runtime values propagate NaN silently (literals are caught at compile time).</td></tr>
+</table></div>
+
+<h2 id="missing"><span class="secno">5</span>Missing — rejected with diagnostics <span class="chip c-miss" style="vertical-align:middle">24 confirmed</span></h2>
+<p class="lede">LRM-defined Verilog-A features that don't compile. Nearly all fail with honest, located errors — the right way to not support something. The generate/paramset group is the biggest functional gap.</p>
+<div class="tblwrap"><table>
+<tr><th>Missing feature</th><th>LRM</th><th>Notes</th></tr>
+<tr><td>Multiple generate constructs in one <code>generate…endgenerate</code> region</td><td class="mono">6.6 p.152</td><td>for+for, if+for, for+case all die at <code>endgenerate</code>; separate regions work. Poor error message.</td></tr>
+<tr><td>Descending / general genvar loops (<code>i&gt;=0; i=i−1</code>)</td><td class="mono">6.6.1 p.155</td><td>"only '&lt;' and '&lt;=' … only ascending '+'" — rejects the LRM's own adc example. Clean diagnostics.</td></tr>
+<tr><td>Generate conditions on module parameters</td><td class="mono">6.6.2 p.157</td><td>Architectural (OSDI binds params at sim time); excellent diagnostic; disclosed in compliance doc ⊙.</td></tr>
+<tr><td>Hierarchical refs into generate block instances (<code>g[2].gg</code>)</td><td class="mono">6.6.1 p.155</td><td>Parse error; the implicit-localparam-by-hierarchical-name contract unmet.</td></tr>
+<tr><td>Paramset overloading (same name, selection rules)</td><td class="mono">6.4.2 p.145</td><td>"already declared in this scope". Basic paramsets incl. <code>.$mfactor</code>/<code>.$xposition</code> work and were verified numerically.</td></tr>
+<tr><td>Paramset output variables (<code>(*desc*) real ft; ft = .gm/…</code>)</td><td class="mono">6.4.3 p.147</td><td>Parse error at the declaration; <code>.module_output_variable</code> refs diagnosed.</td></tr>
+<tr><td><code>macromodule</code> keyword</td><td class="mono">6.2 p.134</td><td>"can be used interchangeably with module" — parse error.</td></tr>
+<tr><td>Module self-instantiation (terminating recursion)</td><td class="mono">6.6.2 p.158</td><td>Clean cycle diagnostic; consequence of parameter-independent structure.</td></tr>
+<tr><td>Hierarchical access to child <em>port</em> nets (<code>V(u1.a, u1.b)</code>)</td><td class="mono">6.7.1 p.161</td><td>Fails with mangled-name error (<code>u1__a</code> not found); child <em>internal</em> nets and <code>$root</code> paths work.</td></tr>
+<tr><td>Upward / out-of-elaboration hierarchical references (<code>top.drv.a</code>)</td><td class="mono">5.6.8, 6.7 p.116</td><td>Only downward refs into the compiled hierarchy resolve.</td></tr>
+<tr><td>Jump statements <code>break</code>/<code>continue</code>/<code>return</code></td><td class="mono">5.11 p.133 (VAMS-2023)</td><td>New in 2023; not implemented and the words aren't even reserved (compile as identifiers).</td></tr>
+<tr><td>Comma as event-OR separator (<code>@(a, b)</code>)</td><td class="mono">5.10.1 p.124</td><td><code>or</code> works; comma is a parse error.</td></tr>
+<tr><td>Vector branches (<code>branch (a,b) br;</code> over buses)</td><td class="mono">3.12 p.48</td><td>Endpoints must be scalar/bit-select; honest diagnostic.</td></tr>
+<tr><td>NIST2018 constants + selection branch in constants.vams</td><td class="mono">Annex D.2 p.397</td><td>Ships the 2.4.0 file; opting into <code>PHYSICAL_CONSTANTS_NIST2018</code> silently yields NIST1998 values.</td></tr>
+<tr><td><code>`__VAMS_ENABLE__</code> predefined macro</td><td class="mono">10.5 p.270</td><td>"shall always be defined" — it isn't (COMPACT_MODELING and __OPENVAF__ are).</td></tr>
+<tr><td><code>`begin_keywords</code>/<code>`end_keywords</code></td><td class="mono">10.6 p.271</td><td>Treated as undefined macros.</td></tr>
+<tr><td><code>`__FILE__</code>/<code>`__LINE__</code> inside included files</td><td class="mono">10.7 p.273</td><td>Unusable there (root file works; see also the include-resolution bug).</td></tr>
+<tr><td>Attribute instances in expression positions</td><td class="mono">2.9 p.19</td><td>Operator/function-suffix placement rejected; all declaration/statement prefixes work.</td></tr>
+<tr><td>ddx of an unnamed-branch flow probe <code>I(n1,n2)</code></td><td class="mono">4.5.6 p.69</td><td>Grammar-legal probe form refused; named branches and node potentials work.</td></tr>
+<tr><td><code>analysis("nodeset")</code> phase</td><td class="mono">4.6.1/4.6.2 p.87</td><td>Flag defined in ngspice, never set — constant 0 even under <code>.nodeset</code>.</td></tr>
+<tr><td>noise_table filename from string parameter; vector from array parameter</td><td class="mono">4.6.4.3 p.89</td><td>Only literals and assignment patterns; both parameter forms refused.</td></tr>
+<tr><td>$table_model: LRM file format beyond 1-D, array data sources, D/2/I/E controls</td><td class="mono">9.21 p.256–260</td><td>The 9.21.1 example file and 9.21.5 array example both refuse; honest errors.</td></tr>
+<tr><td>Whole-array parameter override at instantiation; string→integer literal conversion</td><td class="mono">3.4.4, 3.3 p.30, 26</td><td><code>#(.cf('{…}))</code> names no parameter; <code>integer i = "A"</code> type error (LRM: 65).</td></tr>
+<tr><td>Multichannel descriptors; STDIN/OUT/ERR pre-opened fds; null display args; string-variable scan/format interpretation</td><td class="mono">9.5.1, 9.4.1 p.229</td><td>fd model is plain indices; empty display arguments are a compile error; non-literal formats print verbatim (warned ⊙).</td></tr>
+</table></div>
+
+<h2 id="docs"><span class="secno">6</span>Compliance-doc mismatches <span class="chip c-doc" style="vertical-align:middle">9 confirmed</span></h2>
+<p class="lede">Places where <code>docs/compliance/OpenVAF_Verilog-A_LRM_Compliance.md</code> claims more than the binaries deliver. The doc is honest about several deviations (limexp, zi_*, range-exemption, generate-on-parameters) — these are the claims that are not.</p>
+<div class="finding f-doc"><div class="head"><span class="chip c-doc">doc</span><span class="t">§7.1 Display "✅ … verified against exact printf output" including %r</span></div>
+<div class="d">%r prints garbage for every value; $monitor has no monitor semantics; all display fires per Newton iteration. None disclosed.</div></div>
+<div class="finding f-doc"><div class="head"><span class="chip c-doc">doc</span><span class="t">§6 Hierarchy "✅" — "defparam with its LRM precedence", "generate in all three forms"</span></div>
+<div class="d">The doc's own §6 example pairs defparam with generate — the combination in which defparam is silently dropped. Multi-construct regions, descending loops, and generate-block hierarchical refs all fail; none of the five silent hierarchy bugs are disclosed.</div></div>
+<div class="finding f-doc"><div class="head"><span class="chip c-doc">doc</span><span class="t">§5.5 Events "✅ — cross/above/timer with tolerances"; "analysis-phase lists filtering by analysis type"</span></div>
+<div class="d">cross/above tolerances are parsed and ignored (5,600× the requested tolerance measured); phase lists fire for wrong analyses.</div></div>
+<div class="finding f-doc"><div class="head"><span class="chip c-doc">doc</span><span class="t">"Verilog-A has no break/continue, and the compiler says so with the disable idiom in the diagnostic"</span></div>
+<div class="d">VAMS-2023 §5.11 defines jump statements and Table B.1 reserves the words; the compiler emits no such diagnostic — <code>break</code> compiles as an ordinary identifier.</div></div>
+<div class="finding f-doc"><div class="head"><span class="chip c-doc">doc</span><span class="t">Three §4.5 operator claims contradicted by measurement</span></div>
+<div class="d">"`default_transition` defaults" (explicit-zero case broken), transitions "reach their final value at delay + trise" (amplitude-scaled), Table 4-20 constant/dynamic split "honoured exactly" (dynamic coefficients track).</div></div>
+<div class="finding f-doc"><div class="head"><span class="chip c-doc">doc</span><span class="t">$table_model presented with an example that cannot compile</span></div>
+<div class="d">The showcased 2-D <code>"mos_iv.tbl","1L"</code> call fails against LRM-format files; clause cited as 9.19 (it is 9.21).</div></div>
+<div class="finding f-doc"><div class="head"><span class="chip c-doc">doc</span><span class="t">ac_stim example implies degrees</span></div>
+<div class="d"><code>ac_stim("ac", 1.0, 90.0)</code> — phase is radians (implementation verified correct: 1.5708 → exactly +90°); 90.0 rad only makes sense as a degrees mistake.</div></div>
+<div class="finding f-doc"><div class="head"><span class="chip c-doc">doc</span><span class="t">Analog functions marked a blanket pass</span></div>
+<div class="d">Two compiler crashes (string type, local parameter), the failing LRM array example, zero-init of output args, and the missing 2023 <code>return</code> statement all sit under a ✅.</div></div>
+<div class="finding f-doc"><div class="head"><span class="chip c-doc">doc</span><span class="t">paramset cited as "Verilog-AMS 3.4.6"</span></div>
+<div class="d">LRM 3.4.6 is String parameters; paramsets are clause 6.4.</div></div>
+
+<h2 id="refuted"><span class="secno">7</span>Refuted finding</h2>
+<div class="finding f-ok refuted"><div class="head"><span class="chip c-ok">refuted</span><span class="t">"idtmod without ic does not force the DC solution with default ic = 0"</span><span class="lrm">LRM 4.5.5 p.68</span></div>
+<div class="d">The adversarial verifier re-read 4.5.5, re-read the lowering, and re-ran the deck: the implementation's DC handling of <code>idtmod</code> without ic is consistent with the LRM's requirements. Withdrawn; not counted anywhere above.</div></div>
+
+<h2 id="conformant"><span class="secno">8</span>What is solidly conformant</h2>
+<p class="lede">219 load-bearing requirements verified positively — by measurement, not by reading the docs. The highlights:</p>
+<ul class="oklist">
+  <li><strong>$mfactor core semantics (6.3.6)</strong> — flow contributions ×m (−4 mA at m=4), potentials unscaled, flow probes ÷m (0.5 mA), noise power ×m (onoise matched √(4·S·R²+4kTR) to 6 digits), $mfactor readable in-module, ngspice <code>m=</code> and paramset <code>.$mfactor</code> both correct.</li>
+  <li><strong>Analog operators numerically</strong> — ddt AC = jωC; absdelay DC pass-through and e^{−jωτ} phase; idt with ic; ddx(V·V, V(a)) = 2V; laplace_* match closed-form H(s) to ~5e-16; zi_* match bilinear H(z⁻¹) to 1e-15; last_crossing interpolation; slew band behavior incl. the LRM's negative max_neg_rate.</li>
+  <li><strong>Noise quantitatively (4.6.4)</strong> — white_noise 4kT/R against an ideal resistor's Johnson noise; flicker 1/f^exp slopes; noise_table interpolation; distinct-label sources RSS-combine as uncorrelated.</li>
+  <li><strong>Parameter machinery (3.4, 6.3)</strong> — from/exclude ranges enforced at runtime with located netlist errors; localparam non-overridable; ordered override skips localparams and aliases; excess positional and duplicate named overrides are errors; dependent defaults recompute through both VA and netlist overrides; $param_given/$port_connected correct at the netlist level.</li>
+  <li><strong>Contribution semantics (5.6)</strong> — accumulation of multiple <code>&lt;+</code>, switch-branch V/I selection with value retention, indirect contributions (ideal-opamp idiom solves), port-flow access <code>I(&lt;p&gt;)</code>, unassigned-source defaults.</li>
+  <li><strong>Elaboration basics (6.2–6.9)</strong> — multi-analog-block concatenation in order; instance arrays <code>u[1:3]</code>; named/ordered ports with blank and omitted connections reflected by $port_connected; concatenation actuals; implicit nets; $root paths; scope shadowing in named blocks; duplicate-declaration errors; port range cross-checks.</li>
+  <li><strong>Lexical layer (2, 10)</strong> — all four based-literal bases with s/sign-extension/underscores; SI scale factors exactly per Table 2-1; full string escape set; escaped identifiers incl. escaped keywords; 2000-char identifiers; macros with arguments, nesting, recursion detection; include chains with correct relative resolution (absent srcloc macros); conditional-compilation nesting.</li>
+  <li><strong>Kernel functions</strong> — $temperature/$vt(T) with exact constants; $simparam gmin/iteration/… service; $discontinuity; $bound_step single-call enforcement verified to the accepted-timestep level; $limit pnjlim/fetlim wiring; $table_model 1-D/2-D interpolation with explicit controls; $fatal/$finish abort ngspice correctly.</li>
+  <li><strong>Annex C boundary</strong> — digital/mixed-signal constructs (discrete disciplines, connect modules, driver access, V(a,b) same-node…) rejected with located diagnostics rather than silently accepted; Annex D disciplines.vams natures/abstols match the normative file.</li>
+</ul>
+
+<h2 id="coverage"><span class="secno">9</span>Coverage map</h2>
+<div class="tblwrap"><table>
+<tr><th>Area</th><th>LRM</th><th class="mono">Bugs</th><th class="mono">Dev</th><th class="mono">Miss</th><th class="mono">Doc</th><th class="mono">OK</th></tr>
+<tr><td>Lexical conventions &amp; directives</td><td class="mono">2, 10, B</td><td class="mono">5</td><td class="mono">3</td><td class="mono">4</td><td class="mono">1</td><td class="mono">20</td></tr>
+<tr><td>Data types &amp; parameters</td><td class="mono">3.1–3.5</td><td class="mono">1</td><td class="mono">5</td><td class="mono">2</td><td class="mono">1</td><td class="mono">16</td></tr>
+<tr><td>Natures, disciplines, branches</td><td class="mono">3.6–3.13, D</td><td class="mono">3</td><td class="mono">3</td><td class="mono">2</td><td class="mono">—</td><td class="mono">19</td></tr>
+<tr><td>Expressions &amp; math</td><td class="mono">4.1–4.4</td><td class="mono">2</td><td class="mono">3</td><td class="mono">—</td><td class="mono">—</td><td class="mono">15</td></tr>
+<tr><td>Core analog operators</td><td class="mono">4.5.1–4.5.7</td><td class="mono">—</td><td class="mono">3</td><td class="mono">1</td><td class="mono">—</td><td class="mono">19</td></tr>
+<tr><td>Filter operators</td><td class="mono">4.5.8–4.5.15</td><td class="mono">1</td><td class="mono">4</td><td class="mono">—</td><td class="mono">1</td><td class="mono">14</td></tr>
+<tr><td>Analysis &amp; noise</td><td class="mono">4.6</td><td class="mono">2</td><td class="mono">2</td><td class="mono">2</td><td class="mono">1</td><td class="mono">11</td></tr>
+<tr><td>User-defined functions</td><td class="mono">4.7</td><td class="mono">3</td><td class="mono">—</td><td class="mono">2</td><td class="mono">1</td><td class="mono">18</td></tr>
+<tr><td>Analog behavior &amp; contributions</td><td class="mono">5.1–5.9</td><td class="mono">1</td><td class="mono">2</td><td class="mono">4</td><td class="mono">—</td><td class="mono">20</td></tr>
+<tr><td>Events</td><td class="mono">5.10–5.11</td><td class="mono">5</td><td class="mono">2</td><td class="mono">2</td><td class="mono">1</td><td class="mono">11</td></tr>
+<tr><td>Hierarchy (audited in this pass)</td><td class="mono">6</td><td class="mono">5</td><td class="mono">3</td><td class="mono">8</td><td class="mono">1</td><td class="mono">24</td></tr>
+<tr><td>System tasks: display &amp; file I/O</td><td class="mono">9.1–9.7</td><td class="mono">5</td><td class="mono">3</td><td class="mono">2</td><td class="mono">1</td><td class="mono">18</td></tr>
+<tr><td>Kernel &amp; random system functions</td><td class="mono">9.10–9.21</td><td class="mono">4</td><td class="mono">2</td><td class="mono">3</td><td class="mono">1</td><td class="mono">14</td></tr>
+<tr><td>Annex C/E boundary &amp; doc audit</td><td class="mono">C, E, G</td><td class="mono">—</td><td class="mono">2</td><td class="mono">1</td><td class="mono">1</td><td class="mono">13</td></tr>
+<tr><td>ngspice OSDI layer</td><td class="mono">8.3 + OSDI</td><td class="mono">2</td><td class="mono">1</td><td class="mono">—</td><td class="mono">—</td><td class="mono">11</td></tr>
+</table></div>
+<p style="font-size:13.5px; color:var(--faint); margin-top:10px;">Cross-area duplicates counted once (jump statements, $limit policy, nodeset flag, string-ICE). 34 further low-severity notes — lenient acceptances of illegal-but-harmless source (trailing-dot reals, multi-line strings, do-while, 0**0=1), message-quality issues, and out-of-scope observations — live in the per-area records and are not tabulated here.</p>
+
+<footer>
+Method: 15-area audit → adversarial verification (two lenses for every bug claim) → foreground re-verification of every unverified finding, including a full from-scratch audit of LRM clause 6. All behavioral evidence produced with the committed binaries in <code>bin/macos/apple-silicon/</code>; test decks preserved under the session scratchpad (<code>audit/&lt;area&gt;/</code>). LRM page references are printed page numbers (PDF page = printed + 13).
+</footer>
+</div>
+
+</body>
+</html>
