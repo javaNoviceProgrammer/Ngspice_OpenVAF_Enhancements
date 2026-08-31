@@ -1,0 +1,16 @@
+// srcloc.va -- `__FILE__/`__LINE__ used in the SAME compilation as a relative
+// `include: the source-location rewrite used to lose the working directory,
+// so the include below failed with "entity not found".
+`include "disciplines.vams"
+`include "incsub/level1.va"
+module srcloc(p, n);
+    inout p, n;
+    electrical p, n;
+    (*desc="`__LINE__ of the assignment"*) integer lline;
+    (*desc="macro from the include"*)      integer lv;
+    analog begin
+        lline = `__LINE__;
+        lv = `FROM_LEVEL1;
+        I(p, n) <+ 1e-3 * V(p, n);
+    end
+endmodule

@@ -186,7 +186,10 @@ fn sourcemap(db: &dyn BaseDB, root_file: FileId) -> Arc<SourceMap> {
     db.preprocess(root_file).sm
 }
 
-pub const STANDARD_FLAGS: [&str; 3] = ["__OPENVAF__", "__VAMS__", "__VAMS_COMPACT_MODELING__"];
+/// The predefined Verilog-AMS macros (LRM 10.5), defined for every compilation.
+/// The canonical list lives in the preprocessor, which also refuses to
+/// `` `undef `` them (LRM 10.4).
+pub const STANDARD_FLAGS: [&str; 4] = syntax::PREDEFINED_MACROS;
 
 impl<'a> dyn BaseDB + 'a {
     pub fn as_src_provider(&self) -> impl SourceProvider + '_ {

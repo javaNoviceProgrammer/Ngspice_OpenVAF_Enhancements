@@ -40,6 +40,21 @@ pub enum SyntaxError {
     ZeroWidthLiteral {
         span: TextRange,
     },
+    /// A (possibly white-space-separated, LRM 2.6.1) based integer literal
+    /// whose digits are not valid for its base -- e.g. `'b 29`. Reported here
+    /// because the multi-token form otherwise degrades to 0 silently.
+    InvalidBasedLiteral {
+        span: TextRange,
+    },
+    /// LRM 2.6.2: a real constant needs at least one digit on each side of the
+    /// decimal point (`1.` and `.5` are the LRM's own illegal examples).
+    MalformedRealLiteral {
+        span: TextRange,
+    },
+    /// LRM 2.7: a string literal shall be contained on a single line.
+    MultilineStringLiteral {
+        span: TextRange,
+    },
     MissingToken {
         expected: SyntaxKind,
         span: TextRange,
@@ -156,6 +171,9 @@ impl_display! {
         CommaExpr{..} => "a parenthesised list is not an expression";
         RealLiteralOverflow{..} => "real literal is too large to represent";
         ZeroWidthLiteral{..} => "a sized literal must have a non-zero size";
+        InvalidBasedLiteral{..} => "based literal has no valid digits for its base";
+        MalformedRealLiteral{..} => "a real constant needs a digit on each side of the decimal point";
+        MultilineStringLiteral{..} => "a string literal must be contained on a single line";
         MissingToken{expected, ..} => "unexpected token; expected {}", expected;
         IllegalRootSegment { ..} =>  "$root is only allowed as a prefix";
         BlockItemsAfterStmt{..}  => "declarations in blocks are only allowed before the first stmt";

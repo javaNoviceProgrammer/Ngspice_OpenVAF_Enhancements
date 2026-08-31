@@ -152,6 +152,16 @@ pub enum TokenKind {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum LiteralKind {
     Int,
+    /// A complete based integer literal whose digits are attached to the base
+    /// token (`'hFF`, `'sb1010`). Sized contiguous literals (`8'hFF`) lex as
+    /// [`LiteralKind::Int`] in one token; this kind exists so the parser can
+    /// join a macro-substituted size with the literal (`` `SZ'hFF ``, LRM 2.6.1).
+    BasedInt,
+    /// A based-literal base token without attached digits (`'d`, `'sh`): the
+    /// digits follow after white space, which LRM 2.6.1 explicitly allows
+    /// (`5 'D 3`). The parser joins it with the size before it and the digits
+    /// after it into one literal.
+    BasePrefix,
     Float { has_scale_char: bool },
     Str { terminated: bool },
 }

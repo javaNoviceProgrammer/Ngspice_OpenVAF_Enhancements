@@ -25,6 +25,8 @@ impl lexer::TokenKind {
             SystemCallIdent if src == "$root" => SyntaxKind::ROOT_KW,
             SystemCallIdent => SyntaxKind::SYSFUN,
             Literal { kind: LiteralKind::Int } => SyntaxKind::INT_NUMBER,
+            Literal { kind: LiteralKind::BasedInt } => SyntaxKind::BASED_INT,
+            Literal { kind: LiteralKind::BasePrefix } => SyntaxKind::BASE_PREFIX,
             Literal { kind: LiteralKind::Float { has_scale_char: true } } => {
                 SyntaxKind::SI_REAL_NUMBER
             }

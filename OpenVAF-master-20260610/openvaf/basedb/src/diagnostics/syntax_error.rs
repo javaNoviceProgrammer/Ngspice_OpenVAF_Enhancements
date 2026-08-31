@@ -391,6 +391,49 @@ impl Diagnostic for SyntaxError {
                             .to_owned(),
                     ])
             }
+            SyntaxError::InvalidBasedLiteral { span } => {
+                let FileSpan { range, file: file_id } = parse.to_file_span(span, &sm);
+                Report::error()
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id,
+                        range: range.into(),
+                        message: "not a valid based literal".to_owned(),
+                    }])
+                    .with_notes(vec![
+                        "help: the digits must be legal for the base (LRM 2.6.1), e.g. \
+                         only 0/1/_ after 'b"
+                            .to_owned(),
+                    ])
+            }
+            SyntaxError::MalformedRealLiteral { span } => {
+                let FileSpan { range, file: file_id } = parse.to_file_span(span, &sm);
+                Report::error()
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id,
+                        range: range.into(),
+                        message: "missing digit next to the decimal point".to_owned(),
+                    }])
+                    .with_notes(vec![
+                        "help: LRM 2.6.2: write `1.0` rather than `1.`, `0.5` rather than `.5`"
+                            .to_owned(),
+                    ])
+            }
+            SyntaxError::MultilineStringLiteral { span } => {
+                let FileSpan { range, file: file_id } = parse.to_file_span(span, &sm);
+                Report::error()
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id,
+                        range: range.into(),
+                        message: "string spans more than one line".to_owned(),
+                    }])
+                    .with_notes(vec![
+                        "help: LRM 2.7: a string shall be contained on a single line; use \\n                          for a line break"
+                            .to_owned(),
+                    ])
+            }
             SyntaxError::CommaExpr { span } => {
                 let FileSpan { range, file: file_id } = parse.to_file_span(span, &sm);
                 Report::error()

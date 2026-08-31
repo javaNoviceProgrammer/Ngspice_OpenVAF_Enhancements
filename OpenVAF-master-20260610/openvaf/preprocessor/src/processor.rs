@@ -17,7 +17,16 @@ use crate::diagnostics::PreprocessorDiagnostic::{
 use crate::grammar::{parse_condition, parse_define, parse_include, parse_macro_call};
 use crate::parser::{CompilerDirective, Parser, PreprocessorToken};
 use crate::sourcemap::{CtxSpan, FileSpan, SourceContext, SourceMap};
-use crate::{Diagnostics, FileReadError, ScopedTextArea, SourceProvider, Token};
+use crate::{
+    Diagnostics, FileReadError, ScopedTextArea, SourceProvider, Token, PREDEFINED_MACROS,
+};
+
+/// The `` `begin_keywords `` version specifiers the LRM (10.6) requires an
+/// implementation to accept. This compiler keeps a single keyword table (the
+/// VAMS-2023 one), so the VAMS specifiers are silently satisfied and the
+/// 1364-* ones are accepted with a warning that the set is not narrowed.
+const KNOWN_KEYWORD_SETS: [&str; 5] =
+    ["VAMS-2023", "VAMS-2.3", "1364-2005", "1364-2001", "1364-1995"];
 
 pub(crate) struct Processor<'a> {
     pub(crate) source_map: SourceMap,
@@ -44,6 +53,12 @@ pub(crate) struct Processor<'a> {
     /// (Enhancement-47): the default rise/fall time for `transition()` filters
     /// that omit those arguments. `None` = 0 (instantaneous, the LRM default).
     pub(crate) default_transition: Option<ordered_float::OrderedFloat<f64>>,
+    /// True while the virtual `-D` definitions file is processed: the
+    /// predefined `__VAMS_*`/`__OPENVAF__` macros are legitimately defined
+    /// there, so the reserved-namespace warning must not fire for them.
+    in_defines_file: bool,
+    /// Nesting depth of `` `begin_keywords `` regions (LRM 10.6).
+    keyword_set_depth: u32,
 }
 
 impl<'a> Processor<'a> {
@@ -72,6 +87,8 @@ impl<'a> Processor<'a> {
             include_depth: 0,
             default_discipline: None,
             default_transition: None,
+            in_defines_file: false,
+            keyword_set_depth: 0,
         };
         Ok(res)
     }
@@ -113,7 +130,9 @@ impl<'a> Processor<'a> {
             CtxSpan { range: TextRange::empty(0.into()), ctx: SourceContext::ROOT },
         );
         let parser = Parser::new(src, ctx, workdir, dst, errors);
+        self.in_defines_file = true;
         self.process_file(parser, errors);
+        self.in_defines_file = false;
     }
 
     pub(crate) fn is_macro_defined(&mut self, name: &'a str) -> bool {
@@ -176,6 +195,16 @@ impl<'a> Processor<'a> {
         def: Macro<'a>,
         diagnostics: &mut Diagnostics,
     ) {
+        // LRM 10.4: user macro names shall not begin with `__VAMS_` (that
+        // namespace belongs to the predefined macros). The virtual `-D`
+        // definitions file is where the predefined macros themselves are
+        // defined, so it is exempt.
+        if !self.in_defines_file && (name.starts_with("__VAMS_") || name == "__OPENVAF__") {
+            diagnostics.push(PreprocessorDiagnostic::ReservedMacroName {
+                name: name.to_owned(),
+                span: def.head_span(),
+            });
+        }
         let span = def.head_span();
         if let Some(old) = self.macros.insert(name, def) {
             diagnostics.push(PreprocessorDiagnostic::MacroOverwritten {
@@ -327,7 +356,14 @@ impl<'a> Processor<'a> {
                 CompilerDirective::Undef => {
                     p.bump();
                     let name = p.current_text();
-                    if self.macros.contains_key(name) {
+                    if PREDEFINED_MACROS.contains(&name) {
+                        // LRM 10.4: `undef shall have no effect on predefined
+                        // Verilog-AMS macros; a warning may be issued.
+                        err.push(PreprocessorDiagnostic::UndefPredefined {
+                            name: name.to_owned(),
+                            span: p.current_span(),
+                        })
+                    } else if self.macros.contains_key(name) {
                         self.macros.remove(name);
                     } else {
                         err.push(PreprocessorDiagnostic::MacroNotDefined {
@@ -338,16 +374,59 @@ impl<'a> Processor<'a> {
                     p.bump();
                 }
                 CompilerDirective::ResetAll => {
-                    let name = p.current_text();
-                    err.push(PreprocessorDiagnostic::UnsupportedCompDir {
-                        name: name.to_owned(),
-                        span: p.current_span(),
-                    });
+                    // LRM 10 / IEEE 1364 19.6: reset all compiler directives to
+                    // their default values. Text macros are not directives and
+                    // survive; the directive state this compiler tracks is
+                    // `` `default_transition ``/`` `default_discipline ``.
+                    self.default_transition = None;
+                    self.default_discipline = None;
                     p.bump();
                 }
                 CompilerDirective::UndefineAll => {
                     p.bump();
-                    self.macros.clear();
+                    // LRM 10.4 protects the predefined macros from undefinition.
+                    self.macros.retain(|name, _| PREDEFINED_MACROS.contains(name));
+                }
+                CompilerDirective::BeginKeywords => {
+                    // `` `begin_keywords "VAMS-2023" `` (LRM 10.6). This
+                    // implementation has exactly one keyword table (VAMS-2023),
+                    // so the VAMS specifiers are satisfied as-is and the 1364-*
+                    // ones are accepted with a warning that the reserved set is
+                    // not narrowed. The directive only selects reserved words;
+                    // it never changes semantics (LRM 10.6).
+                    p.bump();
+                    self.keyword_set_depth += 1;
+                    if p.at(PreprocessorToken::StrLit) {
+                        let name = p.current_text().trim_matches('"').to_owned();
+                        if !KNOWN_KEYWORD_SETS.contains(&name.as_str()) {
+                            err.push(PreprocessorDiagnostic::UnknownKeywordSet {
+                                name,
+                                span: p.current_span(),
+                            });
+                        } else if !name.starts_with("VAMS") {
+                            err.push(PreprocessorDiagnostic::KeywordSetNotSwitched {
+                                name,
+                                span: p.current_span(),
+                            });
+                        }
+                        p.bump();
+                    } else {
+                        err.push(PreprocessorDiagnostic::MissingOrUnexpectedToken {
+                            expected: "a version specifier string such as \"VAMS-2023\"",
+                            expected_at: p.current_span(),
+                            span: p.current_span(),
+                        });
+                    }
+                }
+                CompilerDirective::EndKeywords => {
+                    if self.keyword_set_depth == 0 {
+                        err.push(PreprocessorDiagnostic::UnmatchedEndKeywords {
+                            span: p.current_span(),
+                        });
+                    } else {
+                        self.keyword_set_depth -= 1;
+                    }
+                    p.bump();
                 }
                 CompilerDirective::CellDefine | CompilerDirective::EndCellDefine => {
                     // Purely a documentation boundary marker for external tools; no

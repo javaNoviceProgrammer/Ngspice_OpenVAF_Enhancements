@@ -199,7 +199,8 @@ pub mod kw {
         and,
         asin,
         asinh,
-        assert,
+        // `assert` is deliberately NOT here: Annex B does not reserve it, so
+        // `real assert;` is a legal Verilog-AMS declaration (audit 2026-08-31).
         assign,
         atan,
         atan2,

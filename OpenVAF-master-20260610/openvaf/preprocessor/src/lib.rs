@@ -22,6 +22,16 @@ type Text = Arc<str>;
 type ScopedTextArea = scoped_arc_arena::ScopedArea<Text>;
 type Diagnostics = Vec<PreprocessorDiagnostic>;
 
+/// The predefined Verilog-AMS macros (LRM 10.5). `__VAMS_ENABLE__` "shall
+/// always be defined during the parsing of Verilog-AMS source text";
+/// `__VAMS_COMPACT_MODELING__` is defined because the compact-modeling
+/// extensions (`ddx`, ...) are supported; `__OPENVAF__` is the
+/// simulator-specific macro the LRM requires every implementation to provide.
+/// Per LRM 10.4 `` `undef `` (and `` `undefineall ``) has no effect on these.
+/// `basedb::STANDARD_FLAGS` re-exports this list as the default macro flags.
+pub const PREDEFINED_MACROS: [&str; 4] =
+    ["__OPENVAF__", "__VAMS__", "__VAMS_COMPACT_MODELING__", "__VAMS_ENABLE__"];
+
 #[derive(PartialEq, Eq, Clone, Debug)]
 pub struct Preprocess {
     pub ts: Arc<Vec<Token>>,

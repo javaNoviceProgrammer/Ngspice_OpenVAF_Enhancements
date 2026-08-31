@@ -329,6 +329,8 @@ impl<'a, 'd> Parser<'a, 'd> {
             "`timescale" => CompilerDirective::TimeScale,
             "`line" => CompilerDirective::Line,
             "`pragma" => CompilerDirective::Pragma,
+            "`begin_keywords" => CompilerDirective::BeginKeywords,
+            "`end_keywords" => CompilerDirective::EndKeywords,
             _ => CompilerDirective::Macro,
         }
     }
@@ -418,5 +420,7 @@ pub enum CompilerDirective {
     TimeScale,
     Line,
     Pragma,
+    BeginKeywords,
+    EndKeywords,
     Macro,
 }

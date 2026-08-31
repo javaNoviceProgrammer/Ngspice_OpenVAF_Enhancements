@@ -31,15 +31,24 @@ impl Diagnostic for PreprocessorDiagnostic {
                     message: format!("expected {} arguments", expected),
                 }])
             }
-            PreprocessorDiagnostic::MacroNotFound { span, .. } => {
+            PreprocessorDiagnostic::MacroNotFound { span, ref name } => {
                 let span = span.to_file_span(&sm);
 
-                Report::error().with_labels(vec![Label {
+                let mut report = Report::error().with_labels(vec![Label {
                     style: LabelStyle::Primary,
                     file_id: span.file,
                     range: span.range.into(),
                     message: "macro not found here".to_owned(),
-                }])
+                }]);
+                if name == "__FILE__" || name == "__LINE__" {
+                    report = report.with_notes(vec![
+                        "help: `__FILE__/`__LINE__ are expanded only in the root file; \
+                         a use inside an `include'd file (or one only reached through \
+                         a macro) is not supported"
+                            .to_owned(),
+                    ]);
+                }
+                report
             }
             PreprocessorDiagnostic::MacroNotDefined { span, .. } => {
                 let span = span.to_file_span(&sm);
@@ -288,6 +297,76 @@ impl Diagnostic for PreprocessorDiagnostic {
                         message: "unexpected token".to_owned(),
                     }])
                     .with_notes(notes)
+            }
+            PreprocessorDiagnostic::UndefPredefined { span, .. } => {
+                let span = span.to_file_span(&sm);
+                Report::warning()
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: span.file,
+                        range: span.range.into(),
+                        message: "the macro stays defined".to_owned(),
+                    }])
+                    .with_notes(vec![
+                        "help: LRM 10.4: '`undef' shall have no effect on predefined \
+                         Verilog-AMS macros"
+                            .to_owned(),
+                    ])
+            }
+            PreprocessorDiagnostic::ReservedMacroName { span, .. } => {
+                let span = span.to_file_span(&sm);
+                Report::warning()
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: span.file,
+                        range: span.range.into(),
+                        message: "reserved macro namespace".to_owned(),
+                    }])
+                    .with_notes(vec![
+                        "help: LRM 10.4 reserves names beginning with '__VAMS_' for the \
+                         predefined macros; pick a different name"
+                            .to_owned(),
+                    ])
+            }
+            PreprocessorDiagnostic::UnknownKeywordSet { span, .. } => {
+                let span = span.to_file_span(&sm);
+                Report::warning()
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: span.file,
+                        range: span.range.into(),
+                        message: "unknown version specifier".to_owned(),
+                    }])
+                    .with_notes(vec![
+                        "help: LRM 10.6 version specifiers: \"VAMS-2023\", \"VAMS-2.3\", \
+                         \"1364-2005\", \"1364-2001\", \"1364-1995\""
+                            .to_owned(),
+                    ])
+            }
+            PreprocessorDiagnostic::KeywordSetNotSwitched { span, .. } => {
+                let span = span.to_file_span(&sm);
+                Report::warning()
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: span.file,
+                        range: span.range.into(),
+                        message: "keyword set not narrowed".to_owned(),
+                    }])
+                    .with_notes(vec![
+                        "help: this compiler keeps its single VAMS-2023 keyword table; \
+                         identifiers legal under the named set but reserved in VAMS-2023 \
+                         will still be rejected"
+                            .to_owned(),
+                    ])
+            }
+            PreprocessorDiagnostic::UnmatchedEndKeywords { span } => {
+                let span = span.to_file_span(&sm);
+                Report::warning().with_labels(vec![Label {
+                    style: LabelStyle::Primary,
+                    file_id: span.file,
+                    range: span.range.into(),
+                    message: "no '`begin_keywords' is open here".to_owned(),
+                }])
             }
             PreprocessorDiagnostic::MacroOverwritten { old, new, ref name } => {
                 let new = new.to_file_span(&sm);

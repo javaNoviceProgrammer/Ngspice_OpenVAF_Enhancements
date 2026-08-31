@@ -218,6 +218,17 @@ fn validate_literal(literal: ast::Literal, errors: &mut Vec<SyntaxError>) {
             if v.is_infinite() {
                 errors.push(SyntaxError::RealLiteralOverflow { span: range, negative: v < 0.0 });
             }
+            // LRM 2.6.2: at least one digit on each side of the decimal point
+            // (`1.` is among the LRM's illegal examples; Rust's f64 parser
+            // accepts it, so it slipped through silently). The lexer always
+            // starts the token with a digit, so only the right side can be
+            // missing.
+            let text = lit.syntax.text();
+            if let Some(pos) = text.find('.') {
+                if !text.as_bytes().get(pos + 1).is_some_and(|b| b.is_ascii_digit()) {
+                    errors.push(SyntaxError::MalformedRealLiteral { span: range });
+                }
+            }
         }
         ast::LiteralKind::SiRealNumber(lit) => {
             let v = lit.value();
@@ -240,18 +251,36 @@ fn validate_literal(literal: ast::Literal, errors: &mut Vec<SyntaxError>) {
         // is -- a size above 32 truncates, which 3.5.1 explicitly permits (`4'hFF`
         // is 15) and which Verilog-A's 32-bit `integer` makes the only sane reading.
         ast::LiteralKind::IntNumber(lit) => {
-            let text = lit.syntax.text();
-            if let Some((size, _)) = text.split_once('\'') {
+            // `number_text` joins a white-space-separated / macro-substituted
+            // based literal's tokens (LRM 2.6.1) so the checks below see the
+            // contiguous spelling.
+            let text = lit.number_text();
+            if let Some((size, digits)) = text.split_once('\'') {
                 let size = size.trim();
-                if !size.is_empty() && size.bytes().all(|b| b.is_ascii_digit())
+                if !size.is_empty()
+                    && size.bytes().all(|b| b.is_ascii_digit())
                     && size.bytes().all(|b| b == b'0')
                 {
                     errors.push(SyntaxError::ZeroWidthLiteral { span: range });
+                } else if !digits.is_empty()
+                    && crate::ast::parse_based_int_masked(&text).is_none()
+                {
+                    // A single-token literal can never get here (the lexer only
+                    // attaches legal digits); the multi-token form would
+                    // otherwise silently evaluate to 0.
+                    errors.push(SyntaxError::InvalidBasedLiteral { span: range });
                 }
             }
         }
 
-        ast::LiteralKind::String(_) => (),
+        // LRM 2.7: a string shall be contained on a single line. The lexer
+        // consumes a raw newline inside a string without complaint, silently
+        // accepting the illegal form.
+        ast::LiteralKind::String(lit) => {
+            if lit.syntax.text().contains('\n') {
+                errors.push(SyntaxError::MultilineStringLiteral { span: range });
+            }
+        }
     }
 }
 

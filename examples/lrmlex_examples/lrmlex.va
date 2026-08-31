@@ -1,0 +1,79 @@
+// lrmlex.va -- Enhancement-515: the lexical layer and compiler directives,
+// audited and fixed against Accellera VAMS-2023 clauses 2 and 10 (+ Annex B).
+//
+// One module exercising, at RUN time (values checked by verify_lrmlex.py):
+//   * white-space-separated and macro-substituted based literals (LRM 2.6.1:
+//     "It shall be legal to macro substitute these three tokens" and the
+//     unsigned number "optionally preceded by white space" -- `5 'D 3` is the
+//     LRM's own Example 2),
+//   * the contiguous forms next to them, pinning that nothing regressed,
+//   * the predefined-macro surface of LRM 10.5 (`__VAMS_ENABLE__ "shall
+//     always be defined"`) and 10.4 (`` `undef`` "shall have no effect on
+//     predefined Verilog-AMS macros"),
+//   * `assert`, `root` and `do` as ordinary identifiers (Annex B reserves
+//     none of them; `do` stays available to the do-while extension by
+//     context),
+//   * attribute instances in expression positions (LRM 2.9: "as a suffix to
+//     an operator or a Verilog-AMS function name in an expression").
+`include "disciplines.vams"
+`begin_keywords "VAMS-2023"
+`define SZ 8
+`resetall
+
+module lrmlex(p, n);
+    inout p, n;
+    electrical p, n;
+
+    // legal identifiers that used to be rejected as reserved words
+    real assert;
+    real root;
+    real do;
+
+    (*desc="5 'D 3"*)                integer a;
+    (*desc="12'b 0011_0101_0001"*)   integer b;
+    (*desc="`SZ'hFF"*)               integer c;
+    (*desc="'h 837FF"*)              integer d;
+    (*desc="8'sh FF"*)               integer e;
+    (*desc="contiguous 8'hFF"*)      integer f;
+    (*desc="contiguous 'sb1010_1100"*) integer g;
+    (*desc="contiguous 'o17"*)       integer h;
+    (*desc="contiguous 8'shFF"*)     integer i;
+    (*desc="__VAMS_ENABLE__ seen"*)  integer ve;
+    (*desc="undef had no effect"*)   integer uk;
+    (*desc="expr-position attrs"*)   real xa;
+    (*desc="dup attr", desc="last wins"*) real dl;
+
+    analog begin
+        a = 5 'D 3;
+        b = 12'b 0011_0101_0001;
+        c = `SZ'hFF;
+        d = 'h 837FF;
+        e = 8'sh FF;
+        f = 8'hFF;
+        g = 'sb1010_1100;
+        h = 'o17;
+        i = 8'shFF;
+
+`ifdef __VAMS_ENABLE__
+        ve = 1;
+`else
+        ve = 0;
+`endif
+`undef __VAMS_COMPACT_MODELING__
+`ifdef __VAMS_COMPACT_MODELING__
+        uk = 1;   // LRM 10.4: the `undef above shall have no effect
+`else
+        uk = 0;
+`endif
+
+        assert = 1.0;
+        root   = 2.0;
+        do     = 3.0;
+        // LRM 2.9: attributes as operator / function-name suffixes
+        xa = assert + (* lrmlex_tag *) root * (* lrmlex_tag2 *) do;
+        dl = 1.0;
+
+        I(p, n) <+ 1e-3 * V(p, n);
+    end
+endmodule
+`end_keywords

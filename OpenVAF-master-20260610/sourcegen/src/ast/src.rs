@@ -5,6 +5,11 @@ use crate::to_upper_snake_case;
 pub(crate) struct KindsSrc<'a> {
     pub(crate) punct: &'a [(&'a str, &'a str)],
     pub(crate) keywords: &'a [&'a str],
+    /// Words that get a `_KW` SyntaxKind variant but are NOT in
+    /// `from_keyword`: the plain identifier stays an IDENT (it is a legal
+    /// Verilog-AMS name) and the keyword token is only produced by dedicated
+    /// lexer/parser paths (`$root` -> ROOT_KW).
+    pub(crate) contextual_keywords: &'a [&'a str],
     pub(crate) literals: &'a [&'a str],
     pub(crate) tokens: &'a [&'a str],
     pub(crate) nodes: &'a [&'a str],
@@ -97,7 +102,6 @@ pub(crate) const KINDS_SRC: KindsSrc = KindsSrc {
         "while",
         "repeat",
         "do",
-        "root",
         "initial_step",
         "initial",
         "final_step",
@@ -107,7 +111,10 @@ pub(crate) const KINDS_SRC: KindsSrc = KindsSrc {
         "defparam",
         "or",
     ],
-    literals: &["INT_NUMBER", "STD_REAL_NUMBER", "SI_REAL_NUMBER", "STR_LIT"],
+    // `root` is a legal identifier (LRM Annex B does not reserve it); ROOT_KW
+    // is produced only for the `$root` spelling (tokens/src/lib.rs).
+    contextual_keywords: &["root"],
+    literals: &["INT_NUMBER", "BASED_INT", "BASE_PREFIX", "STD_REAL_NUMBER", "SI_REAL_NUMBER", "STR_LIT"],
     tokens: &["ERROR", "IDENT", "SYSFUN", "NET_TYPE", "WHITESPACE", "COMMENT"],
     nodes: &[
         "ANALOG_BEHAVIOUR",

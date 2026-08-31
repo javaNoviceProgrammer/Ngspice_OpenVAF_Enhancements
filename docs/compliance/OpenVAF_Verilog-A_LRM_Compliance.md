@@ -71,6 +71,20 @@ The don't-care digits `x`/`z`/`?` are additionally accepted in the
 power-of-two bases when the literal is a `casex`/`casez` item (§5.4);
 anywhere else they are a located error rather than silent zeros.
 
+The **three-token forms** of LRM 2.6.1 work as of
+[E-515](../../enhancements_doc/Enhancement-515.md): the digits may be
+separated from the base by white space and each token may come from a
+macro — `5 'D 3` (the LRM's own Example 2), `12'b 0011_0101_0001`,
+`` `SZ'hFF ``, `'h 837FF`, `8'sh FF` — evaluated in the `lrmlex` suite
+next to the contiguous forms. A spaced literal whose digits are illegal
+for its base is a located error. Two illegal forms that used to compile
+in silence are errors now: `1.` (LRM 2.6.2 requires a digit on each side
+of the decimal point) and a string spanning a raw newline (LRM 2.7).
+`assert`, `root` and `do` — none of them reserved by Annex B — are legal
+identifiers again (`do` contextually, so do-while still parses), and
+attribute instances parse in the expression positions of LRM 2.9, with
+duplicate attributes resolving to the **last** value as required.
+
 **Strings** (LRM 2.6.3) with the full escape set — `\n`, `\t`, `\\`,
 `\"`, and octal `\ddd` — processed by a single-pass unescaper (a
 sequential-replacement implementation corrupted overlapping escapes and
@@ -619,7 +633,8 @@ rationale.
 All five kinds (`$strobe`, `$display`, `$write`, `$monitor`, `$debug`)
 with the complete format surface — `[flags][width][.precision]` on every
 conversion, dynamic `*` widths, `%e/f/g/r` (engineering notation),
-`%d/h/o/b/c/s`, `%m`, `%%` — verified against exact printf output:
+`%d/h/o/b/c/s`, `%m`, `%%` — verified against exact printf output.
+verified against exact printf output:
 
 ```verilog
 $strobe("Vth=%7.4f V  region=%2d  id=%r  name=%s", vth, reg, id, name);
@@ -719,8 +734,14 @@ $strobe("evaluated at %s:%0d", `__FILE__, `__LINE__);
 
 `` `define `` with arguments (macros-in-macros, macro calls as
 arguments), `` `ifdef ``/`` `ifndef ``/`` `elsif ``/`` `else ``/
-`` `endif `` chained and nested, `` `include `` chains, `` `undef ``,
-`` `resetall ``, `` `default_transition ``, and the housekeeping set
+`` `endif `` chained and nested, `` `include `` chains, `` `undef ``
+(which, per LRM 10.4, has **no effect on the predefined macros** and
+warns — [E-515](../../enhancements_doc/Enhancement-515.md), which also
+makes `` `__VAMS_ENABLE__ `` always-defined per 10.5, validates
+`` `begin_keywords ``/`` `end_keywords `` version specifiers per 10.6,
+and fixes `` `__FILE__``/`` `__LINE__ `` breaking relative
+`` `include `` resolution), `` `resetall `` (now genuinely resetting the
+tracked directive state), `` `default_transition ``, and the housekeeping set
 (`` `celldefine ``, `` `timescale ``, `` `line ``, `` `pragma ``,
 `` `default_nettype ``, …). Recursive macro expansion — direct or
 mutual — is a clean located error (formerly a compiler stack overflow),
@@ -745,7 +766,7 @@ connected port.)*
 
 | LRM area | Status | Verified by |
 |---|---|---|
-| 2 Lexical (identifiers, numbers, strings, attributes) | ✅ | `escid`, `stresc`, `comment` suites |
+| 2 Lexical (identifiers, numbers, strings, attributes, three-token based literals, expression-position attrs) | ✅ ([E-515](../../enhancements_doc/Enhancement-515.md) audit) | `escid`, `stresc`, `comment`, `lrmlex` |
 | 3.2–3.3 Value types, variables, persistence | ✅ | `vartype`, `variable_persistence`, `intstate`, `varinit` |
 | 3.4 Parameters (ranges, localparam, aliasparam, arrays incl. name-then-range, paramset, block-scoped) | ✅ (default-exemption ⚠️ documented) | `paramrange`, `localparam`, `array`, `paramarray`, `paramset`, `paramsethsp`, `blockparam` |
 | 3.5–3.7 Natures, disciplines, nets, buses, nodesets | ✅ | `derivednature`, `domainbind`, `bus`, `netinit`, `ground`, `signalflow` |
@@ -764,7 +785,7 @@ connected port.)*
 | 9 misc ($finish family, $simparam, attributes) | ✅ | `simctrl`, `simparamstr`, `opvar` |
 | plusargs (`$test`/`$value`) | ✅ ([E-215](../../enhancements_doc/Enhancement-215.md)) | `plusargs` |
 | simprobe / node aliases | ⚠️ LRM fallbacks | `alias` |
-| 10 Compiler directives (incl. `` `__FILE__``/`` `__LINE__``) | ✅ | `preproc`, `directive`, `defaulttransition`, `filemacro` |
+| 10 Compiler directives (incl. `` `__FILE__``/`` `__LINE__``, predefined-macro protection, `` `begin_keywords ``) | ✅ ([E-515](../../enhancements_doc/Enhancement-515.md)) | `preproc`, `directive`, `defaulttransition`, `filemacro`, `lrmlex` |
 | Mixed-signal / digital (outside Annex C) | ❌ by scope | — |
 
 As of E-84 the standard's own examples are a compliance suite: every

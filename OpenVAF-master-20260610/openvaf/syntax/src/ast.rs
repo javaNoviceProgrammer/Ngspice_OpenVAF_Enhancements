@@ -7,7 +7,7 @@ use std::marker::PhantomData;
 
 use ordered_float::OrderedFloat;
 
-pub use self::expr_ext::{ArrayExprKind, BinaryOp, LiteralKind, UnaryOp};
+pub use self::expr_ext::{parse_based_int_masked, ArrayExprKind, BinaryOp, LiteralKind, UnaryOp};
 pub use self::generated::nodes::*;
 pub use self::generated::tokens::*;
 pub use self::node_ext::{

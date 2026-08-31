@@ -416,8 +416,8 @@ fn generate_syntax_kinds(grammar: KindsSrc<'_>) -> String {
     let full_keywords =
         full_keywords_values.iter().map(|kw| format_ident!("{}_KW", to_upper_snake_case(kw)));
 
-    let all_keywords_values = grammar.keywords.to_owned();
-    //grammar.keywords.iter().chain(grammar.contextual_keywords.iter()).collect::<Vec<_>>();
+    let mut all_keywords_values = grammar.keywords.to_owned();
+    all_keywords_values.extend_from_slice(grammar.contextual_keywords);
 
     let all_keywords_idents = all_keywords_values.iter().map(|kw| format_ident!("{}", kw));
     let all_keywords = all_keywords_values
@@ -425,7 +425,7 @@ fn generate_syntax_kinds(grammar: KindsSrc<'_>) -> String {
         .map(|name| format_ident!("{}_KW", to_upper_snake_case(name)))
         .collect::<Vec<_>>();
 
-    let keywords_pretty = grammar.keywords.iter().map(|kw| format!("'{}'", kw));
+    let keywords_pretty = all_keywords_values.iter().map(|kw| format!("'{}'", kw));
 
     let literals =
         grammar.literals.iter().map(|name| format_ident!("{}", name)).collect::<Vec<_>>();
@@ -510,6 +510,8 @@ fn generate_syntax_kinds(grammar: KindsSrc<'_>) -> String {
                     #(Self::#punctuation => #punctuation_pretty,)*
                     #(Self::#all_keywords => #keywords_pretty,)*
                     Self::INT_NUMBER => "integer",
+                    Self::BASED_INT => "based integer literal",
+                    Self::BASE_PREFIX => "based-literal base",
                     Self::STD_REAL_NUMBER| Self::SI_REAL_NUMBER  => "real number",
                     Self::STR_LIT => "string literal",
                     Self::LITERAL => "literal",

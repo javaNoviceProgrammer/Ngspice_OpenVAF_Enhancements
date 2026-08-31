@@ -330,6 +330,12 @@ impl ast::Literal {
 
         match token.kind() {
             T![inf] => LiteralKind::Inf,
+            // A white-space-separated or macro-substituted based literal
+            // (LRM 2.6.1): the LITERAL node holds several tokens
+            // ([size] base [digits]); the wrapper evaluates over all of them.
+            crate::SyntaxKind::BASED_INT | crate::SyntaxKind::BASE_PREFIX => {
+                LiteralKind::IntNumber(ast::IntNumber { syntax: token })
+            }
             _ => unreachable!(),
         }
     }
@@ -454,13 +460,43 @@ impl ast::SiRealNumber {
 }
 
 impl ast::IntNumber {
+    /// The literal's full text with `_` separators (and, for a multi-token
+    /// based literal, white space between the tokens) stripped. A based
+    /// literal may span several sibling tokens of one LITERAL node -- size,
+    /// base, digits -- because LRM 2.6.1 allows white space between them and
+    /// macro substitution of each; joining the non-trivia tokens rebuilds the
+    /// contiguous spelling the parsers below understand.
+    pub(crate) fn number_text(&self) -> String {
+        let multi = self.syntax.parent().filter(|node| {
+            node.children_with_tokens().any(|t| {
+                matches!(t.kind(), crate::SyntaxKind::BASED_INT | crate::SyntaxKind::BASE_PREFIX)
+            }) && node
+                .children_with_tokens()
+                .filter(|t| !t.kind().is_trivia())
+                .nth(1)
+                .is_some()
+        });
+        match multi {
+            Some(node) => {
+                let mut joined = String::new();
+                for tok in node.children_with_tokens().filter_map(|e| e.into_token()) {
+                    if !tok.kind().is_trivia() {
+                        joined.extend(tok.text().chars().filter(|&c| c != '_'));
+                    }
+                }
+                joined
+            }
+            None => strip_separators(self.syntax.text()).into_owned(),
+        }
+    }
+
     /// Parses this integer literal's text as an `i32`, or `None` if it doesn't fit (e.g. a
     /// literal like `6134876650875544`, larger than Verilog-A's 32-bit `integer` type can
     /// hold) -- callers should fall back to `value_as_f64` in that case rather than treating
     /// it as an error, since a bare digit-string with no `.`/exponent is still a perfectly
     /// valid (if unusually spelled) real-number literal wherever a `real` is expected.
     pub fn value(&self) -> Option<i32> {
-        let src = strip_separators(self.syntax.text());
+        let src = self.number_text();
         if src.contains('\'') {
             return parse_based_int(&src);
         }
@@ -474,7 +510,7 @@ impl ast::IntNumber {
     /// Without it, `-2147483648` -- the smallest `integer` -- could not be written
     /// as a constant at all, and silently became a real.
     pub fn value_negated(&self) -> Option<i32> {
-        let src = strip_separators(self.syntax.text());
+        let src = self.number_text();
         if src.contains('\'') {
             return None;
         }
@@ -490,7 +526,7 @@ impl ast::IntNumber {
     /// The don't-care digit masks of a based literal -- `(x_mask, z_mask)`
     /// bit sets -- or `None` when it has none (Enhancement-78, casex/casez).
     pub fn dontcare_masks(&self) -> Option<(i32, i32)> {
-        let src = strip_separators(self.syntax.text());
+        let src = self.number_text();
         if !src.contains('\'') {
             return None;
         }
@@ -507,7 +543,7 @@ impl ast::IntNumber {
     /// and never exceeds f64's much larger range) -- the fallback for `value()` returning
     /// `None`.
     pub fn value_as_f64(&self) -> f64 {
-        let src = strip_separators(self.syntax.text());
+        let src = self.number_text();
         if src.contains('\'') {
             // a based literal always fits `i32` after masking; a malformed one
             // (already a parse error elsewhere) degrades to 0 rather than panicking

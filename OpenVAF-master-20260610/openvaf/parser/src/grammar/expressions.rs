@@ -111,6 +111,8 @@ fn expr_bp_inner(p: &mut Parser, bp: u8) -> Option<CompletedMarker> {
         if op == T![?] {
             let m = lhs.precede(p);
             p.bump(T![?]);
+            // LRM 2.9 / A.8.3: attribute instances may follow the `?`
+            attrs(p, EXPR_RECOVERY_SET);
             expr(p);
             p.expect(T![:]);
             expr(p);
@@ -119,6 +121,8 @@ fn expr_bp_inner(p: &mut Parser, bp: u8) -> Option<CompletedMarker> {
 
         let m = lhs.precede(p);
         p.bump(op);
+        // LRM 2.9: an attribute instance can appear as a suffix to an operator
+        attrs(p, EXPR_RECOVERY_SET);
 
         expr_bp(p, op_bp + 1);
         lhs = m.complete(p, BIN_EXPR);
@@ -165,11 +169,17 @@ fn atom_expr_inner(p: &mut Parser) -> Option<CompletedMarker> {
         T![~] | T![!] | T![-] | T![+] => {
             let m = p.start();
             p.bump_ts(TokenSet::new(&[T![~], T![!], T![-], T![+]]));
+            // LRM 2.9: an attribute instance can appear as a suffix to an operator
+            attrs(p, EXPR_RECOVERY_SET);
             atom_expr(p);
             m.complete(p, PREFIX_EXPR)
         }
         IDENT | ROOT_KW => {
             let m = path(p);
+            // LRM 2.9 / A.8.2: attribute instances may follow a function name
+            if p.at(T!["(*"]) {
+                attrs(p, EXPR_RECOVERY_SET);
+            }
             if p.at(T!('(')) {
                 call(p, m)
             } else if p.at(T!['[']) {
@@ -198,7 +208,35 @@ fn atom_expr_inner(p: &mut Parser) -> Option<CompletedMarker> {
         }
         SYSFUN => sys_fun_call(p),
         T![<] => port_flow(p),
-        INT_NUMBER | SI_REAL_NUMBER | STD_REAL_NUMBER | STR_LIT | INF_KW => {
+        INT_NUMBER => {
+            let m = p.start();
+            p.bump_any();
+            // LRM 2.6.1: the three tokens of a based literal may be separated
+            // by white space or produced by macro substitution. Join
+            // `5 'D 3` (INT BASE_PREFIX INT), `8'sh FF` (INT BASE_PREFIX
+            // IDENT), and `` `SZ'hFF `` (INT BASED_INT) into one LITERAL; the
+            // digits after a bare base can lex as INT, IDENT, or INT+IDENT
+            // (`'h 837FF` -> `837` + `FF`).
+            if p.at(BASE_PREFIX) {
+                p.bump_any();
+                based_digit_tokens(p);
+            } else if p.at(BASED_INT) {
+                p.bump_any();
+            }
+            m.complete(p, LITERAL)
+        }
+        BASED_INT => {
+            let m = p.start();
+            p.bump_any();
+            m.complete(p, LITERAL)
+        }
+        BASE_PREFIX => {
+            let m = p.start();
+            p.bump_any();
+            based_digit_tokens(p);
+            m.complete(p, LITERAL)
+        }
+        SI_REAL_NUMBER | STD_REAL_NUMBER | STR_LIT | INF_KW => {
             let m = p.start();
             p.bump_any();
             m.complete(p, LITERAL)
@@ -209,6 +247,19 @@ fn atom_expr_inner(p: &mut Parser) -> Option<CompletedMarker> {
         }
     };
     Some(done)
+}
+
+/// Consumes the digits of a white-space-separated based literal after its
+/// BASE_PREFIX token. The digit blob lexes as INT (`3`, `0011_0101`), IDENT
+/// (`FF`, `z3`), or INT followed directly by IDENT (`837FF` -> `837` + `FF`),
+/// so up to one of each is taken, in that order.
+fn based_digit_tokens(p: &mut Parser) {
+    let had_int = p.eat(INT_NUMBER);
+    if p.at(IDENT) {
+        p.bump_any();
+    } else if !had_int {
+        p.error(p.unexpected_tokens_msg(vec![INT_NUMBER]));
+    }
 }
 
 fn port_flow(p: &mut Parser) -> CompletedMarker {

@@ -1,0 +1,4 @@
+// pulled in by srcloc.va through a RELATIVE `include -- the path resolves
+// against the including file's directory even when `__FILE__/`__LINE__
+// rewriting is active (the regression Enhancement-515 fixes).
+`define FROM_LEVEL1 41

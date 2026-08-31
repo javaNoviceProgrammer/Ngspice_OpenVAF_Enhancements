@@ -46,6 +46,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::ops::Range;
 use std::rc::Rc;
+use std::sync::Arc;
 
 use basedb::{AstId, AstIdMap, BaseDB, VfsStorage};
 use hir_def::db::HirDefDB;
@@ -164,7 +165,21 @@ pub(crate) fn expand_source_location_macros(db: &mut CompilationDB) -> anyhow::R
     let synth_name = format!("/{base_name}__srcloc.va");
     let file_id = db.vfs().write().add_virt_file(&synth_name, out.into());
 
+    // The synthetic copy lives at the virtual root, not in the original
+    // file's directory -- so `` `include `` paths relative to the original
+    // file would no longer resolve. Prepend the original's parent directory
+    // to the include path (first, to preserve the LRM's
+    // workdir-before--I-dirs search order).
     let include_dirs = db.include_dirs(root_file);
+    let orig_parent = db.vfs().read().file_path(root_file).parent();
+    let include_dirs = match orig_parent {
+        Some(parent) => {
+            let dirs: Vec<_> =
+                std::iter::once(parent).chain(include_dirs.iter().cloned()).collect();
+            Arc::from(dirs)
+        }
+        None => include_dirs,
+    };
     db.set_include_dirs(file_id, include_dirs);
     let macro_flags = db.macro_flags(root_file);
     db.set_macro_flags(file_id, macro_flags);
