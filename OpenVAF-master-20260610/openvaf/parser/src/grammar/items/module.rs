@@ -317,6 +317,20 @@ fn func_arg(p: &mut Parser, m: Marker) {
     // own still takes it from a matching `real x;` (or defaults to real).
     eat_ty(p);
 
+    // LRM 4.7.1 Example 3 (UDF audit): the LRM's own spelling of an array
+    // formal puts the range on the DIRECTION line -- `inout [0:1]a; input
+    // [0:1]b; real a[0:1], b[0:1];` -- and it was "unexpected token '['".
+    // The compiler's own namerange elaboration pass even REWRITES the
+    // name-then-range spelling (`output o[0:1];`) into exactly this
+    // range-then-name form, generating syntax its own parser then refused.
+    // The range is accepted here; the argument's array dimensions come from
+    // its mandatory data-type block-item declaration (which Example 3
+    // carries), so the clause is informational -- the same dual-declaration
+    // redundancy the LRM itself writes.
+    while p.at(T!['[']) {
+        width_range(p);
+    }
+
     decl_list(p, T![;], decl_name, FUNC_ARG_RECOVER);
     p.eat(T![;]);
     m.complete(p, FUNCTION_ARG);

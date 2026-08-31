@@ -707,7 +707,7 @@ once at the *successful* end, seeing the converged solution), with
 An operating point fires both step events (a single point is first and
 last); a failed analysis never fires `final_step`.
 
-### 5.6 Analog functions (LRM 5.11) — ✅
+### 5.6 Analog functions (LRM 4.7) — ✅
 
 Declared functions with input/output/inout arguments, **arrays in all
 three roles plus array return values**, locals (including array locals),
@@ -726,9 +726,38 @@ analog function real dot;
 endfunction
 ```
 
+The UDF audit closed every gap this section used to gloss over:
+**string-typed functions** (return and output arguments, 4.7.1/Mantis
+7808) work instead of crashing the compiler; **function-local
+`parameter` declarations** work instead of crashing codegen — a local
+constant, never an OSDI parameter, with the clause's exact scoping: a
+local shadows the same-named module parameter, other module parameters
+read through (and a netlist override of those propagates into the
+function), `$param_given` on one is constantly false; the **LRM's own
+array-argument spelling** compiles — 4.7.1 Example 3 verbatim
+(`inout [0:1]a; input [0:1]b; real a[0:1], b[0:1];`), the range on the
+direction line accepted with the dimensions taken from the mandatory
+data-type declaration (previously the compiler's own name-then-range
+rewrite generated this very form and then refused to parse it); a pure
+**output array is zero-initialized** at entry and an unassigned one
+resets the caller's array to zeros (4.7.2.3 — it silently had inout
+copy-in semantics); and the **`return` statement** (4.7.2.2) works, per
+E-520. Both `$param_given` constant answers are BOOL constants — an
+integer constant there panicked the MIR folder at the bool→int cast, a
+latent bug the paramset path shared.
+
 Recursion is illegal in Verilog-A; both direct and mutual recursion are
 clean errors naming the call cycle (mutual recursion formerly overflowed
 the compiler stack).
+
+Deliberate relaxations and extensions, recorded: ⚠️ **named blocks inside
+function bodies** are accepted (4.7.1 forbids them) — pre-2023 code needs
+`begin : b … disable b` for early exit, the very idiom `return` replaced;
+⚠️ a UDF **call in a constant context** (`parameter real p = f(3.0);`) is
+accepted and constant-evaluated, although 4.7.3 restricts calls to the
+analog context; ⚠️ a formal with no data-type declaration defaults to
+`real`, the **ANSI-style header** `f(input real x)` and **array return
+types** are OpenVAF extensions beyond Syntax 4-5 (E-389, E-23).
 
 ## 6. Hierarchy (LRM 6) — ✅
 
@@ -939,7 +968,7 @@ connected port.)*
 | 5.7–5.9, 5.11 Procedural statements, loops, disable, jump statements (`break`/`continue`/`return`, contextual keywords, genvar-for exclusion enforced) | ✅ | `analogloop`, `dowhile`, `repeat`, `disable`, `arraycase` |
 | casex/casez | ⚠️ extension beyond Annex C (C.7 excludes them from Verilog-A) | `casexz` |
 | 5.10 Events (steps, cross/above/timer, OR lists, phase lists) | ✅ | `initial_step`, `finalstep`, `cross`, `timer`, `lrmcorner` |
-| 4.7 Analog functions (arrays in/out/return; VAMS-2023 string return & args; `return` statement) | ✅ | `funcarray`, `arrayout`, `arrayret` |
+| 4.7 Analog functions (arrays in/out/return incl. the LRM's Example 3 spelling; VAMS-2023 string return & args; function-local `parameter`s with shadowing; output-array zero-init; `return` statement) | ✅ (named blocks in bodies ⚠️ and const-context calls ⚠️ documented relaxations) | `funcarray`, `arrayout`, `arrayret` |
 | 6 Hierarchy (instantiation, generate incl. the legacy analog-block form — obsolete per G.2.3/C.20, kept as a compat extension ⚠️ — defparam, $root, part-select connections, hierarchical branch probes) | ✅ (param-shaped structure ⚠️ explained) | `instantiation`, `generate`, `legacygen`, `defparam`, `hiername`, `implicitnet`, `partselect`, `hierbranch` |
 | 9.4–9.8 Display, file/string I/O (incl. 9.4.6/9.5.9 accepted-iteration deferral, `$monitor` change detection, `%r`, 9.5.1.1 append, pre-opened fds) | ✅ ([E-516](../../enhancements_doc/Enhancement-516.md) audit; MCD/`$fmonitor` ⚠️) | `display`, `fileio`, `stringio`, `fgetc`, `ungetc`, `sscanf`, `scanfmt`, `lrmsysio` |
 | 9.13 Random/distributions | ✅ (deterministic seed ⚠️ documented) | `rng`, `montecarlo` |

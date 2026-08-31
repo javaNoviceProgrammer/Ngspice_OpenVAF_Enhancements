@@ -152,7 +152,22 @@ impl BodyLoweringCtx<'_, '_, '_> {
             Expr::Read(Ref::ParamSysFun(param)) => {
                 self.ctx.use_param(ParamKind::ParamSysFun(param))
             }
-            Expr::Read(Ref::Parameter(param)) => self.ctx.use_param(ParamKind::Param(param)),
+            Expr::Read(Ref::Parameter(param)) => {
+                // LRM 4.7.1 (UDF audit): a FUNCTION-local parameter is a pure
+                // compile-time constant. It is not an OSDI parameter, so a
+                // ParamKind::Param slot for it would stay undefined at codegen
+                // -- `parameter real k = 3.0;` inside a function ICEd the
+                // compiler with "attempted to read undefined value". Inline
+                // its default expression instead; module-parameter references
+                // inside the default resolve to real OSDI params, which is
+                // exactly the clause's local-shadows-module rule.
+                if param.is_function_local(self.ctx.db) {
+                    let body = param.init(self.ctx.db);
+                    self.ctx.lower_expr_body(body.borrow(), 0)
+                } else {
+                    self.ctx.use_param(ParamKind::Param(param))
+                }
+            }
             Expr::Read(Ref::FunctionReturn(fun)) => {
                 self.ctx.use_place(PlaceKind::FunctionReturn(fun))
             }
@@ -668,17 +683,41 @@ impl BodyLoweringCtx<'_, '_, '_> {
             args.next();
         }
         for (arg, expr) in args.clone() {
-            if let Type::Array { .. } = arg.ty(self.ctx.db) {
-                // Whole-array argument (Enhancement-18): bind the function's element variables
-                // (`v[i]`) from the caller's array elements (input semantics).
-                // Enhancement-33: `lower_array_elems` accepts array *literals* as well as
-                // whole-array variable references. Previously a literal argument bound
-                // nothing (`array_var_ref` is only populated for variable references), so
-                // `f('{1.0, 2.0})` silently left every element at 0.
+            if let Type::Array { ty: elem_ty, .. } = arg.ty(self.ctx.db) {
                 let func_elems = arg.array_elems(self.ctx.db);
-                let caller_vals = self.lower_array_elems(*expr);
-                for (&p_i, val) in func_elems.iter().zip(caller_vals) {
-                    self.ctx.def_place(PlaceKind::Var(p_i), val);
+                if arg.is_input(self.ctx.db) {
+                    // Whole-array input/inout argument (Enhancement-18): bind the
+                    // function's element variables (`v[i]`) from the caller's
+                    // array elements.
+                    // Enhancement-33: `lower_array_elems` accepts array *literals* as well as
+                    // whole-array variable references. Previously a literal argument bound
+                    // nothing (`array_var_ref` is only populated for variable references), so
+                    // `f('{1.0, 2.0})` silently left every element at 0.
+                    let caller_vals = self.lower_array_elems(*expr);
+                    for (&p_i, val) in func_elems.iter().zip(caller_vals) {
+                        self.ctx.def_place(PlaceKind::Var(p_i), val);
+                    }
+                } else {
+                    // LRM 4.7.2.3 (UDF audit): a pure OUTPUT array is
+                    // zero-initialized at entry, like the scalar path below --
+                    // it used to get the input copy-in, so the body read the
+                    // caller's values where the LRM mandates zeros, and an
+                    // unassigned output array left the caller unchanged where
+                    // the LRM mandates a reset (the unconditional copy-out
+                    // below turns this zero-init into exactly that reset).
+                    let mut innermost: &Type = &elem_ty;
+                    while let Type::Array { ty, .. } = innermost {
+                        innermost = ty;
+                    }
+                    let zero = match innermost {
+                        Type::Real => F_ZERO,
+                        Type::Integer => ZERO,
+                        Type::String => self.ctx.sconst(""),
+                        ty => unreachable!("invalid array element type {ty:?}"),
+                    };
+                    for &p_i in func_elems.iter() {
+                        self.ctx.def_place(PlaceKind::Var(p_i), zero);
+                    }
                 }
                 continue;
             }
@@ -2523,8 +2562,17 @@ impl BodyLoweringCtx<'_, '_, '_> {
             // silently took the wrong branch through a paramset.
             BuiltIn::param_given => {
                 let param = self.body.into_parameter(args[0]);
+                // BOOL constants, not iconst: `ParamGiven` is bool-typed, so
+                // inference records a bool->int cast at integer-assignment
+                // sites, and a bicast over an INT constant panics the MIR
+                // constant folder ("invalid int operation bicast").
                 if param.is_paramset_bound(self.ctx.db) {
-                    self.ctx.iconst(1)
+                    TRUE
+                } else if param.is_function_local(self.ctx.db) {
+                    // LRM 4.7.1: a function-local parameter can never be given
+                    // from outside; there is no runtime flag slot for it (it
+                    // is not an OSDI parameter), so answer a constant false.
+                    FALSE
                 } else {
                     self.ctx.use_param(ParamKind::ParamGiven { param })
                 }

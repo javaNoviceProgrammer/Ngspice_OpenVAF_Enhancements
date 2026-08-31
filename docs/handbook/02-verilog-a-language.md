@@ -150,6 +150,9 @@ the actual construct and suggest hoisting or `generate` unrolling
 | Array arguments | Whole-array `input` args ([E-18](../../enhancements_doc/Enhancement-18.md)), `output`/`inout` writeback ([E-20](../../enhancements_doc/Enhancement-20.md)), **array return values** (`real [0:2] f;` — [E-23](../../enhancements_doc/Enhancement-23.md)), array-literal arguments ([E-33](../../enhancements_doc/Enhancement-33.md)), array locals. `examples/funcarray_examples/`, `examples/arrayout_examples/`, `examples/arrayret_examples/` | E-18/20/23/33 |
 | Loops inside functions | Iterative algorithms (Newton, factorial) verified exact. | [E-70](../../enhancements_doc/Enhancement-70.md) |
 | Integer/untyped arguments | Untyped args default to `real`; integer output args work. | [E-43](../../enhancements_doc/Enhancement-43.md), [E-59](../../enhancements_doc/Enhancement-59.md) |
+| String functions | `analog function string` return types and string `output` arguments (VAMS-2023, LRM 4.7.1). | [E-520](../../enhancements_doc/Enhancement-520.md) |
+| Function-local `parameter`s | A `parameter` inside a function body is a compile-time local (LRM 4.7.1): it shadows a same-named module parameter, other module parameters read through — a netlist override of those propagates into the function — and it is never netlist-settable itself. | — |
+| Output-array semantics | A pure `output` array is zero-initialized at entry, and an unassigned one resets the caller's array to zeros (LRM 4.7.2.3); `inout` arrays copy in and out. | — |
 | Recursion | Not legal in Verilog-A; both direct and mutual recursion are clean, cycle-naming errors (mutual recursion used to crash the compiler). | [E-59](../../enhancements_doc/Enhancement-59.md) |
 
 ## 2.10 Procedural statements and loops

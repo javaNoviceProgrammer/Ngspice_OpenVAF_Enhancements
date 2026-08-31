@@ -152,14 +152,13 @@ scripting ngspice:
   that terminates only by integer wrap (`k = k - 1`) is *not* rejected: it does
   finish, after about 2³¹ iterations.
 
-- **`break`/`continue` don't exist in Verilog-A** — the compiler rejects
-  them with the `disable <block>;` idiom as the alternative
-  ([E-9](../../enhancements_doc/Enhancement-9.md), [E-70](../../enhancements_doc/Enhancement-70.md)).
-  One restriction: `disable` works as an early exit from a loop that can *also*
-  finish normally, but it is not accepted as the **only** way out of a loop whose
-  condition never changes — `while (1) … disable blk;` is rejected by the check
-  above. That form never compiled anyway; it aborted codegen with
-  `attempted to read undefined value`, so the error replaces a compiler crash
+- **`break`/`continue`/`return` are the VAMS-2023 jump statements** and
+  work as of [E-520](../../enhancements_doc/Enhancement-520.md); `disable
+  <block>;` remains the named-block early exit
+  ([E-9](../../enhancements_doc/Enhancement-9.md)). One restriction carried
+  over: neither `disable` nor `break` is accepted as the **only** way out of
+  a loop whose condition never changes — `while (1) … disable blk;` is
+  rejected by the termination check above
   ([E-375](../../enhancements_doc/Enhancement-375.md)).
 - **Analog operators can't sit in loops or solution-dependent
   conditionals** (LRM 4.5.1) — hoist them or unroll with `generate`; the
@@ -171,10 +170,11 @@ scripting ngspice:
   style `input x; real x;`, the combined declaration `input real x;`, and the
   ANSI header `analog function real f(input real x);` — in which a later
   argument may restate neither direction nor type (`f(input real x, y)` gives
-  `y` both of `x`'s). Only **array** arguments still require the separated form
-  (`output w; real w[0:3];`, not `output real w[0:3];`), because the
-  declaration-level range machinery has no counterpart in the combined and ANSI
-  positions.
+  `y` both of `x`'s). **Array** arguments use the separated form, in either
+  the LRM's own spelling (4.7.1 Example 3: `inout [0:1]a; real a[0:1];` — the
+  range on the direction line is accepted, with the dimensions taken from the
+  mandatory data-type declaration) or the plain `output w; real w[0:3];`.
+  The combined and ANSI positions still take no array dimensions.
 - **String opvars** display via `show` but can't become vectors (ngspice
   vectors are numeric) — `print @n1[strvar]` fails with a clear message
   ([E-69](../../enhancements_doc/Enhancement-69.md)).

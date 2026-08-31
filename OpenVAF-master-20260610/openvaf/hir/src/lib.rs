@@ -548,6 +548,19 @@ impl Parameter {
         db.param_data(self.id).is_local
     }
 
+    /// LRM 4.7.1: a parameter declared INSIDE an analog function body. It is
+    /// a pure compile-time local -- never an OSDI parameter (the module
+    /// declaration walk does not enter function scopes) and never
+    /// netlist-settable -- so lowering inlines its default expression at
+    /// each read. The default may reference module-level parameters, which
+    /// is what implements the clause's local-shadows-module rule.
+    pub fn is_function_local(self, db: &CompilationDB) -> bool {
+        matches!(
+            self.id.lookup(db).scope.src,
+            hir_def::nameres::DefMapSource::Function(_)
+        )
+    }
+
     /// Enhancement-398: this parameter's value comes from a `paramset` override.
     pub fn is_paramset_bound(self, db: &CompilationDB) -> bool {
         db.param_data(self.id).is_paramset_bound
