@@ -291,6 +291,35 @@ pub enum BodyValidationDiagnostic {
         node2: NodeId,
     },
 
+    /// LRM 5.10 (events audit): "Nested event control statements are not
+    /// allowed." The nested form lowered as ANDed gates and was a silently
+    /// dead statement for any disjoint pair.
+    NestedEventControl {
+        stmt: StmtId,
+    },
+    /// LRM 5.10.3.1/.2 (events audit): cross/above under a runtime `if`/
+    /// `case` arm or inside a repeat/while/for body -- the event's
+    /// previous-value state advances only when the branch executes, so
+    /// detection compares against a stale value.
+    EventInConditional {
+        stmt: StmtId,
+        form: &'static str,
+        in_loop: bool,
+    },
+    /// LRM 5.10 (events audit): not a recognizable analog event expression;
+    /// used to silently degrade to an unconditionally-executed body.
+    InvalidEventExpr {
+        stmt: StmtId,
+        name: Option<Box<str>>,
+    },
+    /// LRM 5.10.3.1/.2 (events audit, documented deviation): a nonzero
+    /// cross/above tolerance is accepted but not honored.
+    EventTolIgnored {
+        stmt: StmtId,
+        expr: ExprId,
+        form: &'static str,
+        what: &'static str,
+    },
     /// VAMS-2023 (LRM 5.11): `break`/`continue` outside any runtime loop --
     /// including inside a genvar `analog_for`, which 5.9.3 excludes from jump
     /// statements (those loops are unrolled at elaboration, so their bodies
@@ -612,6 +641,18 @@ impl BodyValidator<'_> {
         true
     }
 
+    /// The display form of the first monitored event (cross/above) in `event`,
+    /// descending into `Or` lists -- LRM 5.10.3.1/.2 restrict where those may
+    /// be placed (timer carries no such sentence and is left alone).
+    fn monitored_event_form(event: &Event) -> Option<&'static str> {
+        match event {
+            Event::Cross { .. } => Some("@(cross)"),
+            Event::Above { .. } => Some("@(above)"),
+            Event::Or(events) => events.iter().find_map(Self::monitored_event_form),
+            _ => None,
+        }
+    }
+
     fn validate_event(&mut self, event: &Event, stmt: StmtId) {
         match *event {
             // Enhancement-399: `@(initial_step("tarn"))` never fires -- the phase
@@ -680,6 +721,7 @@ impl BodyValidator<'_> {
                 if let Some(t) = expr_tol {
                     v.require_non_negative("@(above)", "the expression tolerance", t);
                 }
+                v.warn_event_tol_ignored("@(above)", time_tol, expr_tol);
                 // Nothing to constrain: LRM 5.10.3.2's `enable` argument enables
                 // the event for ANY non-zero value, so no range applies. Inference
                 // types it as a condition and the lowering gates the event on it;
@@ -703,6 +745,7 @@ impl BodyValidator<'_> {
                 if let Some(t) = expr_tol {
                     v.require_non_negative("@(cross)", "the expression tolerance", t);
                 }
+                v.warn_event_tol_ignored("@(cross)", time_tol, expr_tol);
                 // Nothing to constrain: LRM 5.10.3.1's `enable` argument enables
                 // the event for ANY non-zero value, so no range applies. Inference
                 // types it as a condition and the lowering gates the event on it;
@@ -715,6 +758,18 @@ impl BodyValidator<'_> {
                 for ev in events.iter() {
                     self.validate_event(ev, stmt);
                 }
+            }
+            // LRM audit (events): not a recognizable analog event. This used
+            // to DROP the event control -- the guarded body ran on every model
+            // evaluation with no diagnostic anywhere: `@(absdelta(...))` (a
+            // digital-only event, 5.10.3.4), `@(named_event)` (5.10.4, outside
+            // the analog subset), and plain typos (`@(cros(...))`) all became
+            // run-always statements.
+            Event::Invalid { ref name } => {
+                self.diagnostics.push(BodyValidationDiagnostic::InvalidEventExpr {
+                    stmt,
+                    name: name.clone().map(String::into_boxed_str),
+                });
             }
             _ => {}
         }
@@ -821,9 +876,43 @@ impl BodyValidator<'_> {
                     self.diagnostics
                         .push(BodyValidationDiagnostic::IllegalEventControl { stmt, ctx });
                 }
+                // LRM 5.10 (events audit): "Nested event control statements are
+                // not allowed." The nested form lowered as ANDed gates -- the
+                // body ran only when BOTH events fired in one evaluation, which
+                // for `@(initial_step) @(final_step) x = 1;` is never: a
+                // silently dead statement.
+                if matches!(self.ctx, BodyCtx::EventControl) {
+                    self.diagnostics.push(BodyValidationDiagnostic::NestedEventControl { stmt });
+                }
+                // LRM 5.10.3.1/.2: cross (and above, which shares its
+                // restrictions) "shall not be used inside an if, case, casex,
+                // or casez statement unless the conditional expression is a
+                // genvar expression" and is "not allowed in the repeat and
+                // while iteration statements". A genvar analog_for -- which IS
+                // allowed -- unrolls at elaboration and never reaches here,
+                // and a constant condition does not switch the ctx, so both
+                // legal shapes pass untouched. Under a runtime branch the
+                // event's previous-value state advances only when the branch
+                // happens to execute, so detection compares against a value
+                // stale by any number of timepoints.
+                if matches!(self.ctx, BodyCtx::Conditional | BodyCtx::Loop) {
+                    if let Some(form) = Self::monitored_event_form(event) {
+                        self.diagnostics.push(BodyValidationDiagnostic::EventInConditional {
+                            stmt,
+                            form,
+                            in_loop: matches!(self.ctx, BodyCtx::Loop),
+                        });
+                    }
+                }
                 self.validate_event(event, stmt);
-                event.walk_child_exprs(|e| self.validate_expr(e, stmt));
+                // The child expressions are validated UNDER the EventControl
+                // ctx: "Analog filter functions cannot be used as part of the
+                // event control statement" (LRM 5.10) -- the guarded BODY was
+                // always checked under that ctx, but the event EXPRESSION ran
+                // under the enclosing ctx, so `@(cross(ddt(V(p,n)), +1))`
+                // compiled silently.
                 let old = replace(&mut self.ctx, BodyCtx::EventControl);
+                event.walk_child_exprs(|e| self.validate_expr(e, stmt));
                 self.validate_stmt(body);
                 self.ctx = old;
                 return;
@@ -3151,6 +3240,35 @@ impl ExprValidator<'_, '_> {
         if let Some(v) = self.const_num(expr) {
             if v < 0.0 || !v.is_finite() {
                 self.bad_arg(builtin, what, format!("must not be negative, but is {v}"), expr)
+            }
+        }
+    }
+
+    /// LRM audit (events, documented deviation made audible): cross/above
+    /// tolerances are parsed and range-checked but the LOWERING DISCARDS
+    /// them -- detection is evaluation-granular and nothing bounds the
+    /// timestep, so the event fires at the first solver evaluation past the
+    /// crossing regardless of what was requested (measured 5.6 us late
+    /// against a 1 ns time_tol). A tolerance written as 0.0 means "the
+    /// simulator shall apply a suitable value" (5.10.3.1), which is exactly
+    /// what happens, so only a request that is not provably zero warns.
+    fn warn_event_tol_ignored(
+        &mut self,
+        form: &'static str,
+        time_tol: Option<ExprId>,
+        expr_tol: Option<ExprId>,
+    ) {
+        for (what, tol) in [("time", time_tol), ("expression", expr_tol)] {
+            if let Some(t) = tol {
+                if self.const_num(t) != Some(0.0) {
+                    let stmt = self.stmt;
+                    self.report(BodyValidationDiagnostic::EventTolIgnored {
+                        stmt,
+                        expr: t,
+                        form,
+                        what,
+                    });
+                }
             }
         }
     }

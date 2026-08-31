@@ -321,6 +321,14 @@ impl LowerCtx<'_> {
             match &child {
                 syntax::NodeOrToken::Token(tok) => match tok.kind() {
                     SyntaxKind::OR_KW => units.push(Unit::default()),
+                    // LRM 5.10.1 (events audit): "A comma (,) can be used
+                    // interchangeably with the keyword or to OR event
+                    // expressions." Only a comma at depth 1 separates units:
+                    // the event list's own parens are depth 1, a step event's
+                    // phase-list commas sit at depth 2, and a cross/above/
+                    // timer call's argument commas live inside its Expr node
+                    // and never reach this level at all.
+                    SyntaxKind::COMMA if depth == 1 => units.push(Unit::default()),
                     SyntaxKind::L_PAREN => depth += 1,
                     SyntaxKind::INITIAL_STEP_KW => {
                         units.last_mut().unwrap().step = Some(GlobalEvent::InitialStep)
@@ -356,14 +364,35 @@ impl LowerCtx<'_> {
         for unit in units {
             let event = match (unit.step, unit.condition) {
                 (Some(kind), _) => Event::Global { kind, phases: unit.phases },
+                // LRM audit (events): a malformed/unrecognized unit used to
+                // degrade the WHOLE event control to an unconditional body --
+                // `@(absdelta(...))`, `@(typo(...))` and `@(named_event)` all
+                // silently ran on EVERY model evaluation. It is kept as a
+                // distinct Event variant now; `hir_ty::validation` rejects it
+                // with a targeted error and lowering never runs the body.
                 (None, Some(condition)) => match self.event_from_condition(&condition) {
                     Some(ev) => ev,
-                    // malformed unit: degrade the WHOLE event control to an
-                    // unconditional body, the established Enhancement-8
-                    // convention (see `event_from_condition`'s doc comment)
-                    None => return self.collect_opt_stmt(event_stmt.stmt()),
+                    None => {
+                        let name = match &condition {
+                            ast::Expr::Call(call) => {
+                                call.function_ref().and_then(|fun| match fun {
+                                    FunctionRef::Path(path) => {
+                                        path.as_raw_ident().map(|t| t.text().to_owned())
+                                    }
+                                    FunctionRef::SysFun(t) => {
+                                        t.sysfun_token().map(|t| t.text().to_owned())
+                                    }
+                                })
+                            }
+                            ast::Expr::PathExpr(path) => path
+                                .path()
+                                .and_then(|p| p.as_raw_ident().map(|t| t.text().to_owned())),
+                            _ => None,
+                        };
+                        Event::Invalid { name }
+                    }
                 },
-                (None, None) => return self.collect_opt_stmt(event_stmt.stmt()),
+                (None, None) => Event::Invalid { name: None },
             };
             events.push(event);
         }

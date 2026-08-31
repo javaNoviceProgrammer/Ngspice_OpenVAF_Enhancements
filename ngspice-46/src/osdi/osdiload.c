@@ -753,7 +753,12 @@ extern int OSDIload(GENmodel *inModel, CKTcircuit *ckt) {
      * a plain `op`, which is the behaviour this preserves. */
     sim_info.flags |= CALC_REACT_JACOBIAN;
   }
-  if (ckt->CKTmode & MODEAC) {
+  if ((ckt->CKTmode & MODEAC) && !(ckt->CKTmode & MODEACNOISE)) {
+    /* LRM audit (events): LRM Table 4-22 says analysis("ac") is FALSE for
+     * every point of a NOISE analysis (its own row carries the "noise"
+     * name), and Table 5-1 gives ac-qualified step events 0 there -- but a
+     * noise data point runs with MODEAC|MODEACNOISE set, so the bare MODEAC
+     * test raised ANALYSIS_AC through a whole .noise run. */
     sim_info.flags |= ANALYSIS_AC;
   }
 
@@ -785,6 +790,18 @@ extern int OSDIload(GENmodel *inModel, CKTcircuit *ckt) {
       sim_info.flags |= ANALYSIS_AC;
     } else if (strcmp(job_name, "NOISE") == 0) {
       sim_info.flags |= ANALYSIS_NOISE;
+    }
+    /* LRM audit (events): the op phase of an AC/NOISE job BELONGS to that
+     * analysis and is not a DC analysis. LRM Table 4-22's "dc" row is 0 in
+     * the AC-OP and NOISE-OP columns (only "static" stays 1 there), and
+     * Table 5-1 gives initial_step("dc") 0 for every AC and NOISE point --
+     * yet the phase carried ANALYSIS_DC from its MODEDCOP bit, so both
+     * analysis("dc") and @(initial_step("dc")) answered as though a .op were
+     * running. The owning-analysis name replaces the DC bit rather than
+     * joining it; ANALYSIS_STATIC (set above) is what "an equilibrium point
+     * calculation" keeps. */
+    if (sim_info.flags & (ANALYSIS_AC | ANALYSIS_NOISE)) {
+      sim_info.flags &= ~(uint32_t)ANALYSIS_DC;
     }
   }
 
@@ -1003,7 +1020,11 @@ int OSDIfinalStep(CKTcircuit *ckt) {
   if (is_tran) {
     sim_info.flags |= ANALYSIS_TRAN;
   }
-  if (ckt->CKTmode & MODEAC) {
+  /* LRM audit (events): a noise job ends with MODEAC|MODEACNOISE both set,
+   * and the bare MODEAC test made @(final_step("ac")) fire at the end of a
+   * .noise analysis -- LRM Table 5-1 gives it 0 there (the run's own name is
+   * "noise", exactly as Table 4-22's analysis() rows separate the two). */
+  if ((ckt->CKTmode & MODEAC) && !(ckt->CKTmode & MODEACNOISE)) {
     sim_info.flags |= ANALYSIS_AC;
   }
   if (ckt->CKTmode & MODEACNOISE) {

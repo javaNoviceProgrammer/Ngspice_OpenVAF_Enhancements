@@ -1,0 +1,37 @@
+// Enhancement-522: analog events, audited against Accellera VAMS-2023
+// clause 5.10 and fixed. One module serves every analysis of the Table 5-1
+// matrix; the phase-qualified step events print tags the verify script
+// counts per analysis.
+`include "disciplines.vams"
+
+module lrmevents(p, n);
+  inout p, n;
+  electrical p, n;
+  integer ncross, nabove, ntimer, norlist;
+
+  analog begin
+    @(initial_step)          $strobe("EV initial_step");
+    @(initial_step("dc"))    $strobe("EV initial_step(dc)");
+    @(initial_step("tran"))  $strobe("EV initial_step(tran)");
+    @(initial_step("ac"))    $strobe("EV initial_step(ac)");
+    @(initial_step("noise")) $strobe("EV initial_step(noise)");
+
+    // LRM 5.10.3.2: cross fires only in transient analyses and only after
+    // t > 0; above also fires during initialization and dc sweeps.
+    @(cross(V(p,n) - 0.55, +1)) ncross = ncross + 1;
+    @(above(V(p,n) - 0.55))     nabove = nabove + 1;
+    @(timer(0, 1u))             ntimer = ntimer + 1;
+
+    // LRM 5.10.1: a comma is interchangeable with `or`.
+    @(initial_step, timer(2.5u)) norlist = norlist + 1;
+
+    @(final_step)          $strobe("EV final_step RESULT ncross=%d nabove=%d ntimer=%d norlist=%d",
+                                   ncross, nabove, ntimer, norlist);
+    @(final_step("dc"))    $strobe("EV final_step(dc)");
+    @(final_step("tran"))  $strobe("EV final_step(tran)");
+    @(final_step("ac"))    $strobe("EV final_step(ac)");
+    @(final_step("noise")) $strobe("EV final_step(noise)");
+
+    I(p,n) <+ 1e-9 * V(p,n);
+  end
+endmodule

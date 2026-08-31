@@ -136,11 +136,12 @@ the actual construct and suggest hoisting or `generate` unrolling
 | Feature | Notes | Since |
 |---|---|---|
 | `@(initial_step)` / `@(final_step)` | Genuinely gated (once at the start; once at the end of a *successful* analysis, seeing the converged solution — the classic "report a tracked peak" pattern works). An op fires both. `examples/initial_step_examples/`, `examples/finalstep_examples/` | [E-7](../../enhancements_doc/Enhancement-7.md), [E-53](../../enhancements_doc/Enhancement-53.md) |
-| Analysis-phase lists | `@(initial_step("ac","tran"))` filters by analysis type, per LRM 5.10.2. | [E-53](../../enhancements_doc/Enhancement-53.md) |
-| `cross(expr[, dir, time_tol, expr_tol])` | Edge detection with persistent state across evaluations; tolerances honored. `examples/cross_examples/` | [E-8](../../enhancements_doc/Enhancement-8.md), [E-61](../../enhancements_doc/Enhancement-61.md) |
-| `above(expr[, …])` | Like `cross` but also fires in DC. | [E-8](../../enhancements_doc/Enhancement-8.md), [E-59](../../enhancements_doc/Enhancement-59.md) |
-| `timer(start[, period, tol])` | Periodic firing verified at exact counts. `examples/timer_examples/` | [E-8](../../enhancements_doc/Enhancement-8.md), [E-61](../../enhancements_doc/Enhancement-61.md) |
-| Event OR lists | `@(cross(…) or timer(…) or initial_step)` — fires exactly when any member fires (LRM 5.10.3). `examples/lrmcorner_examples/` | [E-59](../../enhancements_doc/Enhancement-59.md) |
+| Analysis-phase lists | `@(initial_step("ac","tran"))` filters by analysis type — LRM Table 5-1 exact per analysis: the OP of an `.ac`/`.noise` job belongs to that analysis, not to `"dc"`. | [E-53](../../enhancements_doc/Enhancement-53.md) |
+| `cross(expr[, dir, time_tol, expr_tol])` | Edge detection with persistent state across evaluations. Fires only in transient analyses and only after t > 0 (LRM 5.10.3.2); its state still tracks through DC so the first step compares against the operating point. Tolerances are accepted but **not honored** (detection is evaluation-granular; a nonzero tolerance draws a warning). Not allowed under runtime `if`/`case`/loops (enforced; genvar forms stay legal). `examples/cross_examples/` | [E-8](../../enhancements_doc/Enhancement-8.md), [E-61](../../enhancements_doc/Enhancement-61.md) |
+| `above(expr[, …])` | Like `cross` but also fires in DC — including the LRM-mandated initialization event when the expression is positive at the initial solve. | [E-8](../../enhancements_doc/Enhancement-8.md), [E-59](../../enhancements_doc/Enhancement-59.md) |
+| `timer(start[, period, tol])` | Periodic firing verified at exact counts; placement exact via the bound-step channel. `examples/timer_examples/` | [E-8](../../enhancements_doc/Enhancement-8.md), [E-61](../../enhancements_doc/Enhancement-61.md) |
+| Event OR lists | `@(cross(…) or timer(…) or initial_step)` — fires exactly when any member fires (LRM 5.10.3); a comma is interchangeable with `or` (5.10.1). `examples/lrmcorner_examples/` | [E-59](../../enhancements_doc/Enhancement-59.md) |
+| Invalid events rejected | `@(absdelta(…))`, named events, and typos are targeted **errors** — they used to silently drop the event and run the body on every evaluation. Nested `@(…)` is an error too. | — |
 
 ## 2.9 Analog functions
 

@@ -271,6 +271,12 @@ impl BodyLoweringCtx<'_, '_, '_> {
                 }
                 acc.expect("the grammar guarantees a non-empty or-list")
             }
+            // LRM audit (events): an unrecognizable event expression.
+            // `hir_ty::validation` has already reported it as an error (the
+            // compile aborts before codegen); lowering keeps total by never
+            // firing, where the old None-degradation ran the body on EVERY
+            // evaluation.
+            Event::Invalid { .. } => FALSE,
             // `Event` is `#[non_exhaustive]` (hir_def/src/expr.rs) for forward-compatibility
             // with unimplemented LRM event kinds; every variant that actually exists today is
             // handled above.
@@ -329,6 +335,17 @@ impl BodyLoweringCtx<'_, '_, '_> {
         let was_below = self.ctx.ins().fle(prev, F_ZERO);
         let is_above = self.ctx.ins().fgt(current, F_ZERO);
         let fired = bool_and(self.ctx, was_below, is_above);
+
+        // LRM 5.10.3.2 (events audit): "If the expression is positive at the
+        // conclusion of the initial condition analysis that precedes a
+        // transient analysis, the above() function shall generate an event."
+        // Seeding prev with current made the first evaluation a non-edge BY
+        // CONSTRUCTION, so an expression positive from the very first iterate
+        // never produced the mandated initialization event -- it only fired
+        // when the Newton trajectory happened to cross the threshold while
+        // converging from the 0 initial guess (solver luck, not the rule).
+        let init_pos = bool_and(self.ctx, is_initial, is_above);
+        let fired = bool_or(self.ctx, fired, init_pos);
 
         self.ctx.def_place(PlaceKind::EventState(idx), current);
         fired
@@ -407,6 +424,24 @@ impl BodyLoweringCtx<'_, '_, '_> {
         } else {
             either
         };
+
+        // LRM 5.10.3.2 (events audit): "The cross() function will not
+        // generate events for non-transient analyses, such as ac, dc, or
+        // noise" and it "can only generate an event after the simulation time
+        // has advanced from zero". It fired during .dc sweeps and off the
+        // Newton iterates of the t=0 operating point (the trajectory from the
+        // 0 initial guess walks through the threshold). The FIRED bool is
+        // gated -- not the state, which keeps tracking through DC and the
+        // operating point so the first transient step compares against the
+        // converged OP value rather than replaying it.
+        let name = self.ctx.sconst("tran");
+        let tran_hit = self.ctx.call1(CallBackKind::Analysis, &[name]);
+        let zero = self.ctx.iconst(0);
+        let is_tran = self.ctx.ins().ine(tran_hit, zero);
+        let abstime = self.ctx.use_param(ParamKind::Abstime);
+        let t_pos = self.ctx.ins().fgt(abstime, F_ZERO);
+        let gate = bool_and(self.ctx, is_tran, t_pos);
+        let fired = bool_and(self.ctx, fired, gate);
 
         self.ctx.def_place(PlaceKind::EventState(idx), current);
         fired

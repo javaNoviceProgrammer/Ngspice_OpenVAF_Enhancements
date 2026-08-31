@@ -95,7 +95,9 @@ fn event_stmt(p: &mut Parser, m: Marker) {
         } else {
             expr(p);
         }
-        if !p.eat(T![or]) {
+        // LRM 5.10.1: "A comma (,) can be used interchangeably with the
+        // keyword or to OR event expressions." Only `or` parsed before.
+        if !p.eat(T![or]) && !p.eat(T![,]) {
             break;
         }
     }

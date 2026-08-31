@@ -695,7 +695,8 @@ non-integer discriminants are located errors — no silent zeros.
 `@(initial_step)` and `@(final_step)` genuinely gate (once at the start;
 once at the *successful* end, seeing the converged solution), with
 **analysis-phase lists** filtering by analysis type; `cross`/`above`/
-`timer` with tolerances and persistent state; **event OR lists**:
+`timer` with persistent state; **event OR lists**, with the comma
+separator the LRM makes interchangeable with `or` (5.10.1):
 
 ```verilog
 @(initial_step("ac", "tran")) voff = 0.1;
@@ -706,6 +707,47 @@ once at the *successful* end, seeing the converged solution), with
 
 An operating point fires both step events (a single point is first and
 last); a failed analysis never fires `final_step`.
+
+The events audit made **Table 5-1 exact for every analysis**: the
+operating point of an `.ac`/`.noise` job no longer answers to `"dc"` —
+the phase belongs to the owning analysis, so `@(initial_step("dc"))`
+stays silent there and `@(final_step("ac"))` stays silent at the end of a
+`.noise` run (the same Table 4-22 rows fix `analysis("dc")`/`analysis("ac")`
+at those points, since both channels share the flag derivation).
+**`cross` obeys 5.10.3.2**: it "will not generate events for
+non-transient analyses" and "can only generate an event after the
+simulation time has advanced from zero" — it used to fire during `.dc`
+sweeps and off the Newton iterates of the t=0 operating point. Its state
+still tracks through DC, so the first transient step compares against
+the converged operating point. **`above` generates the mandated
+initialization event**: an expression positive at the initial solve
+fires once (it used to fire only when the Newton trajectory happened to
+cross the threshold). And the **placement rules are enforced**: nested
+event controls are errors ("not allowed" — the nested form was a
+silently dead statement), `cross`/`above` under a runtime `if`/`case`
+arm or inside `repeat`/`while`/`for` are errors (their state would go
+stale; a genvar-conditioned `if` and the genvar `analog_for` stay legal
+via constant folding and elaboration unrolling), and an analog filter
+inside the event *expression* is rejected like one in the body always
+was. An **unrecognized event expression is a targeted error** —
+`@(absdelta(…))` (digital-only, 5.10.3.4), named events (5.10.4, outside
+the analog subset), and plain typos used to silently DROP the event and
+run the guarded body on *every* evaluation.
+
+Two deviations, documented: ⚠️ **`cross`/`above` tolerances are accepted
+but not honored** — detection is evaluation-granular and does not bound
+the timestep, so the event fires at the first solver evaluation past the
+crossing; a nonzero tolerance now draws a compile-time warning (a 0.0
+tolerance means "the simulator shall apply a suitable value", which is
+exactly what happens — `timer`'s placement, by contrast, is exact via
+its bound-step channel). ⚠️ An **out-of-range `cross`/`last_crossing`
+direction is refused** (compile error for a literal, runtime fatal from
+the deck) where LRM 5.10.3.1 defines any other value as a disabled
+event — E-506's deliberate strictness, kept because a computed
+direction of 7 is a bug far more often than a disable idiom. Event
+detection advances once per model *evaluation* (Newton iteration), not
+per accepted timepoint — the E-7/E-8 granularity design, shared with
+variable persistence.
 
 ### 5.6 Analog functions (LRM 4.7) — ✅
 
@@ -967,7 +1009,7 @@ connected port.)*
 | 5.6 Contributions, indirect assignment, port flow (incl. named port branches) | ✅ | `indirect_assignment`, `portflow`, `signalflow`, `lrm` |
 | 5.7–5.9, 5.11 Procedural statements, loops, disable, jump statements (`break`/`continue`/`return`, contextual keywords, genvar-for exclusion enforced) | ✅ | `analogloop`, `dowhile`, `repeat`, `disable`, `arraycase` |
 | casex/casez | ⚠️ extension beyond Annex C (C.7 excludes them from Verilog-A) | `casexz` |
-| 5.10 Events (steps, cross/above/timer, OR lists, phase lists) | ✅ | `initial_step`, `finalstep`, `cross`, `timer`, `lrmcorner` |
+| 5.10 Events (steps with Table 5-1 exact per analysis, cross/above/timer, cross DC/t=0 gating, above init event, OR lists incl. comma, phase lists, placement rules enforced, invalid events rejected) | ✅ (cross/above tolerances ⚠️ warned not honored; strict out-of-range dir ⚠️ documented) | `initial_step`, `finalstep`, `cross`, `timer`, `lrmcorner` |
 | 4.7 Analog functions (arrays in/out/return incl. the LRM's Example 3 spelling; VAMS-2023 string return & args; function-local `parameter`s with shadowing; output-array zero-init; `return` statement) | ✅ (named blocks in bodies ⚠️ and const-context calls ⚠️ documented relaxations) | `funcarray`, `arrayout`, `arrayret` |
 | 6 Hierarchy (instantiation, generate incl. the legacy analog-block form — obsolete per G.2.3/C.20, kept as a compat extension ⚠️ — defparam, $root, part-select connections, hierarchical branch probes) | ✅ (param-shaped structure ⚠️ explained) | `instantiation`, `generate`, `legacygen`, `defparam`, `hiername`, `implicitnet`, `partselect`, `hierbranch` |
 | 9.4–9.8 Display, file/string I/O (incl. 9.4.6/9.5.9 accepted-iteration deferral, `$monitor` change detection, `%r`, 9.5.1.1 append, pre-opened fds) | ✅ ([E-516](../../enhancements_doc/Enhancement-516.md) audit; MCD/`$fmonitor` ⚠️) | `display`, `fileio`, `stringio`, `fgetc`, `ungetc`, `sscanf`, `scanfmt`, `lrmsysio` |

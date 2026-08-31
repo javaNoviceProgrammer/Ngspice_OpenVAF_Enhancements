@@ -881,6 +881,99 @@ impl Diagnostic for BodyValidationDiagnosticWrapped<'_> {
                             .to_owned(),
                     ])
             }
+            BodyValidationDiagnostic::NestedEventControl { stmt } => {
+                let FileSpan { range, file } = self.stmt_src(stmt);
+                Report::error()
+                    .with_message("nested event control statements are not allowed")
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: file,
+                        range: range.into(),
+                        message: "this @(...) is inside another @(...)".to_owned(),
+                    }])
+                    .with_notes(vec![
+                        "help: LRM 5.10 forbids nesting; the nested form would gate the \
+                         body on BOTH events firing in one evaluation -- for step events \
+                         that is never. Use one @(...) with an `or` list instead"
+                            .to_owned(),
+                    ])
+            }
+            BodyValidationDiagnostic::EventInConditional { stmt, form, in_loop } => {
+                let FileSpan { range, file } = self.stmt_src(stmt);
+                let place = if in_loop { "a repeat/while/for loop" } else { "a conditional" };
+                Report::error()
+                    .with_message(format!("{form} is not allowed inside {place}"))
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: file,
+                        range: range.into(),
+                        message: format!("{form} under a runtime condition"),
+                    }])
+                    .with_notes(vec![format!(
+                        "help: LRM 5.10.3.1: cross/above shall not be used inside an \
+                         if/case unless the condition is a genvar expression, and not in \
+                         repeat/while loops -- the event's internal state only advances \
+                         when this branch executes, so detection would compare against a \
+                         stale value. Move the {form} to the top level and test the \
+                         condition inside its body"
+                    )])
+            }
+            BodyValidationDiagnostic::InvalidEventExpr { stmt, ref name } => {
+                let FileSpan { range, file } = self.stmt_src(stmt);
+                let (msg, help) = match name.as_deref() {
+                    Some("absdelta") => (
+                        "@(absdelta) is not part of the analog subset".to_owned(),
+                        "help: LRM 5.10.3.4 allows absdelta only in digital initial/always \
+                         blocks, which Verilog-A does not have (Annex C.7)"
+                            .to_owned(),
+                    ),
+                    Some(name) => (
+                        format!("`{name}` is not a valid analog event"),
+                        "help: LRM 5.10: the analog event expressions are initial_step, \
+                         final_step, cross(...), above(...) and timer(...); named events \
+                         (5.10.4) are not part of the Verilog-A analog subset. Before this \
+                         check, an unrecognized event was silently DROPPED and the guarded \
+                         statement ran on every evaluation"
+                            .to_owned(),
+                    ),
+                    None => (
+                        "not a valid analog event expression".to_owned(),
+                        "help: LRM 5.10: expected initial_step, final_step, cross(...), \
+                         above(...) or timer(...)"
+                            .to_owned(),
+                    ),
+                };
+                Report::error()
+                    .with_message(msg)
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: file,
+                        range: range.into(),
+                        message: "unrecognized event expression".to_owned(),
+                    }])
+                    .with_notes(vec![help])
+            }
+            BodyValidationDiagnostic::EventTolIgnored { expr, form, what, .. } => {
+                let FileSpan { range, file } = self.expr_src(expr);
+                Report::warning()
+                    .with_message(format!(
+                        "{form}: the {what} tolerance is accepted but not honored"
+                    ))
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: file,
+                        range: range.into(),
+                        message: "this tolerance has no effect".to_owned(),
+                    }])
+                    .with_notes(vec![
+                        "help: event detection is evaluation-granular and does not bound \
+                         the timestep, so the event fires at the first solver evaluation \
+                         past the crossing regardless of the requested tolerance; write \
+                         0.0 (LRM: 'the simulator shall apply a suitable value') to \
+                         accept that without this warning"
+                            .to_owned(),
+                    ])
+            }
             BodyValidationDiagnostic::JumpOutsideLoop { stmt, is_break } => {
                 let kw = if is_break { "break" } else { "continue" };
                 let FileSpan { range, file } = self.stmt_src(stmt);

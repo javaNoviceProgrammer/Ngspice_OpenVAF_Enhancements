@@ -228,6 +228,14 @@ pub enum Event {
     /// `initial_step`/`final_step` (with phase filters) with
     /// `cross`/`above`/`timer`. Never nested (the grammar is a flat list).
     Or(Box<[Event]>),
+    /// LRM audit (events): an event expression that is not a recognizable
+    /// analog event -- `@(absdelta(...))` (digital-only, 5.10.3.4), a
+    /// named-event identifier `@(ev)` (5.10.4, outside the analog subset),
+    /// or a plain typo `@(cros(...))`. These used to DROP the event control
+    /// entirely, so the guarded body ran unconditionally on every model
+    /// evaluation with no diagnostic anywhere. `hir_ty::validation` rejects
+    /// this variant with a targeted error; lowering never runs the body.
+    Invalid { name: Option<String> },
 }
 
 impl Event {
@@ -273,6 +281,7 @@ impl Event {
                     ev.walk_child_exprs_dyn(f);
                 }
             }
+            Event::Invalid { .. } => {}
         }
     }
 
@@ -300,7 +309,7 @@ impl Event {
                     ev.walk_enables(f);
                 }
             }
-            Event::Global { .. } => (),
+            Event::Global { .. } | Event::Invalid { .. } => (),
         }
     }
 }
