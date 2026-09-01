@@ -199,8 +199,20 @@ extern int OSDIparam(int param, IFvalue *value, GENinstance *instPtr,
    * restore writes, and sensitivity perturbations -- and recentering on those
    * turned a sweep's save/restore into a permanent nominal shift (a random
    * walk seeded by one sweep). Only the USER commands recenter, via
-   * doset_user() -> OSDImcNoteUserWrite() in frontend/spiceif.c. */
-  return osdi_write_param(dst, value, param, descr);
+   * doset_user() -> OSDImcNoteUserWrite() in frontend/spiceif.c.
+   *
+   * E-535 fix (hunt bug 14): those same routes must WIN over the current
+   * trial's draw for as long as their command runs, or a swept statistical
+   * parameter is clobbered back to nominal+delta at every point -- so a
+   * successful write PINS the parameter's osdimc entry (a no-op for anything
+   * without one). See OSDImcNoteParamWrite in osdisetup.c for the pin
+   * lifecycle. */
+  {
+    int err535 = osdi_write_param(dst, value, param, descr);
+    if (err535 == OK)
+      OSDImcNoteParamWrite(inst, (uint32_t)param);
+    return err535;
+  }
 }
 
 extern int OSDImParam(int param, IFvalue *value, GENmodel *modelPtr) {
@@ -224,8 +236,14 @@ extern int OSDImParam(int param, IFvalue *value, GENmodel *modelPtr) {
   void *model = osdi_model_data(modelPtr);
   void *dst = descr->access(NULL, model, (uint32_t)param, ACCESS_FLAG_SET);
 
-  /* recentering: see the F1 note in OSDIparam above -- user routes only. */
-  return osdi_write_param(dst, value, param, descr);
+  /* recentering: see the F1 note in OSDIparam above -- user routes only.
+   * E-535 fix (hunt bug 14): machine writes pin, as in OSDIparam above. */
+  {
+    int err535 = osdi_write_param(dst, value, param, descr);
+    if (err535 == OK)
+      OSDImcNoteParamWrite(model, (uint32_t)param);
+    return err535;
+  }
 }
 
 static int osdi_read_param(void *src, IFvalue *value, int id,

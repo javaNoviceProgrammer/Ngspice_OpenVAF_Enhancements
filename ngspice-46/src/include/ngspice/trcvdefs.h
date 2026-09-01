@@ -90,14 +90,21 @@ typedef struct {
     int TRCVnestState;      /* iteration state during pause */
     /* Enhancement-534: keyword scales (`lin|dec|oct N start stop`). For
        DCT_SCALE_LEGACY every new field is dormant and the classic walk runs
-       unchanged. For the keyword forms TRCVnPts holds N as PARSED (lin: total
-       points; dec/oct: points per decade/octave) until resolution converts it
-       to the TOTAL point count, TRCVratio the dec/oct multiplier, and
-       TRCVidx the running point index. */
+       unchanged. For the keyword forms TRCVnPts holds N exactly as PARSED
+       (lin: total points; dec/oct: points per decade/octave), TRCVratio the
+       derived dec/oct multiplier, and TRCVidx the running point index. */
     int    TRCVscale[TRCVNESTLEVEL];
     int    TRCVnPts[TRCVNESTLEVEL];
     int    TRCVidx[TRCVNESTLEVEL];
     double TRCVratio[TRCVNESTLEVEL];
+    /* Enhancement-535 (hunt N6): the derived TOTAL point count, kept apart
+       from TRCVnPts, which stays exactly as PARSED (dec/oct: per decade or
+       octave). The first version derived the total INTO TRCVnPts, so a
+       still-loaded .dc card re-derived its multiplier from the previous
+       total on every `run` -- 5, then 11, then 23 points, the grid refining
+       itself silently. Resolution now recomputes ratio and total from the
+       pristine parse on every run. */
+    int    TRCVnTotal[TRCVNESTLEVEL];
     /* Enhancement-534: XPARAM_CODE bookkeeping -- the collected target list
        (freed on the restore path) and how the name was classified. */
     DCTxtarget *TRCVxTarg[TRCVNESTLEVEL];

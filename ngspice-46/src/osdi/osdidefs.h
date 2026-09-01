@@ -292,13 +292,16 @@ extern OsdiRegistryEntry *osdi_reg_entry_inst(const GENinstance *inst);
 
 /* `.option osdimc` automatic Monte-Carlo (osdisetup.c). capture_chain records
  * the nominals of statistical parameters after a setup pass has resolved
- * defaults (called from OSDItemp's tail); note_param_write recenters a
- * parameter's nominal when OSDIparam/OSDImParam store a new value, so `alter`
- * composes with the draws instead of being overwritten by them. */
+ * defaults (called from the tails of OSDIsetup and OSDItemp).
+ * OSDImcNoteParamWrite is called by OSDIparam/OSDImParam for every successful
+ * parameter store: it PINS the parameter's osdimc entry so the trial's draw
+ * applier leaves a machine-written value (a sweep point, a `.dc` level, a
+ * `sens` perturbation) alone until the writing command's bracket ends --
+ * E-535 fix, hunt bug 14. Recentering on USER writes lives elsewhere
+ * (doset_user -> OSDImcNoteUserWrite, frontend/spiceif.c). */
 extern void osdimc_capture_chain(const OsdiRegistryEntry *entry,
                                  GENmodel *inModel);
-extern void osdimc_note_param_write(const void *owner, uint32_t id,
-                                    double value);
+extern void OSDImcNoteParamWrite(const void *owner, uint32_t id);
 
 typedef struct OsdiNgspiceHandle {
   uint32_t kind;
@@ -345,6 +348,8 @@ void osdi_trnoise_stamp(CKTcircuit *ckt, void *inst, void *model,
  * LOG_FLAG_IMMEDIATE (event-gated statements, $debug/$fdebug, severity tasks)
  * bypass the buffer. */
 void osdi_display_iter_begin(void);
+void osdi_display_setup_phase(void);  /* Enhancement-535: per-ANALYSIS reset */
+void osdi_display_reenter_setup(void); /* per-setup reset, monitor history kept */
 void osdi_display_flush(void);
 void osdi_register_io_hooks(void *lib_handle, void *(*get_sym)(void *, const char *));
 void osdi_io_hooks_iter_begin(void);

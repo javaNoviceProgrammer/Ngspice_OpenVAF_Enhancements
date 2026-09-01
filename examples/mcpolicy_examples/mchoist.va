@@ -1,0 +1,17 @@
+// Enhancement-535 mcpolicy suite: the statistical parameter feeds ONLY an
+// init-resident assignment -- the compiler hoists geff = 1/rr out of eval,
+// so a draw that lands after setup is invisible to the physics. This is the
+// model that exposed hunt bug 1.
+`include "disciplines.vams"
+
+module mchoist(a, b);
+  inout a, b;
+  electrical a, b;
+  (* std=100.0 *)
+  parameter real rr = 1000.0 from (0:inf);
+  real geff;
+  analog begin
+    geff = 1.0 / rr;
+    I(a, b) <+ geff * V(a, b);
+  end
+endmodule

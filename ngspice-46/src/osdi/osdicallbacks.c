@@ -51,6 +51,45 @@ void osdi_display_iter_begin(void) {
   pending_len = 0;
 }
 
+/* Enhancement-535 (hunt N5): a (re-)setup is about to run init-resident code
+ * -- the temperature/parameter-dependent statements the compiler hoists,
+ * which may $strobe/$display. That code is NOT part of any Newton iteration,
+ * so its output must print immediately (as it did on the very first setup of
+ * the session, before display_managed first latched true). Without this the
+ * flag stayed true across the whole session: every setup after the first
+ * DEFERRED the hoisted display into `pending`, and the next iter_begin then
+ * dropped it as a superseded iteration -- a model's temperature $strobe
+ * printed once per session and never again, though the code demonstrably
+ * re-ran (an opvar it assigned updated correctly). Clearing the flag (and any
+ * stale pending from a prior analysis) makes every setup behave like the
+ * first; the first load iteration re-arms deferral via iter_begin. */
+void osdi_display_reenter_setup(void) {
+  display_managed = false;
+  for (int i = 0; i < pending_len; i++) {
+    tfree(pending[i].text);
+  }
+  pending_len = 0;
+}
+
+/* A fresh analysis is starting (OSDIsetup). Do everything reenter_setup does,
+ * AND (hunt N5, bug 4) drop the $monitor change-detection history: it compares
+ * the k-th monitor line of this point against the k-th of the PREVIOUS flushed
+ * point, and across a run boundary the "previous" belongs to a different
+ * analysis -- so the first accepted point of a new run was silently suppressed
+ * when its text happened to match the last flushed line of the prior run, and
+ * the k-indexing misaligned after a deck change. Reset per ANALYSIS (here),
+ * never per temperature point -- a `.dc temp` sweep runs OSDItemp (hence
+ * reenter_setup) per point and must keep its cross-point history intact. */
+void osdi_display_setup_phase(void) {
+  osdi_display_reenter_setup();
+  for (int i = 0; i < monitor_prev_cap; i++) {
+    if (monitor_prev[i]) {
+      tfree(monitor_prev[i]);
+      monitor_prev[i] = NULL;
+    }
+  }
+}
+
 void osdi_display_flush(void) {
   int mon_seq = 0;
   for (int i = 0; i < pending_len; i++) {

@@ -156,3 +156,11 @@ extern void OSDImcNoteUserWrite(int typecode, GENinstance *dev, GENmodel *mdl,
 /* bug-hunt F2: the deck was (re)loaded -- every stored nominal's owner
  * pointer is stale; drop the table. Called by inp_dodeck. */
 extern void OSDImcCircuitChanged(void);
+/* Enhancement-535: loop-command trial policy -- a deterministic loop
+ * (sweep per-point, optimize, wcd, loadpull) brackets its inner analyses
+ * with HoldTrial so the whole loop is ONE sample; an INTERNAL reset calls
+ * PreserveTrial so montecarlo/highsigma samples keep drawing; SigmaScale
+ * is highsigma's -scale inflation for attribute-declared sigmas. */
+extern void OSDImcHoldTrial(bool on);
+extern void OSDImcPreserveTrial(void);
+extern void OSDImcSigmaScale(double s);

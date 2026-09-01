@@ -322,6 +322,14 @@ static int init_matrix(SMPmatrix *matrix, const OsdiDescriptor *descr,
   return (OK);
 }
 
+/* Enhancement-535: forward decls -- the osdimc statics and the extracted
+ * per-type draw applier live far below, but OSDIsetup (above them) must
+ * apply a pending trial's draws once nominals are captured. */
+static void osdimc_apply_type(CKTcircuit *ckt, int type, int seed,
+                              bool verbose);
+static unsigned long osdimc_current_trial(void);
+static bool osdimc_apply_is_pending(void);
+
 int OSDIsetup(SMPmatrix *matrix, GENmodel *inModel, CKTcircuit *ckt,
               int *states) {
   OsdiInitInfo init_info;
@@ -364,6 +372,8 @@ int OSDIsetup(SMPmatrix *matrix, GENmodel *inModel, CKTcircuit *ckt,
     }
   }
 
+  osdi_display_setup_phase();   /* Enhancement-535: init-resident displays
+                                 * print immediately during (re-)setup */
   for (gen_model = inModel; gen_model; gen_model = gen_model->GENnextModel) {
     void *model = osdi_model_data(gen_model);
 
@@ -851,6 +861,38 @@ int OSDIsetup(SMPmatrix *matrix, GENmodel *inModel, CKTcircuit *ckt,
   free(node_ids);
   free(syn_pairs);
 
+  /* `.option osdimc` (Enhancement-535 fix): nominals of statistical
+   * parameters are resolvable HERE -- the loops above ran every model's own
+   * setup, which fills in the defaults of parameters the deck never set.
+   * Capture them, and if this run's drawn trial could not be applied in
+   * OSDImcNewRun (the nominal table was empty then, because an internal
+   * re-source preceded this run -- montecarlo's per-sample reset, a `.param`
+   * knob re-source), write the draws NOW, BEFORE CKTtemp runs OSDItemp: the
+   * init-resident (hoisted) code must be evaluated with the drawn values.
+   *
+   * The first version applied them at the END of OSDItemp instead, which was
+   * wrong twice over: the draws landed after every setup_instance had already
+   * cached its parameter-dependent intermediates from the nominals (a model
+   * computing geff=1/r in init BEHAVED nominal while @dev[r] READ drawn), and
+   * because that apply re-ran on every OSDItemp it also overwrote the machine
+   * writes of `.dc` parameter sweeps and `sens` perturbations (a
+   * `.dc @n1[dr]` curve came out flat at the held draw; `sens` reported ~0
+   * for every statistical parameter).
+   *
+   * Node collapse above was decided on the nominals; if a draw moves it,
+   * OSDItemp re-decides and the E-417/E-495 machinery warns or refuses,
+   * exactly as for any other between-setups parameter change. */
+  osdimc_capture_chain(entry, inModel);
+  if (osdimc_apply_is_pending() && osdimc_enabled() &&
+      osdimc_current_trial() >= 2 && ckt->CKThead[inModel->GENmodType] &&
+      osdi_devtype_is_osdi(inModel->GENmodType)) {
+    int seed535 = 1;
+    if (!cp_getvar("mcseed", CP_NUM, &seed535, 0))
+      seed535 = 1;
+    osdimc_apply_type(ckt, inModel->GENmodType, seed535,
+                      cp_getvar("osdimc_verbose", CP_BOOL, NULL, 0));
+  }
+
   /* Enhancement-426: the FIRST failure, not whatever the last model happened to
    * return -- see the note at first_err's declaration. */
   return first_err != OK ? first_err : res;
@@ -873,6 +915,18 @@ extern int OSDItemp(GENmodel *inModel, CKTcircuit *ckt) {
 
   OsdiSimParas sim_params_ = get_simparams(ckt);
   OsdiSimParas *sim_params = &sim_params_;
+
+  /* Enhancement-535 (hunt bug 3): OSDItemp also runs WITHOUT OSDIsetup --
+   * every point of a `.dc temp` (or `.dc` parameter) sweep re-enters here
+   * through CKTtemp alone. display_managed is then still latched from the
+   * previous point's iterations, so the init-resident $strobe/$display output
+   * of the setup pass below was deferred into `pending` and dropped by the
+   * next iteration begin: a temperature $strobe printed for the first point
+   * and never again, while the end-of-sweep restore's strobe flushed into
+   * the output where it read like a sweep point. Re-enter setup-phase
+   * display (the $monitor cross-point history deliberately survives -- see
+   * osdi_display_setup_phase, which is the per-ANALYSIS reset). */
+  osdi_display_reenter_setup();
 
   for (gen_model = inModel; gen_model != NULL;
        gen_model = gen_model->GENnextModel) {
@@ -1027,10 +1081,15 @@ extern int OSDItemp(GENmodel *inModel, CKTcircuit *ckt) {
     }
   }
 
-  /* `.option osdimc`: nominals of statistical parameters are knowable only
-   * once setup has resolved the defaults of parameters the deck never set --
-   * capture any still missing now (existing entries are never overwritten,
-   * so drawn values are never mistaken for nominals). */
+  /* `.option osdimc`: capture any nominal still missing (existing entries are
+   * never overwritten, so drawn values are never mistaken for nominals).
+   * OSDIsetup already captured this chain -- and applied a pending trial's
+   * draws BEFORE this function's setup loops ran, so the init-resident code
+   * above saw the drawn values. This catch-up capture stays for the paths
+   * that reach OSDItemp through CKTtemp alone. Deliberately NO draw
+   * application here: OSDItemp runs per point of a `.dc` parameter/temp sweep
+   * and after every `sens` perturbation, and writing nominal+delta from here
+   * clobbered those machine writes (flat sweep curves, ~0 sensitivities). */
   osdimc_capture_chain(entry, inModel);
 
   return first_err != OK ? first_err : res;   /* Enhancement-426 */
@@ -1446,6 +1505,9 @@ typedef struct OsdiMcNominal {
   const void *owner; /* model-data or instance-data pointer */
   uint32_t id;
   double nominal;
+  bool pinned;       /* E-535 fix (hunt bug 14): a machine write owns the
+                        value; the draw applier must leave it alone until the
+                        writing command's bracket ends */
 } OsdiMcNominal;
 
 static OsdiMcNominal *osdimc_tbl;
@@ -1453,10 +1515,70 @@ static int osdimc_tbl_len;
 static int osdimc_tbl_cap;
 static CKTcircuit *osdimc_ckt;      /* table belongs to this circuit */
 static unsigned long osdimc_trial;  /* 1 = nominal baseline, 2+ = drawn */
+static unsigned long osdimc_current_trial(void) { return osdimc_trial; }
 static bool osdimc_active;          /* drawn values are currently applied */
 
 /* bug-hunt F5: which trial a setup failure was last reported for */
 static unsigned long osdimc_failed_trial_reported;
+
+/* Enhancement-535 (hunt N1/N7/N8): the loop commands and the trial counter.
+ *
+ * `if_run` advances the trial for every run-class command, which was right
+ * for a lone `op` and wrong at both ends of the loop-command spectrum: a
+ * per-point `sweep` redrew the sample at EVERY point (a swept curve was N
+ * different samples stitched together, and `optimize` fit a stochastic
+ * objective -- measured 2.4% silent bias on a closed-form target), while
+ * `montecarlo` -- the one command that WANTS a fresh draw per sample -- got
+ * none, because its per-sample internal reset zeroed the counter and every
+ * sample became the nominal baseline (its own no-variance NOTE fired).
+ *
+ * Three small levers repair the policy:
+ *   - HOLD (OSDImcHoldTrial): a deterministic loop command (sweep's
+ *     per-point path, optimize, wcd, loadpull) brackets its inner analyses;
+ *     the whole loop consumes exactly ONE trial -- the first held run
+ *     advances, every later one RE-APPLIES the same trial's draws (they are
+ *     pure functions of (mcseed, trial, owner name, id), so they survive
+ *     even an internal re-source that handed the devices their nominals
+ *     back). This matches the handed-dc sweep, which is one run.
+ *   - PRESERVE (OSDImcPreserveTrial): an INTERNAL reset -- the machinery
+ *     montecarlo/highsigma/wcd use to redraw netlist `.param` randoms, and
+ *     sweep uses for a `.param` knob -- keeps the trial sequence running,
+ *     where a USER reset still restarts it at the baseline. The stale
+ *     owner-pointer table is dropped either way and recaptured at setup.
+ *   - SCALE (OSDImcSigmaScale): `highsigma -scale` could inflate only the
+ *     netlist sigmas it owns; attribute-declared (* std *) sigmas were
+ *     un-inflatable, so rare-failure analysis over osdimc variability had
+ *     no instrument. The factor multiplies every drawn sigma (gaussian and
+ *     uniform half-width alike) while it is set. */
+static bool osdimc_hold;          /* a loop command is holding one sample */
+static bool osdimc_held_advanced; /* that hold has taken its one trial */
+static bool osdimc_keep_trial;    /* the NEXT circuit change is internal */
+static double osdimc_scale = 1.0; /* sigma inflation, 1.0 = off */
+
+/* E-535 fix (hunt bug 1): the current trial's draws are NOT in parameter
+ * storage yet -- the table was empty when OSDImcNewRun ran, because an
+ * internal re-source preceded this run. OSDIsetup consumes this: it applies
+ * the draws right after its own setup loops have resolved the nominals, and
+ * BEFORE OSDItemp evaluates the init-resident code. Recomputed by every
+ * OSDImcNewRun, so it cannot go stale across runs; within one run a repeated
+ * OSDIsetup (the E-471 rebuild path) just re-applies bit-identical values. */
+static bool osdimc_apply_pending;
+static bool osdimc_apply_is_pending(void) { return osdimc_apply_pending; }
+
+static void osdimc_clear_pins(void);
+
+void OSDImcHoldTrial(bool on) {
+  osdimc_hold = on;
+  osdimc_held_advanced = false;
+  /* E-535 fix (hunt bug 14): pins never cross a loop command's bracket edge
+   * -- a value pinned by one sweep's restore must not freeze the next
+   * command's draws. */
+  osdimc_clear_pins();
+}
+
+void OSDImcPreserveTrial(void) { osdimc_keep_trial = true; }
+
+void OSDImcSigmaScale(double s) { osdimc_scale = (s > 0.0) ? s : 1.0; }
 
 /* bug-hunt F2: a (re-)sourced or `reset` deck reallocates the model/instance
  * data blocks, so every stored owner pointer is stale. The circuit loader
@@ -1464,9 +1586,10 @@ static unsigned long osdimc_failed_trial_reported;
  * in OSDImcNewRun stays as a second line of defense. */
 void OSDImcCircuitChanged(void) {
   osdimc_tbl_len = 0;
-  osdimc_trial = 0;
   osdimc_active = false;
   osdimc_failed_trial_reported = 0;
+  if (!osdimc_keep_trial)           /* Enhancement-535: internal resets keep */
+    osdimc_trial = 0;               /* the sample sequence running          */
 }
 
 static bool osdimc_armed_now(void) {
@@ -1501,6 +1624,29 @@ static void osdimc_insert(const void *owner, uint32_t id, double nominal) {
       (OsdiMcNominal){.owner = owner, .id = id, .nominal = nominal};
 }
 
+static void osdimc_clear_pins(void) {
+  for (int i = 0; i < osdimc_tbl_len; i++)
+    osdimc_tbl[i].pinned = false;
+}
+
+/* E-535 fix (hunt bug 14): OSDIparam/OSDImParam report every successful
+ * parameter write here. Machine routes -- a `sweep` point push, a `.dc` level
+ * write, a `sens` perturbation, an optimizer candidate -- deliberately do NOT
+ * recenter the nominal (bug-hunt F1), but they must WIN over the trial's
+ * draw: re-applying nominal+delta over the pushed value flattened
+ * `sweep @n1[dr]` to one point repeated N times. The write pins the entry;
+ * the draw applier skips pinned entries; pins clear at every loop-command
+ * bracket edge (OSDImcHoldTrial) and at every un-held OSDImcNewRun (a fresh
+ * standalone trial redraws everything -- which keeps `alter` recentering
+ * observable on the very next run, exactly as check 19 pins). Writes made
+ * before the first capture find no entry and pin nothing, so deck parsing
+ * and re-sourcing stay untouched. */
+void OSDImcNoteParamWrite(const void *owner, uint32_t id) {
+  OsdiMcNominal *e = osdimc_find(owner, id);
+  if (e)
+    e->pinned = true;
+}
+
 static bool osdimc_enabled(void) {
   return cp_getvar("osdimc", CP_BOOL, NULL, 0) ||
          cp_getvar("automc", CP_BOOL, NULL, 0);
@@ -1530,6 +1676,7 @@ static double osdimc_u01(uint64_t h) {
 static double osdimc_delta(uint64_t key, uint32_t dist, double std,
                            double nominal) {
   double sigma = (dist & OSDI_DIST_REL) ? std * fabs(nominal) : std;
+  sigma *= osdimc_scale;            /* Enhancement-535: highsigma inflation */
   double u1 = osdimc_u01(osdimc_mix(key ^ 1));
   if (dist & OSDI_DIST_UNIFORM) {
     return sigma * (2.0 * u1 - 1.0); /* std is the HALF-WIDTH */
@@ -1667,12 +1814,21 @@ void OSDImcNewRun(CKTcircuit *ckt) {
     return;
   }
 
-  /* a different (re-sourced) circuit invalidates every stored nominal */
-  if (ckt != osdimc_ckt) {
-    osdimc_ckt = ckt;
-    osdimc_tbl_len = 0;
-    osdimc_trial = 0;
-    osdimc_active = false;
+  /* a different (re-sourced) circuit invalidates every stored nominal.
+   * Enhancement-535: the preserve flag (set for INTERNAL resets) is consumed
+   * here -- the last checkpoint of a reset+run sequence -- whether or not
+   * the pointer changed, so it can never go stale and leak into a later
+   * USER reset. */
+  {
+    bool keep = osdimc_keep_trial;
+    osdimc_keep_trial = false;
+    if (ckt != osdimc_ckt) {
+      osdimc_ckt = ckt;
+      osdimc_tbl_len = 0;
+      osdimc_active = false;
+      if (!keep)
+        osdimc_trial = 0;
+    }
   }
 
   if (!osdimc_enabled()) {
@@ -1714,24 +1870,85 @@ void OSDImcNewRun(CKTcircuit *ckt) {
       osdimc_active = false;
     }
     osdimc_trial = 0;
+    osdimc_apply_pending = false;
     return;
   }
 
-  osdimc_trial++;
+  /* E-535 fix (hunt bug 14): outside a hold every run is a fresh trial that
+   * redraws everything, so no pin survives into it; under a hold the loop
+   * command's machine writes keep owning their values until the bracket ends
+   * (OSDImcHoldTrial clears at both edges). */
+  if (!osdimc_hold)
+    osdimc_clear_pins();
+
+  /* Enhancement-535: under a loop command's hold the whole loop is ONE
+   * sample -- take a single trial on the first held run, and afterwards
+   * RE-APPLY that same trial (an internal re-source may have put nominals
+   * back; the draws re-derive bit-identically from (seed, trial, owner,
+   * id)). The baseline trial has nothing to re-apply. */
+  if (osdimc_hold) {
+    if (!osdimc_held_advanced) {
+      osdimc_held_advanced = true;
+      osdimc_trial++;
+    } else if (osdimc_trial <= 1) {
+      osdimc_apply_pending = false;
+      return;
+    }
+  } else {
+    osdimc_trial++;
+  }
   if (!cp_getvar("mcseed", CP_NUM, &seed, 0)) {
     seed = 1;
   }
   verbose = cp_getvar("osdimc_verbose", CP_BOOL, NULL, 0);
 
+  /* E-535 fix (hunt bug 15): the baseline NEVER draws -- explicitly, not by
+   * the accident of an empty table. An optimize/-center flow or an
+   * `unset osdimc`/`set osdimc` toggle can reach trial 1 with a POPULATED
+   * table, and the apply loop then drew on the run every contract calls the
+   * nominal baseline. */
+  if (osdimc_trial < 2) {
+    osdimc_apply_pending = false;
+    return;
+  }
+
+  /* E-535 fix (hunt bug 1): an internal re-source dropped the table, so the
+   * nominals (deck defaults included) are resolvable only after one setup
+   * pass -- the draws cannot land here. Flag them pending; OSDIsetup captures
+   * and applies them before OSDItemp evaluates the init-resident code. */
+  if (osdimc_tbl_len == 0) {
+    osdimc_apply_pending = true;
+    return;
+  }
+  osdimc_apply_pending = false;
+
   for (int type = 0; type < DEVmaxnum; type++) {
     if (!ckt->CKThead[type] || !osdi_devtype_is_osdi(type)) {
       continue;
     }
+    osdimc_apply_type(ckt, type, seed, verbose);
+  }
+}
+
+/* Enhancement-535: apply the CURRENT trial's draws to one device type. Split
+ * out of OSDImcNewRun so OSDIsetup can run it for a PENDING trial: OSDImcNewRun
+ * fires from if_run BEFORE the analysis sets the circuit up, so on the first
+ * run after any (re-)source the nominal table is still empty at draw time and
+ * nothing could be written -- exactly wrong for a preserved trial after a loop
+ * command's INTERNAL reset (montecarlo redrew its .params, dropped the table,
+ * and every sample then computed the nominal). OSDIsetup applies the pending
+ * draws right after its setup loops resolve the nominals -- and before
+ * OSDItemp, so the init-resident code sees them. Draws are pure functions of
+ * (mcseed, trial, owner name, id), so a repeated application (the E-471
+ * rebuild path runs OSDIsetup twice) is bit-identical. */
+static void osdimc_apply_type(CKTcircuit *ckt, int type, int seed,
+                              bool verbose) {
+  {
     OsdiRegistryEntry *entry = osdi_reg_entry_model(ckt->CKThead[type]);
     const OsdiDescriptor *descr = entry->descriptor;
     const OsdiStatParamInfo *infos = entry->stat_param_infos;
     if (entry->num_stat_params == 0 || !infos) {
-      continue;
+      return;
     }
 
     uint64_t kbase =
@@ -1749,8 +1966,9 @@ void OSDImcNewRun(CKTcircuit *ckt) {
 
         if (id >= descr->num_instance_params) { /* process: per model card */
           OsdiMcNominal *e = osdimc_find(model, id);
-          if (!e) {
-            continue; /* nominal not resolved yet: this is the baseline run */
+          if (!e || e->pinned) {
+            continue; /* no nominal (a failed card stays undrawn), or a
+                         machine write owns the value (hunt bug 14) */
           }
           double val = e->nominal + osdimc_delta(osdimc_mix(kmodel ^ id),
                                                  infos[s].dist, infos[s].std,
@@ -1769,7 +1987,7 @@ void OSDImcNewRun(CKTcircuit *ckt) {
                gen_inst = gen_inst->GENnextInstance) {
             void *inst = osdi_instance_data(entry, gen_inst);
             OsdiMcNominal *e = osdimc_find(inst, id);
-            if (!e) {
+            if (!e || e->pinned) {
               continue;
             }
             uint64_t kinst =

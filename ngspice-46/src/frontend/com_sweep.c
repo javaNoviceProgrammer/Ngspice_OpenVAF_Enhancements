@@ -60,6 +60,7 @@ analyses is suppressed via `ft_optimizing`.
 #include "ngspice/devdefs.h"      /* Enhancement-320: DEVices[]/DEVmaxnum direct set */
 #include "com_sweep.h"
 #include "com_aging.h"      /* Enhancement-501: aging_replay() */
+#include "ngspice/osdiitf.h" /* Enhancement-535: osdimc trial policy */
 #include "variable.h"       /* struct variable: sw_read_knob reads a bare knob's principal value */
 
 #define SW_ALTER   0             /* alter     -- device / instance / source      */
@@ -94,8 +95,14 @@ static void sw_run_cmd(const char *cmdstr)
            USER types is not marked, drops the record, and still means what it
            always did. */
         int agereset = (strcasecmp(wl->wl_word, "reset") == 0);
-        if (agereset)
+        if (agereset) {
             aging_internal_reset++;
+            /* Enhancement-535: this reset belongs to a loop command's own
+             * machinery -- the osdimc trial sequence must keep running
+             * (montecarlo's per-sample redraw used to re-arm the nominal
+             * baseline and sample the SAME nominal N times) */
+            OSDImcPreserveTrial();
+        }
         cp_coms[i].co_func(wl->wl_next);
         if (agereset) {
             aging_internal_reset--;
@@ -3387,6 +3394,12 @@ void com_sweep(wordlist *wl)
         goto emit_summary;
     ft_optimizing = TRUE;                            /* silence per-point chatter */
 
+    /* Enhancement-535: the whole per-point loop is ONE Monte-Carlo sample
+     * under `.option osdimc` -- the first inner analysis takes the trial,
+     * the rest re-apply it (a swept curve used to stitch npt DIFFERENT
+     * samples together). Cleared on every exit below. */
+    OSDImcHoldTrial(TRUE);
+
     /* Enhancement-477: `npt` is the exact number of analyses this loop runs,
      * so the bar is determinate. */
     outp_loop_begin("sweep", "point", npt, sw_loopbar_mode());
@@ -3550,6 +3563,7 @@ void com_sweep(wordlist *wl)
         }
     }
     outp_loop_end();          /* Enhancement-477 */
+    OSDImcHoldTrial(FALSE);   /* Enhancement-535 */
     ft_optimizing = save_optimizing;
 
 emit_summary:                 /* Enhancement-533: the dc handover joins here */
@@ -3731,6 +3745,7 @@ emit_summary:                 /* Enhancement-533: the dc handover joins here */
     }
 
 cleanup:
+    OSDImcHoldTrial(FALSE);   /* Enhancement-535: never outlive the sweep */
     /* Enhancement-350: put each swept `.param` back to what it was worth before
      * the sweep started.
      *
@@ -4011,6 +4026,13 @@ void com_highsigma(wordlist *wl)
     long nfail = 0;
 
     ft_optimizing = TRUE;
+    /* Enhancement-535 (hunt N8): -scale used to inflate only the netlist
+     * .param sigmas highsigma owns; attribute-declared (* std *) sigmas
+     * were un-inflatable, so rare-failure analysis over `.option osdimc`
+     * variability had no instrument. Inflate them the same way for the
+     * sampling window (each sample keeps advancing the trial -- fresh
+     * draws per sample are exactly what this command wants). */
+    OSDImcSigmaScale(lambda);
     outp_loop_begin("highsigma", "sample", nsamp, sw_loopbar_mode());   /* Enhancement-477 */
     for (int i = 0; i < nsamp; i++) {
         outp_loop_point(i);
@@ -4026,6 +4048,7 @@ void com_highsigma(wordlist *wl)
         if (f != 0.0) nfail++;
     }
     outp_loop_end();          /* Enhancement-477 */
+    OSDImcSigmaScale(1.0);    /* Enhancement-535 */
     ft_optimizing = save_optimizing;
     mc_sss_off();
 
@@ -4541,6 +4564,10 @@ void com_wcd(wordlist *wl)
     }
 
     ft_optimizing = TRUE;
+    /* Enhancement-535: the whole worst-case search is ONE osdimc sample --
+     * a deterministic MPFP search cannot ride a per-evaluation redraw.
+     * Cleared beside every mc_wcd_off() exit. */
+    OSDImcHoldTrial(TRUE);
 
     /* --- the nominal point, which also discovers the dimensionality --------
      * How many Gaussian .params a deck draws is not known until it has been
@@ -4556,6 +4583,7 @@ void com_wcd(wordlist *wl)
         outp_loop_end();          /* Enhancement-477 */
         ft_optimizing = save_optimizing;
         mc_wcd_off();
+        OSDImcHoldTrial(FALSE);   /* Enhancement-535 */
         return;
     }
     if (ndim > WCD_MAXDIM) {
@@ -4564,6 +4592,7 @@ void com_wcd(wordlist *wl)
         outp_loop_end();          /* Enhancement-477 */
         ft_optimizing = save_optimizing;
         mc_wcd_off();
+        OSDImcHoldTrial(FALSE);   /* Enhancement-535 */
         return;
     }
 
@@ -4607,6 +4636,7 @@ void com_wcd(wordlist *wl)
             outp_loop_end();          /* Enhancement-477 */
             ft_optimizing = save_optimizing;
             mc_wcd_off();
+        OSDImcHoldTrial(FALSE);   /* Enhancement-535 */
             return;
         }
 
@@ -4697,6 +4727,7 @@ void com_wcd(wordlist *wl)
     }
 
     mc_wcd_off();
+        OSDImcHoldTrial(FALSE);   /* Enhancement-535 */
     outp_loop_end();          /* Enhancement-477 */
     ft_optimizing = save_optimizing;
 }

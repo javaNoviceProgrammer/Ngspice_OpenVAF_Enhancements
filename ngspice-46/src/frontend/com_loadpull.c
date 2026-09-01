@@ -30,6 +30,7 @@
 #include "ngspice/sim.h"
 
 #include "com_loadpull.h"
+#include "ngspice/osdiitf.h" /* Enhancement-535 */
 
 /* ---- a waveform: time + value samples pulled from the last tran ---- */
 typedef struct {
@@ -222,6 +223,10 @@ void com_loadpull(wordlist *wl)
          * resolves the source terminals; then look up the drive + supply nodes
          * once (they do not change over the sweep). A tiny tran (not op) is used
          * so the branch-current output nodes match the sweep's trans exactly. */
+        /* Enhancement-535: the whole load-pull grid is ONE osdimc sample --
+         * a contour stitched from per-point redraws is not a contour. Cleared
+         * at the single function exit. */
+        OSDImcHoldTrial(TRUE);
         {
             double tp0 = 1.0 / f0;
             (void) snprintf(cmd, sizeof cmd, "tran %.10g %.10g", tp0 / 50.0, tp0);
@@ -435,4 +440,5 @@ void com_loadpull(wordlist *wl)
         }
         tfree(gre); tfree(gim); tfree(poutv); tfree(gainv); tfree(paev); tfree(effv);
     }
+    OSDImcHoldTrial(FALSE);   /* Enhancement-535 */
 }

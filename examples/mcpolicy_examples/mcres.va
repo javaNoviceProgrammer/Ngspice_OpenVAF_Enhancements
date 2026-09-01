@@ -1,0 +1,13 @@
+// Enhancement-535 mcpolicy suite: statistics used directly in eval --
+// a process parameter (model card) and a mismatch parameter (per instance).
+`include "disciplines.vams"
+
+module mcres(a, b);
+  inout a, b;
+  electrical a, b;
+  (* desc="series resistance", std=25.0 *)
+  parameter real r = 1000.0 from (0:inf);
+  (* type="instance", std=10.0 *)
+  parameter real dr = 0.0;
+  analog I(a, b) <+ V(a, b) / (r + dr);
+endmodule

@@ -243,6 +243,23 @@ not); dropping the option restores nominals on the next run;
 parameter's `from` range fails that run with the device's own range error,
 exactly as the same `alter` would — size the sigmas accordingly.
 
+Since E-535 the **loop commands carry a trial policy**
+([`examples/mcpolicy_examples/`](../../examples/mcpolicy_examples/)): a
+deterministic loop (`sweep`'s per-point path, `optimize`, `wcd`,
+`loadpull`) holds **one** sample for its whole run — a swept curve is one
+circuit, an optimizer's objective is deterministic — while `montecarlo` and
+`highsigma` keep drawing a fresh trial per sample (their internal resets
+preserve the sequence; a USER `reset` or re-source still restarts it at the
+baseline). Sweeping a *statistical* parameter itself works: the machine
+write wins over the draw for the duration of the command, so
+`dc @n1[dr] 0 1000 500` and `sweep @n1[dr] ...` trace real curves (the
+other statistical parameters stay at the held sample), and `sens` reports
+correct sensitivities for statistical parameters. `highsigma -scale` also
+inflates the attribute-declared sigmas — but note the known-open caveat:
+the importance weight carries no likelihood-ratio term for the OSDI draws
+yet, so with `-scale` prefer netlist `.param` statistics when the metric
+depends on an OSDI statistical parameter.
+
 ## 3.7 Statistical modeling inside the device
 
 Monte Carlo can also live in the Verilog-A source itself: `$rdist_normal`

@@ -264,6 +264,19 @@ doop(char what,
 
     /* Make sure we have data of the same length. */
     length = ((v1->v_length > v2->v_length) ? v1->v_length : v2->v_length);
+    /* Enhancement-535 (hunt N2): a length-1 operand broadcasts (scalar times
+     * vector) -- silent and useful. Two GENUINE multi-element vectors of
+     * different lengths are almost always a mistake: the shorter is extended
+     * with its LAST element, which reads as data (a truncated import silently
+     * flat-extends). Warn in that case only, once. */
+    if (v1->v_length != v2->v_length &&
+        v1->v_length > 1 && v2->v_length > 1) {
+        fprintf(cp_err,
+                "Warning: operands %s (length %d) and %s (length %d) differ in "
+                "length; the shorter is extended with its last element.\n",
+                v1->v_name ? v1->v_name : "(anon)", v1->v_length,
+                v2->v_name ? v2->v_name : "(anon)", v2->v_length);
+    }
     if (v1->v_length < length) {
         longer = 2;
         free1 = TRUE;

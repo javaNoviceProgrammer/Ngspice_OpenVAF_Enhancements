@@ -1774,6 +1774,13 @@ void com_optimize(wordlist *wl)
         fprintf(cp_err, "optimize: -method lm requires -target objectives\n");
         goto cleanup;
     }
+    /* Enhancement-535: the optimizer's whole search is ONE Monte-Carlo
+     * sample under `.option osdimc` -- each Nelder-Mead evaluation is a
+     * run-class op, and per-evaluation redraws made the objective
+     * stochastic (measured: "converged" 2.4% off a closed-form optimum,
+     * reported with full confidence). Cleared at cleanup. */
+    OSDImcHoldTrial(TRUE);
+
     /* Enhancement-216: NSGA-II is multi-objective and returns a Pareto FRONT rather
      * than a single optimum, so it runs on its own branch below. */
     if (c.method == 6) {
@@ -1957,6 +1964,7 @@ void com_optimize(wordlist *wl)
     }
 
 cleanup:
+    OSDImcHoldTrial(FALSE);              /* Enhancement-535 */
     sw_fp_free();                        /* Enhancement-322: drop fast-path binds */
     for (k = 0; k < c.np; k++)
         tfree(c.name[k]);

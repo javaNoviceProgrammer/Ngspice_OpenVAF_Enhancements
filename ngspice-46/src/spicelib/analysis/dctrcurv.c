@@ -839,7 +839,7 @@ static double
 dct_scale_value(TRCV *job, int i)
 {
     if (job->TRCVscale[i] == DCT_SCALE_LIN) {
-        int n = job->TRCVnPts[i];
+        int n = job->TRCVnTotal[i];
         return (n <= 1) ? job->TRCVvStart[i]
                         : job->TRCVvStart[i]
                           + (job->TRCVvStop[i] - job->TRCVvStart[i])
@@ -1213,6 +1213,7 @@ DCtrCurv(CKTcircuit *ckt, int restart)
                         "DC sweep %d: lin needs at least 1 point", i + 1);
                     return(E_PARMVAL);
                 }
+                job->TRCVnTotal[i] = job->TRCVnPts[i];
             } else {
                 double per = (job->TRCVscale[i] == DCT_SCALE_DEC) ? 10.0 : 2.0;
                 double mul, x;
@@ -1233,8 +1234,125 @@ DCtrCurv(CKTcircuit *ckt, int restart)
                     }
                 }
                 job->TRCVratio[i] = mul;
-                job->TRCVnPts[i] = nv;
+                job->TRCVnTotal[i] = nv;   /* E-535: TRCVnPts stays as parsed */
             }
+        }
+    }
+
+    /* Enhancement-535 (hunt N4): the same knob on BOTH nest levels fought
+     * itself in silence -- the first point was computed with the OUTER level's
+     * start while labeled with the inner's value (resolution applies inner
+     * then outer), and the restore left the knob at the inner level's START,
+     * because the outer level had captured that as its "nominal". The aliasing
+     * is as old as the nested sweep (a duplicated vsrc behaves the same); the
+     * @-parameter kinds just made it easy to reach. Refuse the overlap: same
+     * element for the source/resistor/instance kinds (any spelling -- `v1`
+     * and `@v1[dc]` are the same knob), same element AND parameter for the
+     * parameter kinds, any shared target for the XPARAM lists. */
+    if (job->TRCVnestLevel >= 1) {
+        int clash = 0;
+        if (job->TRCVvType[0] == job->TRCVvType[1]) {
+            if (job->TRCVvType[0] == TEMP_CODE) {
+                clash = 1;
+            } else if (job->TRCVvType[0] == PARAM_CODE) {
+                clash = (job->TRCVvElt[0] == job->TRCVvElt[1] &&
+                         job->TRCVvParmId[0] == job->TRCVvParmId[1]);
+            } else if (job->TRCVvType[0] != XPARAM_CODE) {
+                clash = (job->TRCVvElt[0] == job->TRCVvElt[1]);
+            }
+        }
+        /* cross-KIND aliasing: `v1` and `@v1[dc]` are the same knob (so are
+         * `r2` and `@r2[resistance]`) -- a source/resistor level clashes with
+         * a PARAM level on the same element when the parameter IS the
+         * principal one that kind sweeps */
+        if (!clash) {
+            int a;
+            for (a = 0; a < 2; a++) {
+                int o = 1 - a;
+                const char *principal = NULL;
+                if (job->TRCVvType[o] != PARAM_CODE ||
+                    job->TRCVvElt[a] != job->TRCVvElt[o])
+                    continue;
+                if (job->TRCVvType[a] == vcode || job->TRCVvType[a] == icode)
+                    principal = "dc";
+                else if (job->TRCVvType[a] == rcode)
+                    principal = "resistance";
+                if (principal && job->TRCVvElt[a]) {
+                    IFdevice *dev = &DEVices[job->TRCVvElt[a]->GENmodPtr
+                                                 ->GENmodType]->DEVpublic;
+                    int k, n = dev->numInstanceParms ? *dev->numInstanceParms : 0;
+                    for (k = 0; k < n; k++)
+                        if (dev->instanceParms[k].id == job->TRCVvParmId[o] &&
+                            dev->instanceParms[k].keyword &&
+                            cieq(dev->instanceParms[k].keyword,
+                                 (char *) principal)) {
+                            clash = 1;
+                            break;
+                        }
+                }
+            }
+        }
+        if (job->TRCVvType[0] == XPARAM_CODE || job->TRCVvType[1] == XPARAM_CODE) {
+            int a, b;
+            for (a = 0; a < job->TRCVxN[0] && !clash; a++)
+                for (b = 0; b < job->TRCVxN[1] && !clash; b++) {
+                    DCTxtarget *ta = &job->TRCVxTarg[0][a];
+                    DCTxtarget *tb = &job->TRCVxTarg[1][b];
+                    if (ta->set_id == tb->set_id && ta->type == tb->type &&
+                        ta->inst == tb->inst && ta->mod == tb->mod)
+                        clash = 1;
+                }
+            /* an XPARAM level can also collide with a PARAM level's target */
+            for (a = 0; a < 2 && !clash; a++) {
+                int o = 1 - a;
+                if (job->TRCVvType[a] == XPARAM_CODE &&
+                    job->TRCVvType[o] == PARAM_CODE) {
+                    for (b = 0; b < job->TRCVxN[a] && !clash; b++) {
+                        DCTxtarget *t = &job->TRCVxTarg[a][b];
+                        if (t->inst == job->TRCVvElt[o] &&
+                            t->set_id == job->TRCVvParmId[o])
+                            clash = 1;
+                    }
+                }
+            }
+        }
+        if (clash) {
+            SPfrontEnd->IFerrorf(ERR_FATAL,
+                "DC sweep: \"%s\" and \"%s\" move the same knob -- the two "
+                "levels would fight over one value, mislabel the first point "
+                "and corrupt the restore. Sweep it once",
+                job->TRCVvName[0] ? job->TRCVvName[0] : "?",
+                job->TRCVvName[1] ? job->TRCVvName[1] : "?");
+            /* undo what resolution already applied, in reverse */
+            for (i = job->TRCVnestLevel; i >= 0; i--) {
+                if (job->TRCVvType[i] == XPARAM_CODE)
+                    DCTrestoreXParam(ckt, job, i);
+                else if (job->TRCVvType[i] == PARAM_CODE)
+                    (void) DCTsetInstParam(ckt, job, i, job->TRCVvSave[i], 0);
+                else if (job->TRCVvType[i] == TEMP_CODE) {
+                    ckt->CKTtemp = job->TRCVvSave[i];
+                    inp_evaluate_temper(ft_curckt);
+                    CKTtemp(ckt);
+                } else if (job->TRCVvType[i] == rcode) {
+                    ((RESinstance *)(job->TRCVvElt[i]))->RESresist =
+                        job->TRCVvSave[i];
+                    ((RESinstance *)(job->TRCVvElt[i]))->RESresGiven =
+                        (job->TRCVgSave[i] != 0);
+                    RESupdate_conduct((RESinstance *)(job->TRCVvElt[i]), TRUE);
+                    DEVices[rcode]->DEVload(job->TRCVvElt[i]->GENmodPtr, ckt);
+                } else if (job->TRCVvType[i] == vcode) {
+                    ((VSRCinstance *)(job->TRCVvElt[i]))->VSRCdcValue =
+                        job->TRCVvSave[i];
+                    ((VSRCinstance *)(job->TRCVvElt[i]))->VSRCdcGiven =
+                        (job->TRCVgSave[i] != 0);
+                } else if (job->TRCVvType[i] == icode) {
+                    ((ISRCinstance *)(job->TRCVvElt[i]))->ISRCdcValue =
+                        job->TRCVvSave[i];
+                    ((ISRCinstance *)(job->TRCVvElt[i]))->ISRCdcGiven =
+                        (job->TRCVgSave[i] != 0);
+                }
+            }
+            return(E_PARMVAL);
         }
     }
 
@@ -1296,7 +1414,7 @@ DCtrCurv(CKTcircuit *ckt, int restart)
          * its index -- the value-overshoot tests below belong to the legacy
          * accumulate-by-step walk only (a descending lin would trip them). */
         if (job->TRCVscale[i] != DCT_SCALE_LEGACY) {
-            if (job->TRCVidx[i] >= job->TRCVnPts[i]) {
+            if (job->TRCVidx[i] >= job->TRCVnTotal[i]) {
                 i++;
                 firstTime = 1;
                 ckt->CKTmode = (ckt->CKTmode & MODEUIC) | MODEDCTRANCURVE | MODEINITJCT;
@@ -1622,7 +1740,7 @@ DCtrCurv(CKTcircuit *ckt, int restart)
              * topology guard) aborts through the restore path, exactly as the
              * legacy PARAM arm does. */
             job->TRCVidx[i]++;
-            if (job->TRCVidx[i] < job->TRCVnPts[i]) {
+            if (job->TRCVidx[i] < job->TRCVnTotal[i]) {
                 double next_ = dct_scale_value(job, i);
                 if (DCTapplyLevel(ckt, job, i, next_, 1,
                                   vcode, icode, rcode) != OK) {
@@ -1710,9 +1828,9 @@ DCtrCurv(CKTcircuit *ckt, int restart)
 #ifdef HAS_PROGREP
         if (i == job->TRCVnestLevel) {
             if (job->TRCVscale[i] != DCT_SCALE_LEGACY) {   /* Enhancement-534 */
-                if (job->TRCVnPts[i] > 0)
+                if (job->TRCVnTotal[i] > 0)
                     SetAnalyse("dc",
-                        (int) (1000.0 * job->TRCVidx[i] / job->TRCVnPts[i]));
+                        (int) (1000.0 * job->TRCVidx[i] / job->TRCVnTotal[i]));
             } else {
                 actval += job->TRCVvStep[job->TRCVnestLevel];
                 SetAnalyse("dc", abs((int)((actval - job->TRCVvStart[job->TRCVnestLevel]) * 1000. / actdiff)));
