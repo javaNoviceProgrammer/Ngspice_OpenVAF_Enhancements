@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>openvaf-r vs VAMS-2023: The Re-Audit</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Serif:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+</head>
+<body>
+<style>
+  :root {
+    --paper: #F7F7F4;
+    --surface: #FFFFFF;
+    --ink: #21262D;
+    --muted: #5C6470;
+    --faint: #8A919C;
+    --line: #E2E3DE;
+    --accent: #0E5E68;
+    --accent-soft: #E3EEEF;
+    --sev-bug: #B23A2E;
+    --sev-bug-bg: #F9ECEA;
+    --sev-dev: #96690F;
+    --sev-dev-bg: #F8F1E1;
+    --sev-miss: #6F58B8;
+    --sev-miss-bg: #EFECF8;
+    --sev-doc: #31699E;
+    --sev-doc-bg: #E8F0F8;
+    --sev-ok: #2E7D4F;
+    --sev-ok-bg: #E8F3EC;
+    --code-bg: #EFF0EC;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #14171C;
+      --surface: #1C2026;
+      --ink: #E5E7EA;
+      --muted: #9AA1AB;
+      --faint: #6E7681;
+      --line: #2C313A;
+      --accent: #57B2BC;
+      --accent-soft: #16333A;
+      --sev-bug: #E58074;
+      --sev-bug-bg: #3A211E;
+      --sev-dev: #D9A94E;
+      --sev-dev-bg: #362B14;
+      --sev-miss: #AC9AE3;
+      --sev-miss-bg: #292239;
+      --sev-doc: #7FAEDA;
+      --sev-doc-bg: #1C2B3A;
+      --sev-ok: #74BD92;
+      --sev-ok-bg: #1B3126;
+      --code-bg: #262B33;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #14171C;
+    --surface: #1C2026;
+    --ink: #E5E7EA;
+    --muted: #9AA1AB;
+    --faint: #6E7681;
+    --line: #2C313A;
+    --accent: #57B2BC;
+    --accent-soft: #16333A;
+    --sev-bug: #E58074;
+    --sev-bug-bg: #3A211E;
+    --sev-dev: #D9A94E;
+    --sev-dev-bg: #362B14;
+    --sev-miss: #AC9AE3;
+    --sev-miss-bg: #292239;
+    --sev-doc: #7FAEDA;
+    --sev-doc-bg: #1C2B3A;
+    --sev-ok: #74BD92;
+    --sev-ok-bg: #1B3126;
+    --code-bg: #262B33;
+  }
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+    font-size: 16px;
+    line-height: 1.6;
+    margin: 0;
+  }
+  .wrap { max-width: 880px; margin: 0 auto; padding: 48px 24px 96px; }
+  header.masthead { border-bottom: 3px solid var(--sev-ok); padding-bottom: 28px; margin-bottom: 36px; }
+  .eyebrow {
+    font-family: "IBM Plex Mono", monospace; font-size: 12px; letter-spacing: 0.14em;
+    text-transform: uppercase; color: var(--sev-ok); margin-bottom: 14px;
+  }
+  h1 {
+    font-family: "IBM Plex Serif", Georgia, serif; font-weight: 600;
+    font-size: clamp(30px, 5vw, 44px); line-height: 1.12; margin: 0 0 14px; text-wrap: balance;
+  }
+  .standfirst { font-size: 17.5px; color: var(--muted); max-width: 64ch; margin: 0; }
+  .metaline { font-family: "IBM Plex Mono", monospace; font-size: 12.5px; color: var(--faint); margin-top: 18px; }
+  h2 {
+    font-family: "IBM Plex Serif", Georgia, serif; font-weight: 600; font-size: 25px;
+    margin: 56px 0 6px; text-wrap: balance;
+  }
+  h2 .secno { color: var(--faint); font-family: "IBM Plex Mono", monospace; font-size: 15px; margin-right: 10px; }
+  h3 { font-size: 17px; font-weight: 600; margin: 34px 0 12px; }
+  p { max-width: 70ch; }
+  p.lede { color: var(--muted); margin-top: 0; }
+  a { color: var(--accent); }
+  code, .mono { font-family: "IBM Plex Mono", monospace; font-size: 0.86em; }
+  code { background: var(--code-bg); padding: 1px 5px; border-radius: 3px; }
+  .score { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin: 30px 0 8px; }
+  .scard { background: var(--surface); border: 1px solid var(--line); border-top: 3px solid var(--sc, var(--accent)); padding: 14px 16px 12px; }
+  .scard .n { font-family: "IBM Plex Serif", Georgia, serif; font-size: 34px; font-weight: 600; line-height: 1; color: var(--sc, var(--ink)); font-variant-numeric: tabular-nums; }
+  .scard .l { font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin-top: 6px; }
+  .scorenote { font-size: 13.5px; color: var(--faint); margin-top: 10px; }
+  .chip {
+    font-family: "IBM Plex Mono", monospace; font-size: 10.5px; letter-spacing: 0.08em;
+    text-transform: uppercase; padding: 2px 8px; border-radius: 999px; white-space: nowrap;
+    background: var(--cbg); color: var(--cfg);
+  }
+  .c-bug { --cbg: var(--sev-bug-bg); --cfg: var(--sev-bug); }
+  .c-dev { --cbg: var(--sev-dev-bg); --cfg: var(--sev-dev); }
+  .c-miss { --cbg: var(--sev-miss-bg); --cfg: var(--sev-miss); }
+  .c-doc { --cbg: var(--sev-doc-bg); --cfg: var(--sev-doc); }
+  .c-ok { --cbg: var(--sev-ok-bg); --cfg: var(--sev-ok); }
+  .tblwrap { overflow-x: auto; border: 1px solid var(--line); background: var(--surface); }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  th { font-size: 11.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); text-align: left; }
+  th, td { padding: 9px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  td.mono { font-variant-numeric: tabular-nums; white-space: nowrap; }
+  td.was { color: var(--sev-bug); font-family: "IBM Plex Mono", monospace; font-size: 12.5px; }
+  td.now { color: var(--sev-ok); font-family: "IBM Plex Mono", monospace; font-size: 12.5px; font-weight: 500; }
+  .oklist { padding-left: 0; list-style: none; max-width: 78ch; }
+  .oklist li { padding: 7px 0 7px 26px; position: relative; border-bottom: 1px dashed var(--line); font-size: 14.5px; }
+  .oklist li::before { content: "✓"; position: absolute; left: 2px; color: var(--sev-ok); font-weight: 600; }
+  .toc { background: var(--surface); border: 1px solid var(--line); padding: 18px 22px; margin-top: 30px; }
+  .toc ol { margin: 8px 0 0; padding-left: 22px; columns: 2; column-gap: 40px; font-size: 14.5px; }
+  .toc ol li { margin-bottom: 5px; }
+  @media (max-width: 640px) { .toc ol { columns: 1; } }
+  .callout { background: var(--sev-ok-bg); border-left: 4px solid var(--sev-ok); padding: 14px 18px; margin: 22px 0; font-size: 15px; max-width: 76ch; }
+  .callout-n { background: var(--accent-soft); border-left: 4px solid var(--accent); padding: 14px 18px; margin: 22px 0; font-size: 15px; max-width: 76ch; }
+  footer { margin-top: 64px; border-top: 1px solid var(--line); padding-top: 18px; font-size: 13px; color: var(--faint); }
+</style>
+
+<div class="wrap">
+<header class="masthead">
+  <div class="eyebrow">Conformance re-audit · post-remediation verification · Accellera VAMS-2023</div>
+  <h1>openvaf-r vs VAMS-2023: the re-audit</h1>
+  <p class="standfirst">The <a href="2026-08-31_LRM-conformance-audit.html">morning audit</a> confirmed 100 findings against the Verilog-AMS 2023 LRM. Fifteen enhancements later — <strong>E-515 through E-529</strong>, one per audit area — this report re-measures the evidence with the committed binaries and records the disposition of every finding.</p>
+  <div class="metaline">2026-08-31 (same day, evening) · original audit: 2026-08-31_LRM-conformance-audit.html · remediation: Enhancement-515…529 · binaries: bin/macos/apple-silicon @ commit 3077fb90</div>
+</header>
+
+<div class="score">
+  <div class="scard" style="--sc: var(--sev-bug)"><div class="n">39<span style="font-size:18px;color:var(--faint)">/39</span></div><div class="l">Bugs fixed</div></div>
+  <div class="scard" style="--sc: var(--sev-dev)"><div class="n">28<span style="font-size:18px;color:var(--faint)">/28</span></div><div class="l">Deviations dispositioned</div></div>
+  <div class="scard" style="--sc: var(--sev-miss)"><div class="n">24<span style="font-size:18px;color:var(--faint)">/24</span></div><div class="l">Missing dispositioned</div></div>
+  <div class="scard" style="--sc: var(--sev-doc)"><div class="n">9<span style="font-size:18px;color:var(--faint)">/9</span></div><div class="l">Doc claims corrected</div></div>
+  <div class="scard" style="--sc: var(--sev-ok)"><div class="n">0</div><div class="l">Regressions</div></div>
+</div>
+<p class="scorenote">Every one of the original audit's 100 non-note findings is accounted for: behavior fixed to the LRM, feature implemented, or the difference made explicit — a located diagnostic and a compliance-doc disclosure. Verified today by re-running all 15 remediation suites (310 checks, both solvers) plus an independent 18-point re-measurement of the audit's own evidence lines. The full 443-suite regression sweep, the fast+slow cargo suites, and the 13-model CMC corpus all pass on exactly these binaries.</p>
+
+<div class="toc">
+  <strong>Contents</strong>
+  <ol>
+    <li><a href="#verdict">The verdict</a></li>
+    <li><a href="#method">How the re-audit ran</a></li>
+    <li><a href="#beforeafter">Before → after: the audit's own evidence, re-measured</a></li>
+    <li><a href="#areas">Area by area: finding → enhancement → suite</a></li>
+    <li><a href="#classes">What happened to each finding class</a></li>
+    <li><a href="#remaining">What deliberately remains outside the surface</a></li>
+  </ol>
+</div>
+
+<h2 id="verdict"><span class="secno">1</span>The verdict</h2>
+<p class="lede">The morning's roughest edges are gone; what remains different from the LRM is now chosen, spoken, and pinned.</p>
+<p>The original audit's most consequential group — <strong>eleven silent-wrong-answer findings</strong> — is empty. Every one was re-measured today with the committed binaries and produces the LRM-required number: <code>defparam</code> survives a generate construct (−8&nbsp;mA, was −2&nbsp;mA), <code>#(.$mfactor(4))</code> scales the child (−4&nbsp;mA, was −1&nbsp;mA), <code>$param_given</code> sees hierarchy overrides (−7&nbsp;mA, was −99&nbsp;mA), two same-labelled noise calls power-sum (1.414&nbsp;µV/√Hz, was an exact 0), <code>ac_stim("ac")</code> stays out of the noise gain solve, and the misspelled event that used to run on every evaluation is a located error.</p>
+<p>The lifecycle boundary — where the first audit found its densest cluster — now holds: display and file I/O defer to accepted iterations (a diode <code>.op</code> prints one <code>$strobe</code> line at the converged point, not fifteen along the Newton walk), the transient operating point reports <code>ic=1 static=1</code> at t&nbsp;=&nbsp;0 and zeros at every timepoint, <code>cross()</code>/<code>above()</code> follow their normative timing rules, and <code>$bound_step</code> honors the smallest active bound in either call order.</p>
+<div class="callout">Both compiler crashes are gone, all 39 confirmed bugs are fixed to the letter of the cited clauses, and none of the 15 remediation enhancements broke anything the audit had verified as conformant: the 443-suite sweep — which includes every pre-audit suite — passes on the same binaries that pass the re-measurements below.</div>
+
+<h2 id="method"><span class="secno">2</span>How the re-audit ran</h2>
+<p>Three independent layers of evidence, strongest first:</p>
+<p><strong>The remediation suites, re-run today.</strong> Each of the 15 enhancements committed a suite that pins its area's findings with value checks against the quoted LRM clauses — 310 checks in all. All 15 were re-executed against the current binaries this evening, each under both the Sparse and KLU solvers: <strong>15/15 OK</strong>. These are not smoke tests; they carry the audit's own numbers (the Table 5-1 five-analysis matrix, the √2 noise power sum, the ragged-isoline table file, a spec-conformant fake OSDI v0.3 object the suite compiles itself).</p>
+<p><strong>An independent re-measurement of the original evidence.</strong> The audit's headline findings quoted concrete measured numbers. Eighteen of them were re-reproduced today from scratch — fresh decks, written without reference to the suites, run against the committed <code>bin/macos/apple-silicon/</code> binaries. All 18 produce the LRM answer (§3).</p>
+<p><strong>The regression estate.</strong> The full 443-suite example sweep (ALL OK), the compiler's fast (211) and slow (237) cargo test suites, and the 13-model CMC compile corpus (zero warnings) — all green on the same binaries. This is what rules out fixes that traded one clause for another.</p>
+
+<h2 id="beforeafter"><span class="secno">3</span>Before → after: the audit's own evidence, re-measured</h2>
+<p class="lede">Same construct, same deck idiom, same binaries directory — the number the audit printed then, and the number measured today.</p>
+<div class="tblwrap"><table>
+<tr><th>Check</th><th>LRM</th><th>Audit measured</th><th>Re-audit measures</th><th>Fix</th></tr>
+<tr><td><code>5 'D 3</code> white-space based literal</td><td class="mono">2.6.1</td><td class="was">token error</td><td class="now">compiles; value 3</td><td class="mono"><a href="../../enhancements_doc/Enhancement-515.md">E-515</a></td></tr>
+<tr><td><code>$strobe</code> in a diode <code>.op</code></td><td class="mono">9.4.6</td><td class="was">15 Newton-walk lines</td><td class="now">1 line, at the converged v=0.500717</td><td class="mono"><a href="../../enhancements_doc/Enhancement-516.md">E-516</a></td></tr>
+<tr><td><code>$strobe("%r", 1e3)</code></td><td class="mono">9.4.3</td><td class="was">0.000000&#65533;</td><td class="now">1.000000k</td><td class="mono"><a href="../../enhancements_doc/Enhancement-516.md">E-516</a></td></tr>
+<tr><td><code>integer i = "A"</code></td><td class="mono">3.3</td><td class="was">hard type error</td><td class="now">65</td><td class="mono"><a href="../../enhancements_doc/Enhancement-517.md">E-517</a></td></tr>
+<tr><td><code>V(a,a)</code> same-node access</td><td class="mono">4.4 Tbl 4-16</td><td class="was">silent constant 0</td><td class="now">located error naming the net</td><td class="mono"><a href="../../enhancements_doc/Enhancement-518.md">E-518</a></td></tr>
+<tr><td>electrical ↔ voltage (sig_flow_v) nets</td><td class="mono">3.11.1</td><td class="was">rejected as incompatible</td><td class="now">compiles; i(v1) = −2 mA exact</td><td class="mono"><a href="../../enhancements_doc/Enhancement-519.md">E-519</a></td></tr>
+<tr><td><code>break</code> in an analog for loop</td><td class="mono">5.11</td><td class="was">"not found in current scope"</td><td class="now">exits after 3 iterations</td><td class="mono"><a href="../../enhancements_doc/Enhancement-520.md">E-520</a></td></tr>
+<tr><td>Function-local <code>parameter</code></td><td class="mono">4.7.1</td><td class="was">compiler crash (ICE)</td><td class="now">compiles; k·x = 6.0</td><td class="mono"><a href="../../enhancements_doc/Enhancement-521.md">E-521</a></td></tr>
+<tr><td><code>@(absdelta(…))</code> (digital-only)</td><td class="mono">5.10 / C.7</td><td class="was">ran on EVERY eval (na=120)</td><td class="now">"not part of the analog subset"</td><td class="mono"><a href="../../enhancements_doc/Enhancement-522.md">E-522</a></td></tr>
+<tr><td><code>#(.$mfactor(4))</code> child override</td><td class="mono">6.3.6</td><td class="was">−1 mA (ignored)</td><td class="now">−4 mA</td><td class="mono"><a href="../../enhancements_doc/Enhancement-525.md">E-525</a></td></tr>
+<tr><td><code>defparam</code> beside a generate construct</td><td class="mono">6.3.1</td><td class="was">−2 mA (dropped)</td><td class="now">−8 mA</td><td class="mono"><a href="../../enhancements_doc/Enhancement-525.md">E-525</a></td></tr>
+<tr><td><code>$param_given</code> on a hierarchy override</td><td class="mono">6.3.5/9.19</td><td class="was">−99 mA (always false)</td><td class="now">−7 mA</td><td class="mono"><a href="../../enhancements_doc/Enhancement-525.md">E-525</a></td></tr>
+<tr><td><code>$bound_step(1e-6); $bound_step(1e-4)</code></td><td class="mono">9.17.2</td><td class="was">max dt = 1e-4 (last call won)</td><td class="now">max dt = 1.000e-6 (smallest wins)</td><td class="mono"><a href="../../enhancements_doc/Enhancement-527.md">E-527</a></td></tr>
+<tr><td><code>$table_model</code>, y=2x, query x=4, no ctrl</td><td class="mono">9.21.2 Tbl 9-31</td><td class="was">6.0 (clamped)</td><td class="now">8.0 (linear default)</td><td class="mono"><a href="../../enhancements_doc/Enhancement-527.md">E-527</a></td></tr>
+<tr><td><code>analysis("ic")/("static")</code> at the tran OP</td><td class="mono">4.6.1 Tbl 4-22</td><td class="was">0 0 at t=0, then 1 1 at step 1</td><td class="now">1 1 at t=0, 0 0 at every step</td><td class="mono"><a href="../../enhancements_doc/Enhancement-528.md">E-528</a></td></tr>
+<tr><td>Two same-label <code>white_noise</code> calls, anti-series</td><td class="mono">4.6.4.6</td><td class="was">0.0 (coherent cancel)</td><td class="now">1.414214e-6 (uncorrelated √2 sum)</td><td class="mono"><a href="../../enhancements_doc/Enhancement-528.md">E-528</a></td></tr>
+<tr><td><code>alter @n1[m]=-2</code> on a 1 mA/V model</td><td class="mono">— (loader)</td><td class="was">applied: +2 mA, .noise NaN</td><td class="now">warned "is negative", i stays −1 mA</td><td class="mono"><a href="../../enhancements_doc/Enhancement-529.md">E-529</a></td></tr>
+</table></div>
+<p class="scorenote">18/18 including the two value sub-checks not tabulated separately. The battery script and every deck live in the session scratchpad (<code>recheck/</code>); each row's construct matches the original audit's evidence line. Suite-carried equivalents exist for every row and passed the same evening — plus the cases too heavy to re-derive independently: the OSDI v0.3 fake-object rejection (<code>lrmosdi</code> compiles the object with the host <code>cc</code>), the full Table 5-1 event matrix (<code>lrmevents</code>), and the ragged-isoline 9.21.1 file (<code>lrmkernel</code>).</p>
+
+<h2 id="areas"><span class="secno">4</span>Area by area: finding → enhancement → suite</h2>
+<p class="lede">One enhancement per audit area, in audit order. Finding counts are the original coverage map's (cross-area duplicates counted once in the totals); every suite result is today's re-run, both solvers.</p>
+<div class="tblwrap"><table>
+<tr><th>Audit area</th><th>LRM</th><th>Findings (b·d·m·doc)</th><th>Enhancement</th><th>Suite · today</th></tr>
+<tr><td>Lexical conventions &amp; directives</td><td class="mono">2, 10, B</td><td class="mono">5·3·4·1</td><td><a href="../../enhancements_doc/Enhancement-515.md">E-515 lrmlex</a></td><td class="now">26 checks · OK</td></tr>
+<tr><td>System tasks: display &amp; file I/O</td><td class="mono">9.1–9.7</td><td class="mono">5·3·2·1</td><td><a href="../../enhancements_doc/Enhancement-516.md">E-516 lrmsysio</a></td><td class="now">19 checks · OK</td></tr>
+<tr><td>Data types &amp; parameters</td><td class="mono">3.1–3.5</td><td class="mono">1·5·2·1</td><td><a href="../../enhancements_doc/Enhancement-517.md">E-517 lrmdata</a></td><td class="now">20 checks · OK</td></tr>
+<tr><td>Expressions &amp; math</td><td class="mono">4.1–4.4</td><td class="mono">2·3·—·—</td><td><a href="../../enhancements_doc/Enhancement-518.md">E-518 lrmexpr</a></td><td class="now">22 checks · OK</td></tr>
+<tr><td>Natures, disciplines, branches</td><td class="mono">3.6–3.13, D</td><td class="mono">3·3·2·—</td><td><a href="../../enhancements_doc/Enhancement-519.md">E-519 lrmdisc</a></td><td class="now">21 checks · OK</td></tr>
+<tr><td>Annex C/E boundary, jump statements &amp; doc audit</td><td class="mono">C, E, G</td><td class="mono">—·2·1·1</td><td><a href="../../enhancements_doc/Enhancement-520.md">E-520 lrmjump</a></td><td class="now">22 checks · OK</td></tr>
+<tr><td>User-defined functions</td><td class="mono">4.7</td><td class="mono">3·—·2·1</td><td><a href="../../enhancements_doc/Enhancement-521.md">E-521 lrmudf</a></td><td class="now">15 checks · OK</td></tr>
+<tr><td>Events</td><td class="mono">5.10–5.11</td><td class="mono">5·2·2·1</td><td><a href="../../enhancements_doc/Enhancement-522.md">E-522 lrmevents</a></td><td class="now">22 checks · OK</td></tr>
+<tr><td>Core analog operators</td><td class="mono">4.5.1–4.5.7</td><td class="mono">—·3·1·—</td><td><a href="../../enhancements_doc/Enhancement-523.md">E-523 lrmcoreops</a></td><td class="now">18 checks · OK</td></tr>
+<tr><td>Filter operators</td><td class="mono">4.5.8–4.5.15</td><td class="mono">1·4·—·1</td><td><a href="../../enhancements_doc/Enhancement-524.md">E-524 lrmfilters</a></td><td class="now">14 checks · OK</td></tr>
+<tr><td>Hierarchy</td><td class="mono">6</td><td class="mono">5·3·8·1</td><td><a href="../../enhancements_doc/Enhancement-525.md">E-525 lrmhier</a></td><td class="now">22 checks · OK</td></tr>
+<tr><td>Analog behavior &amp; contributions</td><td class="mono">5.1–5.9</td><td class="mono">1·2·4·—</td><td><a href="../../enhancements_doc/Enhancement-526.md">E-526 lrmcontrib</a></td><td class="now">19 checks · OK</td></tr>
+<tr><td>Kernel &amp; random system functions</td><td class="mono">9.10–9.21</td><td class="mono">4·2·3·1</td><td><a href="../../enhancements_doc/Enhancement-527.md">E-527 lrmkernel</a></td><td class="now">43 checks · OK</td></tr>
+<tr><td>Analysis &amp; noise</td><td class="mono">4.6</td><td class="mono">2·2·2·1</td><td><a href="../../enhancements_doc/Enhancement-528.md">E-528 lrmnoise</a></td><td class="now">17 checks · OK</td></tr>
+<tr><td>ngspice OSDI layer</td><td class="mono">8.3 + OSDI</td><td class="mono">2·1·—·—</td><td><a href="../../enhancements_doc/Enhancement-529.md">E-529 lrmosdi</a></td><td class="now">10 checks · OK</td></tr>
+</table></div>
+<p class="scorenote">Findings that straddle areas were fixed once and re-pinned everywhere they surfaced: the string-function ICE and <code>return</code> landed in E-520 and are re-verified by <code>lrmudf</code>; the break/continue finding of the events area likewise; <code>analysis("nodeset")</code> was implemented in E-528 though the audit filed it under kernel functions; the <code>$limit</code> load-refusal deviation became the mandated 9.17.3 fallback in E-520 and is re-pinned by <code>lrmosdi</code>.</p>
+
+<h2 id="classes"><span class="secno">5</span>What happened to each finding class</h2>
+
+<h3><span class="chip c-bug">39 bugs</span> — all fixed to the cited clause</h3>
+<p>Both ICEs compile or reject cleanly (string-typed functions work end to end; function-local parameters follow the 4.7.1 shadowing rule). The five silent hierarchy bugs produce the LRM numbers (§3). The event machinery follows Table 5-1 exactly — the suite runs the full five-analysis matrix — and <code>cross()</code> stays quiet in DC while <code>above()</code> fires its mandatory initialization event. Display, <code>$monitor</code> change detection, <code>%r</code>, file-write deferral and the append-on-reopen rule all follow 9.4/9.5. The nature-attribute validation runs (it was dead code), the OSDI natures table counts attributes correctly, discipline compatibility implements all six rules of 3.11.1, and <code>`undef</code> can no longer remove predefined macros. On the simulator side, v0.3 objects are rejected with a recompile message instead of being misread, and the phantom IFparm row is gone.</p>
+
+<h3><span class="chip c-dev">28 deviations</span> — promoted to the LRM or kept and made explicit</h3>
+<p><strong>Promoted</strong> — the LRM behavior is now the behavior: <code>absdelay</code> freezes td when maxdelay is absent; <code>transition</code> completes at td&nbsp;+&nbsp;trise regardless of amplitude and explicit zeros consult <code>`default_transition</code>; out-of-range <code>cross</code> dir means "no event", not <code>$fatal</code>; <code>analysis("dc")</code> is 0 at AC/noise operating points; same-labelled noise calls are uncorrelated (the label groups reporting only); <code>$limit</code> with an unknown name falls back to unlimited evaluation with a warning; no-default <code>$simprobe</code> is the 9.16 error; the 9.13.2 distribution domains abort with the mandated runtime error; alias-plus-original overrides and the other 3.4.7 rules are enforced.</p>
+<p><strong>Kept, now audible or documented</strong> — where the difference is a considered design position, it stays, and it now says so: stateless <code>limexp</code> and the bilinear <code>zi_*</code> filters (disclosed, quantified); dynamic laplace coefficients tracking (audible); the parameter-default range exemption; the untyped-parameter freeze; contributions inside runtime loops and out-of-scope named-block access as accepted extensions; <code>m=0</code> as the disable-this-instance idiom; the <code>$bound_step</code> (tstop−tstart)/1e6 per-model floor (⚠️ in the compliance doc and README_OSDI). Every kept deviation is pinned by a suite check so it cannot drift silently.</p>
+
+<h3><span class="chip c-miss">24 missing</span> — implemented, or refused with located diagnostics and documented</h3>
+<p><strong>Implemented since the audit:</strong> jump statements (<code>break</code>/<code>continue</code>/<code>return</code>, as 2023 contextual keywords), white-space and macro-substituted based literals, <code>`__VAMS_ENABLE__</code>, <code>`begin_keywords</code>/<code>`end_keywords</code>, <code>`__FILE__</code>/<code>`__LINE__</code> inside includes (with the include-resolution bug fixed), the comma event-OR separator, string→integer conversion, the NIST2018 constants selection in <code>constants.vams</code>, <code>analysis("nodeset")</code>, <code>ddx</code> of an unnamed flow probe, and the whole missing <code>$table_model</code> surface — the normative 9.21.1 file format with ragged isolines, closest-point <code>D</code> with the 9.21.4 tie rule, <code>E</code>, per-end and per-dimension controls, <code>;N</code>, and the 1-D array pair — plus <code>$simparam$str("analysis_type")</code> and <code>("cwd")</code>.</p>
+<p><strong>Still refused, now honestly:</strong> multi-construct generate regions, descending genvar loops, hierarchical refs into generate instances, paramset overloading and paramset output variables, <code>macromodule</code>, vector branches, upward hierarchical references, child <em>port</em>-net access, <code>noise_table</code>'s parameter-fed forms, <code>$table_model</code>'s <code>2</code>/<code>I</code> controls, and the multichannel/pre-opened descriptor model. Each is a located diagnostic, and each is now listed in the compliance doc's per-area gap notes rather than sitting under a blanket ✅.</p>
+
+<h3><span class="chip c-doc">9 doc mismatches</span> — the compliance doc now matches the binaries</h3>
+<p>All nine corrected in place, and the affected sections rewritten rather than patched: §7.1 display (the %r/monitor/iteration claims), §6 hierarchy (fixes, ⚠️ transform limits, and the refusal list above), §5.5 events, the jump-statement claim (now describing the implemented feature), the three §4.5 operator claims, the <code>$table_model</code> section (clause number fixed to 9.21, example now one that compiles), the <code>ac_stim</code> radians example (<code>`M_PI/2</code>, not <code>90.0</code>), the analog-function section, and the paramset clause reference (6.4). The doc's PDF is rebuilt as part of the release ceremony, so the shipped artifact matches.</p>
+
+<h2 id="remaining"><span class="secno">6</span>What deliberately remains outside the surface</h2>
+<p class="lede">The honest boundary after remediation — every item below is a located diagnostic or a documented bound, none is silent.</p>
+<ul class="oklist">
+  <li><strong>Generate/paramset structural gaps</strong> — multi-construct regions, descending genvar loops, refs into generate instances, paramset overloading and output variables, <code>macromodule</code>, module self-instantiation. Architectural: OSDI binds parameters at simulation time while these require parameter-dependent structure. Disclosed in the compliance doc §6.</li>
+  <li><strong>Upward and port-net hierarchical references</strong> — only downward references into the compiled hierarchy resolve.</li>
+  <li><strong>OSDI v0.3 objects</strong> — deliberately dropped, and the drop is now a clean printed rejection with a recompile message instead of a misread and a SIGSEGV. Recorded in README_OSDI's version-support section.</li>
+  <li><strong>Kept semantic deviations</strong> — stateless <code>limexp</code>, bilinear <code>zi_*</code>, dynamic filter coefficients, the parameter-default range exemption, runtime-loop contributions, the <code>$bound_step</code> per-model floor. Each disclosed and suite-pinned.</li>
+  <li><strong>Unservable identity queries</strong> — <code>$simparam$str("module"/"instance"/"path")</code>: the OSDI simparam channel carries no instance identity; the honest warn-then-fatal stands, documented with the reasoning.</li>
+</ul>
+
+<footer>
+Method: 15 remediation suites re-run 2026-08-31 evening against <code>bin/macos/apple-silicon/</code> (310 checks, Sparse + KLU each) · independent 18-point re-measurement battery (session scratchpad <code>recheck/</code>) · full 443-suite sweep, cargo fast/slow, and CMC corpus green on the same binaries · dispositions traced finding-by-finding through <code>enhancements_doc/Enhancement-515…529.md</code> and the rewritten <code>docs/compliance/OpenVAF_Verilog-A_LRM_Compliance.md</code>. Companion to <a href="2026-08-31_LRM-conformance-audit.html">the original audit</a>, whose finding texts and LRM page references remain the authority on what was found.
+</footer>
+</div>
+
+</body>
+</html>
