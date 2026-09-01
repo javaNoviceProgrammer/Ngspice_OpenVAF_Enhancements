@@ -1,0 +1,6 @@
+`include "disciplines.vams"
+module macsn(p);
+  inout p;
+  electrical p;
+  analog I(p) <+ -ac_stim("noise");
+endmodule

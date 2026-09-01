@@ -25,3 +25,26 @@ The `compile_linux.sh` file enables these flags by default.
 
 
 
+
+## Version support and deliberate bounds (OSDI-layer audit)
+
+* **Only openvaf-reloaded objects load** (`OSDI_DESCRIPTOR_SIZE` present,
+  version >= 0.7). Original-OpenVAF **v0.3 objects are rejected** with a
+  recompile message: the in-repo ABI diverged deliberately (node records
+  carry a nodeset field, the descriptor grew ac_stim/absdelay tails,
+  `load_noise` fills paired densities), and the old acceptance path read a
+  spec-conformant 0.3 object through the new layout — wrong metadata in DC
+  and a transient segfault with no diagnostics.
+* **`$bound_step` is floored to (tstop−tstart)/1e6 per model** (E-504): a
+  bound that would demand more than a million steps of the analysis window
+  is overridden after a named warning, so a device cannot demand an
+  unbounded step count. This is a knowing relaxation of LRM 9.17.2's
+  smallest-active-bound rule, which otherwise holds (including
+  several-bounds-take-the-minimum semantics).
+* **A negative multiplicity `m`/`_mfactor` is warned and ignored** on every
+  route, `alter` included (it used to be applied there — a negative m made
+  the device source current and turned `.noise` spectra into silent NaN via
+  the compiled `sqrt(m)` noise factor). `m=0` stays silent and disables the
+  instance, the established idiom shared with the built-ins (E-426/E-447).
+* An unknown `$limit` function name falls back to **no limiting** with a
+  warning, per LRM 9.17.3 (E-520).

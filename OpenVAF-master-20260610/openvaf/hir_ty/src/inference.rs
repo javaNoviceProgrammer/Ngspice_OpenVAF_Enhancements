@@ -1142,7 +1142,28 @@ impl Ctx<'_> {
             BuiltIn::table_model => {
                 let is_arr =
                     args.len() >= 2 && matches!(self.body.exprs[args[1]], Expr::Array(_));
-                if is_arr || args.len() < 4 {
+                // LRM 9.21.1 (kernel audit): the 1-D data may be a PAIR of
+                // arrays -- abscissae then values -- where only the
+                // interleaved single-array layout had a signature, so
+                // `$table_model(x, '{xs}, '{ys})` failed with "expected
+                // string literal" at the second array.
+                let is_arr_pair = is_arr
+                    && args.len() >= 3
+                    && matches!(self.body.exprs[args[2]], Expr::Array(_));
+                if is_arr_pair {
+                    let mut sig_args = vec![
+                        TyRequirement::Val(Type::Real),
+                        TyRequirement::ArrayAnyLength { ty: Type::Real },
+                        TyRequirement::ArrayAnyLength { ty: Type::Real },
+                    ];
+                    if args.len() > 3 {
+                        sig_args.push(TyRequirement::Literal(Type::String));
+                    }
+                    Cow::Owned(TiVec::from(vec![SignatureData {
+                        args: Cow::Owned(sig_args),
+                        return_ty: Type::Real,
+                    }]))
+                } else if is_arr || args.len() < 4 {
                     Cow::Borrowed(TiSlice::from_ref(info.signatures))
                 } else {
                     let is_str = |e: ExprId| {

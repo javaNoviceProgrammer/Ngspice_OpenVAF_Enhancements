@@ -1,0 +1,13 @@
+# proprietary self-describing 2-D grid: f(x,y)=0.5x+y
+# ndim
+2
+# sizes: y axis 3, x axis 4
+3 4
+# y axis
+0.0 0.5 1.0
+# x axis
+1.0 2.0 3.0 4.0
+# tensor: y outer, x inner: f = 0.5x + y
+0.5 1.0 1.5 2.0
+1.0 1.5 2.0 2.5
+1.5 2.0 2.5 3.0

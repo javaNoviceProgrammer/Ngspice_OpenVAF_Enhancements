@@ -1,0 +1,13 @@
+`include "disciplines.vams"
+
+module aprobe(p, n);
+  inout p, n;
+  electrical p, n;
+  analog begin
+    I(p,n) <+ V(p,n)/1e3;
+    $strobe("FLAGS t=%g dc=%d tran=%d ac=%d noise=%d ic=%d static=%d nodeset=%d or_ac_tran=%d unk=%d name=%s",
+      $abstime, analysis("dc"), analysis("tran"), analysis("ac"), analysis("noise"),
+      analysis("ic"), analysis("static"), analysis("nodeset"),
+      analysis("ac","tran"), analysis("foobar"), $simparam$str("analysis_name"));
+  end
+endmodule

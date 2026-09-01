@@ -27,6 +27,127 @@ use crate::{
     PlaceKind, PrintDst, RetFlag, RngFun, ScanKind,
 };
 
+/// LRM 9.21.2 (kernel audit): one axis's interpolation method. `Closest` is
+/// Table 9-30's 'D' -- the 9.21.4 closest-point lookup.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TblInterp {
+    Linear,
+    Cubic,
+    Closest,
+}
+
+/// LRM 9.21.2: one END's extrapolation method -- Table 9-31's 'C'/'L'/'E'.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TblExtrap {
+    Clamp,
+    Linear,
+    Error,
+}
+
+/// One `$table_model` axis's control: interpolation plus a method per end
+/// ("up to 2 extrapolation method characters may be specified ... the first
+/// ... the lower bound and the second ... the upper bound").
+#[derive(Clone, Copy)]
+struct TblAxisCtrl {
+    interp: TblInterp,
+    lo: TblExtrap,
+    hi: TblExtrap,
+}
+
+impl Default for TblAxisCtrl {
+    /// Tables 9-31/9-32: "When no extrapolation method character is given,
+    /// the linear extrapolation method will be used for both ends as
+    /// default" -- the old lowering clamped by default (kernel audit).
+    fn default() -> Self {
+        TblAxisCtrl { interp: TblInterp::Linear, lo: TblExtrap::Linear, hi: TblExtrap::Linear }
+    }
+}
+
+/// LRM 9.21.1 ragged-isoline table data (kernel audit): a (sub)table is a
+/// dependent value, or an axis of ascending coordinates each carrying the
+/// subtable of the samples that share it.
+enum TblTree {
+    Leaf(f64),
+    Axis(Vec<(f64, TblTree)>),
+}
+
+/// Groups `rows` by their `depth`-th coordinate (ascending; a repeated full
+/// coordinate keeps its FIRST row) and recurses until the `ndim` independent
+/// columns are consumed, when the selected dependent column is the leaf.
+fn build_tbl_tree(rows: &[&Vec<f64>], depth: usize, ndim: usize, dep_col: usize) -> TblTree {
+    if depth == ndim {
+        return TblTree::Leaf(rows[0][dep_col]);
+    }
+    let mut groups: Vec<(f64, Vec<&Vec<f64>>)> = Vec::new();
+    for &row in rows {
+        match groups.iter_mut().find(|(c, _)| *c == row[depth]) {
+            Some((_, g)) => g.push(row),
+            None => groups.push((row[depth], vec![row])),
+        }
+    }
+    groups.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+    TblTree::Axis(
+        groups
+            .into_iter()
+            .map(|(c, g)| (c, build_tbl_tree(&g, depth + 1, ndim, dep_col)))
+            .collect(),
+    )
+}
+
+/// Splits a `$table_model` control string's trailing dependent-variable
+/// selector (`"1L;2"` -> `("1L", 2)`); no selector means column 1. The
+/// selector used to be parsed by validation and then IGNORED here.
+fn split_table_dep(ctrl: &str) -> (&str, usize) {
+    match ctrl.split_once(';') {
+        Some((head, sel)) => (head, sel.trim().parse().unwrap_or(1).max(1)),
+        None => (ctrl, 1),
+    }
+}
+
+/// Parses a control string into per-axis controls (LRM 9.21.2: "a set of
+/// comma separated sub-strings ... with the first sub-string applying to
+/// the outermost dimension and so on"). A single sub-string applies to
+/// every axis (Table 9-32's common shape); with several, a missing tail
+/// takes the default. The old lowering scanned the WHOLE string, so any
+/// 'L' anywhere made ALL axes extrapolate linearly and any '3' made all
+/// axes cubic -- a per-dimension request was silently executed with the
+/// wrong method (kernel audit). Unsupported characters ('2', 'I') are
+/// refused by validation before this runs.
+fn parse_table_ctrl(ctrl: Option<&str>, ndim: usize) -> Vec<TblAxisCtrl> {
+    let Some(ctrl) = ctrl else { return vec![TblAxisCtrl::default(); ndim] };
+    let (body, _) = split_table_dep(ctrl);
+    let parse_one = |sub: &str| -> TblAxisCtrl {
+        let mut interp = TblInterp::Linear;
+        let mut ends: Vec<TblExtrap> = Vec::new();
+        for c in sub.chars() {
+            match c {
+                '1' => interp = TblInterp::Linear,
+                '3' => interp = TblInterp::Cubic,
+                'D' | 'd' => interp = TblInterp::Closest,
+                'C' | 'c' => ends.push(TblExtrap::Clamp),
+                'L' | 'l' => ends.push(TblExtrap::Linear),
+                'E' | 'e' => ends.push(TblExtrap::Error),
+                _ => {}
+            }
+        }
+        let (lo, hi) = match *ends.as_slice() {
+            [] => (TblExtrap::Linear, TblExtrap::Linear),
+            [one] => (one, one),
+            [a, b, ..] => (a, b),
+        };
+        TblAxisCtrl { interp, lo, hi }
+    };
+    let subs: Vec<String> =
+        body.split(',').map(|s| s.chars().filter(|c| !c.is_whitespace()).collect()).collect();
+    if subs.len() <= 1 {
+        vec![parse_one(subs.first().map(String::as_str).unwrap_or("")); ndim]
+    } else {
+        (0..ndim)
+            .map(|i| subs.get(i).map(|s| parse_one(s)).unwrap_or_default())
+            .collect()
+    }
+}
+
 /// Builds the natural-cubic-spline "moment matrix" `L` (n×n) for an ascending `grid`, such that the
 /// vector of second derivatives (moments) `M = L · y` for any data vector `y` sampled on the grid.
 ///
@@ -325,6 +446,32 @@ impl BodyLoweringCtx<'_, '_, '_> {
         let zero = self.ctx.fconst(0.0);
         let ok = self.ctx.ins().fgt(v, zero); // false for 0, negatives and NaN
         self.ctx.make_select(ok, |_, branch| if branch { v } else { zero })
+    }
+
+    /// LRM 9.13.2 (kernel audit): the mean/degree_of_freedom/k_stage arguments
+    /// of the exponential, poisson, chi-square, Student's-t and Erlang
+    /// distributions "shall be greater than zero (0). Otherwise an error shall
+    /// be reported." For a deck-derived argument this reports the mandated
+    /// error via the E-509 runtime-fatal route; other shapes fall through to
+    /// the caller's clamp (or the RNG) exactly as before.
+    fn dist_domain_positive(
+        &mut self,
+        name: &str,
+        what: &str,
+        arg: ExprId,
+        val: Value,
+    ) -> Value {
+        let zero = self.ctx.fconst(0.0);
+        let ok = self.ctx.ins().fgt(val, zero); // false for 0, negatives and NaN
+        let one = self.ctx.fconst(1.0);
+        self.guard_arg_domain(
+            name,
+            &format!("{what} greater than zero, LRM 9.13.2"),
+            arg,
+            val,
+            ok,
+            one,
+        )
     }
 
     /// Enhancement-505: `$rdist_uniform`'s bounds, ordered. The LRM requires the
@@ -910,6 +1057,81 @@ impl BodyLoweringCtx<'_, '_, '_> {
     /// row-major value tensor (outermost axis slowest). Format (whitespace-separated, comments
     /// ignored): `ndim`, then `ndim` axis sizes, then each axis's ascending coordinates, then
     /// `prod(sizes)` values. Returns `None` on a dimensionality mismatch or a truncated file.
+    /// Reads a table data file into per-LINE numeric rows (same comment and
+    /// finiteness rules as `read_table_tokens`; a line with any unusable
+    /// token is skipped whole). The LRM 9.21.1 isoline format is line-
+    /// structured -- "each line of the file represents one sample point" --
+    /// which the flat token reader cannot represent.
+    fn read_table_lines(&self, fname: &str) -> Vec<Vec<f64>> {
+        let Some(dir) = self.ctx.db.root_file_dir() else { return Vec::new() };
+        let Some(path) = dir.join(fname) else { return Vec::new() };
+        let Some(abs) = path.as_path() else { return Vec::new() };
+        let Ok(content) = std::fs::read_to_string(abs) else { return Vec::new() };
+        let mut out = Vec::new();
+        for line in content.lines() {
+            let line = line.trim();
+            if line.is_empty()
+                || line.starts_with('#')
+                || line.starts_with("//")
+                || line.starts_with('*')
+            {
+                continue;
+            }
+            let row: Option<Vec<f64>> = line
+                .split_whitespace()
+                .map(|tok| tok.parse::<f64>().ok().filter(|v| v.is_finite()))
+                .collect();
+            if let Some(row) = row {
+                if !row.is_empty() {
+                    out.push(row);
+                }
+            }
+        }
+        out
+    }
+
+    /// LRM 9.21.1 (kernel audit): the normative N+M-column data format --
+    /// "the first N columns ... the independent variables", one sample per
+    /// line, M >= 1 dependent columns of which `dep` (1-based) is selected.
+    /// Rows group recursively by their leading coordinate into ISOLINES,
+    /// which the clause explicitly allows to be RAGGED ("the number and
+    /// spacing of samples may be different on each isoline") -- the LRM's
+    /// own sample.dat is. Each level sorts ascending; a repeated full
+    /// coordinate keeps its first row, matching the 1-D `dedup_by`.
+    fn read_table_isoline_tree(&self, fname: &str, ndim: usize, dep: usize) -> Option<TblTree> {
+        let rows = self.read_table_lines(fname);
+        let width = rows.first()?.len();
+        if width <= ndim || rows.iter().any(|r| r.len() != width) {
+            return None;
+        }
+        let dep_col = ndim + (dep - 1).min(width - ndim - 1);
+        let refs: Vec<&Vec<f64>> = rows.iter().collect();
+        Some(build_tbl_tree(&refs, 0, ndim, dep_col))
+    }
+
+    /// Interpolates a (possibly ragged) isoline tree: each axis level
+    /// interpolates its children at the remaining coordinates, then runs
+    /// the shared 1-D kernel over this level's coordinates -- for
+    /// rectangular data this is exactly `interp_nd`.
+    fn interp_tbl_tree(
+        &mut self,
+        coords: &[Value],
+        tree: &TblTree,
+        ctrls: &[TblAxisCtrl],
+    ) -> Value {
+        match tree {
+            TblTree::Leaf(v) => self.ctx.fconst(*v),
+            TblTree::Axis(entries) => {
+                let grid: Vec<f64> = entries.iter().map(|(c, _)| *c).collect();
+                let vals: Vec<Value> = entries
+                    .iter()
+                    .map(|(_, t)| self.interp_tbl_tree(&coords[1..], t, &ctrls[1..]))
+                    .collect();
+                self.interp_1d_ctrl(coords[0], &grid, &vals, ctrls[0])
+            }
+        }
+    }
+
     fn read_table_grid_nd(&self, fname: &str, ndim: usize) -> Option<(Vec<Vec<f64>>, Vec<f64>)> {
         let mut it = self.read_table_tokens(fname).into_iter();
         if it.next()? as usize != ndim {
@@ -926,6 +1148,13 @@ impl BodyLoweringCtx<'_, '_, '_> {
         }
         let total: usize = sizes.iter().product();
         let mut tensor = (0..total).map(|_| it.next()).collect::<Option<Vec<f64>>>()?;
+        // The header must account for the token count EXACTLY: with the LRM
+        // 9.21.1 isoline format now accepted as the fallback (kernel audit),
+        // an isoline file whose first token happens to equal `ndim` must not
+        // half-parse as this self-describing format and swallow the rest.
+        if it.next().is_some() {
+            return None;
+        }
         // Enhancement-460: `interp_1d_values` below states its precondition -- "`grid` is
         // ascending" -- and this reader was the one path that never established it. The
         // 1-D forms (inline pairs and the two-column file) sort and de-duplicate their
@@ -992,7 +1221,7 @@ impl BodyLoweringCtx<'_, '_, '_> {
         x: Value,
         grid: &[f64],
         vals: &[Value],
-        linear_extrap: bool,
+        ctrl: TblAxisCtrl,
     ) -> Value {
         let n = grid.len();
         if n == 0 {
@@ -1021,17 +1250,127 @@ impl BodyLoweringCtx<'_, '_, '_> {
             let seg_i = seg[i];
             result = self.ctx.make_select(ge, move |_c, b| if b { seg_i } else { result });
         }
-        if !linear_extrap {
+        // LRM 9.21.2 (kernel audit): the extrapolation method is PER END.
+        // Linear is the segments' own behaviour; Clamp overrides with the
+        // endpoint value; Error aborts the evaluation (Table 9-31's 'E').
+        result = self.apply_end_extrap(x, grid, vals[0], vals[n - 1], result, ctrl);
+        result
+    }
+
+    /// Applies `ctrl`'s per-end extrapolation to an interpolation whose
+    /// interior `result` already extends linearly past both ends: Clamp
+    /// selects the endpoint value, Error reports the LRM 9.21.2 runtime
+    /// fatal (and clamps as the never-observed safe value), Linear leaves
+    /// the segment extension alone.
+    fn apply_end_extrap(
+        &mut self,
+        x: Value,
+        grid: &[f64],
+        v_first: Value,
+        v_last: Value,
+        mut result: Value,
+        ctrl: TblAxisCtrl,
+    ) -> Value {
+        let n = grid.len();
+        if ctrl.lo != TblExtrap::Linear {
             let g0 = self.ctx.fconst(grid[0]);
-            let v0 = vals[0];
             let below = self.ctx.ins().flt(x, g0);
-            result = self.ctx.make_select(below, move |_c, b| if b { v0 } else { result });
+            let fatal = ctrl.lo == TblExtrap::Error;
+            result = self.ctx.make_select(below, move |ctx, b| {
+                if b {
+                    if fatal {
+                        ctx.runtime_fatal(
+                            "$table_model: the evaluation point is below the table and the \
+                             control string requests an error there ('E', LRM 9.21.2); it is",
+                            Some(x),
+                        );
+                    }
+                    v_first
+                } else {
+                    result
+                }
+            });
+        }
+        if ctrl.hi != TblExtrap::Linear {
             let gl = self.ctx.fconst(grid[n - 1]);
-            let vl = vals[n - 1];
             let above = self.ctx.ins().fgt(x, gl);
-            result = self.ctx.make_select(above, move |_c, b| if b { vl } else { result });
+            let fatal = ctrl.hi == TblExtrap::Error;
+            result = self.ctx.make_select(above, move |ctx, b| {
+                if b {
+                    if fatal {
+                        ctx.runtime_fatal(
+                            "$table_model: the evaluation point is above the table and the \
+                             control string requests an error there ('E', LRM 9.21.2); it is",
+                            Some(x),
+                        );
+                    }
+                    v_last
+                } else {
+                    result
+                }
+            });
         }
         result
+    }
+
+    /// LRM 9.21.4 (kernel audit): Table 9-30's 'D' -- "the value of the
+    /// dependent variable at the closest sample point": a select chain over
+    /// the midpoints between adjacent knots. "If the interpolation point
+    /// lies equally distant between two sample points, the sample point
+    /// [farther] from zero" wins -- the tie sits exactly on a midpoint, so
+    /// the comparison there is inclusive toward whichever knot has the
+    /// larger magnitude (decidable at compile time). Outside the grid the
+    /// closest point IS the endpoint, so only 'E' changes the ends.
+    fn interp_1d_closest(
+        &mut self,
+        x: Value,
+        grid: &[f64],
+        vals: &[Value],
+        ctrl: TblAxisCtrl,
+    ) -> Value {
+        let n = grid.len();
+        if n == 0 {
+            return F_ZERO;
+        }
+        let mut result = vals[0];
+        for i in 1..n {
+            let mid = self.ctx.fconst(0.5 * (grid[i - 1] + grid[i]));
+            let upper_wins_tie = grid[i].abs() >= grid[i - 1].abs();
+            let take_upper = if upper_wins_tie {
+                self.ctx.ins().fge(x, mid)
+            } else {
+                self.ctx.ins().fgt(x, mid)
+            };
+            let vi = vals[i];
+            result = self.ctx.make_select(take_upper, move |_c, b| if b { vi } else { result });
+        }
+        // 'E' still aborts out of range; C/L are the closest point itself.
+        let err_only = |e: TblExtrap| {
+            if e == TblExtrap::Error {
+                TblExtrap::Error
+            } else {
+                TblExtrap::Linear // leave the closest-endpoint result alone
+            }
+        };
+        let ends =
+            TblAxisCtrl { interp: ctrl.interp, lo: err_only(ctrl.lo), hi: err_only(ctrl.hi) };
+        self.apply_end_extrap(x, grid, vals[0], vals[n - 1], result, ends)
+    }
+
+    /// Dispatches one axis of a compile-time-grid `$table_model` on its
+    /// control (LRM 9.21.2): linear, natural cubic spline, or closest-point.
+    fn interp_1d_ctrl(
+        &mut self,
+        x: Value,
+        grid: &[f64],
+        vals: &[Value],
+        ctrl: TblAxisCtrl,
+    ) -> Value {
+        match ctrl.interp {
+            TblInterp::Linear => self.interp_1d_values(x, grid, vals, ctrl),
+            TblInterp::Cubic => self.interp_1d_spline(x, grid, vals, ctrl),
+            TblInterp::Closest => self.interp_1d_closest(x, grid, vals, ctrl),
+        }
     }
 
     /// Enhancement-392: the largest runtime `$table_model` that is normalised
@@ -1543,11 +1882,11 @@ impl BodyLoweringCtx<'_, '_, '_> {
         x: Value,
         grid: &[f64],
         vals: &[Value],
-        linear_extrap: bool,
+        ctrl: TblAxisCtrl,
     ) -> Value {
         let n = grid.len();
         if n < 3 {
-            return self.interp_1d_values(x, grid, vals, linear_extrap);
+            return self.interp_1d_values(x, grid, vals, ctrl);
         }
         let l = natural_cubic_spline_moment_matrix(grid);
         // moments M[i] (M[0] = M[n-1] = 0 for a natural spline)
@@ -1600,13 +1939,14 @@ impl BodyLoweringCtx<'_, '_, '_> {
             result = self.ctx.make_select(ge, move |_c, b| if b { seg_i } else { result });
         }
 
-        // Extrapolation outside [grid[0], grid[n-1]].
+        // Extrapolation outside [grid[0], grid[n-1]], PER END (LRM 9.21.2).
+        // Linear continues the spline's end tangent; Clamp holds the endpoint
+        // value; Error is Table 9-31's 'E' via `apply_end_extrap`.
         let h0 = grid[1] - grid[0];
         let hl = grid[n - 1] - grid[n - 2];
-        if linear_extrap {
+        if ctrl.lo == TblExtrap::Linear {
             // continue the spline's end tangent:
             //   S'(grid[0])   = (v1-v0)/h0 - h0/6 · M[1]
-            //   S'(grid[n-1]) = (v_{n-1}-v_{n-2})/h_l + h_l/6 · M[n-2]
             let g0 = self.ctx.fconst(grid[0]);
             let h0c = self.ctx.fconst(h0);
             let h06 = self.ctx.fconst(h0 / 6.0);
@@ -1619,7 +1959,9 @@ impl BodyLoweringCtx<'_, '_, '_> {
             let low = self.ctx.ins().fadd(vals[0], ext0);
             let below = self.ctx.ins().flt(x, g0);
             result = self.ctx.make_select(below, move |_c, b| if b { low } else { result });
-
+        }
+        if ctrl.hi == TblExtrap::Linear {
+            //   S'(grid[n-1]) = (v_{n-1}-v_{n-2})/h_l + h_l/6 · M[n-2]
             let gl = self.ctx.fconst(grid[n - 1]);
             let hlc = self.ctx.fconst(hl);
             let hl6 = self.ctx.fconst(hl / 6.0);
@@ -1632,17 +1974,8 @@ impl BodyLoweringCtx<'_, '_, '_> {
             let high = self.ctx.ins().fadd(vals[n - 1], extl);
             let above = self.ctx.ins().fgt(x, gl);
             result = self.ctx.make_select(above, move |_c, b| if b { high } else { result });
-        } else {
-            // clamp to the endpoint value (constant extrapolation)
-            let g0 = self.ctx.fconst(grid[0]);
-            let v0 = vals[0];
-            let below = self.ctx.ins().flt(x, g0);
-            result = self.ctx.make_select(below, move |_c, b| if b { v0 } else { result });
-            let gl = self.ctx.fconst(grid[n - 1]);
-            let vl = vals[n - 1];
-            let above = self.ctx.ins().fgt(x, gl);
-            result = self.ctx.make_select(above, move |_c, b| if b { vl } else { result });
         }
+        result = self.apply_end_extrap(x, grid, vals[0], vals[n - 1], result, ctrl);
         result
     }
 
@@ -1657,16 +1990,11 @@ impl BodyLoweringCtx<'_, '_, '_> {
         coords: &[Value],
         axes: &[Vec<f64>],
         tensor: &[f64],
-        linear_extrap: bool,
-        cubic: bool,
+        ctrls: &[TblAxisCtrl],
     ) -> Value {
         if coords.len() == 1 {
             let vals: Vec<Value> = tensor.iter().map(|&v| self.ctx.fconst(v)).collect();
-            return if cubic {
-                self.interp_1d_spline(coords[0], &axes[0], &vals, linear_extrap)
-            } else {
-                self.interp_1d_values(coords[0], &axes[0], &vals, linear_extrap)
-            };
+            return self.interp_1d_ctrl(coords[0], &axes[0], &vals, ctrls[0]);
         }
         let n0 = axes[0].len();
         if n0 == 0 || tensor.is_empty() {
@@ -1679,16 +2007,11 @@ impl BodyLoweringCtx<'_, '_, '_> {
                 &coords[1..],
                 &axes[1..],
                 &tensor[i * sub..(i + 1) * sub],
-                linear_extrap,
-                cubic,
+                &ctrls[1..],
             );
             rows.push(row);
         }
-        if cubic {
-            self.interp_1d_spline(coords[0], &axes[0], &rows, linear_extrap)
-        } else {
-            self.interp_1d_values(coords[0], &axes[0], &rows, linear_extrap)
-        }
+        self.interp_1d_ctrl(coords[0], &axes[0], &rows, ctrls[0])
     }
 
     /// Lowers `$table_model(x1, ..., xn, <data>[, "ctrl"])` to differentiable MIR: reads the
@@ -1714,13 +2037,16 @@ impl BodyLoweringCtx<'_, '_, '_> {
                 // A shorter y than x would index past the end; the extra abscissae
                 // describe no data, so drop them rather than fault.
                 let n = grid.len().min(vals.len());
-                let (linear_extrap, cubic) =
-                    match args.get(3).and_then(|&a| self.body.as_literal(a)) {
-                        Some(Literal::String(ctrl)) => {
-                            (ctrl.contains('L') || ctrl.contains('l'), ctrl.contains('3'))
-                        }
-                        _ => (false, false),
-                    };
+                // The runtime kernels keep a single linear/clamp switch;
+                // validation restricts runtime-array controls to the shapes
+                // they can express. The DEFAULT is the Table 9-31 linear
+                // extrapolation now (kernel audit) -- it used to clamp.
+                let ctrl = match args.get(3).and_then(|&a| self.body.as_literal(a)) {
+                    Some(Literal::String(c)) => parse_table_ctrl(Some(c), 1)[0],
+                    _ => TblAxisCtrl::default(),
+                };
+                let linear_extrap = ctrl.lo == TblExtrap::Linear;
+                let cubic = ctrl.interp == TblInterp::Cubic;
                 let x = self.lower_expr(args[0]);
                 // Enhancement-390: sort as the compile-time forms do, and honour the
                 // cubic control code instead of silently interpolating linearly.
@@ -1736,38 +2062,75 @@ impl BodyLoweringCtx<'_, '_, '_> {
 
         let is_str =
             |sel: &Self, e: ExprId| matches!(sel.body.as_literal(e), Some(Literal::String(_)));
-        let (ndim, is_file, has_ctrl) = if matches!(self.body.get_expr(args[1]), Expr::Array(_)) {
-            (1, false, args.len() > 2)
+        // LRM 9.21.1 (kernel audit): the 1-D array data may also arrive as a
+        // PAIR of arrays -- abscissae then values ("arrays of reals may be
+        // specified directly via the concatenation operator") -- where only
+        // the interleaved single-array layout was understood.
+        let two_arrays = args.len() >= 3
+            && matches!(self.body.get_expr(args[1]), Expr::Array(_))
+            && matches!(self.body.get_expr(args[2]), Expr::Array(_));
+        let (ndim, is_file, ctrl_idx) = if matches!(self.body.get_expr(args[1]), Expr::Array(_)) {
+            (1, false, if two_arrays { 3 } else { 2 })
         } else {
             match (1..args.len()).find(|&i| is_str(self, args[i])) {
-                Some(k) => (k, true, args.len() > k + 1),
+                Some(k) => (k, true, k + 1),
                 // defensive: no data argument at all (inference already diagnosed it)
-                None => (1, false, false),
+                None => (1, false, args.len()),
             }
         };
 
-        // The control string selects extrapolation ('L' -> linear, else clamp) and interpolation
-        // degree ('3' -> natural cubic spline, else multilinear). Following Enhancement-16/17's
-        // simplification, a code found anywhere applies to all axes (per-axis codes are future work).
-        let (linear_extrap, cubic) = if has_ctrl {
-            let ctrl = self.body.as_literal(args[ndim + 1]).unwrap().unwrap_str();
-            (ctrl.contains('L') || ctrl.contains('l'), ctrl.contains('3'))
-        } else {
-            (false, false)
-        };
+        // Per-axis controls (LRM 9.21.2) and the dependent-variable selector
+        // (`"1L;2"` picks dependent column 2 of a multi-column file).
+        let ctrl_str = args
+            .get(ctrl_idx)
+            .and_then(|&a| self.body.as_literal(a))
+            .and_then(|l| match l {
+                Literal::String(s) => Some(s.to_string()),
+                _ => None,
+            });
+        let ctrls = parse_table_ctrl(ctrl_str.as_deref(), ndim);
+        let dep = ctrl_str.as_deref().map(|c| split_table_dep(c).1).unwrap_or(1);
 
-        // read the grid into per-axis coordinate vectors + a row-major value tensor
-        let (axes, tensor) = if is_file && ndim >= 2 {
-            let fname = self.body.as_literal(args[ndim]).unwrap().unwrap_str();
-            match self.read_table_grid_nd(fname, ndim) {
-                Some(g) => g,
-                None => return F_ZERO,
+        if is_file {
+            let fname = self.body.as_literal(args[ndim]).unwrap().unwrap_str().to_string();
+            // the self-describing grid format keeps working for N >= 2; the
+            // LRM 9.21.1 N+M-column isoline format -- ragged isolines and the
+            // dependent selector included -- is the normative path (kernel
+            // audit). The 1-D two-column file reads identically through it.
+            let mut coords = Vec::with_capacity(ndim);
+            for i in 0..ndim {
+                coords.push(self.lower_expr(args[i]));
             }
-        } else {
-            // 1-D: inline `{x0,y0,...}` pairs or a two-column data file
-            let mut pts: Vec<(f64, f64)> = if is_file {
-                let fname = self.body.as_literal(args[1]).unwrap().unwrap_str();
-                self.read_noise_table_file(fname)
+            if ndim >= 2 {
+                if let Some((axes, tensor)) = self.read_table_grid_nd(&fname, ndim) {
+                    if axes.iter().any(|a| a.is_empty()) {
+                        return F_ZERO;
+                    }
+                    return self.interp_nd(&coords, &axes, &tensor, &ctrls);
+                }
+            }
+            return match self.read_table_isoline_tree(&fname, ndim, dep) {
+                Some(tree) => self.interp_tbl_tree(&coords, &tree, &ctrls),
+                None => F_ZERO,
+            };
+        }
+
+        let (axes, tensor): (Vec<Vec<f64>>, Vec<f64>) = {
+            // 1-D inline: `'{x0,y0,...}` interleaved pairs, or `'{xs}, '{ys}`
+            let mut pts: Vec<(f64, f64)> = if two_arrays {
+                let xs: Vec<f64> = match self.body.get_expr(args[1]) {
+                    Expr::Array(vals) => {
+                        vals.iter().map(|&e| self.eval_const_real(e).unwrap_or(0.0)).collect()
+                    }
+                    _ => Vec::new(),
+                };
+                let ys: Vec<f64> = match self.body.get_expr(args[2]) {
+                    Expr::Array(vals) => {
+                        vals.iter().map(|&e| self.eval_const_real(e).unwrap_or(0.0)).collect()
+                    }
+                    _ => Vec::new(),
+                };
+                xs.iter().zip(ys.iter()).map(|(&x, &y)| (x, y)).collect()
             } else {
                 match self.body.get_expr(args[1]) {
                     Expr::Array(vals) => {
@@ -1791,7 +2154,7 @@ impl BodyLoweringCtx<'_, '_, '_> {
         for i in 0..ndim {
             coords.push(self.lower_expr(args[i]));
         }
-        self.interp_nd(&coords, &axes, &tensor, linear_extrap, cubic)
+        self.interp_nd(&coords, &axes, &tensor, &ctrls)
     }
 
     fn lower_builtin(&mut self, expr: ExprId, builtin: BuiltIn, args: &[ExprId]) -> Value {
@@ -2175,12 +2538,23 @@ impl BodyLoweringCtx<'_, '_, '_> {
             }
             // `$analog_node_alias`/`$analog_port_alias` -> 0 (no alias created).
             BuiltIn::analog_node_alias | BuiltIn::analog_port_alias => ZERO,
-            // `$simprobe(inst, quantity [, default])` -> the supplied default, or
-            // 0.0 when the probe is unavailable and no default was given.
+            // `$simprobe(inst, quantity [, default])` -> the supplied default
+            // when the probe is unavailable -- which under the OSDI target is
+            // always; that IS the LRM 9.16 fallback. WITHOUT a default the
+            // same clause says "an error shall be generated": this used to
+            // return 0.0 and run on in silence (kernel audit); it now aborts
+            // through the E-509 runtime-fatal route, paired with a
+            // compile-time warning from `validation.rs`.
             BuiltIn::simprobe => {
                 if args.len() >= 3 {
                     self.lower_expr(args[2])
                 } else {
+                    self.ctx.runtime_fatal(
+                        "$simprobe: the probe cannot be resolved under this simulator and no \
+                         default expression was supplied; LRM 9.16 makes that an error (add a \
+                         third argument to fall back on)",
+                        None,
+                    );
                     F_ZERO
                 }
             }
@@ -2464,9 +2838,15 @@ impl BodyLoweringCtx<'_, '_, '_> {
                 }
             }
             BuiltIn::vt => {
-                // TODO make this a database input
-                const KB: f64 = 1.3806488e-23;
-                const Q: f64 = 1.602176565e-19;
+                // LRM 9.15 defines $vt only as kT/q; the VALUES follow the
+                // 2019 exact SI definitions -- the same source the shipped
+                // constants.vams defaults `P_K/`P_Q to (E-519's NIST2018 set)
+                // -- so `$vt(T)` and ``P_K*T/`P_Q`` agree inside one model.
+                // They used to differ by ~1.2e-6 relative: this arm carried
+                // CODATA-2010 values while the header shipped the exact ones
+                // (kernel audit).
+                const KB: f64 = 1.380649e-23;
+                const Q: f64 = 1.602176634e-19;
 
                 let fac = self.ctx.fconst(KB / Q);
                 let temp = match args.get(0) {
@@ -2615,9 +2995,18 @@ impl BodyLoweringCtx<'_, '_, '_> {
                 let zero = self.ctx.fconst(0.0);
                 let usable = self.ctx.ins().fgt(step_size, zero); // false for 0, <0 and NaN
                 let cur = self.ctx.use_place(PlaceKind::BoundStep);
+                // LRM 9.17.2 (kernel audit): "the next time step taken is no
+                // larger than the SMALLEST $bound_step() argument currently
+                // active" -- this used to overwrite the place, so with several
+                // calls in one evaluation the LAST one set the cap. Take the
+                // minimum instead; a negative incumbent (Enhancement-24's
+                // discontinuity sentinel) stays smaller than any usable bound,
+                // so an announced discontinuity keeps winning.
+                let tighter = self.ctx.ins().flt(step_size, cur);
+                let take_new = crate::stmt::bool_and(self.ctx, usable, tighter);
                 let bound = self
                     .ctx
-                    .make_select(usable, |_, branch| if branch { step_size } else { cur });
+                    .make_select(take_new, |_, branch| if branch { step_size } else { cur });
                 self.ctx.def_place(PlaceKind::BoundStep, bound);
                 GRAVESTONE
             }
@@ -2840,15 +3229,30 @@ impl BodyLoweringCtx<'_, '_, '_> {
                 let rr = self.rng_round_real(r);
                 self.ctx.ins().ficast(rr)
             }
+            // LRM 9.13.2 (kernel audit): "For the $rdist_exponential,
+            // $rdist_poisson, $rdist_chi_square, $rdist_t, and $rdist_erlang
+            // functions, the arguments mean, degree_of_freedom, and k_stage
+            // shall be greater than zero (0). Otherwise an error shall be
+            // reported." hir_ty refuses a violation it can SEE (a literal or
+            // localparam); the ordinary deck-supplied route reached the run
+            // time silently -- exponential/poisson clamped to a point mass,
+            // and chi_square/t/erlang passed the bad value straight to the
+            // RNG, returning deviates outside the distribution's own support.
+            // `dist_domain_positive` reports the mandated E-509-style runtime
+            // fatal for a deck-derived argument; the E-505/506 clamps stay as
+            // the safety net for values the guard cannot attribute to a
+            // parameter.
             BuiltIn::rdist_exponential => {
                 let seed = self.lower_expr(args[0]);
                 let mean = self.lower_expr(args[1]);
+                let mean = self.dist_domain_positive("$rdist_exponential", "mean", args[1], mean);
                 let mean = self.clamp_non_negative(mean);      // Enhancement-505
                 self.lower_rng(expr, RngFun::Exponential, seed, &[mean])
             }
             BuiltIn::dist_exponential => {
                 let seed = self.lower_expr(args[0]);
                 let mean = self.lower_num_as_real(args[1]);
+                let mean = self.dist_domain_positive("$dist_exponential", "mean", args[1], mean);
                 let mean = self.clamp_non_negative(mean);      // Enhancement-506
                 let r = self.lower_rng(expr, RngFun::Exponential, seed, &[mean]);
                 let rr = self.rng_round_real(r);
@@ -2857,6 +3261,7 @@ impl BodyLoweringCtx<'_, '_, '_> {
             BuiltIn::rdist_poisson => {
                 let seed = self.lower_expr(args[0]);
                 let mean = self.lower_expr(args[1]);
+                let mean = self.dist_domain_positive("$rdist_poisson", "mean", args[1], mean);
                 let mean = self.clamp_non_negative(mean);      // Enhancement-505
                 // stays REAL: $rdist_* is the real-valued family (Enhancement-376)
                 self.lower_rng(expr, RngFun::Poisson, seed, &[mean])
@@ -2864,6 +3269,7 @@ impl BodyLoweringCtx<'_, '_, '_> {
             BuiltIn::dist_poisson => {
                 let seed = self.lower_expr(args[0]);
                 let mean = self.lower_num_as_real(args[1]);
+                let mean = self.dist_domain_positive("$dist_poisson", "mean", args[1], mean);
                 let mean = self.clamp_non_negative(mean);      // Enhancement-506
                 // `Poisson` already returns an integral (but real) count.
                 let r = self.lower_rng(expr, RngFun::Poisson, seed, &[mean]);
@@ -2872,11 +3278,15 @@ impl BodyLoweringCtx<'_, '_, '_> {
             BuiltIn::rdist_chi_square => {
                 let seed = self.lower_expr(args[0]);
                 let dof = self.lower_expr(args[1]);
+                let dof = self
+                    .dist_domain_positive("$rdist_chi_square", "degree_of_freedom", args[1], dof);
                 self.lower_rng(expr, RngFun::ChiSquare, seed, &[dof])
             }
             BuiltIn::dist_chi_square => {
                 let seed = self.lower_expr(args[0]);
                 let dof = self.lower_num_as_real(args[1]);
+                let dof = self
+                    .dist_domain_positive("$dist_chi_square", "degree_of_freedom", args[1], dof);
                 let r = self.lower_rng(expr, RngFun::ChiSquare, seed, &[dof]);
                 let rr = self.rng_round_real(r);
                 self.ctx.ins().ficast(rr)
@@ -2884,11 +3294,13 @@ impl BodyLoweringCtx<'_, '_, '_> {
             BuiltIn::rdist_t => {
                 let seed = self.lower_expr(args[0]);
                 let dof = self.lower_expr(args[1]);
+                let dof = self.dist_domain_positive("$rdist_t", "degree_of_freedom", args[1], dof);
                 self.lower_rng(expr, RngFun::StudentT, seed, &[dof])
             }
             BuiltIn::dist_t => {
                 let seed = self.lower_expr(args[0]);
                 let dof = self.lower_num_as_real(args[1]);
+                let dof = self.dist_domain_positive("$dist_t", "degree_of_freedom", args[1], dof);
                 let r = self.lower_rng(expr, RngFun::StudentT, seed, &[dof]);
                 let rr = self.rng_round_real(r);
                 self.ctx.ins().ficast(rr)
@@ -2897,12 +3309,16 @@ impl BodyLoweringCtx<'_, '_, '_> {
                 let seed = self.lower_expr(args[0]);
                 let k = self.lower_expr(args[1]);
                 let mean = self.lower_expr(args[2]);
+                let k = self.dist_domain_positive("$rdist_erlang", "k_stage", args[1], k);
+                let mean = self.dist_domain_positive("$rdist_erlang", "mean", args[2], mean);
                 self.lower_rng(expr, RngFun::Erlang, seed, &[k, mean])
             }
             BuiltIn::dist_erlang => {
                 let seed = self.lower_expr(args[0]);
                 let k = self.lower_num_as_real(args[1]);
                 let mean = self.lower_num_as_real(args[2]);
+                let k = self.dist_domain_positive("$dist_erlang", "k_stage", args[1], k);
+                let mean = self.dist_domain_positive("$dist_erlang", "mean", args[2], mean);
                 let r = self.lower_rng(expr, RngFun::Erlang, seed, &[k, mean]);
                 let rr = self.rng_round_real(r);
                 self.ctx.ins().ficast(rr)
@@ -3024,21 +3440,19 @@ impl BodyLoweringCtx<'_, '_, '_> {
     /// `(seed, salt, real_params...)` where `salt` is the call `ExprId` (a stable,
     /// unique per-call-site constant that decorrelates independent draws). Returns
     /// the raw real result; integer-returning builtins cast/round it themselves.
-    /// Enhancement-395: advances the caller's seed VARIABLE, giving the seed the
-    /// `inout` semantics the LRM specifies for every `$random`/`$dist_*` form.
     ///
-    /// Without this the draw was a pure function of `(seed, salt)`, and `salt` is
-    /// a per-CALL-SITE constant -- so a call inside a loop had loop-invariant
-    /// arguments, was hoisted, and returned THE SAME VALUE on every iteration. A
-    /// Monte-Carlo loop drew N identical samples. Distinct call sites differed
-    /// (distinct salt), which is exactly what hid it: straight-line model code
-    /// looked correct.
-    ///
-    /// The advance is the classic LCG step, computed in the model rather than
-    /// through a new callback so the OSDI ABI is untouched. `osdi_rng_state`
-    /// avalanche-mixes `(seed, salt)`, so consecutive LCG seeds decorrelate fully.
-    /// Writing the variable also makes the draw genuinely loop-variant, which is
-    /// what stops it being hoisted.
+    /// DELIBERATE DEVIATION from LRM 9.13.1's inout seed (kernel audit, and
+    /// compliance doc section 7.3): the draw is a PURE function of
+    /// `(seed value, salt)` -- the seed variable is never written, and
+    /// successive calls at one call site with one seed value return the
+    /// identical number, so an in-model sampling loop collects N copies of
+    /// one deviate. An advancing seed would return a different value on
+    /// every Newton iteration and destroy convergence; what the pure form
+    /// buys is reproducible Monte Carlo and independent per-instance
+    /// variation, with per-call-site salts decorrelating distinct calls.
+    /// (An earlier comment here claimed E-395 added an in-model LCG seed
+    /// advance; the behavior proves no such advance exists, and the
+    /// compliance doc records the pure semantics as the contract.)
     fn lower_rng(
         &mut self,
         expr: ExprId,

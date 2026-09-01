@@ -1,0 +1,6 @@
+`include "disciplines.vams"
+module macsi(p);
+  inout p;
+  electrical p;
+  analog I(p) <+ -ac_stim();
+endmodule

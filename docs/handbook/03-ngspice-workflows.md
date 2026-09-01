@@ -24,7 +24,16 @@ n1 in out mymod          ; instance (ports in declaration order)
 - **Instance-line parameters** (`n1 in out mymod r=2k`) work for parameters
   the model marks `(* type="instance" *)` — plus the built-in `m=<mult>`
   device multiplicity, which correctly scales currents, charges, and noise
-  (`$mfactor` in the model's own source).
+  (`$mfactor` in the model's own source). A **negative** `m` is warned and
+  ignored on every route — `alter` included, which used to apply it
+  silently, flipping the device's current and making `.noise` spectra NaN
+  through the compiled `sqrt(m)` factor — while `m=0` stays the silent
+  "disable this instance" idiom, exactly as for built-ins.
+- `pre_osdi` loads **openvaf-reloaded objects only** (OSDI ≥ 0.7).
+  Original-OpenVAF v0.3 objects are rejected with a recompile message —
+  the in-repo ABI diverged, and the old acceptance path misread them
+  (wrong metadata in DC, a transient segfault). See `README_OSDI.md` for
+  the layer's deliberate bounds.
 - Multiple instances of one model card get independent state and
   independent per-instance values of position/multiplicity parameters.
 

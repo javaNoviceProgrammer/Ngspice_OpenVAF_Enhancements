@@ -379,8 +379,13 @@ for i,(lbl,b,ex,want) in enumerate([("$table_model(x,'{data})","y = $table_model
     chk("misc",lbl,st=="ok" and g is not None and abs(g-want)<1e-9,msg or f"{g} want {want}")
 for i,(lbl,b,dc) in enumerate([('$simprobe(dev,param)','y = $simprobe("v1","dc");',Y),
    ('$simprobe(dev,param,default)','y = $simprobe("no","x",3.5);',Y),
-   ('$analog_node_alias(node,"n")','r = $analog_node_alias(p,"vp");'," integer r;\n"),
-   ('$analog_port_alias(node,"n")','r = $analog_port_alias(p,"ip");'," integer r;\n"),
+   # E-527 (kernel audit): the aliases are analog-initial-only per LRM 9.20,
+   # so the compile-must-pass form declares its own analog initial block; the
+   # in-analog-block misuse is pinned as a refusal below.
+   ('$analog_node_alias(node,"n")','',
+    " integer r;\n analog initial r = $analog_node_alias(p,\"vp\");\n"),
+   ('$analog_port_alias(node,"n")','',
+    " integer r;\n analog initial r = $analog_port_alias(p,\"ip\");\n"),
    ('$test$plusargs("flag")','r = $test$plusargs("f");'," integer r;\n"),
    ('$value$plusargs("f=%d",int)','r = $value$plusargs("f=%d",iv);'," integer r, iv;\n"),
    ('$value$plusargs("f=%f",real)','r = $value$plusargs("f=%f",rv);'," integer r; real rv;\n"),
@@ -389,6 +394,13 @@ for i,(lbl,b,dc) in enumerate([('$simprobe(dev,param)','y = $simprobe("v1","dc")
     d,rc,o=build(mod(b,dc),"P%02d"%i)
     e=[l for l in o.splitlines() if 'error' in l.lower()]
     chk("misc",lbl,rc==0,(e[0][7:52] if e else ""))
+
+# E-527 (kernel audit): the 9.20 context rule is enforced -- an alias call in
+# a plain analog block is the LRM's own error.
+d,rc,o=build(mod('r = $analog_node_alias(p,"vp");'," integer r;\n"),"PA1")
+chk("misc",'$analog_node_alias in a plain analog block is the LRM 9.20 error',
+    rc!=0 and "analog initial" in o,
+    next((l[7:60] for l in o.splitlines() if 'error' in l.lower()),""))
 
 # ---- the LRM forms that are deliberately REFUSED (see the header) ----
 print("\n=== refused by design, each with the reason ===")

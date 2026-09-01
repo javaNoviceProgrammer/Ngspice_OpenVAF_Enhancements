@@ -218,10 +218,13 @@ if DIST:
     DECK = ("V1 a 0 dc 0.5\nN1 a 0 o mm\n.model mm distfam {card}\nRo o 0 1meg\n")
     CTL = f"pre_osdi {os.path.basename(DIST)}\ntran 1n 200n\nprint v(o)"
 
+    # E-527 (kernel audit): LRM 9.13.2 says a non-positive mean "shall be
+    # reported" as an ERROR -- the deck route used to clamp in silence; it
+    # aborts with the mandated runtime fatal now.
     rc, out = run(DECK.format(card="pick=0 mean=-1"), CTL, "dfe")
-    vs = rows(out)
-    check("$dist_exponential with a deck mean of -1 draws no negatives",
-          bool(vs) and min(vs) >= 0.0, f"min={min(vs) if vs else None}")
+    check("$dist_exponential with a deck mean of -1 reports the LRM 9.13.2 error",
+          "9.13.2" in out and "$dist_exponential" in out,
+          next((l.strip()[:60] for l in out.splitlines() if "fatal" in l.lower()), ""))
 
     rc, out = run(DECK.format(card="pick=0 mean=1"), CTL, "dfe2")
     vs = rows(out)

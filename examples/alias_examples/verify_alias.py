@@ -45,6 +45,23 @@ def check(desc, got, exp, results):
     print(f"    {'PASS' if ok else 'FAIL'}  {desc:22s} got={got!r} expected={exp!r}")
 
 
+def refused(desc, src, needle, results):
+    va = os.path.join(HERE, "_ref.va")
+    with open(va, "w") as fh:
+        fh.write(src)
+    r = subprocess.run([OPENVAF, "_ref.va", "-o", "_ref.osdi"], cwd=HERE,
+                       capture_output=True, text=True)
+    out = r.stdout + r.stderr
+    ok = needle in out
+    results.append(ok)
+    print(f"    {'PASS' if ok else 'FAIL'}  {desc}")
+    for junk in ("_ref.va", "_ref.osdi"):
+        try:
+            os.remove(os.path.join(HERE, junk))
+        except OSError:
+            pass
+
+
 def main():
     fields = run()
     results = []
@@ -53,8 +70,19 @@ def main():
     #  examples/plusargs_examples.)
     check("$analog_node_alias", fields.get("node_alias"), "0", results)
     check("$analog_port_alias", fields.get("port_alias"), "0", results)
-    check("$simprobe (no default)", fields.get("simprobe"), "0", results)
     check("$simprobe (default 3.5)", fields.get("simprobe_default"), "3.5", results)
+
+    # E-527 (kernel audit): the context and no-default rules are enforced now.
+    HDR = ('`include "disciplines.vams"\n'
+           "module m(p, n); inout p, n; electrical p, n; integer x; real y;\n")
+    refused("alias outside analog initial is the LRM 9.20 error",
+            HDR + "analog begin x = $analog_node_alias(p, \"a\");"
+                  " I(p,n) <+ V(p,n); end\nendmodule\n",
+            "only allowed inside an analog initial block", results)
+    refused("no-default $simprobe warns it is fatal (LRM 9.16)",
+            HDR + "analog begin y = $simprobe(\"i\", \"q\");"
+                  " I(p,n) <+ V(p,n); end\nendmodule\n",
+            "FATAL at run time", results)
 
     ok = all(results)
     print(f"\n{'ALL PASS' if ok else 'SOME CHECKS FAILED'} "

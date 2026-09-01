@@ -169,7 +169,24 @@ extern SPICEdev *osdi_create_spicedev(const OsdiRegistryEntry *entry) {
   }
 
   if (!entry->has_m) {
-    *num_instance_para_names += 1;
+    /* OSDI-layer audit: the synthesized `m` alias row is only WRITTEN when
+     * the descriptor carries an instance parameter literally named
+     * "$mfactor" (write_param_info above). Counting the slot
+     * unconditionally left the table's last IFparm row zeroed for a foreign
+     * object without one -- keyword NULL, id 0 -- and devhelp (or any
+     * instanceParms walker) showed a phantom "(null)" row, one strcmp away
+     * from a crash. Unreachable for openvaf-r output, which always emits
+     * $mfactor; reachable for any hand-written object. Count under the same
+     * condition the writer uses. */
+    bool descr_has_mfactor = false;
+    for (uint32_t i = 0; i < descr->num_instance_params; i++) {
+      if (!strcmp(descr->param_opvar[i].name[0], "$mfactor")) {
+        descr_has_mfactor = true;
+        break;
+      }
+    }
+    if (descr_has_mfactor)
+      *num_instance_para_names += 1;
   }
 
   /* Enhancement-394: one read-only terminal current per terminal, `i(<term>)`.

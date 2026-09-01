@@ -1,0 +1,23 @@
+`include "disciplines.vams"
+module tblm2(a, c);
+  inout a, c; electrical a, c;
+  (* desc="interp at 1.5" *)        real t1;
+  (* desc="extrap default at 4" *)  real t2;
+  (* desc="extrap 1C at 4" *)       real t3;
+  (* desc="extrap 1L at 4" *)       real t4;
+  (* desc="2d rect (0.25,3.5)" *)   real t6;
+  (* desc="inline pairs at 1.5" *)  real t8;
+  (* desc="sep arrays at 1.5" *)    real t9;
+  (* desc="extrap default at 0" *)  real t10;
+  analog begin
+    t1 = $table_model(1.5, "lin.dat");
+    t2 = $table_model(4.0, "lin.dat");
+    t3 = $table_model(4.0, "lin.dat", "1C");
+    t4 = $table_model(4.0, "lin.dat", "1L");
+    t6 = $table_model(0.25, 3.5, "rect.dat");
+    t8 = $table_model(1.5, '{1.0, 2.0, 2.0, 4.0, 3.0, 6.0});
+    t9 = $table_model(1.5, '{1.0, 2.0, 3.0}, '{2.0, 4.0, 6.0});
+    t10 = $table_model(0.0, "lin.dat");
+    I(a,c) <+ V(a,c)/1e3;
+  end
+endmodule

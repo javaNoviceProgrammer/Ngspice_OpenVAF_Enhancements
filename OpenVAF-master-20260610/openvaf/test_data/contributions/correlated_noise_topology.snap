@@ -26,6 +26,7 @@ Topology {
                     noise: [
                         Noise {
                             name: Spur(2),
+                            idx: 1,
                             kind: WhiteNoise {
                                 pwr: v55,
                             },
@@ -74,6 +75,7 @@ Topology {
             noise: [
                 Noise {
                     name: Spur(1),
+                    idx: 0,
                     kind: WhiteNoise {
                         pwr: v54,
                     },

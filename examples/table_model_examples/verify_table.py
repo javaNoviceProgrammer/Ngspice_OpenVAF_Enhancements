@@ -4,7 +4,9 @@ verify_table.py -- verifies the Enhancement-16 `$table_model` lookup-table
 interpolation end-to-end through version11's own openvaf-r + ngspice:
 
   * `table_xfer` -- an INLINE-array transfer function V(out)=table(V(in)); its DC
-    sweep must match a reference piecewise-linear interpolation (constant clamp).
+    sweep must match a reference piecewise-linear interpolation with LINEAR
+    end extrapolation -- the LRM 9.21.2 default since the E-527 kernel audit
+    (no control string used to clamp; "1C" is the spelling that clamps now).
   * `table_res`  -- a FILE-based nonlinear resistor I(p,n)=table(V(p,n)); driven
     through a series resistor, its nonlinear DC operating point must converge to
     the analytic solution -- which only works if the interpolation is
@@ -83,11 +85,19 @@ def main():
             "dc vin -1 5 0.25\nwrdata xfer.txt v(in) v(out)\n.endc\n.end\n")
     d = run_ngspice(deck, "xfer.txt")
     vin, vout = d[:, 1], d[:, 3]
-    ref = np.interp(vin, XFER_XP, XFER_FP)  # numpy default = constant clamp
+    # LRM 9.21.2 default: LINEAR extrapolation on both ends (E-527); numpy's
+    # np.interp clamps, so continue the end-segment slopes explicitly.
+    ref = np.interp(vin, XFER_XP, XFER_FP)
+    lo_slope = (XFER_FP[1] - XFER_FP[0]) / (XFER_XP[1] - XFER_XP[0])
+    hi_slope = (XFER_FP[-1] - XFER_FP[-2]) / (XFER_XP[-1] - XFER_XP[-2])
+    below = vin < XFER_XP[0]
+    above = vin > XFER_XP[-1]
+    ref[below] = XFER_FP[0] + (vin[below] - XFER_XP[0]) * lo_slope
+    ref[above] = XFER_FP[-1] + (vin[above] - XFER_XP[-1]) * hi_slope
     xfer_err = np.max(np.abs(vout - ref))
     good = xfer_err < 1e-9
     ok = ok and good
-    print(f"{'transfer function (inline table, clamp)':44s} max err {xfer_err:.2e}  {'PASS' if good else 'FAIL'}")
+    print(f"{'transfer function (inline table, lin ext)':44s} max err {xfer_err:.2e}  {'PASS' if good else 'FAIL'}")
 
     # --- DC: nonlinear resistor operating point vs analytic root --------------
     deck = ("* table_res nonlinear DC\n"

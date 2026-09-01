@@ -272,11 +272,13 @@ def main():
           amod('  r = $simparam("minr", 1.0);\n'), "sp_dflt2")
     clean("a plusarg-channel name is left alone",
           amod('  r = $simparam("$test$plusargs$foo", 0.0);\n'), "sp_pa")
-    for name in ("analysis_name", "simulator"):
+    # E-527 (kernel audit): analysis_type and cwd joined the served set.
+    for name in ("analysis_name", "analysis_type", "cwd", "simulator"):
         clean(f'$simparam$str("{name}") -- ngspice serves it -- is silent',
               amod(f'  $display("%s", $simparam$str("{name}"));\n'), "ss_" + name)
-    for name in ("cwd", "module", "instance", "path"):
-        warns(f'$simparam$str("{name}") warns -- LRM name, ngspice serves none of them',
+    for name in ("module", "instance", "path"):
+        warns(f'$simparam$str("{name}") warns -- LRM name with no instance identity '
+              f'in the channel',
               amod(f'  $display("%s", $simparam$str("{name}"));\n'), "ssb_" + name, L025)
 
     # the lint must be a LINT: allowable, and deniable

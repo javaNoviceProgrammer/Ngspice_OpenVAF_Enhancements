@@ -43,18 +43,31 @@ int OSDIacLoad(GENmodel *inModel, CKTcircuit *ckt) {
 
       /* Enhancement-51: inject ac_stim small-signal stimulus sources into the
        * complex AC RHS. load_ac_stim fills [re, im] pairs (factor*mag*e^{j*phase},
-       * phase in radians per the LRM); each active source (analysis name "ac" --
-       * the name of THIS analysis) adds +s at node_1 and -s at node_2. Sources
-       * bound to other analysis names stay inactive, per LRM 4.6.3. */
+       * phase in radians per the LRM); each active source adds +s at node_1 and
+       * -s at node_2. Sources bound to other analysis names stay inactive, per
+       * LRM 4.6.3.
+       *
+       * Analysis-noise audit, LRM 4.6.3: "returns zero on all small-signal
+       * analyses using names which do not match analysis_name". ngspice's
+       * .noise reuses this loader for its gain solve (noisean.c sets
+       * MODEACNOISE), and the match was against the LITERAL "ac" -- so an
+       * ac_stim("ac") source was injected into the noise gain solve, poisoning
+       * the input-referred noise by exactly the injected stimulus (measured
+       * 5.75e-12 against a 5.76e-9 control on a 1k/1k divider), while
+       * ac_stim("noise") could never become active even though this simulator
+       * itself names the analysis "noise". Match the RUNNING small-signal
+       * analysis instead. */
       if (descr->num_ac_stim_src > 0) {
         uint32_t n = descr->num_ac_stim_src;
         double *stim = TMALLOC(double, 2 * n);
         uint32_t *node_mapping =
             (uint32_t *)(((char *)inst) + descr->node_mapping_offset);
+        const char *running =
+            (ckt->CKTmode & MODEACNOISE) ? "noise" : "ac";
         descr->load_ac_stim(inst, model, stim);
         for (uint32_t k = 0; k < n; k++) {
           const OsdiAcStimSource *src = &descr->ac_stim_sources[k];
-          if (strcmp(src->analysis, "ac") != 0)
+          if (strcmp(src->analysis, running) != 0)
             continue;
           uint32_t n1 = node_mapping[src->nodes.node_1];
           double re = stim[2 * k];

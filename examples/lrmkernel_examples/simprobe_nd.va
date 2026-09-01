@@ -1,0 +1,11 @@
+`include "disciplines.vams"
+module prm(a, c);
+  inout a, c; electrical a, c;
+  (* desc="probe nodefault" *) real p1;
+  (* desc="probe default" *)   real p2;
+  analog begin
+    p1 = $simprobe("inst_x", "quant_y");   // NO default: warns at compile, FATAL at run (LRM 9.16, E-527)
+    p2 = $simprobe("inst_x", "quant_y", 3.25);
+    I(a,c) <+ V(a,c)/1e3;
+  end
+endmodule

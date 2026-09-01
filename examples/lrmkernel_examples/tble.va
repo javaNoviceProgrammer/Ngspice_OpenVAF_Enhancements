@@ -1,0 +1,10 @@
+`include "disciplines.vams"
+module tble(a, c);
+  inout a, c; electrical a, c;
+  parameter real px = 4.0;
+  (* desc="E extrap" *) real r1;
+  analog begin
+    r1 = $table_model(px, "lin.dat", "1E");
+    I(a,c) <+ V(a,c)/1e3;
+  end
+endmodule

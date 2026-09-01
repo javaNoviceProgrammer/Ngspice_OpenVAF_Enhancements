@@ -12,10 +12,15 @@
 // uses them compiles and runs (rather than being rejected) with predictable
 // behavior. The results are written to a file and checked by verify_alias.py.
 //
-//   $analog_node_alias(node, "nm") -> 0  (no alias created)
+//   $analog_node_alias(node, "nm") -> 0  (no alias created; analog-initial-only
+//                                          per LRM 9.20, enforced since E-527)
 //   $analog_port_alias(port, "nm") -> 0
-//   $simprobe("inst", "q")         -> 0.0 (probe unavailable, no default)
 //   $simprobe("inst", "q", d)      -> d   (the supplied default is returned)
+//
+// The NO-DEFAULT $simprobe form is deliberately absent here: LRM 9.16 makes an
+// unresolvable probe with no default an ERROR, and since the E-527 kernel audit
+// it warns at compile time and aborts at run time (verify_alias.py pins both
+// refusals on separate fixtures).
 `include "disciplines.vams"
 
 module alias_demo(p, n);
@@ -25,20 +30,21 @@ module alias_demo(p, n);
     parameter real R = 1000.0 from (0:inf);
 
     integer f, na, pa;
-    real    sp, spd;
+    real    spd;
+
+    analog initial begin
+        na  = $analog_node_alias(p, "p_alias");
+        pa  = $analog_port_alias(p, "p_alias");
+    end
 
     analog begin
         I(p, n) <+ V(p, n) / R;
 
-        na  = $analog_node_alias(p, "p_alias");
-        pa  = $analog_port_alias(p, "p_alias");
-        sp  = $simprobe("top.x1", "temp");
         spd = $simprobe("top.x1", "temp", 3.5);
 
         f = $fopen("alias_out.txt", "w");
         $fdisplay(f, "node_alias=%d", na);
         $fdisplay(f, "port_alias=%d", pa);
-        $fdisplay(f, "simprobe=%g", sp);
         $fdisplay(f, "simprobe_default=%g", spd);
         $fclose(f);
     end

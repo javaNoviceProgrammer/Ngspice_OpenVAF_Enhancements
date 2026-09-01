@@ -18,6 +18,9 @@ pub enum NoiseSourceKind {
 #[derive(Debug)]
 pub struct NoiseSource {
     pub name: Spur,
+    /// Analysis-noise audit: the originating CALL-SITE id -- the correlation
+    /// key (LRM 4.6.4.6); the name stays a reporting label (4.6.4.1).
+    pub idx: u32,
     pub kind: NoiseSourceKind,
     pub hi: SimUnknown,
     pub lo: Option<SimUnknown>,

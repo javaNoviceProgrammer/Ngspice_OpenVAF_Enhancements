@@ -1,0 +1,11 @@
+`include "disciplines.vams"
+module ncorrA(a, c);
+  inout a, c;
+  electrical a, b, c;
+  real n;
+  analog begin
+    n = white_noise(1e-12, "w");
+    V(a,b) <+ n;
+    V(b,c) <+ -n;
+  end
+endmodule

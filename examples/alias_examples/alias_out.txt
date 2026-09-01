@@ -1,4 +1,3 @@
+simprobe_default=3.5
 node_alias=0
 port_alias=0
-simprobe=0
-simprobe_default=3.5

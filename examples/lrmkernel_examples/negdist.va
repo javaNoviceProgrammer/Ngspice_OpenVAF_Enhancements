@@ -1,0 +1,19 @@
+`include "disciplines.vams"
+module negm(a, c);
+  inout a, c; electrical a, c;
+  parameter real m = 1.0;
+  parameter real d = 2.0;
+  integer s;
+  (* desc="exp draw" *) real e1;
+  (* desc="chi draw" *) real c1;
+  (* desc="t draw" *) real td;
+  (* desc="erl draw" *) real er;
+  analog begin
+    s = 11;
+    e1 = $rdist_exponential(s, m);
+    c1 = $rdist_chi_square(s, d);
+    td = $rdist_t(s, d);
+    er = $rdist_erlang(s, d, m);
+    I(a,c) <+ V(a,c)/1e3;
+  end
+endmodule

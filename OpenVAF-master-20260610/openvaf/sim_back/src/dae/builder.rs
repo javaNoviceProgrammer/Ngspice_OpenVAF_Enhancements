@@ -1038,7 +1038,7 @@ impl<'a> Builder<'a> {
         self.system.noise_sources.extend(contrib.noise.iter().map(|src| {
             let factor = src.factor;
             let factor_react = src.factor_react;
-            NoiseSource { name: src.name, kind: src.kind.clone(), hi, lo, factor, factor_react }
+            NoiseSource { name: src.name, idx: src.idx, kind: src.kind.clone(), hi, lo, factor, factor_react }
         }))
     }
 

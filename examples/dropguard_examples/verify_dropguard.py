@@ -176,15 +176,33 @@ def drawn(card, tag):
 
 # a mean large enough that the draw is reliably non-zero -- a poisson(2) that
 # happens to draw 0 would make the "still draws" check pass vacuously
+def fatal_out(card, tag):
+    rc, out = run(OP.format(card=card), f"pre_osdi {OSDI}\nop\nprint @n1[drawn]", tag)
+    return out
+
+
 for i, (dist, name, good) in enumerate([(0, "normal (sd)", 1.0),
                                         (1, "exponential (mean)", 1.0),
                                         (2, "poisson (mean)", 50.0),
                                         (3, "uniform (hi)", 10.0)]):
     pos = drawn(f"mode=1 dist={dist} p={good}", f"r{i}p")
-    neg = drawn(f"mode=1 dist={dist} p=-{good}", f"r{i}n")
-    zero = drawn(f"mode=1 dist={dist} p=0", f"r{i}z")
     check(f"[{6+2*i}] {name}: a valid argument still draws a non-zero value",
           pos is not None and abs(pos) > 1e-12, f"{pos}")
+    if dist in (1, 2):
+        # E-527 (kernel audit): exponential/poisson are on LRM 9.13.2's
+        # mandated-error list ("shall be greater than zero. Otherwise an
+        # error shall be reported") -- a deck-supplied violation aborts with
+        # the runtime fatal now instead of clamping in silence. Zero is a
+        # violation too ("greater than zero").
+        oneg = fatal_out(f"mode=1 dist={dist} p=-{good}", f"r{i}n")
+        ozero = fatal_out(f"mode=1 dist={dist} p=0", f"r{i}z")
+        check(f"[{7+2*i}] {name}: an out-of-domain argument reports the LRM "
+              f"9.13.2 error (negative and zero both)",
+              "9.13.2" in oneg and "9.13.2" in ozero,
+              next((l.strip()[:56] for l in oneg.splitlines() if "fatal" in l.lower()), ""))
+        continue
+    neg = drawn(f"mode=1 dist={dist} p=-{good}", f"r{i}n")
+    zero = drawn(f"mode=1 dist={dist} p=0", f"r{i}z")
     # the clamp must send an out-of-domain argument to the SAME place a zero
     # argument goes -- not to the negation of the valid draw, which is what the
     # unguarded sign produced

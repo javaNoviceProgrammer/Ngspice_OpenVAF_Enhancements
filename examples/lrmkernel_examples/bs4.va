@@ -1,0 +1,8 @@
+`include "disciplines.vams"
+module bs4(a, c);
+  inout a, c; electrical a, c;
+  analog begin
+    $bound_step(1e-4);
+    I(a,c) <+ V(a,c)/1e3;
+  end
+endmodule

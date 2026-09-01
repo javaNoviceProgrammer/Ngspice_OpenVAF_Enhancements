@@ -1,0 +1,9 @@
+`include "disciplines.vams"
+module nrep(a, c);
+  inout a, c; electrical a, c;
+  analog begin
+    I(a,c) <+ white_noise(1e-18, "shot") + 1e-3*V(a,c);
+    I(a,c) <+ white_noise(3e-18, "shot");
+    I(a,c) <+ white_noise(5e-18, "th");
+  end
+endmodule

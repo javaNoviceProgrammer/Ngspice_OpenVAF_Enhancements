@@ -398,9 +398,36 @@ char *sim_params[NUM_SIM_PARAMS + 1] = {
     NULL};
 /* Enhancement-25: string simulator parameters returned by $simparam$str.
  * "analysis_name" mirrors the analysis() naming ("dc"/"ac"/"tran"/"noise");
- * "simulator" is constant. The values array is filled per call in get_simparams. */
-char *sim_params_str[3] = {"analysis_name", "simulator", NULL};
-char *sim_param_vals_str[2] = {"dc", "ngspice"};
+ * "simulator" is constant. The values array is filled per call in get_simparams.
+ *
+ * Kernel audit, LRM Table 9-28: two more of the table's mandatory names are
+ * served -- the ones ngspice can answer truthfully without new plumbing:
+ *
+ *   analysis_type   ngspice gives analyses no user-chosen names distinct from
+ *                   their type, so the honest answer is the same
+ *                   "dc"/"ac"/"tran"/"noise" string analysis_name carries
+ *   cwd             the working directory, refreshed per query (a .control
+ *                   `cd` can change it between runs)
+ *
+ * `module`, `instance` and `path` stay OUT: the simparam channel is filled
+ * per circuit, with no instance identity in reach, and inventing one would be
+ * worse than the honest compile-time warning + run-time fatal the unknown-name
+ * path already gives. Documented in the compliance doc. */
+#define NUM_SIM_PARAMS_STR 4
+char *sim_params_str[NUM_SIM_PARAMS_STR + 1] =
+    {"analysis_name", "simulator", "analysis_type", "cwd", NULL};
+char *sim_param_vals_str[NUM_SIM_PARAMS_STR] = {"dc", "ngspice", "dc", ""};
+
+/* kernel audit: $simparam$str("cwd"), LRM Table 9-28. */
+static const char *osdi_cwd(void) {
+  static char buf[1024];
+  buf[0] = '\0';
+#ifdef HAVE_GETCWD
+  if (!getcwd(buf, sizeof(buf)))
+    buf[0] = '\0';
+#endif
+  return buf;
+}
 
 double sim_param_vals[NUM_SIM_PARAMS] = {0};
 
@@ -475,16 +502,17 @@ static void build_plusarg_arrays(void) {
   }
   ext_names[NUM_SIM_PARAMS + 3 * pa_n] = NULL;
 
-  ext_names_str = TMALLOC(char *, 2 + pa_n + 1);
-  ext_vals_str = TMALLOC(char *, 2 + pa_n);
-  ext_names_str[0] = "analysis_name";
-  ext_names_str[1] = "simulator";
-  ext_vals_str[1] = "ngspice";
-  for (i = 0; i < pa_n; i++) {
-    ext_names_str[2 + i] = pa_val_key[i];
-    ext_vals_str[2 + i] = pa_value[i];
+  ext_names_str = TMALLOC(char *, NUM_SIM_PARAMS_STR + pa_n + 1);
+  ext_vals_str = TMALLOC(char *, NUM_SIM_PARAMS_STR + pa_n);
+  for (i = 0; i < NUM_SIM_PARAMS_STR; i++) {
+    ext_names_str[i] = sim_params_str[i];
+    ext_vals_str[i] = sim_param_vals_str[i];
   }
-  ext_names_str[2 + pa_n] = NULL;
+  for (i = 0; i < pa_n; i++) {
+    ext_names_str[NUM_SIM_PARAMS_STR + i] = pa_val_key[i];
+    ext_vals_str[NUM_SIM_PARAMS_STR + i] = pa_value[i];
+  }
+  ext_names_str[NUM_SIM_PARAMS_STR + pa_n] = NULL;
   ext_built = 1;
 }
 
@@ -575,6 +603,10 @@ OsdiSimParas get_simparams(const CKTcircuit *ckt) {
    * which is what E-53 established and what the LRM asks for. */
   const char *analysis_name = osdi_analysis_name(ckt);
   sim_param_vals_str[0] = (char *)analysis_name;
+  /* kernel audit, Table 9-28: type == the same derivation here (see the
+   * declaration comment), and the cwd is refreshed per query */
+  sim_param_vals_str[2] = (char *)analysis_name;
+  sim_param_vals_str[3] = (char *)osdi_cwd();
 
   /* Enhancement-215: with command-line plusargs present, return the extended
    * arrays (base params + the namespaced plusarg entries). The base numeric
@@ -587,6 +619,8 @@ OsdiSimParas get_simparams(const CKTcircuit *ckt) {
     for (i = 0; i < NUM_SIM_PARAMS; i++)
       ext_vals[i] = sim_param_vals[i];
     ext_vals_str[0] = (char *)analysis_name;
+    ext_vals_str[2] = (char *)analysis_name;
+    ext_vals_str[3] = sim_param_vals_str[3];
     OsdiSimParas ext_params_ = {.names = ext_names,
                                 .vals = ext_vals,
                                 .names_str = ext_names_str,
@@ -757,7 +791,16 @@ extern int OSDIload(GENmodel *inModel, CKTcircuit *ckt) {
   }
 
   if (is_tran_op) {
-    sim_info.flags |= ANALYSIS_TRAN;
+    /* Analysis-noise audit, LRM Table 4-22 (TRAN OP column): during the
+     * operating point that precedes a transient, analysis("ic") and
+     * analysis("static") shall be 1 (with "tran" 1 and "dc" 0) -- this is
+     * what makes the LRM 4.6.1 idiom
+     *   if (analysis("ic")) V(cap) <+ v0; else I(cap) <+ ddt(C*V(cap));
+     * apply its initial condition during the tran op. The bits used to ride
+     * MODEINITTRAN instead, which ngspice raises at the FIRST ACCEPTED
+     * TIMESTEP (t > 0): 0 exactly where the LRM requires 1, and the IC
+     * forced mid-transient at the first step. */
+    sim_info.flags |= ANALYSIS_TRAN | ANALYSIS_IC | ANALYSIS_STATIC;
   }
 
   if (is_ac) {
@@ -782,12 +825,23 @@ extern int OSDIload(GENmodel *inModel, CKTcircuit *ckt) {
     sim_info.flags |= ANALYSIS_AC;
   }
 
-  if (is_init_tran) {
-    sim_info.flags |= ANALYSIS_IC | ANALYSIS_STATIC;
-  }
+  /* (Analysis-noise audit: MODEINITTRAN used to raise ANALYSIS_IC and
+   * ANALYSIS_STATIC here -- a t > 0 transient evaluation, exactly where
+   * Table 4-22 has both at 0. The bits belong to the MODETRANOP phase
+   * above.) */
 
   if (is_init_junc) {
     sim_info.flags |= INIT_LIM;
+  }
+
+  /* Analysis-noise audit, LRM 4.6.2 / Table 4-22: analysis("nodeset") is
+   * true during the phase of an equilibrium calculation in which the deck's
+   * .nodeset values are enforced. ngspice holds them exactly while CKTmode
+   * carries MODEINITJCT/MODEINITFIX (cktload.c's nsGiven stamping), and
+   * only when the deck supplied any (CKThadNodeset). The ANALYSIS_NODESET
+   * flag was defined but never set anywhere. */
+  if (ckt->CKThadNodeset && (ckt->CKTmode & (MODEINITJCT | MODEINITFIX))) {
+    sim_info.flags |= ANALYSIS_NODESET;
   }
 
   if (ckt->CKTmode & MODEACNOISE) {
@@ -848,7 +902,20 @@ extern int OSDIload(GENmodel *inModel, CKTcircuit *ckt) {
             osdi_extra_instance_data(entry, gen_inst);
 
 #pragma omp task firstprivate(gen_inst, inst, extra_inst_data, model)
-        eval(descr, gen_inst, inst, extra_inst_data, model, &sim_info);
+        {
+          /* OSDI-layer audit: mirror the serial branch's Enhancement-7
+           * gating. This task used to call eval() with the shared sim_info
+           * and never set EVAL_FLAG_IS_INITIAL_STEP or has_evaluated, so an
+           * ngspice built with --enable-openmp never fired @(initial_step)
+           * in any OSDI device. A task-local OsdiSimInfo keeps the flag
+           * per instance and race-free (one task per instance). */
+          OsdiSimInfo task_info = sim_info;
+          if (!extra_inst_data->has_evaluated) {
+            task_info.flags |= EVAL_FLAG_IS_INITIAL_STEP;
+            extra_inst_data->has_evaluated = true;
+          }
+          eval(descr, gen_inst, inst, extra_inst_data, model, &task_info);
+        }
       }
     }
   }

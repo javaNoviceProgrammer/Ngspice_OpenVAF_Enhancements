@@ -86,14 +86,20 @@ module njw_mix(a, c);
   end
 endmodule
 
-// anti-phase cancellation including the j*omega parts: exact zero
+// anti-phase cancellation including the j*omega parts: exact zero.
+// E-528: correlation follows the CALL (LRM 4.6.4.6), so the cancelling pair
+// routes ONE call's output through both contributions -- four separate
+// same-labelled calls (the pre-E-528 spelling) are uncorrelated now and do
+// not cancel.
 module njw_cancel(a, c);
   inout a, c; electrical a, c;
   parameter real r = 1e3, tau = 1e-7, x = 0.5;
+  real n;
   analog begin
     I(a, c) <+ V(a, c)/r;
-    I(a, c) <+ x * white_noise(4*`KB*300/r, "z") + ddt(tau * white_noise(4*`KB*300/r, "z"));
-    I(a, c) <+ -x * white_noise(4*`KB*300/r, "z") - ddt(tau * white_noise(4*`KB*300/r, "z"));
+    n = white_noise(4*`KB*300/r, "z");
+    I(a, c) <+ x * n + ddt(tau * n);
+    I(a, c) <+ -x * n - ddt(tau * n);
   end
 endmodule
 

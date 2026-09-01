@@ -170,6 +170,25 @@ extern int OSDIparam(int param, IFvalue *value, GENinstance *instPtr,
     return (OK);
   }
 
+  /* OSDI-layer audit: a NEGATIVE multiplicity is refused here. The parser
+   * layer (inpdpar.c, Enhancement-447) already warns on a deck-written
+   * negative m -- but `alter @n1[m]=-2` reaches this function directly, so
+   * the value was silently APPLIED: the device's contribution sign-inverted
+   * (a resistor model SOURCED 4 mA) and the compiled noise factor sqrt(m)
+   * turned a .noise run into 'onoise_spectrum = nan' with no diagnostic on
+   * either channel. Warn and keep the previous value on every route.
+   * ZERO stays silent and applied: Enhancement-426 established m=0 as the
+   * "disable this instance" idiom, exactly as for the built-ins. */
+  if (!strcmp(descr->param_opvar[param].name[0], "$mfactor") &&
+      value->rValue < 0.0) {
+    fprintf(stderr,
+            "Warning: multiplier m=%g is negative; the value is ignored "
+            "(a negative multiplicity sign-inverts the device and makes "
+            "its noise NaN).\n",
+            value->rValue);
+    return (OK);
+  }
+
   void *inst = osdi_instance_data(entry, instPtr);
   void *dst = descr->access(inst, NULL, (uint32_t)param,
                             ACCESS_FLAG_SET | ACCESS_FLAG_INSTANCE);

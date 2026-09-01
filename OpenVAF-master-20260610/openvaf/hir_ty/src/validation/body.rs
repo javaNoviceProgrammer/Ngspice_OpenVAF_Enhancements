@@ -27,10 +27,11 @@ use crate::types::{BuiltinInfo, Signature, Ty};
 ///
 /// Deliberately NOT the LRM's list. The LRM names `minr`, `imelt`, `shrink`,
 /// `imax` and `rthresh`, and ngspice serves none of them -- a model using one
-/// dies. For `$simparam$str` the two sets do not intersect at all: the LRM
-/// names `cwd`, `module`, `instance` and `path`; ngspice serves
-/// `analysis_name` and `simulator`. Listing the LRM's names here would warn
-/// on the names that work and stay silent on the ones that abort.
+/// dies. For `$simparam$str` ngspice serves `analysis_name`,
+/// `analysis_type`, `cwd` (the latter two since the kernel audit) and
+/// `simulator`; the LRM's `module`/`instance`/`path` stay unserved (no
+/// instance identity reaches the channel). Listing the LRM's names here
+/// would warn on the names that work and stay silent on the ones that abort.
 ///
 /// Enhancement-476: `temp` was missing, and these lists are now module-level
 /// so that the diagnostic in `validation.rs` can be BUILT from them instead of
@@ -62,7 +63,12 @@ pub(crate) const SIMPARAM_NAMES: [&'static str; 15] = [
 ];
 
 /// The `$simparam$str` channel; see [`SIMPARAM_NAMES`].
-pub(crate) const SIMPARAM_STR_NAMES: [&'static str; 2] = ["analysis_name", "simulator"];
+///
+/// Kernel audit: `analysis_type` and `cwd` joined the served set (LRM Table
+/// 9-28); `module`, `instance` and `path` stay out -- the channel is filled
+/// per circuit with no instance identity in reach.
+pub(crate) const SIMPARAM_STR_NAMES: [&'static str; 4] =
+    ["analysis_name", "analysis_type", "cwd", "simulator"];
 
 #[derive(PartialEq, Eq, Clone, Debug)]
 pub enum IllegalCtxAccessKind {
@@ -349,6 +355,32 @@ pub enum BodyValidationDiagnostic {
         stmt: StmtId,
         expr: ExprId,
         form: &'static str,
+    },
+    /// LRM 9.16 (kernel audit): `$simprobe(inst, quant)` with NO default --
+    /// the probe mechanism is unavailable under the OSDI target, and the
+    /// clause says "an error shall be generated" in exactly this case. Warned
+    /// at compile time; the lowering makes the call a runtime fatal (the
+    /// two-argument `$simparam` unknown-name pattern).
+    SimprobeNoDefault {
+        expr: ExprId,
+        stmt: StmtId,
+    },
+    /// LRM 9.20 (kernel audit): "It shall be an error for these functions to
+    /// be used in any other context" than an analog initial block --
+    /// `$analog_node_alias`/`$analog_port_alias` in a plain analog block
+    /// compiled clean and returned the constant-0 fallback.
+    AliasOutsideInitial {
+        expr: ExprId,
+        stmt: StmtId,
+        port: bool,
+    },
+    /// LRM 9.13.1/9.13.2 (kernel audit): the `type_string` argument of
+    /// `$arandom`/`$dist_*`/`$rdist_*` ("global"/"instance") "shall only be
+    /// used in calls to these functions from within a paramset". Outside one
+    /// it compiled silently and had no effect at all.
+    TypeStringOutsideParamset {
+        expr: ExprId,
+        stmt: StmtId,
     },
     /// VAMS-2023 (LRM 5.11): `break`/`continue` outside any runtime loop --
     /// including inside a genvar `analog_for`, which 5.9.3 excludes from jump
@@ -1696,7 +1728,9 @@ impl ExprValidator<'_, '_> {
                                 if let Expr::Literal(Literal::String(ref ctrl)) =
                                     self.parent.body.exprs[carg]
                                 {
-                                    if let Some(why) = table_ctrl_problem(ctrl) {
+                                    let runtime_data =
+                                        self.parent.infer.array_var_refs.contains_key(&args[1]);
+                                    if let Some(why) = table_ctrl_problem(ctrl, runtime_data) {
                                         self.parent.diagnostics.push(
                                             BodyValidationDiagnostic::TableControlUnsupported {
                                                 expr: carg,
@@ -1852,6 +1886,60 @@ impl ExprValidator<'_, '_> {
         // builtin-specific validation rather than panic.
         if args.len() < BuiltinInfo::from(call).min_args {
             return;
+        }
+        // LRM 9.20 (kernel audit): the alias builtins are analog-initial-only
+        // ("It shall be an error for these functions to be used in any other
+        // context"). Keyed off the body OWNER, not the ctx, so a conditional
+        // inside the initial block stays legal.
+        if matches!(call, BuiltIn::analog_node_alias | BuiltIn::analog_port_alias)
+            && !matches!(self.parent.owner, DefWithBodyId::ModuleId { initial: true, .. })
+        {
+            let stmt = self.stmt;
+            self.report(BodyValidationDiagnostic::AliasOutsideInitial {
+                expr,
+                stmt,
+                port: call == BuiltIn::analog_port_alias,
+            });
+        }
+        // LRM 9.13.1/9.13.2 (kernel audit): a trailing type_string
+        // ("global"/"instance") is only meaningful inside a paramset. A
+        // parameter body may be paramset machinery, so only clearly-outside
+        // owners (analog blocks, functions) are flagged.
+        if matches!(
+            call,
+            BuiltIn::arandom
+                | BuiltIn::dist_chi_square
+                | BuiltIn::dist_exponential
+                | BuiltIn::dist_poisson
+                | BuiltIn::dist_uniform
+                | BuiltIn::dist_erlang
+                | BuiltIn::dist_normal
+                | BuiltIn::dist_t
+                | BuiltIn::rdist_chi_square
+                | BuiltIn::rdist_exponential
+                | BuiltIn::rdist_poisson
+                | BuiltIn::rdist_uniform
+                | BuiltIn::rdist_erlang
+                | BuiltIn::rdist_normal
+                | BuiltIn::rdist_t
+        ) && !matches!(self.parent.owner, DefWithBodyId::ParamId(_))
+        {
+            if let Some(&last) = args.last() {
+                if matches!(self.parent.body.exprs[last], Expr::Literal(Literal::String(_))) {
+                    let stmt = self.stmt;
+                    self.report(BodyValidationDiagnostic::TypeStringOutsideParamset {
+                        expr: last,
+                        stmt,
+                    });
+                }
+            }
+        }
+        // LRM 9.16 (kernel audit): $simprobe with no default is an error at
+        // run time under this target; say so while the model is in front of
+        // the author.
+        if call == BuiltIn::simprobe && args.len() < 3 {
+            let stmt = self.stmt;
+            self.report(BodyValidationDiagnostic::SimprobeNoDefault { expr, stmt });
         }
         match call {
             _ if call.is_unsupported() => self
@@ -2559,7 +2647,7 @@ impl ExprValidator<'_, '_> {
                                     | "simulatorSubversion"
                                     | "simulatorVersion"
                                     | "tnom"
-                            ) | (BuiltIn::simparam_str, "cwd" | "module" | "instance" | "path")
+                            ) | (BuiltIn::simparam_str, "module" | "instance" | "path")
                         )
                     } else {
                         false
@@ -3498,7 +3586,11 @@ fn calls_reach(
 /// silently change the answer of every existing model written with `"1"` or
 /// `"3"`, including this project's own suites. It is documented rather than
 /// changed, and an explicit `L` or `C` always means exactly what it says.
-fn table_ctrl_problem(ctrl: &str) -> Option<String> {
+/// `runtime_data` marks the Enhancement-389 array-VARIABLE form, whose
+/// kernels keep a single linear/clamp switch: the closest-point lookup,
+/// error-on-extrapolation and per-end methods are compile-time-grid features
+/// (kernel audit) and stay refused there rather than silently degraded.
+fn table_ctrl_problem(ctrl: &str, runtime_data: bool) -> Option<String> {
     // strip the dependent-variable selector
     let body = match ctrl.split_once(';') {
         Some((head, sel)) => {
@@ -3521,15 +3613,19 @@ fn table_ctrl_problem(ctrl: &str) -> Option<String> {
             '1' | '3' => chars.collect(),
             '2' => {
                 return Some(
-                    "quadratic spline interpolation ('2') is not implemented; use '1' or '3'"
+                    "quadratic spline interpolation ('2') is not implemented; use '1', '3' \
+                     or 'D'"
                         .to_owned(),
                 )
             }
-            'D' | 'd' => {
+            'D' | 'd' if runtime_data => {
                 return Some(
-                    "closest-point lookup ('D') is not implemented; use '1' or '3'".to_owned()
+                    "closest-point lookup ('D') is not supported for runtime array data; \
+                     use '1' or '3'"
+                        .to_owned(),
                 )
             }
+            'D' | 'd' => chars.collect(),
             'I' | 'i' => {
                 return Some("column selection ('I') is not implemented".to_owned())
             }
@@ -3546,22 +3642,26 @@ fn table_ctrl_problem(ctrl: &str) -> Option<String> {
         for &c in &ext {
             match c {
                 'C' | 'L' | 'c' | 'l' => {}
-                'E' | 'e' => {
+                'E' | 'e' if runtime_data => {
                     return Some(
-                        "error-on-extrapolation ('E') is not implemented; it would silently \
-                         clamp instead, so it is rejected rather than ignored"
+                        "error-on-extrapolation ('E') is not supported for runtime array \
+                         data; use 'C' or 'L'"
                             .to_owned(),
                     )
                 }
+                'E' | 'e' => {}
                 other => {
                     return Some(format!("'{other}' is not an extrapolation control character"))
                 }
             }
         }
-        if ext.len() == 2 && ext[0].to_ascii_uppercase() != ext[1].to_ascii_uppercase() {
+        if runtime_data
+            && ext.len() == 2
+            && ext[0].to_ascii_uppercase() != ext[1].to_ascii_uppercase()
+        {
             return Some(format!(
                 "'{sub}' asks for a different extrapolation method at each end, which is not \
-                 implemented; both ends use the same method"
+                 supported for runtime array data; both ends use the same method"
             ));
         }
     }

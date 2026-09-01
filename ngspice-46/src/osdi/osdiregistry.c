@@ -422,16 +422,27 @@ extern OsdiObjectFile load_object_file(const char *input) {
     }
     descriptor_size = *OSDI_DESCRIPTOR_SIZE;
   } else {
-    // Original OpenVAF, must be version==0.3
-    if (OSDI_VERSION_MAJOR != OSDI_VERSION_MAJOR_CURR ||
-      OSDI_VERSION_MINOR != OSDI_VERSION_MINOR_CURR) {
-      printf("NGSPICE only supports OSDI v%d.%d but \"%s\" uses v%d.%d!",
-        OSDI_VERSION_MAJOR_CURR, OSDI_VERSION_MINOR_CURR, path,
-        OSDI_VERSION_MAJOR, OSDI_VERSION_MINOR);
-      txfree(path);
-      return INVALID_OBJECT;
-    }
-    descriptor_size = sizeof(OsdiDescriptor);
+    /* OSDI-layer audit: an object without OSDI_DESCRIPTOR_SIZE is original
+     * OpenVAF's v0.3 ABI, and this build CANNOT interpret it any more -- it
+     * used to be accepted and then read through the extended in-repo layout:
+     * the OsdiNode stride grew from 48 to 56 bytes (Enhancement-45's nodeset
+     * field), so every node record past the first was misread (a fake but
+     * spec-conformant 0.3 object showed its second terminal named "V" -- the
+     * units field -- in devhelp); osdiacld.c and osditrnoise.c read
+     * descriptor fields past the 0.3 struct's end unconditionally; and the
+     * 0.3 load_noise callback has five arguments where this build passes
+     * four and expects [flat, j*omega] pairs (Enhancement-54). The measured
+     * outcome was silently wrong metadata in DC and a SIGSEGV in transient
+     * with zero diagnostics. Reject it with the same honesty the
+     * openvaf-reloaded version gate above applies. */
+    printf("NGSPICE supports OpenVAF-reloaded OSDI objects (version >= 0.7) but "
+           "\"%s\" is an original-OpenVAF v%d.%d object.\n"
+           "       Its binary layout (node records, noise callbacks, descriptor "
+           "tail) is no longer readable by this build;\n"
+           "       recompile the model with openvaf-r.\n",
+           path, OSDI_VERSION_MAJOR, OSDI_VERSION_MINOR);
+    txfree(path);
+    return INVALID_OBJECT;
   }
   
   GET_CONST(OSDI_NUM_DESCRIPTORS, uint32_t);

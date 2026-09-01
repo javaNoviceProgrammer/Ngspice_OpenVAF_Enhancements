@@ -376,10 +376,21 @@ distinct rules; `ceil` of a runtime argument fixed, E-103), `$clog2` returning `
 conversion functions `$rtoi` (real→integer, truncating toward zero — as
 distinct from the rounding implicit cast) and `$itor` (integer→real, E-104),
 and the environment: `$temperature` (kelvin — verified as the exact kT/q law
-across a −50…150 °C sweep), `$vt` and `$vt(T)`, `$abstime`, `$realtime`
-(identical in the continuous-time analog context), `$simparam` and
-`$simparam$str`, `$param_given`, `$port_connected`, `$mfactor` and the
-position hidden parameters.
+across a −50…150 °C sweep), `$vt` and `$vt(T)` — computed from the **2019
+exact SI k and q** since the kernel audit, so `$vt(T)` equals
+`` `P_K*T/`P_Q `` exactly under `` `define PHYSICAL_CONSTANTS_NIST2018 ``
+(the shipped `constants.vams` still *defaults* to the NIST1998 set for
+LRM backward compatibility, so the two spellings differ by ~1 ppm under
+the default set — pick one constants set per model) — `$abstime`,
+`$realtime` (identical in the continuous-time analog context),
+`$simparam`, and `$simparam$str` serving `analysis_name`,
+`analysis_type`, `cwd` and `simulator` (Table 9-28's
+`module`/`instance`/`path` stay unserved with the honest
+warn-then-fatal: the channel carries no instance identity), plus
+`$param_given`, `$port_connected`, `$mfactor` and the position hidden
+parameters. `$realtobits`/`$bitstoreal` are a documented subset
+boundary: their 64-bit-vector operand type does not exist in analog
+Verilog-A, and the call is a clean resolution error.
 
 `ln1p` and `expm1` (LRM Table 4-14 and Annex A.8.2) are present in both the
 bare and `$`-prefixed spellings, and lower to libm's `log1p`/`expm1` rather
@@ -436,7 +447,7 @@ V(out) <+ zi_nd(V(in), '{0.5, 0.5}, '{1.0}, 1u);
 // small-signal & events
 gm = ddx(Id, V(g,s));                      // symbolic derivative
 tc = last_crossing(V(in) - 0.5, +1);
-V(out) <+ ac_stim("ac", 1.0, 90.0);        // module AS the AC stimulus
+V(out) <+ ac_stim("ac", 1.0, `M_PI/2);     // AC stimulus; phase in RADIANS (LRM 4.6.3)
 ```
 
 - `ddt`, `idt` (with initial conditions that survive into transient, and
@@ -552,8 +563,19 @@ implicit-equation unknowns.
 - **noise sources** (LRM 4.6): `white_noise`, `flicker_noise`,
   `noise_table`, `noise_table_log` (inline or file data);
   operating-point-dependent factors and `ddt()`-shaped noise are exact
-  with **no extra matrix unknowns**; same-named sources sum coherently
-  per LRM 4.6.4 including anti-phase cancellation: ✅.
+  with **no extra matrix unknowns**. **Correlation follows the CALL**
+  (4.6.4.6, analysis-noise audit): one call's output routed into several
+  contributions sums coherently as amplitudes — anti-phase uses cancel
+  exactly — while two separate calls stay uncorrelated *even when they
+  share a name*; the name is the 4.6.4.1 reporting label, and ngspice's
+  contribution summary combines a label's power onto one vector. (E-42
+  first keyed correlation on the name string, which made same-labelled
+  separate calls cancel; the audit moved the key to the call site,
+  exported through the OSDI source name.) ✅.
+  ⚠️ `noise_table`'s array-parameter vector and string-parameter
+  filename forms (4.6.4.3) are refused with located errors: the table is
+  baked at compile time, and a deck-overridable parameter cannot feed it
+  by construction — use a literal array/filename.
   `noise_table` interpolates the power **piecewise-linearly over frequency**
   (LRM 4.6.4.3) and `noise_table_log` interpolates **log-log**
   (`P = 10^(lerp of log10 p over log10 f)`, LRM 4.6.4.4) — both taking Hz
@@ -566,20 +588,55 @@ implicit-equation unknowns.
   I(d,s) <+ gm * white_noise(gamma_4kT, "induced");   // op-dependent factor
   ```
 - `analysis("ac","tran",…)` variadic, with the AC/noise operating point
-  counting as its parent analysis per LRM 4.6.1: ✅
+  counting as its parent analysis per LRM 4.6.1 — and, since the
+  analysis-noise audit, the full Table 4-22 static-phase detail:
+  `analysis("ic")`/`analysis("static")` are 1 at the operating point that
+  precedes a transient (they used to ride the first accepted timestep
+  instead, so the 4.6.1 `if (analysis("ic"))` initial-condition idiom
+  fired mid-transient), and `analysis("nodeset")` is 1 during the
+  iterations in which the deck's `.nodeset` values are enforced (the flag
+  existed and was never set). `ac_stim` activates against the RUNNING
+  small-signal analysis: an `"ac"` stimulus no longer injects into a
+  `.noise` gain solve (it poisoned the input-referred noise by exactly
+  the injected stimulus), and `ac_stim("noise")` participates there, as
+  4.6.3's name matching requires: ✅
 - `$limit` (built-in `"pnjlim"` and user functions — genuinely engages
-  SPICE-style iteration limiting), `$bound_step`, `$discontinuity(n)`
-  (clamps the next step *and* makes the integrator bisect onto the
-  event): ✅
-- `$table_model` (LRM 9.19 by clause, listed here as a modeling
-  operator): 1-D piecewise-linear, **N-dimensional multilinear**, and
-  **natural cubic-spline** interpolation — lowered to differentiable MIR
-  so *all* partial derivatives feed the Jacobian (a table-based MOSFET
-  gets exact gm and gds):
+  SPICE-style iteration limiting; an unknown function name falls back to
+  no limiting with a warning per 9.17.3), `$bound_step` — with 9.17.2's
+  **smallest-active-bound rule** enforced since the kernel audit: several
+  calls in one evaluation used to leave the LAST one as the cap — and one
+  ⚠️ deliberate floor: a bound demanding more than **1e6 steps of the
+  analysis window** is overridden after a named warning (E-504; a device
+  cannot demand an unbounded step count) — `$discontinuity(n)` (clamps the
+  next step *and* makes the integrator bisect onto the event): ✅
+- `$table_model` (LRM 9.21; an earlier revision of this document cited
+  it as 9.19): 1-D piecewise-linear, **N-dimensional multilinear**,
+  **natural cubic-spline**, and — since the kernel audit — **closest-point
+  lookup** (`D`, with 9.21.4's farther-from-zero tie rule), all lowered
+  to differentiable MIR so *all* partial derivatives feed the Jacobian
+  (a table-based MOSFET gets exact gm and gds):
 
   ```verilog
   I(d, s) <+ $table_model(V(g, s), V(d, s), "mos_iv.tbl", "1L");
   ```
+
+  The kernel audit brought the whole 9.21 surface to the clause:
+  **default extrapolation is linear** on both ends (Tables 9-31/9-32 —
+  it used to clamp unless an `L` appeared); the control string's
+  **comma-separated sub-strings apply per dimension**, outermost first
+  (any code used to apply to every axis); **up to two extrapolation
+  characters set each end separately** (`"1CL"`); **`E`
+  errors on extrapolation** at run time; the **`;N` dependent-column
+  selector is honoured**; data files may be the LRM 9.21.1 normative
+  **N+M-column isoline format** — **ragged isolines included** (the
+  LRM's own sample file interpolates correctly), with the project's
+  self-describing N-D grid format still accepted as an extension — and
+  1-D data may be a **pair of arrays** (`'{xs}, '{ys}`) besides the
+  interleaved layout. ⚠️ Still refused with located errors and recorded
+  here: quadratic splines (`2`), the ignore-column code (`I`), and the
+  9.21.5 whole-array N-dimensional data form (use the isoline file
+  format); the runtime array-variable form supports `1`/`3` with
+  same-both-ends `C`/`L` only.
 - ⚠️ **`limexp`** is implemented **stateless** (exact `exp` below the
   overflow threshold, tangent-continued above): a stateful
   previous-iterate limiting version was built and *reverted* because
@@ -1049,10 +1106,26 @@ end
 exponential, poisson, chi-square, t, erlang), verified against
 closed-form moments. ⚠️ One deliberate semantic: draws are a
 deterministic function of *(seed, call site)* with no in-place seed
-advance — an advancing seed would return different values on every Newton
-iteration and destroy convergence. This gives reproducible Monte Carlo
-and independent per-instance variation, at the cost of in-evaluation
-sequences (which have no convergent meaning in an analog solver anyway).
+advance — the LRM 9.13.1 inout seed would return different values on
+every Newton iteration and destroy convergence. The seed VARIABLE is
+never written, so successive calls at one call site with one seed value
+return the identical number (an in-model sampling loop collects N copies
+of one deviate). This gives reproducible Monte Carlo and independent
+per-instance variation, at the cost of in-evaluation sequences (which
+have no convergent meaning in an analog solver anyway).
+
+**Domain rules are errors on every route** (kernel audit): 9.13.2's
+"mean, degree_of_freedom, and k_stage shall be greater than zero.
+Otherwise an error shall be reported" was only enforced for arguments
+the compiler could see; a deck-supplied violation silently clamped
+(exponential, poisson) or passed straight to the RNG (chi-square, t,
+erlang — a *negative* deviate from a distribution supported on
+[0, ∞)). A deck-derived violation now aborts with the mandated
+runtime error naming the function, argument and clause; the E-505/506
+clamps remain as the safety net for values the guard cannot attribute
+to a parameter. The `type_string` argument (`"global"`/`"instance"`)
+warns outside a paramset, where 9.13.1/9.13.2 scope it and where it has
+no effect.
 
 **Return types follow the LRM split**: `$dist_*` returns `integer` and
 `$rdist_*` returns `real` — the `$rdist_*` family exists precisely because the
@@ -1082,10 +1155,19 @@ rejection), and `$warning`/`$error`/`$info` display.
 
 ### 7.5 The mechanism-unavailable group — ⚠️
 
-`$simprobe`, `$analog_node_alias`/`$analog_port_alias` compile and return
-their LRM-specified fallback values (supplied default / 0). (`$test$plusargs`/`$value$plusargs` are NO LONGER in this group: [Enhancement-215](../../enhancements_doc/Enhancement-215.md) serves command-line plusargs through the simparam channel.) This
-is the LRM's own escape hatch for hosts without the mechanism; models
-using them run predictably instead of being rejected.
+`$simprobe(inst, quant, default)` returns its supplied default — the
+LRM 9.16 fallback for a host that resolves no probes — and, since the
+kernel audit, the **no-default form is a compile-time warning plus a
+runtime fatal**, which is exactly the error 9.16 mandates there (it used
+to return 0.0 in silence, which this section previously mis-described as
+an LRM fallback). `$analog_node_alias`/`$analog_port_alias` return 0 (no
+alias created — the clause's unresolvable-reference value), and their
+9.20 context rule is enforced: a call outside an `analog initial` block
+is a compile error. (`$test$plusargs`/`$value$plusargs` are NO LONGER in
+this group: [Enhancement-215](../../enhancements_doc/Enhancement-215.md)
+serves command-line plusargs through the simparam channel.) This is the
+LRM's own escape hatch for hosts without the mechanism; models using
+them run predictably instead of being rejected.
 
 ### 7.6 Attributes as simulator metadata — ✅
 
@@ -1147,7 +1229,7 @@ connected port.)*
 | 3.5–3.13 Natures, disciplines, nets, buses, nodesets, 3.11.1 compatibility (signal-flow/natureless/domainless), nature-attribute validation, NIST2018 constants | ✅ (base-nature attr omission ⚠️ and derived-access extension ⚠️ documented; vector branches ✖ rejected) | `derivednature`, `domainbind`, `bus`, `netinit`, `ground`, `signalflow` |
 | 4.1–4.4 Operators (incl. string relational, `===`/`!==` as 2-state `==`/`!=`), precedence, functions (`$clog2`, `$rtoi`/`$itor`, `ln1p`/`expm1`, domain diagnostics both routes, `%`-by-deck-zero fatal, same-node `V(a,a)`/`I(a,a)` rejected) | ✅ (`<<<`/`>>>` extension ⚠️ warned; runtime-probe domain policy ⚠️ documented) | `operator`, `precedence`, `shift`, `concat`, `stringcmp`, `clog2`, `convert`, `ceil`, `lrmfuncs`, `lrmintrin`, `domainrt` |
 | 4.5 Analog operators (all), **clause-by-clause audit 4.5.1–4.5.15** ([E-514](../../enhancements_doc/Enhancement-514.md)); frozen-`td` absdelay implemented, ddx over unnamed-branch flows, no-ic `idtmod` pins DC at 0, `default_transition` honored for explicit zeros | ✅ (`limexp` stateless ⚠️, idt-reset τ=10µs ⚠️, ddt/idt tolerances not plumbed ⚠️, transition amplitude approximation ⚠️, zi continuous-bilinear ⚠️, dynamic laplace coeffs track+warn ⚠️ — all documented) | `absdelay`, `laplace`, `zi`, `slew`, `transition`, `idt*`, `ddx`, `opargs`, `discontinuity`, `last_crossing`, `defaulttransition`, `transedge`, `rtdomain`, `deckdomain` |
-| 4.6 Noise (incl. correlation 4.6.4; `noise_table` linear-in-f, `noise_table_log` log-log) | ✅ | `noise`, `noisetable`, `noisecorr`, `noisejw` |
+| 4.6 Noise & analysis (correlation per call site with label-combined reporting 4.6.4.1/4.6.4.6; `noise_table` linear-in-f, `noise_table_log` log-log, parameter-fed tables ⚠️ refused; Table 4-22 ic/static/nodeset phases exact; ac_stim matched to the running small-signal analysis) | ✅ | `noise`, `noisetable`, `noisecorr`, `noisejw` |
 | 5.2/6.2 Analog blocks (multiple) | ✅ | `multianalog` |
 | 5.6 Contributions, indirect assignment (placement rules and the 5.6.7.2 direct/indirect incompatibility enforced; generalized equality LHS ⚠️ extension), hierarchical-contribution branch identity (5.6.8.1), parameter vector indices (5.5.2), port flow (incl. named port branches) | ✅ | `indirect_assignment`, `portflow`, `signalflow`, `lrm` |
 | 5.7–5.9, 5.11 Procedural statements, loops, disable, jump statements (`break`/`continue`/`return`, contextual keywords, genvar-for exclusion enforced) | ✅ (contributions in runtime loops ⚠️ and `do…while` ⚠️ are documented non-LRM extensions) | `analogloop`, `dowhile`, `repeat`, `disable`, `arraycase` |
@@ -1156,12 +1238,12 @@ connected port.)*
 | 4.7 Analog functions (arrays in/out/return incl. the LRM's Example 3 spelling; VAMS-2023 string return & args; function-local `parameter`s with shadowing; output-array zero-init; `return` statement) | ✅ (named blocks in bodies ⚠️ and const-context calls ⚠️ documented relaxations) | `funcarray`, `arrayout`, `arrayret` |
 | 6 Hierarchy (instantiation, generate incl. the legacy analog-block form — obsolete per G.2.3/C.20, kept as a compat extension ⚠️ — defparam incl. inside/beside generate, `#(.$mfactor(n))`-family child overrides with the full multiplicity transform, `$param_given` through hierarchy overrides, connection-size and mixed-override checking, $root, part-select connections, hierarchical branch probes) | ✅ (param-shaped structure ⚠️ explained) | `instantiation`, `generate`, `legacygen`, `defparam`, `hiername`, `implicitnet`, `partselect`, `hierbranch` |
 | 9.4–9.8 Display, file/string I/O (incl. 9.4.6/9.5.9 accepted-iteration deferral, `$monitor` change detection, `%r`, 9.5.1.1 append, pre-opened fds) | ✅ ([E-516](../../enhancements_doc/Enhancement-516.md) audit; MCD/`$fmonitor` ⚠️) | `display`, `fileio`, `stringio`, `fgetc`, `ungetc`, `sscanf`, `scanfmt`, `lrmsysio` |
-| 9.13 Random/distributions | ✅ (deterministic seed ⚠️ documented) | `rng`, `montecarlo` |
+| 9.13 Random/distributions (9.13.2 domain rules errors on the deck route too; `type_string` scoped to paramsets) | ✅ (deterministic seed ⚠️ documented) | `rng`, `montecarlo` |
 | 9.17.3 / Annex E.3.4 `$limit` | ✅ (unknown name falls back to no limiting with a warning, per 9.17.3; `vdslim` = Table E.2's preferred spelling of `limvds`) | `fetlim`, `lrm` |
 | Annex E SPICE primitives (E.2/E.3, Table E.1) | ✖ not supported: `resistor`/`capacitor`/`bjt`/… cannot be instantiated from Verilog-A source (clean error); instantiate SPICE devices at netlist level instead | — |
-| 9 misc ($finish family, $simparam, attributes) | ✅ | `simctrl`, `simparamstr`, `opvar` |
+| 9 misc ($finish family, $simparam; $simparam$str serves analysis_name/analysis_type/cwd/simulator — module/instance/path unserved ⚠️; $bound_step smallest-wins; $table_model per 9.21 incl. isoline files, per-dimension controls, D/E codes, `;N` selector — `2`/`I`/whole-array-N-D ⚠️ refused; attributes) | ✅ | `simctrl`, `simparamstr`, `opvar` |
 | plusargs (`$test`/`$value`) | ✅ ([E-215](../../enhancements_doc/Enhancement-215.md)) | `plusargs` |
-| simprobe / node aliases | ⚠️ LRM fallbacks | `alias` |
+| simprobe / node aliases | ⚠️ LRM fallbacks (no-default `$simprobe` = warn + the mandated runtime fatal; aliases analog-initial-only, enforced) | `alias` |
 | 10 Compiler directives (incl. `` `__FILE__``/`` `__LINE__``, predefined-macro protection, `` `begin_keywords ``) | ✅ ([E-515](../../enhancements_doc/Enhancement-515.md)) | `preproc`, `directive`, `defaulttransition`, `filemacro`, `lrmlex` |
 | Mixed-signal / digital (outside Annex C) | ❌ by scope | — |
 

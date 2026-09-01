@@ -27,6 +27,7 @@ use llvm_sys::target_machine::LLVMCodeGenOptLevel;
 use mir_llvm::{CodegenCx, LLVMBackend};
 use ndatable::nda_arrays;
 use salsa::ParallelDatabase;
+use sim_back::dae::NoiseSourceKind;
 use sim_back::{CompiledModule, ModuleInfo, SimUnknownKind};
 use stdx::{impl_debug_display, impl_idx_from};
 use target::spec::Target;
@@ -620,6 +621,16 @@ impl OsdiModule<'_> {
     fn intern_names(&self, literals: &mut Rodeo, db: &CompilationDB) {
         literals.get_or_intern(&*self.info.module.name(db));
         self.intern_node_strs(literals, db);
+        // Analysis-noise audit: the descriptor's noise-source names carry the
+        // CALL-SITE id after a \x1f separator (see `metadata.rs`); the
+        // codegen's `const_str_uninterned` requires every emitted string to
+        // be interned up front, so intern the suffixed spellings here.
+        for source in self.dae_system.noise_sources.iter() {
+            if !matches!(source.kind, NoiseSourceKind::AcStim { .. }) {
+                let name = literals.resolve(&source.name).to_owned();
+                literals.get_or_intern(format!("{}\u{1f}{}", name, source.idx));
+            }
+        }
         literals.get_or_intern_static("Multiplier (Verilog-A $mfactor)");
         literals.get_or_intern_static("deg");
         literals.get_or_intern_static("m");

@@ -8,9 +8,9 @@ units = "", desc = "", flags = ParameterFlags(0x0)
 2 terminals
 node "a" units = "V", runits = "A"
 node "c" units = "V", runits = "A"
-noise "white1" (a, c)
-noise "white2" (a, c)
-noise "flickr1" (a, c)
-noise "flickr2" (a, c)
+noise "white1\u{1f}0" (a, c)
+noise "white2\u{1f}1" (a, c)
+noise "flickr1\u{1f}2" (a, c)
+noise "flickr2\u{1f}3" (a, c)
 0 states
 has bound_step false

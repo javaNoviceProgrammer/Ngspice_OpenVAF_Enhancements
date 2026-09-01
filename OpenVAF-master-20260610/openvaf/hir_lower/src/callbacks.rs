@@ -514,6 +514,13 @@ pub struct NoiseTable {
 }
 
 impl NoiseTable {
+    /// Analysis-noise audit: the CALL-SITE id, exported through the OSDI
+    /// noise-source name so distinct calls sharing a label stay
+    /// uncorrelated (LRM 4.6.4.6).
+    pub fn idx(&self) -> u32 {
+        self.idx
+    }
+
     // `vals` are the raw `(frequency, power)` pairs already gathered by the
     // caller from an inline array or a data file (see
     // `BodyLoweringCtx::noise_table_data` in `expr.rs`). In both forms the

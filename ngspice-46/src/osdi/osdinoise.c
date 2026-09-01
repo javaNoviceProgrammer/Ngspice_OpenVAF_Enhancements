@@ -60,6 +60,50 @@ static uint32_t noise_dense_len = 0;
  * components exactly. The spectra and the grand totals were never affected.
  */
 #define nVar(i, j) noise_vals[i * (descr->num_noise_src + 1) + j]
+
+/* Analysis-noise audit, LRM 4.6.4.1/4.6.4.6: the compiler encodes each
+ * source's CALL-SITE id after a \x1f separator in the name. The full string
+ * is the CORRELATION key (every entry extracted from one call -- the LRM's
+ * shared-output idiom -- shares it and keeps summing coherently), while the
+ * LABEL before the separator is the reporting name: same-labelled
+ * contributions combine in the contribution summary, exactly as 4.6.4.1
+ * asks, but two SEPARATE calls sharing a label are no longer treated as one
+ * physical source (they used to sum as signed amplitudes -- cancellation
+ * where the LRM requires uncorrelated power addition). */
+static size_t osdi_noise_label_len(const char *name) {
+  const char *sep = strchr(name, '\x1f');
+  return sep ? (size_t)(sep - name) : strlen(name);
+}
+
+static bool osdi_noise_same_label(const char *a, const char *b) {
+  size_t la = osdi_noise_label_len(a);
+  size_t lb = osdi_noise_label_len(b);
+  return la == lb && strncmp(a, b, la) == 0;
+}
+
+/* True when source i carries the first occurrence of its label -- the entry
+ * that owns the label's output vectors and (after the reporting fold) its
+ * combined power. */
+static bool osdi_noise_label_first(const OsdiDescriptor *descr, uint32_t i) {
+  uint32_t j;
+  for (j = 0; j < i; j++)
+    if (osdi_noise_same_label(descr->noise_sources[j].name,
+                              descr->noise_sources[i].name))
+      return false;
+  return true;
+}
+
+/* The label (name up to the call-site separator), in a static buffer for the
+ * NOISE_ADD_OUTVAR call sites. */
+static const char *osdi_noise_label(const char *name) {
+  static char buf[256];
+  size_t n = osdi_noise_label_len(name);
+  if (n >= sizeof(buf))
+    n = sizeof(buf) - 1;
+  memcpy(buf, name, n);
+  buf[n] = '\0';
+  return buf;
+}
 /*
  * HICUMnoise (mode, operation, firstModel, ckt, data, OnDens)
  *
@@ -119,8 +163,12 @@ int OSDInoise(int mode, int operation, GENmodel *inModel, CKTcircuit *ckt,
 
           case N_DENS:
             for (i = 0; i < descr->num_noise_src; i++) {
+              /* one output vector per LABEL (LRM 4.6.4.1); non-first
+                 same-label sources report through the first's vector */
+              if (!osdi_noise_label_first(descr, i))
+                continue;
               NOISE_ADD_OUTVAR(ckt, data, "onoise_%s_%s", gen_inst->GENname,
-                               descr->noise_sources[i].name);
+                               osdi_noise_label(descr->noise_sources[i].name));
             }
             // TOTAL noise
             NOISE_ADD_OUTVAR(ckt, data, "onoise_%s%s", gen_inst->GENname, "");
@@ -128,10 +176,14 @@ int OSDInoise(int mode, int operation, GENmodel *inModel, CKTcircuit *ckt,
 
           case INT_NOIZ:
             for (i = 0; i < descr->num_noise_src; i++) {
+              if (!osdi_noise_label_first(descr, i))
+                continue;
               NOISE_ADD_OUTVAR(ckt, data, "onoise_total_%s_%s",
-                               gen_inst->GENname, descr->noise_sources[i].name);
+                               gen_inst->GENname,
+                               osdi_noise_label(descr->noise_sources[i].name));
               NOISE_ADD_OUTVAR(ckt, data, "inoise_total_%s_%s",
-                               gen_inst->GENname, descr->noise_sources[i].name);
+                               gen_inst->GENname,
+                               osdi_noise_label(descr->noise_sources[i].name));
             }
             /* TOTAL noise.
              *
@@ -284,6 +336,24 @@ int OSDInoise(int mode, int operation, GENmodel *inModel, CKTcircuit *ckt,
             noise_dens_ln[i] = log(MAX(noise_dens[i], N_MINLOG));
             totalNoise += noise_dens[i];
           }
+          /* reporting fold (LRM 4.6.4.1): combine same-LABEL powers onto the
+             label's first source. The SOLVE above already summed each
+             call-site group; this only shapes what the summary vectors
+             carry, so the totals are untouched. */
+          for (i = 0; i < descr->num_noise_src; i++) {
+            uint32_t j;
+            if (!osdi_noise_label_first(descr, i))
+              continue;
+            for (j = i + 1; j < descr->num_noise_src; j++) {
+              if (!osdi_noise_same_label(descr->noise_sources[i].name,
+                                         descr->noise_sources[j].name))
+                continue;
+              noise_dens[i] += noise_dens[j];
+              noise_dens[j] = 0.0;
+              noise_dens_ln[j] = log(MAX(noise_dens[j], N_MINLOG));
+            }
+            noise_dens_ln[i] = log(MAX(noise_dens[i], N_MINLOG));
+          }
 #ifdef RFSPICE
           if (ckt->CKTcurrentAnalysis & DOING_SP) {
             continue;
@@ -337,6 +407,8 @@ int OSDInoise(int mode, int operation, GENmodel *inModel, CKTcircuit *ckt,
           if (data->prtSummary) {
             for (i = 0; i < descr->num_noise_src;
                  i++) { /* print a summary report */
+              if (!osdi_noise_label_first(descr, i))
+                continue; /* folded into its label's first source above */
               data->outpVector[data->outNumber++] = noise_dens[i];
             }
             data->outpVector[data->outNumber++] = totalNoise;
@@ -345,6 +417,8 @@ int OSDInoise(int mode, int operation, GENmodel *inModel, CKTcircuit *ckt,
         case INT_NOIZ: /* already calculated, just output */
           if (job->NStpsSm != 0) {
             for (i = 0; i <= descr->num_noise_src; i++) {
+              if (i < descr->num_noise_src && !osdi_noise_label_first(descr, i))
+                continue; /* label folded; the total entry always writes */
               data->outpVector[data->outNumber++] = nVar(OUTNOIZ, i);
               data->outpVector[data->outNumber++] = nVar(INNOIZ, i);
             }

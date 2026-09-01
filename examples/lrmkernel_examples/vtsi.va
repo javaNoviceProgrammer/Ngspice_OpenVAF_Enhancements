@@ -1,0 +1,11 @@
+`define PHYSICAL_CONSTANTS_NIST2018
+`include "disciplines.vams"
+`include "constants.vams"
+module sps2(a, c);
+  inout a, c; electrical a, c;
+  (* desc="vt - PK*T/PQ (NIST2018)" *) real dvt;
+  analog begin
+    dvt = $vt(300.0) - `P_K*300.0/`P_Q;
+    I(a,c) <+ V(a,c)/1e3;
+  end
+endmodule

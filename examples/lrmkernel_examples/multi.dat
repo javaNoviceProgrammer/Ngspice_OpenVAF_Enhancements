@@ -1,0 +1,4 @@
+# 1-D grid with TWO dependent columns: g(x)=10x (col2), h(x)=100x (col3)
+1.0  10.0  100.0
+2.0  20.0  200.0
+3.0  30.0  300.0

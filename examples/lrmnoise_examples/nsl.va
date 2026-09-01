@@ -1,0 +1,9 @@
+`include "disciplines.vams"
+module nsl(a, c);
+  inout a, c; electrical a, c;
+  (* desc="saw nodeset" *) real saw;
+  analog begin
+    if (analysis("nodeset")) saw = 1.0;
+    I(a,c) <+ V(a,c)/1e3;
+  end
+endmodule

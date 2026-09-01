@@ -155,6 +155,7 @@ DaeSystem {
     noise_sources: [
         NoiseSource {
             name: Spur(3),
+            idx: 0,
             kind: FlickerNoise {
                 pwr: v572,
                 exp: v6,
@@ -168,6 +169,7 @@ DaeSystem {
         },
         NoiseSource {
             name: Spur(4),
+            idx: 1,
             kind: WhiteNoise {
                 pwr: v609,
             },

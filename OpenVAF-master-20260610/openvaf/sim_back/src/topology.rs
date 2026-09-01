@@ -107,6 +107,12 @@ impl ContributeKind {
 #[derive(Debug, Clone)]
 pub struct Noise {
     pub name: Spur,
+    /// Analysis-noise audit: the noise CALL-SITE id (hir_lower's per-call
+    /// index). Distinct calls must stay uncorrelated even when they share a
+    /// label (LRM 4.6.4.6), while every entry extracted from ONE call (the
+    /// shared-output idiom) keeps correlating -- so the id, not the name, is
+    /// the correlation key exported to the simulator.
+    pub idx: u32,
     pub kind: NoiseSourceKind,
     pub factor: Value,
     /// Enhancement-54: coefficient of the j*omega component of the factor
@@ -123,13 +129,13 @@ impl Noise {
         ssa_builder: &mut SSAVariableBuilder,
         func: &mut Function,
     ) -> Noise {
-        let (kind, name) = match *cb {
-            CallBackKind::WhiteNoise { name, .. } => {
+        let (kind, name, idx) = match *cb {
+            CallBackKind::WhiteNoise { name, idx } => {
                 let mut pwr = func.dfg.instr_args(inst)[0];
                 pwr = ssa_builder.define_at_exit(func, F_ZERO, pwr, inst);
-                (NoiseSourceKind::WhiteNoise { pwr }, name)
+                (NoiseSourceKind::WhiteNoise { pwr }, name, idx)
             }
-            CallBackKind::FlickerNoise { name, .. } => {
+            CallBackKind::FlickerNoise { name, idx } => {
                 let pwr = func.dfg.instr_args(inst)[0];
                 let exp = func.dfg.instr_args(inst)[1];
                 (
@@ -138,13 +144,15 @@ impl Noise {
                         exp: ssa_builder.define_at_exit(func, F_ZERO, exp, inst),
                     },
                     name,
+                    idx,
                 )
             }
             CallBackKind::NoiseTable(ref table) => (
                 NoiseSourceKind::NoiseTable { log: table.log, vals: table.vals.clone() },
                 table.name,
+                table.idx(),
             ),
-            CallBackKind::AcStim { name, .. } => {
+            CallBackKind::AcStim { name, idx } => {
                 let mag = func.dfg.instr_args(inst)[0];
                 let phase = func.dfg.instr_args(inst)[1];
                 (
@@ -153,11 +161,12 @@ impl Noise {
                         phase: ssa_builder.define_at_exit(func, F_ZERO, phase, inst),
                     },
                     name,
+                    idx,
                 )
             }
             _ => unreachable!(),
         };
-        Noise { name, kind, factor, factor_react }
+        Noise { name, idx, kind, factor, factor_react }
     }
 }
 

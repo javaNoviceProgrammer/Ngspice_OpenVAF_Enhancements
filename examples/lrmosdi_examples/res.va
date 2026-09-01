@@ -1,0 +1,12 @@
+`include "disciplines.vams"
+`include "constants.vams"
+module myres(a, b);
+  inout a, b;
+  electrical a, b;
+  parameter real r = 1k from (0:inf);
+  real tdev;
+  analog begin
+    tdev = $temperature;
+    I(a,b) <+ V(a,b)/r + white_noise(1e-18, "wn");
+  end
+endmodule

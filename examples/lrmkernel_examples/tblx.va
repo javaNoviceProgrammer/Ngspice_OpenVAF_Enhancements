@@ -1,0 +1,21 @@
+`include "disciplines.vams"
+module tblx(a, c);
+  inout a, c; electrical a, c;
+  (* desc="ragged sample (0.25, 3.5)" *) real r1;
+  (* desc="ragged outside isoline" *)    real r2;
+  (* desc="multi.dat ;2 at 1.5" *)       real r3;
+  (* desc="multi.dat ;1 at 1.5" *)       real r4;
+  (* desc="D at 1.4" *)                  real r5;
+  (* desc="D at 1.6" *)                  real r6;
+  (* desc="D tie at 1.5 -> larger |x|" *) real r7;
+  analog begin
+    r1 = $table_model(0.25, 3.5, "sample.dat");
+    r2 = $table_model(0.5, 6.0, "sample.dat");   // isoline y=0.5 ends at x=5: linear extrap along it
+    r3 = $table_model(1.5, "multi.dat", "1L;2");
+    r4 = $table_model(1.5, "multi.dat", "1L;1");
+    r5 = $table_model(1.4, "lin.dat", "D");
+    r6 = $table_model(1.6, "lin.dat", "D");
+    r7 = $table_model(1.5, "lin.dat", "D");
+    I(a,c) <+ V(a,c)/1e3;
+  end
+endmodule

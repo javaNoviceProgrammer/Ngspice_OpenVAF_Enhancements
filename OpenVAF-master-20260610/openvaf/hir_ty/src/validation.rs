@@ -1023,6 +1023,68 @@ impl Diagnostic for BodyValidationDiagnosticWrapped<'_> {
                     }])
                     .with_notes(vec![help])
             }
+            BodyValidationDiagnostic::SimprobeNoDefault { expr, .. } => {
+                let FileSpan { range, file } = self.expr_src(expr);
+                Report::warning()
+                    .with_message(
+                        "$simprobe without a default expression is FATAL at run time"
+                            .to_owned(),
+                    )
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: file,
+                        range: range.into(),
+                        message: "no default to fall back on".to_owned(),
+                    }])
+                    .with_notes(vec![
+                        "help: this simulator resolves no $simprobe probes, and LRM 9.16 \
+                         says 'if either the inst_name or param_name cannot be resolved, \
+                         and the optional expression is not supplied, then an error shall \
+                         be generated'; supply a third argument to fall back on it instead"
+                            .to_owned(),
+                    ])
+            }
+            BodyValidationDiagnostic::AliasOutsideInitial { expr, port, .. } => {
+                let FileSpan { range, file } = self.expr_src(expr);
+                let name =
+                    if port { "$analog_port_alias" } else { "$analog_node_alias" };
+                Report::error()
+                    .with_message(format!(
+                        "{name} is only allowed inside an analog initial block"
+                    ))
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: file,
+                        range: range.into(),
+                        message: "not an analog initial block".to_owned(),
+                    }])
+                    .with_notes(vec![
+                        "help: LRM 9.20 -- aliases are established before the analog \
+                         block runs; 'it shall be an error for these functions to be \
+                         used in any other context'"
+                            .to_owned(),
+                    ])
+            }
+            BodyValidationDiagnostic::TypeStringOutsideParamset { expr, .. } => {
+                let FileSpan { range, file } = self.expr_src(expr);
+                Report::warning()
+                    .with_message(
+                        "the type_string argument is only meaningful inside a paramset"
+                            .to_owned(),
+                    )
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: file,
+                        range: range.into(),
+                        message: "has no effect here".to_owned(),
+                    }])
+                    .with_notes(vec![
+                        "help: LRM 9.13.1/9.13.2 -- \"global\"/\"instance\" 'shall only \
+                         be used in calls to these functions from within a paramset'; \
+                         outside one the draw is unaffected"
+                            .to_owned(),
+                    ])
+            }
             BodyValidationDiagnostic::DynamicFilterCoeff { expr, form, .. } => {
                 let FileSpan { range, file } = self.expr_src(expr);
                 Report::warning()
@@ -1383,7 +1445,7 @@ impl Diagnostic for BodyValidationDiagnosticWrapped<'_> {
         // cannot actually be used. The check lives here because this is the first
         // point with both the root file (to resolve a relative path) and the VFS.
         if let BodyValidationDiagnostic::TableFileUnusable { ref path, ndim, .. } = *self.diag {
-            if table_file_is_usable(root_file, db, path, ndim) {
+            if table_file_is_usable(root_file, db, path, ndim, true) {
                 return None;
             }
         }
@@ -1396,7 +1458,7 @@ impl Diagnostic for BodyValidationDiagnosticWrapped<'_> {
         // since Enhancement-396 -- structure alone let a negative frequency or
         // power through, and a zero through to `noise_table_log`.
         if let BodyValidationDiagnostic::NoiseTableFileUnusable { ref path, log, .. } = *self.diag {
-            if table_file_is_usable(root_file, db, path, 1)
+            if table_file_is_usable(root_file, db, path, 1, false)
                 && noise_table_file_bad_value(root_file, db, path, log).is_none()
             {
                 return None;
@@ -1840,7 +1902,18 @@ impl Diagnostic for TypeValidationDiagnosticWrapped<'_> {
 /// leading numbers also read as a 2-dimensional header. Guessing from the content
 /// -- which is what the old `let d = nums[0]` branch did -- false-positives on real
 /// 1-D data.
-fn table_file_is_usable(root_file: FileId, db: &dyn BaseDB, path: &str, ndim: usize) -> bool {
+/// `multi_col` distinguishes the two 1-D consumers (kernel audit): a
+/// `$table_model` file may carry N+M columns per LRM 9.21.1 (the dependent
+/// selector picks one), while a noise data file is ALWAYS the two-column
+/// `(frequency, power)` form -- `read_noise_table_file` reads exactly two
+/// tokens per line, and this check must keep agreeing with that reader.
+fn table_file_is_usable(
+    root_file: FileId,
+    db: &dyn BaseDB,
+    path: &str,
+    ndim: usize,
+    multi_col: bool,
+) -> bool {
     let Some(dir) = db.file_path(root_file).parent() else { return true };
     let Some(full) = dir.join(path) else { return true };
     let Some(abs) = full.as_path() else { return true };
@@ -1862,65 +1935,80 @@ fn table_file_is_usable(root_file: FileId, db: &dyn BaseDB, path: &str, ndim: us
             })
     };
 
-    if ndim <= 1 {
-        // The one-dimensional form is ONE PAIR PER LINE -- not a flat stream of
-        // numbers. `read_noise_table_file` reads `it.next(), it.next()` and
-        // discards the remainder of the line, and the 1-D `$table_model` file form
-        // calls that same reader, so this is the readers' own grammar.
-        //
-        // Requiring exactly two finite numbers per line catches BOTH faces of the
-        // defect: a corrupt row (`N/A N/A`, `abc def`, a missing-data marker), and
-        // a surplus third column, which the reader silently drops.
-        let mut rows = 0usize;
-        for line in lines() {
-            let mut it = line.split_ascii_whitespace();
-            let (Some(a), Some(b), None) = (it.next(), it.next(), it.next()) else { return false };
+    // Parse every non-comment line into finite numeric rows; any unusable
+    // token fails the file, exactly as before.
+    let mut rows: Vec<Vec<f64>> = Vec::new();
+    for line in lines() {
+        let mut row = Vec::new();
+        for tok in line.split_ascii_whitespace() {
             // Enhancement-396: `f64::from_str` accepts "nan", "inf", "-infinity",
             // and returns an INFINITY rather than an error for an overflowing
             // exponent like 1e400 -- exactly how a measured data file spells a
             // missing value. The readers in hir_lower apply the same rule.
-            let (Ok(x), Ok(y)) = (a.parse::<f64>(), b.parse::<f64>()) else { return false };
-            if !x.is_finite() || !y.is_finite() {
-                return false;
-            }
-            rows += 1;
-        }
-        return rows > 0;
-    }
-
-    // The N-dimensional form is free-form whitespace across lines -- grid4.tbl puts
-    // its entire 36-value tensor on one line -- so it gets a token rule, not a line
-    // rule. Every token must be a finite number (no silent skipping, which is what
-    // let a corrupt token through), and the self-describing header must account for
-    // the count EXACTLY. `read_table_grid_nd` consumes the stream positionally and
-    // ignores anything left over, so a surplus token is a real defect too.
-    let mut nums: Vec<f64> = Vec::new();
-    for line in lines() {
-        for tok in line.split_ascii_whitespace() {
             let Ok(v) = tok.parse::<f64>() else { return false };
             if !v.is_finite() {
                 return false;
             }
-            nums.push(v);
+            row.push(v);
+        }
+        if !row.is_empty() {
+            rows.push(row);
         }
     }
-    if nums.len() < 1 + ndim {
+    if rows.is_empty() {
         return false;
     }
-    // The file's own leading `ndim` must agree with the call's.
-    if nums[0].fract() != 0.0 || nums[0] != ndim as f64 {
-        return false;
+
+    // The LRM 9.21.1 isoline judgement: one sample per line and a CONSTANT
+    // N+M column count. Ragged isolines are LEGAL ("the number and spacing
+    // of samples may be different on each isoline" -- the LRM's own sample
+    // file is ragged), so no grid-completeness demand: the reader
+    // interpolates the isoline tree directly.
+    let isoline_ok = |rows: &[Vec<f64>], ndim: usize, multi_col: bool| -> bool {
+        let width = rows[0].len();
+        if width <= ndim || rows.iter().any(|r| r.len() != width) {
+            return false;
+        }
+        if !multi_col && width != ndim + 1 {
+            return false;
+        }
+        true
+    };
+
+    if ndim <= 1 {
+        // The one-dimensional form is line-structured. A noise file must be
+        // exactly the two-column pair form; a `$table_model` file may carry
+        // extra dependent columns (LRM 9.21.1; the `;N` selector picks one).
+        return isoline_ok(&rows, 1, multi_col);
     }
-    let sizes: Vec<usize> = nums[1..1 + ndim]
-        .iter()
-        .map(|v| if v.fract() == 0.0 && *v >= 1.0 { *v as usize } else { 0 })
-        .collect();
-    if sizes.iter().any(|&s| s == 0) {
-        return false;
-    }
-    let axes: usize = sizes.iter().sum();
-    let vals: usize = sizes.iter().product();
-    nums.len() == 1 + ndim + axes + vals
+
+    // The self-describing N-dimensional grid: free-form whitespace across
+    // lines (grid4.tbl puts its 36-value tensor on one line), the header
+    // accounting for the token count EXACTLY.
+    let nums: Vec<f64> = rows.iter().flatten().copied().collect();
+    let grid_ok = (|| {
+        if nums.len() < 1 + ndim {
+            return false;
+        }
+        // The file's own leading `ndim` must agree with the call's.
+        if nums[0].fract() != 0.0 || nums[0] != ndim as f64 {
+            return false;
+        }
+        let sizes: Vec<usize> = nums[1..1 + ndim]
+            .iter()
+            .map(|v| if v.fract() == 0.0 && *v >= 1.0 { *v as usize } else { 0 })
+            .collect();
+        if sizes.iter().any(|&s| s == 0) {
+            return false;
+        }
+        let axes: usize = sizes.iter().sum();
+        let vals: usize = sizes.iter().product();
+        nums.len() == 1 + ndim + axes + vals
+    })();
+    // Kernel audit: the LRM 9.21.1 N+M-column format is the normative one
+    // and is accepted alongside the project's self-describing grid, exactly
+    // as `lower_table_model` now tries both.
+    grid_ok || isoline_ok(&rows, ndim, true)
 }
 
 /// Enhancement-506: the first out-of-domain entry of a noise data file, if any.

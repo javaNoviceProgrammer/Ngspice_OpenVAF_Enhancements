@@ -7,7 +7,7 @@ idtmod operators each cutting a corner. This suite pins the fixes:
   delay argument td when the module instance is initialized shall be
   used" — a time-varying td expression was *tracked* instead. The
   two-argument form now latches td at the first transient evaluation
-  (checked as v(o)@5.99m = 4.99, where tracking gave 3.99), while the
+  (checked as `v(o)@5.99m` = 4.99, where tracking gave 3.99), while the
   maxdelay form keeps tracking within its bound, the DC pass-through is
   exact, and the AC phase is `-2πf·td` to four digits.
 - **`ddx` by the unnamed-branch flow** (4.5.6, Table 4-16): `I(n1,n2)`

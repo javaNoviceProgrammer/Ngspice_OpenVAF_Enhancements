@@ -1,0 +1,27 @@
+`include "disciplines.vams"
+module tblm3(a, c);
+  inout a, c; electrical a, c;
+  (* desc="interp at 1.5" *)        real t1;
+  (* desc="extrap default at 4" *)  real t2;
+  (* desc="extrap default at 0" *)  real t10;
+  (* desc="extrap 1C at 4" *)       real t3;
+  (* desc="extrap 1L at 4" *)       real t4;
+  (* desc="2d interp (0.25,3.5)" *) real t6;
+  (* desc="2d perax CL yext" *)     real t11;
+  (* desc="inline pairs at 1.5" *)  real t8;
+  (* desc="sel 1L;2 on lin" *)      real t12;
+  analog begin
+    t1 = $table_model(1.5, "lin.dat");
+    t2 = $table_model(4.0, "lin.dat");
+    t10 = $table_model(0.0, "lin.dat");
+    t3 = $table_model(4.0, "lin.dat", "1C");
+    t4 = $table_model(4.0, "lin.dat", "1L");
+    t6 = $table_model(0.25, 3.5, "grid2.tbl");
+    // per-axis control: y (outer, dim1) constant extrap, x (dim2) linear extrap.
+    // Probe y=2.0 (beyond y-axis end 1.0), x=2.0 (inside): constant in y => f(1.0,2.0)=2.0
+    t11 = $table_model(2.0, 2.0, "grid2.tbl", "1C,1L");
+    t8 = $table_model(1.5, '{1.0, 2.0, 2.0, 4.0, 3.0, 6.0});
+    t12 = $table_model(1.5, "lin.dat", "1L;2");
+    I(a,c) <+ V(a,c)/1e3;
+  end
+endmodule

@@ -1,0 +1,18 @@
+`include "disciplines.vams"
+`include "constants.vams"
+module sps(a, c);
+  inout a, c; electrical a, c;
+  string an, at, cw;
+  (* desc="name==type" *)  integer same;
+  (* desc="cwd nonempty" *) integer cwok;
+  (* desc="vt - PK*T/PQ" *) real dvt;
+  analog begin
+    an = $simparam$str("analysis_name");
+    at = $simparam$str("analysis_type");
+    cw = $simparam$str("cwd");
+    same = (an == at) ? 1 : 0;
+    cwok = (cw != "") ? 1 : 0;
+    dvt = $vt(300.0) - `P_K*300.0/`P_Q;
+    I(a,c) <+ V(a,c)/1e3;
+  end
+endmodule

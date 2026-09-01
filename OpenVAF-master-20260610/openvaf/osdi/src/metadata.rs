@@ -405,7 +405,19 @@ impl<'ll> OsdiCompilationUnit<'_, '_, 'll> {
                 .map(|source| {
                     let node_1: u32 = source.hi.into();
                     let node_2: u32 = source.lo.map_or(u32::MAX, u32::from);
-                    let name = cx.literals.resolve(&source.name).to_owned();
+                    // Analysis-noise audit: the CALL-SITE id rides after a
+                    // \x1f separator. ngspice correlates on the full string
+                    // (so one call's multi-branch entries stay coherent, LRM
+                    // 4.6.4.6's shared-output rule) and strips the suffix for
+                    // the contribution summary (4.6.4.1's label rule). Two
+                    // separate calls sharing a label used to be summed
+                    // coherently -- amplitude cancellation where the LRM
+                    // requires uncorrelated power addition.
+                    let name = format!(
+                        "{}\u{1f}{}",
+                        cx.literals.resolve(&source.name),
+                        source.idx
+                    );
                     OsdiNoiseSource { name, nodes: OsdiNodePair { node_1, node_2 } }
                 })
                 .collect();
