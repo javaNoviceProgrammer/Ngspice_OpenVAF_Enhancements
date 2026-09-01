@@ -26,7 +26,16 @@ product forms a curve family -- one curve per output per outer combination, name
 
 For every knob value it sets the knob, runs the `-analysis` command (default `op`),
 and evaluates each `-output` expression (its LAST value). With no `-output`, every
-node voltage of the analysis is recorded (like `.dc`). The results go into a new
+node voltage of the analysis is recorded (like `.dc`).
+
+Enhancement-533: when the analysis is the default `op`, the sweep has a single
+knob `.dc` can step (a source, a resistor, `temp`, or an `@inst[param]`), and the
+points are evenly spaced, the whole point loop is handed to ONE dc analysis --
+a warm NIiter continuation instead of npt cold operating points -- and the
+outputs are served from the dc plot. Any ineligibility or failure (including
+.dc's deliberate E-495 refusal when a swept parameter moves an OSDI node
+collapse or a model bin) falls back to the per-point loop unchanged;
+`-perpoint` forces that loop up front. See sw_dc_handover() for the fine print. The results go into a new
 plot named `sweep<N>` (Enhancement-367 -- it was `unknown<N>` before, because no
 `sweep` entry existed in the plotabs[] table in typesdef.c; the command prints the
 name it actually used), with the knob values as the scale, so `plot <output>` shows the
@@ -2669,7 +2678,8 @@ static int sw_is_optflag(const char *w)
     return w && (eq(w, "-analysis") || eq(w, "-a") ||
                  eq(w, "-overlay")  || eq(w, "-ov") ||
                  eq(w, "-vs")       || eq(w, "-family") ||
-                 eq(w, "-output")   || eq(w, "-o"));
+                 eq(w, "-output")   || eq(w, "-o") ||
+                 eq(w, "-perpoint"));          /* Enhancement-533 */
 }
 
 
@@ -2696,6 +2706,220 @@ static void sw_add_output_token(char **outname, char **outexpr, int *pnout,
  * sweep would recurse forever. */
 static int sweep_active = 0;
 
+/* Enhancement-533: hand an eligible op-point sweep to ONE dc analysis.
+ *
+ * With the default `-analysis op`, the sweep loop solves every point as a COLD
+ * operating point: full `op` job, MODEINITJCT with the whole gmin/source-
+ * stepping fallback chain, one plot allocated per point. `.dc` walks the same
+ * points inside one analysis with a WARM NIiter continuation from the previous
+ * solution (Enhancement-258) -- typically a couple of iterations per point --
+ * and produces one plot. For a many-point sweep the difference is the whole
+ * runtime, so when the knob is something `.dc` can step and the points are
+ * evenly spaced, run one dc under the hood and serve the sweep's outputs from
+ * its plot. `-perpoint` forces the old loop.
+ *
+ * The two engines were made complementary on purpose, which is what makes the
+ * handover safe: `.dc` REFUSES a point that moves an OSDI node collapse or
+ * leaves a model bin (Enhancement-495, whose message recommends `sweep`), and
+ * aborts when a device rejects a value (Enhancement-427) or a point fails to
+ * converge -- and every one of those outcomes lands here as a failed run, which
+ * FALLS BACK to the per-point loop. Fast when the circuit cooperates, the old
+ * behavior to the letter when it does not.
+ *
+ * Eligibility, and why each bound exists:
+ *   - single knob (no `-vs` family), no `-overlay`, analysis exactly `op`;
+ *   - the knob is `temp`, a bare source/resistor name, or a non-wildcard
+ *     `@inst[param]` (Enhancement-62 taught `.dc` that spelling; model
+ *     parameters and symbolic `.param`s have no dc arm);
+ *   - the values are UNIFORMLY spaced: `.dc` regenerates its points as
+ *     start + k*step, so `dec`/`oct`/an uneven `list` cannot be represented.
+ *     A uniform `list` and the `lin` form qualify -- spacing is judged from
+ *     the values, not from the spelling.
+ *
+ * Two mechanical details. `.dc` accumulates `value += step` and stops on an
+ * ABSOLUTE 1e3*DBL_EPSILON overshoot test (dctrcurv.c), so a step derived as
+ * span/(N-1) can lose the endpoint to accumulated rounding; the command is
+ * therefore issued with the stop padded by 0.49*step -- the true endpoint
+ * always lands, the point after it always exceeds the pad by 0.51*step and is
+ * dropped, and the values the circuit actually saw are read back from the dc
+ * plot's scale into the sweep scale (adopted, not assumed: if the count still
+ * disagrees, fall back). And `@r2[resistance]` / `@v1[dc]` are rewritten to
+ * the bare `r2` / `v1` spelling: the same sweep through .dc's classic
+ * source/resistor arm, which steps the value directly instead of routing
+ * every point through CKTsetInstParam + CKTtemp (a full OSDItemp pass over
+ * every device in the deck, per point).
+ *
+ * What changes for the model, recorded honestly: dc points run under
+ * MODEDCTRANCURVE, so a Verilog-A `analysis("dc")` is true where the per-point
+ * loop's op had `analysis("static")` -- .dc semantics, which is what the user
+ * asked this sweep to be. And a warm continuation TRACKS a solution branch
+ * where independent cold ops re-decide it at every point; for a bistable
+ * circuit that is .dc's answer, again by design. Both are in the announce
+ * line's name; `-perpoint` restores the old reading of either.
+ *
+ * Returns 1 with `*pdata` filled (and, when no `-output` was given, the
+ * output lists populated from the dc plot's node voltages) -- the caller skips
+ * its loop and emits the summary plot as usual. Returns 0 untouched-or-cleaned
+ * on any ineligibility or failure: the per-point loop then runs exactly as
+ * before (the dc plot of a failed attempt stays in the session, like any
+ * failed dc). */
+static int sw_dc_handover(const char *kname0, int kkind0, double *kvals0,
+                          int nv, char *outname[], char *outexpr[], int *pnout,
+                          double **pdata)
+{
+    char tok[512], cmd[640];
+    double step, span;
+    struct dvec *sc, *d;
+    double *data;
+    int i, k, collected = 0;
+
+    if (nv < 2)
+        return 0;
+    /* a live `@dev[param]` read can only be answered against the circuit at
+     * the point, never from a finished dc plot -- known before running
+     * anything, so do not pay for a full dc just to discover it */
+    for (k = 0; k < *pnout; k++)
+        if (outexpr[k] && strchr(outexpr[k], '@'))
+            return 0;
+    step = (kvals0[nv - 1] - kvals0[0]) / (nv - 1);
+    span = fabs(kvals0[nv - 1] - kvals0[0]);
+    if (step == 0.0 || !isfinite(step) || !isfinite(span))
+        return 0;
+    for (i = 1; i < nv; i++)
+        if (fabs((kvals0[i] - kvals0[i - 1]) - step) > 1e-9 * span)
+            return 0;                    /* dec/oct/uneven list: no dc form */
+
+    if (kkind0 == SW_TEMP) {
+        /* `.dc temp` holds ONE setup for the whole sweep and never rebuilds a
+         * node collapse that MOVES with temperature -- a known-open finding
+         * the sweeptemp suite pins (its per-point path re-decides the collapse
+         * at every point and is the correct instrument, per the same suite).
+         * Only OSDI devices can re-decide topology after setup; a deck of
+         * built-ins keeps the handover. */
+        int t;
+        CKTcircuit *tck = (CKTcircuit *) ft_curckt->ci_ckt;
+        for (t = 0; t < DEVmaxnum; t++)
+            if (DEVices[t] && tck->CKThead[t] &&
+                DEVices[t]->DEVpublic.registry_entry) {
+                if (ft_ngdebug)
+                    fprintf(cp_out, "sweep: temp handover declined -- OSDI "
+                                    "devices can move their node collapse "
+                                    "with temperature, which one dc setup "
+                                    "cannot follow\n");
+                return 0;
+            }
+        snprintf(tok, sizeof tok, "temp");
+    } else if (kkind0 == SW_ALTER) {
+        if (strchr(kname0, '*') || strlen(kname0) >= sizeof tok)
+            return 0;                    /* wildcard knobs have no dc arm */
+        if (kname0[0] == '@') {
+            /* `@r2[resistance]` and `@v1[dc]`/`@i1[dc]` are the principal
+             * parameters .dc steps through its classic bare-name arms --
+             * rewrite them so the resistor/source fast path applies. */
+            const char *lb = strchr(kname0, '[');
+            char devc = (char) tolower_c(kname0[1]);
+            if (lb && devc == 'r' &&
+                strcasecmp(lb, "[resistance]") == 0) {
+                snprintf(tok, sizeof tok, "%.*s",
+                         (int) (lb - kname0 - 1), kname0 + 1);
+            } else if (lb && (devc == 'v' || devc == 'i') &&
+                       strcasecmp(lb, "[dc]") == 0) {
+                snprintf(tok, sizeof tok, "%.*s",
+                         (int) (lb - kname0 - 1), kname0 + 1);
+            } else {
+                snprintf(tok, sizeof tok, "%s", kname0);   /* E-62 @ form */
+            }
+        } else if (!strchr(kname0, '[') &&
+                   (tolower_c(kname0[0]) == 'r' || tolower_c(kname0[0]) == 'v' ||
+                    tolower_c(kname0[0]) == 'i')) {
+            snprintf(tok, sizeof tok, "%s", kname0);
+        } else {
+            return 0;                    /* not a spelling .dc can step */
+        }
+    } else {
+        return 0;                        /* model / .param knob: no dc arm */
+    }
+
+    fprintf(cp_out, "sweep: analysis is 'op' and the knob is dc-sweepable -- "
+                    "handing all %d points to one dc analysis (warm "
+                    "continuation; -perpoint solves them individually)\n", nv);
+    snprintf(cmd, sizeof cmd, "dc %s %.17g %.17g %.17g",
+             tok, kvals0[0], kvals0[nv - 1] + 0.49 * step, step);
+    if (ft_ngdebug)
+        fprintf(cp_out, "sweep: dc handover command: %s\n", cmd);
+
+    sw_run_cmd(cmd);
+
+    if (sw_run_failed() || !plot_cur || !plot_cur->pl_scale) {
+        fprintf(cp_out, "sweep: the dc analysis did not complete (a refused "
+                        "point, a moved topology, or non-convergence) -- "
+                        "falling back to one op per point\n");
+        return 0;
+    }
+    sc = plot_cur->pl_scale;
+    if (!isreal(sc) || sc->v_length != nv) {
+        fprintf(cp_out, "sweep: the dc analysis returned %d points where %d "
+                        "were asked -- falling back to one op per point\n",
+                sc ? sc->v_length : 0, nv);
+        return 0;
+    }
+
+    /* the values the circuit actually saw are the sweep's honest scale */
+    for (i = 0; i < nv; i++)
+        kvals0[i] = sc->v_realdata[i];
+
+    if (*pnout == 0) {
+        /* no -output given: record every node voltage, the same filter the
+         * per-point loop applies to its op plots */
+        for (d = plot_cur->pl_dvecs; d && *pnout < SW_MAXOUT; d = d->v_next)
+            if (d != sc && d->v_type == SV_VOLTAGE && isreal(d) && d->v_name &&
+                d->v_name[0] != '@' && !strchr(d->v_name, '#')) {
+                outname[*pnout] = copy(d->v_name);
+                outexpr[*pnout] = copy(d->v_name);
+                (*pnout)++;
+            }
+        collected = 1;
+        if (*pnout == 0)
+            return 0;                    /* nothing recordable: let the loop
+                                          * produce its usual diagnostics */
+    }
+
+    data = TMALLOC(double, (size_t) nv * (size_t) *pnout);
+    for (k = 0; k < *pnout; k++) {
+        double *x = NULL, *y = NULL;
+        int n = sw_eval_vec(outexpr[k], &x, &y);
+        tfree(x);
+        if (n == nv && y) {
+            for (i = 0; i < nv; i++)
+                data[(size_t) i * (size_t) *pnout + (size_t) k] = y[i];
+        } else if (n == 1 && y) {
+            for (i = 0; i < nv; i++)     /* a constant: every point agrees */
+                data[(size_t) i * (size_t) *pnout + (size_t) k] = y[0];
+        } else {
+            /* an output the dc plot cannot serve -- a live `@dev[param]`
+             * read, or an expression that never resolved. Only the per-point
+             * loop can evaluate it against the circuit, so hand everything
+             * back. */
+            fprintf(cp_out, "sweep: -output %s cannot be served from the dc "
+                            "plot -- falling back to one op per point\n",
+                    outexpr[k]);
+            tfree(y);
+            tfree(data);
+            if (collected) {
+                for (i = 0; i < *pnout; i++) {
+                    tfree(outname[i]);
+                    tfree(outexpr[i]);
+                }
+                *pnout = 0;
+            }
+            return 0;
+        }
+        tfree(y);
+    }
+    *pdata = data;
+    return 1;
+}
+
 void com_sweep(wordlist *wl)
 {
     char *analysis = NULL, *scname = NULL;
@@ -2710,6 +2934,9 @@ void com_sweep(wordlist *wl)
     int nout = 0, i, k, p, j;
     int save_optimizing = ft_optimizing;
     int overlay = 0;                 /* Enhancement-189: -overlay flag          */
+    int perpoint = 0;                /* Enhancement-533: -perpoint forces the
+                                      * one-op-per-point loop over dc handover */
+    int handed = 0;                  /* Enhancement-533: dc handover succeeded  */
     double **ovx = NULL, **ovy = NULL;   /* per-point waveform scale / values   */
     int *ovlen = NULL;               /* per-point waveform length               */
     char *scwavename = NULL;         /* the analysis scale name (e.g. "time")   */
@@ -2771,7 +2998,8 @@ void com_sweep(wordlist *wl)
         fprintf(cp_err, "usage: sweep <knob> (<start> <stop> <step> | "
                         "lin|dec|oct <N> <start> <stop> | list <v> ...) "
                         "[-vs <knob> <spec>]... "
-                        "[-analysis <cmd>] [-output <expr> ...] [-overlay]\n");
+                        "[-analysis <cmd>] [-output <expr> ...] [-overlay] "
+                        "[-perpoint]\n");
         return;
     }
 
@@ -2791,6 +3019,10 @@ void com_sweep(wordlist *wl)
             analysis = collect_until_flag(&wl);
         } else if (eq(w, "-overlay") || eq(w, "-ov")) {
             overlay = 1; wl = wl->wl_next;
+        } else if (eq(w, "-perpoint")) {
+            /* Enhancement-533: opt out of the dc handover -- one op per point,
+             * the pre-533 behavior (MODEDCOP semantics, cold starts). */
+            perpoint = 1; wl = wl->wl_next;
         } else if (eq(w, "-vs") || eq(w, "-family")) {
             wl = wl->wl_next;
             if (!wl || !wl->wl_word) {
@@ -3071,6 +3303,18 @@ void com_sweep(wordlist *wl)
     for (k = 0; k < SW_MAXOUT; k++)
         outbad[k] = 0;                           /* Enhancement-431 */
 
+    /* Enhancement-533: with the default `op` analysis, a single dc-sweepable
+     * knob and evenly spaced points, one dc analysis computes the same points
+     * with a warm continuation instead of npt cold operating points. Any
+     * ineligibility or failure falls through to the loop below unchanged. */
+    if (!perpoint && !overlay && nknob == 1 && strcasecmp(analysis, "op") == 0)
+        handed = sw_dc_handover(kname[0], kkind[0], kvals[0], nv0,
+                                outname, outexpr, &nout, &data);
+    if (handed) {
+        ft_optimizing = save_optimizing;
+        goto emit_summary;
+    }
+
     /* Enhancement-477: `npt` is the exact number of analyses this loop runs,
      * so the bar is determinate. */
     outp_loop_begin("sweep", "point", npt, sw_loopbar_mode());
@@ -3236,6 +3480,7 @@ void com_sweep(wordlist *wl)
     outp_loop_end();          /* Enhancement-477 */
     ft_optimizing = save_optimizing;
 
+emit_summary:                 /* Enhancement-533: the dc handover joins here */
     /* --- emit the summary plot: the inner knob is the x-scale, and each
      * combination of the outer `-vs` knobs produces one curve per output. With a
      * single knob this is exactly the E-146 transfer curve (name = <output>). --- */

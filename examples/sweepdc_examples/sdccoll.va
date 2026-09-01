@@ -1,0 +1,10 @@
+`include "disciplines.vams"
+module sdccoll(a,b); inout a,b; electrical a,b,m;
+(* type="instance" *) parameter real rs = 0.0 from [0:inf);
+analog begin
+  if (rs > 0.0)
+    I(a,m) <+ V(a,m)/rs;
+  else
+    V(a,m) <+ 0.0;
+  I(m,b) <+ V(m,b)*1e-3;
+end endmodule

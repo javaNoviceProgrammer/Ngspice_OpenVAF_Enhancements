@@ -78,6 +78,19 @@ variables:
                                     ; K inside the model)
 ```
 
+**The `sweep` command hands eligible op sweeps to `.dc`** (E-533): with the
+default `-analysis op`, a single dc-sweepable knob (a source, a resistor,
+`temp`, or an `@inst[param]`) and evenly spaced points, `sweep` runs one dc
+analysis under the hood — a warm point-to-point continuation instead of one
+cold operating point per point (measured 21.2 s → 2.16 s on a 1000-device,
+9900-point sweep, bit-identical to a direct `.dc`). Ineligible spellings
+(model/`.param` knobs, log spacing, `-vs` families, live `@dev[param]`
+outputs, `temp` with OSDI devices in the deck) and every dc refusal — a
+swept parameter that moves a node collapse, a rejected value, a
+non-converged point — fall back to the per-point loop automatically;
+`-perpoint` forces it. See
+[`examples/sweepdc_examples/`](../../examples/sweepdc_examples/).
+
 ## 3.4 Analysis coverage
 
 All core analyses treat OSDI devices as full citizens. The audited status

@@ -100,6 +100,11 @@ def curve(out):
 # ---------------------------------------------------------------------------
 # decks
 # ---------------------------------------------------------------------------
+# Enhancement-533: every deck here runs its sweep with `-perpoint`. This suite
+# pins the E-471/E-503 setup-REUSE machinery, which lives in the per-point
+# loop -- the eligible knobs (a resistor, `temp` on a built-in-only deck, a
+# source) would otherwise hand the whole sweep to one dc analysis and leave no
+# reuse decision to observe. The handover itself is pinned by sweepdc_examples.
 def bjt(n, knob, reuse=True):
     L = ["bjt amplifier chain"]
     if not reuse:
@@ -113,7 +118,7 @@ def bjt(n, knob, reuse=True):
               f"Re{i} e{i} 0 200", f"Cc{i} c{i} 0 1p"]
         prev = f"c{i}"
     L += [f"Rout {prev} out 1k", "Rload out 0 100k", ".control", "set ngdebug",
-          f"sweep {knob} -output v(out) -analysis op", "print v(out)",
+          f"sweep {knob} -perpoint -output v(out) -analysis op", "print v(out)",
           ".endc", ".end"]
     return "\n".join(L) + "\n"
 
@@ -129,7 +134,7 @@ def diode(n, knob, reuse=True):
         L += [f"D{i} {prev} n{i} dmod", f"R{i} n{i} 0 10k"]
         prev = f"n{i}"
     L += [f"Rout {prev} out 1k", "Rl out 0 5k", ".control", "set ngdebug",
-          f"sweep {knob} -output v(out) -analysis op", "print v(out)",
+          f"sweep {knob} -perpoint -output v(out) -analysis op", "print v(out)",
           ".endc", ".end"]
     return "\n".join(L) + "\n"
 
@@ -146,7 +151,7 @@ def mos(n, knob, reuse=True):
         L += [f"M{i} d{i} g {prev} 0 nm w=10u l=1u", f"R{i} d{i} 0 50k"]
         prev = f"d{i}"
     L += [f"Rout {prev} out 1k", "Rl out 0 10k", ".control", "set ngdebug",
-          f"sweep {knob} -output v(out) -analysis op", "print v(out)",
+          f"sweep {knob} -perpoint -output v(out) -analysis op", "print v(out)",
           ".endc", ".end"]
     return "\n".join(L) + "\n"
 
@@ -234,7 +239,7 @@ check("[15] a `.param` knob declares nothing, so the strict gate applies",
 
 # montecarlo does not declare, so it must not gain reuse on a BJT deck
 MC = bjt(8, "@qmod[bf] lin 2 50 150").replace(
-    "sweep @qmod[bf] lin 2 50 150 -output v(out) -analysis op",
+    "sweep @qmod[bf] lin 2 50 150 -perpoint -output v(out) -analysis op",
     "montecarlo 6 -analysis op -spec v(out) -max 99 -seed 3", 1)
 MC = MC.replace(".model qmod npn bf=100",
                 ".param bfr=agauss(100,10,3)\n.model qmod npn bf={bfr}", 1)

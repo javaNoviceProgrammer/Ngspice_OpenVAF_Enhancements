@@ -129,11 +129,21 @@ for i in range(300):
     lad.append(f"R{i} n{i} n{i+1} 1k")
     lad.append(f"C{i} n{i+1} 0 1n")
 lad.append("RL n300 0 1meg")
+# Enhancement-533: an ELIGIBLE default-op sweep no longer runs a point loop at
+# all -- it hands the points to one dc analysis, so there is no point bar to
+# draw and the announce line says where the work went. The bar's own contract
+# is pinned through `-perpoint`, which forces the loop the bar reports on.
 o = run("\n".join(lad), "set loopbar\nsweep @r0[resistance] lin 2500 500 4k "
-                        "-output v(n300)", "op")
+                        "-output v(n300)", "op_hand")
+fr = frames(o, "sweep")
+check("[8a] the eligible default-op sweep hands over: dc announce, no point bar",
+      "handing all 2500 points" in o and not fr, f"{len(fr)} frames")
+o = run("\n".join(lad), "set loopbar\nsweep @r0[resistance] lin 2500 500 4k "
+                        "-perpoint -output v(n300)", "op")
 fr = frames(o, "sweep")
 ps = [pct(f) for f in fr if pct(f) is not None]
-check("[8] DRIVER B (point boundary): an op sweep still draws, and reaches 100%",
+check("[8b] DRIVER B (point boundary): a -perpoint op sweep draws, and "
+      "reaches 100%",
       len(fr) >= 2 and ps and ps[-1] == 100
       and not any(inner_pct(f) for f in fr),
       f"{len(fr)} frames, no inner field (op has no span)")
@@ -166,7 +176,10 @@ check("[11] wcd is INDETERMINATE: a counter, no bar, and drawn BEFORE its result
 # ---------------------------------------------------------------------------
 print("\n[12-15] the switch, and the two behaviours that must not change")
 # ---------------------------------------------------------------------------
-SW = "sweep @r1[resistance] lin 40 500 4k -output v(b)"
+# Enhancement-533: `-perpoint` keeps these vehicles on the point loop the bar
+# reports on; the eligible default would hand the points to one dc analysis
+# and leave nothing for the bar to draw (pinned at [8a]).
+SW = "sweep @r1[resistance] lin 40 500 4k -perpoint -output v(b)"
 on = [("set loopbar", 1), ("set loopbar=1", 1), ("set noloopbar=0", 0)]
 off = [("set loopbar=0", 0), ("set loopbar=false", 0), ("set loopbar=no", 0),
        ("set loopbar=off", 0), ("set noloopbar", 0), ("", 0)]
