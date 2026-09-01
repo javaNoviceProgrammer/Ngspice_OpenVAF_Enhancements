@@ -1,6 +1,6 @@
 use hir::{
-    ArrayAssignElem, BranchWrite, Case, CaseCond, CaseKind, CaseMask, ContributeKind, Event, Expr,
-    ExprId, GlobalEvent, Literal, Node, Stmt, StmtId, Type,
+    ArrayAssignElem, BranchWrite, BuiltIn, Case, CaseCond, CaseKind, CaseMask, ContributeKind,
+    Event, Expr, ExprId, GlobalEvent, Literal, Node, ResolvedFun, Stmt, StmtId, Type,
 };
 use mir::builder::InstBuilder;
 use mir::cursor::{Cursor, FuncCursor};
@@ -852,8 +852,55 @@ impl BodyLoweringCtx<'_, '_, '_> {
 
     fn contribute(&mut self, voltage_src: bool, write: BranchWrite, rhs: ExprId) {
         let is_zero = self.body.get_expr(rhs).is_zero();
+        let is_noise_only = self.expr_is_noise_only(rhs);
         let rhs = self.lower_expr(rhs);
-        self.contribute_value(voltage_src, write, rhs, is_zero)
+        self.contribute_value_(voltage_src, write, rhs, is_zero, is_noise_only)
+    }
+
+    /// Bug-hunt F7: is this contribution PURELY a noise source (a noise
+    /// function call, possibly scaled/negated/summed with other noise calls)?
+    ///
+    /// LRM 4.6.4 makes noise functions ZERO in every large-signal analysis, so
+    /// such a contribution carries no large-signal content -- and it must not
+    /// flip the branch's voltage/current classification. BSIM4's access-region
+    /// noise is the motivating case:
+    ///
+    ///     else begin V(d,di) <+ 0.0; end   // collapse hint (rdsMod = 0)
+    ///     ...
+    ///     I(di,d) <+ white_noise(4*`P_K*T*gdpr, "Rd");
+    ///
+    /// The unconditional noise line lowered AFTER the conditional voltage
+    /// contribution and, through the last-write-wins `IsVoltageSrc` place,
+    /// reclassified the branch as never-a-voltage-source: the collapse
+    /// vanished from the topology, `di`/`si` floated, and the compiled BSIM4
+    /// conducted exactly ZERO at every bias -- with no diagnostic anywhere.
+    fn expr_is_noise_only(&self, expr: ExprId) -> bool {
+        match self.body.get_expr(expr) {
+            Expr::Call { fun: ResolvedFun::BuiltIn(builtin), .. } => matches!(
+                builtin,
+                BuiltIn::white_noise
+                    | BuiltIn::flicker_noise
+                    | BuiltIn::noise_table
+                    | BuiltIn::noise_table_log
+            ),
+            Expr::UnaryOp { expr, .. } => self.expr_is_noise_only(expr),
+            Expr::BinaryOp { lhs, rhs, op } => {
+                use syntax::ast::BinaryOp::*;
+                match op {
+                    // a scaled noise source is still noise-only as long as ONE
+                    // side is noise (noise * gain, noise / r); a SUM is
+                    // noise-only only when both sides are
+                    Multiplication | Division => {
+                        self.expr_is_noise_only(lhs) || self.expr_is_noise_only(rhs)
+                    }
+                    Addition | Subtraction => {
+                        self.expr_is_noise_only(lhs) && self.expr_is_noise_only(rhs)
+                    }
+                    _ => false,
+                }
+            }
+            _ => false,
+        }
     }
 
     /// Stamps `rhs_value` into `write`'s branch as a contribution, exactly like
@@ -864,15 +911,35 @@ impl BodyLoweringCtx<'_, '_, '_> {
     fn contribute_value(
         &mut self,
         voltage_src: bool,
+        write: BranchWrite,
+        rhs: Value,
+        is_zero: bool,
+    ) {
+        self.contribute_value_(voltage_src, write, rhs, is_zero, false)
+    }
+
+    fn contribute_value_(
+        &mut self,
+        voltage_src: bool,
         mut write: BranchWrite,
         rhs: Value,
         is_zero: bool,
+        is_noise_only: bool,
     ) {
         let mut negate = false;
         if let BranchWrite::Unnamed { hi, lo } = &mut write {
             self.lower_contribute_unnamed_branch(&mut negate, hi, lo, voltage_src)
         }
-        self.ctx.def_place(PlaceKind::IsVoltageSrc(write), voltage_src.into());
+        // Bug-hunt F7: a noise-only contribution to a branch that already has
+        // a large-signal classification must not RECLASSIFY it (LRM 4.6.4:
+        // noise is zero in large-signal analyses, so it carries no source
+        // kind). A branch whose ONLY contributions are noise still gets its
+        // classification defined below, exactly as before.
+        let keep_classification =
+            is_noise_only && self.ctx.get_place(PlaceKind::IsVoltageSrc(write)).is_some();
+        if !keep_classification {
+            self.ctx.def_place(PlaceKind::IsVoltageSrc(write), voltage_src.into());
+        }
 
         let (mut hi, mut lo) = write.nodes(self.ctx.db);
         if voltage_src && is_zero {
@@ -883,10 +950,12 @@ impl BodyLoweringCtx<'_, '_, '_> {
             self.ctx.call(CallBackKind::CollapseHint(hi, lo), &[]);
         }
 
-        self.ctx.def_place(
-            PlaceKind::Contribute { dst: write, reactive: false, voltage_src: !voltage_src },
-            F_ZERO,
-        );
+        if !keep_classification {
+            self.ctx.def_place(
+                PlaceKind::Contribute { dst: write, reactive: false, voltage_src: !voltage_src },
+                F_ZERO,
+            );
+        }
 
         if rhs == F_ZERO {
             return;

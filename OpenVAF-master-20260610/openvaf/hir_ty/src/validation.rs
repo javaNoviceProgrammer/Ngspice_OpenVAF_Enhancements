@@ -381,6 +381,30 @@ impl Diagnostic for BodyValidationDiagnosticWrapped<'_> {
                         extra,
                     ])
             }
+            // Bug-hunt F15: only reached when the file IS usable and carries a
+            // duplicated abscissa knot -- `to_report` filters everything else.
+            BodyValidationDiagnostic::TableFileDupKnot { expr, ref path, .. } => {
+                let FileSpan { range, file } = self.expr_src(expr);
+                let dup =
+                    table_file_dup_knot_value(root_file, db, path).unwrap_or(f64::NAN);
+                Report::warning()
+                    .with_message(format!(
+                        "table file '{path}' repeats the abscissa {dup}; the duplicated \
+                         knot makes a zero-width segment"
+                    ))
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: file,
+                        range: range.into(),
+                        message: "interpolation anchors on the LAST value at the repeated knot"
+                            .to_owned(),
+                    }])
+                    .with_notes(vec![
+                        "sample abscissas should be strictly monotone; remove or merge the \
+                         duplicated row"
+                            .to_owned(),
+                    ])
+            }
             // Enhancement-390: only reached when the file is genuinely unusable --
             // `to_report` filters out the readable, parseable ones.
             BodyValidationDiagnostic::TableFileUnusable { expr, ref path, .. } => {
@@ -1449,6 +1473,17 @@ impl Diagnostic for BodyValidationDiagnosticWrapped<'_> {
                 return None;
             }
         }
+        // Bug-hunt F15: the duplicate-knot WARNING is kept only when the file is
+        // otherwise usable (an unusable file already gets its own error), is the
+        // line-structured 1-D form, and really repeats an abscissa.
+        if let BodyValidationDiagnostic::TableFileDupKnot { ref path, ndim, .. } = *self.diag {
+            if ndim != 1
+                || !table_file_is_usable(root_file, db, path, ndim, true)
+                || table_file_dup_knot_value(root_file, db, path).is_none()
+            {
+                return None;
+            }
+        }
         // Enhancement-414: a noise data file is judged by the same rule -- readable, and
         // holding at least one finite pair.
         // Enhancement-425: a noise data file is ALWAYS the one-dimensional
@@ -2009,6 +2044,37 @@ fn table_file_is_usable(
     // and is accepted alongside the project's self-describing grid, exactly
     // as `lower_table_model` now tries both.
     grid_ok || isoline_ok(&rows, ndim, true)
+}
+
+/// Bug-hunt F15: the first duplicated abscissa of a LINE-STRUCTURED 1-D table
+/// data file, if any (self-describing grid files return None -- their leading
+/// token is the dimension count, not a knot).
+fn table_file_dup_knot_value(root_file: FileId, db: &dyn BaseDB, path: &str) -> Option<f64> {
+    let dir = db.file_path(root_file).parent()?;
+    let full = dir.join(path)?;
+    let abs = full.as_path()?;
+    let content = std::fs::read_to_string(abs).ok()?;
+    let mut prev: Option<f64> = None;
+    let mut ncols: Option<usize> = None;
+    for line in content.lines().map(str::trim).filter(|l| {
+        !(l.is_empty() || l.starts_with('#') || l.starts_with("//") || l.starts_with('*'))
+    }) {
+        let toks: Vec<f64> =
+            line.split_ascii_whitespace().filter_map(|t| t.parse::<f64>().ok()).collect();
+        if toks.len() < 2 {
+            return None; // not the line-structured pair form
+        }
+        match ncols {
+            Some(n) if n != toks.len() => return None,
+            None => ncols = Some(toks.len()),
+            _ => (),
+        }
+        if prev == Some(toks[0]) {
+            return Some(toks[0]);
+        }
+        prev = Some(toks[0]);
+    }
+    None
 }
 
 /// Enhancement-506: the first out-of-domain entry of a noise data file, if any.

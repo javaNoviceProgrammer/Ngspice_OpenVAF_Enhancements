@@ -1,5 +1,5 @@
 use super::*;
-use crate::grammar::stmts::{STMT_RECOVER, STMT_TS};
+use crate::grammar::stmts::{STMT_ATTR_RECOVER, STMT_RECOVER, STMT_TS};
 
 const MODULE_ITEM_RECOVERY: TokenSet = DIRECTION_TS.union(TokenSet::new(&[
     NET_TYPE,
@@ -289,7 +289,23 @@ fn func_decl(p: &mut Parser, m: Marker) {
 
     while !p.at_ts(FUNCTION_RECOVER) {
         let m = p.start();
-        attrs(p, FUN_ITEM_TS.union(FUNCTION_RECOVER));
+        // Bug-hunt F17: the recovery set handed to `attrs` must not contain
+        // bare IDENT (FUN_ITEM_TS pulls it in through STMT_TS) -- inside
+        // `(* std=3.0 *)` the attribute NAME is an IDENT, so attr_list bailed
+        // out at `std`, the name was re-parsed as an assignment STATEMENT,
+        // and the trailing `*)` died as "unexpected token '*)'; expected ';'".
+        // Every attribute on a function item -- desc, units, the statistics
+        // set -- was unwritable. Recover on the keyword-shaped item starters
+        // and the function/statement recovery points instead, exactly the
+        // shape stmts.rs's STMT_ATTR_RECOVER uses.
+        attrs(
+            p,
+            TokenSet::new(&[PARAMETER_KW, LOCALPARAM_KW])
+                .union(TYPE_TS)
+                .union(DIRECTION_TS)
+                .union(STMT_ATTR_RECOVER)
+                .union(FUNCTION_RECOVER),
+        );
         if p.at_ts(TYPE_TS) {
             var_decl(p, m)
         } else if p.at_ts(TokenSet::new(&[PARAMETER_KW, LOCALPARAM_KW])) {

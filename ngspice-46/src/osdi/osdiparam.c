@@ -193,16 +193,14 @@ extern int OSDIparam(int param, IFvalue *value, GENinstance *instPtr,
   void *dst = descr->access(inst, NULL, (uint32_t)param,
                             ACCESS_FLAG_SET | ACCESS_FLAG_INSTANCE);
 
-  int err = osdi_write_param(dst, value, param, descr);
-
-  /* `.option osdimc`: a stored scalar real IS the parameter's new nominal --
-   * `alter` recenters the Monte-Carlo distribution (no-op otherwise). */
-  if (err == OK &&
-      (descr->param_opvar[param].flags & PARA_TY_MASK) == PARA_TY_REAL &&
-      descr->param_opvar[param].len == 0) {
-    osdimc_note_param_write(inst, (uint32_t)param, value->rValue);
-  }
-  return err;
+  /* NOTE (bug-hunt F1): the osdimc nominal-recenter hook deliberately does
+   * NOT live here. This setter serves every machine route as well -- .dc
+   * parameter sweeps (DCTsetInstParam), the `sweep` command's per-point and
+   * restore writes, and sensitivity perturbations -- and recentering on those
+   * turned a sweep's save/restore into a permanent nominal shift (a random
+   * walk seeded by one sweep). Only the USER commands recenter, via
+   * doset_user() -> OSDImcNoteUserWrite() in frontend/spiceif.c. */
+  return osdi_write_param(dst, value, param, descr);
 }
 
 extern int OSDImParam(int param, IFvalue *value, GENmodel *modelPtr) {
@@ -226,15 +224,8 @@ extern int OSDImParam(int param, IFvalue *value, GENmodel *modelPtr) {
   void *model = osdi_model_data(modelPtr);
   void *dst = descr->access(NULL, model, (uint32_t)param, ACCESS_FLAG_SET);
 
-  int err = osdi_write_param(dst, value, param, descr);
-
-  /* `.option osdimc`: as in OSDIparam above -- `altermod` recenters. */
-  if (err == OK &&
-      (descr->param_opvar[param].flags & PARA_TY_MASK) == PARA_TY_REAL &&
-      descr->param_opvar[param].len == 0) {
-    osdimc_note_param_write(model, (uint32_t)param, value->rValue);
-  }
-  return err;
+  /* recentering: see the F1 note in OSDIparam above -- user routes only. */
+  return osdi_write_param(dst, value, param, descr);
 }
 
 static int osdi_read_param(void *src, IFvalue *value, int id,

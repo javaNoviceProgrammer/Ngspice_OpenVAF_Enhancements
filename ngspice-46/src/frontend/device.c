@@ -1575,6 +1575,23 @@ com_alter_common(wordlist *wl, int do_model)
         fprintf(cp_err, "Error: no value given for %s.\n", param ? param : dev);
         return;
     }
+    /* bug-hunt F3: a quoted RHS aims at a STRING parameter -- the numeric
+     * path evaluated it as a vector name and failed with `no such vector
+     * "quad"`. Try the string setter first for a concrete device/model
+     * target; it reports 0 when the parameter is not string-typed, in which
+     * case the numeric path below produces its usual diagnostics. */
+    if (param && dev && dev[0] != '*' && dev[0] != '#' &&
+        words->wl_word[0] == '"' && !words->wl_next) {
+        char *unq = cp_unquote(words->wl_word);
+        int r = if_setparam_string(ft_curckt->ci_ckt, &dev, param, unq,
+                                   do_model);
+        tfree(unq);
+        if (r != 0)
+            return;
+        fprintf(cp_err, "Error: parameter '%s' is not string-typed; a quoted "
+                "value cannot be assigned to it.\n", param);
+        return;
+    }
     if (words->wl_word[0] != '[')
         names = ft_getpnames_quotes(words, FALSE);
     else

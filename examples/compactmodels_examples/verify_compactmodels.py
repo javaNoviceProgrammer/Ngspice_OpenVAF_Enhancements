@@ -28,7 +28,7 @@ box (no rdsmod wrinkle); its physics are checked directly.
 Checks (each under BOTH the Sparse and KLU solvers):
   [1] BSIM4 compiles through openvaf-r and loads in ngspice.
   [2] with rdsmod=1 the OSDI BSIM4 conducts a physical current.
-  [3] finding: with the default rdsmod=0 the internal S/D nodes float -> Id=0.
+  [3] FIXED (bug-hunt): default rdsmod=0 conducts -- the V<+0 collapse now survives the noise-only contributions that used to erase it.
   [4] the OSDI BSIM4 output family (Id-Vds) matches built-in BSIM4 to <5%.
   [5] the OSDI BSIM4 transfer curve (Id-Vgs) matches built-in BSIM4 to <6%.
   [6] EKV compiles, conducts, and is physical: Id rises with Vgs and saturates in
@@ -128,8 +128,17 @@ m_off = re.search(r"i\(vz\)\s*=\s*(-?[0-9.eE+-]+)", log)
 i_off = abs(float(m_off.group(1))) if m_off else float("nan")
 check("[2] BSIM4 with rdsmod=1 conducts a physical current", i_on > 1e-4,
       f"(Id = {i_on*1e3:.3f} mA)")
-check("[3] finding: default rdsmod=0 floats internal S/D nodes -> Id=0", i_off < 1e-12,
-      f"(Id = {i_off:.2e} A)")
+# Bug-hunt fix (was pinned as a FINDING): the default rdsmod=0 collapse
+# V(d,di)<+0 / V(s,si)<+0 used to be ERASED from the compiled topology by the
+# access-region noise lines (I(di,d) <+ white_noise ... reclassified the
+# branch as never-a-voltage-source through the last-write-wins IsVoltageSrc
+# place), so the internal S/D nodes floated and Id was exactly 0. hir_lower
+# now keeps a branch's classification across noise-only contributions
+# (LRM 4.6.4: noise is zero in large-signal analyses) -- the default-mode
+# BSIM4 CONDUCTS, and its current matches the rdsmod=1 twin's physics.
+check("[3] FIXED: default rdsmod=0 conducts (collapse survives the noise "
+      "lines; Id was exactly 0)", i_off > 1e-4,
+      f"(Id = {i_off*1e3:.3f} mA)")
 
 # [4] output family Id-Vds match to built-in
 run_deck("b4out.cir", """* bsim4 out family

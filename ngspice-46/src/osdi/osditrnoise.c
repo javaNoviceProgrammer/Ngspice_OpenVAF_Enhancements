@@ -274,13 +274,19 @@ void osdi_trnoise_stamp(CKTcircuit *ckt, void *inst, void *model,
 
     if (!st) {
       if (!table_warned) {
+        /* bug-hunt F14: since the noise-correlation rework the source name
+         * carries a \x1f call-site suffix; print only the user's label, the
+         * same stripping the .noise report vectors apply. */
+        const char *nm = descr->noise_sources[i].name;
+        const char *sep = nm ? strchr(nm, '\x1f') : NULL;
+        int len = sep ? (int)(sep - nm) : (nm ? (int)strlen(nm) : 0);
         table_warned = true;
         fprintf(stderr,
                 "Warning: OSDI transient noise cannot inject noise_table "
-                "source '%s' (a tabulated spectrum needs frequency shaping, "
+                "source '%.*s' (a tabulated spectrum needs frequency shaping, "
                 "not a scalar amplitude); it is still fully accounted for in "
                 ".noise. See Enhancement-364.\n",
-                descr->noise_sources[i].name);
+                len, nm ? nm : "");
       }
       continue;
     }

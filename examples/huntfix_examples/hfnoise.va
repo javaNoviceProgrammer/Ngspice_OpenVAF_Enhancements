@@ -1,0 +1,16 @@
+// Bug-hunt F7 minimal pin: a noise-only current contribution, spelled
+// REVERSED and lowered AFTER a conditional V<+0 collapse hint on the same
+// branch -- the exact BSIM4 access-region shape. The old compiler let the
+// noise line reclassify the branch as never-a-voltage-source: the collapse
+// vanished, node i floated, and the device conducted exactly zero.
+`include "disciplines.vams"
+module hfnoise(a,b); inout a,b; electrical a,b,i;
+parameter integer rm = 0;
+integer md;
+analog begin
+  @(initial_step) md = rm;
+  if (md) I(a,i) <+ V(a,i)*2.0;
+  else    V(a,i) <+ 0.0;
+  I(i,a) <+ white_noise(1e-18, "rd");
+  I(i,b) <+ V(i,b)/1000.0;
+end endmodule

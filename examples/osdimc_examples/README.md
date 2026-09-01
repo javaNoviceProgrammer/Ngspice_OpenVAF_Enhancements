@@ -41,8 +41,16 @@ What the suite pins (24 checks, both solvers):
   `std` beside `std_rel` are located errors; the clean model compiles
   with zero warnings.
 
-A draw that violates the parameter's `from` range fails that run with the
-device's own range error, exactly as the same `alter` would — the
+A draw that violates the parameter's `from` range fails that run with an
+error naming the model and the offending value, plus an in-band notice
+that the trial failed and the previous run's vectors remain current — the
 descriptor does not export ranges, so size sigmas accordingly.
 
-Run `python3 verify_osdimc.py`.
+Hardened in the bug-hunt round (checks 25–29): machine writes — `.dc`
+parameter sweeps, the `sweep` command's points and restores — deliberately
+do **not** recenter nominals (only `alter`/`altermod` do); `reset`
+restarts the MC deterministically; a non-finite draw (sigma too large) is
+refused with a named warning and the parameter stays at nominal; `alter`
+refuses non-representable values outright.
+
+Run `python3 verify_osdimc.py` — 29 checks, both solvers.

@@ -74,9 +74,14 @@ the ordinary parameter setter — **no `reset`, no netlist re-expansion, no
 * draws are **pure functions of (mcseed, trial, owner name, param id)** —
   `.option mcseed=42` makes whole ensembles bit-reproducible, with no
   hidden RNG state; `resume` never redraws;
-* `alter`/`altermod` of a statistical parameter **recenters its nominal**;
-  turning the option off restores every drawn parameter to nominal on the
-  next run; `.option osdimc_verbose` prints every draw;
+* `alter`/`altermod` of a statistical parameter **recenters its nominal**
+  (machine writes -- `.dc` parameter sweeps, `sweep` points/restores,
+  sensitivity perturbations -- deliberately do not, so a sweep can never
+  shift the distribution); turning the option off restores every drawn
+  parameter to nominal on the next run; a non-finite draw (sigma too large)
+  is refused with a named warning; a failed trial is flagged in-band and
+  its range error names the model and value; `.option osdimc_verbose`
+  prints every draw;
 * a draw violating the parameter's Verilog-A `from` range fails that run
   with the device's own range error, exactly as the same `alter` would —
   the descriptor does not export ranges, so size sigmas accordingly.

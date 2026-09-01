@@ -2062,6 +2062,14 @@ inp_dodeck(
     int maxwarns = 0;  /* specifies the maximum number of SOA warnings */
     double startTime;
 
+    /* bug-hunt F2: a deck (re)load -- `source` and `reset` alike -- frees and
+     * reallocates every model/instance data block, so the osdimc nominal
+     * table's owner pointers are all stale. `reset` reuses the CKTcircuit
+     * pointer, which is why the ckt-identity check in OSDImcNewRun could not
+     * see it: entries leaked per reset and an allocator address reuse could
+     * have matched a stale nominal to a fresh device. */
+    OSDImcCircuitChanged();
+
     /* First throw away any old error messages there might be and fix
        the case of the lines.  */
     for (dd = deck; dd; dd = dd->nextcard)

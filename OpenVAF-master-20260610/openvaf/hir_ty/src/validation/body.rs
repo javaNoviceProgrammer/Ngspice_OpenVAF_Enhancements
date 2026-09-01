@@ -120,6 +120,13 @@ pub enum BodyValidationDiagnostic {
     /// one it is looking at.
     TableFileUnusable { expr: ExprId, path: Box<str>, ndim: usize },
 
+    /// Bug-hunt F15: a duplicated abscissa knot in a 1-D `$table_model` data
+    /// file -- accepted (the reader degrades gracefully) but the degenerate
+    /// zero-width segment anchors interpolation oddly, so it is worth a
+    /// warning. Reported from `to_report`, which re-reads the file the same
+    /// way `table_file_is_usable` does.
+    TableFileDupKnot { expr: ExprId, path: Box<str>, ndim: usize },
+
     /// Enhancement-414: a `noise_table`/`noise_table_log` DATA FILE that could not be
     /// used. Exactly the `$table_model` story above, in the one place it was not
     /// checked: a missing, empty or unparseable file yielded an EMPTY table, and an
@@ -1694,6 +1701,16 @@ impl ExprValidator<'_, '_> {
                                         // check can apply the right grammar.
                                         self.parent.diagnostics.push(
                                             BodyValidationDiagnostic::TableFileUnusable {
+                                                expr: arg,
+                                                path: path.clone(),
+                                                ndim: i + 1,
+                                            },
+                                        );
+                                        // Bug-hunt F15: the companion warning;
+                                        // `to_report` keeps it only when the file
+                                        // is usable AND carries a duplicate knot.
+                                        self.parent.diagnostics.push(
+                                            BodyValidationDiagnostic::TableFileDupKnot {
                                                 expr: arg,
                                                 path: path.clone(),
                                                 ndim: i + 1,

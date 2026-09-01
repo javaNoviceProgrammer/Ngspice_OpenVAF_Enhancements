@@ -181,7 +181,14 @@ void raw_write(char *name, struct plot *pl, bool app, bool binary)
                 *branch = '\0';
             }
             /* If the branch name is a number, the vector is already called i(name) */
-            if (ciprefix("i(", v->v_name))
+            /* Bug-hunt F12: a CROSS-PLOT current written as `write f.raw
+             * dc2.i(v1)` keeps its qualified name `dc2.i(v1)` -- no `#branch`
+             * to strip and no `i(` PREFIX, so it was wrapped AGAIN and loaded
+             * back as the unaddressable `i(dc2.i(v1))`. A qualified name whose
+             * leaf already carries the `i(` form is left alone, the same
+             * refinement Enhancement-373 made for the v-sweep scale. */
+            if (ciprefix("i(", v->v_name) ||
+                (branch == NULL && strstr(v->v_name, ".i(") != NULL))
                 fprintf(fp, "\t%d\t%s\t%s", i++, v->v_name, ft_typenames(v->v_type));
             else
                 fprintf(fp, "\t%d\ti(%s)\t%s", i++, v->v_name, ft_typenames(v->v_type));
@@ -202,7 +209,10 @@ void raw_write(char *name, struct plot *pl, bool app, bool binary)
              * this same branch, and `let` vectors are SV_NOTYPE, so the scale was
              * the only thing the else-branch below was ever reached by. */
             if (ciprefix("v(", v->v_name) || newcompat.eg /* FIXME: newcompat.eg should be removed if EAGLE is updated */
-                || v == pl->pl_scale)
+                || v == pl->pl_scale
+                /* Bug-hunt F12: a qualified cross-plot vector (`dc2.v(a)`)
+                 * keeps its name -- as for currents above. */
+                || strstr(v->v_name, ".v(") != NULL)
                fprintf(fp, "\t%d\t%s\t%s", i++, v->v_name, ft_typenames(v->v_type));
             else
                fprintf(fp, "\t%d\tv(%s)\t%s", i++, v->v_name, ft_typenames(v->v_type));

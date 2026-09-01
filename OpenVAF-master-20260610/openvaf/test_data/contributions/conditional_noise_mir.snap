@@ -27,10 +27,10 @@ function %(v16, v17, v20, v21) {
                                     jmp block4
 
                                 block4:
-                                    v40 = phi [v3, block3], [v24, block7]
-                                    v35 = phi [v16, block3], [v30, block7]
-                                    v38 = phi [v3, block3], [v6, block7]
-                                    v37 = optbarrier v35
-                                    v39 = optbarrier v38
-                                    v42 = optbarrier v40
+                                    v48 = phi [v3, block3], [v24, block7]
+                                    v43 = phi [v16, block3], [v30, block7]
+                                    v46 = phi [v3, block3], [v6, block7]
+                                    v45 = optbarrier v43
+                                    v47 = optbarrier v46
+                                    v50 = optbarrier v48
 }

@@ -87,6 +87,17 @@ impl ModuleInfo {
                     // * have a description or units attribute
                     // * belong to a module (not a block/function) -> no path
 
+                    // Bug-hunt F16: the statistics attributes apply to
+                    // PARAMETERS; on a variable they are silently inert, and
+                    // the shadow-variable typo (`parameter real r; (* std *)
+                    // real r_i;`) then runs a Monte-Carlo that varies
+                    // nothing. Name the misplacement instead.
+                    for stat_name in ["std", "std_rel", "dist"] {
+                        if let Some(attr) = var.get_attr(db, &ast, stat_name) {
+                            add_diagnostic(attr.clone(), &StatOnNonParam { attr });
+                        }
+                    }
+
                     // check for units or description
                     let units = var.get_attr(db, &ast, "units");
                     let desc = var.get_attr(db, &ast, "desc");
@@ -452,6 +463,32 @@ impl Diagnostic for DistWithoutSigma {
                 file_id: file,
                 range: range.into(),
                 message: "no sigma is declared for this parameter".to_owned(),
+            }])
+    }
+}
+
+/// Bug-hunt F16: `(* std= / std_rel= / dist= *)` on something that is not a
+/// parameter -- statistics declared where nothing reads them.
+struct StatOnNonParam {
+    attr: ast::Attr,
+}
+
+impl Diagnostic for StatOnNonParam {
+    fn build_report(&self, root_file: FileId, db: &dyn BaseDB) -> Report {
+        let FileSpan { range, file } = db
+            .parse(root_file)
+            .to_file_span(self.attr.syntax().text_range(), &db.sourcemap(root_file));
+        Report::warning()
+            .with_message(format!(
+                "'{}' attribute is ignored here: statistics attributes apply to parameters",
+                self.attr.name().unwrap(),
+            ))
+            .with_labels(vec![Label {
+                style: LabelStyle::Primary,
+                file_id: file,
+                range: range.into(),
+                message: "this declaration is not a parameter; nothing will vary under .option osdimc"
+                    .to_owned(),
             }])
     }
 }

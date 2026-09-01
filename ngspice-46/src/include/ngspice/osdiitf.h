@@ -145,3 +145,14 @@ extern int OSDIanyCollapseChanged(CKTcircuit *ckt);   /* Enhancement-471 */
  * it restores any drawn parameter to its nominal and is otherwise free.
  * Defined in src/osdi/osdisetup.c. */
 extern void OSDImcNewRun(CKTcircuit *ckt);
+
+/* bug-hunt F1: a USER (`alter`/`altermod`, wildcards included) stored a scalar
+ * real parameter -- recenter its Monte-Carlo nominal if it has one. Called
+ * from frontend/spiceif.c's doset_user only; machine writes (.dc parameter
+ * sweeps, `sweep` per-point/restore, sensitivity) must NOT recenter. */
+extern void OSDImcNoteUserWrite(int typecode, GENinstance *dev, GENmodel *mdl,
+                                int param_id, double value);
+
+/* bug-hunt F2: the deck was (re)loaded -- every stored nominal's owner
+ * pointer is stale; drop the table. Called by inp_dodeck. */
+extern void OSDImcCircuitChanged(void);

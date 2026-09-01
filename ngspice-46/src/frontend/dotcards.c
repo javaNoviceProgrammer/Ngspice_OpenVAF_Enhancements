@@ -460,11 +460,19 @@ ft_savedotargs(void)
                 some = 1;
             }
         } else if (ciprefix(".op", s)) {
+            /* bug-hunt F10: this used to register `save all` RESTRICTED to
+             * the OP analysis. In a deck that also carries .ac/.tran cards
+             * (with their output coming from a .control section rather than
+             * .print lines), the batch epilogue's automatic run then found NO
+             * saves for those jobs and failed each with "no data saved for
+             * ...; analysis not run" -- the plots silently lost. Register the
+             * save unrestricted: every job of the automatic run saves its
+             * vectors, which is strictly more data and no lost analyses. */
             some = 1;
-            com_save2(&all, "OP");
+            com_save2(&all, NULL);
         } else if (ciprefix(".tf", s)) {
             some = 1;
-            com_save2(&all, "TF");
+            com_save2(&all, NULL);   /* bug-hunt F10: as for .op above */
         }
     }
     return some;

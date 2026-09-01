@@ -1205,6 +1205,126 @@ if_setparam_model(CKTcircuit *ckt, char **name, char *val)
 }
 
 
+/* bug-hunt F11+F1: the wrapper every USER parameter write goes through
+ * (`alter`, `altermod`, and their wildcards -- NOT the sweep machinery's
+ * per-point/restore writes, which use doset()/setInstanceParm directly).
+ *
+ * F11: the deck route refuses `w=1e400` with "not a representable number",
+ * but the control route stored +inf: a built-in resistor silently became an
+ * OPEN (i = 0, rc = 0 -- a perfectly plausible wrong answer) and an OSDI
+ * device died in convergence noise pointing nowhere near the cause. Guard
+ * every real value here, scalars and vectors alike.
+ *
+ * F1: a user write to a statistical parameter recenters its Monte-Carlo
+ * nominal (`.option osdimc`); machine writes must not, so the hook lives in
+ * exactly this wrapper rather than in the device setter. */
+static int
+doset_user(CKTcircuit *ckt, int typecode, GENinstance *dev, GENmodel *mod,
+           IFparm *opt, struct dvec *val)
+{
+    int err;
+
+    if ((opt->dataType & (IF_VARTYPES & ~IF_VECTOR)) == IF_REAL &&
+        val && val->v_realdata) {
+        int n = (opt->dataType & IF_VECTOR) ? val->v_length : 1;
+        int i;
+        for (i = 0; i < n; i++) {
+            if (!isfinite(val->v_realdata[i])) {
+                fprintf(cp_err,
+                        "Error: value %g for parameter '%s' is not a finite "
+                        "number; not applied.\n",
+                        val->v_realdata[i], opt->keyword);
+                return E_PARMVAL;
+            }
+        }
+    }
+
+    err = doset(ckt, typecode, dev, mod, opt, val);
+
+    if (err == OK &&
+        (opt->dataType & (IF_VARTYPES & ~IF_VECTOR)) == IF_REAL &&
+        !(opt->dataType & IF_VECTOR) && val && val->v_realdata) {
+        OSDImcNoteUserWrite(typecode, dev, mod, opt->id, val->v_realdata[0]);
+    }
+    return err;
+}
+
+/* bug-hunt F3: set a STRING-typed parameter from `alter`/`altermod`.
+ *
+ * The numeric path evaluates the RHS as a vector expression, so
+ * `altermod @mm[mode] = "quad"` died with the baffling `no such vector
+ * "quad"` and there was NO runtime route to a string parameter at all
+ * (the deck's .model card was the only writer). Returns:
+ *   1  the parameter is string-typed and was set (CKTtemp propagated for
+ *      altermod, exactly as if_setparam does);
+ *   0  the parameter exists but is NOT string-typed (caller should use the
+ *      numeric path);
+ *  -1  lookup failed (message already printed). */
+int
+if_setparam_string(CKTcircuit *ckt, char **name, char *param, char *strval,
+                   int do_model)
+{
+    IFparm *opt;
+    IFdevice *device;
+    GENmodel *mod = NULL;
+    GENinstance *dev = NULL;
+    IFvalue nval;
+    int typecode, err;
+
+    INPretrieve(name, ft_curckt->ci_symtab);
+    typecode = finddev(ckt, *name, &dev, &mod);
+    if (typecode == -1) {
+        fprintf(cp_err, "Error: no such device or model name %s\n", *name);
+        return -1;
+    }
+    device = ft_sim->devices[typecode];
+    opt = parmlookup(device, &dev, param, do_model, 1);
+    if (!opt)
+        return 0;   /* let the numeric path produce its diagnostics */
+    if ((opt->dataType & (IF_VARTYPES & ~IF_VECTOR)) != IF_STRING)
+        return 0;
+    if (opt->dataType & IF_VECTOR)
+        return 0;
+
+    if (do_model && !mod) {
+        mod = dev->GENmodPtr;
+        dev = NULL;
+    }
+    memset(&nval, 0, sizeof nval);
+    /* the device layer stores the POINTER (as the deck route does), so the
+       string must live as long as the circuit */
+    nval.sValue = copy(strval);
+    if (dev)
+        err = ft_sim->setInstanceParm(ckt, dev, opt->id, &nval, NULL);
+    else
+        err = ft_sim->setModelParm(ckt, mod, opt->id, &nval, NULL);
+    if (err != OK) {
+        ft_sperror(err, "setting string parameter");
+        return -1;
+    }
+    if (do_model && ckt->CKTtime > 0) {
+        if (CKTtemp(ckt))
+            fprintf(stderr, "Error during changing a device model parameter!\n");
+    }
+    return 1;
+}
+
+/* bug-hunt F4: does this device type register `param` as PER-ELEMENT entries
+ * (`cf[0]`, `cf[1]`, ...)? The OSDI layer exposes array parameters that way,
+ * so the whole-array spelling has no IFparm and the old diagnostic asserted
+ * "model 'mm' has no parameter cf." about a parameter showmod prints two
+ * lines later. */
+static int
+has_element_parms(IFdevice *device, const char *param, int do_model)
+{
+    char buf[256];
+    GENinstance *dummy = NULL;
+    if (!param || strlen(param) > sizeof buf - 4)
+        return 0;
+    sprintf(buf, "%s[0]", param);
+    return parmlookup(device, &dummy, buf, do_model, 1) != NULL;
+}
+
 void
 if_setparam(CKTcircuit *ckt, char **name, char *param, struct dvec *val, int do_model)
 {
@@ -1241,9 +1361,33 @@ if_setparam(CKTcircuit *ckt, char **name, char *param, struct dvec *val, int do_
                         "'%s'; `alter` sets instance parameters. Use "
                         "`altermod %s %s=...` instead.\n",
                         param, *name, *name, param);
+            else if (has_element_parms(device, param, do_model))
+                /* bug-hunt F4 */
+                fprintf(cp_err, "Error: array parameter '%s' is set per "
+                        "element: use @%s[%s[0]] = <value> (one element at a "
+                        "time).\n", param, *name, param);
             else
                 fprintf(cp_err, "Error: model '%s' has no parameter %s.\n",
                         *name, param);
+        } else if (param && has_element_parms(device, param, do_model)) {
+            /* bug-hunt F4: same guidance on the instance side */
+            fprintf(cp_err, "Error: array parameter '%s' is set per element: "
+                    "use @%s[%s[0]] = <value> (one element at a time).\n",
+                    param, *name, param);
+        } else if (param && dev && !do_model) {
+            /* bug-hunt F19: the mirror of Enhancement-467's case -- the name
+             * is a DEVICE and the parameter exists, but on the MODEL. The old
+             * "no such parameter r." denied the existence of something one
+             * keyword away. */
+            GENinstance *dummy = NULL;
+            if (parmlookup(device, &dummy, param, 1 /*model*/, 1))
+                fprintf(cp_err, "Error: '%s' is a MODEL parameter of model "
+                        "'%s'; `alter` sets instance parameters. Use "
+                        "`altermod %s %s=...` instead.\n",
+                        param, (char *) dev->GENmodPtr->GENmodName,
+                        (char *) dev->GENmodPtr->GENmodName, param);
+            else
+                fprintf(cp_err, "Error: no such parameter %s.\n", param);
         } else if (param) {
             fprintf(cp_err, "Error: no such parameter %s.\n", param);
         } else {
@@ -1255,7 +1399,7 @@ if_setparam(CKTcircuit *ckt, char **name, char *param, struct dvec *val, int do_
         mod = dev->GENmodPtr;
         dev = NULL;
     }
-    doset(ckt, typecode, dev, mod, opt, val);
+    doset_user(ckt, typecode, dev, mod, opt, val);
 
     /* Call to CKTtemp(ckt) will be invoked here only by 'altermod' commands,
        to set internal model parameters pParam of each instance for immediate use,
@@ -1332,7 +1476,7 @@ if_setparam_wildcard_model_named(CKTcircuit *ckt, const char *leaf, char *param,
             const char *nm = mod->GENmodName;
             if (!nm || !eq(model_leaf(nm), leaf))
                 continue;
-            doset(ckt, typecode, NULL, mod, opt, val);
+            doset_user(ckt, typecode, NULL, mod, opt, val);
             count++;
         }
     }
@@ -1390,7 +1534,7 @@ if_setparam_wildcard(CKTcircuit *ckt, char *param, struct dvec *val)
         if (!opt)
             continue;
         for (mod = ckt->CKThead[typecode]; mod; mod = mod->GENnextModel) {
-            doset(ckt, typecode, NULL, mod, opt, val);
+            doset_user(ckt, typecode, NULL, mod, opt, val);
             count++;
         }
     }
@@ -1440,7 +1584,7 @@ if_setparam_wildcard_instance(CKTcircuit *ckt, char *param, struct dvec *val)
         for (mod = ckt->CKThead[typecode]; mod; mod = mod->GENnextModel) {
             GENinstance *inst;
             for (inst = mod->GENinstances; inst; inst = inst->GENnextInstance) {
-                doset(ckt, typecode, inst, NULL, opt, val);
+                doset_user(ckt, typecode, inst, NULL, opt, val);
                 count++;
             }
         }

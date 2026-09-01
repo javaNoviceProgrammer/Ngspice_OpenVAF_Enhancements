@@ -352,6 +352,139 @@ check("[23] osdimc_verbose reports each draw with trial, owner, value and "
 check("[24] ...and none of the option names draws an 'unknown option' warning",
       "unknown option" not in out)
 
+# ---- [6] bug-hunt hardening: machine writes, failed trials, finite draws ---
+print("\nbug-hunt hardening (F1/F2/F5/F6/F13):")
+SWEEP_DECK = f"""osdimc sweep no recenter
+V1 a 0 1
+N1 a 0 mm
+.model mm smcres
+.option osdimc mcseed=42
+.control
+pre_osdi {os.path.basename(OSDI)}
+op
+op
+print @n1[dr]
+dc @n1[dr] 50 100 25
+op
+print @n1[dr]
+.endc
+.end
+"""
+out = run_deck(SWEEP_DECK, "sweepnr")
+drs = seq(out, "@n1[dr]")
+check("[25] a .dc sweep of a statistical parameter does NOT recenter its "
+      "nominal (draws stay centered on 0; F1)",
+      len(drs) == 2 and abs(drs[1]) < 60.0 and drs[1] != drs[0]
+      and abs(drs[1] - (-10.5375)) < 1e-3,
+      f"post-sweep draw {drs[1] if len(drs) > 1 else '?'} = trial-4 delta")
+
+RESET_DECK = f"""osdimc reset restarts
+V1 a 0 1
+N1 a 0 mm
+.model mm smcres
+.option osdimc mcseed=42
+.control
+pre_osdi {os.path.basename(OSDI)}
+op
+op
+print @mm[r]
+reset
+op
+print @mm[r]
+op
+print @mm[r]
+.endc
+.end
+"""
+out = run_deck(RESET_DECK, "reset")
+rs = seq(out, "@mm[r]")
+check("[26] `reset` restarts MC deterministically: baseline, then the SAME "
+      "trial-2 draw as the first cycle (F2)",
+      rs == [rs[0], 1000.0, rs[0]] and rs[0] != 1000.0,
+      f"{rs}")
+
+FAIL_DECK = f"""osdimc failed trial says so
+V1 a 0 1
+N1 a 0 mm
+.model mm vcoll
+.control
+pre_osdi _mc_vcoll.osdi
+set osdimc
+set mcseed=5
+repeat 8
+  op
+end
+.endc
+.end
+"""
+wv_vcoll = os.path.join(HERE, "_mc_vcoll.va")
+with open(wv_vcoll, "w") as f:
+    f.write('`include "disciplines.vams"\n'
+            "module vcoll(a,b); inout a,b; electrical a,b,i;\n"
+            "(* std=2.0 *) parameter real rd = 0.0 from [0:inf);\n"
+            "analog begin\n"
+            "  if (rd == 0.0) V(a,i) <+ 0.0;\n"
+            "  else           I(a,i) <+ V(a,i)/rd;\n"
+            "  I(i,b) <+ V(i,b)/1000.0;\n"
+            "end endmodule\n")
+rc, cout = subprocess.run([OPENVAF, wv_vcoll, "-o",
+                           os.path.join(HERE, "_mc_vcoll.osdi")], cwd=HERE,
+                          capture_output=True, text=True, timeout=300).returncode, ""
+out = run_deck(FAIL_DECK, "failmsg")
+check("[27] a range-violating draw fails LOUDLY: the error names the model "
+      "and the value, and the trial is flagged in-band (F5/F6)",
+      "of 'mm' is out of bounds (value" in out
+      and "FAILED during setup; result vectors from the previous successful "
+          "run remain current" in out,
+      "attributed error + trial notice present")
+
+HUGE_DECK = f"""osdimc non-finite draw refused
+V1 a 0 1
+N1 a 0 mm
+.model mm vhuge
+.control
+pre_osdi _mc_vhuge.osdi
+set osdimc
+set mcseed=3
+op
+op
+print @mm[r] i(v1)
+.endc
+.end
+"""
+wv_huge = os.path.join(HERE, "_mc_vhuge.va")
+with open(wv_huge, "w") as f:
+    f.write('`include "disciplines.vams"\n'
+            "module vhuge(a,b); inout a,b; electrical a,b;\n"
+            "(* std=1e308 *) parameter real r = 1000.0 from (0:inf);\n"
+            "analog I(a,b) <+ V(a,b)/r; endmodule\n")
+subprocess.run([OPENVAF, wv_huge, "-o", os.path.join(HERE, "_mc_vhuge.osdi")],
+               cwd=HERE, capture_output=True, text=True, timeout=300)
+out = run_deck(HUGE_DECK, "huge")
+check("[28] an overflowing draw (sigma 1e308 -> +-inf) is refused with a "
+      "named warning and the parameter stays at nominal (F13)",
+      "is not finite" in out and seq(out, "@mm[r]") == [1000.0],
+      f"r={seq(out, '@mm[r]')}")
+
+ALTINF_DECK = f"""alter refuses non-finite
+V1 a 0 1
+N1 a 0 mm
+.model mm smcres
+.control
+pre_osdi {os.path.basename(OSDI)}
+alter @n1[dr] = 1e400
+op
+print @n1[dr] i(v1)
+.endc
+.end
+"""
+out = run_deck(ALTINF_DECK, "altinf")
+check("[29] `alter` refuses a non-representable value (1e400) instead of "
+      "silently storing +inf (F11)",
+      "is not a finite number; not applied" in out
+      and seq(out, "@n1[dr]") == [0.0],
+      f"dr={seq(out, '@n1[dr]')}")
+
 # ----------------------------------------------------------------------------
 print(f"\n{'ALL PASS' if passed == checks else 'FAILURES'}: {passed}/{checks}")
 sys.exit(0 if passed == checks else 1)

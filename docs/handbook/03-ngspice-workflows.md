@@ -90,7 +90,7 @@ of everything beyond op/dc/ac/tran:
 | `.tf` | Exact (transfer function, input/output impedance) |
 | `.pz` | Exact for linear devices, bit-identical to built-in twins; nonlinear `.pz` failures are a stock ngspice quirk affecting built-ins identically |
 | `.sens` (DC and AC) | Exact against analytic derivatives |
-| `.disto` | **Not supported for OSDI devices** — the distortion kernel needs Taylor coefficients beyond first derivatives, which the OSDI ABI cannot provide. ngspice prints a prominent warning naming each affected device (it used to report silent zeros) |
+| `.disto` | Supported (E-352's `OSDIdisto`): a Verilog-A diode's 2nd/3rd-harmonic distortion matches an analytic ground truth (pointwise periodic solve + FFT) to <1 %, and agrees with the built-in diode twin — re-verified in the bug-hunt round |
 | `.sp` (S-parameters) | Fully supported, **any port count** (1-port reflection through N-port); `donoise` (NF, noise parameters) is inherently 2-port |
 | Transient noise (`TRNOISE` sources) | Propagates through OSDI devices correctly; device-*internal* noise does not enter `.tran` (same as built-ins) |
 | `.pss` (experimental, needs `--enable-pss` at configure time) | OSDI devices converge like built-ins; strongly nonlinear circuits defeat the shooting method for both alike |
@@ -206,8 +206,10 @@ second run. A **model** parameter is one draw per model card per trial
 (process — instances sharing the card move in lockstep), an **instance**
 parameter (`(* type="instance" *)`) draws independently per instance
 (mismatch). Draws are pure functions of `(mcseed, trial, owner name,
-param id)`, so a deck re-runs bit-identically; `alter` recenters a
-parameter's nominal; dropping the option restores nominals on the next run;
+param id)`, so a deck re-runs bit-identically; `alter`/`altermod` recenter a
+parameter's nominal (machine writes — `.dc` parameter sweeps, the `sweep`
+command's points and restores, sensitivity perturbations — deliberately do
+not); dropping the option restores nominals on the next run;
 `.option osdimc_verbose` prints every draw. A draw that violates the
 parameter's `from` range fails that run with the device's own range error,
 exactly as the same `alter` would — size the sigmas accordingly.

@@ -26,7 +26,14 @@
 /*
  * Handles any errors raised by the setup_instance and setup_model functions
  */
-static int handle_init_info(OsdiInitInfo info, const OsdiDescriptor *descr) {
+/* bug-hunt F5/F6 forward decls (definitions live in the osdimc block below) */
+static void osdimc_report_setup_failure(void);
+static bool osdimc_armed_now(void);
+static bool osdimc_enabled(void);
+
+static int handle_init_info(OsdiInitInfo info, const OsdiDescriptor *descr,
+                            const OsdiNgspiceHandle *handle, void *inst,
+                            void *model) {
   if (info.flags & (EVAL_RET_FLAG_FATAL | EVAL_RET_FLAG_FINISH)) {
     /* Enhancement-56: a Verilog-A $fatal/$finish during setup is the model
      * rejecting its parameters/configuration (the model's own message was
@@ -46,8 +53,35 @@ static int handle_init_info(OsdiInitInfo info, const OsdiDescriptor *descr) {
     OsdiInitError *err = &info.errors[i];
     switch (err->code) {
     case INIT_ERR_OUT_OF_BOUNDS: {
-      char *param = descr->param_opvar[err->payload.parameter_id].name[0];
-      printf("Parameter %s is out of bounds!\n", param);
+      /* bug-hunt F6: name the owner and the offending value, not just the
+       * parameter -- in a Monte-Carlo loop over many devices a bare
+       * "Parameter rd is out of bounds!" is unattributable. */
+      uint32_t id = err->payload.parameter_id;
+      char *param = descr->param_opvar[id].name[0];
+      bool scalar_real =
+          (descr->param_opvar[id].flags & PARA_TY_MASK) == PARA_TY_REAL &&
+          descr->param_opvar[id].len == 0;
+      void *src = NULL;
+      if (id < descr->num_instance_params) {
+        if (inst)
+          src = descr->access(inst, model, id,
+                              ACCESS_FLAG_READ | ACCESS_FLAG_INSTANCE);
+      } else if (model) {
+        src = descr->access(NULL, model, id, ACCESS_FLAG_READ);
+      }
+      if (scalar_real && src) {
+        double v;
+        memcpy(&v, src, sizeof(double));
+        printf("Parameter %s of '%s' is out of bounds (value %g)!\n", param,
+               handle && handle->name ? (char *)handle->name : descr->name, v);
+      } else {
+        printf("Parameter %s of '%s' is out of bounds!\n", param,
+               handle && handle->name ? (char *)handle->name : descr->name);
+      }
+      /* bug-hunt F5: in an osdimc loop a failed trial leaves the PREVIOUS
+       * run's plot current -- say so in-band, once per trial. */
+      if (osdimc_armed_now())
+        osdimc_report_setup_failure();
       break;
     }
     default:
@@ -288,7 +322,7 @@ int OSDIsetup(SMPmatrix *matrix, GENmodel *inModel, CKTcircuit *ckt,
     /* setup model parameter (setup_model)*/
     handle = (OsdiNgspiceHandle){.kind = 1, .name = gen_model->GENmodName};
     descr->setup_model((void *)&handle, model, sim_params, &init_info);
-    res = handle_init_info(init_info, descr);
+    res = handle_init_info(init_info, descr, &handle, NULL, model);
     if (res) {
       errRtn = "OSDI setup_model";
       if (first_err == OK)
@@ -366,7 +400,7 @@ int OSDIsetup(SMPmatrix *matrix, GENmodel *inModel, CKTcircuit *ckt,
       handle = (OsdiNgspiceHandle){.kind = 2, .name = gen_inst->GENname};
       descr->setup_instance((void *)&handle, inst, model, temp,
                             connected_terminals, sim_params, &init_info);
-      res = handle_init_info(init_info, descr);
+      res = handle_init_info(init_info, descr, &handle, inst, model);
       if (res) {
         errRtn = "OSDI setup_instance";
         if (first_err == OK)
@@ -676,7 +710,7 @@ extern int OSDItemp(GENmodel *inModel, CKTcircuit *ckt) {
 
     handle = (OsdiNgspiceHandle){.kind = 4, .name = gen_model->GENmodName};
     descr->setup_model((void *)&handle, model, sim_params, &init_info);
-    res = handle_init_info(init_info, descr);
+    res = handle_init_info(init_info, descr, &handle, NULL, model);
     if (res) {
       errRtn = "OSDI setup_model (OSDItemp)";
       if (first_err == OK)
@@ -775,7 +809,7 @@ extern int OSDItemp(GENmodel *inModel, CKTcircuit *ckt) {
 
         descr->setup_instance((void *)&handle, inst, model, temp,
                               connected_terminals, sim_params, &init_info);
-        res = handle_init_info(init_info, descr);
+        res = handle_init_info(init_info, descr, &handle, inst, model);
 
         for (uint32_t i = 0; i < descr->num_collapsible; i++) {
           if (collapsed[i] != snap[i]) {
@@ -1181,6 +1215,34 @@ static CKTcircuit *osdimc_ckt;      /* table belongs to this circuit */
 static unsigned long osdimc_trial;  /* 1 = nominal baseline, 2+ = drawn */
 static bool osdimc_active;          /* drawn values are currently applied */
 
+/* bug-hunt F5: which trial a setup failure was last reported for */
+static unsigned long osdimc_failed_trial_reported;
+
+/* bug-hunt F2: a (re-)sourced or `reset` deck reallocates the model/instance
+ * data blocks, so every stored owner pointer is stale. The circuit loader
+ * calls this (inp_dodeck, fresh and reuse paths alike); the ckt-pointer check
+ * in OSDImcNewRun stays as a second line of defense. */
+void OSDImcCircuitChanged(void) {
+  osdimc_tbl_len = 0;
+  osdimc_trial = 0;
+  osdimc_active = false;
+  osdimc_failed_trial_reported = 0;
+}
+
+static bool osdimc_armed_now(void) {
+  return osdimc_trial > 0 && osdimc_enabled();
+}
+
+static void osdimc_report_setup_failure(void) {
+  if (osdimc_failed_trial_reported == osdimc_trial)
+    return;
+  osdimc_failed_trial_reported = osdimc_trial;
+  fprintf(stderr,
+          "osdimc: trial %lu FAILED during setup; result vectors from the "
+          "previous successful run remain current.\n",
+          osdimc_trial);
+}
+
 static OsdiMcNominal *osdimc_find(const void *owner, uint32_t id) {
   for (int i = 0; i < osdimc_tbl_len; i++) {
     if (osdimc_tbl[i].owner == owner && osdimc_tbl[i].id == id) {
@@ -1289,12 +1351,38 @@ void osdimc_capture_chain(const OsdiRegistryEntry *entry, GENmodel *inModel) {
   osdimc_capture(entry, inModel);
 }
 
-/* OSDIparam/OSDImParam wrote a scalar real parameter: if it is a statistical
- * one with a captured nominal, the write IS the new nominal -- `alter`
- * recenters the distribution rather than being overwritten by the next
- * draw's nominal+delta. */
-void osdimc_note_param_write(const void *owner, uint32_t id, double value) {
-  OsdiMcNominal *e = osdimc_find(owner, id);
+/* bug-hunt F1: a USER wrote a scalar real parameter (`alter`/`altermod`,
+ * wildcards included -- frontend/spiceif.c's doset_user is the only caller):
+ * if it is a statistical one with a captured nominal, the write IS the new
+ * nominal, so the distribution recenters. Machine writes (.dc parameter
+ * sweeps, the `sweep` command's per-point and restore writes, sensitivity
+ * perturbations) go through OSDIparam/OSDImParam directly and deliberately
+ * do NOT recenter -- keying on the setter turned a sweep's save/restore into
+ * a permanent nominal shift. */
+void OSDImcNoteUserWrite(int typecode, GENinstance *dev, GENmodel *mdl,
+                         int param_id, double value) {
+  const void *owner;
+  OsdiMcNominal *e;
+
+  if (!osdi_devtype_is_osdi(typecode) || param_id < 0)
+    return;
+  if (dev) {
+    OsdiRegistryEntry *entry = osdi_reg_entry_inst(dev);
+    const OsdiDescriptor *descr = entry->descriptor;
+    if ((uint32_t)param_id >= descr->num_instance_params)
+      return;
+    owner = osdi_instance_data(entry, dev);
+  } else if (mdl) {
+    OsdiRegistryEntry *entry = osdi_reg_entry_model(mdl);
+    const OsdiDescriptor *descr = entry->descriptor;
+    if ((uint32_t)param_id < descr->num_instance_params ||
+        (uint32_t)param_id >= descr->num_params)
+      return;
+    owner = osdi_model_data(mdl);
+  } else {
+    return;
+  }
+  e = osdimc_find(owner, (uint32_t)param_id);
   if (e) {
     e->nominal = value;
   }
@@ -1302,6 +1390,20 @@ void osdimc_note_param_write(const void *owner, uint32_t id, double value) {
 
 /* Write value into one statistical parameter through the descriptor's
  * ordinary setter (the exact channel OSDIparam/OSDImParam use). */
+/* bug-hunt F13: a huge sigma can overflow Box-Muller to +-inf; a non-finite
+ * value must never reach parameter storage (a declared range catches it only
+ * when one exists -- an unbounded parameter would be poisoned silently). */
+static bool osdimc_draw_ok(const OsdiDescriptor *descr, uint32_t id,
+                           double value) {
+  if (isfinite(value))
+    return true;
+  fprintf(stderr,
+          "osdimc: trial %lu: draw for parameter '%s' is not finite "
+          "(sigma too large?); the parameter is left at its nominal.\n",
+          osdimc_trial, descr->param_opvar[id].name[0]);
+  return false;
+}
+
 static void osdimc_write(const OsdiDescriptor *descr, void *inst, void *model,
                          uint32_t id, double value) {
   void *dst;
@@ -1413,6 +1515,8 @@ void OSDImcNewRun(CKTcircuit *ckt) {
           double val = e->nominal + osdimc_delta(osdimc_mix(kmodel ^ id),
                                                  infos[s].dist, infos[s].std,
                                                  e->nominal);
+          if (!osdimc_draw_ok(descr, id, val))
+            val = e->nominal;
           osdimc_write(descr, NULL, model, id, val);
           osdimc_active = true;
           if (verbose) {
@@ -1433,6 +1537,8 @@ void OSDImcNewRun(CKTcircuit *ckt) {
             double val = e->nominal + osdimc_delta(osdimc_mix(kinst ^ id),
                                                    infos[s].dist, infos[s].std,
                                                    e->nominal);
+            if (!osdimc_draw_ok(descr, id, val))
+              val = e->nominal;
             osdimc_write(descr, inst, model, id, val);
             osdimc_active = true;
             if (verbose) {

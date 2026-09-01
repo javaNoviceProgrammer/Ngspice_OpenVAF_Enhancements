@@ -1,0 +1,10 @@
+// F3/F4 pin: a string model parameter and an array model parameter.
+`include "disciplines.vams"
+module hfstr(a,b); inout a,b; electrical a,b;
+parameter string mode = "lin" from '{"lin","quad"};
+parameter real cf[0:2] = '{1.0, 2.0, 3.0};
+(*desc="which"*) integer op;
+analog begin
+  op = (mode == "quad") ? 2 : 1;
+  I(a,b) <+ (cf[0]*1e-3)*V(a,b)*op;
+end endmodule

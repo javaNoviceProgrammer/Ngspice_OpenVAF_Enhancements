@@ -332,6 +332,7 @@ extern struct variable *spif_getparam_special(CKTcircuit *ckt, char **name, char
 extern void if_setndnames(char *line);
 extern void if_setparam_model(CKTcircuit *ckt, char **name, char *val );
 extern void if_setparam(CKTcircuit *ckt, char **name, char *param, struct dvec *val, int do_model);
+extern int if_setparam_string(CKTcircuit *ckt, char **name, char *param, char *strval, int do_model);  /* bug-hunt F3 */
 extern int if_setparam_wildcard(CKTcircuit *ckt, char *param, struct dvec *val);   /* Enhancement-268 */
 extern int if_setparam_wildcard_instance(CKTcircuit *ckt, char *param, struct dvec *val);  /* Enhancement-269 */
 extern int if_hasparam_wildcard(CKTcircuit *ckt, char *param, int do_model);
