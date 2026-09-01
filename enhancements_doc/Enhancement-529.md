@@ -56,11 +56,12 @@ compilation under `-DUSE_OMP` — the committed binaries carry no OpenMP.
 
 ## A negative multiplicity was applied silently (ngspice)
 
-The parser layer (E-447) warns on a deck-written negative `m`, but `alter
-@n1[m]=-2` reaches `OSDIparam` directly and the value was APPLIED: the
-device's contribution sign-inverted — the audit's 1k resistor model
-*sourced* +4 mA — and the compiled noise factor is `sqrt(m)`, so `.noise`
-printed `onoise_spectrum = nan` with no diagnostic on any channel. A
+The parser layer (E-447) warns on a deck-written negative `m`, but
+`alter @n1[m]=-2` reaches `OSDIparam` directly and the value was
+APPLIED: the device's contribution sign-inverted — the audit's 1k
+resistor model *sourced* +4 mA — and the compiled noise factor is
+`sqrt(m)`, so `.noise` printed `onoise_spectrum = nan` with no
+diagnostic on any channel. A
 negative value is now warned and ignored on every route. **Zero stays
 silent and applied**: E-426 established `m=0` as the disable-this-instance
 idiom shared with the built-ins — the first cut of this guard refused it
