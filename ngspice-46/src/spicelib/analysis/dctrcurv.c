@@ -292,6 +292,28 @@ DCTleftItsBin(CKTcircuit *ckt, GENinstance *inst)
  * `alter`", and here that would be false on both counts: the device took the
  * value, and `alter` computes this case correctly. The caller reads this to
  * leave the specific message standing on its own. */
+/* Enhancement-534: the overshoot slack for a parameter sweep. The classic
+ * arms use an ABSOLUTE 1e3*DBL_EPSILON, which is right at source scale
+ * (volts, ohms) and catastrophically wrong at device-parameter scale: a
+ * saturation current swept to 5e-14 sat BELOW the absolute slack the whole
+ * way, so the walk ran on to 2.7e-13 -- five times past stop -- publishing
+ * rows the user never asked for (latent in E-62's @inst[param] sweeps since
+ * the day tiny parameters could be swept). Scale the slack to the sweep's
+ * own magnitudes; at classic scales (>= 1) it is bit-identical to the old
+ * constant. */
+static double
+dct_over_slack(TRCV *job, int i)
+{
+    double m = fabs(job->TRCVvStop[i]);
+    if (fabs(job->TRCVvStart[i]) > m)
+        m = fabs(job->TRCVvStart[i]);
+    if (fabs(job->TRCVvStep[i]) > m)
+        m = fabs(job->TRCVvStep[i]);
+    if (m < 1.0)
+        return DBL_EPSILON * 1e+03 * (m > 0.0 ? m : 1.0);
+    return DBL_EPSILON * 1e+03;
+}
+
 static int dct_topology_refusal = 0;
 
 
@@ -379,6 +401,487 @@ DCTrejected(TRCV *job, int i, double val)
 }
 
 
+/* ================= Enhancement-534: extended parameter sweeps =============
+ *
+ * `.dc` learns the rest of the parameter surface the `sweep`/`altermod`
+ * family established: a MODEL parameter (`@mod[p]`, with the subcircuit
+ * spelling `@x1.rmod[p]` resolved through the same if_find_model_hier funnel
+ * E-433 taught the frontend), and the wildcard families `@*[p]` (every model
+ * with p), `@#*[p]` / `@*[[p]]` (every instance with p), `@*:leaf[p]` /
+ * `@*.leaf[p]` (every model named leaf, wherever expansion put it).
+ *
+ * Targets are collected ONCE at resolution and written per point through the
+ * DEV tables directly -- DEVparam/DEVmodParam, the MACHINE-write path. The
+ * frontend's own wildcard setters were deliberately NOT reused for the
+ * per-point writes: they run doset_user(), which is `alter`'s recentering
+ * hook for `.option osdimc` statistical parameters, and Enhancement-531
+ * established that sweeps must never recenter a nominal; they also
+ * controlled_exit() on a CKTtemp error, which would turn one refused sweep
+ * point into a dead process. One CKTtemp() per point propagates the change
+ * and re-runs the E-495 collapse guard, however many targets moved. */
+
+/* the settable IFparm id for `key` in a type's model/instance table, its
+ * readable twin, and the value type. Mirrors spiceif's parmlookup: keyword
+ * match, IF_SET to write, IF_ASK to capture the nominal, real or integer. */
+static int
+dct_parm_ids(int type, const char *key, int do_model,
+             int *set_id, int *ask_id, int *ptype)
+{
+    IFdevice *dev;
+    IFparm *table;
+    int n, k, vt;
+    int sid = -1, aid = -1, pt = IF_REAL;
+
+    if (type < 0 || !DEVices[type])
+        return 0;
+    dev = &DEVices[type]->DEVpublic;
+    table = do_model ? dev->modelParms : dev->instanceParms;
+    n = do_model ? (dev->numModelParms ? *dev->numModelParms : 0)
+                 : (dev->numInstanceParms ? *dev->numInstanceParms : 0);
+    if (!table || n <= 0)
+        return 0;
+    for (k = 0; k < n; k++) {
+        if (!table[k].keyword || !cieq(table[k].keyword, (char *) key))
+            continue;
+        vt = table[k].dataType & IF_VARTYPES;
+        if (vt != IF_REAL && vt != IF_INTEGER)
+            continue;
+        if ((table[k].dataType & IF_SET) && sid < 0) {
+            sid = table[k].id;
+            pt = vt;
+        }
+        if ((table[k].dataType & IF_ASK) && aid < 0)
+            aid = table[k].id;
+    }
+    if (sid < 0 || aid < 0)
+        return 0;
+    *set_id = sid;
+    *ask_id = aid;
+    *ptype = pt;
+    return 1;
+}
+
+/* the leaf a flattened model name carries: expansion renames a subcircuit's
+ * `.model rmod` to `<path>:rmod`, the top-level card keeps its plain name */
+static const char *
+dct_model_leaf(const char *name)
+{
+    const char *p = name ? strrchr(name, ':') : NULL;
+    return p ? p + 1 : name;
+}
+
+/* classify a wildcard knob -- the exact grammar sw_wildcard_knob() and
+ * `altermod` accept, lowercased the way the device tables store keywords:
+ *   `@*[p]`         every MODEL with p          (do_model = 1)
+ *   `@#*[p]`        every INSTANCE with p       (do_model = 0)
+ *   `@*[[p]]`       every INSTANCE with p       (alias)
+ *   `@*:leaf[p]`    every model named leaf      (do_model = 1, leaf set)
+ *   `@*.leaf[p]`    same, the dotted spelling
+ * Returns 1 for a wildcard. */
+static int
+dct_wildcard_knob(const char *name, char *param, size_t plen,
+                  int *do_model, char *leaf, size_t llen)
+{
+    const char *p, *end;
+    size_t i, n;
+
+    if (leaf && llen)
+        leaf[0] = '\0';
+    if (!name || name[0] != '@' || !param || plen == 0 || !do_model)
+        return 0;
+    p = name + 1;
+    if (p[0] == '#' && p[1] == '*' && p[2] == '[') {
+        *do_model = 0;
+        p += 3;
+    } else if (p[0] == '*' && p[1] == '[' && p[2] == '[') {
+        *do_model = 0;
+        p += 3;
+    } else if (p[0] == '*' && p[1] == '[') {
+        *do_model = 1;
+        p += 2;
+    } else if (p[0] == '*' && (p[1] == ':' || p[1] == '.') &&
+               p[2] && p[2] != '[') {
+        const char *lp = p + 2;
+        const char *lend = strchr(lp, '[');
+        size_t ln;
+        if (!lend || lend == lp || !leaf || llen == 0)
+            return 0;
+        ln = (size_t) (lend - lp);
+        if (ln >= llen)
+            return 0;
+        for (i = 0; i < ln; i++)
+            leaf[i] = (char) tolower_c(lp[i]);
+        leaf[ln] = '\0';
+        *do_model = 1;
+        p = lend + 1;
+    } else {
+        return 0;
+    }
+    end = strchr(p, ']');
+    if (!end || end == p)
+        return 0;
+    n = (size_t) (end - p);
+    if (n >= plen)
+        return 0;
+    for (i = 0; i < n; i++)
+        param[i] = (char) tolower_c(p[i]);
+    param[n] = '\0';
+    return 1;
+}
+
+/* append one target, nominal captured through the ask twin */
+static int
+dct_xtarg_add(CKTcircuit *ckt, TRCV *job, int i, GENinstance *inst,
+              GENmodel *mod, int type, int set_id, int ask_id, int ptype)
+{
+    IFvalue v;
+    DCTxtarget *t;
+    int n = job->TRCVxN[i];
+
+    job->TRCVxTarg[i] = TREALLOC(DCTxtarget, job->TRCVxTarg[i], n + 1);
+    t = &job->TRCVxTarg[i][n];
+    t->inst = inst;
+    t->mod = mod;
+    t->type = type;
+    t->set_id = set_id;
+    t->ptype = ptype;
+    t->save = 0.0;
+    if (inst) {
+        if (!DEVices[type]->DEVask ||
+            DEVices[type]->DEVask(ckt, inst, ask_id, &v, NULL) != OK)
+            return 0;
+    } else {
+        if (!DEVices[type]->DEVmodAsk ||
+            DEVices[type]->DEVmodAsk(ckt, mod, ask_id, &v) != OK)
+            return 0;
+    }
+    t->save = (ptype == IF_INTEGER) ? (double) v.iValue : v.rValue;
+    job->TRCVxN[i] = n + 1;
+    return 1;
+}
+
+/* write every target and propagate. `check` arms the E-495 topology guard,
+ * exactly as DCTsetInstParam does for the single-instance sweep. */
+static int
+DCTsetXParam(CKTcircuit *ckt, TRCV *job, int i, double val, int check)
+{
+    int k, err;
+
+    dct_topology_refusal = 0;
+    for (k = 0; k < job->TRCVxN[i]; k++) {
+        DCTxtarget *t = &job->TRCVxTarg[i][k];
+        IFvalue v;
+        if (t->ptype == IF_INTEGER)
+            v.iValue = (int) floor(val + 0.5);
+        else
+            v.rValue = val;
+        err = t->inst
+                  ? DEVices[t->type]->DEVparam(t->set_id, &v, t->inst, NULL)
+                  : DEVices[t->type]->DEVmodParam(t->set_id, &v, t->mod);
+        if (err)
+            return err;
+    }
+    job->TRCVvNow[i] = val;
+    err = CKTtemp(ckt);
+    if (err)
+        return err;
+    {
+        int moved = 0;
+#ifdef OSDI
+        moved = OSDIanyCollapseChanged(ckt);
+#endif
+        if (check && moved) {
+            SPfrontEnd->IFerrorf(ERR_WARNING,
+                "DC sweep %d: %s = %g changes a device's node collapse, and "
+                "the matrix was built for the collapse decided at setup -- the "
+                "remaining points would be computed for the wrong topology. Use "
+                "the `sweep` command, which rebuilds for each point\n",
+                i + 1, job->TRCVvName[i] ? job->TRCVvName[i] : "?", val);
+            dct_topology_refusal = 1;
+            return E_PARMVAL;
+        }
+    }
+    return OK;
+}
+
+/* put the nominals back, unchecked (the sweep is over, its results are
+ * published -- the same reasoning as the PARAM_CODE restore), and drop the
+ * target list. */
+static void
+DCTrestoreXParam(CKTcircuit *ckt, TRCV *job, int i)
+{
+    int k;
+
+    for (k = 0; k < job->TRCVxN[i]; k++) {
+        DCTxtarget *t = &job->TRCVxTarg[i][k];
+        IFvalue v;
+        if (t->ptype == IF_INTEGER)
+            v.iValue = (int) floor(t->save + 0.5);
+        else
+            v.rValue = t->save;
+        if (t->inst)
+            (void) DEVices[t->type]->DEVparam(t->set_id, &v, t->inst, NULL);
+        else
+            (void) DEVices[t->type]->DEVmodParam(t->set_id, &v, t->mod);
+    }
+    if (job->TRCVxN[i] > 0)
+        (void) CKTtemp(ckt);
+    tfree(job->TRCVxTarg[i]);
+    job->TRCVxTarg[i] = NULL;
+    job->TRCVxN[i] = 0;
+}
+
+/* resolve an `@...` name as a model parameter or a wildcard family.
+ * Returns OK with the target list built and the START value applied;
+ * E_NODEV when the spelling is not this kind (the caller keeps looking);
+ * any other error after printing why. */
+static int
+DCTresolveXParam(CKTcircuit *ckt, TRCV *job, int i)
+{
+    const char *name = job->TRCVvName[i];
+    char param[128], leaf[128];
+    int do_model = 0, t, any_int = 0, k;
+    GENmodel *cmod = NULL;
+    int cmod_type = -1;
+
+    /* a re-run of a still-loaded .dc card resolves again: drop the old list */
+    tfree(job->TRCVxTarg[i]);
+    job->TRCVxTarg[i] = NULL;
+    job->TRCVxN[i] = 0;
+
+    if (!name || name[0] != '@')
+        return E_NODEV;
+
+    if (dct_wildcard_knob(name, param, sizeof param, &do_model,
+                          leaf, sizeof leaf)) {
+        for (t = 0; t < DEVmaxnum; t++) {
+            int sid, aid, pt;
+            GENmodel *mod;
+            if (!DEVices[t] || !ckt->CKThead[t])
+                continue;
+            if (!dct_parm_ids(t, param, do_model, &sid, &aid, &pt))
+                continue;
+            for (mod = ckt->CKThead[t]; mod; mod = mod->GENnextModel) {
+                if (leaf[0] && !(mod->GENmodName &&
+                                 cieq((char *) dct_model_leaf(mod->GENmodName),
+                                      leaf)))
+                    continue;
+                if (do_model) {
+                    if (!dct_xtarg_add(ckt, job, i, NULL, mod, t, sid, aid, pt))
+                        goto askfail;
+                } else {
+                    GENinstance *inst;
+                    for (inst = mod->GENinstances; inst;
+                         inst = inst->GENnextInstance)
+                        if (!dct_xtarg_add(ckt, job, i, inst, NULL, t,
+                                           sid, aid, pt))
+                            goto askfail;
+                }
+            }
+        }
+        if (job->TRCVxN[i] == 0) {
+            if (leaf[0])
+                SPfrontEnd->IFerrorf(ERR_FATAL,
+                    "DC sweep %d: no loaded model named '%s' has parameter "
+                    "'%s' (a model inside a subcircuit is flattened to "
+                    "<instance>:%s)", i + 1, leaf, param, leaf);
+            else if (do_model)
+                SPfrontEnd->IFerrorf(ERR_FATAL,
+                    "DC sweep %d: no loaded model has a settable parameter "
+                    "'%s'", i + 1, param);
+            else
+                SPfrontEnd->IFerrorf(ERR_FATAL,
+                    "DC sweep %d: no loaded instance has a settable parameter "
+                    "'%s'", i + 1, param);
+            return E_BADPARM;
+        }
+    } else {
+        /* a concrete `@name[p]` whose name is a MODEL (the instance
+         * interpretation was already tried and failed): split exactly the
+         * way DCTfindInstParam splits, then the E-433 hierarchy funnel */
+        char buf[1024];
+        char *lbrack, *rbrack, *s;
+        int brdepth = 0, sid, aid, pt;
+
+        if (strlen(name) >= sizeof buf)
+            return E_NODEV;
+        strcpy(buf, name + 1);
+        lbrack = ft_accessor_param_start(buf);
+        rbrack = NULL;
+        if (lbrack)
+            for (s = lbrack; *s; s++) {
+                if (*s == '[')
+                    brdepth++;
+                else if (*s == ']' && --brdepth == 0) {
+                    rbrack = s;
+                    break;
+                }
+            }
+        if (!lbrack || !rbrack || rbrack <= lbrack + 1 || lbrack == buf)
+            return E_NODEV;
+        *lbrack = '\0';
+        *rbrack = '\0';
+        if (strlen(lbrack + 1) >= sizeof param)
+            return E_NODEV;
+        for (k = 0; (lbrack + 1)[k]; k++)
+            param[k] = (char) tolower_c((lbrack + 1)[k]);
+        param[k] = '\0';
+
+        for (t = 0; t < DEVmaxnum && !cmod; t++) {
+            GENmodel *mod;
+            if (!DEVices[t] || !ckt->CKThead[t])
+                continue;
+            for (mod = ckt->CKThead[t]; mod; mod = mod->GENnextModel)
+                if (mod->GENmodName && cieq(mod->GENmodName, buf)) {
+                    cmod = mod;
+                    cmod_type = t;
+                    break;
+                }
+        }
+        if (!cmod) {
+            cmod = if_find_model_hier(ckt, buf);
+            if (cmod)
+                cmod_type = cmod->GENmodType;
+        }
+        if (!cmod)
+            return E_NODEV;
+        if (!dct_parm_ids(cmod_type, param, 1, &sid, &aid, &pt)) {
+            SPfrontEnd->IFerrorf(ERR_FATAL,
+                "DC sweep %d: %s names a model that exists, but not a "
+                "sweepable parameter of it (it must be a settable real or "
+                "integer model parameter)",
+                i + 1, name);
+            return E_BADPARM;
+        }
+        if (!dct_xtarg_add(ckt, job, i, NULL, cmod, cmod_type, sid, aid, pt))
+            goto askfail;
+    }
+
+    /* Enhancement-534/503: a BUILT-IN target whose swept parameter builds
+     * internal nodes decides its topology in DEVsetup, and a running dc
+     * cannot rebuild -- refuse up front, naming the instrument that can.
+     * (OSDI targets are guarded at run time instead: OSDItemp re-decides the
+     * collapse each point and E-495 refuses when it moves.) */
+    for (k = 0; k < job->TRCVxN[i]; k++) {
+        DCTxtarget *tt = &job->TRCVxTarg[i][k];
+        if (DEVices[tt->type]->DEVpublic.registry_entry)
+            continue;                  /* OSDI: run-time guard */
+        if (CKTbuiltinTopologyParamRisk(DEVices[tt->type]->DEVpublic.name,
+                                        param)) {
+            SPfrontEnd->IFerrorf(ERR_FATAL,
+                "DC sweep %d: %s reaches a parameter that builds internal "
+                "nodes at setup time (a '%s' device), and `.dc` sets the "
+                "circuit up once -- the points would be computed for a frozen "
+                "topology. Use the `sweep` command, which re-runs setup for "
+                "each point",
+                i + 1, name, DEVices[tt->type]->DEVpublic.name
+                                 ? DEVices[tt->type]->DEVpublic.name : "?");
+            tfree(job->TRCVxTarg[i]);
+            job->TRCVxTarg[i] = NULL;
+            job->TRCVxN[i] = 0;
+            return E_PARMVAL;
+        }
+    }
+
+    for (k = 0; k < job->TRCVxN[i]; k++)
+        if (job->TRCVxTarg[i][k].ptype == IF_INTEGER)
+            any_int = 1;
+    if (any_int) {
+        /* Enhancement-427's whole-number rule, extended: a fractional point
+         * would publish an abscissa the device never saw. The keyword scales
+         * generate fractional values by construction, so an integer target
+         * refuses them outright. */
+        if (job->TRCVscale[i] != DCT_SCALE_LEGACY) {
+            SPfrontEnd->IFerrorf(ERR_FATAL,
+                "DC sweep %d: %s reaches an integer parameter -- lin/dec/oct "
+                "point generation is fractional; use whole-number start stop "
+                "step instead",
+                i + 1, name);
+            return E_PARMVAL;
+        }
+        if (!(DCTisWhole(job->TRCVvStart[i]) && DCTisWhole(job->TRCVvStop[i])
+              && DCTisWhole(job->TRCVvStep[i]))) {
+            SPfrontEnd->IFerrorf(ERR_FATAL,
+                "DC sweep %d: %s reaches an integer parameter -- start, stop "
+                "and step must be whole numbers (got %g %g %g)",
+                i + 1, name, job->TRCVvStart[i], job->TRCVvStop[i],
+                job->TRCVvStep[i]);
+            return E_PARMVAL;
+        }
+    }
+
+    job->TRCVvType[i] = XPARAM_CODE;
+    job->TRCVvSave[i] = job->TRCVxTarg[i][0].save;
+    job->TRCVgSave[i] = 1;
+    if (DCTsetXParam(ckt, job, i, job->TRCVvStart[i], 1) != OK) {
+        int topo = dct_topology_refusal;
+        DCTrestoreXParam(ckt, job, i);
+        return topo ? E_PARMVAL : DCTrejected(job, i, job->TRCVvStart[i]);
+    }
+    return OK;
+
+askfail:
+    SPfrontEnd->IFerrorf(ERR_FATAL,
+        "DC sweep %d: a nominal of %s could not be read back, so the sweep "
+        "could not be restored afterwards; sweep not started",
+        i + 1, name);
+    tfree(job->TRCVxTarg[i]);
+    job->TRCVxTarg[i] = NULL;
+    job->TRCVxN[i] = 0;
+    return E_BADPARM;
+}
+
+/* Enhancement-534: the value of a COUNTED (lin/dec/oct) level at its current
+ * index. lin interpolates the way the sweep command does, so the endpoint is
+ * exact; dec/oct multiply iteratively from the previous value, so the point
+ * set is bit-identical to sweep's own generation. */
+static double
+dct_scale_value(TRCV *job, int i)
+{
+    if (job->TRCVscale[i] == DCT_SCALE_LIN) {
+        int n = job->TRCVnPts[i];
+        return (n <= 1) ? job->TRCVvStart[i]
+                        : job->TRCVvStart[i]
+                          + (job->TRCVvStop[i] - job->TRCVvStart[i])
+                            * job->TRCVidx[i] / (n - 1);
+    }
+    return job->TRCVvNow[i] * job->TRCVratio[i];   /* dec / oct: next point */
+}
+
+/* Enhancement-534: set level i of ANY sweep-variable kind to `val` -- the
+ * per-type bodies of the classic advance arms, gathered so the counted walk
+ * can drive every kind through one call. `check` arms the mid-sweep guards
+ * for the parameter kinds, exactly as the legacy arms do. */
+static int
+DCTapplyLevel(CKTcircuit *ckt, TRCV *job, int i, double val, int check,
+              int vcode, int icode, int rcode)
+{
+    int err = OK;
+
+    if (job->TRCVvType[i] == vcode) {
+        ((VSRCinstance *) (job->TRCVvElt[i]))->VSRCdcValue = val;
+    } else if (job->TRCVvType[i] == icode) {
+        ((ISRCinstance *) (job->TRCVvElt[i]))->ISRCdcValue = val;
+    } else if (job->TRCVvType[i] == rcode) {
+        ((RESinstance *) (job->TRCVvElt[i]))->RESresist = val;
+        RESupdate_conduct((RESinstance *) (job->TRCVvElt[i]), FALSE);
+        DEVices[rcode]->DEVload(job->TRCVvElt[i]->GENmodPtr, ckt);
+    } else if (job->TRCVvType[i] == TEMP_CODE) {
+        ckt->CKTtemp = val + CONSTCtoK;
+        inp_evaluate_temper(ft_curckt);
+        err = CKTtemp(ckt);
+    } else if (job->TRCVvType[i] == PARAM_CODE) {
+        err = DCTsetInstParam(ckt, job, i, val, check);
+    } else if (job->TRCVvType[i] == XPARAM_CODE) {
+        err = DCTsetXParam(ckt, job, i, val, check);
+    }
+    job->TRCVvNow[i] = val;
+    return err;
+}
+
+
+
+
 int
 DCtrCurv(CKTcircuit *ckt, int restart)
 {
@@ -442,6 +945,10 @@ DCtrCurv(CKTcircuit *ckt, int restart)
     for (i = 0; i <= job->TRCVnestLevel && i < TRCVNESTLEVEL; i++) {
         double step_ = job->TRCVvStep[i];
         double pts_;
+        /* Enhancement-534: a counted (lin/dec/oct) level never accumulates by
+         * step -- its point count is validated at resolution */
+        if (job->TRCVscale[i] != DCT_SCALE_LEGACY)
+            continue;
         if (step_ == 0.0)
             continue;                  /* rejected on its own path */
         pts_ = fabs((job->TRCVvStop[i] - job->TRCVvStart[i]) / step_);
@@ -675,6 +1182,15 @@ DCtrCurv(CKTcircuit *ckt, int restart)
             }
         }
 
+        /* Enhancement-534: a MODEL parameter or a wildcard family */
+        if (job->TRCVvName[i] && job->TRCVvName[i][0] == '@') {
+            int xerr = DCTresolveXParam(ckt, job, i);
+            if (xerr == OK)
+                goto found;
+            if (xerr != E_NODEV)
+                return xerr;           /* the resolver already said why */
+        }
+
         SPfrontEnd->IFerrorf (ERR_FATAL,
                 "DC Transfer Function: Voltage source, current source, or "
                 "resistor named \"%s\" is not in the circuit",
@@ -682,6 +1198,44 @@ DCtrCurv(CKTcircuit *ckt, int restart)
         return(E_NODEV);
 
     found:;
+        /* Enhancement-534: convert a keyword scale into a counted walk, with
+         * the sweep command's own point generation (lin: interpolated, both
+         * endpoints exact; dec/oct: N per decade/octave, iterative multiply
+         * up to stop*(1+1e-9)). The start value was applied by the
+         * resolution above; TRCVvNow seeds the multiplicative walk. */
+        if (job->TRCVscale[i] != DCT_SCALE_LEGACY) {
+            double f0 = job->TRCVvStart[i], f1 = job->TRCVvStop[i];
+            job->TRCVidx[i] = 0;
+            job->TRCVvNow[i] = f0;
+            if (job->TRCVscale[i] == DCT_SCALE_LIN) {
+                if (job->TRCVnPts[i] < 1) {
+                    SPfrontEnd->IFerrorf(ERR_FATAL,
+                        "DC sweep %d: lin needs at least 1 point", i + 1);
+                    return(E_PARMVAL);
+                }
+            } else {
+                double per = (job->TRCVscale[i] == DCT_SCALE_DEC) ? 10.0 : 2.0;
+                double mul, x;
+                int nv = 0;
+                if (f0 <= 0.0 || f1 <= 0.0 || f1 < f0) {
+                    SPfrontEnd->IFerrorf(ERR_FATAL,
+                        "DC sweep %d: dec/oct need positive endpoints with "
+                        "start <= stop (got %g .. %g)", i + 1, f0, f1);
+                    return(E_PARMVAL);
+                }
+                mul = pow(per, 1.0 / job->TRCVnPts[i]);
+                for (x = f0; x <= f1 * (1 + 1e-9); x *= mul) {
+                    if (++nv > 100000) {
+                        SPfrontEnd->IFerrorf(ERR_FATAL,
+                            "DC sweep %d: too many points (> 100000); check "
+                            "<N> and the start/stop range", i + 1);
+                        return(E_PARMVAL);
+                    }
+                }
+                job->TRCVratio[i] = mul;
+                job->TRCVnPts[i] = nv;
+            }
+        }
     }
 
 #ifdef HAS_PROGREP
@@ -710,7 +1264,8 @@ DCtrCurv(CKTcircuit *ckt, int restart)
         SPfrontEnd->IFnewUid (ckt, &varUid, NULL, "temp-sweep", UID_OTHER, NULL);
     else if (job->TRCVvType[0] == rcode)
         SPfrontEnd->IFnewUid (ckt, &varUid, NULL, "res-sweep", UID_OTHER, NULL);
-    else if (job->TRCVvType[0] == PARAM_CODE)
+    else if (job->TRCVvType[0] == PARAM_CODE ||
+             job->TRCVvType[0] == XPARAM_CODE)      /* Enhancement-534 */
         SPfrontEnd->IFnewUid (ckt, &varUid, NULL, "param-sweep", UID_OTHER, NULL);
     else
         SPfrontEnd->IFnewUid (ckt, &varUid, NULL, "?-sweep", UID_OTHER, NULL);
@@ -737,7 +1292,19 @@ DCtrCurv(CKTcircuit *ckt, int restart)
 
     for (;;) {
 
-        if (job->TRCVvType[i] == vcode) { /* voltage source */
+        /* Enhancement-534: a counted (lin/dec/oct) level of ANY kind pops on
+         * its index -- the value-overshoot tests below belong to the legacy
+         * accumulate-by-step walk only (a descending lin would trip them). */
+        if (job->TRCVscale[i] != DCT_SCALE_LEGACY) {
+            if (job->TRCVidx[i] >= job->TRCVnPts[i]) {
+                i++;
+                firstTime = 1;
+                ckt->CKTmode = (ckt->CKTmode & MODEUIC) | MODEDCTRANCURVE | MODEINITJCT;
+                if (i > job->TRCVnestLevel)
+                    break;
+                goto nextstep;
+            }
+        } else if (job->TRCVvType[i] == vcode) { /* voltage source */
             if (SGN(job->TRCVvStep[i]) *
                 (((VSRCinstance*)(job->TRCVvElt[i]))->VSRCdcValue -
                  job->TRCVvStop[i]) >
@@ -788,10 +1355,11 @@ DCtrCurv(CKTcircuit *ckt, int restart)
                     break;
                 goto nextstep;
             }
-        } else if (job->TRCVvType[i] == PARAM_CODE) { /* @inst[param] sweep */
+        } else if (job->TRCVvType[i] == PARAM_CODE ||
+                   job->TRCVvType[i] == XPARAM_CODE) { /* @...[param] sweep */
             if (SGN(job->TRCVvStep[i]) *
                 (job->TRCVvNow[i] - job->TRCVvStop[i]) >
-                DBL_EPSILON * 1e+03)
+                dct_over_slack(job, i))
             {
                 i++;
                 firstTime = 1;
@@ -803,7 +1371,18 @@ DCtrCurv(CKTcircuit *ckt, int restart)
         }
 
         while (--i >= 0)
-            if (job->TRCVvType[i] == vcode) { /* voltage source */
+            if (job->TRCVscale[i] != DCT_SCALE_LEGACY) {
+                /* Enhancement-534: rewind a counted level to its first point */
+                job->TRCVidx[i] = 0;
+                if (DCTapplyLevel(ckt, job, i, job->TRCVvStart[i], 1,
+                                  vcode, icode, rcode) != OK) {
+                    dct_rejected_val = job->TRCVvStart[i];
+                    dct_rejected_lvl = i;
+                    dct_rejected_topo = dct_topology_refusal;
+                    dctrc = E_PARMVAL;
+                    goto osdi_finish;
+                }
+            } else if (job->TRCVvType[i] == vcode) { /* voltage source */
                 ((VSRCinstance *)(job->TRCVvElt[i]))->VSRCdcValue =
                     job->TRCVvStart[i];
             } else if (job->TRCVvType[i] == icode) { /* current source */
@@ -822,6 +1401,12 @@ DCtrCurv(CKTcircuit *ckt, int restart)
                 if (DCTsetInstParam(ckt, job, i, job->TRCVvStart[i], 1) != OK)
                     return dct_topology_refusal
                         ? E_PARMVAL       /* Enhancement-495 already said why */
+                        : DCTrejected(job, i, job->TRCVvStart[i]);
+            } else if (job->TRCVvType[i] == XPARAM_CODE) {
+                /* Enhancement-534 */
+                if (DCTsetXParam(ckt, job, i, job->TRCVvStart[i], 1) != OK)
+                    return dct_topology_refusal
+                        ? E_PARMVAL
                         : DCTrejected(job, i, job->TRCVvStart[i]);
             }
 
@@ -933,6 +1518,8 @@ DCtrCurv(CKTcircuit *ckt, int restart)
             ckt->CKTtime = ((RESinstance *)(job->TRCVvElt[0]))->RESresist;
         else if (job->TRCVvType[0] == PARAM_CODE)
             ckt->CKTtime = job->TRCVvNow[0];
+        else if (job->TRCVvType[0] == XPARAM_CODE)   /* Enhancement-534 */
+            ckt->CKTtime = job->TRCVvNow[0];
         else if (job->TRCVvType[0] == TEMP_CODE)
             ckt->CKTtime = ckt->CKTtemp - CONSTCtoK;
 
@@ -1027,7 +1614,26 @@ DCtrCurv(CKTcircuit *ckt, int restart)
 
     nextstep:;
 
-        if (job->TRCVvType[i] == vcode) { /* voltage source */
+        if (job->TRCVscale[i] != DCT_SCALE_LEGACY) {
+            /* Enhancement-534: a counted level advances by index; the value
+             * comes from the generator (lin interpolation / dec-oct multiply).
+             * Past the last point nothing is applied -- the loop top pops. A
+             * mid-sweep refusal (a parameter kind saying no, or the E-495
+             * topology guard) aborts through the restore path, exactly as the
+             * legacy PARAM arm does. */
+            job->TRCVidx[i]++;
+            if (job->TRCVidx[i] < job->TRCVnPts[i]) {
+                double next_ = dct_scale_value(job, i);
+                if (DCTapplyLevel(ckt, job, i, next_, 1,
+                                  vcode, icode, rcode) != OK) {
+                    dct_rejected_val = next_;
+                    dct_rejected_lvl = i;
+                    dct_rejected_topo = dct_topology_refusal;
+                    dctrc = E_PARMVAL;
+                    goto osdi_finish;
+                }
+            }
+        } else if (job->TRCVvType[i] == vcode) { /* voltage source */
             ((VSRCinstance*)(job->TRCVvElt[i]))->VSRCdcValue +=
                 job->TRCVvStep[i];
         } else if (job->TRCVvType[i] == icode) { /* current source */
@@ -1052,7 +1658,7 @@ DCtrCurv(CKTcircuit *ckt, int restart)
              * TEMP_CODE arm just below already declines its own overshoot for
              * exactly this reason. */
             if (SGN(job->TRCVvStep[i]) * (next_ - job->TRCVvStop[i])
-                    > DBL_EPSILON * 1e+03) {
+                    > dct_over_slack(job, i)) {
                 job->TRCVvNow[i] = next_;      /* advance; the point is dropped */
             } else if (DCTsetInstParam(ckt, job, i, next_, 1) != OK) {
                 dct_rejected_val = next_;
@@ -1062,6 +1668,21 @@ DCtrCurv(CKTcircuit *ckt, int restart)
                 dct_rejected_topo = dct_topology_refusal;
                 dctrc = E_PARMVAL;
                 goto osdi_finish;   /* abort THROUGH the restore path */
+            }
+        } else if (job->TRCVvType[i] == XPARAM_CODE) { /* Enhancement-534 */
+            double next_ = job->TRCVvNow[i] + job->TRCVvStep[i];
+            /* the same drop-before-set overshoot rule as the PARAM arm:
+             * a sweep ending at the edge of a `from` range must not probe
+             * one step outside it */
+            if (SGN(job->TRCVvStep[i]) * (next_ - job->TRCVvStop[i])
+                    > dct_over_slack(job, i)) {
+                job->TRCVvNow[i] = next_;      /* advance; the point is dropped */
+            } else if (DCTsetXParam(ckt, job, i, next_, 1) != OK) {
+                dct_rejected_val = next_;
+                dct_rejected_lvl = i;
+                dct_rejected_topo = dct_topology_refusal;
+                dctrc = E_PARMVAL;
+                goto osdi_finish;
             }
         } else if (job->TRCVvType[i] == TEMP_CODE) { /* temperature */
             ckt->CKTtemp += job->TRCVvStep[i];
@@ -1088,8 +1709,14 @@ DCtrCurv(CKTcircuit *ckt, int restart)
 
 #ifdef HAS_PROGREP
         if (i == job->TRCVnestLevel) {
-            actval += job->TRCVvStep[job->TRCVnestLevel];
-            SetAnalyse("dc", abs((int)((actval - job->TRCVvStart[job->TRCVnestLevel]) * 1000. / actdiff)));
+            if (job->TRCVscale[i] != DCT_SCALE_LEGACY) {   /* Enhancement-534 */
+                if (job->TRCVnPts[i] > 0)
+                    SetAnalyse("dc",
+                        (int) (1000.0 * job->TRCVidx[i] / job->TRCVnPts[i]));
+            } else {
+                actval += job->TRCVvStep[job->TRCVnestLevel];
+                SetAnalyse("dc", abs((int)((actval - job->TRCVvStart[job->TRCVnestLevel]) * 1000. / actdiff)));
+            }
         }
 #endif
 
@@ -1128,6 +1755,9 @@ osdi_finish:
                completed analysis into an error. The value being put back was
                accepted once, so a refusal would itself be the anomaly. */
             (void) DCTsetInstParam(ckt, job, i, job->TRCVvSave[i], 0);
+        } else if (job->TRCVvType[i] == XPARAM_CODE) {
+            /* Enhancement-534: every target's own nominal back, unchecked */
+            DCTrestoreXParam(ckt, job, i);
         }
 
 #ifdef OSDI

@@ -68,26 +68,42 @@ altermod @mm[r] = 2k  ; same for a model-card parameter
 **`.dc` sweeps over device parameters** work for OSDI (and built-in)
 devices — the sweep refreshes the device per point exactly as `alter`
 would, restores the original value afterwards, and nests with other sweep
-variables:
+variables. Since E-534 the whole `sweep`/`altermod` parameter surface has a
+dc arm — **model parameters** (`@mm[p]`, the dotted subcircuit spelling
+`@x1.rmod[p]`), the **wildcards** `@*[p]` / `@#*[p]` / `@*:leaf[p]` — and
+every knob kind takes the keyword scales `lin|dec|oct N start stop`
+(generated exactly as the `sweep` command generates them), while the classic
+triple is untouched:
 
 ```spice
 .dc @n1[r] 500 1500 100            ; sweep an OSDI instance parameter
 .dc @n1[r] 500 1500 500 vin 0 2 1  ; nested with a source sweep
+.dc @mm[g] lin 101 1m 10m          ; a MODEL parameter, 101 exact points
+.dc @*:rmod[rsh] dec 5 10 1k       ; every flattened copy of rmod, log grid
 .dc temp -40 125 5                  ; temperature sweep; $temperature
                                     ; tracks each point (°C in the deck,
                                     ; K inside the model)
 ```
+
+Values are written through the machine path (an `osdimc` nominal is never
+recentered, E-531) and restored afterwards. Topology stays honest both ways:
+an OSDI model parameter that moves a node collapse refuses the point at run
+time (E-495), and a built-in parameter that *builds internal nodes at setup*
+— BJT `rc`/`rb`/`re`/`rco`, diode `rs`/`tt`, MOS `rd`/`rs`/`rsh`/`nrd`/`nrs`
+— is refused at resolution; both messages name the `sweep` command, which
+re-runs setup per point and is the correct instrument there.
 
 **The `sweep` command hands eligible op sweeps to `.dc`** (E-533): with the
 default `-analysis op`, a single dc-sweepable knob (a source, a resistor,
 `temp`, or an `@inst[param]`) and evenly spaced points, `sweep` runs one dc
 analysis under the hood — a warm point-to-point continuation instead of one
 cold operating point per point (measured 21.2 s → 2.16 s on a 1000-device,
-9900-point sweep, bit-identical to a direct `.dc`). Ineligible spellings
-(model/`.param` knobs, log spacing, `-vs` families, live `@dev[param]`
-outputs, `temp` with OSDI devices in the deck) and every dc refusal — a
-swept parameter that moves a node collapse, a rejected value, a
-non-converged point — fall back to the per-point loop automatically;
+9900-point sweep, bit-identical to a direct `.dc`). Since E-534, model
+knobs, the wildcard families and log-spaced grids hand over too; what stays
+on the loop is uneven lists, `.param` knobs, `-vs` families, live
+`@dev[param]` outputs, and `temp` with OSDI devices in the deck. Every dc
+refusal — a swept parameter that moves or builds topology, a rejected value,
+a non-converged point — falls back to the per-point loop automatically;
 `-perpoint` forces it. See
 [`examples/sweepdc_examples/`](../../examples/sweepdc_examples/).
 

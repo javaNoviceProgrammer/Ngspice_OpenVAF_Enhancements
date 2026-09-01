@@ -33,6 +33,37 @@ Modified: 1999 Paolo Nenzi
 #define PARAM_CODE 1024
 #endif
 
+/* Enhancement-534: sweep type code for the extended parameter sweeps --
+   a MODEL parameter (`@mod[p]`, subcircuit copies included through the
+   `@x1.rmod[p]` spelling), and the wildcard families `sweep`/`altermod`
+   established: `@*[p]` (every model with p), `@#*[p]` / `@*[[p]]` (every
+   instance with p), `@*:leaf[p]` / `@*.leaf[p]` (every model named leaf).
+   Targets are collected once at resolution and set per point through the
+   DEV tables directly -- the MACHINE-write path, so an `osdimc` statistical
+   parameter's nominal is never recentered by a sweep (Enhancement-531). */
+#ifndef XPARAM_CODE
+#define XPARAM_CODE 1025
+#endif
+
+/* Enhancement-534: one target of an XPARAM_CODE sweep. `inst` NULL means the
+   target is the model card itself. */
+typedef struct dct_xtarget {
+    GENinstance *inst;
+    GENmodel    *mod;
+    int          type;      /* device type code */
+    int          set_id;    /* IFparm id for DEVparam / DEVmodParam */
+    int          ptype;     /* IF_REAL or IF_INTEGER */
+    double       save;      /* nominal captured at resolution */
+} DCTxtarget;
+
+/* Enhancement-534: point-scale modes. LEGACY is the classic accumulate-by-step
+   walk, byte-for-byte untouched; the keyword forms generate a COUNTED point
+   set exactly the way the `sweep` command does. */
+#define DCT_SCALE_LEGACY 0
+#define DCT_SCALE_LIN    1
+#define DCT_SCALE_DEC    2
+#define DCT_SCALE_OCT    3
+
 typedef struct {
     int JOBtype;
     JOB *JOBnextJob;
@@ -40,7 +71,7 @@ typedef struct {
     double TRCVvStart[TRCVNESTLEVEL];   /* starting voltage/current */
     double TRCVvStop[TRCVNESTLEVEL];    /* ending voltage/current */
     double TRCVvStep[TRCVNESTLEVEL];    /* voltage/current step */
-    double TRCVvSave[TRCVNESTLEVEL];    /* voltage of this source BEFORE 
+    double TRCVvSave[TRCVNESTLEVEL];    /* voltage of this source BEFORE
                                          * analysis-to restore when done */
     int TRCVgSave[TRCVNESTLEVEL];    /* dcGiven flag; as with vSave */
     IFuid TRCVvName[TRCVNESTLEVEL];     /* source being varied */
@@ -57,6 +88,20 @@ typedef struct {
     int TRCVset[TRCVNESTLEVEL];     /* flag to indicate this nest level used */
     int TRCVnestLevel;      /* number of levels of nesting called for */
     int TRCVnestState;      /* iteration state during pause */
+    /* Enhancement-534: keyword scales (`lin|dec|oct N start stop`). For
+       DCT_SCALE_LEGACY every new field is dormant and the classic walk runs
+       unchanged. For the keyword forms TRCVnPts holds N as PARSED (lin: total
+       points; dec/oct: points per decade/octave) until resolution converts it
+       to the TOTAL point count, TRCVratio the dec/oct multiplier, and
+       TRCVidx the running point index. */
+    int    TRCVscale[TRCVNESTLEVEL];
+    int    TRCVnPts[TRCVNESTLEVEL];
+    int    TRCVidx[TRCVNESTLEVEL];
+    double TRCVratio[TRCVNESTLEVEL];
+    /* Enhancement-534: XPARAM_CODE bookkeeping -- the collected target list
+       (freed on the restore path) and how the name was classified. */
+    DCTxtarget *TRCVxTarg[TRCVNESTLEVEL];
+    int         TRCVxN[TRCVNESTLEVEL];
 } TRCV;
 
 enum {
@@ -70,6 +115,10 @@ enum {
     DCT_STEP2,
     DCT_NAME2,
     DCT_TYPE2,
+    DCT_SCALE1,          /* Enhancement-534 */
+    DCT_NPTS1,
+    DCT_SCALE2,
+    DCT_NPTS2,
 };
 
 #endif

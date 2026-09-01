@@ -144,17 +144,40 @@ check("[6] the knob returns to its nominal after a handed sweep",
 # ---- everything that must stay on the loop ---------------------------------
 print("ineligible spellings stay on the per-point loop:")
 
+# Enhancement-534 widened the eligible set: .dc learned model parameters, the
+# wildcard families and the dec/oct grids, so those spellings now HAND OVER
+# (pinned above and in dcxsweep_examples); what stays on the loop is what
+# still has no dc arm at all.
 for label, ctl in [
-    ("[7] log (dec) spacing", "sweep @R2[resistance] dec 5 100 1000 -output v(mid)"),
-    ("[8] a live @-output (prescreened, no dc is run)",
+    ("[7] a live @-output (prescreened, no dc is run)",
      "sweep @R2[resistance] 100 1000 300 -output @d1[gd]"),
-    ("[9] a model-parameter knob", "sweep @dm[is] list 1e-14 2e-14 -output v(mid)"),
-    ("[10] a -vs family",
+    ("[8] an uneven list",
+     "sweep @R2[resistance] list 100 150 400 -output v(mid)"),
+    ("[9] a -vs family",
      "sweep @R2[resistance] 100 400 100 -vs V1 list 3 5 -output v(mid)"),
 ]:
     out = run_deck(sweep_deck(ctl), "inel")
     check(label + " runs per-point", HANDED not in out and "points into plot" in out
           or "curves" in out)
+
+# ...and the E-534 spellings hand over, agreeing with the loop
+out = run_deck(sweep_deck(
+    "sweep @dm[is] lin 3 1e-14 3e-14 -output v(mid)\n"
+    "wrdata _sdc_m1.csv v(mid)\n"
+    "sweep @dm[is] lin 3 1e-14 3e-14 -perpoint -output v(mid)\n"
+    "wrdata _sdc_m2.csv v(mid)\n"
+    "sweep V1 dec 2 0.1 10 -output v(mid)\n"
+    "wrdata _sdc_d1.csv v(mid)\n"
+    "sweep V1 dec 2 0.1 10 -perpoint -output v(mid)\n"
+    "wrdata _sdc_d2.csv v(mid)"), "wide")
+m1, m2 = col("_sdc_m1.csv"), col("_sdc_m2.csv")
+d1, d2 = col("_sdc_d1.csv"), col("_sdc_d2.csv")
+wm = max(abs(a - b) for a, b in zip(m1, m2)) if len(m1) == len(m2) else 1e9
+wd = max(abs(a - b) for a, b in zip(d1, d2)) if len(d1) == len(d2) else 1e9
+check("[10] a MODEL knob hands over (E-534) and agrees with the loop",
+      out.count(HANDED) == 2 and len(m1) == 3 and wm < 1e-3, f"max dv={wm:.1e}")
+check("[10b] a dec grid hands over (E-534) and agrees with the loop",
+      len(d1) == 5 and wd < 1e-3, f"max dv={wd:.1e}")
 
 # ---- temp: OSDI declines, built-ins keep the speedup -----------------------
 print("the temp knob: dc cannot follow an OSDI collapse, built-ins are safe:")

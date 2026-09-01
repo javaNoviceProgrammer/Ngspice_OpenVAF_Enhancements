@@ -17,13 +17,15 @@ back to the per-point loop unchanged — fast when the circuit cooperates, the
 old behavior to the letter when it does not. `-perpoint` forces the loop up
 front.
 
-What stays on the loop, by design: log/uneven spacing (`.dc` regenerates
-points as start + k·step), model-parameter and `.param` knobs (no dc arm),
-`-vs` families, `-overlay`, live `@dev[param]` outputs (only the loop can
-read the circuit at each point — prescreened, so no dc is wasted), and
-`sweep temp` when the deck contains any OSDI device (`dc temp` holds one
-setup and cannot follow a temperature-moved collapse — the known-open finding
-the `sweeptemp` suite pins; built-in-only decks keep the speedup).
+What stays on the loop, by design (narrowed by E-534, which taught `.dc`
+model parameters, the wildcard families and the dec/oct grids — those now
+hand over too, see `dcxsweep_examples`): uneven lists, `.param` knobs (they
+need a re-source), `-vs` families, `-overlay`, live `@dev[param]` outputs
+(only the loop can read the circuit at each point — prescreened, so no dc is
+wasted), and `sweep temp` when the deck contains any OSDI device (`dc temp`
+holds one setup and cannot follow a temperature-moved collapse — the
+known-open finding the `sweeptemp` suite pins; built-in-only decks keep the
+speedup).
 
 Semantics that change with the engine, stated honestly: dc points run under
 `MODEDCTRANCURVE` (a Verilog-A `analysis("dc")` is true where the loop's op
@@ -34,7 +36,7 @@ readings; `-perpoint` restores the old ones.
 | File | Pins |
 |---|---|
 | `sdccoll.va` | An instance-parameter-gated node collapse: sweeping `@N1[rs]` across 0 makes `.dc` refuse (E-495), the sweep announces the fallback, and the per-point loop lands on the closed-form series-resistance values exactly. |
-| `verify_sweepdc.py` | 15 checks, both solvers: bit-identity with `.dc`, tolerance-agreement with `-perpoint`, knob restore, every ineligible spelling, the OSDI temp decline, and the refusal fallback. |
+| `verify_sweepdc.py` | 17 checks, both solvers: bit-identity with `.dc`, tolerance-agreement with `-perpoint`, knob restore, every ineligible spelling, the OSDI temp decline, and the refusal fallback. |
 
 Run it:
 

@@ -555,6 +555,117 @@ dot_pz(char *line, CKTcircuit *ckt, INPtables *tab, struct card *current,
 }
 
 
+/* Enhancement-534: read one .dc sweep specification -- either the classic
+ * `start stop step` triple or the keyword form `lin|dec|oct N start stop`
+ * the `sweep` command established. Returns 0 on success, 1 on bad syntax.
+ * `lvl` is 0 or 1, selecting the start1/start2 parameter family. */
+/* Enhancement-534: read a sweep-variable NAME. The wildcard spellings the
+ * sweep/altermod family established (`@*[p]`, `@#*[p]`, `@*[[p]]`,
+ * `@*:leaf[p]`) cannot pass through INPgetTok -- its token grammar breaks at
+ * '*' (and '+', '-', '/', '^'), which is right for expressions and wrong for
+ * these names. An '@'-led name is therefore read to the next whitespace,
+ * verbatim; everything else keeps the classic tokenizer, so no legacy
+ * spelling changes by a byte. */
+static void
+dot_dc_name(char **line, char **name)
+{
+    char *p = *line, *q;
+
+    while (*p == ' ' || *p == '\t' || *p == '\r')
+        p++;
+    if (*p != '@') {
+        INPgetTok(line, name, 1);
+        return;
+    }
+    q = p;
+    while (*q && *q != ' ' && *q != '\t' && *q != '\r')
+        q++;
+    *name = copy_substring(p, q);
+    while (*q == ' ' || *q == '\t' || *q == '\r')
+        q++;
+    *line = q;
+}
+
+static int
+dot_dc_spec(char *(*linep), CKTcircuit *ckt, INPtables *tab, JOB *foo,
+            int which, int lvl, struct card *current)
+{
+    IFvalue ptemp;
+    IFvalue *parm;
+    int error;                  /* consumed by GCA */
+    char *line = *linep;
+    char *peek = line;
+    char *kw = NULL;
+    int mode = -1;
+    static char nm_start[2][8] = { "start1", "start2" };
+    static char nm_stop[2][8]  = { "stop1",  "stop2"  };
+    static char nm_step[2][8]  = { "step1",  "step2"  };
+    static char nm_scale[2][8] = { "scale1", "scale2" };
+    static char nm_npts[2][8]  = { "npts1",  "npts2"  };
+
+    if (*line == '\0')
+        return 1;
+    INPgetTok(&peek, &kw, 1);
+    if (kw && cieq(kw, "lin"))
+        mode = 1;
+    else if (kw && cieq(kw, "dec"))
+        mode = 2;
+    else if (kw && cieq(kw, "oct"))
+        mode = 3;
+
+    if (mode > 0) {
+        double dn;
+        line = peek;            /* consume the keyword */
+        if (*line == '\0')
+            return 1;
+        parm = INPgetValue(ckt, &line, IF_REAL, tab);   /* N */
+        dn = parm->rValue;
+        /* mirror the sweep command's checks exactly (Enhancement-478): a
+         * whole, positive count, read as a number so `2e2` is 200 not 2 */
+        if (dn != floor(dn) || dn < 1.0 || dn > 100000.0) {
+            fprintf(stderr,
+                    "Error: .dc %s needs a whole number of points between 1 "
+                    "and 100000 (got %g)\n",
+                    mode == 1 ? "lin" : mode == 2 ? "dec" : "oct", dn);
+            return 1;
+        }
+        ptemp.iValue = mode;
+        GCA(INPapName, (ckt, which, foo, nm_scale[lvl], &ptemp));
+        ptemp.iValue = (int) dn;
+        GCA(INPapName, (ckt, which, foo, nm_npts[lvl], &ptemp));
+        if (*line == '\0')
+            return 1;
+        parm = INPgetValue(ckt, &line, IF_REAL, tab);   /* start */
+        GCA(INPapName, (ckt, which, foo, nm_start[lvl], parm));
+        if (*line == '\0')
+            return 1;
+        parm = INPgetValue(ckt, &line, IF_REAL, tab);   /* stop */
+        GCA(INPapName, (ckt, which, foo, nm_stop[lvl], parm));
+        /* a nonzero step placates the zero-step refusals; the counted walk
+         * never reads it as an increment */
+        ptemp.rValue = 1.0;
+        GCA(INPapName, (ckt, which, foo, nm_step[lvl], &ptemp));
+        *linep = line;
+        return 0;
+    }
+
+    /* classic triple */
+    parm = INPgetValue(ckt, &line, IF_REAL, tab);       /* vstart */
+    GCA(INPapName, (ckt, which, foo, nm_start[lvl], parm));
+    if (*line == '\0')
+        return 1;
+    parm = INPgetValue(ckt, &line, IF_REAL, tab);       /* vstop */
+    GCA(INPapName, (ckt, which, foo, nm_stop[lvl], parm));
+    if (*line == '\0')
+        return 1;
+    parm = INPgetValue(ckt, &line, IF_REAL, tab);       /* vinc */
+    if (parm->rValue == 0)
+        return 1;
+    GCA(INPapName, (ckt, which, foo, nm_step[lvl], parm));
+    *linep = line;
+    return 0;
+}
+
 static int
 dot_dc(char *line, CKTcircuit *ckt, INPtables *tab, struct card *current,
        TSKtask *task, CKTnode *gnode, JOB *foo)
@@ -562,12 +673,12 @@ dot_dc(char *line, CKTcircuit *ckt, INPtables *tab, struct card *current,
     char *name;			/* the resistor's name */
     int error;			/* error code temporary */
     IFvalue ptemp;		/* a value structure to package resistance into */
-    IFvalue *parm;		/* a pointer to a value struct for function returns */
     int which;			/* which analysis we are performing */
 
     NG_IGNORE(gnode);
 
-    /* .dc SRC1NAME Vstart1 Vstop1 Vinc1 [SRC2NAME Vstart2 Vstop2 Vinc2]
+    /* .dc SRC1NAME <spec1> [SRC2NAME <spec2>], where a spec is either the
+       classic `Vstart Vstop Vinc` or `lin|dec|oct N start stop` (E-534).
        Return 1 upon error because of bad syntax (missing tokens).*/
     which = ft_find_analysis("DC");
     if (which == -1) {
@@ -575,45 +686,23 @@ dot_dc(char *line, CKTcircuit *ckt, INPtables *tab, struct card *current,
         return (0);
     }
     IFC(newAnalysis, (ckt, which, "DC transfer characteristic", &foo, task));
-    INPgetTok(&line, &name, 1);
+    dot_dc_name(&line, &name);
     if (*name == '\0')
         return 1;
     INPinsert(&name, tab);
     ptemp.uValue = name;
     GCA(INPapName, (ckt, which, foo, "name1", &ptemp));
-    if (*line == '\0')
+    if (dot_dc_spec(&line, ckt, tab, foo, which, 0, current))
         return 1;
-    parm = INPgetValue(ckt, &line, IF_REAL, tab);	/* vstart1 */
-    GCA(INPapName, (ckt, which, foo, "start1", parm));
-    if (*line == '\0')
-        return 1;
-    parm = INPgetValue(ckt, &line, IF_REAL, tab);	/* vstop1 */
-    GCA(INPapName, (ckt, which, foo, "stop1", parm));
-    if (*line == '\0')
-        return 1;
-    parm = INPgetValue(ckt, &line, IF_REAL, tab);	/* vinc1 */
-        if (parm->rValue == 0)
-            return 1;
-    GCA(INPapName, (ckt, which, foo, "step1", parm));
     if (*line) {
-        INPgetTok(&line, &name, 1);
+        dot_dc_name(&line, &name);
         if (*line == '\0')
             return 1;
         INPinsert(&name, tab);
         ptemp.uValue = name;
         GCA(INPapName, (ckt, which, foo, "name2", &ptemp));
-        parm = INPgetValue(ckt, &line, IF_REAL, tab); /* vstart2 */
-        if (*line == '\0')
+        if (dot_dc_spec(&line, ckt, tab, foo, which, 1, current))
             return 1;
-        GCA(INPapName, (ckt, which, foo, "start2", parm));
-        parm = INPgetValue(ckt, &line, IF_REAL, tab); /* vstop2 */
-        if (*line == '\0')
-            return 1;
-        GCA(INPapName, (ckt, which, foo, "stop2", parm));
-        parm = INPgetValue(ckt, &line, IF_REAL, tab); /* vinc2 */
-        if (parm->rValue == 0)
-            return 1;
-        GCA(INPapName, (ckt, which, foo, "step2", parm));
     }
     /* Enhancement-446: `.dc` nests at most two sources. A third specification
        used to be neither run nor refused -- the analysis produced the 2-D grid

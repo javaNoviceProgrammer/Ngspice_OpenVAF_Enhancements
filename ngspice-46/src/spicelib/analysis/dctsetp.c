@@ -81,6 +81,31 @@ DCTsetParm(CKTcircuit *ckt, JOB *anal, int which, IFvalue *value)
         job->TRCVset[1] = TRUE;
         break;
 
+    /* Enhancement-534: keyword point scales (`lin|dec|oct N start stop`) */
+    case DCT_SCALE1:
+        job->TRCVscale[0] = value->iValue;
+        job->TRCVnestLevel = MAX(0, job->TRCVnestLevel);
+        job->TRCVset[0] = TRUE;
+        break;
+
+    case DCT_NPTS1:
+        job->TRCVnPts[0] = value->iValue;
+        job->TRCVnestLevel = MAX(0, job->TRCVnestLevel);
+        job->TRCVset[0] = TRUE;
+        break;
+
+    case DCT_SCALE2:
+        job->TRCVscale[1] = value->iValue;
+        job->TRCVnestLevel = MAX(1, job->TRCVnestLevel);
+        job->TRCVset[1] = TRUE;
+        break;
+
+    case DCT_NPTS2:
+        job->TRCVnPts[1] = value->iValue;
+        job->TRCVnestLevel = MAX(1, job->TRCVnestLevel);
+        job->TRCVset[1] = TRUE;
+        break;
+
     default:
         return(E_BADPARM);
     }
@@ -98,7 +123,11 @@ static IFparm DCTparms[] = {
     { "name1",      DCT_NAME1,  IF_SET|IF_INSTANCE, "name of source to step" },
     { "name2",      DCT_NAME2,  IF_SET|IF_INSTANCE, "name of source to step" },
     { "type1",      DCT_TYPE1,  IF_SET|IF_INTEGER,  "type of source to step" },
-    { "type2",      DCT_TYPE2,  IF_SET|IF_INTEGER,  "type of source to step" }
+    { "type2",      DCT_TYPE2,  IF_SET|IF_INTEGER,  "type of source to step" },
+    { "scale1",     DCT_SCALE1, IF_SET|IF_INTEGER,  "point scale: 0 step, 1 lin, 2 dec, 3 oct" },
+    { "npts1",      DCT_NPTS1,  IF_SET|IF_INTEGER,  "points (lin: total, dec/oct: per decade/octave)" },
+    { "scale2",     DCT_SCALE2, IF_SET|IF_INTEGER,  "point scale: 0 step, 1 lin, 2 dec, 3 oct" },
+    { "npts2",      DCT_NPTS2,  IF_SET|IF_INTEGER,  "points (lin: total, dec/oct: per decade/octave)" }
 };
 
 SPICEanalysis DCTinfo  = {

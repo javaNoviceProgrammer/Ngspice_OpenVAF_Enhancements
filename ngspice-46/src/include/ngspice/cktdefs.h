@@ -471,6 +471,8 @@ extern int CKTdltMod(CKTcircuit *, GENmodel *);
 extern int CKTdltNNum(CKTcircuit *, int);
 extern int CKTdltNodeSet(CKTcircuit *, const char *, int);  /* Enhancement-470 */
 extern int CKTdltNod(CKTcircuit *, CKTnode *);
+/* Enhancement-534: may sweeping `param` on built-in `type_name` move its topology? */
+extern int CKTbuiltinTopologyParamRisk(const char *type_name, const char *param);
 extern int CKTdoJob(CKTcircuit *, int , TSKtask *);
 extern void CKTdeclareSweptParams(const char *decl);   /* Enhancement-503 */
 extern void CKTdump(CKTcircuit *, double, runDesc *);

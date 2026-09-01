@@ -2772,6 +2772,7 @@ static int sw_dc_handover(const char *kname0, int kkind0, double *kvals0,
     struct dvec *sc, *d;
     double *data;
     int i, k, collected = 0;
+    int logn = 0, logbase = 10;      /* Enhancement-534: dec/oct handover */
 
     if (nv < 2)
         return 0;
@@ -2785,9 +2786,43 @@ static int sw_dc_handover(const char *kname0, int kkind0, double *kvals0,
     span = fabs(kvals0[nv - 1] - kvals0[0]);
     if (step == 0.0 || !isfinite(step) || !isfinite(span))
         return 0;
+    logn = 0;
     for (i = 1; i < nv; i++)
         if (fabs((kvals0[i] - kvals0[i - 1]) - step) > 1e-9 * span)
-            return 0;                    /* dec/oct/uneven list: no dc form */
+            break;
+    if (i < nv) {
+        /* not uniform -- is it LOG-spaced (a `dec`/`oct` point set)? A
+         * constant ratio that round-trips to pow(10, 1/N) or pow(2, 1/N)
+         * is exactly what the sweep command's own generator produces
+         * (Enhancement-534 taught .dc the same generator). Anything else
+         * stays on the loop; the adopted-scale count check below is the
+         * safety net either way. */
+        double r;
+        if (kvals0[0] <= 0.0)
+            return 0;
+        r = kvals0[1] / kvals0[0];
+        if (!(r > 1.0) || !isfinite(r))
+            return 0;
+        for (i = 1; i < nv; i++) {
+            if (kvals0[i - 1] <= 0.0)
+                return 0;
+            if (fabs(kvals0[i] / kvals0[i - 1] - r) > 1e-9 * r)
+                return 0;
+        }
+        i = (int) floor(log(10.0) / log(r) + 0.5);
+        if (i >= 1 && fabs(pow(10.0, 1.0 / i) - r) <= 1e-9 * r) {
+            logn = i;
+            logbase = 10;
+        } else {
+            i = (int) floor(log(2.0) / log(r) + 0.5);
+            if (i >= 1 && fabs(pow(2.0, 1.0 / i) - r) <= 1e-9 * r) {
+                logn = i;
+                logbase = 2;
+            } else {
+                return 0;            /* log-ish but not a dec/oct grid */
+            }
+        }
+    }
 
     if (kkind0 == SW_TEMP) {
         /* `.dc temp` holds ONE setup for the whole sweep and never rebuilds a
@@ -2809,10 +2844,26 @@ static int sw_dc_handover(const char *kname0, int kkind0, double *kvals0,
                 return 0;
             }
         snprintf(tok, sizeof tok, "temp");
+    } else if (kkind0 == SW_MODEL) {
+        /* Enhancement-534 taught .dc every model-parameter spelling this
+         * command classifies as SW_MODEL: the concrete `@mod[p]`, the dotted
+         * subcircuit `@x1.rmod[p]`, and the wildcard families `@*[p]` /
+         * `@*:leaf[p]`. Pass the knob through verbatim; a collapse-gated
+         * model parameter comes back as .dc's E-495 refusal and falls back
+         * to the loop below, which is the correct instrument for it. */
+        if (strlen(kname0) >= sizeof tok)
+            return 0;
+        snprintf(tok, sizeof tok, "%s", kname0);
     } else if (kkind0 == SW_ALTER) {
-        if (strchr(kname0, '*') || strlen(kname0) >= sizeof tok)
-            return 0;                    /* wildcard knobs have no dc arm */
-        if (kname0[0] == '@') {
+        if (strlen(kname0) >= sizeof tok)
+            return 0;
+        if (kname0[0] == '@' && kname0[1] == '#') {
+            /* Enhancement-534: the instance wildcard `@#*[p]` has a dc arm */
+            snprintf(tok, sizeof tok, "%s", kname0);
+        } else if (kname0[0] == '@' && kname0[1] == '*') {
+            /* `@*[[p]]`, the instance-wildcard alias */
+            snprintf(tok, sizeof tok, "%s", kname0);
+        } else if (kname0[0] == '@') {
             /* `@r2[resistance]` and `@v1[dc]`/`@i1[dc]` are the principal
              * parameters .dc steps through its classic bare-name arms --
              * rewrite them so the resistor/source fast path applies. */
@@ -2851,8 +2902,13 @@ static int sw_dc_handover(const char *kname0, int kkind0, double *kvals0,
                         "-- handing all %d points to one dc analysis (warm "
                         "continuation; -perpoint solves them individually)\n",
                 nv);
-    snprintf(cmd, sizeof cmd, "dc %s %.17g %.17g %.17g",
-             tok, kvals0[0], kvals0[nv - 1] + 0.49 * step, step);
+    if (logn > 0)
+        snprintf(cmd, sizeof cmd, "dc %s %s %d %.17g %.17g",
+                 tok, logbase == 10 ? "dec" : "oct", logn,
+                 kvals0[0], kvals0[nv - 1]);
+    else
+        snprintf(cmd, sizeof cmd, "dc %s %.17g %.17g %.17g",
+                 tok, kvals0[0], kvals0[nv - 1] + 0.49 * step, step);
     if (ft_ngdebug)
         fprintf(cp_out, "sweep: dc handover command: %s\n", cmd);
 

@@ -102,6 +102,37 @@ static const struct {
 };
 
 
+/* Enhancement-534: the same judgment, exported for `.dc`'s extended
+ * parameter sweeps. A BUILT-IN device decides its topology in DEVsetup and a
+ * running dc cannot rebuild it, so sweeping a node-building parameter there
+ * must be refused (the OSDI case is guarded at run time by E-495 instead --
+ * OSDItemp re-decides and OSDIanyCollapseChanged reports). Returns 1 when
+ * sweeping `param` on built-in type `type_name` could move the topology:
+ * a type in neither table is refused, exactly the E-471/E-503 rule. */
+int
+CKTbuiltinTopologyParamRisk(const char *type_name, const char *param)
+{
+    int t, k;
+
+    if (!type_name)
+        return 1;
+    for (k = 0; e471_fixed_topology[k]; k++)
+        if (!strcmp(type_name, e471_fixed_topology[k]))
+            return 0;                  /* topology fixed unconditionally */
+    for (t = 0; e503_topology_params[t].type; t++) {
+        if (strcmp(type_name, e503_topology_params[t].type))
+            continue;
+        if (!param)
+            return 1;
+        for (k = 0; e503_topology_params[t].params[k]; k++)
+            if (cieq((char *) e503_topology_params[t].params[k],
+                     (char *) param))
+                return 1;              /* this parameter builds nodes */
+        return 0;                      /* known type, a safe parameter */
+    }
+    return 1;                          /* type not verified: refuse */
+}
+
 /* The declaration lives HERE, not on CKTcircuit, and that is deliberate.
  *
  * The first version of this change stored it as a `char[256]` inside

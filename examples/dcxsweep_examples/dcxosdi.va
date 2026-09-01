@@ -1,0 +1,12 @@
+`include "disciplines.vams"
+module dcxosdi(a,b); inout a,b; electrical a,b,m;
+parameter real g = 1e-3 from (0:inf);
+parameter real rd = 0.0 from [0:inf);
+parameter integer nseg = 1 from [1:10];
+analog begin
+  if (rd > 0.0)
+    I(a,m) <+ V(a,m)/rd;
+  else
+    V(a,m) <+ 0.0;
+  I(m,b) <+ V(m,b)*g*nseg;
+end endmodule

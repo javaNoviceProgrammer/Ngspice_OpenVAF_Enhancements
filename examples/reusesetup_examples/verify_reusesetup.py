@@ -289,18 +289,21 @@ check("[13] with the reuse off, no point is kept",
 # [14b] holding the safety property the original pair existed to protect.
 # Nothing but this report can show any of it: the answer is the same either way,
 # which is the point.
-o, _ = run(deck(BJT, "sweep @qmod[bf] lin 5 50 150 -output i(v1)", osdi=(),
+# Enhancement-534: these three pin the LOOP's reuse decision, and their model
+# knobs now hand the whole sweep to one dc analysis -- `-perpoint` keeps them
+# on the loop being tested (the handover itself is sweepdc/dcxsweep's to pin).
+o, _ = run(deck(BJT, "sweep @qmod[bf] lin 5 50 150 -perpoint -output i(v1)", osdi=(),
                 dbg=True), "d4")
 check("[14] a built-in device reuses when the swept knob cannot move a node",
       decision(o) == (4, 0), f"{decision(o)}")
 
-o, _ = run(deck(BJT, "sweep @qmod[rc] lin 5 0 10 -output i(v1)", osdi=(),
+o, _ = run(deck(BJT, "sweep @qmod[rc] lin 5 0 10 -perpoint -output i(v1)", osdi=(),
                 dbg=True), "d4b")
 check("[14b] ...and still declines when the swept knob DOES build a node",
       decision(o) == (0, 0), f"{decision(o)}")
 
 o, _ = run(deck(BJT + "Ncgm n1 0 cgm\n.model cgm cs_gate rd=1k\n",
-                "sweep @cgm[rd] lin 5 1k 5k -output v(n1)", dbg=True), "d5")
+                "sweep @cgm[rd] lin 5 1k 5k -perpoint -output v(n1)", dbg=True), "d5")
 check("[15] ...and reuses with OSDI devices in the same circuit",
       decision(o) == (4, 0), f"{decision(o)}")
 
