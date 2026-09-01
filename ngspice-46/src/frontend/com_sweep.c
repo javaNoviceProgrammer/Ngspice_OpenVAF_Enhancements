@@ -2840,9 +2840,17 @@ static int sw_dc_handover(const char *kname0, int kkind0, double *kvals0,
         return 0;                        /* model / .param knob: no dc arm */
     }
 
-    fprintf(cp_out, "sweep: analysis is 'op' and the knob is dc-sweepable -- "
-                    "handing all %d points to one dc analysis (warm "
-                    "continuation; -perpoint solves them individually)\n", nv);
+    /* The announce is `ngdebug`-gated, like the dc-command line below: a
+     * scripted run that calls `sweep` in a loop should not gain a line of
+     * chatter per call, and turning `set ngdebug` off must actually silence
+     * it (user report, day one). The FALLBACK messages further down stay
+     * unconditional -- a fallback changes engine and runtime and follows a
+     * visible dc refusal, so it must stay audible. */
+    if (ft_ngdebug)
+        fprintf(cp_out, "sweep: analysis is 'op' and the knob is dc-sweepable "
+                        "-- handing all %d points to one dc analysis (warm "
+                        "continuation; -perpoint solves them individually)\n",
+                nv);
     snprintf(cmd, sizeof cmd, "dc %s %.17g %.17g %.17g",
              tok, kvals0[0], kvals0[nv - 1] + 0.49 * step, step);
     if (ft_ngdebug)
@@ -3294,7 +3302,6 @@ void com_sweep(wordlist *wl)
     /* --- run the sweep over the cartesian product (inner knob varies fastest,
      * so point p = outer_combo * nv0 + inner_index) --- */
     sweep_active = 1;                                /* block re-source recursion */
-    ft_optimizing = TRUE;                            /* silence per-point chatter */
     /* Enhancement-432: zero the WHOLE array, not just the `nout` entries known
      * here. With no `-output` the outputs are auto-collected inside the point
      * loop below, so `nout` is still 0 at this line and every auto-collected
@@ -3306,14 +3313,23 @@ void com_sweep(wordlist *wl)
     /* Enhancement-533: with the default `op` analysis, a single dc-sweepable
      * knob and evenly spaced points, one dc analysis computes the same points
      * with a warm continuation instead of npt cold operating points. Any
-     * ineligibility or failure falls through to the loop below unchanged. */
+     * ineligibility or failure falls through to the loop below unchanged.
+     *
+     * Deliberately BEFORE `ft_optimizing = TRUE`: that flag exists to silence
+     * npt inner analyses, but here the one dc IS the sweep, and the flag was
+     * silencing its "Reference value [====] %" progress bar too (user report:
+     * a 9900-point sweep ran with no progress indication at all). Invoked
+     * directly, the handed dc now shows the same bar a hand-written .dc shows,
+     * and `set norefvalue` silences it through the standard switch; invoked
+     * from inside an optimizer or montecarlo loop, ft_optimizing is already
+     * TRUE on entry and the dc stays quiet, exactly as every inner analysis
+     * does. */
     if (!perpoint && !overlay && nknob == 1 && strcasecmp(analysis, "op") == 0)
         handed = sw_dc_handover(kname[0], kkind[0], kvals[0], nv0,
                                 outname, outexpr, &nout, &data);
-    if (handed) {
-        ft_optimizing = save_optimizing;
+    if (handed)
         goto emit_summary;
-    }
+    ft_optimizing = TRUE;                            /* silence per-point chatter */
 
     /* Enhancement-477: `npt` is the exact number of analyses this loop runs,
      * so the bar is determinate. */

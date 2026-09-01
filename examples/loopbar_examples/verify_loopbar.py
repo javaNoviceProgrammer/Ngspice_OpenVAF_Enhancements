@@ -133,7 +133,8 @@ lad.append("RL n300 0 1meg")
 # all -- it hands the points to one dc analysis, so there is no point bar to
 # draw and the announce line says where the work went. The bar's own contract
 # is pinned through `-perpoint`, which forces the loop the bar reports on.
-o = run("\n".join(lad), "set loopbar\nsweep @r0[resistance] lin 2500 500 4k "
+o = run("\n".join(lad), "set loopbar\nset ngdebug\n"
+                        "sweep @r0[resistance] lin 2500 500 4k "
                         "-output v(n300)", "op_hand")
 fr = frames(o, "sweep")
 check("[8a] the eligible default-op sweep hands over: dc announce, no point bar",

@@ -92,8 +92,13 @@ D1 mid 0 dm
 """
 
 
-def sweep_deck(control):
-    return "sweepdc probe\n" + DIV + ".control\noption noacct\n" + control + "\n.endc\n.end\n"
+def sweep_deck(control, debug=True):
+    # Enhancement-533 (user report, day one): the handover announce is
+    # `ngdebug`-gated, so the decks that ASSERT its presence or absence must
+    # set it; `debug=False` builds the quiet deck the gating exists for.
+    dbg = "set ngdebug\n" if debug else ""
+    return ("sweepdc probe\n" + DIV + ".control\noption noacct\n" + dbg
+            + control + "\n.endc\n.end\n")
 
 
 # ---- the handover itself ---------------------------------------------------
@@ -165,6 +170,7 @@ N1 a 0 mm rs=0
 .model mm sdccoll
 .control
 option noacct
+set ngdebug
 pre_osdi _sdc_coll.osdi
 sweep temp 0 100 25 -output i(v1)
 .endc
@@ -193,6 +199,7 @@ N1 a 0 mm rs=0
 .model mm sdccoll
 .control
 option noacct
+set ngdebug
 pre_osdi _sdc_coll.osdi
 sweep @N1[rs] 0 2000 500 -output i(v1)
 wrdata _sdc_fb.csv i(v1)
@@ -207,6 +214,16 @@ check("[14] dc refuses the moved topology and the sweep says so",
 check("[15] ...and the per-point loop lands on the closed-form values "
       "(series resistance appears exactly)",
       len(fb) == 5 and wf < 1e-12, f"max err = {wf:.2e}")
+
+# ---- the announce respects ngdebug (user report, day one) ------------------
+print("verbosity: the announce is ngdebug-gated, the fallback is not:")
+
+out = run_deck(sweep_deck(
+    "sweep @R2[resistance] 100 1000 100 -output v(mid)", debug=False), "quiet")
+check("[16] without `set ngdebug` a handed sweep prints NO handover line "
+      "(and still computes)",
+      HANDED not in out and "dc handover command" not in out
+      and "points into plot" in out)
 
 print(f"\n{passed}/{checks} checks passed")
 sys.exit(0 if passed == checks else 1)
