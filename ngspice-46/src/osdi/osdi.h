@@ -178,6 +178,23 @@ typedef struct OsdiParamOpvar {
   uint32_t len;
 }OsdiParamOpvar;
 
+/* Parameter statistics for `.option osdimc` Monte-Carlo: one entry per
+ * parameter the Verilog-A declared with a `(* std= *)` / `(* std_rel= *)`
+ * attribute. Rides the OSDI_STAT_PARAM_{COUNTS,INFOS} side-table symbols
+ * (same mechanism as the absdelay/term-short tables), so old objects simply
+ * lack the symbols and carry no statistics -- no descriptor-ABI change.
+ * `param_id` indexes param_opvar and is written through the ordinary
+ * `access()` setter. Layout matches the compiler's OsdiStatParamInfo
+ * (openvaf/osdi/src/lib.rs) exactly: 16 bytes. */
+#define OSDI_DIST_UNIFORM 1u /* bit 0: 0 = gauss, 1 = uniform (std = half-width) */
+#define OSDI_DIST_REL 2u     /* bit 1: std is a fraction of |nominal| */
+
+typedef struct OsdiStatParamInfo {
+  uint32_t param_id;
+  uint32_t dist;
+  double std;
+}OsdiStatParamInfo;
+
 /* Enhancement-364: noise-source kinds, mirrored from the compiler-side header
  * openvaf/osdi/header/osdi_0_4.h. The field `noise_source_type` was already in
  * the descriptor; these names were simply never copied across, which is why

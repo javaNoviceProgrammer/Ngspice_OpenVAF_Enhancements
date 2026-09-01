@@ -48,3 +48,39 @@ The `compile_linux.sh` file enables these flags by default.
   instance, the established idiom shared with the built-ins (E-426/E-447).
 * An unknown `$limit` function name falls back to **no limiting** with a
   warning, per LRM 9.17.3 (E-520).
+
+## Automatic Monte-Carlo: `.option osdimc`
+
+A Verilog-A parameter compiled with statistics attributes —
+`(* std=<sigma> *)` (absolute), `(* std_rel=<fraction> *)` (relative to the
+nominal), optionally `(* dist="gauss"|"uniform" *)` (gauss default; for
+uniform the value is the half-width) — carries its variability in the
+`.osdi` object itself, through the `OSDI_STAT_PARAM_{COUNTS,INFOS}`
+side-table (the same mechanism as the absdelay tables, so the descriptor
+ABI is unchanged and objects without statistics simply lack the symbols).
+
+With `.option osdimc` (alias `automc`) set, every run-class command starts
+a fresh trial: each statistical parameter is written nominal + draw through
+the ordinary parameter setter — **no `reset`, no netlist re-expansion, no
+`gauss()` expressions in the deck**. Semantics:
+
+* the **first run after sourcing is the nominal baseline** (defaults of
+  parameters the deck never set are only knowable after one setup pass);
+  draws begin with the second run;
+* a **model parameter** is drawn once per model card per trial (process:
+  instances sharing the card move in lockstep, distinct cards draw
+  independently); an **instance parameter** (`(* type="instance" *)`)
+  draws independently per instance (mismatch);
+* draws are **pure functions of (mcseed, trial, owner name, param id)** —
+  `.option mcseed=42` makes whole ensembles bit-reproducible, with no
+  hidden RNG state; `resume` never redraws;
+* `alter`/`altermod` of a statistical parameter **recenters its nominal**;
+  turning the option off restores every drawn parameter to nominal on the
+  next run; `.option osdimc_verbose` prints every draw;
+* a draw violating the parameter's Verilog-A `from` range fails that run
+  with the device's own range error, exactly as the same `alter` would —
+  the descriptor does not export ranges, so size sigmas accordingly.
+
+Verified end to end by `examples/osdimc_examples/` (measured gauss
+mean/sigma, uniform bounds, relative sigma, mismatch independence,
+determinism, recentering, restore-on-disable).

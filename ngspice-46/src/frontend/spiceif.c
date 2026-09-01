@@ -76,6 +76,8 @@ CDHW*/
 #include "ngspice/mif.h"
 #endif
 
+#include "ngspice/osdiitf.h" /* OSDImcNewRun: .option osdimc Monte-Carlo */
+
 extern INPmodel *modtab;
 extern NGHASHPTR modtabhash;
 extern bool ft_batchmode;
@@ -235,6 +237,10 @@ if_run(CKTcircuit *ckt, char *what, wordlist *args, INPtables *tab)
     IFuid specUid, optUid;
     char *s;
 
+    /* `.option osdimc`: every run-class command starts a new Monte-Carlo
+     * trial; `resume` continues the current one and must not redraw. */
+    if (!eq(what, "resume"))
+        OSDImcNewRun(ckt);
 
     /* First parse the line... */
     /*CDHW Look for an interactive task CDHW*/
@@ -489,6 +495,10 @@ if_is_option(const char *name)
            teaches the user to ignore the check. The `no` prefix is a spelling
            of the same option and gets the same treatment. */
         "reusesetup", "noreusesetup",
+        /* `.option osdimc` automatic Monte-Carlo: all four are read through
+           cp_getvar by OSDImcNewRun/osdimc_enabled (osdisetup.c), so the
+           cards WORK and belong here for the same reason `reusesetup` does. */
+        "osdimc", "automc", "mcseed", "osdimc_verbose",
         "autoadapt", "adapter",      /* PROTOTYPE: autoadapt */
         /* Enhancement-445: the `.four` analysis controls. Each is read by
            fourier() through cp_getvar and each demonstrably takes effect when

@@ -193,7 +193,16 @@ extern int OSDIparam(int param, IFvalue *value, GENinstance *instPtr,
   void *dst = descr->access(inst, NULL, (uint32_t)param,
                             ACCESS_FLAG_SET | ACCESS_FLAG_INSTANCE);
 
-  return osdi_write_param(dst, value, param, descr);
+  int err = osdi_write_param(dst, value, param, descr);
+
+  /* `.option osdimc`: a stored scalar real IS the parameter's new nominal --
+   * `alter` recenters the Monte-Carlo distribution (no-op otherwise). */
+  if (err == OK &&
+      (descr->param_opvar[param].flags & PARA_TY_MASK) == PARA_TY_REAL &&
+      descr->param_opvar[param].len == 0) {
+    osdimc_note_param_write(inst, (uint32_t)param, value->rValue);
+  }
+  return err;
 }
 
 extern int OSDImParam(int param, IFvalue *value, GENmodel *modelPtr) {
@@ -217,7 +226,15 @@ extern int OSDImParam(int param, IFvalue *value, GENmodel *modelPtr) {
   void *model = osdi_model_data(modelPtr);
   void *dst = descr->access(NULL, model, (uint32_t)param, ACCESS_FLAG_SET);
 
-  return osdi_write_param(dst, value, param, descr);
+  int err = osdi_write_param(dst, value, param, descr);
+
+  /* `.option osdimc`: as in OSDIparam above -- `altermod` recenters. */
+  if (err == OK &&
+      (descr->param_opvar[param].flags & PARA_TY_MASK) == PARA_TY_REAL &&
+      descr->param_opvar[param].len == 0) {
+    osdimc_note_param_write(model, (uint32_t)param, value->rValue);
+  }
+  return err;
 }
 
 static int osdi_read_param(void *src, IFvalue *value, int id,

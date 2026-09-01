@@ -266,6 +266,16 @@ extern void *osdi_model_data_from_inst(GENinstance *inst);
 extern OsdiRegistryEntry *osdi_reg_entry_model(const GENmodel *model);
 extern OsdiRegistryEntry *osdi_reg_entry_inst(const GENinstance *inst);
 
+/* `.option osdimc` automatic Monte-Carlo (osdisetup.c). capture_chain records
+ * the nominals of statistical parameters after a setup pass has resolved
+ * defaults (called from OSDItemp's tail); note_param_write recenters a
+ * parameter's nominal when OSDIparam/OSDImParam store a new value, so `alter`
+ * composes with the draws instead of being overwritten by them. */
+extern void osdimc_capture_chain(const OsdiRegistryEntry *entry,
+                                 GENmodel *inModel);
+extern void osdimc_note_param_write(const void *owner, uint32_t id,
+                                    double value);
+
 typedef struct OsdiNgspiceHandle {
   uint32_t kind;
   char *name;

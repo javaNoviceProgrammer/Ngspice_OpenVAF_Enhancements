@@ -219,6 +219,46 @@ impl<'ll> OsdiCompilationUnit<'_, '_, 'll> {
         inst_params.chain(model_params).chain(opvars).collect()
     }
 
+    /// The `(* std= / std_rel= / dist= *)` statistics declared on parameters,
+    /// as `(param_id, dist_flags, sigma)` triples for the
+    /// `OSDI_STAT_PARAM_INFOS` side-table (`.option osdimc` Monte-Carlo).
+    ///
+    /// The ids MUST mirror `param_opvar()`'s chained ordering exactly --
+    /// instance params (builtins included) first, then model params with the
+    /// same `is_instance` filter -- because the simulator uses them with the
+    /// descriptor's ordinary `access()` setter. Opvars carry no statistics.
+    pub fn stat_params(&self) -> Vec<(u32, u32, f64)> {
+        const DIST_UNIFORM: u32 = 1;
+        const DIST_REL: u32 = 2;
+        let OsdiCompilationUnit { inst_data, model_data, module, .. } = self;
+
+        let mut res = Vec::new();
+        let mut id = 0u32;
+        for param in inst_data.params.keys() {
+            if let OsdiInstanceParam::User(param) = param {
+                if let Some(stat) = &module.info.params[param].stat {
+                    let flags = u32::from(stat.uniform) * DIST_UNIFORM
+                        + u32::from(stat.rel) * DIST_REL;
+                    res.push((id, flags, stat.std));
+                }
+            }
+            id += 1;
+        }
+        for param in model_data.params.keys() {
+            let param_info = &module.info.params[param];
+            if param_info.is_instance {
+                continue;
+            }
+            if let Some(stat) = &param_info.stat {
+                let flags =
+                    u32::from(stat.uniform) * DIST_UNIFORM + u32::from(stat.rel) * DIST_REL;
+                res.push((id, flags, stat.std));
+            }
+            id += 1;
+        }
+        res
+    }
+
     pub fn nodes(&self, target_data: &LLVMTargetDataRef, db: &CompilationDB) -> Vec<OsdiNode> {
         let OsdiCompilationUnit { inst_data, module, .. } = self;
         module

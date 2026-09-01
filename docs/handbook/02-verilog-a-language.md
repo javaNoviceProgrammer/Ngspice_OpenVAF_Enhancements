@@ -264,6 +264,10 @@ Attributes `(* … *)` are how a model talks to the simulator's UI:
 | `(* desc="…" *)` on a **variable** | Exposes it as an operating-point variable: `print @n1[var]`, `.save @n1[var]`, `.meas` over it — for real *and* integer variables ([E-69](../../enhancements_doc/Enhancement-69.md), `examples/opvar_examples/`) |
 | `(* type="instance" *)` on a **parameter** | Exposes it on the instance line and to `alter`/`.dc @n1[param]` ([E-62](../../enhancements_doc/Enhancement-62.md)) |
 | `(* desc="…", units="…" *)` on a **parameter** | Description/units metadata in the OSDI descriptor |
+| `(* std=σ *)` / `(* std_rel=f *)` / `(* dist="gauss"\|"uniform" *)` on a **parameter** | Declares the parameter's statistics for `.option osdimc` automatic Monte-Carlo (see [§3.6](03-ngspice-workflows.md#36-monte-carlo)); scalar real, non-local parameters only, and combining `std` with `std_rel` is an error (`examples/osdimc_examples/`) |
 
 A symmetry worth remembering: instance access to *parameters* needs
-`type="instance"`; instance access to *variables* needs `desc`.
+`type="instance"`; instance access to *variables* needs `desc`. And the
+statistics attributes compose with it: a `(* type="instance", std=… *)`
+parameter draws per instance (mismatch), a model-card one per card
+(process).

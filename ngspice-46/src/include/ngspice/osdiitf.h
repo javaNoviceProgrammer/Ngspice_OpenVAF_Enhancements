@@ -47,6 +47,13 @@ typedef struct OsdiRegistryEntry {
   uint32_t num_term_shorts;
   const void *term_short_infos;  /* points into the loaded .osdi's OSDI_TERM_SHORT_INFOS */
 
+  /* `.option osdimc` parameter statistics, filled at .osdi load time from
+   * OSDI_STAT_PARAM_* symbols (same side-table mechanism as absdelay above).
+   * Each entry names a parameter the Verilog-A declared with `(* std= *)` /
+   * `(* std_rel= *)` and the simulator varies per Monte-Carlo run. */
+  uint32_t num_stat_params;
+  const void *stat_param_infos;  /* points into the loaded .osdi's OSDI_STAT_PARAM_INFOS */
+
 } OsdiRegistryEntry;
 
 /* Enhancement-401: one entry of OSDI_TERM_SHORT_INFOS. `node_1`/`node_2` are the
@@ -127,3 +134,14 @@ extern int OSDIterminalNames(CKTcircuit *ckt, const char *name, char ***names,
  * src/osdi/osdiparam.c. */
 extern int OSDIcollapseChanged(GENinstance *instPtr);
 extern int OSDIanyCollapseChanged(CKTcircuit *ckt);   /* Enhancement-471 */
+
+/* `.option osdimc` (alias `automc`) automatic Monte-Carlo: called by if_run
+ * at the start of every run-class command (not `resume`). Advances the trial
+ * counter and, from the second run on, writes nominal+draw into every OSDI
+ * parameter that declared `(* std= *)` statistics -- through the ordinary
+ * parameter setter, so no netlist reset is involved. The FIRST run after
+ * sourcing is the nominal baseline: default values of unset parameters are
+ * only knowable after one setup pass has resolved them. With the option off
+ * it restores any drawn parameter to its nominal and is otherwise free.
+ * Defined in src/osdi/osdisetup.c. */
+extern void OSDImcNewRun(CKTcircuit *ckt);

@@ -95,6 +95,7 @@ fn parameters() {
                     description: "hmm",
                     group: "foo",
                     is_instance: true,
+                    stat: None,
                 },
             ),
             (
@@ -106,6 +107,7 @@ fn parameters() {
                     description: "hmm",
                     group: "foo",
                     is_instance: true,
+                    stat: None,
                 },
             ),
             (
@@ -117,6 +119,7 @@ fn parameters() {
                     description: "",
                     group: "",
                     is_instance: false,
+                    stat: None,
                 },
             ),
         ]

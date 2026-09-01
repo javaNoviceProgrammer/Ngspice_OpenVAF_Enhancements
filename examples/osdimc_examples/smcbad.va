@@ -1,0 +1,11 @@
+// Both ERROR diagnostics of the statistics attributes: a negative sigma,
+// and std beside std_rel on one parameter.
+`include "disciplines.vams"
+
+module smcbad(a, b);
+  inout a, b;
+  electrical a, b;
+  (* std=-3.0 *)             parameter real r = 1000.0;
+  (* std=1.0, std_rel=0.1 *) parameter real q = 1.0;
+  analog I(a, b) <+ V(a, b) * 1e-3 * (r / r) * (q / q);
+endmodule

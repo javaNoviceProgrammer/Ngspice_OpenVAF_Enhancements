@@ -1,0 +1,25 @@
+// Parameter statistics for `.option osdimc` automatic Monte-Carlo:
+// the model declares its own variability with LRM 2.9 attributes and the
+// simulator draws per run -- the netlist carries no gauss()/agauss() at all.
+`include "disciplines.vams"
+
+module smcres(a, b);
+  inout a, b;
+  electrical a, b;
+
+  // process parameters (model card): drawn once per card per trial
+  (* desc="series resistance", std=25.0 *)
+  parameter real r = 1000.0 from (0:inf);
+  (* dist="uniform", std=2e-4 *)     // std = HALF-WIDTH of the interval
+  parameter real g = 1e-3 from [0:1);
+  (* std_rel=0.05 *)                 // sigma = 5 % of the nominal
+  parameter real k = 2.0;
+  (* std=5.0 *)                      // never set from the deck: nominal is
+  parameter real u = 50.0;           // the default, resolved by setup
+
+  // mismatch parameter: independent draw per instance
+  (* type="instance", std=10.0 *)
+  parameter real dr = 0.0;
+
+  analog I(a, b) <+ V(a, b) / (r + dr) + 0.0 * (g + k + u) * V(a, b);
+endmodule

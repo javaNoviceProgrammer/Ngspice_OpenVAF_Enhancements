@@ -324,6 +324,16 @@ pub fn compile<'a>(
         let mut term_short_counts: Vec<u32> = Vec::new();
         let mut term_short_infos_ll: Vec<&llvm_sys::LLVMValue> = Vec::new();
 
+        // { param_id: u32, dist: u32, std: f64 } -- one entry per parameter
+        // declared with `(* std= / std_rel= *)` statistics. `dist` bit 0:
+        // 0 = gauss, 1 = uniform (std is the half-width); bit 1: std is a
+        // FRACTION of the resolved nominal. Consumed by ngspice's
+        // `.option osdimc` Monte-Carlo draws (osdisetup.c).
+        let stat_param_info_ty =
+            cx.ty_struct("OsdiStatParamInfo", &[cx.ty_int(), cx.ty_int(), cx.ty_double()]);
+        let mut stat_param_counts: Vec<u32> = Vec::new();
+        let mut stat_param_infos_ll: Vec<&llvm_sys::LLVMValue> = Vec::new();
+
         let descriptors: Vec<_> = osdi_modules
             .iter()
             .map(|module| {
@@ -424,6 +434,20 @@ pub fn compile<'a>(
                 }
                 term_short_counts.push(n_ts);
 
+                // Collect declared parameter statistics for this module
+                let stats = cguint.stat_params();
+                stat_param_counts.push(stats.len() as u32);
+                for (param_id, dist, std) in stats {
+                    stat_param_infos_ll.push(cx.const_struct(
+                        stat_param_info_ty,
+                        &[
+                            cx.const_unsigned_int(param_id),
+                            cx.const_unsigned_int(dist),
+                            cx.const_real(std),
+                        ],
+                    ));
+                }
+
                 descriptor.to_ll_val(&cx, &tys)
             })
             .collect();
@@ -502,6 +526,22 @@ pub fn compile<'a>(
                     "OSDI_TERM_SHORT_INFOS",
                     term_short_info_ty,
                     &term_short_infos_ll,
+                    true,
+                    false,
+                );
+            }
+        }
+
+        // Export parameter statistics (only if any module declares them)
+        if stat_param_counts.iter().any(|&n| n > 0) {
+            let counts_ll: Vec<_> =
+                stat_param_counts.iter().map(|&n| cx.const_unsigned_int(n)).collect();
+            cx.export_array("OSDI_STAT_PARAM_COUNTS", cx.ty_int(), &counts_ll, true, false);
+            if !stat_param_infos_ll.is_empty() {
+                cx.export_array(
+                    "OSDI_STAT_PARAM_INFOS",
+                    stat_param_info_ty,
+                    &stat_param_infos_ll,
                     true,
                     false,
                 );

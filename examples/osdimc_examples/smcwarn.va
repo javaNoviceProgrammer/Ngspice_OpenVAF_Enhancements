@@ -1,0 +1,13 @@
+// Every WARNING diagnostic of the statistics attributes, in one module
+// (still compiles: none of these is an error).
+`include "disciplines.vams"
+
+module smcwarn(a, b);
+  inout a, b;
+  electrical a, b;
+  (* dist="banana", std=1.0 *) parameter real w = 1.0;   // unknown dist
+  (* std=2 *)                  parameter integer n = 4;  // not a real param
+  (* std=5.0 *)                localparam real lp = 7.0; // not settable
+  (* dist="gauss" *)           parameter real d0 = 1.0;  // dist without sigma
+  analog I(a, b) <+ V(a, b) * 1e-3 * (w / w) * n * (lp / lp) * d0;
+endmodule

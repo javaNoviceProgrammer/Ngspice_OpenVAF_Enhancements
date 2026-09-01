@@ -822,6 +822,13 @@ extern int OSDItemp(GENmodel *inModel, CKTcircuit *ckt) {
       }
     }
   }
+
+  /* `.option osdimc`: nominals of statistical parameters are knowable only
+   * once setup has resolved the defaults of parameters the deck never set --
+   * capture any still missing now (existing entries are never overwritten,
+   * so drawn values are never mistaken for nominals). */
+  osdimc_capture_chain(entry, inModel);
+
   return first_err != OK ? first_err : res;   /* Enhancement-426 */
 }
 
@@ -1121,3 +1128,321 @@ int OSDIbindCSCComplex(GENmodel *inModel, CKTcircuit *ckt) {
   return OSDIupdateCSC(inModel, ckt, true);
 }
 #endif
+
+/* ====================================================================== *
+ *          `.option osdimc` -- automatic Monte-Carlo (statmc)            *
+ * ====================================================================== *
+ *
+ * A Verilog-A parameter declared with `(* std=<sigma> *)` (absolute), or
+ * `(* std_rel=<fraction> *)` (relative to the nominal), optionally with
+ * `(* dist="gauss"|"uniform" *)`, carries its own statistics: the compiler
+ * exports them through the OSDI_STAT_PARAM_INFOS side-table and, with
+ * `.option osdimc` (alias `automc`) set, every run-class command draws a
+ * fresh value nominal+delta for each such parameter -- through the ordinary
+ * parameter setter, so the netlist is never re-expanded and no `reset` is
+ * involved. The usual `.control` Monte-Carlo loop simply drops its manual
+ * `alter ... gauss()` lines.
+ *
+ * SEMANTICS, deliberately simple and documented:
+ *   - The FIRST run after sourcing is the NOMINAL baseline (trial 1, no
+ *     draws): a parameter the deck never set has its nominal resolved by the
+ *     model's own setup, so nominals are only knowable after one setup pass.
+ *     Draws begin with the second run.
+ *   - A MODEL parameter is drawn once per model card per trial -- every
+ *     instance sharing the card moves in lockstep (process variation). An
+ *     INSTANCE parameter (`(* type="instance" *)`) is drawn independently
+ *     per instance (mismatch). The split reuses the existing
+ *     model/instance-parameter machinery; nothing new is invented.
+ *   - Draws are PURE functions of (mcseed, trial, owner name, param id) --
+ *     the same (seed, salt) philosophy as the compiler's $random contract:
+ *     `.option mcseed=42` reproduces a whole sequence, and trial N is
+ *     re-runnable in isolation. No hidden RNG state advances.
+ *   - `alter` of a statistical parameter updates its NOMINAL (the hook in
+ *     OSDIparam/OSDImParam below), so later draws recenter on the altered
+ *     value; draws are always nominal+delta, never cumulative.
+ *   - Turning the option off restores every drawn parameter to its nominal
+ *     on the next run.
+ *   - A draw that violates the parameter's Verilog-A range is NOT filtered
+ *     here (the descriptor does not export ranges): it fails that run with
+ *     the device's own located range error, exactly as the same `alter`
+ *     would. Size sigmas accordingly.
+ */
+
+typedef struct OsdiMcNominal {
+  const void *owner; /* model-data or instance-data pointer */
+  uint32_t id;
+  double nominal;
+} OsdiMcNominal;
+
+static OsdiMcNominal *osdimc_tbl;
+static int osdimc_tbl_len;
+static int osdimc_tbl_cap;
+static CKTcircuit *osdimc_ckt;      /* table belongs to this circuit */
+static unsigned long osdimc_trial;  /* 1 = nominal baseline, 2+ = drawn */
+static bool osdimc_active;          /* drawn values are currently applied */
+
+static OsdiMcNominal *osdimc_find(const void *owner, uint32_t id) {
+  for (int i = 0; i < osdimc_tbl_len; i++) {
+    if (osdimc_tbl[i].owner == owner && osdimc_tbl[i].id == id) {
+      return &osdimc_tbl[i];
+    }
+  }
+  return NULL;
+}
+
+static void osdimc_insert(const void *owner, uint32_t id, double nominal) {
+  if (osdimc_tbl_len == osdimc_tbl_cap) {
+    osdimc_tbl_cap = osdimc_tbl_cap ? 2 * osdimc_tbl_cap : 16;
+    osdimc_tbl = TREALLOC(OsdiMcNominal, osdimc_tbl, osdimc_tbl_cap);
+  }
+  osdimc_tbl[osdimc_tbl_len++] =
+      (OsdiMcNominal){.owner = owner, .id = id, .nominal = nominal};
+}
+
+static bool osdimc_enabled(void) {
+  return cp_getvar("osdimc", CP_BOOL, NULL, 0) ||
+         cp_getvar("automc", CP_BOOL, NULL, 0);
+}
+
+/* splitmix64: the draw is a pure hash of its inputs, no stored RNG state */
+static uint64_t osdimc_mix(uint64_t z) {
+  z += 0x9e3779b97f4a7c15ull;
+  z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9ull;
+  z = (z ^ (z >> 27)) * 0x94d049bb133111ebull;
+  return z ^ (z >> 31);
+}
+
+static uint64_t osdimc_hash_str(const char *s) {
+  uint64_t h = 0xcbf29ce484222325ull; /* FNV-1a */
+  for (; s && *s; s++) {
+    h = (h ^ (uint64_t)(unsigned char)*s) * 0x100000001b3ull;
+  }
+  return h;
+}
+
+/* uniform in (0,1), both ends excluded (log() below needs nonzero) */
+static double osdimc_u01(uint64_t h) {
+  return ((double)(h >> 11) + 0.5) * (1.0 / 9007199254740992.0);
+}
+
+static double osdimc_delta(uint64_t key, uint32_t dist, double std,
+                           double nominal) {
+  double sigma = (dist & OSDI_DIST_REL) ? std * fabs(nominal) : std;
+  double u1 = osdimc_u01(osdimc_mix(key ^ 1));
+  if (dist & OSDI_DIST_UNIFORM) {
+    return sigma * (2.0 * u1 - 1.0); /* std is the HALF-WIDTH */
+  }
+  double u2 = osdimc_u01(osdimc_mix(key ^ 2));
+  return sigma * sqrt(-2.0 * log(u1)) * cos(2.0 * M_PI * u2);
+}
+
+/* Capture the nominal of every statistical parameter that does not have one
+ * yet, reading the CURRENT resolved value. Called at the end of OSDItemp --
+ * after setup_model/setup_instance have filled in the defaults of parameters
+ * the deck never set (Enhancement-476 recorded that defaults are applied
+ * during setup) -- and only inserting MISSING entries, so the drawn values a
+ * later trial has already written are never mistaken for nominals. */
+static void osdimc_capture(const OsdiRegistryEntry *entry, GENmodel *inModel) {
+  const OsdiDescriptor *descr = entry->descriptor;
+  const OsdiStatParamInfo *infos = entry->stat_param_infos;
+
+  if (entry->num_stat_params == 0 || !infos || !osdimc_enabled()) {
+    return;
+  }
+
+  for (GENmodel *gen_model = inModel; gen_model;
+       gen_model = gen_model->GENnextModel) {
+    void *model = osdi_model_data(gen_model);
+    for (uint32_t s = 0; s < entry->num_stat_params; s++) {
+      uint32_t id = infos[s].param_id;
+      if (id >= descr->num_instance_params) { /* model parameter */
+        if (!osdimc_find(model, id)) {
+          double val;
+          void *src = descr->access(NULL, model, id, ACCESS_FLAG_READ);
+          if (src) {
+            memcpy(&val, src, sizeof(double));
+            osdimc_insert(model, id, val);
+          }
+        }
+      } else { /* instance parameter */
+        for (GENinstance *gen_inst = gen_model->GENinstances; gen_inst;
+             gen_inst = gen_inst->GENnextInstance) {
+          void *inst = osdi_instance_data((OsdiRegistryEntry *)entry, gen_inst);
+          if (!osdimc_find(inst, id)) {
+            double val;
+            void *src = descr->access(inst, model, id,
+                                      ACCESS_FLAG_READ | ACCESS_FLAG_INSTANCE);
+            if (src) {
+              memcpy(&val, src, sizeof(double));
+              osdimc_insert(inst, id, val);
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+/* Called by OSDItemp once its model/instance loops are done (success or not:
+ * a failed card's params simply stay uncaptured and undrawn). */
+void osdimc_capture_chain(const OsdiRegistryEntry *entry, GENmodel *inModel) {
+  osdimc_capture(entry, inModel);
+}
+
+/* OSDIparam/OSDImParam wrote a scalar real parameter: if it is a statistical
+ * one with a captured nominal, the write IS the new nominal -- `alter`
+ * recenters the distribution rather than being overwritten by the next
+ * draw's nominal+delta. */
+void osdimc_note_param_write(const void *owner, uint32_t id, double value) {
+  OsdiMcNominal *e = osdimc_find(owner, id);
+  if (e) {
+    e->nominal = value;
+  }
+}
+
+/* Write value into one statistical parameter through the descriptor's
+ * ordinary setter (the exact channel OSDIparam/OSDImParam use). */
+static void osdimc_write(const OsdiDescriptor *descr, void *inst, void *model,
+                         uint32_t id, double value) {
+  void *dst;
+  if (id < descr->num_instance_params) {
+    dst = descr->access(inst, NULL, id, ACCESS_FLAG_SET | ACCESS_FLAG_INSTANCE);
+  } else {
+    dst = descr->access(NULL, model, id, ACCESS_FLAG_SET);
+  }
+  if (dst) {
+    memcpy(dst, &value, sizeof(double));
+  }
+}
+
+/* The per-run entry point: called by if_run for every run-class command
+ * (`run`, `tran`, `op`, ... -- everything but `resume`). */
+void OSDImcNewRun(CKTcircuit *ckt) {
+  int seed = 1;
+  bool verbose;
+
+  if (!ckt) {
+    return;
+  }
+
+  /* a different (re-sourced) circuit invalidates every stored nominal */
+  if (ckt != osdimc_ckt) {
+    osdimc_ckt = ckt;
+    osdimc_tbl_len = 0;
+    osdimc_trial = 0;
+    osdimc_active = false;
+  }
+
+  if (!osdimc_enabled()) {
+    /* option switched off: put every drawn parameter back to its nominal */
+    if (osdimc_active) {
+      for (int type = 0; type < DEVmaxnum; type++) {
+        if (!ckt->CKThead[type] || !osdi_devtype_is_osdi(type)) {
+          continue;
+        }
+        OsdiRegistryEntry *entry = osdi_reg_entry_model(ckt->CKThead[type]);
+        const OsdiDescriptor *descr = entry->descriptor;
+        const OsdiStatParamInfo *infos = entry->stat_param_infos;
+        if (entry->num_stat_params == 0 || !infos) {
+          continue;
+        }
+        for (GENmodel *gen_model = ckt->CKThead[type]; gen_model;
+             gen_model = gen_model->GENnextModel) {
+          void *model = osdi_model_data(gen_model);
+          for (uint32_t s = 0; s < entry->num_stat_params; s++) {
+            uint32_t id = infos[s].param_id;
+            if (id >= descr->num_instance_params) {
+              OsdiMcNominal *e = osdimc_find(model, id);
+              if (e) {
+                osdimc_write(descr, NULL, model, id, e->nominal);
+              }
+            } else {
+              for (GENinstance *gen_inst = gen_model->GENinstances; gen_inst;
+                   gen_inst = gen_inst->GENnextInstance) {
+                void *inst = osdi_instance_data(entry, gen_inst);
+                OsdiMcNominal *e = osdimc_find(inst, id);
+                if (e) {
+                  osdimc_write(descr, inst, model, id, e->nominal);
+                }
+              }
+            }
+          }
+        }
+      }
+      osdimc_active = false;
+    }
+    osdimc_trial = 0;
+    return;
+  }
+
+  osdimc_trial++;
+  if (!cp_getvar("mcseed", CP_NUM, &seed, 0)) {
+    seed = 1;
+  }
+  verbose = cp_getvar("osdimc_verbose", CP_BOOL, NULL, 0);
+
+  for (int type = 0; type < DEVmaxnum; type++) {
+    if (!ckt->CKThead[type] || !osdi_devtype_is_osdi(type)) {
+      continue;
+    }
+    OsdiRegistryEntry *entry = osdi_reg_entry_model(ckt->CKThead[type]);
+    const OsdiDescriptor *descr = entry->descriptor;
+    const OsdiStatParamInfo *infos = entry->stat_param_infos;
+    if (entry->num_stat_params == 0 || !infos) {
+      continue;
+    }
+
+    uint64_t kbase =
+        osdimc_mix(((uint64_t)(uint32_t)seed << 32) ^ 0x6f7364696d63ull);
+    kbase = osdimc_mix(kbase ^ osdimc_trial);
+
+    for (GENmodel *gen_model = ckt->CKThead[type]; gen_model;
+         gen_model = gen_model->GENnextModel) {
+      void *model = osdi_model_data(gen_model);
+      uint64_t kmodel =
+          osdimc_mix(kbase ^ osdimc_hash_str((char *)gen_model->GENmodName));
+
+      for (uint32_t s = 0; s < entry->num_stat_params; s++) {
+        uint32_t id = infos[s].param_id;
+
+        if (id >= descr->num_instance_params) { /* process: per model card */
+          OsdiMcNominal *e = osdimc_find(model, id);
+          if (!e) {
+            continue; /* nominal not resolved yet: this is the baseline run */
+          }
+          double val = e->nominal + osdimc_delta(osdimc_mix(kmodel ^ id),
+                                                 infos[s].dist, infos[s].std,
+                                                 e->nominal);
+          osdimc_write(descr, NULL, model, id, val);
+          osdimc_active = true;
+          if (verbose) {
+            printf("osdimc: trial %lu: %s:%s = %g (nominal %g)\n",
+                   osdimc_trial, (char *)gen_model->GENmodName,
+                   descr->param_opvar[id].name[0], val, e->nominal);
+          }
+        } else { /* mismatch: per instance */
+          for (GENinstance *gen_inst = gen_model->GENinstances; gen_inst;
+               gen_inst = gen_inst->GENnextInstance) {
+            void *inst = osdi_instance_data(entry, gen_inst);
+            OsdiMcNominal *e = osdimc_find(inst, id);
+            if (!e) {
+              continue;
+            }
+            uint64_t kinst =
+                osdimc_mix(kbase ^ osdimc_hash_str((char *)gen_inst->GENname));
+            double val = e->nominal + osdimc_delta(osdimc_mix(kinst ^ id),
+                                                   infos[s].dist, infos[s].std,
+                                                   e->nominal);
+            osdimc_write(descr, inst, model, id, val);
+            osdimc_active = true;
+            if (verbose) {
+              printf("osdimc: trial %lu: %s:%s = %g (nominal %g)\n",
+                     osdimc_trial, (char *)gen_inst->GENname,
+                     descr->param_opvar[id].name[0], val, e->nominal);
+            }
+          }
+        }
+      }
+    }
+  }
+}

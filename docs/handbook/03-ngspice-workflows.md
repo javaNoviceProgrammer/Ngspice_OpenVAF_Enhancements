@@ -175,6 +175,43 @@ devices); ngspice's `sunif(0)` is uniform on **[−1, 1]**, not [0, 1]; and
 `wrdata` cannot export control-created vectors (parse `print` output
 instead — see [§4.5](04-limitations-and-gotchas.md#45-ngspice-control-language-traps)).
 
+**Automatic MC from the model's own statistics — `.option osdimc`.** A
+Verilog-A parameter can *declare* its variability with attributes, and the
+simulator then handles the whole loop
+([`examples/osdimc_examples/`](../../examples/osdimc_examples/)):
+
+```verilog
+(* std=25.0 *)                  parameter real r  = 1000.0 from (0:inf);
+(* dist="uniform", std=2e-4 *)  parameter real g  = 1e-3;   // std = half-width
+(* std_rel=0.05 *)              parameter real k  = 2.0;    // σ = 5 % of nominal
+(* type="instance", std=10.0 *) parameter real dr = 0.0;    // per-device mismatch
+```
+
+```spice
+.option osdimc mcseed=42            ; alias: .option automc
+.control
+pre_osdi model.osdi
+repeat 301
+  op                                 ; every run-class command = one trial
+  print @mm[r] @n1[dr] ...
+end
+.endc
+```
+
+Each run writes nominal + draw through the ordinary parameter setter — no
+`reset`, no netlist re-expansion, no `gauss()` expressions in the deck. The
+**first run after sourcing is the nominal baseline** (defaults of unset
+parameters are only knowable after one setup pass); draws begin with the
+second run. A **model** parameter is one draw per model card per trial
+(process — instances sharing the card move in lockstep), an **instance**
+parameter (`(* type="instance" *)`) draws independently per instance
+(mismatch). Draws are pure functions of `(mcseed, trial, owner name,
+param id)`, so a deck re-runs bit-identically; `alter` recenters a
+parameter's nominal; dropping the option restores nominals on the next run;
+`.option osdimc_verbose` prints every draw. A draw that violates the
+parameter's `from` range fails that run with the device's own range error,
+exactly as the same `alter` would — size the sigmas accordingly.
+
 ## 3.7 Statistical modeling inside the device
 
 Monte Carlo can also live in the Verilog-A source itself: `$rdist_normal`

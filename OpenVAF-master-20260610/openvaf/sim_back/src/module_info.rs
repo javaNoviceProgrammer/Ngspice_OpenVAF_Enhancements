@@ -4,7 +4,7 @@ use ahash::AHashSet;
 use hir::diagnostics::{BaseDB, ConsoleSink, Diagnostic, FileId, Label, LabelStyle, Report};
 use hir::{
     CompilationDB, CompilationUnit, DiagnosticSink, Module, ParamSysFun, Parameter,
-    ResolvedAliasParameter, ScopeDef, Variable,
+    ResolvedAliasParameter, ScopeDef, Type, Variable,
 };
 use indexmap::IndexMap;
 use rustc_hash::FxHasher;
@@ -183,6 +183,117 @@ impl ModuleInfo {
                         }
                     };
 
+                    // Statistical metadata for `.option osdimc` Monte-Carlo (a
+                    // project extension; LRM 2.9 attributes are the sanctioned
+                    // vehicle): `(* std=<sigma> *)` declares an absolute
+                    // standard deviation, `(* std_rel=<fraction> *)` one
+                    // relative to the resolved nominal, and
+                    // `(* dist="gauss"|"uniform" *)` picks the distribution
+                    // (gauss when absent; for "uniform" the value is the
+                    // HALF-WIDTH of the interval). The values ride the OSDI
+                    // side-table `OSDI_STAT_PARAM_INFOS` to the simulator,
+                    // which draws per run -- see ngspice's osdisetup.c.
+                    let stat = {
+                        let mut read_sigma = |attr_name: &str| {
+                            param.get_attr(db, &ast, attr_name).and_then(|attr| {
+                                let val = attr
+                                    .val()
+                                    .and_then(|e| e.as_constexprval())
+                                    .and_then(|v| v.as_real());
+                                match val {
+                                    Some(v) if v >= 0.0 => Some(v),
+                                    _ => {
+                                        add_diagnostic(
+                                            attr.clone(),
+                                            &IllegalSigmaAttr { attr },
+                                        );
+                                        None
+                                    }
+                                }
+                            })
+                        };
+                        let std = read_sigma("std");
+                        let std_rel = read_sigma("std_rel");
+                        if std.is_some() && std_rel.is_some() {
+                            let attr = param.get_attr(db, &ast, "std_rel").unwrap();
+                            add_diagnostic(attr.clone(), &SigmaConflict { attr });
+                        }
+
+                        let dist_attr = param.get_attr(db, &ast, "dist");
+                        let uniform = dist_attr.as_ref().map_or(false, |attr| {
+                            let lit = attr.val().and_then(|e| e.as_str_literal());
+                            match lit.as_deref() {
+                                Some("gauss") | Some("gaussian") | Some("normal") => false,
+                                Some("uniform") => true,
+                                Some(found) => {
+                                    add_diagnostic(
+                                        attr.clone(),
+                                        &UnknownDist {
+                                            expr: attr.val().unwrap(),
+                                            found: found.to_owned(),
+                                        },
+                                    );
+                                    false
+                                }
+                                None => {
+                                    add_diagnostic(
+                                        attr.clone(),
+                                        &IllegalAttr { attr: attr.clone() },
+                                    );
+                                    false
+                                }
+                            }
+                        });
+
+                        let (sigma, rel) = match (std, std_rel) {
+                            // both given is diagnosed above; the absolute one wins
+                            (Some(s), _) => (Some(s), false),
+                            (None, Some(s)) => (Some(s), true),
+                            (None, None) => (None, false),
+                        };
+
+                        match sigma {
+                            // a zero sigma declares statistics with no width;
+                            // exporting it would only produce exact-zero draws
+                            Some(s) if s > 0.0 => {
+                                // Only a scalar real, non-local parameter can be
+                                // varied by the simulator: the draw path writes a
+                                // double through the ordinary parameter setter,
+                                // and a localparam refuses netlist writes by
+                                // design (E-93).
+                                let reason = if param.ty(db) != Type::Real {
+                                    Some("only a scalar real parameter can carry statistics")
+                                } else if param.is_local(db) {
+                                    Some(
+                                        "a localparam cannot be varied by the simulator",
+                                    )
+                                } else {
+                                    None
+                                };
+                                match reason {
+                                    Some(reason) => {
+                                        let attr = param
+                                            .get_attr(db, &ast, "std")
+                                            .or_else(|| param.get_attr(db, &ast, "std_rel"))
+                                            .unwrap();
+                                        add_diagnostic(
+                                            attr.clone(),
+                                            &SigmaIgnored { attr, reason },
+                                        );
+                                        None
+                                    }
+                                    None => Some(ParamStat { std: s, rel, uniform }),
+                                }
+                            }
+                            _ => {
+                                if let (None, Some(attr)) = (sigma, dist_attr) {
+                                    add_diagnostic(attr.clone(), &DistWithoutSigma { attr });
+                                }
+                                None
+                            }
+                        }
+                    };
+
                     params.insert(
                         param,
                         ParamInfo {
@@ -192,6 +303,7 @@ impl ModuleInfo {
                             description: desc,
                             group,
                             is_instance,
+                            stat,
                         },
                     );
                 }
@@ -241,6 +353,135 @@ impl Diagnostic for IllegalAttr {
     }
 }
 
+/// `(* std=... *)` / `(* std_rel=... *)` whose value is not a non-negative
+/// real literal. The draw machinery needs one number known at compile time;
+/// a negative sigma has no meaning for either distribution.
+struct IllegalSigmaAttr {
+    attr: ast::Attr,
+}
+
+impl Diagnostic for IllegalSigmaAttr {
+    fn build_report(&self, root_file: FileId, db: &dyn BaseDB) -> Report {
+        let FileSpan { range, file } = db
+            .parse(root_file)
+            .to_file_span(self.attr.syntax().text_range(), &db.sourcemap(root_file));
+        Report::error()
+            .with_message(format!(
+                "illegal expression supplied to '{}' attribute; expected a non-negative real literal",
+                self.attr.name().unwrap(),
+            ))
+            .with_labels(vec![Label {
+                style: LabelStyle::Primary,
+                file_id: file,
+                range: range.into(),
+                message: "expected a non-negative real literal".to_owned(),
+            }])
+    }
+}
+
+/// Both `std` and `std_rel` on one parameter: two different sigmas for one
+/// quantity. The absolute one wins so the model still compiles predictably.
+struct SigmaConflict {
+    attr: ast::Attr,
+}
+
+impl Diagnostic for SigmaConflict {
+    fn build_report(&self, root_file: FileId, db: &dyn BaseDB) -> Report {
+        let FileSpan { range, file } = db
+            .parse(root_file)
+            .to_file_span(self.attr.syntax().text_range(), &db.sourcemap(root_file));
+        Report::error()
+            .with_message(
+                "'std' and 'std_rel' attributes are mutually exclusive; \
+                 the absolute 'std' is used"
+                    .to_owned(),
+            )
+            .with_labels(vec![Label {
+                style: LabelStyle::Primary,
+                file_id: file,
+                range: range.into(),
+                message: "conflicts with the 'std' attribute on this parameter".to_owned(),
+            }])
+    }
+}
+
+/// `(* std=... *)` on a parameter the simulator cannot vary (non-real type,
+/// array, or localparam) -- named and dropped rather than silently exported.
+struct SigmaIgnored {
+    attr: ast::Attr,
+    reason: &'static str,
+}
+
+impl Diagnostic for SigmaIgnored {
+    fn build_report(&self, root_file: FileId, db: &dyn BaseDB) -> Report {
+        let FileSpan { range, file } = db
+            .parse(root_file)
+            .to_file_span(self.attr.syntax().text_range(), &db.sourcemap(root_file));
+        Report::warning()
+            .with_message(format!(
+                "'{}' attribute is ignored: {}",
+                self.attr.name().unwrap(),
+                self.reason,
+            ))
+            .with_labels(vec![Label {
+                style: LabelStyle::Primary,
+                file_id: file,
+                range: range.into(),
+                message: "this parameter will not vary under .option osdimc".to_owned(),
+            }])
+    }
+}
+
+/// `(* dist=... *)` without any sigma: the distribution of nothing.
+struct DistWithoutSigma {
+    attr: ast::Attr,
+}
+
+impl Diagnostic for DistWithoutSigma {
+    fn build_report(&self, root_file: FileId, db: &dyn BaseDB) -> Report {
+        let FileSpan { range, file } = db
+            .parse(root_file)
+            .to_file_span(self.attr.syntax().text_range(), &db.sourcemap(root_file));
+        Report::warning()
+            .with_message(
+                "'dist' attribute has no effect without a 'std' or 'std_rel' attribute"
+                    .to_owned(),
+            )
+            .with_labels(vec![Label {
+                style: LabelStyle::Primary,
+                file_id: file,
+                range: range.into(),
+                message: "no sigma is declared for this parameter".to_owned(),
+            }])
+    }
+}
+
+/// `(* dist="..." *)` naming a distribution the draw machinery does not have.
+struct UnknownDist {
+    expr: Expr,
+    found: String,
+}
+
+impl Diagnostic for UnknownDist {
+    fn build_report(&self, root_file: FileId, db: &dyn BaseDB) -> Report {
+        let FileSpan { range, file } = db.parse(root_file).to_file_span(
+            self.expr.syntax().parent().unwrap().text_range(),
+            &db.sourcemap(root_file),
+        );
+        Report::warning()
+            .with_message(format!(
+                "unknown distribution \"{}\"; expected \"gauss\" or \"uniform\" (\"gauss\" is used)",
+                self.found
+            ))
+            .with_labels(vec![Label {
+                style: LabelStyle::Primary,
+                file_id: file,
+                range: range.into(),
+                message: "unknown distribution".to_owned(),
+            }])
+    }
+}
+
 struct UnknownType<'a> {
     expr: Expr,
     found: &'a str,
@@ -266,7 +507,7 @@ impl Diagnostic for UnknownType<'_> {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct ParamInfo {
     pub name: SmolStr,
     pub alias: Vec<SmolStr>,
@@ -274,6 +515,20 @@ pub struct ParamInfo {
     pub description: String,
     pub group: String,
     pub is_instance: bool,
+    /// `(* std= / std_rel= / dist= *)` statistics for `.option osdimc`
+    pub stat: Option<ParamStat>,
+}
+
+/// Declared statistics of a parameter, exported through the OSDI
+/// `OSDI_STAT_PARAM_INFOS` side-table for the simulator's Monte-Carlo draws.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ParamStat {
+    /// standard deviation (gauss) or half-width (uniform); a fraction of the
+    /// resolved nominal when `rel` is set
+    pub std: f64,
+    pub rel: bool,
+    /// false = gauss (the default)
+    pub uniform: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
