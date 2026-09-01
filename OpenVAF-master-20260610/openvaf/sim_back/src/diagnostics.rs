@@ -117,6 +117,22 @@ impl Diagnostic for DiscardedContribution {
              paths (a switch branch); that form is unaffected by this check"
                 .to_owned(),
         ];
+        // Enhancement-532: a noise-only loser deserves its own words. Since
+        // Enhancement-531 a noise-only contribution never decides the branch kind
+        // (noise is zero in every large-signal analysis, LRM 4.6.4), so "the last
+        // contribution decides" above does not apply to it -- the branch keeps the
+        // kind of its last VALUE contribution, and the declared noise vanishes with
+        // the losing kind.
+        if self.discarded().any(|site| site.noise_only) {
+            notes.insert(
+                1,
+                "the discarded contribution is noise-only: it never decides the branch \
+                 kind (noise functions are zero in every large-signal analysis, LRM \
+                 4.6.4), but its NOISE is dropped with it -- to keep the noise, express \
+                 it in the branch's own kind or contribute it on a branch of its own"
+                    .to_owned(),
+            );
+        }
         if labels.is_empty() {
             notes.insert(0, format!("in module '{}'", self.module));
         }

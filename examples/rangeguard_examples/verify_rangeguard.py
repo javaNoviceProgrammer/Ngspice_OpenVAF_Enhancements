@@ -185,8 +185,10 @@ def main():
           pmod(" parameter real x = 1.0 from [0:10] exclude (2:3);"), "ok_sub")
     clean("two disjoint excluded points",
           pmod(" parameter real x = 1.0 from [0:10] exclude 2 exclude 4;"), "ok_2pt")
+    # default 5.5 sits in the deliberate gap: since E-532 a default INSIDE an
+    # excluded interval earns its own L027, which is not this check's subject
     clean("two excludes that leave a GAP between them",
-          pmod(" parameter real x = 1.0 from [0:10] exclude [0:5] exclude [6:10];"), "ok_gap")
+          pmod(" parameter real x = 5.5 from [0:10] exclude [0:5] exclude [6:10];"), "ok_gap")
     clean("an OPEN exclude leaves both endpoints settable",
           pmod(" parameter real x = 0.0 from [0:10] exclude (0:10);"), "ok_open")
     clean("`exclude [0:10)` leaves exactly the upper endpoint",
@@ -215,15 +217,27 @@ def main():
     clean("a RUNTIME bound makes the question unanswerable, so nothing is said",
           pmod(" parameter real x = 1.0 from [0:10] exclude [0:y];",
                extra=" parameter real y = 5.0;\n"), "ok_rt")
-    clean("two `from` clauses are a union and are skipped",
-          pmod(" parameter real x = 1.0 from [0:1] from [2:3] exclude [0:3];"), "ok_2from")
+    # The exclude here covers the whole from-UNION, so no legal value exists at
+    # all -- the cover checker deliberately skips unions (under-reporting is
+    # the safe direction), but since E-532 the DEFAULT-range lint catches the
+    # default sitting in the excluded interval, which is exactly the audible
+    # symptom this shape deserves. The cover checker's silence stays pinned by
+    # the absence of the COVER error (the build succeeds).
+    warns("two `from` clauses are a union: the cover checker skips them, the "
+          "default-range lint still speaks",
+          pmod(" parameter real x = 1.0 from [0:1] from [2:3] exclude [0:3];"), "ok_2from",
+          "param_default_out_of_range")
     # SCOPE BOUNDARY, pinned deliberately: the sweep is real-valued, so points
     # cannot tile an interval. On an INTEGER parameter `exclude 0/1/2` over
-    # [0:2] really is a full cover and is NOT reported. Under-reporting is the
-    # safe direction and the evidence was real-valued; recorded so the gap is
-    # known rather than accidental.
-    clean("SCOPE: points over an integer range are not treated as a cover",
-          pmod(" parameter integer x = 1 from [0:2] exclude 0 exclude 1 exclude 2;"), "ok_ipt")
+    # [0:2] really is a full cover and is NOT reported as one. Under-reporting
+    # is the safe direction and the evidence was real-valued; recorded so the
+    # gap is known rather than accidental. Since E-532 the default (1, on an
+    # excluded point) draws the default-range lint, so the shape is no longer
+    # silent -- the check pins BOTH facts: no cover error, one L027.
+    warns("SCOPE: points over an integer range are not treated as a cover, "
+          "but the default-range lint names the excluded default",
+          pmod(" parameter integer x = 1 from [0:2] exclude 0 exclude 1 exclude 2;"), "ok_ipt",
+          "param_default_out_of_range")
 
     # ---- and the boundary must be real, not just quiet -------------------
     d, rc, _ = build(pmod(" parameter real x = 0.0 from [0:10] exclude (0:10);"), "bnd")

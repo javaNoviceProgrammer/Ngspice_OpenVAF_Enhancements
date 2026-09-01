@@ -1,0 +1,35 @@
+// H2 pin: a terminal-to-terminal short spelled THREE ways.
+//
+// `direct` is the E-401 baseline: `V(a,b) <+ 0` between two terminals becomes
+// a real 0 V source. `chain` and `chain3` are the SAME circuit spelled through
+// internal nodes -- collapse hints that merge the internals onto one terminal
+// and then face a terminal-terminal merge, which node collapsing cannot do.
+// Before E-532 that second merge was silently dropped and the device fell OPEN
+// (i = 0 where the direct spelling carried 10 mA); now the simulator stamps a
+// synthetic ideal 0 V source for the refused merge.
+`include "disciplines.vams"
+
+module hxdirect(a, b);
+  inout a, b;
+  electrical a, b;
+  analog V(a, b) <+ 0.0;
+endmodule
+
+module hxchain(a, b);
+  inout a, b;
+  electrical a, b, m;
+  analog begin
+    V(a, m) <+ 0.0;
+    V(m, b) <+ 0.0;
+  end
+endmodule
+
+module hxchain3(a, b);
+  inout a, b;
+  electrical a, b, m, n;
+  analog begin
+    V(a, m) <+ 0.0;
+    V(m, n) <+ 0.0;
+    V(n, b) <+ 0.0;
+  end
+endmodule

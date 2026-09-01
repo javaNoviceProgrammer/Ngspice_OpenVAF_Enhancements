@@ -134,6 +134,23 @@ static double absdelay_lookup(const OsdiExtraInstData *extra, uint32_t k,
 }
 
 /*
+ * Enhancement-532: stamp the synthetic ideal 0 V sources OSDIsetup built for
+ * collapse merges the node mapping could not honour (a terminal-terminal
+ * short reached through a chain of collapses). Constant, linear, analysis-
+ * independent: branch row V(n1) - V(n2) = 0 and the +-1 current columns,
+ * with a zero right-hand side -- exactly the vsrc stamp at dc 0.
+ */
+static void syn_short_stamp(OsdiExtraInstData *extra) {
+  for (uint32_t k = 0; k < extra->num_syn_shorts; k++) {
+    double **p = extra->syn_short_ptrs + 4 * k;
+    *(p[0]) += 1.0;  /* (br, n1) */
+    *(p[1]) -= 1.0;  /* (br, n2) */
+    *(p[2]) += 1.0;  /* (n1, br) */
+    *(p[3]) -= 1.0;  /* (n2, br) */
+  }
+}
+
+/*
  * DC / TRAN-OP pass-through stamp for absdelay slots.
  * In steady-state absdelay reduces to an ideal wire: V(z) = V(y_synth).
  * Without this the z-row has no matrix entries and the solver reports a
@@ -944,6 +961,8 @@ extern int OSDIload(GENmodel *inModel, CKTcircuit *ckt) {
       }
       last_crossing_stamp(inst, extra_inst_data, entry, descr, ckt, is_tran,
                           is_init_tran);
+      /* Enhancement-532: chained terminal-terminal collapse shorts */
+      syn_short_stamp(extra_inst_data);
       /* Enhancement-364: inject Verilog-A noise sources into the transient
          right-hand side. No-op unless the circuit has transient noise. */
       osdi_trnoise_stamp(ckt, inst, model, extra_inst_data, descr, is_tran);
@@ -994,6 +1013,8 @@ extern int OSDIload(GENmodel *inModel, CKTcircuit *ckt) {
         }
         last_crossing_stamp(inst, extra_inst_data, entry, descr, ckt, is_tran,
                           is_init_tran);
+        /* Enhancement-532: chained terminal-terminal collapse shorts */
+        syn_short_stamp(extra_inst_data);
         /* Enhancement-364: inject Verilog-A noise sources into the transient
            right-hand side. No-op unless the circuit has transient noise. */
         osdi_trnoise_stamp(ckt, inst, model, extra_inst_data, descr, is_tran);

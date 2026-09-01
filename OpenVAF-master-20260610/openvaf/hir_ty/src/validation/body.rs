@@ -477,6 +477,34 @@ pub enum BodyValidationDiagnostic {
         cond: ExprId,
         always: bool,
     },
+
+    /// Enhancement-532 (bug-hunt H3): a parameter DEFAULT that violates the
+    /// parameter's own `from`/`exclude` constraints.
+    ///
+    /// The range check a model declares is enforced by the simulator only for
+    /// values the netlist GIVES; the author's own default escapes it entirely,
+    /// so `parameter real r = -1.0 from (0:inf);` compiled silently and then
+    /// simulated with r = -1 -- the exact typo the range exists to catch, and
+    /// the same value spelled in `.model` is refused as out of bounds.
+    ///
+    /// Fires only when the default and every constraint that decides the
+    /// verdict fold to compile-time constants: a default that references an
+    /// overridable parameter, or a `from` union with any non-constant member,
+    /// is left alone. An `exclude` match is judged per constraint (exclusion
+    /// is absolute), so one foldable `exclude` hit reports even when other
+    /// constraints do not fold.
+    ParamDefaultOutOfRange {
+        param: ParamId,
+        /// the default expression, the report's anchor
+        expr: ExprId,
+        /// the folded default value, pre-rendered (the enum derives `Eq`,
+        /// which `f64` cannot)
+        value: String,
+        /// `true`: an `exclude` matched; `false`: no `from` accepted the value
+        excluded: bool,
+        /// the entry statement carrying the default, for lint attribution
+        stmt: StmtId,
+    },
 }
 
 impl BodyValidationDiagnostic {
@@ -507,6 +535,12 @@ impl BodyValidationDiagnostic {
 
         for stmt in &*body.entry_stmts {
             validator.validate_stmt(*stmt)
+        }
+
+        // Enhancement-532 (bug-hunt H3): judge a parameter's default against the
+        // parameter's own range, where both fold to compile-time constants.
+        if let DefWithBodyId::ParamId(param) = def {
+            check_param_default_range(db, param, &body, &infere, &mut validator.diagnostics);
         }
 
         // LRM 5.6.7.2 (behavior audit): a branch may be a direct-contribution
@@ -3735,6 +3769,10 @@ fn const_num_in(
     match body.exprs[expr] {
         Expr::Literal(Literal::Float(v)) => Some(f64::from(v)),
         Expr::Literal(Literal::Int(v)) => Some(v as f64),
+        // Enhancement-532: the `inf` range-bound keyword is its own literal; a
+        // `from (0:inf)` was unjudgeable without it, which silenced the
+        // default-out-of-range check on the single most common range spelling.
+        Expr::Literal(Literal::Inf) => Some(f64::INFINITY),
         Expr::UnaryOp { expr: inner, op: UnaryOp::Neg } => {
             const_num_in(db, body, infer, inner, depth).map(|v| -v)
         }
@@ -3775,6 +3813,91 @@ fn const_param_value(db: &dyn HirTyDB, param: ParamId, depth: u32) -> Option<f64
     let infer = db.inference_result(owner);
     let default = db.param_exprs(param).default;
     const_num_in(db, &body, &infer, default, depth)
+}
+
+/// Enhancement-532 (bug-hunt H3): does this parameter's constant default violate
+/// the parameter's own constant `from`/`exclude` constraints? The judgment
+/// mirrors the generated `check_param` exactly: with any `from` present the
+/// value must satisfy at least ONE of them (a `from` list is a union), and any
+/// matching `exclude` refuses it outright. Verdicts are drawn only from folded
+/// constants -- a non-constant `from` member makes the whole union unjudgeable
+/// (the constant members alone cannot prove a violation), while `exclude` is
+/// judged per constraint (one foldable hit is a violation regardless of the
+/// rest).
+fn check_param_default_range(
+    db: &dyn HirTyDB,
+    param: ParamId,
+    body: &Body,
+    infer: &InferenceResult,
+    diagnostics: &mut Vec<BodyValidationDiagnostic>,
+) {
+    use hir_def::body::ConstraintValue;
+    use syntax::ast::ConstraintKind;
+
+    let exprs = db.param_exprs(param);
+    let Some(value) = const_num_in(db, body, infer, exprs.default, 0) else { return };
+
+    let in_range = |start: f64, start_inclusive: bool, end: f64, end_inclusive: bool| {
+        let lo_ok = if start_inclusive { value >= start } else { value > start };
+        let hi_ok = if end_inclusive { value <= end } else { value < end };
+        lo_ok && hi_ok
+    };
+
+    let mut has_from = false;
+    let mut from_ok = false;
+    let mut from_all_const = true;
+    let mut excluded = false;
+    for constraint in exprs.bounds.iter() {
+        match (constraint.kind, constraint.val) {
+            (ConstraintKind::From, ConstraintValue::Value(e)) => {
+                has_from = true;
+                match const_num_in(db, body, infer, e, 0) {
+                    Some(v) => from_ok |= v == value,
+                    None => from_all_const = false,
+                }
+            }
+            (ConstraintKind::From, ConstraintValue::Range(range)) => {
+                has_from = true;
+                match (
+                    const_num_in(db, body, infer, range.start, 0),
+                    const_num_in(db, body, infer, range.end, 0),
+                ) {
+                    (Some(start), Some(end)) => {
+                        from_ok |=
+                            in_range(start, range.start_inclusive, end, range.end_inclusive);
+                    }
+                    _ => from_all_const = false,
+                }
+            }
+            (ConstraintKind::Exclude, ConstraintValue::Value(e)) => {
+                if const_num_in(db, body, infer, e, 0) == Some(value) {
+                    excluded = true;
+                }
+            }
+            (ConstraintKind::Exclude, ConstraintValue::Range(range)) => {
+                if let (Some(start), Some(end)) = (
+                    const_num_in(db, body, infer, range.start, 0),
+                    const_num_in(db, body, infer, range.end, 0),
+                ) {
+                    if in_range(start, range.start_inclusive, end, range.end_inclusive) {
+                        excluded = true;
+                    }
+                }
+            }
+        }
+    }
+
+    let out_of_from = has_from && from_all_const && !from_ok;
+    if excluded || out_of_from {
+        let Some(&stmt) = body.entry_stmts.first() else { return };
+        diagnostics.push(BodyValidationDiagnostic::ParamDefaultOutOfRange {
+            param,
+            expr: exprs.default,
+            value: format!("{value}"),
+            excluded,
+            stmt,
+        });
+    }
 }
 
 /// Enhancement-506: the `$dist_*`/`$rdist_*` spelling the AUTHOR wrote.

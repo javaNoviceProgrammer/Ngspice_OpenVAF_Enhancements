@@ -49,6 +49,14 @@ pub struct ContributionSite {
     /// `CollapseHint` callback rather than by the branch's residual, and `I(a,b) <+ 0`
     /// is a no-op. Discarding one discards nothing.
     pub zero: bool,
+    /// Enhancement-532: `true` when the contributed expression is noise-only (a noise
+    /// function, possibly negated, scaled, or summed with other noise) -- the same
+    /// classification `hir_lower::stmt::expr_is_noise_only` applies when it decides
+    /// that such a contribution must not reclassify the branch (Enhancement-531).
+    /// A discarded noise-only site loses no large-signal value (noise is zero in
+    /// every large-signal analysis, LRM 4.6.4) but its NOISE is dropped with it,
+    /// which deserves its own words in the report.
+    pub noise_only: bool,
     /// Source range of the whole statement.
     pub range: TextRange,
     /// Lint anchor of the statement, so `(* openvaf_allow=".." *)` on it (or on any
@@ -126,17 +134,21 @@ impl ContributionMap {
             };
             // the same literal-zero test `hir_lower::stmt::contribute` applies when it
             // decides a contribution is a collapse request
-            let zero = match body.stmts[stmt] {
-                hir_def::Stmt::Assignment { val, .. } => match body.exprs[val] {
-                    hir_def::Expr::Literal(ref lit) => lit.is_zero(),
-                    _ => false,
-                },
-                _ => false,
+            let (zero, noise_only) = match body.stmts[stmt] {
+                hir_def::Stmt::Assignment { val, .. } => {
+                    let zero = match body.exprs[val] {
+                        hir_def::Expr::Literal(ref lit) => lit.is_zero(),
+                        _ => false,
+                    };
+                    (zero, expr_is_noise_only(&body, &infere, val))
+                }
+                _ => (false, false),
             };
             let site = ContributionSite {
                 potential,
                 indirect: infere.indirect_branch_constraints.contains_key(&stmt),
                 zero,
+                noise_only,
                 range,
                 lint_src: sm.lint_src(stmt, lint),
             };
@@ -170,6 +182,46 @@ pub struct FlowProbeSite {
     pub range: TextRange,
     /// Lint anchor, so `(* openvaf_allow=".." *)` on an enclosing scope is honoured.
     pub lint_src: LintSrc,
+}
+
+/// Enhancement-532: is this expression noise-only -- a noise function call, possibly
+/// negated, scaled, or summed with other noise? The mirror of
+/// `hir_lower::stmt::expr_is_noise_only`, evaluated at the HIR level where source
+/// positions still exist, so the contribution map can carry the classification into
+/// the Enhancement-400 report.
+fn expr_is_noise_only(
+    body: &hir_def::body::Body,
+    infere: &inference::InferenceResult,
+    expr: ExprId,
+) -> bool {
+    match body.exprs[expr] {
+        hir_def::Expr::Call { .. } => matches!(
+            infere.resolved_calls.get(&expr),
+            Some(inference::ResolvedFun::BuiltIn(
+                BuiltIn::white_noise
+                    | BuiltIn::flicker_noise
+                    | BuiltIn::noise_table
+                    | BuiltIn::noise_table_log
+            ))
+        ),
+        hir_def::Expr::UnaryOp { expr, .. } => expr_is_noise_only(body, infere, expr),
+        hir_def::Expr::BinaryOp { lhs, rhs, op: Some(op) } => {
+            use syntax::ast::BinaryOp::*;
+            match op {
+                // a scaled noise source is still noise-only as long as ONE side is
+                // noise (noise * gain, noise / r); a SUM is noise-only only when
+                // both sides are
+                Multiplication | Division => {
+                    expr_is_noise_only(body, infere, lhs) || expr_is_noise_only(body, infere, rhs)
+                }
+                Addition | Subtraction => {
+                    expr_is_noise_only(body, infere, lhs) && expr_is_noise_only(body, infere, rhs)
+                }
+                _ => false,
+            }
+        }
+        _ => false,
+    }
 }
 
 /// The ground-free, order-free node set a branch spans, as the DAE sees it.

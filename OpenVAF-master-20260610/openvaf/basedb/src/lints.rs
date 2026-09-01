@@ -199,5 +199,12 @@ pub mod builtin {
         // model that means to print a message wants -- it is only wrong when
         // OPERANDS follow, which is what the check requires.
         pub const runtime_format_string = LintData{default_lvl: Warn, documentation_id: 26};
+        // Enhancement-532: a parameter DEFAULT that violates the parameter's own
+        // `from`/`exclude` range. Simulators range-check only GIVEN values, so the
+        // default escapes the very check the range declares and the model simulates
+        // with the illegal value. Warn rather than deny: the "must-give" idiom
+        // (a deliberately out-of-range default forcing the netlist to set the
+        // parameter) is real, and such a model is fine whenever the netlist obliges.
+        pub const param_default_out_of_range = LintData{default_lvl: Warn, documentation_id: 27};
     }
 }

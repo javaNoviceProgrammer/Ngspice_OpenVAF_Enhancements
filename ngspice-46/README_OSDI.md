@@ -48,6 +48,15 @@ The `compile_linux.sh` file enables these flags by default.
   instance, the established idiom shared with the built-ins (E-426/E-447).
 * An unknown `$limit` function name falls back to **no limiting** with a
   warning, per LRM 9.17.3 (E-520).
+* **A collapse chain that shorts two terminals becomes a real 0 V source**
+  (E-532): ngspice cannot merge terminal nodes, so `V(a,m)<+0; V(m,b)<+0`
+  (m internal) used to lose the second merge silently — the device fell
+  open where the direct `V(a,b)<+0` spelling shorted correctly. Every
+  refused terminal-terminal or terminal-ground merge is now stamped as a
+  synthetic ideal 0 V source (all analyses, both solvers, `sens`'s
+  double-setup included), and the same rewrite fixed two latent merge
+  bugs: a re-merged ground group is no longer un-grounded, and a redundant
+  hint inside one collapse group no longer corrupts the node count.
 
 ## Automatic Monte-Carlo: `.option osdimc`
 

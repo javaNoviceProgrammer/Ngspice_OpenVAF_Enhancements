@@ -155,11 +155,25 @@ static uint32_t drop_node(const OsdiDescriptor *descr, uint32_t *node_mapping,
   return num_nodes - 1;
 }
 
+/* Enhancement-532: rank of a group representative for the collapse-merge
+ * decision. Ground can absorb anything, a connected terminal can absorb
+ * internals but never another terminal (ngspice allocates terminal nodes,
+ * OSDI cannot merge them), internals merge freely. */
+#define OSDI_GRP_GROUND 0
+#define OSDI_GRP_TERMINAL 1
+#define OSDI_GRP_INTERNAL 2
+static int osdi_group_rank(uint32_t rep, uint32_t connected_terminals) {
+  if (rep == UINT32_MAX)
+    return OSDI_GRP_GROUND;
+  return rep < connected_terminals ? OSDI_GRP_TERMINAL : OSDI_GRP_INTERNAL;
+}
+
 static uint32_t collapse_nodes(const OsdiDescriptor *descr, void *inst,
                                uint32_t connected_terminals,
                                const OsdiTermShortInfo *term_shorts,
                                uint32_t num_term_shorts,
-                               const int *terminals) {
+                               const int *terminals,
+                               uint32_t *syn_pairs, uint32_t *num_syn) {
   /* access data inside instance */
   uint32_t *node_mapping =
       (uint32_t *)(((char *)inst) + descr->node_mapping_offset);
@@ -182,39 +196,68 @@ static uint32_t collapse_nodes(const OsdiDescriptor *descr, void *inst,
     }
   }
 
+  /* Enhancement-532: the executed hints are processed as group merges over
+   * the CURRENT mapping. The old loop had three holes, all reachable through
+   * chains of hints: a merge whose endpoints both already mapped to
+   * connected terminals was silently DROPPED (the V(x,y)=0 equation simply
+   * vanished and the device fell open -- physically identical netlists gave
+   * opposite answers depending on whether the short was spelled directly or
+   * through an internal node); a group already collapsed to ground being
+   * merged again re-mapped its UINT32_MAX members onto the other group,
+   * quietly UN-grounding them; and a hint between two nodes already in the
+   * same group renumbered everything above the representative and
+   * decremented num_nodes although no row disappeared. Terminal-terminal
+   * (and terminal-ground) merges are now recorded in `syn_pairs` -- local
+   * indices, UINT32_MAX for ground -- and OSDIsetup stamps a synthetic
+   * ideal 0 V source for each, which is exactly the equation the hint
+   * expressed and exactly what the compiler itself emits for the direct
+   * spelling (Enhancement-401). */
   for (uint32_t i = 0; i < descr->num_collapsible; i++) {
     /* check if the collapse hint (V(x,y) <+ 0) was executed */
     if (!collapsed[i]) {
       continue;
     }
 
-    uint32_t from = descr->collapsible[i].node_1;
-    uint32_t to = descr->collapsible[i].node_2;
+    uint32_t n1 = descr->collapsible[i].node_1;
+    uint32_t n2 = descr->collapsible[i].node_2;
+    uint32_t r1 = node_mapping[n1];
+    uint32_t r2 = (n2 == UINT32_MAX) ? UINT32_MAX : node_mapping[n2];
 
-    /* terminals created by the simulator cannot be collapsed
-     */
-    if (node_mapping[from] < connected_terminals &&
-        (to == UINT32_MAX || node_mapping[to] < connected_terminals ||
-         node_mapping[to] == UINT32_MAX)) {
+    if (r1 == r2) {
+      continue; /* already in the same group (or both ground): redundant */
+    }
+
+    /* order so that r2 is the group that survives: ground beats terminal
+     * beats internal; among internals the smaller index survives (the old
+     * "to is always the smaller node" invariant, which the renumbering
+     * below relies on) */
+    int k1 = osdi_group_rank(r1, connected_terminals);
+    int k2 = osdi_group_rank(r2, connected_terminals);
+    if (k1 < k2 || (k1 == k2 && r1 < r2)) {
+      uint32_t tr = r1;
+      r1 = r2;
+      r2 = tr;
+      int tk = k1;
+      k1 = k2;
+      k2 = tk;
+    }
+
+    if (k1 == OSDI_GRP_TERMINAL) {
+      /* terminal-terminal or terminal-ground: ngspice owns these nodes and
+       * they cannot be merged -- record the pair for a synthetic 0 V source */
+      syn_pairs[2 * *num_syn] = r1;
+      syn_pairs[2 * *num_syn + 1] = r2;
+      *num_syn += 1;
       continue;
     }
-    /* ensure that to is always the smaller node */
-    if (to != UINT32_MAX && node_mapping[from] < node_mapping[to]) {
-      uint32_t temp = from;
-      from = to;
-      to = temp;
-    }
 
-    from = node_mapping[from];
-    if (to != UINT32_MAX) {
-      to = node_mapping[to];
-    }
-
-    /* replace nodes mapped to from with to and reduce the number of nodes */
+    /* r1 is an internal group: dissolve it into r2 (ground, a terminal, or a
+     * lower-numbered internal -- all numerically smaller than r1, so the
+     * compaction below cannot disturb r2) */
     for (uint32_t j = 0; j < descr->num_nodes; j++) {
-      if (node_mapping[j] == from) {
-        node_mapping[j] = to;
-      } else if (node_mapping[j] > from && node_mapping[j] != UINT32_MAX) {
+      if (node_mapping[j] == r1) {
+        node_mapping[j] = r2;
+      } else if (node_mapping[j] > r1 && node_mapping[j] != UINT32_MAX) {
         node_mapping[j] -= 1;
       }
     }
@@ -307,6 +350,11 @@ int OSDIsetup(SMPmatrix *matrix, GENmodel *inModel, CKTcircuit *ckt,
 
   /* setup a temporary buffer */
   uint32_t *node_ids = TMALLOC(uint32_t, descr->num_nodes);
+  /* Enhancement-532: per-instance scratch for collapse merges that need a
+   * synthetic 0 V source (terminal-terminal shorts reached through a chain
+   * of collapses); bounded by the number of collapsible pairs */
+  uint32_t *syn_pairs =
+      TMALLOC(uint32_t, 2 * (size_t)descr->num_collapsible + 2);
 
   /* determine the number of states required by each instance */
   int num_states = (int)descr->num_states;
@@ -410,10 +458,11 @@ int OSDIsetup(SMPmatrix *matrix, GENmodel *inModel, CKTcircuit *ckt,
 
       /* setup the instance nodes */
 
+      uint32_t num_syn = 0;
       uint32_t num_nodes = collapse_nodes(
           descr, inst, connected_terminals,
           (const OsdiTermShortInfo *)entry->term_short_infos,
-          entry->num_term_shorts, terminals);
+          entry->num_term_shorts, terminals, syn_pairs, &num_syn);
 
       /* Enhancement-416: record which terminal each descriptor node was
        * collapsed onto, while the LOCAL mapping still says so. Further down,
@@ -606,6 +655,126 @@ int OSDIsetup(SMPmatrix *matrix, GENmodel *inModel, CKTcircuit *ckt,
         return err;
       }
 
+      /* Enhancement-532: build the synthetic 0 V sources for collapse merges
+       * the node mapping could not honour (see collapse_nodes). Each one is
+       * stamped exactly like the vsrc device: a branch equation
+       * V(n1) - V(n2) = 0 plus the +-1 current entries in the two node rows.
+       * The endpoints are connected terminals (or ground), so they are real
+       * circuit nodes that Enhancement-116 can never ground away. */
+      {
+        /* resolve the recorded local pairs to global nodes; drop a short
+         * whose endpoints the netlist already ties together, and duplicates
+         * (two hints can reach the same terminal pair through different
+         * internal chains) */
+        uint32_t nshort = 0;
+        for (uint32_t k = 0; k < num_syn; k++) {
+          uint32_t g1 = syn_pairs[2 * k] == UINT32_MAX
+                            ? 0
+                            : node_ids[syn_pairs[2 * k]];
+          uint32_t g2 = syn_pairs[2 * k + 1] == UINT32_MAX
+                            ? 0
+                            : node_ids[syn_pairs[2 * k + 1]];
+          if (g1 == g2) {
+            continue; /* same circuit node: the short is already a fact */
+          }
+          bool dup = false;
+          for (uint32_t j = 0; j < nshort; j++) {
+            uint32_t h1 = syn_pairs[2 * j];
+            uint32_t h2 = syn_pairs[2 * j + 1];
+            if ((h1 == g1 && h2 == g2) || (h1 == g2 && h2 == g1)) {
+              dup = true;
+              break;
+            }
+          }
+          if (dup) {
+            continue;
+          }
+          /* compact in place: the write index never passes the read index */
+          syn_pairs[2 * nshort] = g1;
+          syn_pairs[2 * nshort + 1] = g2;
+          nshort++;
+        }
+
+        /* `sens` runs DEVsetup() a second time on a still-set-up circuit and
+         * requires that no node be allocated (Enhancement-351); the collapse
+         * decision is unchanged there, so prove it and reuse the branch
+         * equations. */
+        bool reuse_shorts =
+            extra_inst_data->syn_short_br != NULL &&
+            extra_inst_data->num_syn_shorts == nshort && nshort > 0 &&
+            memcmp(extra_inst_data->syn_short_glob, syn_pairs,
+                   2 * (size_t)nshort * sizeof(uint32_t)) == 0;
+
+        if (!reuse_shorts && extra_inst_data->syn_short_br != NULL) {
+          /* stale set from an earlier decision: delete those branch nodes
+           * before forgetting them (unreachable in practice -- a re-setup
+           * normally passes through OSDIunsetup, which already did this) */
+          for (uint32_t k = 0; k < extra_inst_data->num_syn_shorts; k++) {
+            if (ckt->prev_CKTlastNode->number &&
+                (int)extra_inst_data->syn_short_br[k] >
+                    ckt->prev_CKTlastNode->number) {
+              CKTdltNNum(ckt, (int)extra_inst_data->syn_short_br[k]);
+            }
+          }
+          FREE(extra_inst_data->syn_short_glob);
+          FREE(extra_inst_data->syn_short_br);
+          extra_inst_data->syn_short_glob = NULL;
+          extra_inst_data->syn_short_br = NULL;
+          extra_inst_data->num_syn_shorts = 0;
+        }
+        if (extra_inst_data->syn_short_ptrs) {
+          FREE(extra_inst_data->syn_short_ptrs);
+          extra_inst_data->syn_short_ptrs = NULL;
+        }
+        if (extra_inst_data->syn_short_csc) {
+          FREE(extra_inst_data->syn_short_csc);
+          extra_inst_data->syn_short_csc = NULL;
+        }
+        if (extra_inst_data->syn_short_cx) {
+          FREE(extra_inst_data->syn_short_cx);
+          extra_inst_data->syn_short_cx = NULL;
+        }
+
+        if (nshort > 0) {
+          if (!reuse_shorts) {
+            extra_inst_data->syn_short_glob = TMALLOC(uint32_t, 2 * nshort);
+            extra_inst_data->syn_short_br = TMALLOC(uint32_t, nshort);
+            memcpy(extra_inst_data->syn_short_glob, syn_pairs,
+                   2 * (size_t)nshort * sizeof(uint32_t));
+            for (uint32_t k = 0; k < nshort; k++) {
+              char nmbuf[32];
+              snprintf(nmbuf, sizeof nmbuf, "cshort%u", k);
+              error = CKTmkCur(ckt, &tmp, gen_inst->GENname, nmbuf);
+              if (error) {
+                return error;
+              }
+              extra_inst_data->syn_short_br[k] = (uint32_t)tmp->number;
+            }
+          }
+          extra_inst_data->num_syn_shorts = nshort;
+          extra_inst_data->syn_short_ptrs = TMALLOC(double *, 4 * nshort);
+          extra_inst_data->syn_short_csc = TMALLOC(double *, 4 * nshort);
+          extra_inst_data->syn_short_cx = TMALLOC(double *, 4 * nshort);
+          for (uint32_t k = 0; k < nshort; k++) {
+            int br = (int)extra_inst_data->syn_short_br[k];
+            int g1 = (int)extra_inst_data->syn_short_glob[2 * k];
+            int g2 = (int)extra_inst_data->syn_short_glob[2 * k + 1];
+            double **p = extra_inst_data->syn_short_ptrs + 4 * k;
+            p[0] = SMPmakeElt(matrix, br, g1);
+            p[1] = SMPmakeElt(matrix, br, g2);
+            p[2] = SMPmakeElt(matrix, g1, br);
+            p[3] = SMPmakeElt(matrix, g2, br);
+            for (int j = 0; j < 4; j++) {
+              extra_inst_data->syn_short_csc[4 * k + j] = NULL;
+              extra_inst_data->syn_short_cx[4 * k + j] = NULL;
+              if (p[j] == NULL) {
+                return E_NOMEM;
+              }
+            }
+          }
+        }
+      }
+
       /* Allocate extra matrix entries and waveform history for absdelay */
       if (entry->num_absdelays > 0) {
         uint32_t *node_mapping =
@@ -680,6 +849,7 @@ int OSDIsetup(SMPmatrix *matrix, GENmodel *inModel, CKTcircuit *ckt,
   }
 
   free(node_ids);
+  free(syn_pairs);
 
   /* Enhancement-426: the FIRST failure, not whatever the last model happened to
    * return -- see the note at first_err's declaration. */
@@ -921,6 +1091,41 @@ extern int OSDIunsetup(GENmodel *inModel, CKTcircuit *ckt) {
            the next run re-probes the circuit and re-allocates. */
         osdi_trnoise_free(extra);
         osdi_trnoise_reset();
+        /* Enhancement-532: the synthetic-short branch equations are internal
+         * nodes too, but they live outside node_mapping, so the scan below
+         * cannot find them -- delete them here and drop the record so the
+         * next setup allocates afresh. */
+        if (extra->syn_short_br) {
+          for (uint32_t k = 0; k < extra->num_syn_shorts; k++) {
+            num = (int)extra->syn_short_br[k];
+            if (ckt->prev_CKTlastNode->number &&
+                num > ckt->prev_CKTlastNode->number) {
+              if (e470_del && num >= 0 && num <= e470_maxnum)
+                e470_del[num] = 1;
+              else
+                CKTdltNNum(ckt, num);
+            }
+          }
+          FREE(extra->syn_short_br);
+          extra->syn_short_br = NULL;
+        }
+        if (extra->syn_short_glob) {
+          FREE(extra->syn_short_glob);
+          extra->syn_short_glob = NULL;
+        }
+        if (extra->syn_short_ptrs) {
+          FREE(extra->syn_short_ptrs);
+          extra->syn_short_ptrs = NULL;
+        }
+        if (extra->syn_short_csc) {
+          FREE(extra->syn_short_csc);
+          extra->syn_short_csc = NULL;
+        }
+        if (extra->syn_short_cx) {
+          FREE(extra->syn_short_cx);
+          extra->syn_short_cx = NULL;
+        }
+        extra->num_syn_shorts = 0;
       }
 
       // reset is collapsible
@@ -1097,6 +1302,30 @@ int OSDIbindCSC(GENmodel *inModel, CKTcircuit *ckt) {
           }
         }
       }
+
+      /* Enhancement-532: same rebinding for the synthetic-short stamps. A
+       * ground entry's COO pointer is the KLU trashcan and is absent from the
+       * bind table -- the bsearch misses, the pointer stays where it is, and
+       * writes remain harmless, exactly as for the delay rows above. */
+      {
+        OsdiExtraInstData *extra = osdi_extra_instance_data(entry, gen_inst);
+        if (extra->num_syn_shorts > 0 && extra->syn_short_ptrs) {
+          BindElement tmp;
+          for (uint32_t j = 0; j < 4 * extra->num_syn_shorts; j++) {
+            if (extra->syn_short_ptrs[j]) {
+              tmp.COO = extra->syn_short_ptrs[j];
+              BindElement *m = (BindElement *)bsearch(&tmp, bindings, nz,
+                                                      sizeof(BindElement),
+                                                      BindCompare);
+              if (m) {
+                extra->syn_short_csc[j] = m->CSC;
+                extra->syn_short_cx[j] = m->CSC_Complex;
+                extra->syn_short_ptrs[j] = m->CSC;
+              }
+            }
+          }
+        }
+      }
     }
   }
 
@@ -1147,6 +1376,17 @@ int OSDIupdateCSC(GENmodel *inModel, CKTcircuit *ckt, bool complex) {
           if (extra->crossing_jac_z_csc[k])
             extra->crossing_jac_z[k] =
                 complex ? extra->crossing_jac_z_cx[k] : extra->crossing_jac_z_csc[k];
+        }
+      }
+
+      /* Enhancement-532: switch the synthetic-short stamps between the real
+       * and complex KLU arrays, mirroring the delay rows above. */
+      {
+        OsdiExtraInstData *extra = osdi_extra_instance_data(entry, gen_inst);
+        for (uint32_t j = 0; j < 4 * extra->num_syn_shorts; j++) {
+          if (extra->syn_short_csc[j])
+            extra->syn_short_ptrs[j] =
+                complex ? extra->syn_short_cx[j] : extra->syn_short_csc[j];
         }
       }
     }

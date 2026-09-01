@@ -1,7 +1,7 @@
 use basedb::diagnostics::{Diagnostic, Label, LabelStyle, Report};
 use basedb::lints::builtin::{
-    const_simparam, rng_in_loop, runtime_format_string, trivial_probe, unknown_analysis_name,
-    unknown_limit_function, unknown_simparam,
+    const_simparam, param_default_out_of_range, rng_in_loop, runtime_format_string,
+    trivial_probe, unknown_analysis_name, unknown_limit_function, unknown_simparam,
     variant_const_simparam,
 };
 use basedb::lints::{self, Lint, LintSrc};
@@ -173,6 +173,10 @@ impl Diagnostic for BodyValidationDiagnosticWrapped<'_> {
             BodyValidationDiagnostic::RuntimeFormatString { stmt, .. } => {
                 let src = self.body_sm.lint_src(stmt, runtime_format_string);
                 Some((runtime_format_string, src))
+            }
+            BodyValidationDiagnostic::ParamDefaultOutOfRange { stmt, .. } => {
+                let src = self.body_sm.lint_src(stmt, param_default_out_of_range);
+                Some((param_default_out_of_range, src))
             }
             _ => None,
         }
@@ -501,6 +505,39 @@ impl Diagnostic for BodyValidationDiagnosticWrapped<'_> {
                             .to_owned(),
                         "note: `disable <block>` is not accepted as the only way out of \
                          such a loop; it works for a loop that can also finish normally"
+                            .to_owned(),
+                    ])
+            }
+
+            // Enhancement-532 (bug-hunt H3): a default the parameter's own range forbids
+            BodyValidationDiagnostic::ParamDefaultOutOfRange { param, expr, ref value, excluded, .. } => {
+                let FileSpan { range, file } = self.expr_src(expr);
+                let name = self.db.param_data(param).name.clone();
+                let verdict = if excluded {
+                    format!("{value} is a value the parameter's `exclude` constraint forbids")
+                } else {
+                    format!("{value} satisfies none of the parameter's `from` constraints")
+                };
+                Report::warning()
+                    .with_message(format!(
+                        "the default value of parameter '{name}' violates its own range"
+                    ))
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: file,
+                        range: range.into(),
+                        message: verdict,
+                    }])
+                    .with_notes(vec![
+                        "the range is enforced only for values the netlist GIVES -- the \
+                         simulator refuses those as out of bounds; the default escapes \
+                         that check, so a netlist that never sets this parameter \
+                         simulates with the value the range was written to forbid"
+                            .to_owned(),
+                        "help: if the intent is that this parameter MUST be given, keep \
+                         the default and silence this warning with \
+                         (* openvaf_allow=\"param_default_out_of_range\" *) on the \
+                         declaration; otherwise pick a default inside the range"
                             .to_owned(),
                     ])
             }

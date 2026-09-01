@@ -1,0 +1,20 @@
+// H3 companions that must stay SILENT:
+//  * the deliberate must-give idiom, silenced per declaration with
+//    (* openvaf_allow="param_default_out_of_range" *);
+//  * a localparam-derived constant default judged through the fold
+//    (d1 = c1 = 2.0, inside (0:inf));
+//  * a default referencing an OVERRIDABLE parameter -- not a compile-time
+//    constant, so no verdict is possible and none is given.
+`include "disciplines.vams"
+
+module hxrangeok(a, b);
+  inout a, b;
+  electrical a, b;
+  (* openvaf_allow = "param_default_out_of_range" *)
+  parameter real w = 0.0 from (0:inf);
+  localparam real c1 = 2.0;
+  parameter real d1 = c1 from (0:inf);
+  parameter real base = 1.0 from (0:inf);
+  parameter real scaled = 2.0 * base from (0:3);
+  analog I(a, b) <+ V(a, b) * 1e-3 * (1.0 + 0.0 * (w + d1 + scaled));
+endmodule

@@ -1,0 +1,16 @@
+// H3 pin: constant defaults that violate their own constant ranges.
+//
+// `rex` sits ON its own `exclude` value; `rng` sits OUTSIDE its `from` range.
+// Both are exactly what the simulator refuses when the netlist GIVES the same
+// value -- only the default used to escape the check, silently. Each earns a
+// `param_default_out_of_range` (L027) warning; `rok`, in range, earns nothing.
+`include "disciplines.vams"
+
+module hxrangebad(a, b);
+  inout a, b;
+  electrical a, b;
+  parameter real rex = 1.0 from (0:inf) exclude 1.0;
+  parameter real rng = -1.0 from (0:inf);
+  parameter real rok = 50.0 from (0:inf);
+  analog I(a, b) <+ V(a, b) / (rok + 0.0 * (rex + rng));
+endmodule

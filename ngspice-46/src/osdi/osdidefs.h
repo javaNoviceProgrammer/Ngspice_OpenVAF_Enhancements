@@ -224,6 +224,30 @@ typedef struct OsdiExtraInstData {
    * once per pz trial: OSDIpzLoad runs hundreds of times per analysis. */
   bool pz_delay_warned;
 
+  /* Enhancement-532: synthetic 0 V sources for collapse hints that would merge
+   * two connected terminals -- or a terminal into ground -- through a CHAIN of
+   * collapses (V(a,m)<+0; V(m,b)<+0 with m internal). ngspice cannot merge
+   * terminal nodes, and the compiler emits a real 0 V source only for the
+   * DIRECT terminal-terminal spelling (Enhancement-401); the chained short
+   * used to be silently dropped and the device fell OPEN. When collapse_nodes
+   * refuses such a merge it records the pair here, and OSDIsetup stamps an
+   * ideal 0 V source (branch row V(n1)-V(n2)=0 plus the +-1 current columns)
+   * between the two global nodes, exactly like the vsrc device would.
+   *
+   * `syn_short_glob` holds the resolved global pair per short (0 = ground) so
+   * a second DEVsetup() on a still-set-up circuit (`sens`, Enhancement-351)
+   * can prove the decision unchanged and REUSE the branch equations instead
+   * of allocating new nodes. Pointer arrays follow the delay_jac_* pattern:
+   * `syn_short_ptrs` is the ACTIVE set (4 per short: (br,n1),(br,n2),(n1,br),
+   * (n2,br)); the _csc/_cx shadows exist only under KLU, switched on each
+   * DC<->AC transition. */
+  uint32_t num_syn_shorts;
+  uint32_t *syn_short_glob;  /* [2n] global node pair, 0 = ground */
+  uint32_t *syn_short_br;    /* [n] global branch-equation node numbers */
+  double **syn_short_ptrs;   /* [4n] active matrix pointers */
+  double **syn_short_csc;    /* [4n] KLU real CSC pointers, NULL under SPARSE */
+  double **syn_short_cx;     /* [4n] KLU complex CSC pointers */
+
 } OSDI_ALIGN(MAX_ALIGN) OsdiExtraInstData;
 
 /* Enhancement-7: extra bit in the eval() `flags` input (see

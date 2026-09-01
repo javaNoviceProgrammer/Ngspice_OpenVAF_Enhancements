@@ -1,0 +1,49 @@
+// H2 companions: the collapse-merge shapes the old loop got wrong.
+//
+// `hxgchain`: a terminal shorted to GROUND through an internal node
+// (V(a,m)<+0; V(m)<+0). The old guard dropped the second merge exactly like
+// the terminal-terminal case; now it becomes a synthetic 0 V source to ground.
+//
+// `hxung`: a group already collapsed to ground merged AGAIN (V(m)<+0 then
+// V(m,x)<+0). The old loop re-mapped the ground group onto x -- quietly
+// UN-grounding m -- and decremented the node count although no row vanished.
+//
+// `hxtri`: a collapse TRIANGLE (three hints over three internals already in
+// one group by the third hint). The old loop renumbered the mapping and
+// decremented the count for a merge that merged nothing, corrupting every
+// node above the group representative.
+`include "disciplines.vams"
+
+module hxgchain(a, b);
+  inout a, b;
+  electrical a, b, m;
+  analog begin
+    V(a, m) <+ 0.0;
+    V(m) <+ 0.0;
+    I(b, m) <+ V(b, m) * 1e-3;
+  end
+endmodule
+
+module hxung(a, b);
+  inout a, b;
+  electrical a, b, m, x;
+  analog begin
+    V(m) <+ 0.0;
+    V(m, x) <+ 0.0;
+    I(a, x) <+ V(a, x) * 1e-3;
+    I(x, b) <+ V(x, b) * 1e-3;
+  end
+endmodule
+
+module hxtri(a, b);
+  inout a, b;
+  electrical a, b, x, y, z, w;
+  analog begin
+    V(x, y) <+ 0.0;
+    V(y, z) <+ 0.0;
+    V(x, z) <+ 0.0;
+    I(a, x) <+ V(a, x) * 2e-3;
+    I(z, w) <+ V(z, w) * 2e-3;
+    I(w, b) <+ V(w, b) * 2e-3;
+  end
+endmodule

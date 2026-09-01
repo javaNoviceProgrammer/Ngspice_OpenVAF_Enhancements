@@ -66,8 +66,15 @@ The single most useful mental model for this toolchain:
 ## 4.4 Documented design decisions
 
 - **`limexp()` is stateless** ([E-13](../../enhancements_doc/Enhancement-13.md)):
-  `exp(x)` below the overflow cutoff, tangent-continued above — exact in
-  every analysis. A stateful, previous-iterate limiting version was built
+  `exp(x)` below the overflow cutoff at `ln(1e30)` ≈ 69.08, tangent-continued
+  above it (`1e30·(1 + x − ln 1e30)`). Below the cutoff it is exactly `exp` in
+  every analysis; **above it the converged value is the linearisation, not
+  `exp`** — a junction forced deep past the cutoff (e.g. an ideal diode at a
+  hard 5 V, x ≈ 193) converges quietly to the tangent value, tens of decades
+  below the true exponential. No silicon operates there, and the LRM's
+  "apparent behavior identical to exp" is traded for convergence exactly as
+  every production simulator trades it — but the trade is real, so it is
+  written down here. A stateful, previous-iterate limiting version was built
   and reverted: correct converged values under limiting require SPICE's
   limiting-RHS correction, which applies to circuit unknowns, not to
   `limexp`'s derived argument. Use `$limit` for genuine iteration limiting.

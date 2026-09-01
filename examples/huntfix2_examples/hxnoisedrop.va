@@ -1,0 +1,18 @@
+// H1 pin: opposite-kind noise on a classified branch is dropped -- audibly.
+//
+// The branch is a resistor (flow kind); the voltage-noise contribution never
+// decides the branch kind (E-531: noise is zero in every large-signal
+// analysis) and its noise is dropped with the losing kind. E-400's
+// `discarded_contribution` report fires here, and since E-532 it says the
+// discarded site is NOISE-ONLY in as many words. The run itself pins the
+// physics: output noise shows the source resistor alone.
+`include "disciplines.vams"
+
+module hxnoisedrop(a, b);
+  inout a, b;
+  electrical a, b;
+  analog begin
+    I(a, b) <+ V(a, b) / 1000.0;
+    V(a, b) <+ white_noise(1e-14, "nv");
+  end
+endmodule

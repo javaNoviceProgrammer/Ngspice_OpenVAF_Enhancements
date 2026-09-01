@@ -1,0 +1,41 @@
+// H5 retraction pin: noise correlation follows the CALL, not the label.
+//
+// The hunt claimed same-labelled sources should sum coherently; the in-repo
+// LRM audit (4.6.4.6, and E-528's fix) says the opposite -- labels group
+// REPORTING, separate calls stay uncorrelated, and correlation is expressed
+// by reusing one call's OUTPUT. These three modules pin all three facts with
+// closed-form spectra so the audited semantics cannot regress silently:
+//   hxcorrsep : two separate calls, one label     -> powers add      (2S)
+//   hxcorrshr : one call contributed twice        -> amplitudes add  (4S)
+//   hxcorrscl : one call scaled by 2              -> power x4        (4S)
+`include "disciplines.vams"
+
+module hxcorrsep(a, b);
+  inout a, b;
+  electrical a, b;
+  analog begin
+    I(a, b) <+ V(a, b) * 1e-3;
+    I(a, b) <+ white_noise(1e-16, "x") + white_noise(1e-16, "x");
+  end
+endmodule
+
+module hxcorrshr(a, b);
+  inout a, b;
+  electrical a, b;
+  real n;
+  analog begin
+    I(a, b) <+ V(a, b) * 1e-3;
+    n = white_noise(1e-16, "x");
+    I(a, b) <+ n;
+    I(a, b) <+ n;
+  end
+endmodule
+
+module hxcorrscl(a, b);
+  inout a, b;
+  electrical a, b;
+  analog begin
+    I(a, b) <+ V(a, b) * 1e-3;
+    I(a, b) <+ 2.0 * white_noise(1e-16, "x");
+  end
+endmodule

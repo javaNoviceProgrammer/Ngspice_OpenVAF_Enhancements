@@ -90,6 +90,19 @@ int OSDIpzLoad(GENmodel *inModel, CKTcircuit *ckt, SPcomplex *s) {
           *(extra->crossing_jac_z[k]) += -1.0;
         }
       }
+
+      /* Enhancement-532: the synthetic 0 V collapse shorts are frequency-
+       * independent linear constraints -- stamp them at every trial s. */
+      {
+        OsdiExtraInstData *extra = osdi_extra_instance_data(entry, gen_inst);
+        for (uint32_t k = 0; k < extra->num_syn_shorts; k++) {
+          double **p = extra->syn_short_ptrs + 4 * k;
+          *(p[0]) += 1.0;
+          *(p[1]) -= 1.0;
+          *(p[2]) += 1.0;
+          *(p[3]) -= 1.0;
+        }
+      }
     }
   }
   return (OK);

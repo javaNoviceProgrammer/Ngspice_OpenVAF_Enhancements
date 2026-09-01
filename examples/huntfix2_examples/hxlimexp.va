@@ -1,0 +1,19 @@
+// H4 pin: the documented limexp knee, measured.
+//
+// limexp is exp up to the overflow cutoff ln(1e30) ~= 69.078 and the tangent
+// line 1e30*(1 + x - ln(1e30)) above it (handbook 4.4). r68 pins the exact
+// region, l80 pins the linearisation -- so the documented knee cannot drift
+// away from the implementation without this suite noticing.
+`include "disciplines.vams"
+
+module hxlimexp(a, b);
+  inout a, b;
+  electrical a, b;
+  real r68, l80;
+  analog begin
+    r68 = limexp(68.0) / exp(68.0);
+    l80 = limexp(80.0);
+    $strobe("HXLIM r68=%.15g l80=%.15g", r68, l80);
+    I(a, b) <+ V(a, b) * 1e-3;
+  end
+endmodule
