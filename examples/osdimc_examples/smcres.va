@@ -12,8 +12,9 @@ module smcres(a, b);
   parameter real r = 1000.0 from (0:inf);
   (* dist="uniform", std=2e-4 *)     // std = HALF-WIDTH of the interval
   parameter real g = 1e-3 from [0:1);
-  (* std_rel=0.05 *)                 // sigma = 5 % of the nominal
-  parameter real k = 2.0;
+  (* std_rel="0.05" *)               // sigma = 5 % of the nominal -- the
+  parameter real k = 2.0;            // QUOTED spelling, accepted since the
+                                     // string-value convenience landed
   (* std=5.0 *)                      // never set from the deck: nominal is
   parameter real u = 50.0;           // the default, resolved by setup
 

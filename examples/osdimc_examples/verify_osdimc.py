@@ -142,9 +142,10 @@ check("[5] unknown dist / integer param / localparam / dist-without-sigma "
       f"rc={rc}")
 
 rc, out, _ = compile_va("smcbad.va")
-check("[6] a negative sigma and std beside std_rel are located ERRORS",
+check("[6] a negative sigma, std beside std_rel, and quoted GARBAGE "
+      "(\"25 ohm\", \"inf\") are located ERRORS",
       rc != 0
-      and "expected a non-negative real literal" in out
+      and out.count("expected a non-negative real literal") >= 3
       and "mutually exclusive" in out,
       f"rc={rc}")
 

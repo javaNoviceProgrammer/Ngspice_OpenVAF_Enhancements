@@ -207,10 +207,25 @@ impl ModuleInfo {
                     let stat = {
                         let mut read_sigma = |attr_name: &str| {
                             param.get_attr(db, &ast, attr_name).and_then(|attr| {
-                                let val = attr
-                                    .val()
+                                let expr = attr.val();
+                                let val = expr
+                                    .as_ref()
                                     .and_then(|e| e.as_constexprval())
-                                    .and_then(|v| v.as_real());
+                                    .and_then(|v| v.as_real())
+                                    // Convenience: the QUOTED spelling
+                                    // `(* std="25.0" *)` is accepted too --
+                                    // parsed strictly as one bare number
+                                    // (`"25 ohm"`, `"inf"`, `"nan"` are
+                                    // refused; a negative falls to the same
+                                    // range check as the numeric form).
+                                    .or_else(|| {
+                                        expr.as_ref()
+                                            .and_then(|e| e.as_str_literal())
+                                            .and_then(|lit| {
+                                                lit.trim().parse::<f64>().ok()
+                                            })
+                                            .filter(|v| v.is_finite())
+                                    });
                                 match val {
                                     Some(v) if v >= 0.0 => Some(v),
                                     _ => {
@@ -378,7 +393,8 @@ impl Diagnostic for IllegalSigmaAttr {
             .to_file_span(self.attr.syntax().text_range(), &db.sourcemap(root_file));
         Report::error()
             .with_message(format!(
-                "illegal expression supplied to '{}' attribute; expected a non-negative real literal",
+                "illegal expression supplied to '{}' attribute; expected a non-negative real \
+                 literal (a quoted number such as \"25.0\" is also accepted)",
                 self.attr.name().unwrap(),
             ))
             .with_labels(vec![Label {

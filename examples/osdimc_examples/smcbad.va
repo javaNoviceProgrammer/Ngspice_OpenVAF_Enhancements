@@ -7,5 +7,7 @@ module smcbad(a, b);
   electrical a, b;
   (* std=-3.0 *)             parameter real r = 1000.0;
   (* std=1.0, std_rel=0.1 *) parameter real q = 1.0;
-  analog I(a, b) <+ V(a, b) * 1e-3 * (r / r) * (q / q);
+  (* std="25 ohm" *)         parameter real w = 1.0;  // quoted garbage
+  (* std="inf" *)            parameter real x = 1.0;  // quoted non-finite
+  analog I(a, b) <+ V(a, b) * 1e-3 * (r / r) * (q / q) * (w / w) * (x / x);
 endmodule
