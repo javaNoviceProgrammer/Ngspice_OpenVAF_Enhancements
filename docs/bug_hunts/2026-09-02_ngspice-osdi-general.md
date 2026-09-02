@@ -109,8 +109,14 @@ than broad. What that means:
 * **Everything else in ngspice + OSDI was not touched**: parameter and
   `alter`/`altermod` paths, node collapse, temperature, AC and noise, `$limit`,
   `absdelay`/`last_crossing`, terminal currents, the matrix/solver layer.
-* **Root cause was not established.** H1 is characterised, not diagnosed — why
-  the descriptor crossing NULLs the scan cursor is left to whoever fixes it.
-  The table above is meant to be the diagnostic starting point.
+* **Root cause was not established *in this hunt*.** H1 was characterised, not
+  diagnosed. It has since been **diagnosed and fixed** in
+  [Enhancement-540](../../enhancements_doc/Enhancement-540.md): the scan
+  protocol (`ScanBegin` → `Scan*` → `ScanCount`) communicates through runtime
+  globals rather than MIR values, so the init/eval splitter was free to hoist
+  the field scanner into instance setup while `ScanBegin` stayed pinned in
+  eval. Worth noting the defect was **not in the file-I/O runtime at all** —
+  the fix is one predicate in `hir_lower`. The table above was indeed the
+  diagnostic starting point.
 
 No claim is made that these areas are sound; they were simply not looked at.

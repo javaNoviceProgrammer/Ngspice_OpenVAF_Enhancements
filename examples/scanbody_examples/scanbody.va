@@ -1,0 +1,28 @@
+`include "disciplines.vams"
+// A file descriptor opened in @(initial_step) and SCANNED in the analog body.
+//
+// This crashed the simulator with a SIGSEGV. `$sscanf`/`$fscanf` lower to a
+// ScanBegin -> Scan* -> ScanCount sequence that communicates through the
+// runtime's cursor globals rather than through MIR values, so nothing in the
+// dataflow tied the three together. The init/eval splitter -- which copies
+// every instruction that is not operating-point dependent into the
+// instance-setup function -- hoisted the field scanner and the count while
+// leaving ScanBegin behind with the descriptor it depends on. Setup then ran a
+// scanner with the cursor never initialised: NULL dereference in
+// osdi_scan_real.
+//
+// rdata.txt's first field is 2.0, so the device is a 500 ohm conductance and
+// the deck's 1k divider must land on exactly 500/1500.
+module scanbody(a, b);
+  inout a, b;
+  electrical a, b;
+  integer fd, n;
+  real g;
+  (* desc="gread" *) real gread;
+  analog begin
+    @(initial_step) fd = $fopen("scanbody_data.txt", "r");
+    n = $fscanf(fd, "%g", g);
+    gread = g;
+    I(a, b) <+ V(a, b) * g * 1e-3;
+  end
+endmodule

@@ -628,3 +628,10 @@ examples/lrmio_examples/lrmio_data.txt
 # Enhancement-539 perf pin: generated ladder decks and the compiled fixture
 examples/abstolperf_examples/_ap_*.cir
 examples/abstolperf_examples/*.osdi
+
+# scanbody: generated decks, the compiled fixtures and the data file the
+# models read (the solver harness restores decks at process exit, so these
+# outlive the script's own cleanup -- same as every other deck-generating suite)
+examples/scanbody_examples/_sb*.cir
+examples/scanbody_examples/*.osdi
+examples/scanbody_examples/scanbody_data.txt

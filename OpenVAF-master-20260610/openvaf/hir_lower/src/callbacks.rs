@@ -515,6 +515,26 @@ impl CallBackKind {
                 | CallBackKind::SimParamStrOpt
                 | CallBackKind::LimDiscontinuity
                 | CallBackKind::BuiltinLimit { .. }
+                // The scan protocol. These three do not depend on the operating
+                // point in any physical sense -- they are listed here because
+                // this predicate is what pins an instruction into the eval
+                // function, and they MUST NOT be separated from one another.
+                //
+                // `$sscanf`/`$fscanf` lower to ScanBegin -> Scan* -> ScanCount,
+                // a sequence that communicates through the runtime's cursor
+                // globals rather than through MIR values. Nothing in the
+                // dataflow ties them together, so the init/eval splitter -- which
+                // copies every instruction that is not op-dependent into the
+                // instance-setup function -- was free to hoist `Scan`/`ScanCount`
+                // while leaving `ScanBegin` behind with the descriptor it depends
+                // on. Setup then ran a field scanner with the cursor never
+                // initialised and SEGFAULTED on the NULL dereference.
+                //
+                // Marking the whole protocol keeps the three together in eval,
+                // which is the only place the sequence is well-defined.
+                | CallBackKind::ScanBegin
+                | CallBackKind::Scan(_)
+                | CallBackKind::ScanCount
         )
     }
 

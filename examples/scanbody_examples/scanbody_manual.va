@@ -1,0 +1,19 @@
+`include "disciplines.vams"
+// The MANUAL equivalent of the above -- $fgets into a string, then $sscanf on
+// that string. It crashed identically, which is what proved the defect was the
+// scan protocol being split rather than anything specific to $fscanf.
+module scanbody_manual(a, b);
+  inout a, b;
+  electrical a, b;
+  integer fd, n, c;
+  real g;
+  string s;
+  (* desc="gread" *) real gread;
+  analog begin
+    @(initial_step) fd = $fopen("scanbody_data.txt", "r");
+    c = $fgets(s, fd);
+    n = $sscanf(s, "%g", g);
+    gread = g;
+    I(a, b) <+ V(a, b) * g * 1e-3;
+  end
+endmodule
