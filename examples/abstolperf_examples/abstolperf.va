@@ -1,0 +1,15 @@
+`include "disciplines.vams"
+// A deliberately trivial two-terminal device on the STANDARD electrical
+// discipline -- and that is the whole point of this fixture.
+//
+// `disciplines.vams` declares abstol on the standard natures (Voltage = 1u,
+// Current = 1p), so EVERY instance of ANY ordinary OSDI model feeds the
+// LRM 3.6.1 nature-tolerance path in OSDIsetup. No custom nature is needed to
+// exercise it, which is exactly the fact that made the first implementation's
+// cost matter: it was written believing the path was rare.
+module abstolperf(a, b);
+  inout a, b;
+  electrical a, b;
+  parameter real r = 1000.0 from (0:inf);
+  analog I(a, b) <+ V(a, b) / r;
+endmodule

@@ -624,3 +624,7 @@ examples/lrmio_examples/*.osdi
 examples/lrmio_examples/mcd_*.txt
 examples/lrmio_examples/lrmio_out.txt
 examples/lrmio_examples/lrmio_data.txt
+
+# Enhancement-539 perf pin: generated ladder decks and the compiled fixture
+examples/abstolperf_examples/_ap_*.cir
+examples/abstolperf_examples/*.osdi
