@@ -145,6 +145,27 @@ static const char *e469_plot_kw[] = {
     NULL
 };
 
+/* F1: output commands whose ARGUMENT-LESS form means "everything".
+ * `write file.raw` with no vector arguments writes every vector -- com_write()
+ * takes the first word as the file name and, finding nothing after it, expands
+ * `all` itself. saveused stood aside on an EXPLICIT `all` but did not recognise
+ * this spelling as the same request, so the raw file was pruned to whatever
+ * some other line happened to name: a deck that wrote a full raw for offline
+ * work and also printed one node for a sanity check silently lost every other
+ * node. Under-saving turns a performance option into a correctness bug, which
+ * is the one thing this feature must not do. */
+static const char *e469_implicit_all[] = { "write", NULL };
+
+/* F2: commands whose bare words may name vectors even though they produce no
+ * output themselves. ngspice stores a node voltage as a vector named after the
+ * node, so `let y = a2 + a3` reads two of them by their plain names -- legal,
+ * and the reference scan only knows v()/i()/@dev[param]. Collecting here is
+ * deliberately generous: the LHS name and any stray word are registered too,
+ * which costs a little memory and, since E-496 marks inferred saves, produces
+ * no unmatched-name warning. Over-saving costs memory; under-saving costs the
+ * answer. */
+static const char *e469_expr_cmds[] = { "let", NULL };
+
 /* commands whose bare words are grammar rather than vectors. `meas` names its
  * analysis, its result and its function as bare words -- `meas tran m1 FIND
  * v(b) AT 50u` offered `tran`, `m1`, `find` and `at` -- while the vectors it
@@ -256,6 +277,38 @@ static void e469_scan_refs(const char *line, wordlist **wl)
     }
 }
 
+/* F2: register every identifier inside an expression token.
+ *
+ * `gettok` does not break on `=`, so `let y = a2 + a3` arrives as the three
+ * tokens `y=a2`, `+`, `a3`. The operator test below then skipped `y=a2` whole
+ * and the node `a2` was never registered, while `a3` survived only because it
+ * happened to stand alone -- which is why the defect looked intermittent.
+ * Splitting on the operator set recovers the names. Registering a little too
+ * much is the intended trade: a function name or an LHS variable that matches
+ * no vector costs a slot and, since E-496 marks inferred saves, warns about
+ * nothing. */
+static void e469_add_expr_names(const char *tok, wordlist **wl)
+{
+    const char *p = tok;
+    char buf[128];
+
+    while (*p) {
+        size_t n = 0;
+        while (*p && !(isalpha_c(*p) || *p == '_'))
+            p++;                                 /* skip operators and digits */
+        while (p[n] && (isalnum_c(p[n]) || p[n] == '_'))
+            n++;
+        if (n == 0)
+            break;
+        if (n < sizeof buf) {
+            memcpy(buf, p, n);
+            buf[n] = '\0';
+            e469_add(wl, buf);
+        }
+        p += n;
+    }
+}
+
 /* Plain node names written as bare words to an output command. Numbers,
    switches and the leading file name of `wrdata`-style commands are skipped;
    so is anything containing an operator, which belongs to an expression the
@@ -264,7 +317,7 @@ static int e469_scan_bare(const char *line, wordlist **wl)
 {
     char *c = (char *) line, *tok;
     char cmd[64];
-    int argno = 0, filefirst, saw_all = 0, plotcmd;
+    int argno = 0, filefirst, saw_all = 0, plotcmd, named = 0, exprcmd;
 
     tok = gettok(&c);
     if (!tok)
@@ -272,12 +325,13 @@ static int e469_scan_bare(const char *line, wordlist **wl)
     (void) strncpy(cmd, tok, sizeof cmd - 1);
     cmd[sizeof cmd - 1] = '\0';
     tfree(tok);
-    if (!e469_in_list(cmd, e469_out_cmds))
-        return 0;
+    if (!e469_in_list(cmd, e469_out_cmds) && !e469_in_list(cmd, e469_expr_cmds))
+        return 0;                            /* F2: `let` joins the scan */
     if (e469_in_list(cmd, e469_no_bare))     /* Enhancement-496 */
         return 0;
     filefirst = e469_in_list(cmd, e469_file_first);
     plotcmd = e469_in_list(cmd, e469_plot_cmds);
+    exprcmd = e469_in_list(cmd, e469_expr_cmds);
 
     while ((tok = gettok(&c)) != NULL) {
         argno++;
@@ -286,29 +340,45 @@ static int e469_scan_bare(const char *line, wordlist **wl)
             tfree(tok);
             break;
         }
+        named++;                             /* F1: the line named something */
         if (filefirst && argno == 1) {          /* the output file */
+            named--;                             /* not a vector */
             tfree(tok);
             continue;
         }
         if (tok[0] == '-' || tok[0] == '>' || tok[0] == '<') {
+            named--;
             tfree(tok);
             continue;
         }
         if (isdigit_c(tok[0]) || tok[0] == '.' || tok[0] == '+') {
+            named--;
             tfree(tok);                          /* a number, not a vector */
             continue;
         }
-        if (strpbrk(tok, "()[]@=*/+-,'\"")) {    /* handled by the ref scan */
+        if (strpbrk(tok, "()[]@=*/+-,'\"")) {
+            /* F2: on an expression command the names are INSIDE the token,
+             * so pull them out; on an output command the reference scan
+             * already covers v()/i()/@dev[param] and splitting would only
+             * add noise. */
+            if (exprcmd)
+                e469_add_expr_names(tok, wl);
             tfree(tok);
             continue;
         }
         if (plotcmd && e469_in_list(tok, e469_plot_kw)) {
+            named--;
             tfree(tok);                          /* Enhancement-496: grammar */
             continue;
         }
         e469_add(wl, tok);
         tfree(tok);
     }
+    /* F1: an output command whose argument-less form means "everything", and
+     * which named nothing, IS a request for everything -- treat it exactly as
+     * a written-out `all`. */
+    if (!named && !saw_all && e469_in_list(cmd, e469_implicit_all))
+        saw_all = 1;
     return saw_all;
 }
 
@@ -359,6 +429,12 @@ void ft_saveused(wordlist *controls)
                 any_out = 1;
                 if (e469_scan_bare(l, &saves))
                     saw_all = 1;
+            } else if (e469_in_list(first, e469_expr_cmds)) {
+                /* F2: collect the plain node names an expression reads. NOT an
+                 * output command -- a block of nothing but `let` still has
+                 * nothing to infer an output set from, so any_out stays clear
+                 * and the run is left alone. */
+                e469_scan_bare(l, &saves);
             }
             tfree(first);
         }

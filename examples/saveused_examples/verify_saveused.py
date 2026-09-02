@@ -174,5 +174,37 @@ out = run(".option saveused", WR, "noopt")
 check("[5] the option name is registered, so no 'unknown option' warning",
       "unknown option" not in out, "")
 
+# ---------------------------------------------------------------- F1, F2 ----
+# Two under-saves found by a bug hunt (docs/bug_hunts/). Both are the failure
+# this feature's own source comment calls out: "under-saving turns a
+# performance option into a correctness bug".
+print("\nan implicit-all `write`, and bare node names in an expression")
+
+# F1: `write file.raw` with no vector arguments means EVERYTHING. saveused stood
+# aside on an explicit `all` but not on this spelling, so a stray `print`
+# elsewhere in the block pruned the raw file to whatever that print named.
+out = run(".option saveused", "print v(out)\nwrite _su_f1.raw", "f1")
+n, names = kept(out)
+check("[F1] a `print` beside an implicit-all `write` does not prune it",
+      names == ALL, f"{names}")
+out = run(".option saveused", "write _su_f1b.raw", "f1b")
+check("[F1] ...and a bare `write` alone is still everything",
+      kept(out)[1] == ALL, f"{kept(out)[1]}")
+# the option must still restrict when the block really does name its vectors
+out = run(".option saveused", WR, "f1c")
+check("[F1] ...while a block that names its vectors is still restricted",
+      kept(out)[1] == ["out"], f"{kept(out)[1]}")
+
+# F2: ngspice stores a node voltage as a vector named after the node, so
+# `let y = mid + out` reads two of them by their plain names. `gettok` glues
+# `y = mid` into one token, so the operator test skipped the name inside it.
+out = run(".option saveused", "let y = mid + out\nprint y", "f2")
+check("[F2] bare node names inside a `let` are saved",
+      "not available" not in out and "invalid" not in out,
+      "".join(l for l in out.splitlines(True) if "not available" in l)[:60])
+out = run(".option saveused", "let y = v(mid) + v(out)\nprint y", "f2v")
+check("[F2] ...and the v() spelling still works",
+      "not available" not in out and "invalid" not in out, "")
+
 print(f"\n{'ALL PASS' if passed == checks else 'FAILURES'}: {passed}/{checks} passed")
 sys.exit(0 if passed == checks else 1)
