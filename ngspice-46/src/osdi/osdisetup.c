@@ -287,7 +287,72 @@ static void write_node_mapping(const OsdiDescriptor *descr, void *inst,
  * declares, so the convergence test judges it by the tolerance the model asked
  * for rather than the circuit-wide default. Nodes shared with other devices
  * keep the TIGHTEST claim; a model that declares nothing leaves the node at 0
- * and the global tolerance continues to apply. */
+ * and the global tolerance continues to apply.
+ *
+ * The tolerances are collected into an array INDEXED BY NODE NUMBER and applied
+ * in one pass per OSDIsetup call, rather than written straight onto the CKTnode
+ * as each instance is set up. The direct version searched the CKTnode list for
+ * every (instance, node) pair -- O(instances x nodes x circuit nodes) -- which
+ * was written on the assumption that models declaring an abstol are rare. They
+ * are not: `disciplines.vams` declares abstol on the STANDARD natures, so the
+ * path runs for every OSDI node in every deck. On a 17-model photonic deck that
+ * cost 4.1 s of a 6.2 s run, tripling it. Collecting is O(1) per pair and the
+ * single flush is O(circuit nodes) per model type. */
+static double *osdi_pending_abstol;      /* indexed by global node number */
+static uint32_t osdi_pending_abstol_len;
+static CKTcircuit *osdi_pending_abstol_ckt;
+
+static void note_node_abstol(uint32_t gnode, double tol) {
+  if (gnode == 0 || tol <= 0.0) {
+    return; /* ground, or nothing declared */
+  }
+  if (gnode >= osdi_pending_abstol_len) {
+    uint32_t want = gnode + 64, k;
+    double *grown = TREALLOC(double, osdi_pending_abstol, want);
+    if (!grown) {
+      return; /* out of memory: the circuit-wide tolerance still applies */
+    }
+    for (k = osdi_pending_abstol_len; k < want; k++) {
+      grown[k] = 0.0;
+    }
+    osdi_pending_abstol = grown;
+    osdi_pending_abstol_len = want;
+  }
+  if (osdi_pending_abstol[gnode] <= 0.0 || tol < osdi_pending_abstol[gnode]) {
+    osdi_pending_abstol[gnode] = tol; /* tightest claim wins */
+  }
+}
+
+/* One walk of the node list, applying everything collected so far. Re-running
+ * it after a later model type has added more is harmless: tightest-wins makes
+ * re-application idempotent. */
+static void flush_node_abstol(CKTcircuit *ckt) {
+  CKTnode *n;
+
+  if (!ckt || !osdi_pending_abstol) {
+    return;
+  }
+  for (n = ckt->CKTnodes; n; n = n->next) {
+    uint32_t num;
+    double tol;
+    if (n->number < 0) {
+      continue;
+    }
+    num = (uint32_t)n->number;
+    if (num >= osdi_pending_abstol_len) {
+      continue;
+    }
+    tol = osdi_pending_abstol[num];
+    if (tol > 0.0 && (n->natabstol <= 0.0 || tol < n->natabstol)) {
+      if (ft_ngdebug) {
+        fprintf(stderr, "OSDI: node %u convergence abstol = %g "
+                        "(declared by its nature)\n", num, tol);
+      }
+      n->natabstol = tol;
+    }
+  }
+}
+
 static void apply_node_abstol(CKTcircuit *ckt, const OsdiRegistryEntry *entry,
                               const OsdiDescriptor *descr, void *inst) {
   uint32_t *node_mapping;
@@ -296,26 +361,17 @@ static void apply_node_abstol(CKTcircuit *ckt, const OsdiRegistryEntry *entry,
   if (!ckt || !entry || !entry->natures) {
     return;
   }
+  /* A different circuit means the collected tolerances belong to the previous
+   * one; node numbers are per-circuit, so they must not carry over. */
+  if (osdi_pending_abstol_ckt != ckt) {
+    tfree(osdi_pending_abstol);
+    osdi_pending_abstol = NULL;
+    osdi_pending_abstol_len = 0;
+    osdi_pending_abstol_ckt = ckt;
+  }
   node_mapping = (uint32_t *)(((char *)inst) + descr->node_mapping_offset);
   for (i = 0; i < descr->num_nodes; i++) {
-    double tol = osdi_node_abstol(entry, i);
-    uint32_t gnode = node_mapping[i];
-    CKTnode *n;
-    if (tol <= 0.0 || gnode == 0) {
-      continue; /* nothing declared, or ground */
-    }
-    for (n = ckt->CKTnodes; n; n = n->next) {
-      if ((uint32_t)n->number == gnode) {
-        if (n->natabstol <= 0.0 || tol < n->natabstol) {
-          if (ft_ngdebug) {
-            fprintf(stderr, "OSDI: node %u convergence abstol = %g "
-                            "(declared by its nature)\n", gnode, tol);
-          }
-          n->natabstol = tol;
-        }
-        break;
-      }
-    }
+    note_node_abstol(node_mapping[i], osdi_node_abstol(entry, i));
   }
 }
 
@@ -930,6 +986,12 @@ int OSDIsetup(SMPmatrix *matrix, GENmodel *inModel, CKTcircuit *ckt,
     osdimc_apply_type(ckt, inModel->GENmodType, seed535,
                       cp_getvar("osdimc_verbose", CP_BOOL, NULL, 0));
   }
+
+  /* LRM 3.6.1: apply the nature tolerances this model type collected, in one
+   * walk of the node list rather than a search per instance (see
+   * apply_node_abstol). Every node exists by now, and tightest-wins makes the
+   * re-application by a later model type idempotent. */
+  flush_node_abstol(ckt);
 
   /* Enhancement-426: the FIRST failure, not whatever the last model happened to
    * return -- see the note at first_err's declaration. */
