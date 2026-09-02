@@ -1,0 +1,20 @@
+`include "disciplines.vams"
+module seed(a,b); inout a,b; electrical a,b;
+  integer s;
+  (* desc="s0" *) integer s0;  (* desc="s1" *) integer s1;  (* desc="s2" *) integer s2;
+  (* desc="r1" *) integer r1;  (* desc="r2" *) integer r2;  (* desc="r3" *) integer r3;
+  (* desc="u1" *) real u1;     (* desc="u2" *) real u2;     (* desc="u3" *) real u3;
+  analog begin
+    @(initial_step) begin
+      s = 1234;  s0 = s;
+      r1 = $random(s);  s1 = s;      // LRM: seed is INOUT -> s must change
+      r2 = $random(s);  s2 = s;      // LRM: "a new number each time it is called"
+      r3 = $random(s);
+      s = 77;
+      u1 = $rdist_uniform(s, 0.0, 1.0);
+      u2 = $rdist_uniform(s, 0.0, 1.0);
+      u3 = $rdist_uniform(s, 0.0, 1.0);
+    end
+    I(a,b) <+ V(a,b)*1e-6;
+  end
+endmodule

@@ -1,0 +1,11 @@
+loop draw
+v1 1 0 dc 1
+n1 1 0 lm
+.model lm loop
+.control
+pre_osdi loop.osdi
+op
+print @n1[d1] @n1[d2] @n1[d3] @n1[nd]
+quit
+.endc
+.end

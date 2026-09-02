@@ -1,0 +1,10 @@
+fgets
+v1 1 0 dc 1
+n1 1 0 rm
+.model rm rd2
+.control
+pre_osdi rd2.osdi
+op
+quit
+.endc
+.end

@@ -1,0 +1,15 @@
+`include "disciplines.vams"
+module fio2(a,b); inout a,b; electrical a,b;
+  integer m1;
+  analog begin
+    @(initial_step) begin
+      // LRM 9.5.1: "The least significant bit (bit 0) of an mcd always refers to
+      // the standard output" -- so writing to descriptor 1 must reach stdout.
+      $fdisplay(1, "TO-MCD-1-SHOULD-BE-STDOUT");
+      m1 = $fopen("g1.txt");
+      $strobe("first user mcd = %0d (LRM: must have bit0 clear, i.e. >= 2)", m1);
+      $fclose(m1);
+    end
+    I(a,b) <+ V(a,b)*1e-3;
+  end
+endmodule

@@ -1,0 +1,34 @@
+// LRM 3.6.1: user-defined natures/disciplines, derived natures, ddt_nature/idt_nature
+nature myvoltage;
+  units = "V"; access = Vm; abstol = 1u; idt_nature = myflux;
+endnature
+nature myflux;
+  units = "Wb"; access = Phi; abstol = 1p; ddt_nature = myvoltage;
+endnature
+nature mycurrent;
+  units = "A"; access = Im; abstol = 1p; idt_nature = mycharge;
+endnature
+nature mycharge;
+  units = "C"; access = Q; abstol = 1f; ddt_nature = mycurrent;
+endnature
+nature myvoltage_derived : myvoltage;      // 3.6.1.1 derived nature
+  abstol = 1n;
+endnature
+discipline mydis;
+  potential myvoltage; flow mycurrent;
+enddiscipline
+discipline sigflow;                        // signal-flow: potential only
+  potential myvoltage;
+enddiscipline
+
+module nat(a,b);
+  inout a,b; mydis a,b;
+  branch (a,b) br;                         // 3.x named branch
+  (* desc="vv" *) real vv;
+  (* desc="ii" *) real ii;
+  analog begin
+    vv = Vm(br);                            // access via user-defined access fn
+    ii = Im(br);
+    Im(br) <+ Vm(br)*1e-3;
+  end
+endmodule

@@ -1,0 +1,16 @@
+%m across instances and hierarchy
+.subckt leg p
+nsub p 0 fm
+.ends
+v1 1 0 dc 1
+na 1 0 fm
+nb 1 0 fm
+x1 1 leg
+x2 1 leg
+.model fm fmt
+.control
+pre_osdi fmt.osdi
+op
+quit
+.endc
+.end

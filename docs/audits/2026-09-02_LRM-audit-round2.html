@@ -1,0 +1,303 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LRM audit 2026-09-02</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Serif:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+</head>
+<body>
+<style>
+  :root {
+    --paper: #F7F7F4;
+    --surface: #FFFFFF;
+    --ink: #21262D;
+    --muted: #5C6470;
+    --faint: #8A919C;
+    --line: #E2E3DE;
+    --accent: #0E5E68;
+    --accent-soft: #E3EEEF;
+    --sev-bug: #B23A2E;
+    --sev-bug-bg: #F9ECEA;
+    --sev-dev: #96690F;
+    --sev-dev-bg: #F8F1E1;
+    --sev-miss: #6F58B8;
+    --sev-miss-bg: #EFECF8;
+    --sev-doc: #31699E;
+    --sev-doc-bg: #E8F0F8;
+    --sev-ok: #2E7D4F;
+    --sev-ok-bg: #E8F3EC;
+    --code-bg: #EFF0EC;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #14171C;
+      --surface: #1C2026;
+      --ink: #E5E7EA;
+      --muted: #9AA1AB;
+      --faint: #6E7681;
+      --line: #2C313A;
+      --accent: #57B2BC;
+      --accent-soft: #16333A;
+      --sev-bug: #E58074;
+      --sev-bug-bg: #3A211E;
+      --sev-dev: #D9A94E;
+      --sev-dev-bg: #362B14;
+      --sev-miss: #AC9AE3;
+      --sev-miss-bg: #292239;
+      --sev-doc: #7FAEDA;
+      --sev-doc-bg: #1C2B3A;
+      --sev-ok: #74BD92;
+      --sev-ok-bg: #1B3126;
+      --code-bg: #262B33;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #14171C;
+    --surface: #1C2026;
+    --ink: #E5E7EA;
+    --muted: #9AA1AB;
+    --faint: #6E7681;
+    --line: #2C313A;
+    --accent: #57B2BC;
+    --accent-soft: #16333A;
+    --sev-bug: #E58074;
+    --sev-bug-bg: #3A211E;
+    --sev-dev: #D9A94E;
+    --sev-dev-bg: #362B14;
+    --sev-miss: #AC9AE3;
+    --sev-miss-bg: #292239;
+    --sev-doc: #7FAEDA;
+    --sev-doc-bg: #1C2B3A;
+    --sev-ok: #74BD92;
+    --sev-ok-bg: #1B3126;
+    --code-bg: #262B33;
+  }
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+    font-size: 16px;
+    line-height: 1.6;
+    margin: 0;
+  }
+  .wrap { max-width: 860px; margin: 0 auto; padding: 48px 24px 96px; }
+  header.masthead { border-bottom: 3px solid var(--ink); padding-bottom: 28px; margin-bottom: 36px; }
+  .eyebrow {
+    font-family: "IBM Plex Mono", monospace; font-size: 12px; letter-spacing: 0.14em;
+    text-transform: uppercase; color: var(--accent); margin-bottom: 14px;
+  }
+  h1 {
+    font-family: "IBM Plex Serif", Georgia, serif; font-weight: 600;
+    font-size: clamp(30px, 5vw, 44px); line-height: 1.12; margin: 0 0 14px; text-wrap: balance;
+  }
+  .standfirst { font-size: 17.5px; color: var(--muted); max-width: 64ch; margin: 0; }
+  .metaline { font-family: "IBM Plex Mono", monospace; font-size: 12.5px; color: var(--faint); margin-top: 18px; }
+  h2 {
+    font-family: "IBM Plex Serif", Georgia, serif; font-weight: 600; font-size: 25px;
+    margin: 56px 0 6px; text-wrap: balance;
+  }
+  h2 .secno { color: var(--faint); font-family: "IBM Plex Mono", monospace; font-size: 15px; margin-right: 10px; }
+  h3 { font-size: 17px; font-weight: 600; margin: 34px 0 12px; }
+  p { max-width: 70ch; }
+  p.lede { color: var(--muted); margin-top: 0; }
+  a { color: var(--accent); }
+  code, .mono { font-family: "IBM Plex Mono", monospace; font-size: 0.86em; }
+  code { background: var(--code-bg); padding: 1px 5px; border-radius: 3px; }
+  /* scoreboard */
+  .score { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; margin: 30px 0 8px; }
+  .scard { background: var(--surface); border: 1px solid var(--line); border-top: 3px solid var(--sc, var(--accent)); padding: 14px 16px 12px; }
+  .scard .n { font-family: "IBM Plex Serif", Georgia, serif; font-size: 34px; font-weight: 600; line-height: 1; color: var(--sc, var(--ink)); font-variant-numeric: tabular-nums; }
+  .scard .l { font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin-top: 6px; }
+  .scorenote { font-size: 13.5px; color: var(--faint); margin-top: 10px; }
+  /* findings */
+  .finding {
+    background: var(--surface); border: 1px solid var(--line);
+    border-left: 4px solid var(--fc, var(--accent));
+    padding: 14px 18px 13px; margin: 0 0 10px;
+  }
+  .f-bug { --fc: var(--sev-bug); }
+  .f-dev { --fc: var(--sev-dev); }
+  .f-miss { --fc: var(--sev-miss); }
+  .f-doc { --fc: var(--sev-doc); }
+  .f-ok { --fc: var(--sev-ok); }
+  .finding .head { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: baseline; }
+  .finding .t { font-weight: 600; font-size: 15.5px; }
+  .chip {
+    font-family: "IBM Plex Mono", monospace; font-size: 10.5px; letter-spacing: 0.08em;
+    text-transform: uppercase; padding: 2px 8px; border-radius: 999px; white-space: nowrap;
+    background: var(--cbg); color: var(--cfg);
+  }
+  .c-bug { --cbg: var(--sev-bug-bg); --cfg: var(--sev-bug); }
+  .c-dev { --cbg: var(--sev-dev-bg); --cfg: var(--sev-dev); }
+  .c-miss { --cbg: var(--sev-miss-bg); --cfg: var(--sev-miss); }
+  .c-doc { --cbg: var(--sev-doc-bg); --cfg: var(--sev-doc); }
+  .c-ok { --cbg: var(--sev-ok-bg); --cfg: var(--sev-ok); }
+  .lrm { font-family: "IBM Plex Mono", monospace; font-size: 11.5px; color: var(--faint); white-space: nowrap; }
+  .finding .d { font-size: 14.5px; color: var(--muted); margin-top: 5px; max-width: 76ch; }
+  .finding .d strong { color: var(--ink); font-weight: 600; }
+  .finding .ev {
+    font-family: "IBM Plex Mono", monospace; font-size: 12.5px; color: var(--muted);
+    background: var(--code-bg); border-radius: 4px; padding: 7px 10px; margin-top: 9px;
+    overflow-x: auto; white-space: pre; line-height: 1.55;
+  }
+  /* tables */
+  .tblwrap { overflow-x: auto; border: 1px solid var(--line); background: var(--surface); }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  th { font-size: 11.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); text-align: left; }
+  th, td { padding: 9px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  td.mono { font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .oklist { padding-left: 0; list-style: none; max-width: 78ch; }
+  .oklist li { padding: 7px 0 7px 26px; position: relative; border-bottom: 1px dashed var(--line); font-size: 14.5px; }
+  .oklist li::before { content: "✓"; position: absolute; left: 2px; color: var(--sev-ok); font-weight: 600; }
+  .toc { background: var(--surface); border: 1px solid var(--line); padding: 18px 22px; margin-top: 30px; }
+  .toc ol { margin: 8px 0 0; padding-left: 22px; columns: 2; column-gap: 40px; font-size: 14.5px; }
+  .toc ol li { margin-bottom: 5px; }
+  @media (max-width: 640px) { .toc ol { columns: 1; } }
+  .callout { background: var(--accent-soft); border-left: 4px solid var(--accent); padding: 14px 18px; margin: 22px 0; font-size: 15px; max-width: 76ch; }
+  .refuted { opacity: 0.85; }
+  footer { margin-top: 64px; border-top: 1px solid var(--line); padding-top: 18px; font-size: 13px; color: var(--faint); }
+</style>
+<div class="wrap">
+<header class="masthead">
+  <div class="eyebrow">Conformance audit · Accellera VAMS-2023 · fresh pass over 15 areas</div>
+  <h1>The second LRM audit: six findings the first pass did not reach</h1>
+  <p class="standfirst">An independent re-audit of <strong>openvaf-r</strong> and the <strong>ngspice-46 OSDI</strong> layer against the Verilog-AMS 2023 LRM. The August pass fixed 39 bugs and left the core in good shape; this pass re-read the normative text for all fifteen assigned areas and went looking for what was still hiding. Six findings, every one reproduced against the committed binaries and traced to the line of code that causes it.</p>
+  <div class="metaline">2026-09-02 · LRM: docs/VAMS-LRM-2023.pdf (442 pp, clauses 2–6, 9, 10, Annexes C/E) · compiler: OpenVAF-master-20260610 · simulator: ngspice-46 · prior passes: 2026-08-31 audit + re-audit</div>
+</header>
+
+<div class="score">
+  <div class="scard" style="--sc: var(--sev-bug)"><div class="n">3</div><div class="l">Silent wrong answers</div></div>
+  <div class="scard" style="--sc: var(--sev-bug)"><div class="n">2</div><div class="l">Other bugs</div></div>
+  <div class="scard" style="--sc: var(--sev-miss)"><div class="n">1</div><div class="l">ABI gap</div></div>
+  <div class="scard" style="--sc: var(--sev-ok)"><div class="n">15</div><div class="l">Areas audited</div></div>
+</div>
+<p class="scorenote">Every finding below was reproduced with a minimal deck against the committed binaries, then traced to a specific file and line. Where a behaviour looked wrong but turned out to be correct on re-reading the LRM, it is recorded in §5 rather than dropped.</p>
+
+<div class="toc">
+  <strong>Contents</strong>
+  <ol>
+    <li><a href="#verdict">The verdict</a></li>
+    <li><a href="#method">How this pass ran</a></li>
+    <li><a href="#findings">The six findings</a></li>
+    <li><a href="#conformant">What was measured and holds</a></li>
+    <li><a href="#notquite">Things that looked wrong and are not</a></li>
+    <li><a href="#coverage">Coverage map</a></li>
+  </ol>
+</div>
+
+<h2 id="verdict"><span class="secno">1</span>The verdict</h2>
+<p class="lede">The numerical core is excellent. What still breaks is state that spans calls — file position, RNG seed, instance identity.</p>
+<p>Everything that can be checked against a closed-form answer was checked, and it is right: the three <code>laplace</code> forms land on <strong>−3.01030&nbsp;dB and −45.000°</strong> at the pole frequency; <code>ddt</code>, <code>idt</code>, <code>ddx</code> and <code>absdelay</code> match analytic values exactly on a ramp; <code>ln1p(1e-16)</code> returns <code>1e-16</code> where a naive <code>ln(1+x)</code> collapses to zero, which is the entire reason that function exists; all fifteen parameter-range boundary cases resolve with the correct open/closed sense, including <code>exclude&nbsp;(30:40]</code>. That is the hard part of a compact-model toolchain and it is in good order.</p>
+<p>The six findings share a shape. Each one involves <strong>state that has to survive from one call to the next</strong> — a file's read position, a random seed, an instance's identity, a nature's tolerance — and in each case that state is either dropped at a boundary or was never given a channel to travel through. None of them is a mistake in a formula.</p>
+<div class="callout">Three findings produce <strong>wrong numbers or wrong data with no diagnostic on any channel</strong>: the RNG seed that never advances (a sampling loop silently returns one value N times), <code>$fclose</code>+<code>$fopen</code> that does not rewind (a re-read file yields different data), and the multichannel descriptor that is not a bit mask (the LRM's multi-file write lands in an unrelated file). Those are the recommended first fixes.</div>
+
+<h2 id="method"><span class="secno">2</span>How this pass ran</h2>
+<p>For each of the fifteen assigned areas the normative LRM text was extracted from the PDF and read first — never quoted from memory — then micro-models were written, compiled with the committed <code>openvaf-r</code>, and simulated with the committed <code>ngspice</code>. Expected values were derived independently (closed-form algebra, or Python/<code>scipy</code> for the numerical ones) so that a disagreement means something.</p>
+<p>Every finding was then pushed until it named a cause: the offending line in <code>openvaf/hir_lower</code>, <code>openvaf/osdi/stdlib.c</code> or <code>ngspice-46/src/osdi</code>. Two candidate findings were withdrawn after re-reading the LRM (§5). This pass deliberately did not re-test the 39 bugs the August audit fixed; it re-read the same clauses looking for what the earlier sweep had not exercised.</p>
+
+<h2 id="findings"><span class="secno">3</span>The six findings</h2>
+
+<h3>Silent wrong answers</h3>
+
+<div class="finding f-bug"><div class="head"><span class="chip c-bug">bug · silent</span><span class="t">The random-number seed is never advanced, so a sampling loop returns the same draw every iteration</span><span class="lrm">LRM 9.13.1 p.238</span></div>
+<div class="d">The LRM is unusually explicit: the seed “<em>is an <strong>inout</strong> argument; that is, a value is passed to the function and <strong>a different value is returned</strong> … only updated by the system function</em>”, and the function “<em>returns a <strong>new</strong> 32-bit random number <strong>each time it is called</strong></em>”. Measured: <code>s=1234</code> before <code>$random(s)</code>, and after three successive calls <code>s</code> is <strong>still 1234</strong> — the variable is never written back. Consequently one call site executed repeatedly cannot advance, and the canonical Monte-Carlo idiom degenerates to a constant with zero variance and no warning. Distinct call sites <em>do</em> get independent streams, which is why per-instance mismatch modelling works and why this went unnoticed.</div>
+<div class="ev">one call site, 5 loop iterations → 0.3361617 five times (1 distinct value, not 5)<br>20000 iterations of <code>$rdist_uniform(s,2,8)</code> → min = max = mean = 6.824131<br><code>$rdist_normal(s,5,2)</code> over 20000 → mean 3.547, sd <strong>NaN</strong> (variance is exactly zero, rounded negative)<br><code>$rdist_exponential(s,3)</code> → 2.12</div></div>
+
+<div class="finding f-bug"><div class="head"><span class="chip c-bug">bug · silent</span><span class="t"><code>$fclose</code> followed by <code>$fopen</code> does not rewind — a re-read file yields different data</span><span class="lrm">LRM 9.5.1 / IEEE 1364</span></div>
+<div class="d">Opening a file for reading must start at byte 0. Measured on a three-line file: open, <code>$fgets</code> → line 1 (correct); <code>$fclose</code>; open again, <code>$fgets</code> → <strong>line 2</strong>. The stream position survives the close.</div>
+<div class="d"><strong>Cause.</strong> <code>osdi_fopen</code> (<code>openvaf/osdi/stdlib.c:631</code>) dedups by filename and returns the existing descriptor, re-opening only when <code>!osdi_io_managed &amp;&amp; osdi_file_close_req[i]</code>. Once the I/O deferral machinery is engaged the <code>freopen</code> branch is skipped and the old position is kept. The dedup comment reasons only about the per-evaluation <em>open-write-close</em> idiom; the cost falls on the read path, which appears unintended.</div>
+<div class="ev">a model re-reading a lookup table per instance or per temperature point silently gets different rows each time, then EOF</div></div>
+
+<div class="finding f-bug"><div class="head"><span class="chip c-bug">bug · silent</span><span class="t">Multichannel descriptors are sequential integers, not bit masks — the LRM's multi-file write lands in an unrelated file</span><span class="lrm">LRM 9.5.1 p.228</span></div>
+<div class="d">The LRM defines a multichannel descriptor as “<em>a 32-bit integer in which a <strong>single bit is set</strong></em>”, reserves “<em>the least significant bit (bit 0) … <strong>always</strong> refers to the standard output</em>”, and specifies that output goes to several files “<em>by <strong>bitwise OR-ing</strong> together their multichannel descriptors</em>”. Measured: <code>$fopen("fa")</code>→1, <code>$fopen("fb")</code>→2, <code>$fopen("fc","w")</code>→3 — consecutive integers drawn from one namespace shared with file descriptors.</div>
+<div class="ev"><code>$fdisplay(mA|mB, "both")</code> wrote to <strong>neither</strong> file: <code>1|2 = 3</code> aliased the third file's descriptor, so the text landed in <code>fc.txt</code><br>the first user file is handed descriptor 1, the value the LRM reserves for stdout; <code>$fdisplay(1, …)</code> before any <code>$fopen</code> produced no output at all</div></div>
+
+<h3>Other bugs</h3>
+
+<div class="finding f-bug"><div class="head"><span class="chip c-bug">bug</span><span class="t"><code>%m</code> prints the module name, so it cannot identify the instance it exists to identify</span><span class="lrm">LRM 9.4.4 p.229</span></div>
+<div class="d">“<em>%m … causes the display task to print the hierarchical name of the module … which <strong>invokes</strong> the system task. This is useful when there are <strong>many instances</strong> of the module … the <code>%m</code> format specifier <strong>pinpoints the module instance</strong> responsible.</em>” One module instantiated four ways prints the same string every time.</div>
+<div class="d"><strong>Cause.</strong> <code>hir_lower/src/fmt.rs:85</code> expands <code>%m</code> to <code>self.path</code>, and <code>lib.rs:578</code> sets <code>let path = self.module.name(self.db)</code> — the <em>module</em> name, baked into the format literal at compile time, so no instance information can reach it. The correct name is demonstrably available at run time: ngspice's own prefix on the very same lines reads <code>OSDI na:</code> and <code>OSDI n.x1.nsub:</code>.</div>
+<div class="ev">instances na, nb, x1.nsub, x2.nsub → all four print <code>m=fmt</code></div></div>
+
+<div class="finding f-bug"><div class="head"><span class="chip c-bug">bug</span><span class="t"><code>$fscanf</code> consumes the whole line, so a following <code>$fgets</code> silently loses the remainder</span><span class="lrm">IEEE 1364 (via LRM 9.5)</span></div>
+<div class="d"><code>$fscanf</code> should consume only what its format matches, leaving the rest of the line for a following <code>$fgets</code> — the ordinary “scan the numbers, take the trailing label” idiom. Measured within a single open (so unrelated to the reopen finding above): <code>$fscanf(fd,"%d %g",iv,rv)</code> correctly returns <code>iv=10 rv=1.5</code> and a match count of 2, but the following <code>$fgets</code> returns <strong><code>"20 2.5 beta"</code></strong> instead of the remainder <code>" alpha"</code>. A pure <code>$fgets</code> sequence is correct, which isolates the defect to <code>$fscanf</code>.</div>
+<div class="d"><strong>Cause.</strong> <code>hir_lower/src/expr.rs:2469</code> lowers <code>$fscanf</code> as <em>“Read one line from the descriptor, then scan it like <code>$sscanf</code>”</em> — a <code>Fgets</code> call feeding a whitespace tokenizer (<code>osdi_scanf_begin</code>, <code>stdlib.c:1010</code>). Consuming a whole line is therefore structural, not incidental.</div></div>
+
+<h3>ABI gap</h3>
+
+<div class="finding f-miss"><div class="head"><span class="chip c-miss">gap · silent</span><span class="t">A nature's <code>abstol</code> is parsed and then discarded; it never reaches the simulator</span><span class="lrm">LRM 3.6.1 p.34</span></div>
+<div class="d"><code>abstol</code> is a required nature attribute whose purpose is the absolute convergence tolerance the simulator applies to signals of that nature — the standard natures set Current 1e-12, Charge 1e-14, Voltage 1e-6, Flux 1e-9, Temperature 1e-4. Every occurrence of <code>abstol</code> in the whole openvaf-r tree is inside the built-in <code>disciplines.vams</code> text (<code>vfs/src/va_std.rs</code>); nothing lowers or emits it. The OSDI ABI has no field for it either: <code>OsdiNode</code> (<code>osdi.h:158</code>) carries name, units, residual units, offsets, a nodeset and <code>is_flow</code>, but no tolerance. ngspice's only <code>abstol</code> is the global one from <code>.options</code>.</div>
+<div class="d">So a declared <code>abstol</code> has no effect: every node is converged against ngspice's global tolerance chosen by node <em>kind</em>. Nothing reports that the declaration was dropped. This is an ABI-level gap rather than a coding slip — closing it needs a tolerance field on <code>OsdiNode</code> plus ngspice honouring it at node registration.</div></div>
+
+<h2 id="conformant"><span class="secno">4</span>What was measured and holds</h2>
+<p class="lede">Positive results, each from a run against the committed binaries with an independently derived expectation.</p>
+
+<h3>Lexical conventions &amp; directives (LRM 2, 10)</h3>
+<div class="finding f-ok"><div class="d">Underscores ignored in numbers (<code>27_195_000</code>, <code>236.123_763_e-12</code>); every Table 2-1 scale factor exact, with <code>M</code>&nbsp;=&nbsp;1e6 per the LRM rather than SPICE's milli; all six invalid real forms the LRM lists (<code>.12</code>, <code>9.</code>, <code>4.E3</code>, <code>.2e-7</code>, <code>.1p</code>, <code>34.M</code>) rejected. String escapes byte-exact including octal <code>\101</code>→<code>A</code>, <code>\60</code>→<code>0</code>, <code>\7</code>→BEL. Escaped identifiers work and an escaped keyword (<code>\analog</code>) is correctly not a keyword. Block comments do not nest. Every clause-10 directive is accepted; <code>`begin_keywords "1364-2005"</code> is honoured with a located warning that it maps to VAMS-2023. Macros with arguments, <code>`__FILE__</code> and <code>`__LINE__</code> all exact.</div></div>
+
+<h3>Data types &amp; parameters (LRM 3)</h3>
+<div class="finding f-ok"><div class="d">All fifteen range-boundary probes resolve correctly, including the subtle <code>exclude (30:40]</code> where 30 is legal and 40 is refused. The LRM's rule that a <em>default</em> may sit outside its own range while only the instance value is an error is respected — openvaf-r warns (lint L027, with a documented suppression attribute) and compiles. String parameter value lists (<code>from '{"NMOS","PMOS"}</code>) accept and refuse correctly. Real→integer rounds away from zero (2.5→3, −2.5→−3). <code>localparam</code> cannot be set from the netlist and ngspice says so.</div></div>
+
+<h3>Expressions &amp; math (LRM 4)</h3>
+<div class="finding f-ok"><div class="d">Both function styles agree (<code>$ln(x)</code> = <code>ln(x)</code>); traditional <code>log()</code> is correctly the <em>decimal</em> log. <code>ln1p(1e-16)</code>=1e-16 and <code>expm1(1e-16)</code>=1e-16 where the naive forms give 0 — the accuracy guarantee genuinely holds. <code>hypot</code>, <code>atan2</code>, <code>pow</code>, <code>log10</code> exact; <code>min</code>/<code>max</code>/<code>abs</code> preserve integer type and promote correctly on mixed operands.</div></div>
+
+<h3>Natures, disciplines, branches (LRM 3.6–3.10)</h3>
+<div class="finding f-ok"><div class="d">User-defined natures, derived natures (<code>nature x : parent</code>), user disciplines (conservative and signal-flow), named branches and user-defined access functions all work end-to-end with exact values. (The <code>abstol</code> gap is §3.)</div></div>
+
+<h3>User-defined functions, events, analog operators, filters (LRM 4.5–4.7, 5.10)</h3>
+<div class="finding f-ok"><div class="d">Analog functions: <code>input</code>/<code>output</code>/<code>inout</code> formals, accumulation through an <code>inout</code>, return via the function name, integer return type — all exact. The LRM's restrictions are enforced: access functions, <code>ddt</code>/<code>idt</code> and recursion are all rejected inside an analog function.</div>
+<div class="d">Events on a five-cycle triangle: <code>cross(+1)</code>=5, <code>cross(−1)</code>=5, <code>cross(0)</code>=10, <code>timer(0,1u)</code>=6, <code>above()</code>=5, one <code>initial_step</code>, one <code>final_step</code>.</div>
+<div class="d">Core operators against analytic values on a 1&nbsp;V/µs ramp: <code>ddt</code>=1e6, <code>idt</code>=1.8e−5, <code>ddx(V²,V)</code>=2V=12, <code>absdelay(1µs)</code>=V(5µs)=5.</div>
+<div class="ev">laplace_nd / laplace_zp / laplace_np → −3.01030 dB and −45.000° at f<sub>c</sub> (analytic: 20·log₁₀(1/√2), −45°)<br>the LRM's null-argument form for “no zeros” (two adjacent commas) is supported; <code>{}</code> is correctly refused<br><code>transition(td=1u,tr=2u)</code> half-way at 3.006 µs; <code>slew(+1e6,−5e5)</code> crosses 0.5 V at 1.499 µs rising and 12.0 µs falling</div></div>
+
+<h3>Hierarchy, analog behaviour, analysis &amp; noise (LRM 5, 6)</h3>
+<div class="finding f-ok"><div class="d">By-order and by-name parameter overrides and port connections all take effect (a four-deep series chain lands on exactly −1.000 mA). Multiple analog blocks are allowed and concatenate <em>in order</em> (((1·10+2)·10+3)=123). Contributions accumulate; indirect assignment <code>V(a,b) : I(a,b) == 1e-3</code> forces exactly 1 mA; switch branches toggle potential/flow. <code>analysis()</code> reports correctly in every mode, and a noise function evaluates to 0 in large-signal analyses per LRM 4.6.4.</div></div>
+
+<h3>Kernel functions and the OSDI layer</h3>
+<div class="finding f-ok"><div class="d"><code>$temperature</code>=300.15 K; <code>$vt</code>=0.02586493 and <code>$vt(300)</code>=0.0258520, both matching kT/q exactly. <code>$param_given</code> distinguishes set from defaulted; <code>$simparam</code> returns its default for an unknown name. <code>$mfactor</code> scales currents exactly (m=1,2,4 → 1,2,4 mA). <code>$bound_step</code> is honoured (a 1 ns bound over 1 µs gives 1005 points against 59 unbounded). <code>$limit</code>'s unknown-function fallback warns per LRM 9.17.3.</div></div>
+
+<h3>The Annex C/E boundary</h3>
+<div class="finding f-ok"><div class="d">The sharpest test in this area passes: <code>1M</code> in Verilog-A <em>source</em> is 1e6 per LRM Table 2-1, while <code>1M</code> on a SPICE <code>.model</code> card is 1e−3 and <code>1MEG</code> is 1e6 per SPICE rules. The same token correctly means different things on either side of the boundary. Annex C's exclusions hold: <code>reg</code>, <code>wire</code>, <code>always</code>, digital <code>initial</code>, <code>task</code> and continuous <code>assign</code> are all rejected.</div></div>
+
+<h2 id="notquite"><span class="secno">5</span>Things that looked wrong and are not</h2>
+<p class="lede">Recorded so the next audit does not re-litigate them.</p>
+<div class="finding f-ok"><div class="head"><span class="t">An empty zero list <code>{}</code> for <code>laplace_zp</code> is refused</span></div>
+<div class="d">This looked like a gap until the clause was read: LRM 4.5.11 specifies the “no zeros” spelling as a <strong>null argument</strong> — “<em>characterised by two adjacent commas</em>” — not an empty concatenation. <code>laplace_zp(V(in), , {…})</code> compiles and gives the exact analytic response, and refusing <code>{}</code> as an empty concatenation is correct.</div></div>
+<div class="finding f-ok"><div class="head"><span class="t">Multiple <code>analog</code> blocks in one module are accepted</span></div>
+<div class="d">Not a subset violation: LRM 6.2 explicitly permits them and requires that they “<em>are concatenated in the order they appear</em>”, which was then verified with an order-dependent chain.</div></div>
+<div class="finding f-ok"><div class="head"><span class="t"><code>white_noise()</code> and <code>$temperature</code> inside an analog function</span></div>
+<div class="d">Accepted where a strict reading of LRM 4.7.1 might exclude them, but both behave correctly — noise written through a function gives byte-identical output to the inline form (2.878521e−09 either way). Recorded as a permissive extension, not a defect.</div></div>
+<div class="finding f-ok"><div class="head"><span class="t"><code>%*</code> assignment suppression in <code>$fscanf</code></span></div>
+<div class="d">Not implemented — but <em>refused at compile time</em> with an explanation of exactly what would otherwise go wrong (“the field would be stored into the next destination instead of discarded”). This is the model the other findings should follow: missing, and loudly so.</div></div>
+
+<h2 id="coverage"><span class="secno">6</span>Coverage map</h2>
+<div class="tblwrap">
+<table>
+<thead><tr><th>Area</th><th>LRM</th><th>Result</th></tr></thead>
+<tbody>
+<tr><td>Lexical conventions &amp; directives</td><td>2, 10</td><td>conformant</td></tr>
+<tr><td>System tasks: display &amp; file I/O</td><td>9.4, 9.5</td><td><strong>4 findings</strong> (%m, mcd, reopen, fscanf)</td></tr>
+<tr><td>Data types &amp; parameters</td><td>3</td><td>conformant</td></tr>
+<tr><td>Expressions &amp; math</td><td>4.1–4.3</td><td>conformant</td></tr>
+<tr><td>Natures, disciplines, branches</td><td>3.6–3.10</td><td><strong>1 finding</strong> (abstol dropped)</td></tr>
+<tr><td>Annex C/E boundary &amp; doc audit</td><td>Annex C, E</td><td>conformant</td></tr>
+<tr><td>User-defined functions</td><td>4.7</td><td>conformant (2 permissive extensions)</td></tr>
+<tr><td>Events</td><td>5.10</td><td>conformant</td></tr>
+<tr><td>Core analog operators</td><td>4.5</td><td>conformant</td></tr>
+<tr><td>Filter operators</td><td>4.5.7–4.5.11</td><td>conformant</td></tr>
+<tr><td>Hierarchy</td><td>6</td><td>conformant</td></tr>
+<tr><td>Analog behaviour &amp; contributions</td><td>5.2–5.6</td><td>conformant</td></tr>
+<tr><td>Kernel &amp; random system functions</td><td>9.6–9.13</td><td><strong>1 finding</strong> (seed never advances)</td></tr>
+<tr><td>Analysis &amp; noise</td><td>4.6, 5.10.2</td><td>conformant</td></tr>
+<tr><td>ngspice OSDI layer</td><td>—</td><td>conformant (file I/O findings above)</td></tr>
+</tbody>
+</table>
+</div>
+<p class="scorenote">Reproduction decks for every finding are named in the audit log kept with this report. Each was run against <code>ngspice-46/build/src/ngspice</code> and <code>OpenVAF-master-20260610/target/opt/openvaf-r</code> as committed on 2026-09-02.</p>
+</div>
+
+</body>
+</html>

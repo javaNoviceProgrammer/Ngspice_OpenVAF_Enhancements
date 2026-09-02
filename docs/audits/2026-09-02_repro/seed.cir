@@ -1,0 +1,13 @@
+seed
+v1 1 0 dc 1
+n1 1 0 sm
+.model sm seed
+.control
+pre_osdi seed.osdi
+op
+print @n1[s0] @n1[s1] @n1[s2]
+print @n1[r1] @n1[r2] @n1[r3]
+print @n1[u1] @n1[u2] @n1[u3]
+quit
+.endc
+.end

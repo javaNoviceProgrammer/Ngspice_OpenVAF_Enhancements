@@ -1,0 +1,15 @@
+`include "disciplines.vams"
+module rd4(a,b); inout a,b; electrical a,b;
+  integer fd, c; string s;
+  analog begin
+    @(initial_step) begin
+      fd = $fopen("data.txt","r");
+      c=$fgets(s,fd); $strobe("open#1 first line: [%s]", s);
+      $fclose(fd);
+      fd = $fopen("data.txt","r");           // reopen: MUST start at the beginning
+      c=$fgets(s,fd); $strobe("open#2 first line: [%s]", s);
+      $fclose(fd);
+    end
+    I(a,b) <+ V(a,b)*1e-6;
+  end
+endmodule

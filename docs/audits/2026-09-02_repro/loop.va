@@ -1,0 +1,21 @@
+`include "disciplines.vams"
+module loop(a,b); inout a,b; electrical a,b;
+  integer s, i, ndistinct;
+  real prev, x;
+  (* desc="d1" *) real d1; (* desc="d2" *) real d2; (* desc="d3" *) real d3;
+  (* desc="nd" *) integer nd;
+  analog begin
+    @(initial_step) begin
+      s = 5; nd = 0; prev = -999.0;
+      for (i = 0; i < 5; i = i + 1) begin
+        x = $rdist_uniform(s, 0.0, 1.0);   // ONE call site, called 5 times
+        if (i == 0) d1 = x;
+        if (i == 1) d2 = x;
+        if (i == 2) d3 = x;
+        if (x != prev) nd = nd + 1;
+        prev = x;
+      end
+    end
+    I(a,b) <+ V(a,b)*1e-6;
+  end
+endmodule

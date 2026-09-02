@@ -1,0 +1,16 @@
+`include "disciplines.vams"
+module fmt(a,b); inout a,b; electrical a,b;
+  parameter integer n = 200;
+  parameter real    r = 1234.5678;
+  analog begin
+    @(initial_step) begin
+      $strobe("h=%h H=%H d=%d o=%o b=%b", n, n, n, n, n);
+      $strobe("c=%c s=%s", 65, "txt");
+      $strobe("e=%e f=%f g=%g", r, r, r);
+      $strobe("width[%10.3g] [%-12.4f]", r, r);
+      $strobe("pct=%% m=%m");
+      $strobe("nofmt", n, r);            // 9.4.3: args w/o spec -> default decimal
+    end
+    I(a,b) <+ V(a,b)*1e-3;
+  end
+endmodule

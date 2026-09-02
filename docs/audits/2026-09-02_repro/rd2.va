@@ -1,0 +1,17 @@
+`include "disciplines.vams"
+module rd2(a,b); inout a,b; electrical a,b;
+  integer fd, code, iv; real rv; string s1, s2;
+  analog begin
+    @(initial_step) begin
+      fd = $fopen("data.txt", "r");
+      code = $fscanf(fd, "%d %g", iv, rv);
+      $strobe("after fscanf: iv=%0d rv=%g code=%0d", iv, rv, code);
+      code = $fgets(s1, fd);
+      $strobe("fgets#1 ret=%0d got=[%s]", code, s1);
+      code = $fgets(s2, fd);
+      $strobe("fgets#2 ret=%0d got=[%s]", code, s2);
+      $fclose(fd);
+    end
+    I(a,b) <+ V(a,b)*1e-6;
+  end
+endmodule

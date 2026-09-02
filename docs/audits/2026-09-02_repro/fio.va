@@ -1,0 +1,18 @@
+`include "disciplines.vams"
+module fio(a,b); inout a,b; electrical a,b;
+  integer mA, mB, fd;
+  analog begin
+    @(initial_step) begin
+      mA = $fopen("fa.txt");            // LRM 9.5.1: no type -> multichannel descriptor
+      mB = $fopen("fb.txt");
+      fd = $fopen("fc.txt", "w");       // with type -> file descriptor
+      $strobe("mcdA=%h mcdB=%h fd=%h", mA, mB, fd);
+      $fdisplay(mA, "only-A");
+      $fdisplay(mB, "only-B");
+      $fdisplay(mA|mB, "both-A-and-B"); // LRM: bitwise OR writes to both
+      $fclose(mA); $fclose(mB); $fclose(fd);
+      $strobe("engfmt r=%r", 0.0000123);  // Table 9-23 %r engineering notation
+    end
+    I(a,b) <+ V(a,b)*1e-3;
+  end
+endmodule
