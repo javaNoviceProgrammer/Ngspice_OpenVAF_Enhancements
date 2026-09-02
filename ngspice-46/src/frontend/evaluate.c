@@ -271,11 +271,23 @@ doop(char what,
      * flat-extends). Warn in that case only, once. */
     if (v1->v_length != v2->v_length &&
         v1->v_length > 1 && v2->v_length > 1) {
-        fprintf(cp_err,
-                "Warning: operands %s (length %d) and %s (length %d) differ in "
-                "length; the shorter is extended with its last element.\n",
-                v1->v_name ? v1->v_name : "(anon)", v1->v_length,
-                v2->v_name ? v2->v_name : "(anon)", v2->v_length);
+        /* E-537 (hunt K): the E-535 comment promised "once" but there was no
+         * latch, so the warning fired on EVERY operation -- a 50-iteration
+         * control loop emitted 50 identical lines, and a post-processing script
+         * over thousands of sweep points floods stderr and buries the real
+         * diagnostics this warning exists to sit among. Latch on the operand
+         * shape: a genuinely different mismatch still speaks. */
+        static int last_l1 = -1, last_l2 = -1;
+        if (v1->v_length != last_l1 || v2->v_length != last_l2) {
+            last_l1 = v1->v_length;
+            last_l2 = v2->v_length;
+            fprintf(cp_err,
+                    "Warning: operands %s (length %d) and %s (length %d) differ in "
+                    "length; the shorter is extended with its last element.\n"
+                    "         (further mismatches of this shape are not repeated)\n",
+                    v1->v_name ? v1->v_name : "(anon)", v1->v_length,
+                    v2->v_name ? v2->v_name : "(anon)", v2->v_length);
+        }
     }
     if (v1->v_length < length) {
         longer = 2;

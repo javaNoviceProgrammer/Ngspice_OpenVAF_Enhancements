@@ -169,6 +169,9 @@ struct optctx {
     unsigned long mc_trial0;             /* E-536 (hunt bug 8): osdimc trial
                                           * checkpoint -- every -center candidate
                                           * replays the same trial window        */
+    int    interrupted;                  /* E-537 (hunt I): the user stopped the
+                                          * search, so it did not converge       */
+    int    lhs_warned;                   /* E-537 (hunt O): said once          */
 
     /* Enhancement-216: multi-objective / Pareto optimization (NSGA-II). Instead of
      * one scalar cost, `nobj` competing objectives are traded off; the result is a
@@ -480,6 +483,14 @@ static double opt_eval_center(struct optctx *c, const double *u)
 
     if (c->lhs) {
         mc_lhs_config(c->nsamples, c->mcseed);
+        /* E-537 (hunt O): see the note in com_sweep.c -- -lhs does not reach
+         * osdimc draws. Said once per command, not once per candidate. */
+        if (OSDImcActive() && !c->lhs_warned) {
+            c->lhs_warned = 1;
+            fprintf(cp_err,
+                    "optimize: NOTE -- -lhs stratifies the netlist's own random "
+                    ".params; it does NOT cover `.option osdimc` draws.\n");
+        }
     } else {
         (void) snprintf(cmd, sizeof cmd, "setseed %u", c->mcseed);
         opt_run_cmd(cmd);
@@ -793,6 +804,7 @@ static void levenberg_marquardt(struct optctx *c, double *ubest, double *fbest)
          * reported by the normal epilogue). */
         if (ft_intrpt) {
             fprintf(cp_err, "optimize: interrupted at iteration %d\n", iter);
+            c->interrupted = 1;          /* E-537 (hunt I): not a convergence */
             break;
         }
         int accepted = 0;
@@ -902,6 +914,7 @@ static void nelder_mead(struct optctx *c, double *ubest, double *fbest)
          * reported by the normal epilogue). */
         if (ft_intrpt) {
             fprintf(cp_err, "optimize: interrupted at iteration %d\n", iter);
+            c->interrupted = 1;          /* E-537 (hunt I): not a convergence */
             break;
         }
         int hi, nh;
@@ -1033,6 +1046,7 @@ static void particle_swarm(struct optctx *c, double *ubest, double *fbest)
          * reported by the normal epilogue). */
         if (ft_intrpt) {
             fprintf(cp_err, "optimize: interrupted at iteration %d\n", iter);
+            c->interrupted = 1;          /* E-537 (hunt I): not a convergence */
             break;
         }
         double prevgf = gf;
@@ -1116,6 +1130,7 @@ static void differential_evolution(struct optctx *c, double *ubest, double *fbes
          * reported by the normal epilogue). */
         if (ft_intrpt) {
             fprintf(cp_err, "optimize: interrupted at iteration %d\n", iter);
+            c->interrupted = 1;          /* E-537 (hunt I): not a convergence */
             break;
         }
         double prevgf = gf;
@@ -1202,6 +1217,7 @@ static void simulated_annealing(struct optctx *c, double *ubest, double *fbest)
          * reported by the normal epilogue). */
         if (ft_intrpt) {
             fprintf(cp_err, "optimize: interrupted at iteration %d\n", level);
+            c->interrupted = 1;          /* E-537 (hunt I): not a convergence */
             break;
         }
         double step = 0.30 * sqrt(T / T0) + 0.02;   /* wide when hot, fine when cold */
@@ -1409,6 +1425,7 @@ static void nsga2(struct optctx *c)
          * reported by the normal epilogue). */
         if (ft_intrpt) {
             fprintf(cp_err, "optimize: interrupted at iteration %d\n", gen);
+            c->interrupted = 1;          /* E-537 (hunt I): not a convergence */
             break;
         }
         /* rank+crowd the current parents [0,N) for tournament selection */
@@ -1998,11 +2015,18 @@ void com_optimize(wordlist *wl)
         dc_set_result("dcenter_yield", c.last_yield);
         dc_set_result("dcenter_cpk", c.last_cpk);
     } else if (c.nt > 0)
-        fprintf(cp_out, "optimize: converged, sum-sq residual = %.6g (rms %.6g) "
+        /* E-537 (hunt I): "converged" describes the search stopping on its own
+         * criterion. A search the USER stopped did not, and saying so was the
+         * one case E-499's qualifiers did not cover -- the interrupt poll
+         * (E-536) breaks straight into this line, and if the interrupt lands
+         * early the reported value can be the untouched starting point. */
+        fprintf(cp_out, "optimize: %s, sum-sq residual = %.6g (rms %.6g) "
                         "after %d evaluations\n",
+                c.interrupted ? "INTERRUPTED -- best point so far" : "converged",
                 fbest, sqrt(fbest / c.nt), c.nevals);
     else
-        fprintf(cp_out, "optimize: converged, objective = %.6g after %d evaluations\n",
+        fprintf(cp_out, "optimize: %s, objective = %.6g after %d evaluations\n",
+                c.interrupted ? "INTERRUPTED -- best point so far" : "converged",
                 fbest, c.nevals);
     /* Enhancement-499: "converged" describes the SEARCH stopping, not the answer
      * being the one the author wanted, and three ordinary situations produced a

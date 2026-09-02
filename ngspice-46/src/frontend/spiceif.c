@@ -1410,10 +1410,30 @@ if_setparam(CKTcircuit *ckt, char **name, char *param, struct dvec *val, int do_
     if (do_model && (ckt->CKTtime > 0)) {
         int error = 0;
         error = CKTtemp(ckt);
-        if (error)
-            fprintf(stderr, "Error during changing a device model parameter!\n");
-        if (error)
-            controlled_exit(1);
+        /* E-537 (hunt N): this used to controlled_exit(1) -- so a MISTYPED model
+         * parameter value KILLED the session. It refused the value cleanly at a
+         * fresh prompt and after `op` (CKTtime is still 0 there, so this whole
+         * block was skipped) and destroyed everything once a `dc` or `tran` had
+         * run, which is the state a real session is almost always in: loaded
+         * circuit, vectors and plots all gone, batch scripts exiting 1 with
+         * every later command skipped. Measured with an OSDI parameter whose
+         * Verilog-A range refuses the value (`altermod mm r = -500` on
+         * `r ... from (0:inf)`); the same refusal on an INSTANCE parameter, and
+         * on any built-in model, was already only a warning.
+         *
+         * Refusing and staying alive is what the rest of this surface does --
+         * E-531 made `alter` refuse non-representable values, and the sibling
+         * string-parameter path a few hundred lines above prints this very
+         * message without exiting. The device has already reported WHICH value
+         * it refused and why, so the honest thing left to say is that the write
+         * did not take and the circuit needs re-setting. */
+        if (error) {
+            fprintf(stderr,
+                    "Error: the device refused that model parameter value, so the "
+                    "model update did not take effect.\n"
+                    "       The circuit is left as the failed update found it -- "
+                    "`reset` (or re-`source`) before relying on further results.\n");
+        }
     }
 }
 

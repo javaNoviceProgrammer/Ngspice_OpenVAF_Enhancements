@@ -173,6 +173,20 @@ extern void OSDImcSigmaScale(double s);
  * across candidates while still sampling osdimc variation (hunt bug 8).
  * SampleLogLR -- the log importance weight of the current trial's inflated
  * gauss draws, for `highsigma -scale`'s estimator (hunt bug 7). */
+/* E-537 (hunt G): bracket writes that go through the `alter` command but are
+ * machine-computed (aging's dose), so they do not recenter a statistical
+ * nominal -- the E-531 rule that only user writes recenter. */
+extern void OSDImcMachineWrite(bool on);
+/* E-537 (hunt P): a loop command's own `-seed`, mixed into the draw key so
+ * independent replications really are independent. 0 = not given (the draws a
+ * deck gets today). */
+extern void OSDImcSeedOffset(unsigned s);
+/* E-537 (hunt O): true while `.option osdimc` is drawing, so a command can say
+ * that Latin-hypercube stratification does not cover these draws. */
+extern bool OSDImcActive(void);
+/* E-537 (hunt J): step past the nominal baseline so `montecarlo N` really
+ * draws N samples rather than N-1 draws plus the deterministic nominal. */
+extern void OSDImcSkipBaseline(void);
 extern void OSDImcInterruptReset(void);
 extern unsigned long OSDImcTrialCheckpoint(void);
 extern void OSDImcTrialRewind(unsigned long t);

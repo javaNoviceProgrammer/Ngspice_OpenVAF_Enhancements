@@ -62,7 +62,23 @@ are pinned here too:
 * and an interrupt no longer leaks the hold, the sigma inflation, the
   sampling mode, `ft_optimizing` or the progress bar into the next command.
 
-`verify_mcpolicy.py` (18 checks, both solvers) pins each behavior with
+Enhancement-537 came out of a second hunt over that shipped work, and its ten
+repairs are pinned here too — the headline being that `highsigma -scale`'s
+importance weights **collapse as more statistical dimensions are inflated**
+(twenty bystander devices that cannot affect the metric dragged a true
+P(fail) of 0.297 to 2.5e-11), so the command now reports an effective sample
+size and refuses to present a number it cannot stand behind. Alongside:
+`highsigma`, `wcd`, `aging`, `emir` and `loadpull` no longer read results
+back from a run that never solved; a mistyped `altermod` value refuses
+instead of killing the session; `montecarlo N` draws N samples in every
+session state; `-seed` varies the osdimc draws so replications are really
+independent; `-lhs` says it does not cover them; a weighted P(fail) is
+clamped into [0,1] with `n/a` rather than a misleading `0.000` at the
+boundary; a never-varying metric is named instead of blamed on resolution;
+aging's dose no longer recentres a statistical nominal; and a refused command
+leaves its result variables unset rather than showing the last run's answer.
+
+`verify_mcpolicy.py` (28 checks, both solvers) pins each behavior with
 closed-form expectations computed from the same run's parameter readbacks —
 `v(2) = 1k/(r+dr+1k)` against `@mm[r]`/`@n1[dr]` — plus the deterministic
 mcseed-7 montecarlo discriminators for the init-resident and preserve legs,

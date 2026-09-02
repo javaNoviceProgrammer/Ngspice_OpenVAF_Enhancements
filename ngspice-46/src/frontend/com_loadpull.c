@@ -41,6 +41,16 @@ typedef struct {
 
 /* Run one command synchronously through the command table (cp_evloop would
  * defer it), exactly as com_stb's stb_run. */
+/* E-537 (hunt D): see the note at the tran call -- `sim_status` (runcoms.c) is
+ * how the rest of the loop commands tell a solved run from a failed one. */
+static int lp_run_failed(void)
+{
+    int st = 0;
+    if (cp_getvar("sim_status", CP_NUM, &st, sizeof st))
+        return st != 0;
+    return 0;                    /* variable absent -- assume the run was fine */
+}
+
 static void lp_run(const char *cmdstr)
 {
     wordlist *wl = cp_lexer((char *) cmdstr);
@@ -327,6 +337,19 @@ void com_loadpull(wordlist *wl)
                 (void) snprintf(cmd, sizeof cmd, "alter %s = %.10g", lname, L); lp_run(cmd);
                 (void) snprintf(cmd, sizeof cmd, "alter %s = %.10g", cname, C); lp_run(cmd);
                 (void) snprintf(cmd, sizeof cmd, "tran %.10g %.10g", tstep, tstop); lp_run(cmd);
+
+                /* E-537 (hunt D): a point whose tran did not solve still has a
+                 * full set of vectors -- the PREVIOUS point's, which ngspice
+                 * leaves in place. The extract guard below only catches MISSING
+                 * data, so a failed point silently entered the grid as a
+                 * duplicate of its neighbour and the reported optimum could
+                 * sit on it. Skip it the same way an unusable extract is
+                 * skipped, and say which point was dropped. */
+                if (lp_run_failed()) {
+                    fprintf(cp_err, "loadpull: tran did not solve at "
+                                    "G=(%.3g,%.3g); point skipped.\n", gr, gi);
+                    continue;
+                }
 
                 tt = lp_eval("time", &nt);
                 (void) snprintf(expr, sizeof expr, "v(%s)", outnode);

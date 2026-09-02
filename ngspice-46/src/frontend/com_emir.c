@@ -49,6 +49,19 @@ it reads a DC solution and per-resistor currents/widths.
 
 /* Run one command synchronously through the command table (com_optimize's
  * opt_run_cmd pattern). */
+/* E-537 (hunt D): ngspice keeps the previous run's plot when an analysis
+ * fails, so reading node voltages and branch currents back blind produces a
+ * complete, plausible IR-drop and electromigration verdict computed on a bias
+ * point that does not exist for this circuit -- a reliability sign-off on
+ * another run's numbers. `sim_status` carries the verdict (runcoms.c). */
+static int emir_run_failed(void)
+{
+    int st = 0;
+    if (cp_getvar("sim_status", CP_NUM, &st, sizeof st))
+        return st != 0;
+    return 0;                    /* variable absent -- assume the run was fine */
+}
+
 static void emir_run_cmd(const char *cmdstr)
 {
     wordlist *wl = cp_lexer((char *) cmdstr);
@@ -174,6 +187,12 @@ void com_emir(wordlist *wl)
     ft_optimizing = !verbose;
     emir_run_cmd("op");
     ft_optimizing = !verbose;
+    if (emir_run_failed()) {          /* E-537 (hunt D) */
+        ft_optimizing = FALSE;
+        fprintf(cp_err, "emir: the operating point did not solve, so there is no "
+                        "bias to analyse; no IR-drop or electromigration report.\n");
+        return;
+    }
 
     /* --- IR-drop: gather node voltages from the current plot --- */
     for (d = plot_cur ? plot_cur->pl_dvecs : NULL; d; d = d->v_next) {

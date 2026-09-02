@@ -54,12 +54,28 @@ resistors, sources, etc.
 #include "ngspice/devdefs.h"
 #include "ngspice/gendefs.h"
 #include "ngspice/cktdefs.h"
+#include "ngspice/osdiitf.h"   /* E-537 (hunt G): OSDImcMachineWrite */
 
 #include "com_aging.h"
 
 /* Run one command synchronously through the command table (as com_optimize's
  * opt_run_cmd does): cp_evloop would defer it to the outer interpreter, which
  * is too late here. */
+/* E-537 (hunt D): did the analysis just run actually solve? ngspice leaves the
+ * PREVIOUS run's plot in place when one fails, so reading a stress rate back
+ * blind returns another run's numbers -- and aging then WRITES the resulting
+ * dose into the devices and PERSISTS it (age_remember), so a failed stress
+ * simulation silently ages the circuit from a foreign bias point. runcoms.c
+ * publishes the verdict in `sim_status`; the same helper com_sweep.c and
+ * com_optimize.c already use. */
+static int age_run_failed(void)
+{
+    int st = 0;
+    if (cp_getvar("sim_status", CP_NUM, &st, sizeof st))
+        return st != 0;
+    return 0;                    /* variable absent -- assume the run was fine */
+}
+
 static void age_run_cmd(const char *cmdstr)
 {
     wordlist *wl = cp_lexer((char *) cmdstr);
@@ -161,8 +177,10 @@ void aging_replay(void)
         return;
     save = ft_optimizing;
     ft_optimizing = TRUE;            /* keep `alter` quiet, as the writer does */
+    OSDImcMachineWrite(TRUE);        /* E-537 (hunt G): a replay is not a user write */
     for (k = 0; k < age_nwrites; k++)
         age_run_cmd(age_writes[k]);
+    OSDImcMachineWrite(FALSE);
     ft_optimizing = save;
 }
 
@@ -390,6 +408,12 @@ void com_aging(wordlist *wl)
             (void) snprintf(cmd, sizeof cmd, "tran %.10g %.10g", tstop / 200.0, tstop);
         age_run_cmd(cmd);
         ft_optimizing = !verbose;     /* re-assert after the analysis banner */
+        if (age_run_failed()) {       /* E-537 (hunt D) */
+            ft_optimizing = FALSE;
+            fprintf(cp_err, "aging: the stress simulation did not solve, so there "
+                            "are no stress rates to age from; nothing was aged.\n");
+            return;
+        }
         for (k = 0; k < ndev; k++) {
             char e[256];
             (void) snprintf(e, sizeof e, "@%s[%s]", name[k], ratevar);
@@ -398,6 +422,12 @@ void com_aging(wordlist *wl)
     } else {
         age_run_cmd("op");
         ft_optimizing = !verbose;
+        if (age_run_failed()) {       /* E-537 (hunt D) */
+            ft_optimizing = FALSE;
+            fprintf(cp_err, "aging: the stress simulation did not solve, so there "
+                            "are no stress rates to age from; nothing was aged.\n");
+            return;
+        }
         for (k = 0; k < ndev; k++) {
             char e[256];
             (void) snprintf(e, sizeof e, "@%s[%s]", name[k], ratevar);
@@ -407,6 +437,10 @@ void com_aging(wordlist *wl)
 
     /* --- accumulate dose and write it back --- */
     age_forget();                                /* Enhancement-501: this run replaces the last */
+    /* E-537 (hunt G): the dose is MACHINE-computed (from a stress simulation
+     * that itself ran on a drawn sample), so it must not recenter an osdimc
+     * statistical nominal the way a user's `alter` does -- E-531's rule. */
+    OSDImcMachineWrite(TRUE);
     for (k = 0; k < ndev; k++) {
         char cmd[256];
         if (!finite(rate[k]) || rate[k] < 0.0)
@@ -417,6 +451,7 @@ void com_aging(wordlist *wl)
         age_remember(cmd);                       /* Enhancement-501 */
         aged++;
     }
+    OSDImcMachineWrite(FALSE);                   /* E-537 (hunt G) */
 
     ft_optimizing = FALSE;
 

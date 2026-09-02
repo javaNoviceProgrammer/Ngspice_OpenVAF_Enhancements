@@ -1566,6 +1566,34 @@ static bool osdimc_internal_change; /* E-536 fix (hunt bug 12): CircuitChanged
                                        consumed a keep -- bless the next
                                        ckt-pointer change at OSDImcNewRun */
 static double osdimc_scale = 1.0; /* sigma inflation, 1.0 = off */
+/* E-537 (hunt P): the loop commands' own `-seed`, mixed into the draw key.
+ * osdimc keys on `.option mcseed`, so `montecarlo -seed 1` and `-seed 999`
+ * produced BYTE-IDENTICAL samples -- and varying the seed is precisely how one
+ * checks a Monte-Carlo estimate is stable, so every "independent" replication
+ * returned the same points and looked perfectly reproducible when nothing had
+ * been re-sampled. Applied only when the user actually passed -seed, so a deck
+ * that never mentions it keeps the draws it has today. */
+static uint32_t osdimc_seed_extra;
+
+void OSDImcSeedOffset(unsigned s) { osdimc_seed_extra = (uint32_t) s; }
+
+/* E-537 (hunt O): is `.option osdimc` drawing for this circuit? The frontend
+ * asks so it can say that a stratified-sampling request does not reach these
+ * draws. Defined here beside the option test it wraps. */
+bool OSDImcActive(void) { return osdimc_enabled(); }
+
+/* E-537 (hunt J): step past the nominal baseline so a sampling command's N
+ * samples are N DRAWS. osdimc's contract makes the first run after sourcing
+ * the nominal baseline, and `montecarlo N` consumed it as sample 1 -- so on a
+ * freshly sourced deck (the normal way to run it) N-1 samples were random and
+ * one was deterministic, while the banner said "N random samples". The yield
+ * and its Wilson interval treated that fixed point as a draw, and the effective
+ * count depended on how many run-class commands happened earlier in the
+ * session. Idempotent: a sequence already past the baseline is untouched. */
+void OSDImcSkipBaseline(void) {
+  if (osdimc_enabled() && osdimc_trial < 1)
+    osdimc_trial = 1;
+}
 
 /* E-535 fix (hunt bug 1): the current trial's draws are NOT in parameter
  * storage yet -- the table was empty when OSDImcNewRun ran, because an
@@ -1612,6 +1640,7 @@ void OSDImcInterruptReset(void) {
   osdimc_keep_trial = false;
   osdimc_internal_change = false;
   osdimc_scale = 1.0;
+  osdimc_seed_extra = 0;          /* E-537 (hunt P) */
   osdimc_clear_pins();
 }
 
@@ -1729,6 +1758,16 @@ static uint64_t osdimc_hash_str(const char *s) {
   return h;
 }
 
+/* E-537 (hunt P): the per-trial base key, shared by the draw applier and the
+ * importance-weight walker so the two can never disagree about which value was
+ * drawn. */
+static uint64_t osdimc_kbase(int seed) {
+  uint64_t k = osdimc_mix(((uint64_t)(uint32_t)seed << 32) ^ 0x6f7364696d63ull);
+  if (osdimc_seed_extra)
+    k = osdimc_mix(k ^ ((uint64_t)osdimc_seed_extra << 1));
+  return osdimc_mix(k ^ osdimc_trial);
+}
+
 /* uniform in (0,1), both ends excluded (log() below needs nonzero) */
 static double osdimc_u01(uint64_t h) {
   return ((double)(h >> 11) + 0.5) * (1.0 / 9007199254740992.0);
@@ -1820,11 +1859,27 @@ void osdimc_capture_chain(const OsdiRegistryEntry *entry, GENmodel *inModel) {
  * perturbations) go through OSDIparam/OSDImParam directly and deliberately
  * do NOT recenter -- keying on the setter turned a sweep's save/restore into
  * a permanent nominal shift. */
+/* E-537 (hunt G): a command that writes through the USER channel but is really
+ * a MACHINE writer brackets its writes with this, so the recentering below is
+ * skipped. `aging` computes a dose from a stress simulation and applies it with
+ * `alter @dev[agepar] = <dose>` -- the user route -- which permanently moved the
+ * statistical nominal of an aging parameter declared with (* std *). Because the
+ * dose is computed from a DRAWN sample, that wrote the draw's randomness into
+ * the nominal and made it random-walk across repeated aging runs (measured
+ * 0 -> 0.495253 -> 0.49919 -> 0.499013, non-monotonic). E-531 settled the rule
+ * this restores: only writes the USER typed recenter. */
+static bool osdimc_machine_write;
+
+
+void OSDImcMachineWrite(bool on) { osdimc_machine_write = on; }
+
 void OSDImcNoteUserWrite(int typecode, GENinstance *dev, GENmodel *mdl,
                          int param_id, double value) {
   const void *owner;
   OsdiMcNominal *e;
 
+  if (osdimc_machine_write)                /* E-537 (hunt G) */
+    return;
   if (!osdi_devtype_is_osdi(typecode) || param_id < 0)
     return;
   if (dev) {
@@ -2028,9 +2083,7 @@ static void osdimc_apply_type(CKTcircuit *ckt, int type, int seed,
       return;
     }
 
-    uint64_t kbase =
-        osdimc_mix(((uint64_t)(uint32_t)seed << 32) ^ 0x6f7364696d63ull);
-    kbase = osdimc_mix(kbase ^ osdimc_trial);
+    uint64_t kbase = osdimc_kbase(seed);   /* E-537 (hunt P) */
 
     for (GENmodel *gen_model = ckt->CKThead[type]; gen_model;
          gen_model = gen_model->GENnextModel) {
@@ -2118,9 +2171,7 @@ double OSDImcSampleLogLR(CKTcircuit *ckt) {
     seed = 1;
 
   double lam2 = osdimc_scale * osdimc_scale;
-  uint64_t kbase =
-      osdimc_mix(((uint64_t)(uint32_t)seed << 32) ^ 0x6f7364696d63ull);
-  kbase = osdimc_mix(kbase ^ osdimc_trial);
+  uint64_t kbase = osdimc_kbase(seed);    /* E-537 (hunt P) */
 
   for (int type = 0; type < DEVmaxnum; type++) {
     if (!ckt->CKThead[type] || !osdi_devtype_is_osdi(type))

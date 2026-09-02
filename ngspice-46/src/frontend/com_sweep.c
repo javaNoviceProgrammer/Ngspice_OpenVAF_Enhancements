@@ -3419,8 +3419,19 @@ void com_sweep(wordlist *wl)
          * next run can clear it; the points never run get E-445's honest
          * no-result marker. */
         if (ft_intrpt) {
-            fprintf(cp_err, "sweep: interrupted after %d of %d points; "
-                            "the remaining entries are nan\n", p, npt);
+            /* E-537 (hunt A): `data` is not allocated until the FIRST point has
+             * run (it is sized from nout, which an -output-less sweep only
+             * learns from that point's plot), so an interrupt arriving before
+             * point 0 completes -- during fast-path arming, say -- used to
+             * write NaN through a NULL pointer. With nothing recorded there is
+             * also no summary worth emitting, so go straight to the restore. */
+            fprintf(cp_err, "sweep: interrupted after %d of %d points%s\n",
+                    p, npt, data ? "; the remaining entries are nan" : "");
+            if (!data) {
+                outp_loop_end();          /* Enhancement-477 */
+                ft_optimizing = save_optimizing;
+                goto cleanup;
+            }
             for (size_t q = (size_t) p * (size_t) nout;
                  q < (size_t) npt * (size_t) nout; q++)
                 data[q] = NAN;
@@ -3932,8 +3943,42 @@ static void hs_set_result(const char *name, double val)
     }
 }
 
+/* E-537 (hunt H): these result variables exist FOR scripting -- that is their
+ * only purpose -- and nothing ever cleared them. They were written on the
+ * success paths alone, so a command that FAILED or REFUSED left the previous
+ * invocation's answer readable: after a `wcd` that reported "cannot locate an
+ * MPFP", `echo $wcd_beta` still returned the earlier run's 0.37037, and a
+ * script branching on it silently used a result from a different analysis.
+ * Each command drops its whole namespace on entry, so a run that publishes
+ * nothing leaves the variables UNSET rather than lying. */
+static void hs_clear_results(const char *const *names, int n)
+{
+    int i;
+    for (i = 0; i < n; i++) {
+        cp_remvar((char *) names[i]);
+        vec_remove(names[i]);
+    }
+}
+
+static const char *const hs_names_highsigma[] = {
+    "highsigma_pfail", "highsigma_relerr", "highsigma_sigma",
+    "highsigma_nfail", "highsigma_ess", "highsigma_nfailed"
+};
+static const char *const hs_names_wcd[] = {
+    "wcd_beta", "wcd_pfail", "wcd_ndim", "wcd_converged",
+    "wcd_pfail_is", "wcd_pfail_is_err", "wcd_sigma_is"
+};
+static const char *const hs_names_montecarlo[] = {
+    "montecarlo_yield", "montecarlo_npass", "montecarlo_n",
+    "montecarlo_nvalid", "montecarlo_nfailed"
+};
+
 void com_highsigma(wordlist *wl)
 {
+    /* E-537 (hunt H): a run that refuses must not leave the last one's answer */
+    hs_clear_results(hs_names_highsigma,
+                     (int) (sizeof hs_names_highsigma / sizeof *hs_names_highsigma));
+    int seed_given = 0;              /* E-537 (hunt P) */
     int nsamp = 0;
     double lambda = 2.0;
     unsigned seed = 1;
@@ -3967,6 +4012,7 @@ void com_highsigma(wordlist *wl)
             if (!wl->wl_next) { fprintf(cp_err, "highsigma: -seed needs a value\n"); return; }
             wl = wl->wl_next;
             if (!sw_seedarg(wl->wl_word, "highsigma", &seed)) return;   /* Enhancement-499 */
+            seed_given = 1;              /* E-537 (hunt P) */
             wl = wl->wl_next;
         } else if (eq(w, "-max")) {
             if (!wl->wl_next) { fprintf(cp_err, "highsigma: -max needs a value\n"); return; }
@@ -4051,6 +4097,11 @@ void com_highsigma(wordlist *wl)
 
     mc_sss_config(nsamp, lambda, seed);
     double sum_wf = 0.0, sum_w2f2 = 0.0;
+    /* E-537: weight moments (hunt E, effective sample size), the solved-sample
+     * count (hunt B) and the metric's observed range (hunt L). */
+    double sum_w = 0.0, sum_w2 = 0.0;
+    double mseen_lo = 0.0, mseen_hi = 0.0;
+    int nvalid = 0, nfailed_run = 0;
     long nfail = 0;
 
     ft_optimizing = TRUE;
@@ -4061,6 +4112,7 @@ void com_highsigma(wordlist *wl)
      * sampling window (each sample keeps advancing the trial -- fresh
      * draws per sample are exactly what this command wants). */
     OSDImcSigmaScale(lambda);
+    if (seed_given) OSDImcSeedOffset(seed);   /* E-537 (hunt P) */
     outp_loop_begin("highsigma", "sample", nsamp, sw_loopbar_mode());   /* Enhancement-477 */
     for (int i = 0; i < nsamp; i++) {
         /* E-536 (hunt bug 17): stop sampling on interrupt -- the next
@@ -4076,7 +4128,20 @@ void com_highsigma(wordlist *wl)
         ft_optimizing = TRUE;               /* reset re-source may clear it */
         sw_run_cmd("reset");                /* redraws the lambda-inflated .params */
         sw_run_cmd(analysis);
+        /* E-537 (hunt B): a sample whose analysis never solved has no metric.
+         * ngspice leaves the PREVIOUS sample's plot in place, so reading on
+         * regardless counted another sample's value as this one's -- and under
+         * -scale the failures cluster in the TAIL, exactly the region being
+         * measured, so the rare-failure probability came out systematically
+         * LOW. This is the guard E-438 gave montecarlo and E-445 gave sweep. */
+        if (sw_run_failed()) {
+            nfailed_run++;
+            continue;
+        }
         double m = sw_eval_expr(metric);
+        if (nvalid == 0 || m < mseen_lo) mseen_lo = m;
+        if (nvalid == 0 || m > mseen_hi) mseen_hi = m;
+        nvalid++;
         double f = ((have_max && m > hi) || (have_min && m < lo)) ? 1.0 : 0.0;
         /* E-536 fix (hunt bug 7): the netlist draws carry their likelihood
          * ratio in mc_sample_weight(); the lambda-inflated osdimc gauss draws
@@ -4089,31 +4154,103 @@ void com_highsigma(wordlist *wl)
         double x = w * f;
         sum_wf += x;
         sum_w2f2 += x * x;
+        /* E-537 (hunt E): the weight moments, for the effective sample size
+         * that tells us whether this estimate means anything at all. */
+        sum_w += w;
+        sum_w2 += w * w;
         if (f != 0.0) nfail++;
     }
     outp_loop_end();          /* Enhancement-477 */
     OSDImcSigmaScale(1.0);    /* Enhancement-535 */
+    OSDImcSeedOffset(0);      /* E-537 (hunt P) */
     ft_optimizing = save_optimizing;
     mc_sss_off();
 
-    if (nsamp <= 0) {         /* E-536: interrupted before the first sample */
-        fprintf(cp_out, "  (no samples completed -- nothing to estimate)\n");
+    if (nvalid <= 0) {        /* E-536: interrupted; E-537: or none solved */
+        fprintf(cp_out, "\n  P(fail) : not available -- %s\n",
+                nsamp <= 0 ? "no samples completed"
+                           : "no sample produced a solution");
+        if (nfailed_run)
+            fprintf(cp_out, "  NOTE    : all %d sample%s failed to simulate; check "
+                            "that -scale keeps the draws inside every parameter's "
+                            "legal domain\n",
+                    nfailed_run, nfailed_run == 1 ? "" : "s");
         return;
     }
 
-    double pfail = sum_wf / (double) nsamp;
-    double var_x = sum_w2f2 / (double) nsamp - pfail * pfail;
+    double pfail = sum_wf / (double) nvalid;
+    double var_x = sum_w2f2 / (double) nvalid - pfail * pfail;
     if (var_x < 0.0) var_x = 0.0;
-    double se = sqrt(var_x / (double) nsamp);
+    double se = sqrt(var_x / (double) nvalid);
+    /* E-537 (hunt E): the effective sample size of the importance weights,
+     * ESS = (sum w)^2 / sum w^2. The weight is a PRODUCT over every inflated
+     * dimension, so its variance grows exponentially with their number and the
+     * weighted mean collapses toward zero long before it looks suspicious:
+     * measured, twenty statistically-declared bystander devices that cannot
+     * affect the metric at all dragged a true P(fail) of 0.297 down to 2.5e-11.
+     * ESS says how many samples the weighting is really worth; when it is a
+     * tiny fraction of the run, the number below is not an estimate and must
+     * not be presented as one. (The netlist .param SSS path degenerates the
+     * same way -- this guard covers both, since both feed these weights.) */
+    double ess = (sum_w2 > 0.0) ? (sum_w * sum_w) / sum_w2 : 0.0;
+    int degenerate = (ess < 0.10 * (double) nvalid);
+    /* E-537 (hunt M): a weighted mean is not automatically a probability. It
+     * printed 1.0445 for a case where every sample failed (true answer 1), and
+     * the sigma guard then silently substituted 0.000 -- which READS as P=0.5,
+     * the opposite of certain failure. Clamp, and say n/a rather than 0. */
+    double praw = (double) nfail / (double) nvalid;
+    int clamped = (pfail < 0.0 || pfail > 1.0);
+    if (pfail < 0.0) pfail = 0.0;
+    if (pfail > 1.0) pfail = 1.0;
     double relerr = (pfail > 0.0) ? se / pfail : 0.0;
-    double sigma = (pfail > 0.0 && pfail < 1.0) ? -inv_normal_cdf(pfail) : 0.0;
+    int have_sigma = (pfail > 0.0 && pfail < 1.0);
+    double sigma = have_sigma ? -inv_normal_cdf(pfail) : 0.0;
 
     fprintf(cp_out,
             "\n  failures observed : %ld / %d (in the inflated sampling)\n"
-            "  P(fail)           : %.4e  +/- %.2e  (relative error %.1f%%)\n"
-            "  equivalent sigma  : %.3f  (one-sided, P = Phi(-sigma))\n",
-            nfail, nsamp, pfail, se, 100.0 * relerr, sigma);
-    if (nfail == 0)
+            "  P(fail)           : %.4e  +/- %.2e  (relative error %.1f%%)\n",
+            nfail, nvalid, pfail, se, 100.0 * relerr);
+    if (have_sigma)
+        fprintf(cp_out, "  equivalent sigma  : %.3f  (one-sided, P = Phi(-sigma))\n",
+                sigma);
+    else
+        fprintf(cp_out, "  equivalent sigma  : n/a  (P(fail) is %s; Phi(-sigma) has "
+                        "no finite sigma there)\n", pfail > 0.0 ? "1" : "0");
+    if (clamped)
+        fprintf(cp_out, "  NOTE    : the weighted estimate fell outside [0,1] and was "
+                        "clamped; the raw failure fraction was %.4g. That only "
+                        "happens when the importance weights are badly spread --\n"
+                        "            treat this run as unusable.\n", praw);
+    /* E-537 (hunt B): failed samples are excluded and SAID, as montecarlo does */
+    if (nfailed_run)
+        fprintf(cp_out, "  NOTE    : %d of %d sample%s failed to simulate and %s "
+                        "EXCLUDED; with -scale the failures cluster in the tail, so "
+                        "excluding them biases P(fail) LOW -- check that the inflated "
+                        "draws stay inside every parameter's legal domain\n",
+                nfailed_run, nfailed_run + nvalid, nfailed_run == 1 ? "" : "s",
+                nfailed_run == 1 ? "is" : "are");
+    if (degenerate)
+        fprintf(cp_out, "  NOTE    : the importance weights have collapsed -- an "
+                        "effective sample size of %.1f out of %d. P(fail) above is "
+                        "NOT trustworthy.\n"
+                        "            This is what happens when -scale inflates many "
+                        "statistical dimensions at once (every (* std *) parameter of "
+                        "every device counts, even ones\n"
+                        "            the metric cannot depend on). Narrow the "
+                        "variability to the parameters that matter, or use a plain "
+                        "`montecarlo` for a probability this large.\n",
+                ess, nvalid);
+    /* E-537 (hunt L): a metric that never moved is a mis-typed node or an
+     * unsaved vector far more often than a genuinely rare failure -- and the
+     * old "increase -scale or N" hint sent the user off to spend a bigger run
+     * chasing a quantity that does not exist. montecarlo has had this check
+     * since E-501; highsigma was the only one of the three without it. */
+    if (nvalid > 1 && mseen_hi == mseen_lo)
+        fprintf(cp_out, "  NOTE    : every sample gave the SAME metric value (%s = "
+                        "%g), so nothing in this deck varied it; check the metric "
+                        "resolves and depends on a statistical parameter\n",
+                metric, mseen_lo);
+    else if (nfail == 0)
         fprintf(cp_out, "  (no failures sampled -- increase -scale or N; "
                         "P(fail) is below what this run can resolve)\n");
 
@@ -4121,6 +4258,8 @@ void com_highsigma(wordlist *wl)
     hs_set_result("highsigma_relerr", relerr);
     hs_set_result("highsigma_sigma", sigma);
     hs_set_result("highsigma_nfail", (double) nfail);
+    hs_set_result("highsigma_ess", ess);            /* E-537 (hunt E) */
+    hs_set_result("highsigma_nfailed", (double) nfailed_run);  /* E-537 (hunt B) */
 }
 
 
@@ -4147,6 +4286,10 @@ process corners by the ordinary `.lib`/`.include` corner selection.
 
 void com_montecarlo(wordlist *wl)
 {
+    /* E-537 (hunt H): see hs_clear_results */
+    hs_clear_results(hs_names_montecarlo,
+                     (int) (sizeof hs_names_montecarlo / sizeof *hs_names_montecarlo));
+    int seed_given = 0;              /* E-537 (hunt P) */
     int nsamp = 0, uselhs = 0, nspec = 0, usewarm = 0;
     unsigned seed = 1;
     char analysis[512] = "op";
@@ -4179,6 +4322,7 @@ void com_montecarlo(wordlist *wl)
             if (!wl->wl_next) { fprintf(cp_err, "montecarlo: -seed needs a value\n"); return; }
             wl = wl->wl_next;
             if (!sw_seedarg(wl->wl_word, "montecarlo", &seed)) return;   /* Enhancement-499 */
+            seed_given = 1;              /* E-537 (hunt P) */
             wl = wl->wl_next;
         } else if (eq(w, "-analysis")) {
             /* `is_flag()`, not a bare leading '-': an analysis argument may be
@@ -4255,6 +4399,22 @@ void com_montecarlo(wordlist *wl)
 
     if (uselhs) {
         mc_lhs_config(nsamp, seed);
+        /* E-537 (hunt O): Latin-hypercube stratification is applied by the
+         * netlist draw functions (mc_sample_uniform/gauss). osdimc draws are
+         * pure hashes of (mcseed, trial, owner, id) and never pass through
+         * them, so `-lhs` on a deck whose variability is DECLARED IN THE MODELS
+         * -- E-530's headline case, where "the netlist carries no
+         * gauss()/agauss() at all" -- silently degraded to plain random
+         * sampling: measured, the draws were byte-identical with and without
+         * the flag. Say so rather than letting the user believe N stratified
+         * samples cover the space better than N random ones. */
+        if (OSDImcActive())
+            fprintf(cp_err,
+                    "montecarlo: NOTE -- -lhs stratifies the netlist's own random "
+                    ".params; it does NOT cover `.option osdimc` draws, which are "
+                    "keyed per trial.\n"
+                    "            Model-declared (* std *) variability is sampled "
+                    "plainly in this run.\n");
     } else {
         char cmd[64];
         snprintf(cmd, sizeof cmd, "setseed %u", seed);
@@ -4316,6 +4476,12 @@ void com_montecarlo(wordlist *wl)
     int mc_prev_failed = 0;
     sw_reuse_report(NULL, NULL);                 /* zero the tally */
 
+    if (seed_given) OSDImcSeedOffset(seed);   /* E-537 (hunt P) */
+    /* E-537 (hunt J): N samples must be N DRAWS. Without this the first sample
+     * of a freshly sourced deck was osdimc's nominal baseline -- a deterministic
+     * point folded into the yield and its confidence interval, with the
+     * effective sample count depending on session history. */
+    OSDImcSkipBaseline();
     outp_loop_begin("montecarlo", "sample", nsamp, sw_loopbar_mode());  /* Enhancement-477 */
 
     for (int i = 0; i < nsamp; i++) {
@@ -4383,6 +4549,7 @@ void com_montecarlo(wordlist *wl)
                             "rebuilt after a node collapse moved\n",
                     rk, nsamp, rr);
     }
+    OSDImcSeedOffset(0);                  /* E-537 (hunt P) */
     if (fast_mc)
         sw_fp_free();                     /* Enhancement-346: drop the binds */
     if (uselhs)
@@ -4488,6 +4655,18 @@ static double wcd_margin(const double *u, int ndim, const char *analysis,
     mc_wcd_config(u, ndim);
     sw_run_cmd("reset");            /* redraws the .params at this u */
     sw_run_cmd(analysis);
+    /* E-537 (hunt C): an evaluation that never solved has no margin. ngspice
+     * leaves the previous point's plot in place, so reading on regardless
+     * returned the BASE point's metric -- and since the gradient below is a
+     * finite difference, an identical value makes that component exactly zero.
+     * With one statistical dimension the whole gradient went to zero and wcd
+     * announced "the metric does not respond to any statistical parameter",
+     * blaming the model for a value the search itself had chosen out of range;
+     * with several dimensions only some components went stale and the search
+     * silently walked the wrong way. NaN propagates into the caller, which
+     * reports honestly instead of guessing. */
+    if (sw_run_failed())
+        return NAN;
     m = sw_eval_expr(metric);
     /* Distance to the nearest spec violation, in metric units. With both a max
      * and a min the pass band is an interval and the margin is the smaller of
@@ -4503,6 +4682,10 @@ static double wcd_margin(const double *u, int ndim, const char *analysis,
 
 void com_wcd(wordlist *wl)
 {
+    /* E-537 (hunt H): see hs_clear_results */
+    hs_clear_results(hs_names_wcd,
+                     (int) (sizeof hs_names_wcd / sizeof *hs_names_wcd));
+    int seed_given = 0;              /* E-537 (hunt P) */
     char analysis[512] = "op";
     char metric[1024] = "";
     double hi = 0.0, lo = 0.0;
@@ -4593,6 +4776,7 @@ void com_wcd(wordlist *wl)
             if (!wl->wl_next) { fprintf(cp_err, "wcd: -seed needs a value\n"); return; }
             wl = wl->wl_next;
             if (!sw_seedarg(wl->wl_word, "wcd", &seed)) return;   /* Enhancement-499 */
+            seed_given = 1;              /* E-537 (hunt P) */
             wl = wl->wl_next;
         } else {
             fprintf(cp_err, "wcd: unknown option '%s'\n", w);
@@ -4627,6 +4811,7 @@ void com_wcd(wordlist *wl)
      * a deterministic MPFP search cannot ride a per-evaluation redraw.
      * Cleared beside every mc_wcd_off() exit. */
     OSDImcHoldTrial(TRUE);
+    if (seed_given) OSDImcSeedOffset(seed);   /* E-537 (hunt P) */
 
     /* --- the nominal point, which also discovers the dimensionality --------
      * How many Gaussian .params a deck draws is not known until it has been
@@ -4636,12 +4821,28 @@ void com_wcd(wordlist *wl)
     g0 = wcd_margin(u, WCD_MAXDIM, analysis, metric, hi, lo, hasmax, hasmin);
     ndim = mc_wcd_ndim();
 
+    /* E-537 (hunt C): if the deck will not even solve at the NOMINAL point
+     * there is no margin to search from, and every later evaluation would be
+     * measured against a value that does not exist. */
+    if (!finite(g0)) {
+        fprintf(cp_err, "wcd: the analysis did not solve at the nominal point, so "
+                        "there is no margin to search from -- fix the operating "
+                        "point first\n");
+        outp_loop_end();          /* Enhancement-477 */
+        ft_optimizing = save_optimizing;
+        mc_wcd_off();
+        OSDImcSeedOffset(0);  /* E-537 (hunt P) */
+        OSDImcHoldTrial(FALSE);   /* Enhancement-535 */
+        return;
+    }
+
     if (ndim < 1) {
         fprintf(cp_err, "wcd: the deck draws no Gaussian .params -- nothing to "
                         "search over (use agauss/gauss in a .param)\n");
         outp_loop_end();          /* Enhancement-477 */
         ft_optimizing = save_optimizing;
         mc_wcd_off();
+        OSDImcSeedOffset(0);  /* E-537 (hunt P) */
         OSDImcHoldTrial(FALSE);   /* Enhancement-535 */
         return;
     }
@@ -4651,6 +4852,7 @@ void com_wcd(wordlist *wl)
         outp_loop_end();          /* Enhancement-477 */
         ft_optimizing = save_optimizing;
         mc_wcd_off();
+        OSDImcSeedOffset(0);  /* E-537 (hunt P) */
         OSDImcHoldTrial(FALSE);   /* Enhancement-535 */
         return;
     }
@@ -4683,12 +4885,30 @@ void com_wcd(wordlist *wl)
             outp_loop_end();          /* Enhancement-477 */
             ft_optimizing = save_optimizing;
             mc_wcd_off();
+        OSDImcSeedOffset(0);  /* E-537 (hunt P) */
             OSDImcHoldTrial(FALSE);   /* Enhancement-535 */
             return;
         }
         double g = wcd_margin(u, ndim, analysis, metric, hi, lo, hasmax, hasmin);
         outp_loop_point(it);
         double gn2 = 0.0, gdotu = 0.0, dnorm = 0.0, unorm = 0.0;
+        int failed_eval = 0;              /* E-537 (hunt C) */
+
+        /* E-537 (hunt C): the search stepped somewhere the deck will not solve.
+         * Say that, rather than differencing against a stale value. */
+        if (!finite(g)) {
+            fprintf(cp_err, "wcd: the analysis stopped solving at iteration %d "
+                            "(the search reached a point the deck cannot "
+                            "evaluate); no worst-case distance is reported.\n"
+                            "     Narrow the spec or the statistical ranges so the "
+                            "search stays inside the solvable region.\n", it);
+            outp_loop_end();          /* Enhancement-477 */
+            ft_optimizing = save_optimizing;
+            mc_wcd_off();
+        OSDImcSeedOffset(0);  /* E-537 (hunt P) */
+            OSDImcHoldTrial(FALSE);   /* Enhancement-535 */
+            return;
+        }
 
         /* forward-difference gradient: D extra evaluations */
         for (d = 0; d < ndim; d++) {
@@ -4696,9 +4916,27 @@ void com_wcd(wordlist *wl)
             u[d] = save + step;
             gp = wcd_margin(u, ndim, analysis, metric, hi, lo, hasmax, hasmin);
             u[d] = save;
+            if (!finite(gp)) {        /* E-537 (hunt C) */
+                failed_eval = 1;
+                break;
+            }
             grad[d] = (gp - g) / step;
             gn2 += grad[d] * grad[d];
             gdotu += grad[d] * save;
+        }
+
+        if (failed_eval) {
+            fprintf(cp_err, "wcd: a gradient probe did not solve at iteration %d, "
+                            "so the search direction cannot be computed; no "
+                            "worst-case distance is reported.\n"
+                            "     A perturbed parameter left its legal range -- "
+                            "narrow the statistical ranges or reduce -step.\n", it);
+            outp_loop_end();          /* Enhancement-477 */
+            ft_optimizing = save_optimizing;
+            mc_wcd_off();
+        OSDImcSeedOffset(0);  /* E-537 (hunt P) */
+            OSDImcHoldTrial(FALSE);   /* Enhancement-535 */
+            return;
         }
 
         if (gn2 <= 0.0) {
@@ -4707,6 +4945,7 @@ void com_wcd(wordlist *wl)
             outp_loop_end();          /* Enhancement-477 */
             ft_optimizing = save_optimizing;
             mc_wcd_off();
+        OSDImcSeedOffset(0);  /* E-537 (hunt P) */
         OSDImcHoldTrial(FALSE);   /* Enhancement-535 */
             return;
         }
@@ -4762,6 +5001,7 @@ void com_wcd(wordlist *wl)
         double sum_wf = 0.0, sum_w2f2 = 0.0;
         long nfail = 0;
         int i;
+        int nis_ok = 0, nis_failed = 0;   /* E-537 (hunt C) */
 
         fprintf(cp_out, "\n  refining with %d mean-shift importance samples "
                         "centred on the MPFP...\n", nis);
@@ -4777,6 +5017,11 @@ void com_wcd(wordlist *wl)
             }
             sw_run_cmd("reset");
             sw_run_cmd(analysis);
+            if (sw_run_failed()) {    /* E-537 (hunt C): exclude, do not guess */
+                nis_failed++;
+                continue;
+            }
+            nis_ok++;
             m = sw_eval_expr(metric);
             if ((hasmax && m > hi) || (hasmin && m < lo))
                 f = 1.0;
@@ -4787,17 +5032,30 @@ void com_wcd(wordlist *wl)
                 sum_w2f2 += w * w;
             }
         }
-        if (nis > 0) {        /* E-536: 0 after an immediate interrupt */
-            double pf = sum_wf / (double) nis;
-            double var = sum_w2f2 / (double) nis - pf * pf;
-            double se = (var > 0.0) ? sqrt(var / (double) nis) : 0.0;
+        if (nis_ok > 0) {     /* E-536/E-537: none completed, or none solved */
+            /* E-537 (hunt C): average over the samples that SOLVED */
+            double pf = sum_wf / (double) nis_ok;
+            double var = sum_w2f2 / (double) nis_ok - pf * pf;
+            double se = (var > 0.0) ? sqrt(var / (double) nis_ok) : 0.0;
             double rel = (pf > 0.0) ? se / pf : 0.0;
+            if (pf < 0.0) pf = 0.0;       /* E-537 (hunt M): a probability */
+            if (pf > 1.0) pf = 1.0;
             double sig = (pf > 0.0 && pf < 1.0) ? -inv_normal_cdf(pf) : 0.0;
             fprintf(cp_out,
                     "  failures seen       : %ld / %d (in the shifted sampling)\n"
-                    "  P(fail), mean-shift : %.6e  +/- %.2e  (relative error %.1f%%)\n"
-                    "  equivalent sigma    : %.3f\n",
-                    nfail, nis, pf, se, 100.0 * rel, sig);
+                    "  P(fail), mean-shift : %.6e  +/- %.2e  (relative error %.1f%%)\n",
+                    nfail, nis_ok, pf, se, 100.0 * rel);
+            if (pf > 0.0 && pf < 1.0)
+                fprintf(cp_out, "  equivalent sigma    : %.3f\n", sig);
+            else
+                fprintf(cp_out, "  equivalent sigma    : n/a  (P(fail) is %s)\n",
+                        pf > 0.0 ? "1" : "0");
+            if (nis_failed)
+                fprintf(cp_out, "  NOTE                : %d of %d shifted sample%s "
+                                "failed to simulate and %s excluded\n",
+                        nis_failed, nis_failed + nis_ok,
+                        nis_failed == 1 ? "" : "s",
+                        nis_failed == 1 ? "was" : "were");
             hs_set_result("wcd_pfail_is", pf);
             hs_set_result("wcd_pfail_is_err", se);
             hs_set_result("wcd_sigma_is", sig);
@@ -4805,6 +5063,7 @@ void com_wcd(wordlist *wl)
     }
 
     mc_wcd_off();
+    OSDImcSeedOffset(0);      /* E-537 (hunt P) */
         OSDImcHoldTrial(FALSE);   /* Enhancement-535 */
     outp_loop_end();          /* Enhancement-477 */
     ft_optimizing = save_optimizing;

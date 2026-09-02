@@ -1,0 +1,12 @@
+`include "disciplines.vams"
+module agestat(a, b);
+  inout a, b;
+  electrical a, b;
+  parameter real r = 1000.0 from (0:inf);
+  (* type="instance", std=10.0 *) parameter real dr = 0.0;
+  (* desc="stress rate", units="1/s" *) real srate;
+  analog begin
+    srate = 1e-9 * abs(V(a, b));
+    I(a, b) <+ V(a, b) / (r + dr);
+  end
+endmodule

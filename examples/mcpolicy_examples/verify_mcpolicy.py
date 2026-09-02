@@ -62,6 +62,36 @@ pin those repairs, each one a former ledger entry with its own repro:
   [18] highsigma -scale weights the OSDI draws it inflates (P(fail) was the
        raw inflated failure fraction)
 
+Enhancement-537 -- a second hunt over the shipped work -- adds [19]-[28]:
+
+  [19] a degenerate importance weight is CALLED OUT (effective sample size),
+       not printed as though it were an estimate: inflating many statistical
+       dimensions at once collapses the weights, and twenty bystander devices
+       that cannot affect the metric took a true P(fail) of 0.297 to 2.5e-11
+  [20] highsigma EXCLUDES samples whose analysis never solved, and says so --
+       it used to count them using the previous sample's metric, biasing the
+       rare-failure probability LOW because -scale makes failures cluster in
+       the tail
+  [21] a weighted mean is clamped into [0,1] (it printed 1.0445), with the
+       equivalent sigma reported n/a at the boundary rather than a 0.000 that
+       reads as P = 0.5
+  [22] a metric that never varied is NAMED, not blamed on resolution ("increase
+       -scale or N" sent the user to chase a mis-typed node with a bigger run)
+  [23] aging's machine-computed dose does not recentre a statistical nominal
+       (E-531's rule: only what the USER typed recentres)
+  [24] montecarlo N draws N samples in every session state -- it used to spend
+       the first on the nominal baseline and fold that fixed point into the
+       yield
+  [25] -seed varies the osdimc draws, so independent replications really are
+       independent (they were byte-identical, making an estimate look stable
+       when nothing had been re-sampled)
+  [26] -lhs says it does not cover osdimc draws (it silently did nothing for
+       model-declared variability)
+  [27] a refused command leaves its result variables UNSET instead of showing
+       the previous run's answer to the scripts they exist for
+  [28] an out-of-range altermod refuses instead of calling controlled_exit --
+       a typo used to destroy the session once a dc/tran had run
+
 Not pinned here, by nature: the interrupt repairs (an interrupted command no
 longer leaks the hold, the sigma inflation, the sampling mode, ft_optimizing
 or the progress bar; and the loop commands now poll ft_intrpt). They need a
@@ -160,27 +190,32 @@ def main():
           f"v={v}")
 
     # [5] BUG 1's pin: montecarlo runs its samples through an internal
-    # reset+run, so the trial-2 draw lands through OSDIsetup's late apply.
-    # Sample 1 = the nominal baseline (0.5), sample 2 = trial 2, which at
-    # mcseed 7 gives v(2) = 0.49240 for this deck. -min 0.497 is violated by
-    # the drawn sample only: exactly 1 when the draw reaches the hoisted
-    # init code, 0 when it lands too late (the bug this run pins).
+    # reset+run, so the draw has to land through OSDIsetup's late apply. The
+    # metric only dips below 0.497 when the draw actually reaches the HOISTED
+    # init code; if it lands too late every sample computes the nominal 0.5 and
+    # nothing violates. So "at least one violation" is exactly the property,
+    # and 0 is the bug. (E-537 hunt J: montecarlo no longer spends a sample on
+    # the nominal baseline, so both samples here are draws.)
     rc, out = run("mchoist",
                   "montecarlo 2 -analysis op -spec v(2) -min 0.497")
     m = re.search(r"spec 1 \(v\(2\)\): (\d+) violation", out)
     check("montecarlo's internal-reset path reaches init-resident code (bug 1)",
-          rc == 0 and m and m.group(1) == "1",
-          f"violations={m.group(1) if m else '?'} (want 1; the bug gave 0)")
+          rc == 0 and m and int(m.group(1)) >= 1,
+          f"violations={m.group(1) if m else '?'} (want >=1; the bug gave 0)")
 
-    # [6] the PRESERVE leg: samples keep drawing across internal resets.
-    # Trials 1..3 at mcseed 7 give v(2) = 0.5, 0.49511, 0.50077; only the
-    # third exceeds 0.5005. A dead sequence (every sample the baseline)
-    # scores 0.
+    # [6] the PRESERVE leg: the samples must DIFFER from each other across the
+    # internal resets. A dead sequence -- every sample falling back to the same
+    # nominal -- scores all-or-nothing against a threshold that sits inside the
+    # spread, so a count strictly between 0 and N is the property. Pinning one
+    # exact count instead made this brittle to how many trials the command
+    # spends (E-537 hunt J changed that legitimately).
     rc, out = run("mcres", "montecarlo 3 -analysis op -spec v(2) -max 0.5005")
     m = re.search(r"spec 1 \(v\(2\)\): (\d+) violation", out)
+    nv = int(m.group(1)) if m else -1
     check("montecarlo samples differ across internal resets (preserve)",
-          rc == 0 and m and m.group(1) == "1",
-          f"violations={m.group(1) if m else '?'} (want 1)")
+          rc == 0 and 0 < nv < 3,
+          f"violations={nv} of 3 (want strictly between 0 and 3: all-same "
+          f"samples would score 0 or 3)")
 
     # [7] `.dc` of a statistical parameter under a DRAWN trial: the machine
     # write pins dr, the held r draw stays applied -- the curve is
@@ -339,6 +374,176 @@ def main():
     check("highsigma -scale weights the inflated OSDI draws (bug 7)", ok18,
           f"P(fail)={mp.group(1) if mp else '?'} raw_frac="
           f"{raw:.3f} true~0.297" if mfail and mp else "no summary")
+
+    # ---- E-537: the second hunt round's findings ------------------------
+
+    # [19] hunt E: the importance weights degenerate as -scale inflates more
+    # dimensions. Bystander devices on a DISCONNECTED subcircuit cannot affect
+    # the metric, yet they used to drag a true P(fail) of 0.297 to 2.5e-11 with
+    # no warning. The estimate is still poor -- that is inherent -- but it must
+    # now SAY the weights collapsed instead of presenting the number plainly.
+    with open(os.path.join(HERE, "_by.cir"), "w") as f:
+        f.write("bystander\n.option osdimc\nv1 1 0 dc 1\nn1 1 2 mm\nr1 2 0 1k\n"
+                ".model mm mchoist rr=1000\n")
+        for i in range(20):
+            f.write("nx%d %d %d bys\n" % (i, 10 + i, 11 + i))
+        f.write("vb 10 0 dc 0\nrb 30 0 1k\n.model bys mcres r=1000\n"
+                ".control\npre_osdi mchoist.osdi\npre_osdi mcres.osdi\n"
+                "set mcseed = 7\nop\n"
+                "highsigma 200 -scale 3 -seed 11 -analysis op -metric v(2) "
+                "-min 0.487\nquit\n.endc\n.end\n")
+    r = subprocess.run([NGSPICE, "-b", "_by.cir"], cwd=HERE, capture_output=True,
+                       text=True, timeout=900, errors="replace")
+    o = r.stdout + r.stderr
+    os.remove(os.path.join(HERE, "_by.cir"))
+    mess = re.search(r"effective sample size of ([\d.]+) out of (\d+)", o)
+    check("a degenerate importance weight is called out, not just printed "
+          "(hunt E)",
+          r.returncode == 0 and "weights have collapsed" in o and mess
+          and float(mess.group(1)) < 0.10 * float(mess.group(2)),
+          f"ESS={mess.group(1) + '/' + mess.group(2) if mess else 'no note'}")
+
+    # [20] hunt B: a sample whose analysis never solved has no metric; it must
+    # be excluded and reported, as montecarlo has done since E-438. The deck
+    # drives an OSDI `r ... from (0:inf)` negative, which fails the run.
+    with open(os.path.join(HERE, "_bb.cir"), "w") as f:
+        f.write("failing samples\n.param rr = agauss(1000, 900, 1)\n"
+                "v1 1 0 dc 1\nn1 1 2 mm\nr2 2 0 1k\n.model mm mcres r={rr}\n"
+                ".control\npre_osdi mcres.osdi\nset mcseed = 3\n"
+                "highsigma 60 -scale 3 -seed 3 -analysis op -metric v(2) "
+                "-max 0.6\nquit\n.endc\n.end\n")
+    rb = subprocess.run([NGSPICE, "-b", "_bb.cir"], cwd=HERE, capture_output=True,
+                        text=True, timeout=900, errors="replace")
+    rc, out = rb.returncode, rb.stdout + rb.stderr
+    os.remove(os.path.join(HERE, "_bb.cir"))
+    mex = re.search(r"(\d+) of (\d+) samples? failed to simulate", out)
+    mtot = re.search(r"failures observed\s*:\s*\d+\s*/\s*(\d+)", out)
+    check("highsigma excludes samples that did not solve, and says so (hunt B)",
+          rc == 0 and mex and mtot
+          and int(mex.group(1)) > 0
+          and int(mtot.group(1)) == int(mex.group(2)) - int(mex.group(1)),
+          f"excluded={mex.group(0) if mex else 'NONE -- deck did not fail any'}; "
+          f"denominator={mtot.group(1) if mtot else '?'} "
+          f"(must be total minus excluded, and the old code used the total)")
+
+    # [21] hunt M: a weighted mean is not automatically a probability. With a
+    # spec every sample violates, the true answer is exactly 1 -- the estimate
+    # must be clamped into [0,1] and the equivalent sigma reported as n/a
+    # rather than the old 0.000, which reads as P = 0.5.
+    rc, out = run("mchoist", "op\nhighsigma 200 -scale 3 -seed 11 -analysis op "
+                             "-metric v(2) -min 10", timeout=900)
+    mp = re.search(r"P\(fail\)\s*:\s*([-\d.eE+]+)", out)
+    pv = float(mp.group(1)) if mp else -1.0
+    # every sample violates, so the estimate must never exceed 1 (it printed
+    # 1.0445 before); at the boundary the sigma must read n/a, not 0.000.
+    at_bound = (pv >= 1.0 - 1e-12)
+    check("an all-fail case reports a probability, never >1 (hunt M)",
+          rc == 0 and mp and 0.0 <= pv <= 1.0
+          and (not at_bound or "equivalent sigma  : n/a" in out),
+          f"P(fail)={mp.group(1) if mp else '?'} (<=1 required), "
+          f"at-boundary={at_bound}, sigma-n/a={'equivalent sigma  : n/a' in out}")
+
+    # [22] hunt L: a metric that never varies is a mis-typed node far more often
+    # than a rare failure, and the old hint sent the user to spend a bigger run
+    # chasing it. montecarlo has had this check since E-501.
+    rc, out = run("mcres", "op\nhighsigma 20 -scale 2 -analysis op "
+                           "-metric v(nosuchnode) -max 0.9", timeout=900)
+    check("a metric that never varied is named, not blamed on resolution "
+          "(hunt L)",
+          rc == 0 and "every sample gave the SAME metric value" in out
+          and "increase -scale or N" not in out
+          and "equivalent sigma  : n/a" in out,
+          f"no-variance note={'every sample gave the SAME' in out}, "
+          f"misleading hint={'increase -scale or N' in out}, "
+          f"sigma n/a at P=0={'equivalent sigma  : n/a' in out}")
+
+    # [23] hunt G: aging's dose is MACHINE-computed, so it must not recenter a
+    # statistical nominal the way a user's `alter` does (E-531's rule). The
+    # fixture's aging parameter carries (* std *), so a recentre is visible in
+    # the verbose "(nominal ...)" of every later draw.
+    with open(os.path.join(HERE, "_ag.cir"), "w") as f:
+        f.write("aging recentre\n.option osdimc\nv1 1 0 dc 1\nn1 1 2 am\n"
+                "r1 2 0 1k\n.model am agestat r=1000\n.control\n"
+                "pre_osdi agestat.osdi\nset mcseed = 7\nset osdimc_verbose\n"
+                "op\nop\naging 1e9 rate srate param dr\nop\nop\n"
+                "quit\n.endc\n.end\n")
+    compile_model("agestat")
+    ra = subprocess.run([NGSPICE, "-b", "_ag.cir"], cwd=HERE, capture_output=True,
+                        text=True, timeout=900, errors="replace")
+    oa = ra.stdout + ra.stderr
+    os.remove(os.path.join(HERE, "_ag.cir"))
+    noms = set(re.findall(r"n1:dr = [-\d.e+]+ \(nominal ([-\d.e+]+)\)", oa))
+    check("aging's dose does not recentre a statistical nominal (hunt G)",
+          ra.returncode == 0 and noms and noms == {"0"},
+          f"nominals seen after aging = {sorted(noms) if noms else 'none'} "
+          f"(want only 0)")
+
+    # [24] hunt J: N samples must be N DRAWS regardless of session history --
+    # the banner says "N random samples", and the yield and its interval must
+    # not fold in a deterministic point.
+    rc1, o1 = run("mcres", "set osdimc_verbose\n"
+                           "montecarlo 4 -analysis op -spec v(2) -max 0.9")
+    rc2, o2 = run("mcres", "set osdimc_verbose\nop\n"
+                           "montecarlo 4 -analysis op -spec v(2) -max 0.9")
+    n1 = len(re.findall(r"osdimc: trial \d+: mm:r", o1))
+    n2 = len(re.findall(r"osdimc: trial \d+: mm:r", o2))
+    check("montecarlo N draws N samples in every session state (hunt J)",
+          rc1 == 0 and rc2 == 0 and n1 == 4 and n2 == 4,
+          f"draws: fresh={n1}, after an op={n2} (want 4 and 4; the bug gave 3)")
+
+    # [25] hunt P: varying -seed is how one checks a Monte-Carlo estimate is
+    # stable. It keyed only the netlist PRNG, so every "independent"
+    # replication returned the SAME osdimc samples.
+    rc1, o1 = run("mcres", "set osdimc_verbose\n"
+                           "montecarlo 4 -analysis op -seed 1 -spec v(2) -max 0.9")
+    rc2, o2 = run("mcres", "set osdimc_verbose\n"
+                           "montecarlo 4 -analysis op -seed 999 -spec v(2) -max 0.9")
+    d1 = re.findall(r"mm:r = ([\d.]+)", o1)
+    d2 = re.findall(r"mm:r = ([\d.]+)", o2)
+    check("-seed varies the osdimc draws, so replications are independent "
+          "(hunt P)",
+          rc1 == 0 and rc2 == 0 and d1 and d2 and d1 != d2,
+          f"seed 1 -> {d1[:2]}, seed 999 -> {d2[:2]} (were byte-identical)")
+
+    # [26] hunt O: -lhs stratifies the netlist's own draws only. Say so on a
+    # deck whose variability is declared in the models, which is exactly where
+    # a user would expect it to apply.
+    rc, out = run("mcres", "montecarlo 4 -analysis op -lhs -spec v(2) -max 0.9")
+    check("-lhs says it does not cover osdimc draws (hunt O)",
+          rc == 0 and "does NOT cover" in out and "osdimc" in out,
+          f"note present={'does NOT cover' in out}")
+
+    # [27] hunt H: the result variables exist for scripting, so a command that
+    # REFUSES must leave them unset rather than showing the last run's answer.
+    with open(os.path.join(HERE, "_hh.cir"), "w") as f:
+        f.write("wcd result vars\n.param rr = agauss(1000, 60, 1)\n"
+                "v1 1 0 dc 1\nr1 1 2 {rr}\nr2 2 0 1k\n.control\n"
+                "wcd -metric v(2) -max 0.53 -analysis op -maxiter 8\n"
+                "echo GOOD=$wcd_beta\n"
+                "wcd -metric v(nosuchnode) -max 0.9 -analysis op -maxiter 8\n"
+                "echo AFTER=$wcd_beta\nquit\n.endc\n.end\n")
+    rh = subprocess.run([NGSPICE, "-b", "_hh.cir"], cwd=HERE, capture_output=True,
+                        text=True, timeout=900, errors="replace")
+    rc, out = rh.returncode, rh.stdout + rh.stderr
+    os.remove(os.path.join(HERE, "_hh.cir"))
+    mg = re.search(r"^GOOD=(\S*)$", out, re.M)
+    ma = re.search(r"^AFTER=(\S*)$", out, re.M)
+    check("a refused command leaves its result variables unset (hunt H)",
+          rc == 0 and mg and mg.group(1) and ma and not ma.group(1),
+          f"after a good run: {mg.group(1) if mg else '?'!r}; "
+          f"after a refusal: {ma.group(1) if ma else '?'!r} (want empty)")
+
+    # [28] hunt N: a mistyped MODEL parameter value used to call controlled_exit
+    # once a dc/tran had run -- the whole session gone to a typo. It must
+    # refuse and stay alive, as `alter` and every built-in already did.
+    rc, out = run("mcres", "dc v1 0 1 0.5\naltermod mm r = -500\n"
+                           "echo SURVIVED_THE_TYPO")
+    check("an out-of-range altermod refuses instead of killing the session "
+          "(hunt N)",
+          rc == 0 and "SURVIVED_THE_TYPO" in out
+          and "did not take effect" in out,
+          f"survived={'SURVIVED_THE_TYPO' in out}, "
+          f"refusal explained={'did not take effect' in out}")
 
     print(f"\n{'ALL PASS' if passed == checks else 'FAILURES'}: "
           f"{passed}/{checks} passed")

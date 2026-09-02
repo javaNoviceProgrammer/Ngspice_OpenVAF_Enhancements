@@ -107,6 +107,14 @@ a non-converged point — falls back to the per-point loop automatically;
 `-perpoint` forces it. See
 [`examples/sweepdc_examples/`](../../examples/sweepdc_examples/).
 
+One caveat under **`.option osdimc`**: the two engines are separate run-class
+commands, so each takes its *own* Monte-Carlo trial. Running a sweep twice —
+once by default and once with `-perpoint` — therefore compares two different
+samples, and the curves differ by however much the model's declared
+variability moves them (measured ~2 % on a σ=25 resistance). Both answers are
+correct for their own sample; to compare the engines themselves, turn the
+option off or re-source between the two runs.
+
 ## 3.4 Analysis coverage
 
 All core analyses treat OSDI devices as full citizens. The audited status
@@ -272,6 +280,32 @@ behind — an interrupt used to leave a sigma inflation or a held sample
 armed for the rest of the session. One interrupt arriving *inside* a long
 inner analysis is consumed by that analysis; press Ctrl-C again to stop the
 loop.
+
+E-537 made the sampling commands say what they are actually measuring.
+**`montecarlo N` now draws N samples** in every session state — it used to
+spend the first one on the nominal baseline on a freshly sourced deck, and
+fold that deterministic point into the yield and its confidence interval.
+**`-seed` varies the osdimc draws**, so independent replications really are
+independent (it keyed only the netlist PRNG before, and every "independent"
+run returned the same points — which made an estimate look perfectly stable
+when nothing had been re-sampled). **`-lhs` says so** when it cannot reach
+model-declared variability: it stratifies the netlist's own `.param` draws
+only. And every sampling command now **excludes samples that did not solve
+and reports them** rather than silently reusing the previous sample's
+numbers — with `-scale` those failures cluster in the tail, so their
+exclusion biases P(fail) low and the run says as much.
+
+Two limits `highsigma` now states instead of hiding. It reports an
+**effective sample size** for its importance weights, and refuses to present
+P(fail) as an estimate when they have collapsed: the weight is a product over
+*every* inflated dimension, so a deck with many `(* std *)` parameters —
+per-instance mismatch on several devices — drives its variance up
+exponentially, and the estimate can fall orders of magnitude low while
+looking precise. Narrow the variability to the parameters that matter, or use
+a plain `montecarlo` for a probability that large. And a weighted mean is not
+automatically a probability: the estimate is clamped into `[0,1]`, with the
+equivalent sigma reported as `n/a` at the boundary rather than a `0.000` that
+reads as P = 0.5.
 
 ## 3.7 Statistical modeling inside the device
 
