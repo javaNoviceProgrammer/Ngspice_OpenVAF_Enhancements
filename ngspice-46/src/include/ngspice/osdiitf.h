@@ -187,6 +187,15 @@ extern bool OSDImcActive(void);
 /* E-537 (hunt J): step past the nominal baseline so `montecarlo N` really
  * draws N samples rather than N-1 draws plus the deterministic nominal. */
 extern void OSDImcSkipBaseline(void);
+/* E-538: scope `highsigma -scale` to named statistical parameters, so the
+ * importance weight stays low-dimensional enough to estimate with. A spec is
+ * a bare parameter name or `@owner[param]` (`*` allowed as the owner); with
+ * no specs every gauss statistical parameter inflates, as before. Hits counts
+ * the draws the specs actually matched, so the command can say when a spec
+ * named nothing. */
+extern void OSDImcScaleScopeClear(void);
+extern bool OSDImcScaleScopeAdd(const char *spec);
+extern int  OSDImcScaleScopeHits(void);
 extern void OSDImcInterruptReset(void);
 extern unsigned long OSDImcTrialCheckpoint(void);
 extern void OSDImcTrialRewind(unsigned long t);

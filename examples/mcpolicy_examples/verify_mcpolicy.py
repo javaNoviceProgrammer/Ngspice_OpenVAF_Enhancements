@@ -92,6 +92,20 @@ Enhancement-537 -- a second hunt over the shipped work -- adds [19]-[28]:
   [28] an out-of-range altermod refuses instead of calling controlled_exit --
        a typo used to destroy the session once a dc/tran had run
 
+Enhancement-538 makes `-scale` scopeable, which is what makes highsigma
+usable on a deck with more than a couple of statistical dimensions; [29]-[33]
+pin it:
+
+  [29] scoping -scale to the parameter the metric turns on takes a collapsed
+       deck from 3.35e-05 to 0.2967 against a true 0.29670536
+  [30] and the weight counts EXACTLY the inflated dimensions: a scoped run on
+       a deck with twenty bystander devices equals, bit for bit, the same deck
+       without them
+  [31] -inflate accepts the @owner[param] accessor as well as a bare name
+  [32] a spec matching no statistical parameter is reported (it inflated
+       nothing, so the run sampled the nominal spread)
+  [33] a malformed spec is refused before the run, not silently ignored
+
 Not pinned here, by nature: the interrupt repairs (an interrupted command no
 longer leaks the hold, the sigma inflation, the sampling mode, ft_optimizing
 or the progress bar; and the loop commands now poll ft_intrpt). They need a
@@ -544,6 +558,88 @@ def main():
           and "did not take effect" in out,
           f"survived={'SURVIVED_THE_TYPO' in out}, "
           f"refusal explained={'did not take effect' in out}")
+
+    # ---- E-538: -scale is scopeable, so highsigma is usable -------------
+
+    def bystander_deck(name, inflate):
+        """The E-537 degenerate deck: the metric depends only on n1's rr, and
+        twenty statistically-declared bystanders sit on a DISCONNECTED
+        subcircuit where they cannot affect it."""
+        with open(os.path.join(HERE, name), "w") as f:
+            f.write("bystander\n.option osdimc\nv1 1 0 dc 1\nn1 1 2 mm\n"
+                    "r1 2 0 1k\n.model mm mchoist rr=1000\n")
+            for i in range(20):
+                f.write("nx%d %d %d bys\n" % (i, 10 + i, 11 + i))
+            f.write("vb 10 0 dc 0\nrb 30 0 1k\n.model bys mcres r=1000\n"
+                    ".control\npre_osdi mchoist.osdi\npre_osdi mcres.osdi\n"
+                    "set mcseed = 7\nop\n"
+                    "highsigma 2000 -scale 3 -seed 11 %s-analysis op "
+                    "-metric v(2) -min 0.487\nquit\n.endc\n.end\n" % inflate)
+
+    def hs_run(name):
+        r = subprocess.run([NGSPICE, "-b", name], cwd=HERE, capture_output=True,
+                           text=True, timeout=1800, errors="replace")
+        o = r.stdout + r.stderr
+        os.remove(os.path.join(HERE, name))
+        m = re.search(r"P\(fail\)\s*:\s*([-\d.eE+]+)", o)
+        return r.returncode, o, (float(m.group(1)) if m else -1.0)
+
+    # [29] the headline: scoping -scale to the one parameter the metric turns
+    # on makes an unusable deck estimate correctly. True P(fail) = 0.29670536
+    # by quadrature; unscoped this deck reports ~1e-9.
+    bystander_deck("_s1.cir", "")
+    rc_u, out_u, p_u = hs_run("_s1.cir")
+    bystander_deck("_s2.cir", "-inflate rr ")
+    rc_s, out_s, p_s = hs_run("_s2.cir")
+    TRUE_P = 0.29670536
+    check("scoping -scale makes a degenerate deck estimate correctly (E-538)",
+          rc_u == 0 and rc_s == 0
+          and p_u >= 0 and p_u < 0.5 * TRUE_P          # unscoped: collapsed
+          and abs(p_s - TRUE_P) < 0.05                 # scoped: on target
+          and "weights have collapsed" in out_u
+          and "weights have collapsed" not in out_s,
+          f"unscoped={p_u:.4g} (collapsed, flagged={'weights have collapsed' in out_u}), "
+          f"scoped={p_s:.4g} vs true {TRUE_P:.5g}")
+
+    # [30] the weight must count EXACTLY the inflated dimensions, so scoping a
+    # deck down to its only relevant parameter must reproduce the same answer
+    # as a deck that never had the bystanders at all.
+    with open(os.path.join(HERE, "_s3.cir"), "w") as f:
+        f.write("no bystanders\n.option osdimc\nv1 1 0 dc 1\nn1 1 2 mm\n"
+                "r1 2 0 1k\n.model mm mchoist rr=1000\n.control\n"
+                "pre_osdi mchoist.osdi\nset mcseed = 7\nop\n"
+                "highsigma 2000 -scale 3 -seed 11 -analysis op -metric v(2) "
+                "-min 0.487\nquit\n.endc\n.end\n")
+    rc_b, _, p_b = hs_run("_s3.cir")
+    check("a scoped run matches the deck without the extra dimensions (E-538)",
+          rc_b == 0 and p_s > 0 and abs(p_s - p_b) < 1e-9,
+          f"scoped-with-bystanders={p_s:.6g}, without-bystanders={p_b:.6g} "
+          f"(must be identical: the bystanders now cost nothing)")
+
+    # [31] the accessor spellings, and an unscoped run left untouched
+    bystander_deck("_s4.cir", "-inflate @mm[rr] ")
+    rc_a, _, p_a = hs_run("_s4.cir")
+    check("-inflate accepts the @owner[param] spelling (E-538)",
+          rc_a == 0 and abs(p_a - p_s) < 1e-9,
+          f"@mm[rr] -> {p_a:.6g}, bare rr -> {p_s:.6g} (same parameter)")
+
+    # [32] a spec naming nothing inflated nothing, so the run measured the
+    # NOMINAL spread -- that must be said, not reported as a scoped result.
+    bystander_deck("_s5.cir", "-inflate nosuchparam ")
+    rc_n, out_n, _ = hs_run("_s5.cir")
+    check("an -inflate spec that matched nothing is reported (E-538)",
+          rc_n == 0 and "matched a statistical parameter" in out_n,
+          f"note present={'matched a statistical parameter' in out_n}")
+
+    # [33] a malformed spec is refused before the run, not silently ignored
+    rc_m, out_m = run("mcres", "highsigma 20 -scale 2 -inflate @bad[ "
+                               "-analysis op -metric v(2) -max 0.9")
+    # (the deck then runs no analysis at all, so batch mode exits non-zero --
+    # that is the refusal working, not a failure of this check)
+    check("a malformed -inflate spec is refused, not ignored (E-538)",
+          "is not a parameter name" in out_m and "P(fail)" not in out_m,
+          f"refused={'is not a parameter name' in out_m}, "
+          f"ran anyway={'P(fail)' in out_m}")
 
     print(f"\n{'ALL PASS' if passed == checks else 'FAILURES'}: "
           f"{passed}/{checks} passed")

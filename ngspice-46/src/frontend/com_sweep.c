@@ -3978,7 +3978,11 @@ void com_highsigma(wordlist *wl)
     /* E-537 (hunt H): a run that refuses must not leave the last one's answer */
     hs_clear_results(hs_names_highsigma,
                      (int) (sizeof hs_names_highsigma / sizeof *hs_names_highsigma));
+    /* E-538: start from a clean scope, so a spec list left by an earlier
+     * invocation (or by a parse error that returned early) cannot leak in. */
+    OSDImcScaleScopeClear();
     int seed_given = 0;              /* E-537 (hunt P) */
+    int ninflate = 0;                /* E-538: -inflate specs given */
     int nsamp = 0;
     double lambda = 2.0;
     unsigned seed = 1;
@@ -3989,8 +3993,14 @@ void com_highsigma(wordlist *wl)
     int save_optimizing = ft_optimizing;
 
     if (wl == NULL || wl->wl_word == NULL) {
-        fprintf(cp_err, "Usage: highsigma <N> [-scale <lambda>] [-seed <s>] "
-                        "[-analysis <cmd>] -metric <expr> [-max <hi>] [-min <lo>]\n");
+        fprintf(cp_err, "Usage: highsigma <N> [-scale <lambda>] "
+                        "[-inflate <param>]... [-seed <s>] "
+                        "[-analysis <cmd>] -metric <expr> [-max <hi>] [-min <lo>]\n"
+                        "       -inflate names which statistical parameters "
+                        "-scale may inflate (`vth0`, or `@mod[vth0]`); without "
+                        "it every one inflates,\n"
+                        "       which on a deck with per-instance mismatch makes "
+                        "the importance weights collapse.\n");
         return;
     }
 
@@ -4007,6 +4017,26 @@ void com_highsigma(wordlist *wl)
             if (!wl->wl_next) { fprintf(cp_err, "highsigma: -scale needs a value\n"); return; }
             wl = wl->wl_next;
             if (!sw_boundarg(wl->wl_word, "highsigma", "-scale", &lambda)) return;   /* E-501 */
+            wl = wl->wl_next;
+        } else if (eq(w, "-inflate") || eq(w, "inflate")) {
+            /* E-538: name the statistical parameters -scale may inflate. The
+             * weight is a product over the inflated dimensions, so restricting
+             * it to the ones the failure depends on is what keeps the estimate
+             * usable on a deck with per-instance mismatch. */
+            if (!wl->wl_next) {
+                fprintf(cp_err, "highsigma: -inflate needs a parameter "
+                                "(`vth0`, or `@mod[vth0]`)\n");
+                return;
+            }
+            wl = wl->wl_next;
+            if (!OSDImcScaleScopeAdd(wl->wl_word)) {
+                fprintf(cp_err, "highsigma: -inflate '%s' is not a parameter "
+                                "name or an @owner[param] accessor\n",
+                        wl->wl_word);
+                OSDImcScaleScopeClear();
+                return;
+            }
+            ninflate++;
             wl = wl->wl_next;
         } else if (eq(w, "-seed") || eq(w, "seed")) {
             if (!wl->wl_next) { fprintf(cp_err, "highsigma: -seed needs a value\n"); return; }
@@ -4090,9 +4120,11 @@ void com_highsigma(wordlist *wl)
         if (have_max) snprintf(spec, sizeof spec, "> %g", hi);
         if (have_min) snprintf(spec + strlen(spec), sizeof spec - strlen(spec),
                                "%s< %g", have_max ? " or " : "", lo);
-        fprintf(cp_out, "highsigma: %d samples, scale (sigma inflation) = %g, "
+        fprintf(cp_out, "highsigma: %d samples, scale (sigma inflation) = %g%s, "
                         "analysis '%s', fail if (%s) %s\n",
-                nsamp, lambda, analysis, metric, spec);
+                nsamp, lambda,
+                ninflate ? " on the -inflate parameters only" : "",
+                analysis, metric, spec);
     }
 
     mc_sss_config(nsamp, lambda, seed);
@@ -4163,6 +4195,8 @@ void com_highsigma(wordlist *wl)
     outp_loop_end();          /* Enhancement-477 */
     OSDImcSigmaScale(1.0);    /* Enhancement-535 */
     OSDImcSeedOffset(0);      /* E-537 (hunt P) */
+    int inflate_hits = OSDImcScaleScopeHits();   /* E-538 */
+    OSDImcScaleScopeClear();
     ft_optimizing = save_optimizing;
     mc_sss_off();
 
@@ -4229,17 +4263,29 @@ void com_highsigma(wordlist *wl)
                         "draws stay inside every parameter's legal domain\n",
                 nfailed_run, nfailed_run + nvalid, nfailed_run == 1 ? "" : "s",
                 nfailed_run == 1 ? "is" : "are");
+    /* E-538: a spec that matched nothing inflated nothing, so the run measured
+     * the NOMINAL circuit -- say so rather than reporting its P(fail) as if the
+     * scoping had worked. */
+    if (ninflate && inflate_hits == 0)
+        fprintf(cp_out, "  NOTE    : none of the %d -inflate parameter%s matched a "
+                        "statistical parameter in this circuit, so NOTHING was "
+                        "inflated and this run\n"
+                        "            sampled the nominal spread; check the names "
+                        "against the model's (* std *) parameters.\n",
+                ninflate, ninflate == 1 ? "" : "s");
     if (degenerate)
         fprintf(cp_out, "  NOTE    : the importance weights have collapsed -- an "
                         "effective sample size of %.1f out of %d. P(fail) above is "
                         "NOT trustworthy.\n"
-                        "            This is what happens when -scale inflates many "
-                        "statistical dimensions at once (every (* std *) parameter of "
-                        "every device counts, even ones\n"
-                        "            the metric cannot depend on). Narrow the "
-                        "variability to the parameters that matter, or use a plain "
-                        "`montecarlo` for a probability this large.\n",
-                ess, nvalid);
+                        "            %s\n",
+                ess, nvalid,
+                ninflate
+                  ? "Even scoped, too many dimensions are inflated -- narrow "
+                    "`-inflate` further, to the parameters the failure really "
+                    "turns on."
+                  : "-scale inflates EVERY (* std *) parameter of every device, "
+                    "including ones the metric cannot depend on. Name the ones "
+                    "that matter with `-inflate <param>`.");
     /* E-537 (hunt L): a metric that never moved is a mis-typed node or an
      * unsaved vector far more often than a genuinely rare failure -- and the
      * old "increase -scale or N" hint sent the user off to spend a bigger run

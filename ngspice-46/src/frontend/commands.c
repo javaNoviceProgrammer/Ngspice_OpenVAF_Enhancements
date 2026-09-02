@@ -220,10 +220,14 @@ struct comm spcp_coms[] = {
     { "highsigma", com_highsigma, FALSE, FALSE,   /* Enhancement-150 */
       { 0, 0, 0, 0 }, E_DEFHMASK, 1, LOTS,
       NULL,
-      "<N> [-scale <lambda>] [-seed <s>] [-analysis <cmd>] -metric <expr> [-max <hi>] [-min <lo>] : "
+      "<N> [-scale <lambda>] [-inflate <param>]... [-seed <s>] [-analysis <cmd>] -metric <expr> [-max <hi>] [-min <lo>] : "
       "rare-event (high-sigma) failure-probability estimation by scaled-sigma importance sampling -- "
       "inflates Gaussian .param sigmas by lambda so tail failures (metric > hi or < lo) are sampled "
-      "often, reweights, and reports P(fail), relative error, and equivalent sigma-to-fail." } ,
+      "often, reweights, and reports P(fail), relative error, and equivalent sigma-to-fail. "
+      "`-inflate` (E-538) names which statistical parameters may be inflated (`vth0`, or `@mod[vth0]`); "
+      "without it every one is, and the importance weight -- a product over the inflated dimensions -- "
+      "collapses on any deck with per-instance mismatch. The reported effective sample size says when "
+      "that has happened." } ,
     { "mccorr", com_mccorr, FALSE, FALSE,          /* Enhancement-151 */
       { 0, 0, 0, 0 }, E_DEFHMASK, 0, LOTS,
       NULL,
@@ -895,10 +899,14 @@ struct comm nutcp_coms[] = {
     { "highsigma", com_highsigma, FALSE, FALSE,   /* Enhancement-150 */
       { 0, 0, 0, 0 }, E_DEFHMASK, 1, LOTS,
       NULL,
-      "<N> [-scale <lambda>] [-seed <s>] [-analysis <cmd>] -metric <expr> [-max <hi>] [-min <lo>] : "
+      "<N> [-scale <lambda>] [-inflate <param>]... [-seed <s>] [-analysis <cmd>] -metric <expr> [-max <hi>] [-min <lo>] : "
       "rare-event (high-sigma) failure-probability estimation by scaled-sigma importance sampling -- "
       "inflates Gaussian .param sigmas by lambda so tail failures (metric > hi or < lo) are sampled "
-      "often, reweights, and reports P(fail), relative error, and equivalent sigma-to-fail." } ,
+      "often, reweights, and reports P(fail), relative error, and equivalent sigma-to-fail. "
+      "`-inflate` (E-538) names which statistical parameters may be inflated (`vth0`, or `@mod[vth0]`); "
+      "without it every one is, and the importance weight -- a product over the inflated dimensions -- "
+      "collapses on any deck with per-instance mismatch. The reported effective sample size says when "
+      "that has happened." } ,
     { "mccorr", com_mccorr, FALSE, FALSE,          /* Enhancement-151 */
       { 0, 0, 0, 0 }, E_DEFHMASK, 0, LOTS,
       NULL,

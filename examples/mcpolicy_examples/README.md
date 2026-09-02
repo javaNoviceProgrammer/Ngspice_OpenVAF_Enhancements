@@ -78,7 +78,15 @@ boundary; a never-varying metric is named instead of blamed on resolution;
 aging's dose no longer recentres a statistical nominal; and a refused command
 leaves its result variables unset rather than showing the last run's answer.
 
-`verify_mcpolicy.py` (28 checks, both solvers) pins each behavior with
+Enhancement-538 supplies the remedy E-537's guard was pointing at:
+**`-inflate <param>`** names which statistical parameters `-scale` may
+inflate, so the importance weight counts only the dimensions the failure
+actually turns on. On the very deck that collapsed, `-inflate rr` takes the
+reported P(fail) from 3.35e-05 to **0.2967** against a true 0.29670536 — and
+reproduces bit for bit the answer from a deck that never had the bystander
+devices, so they now cost exactly nothing.
+
+`verify_mcpolicy.py` (33 checks, both solvers) pins each behavior with
 closed-form expectations computed from the same run's parameter readbacks —
 `v(2) = 1k/(r+dr+1k)` against `@mm[r]`/`@n1[dr]` — plus the deterministic
 mcseed-7 montecarlo discriminators for the init-resident and preserve legs,

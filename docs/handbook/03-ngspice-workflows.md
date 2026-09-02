@@ -301,11 +301,27 @@ P(fail) as an estimate when they have collapsed: the weight is a product over
 *every* inflated dimension, so a deck with many `(* std *)` parameters —
 per-instance mismatch on several devices — drives its variance up
 exponentially, and the estimate can fall orders of magnitude low while
-looking precise. Narrow the variability to the parameters that matter, or use
-a plain `montecarlo` for a probability that large. And a weighted mean is not
-automatically a probability: the estimate is clamped into `[0,1]`, with the
-equivalent sigma reported as `n/a` at the boundary rather than a `0.000` that
-reads as P = 0.5.
+looking precise. And a weighted mean is not automatically a probability: the
+estimate is clamped into `[0,1]`, with the equivalent sigma reported as `n/a`
+at the boundary rather than a `0.000` that reads as P = 0.5.
+
+E-538 supplies the remedy that guard was pointing at. **`-inflate <param>`**
+(repeatable) names which statistical parameters `-scale` may inflate — a bare
+name, or the usual `@owner[param]` accessor with `*` allowed as the owner —
+and the importance weight then counts exactly those dimensions and no others.
+Scoping the inflation to the parameters a failure actually turns on is what
+keeps the weight low-dimensional enough to estimate with: on a deck where
+twenty statistically-declared bystander devices had dragged a true P(fail) of
+0.2967 down to 3.35e-05, `-inflate rr` recovers **0.2967**, and reproduces bit
+for bit the answer from a deck that never had those devices. Without
+`-inflate` every parameter still inflates, exactly as before. A spec that
+matches nothing, or one that is malformed, is reported rather than silently
+widening the scope back to everything:
+
+```spice
+highsigma 2000 -scale 3 -inflate vth0 -inflate @nmod[u0] \
+          -analysis op -metric v(out) -min 0.9
+```
 
 ## 3.7 Statistical modeling inside the device
 

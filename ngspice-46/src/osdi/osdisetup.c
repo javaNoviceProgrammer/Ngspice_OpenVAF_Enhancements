@@ -1577,6 +1577,106 @@ static uint32_t osdimc_seed_extra;
 
 void OSDImcSeedOffset(unsigned s) { osdimc_seed_extra = (uint32_t) s; }
 
+/* ===================== E-538: scoped sigma inflation =====================
+ *
+ * `highsigma -scale` inflates EVERY gauss statistical parameter in the
+ * circuit, and the importance weight is a PRODUCT over all of them. Its
+ * variance therefore grows exponentially with their number, so on any deck
+ * with per-instance mismatch the estimator collapses: E-537 measured a true
+ * P(fail) of 0.297 reported as 2.5e-11 once twenty bystander devices -- ones
+ * the metric cannot even depend on -- joined the product, and added an
+ * effective-sample-size guard that says the answer is unusable.
+ *
+ * Saying "unusable" is only half an answer. The reason those dimensions are
+ * in the product at all is that nothing could name a subset, so this is the
+ * other half: `-inflate <spec>` restricts inflation (and therefore the
+ * weight) to the parameters the failure actually depends on, which is what
+ * makes the run low-dimensional enough to estimate.
+ *
+ * A spec is either a bare parameter name -- `vth0`, meaning that parameter
+ * wherever it occurs -- or the project's ordinary accessor spelling
+ * `@owner[param]`, with `*` allowed as the owner. Matching is
+ * case-insensitive, as everywhere else in the name surface.
+ *
+ * With no specs the behaviour is exactly what it was: everything inflates. */
+typedef struct {
+  char *owner; /* model-card or instance name, or "*" */
+  char *param;
+} OsdiMcScope;
+
+static OsdiMcScope *osdimc_scope;
+static int osdimc_scope_len, osdimc_scope_cap;
+static int osdimc_scope_hits; /* how many draws the specs actually matched */
+
+void OSDImcScaleScopeClear(void) {
+  int i;
+  for (i = 0; i < osdimc_scope_len; i++) {
+    tfree(osdimc_scope[i].owner);
+    tfree(osdimc_scope[i].param);
+  }
+  osdimc_scope_len = 0;
+  osdimc_scope_hits = 0;
+}
+
+int OSDImcScaleScopeHits(void) { return osdimc_scope_hits; }
+
+/* Parse one spec. Returns false (and says nothing) on a shape this does not
+ * recognise; the caller reports, since it knows the command name. */
+bool OSDImcScaleScopeAdd(const char *spec) {
+  const char *owner = "*", *param = NULL;
+  char buf[256], *lb, *rb;
+
+  if (!spec || !*spec)
+    return false;
+  if (*spec == '@') {
+    if (strlen(spec) >= sizeof buf)
+      return false;
+    strcpy(buf, spec + 1);
+    lb = strchr(buf, '[');
+    rb = strrchr(buf, ']');
+    if (!lb || !rb || rb <= lb + 1 || lb == buf)
+      return false;
+    *lb = '\0';
+    *rb = '\0';
+    owner = buf;
+    param = lb + 1;
+  } else {
+    if (strchr(spec, '[') || strchr(spec, ']'))
+      return false;
+    param = spec;
+  }
+  if (!*param)
+    return false;
+
+  if (osdimc_scope_len == osdimc_scope_cap) {
+    osdimc_scope_cap = osdimc_scope_cap ? 2 * osdimc_scope_cap : 8;
+    osdimc_scope = TREALLOC(OsdiMcScope, osdimc_scope, osdimc_scope_cap);
+  }
+  osdimc_scope[osdimc_scope_len].owner = copy(owner);
+  osdimc_scope[osdimc_scope_len].param = copy(param);
+  osdimc_scope_len++;
+  return true;
+}
+
+/* The inflation factor for ONE parameter: the command's lambda when it is in
+ * scope, 1.0 (no inflation, and hence weight 1) when it is not. */
+static double osdimc_scale_for(const char *owner, const char *param) {
+  int i;
+  if (osdimc_scale == 1.0 || osdimc_scope_len == 0)
+    return osdimc_scale;        /* unscoped: everything, exactly as before */
+  if (!param)
+    return 1.0;
+  for (i = 0; i < osdimc_scope_len; i++) {
+    if (!cieq(osdimc_scope[i].param, (char *) param))
+      continue;
+    if (osdimc_scope[i].owner[0] == '*' && osdimc_scope[i].owner[1] == '\0')
+      return osdimc_scale;
+    if (owner && cieq(osdimc_scope[i].owner, (char *) owner))
+      return osdimc_scale;
+  }
+  return 1.0;
+}
+
 /* E-537 (hunt O): is `.option osdimc` drawing for this circuit? The frontend
  * asks so it can say that a stratified-sampling request does not reach these
  * draws. Defined here beside the option test it wraps. */
@@ -1783,7 +1883,7 @@ static double osdimc_n01(uint64_t key) {
 }
 
 static double osdimc_delta(uint64_t key, uint32_t dist, double std,
-                           double nominal) {
+                           double nominal, double scale) {
   double sigma = (dist & OSDI_DIST_REL) ? std * fabs(nominal) : std;
   if (dist & OSDI_DIST_UNIFORM) {
     /* E-536 fix (hunt bug 7): SCALE does NOT inflate uniforms, matching the
@@ -1794,8 +1894,9 @@ static double osdimc_delta(uint64_t key, uint32_t dist, double std,
     double u1 = osdimc_u01(osdimc_mix(key ^ 1));
     return sigma * (2.0 * u1 - 1.0);
   }
-  /* Enhancement-535: highsigma inflation (gauss only) */
-  return sigma * osdimc_scale * osdimc_n01(key);
+  /* Enhancement-535: highsigma inflation (gauss only); E-538: `scale` is
+   * this parameter's own factor, 1.0 when `-inflate` left it out of scope. */
+  return sigma * scale * osdimc_n01(key);
 }
 
 /* Capture the nominal of every statistical parameter that does not have one
@@ -2100,9 +2201,14 @@ static void osdimc_apply_type(CKTcircuit *ckt, int type, int seed,
             continue; /* no nominal (a failed card stays undrawn), or a
                          machine write owns the value (hunt bug 14) */
           }
+          /* E-538: this parameter's own inflation (1.0 when out of scope) */
+          double sc = osdimc_scale_for((char *)gen_model->GENmodName,
+                                       descr->param_opvar[id].name[0]);
+          if (sc != 1.0)
+            osdimc_scope_hits++;
           double val = e->nominal + osdimc_delta(osdimc_mix(kmodel ^ id),
                                                  infos[s].dist, infos[s].std,
-                                                 e->nominal);
+                                                 e->nominal, sc);
           if (!osdimc_draw_ok(descr, id, val))
             val = e->nominal;
           osdimc_write(descr, NULL, model, id, val);
@@ -2122,9 +2228,13 @@ static void osdimc_apply_type(CKTcircuit *ckt, int type, int seed,
             }
             uint64_t kinst =
                 osdimc_mix(kbase ^ osdimc_hash_str((char *)gen_inst->GENname));
+            double sc = osdimc_scale_for((char *)gen_inst->GENname,
+                                         descr->param_opvar[id].name[0]);
+            if (sc != 1.0)
+              osdimc_scope_hits++;
             double val = e->nominal + osdimc_delta(osdimc_mix(kinst ^ id),
                                                    infos[s].dist, infos[s].std,
-                                                   e->nominal);
+                                                   e->nominal, sc);
             if (!osdimc_draw_ok(descr, id, val))
               val = e->nominal;
             osdimc_write(descr, inst, model, id, val);
@@ -2170,7 +2280,6 @@ double OSDImcSampleLogLR(CKTcircuit *ckt) {
   if (!cp_getvar("mcseed", CP_NUM, &seed, 0))
     seed = 1;
 
-  double lam2 = osdimc_scale * osdimc_scale;
   uint64_t kbase = osdimc_kbase(seed);    /* E-537 (hunt P) */
 
   for (int type = 0; type < DEVmaxnum; type++) {
@@ -2196,8 +2305,17 @@ double OSDImcSampleLogLR(CKTcircuit *ckt) {
           OsdiMcNominal *e = osdimc_find(model, id);
           if (!e || e->pinned)
             continue;
+          /* E-538: weight EXACTLY the dimensions that were inflated. A
+           * parameter `-inflate` left out of scope was drawn at its true
+           * sigma, so it carries no likelihood ratio -- and keeping it out of
+           * the product is the whole point: the weight stays low-dimensional
+           * and the estimate usable. */
+          double sc = osdimc_scale_for((char *)gen_model->GENmodName,
+                                       descr->param_opvar[id].name[0]);
+          if (sc == 1.0)
+            continue;
           double n = osdimc_n01(osdimc_mix(kmodel ^ id));
-          logw += log(osdimc_scale) - 0.5 * n * n * (lam2 - 1.0);
+          logw += log(sc) - 0.5 * n * n * (sc * sc - 1.0);
         } else {
           for (GENinstance *gen_inst = gen_model->GENinstances; gen_inst;
                gen_inst = gen_inst->GENnextInstance) {
@@ -2205,10 +2323,14 @@ double OSDImcSampleLogLR(CKTcircuit *ckt) {
             OsdiMcNominal *e = osdimc_find(inst, id);
             if (!e || e->pinned)
               continue;
+            double sc = osdimc_scale_for((char *)gen_inst->GENname,
+                                         descr->param_opvar[id].name[0]);
+            if (sc == 1.0)
+              continue;                      /* E-538: not inflated, weight 1 */
             uint64_t kinst =
                 osdimc_mix(kbase ^ osdimc_hash_str((char *)gen_inst->GENname));
             double n = osdimc_n01(osdimc_mix(kinst ^ id));
-            logw += log(osdimc_scale) - 0.5 * n * n * (lam2 - 1.0);
+            logw += log(sc) - 0.5 * n * n * (sc * sc - 1.0);
           }
         }
       }
