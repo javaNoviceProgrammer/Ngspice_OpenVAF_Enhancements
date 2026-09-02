@@ -461,6 +461,10 @@ extern OsdiObjectFile load_object_file(const char *input) {
   }
 
   INIT_CALLBACK(osdi_log, osdi_log_ptr)
+  /* `%m` instance names. A model built by an older openvaf-r exports no such
+   * slot, so GET_SYM finds nothing and INIT_CALLBACK does nothing -- that
+   * model keeps printing the module name, as it always did. */
+  INIT_CALLBACK(osdi_instance_name, osdi_instance_name_ptr)
 
   uint32_t lim_table_len = 0;
   sym = GET_SYM(handle, "OSDI_LIM_TABLE_LEN");
@@ -547,6 +551,22 @@ extern OsdiObjectFile load_object_file(const char *input) {
 
   sym = GET_SYM(handle, "OSDI_STAT_PARAM_INFOS");
   const void *stat_param_infos_base = sym;
+
+  /* Nature / discipline / attribute tables. Every one is optional: a model
+   * that declares no custom nature exports none, and an older .osdi exports
+   * none either -- both simply fall back to the circuit-wide tolerances. */
+  sym = GET_SYM(handle, "OSDI_NATURES");
+  const void *natures_base = sym;
+  sym = GET_SYM(handle, "OSDI_NATURES_LEN");
+  const uint32_t n_natures = sym ? *(const uint32_t *)sym : 0;
+  sym = GET_SYM(handle, "OSDI_DISCIPLINES");
+  const void *disciplines_base = sym;
+  sym = GET_SYM(handle, "OSDI_DISCIPLINES_LEN");
+  const uint32_t n_disciplines = sym ? *(const uint32_t *)sym : 0;
+  sym = GET_SYM(handle, "OSDI_ATTRIBUTES");
+  const void *attributes_base = sym;
+  sym = GET_SYM(handle, "OSDI_ATTRIBUTES_LEN");
+  const uint32_t n_attributes = sym ? *(const uint32_t *)sym : 0;
 
   OsdiRegistryEntry *dst = TMALLOC(OsdiRegistryEntry, OSDI_NUM_DESCRIPTORS);
 
@@ -735,6 +755,13 @@ extern OsdiObjectFile load_object_file(const char *input) {
 
         .num_stat_params = n_stat_params,
         .stat_param_infos = stat_params_ptr,
+
+        .num_natures = n_natures,
+        .natures = natures_base,
+        .num_disciplines = n_disciplines,
+        .disciplines = disciplines_base,
+        .num_attributes = n_attributes,
+        .attributes = attributes_base,
     };
   }
 

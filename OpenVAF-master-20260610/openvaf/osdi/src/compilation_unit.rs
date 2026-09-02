@@ -229,6 +229,22 @@ pub fn general_callbacks<'ll>(
                         num_state: 0,
                     })
                 }
+                // `%m`: osdi_inst_name(handle, fallback) -> char*. The handle
+                // is prepended state; the model-side NULL check on the
+                // simulator's callback slot lives in stdlib.c.
+                CallBackKind::InstanceName => {
+                    let fun = builder
+                        .cx
+                        .get_func_by_name("osdi_inst_name")
+                        .expect("stdlib function osdi_inst_name is missing");
+                    let fun_ty = builder.cx.ty_func(&[ptr_ty, ptr_ty], ptr_ty);
+                    CallbackFun::Prebuilt(BuiltCallbackFun {
+                        fun_ty,
+                        fun,
+                        state: vec![handle].into_boxed_slice(),
+                        num_state: 0,
+                    })
+                }
                 CallBackKind::SimParamOpt => {
                     let fun = builder
                         .cx
@@ -385,6 +401,7 @@ pub fn general_callbacks<'ll>(
                 | CallBackKind::Scan(_)
                 | CallBackKind::ScanCount
                 | CallBackKind::Fgets
+                | CallBackKind::FgetsScan
                 | CallBackKind::StrLen
                 | CallBackKind::StrCmp
                 | CallBackKind::FerrorMsg
@@ -415,6 +432,7 @@ pub fn general_callbacks<'ll>(
                         }
                         CallBackKind::ScanCount => ("osdi_scanf_count", vec![], int),
                         CallBackKind::Fgets => ("osdi_fgets", vec![int], ptr_ty),
+                        CallBackKind::FgetsScan => ("osdi_fgets_scan", vec![int], ptr_ty),
                         CallBackKind::StrLen => ("osdi_strlen", vec![ptr_ty], int),
                         // Enhancement-106: lexicographic string comparison.
                         CallBackKind::StrCmp => ("osdi_strcmp", vec![ptr_ty, ptr_ty], int),

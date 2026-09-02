@@ -82,7 +82,19 @@ impl BodyLoweringCtx<'_, '_, '_> {
                                 continue;
                             }
                             'm' | 'M' => {
-                                fmt_lit.push_str(self.path);
+                                // LRM 9.4.4: the INSTANCE's hierarchical name,
+                                // which only the simulator knows -- so this is
+                                // a runtime "%s" fed by a callback, not the
+                                // compile-time module name it used to expand
+                                // to. `self.path` (the module name) rides along
+                                // as the fallback for a simulator that does not
+                                // supply one.
+                                let fallback = self.ctx.sconst(self.path);
+                                let name =
+                                    self.ctx.call1(CallBackKind::InstanceName, &[fallback]);
+                                fmt_lit.push_str("%s");
+                                arg_tys.push(Type::String.into());
+                                call_args.push(name);
                                 continue;
                             }
                             'l' | 'L' => {

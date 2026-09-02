@@ -336,7 +336,11 @@ d,out,msg=textsim('@(initial_step) begin f=$fopen("in.txt","r"); r=$fgetc(f); $d
    ' $display("FEOF %d",$feof(f)); r=$ferror(f,es); $display("FERR %d",r); r=$fflush(); $fclose(f); end',
    D,"IO3",{"in.txt":"hello world\n42 3.5\n"})
 for want,nm in [("FGETC 104","$fgetc(fd)"),("FGETS hello","$ungetc + $fgets(str,fd)"),
-                ("FSCANF 2 42 3.5","$fscanf(fd,fmt,targets)"),("FTELL 19","$ftell(fd)"),
+                ("FSCANF 2 42 3.5","$fscanf(fd,fmt,targets)"),
+                # 18, not 19: since Enhancement-539 $fscanf consumes only what
+                # its format matched, so the trailing newline of "42 3.5\n" is
+                # left for the next read -- which is what C's fscanf does too.
+                ("FTELL 18","$ftell(fd)"),
                 ("REW 0","$rewind(fd)"),("SEEK 6","$fseek(fd,off,whence)"),("FEOF 0","$feof(fd)"),
                 ("FERR 0","$ferror(fd,str)")]:
     chk("io",nm,out is not None and want in out,msg)

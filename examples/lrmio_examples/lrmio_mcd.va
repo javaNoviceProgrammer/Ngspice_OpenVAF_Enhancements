@@ -1,0 +1,33 @@
+// Enhancement-539: LRM 9.5.1 multichannel descriptors.
+//
+//   $fopen(name)        -> MULTICHANNEL descriptor: a 32-bit integer with a
+//                          SINGLE bit set; bit 0 always means standard output.
+//   $fopen(name, mode)  -> FILE descriptor (most significant bit set).
+//
+// Output goes to several files at once by bitwise OR-ing their multichannel
+// descriptors, which is what this exercises.
+`include "disciplines.vams"
+module lrmio_mcd(a, b);
+  inout a, b;
+  electrical a, b;
+  (* desc="mA" *) integer mA;
+  (* desc="mB" *) integer mB;
+  (* desc="fd" *) integer fd;
+  (* desc="orv" *) integer orv;
+  analog begin
+    @(initial_step) begin
+      mA = $fopen("mcd_a.txt");
+      mB = $fopen("mcd_b.txt");
+      fd = $fopen("mcd_c.txt", "w");
+      orv = mA | mB;
+      $fdisplay(mA, "only-A");
+      $fdisplay(mB, "only-B");
+      $fdisplay(mA | mB, "BOTH");
+      $fdisplay(fd, "to-fd");
+      $fclose(mA);
+      $fclose(mB);
+      $fclose(fd);
+    end
+    I(a, b) <+ V(a, b) * 1e-6;
+  end
+endmodule

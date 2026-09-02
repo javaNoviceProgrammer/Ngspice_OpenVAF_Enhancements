@@ -314,6 +314,13 @@ OsdiSimParas get_simparams(const CKTcircuit *ckt);
 typedef void (*osdi_log_ptr)(void *handle, char *msg, uint32_t lvl);
 void osdi_log(void *handle_, char *msg, uint32_t lvl);
 
+/* `%m` (LRM 9.4.4): hand the compiled model the INSTANCE name behind a handle,
+ * so a display task can name the instance that ran it rather than the module
+ * it was compiled from. Bound into the model's callback slot at load; a model
+ * built by an older compiler simply has no slot to bind. */
+typedef char *(*osdi_instance_name_ptr)(void *handle);
+char *osdi_instance_name(void *handle_);
+
 typedef void (*osdi_log_ptr)(void *handle, char *msg, uint32_t lvl);
 
 double osdi_pnjlim(bool init, bool *icheck, double vnew, double vold, double vt,

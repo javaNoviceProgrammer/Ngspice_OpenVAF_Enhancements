@@ -96,6 +96,32 @@ char *concat(const char *s1, const char *s2) {
 typedef void (*osdi_log_ptr)(void *handle, char *msg, uint32_t lvl);
 extern osdi_log_ptr osdi_log;
 
+/* `%m` (LRM 9.4.4) must print the hierarchical name of the module INSTANCE
+ * that invoked the display task -- the clause's whole point is that "when
+ * there are many instances ... %m pinpoints the module instance responsible".
+ * It used to expand at compile time to the MODULE's name, so every instance
+ * printed the same string.
+ *
+ * The instance name only exists at run time, in the simulator, so it takes a
+ * callback slot the simulator fills in at load (exactly like osdi_log above).
+ * That is what made this awkward to fix before: a model built by a NEW
+ * compiler and loaded by an OLD simulator would find the slot unset. Hence
+ * `osdi_inst_name` rather than a direct call -- the NULL check lives here, in
+ * the model, so an old simulator silently yields the old module-name
+ * behaviour instead of jumping through a null pointer. */
+typedef char *(*osdi_instance_name_ptr)(void *handle);
+extern osdi_instance_name_ptr osdi_instance_name;
+
+__attribute__((noinline))
+char *osdi_inst_name(void *handle, char *fallback) {
+  osdi_instance_name_ptr f = osdi_instance_name;
+  if (f == NULL || handle == NULL) {
+    return fallback;
+  }
+  char *n = f(handle);
+  return (n != NULL && n[0] != '\0') ? n : fallback;
+}
+
 #define SCMP(p1, p2, s1, s2, eq) for(p1=s1, p2=s2;*p1 && *p2 && *p1==*p2;p1++, p2++); eq = (*p1==*p2);
 
 /* Enhancement-377: report an unknown $simparam / $simparam$str name.
@@ -558,6 +584,45 @@ OSDI_SHARED char volatile osdi_file_close_req[OSDI_MAX_FILES];
 // iteration's reads stick (LRM 9.5.9).
 OSDI_SHARED long volatile osdi_file_basepos[OSDI_MAX_FILES];
 
+/* LRM 9.5.1 distinguishes TWO kinds of descriptor, and the difference is not
+ * cosmetic:
+ *
+ *   - `$fopen(name, mode)` yields a FILE DESCRIPTOR, "a 32-bit value ... with
+ *     the most significant bit set", naming exactly one stream.
+ *   - `$fopen(name)` yields a MULTICHANNEL DESCRIPTOR, "a 32-bit integer in
+ *     which a single bit is set". Bit 0 ALWAYS refers to the standard output,
+ *     and output goes to several files at once "by bitwise OR-ing together
+ *     their multichannel descriptors".
+ *
+ * Both used to be drawn from one namespace of consecutive small integers, so
+ * `$fopen("a")` and `$fopen("b")` returned 1 and 2 and the LRM's own idiom
+ * `$fdisplay(mA|mB, ...)` computed 3 -- the descriptor of an unrelated third
+ * file, which silently received the text. Descriptor 1, which the LRM reserves
+ * for stdout, was handed to the first user file instead.
+ *
+ * So: a file descriptor is the slot index with OSDI_FD_BIT set (slots 0..2 are
+ * the pre-opened standard streams, which is why user slots start at 3), and a
+ * multichannel descriptor is a one-hot bit that indexes osdi_mcd_table. The
+ * two are told apart by OSDI_FD_BIT, exactly as the LRM's wording implies. */
+#define OSDI_FD_BIT 0x80000000u
+#define OSDI_FD_FIRST 3
+#define OSDI_MCD_BITS 32
+OSDI_SHARED void *volatile osdi_mcd_table[OSDI_MCD_BITS];
+OSDI_SHARED char *volatile osdi_mcd_names[OSDI_MCD_BITS];
+
+// Slot behind a file descriptor, or -1 if this is not a file descriptor.
+static int osdi_fd_slot(int fd) {
+  unsigned u = (unsigned)fd;
+  if (!(u & OSDI_FD_BIT)) {
+    return -1;
+  }
+  unsigned i = u & ~OSDI_FD_BIT;
+  if (i >= OSDI_MAX_FILES) {
+    return -1;
+  }
+  return (int)i;
+}
+
 // File names written earlier in this simulator process: a "w"-mode reopen of
 // such a name APPENDS instead of truncating, so a later analysis in the same
 // process extends the earlier one's output (LRM 9.5.1.1).
@@ -584,21 +649,35 @@ OSDI_SHARED int volatile osdi_io_managed;
 #define OSDI_EXPORT __attribute__((visibility("default")))
 
 static void *osdi_file_lookup(int fd) {
+  int slot = osdi_fd_slot(fd);
   // LRM 9.5.1: pre-opened descriptors for the standard streams.
-  unsigned u = (unsigned)fd;
-  if (u == 0x80000000u) {
+  if (slot == 0) {
     return OSDI_STDIN;
   }
-  if (u == 0x80000001u) {
+  if (slot == 1) {
     return OSDI_STDOUT;
   }
-  if (u == 0x80000002u) {
+  if (slot == 2) {
     return OSDI_STDERR;
   }
-  if (fd < 1 || fd >= OSDI_MAX_FILES) {
+  if (slot < 0) {
+    // A multichannel descriptor. Only the write path understands one -- it
+    // fans out over the set bits -- so every other file operation, which the
+    // LRM defines on a file descriptor, correctly finds nothing here.
     return NULL;
   }
-  return osdi_file_table[fd];
+  return osdi_file_table[slot];
+}
+
+// The single stream behind a one-hot multichannel bit (bit 0 is stdout).
+static void *osdi_mcd_lookup(int bit) {
+  if (bit == 0) {
+    return OSDI_STDOUT;
+  }
+  if (bit < 0 || bit >= OSDI_MCD_BITS) {
+    return NULL;
+  }
+  return osdi_mcd_table[bit];
 }
 
 static int osdi_name_was_written(const char *name) {
@@ -627,15 +706,102 @@ static void osdi_record_written(const char *name) {
   }
 }
 
-// $fopen(name, mode) -> descriptor (0 on failure).
+// Is a deferred $fclose (LRM 9.5.9: s == NULL is the close marker) queued for
+// this slot? Under managed I/O that queue, not osdi_file_close_req, is where a
+// close waits, so a reopen has to consult it to see that the model closed the
+// file. `drop` removes the markers as well as reporting them: a reopen makes
+// the stream live again, so the queued close must not fire at the next flush
+// and shut the file under the reader that just opened it.
+static int osdi_close_deferred(int fd, int drop) {
+  int found = 0;
+  int w = 0;
+  for (int i = 0; i < osdi_pending_len; i++) {
+    if (osdi_pending_writes[i].fd == fd && osdi_pending_writes[i].s == NULL) {
+      found = 1;
+      if (drop) {
+        continue;
+      }
+    }
+    if (drop) {
+      osdi_pending_writes[w++] = osdi_pending_writes[i];
+    }
+  }
+  if (drop) {
+    osdi_pending_len = w;
+  }
+  return found;
+}
+
+// $fopen(name, mode) -> descriptor (0 on failure). An EMPTY mode is how the
+// lowering spells the LRM's one-argument `$fopen(name)`, which returns a
+// multichannel descriptor rather than a file descriptor.
 OSDI_NOINLINE int osdi_fopen(const char *name, const char *mode) {
+  if (mode[0] == '\0') {
+    // Multichannel: one bit per file, bit 0 reserved for stdout. Same-name
+    // dedup as below, so reopening a channel returns the bit it already has.
+    for (int b = 1; b < OSDI_MCD_BITS; b++) {
+      if (osdi_mcd_table[b] != NULL && osdi_mcd_names[b] != NULL &&
+          strcmp((const char *)osdi_mcd_names[b], name) == 0) {
+        // Reopening cancels a deferred $fclose of this channel, for the same
+        // reason it does on the file-descriptor path above: otherwise the
+        // queued close fires at the next flush and shuts the channel under a
+        // model that believes it just reopened it, and later writes to the
+        // bit vanish with no error.
+        osdi_close_deferred(1 << b, 1);
+        return 1 << b;
+      }
+    }
+    for (int b = 1; b < OSDI_MCD_BITS; b++) {
+      if (osdi_mcd_table[b] == NULL) {
+        // LRM 9.5.1.1's append-on-rewrite rule applies here too.
+        const char *m = osdi_name_was_written(name) ? "a" : "w";
+        void *f = fopen(name, m);
+        if (f == NULL) {
+          return 0;
+        }
+        osdi_mcd_table[b] = f;
+        size_t n = strlen(name) + 1;
+        char *copy = malloc(n);
+        if (copy) {
+          memcpy(copy, name, n);
+        }
+        osdi_mcd_names[b] = copy;
+        osdi_record_written(name);
+        return 1 << b;
+      }
+    }
+    return 0; // all 31 channels in use
+  }
   // Same-name dedup: an $fopen of a file that is already open returns the
   // existing descriptor instead of burning a new slot. This keeps the
   // per-evaluation open-write-close idiom (LRM statements execute per
   // evaluation) from exhausting the table when the model omits the $fclose.
-  for (int i = 1; i < OSDI_MAX_FILES; i++) {
+  for (int i = OSDI_FD_FIRST; i < OSDI_MAX_FILES; i++) {
     if (osdi_file_table[i] != NULL && osdi_file_names[i] != NULL &&
         strcmp((const char *)osdi_file_names[i], name) == 0) {
+      // A close-then-open of the same name must hand back a stream positioned
+      // at byte 0, not one that carries the closed stream's read offset. The
+      // dedup above is what makes that non-automatic, and the reopen branch
+      // below only ever ran for unmanaged I/O -- so under the simulator (which
+      // is always managed) `$fclose` + `$fopen` + `$fgets` returned the LINE
+      // AFTER the one the first read consumed. Rewinding is enough for the
+      // read path and leaves the write deferral untouched: a write-mode
+      // reopen keeps the existing append-and-close-at-flush behaviour, whose
+      // pending writes must still land in queue order.
+      int readable = (mode[0] == 'r' || strchr(mode, '+') != NULL);
+      int enc = (int)(OSDI_FD_BIT | (unsigned)i);
+      // Only when the stream is ALREADY readable: reopening a write-mode
+      // stream for reading is a MODE CHANGE and needs the freopen below --
+      // seeking a "w" handle back to 0 leaves it just as unreadable as it was.
+      if (readable && osdi_file_readable[i] &&
+          (osdi_file_close_req[i] || osdi_close_deferred(enc, 0))) {
+        osdi_close_deferred(enc, 1);
+        fseek(osdi_file_table[i], 0, SEEK_SET);
+        osdi_file_readable[i] = 1;
+        osdi_file_basepos[i] = 0;
+        osdi_file_close_req[i] = 0;
+        return enc;
+      }
       if (!osdi_io_managed && osdi_file_close_req[i]) {
         // The instance initialization re-ran (ngspice executes it for both
         // setup and temperature): the previous run already open-...-closed
@@ -657,7 +823,7 @@ OSDI_NOINLINE int osdi_fopen(const char *name, const char *mode) {
         osdi_file_basepos[i] = ftell(nf);
       }
       osdi_file_close_req[i] = 0;
-      return i;
+      return enc;
     }
   }
   // LRM 9.5.1.1: a "w"-mode reopen of a file already written in this
@@ -673,7 +839,7 @@ OSDI_NOINLINE int osdi_fopen(const char *name, const char *mode) {
     mode_buf[0] = 'a';
     mode = mode_buf;
   }
-  for (int i = 1; i < OSDI_MAX_FILES; i++) {
+  for (int i = OSDI_FD_FIRST; i < OSDI_MAX_FILES; i++) {
     if (osdi_file_table[i] == NULL) {
       void *f = fopen(name, mode);
       if (f == NULL) {
@@ -692,13 +858,29 @@ OSDI_NOINLINE int osdi_fopen(const char *name, const char *mode) {
       if (mode[0] == 'w' || mode[0] == 'a' || strchr(mode, '+')) {
         osdi_record_written(name);
       }
-      return i;
+      return (int)(OSDI_FD_BIT | (unsigned)i);
     }
   }
   return 0; // table full
 }
 
 static void osdi_fputs_now(int fd, const char *s) {
+  if (osdi_fd_slot(fd) < 0) {
+    // A multichannel descriptor: LRM 9.5.1 says output goes to every file
+    // whose bit is set, which is what makes `$fdisplay(mA|mB, ...)` write to
+    // both. Bit 0 is stdout.
+    unsigned mask = (unsigned)fd;
+    for (int b = 0; b < OSDI_MCD_BITS && mask; b++) {
+      if (mask & (1u << b)) {
+        void *f = osdi_mcd_lookup(b);
+        if (f != NULL) {
+          fputs(s, f);
+        }
+        mask &= ~(1u << b);
+      }
+    }
+    return;
+  }
   void *f = osdi_file_lookup(fd);
   if (f != NULL) {
     fputs(s, f);
@@ -777,21 +959,39 @@ OSDI_EXPORT void osdi_io_flush(void) {
     }
     if (f != NULL && osdi_file_close_req[i]) {
       osdi_file_close_req[i] = 0;
-      osdi_fclose_now(i);
+      osdi_fclose_now((int)(OSDI_FD_BIT | (unsigned)i));
     }
   }
 }
 
 static int osdi_fclose_now(int fd) {
+  int slot = osdi_fd_slot(fd);
+  if (slot < 0) {
+    // $fclose of a multichannel descriptor closes every channel in the mask
+    // (LRM 9.5.2). Bit 0 is stdout and is never closed.
+    unsigned mask = (unsigned)fd;
+    int r = -1;
+    for (int b = 1; b < OSDI_MCD_BITS; b++) {
+      if ((mask & (1u << b)) && osdi_mcd_table[b] != NULL) {
+        r = fclose(osdi_mcd_table[b]);
+        osdi_mcd_table[b] = NULL;
+        if (osdi_mcd_names[b]) {
+          free(osdi_mcd_names[b]);
+          osdi_mcd_names[b] = NULL;
+        }
+      }
+    }
+    return r;
+  }
   void *f = osdi_file_lookup(fd);
   if (f == NULL) {
     return -1;
   }
   int r = fclose(f);
-  osdi_file_table[fd] = NULL;
-  if (osdi_file_names[fd]) {
-    free(osdi_file_names[fd]);
-    osdi_file_names[fd] = NULL;
+  osdi_file_table[slot] = NULL;
+  if (osdi_file_names[slot]) {
+    free(osdi_file_names[slot]);
+    osdi_file_names[slot] = NULL;
   }
   return r;
 }
@@ -807,18 +1007,33 @@ OSDI_NOINLINE int osdi_fclose(int fd) {
   if (u == 0x80000000u || u == 0x80000001u || u == 0x80000002u) {
     return 0;
   }
+  int slot = osdi_fd_slot(fd);
+  // A multichannel descriptor names one or more channels, none of which the
+  // file-descriptor lookup can see; it is live if any of its bits is open.
+  int live = (slot >= 0) ? (osdi_file_lookup(fd) != NULL) : 0;
+  if (slot < 0) {
+    unsigned mask = (unsigned)fd;
+    for (int b = 1; b < OSDI_MCD_BITS; b++) {
+      if ((mask & (1u << b)) && osdi_mcd_table[b] != NULL) {
+        live = 1;
+        break;
+      }
+    }
+  }
   if (!osdi_io_managed) {
     // Instance-setup close: keep the stream open for eval's deferred writes
     // and close it at the first accepted-iteration flush instead.
-    if (osdi_file_lookup(fd) == NULL) {
+    if (!live) {
       return -1;
     }
-    if (fd >= 1 && fd < OSDI_MAX_FILES) {
-      osdi_file_close_req[fd] = 1;
+    if (slot >= OSDI_FD_FIRST && slot < OSDI_MAX_FILES) {
+      osdi_file_close_req[slot] = 1;
+      return 0;
     }
-    return 0;
+    // Multichannel descriptors have no deferral slot; close them outright.
+    return osdi_fclose_now(fd);
   }
-  if (osdi_file_lookup(fd) == NULL) {
+  if (!live) {
     return -1;
   }
   if (osdi_pending_len >= osdi_pending_cap) {
@@ -839,6 +1054,21 @@ OSDI_NOINLINE int osdi_fclose(int fd) {
 
 // $fflush(fd)
 OSDI_NOINLINE int osdi_fflush(int fd) {
+  if (osdi_fd_slot(fd) < 0) {
+    // A multichannel descriptor flushes every channel in its mask, the same
+    // way a write to it reaches every channel.
+    unsigned mask = (unsigned)fd;
+    int r = -1;
+    for (int b = 0; b < OSDI_MCD_BITS; b++) {
+      if (mask & (1u << b)) {
+        void *ch = osdi_mcd_lookup(b);
+        if (ch != NULL) {
+          r = fflush(ch);
+        }
+      }
+    }
+    return r;
+  }
   void *f = osdi_file_lookup(fd);
   if (f == NULL) {
     return -1;
@@ -956,6 +1186,35 @@ char *osdi_fgets(int fd) {
   return buf;
 }
 
+// $fscanf's line read. $fscanf is lowered as "read a line, then scan it like
+// $sscanf", which by itself consumes the WHOLE line however little the format
+// matches -- so the ordinary "scan the numbers, take the trailing text" idiom
+// lost everything after the last conversion, and a following $fgets returned
+// the line after next. The scan must put back what it did not consume, so the
+// line read records where the line began; the scanners below then keep the
+// descriptor sitting exactly at the last converted character.
+OSDI_SHARED int volatile osdi_scan_src_fd;
+OSDI_SHARED long volatile osdi_scan_src_pos;
+OSDI_SHARED const char *volatile osdi_scan_src_base;
+
+OSDI_NOINLINE
+char *osdi_fgets_scan(int fd) {
+  void *f = osdi_file_lookup(fd);
+  long pos = f ? ftell(f) : -1;
+  char *buf = osdi_fgets(fd);
+  // Arm the pushback only for a seekable stream: on a pipe or terminal ftell
+  // fails and the bytes are simply gone, which is the same limitation C's own
+  // fscanf has there.
+  if (f != NULL && pos >= 0 && buf != NULL && buf[0] != '\0') {
+    osdi_scan_src_fd = fd;
+    osdi_scan_src_pos = pos;
+    osdi_scan_src_base = buf;
+  } else {
+    osdi_scan_src_fd = 0;
+  }
+  return buf;
+}
+
 OSDI_NOINLINE
 int osdi_ferror_code(int fd) {
   void *f = osdi_file_lookup(fd);
@@ -1006,10 +1265,33 @@ static const char *osdi_skip_ws(const char *p) {
   return p;
 }
 
+// Put the descriptor back to the first byte the format did not consume. Called
+// after every field so the position is right however early the scan stops.
+static void osdi_scan_sync(void) {
+  if (osdi_scan_src_fd == 0 || osdi_scan_src_base == NULL) {
+    return;
+  }
+  void *f = osdi_file_lookup(osdi_scan_src_fd);
+  if (f == NULL) {
+    osdi_scan_src_fd = 0;
+    return;
+  }
+  long used = (long)(osdi_scan_cursor - osdi_scan_src_base);
+  if (used >= 0) {
+    fseek(f, osdi_scan_src_pos + used, SEEK_SET);
+  }
+}
+
 OSDI_NOINLINE
 void osdi_scanf_begin(const char *input) {
   osdi_scan_cursor = input ? input : "";
   osdi_scan_matches = 0;
+  // Only a line read by osdi_fgets_scan (i.e. $fscanf) may reposition a file.
+  // A $sscanf over a plain string -- including one the model got from its own
+  // $fgets, which is specified to have consumed the whole line -- must not.
+  if (input == NULL || input != osdi_scan_src_base) {
+    osdi_scan_src_fd = 0;
+  }
 }
 
 OSDI_NOINLINE
@@ -1019,10 +1301,12 @@ int osdi_scan_int(int fallback) {
   long v = strtol(p, &end, 0);
   if (end != p) {
     osdi_scan_cursor = end;
+    osdi_scan_sync();
     osdi_scan_matches++;
     return (int)v;
   }
   osdi_scan_cursor = p;
+  osdi_scan_sync();
   return fallback;
 }
 
@@ -1037,10 +1321,12 @@ int osdi_scan_hex(int fallback) {
   long v = strtol(p, &end, 16);
   if (end != p) {
     osdi_scan_cursor = end;
+    osdi_scan_sync();
     osdi_scan_matches++;
     return (int)v;
   }
   osdi_scan_cursor = p;
+  osdi_scan_sync();
   return fallback;
 }
 
@@ -1051,10 +1337,12 @@ int osdi_scan_oct(int fallback) {
   long v = strtol(p, &end, 8);
   if (end != p) {
     osdi_scan_cursor = end;
+    osdi_scan_sync();
     osdi_scan_matches++;
     return (int)v;
   }
   osdi_scan_cursor = p;
+  osdi_scan_sync();
   return fallback;
 }
 
@@ -1065,10 +1353,12 @@ int osdi_scan_bin(int fallback) {
   long v = strtol(p, &end, 2);
   if (end != p) {
     osdi_scan_cursor = end;
+    osdi_scan_sync();
     osdi_scan_matches++;
     return (int)v;
   }
   osdi_scan_cursor = p;
+  osdi_scan_sync();
   return fallback;
 }
 
@@ -1079,10 +1369,12 @@ double osdi_scan_real(double fallback) {
   double v = strtod(p, &end);
   if (end != p) {
     osdi_scan_cursor = end;
+    osdi_scan_sync();
     osdi_scan_matches++;
     return v;
   }
   osdi_scan_cursor = p;
+  osdi_scan_sync();
   return fallback;
 }
 
@@ -1104,6 +1396,7 @@ char *osdi_scan_str(char *fallback) {
     return fallback ? fallback : "";
   }
   osdi_scan_cursor = p;
+  osdi_scan_sync();
   osdi_scan_matches++;
   return res;
 }

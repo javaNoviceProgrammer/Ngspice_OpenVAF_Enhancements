@@ -145,6 +145,90 @@ static void osdi_log_defer(const char *prefix, const char *name,
   pending_len++;
 }
 
+/* LRM 3.6.1: a nature's `abstol` is "the absolute tolerance ... used to
+ * determine convergence" for a signal of that nature. The compiler writes it
+ * into the .osdi nature tables, but nothing here ever read them, so a model
+ * declaring `abstol = 1p` was still judged by the circuit-wide `abstol` --
+ * a tolerance three orders too loose converges early on a wrong answer, and a
+ * tolerance too tight refuses to converge at all. Neither said anything.
+ *
+ * Resolves node `node_idx`'s POTENTIAL nature (that is the unknown the
+ * convergence test compares) to its declared abstol, or 0.0 when the model
+ * names none -- in which case the caller keeps the circuit-wide value. */
+double osdi_node_abstol(const OsdiRegistryEntry *entry, uint32_t node_idx) {
+  const OsdiDescriptor *descr;
+  const OsdiNature *natures;
+  const OsdiAttribute *attrs;
+  const OsdiNatureRef *ref;
+  uint32_t nat_idx;
+
+  if (!entry || !entry->natures || !entry->attributes) {
+    return 0.0;
+  }
+  descr = (const OsdiDescriptor *)entry->descriptor;
+  if (!descr || !descr->unknown_nature || node_idx >= descr->num_nodes) {
+    return 0.0;
+  }
+  natures = (const OsdiNature *)entry->natures;
+  attrs = (const OsdiAttribute *)entry->attributes;
+  ref = &descr->unknown_nature[node_idx];
+
+  /* A node's unknown is reached either directly as a nature or through its
+   * discipline's potential/flow nature. */
+  if (ref->ref_type == NATREF_NATURE) {
+    nat_idx = ref->index;
+  } else if (ref->ref_type == NATREF_DISCIPLINE_POTENTIAL ||
+             ref->ref_type == NATREF_DISCIPLINE_FLOW) {
+    const OsdiDiscipline *disc = (const OsdiDiscipline *)entry->disciplines;
+    if (!disc || ref->index >= entry->num_disciplines) {
+      return 0.0;
+    }
+    nat_idx = (ref->ref_type == NATREF_DISCIPLINE_POTENTIAL)
+                  ? disc[ref->index].potential
+                  : disc[ref->index].flow;
+  } else {
+    return 0.0;
+  }
+  if (nat_idx >= entry->num_natures) {
+    return 0.0;
+  }
+
+  {
+    const OsdiNature *nat = &natures[nat_idx];
+    uint32_t k;
+    /* A derived nature inherits its parent's abstol unless it overrides it
+     * (LRM 3.6.1.1), so walk up the parent chain. The bound on the walk is
+     * the table size: a corrupt table must not spin here. */
+    uint32_t hops = 0;
+    while (hops++ <= entry->num_natures) {
+      for (k = 0; k < nat->num_attr; k++) {
+        uint32_t a = nat->attr_start + k;
+        if (a >= entry->num_attributes) {
+          break;
+        }
+        if (attrs[a].name && strcmp(attrs[a].name, "abstol") == 0 &&
+            attrs[a].value_type == ATTR_TYPE_REAL) {
+          double v = attrs[a].value.real;
+          return (v > 0.0) ? v : 0.0;
+        }
+      }
+      if (nat->parent_type != NATREF_NATURE || nat->parent >= entry->num_natures) {
+        break;
+      }
+      nat = &natures[nat->parent];
+    }
+  }
+  return 0.0;
+}
+
+/* `%m`: the instance name behind an OSDI handle (LRM 9.4.4). This is the same
+ * string osdi_log prefixes its output with, which is exactly the name the
+ * clause asks %m to print -- it was simply never offered to the model. */
+char *osdi_instance_name(void *handle_) {
+  OsdiNgspiceHandle *handle = handle_;
+  return handle ? handle->name : NULL;
+}
+
 void osdi_log(void *handle_, char *msg, uint32_t lvl) {
   OsdiNgspiceHandle *handle = handle_;
   FILE *dst = stdout;

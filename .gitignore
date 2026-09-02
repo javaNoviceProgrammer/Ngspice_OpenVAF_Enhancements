@@ -615,3 +615,12 @@ docs/internals/ngspice_internals/ngspice_trnoise_figs/_work/
 examples/vafmeta_examples/fuzz/j_*/
 examples/vafmeta_examples/fuzz/s_*.cir
 examples/vafmeta_examples/_vm_*
+
+# Enhancement-539 LRM I/O suite: temp netlists, compiled models and the
+# files the fixtures write and read back
+examples/lrmio_examples/_*.sp
+examples/lrmio_examples/_*.va
+examples/lrmio_examples/*.osdi
+examples/lrmio_examples/mcd_*.txt
+examples/lrmio_examples/lrmio_out.txt
+examples/lrmio_examples/lrmio_data.txt

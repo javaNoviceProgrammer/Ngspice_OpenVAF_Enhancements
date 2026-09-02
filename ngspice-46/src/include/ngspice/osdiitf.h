@@ -54,7 +54,24 @@ typedef struct OsdiRegistryEntry {
   uint32_t num_stat_params;
   const void *stat_param_infos;  /* points into the loaded .osdi's OSDI_STAT_PARAM_INFOS */
 
+  /* Nature / discipline / attribute tables (OSDI_NATURES, OSDI_DISCIPLINES,
+   * OSDI_ATTRIBUTES), filled at .osdi load time. The compiler has always
+   * written a nature's declared `abstol` (LRM 3.6.1) into these, but nothing
+   * on this side ever read them, so a model's tolerance never reached the
+   * convergence test -- every node was judged by the global `abstol`/`vntol`
+   * whatever its nature said. osdi_node_abstol() below resolves them. */
+  uint32_t num_natures;
+  const void *natures;
+  uint32_t num_disciplines;
+  const void *disciplines;
+  uint32_t num_attributes;
+  const void *attributes;
+
 } OsdiRegistryEntry;
+
+/* Declared abstol of node `node_idx`'s potential nature, or 0.0 when the model
+ * names none (in which case the circuit-wide tolerance applies as before). */
+double osdi_node_abstol(const OsdiRegistryEntry *entry, uint32_t node_idx);
 
 /* Enhancement-401: one entry of OSDI_TERM_SHORT_INFOS. `node_1`/`node_2` are the
  * OSDI node indices of the two shorted terminals (`node_2` is UINT32_MAX when the

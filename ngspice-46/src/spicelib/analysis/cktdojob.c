@@ -274,6 +274,7 @@ CKTdoJob(CKTcircuit* ckt, int reset, TSKtask* task)
     ckt->CKTreltol = task->TSKreltol;
     ckt->CKTchgtol = task->TSKchgtol;
     ckt->CKTvoltTol = task->TSKvoltTol;
+    ckt->CKTtolGiven = task->TSKtolGiven; /* Enhancement-539 */
     ckt->CKTgmin = task->TSKgmin;
     ckt->CKTgshunt = task->TSKgshunt;
     ckt->CKTcshunt = task->TSKcshunt;

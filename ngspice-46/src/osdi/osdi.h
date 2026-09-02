@@ -213,6 +213,52 @@ typedef struct OsdiNatureRef {
   uint32_t index;
 }OsdiNatureRef;
 
+#define NATREF_NONE 0
+#define NATREF_NATURE 1
+#define NATREF_DISCIPLINE_FLOW 2
+#define NATREF_DISCIPLINE_POTENTIAL 3
+
+#define ATTR_TYPE_STR 0
+#define ATTR_TYPE_INT 1
+#define ATTR_TYPE_REAL 2
+
+/* Nature / discipline / attribute tables, exported by the .osdi as
+ * OSDI_NATURES / OSDI_DISCIPLINES / OSDI_ATTRIBUTES. These carry a nature's
+ * declared `abstol` (LRM 3.6.1) among its attributes. Layouts must match
+ * openvaf/osdi/header/osdi_0_4.h exactly. */
+typedef struct OsdiNature {
+  char *name;
+  uint32_t parent_type;
+  uint32_t parent;
+  uint32_t ddt;
+  uint32_t idt;
+  uint32_t attr_start;
+  uint32_t num_attr;
+}OsdiNature;
+
+typedef struct OsdiDiscipline {
+  char *name;
+  uint32_t flow;
+  uint32_t potential;
+  uint32_t domain;
+  uint32_t attr_start;
+  uint32_t num_flow_attr;
+  uint32_t num_potential_attr;
+  uint32_t num_user_attr;
+}OsdiDiscipline;
+
+typedef union OsdiAttributeValue {
+  char* string;
+  int32_t integer;
+  double real;
+}OsdiAttributeValue;
+
+typedef struct OsdiAttribute {
+  char *name;
+  uint32_t value_type;
+  OsdiAttributeValue value;
+}OsdiAttribute;
+
 /* Enhancement-51: `ac_stim` small-signal stimulus source. `analysis` is the
  * analysis name the stimulus is active in (LRM default "ac"); node_2 ==
  * UINT32_MAX means ground. */

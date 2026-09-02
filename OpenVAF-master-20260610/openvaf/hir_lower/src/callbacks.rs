@@ -223,8 +223,18 @@ pub enum CallBackKind {
     /// The number of successful conversions since the last `ScanBegin`
     /// (the `$sscanf`/`$fscanf` return value).
     ScanCount,
+    /// `%m` (LRM 9.4.4): the hierarchical name of the module INSTANCE running
+    /// the display task. Takes the module name as a fallback for a simulator
+    /// that does not supply instance names.
+    InstanceName,
     /// `$fgets(fd) -> char*`: read one line from the descriptor.
     Fgets,
+    /// `$fscanf`'s line read: same as [`CallBackKind::Fgets`], but the runtime
+    /// remembers where the line started so the scanners can put back whatever
+    /// the format did not consume. `$fgets` proper must NOT do that -- it is
+    /// specified to consume the whole line -- which is why this is a separate
+    /// callback rather than a flag on the one above.
+    FgetsScan,
     /// `osdi_strlen(s) -> int`: length of a string (for `$fgets`'s return count).
     StrLen,
     /// Enhancement-106: `osdi_strcmp(a, b) -> int`: lexicographic string
@@ -367,8 +377,20 @@ impl CallBackKind {
                 returns: 1,
                 has_sideeffects: true,
             },
+            CallBackKind::InstanceName => FunctionSignature {
+                name: "instance_name".to_owned(),
+                params: 1,
+                returns: 1,
+                has_sideeffects: false,
+            },
             CallBackKind::Fgets => FunctionSignature {
                 name: "fgets".to_owned(),
+                params: 1,
+                returns: 1,
+                has_sideeffects: true,
+            },
+            CallBackKind::FgetsScan => FunctionSignature {
+                name: "fgets_scan".to_owned(),
                 params: 1,
                 returns: 1,
                 has_sideeffects: true,

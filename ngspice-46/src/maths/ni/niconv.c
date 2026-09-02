@@ -13,6 +13,7 @@ Author: 1985 Thomas L. Quarles
 #include "ngspice/ngspice.h"
 #include "ngspice/cktdefs.h"
 #include "ngspice/smpdefs.h"
+#include "ngspice/optdefs.h"  /* ERRP_* -- Enhancement-539 */
 
 extern bool ft_ngdebug;
 
@@ -53,8 +54,13 @@ NIconvTest(CKTcircuit *ckt)
             return 1;
         }
         if(node->type == SP_VOLTAGE) {
+            /* LRM 3.6.1: a nature's declared abstol governs convergence for
+             * signals of that nature -- unless the user set `vntol` himself,
+             * in which case the explicit option wins (see CKTtolGiven). */
             tol =  ckt->CKTreltol * (MAX(fabs(old),fabs(new))) +
-                    ckt->CKTvoltTol;
+                    ((node->natabstol > 0.0 &&
+                      !(ckt->CKTtolGiven & ERRP_VNTOL))
+                         ? node->natabstol : ckt->CKTvoltTol);
             if (fabs(new-old) >tol ) {
 #ifdef STEPDEBUG
                 printf(" non-convergence at node (type=3) %s (fabs(new-old)>tol --> fabs(%g-%g)>%g)\n",CKTnodName(ckt,i),new,old,tol);
@@ -66,7 +72,9 @@ NIconvTest(CKTcircuit *ckt)
             }
         } else {
             tol =  ckt->CKTreltol * (MAX(fabs(old),fabs(new))) +
-                    ckt->CKTabstol;
+                    ((node->natabstol > 0.0 &&
+                      !(ckt->CKTtolGiven & ERRP_ABSTOL))
+                         ? node->natabstol : ckt->CKTabstol);
             if (fabs(new-old) >tol ) {
 #ifdef STEPDEBUG
                 printf(" non-convergence at node (type=%d) %s (fabs(new-old)>tol --> fabs(%g-%g)>%g)\n",node->type,CKTnodName(ckt,i),new,old,tol);

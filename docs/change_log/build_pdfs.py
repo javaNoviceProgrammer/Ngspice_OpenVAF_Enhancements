@@ -213,6 +213,14 @@ def _pdf_text(path):
             lines = page.get_text().splitlines()
             while lines and re.fullmatch(r"\s*\d+\s*", lines[-1]):
                 lines.pop()
+            # ...and at the FRONT: pymupdf does not always return the page
+            # number last. On a page whose body starts mid-sentence the number
+            # came back first -- "a metric" / "207" / "that never varies" --
+            # splicing it into the sentence just the same and reporting two
+            # complete rows as clipped. Both ends, or the guard cries wolf and
+            # teaches the next person to reach for SKIP_PDF_VERIFY.
+            while lines and re.fullmatch(r"\s*\d+\s*", lines[0]):
+                lines.pop(0)
             out.append("\n".join(lines))
     return _sig("".join(out))
 

@@ -1,0 +1,23 @@
+// Enhancement-539: LRM 3.6.1 -- a nature's declared `abstol` is the absolute
+// tolerance the convergence test must use for signals of that nature.
+// `tightv` deliberately declares a potential tolerance far tighter than the
+// circuit-wide vntol so that the value reaching the solver is unambiguous.
+nature tightv;
+  units = "V"; access = Vt; abstol = 1e-9;
+endnature
+nature tighti;
+  units = "A"; access = It; abstol = 1e-15;
+endnature
+discipline tightd;
+  potential tightv; flow tighti;
+enddiscipline
+
+module lrmio_nat(a, b);
+  inout a, b;
+  tightd a, b;
+  (* desc="vv" *) real vv;
+  analog begin
+    vv = Vt(a, b);
+    It(a, b) <+ Vt(a, b) * 1e-3;
+  end
+endmodule

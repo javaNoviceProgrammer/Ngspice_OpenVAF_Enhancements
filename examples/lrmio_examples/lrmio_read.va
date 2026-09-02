@@ -1,0 +1,54 @@
+// Enhancement-539: the read-side file semantics.
+//
+//   [reopen] $fclose then $fopen for reading restarts at byte 0 (LRM 9.5.1).
+//   [scanf]  $fscanf consumes only what its format matches, so a following
+//            $fgets sees the REMAINDER of the same line.
+//   [sscanf] a plain $fgets consumes the whole line, so a $sscanf over the
+//            string it returned must NOT move the descriptor.
+`include "disciplines.vams"
+module lrmio_read(a, b);
+  inout a, b;
+  electrical a, b;
+  integer fd, c, n;
+  string s;
+  string reopen_first, scan_rest, scan_next, ss_next;
+  integer of;
+  (* desc="iv" *) integer iv;
+  (* desc="rv" *) real    rv;
+  (* desc="nf" *) integer nf;
+  analog begin
+    @(initial_step) begin
+      // [reopen] read line 1, close, reopen -- must be line 1 again
+      fd = $fopen("lrmio_data.txt", "r");
+      c = $fgets(s, fd);
+      $fclose(fd);
+      fd = $fopen("lrmio_data.txt", "r");
+      c = $fgets(reopen_first, fd);
+      $fclose(fd);
+
+      // [scanf] partial scan leaves the rest of the line
+      fd = $fopen("lrmio_data.txt", "r");
+      nf = $fscanf(fd, "%d %g", iv, rv);
+      c = $fgets(scan_rest, fd);
+      c = $fgets(scan_next, fd);
+      $fclose(fd);
+
+      // [sscanf] $fgets consumed the line; scanning the string must not rewind
+      fd = $fopen("lrmio_data.txt", "r");
+      c = $fgets(s, fd);
+      n = $sscanf(s, "%d %g", iv, rv);
+      c = $fgets(ss_next, fd);
+      $fclose(fd);
+
+      // Report: strings are not readable as operating-point variables, so the
+      // results travel through a file the checker reads (as stringio does).
+      of = $fopen("lrmio_out.txt", "w");
+      $fwrite(of, "reopen_first=[%s]\n", reopen_first);
+      $fwrite(of, "scan_rest=[%s]\n", scan_rest);
+      $fwrite(of, "scan_next=[%s]\n", scan_next);
+      $fwrite(of, "ss_next=[%s]\n", ss_next);
+      $fclose(of);
+    end
+    I(a, b) <+ V(a, b) * 1e-6;
+  end
+endmodule

@@ -1,0 +1,13 @@
+// Enhancement-539: LRM 9.4.4 `%m` prints the hierarchical name of the module
+// INSTANCE that ran the display task -- the clause exists so that, with many
+// instances of one module, %m pinpoints the one responsible.
+`include "disciplines.vams"
+module lrmio_m(a, b);
+  inout a, b;
+  electrical a, b;
+  analog begin
+    @(initial_step)
+      $strobe("WHOAMI %m");
+    I(a, b) <+ V(a, b) * 1e-3;
+  end
+endmodule

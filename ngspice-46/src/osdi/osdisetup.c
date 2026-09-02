@@ -14,6 +14,7 @@
 #include "ngspice/memory.h"
 #include "ngspice/ngspice.h"
 #include "ngspice/typedefs.h"
+#include "ngspice/fteext.h"
 
 #include "osdi.h"
 #include "osdidefs.h"
@@ -278,6 +279,42 @@ static void write_node_mapping(const OsdiDescriptor *descr, void *inst,
       node_mapping[i] = 0;
     } else {
       node_mapping[i] = nodes[node_mapping[i]];
+    }
+  }
+}
+
+/* LRM 3.6.1: stamp each of this instance's nodes with the abstol its nature
+ * declares, so the convergence test judges it by the tolerance the model asked
+ * for rather than the circuit-wide default. Nodes shared with other devices
+ * keep the TIGHTEST claim; a model that declares nothing leaves the node at 0
+ * and the global tolerance continues to apply. */
+static void apply_node_abstol(CKTcircuit *ckt, const OsdiRegistryEntry *entry,
+                              const OsdiDescriptor *descr, void *inst) {
+  uint32_t *node_mapping;
+  uint32_t i;
+
+  if (!ckt || !entry || !entry->natures) {
+    return;
+  }
+  node_mapping = (uint32_t *)(((char *)inst) + descr->node_mapping_offset);
+  for (i = 0; i < descr->num_nodes; i++) {
+    double tol = osdi_node_abstol(entry, i);
+    uint32_t gnode = node_mapping[i];
+    CKTnode *n;
+    if (tol <= 0.0 || gnode == 0) {
+      continue; /* nothing declared, or ground */
+    }
+    for (n = ckt->CKTnodes; n; n = n->next) {
+      if ((uint32_t)n->number == gnode) {
+        if (n->natabstol <= 0.0 || tol < n->natabstol) {
+          if (ft_ngdebug) {
+            fprintf(stderr, "OSDI: node %u convergence abstol = %g "
+                            "(declared by its nature)\n", gnode, tol);
+          }
+          n->natabstol = tol;
+        }
+        break;
+      }
     }
   }
 }
@@ -658,6 +695,7 @@ int OSDIsetup(SMPmatrix *matrix, GENmodel *inModel, CKTcircuit *ckt,
       }
       FREE(node_used);
       write_node_mapping(descr, inst, node_ids);
+      apply_node_abstol(ckt, entry, descr, inst);
 
       /* now that we have the node mapping we can create the matrix entries */
       err = init_matrix(matrix, descr, inst);

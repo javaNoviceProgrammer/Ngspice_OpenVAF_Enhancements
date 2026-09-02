@@ -58,6 +58,13 @@ struct CKTnode {
     int number;                 /* Number of the node */
     double ic;                  /* Value of the initial condition */
     double nodeset;             /* Value of the .nodeset option */
+    /* LRM 3.6.1: absolute tolerance declared by the nature of the signal on
+     * this node, taken from an OSDI model's nature tables at setup. 0 means
+     * none was declared and the circuit-wide abstol/vntol applies, which is
+     * how every node behaved before. When several models meet on one node the
+     * TIGHTEST declared value wins -- a shared node must satisfy the
+     * strictest claim made about it. */
+    double natabstol;
     double *ptr;                /* ??? */
     CKTnode *next;              /* pointer to the next node */
     unsigned int icGiven:1;     /* FLAG ic given */
@@ -285,7 +292,14 @@ struct CKTcircuit {
     double CKTpivotRelTol;      /* --- */
     double CKTreltol;           /* --- */
     double CKTchgtol;           /* --- */
-    double CKTvoltTol;          /* --- */
+    double CKTvoltTol;
+    /* Enhancement-539: copy of TSKtolGiven (ERRP_* bits, optdefs.h) naming the
+     * tolerance options the USER set explicitly. A nature's declared abstol
+     * must not override an option the user gave -- the standard `electrical`
+     * natures in disciplines.vams declare abstol themselves, so without this a
+     * deliberately loosened `.option vntol` would be silently pulled back to
+     * the discipline's 1u on every OSDI node. */
+    unsigned int CKTtolGiven;          /* --- */
     double CKTlteReltol;        /* relative error in voltage based truncation error estimation */
     double CKTlteAbstol;        /* absolute error in voltage based truncation error estimation */
     double CKTlteTrtol;         /* scaling time step in voltage based truncation error estimation */

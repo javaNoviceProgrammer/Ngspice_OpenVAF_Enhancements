@@ -2469,7 +2469,7 @@ impl BodyLoweringCtx<'_, '_, '_> {
             BuiltIn::fscanf => {
                 // Read one line from the descriptor, then scan it like $sscanf.
                 let fd = self.lower_expr(args[0]);
-                let input = self.ctx.call1(CallBackKind::Fgets, &[fd]);
+                let input = self.ctx.call1(CallBackKind::FgetsScan, &[fd]);
                 self.lower_scanf(input, args[1], &args[2..])
             }
 
@@ -2559,13 +2559,17 @@ impl BodyLoweringCtx<'_, '_, '_> {
                 }
             }
             BuiltIn::fopen => {
-                // $fopen(name) / $fopen(name, mode). A missing mode defaults to
-                // "w" so the runtime always receives a (name, mode) pair.
+                // $fopen(name, mode) -> file descriptor; $fopen(name) -> the
+                // LRM's MULTICHANNEL descriptor, a distinct namespace of
+                // one-hot bits that may be OR-ed together (LRM 9.5.1). The
+                // one-argument form used to default the mode to "w" here,
+                // which erased that distinction before the runtime could see
+                // it; an empty mode is how it now travels.
                 let name = self.lower_expr(args[0]);
                 let mode = if args.len() > 1 {
                     self.lower_expr(args[1])
                 } else {
-                    self.ctx.sconst("w")
+                    self.ctx.sconst("")
                 };
                 self.ctx.call1(CallBackKind::Fopen, &[name, mode])
             }

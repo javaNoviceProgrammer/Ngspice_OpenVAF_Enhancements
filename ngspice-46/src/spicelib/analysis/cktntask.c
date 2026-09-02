@@ -97,7 +97,16 @@ CKTnewTask(CKTcircuit *ckt, TSKtask **taskPtr, IFuid taskName, TSKtask **defPtr)
         tsk->TSKlteAbstol       = def->TSKlteAbstol;
         tsk->TSKlteTrtol       = def->TSKlteTrtol;
         tsk->TSKnewtrunc       = def->TSKnewtrunc;
-        tsk->TSKtolGiven       = 0; /* Enhancement-110: no user-given options yet */
+        /* Enhancement-539: the flags must follow the VALUES they describe.
+         * This inherits every tolerance from `def` and then used to clear the
+         * record of which of them the user had set explicitly, so a `vntol`
+         * given in the deck arrived here with the right value and no memory
+         * of who chose it. Enhancement-539 needs that record downstream, to
+         * keep a nature's declared abstol from overriding a tolerance the
+         * user chose. (Enhancement-110's preset rule is unaffected either
+         * way: a preset and the explicit options land on the same task, so an
+         * explicit .option already won there.) */
+        tsk->TSKtolGiven       = def->TSKtolGiven;
     } else {
 #endif /*CDHW*/
 

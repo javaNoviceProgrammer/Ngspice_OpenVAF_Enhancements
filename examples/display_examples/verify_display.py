@@ -100,7 +100,11 @@ for tag, want, what in [
 
 print("[2] display kinds + %m + escapes")
 log, rc = run_model("display_kinds.osdi", "dispkinds")
-check("%m prints the module path", "mod=dispkinds" in log)
+# LRM 9.4.4: %m names the INSTANCE running the task, not the module it was
+# compiled from -- the instance here is `N1`. This check asserted the module
+# name until Enhancement-539 fixed %m; `dispkinds` must NOT appear.
+check("%m prints the instance path, not the module name",
+      "mod=n1" in log.lower() and "mod=dispkinds" not in log)
 check("\\t escape renders a tab", "tab[\t]" in log)
 check("$write / $display / $monitor / $debug all print",
       all(f"M{k}" in log for k in (3, 4, 5, 6)))

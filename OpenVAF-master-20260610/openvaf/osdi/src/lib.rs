@@ -600,6 +600,32 @@ pub fn compile<'a>(
             );
         }
 
+        // The instance-name callback slot backing `%m`: exported and
+        // NULL-initialised exactly like osdi_log, so a simulator that does not
+        // know about it simply leaves it NULL and the model falls back (see
+        // osdi_inst_name in stdlib.c).
+        if let Some(inst_name) = cx.get_declared_value("osdi_instance_name") {
+            let null = cx.const_null_ptr();
+            unsafe {
+                llvm_sys::core::LLVMSetInitializer(
+                    NonNull::from(inst_name).as_ptr(),
+                    NonNull::from(null).as_ptr(),
+                );
+                llvm_sys::core::LLVMSetLinkage(
+                    NonNull::from(inst_name).as_ptr(),
+                    llvm_sys::LLVMLinkage::LLVMExternalLinkage,
+                );
+                llvm_sys::core::LLVMSetUnnamedAddress(
+                    NonNull::from(inst_name).as_ptr(),
+                    llvm_sys::LLVMUnnamedAddr::LLVMNoUnnamedAddr,
+                );
+                llvm_sys::core::LLVMSetDLLStorageClass(
+                    NonNull::from(inst_name).as_ptr(),
+                    llvm_sys::LLVMDLLStorageClass::LLVMDLLExportStorageClass,
+                );
+            }
+        }
+
         let osdi_log =
             cx.get_declared_value("osdi_log").expect("symbol osdi_log missing from std lib");
         let val = cx.const_null_ptr();
