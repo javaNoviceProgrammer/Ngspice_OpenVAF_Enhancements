@@ -3004,6 +3004,11 @@ void com_sweep(wordlist *wl)
     double *data = NULL;
     int nout = 0, i, k, p, j;
     int save_optimizing = ft_optimizing;
+    /* E-536 (hunt bug 16): the osdimc hold is a DEPTH now; release exactly
+     * what THIS command took -- the shared cleanup runs for paths that never
+     * took the bracket (the dc handover, parse failures), and an unbalanced
+     * release would pop an OUTER loop command's hold. */
+    int mc_held = 0;
     int overlay = 0;                 /* Enhancement-189: -overlay flag          */
     int perpoint = 0;                /* Enhancement-533: -perpoint forces the
                                       * one-op-per-point loop over dc handover */
@@ -3399,6 +3404,7 @@ void com_sweep(wordlist *wl)
      * the rest re-apply it (a swept curve used to stitch npt DIFFERENT
      * samples together). Cleared on every exit below. */
     OSDImcHoldTrial(TRUE);
+    mc_held = 1;
 
     /* Enhancement-477: `npt` is the exact number of analyses this loop runs,
      * so the bar is determinate. */
@@ -3406,6 +3412,20 @@ void com_sweep(wordlist *wl)
 
     for (p = 0; p < npt; p++) {
         int idx[SW_MAXKNOB], rem = p, anyDeck = 0, deckChanged = 0, resetNeeded;
+        /* E-536 (hunt bug 17): an interrupt aborts only the inner analysis it
+         * lands in, and the very next dosim() CLEARS ft_intrpt -- so the loop
+         * marched through every remaining point as if nothing happened, and
+         * the user's Ctrl-C was swallowed entirely. Poll it here, before the
+         * next run can clear it; the points never run get E-445's honest
+         * no-result marker. */
+        if (ft_intrpt) {
+            fprintf(cp_err, "sweep: interrupted after %d of %d points; "
+                            "the remaining entries are nan\n", p, npt);
+            for (size_t q = (size_t) p * (size_t) nout;
+                 q < (size_t) npt * (size_t) nout; q++)
+                data[q] = NAN;
+            break;
+        }
         outp_loop_point(p);
         int reuseOK;
         double curval[SW_MAXKNOB];
@@ -3563,7 +3583,10 @@ void com_sweep(wordlist *wl)
         }
     }
     outp_loop_end();          /* Enhancement-477 */
-    OSDImcHoldTrial(FALSE);   /* Enhancement-535 */
+    if (mc_held) {            /* Enhancement-535 / E-536 balance */
+        OSDImcHoldTrial(FALSE);
+        mc_held = 0;
+    }
     ft_optimizing = save_optimizing;
 
 emit_summary:                 /* Enhancement-533: the dc handover joins here */
@@ -3745,7 +3768,12 @@ emit_summary:                 /* Enhancement-533: the dc handover joins here */
     }
 
 cleanup:
-    OSDImcHoldTrial(FALSE);   /* Enhancement-535: never outlive the sweep */
+    if (mc_held) {            /* Enhancement-535: never outlive the sweep;
+                               * E-536: and never pop a bracket this command
+                               * did not take (hunt bug 16) */
+        OSDImcHoldTrial(FALSE);
+        mc_held = 0;
+    }
     /* Enhancement-350: put each swept `.param` back to what it was worth before
      * the sweep started.
      *
@@ -4035,13 +4063,29 @@ void com_highsigma(wordlist *wl)
     OSDImcSigmaScale(lambda);
     outp_loop_begin("highsigma", "sample", nsamp, sw_loopbar_mode());   /* Enhancement-477 */
     for (int i = 0; i < nsamp; i++) {
+        /* E-536 (hunt bug 17): stop sampling on interrupt -- the next
+         * dosim() would clear the flag and the loop would march on. The
+         * estimator below runs over the samples that completed. */
+        if (ft_intrpt) {
+            fprintf(cp_err, "highsigma: interrupted after %d of %d samples\n",
+                    i, nsamp);
+            nsamp = i;
+            break;
+        }
         outp_loop_point(i);
         ft_optimizing = TRUE;               /* reset re-source may clear it */
         sw_run_cmd("reset");                /* redraws the lambda-inflated .params */
         sw_run_cmd(analysis);
         double m = sw_eval_expr(metric);
         double f = ((have_max && m > hi) || (have_min && m < lo)) ? 1.0 : 0.0;
-        double w = mc_sample_weight();
+        /* E-536 fix (hunt bug 7): the netlist draws carry their likelihood
+         * ratio in mc_sample_weight(); the lambda-inflated osdimc gauss draws
+         * carry theirs in OSDImcSampleLogLR() -- without it, a metric that
+         * depends on an OSDI statistical parameter was estimated under the
+         * INFLATED density (measured P(fail) 0.42 where the true value is
+         * 0.354) with every sample at weight 1. */
+        double w = mc_sample_weight()
+                   * exp(OSDImcSampleLogLR(ft_curckt->ci_ckt));
         double x = w * f;
         sum_wf += x;
         sum_w2f2 += x * x;
@@ -4051,6 +4095,11 @@ void com_highsigma(wordlist *wl)
     OSDImcSigmaScale(1.0);    /* Enhancement-535 */
     ft_optimizing = save_optimizing;
     mc_sss_off();
+
+    if (nsamp <= 0) {         /* E-536: interrupted before the first sample */
+        fprintf(cp_out, "  (no samples completed -- nothing to estimate)\n");
+        return;
+    }
 
     double pfail = sum_wf / (double) nsamp;
     double var_x = sum_w2f2 / (double) nsamp - pfail * pfail;
@@ -4270,6 +4319,16 @@ void com_montecarlo(wordlist *wl)
     outp_loop_begin("montecarlo", "sample", nsamp, sw_loopbar_mode());  /* Enhancement-477 */
 
     for (int i = 0; i < nsamp; i++) {
+        /* E-536 (hunt bug 17): stop drawing samples once the user has
+         * interrupted -- the next dosim() would clear the flag and the loop
+         * would march through every remaining sample. The statistics below
+         * are reported over the samples that actually ran. */
+        if (ft_intrpt) {
+            fprintf(cp_err, "montecarlo: interrupted after %d of %d samples\n",
+                    i, nsamp);
+            nsamp = i;
+            break;
+        }
         outp_loop_point(i);
         ft_optimizing = TRUE;
         if (fast_mc)
@@ -4615,6 +4674,18 @@ void com_wcd(wordlist *wl)
     outp_loop_begin("wcd", "iteration", 0, sw_loopbar_mode());
 
     for (it = 0; it < maxiter; it++) {
+        /* E-536 (hunt bug 17): an interrupted MPFP search has no result --
+         * a half-converged u* would report a beta that means nothing. Poll
+         * before the next evaluation clears the flag, and unwind. */
+        if (ft_intrpt) {
+            fprintf(cp_err, "wcd: interrupted at iteration %d -- no result\n",
+                    it);
+            outp_loop_end();          /* Enhancement-477 */
+            ft_optimizing = save_optimizing;
+            mc_wcd_off();
+            OSDImcHoldTrial(FALSE);   /* Enhancement-535 */
+            return;
+        }
         double g = wcd_margin(u, ndim, analysis, metric, hi, lo, hasmax, hasmin);
         outp_loop_point(it);
         double gn2 = 0.0, gdotu = 0.0, dnorm = 0.0, unorm = 0.0;
@@ -4697,6 +4768,13 @@ void com_wcd(wordlist *wl)
         mc_wcd_shift(u, ndim, seed);
         for (i = 0; i < nis; i++) {
             double m, f = 0.0, w;
+            /* E-536 (hunt bug 17): report over the samples that completed */
+            if (ft_intrpt) {
+                fprintf(cp_err, "wcd: interrupted after %d of %d importance "
+                                "samples\n", i, nis);
+                nis = i;
+                break;
+            }
             sw_run_cmd("reset");
             sw_run_cmd(analysis);
             m = sw_eval_expr(metric);
@@ -4709,7 +4787,7 @@ void com_wcd(wordlist *wl)
                 sum_w2f2 += w * w;
             }
         }
-        {
+        if (nis > 0) {        /* E-536: 0 after an immediate interrupt */
             double pf = sum_wf / (double) nis;
             double var = sum_w2f2 / (double) nis - pf * pf;
             double se = (var > 0.0) ? sqrt(var / (double) nis) : 0.0;

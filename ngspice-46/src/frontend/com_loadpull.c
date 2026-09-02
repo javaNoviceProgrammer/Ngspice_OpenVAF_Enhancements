@@ -296,6 +296,15 @@ void com_loadpull(wordlist *wl)
                 source_mode ? "source" : "load", f0, z0, gmax, ngrid, ngrid, nper);
 
         for (ig = 0; ig <= ngrid; ig++) {
+            /* E-536 (hunt bug 17): an interrupt only aborts the inner tran it
+             * lands in, and the next dosim() clears the flag -- poll here so
+             * Ctrl-C actually stops the grid. The contours below are drawn
+             * from the points that completed. */
+            if (ft_intrpt) {
+                fprintf(cp_err, "loadpull: interrupted at grid row %d of %d\n",
+                        ig, ngrid + 1);
+                break;
+            }
             for (jg = 0; jg <= ngrid; jg++) {
                 double gr = -gmax + 2.0 * gmax * ig / ngrid;
                 double gi = -gmax + 2.0 * gmax * jg / ngrid;

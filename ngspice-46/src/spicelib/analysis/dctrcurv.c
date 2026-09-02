@@ -797,6 +797,12 @@ DCTresolveXParam(CKTcircuit *ckt, TRCV *job, int i)
                 "point generation is fractional; use whole-number start stop "
                 "step instead",
                 i + 1, name);
+            /* E-536 (hunt bug 11): drop the collected list, exactly as the
+             * sibling error paths do -- a stale list with TRCVxN > 0 and
+             * dangling owner pointers otherwise outlives this refusal. */
+            tfree(job->TRCVxTarg[i]);
+            job->TRCVxTarg[i] = NULL;
+            job->TRCVxN[i] = 0;
             return E_PARMVAL;
         }
         if (!(DCTisWhole(job->TRCVvStart[i]) && DCTisWhole(job->TRCVvStop[i])
@@ -806,6 +812,9 @@ DCTresolveXParam(CKTcircuit *ckt, TRCV *job, int i)
                 "and step must be whole numbers (got %g %g %g)",
                 i + 1, name, job->TRCVvStart[i], job->TRCVvStop[i],
                 job->TRCVvStep[i]);
+            tfree(job->TRCVxTarg[i]);      /* E-536 (hunt bug 11) */
+            job->TRCVxTarg[i] = NULL;
+            job->TRCVxN[i] = 0;
             return E_PARMVAL;
         }
     }
@@ -880,6 +889,52 @@ DCTapplyLevel(CKTcircuit *ckt, TRCV *job, int i, double val, int check,
 }
 
 
+/* E-536 fix (hunt bug 10): resolution APPLIES each level's start value as it
+ * walks the levels (a temperature is set and propagated through
+ * inp_evaluate_temper + CKTtemp, a source's dc value overwritten, a
+ * parameter written through the DEV tables) -- so a failure at a LATER level
+ * must put every earlier level back, or the error leaves the circuit
+ * silently changed: `dc v1 0.5 1.5 0.5 @r1[bogus] 1 2 0.5` left v1 parked at
+ * 0.5 V, and a temp outer level left every temper-baked expression at the
+ * sweep's start temperature. Restore from `from` down to 0, in REVERSE
+ * order, so an aliased knob lands back on its true pre-sweep value (levels
+ * above `from` were never resolved this run and their job fields may be
+ * stale -- they are deliberately not touched). The clash refusal and every
+ * resolution-failure return share this path. */
+static void
+DCTunwindLevels(CKTcircuit *ckt, TRCV *job, int from,
+                int vcode, int icode, int rcode)
+{
+    int i;
+    for (i = from; i >= 0; i--) {
+        if (job->TRCVvType[i] == XPARAM_CODE)
+            DCTrestoreXParam(ckt, job, i);
+        else if (job->TRCVvType[i] == PARAM_CODE)
+            (void) DCTsetInstParam(ckt, job, i, job->TRCVvSave[i], 0);
+        else if (job->TRCVvType[i] == TEMP_CODE) {
+            ckt->CKTtemp = job->TRCVvSave[i];
+            inp_evaluate_temper(ft_curckt);
+            CKTtemp(ckt);
+        } else if (rcode >= 0 && job->TRCVvType[i] == rcode) {
+            ((RESinstance *)(job->TRCVvElt[i]))->RESresist =
+                job->TRCVvSave[i];
+            ((RESinstance *)(job->TRCVvElt[i]))->RESresGiven =
+                (job->TRCVgSave[i] != 0);
+            RESupdate_conduct((RESinstance *)(job->TRCVvElt[i]), TRUE);
+            DEVices[rcode]->DEVload(job->TRCVvElt[i]->GENmodPtr, ckt);
+        } else if (vcode >= 0 && job->TRCVvType[i] == vcode) {
+            ((VSRCinstance *)(job->TRCVvElt[i]))->VSRCdcValue =
+                job->TRCVvSave[i];
+            ((VSRCinstance *)(job->TRCVvElt[i]))->VSRCdcGiven =
+                (job->TRCVgSave[i] != 0);
+        } else if (icode >= 0 && job->TRCVvType[i] == icode) {
+            ((ISRCinstance *)(job->TRCVvElt[i]))->ISRCdcValue =
+                job->TRCVvSave[i];
+            ((ISRCinstance *)(job->TRCVvElt[i]))->ISRCdcGiven =
+                (job->TRCVgSave[i] != 0);
+        }
+    }
+}
 
 
 int
@@ -1110,6 +1165,7 @@ DCtrCurv(CKTcircuit *ckt, int restart)
                     "DC sweep %d: temperature range %g C .. %g C reaches at or"
                     " below absolute zero (-273.15 C)\n",
                     i + 1, job->TRCVvStart[i], job->TRCVvStop[i]);
+                DCTunwindLevels(ckt, job, i - 1, vcode, icode, rcode);   /* E-536 (hunt bug 10) */
                 return(E_PARMVAL);
             }
             job->TRCVvSave[i] = ckt->CKTtemp; /* Saves the old circuit temperature */
@@ -1161,12 +1217,15 @@ DCtrCurv(CKTcircuit *ckt, int restart)
                         "and step must be whole numbers (got %g %g %g)",
                         i + 1, job->TRCVvName[i], job->TRCVvStart[i],
                         job->TRCVvStop[i], job->TRCVvStep[i]);
+                    DCTunwindLevels(ckt, job, i - 1, vcode, icode, rcode);   /* E-536 (hunt bug 10) */
                     return(E_PARMVAL);
                 }
-                if (DCTsetInstParam(ckt, job, i, job->TRCVvStart[i], 1) != OK)
+                if (DCTsetInstParam(ckt, job, i, job->TRCVvStart[i], 1) != OK) {
+                    DCTunwindLevels(ckt, job, i - 1, vcode, icode, rcode);   /* E-536 (hunt bug 10) */
                     return dct_topology_refusal
                         ? E_PARMVAL       /* Enhancement-495 already said why */
                         : DCTrejected(job, i, job->TRCVvStart[i]);
+                }
                 goto found;
             }
             /* Enhancement-427: the device WAS found, the parameter was not.
@@ -1178,6 +1237,7 @@ DCtrCurv(CKTcircuit *ckt, int restart)
                         "sweepable parameter of it (it must be a settable real "
                         "or integer instance parameter)",
                         job->TRCVvName[i]);
+                DCTunwindLevels(ckt, job, i - 1, vcode, icode, rcode);   /* E-536 (hunt bug 10) */
                 return(E_BADPARM);
             }
         }
@@ -1187,14 +1247,17 @@ DCtrCurv(CKTcircuit *ckt, int restart)
             int xerr = DCTresolveXParam(ckt, job, i);
             if (xerr == OK)
                 goto found;
-            if (xerr != E_NODEV)
+            if (xerr != E_NODEV) {
+                DCTunwindLevels(ckt, job, i - 1, vcode, icode, rcode);   /* E-536 (hunt bug 10) */
                 return xerr;           /* the resolver already said why */
+            }
         }
 
         SPfrontEnd->IFerrorf (ERR_FATAL,
                 "DC Transfer Function: Voltage source, current source, or "
                 "resistor named \"%s\" is not in the circuit",
                 job->TRCVvName[i]);
+        DCTunwindLevels(ckt, job, i - 1, vcode, icode, rcode);   /* E-536 (hunt bug 10) */
         return(E_NODEV);
 
     found:;
@@ -1211,6 +1274,7 @@ DCtrCurv(CKTcircuit *ckt, int restart)
                 if (job->TRCVnPts[i] < 1) {
                     SPfrontEnd->IFerrorf(ERR_FATAL,
                         "DC sweep %d: lin needs at least 1 point", i + 1);
+                    DCTunwindLevels(ckt, job, i, vcode, icode, rcode);
                     return(E_PARMVAL);
                 }
                 job->TRCVnTotal[i] = job->TRCVnPts[i];
@@ -1222,6 +1286,7 @@ DCtrCurv(CKTcircuit *ckt, int restart)
                     SPfrontEnd->IFerrorf(ERR_FATAL,
                         "DC sweep %d: dec/oct need positive endpoints with "
                         "start <= stop (got %g .. %g)", i + 1, f0, f1);
+                    DCTunwindLevels(ckt, job, i, vcode, icode, rcode);
                     return(E_PARMVAL);
                 }
                 mul = pow(per, 1.0 / job->TRCVnPts[i]);
@@ -1230,6 +1295,7 @@ DCtrCurv(CKTcircuit *ckt, int restart)
                         SPfrontEnd->IFerrorf(ERR_FATAL,
                             "DC sweep %d: too many points (> 100000); check "
                             "<N> and the start/stop range", i + 1);
+                        DCTunwindLevels(ckt, job, i, vcode, icode, rcode);
                         return(E_PARMVAL);
                     }
                 }
@@ -1315,6 +1381,42 @@ DCtrCurv(CKTcircuit *ckt, int restart)
                     }
                 }
             }
+            /* E-536 fix (hunt bug 9): a wildcard's INSTANCE targets can also
+             * cover a SOURCE/RESISTOR level's element through its principal
+             * parameter -- `dc v1 0.5 1.5 0.5 @#*[dc] 0 2 1` moved v1's dc
+             * from both levels, passed the guard, and left v1 parked at the
+             * sweep start. Same principal-keyword identity the cross-KIND
+             * check above uses. */
+            for (a = 0; a < 2 && !clash; a++) {
+                int o = 1 - a;
+                const char *principal = NULL;
+                if (job->TRCVvType[a] != XPARAM_CODE || !job->TRCVvElt[o])
+                    continue;
+                if (job->TRCVvType[o] == vcode || job->TRCVvType[o] == icode)
+                    principal = "dc";
+                else if (job->TRCVvType[o] == rcode)
+                    principal = "resistance";
+                if (!principal)
+                    continue;
+                for (b = 0; b < job->TRCVxN[a] && !clash; b++) {
+                    DCTxtarget *t = &job->TRCVxTarg[a][b];
+                    IFdevice *dev;
+                    int k, n;
+                    if (t->inst != job->TRCVvElt[o])
+                        continue;
+                    dev = &DEVices[job->TRCVvElt[o]->GENmodPtr
+                                       ->GENmodType]->DEVpublic;
+                    n = dev->numInstanceParms ? *dev->numInstanceParms : 0;
+                    for (k = 0; k < n; k++)
+                        if (dev->instanceParms[k].id == t->set_id &&
+                            dev->instanceParms[k].keyword &&
+                            cieq(dev->instanceParms[k].keyword,
+                                 (char *) principal)) {
+                            clash = 1;
+                            break;
+                        }
+                }
+            }
         }
         if (clash) {
             SPfrontEnd->IFerrorf(ERR_FATAL,
@@ -1323,35 +1425,9 @@ DCtrCurv(CKTcircuit *ckt, int restart)
                 "and corrupt the restore. Sweep it once",
                 job->TRCVvName[0] ? job->TRCVvName[0] : "?",
                 job->TRCVvName[1] ? job->TRCVvName[1] : "?");
-            /* undo what resolution already applied, in reverse */
-            for (i = job->TRCVnestLevel; i >= 0; i--) {
-                if (job->TRCVvType[i] == XPARAM_CODE)
-                    DCTrestoreXParam(ckt, job, i);
-                else if (job->TRCVvType[i] == PARAM_CODE)
-                    (void) DCTsetInstParam(ckt, job, i, job->TRCVvSave[i], 0);
-                else if (job->TRCVvType[i] == TEMP_CODE) {
-                    ckt->CKTtemp = job->TRCVvSave[i];
-                    inp_evaluate_temper(ft_curckt);
-                    CKTtemp(ckt);
-                } else if (job->TRCVvType[i] == rcode) {
-                    ((RESinstance *)(job->TRCVvElt[i]))->RESresist =
-                        job->TRCVvSave[i];
-                    ((RESinstance *)(job->TRCVvElt[i]))->RESresGiven =
-                        (job->TRCVgSave[i] != 0);
-                    RESupdate_conduct((RESinstance *)(job->TRCVvElt[i]), TRUE);
-                    DEVices[rcode]->DEVload(job->TRCVvElt[i]->GENmodPtr, ckt);
-                } else if (job->TRCVvType[i] == vcode) {
-                    ((VSRCinstance *)(job->TRCVvElt[i]))->VSRCdcValue =
-                        job->TRCVvSave[i];
-                    ((VSRCinstance *)(job->TRCVvElt[i]))->VSRCdcGiven =
-                        (job->TRCVgSave[i] != 0);
-                } else if (job->TRCVvType[i] == icode) {
-                    ((ISRCinstance *)(job->TRCVvElt[i]))->ISRCdcValue =
-                        job->TRCVvSave[i];
-                    ((ISRCinstance *)(job->TRCVvElt[i]))->ISRCdcGiven =
-                        (job->TRCVgSave[i] != 0);
-                }
-            }
+            /* undo what resolution already applied, in reverse
+             * (E-536: the shared unwind every failure path now uses) */
+            DCTunwindLevels(ckt, job, job->TRCVnestLevel, vcode, icode, rcode);
             return(E_PARMVAL);
         }
     }

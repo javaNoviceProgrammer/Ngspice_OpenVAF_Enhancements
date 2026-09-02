@@ -166,6 +166,9 @@ struct optctx {
     unsigned mcseed;                     /* inner MC seed                          */
     double last_yield;                   /* yield at the last centering eval       */
     double last_cpk;                     /* worst-case Cpk at the last eval        */
+    unsigned long mc_trial0;             /* E-536 (hunt bug 8): osdimc trial
+                                          * checkpoint -- every -center candidate
+                                          * replays the same trial window        */
 
     /* Enhancement-216: multi-objective / Pareto optimization (NSGA-II). Instead of
      * one scalar cost, `nobj` competing objectives are traded off; the result is a
@@ -218,8 +221,16 @@ static void opt_run_cmd(const char *cmdstr)
            USER types is not marked, drops the record, and still means what it
            always did. */
         int agereset = (strcasecmp(wl->wl_word, "reset") == 0);
-        if (agereset)
+        if (agereset) {
             aging_internal_reset++;
+            /* E-536 fix (hunt bug 8): this reset belongs to the optimizer's
+             * own machinery, exactly like sw_run_cmd's -- the osdimc trial
+             * sequence must keep running. Without it, a `-dparam` fit's
+             * per-evaluation re-source zeroed the counter (the held sample
+             * silently became the nominal mid-search) and `-center`'s inner
+             * Monte-Carlo saw NO osdimc variation at all. */
+            OSDImcPreserveTrial();
+        }
         cp_coms[i].co_func(wl->wl_next);
         if (agereset) {
             aging_internal_reset--;
@@ -458,6 +469,15 @@ static double opt_eval_center(struct optctx *c, const double *u)
 
     for (s = 0; s < c->nspec; s++) { sum[s] = 0.0; sumsq[s] = 0.0; }
 
+    /* E-536 fix (hunt bug 8): rewind the osdimc trial counter to the
+     * checkpoint taken before the search, so every candidate's inner
+     * Monte-Carlo replays the SAME window of trials (draws are pure
+     * functions of the counter). The yield objective then samples osdimc
+     * variation AND is deterministic across candidates -- the same property
+     * the seeded netlist draws below already have. -center therefore runs
+     * WITHOUT the hold the deterministic methods take. */
+    OSDImcTrialRewind(c->mc_trial0);
+
     if (c->lhs) {
         mc_lhs_config(c->nsamples, c->mcseed);
     } else {
@@ -599,6 +619,17 @@ static double opt_eval(struct optctx *c, const double *u, double *resid)
     int k, s, i;
     char cmd[512];
     double cost = 0.0;
+
+    /* E-536 (hunt bug 17): once the user has interrupted, every further
+     * evaluation is wasted work (a population method can owe dozens before
+     * its loop-top poll fires) -- return the penalty cost immediately so the
+     * method winds down without running more analyses. */
+    if (ft_intrpt) {
+        if (resid)
+            for (k = 0; k < c->nt; k++)
+                resid[k] = 0.0;
+        return OPT_PENALTY;
+    }
 
     /* Silence the per-iteration console chatter (alter's re-setup banner, the
      * analysis banner, row count, reference-value progress) unless -verbose.
@@ -756,6 +787,14 @@ static void levenberg_marquardt(struct optctx *c, double *ubest, double *fbest)
     cost0 = opt_eval(c, u, r0);
 
     for (iter = 0; iter < c->maxiter; iter++) {
+        /* E-536 (hunt bug 17): an interrupt only aborts the inner analysis it
+         * lands in, and the next dosim() clears the flag -- poll here so
+         * Ctrl-C actually stops the search (the best point so far is
+         * reported by the normal epilogue). */
+        if (ft_intrpt) {
+            fprintf(cp_err, "optimize: interrupted at iteration %d\n", iter);
+            break;
+        }
         int accepted = 0;
         double dnorm = 0.0, costn = cost0;
         int tries;
@@ -857,6 +896,14 @@ static void nelder_mead(struct optctx *c, double *ubest, double *fbest)
     }
 
     for (iter = 0; iter < c->maxiter; iter++) {
+        /* E-536 (hunt bug 17): an interrupt only aborts the inner analysis it
+         * lands in, and the next dosim() clears the flag -- poll here so
+         * Ctrl-C actually stops the search (the best point so far is
+         * reported by the normal epilogue). */
+        if (ft_intrpt) {
+            fprintf(cp_err, "optimize: interrupted at iteration %d\n", iter);
+            break;
+        }
         int hi, nh;
         double fr;
 
@@ -980,6 +1027,14 @@ static void particle_swarm(struct optctx *c, double *ubest, double *fbest)
     for (j = 0; j < n; j++) gb[j] = pb[gi * n + j];
 
     for (iter = 0; iter < c->maxiter; iter++) {
+        /* E-536 (hunt bug 17): an interrupt only aborts the inner analysis it
+         * lands in, and the next dosim() clears the flag -- poll here so
+         * Ctrl-C actually stops the search (the best point so far is
+         * reported by the normal epilogue). */
+        if (ft_intrpt) {
+            fprintf(cp_err, "optimize: interrupted at iteration %d\n", iter);
+            break;
+        }
         double prevgf = gf;
         for (i = 0; i < N; i++) {
             for (j = 0; j < n; j++) {
@@ -1055,6 +1110,14 @@ static void differential_evolution(struct optctx *c, double *ubest, double *fbes
     for (j = 0; j < n; j++) gb[j] = x[gi * n + j];
 
     for (iter = 0; iter < c->maxiter; iter++) {
+        /* E-536 (hunt bug 17): an interrupt only aborts the inner analysis it
+         * lands in, and the next dosim() clears the flag -- poll here so
+         * Ctrl-C actually stops the search (the best point so far is
+         * reported by the normal epilogue). */
+        if (ft_intrpt) {
+            fprintf(cp_err, "optimize: interrupted at iteration %d\n", iter);
+            break;
+        }
         double prevgf = gf;
         for (i = 0; i < NP; i++) {
             int a, b, e, jr;
@@ -1133,6 +1196,14 @@ static void simulated_annealing(struct optctx *c, double *ubest, double *fbest)
     alpha = pow(1e-4, 1.0 / (double) (c->maxiter > 1 ? c->maxiter : 1));
 
     for (level = 0; level < c->maxiter; level++) {
+        /* E-536 (hunt bug 17): an interrupt only aborts the inner analysis it
+         * lands in, and the next dosim() clears the flag -- poll here so
+         * Ctrl-C actually stops the search (the best point so far is
+         * reported by the normal epilogue). */
+        if (ft_intrpt) {
+            fprintf(cp_err, "optimize: interrupted at iteration %d\n", level);
+            break;
+        }
         double step = 0.30 * sqrt(T / T0) + 0.02;   /* wide when hot, fine when cold */
         for (i = 0; i < L; i++) {
             for (j = 0; j < n; j++)
@@ -1171,6 +1242,13 @@ static void opt_eval_objs(struct optctx *c, const double *u, double *f)
 {
     int i, k;
     char cmd[512];
+
+    /* E-536 (hunt bug 17): see opt_eval -- wind down without more analyses */
+    if (ft_intrpt) {
+        for (k = 0; k < c->nobj; k++)
+            f[k] = OPT_PENALTY;
+        return;
+    }
 
     ft_optimizing = !c->verbose;
     if (c->has_deckparam) {
@@ -1325,6 +1403,14 @@ static void nsga2(struct optctx *c)
     }
 
     for (gen = 0; gen < c->maxiter; gen++) {
+        /* E-536 (hunt bug 17): an interrupt only aborts the inner analysis it
+         * lands in, and the next dosim() clears the flag -- poll here so
+         * Ctrl-C actually stops the search (the best point so far is
+         * reported by the normal epilogue). */
+        if (ft_intrpt) {
+            fprintf(cp_err, "optimize: interrupted at iteration %d\n", gen);
+            break;
+        }
         /* rank+crowd the current parents [0,N) for tournament selection */
         nsga_sort(F, N, m, rank);
         nsga_crowding(F, N, m, rank, crowd);
@@ -1499,6 +1585,7 @@ void com_optimize(wordlist *wl)
     struct optctx c;
     double ubest[OPT_MAXP], fbest = OPT_PENALTY;
     int k, use_lm, use_pso, use_de, use_sa;
+    int mc_held = 0;                     /* E-536 (hunt bug 16): bracket balance */
 
     memset(&c, 0, sizeof c);
     sw_reuse_report(NULL, NULL);        /* Enhancement-472: zero the tally */
@@ -1778,8 +1865,20 @@ void com_optimize(wordlist *wl)
      * sample under `.option osdimc` -- each Nelder-Mead evaluation is a
      * run-class op, and per-evaluation redraws made the objective
      * stochastic (measured: "converged" 2.4% off a closed-form optimum,
-     * reported with full confidence). Cleared at cleanup. */
-    OSDImcHoldTrial(TRUE);
+     * reported with full confidence). Cleared at cleanup.
+     *
+     * E-536 fix (hunt bug 8): -center is the exception -- its objective IS a
+     * Monte-Carlo, so its inner samples must draw fresh trials; determinism
+     * across candidates comes from replaying the same trial window instead
+     * (see opt_eval_center). And the release is guarded (hunt bug 16): a
+     * parse error reaches cleanup without ever taking the bracket, and with
+     * the hold now a DEPTH an unbalanced release would pop an OUTER loop
+     * command's hold. */
+    c.mc_trial0 = OSDImcTrialCheckpoint();
+    if (!c.center) {
+        OSDImcHoldTrial(TRUE);
+        mc_held = 1;
+    }
 
     /* Enhancement-216: NSGA-II is multi-objective and returns a Pareto FRONT rather
      * than a single optimum, so it runs on its own branch below. */
@@ -1964,7 +2063,10 @@ void com_optimize(wordlist *wl)
     }
 
 cleanup:
-    OSDImcHoldTrial(FALSE);              /* Enhancement-535 */
+    if (mc_held) {                       /* Enhancement-535 / E-536 balance */
+        OSDImcHoldTrial(FALSE);
+        mc_held = 0;
+    }
     sw_fp_free();                        /* Enhancement-322: drop fast-path binds */
     for (k = 0; k < c.np; k++)
         tfree(c.name[k]);

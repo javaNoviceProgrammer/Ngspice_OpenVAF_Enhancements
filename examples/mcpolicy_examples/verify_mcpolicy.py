@@ -46,6 +46,28 @@ deterministic draw of the pinned seed):
   [10] `sens` of statistical parameters is finite and closed-form correct
   [11] the baseline guard: an option toggle cannot make trial 1 draw
   [12] a USER reset after a sweep restarts the sequence at the baseline
+
+Enhancement-536 closed the known-open ledger E-535 shipped; checks [13]-[18]
+pin those repairs, each one a former ledger entry with its own repro:
+
+  [13] the hold is a DEPTH -- a loop command nested as another's -analysis
+       no longer releases the outer bracket (it drew a fresh trial per
+       optimizer evaluation before, the stochastic objective again)
+  [14] optimize's internal resets PRESERVE the sequence, like sweep's
+  [15] optimize -center replays a trial window per candidate: its inner
+       Monte-Carlo samples osdimc variation AND is deterministic
+  [16] the clash guard catches a wildcard covering a source's principal
+       parameter, and restores the knob
+  [17] a failed LATER .dc nest level restores the earlier applied levels
+  [18] highsigma -scale weights the OSDI draws it inflates (P(fail) was the
+       raw inflated failure fraction)
+
+Not pinned here, by nature: the interrupt repairs (an interrupted command no
+longer leaks the hold, the sigma inflation, the sampling mode, ft_optimizing
+or the progress bar; and the loop commands now poll ft_intrpt). They need a
+signal delivered to a live interactive process mid-command, which this
+batch harness cannot stage; they are verified by hand and described in the
+enhancement.
 """
 import os
 import re
@@ -97,6 +119,16 @@ def seq(out, name):
     """Every printed value of `name`, in order."""
     pat = re.escape(name) + r"\s*=\s*([-\d.eE+]+)"
     return [float(x) for x in re.findall(pat, out)]
+
+
+def trials(out):
+    """The distinct osdimc trial numbers that drew, in first-seen order
+    (needs `set osdimc_verbose`)."""
+    seen = []
+    for t in re.findall(r"osdimc: trial (\d+):", out):
+        if t not in seen:
+            seen.append(t)
+    return seen
 
 
 def main():
@@ -222,6 +254,91 @@ def main():
     check("a USER reset after a sweep restarts at the nominal baseline",
           rc == 0 and v and v[-1] == 0.5 and r and r[-1] == 1000.0
           and dr and dr[-1] == 0.0, f"v={v[-1:]} r={r[-1:]} dr={dr[-1:]}")
+
+    # ---- E-536: the hunt round's known-open repairs ---------------------
+
+    # [13] bug 16: the hold is a DEPTH, not a flag. A loop command nested as
+    # another's -analysis (optimize over a swept-curve objective) must stay
+    # ONE sample -- the inner sweep's release must not un-hold the optimizer.
+    rc, out = run("mcres", "set osdimc_verbose\nop\n"
+                  "optimize -param r1 1000 500 2000 "
+                  "-analysis sweep v1 lin 2 0.9 1.1 "
+                  "-minimize (v(2)-0.4)^2 -maxiter 4", timeout=600)
+    t = trials(out)
+    check("nested loop commands hold ONE osdimc sample (bug 16)",
+          rc == 0 and t == ["2"], f"trials drawn = {t} (want ['2'])")
+
+    # [14] bug 8, -dparam: opt_run_cmd's per-evaluation reset PRESERVES the
+    # held trial, so every evaluation sees the same sample (not the nominal).
+    rc, out = run("mcres", "set osdimc_verbose\nop\nop\n"
+                  "optimize -dparam rl 1000 500 2000 -analysis op "
+                  "-minimize (v(2)-0.4)^2 -maxiter 4", timeout=600)
+    # trial 2 is op2's draw; the whole optimize holds trial 3 across its resets
+    inopt = out.split("optimize", 1)[-1] if "optimize" in out else out
+    topt = trials(inopt)
+    check("optimize -dparam holds one trial across its resets (bug 8)",
+          rc == 0 and len(topt) == 1 and topt != ["1"],
+          f"trials inside optimize = {topt} (want a single non-baseline trial)")
+
+    # [15] bug 8, -center: the inner Monte-Carlo REPLAYS a trial window per
+    # candidate -- osdimc variation is present (>1 distinct trial) and the
+    # window repeats (a rewound counter revisits the same trials). A dead
+    # sequence would draw nothing at all.
+    rc, out = run("mcres", "set osdimc_verbose\nop\n"
+                  "optimize -param r1 1000 800 1200 -analysis op -center "
+                  "-samples 3 -spec v(2) -max 0.55 -maxiter 3", timeout=600)
+    tc = trials(out)
+    # the same low trial numbers recur across candidates -> counter rewinds
+    nums = [int(x) for x in re.findall(r"osdimc: trial (\d+):", out)]
+    repeats = len(nums) > len(set(nums))
+    check("optimize -center samples osdimc variation, replayed per candidate "
+          "(bug 8)", rc == 0 and len(tc) >= 2 and repeats,
+          f"distinct trials={tc}, replayed={repeats}")
+
+    # [16] bug 9: a wildcard INSTANCE level and a source level that move the
+    # same knob are refused, and v1 is left on its pre-sweep value. Read the
+    # SOURCE knob directly (`@v1[dc]`), not a branch current -- every run
+    # under osdimc draws a fresh trial, so the current legitimately moves
+    # while the knob under test must not.
+    rc, out = run("mcres",
+                  "op\nprint @v1[dc]\n"
+                  "dc v1 0.5 1.5 0.5 @#*[dc] 0 2 1\n"
+                  "op\nprint @v1[dc]")
+    dcv = seq(out, "@v1[dc]")
+    check("a wildcard level clashing with a source level is refused (bug 9)",
+          rc == 0 and "same knob" in out and len(dcv) == 2
+          and dcv[0] == 1.0 and dcv[1] == 1.0,
+          f"same-knob refused={'same knob' in out} @v1[dc]={dcv} (want 1,1)")
+
+    # [17] bug 10: a failure at a LATER .dc nest level restores the earlier
+    # level resolution already applied -- v1 must return to 1 V, not stay
+    # parked at the refused sweep's start value.
+    rc, out = run("mcres",
+                  "op\nprint @v1[dc]\n"
+                  "dc v1 0.5 1.5 0.5 @n1[nonesuch] 1 2 0.5\n"
+                  "op\nprint @v1[dc]")
+    dcv = seq(out, "@v1[dc]")
+    check("a failed later .dc level restores the earlier level (bug 10)",
+          rc == 0 and len(dcv) == 2 and dcv[0] == 1.0 and dcv[1] == 1.0,
+          f"@v1[dc] before/after = {dcv} (want 1,1; the bug left 0.5)")
+
+    # [18] bug 7: highsigma -scale weights the inflated OSDI draws. The
+    # REPORTED P(fail) (importance-weighted) must sit well below the raw
+    # inflated failure fraction -- the weight pulls the lambda-inflated tail
+    # back toward the true probability. Deterministic (seeded).
+    rc, out = run("mchoist",
+                  "op\nhighsigma 1000 -scale 3 -seed 11 -analysis op "
+                  "-metric v(2) -min 0.487", timeout=600)
+    mfail = re.search(r"failures observed\s*:\s*(\d+)\s*/\s*(\d+)", out)
+    mp = re.search(r"P\(fail\)\s*:\s*([-\d.eE+]+)", out)
+    if mfail and mp:
+        raw = int(mfail.group(1)) / int(mfail.group(2))
+        pf = float(mp.group(1))
+    ok18 = (rc == 0 and mfail and mp and pf < raw * 0.85
+            and abs(pf - 0.297) < 0.06)
+    check("highsigma -scale weights the inflated OSDI draws (bug 7)", ok18,
+          f"P(fail)={mp.group(1) if mp else '?'} raw_frac="
+          f"{raw:.3f} true~0.297" if mfail and mp else "no summary")
 
     print(f"\n{'ALL PASS' if passed == checks else 'FAILURES'}: "
           f"{passed}/{checks} passed")

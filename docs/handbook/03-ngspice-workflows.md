@@ -254,11 +254,24 @@ baseline). Sweeping a *statistical* parameter itself works: the machine
 write wins over the draw for the duration of the command, so
 `dc @n1[dr] 0 1000 500` and `sweep @n1[dr] ...` trace real curves (the
 other statistical parameters stay at the held sample), and `sens` reports
-correct sensitivities for statistical parameters. `highsigma -scale` also
-inflates the attribute-declared sigmas — but note the known-open caveat:
-the importance weight carries no likelihood-ratio term for the OSDI draws
-yet, so with `-scale` prefer netlist `.param` statistics when the metric
-depends on an OSDI statistical parameter.
+correct sensitivities for statistical parameters.
+
+E-536 completed the policy. The hold **nests**, so a loop command used as
+another's `-analysis` (an `optimize` over a swept curve) is still one
+sample; `optimize`'s own internal resets preserve the sequence, and
+`-center` replays one trial window per candidate, so its yield objective
+samples osdimc variation while staying deterministic across candidates.
+`highsigma -scale` inflates the attribute-declared gauss sigmas **and
+weights them** (`log λ − n²(λ²−1)/2` per dimension, beside the netlist
+term), so P(fail) is estimated under the true density rather than the
+inflated one — uniforms are deliberately not inflated, as for netlist
+`.param` draws. **Ctrl-C** now stops a loop command at its next iteration
+boundary (`sweep` marks the points it never ran `nan`; `montecarlo` and
+`highsigma` report over the samples that completed) and leaves no state
+behind — an interrupt used to leave a sigma inflation or a held sample
+armed for the rest of the session. One interrupt arriving *inside* a long
+inner analysis is consumed by that analysis; press Ctrl-C again to stop the
+loop.
 
 ## 3.7 Statistical modeling inside the device
 

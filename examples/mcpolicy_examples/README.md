@@ -40,10 +40,35 @@ pinned here:
   of once-then-dropped, and a new run's first `$monitor` line is never
   suppressed by the previous run's text.
 
-`verify_mcpolicy.py` (12 checks, both solvers) pins each behavior with
+Enhancement-536 then closed the ledger E-535 shipped, and those six repairs
+are pinned here too:
+
+* the hold is a **depth**, so a loop command nested as another's `-analysis`
+  (an `optimize` over a swept-curve objective) no longer releases the outer
+  bracket — it drew one fresh trial *per evaluation* before;
+* `optimize`'s own internal resets **preserve** the sequence like `sweep`'s
+  (a `-dparam` fit's objective changed mid-search; `-center` saw no osdimc
+  variation at all), and `-center` **replays a trial window** per candidate
+  so its yield objective samples variation yet stays deterministic;
+* `highsigma -scale` **weights** the OSDI draws it inflates
+  (`log λ − n²(λ²−1)/2` per gauss dimension) — P(fail) was the raw inflated
+  fraction, 0.42 reported against a true 0.354;
+* a `.dc` failure at a later nest level **restores** the earlier levels (a
+  typo left `v1` parked at the sweep start), the clash guard also catches a
+  wildcard covering a source's principal parameter, and the integer-refusal
+  paths drop their target list;
+* Ctrl-C **stops** a loop command instead of letting it march through every
+  remaining point and report success;
+* and an interrupt no longer leaks the hold, the sigma inflation, the
+  sampling mode, `ft_optimizing` or the progress bar into the next command.
+
+`verify_mcpolicy.py` (18 checks, both solvers) pins each behavior with
 closed-form expectations computed from the same run's parameter readbacks —
-`v(2) = 1k/(r+dr+1k)` against `@mm[r]`/`@n1[dr]` — plus the two
-deterministic mcseed-7 montecarlo discriminators for the init-resident and
-preserve legs. Two fixture models: `mcres.va` (statistics used directly in
-eval) and `mchoist.va` (a statistic feeding only a hoisted assignment — the
-model that exposed the ordering bug).
+`v(2) = 1k/(r+dr+1k)` against `@mm[r]`/`@n1[dr]` — plus the deterministic
+mcseed-7 montecarlo discriminators for the init-resident and preserve legs,
+trial-number traces from `osdimc_verbose` for the hold/preserve policy, and
+a seeded 1000-sample high-sigma run checked against the closed-form
+P(fail) = 0.2967 its single statistical dimension implies. Two fixture
+models: `mcres.va` (statistics used directly in eval) and `mchoist.va` (a
+statistic feeding only a hoisted assignment — the model that exposed the
+ordering bug).

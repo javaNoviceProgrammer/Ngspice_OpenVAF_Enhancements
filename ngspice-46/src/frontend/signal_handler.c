@@ -12,6 +12,10 @@ Author: 1985 Wayne A. Christopher, U. C. Berkeley CAD Group
 #include "ngspice/cpdefs.h"
 #include "ngspice/ftedefs.h"
 #include "ngspice/ftedev.h"
+#include "ngspice/fteext.h"     /* E-536: ft_optimizing, outp_loop_abort */
+#include "ngspice/randnumb.h"   /* E-536: mc_wcd_off, mc_sss_off */
+#include "ngspice/osdiitf.h"    /* E-536: OSDImcInterruptReset */
+#include "com_aging.h"          /* E-536: aging_internal_reset */
 #include <setjmp.h>
 #include <signal.h>
 #include "signal_handler.h"
@@ -54,6 +58,26 @@ JMP_BUF jbuf;
 void
 ft_sigintr_cleanup(void)
 {
+    /* E-536 (hunt bugs 5/6/12): the LONGJMP above skipped every loop
+     * command's cleanup path, and the leaked state silently corrupted
+     * whatever the user did next: ft_optimizing left TRUE muted all later
+     * output; an interrupted `highsigma -scale` left its sigma inflation
+     * (and MC_MODE_SSS) armed, scaling every later draw; an interrupted
+     * `wcd` left MC_MODE_WCD pinning every gaussian to a chosen point; a
+     * dangling osdimc hold froze all later runs on one Monte-Carlo sample,
+     * and a dangling preserve carried the trial sequence through a USER
+     * re-source (observed continuing at trial 91828); a half-drawn progress
+     * bar kept the terminal line; and an elevated aging_internal_reset made
+     * later USER resets keep age records they must drop. Once control is
+     * back at the prompt, none of that state is legitimately in progress --
+     * reset it all. */
+    ft_optimizing = FALSE;
+    aging_internal_reset = 0;
+    mc_wcd_off();
+    mc_sss_off();
+    OSDImcInterruptReset();
+    outp_loop_abort();
+
     gr_clean();  /* Clean up plot window */
 
     /* sjb - what to do for editline???

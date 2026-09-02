@@ -156,6 +156,7 @@ extern void outp_loop_begin(const char *label, const char *noun,
                             int total, int mode);
 extern void outp_loop_point(int index);
 extern void outp_loop_end(void);
+extern void outp_loop_abort(void);   /* E-536: interrupt unwind */
 extern bool ft_listprint;
 extern bool ft_nopage;
 extern bool ft_nomod;

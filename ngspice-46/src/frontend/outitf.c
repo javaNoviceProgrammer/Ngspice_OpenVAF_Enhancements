@@ -476,6 +476,28 @@ outp_loop_end(void)
 #endif
 }
 
+/* E-536 (hunt bugs 5/6 family): a keyboard interrupt longjmps out of a loop
+ * command without reaching its outp_loop_end() -- the bar state (nesting
+ * depth included) then leaked into the next command's output. Called from
+ * ft_sigintr_cleanup(): unwind unconditionally, releasing the terminal line
+ * if a bar was being drawn. */
+void
+outp_loop_abort(void)
+{
+#ifndef HAS_WINGUI
+    outp_loop_nested = 0;
+    if (outp_loop_active && outp_loop_show) {
+        fputc('\n', stdout);
+        fflush(stdout);
+    }
+    outp_loop_active = 0;
+    outp_loop_show = 0;
+    outp_loop_drawn = 0;
+    outp_loop_label = NULL;
+    outp_loop_noun = NULL;
+#endif
+}
+
 // fixme
 //   ugly hack to work around missing api to specify the "type" of signals
 int fixme_onoise_type = SV_NOTYPE;

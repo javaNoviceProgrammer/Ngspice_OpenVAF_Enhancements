@@ -1550,9 +1550,21 @@ static unsigned long osdimc_failed_trial_reported;
  *     un-inflatable, so rare-failure analysis over osdimc variability had
  *     no instrument. The factor multiplies every drawn sigma (gaussian and
  *     uniform half-width alike) while it is set. */
-static bool osdimc_hold;          /* a loop command is holding one sample */
+/* E-536 fix (hunt bug 16): the hold is a DEPTH, not a flag. A loop command
+ * nested as another's -analysis (an `optimize` whose objective is a swept
+ * curve) used to release the OUTER command's bracket when the inner one
+ * finished -- measured: one fresh Monte-Carlo trial PER optimizer evaluation,
+ * the exact stochastic-objective bias the hold exists to eliminate. Only the
+ * outermost edges reset held_advanced and the pins; the whole nest is ONE
+ * sample. Callers keep their own held flag so an error path that never took
+ * the bracket (a parse failure, the sweep->dc handover) cannot pop someone
+ * else's. */
+static int osdimc_hold_depth;     /* >0: loop command(s) holding one sample */
 static bool osdimc_held_advanced; /* that hold has taken its one trial */
 static bool osdimc_keep_trial;    /* the NEXT circuit change is internal */
+static bool osdimc_internal_change; /* E-536 fix (hunt bug 12): CircuitChanged
+                                       consumed a keep -- bless the next
+                                       ckt-pointer change at OSDImcNewRun */
 static double osdimc_scale = 1.0; /* sigma inflation, 1.0 = off */
 
 /* E-535 fix (hunt bug 1): the current trial's draws are NOT in parameter
@@ -1568,17 +1580,54 @@ static bool osdimc_apply_is_pending(void) { return osdimc_apply_pending; }
 static void osdimc_clear_pins(void);
 
 void OSDImcHoldTrial(bool on) {
-  osdimc_hold = on;
-  osdimc_held_advanced = false;
-  /* E-535 fix (hunt bug 14): pins never cross a loop command's bracket edge
-   * -- a value pinned by one sweep's restore must not freeze the next
-   * command's draws. */
-  osdimc_clear_pins();
+  if (on) {
+    if (osdimc_hold_depth++ == 0) {
+      osdimc_held_advanced = false;
+      /* E-535 fix (hunt bug 14): pins never cross the OUTERMOST bracket edge
+       * -- a value pinned by one sweep's restore must not freeze the next
+       * command's draws. Inner edges leave both alone: the nest shares one
+       * sample and one pin set. */
+      osdimc_clear_pins();
+    }
+  } else if (osdimc_hold_depth > 0 && --osdimc_hold_depth == 0) {
+    osdimc_held_advanced = false;
+    osdimc_clear_pins();
+  }
 }
 
 void OSDImcPreserveTrial(void) { osdimc_keep_trial = true; }
 
 void OSDImcSigmaScale(double s) { osdimc_scale = (s > 0.0) ? s : 1.0; }
+
+/* E-536 fix (hunt bugs 5/6): a keyboard interrupt longjmps from anywhere in a
+ * loop command straight to the prompt, skipping every bracket clear -- the
+ * hold froze all later runs on one sample, a leaked highsigma inflation
+ * silently scaled every later draw, and a dangling preserve carried an
+ * interrupted run's trial sequence through a USER re-source (observed
+ * continuing at trial 91828). Called from ft_sigintr_cleanup(): once control
+ * is back at the prompt, no loop command is legitimately in progress. */
+void OSDImcInterruptReset(void) {
+  osdimc_hold_depth = 0;
+  osdimc_held_advanced = false;
+  osdimc_keep_trial = false;
+  osdimc_internal_change = false;
+  osdimc_scale = 1.0;
+  osdimc_clear_pins();
+}
+
+/* E-536 fix (hunt bug 8, the -center half): `optimize -center` evaluates a
+ * YIELD objective -- an inner Monte-Carlo per candidate. Each candidate must
+ * see the SAME set of osdimc trials, or the objective is stochastic across
+ * candidates; rewinding to a checkpoint taken before the search replays the
+ * identical trial window (draws are pure functions of the counter), so the
+ * yield estimate includes osdimc variation AND is deterministic. Rewind only
+ * ever moves the counter backwards. */
+unsigned long OSDImcTrialCheckpoint(void) { return osdimc_trial; }
+
+void OSDImcTrialRewind(unsigned long t) {
+  if (osdimc_trial > t)
+    osdimc_trial = t;
+}
 
 /* bug-hunt F2: a (re-)sourced or `reset` deck reallocates the model/instance
  * data blocks, so every stored owner pointer is stale. The circuit loader
@@ -1588,8 +1637,20 @@ void OSDImcCircuitChanged(void) {
   osdimc_tbl_len = 0;
   osdimc_active = false;
   osdimc_failed_trial_reported = 0;
-  if (!osdimc_keep_trial)           /* Enhancement-535: internal resets keep */
-    osdimc_trial = 0;               /* the sample sequence running          */
+  /* E-536 fix (hunt bug 12): the preserve flag is consumed HERE, at the
+   * circuit change it was set for, so it can never dangle into a later USER
+   * reset (the sweep's reset-path restore is the last reset of its run, with
+   * no run after it to consume the flag -- a user's next `reset` then
+   * wrongly continued the sequence). What survives to OSDImcNewRun is the
+   * blessing for the pointer change this reload causes; a USER change both
+   * restarts the sequence and revokes any blessing. */
+  if (osdimc_keep_trial) {          /* Enhancement-535: internal resets keep */
+    osdimc_keep_trial = false;      /* the sample sequence running          */
+    osdimc_internal_change = true;
+  } else {
+    osdimc_trial = 0;
+    osdimc_internal_change = false;
+  }
 }
 
 static bool osdimc_armed_now(void) {
@@ -1673,16 +1734,29 @@ static double osdimc_u01(uint64_t h) {
   return ((double)(h >> 11) + 0.5) * (1.0 / 9007199254740992.0);
 }
 
+/* the standard-normal deviate of a gauss draw -- shared by the draw itself
+ * and the importance-weight walker (E-536 fix, hunt bug 7), so the two can
+ * never disagree about which value was drawn */
+static double osdimc_n01(uint64_t key) {
+  double u1 = osdimc_u01(osdimc_mix(key ^ 1));
+  double u2 = osdimc_u01(osdimc_mix(key ^ 2));
+  return sqrt(-2.0 * log(u1)) * cos(2.0 * M_PI * u2);
+}
+
 static double osdimc_delta(uint64_t key, uint32_t dist, double std,
                            double nominal) {
   double sigma = (dist & OSDI_DIST_REL) ? std * fabs(nominal) : std;
-  sigma *= osdimc_scale;            /* Enhancement-535: highsigma inflation */
-  double u1 = osdimc_u01(osdimc_mix(key ^ 1));
   if (dist & OSDI_DIST_UNIFORM) {
-    return sigma * (2.0 * u1 - 1.0); /* std is the HALF-WIDTH */
+    /* E-536 fix (hunt bug 7): SCALE does NOT inflate uniforms, matching the
+     * netlist SSS policy exactly ("uniform .params are bounded, so SSS does
+     * not inflate them -- they carry weight 1", randnumb.c). An inflated
+     * uniform can land where the TRUE density is zero, which no finite
+     * importance weight represents. std is the HALF-WIDTH. */
+    double u1 = osdimc_u01(osdimc_mix(key ^ 1));
+    return sigma * (2.0 * u1 - 1.0);
   }
-  double u2 = osdimc_u01(osdimc_mix(key ^ 2));
-  return sigma * sqrt(-2.0 * log(u1)) * cos(2.0 * M_PI * u2);
+  /* Enhancement-535: highsigma inflation (gauss only) */
+  return sigma * osdimc_scale * osdimc_n01(key);
 }
 
 /* Capture the nominal of every statistical parameter that does not have one
@@ -1815,12 +1889,15 @@ void OSDImcNewRun(CKTcircuit *ckt) {
   }
 
   /* a different (re-sourced) circuit invalidates every stored nominal.
-   * Enhancement-535: the preserve flag (set for INTERNAL resets) is consumed
-   * here -- the last checkpoint of a reset+run sequence -- whether or not
-   * the pointer changed, so it can never go stale and leak into a later
-   * USER reset. */
+   * E-536 fix (hunt bug 12): what is consumed here is the BLESSING
+   * OSDImcCircuitChanged left for the pointer change an internal reset
+   * caused (the preserve flag itself is consumed at the circuit change, so
+   * it cannot dangle into a later USER reset). A preserve that never saw its
+   * circuit change -- the reset was interrupted mid-reload -- is swept up
+   * here too, as the old code did. */
   {
-    bool keep = osdimc_keep_trial;
+    bool keep = osdimc_internal_change || osdimc_keep_trial;
+    osdimc_internal_change = false;
     osdimc_keep_trial = false;
     if (ckt != osdimc_ckt) {
       osdimc_ckt = ckt;
@@ -1877,8 +1954,8 @@ void OSDImcNewRun(CKTcircuit *ckt) {
   /* E-535 fix (hunt bug 14): outside a hold every run is a fresh trial that
    * redraws everything, so no pin survives into it; under a hold the loop
    * command's machine writes keep owning their values until the bracket ends
-   * (OSDImcHoldTrial clears at both edges). */
-  if (!osdimc_hold)
+   * (OSDImcHoldTrial clears at the outermost edges). */
+  if (osdimc_hold_depth == 0)
     osdimc_clear_pins();
 
   /* Enhancement-535: under a loop command's hold the whole loop is ONE
@@ -1886,7 +1963,7 @@ void OSDImcNewRun(CKTcircuit *ckt) {
    * RE-APPLY that same trial (an internal re-source may have put nominals
    * back; the draws re-derive bit-identically from (seed, trial, owner,
    * id)). The baseline trial has nothing to re-apply. */
-  if (osdimc_hold) {
+  if (osdimc_hold_depth > 0) {
     if (!osdimc_held_advanced) {
       osdimc_held_advanced = true;
       osdimc_trial++;
@@ -2009,4 +2086,82 @@ static void osdimc_apply_type(CKTcircuit *ckt, int type, int seed,
       }
     }
   }
+}
+
+/* E-536 fix (hunt bug 7): the log importance weight of the CURRENT trial's
+ * osdimc draws under the active sigma inflation.
+ *
+ * `highsigma -scale` inflates the attribute-declared gauss sigmas (above),
+ * but mc_sample_weight() accumulates likelihood ratios only for the netlist
+ * `.param` draws -- so with OSDI-only variability every sample carried
+ * weight 1 and P(fail) was estimated under the INFLATED density (measured
+ * 0.42 reported where the true value is 0.354). This walker recomputes, for
+ * every gauss statistical parameter the applier would draw, the same
+ * standard-normal deviate n (draws are pure functions of (seed, trial,
+ * owner, id)) and sums the per-dimension log ratio
+ *
+ *     log[ phi(z) / ((1/lambda) phi(z/lambda)) ]  with  z = lambda*n
+ *   = log(lambda) - n^2 (lambda^2 - 1) / 2 .
+ *
+ * Recomputing instead of accumulating during apply makes double application
+ * (the E-471 rebuild path re-runs OSDIsetup) harmless by construction.
+ * Uniform draws are not inflated (see osdimc_delta) and contribute 0;
+ * pinned entries were not drawn and contribute 0. Returns 0 whenever no
+ * inflation is active, so callers can apply exp() unconditionally. */
+double OSDImcSampleLogLR(CKTcircuit *ckt) {
+  double logw = 0.0;
+  int seed = 1;
+
+  if (!ckt || osdimc_scale == 1.0 || osdimc_trial < 2 || !osdimc_enabled())
+    return 0.0;
+  if (!cp_getvar("mcseed", CP_NUM, &seed, 0))
+    seed = 1;
+
+  double lam2 = osdimc_scale * osdimc_scale;
+  uint64_t kbase =
+      osdimc_mix(((uint64_t)(uint32_t)seed << 32) ^ 0x6f7364696d63ull);
+  kbase = osdimc_mix(kbase ^ osdimc_trial);
+
+  for (int type = 0; type < DEVmaxnum; type++) {
+    if (!ckt->CKThead[type] || !osdi_devtype_is_osdi(type))
+      continue;
+    OsdiRegistryEntry *entry = osdi_reg_entry_model(ckt->CKThead[type]);
+    const OsdiDescriptor *descr = entry->descriptor;
+    const OsdiStatParamInfo *infos = entry->stat_param_infos;
+    if (entry->num_stat_params == 0 || !infos)
+      continue;
+
+    for (GENmodel *gen_model = ckt->CKThead[type]; gen_model;
+         gen_model = gen_model->GENnextModel) {
+      void *model = osdi_model_data(gen_model);
+      uint64_t kmodel =
+          osdimc_mix(kbase ^ osdimc_hash_str((char *)gen_model->GENmodName));
+
+      for (uint32_t s = 0; s < entry->num_stat_params; s++) {
+        uint32_t id = infos[s].param_id;
+        if (infos[s].dist & OSDI_DIST_UNIFORM)
+          continue;
+        if (id >= descr->num_instance_params) {
+          OsdiMcNominal *e = osdimc_find(model, id);
+          if (!e || e->pinned)
+            continue;
+          double n = osdimc_n01(osdimc_mix(kmodel ^ id));
+          logw += log(osdimc_scale) - 0.5 * n * n * (lam2 - 1.0);
+        } else {
+          for (GENinstance *gen_inst = gen_model->GENinstances; gen_inst;
+               gen_inst = gen_inst->GENnextInstance) {
+            void *inst = osdi_instance_data(entry, gen_inst);
+            OsdiMcNominal *e = osdimc_find(inst, id);
+            if (!e || e->pinned)
+              continue;
+            uint64_t kinst =
+                osdimc_mix(kbase ^ osdimc_hash_str((char *)gen_inst->GENname));
+            double n = osdimc_n01(osdimc_mix(kinst ^ id));
+            logw += log(osdimc_scale) - 0.5 * n * n * (lam2 - 1.0);
+          }
+        }
+      }
+    }
+  }
+  return logw;
 }

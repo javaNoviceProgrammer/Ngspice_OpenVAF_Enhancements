@@ -164,3 +164,16 @@ extern void OSDImcCircuitChanged(void);
 extern void OSDImcHoldTrial(bool on);
 extern void OSDImcPreserveTrial(void);
 extern void OSDImcSigmaScale(double s);
+/* E-536: the hunt round's known-open repairs.
+ * InterruptReset -- a keyboard interrupt longjmps past every bracket clear;
+ * ft_sigintr_cleanup() calls this so a leaked hold/inflation/preserve cannot
+ * corrupt later commands (hunt bugs 5/6/12).
+ * TrialCheckpoint/TrialRewind -- `optimize -center` replays the same osdimc
+ * trial window for every candidate, so its yield objective is deterministic
+ * across candidates while still sampling osdimc variation (hunt bug 8).
+ * SampleLogLR -- the log importance weight of the current trial's inflated
+ * gauss draws, for `highsigma -scale`'s estimator (hunt bug 7). */
+extern void OSDImcInterruptReset(void);
+extern unsigned long OSDImcTrialCheckpoint(void);
+extern void OSDImcTrialRewind(unsigned long t);
+extern double OSDImcSampleLogLR(CKTcircuit *ckt);
