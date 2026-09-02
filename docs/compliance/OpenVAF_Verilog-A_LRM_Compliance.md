@@ -17,6 +17,7 @@ expectations on every regression run.
 | ✅ | fully implemented and runtime-verified |
 | ⚠️ | implemented with LRM-sanctioned fallback semantics, or a documented deviation |
 | ❌ | out of scope: a Verilog-AMS (mixed-signal) feature outside Annex C |
+| ✖ | in scope for Verilog-A, but deliberately not implemented — refused with a clean diagnostic, or unserved |
 
 A one-page summary table closes the document. Companion references: the
 [User Handbook](../handbook/README.md) (task-oriented),
@@ -220,6 +221,29 @@ electrical data[0:7];        // vectored net (name-then-range, E-89)
 electrical vout = 2.5;       // initializer -> OSDI nodeset (initial guess)
 ground electrical gnd;
 ```
+
+A nature's declared **`abstol` now governs convergence** for signals of that
+nature (LRM 3.6.1's "absolute tolerance ... used to determine convergence"), as
+of [E-539](../../enhancements_doc/Enhancement-539.md). The compiler had always
+written each value into the `.osdi` nature tables and nothing in ngspice ever
+read them, so every node was judged by the circuit-wide `abstol`/`vntol`
+whatever its nature said. The loader now resolves each node's unknown to its
+nature — directly, or through its discipline's potential/flow, walking the
+parent chain so a **derived** nature inherits per 3.6.1.1 — and stamps the
+value on the node; a node where several models meet keeps the **tightest**
+claim. No ABI change was needed, so this reaches models compiled before the
+change.
+
+⚠️ One deliberate departure from a literal reading of 3.6.1: **an explicit
+`.option vntol`/`abstol` wins over the nature.** This matters more than it
+sounds, because `disciplines.vams` declares `abstol` on the *standard* natures
+too (`Voltage` = 1u, `Current` = 1p), so the rule applies to every OSDI node in
+every deck rather than to exotic models only. Those values equal ngspice's own
+defaults and so change nothing by themselves — but honouring them
+unconditionally would silently pull a user who *loosened* a tolerance to get a
+stubborn circuit to converge back to the discipline's `1u`, from a declaration
+they never wrote. The user's explicit option is the control surface, so it
+takes precedence; where no option is given, the nature governs.
 
 Both declaration orders are accepted for vectored nets and ports: the
 range-then-name form `electrical [3:0] bus;` / `input [3:0] bus;` and the
@@ -557,9 +581,12 @@ return — E-52's deliberate choice, because the algebraic pin made the
 transient integrator see an impulse and self-resetting integrators ring; and
 ⚠️ the **`abstol`/nature tolerance arguments** of `ddt`/`idt`/`idtmod` are
 parsed and validated (positive, a real nature) but **do not influence
-simulator convergence tolerances** — the OSDI ABI has no per-equation
+simulator convergence tolerances** — the OSDI ABI has no per-**equation**
 tolerance channel, so ngspice applies its global `abstol`/`reltol` to the
-implicit-equation unknowns.
+implicit-equation unknowns. This is a narrower statement than it used to be:
+a **nature's own declared `abstol`** (LRM 3.6.1) *does* now reach the
+convergence test per node — see §3.3 — so what remains unplumbed is the
+per-operator override, not nature tolerances in general.
 - **noise sources** (LRM 4.6): `white_noise`, `flicker_noise`,
   `noise_table`, `noise_table_log` (inline or file data);
   operating-point-dependent factors and `ddt()`-shaped noise are exact
@@ -1041,7 +1068,17 @@ scales it) runs without the diagnostic the LRM shows.
 All five kinds (`$strobe`, `$display`, `$write`, `$monitor`, `$debug`)
 with the complete format surface — `[flags][width][.precision]` on every
 conversion, dynamic `*` widths, `%e/f/g/r` (engineering notation),
-`%d/h/o/b/c/s`, `%m`, `%%` — verified against exact printf output.
+`%d/h/o/b/c/s`, `%m`, `%%` — verified against exact printf output. As of
+[E-539](../../enhancements_doc/Enhancement-539.md) `%m` prints the
+**hierarchical name of the INSTANCE** that ran the task (`n.x1.nsub`), which is
+what 9.4.4 asks it for — it expanded at compile time to the *module* name until
+then, so every instance of a module printed one string. ⚠️ **`%l`/`%L` (the
+library.cell specifier) is NOT implemented**: it expands to the literal
+placeholder `__.__`, which looks like data rather than a diagnostic. There is
+no library concept in the SPICE netlist flow to name, so the honest options are
+a defined substitute (model plus module name) or the mechanism-unavailable
+treatment of §7.5; neither has been chosen yet, and until one is this is a gap
+rather than a fallback.
 As of [E-516](../../enhancements_doc/Enhancement-516.md) the LRM 9.4.6
 timing rule holds: display output is buffered per Newton iteration and
 printed only for the **accepted** point (`$debug` keeps the clause's
@@ -1074,9 +1111,26 @@ open-write-close idiom in the analog body writes its line (an
 instance-setup `$fclose` defers so the descriptor survives for eval);
 a re-run of the instance initialization reproduces `$rewind`/`$fseek`
 files byte-exactly; and the pre-opened descriptors `32'h8000_0000/1/2`
-reach stdin/stdout/stderr. Full one-hot multichannel descriptors and
-`$fmonitor` change detection remain ⚠️ documented gaps. `$sscanf`/`$fscanf` honour the format conversion base —
+reach stdin/stdout/stderr. ⚠️ `$fmonitor` change detection remains a documented
+gap. `$sscanf`/`$fscanf` honour the format conversion base —
 `%h`/`%x` hex, `%o` octal, `%b` binary, `%d` decimal (E-105).
+
+[E-539](../../enhancements_doc/Enhancement-539.md) closed the 9.5.1 descriptor
+and read-position rules. **Multichannel descriptors are one-hot bits**: the
+one-argument `$fopen(name)` returns a descriptor with a single bit set, bit 0
+is reserved for standard output, and OR-ing several writes to all of them —
+previously both descriptor kinds were drawn from one namespace of consecutive
+integers, so `$fopen("a")`→1 and `$fopen("b")`→2 made an OR-ed write compute 3,
+the descriptor of an unrelated *third* file which silently received the text.
+A file descriptor from `$fopen(name, mode)` now carries the most significant
+bit the clause gives it, so the two namespaces cannot collide. **`$fscanf`
+consumes only what its format matches**, leaving the rest of the line for a
+following `$fgets` (it took the whole line before, so the ordinary
+scan-the-numbers-take-the-label idiom lost everything after the last
+conversion); `$fgets` proper still consumes the whole line, so a `$fgets` +
+`$sscanf` pair deliberately does not reposition the descriptor. And **`$fclose`
+followed by `$fopen` for reading restarts at byte 0** rather than continuing at
+the closed stream's offset.
 
 **The scan format is read only when it is a literal**
 ([E-507](../../enhancements_doc/Enhancement-507.md)). The scanners are chosen at
@@ -1226,7 +1280,7 @@ connected port.)*
 | 2 Lexical (identifiers, numbers, strings, attributes, three-token based literals, expression-position attrs) | ✅ ([E-515](../../enhancements_doc/Enhancement-515.md) audit) | `escid`, `stresc`, `comment`, `lrmlex` |
 | 3.2–3.3 Value types, variables, persistence | ✅ | `vartype`, `variable_persistence`, `intstate`, `varinit` |
 | 3.4 Parameters (ranges, localparam, aliasparam incl. 3.4.7 error rules, arrays incl. whole-array instantiation override, paramset, block-scoped) | ✅ (default-exemption ⚠️ and frozen-type-of-untyped ⚠️ documented) | `paramrange`, `localparam`, `array`, `paramarray`, `paramset`, `paramsethsp`, `blockparam`, `alias` |
-| 3.5–3.13 Natures, disciplines, nets, buses, nodesets, 3.11.1 compatibility (signal-flow/natureless/domainless), nature-attribute validation, NIST2018 constants | ✅ (base-nature attr omission ⚠️ and derived-access extension ⚠️ documented; vector branches ✖ rejected) | `derivednature`, `domainbind`, `bus`, `netinit`, `ground`, `signalflow` |
+| 3.5–3.13 Natures, disciplines, nets, buses, nodesets, 3.11.1 compatibility (signal-flow/natureless/domainless), nature-attribute validation, NIST2018 constants, **3.6.1 `abstol` honoured per node** ([E-539](../../enhancements_doc/Enhancement-539.md)) | ✅ (base-nature attr omission ⚠️, derived-access extension ⚠️ and explicit-`.option`-wins ⚠️ documented; vector branches ✖ rejected) | `derivednature`, `domainbind`, `bus`, `netinit`, `ground`, `signalflow` |
 | 4.1–4.4 Operators (incl. string relational, `===`/`!==` as 2-state `==`/`!=`), precedence, functions (`$clog2`, `$rtoi`/`$itor`, `ln1p`/`expm1`, domain diagnostics both routes, `%`-by-deck-zero fatal, same-node `V(a,a)`/`I(a,a)` rejected) | ✅ (`<<<`/`>>>` extension ⚠️ warned; runtime-probe domain policy ⚠️ documented) | `operator`, `precedence`, `shift`, `concat`, `stringcmp`, `clog2`, `convert`, `ceil`, `lrmfuncs`, `lrmintrin`, `domainrt` |
 | 4.5 Analog operators (all), **clause-by-clause audit 4.5.1–4.5.15** ([E-514](../../enhancements_doc/Enhancement-514.md)); frozen-`td` absdelay implemented, ddx over unnamed-branch flows, no-ic `idtmod` pins DC at 0, `default_transition` honored for explicit zeros | ✅ (`limexp` stateless ⚠️, idt-reset τ=10µs ⚠️, ddt/idt tolerances not plumbed ⚠️, transition amplitude approximation ⚠️, zi continuous-bilinear ⚠️, dynamic laplace coeffs track+warn ⚠️ — all documented) | `absdelay`, `laplace`, `zi`, `slew`, `transition`, `idt*`, `ddx`, `opargs`, `discontinuity`, `last_crossing`, `defaulttransition`, `transedge`, `rtdomain`, `deckdomain` |
 | 4.6 Noise & analysis (correlation per call site with label-combined reporting 4.6.4.1/4.6.4.6; `noise_table` linear-in-f, `noise_table_log` log-log, parameter-fed tables ⚠️ refused; Table 4-22 ic/static/nodeset phases exact; ac_stim matched to the running small-signal analysis) | ✅ | `noise`, `noisetable`, `noisecorr`, `noisejw` |
@@ -1237,7 +1291,7 @@ connected port.)*
 | 5.10 Events (steps with Table 5-1 exact per analysis, cross/above/timer, cross DC/t=0 gating, above init event, OR lists incl. comma, phase lists, placement rules enforced, invalid events rejected) | ✅ (cross/above tolerances ⚠️ warned not honored; strict out-of-range dir ⚠️ documented) | `initial_step`, `finalstep`, `cross`, `timer`, `lrmcorner` |
 | 4.7 Analog functions (arrays in/out/return incl. the LRM's Example 3 spelling; VAMS-2023 string return & args; function-local `parameter`s with shadowing; output-array zero-init; `return` statement) | ✅ (named blocks in bodies ⚠️ and const-context calls ⚠️ documented relaxations) | `funcarray`, `arrayout`, `arrayret` |
 | 6 Hierarchy (instantiation, generate incl. the legacy analog-block form — obsolete per G.2.3/C.20, kept as a compat extension ⚠️ — defparam incl. inside/beside generate, `#(.$mfactor(n))`-family child overrides with the full multiplicity transform, `$param_given` through hierarchy overrides, connection-size and mixed-override checking, $root, part-select connections, hierarchical branch probes) | ✅ (param-shaped structure ⚠️ explained) | `instantiation`, `generate`, `legacygen`, `defparam`, `hiername`, `implicitnet`, `partselect`, `hierbranch` |
-| 9.4–9.8 Display, file/string I/O (incl. 9.4.6/9.5.9 accepted-iteration deferral, `$monitor` change detection, `%r`, 9.5.1.1 append, pre-opened fds) | ✅ ([E-516](../../enhancements_doc/Enhancement-516.md) audit; MCD/`$fmonitor` ⚠️) | `display`, `fileio`, `stringio`, `fgetc`, `ungetc`, `sscanf`, `scanfmt`, `lrmsysio` |
+| 9.4–9.8 Display, file/string I/O (incl. 9.4.6/9.5.9 accepted-iteration deferral, `$monitor` change detection, `%r`, 9.5.1.1 append, pre-opened fds) | ✅ ([E-516](../../enhancements_doc/Enhancement-516.md) audit; one-hot MCDs, instance-naming `%m` and the `$fscanf`/reopen read rules from [E-539](../../enhancements_doc/Enhancement-539.md); `$fmonitor` change detection ⚠️, `%l`/`%L` ✖ not implemented — and, unlike the other ✖ entries, it emits the placeholder `__.__` rather than a diagnostic) | `display`, `fileio`, `stringio`, `fgetc`, `ungetc`, `sscanf`, `scanfmt`, `lrmsysio` |
 | 9.13 Random/distributions (9.13.2 domain rules errors on the deck route too; `type_string` scoped to paramsets) | ✅ (deterministic seed ⚠️ documented) | `rng`, `montecarlo` |
 | 9.17.3 / Annex E.3.4 `$limit` | ✅ (unknown name falls back to no limiting with a warning, per 9.17.3; `vdslim` = Table E.2's preferred spelling of `limvds`) | `fetlim`, `lrm` |
 | Annex E SPICE primitives (E.2/E.3, Table E.1) | ✖ not supported: `resistor`/`capacitor`/`bjt`/… cannot be instantiated from Verilog-A source (clean error); instantiate SPICE devices at netlist level instead | — |
