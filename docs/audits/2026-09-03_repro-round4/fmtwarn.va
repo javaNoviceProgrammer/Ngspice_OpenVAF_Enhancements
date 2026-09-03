@@ -1,0 +1,7 @@
+`include "disciplines.vams"
+module fmtwarn(p,n); inout p,n; electrical p,n; parameter string ps = "pp"; string m1 = ps; string m2 = "x";
+analog begin @(initial_step) begin
+$strobe("A %s", m1);
+$strobe("B %s", m2);
+$strobe("C %s %s", m2, m1);
+end I(p,n) <+ V(p,n); end endmodule

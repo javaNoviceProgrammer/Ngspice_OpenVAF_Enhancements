@@ -1,0 +1,9 @@
+discovr
+.control
+pre_osdi discovr.osdi
+.endc
+v1 1 0 1
+.model mm discovr
+n1 1 0 mm
+.op
+.end

@@ -1,0 +1,13 @@
+`include "disciplines.vams"
+module icint(p,n);
+inout p,n; electrical p,n; electrical mid;
+parameter real g = 1e-3;
+real gm, ta;
+analog begin
+ gm = $simparam("gmin"); ta = $abstime;
+ I(p,mid) <+ V(p,mid)*g;
+ I(mid,n) <+ V(mid,n)*g + 1e-9*ddt(V(mid,n));
+ @(timer(1e-6)) $strobe("at timer 1u: $abstime=%g gmin=%g", ta, gm);
+ @(initial_step("tran")) $strobe("tran start: V(mid)=%g (ic 0.3 if honoured)", V(mid,n));
+end
+endmodule

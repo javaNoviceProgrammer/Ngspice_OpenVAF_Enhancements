@@ -1,0 +1,4 @@
+`define STR(x) `"x`"
+`define PASTE(a,b) a``b
+`define QUOTE(x) `"x is \`"x\`"`"
+module macroq(); integer `PASTE(ab,cd); analog begin abcd = 1; $strobe("%s %s %d", `STR(hello), `QUOTE(v), abcd); end endmodule

@@ -1,0 +1,3 @@
+`include "disciplines.vams"
+module leaf(p,n); inout p,n; electrical p,n; parameter real g = 1e-3; analog I(p,n) <+ V(p,n)*g; endmodule
+module ia(p,n); inout p,n; electrical p,n; leaf arr[0:3] (p,n); leaf #(.g(2e-3)) arr2[1:2] (p,n); endmodule

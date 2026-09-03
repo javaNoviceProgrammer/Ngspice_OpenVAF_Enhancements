@@ -1,0 +1,2 @@
+`include "disciplines.vams"
+module badres(a, b); inout a, b; electrical a, b; parameter real r = 1.0 from (0:inf); analog begin I(a,b) <+ V(a,b) / r * $mfactor; end endmodule

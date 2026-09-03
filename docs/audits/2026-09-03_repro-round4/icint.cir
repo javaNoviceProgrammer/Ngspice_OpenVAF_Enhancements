@@ -1,0 +1,16 @@
+os3
+.control
+pre_osdi icint.osdi
+.endc
+.model mm icint
+v1 1 0 dc 1
+r1 1 2 1k
+c1 2 0 1n
+n1 2 0 mm
+.ic v(2)=0.3 v(n1#mid)=0.2
+.control
+tran 0.5u 2u uic
+print v(2)[0] v(n1#mid)[0]
+quit
+.endc
+.end

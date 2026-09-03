@@ -1,0 +1,4 @@
+`include "disciplines.vams"
+module realtoint(p,n); inout p,n; electrical p,n; integer k; real q;
+analog function integer f; input i; integer i; begin f = i; end endfunction
+analog begin q = 2.6; k = f(q); I(p,n) <+ V(p,n); end endmodule

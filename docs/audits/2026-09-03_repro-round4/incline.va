@@ -1,0 +1,6 @@
+`include "disciplines.vams"
+module incline(a,b); inout a,b; electrical a,b;
+analog begin @(initial_step) begin
+`include "inc/sub2.vah"
+$strobe("after include: line=%d (LRM: 5)", `__LINE__);
+end I(a,b) <+ V(a,b); end endmodule

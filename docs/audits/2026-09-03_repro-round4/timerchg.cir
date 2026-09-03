@@ -1,0 +1,12 @@
+timerchg
+.control
+pre_osdi timerchg.osdi
+.endc
+.model mm timerchg
+v1 1 0 sin(0 1 1k)
+n1 1 0 mm
+.control
+tran 1u 5m
+quit
+.endc
+.end

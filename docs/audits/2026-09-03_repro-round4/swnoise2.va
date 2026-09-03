@@ -1,0 +1,9 @@
+`include "disciplines.vams"
+module sw2(p,n); inout p,n; electrical p,n; parameter integer sw = 0;
+analog begin if (sw) I(p,n) <+ white_noise(1e-12,"wn") + V(p,n)*1e-3; else V(p,n) <+ white_noise(1e-12,"wn"); end endmodule
+module sw3(p,n); inout p,n; electrical p,n; parameter integer sw = 0;
+analog begin if (sw) I(p,n) <+ V(p,n)*1e-3; else V(p,n) <+ white_noise(1e-12,"wn"); end endmodule
+module sw4(p,n); inout p,n; electrical p,n; parameter integer sw = 0;
+analog begin if (sw) I(p,n) <+ white_noise(1e-12,"wn") + V(p,n)*1e-3; else V(p,n) <+ 0.1 + white_noise(1e-12,"wn"); end endmodule
+module sw5(p,n,c); inout p,n,c; electrical p,n,c;
+analog begin if (V(c) > 0.5) I(p,n) <+ white_noise(1e-12,"wn") + V(p,n)*1e-3; else V(p,n) <+ white_noise(1e-12,"wn"); I(c) <+ V(c)*1e-9; end endmodule

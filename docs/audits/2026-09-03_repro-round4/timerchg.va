@@ -1,0 +1,17 @@
+`include "disciplines.vams"
+module timerchg(p,n);
+inout p,n; electrical p,n;
+parameter period = 1.0;
+integer c0, cneg, cpast, cen, cchg, cab, x; real per2, tlast_en, tlast_chg;
+analog begin
+ @(initial_step) begin c0=0; cneg=0; cpast=0; cen=0; cchg=0; cab=0; per2 = 0.5e-3; tlast_en = -1; tlast_chg = -1; end
+ @(timer(0.3e-3, 0)) c0 = c0 + 1;
+ @(timer(0.3e-3, -1)) cneg = cneg + 1;
+ @(timer(0, 0.5e-3, 0, ($abstime < 1.2e-3 || $abstime > 2.7e-3))) begin cen = cen + 1; tlast_en = $abstime; end
+ @(timer(0, per2)) begin cchg = cchg + 1; tlast_chg = $abstime; if (cchg == 3) per2 = 1e-3; end
+ @(above(V(p,n) - 0.5)) cab = cab + 1;
+ @(timer(0, period)) x = $random + 0.5;
+ @(final_step) $strobe("timer: period0=%d (1) periodneg=%d (1) past=%d (0) enable-gated=%d last=%g (LRM: fires at 0,0.5m,1m then 3m,3.5m,4m,4.5m,5m -> 8, last 5m) changed=%d last=%g (0,0.5m,1m,then 2m,3m,4m,5m -> 7) above=%d", c0, cneg, cpast, cen, tlast_en, cchg, tlast_chg, cab);
+ I(p,n) <+ V(p,n)*1e-3;
+end
+endmodule

@@ -1,0 +1,9 @@
+incline
+.control
+pre_osdi incline.osdi
+.endc
+v1 1 0 1
+.model mm incline
+n1 1 0 mm
+.op
+.end

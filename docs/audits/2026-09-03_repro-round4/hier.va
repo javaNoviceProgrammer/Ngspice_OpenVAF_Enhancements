@@ -1,0 +1,25 @@
+`include "disciplines.vams"
+module res(p,n);
+inout p,n; electrical p,n;
+parameter real r = 1000.0;
+parameter real half = r/2;
+analog I(p,n) <+ V(p,n)/r;
+endmodule
+module hier(p,n,c);
+inout p,n,c; electrical p,n,c;
+parameter real rtop = 500.0;
+electrical mid;
+res #(.r(rtop)) ra(p, mid);
+res #(.r(2000.0)) rb(.p(mid), .n(n));
+res rc(.p(mid), .n(n));
+defparam rc.r = 4000.0;
+res rd(c, n);
+defparam rd.r = 8000.0;
+res #(.r(100.0)) re(c, n);
+defparam re.r = 16000.0;
+real dep;
+analog begin
+ dep = rb.half;
+ @(initial_step) $strobe("rb.half=%g (LRM 6.3.4 dependent param follows override: 1000) rc.r=%g (defparam 4000) rd.r=%g (8000) re.r=%g V(ra.p,ra.n)=%g", dep, rc.r, rd.r, re.r, V(ra.p, ra.n));
+end
+endmodule

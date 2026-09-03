@@ -1,0 +1,9 @@
+flowonly
+.control
+pre_osdi flowonly.osdi
+.endc
+v1 1 0 1
+.model mm flowonly
+n1 1 0 mm
+.op
+.end

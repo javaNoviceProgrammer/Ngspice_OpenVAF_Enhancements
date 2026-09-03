@@ -1,0 +1,1 @@
+module hexlit(); parameter integer q = 32 'h 12ab_f001; parameter integer r = 'h 1f; parameter integer s = 'h 1e5; analog $strobe("%d %d %d", q, r, s); endmodule

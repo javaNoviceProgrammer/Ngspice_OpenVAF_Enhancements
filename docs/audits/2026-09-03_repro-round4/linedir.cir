@@ -1,0 +1,12 @@
+linedir
+.control
+pre_osdi linedir.osdi
+.endc
+.model mm linedir
+v1 1 0 dc 1
+n1 1 0 mm
+.control
+op
+quit
+.endc
+.end

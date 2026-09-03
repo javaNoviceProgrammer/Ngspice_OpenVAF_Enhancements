@@ -1,0 +1,24 @@
+`define VOLTAGE_ABSTOL 2e-6
+`include "disciplines.vams"
+nature ttl_curr; units = "A"; access = Itl; abstol = 1u; endnature
+nature ttl_volt; units = "V"; access = Vtl; abstol = 100u; endnature
+discipline ttl; potential ttl_volt; flow ttl_curr; flow.abstol = 10u; enddiscipline
+nature ttl_net_curr : ttl.flow; endnature
+nature ttl_net_volt : ttl.potential; abstol = 1m; maxval = 12.3; endnature
+nature new_curr : ttl_curr; abstol = 1m; maxval = 12.3; endnature
+nature alias_curr : ttl_curr; endnature
+discipline ttl2; potential ttl_net_volt; flow new_curr; enddiscipline
+discipline ttl3; potential ttl_net_volt; flow ttl_net_curr; enddiscipline
+discipline dd; domain discrete; enddiscipline
+module discovr(p,n);
+inout p,n; electrical p,n; ttl a; ttl2 b; ttl3 c;
+analog begin
+ @(initial_step) begin
+  $strobe("electrical: p.potential.abstol=%g (LRM 2e-6 via define) p.flow.abstol=%g (1e-12)", p.potential.abstol, p.flow.abstol);
+  $strobe("ttl: a.potential.abstol=%g (100u) a.flow.abstol=%g (10u by discipline override)", a.potential.abstol, a.flow.abstol);
+  $strobe("ttl2: b.potential.abstol=%g (1m) b.potential.maxval=%g (12.3) b.flow.abstol=%g (1m) b.flow.maxval=%g (12.3)", b.potential.abstol, b.potential.maxval, b.flow.abstol, b.flow.maxval);
+  $strobe("ttl3: c.flow.abstol=%g (LRM 10u: derived from ttl.flow after override)", c.flow.abstol);
+ end
+ I(p,n) <+ V(p,n); Itl(a) <+ Vtl(a); Itl(b) <+ Vtl(b); Itl(c) <+ Vtl(c);
+end
+endmodule

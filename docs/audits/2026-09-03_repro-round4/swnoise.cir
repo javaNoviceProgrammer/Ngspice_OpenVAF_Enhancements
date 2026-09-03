@@ -1,0 +1,15 @@
+swnoise
+.control
+pre_osdi swnoise.osdi
+.endc
+.model mm swn sw=0
+v1 1 0 dc 0 ac 1
+r1 1 2 1k
+n1 2 0 mm m=9
+.control
+noise v(2) v1 lin 2 10 20
+setplot noise1
+print onoise_spectrum
+quit
+.endc
+.end

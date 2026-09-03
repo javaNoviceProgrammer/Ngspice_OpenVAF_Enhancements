@@ -1,0 +1,410 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LRM audit 2026-09-03 · round 4</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Serif:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+</head>
+<body>
+<style>
+  :root {
+    --paper: #F7F7F4; --surface: #FFFFFF; --ink: #21262D; --muted: #5C6470; --faint: #8A919C; --line: #E2E3DE;
+    --accent: #0E5E68; --accent-soft: #E3EEEF;
+    --sev-bug: #B23A2E; --sev-bug-bg: #F9ECEA; --sev-dev: #96690F; --sev-dev-bg: #F8F1E1;
+    --sev-miss: #6F58B8; --sev-miss-bg: #EFECF8; --sev-doc: #31699E; --sev-doc-bg: #E8F0F8;
+    --sev-ok: #2E7D4F; --sev-ok-bg: #E8F3EC; --code-bg: #EFF0EC;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #14171C; --surface: #1C2026; --ink: #E5E7EA; --muted: #9AA1AB; --faint: #6E7681; --line: #2C313A;
+      --accent: #57B2BC; --accent-soft: #16333A;
+      --sev-bug: #E58074; --sev-bug-bg: #3A211E; --sev-dev: #D9A94E; --sev-dev-bg: #362B14;
+      --sev-miss: #AC9AE3; --sev-miss-bg: #292239; --sev-doc: #7FAEDA; --sev-doc-bg: #1C2B3A;
+      --sev-ok: #74BD92; --sev-ok-bg: #1B3126; --code-bg: #262B33;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #14171C; --surface: #1C2026; --ink: #E5E7EA; --muted: #9AA1AB; --faint: #6E7681; --line: #2C313A;
+    --accent: #57B2BC; --accent-soft: #16333A;
+    --sev-bug: #E58074; --sev-bug-bg: #3A211E; --sev-dev: #D9A94E; --sev-dev-bg: #362B14;
+    --sev-miss: #AC9AE3; --sev-miss-bg: #292239; --sev-doc: #7FAEDA; --sev-doc-bg: #1C2B3A;
+    --sev-ok: #74BD92; --sev-ok-bg: #1B3126; --code-bg: #262B33;
+  }
+  body { background: var(--paper); color: var(--ink); font-family: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif; font-size: 16px; line-height: 1.6; margin: 0; }
+  .wrap { max-width: 860px; margin: 0 auto; padding: 48px 24px 96px; }
+  header.masthead { border-bottom: 3px solid var(--ink); padding-bottom: 28px; margin-bottom: 36px; }
+  .eyebrow { font-family: "IBM Plex Mono", monospace; font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--accent); margin-bottom: 14px; }
+  h1 { font-family: "IBM Plex Serif", Georgia, serif; font-weight: 600; font-size: clamp(30px, 5vw, 44px); line-height: 1.12; margin: 0 0 14px; text-wrap: balance; }
+  .standfirst { font-size: 17.5px; color: var(--muted); max-width: 64ch; margin: 0; }
+  .metaline { font-family: "IBM Plex Mono", monospace; font-size: 12.5px; color: var(--faint); margin-top: 18px; }
+  h2 { font-family: "IBM Plex Serif", Georgia, serif; font-weight: 600; font-size: 25px; margin: 56px 0 6px; text-wrap: balance; }
+  h2 .secno { color: var(--faint); font-family: "IBM Plex Mono", monospace; font-size: 15px; margin-right: 10px; }
+  h3 { font-size: 17px; font-weight: 600; margin: 34px 0 12px; }
+  p { max-width: 70ch; }
+  p.lede { color: var(--muted); margin-top: 0; }
+  a { color: var(--accent); }
+  code, .mono { font-family: "IBM Plex Mono", monospace; font-size: 0.86em; }
+  code { background: var(--code-bg); padding: 1px 5px; border-radius: 3px; }
+  .score { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; margin: 30px 0 8px; }
+  .scard { background: var(--surface); border: 1px solid var(--line); border-top: 3px solid var(--sc, var(--accent)); padding: 14px 16px 12px; }
+  .scard .n { font-family: "IBM Plex Serif", Georgia, serif; font-size: 34px; font-weight: 600; line-height: 1; color: var(--sc, var(--ink)); font-variant-numeric: tabular-nums; }
+  .scard .l { font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin-top: 6px; }
+  .scorenote { font-size: 13.5px; color: var(--faint); margin-top: 10px; }
+  .finding { background: var(--surface); border: 1px solid var(--line); border-left: 4px solid var(--fc, var(--accent)); padding: 14px 18px 13px; margin: 0 0 10px; }
+  .f-bug { --fc: var(--sev-bug); } .f-dev { --fc: var(--sev-dev); } .f-miss { --fc: var(--sev-miss); } .f-doc { --fc: var(--sev-doc); } .f-ok { --fc: var(--sev-ok); }
+  .finding .head { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: baseline; }
+  .finding .t { font-weight: 600; font-size: 15.5px; }
+  .chip { font-family: "IBM Plex Mono", monospace; font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase; padding: 2px 8px; border-radius: 999px; white-space: nowrap; background: var(--cbg); color: var(--cfg); }
+  .c-bug { --cbg: var(--sev-bug-bg); --cfg: var(--sev-bug); } .c-dev { --cbg: var(--sev-dev-bg); --cfg: var(--sev-dev); }
+  .c-miss { --cbg: var(--sev-miss-bg); --cfg: var(--sev-miss); } .c-doc { --cbg: var(--sev-doc-bg); --cfg: var(--sev-doc); } .c-ok { --cbg: var(--sev-ok-bg); --cfg: var(--sev-ok); }
+  .lrm { font-family: "IBM Plex Mono", monospace; font-size: 11.5px; color: var(--faint); white-space: nowrap; }
+  .finding .d { font-size: 14.5px; color: var(--muted); margin-top: 5px; max-width: 76ch; }
+  .finding .d strong { color: var(--ink); font-weight: 600; }
+  .finding .ev { font-family: "IBM Plex Mono", monospace; font-size: 12.5px; color: var(--muted); background: var(--code-bg); border-radius: 4px; padding: 7px 10px; margin-top: 9px; overflow-x: auto; white-space: pre; line-height: 1.55; }
+  .tblwrap { overflow-x: auto; border: 1px solid var(--line); background: var(--surface); }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  th { font-size: 11.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); text-align: left; }
+  th, td { padding: 9px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  td.mono { font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .oklist { padding-left: 0; list-style: none; max-width: 78ch; }
+  .oklist li { padding: 7px 0 7px 26px; position: relative; border-bottom: 1px dashed var(--line); font-size: 14.5px; }
+  .oklist li::before { content: "✓"; position: absolute; left: 2px; color: var(--sev-ok); font-weight: 600; }
+  .toc { background: var(--surface); border: 1px solid var(--line); padding: 18px 22px; margin-top: 30px; }
+  .toc ol { margin: 8px 0 0; padding-left: 22px; columns: 2; column-gap: 40px; font-size: 14.5px; }
+  .toc ol li { margin-bottom: 5px; }
+  @media (max-width: 640px) { .toc ol { columns: 1; } }
+  .callout { background: var(--accent-soft); border-left: 4px solid var(--accent); padding: 14px 18px; margin: 22px 0; font-size: 15px; max-width: 76ch; }
+  .refuted { opacity: 0.85; }
+  footer { margin-top: 64px; border-top: 1px solid var(--line); padding-top: 18px; font-size: 13px; color: var(--faint); }
+</style>
+<div class="wrap">
+<header class="masthead">
+  <div class="eyebrow">Conformance audit · Accellera VAMS-2023 · fourth pass, fifteen areas</div>
+  <h1>The fourth LRM audit: the standard's own examples, run one clause at a time</h1>
+  <p class="standfirst">An independent pass over <strong>openvaf-r</strong> and the <strong>ngspice-46 OSDI</strong> layer against the Verilog-AMS 2023 LRM, over the same fifteen areas the first two audits used. Three earlier passes had already fixed 53 divergences, so this one changed instrument: wherever the LRM prints a worked example, that example was compiled and run <em>verbatim</em>, and wherever it states a numeric rule, the number was measured rather than the construct merely compiled. <strong>Fifteen findings, every one reproduced on both binary pairs and traced to a named line.</strong> Five are silent: a discipline's tolerance override that never reaches the solver, two noise sources that disappear or triple on a switch branch, a transient that starts from the wrong voltage, and a string that loses its tail. Three of the LRM's own printed examples do not compile.</p>
+  <div class="metaline">2026-09-03 · LRM: docs/VAMS-LRM-2023.pdf (clauses 2, 3, 4, 5, 6, 9, 10, Annexes C and D) · compiler: OpenVAF-master-20260610 · simulator: ngspice-46 · binaries: bin/macos/apple-silicon @ 04e42be2, and the local builds target/opt/openvaf-r + ngspice-46/build/src/ngspice (identical output) · prior passes: 2026-08-31 audit + re-audit, 2026-09-02 rounds 2 and 3</div>
+</header>
+
+<div class="score">
+  <div class="scard" style="--sc: var(--sev-bug)"><div class="n">15</div><div class="l">Findings</div></div>
+  <div class="scard" style="--sc: var(--sev-bug)"><div class="n">5</div><div class="l">Silent</div></div>
+  <div class="scard" style="--sc: var(--sev-miss)"><div class="n">3</div><div class="l">LRM examples refused</div></div>
+  <div class="scard" style="--sc: var(--sev-doc)"><div class="n">4</div><div class="l">Doc mismatches</div></div>
+  <div class="scard" style="--sc: var(--sev-ok)"><div class="n">15</div><div class="l">Areas audited</div></div>
+</div>
+<p class="scorenote">Every finding was reproduced against the committed <code>bin/macos/apple-silicon/</code> pair and again against the locally built compiler and simulator; the two runs of the reproduction set are byte-identical. Before any finding was written up, the compliance tracker, the three prior audits and the enhancement record were searched for prior art, and where a behaviour turned out to be a documented decision it is in §7, not in the findings. Decks: <a href="2026-09-03_repro-round4/">2026-09-03_repro-round4/</a> (with <code>run_all.sh</code>, which reruns every deck against either binary pair).</p>
+
+<div class="toc">
+  <strong>Contents</strong>
+  <ol>
+    <li><a href="#verdict">The verdict</a></li>
+    <li><a href="#method">How this pass ran</a></li>
+    <li><a href="#silent">Silent divergences</a></li>
+    <li><a href="#refused">Legal source the compiler refuses</a></li>
+    <li><a href="#lower">Lower severity</a></li>
+    <li><a href="#conformant">What was measured and holds</a></li>
+    <li><a href="#notquite">Things that looked wrong and are not</a></li>
+    <li><a href="#docs">The documentation audit</a></li>
+    <li><a href="#coverage">Coverage map</a></li>
+  </ol>
+</div>
+
+<h2 id="verdict"><span class="secno">1</span>The verdict</h2>
+<p class="lede">The numerical core holds again. What gave way this time is the layer where the language lets one declaration modify another: a discipline overriding a nature, a later contribution reclassifying an earlier one, a netlist multiplier reaching a source the compiler has already scaled, an initial condition applied to a node the simulator created itself.</p>
+<p>The prior three audits established that contributions, derivatives, filters, noise and parameter resolution are right, then that state spanning calls and iterations is right. This round's fifteen areas were the same list the first audit used, but the method was different: <strong>every worked example printed in the audited clauses was compiled as written</strong>, and every rule that yields a number was measured. Three of the LRM's own examples fail. <code>32 'h 12ab_f001</code> (2.6.1, Example 5) is lexed as a real number. The sample-and-hold in 5.10.3.1, with its null arguments <code>cross(V(smpl) - thresh, dir, , , en)</code>, is a type error. The <code>ttl</code> discipline of 3.6.2.5, whose whole point is <code>flow.abstol = 10u</code>, compiles and then behaves as if the line were absent.</p>
+<div class="callout">The sharpest result is the last one. A discipline may override the tolerance of the nature it binds (3.6.2.5), and a nature may be derived from a discipline's flow so that it inherits that override (3.6.2.6, whose example says in a comment <em>&ldquo;abstol = 10u as modified in ttl&rdquo;</em>). The override parses, produces no diagnostic, and has no effect anywhere: <code>a.flow.abstol</code> reads <code>1e-6</code>, the derived nature reads <code>1e-6</code>, the compiled <code>.osdi</code> tables carry no override, and the per-node tolerance that Enhancement-539 added to the simulator walks a parent chain that stops exactly where a discipline-derived nature begins. A model author who tightened a tolerance by the LRM's own mechanism is being solved with the loose one, silently.</div>
+<p>The second group is noise on a <strong>switch branch</strong>, the construct 5.6.5 defines for relays and ideal switches. Two different things go wrong on it, and neither goes wrong on a plain branch. A potential contribution that is <em>only</em> a noise source, written in the arm after a flow contribution, is dropped: the output shows nothing but the load resistor's thermal noise. That is a direct consequence of the rule Enhancement-531 introduced to keep BSIM4's access-region noise from reclassifying a collapse branch: a noise-only right-hand side no longer sets the branch's source kind, which was right for that model and is wrong for a noise-only potential source, because 5.6.1.3 says a potential contribution discards any retained flow. And a flow-arm noise source, when the multiplier comes from the netlist's <code>m=</code> rather than from Verilog-A's <code>#(.$mfactor())</code>, scales as <em>m</em><sup>1.5</sup>: nine parallel devices report twenty-seven times the noise current of one, where 6.3.6 says three.</p>
+<p>Reading the fifteen together, one pattern explains most of them: <strong>a construct is implemented on the path it was first needed for and not on its siblings</strong>. Null arguments were implemented for the Laplace filters (E-453) and not for the event functions the same grammar rule covers. Attribute access was implemented for natures (E-45) and not for the discipline that overrides them. Initial conditions reach netlist nodes and not the internal nodes an OSDI device declares. The multiplicity scaling of noise is right on the route the LRM examples use and wrong on the route every SPICE deck uses.</p>
+
+<h2 id="method"><span class="secno">2</span>How this pass ran</h2>
+<p>The fifteen areas are the ones named in the brief, which are the first audit's areas. To avoid re-measuring what three passes had already pinned, each area started from the LRM text rather than from the compiler: the relevant clauses were read in full (2, 3, 4.2 to 4.7, 5, 6.2 to 6.5, 9.4 to 9.18, 10, Annexes C and D), and every printed example and every stated number became a test. Where an earlier audit's coverage map already claimed a rule, the rule was re-measured only if the new test was a different shape.</p>
+<p>Two instruments carried most of the weight. The first was <strong>verbatim compilation of the LRM's examples</strong>: the based-literal table of 2.6.1, the string-operator examples of 3.3, the four analog-function examples of 4.7.1 and 4.7.3, the sample-and-hold of 5.10.3.1, the <code>ttl</code> disciplines of 3.6.2.5 and 3.6.2.6, the value-retention module of 5.6.1.3, the implicit diode of 5.6.6, the CCCS of 5.6.1.3, <code>badres</code> and <code>parares</code> of 6.3.6, the bit-error-rate module of 5.10.2. Three of these do not compile, one compiles and gives the wrong answer, and the rest give the LRM's answer.</p>
+<p>The second was <strong>paired measurement by route</strong>. Where the LRM gives one rule and the implementation has two ways in, both were driven with the same module: the netlist <code>m=</code> beside the Verilog-A <code>#(.$mfactor(9))</code>; a potential arm written first beside the same arm written second; an initial condition on a netlist node beside one on an OSDI internal node; the same event function with an explicit zero beside a null argument. Every headline number below is one half of such a pair, and the other half is the control that makes it a finding rather than an opinion.</p>
+<p>Each finding was then pushed until it named a cause in <code>openvaf/lexer</code>, <code>openvaf/parser</code>, <code>openvaf/hir_def</code>, <code>openvaf/hir_ty</code>, <code>openvaf/hir_lower</code>, <code>openvaf/sim_back</code>, <code>openvaf/osdi</code> or <code>ngspice-46/src/osdi</code>, and each was re-run on the second binary pair. Candidates that turned out to be documented, deliberate, or correct on a closer reading are kept in §7 so that a fifth pass does not spend its budget on them.</p>
+
+<h2 id="silent"><span class="secno">3</span>Silent divergences</h2>
+
+<div class="finding f-bug"><div class="head"><span class="chip c-bug">bug · silent</span><span class="t">A discipline's nature-attribute override parses and is then dropped everywhere: attribute access, the OSDI tables, derived natures, and the per-node solver tolerance</span><span class="lrm">LRM 3.6.2.5 / 3.6.2.6 / 3.6.1.2</span></div>
+<div class="d">3.6.2.5 lets a discipline override the attributes of the nature it binds (<em>&ldquo;the keyword flow or potential, then the hierarchical separator . and the attribute name&rdquo;</em>), and 3.6.2.6 lets a nature be derived from <code>ttl.flow</code> so that <em>&ldquo;if the nature bound to the potential or the flow of a discipline changes, the new nature shall automatically inherit the attributes for the changed nature&rdquo;</em>. The LRM's two examples were compiled together, unchanged apart from the access names, and the overridden tolerance is read back through 5.5.3's attribute access:</div>
+<div class="ev">nature ttl_curr; units = "A"; access = Itl; abstol = 1u; endnature
+discipline ttl; potential ttl_volt; flow ttl_curr; flow.abstol = 10u; enddiscipline
+nature ttl_net_curr : ttl.flow; endnature        // LRM comment: "abstol = 10u as modified in ttl"
+discipline ttl3; potential ttl_net_volt; flow ttl_net_curr; enddiscipline
+ttl a; ttl3 c;
+
+a.flow.abstol  = 1e-06     LRM: 1e-05   (the discipline's override)
+c.flow.abstol  = 1e-06     LRM: 1e-05   (inherited through ttl.flow)
+a.potential.abstol = 1e-04 (correct: no override on the potential side)</div>
+<div class="d">Nothing is said on any channel. The neighbouring mechanisms all work, which is what makes this a drop rather than an unimplemented feature: a <em>nature</em>-level override in a derived nature (<code>abstol = 1m</code>) is honoured, a user-defined attribute (<code>maxval = 12.3</code>) is readable, and the <code>`VOLTAGE_ABSTOL</code> define of Annex D reaches <code>p.potential.abstol</code> exactly.</div>
+<div class="d"><strong>Cause, in four places.</strong> <code>hir_def/src/item_tree/lower.rs:664-712</code> lowers each discipline item; for a qualified name such as <code>flow.abstol</code> the kind is recorded as <code>FlowOverwrite</code>, but the only line that evaluates an attribute's value (<em>&ldquo;All other attributes - evaluate ast expression&rdquo;</em>) sits inside the <code>kw::domain</code> arm of the match, so the override is stored with <code>value: None</code>. <code>osdi/src/ndatable.rs:52-67</code> (<code>OsdiAttribute::new</code>) returns <code>None</code> for a value-less attribute, so the override never enters the <code>.osdi</code> discipline tables. <code>hir_def/src/nameres.rs:441-466</code> resolves <code>net.flow.attr</code> straight to the bound nature's attribute (the <code>DisciplineAttrId</code> scope item is commented out), so attribute access cannot see an override even if one were stored. And <code>ngspice-46/src/osdi/osdicallbacks.c:280-344</code> (<code>osdi_node_abstol</code>, Enhancement-539) resolves a node's tolerance by walking the nature's parent chain and breaks out as soon as <code>parent_type != NATREF_NATURE</code>, so a nature derived from <code>ttl.flow</code> returns 0.0 and the circuit-wide default is used. The compliance tracker (§3.3) claims deriving from a discipline's nature <em>&ldquo;with full attribute inheritance&rdquo;</em>; the inheritance is full only when the discipline has nothing to add.</div>
+<div class="ev">repro: discovr.va / discovr.cir</div></div>
+
+<div class="finding f-bug"><div class="head"><span class="chip c-bug">bug · silent</span><span class="t">A noise-only potential contribution in the later arm of a switch branch is dropped</span><span class="lrm">LRM 5.6.1.3 / 5.6.5 / 4.6.4</span></div>
+<div class="d">5.6.1.3: <em>&ldquo;contributing a potential to a branch which already has a value retained for the flow results in the flow being discarded and the branch being converted into a potential source&rdquo;</em>. No exception is made for a contribution whose value happens to be a noise function. Two modules differ only in which arm comes first:</div>
+<div class="ev">// potential arm first                              // flow arm first
+if (sw) V(p,n) &lt;+ white_noise(1e-12,"wn");           if (sw) I(p,n) &lt;+ white_noise(1e-12,"wn") + V(p,n)*1e-3;
+else    I(p,n) &lt;+ white_noise(1e-12,"wn") + V(p,n)*1e-3;   else    V(p,n) &lt;+ white_noise(1e-12,"wn");
+
+onoise at node 2, potential arm active (sw=1 left, sw=0 right), 1 kΩ from an AC-grounded source:
+   left   1.000e-06 V/√Hz     LRM 1e-6
+   right  4.071e-09 V/√Hz     = √(4kT·1kΩ): the load resistor alone; the device's source is gone</div>
+<div class="d">Adding any deterministic term restores it: <code>V(p,n) &lt;+ 0.1 + white_noise(...)</code> in the same second arm gives <code>1e-6</code>. A runtime switch (<code>if (V(c) &gt; 0.5)</code>) behaves the same as the parameter one. The flow arm's own noise is not affected.</div>
+<div class="d"><strong>Cause.</strong> <code>hir_lower/src/stmt.rs:921-941</code> (<code>contribute_value_</code>, from Enhancement-531): a contribution whose right-hand side is noise-only does not define the branch's <code>IsVoltageSrc</code> place if the place already exists. That rule was written so BSIM4's unconditional <code>I(di,d) &lt;+ white_noise(...)</code> would stop reclassifying a collapse branch, and E-531 states the reasoning: <em>&ldquo;a noise-only contribution carries no source kind and must not reclassify anything&rdquo;</em>. For a potential source the reasoning inverts: 4.6.4 makes the noise zero in large-signal analyses, so the arm contributes <code>V = 0</code> plus a noise source, and 5.6.1.3 makes that a potential source. With the flow arm lowered first the place exists and stays <code>false</code>, the branch remains a flow source, and <code>sim_back/src/dae/builder.rs:576-582</code> then sees a trivial voltage source with no current unknown and builds no source equation for it, noise included. Recorded with E-531 as the prior art it is: the rule is correct for its motivating case and one case too wide.</div>
+<div class="ev">repro: swnoise2.va / swnoise2.cir (4.07e-9)  ·  control: swnoise.va with sw=1 (1e-6)</div></div>
+
+<div class="finding f-bug"><div class="head"><span class="chip c-bug">bug · silent</span><span class="t">On a switch branch, a flow-arm noise source scales with the netlist multiplier as <em>m</em><sup>1.5</sup>, not √<em>m</em></span><span class="lrm">LRM 6.3.6 / 9.18 Table 9-29</span></div>
+<div class="d">6.3.6: <em>&ldquo;Contributions to a branch flow quantity using the noise functions of 4.6.4 shall have the noise power multiplied by $mfactor&rdquo;</em>, so the noise current of <em>m</em> devices is √<em>m</em> times that of one. The same module was driven by both routes the multiplier can take. The Verilog-A route is exact; the netlist route is off by a factor of <em>m</em> in amplitude:</div>
+<div class="ev">leaf: if (sw) V(p,n) &lt;+ white_noise(1e-12); else I(p,n) &lt;+ white_noise(1e-12) + V(p,n)*1e-3;   flow arm active
+load: 1 kΩ in parallel with the device (9 mS at m=9 -&gt; 100 Ω)
+
+                                  m=1        m=9         LRM at m=9
+netlist  n1 2 0 mm m=9            5.00e-4    2.70e-3     3.00e-4   (√9 · 1e-6 A/√Hz · 100 Ω)
+Verilog-A #(.$mfactor(9))         5.00e-4    3.00e-4     3.00e-4
+plain branch, netlist m=9         5.00e-4    3.00e-4     3.00e-4   (no switch: correct on both routes)
+potential arm, either route                  3.33e-7     3.33e-7   (÷√9: correct)</div>
+<div class="d">Both halves of the pair are needed to place the fault. A plain branch scales correctly on both routes, so the multiplier itself arrives intact (ngspice maps the netlist <code>m</code> onto the model's <code>$mfactor</code> parameter, <code>ngspice-46/src/osdi/osdiinit.c:80</code>). A switch branch scales correctly on the Verilog-A route, where the factor 9 is folded into the child at elaboration. What differs is the runtime path. The only place the two branch kinds diverge is <code>sim_back/src/dae/builder.rs:981-1010</code> (<code>switch_branch</code>), which scales the merged noise list after its phi nodes, against <code>current_branch</code> (<code>866-897</code>), which scales each source before the contribution is assembled; the residual scaling of <code>ensure_optbarriers</code> (<code>1080-1100</code>) then multiplies every Kirchhoff row by the runtime <code>$mfactor</code>. The measured excess is exactly one factor of <em>m</em>, and the <code>OSDI_NOISE_DEBUG</code> trace locates it on the simulator side of the descriptor: the adjoint transfer reported for the switch-branch source is 900 Ω at <em>m</em>=9 where the node impedance is 100 Ω, so the source's injection point, not its density, carries the extra factor. Which of the two functions should own the scaling is a design question for the fix; that the answer is <em>m</em> too large by exactly <em>m</em> on one route and right on the other is the measurement.</div>
+<div class="ev">repro: swnoise.va / swnoise.cir (2.7e-3)  ·  controls: the same deck with m=1, and the module wrapped as swn9 with #(.$mfactor(9))</div></div>
+
+<div class="finding f-bug"><div class="head"><span class="chip c-bug">bug · silent · ngspice OSDI layer</span><span class="t">An initial condition on an OSDI internal node is ignored under <code>uic</code></span><span class="lrm">ngspice .ic / uic semantics (LRM 4.6.1 &ldquo;ic&rdquo; analysis)</span></div>
+<div class="d">A netlist <code>.ic</code> with <code>uic</code> sets the starting voltage of a node for the transient. It reaches ordinary nodes and does not reach the internal nodes an OSDI device declares, although the simulator accepts and prints them by name:</div>
+<div class="ev">device:  I(p,mid) &lt;+ V(p,mid)*g;  I(mid,n) &lt;+ V(mid,n)*g + 1e-9*ddt(V(mid,n));
+deck:    r1 1 2 1k / c1 2 0 1n / n1 2 0 mm
+         .ic v(2)=0.3 v(n1#mid)=0.2
+         tran 0.5u 2u uic
+
+v(2)[0]      = 3.0008e-01     honoured
+v(n1#mid)[0] = 5.9992e-05     LRM/SPICE: 0.2 -- the node starts from its natural value instead</div>
+<div class="d">A <code>.nodeset</code> on the same node converges the operating point normally, and a Verilog-A net initializer (<code>electrical mid = 0.5;</code>, 3.6.3.2, Enhancement-45) is a nodeset rather than an initial condition, so neither is a substitute. A model that relies on <code>uic</code> to start a transient from a stored state starts from the wrong one, and the only symptom is a different waveform.</div>
+<div class="d"><strong>Cause.</strong> <code>ngspice-46/src/spicelib/analysis/cktic.c:58</code> applies <code>icGiven</code> to every node the deck names, internal ones included. The OSDI load, <code>ngspice-46/src/osdi/osdiload.c</code>, has no <code>MODEUIC</code> handling at all (no occurrence of the flag in <code>src/osdi/</code>): at the first transient point it loads the device's equations against the internal node as if no initial condition existed, and the first Newton solve replaces the value. Every built-in ngspice device that owns internal nodes gates that first load on <code>MODEUIC</code>; the OSDI layer does not.</div>
+<div class="ev">repro: icint.va / icint.cir</div></div>
+
+<div class="finding f-bug"><div class="head"><span class="chip c-bug">bug · silent</span><span class="t"><code>"hello\0world"</code> assigned to a string becomes <code>"hello"</code>; the LRM says <code>"helloworld"</code></span><span class="lrm">LRM 3.3 p.26</span></div>
+<div class="d">3.3 gives the conversion of a literal to a <code>string</code> in three steps, the first being <em>&ldquo;All "\0" characters in the string literal are ignored (i.e., removed from the string)&rdquo;</em>, and prints the example <code>string s1 = "hello\0world"; // sets s1 to "helloworld"</code>. The shipped compiler keeps the NUL and every consumer stops at it:</div>
+<div class="ev">string s1 = "hello\0world";   $strobe("[%s]", s1);   -&gt;   [hello]</div>
+<div class="d">Low consequence, but the LRM's own example prints the wrong answer with no diagnostic, and the same clause's other rules (<code>{"H",""}</code> on a string is <code>"H"</code>, literal-to-string concatenation, the relational operators) all hold. The octal escape <code>\0</code> is decoded by the single-pass unescaper (E-48) as a byte and never filtered afterwards.</div>
+<div class="ev">repro: strrep.va (line 6; the deck's other line is the finding below)</div></div>
+
+<h2 id="refused"><span class="secno">4</span>Legal source the compiler refuses</h2>
+
+<div class="finding f-miss"><div class="head"><span class="chip c-miss">bug · LRM example refused · FIXED</span><span class="t">A white-space-separated hex literal whose digits begin with a decimal digit followed by <code>a</code>, <code>e</code> or <code>f</code> is lexed as a real number</span><span class="lrm">LRM 2.6.1 Example 5 p.15</span></div>
+<div class="d">Enhancement-515 implemented the three-token form of 2.6.1 (<em>&ldquo;It shall be legal to macro substitute these three tokens&rdquo;</em>, with white space allowed between base and digits) and the tracker names <code>'h 837FF</code> as evidence. The LRM's Example 5 uses <code>32 'h 12ab_f001</code>, and it does not compile:</div>
+<div class="ev">32 'h 12ab_f001   error: unexpected token real number; expected integer
+'h 1f             error   ('1f' = 1 femto)
+'h 1e5            error   ('1e5' = 100000.0)
+'h 1a             error   ('1a' = 1 atto)
+'h 837FF          ok      ('837' then 'FF': no scale letter follows a digit)
+'h ab, 'h 3e      ok
+'h12ab_f001       ok      (contiguous form)</div>
+<div class="d"><strong>Cause.</strong> After a bare base token the digit run is lexed as an ordinary number: <code>lexer/src/lib.rs:437-446</code> turns a digit run followed by a Table 2-1 scale letter (<code>a</code>, <code>f</code>) or an exponent (<code>e</code>) into a <code>Float</code>, and <code>parser/src/grammar/expressions.rs:259-266</code> (<code>based_digit_tokens</code>) joins only <code>INT</code> and <code>IDENT</code> tokens onto the base. The fix is a lexer mode for the token after a <code>BASE_PREFIX</code>, or accepting a <code>Float</code> token there and re-reading its text as hex digits.</div>
+<div class="d"><strong>Resolved (2026-09-03, after the audit), by both halves of that sentence.</strong> A bare base token now arms a lexer mode: the next non-trivia token, when it starts with a digit legal for the base, is lexed as a bare digit run (trivia keeps the mode armed; a define boundary or any non-digit disarms it). And the parser's digit join accepts number tokens of every kind, so digits substituted from a macro body — where they lex with no base before them, e.g. a body of <code>1f</code> — join too; the value computation re-validates every digit against the base, so illegal-digit errors, the don't-care rule, and every previously working form are unchanged. Verified: the LRM's <code>32 'h 12ab_f001</code> = 313257985, the <code>'h 1f</code>/<code>'h 1e5</code>/<code>'h 1a</code>/<code>'h 1f2a</code> family, base and digits each or both from macros, and spaced don't-care digits in a <code>casex</code> item; pinned by four new checks in <a href="../../examples/lrmlex_examples/">examples/lrmlex_examples/</a> (30 checks, both solvers) and two lexer unit tests. The fast and slow cargo tiers (208 + 234) and the full 455-suite example sweep pass on the fixed compiler.</div>
+<div class="ev">repro: hexlit.va (compiles clean after the fix)</div></div>
+
+<div class="finding f-miss"><div class="head"><span class="chip c-miss">missing · LRM example refused</span><span class="t">Null arguments to <code>cross</code>, <code>above</code> and <code>timer</code> are a type error, so the LRM's sample-and-hold does not compile</span><span class="lrm">LRM 5.10.3.1 / 5.10.3.2 / 5.10.3.3, Syntax 5-16 to 5-18</span></div>
+<div class="d">All three event functions are declared with <code>analog_expression_or_null</code> in every optional position, and 5.10.3.1's second example is <code>@(cross(V(smpl) - thresh, dir, , , en === 1'b1))</code>: tolerances left to the simulator, an enable supplied. The shipped compiler rejects every null form, with a diagnostic that names an internal type rather than the construct:</div>
+<div class="ev">@(cross(V(p,n) - 0.5, dir, , , en))   error: type mismatch: expected real value but found _[0:0] value
+@(above(V(p,n), , 1e-3))              same
+@(timer(0, , 1e-9, 1))                same
+@(cross(V(p,n) - 0.5, dir, 0, 0, en)) ok   (explicit zeros, which 5.10.3.1 also allows)</div>
+<div class="d">The clause offers explicit zeros as an alternative (<em>&ldquo;If a value of zero (0.0) is specified, the simulator shall apply a suitable value&rdquo;</em>), so a model can be rewritten; a model taken from the standard, or from a library written to it, cannot be compiled. It is the same feature that Enhancement-453 implemented for the analog operators, whose null argument round 2 verified for <code>laplace_zp</code>.</div>
+<div class="d"><strong>Cause.</strong> <code>parser/src/grammar/call.rs:25-66</code> (E-453) represents a null argument as an empty <code>ARRAY_EXPR</code>, which is what the Laplace lowering expects. <code>hir_ty/src/inference.rs:499-525</code> (<code>infere_event_control</code>) types every child expression of an event as <code>Val(Type::Real)</code>, or <code>Condition</code> for the enable, and the empty array fails that requirement; the <code>_[0:0]</code> in the message is the empty array's type printed by the generic mismatch reporter. The event lowering then has no notion of &ldquo;default&rdquo; for a position, which explicit zeros already provide.</div>
+<div class="ev">repro: nullarg.va</div></div>
+
+<div class="finding f-miss"><div class="head"><span class="chip c-miss">missing · LRM example refused</span><span class="t">Non-constant string replication, which 3.3's example marks OK, is refused</span><span class="lrm">LRM 3.3 Table 3-3 p.26</span></div>
+<div class="d">Table 3-3 defines replication on strings with <em>&ldquo;multiplier must be of integral type and can be nonconstant&rdquo;</em>, and the clause's example annotates <code>a = {i{"Hi"}}; // OK (non constant replication)</code>. The compiler requires a literal:</div>
+<div class="ev">integer i = 3; string a;
+a = {i{"Hi"}};      error: replication count must be a positive integer literal
+a = {3{"Hi"}};      ok  -&gt; HiHiHi</div>
+<div class="d">The distinction the LRM draws is between the Verilog integral replication (constant only) and the string replication (dynamic length), and the tracker's §3.1 claims <em>&ldquo;concatenation {a,b} and replication&rdquo;</em> over strings without the qualification. Low consequence: the construct has an obvious loop rewrite. Recorded because the example is printed in the standard.</div>
+<div class="ev">repro: strrep.va (line 17)</div></div>
+
+<div class="finding f-miss"><div class="head"><span class="chip c-miss">missing</span><span class="t">The macro operators <code>`"</code>, <code>`\`"</code> and <code>``</code> are not implemented</span><span class="lrm">LRM 10.4 (by reference to IEEE 1364-2005 19.3.1)</span></div>
+<div class="d">10.4 defines <code>`define</code> by reference: <em>&ldquo;The 'define and 'undef compiler directives are described in IEEE Std 1364 Verilog&rdquo;</em>, and 1364-2005 19.3.1 specifies the three operators that let a macro build a string literal or paste tokens. All three are lexer errors:</div>
+<div class="ev">`define STR(x) `"x`"                error: encountered unexpected token!  (at `")
+`define PASTE(a,b) a``b             error at ``
+`define QUOTE(x) `"x is \`"x\`"`"   error at `"
+`define MAX(a,b) ((a)&gt;(b)?(a):(b))  ok   (arguments, nesting, `ifdef/`elsif, `undef: all exact)</div>
+<div class="d">These are the mechanism by which a compact-model header generates <code>$strobe</code> messages and parameter names from one macro; a library that uses them stops at the first line. Missing rather than wrong: nothing is silently mis-expanded.</div>
+<div class="ev">repro: macroq.va</div></div>
+
+<div class="finding f-miss"><div class="head"><span class="chip c-miss">missing · doc mismatch</span><span class="t"><code>`__LINE__</code> and <code>`__FILE__</code> are refused inside an included file, which the re-audit records as implemented; and <code>`line</code> has no effect on either</span><span class="lrm">LRM 10.7 p.273</span></div>
+<div class="d">10.7: <em>&ldquo;An `include directive changes the expansions of `__FILE__ and `__LINE__ to correspond to the included file&rdquo;</em>, and <em>&ldquo;A `line directive (as defined in IEEE Std 1364 Verilog) changes `__LINE__ and may change `__FILE__ as well&rdquo;</em>. Measured:</div>
+<div class="ev">inc/sub2.vah:3   $strobe("%d %s", `__LINE__, `__FILE__);
+                 error: macro '`__LINE__' has not been declared
+                 help: `__FILE__/`__LINE__ are expanded only in the root file; a use inside an
+                       `include'd file (or one only reached through a macro) is not supported
+
+`line 500 "fake.va" 0            then, three lines later in the same file:
+$strobe("%d %s", `__LINE__, `__FILE__)   -&gt;   3 linedir.va      LRM: 503 fake.va</div>
+<div class="d">The compiler's help text is honest, and it contradicts the record. The first audit listed <em>&ldquo;`__FILE__/`__LINE__ inside included files: unusable there (root file works)&rdquo;</em> as a missing feature; the re-audit's disposition list then states <em>&ldquo;Implemented since the audit: ... `__FILE__/`__LINE__ inside includes (with the include-resolution bug fixed)&rdquo;</em>. Enhancement-515 fixed the include-resolution bug (a use of either macro broke relative <code>`include</code> paths) and did not add expansion inside included files; the two got merged in the summary. The tracker's §8 lists <code>`line</code> among the accepted <em>&ldquo;housekeeping set&rdquo;</em>, which is true of parsing and not of effect.</div>
+<div class="ev">repro: incline.va + inc/sub2.vah  ·  linedir.va / linedir.cir</div></div>
+
+<div class="finding f-dev"><div class="head"><span class="chip c-dev">deviation · strict</span><span class="t">A real argument to an <code>integer</code> input of an analog function is a type error</span><span class="lrm">LRM 4.7.3 / 4.2.1.1</span></div>
+<div class="d">4.7.3: <em>&ldquo;The argument expressions are assigned to the declared inputs, outputs, and inouts in the order of their declaration&rdquo;</em>, and 4.2.1.1 makes assignment of a real to an integer an implicit conversion by rounding. The compiler accepts the widening direction and refuses the narrowing one:</div>
+<div class="ev">analog function integer f; input i; integer i; begin f = i; end endfunction
+k = f(q);        q real      error: type mismatch: expected integer value but found real variable reference
+k = f(V(p,n));               error: ... found real value
+r = g(k);        g takes real, k integer     ok</div>
+<div class="d"><strong>Cause.</strong> <code>hir_ty/src/inference.rs:866-920</code> (<code>infere_user_fun_call</code>) builds the signature with <code>TyRequirement::Val(arg.ty)</code>, which permits an integer where a real is required and not the reverse; the same file's assignment inference inserts the rounding cast for <code>k = q</code>. A strictness that refuses legal source, hence a deviation and not a bug; every other 4.7 rule measured here holds (§6).</div>
+<div class="ev">repro: realtoint.va</div></div>
+
+<h2 id="lower"><span class="secno">5</span>Lower severity</h2>
+
+<div class="finding f-dev"><div class="head"><span class="chip c-dev">deviation</span><span class="t">A <code>timer</code> whose period changes takes the new period one event late, and does not re-anchor to the start time</span><span class="lrm">LRM 5.10.3.3 p.130</span></div>
+<div class="d">5.10.3.3: <em>&ldquo;If the start_time or period expressions change value during the evaluation of the analog block, the next event will be scheduled based on the latest value of the start_time and period.&rdquo;</em> A timer with <code>period</code> 0.5 ms that switches to 1 ms inside its third event should next fire at 2 ms (the next multiple of the new period from the unchanged start of 0):</div>
+<div class="ev">@(timer(0, per2)) begin n = n + 1; if (n == 3) per2 = 1e-3; end       tran to 5 ms
+observed: 7 events, last at 4.5 ms   =&gt; 0, 0.5, 1.0, 1.5, 2.5, 3.5, 4.5
+LRM:      7 events, last at 5.0 ms   =&gt; 0, 0.5, 1.0, 2.0, 3.0, 4.0, 5.0</div>
+<div class="d">The count happens to agree, which hides it. The event at 1.5 ms was scheduled with the old period before the block that changed it had finished, and the later events are spaced by the new period from that event rather than from <code>start_time</code>. The enable argument, period ≤ 0 (single event), and a start in the past all behave as the clause says.</div>
+<div class="ev">repro: timerchg.va / timerchg.cir</div></div>
+
+<div class="finding f-dev"><div class="head"><span class="chip c-dev">deviation</span><span class="t">A flow-only signal-flow net contributed and read inside one module is a singular matrix</span><span class="lrm">LRM 3.12 / 3.6.2.1</span></div>
+<div class="d">3.12: <em>&ldquo;If one net is a signal-flow net, then the branch is a signal-flow branch and it defines either a branch potential or a branch flow, but not both.&rdquo;</em> A net of the Annex D <code>current</code> discipline has no potential; a contribution <code>I(sfi) &lt;+ 1e-3</code> defines the whole state of the branch to ground. The simulator builds a conservative node for it and then has no path for the current:</div>
+<div class="ev">current sfi;  analog begin I(sfi) &lt;+ 1e-3; I(p,n) &lt;+ 2*I(sfi); end
+Warning: singular matrix:  check node n1#sfi   (x6, gmin and source stepping fail)</div>
+<div class="d">Enhancement-36's cross-module idiom (source module contributes, receiver probes) works, because the receiver's probe synthesises the 0 V short that closes the loop. Within one module nothing does, and the LRM does not require a probe. Low severity: the construct is rare; recorded because the <code>signalflow</code> suite's positive result could be read as covering it.</div>
+<div class="ev">repro: flowonly.va / flowonly.cir</div></div>
+
+<div class="finding f-miss"><div class="head"><span class="chip c-miss">missing diagnostic</span><span class="t">Two attribute rules 3.6.1.2 states as illegal are accepted without comment</span><span class="lrm">LRM 3.6.1.2 / 3.6.2.5</span></div>
+<div class="d">3.6.1.2: <em>&ldquo;It is illegal for a derived nature to change the access attribute&rdquo;</em> and <em>&ldquo;It is illegal for a derived nature to define or change the units&rdquo;</em>; 3.6.2.5 lets a discipline override attributes <em>&ldquo;except as restricted by 3.6.1.2&rdquo;</em>. Measured:</div>
+<div class="ev">nature n1 : Voltage; access = W; endnature                          compiles, silent
+nature n1 : Voltage; units = "mV"; endnature                        warning, inherited value used   (fine)
+discipline d; potential Voltage; flow Current; flow.units = "mA"; enddiscipline        compiles, silent
+discipline d; potential Voltage; flow Current; potential.access = W; enddiscipline     compiles, silent</div>
+<div class="d">The base-nature omissions (no <code>abstol</code>, <code>access</code> or <code>units</code>) are a documented leniency in the tracker; the derived-nature <code>access</code> change and the two discipline forms are not on record. Harmless in effect today, because the discipline override is dropped anyway (§3).</div></div>
+
+<div class="finding f-doc"><div class="head"><span class="chip c-doc">diagnostic quality</span><span class="t">Lint L026 fires on any <code>%s</code> operand that is not the last argument, calling it a non-literal format string</span><span class="lrm">LRM 9.4.1 / 9.4.3</span></div>
+<div class="d">Enhancement-507 warns when the format argument of a display task is not a literal. The check walks every argument, not the format position, so a string variable printed through <code>%s</code> with anything after it is reported as a format string:</div>
+<div class="ev">$strobe("A %s", m1);           no warning
+$strobe("C %s %s", m2, m1);    warning[L026]: $strobe: this format string is not a literal ... (pointing at m2)
+$strobe("... %s ...", myName, s1, names[1], ...);    warning, pointing at myName</div>
+<div class="d">The output is right; the warning is wrong, and it fires on the most ordinary use of <code>%s</code> there is. <strong>Cause:</strong> <code>hir_ty/src/validation/body.rs:2571-2588</code> loops <code>for (i, &amp;arg) in args.iter().enumerate().skip(first)</code> and reports the first non-literal string that has a successor; only <code>args[first]</code> can be the format.</div>
+<div class="ev">repro: fmtwarn.va</div></div>
+
+<div class="finding f-doc"><div class="head"><span class="chip c-doc">diagnostic quality · doc mismatch</span><span class="t">Hierarchical access to a child's port nets, and instance-array element references, fail with unlocated internal errors</span><span class="lrm">LRM 6.7 / 6.2.2</span></div>
+<div class="d">The re-audit lists child port-net access among the gaps that are <em>&ldquo;still refused, now honestly ... each is a located diagnostic&rdquo;</em>, and the tracker's §6 records it as unsupported. The message a user sees is the elaborated file's mangled name:</div>
+<div class="ev">V(ra.p, ra.n)         error: 'ra__p' was not found in the current scope   (in hier.va__elaborated.va)
+$root.ng.x.p          error: 'x__p' was not found in the current scope
+leaf arr[0:3] (p,n);  arr[2].g    error: unexpected token '.'; expected ','</div>
+<div class="d">The instance array itself is right at run time: four instances of a 1 mA/V leaf draw 4 mA, a vector-net connection splits one bit per instance (2 mA through four series pairs, 6.2.2 Figure semantics), and two instances per statement (<code>leaf r1(p,b), r2(b,n);</code>) work. Only the element reference is refused, by the parser, without saying so.</div>
+<div class="ev">repro: hier.va, instarr.va, instarr2.va</div></div>
+
+<h2 id="conformant"><span class="secno">6</span>What was measured and holds</h2>
+<p>Positive results, each an independent expectation checked against the binaries, grouped by area. Several are the controls that make the findings above interpretable.</p>
+<h3>Lexical conventions and directives (2, 10)</h3>
+<ul class="oklist">
+<li>Every literal of 2.6.1 Examples 1 to 5 except the one above: <code>5 'D 3</code>, <code>-8 'd 6</code> = −6, <code>4 'shf</code> = −1, <code>-4 'sd15</code> = 1, <code>16'b0011_0101_0001_1111</code> = 13599, <code>27_195_000</code>; all eight Table 2-1 scale factors including <code>M</code> = 1e6 versus <code>m</code> = 1e-3; the six invalid real forms and <code>8 'd -6</code> rejected; <code>1_.5</code> accepted and <code>1._5</code> refused, exactly per the underscore rule.</li>
+<li>String escapes byte-exact (<code>\101\102\103</code> → ABC, <code>\61x</code> → 1x, <code>\"</code>, <code>\\</code>, <code>\t</code>); <code>n$657</code> and <code>\bus+index</code> as identifiers.</li>
+<li><code>`define</code> with arguments and nested calls, <code>`ifdef</code>/<code>`elsif</code>/<code>`else</code>, <code>`undef</code> then redefine, <code>`include</code> of a macro file, <code>`resetall</code>, <code>`celldefine</code>, <code>`timescale</code>, <code>`pragma</code>, <code>`unconnected_drive</code>; <code>`__VAMS_ENABLE__</code> and <code>`__VAMS_COMPACT_MODELING__</code> defined; the simulator-specific macro 10.5 requires exists (<code>`__OPENVAF__</code>); <code>`define __VAMS_x</code> and <code>`undef</code> of a predefined macro warn as 10.4 permits; <code>`begin_keywords "VAMS-2023"</code> makes <code>sin</code> a keyword as 10.6's example requires; <code>`default_nettype none</code> makes an undeclared net an error.</li>
+</ul>
+<h3>Data types and parameters (3)</h3>
+<ul class="oklist">
+<li>Real-to-integer rounding per 4.2.1.1 at every point the clause names: 35.7→36, 35.5→36, 35.2→35, −1.5→−2, 1.5→2, 2.5→3, −2.5→−3, 0.5→1. Two's complement wrap at 2<sup>31</sup>. Negative and multidimensional array bounds; declaration initializers; assignment patterns including <code>'{5{0.0}}</code>.</li>
+<li>String parameters as defaults for string variables, string arrays and two-dimensional string arrays with pattern initializers, constant replication, concatenation with <code>""</code>, all six relational operators on strings.</li>
+<li>Every range form of 3.4.2: <code>[a:b]</code>, <code>(a:b)</code>, <code>[0:inf)</code>, <code>(-inf:inf)</code>, <code>exclude v</code>, <code>exclude [a:b]</code>, <code>exclude (a:b]</code>, two <code>from</code> ranges, a reversed range refused at compile time; the netlist rejects each out-of-range value at the correct end point (2.0001 out of [0:2], 0 out of (0:2), 0.5 excluded, 0.9 inside <code>(0.9:1.1)</code> accepted, 1.0 refused); string value sets by <code>from</code> and <code>exclude '{""}</code>; integer parameters rounded from real netlist values with a warning; untyped parameters take the default's type.</li>
+<li>3.4.1's type conflicts are errors in both directions; 3.4.7's alias rules: <code>aliasparam m = $mfactor</code> (the LRM's example) works on the instance line, an alias used in the body is an error, setting both an alias and its original on a model card or instance line is an error naming 3.4.7.</li>
+</ul>
+<h3>Expressions and math (4.1 to 4.4)</h3>
+<ul class="oklist">
+<li>All of Table 4-6 (11%3, 12%3, −10%3, 11%−3, 10%3.75) and the real-modulus formula on both signs; integer division toward zero; 4.2.1.3's four conversion examples; precedence: <code>-2**2</code> = 4 (unary binds first), <code>2**3**2</code> = 64 (left-associative), <code>5-1&lt;3</code> versus <code>5-(1&lt;3)</code>; integer power with negative exponent per 1364; short-circuit evaluation of <code>&amp;&amp;</code>, <code>||</code>, <code>?:</code> and none for <code>&amp;</code>, <code>|</code>, <code>*</code>, measured through a counting inout argument; logical shifts zero-fill (<code>-8 &gt;&gt; 1</code> = 2147483644), a 32-bit shift warns and yields 0; bitwise operators including both spellings of xnor; the ternary's real result type.</li>
+<li>Table 4-14's type rule: <code>max(2,3)</code> integer, <code>min(1,2.5)</code> real, <code>abs(-3)</code> integer, <code>abs(-3.0)</code> real; <code>log</code> is base 10 and <code>$log10</code>, <code>$ln</code>, <code>ln1p</code>, <code>expm1</code> agree with C; <code>atan2(0,0)</code> = 0 as the table specifies; <code>pow</code> domain (<code>0**-1</code>, negative base with fractional exponent) refused at compile time along with the seven other constant domain errors; <code>$clog2</code>, <code>$rtoi</code>, <code>$itor</code>.</li>
+</ul>
+<h3>Natures, disciplines, branches (3.6 to 3.13)</h3>
+<ul class="oklist">
+<li>The embedded <code>disciplines.vams</code> is Annex D.1 line for line: every nature's units, access, abstol, <code>idt_nature</code>/<code>ddt_nature</code>, every discipline, both discrete disciplines, and the <code>_ABSTOL</code> define hooks.</li>
+<li>Nature-level derivation and attribute override, user-defined attributes readable through 5.5.3, base-nature access uniqueness enforced per 3.13.2, a discipline binding one nature to both sides refused (3.6.2.1), a discrete domain with nature bindings refused (3.6.2.2), <code>abstol</code> must be a real constant.</li>
+<li>Two named branches on the same nodes carry independent currents that sum; a branch to ground; a vector branch on bit-selects; the port branch <code>branch (&lt;p&gt;) pb</code> equals <code>I(&lt;p&gt;)</code>; 3.11.1's compatibility: derived-nature disciplines connect, signal-flow <code>voltage</code> connects to <code>electrical</code>, <code>thermal</code> to <code>electrical</code> is a located error in access functions and in branch declarations; a natureless net cannot be accessed; two discipline declarations for one net is an error; nets cannot be declared in a block.</li>
+</ul>
+<h3>User-defined functions (4.7)</h3>
+<ul class="oklist">
+<li>All three examples of 4.7.1 verbatim, including <code>arrayadd(x,'{y,z})</code> updating <code>x</code> to 8 and 16 through an inout array; <code>return</code> overrides the identifier variable; an unassigned function returns 0, a string function returns <code>""</code>; an output argument is zeroed on entry and the caller's variable is reset to zero on exit (4.7.2.3); an unassigned inout leaves the caller untouched (4.7.2.4); module parameters visible, a local parameter shadows one (4.7.1); recursion, access functions, analog operators, contributions, event controls, zero arguments and wrong arity all refused, <code>V(a)</code> as an output argument refused with 4.7.3's own reasoning.</li>
+</ul>
+<h3>Events (5.10) and analog behaviour (5)</h3>
+<ul class="oklist">
+<li>A 1 kHz sine to 1.9 ms: <code>cross</code> +1 twice, −1 twice, 0 four times, <code>enable</code> 0 never; <code>timer(0, 0.25m)</code> eight times, single-shot once at 0.1 ms, <code>final_step</code> fires at the <code>$finish</code> issued from a timer (5.10.2); <code>or</code> and comma lists identical; <code>above</code> fires on the upward crossing in a DC sweep and never on the initial zero; period ≤ 0 fires once; an enable gate skips the disabled window and resumes on the grid.</li>
+<li>Nested events, contributions and analog operators inside events, <code>cross</code> under a runtime <code>if</code> or in <code>while</code>, negative tolerances: all refused; <code>cross</code> in an analog for is allowed; explicit tolerances warn that they are not honoured.</li>
+<li>5.6.1.3 Example 2 gives 7.0 V; a switch branch shorts and opens; accumulation; sign reversal; 5.6.6's implicit <code>I(diode) &lt;+ is*(limexp((V(diode) - r*I(diode))/$vt) - 1)</code> converges to the self-consistent point; an implicit potential contribution; contributions to a port branch refused; <code>V(&lt;p&gt;)</code> refused per 5.4.3.</li>
+<li><code>case</code> on reals, strings and lists, <code>repeat</code>, <code>while</code>, <code>for</code>, named blocks with local declarations and nested blocks, <code>break</code>/<code>continue</code>, <code>disable</code> of an unknown block an error, duplicate block names an error; 4.5.15's placement rules for analog operators in conditions, loops and the ternary.</li>
+</ul>
+<h3>Core and filter operators (4.5)</h3>
+<ul class="oklist">
+<li>On a 1 kHz sine at 2.125 ms: <code>ddt</code> 4471 (analytic 4443), <code>idt</code> 4.59e-5 (4.66e-5), <code>idt(v, 1.0)</code> 1.00005, <code>idtmod</code> with and without offset at every sampled instant including the wrap, <code>absdelay</code> at two delays, <code>transition</code> half-way at exactly <code>td + tr/2</code>, <code>slew</code> at the limit rate, <code>last_crossing</code> 0.002000, <code>limexp</code>, <code>ddx(v², V(p))</code> = 2v; the same operators in one module and after a preceding <code>op</code> or <code>dc</code>.</li>
+<li><code>laplace_nd</code>, <code>laplace_zp</code> with the empty zero list, <code>laplace_np</code>, <code>laplace_zd</code>, a parameter-array denominator: DC gain 1, |H| = 0.7071 at the corner and 0.0995 a decade above, an all-pass; step response 0.632/0.667/0.865 at τ, 1.1τ, 2τ; ramp response τ·(t/τ − 1 + e<sup>−t/τ</sup>).</li>
+</ul>
+<h3>Hierarchy (6)</h3>
+<ul class="oklist">
+<li>Named and ordered connections, an omitted or empty named port with <code>$port_connected</code> reading 0 inside the child (6.5.6), a port range mismatch between direction and discipline declaration refused (6.5.2.2), arity mismatches and positional-override count mismatches refused, self-instantiation refused; a dependent parameter follows an override (6.3.4: <code>rb.half</code> = 1000 after <code>.r(2000)</code>); <code>defparam</code> on a plain instance and over an instance override; instance arrays and vector-net splitting at run time; flow probes divided by <code>$mfactor</code> (<code>I(p,n)</code> and <code>I(&lt;p&gt;)</code> read the per-device 1 mA at m=4 while the terminal carries 4 mA).</li>
+</ul>
+<h3>Kernel, analysis, noise, OSDI (4.6, 9, ngspice)</h3>
+<ul class="oklist">
+<li>Table 4-22 at every column measured: op 145 (dc, static, dc|tran), a dc sweep point the same, tran points 132 (tran, dc|tran), the AC operating point ac+static, the noise operating point noise+static; an unknown analysis name is 0 with a compile warning; noise terms contribute 0 to an operating point.</li>
+<li>White, flicker (exponent 1: 1e-6, 3.16e-7, 1e-7 at 1, 10, 100 Hz) and table noise (linear-in-f and log-log interpolation exact) on both potential and flow branches of a plain module and of a child instance; <code>ac_stim("ac", 2, π/2)</code> gives 2 V at +90°; voltage-noise power ÷m and current-noise power ×m on plain branches on both routes at m = 2, 4, 9.</li>
+<li><code>$temperature</code> follows <code>.option temp</code> and the instance <code>temp=</code>, <code>$vt</code> and <code>$vt(400)</code> are kT/q, <code>$abstime</code> equals the timer's instant, <code>$simparam("gmin")</code> follows <code>.option gmin</code>, <code>$param_given</code>, <code>$port_connected</code>; <code>alter</code> of an instance parameter and <code>altermod</code> of a model parameter re-solve correctly, output variables with <code>desc</code>/<code>units</code> print in <code>show</code> and via <code>@n1[name]</code>, a collapsed internal node, a shorted instance, <code>.nodeset</code> on an internal node.</li>
+<li>File I/O: <code>$fgets</code> returns the character count, <code>$fscanf</code> returns the conversion count and leaves the remainder, <code>$ftell</code>/<code>$fseek</code> from start and end/<code>$rewind</code>, <code>$feof</code>, <code>$ferror</code>, <code>$fflush</code> before <code>$fclose</code>, <code>$sformat</code> with widths, flags, precision, <code>%e</code>/<code>%E</code>, <code>%c</code>, <code>%m</code>; <code>$swrite</code>, <code>$sscanf</code>; <code>$fstrobe(1, ...)</code> reaches stdout through multichannel bit 0.</li>
+</ul>
+
+<h2 id="notquite"><span class="secno">7</span>Things that looked wrong and are not</h2>
+<p>Recorded so a fifth pass does not spend its budget here. Each reproduced exactly as described; none is a finding.</p>
+<div class="finding f-ok"><div class="head"><span class="chip c-ok">deliberate, documented</span><span class="t">The seed passed to <code>$random</code> and the <code>$dist_*</code> family is never written back, and a call inside a loop draws one value per evaluation</span></div>
+<div class="d">Both reproduce: <code>seed</code> is 7 before and after every call, and 3000 loop iterations of <code>$dist_uniform(seed, 1, 6)</code> return one number. Round 2 raised the second, then withdrew it: the compiler reports it as lint L019 by default, and Enhancement-539 records the pure-seed design as a deliberate deviation from 9.13.1, because a seed advancing in place would change on every Newton iteration and defeat convergence. The first is the same design seen from the variable's side. Not re-litigated.</div></div>
+<div class="finding f-ok"><div class="head"><span class="chip c-ok">documented</span><span class="t">The 6.3.6 double-scaling module <code>badres</code> compiles without the diagnostic the LRM shows</span></div>
+<div class="d"><code>I(a,b) &lt;+ V(a,b) / r * $mfactor</code> compiles cleanly where 6.3.6 says <em>&ldquo;The simulator will generate an error for this module&rdquo;</em>. The tracker's §6 lists this exact omission as an accepted extension. <code>parares</code>, the clause's legal counterpart, compiles as it should.</div></div>
+<div class="finding f-ok"><div class="head"><span class="chip c-ok">documented</span><span class="t"><code>`begin_keywords "1364-2005"</code> is mapped to VAMS-2023, so 10.6's <code>module m2(sin, ...)</code> example is refused</span></div>
+<div class="d">10.6 says the 1364 keyword sets <em>&ldquo;must also be supported&rdquo;</em>; the compiler keeps one table and says so in a located warning. Round 2 measured and recorded this. A disclosed deviation, not a new one.</div></div>
+<div class="finding f-ok"><div class="head"><span class="chip c-ok">conformant on reading</span><span class="t">A source branch that is not contributed to on the taken path reads as an open circuit, not as a probe</span></div>
+<div class="d">In a <code>case</code> whose other arm contributes to <code>(ps,ns)</code>, the arm <code>I(p,n) &lt;+ A * I(ps,ns)</code> saw <code>I(ps,ns)</code> = 0 and the branch open, where the CCCS example of 5.6.1.3 has a shorted probe. 5.4.2.2 settles it: a branch is a source branch <em>&ldquo;if either the potential or the flow of that branch is assigned a value by a contribution statement anywhere in the module&rdquo;</em>, and 5.4.4 then makes an unassigned source a zero flow. The same module without the other arm shorts and reads 1 mA, as the example requires.</div></div>
+<div class="finding f-ok"><div class="head"><span class="chip c-ok">documented</span><span class="t"><code>zi_nd</code> tracks a ramp between sampling instants instead of holding</span></div>
+<div class="d">Measured at 1.1 ms with T = 0.25 ms: 1.0997 rather than the held sample 1.0. The tracker's §4.3 carries the bilinear, continuous <code>zi_*</code> implementation as a disclosed deviation with the error quantified; at the sampling instants themselves the values are exact.</div></div>
+<div class="finding f-ok"><div class="head"><span class="chip c-ok">permissive extension</span><span class="t">Several illegal-but-harmless forms are accepted</span></div>
+<div class="d"><code>`default_transition</code> inside a module (10.3: outside only); <code>from [1:1]</code> (3.4.2: the first bound &ldquo;shall be numerically smaller&rdquo;); <code>input x;</code> with no type declaration in a function (4.7.1); a string parameter given a number on a model card (<code>fn=5</code> becomes <code>"5"</code>); <code>case (i) endcase</code> with no items; a real loop variable in <code>for</code>; <code>cross(expr, -1.0)</code> with a real direction. And two strictnesses on the display tasks: fewer operands than conversions and <code>%d</code> applied to a real are compile errors rather than 1364's lenient printing. None changes a simulated number.</div></div>
+<div class="finding f-ok"><div class="head"><span class="chip c-ok">correct on re-reading</span><span class="t"><code>idt(1.0)</code> without an initial condition diverges to 1e12 at the operating point</span></div>
+<div class="d">The integral of a nonzero constant has no equilibrium, and 4.5.4 leaves the DC value of an <code>idt</code> without <code>ic</code> to the circuit equations. With a zero-mean integrand the same operator gives 0 (with harmless singular-matrix warnings on the way), and every form with an <code>ic</code> gives the <code>ic</code>. Not a finding.</div></div>
+
+<h2 id="docs"><span class="secno">8</span>The documentation audit</h2>
+<p>Annex C's boundary held on every probe: <code>initial</code>, <code>always</code>, <code>reg</code>, <code>wire</code> with <code>assign</code>, <code>event</code>, <code>#</code> delays, <code>fork</code>/<code>join</code>, <code>wreal</code>, real-valued ports, <code>task</code>, <code>function</code>, <code>specify</code>, <code>connectmodule</code>, <code>$time</code>, <code>$bitstoreal</code>, x/z digits outside <code>casex</code>: all refused; <code>$realtime</code> warns; <code>`default_discipline</code> is ignored with a warning, which C.4 permits; <code>casex</code> and <code>===</code> are the two accepted extensions the tracker already lists. Annex E's SPICE primitives (<code>resistor #(.r(10K))</code> from 3.6.4's own example) are a clean &ldquo;module not defined&rdquo; error. What follows is the record measured against the binaries.</p>
+<div class="tblwrap">
+<table>
+<thead><tr><th>Where</th><th>Claim</th><th>Measured</th></tr></thead>
+<tbody>
+<tr><td>Tracker §3.3</td><td>deriving from a discipline's nature <em>&ldquo;with full attribute inheritance&rdquo;</em></td><td>the discipline's own override is not inherited, or applied anywhere (§3)</td></tr>
+<tr><td>Re-audit §5</td><td><em>&ldquo;Implemented since the audit: ... `__FILE__/`__LINE__ inside includes&rdquo;</em></td><td>refused with the compiler's own note that it is not supported; only the include-resolution bug of the first audit was fixed (§4)</td></tr>
+<tr><td>Tracker §8</td><td><code>`line</code> among the accepted housekeeping directives</td><td>parsed and without effect on <code>`__LINE__</code>/<code>`__FILE__</code> (§4)</td></tr>
+<tr><td>Re-audit §5</td><td>child port-net access <em>&ldquo;refused, now honestly ... a located diagnostic&rdquo;</em></td><td>a mangled-name error from the elaborated file (§5)</td></tr>
+<tr><td>Tracker §2</td><td>the three-token literal forms of 2.6.1 work, <code>'h 837FF</code> as evidence</td><td>true for that literal; the LRM's own <code>32 'h 12ab_f001</code> failed (§4; fixed after the audit, tracker updated)</td></tr>
+<tr><td>Tracker §3.1</td><td>string <em>&ldquo;replication&rdquo;</em> works</td><td>constant replication only; Table 3-3's non-constant form is refused (§4)</td></tr>
+<tr><td>Tracker §5.5, E-453</td><td>null arguments <em>&ldquo;two adjacent commas&rdquo;</em> honoured for the analog operators</td><td>true for the filters, and event functions share the grammar rule and are refused (§4)</td></tr>
+<tr><td>Tracker §6, E-531</td><td>noise-only contributions <em>&ldquo;must not reclassify anything&rdquo;</em></td><td>right for BSIM4's flow noise; drops a noise-only potential source on a switch branch (§3)</td></tr>
+</tbody>
+</table>
+</div>
+
+<h2 id="coverage"><span class="secno">9</span>Coverage map</h2>
+<div class="tblwrap">
+<table>
+<thead><tr><th>Area</th><th>LRM</th><th>Result</th></tr></thead>
+<tbody>
+<tr><td>Lexical conventions &amp; directives</td><td class="mono">2, 10</td><td>3 findings — spaced hex literal lexed as a real (<strong>fixed</strong>, §4), <code>`"</code>/<code>``</code> missing, <code>`__LINE__</code> in includes and <code>`line</code>; everything else in 2.6 to 2.9 and clause 10 conformant</td></tr>
+<tr><td>System tasks: display &amp; file I/O</td><td class="mono">9.4, 9.5</td><td>1 diagnostic finding — L026 false positive; positioning, EOF, error status, formatting and scanning conformant</td></tr>
+<tr><td>Data types &amp; parameters</td><td class="mono">3.2–3.4</td><td>2 findings — <code>\0</code> in a string literal, non-constant string replication; ranges, aliases, type rules conformant</td></tr>
+<tr><td>Expressions &amp; math</td><td class="mono">4.1–4.3</td><td>conformant — 60 measured values, all exact</td></tr>
+<tr><td>Natures, disciplines, branches</td><td class="mono">3.6–3.13, D</td><td>3 findings — discipline attribute override dropped (silent), flow-only net singular, two attribute rules unchecked; Annex D exact</td></tr>
+<tr><td>Annex C/E boundary &amp; doc audit</td><td class="mono">C, E</td><td>boundary conformant; 8 record entries corrected (§8)</td></tr>
+<tr><td>User-defined functions</td><td class="mono">4.7</td><td>1 finding — real to integer input refused; all four LRM examples and every rule of 4.7.2 conformant</td></tr>
+<tr><td>Events</td><td class="mono">5.10</td><td>2 findings — null arguments (LRM example refused), timer period change one event late; timing of cross/above/timer/final_step exact</td></tr>
+<tr><td>Core analog operators</td><td class="mono">4.5.1–4.5.10, 4.5.13–15</td><td>conformant — every operator within integration error of the analytic value, placement rules enforced</td></tr>
+<tr><td>Filter operators</td><td class="mono">4.5.11–4.5.12</td><td>conformant (the <code>zi_*</code> continuous approximation is documented)</td></tr>
+<tr><td>Hierarchy</td><td class="mono">6.2–6.5, 6.7</td><td>1 diagnostic finding — port-net and instance-element references; instantiation, arrays, defparam, dependence, ports, <code>$mfactor</code> probes conformant</td></tr>
+<tr><td>Analog behaviour &amp; contributions</td><td class="mono">5.4–5.9</td><td>conformant — value retention, switch branches, implicit contributions, statements</td></tr>
+<tr><td>Kernel &amp; random system functions</td><td class="mono">9.10–9.19</td><td>conformant — the seed design is a recorded deviation (§7)</td></tr>
+<tr><td>Analysis &amp; noise</td><td class="mono">4.6, 6.3.6</td><td>2 findings — noise-only potential arm dropped, flow-arm noise <em>m</em><sup>1.5</sup> on the netlist route, both on switch branches only; Table 4-22 and every plain-branch noise source exact</td></tr>
+<tr><td>ngspice OSDI layer</td><td class="mono">—</td><td>1 finding — <code>.ic</code> under <code>uic</code> ignored on internal nodes; alter, altermod, temperature, output variables, collapse, nodeset conformant</td></tr>
+</tbody>
+</table>
+</div>
+<p class="scorenote">Every deck named above is in <a href="2026-09-03_repro-round4/">2026-09-03_repro-round4/</a>, with a README mapping deck to finding and a <code>run_all.sh</code> that reruns the set against a given compiler and simulator. The set was run against <code>bin/macos/apple-silicon/{openvaf-r,ngspice}</code> at <code>04e42be2</code> and against the locally built <code>OpenVAF-master-20260610/target/opt/openvaf-r</code> and <code>ngspice-46/build/src/ngspice</code>; the two outputs are byte-identical.</p>
+<footer>Method: fifteen areas, each started from a full reading of its LRM clauses; every printed example compiled verbatim; every stated number measured; every finding paired with a control on the sibling route and traced to a file and line; prior art searched in the compliance tracker, the three earlier audits and the enhancement record before write-up. LRM page references are printed page numbers.</footer>
+</div>
+</body>
+</html>
