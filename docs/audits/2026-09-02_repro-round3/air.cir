@@ -1,0 +1,13 @@
+* LRM 5.2.1 re-execution on a parameter sweep
+.control
+pre_osdi air.osdi
+.endc
+.model mm air
+n1 1 0 mm g0=1e-3
+v1 1 0 dc 1
+.control
+dc @n1[g0] 1e-3 5e-3 1e-3
+print i(v1)
+quit
+.endc
+.end

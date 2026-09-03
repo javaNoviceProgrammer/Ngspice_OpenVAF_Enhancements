@@ -53,6 +53,8 @@ pub const EVAL_RET_FLAG_STOP: u32 = 8;
 /// simulator may reject the current timestep and retry with a smaller one.
 /// Additive bit -- not an ABI break (older simulators simply ignore it).
 pub const EVAL_RET_FLAG_DISCONT: u32 = 16;
+/// Round-3 audit / LRM 9.7.3: `$error` inside an `analog initial` block.
+pub const EVAL_RET_FLAG_INITERR: u32 = 32;
 pub const LOG_LVL_MASK: u32 = 7;
 pub const LOG_LVL_DEBUG: u32 = 0;
 pub const LOG_LVL_DISPLAY: u32 = 1;
@@ -63,6 +65,8 @@ pub const LOG_LVL_FATAL: u32 = 5;
 pub const LOG_LVL_MONITOR: u32 = 6;
 pub const LOG_FLAG_IMMEDIATE: u32 = 8;
 pub const LOG_FMT_ERR: u32 = 16;
+/// Round-3 audit / LRM 9.7.3: the statement is inside an `analog initial` block.
+pub const LOG_FLAG_INIT: u32 = 32;
 pub const INIT_ERR_OUT_OF_BOUNDS: u32 = 1;
 pub const ATTR_TYPE_STR: u32 = 0;
 pub const ATTR_TYPE_INT: u32 = 1;

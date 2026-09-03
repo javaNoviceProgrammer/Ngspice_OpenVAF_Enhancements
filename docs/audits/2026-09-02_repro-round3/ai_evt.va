@@ -1,0 +1,9 @@
+`include "disciplines.vams"
+module ai_evt(p,n);
+  inout p,n; electrical p,n;
+  real r;
+  analog initial begin
+      @(initial_step) r = 1.0;    // event control
+  end
+  analog I(p,n) <+ V(p,n)*1e-3 + r*0.0;
+endmodule

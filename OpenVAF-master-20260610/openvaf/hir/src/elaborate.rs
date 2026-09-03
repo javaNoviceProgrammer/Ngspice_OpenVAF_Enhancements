@@ -2914,6 +2914,52 @@ fn flow_access_names(tree: &ItemTree) -> HashSet<String> {
 /// hierarchy, additive ones ($xposition/$yposition/$angle) sum (LRM 6.3.6).
 /// Both sides hold FINAL (rename-applied) expression text, so the composed
 /// text splices verbatim into any inlined body.
+/// LRM 9.18 Table 9-29's *Allowed values* column, checked for an instance
+/// override written as a plain numeric literal (round-3 audit -- the column
+/// was unenforced on every route).
+///
+/// | parameter | allowed |
+/// |---|---|
+/// | `$mfactor` | `> 0` |
+/// | `$hflip`, `$vflip` | `+1` or `-1` |
+/// | `$angle` | any real; normalised to `0 <= $angle < 360` rather than refused |
+/// | `$xposition`, `$yposition` | any |
+///
+/// `$mfactor` is the one that produces wrong numbers rather than a wrong
+/// label: it drives the LRM 6.3.6 multiplicity transform, so a negative value
+/// sign-inverts every flow contribution -- a plain resistor model measured
+/// **+3 mA out** under `#(.$mfactor(-3))`, with no diagnostic anywhere. The
+/// identical value written on the netlist line (`m=-3`) has been refused by
+/// ngspice's own parameter setter all along; this closes the Verilog-A route
+/// the same check never covered.
+///
+/// Only a literal is judged. An override built from a paramset card parameter
+/// is not known until run time, which is the same boundary the constant-only
+/// `sqrt` domain check draws, and stating it is better than guessing.
+fn hsp_range_error(sys: ParamSysFun, text: &str) -> Option<String> {
+    let val: f64 = text.trim().parse().ok()?;
+    let bad = |allowed: &str| {
+        Some(format!(
+            "instance parameter '.{}' is set to {text}, which LRM 9.18 Table 9-29 does not \
+             allow ({allowed})",
+            sys.sysfun_text(),
+        ))
+    };
+    match sys {
+        ParamSysFun::mfactor if !(val > 0.0) => bad(
+            "$mfactor > 0 -- a multiplicity is a count of devices in parallel: a \
+             negative one sign-inverts every flow contribution the instance makes, \
+             and zero is not a device. (The netlist spelling `m=0` is a separate, \
+             deliberate SPICE idiom for disabling an instance; Table 9-29 governs \
+             this one.)",
+        ),
+        ParamSysFun::hflip | ParamSysFun::vflip if val != 1.0 && val != -1.0 => {
+            bad("$hflip and $vflip are +1 or -1 -- they say whether the instance is mirrored")
+        }
+        _ => None,
+    }
+}
+
 fn merge_sys_overrides(
     outer: &[(ParamSysFun, String)],
     inner: &[(ParamSysFun, String)],
@@ -3063,7 +3109,20 @@ fn hier_sys_override_holes(
         let Some(sys_fn) = ParamSysFun::from_sysfun_text(tok.text()) else { continue };
         let Some((_, v)) = sys.iter().find(|(s, _)| *s == sys_fn) else { continue };
         let op = if sys_fn.composes_multiplicatively() { '*' } else { '+' };
-        holes.push((rel_range(base, tok.text_range()), format!("({}{op}({v}))", tok.text())));
+        let composed = format!("({}{op}({v}))", tok.text());
+        // LRM 9.18 Table 9-29 (round-3 audit): `$angle` composes as a sum
+        // "modulo 360 degrees", with the allowed range 0 <= $angle < 360.
+        // `x - 360*floor(x/360)` is the non-negative remainder, and it is the
+        // one form that stays correct for a negative composed angle.
+        // `merge_sys_overrides` has already folded every enclosing instance's
+        // override into `v`, so this hole is applied once per read and the
+        // text is duplicated once, not per hierarchy level.
+        let composed = if sys_fn == ParamSysFun::angle {
+            format!("(({composed}) - 360.0*floor(({composed})/360.0))")
+        } else {
+            composed
+        };
+        holes.push((rel_range(base, tok.text_range()), composed));
     }
     holes.sort_by_key(|(r, _)| r.start);
     holes
@@ -4221,7 +4280,12 @@ impl ElabCtx<'_> {
                                     tok.text(),
                                 ));
                             } else if let Some(val) = assign.val() {
-                                sys_overrides.push((sys, val.syntax().text().to_string()));
+                                let text = val.syntax().text().to_string();
+                                if let Some(err) = hsp_range_error(sys, &text) {
+                                    self.hier_param_errors.push(err);
+                                } else {
+                                    sys_overrides.push((sys, text));
+                                }
                             }
                         }
                         None => self.hier_param_errors.push(format!(

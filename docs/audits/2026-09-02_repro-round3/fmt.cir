@@ -1,0 +1,12 @@
+* format specifier case
+.control
+pre_osdi fmt.osdi
+.endc
+.model mm fmt
+n1 1 0 mm
+v1 1 0 dc 1
+.control
+op
+quit
+.endc
+.end

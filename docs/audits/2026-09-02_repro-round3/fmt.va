@@ -1,0 +1,13 @@
+`include "disciplines.vams"
+module fmt(p,n);
+  inout p,n; electrical p,n;
+  analog begin
+    @(initial_step) begin
+      $strobe("LOWER h=%h d=%d o=%o b=%b c=%c s=%s e=%e f=%f g=%g r=%r m=%m",
+              255, 255, 255, 5, 65, "str", 1234.5, 1234.5, 1234.5, 1234.5);
+      $strobe("UPPER H=%H D=%D O=%O B=%B C=%C S=%S E=%E F=%F G=%G R=%R M=%M",
+              255, 255, 255, 5, 65, "str", 1234.5, 1234.5, 1234.5, 1234.5);
+    end
+    I(p,n) <+ V(p,n)*1e-3;
+  end
+endmodule

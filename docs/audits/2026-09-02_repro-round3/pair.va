@@ -1,0 +1,11 @@
+`include "disciplines.vams"
+module pair(p,n);
+  inout p,n; electrical p,n;
+  analog begin
+    $strobe ("S v=%g", V(p,n));
+    $warning("W v=%g", V(p,n));
+    $info   ("I v=%g", V(p,n));
+    $error  ("E v=%g", V(p,n));
+    I(p,n) <+ V(p,n)*1e-3;
+  end
+endmodule

@@ -1,0 +1,19 @@
+`include "disciplines.vams"
+module exh2(p,n);
+  inout p,n; electrical p,n;
+  integer i, fdv, m31;
+  string nm;
+  analog begin
+    @(initial_step) begin
+      m31 = 0;
+      for (i = 0; i < 31; i = i + 1) begin
+        $sformat(nm, "ex2/e%0d.txt", i);
+        fdv = $fopen(nm);
+        if (i == 30) m31 = fdv;
+      end
+      $strobe("EXH2 31st-mcd=%0d", m31);
+      $fdisplay(m31, "THIS-SHOULD-GO-TO-ex2/e30.txt");
+    end
+    I(p,n) <+ V(p,n)*1e-3;
+  end
+endmodule

@@ -1,0 +1,10 @@
+`include "disciplines.vams"
+module dfio(p,n);
+  inout p,n; electrical p,n;
+  integer fd;
+  analog begin
+    @(initial_step) fd = $fopen("dfio.txt","w");
+    $fstrobe(fd, "v=%.6f", V(p,n));
+    I(p,n) <+ 1e-14*(exp(V(p,n)/$vt) - 1.0);
+  end
+endmodule

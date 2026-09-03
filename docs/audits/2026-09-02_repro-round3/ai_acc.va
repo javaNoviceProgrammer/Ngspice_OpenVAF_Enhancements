@@ -1,0 +1,9 @@
+`include "disciplines.vams"
+module ai_acc(p,n);
+  inout p,n; electrical p,n;
+  real r;
+  analog initial begin
+      r = V(p,n);                 // access function
+  end
+  analog I(p,n) <+ V(p,n)*1e-3 + r*0.0;
+endmodule

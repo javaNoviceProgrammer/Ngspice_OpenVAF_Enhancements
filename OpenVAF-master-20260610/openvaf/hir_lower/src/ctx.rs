@@ -49,6 +49,24 @@ pub struct LoweringCtx<'a, 'c> {
     /// the simulator prints them right away instead of deferring them to the
     /// accepted iteration (LRM 9.4.6 deferral, audit 2026-08-31).
     pub in_event_ctx: bool,
+    /// True while lowering an `analog initial` block (LRM 5.2.1). Two rules
+    /// hang off it, and both were open before the 2026-09-02 round-3 audit:
+    ///
+    /// * The block is gated on `IsInitialStep` inside the eval function, so
+    ///   its statements run on the instance's FIRST Newton iteration of an
+    ///   analysis -- which is not the accepted one. Untagged, every
+    ///   `$strobe`/`$display`/`$write`/`$monitor` and every file write it
+    ///   makes was deferred into that iteration's buffer and then dropped as
+    ///   superseded: an `analog initial` block's entire output vanished, in
+    ///   every analysis, with the file it opened left at zero bytes. This is
+    ///   the same hazard `in_event_ctx` exists for, on the neighbouring
+    ///   construct, so displays lowered here are tagged LOG_FLAG_IMMEDIATE
+    ///   too.
+    /// * LRM 9.7.3: "If `$error` is executed within an `analog initial`
+    ///   block, then the message is issued and the initialization continues.
+    ///   However, the simulation shall not proceed past initialization."
+    ///   `$error` therefore raises [`RetFlag::InitErr`] here and nowhere else.
+    pub in_analog_initial: bool,
 }
 
 impl<'a, 'c> LoweringCtx<'a, 'c> {
@@ -71,6 +89,7 @@ impl<'a, 'c> LoweringCtx<'a, 'c> {
             loop_scopes: Vec::new(),
             return_scopes: Vec::new(),
             in_event_ctx: false,
+            in_analog_initial: false,
         }
     }
 
@@ -219,6 +238,7 @@ impl<'a, 'c> LoweringCtx<'a, 'c> {
             arg_tys: arg_tys.into_boxed_slice(),
             dst: PrintDst::Console,
             immediate: true,
+            in_initial: self.in_analog_initial,
         };
         self.call(cb, &call_args);
         self.call(CallBackKind::SetRetFlag(RetFlag::Abort), &[]);
@@ -390,6 +410,26 @@ impl<'a, 'c> LoweringCtx<'a, 'c> {
 
     pub fn fconst(&mut self, val: f64) -> Value {
         self.func.fconst(val)
+    }
+
+    /// LRM 9.18 Table 9-29 (round-3 audit): `$angle` resolves to
+    /// "$angle_specified + $angle_hier, **modulo 360 degrees**", with the
+    /// allowed range "0 <= $angle < 360". The sum was implemented and the
+    /// modulo was not, so two levels of 200 degrees read back as 400.
+    ///
+    /// `x - 360*floor(x/360)` rather than a `%`: the value is a real, and this
+    /// form is the mathematically correct non-negative remainder for negative
+    /// angles too (-90 -> 270), which C's `fmod` and Verilog's `%` are not.
+    ///
+    /// Applied wherever a `$angle` value is materialised, so every route into
+    /// it -- the netlist `_angle=`, a paramset override, an instance
+    /// `#(.$angle(...))`, and any composition of them -- lands in range.
+    pub fn normalize_angle(&mut self, val: Value) -> Value {
+        let full = self.fconst(360.0);
+        let turns = self.ins().fdiv(val, full);
+        let whole = self.ins().floor(turns);
+        let wrapped = self.ins().fmul(full, whole);
+        self.ins().fsub(val, wrapped)
     }
 
     pub fn iconst(&mut self, val: i32) -> Value {

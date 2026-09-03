@@ -727,7 +727,19 @@ operator on a `parameter` (`if (SELFHEATING) ... ddt(...)`) compiles.
 
 Multiple `analog` and `analog initial` blocks per module execute
 as-if-concatenated in source order — verified including across instance
-flattening and with declarations interleaved between blocks.
+flattening and with declarations interleaved between blocks. LRM 5.2.1's four
+restrictions on an `analog initial` block are enforced, each with a diagnostic
+that names the construct: access functions, analog operators, contribution
+statements and event control statements are all refused there. The block is
+re-executed when a parameter it reads changes during a parameter sweep, per the
+same clause. **Its output reaches its destination** as of
+[E-541](../../enhancements_doc/Enhancement-541.md): because the block is gated
+on the initial-step iteration — which the 9.4.6/9.5.9 deferral treats as
+superseded — every `$strobe`/`$display`/`$write`/`$monitor` and every file
+write it made used to be buffered and then dropped, in every analysis, with the
+file it opened created and left at zero bytes. Since 5.2.1 forbids access
+functions and contributions in the block, reporting is one of only two things
+it can do at all.
 
 ### 5.2 Contribution statements (LRM 5.6) — ✅
 
@@ -1017,7 +1029,25 @@ multiplicatively with the netlist-level instance value (and
 multiplicatively), the child's flow contributions scale by *m*, its flow
 probes read the per-copy current back out, and its noise scales as the
 parallel combination demands (contributed-current noise power ×*m*,
-contributed-voltage noise power ÷*m*). Overrides compose down the
+contributed-voltage noise power ÷*m*).
+
+**Table 9-29's own arithmetic and bounds hold** as of
+[E-541](../../enhancements_doc/Enhancement-541.md). `$angle` resolves as a sum
+**modulo 360 degrees** into the clause's `0 ≤ $angle < 360` — two levels of
+200° read back as 400 before, which a model using it trigonometrically never
+notices and a model *comparing* it gets wrong — normalised on every route
+(netlist `_angle=`, paramset, instance override, and any composition of them).
+The *Allowed values* column is enforced: `$mfactor > 0` and
+`$hflip`/`$vflip` ∈ {+1, −1}, refused on the Verilog-A route where the value is
+a literal and warned-and-ignored on the netlist route. A negative `$mfactor`
+set from Verilog-A used to sign-invert the device silently — a plain resistor
+model **sourced** 3 mA under `#(.$mfactor(-3))` — while the identical value
+written as `m=-3` had been refused all along, which is what made this a gap in
+coverage rather than in understanding. ⚠️ Only a literal override is judged;
+one computed from a paramset card parameter is not known until run time (the
+same boundary the constant-only `sqrt` domain check draws). ⚠️ `m=0` on a
+netlist line stays silent and applied — [E-426](../../enhancements_doc/Enhancement-426.md)'s
+"disable this instance" idiom, a SPICE convention this does not relitigate. Overrides compose down the
 hierarchy (`.$mfactor(2)` inside `.$mfactor(4)` is ×8) and with the
 netlist `m=`. ⚠️ Two forms inside a scaled child keep their unscaled
 shape: indirect contributions (`V(x): I(x) == 0`) and noise routed
@@ -1090,7 +1120,11 @@ one line per change of its argument list at accepted points (a
 engineering notation, which printed garbage for every input, is exact:
 `1e3 → 1.000000k`, `1e-9 → 1.000000n`, `0.036 → 36.000000m`. A null
 argument (two adjacent commas) renders as the single space 9.4.1
-specifies. A constant-argument display hoisted to instance
+specifies. **`$write` composes a line** ([E-541](../../enhancements_doc/Enhancement-541.md)):
+the `OSDI <instance>: ` head is emitted only at the start of a line, so
+`$write("[A]"); $write("[B]")` renders `OSDI n1: [A][B]` rather than
+`OSDI n1: [A]OSDI n1: [B]` — assembling one line from several calls is the only
+thing 9.4.1 gives `$write` over `$strobe`, and a per-call head defeated it. A constant-argument display hoisted to instance
 initialization still executes there (⚠️ documented at the split):
 
 ```verilog
@@ -1131,6 +1165,21 @@ conversion); `$fgets` proper still consumes the whole line, so a `$fgets` +
 `$sscanf` pair deliberately does not reposition the descriptor. And **`$fclose`
 followed by `$fopen` for reading restarts at byte 0** rather than continuing at
 the closed stream's offset.
+
+[E-541](../../enhancements_doc/Enhancement-541.md) closed the two remaining
+9.5.1 gaps, both of which lost data in silence. **Multichannel allocation stops
+at bit 30**: the clause reserves bit 31 and says so precisely because an
+implementation needs it to tell the two descriptor kinds apart — and it is the
+very bit E-539 took for file descriptors, so the 31st `$fopen(name)` returned
+`0x8000_0000`, which is the pre-opened **STDIN**, and every write to it was
+discarded. The 31st open now returns the clause's own failure value, 0. And a
+**reopen that changes mode really reopens**: read a file, `$fclose` it, reopen
+it `"w"`, and Table 9-24's "truncate to zero length or create for writing" now
+happens — the same-name dedup used to hand back the read-mode stream, so the
+file was untouched and every following write vanished. E-539 had implemented
+this rule for the write → read direction; read → write was the other half. The
+descriptor's queued deferred writes are performed before such a reopen, because
+the model has closed the file and a reopen for reading must see them.
 
 **The scan format is read only when it is a literal**
 ([E-507](../../enhancements_doc/Enhancement-507.md)). The scanners are chosen at
@@ -1205,7 +1254,32 @@ end
 `$finish`, `$stop`, `$fatal` are honored with simulator-correct timing
 (at the accepted-point boundary; `$finish` fires `@(final_step)` and ends
 the analysis cleanly; `$fatal` during setup reads as a configuration
-rejection), and `$warning`/`$error`/`$info` display.
+rejection).
+
+The severity family follows **9.7.3** as of
+[E-541](../../enhancements_doc/Enhancement-541.md), which states its rules in
+its own words rather than by reference to 9.4.6 — and that is why they were
+missed:
+
+- **`$error`/`$warning`/`$info` fire only on accepted iterations.** "Called
+  during a rejected iteration shall have no effect": one diode `.op` used to
+  print **21** `$warning` lines walking the unconverged Newton sequence where
+  `$strobe`, on the adjacent line of the same block, printed one. `$fatal`
+  stays immediate, because the same clause says it "terminates the simulation
+  without checking whether the iteration would be rejected", and `$debug` keeps
+  9.4.6's exemption.
+- **`$error` in an `analog initial` block stops the run.** "The message is
+  issued and the initialization continues. However, the simulation shall not
+  proceed past initialization." It used to print and then hand the deck a full
+  operating point. Carried by the additive `EVAL_RET_FLAG_INITERR` bit, distinct
+  from `$fatal`'s abort: the block runs to its end and the matrix loads, and
+  only the analysis is stopped.
+- **Each message reports when it was called.** The simulation time, or "the
+  current value of the swept variable in place of the simulation run time"
+  during a `.dc`, or "that the call was made during initialization" — appended
+  as a trailing parenthetical so the `OSDI(warn) <inst>: ` head is unchanged.
+  Resolved when the message is *printed*, not when it is formatted: `CKTtime`
+  only takes a sweep point's value after the solve that produced the message.
 
 ### 7.5 The mechanism-unavailable group — ⚠️
 
@@ -1215,9 +1289,15 @@ kernel audit, the **no-default form is a compile-time warning plus a
 runtime fatal**, which is exactly the error 9.16 mandates there (it used
 to return 0.0 in silence, which this section previously mis-described as
 an LRM fallback). `$analog_node_alias`/`$analog_port_alias` return 0 (no
-alias created — the clause's unresolvable-reference value), and their
-9.20 context rule is enforced: a call outside an `analog initial` block
-is a compile error. (`$test$plusargs`/`$value$plusargs` are NO LONGER in
+alias created — the clause's unresolvable-reference value), and **all three of
+9.20's `shall be an error` rules are enforced** as of
+[E-541](../../enhancements_doc/Enhancement-541.md): a call outside an `analog
+initial` block, an aliased net that is a **port** of the module, and a target
+that is **another call's aliased net**. The third is judged only where it does
+not need hierarchy resolution — the target's last path segment names a node of
+this module that another call aliases — because a false error on a legal alias
+would be worse than the missing one; ⚠️ a path into another instance is not
+checked. (`$test$plusargs`/`$value$plusargs` are NO LONGER in
 this group: [Enhancement-215](../../enhancements_doc/Enhancement-215.md)
 serves command-line plusargs through the simparam channel.) This is the
 LRM's own escape hatch for hosts without the mechanism; models using
@@ -1284,20 +1364,21 @@ connected port.)*
 | 4.1–4.4 Operators (incl. string relational, `===`/`!==` as 2-state `==`/`!=`), precedence, functions (`$clog2`, `$rtoi`/`$itor`, `ln1p`/`expm1`, domain diagnostics both routes, `%`-by-deck-zero fatal, same-node `V(a,a)`/`I(a,a)` rejected) | ✅ (`<<<`/`>>>` extension ⚠️ warned; runtime-probe domain policy ⚠️ documented) | `operator`, `precedence`, `shift`, `concat`, `stringcmp`, `clog2`, `convert`, `ceil`, `lrmfuncs`, `lrmintrin`, `domainrt` |
 | 4.5 Analog operators (all), **clause-by-clause audit 4.5.1–4.5.15** ([E-514](../../enhancements_doc/Enhancement-514.md)); frozen-`td` absdelay implemented, ddx over unnamed-branch flows, no-ic `idtmod` pins DC at 0, `default_transition` honored for explicit zeros | ✅ (`limexp` stateless ⚠️, idt-reset τ=10µs ⚠️, ddt/idt tolerances not plumbed ⚠️, transition amplitude approximation ⚠️, zi continuous-bilinear ⚠️, dynamic laplace coeffs track+warn ⚠️ — all documented) | `absdelay`, `laplace`, `zi`, `slew`, `transition`, `idt*`, `ddx`, `opargs`, `discontinuity`, `last_crossing`, `defaulttransition`, `transedge`, `rtdomain`, `deckdomain` |
 | 4.6 Noise & analysis (correlation per call site with label-combined reporting 4.6.4.1/4.6.4.6; `noise_table` linear-in-f, `noise_table_log` log-log, parameter-fed tables ⚠️ refused; Table 4-22 ic/static/nodeset phases exact; ac_stim matched to the running small-signal analysis) | ✅ | `noise`, `noisetable`, `noisecorr`, `noisejw` |
-| 5.2/6.2 Analog blocks (multiple) | ✅ | `multianalog` |
+| 5.2/6.2 Analog blocks (multiple); **5.2.1 `analog initial` restrictions, re-execution on a parameter sweep, and its display/file output** ([E-541](../../enhancements_doc/Enhancement-541.md)) | ✅ | `multianalog`, `lrmvoice` |
 | 5.6 Contributions, indirect assignment (placement rules and the 5.6.7.2 direct/indirect incompatibility enforced; generalized equality LHS ⚠️ extension), hierarchical-contribution branch identity (5.6.8.1), parameter vector indices (5.5.2), port flow (incl. named port branches) | ✅ | `indirect_assignment`, `portflow`, `signalflow`, `lrm` |
 | 5.7–5.9, 5.11 Procedural statements, loops, disable, jump statements (`break`/`continue`/`return`, contextual keywords, genvar-for exclusion enforced) | ✅ (contributions in runtime loops ⚠️ and `do…while` ⚠️ are documented non-LRM extensions) | `analogloop`, `dowhile`, `repeat`, `disable`, `arraycase` |
 | casex/casez | ⚠️ extension beyond Annex C (C.7 excludes them from Verilog-A) | `casexz` |
 | 5.10 Events (steps with Table 5-1 exact per analysis, cross/above/timer, cross DC/t=0 gating, above init event, OR lists incl. comma, phase lists, placement rules enforced, invalid events rejected) | ✅ (cross/above tolerances ⚠️ warned not honored; strict out-of-range dir ⚠️ documented) | `initial_step`, `finalstep`, `cross`, `timer`, `lrmcorner` |
 | 4.7 Analog functions (arrays in/out/return incl. the LRM's Example 3 spelling; VAMS-2023 string return & args; function-local `parameter`s with shadowing; output-array zero-init; `return` statement) | ✅ (named blocks in bodies ⚠️ and const-context calls ⚠️ documented relaxations) | `funcarray`, `arrayout`, `arrayret` |
-| 6 Hierarchy (instantiation, generate incl. the legacy analog-block form — obsolete per G.2.3/C.20, kept as a compat extension ⚠️ — defparam incl. inside/beside generate, `#(.$mfactor(n))`-family child overrides with the full multiplicity transform, `$param_given` through hierarchy overrides, connection-size and mixed-override checking, $root, part-select connections, hierarchical branch probes) | ✅ (param-shaped structure ⚠️ explained) | `instantiation`, `generate`, `legacygen`, `defparam`, `hiername`, `implicitnet`, `partselect`, `hierbranch` |
-| 9.4–9.8 Display, file/string I/O (incl. 9.4.6/9.5.9 accepted-iteration deferral, `$monitor` change detection, `%r`, 9.5.1.1 append, pre-opened fds) | ✅ ([E-516](../../enhancements_doc/Enhancement-516.md) audit; one-hot MCDs, instance-naming `%m` and the `$fscanf`/reopen read rules from [E-539](../../enhancements_doc/Enhancement-539.md); `$fmonitor` change detection ⚠️, `%l`/`%L` ✖ not implemented — and, unlike the other ✖ entries, it emits the placeholder `__.__` rather than a diagnostic) | `display`, `fileio`, `stringio`, `fgetc`, `ungetc`, `sscanf`, `scanfmt`, `lrmsysio` |
+| 6 Hierarchy (**9.18 Table 9-29 exact: `$angle` modulo 360 and the allowed-value bounds enforced on every route**, [E-541](../../enhancements_doc/Enhancement-541.md); instantiation, generate incl. the legacy analog-block form — obsolete per G.2.3/C.20, kept as a compat extension ⚠️ — defparam incl. inside/beside generate, `#(.$mfactor(n))`-family child overrides with the full multiplicity transform, `$param_given` through hierarchy overrides, connection-size and mixed-override checking, $root, part-select connections, hierarchical branch probes) | ✅ (param-shaped structure ⚠️ explained) | `instantiation`, `generate`, `legacygen`, `defparam`, `hiername`, `implicitnet`, `partselect`, `hierbranch` |
+| 9.4–9.8 Display, file/string I/O (incl. 9.4.6/9.5.9 accepted-iteration deferral, `$monitor` change detection, `%r`, 9.5.1.1 append, pre-opened fds; **`$write` composes one line, multichannel allocation stops at the reserved bit 31, and a mode-changing reopen really reopens** — [E-541](../../enhancements_doc/Enhancement-541.md)) | ✅ ([E-516](../../enhancements_doc/Enhancement-516.md) audit; one-hot MCDs, instance-naming `%m` and the `$fscanf`/reopen read rules from [E-539](../../enhancements_doc/Enhancement-539.md); `$fmonitor` change detection ⚠️, `%l`/`%L` ✖ not implemented — and, unlike the other ✖ entries, it emits the placeholder `__.__` rather than a diagnostic) | `display`, `fileio`, `stringio`, `fgetc`, `ungetc`, `sscanf`, `scanfmt`, `lrmsysio` |
 | 9.13 Random/distributions (9.13.2 domain rules errors on the deck route too; `type_string` scoped to paramsets) | ✅ (deterministic seed ⚠️ documented) | `rng`, `montecarlo` |
+| 9.6–9.7 Simulation control; **9.7.3 severity tasks: the non-fatal three defer to the accepted iteration, `$error` in an `analog initial` block stops the run, and each message reports its time / swept value / initialization** ([E-541](../../enhancements_doc/Enhancement-541.md)) | ✅ | `simctrl`, `simparamdiag`, `lrmvoice` |
 | 9.17.3 / Annex E.3.4 `$limit` | ✅ (unknown name falls back to no limiting with a warning, per 9.17.3; `vdslim` = Table E.2's preferred spelling of `limvds`) | `fetlim`, `lrm` |
 | Annex E SPICE primitives (E.2/E.3, Table E.1) | ✖ not supported: `resistor`/`capacitor`/`bjt`/… cannot be instantiated from Verilog-A source (clean error); instantiate SPICE devices at netlist level instead | — |
 | 9 misc ($finish family, $simparam; $simparam$str serves analysis_name/analysis_type/cwd/simulator — module/instance/path unserved ⚠️; $bound_step smallest-wins; $table_model per 9.21 incl. isoline files, per-dimension controls, D/E codes, `;N` selector — `2`/`I`/whole-array-N-D ⚠️ refused; attributes) | ✅ | `simctrl`, `simparamstr`, `opvar` |
 | plusargs (`$test`/`$value`) | ✅ ([E-215](../../enhancements_doc/Enhancement-215.md)) | `plusargs` |
-| simprobe / node aliases | ⚠️ LRM fallbacks (no-default `$simprobe` = warn + the mandated runtime fatal; aliases analog-initial-only, enforced) | `alias` |
+| simprobe / node aliases | ⚠️ LRM fallbacks (no-default `$simprobe` = warn + the mandated runtime fatal; all three 9.20 `shall be an error` rules enforced — context, a port as the aliased net, and a target that is another call's net ([E-541](../../enhancements_doc/Enhancement-541.md)); ⚠️ the third only within one module) | `alias`, `lrmvoice` |
 | 10 Compiler directives (incl. `` `__FILE__``/`` `__LINE__``, predefined-macro protection, `` `begin_keywords ``) | ✅ ([E-515](../../enhancements_doc/Enhancement-515.md)) | `preproc`, `directive`, `defaulttransition`, `filemacro`, `lrmlex` |
 | Mixed-signal / digital (outside Annex C) | ❌ by scope | — |
 

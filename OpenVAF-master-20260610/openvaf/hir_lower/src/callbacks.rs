@@ -27,6 +27,16 @@ pub enum RetFlag {
     /// retry with a smaller one (sharp event resolution), in addition to the
     /// E-24 bound_step clamp on the next step.
     Discont,
+    /// LRM 9.7.3 (round-3 audit): `$error` executed inside an `analog initial`
+    /// block -- "the message is issued and the initialization continues.
+    /// However, the simulation shall not proceed past initialization."
+    ///
+    /// Distinct from [`RetFlag::Abort`] on purpose. `$fatal` "terminates the
+    /// simulation without checking whether the iteration would be rejected";
+    /// `$error` must let the initialization finish and only then stop the
+    /// analysis, and outside an `analog initial` block it must not stop
+    /// anything at all. Raised nowhere else.
+    InitErr,
 }
 
 /// The statistical-distribution family selected for a `$random`/`$dist_*`/`$rdist_*`
@@ -97,6 +107,7 @@ impl std::fmt::Display for RetFlag {
             Self::Stop => "stop",
             Self::Limited => "limited",
             Self::Discont => "discont",
+            Self::InitErr => "initerr",
         };
         write!(f, "{}", txt)
     }
@@ -208,10 +219,16 @@ pub enum CallBackKind {
         kind: DisplayKind,
         arg_tys: Box<[FmtArg]>,
         dst: PrintDst,
-        /// Lowered inside an event-controlled block: the statement fires on
-        /// the event's own iteration, so the simulator prints it right away
-        /// instead of deferring it to the accepted iteration (LRM 9.4.6).
+        /// Lowered inside an event-controlled block or an `analog initial`
+        /// block: the statement fires on that iteration, not the accepted one,
+        /// so the simulator prints it right away instead of deferring it (LRM
+        /// 9.4.6/9.5.9).
         immediate: bool,
+        /// Lowered inside an `analog initial` block. LRM 9.7.3 asks a severity
+        /// task called from one to "report that the call was made during
+        /// initialization" in place of a simulation time, and only the
+        /// compiler knows which block a statement came from.
+        in_initial: bool,
     },
     /// Begin a `$sscanf`/`$fscanf` parse over the given input string; resets the
     /// runtime scan cursor and match count. Args: `(input: ptr)`.

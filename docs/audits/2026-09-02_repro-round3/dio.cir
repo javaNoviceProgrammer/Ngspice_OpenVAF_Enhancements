@@ -1,0 +1,13 @@
+* diode op: Newton walk visible
+.control
+pre_osdi dio.osdi
+.endc
+.model mm dio
+n1 1 0 mm
+r1 in 1 1k
+v1 in 0 dc 1
+.control
+op
+quit
+.endc
+.end

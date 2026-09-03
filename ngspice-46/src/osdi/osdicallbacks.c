@@ -27,10 +27,111 @@
  * ------------------------------------------------------------------------ */
 
 typedef struct {
-  char *text;    /* fully formatted, prefix included */
+  char *text;    /* "OSDI<kind> <inst>: <message>", context NOT yet appended */
+  int head_len;  /* bytes of the "OSDI <inst>: " head at the front of `text` */
+  uint32_t sev;  /* nonzero for a severity task: its `lvl`, for the 9.7.3
+                    context, which is computed at OUTPUT time (see below) */
   bool to_err;   /* stream selection at flush time */
   bool monitor;  /* LOG_LVL_MONITOR: change-detected at flush */
 } OsdiPendingMsg;
+
+/* ROUND-3 AUDIT (2026-09-02) / LRM 9.4.1: "The $write task provides the same
+ * capabilities as $strobe, but with no newline." Suppressing the newline has
+ * exactly one purpose -- assembling one output line from several calls -- and
+ * the per-message "OSDI <inst>: " head defeated it:
+ *
+ *     $write("[A]"); $write("[B]"); $write("[C]\n");
+ *       was:  OSDI n1: [A]OSDI n1: [B]OSDI n1: [C]
+ *       now:  OSDI n1: [A][B][C]
+ *
+ * So the head is written only at the START of a line. Every other display task
+ * ends its text with a newline, so each of those still carries its own head
+ * and nothing else changes. Tracked per stream, since stdout and stderr keep
+ * independent write positions. */
+static bool at_line_start[2] = {true, true}; /* [0] stdout, [1] stderr */
+
+static void osdi_severity_when(char *buf, size_t n, uint32_t lvl);
+
+/* `sev` is a severity task's `lvl`, or 0 for every other task. The LRM 9.7.3
+ * context is resolved HERE rather than when the message was formatted, because
+ * a deferred message is emitted at the accepted point and that is when the
+ * simulator's own bookkeeping holds the right answer: during a .dc sweep
+ * `CKTtime` only takes the point's swept value after the solve that produced
+ * the message, so a context baked in at format time reported the PREVIOUS
+ * point's value. */
+static void osdi_emit(const char *text, int head_len, bool to_err,
+                      uint32_t sev) {
+  int stream = to_err ? 1 : 0;
+  FILE *dst = to_err ? stderr : stdout;
+  const char *out;
+  size_t n;
+  if (text == NULL) {
+    return;
+  }
+  out = at_line_start[stream] ? text : text + head_len;
+  n = strlen(out);
+  if (sev != 0) {
+    char when[64];
+    osdi_severity_when(when, sizeof(when), sev);
+    if (when[0] != '\0') {
+      /* before the message's own newline, so the head and the message text
+         stay contiguous for every reader that matches on them */
+      if (n > 0 && out[n - 1] == '\n') {
+        fprintf(dst, "%.*s%s\n", (int)(n - 1), out, when);
+      } else {
+        fprintf(dst, "%s%s", out, when);
+      }
+      if (n > 0) {
+        at_line_start[stream] = (out[n - 1] == '\n');
+      }
+      return;
+    }
+  }
+  fputs(out, dst);
+  if (n > 0) {
+    at_line_start[stream] = (out[n - 1] == '\n');
+  }
+}
+
+/* The circuit whose evaluation is producing log output, published by the load
+ * and setup paths below. Only the LRM 9.7.3 severity context reads it. */
+static const CKTcircuit *osdi_log_ckt;
+
+void osdi_display_note_circuit(const CKTcircuit *ckt) { osdi_log_ckt = ckt; }
+
+/* ROUND-3 AUDIT / LRM 9.7.3: "these tasks shall also report the simulation run
+ * time at which the severity system task is called. If any of these tasks is
+ * called from an analog context during a dc sweep, the simulator shall report
+ * the current value of the swept variable in place of the simulation run time.
+ * If the task is called from an analog initial block, the simulator shall
+ * report that the call was made during initialization."
+ *
+ * None of it was reported: a $warning carried the instance name and nothing
+ * else, in every analysis. Written as a trailing parenthetical rather than
+ * inside the head so that the head stays the stable "OSDI(warn) <inst>: "
+ * every reader (and every suite) already matches on.
+ *
+ * `CKTtime` carries the swept value during a .dc, which is why the two cases
+ * differ only in wording -- the same field E-55's $finish note reports as
+ * "sweep value". */
+static void osdi_severity_when(char *buf, size_t n, uint32_t lvl) {
+  const CKTcircuit *ckt = osdi_log_ckt;
+  buf[0] = '\0';
+  if (lvl & LOG_FLAG_INIT) {
+    snprintf(buf, n, " (during initialization)");
+    return;
+  }
+  if (ckt == NULL) {
+    return;
+  }
+  if (ckt->CKTmode & MODEDCTRANCURVE) {
+    snprintf(buf, n, " (at sweep value %g)", ckt->CKTtime);
+  } else if (ckt->CKTmode & MODETRAN) {
+    snprintf(buf, n, " (at t = %g)", ckt->CKTtime);
+  } else {
+    snprintf(buf, n, " (at the operating point)");
+  }
+}
 
 static OsdiPendingMsg *pending;
 static int pending_len, pending_cap;
@@ -65,6 +166,12 @@ void osdi_display_iter_begin(void) {
  * first; the first load iteration re-arms deferral via iter_begin. */
 void osdi_display_reenter_setup(void) {
   display_managed = false;
+  /* Round-3 audit: a model whose last `$write` never terminated its line would
+   * otherwise keep every later message's head suppressed for the rest of the
+   * session. Within one evaluation that is exactly what $write asks for; a new
+   * setup is a new line. */
+  at_line_start[0] = true;
+  at_line_start[1] = true;
   for (int i = 0; i < pending_len; i++) {
     tfree(pending[i].text);
   }
@@ -116,30 +223,45 @@ void osdi_display_flush(void) {
         tfree(monitor_prev[k]);
       }
       monitor_prev[k] = m->text; /* keep for the next comparison */
-      fputs(m->text, m->to_err ? stderr : stdout);
+      osdi_emit(m->text, m->head_len, m->to_err, m->sev);
       continue;
     }
-    fputs(m->text, m->to_err ? stderr : stdout);
+    osdi_emit(m->text, m->head_len, m->to_err, m->sev);
     tfree(m->text);
   }
   pending_len = 0;
 }
 
-static void osdi_log_defer(const char *prefix, const char *name,
-                           const char *msg, bool fmt_err, bool to_err,
+/* Build "<prefix><name>: <msg>", reporting how many bytes of head that put in
+ * front of the message so a `$write` continuation can skip them, and appending
+ * the LRM 9.7.3 context (`when`, empty for every non-severity task) before the
+ * message's own trailing newline. Caller owns the returned buffer. */
+static char *osdi_log_format(const char *prefix, const char *name,
+                             const char *msg, bool fmt_err, int *head_len) {
+  size_t n = strlen(prefix) + strlen(name) + strlen(msg) + 32;
+  char *text = TMALLOC(char, n);
+  int head = snprintf(text, n, "%s%s: ", prefix, name);
+  if (head < 0) {
+    head = 0;
+  }
+  if (fmt_err) {
+    snprintf(text + head, n - (size_t)head, "failed to format\"%s\"\n", msg);
+  } else {
+    snprintf(text + head, n - (size_t)head, "%s", msg);
+  }
+  *head_len = head;
+  return text;
+}
+
+static void osdi_log_defer(char *text, int head_len, uint32_t sev, bool to_err,
                            bool monitor) {
   if (pending_len >= pending_cap) {
     pending_cap = pending_cap ? 2 * pending_cap : 16;
     pending = TREALLOC(OsdiPendingMsg, pending, pending_cap);
   }
-  size_t n = strlen(prefix) + strlen(name) + strlen(msg) + 32;
-  char *text = TMALLOC(char, n);
-  if (fmt_err) {
-    snprintf(text, n, "%s%s: failed to format\"%s\"\n", prefix, name, msg);
-  } else {
-    snprintf(text, n, "%s%s: %s", prefix, name, msg);
-  }
   pending[pending_len].text = text;
+  pending[pending_len].head_len = head_len;
+  pending[pending_len].sev = sev;
   pending[pending_len].to_err = to_err;
   pending[pending_len].monitor = monitor;
   pending_len++;
@@ -231,51 +353,82 @@ char *osdi_instance_name(void *handle_) {
 
 void osdi_log(void *handle_, char *msg, uint32_t lvl) {
   OsdiNgspiceHandle *handle = handle_;
-  FILE *dst = stdout;
   uint32_t level = lvl & LOG_LVL_MASK;
-
-  /* LRM 9.4.6 deferral: display-class output waits for the accepted
-   * iteration, unless the compiler tagged it immediate (event-gated). */
-  if (display_managed &&
-      (level == LOG_LVL_DISPLAY || level == LOG_LVL_MONITOR) &&
-      !(lvl & LOG_FLAG_IMMEDIATE)) {
-    osdi_log_defer("OSDI ", handle->name, msg, (lvl & LOG_FMT_ERR) != 0,
-                   false, level == LOG_LVL_MONITOR);
-    return;
-  }
+  const char *prefix;
+  bool to_err = false;
+  bool severity = false;
+  /* Does this level wait for an accepted iteration?
+   *
+   * ROUND-3 AUDIT (2026-09-02): the three non-fatal SEVERITY levels belong
+   * here and were missing, so `$error`/`$warning`/`$info` ran on every Newton
+   * iteration. LRM 9.7.3 states the rule for this family in its own words --
+   * "Non-fatal system severity tasks ($error, $warning, $info) called during a
+   * rejected iteration shall have no effect" -- which is why reading 9.4.6
+   * alone (it names only "the display tasks") missed them. Measured on one
+   * diode .op: $strobe printed 1 line at the converged point and $warning
+   * printed 21, walking the whole unconverged Newton sequence.
+   *
+   * The other two levels stay immediate, each for its own clause:
+   *   LOG_LVL_DEBUG -- 9.4.6's sole exemption, "except $debug".
+   *   LOG_LVL_FATAL -- 9.7.3: "$fatal terminates the simulation without
+   *                    checking whether the iteration would be rejected." */
+  bool defers = false;
 
   switch (level) {
   case LOG_LVL_DEBUG:
-    printf("OSDI(debug) %s: ", handle->name);
+    prefix = "OSDI(debug) ";
     break;
   case LOG_LVL_DISPLAY:
   case LOG_LVL_MONITOR:
-    printf("OSDI %s: ", handle->name);
+    prefix = "OSDI ";
+    defers = true;
     break;
   case LOG_LVL_INFO:
-    printf("OSDI(info) %s: ", handle->name);
+    prefix = "OSDI(info) ";
+    defers = true;
+    severity = true;
     break;
   case LOG_LVL_WARN:
-    fprintf(stderr, "OSDI(warn) %s: ", handle->name);
-    dst = stderr;
+    prefix = "OSDI(warn) ";
+    to_err = true;
+    defers = true;
+    severity = true;
     break;
   case LOG_LVL_ERR:
-    fprintf(stderr, "OSDI(err) %s: ", handle->name);
-    dst = stderr;
+    prefix = "OSDI(err) ";
+    to_err = true;
+    defers = true;
+    severity = true;
     break;
   case LOG_LVL_FATAL:
-    fprintf(stderr, "OSDI(fatal) %s: ", handle->name);
-    dst = stderr;
+    prefix = "OSDI(fatal) ";
+    to_err = true;
+    severity = true;
     break;
   default:
-    fprintf(stderr, "OSDI(unknown) %s", handle->name);
+    prefix = "OSDI(unknown) ";
+    to_err = true;
     break;
   }
 
-  if (lvl & LOG_FMT_ERR) {
-    fprintf(dst, "failed to format\"%s\"\n", msg);
-  } else {
-    fprintf(dst, "%s", msg);
+  {
+    int head_len = 0;
+    /* The severity levels are all nonzero (INFO=2 .. FATAL=5), so the raw
+       `lvl` doubles as the "this is a severity task" marker and carries
+       LOG_FLAG_INIT along to the context. */
+    uint32_t sev = severity ? lvl : 0u;
+    char *text = osdi_log_format(prefix, handle->name, msg,
+                                 (lvl & LOG_FMT_ERR) != 0, &head_len);
+
+    /* LRM 9.4.6/9.5.9/9.7.3 deferral: output waits for the accepted iteration
+     * unless the compiler tagged it immediate (event-gated, or an `analog
+     * initial` block, which fires on the initial-step iteration). */
+    if (display_managed && defers && !(lvl & LOG_FLAG_IMMEDIATE)) {
+      osdi_log_defer(text, head_len, sev, to_err, level == LOG_LVL_MONITOR);
+      return;
+    }
+    osdi_emit(text, head_len, to_err, sev);
+    tfree(text);
   }
 }
 

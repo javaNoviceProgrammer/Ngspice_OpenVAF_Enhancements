@@ -24,7 +24,8 @@ use typed_indexmap::TiSet;
 
 use crate::inst_data::OsdiInstanceData;
 use crate::metadata::osdi_0_4::{
-    stdlib_bitcode, OsdiTys, LOG_FLAG_IMMEDIATE, LOG_FMT_ERR, LOG_LVL_DEBUG, LOG_LVL_DISPLAY,
+    stdlib_bitcode, OsdiTys, LOG_FLAG_IMMEDIATE, LOG_FLAG_INIT, LOG_FMT_ERR, LOG_LVL_DEBUG,
+    LOG_LVL_DISPLAY,
     LOG_LVL_ERR, LOG_LVL_FATAL, LOG_LVL_INFO, LOG_LVL_MONITOR, LOG_LVL_WARN,
 };
 use crate::metadata::OsdiLimFunction;
@@ -315,9 +316,9 @@ pub fn general_callbacks<'ll>(
                 | CallBackKind::AcStim { .. }
                 | CallBackKind::TimeDerivative => return None,
 
-                CallBackKind::Print { kind, arg_tys, dst, immediate } => {
+                CallBackKind::Print { kind, arg_tys, dst, immediate, in_initial } => {
                     let (fun, fun_ty) =
-                        print_callback(builder.cx, *kind, arg_tys, *dst, *immediate);
+                        print_callback(builder.cx, *kind, arg_tys, *dst, *immediate, *in_initial);
                     CallbackFun::Prebuilt(BuiltCallbackFun {
                         fun_ty,
                         fun,
@@ -350,6 +351,14 @@ pub fn general_callbacks<'ll>(
                             .cx
                             .get_func_by_name("set_ret_flag_discont")
                             .expect("stdlib function set_ret_flag_discont is missing")
+                    } else if *flag == RetFlag::InitErr {
+                        // Round-3 audit / LRM 9.7.3: `$error` in an `analog
+                        // initial` block -- finish the initialization, then
+                        // do not proceed past it.
+                        builder
+                            .cx
+                            .get_func_by_name("set_ret_flag_initerr")
+                            .expect("stdlib function set_ret_flag_initerr is missing")
                     } else {
                         panic!("Unsupported RetFlag encountered.");
                     };
@@ -518,6 +527,7 @@ fn print_callback<'ll>(
     arg_tys: &[FmtArg],
     dst: PrintDst,
     immediate: bool,
+    in_initial: bool,
 ) -> (&'ll llvm_sys::LLVMValue, &'ll llvm_sys::LLVMType) {
     // Parameters: (handle, fmt_string, [fd if File], formatted args...). The
     // file variant carries the integer descriptor right after the format string
@@ -774,6 +784,9 @@ fn print_callback<'ll>(
         // (e.g. @(initial_step)); the simulator must print them right away
         // rather than defer them to the accepted iteration (LRM 9.4.6).
         let lvl = if immediate { lvl | LOG_FLAG_IMMEDIATE } else { lvl };
+        // Round-3 audit / LRM 9.7.3: a severity task called from an `analog
+        // initial` block reports "during initialization" instead of a time.
+        let lvl = if in_initial { lvl | LOG_FLAG_INIT } else { lvl };
         let lvl_and_err = lvl | LOG_FMT_ERR;
         let lvl = cx.const_unsigned_int(lvl);
         let lvl_and_err = cx.const_unsigned_int(lvl_and_err);

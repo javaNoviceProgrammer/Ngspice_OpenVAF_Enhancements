@@ -1,0 +1,12 @@
+* fclose(mcd) and channel reuse
+.control
+pre_osdi mch2.osdi
+.endc
+.model mm mch2
+n1 1 0 mm
+v1 1 0 dc 1
+.control
+op
+quit
+.endc
+.end

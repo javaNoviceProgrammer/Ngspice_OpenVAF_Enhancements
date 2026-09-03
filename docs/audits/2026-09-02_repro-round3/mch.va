@@ -1,0 +1,18 @@
+`include "disciplines.vams"
+module mch(p,n);
+  inout p,n; electrical p,n;
+  integer f1,f2; string s;
+  analog begin
+    @(initial_step) begin
+      f1 = $fopen("mode1.txt","r");
+      $fgets(s, f1);
+      $strobe("MCH read1=%0d line=%s", f1, s);
+      $fclose(f1);
+      f2 = $fopen("mode1.txt","a");        // MODE CHANGE: read -> append
+      $strobe("MCH append fd=%0d (same as read fd? %0d)", f2, f1);
+      $fdisplay(f2, "CCCC");
+      $fclose(f2);
+    end
+    I(p,n) <+ V(p,n)*1e-3;
+  end
+endmodule

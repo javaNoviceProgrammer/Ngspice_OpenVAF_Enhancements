@@ -63,6 +63,14 @@
  * simulator may reject the current timestep and retry with a smaller one.
  * Additive bit -- not an ABI break (older simulators simply ignore it). */
 #define EVAL_RET_FLAG_DISCONT 16
+/* Round-3 audit / LRM 9.7.3: `$error` ran inside an `analog initial` block.
+ * "The message is issued and the initialization continues. However, the
+ * simulation shall not proceed past initialization." Unlike
+ * EVAL_RET_FLAG_FATAL this does NOT abandon the evaluation -- the block runs
+ * to its end and the matrix load completes; the simulator stops the analysis
+ * afterwards. Additive bit, so an older simulator simply ignores it and gets
+ * exactly today's behaviour. */
+#define EVAL_RET_FLAG_INITERR 32
 
 
 #define LOG_LVL_MASK 7
@@ -75,6 +83,9 @@
 #define LOG_LVL_MONITOR 6
 #define LOG_FLAG_IMMEDIATE 8
 #define LOG_FMT_ERR 16
+/* Round-3 audit / LRM 9.7.3: the display statement sits in an `analog
+ * initial` block; a severity task reports "during initialization". */
+#define LOG_FLAG_INIT 32
 
 #define INIT_ERR_OUT_OF_BOUNDS 1
 

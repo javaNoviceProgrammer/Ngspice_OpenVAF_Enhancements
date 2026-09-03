@@ -1,0 +1,423 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LRM audit 2026-09-02 · round 3</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Serif:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+</head>
+<body>
+<style>
+  :root {
+    --paper: #F7F7F4;
+    --surface: #FFFFFF;
+    --ink: #21262D;
+    --muted: #5C6470;
+    --faint: #8A919C;
+    --line: #E2E3DE;
+    --accent: #0E5E68;
+    --accent-soft: #E3EEEF;
+    --sev-bug: #B23A2E;
+    --sev-bug-bg: #F9ECEA;
+    --sev-dev: #96690F;
+    --sev-dev-bg: #F8F1E1;
+    --sev-miss: #6F58B8;
+    --sev-miss-bg: #EFECF8;
+    --sev-doc: #31699E;
+    --sev-doc-bg: #E8F0F8;
+    --sev-ok: #2E7D4F;
+    --sev-ok-bg: #E8F3EC;
+    --code-bg: #EFF0EC;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #14171C;
+      --surface: #1C2026;
+      --ink: #E5E7EA;
+      --muted: #9AA1AB;
+      --faint: #6E7681;
+      --line: #2C313A;
+      --accent: #57B2BC;
+      --accent-soft: #16333A;
+      --sev-bug: #E58074;
+      --sev-bug-bg: #3A211E;
+      --sev-dev: #D9A94E;
+      --sev-dev-bg: #362B14;
+      --sev-miss: #AC9AE3;
+      --sev-miss-bg: #292239;
+      --sev-doc: #7FAEDA;
+      --sev-doc-bg: #1C2B3A;
+      --sev-ok: #74BD92;
+      --sev-ok-bg: #1B3126;
+      --code-bg: #262B33;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #14171C;
+    --surface: #1C2026;
+    --ink: #E5E7EA;
+    --muted: #9AA1AB;
+    --faint: #6E7681;
+    --line: #2C313A;
+    --accent: #57B2BC;
+    --accent-soft: #16333A;
+    --sev-bug: #E58074;
+    --sev-bug-bg: #3A211E;
+    --sev-dev: #D9A94E;
+    --sev-dev-bg: #362B14;
+    --sev-miss: #AC9AE3;
+    --sev-miss-bg: #292239;
+    --sev-doc: #7FAEDA;
+    --sev-doc-bg: #1C2B3A;
+    --sev-ok: #74BD92;
+    --sev-ok-bg: #1B3126;
+    --code-bg: #262B33;
+  }
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+    font-size: 16px;
+    line-height: 1.6;
+    margin: 0;
+  }
+  .wrap { max-width: 860px; margin: 0 auto; padding: 48px 24px 96px; }
+  header.masthead { border-bottom: 3px solid var(--ink); padding-bottom: 28px; margin-bottom: 36px; }
+  .eyebrow {
+    font-family: "IBM Plex Mono", monospace; font-size: 12px; letter-spacing: 0.14em;
+    text-transform: uppercase; color: var(--accent); margin-bottom: 14px;
+  }
+  h1 {
+    font-family: "IBM Plex Serif", Georgia, serif; font-weight: 600;
+    font-size: clamp(30px, 5vw, 44px); line-height: 1.12; margin: 0 0 14px; text-wrap: balance;
+  }
+  .standfirst { font-size: 17.5px; color: var(--muted); max-width: 64ch; margin: 0; }
+  .metaline { font-family: "IBM Plex Mono", monospace; font-size: 12.5px; color: var(--faint); margin-top: 18px; }
+  h2 {
+    font-family: "IBM Plex Serif", Georgia, serif; font-weight: 600; font-size: 25px;
+    margin: 56px 0 6px; text-wrap: balance;
+  }
+  h2 .secno { color: var(--faint); font-family: "IBM Plex Mono", monospace; font-size: 15px; margin-right: 10px; }
+  h3 { font-size: 17px; font-weight: 600; margin: 34px 0 12px; }
+  p { max-width: 70ch; }
+  p.lede { color: var(--muted); margin-top: 0; }
+  a { color: var(--accent); }
+  code, .mono { font-family: "IBM Plex Mono", monospace; font-size: 0.86em; }
+  code { background: var(--code-bg); padding: 1px 5px; border-radius: 3px; }
+  /* scoreboard */
+  .score { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; margin: 30px 0 8px; }
+  .scard { background: var(--surface); border: 1px solid var(--line); border-top: 3px solid var(--sc, var(--accent)); padding: 14px 16px 12px; }
+  .scard .n { font-family: "IBM Plex Serif", Georgia, serif; font-size: 34px; font-weight: 600; line-height: 1; color: var(--sc, var(--ink)); font-variant-numeric: tabular-nums; }
+  .scard .l { font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin-top: 6px; }
+  .scorenote { font-size: 13.5px; color: var(--faint); margin-top: 10px; }
+  /* findings */
+  .finding {
+    background: var(--surface); border: 1px solid var(--line);
+    border-left: 4px solid var(--fc, var(--accent));
+    padding: 14px 18px 13px; margin: 0 0 10px;
+  }
+  .f-bug { --fc: var(--sev-bug); }
+  .f-dev { --fc: var(--sev-dev); }
+  .f-miss { --fc: var(--sev-miss); }
+  .f-doc { --fc: var(--sev-doc); }
+  .f-ok { --fc: var(--sev-ok); }
+  .finding .head { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: baseline; }
+  .finding .t { font-weight: 600; font-size: 15.5px; }
+  .chip {
+    font-family: "IBM Plex Mono", monospace; font-size: 10.5px; letter-spacing: 0.08em;
+    text-transform: uppercase; padding: 2px 8px; border-radius: 999px; white-space: nowrap;
+    background: var(--cbg); color: var(--cfg);
+  }
+  .c-bug { --cbg: var(--sev-bug-bg); --cfg: var(--sev-bug); }
+  .c-dev { --cbg: var(--sev-dev-bg); --cfg: var(--sev-dev); }
+  .c-miss { --cbg: var(--sev-miss-bg); --cfg: var(--sev-miss); }
+  .c-doc { --cbg: var(--sev-doc-bg); --cfg: var(--sev-doc); }
+  .c-ok { --cbg: var(--sev-ok-bg); --cfg: var(--sev-ok); }
+  .lrm { font-family: "IBM Plex Mono", monospace; font-size: 11.5px; color: var(--faint); white-space: nowrap; }
+  .finding .d { font-size: 14.5px; color: var(--muted); margin-top: 5px; max-width: 76ch; }
+  .finding .d strong { color: var(--ink); font-weight: 600; }
+  .finding .ev {
+    font-family: "IBM Plex Mono", monospace; font-size: 12.5px; color: var(--muted);
+    background: var(--code-bg); border-radius: 4px; padding: 7px 10px; margin-top: 9px;
+    overflow-x: auto; white-space: pre; line-height: 1.55;
+  }
+  /* tables */
+  .tblwrap { overflow-x: auto; border: 1px solid var(--line); background: var(--surface); }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  th { font-size: 11.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); text-align: left; }
+  th, td { padding: 9px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  td.mono { font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .oklist { padding-left: 0; list-style: none; max-width: 78ch; }
+  .oklist li { padding: 7px 0 7px 26px; position: relative; border-bottom: 1px dashed var(--line); font-size: 14.5px; }
+  .oklist li::before { content: "✓"; position: absolute; left: 2px; color: var(--sev-ok); font-weight: 600; }
+  .toc { background: var(--surface); border: 1px solid var(--line); padding: 18px 22px; margin-top: 30px; }
+  .toc ol { margin: 8px 0 0; padding-left: 22px; columns: 2; column-gap: 40px; font-size: 14.5px; }
+  .toc ol li { margin-bottom: 5px; }
+  @media (max-width: 640px) { .toc ol { columns: 1; } }
+  .callout { background: var(--accent-soft); border-left: 4px solid var(--accent); padding: 14px 18px; margin: 22px 0; font-size: 15px; max-width: 76ch; }
+  .refuted { opacity: 0.85; }
+  footer { margin-top: 64px; border-top: 1px solid var(--line); padding-top: 18px; font-size: 13px; color: var(--faint); }
+</style>
+<div class="wrap">
+<header class="masthead">
+  <div class="eyebrow">Conformance audit · Accellera VAMS-2023 · third pass, twelve areas</div>
+  <h1>The third LRM audit: nine divergences, and all of them are about output</h1>
+  <p class="standfirst">An independent pass over <strong>openvaf-r</strong> and the <strong>ngspice-46 OSDI</strong> layer against the Verilog-AMS 2023 LRM. The August audit fixed 39 bugs; the September re-audit fixed five more and left the numerical core in good order. This pass went at the places the first two swept past — the <em>timing</em> and <em>addressing</em> of everything a model says to the outside world. <strong>Nine findings, every one reproduced against the shipped binaries and traced to a named line.</strong> Four lose data silently: an <code>analog initial</code> block's entire output is discarded, a file reopened for writing swallows every write, a negative multiplicity turns a resistor into a source, and the thirty-first output file writes into a descriptor that goes nowhere.</p>
+  <div class="metaline">2026-09-02 · LRM: docs/VAMS-LRM-2023.pdf (442 pp, clauses 3, 5, 9, Annex C) · compiler: OpenVAF-master-20260610 · simulator: ngspice-46 · binaries: bin/macos/apple-silicon @ cb8a6528 · prior passes: 2026-08-31 audit + re-audit, 2026-09-02 round 2</div>
+</header>
+
+<div class="score">
+  <div class="scard" style="--sc: var(--sev-bug)"><div class="n">9</div><div class="l">Findings</div></div>
+  <div class="scard" style="--sc: var(--sev-bug)"><div class="n">4</div><div class="l">Silent data loss</div></div>
+  <div class="scard" style="--sc: var(--sev-miss)"><div class="n">1</div><div class="l">Partly pre-documented</div></div>
+  <div class="scard" style="--sc: var(--sev-ok)"><div class="n">9</div><div class="l">Now fixed</div></div>
+  <div class="scard" style="--sc: var(--sev-ok)"><div class="n">12</div><div class="l">Areas audited</div></div>
+</div>
+<p class="scorenote">Each finding was reproduced first against the locally built binaries and then re-run against the committed <code>bin/macos/apple-silicon/</code> pair; all nine behave identically on both. Before writing any of them up, the repository's own record — the compliance tracker, all 535 enhancement documents, the two prior audits — was searched for prior art, and where it exists it is quoted inline rather than left for a later correction. Decks: <a href="2026-09-02_repro-round3/">2026-09-02_repro-round3/</a>.</p>
+
+<div class="callout" style="background: var(--sev-ok-bg); border-left-color: var(--sev-ok)"><strong>Resolved (2026-09-02, after the audit).</strong> All nine are fixed in <a href="../../enhancements_doc/Enhancement-541.md">Enhancement-541</a>, and pinned by <a href="../../examples/lrmvoice_examples/">examples/lrmvoice_examples/</a> — <strong>28 checks, both solvers</strong>, scoring <strong>11/28</strong> against the binaries audited here, where the eleven passes are the compile checks plus four deliberate controls. Five of the nine needed no new mechanism: they were the existing guard applied to the route it had not reached. The two that did are additive ABI bits (<code>EVAL_RET_FLAG_INITERR</code>, <code>LOG_FLAG_INIT</code>), so an older simulator or an older <code>.osdi</code> reads exactly as before. One correction to this page's own reasoning came out of the work — the severity context has to be resolved when the message is <em>printed</em>, not when it is formatted: during a <code>.dc</code> sweep <code>CKTtime</code> only takes the point's swept value after the solve that produced the message, so the first implementation reported the <em>previous</em> point's.</div>
+
+<div class="toc">
+  <strong>Contents</strong>
+  <ol>
+    <li><a href="#verdict">The verdict</a></li>
+    <li><a href="#method">How this pass ran</a></li>
+    <li><a href="#lost">Output that is lost, doubled, or misrouted</a></li>
+    <li><a href="#bounds">Values the LRM bounds and nothing checks</a></li>
+    <li><a href="#lower">Lower severity</a></li>
+    <li><a href="#conformant">What was measured and holds</a></li>
+    <li><a href="#notquite">Things that looked wrong and are not</a></li>
+    <li><a href="#coverage">Coverage map</a></li>
+  </ol>
+</div>
+
+<h2 id="verdict"><span class="secno">1</span>The verdict</h2>
+<p class="lede">The arithmetic is not the problem and was not the problem last time either. What this pass found is that a model's <em>voice</em> — display, files, diagnostics — is routed by machinery that three separate clauses constrain, and the machinery covers some of them and not others.</p>
+<p>Two prior audits established that the compact-model core is right: contributions, derivatives, filters, noise, parameter resolution. Round 2 then found that the failures had migrated to <strong>state that spans calls</strong> — a file position, an instance identity, a nature's tolerance. This round pushed one step further along the same line and found the next stratum: <strong>state that spans <em>iterations</em></strong>. Every finding here is a question of <em>when</em> a message is emitted, or <em>where</em> it is addressed, and none is a mistake in a formula.</p>
+<p>The sharpest result is a single-module experiment. Put six display tasks and one file write in an <code>analog initial</code> block. Run three analyses. <code>$debug</code> and <code>$info</code> print three times each — which <strong>proves the block executed in every analysis</strong> — and <code>$strobe</code>, <code>$display</code>, <code>$write</code>, <code>$monitor</code> and <code>$fdisplay</code> produce <strong>nothing at all</strong>, with the output file created and left at zero bytes. LRM 5.2.1 forbids access functions, analog operators, contributions and event controls inside that block, so initialising variables and reporting are the only two things it is allowed to do, and one of the two is silently discarded.</p>
+<div class="callout">The second sharpest is a two-line diff. In one diode <code>.op</code>, from the same analog block: <code>$strobe</code> prints <strong>one</strong> line at the converged point; <code>$warning</code> prints <strong>twenty-one</strong>, walking the whole unconverged Newton sequence <code>0 → 1.000000 → 0.974135 → … → 0.629443</code>. That is verbatim the headline of the August audit — <em>"every display fired on every Newton iteration"</em> — surviving on the one family of tasks the remediation did not sweep, and the clause that governs them (9.7.3) states the rule in its own words rather than by reference to 9.4.6, which is very likely why it was missed.</div>
+<p>Reading the three groups together, one pattern explains five of the nine: <strong>a guard exists, is correct, and does not cover every route into the thing it guards</strong>. Display deferral covers <code>$strobe</code> but not <code>$warning</code>. The immediate-print tag covers <code>@(initial_step)</code> but not <code>analog initial</code>. ngspice's multiplicity check covers the netlist <code>m=</code> but not the Verilog-A <code>#(.$mfactor(…))</code>. The descriptor split introduced by E-539 reserves bit 31 for file descriptors, and the multichannel allocator still hands bit 31 out; the same enhancement's mode-change reopen covers write&nbsp;→&nbsp;read and not read&nbsp;→&nbsp;write. In each case the reasoning that produced the guard applies unchanged to the uncovered route.</p>
+
+<h2 id="method"><span class="secno">2</span>How this pass ran</h2>
+<p>Twelve areas, chosen by first reading the two prior audits' coverage maps and then deliberately <em>not</em> repeating them. Both earlier passes were organised by LRM chapter; this one was organised by <strong>mechanism</strong>, on the theory that a chapter-shaped sweep will systematically miss anything whose specification is split across chapters — which is exactly what LRM 9.4.6, 9.5.9 and 9.7.3 do to the accepted-iteration rule.</p>
+<p>Two instruments were new here. The first was an <strong>exhaustive existence sweep</strong> of the system-function surface: 108 call sites — every entry in LRM Tables 9-1 through 9-18 marked <em>&ldquo;supported in analog context: Yes&rdquo;</em>, plus the entries marked <em>No</em>, so that both &ldquo;missing&rdquo; and &ldquo;correctly refused&rdquo; are measured facts rather than impressions — each compiled on its own. It produced no bugs: everything the tables require is present, the one absence is a disclosed subset boundary, and every refusal is one the tables ask for. Worth knowing in itself — the gaps are not in <em>what exists</em>.</p>
+<p>The second was <strong>paired measurement</strong>. Rather than checking one task against the clause, each test puts the suspect task and a known-good sibling in the same block of the same module, so the comparison controls for the deck, the analysis, the instance and the iteration count. <code>$strobe</code> beside <code>$warning</code>; <code>@(initial_step)</code> beside <code>analog initial</code>; <code>#(.$mfactor(3))</code> beside <code>#(.$mfactor(-3))</code>. Every headline number below is one of those pairs, which is why none of them needs an argument about what the simulator &ldquo;should&rdquo; have done.</p>
+<p>Each finding was then pushed until it named a cause in <code>openvaf/hir_lower</code>, <code>openvaf/hir</code>, <code>openvaf/osdi/stdlib.c</code> or <code>ngspice-46/src/osdi</code>, and each was re-run against the committed binaries. Candidates that turned out to be documented, deliberate, or correct on a closer reading of the clause are in §7 rather than deleted — including one that reproduced perfectly and is <em>not</em> a finding.</p>
+
+<h2 id="lost"><span class="secno">3</span>Output that is lost, doubled, or misrouted</h2>
+
+<div class="finding f-bug"><div class="head"><span class="chip c-bug">bug · silent · FIXED (E-541)</span><span class="t">Every display task and every file write in an <code>analog initial</code> block is discarded</span><span class="lrm">LRM 5.2.1 / 9.4.6 / 9.5.9</span></div>
+<div class="d">LRM 5.2.1 gives the <code>analog initial</code> block one job — <em>&ldquo;simulation initialization purposes&rdquo;</em> — and then forbids, inside it, access functions, analog operators, contribution statements and event control statements. What remains is assigning variables and reporting. <strong>The reporting half produces no output whatsoever</strong>, in every analysis, and the file it opens is created and left empty, so nothing looks wrong.</div>
+<div class="d">One module, one <code>analog initial</code> block holding the six display tasks and one open&ndash;write&ndash;close file sequence, three analyses (<code>op</code>, <code>tran</code>, <code>dc</code>):</div>
+<div class="ev">$debug     3 lines   (once per analysis)   &lt;- proves the block ran
+$info      3 lines   (once per analysis)
+$strobe    0 lines
+$display   0 lines
+$write     0 lines
+$monitor   0 lines
+$fdisplay  0 bytes   (INIT.txt created, size 0)</div>
+<div class="d">The paired control is decisive: move the identical statements into <code>@(initial_step)</code> in the same module and <strong>all of them appear</strong>. Same tasks, same instance, same analysis — only the enclosing construct differs.</div>
+<div class="ev">analog initial  begin $strobe("INIT-strobe"); $display("INIT-display"); $info("INIT-info"); end
+@(initial_step) begin $strobe("EVT-strobe");  $display("EVT-display");  $info("EVT-info");  end
+
+observed:  OSDI(info) n1: INIT-info          &lt;- only the immediate-path task
+           OSDI n1: EVT-strobe
+           OSDI n1: EVT-display
+           OSDI(info) n1: EVT-info</div>
+<div class="d"><strong>Cause.</strong> <code>hir_lower/src/lib.rs:619</code> lowers the block into the <em>eval</em> function under <code>make_cond(ParamKind::IsInitialStep, …)</code> — correct for E-456's purpose, which was to stop the block re-running on every evaluation. But it does not set <code>ctx.in_event_ctx</code>, which <code>hir_lower/src/stmt.rs:215</code> sets only while lowering an event-controlled statement, and which is what tags a display with <code>LOG_FLAG_IMMEDIATE</code>. Untagged, the output reaches <code>osdi_log</code> (<code>ngspice-46/src/osdi/osdicallbacks.c:239</code>) during the instance's <em>first</em> Newton iteration, is deferred into the pending buffer, and is then dropped by the next <code>osdi_display_iter_begin</code> as a superseded iteration. The file half takes the same route through <code>osdi_io_iter_begin</code>.</div>
+<div class="d">The comment sitting directly above that assignment states the hazard exactly, for the neighbouring construct: <em>&ldquo;the event fires on its own Newton iteration, so deferring their output to the accepted iteration (LRM 9.4.6) would drop it entirely&rdquo;</em>. <code>analog initial</code> fires on the initial-step iteration for precisely the same reason and did not get the tag. This is the third appearance of one hazard — E-516 handled it for event-gated statements, E-535 (hunt N5) for re-entered setup code, and the <code>analog initial</code> route is still open.</div>
+<div class="ev">repro: cbig.va / cbig.cir   ·   paired control: ini.va, fw.va</div></div>
+
+<div class="finding f-bug"><div class="head"><span class="chip c-bug">bug · FIXED (E-541)</span><span class="t"><code>$error</code>, <code>$warning</code> and <code>$info</code> execute on every Newton iteration, including rejected ones</span><span class="lrm">LRM 9.7.3 p.237</span></div>
+<div class="d">LRM 9.7.3 is explicit and self-contained: <em>&ldquo;Non-fatal system severity tasks (<code>$error</code>, <code>$warning</code>, <code>$info</code>) called during a <strong>rejected iteration shall have no effect</strong>. <code>$fatal</code> terminates the simulation without checking whether the iteration would be rejected.&rdquo;</em> The rule is stated for this family in its own words, not by reference to 9.4.6 — and the split it draws is exactly one task wide.</div>
+<div class="d">One diode <code>.op</code>. <code>$strobe</code> and <code>$warning</code> sit on adjacent lines of the same analog block:</div>
+<div class="ev">$strobe  -> 1 line    OSDI n1: S v=0.629443            &lt;- the converged point
+$warning -> 21 lines  OSDI(warn) n1: W v=0.000000
+                      OSDI(warn) n1: W v=1.000000
+                      OSDI(warn) n1: W v=0.974135
+                      ... 16 more unconverged iterates ...
+                      OSDI(warn) n1: W v=0.629443</div>
+<div class="d">Over a 5-point DC sweep the same pairing gives <strong>5 lines from <code>$strobe</code> and 12 from each severity task</strong>: one at <code>v=0</code> before the sweep begins — output displayed when no iteration has been accepted at all, which is the negative half of 9.4.6 as well — then one per Newton iteration at each of the five points (three at the first, two at each of the rest).</div>
+<div class="d"><strong>Cause.</strong> <code>ngspice-46/src/osdi/osdicallbacks.c:239</code>. The deferral gate tests the level:</div>
+<div class="ev">if (display_managed &amp;&amp;
+    (level == LOG_LVL_DISPLAY || level == LOG_LVL_MONITOR) &amp;&amp;
+    !(lvl &amp; LOG_FLAG_IMMEDIATE)) {  ... defer ... }</div>
+<div class="d"><code>LOG_LVL_INFO</code>, <code>LOG_LVL_WARN</code> and <code>LOG_LVL_ERR</code> fall through to the immediate <code>switch</code>. <code>LOG_LVL_FATAL</code> falling through is <em>correct</em> — the clause says so — so the fix is bounded to adding the three non-fatal levels, and <code>$debug</code> and <code>$fatal</code> must stay out.</div>
+<div class="d" style="border-left:3px solid var(--sev-miss);padding-left:10px"><strong>Prior art, and it is partial.</strong> <a href="../../enhancements_doc/Enhancement-516.md">Enhancement-516</a> contains the sentence <em>&ldquo;the compiler knows the gating: statements lowered inside an event control carry a new <code>LOG_FLAG_IMMEDIATE</code> bit (and <code>$fdebug</code>/severity tasks keep their immediate paths)&rdquo;</em> — a parenthesis inside a paragraph about event gating, with no clause cited. Thirty-four lines earlier the same document states the exemption as <em>&ldquo;only <code>$fdebug</code> exempt&rdquo;</em>. So the behaviour was chosen, but chosen by grouping the severity tasks with <code>$debug</code>, which is the one task 9.4.6 exempts and the one task 9.7.3 does not cover. The compliance tracker records only that <code>$warning</code>/<code>$error</code>/<code>$info</code> &ldquo;display&rdquo;; no document weighs 9.7.3 against the choice. It is reported here as a divergence, with the prior decision quoted rather than paraphrased.</div>
+<div class="ev">repro: dio.va / dio.cir (21 vs 1)  ·  pair.va / pair.cir (12 vs 5)</div></div>
+
+<div class="finding f-bug"><div class="head"><span class="chip c-bug">bug · FIXED (E-541)</span><span class="t"><code>$error</code> in an <code>analog initial</code> block lets the simulation proceed past initialization</span><span class="lrm">LRM 9.7.3 p.237</span></div>
+<div class="d">The clause is unambiguous: <em>&ldquo;If <code>$error</code> is executed within an <code>analog initial</code> block, then the message is issued and the initialization continues. However, <strong>the simulation shall not proceed past initialization</strong>.&rdquo;</em> This is the standard's designated way for a model to reject a parameter combination it cannot serve. Observed: the message prints, the operating point runs to completion, and the deck gets numbers.</div>
+<div class="ev">OSDI(err) n1: ERR from analog initial
+v(1) = 1.000000e+00              &lt;- LRM: this solution must not be produced
+REACHED-END</div>
+<div class="d">The mechanism to stop after initialization <strong>exists and is demonstrably wired up</strong> — the same model with <code>$fatal</code> in place of <code>$error</code> aborts exactly as it should, producing <em>&ldquo;a Verilog-A device raised $fatal during the operating point; aborting&rdquo;</em> and no <code>v(1)</code>. Only <code>$error</code> does not reach it.</div>
+<div class="d"><strong>Cause.</strong> <code>hir_lower/src/expr.rs:2591</code> lowers <code>$fatal</code> as a display <em>plus</em> <code>CallBackKind::SetRetFlag(RetFlag::Abort)</code>, which <code>osdiload.c:1035</code> turns into <code>E_PANIC</code>. <code>BuiltIn::error</code> (same file, line 2402) emits the display and nothing else, and no <code>RetFlag</code> expresses 9.7.3's weaker &ldquo;finish after initialization, do not start the analysis&rdquo;.</div>
+<div class="d"><strong>The same clause's reporting requirement is also unmet</strong>, for all four tasks: <em>&ldquo;these tasks <strong>shall</strong> also report the simulation run time at which the severity system task is called. If any of these tasks is called from an analog context during a dc sweep, the simulator shall report the current value of the swept variable in place of the simulation run time. If the task is called from an <code>analog initial</code> block, the simulator shall report that the call was made during initialization.&rdquo;</em> Messages carry the instance name and nothing else, in every analysis — which is the same complaint 9.4.4 makes about <code>%m</code>, on a family where the LRM spells the requirement out.</div>
+<div class="ev">measured in a dc sweep: OSDI(warn) n1: v is high (0.75)      &lt;- no swept value
+measured in a transient: OSDI(warn) n1: v is high (0.5312)    &lt;- no time
+repro: sev.va + si3.cir  ·  control: fat.va + fatbody.cir  ·  context: sev2.va</div></div>
+
+<div class="finding f-bug"><div class="head"><span class="chip c-bug">bug · silent · FIXED (E-541)</span><span class="t">The thirty-first multichannel descriptor is <code>0x8000_0000</code>, the bit the LRM reserves — and writes to it vanish</span><span class="lrm">LRM 9.5.1 p.229</span></div>
+<div class="d">LRM 9.5.1: <em>&ldquo;The most significant bit (bit 31) of a multichannel descriptor is <strong>reserved and shall always be cleared</strong>, limiting an implementation to at most <strong>31 files</strong> opened for output via multichannel descriptors.&rdquo;</em> Bit 0 is stdout, so the usable range is bits 1–30 and the ceiling is 30 user files. The allocator runs to bit 31.</div>
+<div class="ev">$fopen("e0.txt")   -> 2            (bit 1)   ok
+...
+$fopen("e29.txt")  -> 1073741824   (bit 30)  ok, and this is the last legal one
+$fopen("e30.txt")  -> -2147483648  (bit 31)  LRM: shall always be cleared
+$fopen("e31.txt")  -> 0                      correct failure indication</div>
+<div class="d">The consequence is not cosmetic, and it is specific to this tree. <a href="../../enhancements_doc/Enhancement-539.md">Enhancement-539</a> implemented the clause's two-namespace split by taking bit 31 as the file-descriptor marker (<code>OSDI_FD_BIT 0x80000000u</code>), with <code>0x8000_0000</code> itself being <strong>STDIN</strong>. So the thirty-first multichannel descriptor is bit-identical to the pre-opened read-only standard input, and the runtime resolves it that way: a <code>$fdisplay</code> to it is silently discarded — it does not reach the file, and it does not reach stdout either.</div>
+<div class="ev">$fdisplay(&lt;31st mcd&gt;, "THIS-SHOULD-GO-TO-ex2/e30.txt")
+  ex2/e30.txt : 0 bytes
+  stdout      : nothing</div>
+<div class="d"><strong>Cause.</strong> <code>openvaf/osdi/stdlib.c:754</code> — the free-slot scan is <code>for (int b = 1; b &lt; OSDI_MCD_BITS; b++)</code> with <code>OSDI_MCD_BITS</code> defined as 32 (line 609), so bit 31 is allocatable. The dedup scan (line 742) and both close loops (974, 1016) share the bound. The clause's own arithmetic — bit 0 reserved below, bit 31 reserved above, 31 files — is the check that was not applied.</div>
+<div class="ev">repro: exh.va / exh.cir (allocation), exh2.va / exh2.cir (the lost write)</div></div>
+<div class="finding f-bug"><div class="head"><span class="chip c-bug">bug · silent · FIXED (E-541)</span><span class="t">Reopening a file in a different mode is ignored, and every write to it is silently lost</span><span class="lrm">LRM 9.5.1 Table 9-24 p.229</span></div>
+<div class="d">Table 9-24 gives <code>"w"</code> as <em>&ldquo;truncate to zero length or create for writing&rdquo;</em> and <code>"a"</code> as <em>&ldquo;append; open for writing at end of file&rdquo;</em>. Read a file, close it, reopen it for writing, and the descriptor handed back is the <strong>read-mode stream</strong> — so the file is neither truncated nor appended to, and the writes disappear without an error.</div>
+<div class="d">The paired control is in the same block of the same module. One file is opened <code>"a"</code> with no prior open; the other is read first:</div>
+<div class="ev">control   $fopen("mode2.txt","a")            -> AAAA / BBBB / CCCC-control   appended, correct
+
+finding   $fopen("mode3.txt","r"); $fgets(...)
+          $fclose(...)
+          $fopen("mode3.txt","w")            -> same descriptor as the read open
+          $fdisplay(..., "DDDD-should-be-only-line")
+          mode3.txt afterwards:  AAAA / BBBB    file untouched, write lost</div>
+<div class="d">The read-then-rewrite shape is not exotic — a model that loads a calibration table at initialization and writes an updated one back is exactly it — and nothing on any channel says the write did not happen.</div>
+<div class="d"><strong>Cause.</strong> <code>openvaf/osdi/stdlib.c:774</code>, the same-name dedup in <code>osdi_fopen</code>. Two branches can honour a reopen: a rewind, gated on <code>readable &amp;&amp; osdi_file_readable[i]</code>, and a real <code>freopen</code>, gated on <code>!osdi_io_managed</code> — which never holds under the simulator. Anything else falls through to <code>osdi_file_close_req[i] = 0; return enc;</code>, returning the existing stream in its original mode. The comment on the rewind branch names the general rule precisely — <em>&ldquo;reopening a write-mode stream for reading is a MODE CHANGE and needs the freopen below&rdquo;</em> — and <a href="../../enhancements_doc/Enhancement-539.md">E-539</a> implemented it for that direction, after a first attempt in the other direction broke <code>stringio_examples</code>. The read&nbsp;→&nbsp;write direction is the half still open, and it fails silently where the broken write&nbsp;→&nbsp;read case at least produced visibly wrong data.</div>
+<div class="ev">repro: mch2.va / mch2.cir (control + finding)  ·  mch.va (the append variant)</div></div>
+
+
+<h2 id="bounds"><span class="secno">4</span>Values the LRM bounds and nothing checks</h2>
+
+<div class="finding f-bug"><div class="head"><span class="chip c-bug">bug · silent · FIXED (E-541)</span><span class="t">A negative <code>$mfactor</code> set from Verilog-A sign-inverts the device, with no diagnostic on any channel</span><span class="lrm">LRM 9.18 Table 9-29 p.249</span></div>
+<div class="d">Table 9-29's <em>Allowed values</em> column reads <code>$mfactor &gt; 0</code>. A multiplicity is a count of identical devices in parallel; a negative one is not a small device, it is a reversed one.</div>
+<div class="ev">leaf: I(p,n) &lt;+ V(p,n)*1e-3        (a plain 1 kΩ resistor)
+
+leaf #(.$mfactor( 3)) -> i(v1) = -3.00000e-03    correct: sinks 3 mA
+leaf #(.$mfactor(-3)) -> i(v1) = +3.000000e-03   the resistor now SOURCES 3 mA
+leaf #(.$mfactor( 0)) -> i(v1) =  0.000000e+00   the device silently disappears</div>
+<div class="d">What makes this a finding rather than a missing nicety is that <strong>the same illegal value is caught, precisely, on the netlist route</strong>. Write <code>m=-3</code> on the instance line and ngspice says so and ignores it:</div>
+<div class="ev">Warning: n2: multiplier m=-3 is negative; the device's contribution is
+sign-inverted (a passive device becomes active) and any noise contribution
+becomes NaN.
+Warning: multiplier m=-3 is negative; the value is ignored.
+  -> i(v2) = -1.00000e-03   (m clamped to 1)</div>
+<div class="d">So the hazard is understood, the consequence is written down in the message, and the check simply does not cover the Verilog-A route. There is a <em>second</em> partial guard, too: give the leaf a <code>white_noise</code> contribution and the compiler rejects the same model at compile time — because the noise scaling divides by <code>sqrt($mfactor)</code> and the constant-folded <code>sqrt(-3)</code> trips the domain check. A model without noise gets no such luck.</div>
+<div class="ev">error: sqrt: the argument is -3, which is outside the domain of sqrt
+       (values &gt;= 0); the result would be NaN</div>
+<div class="d"><strong>Cause.</strong> Three composition sites share one shape and none validates: <code>hir/src/elaborate.rs:2925</code> (<code>merge_sys_overrides</code>, composing inherited overrides), <code>hir/src/elaborate.rs:3065</code> (rewriting each <code>$mfactor</code>-family read in an inlined body), and <code>hir_lower/src/state.rs:107</code> (the MIR composition for paramset and netlist overrides). Each picks <code>*</code> or <code>+</code> from <code>ParamSysFun::composes_multiplicatively</code> and emits it. <a href="../../enhancements_doc/Enhancement-44.md">Enhancement-44</a> documents the two composition rules and records the six defaults; the <em>Allowed values</em> column of the same table is not mentioned there or anywhere else in the tree.</div>
+<div class="ev">repro: mfva.va / mfva.cir</div></div>
+
+<div class="finding f-dev"><div class="head"><span class="chip c-dev">bug · FIXED (E-541)</span><span class="t"><code>$angle</code> is never reduced modulo 360, and the other three bounds are unchecked on both routes</span><span class="lrm">LRM 9.18 Table 9-29 p.249</span></div>
+<div class="d">Table 9-29 gives <code>$angle</code> the resolution rule <em>&ldquo;<code>$angle</code><sub>specified</sub> + <code>$angle</code><sub>hier</sub>, <strong>modulo 360 degrees</strong>&rdquo;</em> and the allowed range <em>&ldquo;0 ≤ <code>$angle</code> &lt; 360&rdquo;</em>. The sum is implemented; the modulo is not. Two levels of hierarchy, 200° at each:</div>
+<div class="ev">top -> mida #(.$angle(200)) -> leafb #(.$angle(200))
+observed:  angle=400        LRM:  angle=40
+
+(the same deck confirms the other rules ARE right:
+   hflip = (-1)*(-1) = +1  multiplicative, correct
+   xposition = 0.002+0.001 = 0.003  additive, correct)</div>
+<div class="d">Separately, every <em>Allowed values</em> entry is unenforced, and on <strong>both</strong> ways of setting these parameters — the Verilog-A <code>#(.$angle(…))</code> form and ngspice's <code>_angle=</code> instance form:</div>
+<div class="ev">Verilog-A:  leafb #(.$angle(400), .$hflip(2), .$vflip(0), .$mfactor(-3))
+              -> angle=400  hflip=2  vflip=0  m=-3
+netlist:    n1 1 0 mm _angle=400 _hflip=5 _vflip=0
+              -> angle=400  hflip=5  vflip=0
+LRM 9-29:   0 ≤ angle &lt; 360 ;  hflip, vflip ∈ {+1, −1} ;  mfactor &gt; 0</div>
+<div class="d">A model that <em>uses</em> the angle trigonometrically is unharmed — 400° and 40° have the same sine — which is why this can sit unnoticed. A model that <strong>compares</strong> it is not: <code>if ($angle &lt; 90)</code>, a quadrant lookup, or a table keyed on orientation all take the wrong branch, and the LRM's range is exactly the contract such a model is entitled to rely on. Same three lines as the finding above.</div>
+<div class="ev">repro: ang.va / ang.cir (modulo)  ·  rng1.va, hsp.va (ranges, both routes)</div></div>
+
+<h2 id="lower"><span class="secno">5</span>Lower severity</h2>
+
+<div class="finding f-miss"><div class="head"><span class="chip c-miss">missing diagnostic · FIXED (E-541)</span><span class="t">Two errors LRM 9.20 mandates for the node-alias functions are not raised</span><span class="lrm">LRM 9.20 p.253</span></div>
+<div class="d">The clause states three <em>&ldquo;shall be an error&rdquo;</em> rules for <code>$analog_node_alias</code>/<code>$analog_port_alias</code>. The context rule — a call outside an <code>analog initial</code> block — is enforced, with a good message. The other two are not:</div>
+<div class="ev">$analog_node_alias(p, "top.x")        p is a PORT
+   LRM: "It shall be an error for the analog_net_reference to be a port
+         or to be involved in port connections."          -> compiles clean
+
+$analog_node_alias(loc2, "top.loc1")  loc1 is another call's net reference
+   LRM: "It shall be an error for the hierarchical_reference_string to
+         reference a node that is used as an analog_net_reference in
+         another ... call."                               -> compiles clean</div>
+<div class="d">Severity is low because both functions are a documented always-return-0 stub (compliance §7.5 — the clause's own unresolvable-reference value), so nothing numerically wrong follows. It is recorded because the tracker's wording, <em>&ldquo;their 9.20 context rule is enforced&rdquo;</em>, is true of the one rule it names and reads as covering the clause.</div>
+<div class="ev">repro: al.va</div></div>
+
+<div class="finding f-dev"><div class="head"><span class="chip c-dev">deviation · FIXED (E-541)</span><span class="t"><code>$write</code> cannot compose a line: every call carries its own instance prefix</span><span class="lrm">LRM 9.4.1 p.226</span></div>
+<div class="d">LRM 9.4.1: <em>&ldquo;The <code>$write</code> task provides the same capabilities as <code>$strobe</code>, but with <strong>no newline</strong>.&rdquo;</em> Suppressing the newline has one purpose — assembling a line from several calls — and the per-message <code>OSDI &lt;instance&gt;: </code> prefix (E-377, and genuinely useful on every other task) is emitted per call, so the pieces cannot join:</div>
+<div class="ev">$write("[A]"); $write("[B]"); $write("[C]\n");
+
+observed:  OSDI n1: [A]OSDI n1: [B]OSDI n1: [C]
+wanted:    OSDI n1: [A][B][C]</div>
+<div class="d">A prefix emitted on the first fragment after a newline, rather than on every call, would keep the diagnostic value and restore the construct. Recorded as a deviation rather than a bug: no data is wrong, and the prefix is a deliberate local improvement. Two conformant neighbours were checked in the same deck — a bare <code>$strobe;</code> prints exactly a newline (9.4.1), and <code>$debug</code> prints on every iteration (9.4.6's sole exemption).</div>
+<div class="ev">repro: wr.va / wr.cir</div></div>
+
+<h2 id="conformant"><span class="secno">6</span>What was measured and holds</h2>
+<p class="lede">Positive results, each an independent expectation checked against the shipped binaries. Several are the direct neighbours of findings above, which is what makes the findings interpretable.</p>
+
+<h3><code>analog initial</code> semantics (LRM 5.2.1) — every rule but the output</h3>
+<p>All four statement restrictions are enforced, each with a diagnostic that names the construct rather than the parse:</p>
+<div class="ev">access function   -> error: nature access is not allowed in analog initial block
+analog operator   -> error: analog operator 'ddt' is not allowed in analog initial block
+contribution      -> error: branch contributions are not allowed in analog initial block
+event control     -> error: event control statements are not allowed in analog initial block</div>
+<p>And the re-execution rule holds — <em>&ldquo;If a parameter or variable that is referenced from an <code>analog initial</code> block is changed during a sub-task of a parameter sweep analysis, then the <code>analog initial</code> block shall be re-executed&rdquo;</em>. Sweeping an instance parameter the block reads tracks it exactly across all five points (<code>g0 = 1…5 mS → i = −1…−5 mA</code>), rather than freezing at the first.</p>
+
+<h3>File I/O — the deferral, the modes, and the failure values</h3>
+<ul class="oklist">
+<li><strong>LRM 9.5.9 holds for file writes.</strong> The identical diode <code>.op</code> that produces 21 <code>$warning</code> lines produces exactly <strong>one</strong> <code>$fstrobe</code> line, at the converged <code>v=0.629443</code>. The file machinery does what the severity machinery does not.</li>
+<li><strong>All fifteen Table 9-24 modes open</strong> — <code>r rb w wb a ab r+ r+b rb+ w+ w+b wb+ a+ a+b ab+</code> — and every file descriptor carries bit 31 as 9.5.1 requires (the first user descriptor is <code>0x8000_0003</code>, immediately above the three pre-opened streams).</li>
+<li><strong>Failure returns zero</strong>, per 9.5.1: a missing file opened <code>"r"</code> gives 0, and so does an unrecognised mode string.</li>
+<li><strong>Multichannel channels are reused after close</strong>, per 9.5.1, on the instance-setup path: open/close/open returns the same channel rather than consuming a new one.</li>
+</ul>
+
+<h3>The system-function surface (Tables 9-1 – 9-18)</h3>
+<p>All 108 call sites were compiled individually — every Table 9-1 – 9-18 entry marked supported in the analog context, plus the entries marked unsupported, so that a refusal is measured rather than assumed. Everything the tables mark supported is present and compiles, except <code>$bitstoreal</code>/<code>$realtobits</code>, which are a disclosed subset boundary (their 64-bit vector operand type has no analog counterpart). The four rejections are all correct: <code>$monitoron</code>/<code>$monitoroff</code> (Table 9-1, analog: No), <code>$time</code> (Table 9-7, analog: No), and <code>$receiver_count</code> (connectmodule-only, outside Annex C). <code>$simprobe</code> and <code>$limit</code> reject with the LRM's own fallback wording plus a located warning.</p>
+
+<h3><code>$simparam</code> (LRM 9.15, Table 9-27)</h3>
+<p>Nine of the thirteen table names are served with sensible values — <code>gdev</code>&nbsp;1e-12, <code>gmin</code>&nbsp;1e-12, <code>iteration</code>, <code>scale</code>&nbsp;1, <code>simulatorVersion</code>&nbsp;46, <code>simulatorSubversion</code>&nbsp;0, <code>sourceScaleFactor</code>&nbsp;1, <code>tnom</code>&nbsp;27; the clause's <em>&ldquo;if they support the parameter&rdquo;</em> makes the other four legitimately absent. The normative half is the error behaviour, and it is exact: an unknown name <em>with</em> a default returns the default silently, and an unknown name <em>without</em> one is a located compile warning <strong>and</strong> a run-time fatal — <em>&ldquo;an error is generated&rdquo;</em>, as 9.15 requires. The warning even enumerates the served names.</p>
+
+<h3>Display formatting (Tables 9-21 – 9-23)</h3>
+<p>Every conversion works in <strong>both</strong> cases, which the tables specify as alternatives (<em>&ldquo;%h or %H&rdquo;</em>) and no repository document had claimed: <code>h/H o/O b/B d/D c/C s/S e/E f/F g/G r/R m/M</code>. <code>%H</code> yields upper-case hex and <code>%E</code> an upper-case exponent, matching C. <code>%m</code> names the instance (E-539) in both spellings.</p>
+
+<h3><code>$table_model</code> tie-breaking (LRM 9.21.4)</h3>
+<p>The clause has one rule that a plausible implementation gets wrong: <em>&ldquo;When the lookup ordinate is equidistant from two bracketing samples the function <strong>snaps away from zero</strong>.&rdquo;</em> On samples at −4, −2, +2, +4 with closest-point lookup <code>"D"</code>, a lookup at +3 returns the +4 sample and a lookup at −3 returns the −4 sample. Both correct.</p>
+
+<h2 id="notquite"><span class="secno">7</span>Things that looked wrong and are not</h2>
+<p class="lede">Recorded so a fourth pass does not spend its budget here. Each reproduced exactly as described; none is a finding.</p>
+
+<div class="finding f-ok"><div class="head"><span class="chip c-ok">documented, not new</span><span class="t">A constant-argument display prints twice at setup and never at an accepted point</span></div>
+<div class="d">A <code>$strobe</code> whose arguments do not depend on the operating point is hoisted into instance initialization, so it prints twice (setup and temperature update) and then not at all: in a 5-point DC sweep it yields 2 lines where an op-dependent <code>$strobe</code> beside it yields 5. This was the first thing this pass found and it is <strong>fully on record</strong> — <a href="../../enhancements_doc/Enhancement-516.md">E-516</a>'s <em>&ldquo;Remaining, documented&rdquo;</em> section names it, and the compliance tracker §7.1 carries it as <em>&ldquo;a constant-argument display hoisted to instance initialization still executes there (⚠️ documented at the split)&rdquo;</em>. Reported here only as evidence that the prior-art check was run before the write-up, not after.</div></div>
+
+<div class="finding f-ok refuted"><div class="head"><span class="chip c-ok">deliberate</span><span class="t">Writing to a descriptor after <code>$fclose</code> still reaches the file, and the channel is not reused</span></div>
+<div class="d">LRM 9.5.1 says <em>&ldquo;No further output to or input from any file descriptor(s) closed by <code>$fclose</code> is allowed&rdquo;</em> and <em>&ldquo;<code>$fopen</code> shall reuse channels that have been closed&rdquo;</em>. Under the managed path neither is observable, because 9.5.9 requires the close itself to be deferred to the accepted iteration: within one evaluation the stream is still open, so a stray write lands and a reopen takes a fresh channel. That deferral is <a href="../../enhancements_doc/Enhancement-516.md">E-516</a>'s design and it is the right reading of the two clauses together — a close executed on a superseded iteration would destroy accepted output. On the unmanaged instance-setup path, where no such conflict exists, reuse works correctly (open/close/open returns the same channel). Recorded as a deviation forced by a clause conflict, not a defect.</div></div>
+
+<div class="finding f-ok"><div class="head"><span class="chip c-ok">permissive extension</span><span class="t"><code>$fgetc</code>, <code>$ungetc</code> and <code>$realtime</code> are accepted although Table 9-2/9-7 mark them analog: No</span></div>
+<div class="d">All three compile and work in an analog block. <code>$realtime</code> at least says so — <em>&ldquo;warning: $realtime in the analog context is deprecated by VAMS-2023&rdquo;</em> — while <code>$fgetc</code>/<code>$ungetc</code> (E-107/E-108) are silent. Accepting more than the standard requires is not a conformance failure, and the compliance tracker lists both; noted only because a strict-mode reader of Table 9-2 would expect a diagnostic.</div></div>
+
+<div class="finding f-ok"><div class="head"><span class="chip c-ok">correct on re-reading</span><span class="t"><code>$fclose</code> of an OR-ed multichannel descriptor looked like a no-op</span></div>
+<div class="d">A first measurement showed writes still landing in both files after <code>$fclose(a|b)</code>, which reads as the mask being ignored. It is not: <code>osdi_fclose_now</code> (<code>stdlib.c:967</code>) walks the mask and closes every channel in it. The observation is the deferred-close behaviour above, and the single-descriptor case behaves identically — which is what distinguishes the two explanations. Withdrawn before it reached the findings list.</div></div>
+
+<h2 id="coverage"><span class="secno">8</span>Coverage map</h2>
+<div class="tblwrap">
+<table>
+<thead><tr><th>Area</th><th>LRM</th><th>Result</th></tr></thead>
+<tbody>
+<tr><td>Display timing in <code>analog initial</code></td><td class="mono">5.2.1, 9.4.6</td><td>1 finding — all output discarded</td></tr>
+<tr><td>Severity tasks</td><td class="mono">9.7.3</td><td>2 findings — rejected-iteration rule, and <code>$error</code> initialization rule</td></tr>
+<tr><td>Hierarchical system parameters</td><td class="mono">9.18, Table 9-29</td><td>2 findings — <code>$mfactor</code> sign, <code>$angle</code> modulo and ranges</td></tr>
+<tr><td>File descriptors and channels</td><td class="mono">9.5.1, Table 9-24</td><td>2 findings — bit 31, and the ignored mode change on reopen; the fifteen open modes and the failure values are conformant</td></tr>
+<tr><td>Node alias functions</td><td class="mono">9.20</td><td>1 finding — two mandated errors missing</td></tr>
+<tr><td>Display format specifications</td><td class="mono">9.4.1–9.4.4, Tables 9-21/22/23</td><td>1 finding — <code>$write</code> prefix; conversions conformant in both cases</td></tr>
+<tr><td>File write deferral and read replay</td><td class="mono">9.5.9</td><td>conformant</td></tr>
+<tr><td><code>analog initial</code> restrictions and re-execution</td><td class="mono">5.2.1</td><td>conformant</td></tr>
+<tr><td>Analog kernel parameters</td><td class="mono">9.15, Table 9-27</td><td>conformant</td></tr>
+<tr><td>System-function surface, 108 call sites</td><td class="mono">Tables 9-1 – 9-18</td><td>conformant</td></tr>
+<tr><td>Table-based lookup, control and tie rules</td><td class="mono">9.21</td><td>conformant</td></tr>
+<tr><td>Simulation control</td><td class="mono">9.7.1–9.7.2</td><td>conformant — <code>$fatal</code> aborts the analysis, and <code>$finish</code> completes the current solution first (<em>&ldquo;the operating point is complete and is reported&rdquo;</em>), per 9.7.1</td></tr>
+</tbody>
+</table>
+</div>
+<p class="scorenote">Every deck named above is in <a href="2026-09-02_repro-round3/">2026-09-02_repro-round3/</a>, with a table mapping deck to finding. Each was run against <code>bin/macos/apple-silicon/{openvaf-r,ngspice}</code> as committed at <code>cb8a6528</code>, and again against the locally built <code>target/opt/openvaf-r</code> and <code>ngspice-46/build/src/ngspice</code>; all nine findings reproduce identically on both pairs.</p>
+</div>
+
+</body>
+</html>

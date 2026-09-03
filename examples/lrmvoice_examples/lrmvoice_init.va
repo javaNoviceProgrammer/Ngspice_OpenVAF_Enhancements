@@ -1,0 +1,32 @@
+`include "disciplines.vams"
+// LRM 5.2.1: an `analog initial` block is "for simulation initialization
+// purposes", and the clause forbids access functions, analog operators,
+// contributions and event controls inside it -- so initialising variables and
+// REPORTING are the only two things it can do. Round-3 audit: the reporting
+// half produced no output at all, in any analysis, and the file it opened was
+// created and left empty.
+module lrmvoice_init(p, n);
+  inout p, n;
+  electrical p, n;
+  integer fd;
+  analog initial begin
+    $strobe ("INIT-strobe");
+    $display("INIT-display");
+    $write  ("INIT-write\n");
+    $monitor("INIT-monitor");
+    $debug  ("INIT-debug");
+    $info   ("INIT-info");
+    fd = $fopen("lrmvoice_init.txt", "w");
+    $fdisplay(fd, "INIT-file");
+    $fclose(fd);
+  end
+  analog begin
+    // the same tasks in an event control, which have always worked: the
+    // control that says the fix did not simply make everything immediate
+    @(initial_step) begin
+      $strobe("EVT-strobe");
+      $info  ("EVT-info");
+    end
+    I(p, n) <+ V(p, n) * 1e-3;
+  end
+endmodule

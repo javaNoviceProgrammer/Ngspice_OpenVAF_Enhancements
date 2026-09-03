@@ -45,6 +45,9 @@
  * empty-matrix path -- so a deck containing no Verilog-A device at all was
  * told one had raised $fatal. */
 extern int CKTvaFatalRaised;
+/* Round-3 audit: a Verilog-A $error executed inside an `analog initial`
+   block; LRM 9.7.3 forbids proceeding past initialization. */
+extern int CKTvaInitErrRaised;
 
 struct CKTnode {
     IFuid name;

@@ -1,0 +1,14 @@
+* fatbody
+.control
+pre_osdi fat.osdi
+.endc
+.model mm fatbody
+n1 1 0 mm
+v1 1 0 dc 1
+.control
+op
+print v(1)
+echo "REACHED-END"
+quit
+.endc
+.end

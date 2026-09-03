@@ -1,0 +1,9 @@
+`include "disciplines.vams"
+module ai_contrib(p,n);
+  inout p,n; electrical p,n;
+  real r;
+  analog initial begin
+      I(p,n) <+ 1e-6;             // contribution
+  end
+  analog I(p,n) <+ V(p,n)*1e-3 + r*0.0;
+endmodule

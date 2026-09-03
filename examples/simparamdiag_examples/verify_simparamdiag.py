@@ -143,9 +143,16 @@ def main():
     #    directly instead: the line must END at the closing quote. Pre-fix the
     #    message carried no newline, so whatever ngspice printed next was glued
     #    onto the same line.
+    #    Enhancement-541 then gave the severity family the context LRM 9.7.3
+    #    requires ("these tasks shall also report the simulation run time ...",
+    #    or the swept value, or "during initialization"), which lands as a
+    #    trailing parenthetical AFTER the closing quote. The property under test
+    #    is unchanged -- the line ends where the report ends -- so the pattern
+    #    admits that one parenthetical and nothing else.
     lines = [l for l in err.splitlines() if "unknown $simparam" in l]
     check("the report is newline-terminated (nothing glued after it)",
-          len(lines) >= 1 and all(l.rstrip().endswith('"') for l in lines),
+          len(lines) >= 1
+          and all(re.search(r'"(\s*\([^()]*\))?$', l.rstrip()) for l in lines),
           "%d line(s); tail = %r" % (len(lines), lines[0][-28:] if lines else ""))
     check("no line carries two concatenated reports",
           all(l.count("unknown $simparam") == 1 for l in lines),

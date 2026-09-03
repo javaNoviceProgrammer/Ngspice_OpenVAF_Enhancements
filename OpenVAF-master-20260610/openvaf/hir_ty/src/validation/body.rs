@@ -381,6 +381,30 @@ pub enum BodyValidationDiagnostic {
         stmt: StmtId,
         port: bool,
     },
+    /// LRM 9.20 (round-3 audit): "It shall be an error for the
+    /// analog_net_reference to be a port or to be involved in port
+    /// connections." A module's own port passed as the aliased net compiled
+    /// clean -- the second of the clause's three `shall be an error` rules,
+    /// where only the context rule above was enforced.
+    AliasNetIsPort {
+        expr: ExprId,
+        stmt: StmtId,
+        port: bool,
+    },
+    /// LRM 9.20 (round-3 audit): "It shall be an error for the
+    /// hierarchical_reference_string to reference a node that is used as an
+    /// analog_net_reference in another `$analog_node_alias()` or
+    /// `$analog_port_alias()` system function call" -- aliasing onto a node
+    /// that is itself aliased. Judged only where it is decidable without
+    /// hierarchy resolution: the string names a node of THIS module (a bare
+    /// name, or a path whose last segment is one) that another call in the
+    /// same module aliases.
+    AliasTargetIsAliased {
+        expr: ExprId,
+        stmt: StmtId,
+        port: bool,
+        target: String,
+    },
     /// LRM 9.13.1/9.13.2 (kernel audit): the `type_string` argument of
     /// `$arandom`/`$dist_*`/`$rdist_*` ("global"/"instance") "shall only be
     /// used in calls to these functions from within a paramset". Outside one
@@ -531,6 +555,7 @@ impl BodyValidationDiagnostic {
             non_const_dominator: Box::default(),
             non_trivial_branches: HashSet::default(),
             trivial_probes: HashMap::default(),
+            alias_calls: Vec::new(),
         };
 
         for stmt in &*body.entry_stmts {
@@ -615,6 +640,44 @@ impl BodyValidationDiagnostic {
         // (mutual recursion) before lowering inlines them forever.
         if let DefWithBodyId::FunctionId(func) = def {
             check_call_cycles(db, func, &infere, &mut validator.diagnostics);
+        }
+
+        // LRM 9.20 (round-3 audit): "It shall be an error for the
+        // hierarchical_reference_string to reference a node that is used as an
+        // analog_net_reference in another ... call." Judged here, where every
+        // alias call in the body has been seen, and only where the answer does
+        // not need hierarchy resolution: the target's last path segment names a
+        // node of THIS module that another call in it aliases. A path into some
+        // other instance is left alone rather than guessed at -- a false error
+        // on a legal alias would be worse than the missing one this closes.
+        {
+            let aliased: Vec<(NodeId, Name)> = validator
+                .alias_calls
+                .iter()
+                .filter_map(|&(_, _, _, node, _)| {
+                    node.map(|id| (id, validator.db.node_data(id).name.clone()))
+                })
+                .collect();
+            let mut found: Vec<BodyValidationDiagnostic> = Vec::new();
+            for &(expr, stmt, port, node, ref target) in &validator.alias_calls {
+                let Some(target) = target else { continue };
+                let leaf: &str = target.rsplit('.').next().unwrap_or(target);
+                for (id, name) in &aliased {
+                    // "another" call: a node aliased to a path ending in its
+                    // own name is a different (and unresolvable) statement.
+                    if node == Some(*id) || &**name != leaf {
+                        continue;
+                    }
+                    found.push(BodyValidationDiagnostic::AliasTargetIsAliased {
+                        expr,
+                        stmt,
+                        port,
+                        target: target.clone(),
+                    });
+                    break;
+                }
+            }
+            validator.diagnostics.extend(found);
         }
 
         for (branch, exprs) in validator.trivial_probes {
@@ -739,6 +802,12 @@ struct BodyValidator<'a> {
     non_const_dominator: Box<[ExprId]>,
     non_trivial_branches: HashSet<BranchWrite>,
     trivial_probes: HashMap<BranchWrite, Vec<(StmtId, ExprId)>>,
+    /// LRM 9.20 (round-3 audit): every `$analog_node_alias`/`$analog_port_alias`
+    /// call in this body -- `(expr, stmt, is_port_alias, aliased node, target
+    /// string)`. Collected during the walk because the clause's third rule is
+    /// about one call's target naming ANOTHER call's net reference, which is
+    /// only decidable once every call has been seen.
+    alias_calls: Vec<(ExprId, StmtId, bool, Option<NodeId>, Option<String>)>,
 }
 
 impl BodyValidator<'_> {
@@ -1942,15 +2011,29 @@ impl ExprValidator<'_, '_> {
         // ("It shall be an error for these functions to be used in any other
         // context"). Keyed off the body OWNER, not the ctx, so a conditional
         // inside the initial block stays legal.
-        if matches!(call, BuiltIn::analog_node_alias | BuiltIn::analog_port_alias)
-            && !matches!(self.parent.owner, DefWithBodyId::ModuleId { initial: true, .. })
-        {
+        if matches!(call, BuiltIn::analog_node_alias | BuiltIn::analog_port_alias) {
             let stmt = self.stmt;
-            self.report(BodyValidationDiagnostic::AliasOutsideInitial {
-                expr,
-                stmt,
-                port: call == BuiltIn::analog_port_alias,
+            let port = call == BuiltIn::analog_port_alias;
+            if !matches!(self.parent.owner, DefWithBodyId::ModuleId { initial: true, .. }) {
+                self.report(BodyValidationDiagnostic::AliasOutsideInitial { expr, stmt, port });
+            }
+            // LRM 9.20's other two "shall be an error" rules (round-3 audit --
+            // neither was raised, so a module's own port passed as the aliased
+            // net compiled clean).
+            let node = match self.parent.infer.expr_types[args[0]] {
+                Ty::Node(id) => Some(id),
+                _ => None,
+            };
+            if let Some(id) = node {
+                if self.parent.db.node_data(id).is_port() {
+                    self.report(BodyValidationDiagnostic::AliasNetIsPort { expr, stmt, port });
+                }
+            }
+            let target = args.get(1).and_then(|&a| match self.parent.body.exprs[a] {
+                Expr::Literal(Literal::String(ref lit)) => Some(lit.to_string()),
+                _ => None,
             });
+            self.parent.alias_calls.push((expr, stmt, port, node, target));
         }
         // LRM 9.13.1/9.13.2 (kernel audit): a trailing type_string
         // ("global"/"instance") is only meaningful inside a paramset. A

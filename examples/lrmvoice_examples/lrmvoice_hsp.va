@@ -1,0 +1,37 @@
+`include "disciplines.vams"
+// LRM 9.18 Table 9-29. Round-3 audit: the resolution rule for $angle is a sum
+// "modulo 360 degrees" and the modulo was missing (200 + 200 read back as 400),
+// while the whole *Allowed values* column went unchecked on every route.
+//
+// The leaf reports every hierarchical system parameter, so the two rules that
+// were ALREADY right -- multiplicative $hflip/$vflip, additive $xposition --
+// are measured in the same run as the one that was not.
+module lrmvoice_leaf(p, n);
+  inout p, n;
+  electrical p, n;
+  analog begin
+    $strobe("HSP angle=%g hflip=%g vflip=%g x=%g m=%g",
+            $angle, $hflip, $vflip, $xposition, $mfactor);
+    I(p, n) <+ V(p, n) * 1e-3;
+  end
+endmodule
+
+module lrmvoice_mid(p, n);
+  inout p, n;
+  electrical p, n;
+  lrmvoice_leaf #(.$angle(200), .$hflip(-1), .$xposition(0.001)) b1(p, n);
+endmodule
+
+// 200 + 200 = 400 degrees, which LRM Table 9-29 resolves to 40.
+module lrmvoice_hsp(p, n);
+  inout p, n;
+  electrical p, n;
+  lrmvoice_mid #(.$angle(200), .$hflip(-1), .$xposition(0.002)) a1(p, n);
+endmodule
+
+// A legal multiplicity still applies the full 6.3.6 transform.
+module lrmvoice_m3(p, n);
+  inout p, n;
+  electrical p, n;
+  lrmvoice_leaf #(.$mfactor(3)) b1(p, n);
+endmodule

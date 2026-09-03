@@ -1,0 +1,27 @@
+`include "disciplines.vams"
+module modes(p,n);
+  inout p,n; electrical p,n;
+  integer f;
+  analog begin
+    @(initial_step) begin
+      f = $fopen("data.txt","r");    $strobe("MODE r     -> %0d", f); $fclose(f);
+      f = $fopen("data.txt","rb");   $strobe("MODE rb    -> %0d", f); $fclose(f);
+      f = $fopen("out_w.txt","w");   $strobe("MODE w     -> %0d", f); $fclose(f);
+      f = $fopen("out_w.txt","wb");  $strobe("MODE wb    -> %0d", f); $fclose(f);
+      f = $fopen("out_a.txt","a");   $strobe("MODE a     -> %0d", f); $fclose(f);
+      f = $fopen("out_a.txt","ab");  $strobe("MODE ab    -> %0d", f); $fclose(f);
+      f = $fopen("data.txt","r+");   $strobe("MODE r+    -> %0d", f); $fclose(f);
+      f = $fopen("data.txt","r+b");  $strobe("MODE r+b   -> %0d", f); $fclose(f);
+      f = $fopen("data.txt","rb+");  $strobe("MODE rb+   -> %0d", f); $fclose(f);
+      f = $fopen("out_u.txt","w+");  $strobe("MODE w+    -> %0d", f); $fclose(f);
+      f = $fopen("out_u.txt","w+b"); $strobe("MODE w+b   -> %0d", f); $fclose(f);
+      f = $fopen("out_u.txt","wb+"); $strobe("MODE wb+   -> %0d", f); $fclose(f);
+      f = $fopen("out_v.txt","a+");  $strobe("MODE a+    -> %0d", f); $fclose(f);
+      f = $fopen("out_v.txt","a+b"); $strobe("MODE a+b   -> %0d", f); $fclose(f);
+      f = $fopen("out_v.txt","ab+"); $strobe("MODE ab+   -> %0d", f); $fclose(f);
+      f = $fopen("nope_missing.txt","r"); $strobe("MODE missing-r -> %0d (LRM: 0)", f);
+      f = $fopen("nope_missing.txt","q"); $strobe("MODE bogus-q   -> %0d", f);
+    end
+    I(p,n) <+ V(p,n)*1e-3;
+  end
+endmodule

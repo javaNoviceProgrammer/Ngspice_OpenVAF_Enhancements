@@ -1,0 +1,12 @@
+* rng1le
+.control
+pre_osdi rng1.osdi
+.endc
+.model mm rng1
+n1 1 0 mm
+v1 1 0 dc 1
+.control
+op
+quit
+.endc
+.end

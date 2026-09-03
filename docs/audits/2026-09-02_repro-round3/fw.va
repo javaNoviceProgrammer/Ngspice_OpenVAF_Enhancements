@@ -1,0 +1,18 @@
+`include "disciplines.vams"
+module fw(p,n);
+  inout p,n; electrical p,n;
+  integer f1, f2;
+  analog initial begin
+    f1 = $fopen("INIT.txt", "w");
+    $fdisplay(f1, "written from analog initial");
+    $fclose(f1);
+  end
+  analog begin
+    @(initial_step) begin
+      f2 = $fopen("EVT.txt", "w");
+      $fdisplay(f2, "written from initial_step");
+      $fclose(f2);
+    end
+    I(p,n) <+ V(p,n)*1e-3;
+  end
+endmodule

@@ -109,6 +109,15 @@ impl HirInterner {
             } else {
                 ctx.ins().fadd(sys_val, ov_val)
             };
+            // LRM 9.18 Table 9-29: the additive rule for `$angle` is a sum
+            // "modulo 360 degrees" (round-3 audit -- the sum was applied and
+            // the modulo was not). The other two additive parameters,
+            // $xposition and $yposition, are "Any".
+            let composed = if sys == ParamSysFun::angle {
+                ctx.normalize_angle(composed)
+            } else {
+                composed
+            };
 
             for use_ in existing_uses {
                 ctx.dfg_mut().use_set_value(use_, composed);

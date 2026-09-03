@@ -1,0 +1,20 @@
+`include "disciplines.vams"
+module leafm(p,n);
+  inout p,n; electrical p,n;
+  analog begin
+    $strobe("LEAFM m=%g", $mfactor);
+    I(p,n) <+ V(p,n)*1e-3;
+  end
+endmodule
+module mfva(p,n);
+  inout p,n; electrical p,n;
+  leafm #(.$mfactor(-3)) b1(p,n);
+endmodule
+module mfva0(p,n);
+  inout p,n; electrical p,n;
+  leafm #(.$mfactor(0)) b1(p,n);
+endmodule
+module mfva3(p,n);
+  inout p,n; electrical p,n;
+  leafm #(.$mfactor(3)) b1(p,n);
+endmodule

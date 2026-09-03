@@ -1,0 +1,12 @@
+* netlist route
+.control
+pre_osdi hsp.osdi
+.endc
+.model mm hsp
+n1 1 0 mm _angle=400 _hflip=5 _vflip=0 _xposition=0.5
+v1 1 0 dc 1
+.control
+op
+quit
+.endc
+.end

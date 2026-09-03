@@ -1,0 +1,13 @@
+`include "disciplines.vams"
+module tie(a,b);
+  inout a,b; electrical a,b;
+  real fp, fn, fq;
+  analog begin
+    // ties: +3 is equidistant from 2 and 4 ; -3 is equidistant from -4 and -2
+    fp = $table_model( 3.0, "tie.dat", "D");
+    fn = $table_model(-3.0, "tie.dat", "D");
+    fq = $table_model( 0.0, "tie.dat", "D");   // equidistant from -2 and +2
+    $strobe("TIE pos=%g neg=%g zero=%g", fp, fn, fq);
+    I(a,b) <+ V(a,b)*1e-3;
+  end
+endmodule

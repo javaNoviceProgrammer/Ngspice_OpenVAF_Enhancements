@@ -1,0 +1,13 @@
+* write/strobe-no-args/debug
+.control
+pre_osdi wr.osdi
+.endc
+.model mm wr
+n1 1 0 mm
+r1 in 1 1k
+v1 in 0 dc 1
+.control
+op
+quit
+.endc
+.end

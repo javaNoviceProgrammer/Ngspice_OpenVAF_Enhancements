@@ -1,0 +1,10 @@
+`include "disciplines.vams"
+module air(p,n);
+  inout p,n; electrical p,n;
+  (* type="instance" *) parameter real g0 = 1e-3;
+  real geff;
+  analog initial begin
+    geff = g0;            // reads a swept instance parameter
+  end
+  analog I(p,n) <+ V(p,n)*geff;
+endmodule

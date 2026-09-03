@@ -20,6 +20,9 @@
 /* Enhancement-492: defined here because this file owns the only place a
    Verilog-A $fatal is actually detected. See cktdefs.h. */
 int CKTvaFatalRaised = 0;
+/* Round-3 audit: $error inside an `analog initial` block (LRM 9.7.3). Kept
+   apart from CKTvaFatalRaised so CKTop's report names the right task. */
+int CKTvaInitErrRaised = 0;
 
 #include "osdi.h"
 #include "osdidefs.h"
@@ -758,6 +761,10 @@ static void osdi_note_iteration(CKTcircuit *ckt) {
     osdi_display_iter_begin();
     osdi_io_hooks_iter_begin();
   }
+  /* Round-3 audit: refresh unconditionally -- the severity context (LRM 9.7.3)
+   * has to track the time/sweep value of every evaluation, not only the ones
+   * that open a new iteration. */
+  osdi_display_note_circuit(ckt);
 }
 
 /* Flush the just-converged/accepted point's deferred display and file output.
@@ -1039,6 +1046,21 @@ extern int OSDIload(GENmodel *inModel, CKTcircuit *ckt) {
        for any E_PANIC that reached it, including decks with no Verilog-A device
        in them at all. */
     CKTvaFatalRaised = 1;
+    return E_PANIC;
+  }
+
+  /* Round-3 audit / LRM 9.7.3: `$error` inside an `analog initial` block --
+     "the message is issued and the initialization continues. However, the
+     simulation shall not proceed past initialization."
+
+     The distinction from $fatal above is real and is why this is a second
+     flag: the evaluation itself has already run to the end (the block ran,
+     the message printed, the matrix loaded), and only the ANALYSIS is
+     stopped. The clause's designated way for a model to reject a parameter
+     combination it cannot serve used to print its message and then hand the
+     deck a full set of numbers. */
+  if (eval_flags & EVAL_RET_FLAG_INITERR) {
+    CKTvaInitErrRaised = 1;
     return E_PANIC;
   }
 

@@ -1,0 +1,17 @@
+`include "disciplines.vams"
+module cbig(p,n);
+  inout p,n; electrical p,n;
+  integer fd;
+  analog initial begin
+    $strobe ("INIT-strobe");
+    $display("INIT-display");
+    $write  ("INIT-write\n");
+    $monitor("INIT-monitor");
+    $debug  ("INIT-debug");
+    $info   ("INIT-info");
+    fd = $fopen("CBIG.txt","w");
+    $fdisplay(fd, "INIT-file");
+    $fclose(fd);
+  end
+  analog I(p,n) <+ V(p,n)*1e-3;
+endmodule

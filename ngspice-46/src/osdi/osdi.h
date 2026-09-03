@@ -78,6 +78,12 @@
 /* Enhancement-55: $discontinuity(n >= 0) fired at this evaluation; OSDItrunc
  * may reject the current timestep and retry with a smaller one. */
 #define EVAL_RET_FLAG_DISCONT 16
+/* Round-3 audit / LRM 9.7.3: `$error` ran inside an `analog initial` block --
+ * "the message is issued and the initialization continues. However, the
+ * simulation shall not proceed past initialization." Unlike
+ * EVAL_RET_FLAG_FATAL the evaluation itself completes; the analysis is
+ * stopped afterwards. */
+#define EVAL_RET_FLAG_INITERR 32
 
 
 /* Enhancement-377: the level occupies the low THREE bits (DEBUG 0 .. FATAL 5),
@@ -102,6 +108,11 @@
  * deferred to the accepted iteration (LRM 9.4.6 deferral). */
 #define LOG_FLAG_IMMEDIATE 8
 #define LOG_FMT_ERR 16
+/* Round-3 audit / LRM 9.7.3: the statement sits in an `analog initial`
+ * block, so a severity task reports "during initialization" in place of a
+ * simulation time. Additive bit: an .osdi from an older compiler never sets
+ * it and reads exactly as before. */
+#define LOG_FLAG_INIT 32
 
 #define INIT_ERR_OUT_OF_BOUNDS 1
 

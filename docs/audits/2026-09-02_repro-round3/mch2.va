@@ -1,0 +1,22 @@
+`include "disciplines.vams"
+module mch2(p,n);
+  inout p,n; electrical p,n;
+  integer f1,f2,f3; string s;
+  analog begin
+    @(initial_step) begin
+      // control: append with NO prior open of the same name
+      f1 = $fopen("mode2.txt","a");
+      $fdisplay(f1, "CCCC-control");
+      $fclose(f1);
+      // read, close, then reopen for writing ("w" should truncate)
+      f2 = $fopen("mode3.txt","r");
+      $fgets(s, f2);
+      $fclose(f2);
+      f3 = $fopen("mode3.txt","w");
+      $strobe("MCH2 read=%0d write=%0d", f2, f3);
+      $fdisplay(f3, "DDDD-should-be-only-line");
+      $fclose(f3);
+    end
+    I(p,n) <+ V(p,n)*1e-3;
+  end
+endmodule

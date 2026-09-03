@@ -1,0 +1,13 @@
+`include "disciplines.vams"
+module fatinit(p,n);
+  inout p,n; electrical p,n;
+  analog initial $fatal(1, "FATAL from analog initial");
+  analog I(p,n) <+ V(p,n)*1e-3;
+endmodule
+module fatbody(p,n);
+  inout p,n; electrical p,n;
+  analog begin
+    $fatal(1, "FATAL from analog body");
+    I(p,n) <+ V(p,n)*1e-3;
+  end
+endmodule

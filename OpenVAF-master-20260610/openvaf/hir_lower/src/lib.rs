@@ -615,12 +615,30 @@ impl<'a> MirBuilder<'a> {
         // the corpus picks up an `IsInitialStep` parameter and an empty
         // conditional it never asked for, which showed up immediately as a
         // 32-byte change in a MEXTRAM model that has no initial block at all.
+        //
+        // ROUND-3 AUDIT (2026-09-02): the gate below is what makes the block's
+        // statements run on the instance's FIRST Newton iteration of an
+        // analysis -- which is exactly the iteration the LRM 9.4.6/9.5.9
+        // deferral treats as superseded. Every display and every file write in
+        // an `analog initial` block was therefore buffered and then dropped:
+        // one module with $strobe/$display/$write/$monitor and an
+        // open-write-close sequence in its initial block produced ZERO output
+        // across op+tran+dc, and left the file it created at zero bytes, while
+        // $debug and $info (which take the immediate path) printed once per
+        // analysis -- proving the block ran and only its output was lost.
+        // LRM 5.2.1 forbids access functions, analog operators, contributions
+        // and event controls in the block, so reporting is one of only two
+        // things it can do at all. `in_analog_initial` tags those statements
+        // immediate, exactly as `in_event_ctx` does for `@(initial_step)`.
         if !body_ctx.body.entry().is_empty() {
             let is_initial = body_ctx.ctx.use_param(ParamKind::IsInitialStep);
             body_ctx.ctx.make_cond(is_initial, |ctx, branch| {
                 if branch {
+                    let outer = ctx.in_analog_initial;
+                    ctx.in_analog_initial = true;
                     BodyLoweringCtx { ctx, body: analog_initial_body.borrow(), path: &path }
                         .lower_entry_stmts();
+                    ctx.in_analog_initial = outer;
                 }
             });
         }

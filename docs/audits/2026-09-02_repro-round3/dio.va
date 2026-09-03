@@ -1,0 +1,10 @@
+`include "disciplines.vams"
+module dio(p,n);
+  inout p,n; electrical p,n;
+  parameter real is = 1e-14;
+  analog begin
+    $strobe ("S v=%.6f", V(p,n));
+    $warning("W v=%.6f", V(p,n));
+    I(p,n) <+ is*(exp(V(p,n)/$vt) - 1.0);
+  end
+endmodule

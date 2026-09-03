@@ -1,0 +1,23 @@
+`include "disciplines.vams"
+module sp(p,n);
+  inout p,n; electrical p,n;
+  analog begin
+    @(initial_step) begin
+      $strobe("SP gdev                = %g", $simparam("gdev", -999));
+      $strobe("SP gmin                = %g", $simparam("gmin", -999));
+      $strobe("SP imax                = %g", $simparam("imax", -999));
+      $strobe("SP imelt               = %g", $simparam("imelt", -999));
+      $strobe("SP iteration           = %g", $simparam("iteration", -999));
+      $strobe("SP scale               = %g", $simparam("scale", -999));
+      $strobe("SP shrink              = %g", $simparam("shrink", -999));
+      $strobe("SP simulatorSubversion = %g", $simparam("simulatorSubversion", -999));
+      $strobe("SP simulatorVersion    = %g", $simparam("simulatorVersion", -999));
+      $strobe("SP sourceScaleFactor   = %g", $simparam("sourceScaleFactor", -999));
+      $strobe("SP tnom                = %g", $simparam("tnom", -999));
+      $strobe("SP timeUnit            = %g", $simparam("timeUnit", -999));
+      $strobe("SP timePrecision       = %g", $simparam("timePrecision", -999));
+      $strobe("SP <unknown,default>   = %g", $simparam("no_such_param_xyz", -999));
+    end
+    I(p,n) <+ V(p,n)*1e-3;
+  end
+endmodule

@@ -330,6 +330,10 @@ void set_ret_flag_stop(int *flags) { *flags |= EVAL_RET_FLAG_STOP; }
 /* Enhancement-55: $discontinuity(n >= 0) -- see EVAL_RET_FLAG_DISCONT */
 void set_ret_flag_discont(int *flags) { *flags |= EVAL_RET_FLAG_DISCONT; }
 
+/* Round-3 audit / LRM 9.7.3: `$error` inside an `analog initial` block --
+ * see EVAL_RET_FLAG_INITERR. */
+void set_ret_flag_initerr(int *flags) { *flags |= EVAL_RET_FLAG_INITERR; }
+
 double store_lim(void *sim_info_, int idx, double val) {
   OsdiSimInfo *sim_info = (OsdiSimInfo *)sim_info_;
   sim_info->next_state[idx] = val;
@@ -572,6 +576,12 @@ OSDI_SHARED char *volatile osdi_file_names[OSDI_MAX_FILES];
 // the read-position rewind below -- rewinding a write-only stream would make
 // later writes overwrite what an accepted iteration already wrote.
 OSDI_SHARED char volatile osdi_file_readable[OSDI_MAX_FILES];
+// Opened with a writable mode ('w', 'a' or '+'). Round-3 audit: a reopen that
+// CHANGES the capability -- read -> write, or write -> read -- needs a real
+// freopen; handing the existing stream back leaves it in its original mode and
+// every subsequent operation fails in silence. Tracking writability alongside
+// readability is what lets the reopen path below see that a mode changed.
+OSDI_SHARED char volatile osdi_file_writable[OSDI_MAX_FILES];
 // $fclose seen while the deferral is not yet managed (i.e. during instance
 // setup, where the compiler hoists parameter-only file code): the close is
 // postponed so the descriptor stays valid for the eval function's deferred
@@ -607,6 +617,18 @@ OSDI_SHARED long volatile osdi_file_basepos[OSDI_MAX_FILES];
 #define OSDI_FD_BIT 0x80000000u
 #define OSDI_FD_FIRST 3
 #define OSDI_MCD_BITS 32
+/* Round-3 audit / LRM 9.5.1: "The most significant bit (bit 31) of a
+ * multichannel descriptor is reserved and shall always be cleared, limiting an
+ * implementation to at most 31 files opened for output via multichannel
+ * descriptors." Bit 0 is stdout, so the allocatable range is bits 1..30.
+ *
+ * The allocator used to scan to OSDI_MCD_BITS, so the 31st $fopen(name)
+ * returned 0x8000_0000 -- which is not merely a reserved bit here, it is
+ * OSDI_FD_BIT, and 0x8000_0000 exactly is the pre-opened STDIN descriptor. A
+ * $fdisplay to that channel resolved to a read-only stream and was discarded
+ * in silence: it reached neither the file nor stdout. Bounding the scan makes
+ * the 31st open fail with the clause's own 0 instead. */
+#define OSDI_MCD_ALLOC_BITS 31
 OSDI_SHARED void *volatile osdi_mcd_table[OSDI_MCD_BITS];
 OSDI_SHARED char *volatile osdi_mcd_names[OSDI_MCD_BITS];
 
@@ -732,6 +754,30 @@ static int osdi_close_deferred(int fd, int drop) {
   return found;
 }
 
+static void osdi_fputs_now(int fd, const char *s);
+
+/* Round-3 audit: perform (and remove) the deferred writes queued for ONE
+ * descriptor, leaving every other descriptor's queue untouched and in order.
+ *
+ * Used by the mode-change reopen below. The model has closed the file, so the
+ * writes it made before the close are owed to it now: a reopen for reading
+ * must be able to see them, and the freopen would otherwise strand them on a
+ * stream that no longer exists. This is not a hole in the LRM 9.5.9 deferral
+ * -- the model itself asked to close and reopen within the evaluation, which
+ * is the point at which a real `fclose` would have flushed them too. */
+static void osdi_pending_flush_fd(int fd) {
+  int w = 0;
+  for (int i = 0; i < osdi_pending_len; i++) {
+    if (osdi_pending_writes[i].fd == fd && osdi_pending_writes[i].s != NULL) {
+      osdi_fputs_now(fd, osdi_pending_writes[i].s);
+      free(osdi_pending_writes[i].s);
+      continue;
+    }
+    osdi_pending_writes[w++] = osdi_pending_writes[i];
+  }
+  osdi_pending_len = w;
+}
+
 // $fopen(name, mode) -> descriptor (0 on failure). An EMPTY mode is how the
 // lowering spells the LRM's one-argument `$fopen(name)`, which returns a
 // multichannel descriptor rather than a file descriptor.
@@ -751,7 +797,7 @@ OSDI_NOINLINE int osdi_fopen(const char *name, const char *mode) {
         return 1 << b;
       }
     }
-    for (int b = 1; b < OSDI_MCD_BITS; b++) {
+    for (int b = 1; b < OSDI_MCD_ALLOC_BITS; b++) {
       if (osdi_mcd_table[b] == NULL) {
         // LRM 9.5.1.1's append-on-rewrite rule applies here too.
         const char *m = osdi_name_was_written(name) ? "a" : "w";
@@ -770,7 +816,7 @@ OSDI_NOINLINE int osdi_fopen(const char *name, const char *mode) {
         return 1 << b;
       }
     }
-    return 0; // all 31 channels in use
+    return 0; // bits 1..30 all in use (bit 0 is stdout, bit 31 reserved)
   }
   // Same-name dedup: an $fopen of a file that is already open returns the
   // existing descriptor instead of burning a new slot. This keeps the
@@ -789,12 +835,67 @@ OSDI_NOINLINE int osdi_fopen(const char *name, const char *mode) {
       // reopen keeps the existing append-and-close-at-flush behaviour, whose
       // pending writes must still land in queue order.
       int readable = (mode[0] == 'r' || strchr(mode, '+') != NULL);
+      int writable =
+          (mode[0] == 'w' || mode[0] == 'a' || strchr(mode, '+') != NULL);
       int enc = (int)(OSDI_FD_BIT | (unsigned)i);
+      int closed = osdi_file_close_req[i] || osdi_close_deferred(enc, 0);
+
+      /* ROUND-3 AUDIT (2026-09-02): a MODE CHANGE on reopen needs a real
+       * freopen, in BOTH directions.
+       *
+       * The comment on the rewind branch below already named the rule for
+       * write -> read ("seeking a 'w' handle back to 0 leaves it just as
+       * unreadable as it was") and E-539 implemented that half. The other
+       * half was open: read the file, $fclose, $fopen(name, "w") handed back
+       * the READ-mode stream, so Table 9-24's "truncate to zero length or
+       * create for writing" did not happen and every following $fdisplay was
+       * discarded with no error on any channel -- measured on the ordinary
+       * read-a-table-then-write-it-back shape.
+       *
+       * Only a stream the model has actually closed is reopened: without a
+       * close this is the per-evaluation dedup, whose whole job is to hand
+       * back the live descriptor. */
+      if (closed && ((readable && !osdi_file_readable[i]) ||
+                     (writable && !osdi_file_writable[i]))) {
+        /* The requested mode is honoured VERBATIM here -- in particular a "w"
+         * still truncates. LRM 9.5.1.1's append-on-rewrite rule is about
+         * "content written from the following ANALYSES", and it is applied on
+         * the fresh-open path below, where a following analysis reaches it.
+         * Applying it here instead breaks E-516's re-run guarantee: ngspice
+         * runs instance initialization twice (setup + temperature), and a
+         * write-read-write model would then APPEND its second run's output
+         * onto its first's rather than reproducing it byte for byte.
+         * `stringio_examples`' committed round-trip files caught exactly that
+         * -- one line became two. */
+        osdi_pending_flush_fd(enc);
+        osdi_close_deferred(enc, 1);
+        {
+          void *nf = freopen(name, mode, osdi_file_table[i]);
+          if (nf == NULL) {
+            osdi_file_table[i] = NULL;
+            if (osdi_file_names[i]) {
+              free(osdi_file_names[i]);
+              osdi_file_names[i] = NULL;
+            }
+            osdi_file_close_req[i] = 0;
+            return 0; /* LRM 9.5.1: a failed open returns zero */
+          }
+          osdi_file_table[i] = nf;
+        }
+        osdi_file_readable[i] = (char)readable;
+        osdi_file_writable[i] = (char)writable;
+        osdi_file_basepos[i] = ftell(osdi_file_table[i]);
+        osdi_file_close_req[i] = 0;
+        if (writable) {
+          osdi_record_written(name);
+        }
+        return enc;
+      }
+
       // Only when the stream is ALREADY readable: reopening a write-mode
-      // stream for reading is a MODE CHANGE and needs the freopen below --
+      // stream for reading is a MODE CHANGE and takes the freopen above --
       // seeking a "w" handle back to 0 leaves it just as unreadable as it was.
-      if (readable && osdi_file_readable[i] &&
-          (osdi_file_close_req[i] || osdi_close_deferred(enc, 0))) {
+      if (readable && osdi_file_readable[i] && closed) {
         osdi_close_deferred(enc, 1);
         fseek(osdi_file_table[i], 0, SEEK_SET);
         osdi_file_readable[i] = 1;
@@ -819,7 +920,8 @@ OSDI_NOINLINE int osdi_fopen(const char *name, const char *mode) {
           continue;
         }
         osdi_file_table[i] = nf;
-        osdi_file_readable[i] = (mode[0] == 'r' || strchr(mode, '+') != NULL);
+        osdi_file_readable[i] = (char)readable;
+        osdi_file_writable[i] = (char)writable;
         osdi_file_basepos[i] = ftell(nf);
       }
       osdi_file_close_req[i] = 0;
@@ -853,6 +955,8 @@ OSDI_NOINLINE int osdi_fopen(const char *name, const char *mode) {
       }
       osdi_file_names[i] = copy;
       osdi_file_readable[i] = (mode[0] == 'r' || strchr(mode, '+') != NULL);
+      osdi_file_writable[i] =
+          (mode[0] == 'w' || mode[0] == 'a' || strchr(mode, '+') != NULL);
       osdi_file_close_req[i] = 0;
       osdi_file_basepos[i] = ftell(f);
       if (mode[0] == 'w' || mode[0] == 'a' || strchr(mode, '+')) {

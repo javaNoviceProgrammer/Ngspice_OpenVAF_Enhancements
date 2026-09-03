@@ -1,0 +1,19 @@
+* mfactor VA route
+.control
+pre_osdi mfva.osdi
+.endc
+.model mA mfva
+.model mB mfva0
+.model mC mfva3
+n1 1 0 mA
+n2 2 0 mB
+n3 3 0 mC
+v1 1 0 dc 1
+v2 2 0 dc 1
+v3 3 0 dc 1
+.control
+op
+print i(v1) i(v2) i(v3)
+quit
+.endc
+.end

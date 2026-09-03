@@ -212,7 +212,11 @@ impl BodyLoweringCtx<'_, '_, '_> {
             kind,
             arg_tys: arg_tys.into_boxed_slice(),
             dst,
-            immediate: self.ctx.in_event_ctx,
+            // Round-3 audit: `analog initial` joins the event contexts here.
+            // Its statements fire on the initial-step iteration, which is not
+            // the accepted one, so deferring their output drops it entirely.
+            immediate: self.ctx.in_event_ctx || self.ctx.in_analog_initial,
+            in_initial: self.ctx.in_analog_initial,
         };
         if dst == PrintDst::String {
             // The callback returns the formatted string.
@@ -250,8 +254,9 @@ impl BodyLoweringCtx<'_, '_, '_> {
             kind: DisplayKind::Display,
             arg_tys: arg_tys.into_boxed_slice(),
             dst: PrintDst::String,
-            // String formatting never reaches the log; the flag is inert.
+            // String formatting never reaches the log; the flags are inert.
             immediate: true,
+            in_initial: false,
         };
         self.ctx.call1(cb, &call_args)
     }

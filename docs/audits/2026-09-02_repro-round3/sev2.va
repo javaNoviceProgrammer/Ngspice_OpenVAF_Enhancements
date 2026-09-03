@@ -1,0 +1,8 @@
+`include "disciplines.vams"
+module sev2(p,n);
+  inout p,n; electrical p,n;
+  analog begin
+    if (V(p,n) > 0.5) $warning("v is high (%g)", V(p,n));
+    I(p,n) <+ V(p,n)*1e-3;
+  end
+endmodule

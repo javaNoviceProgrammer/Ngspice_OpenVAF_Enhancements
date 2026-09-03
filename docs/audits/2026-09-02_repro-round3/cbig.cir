@@ -1,0 +1,14 @@
+* analog initial output, several analyses
+.control
+pre_osdi cbig.osdi
+.endc
+.model mm cbig
+n1 1 0 mm
+v1 1 0 dc 1
+.control
+op
+tran 1u 5u
+dc v1 1 3 1
+quit
+.endc
+.end

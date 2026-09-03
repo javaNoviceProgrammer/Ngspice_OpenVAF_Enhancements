@@ -1,0 +1,12 @@
+`include "disciplines.vams"
+module spn(p,n);
+  inout p,n; electrical p,n;
+  real r;
+  analog begin
+    @(initial_step) begin
+      r = $simparam("no_such_param_xyz");   // LRM 9.15: no default -> an error
+      $strobe("SPN unknown-no-default = %g", r);
+    end
+    I(p,n) <+ V(p,n)*1e-3;
+  end
+endmodule

@@ -1,0 +1,15 @@
+* op-dependent warning
+.control
+pre_osdi sev2.osdi
+.endc
+.model mm sev2
+n1 1 0 mm
+v1 1 0 pulse(0 1 0 1u 1u 1u 4u)
+.control
+echo "--- DC SWEEP (swept variable should be reported) ---"
+dc v1 0 1 0.25
+echo "--- TRAN (simulation time should be reported) ---"
+tran 0.5u 2u
+quit
+.endc
+.end

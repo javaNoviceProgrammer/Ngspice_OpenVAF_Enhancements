@@ -1,0 +1,15 @@
+`include "disciplines.vams"
+// LRM 9.7.3: "these tasks shall also report the simulation run time at which
+// the severity system task is called. If any of these tasks is called from an
+// analog context during a dc sweep, the simulator shall report the current
+// value of the swept variable in place of the simulation run time."
+// The gate keeps the message op-dependent, so it cannot be answered by the
+// constant-argument hoisting.
+module lrmvoice_ctx(p, n);
+  inout p, n;
+  electrical p, n;
+  analog begin
+    if (V(p, n) > 0.6) $warning("CTX high");
+    I(p, n) <+ V(p, n) * 1e-3;
+  end
+endmodule

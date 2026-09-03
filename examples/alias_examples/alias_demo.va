@@ -27,14 +27,23 @@ module alias_demo(p, n);
     inout p, n;
     electrical p, n;
 
+    // Enhancement-541 (LRM 9.20): the aliased net may not be a PORT -- "it
+    // shall be an error for the analog_net_reference to be a port or to be
+    // involved in port connections", and a port is already wired by the
+    // instantiation, so there is no second position for an alias to move it
+    // to. These two calls used to pass `p` and compiled clean; the local nets
+    // are the legal spelling of the same probe, and the return value under
+    // test (0, the unresolvable-reference fallback) is unchanged.
+    electrical loc_n, loc_p;
+
     parameter real R = 1000.0 from (0:inf);
 
     integer f, na, pa;
     real    spd;
 
     analog initial begin
-        na  = $analog_node_alias(p, "p_alias");
-        pa  = $analog_port_alias(p, "p_alias");
+        na  = $analog_node_alias(loc_n, "p_alias");
+        pa  = $analog_port_alias(loc_p, "p_alias");
     end
 
     analog begin

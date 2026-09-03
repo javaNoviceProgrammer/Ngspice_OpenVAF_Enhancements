@@ -55,6 +55,7 @@ CKTop (CKTcircuit *ckt, long int firstmode, long int continuemode,
        would otherwise still be set and make the NEXT unrelated abort claim a
        $fatal that belonged to a previous run. */
     CKTvaFatalRaised = 0;
+    CKTvaInitErrRaised = 0;
 
     if (ckt->CKTconvhelp)       /* Enhancement-204: globalize the op-point Newton */
         ckt->CKTlinesearch = 1;
@@ -226,7 +227,19 @@ CKTop (CKTcircuit *ckt, long int firstmode, long int continuemode,
      * CKTvaFatalRaised is set only where a $fatal is actually detected, so the
      * two cases can now be told apart and each says what it knows. */
     ckt->CKTlinesearch = ls_saved;
-    if (CKTvaFatalRaised) {
+    if (CKTvaInitErrRaised) {
+        /* Round-3 audit / LRM 9.7.3: "If $error is executed within an analog
+           initial block, then the message is issued and the initialization
+           continues. However, the simulation shall not proceed past
+           initialization." */
+        fprintf(cp_err,
+                "\nError: a Verilog-A device raised $error in an analog initial"
+                " block; the analysis is not run.\n"
+                "       This is not a convergence failure -- see the OSDI(err)"
+                " message above for the cause.\n"
+                "       LRM 9.7.3: initialization completes, then the simulation"
+                " shall not proceed past it.\n");
+    } else if (CKTvaFatalRaised) {
         fprintf(cp_err,
                 "\nError: a Verilog-A device raised $fatal during the operating"
                 " point; aborting.\n"

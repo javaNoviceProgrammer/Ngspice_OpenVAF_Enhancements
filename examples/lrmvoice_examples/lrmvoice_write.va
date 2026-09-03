@@ -1,0 +1,18 @@
+`include "disciplines.vams"
+// LRM 9.4.1: "The $write task provides the same capabilities as $strobe, but
+// with no newline." Composing one line from several calls is the only thing
+// that distinguishes it, and the per-call instance prefix used to make that
+// impossible: "OSDI n1: [A]OSDI n1: [B]".
+module lrmvoice_write(p, n);
+  inout p, n;
+  electrical p, n;
+  analog begin
+    @(initial_step) begin
+      $write("[A]");
+      $write("[B]");
+      $write("[C]\n");
+      $strobe("AFTER");      // a normal task still gets its own prefix
+    end
+    I(p, n) <+ V(p, n) * 1e-3;
+  end
+endmodule

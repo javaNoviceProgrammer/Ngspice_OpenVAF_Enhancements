@@ -1,0 +1,20 @@
+`include "disciplines.vams"
+
+module leafb(p,n);
+  inout p,n; electrical p,n;
+  analog begin
+    $strobe("LEAF angle=%g hflip=%g vflip=%g x=%g y=%g m=%g",
+            $angle, $hflip, $vflip, $xposition, $yposition, $mfactor);
+    I(p,n) <+ V(p,n)*1e-3;
+  end
+endmodule
+
+module mida(p,n);
+  inout p,n; electrical p,n;
+  leafb #(.$angle(200), .$hflip(-1), .$xposition(0.001)) b1(p,n);
+endmodule
+
+module ang(p,n);
+  inout p,n; electrical p,n;
+  mida #(.$angle(200), .$hflip(-1), .$xposition(0.002)) a1(p,n);
+endmodule

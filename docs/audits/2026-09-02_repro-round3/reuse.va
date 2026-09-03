@@ -1,0 +1,19 @@
+`include "disciplines.vams"
+module reuse(p,n);
+  inout p,n; electrical p,n;
+  integer a,b,c;
+  analog begin
+    @(initial_step) begin
+      a = $fopen("re_a.txt");
+      $fdisplay(a, "A-before");
+      $fclose(a);
+      $fdisplay(a, "A-after-close");
+      b = $fopen("re_b.txt");
+      $fdisplay(b, "B");
+      c = $fopen("re_c.txt");
+      $strobe("REUSE a=%0d b=%0d c=%0d", a,b,c);
+      $fclose(b); $fclose(c);
+    end
+    I(p,n) <+ V(p,n)*1e-3;
+  end
+endmodule

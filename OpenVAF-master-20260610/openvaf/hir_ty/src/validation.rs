@@ -1105,6 +1105,53 @@ impl Diagnostic for BodyValidationDiagnosticWrapped<'_> {
                             .to_owned(),
                     ])
             }
+            BodyValidationDiagnostic::AliasNetIsPort { expr, port, .. } => {
+                let FileSpan { range, file } = self.expr_src(expr);
+                let name =
+                    if port { "$analog_port_alias" } else { "$analog_node_alias" };
+                Report::error()
+                    .with_message(format!(
+                        "{name}'s aliased net is a port of this module"
+                    ))
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: file,
+                        range: range.into(),
+                        message: "the first argument is a port".to_owned(),
+                    }])
+                    .with_notes(vec![
+                        "help: LRM 9.20 -- 'it shall be an error for the \
+                         analog_net_reference to be a port or to be involved in port \
+                         connections'; a port is already wired by the instantiation, so \
+                         there is no second position for an alias to move it to. Declare \
+                         a local net for the alias instead"
+                            .to_owned(),
+                    ])
+            }
+            BodyValidationDiagnostic::AliasTargetIsAliased { expr, port, ref target, .. } => {
+                let FileSpan { range, file } = self.expr_src(expr);
+                let name =
+                    if port { "$analog_port_alias" } else { "$analog_node_alias" };
+                Report::error()
+                    .with_message(format!(
+                        "{name} targets \"{target}\", which is itself aliased in this module"
+                    ))
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: file,
+                        range: range.into(),
+                        message: "target is another alias call's net".to_owned(),
+                    }])
+                    .with_notes(vec![
+                        "help: LRM 9.20 -- 'it shall be an error for the \
+                         hierarchical_reference_string to reference a node that is used \
+                         as an analog_net_reference in another $analog_node_alias() or \
+                         $analog_port_alias() system function call'; chaining one alias \
+                         onto another has no defined resolution. Point this call at the \
+                         node the other alias resolves to"
+                            .to_owned(),
+                    ])
+            }
             BodyValidationDiagnostic::AliasOutsideInitial { expr, port, .. } => {
                 let FileSpan { range, file } = self.expr_src(expr);
                 let name =

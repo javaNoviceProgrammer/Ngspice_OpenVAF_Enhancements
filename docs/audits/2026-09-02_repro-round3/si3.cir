@@ -1,0 +1,14 @@
+* severity in analog initial, mode 3
+.control
+pre_osdi sev.osdi
+.endc
+.model mm sevinit mode=3
+n1 1 0 mm
+v1 1 0 dc 1
+.control
+op
+print v(1)
+echo "REACHED-END"
+quit
+.endc
+.end

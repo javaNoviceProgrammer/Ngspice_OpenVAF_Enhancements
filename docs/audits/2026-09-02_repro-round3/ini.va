@@ -1,0 +1,17 @@
+`include "disciplines.vams"
+module ini(p,n);
+  inout p,n; electrical p,n;
+  analog initial begin
+    $strobe ("INIT-strobe");
+    $display("INIT-display");
+    $info   ("INIT-info");
+  end
+  analog begin
+    @(initial_step) begin
+      $strobe ("EVT-strobe");
+      $display("EVT-display");
+      $info   ("EVT-info");
+    end
+    I(p,n) <+ V(p,n)*1e-3;
+  end
+endmodule

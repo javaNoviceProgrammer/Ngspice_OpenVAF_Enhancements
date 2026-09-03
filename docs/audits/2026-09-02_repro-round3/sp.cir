@@ -1,0 +1,12 @@
+* simparam table 9-27
+.control
+pre_osdi sp.osdi
+.endc
+.model mm sp
+n1 1 0 mm
+v1 1 0 dc 1
+.control
+op
+quit
+.endc
+.end

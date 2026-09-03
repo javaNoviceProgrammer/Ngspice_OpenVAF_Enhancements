@@ -271,7 +271,17 @@ impl BodyLoweringCtx<'_, '_, '_> {
             ),
             Expr::Read(Ref::Variable(var)) => self.ctx.read_variable(var),
             Expr::Read(Ref::ParamSysFun(param)) => {
-                self.ctx.use_param(ParamKind::ParamSysFun(param))
+                let val = self.ctx.use_param(ParamKind::ParamSysFun(param));
+                // LRM 9.18 Table 9-29 (round-3 audit): `$angle` is specified
+                // and returned in the range 0 <= $angle < 360. The value
+                // arriving here is whatever the netlist instance parameter
+                // holds (`_angle=400` was read straight back as 400), so the
+                // read is where every route is brought into range.
+                if param == hir::ParamSysFun::angle {
+                    self.ctx.normalize_angle(val)
+                } else {
+                    val
+                }
             }
             Expr::Read(Ref::Parameter(param)) => {
                 // LRM 4.7.1 (UDF audit): a FUNCTION-local parameter is a pure
@@ -2401,6 +2411,17 @@ impl BodyLoweringCtx<'_, '_, '_> {
             }
             BuiltIn::error => {
                 self.ins_display(DisplayKind::Error, true, args, PrintDst::Console, None);
+                // LRM 9.7.3, round-3 audit: inside an `analog initial` block
+                // "the simulation shall not proceed past initialization".
+                // The message is still issued and the block still runs to the
+                // end -- unlike `$fatal`, which abandons the evaluation -- so
+                // this is a separate flag the simulator acts on once the
+                // initialization is complete. Elsewhere `$error` is a
+                // diagnostic and changes no control flow, which is all the
+                // clause asks for there.
+                if self.ctx.in_analog_initial {
+                    self.ctx.call(CallBackKind::SetRetFlag(RetFlag::InitErr), &[]);
+                }
                 GRAVESTONE
             }
             BuiltIn::info => {

@@ -174,6 +174,20 @@ impl ParamSysFun {
         }
     }
 
+    /// The `$`-spelled source text of a hierarchical system parameter -- the
+    /// inverse of [`Self::from_sysfun_text`], for diagnostics that name the
+    /// parameter the user wrote.
+    pub fn sysfun_text(self) -> &'static str {
+        match self {
+            Self::mfactor => "$mfactor",
+            Self::xposition => "$xposition",
+            Self::yposition => "$yposition",
+            Self::angle => "$angle",
+            Self::hflip => "$hflip",
+            Self::vflip => "$vflip",
+        }
+    }
+
     /// `true` for the multiplicative hierarchical system parameters (`$mfactor`,
     /// `$hflip`, `$vflip` -- multiplicities and flips multiply down the hierarchy);
     /// `false` for the additive ones (`$xposition`, `$yposition`, `$angle`).

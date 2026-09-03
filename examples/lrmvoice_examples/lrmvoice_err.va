@@ -1,0 +1,11 @@
+`include "disciplines.vams"
+// LRM 9.7.3: "If $error is executed within an analog initial block, then the
+// message is issued and the initialization continues. However, the simulation
+// shall not proceed past initialization." Round-3 audit: the message printed
+// and the operating point ran to completion and produced numbers.
+module lrmvoice_err(p, n);
+  inout p, n;
+  electrical p, n;
+  analog initial $error("ERR-in-initial");
+  analog I(p, n) <+ V(p, n) * 1e-3;
+endmodule

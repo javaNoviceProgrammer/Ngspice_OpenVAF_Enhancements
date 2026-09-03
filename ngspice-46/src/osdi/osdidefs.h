@@ -352,9 +352,17 @@ void osdi_trnoise_stamp(CKTcircuit *ckt, void *inst, void *model,
  * time. OSDIload announces the start of each Newton iteration (dropping the
  * superseded iteration's output), OSDIaccept and OSDIfinalStep flush, and the
  * sweep analyses flush per converged point. Messages carrying
- * LOG_FLAG_IMMEDIATE (event-gated statements, $debug/$fdebug, severity tasks)
- * bypass the buffer. */
+ * LOG_FLAG_IMMEDIATE (event-gated statements and `analog initial` blocks,
+ * which fire on an iteration that is not the accepted one) bypass the buffer,
+ * as do $debug/$fdebug (9.4.6's exemption) and $fatal (9.7.3: it "terminates
+ * the simulation without checking whether the iteration would be rejected").
+ * Round-3 audit: $error/$warning/$info do NOT -- 9.7.3 says a non-fatal
+ * severity task called during a rejected iteration "shall have no effect". */
 void osdi_display_iter_begin(void);
+/* Round-3 audit: publish the circuit whose evaluation is producing output, so
+ * a severity task can report the simulation time (or, in a .dc, the swept
+ * value) that LRM 9.7.3 requires alongside its message. */
+void osdi_display_note_circuit(const CKTcircuit *ckt);
 void osdi_display_setup_phase(void);  /* Enhancement-535: per-ANALYSIS reset */
 void osdi_display_reenter_setup(void); /* per-setup reset, monitor history kept */
 void osdi_display_flush(void);

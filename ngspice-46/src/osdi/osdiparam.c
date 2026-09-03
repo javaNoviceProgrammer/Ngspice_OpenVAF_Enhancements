@@ -15,6 +15,7 @@
 
 #include "osdidefs.h"
 
+#include <math.h>   /* round-3 audit: floor(), for the LRM 9.18 angle wrap */
 #include <stdint.h>
 #include <string.h>
 
@@ -187,6 +188,39 @@ extern int OSDIparam(int param, IFvalue *value, GENinstance *instPtr,
             "its noise NaN).\n",
             value->rValue);
     return (OK);
+  }
+
+  /* ROUND-3 AUDIT (2026-09-02) / LRM 9.18 Table 9-29: the rest of the
+     *Allowed values* column, which nothing checked on this route either.
+     `_hflip=5` and `_vflip=0` were applied verbatim, though the table gives
+     both as "+1 or -1" -- they say whether the instance is mirrored, and no
+     other value means anything. Warned and ignored, the same shape as the
+     multiplier above, so a deck that sets one keeps running with the value it
+     had. */
+  if ((!strcmp(descr->param_opvar[param].name[0], "$hflip") ||
+       !strcmp(descr->param_opvar[param].name[0], "$vflip")) &&
+      value->rValue != 1.0 && value->rValue != -1.0) {
+    fprintf(stderr,
+            "Warning: %s=%g is not +1 or -1; the value is ignored "
+            "(LRM 9.18 Table 9-29 -- a flip says whether the instance is "
+            "mirrored about its center).\n",
+            descr->param_opvar[param].name[0], value->rValue);
+    return (OK);
+  }
+
+  /* LRM 9.18 Table 9-29 again: $angle resolves "modulo 360 degrees" into
+     0 <= $angle < 360. `_angle=400` was stored and read back as 400, so a
+     model that COMPARES the angle (a quadrant test, a lookup keyed on
+     orientation) took the wrong branch -- one that only feeds it to a
+     trigonometric function never noticed. Normalised rather than refused:
+     400 degrees is a legal rotation, it is simply spelled 40 here. */
+  if (!strcmp(descr->param_opvar[param].name[0], "$angle") &&
+      (value->rValue < 0.0 || value->rValue >= 360.0)) {
+    double a = value->rValue - 360.0 * floor(value->rValue / 360.0);
+    if (a < 0.0 || a >= 360.0) {
+      a = 0.0; /* only reachable for a non-finite input */
+    }
+    value->rValue = a;
   }
 
   void *inst = osdi_instance_data(entry, instPtr);

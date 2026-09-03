@@ -1,0 +1,12 @@
+`include "disciplines.vams"
+module al(p,n);
+  inout p,n; electrical p,n;      // p and n are PORTS
+  electrical loc1, loc2;
+  integer s1, s2, s3;
+  analog initial begin
+    s1 = $analog_node_alias(p, "top.x");        // LRM 9.20: ERROR -- net ref is a port
+    s2 = $analog_node_alias(loc1, "top.x");     // legal shape
+    s3 = $analog_node_alias(loc2, "top.loc1");  // ERROR -- loc1 is itself a net ref above
+  end
+  analog I(p,n) <+ V(p,n)*1e-3;
+endmodule

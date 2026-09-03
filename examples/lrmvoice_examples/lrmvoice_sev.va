@@ -1,0 +1,20 @@
+`include "disciplines.vams"
+// LRM 9.7.3: "Non-fatal system severity tasks ($error, $warning, $info) called
+// during a rejected iteration shall have no effect." Round-3 audit: they ran on
+// every Newton iteration, so one diode .op printed 21 $warning lines walking
+// the unconverged sequence where $strobe -- correctly -- printed one.
+//
+// $strobe sits on the adjacent line so the two are measured under identical
+// conditions.
+module lrmvoice_sev(p, n);
+  inout p, n;
+  electrical p, n;
+  parameter real is = 1e-14;
+  analog begin
+    $strobe ("SEV-strobe v=%.6f", V(p, n));
+    $warning("SEV-warn v=%.6f", V(p, n));
+    $info   ("SEV-info v=%.6f", V(p, n));
+    $debug  ("SEV-debug v=%.6f", V(p, n));
+    I(p, n) <+ is * (exp(V(p, n) / $vt) - 1.0);
+  end
+endmodule

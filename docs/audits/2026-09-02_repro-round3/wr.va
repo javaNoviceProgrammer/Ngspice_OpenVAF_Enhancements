@@ -1,0 +1,13 @@
+`include "disciplines.vams"
+module wr(p,n);
+  inout p,n; electrical p,n;
+  analog begin
+    $write("[A]");
+    $write("[B]");
+    $strobe;                     // LRM 9.4.1: prints just a newline
+    $write("[C]\n");
+    $debug("DBG v=%.4f", V(p,n));
+    I(p,n) <+ is_pos(V(p,n));
+  end
+  analog function real is_pos; input x; real x; is_pos = x*1e-3; endfunction
+endmodule

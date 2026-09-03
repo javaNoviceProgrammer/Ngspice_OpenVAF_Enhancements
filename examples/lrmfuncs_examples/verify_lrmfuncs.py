@@ -386,10 +386,14 @@ for i,(lbl,b,dc) in enumerate([('$simprobe(dev,param)','y = $simprobe("v1","dc")
    # E-527 (kernel audit): the aliases are analog-initial-only per LRM 9.20,
    # so the compile-must-pass form declares its own analog initial block; the
    # in-analog-block misuse is pinned as a refusal below.
+   # E-541 (LRM 9.20): the aliased net may not be a PORT -- "it shall be an
+   # error for the analog_net_reference to be a port or to be involved in port
+   # connections" -- so these declare a local net. They used to pass the port
+   # `p` and compiled clean.
    ('$analog_node_alias(node,"n")','',
-    " integer r;\n analog initial r = $analog_node_alias(p,\"vp\");\n"),
+    " integer r;\n electrical loc;\n analog initial r = $analog_node_alias(loc,\"vp\");\n"),
    ('$analog_port_alias(node,"n")','',
-    " integer r;\n analog initial r = $analog_port_alias(p,\"ip\");\n"),
+    " integer r;\n electrical loc2;\n analog initial r = $analog_port_alias(loc2,\"ip\");\n"),
    ('$test$plusargs("flag")','r = $test$plusargs("f");'," integer r;\n"),
    ('$value$plusargs("f=%d",int)','r = $value$plusargs("f=%d",iv);'," integer r, iv;\n"),
    ('$value$plusargs("f=%f",real)','r = $value$plusargs("f=%f",rv);'," integer r; real rv;\n"),
@@ -401,9 +405,11 @@ for i,(lbl,b,dc) in enumerate([('$simprobe(dev,param)','y = $simprobe("v1","dc")
 
 # E-527 (kernel audit): the 9.20 context rule is enforced -- an alias call in
 # a plain analog block is the LRM's own error.
-d,rc,o=build(mod('r = $analog_node_alias(p,"vp");'," integer r;\n"),"PA1")
+# The net is local (E-541), so the ONLY thing wrong with this call is the
+# context -- the check pins the context rule rather than any refusal.
+d,rc,o=build(mod('r = $analog_node_alias(loc3,"vp");'," integer r;\n electrical loc3;\n"),"PA1")
 chk("misc",'$analog_node_alias in a plain analog block is the LRM 9.20 error',
-    rc!=0 and "analog initial" in o,
+    rc!=0 and "analog initial" in o and "is a port" not in o,
     next((l[7:60] for l in o.splitlines() if 'error' in l.lower()),""))
 
 # ---- the LRM forms that are deliberately REFUSED (see the header) ----

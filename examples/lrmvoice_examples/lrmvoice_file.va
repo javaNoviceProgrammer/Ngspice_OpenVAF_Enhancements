@@ -1,0 +1,47 @@
+`include "disciplines.vams"
+// LRM 9.5.1, two rules, both measured against a control in the same block.
+//
+//  * "The most significant bit (bit 31) of a multichannel descriptor is
+//    reserved and shall always be cleared, limiting an implementation to at
+//    most 31 files opened for output via multichannel descriptors." Round-3
+//    audit: the 31st $fopen(name) returned 0x8000_0000 -- which is the file
+//    descriptor bit, and exactly the pre-opened STDIN -- so writes to it were
+//    silently discarded.
+//
+//  * Table 9-24: "w" is "truncate to zero length or create for writing".
+//    Round-3 audit: reopening a file that had been read handed back the
+//    READ-mode stream, so the truncation never happened and every write
+//    vanished with no error.
+module lrmvoice_file(p, n);
+  inout p, n;
+  electrical p, n;
+  integer i, mcd, last, prev, f1, f2, f3;
+  string nm, s;
+  analog begin
+    @(initial_step) begin
+      // --- multichannel allocation: bits 1..30, then failure ---------------
+      prev = 0;
+      last = 0;
+      for (i = 0; i < 31; i = i + 1) begin
+        $sformat(nm, "mc/e%0d.txt", i);
+        mcd = $fopen(nm);
+        if (i == 29) prev = mcd;   // the last legal channel: bit 30
+        if (i == 30) last = mcd;   // one past it: must fail with 0
+      end
+      $strobe("FILE bit30=%0d over=%0d", prev, last);
+
+      // --- mode change on reopen ------------------------------------------
+      f1 = $fopen("lrmvoice_ctl.txt", "a");   // control: plain append
+      $fdisplay(f1, "CTL-appended");
+      $fclose(f1);
+
+      f2 = $fopen("lrmvoice_rw.txt", "r");    // read it first...
+      i  = $fgets(s, f2);
+      $fclose(f2);
+      f3 = $fopen("lrmvoice_rw.txt", "w");    // ...then reopen for writing
+      $fdisplay(f3, "RW-rewritten");
+      $fclose(f3);
+    end
+    I(p, n) <+ V(p, n) * 1e-3;
+  end
+endmodule

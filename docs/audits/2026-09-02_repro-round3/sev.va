@@ -1,0 +1,21 @@
+`include "disciplines.vams"
+module sev(p,n);
+  inout p,n; electrical p,n;
+  parameter integer mode = 0;
+  analog begin
+    if (mode == 1) $info("INFO from analog body");
+    if (mode == 2) $warning("WARN from analog body");
+    if (mode == 3) $error("ERR from analog body");
+    I(p,n) <+ V(p,n)*1e-3;
+  end
+endmodule
+module sevinit(p,n);
+  inout p,n; electrical p,n;
+  parameter integer mode = 0;
+  analog initial begin
+    if (mode == 1) $info("INFO from analog initial");
+    if (mode == 2) $warning("WARN from analog initial");
+    if (mode == 3) $error("ERR from analog initial");
+  end
+  analog I(p,n) <+ V(p,n)*1e-3;
+endmodule
