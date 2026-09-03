@@ -85,6 +85,14 @@ impl lexer::TokenKind {
             NXorL => T![~^],
             NXorR => T![^~],
 
+            // the IEEE 1364-2005 19.3.1 macro operators are only meaningful
+            // inside `` `define `` bodies, where the preprocessor stores them
+            // as markers before this conversion runs; anywhere else they are
+            // the error they always were
+            MacroQuote | MacroEscQuote | Paste => {
+                return (None, Some(LexerErrorKind::UnexpectedToken))
+            }
+
             Unknown => return (None, Some(LexerErrorKind::UnexpectedToken)),
         };
 

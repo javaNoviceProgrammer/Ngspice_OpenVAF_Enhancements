@@ -152,6 +152,26 @@ impl Cursor<'_> {
                 self.bump();
                 self.whitespace()
             }
+            // The IEEE 1364-2005 19.3.1 macro operators (via LRM 10.4), lexed
+            // only inside a `` `define `` body: `" opens/closes a string the
+            // expansion builds after argument substitution, \`" contributes an
+            // escaped quote inside such a string, and `` pastes the adjacent
+            // tokens into one. Outside macro text every character keeps its
+            // old meaning (`\` may start an escaped identifier, a bare `" is
+            // the error it always was).
+            '\\' if self.in_define() && self.first() == '`' && self.second() == '"' => {
+                self.bump();
+                self.bump();
+                MacroEscQuote
+            }
+            '`' if self.in_define() && self.first() == '"' => {
+                self.bump();
+                MacroQuote
+            }
+            '`' if self.in_define() && self.first() == '`' => {
+                self.bump();
+                Paste
+            }
             '`' if is_ident_start_char(self.first()) => self.compiler_directive(),
 
             // Identifier (this should be checked after other variant that can

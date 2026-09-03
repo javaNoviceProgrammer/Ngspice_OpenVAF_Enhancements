@@ -11,7 +11,7 @@ use typed_index_collections::{TiSlice, TiVec};
 use vfs::VfsPath;
 
 use crate::diagnostics::PreprocessorDiagnostic;
-use crate::processor::ParsedToken;
+use crate::processor::{ParsedToken, ParsedTokenKind};
 use crate::sourcemap::{CtxSpan, SourceContext};
 use crate::Diagnostics;
 
@@ -226,12 +226,29 @@ impl<'a, 'd> Parser<'a, 'd> {
         dst: &mut Vec<ParsedToken<'a>>,
         err: &mut Vec<PreprocessorDiagnostic>,
     ) {
-        dst.extend(self.full_tokens[range].iter().filter_map(|token| {
+        for token in self.full_tokens[range].iter() {
+            // The IEEE 1364-2005 19.3.1 macro operators (via LRM 10.4) are
+            // only meaningful in macro text. They are stored as markers the
+            // expansion interprets -- `to_syntax` would report them as the
+            // errors they are everywhere else.
+            let marker = match token.kind {
+                TokenKind::MacroQuote => Some(ParsedTokenKind::Quote),
+                TokenKind::MacroEscQuote => Some(ParsedTokenKind::EscQuote),
+                TokenKind::Paste => Some(ParsedTokenKind::Paste),
+                _ => None,
+            };
+            if let Some(kind) = marker {
+                let range = TextRange::at(self.offset, token.len);
+                self.offset += token.len;
+                dst.push(ParsedToken { kind, range });
+                continue;
+            }
             let res = Self::convert_lexer_token(*token, self.offset, self.src, err, self.ctx);
             self.offset += token.len;
-            let (kind, range) = res?;
-            Some(ParsedToken { kind: kind.into(), range })
-        }))
+            if let Some((kind, range)) = res {
+                dst.push(ParsedToken { kind: kind.into(), range });
+            }
+        }
     }
 
     pub(crate) fn bump_to_macro(

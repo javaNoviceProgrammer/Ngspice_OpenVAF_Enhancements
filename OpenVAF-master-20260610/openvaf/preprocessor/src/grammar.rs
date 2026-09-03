@@ -224,9 +224,14 @@ fn parse_macro_token<'a>(
     if p.at(PreprocessorToken::SimpleIdent) {
         if let Some(arg) = args.iter().position(|x| *x == p.current_text()) {
             // debug!(name = p.current_text(), idx = arg, "macro arg reference");
+            // Round-4 audit: capture the identifier's OWN range before the
+            // bump -- `current_range` afterwards is the next token's, which
+            // made the stored range lie and lost the spacing that `"`
+            // stringification reconstructs from the source gaps.
+            let range = p.current_range();
             p.bump();
             dst.push(ParsedToken {
-                range: p.current_range(),
+                range,
                 kind: ParsedTokenKind::ArgumentReference(MacroArg::from(arg)),
             });
             return;

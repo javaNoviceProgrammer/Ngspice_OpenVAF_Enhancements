@@ -93,6 +93,13 @@ pub trait SourceProvider {
     fn file_text(&self, file: FileId) -> Result<Arc<str>, FileReadError>;
     fn file_path(&self, file: FileId) -> VfsPath;
     fn file_id(&self, path: VfsPath) -> FileId;
+
+    /// Round-4 audit (LRM 10.4 -> IEEE 1364-2005 19.3.1): stores the text of
+    /// the virtual file that backs preprocessor-synthesized tokens (macro
+    /// stringification and token pasting produce text that exists in no
+    /// source file). The file id was interned through `file_id` earlier;
+    /// after this call `file_text` must serve `text` for it.
+    fn set_file_text(&self, file: FileId, text: &str);
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]

@@ -41,6 +41,10 @@ impl SourceProvider for TestSourceProvider {
     fn file_id(&self, path: VfsPath) -> FileId {
         self.vfs.borrow_mut().ensure_file_id(path)
     }
+
+    fn set_file_text(&self, file: FileId, text: &str) {
+        self.vfs.borrow_mut().set_file_contents(file, text.to_owned().into());
+    }
 }
 
 fn check_prepocessor(sources: TestSourceProvider, root_file: FileId, test_name: &'static str) {

@@ -123,7 +123,7 @@ if rc == 0:
     sim = run("N1 a 0 mm\nR1 a 0 1k\n.model mm lrmlex()",
               "op\nprint @n1[a] @n1[b] @n1[c] @n1[d] @n1[e]\n"
               "print @n1[f] @n1[g] @n1[h] @n1[i]\nprint @n1[ve] @n1[uk] @n1[xa]\n"
-              "print @n1[e2] @n1[e3] @n1[e4] @n1[e5]",
+              "print @n1[e2] @n1[e3] @n1[e4] @n1[e5] @n1[opq]",
               "main", osdi)
     for name, want, why in [
         ("a", 3, "5 'D 3 (LRM Example 2)"),
@@ -135,6 +135,7 @@ if rc == 0:
         ("e3", 31, "'h 1f (digit + scale letter)"),
         ("e4", 485, "'h 1e5 (digit + exponent shape)"),
         ("e5", 26, "'h 1a (digit + scale letter)"),
+        ("opq", 12, "`` pastes op+q into one identifier (19.3.1 via LRM 10.4)"),
         ("f", 255, "contiguous 8'hFF unchanged"),
         ("g", 172, "contiguous 'sb1010_1100 unchanged"),
         ("h", 15, "contiguous 'o17 unchanged"),
@@ -157,6 +158,9 @@ if rc == 0:
              "devh", osdi)
     check("[5] duplicate attribute resolves to the LAST value in the descriptor",
           "last wins" in dh, "devhelp text")
+    check("[2b] `\" stringifies a macro argument (19.3.1)", "MOPS1=[hello]" in sim)
+    check("[2b] \\`\" places a quote inside the built string",
+          'MOPS2=[v is \"v\"]' in sim)
 
 # ---- srcloc + relative include ---------------------------------------------
 print("\nsrcloc.va (`__FILE__/`__LINE__ next to a relative `include):")

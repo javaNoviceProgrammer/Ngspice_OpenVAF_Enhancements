@@ -111,6 +111,14 @@ impl<'a> Cursor<'a> {
         self.dst.push(Token { kind, len })
     }
 
+    /// Whether the cursor is inside a `` `define `` directive's body (the
+    /// marker is set at the directive and cleared at the terminating
+    /// newline). The IEEE 1364-2005 19.3.1 macro operators are only lexed
+    /// here; outside macro text their characters keep their old meanings.
+    pub(crate) fn in_define(&self) -> bool {
+        self.marker.is_some()
+    }
+
     pub(crate) fn finish_marker(&mut self) -> bool {
         if let Some(marker) = self.marker.take() {
             // A macro body that ends in a bare base token must not leak the

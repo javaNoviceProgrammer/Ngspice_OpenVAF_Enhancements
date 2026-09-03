@@ -12,7 +12,7 @@ use typed_index_collections::{TiSlice, TiVec};
 use vfs::{FileId, VfsPath};
 
 use crate::diagnostics::PreprocessorDiagnostic::{
-    self, MacroArgumentCountMismatch, MacroNotFound, UnexpectedToken,
+    self, MacroArgumentCountMismatch, MacroNotFound, UnexpectedEof, UnexpectedToken,
 };
 use crate::grammar::{parse_condition, parse_define, parse_include, parse_macro_call};
 use crate::parser::{CompilerDirective, Parser, PreprocessorToken};
@@ -59,6 +59,13 @@ pub(crate) struct Processor<'a> {
     in_defines_file: bool,
     /// Nesting depth of `` `begin_keywords `` regions (LRM 10.6).
     keyword_set_depth: u32,
+    /// Round-4 audit (LRM 10.4 -> IEEE 1364-2005 19.3.1): text synthesized by
+    /// the macro operators -- `` `" `` stringification and token pasting --
+    /// which exists in no source file. Fragments accumulate here and are
+    /// flushed into one virtual file at the end of `run`, so the spans of
+    /// synthesized tokens resolve through the source map like any others.
+    synth_buf: String,
+    synth_file: Option<FileId>,
 }
 
 impl<'a> Processor<'a> {
@@ -89,6 +96,8 @@ impl<'a> Processor<'a> {
             default_transition: None,
             in_defines_file: false,
             keyword_set_depth: 0,
+            synth_buf: String::new(),
+            synth_file: None,
         };
         Ok(res)
     }
@@ -108,6 +117,13 @@ impl<'a> Processor<'a> {
         let parser =
             Parser::new(self.arena.get(0), SourceContext::ROOT, working_dir, &mut dst, &mut err);
         self.process_file(parser, &mut err);
+
+        // Flush the macro-operator scratch file (see `synth_buf`): from here
+        // on the tree builder and the diagnostics renderer read synthesized
+        // token text through the ordinary file_text path.
+        if let Some(file) = self.synth_file {
+            self.sources.set_file_text(file, &self.synth_buf);
+        }
 
         (dst, err)
     }
@@ -229,6 +245,13 @@ impl<'a> Processor<'a> {
                 dst.extend(&args[arg]);
             }
             ParsedTokenKind::MacroCall(ref call) => self.call_macro(call, span, args, dst, errors),
+            // the macro operators belong to `` `define `` bodies, where
+            // `call_macro`'s body walk consumes them before this function is
+            // reached; in any other position (a macro-call argument list)
+            // they are the error they are outside macro text
+            ParsedTokenKind::Quote | ParsedTokenKind::EscQuote | ParsedTokenKind::Paste => {
+                errors.push(UnexpectedToken(span));
+            }
         }
     }
 
@@ -274,9 +297,27 @@ impl<'a> Processor<'a> {
             if new_args.len() == def.arg_cnt || def.arg_cnt == 0 {
                 let ctx = self.source_map.add_ctx(def.span.to_file_span(&self.source_map), span);
                 self.expansion_stack.push(call.name);
-                for ParsedToken { kind, range } in &def.body {
-                    let span = CtxSpan { range: range - def.span.range.start(), ctx };
-                    self.process_macro_token(kind, span, &new_args, dst, errors)
+                // Round-4 audit: the body walk interprets the IEEE 1364-2005
+                // 19.3.1 macro operators -- an index loop because `" opens a
+                // region and `` consumes its neighbours.
+                let mut i = 0;
+                while i < def.body.len() {
+                    let ParsedToken { ref kind, range } = def.body[i];
+                    let tok_span = CtxSpan { range: range - def.span.range.start(), ctx };
+                    match *kind {
+                        ParsedTokenKind::Quote => {
+                            i = self.stringify_region(&def, i, ctx, span, &new_args, dst, errors);
+                            continue;
+                        }
+                        ParsedTokenKind::Paste => {
+                            i = self.paste(&def, i, ctx, span, &new_args, dst, errors);
+                            continue;
+                        }
+                        // \`" outside a `" ... `" region
+                        ParsedTokenKind::EscQuote => errors.push(UnexpectedToken(tok_span)),
+                        ref kind => self.process_macro_token(kind, tok_span, &new_args, dst, errors),
+                    }
+                    i += 1;
                 }
                 self.expansion_stack.pop();
                 if new_args.len() > def.arg_cnt {
@@ -300,6 +341,235 @@ impl<'a> Processor<'a> {
         } else {
             errors.push(MacroNotFound { name: call.name.to_owned(), span })
         }
+    }
+
+    /// The virtual file that backs synthesized tokens, interned on first use.
+    fn synth_file_id(&mut self) -> FileId {
+        if let Some(file) = self.synth_file {
+            return file;
+        }
+        let root = self.source_map.root_file();
+        let path = self.sources.file_path(root).to_string();
+        let base = path.rsplit(['/', '\\']).next().unwrap_or("root").to_owned();
+        let file =
+            self.sources.file_id(VfsPath::new_virtual_path(format!("/{base}__macro_synth.va")));
+        self.synth_file = Some(file);
+        file
+    }
+
+    /// Appends synthesized `text` to the scratch buffer and returns a token
+    /// of `kind` whose span resolves to it. The new context's call site is
+    /// `call_site`, so diagnostics walk back to the macro call that
+    /// synthesized the token.
+    fn synth_token(&mut self, text: &str, kind: SyntaxKind, call_site: CtxSpan) -> Token {
+        let file = self.synth_file_id();
+        let start = TextSize::of(self.synth_buf.as_str());
+        self.synth_buf.push_str(text);
+        let range = TextRange::at(start, TextSize::of(text));
+        // a newline between fragments keeps the scratch readable and keeps
+        // neighbouring fragments from ever lexing into one another
+        self.synth_buf.push('\n');
+        let ctx = self.source_map.add_ctx(FileSpan { file, range }, call_site);
+        Token { kind, span: CtxSpan { range: TextRange::up_to(TextSize::of(text)), ctx } }
+    }
+
+    /// The source text of an already-processed token. Synthesized spans are
+    /// resolved against the in-memory scratch buffer -- the backing file is
+    /// only flushed at the end of `run`.
+    fn token_text(&self, token: &Token) -> String {
+        let fs = token.span.to_file_span(&self.source_map);
+        let range = usize::from(fs.range.start())..usize::from(fs.range.end());
+        if self.synth_file == Some(fs.file) {
+            return self.synth_buf.get(range).map_or_else(String::new, str::to_owned);
+        }
+        match self.sources.file_text(fs.file) {
+            Ok(src) => src.get(range).map_or_else(String::new, str::to_owned),
+            Err(_) => String::new(),
+        }
+    }
+
+    /// Renders processed tokens as the text a `` `" `` region sees: token
+    /// texts verbatim, except that trivia carrying characters a string
+    /// literal cannot hold (a newline or line continuation in a multi-line
+    /// define, a quote inside a comment) collapses to one space.
+    fn tokens_to_text(&self, tokens: &[Token], out: &mut String) {
+        for token in tokens {
+            let text = self.token_text(token);
+            if token.kind.is_trivia() && text.contains(['\n', '\\', '"']) {
+                out.push(' ');
+            } else {
+                out.push_str(&text);
+            }
+        }
+    }
+
+    /// IEEE 1364-2005 19.3.1 (via LRM 10.4): a `" ... `" region in a macro
+    /// body becomes ONE string literal built after argument substitution --
+    /// `` `define msg(x) `"x`" `` called as `` `msg(hello) `` is "hello".
+    /// \`" contributes an escaped quote; `` inside the region is a pure
+    /// token separator and contributes nothing. Returns the body index one
+    /// past the closing `".
+    #[allow(clippy::too_many_arguments)]
+    fn stringify_region(
+        &mut self,
+        def: &Macro<'a>,
+        open_idx: usize,
+        ctx: SourceContext,
+        call_span: CtxSpan,
+        args: &TiSlice<MacroArg, Vec<Token>>,
+        dst: &mut Vec<Token>,
+        errors: &mut Diagnostics,
+    ) -> usize {
+        let def_start = def.span.range.start();
+        let def_file = def.span.to_file_span(&self.source_map).file;
+        let def_src = self.sources.file_text(def_file).ok();
+
+        // the region's spacing is reconstructed from the SOURCE gaps between
+        // elements (the body parser swallows some trivia, e.g. after an
+        // argument reference), collapsed to one space when they hold what a
+        // string literal cannot (a line continuation in a multi-line define)
+        let mut push_gap = |text: &mut String, from: TextSize, to: TextSize| {
+            if to <= from {
+                return;
+            }
+            let gap = def_src
+                .as_deref()
+                .and_then(|src| src.get(usize::from(from)..usize::from(to)))
+                .unwrap_or("");
+            if gap.contains(['\n', '\\', '"']) {
+                text.push(' ');
+            } else {
+                text.push_str(gap);
+            }
+        };
+
+        let mut text = String::from("\"");
+        let mut prev_end = def.body[open_idx].range.end();
+        let mut i = open_idx + 1;
+        let mut closed = false;
+        while i < def.body.len() {
+            let ParsedToken { ref kind, range } = def.body[i];
+            push_gap(&mut text, prev_end, range.start());
+            prev_end = range.end();
+            match *kind {
+                ParsedTokenKind::Quote => {
+                    closed = true;
+                    i += 1;
+                    break;
+                }
+                ParsedTokenKind::EscQuote => text.push_str("\\\""),
+                ParsedTokenKind::Paste => (),
+                ParsedTokenKind::ResolvedToken(kind) => {
+                    let piece = def_src
+                        .as_deref()
+                        .and_then(|src| {
+                            src.get(usize::from(range.start())..usize::from(range.end()))
+                        })
+                        .unwrap_or("");
+                    if kind.is_trivia() && piece.contains(['\n', '\\', '"']) {
+                        text.push(' ');
+                    } else {
+                        text.push_str(piece);
+                    }
+                }
+                ParsedTokenKind::ArgumentReference(arg) => {
+                    if let Some(tokens) = args.get(arg) {
+                        self.tokens_to_text(tokens, &mut text);
+                    }
+                }
+                ParsedTokenKind::MacroCall(ref call) => {
+                    let tok_span = CtxSpan { range: range - def_start, ctx };
+                    let mut tmp = Vec::new();
+                    self.call_macro(call, tok_span, args, &mut tmp, errors);
+                    self.tokens_to_text(&tmp, &mut text);
+                }
+            }
+            i += 1;
+        }
+        if !closed {
+            errors.push(UnexpectedEof {
+                expected: "`\"",
+                span: CtxSpan { range: def.body[open_idx].range - def_start, ctx },
+            });
+        }
+        text.push('"');
+        let token = self.synth_token(&text, SyntaxKind::STR_LIT, call_span);
+        dst.push(token);
+        i
+    }
+
+    /// IEEE 1364-2005 19.3.1 (via LRM 10.4): `` glues the token before it to
+    /// the token after it -- `` `define P(a,b) a``b `` called as
+    /// `` `P(ab,cd) `` is the one identifier `abcd`. Both sides are taken
+    /// after argument substitution; the glued text must re-lex as exactly one
+    /// token, otherwise the paste is reported and the operands stay separate.
+    /// Returns the body index one past the right operand.
+    #[allow(clippy::too_many_arguments)]
+    fn paste(
+        &mut self,
+        def: &Macro<'a>,
+        paste_idx: usize,
+        ctx: SourceContext,
+        call_span: CtxSpan,
+        args: &TiSlice<MacroArg, Vec<Token>>,
+        dst: &mut Vec<Token>,
+        errors: &mut Diagnostics,
+    ) -> usize {
+        let def_start = def.span.range.start();
+        let paste_span = CtxSpan { range: def.body[paste_idx].range - def_start, ctx };
+
+        // the nearest non-trivia token already produced is the left operand;
+        // pasting means adjacency, so intervening trivia is dropped
+        let mut left = None;
+        while let Some(token) = dst.last() {
+            if token.kind.is_trivia() {
+                dst.pop();
+            } else {
+                left = dst.pop();
+                break;
+            }
+        }
+
+        // produce tokens after the `` until a non-trivia right operand exists
+        let mut tmp: Vec<Token> = Vec::new();
+        let mut i = paste_idx + 1;
+        while i < def.body.len() && !tmp.iter().any(|t| !t.kind.is_trivia()) {
+            let ParsedToken { ref kind, range } = def.body[i];
+            let tok_span = CtxSpan { range: range - def_start, ctx };
+            match *kind {
+                ParsedTokenKind::Quote | ParsedTokenKind::EscQuote | ParsedTokenKind::Paste => {
+                    break
+                }
+                ref kind => self.process_macro_token(kind, tok_span, args, &mut tmp, errors),
+            }
+            i += 1;
+        }
+
+        let right = tmp.iter().position(|t| !t.kind.is_trivia());
+        match (left, right) {
+            (Some(left), Some(pos)) => {
+                let text = format!("{}{}", self.token_text(&left), self.token_text(&tmp[pos]));
+                match relex_single(&text) {
+                    Some(kind) => {
+                        let token = self.synth_token(&text, kind, call_span);
+                        dst.push(token);
+                        dst.extend_from_slice(&tmp[pos + 1..]);
+                    }
+                    None => {
+                        // the glued text is not one lexical token
+                        errors.push(UnexpectedToken(paste_span));
+                        dst.push(left);
+                        dst.extend_from_slice(&tmp);
+                    }
+                }
+            }
+            (left, _) => {
+                errors.push(UnexpectedToken(paste_span));
+                dst.extend(left);
+                dst.extend_from_slice(&tmp);
+            }
+        }
+        i
     }
 
     pub(crate) fn process_file(&mut self, mut p: Parser<'a, '_>, err: &mut Diagnostics) {
@@ -521,6 +791,15 @@ pub(crate) enum ParsedTokenKind<'s> {
     ResolvedToken(SyntaxKind),
     ArgumentReference(MacroArg),
     MacroCall(MacroCall<'s>),
+    /// `" -- opens/closes a stringification region (IEEE 1364-2005 19.3.1
+    /// via LRM 10.4); the region becomes one string literal at expansion,
+    /// after argument substitution.
+    Quote,
+    /// \`" -- an escaped quote inside a stringification region.
+    EscQuote,
+    /// `` -- the token-paste operator: glues its neighbours into one token
+    /// at expansion.
+    Paste,
 }
 
 impl From<SyntaxKind> for ParsedTokenKind<'static> {
@@ -546,6 +825,34 @@ impl Macro<'_> {
 pub(crate) struct MacroCall<'s> {
     pub name: &'s str,
     pub arg_bindings: MacroArgs<'s>,
+}
+
+/// Re-lexes pasted text: the paste is valid only when the glued fragments
+/// form EXACTLY one lexical token (19.3.1's purpose is building one
+/// identifier, number or operator from pieces). Keyword formation falls out
+/// of the ordinary conversion -- pasting `beg` to `in` yields the keyword.
+fn relex_single(text: &str) -> Option<SyntaxKind> {
+    let mut res = None;
+    let mut offset = 0usize;
+    for token in lexer::tokenize(text) {
+        let len = usize::from(token.len);
+        let (kind, err) = token.kind.to_syntax(&text[offset..offset + len]);
+        offset += len;
+        if err.is_some() {
+            return None;
+        }
+        match kind {
+            Some(kind) if kind.is_trivia() => return None,
+            Some(kind) => {
+                if res.is_some() {
+                    return None;
+                }
+                res = Some(kind);
+            }
+            None => return None,
+        }
+    }
+    res
 }
 
 /// Parses a number with an optional SI scale suffix (`1u`, `10n`, `1e-6`,

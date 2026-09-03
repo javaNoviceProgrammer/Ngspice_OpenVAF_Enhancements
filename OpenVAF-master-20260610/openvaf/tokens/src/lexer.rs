@@ -149,6 +149,18 @@ pub enum TokenKind {
     /// ^~
     NXorR,
 
+    /// `" -- the macro string-literal quote of IEEE 1364-2005 19.3.1 (via
+    /// LRM 10.4). Only lexed inside a `` `define `` body; the region it
+    /// brackets becomes a string literal AFTER argument substitution.
+    MacroQuote,
+    /// \`" -- contributes a `\"` inside a `` `" ... `" `` region, so a
+    /// macro can synthesize a string that itself contains quotes.
+    MacroEscQuote,
+    /// `` -- the token-paste operator: delimits lexical tokens in a macro
+    /// body without white space, so substituted fragments glue into one
+    /// token at expansion.
+    Paste,
+
     /// Unknown token, not expected by the lexer, e.g. "№"
     Unknown,
 }

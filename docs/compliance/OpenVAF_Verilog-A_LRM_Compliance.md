@@ -1364,7 +1364,19 @@ tracked directive state), `` `default_transition ``, and the housekeeping set
 `` `default_nettype ``, …). Recursive macro expansion — direct or
 mutual — is a clean located error (formerly a compiler stack overflow),
 while the legal same-macro nesting inside *arguments*
-(`` `QUAD(x) = `TWICE(`TWICE(x)) ``) expands finitely:
+(`` `QUAD(x) = `TWICE(`TWICE(x)) ``) expands finitely. The **macro
+operators of IEEE 1364-2005 19.3.1** (which LRM 10.4 adopts by
+reference) work as of the round-4 audit (2026-09-03): `` `" `` builds a
+string literal after argument substitution (`` `define home(f)
+`"/home/mydir/f`" `` is 1364's own example), `` \`" `` places a quote
+inside it, and ``` `` ``` pastes post-substitution fragments into one
+re-lexed token — identifiers, numbers, even keywords. All three used to
+stop compilation at the definition with "encountered unexpected
+token!". Outside macro text the characters keep their old meanings, an
+unterminated `` `" `` region and a paste that does not glue to exactly
+one token are located errors, and the synthesized text is flushed into
+a virtual scratch file so diagnostics and the parser resolve its spans
+like any source. Pinned in `lrmlex`:
 
 ```verilog
 `define TWICE(x) ((x)*2.0)

@@ -18,6 +18,13 @@
 `include "disciplines.vams"
 `begin_keywords "VAMS-2023"
 `define SZ 8
+// LRM 10.4 -> IEEE 1364-2005 19.3.1 (round-4 audit): the macro operators.
+// `" builds a string literal after argument substitution, \`" puts a quote
+// inside it, and `` pastes fragments into one token. All three used to be
+// "encountered unexpected token!" at definition.
+`define OPSTR(x) `"x`"
+`define OPQUOTE(x) `"x is \`"x\`"`"
+`define OPPASTE(a,b) a``b
 `resetall
 
 module lrmlex(p, n);
@@ -46,6 +53,7 @@ module lrmlex(p, n);
     (*desc="undef had no effect"*)   integer uk;
     (*desc="expr-position attrs"*)   real xa;
     (*desc="dup attr", desc="last wins"*) real dl;
+    (*desc="pasted identifier"*)     integer `OPPASTE(op,q);
 
     analog begin
         a = 5 'D 3;
@@ -64,6 +72,11 @@ module lrmlex(p, n);
         g = 'sb1010_1100;
         h = 'o17;
         i = 8'shFF;
+        opq = 12;
+        @(initial_step) begin
+            $strobe("MOPS1=[%s]", `OPSTR(hello));
+            $strobe("MOPS2=[%s]", `OPQUOTE(v));
+        end
 
 `ifdef __VAMS_ENABLE__
         ve = 1;

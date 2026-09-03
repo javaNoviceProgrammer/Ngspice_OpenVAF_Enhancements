@@ -224,6 +224,13 @@ impl SourceProvider for SourceProviderDelegate<'_> {
     fn file_id(&self, path: VfsPath) -> FileId {
         self.0.file_id(path)
     }
+
+    fn set_file_text(&self, file: FileId, text: &str) {
+        // the macro-operator scratch file (IEEE 1364-2005 19.3.1): written
+        // through the same interior-mutable vfs the lazy file loader in
+        // `file_text` above already uses
+        self.0.vfs().write().set_file_contents(file, text.to_owned().into());
+    }
 }
 
 #[macro_export]

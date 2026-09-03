@@ -578,3 +578,61 @@ fn based_literal_pending_disarm() {
         "#]],
     )
 }
+
+/// The IEEE 1364-2005 19.3.1 macro operators (via LRM 10.4) lex as their own
+/// tokens INSIDE a `define body -- `" (string quote), \`" (escaped quote),
+/// `` (token paste) -- and keep their old meanings everywhere else: outside
+/// macro text a backslash starts an escaped identifier and a bare `" is the
+/// unknown token it always was.
+#[test]
+fn macro_operators_in_define() {
+    check_lexing(
+        "`define Q(x) `\"x \\`\"x\\`\"`\" a``b\n`\" \\`\"x",
+        expect![[r#"
+            Token { kind: Define { end: 18 }, len: 7 }
+            "`define"
+            Token { kind: Whitespace, len: 1 }
+            " "
+            Token { kind: SimpleIdent, len: 1 }
+            "Q"
+            Token { kind: OpenParen, len: 1 }
+            "("
+            Token { kind: SimpleIdent, len: 1 }
+            "x"
+            Token { kind: CloseParen, len: 1 }
+            ")"
+            Token { kind: Whitespace, len: 1 }
+            " "
+            Token { kind: MacroQuote, len: 2 }
+            "`\""
+            Token { kind: SimpleIdent, len: 1 }
+            "x"
+            Token { kind: Whitespace, len: 1 }
+            " "
+            Token { kind: MacroEscQuote, len: 3 }
+            "\\`\""
+            Token { kind: SimpleIdent, len: 1 }
+            "x"
+            Token { kind: MacroEscQuote, len: 3 }
+            "\\`\""
+            Token { kind: MacroQuote, len: 2 }
+            "`\""
+            Token { kind: Whitespace, len: 1 }
+            " "
+            Token { kind: SimpleIdent, len: 1 }
+            "a"
+            Token { kind: Paste, len: 2 }
+            "``"
+            Token { kind: SimpleIdent, len: 1 }
+            "b"
+            Token { kind: Whitespace, len: 1 }
+            "\n"
+            Token { kind: Unknown, len: 1 }
+            "`"
+            Token { kind: Literal { kind: Str { terminated: true } }, len: 5 }
+            "\" \\`\""
+            Token { kind: SimpleIdent, len: 1 }
+            "x"
+        "#]],
+    )
+}
