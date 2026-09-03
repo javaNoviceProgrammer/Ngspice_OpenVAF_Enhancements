@@ -14,6 +14,10 @@ pub(crate) struct Cursor<'a> {
     prev: char,
     dst: Vec<Token>,
     marker: Option<usize>,
+    /// Set after a bare based-literal base token (`'h`): the digits that
+    /// follow (possibly across white space, LRM 2.6.1) must be lexed as bare
+    /// digits of this base, not as an ordinary number. See `advance_token`.
+    pub(crate) pending_base: Option<char>,
 }
 
 pub(crate) const EOF_CHAR: char = '\0';
@@ -28,6 +32,7 @@ impl<'a> Cursor<'a> {
             // Tokens are on averge a length of about 4
             dst: Vec::with_capacity(input.len() / 4),
             marker: None,
+            pending_base: None,
         }
     }
 
@@ -108,6 +113,9 @@ impl<'a> Cursor<'a> {
 
     pub(crate) fn finish_marker(&mut self) -> bool {
         if let Some(marker) = self.marker.take() {
+            // A macro body that ends in a bare base token must not leak the
+            // pending digit-run mode into the source after the define.
+            self.pending_base = None;
             self.dst[marker].kind = TokenKind::Define { end: self.dst.len() };
             true
         } else {

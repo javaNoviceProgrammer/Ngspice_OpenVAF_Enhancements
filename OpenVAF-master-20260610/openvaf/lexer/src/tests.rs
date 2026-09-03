@@ -451,3 +451,130 @@ fn array() {
         "#]],
     );
 }
+
+/// LRM 2.6.1 Example 5 (spaced-hex-literal audit finding): the digit run
+/// after a bare base token must lex as bare digits of that base, not as an
+/// ordinary number -- `12a` is not "12 atto" and `1e5` is not a real here.
+#[test]
+fn based_literal_spaced_digits() {
+    check_lexing(
+        "32 'h 12ab_f001 'h 1f 'h 1e5 x = 'h 1f2a; 'd 12 'h zx?_1 'h 1f+'h 2",
+        expect![[r#"
+            Token { kind: Literal { kind: Int }, len: 2 }
+            "32"
+            Token { kind: Whitespace, len: 1 }
+            " "
+            Token { kind: Literal { kind: BasePrefix }, len: 2 }
+            "'h"
+            Token { kind: Whitespace, len: 1 }
+            " "
+            Token { kind: Literal { kind: Int }, len: 9 }
+            "12ab_f001"
+            Token { kind: Whitespace, len: 1 }
+            " "
+            Token { kind: Literal { kind: BasePrefix }, len: 2 }
+            "'h"
+            Token { kind: Whitespace, len: 1 }
+            " "
+            Token { kind: Literal { kind: Int }, len: 2 }
+            "1f"
+            Token { kind: Whitespace, len: 1 }
+            " "
+            Token { kind: Literal { kind: BasePrefix }, len: 2 }
+            "'h"
+            Token { kind: Whitespace, len: 1 }
+            " "
+            Token { kind: Literal { kind: Int }, len: 3 }
+            "1e5"
+            Token { kind: Whitespace, len: 1 }
+            " "
+            Token { kind: SimpleIdent, len: 1 }
+            "x"
+            Token { kind: Whitespace, len: 1 }
+            " "
+            Token { kind: Eq, len: 1 }
+            "="
+            Token { kind: Whitespace, len: 1 }
+            " "
+            Token { kind: Literal { kind: BasePrefix }, len: 2 }
+            "'h"
+            Token { kind: Whitespace, len: 1 }
+            " "
+            Token { kind: Literal { kind: Int }, len: 4 }
+            "1f2a"
+            Token { kind: Semi, len: 1 }
+            ";"
+            Token { kind: Whitespace, len: 1 }
+            " "
+            Token { kind: Literal { kind: BasePrefix }, len: 2 }
+            "'d"
+            Token { kind: Whitespace, len: 1 }
+            " "
+            Token { kind: Literal { kind: Int }, len: 2 }
+            "12"
+            Token { kind: Whitespace, len: 1 }
+            " "
+            Token { kind: Literal { kind: BasePrefix }, len: 2 }
+            "'h"
+            Token { kind: Whitespace, len: 1 }
+            " "
+            Token { kind: Literal { kind: Int }, len: 5 }
+            "zx?_1"
+            Token { kind: Whitespace, len: 1 }
+            " "
+            Token { kind: Literal { kind: BasePrefix }, len: 2 }
+            "'h"
+            Token { kind: Whitespace, len: 1 }
+            " "
+            Token { kind: Literal { kind: Int }, len: 2 }
+            "1f"
+            Token { kind: Plus, len: 1 }
+            "+"
+            Token { kind: Literal { kind: BasePrefix }, len: 2 }
+            "'h"
+            Token { kind: Whitespace, len: 1 }
+            " "
+            Token { kind: Literal { kind: Int }, len: 1 }
+            "2"
+        "#]],
+    )
+}
+
+/// The pending digit-run mode is disarmed by any non-trivia token that does
+/// not start a digit legal for the base -- `'d f` is still an ordinary
+/// identifier (and a parse error downstream), and the mode never crosses a
+/// non-digit. A comment between base and digits keeps it armed.
+#[test]
+fn based_literal_pending_disarm() {
+    check_lexing(
+        "'d ff 'h /*c*/ 3e 'h ;",
+        expect![[r#"
+            Token { kind: Literal { kind: BasePrefix }, len: 2 }
+            "'d"
+            Token { kind: Whitespace, len: 1 }
+            " "
+            Token { kind: SimpleIdent, len: 2 }
+            "ff"
+            Token { kind: Whitespace, len: 1 }
+            " "
+            Token { kind: Literal { kind: BasePrefix }, len: 2 }
+            "'h"
+            Token { kind: Whitespace, len: 1 }
+            " "
+            Token { kind: BlockComment { terminated: true }, len: 5 }
+            "/*c*/"
+            Token { kind: Whitespace, len: 1 }
+            " "
+            Token { kind: Literal { kind: Int }, len: 2 }
+            "3e"
+            Token { kind: Whitespace, len: 1 }
+            " "
+            Token { kind: Literal { kind: BasePrefix }, len: 2 }
+            "'h"
+            Token { kind: Whitespace, len: 1 }
+            " "
+            Token { kind: Semi, len: 1 }
+            ";"
+        "#]],
+    )
+}

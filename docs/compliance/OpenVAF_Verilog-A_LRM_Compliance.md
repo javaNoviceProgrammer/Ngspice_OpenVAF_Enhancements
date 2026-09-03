@@ -77,7 +77,15 @@ The **three-token forms** of LRM 2.6.1 work as of
 separated from the base by white space and each token may come from a
 macro — `5 'D 3` (the LRM's own Example 2), `12'b 0011_0101_0001`,
 `` `SZ'hFF ``, `'h 837FF`, `8'sh FF` — evaluated in the `lrmlex` suite
-next to the contiguous forms. A spaced literal whose digits are illegal
+next to the contiguous forms. The round-4 audit (2026-09-03) found the
+one family E-515 missed: a spaced digit run beginning with a decimal
+digit followed by a scale letter or exponent shape (`32 'h 12ab_f001` —
+the LRM's own Example 5 — `'h 1f`, `'h 1e5`, `'h 1a`) was lexed as a
+*real number*. Fixed at the lexer: a bare base token arms a digit-run
+mode for the next non-trivia token, and the parser joins
+macro-substituted digits of any lexed kind, so all three tokens still
+substitute independently. Pinned in `lrmlex` beside the E-515 forms.
+A spaced literal whose digits are illegal
 for its base is a located error. Two illegal forms that used to compile
 in silence are errors now: `1.` (LRM 2.6.2 requires a digit on each side
 of the decimal point) and a string spanning a raw newline (LRM 2.7).

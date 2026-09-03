@@ -47,6 +47,22 @@ fn is_based_digit(c: char) -> bool {
     c.is_ascii_hexdigit() || matches!(c, '_' | 'x' | 'X' | 'z' | 'Z' | '?')
 }
 
+/// Whether `c` is a legal digit (or `_` separator) for the given base
+/// character. The single source of truth for the digit sets of LRM 2.6.1:
+/// x/z/? are don't-care digits, legal in the power-of-two bases only (their
+/// use is then restricted to casex/casez items by later validation).
+fn is_digit_of_base(base: char, c: char) -> bool {
+    match base {
+        'b' | 'B' => matches!(c, '0' | '1' | '_' | 'x' | 'X' | 'z' | 'Z' | '?'),
+        'o' | 'O' => matches!(c, '0'..='7' | '_' | 'x' | 'X' | 'z' | 'Z' | '?'),
+        'd' | 'D' => matches!(c, '0'..='9' | '_'),
+        'h' | 'H' => {
+            matches!(c, '0'..='9' | 'a'..='f' | 'A'..='F' | '_' | 'x' | 'X' | 'z' | 'Z' | '?')
+        }
+        _ => false,
+    }
+}
+
 pub fn is_whitespace(c: char) -> bool {
     // This is Pattern_White_Space.
     //
@@ -89,6 +105,34 @@ impl Cursor<'_> {
     /// Parses a token from the input string.
     fn advance_token(&mut self) {
         let first_char = self.bump().unwrap();
+
+        // A bare base token (`'h`) arms this: the next non-trivia token, when
+        // it starts with a digit legal for that base, is the literal's digit
+        // run and must be lexed as bare digits -- not as an ordinary number,
+        // whose scale-factor/exponent rules would split `12ab_f001` at the `a`
+        // and turn `1f` into a real (LRM 2.6.1, the white-space-separated
+        // form; the audit's spaced-hex-literal finding). Trivia (white space,
+        // comments, a line continuation) keeps the state; anything else
+        // disarms it, so `'h` followed by a non-digit still surfaces as an
+        // ordinary parse error.
+        if let Some(base) = self.pending_base {
+            let is_trivia_start = match first_char {
+                '/' if matches!(self.first(), '/' | '*') => true,
+                '\\' if self.first() == '\n' => true,
+                c => is_whitespace(c),
+            };
+            if !is_trivia_start {
+                self.pending_base = None;
+                if first_char != '_' && is_digit_of_base(base, first_char) {
+                    while is_digit_of_base(base, self.first()) {
+                        self.bump();
+                    }
+                    self.finish_token(TokenKind::Literal { kind: LiteralKind::Int });
+                    return;
+                }
+            }
+        }
+
         let token_kind = match first_char {
             // Slash, comment or block comment.
             '/' => match self.first() {
@@ -176,13 +220,20 @@ impl Cursor<'_> {
             '\'' if is_base_char(self.first())
                 || (matches!(self.first(), 's' | 'S') && is_base_char(self.second())) =>
             {
+                let base =
+                    if is_base_char(self.first()) { self.first() } else { self.second() };
                 let has_digits = self.based_literal_body();
-                TokenKind::Literal {
-                    kind: if has_digits {
-                        LiteralKind::BasedInt
-                    } else {
-                        LiteralKind::BasePrefix
-                    },
+                if has_digits {
+                    TokenKind::Literal { kind: LiteralKind::BasedInt }
+                } else {
+                    // Arm the digit-run mode for the next non-trivia token:
+                    // `'h 1f` / `'h 1e5` / `32 'h 12ab_f001` (LRM 2.6.1
+                    // Example 5). Without it the spaced digits go through the
+                    // ordinary number lexer, which reads `1f` as 1 femto and
+                    // `1e5` as a real -- the digits of a based literal have no
+                    // scale factors or exponents.
+                    self.pending_base = Some(base);
+                    TokenKind::Literal { kind: LiteralKind::BasePrefix }
                 }
             }
             // case (in)equality before the two-char forms, the way <<< is
@@ -483,25 +534,9 @@ impl Cursor<'_> {
         }
         let base = self.first();
         self.bump();
-        loop {
-            let ok = match base {
-                // x/z/? are don't-care digits (casex/casez items, LRM A.8.7);
-                // legal in the power-of-two bases, not in decimal
-                'b' | 'B' => {
-                    matches!(self.first(), '0' | '1' | '_' | 'x' | 'X' | 'z' | 'Z' | '?')
-                }
-                'o' | 'O' => {
-                    matches!(self.first(), '0'..='7' | '_' | 'x' | 'X' | 'z' | 'Z' | '?')
-                }
-                'd' | 'D' => matches!(self.first(), '0'..='9' | '_'),
-                'h' | 'H' => {
-                    matches!(self.first(), '0'..='9' | 'a'..='f' | 'A'..='F' | '_' | 'x' | 'X' | 'z' | 'Z' | '?')
-                }
-                _ => false,
-            };
-            if !ok {
-                break;
-            }
+        // x/z/? are don't-care digits (casex/casez items, LRM A.8.7);
+        // legal in the power-of-two bases, not in decimal -- see is_digit_of_base
+        while is_digit_of_base(base, self.first()) {
             if self.first() != '_' {
                 has_digits = true;
             }

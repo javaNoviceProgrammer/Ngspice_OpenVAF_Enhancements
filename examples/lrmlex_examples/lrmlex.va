@@ -34,6 +34,10 @@ module lrmlex(p, n);
     (*desc="`SZ'hFF"*)               integer c;
     (*desc="'h 837FF"*)              integer d;
     (*desc="8'sh FF"*)               integer e;
+    (*desc="32 'h 12ab_f001"*)       integer e2;
+    (*desc="'h 1f"*)                 integer e3;
+    (*desc="'h 1e5"*)                integer e4;
+    (*desc="'h 1a"*)                 integer e5;
     (*desc="contiguous 8'hFF"*)      integer f;
     (*desc="contiguous 'sb1010_1100"*) integer g;
     (*desc="contiguous 'o17"*)       integer h;
@@ -49,6 +53,13 @@ module lrmlex(p, n);
         c = `SZ'hFF;
         d = 'h 837FF;
         e = 8'sh FF;
+        // The round-4 audit's spaced-hex finding: a digit run starting with a
+        // decimal digit followed by a scale letter (f, a) or an exponent (e5)
+        // was lexed as a REAL. 32 'h 12ab_f001 is LRM 2.6.1 Example 5 itself.
+        e2 = 32 'h 12ab_f001;
+        e3 = 'h 1f;
+        e4 = 'h 1e5;
+        e5 = 'h 1a;
         f = 8'hFF;
         g = 'sb1010_1100;
         h = 'o17;

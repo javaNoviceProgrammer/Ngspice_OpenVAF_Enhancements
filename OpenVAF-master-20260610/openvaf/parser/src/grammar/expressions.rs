@@ -253,14 +253,23 @@ fn atom_expr_inner(p: &mut Parser) -> Option<CompletedMarker> {
 }
 
 /// Consumes the digits of a white-space-separated based literal after its
-/// BASE_PREFIX token. The digit blob lexes as INT (`3`, `0011_0101`), IDENT
-/// (`FF`, `z3`), or INT followed directly by IDENT (`837FF` -> `837` + `FF`),
-/// so up to one of each is taken, in that order.
+/// BASE_PREFIX token. A digit run straight from source is a single INT (the
+/// lexer's pending-base mode, LRM 2.6.1 Example 5) or an IDENT (`FF`, `z3`).
+/// A run substituted from a macro body was lexed with no base before it, so
+/// it can arrive as number/identifier fragments (`1f` as an SI real, `12a` +
+/// `b_f001`, `1f` + `2a`): take any run of number tokens, then at most one
+/// trailing IDENT (an identifier eats every remaining digit character, so
+/// nothing can follow it). The literal's value is computed from the joined
+/// token text, which re-validates every digit against the base.
 fn based_digit_tokens(p: &mut Parser) {
-    let had_int = p.eat(INT_NUMBER);
+    let mut any = false;
+    while p.at(INT_NUMBER) || p.at(SI_REAL_NUMBER) || p.at(STD_REAL_NUMBER) {
+        p.bump_any();
+        any = true;
+    }
     if p.at(IDENT) {
         p.bump_any();
-    } else if !had_int {
+    } else if !any {
         p.error(p.unexpected_tokens_msg(vec![INT_NUMBER]));
     }
 }

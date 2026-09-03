@@ -122,7 +122,8 @@ check("[2] `undef of a predefined macro draws the LRM 10.4 warning",
 if rc == 0:
     sim = run("N1 a 0 mm\nR1 a 0 1k\n.model mm lrmlex()",
               "op\nprint @n1[a] @n1[b] @n1[c] @n1[d] @n1[e]\n"
-              "print @n1[f] @n1[g] @n1[h] @n1[i]\nprint @n1[ve] @n1[uk] @n1[xa]",
+              "print @n1[f] @n1[g] @n1[h] @n1[i]\nprint @n1[ve] @n1[uk] @n1[xa]\n"
+              "print @n1[e2] @n1[e3] @n1[e4] @n1[e5]",
               "main", osdi)
     for name, want, why in [
         ("a", 3, "5 'D 3 (LRM Example 2)"),
@@ -130,6 +131,10 @@ if rc == 0:
         ("c", 255, "`SZ'hFF (macro-substituted size)"),
         ("d", 538623, "'h 837FF (LRM Example 1)"),
         ("e", -1, "8'sh FF (signed, space before digits)"),
+        ("e2", 313257985, "32 'h 12ab_f001 (LRM Example 5; round-4 audit: lexed as a real)"),
+        ("e3", 31, "'h 1f (digit + scale letter)"),
+        ("e4", 485, "'h 1e5 (digit + exponent shape)"),
+        ("e5", 26, "'h 1a (digit + scale letter)"),
         ("f", 255, "contiguous 8'hFF unchanged"),
         ("g", 172, "contiguous 'sb1010_1100 unchanged"),
         ("h", 15, "contiguous 'o17 unchanged"),
