@@ -1,0 +1,4 @@
+// incuse.vah -- a direct `__FILE__/`__LINE__ use INSIDE an included file
+// (LRM 10.7: the include changes the expansions; round-4 audit fix)
+il = `__LINE__;
+@(initial_step) $strobe("INCFILE=[%s]", `__FILE__);

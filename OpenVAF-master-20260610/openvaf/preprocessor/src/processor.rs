@@ -15,7 +15,7 @@ use crate::diagnostics::PreprocessorDiagnostic::{
     self, MacroArgumentCountMismatch, MacroNotFound, UnexpectedEof, UnexpectedToken,
 };
 use crate::grammar::{parse_condition, parse_define, parse_include, parse_macro_call};
-use crate::parser::{CompilerDirective, Parser, PreprocessorToken};
+use crate::parser::{CompilerDirective, LineOverride, Parser, PreprocessorToken};
 use crate::sourcemap::{CtxSpan, FileSpan, SourceContext, SourceMap};
 use crate::{
     Diagnostics, FileReadError, ScopedTextArea, SourceProvider, Token, PREDEFINED_MACROS,
@@ -66,6 +66,11 @@ pub(crate) struct Processor<'a> {
     /// synthesized tokens resolve through the source map like any others.
     synth_buf: String,
     synth_file: Option<FileId>,
+    /// LRM 10.7: the use-site location of the macro call currently being
+    /// expanded, recorded by `process_token` so `` `__FILE__ ``/
+    /// `` `__LINE__ `` inside macro text expand to the line of USE (the
+    /// C-preprocessor reading), not the definition site.
+    srcloc_origin: Option<(String, u32)>,
 }
 
 impl<'a> Processor<'a> {
@@ -98,6 +103,7 @@ impl<'a> Processor<'a> {
             keyword_set_depth: 0,
             synth_buf: String::new(),
             synth_file: None,
+            srcloc_origin: None,
         };
         Ok(res)
     }
@@ -215,7 +221,12 @@ impl<'a> Processor<'a> {
         // namespace belongs to the predefined macros). The virtual `-D`
         // definitions file is where the predefined macros themselves are
         // defined, so it is exempt.
-        if !self.in_defines_file && (name.starts_with("__VAMS_") || name == "__OPENVAF__") {
+        if !self.in_defines_file
+            && (name.starts_with("__VAMS_")
+                || name == "__OPENVAF__"
+                || name == "__FILE__"
+                || name == "__LINE__")
+        {
             diagnostics.push(PreprocessorDiagnostic::ReservedMacroName {
                 name: name.to_owned(),
                 span: def.head_span(),
@@ -263,6 +274,17 @@ impl<'a> Processor<'a> {
         dst: &mut Vec<Token>,
         errors: &mut Diagnostics,
     ) {
+        // LRM 10.7: the source-location macros expand to the position of
+        // USE. Inside macro text that is the top-level call `process_token`
+        // recorded -- the C preprocessor's reading, which the LRM's own
+        // "current input line number" describes.
+        if call.name == "__FILE__" || call.name == "__LINE__" {
+            if let Some(loc) = self.srcloc_origin.clone() {
+                self.emit_source_location(call.name == "__FILE__", loc, span, dst);
+                return;
+            }
+        }
+
         // Enhancement-65: a macro reached again while its BODY is still being
         // expanded (directly or through other macros) is infinite recursion --
         // report it instead of blowing the compiler stack. The name is pushed
@@ -373,6 +395,44 @@ impl<'a> Processor<'a> {
         Token { kind, span: CtxSpan { range: TextRange::up_to(TextSize::of(text)), ctx } }
     }
 
+    /// `` `__FILE__ ``/`` `__LINE__ `` at the parser's current position
+    /// (LRM 10.7): the file is the one THIS parser processes -- inside an
+    /// `` `include `` that is the included file, reverting when it ends --
+    /// as a basename, for the same provenance reason Enhancement-58 names
+    /// elaboration buffers by basename (the expansion is baked into the
+    /// compiled .osdi, and a full path would leak the build machine's
+    /// layout). A `` `line `` directive overrides both halves.
+    fn source_location(&self, p: &Parser) -> (String, u32) {
+        let file = match p.file_override() {
+            Some(name) => name.to_owned(),
+            None => {
+                let file = self.source_map.ctx_data(p.ctx()).decl.file;
+                let path = self.sources.file_path(file).to_string();
+                path.rsplit(['/', '\\']).next().unwrap_or("").to_owned()
+            }
+        };
+        (file, p.effective_line())
+    }
+
+    /// Emits the expansion of `` `__FILE__ `` or `` `__LINE__ `` (LRM 10.7)
+    /// as a synthesized token: a string literal holding the file name, or
+    /// the decimal line number.
+    fn emit_source_location(
+        &mut self,
+        is_file: bool,
+        loc: (String, u32),
+        span: CtxSpan,
+        dst: &mut Vec<Token>,
+    ) {
+        let token = if is_file {
+            let text = format!("\"{}\"", loc.0);
+            self.synth_token(&text, SyntaxKind::STR_LIT, span)
+        } else {
+            self.synth_token(&loc.1.to_string(), SyntaxKind::INT_NUMBER, span)
+        };
+        dst.push(token);
+    }
+
     /// The source text of an already-processed token. Synthesized spans are
     /// resolved against the in-memory scratch buffer -- the backing file is
     /// only flushed at the end of `run`.
@@ -428,7 +488,7 @@ impl<'a> Processor<'a> {
         // elements (the body parser swallows some trivia, e.g. after an
         // argument reference), collapsed to one space when they hold what a
         // string literal cannot (a line continuation in a multi-line define)
-        let mut push_gap = |text: &mut String, from: TextSize, to: TextSize| {
+        let push_gap = |text: &mut String, from: TextSize, to: TextSize| {
             if to <= from {
                 return;
             }
@@ -626,7 +686,8 @@ impl<'a> Processor<'a> {
                 CompilerDirective::Undef => {
                     p.bump();
                     let name = p.current_text();
-                    if PREDEFINED_MACROS.contains(&name) {
+                    if PREDEFINED_MACROS.contains(&name) || name == "__FILE__" || name == "__LINE__"
+                    {
                         // LRM 10.4: `undef shall have no effect on predefined
                         // Verilog-AMS macros; a warning may be issued.
                         err.push(PreprocessorDiagnostic::UndefPredefined {
@@ -745,8 +806,60 @@ impl<'a> Processor<'a> {
                     }
                     p.skip_rest_of_line(err);
                 }
-                CompilerDirective::TimeScale | CompilerDirective::Line => {
+                CompilerDirective::TimeScale => {
                     p.skip_rest_of_line(err);
+                }
+                CompilerDirective::Line => {
+                    // `` `line number "filename" level `` (LRM 10.7 / IEEE
+                    // 1364 19.7): `number` declares the line number of the
+                    // line FOLLOWING the directive, `filename` (optional
+                    // here; 1364 spells all three) replaces `` `__FILE__ ``.
+                    // The override is per parser, so an `` `include `` is
+                    // unaffected and the outer file resumes unchanged.
+                    // every consume below is guarded against the end of the
+                    // directive's own line: a bump crosses trivia (the
+                    // newline included), so an unguarded skip would eat the
+                    // FOLLOWING line when the directive's last argument ends
+                    // this one.
+                    let at_line = p.current_line();
+                    let line_end = p.current_line_end();
+                    p.bump();
+                    let on_line = |p: &Parser| p.current_range().start() < line_end;
+                    let number = if on_line(p) && p.at(PreprocessorToken::Other) {
+                        p.current_text().parse::<u32>().ok()
+                    } else {
+                        None
+                    };
+                    match number {
+                        Some(number) => {
+                            p.bump();
+                            let file = if on_line(p) && p.at(PreprocessorToken::StrLit) {
+                                let text = p.current_text();
+                                let inner = text
+                                    .get(1..text.len().saturating_sub(1))
+                                    .unwrap_or("")
+                                    .to_owned();
+                                p.bump();
+                                Some(inner)
+                            } else {
+                                // 1364 spells all three arguments; the
+                                // number-only leniency keeps the current
+                                // declared file, the way C's #line does
+                                p.line_override.take().and_then(|ov| ov.file)
+                            };
+                            p.line_override = Some(LineOverride { at_line, number, file });
+                        }
+                        None => err.push(PreprocessorDiagnostic::MissingOrUnexpectedToken {
+                            expected: "a line number",
+                            expected_at: p.current_span(),
+                            span: p.current_span(),
+                        }),
+                    }
+                    // consume whatever else sits on the directive's line (the
+                    // 1364 `level` argument), and nothing beyond it
+                    while p.current() != PreprocessorToken::Eof && on_line(p) {
+                        p.bump();
+                    }
                 }
                 CompilerDirective::Pragma => {
                     // Tool-specific hints (e.g. `protect`/`endprotect` encryption pragmas
@@ -755,6 +868,23 @@ impl<'a> Processor<'a> {
                     p.skip_rest_of_line(err);
                 }
                 CompilerDirective::Macro => {
+                    // LRM 10.7: `` `__FILE__ ``/`` `__LINE__ `` expand here, at
+                    // the position of use -- the included file's own name and
+                    // line inside an `` `include ``, the declared position
+                    // after a `` `line ``. (They used to be a textual pre-pass
+                    // over the ROOT file only; a use anywhere else was a
+                    // macro-not-found error.)
+                    let name = p.current_text();
+                    if name == "`__FILE__" || name == "`__LINE__" {
+                        let span = p.current_span();
+                        let loc = self.source_location(p);
+                        self.emit_source_location(name == "`__FILE__", loc, span, p.dst);
+                        p.bump();
+                        return;
+                    }
+                    // record the use site, so the macros expand to it from
+                    // inside the called macro's text as well
+                    self.srcloc_origin = Some(self.source_location(p));
                     let (call, range) =
                         parse_macro_call(p, err, &[], &mut self.source_map, p.end());
                     let span = CtxSpan { range, ctx: p.ctx() };

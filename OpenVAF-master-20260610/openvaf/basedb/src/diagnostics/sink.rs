@@ -204,12 +204,11 @@ const MAX_RENDERED_DIAGNOSTICS: usize = 128;
 /// Enhancement-414: the names `hir::elaborate` gives the buffers it synthesises, each
 /// `<original>.va__<pass>.va`. Matched by suffix rather than by "is this path virtual",
 /// because ordinary test fixtures are virtual too and are NOT elaborated copies.
-const ELABORATION_BUFFER_SUFFIXES: [&str; 6] = [
+const ELABORATION_BUFFER_SUFFIXES: [&str; 5] = [
     "__generated.va",
     "__paramwidth.va",
     "__namerange.va",
     "__legacygen.va",
-    "__srcloc.va",
     "__elaborated.va",
 ];
 

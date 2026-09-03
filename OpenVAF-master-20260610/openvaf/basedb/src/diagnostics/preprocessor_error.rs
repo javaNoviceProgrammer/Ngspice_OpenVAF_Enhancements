@@ -31,24 +31,15 @@ impl Diagnostic for PreprocessorDiagnostic {
                     message: format!("expected {} arguments", expected),
                 }])
             }
-            PreprocessorDiagnostic::MacroNotFound { span, ref name } => {
+            PreprocessorDiagnostic::MacroNotFound { span, name: _ } => {
                 let span = span.to_file_span(&sm);
 
-                let mut report = Report::error().with_labels(vec![Label {
+                Report::error().with_labels(vec![Label {
                     style: LabelStyle::Primary,
                     file_id: span.file,
                     range: span.range.into(),
                     message: "macro not found here".to_owned(),
-                }]);
-                if name == "__FILE__" || name == "__LINE__" {
-                    report = report.with_notes(vec![
-                        "help: `__FILE__/`__LINE__ are expanded only in the root file; \
-                         a use inside an `include'd file (or one only reached through \
-                         a macro) is not supported"
-                            .to_owned(),
-                    ]);
-                }
-                report
+                }])
             }
             PreprocessorDiagnostic::MacroNotDefined { span, .. } => {
                 let span = span.to_file_span(&sm);
@@ -339,8 +330,9 @@ impl Diagnostic for PreprocessorDiagnostic {
                         message: "reserved macro namespace".to_owned(),
                     }])
                     .with_notes(vec![
-                        "help: LRM 10.4 reserves names beginning with '__VAMS_' for the \
-                         predefined macros; pick a different name"
+                        "help: LRM 10.4 reserves names beginning with '__VAMS_' (and the \
+                         predefined `__FILE__/`__LINE__/`__OPENVAF__) for the predefined \
+                         macros; pick a different name"
                             .to_owned(),
                     ])
             }

@@ -59,7 +59,7 @@ impl_display! {
         MacroOverwritten { name, .. } => "macro '`{}' was overwritten", name;
         UndefPredefined { name, .. } => "'`undef' has no effect on the predefined macro '`{}'", name;
         AmsOnlyDirective { name, .. } => "'`{}' is an AMS-only directive and is ignored in Verilog-A", name;
-        ReservedMacroName { name, .. } => "macro name '{}' lies in the reserved '__VAMS_' namespace", name;
+        ReservedMacroName { name, .. } => "macro name '{}' is reserved for a predefined macro", name;
         UnknownKeywordSet { name, .. } => "unknown '`begin_keywords' version specifier \"{}\"", name;
         KeywordSetNotSwitched { name, .. } => "keyword set \"{}\" is treated as \"VAMS-2023\"", name;
         UnmatchedEndKeywords { .. } => "'`end_keywords' without a matching '`begin_keywords'";

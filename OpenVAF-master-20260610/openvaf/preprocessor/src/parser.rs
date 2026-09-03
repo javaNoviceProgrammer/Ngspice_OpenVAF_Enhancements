@@ -23,6 +23,20 @@ impl_idx_math_from!(FullTokenIdx(u32));
 pub struct RelevantTokenIdx(u32);
 impl_idx_math_from!(RelevantTokenIdx(u32));
 
+/// `` `line number "filename" level `` override state (LRM 10.7 / IEEE 1364
+/// 19.7): `number` declares the line number of the line FOLLOWING the
+/// directive, and `filename`, when given, replaces `` `__FILE__ ``. Held per
+/// parser -- an `` `include `` gets its own parser and the outer one resumes
+/// untouched, which is exactly 10.7's include scoping.
+pub(crate) struct LineOverride {
+    /// 1-based source line the directive itself sits on
+    pub at_line: u32,
+    /// declared number of the following line
+    pub number: u32,
+    /// declared file name, when given
+    pub file: Option<String>,
+}
+
 pub(crate) struct Parser<'a, 'd> {
     full_tokens: TiVec<FullTokenIdx, tokens::lexer::Token>,
     relevant_tokens: TiVec<RelevantTokenIdx, (PreprocessorToken, FullTokenIdx)>,
@@ -35,6 +49,8 @@ pub(crate) struct Parser<'a, 'd> {
     pub(crate) ctx: SourceContext,
     pub(crate) dst: &'d mut Vec<crate::Token>,
     pub(crate) working_dir: VfsPath,
+    /// `` `line `` state for `` `__FILE__ ``/`` `__LINE__ `` (LRM 10.7).
+    pub(crate) line_override: Option<LineOverride>,
 }
 
 fn mk_token(
@@ -98,6 +114,7 @@ impl<'a, 'd> Parser<'a, 'd> {
             token,
             pos: RelevantTokenIdx(0),
             full_token_pos,
+            line_override: None,
         };
 
         res.advance(true, 0u32.into(), err);
@@ -300,6 +317,35 @@ impl<'a, 'd> Parser<'a, 'd> {
 
     pub(crate) fn ctx(&self) -> SourceContext {
         self.ctx
+    }
+
+    /// End offset (exclusive) of the source line the current token starts on.
+    pub(crate) fn current_line_end(&self) -> TextSize {
+        self.src[usize::from(self.offset)..]
+            .find('\n')
+            .map(|i| self.offset + TextSize::from(i as u32))
+            .unwrap_or_else(|| TextSize::of(self.src))
+    }
+
+    /// 1-based source line of the current token in this parser's file.
+    pub(crate) fn current_line(&self) -> u32 {
+        let upto = usize::from(self.offset).min(self.src.len());
+        self.src[..upto].bytes().filter(|&b| b == b'\n').count() as u32 + 1
+    }
+
+    /// The `` `__LINE__ `` value at the current token, honouring an earlier
+    /// `` `line `` directive in this file (LRM 10.7).
+    pub(crate) fn effective_line(&self) -> u32 {
+        let line = self.current_line();
+        match &self.line_override {
+            Some(ov) => ov.number.saturating_add(line.saturating_sub(ov.at_line + 1)),
+            None => line,
+        }
+    }
+
+    /// The `` `__FILE__ `` replacement a `` `line `` directive declared, if any.
+    pub(crate) fn file_override(&self) -> Option<&str> {
+        self.line_override.as_ref()?.file.as_deref()
     }
 
     /// Consume the next token if `kind` matches.

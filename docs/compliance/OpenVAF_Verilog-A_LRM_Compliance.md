@@ -1341,10 +1341,23 @@ parameter puts it on the instance line and under `alter`/`.dc` sweeps;
 
 ## 8. Compiler directives (LRM 10) — ✅
 
-The predefined source-location macros work (E-85): `` `__FILE__``
-expands to the source file's basename, `` `__LINE__`` to the exact line
-(a use inside a `` `define`` body reports the definition site —
-documented textual-expansion semantics):
+The predefined source-location macros work — since the round-4 audit
+(2026-09-03) as **real preprocessor expansions at the position of use**,
+replacing E-85's textual root-file pre-pass. `` `__FILE__`` expands to
+the current file's basename (basename for provenance: the string is
+baked into the compiled .osdi) and `` `__LINE__`` to the exact 1-based
+line, **inside `` `include``d files too** — the include reports its own
+file and line and the outer file resumes unchanged, per LRM 10.7 — and a
+use inside a `` `define`` body reports the **line of use** (10.7's
+"current input line number", the C reading; the pre-pass's
+definition-site expansion was a documented deviation the `filemacro`
+suite now pins the other way). **`` `line number "file" level`` is
+honoured** (IEEE 1364 19.7): the number names the *next* line, the
+declared file replaces `` `__FILE__``, a number-only form keeps the
+declared file, and the override is scoped to its file — it neither
+enters nor survives an `` `include``. `` `define``/`` `undef`` of either
+name warn as for the other predefined macros. Pinned in `lrmlex` and
+`filemacro`:
 
 ```verilog
 $strobe("evaluated at %s:%0d", `__FILE__, `__LINE__);
@@ -1359,8 +1372,9 @@ makes `` `__VAMS_ENABLE__ `` always-defined per 10.5, validates
 `` `begin_keywords ``/`` `end_keywords `` version specifiers per 10.6,
 and fixes `` `__FILE__``/`` `__LINE__ `` breaking relative
 `` `include `` resolution), `` `resetall `` (now genuinely resetting the
-tracked directive state), `` `default_transition ``, and the housekeeping set
-(`` `celldefine ``, `` `timescale ``, `` `line ``, `` `pragma ``,
+tracked directive state), `` `default_transition ``, `` `line `` (with
+real effect on the source-location macros — see above), and the
+housekeeping set (`` `celldefine ``, `` `timescale ``, `` `pragma ``,
 `` `default_nettype ``, …). Recursive macro expansion — direct or
 mutual — is a clean located error (formerly a compiler stack overflow),
 while the legal same-macro nesting inside *arguments*

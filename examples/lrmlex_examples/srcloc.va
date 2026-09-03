@@ -8,9 +8,16 @@ module srcloc(p, n);
     electrical p, n;
     (*desc="`__LINE__ of the assignment"*) integer lline;
     (*desc="macro from the include"*)      integer lv;
+    (*desc="`__LINE__ inside the include"*) integer il;
+    (*desc="`__LINE__ after `line"*)       integer l2;
     analog begin
         lline = `__LINE__;
         lv = `FROM_LEVEL1;
+        @(initial_step) $strobe("ROOTFILE=[%s]", `__FILE__);
+`include "incsub/incuse.vah"
+`line 200 "pinned.va" 0
+        l2 = `__LINE__;
+        @(initial_step) $strobe("LINEFILE=[%s]", `__FILE__);
         I(p, n) <+ 1e-3 * V(p, n);
     end
 endmodule

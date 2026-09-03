@@ -169,9 +169,21 @@ check("[6] compiles: the rewrite no longer loses the include directory", rc == 0
       out.strip().splitlines()[-1] if rc else "")
 if rc == 0:
     sim = run("N1 a 0 mm\nR1 a 0 1k\n.model mm srcloc()",
-              "op\nprint @n1[lline] @n1[lv]", "srcloc", osdi)
-    check("[7] `__LINE__ is the exact 1-based use line", opvar(sim, "lline") == 12,
+              "op\nprint @n1[lline] @n1[lv] @n1[il] @n1[l2]", "srcloc", osdi)
+    check("[7] `__LINE__ is the exact 1-based use line", opvar(sim, "lline") == 14,
           f"{opvar(sim, 'lline')}")
+    # LRM 10.7 (round-4 audit): an `include changes the expansions to the
+    # included file, and `line declares the following line's number and file
+    check("[7b] `__LINE__ inside the included file is ITS line 3",
+          opvar(sim, "il") == 3, f"{opvar(sim, 'il')}")
+    check("[7b] `__FILE__ inside the include is the include's basename",
+          "INCFILE=[incuse.vah]" in sim)
+    check("[7b] `__FILE__ in the root file is the root basename",
+          "ROOTFILE=[srcloc.va]" in sim)
+    check("[7b] `line 200 \"pinned.va\": the next line is 200",
+          opvar(sim, "l2") == 200, f"{opvar(sim, 'l2')}")
+    check("[7b] `line's declared file replaces `__FILE__",
+          "LINEFILE=[pinned.va]" in sim)
     check("[8] the macro defined by the included file arrived", opvar(sim, "lv") == 41,
           f"{opvar(sim, 'lv')}")
 
@@ -181,7 +193,7 @@ rc, out, _ = compile_src(HDR + '`define __VAMS_MINE 1\n'
                          'module t1(p,n); inout p,n; electrical p,n;\n'
                          'analog I(p,n) <+ 1e-3*V(p,n);\nendmodule\n', "t1")
 check("[9] `define in the reserved __VAMS_ namespace warns (LRM 10.4)",
-      rc == 0 and "reserved '__VAMS_' namespace" in out)
+      rc == 0 and "is reserved for a predefined macro" in out)
 
 rc, out, _ = compile_src('`begin_keywords "1364-2005"\n' + HDR +
                          'module t2(p,n); inout p,n; electrical p,n;\n'

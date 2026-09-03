@@ -3,9 +3,10 @@
 // `__FILE__ expands to a string literal holding the source file's name
 // (basename -- the expansion is baked into the compiled .osdi, so it must
 // stay machine-portable), `__LINE__ to the 1-based line number of the
-// occurrence. A use inside a `define body expands at the DEFINITION site
-// (textual pre-pass semantics; documented deviation from C-style
-// line-of-use).
+// occurrence. A use inside a `define body expands at the line of USE (LRM
+// 10.7's "current input line number", the C reading) -- the round-4 audit's
+// preprocessor implementation replaced the old textual pre-pass, whose
+// definition-site expansion this suite used to pin as a deviation.
 `include "disciplines.vams"
 
 `define WHERE $strobe("macro-site %s:%0d", `__FILE__, `__LINE__)
