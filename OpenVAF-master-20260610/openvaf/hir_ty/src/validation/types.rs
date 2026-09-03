@@ -8,6 +8,7 @@ use hir_def::{
     LocalDisciplineAttrId, LocalNatureAttrId, Lookup, ModuleId, ModuleLoc, NatureId, NodeId,
     NodeTypeDecl, Path, ScopeId,
 };
+use hir_def::item_tree::DisciplineAttrKind;
 use syntax::ast::ArgListOwner;
 use syntax::name::{kw, Name};
 use syntax::{ast, AstNode, SyntaxNodePtr};
@@ -62,6 +63,21 @@ pub enum TypeValidationDiagnostic {
     /// -- `nature FunnyV : Voltage; units = "furlong";` stayed 'V'. Warning,
     /// not error, matching this project's permissive derived-nature stance.
     DerivedNatureUnits { nature: NatureId, attr: LocalNatureAttrId },
+    /// Round-4 audit / LRM 3.6.1.2: "It is illegal for a derived nature to
+    /// change the access attribute". Enhancement-39 supports the fresh access
+    /// name ON PURPOSE (`derivednature_demo.va` pins it working), so the
+    /// extension keeps working -- this warning makes it audible, the way the
+    /// `<<<`/`>>>` extension warns.
+    DerivedNatureAccess { nature: NatureId, attr: LocalNatureAttrId },
+    /// Round-4 audit / LRM 3.6.2.5: a discipline may override the bound
+    /// nature's attributes only "except as restricted by 3.6.1.2" -- and
+    /// 3.6.1.2 forbids changing `units` and `access`. `flow.units = "mA"` and
+    /// `potential.access = W` compiled without a word (and without effect).
+    IllegalDisciplineOverride {
+        discipline: DisciplineId,
+        attr: LocalDisciplineAttrId,
+        what: &'static str,
+    },
     /// LRM 3.6.1.2: an `idt_nature`/`ddt_nature` override in a derived nature
     /// "shall be related (share the same base nature) to the nature the parent
     /// uses for its idt_nature/ddt_nature". An unrelated link only mis-selects
@@ -378,6 +394,27 @@ impl TypeValidationCtx<'_> {
                 }
             }
         }
+
+        // Round-4 audit / LRM 3.6.2.5: an attribute override (`flow.attr = v`)
+        // is permitted "except as restricted by 3.6.1.2", which forbids
+        // changing `units` and `access`. Both compiled in silence -- and
+        // without effect. The legal overrides (abstol, user-defined) are not
+        // this check's business.
+        for (attr, attr_data) in data.attrs.iter_enumerated() {
+            let what = match attr_data.kind {
+                DisciplineAttrKind::PotentialOverwrite => "potential",
+                DisciplineAttrKind::FlowOverwrite => "flow",
+                DisciplineAttrKind::UserDefined => continue,
+            };
+            let attr_name = attr_data.name.to_string();
+            if attr_name == "units" || attr_name == "access" {
+                self.report(TypeValidationDiagnostic::IllegalDisciplineOverride {
+                    discipline,
+                    attr,
+                    what,
+                });
+            }
+        }
     }
 
     fn verify_nature(&mut self, nature: NatureId) {
@@ -421,10 +458,13 @@ impl TypeValidationCtx<'_> {
         //    illegal, but Enhancement-39 supports it ON PURPOSE: its example
         //    `derivednature_demo.va` derives `Current2` with a fresh access function,
         //    and Enhancement-422's suite builds every derived nature that way.
+        //    Round-4 audit: the extension still works, and is now AUDIBLE -- a
+        //    warning names the rule (DerivedNatureAccess below), the same
+        //    treatment the `<<<`/`>>>` extension gets.
         //
-        // Both rules were implemented, and the two suites caught them within one
-        // regression sweep. They are recorded here so the next reader finds the
-        // decision rather than the idea.
+        // Both rules were implemented as ERRORS, and the two suites caught them
+        // within one regression sweep. They are recorded here so the next reader
+        // finds the decision rather than the idea.
 
         for (what, nature_ref) in [
             ("parent nature", &data.parent),
@@ -457,6 +497,14 @@ impl TypeValidationCtx<'_> {
                 {
                     self.report(TypeValidationDiagnostic::DerivedNatureUnits { nature, attr });
                 }
+            }
+            // access on a derived nature: LRM 3.6.1.2 makes changing it
+            // illegal; the fresh name is a deliberate, working extension (see
+            // the note above) -- round-4 audit: now audible.
+            if let Some((attr, _)) =
+                data.attrs.iter_enumerated().find(|(_, attr)| attr.name.to_string() == "access")
+            {
+                self.report(TypeValidationDiagnostic::DerivedNatureAccess { nature, attr });
             }
             // idt_nature/ddt_nature override must be RELATED (same base nature)
             // to the nature the parent uses for that link. The parent's link

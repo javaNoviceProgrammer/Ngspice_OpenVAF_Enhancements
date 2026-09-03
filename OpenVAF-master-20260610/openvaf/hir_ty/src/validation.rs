@@ -1829,6 +1829,63 @@ impl Diagnostic for TypeValidationDiagnosticWrapped<'_> {
                             .to_owned(),
                     ])
             }
+            TypeValidationDiagnostic::DerivedNatureAccess { nature, attr } => {
+                let nature_ = &self.item_tree[nature.lookup(self.db.upcast()).id];
+                let id = u32::from(nature_.attrs.start()) + u32::from(attr);
+                let id = NatureAttr::lookup(self.item_tree, id.into()).ast_id();
+                let range = self.map.get(id).range();
+                let FileSpan { file, range } = self.parse.to_file_span(range, self.sm);
+                let name = self.db.nature_data(nature).name.clone();
+                let own =
+                    nature_.access.as_ref().map(|(n, _)| n.to_string()).unwrap_or_default();
+                let base = self.db.nature_info(nature).base_nature;
+                let inherited = self.item_tree[base.lookup(self.db.upcast()).id]
+                    .access
+                    .as_ref()
+                    .map(|(n, _)| n.to_string())
+                    .unwrap_or_default();
+                Report::warning()
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: file,
+                        range: range.into(),
+                        message: format!("declares the access function '{own}'"),
+                    }])
+                    .with_message(format!(
+                        "derived nature '{name}' changes the access attribute"
+                    ))
+                    .with_notes(vec![format!(
+                        "help: LRM 3.6.1.2: it is illegal for a derived nature to change \
+                         the access attribute -- it always inherits its parent's. This \
+                         compiler keeps the fresh name as an extension: '{own}' works \
+                         alongside the inherited '{inherited}'"
+                    )])
+            }
+            TypeValidationDiagnostic::IllegalDisciplineOverride { discipline, attr, what } => {
+                let discipline_ = &self.item_tree[discipline.lookup(self.db.upcast()).id];
+                let id = u32::from(discipline_.extra_attrs.start()) + u32::from(attr);
+                let id = DisciplineAttr::lookup(self.item_tree, id.into()).ast_id();
+                let range = self.map.get(id).range();
+                let FileSpan { file, range } = self.parse.to_file_span(range, self.sm);
+                let name = self.db.discipline_data(discipline).name.clone();
+                let attr_name = self.db.discipline_data(discipline).attrs[attr].name.clone();
+                Report::warning()
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: file,
+                        range: range.into(),
+                        message: "this override is ignored".to_owned(),
+                    }])
+                    .with_message(format!(
+                        "discipline '{name}' overrides the {what} nature's '{attr_name}'"
+                    ))
+                    .with_notes(vec![
+                        "help: LRM 3.6.2.5 allows a discipline to override nature \
+                         attributes only as far as 3.6.1.2 permits, and 3.6.1.2 forbids \
+                         changing units or access; the declaration has no effect"
+                            .to_owned(),
+                    ])
+            }
             TypeValidationDiagnostic::UnrelatedIdtDdtOverride {
                 nature,
                 what,

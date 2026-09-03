@@ -215,7 +215,15 @@ endparamset
 ✅ Discipline/nature declarations with attribute access from expressions
 (`net.potential.abstol`); **derived natures** — `nature Xf : Flow` and
 deriving from a discipline's nature (`: electrical.flow`) — with full
-attribute inheritance; `ground` declarations in both orderings;
+attribute inheritance. The two changes LRM 3.6.1.2 calls illegal are
+**audible as of the round-4 audit** (2026-09-03): a derived nature
+declaring its own `access` warns naming the rule but keeps working (the
+deliberate extension the `derivednature` suite pins — the fresh name
+works alongside the inherited one), and a discipline override of
+`units` or `access` (`flow.units = "mA"`, `potential.access = W`) warns
+that 3.6.2.5 permits overrides only as far as 3.6.1.2 allows and that
+the declaration has no effect; both used to compile without a word.
+`ground` declarations in both orderings;
 **vectored nets and ports** with bit-selects; **net initializers** that
 become solver nodesets; `domain continuous`:
 
@@ -1413,7 +1421,7 @@ connected port.)*
 | 2 Lexical (identifiers, numbers, strings, attributes, three-token based literals, expression-position attrs) | ✅ ([E-515](../../enhancements_doc/Enhancement-515.md) audit) | `escid`, `stresc`, `comment`, `lrmlex` |
 | 3.2–3.3 Value types, variables, persistence | ✅ | `vartype`, `variable_persistence`, `intstate`, `varinit` |
 | 3.4 Parameters (ranges, localparam, aliasparam incl. 3.4.7 error rules, arrays incl. whole-array instantiation override, paramset, block-scoped) | ✅ (default-exemption ⚠️ and frozen-type-of-untyped ⚠️ documented) | `paramrange`, `localparam`, `array`, `paramarray`, `paramset`, `paramsethsp`, `blockparam`, `alias` |
-| 3.5–3.13 Natures, disciplines, nets, buses, nodesets, 3.11.1 compatibility (signal-flow/natureless/domainless), nature-attribute validation, NIST2018 constants, **3.6.1 `abstol` honoured per node** ([E-539](../../enhancements_doc/Enhancement-539.md)) | ✅ (base-nature attr omission ⚠️, derived-access extension ⚠️ and explicit-`.option`-wins ⚠️ documented; vector branches ✖ rejected) | `derivednature`, `domainbind`, `bus`, `netinit`, `ground`, `signalflow` |
+| 3.5–3.13 Natures, disciplines, nets, buses, nodesets, 3.11.1 compatibility (signal-flow/natureless/domainless), nature-attribute validation, NIST2018 constants, **3.6.1 `abstol` honoured per node** ([E-539](../../enhancements_doc/Enhancement-539.md)) | ✅ (base-nature attr omission ⚠️, derived-access extension ⚠️ documented **and audible**, explicit-`.option`-wins ⚠️ documented; illegal discipline `units`/`access` overrides warn; vector branches ✖ rejected) | `derivednature`, `domainbind`, `bus`, `netinit`, `ground`, `signalflow` |
 | 4.1–4.4 Operators (incl. string relational, `===`/`!==` as 2-state `==`/`!=`), precedence, functions (`$clog2`, `$rtoi`/`$itor`, `ln1p`/`expm1`, domain diagnostics both routes, `%`-by-deck-zero fatal, same-node `V(a,a)`/`I(a,a)` rejected) | ✅ (`<<<`/`>>>` extension ⚠️ warned; runtime-probe domain policy ⚠️ documented) | `operator`, `precedence`, `shift`, `concat`, `stringcmp`, `clog2`, `convert`, `ceil`, `lrmfuncs`, `lrmintrin`, `domainrt` |
 | 4.5 Analog operators (all), **clause-by-clause audit 4.5.1–4.5.15** ([E-514](../../enhancements_doc/Enhancement-514.md)); frozen-`td` absdelay implemented, ddx over unnamed-branch flows, no-ic `idtmod` pins DC at 0, `default_transition` honored for explicit zeros | ✅ (`limexp` stateless ⚠️, idt-reset τ=10µs ⚠️, ddt/idt tolerances not plumbed ⚠️, transition amplitude approximation ⚠️, zi continuous-bilinear ⚠️, dynamic laplace coeffs track+warn ⚠️ — all documented) | `absdelay`, `laplace`, `zi`, `slew`, `transition`, `idt*`, `ddx`, `opargs`, `discontinuity`, `last_crossing`, `defaulttransition`, `transedge`, `rtdomain`, `deckdomain` |
 | 4.6 Noise & analysis (correlation per call site with label-combined reporting 4.6.4.1/4.6.4.6; `noise_table` linear-in-f, `noise_table_log` log-log, parameter-fed tables ⚠️ refused; Table 4-22 ic/static/nodeset phases exact; ac_stim matched to the running small-signal analysis) | ✅ | `noise`, `noisetable`, `noisecorr`, `noisejw` |

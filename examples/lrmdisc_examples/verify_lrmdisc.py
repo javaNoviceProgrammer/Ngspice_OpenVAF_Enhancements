@@ -185,6 +185,51 @@ endmodule
 check("[9] an idt_nature override unrelated to the parent's link warns",
       rc == 0 and "unrelated" in out)
 
+# Round-4 audit: the other two rules 3.6.1.2 states as illegal used to be
+# accepted WITHOUT COMMENT. The derived-access form keeps working (it is the
+# deliberate extension the derivednature suite pins) but is now audible; the
+# discipline overrides of units/access are illegal AND without effect, and
+# both now say so. The LEGAL discipline override (flow.abstol) stays silent.
+rc, out, _ = compile_src(HDR + """
+nature VoltW : Voltage;
+  access = W;
+endnature
+module m9a(a,b); inout a,b; electrical a,b;
+  analog I(a,b) <+ V(a,b)/1e3;
+endmodule
+""", "dacc")
+check("[9b] access on a DERIVED nature warns naming LRM 3.6.1.2",
+      rc == 0 and "changes the access attribute" in out and "3.6.1.2" in out)
+
+rc, out, _ = compile_src(HDR + """
+discipline dov;
+  potential Voltage;
+  flow Current;
+  flow.units = "mA";
+  potential.access = W2;
+enddiscipline
+module m9b(a,b); inout a,b; electrical a,b;
+  analog I(a,b) <+ V(a,b)/1e3;
+endmodule
+""", "dovr")
+check("[9b] a discipline override of units warns that it is ignored",
+      rc == 0 and "overrides the flow nature's 'units'" in out)
+check("[9b] a discipline override of access warns that it is ignored",
+      rc == 0 and "overrides the potential nature's 'access'" in out)
+
+rc, out, _ = compile_src(HDR + """
+discipline dab;
+  potential Voltage;
+  flow Current;
+  flow.abstol = 10u;
+enddiscipline
+module m9c(a,b); inout a,b; electrical a,b;
+  analog I(a,b) <+ V(a,b)/1e3;
+endmodule
+""", "dabs")
+check("[9b] the LEGAL abstol override stays warning-free",
+      rc == 0 and "warning" not in out)
+
 rc, out, _ = compile_src(HDR + """
 module vb(a,b); inout a,b;
   electrical [3:5] a; electrical [1:3] b;
