@@ -277,5 +277,46 @@ endmodule
 check("[18] a 0.0 tolerance (LRM: simulator picks) stays silent",
       rc == 0 and "not honored" not in out)
 
+# ---- null arguments (round-4 audit, LRM 5.10.3.1-5.10.3.3) -----------------
+print("\nnull arguments mean 'not specified' (round-4 audit):")
+rc, out, osdi = compile_src(HDR + """
+module na(in, out, smpl, en);
+  parameter real thresh = 0.0;
+  parameter integer dir = +1 from [-1:+1] exclude 0;
+  output out; input in, smpl, en;
+  electrical in, out, smpl, en;
+  real state; integer cnull, comit, tnull, tomit;
+  analog begin
+    @(initial_step) begin cnull = 0; comit = 0; tnull = 0; tomit = 0; end
+    // the LRM 5.10.3.1 sample-and-hold, in the analog-subset spelling of
+    // its enable (a net's digital value is mixed-signal; V(en) is ours)
+    @(cross(V(smpl) - thresh, dir, , , V(en) > 0.5))
+       state = V(in);
+    V(out) <+ transition(state, 0, 10n);
+    // null tolerances/enable versus trailing omission: identical events
+    @(cross(V(smpl) - 0.5, dir, , , 1)) cnull = cnull + 1;
+    @(cross(V(smpl) - 0.5, dir))        comit = comit + 1;
+    // a null period is the one-shot form (5.10.3.3)
+    @(timer(3u, , , 1)) tnull = tnull + 1;
+    @(timer(3u))        tomit = tomit + 1;
+    @(final_step) $strobe("NARESULT c=%d/%d t=%d/%d", cnull, comit, tnull, tomit);
+    I(in) <+ 1e-9*V(in); I(en) <+ 1e-9*V(en);
+  end
+endmodule
+""", "nullargs")
+check("[19] null event arguments compile (LRM sample-and-hold shape)",
+      rc == 0, out.strip().splitlines()[-1] if rc else "")
+check("[20] null tolerances draw no bogus not-honored warning",
+      rc == 0 and "not honored" not in out)
+if rc == 0:
+    sim = run("V1 a 0 DC 0 PULSE(0 1 2u 1u 1u 4u 10u)\nVen en 0 DC 1\nN1 a b a en mm\n.model mm na",
+              "tran 0.2u 8u", "nullargs", osdi)
+    m = re.search(r"NARESULT c=(\d+)/(\d+) t=(\d+)/(\d+)", sim)
+    check("[21] null tolerances+enable fire identically to the omitted form",
+          m and m.group(1) == m.group(2) and m.group(1) == "1",
+          m.group(0) if m else "no line")
+    check("[22] a null timer period is the one-shot form",
+          m and m.group(3) == "1" and m.group(4) == "1", m.group(0) if m else "no line")
+
 print(f"\n{passed}/{checks} checks passed")
 sys.exit(0 if passed == checks else 1)

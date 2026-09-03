@@ -422,6 +422,26 @@ impl LowerCtx<'_> {
     /// right layer for a real "not a valid event-control expression"
     /// diagnostic, not yet wired up here -- see `Enhancement-8.md` known
     /// limitations).
+    /// Round-4 audit / LRM 5.10.3.1-5.10.3.3: every optional event-function
+    /// argument is an `analog_expression_or_null`, and a NULL argument -- two
+    /// adjacent commas, recorded by the parser as an empty `ARRAY_EXPR`
+    /// (Enhancement-453's null-argument form) -- means the same thing as
+    /// leaving the position off, so it lowers to `None` exactly the way a
+    /// trailing omission does. `@(cross(V(smpl) - thresh, dir, , , en))` is
+    /// the LRM's own sample-and-hold spelling; it used to die in inference
+    /// with "expected real value but found _[0:0] value". The required first
+    /// argument is NOT filtered: a null there stays an empty array for
+    /// inference to reject.
+    fn collect_opt_event_arg(&mut self, arg: Option<ast::Expr>) -> Option<ExprId> {
+        let arg = arg?;
+        if let ast::Expr::ArrayExpr(ref a) = arg {
+            if a.exprs().next().is_none() {
+                return None;
+            }
+        }
+        Some(self.collect_expr(arg))
+    }
+
     fn event_from_condition(&mut self, condition: &ast::Expr) -> Option<Event> {
         let ast::Expr::Call(call) = condition else {
             return None;
@@ -446,11 +466,11 @@ impl LowerCtx<'_> {
                     Some(e) => self.collect_expr(e),
                     None => self.missing_expr(),
                 };
-                let dir = args.next().map(|e| self.collect_expr(e));
-                let time_tol = args.next().map(|e| self.collect_expr(e));
-                let expr_tol = args.next().map(|e| self.collect_expr(e));
+                let dir = self.collect_opt_event_arg(args.next());
+                let time_tol = self.collect_opt_event_arg(args.next());
+                let expr_tol = self.collect_opt_event_arg(args.next());
                 // LRM 5.10.3.1: cross(expr [, dir [, time_tol [, expr_tol [, enable]]]])
-                let enable = args.next().map(|e| self.collect_expr(e));
+                let enable = self.collect_opt_event_arg(args.next());
                 let surplus: Box<[_]> = args.map(|e| self.collect_expr(e)).collect();
                 Event::Cross { expr, dir, time_tol, expr_tol, enable, surplus }
             }
@@ -459,10 +479,10 @@ impl LowerCtx<'_> {
                     Some(e) => self.collect_expr(e),
                     None => self.missing_expr(),
                 };
-                let time_tol = args.next().map(|e| self.collect_expr(e));
-                let expr_tol = args.next().map(|e| self.collect_expr(e));
+                let time_tol = self.collect_opt_event_arg(args.next());
+                let expr_tol = self.collect_opt_event_arg(args.next());
                 // LRM 5.10.3.2: above(expr [, time_tol [, expr_tol [, enable]]])
-                let enable = args.next().map(|e| self.collect_expr(e));
+                let enable = self.collect_opt_event_arg(args.next());
                 let surplus: Box<[_]> = args.map(|e| self.collect_expr(e)).collect();
                 Event::Above { expr, time_tol, expr_tol, enable, surplus }
             }
@@ -471,10 +491,10 @@ impl LowerCtx<'_> {
                     Some(e) => self.collect_expr(e),
                     None => self.missing_expr(),
                 };
-                let period = args.next().map(|e| self.collect_expr(e));
-                let tol = args.next().map(|e| self.collect_expr(e));
+                let period = self.collect_opt_event_arg(args.next());
+                let tol = self.collect_opt_event_arg(args.next());
                 // LRM 5.10.3.3: timer(start [, period [, time_tol [, enable]]])
-                let enable = args.next().map(|e| self.collect_expr(e));
+                let enable = self.collect_opt_event_arg(args.next());
                 let surplus: Box<[_]> = args.map(|e| self.collect_expr(e)).collect();
                 Event::Timer { t0, period, tol, enable, surplus }
             }

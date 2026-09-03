@@ -914,6 +914,18 @@ separator the LRM makes interchangeable with `or` (5.10.1):
 An operating point fires both step events (a single point is first and
 last); a failed analysis never fires `final_step`.
 
+**Null arguments** to `cross`/`above`/`timer` work as of the round-4
+audit (2026-09-03): every optional position is an
+`analog_expression_or_null` (LRM 5.10.3.1-5.10.3.3), and a null — two
+adjacent commas, as in the LRM's own sample-and-hold
+`@(cross(V(smpl) - thresh, dir, , , en))` — now lowers to "not
+specified", identical to the trailing omission: a null `dir` is
+both-edges, null tolerances leave the simulator to choose (and draw no
+not-honored warning), a null `timer` period is the one-shot form, and a
+null `enable` is enabled. They used to be a type error naming an
+internal type. A null in the *required* first position is still refused,
+and explicit tolerances keep their warnings. Pinned in `lrmevents`.
+
 The events audit made **Table 5-1 exact for every analysis**: the
 operating point of an `.ac`/`.noise` job no longer answers to `"dc"` —
 the phase belongs to the owning analysis, so `@(initial_step("dc"))`
