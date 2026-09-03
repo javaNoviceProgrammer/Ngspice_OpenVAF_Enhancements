@@ -2024,7 +2024,6 @@ impl Ctx<'_> {
             self.result.diagnostics.push(InferenceDiagnostic::EmptyConcat { expr });
             return None;
         }
-        let rep_cnt = self.concat_rep_count(rep)?;
 
         let mut tys: Vec<Option<Ty>> = Vec::with_capacity(elems.len());
         for &e in &elems {
@@ -2047,6 +2046,29 @@ impl Ctx<'_> {
                     }
                 }
             }
+            // Round-4 audit / LRM 3.3 Table 3-3: for STRING replication the
+            // multiplier "must be of integral type and can be nonconstant". A
+            // literal count keeps the fully-unrolled lowering (and the
+            // Enhancement-314 cap); any other count expression is typed as an
+            // integer value and lowered as a runtime loop, whose per-call
+            // operand list is just the one unit -- so it contributes a factor
+            // of 1 to the Enhancement-325 arity cap below.
+            let rep_cnt = if rep
+                .is_none_or(|r| matches!(self.body.exprs[r], Expr::Literal(Literal::Int(_))))
+            {
+                self.concat_rep_count(rep)?
+            } else {
+                let r = rep.unwrap();
+                if let Some(ty) = self.infere_expr(stmt, r) {
+                    self.expect::<false>(
+                        r,
+                        None,
+                        ty,
+                        Cow::Borrowed(&[TyRequirement::Val(Type::Integer)]),
+                    );
+                }
+                1
+            };
             // Enhancement-325: a string concatenation is materialized as ONE generated
             // LLVM callback per operand copy -- `lower_string_concat` builds an
             // `elems.len() * rep_cnt` operand list AND a format string of that many
@@ -2064,6 +2086,10 @@ impl Ctx<'_> {
             }
             return Some(Ty::Val(Type::String));
         }
+
+        // Numeric replication (LRM 4.2.13) does require a constant count; only
+        // the string form above may take a runtime multiplier.
+        let rep_cnt = self.concat_rep_count(rep)?;
 
         // numeric: flatten scalars + arrays
         let mut any_real = false;

@@ -125,6 +125,14 @@ if rc == 0:
           opvar(sim, "gblk") is None and "no such parameter gblk" in sim)
     check("[4] backslash-newline is a line continuation (one joined line)",
           "part one and part two as ONE line" in sim)
+    for tag, want, why in [
+        ("REPVAR", "HiHiHi", "nonconstant count {cnt{\"Hi\"}} (LRM 3.3's own example)"),
+        ("REPPAR", "cdcdcd", "parameter count {rp{\"cd\"}}"),
+        ("REPZERO", "", "zero count yields the empty string"),
+        ("REPUNIT", "ab-ab-", "multi-operand unit {cnt-1{\"ab\",\"-\"}}"),
+    ]:
+        check(f"[4b] string replication, {why}", f"{tag}=[{want}]" in sim,
+              next((l for l in sim.splitlines() if tag in l), "no line"))
 
 # ---- whole-array override at instantiation (3.4.4 / 3.4.8) -----------------
 print("\nwhole-array parameter overrides at instantiation:")

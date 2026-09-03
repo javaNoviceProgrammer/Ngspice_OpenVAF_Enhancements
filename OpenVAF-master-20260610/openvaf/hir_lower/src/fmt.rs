@@ -1,5 +1,7 @@
 use hir::{ExprId, Literal, Type};
-use mir::{Value, GRAVESTONE};
+use mir::builder::InstBuilder;
+use mir::cursor::{Cursor, FuncCursor};
+use mir::{Opcode, Value, GRAVESTONE};
 
 use crate::body::BodyLoweringCtx;
 use crate::callbacks::{CallBackKind, PrintDst};
@@ -233,6 +235,16 @@ impl BodyLoweringCtx<'_, '_, '_> {
     /// (which returns the freshly formatted string). Every operand is a *value* — it is
     /// never interpreted as a format string, so `%` characters in the data are safe.
     pub fn lower_string_concat(&mut self, rep: Option<ExprId>, elems: &[ExprId]) -> Value {
+        // Round-4 audit / LRM 3.3 Table 3-3: the multiplier of a STRING
+        // replication "can be nonconstant" (`{i{"Hi"}}` is the clause's own
+        // example). A non-literal count cannot be unrolled below, so it takes
+        // the runtime-loop lowering instead; inference has already typed it as
+        // an integer value.
+        if let Some(r) = rep {
+            if !matches!(self.body.as_literal(r), Some(Literal::Int(_))) {
+                return self.lower_string_concat_dyn(r, elems);
+            }
+        }
         let rep_cnt = rep
             .and_then(|r| match self.body.as_literal(r) {
                 Some(Literal::Int(n)) => Some(*n as usize),
@@ -259,5 +271,83 @@ impl BodyLoweringCtx<'_, '_, '_> {
             in_initial: false,
         };
         self.ctx.call1(cb, &call_args)
+    }
+
+    /// LRM 3.3 Table 3-3 (round-4 audit): a string replication whose
+    /// multiplier is not a compile-time literal -- `{i{"Hi"}}`, the clause's
+    /// own "OK (non constant replication)" example. The unrolled lowering
+    /// above cannot represent it, so this builds the loop
+    ///
+    ///   acc = ""; while (n > 0) { acc = {acc, unit}; n = n - 1 }
+    ///
+    /// with the same `%s%s` string-print callback the unrolled form uses for
+    /// each append. The unit -- the concatenation of the operands, taken once
+    /// -- is evaluated BEFORE the loop, which is also LRM 4.2.13's rule that
+    /// replication operands are "evaluated exactly once, even if the
+    /// replication constant is zero". A count of zero (or negative) runs no
+    /// iterations and yields the empty string. The loop shape and the
+    /// spliced header phis mirror `lower_repeat`.
+    fn lower_string_concat_dyn(&mut self, rep: ExprId, elems: &[ExprId]) -> Value {
+        let unit = if let [single] = elems {
+            self.lower_expr(*single)
+        } else {
+            self.lower_string_concat(None, elems)
+        };
+        // Inference required an integer; tolerate a real defensively, the way
+        // `lower_repeat` does for its count.
+        let count_ty = self.body.expr_type(rep);
+        let mut n = self.lower_expr(rep);
+        if count_ty == Type::Real {
+            n = self.ctx.insert_cast(n, &Type::Real, &Type::Integer);
+        }
+        let empty = self.ctx.sconst("");
+
+        let entry = self.ctx.current_block();
+        let head = self.ctx.create_block();
+        let body = self.ctx.create_block();
+        let exit = self.ctx.create_block();
+
+        self.ctx.ins().jump(head);
+        self.ctx.switch_to_block(head);
+
+        // Header phi placeholders; their definitions are spliced in at the top
+        // of `head` once the back-edge values are known.
+        let counter = self.ctx.func.make_param(0u32.into());
+        let acc = self.ctx.func.make_param(0u32.into());
+        let zero = self.ctx.iconst(0);
+        let cond = self.ctx.ins().binary1(Opcode::Igt, counter, zero);
+        self.ctx.ins().br_loop(cond, body, exit);
+        self.ctx.seal_block(body);
+
+        self.ctx.switch_to_block(body);
+        let fmt = self.ctx.sconst("%s%s");
+        let cb = CallBackKind::Print {
+            kind: DisplayKind::Display,
+            arg_tys: vec![FmtArg { ty: Type::String, kind: FmtArgKind::Other }; 2]
+                .into_boxed_slice(),
+            dst: PrintDst::String,
+            immediate: true,
+            in_initial: false,
+        };
+        let appended = self.ctx.call1(cb, &[fmt, acc, unit]);
+        let one = self.ctx.iconst(1);
+        let dec = self.ctx.ins().binary1(Opcode::Isub, counter, one);
+        self.ctx.ins().jump(head);
+        self.ctx.seal_block(head);
+        self.ctx.seal_block(exit);
+
+        FuncCursor::new(&mut self.ctx.func.func)
+            .at_first_inst(head)
+            .ins()
+            .with_result(counter)
+            .phi(&[(entry, n), (body, dec)]);
+        FuncCursor::new(&mut self.ctx.func.func)
+            .at_first_inst(head)
+            .ins()
+            .with_result(acc)
+            .phi(&[(entry, empty), (body, appended)]);
+
+        self.ctx.switch_to_block(exit);
+        acc
     }
 }

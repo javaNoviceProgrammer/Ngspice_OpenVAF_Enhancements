@@ -33,7 +33,7 @@ ngspice -b <name>.cir
 | `swnoise2.va` / `swnoise2.cir` | **§3** — a noise-only `V(p,n) <+ white_noise(...)` in the arm after a flow contribution is dropped (only the load's `4.07e-9` remains); `swnoise.va` with `sw=1` is the control that works |
 | `swnoise.va` / `swnoise.cir` | **§3** — flow-arm noise on a switch branch with netlist `m=9` reads `2.7e-3` instead of `3e-4`; the same module wrapped with `#(.$mfactor(9))` is right |
 | `icint.va` / `icint.cir` | **§3** — `.ic v(n1#mid)=0.2` under `uic` is ignored on the OSDI internal node while `.ic v(2)=0.3` is honoured |
-| `strrep.va` | **§3, §4** — line 6: `"hello\0world"` prints `hello`; line 17: `{i{"Hi"}}` is refused (LRM 3.3 marks it OK) |
+| `strrep.va` | **§3, §4** — line 6: `"hello\0world"` prints `hello`; line 17: `{i{"Hi"}}` is refused (LRM 3.3 marks it OK). **Line 17 fixed** (an integer-typed runtime multiplier now lowers to an append loop over the once-evaluated unit); the deck's replication line compiles clean on the fixed compiler and reproduces only against the audited binaries. Pinned by four new checks in `examples/lrmdata_examples/` |
 | `hexlit.va` | **§4** — `32 'h 12ab_f001` (LRM 2.6.1 Example 5), `'h 1f`, `'h 1e5` are lexed as real numbers. **Fixed** the same day (a lexer digit-run mode after a bare base token, plus the parser accepting macro-substituted number tokens as digits); the deck compiles clean on the fixed compiler and reproduces only against the binaries the audit measured (`04e42be2`). Pinned by four new checks in `examples/lrmlex_examples/` |
 | `nullarg.va` | **§4** — null arguments to `cross`/`above`/`timer` (LRM 5.10.3.1's sample-and-hold) are a type error |
 | `macroq.va` | **§4** — the `` `" ``, `` `\`" `` and ``` `` ``` macro operators are lexer errors |

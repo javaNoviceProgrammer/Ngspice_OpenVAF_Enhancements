@@ -24,6 +24,15 @@ module lrmdata(a, b);
   // one inside a named block is block-local and shall NOT be exported.
   (* desc="module-scope opvar" *) real gmod;
 
+  // LRM 3.3 Table 3-3 (round-4 audit): the multiplier of a STRING replication
+  // "can be nonconstant" -- `a = {i{"Hi"}}` is the clause's own example and
+  // used to be refused ("replication count must be a positive integer
+  // literal"). Pinned with a runtime count, a parameter count, a zero count
+  // (empty string) and a multi-operand unit.
+  parameter integer rp = 3;
+  integer cnt;
+  string sr, sp, sz, sm;
+
   analog begin : blk
     (* desc="block-scope var (must not be an opvar)" *) real gblk;
     i1 = "A";
@@ -31,6 +40,17 @@ module lrmdata(a, b);
     i3 = "ABCDE";
     gblk = 2.0;
     gmod = 3.0;
+    cnt = sel + 2;
+    sr = {cnt{"Hi"}};
+    sp = {rp{"cd"}};
+    sz = {cnt-3{"z"}};
+    sm = {cnt-1{"ab", "-"}};
+    @(initial_step) begin
+      $strobe("REPVAR=[%s]", sr);
+      $strobe("REPPAR=[%s]", sp);
+      $strobe("REPZERO=[%s]", sz);
+      $strobe("REPUNIT=[%s]", sm);
+    end
     // LRM 2.7 (E-515) + practice: backslash-newline inside a string literal
     // is a LINE CONTINUATION contributing nothing (BSIM4 splits its $strobe
     // messages this way); a bare newline stays an error (pinned by lrmlex).

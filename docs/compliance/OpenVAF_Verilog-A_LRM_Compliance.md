@@ -355,8 +355,15 @@ The full operator surface — arithmetic (incl. `**`), comparison, logical,
 bitwise, shifts, ternary
 (including over strings), concatenation `{a,b}` and replication
 `{n{x}}` — was **audited operator-by-operator and level-by-level against
-Table 4-2** with self-checking bitmask modules whose failure modes are
-numerically visible. Two real defects found and fixed in the audits:
+Table 4-2**. On strings the replication multiplier may be **nonconstant**,
+per LRM 3.3 Table 3-3 ("multiplier ... can be nonconstant"; `{i{"Hi"}}`
+is the clause's own example) — the round-4 audit (2026-09-03) found the
+runtime form refused, and it now lowers to a loop appending the
+once-evaluated unit, so a zero or negative count yields the empty string
+and a parameter count tracks its override (pinned in `lrmdata`); numeric
+replication still requires the constant count LRM 4.2.13 mandates. The
+operator sweep ran with self-checking bitmask modules whose failure modes
+are numerically visible. Two real defects found and fixed in the audits:
 unary `~` emitted arithmetic negate, and the constant folder disagreed
 with the runtime on `>>`; one precedence defect: `%` bound tighter than
 `*`/`/` (so `6*7%4` evaluated to 18 instead of 2). Associativity verified
