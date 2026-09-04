@@ -66,3 +66,25 @@ Compiled Verilog-A through OSDI runs within a small factor of ngspice's
 hand-coded built-ins on identical physics — machine-zero-identical
 waveforms — and `openvaf-r` compiles the entire flagship set of industry
 compact models in well under a minute total.
+
+## `large_bench.py` — the thousands-of-devices regime (2026-09-04)
+
+`run_benchmark.py` measures small circuits. `large_bench.py` is its companion
+for **40 000 BSIM4 MOSFETs and 67 000 OSDI instances**: four generated circuit
+families (a BSIM4 / PSP 103 inverter chain, a resistor-diode mesh, a 2-D
+BSIM4 grid, HiCUM L2 stages) at three or four sizes, each under **both**
+solvers and against its built-in twin, with the op solution and two transient
+probes diffed across every pair. Models are compiled from the VA-Models
+corpus on demand; results accumulate in `large_results.json` (the committed
+one is the reference run behind
+[`docs/bug_hunts/2026-09-04_large-circuits-speed-and-correctness.md`](../../docs/bug_hunts/2026-09-04_large-circuits-speed-and-correctness.md)).
+
+```bash
+python3 large_bench.py --maxsize 300   # the small tier, a few minutes
+python3 large_bench.py                 # everything; resumable in --budget chunks
+python3 large_bench.py --report        # the tables
+```
+
+It is not part of the regression sweep (no `verify_` prefix): the full run
+takes about ten minutes and one Sparse job is expected to time out.
+

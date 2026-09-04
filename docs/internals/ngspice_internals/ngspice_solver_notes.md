@@ -252,6 +252,20 @@ the ratio is flat as you scale, the circuit is chain-like and the default is
 already the right choice. If the ratio grows, switch to `.option klu`. The two
 solvers agree on the answer, so the only cost is the flag.
 
+**At tens of thousands of compact-model instances** (the 2026-09-04 sweep,
+[`docs/bug_hunts/2026-09-04_large-circuits-speed-and-correctness.md`](../../bug_hunts/2026-09-04_large-circuits-speed-and-correctness.md),
+regenerable with `examples/benchmark_examples/large_bench.py`): the two solvers
+still agree to 1e-15 on every node of every op and to the last bit on AC, on
+decks of up to 22 502 equations and 67 200 OSDI instances. KLU is 1.2–2.7×
+ahead on MOSFET chains (an inverter chain is not tridiagonal), 4–8× on
+resistor-diode meshes, 10× on a 3 200-MOSFET BSIM4 grid, and the only solver
+that finishes a 9 800-MOSFET grid at all (9 s against more than 500 s). KLU
+holds about a third more memory. The one cost the sweep traced to the OSDI
+side is not the solver's: a compiled MOSFET model without `$limit` (BSIM4,
+PSP 103) needs gmin stepping for its operating point on chains of 100 stages
+where the built-in converges directly, which the un-limited Newton makes 5–6×
+dearer per device — see the study's F1.
+
 ## Noise and pole-zero under KLU (Enhancement-113)
 
 ngspice **used to refuse** both outright (`noisean.c` / `pzan.c` printed
