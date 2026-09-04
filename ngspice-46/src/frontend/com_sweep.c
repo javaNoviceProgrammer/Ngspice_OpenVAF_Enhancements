@@ -3980,7 +3980,7 @@ static const char *const hs_names_highsigma[] = {
 };
 static const char *const hs_names_wcd[] = {
     "wcd_beta", "wcd_pfail", "wcd_ndim", "wcd_converged",
-    "wcd_pfail_is", "wcd_pfail_is_err", "wcd_sigma_is", "wcd_seed"
+    "wcd_pfail_is", "wcd_pfail_is_err", "wcd_sigma_is", "wcd_seed", "wcd_ndim_model"
 };
 static const char *const hs_names_montecarlo[] = {
     "montecarlo_yield", "montecarlo_npass", "montecarlo_n",
@@ -4772,12 +4772,22 @@ void com_montecarlo(wordlist *wl)
  * blame the operating point. Cleared at the start of every wcd run. */
 static int wcd_metric_unresolved = 0;
 
+/* 2026-09-04 MC hunt, F3: how many of the u-space dimensions belong to the
+ * netlist's .param draws. The model-declared (osdimc) dimensions follow them
+ * in u, and are handed to the osdimc applier's walk from that offset. 0
+ * until the nominal evaluation has discovered the split. */
+static int wcd_nnet = 0;
+
 static double wcd_margin(const double *u, int ndim, const char *analysis,
                          const char *metric, double hi, double lo,
                          int hasmax, int hasmin)
 {
     double m, g;
     mc_wcd_config(u, ndim);
+    /* MC hunt F3: the model-declared Gaussian statistics take the coordinates
+     * after the netlist's, through the osdimc applier's walk mode */
+    if (OSDImcActive())
+        OSDImcWalk(u + wcd_nnet, ndim - wcd_nnet);
     sw_run_cmd("reset");            /* redraws the .params at this u */
     sw_run_cmd(analysis);
     /* E-537 (hunt C): an evaluation that never solved has no margin. ngspice
@@ -4815,6 +4825,7 @@ static double wcd_margin(const double *u, int ndim, const char *analysis,
 void com_wcd(wordlist *wl)
 {
     wcd_metric_unresolved = 0;              /* MC hunt F1 */
+    wcd_nnet = 0;                           /* MC hunt F3 */
     /* E-537 (hunt H): see hs_clear_results */
     hs_clear_results(hs_names_wcd,
                      (int) (sizeof hs_names_wcd / sizeof *hs_names_wcd));
@@ -4957,6 +4968,20 @@ void com_wcd(wordlist *wl)
         u[d] = 0.0;
     g0 = wcd_margin(u, WCD_MAXDIM, analysis, metric, hi, lo, hasmax, hasmin);
     ndim = mc_wcd_ndim();
+    /* MC hunt F3: the model-declared Gaussian statistics are dimensions too.
+     * Enhancement-535 held them at ONE draw for the whole search, so on a
+     * deck whose variability is entirely model-declared this command said
+     * there was nothing to search over, and with one small netlist dimension
+     * added it reported a 4-sigma event at 106 sigma -- the sigma the model
+     * declares was invisible to the walk. They follow the netlist dimensions
+     * in u; a bounded uniform has no Gaussian coordinate and is held. */
+    int nnet = ndim, nmodel = 0, nunif = 0;
+    if (OSDImcActive()) {
+        nmodel = OSDImcWalkNdim();
+        nunif = OSDImcWalkNuniform();
+    }
+    ndim = nnet + nmodel;
+    wcd_nnet = nnet;
 
     /* E-537 (hunt C): if the deck will not even solve at the NOMINAL point
      * there is no margin to search from, and every later evaluation would be
@@ -4976,17 +5001,23 @@ void com_wcd(wordlist *wl)
         mc_wcd_off();
         OSDImcSeedOffset(0);  /* E-537 (hunt P) */
         OSDImcHoldTrial(FALSE);   /* Enhancement-535 */
+        OSDImcWalk(NULL, 0);      /* MC hunt F3 */
         return;
     }
 
     if (ndim < 1) {
-        fprintf(cp_err, "wcd: the deck draws no Gaussian .params -- nothing to "
-                        "search over (use agauss/gauss in a .param)\n");
+        fprintf(cp_err, "wcd: the deck draws no Gaussian .params%s -- nothing "
+                        "to search over (use agauss/gauss in a .param%s)\n",
+                OSDImcActive() ? " and its models declare no Gaussian statistics"
+                               : "",
+                OSDImcActive() ? "" : ", or (* std *) attributes on model "
+                                      "parameters with .option osdimc");
         outp_loop_end();          /* Enhancement-477 */
         ft_optimizing = save_optimizing;
         mc_wcd_off();
         OSDImcSeedOffset(0);  /* E-537 (hunt P) */
         OSDImcHoldTrial(FALSE);   /* Enhancement-535 */
+        OSDImcWalk(NULL, 0);      /* MC hunt F3 */
         return;
     }
     if (ndim > WCD_MAXDIM) {
@@ -4997,13 +5028,24 @@ void com_wcd(wordlist *wl)
         mc_wcd_off();
         OSDImcSeedOffset(0);  /* E-537 (hunt P) */
         OSDImcHoldTrial(FALSE);   /* Enhancement-535 */
+        OSDImcWalk(NULL, 0);      /* MC hunt F3 */
         return;
     }
 
-    fprintf(cp_out, "wcd: %d statistical dimension%s, analysis '%s', "
-                    "fail if (%s) %s\n",
-            ndim, ndim == 1 ? "" : "s", analysis, metric,
-            hasmax && hasmin ? "outside [min,max]" : hasmax ? "> max" : "< min");
+    {
+        char dimnote[96] = "";
+        if (OSDImcActive())               /* MC hunt F3 */
+            snprintf(dimnote, sizeof dimnote,
+                     " (%d netlist .param, %d model-declared)", nnet, nmodel);
+        fprintf(cp_out, "wcd: %d statistical dimension%s%s, analysis '%s', "
+                        "fail if (%s) %s\n",
+                ndim, ndim == 1 ? "" : "s", dimnote, analysis, metric,
+                hasmax && hasmin ? "outside [min,max]" : hasmax ? "> max" : "< min");
+        if (nunif)
+            fprintf(cp_out, "  note: %d uniform model parameter%s held at nominal "
+                            "(a bounded uniform has no Gaussian coordinate)\n",
+                    nunif, nunif == 1 ? " is" : "s are");
+    }
     fprintf(cp_out, "  nominal margin g(0) = %+.6g  (%s at nominal)\n",
             g0, g0 > 0.0 ? "passes" : "FAILS");
 
@@ -5030,6 +5072,7 @@ void com_wcd(wordlist *wl)
             mc_wcd_off();
         OSDImcSeedOffset(0);  /* E-537 (hunt P) */
             OSDImcHoldTrial(FALSE);   /* Enhancement-535 */
+            OSDImcWalk(NULL, 0);      /* MC hunt F3 */
             return;
         }
         double g = wcd_margin(u, ndim, analysis, metric, hi, lo, hasmax, hasmin);
@@ -5050,6 +5093,7 @@ void com_wcd(wordlist *wl)
             mc_wcd_off();
         OSDImcSeedOffset(0);  /* E-537 (hunt P) */
             OSDImcHoldTrial(FALSE);   /* Enhancement-535 */
+            OSDImcWalk(NULL, 0);      /* MC hunt F3 */
             return;
         }
 
@@ -5079,6 +5123,7 @@ void com_wcd(wordlist *wl)
             mc_wcd_off();
         OSDImcSeedOffset(0);  /* E-537 (hunt P) */
             OSDImcHoldTrial(FALSE);   /* Enhancement-535 */
+            OSDImcWalk(NULL, 0);      /* MC hunt F3 */
             return;
         }
 
@@ -5090,6 +5135,7 @@ void com_wcd(wordlist *wl)
             mc_wcd_off();
         OSDImcSeedOffset(0);  /* E-537 (hunt P) */
         OSDImcHoldTrial(FALSE);   /* Enhancement-535 */
+        OSDImcWalk(NULL, 0);      /* MC hunt F3 */
             return;
         }
 
@@ -5137,6 +5183,7 @@ void com_wcd(wordlist *wl)
     hs_set_result("wcd_beta", beta);
     hs_set_result("wcd_pfail", pf_form);
     hs_set_result("wcd_ndim", (double) ndim);
+    hs_set_result("wcd_ndim_model", (double) nmodel);   /* MC hunt F3 */
     hs_set_result("wcd_converged", (double) converged);
 
     /* --- optional mean-shift importance sampling around the MPFP ---------- */
@@ -5153,12 +5200,27 @@ void com_wcd(wordlist *wl)
         mc_wcd_shift(u, ndim, seed);
         for (i = 0; i < nis; i++) {
             double m, f = 0.0, w;
+            double logw_model = 0.0;      /* MC hunt F3 */
             /* E-536 (hunt bug 17): report over the samples that completed */
             if (ft_intrpt) {
                 fprintf(cp_err, "wcd: interrupted after %d of %d importance "
                                 "samples\n", i, nis);
                 nis = i;
                 break;
+            }
+            /* MC hunt F3: the model-declared dimensions are shifted the same
+             * way the netlist ones are in mc_wcd_shift -- z = u* + N(0,1),
+             * log w = -u*.z + |u*|^2/2 per dimension -- and handed to the
+             * applier's walk for this sample. */
+            if (nmodel > 0) {
+                double zmodel[WCD_MAXDIM];
+                int k;
+                for (k = 0; k < nmodel; k++) {
+                    double shift = u[nnet + k];
+                    zmodel[k] = shift + gauss1();
+                    logw_model += -shift * zmodel[k] + 0.5 * shift * shift;
+                }
+                OSDImcWalk(zmodel, nmodel);
             }
             sw_run_cmd("reset");
             sw_run_cmd(analysis);
@@ -5177,7 +5239,7 @@ void com_wcd(wordlist *wl)
             nis_ok++;
             if ((hasmax && m > hi) || (hasmin && m < lo))
                 f = 1.0;
-            w = mc_sample_weight();
+            w = mc_sample_weight() * exp(logw_model);   /* MC hunt F3 */
             if (f != 0.0) {
                 nfail++;
                 sum_wf += w;
@@ -5218,6 +5280,7 @@ void com_wcd(wordlist *wl)
     mc_wcd_off();
     OSDImcSeedOffset(0);      /* E-537 (hunt P) */
         OSDImcHoldTrial(FALSE);   /* Enhancement-535 */
+        OSDImcWalk(NULL, 0);      /* MC hunt F3 */
     outp_loop_end();          /* Enhancement-477 */
     ft_optimizing = save_optimizing;
 }

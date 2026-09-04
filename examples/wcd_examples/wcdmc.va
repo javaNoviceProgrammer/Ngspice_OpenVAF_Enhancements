@@ -1,0 +1,19 @@
+// MC hunt F3 (2026-09-04): a model whose variability is DECLARED in the model
+// (LRM 2.9 attributes, sampled by `.option osdimc`) -- the netlist carries no
+// gauss()/agauss() at all. R = r + dr ~ N(1000, sqrt(25^2 + 10^2) = 26.926),
+// so the limit state i(v1) > -1/(1000 + 4*26.926) is linear in the two
+// standardised coordinates and FORM is exact: beta = 4. `g` is uniform and
+// has no Gaussian coordinate; wcd holds it at nominal and says so.
+`include "disciplines.vams"
+
+module wcdmc(a, b);
+  inout a, b;
+  electrical a, b;
+  (* desc="series resistance", std=25.0 *)
+  parameter real r = 1000.0 from (0:inf);
+  (* type="instance", std=10.0 *)
+  parameter real dr = 0.0;
+  (* dist="uniform", std=2e-4 *)
+  parameter real g = 1e-3 from [0:1);
+  analog I(a, b) <+ V(a, b) / (r + dr) + 0.0 * g * V(a, b);
+endmodule

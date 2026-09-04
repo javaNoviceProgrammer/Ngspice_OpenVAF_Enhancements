@@ -24,6 +24,7 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 from _setup import NG as NGSPICE  # noqa: E402
+from _setup import VAF as OPENVAF  # noqa: E402
 from _setup import check_both_solvers as _check_both_solvers  # noqa: E402
 _check_both_solvers(__file__)
 
@@ -189,6 +190,84 @@ stated = ("centred on the MPFP, seed 1 (default)" in out
 chk("-is un-seeded: 'seed 1 (default)' stated, rerun note, wcd_seed = 1 (1=yes)",
     1.0 if stated else 0.0, 1.0, 0.0)
 
+# ---- MC hunt F3 (2026-09-04): model-declared statistics are dimensions too --
+# Enhancement-535 held every `.option osdimc` draw at ONE sample for the whole
+# search, so a deck whose variability is entirely model-declared was refused
+# ("draws no Gaussian .params -- use agauss"), and with one 1-ohm netlist
+# dimension added wcd reported beta = 106.7 for a 4-sigma event. The osdimc
+# applier now has a walk mode: every Gaussian statistical parameter takes
+# nominal + sigma * u_k, uniforms are held, and the mean-shift refinement
+# shifts those dimensions like the netlist ones.
+SIG_R, SIG_DR = 25.0, 10.0
+sig_tot = math.sqrt(SIG_R ** 2 + SIG_DR ** 2)                 # 26.926
+r_thr = 1000.0 + 4.0 * sig_tot                                # 1107.703
+imax = -1.0 / r_thr                                           # -0.902769m
+rc_c = subprocess.run([OPENVAF, "wcdmc.va", "-o", "wcdmc.osdi"], cwd=HERE,
+                      capture_output=True, text=True, timeout=300)
+chk("wcdmc.va compiles (0 = clean)", float(rc_c.returncode), 0.0, 0.0,
+    (rc_c.stdout + rc_c.stderr).strip().splitlines()[-1][:60] if rc_c.returncode else "")
+OSDIMC_DECK = """* wcd over model-declared statistics only
+.control
+pre_osdi wcdmc.osdi
+.endc
+.option osdimc
+V1 a 0 DC 1
+N1 a 0 mm
+.model mm wcdmc
+.control
+wcd -metric i(v1) -max %.9g -analysis op%s
+echo NDIM_MODEL=$wcd_ndim_model
+.endc
+.end
+"""
+out = run(OSDIMC_DECK % (imax, ""), "_mc.cir")
+chk("osdimc-only deck: 2 model-declared dimensions", grab(out, NDIM), 2.0, 0.0,
+    "was refused as drawing no Gaussian .params")
+chk("osdimc-only deck: beta = 4 (FORM exact, R = r + dr linear in u)",
+    grab(out, BETA), 4.0, 1e-3)
+held = ("1 uniform model parameter is held at nominal" in out
+        and "(0 netlist .param, 2 model-declared)" in out
+        and grab(out, r"NDIM_MODEL=(\d+)") == 2.0)
+chk("banner splits netlist/model dims, uniform held, $wcd_ndim_model = 2 (1=yes)",
+    1.0 if held else 0.0, 1.0, 0.0)
+out = run("""* wcd: model-declared statistics plus one small netlist dimension
+.control
+pre_osdi wcdmc.osdi
+.endc
+.option osdimc
+.param rs = agauss(1, 1, 1)
+V1 a 0 DC 1
+Rs a b {rs}
+N1 b 0 mm
+.model mm wcdmc
+.control
+wcd -metric i(v1) -max %.9g -analysis op
+.endc
+.end
+""" % imax, "_mix.cir")
+beta_mix = (r_thr - 1001.0) / math.sqrt(1.0 + SIG_R ** 2 + SIG_DR ** 2)   # 3.960
+chk("mixed deck: 3 dimensions (1 netlist + 2 model)", grab(out, NDIM), 3.0, 0.0)
+chk("mixed deck: beta on the analytic value (was 106.7)", grab(out, BETA),
+    beta_mix, 1e-3)
+out = run(OSDIMC_DECK % (imax, " -is 2000 -seed 1"), "_mcis.cir")
+pis = grab(out, r"P\(fail\), mean-shift : ([-\d.eE+]+)")
+chk("mean-shift IS over model dims vs analytic Phi(-4)", pis, phi_bar(4.0), 0.15,
+    "unbiased shifted estimate, 2000 samples")
+out = run("""* wcd with nothing statistical, osdimc on
+.control
+pre_osdi wcdmc.osdi
+set osdimc
+.endc
+V1 a 0 DC 1
+R1 a 0 1k
+.control
+wcd -metric i(v1) -max -0.9m -analysis op
+.endc
+.end
+""", "_none.cir")
+chk("no statistics anywhere: refusal names both sources (1=yes)",
+    1.0 if "and its models declare no Gaussian statistics" in out else 0.0, 1.0, 0.0)
+
 print("Enhancement-305: worst-case distance / MPFP vs the analytic Gaussian tail")
 bad = 0
 for w, v, g, wt, n in rows:
@@ -201,6 +280,8 @@ for w, v, g, wt, n in rows:
 for f in os.listdir(HERE):
     if f.startswith("_") and f.endswith(".cir"):
         os.remove(os.path.join(HERE, f))
+if os.path.exists(os.path.join(HERE, "wcdmc.osdi")):
+    os.remove(os.path.join(HERE, "wcdmc.osdi"))
 
 print(f"\n{len(rows)-bad}/{len(rows)} checks passed")
 print("ALL PASS" if bad == 0 else "FAILURES PRESENT")

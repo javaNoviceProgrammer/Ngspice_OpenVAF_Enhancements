@@ -79,10 +79,19 @@ The statistical `.param` must reach a **device value** by brace substitution
 *expression* (`B1 out 0 v='rr'`) captures it once, so the parameter never varies and
 `wcd` correctly reports that the deck draws no Gaussian `.params`.
 
+**Model-declared statistics count too** (MC hunt F3, 2026-09-04). Under
+`.option osdimc`, every Gaussian `(* std *)` parameter of every OSDI model card
+and instance is a dimension of the search — the banner says how many are
+netlist `.params` and how many are model-declared, in that order in `u`. A
+uniform `(* dist="uniform" *)` parameter has no Gaussian coordinate; it is held
+at its nominal and the banner says so. `wcdmc.va` pins this: R = r + dr with
+σ = 25 and 10 gives β = 4 exactly at the 4σ threshold, where the search used to
+be refused as "drawing no Gaussian .params".
+
 ## Verify
 
 ```bash
 python3 verify_wcd.py
 ```
 
-Runs under both linear solvers (22 checks), all against the analytic Gaussian tail.
+Runs under both linear solvers (30 checks), all against the analytic Gaussian tail.

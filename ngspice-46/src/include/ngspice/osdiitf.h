@@ -217,6 +217,15 @@ extern void OSDImcInterruptReset(void);
 extern unsigned long OSDImcTrialCheckpoint(void);
 extern void OSDImcTrialRewind(unsigned long t);
 extern double OSDImcSampleLogLR(CKTcircuit *ckt);
+/* 2026-09-04 MC hunt, F3: WALK mode for `wcd`. While a walk is set, every
+ * Gaussian statistical parameter takes nominal + sigma * z[k] (k = its place
+ * in the applier's fixed enumeration order; 0 beyond n), uniform ones are held
+ * at their nominal, and the trial counter's baseline gate does not apply --
+ * the deck is a plain function of z. NULL/0 ends the walk. The counts are of
+ * the CURRENT circuit's applicable parameters, valid after it has run once. */
+extern void OSDImcWalk(const double *z, int n);
+extern int  OSDImcWalkNdim(void);
+extern int  OSDImcWalkNuniform(void);
 /* 2026-09-04 hunt, F1: Verilog-A modules whose name is one of ngspice's own
  * (a built-in device's name, or a `.model` type keyword). They are registered
  * but SHADOWED: a `.model` card of that type resolves to the built-in, and

@@ -273,6 +273,14 @@ most-probable failure point that gets there. It answers "how much margin do I
 have, and in which direction is it thinnest", which a yield percentage from a
 Monte-Carlo run cannot: MC estimates the tail by sampling it, and the tail is
 exactly where samples are scarce.
+Its dimensions are the netlist's Gaussian `.params` **and, under
+`.option osdimc`, every Gaussian `(* std *)` parameter of every OSDI model card
+and instance** (MC hunt F3, 2026-09-04): the banner says how many of each, in
+that order in `u`, and holds a uniform `(* dist="uniform" *)` parameter at its
+nominal, since a bounded uniform has no Gaussian coordinate. Before that the
+model-declared statistics were frozen at one draw for the whole search, so a
+deck whose variability was entirely model-declared was refused, and one small
+netlist dimension beside them produced a wildly wrong distance.
 
 **Warm-started Monte Carlo** ([E-188](../../../enhancements_doc/Enhancement-188.md)) reuses the previous
 sample's solution as the next sample's initial guess, and **Latin-hypercube

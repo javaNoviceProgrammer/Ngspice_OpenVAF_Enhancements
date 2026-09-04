@@ -422,6 +422,7 @@ static void osdimc_apply_type(CKTcircuit *ckt, int type, int seed,
                               bool verbose);
 static unsigned long osdimc_current_trial(void);
 static bool osdimc_apply_is_pending(void);
+static bool osdimc_walk_active(void);       /* MC hunt F3 */
 
 int OSDIsetup(SMPmatrix *matrix, GENmodel *inModel, CKTcircuit *ckt,
               int *states) {
@@ -978,7 +979,8 @@ int OSDIsetup(SMPmatrix *matrix, GENmodel *inModel, CKTcircuit *ckt,
    * exactly as for any other between-setups parameter change. */
   osdimc_capture_chain(entry, inModel);
   if (osdimc_apply_is_pending() && osdimc_enabled() &&
-      osdimc_current_trial() >= 2 && ckt->CKThead[inModel->GENmodType] &&
+      (osdimc_current_trial() >= 2 || osdimc_walk_active()) &&
+      ckt->CKThead[inModel->GENmodType] &&
       osdi_devtype_is_osdi(inModel->GENmodType)) {
     int seed535 = 1;
     if (!cp_getvar("mcseed", CP_NUM, &seed535, 0))
@@ -1675,6 +1677,33 @@ static double osdimc_scale = 1.0; /* sigma inflation, 1.0 = off */
  * that never mentions it keeps the draws it has today. */
 static uint32_t osdimc_seed_extra;
 
+/* 2026-09-04 MC hunt, F3: WALK mode. `wcd` evaluates the deck at chosen
+ * points of standardised normal space; that space held the netlist's
+ * Gaussian .params only, and every model-declared statistic was frozen at
+ * ONE held draw for the whole search -- invisible to the walk. On a deck
+ * whose variability is entirely model-declared wcd said there was nothing to
+ * search over (and told the user to add agauss to a .param, which would
+ * double-count); with one small netlist dimension added it reported a beta
+ * of 106 sigma for a 4-sigma event. In walk mode every Gaussian statistical
+ * parameter takes nominal + sigma * z[k], k being its position in the
+ * applier's fixed enumeration order (device type, model card, parameter,
+ * instance) and z the coordinate vector the caller supplied (0 beyond it:
+ * the nominal), so the deck is a plain function of z. Uniform parameters
+ * have no Gaussian coordinate; they are held at their nominal and counted so
+ * the caller can say so. Nothing here is random, so the trial counter's
+ * "baseline never draws" gate does not apply while a walk is set. */
+static bool osdimc_walk_on;
+static double *osdimc_walk_z;      /* a copy of the caller's coordinates */
+static int osdimc_walk_n, osdimc_walk_cap;
+static bool osdimc_walk_active(void) { return osdimc_walk_on; }
+static double osdimc_walk_value(const OsdiStatParamInfo *info, double nominal,
+                                int *k, double *z_out);
+static void osdimc_say_applied(const char *owner, const char *param,
+                               double val, double nominal,
+                               const OsdiStatParamInfo *info, double z);
+static void osdimc_walk_count(CKTcircuit *ckt, int upto, int *ngauss,
+                              int *nunif);
+
 void OSDImcSeedOffset(unsigned s) { osdimc_seed_extra = (uint32_t) s; }
 
 /* ===================== E-538: scoped sigma inflation =====================
@@ -1841,6 +1870,8 @@ void OSDImcInterruptReset(void) {
   osdimc_internal_change = false;
   osdimc_scale = 1.0;
   osdimc_seed_extra = 0;          /* E-537 (hunt P) */
+  osdimc_walk_on = false;         /* MC hunt F3 */
+  osdimc_walk_n = 0;
   osdimc_clear_pins();
 }
 
@@ -2223,7 +2254,7 @@ void OSDImcNewRun(CKTcircuit *ckt) {
     if (!osdimc_held_advanced) {
       osdimc_held_advanced = true;
       osdimc_trial++;
-    } else if (osdimc_trial <= 1) {
+    } else if (osdimc_trial <= 1 && !osdimc_walk_on) {   /* MC hunt F3 */
       osdimc_apply_pending = false;
       return;
     }
@@ -2240,7 +2271,7 @@ void OSDImcNewRun(CKTcircuit *ckt) {
    * `unset osdimc`/`set osdimc` toggle can reach trial 1 with a POPULATED
    * table, and the apply loop then drew on the run every contract calls the
    * nominal baseline. */
-  if (osdimc_trial < 2) {
+  if (osdimc_trial < 2 && !osdimc_walk_on) {   /* MC hunt F3: a walk is not a draw */
     osdimc_apply_pending = false;
     return;
   }
@@ -2285,6 +2316,12 @@ static void osdimc_apply_type(CKTcircuit *ckt, int type, int seed,
     }
 
     uint64_t kbase = osdimc_kbase(seed);   /* E-537 (hunt P) */
+    /* MC hunt F3: this type's first walk coordinate is the Gaussian count of
+     * the types before it, so the per-type application lands every parameter
+     * on the same coordinate whatever order (or how many times) it runs. */
+    int walk_k = 0, walk_nu = 0;
+    if (osdimc_walk_on)
+      osdimc_walk_count(ckt, type, &walk_k, &walk_nu);
 
     for (GENmodel *gen_model = ckt->CKThead[type]; gen_model;
          gen_model = gen_model->GENnextModel) {
@@ -2301,22 +2338,27 @@ static void osdimc_apply_type(CKTcircuit *ckt, int type, int seed,
             continue; /* no nominal (a failed card stays undrawn), or a
                          machine write owns the value (hunt bug 14) */
           }
-          /* E-538: this parameter's own inflation (1.0 when out of scope) */
-          double sc = osdimc_scale_for((char *)gen_model->GENmodName,
-                                       descr->param_opvar[id].name[0]);
-          if (sc != 1.0)
-            osdimc_scope_hits++;
-          double val = e->nominal + osdimc_delta(osdimc_mix(kmodel ^ id),
-                                                 infos[s].dist, infos[s].std,
-                                                 e->nominal, sc);
+          double val, z = 0.0;
+          if (osdimc_walk_on) {                       /* MC hunt F3 */
+            val = osdimc_walk_value(&infos[s], e->nominal, &walk_k, &z);
+          } else {
+            /* E-538: this parameter's own inflation (1.0 when out of scope) */
+            double sc = osdimc_scale_for((char *)gen_model->GENmodName,
+                                         descr->param_opvar[id].name[0]);
+            if (sc != 1.0)
+              osdimc_scope_hits++;
+            val = e->nominal + osdimc_delta(osdimc_mix(kmodel ^ id),
+                                            infos[s].dist, infos[s].std,
+                                            e->nominal, sc);
+          }
           if (!osdimc_draw_ok(descr, id, val))
             val = e->nominal;
           osdimc_write(descr, NULL, model, id, val);
           osdimc_active = true;
           if (verbose) {
-            printf("osdimc: trial %lu: %s:%s = %g (nominal %g)\n",
-                   osdimc_trial, (char *)gen_model->GENmodName,
-                   descr->param_opvar[id].name[0], val, e->nominal);
+            osdimc_say_applied((char *)gen_model->GENmodName,
+                               descr->param_opvar[id].name[0], val,
+                               e->nominal, &infos[s], z);
           }
         } else { /* mismatch: per instance */
           for (GENinstance *gen_inst = gen_model->GENinstances; gen_inst;
@@ -2326,29 +2368,139 @@ static void osdimc_apply_type(CKTcircuit *ckt, int type, int seed,
             if (!e || e->pinned) {
               continue;
             }
-            uint64_t kinst =
-                osdimc_mix(kbase ^ osdimc_hash_str((char *)gen_inst->GENname));
-            double sc = osdimc_scale_for((char *)gen_inst->GENname,
-                                         descr->param_opvar[id].name[0]);
-            if (sc != 1.0)
-              osdimc_scope_hits++;
-            double val = e->nominal + osdimc_delta(osdimc_mix(kinst ^ id),
-                                                   infos[s].dist, infos[s].std,
-                                                   e->nominal, sc);
+            double val, z = 0.0;
+            if (osdimc_walk_on) {                     /* MC hunt F3 */
+              val = osdimc_walk_value(&infos[s], e->nominal, &walk_k, &z);
+            } else {
+              uint64_t kinst =
+                  osdimc_mix(kbase ^ osdimc_hash_str((char *)gen_inst->GENname));
+              double sc = osdimc_scale_for((char *)gen_inst->GENname,
+                                           descr->param_opvar[id].name[0]);
+              if (sc != 1.0)
+                osdimc_scope_hits++;
+              val = e->nominal + osdimc_delta(osdimc_mix(kinst ^ id),
+                                              infos[s].dist, infos[s].std,
+                                              e->nominal, sc);
+            }
             if (!osdimc_draw_ok(descr, id, val))
               val = e->nominal;
             osdimc_write(descr, inst, model, id, val);
             osdimc_active = true;
             if (verbose) {
-              printf("osdimc: trial %lu: %s:%s = %g (nominal %g)\n",
-                     osdimc_trial, (char *)gen_inst->GENname,
-                     descr->param_opvar[id].name[0], val, e->nominal);
+              osdimc_say_applied((char *)gen_inst->GENname,
+                                 descr->param_opvar[id].name[0], val,
+                                 e->nominal, &infos[s], z);
             }
           }
         }
       }
     }
   }
+}
+
+/* MC hunt F3: the walk value of one parameter. A Gaussian one takes the next
+ * coordinate (0 -- the nominal -- beyond the supplied vector) and advances
+ * the index; a uniform one has no Gaussian coordinate and is held. */
+static double osdimc_walk_value(const OsdiStatParamInfo *info, double nominal,
+                                int *k, double *z_out) {
+  if (info->dist & OSDI_DIST_UNIFORM) {
+    *z_out = 0.0;
+    return nominal;
+  }
+  double sigma = (info->dist & OSDI_DIST_REL) ? info->std * fabs(nominal)
+                                              : info->std;
+  double z = (*k < osdimc_walk_n) ? osdimc_walk_z[*k] : 0.0;
+  (*k)++;
+  *z_out = z;
+  return nominal + sigma * z;
+}
+
+static void osdimc_say_applied(const char *owner, const char *param,
+                               double val, double nominal,
+                               const OsdiStatParamInfo *info, double z) {
+  if (!osdimc_walk_on)
+    printf("osdimc: trial %lu: %s:%s = %g (nominal %g)\n", osdimc_trial, owner,
+           param, val, nominal);
+  else if (info->dist & OSDI_DIST_UNIFORM)
+    printf("osdimc: walk: %s:%s = %g (nominal %g, uniform: held)\n", owner,
+           param, val, nominal);
+  else
+    printf("osdimc: walk: %s:%s = %g (nominal %g, z = %+g)\n", owner, param,
+           val, nominal, z);
+}
+
+/* MC hunt F3: count, in the applier's enumeration order, the statistical
+ * parameters of the device types BELOW `upto` that an application writes:
+ * Gaussian ones, which take a walk coordinate each, and uniform ones, which
+ * are held. Mirrors osdimc_apply_type's skips exactly (no nominal captured,
+ * or pinned), so an index computed here is the index the applier uses. */
+static void osdimc_walk_count(CKTcircuit *ckt, int upto, int *ngauss,
+                              int *nunif) {
+  *ngauss = 0;
+  *nunif = 0;
+  if (!ckt)
+    return;
+  for (int type = 0; type < upto && type < DEVmaxnum; type++) {
+    if (!ckt->CKThead[type] || !osdi_devtype_is_osdi(type))
+      continue;
+    OsdiRegistryEntry *entry = osdi_reg_entry_model(ckt->CKThead[type]);
+    const OsdiDescriptor *descr = entry->descriptor;
+    const OsdiStatParamInfo *infos = entry->stat_param_infos;
+    if (entry->num_stat_params == 0 || !infos)
+      continue;
+    for (GENmodel *gen_model = ckt->CKThead[type]; gen_model;
+         gen_model = gen_model->GENnextModel) {
+      void *model = osdi_model_data(gen_model);
+      for (uint32_t s = 0; s < entry->num_stat_params; s++) {
+        uint32_t id = infos[s].param_id;
+        int *cnt = (infos[s].dist & OSDI_DIST_UNIFORM) ? nunif : ngauss;
+        if (id >= descr->num_instance_params) {
+          OsdiMcNominal *e = osdimc_find(model, id);
+          if (e && !e->pinned)
+            (*cnt)++;
+        } else {
+          for (GENinstance *gen_inst = gen_model->GENinstances; gen_inst;
+               gen_inst = gen_inst->GENnextInstance) {
+            OsdiMcNominal *e =
+                osdimc_find(osdi_instance_data(entry, gen_inst), id);
+            if (e && !e->pinned)
+              (*cnt)++;
+          }
+        }
+      }
+    }
+  }
+}
+
+void OSDImcWalk(const double *z, int n) {
+  if (!z || n <= 0) {
+    osdimc_walk_on = false;
+    osdimc_walk_n = 0;
+    return;
+  }
+  if (n > osdimc_walk_cap) {
+    osdimc_walk_z = TREALLOC(double, osdimc_walk_z, n);
+    osdimc_walk_cap = n;
+  }
+  memcpy(osdimc_walk_z, z, (size_t)n * sizeof(double));
+  osdimc_walk_n = n;
+  osdimc_walk_on = true;
+}
+
+int OSDImcWalkNdim(void) {
+  int g, u;
+  if (!osdimc_enabled())
+    return 0;
+  osdimc_walk_count(osdimc_ckt, DEVmaxnum, &g, &u);
+  return g;
+}
+
+int OSDImcWalkNuniform(void) {
+  int g, u;
+  if (!osdimc_enabled())
+    return 0;
+  osdimc_walk_count(osdimc_ckt, DEVmaxnum, &g, &u);
+  return u;
 }
 
 /* E-536 fix (hunt bug 7): the log importance weight of the CURRENT trial's

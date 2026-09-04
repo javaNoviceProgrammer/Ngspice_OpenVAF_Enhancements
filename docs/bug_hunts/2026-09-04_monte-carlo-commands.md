@@ -24,7 +24,7 @@ cannot see.
 |---|---|---|
 | [F1](#f1--a-quoted--spec-or--metric-is-scored-as-0-and-reported-with-confidence) | a `-spec`/`-metric` written in double quotes — or naming a vector that does not exist — is evaluated as 0 and reported as a definite 0 % or 100 % yield / P(fail); the evaluator's validity flag is discarded | medium — wrong answer, run completes. **Fixed** |
 | [F2](#f2--un-seeded-runs-are-identical-replications) | `montecarlo` and `highsigma` without `-seed` re-seed from the constant `1` on every invocation, so "run it again" returns the same samples; the report never states the seed | medium — a replication that is not one. **Fixed** (stated) |
-| [F3](#f3--wcd-cannot-see-model-declared-statistics-and-says-the-wrong-thing) | `wcd` walks netlist `.param` dimensions only: with osdimc-only statistics it says *"the deck draws no Gaussian .params — use agauss"*; with one netlist dimension added it reports P(fail) = 0 for a 4σ event that `highsigma` and `montecarlo` both see | medium — wrong answer, wrong advice |
+| [F3](#f3--wcd-cannot-see-model-declared-statistics-and-says-the-wrong-thing) | `wcd` walks netlist `.param` dimensions only: with osdimc-only statistics it says *"the deck draws no Gaussian .params — use agauss"*; with one netlist dimension added it reports P(fail) = 0 for a 4σ event that `highsigma` and `montecarlo` both see | medium — wrong answer, wrong advice. **Fixed** |
 | [F4](#f4--mvnormi-outside-the-registered-matrix-is-an-independent-draw) | `mvnorm(i)` with *i* outside 1..*k*, or with no `mccorr` registered, silently returns an independent standard normal — the requested correlation is simply not applied | low — silent |
 | [F5](#f5--a-contradictory-spec-yields-0--in-silence) | `-spec x -max 1.1m -min 0.9m` (max below min) is accepted and yields 0 % without a word | low — diagnostic |
 
@@ -158,6 +158,30 @@ the walk, so the 1 Ω netlist dimension is the only one, and 106 σ of it is
 "needed" to fail. A one-line note when osdimc statistics are present — *"the
 model's declared statistics are held at one sample and not walked"* — would
 make both outcomes honest.
+
+**Resolved (2026-09-04, after the hunt) — by walking them.** The note would
+have made the limit honest; removing the limit turned out to be tractable, so
+`wcd` now searches over the model-declared statistics too. The osdimc applier
+gained a **walk mode** (`OSDImcWalk`, `osdi/osdisetup.c`): while a walk is
+set, every Gaussian statistical parameter takes nominal + σ·z[k], k being its
+position in the applier's fixed enumeration order (device type, model card,
+parameter, instance), uniforms are held at their nominal, and the trial
+counter's "baseline never draws" gate does not apply — the deck is a plain
+function of z, which is what FORM needs. `wcd` counts those dimensions after
+its nominal evaluation, places them after the netlist's in `u`, and shifts
+them in the `-is` refinement the way the netlist ones are shifted, with the
+same per-dimension likelihood ratio. On the table's decks: the osdimc-only
+deck now reports *"4 statistical dimensions (0 netlist .param, 4
+model-declared)"*, *"1 uniform model parameter is held at nominal"*, and
+**β = 4.0000**; the deck with the 1 Ω series resistor reports 5 dimensions
+and **β = 3.9601**, the analytic (1107.70 − 1001)/√(1 + 25² + 10²). The
+`-is` refinement over the model dimensions lands on Φ(−4) within its own
+error bar (3.03e-05 ± 1.4e-06 vs 3.17e-05). A deck with nothing statistical
+is refused naming both sources — *"draws no Gaussian .params and its models
+declare no Gaussian statistics"* — and without `.option osdimc` the refusal
+now mentions the attributes. `wcd_ndim_model` publishes the model-declared
+count. Pinned: `wcd_examples` 22 → 30 with a compiled fixture (`wcdmc.va`);
+the 23 suites that exercise the sampling commands or osdimc pass.
 
 ---
 
