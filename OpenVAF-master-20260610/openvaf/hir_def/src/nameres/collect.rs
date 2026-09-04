@@ -38,6 +38,49 @@ const RESERVED_NGSPICE_DEVICE_NAMES: &[&str] = &[
     "TransLine", "URC", "VBIC", "VCCS", "VCVS", "VDMOS", "Vsource", "hicum2", "mutual",
 ];
 
+/// 2026-09-04 hunt, F1: the OTHER family of names a `.model` card cannot
+/// reach. ngspice's card parser (`spicelib/parser/inpdomod.c`, INPdomodel)
+/// matches these `.model` TYPE KEYWORDS before it ever consults the device
+/// table, so a module named `res`, `d`, `sw`, `nmos` ... is registered and
+/// then never selected: every card of that type gets the built-in, and the
+/// device-name list above never sees it (`res` is not "Resistor"). The second
+/// column is the built-in the keyword selects, for the message. Same
+/// best-effort contract as the list above; keep it in step with
+/// `inp_model_type_keywords` in inpdomod.c.
+const RESERVED_NGSPICE_MODEL_KEYWORDS: &[(&str, &str)] = &[
+    ("npn", "BJT"),
+    ("pnp", "BJT"),
+    ("d", "Diode"),
+    ("njf", "JFET"),
+    ("pjf", "JFET"),
+    ("nmf", "MES/HFET"),
+    ("pmf", "MES/HFET"),
+    ("nhfet", "MES/HFET"),
+    ("phfet", "MES/HFET"),
+    ("urc", "URC"),
+    ("vdmos", "VDMOS"),
+    ("vdmosn", "VDMOS"),
+    ("vdmosp", "VDMOS"),
+    ("nmos", "MOSFET"),
+    ("pmos", "MOSFET"),
+    ("nsoi", "MOSFET"),
+    ("psoi", "MOSFET"),
+    ("ndev", "NDEV"),
+    ("r", "Resistor"),
+    ("res", "Resistor"),
+    ("txl", "TransLine"),
+    ("cpl", "CplLines"),
+    ("c", "Capacitor"),
+    ("l", "Inductor"),
+    ("sw", "Switch"),
+    ("csw", "CSwitch"),
+    ("ltra", "LTRA"),
+    ("numd", "NUMD"),
+    ("nbjt", "NBJT"),
+    ("numos", "NUMOS"),
+    ("poly", "POLY"),
+];
+
 pub fn collect_root_def_map(db: &dyn HirDefDB, root_file: FileId) -> Arc<DefMap> {
     let tree = &db.item_tree(root_file);
     let scope_cnt = tree.data.natures.len() + tree.data.disciplines.len() + tree.data.modules.len();
@@ -309,6 +352,20 @@ impl DefCollector<'_> {
     /// for how this list was derived.
     fn check_reserved_module_name(&mut self, module: &Module) {
         let name = module.name.to_string();
+        // the keyword family first: it is the more specific statement (the card
+        // parser never even looks the name up), and `urc`/`ltra`/`vdmos` are in
+        // both lists
+        if let Some(&(_, builtin)) =
+            RESERVED_NGSPICE_MODEL_KEYWORDS.iter().find(|(kw, _)| kw.eq_ignore_ascii_case(&name))
+        {
+            self.map.diagnostics.push(DefDiagnostic::ReservedModuleName {
+                ast_id: module.ast_id.into(),
+                module: module.name.clone(),
+                builtin,
+                keyword: true,
+            });
+            return;
+        }
         if let Some(&builtin) =
             RESERVED_NGSPICE_DEVICE_NAMES.iter().find(|b| b.eq_ignore_ascii_case(&name))
         {
@@ -316,6 +373,7 @@ impl DefCollector<'_> {
                 ast_id: module.ast_id.into(),
                 module: module.name.clone(),
                 builtin,
+                keyword: false,
             });
         }
     }

@@ -1,0 +1,8 @@
+// 2026-09-04 hunt, F1: a module named like a built-in DEVICE (`diode`). With
+// the built-in's own device letter the deck used to run the built-in silently.
+`include "disciplines.vams"
+module diode(a, c);
+  inout a, c; electrical a, c;
+  parameter real is = 1e-14;
+  analog I(a, c) <+ is * (limexp(V(a, c) / $vt) - 1.0);
+endmodule

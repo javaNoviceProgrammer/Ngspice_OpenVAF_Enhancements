@@ -177,6 +177,11 @@ int INPtermInsert(CKTcircuit *, char **, INPtables *, CKTnode **);
 int INPtermSearch(CKTcircuit*, char**, INPtables*, CKTnode**);
 int INPmkTerm(CKTcircuit *, char **, INPtables *, CKTnode **);
 int INPtypelook(char *);
+/* 2026-09-04 hunt, F1: the built-in a `.model` type keyword selects before
+ * the device table is ever consulted (INPdomodel's keyword chain), or NULL
+ * if the name is not one of those keywords. Case-insensitive, since the
+ * front end lowercases the deck before the chain's strcmp sees it. */
+const char *INPbuiltinModelTypeKeyword(const char *type_name);
 int INP2dot(CKTcircuit *, INPtables *, struct card *, TSKtask *, CKTnode *);
 INPtables *INPtabInit(int);
 void INPkillMods(void);

@@ -6,7 +6,58 @@ Author: 1985 Thomas L. Quarles
 #include "ngspice/ngspice.h"
 #include "ngspice/iferrmsg.h"
 #include "ngspice/inpdefs.h"
+#include "ngspice/fteext.h"
+#ifdef OSDI
+#include "ngspice/osdiitf.h"
+#endif
 #include "inpxx.h"
+
+/* 2026-09-04 hunt, F1. The chain in INPdomodel below matches these keywords
+ * BEFORE it falls back to INPtypelook, so a device registered under one of
+ * them -- a Verilog-A module named `res`, `d`, `sw`, `nmos` ... -- can never
+ * be selected by a `.model` card. The loader asks this to refuse such a
+ * module with the reason instead of registering something unreachable.
+ * Keep the table in step with the chain; the second column is the built-in
+ * the keyword selects (the family, where a `level=` picks the member). */
+static const struct {
+  const char *keyword;
+  const char *builtin;
+} inp_model_type_keywords[] = {
+  {"npn", "BJT (VBIC/HICUM by level)"}, {"pnp", "BJT (VBIC/HICUM by level)"},
+  {"d", "Diode"},
+  {"njf", "JFET"}, {"pjf", "JFET"},
+  {"nmf", "MES/HFET"}, {"pmf", "MES/HFET"},
+  {"nhfet", "MES/HFET"}, {"phfet", "MES/HFET"},
+  {"urc", "URC"},
+  {"vdmos", "VDMOS"}, {"vdmosn", "VDMOS"}, {"vdmosp", "VDMOS"},
+  {"nmos", "MOSFET (by level)"}, {"pmos", "MOSFET (by level)"},
+  {"nsoi", "MOSFET (by level)"}, {"psoi", "MOSFET (by level)"},
+#ifdef NDEV
+  {"ndev", "NDEV"},
+#endif
+  {"r", "Resistor"}, {"res", "Resistor"},
+  {"txl", "TransLine"}, {"cpl", "CplLines"},
+  {"c", "Capacitor"}, {"l", "Inductor"},
+  {"sw", "Switch"}, {"csw", "CSwitch"},
+  {"ltra", "LTRA"},
+#ifdef CIDER
+  {"numd", "NUMD"}, {"nbjt", "NBJT"}, {"numos", "NUMOS"},
+#endif
+#ifdef XSPICE
+  {"poly", "POLY"},
+#endif
+};
+
+const char *INPbuiltinModelTypeKeyword(const char *type_name)
+{
+    size_t i;
+    if (!type_name)
+        return NULL;
+    for (i = 0; i < NUMELEMS(inp_model_type_keywords); i++)
+        if (strcasecmp(inp_model_type_keywords[i].keyword, type_name) == 0)
+            return inp_model_type_keywords[i].builtin;
+    return NULL;
+}
 
 /*--------------------------------------------------------------
  * This fcn takes the model card & examines it.  Depending upon
@@ -635,6 +686,30 @@ char *INPdomodel(CKTcircuit *ckt, struct card *image, INPtables * tab)
 #endif
 
     }
+
+#ifdef OSDI
+    /* 2026-09-04 hunt, F1: this card just bound to a BUILT-IN, and a
+     * Verilog-A module of the same name was refused at load for colliding
+     * with it. The deck's author almost certainly meant the Verilog-A model
+     * -- they compiled and loaded it -- and without this line the built-in
+     * runs in its place in complete silence (it may even accept the card's
+     * parameters, as the junction diode does for `is`). */
+    if (type >= 0 && ft_sim->devices[type] &&
+        !ft_sim->devices[type]->registry_entry) {
+        const char *builtin = NULL;
+        const char *lib = osdi_refused_module_lib(type_name, &builtin);
+        if (lib) {
+            fprintf(stderr,
+                    "Warning: .model %s: type \"%s\" is ngspice's built-in %s. "
+                    "The Verilog-A module \"%s\" loaded from \"%s\" was refused "
+                    "for colliding with that name, so this card does NOT reach "
+                    "it -- the built-in will simulate. Rename the module to use "
+                    "the Verilog-A model.\n",
+                    modname, type_name, builtin ? builtin : "device",
+                    type_name, lib);
+        }
+    }
+#endif
     tfree(type_name);
     return (err);
 }

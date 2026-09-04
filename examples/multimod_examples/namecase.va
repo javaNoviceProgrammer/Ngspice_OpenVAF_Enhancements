@@ -1,0 +1,12 @@
+// 2026-09-04 hunt, F2: two modules whose names differ only in case. Legal --
+// Verilog-A is case-sensitive -- but SPICE resolves a .model card's type
+// case-insensitively, so ngspice can reach only one of them and must say so.
+`include "disciplines.vams"
+module Foo(p, n);
+  inout p, n; electrical p, n;
+  analog I(p, n) <+ V(p, n) * 1e-3;   // 1 mA at 1 V
+endmodule
+module foo(p, n);
+  inout p, n; electrical p, n;
+  analog I(p, n) <+ V(p, n) * 7e-3;   // 7 mA at 1 V -- distinct physics
+endmodule

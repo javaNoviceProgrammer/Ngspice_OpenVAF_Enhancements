@@ -217,3 +217,13 @@ extern void OSDImcInterruptReset(void);
 extern unsigned long OSDImcTrialCheckpoint(void);
 extern void OSDImcTrialRewind(unsigned long t);
 extern double OSDImcSampleLogLR(CKTcircuit *ckt);
+/* 2026-09-04 hunt, F1: Verilog-A modules the loader refused because their
+ * name is one of ngspice's own (a built-in device's name, or a `.model` type
+ * keyword). `_lib` looks one up by module name and returns the .osdi it came
+ * from (NULL if no such refusal), naming the built-in through `builtin`;
+ * `_for` looks one up by the built-in's device name and returns the refused
+ * module's name (NULL if none), naming the library through `lib`. */
+extern const char *osdi_refused_module_lib(const char *module,
+                                           const char **builtin);
+extern const char *osdi_refused_module_for(const char *devname,
+                                           const char **lib);

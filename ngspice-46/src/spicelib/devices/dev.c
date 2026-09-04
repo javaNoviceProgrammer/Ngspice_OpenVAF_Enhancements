@@ -582,15 +582,18 @@ static void free_dlerr_msg(char *msg)
 
 #ifdef OSDI
 #include "ngspice/osdiitf.h"
+#include "ngspice/inpdefs.h"   /* INPbuiltinModelTypeKeyword */
 
 /* A device-type name may only be registered once: a duplicate would be
  * unreachable at best (the model-card lookup scans the table and the first
  * entry wins, silently shadowing the new one) and, for a Verilog-A module
  * named like a built-in device, crashed model creation outright.
- * Returns the table index of a device with this name, or -1 if none. */
-static int osdi_device_index(const char *name) {
+ * Returns the index of a device with this name among the first `limit`
+ * table entries, or -1 if none. The name comparison is case-insensitive
+ * because that is how a `.model` card's type is resolved (INPtypelook). */
+static int osdi_device_index(const char *name, int limit) {
   int k;
-  for (k = 0; k < DEVNUM; k++) {
+  for (k = 0; k < limit; k++) {
     if (DEVices[k] && DEVices[k]->DEVpublic.name &&
         strcasecmp(DEVices[k]->DEVpublic.name, name) == 0) {
       return k;
@@ -599,9 +602,71 @@ static int osdi_device_index(const char *name) {
   return -1;
 }
 
-static int osdi_add_device(int n, OsdiRegistryEntry *devs, bool replace) {
+/* 2026-09-04 hunt, F1: the modules refused because their name is one of
+ * ngspice's own -- a built-in device's name, or a `.model` type keyword the
+ * card parser intercepts before it ever consults the device table. Kept so
+ * the two places a user meets the consequence can explain it: the `.model`
+ * card that quietly binds to the built-in (INPdomodel) and the N line that
+ * then fails with the wrong device type (INP2N). */
+typedef struct osdi_refused {
+  char *module;    /* the Verilog-A module name, as compiled */
+  char *lib;       /* the .osdi it came from */
+  char *builtin;   /* the built-in it collides with, for the message */
+} osdi_refused;
+
+static osdi_refused *osdi_refused_list = NULL;
+static int osdi_num_refused = 0;
+
+static void osdi_note_refused(const char *module, const char *lib,
+                              const char *builtin) {
+  int k;
+  for (k = 0; k < osdi_num_refused; k++) {
+    if (strcasecmp(osdi_refused_list[k].module, module) == 0)
+      return;   /* the same module loaded again: one record is enough */
+  }
+  osdi_refused_list =
+      TREALLOC(osdi_refused, osdi_refused_list, osdi_num_refused + 1);
+  osdi_refused_list[osdi_num_refused].module = copy(module);
+  osdi_refused_list[osdi_num_refused].lib = copy(lib ? lib : "");
+  osdi_refused_list[osdi_num_refused].builtin = copy(builtin);
+  osdi_num_refused++;
+}
+
+const char *osdi_refused_module_lib(const char *module, const char **builtin) {
+  int k;
+  for (k = 0; k < osdi_num_refused; k++) {
+    if (strcasecmp(osdi_refused_list[k].module, module) == 0) {
+      if (builtin)
+        *builtin = osdi_refused_list[k].builtin;
+      return osdi_refused_list[k].lib;
+    }
+  }
+  return NULL;
+}
+
+const char *osdi_refused_module_for(const char *devname, const char **lib) {
+  int k;
+  for (k = 0; k < osdi_num_refused; k++) {
+    if (strcasecmp(osdi_refused_list[k].builtin, devname) == 0) {
+      if (lib)
+        *lib = osdi_refused_list[k].lib;
+      return osdi_refused_list[k].module;
+    }
+  }
+  return NULL;
+}
+
+/* The remedy is the same for every collision, and the CMC reference sources
+ * already practise it (bsim4va, hicumL2va, diode_va, resistor_va ...). */
+#define OSDI_RENAME_HINT                                                       \
+  "Rename the module to reach it from a netlist (a `_va` suffix is the "      \
+  "convention the reference compact models use)"
+
+static int osdi_add_device(int n, OsdiRegistryEntry *devs, bool replace,
+                           const char *path, int *refused_out) {
   int i;
   int added = 0;
+  int refused = 0;
   int dnum = DEVNUM + n;
   DEVices = TREALLOC(SPICEdev *, DEVices, dnum);
 #ifdef XSPICE
@@ -609,8 +674,47 @@ static int osdi_add_device(int n, OsdiRegistryEntry *devs, bool replace) {
 #endif
   for (i = 0; i < n; i++) {
     SPICEdev *dev = osdi_create_spicedev(&devs[i]);
-    int k = osdi_device_index(dev->DEVpublic.name);
+    const char *name = dev->DEVpublic.name;
+    /* 2026-09-04 hunt, F1: a `.model` card's type is matched against the
+     * keyword list in INPdomodel BEFORE the device table is consulted, so a
+     * module named `res`, `d`, `sw`, `nmos` ... can be registered and never
+     * selected: every card of that type gets the built-in. Refuse it with
+     * the reason, rather than register something no netlist can reach. */
+    const char *kw_builtin = INPbuiltinModelTypeKeyword(name);
+    /* The scan covers the devices added earlier in THIS call too. It used to
+     * stop at DEVNUM, which is only advanced after the loop, so two modules
+     * of one .osdi whose names differ only in case -- legal, Verilog-A is
+     * case-sensitive -- were both registered without a word, and the second
+     * was unreachable: a card naming it resolved (case-insensitively) to the
+     * first (2026-09-04 hunt, F2). */
+    int k = osdi_device_index(name, DEVNUM + added);
+    if (kw_builtin) {
+      printf("Warning(osdi): Verilog-A module \"%s\" (from \"%s\") has the "
+             "same name as ngspice's `.model` type keyword for the built-in "
+             "%s; a `.model ... %s` card always selects the built-in, so the "
+             "module is NOT registered. %s.\n",
+             name, path ? path : "?", kw_builtin, name, OSDI_RENAME_HINT);
+      osdi_note_refused(name, path, kw_builtin);
+      refused++;
+      continue;
+    }
     if (k >= 0) {
+      const char *existing = DEVices[k]->DEVpublic.name;
+      bool is_builtin = DEVices[k]->DEVpublic.registry_entry == NULL;
+      if (is_builtin) {
+        /* Never swap a built-in out, not even on a forced reload: before
+         * this test `pre_osdi -f` on a module named `diode` replaced
+         * ngspice's junction diode for the rest of the session, and every
+         * plain `.model ... d` card then ran the Verilog-A model. */
+        printf("Warning(osdi): Verilog-A module \"%s\" (from \"%s\") has the "
+               "same name as ngspice's built-in %s device; a `.model ... %s` "
+               "card always selects the built-in, so the module is NOT "
+               "registered. %s.\n",
+               name, path ? path : "?", existing, name, OSDI_RENAME_HINT);
+        osdi_note_refused(name, path, existing);
+        refused++;
+        continue;
+      }
       if (replace) {
         /* Enhancement-229: force reload -- swap the registered device to the
          * freshly loaded descriptor IN PLACE, so the table index stays stable
@@ -619,10 +723,20 @@ static int osdi_add_device(int n, OsdiRegistryEntry *devs, bool replace) {
          * a circuit still built against the old model keeps a valid device, and
          * freeing descriptor-owned memory here would risk a double free. */
         DEVices[k] = dev;
+      } else if (strcmp(existing, name) != 0) {
+        /* the F2 shape: same name to a netlist, different name to the
+         * compiler -- say which spelling survives, because the model's
+         * author sees two distinct modules and the deck sees one */
+        printf("Warning(osdi): device \"%s\" is already registered as "
+               "\"%s\"%s; the two names differ only in case, which a `.model` "
+               "card cannot tell apart, so \"%s\" is unreachable and every "
+               "card of that type gets \"%s\". Keeping the existing device "
+               "and ignoring this one. %s.\n",
+               name, existing, k >= DEVNUM ? " by this same library" : "",
+               name, existing, OSDI_RENAME_HINT);
       } else {
         printf("Warning(osdi): device \"%s\" is already registered; "
-               "keeping the existing device and ignoring this one\n",
-               dev->DEVpublic.name);
+               "keeping the existing device and ignoring this one\n", name);
         /* dev discarded; left unfreed for the same reason as above */
       }
       continue;
@@ -635,7 +749,9 @@ static int osdi_add_device(int n, OsdiRegistryEntry *devs, bool replace) {
   }
   DEVNUM += added;
   relink();
-  return 0;
+  if (refused_out)
+    *refused_out = refused;
+  return added;
 }
 
 /* Loading the same object file twice would only produce a page of duplicate
@@ -723,11 +839,16 @@ int load_osdi(const char *path, bool force) {
     osdi_loaded_paths[osdi_num_loaded++] = copy(path);
   }
 
-  osdi_add_device(file.num_entries, file.entrys, reloading);
+  int refused = 0;
+  osdi_add_device(file.num_entries, file.entrys, reloading, path, &refused);
 
   if (reloading) {
-    printf("Note(osdi): reloaded \"%s\" (%d device%s)\n",
-           path, file.num_entries, file.num_entries == 1 ? "" : "s");
+    /* a swapped-in-place device is not "added", so report the file's
+     * entries less the ones refused above -- a refused module is not
+     * "reloaded" in any sense the user would mean */
+    printf("Note(osdi): reloaded \"%s\" (%d of %d device%s registered)\n",
+           path, file.num_entries - refused, file.num_entries,
+           file.num_entries == 1 ? "" : "s");
   }
   return 0;
 }

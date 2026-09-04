@@ -17,9 +17,18 @@ descriptor as a device type. This suite pins the whole packaging surface:
       trap);
   [6] loading the same .osdi twice notes "already loaded" and skips;
   [7] a module named like a built-in device (vcvs) no longer crashes
-      ngspice: the duplicate is warned-and-skipped and the instance line
-      gets a clean "Expected OSDI [or nport] device" error (this was the
-      documented Enhancement-29 segfault gotcha, now retired);
+      ngspice: the module is refused with a message naming the built-in and
+      the remedy, and the instance line gets a clean "Expected OSDI [or
+      nport] device" error that names the built-in the card resolved to
+      (this was the documented Enhancement-29 segfault gotcha, now retired);
+  [9]-[12] the 2026-09-04 hunt's name-collision findings: a module named
+      like a `.model` type KEYWORD (`res`) is refused with the reason, the
+      `.model` card that then binds to the built-in warns that the Verilog-A
+      model is not the one simulating, and so does the built-in's own device
+      letter (a `d` line on a module named `diode`); two modules in one .osdi
+      whose names differ only in case warn, naming both spellings; and
+      `pre_osdi -f` on a built-in-colliding module no longer REPLACES the
+      built-in for the session.
   [8] the underlying stock defect is fixed on its own: a .model card
       naming a card-less built-in type (vcvs), referenced by an ordinary
       MOS instance with NO OSDI involved, errors cleanly instead of
@@ -63,7 +72,8 @@ def val(out, expr):
 
 
 def main():
-    for f in ("trio.va", "hier.va", "psmix.va", "dup1.va", "dup2.va", "vcvs.va"):
+    for f in ("trio.va", "hier.va", "psmix.va", "dup1.va", "dup2.va", "vcvs.va",
+              "namecase.va", "namekw.va", "namedio.va"):
         compile_va(f, f.replace(".va", ".osdi"))
 
     print("[1] three modules, one .osdi")
@@ -124,9 +134,60 @@ def main():
                   ".control\npre_osdi vcvs.osdi\nop\nprint -i(vin)\n.endc\n.end\n",
                   "t7")
     check("no crash (used to SIGSEGV)", rc >= 0 and rc < 128)
-    check("duplicate warned", 'device "vcvs" is already registered' in out)
-    check("instance line gets a clean error",
-          "Expected OSDI" in out)   # E-242 broadened this to "OSDI or nport device"
+    check("refused, naming the built-in and the remedy",
+          'module "vcvs" (from "vcvs.osdi") has the same name as ngspice\'s '
+          'built-in' in out and "Rename the module" in out)
+    check("instance line gets a clean error that names the built-in",
+          "Expected OSDI" in out   # E-242 broadened this to "OSDI or nport device"
+          and 'model "mm" is ngspice\'s built-in' in out)
+
+    print("[9] a module named like a .model type KEYWORD (res)")
+    rc, out = run("* keyword clash\nvin in 0 dc 1\nn1 in 0 mm\n.model mm res r=2000\n"
+                  ".control\npre_osdi namekw.osdi\nop\nprint -i(vin)\n.endc\n.end\n",
+                  "t9")
+    check("refused at load with the keyword named",
+          "`.model` type keyword for the built-in Resistor" in out
+          and 'module "res"' in out)
+    check("the .model card says the built-in will simulate, not the Verilog-A model",
+          '.model mm: type "res" is ngspice\'s built-in Resistor' in out
+          and "does NOT reach it" in out)
+    check("the N line names the built-in and the refused module",
+          'model "mm" is ngspice\'s built-in Resistor' in out
+          and 'module "res" loaded from "namekw.osdi" was refused' in out)
+
+    print("[10] the silent half: the built-in's own device letter")
+    rc, out = run("* d-line clash\nvin in 0 dc 0.6\nr1 in a 100\nd1 a 0 md\n"
+                  ".model md diode is=1e-20\n"
+                  ".control\npre_osdi namedio.osdi\nop\nprint v(a)\n.endc\n.end\n",
+                  "t10")
+    check("the card warns that the built-in Diode simulates in the module's place",
+          '.model md: type "diode" is ngspice\'s built-in Diode' in out
+          and 'module "diode" loaded from "namedio.osdi" was refused' in out)
+    check("...and it does run (the built-in), so the warning is the only signal",
+          val(out, "v(a)") is not None)
+
+    print("[11] two modules differing only in case, one .osdi")
+    rc, out = run("* case pair\nvin in 0 dc 1\nn1 in 0 m1\n.model m1 Foo\n"
+                  "v2 b 0 dc 1\nn2 b 0 m2\n.model m2 foo\n"
+                  ".control\npre_osdi namecase.osdi\nop\nprint -i(vin)\nprint -i(v2)\n.endc\n.end\n",
+                  "t11")
+    check("warned, naming both spellings and this same library",
+          'device "foo" is already registered as "Foo" by this same library' in out
+          and "differ only in case" in out)
+    check("first module wins for both cards (1 mA, not foo's 7 mA) -- as the warning says",
+          val(out, "-i(vin)") is not None and abs(val(out, "-i(vin)") - 1e-3) < 1e-12
+          and val(out, "-i(v2)") is not None and abs(val(out, "-i(v2)") - 1e-3) < 1e-12)
+
+    print("[12] pre_osdi -f on a built-in-colliding module keeps the built-in")
+    rc, out = run("* reload swap\nvin in 0 dc 0.6\nr1 in a 100\nd1 a 0 md\n"
+                  ".model md d(is=1e-14)\n"
+                  ".control\npre_osdi namedio.osdi\npre_osdi -f namedio.osdi\nop\n"
+                  "print v(a)\nshowmod md\n.endc\n.end\n", "t12")
+    check("the reload registers nothing and says so",
+          'reloaded "namedio.osdi" (0 of 1 device registered)' in out)
+    check("a plain `d` card is still the built-in junction diode "
+          "(it used to become the Verilog-A module for the session)",
+          "Junction Diode model" in out and "loaded with OSDI" not in out)
 
     print("[8] stock shape: .model of a card-less built-in, no OSDI")
     rc, out = run("* stock clash\nvin in 0 dc 1\nr1 in 0 1k\nm1 a b c d mm\n"

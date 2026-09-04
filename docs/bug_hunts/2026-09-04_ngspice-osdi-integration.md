@@ -16,13 +16,24 @@ explicit hand-built equivalent, or an analytic value.
 and two non-OSDI simulator gaps.** None of them is a wrong number in
 an analysis: the numerical integration between ngspice and OSDI came through
 every probe exact. What broke was at the edges — the device registry, the
-netlist parameter parser, and a diagnostic that names the wrong cause.
+netlist parameter parser, and a diagnostic that names the wrong cause. F1 and
+F2 were fixed the same day.
+
+> **Reviewed 2026-09-04, after the fixes.** Every finding was re-run against
+> the tree and its claims checked against the source. Four statements did not
+> survive and are corrected in place, each marked *"Review:"* — F3 was
+> overstated (an array parameter *can* be set from a card, per element; only
+> the whole-array spelling is refused), F1's keyword list was incomplete, F4's
+> `i_p` note claimed a current became unreachable that `show` still lists, and
+> the long-label noise vectors are separate rows that share one name rather
+> than merely "truncated for display". The measurements in *What was measured
+> and holds* reproduced as recorded.
 
 | # | finding | severity |
 |---|---|---|
-| [F1](#f1--a-module-named-like-a-built-in-model-type-is-dropped-and-the-deck-may-simulate-the-built-in-instead) | a Verilog-A module whose name is a built-in model-type keyword is dropped; the deck either aborts with an unexplained error or **simulates ngspice's built-in device instead** | medium — wrong device, run completes |
-| [F2](#f2--two-modules-whose-names-differ-only-in-case-collapse-into-one-silently) | two modules in one `.osdi` whose names differ only in case collapse into one — **the second is unreachable and every deck asking for it silently gets the first**, with no diagnostic at all | medium — wrong device, nothing said |
-| [F3](#f3--an-array-parameter-cannot-be-set-from-a-netlist-card-and-the-card-says-it-does-not-exist) | array-valued OSDI parameters are unreachable from `.model`/instance cards; the model card warns "unrecognized parameter" and runs on with defaults | low — audible, but the wording denies the parameter exists |
+| [F1](#f1--a-module-named-like-a-built-in-model-type-is-dropped-and-the-deck-may-simulate-the-built-in-instead) | a Verilog-A module whose name is a built-in model-type keyword is dropped; the deck either aborts with an unexplained error or **simulates ngspice's built-in device instead** | medium — wrong device, run completes. **Fixed** |
+| [F2](#f2--two-modules-whose-names-differ-only-in-case-collapse-into-one-silently) | two modules in one `.osdi` whose names differ only in case collapse into one — **the second is unreachable and every deck asking for it silently gets the first**, with no diagnostic at all | medium — wrong device, nothing said. **Fixed** |
+| [F3](#f3--an-array-parameter-cannot-be-set-from-a-netlist-card-and-the-card-says-it-does-not-exist) | the whole-array spelling `tab=[1 2 3]` — the one the card parser's own comment says OSDI cards use — is refused as "unrecognized parameter", and the card never names the per-element form that works (`tab[0]=1 tab[1]=2 ...`); the model card then runs on with defaults | low — **downgraded on review**: the parameter is settable per element on both card types |
 | [F4](#f4--the-collapse-change-warning-blames-temperature-for-a-parameter-sweep) | the node-collapse-changed warning blames temperature and prescribes a temperature remedy when the trigger was a `.dc` parameter sweep | low — diagnostic quality |
 | [F5](#f5--the-deferred-message-and-monitor-buffers-are-unsynchronised-under---enable-openmp) | the deferred `$strobe`/`$monitor` buffers are file-scope globals mutated from inside `#pragma omp task` | **unreproduced here** — code reading only; this tree builds `--disable-openmp` |
 | [F6](#f6--monitor-change-detection-is-positional) | `$monitor` change detection keys on the *position* of the message in the flush, not on its instance and call site | observation — fragility, not a demonstrated defect |
@@ -92,9 +103,12 @@ which is loud but never mentions the cause.
 **Scope.** Two families of names collide, both measured one module at a time
 with `.model mm <name>` on an `n` line:
 
-* the **`.model` type keywords** `INPdomodel` matches — `c csw d l ltra ndev
-  nhfet njf nmf nmos npn nsoi phfet pjf pmf pmos pnp poly psoi r res sw urc
-  vdmos vdmosn vdmosp` (read from `spicelib/parser/inpdomod.c`);
+* the **`.model` type keywords** `INPdomodel` matches — `c cpl csw d l ltra
+  nhfet njf nmf nmos npn nsoi phfet pjf pmf pmos pnp psoi r res sw txl urc
+  vdmos vdmosn vdmosp`, plus `ndev`, `numd`/`nbjt`/`numos` and `poly` in builds
+  with NDEV, CIDER and XSPICE (read from `spicelib/parser/inpdomod.c`; *Review:*
+  the hunt's first reading missed `txl cpl numd nbjt numos` — its pattern
+  required a space after the comma that those five `strcmp` calls do not have);
 * every built-in **device name** — measured shadowed: `diode`, `resistor`,
   `capacitor`, `inductor`, `bjt`, `jfet`, `switch`, `vsource`, `isource`,
   `asrc`, **`bsim4`, `hicum2`, `vbic`**.
@@ -117,6 +131,37 @@ substitution leaves no trace in the output at all.
 A registry-time message naming the built-in and the remedy ("rename the
 module") would close this; the information is available exactly where the
 existing warning is printed.
+
+**Resolved (2026-09-04, after the hunt) — with two corrections to this entry.**
+First, the claim that *nothing* said to rename the module was wrong for the
+device-name family: openvaf's lint **L018** (`reserved_module_name`) had warned
+`module name 'diode' collides with ngspice's built-in 'Diode' device` at compile
+time, with the rename advice in its help text. The hunt's compile step filtered
+that line out. It was right for the keyword family (`res`, `d`, `sw`, `nmos`
+...), which L018 did not cover, and for the case pair of F2. Second, a worse
+route turned up while fixing: **`pre_osdi -f` on a built-in-colliding module
+replaced ngspice's built-in for the session** — after `pre_osdi -f lcdiode.osdi`
+a plain `.model md d(...)` card ran the Verilog-A module (`showmod` said
+*"loaded with OSDI"*), because the forced-reload swap in `osdi_add_device` did
+not ask whether the device it was replacing was a built-in.
+
+The fix, in both halves. The loader (`spicelib/devices/dev.c`) now refuses a
+module whose name is a built-in device's *or* a `.model` type keyword's — it
+asks the parser through a new `INPbuiltinModelTypeKeyword`, which reads the
+same keyword table as `INPdomodel` — with a message that names the built-in,
+the library, and the remedy; it never swaps a built-in on `-f`, and the reload
+note reports `(0 of 1 device registered)`. It also remembers what it refused,
+so the two places the user meets the consequence can say why: the `.model`
+card that binds to the built-in warns *"the Verilog-A module "diode" loaded
+from "lcdiode.osdi" was refused for colliding with that name, so this card
+does NOT reach it -- the built-in will simulate"*, and the N line's error now
+reads *"incorrect model type! Expected OSDI or nport device, but model "mm" is
+ngspice's built-in Resistor. The Verilog-A module "res" loaded from
+"coll_name.osdi" was refused ..."*. The compiler's L018 gained the keyword
+family with its own wording (`.model <name> res` *always selects* the
+built-in) and the `_va` convention in its help. Pinned by six new checks in
+`examples/multimod_examples/` (22/22, both solvers) and two new modules in the
+L018 UI fixture.
 
 ---
 
@@ -146,9 +191,12 @@ for it is answered with `Foo`.
 **Nothing is printed.** The registry's own duplicate guard — the
 `Warning(osdi): device "X" is already registered; keeping the existing device
 and ignoring this one` that fires when two `.osdi` *files* clash — does not fire
-here: it compares names case-sensitively while the model-card lookup that later
-resolves them is case-insensitive, so the pair passes both tests. The same
-guard, applied case-insensitively, would catch this.
+here. The hunt attributed that to a case-sensitive comparison; **the fix found
+the real cause elsewhere**: the guard already compared case-insensitively, but
+its scan stopped at `DEVNUM`, which is only advanced after the whole file has
+been processed, so a module never saw the ones registered *earlier in the same
+file*. Identical names cannot occur within one file (the compiler refuses
+them), which is why only case variants slipped through.
 
 The gap is the more striking because **the same collision one level down is
 already diagnosed**. Two *parameters* of one module differing only in case get
@@ -166,10 +214,16 @@ not given the same treatment.
 Nor is it the only sibling check that already works. Two `.model` **cards**
 differing only in case draw `Warning: model "md" is already defined; keeping the
 first definition and ignoring the later one`, and a module named `Diode` — a
-case variant of the *built-in* — is caught by the registry
-(`Warning(osdi): device "Diode" is already registered`), so that comparison is
-case-**in**sensitive. Module-against-module is the one comparison in the family
-that is not.
+case variant of the *built-in* — is caught by the registry. Within one file,
+module-against-module was the one comparison the family did not make.
+
+**Resolved (2026-09-04, after the hunt).** The scan now covers the devices
+added earlier in the same load, and the collision is reported with both
+spellings: `Warning(osdi): device "foo" is already registered as "Foo" by this
+same library; the two names differ only in case, which a .model card cannot
+tell apart, so "foo" is unreachable and every card of that type gets "Foo"`.
+Pinned in `examples/multimod_examples/` (check [11], both spellings and the
+1 mA both cards now audibly get).
 
 ---
 
@@ -188,16 +242,34 @@ parameter real tab[0:2] = '{1.0, 2.0, 3.0};       // model-scope
 | `altermod @mp[tab[0]] = 10` | **works** — the model's next evaluation sees 10 (`tsum` moved 11 → 20) |
 | `echo $&@mp[tab[0]]` | **works** — reads back 10 |
 
-So the parameter is fully known to the simulator at run time, and only the
-netlist-card path cannot reach it — while telling the user it is
-*unrecognized*, which is the one thing it is not. The model-card route is the
-one that matters: it warns and then **runs the analysis with default array
-values**, which for a table-driven compact model is a silently wrong device
-with an easily-missed warning three lines above the results.
+**Review: this entry was overstated, and its stated cause was wrong.** The
+parameter *is* reachable from both card types — in the per-element form that
+`altermod`'s own message names:
 
-(The compiler side is not the gap: `OsdiParamOpvar.len` is emitted for array
-parameters, ngspice registers them with `IF_VECTOR`, and `osdi_write_param`
-already handles the vector case.)
+| route | result |
+|---|---|
+| `.model mp pkinds r=1000 k=5 tab[0]=4 tab[1]=5 tab[2]=6` | **works** — `tsum` reads 20 |
+| `n1 1 0 mi itab[0]=5 itab[1]=6` | **works** — `s` reads 11 |
+| `showmod mp` | lists `tab[0]`, `tab[1]`, `tab[2]` with their values (the hunt's reading that it listed only `r k label` was a truncated capture) |
+
+The mechanism is not what the hunt wrote either. The compiler does not export
+one array parameter with `len = 3`: it **flattens** the array into three scalar
+parameters named `tab[0]`, `tab[1]`, `tab[2]` (those are the strings in the
+`.osdi`), and ngspice registers, sets, reads back and lists exactly those. No
+OSDI parameter reaches ngspice with `len != 0`, so the `IF_VECTOR` entry in
+`osdiinit.c` and the whole-array branch in the card parser — `inpgmod.c:229`,
+whose comment says *"OSDI models receive array params in the syntax
+`param_name=[...]`"* and strips the `[` — are dead code from an earlier
+convention.
+
+What remains of the finding is real but small: the whole-array spelling that
+the parser's own comment documents, `tab=[1 2 3]`, is refused with
+*"unrecognized parameter (tab)"* (plus a bogus *"([1)"* from the leftover
+token), the model card then runs on with the defaults, and nothing on the card
+route says *"set it per element"* — the hint `altermod` gives. The instance
+line at least aborts. A card-side message of the same shape as `altermod`'s,
+or accepting the documented `[...]` form by expanding it onto the element
+parameters, would close it.
 
 ---
 
@@ -235,8 +307,10 @@ A smaller one of the same kind: a model that declares an opvar named `i_p` —
 colliding with the terminal current ngspice synthesizes for terminal `p` —
 draws *"instance parameter 'i_p' is declared more than once **differing only in
 case**"*. The names are identical, not case variants; the guard is right to fire
-(the opvar wins, `@n1[i_p]` reads the model's 42 and the synthesized current
-becomes unreachable) but it reports the wrong reason.
+but reports the wrong reason. (*Review:* the hunt added that the synthesized
+current "becomes unreachable" — it does not. `show n1` lists both rows, `i_p
+42` and `i_p 0.001`; only `@n1[i_p]` is ambiguous, and it answers with the
+opvar's 42.)
 
 The run is aborted immediately afterwards, so no wrong numbers reach the user
 — and the recommended `sweep` command does work across the collapse change
@@ -532,10 +606,14 @@ identical to four explicit instances of the same model.
 **Names and buffers.** A 260-character instance name, a 92-character module
 name, a module named `x1`, and a model card sharing its name with an instance
 all work. Two `white_noise` sources whose labels share their first 260
-characters stay *separate* vectors in the noise plot, so the 256-byte label
-buffer in `osdinoise.c` truncates for display without merging contributions;
-both fixed-buffer copies in the layer (`osdinoise.c:99`, `osdisetup.c:1727`)
-bound-check before writing.
+characters stay *separate* vectors in the noise plot — their contributions are
+not merged — but (*Review*) the 256-byte label buffer in `osdinoise.c:99` cuts
+both labels at the same point, so the two vectors carry **one identical
+265-character name** (read back from an ASCII raw file), and `print`ing that
+name reaches only one of them. Reachable only with labels over 255 bytes; noted,
+not pursued. All four fixed buffers in the layer (`osdicallbacks.c:74`,
+`osdinoise.c:99`, `osdisetup.c:849`, `osdisetup.c:1727`) are written through a
+bounded call.
 
 **Bad libraries.** A missing file, a text file, 200 kB of random bytes, a
 truncated `.osdi`, and a *valid* shared library that is not an OSDI model are
@@ -555,10 +633,14 @@ exactly zero otherwise.
 ## Coverage, honestly
 
 One hour, ~70 probes, all foreground. What this hunt did **not** reach: an
-OpenMP build (F4 is unverified), the quasi-periodic family (`qpac`/`qpnoise`/
+OpenMP build (F5 is unverified), the quasi-periodic family (`qpac`/`qpnoise`/
 `qpxf` — they have verify scripts inside `qpss_examples`, which is why they were
 skipped), harmonic balance, `.pss` (its syntax needs an oscillator node and a
 driven circuit is the wrong test), aging/`osdimc`/`autobus` (three prior hunts),
-and any large real compact model under a full analysis chain. F1's silent half
-also deserves a scan of the complete ngspice model-type keyword list rather than
-the fourteen names spot-checked here.
+and any large real compact model under a full analysis chain.
+
+The review that followed is its own lesson: of the hunt's four findings, one
+(F3) rested on a mis-read mechanism and a `head`-truncated `showmod`, and three
+smaller statements were wrong in ways a second run exposed in minutes. The
+measured values all held; it was the *explanations* attached to them that
+needed re-checking.

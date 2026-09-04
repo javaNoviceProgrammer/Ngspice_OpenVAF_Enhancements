@@ -29,6 +29,15 @@ the same path is invisible until the old mapping is gone.
 These guards are correct for the normal case (avoid duplicate/shadowing
 registration). They just left no way to intentionally refresh a model.
 
+> **2026-09-04 (name-collision fix).** The in-place swap below applies only
+> when the registered device is itself an OSDI module. A module whose name is
+> one of ngspice's own -- a built-in device's name (`diode`) or a `.model`
+> type keyword (`res`) -- is refused at load with the reason, and `-f` never
+> replaces the built-in: before that rule, `pre_osdi -f` on a module named
+> `diode` swapped ngspice's junction diode out for the rest of the session,
+> and every plain `.model ... d` card then ran the Verilog-A model. The
+> reload note now reports `(<n> of <m> devices registered)` accordingly.
+
 ## The fix — an opt-in `-f` flag
 
 `pre_osdi -f <file>` (equivalently the interactive `osdi -f <file>`) forces a

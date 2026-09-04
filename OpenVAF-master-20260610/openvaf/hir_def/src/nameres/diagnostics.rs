@@ -82,7 +82,10 @@ pub enum DefDiagnostic {
     /// than only reached through `instantiate`), so it's a lint
     /// (`reserved_module_name`, warn by default) rather than a hard error:
     /// nothing is actually wrong with the Verilog-A itself.
-    ReservedModuleName { ast_id: ErasedAstId, module: Name, builtin: &'static str },
+    /// `keyword`: the name is one of the `.model` TYPE KEYWORDS ngspice's
+    /// card parser intercepts (`res`, `d`, `sw`, `nmos` ...) rather than a
+    /// device's name; the consequence is the same, the wording differs.
+    ReservedModuleName { ast_id: ErasedAstId, module: Name, builtin: &'static str, keyword: bool },
 }
 
 pub struct DefDiagnosticWrapped<'a> {
@@ -210,24 +213,41 @@ impl Diagnostic for DefDiagnosticWrapped<'_> {
                             .to_owned(),
                     ])
             }
-            DefDiagnostic::ReservedModuleName { ast_id, module, builtin } => {
+            DefDiagnostic::ReservedModuleName { ast_id, module, builtin, keyword } => {
                 let range = self.ast_id_map.get_syntax(*ast_id).range();
                 let span = self.parse.to_file_span(range, self.sm);
+                let (what, label) = if *keyword {
+                    (
+                        format!(
+                            "module name '{module}' is ngspice's `.model` type keyword for the \
+                             built-in {builtin}"
+                        ),
+                        format!("'{module}' is a SPICE `.model` type keyword"),
+                    )
+                } else {
+                    (
+                        format!(
+                            "module name '{module}' collides with ngspice's built-in '{builtin}' \
+                             device"
+                        ),
+                        format!("'{module}' matches a built-in ngspice device name"),
+                    )
+                };
                 Report::warning()
-                    .with_message(format!(
-                        "module name '{module}' collides with ngspice's built-in '{builtin}' device"
-                    ))
+                    .with_message(what)
                     .with_labels(vec![Label {
                         style: LabelStyle::Primary,
                         file_id: span.file,
                         range: span.range.into(),
-                        message: format!("'{module}' matches a built-in ngspice device name"),
+                        message: label,
                     }])
                     .with_notes(vec![format!(
-                        "help: `.model <name> {module}` in a SPICE netlist may silently bind to \
-                         ngspice's built-in '{builtin}' device instead of this OSDI module; \
-                         rename '{module}' to something that doesn't collide, or only ever \
-                         reach it via Verilog-A `instantiate`, never `.model` directly"
+                        "help: `.model <name> {module}` in a SPICE netlist {} \
+                         ngspice's built-in {builtin} instead of this OSDI module; \
+                         rename '{module}' to something that doesn't collide (the reference \
+                         compact models use a `_va` suffix), or only ever reach it via \
+                         Verilog-A `instantiate`, never `.model` directly",
+                        if *keyword { "always selects" } else { "may silently bind to" }
                     )])
             }
         }

@@ -30,3 +30,25 @@ module my_custom_resistor(p, n);
         I(p, n) <+ V(p, n) / r;
     end
 endmodule
+
+// 2026-09-04 hunt, F1: a `.model` TYPE KEYWORD (`res`) is the other family.
+// ngspice's card parser matches it before it ever consults the device table,
+// so the wording differs ("always selects", not "may silently bind").
+module res(p, n);
+    inout p, n;
+    electrical p, n;
+    parameter real r = 1000;
+    analog begin
+        I(p, n) <+ V(p, n) / r;
+    end
+endmodule
+
+// In BOTH lists (a keyword and a device name): the keyword wording wins,
+// since it is the more specific statement.
+module urc(p, n);
+    inout p, n;
+    electrical p, n;
+    analog begin
+        I(p, n) <+ V(p, n) * 1e-3;
+    end
+endmodule

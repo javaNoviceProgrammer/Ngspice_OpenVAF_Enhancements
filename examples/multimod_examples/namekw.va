@@ -1,0 +1,8 @@
+// 2026-09-04 hunt, F1: a module named like a `.model` TYPE KEYWORD (`res`),
+// which the card parser intercepts before it consults the device table.
+`include "disciplines.vams"
+module res(p, n);
+  inout p, n; electrical p, n;
+  parameter real r = 1000.0;
+  analog I(p, n) <+ V(p, n) / r;
+endmodule

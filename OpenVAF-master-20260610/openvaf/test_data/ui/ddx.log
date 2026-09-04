@@ -10,7 +10,7 @@ warning[L018]: module name 'diode' collides with ngspice's built-in 'Diode' devi
 30 | | endmodule
    | \---------^ 'diode' matches a built-in ngspice device name
    |  
-   = help: `.model <name> diode` in a SPICE netlist may silently bind to ngspice's built-in 'Diode' device instead of this OSDI module; rename 'diode' to something that doesn't collide, or only ever reach it via Verilog-A `instantiate`, never `.model` directly
+   = help: `.model <name> diode` in a SPICE netlist may silently bind to ngspice's built-in Diode instead of this OSDI module; rename 'diode' to something that doesn't collide (the reference compact models use a `_va` suffix), or only ever reach it via Verilog-A `instantiate`, never `.model` directly
    = reserved_module_name is set to warn by default
      use a CLI argument or an attribute to overwrite
 

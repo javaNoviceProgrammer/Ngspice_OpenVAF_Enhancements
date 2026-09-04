@@ -12,6 +12,9 @@ Modified: 2001 Paolo Nenzi (Cider Integration)
 #include "ngspice/inpdefs.h"
 #include "ngspice/inpmacs.h"
 #include "ngspice/dstring.h"
+#ifdef OSDI
+#include "ngspice/osdiitf.h"
+#endif
 
 #include "inpxx.h"
 #include <stdio.h>
@@ -442,7 +445,30 @@ void INP2N(CKTcircuit *ckt, INPtables *tab, struct card *current) {
   /* E-242: the N dispatcher hosts OSDI devices (registry_entry set) and the
    * native n-port rational device (name "nport"); accept either. */
   if (!dev->registry_entry && strcmp(dev->name, "nport") != 0) {
-    LITERR("incorrect model type! Expected OSDI or nport device");
+    /* 2026-09-04 hunt, F1: say WHICH built-in the card resolved to, and --
+     * when a Verilog-A module of that name was refused at load -- why the
+     * deck ended up here, since that is the one likely explanation for an N
+     * line naming a built-in model. */
+    const char *lib = NULL;
+    const char *refused = NULL;
+    char *msg;
+#ifdef OSDI
+    refused = osdi_refused_module_for(dev->name, &lib);
+#endif
+    if (refused) {
+      msg = tprintf("incorrect model type! Expected OSDI or nport device, but "
+                    "model \"%s\" is ngspice's built-in %s. The Verilog-A "
+                    "module \"%s\" loaded from \"%s\" was refused for "
+                    "colliding with that name; rename the module to use it",
+                    thismodel->INPmodName, dev->name, refused,
+                    lib ? lib : "?");
+    } else {
+      msg = tprintf("incorrect model type! Expected OSDI or nport device, but "
+                    "model \"%s\" is ngspice's built-in %s",
+                    thismodel->INPmodName, dev->name);
+    }
+    LITERR(msg);
+    tfree(msg);
     return;
   }
 
