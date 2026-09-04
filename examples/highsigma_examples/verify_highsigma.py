@@ -160,6 +160,22 @@ p, sig = grab(log, "highsigma_pfail"), grab(log, "highsigma_sigma")
 check("combined sigma-to-fail ~ 4.0 (R_tot ~ N(2000, sqrt2*sig))",
       abs(sig - 4.0) < 0.25, f"got sigma={sig:.3f}")
 
+# --- [6] MC hunt F1 (2026-09-04) -------------------------------------------
+# A -metric in double quotes used to keep its quotes and be looked up as one
+# vector NAME; that lookup failed, the sample scored 0, and P(fail) came out as
+# a confident 0 or 1. The quotes are now stripped like -analysis's, and a metric
+# that resolves to nothing refuses to report at all.
+print("[6] a quoted -metric is the expression; an unresolvable one is refused")
+d = one_param_deck(2500, 2.5, 4.0, seed=11)
+p_plain = grab(run(d), "highsigma_pfail")
+p_quoted = grab(run(d.replace("-metric -1/i(v1)", '-metric "-1/i(v1)"')), "highsigma_pfail")
+check('-metric "-1/i(v1)" gives exactly the unquoted spelling\'s P(fail)',
+      p_plain == p_quoted and not math.isnan(p_plain), f"{p_plain:.6e} vs {p_quoted:.6e}")
+log = run(d.replace("-metric -1/i(v1)", "-metric v(nosuch)"))
+check("-metric v(nosuch) is refused with the metric named, no estimate printed",
+      "highsigma: the metric (v(nosuch)) did not resolve" in log
+      and math.isnan(grab(log, "highsigma_pfail")) and "P(fail)" not in log, "")
+
 import shutil
 shutil.rmtree(SCRATCH, ignore_errors=True)
 

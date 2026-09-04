@@ -22,7 +22,7 @@ cannot see.
 
 | # | finding | severity |
 |---|---|---|
-| [F1](#f1--a-quoted--spec-or--metric-is-scored-as-0-and-reported-with-confidence) | a `-spec`/`-metric` written in double quotes — or naming a vector that does not exist — is evaluated as 0 and reported as a definite 0 % or 100 % yield / P(fail); the evaluator's validity flag is discarded | medium — wrong answer, run completes |
+| [F1](#f1--a-quoted--spec-or--metric-is-scored-as-0-and-reported-with-confidence) | a `-spec`/`-metric` written in double quotes — or naming a vector that does not exist — is evaluated as 0 and reported as a definite 0 % or 100 % yield / P(fail); the evaluator's validity flag is discarded | medium — wrong answer, run completes. **Fixed** |
 | [F2](#f2--un-seeded-runs-are-identical-replications) | `montecarlo` and `highsigma` without `-seed` re-seed from the constant `1` on every invocation, so "run it again" returns the same samples; the report never states the seed | medium — a replication that is not one |
 | [F3](#f3--wcd-cannot-see-model-declared-statistics-and-says-the-wrong-thing) | `wcd` walks netlist `.param` dimensions only: with osdimc-only statistics it says *"the deck draws no Gaussian .params — use agauss"*; with one netlist dimension added it reports P(fail) = 0 for a 4σ event that `highsigma` and `montecarlo` both see | medium — wrong answer, wrong advice |
 | [F4](#f4--mvnormi-outside-the-registered-matrix-is-an-independent-draw) | `mvnorm(i)` with *i* outside 1..*k*, or with no `mccorr` registered, silently returns an independent standard normal — the requested correlation is simply not applied | low — silent |
@@ -67,6 +67,28 @@ a multi-point vector (`v_realdata[v_length-1]`), so a transient spec reads the
 final time point — worth knowing, since a pulse deck whose `tran` ends in the
 low phase reads 0 legitimately. Non-finite metric values are also mapped to
 0 (`if (!finite(f)) f = 0.0`) with the same silence.
+
+**Resolved (2026-09-04, after the hunt).** `-spec` and `-metric` now pass
+through the same `cp_unquote` as `-analysis` in all three commands, and every
+evaluation honours the validity flag. `montecarlo` and `highsigma` stop at the
+first sample whose metric resolves to nothing — the expression is the same for
+every sample, so one is enough to know — and refuse to report: *"montecarlo:
+spec 1 (v(nosuch)) did not resolve to a value on sample 1 -- it names no
+vector this analysis produces (check the spelling, and that the metric exists
+in the 'op' plot). No yield is reported: a spec that resolves to nothing would
+have scored 0 against its limits."* The refusal runs after the loop's normal
+cleanup (warm start, loop bar, seed offset, fast path, LHS), and the result
+variables stay unset as a refused run's must (the E-537 hunt's H). `wcd`
+says *"the metric (v(nosuch)) did not resolve to a value at the nominal
+point"* instead of blaming the operating point, and a sample whose metric
+does not resolve inside its importance-sampling loop is excluded like a run
+that did not solve. The quoted transient spec in the table reads 20 / 20.
+Pinned: `montecarlo_examples` 10 → 12, `highsigma_examples` 10 → 12,
+`wcd_examples` 19 → 21; `mcpolicy_examples`' hunt-L check, which had reached
+the no-variance note only because a mis-typed node's constant 0 never varied,
+now uses a metric that resolves and never varies, and the mis-typed node is a
+check of its own (33 → 34). Still as described: a non-finite metric value is
+mapped to 0 in silence.
 
 ---
 

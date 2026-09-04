@@ -186,12 +186,6 @@ static double sw_eval_expr_ok(const char *expr, int *ok)
     return f;
 }
 
-/* The historic spelling: every caller that only wants the value. */
-static double sw_eval_expr(const char *expr)
-{
-    return sw_eval_expr_ok(expr, NULL);
-}
-
 /* Enhancement-189: linear interpolation of (x[],y[]) at xq, flat outside the
  * data range; x[] is assumed monotonic increasing. Used to resample per-point
  * waveforms onto a common scale for the `-overlay` family plot. */
@@ -4087,8 +4081,12 @@ void com_highsigma(wordlist *wl)
              * '-' (e.g. `-1/i(v1)`) would otherwise look like a flag */
             if (!wl->wl_next) { fprintf(cp_err, "highsigma: -metric needs an expression\n"); return; }
             wl = wl->wl_next;
-            strncpy(metric, wl->wl_word, sizeof(metric) - 1);
-            metric[sizeof(metric) - 1] = '\0';
+            {
+                char *tok = cp_unquote(wl->wl_word);   /* MC hunt F1, as -analysis */
+                strncpy(metric, tok, sizeof(metric) - 1);
+                metric[sizeof(metric) - 1] = '\0';
+                tfree(tok);
+            }
             have_metric = 1;
             wl = wl->wl_next;
         } else {
@@ -4128,6 +4126,7 @@ void com_highsigma(wordlist *wl)
     }
 
     mc_sss_config(nsamp, lambda, seed);
+    int hs_unresolved = 0;                  /* MC hunt F1 */
     double sum_wf = 0.0, sum_w2f2 = 0.0;
     /* E-537: weight moments (hunt E, effective sample size), the solved-sample
      * count (hunt B) and the metric's observed range (hunt L). */
@@ -4170,7 +4169,12 @@ void com_highsigma(wordlist *wl)
             nfailed_run++;
             continue;
         }
-        double m = sw_eval_expr(metric);
+        int mok = 0;
+        double m = sw_eval_expr_ok(metric, &mok);   /* MC hunt F1 */
+        if (!mok) {
+            hs_unresolved = 1;
+            break;
+        }
         if (nvalid == 0 || m < mseen_lo) mseen_lo = m;
         if (nvalid == 0 || m > mseen_hi) mseen_hi = m;
         nvalid++;
@@ -4199,6 +4203,15 @@ void com_highsigma(wordlist *wl)
     OSDImcScaleScopeClear();
     ft_optimizing = save_optimizing;
     mc_sss_off();
+
+    if (hs_unresolved) {
+        fprintf(cp_err, "highsigma: the metric (%s) did not resolve to a value -- "
+                        "it names no vector the '%s' analysis produces (check the "
+                        "spelling, and that it exists in that plot). No estimate "
+                        "is reported: a metric that resolves to nothing would "
+                        "have scored 0 against its limits.\n", metric, analysis);
+        return;
+    }
 
     if (nvalid <= 0) {        /* E-536: interrupted; E-537: or none solved */
         fprintf(cp_out, "\n  P(fail) : not available -- %s\n",
@@ -4402,8 +4415,18 @@ void com_montecarlo(wordlist *wl)
             if (nspec >= MC_MAXSPEC) { fprintf(cp_err, "montecarlo: too many -spec (max %d)\n", MC_MAXSPEC); return; }
             if (!wl->wl_next) { fprintf(cp_err, "montecarlo: -spec needs a metric expression\n"); return; }
             wl = wl->wl_next;
-            strncpy(metric[nspec], wl->wl_word, sizeof(metric[nspec]) - 1);
-            metric[nspec][sizeof(metric[nspec]) - 1] = '\0';
+            {
+                /* 2026-09-04 MC hunt, F1: a metric written in double quotes --
+                 * the natural spelling once it has parentheses -- arrived with
+                 * the quotes attached, so the expression parser took it for one
+                 * VECTOR NAME, the lookup failed, and the sample scored 0 (see
+                 * the evaluation below). The same cp_unquote that -analysis has
+                 * had since Enhancement-433. */
+                char *tok = cp_unquote(wl->wl_word);
+                strncpy(metric[nspec], tok, sizeof(metric[nspec]) - 1);
+                metric[nspec][sizeof(metric[nspec]) - 1] = '\0';
+                tfree(tok);
+            }
             hasmax[nspec] = hasmin[nspec] = 0; specfail[nspec] = 0;
             nspec++;
             wl = wl->wl_next;
@@ -4528,6 +4551,13 @@ void com_montecarlo(wordlist *wl)
      * point folded into the yield and its confidence interval, with the
      * effective sample count depending on session history. */
     OSDImcSkipBaseline();
+    /* 2026-09-04 MC hunt, F1: a spec that does not resolve -- a misspelled
+     * vector, an expression this analysis never produces -- used to be scored
+     * as 0 against the limits and reported as a confident 0% or 100% yield,
+     * because sw_eval_expr() discards the evaluator's validity flag. Such a
+     * run has measured nothing; it is refused, and the first sample is enough
+     * to know (the expression is the same for every sample). */
+    int unresolved_spec = -1, unresolved_sample = 0;
     outp_loop_begin("montecarlo", "sample", nsamp, sw_loopbar_mode());  /* Enhancement-477 */
 
     for (int i = 0; i < nsamp; i++) {
@@ -4564,7 +4594,13 @@ void com_montecarlo(wordlist *wl)
         }
         int pass = 1;
         for (s = 0; s < nspec; s++) {
-            double m = sw_eval_expr(metric[s]);
+            int mok = 0;
+            double m = sw_eval_expr_ok(metric[s], &mok);
+            if (!mok) {
+                unresolved_spec = s;
+                unresolved_sample = i + 1;
+                break;
+            }
             /* Enhancement-501: remember the spread each metric actually showed.
              * A yield is a statement about VARIATION; if nothing varied, the
              * sample set is one point measured nsamp times and the percentage
@@ -4581,6 +4617,8 @@ void com_montecarlo(wordlist *wl)
                 specfail[s]++;
             }
         }
+        if (unresolved_spec >= 0)
+            break;
         if (pass) npass++;
     }
     if (usewarm)
@@ -4600,6 +4638,17 @@ void com_montecarlo(wordlist *wl)
         sw_fp_free();                     /* Enhancement-346: drop the binds */
     if (uselhs)
         mc_sss_off();
+
+    if (unresolved_spec >= 0) {
+        fprintf(cp_err, "montecarlo: spec %d (%s) did not resolve to a value on "
+                        "sample %d -- it names no vector this analysis produces "
+                        "(check the spelling, and that the metric exists in the "
+                        "'%s' plot). No yield is reported: a spec that resolves "
+                        "to nothing would have scored 0 against its limits.\n",
+                unresolved_spec + 1, metric[unresolved_spec], unresolved_sample,
+                analysis);
+        return;
+    }
 
     /* Enhancement-438: the yield is over the samples that actually produced a
      * solution. Quoting a percentage of the requested count when some never ran
@@ -4693,6 +4742,11 @@ void com_montecarlo(wordlist *wl)
 #define WCD_MAXDIM 256
 
 /* Evaluate the deck at u and return the margin g(u): positive = pass. */
+/* 2026-09-04 MC hunt, F1: set by wcd's margin evaluation when the metric
+ * expression resolves to nothing, so the caller can say THAT rather than
+ * blame the operating point. Cleared at the start of every wcd run. */
+static int wcd_metric_unresolved = 0;
+
 static double wcd_margin(const double *u, int ndim, const char *analysis,
                          const char *metric, double hi, double lo,
                          int hasmax, int hasmin)
@@ -4713,7 +4767,14 @@ static double wcd_margin(const double *u, int ndim, const char *analysis,
      * reports honestly instead of guessing. */
     if (sw_run_failed())
         return NAN;
-    m = sw_eval_expr(metric);
+    {
+        int mok = 0;
+        m = sw_eval_expr_ok(metric, &mok);   /* MC hunt F1 */
+        if (!mok) {
+            wcd_metric_unresolved = 1;
+            return NAN;
+        }
+    }
     /* Distance to the nearest spec violation, in metric units. With both a max
      * and a min the pass band is an interval and the margin is the smaller of
      * the two distances. */
@@ -4728,6 +4789,7 @@ static double wcd_margin(const double *u, int ndim, const char *analysis,
 
 void com_wcd(wordlist *wl)
 {
+    wcd_metric_unresolved = 0;              /* MC hunt F1 */
     /* E-537 (hunt H): see hs_clear_results */
     hs_clear_results(hs_names_wcd,
                      (int) (sizeof hs_names_wcd / sizeof *hs_names_wcd));
@@ -4756,8 +4818,12 @@ void com_wcd(wordlist *wl)
         if (eq(w, "-metric") || eq(w, "-spec")) {
             if (!wl->wl_next) { fprintf(cp_err, "wcd: -metric needs an expression\n"); return; }
             wl = wl->wl_next;
-            strncpy(metric, wl->wl_word, sizeof(metric) - 1);
-            metric[sizeof(metric) - 1] = '\0';
+            {
+                char *tok = cp_unquote(wl->wl_word);   /* MC hunt F1, as -analysis */
+                strncpy(metric, tok, sizeof(metric) - 1);
+                metric[sizeof(metric) - 1] = '\0';
+                tfree(tok);
+            }
             have_metric = 1; wl = wl->wl_next;
         } else if (eq(w, "-max")) {
             if (!wl->wl_next) { fprintf(cp_err, "wcd: -max needs a value\n"); return; }
@@ -4871,9 +4937,15 @@ void com_wcd(wordlist *wl)
      * there is no margin to search from, and every later evaluation would be
      * measured against a value that does not exist. */
     if (!finite(g0)) {
-        fprintf(cp_err, "wcd: the analysis did not solve at the nominal point, so "
-                        "there is no margin to search from -- fix the operating "
-                        "point first\n");
+        if (wcd_metric_unresolved)
+            fprintf(cp_err, "wcd: the metric (%s) did not resolve to a value at "
+                            "the nominal point -- it names no vector the '%s' "
+                            "analysis produces (check the spelling, and that it "
+                            "exists in that plot)\n", metric, analysis);
+        else
+            fprintf(cp_err, "wcd: the analysis did not solve at the nominal point, so "
+                            "there is no margin to search from -- fix the operating "
+                            "point first\n");
         outp_loop_end();          /* Enhancement-477 */
         ft_optimizing = save_optimizing;
         mc_wcd_off();
@@ -5067,8 +5139,15 @@ void com_wcd(wordlist *wl)
                 nis_failed++;
                 continue;
             }
+            {
+                int mok = 0;
+                m = sw_eval_expr_ok(metric, &mok);   /* MC hunt F1 */
+                if (!mok) {           /* vetted at the nominal point; exclude, do not guess */
+                    nis_failed++;
+                    continue;
+                }
+            }
             nis_ok++;
-            m = sw_eval_expr(metric);
             if ((hasmax && m > hi) || (hasmin && m < lo))
                 f = 1.0;
             w = mc_sample_weight();

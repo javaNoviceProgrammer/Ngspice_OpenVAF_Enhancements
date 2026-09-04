@@ -141,6 +141,36 @@ chk("mean-shift P vs analytic Phi(-4.5)", pis, phi_bar(4.5), 5e-2,
     "unbiased IS estimate, 2000 samples")
 
 
+# ---- MC hunt F1 (2026-09-04): a quoted metric, and one that names no vector --
+# The quotes used to stay on the expression, which was then looked up as one
+# vector NAME; the failed lookup scored 0 and the "margin" was fiction. Stripped
+# now, like -analysis's. And a metric that resolves to nothing is refused with
+# the metric named, instead of blaming the operating point.
+out = run("""* wcd metric in double quotes
+.param rr = agauss(1000, 1, 1)
+V1 a 0 DC 1
+R1 a 0 {rr}
+.control
+wcd -metric "-1/i(v1)" -max 1004 -analysis op
+.endc
+.end
+""", "_q.cir")
+chk('quoted -metric "-1/i(v1)" -> beta = 4', grab(out, BETA), 4.0, 1e-4)
+out = run("""* wcd metric that names no vector
+.param rr = agauss(1000, 1, 1)
+V1 a 0 DC 1
+R1 a 0 {rr}
+.control
+wcd -metric v(nosuch) -max 1 -analysis op
+.endc
+.end
+""", "_nosuch.cir")
+refused = ("wcd: the metric (v(nosuch)) did not resolve" in out
+           and grab(out, BETA) is None
+           and "did not solve at the nominal point" not in out)
+chk("-metric v(nosuch): refused naming the metric, no beta, op not blamed (1=yes)",
+    1.0 if refused else 0.0, 1.0, 0.0)
+
 print("Enhancement-305: worst-case distance / MPFP vs the analytic Gaussian tail")
 bad = 0
 for w, v, g, wt, n in rows:

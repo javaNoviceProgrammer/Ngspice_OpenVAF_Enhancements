@@ -85,4 +85,4 @@ The statistical `.param` must reach a **device value** by brace substitution
 python3 verify_wcd.py
 ```
 
-Runs under both linear solvers (19 checks), all against the analytic Gaussian tail.
+Runs under both linear solvers (21 checks), all against the analytic Gaussian tail.

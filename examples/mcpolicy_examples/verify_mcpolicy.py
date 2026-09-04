@@ -459,9 +459,10 @@ def main():
 
     # [22] hunt L: a metric that never varies is a mis-typed node far more often
     # than a rare failure, and the old hint sent the user to spend a bigger run
-    # chasing it. montecarlo has had this check since E-501.
+    # chasing it. montecarlo has had this check since E-501. v(1) is the DC
+    # source: it resolves in every sample and never moves.
     rc, out = run("mcres", "op\nhighsigma 20 -scale 2 -analysis op "
-                           "-metric v(nosuchnode) -max 0.9", timeout=900)
+                           "-metric v(1) -max 1.5", timeout=900)
     check("a metric that never varied is named, not blamed on resolution "
           "(hunt L)",
           rc == 0 and "every sample gave the SAME metric value" in out
@@ -470,6 +471,18 @@ def main():
           f"no-variance note={'every sample gave the SAME' in out}, "
           f"misleading hint={'increase -scale or N' in out}, "
           f"sigma n/a at P=0={'equivalent sigma  : n/a' in out}")
+
+    # [22b] 2026-09-04 MC hunt, F1: a metric that resolves to NOTHING (this
+    # check's original mis-typed node) used to be scored 0 and reach the
+    # no-variance note above only by accident of that 0 being constant. It is
+    # now refused outright, with the metric named and no estimate printed.
+    rc, out = run("mcres", "op\nhighsigma 20 -scale 2 -analysis op "
+                           "-metric v(nosuchnode) -max 0.9", timeout=900)
+    check("a metric that names no vector is refused, not scored as 0 (MC hunt F1)",
+          rc == 0 and "highsigma: the metric (v(nosuchnode)) did not resolve" in out
+          and "P(fail)" not in out and "increase -scale or N" not in out,
+          f"refused={'did not resolve' in out}, estimate printed={'P(fail)' in out}, "
+          f"misleading hint={'increase -scale or N' in out}")
 
     # [23] hunt G: aging's dose is MACHINE-computed, so it must not recenter a
     # statistical nominal the way a user's `alter` does (E-531's rule). The

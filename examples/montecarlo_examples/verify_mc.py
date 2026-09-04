@@ -295,5 +295,31 @@ check("diode op-point spread ~ vt*sigma_Is/Is",
       abs(mv - 0.9345) < 5e-3 and 0.5 * 1.73e-3 < sv < 1.5 * 1.73e-3,
       f"(mean={mv:.5g}, sd={sv:.4g})")
 
+# --- MC hunt F1 (2026-09-04): a -spec in double quotes -- the natural spelling
+# once it has parentheses or a leading minus -- used to keep its quotes and be
+# looked up as one vector NAME, and a spec that resolves to nothing was scored 0
+# against its limits: both reported a confident 0% or 100% yield. The quotes are
+# now stripped like -analysis's, and an unresolvable spec refuses to report.
+log = run_deck("_mc8.cir", """quoted spec, and a spec that names no vector
+.param rr = agauss(1k, 100, 1)
+v1 1 0 dc 1
+r1 1 0 {rr}
+.control
+montecarlo 20 -seed 7 -spec "-1/i(v1)" -max 1500 -min 500
+echo ---nosuch---
+montecarlo 20 -seed 7 -spec v(nosuch) -max 1
+echo ---after---
+.endc
+.end
+""")
+head, _, tail = log.partition("---nosuch---")
+m = re.search(r"yield\s*:\s*[0-9.]+%\s*\((\d+) / (\d+) pass\)", head)
+check('quoted -spec "-1/i(v1)" is the expression, not a vector name (20/20 pass)',
+      m is not None and m.group(1) == "20" and m.group(2) == "20",
+      f"({m.group(0).strip() if m else 'no yield line'})")
+check("a -spec naming no vector is refused, spec named, no yield reported",
+      "spec 1 (v(nosuch)) did not resolve" in tail
+      and not re.search(r"yield\s*:", tail.partition("---after---")[0]), "")
+
 print(f"\n{'ALL PASS' if failed == 0 else 'FAILURES'}: {passed} passed, {failed} failed")
 raise SystemExit(1 if failed else 0)

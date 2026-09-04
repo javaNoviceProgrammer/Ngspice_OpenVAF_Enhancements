@@ -86,7 +86,7 @@ reported P(fail) from 3.35e-05 to **0.2967** against a true 0.29670536 — and
 reproduces bit for bit the answer from a deck that never had the bystander
 devices, so they now cost exactly nothing.
 
-`verify_mcpolicy.py` (33 checks, both solvers) pins each behavior with
+`verify_mcpolicy.py` (34 checks, both solvers) pins each behavior with
 closed-form expectations computed from the same run's parameter readbacks —
 `v(2) = 1k/(r+dr+1k)` against `@mm[r]`/`@n1[dr]` — plus the deterministic
 mcseed-7 montecarlo discriminators for the init-resident and preserve legs,
