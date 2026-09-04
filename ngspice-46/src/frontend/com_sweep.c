@@ -4124,6 +4124,12 @@ void com_highsigma(wordlist *wl)
                         "'-min <lo>' (failure region)\n");
         return;
     }
+    if (have_max && have_min && hi < lo) {      /* MC hunt F5 */
+        fprintf(cp_err, "highsigma: -max %g is below -min %g, so every value fails "
+                        "and P(fail) would be 1 by construction -- the limits are "
+                        "contradictory (swapped?)\n", hi, lo);
+        return;
+    }
     if (lambda <= 1.0) {
         fprintf(cp_err, "highsigma: -scale (lambda) must be > 1 (got %g)\n", lambda);
         return;
@@ -4477,6 +4483,17 @@ void com_montecarlo(wordlist *wl)
     for (s = 0; s < nspec; s++)
         if (!hasmax[s] && !hasmin[s]) {
             fprintf(cp_err, "montecarlo: spec '%s' has no -max/-min limit\n", metric[s]);
+            return;
+        }
+    /* 2026-09-04 MC hunt, F5: an upper limit below the lower one is
+     * unsatisfiable by construction, and used to be reported as a confident
+     * "yield 0.000% (0 / N pass)" with a violation count -- indistinguishable
+     * from a real 0% yield. Refuse it at parse time instead. */
+    for (s = 0; s < nspec; s++)
+        if (hasmax[s] && hasmin[s] && hi[s] < lo[s]) {
+            fprintf(cp_err, "montecarlo: spec %d (%s): -max %g is below -min %g, so "
+                            "nothing can pass -- the limits are contradictory "
+                            "(swapped?)\n", s + 1, metric[s], hi[s], lo[s]);
             return;
         }
     if (ft_curckt == NULL || ft_curckt->ci_ckt == NULL) {
@@ -4939,6 +4956,12 @@ void com_wcd(wordlist *wl)
     if (!hasmax && !hasmin) {
         fprintf(cp_err, "wcd: give a spec limit -- '-max <hi>' and/or '-min <lo>' "
                         "(the failure region)\n");
+        return;
+    }
+    if (hasmax && hasmin && hi < lo) {          /* MC hunt F5 */
+        fprintf(cp_err, "wcd: -max %g is below -min %g, so the pass band is empty and "
+                        "there is no margin to search from -- the limits are "
+                        "contradictory (swapped?)\n", hi, lo);
         return;
     }
     if (maxiter < 1 || maxiter > 1000) {

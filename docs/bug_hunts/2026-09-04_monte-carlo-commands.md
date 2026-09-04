@@ -26,7 +26,7 @@ cannot see.
 | [F2](#f2--un-seeded-runs-are-identical-replications) | `montecarlo` and `highsigma` without `-seed` re-seed from the constant `1` on every invocation, so "run it again" returns the same samples; the report never states the seed | medium — a replication that is not one. **Fixed** (stated) |
 | [F3](#f3--wcd-cannot-see-model-declared-statistics-and-says-the-wrong-thing) | `wcd` walks netlist `.param` dimensions only: with osdimc-only statistics it says *"the deck draws no Gaussian .params — use agauss"*; with one netlist dimension added it reports P(fail) = 0 for a 4σ event that `highsigma` and `montecarlo` both see | medium — wrong answer, wrong advice. **Fixed** |
 | [F4](#f4--mvnormi-outside-the-registered-matrix-is-an-independent-draw) | `mvnorm(i)` with *i* outside 1..*k*, or with no `mccorr` registered, silently returns an independent standard normal — the requested correlation is simply not applied | low — silent. **Fixed** |
-| [F5](#f5--a-contradictory-spec-yields-0--in-silence) | `-spec x -max 1.1m -min 0.9m` (max below min) is accepted and yields 0 % without a word | low — diagnostic |
+| [F5](#f5--a-contradictory-spec-yields-0--in-silence) | `-spec x -max 1.1m -min 0.9m` (max below min) is accepted and yields 0 % without a word | low — diagnostic. **Fixed** |
 
 ---
 
@@ -233,6 +233,15 @@ reset redraws them. Pinned: `yield_examples` +4 checks.
 lower one, unsatisfiable by construction — reports `yield 0.000% (0 / 20
 pass)` and a per-spec violation count, exactly as a real 0 % yield would.
 Diagnostic only; a check at parse time is a line.
+
+**Resolved (2026-09-04, after the hunt).** The line is there, in all three
+commands: `montecarlo` refuses per spec — *"spec 1 (i(v1)): -max -0.0011 is
+below -min -0.0009, so nothing can pass -- the limits are contradictory
+(swapped?)"* — and `highsigma` and `wcd` refuse with the consequence each
+would have reported (P(fail) = 1 by construction; an empty pass band with no
+margin to search from). A correctly ordered spec is untouched. Pinned:
+`montecarlo_examples` 14 → 15, `highsigma_examples` +1, `wcd_examples`
+30 → 31.
 
 ---
 

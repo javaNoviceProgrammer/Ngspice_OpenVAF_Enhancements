@@ -268,6 +268,20 @@ wcd -metric i(v1) -max -0.9m -analysis op
 chk("no statistics anywhere: refusal names both sources (1=yes)",
     1.0 if "and its models declare no Gaussian statistics" in out else 0.0, 1.0, 0.0)
 
+# ---- MC hunt F5 (2026-09-04): contradictory limits are refused at parse time
+out = run("""* wcd with -max below -min
+.param rr = agauss(1000, 1, 1)
+V1 a 0 DC 1
+R1 a 0 {rr}
+.control
+wcd -metric -1/i(v1) -max 990 -min 1010 -analysis op
+.endc
+.end
+""", "_swap.cir")
+chk("-max below -min: refused as contradictory, no beta (1=yes)",
+    1.0 if ("the limits are contradictory" in out and grab(out, BETA) is None) else 0.0,
+    1.0, 0.0)
+
 print("Enhancement-305: worst-case distance / MPFP vs the analytic Gaussian tail")
 bad = 0
 for w, v, g, wt, n in rows:

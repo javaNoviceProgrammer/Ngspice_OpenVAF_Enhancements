@@ -191,6 +191,14 @@ check("un-seeded: banner says 'seed 1 (default)', a rerun repeats, highsigma_see
       ", seed 1 (default)" in log and "running this highsigma again repeats" in log
       and grab(log, "highsigma_seed") == 1.0, "")
 
+# --- [8] MC hunt F5 (2026-09-04): contradictory limits are refused -------
+print("[8] -max below -min is refused rather than reported as P(fail) = 1")
+d = one_param_deck(200, 2.0, 3.0, seed=11, two_sided=True)
+lo_s = re.search(r"-min ([-\d.]+)", d).group(1); hi_s = re.search(r"-max ([-\d.]+)", d).group(1)
+log = run(d.replace(f"-max {hi_s} -min {lo_s}", f"-max {lo_s} -min {hi_s}"))
+check("swapped limits: refused as contradictory, no estimate",
+      "the limits are contradictory" in log and not re.search(r"P\(fail\)\s+:", log), "")
+
 import shutil
 shutil.rmtree(SCRATCH, ignore_errors=True)
 

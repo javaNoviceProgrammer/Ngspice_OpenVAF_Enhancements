@@ -347,5 +347,20 @@ check("-seed 7 is stated in the banner, with no repeat note, and montecarlo_seed
       "1 spec, seed 7\n" in tail and "repeats" not in tail
       and grab(tail, "montecarlo_seed") == 7.0, "")
 
+# --- MC hunt F5 (2026-09-04): an upper limit below the lower one is
+# unsatisfiable by construction and used to be reported as a confident
+# "yield 0.000% (0 / N pass)". It is refused at parse time now.
+log = run_deck("_mc10.cir", """contradictory limits
+.param rr = agauss(1k, 100, 1)
+v1 1 0 dc 1
+r1 1 0 {rr}
+.control
+montecarlo 20 -seed 7 -spec i(v1) -max -1.1m -min -0.9m
+.endc
+.end
+""")
+check("-max below -min is refused as contradictory, no yield reported",
+      "the limits are contradictory" in log and not re.search(r"yield\s*:", log), "")
+
 print(f"\n{'ALL PASS' if failed == 0 else 'FAILURES'}: {passed} passed, {failed} failed")
 raise SystemExit(1 if failed else 0)

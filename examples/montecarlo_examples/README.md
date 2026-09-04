@@ -32,7 +32,7 @@ where one control-language value is explicitly assigned to each instance.
 ## Run
 
 ```bash
-python3 verify_mc.py    # 14 checks
+python3 verify_mc.py    # 15 checks
 python3 plot_mc.py      # regenerates plots/mc_distributions.png
 ```
 

@@ -94,4 +94,4 @@ be refused as "drawing no Gaussian .params".
 python3 verify_wcd.py
 ```
 
-Runs under both linear solvers (30 checks), all against the analytic Gaussian tail.
+Runs under both linear solvers (31 checks), all against the analytic Gaussian tail.
