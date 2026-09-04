@@ -176,6 +176,21 @@ check("-metric v(nosuch) is refused with the metric named, no estimate printed",
       "highsigma: the metric (v(nosuch)) did not resolve" in log
       and math.isnan(grab(log, "highsigma_pfail")) and "P(fail)" not in log, "")
 
+# --- [7] MC hunt F2 (2026-09-04) -------------------------------------------
+# The banner states the seed, an un-seeded run says a rerun repeats it, and
+# highsigma_seed publishes the seed for scripts.
+print("[7] the seed is stated in the banner and published as highsigma_seed")
+d = one_param_deck(200, 2.0, 3.0, seed=11).replace(
+    "print highsigma_pfail highsigma_sigma highsigma_nfail",
+    "print highsigma_pfail highsigma_sigma highsigma_nfail highsigma_seed")
+log = run(d)
+check("-seed 11: banner ends 'seed 11', no repeat note, highsigma_seed = 11",
+      ", seed 11\n" in log and "repeats" not in log and grab(log, "highsigma_seed") == 11.0, "")
+log = run(d.replace("-seed 11 ", ""))
+check("un-seeded: banner says 'seed 1 (default)', a rerun repeats, highsigma_seed = 1",
+      ", seed 1 (default)" in log and "running this highsigma again repeats" in log
+      and grab(log, "highsigma_seed") == 1.0, "")
+
 import shutil
 shutil.rmtree(SCRATCH, ignore_errors=True)
 

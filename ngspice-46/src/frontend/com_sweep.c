@@ -511,6 +511,26 @@ static int sw_boundarg(const char *w, const char *cmd, const char *what, double 
 }
 
 
+/* 2026-09-04 MC hunt, F2: every sampling command re-seeds the netlist PRNG
+ * from the constant 1 unless -seed is given, so "run it again" -- the natural
+ * check of an estimate -- returned the SAME samples, and the report never said
+ * which seed it had used. The default stays (a fixed seed pairs the samples
+ * across design changes, which is what a comparison wants); the banner now
+ * states the seed, and an un-seeded run says what repeating it will do.
+ * osdimc draws are keyed per trial and advance across commands (E-537, hunt
+ * J), so on such a deck only the netlist's own draws repeat -- say so. */
+static void sw_seed_note(const char *cmd, int seed_given)
+{
+    if (seed_given)
+        return;
+    fprintf(cp_out, "  NOTE    : no -seed given -- the netlist's random .params are "
+                    "drawn from the default seed 1, so running this %s again "
+                    "repeats them%s; give -seed <n> for an independent "
+                    "replication\n",
+            cmd, OSDImcActive() ? " (.option osdimc draws are keyed per trial "
+                                  "and do advance)" : "");
+}
+
 static int sw_seedarg(const char *w, const char *cmd, unsigned int *out)
 {
     char *end;
@@ -3956,15 +3976,15 @@ static void hs_clear_results(const char *const *names, int n)
 
 static const char *const hs_names_highsigma[] = {
     "highsigma_pfail", "highsigma_relerr", "highsigma_sigma",
-    "highsigma_nfail", "highsigma_ess", "highsigma_nfailed"
+    "highsigma_nfail", "highsigma_ess", "highsigma_nfailed", "highsigma_seed"
 };
 static const char *const hs_names_wcd[] = {
     "wcd_beta", "wcd_pfail", "wcd_ndim", "wcd_converged",
-    "wcd_pfail_is", "wcd_pfail_is_err", "wcd_sigma_is"
+    "wcd_pfail_is", "wcd_pfail_is_err", "wcd_sigma_is", "wcd_seed"
 };
 static const char *const hs_names_montecarlo[] = {
     "montecarlo_yield", "montecarlo_npass", "montecarlo_n",
-    "montecarlo_nvalid", "montecarlo_nfailed"
+    "montecarlo_nvalid", "montecarlo_nfailed", "montecarlo_seed"
 };
 
 void com_highsigma(wordlist *wl)
@@ -4119,10 +4139,11 @@ void com_highsigma(wordlist *wl)
         if (have_min) snprintf(spec + strlen(spec), sizeof spec - strlen(spec),
                                "%s< %g", have_max ? " or " : "", lo);
         fprintf(cp_out, "highsigma: %d samples, scale (sigma inflation) = %g%s, "
-                        "analysis '%s', fail if (%s) %s\n",
+                        "analysis '%s', fail if (%s) %s, seed %u%s\n",
                 nsamp, lambda,
                 ninflate ? " on the -inflate parameters only" : "",
-                analysis, metric, spec);
+                analysis, metric, spec, seed, seed_given ? "" : " (default)");
+        sw_seed_note("highsigma", seed_given);   /* MC hunt F2 */
     }
 
     mc_sss_config(nsamp, lambda, seed);
@@ -4319,6 +4340,7 @@ void com_highsigma(wordlist *wl)
     hs_set_result("highsigma_nfail", (double) nfail);
     hs_set_result("highsigma_ess", ess);            /* E-537 (hunt E) */
     hs_set_result("highsigma_nfailed", (double) nfailed_run);  /* E-537 (hunt B) */
+    hs_set_result("highsigma_seed", (double) seed);            /* MC hunt F2 */
 }
 
 
@@ -4462,9 +4484,10 @@ void com_montecarlo(wordlist *wl)
         return;
     }
 
-    fprintf(cp_out, "montecarlo: %d %s samples, analysis '%s', %d spec%s\n",
+    fprintf(cp_out, "montecarlo: %d %s samples, analysis '%s', %d spec%s, seed %u%s\n",
             nsamp, uselhs ? "Latin-Hypercube" : "random", analysis,
-            nspec, nspec == 1 ? "" : "s");
+            nspec, nspec == 1 ? "" : "s", seed, seed_given ? "" : " (default)");
+    sw_seed_note("montecarlo", seed_given);   /* MC hunt F2 */
 
     if (uselhs) {
         mc_lhs_config(nsamp, seed);
@@ -4662,6 +4685,7 @@ void com_montecarlo(wordlist *wl)
         hs_set_result("montecarlo_nfailed", (double) nfailed);
         hs_set_result("montecarlo_nvalid", 0.0);
         hs_set_result("montecarlo_n", (double) nsamp);
+    hs_set_result("montecarlo_seed", (double) seed);   /* MC hunt F2 */
         return;
     }
 
@@ -4699,6 +4723,7 @@ void com_montecarlo(wordlist *wl)
     hs_set_result("montecarlo_nfailed", (double) nfailed);
     hs_set_result("montecarlo_nvalid", (double) nvalid);
     hs_set_result("montecarlo_n", (double) nsamp);
+    hs_set_result("montecarlo_seed", (double) seed);   /* MC hunt F2 */
 }
 
 
@@ -5122,7 +5147,9 @@ void com_wcd(wordlist *wl)
         int nis_ok = 0, nis_failed = 0;   /* E-537 (hunt C) */
 
         fprintf(cp_out, "\n  refining with %d mean-shift importance samples "
-                        "centred on the MPFP...\n", nis);
+                        "centred on the MPFP, seed %u%s...\n",
+                nis, seed, seed_given ? "" : " (default)");
+        sw_seed_note("wcd -is", seed_given);   /* MC hunt F2 */
         mc_wcd_shift(u, ndim, seed);
         for (i = 0; i < nis; i++) {
             double m, f = 0.0, w;
@@ -5184,6 +5211,7 @@ void com_wcd(wordlist *wl)
             hs_set_result("wcd_pfail_is", pf);
             hs_set_result("wcd_pfail_is_err", se);
             hs_set_result("wcd_sigma_is", sig);
+            hs_set_result("wcd_seed", (double) seed);   /* MC hunt F2 */
         }
     }
 

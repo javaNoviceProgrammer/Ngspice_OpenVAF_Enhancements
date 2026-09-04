@@ -23,7 +23,7 @@ cannot see.
 | # | finding | severity |
 |---|---|---|
 | [F1](#f1--a-quoted--spec-or--metric-is-scored-as-0-and-reported-with-confidence) | a `-spec`/`-metric` written in double quotes — or naming a vector that does not exist — is evaluated as 0 and reported as a definite 0 % or 100 % yield / P(fail); the evaluator's validity flag is discarded | medium — wrong answer, run completes. **Fixed** |
-| [F2](#f2--un-seeded-runs-are-identical-replications) | `montecarlo` and `highsigma` without `-seed` re-seed from the constant `1` on every invocation, so "run it again" returns the same samples; the report never states the seed | medium — a replication that is not one |
+| [F2](#f2--un-seeded-runs-are-identical-replications) | `montecarlo` and `highsigma` without `-seed` re-seed from the constant `1` on every invocation, so "run it again" returns the same samples; the report never states the seed | medium — a replication that is not one. **Fixed** (stated) |
 | [F3](#f3--wcd-cannot-see-model-declared-statistics-and-says-the-wrong-thing) | `wcd` walks netlist `.param` dimensions only: with osdimc-only statistics it says *"the deck draws no Gaussian .params — use agauss"*; with one netlist dimension added it reports P(fail) = 0 for a 4σ event that `highsigma` and `montecarlo` both see | medium — wrong answer, wrong advice |
 | [F4](#f4--mvnormi-outside-the-registered-matrix-is-an-independent-draw) | `mvnorm(i)` with *i* outside 1..*k*, or with no `mccorr` registered, silently returns an independent standard normal — the requested correlation is simply not applied | low — silent |
 | [F5](#f5--a-contradictory-spec-yields-0--in-silence) | `-spec x -max 1.1m -min 0.9m` (max below min) is accepted and yields 0 % without a word | low — diagnostic |
@@ -114,6 +114,23 @@ Enhancement-537 records the *seeded* half of this problem ("every
 path still has it. Either advance the default per invocation or print the
 seed in the report — printing it is the smaller change and makes the
 determinism a stated fact rather than a trap.
+
+**Resolved (2026-09-04, after the hunt) — by stating it.** The default seed
+stays 1: a fixed seed pairs the samples across design changes, which is what a
+before/after comparison wants, and 33 un-seeded invocations across the suites
+rely on it. What changes is that the determinism is now a stated fact. Every
+banner ends with the seed — `montecarlo: 300 random samples, analysis 'op',
+1 spec, seed 1 (default)`, `…, seed 7` when given — and an un-seeded run
+adds *"NOTE : no -seed given -- the netlist's random .params are drawn from
+the default seed 1, so running this montecarlo again repeats them; give -seed
+<n> for an independent replication"*. On a deck with `.option osdimc` the
+note adds that those draws are keyed per trial and do advance — measured:
+two un-seeded `montecarlo 3` runs used trials 2–4 and 5–7, so on such a deck
+only the netlist's own draws repeat. `wcd` states the seed on its
+importance-sampling line, the one place it matters. Each command publishes
+`montecarlo_seed` / `highsigma_seed` / `wcd_seed` for scripts, cleared on
+entry with the rest of its namespace. Pinned: `montecarlo_examples` 12 → 14,
+`highsigma_examples` 12 → 14, `wcd_examples` 21 → 22.
 
 ---
 

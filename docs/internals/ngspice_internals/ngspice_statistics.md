@@ -284,7 +284,13 @@ independent sampling.
 
 - **Reproducibility.** Every run is seeded (`setseed`, or the command's `seed`/
   `-seed`); the same seed reproduces the sample sequence bit-for-bit, so results
-  are portable and regressions are detectable.
+  are portable and regressions are detectable. **Without `-seed` the seed is
+  1, every time** — so "run it again" returns the same netlist draws, which is
+  what a paired comparison across design changes wants and what a replication
+  does not. The banner states the seed (`…, seed 1 (default)` / `seed 7`), an
+  un-seeded run says a rerun repeats it, and `montecarlo_seed` /
+  `highsigma_seed` / `wcd_seed` publish it for scripts. `.option osdimc` draws
+  are keyed per trial and advance across commands regardless.
 - **Which sampler?** Use **plain MC** to sanity-check; **`mcsample lhs`** (or
   `montecarlo -lhs`) for an accurate mean/stddev/yield at a fixed budget;
   **`highsigma`** when the interesting probability is out in the 4–6 σ tail.

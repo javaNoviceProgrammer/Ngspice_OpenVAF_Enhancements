@@ -171,6 +171,24 @@ refused = ("wcd: the metric (v(nosuch)) did not resolve" in out
 chk("-metric v(nosuch): refused naming the metric, no beta, op not blamed (1=yes)",
     1.0 if refused else 0.0, 1.0, 0.0)
 
+# ---- MC hunt F2 (2026-09-04): the importance-sampling refinement states its
+# seed, an un-seeded one says a rerun repeats it, and wcd_seed is published.
+out = run("""* wcd -is without a seed
+.param rr = agauss(1000, 1, 1)
+V1 a 0 DC 1
+R1 a 0 {rr}
+.control
+wcd -metric -1/i(v1) -max 1004.5 -analysis op -is 200
+print wcd_seed
+.endc
+.end
+""", "_is0.cir")
+stated = ("centred on the MPFP, seed 1 (default)" in out
+          and "running this wcd -is again repeats" in out
+          and grab(out, r"wcd_seed = ([-\d.eE+]+)") == 1.0)
+chk("-is un-seeded: 'seed 1 (default)' stated, rerun note, wcd_seed = 1 (1=yes)",
+    1.0 if stated else 0.0, 1.0, 0.0)
+
 print("Enhancement-305: worst-case distance / MPFP vs the analytic Gaussian tail")
 bad = 0
 for w, v, g, wt, n in rows:

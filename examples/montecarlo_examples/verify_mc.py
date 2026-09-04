@@ -321,5 +321,31 @@ check("a -spec naming no vector is refused, spec named, no yield reported",
       "spec 1 (v(nosuch)) did not resolve" in tail
       and not re.search(r"yield\s*:", tail.partition("---after---")[0]), "")
 
+# --- MC hunt F2 (2026-09-04): an un-seeded run re-seeds the netlist PRNG from
+# the constant 1, so "run it again" returned the same samples and the report
+# never said which seed it had used. The default stays; the banner now states
+# the seed, an un-seeded run says what repeating it does, and montecarlo_seed
+# publishes the seed for scripts.
+log = run_deck("_mc9.cir", """the seed is stated
+.param rr = agauss(1k, 100, 1)
+v1 1 0 dc 1
+r1 1 0 {rr}
+.control
+montecarlo 20 -spec i(v1) -max -0.9m -min -1.1m
+print montecarlo_seed
+echo ---seeded---
+montecarlo 20 -seed 7 -spec i(v1) -max -0.9m -min -1.1m
+print montecarlo_seed
+.endc
+.end
+""")
+head, _, tail = log.partition("---seeded---")
+check("an un-seeded run states 'seed 1 (default)', says a rerun repeats it, publishes montecarlo_seed = 1",
+      "1 spec, seed 1 (default)" in head and "running this montecarlo again repeats" in head
+      and grab(head, "montecarlo_seed") == 1.0, "")
+check("-seed 7 is stated in the banner, with no repeat note, and montecarlo_seed = 7",
+      "1 spec, seed 7\n" in tail and "repeats" not in tail
+      and grab(tail, "montecarlo_seed") == 7.0, "")
+
 print(f"\n{'ALL PASS' if failed == 0 else 'FAILURES'}: {passed} passed, {failed} failed")
 raise SystemExit(1 if failed else 0)
