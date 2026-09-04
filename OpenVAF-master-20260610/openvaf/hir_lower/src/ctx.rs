@@ -1,5 +1,5 @@
 use ahash::AHashSet;
-use hir::{CompilationDB, Function, Name, Node, Type, Variable};
+use hir::{BranchWrite, CompilationDB, Function, Name, Node, Type, Variable};
 use mir::builder::{InsertBuilder, InstBuilder};
 use mir::{
     Block, DataFlowGraph, FuncRef, Inst, Opcode, Param, SourceLoc, Value, FALSE, F_ZERO, INFINITY,
@@ -21,6 +21,18 @@ pub struct LoweringCtx<'a, 'c> {
     pub intern: &'a mut HirInterner,
     pub places: TiSet<Place, PlaceKind>,
     tagged_vars: AHashSet<Variable>,
+    /// Round-4 audit: the branches whose `IsVoltageSrc` classification is
+    /// visible ON THE PATH BEING LOWERED. `places` answers "does this location
+    /// exist at all", which is monotonic -- once any arm classifies a branch
+    /// it looks classified everywhere, including in its own SIBLING arm. That
+    /// is the wrong question for the noise-only rule in `contribute_value_`
+    /// (see there): a noise-only contribution must not overwrite a
+    /// classification that reaches it, but in an arm where none reaches it,
+    /// its own kind is the only information there is. `make_cond` saves and
+    /// restores this set per arm and unions the two afterwards, which is
+    /// exactly "a definition in one arm reaches code after the merge, but not
+    /// its sibling".
+    classified_branches: AHashSet<BranchWrite>,
     pub inside_lim: bool,
     /// We create a dedicated callback for each noise source
     /// by giving each callback a unique index. Kind of ineffcient
@@ -82,6 +94,7 @@ impl<'a, 'c> LoweringCtx<'a, 'c> {
             no_equations,
             places: TiSet::default(),
             tagged_vars: AHashSet::default(),
+            classified_branches: AHashSet::default(),
             inside_lim: false,
             intern,
             num_noise_sources: 0,
@@ -155,6 +168,17 @@ impl<'a, 'c> LoweringCtx<'a, 'c> {
     /// otherwise returns `None`
     pub fn get_place(&self, kind: PlaceKind) -> Option<Place> {
         self.places.index(&kind)
+    }
+
+    /// Whether a branch-kind classification reaches the point being lowered
+    /// (round-4 audit -- see `classified_branches`).
+    pub fn classification_reaches(&self, write: BranchWrite) -> bool {
+        self.classified_branches.contains(&write)
+    }
+
+    /// Records that this branch's kind is now classified on the current path.
+    pub fn record_classification(&mut self, write: BranchWrite) {
+        self.classified_branches.insert(write);
     }
 
     /// Defines a new parameter (if not already present) and returns its value
@@ -377,17 +401,27 @@ impl<'a, 'c> LoweringCtx<'a, 'c> {
         self.func.seal_block(then_dst);
         self.func.seal_block(else_dst);
 
+        // Round-4 audit: branch classifications are path-scoped across the two
+        // arms (see `classified_branches`). The else arm starts from the set
+        // that reached the `if`, not from whatever the then arm added, and the
+        // union is what reaches the code after the merge.
+        let entry_classified = self.classified_branches.clone();
+
         self.func.switch_to_block(then_dst);
         self.func.ensure_inserted_block();
         let then_val = lower_branch(self, true);
         self.func.ins().jump(next_bb);
         let then_tail = self.func.current_block();
 
+        let then_classified = std::mem::replace(&mut self.classified_branches, entry_classified);
+
         self.func.switch_to_block(else_dst);
         self.func.ensure_inserted_block();
         let else_val = lower_branch(self, false);
         self.func.ins().jump(next_bb);
         let else_tail = self.func.current_block();
+
+        self.classified_branches.extend(then_classified);
 
         self.func.switch_to_block(next_bb);
         self.func.ensure_inserted_block();

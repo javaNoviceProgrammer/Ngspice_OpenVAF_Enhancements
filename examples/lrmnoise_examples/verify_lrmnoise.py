@@ -182,5 +182,66 @@ if rc == 0:
     check("the device total matches", close(num(sim, "onoise_n1"),
           (9e-18 * 250000) ** 0.5, 1e-9), f"{num(sim, 'onoise_n1')}")
 
+# ---- [4] noise and ac_stim on a SWITCH BRANCH (round-4 audit) --------------
+# LRM 5.6.5 / 5.6.1.3 / 4.6.4 / 6.3.6. A switch branch carries its branch
+# current as an unknown, so both arms' sources inject into that equation --
+# which is where both defects lived. Every value below is the PLAIN branch's,
+# measured on the same circuit: the switch branch must not differ.
+print("\nnoise on a switch branch (LRM 5.6.5 + 6.3.6):")
+SWDECK = "V1 a 0 dc 0 ac 1\nR1 a x 1k\nN1 x 0 mm {inst}\n.model mm {m} {mp}"
+SWCTL = ("noise v(x) V1 lin 1 1k 1k\nsetplot noise1\nprint onoise_spectrum")
+
+rc, out, osdi = compile_file("nsw.va")
+check("[4] nsw.va compiles", rc == 0, out.strip().splitlines()[-1] if rc else "")
+
+if rc == 0:
+    def sw_noise(model, mp, inst, tag):
+        sim = run(SWDECK.format(m=model, mp=mp, inst=inst), SWCTL, tag, osdi)
+        return num(sim, "onoise_spectrum")
+
+    # the flow arm, against the plain branch, at m = 1 and m = 9
+    for mult, want, why in [
+        ("", 5e-4, "m=1"),
+        ("m=9", 3e-4, "m=9 -- LRM 6.3.6 multiplies the noise POWER, so the "
+                      "density goes as sqrt(m); this read 2.70e-3 (m^1.5)"),
+    ]:
+        plain = sw_noise("nplain", "", mult, f"pl{mult}")
+        swf = sw_noise("nswf", "sw=1", mult, f"swf{mult}")
+        check(f"[4] flow arm equals the plain branch at {why}",
+              close(plain, want, 1e-9) and close(swf, want, 1e-9),
+              f"plain={plain} switch={swf}")
+
+    # the potential arm -- the noise-only contribution that used to vanish
+    # when its arm was lowered second
+    p_second = sw_noise("nswf", "sw=0", "", "pot2nd")
+    p_first = sw_noise("nswp", "sw=1", "", "pot1st")
+    check("[4] a noise-only potential arm survives whichever arm is written "
+          "first (it was dropped when lowered second: 4.07e-9, the load alone)",
+          close(p_second, 1e-6, 1e-9) and close(p_first, 1e-6, 1e-9),
+          f"flow-first={p_second} potential-first={p_first}")
+    check("[4] ...and the potential arm still divides by sqrt(m) (6.3.6)",
+          close(sw_noise("nswf", "sw=0", "m=9", "pot9"), 1e-6 / 3, 1e-9),
+          f"{sw_noise('nswf', 'sw=0', 'm=9', 'pot9b')}")
+
+    # ac_stim rides the same injection point and had the same extra m
+    print("\nac_stim on a switch branch (LRM 4.6.3 + 6.3.6):")
+    ACCTL = "ac lin 1 1k 1k\nprint vm(x)"
+    def sw_ac(model, mp, inst, tag):
+        body = "V1 a 0 dc 0 ac 0\nR1 a x 1k\nN1 x 0 mm {i}\n.model mm {m} {p}".format(
+            m=model, p=mp, i=inst)
+        return num(run(body, ACCTL, tag, osdi), "vm(x)")
+
+    for mult, want in [("", 0.5), ("m=9", 0.9)]:
+        plain = sw_ac("nplainac", "", mult, f"acpl{mult}")
+        swa = sw_ac("nswac", "sw=0", mult, f"acsw{mult}")
+        check(f"[4] a current ac_stim arm equals the plain branch at "
+              f"{mult or 'm=1'} (it read 8.1 V at m=9)",
+              close(plain, want, 1e-9) and close(swa, want, 1e-9),
+              f"plain={plain} switch={swa}")
+    check("[4] a voltage ac_stim arm stays mfactor-invariant (E-51)",
+          close(sw_ac("nswac", "sw=1", "", "acv1"), 1.0, 1e-9)
+          and close(sw_ac("nswac", "sw=1", "m=9", "acv9"), 1.0, 1e-9),
+          f"{sw_ac('nswac', 'sw=1', 'm=9', 'acv9b')}")
+
 print(f"\n{'ALL PASS' if checks == passed else 'FAILURES'}: {passed}/{checks} passed")
 sys.exit(0 if checks == passed else 1)

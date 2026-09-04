@@ -935,9 +935,19 @@ impl BodyLoweringCtx<'_, '_, '_> {
         // noise is zero in large-signal analyses, so it carries no source
         // kind). A branch whose ONLY contributions are noise still gets its
         // classification defined below, exactly as before.
-        let keep_classification =
-            is_noise_only && self.ctx.get_place(PlaceKind::IsVoltageSrc(write)).is_some();
+        // Round-4 audit: the question is whether a classification REACHES this
+        // point, not whether the place exists. `get_place` is monotonic, so a
+        // classification made in one arm of an `if` made its own SIBLING look
+        // classified -- and a noise-only contribution alone in that sibling
+        // (`else V(p,n) <+ white_noise(...)`) was suppressed, leaving the
+        // branch a pure flow source and dropping the arm's noise entirely.
+        // In an arm where nothing reaches, the contribution's own kind is the
+        // only information there is: LRM 4.6.4 makes the noise zero in large
+        // signal, so that arm is a 0 V source (5.6.1.3), which is a real
+        // switch branch.
+        let keep_classification = is_noise_only && self.ctx.classification_reaches(write);
         if !keep_classification {
+            self.ctx.record_classification(write);
             self.ctx.def_place(PlaceKind::IsVoltageSrc(write), voltage_src.into());
         }
 

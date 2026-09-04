@@ -637,6 +637,28 @@ per-operator override, not nature tolerances in general.
   I(a,b) <+ white_noise(4.0 * `P_K * $temperature / r, "thermal");
   I(d,s) <+ gm * white_noise(gamma_4kT, "induced");   // op-dependent factor
   ```
+- **noise on a switch branch** (LRM 5.6.5 with 5.6.1.3, 4.6.4, 6.3.6): a
+  switch branch carries its branch *current* as an unknown, so every source
+  either arm contributes is injected into that one equation rather than into
+  the Kirchhoff rows. Two divergences lived there, both found by the round-4
+  audit, both fixed, and neither visible on a plain branch. **A potential arm
+  holding nothing but a noise source is a potential source** — 4.6.4 makes
+  the noise zero in large signal, so the arm contributes `V = 0` plus a noise
+  source, and 5.6.1.3 discards any retained flow — and it is no longer
+  dropped when the flow arm happens to be lowered first (both arm orders read
+  the same value now; one of them used to report only the load resistor).
+  The noise-only rule that keeps BSIM4's access-region noise from
+  reclassifying a collapse branch now asks whether a classification *reaches*
+  the contribution along the path being lowered, not whether one exists
+  anywhere in the function, which is what had made a sibling `if` arm look
+  classified. **And the arms take 6.3.6's multiplicity exactly once**: the
+  branch-current equation's own coupling already carries `$mfactor`, so a
+  flow arm under netlist `m=9` reads √9 × the one-device density (it read
+  27×, i.e. *m*^1.5, on the netlist route while the `#(.$mfactor(9))` route
+  was right), the potential arm still divides by √*m*, and `ac_stim` — which
+  6.3.6 does not scale — is left alone on both arms (its current form had
+  read 8.1 V for 0.9 V). Every value now equals a plain branch of the same
+  conductance; pinned by `examples/lrmnoise_examples/nsw.va`: ✅
 - `analysis("ac","tran",…)` variadic, with the AC/noise operating point
   counting as its parent analysis per LRM 4.6.1 — and, since the
   analysis-noise audit, the full Table 4-22 static-phase detail:
@@ -1064,7 +1086,9 @@ multiplicatively with the netlist-level instance value (and
 multiplicatively), the child's flow contributions scale by *m*, its flow
 probes read the per-copy current back out, and its noise scales as the
 parallel combination demands (contributed-current noise power ×*m*,
-contributed-voltage noise power ÷*m*).
+contributed-voltage noise power ÷*m*). **Switch branches obey the same law
+on both routes** as of the round-4 audit fix — see the noise-on-a-switch-branch
+entry in §4.3 — as does `ac_stim` on either arm.
 
 **Table 9-29's own arithmetic and bounds hold** as of
 [E-541](../../enhancements_doc/Enhancement-541.md). `$angle` resolves as a sum

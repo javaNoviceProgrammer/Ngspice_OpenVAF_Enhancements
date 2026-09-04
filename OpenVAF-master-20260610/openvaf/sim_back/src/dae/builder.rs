@@ -984,28 +984,34 @@ impl<'a> Builder<'a> {
         let mfactor = self
             .intern
             .ensure_param(&mut self.cursor, ParamKind::ParamSysFun(ParamSysFun::mfactor));
+        // Round-4 audit: a switch branch carries its branch CURRENT as an
+        // unknown, so every source here -- voltage arm and current arm alike --
+        // is injected into that branch-current equation (`add_source_equation`),
+        // not into the Kirchhoff rows. The equation's coupling to the nodes is
+        // itself scaled by mfactor in `ensure_optbarriers`, so a source placed
+        // there must NOT carry the node-injection scaling a second time:
+        //
+        //   plain flow branch   noise at KCL rows      factor sqrt(m), transfer Z
+        //   switch branch       noise at the I equation, transfer m*Z
+        //
+        // Taking `sqrt(m)` on the current arm therefore produced m^1.5 -- a
+        // netlist `m=9` read 2.70e-3 where the LRM's power-times-m rule gives
+        // 3.00e-4 -- while the voltage arm, which already divides, was right.
+        // Dividing on both arms leaves sqrt(m*D)*Z, and the deterministic
+        // `ac_stim` current stimulus needs no factor at all (the transfer's own
+        // m is exactly the "m parallel copies sum their currents" rule; it read
+        // 8.1 V where a plain branch reads 0.9 V).
         for ii in 0..voltage_src.noise.len() + current_src.noise.len() {
             let is_ac_stim = matches!(noise[ii].kind, NoiseSourceKind::AcStim { .. });
-            if ii < voltage_src.noise.len() {
-                // Voltage noise divides by sqrt(mfactor); a deterministic
-                // ac_stim voltage stimulus is mfactor-invariant (Enhancement-51)
-                if !is_ac_stim {
-                    noise[ii].factor = self.mfactor_divide(mfactor, noise[ii].factor);
-                    if noise[ii].factor_react != F_ZERO {
-                        noise[ii].factor_react =
-                            self.mfactor_divide(mfactor, noise[ii].factor_react);
-                    }
-                }
-            } else if is_ac_stim {
-                // deterministic current stimulus: linear in mfactor
-                noise[ii].factor = self.mfactor_multiply_linear(mfactor, noise[ii].factor);
-            } else {
-                // Current noise
-                noise[ii].factor = self.mfactor_multiply(mfactor, noise[ii].factor);
-                if noise[ii].factor_react != F_ZERO {
-                    noise[ii].factor_react =
-                        self.mfactor_multiply(mfactor, noise[ii].factor_react);
-                }
+            // an ac_stim on either arm is mfactor-invariant HERE: the voltage
+            // form is invariant by Enhancement-51, and the current form gets
+            // its linear m from the branch-current equation's own coupling
+            if is_ac_stim {
+                continue;
+            }
+            noise[ii].factor = self.mfactor_divide(mfactor, noise[ii].factor);
+            if noise[ii].factor_react != F_ZERO {
+                noise[ii].factor_react = self.mfactor_divide(mfactor, noise[ii].factor_react);
             }
         }
 
