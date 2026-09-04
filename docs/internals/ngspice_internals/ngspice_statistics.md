@@ -201,6 +201,16 @@ mccorr 1  1                            ; one shared process factor
 Here `mvnorm(1)` (the global process shift) is shared by both devices, while each
 `agauss(0,1,1)` is independent local mismatch — exactly the standard model.
 
+**An index the matrix does not have is refused** (MC hunt F4, 2026-09-04):
+with a `k × k` matrix registered, `mvnorm(0)`, `mvnorm(k+1)` or a fractional
+index is a `.param` error naming the range, where it used to fall through to an
+independent draw in silence. With **no** matrix registered `mvnorm(i)` draws
+independently by design — that is every deck's state at load, before its
+`.control` block has run `mccorr` — so `mccorr` itself reports an index the
+deck has already used beyond the matrix, and notes that the load-time draws
+are independent until a `reset` redraws them (the sampling commands do one per
+sample).
+
 ## 6. Yield — `montecarlo`
 
 `montecarlo` packages the whole flow: run the samples, apply the pass/fail specs,

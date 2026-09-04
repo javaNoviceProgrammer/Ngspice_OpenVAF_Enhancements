@@ -249,6 +249,42 @@ y_corr = two_param_yield(0.9)
 check("corr=0.9 yield > independent yield (same-direction specs)",
       y_corr > y_indep + 0.02, f"indep={y_indep:.4f}, corr={y_corr:.4f}")
 
+# --- MC hunt F4 (2026-09-04): an index the matrix does not have is refused --
+# mvnorm(3) against a 2x2 matrix, or mvnorm(0), used to fall through to an
+# independent standard normal without a word, so the correlation the deck
+# asked for was simply absent; a fractional index was rounded in silence.
+# With a matrix registered both are now .param errors. Without one the
+# independent draw stands (E-151's design, and check [2] above) -- which is
+# every deck's state at LOAD, before its .control block has run mccorr; so
+# mccorr itself now reports an index the deck has already used beyond it.
+print("[F4] mvnorm outside the registered matrix is a deck error, not a silent draw")
+BAD = """* mvnorm beyond the registered matrix
+.param a = 10 + 2*mvnorm(%s)
+V1 x 0 DC {a}
+R1 x 0 1k
+.control
+mccorr 2 1 0.9 0.9 1
+%s
+op
+print v(x)
+.endc
+.end
+"""
+log = run(BAD % ("3", "reset"))
+check("mvnorm(3) against a 2x2 matrix: the reset refuses it, naming the range",
+      "so only mvnorm(1..2) exist" in log and "v(x) = " not in log,
+      "refused" if "so only mvnorm(1..2) exist" in log else "NOT refused")
+log = run(BAD % ("1.5", "reset"))
+check("mvnorm(1.5) is refused as a non-integer index",
+      "index must be a whole number" in log and "v(x) = " not in log, "")
+log = run(BAD % ("2", "reset"))
+check("mvnorm(2) against a 2x2 matrix still draws, with no error",
+      "v(x) = " in log and "Error in netlist" not in log, "")
+log = run(BAD % ("3", ""))
+check("without a reset, mccorr says the deck already used mvnorm(3) beyond it",
+      "already evaluated mvnorm(3), which this 2 x 2 matrix does not have" in log
+      and "v(x) = " in log, "the load-time draw was independent, and it says so")
+
 import shutil
 shutil.rmtree(SCRATCH, ignore_errors=True)
 

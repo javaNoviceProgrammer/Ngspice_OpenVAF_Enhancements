@@ -1145,8 +1145,33 @@ formula(dico_t *dico, const char *s, const char *s_end, bool *perror)
                         u = aunif(v, u);
                     else if (fu == XFU_LIMIT)
                         u = limit(v, u);
-                    else if (fu == XFU_MVNORM)
-                        u = mc_corr_component((int) (u + (u < 0 ? -0.5 : 0.5)));
+                    else if (fu == XFU_MVNORM) {
+                        /* 2026-09-04 MC hunt, F4: an index the registered
+                         * matrix does not have -- mvnorm(3) against a 2x2,
+                         * mvnorm(0) -- used to fall through to an independent
+                         * standard normal without a word, so the correlation
+                         * the deck asked for was simply absent. With a matrix
+                         * registered that is a deck error, refused here like
+                         * any other bad .param. A fractional index was
+                         * rounded in silence; it is refused too. With NO
+                         * matrix registered the independent draw stands
+                         * (Enhancement-151's design, and the state every deck
+                         * is in at load time, before its .control block has
+                         * run `mccorr`). */
+                        double r = floor(u + 0.5);
+                        int k = mc_corr_size();
+                        if (fabs(u - r) > 1e-9)
+                            error = message(dico, "mvnorm(%g): the component "
+                                            "index must be a whole number\n", u);
+                        else if (k > 0 && (r < 1.0 || r > (double) k))
+                            error = message(dico, "mvnorm(%g): the registered "
+                                            "correlation matrix is %d x %d "
+                                            "(mccorr %d ...), so only "
+                                            "mvnorm(1..%d) exist\n",
+                                            u, k, k, k, k);
+                        else
+                            u = mc_corr_component((int) r);
+                    }
                     else
                         u = mathfunction(fu, v, u);
                 }

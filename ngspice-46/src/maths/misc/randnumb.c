@@ -438,6 +438,8 @@ static double  *corr_L = NULL;     /* [k*k] lower Cholesky factor           */
 static double  *corr_y = NULL;     /* [k] cached correlated draw            */
 static double  *corr_z = NULL;     /* [k] scratch for the underlying z      */
 static int      corr_drawn = 0;    /* has corr_y been built this sample?    */
+static int      corr_idx_seen = 0; /* MC hunt F4: largest mvnorm(i) evaluated
+                                      while NO matrix was registered         */
 
 /* splitmix64 -- a tiny, self-contained, reproducible generator used only to
  * build the per-dimension strata, kept independent of the global PRNG state. */
@@ -748,7 +750,18 @@ void mc_lhs_config(int nsamples, unsigned seed)
  * then mapped by the Cholesky factor: y = L*z. */
 double mc_corr_component(int idx)
 {
-    if (corr_k <= 0 || idx < 1 || idx > corr_k)
+    /* MC hunt F4: with no matrix registered the independent draw stands --
+     * every deck is in this state at load time, before its .control block
+     * has run `mccorr` -- but remember the index, so `mccorr` can say when
+     * the deck has already used one its matrix does not have. An index out
+     * of range WITH a matrix registered never reaches here: the .param
+     * evaluator refuses it (xpressn.c). */
+    if (corr_k <= 0) {
+        if (idx > corr_idx_seen)
+            corr_idx_seen = idx;
+        return mc_sample_gauss();
+    }
+    if (idx < 1 || idx > corr_k)
         return mc_sample_gauss();
     if (!corr_drawn) {
         int i, j;
@@ -763,6 +776,13 @@ double mc_corr_component(int idx)
         corr_drawn = 1;
     }
     return corr_y[idx - 1];
+}
+
+/* 2026-09-04 MC hunt, F4: the registered group size, so the .param evaluator
+ * can refuse an index the matrix does not have (see xpressn.c). */
+int mc_corr_size(void)
+{
+    return corr_k;
 }
 
 /* Register a k x k correlation matrix (row-major, symmetric, unit diagonal) and
@@ -804,6 +824,29 @@ int mc_corr_config(int k, const double *mat)
     return 0;
 }
 
+/* MC hunt F4: after a matrix is registered, say what the deck has already
+ * done with mvnorm(). Its .params were evaluated at load, before this
+ * command ran, so those draws were independent; the index they used is the
+ * one fact worth checking here -- one beyond the matrix is a mistake the
+ * next reset will refuse, and until then the value in the circuit is an
+ * uncorrelated draw with no error attached. */
+static void mc_corr_report_seen(int k)
+{
+    if (corr_idx_seen <= 0)
+        return;
+    if (corr_idx_seen > k)
+        fprintf(cp_err, "mccorr: the deck has already evaluated mvnorm(%d), which "
+                        "this %d x %d matrix does not have -- that draw was an "
+                        "independent normal, and a reset will refuse the index; "
+                        "use mvnorm(1..%d)\n", corr_idx_seen, k, k, k);
+    else
+        fprintf(cp_out, "  NOTE    : the deck's .params were evaluated before this "
+                        "matrix existed, so their mvnorm() draws so far are "
+                        "independent; a reset (montecarlo, highsigma and wcd do "
+                        "one per sample) redraws them correlated\n");
+    corr_idx_seen = 0;
+}
+
 /* mccorr <k> <m11> <m12> ... <mkk>   -- register a k x k correlation matrix
  * mccorr off                          -- clear it                              */
 void com_mccorr(wordlist *wl)
@@ -820,6 +863,7 @@ void com_mccorr(wordlist *wl)
         tfree(corr_L); tfree(corr_y); tfree(corr_z);
         corr_L = corr_y = corr_z = NULL;
         corr_k = 0;
+        corr_idx_seen = 0;                  /* MC hunt F4 */
         printf("Correlated sampling cleared.\n");
         return;
     }
@@ -843,9 +887,11 @@ void com_mccorr(wordlist *wl)
     if (mc_corr_config(k, mat) != 0)
         fprintf(cp_err, "mccorr: the matrix is not positive-definite "
                         "(not a valid correlation matrix)\n");
-    else
+    else {
         printf("Correlated sampling: %d x %d correlation matrix registered; "
                "use mvnorm(1..%d) in .param expressions.\n", k, k, k);
+        mc_corr_report_seen(k);             /* MC hunt F4 */
+    }
     tfree(mat);
 }
 

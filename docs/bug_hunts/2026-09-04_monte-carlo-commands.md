@@ -25,7 +25,7 @@ cannot see.
 | [F1](#f1--a-quoted--spec-or--metric-is-scored-as-0-and-reported-with-confidence) | a `-spec`/`-metric` written in double quotes — or naming a vector that does not exist — is evaluated as 0 and reported as a definite 0 % or 100 % yield / P(fail); the evaluator's validity flag is discarded | medium — wrong answer, run completes. **Fixed** |
 | [F2](#f2--un-seeded-runs-are-identical-replications) | `montecarlo` and `highsigma` without `-seed` re-seed from the constant `1` on every invocation, so "run it again" returns the same samples; the report never states the seed | medium — a replication that is not one. **Fixed** (stated) |
 | [F3](#f3--wcd-cannot-see-model-declared-statistics-and-says-the-wrong-thing) | `wcd` walks netlist `.param` dimensions only: with osdimc-only statistics it says *"the deck draws no Gaussian .params — use agauss"*; with one netlist dimension added it reports P(fail) = 0 for a 4σ event that `highsigma` and `montecarlo` both see | medium — wrong answer, wrong advice. **Fixed** |
-| [F4](#f4--mvnormi-outside-the-registered-matrix-is-an-independent-draw) | `mvnorm(i)` with *i* outside 1..*k*, or with no `mccorr` registered, silently returns an independent standard normal — the requested correlation is simply not applied | low — silent |
+| [F4](#f4--mvnormi-outside-the-registered-matrix-is-an-independent-draw) | `mvnorm(i)` with *i* outside 1..*k*, or with no `mccorr` registered, silently returns an independent standard normal — the requested correlation is simply not applied | low — silent. **Fixed** |
 | [F5](#f5--a-contradictory-spec-yields-0--in-silence) | `-spec x -max 1.1m -min 0.9m` (max below min) is accepted and yields 0 % without a word | low — diagnostic |
 
 ---
@@ -206,6 +206,24 @@ message, would close this.
 Measured in range, the machinery is exact: ρ = 0.9 gives +0.909, ρ = −0.9
 gives −0.877, ρ = 0.5 gives +0.505, and `mccorr off` gives −0.027, over 400
 resets each.
+
+**Resolved (2026-09-04, after the hunt).** With a matrix registered, an index
+outside it — `mvnorm(3)` against a 2×2, `mvnorm(0)` — is now a `.param`
+error from the numparam evaluator (`frontend/numparam/xpressn.c`): *"mvnorm(3):
+the registered correlation matrix is 2 x 2 (mccorr 2 ...), so only
+mvnorm(1..2) exist"*, and the deck fails like any other bad `.param`. A
+fractional index, which was rounded in silence, is refused as well. The
+no-matrix case stays an independent draw, as Enhancement-151 designed and the
+yield suite pins — necessarily so, because **every deck is in that state at
+load**: its `.param` lines are evaluated before its `.control` block has run
+`mccorr`, so a deck that registers the matrix and then runs `op` without a
+`reset` computes on independent draws whatever the index. That path is no
+longer silent either: `mc_corr_component` remembers the largest index used
+while nothing was registered, and `mccorr` reports it — *"the deck has
+already evaluated mvnorm(3), which this 2 x 2 matrix does not have -- that
+draw was an independent normal, and a reset will refuse the index"* — or,
+for an in-range index, notes that the load-time draws are independent until a
+reset redraws them. Pinned: `yield_examples` +4 checks.
 
 ---
 
