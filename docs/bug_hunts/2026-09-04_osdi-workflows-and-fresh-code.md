@@ -29,7 +29,7 @@ by `.nodeset v(q)=0` settles in the opposite state from the built-in one.
 |---|---|---|
 | [F1](#f1--the-limiter-across-live-internal-drainsource-nodes-makes-convergence-worse-and-can-break-it) | with `rdsmod=1` (live internal drain/source nodes) the limiter costs 5–12× the iterations of the un-limited path, pulls in gmin stepping, and with `rgatemod=1` added the DC operating point fails altogether; the verbose report presents the internal-node path as a feature | **high** — default-on, wrong direction, one configuration fails |
 | [F2](#f2--a-bsim4-osdi-bistable-cell-steered-by-nodeset-lands-in-the-other-state) | `.nodeset v(q)=0` (or 0.05) on a 6T cell with OSDI BSIM4 ends in the mirrored state; the built-in twin and OSDI PSP103 honour it; a chain given its exact solution as nodeset takes 30–40 iterations against 6 | medium — wrong state, silently; not the limiter |
-| [F3](#f3--altermodalter-on-a-statistical-osdimc-parameter-is-undone-by-the-sampling-commands) | after `altermod @mm[r]=1100` on a model-declared statistical parameter, `montecarlo`, `highsigma` and `wcd` all sample around the original 1000 and the operating point afterwards reads a draw | medium — confident wrong statistics |
+| [F3](#f3--altermodalter-on-a-statistical-osdimc-parameter-is-undone-by-the-sampling-commands) | after `altermod @mm[r]=1100` on a model-declared statistical parameter, `montecarlo`, `highsigma` and `wcd` all sample around the original 1000 and the operating point afterwards reads a draw | medium — confident wrong statistics. **Fixed** (the user's alters are journaled and replayed after the internal resets) |
 | [F4](#f4--a-statistical-param-on-an-osdi-model-card-for-an-instance-class-parameter-yields-0-) | `.model nmv bsim4va(l={ll})` with `ll` an `agauss` param: `montecarlo` prints *model has no parameter l* once per trial and reports yield 0 %; `highsigma` and `wcd` apply the same deck correctly | medium-low — wrong number, loud but not refused |
 | [F5](#f5--the-display-coalescing-ring-resets-on-every-setup-pass) | `sens` on an OSDI BSIM4 deck prints the model's `$strobe` 3 477 times with no summary; a `.dc` over a device parameter and `montecarlo` print it once per point | low — noise, E-543 F4 follow-up |
 | [F6](#f6--option-osdilim_verbose-on-the-options-card-is-honoured-and-called-unknown) | `.option osdilim_verbose` works and is warned *unknown option … ignored* | low — diagnostic |
@@ -40,6 +40,7 @@ by `.nodeset v(q)=0` settles in the opposite state from the built-in one.
 | [F11](#f11--sens-vector-names-mix-two-separators) | `n1:r` beside `n1__mfactor`, `n1_dt`, `n1_temp` | cosmetic |
 | [F12](#f12--hisim2-is-never-limited-its-internal-nodes-are-named-dpsp) | the recognizer knows `gp` for the gate but not `dp`/`sp`/`bp`, and HiSIM2's noise node `n` is live: a 20-stage HiSIM2 chain takes 258 iterations with gmin stepping, limiter or not | low — E-543's claim does not reach HiSIM2 |
 | [F13](#f13--an-absent-terminal-is-warned-about-per-instance-then-left-floating) | BSIMBULK (`d,g,s,b,t`) written with four nodes: 40 three-line warnings name the absent `t`, then the thermal node floats and the DC operating point fails after 373 iterations and three stepping strategies without referring back; with `t` grounded, 11 iterations | low — diagnostic |
+| [F14](#f14--set-temp-is-dropped-by-every-reset-the-sampling-commands-internal-ones-included) | `set temp=127` then `wcd`/`highsigma`/`montecarlo` (reset path): every sample runs at the deck's temperature; a user `reset` drops it too; pre-existing, found while fixing F3 | medium-low — silent wrong temperature |
 
 Three observations that are design limits rather than defects, and three
 things that are not OSDI-specific, follow the findings.
@@ -193,6 +194,26 @@ message.
 
 Reproduce: `hunt3/o5.cir`, `p1h.cir`, and the earlier `z*` decks.
 
+**Resolved.** The cause was broader than the finding said, and one sentence
+of it was wrong: the sampling commands' internal `reset` is a full re-source
+(`highsigma` and `wcd` on every evaluation, `montecarlo` whenever E-346's
+fast path cannot arm — which is any deck whose only variability is
+model-declared), and it discarded *every* `alter`/`altermod`, statistical
+or not. Re-measured on the same deck with a plain `altermod @pm[r]=3000`
+and a netlist `alter r3=2k` beside the statistical one: all three were
+back at their deck values after `montecarlo 3`. "Plain OSDI altermod
+survives" had been observed on a deck where the fast path armed. The fix
+journals the `alter`/`altermod` commands the user types — armed only at
+the command dispatcher, so the optimizer's, `sweep`'s, `temper`'s and
+aging's own alters stay out — with the value already evaluated, one entry
+per target, and replays the journal after each internal reset beside the
+E-501 aging replay; a user-typed `reset` forgets it, and `optimize` journals
+its final optimum so a sampling run after it analyses the optimized
+circuit. On the decks above: `wcd` β = 0.41 (was 4.00), `highsigma`
+P(fail) = 0.35 (was 2.3e-5), `montecarlo` banners *(nominal 1100)*, the
+`op` afterwards on the recentred draw, and the plain alters intact. Pinned
+by seven checks in [`examples/mcpolicy_examples/`](../../examples/mcpolicy_examples/).
+
 ## F4 — a statistical `.param` on an OSDI model card, for an instance-class parameter, yields 0 %
 
 OSDI lets an instance-class parameter (`l`, `w`) be given on the model card
@@ -318,6 +339,20 @@ Tying an absent terminal to ground, or naming it again in the failure, is
 the missing piece; the BSIM4 deck written with three nodes (bulk absent)
 gets the same warning and converges in 9, so the policy question only bites
 when the absent terminal has no path.
+
+## F14 — `set temp` is dropped by every reset, the sampling commands' internal ones included
+
+Found while verifying F3's fix on the `temper` machinery, and identical on
+the pre-fix binary. A model card with a `temper` expression
+(`.model rm r(rsh=1k tc1={0.01*(temper/27)})`), `set temp=127`, `op`:
+*Doing analysis at TEMP = 127*, tc1 = 0.047. Then `reset`, `op`: *TEMP =
+27*, tc1 = 0.010 — the variable is still set, the re-sourced circuit does
+not read it, and only a fresh `set temp=126` brings the next analysis back
+up. The sampling commands' internal resets are the same reset, so a
+`montecarlo` (reset path), `highsigma` or `wcd` typed after `set temp=125`
+samples at the deck's temperature and says so only in the per-sample
+*Doing analysis at TEMP* line that `ft_optimizing` silences. `.temp` or
+`.option temp` on the deck survive, being deck text. Not fixed here.
 
 ---
 

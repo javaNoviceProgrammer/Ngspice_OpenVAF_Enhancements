@@ -12,6 +12,7 @@ Author: 1985 Wayne A. Christopher, U. C. Berkeley CAD Group
 #include "com_cdump.h"
 #include "variable.h"
 #include "ngspice/fteext.h"
+#include "com_aging.h"      /* Enhancement-544: the user alter journal */
 
 
 /* Return values from doblock().  I am assuming that nobody will use
@@ -242,7 +243,12 @@ docommand(wordlist *wlist)
             } else if (nargs > command->co_maxargs) {
                 fprintf(cp_err, "%s: too many args.\n", s);
             } else {
+                /* Enhancement-544: an alter/altermod reaching this dispatcher
+                 * is the USER's (the loop commands call the command from C);
+                 * only those are journaled across internal resets. */
+                alter_journal_dispatch(command->co_comname, 1);
                 command->co_func (wlist->wl_next);
+                alter_journal_dispatch(command->co_comname, 0);
             }
         }
 

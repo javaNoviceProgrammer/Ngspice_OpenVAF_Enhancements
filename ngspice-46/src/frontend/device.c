@@ -23,6 +23,9 @@ Modified: 2000 AlansFixes
 #include "../misc/util.h" /* ngdirname() */
 
 #include "gens.h" /* wl_forall */
+#include "com_aging.h" /* Enhancement-544: the user alter journal */
+
+int ft_set_writes = 0;   /* Enhancement-544: bumped by every successful doset() */
 
 
 static wordlist *devexpand(char *name);
@@ -1238,6 +1241,7 @@ old_show(wordlist *wl)
  */
 
 static void com_alter_common(wordlist *wl, int do_model);
+static void com_alter_common_impl(wordlist *wl, int do_model);
 
 void
 com_alter(wordlist *wl)
@@ -1397,8 +1401,23 @@ alter_set(char *dev, char *param, struct dvec *dv, int do_model)
 }
 
 
+/* Enhancement-544: the journal brackets the command. The original text is
+ * taken before the worker splits its words in place; the worker stages the
+ * value it is about to write, and the journal records the pair only when the
+ * command came from the user (control.c armed it) and something was written. */
 static void
 com_alter_common(wordlist *wl, int do_model)
+{
+    char *orig = wl ? wl_flatten(wl) : NULL;
+    alter_journal_begin();
+    com_alter_common_impl(wl, do_model);
+    alter_journal_end(do_model, orig);
+    tfree(orig);
+}
+
+
+static void
+com_alter_common_impl(wordlist *wl, int do_model)
 {
     wordlist *wl_head = wl;
     wordlist *eqword, *words;
@@ -1585,6 +1604,8 @@ com_alter_common(wordlist *wl, int do_model)
         char *unq = cp_unquote(words->wl_word);
         int r = if_setparam_string(ft_curckt->ci_ckt, &dev, param, unq,
                                    do_model);
+        if (r == 1)
+            alter_journal_stage_string(unq);   /* Enhancement-544 */
         tfree(unq);
         if (r != 0)
             return;
@@ -1645,6 +1666,7 @@ com_alter_common(wordlist *wl, int do_model)
         /* Here I was, to change the inclusion in the circuit.
          * will have to revise that dv is right for its insertion.
          */
+        alter_journal_stage_real(dv);          /* Enhancement-544 */
         alter_set(dev, param, dv, do_model);
 
         tfree(rem_xsbuf);
@@ -1670,6 +1692,7 @@ com_alter_common(wordlist *wl, int do_model)
     if (param && (dev[0] == 'm') && (eq(param, "w") || eq(param, "l")))
         if_set_binned_model(ft_curckt->ci_ckt, dev, param, dv);
 
+    alter_journal_stage_real(dv);              /* Enhancement-544 */
     alter_set(dev, param, dv, do_model);
 
  done:

@@ -148,6 +148,7 @@ extern bool ft_noacctprint;
 extern bool ft_noinitprint;
 extern bool ft_norefprint;
 extern bool ft_optimizing;      /* Enhancement-130 */
+extern int ft_set_writes;       /* Enhancement-544: successful parameter writes, counted */
 
 /* Enhancement-477: outer progress for the loop commands (outitf.c).
  * mode: 1 = forced on, 0 = forced off, -1 = auto (only when stdout is a tty).

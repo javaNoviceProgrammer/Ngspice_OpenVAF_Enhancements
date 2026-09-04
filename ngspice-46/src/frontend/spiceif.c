@@ -2461,6 +2461,8 @@ doset(CKTcircuit *ckt, int typecode, GENinstance *dev, GENmodel *mod, IFparm *op
     else
         err = ft_sim->setModelParm (ckt, mod, opt->id, &nval, NULL);
 
+    if (err == OK)
+        ft_set_writes++;             /* Enhancement-544: the alter journal asks */
     return err;
 }
 

@@ -187,8 +187,10 @@ com_rset(wordlist *wl)
      * statistical loop commands issue between samples, but a reset the user
      * asked for must drop them -- otherwise there is no way back to a fresh
      * device short of reloading the file. */
-    if (!aging_internal_reset)
+    if (!aging_internal_reset) {
         aging_forget_writes();
+        alter_journal_forget();      /* Enhancement-544: and the user's alters */
+    }
     com_remcirc(NULL);
     inp_source_recent();
 }

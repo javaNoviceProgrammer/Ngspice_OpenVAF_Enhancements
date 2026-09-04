@@ -86,7 +86,23 @@ reported P(fail) from 3.35e-05 to **0.2967** against a true 0.29670536 — and
 reproduces bit for bit the answer from a deck that never had the bystander
 devices, so they now cost exactly nothing.
 
-`verify_mcpolicy.py` (34 checks, both solvers) pins each behavior with
+Enhancement-544 adds checks 35–41: the **user's `alter`/`altermod` writes
+survive the loop commands' internal resets**. Those resets are full
+re-sources — `highsigma` and `wcd` on every evaluation, `montecarlo` whenever
+the fast path cannot arm, which is this deck (no netlist random binding) —
+and they discarded every altered value, statistical or not: `wcd` reported
+β = 4.00 for a nominal the user had just moved 4σ, `highsigma` P(fail) =
+2e-5 where the recentred nominal made it 0.5, and the `op` after
+`montecarlo` read the un-altered circuit. The commands the user types are
+now journaled (value already evaluated, one entry per target) and replayed
+after each internal reset, as E-501 replays the aging doses; a user-typed
+`reset` forgets them; `optimize` journals its final optimum. The checks read
+the `osdimc_verbose` nominals across `montecarlo`, the value `unset osdimc`
+restores, a plain netlist `alter`, `wcd`'s β against the closed-form 1.03σ
+from the recentred (1100, 0), `highsigma`'s P(r > 1100) = 0.5, the
+user-`reset` case, and an optimum carried through a `montecarlo`.
+
+`verify_mcpolicy.py` (41 checks, both solvers) pins each behavior with
 closed-form expectations computed from the same run's parameter readbacks —
 `v(2) = 1k/(r+dr+1k)` against `@mm[r]`/`@n1[dr]` — plus the deterministic
 mcseed-7 montecarlo discriminators for the init-resident and preserve legs,

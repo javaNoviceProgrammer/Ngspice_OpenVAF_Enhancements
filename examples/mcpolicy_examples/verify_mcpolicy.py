@@ -654,6 +654,81 @@ def main():
           f"refused={'is not a parameter name' in out_m}, "
           f"ran anyway={'P(fail)' in out_m}")
 
+    # ---- Enhancement-544: the user's alters survive the internal resets ----
+    # The sampling commands redraw the deck's randoms with an internal `reset`
+    # (a full re-source) -- highsigma and wcd always, montecarlo whenever the
+    # fast path cannot arm, which is this deck: no netlist random binding.
+    # Every `alter`/`altermod` the user made beforehand was silently undone,
+    # so wcd/highsigma/montecarlo reported the un-altered circuit and the
+    # `op` afterwards read it too. The user's writes are now journaled and
+    # put back after each internal reset (as E-501 does for aging doses); a
+    # user-typed `reset` still forgets them.
+    print("\n  Enhancement-544: user alters across the internal resets")
+
+    def nominals(out, owner_param):
+        return [float(m.group(1)) for m in
+                re.finditer(rf"osdimc: trial \d+: {re.escape(owner_param)} = \S+ "
+                            rf"\(nominal (\S+)\)", out)]
+
+    rc, out = run("mcres", "altermod @mm[r] = 1100\nset osdimc_verbose\n"
+                           "montecarlo 3 -analysis op -spec v(2) -max 0.9\n"
+                           "unset osdimc\nop\nprint @mm[r]")
+    noms = nominals(out, "mm:r")
+    check("montecarlo (reset path) samples around the altermod'd nominal, "
+          "not the deck's (E-544)",
+          rc == 0 and len(noms) >= 3 and all(n == 1100.0 for n in noms),
+          f"nominals seen={sorted(set(noms))}")
+    r_after = seq(out, "@mm[r]")
+    check("the recentred nominal is what `unset osdimc` restores after the "
+          "run (E-544)",
+          len(r_after) == 1 and r_after[0] == 1100.0, f"@mm[r]={r_after}")
+
+    rc, out = run("mcres", "alter r1 = 2k\n"
+                           "montecarlo 2 -analysis op -spec v(2) -max 0.9\n"
+                           "print @r1[resistance]")
+    r1 = seq(out, "@r1[resistance]")
+    check("a plain netlist `alter` survives montecarlo's per-sample reset "
+          "(E-544)", rc == 0 and r1 == [2000.0], f"@r1[resistance]={r1}")
+
+    # closed form: v(2) = 1k/(r+dr+1k) fails below 0.47 when r+dr > 1127.66;
+    # from the recentred (1100, 0) that is 27.66/sqrt(25^2+10^2) = 1.03 sigma
+    # (4.74 sigma from the deck's 1000 -- the old, wrong answer)
+    rc, out = run("mcres", "altermod @mm[r] = 1100\n"
+                           "wcd -analysis op -spec v(2) -min 0.47")
+    mb = re.search(r"beta = (\S+)", out)
+    beta = float(mb.group(1)) if mb else None
+    check("wcd after altermod walks from the recentred nominal: beta 1.03, "
+          "not 4.7 (E-544)",
+          beta is not None and 0.9 < beta < 1.15, f"beta={beta}")
+
+    rc, out = run("mcres", "altermod @mm[r] = 1100\n"
+                           "highsigma 400 -scale 1.5 -seed 3 -analysis op "
+                           "-metric @mm[r] -max 1100")
+    mp = re.search(r"P\(fail\)\s*:\s*(\S+)", out)
+    pf = float(mp.group(1)) if mp else None
+    check("highsigma after altermod: P(r > recentred nominal) = 0.5, not "
+          "3e-5 (E-544)",
+          pf is not None and 0.3 < pf < 0.7, f"P(fail)={pf}")
+
+    rc, out = run("mcres", "altermod @mm[r] = 1100\nreset\nset osdimc_verbose\n"
+                           "montecarlo 2 -analysis op -spec v(2) -max 0.9")
+    noms = nominals(out, "mm:r")
+    check("a user-typed `reset` still forgets the alters: back to the deck's "
+          "nominal (E-544)",
+          rc == 0 and len(noms) >= 2 and all(n == 1000.0 for n in noms),
+          f"nominals seen={sorted(set(noms))}")
+
+    rc, out = run("mcres", "optimize -param r1 1k 500 3k -analysis op "
+                           "-target v(2) 0.6 -maxiter 40\nprint @r1[resistance]\n"
+                           "montecarlo 2 -analysis op -spec v(2) -max 0.9\n"
+                           "print @r1[resistance]")
+    r1 = seq(out, "@r1[resistance]")
+    check("an `optimize` optimum survives the montecarlo run that follows "
+          "(E-544)",
+          rc == 0 and "converged" in out and len(r1) == 2 and r1[0] == r1[1]
+          and r1[0] != 1000.0,
+          f"r1 before/after={r1}")
+
     print(f"\n{'ALL PASS' if passed == checks else 'FAILURES'}: "
           f"{passed}/{checks} passed")
     sys.exit(0 if passed == checks else 1)

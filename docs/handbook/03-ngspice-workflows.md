@@ -286,7 +286,19 @@ samples osdimc variation while staying deterministic across candidates.
 weights them** (`log λ − n²(λ²−1)/2` per dimension, beside the netlist
 term), so P(fail) is estimated under the true density rather than the
 inflated one — uniforms are deliberately not inflated, as for netlist
-`.param` draws. **Ctrl-C** now stops a loop command at its next iteration
+`.param` draws. Since E-544 the **user's `alter`/`altermod` writes survive
+the loop commands' internal resets**: those resets are full re-sources, and
+they used to put every altered value back to the deck's — a recentred
+statistical nominal, a trimmed resistor, a corner's model parameter — so
+`wcd`, `highsigma` and a `montecarlo` without a netlist random binding
+reported the un-altered circuit. The commands the user types are journaled
+(value already evaluated, one entry per target) and replayed after each
+internal reset, as E-501 replays the aging doses; the optimizer's, `sweep`'s
+and `temper`'s own alters are not journaled; `optimize` journals its final
+optimum; a user-typed `reset` still means "the deck as written" and forgets
+the journal
+([`examples/mcpolicy_examples/`](../../examples/mcpolicy_examples/), checks
+35–41). **Ctrl-C** now stops a loop command at its next iteration
 boundary (`sweep` marks the points it never ran `nan`; `montecarlo` and
 `highsigma` report over the samples that completed) and leaves no state
 behind — an interrupt used to leave a sigma inflation or a held sample

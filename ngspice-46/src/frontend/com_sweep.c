@@ -106,7 +106,8 @@ static void sw_run_cmd(const char *cmdstr)
         cp_coms[i].co_func(wl->wl_next);
         if (agereset) {
             aging_internal_reset--;
-            aging_replay();
+            alter_journal_replay();  /* Enhancement-544: the user's alters ... */
+            aging_replay();          /* ... then the doses on top of them */
         }
     }
     else

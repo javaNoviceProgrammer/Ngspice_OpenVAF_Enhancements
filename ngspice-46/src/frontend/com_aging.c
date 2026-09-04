@@ -185,6 +185,250 @@ void aging_replay(void)
 }
 
 
+/* ====================================================================== *
+ * Enhancement-544: the user's `alter`/`altermod` journal                  *
+ * ====================================================================== *
+ *
+ * The statistical loop commands redraw a deck's random `.param`s with an
+ * INTERNAL `reset` -- a full re-source -- between samples: `highsigma` and
+ * `wcd` on every evaluation, `montecarlo` whenever E-346's fast path cannot
+ * arm (a deck whose only variability is model-declared has no random binding
+ * to arm on), `optimize -dparam` per evaluation. A re-source rebuilds the
+ * circuit from the deck text, so every `alter`/`altermod` the user made
+ * beforehand -- a recentred statistical nominal, a trimmed resistor, a
+ * corner's model parameter -- was silently gone: `wcd` reported beta = 4.00
+ * for a device the user had just moved 4 sigma, `highsigma` P(fail) = 2e-5
+ * where the recentred nominal made it 0.4, and the `op` after `montecarlo`
+ * read the un-altered circuit. Enhancement-501 met the same loss for the
+ * aging doses and answered it with a journal replayed after the internal
+ * resets only; this is the same answer for the user's own writes.
+ *
+ * What is recorded: a command the USER typed -- `alter`/`altermod` reaching
+ * the command dispatcher (control.c) -- that actually wrote something (the
+ * write counter moved, or the string setter reported success). The value is
+ * stored as the NUMBER the expression evaluated to, never the expression:
+ * `alter r1 = gauss(1k, 0.1, 3)` is one draw, and replaying the text would
+ * redraw it per sample and shift the netlist's own random stream. One entry
+ * per target (a later write to the same target replaces the earlier one and
+ * moves to the end, so a wildcard after a concrete write still wins), so the
+ * journal is bounded by the number of distinct targets, not by loop length.
+ *
+ * What is NOT recorded: the machine's own alters -- the optimizer's
+ * candidates, `sweep`'s textual per-point pushes, the `temper` re-evaluation
+ * at every temperature, the aging doses (which have their own replay) --
+ * all of which call the alter command from C, never through the dispatcher.
+ * The one exception is deliberate: `optimize` leaves the circuit at the
+ * optimum and arms the journal for that final apply, so a `montecarlo` or
+ * `wcd` run afterwards analyses the optimized circuit, as it did in place.
+ *
+ * Replay goes through the user channel (so `.option osdimc` sees the write
+ * as the user's: the recaptured nominal after the re-source IS the replayed
+ * value), before the aging doses, and only while the current circuit is the
+ * one the entries were made on -- a different deck drops them. A `reset`
+ * the user types forgets the journal, as it forgets the doses: `reset`
+ * still means "the deck as written". */
+
+typedef struct aj_entry {
+    char *key;   /* "i:"/"m:" + the target text, lower-cased, no whitespace */
+    char *cmd;   /* the command to replay, value already evaluated */
+} aj_entry;
+
+static aj_entry *aj_list = NULL;
+static int    aj_n = 0;
+static char  *aj_ckt = NULL;      /* title of the circuit the entries belong to */
+static int    aj_armed = 0;       /* inside a user-typed alter/altermod */
+static int    aj_replaying = 0;   /* a replay must not re-record itself */
+static int    aj_snap = 0;        /* ft_set_writes at alter_journal_begin() */
+static int    aj_kind = 0;        /* 0 nothing staged, 1 real values, 2 string */
+static double *aj_vals = NULL;
+static int    aj_nvals = 0;
+static char  *aj_str = NULL;
+
+
+void alter_journal_dispatch(const char *cmdname, int begin)
+{
+    aj_armed = begin && cmdname &&
+               (strcasecmp(cmdname, "alter") == 0 ||
+                strcasecmp(cmdname, "altermod") == 0);
+}
+
+
+void alter_journal_arm(int on)
+{
+    aj_armed = on;
+}
+
+
+static void aj_clear_stage(void)
+{
+    tfree(aj_vals);
+    aj_nvals = 0;
+    tfree(aj_str);
+    aj_kind = 0;
+}
+
+
+void alter_journal_begin(void)
+{
+    aj_snap = ft_set_writes;
+    aj_clear_stage();
+}
+
+
+void alter_journal_stage_real(const struct dvec *dv)
+{
+    aj_clear_stage();
+    if (!dv || !dv->v_realdata || dv->v_length < 1)
+        return;
+    aj_vals = TMALLOC(double, dv->v_length);
+    memcpy(aj_vals, dv->v_realdata, sizeof(double) * (size_t) dv->v_length);
+    aj_nvals = dv->v_length;
+    aj_kind = 1;
+}
+
+
+void alter_journal_stage_string(const char *s)
+{
+    aj_clear_stage();
+    aj_str = copy(s ? s : "");
+    aj_kind = 2;
+}
+
+
+int alter_journal_count(void)
+{
+    return aj_n;
+}
+
+
+void alter_journal_forget(void)
+{
+    int k;
+    for (k = 0; k < aj_n; k++) {
+        tfree(aj_list[k].key);
+        tfree(aj_list[k].cmd);
+    }
+    tfree(aj_list);
+    aj_list = NULL;
+    aj_n = 0;
+    tfree(aj_ckt);
+}
+
+
+/* the entries belong to one deck: title compare, since the circuit struct
+ * itself is rebuilt by every reset, internal ones included */
+static int aj_same_circuit(void)
+{
+    const char *name = (ft_curckt && ft_curckt->ci_name) ? ft_curckt->ci_name : "";
+    return !aj_ckt || strcmp(aj_ckt, name) == 0;
+}
+
+
+static char *aj_make_key(int do_model, const char *lhs)
+{
+    char *key = TMALLOC(char, strlen(lhs) + 3), *q = key;
+    const char *p;
+    *q++ = do_model ? 'm' : 'i';
+    *q++ = ':';
+    for (p = lhs; *p; p++)
+        if (!isspace((unsigned char) *p))
+            *q++ = (char) tolower((unsigned char) *p);
+    *q = '\0';
+    return key;
+}
+
+
+void alter_journal_end(int do_model, const char *orig)
+{
+    int kind = aj_kind;
+    const char *eq;
+    char *lhs, *rhs, *cmd, *key;
+    int k;
+
+    if (!aj_armed || aj_replaying || !orig || !ft_curckt || kind == 0 ||
+        (kind == 1 && ft_set_writes == aj_snap)) {   /* nothing was written */
+        aj_clear_stage();
+        return;
+    }
+
+    eq = strchr(orig, '=');
+    if (eq) {
+        const char *e = eq;
+        while (e > orig && isspace((unsigned char) e[-1]))
+            e--;
+        lhs = copy_substring(orig, e);
+        while (*lhs && isspace((unsigned char) *lhs))
+            memmove(lhs, lhs + 1, strlen(lhs));
+    } else {
+        lhs = copy(orig);              /* pre-3f4 `alter dev value`: verbatim */
+    }
+
+    if (kind == 2) {
+        rhs = tprintf("\"%s\"", aj_str);
+    } else if (aj_nvals == 1) {
+        rhs = tprintf("%.17g", aj_vals[0]);
+    } else {
+        size_t cap = 32 * (size_t) aj_nvals + 8, len = 0;
+        rhs = TMALLOC(char, cap);
+        len += (size_t) snprintf(rhs + len, cap - len, "[");
+        for (k = 0; k < aj_nvals; k++)
+            len += (size_t) snprintf(rhs + len, cap - len, " %.17g", aj_vals[k]);
+        (void) snprintf(rhs + len, cap - len, " ]");
+    }
+    if (eq)
+        cmd = tprintf("%s %s = %s", do_model ? "altermod" : "alter", lhs, rhs);
+    else
+        cmd = tprintf("%s %s", do_model ? "altermod" : "alter", orig);
+    key = aj_make_key(do_model, lhs);
+    tfree(lhs);
+    tfree(rhs);
+    aj_clear_stage();
+
+    if (!aj_same_circuit())
+        alter_journal_forget();        /* a different deck: its entries are void */
+    if (!aj_ckt)
+        aj_ckt = copy(ft_curckt->ci_name ? ft_curckt->ci_name : "");
+
+    /* one entry per target: drop the earlier write, append this one */
+    for (k = 0; k < aj_n; k++) {
+        if (strcmp(aj_list[k].key, key) == 0) {
+            tfree(aj_list[k].key);
+            tfree(aj_list[k].cmd);
+            memmove(&aj_list[k], &aj_list[k + 1],
+                    sizeof(aj_entry) * (size_t) (aj_n - k - 1));
+            aj_n--;
+            break;
+        }
+    }
+    aj_list = TREALLOC(aj_entry, aj_list, aj_n + 1);
+    aj_list[aj_n].key = key;
+    aj_list[aj_n].cmd = cmd;
+    aj_n++;
+}
+
+
+/* Put the user's writes back after an INTERNAL reset. Silent; a no-op when
+ * nothing was altered, and a forget when the circuit is not the one the
+ * entries were made on. */
+void alter_journal_replay(void)
+{
+    int k, save;
+    if (aj_n <= 0 || !ft_curckt)
+        return;
+    if (!aj_same_circuit()) {
+        alter_journal_forget();
+        return;
+    }
+    save = ft_optimizing;
+    ft_optimizing = TRUE;            /* keep `alter` quiet, as the writer does */
+    aj_replaying = 1;
+    for (k = 0; k < aj_n; k++)
+        age_run_cmd(aj_list[k].cmd);
+    aj_replaying = 0;
+    ft_optimizing = save;
+}
+
+
 /* parse a SPICE-style number (understands k / meg / u / n / p ... suffixes) */
 static double age_num(const char *w)
 {

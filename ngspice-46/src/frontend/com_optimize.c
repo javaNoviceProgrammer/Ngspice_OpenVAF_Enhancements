@@ -237,7 +237,8 @@ static void opt_run_cmd(const char *cmdstr)
         cp_coms[i].co_func(wl->wl_next);
         if (agereset) {
             aging_internal_reset--;
-            aging_replay();
+            alter_journal_replay();  /* Enhancement-544: the user's alters ... */
+            aging_replay();          /* ... then the doses on top of them */
         }
     }
     else
@@ -1996,7 +1997,12 @@ void com_optimize(wordlist *wl)
      * plain optimize (one analysis), but stays quiet for centering -- a verbose
      * final run would re-do the whole inner MC and flood the console with resets. */
     c.verbose = !c.center;
+    /* Enhancement-544: the optimum is the user's circuit from here on -- journal
+     * this final apply so a `montecarlo`/`wcd` run next analyses it, as it did
+     * in place, instead of a deck the sampling command's reset put back. */
+    alter_journal_arm(1);
     (void) opt_eval(&c, ubest, NULL);
+    alter_journal_arm(0);
 
     /* Enhancement-472: say what the reuse actually did. The evaluation count
        above is the honest place to look for a behaviour change, so the decision
