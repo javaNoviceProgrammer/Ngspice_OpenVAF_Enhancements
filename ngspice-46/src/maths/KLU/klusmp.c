@@ -641,6 +641,31 @@ SMPcLUfac (SMPmatrix *Matrix, double PivTol)
  */
 /*ARGSUSED*/
 
+/* F1 (large-circuit sweep): remember the rcond of a full (pivoting)
+ * factorization, so a later refactor -- which reuses its pivot order -- can
+ * tell whether that order still suits the matrix it is being applied to. */
+#define KLU_REFACTOR_RCOND_DROP 1e-6
+static void
+klu_note_factor_rcond (SMPmatrix *Matrix)
+{
+    Matrix->SMPkluMatrix->KLUmatrixRcondFactor = 0.0 ;
+    if (Matrix->SMPkluMatrix->KLUmatrixNumeric != NULL &&
+        Matrix->SMPkluMatrix->KLUmatrixSymbolic != NULL &&
+        Matrix->SMPkluMatrix->KLUmatrixCommon != NULL &&
+        Matrix->SMPkluMatrix->KLUmatrixCommon->status == KLU_OK)
+    {
+        /* klu_rcond resets Common->status to KLU_OK on its way in, so it is
+         * only consulted when klu_factor's own verdict was OK -- a singular
+         * verdict must reach the caller untouched. */
+        if (klu_rcond (Matrix->SMPkluMatrix->KLUmatrixSymbolic,
+                       Matrix->SMPkluMatrix->KLUmatrixNumeric,
+                       Matrix->SMPkluMatrix->KLUmatrixCommon) &&
+            Matrix->SMPkluMatrix->KLUmatrixCommon->status == KLU_OK)
+            Matrix->SMPkluMatrix->KLUmatrixRcondFactor = Matrix->SMPkluMatrix->KLUmatrixCommon->rcond ;
+        Matrix->SMPkluMatrix->KLUmatrixCommon->status = KLU_OK ;
+    }
+}
+
 int
 SMPluFac (SMPmatrix *Matrix, double PivTol, double Gmin)
 {
@@ -676,6 +701,7 @@ SMPluFac (SMPmatrix *Matrix, double PivTol, double Gmin)
                             Matrix->SMPkluMatrix->KLUmatrixCommon) ;
             Matrix->SMPkluMatrix->KLUmatrixNumericIsComplex = 0 ;
             ret = (Matrix->SMPkluMatrix->KLUmatrixNumeric != NULL) ;
+            klu_note_factor_rcond (Matrix) ;
         } else {
             ret = klu_refactor (Matrix->SMPkluMatrix->KLUmatrixAp, Matrix->SMPkluMatrix->KLUmatrixAi, Matrix->SMPkluMatrix->KLUmatrixAx,
                                 Matrix->SMPkluMatrix->KLUmatrixSymbolic, Matrix->SMPkluMatrix->KLUmatrixNumeric, Matrix->SMPkluMatrix->KLUmatrixCommon) ;
@@ -745,6 +771,37 @@ SMPluFac (SMPmatrix *Matrix, double PivTol, double Gmin)
                         fprintf (stderr, "Warning (ReFactor): reuse of the existing "
                                  "pivot order produced a singular U; forcing a "
                                  "full factorization\n") ;
+                    return E_SINGULAR ;
+                }
+                /* 2026-09-04 large-circuit sweep, F1: the same reuse can be
+                 * numerically terrible without being singular. SPARSE's
+                 * refactor tests every reused pivot against its column
+                 * (spSMALL_PIVOT) and the caller reorders; KLU's refactor
+                 * tests nothing, so when the Jacobian has changed character
+                 * since the pivots were chosen -- a Newton whose second
+                 * iterate exploded and whose third is evaluated at limited
+                 * voltages -- U's diagonal collapses, the solve returns a
+                 * wrong direction with no error, and the iteration wanders
+                 * until the operating point falls into gmin stepping (whose
+                 * every rung reorders, and so converges). Measured on a
+                 * 20x20 OSDI BSIM4 grid: 137 iterations with gmin stepping
+                 * under KLU against 8 under SPARSE for the same matrices.
+                 * rcond is already computed above; a collapse by more than
+                 * KLU_REFACTOR_RCOND_DROP relative to the last full
+                 * factorization's value is treated like a small pivot. A
+                 * stiff circuit's tiny rcond passes unharmed: the test is
+                 * relative to its own full-factor value. */
+                if (Matrix->SMPkluMatrix->KLUmatrixRcondFactor > 0.0 &&
+                    Matrix->SMPkluMatrix->KLUmatrixCommon->rcond <
+                        KLU_REFACTOR_RCOND_DROP * Matrix->SMPkluMatrix->KLUmatrixRcondFactor) {
+                    if (ft_ngdebug)
+                        fprintf (stderr, "Warning (ReFactor): reuse of the existing pivot "
+                                 "order lost %.1e in rcond (%.3e vs %.3e at the last full "
+                                 "factorization); forcing a full factorization\n",
+                                 Matrix->SMPkluMatrix->KLUmatrixCommon->rcond /
+                                 Matrix->SMPkluMatrix->KLUmatrixRcondFactor,
+                                 Matrix->SMPkluMatrix->KLUmatrixCommon->rcond,
+                                 Matrix->SMPkluMatrix->KLUmatrixRcondFactor) ;
                     return E_SINGULAR ;
                 }
             }
@@ -929,6 +986,7 @@ SMPreorder (SMPmatrix *Matrix, double PivTol, double PivRel, double Gmin)
                                                              Matrix->SMPkluMatrix->KLUmatrixAx, Matrix->SMPkluMatrix->KLUmatrixSymbolic,
                                                              Matrix->SMPkluMatrix->KLUmatrixCommon) ;
         Matrix->SMPkluMatrix->KLUmatrixNumericIsComplex = 0 ;   /* Enhancement-499 */
+        klu_note_factor_rcond (Matrix) ;   /* F1 (large-circuit sweep): the reference for every refactor */
 
         if (Matrix->SMPkluMatrix->KLUmatrixNumeric == NULL)
         {

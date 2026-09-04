@@ -26,6 +26,9 @@ int CKTvaInitErrRaised = 0;
 
 #include "osdi.h"
 #include "osdidefs.h"
+#include "ngspice/cpextern.h"
+#include "ngspice/const.h"
+#include "ngspice/devdefs.h"
 
 #include <math.h>
 #include <stdint.h>
@@ -736,6 +739,337 @@ static void load(CKTcircuit *ckt, const GENinstance *gen_inst, void *model,
   }
 }
 
+
+/* ------------------------------------------------------------------------
+ * 2026-09-04 large-circuit sweep, F1: Newton step limiting for OSDI devices
+ * whose model calls no $limit (see osdiitf.h for the why). The built-in load
+ * routines evaluate the device at LIMITED terminal voltages and stamp the
+ * companion at that point; the Newton step is then taken from the limited
+ * point, and the iteration is not declared converged while limiting was
+ * active. The same is done here from the outside: the instance's terminal
+ * entries of the previous solution (CKTrhsOld, which both descr->eval and
+ * load_spice_rhs_* read) are replaced by the limited voltages for the
+ * duration of this instance's evaluation and stamping, then restored. The
+ * limited branch voltages become the instance's "old" values for the next
+ * iteration, as CKTstate0 does for the built-ins. Ground (node 0) is never
+ * written: the reference terminal is whichever of the device's terminals is
+ * ground, else the source / emitter / cathode. The sequential load loop is
+ * what makes the patch safe; the OpenMP branch does not limit.
+ * ------------------------------------------------------------------------ */
+typedef struct {
+  uint32_t node[4];
+  double saved[4];
+  int n;
+} OsdiLimPatch;
+
+static bool osdi_lim_disabled; /* `.option noosdilim`, read once per load */
+static bool osdi_lim_verbose;  /* `set osdilim_verbose`: say, once per model, what was decided */
+static const OsdiDescriptor *osdi_lim_reported[32];
+static int osdi_lim_nreported;
+
+static void osdi_lim_report(const OsdiRegistryEntry *entry, void *inst,
+                            const char *verdict, const char *detail) {
+  const OsdiDescriptor *descr = entry->descriptor;
+  for (int i = 0; i < osdi_lim_nreported; i++)
+    if (osdi_lim_reported[i] == descr)
+      return;
+  if (osdi_lim_nreported < 32)
+    osdi_lim_reported[osdi_lim_nreported++] = descr;
+  fprintf(stderr, "osdilim: model %s (instance %s): %s%s%s\n", descr->name,
+          ((const GENinstance *)((const char *)inst - osdi_instance_data_off(entry)))->GENname,
+          verdict, detail[0] ? " -- " : "", detail);
+}
+
+
+/* "did the limiter move this voltage" -- judged against the circuit's own
+ * voltage tolerances, never bit-exactly: the vds the built-in's block
+ * reconstructs from a limited vgs and the raw vgd is the raw vds plus a
+ * rounding residue of order eps * |vgs|, which for a device sitting at
+ * vds ~ 1e-8 is a relative change of 1e-8 -- a "change" every iteration,
+ * and a Newton that can never be declared converged. */
+static bool osdi_lim_moved(const CKTcircuit *ckt, double lim, double raw) {
+  double tol = ckt->CKTreltol * fmax(fabs(lim), fabs(raw)) + ckt->CKTvoltTol;
+  return fabs(lim - raw) > tol;
+}
+
+static void osdi_lim_set(CKTcircuit *ckt, OsdiLimPatch *p, uint32_t node,
+                         double v) {
+  if (node == 0 || p->n >= 4)
+    return;
+  p->node[p->n] = node;
+  p->saved[p->n] = ckt->CKTrhsOld[node];
+  p->n++;
+  ckt->CKTrhsOld[node] = v;
+}
+
+static void osdi_lim_restore(CKTcircuit *ckt, const OsdiLimPatch *p) {
+  for (int i = p->n - 1; i >= 0; i--)
+    ckt->CKTrhsOld[p->node[i]] = p->saved[i];
+}
+
+/* the model's polarity (+1 / -1) from its `type` parameter, +1 when it has none */
+static double osdi_lim_polarity(const OsdiRegistryEntry *entry, void *model) {
+  const OsdiDescriptor *descr = entry->descriptor;
+  if (entry->lim_type_param == UINT32_MAX)
+    return 1.0;
+  const OsdiParamOpvar *po = &descr->param_opvar[entry->lim_type_param];
+  void *ptr = descr->access(NULL, model, entry->lim_type_param, ACCESS_FLAG_READ);
+  if (!ptr)
+    return 1.0;
+  double v = ((po->flags & PARA_TY_MASK) == PARA_TY_INT) ? (double)*(int32_t *)ptr
+                                                         : *(double *)ptr;
+  return (v < 0.0) ? -1.0 : 1.0;
+}
+
+/* the threshold the FET limiter centres on: |vth0| when the model names one
+ * (its sign convention differs between the C and Verilog-A worlds; the
+ * magnitude is what matters in the normalized frame), else 0.5 V */
+static double osdi_lim_vth(const OsdiRegistryEntry *entry, void *model) {
+  const OsdiDescriptor *descr = entry->descriptor;
+  if (entry->lim_vth_param == UINT32_MAX)
+    return 0.5;
+  void *ptr = descr->access(NULL, model, entry->lim_vth_param, ACCESS_FLAG_READ);
+  if (!ptr)
+    return 0.5;
+  double v = fabs(*(double *)ptr);
+  return (v >= 0.05 && v <= 3.0) ? v : 0.5;
+}
+
+static void osdi_lim_apply(CKTcircuit *ckt, const OsdiRegistryEntry *entry,
+                           void *inst, void *model, OsdiExtraInstData *extra,
+                           OsdiLimPatch *p) {
+  p->n = 0;
+  if (osdi_lim_disabled)
+    return;
+  if (entry->lim_kind == OSDI_LIM_NONE || entry->uses_limit) {
+    if (osdi_lim_verbose)
+      osdi_lim_report(entry, inst, "no simulator-side limiting",
+                      entry->uses_limit ? "the model calls $limit itself"
+                                        : "its terminals are not a 3/4-terminal MOSFET's (d,g,s[,b]) or BJT's (c,b,e[,s])");
+    return;
+  }
+  if (ckt->CKTmode & (MODEINITSMSIG | MODEAC))
+    return;
+  const OsdiDescriptor *descr = entry->descriptor;
+  const uint32_t *nm =
+      (const uint32_t *)(((const char *)inst) + descr->node_mapping_offset);
+  const double *v = ckt->CKTrhsOld;
+  /* The voltages limited must be the device's OWN junction and channel
+   * voltages, which is what the built-ins limit. A MOSFET whose series
+   * resistances are on keeps the channel behind internal drain/source/gate/
+   * bulk nodes; those nodes, when setup leaves them live, take the place of
+   * the terminals (b4ld.c limits vdes/vses across rdsmod's nodes the same
+   * way). Any OTHER live internal node -- a BJT's base and emitter nodes
+   * behind rb/re (MEXTRAM's b1/e1), an NQS or noise node -- disqualifies
+   * the device: limiting a terminal-to-terminal voltage across a resistance
+   * is a different operation (measured on MEXTRAM: it steered the operating
+   * point to a wrong stationary point, 30 mV off, at two temperatures of a
+   * Vbe(T) sweep). An internal node setup collapsed onto a terminal, or tied
+   * to ground, is not live. */
+  uint32_t role[4] = {0, 0, 0, 0};   /* MOS: d, g, s, b node used for limiting */
+  for (int r = 0; r < 4; r++) {
+    uint8_t tr = entry->lim_term[r];
+    role[r] = (tr == OSDI_LIM_NOTERM) ? 0 : nm[tr];
+    if (entry->lim_kind == OSDI_LIM_MOS && entry->lim_int[r] != OSDI_LIM_NOTERM) {
+      uint32_t mi = nm[entry->lim_int[r]];
+      if (mi != 0 && mi != role[r])
+        role[r] = mi;                /* the live internal node is the device's own */
+    }
+  }
+  for (uint32_t i = descr->num_terminals; i < descr->num_nodes; i++) {
+    uint32_t m = nm[i];
+    bool ok = (m == 0) || descr->nodes[i].is_flow;   /* a branch current is not a node */
+    for (uint32_t k = 0; k < descr->num_terminals && !ok; k++)
+      if (nm[k] == m)
+        ok = true;
+    for (int r = 0; r < 4 && !ok; r++)
+      if (entry->lim_kind == OSDI_LIM_MOS && role[r] == m)
+        ok = true;
+    if (!ok && entry->lim_kind == OSDI_LIM_MOS && i == entry->lim_noi)
+      ok = true;                     /* PSP103/EKV3's noise-correlation node: no DC role */
+    if (!ok) {
+      if (osdi_lim_verbose) {
+        char why[160];
+        snprintf(why, sizeof why, "internal node '%s' is live and is not a drain/gate/"
+                 "source/bulk node the limiter knows", descr->nodes[i].name);
+        osdi_lim_report(entry, inst, "no simulator-side limiting", why);
+      }
+      return;
+    }
+  }
+  if (osdi_lim_verbose) {
+    char what[200];
+    snprintf(what, sizeof what, "%s limiting (DEVfetlim/DEVlimvds/DEVpnjlim), polarity %+g, "
+             "threshold %g V%s",
+             entry->lim_kind == OSDI_LIM_MOS ? "MOSFET" : "BJT",
+             osdi_lim_polarity(entry, model),
+             entry->lim_kind == OSDI_LIM_MOS ? osdi_lim_vth(entry, model) : 0.0,
+             (entry->lim_kind == OSDI_LIM_MOS && role[2] != nm[entry->lim_term[2]]) ? ", across its internal nodes" : "");
+    osdi_lim_report(entry, inst, what, "");
+  }
+  /* MODEINITJCT is the one initial iteration; MODEINITFIX persists until an
+   * iteration converges (NIiter), and the built-ins limit through it. At
+   * MODEINITJCT a device that starts from all-zero voltages is evaluated at
+   * the built-ins' cold-start guess instead -- a weakly-on MOSFET (b4ld.c:
+   * vds = 0.1, vgs = vth0 + 0.1), a forward-biased junction (bjtload.c,
+   * dioload.c: vcrit) -- so the chain's first linear solve lands near the
+   * switching points and every stage moves at once; from the zero point the
+   * stages move one per iteration and a long chain runs out of itl1. */
+  bool init = (ckt->CKTmode & MODEINITJCT) || !extra->lim_has_old;
+  bool guess = (ckt->CKTmode & MODEINITJCT) && !(ckt->CKTmode & MODEUIC);
+  double vt = ckt->CKTtemp * CONSTKoverQ;
+  double vcrit = vt * log(vt / (CONSTroot2 * 1e-14)); /* the built-in diode's default Is */
+  int chk = 0, chk2 = 0;
+  bool changed = false;
+
+  if (entry->lim_kind == OSDI_LIM_MOS) {
+    uint32_t nd = role[0], ng = role[1], ns = role[2];
+    bool hasb = entry->lim_term[3] != OSDI_LIM_NOTERM;
+    uint32_t nb = hasb ? role[3] : ns;
+    /* The built-ins limit TYPE-NORMALIZED voltages (b4ld.c: vgs = type *
+     * (Vg - Vs) ...), in which "on" is positive for both polarities and the
+     * limiters' asymmetric bands point the right way. Work in that frame. */
+    double pol = osdi_lim_polarity(entry, model);
+    double vgs0 = pol * (v[ng] - v[ns]), vds0 = pol * (v[nd] - v[ns]),
+           vbs0 = pol * (v[nb] - v[ns]);
+    double vgs = vgs0, vds = vds0, vbs = vbs0;
+    double von = osdi_lim_vth(entry, model);
+    if (guess && vgs0 == 0.0 && vds0 == 0.0 && vbs0 == 0.0) {
+      vgs = von + 0.1;   /* b4ld.c: vth0 + 0.1, and vds = 0.1 */
+      vds = 0.1;
+    } else if (!init) {
+      double vgso = extra->lim_old[0], vdso = extra->lim_old[1],
+             vbso = extra->lim_old[2];
+      /* b4ld.c's block */
+      if (vdso >= 0.0) {
+        double vgd = vgs0 - vds0;
+        vgs = DEVfetlim(vgs0, vgso, von);
+        vds = vgs - vgd;
+        vds = DEVlimvds(vds, vdso);
+      } else {
+        double vgd = DEVfetlim(vgs0 - vds0, vgso - vdso, von);
+        vds = vgs0 - vgd;
+        vds = -DEVlimvds(-vds, -vdso);
+        vgs = vgd + vds;
+      }
+      if (hasb) {
+        if (vds >= 0.0) {
+          vbs = DEVpnjlim(vbs0, vbso, vt, vcrit, &chk);
+        } else {
+          double vbd = DEVpnjlim(vbs0 - vds0, vbso - vdso, vt, vcrit, &chk);
+          vbs = vbd + vds;
+        }
+      }
+    }
+    /* Terminals that share a circuit node have a branch voltage of exactly
+     * zero, and the realized node voltages must keep it so: a value that
+     * cannot be realized on a shared node -- a PMOS with bulk and source
+     * both on the supply -- would rewrite the shared node and evaluate the
+     * device at nonsense. */
+    if (ng == ns)
+      vgs = 0.0;
+    if (nd == ns)
+      vds = 0.0;
+    else if (nd == ng)
+      vds = vgs;
+    if (hasb) {
+      if (nb == ns)
+        vbs = 0.0;
+      else if (nb == nd)
+        vbs = vds;
+      else if (nb == ng)
+        vbs = vgs;
+    }
+    changed = osdi_lim_moved(ckt, vgs, vgs0) || osdi_lim_moved(ckt, vds, vds0) ||
+              osdi_lim_moved(ckt, vbs, vbs0);
+    if (!changed) {
+      vgs = vgs0; vds = vds0; vbs = vbs0;   /* keep the raw point exactly */
+    }
+    extra->lim_old[0] = vgs;   /* normalized, like CKTstate0 in the built-in */
+    extra->lim_old[1] = vds;
+    extra->lim_old[2] = vbs;
+    extra->lim_has_old = true;
+    if (changed) {
+      /* back to the raw frame for the node voltages */
+      double rgs = pol * vgs, rds = pol * vds, rbs = pol * vbs;
+      double vs_new = v[ns];
+      if (ns == 0)
+        vs_new = 0.0;
+      else if (ng == 0)
+        vs_new = -rgs;
+      else if (nd == 0)
+        vs_new = -rds;
+      else if (hasb && nb == 0)
+        vs_new = -rbs;
+      osdi_lim_set(ckt, p, ns, vs_new);
+      osdi_lim_set(ckt, p, ng, vs_new + rgs);
+      osdi_lim_set(ckt, p, nd, vs_new + rds);
+      if (hasb)
+        osdi_lim_set(ckt, p, nb, vs_new + rbs);
+    }
+  } else if (entry->lim_kind == OSDI_LIM_BJT) {
+    uint32_t nc = nm[entry->lim_term[0]], nb = nm[entry->lim_term[1]],
+             ne = nm[entry->lim_term[2]];
+    double pol = osdi_lim_polarity(entry, model);   /* bjtload.c: vbe = type * (Vb - Ve) */
+    double vbe0 = pol * (v[nb] - v[ne]), vbc0 = pol * (v[nb] - v[nc]);
+    double vbe = vbe0, vbc = vbc0;
+    if (guess && vbe0 == 0.0 && vbc0 == 0.0) {
+      vbe = vcrit;
+      vbc = 0.0;
+    } else if (!init) {
+      vbe = DEVpnjlim(vbe0, extra->lim_old[0], vt, vcrit, &chk);
+      vbc = DEVpnjlim(vbc0, extra->lim_old[1], vt, vcrit, &chk2);
+    }
+    if (nb == ne)
+      vbe = 0.0;
+    if (nc == nb)
+      vbc = 0.0;
+    else if (nc == ne)
+      vbc = vbe;
+    changed = osdi_lim_moved(ckt, vbe, vbe0) || osdi_lim_moved(ckt, vbc, vbc0);
+    if (!changed) {
+      vbe = vbe0; vbc = vbc0;
+    }
+    extra->lim_old[0] = vbe;
+    extra->lim_old[1] = vbc;
+    extra->lim_has_old = true;
+    if (changed) {
+      double rbe = pol * vbe, rbc = pol * vbc;
+      double ve_new = v[ne];
+      if (ne == 0)
+        ve_new = 0.0;
+      else if (nb == 0)
+        ve_new = -rbe;
+      else if (nc == 0)
+        ve_new = rbc - rbe;
+      osdi_lim_set(ckt, p, ne, ve_new);
+      osdi_lim_set(ckt, p, nb, ve_new + rbe);
+      osdi_lim_set(ckt, p, nc, ve_new + rbe - rbc);
+    }
+  } else if (entry->lim_kind == OSDI_LIM_DIODE) {
+    uint32_t na = nm[entry->lim_term[0]], nc = nm[entry->lim_term[1]];
+    double vd0 = v[na] - v[nc], vd = vd0;
+    if (guess && vd0 == 0.0)
+      vd = vcrit;
+    else if (!init)
+      vd = DEVpnjlim(vd0, extra->lim_old[0], vt, vcrit, &chk);
+    if (na == nc)
+      vd = 0.0;
+    changed = osdi_lim_moved(ckt, vd, vd0);
+    if (!changed)
+      vd = vd0;
+    extra->lim_old[0] = vd;
+    extra->lim_has_old = true;
+    if (changed) {
+      double vc_new = (nc == 0) ? 0.0 : (na == 0) ? -vd : v[nc];
+      osdi_lim_set(ckt, p, nc, vc_new);
+      osdi_lim_set(ckt, p, na, vc_new + vd);
+    }
+  }
+  if (changed)
+    ckt->CKTnoncon++; /* as the built-ins: not converged while limiting */
+}
+
 /* LRM 9.4.6/9.5.9: a new Newton iteration's output supersedes the previous,
  * unaccepted iteration's. Detected per (circuit, iteration-counter) pair; the
  * counter alone would go stale across a re-run of the same circuit. */
@@ -781,6 +1115,8 @@ extern int OSDIload(GENmodel *inModel, CKTcircuit *ckt) {
   GENinstance *gen_inst;
 
   osdi_note_iteration(ckt);
+  osdi_lim_disabled = cp_getvar("noosdilim", CP_BOOL, NULL, 0);   /* F1 */
+  osdi_lim_verbose = cp_getvar("osdilim_verbose", CP_BOOL, NULL, 0);
 
   bool is_init_smsig = ckt->CKTmode & MODEINITSMSIG;
   bool is_dc = ckt->CKTmode & (MODEDCOP | MODEDCTRANCURVE);
@@ -998,6 +1334,8 @@ extern int OSDIload(GENmodel *inModel, CKTcircuit *ckt) {
        * instance's first evaluation, gating `@(initial_step)`. sim_info is
        * shared across all instances in this sequential (non-OMP) loop, so
        * the bit is added just for this call and cleared right after. */
+      OsdiLimPatch lim_patch;                     /* F1 */
+      osdi_lim_apply(ckt, entry, inst, model, extra_inst_data, &lim_patch);
       if (!extra_inst_data->has_evaluated) {
         sim_info.flags |= EVAL_FLAG_IS_INITIAL_STEP;
         eval(descr, gen_inst, inst, extra_inst_data, model, &sim_info);
@@ -1012,6 +1350,7 @@ extern int OSDIload(GENmodel *inModel, CKTcircuit *ckt) {
       if (!is_init_smsig) {
         load(ckt, gen_inst, model, inst, extra_inst_data, is_tran, is_init_tran,
              descr);
+        osdi_lim_restore(ckt, &lim_patch);        /* F1: before the other stamps */
         if (is_tran) {
           absdelay_stamp_tran(ckt, gen_inst, inst, extra_inst_data, entry,
                               descr, is_init_tran);
@@ -1033,6 +1372,8 @@ extern int OSDIload(GENmodel *inModel, CKTcircuit *ckt) {
           extra_inst_data->point_eval_flags |= extra_inst_data->eval_flags;
         }
         eval_flags |= extra_inst_data->eval_flags;
+      } else {
+        osdi_lim_restore(ckt, &lim_patch);        /* F1 */
       }
     }
   }

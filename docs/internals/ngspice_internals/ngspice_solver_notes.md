@@ -261,10 +261,17 @@ ahead on MOSFET chains (an inverter chain is not tridiagonal), 4–8× on
 resistor-diode meshes, 10× on a 3 200-MOSFET BSIM4 grid, and the only solver
 that finishes a 9 800-MOSFET grid at all (9 s against more than 500 s). KLU
 holds about a third more memory. The one cost the sweep traced to the OSDI
-side is not the solver's: a compiled MOSFET model without `$limit` (BSIM4,
-PSP 103) needs gmin stepping for its operating point on chains of 100 stages
-where the built-in converges directly, which the un-limited Newton makes 5–6×
-dearer per device — see the study's F1.
+side was not the solver's: a compiled MOSFET model without `$limit` (BSIM4,
+PSP 103) needed gmin stepping for its operating point on chains of 100 stages
+where the built-in converges directly. The simulator now applies the
+built-ins' step limiting to such models itself (the study's F1; 8 iterations
+on those chains, `.option noosdilim` to switch it off). The same work found
+that KLU's refactor reused a pivot order the matrix had outgrown without any
+test, where Sparse's refactor flags a small pivot and reorders: `SMPluFac`
+now treats a collapse of the refactor's rcond estimate by more than 1e-6
+relative to the last full factorization as a small pivot and reorders too
+(the study's F2 addendum) — a 20×20 OSDI BSIM4 grid went from 137 iterations
+with gmin stepping to 12 under KLU.
 
 ## Noise and pole-zero under KLU (Enhancement-113)
 

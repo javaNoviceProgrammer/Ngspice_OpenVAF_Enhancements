@@ -248,6 +248,13 @@ typedef struct OsdiExtraInstData {
   double **syn_short_csc;    /* [4n] KLU real CSC pointers, NULL under SPARSE */
   double **syn_short_cx;     /* [4n] KLU complex CSC pointers */
 
+  /* F1 (see osdiitf.h): the limited branch voltages of the previous Newton
+   * iteration -- MOS vgs, vds, vbs; BJT vbe, vbc; diode vd -- the values the
+   * built-in devices keep in CKTstate0. lim_has_old is false until the first
+   * evaluation (and after a re-setup zeroes this block), which counts as an
+   * initial iteration: the raw voltages are taken, nothing is limited. */
+  double lim_old[3];
+  bool lim_has_old;
 } OSDI_ALIGN(MAX_ALIGN) OsdiExtraInstData;
 
 /* Enhancement-7: extra bit in the eval() `flags` input (see

@@ -365,6 +365,78 @@ static void *reg_get_sym(void *lib, const char *sym) {
 #define OSDI_MAX_DESCRIPTORS 4096u
 #define OSDI_MAX_DESC_COUNT (1u << 20)
 
+/* F1 (osdiitf.h): which family of built-in limiting fits this model, decided
+ * from its terminal names -- the only thing the descriptor says about what a
+ * terminal is. d,g,s(,b) on a three- or four-terminal module is a MOSFET;
+ * c,b,e(,s) a BJT. Anything else gets no limiting, which is what it has
+ * today. */
+static void osdi_lim_classify(const OsdiDescriptor *descr, int *kind,
+                              uint8_t term[4], uint8_t internal[4], uint8_t *noi) {
+  uint8_t d = OSDI_LIM_NOTERM, g = OSDI_LIM_NOTERM, s = OSDI_LIM_NOTERM,
+          b = OSDI_LIM_NOTERM, c = OSDI_LIM_NOTERM, e = OSDI_LIM_NOTERM,
+          a = OSDI_LIM_NOTERM;
+  *kind = OSDI_LIM_NONE;
+  term[0] = term[1] = term[2] = term[3] = OSDI_LIM_NOTERM;
+  internal[0] = internal[1] = internal[2] = internal[3] = OSDI_LIM_NOTERM;
+  *noi = OSDI_LIM_NOTERM;
+  for (uint32_t i = 0; i < descr->num_terminals && i < OSDI_LIM_NOTERM; i++) {
+    const char *n = descr->nodes[i].name;
+    if (!n)
+      continue;
+    if (!strcasecmp(n, "d") || !strcasecmp(n, "drain"))
+      d = (uint8_t)i;
+    else if (!strcasecmp(n, "g") || !strcasecmp(n, "gate"))
+      g = (uint8_t)i;
+    else if (!strcasecmp(n, "s") || !strcasecmp(n, "source"))
+      s = (uint8_t)i;
+    else if (!strcasecmp(n, "b") || !strcasecmp(n, "bulk") || !strcasecmp(n, "body") ||
+             !strcasecmp(n, "base"))
+      b = (uint8_t)i;
+    else if (!strcasecmp(n, "c") || !strcasecmp(n, "collector") || !strcasecmp(n, "cathode"))
+      c = (uint8_t)i;
+    else if (!strcasecmp(n, "e") || !strcasecmp(n, "emitter"))
+      e = (uint8_t)i;
+    else if (!strcasecmp(n, "a") || !strcasecmp(n, "anode"))
+      a = (uint8_t)i;
+  }
+  /* Only the shapes the built-in limiters were written for: a model with a
+   * further terminal -- BSIM-CMG's or BSIMBULK's thermal node, MEXTRAM's --
+   * couples it to the electrical point in ways those limiters do not know
+   * (measured: the self-heating BSIM-CMG stage converged in 5 iterations
+   * un-limited and failed its operating point limited), so it is left alone. */
+  if (descr->num_terminals <= 4 &&
+      d != OSDI_LIM_NOTERM && g != OSDI_LIM_NOTERM && s != OSDI_LIM_NOTERM) {
+    *kind = OSDI_LIM_MOS;
+    term[0] = d; term[1] = g; term[2] = s; term[3] = b;
+    /* the CMC MOSFETs name their series-resistance nodes alike: BSIM4 di, si,
+     * gi, bi; PSP103 DI, SI, GP, BI/BP; EKV3 di, si */
+    for (uint32_t i = descr->num_terminals; i < descr->num_nodes && i < OSDI_LIM_NOTERM; i++) {
+      const char *n = descr->nodes[i].name;
+      if (!n)
+        continue;
+      if (!strcasecmp(n, "di"))
+        internal[0] = (uint8_t)i;
+      else if (!strcasecmp(n, "gi") || !strcasecmp(n, "gp"))
+        internal[1] = (uint8_t)i;
+      else if (!strcasecmp(n, "si"))
+        internal[2] = (uint8_t)i;
+      else if (!strcasecmp(n, "bi") || !strcasecmp(n, "bp"))
+        internal[3] = (uint8_t)i;
+      else if (!strcasecmp(n, "noi"))
+        *noi = (uint8_t)i;
+    }
+  } else if (descr->num_terminals <= 4 &&
+             c != OSDI_LIM_NOTERM && b != OSDI_LIM_NOTERM && e != OSDI_LIM_NOTERM) {
+    *kind = OSDI_LIM_BJT;
+    term[0] = c; term[1] = b; term[2] = e;
+  }
+  /* No diode family: a two-terminal module with terminals named a and c is
+   * as likely a resistor (measured: a paramset resistor fixture's 24 kV
+   * output, clamped by pnjlim as if it were a junction, never converged),
+   * and the junction limiting was never what the F1 chains lacked. */
+  NG_IGNORE(a);
+}
+
 extern OsdiObjectFile load_object_file(const char *input) {
   void *handle;
   char *error;
@@ -733,8 +805,38 @@ extern OsdiObjectFile load_object_file(const char *input) {
 
     size_t inst_off = calc_osdi_instance_data_off(descr);
     size_t noise_off = calc_osdi_noise_off(descr);
+    int lim_kind = OSDI_LIM_NONE;
+    uint8_t lim_term[4], lim_int[4], lim_noi;
+    uint32_t lim_type_param = UINT32_MAX, lim_vth_param = UINT32_MAX;
+    osdi_lim_classify(descr, &lim_kind, lim_term, lim_int, &lim_noi);   /* F1 */
+    if (lim_kind == OSDI_LIM_MOS || lim_kind == OSDI_LIM_BJT) {
+      /* the polarity: the CMC models carry it as a model parameter `TYPE` =
+       * +1 / -1 (bsim4, psp, bsimbulk, ekv, mextram ...); and a MOSFET's
+       * threshold, when the model names one (BSIM vth0, EKV vto) */
+      for (uint32_t pid = descr->num_instance_params; pid < descr->num_params; pid++) {
+        const OsdiParamOpvar *po = &descr->param_opvar[pid];
+        uint32_t ty = po->flags & PARA_TY_MASK;
+        for (uint32_t k = 0; k <= po->num_alias; k++) {
+          const char *nm = po->name[k];
+          if (!nm)
+            continue;
+          if (lim_type_param == UINT32_MAX && ty != PARA_TY_STR && !strcasecmp(nm, "type"))
+            lim_type_param = pid;
+          if (lim_vth_param == UINT32_MAX && ty == PARA_TY_REAL && lim_kind == OSDI_LIM_MOS &&
+              (!strcasecmp(nm, "vth0") || !strcasecmp(nm, "vto") || !strcasecmp(nm, "vt0")))
+            lim_vth_param = pid;
+        }
+      }
+    }
     dst[i] = (OsdiRegistryEntry){
         .descriptor = descr,
+        .uses_limit = lim_table_len > 0,               /* F1 */
+        .lim_kind = lim_kind,
+        .lim_term = {lim_term[0], lim_term[1], lim_term[2], lim_term[3]},
+        .lim_int = {lim_int[0], lim_int[1], lim_int[2], lim_int[3]},
+        .lim_noi = lim_noi,
+        .lim_type_param = lim_type_param,
+        .lim_vth_param = lim_vth_param,
         .inst_offset = (uint32_t)inst_off,
         .noise_offset = (uint32_t)noise_off,
         .dt = dt,

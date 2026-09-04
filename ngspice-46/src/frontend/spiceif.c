@@ -499,6 +499,7 @@ if_is_option(const char *name)
            cp_getvar by OSDImcNewRun/osdimc_enabled (osdisetup.c), so the
            cards WORK and belong here for the same reason `reusesetup` does. */
         "osdimc", "automc", "mcseed", "osdimc_verbose",
+        "noosdilim",          /* F1: OSDI Newton step limiting opt-out (osdiload.c) */
         "autoadapt", "adapter",      /* PROTOTYPE: autoadapt */
         /* Enhancement-445: the `.four` analysis controls. Each is read by
            fourier() through cp_getvar and each demonstrably takes effect when

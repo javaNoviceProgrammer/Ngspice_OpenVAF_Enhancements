@@ -994,6 +994,8 @@ typedef struct sKLUmatrix {
     double *KLUmatrixTrashCOO ;                     /* KLU COO Trash Pointer for Ground Node not Stored in the Matrix */
     double **KLUmatrixDiag ;                        /* KLU pointer to diagonal element to perform Gmin */
     unsigned int KLUloadDiagGmin:1 ;                /* KLU flag to load Diag Gmin */
+    double KLUmatrixRcondFactor ;                   /* rcond of the last FULL factorization (the pivot order
+                                                       every refactor reuses); 0 when none -- see SMPluFac */
 
 #ifdef CIDER
     int *KLUmatrixColCOOforCIDER ;             /* KLU Col Index for COO storage (for CIDER) */

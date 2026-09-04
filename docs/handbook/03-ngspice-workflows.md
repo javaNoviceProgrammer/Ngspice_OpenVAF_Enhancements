@@ -251,6 +251,19 @@ not); dropping the option restores nominals on the next run;
 parameter's `from` range fails that run with the device's own range error,
 exactly as the same `alter` would — size the sigmas accordingly.
 
+**Newton step limiting for compiled MOSFETs and BJTs** (F1 of the 2026-09-04
+large-circuit sweep): a Verilog-A model that calls no `$limit` used to run an
+un-limited Newton, so a chain of 100 BSIM4 or PSP103 inverters needed gmin
+stepping for its operating point where the built-in converged in 9. The
+simulator now recognizes a 3/4-terminal MOSFET (`d,g,s[,b]`) or BJT
+(`c,b,e[,s]`) by its terminal names and applies the built-ins' cold-start
+guess and `DEVfetlim`/`DEVlimvds`/`DEVpnjlim` limiting to it — 8 iterations
+on those chains, the same operating point to 1e-16. Models that limit
+themselves, carry a thermal terminal, or keep other live internal nodes are
+left alone. `.option noosdilim` switches it off; `set osdilim_verbose` says,
+once per model, what was decided and why
+([`examples/osdilimit_examples/`](../../examples/osdilimit_examples/)).
+
 Since E-535 the **loop commands carry a trial policy**
 ([`examples/mcpolicy_examples/`](../../examples/mcpolicy_examples/)): a
 deterministic loop (`sweep`'s per-point path, `optimize`, `wcd`,

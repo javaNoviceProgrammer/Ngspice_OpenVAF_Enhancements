@@ -26,8 +26,8 @@ worth an enhancement.
 
 | # | finding | severity |
 |---|---|---|
-| [F1](#f1--the-osdi-mosfet-operating-point-falls-into-gmin-stepping-where-the-built-in-converges-directly) | a chain of 100 OSDI BSIM4 (or PSP 103) inverters needs dynamic gmin stepping for its operating point where the built-in BSIM4 converges in 9 iterations; the built-in only reaches that regime at 300 stages. The models call no `$limit`, so Newton runs un-limited. Cost: the op is 5–6× slower per device than the twin's, and the whole run 2.4× (KLU) to 3.8× (Sparse) | medium — cost and robustness, answer unchanged |
-| [F2](#f2--under-klu-a-long-inverter-chain-is-declared-singular-at-its-last-node) | under KLU the plain-Newton attempt on a long inverter chain ends in *"singular matrix: check node s1000"* — always the chain's last node — and only then falls back to gmin stepping; Sparse fails the same attempt without a verdict. Insensitive to BTF, scaling, gmin and a 1 GΩ leak on that node; the built-in twin does it too from 300 stages. The answer is unaffected | low — a misleading warning |
+| [F1](#f1--the-osdi-mosfet-operating-point-falls-into-gmin-stepping-where-the-built-in-converges-directly) | a chain of 100 OSDI BSIM4 (or PSP 103) inverters needs dynamic gmin stepping for its operating point where the built-in BSIM4 converges in 9 iterations; the built-in only reaches that regime at 300 stages. The models call no `$limit`, so Newton runs un-limited. Cost: the op is 5–6× slower per device than the twin's, and the whole run 2.4× (KLU) to 3.8× (Sparse) | medium — cost and robustness, answer unchanged. **Fixed** (simulator-side limiting; 8 iterations) |
+| [F2](#f2--under-klu-a-long-inverter-chain-is-declared-singular-at-its-last-node) | under KLU the plain-Newton attempt on a long inverter chain ends in *"singular matrix: check node s1000"* — always the chain's last node — and only then falls back to gmin stepping; Sparse fails the same attempt without a verdict. Insensitive to BTF, scaling, gmin and a 1 GΩ leak on that node; the built-in twin does it too from 300 stages. The answer is unaffected | low — a misleading warning. The excursion no longer happens on these decks (F1); a sibling defect, KLU's refactor reusing pivots that no longer fit, is **fixed** (see the addendum) |
 | [F3](#f3--rusage-reports-a-negative-fill-in-under-klu) | `rusage` prints *"Circuit fill-in non-zeroes = -1002"* under KLU on a chain: the formula `lnz + unz − nz` omits KLU's off-diagonal-block entries | low — cosmetic. **Fixed** |
 | [F4](#f4--the-bsim4-source-prints-a-line-per-instance-per-setup) | BSIM4's Verilog-A prints *"RECALCULATION for no K1 or K2"* from a `$strobe` twice per instance per setup — 13 000 lines on a 6 400-device deck, 80 000 on the 40 000-device one — and its leading newline leaves the `OSDI <inst>` head on a line of its own | low — model-side noise. **Fixed** (simulator side: shown 5 times, then counted; the head follows the newline) |
 
@@ -193,12 +193,59 @@ shows it as a 3.8× whole-run gap where KLU shows 2.4×. The transient is not
 affected (its initial guess is the converged op and the timestep bounds the
 step).
 
-Two ways to close it, neither done here: the model-side one is a `$limit` in
+Two ways to close it: the model-side one is a `$limit` in
 `bsim4.va`/`psp103.va` (a model-author matter; the CMC sources ship without
 one); the simulator-side one is what every built-in MOSFET already does —
 apply `DEVfetlim`/`DEVpnjlim` to an OSDI MOSFET's terminal voltages in the
-Newton loop when the model calls no `$limit` of its own. The second is worth
-an enhancement: it would apply to every compiled MOSFET model at once.
+Newton loop when the model calls no `$limit` of its own.
+
+**Resolved (2026-09-04, after the sweep) — the simulator-side way, and with
+more than the limiters.** The OSDI load path (`osdi/osdiload.c`) now
+recognizes a 3/4-terminal MOSFET (`d,g,s[,b]`) or BJT (`c,b,e[,s]`) by its
+terminal names at load time (`osdi/osdiregistry.c`), reads the model's
+polarity from a parameter named `type` and its threshold from `vth0`/`vto`,
+and, for every model that calls no `$limit`, does in the Newton loop what
+`b4ld.c` does: the built-ins' cold-start guess at the first iteration
+(`vgs = vth0 + 0.1`, `vds = 0.1`) and `DEVfetlim`/`DEVlimvds`/`DEVpnjlim` on
+every later one — in the **type-normalized frame**, since the limiters'
+asymmetric bands assume "on" is positive; across the model's own internal
+drain/source/gate/bulk nodes (`DI`/`SI`/`GP`/`BI`) when its series
+resistances leave them live, as `b4ld.c` limits across `rdsmod`'s. The
+limited voltages replace the instance's terminal entries of the previous
+solution for the duration of its evaluation and stamping, then are restored;
+the iteration is not declared converged while limiting moved a voltage by
+more than the circuit's voltage tolerances (an exact test flagged rounding
+residue for ever); ground is never written; terminals that share a node keep
+their branch voltage at zero. Five things learned the hard way are in the
+code: MODEINITFIX persists until an iteration converges and is not an
+initial iteration; a limiter applied to raw PMOS voltages parks the device
+in the wrong region after every excursion; a device with a thermal terminal
+(BSIM-CMG) or a further live internal node (MEXTRAM's `b1`/`e1`) must be
+left alone, or the extrapolated power / the terminal-to-terminal limiting
+steers Newton to a wrong stationary point; a two-terminal module named `a,c`
+is as likely a resistor, so there is no diode family; and PSP103's
+noise-correlation node is a flow unknown, not a node. `.option noosdilim`
+switches it all off; `set osdilim_verbose` says, once per model, what was
+decided and why.
+
+| deck, `op` | before | after |
+|---|---:|---:|
+| 100-stage OSDI BSIM4 chain | 333 iterations, gmin stepping | **8**, none (built-in: 9) |
+| 200-stage | 356, gmin stepping | **8** |
+| 100-stage OSDI PSP103 chain | 387, gmin stepping | **8** |
+| 40×40 OSDI BSIM4 grid, Sparse | 167 iterations, 5.2 s | **8, 0.56 s** |
+| 40×40 grid, KLU | 70 | 49 (built-in: 48) |
+| 70×70 grid, Sparse (9 800 MOSFETs) | > 500 s, timed out | op 16 s, whole run 298 s |
+| 10 000-device chain op, Sparse | 9.7 s | 5.9 s (592 iterations with gmin stepping — the built-in needs 243 at 500 stages too) |
+| 40 000-device chain op, Sparse / KLU | 53 s / 8.1 s | 30 s / 5.9 s |
+
+Every operating point is the same as before to 1e-16 at every node, and the
+twins still agree to 1.6e-9 V: the limiting changes the path only. Pinned in
+[`examples/osdilimit_examples/`](../../examples/osdilimit_examples/) (12
+checks, both solvers); the full 453-suite sweep passes.
+
+The same work uncovered a KLU-path defect that F2 had been circling: see the
+addendum under F2.
 
 The two solvers' iteration counts differ on the same deck (333 vs 126) because
 of F2: KLU's singular verdict aborts the doomed plain-Newton attempt early and
@@ -228,6 +275,28 @@ Sparse's factorization of the same excursion produces no verdict, only a
 non-converging Newton. Neither path changes the answer, but the warning sends
 a user to inspect a node that is fine, on a deck that will converge a moment
 later.
+
+**Addendum (2026-09-04, from the F1 work) — a refactor that reuses pivots
+which no longer fit.** With the limiter in place the OSDI grid converged in
+8 iterations under Sparse and fell into gmin stepping for 137 under KLU, at
+every size and under every KLU knob. Tracing the two side by side: identical
+through the exploded second iterate, then at the third solve — whose
+Jacobian, evaluated at the limited voltages, is nothing like the one the
+pivots were chosen on — Sparse's `spFactor` flags a small pivot, reorders and
+returns a tame 1.24, while `klu_refactor` reuses the old pivot order without
+any test and returns 11.6 with no error; from there KLU's trajectory is
+garbage (1e14, 1e24) until gmin stepping, whose every rung reorders. E-439
+had added an exact-zero test on `klu_rcond` after each refactor; it now also
+treats a collapse of that rcond by more than 1e-6 relative to the last full
+factorization's value as a small pivot and returns E_SINGULAR, which routes
+NIiter into the reorder it already has (`maths/KLU/klusmp.c`, `KLUmatrixRcondFactor`).
+Relative to the factor-time value, so a stiff circuit's tiny rcond passes
+unharmed; measured on a 100-stage transient's 650 refactors the ratio never
+left 1.0. The 20×20 grid: 12 iterations under KLU, the check firing twice;
+the 40×40: 49 against the built-in's 48. The singular verdict itself is
+preserved (`klu_rcond` resets KLU's status, so it is consulted only when the
+factor's own verdict was OK), and F2's warning is unchanged where it still
+occurs.
 
 ## F3 — `rusage` reports a negative fill-in under KLU
 

@@ -67,7 +67,35 @@ typedef struct OsdiRegistryEntry {
   uint32_t num_attributes;
   const void *attributes;
 
+  /* 2026-09-04 large-circuit sweep, F1: simulator-side Newton step limiting
+   * for a compiled model that calls no $limit of its own. ngspice's built-in
+   * MOSFETs, BJTs and diodes limit every junction and channel voltage step in
+   * their load routines (DEVfetlim / DEVlimvds / DEVpnjlim); a Verilog-A
+   * model gets that only through $limit, and BSIM4 and PSP103 ship without
+   * one -- so a chain of 100 OSDI inverters needed dynamic gmin stepping for
+   * its operating point where the built-in twin converged in 9 iterations.
+   * The recognizer runs once per loaded model on its TERMINAL NAMES (d,g,s,b
+   * / c,b,e / a,c, case-insensitive); a model whose library calls $limit is
+   * left to its own limiting. `.option noosdilim` switches it off. */
+  bool uses_limit;      /* the .osdi's OSDI_LIM_TABLE is non-empty */
+  int lim_kind;         /* OSDI_LIM_NONE / OSDI_LIM_MOS / OSDI_LIM_BJT / OSDI_LIM_DIODE */
+  uint8_t lim_term[4];  /* terminal indices: MOS d,g,s,b (b may be 255); BJT c,b,e */
+  uint8_t lim_int[4];   /* MOS: the model's INTERNAL drain, gate, source, bulk nodes (di/DI,
+                           gi/GP, si/SI, bi/BI/BP) or 255 -- used in place of the terminal
+                           when setup leaves them live, as b4ld.c limits across rdsmod's */
+  uint8_t lim_noi;      /* MOS: a node named `noi` (PSP103, EKV3: the noise-correlation node,
+                           no DC role) or 255 -- live, it does not disqualify the device */
+  uint32_t lim_type_param; /* a MODEL parameter named `type` (the CMC +1/-1 polarity), or UINT32_MAX */
+  uint32_t lim_vth_param;  /* a MODEL parameter named vth0 / vto / vt0 (the threshold the limiter
+                              centres on, as b4ld.c uses `von`), or UINT32_MAX for the 0.5 V default */
+
 } OsdiRegistryEntry;
+
+#define OSDI_LIM_NONE 0
+#define OSDI_LIM_MOS 1
+#define OSDI_LIM_BJT 2
+#define OSDI_LIM_DIODE 3
+#define OSDI_LIM_NOTERM 255
 
 /* Declared abstol of node `node_idx`'s potential nature, or 0.0 when the model
  * names none (in which case the circuit-wide tolerance applies as before). */
