@@ -26,8 +26,10 @@ F2 were fixed the same day.
 > the whole-array spelling is refused), F1's keyword list was incomplete, F4's
 > `i_p` note claimed a current became unreachable that `show` still lists, and
 > the long-label noise vectors are separate rows that share one name rather
-> than merely "truncated for display". The measurements in *What was measured
-> and holds* reproduced as recorded.
+> than merely "truncated for display". A second pass added a fifth: N2's
+> "`.lib` is the special case" — `.include` on line 1 behaves identically, and
+> the entry now records the actual rule and a no-fix verdict. The measurements
+> in *What was measured and holds* reproduced as recorded.
 
 | # | finding | severity |
 |---|---|---|
@@ -38,7 +40,7 @@ F2 were fixed the same day.
 | [F5](#f5--the-deferred-message-and-monitor-buffers-are-unsynchronised-under---enable-openmp) | the deferred `$strobe`/`$monitor` buffers are file-scope globals mutated from inside `#pragma omp task` | **unreproduced here** — code reading only; this tree builds `--disable-openmp` |
 | [F6](#f6--monitor-change-detection-is-positional) | `$monitor` change detection keys on the *position* of the message in the flush, not on its instance and call site | observation — fragility, not a demonstrated defect |
 | [N1](#n1-not-osdi--the-documented-temp-t1-t2-t3-list-form-is-not-implemented) | `.temp 50 100` rejects the whole card and runs at 27 °C | low, **not OSDI** — the built-in control behaves identically |
-| [N2](#n2-not-osdi--a-title-line-beginning-with-lib-is-parsed-as-a-library-include) | a deck whose title line begins with `.lib` dies with `exit(1)` before anything runs | low, **not OSDI** — reproduced with no OSDI device in the deck |
+| [N2](#n2-not-osdi--a-title-line-beginning-with-lib-is-parsed-as-a-library-include) | a deck whose title line begins with `.lib` dies with `exit(1)` before anything runs — `.include` behaves identically; file directives are executed wherever they appear | low, **not OSDI**, **no fix** — stock reader behaviour, and the better rule for the common forgotten-title mistake |
 
 ---
 
@@ -460,13 +462,38 @@ ERROR, library file my not found
 ERROR: fatal error in ngspice, exit(1)
 ```
 
-Line 1 of a SPICE deck is the title, unconditionally — the library pre-pass in
-`inpcom.c` scans it anyway and reads the next two words as a file and a section.
 Found by accident (a hunt deck whose title happened to start with `.lib`), then
-isolated: **no OSDI device is involved**, and a title starting with `.temp` is
-harmless by comparison, so `.lib` is the special case rather than dot cards in
-general. The failure is a hard `exit(1)` before any analysis runs, which at least
-makes it loud.
+isolated: **no OSDI device is involved**. The failure is a hard `exit(1)` before
+any analysis runs, which at least makes it loud.
+
+*Review (2026-09-04, second pass):* the hunt called `.lib` "the special case
+rather than dot cards in general". It is not. Putting each kind of dot-card on
+line 1 of an otherwise valid deck:
+
+| line 1 | what the reader does |
+|---|---|
+| `.include nosuch.cir` | executed — `Error: Could not find include file nosuch.cir`, `exit(1)` |
+| `.lib nosuch.lib tt` | executed — `Error: Could not find library file nosuch.lib`, `exit(1)` |
+| `.model md d(is=1e-14)` | taken as the title: `Circuit: .model md d(is=1e-14)` |
+| `.param rr=2k` | taken as the title |
+| `.temp 55` | taken as the title (the run stays at 27 °C) |
+
+So the rule is: **file directives (`.include`, `.lib`) are executed wherever
+they appear; every other dot-card on line 1 is the title.** That is stock
+ngspice reader logic (`inpcom.c` carries no fork markers near it), and it is
+the better rule to keep. The realistic mistake is the reverse of the hunt's
+case — a deck with *no* title whose first line is `.include models.lib` or
+`.lib corners.lib tt`, which is common — and under a strict "line 1 is always
+the title" that include would be swallowed in silence, with the models missing
+and the errors far from the cause. As it stands the file is loaded, or the run
+stops and names the file. A title that genuinely *begins* with `.include` or
+`.lib` is rare, and when it happens the failure is immediate and names the
+token it took as a filename. Nothing computes a wrong number either way.
+
+**Verdict: no fix.** At most a one-line note when a line-1 file directive is
+executed ("line 1 of a deck is its title by convention -- this deck has none"),
+which would serve the forgotten-title case as much as the odd-title one;
+recorded as optional.
 
 Real `.lib` use with OSDI model cards is fine: a two-section library selected as
 `.lib models.lib tt` / `... ff` gives `is=1e-14` (`id = 8.53508e-05`) and
