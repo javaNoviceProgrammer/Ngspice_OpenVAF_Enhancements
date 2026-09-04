@@ -1,10 +1,12 @@
 use std::sync::Arc;
 
+use hir_def::item_tree::DisciplineAttrKind;
 use hir_def::nameres::diagnostics::PathResolveError;
 use hir_def::nameres::DefMap;
+use hir_def::nameres::ScopeDefItem;
 use hir_def::{
-    BranchId, DisciplineId, Intern, Lookup, NatureAttrId, NatureAttrLoc, NatureId, NatureRef,
-    NatureRefKind, NodeId,
+    BranchId, DisciplineAttrId, DisciplineAttrLoc, DisciplineId, Intern, Lookup, NatureAttrLoc,
+    NatureId, NatureRef, NatureRefKind, NodeId,
 };
 use syntax::name::{kw, Name};
 
@@ -105,12 +107,12 @@ impl NatureTy {
         db: &dyn HirTyDB,
         nature: NatureId,
         name: &Name,
-    ) -> Result<NatureAttrId, PathResolveError> {
+    ) -> Result<ScopeDefItem, PathResolveError> {
         fn lookup_attr_inner(
             db: &dyn HirTyDB,
             mut nature: NatureId,
             name: &Name,
-        ) -> Option<NatureAttrId> {
+        ) -> Option<ScopeDefItem> {
             loop {
                 if let Some((attr, _)) = db
                     .nature_data(nature)
@@ -118,7 +120,22 @@ impl NatureTy {
                     .iter_enumerated()
                     .find(|(_, attr)| &attr.name == name)
                 {
-                    return Some(NatureAttrLoc { nature, id: attr }.intern(db.upcast()));
+                    return Some(NatureAttrLoc { nature, id: attr }.intern(db.upcast()).into());
+                }
+                // Round-4 audit: LRM 3.6.2.6 -- a nature derived from a
+                // DISCIPLINE's flow or potential (`nature n : ttl.flow;`)
+                // inherits the attributes of the nature bound there "as
+                // modified in" that discipline. So the discipline's override
+                // sits on this link, between the derived nature and the nature
+                // it names, and has to be consulted before the walk steps past
+                // it: the LRM's own example comments the inherited value as
+                // "abstol = 10u as modified in ttl", and it read 1u.
+                if let Some(attr) =
+                    derived_through_discipline(db, nature).and_then(|(disc, potential)| {
+                        discipline_attr_override(db, disc, name, potential)
+                    })
+                {
+                    return Some(attr.into());
                 }
                 let info = db.nature_info(nature);
                 if info.base_nature == nature {
@@ -132,6 +149,51 @@ impl NatureTy {
             scope: db.nature_data(nature).name.clone(),
         })
     }
+}
+
+/// Round-4 audit: the attribute a DISCIPLINE declares for the nature it binds
+/// (LRM 3.6.2.5 -- `flow.abstol = 10u`, "the keyword flow or potential, then
+/// the hierarchical separator . and the attribute name"). Such an override
+/// takes precedence over the nature's own declaration of the same attribute,
+/// which is the whole point of writing one.
+pub fn discipline_attr_override(
+    db: &dyn HirTyDB,
+    discipline: DisciplineId,
+    name: &Name,
+    potential: bool,
+) -> Option<DisciplineAttrId> {
+    // ...but only as far as 3.6.1.2 permits. `units` and `access` may not be
+    // changed, and the compiler already warns that such an override "has no
+    // effect" -- so it must not take effect here either.
+    if name == &kw::units || name == &kw::access {
+        return None;
+    }
+    let kind = if potential {
+        DisciplineAttrKind::PotentialOverwrite
+    } else {
+        DisciplineAttrKind::FlowOverwrite
+    };
+    let data = db.discipline_data(discipline);
+    let (id, _) =
+        data.attrs.iter_enumerated().find(|(_, attr)| attr.kind == kind && &attr.name == name)?;
+    Some(DisciplineAttrLoc { discipline, id }.intern(db.upcast()))
+}
+
+/// The discipline a nature was derived THROUGH, if it was written as
+/// `nature n : ttl.flow;` rather than `nature n : ttl_curr;` (LRM 3.6.2.6),
+/// together with which side of the discipline was named.
+fn derived_through_discipline(db: &dyn HirTyDB, nature: NatureId) -> Option<(DisciplineId, bool)> {
+    let data = db.nature_data(nature);
+    let parent = data.parent.as_ref()?;
+    let potential = match parent.kind {
+        NatureRefKind::DisciplinePotential => true,
+        NatureRefKind::DisciplineFlow => false,
+        NatureRefKind::Nature => return None,
+    };
+    let loc = nature.lookup(db.upcast());
+    let def_map = db.def_map(loc.root_file);
+    let discipline = def_map.resolve_local_item_in_scope(def_map.root(), &parent.name).ok()?;
+    Some((discipline, potential))
 }
 
 pub fn lookup_nature(
@@ -360,8 +422,12 @@ impl BranchTy {
         db: &dyn HirTyDB,
         branch: BranchId,
         name: &Name,
-    ) -> Option<Result<NatureAttrId, PathResolveError>> {
+    ) -> Option<Result<ScopeDefItem, PathResolveError>> {
         let discipline = db.branch_info(branch)?.discipline;
+        // 3.6.2.5: the discipline's own override of this attribute wins
+        if let Some(attr) = discipline_attr_override(db, discipline, name, false) {
+            return Some(Ok(attr.into()));
+        }
         match db.discipline_info(discipline).flow {
             Some(nature) => Some(NatureTy::lookup_attr(db, nature, name)),
             None => Some(Err(PathResolveError::NotFoundIn {
@@ -375,8 +441,11 @@ impl BranchTy {
         db: &dyn HirTyDB,
         branch: BranchId,
         name: &Name,
-    ) -> Option<Result<NatureAttrId, PathResolveError>> {
+    ) -> Option<Result<ScopeDefItem, PathResolveError>> {
         let discipline = db.branch_info(branch)?.discipline;
+        if let Some(attr) = discipline_attr_override(db, discipline, name, true) {
+            return Some(Ok(attr.into()));
+        }
         match db.discipline_info(discipline).potential {
             Some(nature) => Some(NatureTy::lookup_attr(db, nature, name)),
             None => Some(Err(PathResolveError::NotFoundIn {
@@ -395,8 +464,12 @@ pub fn net_nature_attr(
     node: NodeId,
     name: &Name,
     potential: bool,
-) -> Option<Result<NatureAttrId, PathResolveError>> {
+) -> Option<Result<ScopeDefItem, PathResolveError>> {
     let discipline = db.node_discipline(node)?;
+    // 3.6.2.5: the discipline's own override of this attribute wins
+    if let Some(attr) = discipline_attr_override(db, discipline, name, potential) {
+        return Some(Ok(attr.into()));
+    }
     let info = db.discipline_info(discipline);
     let (nature, kind) =
         if potential { (info.potential, kw::potential) } else { (info.flow, kw::flow) };

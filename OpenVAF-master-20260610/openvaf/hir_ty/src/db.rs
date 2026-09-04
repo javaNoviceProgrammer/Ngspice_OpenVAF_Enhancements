@@ -3,8 +3,8 @@ use std::sync::Arc;
 use hir_def::db::HirDefDB;
 use hir_def::nameres::{ResolvedPath, ScopeDefItem};
 use hir_def::{
-    AliasParamId, BranchId, DefWithBodyId, DisciplineId, Lookup, NatureAttrId, NatureId, NodeId,
-    ParamId, ParamSysFun, Type,
+    AliasParamId, BranchId, DefWithBodyId, DisciplineAttrId, DisciplineId, Lookup, NatureAttrId,
+    NatureId, NodeId, ParamId, ParamSysFun, Type,
 };
 use stdx::Upcast;
 
@@ -33,6 +33,12 @@ pub trait HirTyDB: HirDefDB + Upcast<dyn HirDefDB> {
     #[salsa::cycle(nature_attr_ty_recover)]
     fn nature_attr_ty(&self, id: NatureAttrId) -> Option<Type>;
 
+    /// Round-4 audit: the twin of `nature_attr_ty` for a discipline's override
+    /// of a nature attribute (LRM 3.6.2.5). Its body is lowered exactly like a
+    /// nature attribute's, so the value type is read the same way.
+    #[salsa::cycle(discipline_attr_ty_recover)]
+    fn discipline_attr_ty(&self, id: DisciplineAttrId) -> Option<Type>;
+
     #[salsa::cycle(resolve_alias_recover)]
     fn resolve_alias(&self, id: AliasParamId) -> Option<Alias>;
 
@@ -50,6 +56,21 @@ fn nature_attr_ty(db: &dyn HirTyDB, id: NatureAttrId) -> Option<Type> {
     let body = db.body(id.into());
     let expr = body.stmts[body.entry_stmts[0]].unwrap_expr();
     db.inference_result(id.into()).expr_types.get(expr).and_then(|ty| ty.to_value())
+}
+
+fn discipline_attr_ty(db: &dyn HirTyDB, id: DisciplineAttrId) -> Option<Type> {
+    let body = db.body(id.into());
+    let expr = body.stmts[body.entry_stmts[0]].unwrap_expr();
+    db.inference_result(id.into()).expr_types.get(expr).and_then(|ty| ty.to_value())
+}
+
+#[allow(clippy::trivially_copy_pass_by_ref)]
+fn discipline_attr_ty_recover(
+    _db: &dyn HirTyDB,
+    _cycel: &salsa::Cycle,
+    _id: &DisciplineAttrId,
+) -> Option<Type> {
+    None
 }
 
 // TODO proper cycel revery

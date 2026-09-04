@@ -2,8 +2,8 @@ use std::borrow::Cow;
 use std::ops::Deref;
 
 use hir_def::{
-    BranchId, DisciplineId, FunctionId, LocalFunctionArgId, NatureAttrId, NatureId, NodeId,
-    ParamId, Type, VarId,
+    BranchId, DisciplineAttrId, DisciplineId, FunctionId, LocalFunctionArgId, NatureAttrId,
+    NatureId, NodeId, ParamId, Type, VarId,
 };
 use stdx::{impl_display, impl_idx_from, pretty};
 
@@ -70,6 +70,30 @@ impl_display! {
 
 }
 
+/// Round-4 audit: which declaration a nature-attribute reference resolved to.
+/// `p.potential.abstol` is the nature's own attribute (LRM 3.6.1) unless the
+/// net's discipline overrides it (3.6.2.5), in which case the override is what
+/// the LRM says the reference reads. Both are `DefWithBodyId`s whose body is
+/// the attribute's constant expression, so everything past this point treats
+/// them alike.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum AttrId {
+    Nature(NatureAttrId),
+    Discipline(DisciplineAttrId),
+}
+
+impl From<NatureAttrId> for AttrId {
+    fn from(id: NatureAttrId) -> AttrId {
+        AttrId::Nature(id)
+    }
+}
+
+impl From<DisciplineAttrId> for AttrId {
+    fn from(id: DisciplineAttrId) -> AttrId {
+        AttrId::Discipline(id)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Ty {
     Val(Type),
@@ -78,7 +102,7 @@ pub enum Ty {
     Nature(NatureId),
     Discipline(DisciplineId),
     Var(Type, VarId),
-    NatureAttr(Type, NatureAttrId),
+    NatureAttr(Type, AttrId),
     FunctionVar { ty: Type, fun: FunctionId, arg: Option<LocalFunctionArgId> },
     Param(Type, ParamId),
     Literal(Type),

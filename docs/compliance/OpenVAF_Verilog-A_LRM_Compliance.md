@@ -215,14 +215,37 @@ endparamset
 ✅ Discipline/nature declarations with attribute access from expressions
 (`net.potential.abstol`); **derived natures** — `nature Xf : Flow` and
 deriving from a discipline's nature (`: electrical.flow`) — with full
-attribute inheritance. The two changes LRM 3.6.1.2 calls illegal are
+attribute inheritance, **the discipline's own overrides included as of the
+round-4 audit fix** (2026-09-03). LRM 3.6.2.5 lets a discipline override an
+attribute of the nature it binds and 3.6.2.6 makes a nature derived from
+`ttl.flow` inherit that override — the clause's own example comments the
+inherited value as *"abstol = 10u as modified in ttl"* — and the whole path
+used to be dropped in silence: the override's value was never evaluated, so
+it reached neither `net.flow.<attr>` nor the `.osdi` discipline tables, the
+attribute path resolved straight to the bound nature, and the per-node
+tolerance below walked a parent chain that stopped where a
+discipline-derived nature began. All four now carry it, so a model author
+who tightens a tolerance by the LRM's own mechanism is solved with the
+tightened one:
+
+```verilog
+discipline ttl; potential ttl_volt; flow ttl_curr; flow.abstol = 10u; enddiscipline
+nature ttl_net_curr : ttl.flow; endnature      // inherits the 10u, not the 1u
+// a.flow.abstol and c.flow.abstol both read 1e-5; a `potential.abstol`
+// override reaches the convergence test on both routes
+```
+
+The two changes LRM 3.6.1.2 calls illegal are
 **audible as of the round-4 audit** (2026-09-03): a derived nature
 declaring its own `access` warns naming the rule but keeps working (the
 deliberate extension the `derivednature` suite pins — the fresh name
 works alongside the inherited one), and a discipline override of
 `units` or `access` (`flow.units = "mA"`, `potential.access = W`) warns
 that 3.6.2.5 permits overrides only as far as 3.6.1.2 allows and that
-the declaration has no effect; both used to compile without a word.
+the declaration has no effect; both used to compile without a word. That
+promise is kept by the override path above: an illegal `units`/`access`
+override is skipped by attribute access **and** left out of the `.osdi`
+tables, so `u.flow.units` still reads the nature's `"A"`.
 `ground` declarations in both orderings;
 **vectored nets and ports** with bit-selects; **net initializers** that
 become solver nodesets; `domain continuous`:
@@ -245,9 +268,10 @@ written each value into the `.osdi` nature tables and nothing in ngspice ever
 read them, so every node was judged by the circuit-wide `abstol`/`vntol`
 whatever its nature said. The loader now resolves each node's unknown to its
 nature — directly, or through its discipline's potential/flow, walking the
-parent chain so a **derived** nature inherits per 3.6.1.1 — and stamps the
-value on the node; a node where several models meet keeps the **tightest**
-claim. No ABI change was needed, so this reaches models compiled before the
+parent chain so a **derived** nature inherits per 3.6.1.1, and reading a
+discipline's own override of that side wherever the chain passes through one
+(3.6.2.5/3.6.2.6, the round-4 audit fix) — and stamps the value on the node; a
+node where several models meet keeps the **tightest** claim. No ABI change was needed, so this reaches models compiled before the
 change.
 
 ⚠️ One deliberate departure from a literal reading of 3.6.1: **an explicit

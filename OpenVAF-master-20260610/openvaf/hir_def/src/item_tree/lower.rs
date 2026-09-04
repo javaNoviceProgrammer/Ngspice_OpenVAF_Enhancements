@@ -704,13 +704,26 @@ impl Ctx {
                                     domain = Some((Domain::Discrete, id.into()));
                                 }
                                 _ => {
-                                    // All other attributes - evaluate ast expression
                                     evaluated = attr.val().and_then(|v| v.as_constexprval());
                                 }
                             }
                         }
 
-                        _ => (),
+                        // Round-4 audit: EVERY other discipline attribute --
+                        // 3.6.2.5's `flow.<attr>` / `potential.<attr>` overrides
+                        // and user-defined discipline attributes -- carries a
+                        // constant expression, and this is the only place its
+                        // value is evaluated. The line that does it used to sit
+                        // inside the `domain` arm, one level too deep, so an
+                        // override was stored with `value: None`: it parsed,
+                        // said nothing, and was then dropped by everything
+                        // downstream (`OsdiAttribute::new` skips a value-less
+                        // attribute, so it never reached the `.osdi` tables
+                        // either). `flow.abstol = 10u` behaved as if the line
+                        // were absent.
+                        _ => {
+                            evaluated = attr.val().and_then(|v| v.as_constexprval());
+                        }
                     };
 
                     self.tree.data.discipline_attrs.push(DisciplineAttr {

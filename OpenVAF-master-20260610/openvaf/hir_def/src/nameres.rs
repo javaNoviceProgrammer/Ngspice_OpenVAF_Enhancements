@@ -16,8 +16,8 @@ use crate::builtin::{insert_builtin_scope, BuiltIn, ParamSysFun};
 use crate::db::HirDefDB;
 use crate::nameres::diagnostics::PathResolveError;
 use crate::{
-    AliasParamId, BlockId, BranchId, DisciplineId, FunctionArgId, FunctionId, InstantiationId,
-    Lookup, ModuleId, NatureAttrId, NatureId, NodeId, ParamId, VarId,
+    AliasParamId, BlockId, BranchId, DisciplineAttrId, DisciplineId, FunctionArgId, FunctionId,
+    InstantiationId, Lookup, ModuleId, NatureAttrId, NatureId, NodeId, ParamId, VarId,
 };
 
 mod collect;
@@ -91,6 +91,11 @@ pub enum ScopeDefItem {
     FunctionReturn(FunctionId),
     FunctionArgId(FunctionArgId),
     NatureAttrId(NatureAttrId),
+    /// Round-4 audit: a discipline's override of one of its nature's
+    /// attributes (LRM 3.6.2.5 `flow.abstol = 10u`). The variant was sketched
+    /// and left commented out, so `a.flow.abstol` resolved straight to the
+    /// nature's own attribute and could not see an override at all.
+    DisciplineAttrId(DisciplineAttrId),
     InstantiationId(InstantiationId),
 }
 
@@ -113,6 +118,7 @@ impl ScopeDefItem {
             ScopeDefItem::BuiltIn(_) | ScopeDefItem::ParamSysFun(_) => return None,
             ScopeDefItem::AliasParamId(id) => id.lookup(db).ast_id(db).into(),
             ScopeDefItem::NatureAttrId(id) => id.lookup(db).ast_id(db).into(),
+            ScopeDefItem::DisciplineAttrId(id) => id.lookup(db).ast_id(db).into(),
             ScopeDefItem::InstantiationId(id) => id.lookup(db).ast_id(db).into(),
         };
         Some(id)
@@ -194,6 +200,9 @@ impl ScopeDefItem {
             ScopeDefItem::BuiltIn(_) | ScopeDefItem::ParamSysFun(_) => return None,
             ScopeDefItem::AliasParamId(id) => ast_id_map.get(id.lookup(db).ast_id(db)).range(),
             ScopeDefItem::NatureAttrId(id) => ast_id_map.get(id.lookup(db).ast_id(db)).range(),
+            ScopeDefItem::DisciplineAttrId(id) => {
+                ast_id_map.get(id.lookup(db).ast_id(db)).range()
+            }
             ScopeDefItem::InstantiationId(id) => {
                 let inst = id.lookup(db);
                 let unit_idx = inst.item_tree(db)[inst.id].unit_idx;
@@ -226,7 +235,7 @@ impl_from! {
     NatureAttrId,
     AliasParamId,
     ParamSysFun,
-    // DisciplineAttrId,
+    DisciplineAttrId,
     FunctionArgId,
     BuiltIn,
     InstantiationId
@@ -260,6 +269,7 @@ scope_item_kinds! {
     DisciplineId => "discipline",
     NatureAccess => "nature access function",
     NatureAttrId => "nature attribute",
+    DisciplineAttrId => "nature attribute",
     NodeId => "node",
     VarId => "variable",
     ParamId => "parameter",

@@ -304,6 +304,10 @@ impl BodyLoweringCtx<'_, '_, '_> {
             }
             Expr::Read(Ref::FunctionArg(fun)) => self.ctx.use_place(PlaceKind::FunctionArg(fun)),
             Expr::Read(Ref::NatureAttr(attr)) => self.lower_body(attr.value(self.ctx.db), 0),
+            // Round-4 audit: a discipline's override of that attribute reads
+            // the same way -- its body is the override's constant expression
+            // (LRM 3.6.2.5).
+            Expr::Read(Ref::DisciplineAttr(attr)) => self.lower_body(attr.value(self.ctx.db), 0),
             Expr::BinaryOp { lhs, rhs, op } => self.lower_bin_op(expr, lhs, rhs, op),
             Expr::UnaryOp { expr: arg, op } => self.lower_unary_op(expr, arg, op),
             Expr::Select { cond, then_val, else_val } => {

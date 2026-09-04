@@ -1,0 +1,72 @@
+// Round-4 audit: a DISCIPLINE overriding an attribute of the nature it binds
+// (LRM 3.6.2.5), and a nature derived from that discipline's flow or potential
+// inheriting the override (3.6.2.6, whose example comments the inherited value
+// as "abstol = 10u as modified in ttl").
+//
+// The override parsed, said nothing, and was dropped everywhere: the value was
+// never evaluated, so it reached neither attribute access nor the `.osdi`
+// tables; the attribute path resolved straight to the bound nature; and the
+// per-node convergence tolerance walked a parent chain that stopped where a
+// discipline-derived nature began. Every reading below was the nature's own.
+//
+// The first two disciplines are the LRM's own example, spelled as 3.6.2.5 and
+// 3.6.2.6 print it apart from the access names.
+`include "disciplines.vams"
+
+nature ttl_curr;  units = "A"; access = Itl; abstol = 1u;   endnature
+nature ttl_volt;  units = "V"; access = Vtl; abstol = 100u; endnature
+
+discipline ttl;
+  potential ttl_volt;
+  flow ttl_curr;
+  flow.abstol = 10u;          // legal: 3.6.2.5, and 3.6.1.2 does not restrict it
+enddiscipline
+
+nature ttl_net_curr : ttl.flow; endnature   // "abstol = 10u as modified in ttl"
+discipline ttl3; potential ttl_volt; flow ttl_net_curr; enddiscipline
+
+// an ILLEGAL override (3.6.1.2 forbids changing units): warned, and ignored
+discipline ttlu;
+  potential ttl_volt;
+  flow ttl_curr;
+  flow.units = "mA";
+enddiscipline
+
+module ovr(a, a2, c, u);
+    inout a, a2, c, u;
+    ttl a, a2;
+    ttl3 c;
+    ttlu u;
+    branch (a, a2) bra;         // the same access, scoped to a branch (5.5.3)
+    analog begin
+        @(initial_step)
+            $strobe("OVR a_flow=%g a_pot=%g c_flow=%g u_units=%s br_flow=%g",
+                    a.flow.abstol, a.potential.abstol, c.flow.abstol,
+                    u.flow.units, bra.flow.abstol);
+        Itl(a) <+ Vtl(a) * 1e-3;
+        Itl(a2) <+ Vtl(a2) * 1e-3;
+        Itl(c) <+ Vtl(c) * 1e-3;
+        Itl(u) <+ Vtl(u) * 1e-3;
+    end
+endmodule
+
+// The same override on the POTENTIAL side, which is the nature the convergence
+// test compares -- so this pair is what the solver tolerance is measured on.
+discipline tight;
+  potential ttl_volt;
+  flow ttl_curr;
+  potential.abstol = 1n;
+enddiscipline
+
+nature tight_volt : tight.potential; endnature
+discipline tight_derived; potential tight_volt; flow ttl_curr; enddiscipline
+
+module tol(p, q);
+    inout p, q;
+    tight p;
+    tight_derived q;
+    analog begin
+        Itl(p) <+ Vtl(p) * 1e-3;
+        Itl(q) <+ Vtl(q) * 1e-3;
+    end
+endmodule

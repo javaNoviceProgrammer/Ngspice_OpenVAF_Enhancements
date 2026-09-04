@@ -230,6 +230,50 @@ endmodule
 check("[9b] the LEGAL abstol override stays warning-free",
       rc == 0 and "warning" not in out)
 
+# Round-4 audit: ...and the legal override now has an EFFECT. 3.6.2.5 lets a
+# discipline override an attribute of the nature it binds, 3.6.2.6 makes a
+# nature derived from `ttl.flow` inherit it ("abstol = 10u as modified in
+# ttl"), and the whole path was dropped: the value was never evaluated, so it
+# reached neither `net.flow.<attr>` nor the `.osdi` tables, and the per-node
+# convergence tolerance walked a chain that stopped at the discipline. Every
+# reading here was the NATURE's own (1e-6 for the first three).
+print("\ndiscipline attribute overrides (LRM 3.6.2.5 / 3.6.2.6):")
+rc, out, ovr_osdi = compile_file("lrmdisc_ovr.va")
+check("[9c] lrmdisc_ovr.va compiles (with only the illegal units warning)",
+      rc == 0 and out.count("warning: discipline") == 1,
+      out.strip().splitlines()[-1] if rc else "")
+
+if rc == 0:
+    sim = run("V1 1 0 DC 1\nV2 2 0 DC 1\nV3 3 0 DC 1\nV4 4 0 DC 1\n"
+              "N1 1 2 3 4 mm\n.model mm ovr", "op", "ovr", ovr_osdi)
+    m = re.search(r"OVR a_flow=(\S+) a_pot=(\S+) c_flow=(\S+) u_units=(\S+) "
+                  r"br_flow=(\S+)", sim)
+    got = [m.group(i) for i in range(1, 6)] if m else None
+    check("[9c] a discipline's flow.abstol override reaches net.flow.abstol "
+          "(1e-5, not the nature's 1e-6)",
+          got is not None and abs(float(got[0]) - 1e-5) < 1e-18, f"{got}")
+    check("[9c] the potential side, which nothing overrides, is unchanged",
+          got is not None and abs(float(got[1]) - 1e-4) < 1e-18, f"{got}")
+    check("[9c] a nature derived from ttl.flow inherits the override "
+          "(3.6.2.6's own comment: 'abstol = 10u as modified in ttl')",
+          got is not None and abs(float(got[2]) - 1e-5) < 1e-18, f"{got}")
+    check("[9c] an ILLEGAL units override stays ignored, as its warning says",
+          got is not None and got[3] == "A", f"{got}")
+    check("[9c] a BRANCH-scoped read sees the override too (br.flow.abstol)",
+          got is not None and abs(float(got[4]) - 1e-5) < 1e-18, f"{got}")
+
+    # the solver tolerance: `tight` overrides the POTENTIAL nature's abstol,
+    # which is the unknown the convergence test compares, and `tight_derived`
+    # reaches the same value through 3.6.2.6. The second node used to report
+    # nothing at all, so the circuit-wide default applied.
+    dbg = run("V1 1 0 DC 1\nV2 2 0 DC 1\nN2 1 2 mt\n.model mt tol",
+              "set ngdebug\nop", "tol", ovr_osdi)
+    tols = [float(x) for x in
+            re.findall(r"convergence abstol = ([\d.eE+-]+)", dbg)]
+    check("[9c] an overridden potential.abstol reaches the convergence test "
+          "on both the direct and the derived-nature route",
+          len([x for x in tols if abs(x - 1e-9) < 1e-18]) == 2, f"{tols}")
+
 rc, out, _ = compile_src(HDR + """
 module vb(a,b); inout a,b;
   electrical [3:5] a; electrical [1:3] b;
@@ -306,6 +350,21 @@ else:
             ok = ok and end <= int(total.group(1))
         check("[18] every nature's attribute range is contiguous and in-bounds",
               ok, f"{len(spans)} natures")
+
+        # Round-4 audit: the discipline tables carry the LEGAL overrides now
+        # that their values are evaluated at all -- and not the illegal ones,
+        # which the compiler warns have no effect.
+        rc2, _, ovr2 = compile_file("lrmdisc_ovr.va")
+        d2 = subprocess.run([exe, ovr2], capture_output=True, text=True,
+                            timeout=300).stdout if rc2 == 0 else ""
+        ttl = re.search(r"discipline ttl\s.*?\n((?:    .*\n)*)", d2)
+        ttlu = re.search(r"discipline ttlu\s.*?\n((?:    .*\n)*)", d2)
+        check("[19] the .osdi discipline table carries flow.abstol = 1e-5",
+              ttl is not None and "flow.abstol = 1e-05" in ttl.group(1),
+              ttl.group(1).strip() if ttl else d2[:60])
+        check("[19] ...and not the units override 3.6.1.2 forbids",
+              ttlu is not None and "units" not in ttlu.group(1),
+              ttlu.group(1).strip() if ttlu else d2[:60])
 
 print(f"\n{passed}/{checks} checks passed")
 sys.exit(0 if passed == checks else 1)

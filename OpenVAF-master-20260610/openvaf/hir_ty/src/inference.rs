@@ -605,10 +605,27 @@ impl Ctx<'_> {
                     // what keeps it out of the lowering, which panics on an unresolved
                     // path rather than diagnosing it.
                     match self.db.nature_attr_ty(attr) {
-                        Some(ty) => Ty::NatureAttr(ty, attr),
+                        Some(ty) => Ty::NatureAttr(ty, attr.into()),
                         None => {
                             let loc = attr.lookup(self.db.upcast());
                             let name = self.db.nature_data(loc.nature).attrs[loc.id].name.clone();
+                            self.result
+                                .diagnostics
+                                .push(InferenceDiagnostic::NonConstNatureAttr { expr, attr: name });
+                            return None;
+                        }
+                    }
+                }
+                // Round-4 audit: a discipline's override of a nature attribute
+                // (LRM 3.6.2.5). Same shape as the nature's own attribute --
+                // a constant-expression body -- so it types identically.
+                ScopeDefItem::DisciplineAttrId(attr) => {
+                    match self.db.discipline_attr_ty(attr) {
+                        Some(ty) => Ty::NatureAttr(ty, attr.into()),
+                        None => {
+                            let loc = attr.lookup(self.db.upcast());
+                            let name =
+                                self.db.discipline_data(loc.discipline).attrs[loc.id].name.clone();
                             self.result
                                 .diagnostics
                                 .push(InferenceDiagnostic::NonConstNatureAttr { expr, attr: name });
@@ -2549,7 +2566,7 @@ impl Ctx<'_> {
         };
 
         match attr {
-            Ok(attr) => Some(attr.into()),
+            Ok(attr) => Some(attr),
             Err(err) => {
                 self.result.diagnostics.push(InferenceDiagnostic::PathResolveError { err, expr });
                 None

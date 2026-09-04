@@ -22,9 +22,9 @@ pub use hir_def::expr::{CaseCond, CaseKind, CaseMask};
 pub use hir_def::nameres::diagnostics::PathResolveError;
 use hir_def::nameres::{DefMap, LocalScopeId, ScopeDefItem};
 use hir_def::{
-    AliasParamId, BlockId, BlockLoc, BranchId, DefWithBodyId, DisciplineId, FunctionId,
-    LocalFunctionArgId, Lookup, ModuleId, ModuleLoc, NatureAttrId, NatureId, NodeId, ParamId,
-    VarId,
+    AliasParamId, BlockId, BlockLoc, BranchId, DefWithBodyId, DisciplineAttrId, DisciplineId,
+    FunctionId, LocalFunctionArgId, Lookup, ModuleId, ModuleLoc, NatureAttrId, NatureId, NodeId,
+    ParamId, VarId,
 };
 pub use hir_def::{BuiltIn, Case, Literal, ParamSysFun, Path, Type};
 use stdx::Upcast;
@@ -428,6 +428,7 @@ impl Scope {
                     | ScopeDefItem::FunctionReturn(_)
                     | ScopeDefItem::FunctionArgId(_)
                     | ScopeDefItem::NatureAttrId(_)
+                    | ScopeDefItem::DisciplineAttrId(_)
                     | ScopeDefItem::InstantiationId(_) => return None,
                 };
                 Some((name.to_owned(), res))
@@ -712,6 +713,26 @@ impl NatureAttribute {
     pub fn name(self, db: &CompilationDB) -> String {
         let loc = self.id.lookup(db);
         db.nature_data(loc.nature).attrs[loc.id].name.to_string()
+    }
+}
+
+/// Round-4 audit: a discipline's override of one of its nature's attributes
+/// (LRM 3.6.2.5). Read exactly like a `NatureAttribute` -- its body is the
+/// attribute's constant expression -- but declared on the discipline, which is
+/// what makes `flow.abstol = 10u` reach `net.flow.abstol`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct DisciplineAttribute {
+    id: DisciplineAttrId,
+}
+
+impl DisciplineAttribute {
+    pub fn value(&self, db: &CompilationDB) -> Body {
+        Body::new(self.id.into(), db)
+    }
+
+    pub fn name(self, db: &CompilationDB) -> String {
+        let loc = self.id.lookup(db);
+        db.discipline_data(loc.discipline).attrs[loc.id].name.to_string()
     }
 }
 

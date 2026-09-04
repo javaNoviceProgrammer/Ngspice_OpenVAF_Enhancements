@@ -154,6 +154,18 @@ fn collect_discipline_attrs(
         if attr.kind != kind {
             continue;
         }
+        // LRM 3.6.2.5 permits an override only as far as 3.6.1.2 allows, and
+        // 3.6.1.2 forbids changing `units` or `access`. The compiler warns
+        // that such an override has no effect; exporting it would invite a
+        // consumer of these tables to apply what the diagnostic says is
+        // ignored, so it is dropped here too. (Round-4 audit -- the LEGAL
+        // overrides, `abstol` and user-defined attributes, reach the tables
+        // now that their values are evaluated at all.)
+        if kind != DisciplineAttrKind::UserDefined
+            && matches!(attr.name.as_ref(), "units" | "access")
+        {
+            continue;
+        }
         literals.get_or_intern(attr.name.to_string());
         if let Some(osdi_attr) = OsdiAttribute::new(attr, literals) {
             attrs.push(osdi_attr);

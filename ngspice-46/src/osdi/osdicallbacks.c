@@ -277,6 +277,68 @@ static void osdi_log_defer(char *text, int head_len, uint32_t sev, bool to_err,
  * Resolves node `node_idx`'s POTENTIAL nature (that is the unknown the
  * convergence test compares) to its declared abstol, or 0.0 when the model
  * names none -- in which case the caller keeps the circuit-wide value. */
+/* Does this attribute range declare `abstol`? Round-4 audit: split out of the
+ * walk below so the same search can be run over a DISCIPLINE's override
+ * attributes as over a nature's own. Reports the declared value even when it
+ * is not positive, so a nonsense declaration stops the walk exactly as it did
+ * before rather than silently inheriting a parent's. */
+static bool osdi_attr_abstol(const OsdiAttribute *attrs, uint32_t num_attributes,
+                             uint32_t start, uint32_t count, double *out) {
+  uint32_t k;
+  for (k = 0; k < count; k++) {
+    uint32_t a = start + k;
+    if (a >= num_attributes) {
+      break;
+    }
+    if (attrs[a].name && strcmp(attrs[a].name, "abstol") == 0 &&
+        attrs[a].value_type == ATTR_TYPE_REAL) {
+      *out = attrs[a].value.real;
+      return true;
+    }
+  }
+  return false;
+}
+
+/* LRM 3.6.2.5: a discipline may override an attribute of the nature it binds
+ * (`discipline ttl; flow ttl_curr; flow.abstol = 10u; enddiscipline`), and
+ * 3.6.2.6 makes a nature derived from `ttl.flow` inherit the attributes "as
+ * modified in" that discipline. So wherever a nature is reached THROUGH a
+ * discipline -- a node's own binding, or a derived nature's parent link -- the
+ * discipline's override of that side is what the LRM says applies, and it is
+ * consulted before the nature underneath.
+ *
+ * Round-4 audit: this whole path was missing. The walk resolved a discipline
+ * straight to its nature index and broke out of the loop the moment a parent
+ * was not a plain nature, so an override never reached the convergence test
+ * and a nature derived from a discipline's flow reported nothing at all.
+ *
+ * Writes the underlying nature index to `*nature` so the caller can carry on
+ * there, and returns true when the discipline itself declares `abstol`. */
+static bool osdi_discipline_abstol(const OsdiRegistryEntry *entry,
+                                   uint32_t disc_idx, bool potential,
+                                   uint32_t *nature, double *out) {
+  const OsdiDiscipline *disc = (const OsdiDiscipline *)entry->disciplines;
+  const OsdiAttribute *attrs = (const OsdiAttribute *)entry->attributes;
+  uint32_t start, count;
+
+  *nature = UINT32_MAX;
+  if (!disc || !attrs || disc_idx >= entry->num_disciplines) {
+    return false;
+  }
+  disc += disc_idx;
+  *nature = potential ? disc->potential : disc->flow;
+  /* the table lays a discipline's attributes out as [flow][potential][user],
+   * all counted from `attr_start` */
+  if (potential) {
+    start = disc->attr_start + disc->num_flow_attr;
+    count = disc->num_potential_attr;
+  } else {
+    start = disc->attr_start;
+    count = disc->num_flow_attr;
+  }
+  return osdi_attr_abstol(attrs, entry->num_attributes, start, count, out);
+}
+
 double osdi_node_abstol(const OsdiRegistryEntry *entry, uint32_t node_idx) {
   const OsdiDescriptor *descr;
   const OsdiNature *natures;
@@ -296,18 +358,18 @@ double osdi_node_abstol(const OsdiRegistryEntry *entry, uint32_t node_idx) {
   ref = &descr->unknown_nature[node_idx];
 
   /* A node's unknown is reached either directly as a nature or through its
-   * discipline's potential/flow nature. */
+   * discipline's potential/flow nature -- and in the second case the
+   * discipline's own override of that attribute comes first (3.6.2.5). */
   if (ref->ref_type == NATREF_NATURE) {
     nat_idx = ref->index;
   } else if (ref->ref_type == NATREF_DISCIPLINE_POTENTIAL ||
              ref->ref_type == NATREF_DISCIPLINE_FLOW) {
-    const OsdiDiscipline *disc = (const OsdiDiscipline *)entry->disciplines;
-    if (!disc || ref->index >= entry->num_disciplines) {
-      return 0.0;
+    double overridden;
+    if (osdi_discipline_abstol(entry, ref->index,
+                               ref->ref_type == NATREF_DISCIPLINE_POTENTIAL,
+                               &nat_idx, &overridden)) {
+      return (overridden > 0.0) ? overridden : 0.0;
     }
-    nat_idx = (ref->ref_type == NATREF_DISCIPLINE_POTENTIAL)
-                  ? disc[ref->index].potential
-                  : disc[ref->index].flow;
   } else {
     return 0.0;
   }
@@ -317,27 +379,38 @@ double osdi_node_abstol(const OsdiRegistryEntry *entry, uint32_t node_idx) {
 
   {
     const OsdiNature *nat = &natures[nat_idx];
-    uint32_t k;
     /* A derived nature inherits its parent's abstol unless it overrides it
      * (LRM 3.6.1.1), so walk up the parent chain. The bound on the walk is
      * the table size: a corrupt table must not spin here. */
     uint32_t hops = 0;
     while (hops++ <= entry->num_natures) {
-      for (k = 0; k < nat->num_attr; k++) {
-        uint32_t a = nat->attr_start + k;
-        if (a >= entry->num_attributes) {
+      double v;
+      if (osdi_attr_abstol(attrs, entry->num_attributes, nat->attr_start,
+                           nat->num_attr, &v)) {
+        return (v > 0.0) ? v : 0.0;
+      }
+      if (nat->parent_type == NATREF_NATURE) {
+        if (nat->parent >= entry->num_natures) {
           break;
         }
-        if (attrs[a].name && strcmp(attrs[a].name, "abstol") == 0 &&
-            attrs[a].value_type == ATTR_TYPE_REAL) {
-          double v = attrs[a].value.real;
+        nat = &natures[nat->parent];
+      } else if (nat->parent_type == NATREF_DISCIPLINE_POTENTIAL ||
+                 nat->parent_type == NATREF_DISCIPLINE_FLOW) {
+        /* 3.6.2.6: `nature n : ttl.flow;` inherits ttl's override of the
+         * flow's attributes, and only then the bound nature's own. */
+        uint32_t next;
+        if (osdi_discipline_abstol(entry, nat->parent,
+                                   nat->parent_type == NATREF_DISCIPLINE_POTENTIAL,
+                                   &next, &v)) {
           return (v > 0.0) ? v : 0.0;
         }
-      }
-      if (nat->parent_type != NATREF_NATURE || nat->parent >= entry->num_natures) {
+        if (next >= entry->num_natures) {
+          break;
+        }
+        nat = &natures[next];
+      } else {
         break;
       }
-      nat = &natures[nat->parent];
     }
   }
   return 0.0;

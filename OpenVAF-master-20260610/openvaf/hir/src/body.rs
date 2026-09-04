@@ -7,14 +7,14 @@ use hir_def::{DefWithBodyId, ModuleId};
 pub use hir_def::{/*expr::CaseCond,*/ BuiltIn, Case, CaseKind, ExprId, Literal, ParamSysFun, StmtId, Type,};
 use hir_ty::db::HirTyDB;
 use hir_ty::inference;
-use hir_ty::types::{Signature, Ty};
+use hir_ty::types::{AttrId, Signature, Ty};
 pub use syntax::ast::{BinaryOp, UnaryOp};
 pub use syntax::name::Name;
 use syntax::TextRange;
 
 use crate::{
-    Branch, BranchKind, BranchWrite, CompilationDB, Function, FunctionArg, NatureAttribute, Node,
-    Parameter, Variable,
+    Branch, BranchKind, BranchWrite, CompilationDB, DisciplineAttribute, Function, FunctionArg,
+    NatureAttribute, Node, Parameter, Variable,
 };
 use hir_ty::builtin::{NATURE_ACCESS_BRANCH, NATURE_ACCESS_NODES, NATURE_ACCESS_NODE_GND};
 
@@ -430,7 +430,13 @@ impl<'a> BodyRef<'a> {
                 Ref::FunctionArg(FunctionArg { fun_id: fun, arg_id: arg })
             }
             Ty::FunctionVar { fun, .. } => Ref::FunctionReturn(Function { id: fun }),
-            Ty::NatureAttr(_, id) => Ref::NatureAttr(NatureAttribute { id }),
+            // Round-4 audit: the reference may be the nature's own attribute
+            // or a discipline's override of it (LRM 3.6.2.5); both read as a
+            // constant-expression body.
+            Ty::NatureAttr(_, AttrId::Nature(id)) => Ref::NatureAttr(NatureAttribute { id }),
+            Ty::NatureAttr(_, AttrId::Discipline(id)) => {
+                Ref::DisciplineAttr(DisciplineAttribute { id })
+            }
 
             ref it => {
                 if let Some(&inference::ResolvedFun::Param(param)) =
@@ -837,6 +843,7 @@ pub enum Ref {
     FunctionArg(FunctionArg),
     FunctionReturn(Function),
     NatureAttr(NatureAttribute),
+    DisciplineAttr(DisciplineAttribute),
     ParamSysFun(ParamSysFun),
 }
 

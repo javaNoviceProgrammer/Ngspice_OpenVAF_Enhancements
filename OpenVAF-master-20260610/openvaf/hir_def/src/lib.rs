@@ -414,6 +414,22 @@ pub struct DisciplineAttrLoc {
     pub id: LocalDisciplineAttrId,
 }
 
+impl DisciplineAttrLoc {
+    /// Round-4 audit: the mirror of `NatureAttrLoc::ast_id`, needed now that a
+    /// discipline's attribute is a resolvable scope item -- LRM 3.6.2.5 lets a
+    /// discipline override an attribute of the nature it binds, and reading
+    /// `net.flow.<attr>` back must be able to name the OVERRIDE rather than the
+    /// nature's own declaration.
+    pub fn ast_id(self, db: &dyn HirDefDB) -> AstId<ast::DisciplineAttr> {
+        let discipline = self.discipline.lookup(db);
+        let item_tree = &discipline.item_tree(db);
+        let discipline = &item_tree[discipline.id];
+        let id = u32::from(discipline.extra_attrs.start()) + u32::from(self.id);
+        let id: ItemTreeId<item_tree::DisciplineAttr> = ItemTreeId::from(id);
+        item_tree[id].ast_id()
+    }
+}
+
 impl_intern!(
     DisciplineAttrId,
     DisciplineAttrLoc,
