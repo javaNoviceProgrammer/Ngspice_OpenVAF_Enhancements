@@ -50,6 +50,107 @@ typedef struct {
  * independent write positions. */
 static bool at_line_start[2] = {true, true}; /* [0] stdout, [1] stderr */
 
+/* 2026-09-04 large-circuit sweep, F4: a model that prints one line per
+ * instance from its setup code -- BSIM4's `$strobe("\n RECALCULATION for no
+ * K1 or K2")`, fired for every instance whose card gives neither -- put
+ * 80 000 identical lines into the log of a 40 000-device deck, on every
+ * reset, and buried every real diagnostic among them. Identical COMPLETE
+ * lines (the text after the "OSDI <inst>: " head, newline-terminated) are
+ * shown OSDI_REPEAT_SHOW times within one run of output and then counted;
+ * each count is reported as one line when the run ends -- a Newton iteration
+ * or setup begins, or a flush ends. Messages are keyed by their text in a
+ * small ring of the most recent distinct texts, so a constant line survives
+ * being interleaved with a per-instance one (a model that prints both), at a
+ * bounded cost per message. Partial lines (`$write` continuations) are never
+ * coalesced, so line assembly is untouched, and the first occurrences print
+ * exactly as before. */
+#define OSDI_REPEAT_SHOW 5
+#define OSDI_REPEAT_RING 64
+typedef struct {
+  char *body;      /* the message text, head excluded; NULL = free slot */
+  char *last_head; /* "OSDI <inst>" of the most recent arrival */
+  int seen;        /* arrivals in the current run */
+  bool to_err;     /* the stream those messages went to */
+} OsdiRepeat;
+static OsdiRepeat rep_ring[OSDI_REPEAT_RING];
+static int rep_next; /* the slot a new text takes (round robin) */
+
+static void osdi_repeat_summarize(OsdiRepeat *r) {
+  if (r->body != NULL && r->seen > OSDI_REPEAT_SHOW) {
+    int stream = r->to_err ? 1 : 0;
+    FILE *dst = r->to_err ? stderr : stdout;
+    const char *b = r->body;
+    int len;
+    while (*b == '\n') {
+      b++;
+    }
+    len = (int)strcspn(b, "\n");
+    if (len > 60) {
+      len = 60;
+    }
+    if (!at_line_start[stream]) {
+      fputc('\n', dst);
+    }
+    fprintf(dst, "OSDI: \"%.*s%s\" was repeated %d more time%s by other instances "
+                 "(last from %s)\n",
+            len, b, (size_t)len < strcspn(b, "\n") ? "..." : "",
+            r->seen - OSDI_REPEAT_SHOW, r->seen - OSDI_REPEAT_SHOW == 1 ? "" : "s",
+            r->last_head ? r->last_head : "?");
+    at_line_start[stream] = true;
+  }
+  tfree(r->body);
+  tfree(r->last_head);
+  r->body = NULL;
+  r->last_head = NULL;
+  r->seen = 0;
+}
+
+void osdi_display_repeat_summary(void) {
+  for (int i = 0; i < OSDI_REPEAT_RING; i++) {
+    osdi_repeat_summarize(&rep_ring[i]);
+  }
+  rep_next = 0;
+}
+
+static void osdi_repeat_note_head(OsdiRepeat *r, const char *text, int head_len) {
+  tfree(r->last_head);
+  r->last_head = TMALLOC(char, (size_t)head_len + 1);
+  memcpy(r->last_head, text, (size_t)head_len);
+  r->last_head[head_len] = '\0';
+  /* drop the trailing ": " so the summary reads "last from OSDI n42" */
+  if (head_len >= 2 && r->last_head[head_len - 2] == ':') {
+    r->last_head[head_len - 2] = '\0';
+  }
+}
+
+/* true when `text` is a complete line already shown OSDI_REPEAT_SHOW times
+ * in this run, and so is to be suppressed (its arrival is counted) */
+static bool osdi_repeat_suppress(const char *text, int head_len, bool to_err) {
+  const char *body = text + head_len;
+  size_t n = strlen(body);
+  OsdiRepeat *r;
+  if (n == 0 || body[n - 1] != '\n') {
+    return false; /* a partial line: never coalesced */
+  }
+  for (int i = 0; i < OSDI_REPEAT_RING; i++) {
+    r = &rep_ring[i];
+    if (r->body != NULL && r->to_err == to_err && strcmp(r->body, body) == 0) {
+      r->seen++;
+      osdi_repeat_note_head(r, text, head_len);
+      return r->seen > OSDI_REPEAT_SHOW;
+    }
+  }
+  r = &rep_ring[rep_next];
+  rep_next = (rep_next + 1) % OSDI_REPEAT_RING;
+  osdi_repeat_summarize(r); /* an evicted text reports its count now */
+  r->body = TMALLOC(char, n + 1);
+  memcpy(r->body, body, n + 1);
+  r->seen = 1;
+  r->to_err = to_err;
+  osdi_repeat_note_head(r, text, head_len);
+  return false;
+}
+
 static void osdi_severity_when(char *buf, size_t n, uint32_t lvl);
 
 /* `sev` is a severity task's `lvl`, or 0 for every other task. The LRM 9.7.3
@@ -68,8 +169,47 @@ static void osdi_emit(const char *text, int head_len, bool to_err,
   if (text == NULL) {
     return;
   }
+  /* F4: a message that BEGINS with newlines -- BSIM4's "\n RECALCULATION ..."
+   * -- used to print the head, then the newline, leaving "OSDI np2" alone on
+   * a line and the message on the next, headless. The newlines end whatever
+   * line is open (a blank line when none is), and the head then goes where
+   * it belongs: in front of the first character of text. */
+  /* F4: the repeat check comes first and keys on the WHOLE body, leading
+   * newlines included, so a suppressed repeat prints nothing at all. A
+   * message that begins with a newline is at a line start after it. */
+  {
+    const char *body = text + head_len;
+    if ((at_line_start[stream] || body[0] == '\n') &&
+        osdi_repeat_suppress(text, head_len, to_err)) {
+      return; /* shown OSDI_REPEAT_SHOW times already; counted for the summary */
+    }
+  }
+  {
+    const char *body = text + head_len;
+    size_t lead = strspn(body, "\n");
+    if (lead > 0) {
+      fwrite(body, 1, lead, dst);
+      at_line_start[stream] = true;
+      if (body[lead] == '\0') {
+        return;
+      }
+      fprintf(dst, "%.*s", head_len, text);
+      at_line_start[stream] = false;
+      out = body + lead;
+      n = strlen(out);
+      if (sev == 0) {
+        fputs(out, dst);
+        at_line_start[stream] = (out[n - 1] == '\n');
+        return;
+      }
+      /* a severity task: fall through to the context handling with `out`
+         already positioned past the head */
+      goto with_context;
+    }
+  }
   out = at_line_start[stream] ? text : text + head_len;
   n = strlen(out);
+with_context:
   if (sev != 0) {
     char when[64];
     osdi_severity_when(when, sizeof(when), sev);
@@ -145,6 +285,7 @@ static char **monitor_prev;
 static int monitor_prev_cap;
 
 void osdi_display_iter_begin(void) {
+  osdi_display_repeat_summary(); /* F4: a setup's run of repeats ends here */
   display_managed = true;
   for (int i = 0; i < pending_len; i++) {
     tfree(pending[i].text);
@@ -165,6 +306,7 @@ void osdi_display_iter_begin(void) {
  * stale pending from a prior analysis) makes every setup behave like the
  * first; the first load iteration re-arms deferral via iter_begin. */
 void osdi_display_reenter_setup(void) {
+  osdi_display_repeat_summary(); /* F4 */
   display_managed = false;
   /* Round-3 audit: a model whose last `$write` never terminated its line would
    * otherwise keep every later message's head suppressed for the rest of the
@@ -230,6 +372,7 @@ void osdi_display_flush(void) {
     tfree(m->text);
   }
   pending_len = 0;
+  osdi_display_repeat_summary(); /* F4: the accepted point's run ends here */
 }
 
 /* Build "<prefix><name>: <msg>", reporting how many bytes of head that put in

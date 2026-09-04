@@ -156,7 +156,35 @@ Rp2 a 0  1e-3
 check("v(out) = 0.5 under none/sum/max scaling", ok)
 
 import shutil
+# --- 2026-09-04 large-circuit sweep, F3: rusage's KLU non-zero accounting ----
+# A one-way chain (each stage's current source is controlled by the previous
+# node) is block-triangular: KLU's BTF puts every coupling entry in its
+# off-diagonal-block array (`nzoff`) and the LU of the singleton blocks holds
+# only the diagonal. `rusage` computed the fill-in as lnz + unz - nz, which
+# counts the diagonal twice and the off-block entries never: a chain with no
+# fill-in at all reported "fill-in non-zeroes = -1002". In Sparse mode this
+# KLU build also reported "total non-zeroes = 0" on every deck.
+print("[F3] rusage non-zero accounting under KLU, and the Sparse-mode total")
+def chain_deck(solver, n=200):
+    L = ["* one-way chain", f".option {solver}", "vin s0 0 dc 1"]
+    for i in range(1, n + 1):
+        L += [f"g{i} s{i} 0 s{i-1} 0 1m", f"r{i} s{i} 0 1k"]
+    L += [".control", "op", "rusage all", ".endc", ".end"]
+    return "\n".join(L) + "\n"
+import re as _re
+def nz(log):
+    g = lambda k: int(_re.search(rf"Circuit {k} non-zeroes = (-?\d+)", log).group(1))
+    return g("original"), g("fill-in"), g("total")
+o, f, tot = nz(run(chain_deck("klu")))
+check("KLU: a block-triangular chain reports a non-negative fill-in",
+      f >= 0, f"(fill-in {f}; was -{2 * 200 + 2})")
+check("KLU: total non-zeroes = original + fill-in", tot == o + f,
+      f"({tot} vs {o} + {f})")
+o2, f2, tot2 = nz(run(chain_deck("sparse")))
+check("Sparse mode in this KLU build reports a total, not 0", tot2 > 0 and tot2 == o2 + f2,
+      f"({tot2} = {o2} + {f2})")
 shutil.rmtree(SCRATCH, ignore_errors=True)
+
 
 print()
 if _fail:

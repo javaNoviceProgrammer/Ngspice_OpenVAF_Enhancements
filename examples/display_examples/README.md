@@ -24,5 +24,5 @@ all five display kinds.
 ## Run
 
 ```bash
-python3 verify_display.py    # 18 checks
+python3 verify_display.py    # 22 checks
 ```

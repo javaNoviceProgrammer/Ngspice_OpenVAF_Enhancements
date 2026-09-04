@@ -28,8 +28,8 @@ worth an enhancement.
 |---|---|---|
 | [F1](#f1--the-osdi-mosfet-operating-point-falls-into-gmin-stepping-where-the-built-in-converges-directly) | a chain of 100 OSDI BSIM4 (or PSP 103) inverters needs dynamic gmin stepping for its operating point where the built-in BSIM4 converges in 9 iterations; the built-in only reaches that regime at 300 stages. The models call no `$limit`, so Newton runs un-limited. Cost: the op is 5–6× slower per device than the twin's, and the whole run 2.4× (KLU) to 3.8× (Sparse) | medium — cost and robustness, answer unchanged |
 | [F2](#f2--under-klu-a-long-inverter-chain-is-declared-singular-at-its-last-node) | under KLU the plain-Newton attempt on a long inverter chain ends in *"singular matrix: check node s1000"* — always the chain's last node — and only then falls back to gmin stepping; Sparse fails the same attempt without a verdict. Insensitive to BTF, scaling, gmin and a 1 GΩ leak on that node; the built-in twin does it too from 300 stages. The answer is unaffected | low — a misleading warning |
-| [F3](#f3--rusage-reports-a-negative-fill-in-under-klu) | `rusage` prints *"Circuit fill-in non-zeroes = -1002"* under KLU on a chain: the formula `lnz + unz − nz` omits KLU's off-diagonal-block entries | low — cosmetic |
-| [F4](#f4--the-bsim4-source-prints-a-line-per-instance-per-setup) | BSIM4's Verilog-A prints *"RECALCULATION for no K1 or K2"* from a `$strobe` twice per instance per setup — 13 000 lines on a 6 400-device deck, 80 000 on the 40 000-device one — and its leading newline leaves the `OSDI <inst>` head on a line of its own | low — model-side noise |
+| [F3](#f3--rusage-reports-a-negative-fill-in-under-klu) | `rusage` prints *"Circuit fill-in non-zeroes = -1002"* under KLU on a chain: the formula `lnz + unz − nz` omits KLU's off-diagonal-block entries | low — cosmetic. **Fixed** |
+| [F4](#f4--the-bsim4-source-prints-a-line-per-instance-per-setup) | BSIM4's Verilog-A prints *"RECALCULATION for no K1 or K2"* from a `$strobe` twice per instance per setup — 13 000 lines on a 6 400-device deck, 80 000 on the 40 000-device one — and its leading newline leaves the `OSDI <inst>` head on a line of its own | low — model-side noise. **Fixed** (simulator side: shown 5 times, then counted; the head follows the newline) |
 
 The measurements that hold are in [What was measured and holds](#what-was-measured-and-holds).
 
@@ -239,6 +239,19 @@ its off-diagonal-block array (`Numeric->nzoff`) are left out, so a block-
 triangular matrix with no fill-in at all reports a negative one. Cosmetic;
 the mesh, which has one large block, reports the right order of magnitude.
 
+**Resolved (2026-09-04, after the sweep).** The accounting (`cktacct.c`) now
+reads the factor as KLU stores it: `lnz + unz − n + nzoff`, since KLU counts
+the diagonal in both L and U (`klu_kernel`: "1 added to lnz for diagonal", and
+again for `unz`; a singleton block adds one to each) and keeps the entries
+outside the diagonal blocks of its block-triangular form in `nzoff`. The
+1 000-stage chain reports `fill-in 0, total 5008`, the same as Sparse; the
+30×30 mesh 15 222 against Sparse's 15 720 (different orderings). A second
+defect fell out of the same case: in this KLU build the *Sparse*-mode total
+read 0 on every deck (the `#ifdef KLU` branch answered 0 whenever KLU was not
+in use, instead of asking Sparse); it now reports the count. Pinned in
+`klu_tuning_examples` (+3) on a one-way chain whose every coupling entry lives
+in the off-block array.
+
 ## F4 — the BSIM4 source prints a line per instance per setup
 
 ```verilog
@@ -254,6 +267,25 @@ head is written, then the newline, and ngspice's next `Note:` lands beside the
 head. This is the model's choice, and the cost in time is invisible next to
 the op; it is noted because a 40 000-device log with 80 000 identical lines
 buries every real diagnostic in it.
+
+**Resolved (2026-09-04, after the sweep) — on the simulator's side.** The
+model keeps its line; the display funnel (`osdicallbacks.c`) now treats it
+the way ngspice treats its own repeated warnings. Identical complete lines
+(the text after the `OSDI <inst>: ` head, newline-terminated) are shown five
+times within one run of output and then counted, and each count is reported
+as one line when the run ends — a Newton iteration or setup begins, or a
+flush ends: *"OSDI: " RECALCULATION for no K1 or K2" was repeated 3195 more
+times by other instances (last from OSDI np0_0)"*. Messages are keyed by
+their text in a ring of the 64 most recent distinct texts, so a constant line
+survives being interleaved with a per-instance one (a model that prints
+both) at a bounded cost per message; partial lines (`$write` continuations)
+are never coalesced, so line assembly is untouched; the first occurrences
+print exactly as before. The 3 200-device grid's 6 400 lines are now 10 plus
+two summaries. And a message that begins with newlines emits them first and
+then puts the head in front of its first character, so `OSDI np2` no longer
+sits alone on a line. Pinned in `display_examples` (18 → 22) with a fixture
+that prints one constant and one distinct line per instance; the 27 suites
+that pin display output, and the full 453-suite sweep, pass.
 
 ---
 

@@ -366,6 +366,7 @@ void osdi_display_note_circuit(const CKTcircuit *ckt);
 void osdi_display_setup_phase(void);  /* Enhancement-535: per-ANALYSIS reset */
 void osdi_display_reenter_setup(void); /* per-setup reset, monitor history kept */
 void osdi_display_flush(void);
+void osdi_display_repeat_summary(void);   /* F4: end a run of repeats */
 void osdi_register_io_hooks(void *lib_handle, void *(*get_sym)(void *, const char *));
 void osdi_io_hooks_iter_begin(void);
 void osdi_io_hooks_flush(void);

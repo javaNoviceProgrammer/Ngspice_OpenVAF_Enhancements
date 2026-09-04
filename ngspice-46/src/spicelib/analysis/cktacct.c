@@ -62,9 +62,20 @@ CKTacct(CKTcircuit *ckt, JOB *anal, int which, IFvalue *val)
                     !ckt->CKTmatrix->SMPkluMatrix->KLUmatrixNumeric) {
                     return -1;
                 }
+                /* 2026-09-04 large-circuit sweep, F3: the factor's size is
+                 * not lnz + unz. KLU counts the diagonal in BOTH L (unit,
+                 * stored) and U (klu_kernel: "1 added to lnz for diagonal",
+                 * and again for unz; a singleton block adds one to each), and
+                 * it keeps the entries outside the diagonal blocks of its
+                 * block-triangular form in a separate array (`nzoff`). The
+                 * old lnz + unz - nz reported the fill-in of a block-
+                 * triangular matrix that has none as NEGATIVE ("fill-in
+                 * non-zeroes = -1002" on a 1000-stage chain). */
 		val->iValue =
                     ckt->CKTmatrix->SMPkluMatrix->KLUmatrixNumeric->lnz +
                     ckt->CKTmatrix->SMPkluMatrix->KLUmatrixNumeric->unz -
+                    ckt->CKTmatrix->SMPkluMatrix->KLUmatrixNumeric->n +
+                    ckt->CKTmatrix->SMPkluMatrix->KLUmatrixNumeric->nzoff -
                     (int)ckt->CKTmatrix->SMPkluMatrix->KLUmatrixNZ ;
 	    } else {
 		val->iValue = spFillinCount(ckt->CKTmatrix->SPmatrix);
@@ -81,11 +92,19 @@ CKTacct(CKTcircuit *ckt, JOB *anal, int which, IFvalue *val)
 #ifdef KLU
 	    if (ckt->CKTmatrix->CKTkluMODE && ckt->CKTmatrix->SMPkluMatrix &&
                 ckt->CKTmatrix->SMPkluMatrix->KLUmatrixNumeric) {
+                /* F3 (see above): one diagonal, plus the off-block entries */
 		val->iValue =
                     ckt->CKTmatrix->SMPkluMatrix->KLUmatrixNumeric->lnz +
-                    ckt->CKTmatrix->SMPkluMatrix->KLUmatrixNumeric->unz ;
-            } else {
+                    ckt->CKTmatrix->SMPkluMatrix->KLUmatrixNumeric->unz -
+                    ckt->CKTmatrix->SMPkluMatrix->KLUmatrixNumeric->n +
+                    ckt->CKTmatrix->SMPkluMatrix->KLUmatrixNumeric->nzoff ;
+            } else if (ckt->CKTmatrix->CKTkluMODE) {
 		val->iValue = 0;
+            } else {
+                /* F3: in a KLU build the Sparse-mode total read 0 -- the
+                 * default solver answered "Circuit total non-zeroes = 0" on
+                 * every deck, while the plain build reports the count. */
+		val->iValue = spElementCount(ckt->CKTmatrix->SPmatrix);
             }
 #else
 	    val->iValue = spElementCount(ckt->CKTmatrix->SPmatrix);

@@ -109,5 +109,34 @@ check("\\t escape renders a tab", "tab[\t]" in log)
 check("$write / $display / $monitor / $debug all print",
       all(f"M{k}" in log for k in (3, 4, 5, 6)))
 
+# --- 2026-09-04 large-circuit sweep, F4: repeated setup-time lines ------------
+# Eight instances each print the same setup line and one distinct line.
+ok3 = compile_va("display_repeat.va")[1]
+check("display_repeat.va compiles", ok3)
+if ok3:
+    deck = ["* display repeat", "V1 a 0 DC 1"]
+    deck += [f"N{k} a 0 mm" for k in range(1, 9)]
+    deck += [".model mm disprepeat", ".op", ".control", "pre_osdi display_repeat.osdi",
+             "run", ".endc", ".end"]
+    with open(os.path.join(HERE, "_rep.cir"), "w") as fh:
+        fh.write("\n".join(deck) + "\n")
+    r = subprocess.run([NGSPICE, "-b", "_rep.cir"], capture_output=True, text=True,
+                       timeout=120, cwd=HERE)
+    log = r.stdout + r.stderr
+    summ = [l for l in log.splitlines() if "was repeated" in l]
+    rep = [l for l in log.splitlines() if "REPEATED setup line" in l and l not in summ]
+    dist = [l for l in log.splitlines() if "distinct n" in l]
+    npass = len(summ)   # setup passes in the run (each prints once per instance)
+    check("an identical setup line from 8 instances shows 5 times per pass, then one summary",
+          npass >= 1 and len(rep) == 5 * npass
+          and all("repeated 3 more times" in s and "REPEATED setup line" in s for s in summ),
+          f"(shown {len(rep)}, summaries {len(summ)})")
+    check("a message that begins with a newline keeps its head on the text's line",
+          all(re.match(r"OSDI n\d+:\s+REPEATED setup line", l) for l in rep)
+          and not any(re.fullmatch(r"OSDI n\d+:\s*", l) for l in log.splitlines()),
+          "")
+    check("lines that differ per instance are never coalesced, even interleaved",
+          npass >= 1 and len(dist) == 8 * npass, f"({len(dist)} for {npass} passes)")
+
 print(f"\n{'ALL PASS' if failed == 0 else 'FAILURES'}: {passed} passed, {failed} failed")
 raise SystemExit(1 if failed else 0)

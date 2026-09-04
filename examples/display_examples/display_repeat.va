@@ -1,0 +1,17 @@
+// 2026-09-04 large-circuit sweep, F4: a model that prints one line per instance
+// from its SETUP code (no voltage dependence, so the compiler hoists it; BSIM4
+// does exactly this with "\n RECALCULATION for no K1 or K2") put tens of
+// thousands of identical lines into a large deck's log. The simulator now shows
+// such a line OSDI_REPEAT_SHOW (5) times and then counts the rest into one
+// summary line; a message that BEGINS with a newline keeps its head on the
+// text's line; lines that differ per instance are never coalesced.
+`include "disciplines.vams"
+module disprepeat(a, c);
+  inout a, c; electrical a, c;
+  parameter real r = 1e3 from (0:inf);
+  analog begin
+    $strobe("\n REPEATED setup line r=%g", r);   // identical for every instance
+    $strobe("distinct %m");                        // differs per instance
+    I(a,c) <+ V(a,c)/r;
+  end
+endmodule
