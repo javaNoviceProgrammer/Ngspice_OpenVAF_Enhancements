@@ -687,29 +687,16 @@ char *INPdomodel(CKTcircuit *ckt, struct card *image, INPtables * tab)
 
     }
 
-#ifdef OSDI
-    /* 2026-09-04 hunt, F1: this card just bound to a BUILT-IN, and a
-     * Verilog-A module of the same name was refused at load for colliding
-     * with it. The deck's author almost certainly meant the Verilog-A model
-     * -- they compiled and loaded it -- and without this line the built-in
-     * runs in its place in complete silence (it may even accept the card's
-     * parameters, as the junction diode does for `is`). */
-    if (type >= 0 && ft_sim->devices[type] &&
-        !ft_sim->devices[type]->registry_entry) {
-        const char *builtin = NULL;
-        const char *lib = osdi_refused_module_lib(type_name, &builtin);
-        if (lib) {
-            fprintf(stderr,
-                    "Warning: .model %s: type \"%s\" is ngspice's built-in %s. "
-                    "The Verilog-A module \"%s\" loaded from \"%s\" was refused "
-                    "for colliding with that name, so this card does NOT reach "
-                    "it -- the built-in will simulate. Rename the module to use "
-                    "the Verilog-A model.\n",
-                    modname, type_name, builtin ? builtin : "device",
-                    type_name, lib);
-        }
+    /* F1 (2026-09-04 hunt): keep the type token. A card whose type resolved
+     * to a built-in may still be meant for a shadowed Verilog-A module of the
+     * same name; only the instance line that uses it can tell (an `n` line
+     * can mean nothing but an OSDI device), and that is decided in INP2N
+     * before the model is materialised. */
+    {
+        INPmodel *made = INPlookMod(modname);
+        if (made && !made->INPmodTypeName)
+            made->INPmodTypeName = copy(type_name);
     }
-#endif
     tfree(type_name);
     return (err);
 }

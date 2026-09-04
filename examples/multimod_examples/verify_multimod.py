@@ -17,18 +17,19 @@ descriptor as a device type. This suite pins the whole packaging surface:
       trap);
   [6] loading the same .osdi twice notes "already loaded" and skips;
   [7] a module named like a built-in device (vcvs) no longer crashes
-      ngspice: the module is refused with a message naming the built-in and
-      the remedy, and the instance line gets a clean "Expected OSDI [or
-      nport] device" error that names the built-in the card resolved to
-      (this was the documented Enhancement-29 segfault gotcha, now retired);
-  [9]-[12] the 2026-09-04 hunt's name-collision findings: a module named
-      like a `.model` type KEYWORD (`res`) is refused with the reason, the
-      `.model` card that then binds to the built-in warns that the Verilog-A
-      model is not the one simulating, and so does the built-in's own device
-      letter (a `d` line on a module named `diode`); two modules in one .osdi
-      whose names differ only in case warn, naming both spellings; and
-      `pre_osdi -f` on a built-in-colliding module no longer REPLACES the
-      built-in for the session.
+      ngspice -- and now WORKS from an n line: the module is registered as
+      shadowed (a message names the built-in and what the name costs), and
+      an n-line instance re-binds its `.model` card to the module, since an
+      n line can mean nothing but an OSDI device (this was the documented
+      Enhancement-29 segfault gotcha, now retired twice over);
+  [9]-[13] the 2026-09-04 hunt's name-collision findings (F1/F2): a module
+      named like a `.model` type KEYWORD (`res`) works from an n line the
+      same way; a `d` line on a card of a shadowed type (`diode`) gets the
+      built-in, with a warning at materialisation saying so; two modules in
+      one .osdi whose names differ only in case warn, naming both spellings;
+      `pre_osdi -f` on a shadowed module reloads the module's own slot and
+      never REPLACES the built-in; and the two mixed orderings on one card
+      (n line first / d line first) each fail loudly on the second user.
   [8] the underlying stock defect is fixed on its own: a .model card
       naming a card-less built-in type (vcvs), referenced by an ordinary
       MOS instance with NO OSDI involved, errors cleanly instead of
@@ -134,35 +135,34 @@ def main():
                   ".control\npre_osdi vcvs.osdi\nop\nprint -i(vin)\n.endc\n.end\n",
                   "t7")
     check("no crash (used to SIGSEGV)", rc >= 0 and rc < 128)
-    check("refused, naming the built-in and the remedy",
+    check("shadowed, naming the built-in and what the name costs",
           'module "vcvs" (from "vcvs.osdi") has the same name as ngspice\'s '
           'built-in' in out and "Rename the module" in out)
-    check("instance line gets a clean error that names the built-in",
-          "Expected OSDI" in out   # E-242 broadened this to "OSDI or nport device"
-          and 'model "mm" is ngspice\'s built-in' in out)
+    check("the n line re-binds the card and the Verilog-A vcvs runs (1k -> 1 mA)",
+          "binding the card to it" in out
+          and val(out, "-i(vin)") is not None and abs(val(out, "-i(vin)") - 1e-3) < 1e-12)
 
     print("[9] a module named like a .model type KEYWORD (res)")
     rc, out = run("* keyword clash\nvin in 0 dc 1\nn1 in 0 mm\n.model mm res r=2000\n"
                   ".control\npre_osdi namekw.osdi\nop\nprint -i(vin)\n.endc\n.end\n",
                   "t9")
-    check("refused at load with the keyword named",
-          "`.model` type keyword for the built-in Resistor" in out
+    check("shadowed at load with the keyword named",
+          "built-in Resistor (a `.model` type keyword)" in out
           and 'module "res"' in out)
-    check("the .model card says the built-in will simulate, not the Verilog-A model",
-          '.model mm: type "res" is ngspice\'s built-in Resistor' in out
-          and "does NOT reach it" in out)
-    check("the N line names the built-in and the refused module",
-          'model "mm" is ngspice\'s built-in Resistor' in out
-          and 'module "res" loaded from "namekw.osdi" was refused' in out)
+    check("the n line re-binds the card and the Verilog-A res runs (r=2000 -> 0.5 mA)",
+          '.model mm: type "res" is ngspice\'s built-in Resistor, but this `n`-line' in out
+          and val(out, "-i(vin)") is not None and abs(val(out, "-i(vin)") - 5e-4) < 1e-12)
+    check("no spurious 'model type mismatch' for the n line",
+          "model type mismatch" not in out)
 
     print("[10] the silent half: the built-in's own device letter")
     rc, out = run("* d-line clash\nvin in 0 dc 0.6\nr1 in a 100\nd1 a 0 md\n"
                   ".model md diode is=1e-20\n"
                   ".control\npre_osdi namedio.osdi\nop\nprint v(a)\n.endc\n.end\n",
                   "t10")
-    check("the card warns that the built-in Diode simulates in the module's place",
-          '.model md: type "diode" is ngspice\'s built-in Diode' in out
-          and 'module "diode" loaded from "namedio.osdi" was refused' in out)
+    check("the card warns at materialisation that the built-in Diode simulates",
+          '.model md: created as ngspice\'s built-in Diode' in out
+          and 'module "diode" loaded from "namedio.osdi" has the same name' in out)
     check("...and it does run (the built-in), so the warning is the only signal",
           val(out, "v(a)") is not None)
 
@@ -183,11 +183,25 @@ def main():
                   ".model md d(is=1e-14)\n"
                   ".control\npre_osdi namedio.osdi\npre_osdi -f namedio.osdi\nop\n"
                   "print v(a)\nshowmod md\n.endc\n.end\n", "t12")
-    check("the reload registers nothing and says so",
-          'reloaded "namedio.osdi" (0 of 1 device registered)' in out)
+    check("the reload swaps the module's own slot",
+          'reloaded "namedio.osdi" (1 device)' in out)
     check("a plain `d` card is still the built-in junction diode "
           "(it used to become the Verilog-A module for the session)",
           "Junction Diode model" in out and "loaded with OSDI" not in out)
+
+    print("[13] one card, both device letters: the second user fails loudly")
+    rc, out = run("* n then d\nvin in 0 dc 0.6\nr1 in a 100\nn1 a 0 md\nd1 a 0 md\n"
+                  ".model md diode is=1e-14\n"
+                  ".control\npre_osdi namedio.osdi\nop\nprint v(a)\n.endc\n.end\n", "t13a")
+    check("n line first: the d line is refused (the card is now the Verilog-A model)",
+          "binding the card to it" in out and "incorrect model type" in out
+          and val(out, "v(a)") is None)
+    rc, out = run("* d then n\nvin in 0 dc 0.6\nr1 in a 100\nd1 a 0 md\nn1 a 0 md\n"
+                  ".model md diode is=1e-14\n"
+                  ".control\npre_osdi namedio.osdi\nop\nprint v(a)\n.endc\n.end\n", "t13b")
+    check("d line first: the n line's error says the card was already created as the built-in",
+          'was already created as ngspice\'s built-in Diode by another instance line' in out
+          and "give this `n` line a `.model` card of its own" in out)
 
     print("[8] stock shape: .model of a card-less built-in, no OSDI")
     rc, out = run("* stock clash\nvin in 0 dc 1\nr1 in 0 1k\nm1 a b c d mm\n"

@@ -76,6 +76,7 @@ int INPmakeMod(char *token, int type, struct card *line)
    newm->INPnextModel = modtab;              /* pointer to second model */
    newm->INPmodLine = line;                  /* model line */
    newm->INPmodfast = NULL;
+   newm->INPmodTypeName = NULL;   /* set by INPdomodel once the type is known */
 
    nghash_insert(modtabhash, token, newm);
 

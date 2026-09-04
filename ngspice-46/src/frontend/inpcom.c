@@ -11531,7 +11531,16 @@ void inp_rem_unused_models(struct nscope *root, struct card *deck)
                 struct modellist *m =
                         inp_find_model(card->level, elem_model_name);
                 if (m) {
-                    if (*curr_line != m->elemb && !(*curr_line == 'n' && m->elemb == 'a'))
+                    /* F1 (2026-09-04 hunt): an `n` line is never judged here.
+                     * This pass runs while the deck is being READ, before any
+                     * `pre_osdi` has loaded a library, so it cannot know that a
+                     * card whose type is a `.model` keyword (`res`, `d`, ...)
+                     * names a Verilog-A module shadowed by the built-in --
+                     * which INP2N re-binds the card to. INP2N also reports a
+                     * genuine n-line mismatch, naming the built-in the card
+                     * resolved to and why, so nothing is lost by staying quiet. */
+                    bool mismatch = (*curr_line != m->elemb && *curr_line != 'n');
+                    if (mismatch)
                         fprintf(stderr,
                                 "warning, model type mismatch in line\n    "
                                 "%s\n",

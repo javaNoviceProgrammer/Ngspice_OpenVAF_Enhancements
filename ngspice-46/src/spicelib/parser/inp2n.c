@@ -422,6 +422,34 @@ void INP2N(CKTcircuit *ckt, INPtables *tab, struct card *current) {
   /* We have single terminal Verilog-A modules */
 
   if (i >= 2) {
+#ifdef OSDI
+      /* F1 (2026-09-04 hunt): an N line can mean nothing but an OSDI (or
+       * nport) device. If this card's type resolved to a BUILT-IN and a
+       * Verilog-A module of that name is loaded and shadowed, the card was
+       * meant for the module -- re-bind it now, before INPgetMod materialises
+       * it. A card already created as the built-in (a `d` line used it first)
+       * cannot be re-typed; that case falls through to the error below, which
+       * explains it. */
+      {
+          INPmodel *pre = INPlookMod(token);
+          if (pre && pre->INPmodTypeName && pre->INPmodfast == NULL &&
+              ft_sim->devices[pre->INPmodType] &&
+              !ft_sim->devices[pre->INPmodType]->registry_entry) {
+              const char *lib = NULL, *builtin = NULL;
+              int idx = osdi_shadowed_module(pre->INPmodTypeName, &lib, &builtin);
+              if (idx >= 0) {
+                  fprintf(stderr,
+                          "Note(osdi): .model %s: type \"%s\" is ngspice's built-in "
+                          "%s, but this `n`-line instance can only mean the Verilog-A "
+                          "module \"%s\" from \"%s\" -- binding the card to it.\n",
+                          pre->INPmodName, pre->INPmodTypeName,
+                          builtin ? builtin : "device", pre->INPmodTypeName,
+                          lib ? lib : "?");
+                  pre->INPmodType = idx;
+              }
+          }
+      }
+#endif
       c = INPgetMod(ckt, token, &thismodel, tab);
       /* check if using model binning -- pass in line since need 'l' and 'w' */
       if (!thismodel)
@@ -450,17 +478,20 @@ void INP2N(CKTcircuit *ckt, INPtables *tab, struct card *current) {
      * deck ended up here, since that is the one likely explanation for an N
      * line naming a built-in model. */
     const char *lib = NULL;
-    const char *refused = NULL;
+    const char *shadowed = NULL;
     char *msg;
 #ifdef OSDI
-    refused = osdi_refused_module_for(dev->name, &lib);
+    shadowed = osdi_shadowed_module_for(dev->name, &lib);
 #endif
-    if (refused) {
+    if (shadowed) {
+      /* the card was materialised as the built-in before this line -- another
+       * device letter used it first -- so it cannot be re-bound now */
       msg = tprintf("incorrect model type! Expected OSDI or nport device, but "
-                    "model \"%s\" is ngspice's built-in %s. The Verilog-A "
-                    "module \"%s\" loaded from \"%s\" was refused for "
-                    "colliding with that name; rename the module to use it",
-                    thismodel->INPmodName, dev->name, refused,
+                    "model \"%s\" was already created as ngspice's built-in "
+                    "%s by another instance line. The Verilog-A module \"%s\" "
+                    "from \"%s\" has the same name; give this `n` line a "
+                    "`.model` card of its own, or rename the module",
+                    thismodel->INPmodName, dev->name, shadowed,
                     lib ? lib : "?");
     } else {
       msg = tprintf("incorrect model type! Expected OSDI or nport device, but "

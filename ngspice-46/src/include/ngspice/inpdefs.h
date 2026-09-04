@@ -96,6 +96,10 @@ struct INPmodel {
     INPmodel *INPnextModel; /* link to next model */
     struct card *INPmodLine; /* pointer to line describing model */
     GENmodel *INPmodfast; /* high speed pointer to model for access */
+    /* F1 (2026-09-04 hunt): the card's TYPE token as written (`diode`,
+     * `res`), kept so an `n` line can tell that a card which resolved to a
+     * built-in names a shadowed Verilog-A module of the same name. */
+    char *INPmodTypeName;
 };
 
 // Ugly way to pass line onfo (number and source file) to lower-level error handlers.

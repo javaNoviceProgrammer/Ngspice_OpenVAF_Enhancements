@@ -145,23 +145,60 @@ a plain `.model md d(...)` card ran the Verilog-A module (`showmod` said
 *"loaded with OSDI"*), because the forced-reload swap in `osdi_add_device` did
 not ask whether the device it was replacing was a built-in.
 
-The fix, in both halves. The loader (`spicelib/devices/dev.c`) now refuses a
-module whose name is a built-in device's *or* a `.model` type keyword's — it
-asks the parser through a new `INPbuiltinModelTypeKeyword`, which reads the
-same keyword table as `INPdomodel` — with a message that names the built-in,
-the library, and the remedy; it never swaps a built-in on `-f`, and the reload
-note reports `(0 of 1 device registered)`. It also remembers what it refused,
-so the two places the user meets the consequence can say why: the `.model`
-card that binds to the built-in warns *"the Verilog-A module "diode" loaded
-from "lcdiode.osdi" was refused for colliding with that name, so this card
-does NOT reach it -- the built-in will simulate"*, and the N line's error now
-reads *"incorrect model type! Expected OSDI or nport device, but model "mm" is
-ngspice's built-in Resistor. The Verilog-A module "res" loaded from
-"coll_name.osdi" was refused ..."*. The compiler's L018 gained the keyword
-family with its own wording (`.model <name> res` *always selects* the
-built-in) and the `_va` convention in its help. Pinned by six new checks in
-`examples/multimod_examples/` (22/22, both solvers) and two new modules in the
-L018 UI fixture.
+The fix came in two stages. The first (`d3a21c79`) made the collision audible:
+the loader refused such a module with a message naming the built-in and the
+remedy, never swapped a built-in on `-f`, and remembered what it refused so
+the `.model` card and the N line could explain themselves. That left the
+module **unusable** under its name — "rename it" was the only way out.
+
+**The second stage makes it usable.** An `n`-line instance can mean nothing
+but an OSDI device, and ngspice materialises a model lazily (at the first
+instance line that uses it, not at the card), so the ambiguity can be decided
+where it is unambiguous:
+
+* the loader (`spicelib/devices/dev.c`) now *registers* a colliding module
+  under its own slot — it asks the parser through `INPbuiltinModelTypeKeyword`,
+  which reads the same keyword table as `INPdomodel`, for the keyword family
+  — and records it as **shadowed**: `Warning(osdi): Verilog-A module "res"
+  ... has the same name as ngspice's built-in Resistor (a .model type
+  keyword). A .model ... res card resolves to the built-in; only an n-line
+  instance re-binds such a card to this module, any other device letter gets
+  the built-in.` `INPtypelook` returns the first match, so every card still
+  resolves to the built-in and nothing that worked before changes;
+* `INPdomodel` keeps the card's type token on the model entry, and the N-line
+  parser (`inp2n.c`) — before `INPgetMod` materialises the model — re-binds a
+  card whose type resolved to a built-in to the shadowed module of that name:
+  `Note(osdi): .model mm: type "res" is ngspice's built-in Resistor, but this
+  n-line instance can only mean the Verilog-A module "res" from
+  "coll_name.osdi" -- binding the card to it.` Measured: `.model mm res r=2000`
+  on an `n` line now gives `-5.00000e-04`;
+* a card used by a *built-in* device letter is materialised as the built-in,
+  and `create_model` (`inpgmod.c`) says so at that moment — the one place it
+  is certain: `Warning: .model md: created as ngspice's built-in Diode. The
+  Verilog-A module "diode" ... is reached only from an n-line instance; this
+  card is used by another device letter, so the built-in simulates.`
+  (The first stage warned at `INPdomodel`, which runs before any instance line
+  is seen and so could not have known; that warning is gone.);
+* one card cannot serve both letters: `n` first then `d` fails on the `d` line
+  ("incorrect model type"), `d` first then `n` fails on the `n` line with
+  *"model "md" was already created as ngspice's built-in Diode by another
+  instance line ... give this n line a .model card of its own, or rename the
+  module"*;
+* the deck-reading pre-pass in `inpcom.c` no longer pre-judges `n` lines at
+  all: it runs before any `pre_osdi` has loaded a library, so it cannot know
+  about shadowed modules, and INP2N reports every genuine n-line mismatch
+  later with the cause;
+* `pre_osdi -f` swaps the shadowed module's *own* slot and never the
+  built-in's.
+
+The compiler's L018 covers the keyword family with wording that now matches
+the simulator: `.model <name> res` *resolves to* the built-in and ngspice
+re-binds such a card only for an `n`-line instance. Pinned in
+`examples/multimod_examples/` (24/24, both solvers): `vcvs` and `res` now
+*run* from an `n` line ([7], [9]), the `d`-line card warns at
+materialisation ([10]), `-f` keeps the built-in ([12]), and both mixed
+orderings fail loudly on the second user ([13]); the L018 UI fixture pins two
+keyword-named modules.
 
 ---
 

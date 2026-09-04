@@ -10,7 +10,7 @@ warning[L018]: module name 'resistor' collides with ngspice's built-in 'Resistor
 12 | | endmodule
    | \---------^ 'resistor' matches a built-in ngspice device name
    |  
-   = help: `.model <name> resistor` in a SPICE netlist may silently bind to ngspice's built-in Resistor instead of this OSDI module; rename 'resistor' to something that doesn't collide (the reference compact models use a `_va` suffix), or only ever reach it via Verilog-A `instantiate`, never `.model` directly
+   = help: `.model <name> resistor` in a SPICE netlist resolves to ngspice's built-in Resistor; ngspice re-binds such a card to this OSDI module only for an `n`-line instance, any other device letter gets the built-in. Rename 'resistor' to something that doesn't collide (the reference compact models use a `_va` suffix), or only ever reach it via Verilog-A `instantiate`, never `.model` directly
    = reserved_module_name is set to warn by default
      use a CLI argument or an attribute to overwrite
 
@@ -26,7 +26,7 @@ warning[L018]: module name 'CAPACITOR' collides with ngspice's built-in 'Capacit
 22 | | endmodule
    | \---------^ 'CAPACITOR' matches a built-in ngspice device name
    |  
-   = help: `.model <name> CAPACITOR` in a SPICE netlist may silently bind to ngspice's built-in Capacitor instead of this OSDI module; rename 'CAPACITOR' to something that doesn't collide (the reference compact models use a `_va` suffix), or only ever reach it via Verilog-A `instantiate`, never `.model` directly
+   = help: `.model <name> CAPACITOR` in a SPICE netlist resolves to ngspice's built-in Capacitor; ngspice re-binds such a card to this OSDI module only for an `n`-line instance, any other device letter gets the built-in. Rename 'CAPACITOR' to something that doesn't collide (the reference compact models use a `_va` suffix), or only ever reach it via Verilog-A `instantiate`, never `.model` directly
    = reserved_module_name is set to warn by default
      use a CLI argument or an attribute to overwrite
 
@@ -42,7 +42,7 @@ warning[L018]: module name 'res' is ngspice's `.model` type keyword for the buil
 44 | | endmodule
    | \---------^ 'res' is a SPICE `.model` type keyword
    |  
-   = help: `.model <name> res` in a SPICE netlist always selects ngspice's built-in Resistor instead of this OSDI module; rename 'res' to something that doesn't collide (the reference compact models use a `_va` suffix), or only ever reach it via Verilog-A `instantiate`, never `.model` directly
+   = help: `.model <name> res` in a SPICE netlist always resolves to ngspice's built-in Resistor; ngspice re-binds such a card to this OSDI module only for an `n`-line instance, any other device letter gets the built-in. Rename 'res' to something that doesn't collide (the reference compact models use a `_va` suffix), or only ever reach it via Verilog-A `instantiate`, never `.model` directly
    = reserved_module_name is set to warn by default
      use a CLI argument or an attribute to overwrite
 
@@ -58,7 +58,7 @@ warning[L018]: module name 'urc' is ngspice's `.model` type keyword for the buil
 54 | | endmodule
    | \---------^ 'urc' is a SPICE `.model` type keyword
    |  
-   = help: `.model <name> urc` in a SPICE netlist always selects ngspice's built-in URC instead of this OSDI module; rename 'urc' to something that doesn't collide (the reference compact models use a `_va` suffix), or only ever reach it via Verilog-A `instantiate`, never `.model` directly
+   = help: `.model <name> urc` in a SPICE netlist always resolves to ngspice's built-in URC; ngspice re-binds such a card to this OSDI module only for an `n`-line instance, any other device letter gets the built-in. Rename 'urc' to something that doesn't collide (the reference compact models use a `_va` suffix), or only ever reach it via Verilog-A `instantiate`, never `.model` directly
    = reserved_module_name is set to warn by default
      use a CLI argument or an attribute to overwrite
 

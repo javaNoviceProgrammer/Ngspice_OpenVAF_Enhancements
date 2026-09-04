@@ -217,13 +217,16 @@ extern void OSDImcInterruptReset(void);
 extern unsigned long OSDImcTrialCheckpoint(void);
 extern void OSDImcTrialRewind(unsigned long t);
 extern double OSDImcSampleLogLR(CKTcircuit *ckt);
-/* 2026-09-04 hunt, F1: Verilog-A modules the loader refused because their
- * name is one of ngspice's own (a built-in device's name, or a `.model` type
- * keyword). `_lib` looks one up by module name and returns the .osdi it came
- * from (NULL if no such refusal), naming the built-in through `builtin`;
- * `_for` looks one up by the built-in's device name and returns the refused
- * module's name (NULL if none), naming the library through `lib`. */
-extern const char *osdi_refused_module_lib(const char *module,
-                                           const char **builtin);
-extern const char *osdi_refused_module_for(const char *devname,
-                                           const char **lib);
+/* 2026-09-04 hunt, F1: Verilog-A modules whose name is one of ngspice's own
+ * (a built-in device's name, or a `.model` type keyword). They are registered
+ * but SHADOWED: a `.model` card of that type resolves to the built-in, and
+ * only an `n`-line instance -- which can mean nothing but an OSDI device --
+ * re-binds the card to the module (INP2N). `osdi_shadowed_module` looks one
+ * up by the card's type name and returns its device-table index (-1 if none),
+ * naming the library and the built-in; `osdi_shadowed_module_for` looks one
+ * up by the built-in's device name and returns the module's name (NULL if
+ * none), naming the library. */
+extern int osdi_shadowed_module(const char *type_name, const char **lib,
+                                const char **builtin);
+extern const char *osdi_shadowed_module_for(const char *devname,
+                                            const char **lib);

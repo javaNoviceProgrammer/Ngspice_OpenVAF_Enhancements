@@ -602,71 +602,98 @@ static int osdi_device_index(const char *name, int limit) {
   return -1;
 }
 
-/* 2026-09-04 hunt, F1: the modules refused because their name is one of
- * ngspice's own -- a built-in device's name, or a `.model` type keyword the
- * card parser intercepts before it ever consults the device table. Kept so
- * the two places a user meets the consequence can explain it: the `.model`
- * card that quietly binds to the built-in (INPdomodel) and the N line that
- * then fails with the wrong device type (INP2N). */
-typedef struct osdi_refused {
+/* 2026-09-04 hunt, F1: the modules whose name is one of ngspice's own -- a
+ * built-in device's name, or a `.model` type keyword the card parser
+ * intercepts before it ever consults the device table. They ARE registered
+ * (so they have a device index and can be reloaded), but a `.model` card of
+ * that type always resolves to the built-in, so the module is SHADOWED: only
+ * an `n`-line instance, which can mean nothing but an OSDI device, re-binds
+ * such a card to the module (INP2N, before the model is materialised). This
+ * list is what lets that re-binding, the materialisation warning in
+ * INPgetMod, and the N line's error explain themselves. */
+typedef struct osdi_shadowed {
   char *module;    /* the Verilog-A module name, as compiled */
   char *lib;       /* the .osdi it came from */
   char *builtin;   /* the built-in it collides with, for the message */
-} osdi_refused;
+  int index;       /* its slot in DEVices[] */
+} osdi_shadowed;
 
-static osdi_refused *osdi_refused_list = NULL;
-static int osdi_num_refused = 0;
+static osdi_shadowed *osdi_shadowed_list = NULL;
+static int osdi_num_shadowed = 0;
 
-static void osdi_note_refused(const char *module, const char *lib,
-                              const char *builtin) {
+static int osdi_shadowed_slot(const char *module) {
   int k;
-  for (k = 0; k < osdi_num_refused; k++) {
-    if (strcasecmp(osdi_refused_list[k].module, module) == 0)
-      return;   /* the same module loaded again: one record is enough */
+  for (k = 0; k < osdi_num_shadowed; k++) {
+    if (strcasecmp(osdi_shadowed_list[k].module, module) == 0)
+      return k;
   }
-  osdi_refused_list =
-      TREALLOC(osdi_refused, osdi_refused_list, osdi_num_refused + 1);
-  osdi_refused_list[osdi_num_refused].module = copy(module);
-  osdi_refused_list[osdi_num_refused].lib = copy(lib ? lib : "");
-  osdi_refused_list[osdi_num_refused].builtin = copy(builtin);
-  osdi_num_refused++;
+  return -1;
 }
 
-const char *osdi_refused_module_lib(const char *module, const char **builtin) {
-  int k;
-  for (k = 0; k < osdi_num_refused; k++) {
-    if (strcasecmp(osdi_refused_list[k].module, module) == 0) {
-      if (builtin)
-        *builtin = osdi_refused_list[k].builtin;
-      return osdi_refused_list[k].lib;
-    }
-  }
-  return NULL;
+static void osdi_note_shadowed(const char *module, const char *lib,
+                               const char *builtin, int index) {
+  if (osdi_shadowed_slot(module) >= 0)
+    return;   /* the same module loaded again: one record is enough */
+  osdi_shadowed_list =
+      TREALLOC(osdi_shadowed, osdi_shadowed_list, osdi_num_shadowed + 1);
+  osdi_shadowed_list[osdi_num_shadowed].module = copy(module);
+  osdi_shadowed_list[osdi_num_shadowed].lib = copy(lib ? lib : "");
+  osdi_shadowed_list[osdi_num_shadowed].builtin = copy(builtin);
+  osdi_shadowed_list[osdi_num_shadowed].index = index;
+  osdi_num_shadowed++;
 }
 
-const char *osdi_refused_module_for(const char *devname, const char **lib) {
+int osdi_shadowed_module(const char *type_name, const char **lib,
+                         const char **builtin) {
+  int k = type_name ? osdi_shadowed_slot(type_name) : -1;
+  if (k < 0)
+    return -1;
+  if (lib)
+    *lib = osdi_shadowed_list[k].lib;
+  if (builtin)
+    *builtin = osdi_shadowed_list[k].builtin;
+  return osdi_shadowed_list[k].index;
+}
+
+const char *osdi_shadowed_module_for(const char *devname, const char **lib) {
   int k;
-  for (k = 0; k < osdi_num_refused; k++) {
-    if (strcasecmp(osdi_refused_list[k].builtin, devname) == 0) {
+  for (k = 0; k < osdi_num_shadowed; k++) {
+    if (strcasecmp(osdi_shadowed_list[k].builtin, devname) == 0) {
       if (lib)
-        *lib = osdi_refused_list[k].lib;
-      return osdi_refused_list[k].module;
+        *lib = osdi_shadowed_list[k].lib;
+      return osdi_shadowed_list[k].module;
     }
   }
   return NULL;
+}
+
+/* Like osdi_device_index, but sees only OSDI devices -- the slot a reload
+ * may swap, and the one a same-named second module collides with. A built-in
+ * of the same name is not a "duplicate" of a Verilog-A module; it is the
+ * thing the module is shadowed by. */
+static int osdi_device_index_osdi(const char *name, int limit) {
+  int k;
+  for (k = 0; k < limit; k++) {
+    if (DEVices[k] && DEVices[k]->DEVpublic.registry_entry &&
+        DEVices[k]->DEVpublic.name &&
+        strcasecmp(DEVices[k]->DEVpublic.name, name) == 0) {
+      return k;
+    }
+  }
+  return -1;
 }
 
 /* The remedy is the same for every collision, and the CMC reference sources
  * already practise it (bsim4va, hicumL2va, diode_va, resistor_va ...). */
 #define OSDI_RENAME_HINT                                                       \
-  "Rename the module to reach it from a netlist (a `_va` suffix is the "      \
+  "Rename the module to avoid the ambiguity (a `_va` suffix is the "          \
   "convention the reference compact models use)"
 
 static int osdi_add_device(int n, OsdiRegistryEntry *devs, bool replace,
-                           const char *path, int *refused_out) {
+                           const char *path, int *shadowed_out) {
   int i;
   int added = 0;
-  int refused = 0;
+  int shadowed = 0;
   int dnum = DEVNUM + n;
   DEVices = TREALLOC(SPICEdev *, DEVices, dnum);
 #ifdef XSPICE
@@ -686,35 +713,39 @@ static int osdi_add_device(int n, OsdiRegistryEntry *devs, bool replace,
      * of one .osdi whose names differ only in case -- legal, Verilog-A is
      * case-sensitive -- were both registered without a word, and the second
      * was unreachable: a card naming it resolved (case-insensitively) to the
-     * first (2026-09-04 hunt, F2). */
-    int k = osdi_device_index(name, DEVNUM + added);
-    if (kw_builtin) {
-      printf("Warning(osdi): Verilog-A module \"%s\" (from \"%s\") has the "
-             "same name as ngspice's `.model` type keyword for the built-in "
-             "%s; a `.model ... %s` card always selects the built-in, so the "
-             "module is NOT registered. %s.\n",
-             name, path ? path : "?", kw_builtin, name, OSDI_RENAME_HINT);
-      osdi_note_refused(name, path, kw_builtin);
-      refused++;
-      continue;
+     * first (2026-09-04 hunt, F2). Only OSDI devices count as duplicates; a
+     * built-in of the same name shadows the module instead (below). */
+    int k = osdi_device_index_osdi(name, DEVNUM + added);
+    int k_any = osdi_device_index(name, DEVNUM + added);
+    if (k < 0) {
+      /* the shadow cases: a keyword, or a built-in device of this name */
+      const char *shadow = kw_builtin;
+      if (!shadow && k_any >= 0)
+        shadow = DEVices[k_any]->DEVpublic.name;
+      if (shadow) {
+        /* Register it anyway -- under its own index, never touching the
+         * built-in's (before this rule `pre_osdi -f` on a module named
+         * `diode` replaced ngspice's junction diode for the session) -- and
+         * say what the name costs. INPtypelook returns the FIRST match, so
+         * the built-in keeps every `.model` card; INP2N re-binds an n line's
+         * card to this slot. */
+        printf("Warning(osdi): Verilog-A module \"%s\" (from \"%s\") has the "
+               "same name as ngspice's built-in %s%s. A `.model ... %s` card "
+               "resolves to the built-in; only an `n`-line instance re-binds "
+               "such a card to this module, any other device letter gets the "
+               "built-in. %s.\n",
+               name, path ? path : "?", shadow,
+               kw_builtin ? " (a `.model` type keyword)" : " device",
+               name, OSDI_RENAME_HINT);
+        DEVices[DEVNUM + added] = dev;
+        osdi_note_shadowed(name, path, shadow, DEVNUM + added);
+        shadowed++;
+        added++;
+        continue;
+      }
     }
     if (k >= 0) {
       const char *existing = DEVices[k]->DEVpublic.name;
-      bool is_builtin = DEVices[k]->DEVpublic.registry_entry == NULL;
-      if (is_builtin) {
-        /* Never swap a built-in out, not even on a forced reload: before
-         * this test `pre_osdi -f` on a module named `diode` replaced
-         * ngspice's junction diode for the rest of the session, and every
-         * plain `.model ... d` card then ran the Verilog-A model. */
-        printf("Warning(osdi): Verilog-A module \"%s\" (from \"%s\") has the "
-               "same name as ngspice's built-in %s device; a `.model ... %s` "
-               "card always selects the built-in, so the module is NOT "
-               "registered. %s.\n",
-               name, path ? path : "?", existing, name, OSDI_RENAME_HINT);
-        osdi_note_refused(name, path, existing);
-        refused++;
-        continue;
-      }
       if (replace) {
         /* Enhancement-229: force reload -- swap the registered device to the
          * freshly loaded descriptor IN PLACE, so the table index stays stable
@@ -749,8 +780,8 @@ static int osdi_add_device(int n, OsdiRegistryEntry *devs, bool replace,
   }
   DEVNUM += added;
   relink();
-  if (refused_out)
-    *refused_out = refused;
+  if (shadowed_out)
+    *shadowed_out = shadowed;
   return added;
 }
 
@@ -839,16 +870,13 @@ int load_osdi(const char *path, bool force) {
     osdi_loaded_paths[osdi_num_loaded++] = copy(path);
   }
 
-  int refused = 0;
-  osdi_add_device(file.num_entries, file.entrys, reloading, path, &refused);
+  int shadowed = 0;
+  osdi_add_device(file.num_entries, file.entrys, reloading, path, &shadowed);
 
   if (reloading) {
-    /* a swapped-in-place device is not "added", so report the file's
-     * entries less the ones refused above -- a refused module is not
-     * "reloaded" in any sense the user would mean */
-    printf("Note(osdi): reloaded \"%s\" (%d of %d device%s registered)\n",
-           path, file.num_entries - refused, file.num_entries,
-           file.num_entries == 1 ? "" : "s");
+    printf("Note(osdi): reloaded \"%s\" (%d device%s%s)\n", path,
+           file.num_entries, file.num_entries == 1 ? "" : "s",
+           shadowed ? ", shadowed by a built-in of the same name" : "");
   }
   return 0;
 }

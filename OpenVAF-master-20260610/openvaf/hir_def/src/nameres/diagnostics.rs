@@ -85,7 +85,12 @@ pub enum DefDiagnostic {
     /// `keyword`: the name is one of the `.model` TYPE KEYWORDS ngspice's
     /// card parser intercepts (`res`, `d`, `sw`, `nmos` ...) rather than a
     /// device's name; the consequence is the same, the wording differs.
-    ReservedModuleName { ast_id: ErasedAstId, module: Name, builtin: &'static str, keyword: bool },
+    ReservedModuleName {
+        ast_id: ErasedAstId,
+        module: Name,
+        builtin: &'static str,
+        keyword: bool,
+    },
 }
 
 pub struct DefDiagnosticWrapped<'a> {
@@ -243,11 +248,12 @@ impl Diagnostic for DefDiagnosticWrapped<'_> {
                     }])
                     .with_notes(vec![format!(
                         "help: `.model <name> {module}` in a SPICE netlist {} \
-                         ngspice's built-in {builtin} instead of this OSDI module; \
-                         rename '{module}' to something that doesn't collide (the reference \
-                         compact models use a `_va` suffix), or only ever reach it via \
-                         Verilog-A `instantiate`, never `.model` directly",
-                        if *keyword { "always selects" } else { "may silently bind to" }
+                         ngspice's built-in {builtin}; ngspice re-binds such a card to this \
+                         OSDI module only for an `n`-line instance, any other device letter \
+                         gets the built-in. Rename '{module}' to something that doesn't \
+                         collide (the reference compact models use a `_va` suffix), or only \
+                         ever reach it via Verilog-A `instantiate`, never `.model` directly",
+                        if *keyword { "always resolves to" } else { "resolves to" }
                     )])
             }
         }

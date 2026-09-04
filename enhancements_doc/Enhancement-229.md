@@ -30,13 +30,14 @@ These guards are correct for the normal case (avoid duplicate/shadowing
 registration). They just left no way to intentionally refresh a model.
 
 > **2026-09-04 (name-collision fix).** The in-place swap below applies only
-> when the registered device is itself an OSDI module. A module whose name is
-> one of ngspice's own -- a built-in device's name (`diode`) or a `.model`
-> type keyword (`res`) -- is refused at load with the reason, and `-f` never
-> replaces the built-in: before that rule, `pre_osdi -f` on a module named
-> `diode` swapped ngspice's junction diode out for the rest of the session,
-> and every plain `.model ... d` card then ran the Verilog-A model. The
-> reload note now reports `(<n> of <m> devices registered)` accordingly.
+> to the slot of an OSDI module -- never to a built-in's. A module whose name
+> is one of ngspice's own -- a built-in device's name (`diode`) or a `.model`
+> type keyword (`res`) -- is registered under its own slot as *shadowed* (a
+> `.model` card of that type resolves to the built-in; an `n`-line instance
+> re-binds the card to the module), and `-f` swaps that slot. Before this
+> rule, `pre_osdi -f` on a module named `diode` swapped ngspice's junction
+> diode out for the rest of the session, and every plain `.model ... d` card
+> then ran the Verilog-A model.
 
 ## The fix — an opt-in `-f` flag
 

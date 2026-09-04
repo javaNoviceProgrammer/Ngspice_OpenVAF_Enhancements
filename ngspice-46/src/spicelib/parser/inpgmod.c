@@ -8,6 +8,9 @@ Modified: 2001 Paolo Nenzi (Cider Integration)
 **********/
 
 #include "ngspice/ngspice.h"
+#ifdef OSDI
+#include "ngspice/osdiitf.h"
+#endif
 #include "ngspice/inpdefs.h"
 #include "ngspice/ifsim.h"
 #include "ngspice/cpstd.h"
@@ -119,6 +122,31 @@ create_model(CKTcircuit *ckt, INPmodel *modtmp, INPtables *tab)
 {
     char    *err = NULL, *line, *parm, *endptr;
     int     error;
+
+#ifdef OSDI
+    /* F1 (2026-09-04 hunt): this card is being materialised as a BUILT-IN
+     * while a Verilog-A module of the same name is loaded and shadowed. The
+     * author compiled and loaded that module; without this line the built-in
+     * runs in its place in silence (it may even accept the card's parameters,
+     * as the junction diode does for `is`). An `n` line would have re-bound
+     * the card first (INP2N), so reaching here means a built-in device letter
+     * is using it. */
+    if (modtmp->INPmodTypeName && ft_sim->devices[modtmp->INPmodType] &&
+        !ft_sim->devices[modtmp->INPmodType]->registry_entry) {
+        const char *lib = NULL, *builtin = NULL;
+        if (osdi_shadowed_module(modtmp->INPmodTypeName, &lib, &builtin) >= 0) {
+            fprintf(stderr,
+                    "Warning: .model %s: created as ngspice's built-in %s. The "
+                    "Verilog-A module \"%s\" loaded from \"%s\" has the same "
+                    "name and is reached only from an `n`-line instance; this "
+                    "card is used by another device letter, so the built-in "
+                    "simulates. Rename the module if you meant the Verilog-A "
+                    "model.\n",
+                    modtmp->INPmodName, builtin ? builtin : "device",
+                    modtmp->INPmodTypeName, lib ? lib : "?");
+        }
+    }
+#endif
 
     /* not already defined, so create & give parameters */
     error = ft_sim->newModel(ckt, modtmp->INPmodType, &(modtmp->INPmodfast), modtmp->INPmodName);

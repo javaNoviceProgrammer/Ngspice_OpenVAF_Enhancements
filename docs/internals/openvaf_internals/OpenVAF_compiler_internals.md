@@ -1113,10 +1113,12 @@ warning[L018]: module name 'resistor' collides with ngspice's built-in 'Resistor
 Since the 2026-09-04 name-collision fix the same lint covers a second family
 with its own wording: the `.model` *type keywords* ngspice's card parser matches
 before it ever consults the device table (`res`, `r`, `d`, `c`, `l`, `sw`,
-`nmos` ...). A module named `res` is told that `.model <name> res` *always
-selects* the built-in Resistor -- there is no "may" about it -- and ngspice's
-loader refuses such a module with the same explanation, so the trap is audible
-at both ends.
+`nmos` ...). A module named `res` is told that `.model <name> res` *resolves to*
+the built-in Resistor, and that ngspice re-binds such a card to the OSDI module
+only for an `n`-line instance -- which is exactly what the simulator does: the
+module is registered as *shadowed*, an `n` line gets it, any other device letter
+gets the built-in and says so. The lint is still worth heeding; the name is an
+ambiguity the netlist author has to know about.
 
 The compiler carried enough *semantic* knowledge (the module's name) and enough *domain* knowledge (a table of reserved simulator device names) to warn about a footgun that has nothing to do with the Verilog‑A language itself — a good example of the value the HIR layer adds over raw parsing.
 ---
