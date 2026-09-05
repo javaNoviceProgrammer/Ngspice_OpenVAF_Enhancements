@@ -351,6 +351,12 @@ cp_istrue(wordlist *wl)
         return FALSE;
     /* backquote '`' substitution */
     wl = cp_bquote(wl);
+    /* Enhancement-556 (hunt F4): an f-string in an `if`/`while` condition is
+       evaluated like one in a command -- `if f"{k*3}" = 6` compared the
+       unevaluated text before */
+    wl = cp_fstringsubst(wl);
+    if (!wl)
+        return FALSE;
 
     /* parse the condition */
     names = ft_getpnames_quotes(wl, TRUE);

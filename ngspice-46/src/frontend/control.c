@@ -313,47 +313,74 @@ static char *fstr_expand(const char *body, const char *word)
     return out;
 }
 
-/* Every f"..." / rf"..." word of the list becomes "<text>"; a bare r"..."
+/* Every f"..." / rf"..." of the list is replaced by its text; a bare r"..."
    becomes "..." (its case has already been kept). NULL, with the list freed,
-   on an error. */
-static wordlist *cp_fstringsubst(wordlist *wlist)
+   on an error.
+
+   Enhancement-556 (hunt F3, F4): the prefixed string may sit after `name=`
+   inside the word (`let z=f"{7}"`, `set t=f"{1+1}"`, `alter r1=f"{2k}"` --
+   the deck reader collapses the spaces around `=`), and what an f-string
+   produces is PLAIN TEXT, not a quoted word: `"7"` was refused by `let`,
+   `alter`, `setplot` and every numeric option, which do not see through
+   quotes, so the value an f-string formats could reach an echo and nothing
+   else. Text with whitespace in it is quoted, so a command that re-reads its
+   arguments still sees one word and unquotes it itself; a raw string keeps
+   its quotes, like the plain quoted word it stands in for. */
+wordlist *cp_fstringsubst(wordlist *wlist)
 {
     wordlist *wl;
     for (wl = wlist; wl; wl = wl->wl_next) {
-        const char *w = wl->wl_word;
-        const char *q;
-        int k, has_f = 0, i;
-        size_t n;
-        if (!w)
-            continue;
-        n = strlen(w);
-        q = strchr(w, '"');
-        if (!q || q == w || n < 3 || w[n - 1] != '"')
-            continue;
-        k = cp_string_prefix_len(w, (size_t) (q - w));
-        if (k <= 0 || q != w + k)
-            continue;
-        for (i = 0; i < k; i++)
-            if (w[i] == 'f' || w[i] == 'F')
-                has_f = 1;
-        {
-            char *body = copy(q + 1);
-            char *text, *neww;
-            body[strlen(body) - 1] = '\0';          /* drop the closing quote */
-            if (has_f) {
-                text = fstr_expand(body, w);
-                tfree(body);
-                if (!text) {
-                    wl_free(wlist);
-                    return NULL;
+        size_t from = 0;
+        int guard;
+        /* a word may carry more than one, and a tail after the closing quote
+           (`f"{1+1}"=2`, the deck reader's form of `f"{1+1}" = 2`) is kept */
+        for (guard = 0; guard < 16 && wl->wl_word; guard++) {
+            const char *w = wl->wl_word;
+            size_t pos = 0, end = 0;
+            int k, has_f = 0, i;
+            k = cp_string_prefix_at(w, from, &pos, &end);
+            if (k <= 0)
+                break;
+            for (i = 0; i < k; i++)
+                if (w[pos + i] == 'f' || w[pos + i] == 'F')
+                    has_f = 1;
+            {
+                size_t blen = end - (pos + (size_t) k + 1);
+                char *body = TMALLOC(char, blen + 1);
+                char *head = TMALLOC(char, pos + 1);
+                const char *tail = w + end + 1;
+                char *text, *neww;
+                memcpy(body, w + pos + k + 1, blen);
+                body[blen] = '\0';
+                memcpy(head, w, pos);
+                head[pos] = '\0';
+                if (has_f) {
+                    text = fstr_expand(body, w);
+                    tfree(body);
+                    if (!text) {
+                        tfree(head);
+                        wl_free(wlist);
+                        return NULL;
+                    }
+                    if (strpbrk(text, " \t")) {
+                        /* whitespace: stay one word through a command that
+                           re-reads its arguments (`set u=f"{x} V"`) */
+                        neww = tprintf("%s\"%s\"%s", head, text, tail);
+                        from = pos + strlen(text) + 2;
+                    } else {
+                        neww = tprintf("%s%s%s", head, text, tail);
+                        from = pos + strlen(text);
+                    }
+                } else {
+                    text = body;
+                    neww = tprintf("%s\"%s\"%s", head, text, tail);
+                    from = pos + strlen(text) + 2;
                 }
-            } else {
-                text = body;
+                tfree(text);
+                tfree(head);
+                tfree(wl->wl_word);
+                wl->wl_word = neww;
             }
-            neww = tprintf("\"%s\"", text);
-            tfree(text);
-            tfree(wl->wl_word);
-            wl->wl_word = neww;
         }
     }
     return wlist;

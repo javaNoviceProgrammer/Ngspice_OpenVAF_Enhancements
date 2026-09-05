@@ -34,11 +34,15 @@ Checks (both solvers):
   [7]  an unresolved {expr} is an error naming the string; the command does not run
   [8]  a '{' without '}' is an error; a stray '}' is an error
   [9]  a colon inside brackets or parentheses is not a format spec
-  [10] f-strings in a foreach list are evaluated
+  [10] f-strings in a foreach list are evaluated, as plain text
   [11] a bare r, f, rf word, a resistor r1 and `set r=...` are untouched
   [12] the interactive path takes all three prefixes
   [13] a .for loop with {{i}} in the netlist coexists with f-strings in the control block
   [14] an f-string title on a plot: formatted, case kept, spaces kept
+  [15] E-556: an f-string after `name=` in a deck -- let, set, alter -- is evaluated
+  [16] E-556: the result is plain text (quoted only when it has whitespace): a numeric option, an if condition, a setplot name take it
+  [17] E-556: a file name from an f-string has no quotes (wrdata, write, pyplot -export)
+  [18] E-556: a raw string after `name=` keeps its braces
 """
 import os
 import re
@@ -123,7 +127,8 @@ check("[5] f-string: %g default, a .3f spec, an integer :d, a vector, a complex 
       and re.search(r"complex 0\.99\d+,-0\.000\d+ mag 1\.0000", body) is not None, body.strip()[-260:])
 check("[6] rf-string: case kept, evaluated, \\{ \\} literal braces survive globbing",
       "Kept Case 6 and {literal} braces" in body, body.strip()[-160:])
-check("[10] f-strings in a foreach list are evaluated", 'x="2"' in body and 'x="4"' in body)
+check("[10] f-strings in a foreach list are evaluated, as plain text", 'x=2' in body and 'x=4' in body
+      and 'x="2"' not in body)
 check("[9] a colon inside brackets or parentheses is not a format spec, and a real spec after one works",
       re.search(r"colon 0 paren 2 name \d\.\d\de[-+]\d\d", body) is not None, body.strip()[-120:])
 
@@ -163,6 +168,49 @@ body, all_ = run(PNG + '''pyplot ft v(out) title rf"RC low-pass, Vmax = {vecmax(
 py = script("ft")
 check("[14] an f-string title on a plot: formatted, case kept, spaces kept",
       re.search(r"suptitle\('RC low-pass, Vmax = 0\.75\d V'\)", py) is not None, py[-160:])
+
+# ------------------------------------------------------ E-556: after name= ---
+body, all_ = run('''let z = f"{7}"
+let w=f"{2*4}"
+set t=f"{1+1}"
+set u = rf"{vecmax(v(out)):.3f} V"
+alter r1 = f"{3*1000}"
+print z w @r1[resistance]
+echo t=$t u=$u''', "aftereq")
+check("[15] E-556: an f-string after `name=` in a deck -- let, set, alter -- is evaluated",
+      "z = 7.000000e+00" in body and "w = 8.000000e+00" in body
+      and "@r1[resistance] = 3.000000e+03" in body and "t=2" in body
+      and re.search(r"u=0\.75\d V", body) is not None, body.strip()[-200:])
+body, all_ = run('''if f"{1+1}" = 2
+  echo if-ok
+else
+  echo if-not
+end
+let k = 0
+while k < 2
+  let k = k + 1
+end
+if f"{k*3}" = 6
+  echo if2-ok
+end
+setplot f"tran{1}"
+echo cur=$curplot
+montecarlo 3 -seed 1 -analysis op -spec @r1[resistance] -max f"{1000+40}"
+echo yield=$montecarlo_yield''', "plaintext")
+check("[16] E-556: the result is plain text (quoted only when it has whitespace): a numeric option, an if condition, a setplot name take it",
+      "if-ok" in body and "if2-ok" in body and "cur=tran1" in body and "yield=1" in body,
+      body.strip()[-200:])
+body, all_ = run('''set pyplot_export=bin
+wrdata f"wr{1+1}.txt" v(out)
+write f"wr{2+1}.raw" v(out)
+pyplot -export f"ex{4}" v(out)
+shell ls wr2.txt wr3.raw ex4.npy''', "fnames")
+made = [os.path.isfile(os.path.join(WORK, f)) for f in ("wr2.txt", "wr3.raw", "ex4.npy")]
+check("[17] E-556: a file name from an f-string has no quotes (wrdata, write, pyplot -export)",
+      all(made) and not os.path.isfile(os.path.join(WORK, '"wr2.txt"')), f"made={made}")
+body, all_ = run('''set v=r"{1+1}"
+echo r"$v"''', "rawaftereq")
+check("[18] E-556: a raw string after `name=` keeps its braces", "{1+1}" in body, body.strip()[-80:])
 
 print(f"\n{passed}/{checks} checks passed")
 shutil.rmtree(WORK, ignore_errors=True)

@@ -27,6 +27,7 @@ com_pyplot(wordlist *wl)
 {
     char *fname = NULL;
     char *fullname = NULL;
+    char *fname_unq = NULL;   /* Enhancement-556 (hunt F5): the name, unquoted */
     wordlist *wl_owned = NULL;     /* E-217/E-218: filtered copy we (not the caller) own */
     char defname[64] = "pyplot";
     bool tempf = FALSE;
@@ -90,7 +91,7 @@ com_pyplot(wordlist *wl)
             is_eye = TRUE;
             strcpy(defname, "eye");
             if (wl != marker && wl->wl_word)
-                fname = wl->wl_word;
+                fname = fname_unq = cp_unquote(wl->wl_word);
             eye_args = marker->wl_next;
             if (!eye_args || !eye_args->wl_word) {
                 fprintf(cp_err, "Usage: pyplot [name] -eye <expr> -ui <T> "
@@ -172,7 +173,11 @@ com_pyplot(wordlist *wl)
         const char *w = wl->wl_word;
         bool is_expr = (strchr(w, '(') != NULL) || (vec_get(w) != NULL);
         if (!is_expr) {
-            fname = wl->wl_word;
+            /* Enhancement-556 (hunt F5): a quoted name -- the one spelling
+               that can carry a space, `pyplot -export "my dir/sig" ...` --
+               was used verbatim, quotes and all, so the file could not be
+               opened. Unquote it, as every other file-taking command does. */
+            fname = fname_unq = cp_unquote(wl->wl_word);
             wl = wl->wl_next;
         }
     }
@@ -233,6 +238,8 @@ done:
         tfree(fname);
     if (fullname)
         tfree(fullname);
+    if (fname_unq)
+        tfree(fname_unq);
     if (wl_owned)
         wl_free(wl_owned);
 }

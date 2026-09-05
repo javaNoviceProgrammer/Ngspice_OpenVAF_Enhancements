@@ -97,15 +97,10 @@ wordlist *cp_doglob(wordlist *wlist)
             /* Enhancement-553: an r"..." / f"..." word is not globbed -- its
              * braces are an f-string's expressions (evaluated after this
              * pass) or, in a raw string, literal text */
-            if (wl->wl_word) {
-                const char *q = strchr(wl->wl_word, '"');
-                if (q && q != wl->wl_word
-                    && cp_string_prefix_len(wl->wl_word, (size_t) (q - wl->wl_word)) > 0
-                    && q == wl->wl_word + (q - wl->wl_word)
-                    && wl->wl_word[strlen(wl->wl_word) - 1] == '"') {
-                    wl = wl->wl_next;
-                    continue;
-                }
+            if (wl->wl_word && cp_string_prefix_at(wl->wl_word, 0, NULL, NULL) > 0) {
+                /* E-556: at the word start or after `=`, `(`, `,` alike */
+                wl = wl->wl_next;
+                continue;
             }
             w = bracexpand(wl);
             if (!w) {

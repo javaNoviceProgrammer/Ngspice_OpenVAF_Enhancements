@@ -143,6 +143,50 @@ int cp_string_prefix_len(const char *word, size_t len)
     return (int) len;
 }
 
+/* Enhancement-556 (hunt F3): the prefixed string a WORD carries, if it does
+ * -- r"..." / f"..." / rf"..." at the word's start or after `=`, `(` or `,`
+ * (exactly where the lexer accepts a prefix), closing at the next `"`.
+ * Returns the prefix length (1 or 2), its position in `*pos` and the closing
+ * quote's in `*end`, else 0. The glob skip and the f-string pass share it,
+ * so that `let z=f"{7}"` -- which the deck reader makes of `let z = f"{7}"`
+ * -- is treated like `echo f"{7}"`, and `f"{1+1}"=2` -- what it makes of an
+ * `if f"{1+1}" = 2` -- keeps its tail: before this, the two recognised a
+ * prefix at the word start only, the lexer after `=` as well, and an
+ * f-string after `name=` had its braces globbed away and was never
+ * evaluated. The search starts at `word + from`, so a caller can walk a
+ * word carrying more than one. */
+int cp_string_prefix_at(const char *word, size_t from, size_t *pos, size_t *end)
+{
+    const char *q, *e;
+    size_t n, k;
+    if (!word)
+        return 0;
+    n = strlen(word);
+    if (from >= n)
+        return 0;
+    for (q = strchr(word + from, '"'); q; q = strchr(q + 1, '"')) {
+        if (q == word)
+            continue;
+        e = strchr(q + 1, '"');
+        if (!e)
+            return 0;
+        for (k = 1; k <= 2 && (size_t) (q - word) >= k; k++) {
+            const char *start = q - k;
+            if (cp_string_prefix_len(start, k) > 0
+                && (start == word || start[-1] == '=' || start[-1] == '('
+                    || start[-1] == ',')) {
+                if (pos)
+                    *pos = (size_t) (start - word);
+                if (end)
+                    *end = (size_t) (e - word);
+                return (int) k;
+            }
+        }
+        q = e;                      /* an unprefixed pair: skip past it */
+    }
+    return 0;
+}
+
 /* The prefix at the END of the word read so far, if the word ends in one:
  * the whole word (`r`, `rf`), or a prefix after `=`, `(` or `,` -- so that
  * `set t=r'...'` and `title=r"..."` carry one. 0 otherwise. */

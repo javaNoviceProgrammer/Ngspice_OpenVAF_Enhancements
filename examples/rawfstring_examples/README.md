@@ -4,7 +4,7 @@
 python3 verify_rawfstring.py
 ```
 
-14 checks, both solvers.
+18 checks, both solvers.
 
 ## The need
 
@@ -21,11 +21,13 @@ put a computed, formatted value into a string at all.
 | form | meaning |
 |---|---|
 | `r"…"` / `r'…'` | a **raw string**: copied through the deck reader as written, case and spaces kept (also `R`) |
-| `f"…"` / `f'…'` | an **f-string**: every `{expression}` is evaluated with the control-language evaluator when the command runs and replaced by its text; `{expr:.3f}`, `{expr:.4g}`, `{expr:e}`, `{expr:d}` format it; a scalar prints with `%g`, a vector as its elements, a complex value as `re,im`; `\{` and `\}` are literal braces |
+| `f"…"` / `f'…'` | an **f-string**: every `{expression}` is evaluated with the control-language evaluator when the command runs and replaced by its text; `{expr:.3f}`, `{expr:.4g}`, `{expr:e}`, `{expr:d}` format it; a scalar prints with `%g`, a vector as its elements, a complex value as `re,im`; `\{` and `\}` are literal braces. Since E-556 the result is plain text (quoted only when it has whitespace, so it stays one word), so `let`, `set`, `alter`, `if`, `setplot`, a file name and a numeric option all take it |
 | `rf"…"` / `fr"…"` | both |
 
-The prefix counts only at a token start (`set t=r"…"` has one; a device `r1`,
-a variable `f` and the words `r`, `rf` do not). An expression that resolves to
+The prefix counts at a token start or after `=`, `(`, `,` inside a token
+(`set t=r"…"` and `let z=f"{7}"` — the deck reader's form of `let z = f"{7}"`
+— have one; a device `r1`, a variable `f` and the words `r`, `rf` do not;
+E-556 closed the gap where only the lexer knew the second rule). An expression that resolves to
 nothing, an unbalanced brace or a bad format is an error naming the string,
 and the command is not run. `{{ }}` is not an escape: it belongs to the
 netlist's `.for` construct (E-474), and the suite pins that the two coexist.

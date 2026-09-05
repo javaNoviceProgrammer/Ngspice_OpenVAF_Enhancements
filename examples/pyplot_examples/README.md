@@ -94,4 +94,4 @@ deck's `* ` comment marker. A label or title the user gives is kept
 verbatim; `set pyplot_eng=off` keeps plain tick numbers. The same ticks go on
 the Bode frequency axis, the eye's time axis and the contour axes.
 
-Run: `python3 verify_pyplot.py` (47 checks, both solvers).
+Run: `python3 verify_pyplot.py` (49 checks, both solvers).

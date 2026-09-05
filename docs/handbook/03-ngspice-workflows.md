@@ -474,7 +474,7 @@ text (E-553; [`examples/rawfstring_examples/`](../../examples/rawfstring_example
 | form | meaning |
 |---|---|
 | `r"…"` / `r'…'` | a **raw string**: copied through the deck reader as written — case and spaces kept (also `R`) |
-| `f"…"` / `f'…'` | an **f-string**: every `{expression}` in it is evaluated with the control-language evaluator when the command runs and replaced by its text; `{expr:.3f}`, `{expr:.4g}`, `{expr:e}`, `{expr:d}` format it; a scalar prints with `%g`, a vector as its elements separated by spaces, a complex value as `re,im`; `\{` and `\}` are literal braces |
+| `f"…"` / `f'…'` | an **f-string**: every `{expression}` in it is evaluated with the control-language evaluator when the command runs and replaced by its text; `{expr:.3f}`, `{expr:.4g}`, `{expr:e}`, `{expr:d}` format it; a scalar prints with `%g`, a vector as its elements separated by spaces, a complex value as `re,im`; `\{` and `\}` are literal braces. The result is **plain text** — so `let z = f"{…}"`, `set t=f"{…}"`, `alter r1 = f"{2*rr}"`, `if f"{k*3}" = 6`, `setplot f"tran{n}"`, `wrdata f"run{i}.txt"` and a command's numeric option (`-max f"{lim}"`) all take it; a result with whitespace in it is quoted, so it stays one word and the command unquotes it (`set u=rf"{vmax:.3f} V"` stores `0.756 V`) (E-556) |
 | `rf"…"` / `fr"…"` | both |
 
 ```spice
@@ -486,8 +486,10 @@ foreach x f"{2*n}" f"{3*n}"
 end
 ```
 
-The prefix counts only at the start of a token (`set t=r"…"` has one, a device
-called `r` or a variable called `f` does not). An `{expression}` that resolves
+The prefix counts at the start of a token or after `=`, `(` or `,` inside one
+(`set t=r"…"` has one, and so does `let z=f"{7}"`, which is what the deck reader
+makes of `let z = f"{7}"`; a device called `r` or a variable called `f` does
+not). An `{expression}` that resolves
 to nothing, an unbalanced brace, or a format that is not one is an error naming
 the string, and the command does not run — an empty substitution would be a
 silent zero. `$variables` are substituted before the braces are evaluated, so

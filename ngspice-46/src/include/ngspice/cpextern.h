@@ -159,6 +159,8 @@ extern void cp_remvar(char *varname);
 void cp_vset(const char *varname, enum cp_types type, const void *value);
 /* Enhancement-553: r"..." / f"..." string prefixes (lexical.c) */
 int cp_string_prefix_len(const char *word, size_t len);
+int cp_string_prefix_at(const char *word, size_t from, size_t *pos, size_t *end); /* E-556 */
+wordlist *cp_fstringsubst(wordlist *wlist);                 /* E-553/E-556 */
 extern struct variable *cp_setparse(wordlist *wl);
 extern wordlist *vareval(char *string);
 extern char *span_var_expr(char *t);

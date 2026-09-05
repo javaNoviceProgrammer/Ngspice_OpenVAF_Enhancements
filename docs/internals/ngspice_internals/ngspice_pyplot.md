@@ -98,6 +98,10 @@ suffix.
 
 ### 2.3 Where the files go
 
+A name with a space is quoted, `pyplot -export "my dir/sig" v(out)`, and lands
+where it says (E-556; before that the quotes went into the file name and
+nothing was written).
+
 With a bare base name, artifacts are written **next to the circuit file**, so a
 self-contained deck folder collects its own plots. Give a path of your own and it is
 respected. The special names `temp` / `tmp` write to a temporary file instead:

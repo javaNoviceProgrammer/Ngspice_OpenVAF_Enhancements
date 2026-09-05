@@ -373,6 +373,18 @@ for tag, sub in (("a", "with space"), ("b", "it's")):
           and "unexpected EOF" not in log and "Error" not in log,
           log.strip()[-200:])
 
+# Enhancement-556 (hunt F5): a QUOTED name -- the one spelling that can carry
+# a space -- was used verbatim, quotes and all, so the file could not be opened
+qdeck = os.path.join(HERE, "quoted.sp")
+with open(qdeck, "w") as f:
+    f.write(statusdeck.format(extra='pyplot -export "with space/exp" v(in)', name='"with space/img"'))
+log = run_deck(qdeck, HERE)
+check("E-556a: a quoted export name with a space lands where it says",
+      os.path.isfile(os.path.join(HERE, "with space", "exp.npy"))
+      and not os.path.exists(os.path.join(HERE, '"with space')), log.strip()[-160:])
+check("E-556b: a quoted hardcopy name with a space renders there, status 0",
+      is_png(os.path.join(HERE, "with space", "img.png")) and status_of(log) == 0, log.strip()[-160:])
+
 badpy = os.path.join(HERE, "badpy.sh")
 with open(badpy, "w") as f:
     f.write("#!/bin/sh\necho 'ModuleNotFoundError: No module named matplotlib' >&2\nexit 3\n")
@@ -779,7 +791,7 @@ for f in ("two.sp", "dir.sp", "lw.sp", "be.sp",
           "acmag.py", "acmag.data", "acmag.npy", "acmag.png",
           "eye.sp", "eyefig.py", "eyefig.data", "eyefig.npy", "eyefig.png",
           "eye.py", "eye.data", "eye.npy", "eye.png",
-          "pyplot.py", "pyplot.data", "pyplot.npy", "pyplot.png", "rcload.osdi"):
+          "pyplot.py", "pyplot.data", "pyplot.npy", "pyplot.png", "rcload.osdi", "quoted.sp"):
     p = os.path.join(HERE, f)
     if os.path.exists(p):
         os.remove(p)
