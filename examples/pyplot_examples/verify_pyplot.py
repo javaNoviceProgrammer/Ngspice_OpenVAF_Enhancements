@@ -37,6 +37,17 @@ Enhancement-547 (the launch: quoting and the exit status):
   [E-547e] a success publishes `pyplot_status` = 0
   [E-547f] `pyplot_python` still carries options (`/usr/bin/env python3`)
   [E-547g] an interpreter PATH with a space is one word
+
+Enhancement-548 (the script and its data):
+  [E-548a] the data table carries full precision: a time axis offset to 1 s with
+           1 ns steps keeps every x distinct, a microvolt ripple on 1 V survives
+           (six digits used to collapse both)
+  [E-548b] `ylimit lo hi` under `ylog` is applied (it used to be dropped
+           silently); a non-positive bound is refused by the command itself
+  [E-548c] a voltage and a current on one plot get two y scales (twinx), each
+           labelled with its type, one combined legend, distinct colours
+  [E-548d] the generated script runs from any directory: its data and image are
+           found next to the script itself
 """
 import os
 import random
@@ -115,8 +126,8 @@ r = subprocess.run([NGSPICE, "-b", "tranlim.sp"], capture_output=True, text=True
 pylim = (open(os.path.join(HERE, "rclim.py")).read()
          if os.path.isfile(os.path.join(HERE, "rclim.py")) else "")
 check("E-182: explicit xlimit/ylimit still emit set_xlim and set_ylim",
-      "set_xlim(0.000000e+00, 1.000000e-03)" in pylim and
-      "set_ylim(-1.000000e+00, 1.000000e+00)" in pylim and
+      "set_xlim(0, 0.001)" in pylim and          # E-548: full-precision %.17g spelling
+      "set_ylim(-1, 1)" in pylim and
       is_png(os.path.join(HERE, "rclim.png")))
 for f_ in ("tranlim.sp", "rclim.py", "rclim.data", "rclim.png"):
     try:
@@ -216,7 +227,7 @@ pydir = open(os.path.join(HERE, "dir.py")).read() if os.path.isfile(os.path.join
 check("E-183b: artifacts land next to the .cir (abs deck path, run from parent)",
       is_png(os.path.join(HERE, "dir.png"))
       and not os.path.exists(os.path.join(parent, "dir.png"))
-      and os.path.join(HERE, "dir.data") in pydir)
+      and "'dir.data'" in pydir and "_here" in pydir)   # E-548: resolved against the script
 
 # ---- Enhancement-183c: pyplot_linewidth ----
 lwdeck = twodeck.replace(
@@ -374,6 +385,68 @@ with open(deck, "w") as f:
 log = run_deck(deck, HERE)
 check("E-547g: an interpreter path with a space is one word",
       is_png(os.path.join(HERE, "status3.png")) and status_of(log) == 0, log.strip()[-200:])
+
+# ---- Enhancement-548: the script and its data ----
+import tempfile
+E548 = """* pyplot script probe (Enhancement-548)
+V1 in 0 dc 1 sin(1 1u 100meg)
+R1 in out 1k
+C1 out 0 1n
+.tran 1n 20n
+.control
+run
+set pyplot_terminal=png
+set pyplot_backend=Agg
+let t2 = time + 1
+pyplot prec v(in) vs t2
+ac dec 10 10 1e6
+pyplot ylo mag(v(out)) ylog ylimit 1e-3 1
+pyplot ybad mag(v(out)) ylog ylimit 0 1
+pyplot xlo mag(v(out)) xlog xlimit 0 1e6
+tran 10u 1m
+pyplot mixed v(out) i(v1)
+.endc
+.end
+"""
+deck = os.path.join(HERE, "e548.sp")
+with open(deck, "w") as f:
+    f.write(E548)
+log = run_deck(deck, HERE)
+rows = [l.split() for l in open(os.path.join(HERE, "prec.data")) if l.strip()] \
+    if os.path.isfile(os.path.join(HERE, "prec.data")) else []
+xs = [float(r[0]) for r in rows]; ys = [float(r[1]) for r in rows]
+check("E-548a: every x of a 1 s-offset, 1 ns-step axis is distinct, and a 1 uV ripple on 1 V survives",
+      len(rows) > 10 and len(set(xs)) == len(xs) and 1.5e-6 < (max(ys) - min(ys)) < 2.5e-6,
+      f"{len(rows)} rows, {len(set(xs))} distinct x, ripple {max(ys) - min(ys) if ys else None}")
+ylo = open(os.path.join(HERE, "ylo.py")).read() if os.path.isfile(os.path.join(HERE, "ylo.py")) else ""
+ybad = open(os.path.join(HERE, "ybad.py")).read() if os.path.isfile(os.path.join(HERE, "ybad.py")) else ""
+xlo = open(os.path.join(HERE, "xlo.py")).read() if os.path.isfile(os.path.join(HERE, "xlo.py")) else ""
+check("E-548b: ylimit 1e-3 1 under ylog is applied",
+      "set_yscale('log')" in ylo and "set_ylim(0.001" in ylo and is_png(os.path.join(HERE, "ylo.png")))
+check("...E-548b: a non-positive limit under a log axis is refused by the command itself, no script",
+      "Y values must be > 0 for log scale" in log and not ybad
+      and "X values must be > 0 for log scale" in log and not xlo,
+      log.strip()[-300:])
+mixed = open(os.path.join(HERE, "mixed.py")).read() if os.path.isfile(os.path.join(HERE, "mixed.py")) else ""
+check("E-548c: a voltage and a current get two y scales, labelled 'V' and 'A', one legend, explicit colours",
+      "twinx()" in mixed and "_twin(0).plot(" in mixed and "set_ylabel('V')" in mixed
+      and "_twin(0).set_ylabel('A')" in mixed and "_l1 + _l2" in mixed
+      and "color='C0'" in mixed and "color='C1'" in mixed
+      and is_png(os.path.join(HERE, "mixed.png")), mixed[-400:])
+with tempfile.TemporaryDirectory() as far:
+    os.remove(os.path.join(HERE, "mixed.png"))
+    r = subprocess.run([sys.executable, os.path.join(HERE, "mixed.py")],
+                       capture_output=True, text=True, cwd=far)
+    check("E-548d: the generated script runs from another directory and writes its image next to itself",
+          r.returncode == 0 and is_png(os.path.join(HERE, "mixed.png"))
+          and not os.path.exists(os.path.join(far, "mixed.png")),
+          (r.stderr or r.stdout).strip()[-200:])
+for f in ("e548.sp", "prec.py", "prec.data", "prec.png", "ylo.py", "ylo.data", "ylo.png",
+          "ybad.py", "ybad.data", "ybad.png", "xlo.py", "xlo.data", "xlo.png",
+          "mixed.py", "mixed.data", "mixed.png"):
+    p = os.path.join(HERE, f)
+    if os.path.exists(p):
+        os.remove(p)
 
 for d in e547_dirs:
     shutil.rmtree(d, ignore_errors=True)

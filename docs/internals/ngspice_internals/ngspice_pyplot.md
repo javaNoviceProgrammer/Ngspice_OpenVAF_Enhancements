@@ -262,6 +262,25 @@ A parametric (x–y) plot uses `vs`:
 pyplot iv i(v1) vs v(a) title "I-V curve"
 ```
 
+`ylimit 1e-3 1 ylog` is applied (E-548; before that a `ylimit` under `ylog` was dropped
+silently). A non-positive limit under a log axis is refused by the command itself,
+`Error: Y values must be > 0 for log scale`, before anything is written.
+
+### 5.1 Mixed units — a voltage and a current on one plot
+
+Traces of different types get their own scales, as in the built-in `plot`: the first
+trace's type owns the left axis and any other type is drawn on a twin axis on the right,
+each labelled with its type (`V`, `A`), with one combined legend and a distinct colour per
+trace (E-548):
+
+```
+pyplot vi v(out) i(v1)        $ volts on the left, amps on the right
+```
+
+An explicit `ylimit`, `ylog` and the reference lines apply to the left axis. With
+`pyplot_subplots` the rule holds per panel. Before E-548 a mixed list shared one unlabelled
+axis, so the milliamp trace lay flat along the bottom of the volt scale.
+
 ---
 
 ## 6. Histograms — `-hist`
@@ -561,6 +580,10 @@ import numpy as np
 d = np.loadtxt("compare.data")
 ```
 
+The numbers carry 17 significant digits, so every double round-trips exactly (E-548; the
+six digits written before collapsed a time axis offset to 1 s with nanosecond steps to a
+single x value, and a microvolt ripple on a volt to a handful of levels).
+
 ---
 
 ## 13. What gets written
@@ -574,10 +597,13 @@ For base name `NAME`, `pyplot` produces:
 | `NAME.png` / `.svg` / `.pdf` | the image, when `pyplot_terminal` is set |
 
 `NAME.py` is *self-contained*: it can be edited and re-run outside ngspice, which is the
-easiest way to fine-tune a figure for a paper without re-running the simulation.
+easiest way to fine-tune a figure for a paper without re-running the simulation. It finds
+`NAME.data` and writes `NAME.png` next to itself, wherever it is run from (E-548; it used
+to look for the data relative to the directory ngspice ran in):
 
 ```
 python3 rcplot.py
+python3 /somewhere/else/rcplot.py      $ also fine
 ```
 
 ### 13.1 Did it work? — `pyplot_status`

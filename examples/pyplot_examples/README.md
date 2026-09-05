@@ -41,4 +41,20 @@ end
 A window is launched in the background, where nothing can be waited for; on
 POSIX the background shell reports a non-zero exit when it happens.
 
-Run: `python3 verify_pyplot.py` (24 checks, both solvers).
+**Enhancement-548 — the script and its data.** Four defects from the same
+review. The data table is written with 17 significant digits instead of six: a
+time axis offset to 1 s with 1 ns steps used to collapse to one distinct x, and
+a microvolt ripple on 1 V to eight distinct values, in the very file the doc
+calls the export. `ylimit lo hi` under `ylog` was dropped without a word; it is
+applied now (a non-positive bound never reaches the backend: the command
+refuses it with `Y values must be > 0 for log scale`). A voltage and a
+current on one plot shared one axis with no label at all, the milliamps flat
+along the bottom of the volt scale; each type now has its own scale, the first
+trace's type on the left and any other on a `twinx()` on the right, labelled
+`V` and `A`, one combined legend, explicit colours (a twin axis restarts the
+colour cycle). And the generated script found its data relative to the
+directory ngspice ran in, so re-running it elsewhere failed with
+`NAME.data not found`; it now resolves its data table and its image against
+its own location.
+
+Run: `python3 verify_pyplot.py` (29 checks, both solvers).

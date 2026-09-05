@@ -23,6 +23,14 @@
 
 #define PY_MAXVECTORS 64
 
+/* Enhancement-548: one number in the data table. `%e` carried six significant
+   digits, which is what the gnuplot backend writes but not what an export
+   needs: a time axis offset to 1 s with 1 ns steps collapsed to ONE distinct
+   x value, and a 1 V signal with a microvolt ripple to eight distinct values.
+   17 significant digits round-trip every double exactly; NaN and inf spell
+   themselves, which numpy reads. */
+#define PY_NUM "%.17g"
+
 
 /* Write `s` as a single-quoted Python string literal, escaping backslashes
    and single quotes. */
@@ -50,6 +58,68 @@ emit_wrote_line(FILE *file, const char *filename, const char *fmt)
     fprintf(file, "print('pyplot: wrote ' + ");
     quote_python_string(file, filename);
     fprintf(file, " + '.%s')\n", fmt);
+}
+
+
+/* Enhancement-548: the file name part of a path, after the last separator
+   (either kind, so a Windows path written with '/' is handled too). */
+static const char *
+path_basename(const char *path)
+{
+    const char *base = path, *p;
+    for (p = path; *p; p++)
+        if (*p == '/' || *p == '\\')
+            base = p + 1;
+    return base;
+}
+
+
+/* Enhancement-548: `os.path.join(_here, '<basename of path>')`. The script
+   used to name its data table and its image relative to the directory ngspice
+   ran in, so the doc's own advice -- edit the script and run it again -- failed
+   from any other directory with "NAME.data not found". Now every path is
+   resolved against the script's own location (`_here`, set by
+   emit_data_load), which is where the data table and the image live. */
+static void
+emit_here_path(FILE *file, const char *path)
+{
+    fprintf(file, "os.path.join(_here, ");
+    quote_python_string(file, path_basename(path));
+    fprintf(file, ")");
+}
+
+
+/* Enhancement-548: `d = np.loadtxt(...)` of the data table, found next to the
+   script wherever the script is run from. */
+static void
+emit_data_load(FILE *file, const char *filename_data)
+{
+    fprintf(file, "import os\n");
+    fprintf(file, "_here = os.path.dirname(os.path.abspath(__file__))\n");
+    fprintf(file, "d = np.loadtxt(");
+    emit_here_path(file, filename_data);
+    fprintf(file, ")\n");
+}
+
+
+/* Enhancement-548: `_ax.set_<axis>lim(lo, hi)` for an explicit `xlimit` /
+   `ylimit`. Under `ylog` the limits used to be dropped without a word
+   (`ylimit 1e-3 1 ylog` set the scale and no limits); they are applied now.
+   plotit refuses a non-positive limit under a log axis before this runs
+   ("Y values must be > 0 for log scale"); the check here is a backstop, since
+   matplotlib cannot place such a limit either. */
+static void
+emit_axis_limits(FILE *file, char axis, const double *lims, bool log)
+{
+    if (!lims)
+        return;
+    if (log && (lims[0] <= 0.0 || lims[1] <= 0.0)) {
+        fprintf(cp_err, "Warning: pyplot: %climit %g %g ignored under %clog: "
+                "a log axis needs positive bounds.\n",
+                axis, lims[0], lims[1], axis);
+        return;
+    }
+    fprintf(file, "    _ax.set_%clim(" PY_NUM ", " PY_NUM ")\n", axis, lims[0], lims[1]);
 }
 
 
@@ -450,7 +520,7 @@ void ft_pyplot(double *xlims, double *ylims,
             double yval = (i < v->v_length)
                 ? (isreal(v) ? v->v_realdata[i] : realpart(v->v_compdata[i]))
                 : NAN;
-            fprintf(file_data, "%e %e ", xval, yval);
+            fprintf(file_data, PY_NUM " " PY_NUM " ", xval, yval);
         }
         fprintf(file_data, "\n");
     }
@@ -484,9 +554,7 @@ void ft_pyplot(double *xlims, double *ylims,
         quote_python_string(file, style);
         fprintf(file, ")\nexcept Exception:\n    pass\n");
     }
-    fprintf(file, "d = np.loadtxt(");
-    quote_python_string(file, filename_data);
-    fprintf(file, ")\n");
+    emit_data_load(file, filename_data);
     fprintf(file, "if d.ndim == 1:\n    d = d.reshape(-1, %d)\n", 2 * numVecs);
     /* Enhancement-98: one axis, or `nrows` stacked subplots sharing the x-axis.
        `axes` is always a 2-D array (squeeze=False) so it is indexed uniformly. */
@@ -508,6 +576,35 @@ void ft_pyplot(double *xlims, double *ylims,
         else if (cieq(fftwin, "blackman")) winexpr = "np.blackman(_N)";
         else if (cieq(fftwin, "rect") || cieq(fftwin, "none")
                  || cieq(fftwin, "boxcar")) winexpr = "np.ones(_N)";
+    }
+
+    /* Enhancement-548: traces of DIFFERENT types (a voltage and a current,
+       `pyplot v(out) i(v1)`) used to share one axis with no label at all --
+       plotit hands over no `ylabel` for a mixed list -- so the milliamp trace
+       lay flat along the bottom of the volt scale. Stock `plot` gives each type
+       its own scale; so does this now: within a panel, the first trace's type
+       owns the left axis and any other type goes to a `twinx()` axis on the
+       right, each labelled with its type, the legend combined, and every trace
+       given an explicit colour (a twin axis restarts matplotlib's colour cycle,
+       so the two first traces would both have come out blue). Explicit
+       `ylimit`, `ylog` and the reference lines apply to the left axis. */
+    bool mixed = FALSE;
+    if (!hist && !fft)
+        for (v = vecs->v_link2; v; v = v->v_link2)
+            if (v->v_type != vecs->v_type)
+                mixed = TRUE;
+    int row_type[PY_MAXVECTORS];        /* the type owning each panel's left axis */
+    const char *twin_label[PY_MAXVECTORS];
+    for (i = 0; i < PY_MAXVECTORS; i++) {
+        row_type[i] = SV_NOTYPE;
+        twin_label[i] = NULL;
+    }
+    if (mixed) {
+        fprintf(file, "_tw = {}\n");
+        fprintf(file, "def _twin(_r):\n");
+        fprintf(file, "    if _r not in _tw:\n");
+        fprintf(file, "        _tw[_r] = axes[_r, 0].twinx()\n");
+        fprintf(file, "    return _tw[_r]\n");
     }
 
     col = 0;
@@ -545,7 +642,16 @@ void ft_pyplot(double *xlims, double *ylims,
             i++;
             continue;
         }
-        fprintf(file, "axes[%d, 0].", row);
+        /* Enhancement-548: the axis this trace is drawn on (see `mixed`). */
+        if (row_type[row] == SV_NOTYPE)
+            row_type[row] = (int) v->v_type;
+        if (mixed && (int) v->v_type != row_type[row]) {
+            const char *abbrev = ft_typabbrev((int) v->v_type);
+            if (!twin_label[row])
+                twin_label[row] = abbrev ? abbrev : "";
+            fprintf(file, "_twin(%d).", row);
+        } else
+            fprintf(file, "axes[%d, 0].", row);
         if (hist) {
             /* Enhancement-217: the VALUE column (col+1), NaN-filtered so vectors
                of unequal length (padded with NaN in the data table) histogram
@@ -574,6 +680,8 @@ void ft_pyplot(double *xlims, double *ylims,
                     col, col + 1, mk[i % 8], lwarg);
         } else
             fprintf(file, "plot(d[:, %d], d[:, %d], %s", col, col + 1, lwarg);
+        if (mixed)
+            fprintf(file, "color='C%d', ", i % 10);
         fprintf(file, "label=");
         quote_python_string(file, v->v_name ? v->v_name : "");
         fprintf(file, ")\n");
@@ -622,10 +730,8 @@ void ft_pyplot(double *xlims, double *ylims,
     /* Enhancement-182: xlims/ylims arrive non-NULL only when the user gave
      * explicit `xlimit`/`ylimit` on the command; otherwise the axes are left
      * to matplotlib's autoscaling (with fig.tight_layout() below). */
-    if (xlims)
-        fprintf(file, "    _ax.set_xlim(%e, %e)\n", xlims[0], xlims[1]);
-    if (ylims && !ylog)
-        fprintf(file, "    _ax.set_ylim(%e, %e)\n", ylims[0], ylims[1]);
+    emit_axis_limits(file, 'x', xlims, xlog);
+    emit_axis_limits(file, 'y', ylims, ylog);
     /* Enhancement-296: `pyplot_legend=off` hides the legend; any other value is
        the matplotlib legend location. Unset -> the default `legend()`. */
     if (have_legend) {
@@ -645,6 +751,36 @@ void ft_pyplot(double *xlims, double *ylims,
         }
     } else
         fprintf(file, "    _ax.legend()\n");
+    /* Enhancement-548: a mixed plot labels each panel's left axis with the type
+       that owns it and the twin with its own, and combines the two legends. */
+    if (mixed) {
+        int r;
+        for (r = 0; r < nrows; r++) {
+            const char *left = ft_typabbrev(row_type[r]);
+            if (left && *left) {
+                fprintf(file, "axes[%d, 0].set_ylabel(", r);
+                quote_python_string(file, left);
+                fprintf(file, ")\n");
+            }
+            if (twin_label[r] && *twin_label[r]) {
+                fprintf(file, "_twin(%d).set_ylabel(", r);
+                quote_python_string(file, twin_label[r]);
+                fprintf(file, ")\n");
+            }
+        }
+        if (!(have_legend && (cieq(legendvar, "off") || cieq(legendvar, "none")
+                              || cieq(legendvar, "false")))) {
+            fprintf(file, "for _r, _t in _tw.items():\n");
+            fprintf(file, "    _h1, _l1 = axes[_r, 0].get_legend_handles_labels()\n");
+            fprintf(file, "    _h2, _l2 = _t.get_legend_handles_labels()\n");
+            fprintf(file, "    axes[_r, 0].legend(_h1 + _h2, _l1 + _l2");
+            if (have_legend) {
+                fprintf(file, ", loc=");
+                quote_python_string(file, legendvar);
+            }
+            fprintf(file, ")\n");
+        }
+    }
     /* Enhancement-217: a histogram's x-axis is the signal VALUE (the `ylabel` type),
        and the panels do not share it, so it is labelled on every panel; a line
        plot's shared time/frequency axis is labelled on the bottom panel only. */
@@ -677,7 +813,7 @@ void ft_pyplot(double *xlims, double *ylims,
     if (hardcopy) {
         /* Enhancement-296: `pyplot_dpi` (default 100) and `pyplot_transparent`. */
         fprintf(file, "fig.savefig(");
-        quote_python_string(file, filename);
+        emit_here_path(file, filename);
         fprintf(file, " + '.%s', dpi=%d%s)\n", fmt, dpi,
                 transparent ? ", transparent=True" : "");
         emit_wrote_line(file, filename, fmt);
@@ -814,7 +950,7 @@ ft_pyplot_contour(const char *filename, const char *title, struct dvec *vecs)
         double xv = isreal(x) ? x->v_realdata[i] : realpart(x->v_compdata[i]);
         double yv = isreal(y) ? y->v_realdata[i] : realpart(y->v_compdata[i]);
         double zv = isreal(z) ? z->v_realdata[i] : realpart(z->v_compdata[i]);
-        fprintf(file_data, "%e %e %e\n", xv, yv, zv);
+        fprintf(file_data, PY_NUM " " PY_NUM " " PY_NUM "\n", xv, yv, zv);
     }
     (void) fclose(file_data);
 
@@ -842,9 +978,7 @@ ft_pyplot_contour(const char *filename, const char *title, struct dvec *vecs)
         quote_python_string(file, style);
         fprintf(file, ")\nexcept Exception:\n    pass\n");
     }
-    fprintf(file, "d = np.loadtxt(");
-    quote_python_string(file, filename_data);
-    fprintf(file, ")\n");
+    emit_data_load(file, filename_data);
     fprintf(file, "if d.ndim == 1:\n    d = d.reshape(-1, 3)\n");
     fprintf(file, "x = d[:, 0]; y = d[:, 1]; z = d[:, 2]\n");
     if (have_figsize)
@@ -890,7 +1024,7 @@ ft_pyplot_contour(const char *filename, const char *title, struct dvec *vecs)
     fprintf(file, "fig.tight_layout()\n");
     if (hardcopy) {
         fprintf(file, "fig.savefig(");
-        quote_python_string(file, filename);
+        emit_here_path(file, filename);
         fprintf(file, " + '.%s', dpi=110)\n", fmt);
         emit_wrote_line(file, filename, fmt);
     } else {
@@ -981,7 +1115,7 @@ ft_pyplot_smith(const char *filename, const char *title, struct dvec *vecs)
         for (i = 0; i < d->v_length; i++) {
             double re = isreal(d) ? d->v_realdata[i] : realpart(d->v_compdata[i]);
             double im = isreal(d) ? 0.0             : imagpart(d->v_compdata[i]);
-            fprintf(file_data, "%d %e %e\n", vi, re, im);
+            fprintf(file_data, "%d " PY_NUM " " PY_NUM "\n", vi, re, im);
         }
     }
     (void) fclose(file_data);
@@ -1035,9 +1169,7 @@ ft_pyplot_smith(const char *filename, const char *title, struct dvec *vecs)
     fprintf(file, "for x in (0.2, 0.5, 1.0, 2.0, 5.0):\n    _xarc(x); _xarc(-x)\n");
     fprintf(file, "ax.plot([-1, 1], [0, 0], color='0.75', lw=0.6, zorder=1)\n");
     /* --- plot the data curves --- */
-    fprintf(file, "d = np.loadtxt(");
-    quote_python_string(file, filename_data);
-    fprintf(file, ")\n");
+    emit_data_load(file, filename_data);
     fprintf(file, "if d.ndim == 1:\n    d = d.reshape(-1, 3)\n");
     fprintf(file, "for vi in range(len(names)):\n"
                   "    m = d[:, 0] == vi\n"
@@ -1061,7 +1193,7 @@ ft_pyplot_smith(const char *filename, const char *title, struct dvec *vecs)
     fprintf(file, "fig.tight_layout()\n");
     if (hardcopy) {
         fprintf(file, "fig.savefig(");
-        quote_python_string(file, filename);
+        emit_here_path(file, filename);
         fprintf(file, " + '.%s', dpi=110)\n", fmt);
         emit_wrote_line(file, filename, fmt);
     } else {
@@ -1156,7 +1288,7 @@ ft_pyplot_ac(const char *filename, const char *title, struct dvec *vecs, int ac_
                 : (double) i;
             double re = isreal(d) ? d->v_realdata[i] : realpart(d->v_compdata[i]);
             double im = isreal(d) ? 0.0             : imagpart(d->v_compdata[i]);
-            fprintf(file_data, "%d %e %e %e\n", vi, fr, re, im);
+            fprintf(file_data, "%d " PY_NUM " " PY_NUM " " PY_NUM "\n", vi, fr, re, im);
         }
     }
     (void) fclose(file_data);
@@ -1190,9 +1322,7 @@ ft_pyplot_ac(const char *filename, const char *title, struct dvec *vecs, int ac_
         fprintf(file, ", ");
     }
     fprintf(file, "]\n");
-    fprintf(file, "d = np.loadtxt(");
-    quote_python_string(file, filename_data);
-    fprintf(file, ")\n");
+    emit_data_load(file, filename_data);
     fprintf(file, "if d.ndim == 1:\n    d = d.reshape(-1, 4)\n");
 
     if (ac_mode == AC_BODE) {
@@ -1255,7 +1385,7 @@ ft_pyplot_ac(const char *filename, const char *title, struct dvec *vecs, int ac_
     fprintf(file, "fig.tight_layout()\n");
     if (hardcopy) {
         fprintf(file, "fig.savefig(");
-        quote_python_string(file, filename);
+        emit_here_path(file, filename);
         fprintf(file, " + '.%s', dpi=110)\n", fmt);
         emit_wrote_line(file, filename, fmt);
     } else {
@@ -1375,7 +1505,7 @@ ft_pyplot_eye(const char *filename, const char *expr)
         for (i = 0; i < nrow; i++) {
             double x = isreal(et) ? et->v_realdata[i] : realpart(et->v_compdata[i]);
             double y = isreal(ew) ? ew->v_realdata[i] : realpart(ew->v_compdata[i]);
-            fprintf(file_data, "%e %e\n", x, y);
+            fprintf(file_data, PY_NUM " " PY_NUM "\n", x, y);
         }
     }
     (void) fclose(file_data);
@@ -1405,9 +1535,7 @@ ft_pyplot_eye(const char *filename, const char *expr)
         quote_python_string(file, style);
         fprintf(file, ")\nexcept Exception:\n    pass\n");
     }
-    fprintf(file, "d = np.loadtxt(");
-    quote_python_string(file, filename_data);
-    fprintf(file, ")\n");
+    emit_data_load(file, filename_data);
     fprintf(file, "if d.ndim == 1:\n    d = d.reshape(-1, 2)\n");
     fprintf(file, "t = d[:, 0]; v = d[:, 1]\n");
     fprintf(file, "ui = %e; thr = %e; eh = %e; ew = %e; ewb = %e; jr = %e; amp = %e\n",
@@ -1449,7 +1577,7 @@ ft_pyplot_eye(const char *filename, const char *expr)
     fprintf(file, "fig.tight_layout()\n");
     if (hardcopy) {
         fprintf(file, "fig.savefig(");
-        quote_python_string(file, filename);
+        emit_here_path(file, filename);
         fprintf(file, " + '.%s', dpi=110)\n", fmt);
         emit_wrote_line(file, filename, fmt);
     } else {

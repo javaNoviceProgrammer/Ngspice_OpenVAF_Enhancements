@@ -4,7 +4,9 @@ import numpy as np
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-d = np.loadtxt('contour.data')
+import os
+_here = os.path.dirname(os.path.abspath(__file__))
+d = np.loadtxt(os.path.join(_here, 'contour.data'))
 if d.ndim == 1:
     d = d.reshape(-1, 3)
 x = d[:, 0]; y = d[:, 1]; z = d[:, 2]
@@ -21,5 +23,5 @@ ax.set_xlabel('time')
 ax.set_ylabel('time')
 ax.set_title('* pyplot base')
 fig.tight_layout()
-fig.savefig('contour' + '.png', dpi=110)
+fig.savefig(os.path.join(_here, 'contour') + '.png', dpi=110)
 print('pyplot: wrote ' + 'contour' + '.png')
