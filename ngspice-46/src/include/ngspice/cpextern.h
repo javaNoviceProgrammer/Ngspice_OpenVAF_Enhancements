@@ -157,6 +157,8 @@ extern bool cp_noglob;
 extern bool cp_nonomatch;
 extern void cp_remvar(char *varname);
 void cp_vset(const char *varname, enum cp_types type, const void *value);
+/* Enhancement-553: r"..." / f"..." string prefixes (lexical.c) */
+int cp_string_prefix_len(const char *word, size_t len);
 extern struct variable *cp_setparse(wordlist *wl);
 extern wordlist *vareval(char *string);
 extern char *span_var_expr(char *t);

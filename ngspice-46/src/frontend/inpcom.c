@@ -341,6 +341,48 @@ static int is_comment_or_blank_461(char *buffer)
  * so a string parameter could never match a mixed-case value and a `from` set
  * written in upper case rejected every one of its own members.
  */
+/* Enhancement-553: a RAW string literal in a control line -- r"..." or r'...',
+ * also rf/fr and upper case -- keeps its case through the deck's folding, as
+ * Python's r"" keeps its backslashes. With `s` at a candidate prefix, returns
+ * the character after the closing quote (or the end of the line) when `s`
+ * starts such a literal, NULL otherwise. Only a TOKEN START counts: the `r` of
+ * `var"..."` is not a prefix, the `r` of `t=r"..."` (a set value) is. */
+static char *prefixed_span_end(char *s, const char *line, int *has_r)
+{
+    char *p = s;
+    int n = 0, r = 0;
+    if (s > line && (isalnum_c((unsigned char) s[-1]) || s[-1] == '_'))
+        return NULL;
+    while (n < 2 && (*p == 'r' || *p == 'R' || *p == 'f' || *p == 'F')) {
+        if (*p == 'r' || *p == 'R')
+            r = 1;
+        p++;
+        n++;
+    }
+    if (n == 0 || (*p != '"' && *p != '\''))
+        return NULL;
+    if (n == 2 && tolower_c(s[0]) == tolower_c(s[1]))
+        return NULL;                     /* rr / ff is not a prefix */
+    {
+        const char q = *p++;
+        while (*p && *p != '\n' && *p != q)
+            p++;
+        if (*p == q)
+            p++;
+        if (has_r)
+            *has_r = r;
+        return p;
+    }
+}
+
+/* the case-keeping span: a prefixed literal with an r in its prefix */
+static char *raw_span_end(char *s, const char *line)
+{
+    int has_r = 0;
+    char *e = prefixed_span_end(s, line, &has_r);
+    return (e && has_r) ? e : NULL;
+}
+
 static char *keep_case_in_quotes(char *buffer)
 {
     char *s;
@@ -1883,8 +1925,12 @@ static struct inp_read_t inp_read(FILE* fp, int call_depth, const char* dir_name
 #endif
     }
 #endif
+            /* Enhancement-553: `pyplot` joins the list -- it takes the same title,
+             * xlabel and ylabel keywords as plot and gnuplot, and was the one plot
+             * command whose line was folded whole, so its titles came out in lower
+             * case where gnuplot's did not. */
             if (ciprefix("plot", buffer) || ciprefix("gnuplot", buffer) ||
-                ciprefix("hardcopy", buffer)) {
+                ciprefix("hardcopy", buffer) || ciprefix("pyplot", buffer)) {
                 /* lower case excluded for tokens following title, xlabel,
                  * ylabel. tokens may contain spaces, then they have to be
                  * enclosed in quotes. keywords and tokens have to be
@@ -1892,6 +1938,10 @@ static struct inp_read_t inp_read(FILE* fp, int call_depth, const char* dir_name
                 int j;
                 char t = ' ';
                 for (s = buffer; *s && (*s != '\n'); s++) {
+                    {   /* Enhancement-553: a raw string is copied through */
+                        char *e = raw_span_end(s, buffer);
+                        if (e) { s = e - 1; continue; }
+                    }
                     *s = tolower_c(*s);
                     if (ciprefix("title", s)) {
                         /* jump beyond title */
@@ -1903,8 +1953,12 @@ static struct inp_read_t inp_read(FILE* fp, int call_depth, const char* dir_name
                             s++;
                         if (!s || (*s == '\n'))
                             break;
+                        {   /* Enhancement-553: a raw literal is copied through */
+                            char *e = raw_span_end(s, buffer);
+                            if (e) { s = e - 1; continue; }
+                        }
                         /* check if single quote is at start of token */
-                        else if (*s == '\'') {
+                        if (*s == '\'') {
                             s++;
                             t = '\'';
                         }
@@ -1929,8 +1983,12 @@ static struct inp_read_t inp_read(FILE* fp, int call_depth, const char* dir_name
                             s++;
                         if (!s || (*s == '\n'))
                             break;
+                        {   /* Enhancement-553: a raw literal is copied through */
+                            char *e = raw_span_end(s, buffer);
+                            if (e) { s = e - 1; continue; }
+                        }
                         /* check if single quote is at start of token */
-                        else if (*s == '\'') {
+                        if (*s == '\'') {
                             s++;
                             t = '\'';
                         }
@@ -2011,9 +2069,16 @@ static struct inp_read_t inp_read(FILE* fp, int call_depth, const char* dir_name
                     ciprefix("echo", buffer) || ciprefix("shell", buffer) ||
                     ciprefix("source", buffer) ||ciprefix("cd", buffer) ||
                     ciprefix("load", buffer) || ciprefix("setcs", buffer))))) {
-                /* lower case for all other lines */
-                for (s = buffer; *s && (*s != '\n'); s++)
+                /* lower case for all other lines -- Enhancement-553: except the
+                 * raw string literals of a control line, copied through as they
+                 * are */
+                for (s = buffer; *s && (*s != '\n'); s++) {
+                    if (is_control || comfile) {
+                        char *e = raw_span_end(s, buffer);
+                        if (e) { s = e - 1; continue; }
+                    }
                     *s = tolower_c(*s);
+                }
             }
             else {
                 /* s points to end of buffer for all cases not treated so far
@@ -5421,7 +5486,18 @@ static char *inp_fix_subckt(struct names *subckt_w_params, char *s)
  *   thats odd and very naive business
  */
 
+/* Enhancement-553: `keep_prefixed` -- a prefixed string literal of a control
+   line (r"...", f"...", rf"...") is copied through as written: its spaces
+   around an `=` are text, and an f-string's {expressions} must reach the
+   command loop as spelled. */
+static char *inp_remove_ws_x(char *s, bool keep_prefixed);
+
 char *inp_remove_ws(char *s)
+{
+    return inp_remove_ws_x(s, FALSE);
+}
+
+static char *inp_remove_ws_x(char *s, bool keep_prefixed)
 {
     char *x = s;
     char *d = s;
@@ -5437,6 +5513,14 @@ char *inp_remove_ws(char *s)
         *d++ = *s++;
 
     while (*s != '\0') {
+        if (keep_prefixed) {
+            char *e = prefixed_span_end(s, x, NULL);
+            if (e) {
+                while (s < e)
+                    *d++ = *s++;
+                continue;
+            }
+        }
         if (*s == '{')
             brace_level++;
         if (*s == '}')
@@ -5536,7 +5620,8 @@ static void inp_remove_excess_ws(struct card *c)
         if (found_control && ciprefix("echo", c->line))
             continue;
 
-        c->line = inp_remove_ws(c->line); /* freed in fcn */
+        /* Enhancement-553: a control line's prefixed strings pass as written */
+        c->line = inp_remove_ws_x(c->line, found_control); /* freed in fcn */
     }
 }
 

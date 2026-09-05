@@ -6,6 +6,7 @@ Author: 1985 Wayne A. Christopher, U. C. Berkeley CAD Group
 /* The front-end command loop.  */
 
 #include "ngspice/ngspice.h"
+#include <ctype.h>
 #include "ngspice/cpdefs.h"
 
 #include "control.h"
@@ -132,6 +133,232 @@ ctl_free(struct control *ctrl)
 }
 
 
+/* ------------------------------------------------------------------------
+ * Enhancement-553: f-strings in the control language.
+ *
+ *     echo f"yield {100*montecarlo_yield:.2f} %, corner {mean(fc):.4g} Hz"
+ *     pyplot fig v(out) title rf"RC low-pass, Vmax = {vecmax(v(out)):.3f} V"
+ *
+ * A word spelled f"..." (or rf"..." / fr"..." -- the r half keeps the case
+ * through the deck's folding, see inpcom.c) has every {expression} inside it
+ * evaluated with the ordinary expression evaluator and replaced by its text:
+ * a scalar with %g, or with the printf-style format after a ':' (`.3f`,
+ * `.4g`, `e`, `d` for an integer); a vector by its elements separated by
+ * spaces; a complex value as `re,im`, the way `print` shows one. \{ and \}
+ * are literal braces ({{ }} belongs to the `.for` construct of the netlist,
+ * E-474, and is not reused here). The result is one quoted word, so every
+ * command that unquotes its argument takes it. An expression that resolves
+ * to nothing, or a format that is not one, is an error naming the string and
+ * the brace, and the command does not run -- an empty substitution would be
+ * the silent-zero fault of E-431 all over again. $variables are substituted
+ * before this pass, as in every other word.
+ * ------------------------------------------------------------------------ */
+
+/* is `spec` a printf-style number format: [-+ #0]* [width] [.prec] one of
+   eEfFgGdiuxX ? */
+static int fstr_valid_spec(const char *spec, char *conv)
+{
+    const char *p = spec;
+    while (*p == '-' || *p == '+' || *p == ' ' || *p == '#' || *p == '0')
+        p++;
+    while (isdigit((unsigned char) *p))
+        p++;
+    if (*p == '.') {
+        p++;
+        if (!isdigit((unsigned char) *p))
+            return 0;
+        while (isdigit((unsigned char) *p))
+            p++;
+    }
+    if (*p && strchr("eEfFgGdiuxX", *p) && p[1] == '\0') {
+        *conv = *p;
+        return 1;
+    }
+    return 0;
+}
+
+/* format one real with `spec` (NULL: %g) into `out` (of `cap` bytes) */
+static void fstr_format_real(char *out, size_t cap, double v, const char *spec, char conv)
+{
+    char fmt[48];
+    if (!spec) {
+        (void) snprintf(out, cap, "%g", v);
+        return;
+    }
+    if (strchr("diuxX", conv)) {
+        (void) snprintf(fmt, sizeof fmt, "%%%.*sl%c", (int) (strlen(spec) - 1), spec, conv);
+        (void) snprintf(out, cap, fmt, (long) v);
+    } else {
+        (void) snprintf(fmt, sizeof fmt, "%%%s", spec);
+        (void) snprintf(out, cap, fmt, v);
+    }
+}
+
+/* append `add` to the growable string */
+static void fstr_cat(char **buf, size_t *len, size_t *cap, const char *add)
+{
+    size_t n = strlen(add);
+    if (*len + n + 1 > *cap) {
+        *cap = (*len + n + 1) * 2;
+        *buf = TREALLOC(char, *buf, *cap);
+    }
+    memcpy(*buf + *len, add, n + 1);
+    *len += n;
+}
+
+/* Evaluate `expr` (with `spec`, NULL for none) and append its text. 0 on an
+   expression that resolves to nothing. */
+static int fstr_eval_one(char **buf, size_t *len, size_t *cap,
+                         const char *expr, const char *spec, char conv)
+{
+    struct pnode *pn = ft_getpnames_from_string(expr, TRUE);
+    struct dvec *v;
+    int i, ok = 0;
+    char num[64];
+    if (!pn)
+        return 0;
+    v = ft_evaluate(pn);
+    if (v && v->v_length >= 1) {
+        ok = 1;
+        for (i = 0; i < v->v_length; i++) {
+            if (i > 0)
+                fstr_cat(buf, len, cap, " ");
+            if (isreal(v)) {
+                fstr_format_real(num, sizeof num, v->v_realdata[i], spec, conv);
+                fstr_cat(buf, len, cap, num);
+            } else {
+                fstr_format_real(num, sizeof num, v->v_compdata[i].cx_real, spec, conv);
+                fstr_cat(buf, len, cap, num);
+                fstr_cat(buf, len, cap, ",");
+                fstr_format_real(num, sizeof num, v->v_compdata[i].cx_imag, spec, conv);
+                fstr_cat(buf, len, cap, num);
+            }
+        }
+    }
+    if (!pn->pn_value && v)
+        vec_free(v);
+    free_pnode(pn);
+    return ok;
+}
+
+/* The body of one f-string (between the quotes) to its text; NULL on error,
+   which has been reported. */
+static char *fstr_expand(const char *body, const char *word)
+{
+    char *out = NULL;
+    size_t len = 0, cap = 0;
+    const char *p = body;
+    char one[2] = { 0, 0 };
+
+    fstr_cat(&out, &len, &cap, "");
+    while (*p) {
+        if (*p == '\\' && (p[1] == '{' || p[1] == '}' || p[1] == '\\')) {
+            one[0] = p[1];
+            fstr_cat(&out, &len, &cap, one);
+            p += 2;
+        } else if (*p == '{') {
+            const char *q = p + 1, *colon = NULL;
+            int depth = 1, par = 0;
+            char *expr, *spec = NULL, conv = 0;
+            while (*q && depth > 0) {
+                if (*q == '{') depth++;
+                else if (*q == '}') { depth--; if (depth == 0) break; }
+                else if (*q == '(' || *q == '[') par++;
+                else if (*q == ')' || *q == ']') par--;
+                else if (*q == ':' && par == 0 && depth == 1) colon = q;
+                q++;
+            }
+            if (*q != '}') {
+                fprintf(cp_err, "Error: f-string %s: '{' without a closing '}'\n", word);
+                tfree(out);
+                return NULL;
+            }
+            if (colon) {
+                spec = copy(colon + 1);
+                spec[q - colon - 1] = '\0';
+                if (!fstr_valid_spec(spec, &conv)) {
+                    /* not a format: the colon belongs to the expression */
+                    tfree(spec);
+                    spec = NULL;
+                    colon = NULL;
+                }
+            }
+            expr = copy(p + 1);
+            expr[(colon ? colon : q) - (p + 1)] = '\0';
+            if (!expr[0]) {
+                fprintf(cp_err, "Error: f-string %s: an empty {}\n", word);
+                tfree(expr); if (spec) tfree(spec); tfree(out);
+                return NULL;
+            }
+            if (!fstr_eval_one(&out, &len, &cap, expr, spec, conv)) {
+                fprintf(cp_err, "Error: f-string %s: {%s} does not evaluate to a value "
+                                "(no such vector or variable in the current plot?); "
+                                "the command is not run\n", word, expr);
+                tfree(expr); if (spec) tfree(spec); tfree(out);
+                return NULL;
+            }
+            tfree(expr);
+            if (spec) tfree(spec);
+            p = q + 1;
+        } else if (*p == '}') {
+            fprintf(cp_err, "Error: f-string %s: a '}' without a '{' (write \\} for a "
+                            "literal brace)\n", word);
+            tfree(out);
+            return NULL;
+        } else {
+            one[0] = *p++;
+            fstr_cat(&out, &len, &cap, one);
+        }
+    }
+    return out;
+}
+
+/* Every f"..." / rf"..." word of the list becomes "<text>"; a bare r"..."
+   becomes "..." (its case has already been kept). NULL, with the list freed,
+   on an error. */
+static wordlist *cp_fstringsubst(wordlist *wlist)
+{
+    wordlist *wl;
+    for (wl = wlist; wl; wl = wl->wl_next) {
+        const char *w = wl->wl_word;
+        const char *q;
+        int k, has_f = 0, i;
+        size_t n;
+        if (!w)
+            continue;
+        n = strlen(w);
+        q = strchr(w, '"');
+        if (!q || q == w || n < 3 || w[n - 1] != '"')
+            continue;
+        k = cp_string_prefix_len(w, (size_t) (q - w));
+        if (k <= 0 || q != w + k)
+            continue;
+        for (i = 0; i < k; i++)
+            if (w[i] == 'f' || w[i] == 'F')
+                has_f = 1;
+        {
+            char *body = copy(q + 1);
+            char *text, *neww;
+            body[strlen(body) - 1] = '\0';          /* drop the closing quote */
+            if (has_f) {
+                text = fstr_expand(body, w);
+                tfree(body);
+                if (!text) {
+                    wl_free(wlist);
+                    return NULL;
+                }
+            } else {
+                text = body;
+            }
+            neww = tprintf("\"%s\"", text);
+            tfree(text);
+            tfree(wl->wl_word);
+            wl->wl_word = neww;
+        }
+    }
+    return wlist;
+}
+
 /* Note that we only do io redirection when we get to here - we also
  * postpone some other things until now.  */
 static void
@@ -161,6 +388,14 @@ docommand(wordlist *wlist)
     if (!eq(wlist->wl_word, "circbyline"))
         wlist = cp_doglob(wlist);
     pwlist(wlist, "After globbing");
+
+    /* Enhancement-553: f-strings, evaluated AFTER globbing -- cp_doglob()
+     * leaves a prefixed word alone, so the {expr} of an f"..." reach this
+     * pass intact and the braces it produces (\{ \}) are never globbed */
+    wlist = cp_fstringsubst(wlist);
+    if (!wlist)
+        return;
+    pwlist(wlist, "After f-string substitution");
 
     pwlist_echo(wlist, "Becomes >");
 
@@ -466,7 +701,7 @@ doblock(struct control *bl, int *num)
         break;
 
     case CO_FOREACH:
-        wltmp = cp_variablesubst(cp_bquote(cp_doglob(wl_copy(bl->co_text))));
+        wltmp = cp_fstringsubst(cp_variablesubst(cp_bquote(cp_doglob(wl_copy(bl->co_text)))));
         for (wl = wltmp; wl; wl = wl->wl_next) {
             cp_vset(bl->co_foreachvar, CP_STRING, wl->wl_word);
             for (ch = bl->co_children; ch; ch = cn) {

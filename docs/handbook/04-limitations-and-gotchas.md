@@ -113,6 +113,15 @@ scripting ngspice:
 
 - **The first line of a deck is the title**, not a statement. A netlist
   line placed first is silently swallowed.
+- **A deck is folded to lower case as it is read**, and the fold reaches the
+  text a control script hands to a command — a `set` value, a plot title —
+  except for a few exempt commands (`echo`, `shell`, `load`, …); the same pass
+  drops the spaces around an `=` inside a quoted string. Since E-553 a
+  **raw string**, `r"…"` or `r'…'`, is copied through as written, and an
+  **f-string**, `f"… {expr:.3f} …"`, is evaluated at the command
+  ([§3.10](03-ngspice-workflows.md#310-raw-strings-and-f-strings-in-control-scripts)).
+  `pyplot` now keeps the case of its `title`/`xlabel`/`ylabel` tokens the way
+  `plot` and `gnuplot` always did.
 - **`wrdata` mispairs control-created vectors** (it attaches the current
   plot's scale, which for a control-made vector is length 1). Export such
   vectors by parsing `print` output, or `wrdata` only plot-native vectors

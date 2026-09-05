@@ -9,6 +9,7 @@ Author: 1985 Wayne A. Christopher, U. C. Berkeley CAD Group
 
 #include "ngspice/defines.h"
 #include "ngspice/ngspice.h"
+#include <ctype.h>
 #include "ngspice/cpdefs.h"
 
 #include <errno.h>
@@ -127,6 +128,36 @@ cp_readchar(char **string, FILE *fptr)
 
 /* CDHW */
 
+/* Enhancement-553: the length (1 or 2) of a string prefix -- r, f, rf or fr,
+ * in either case -- that `word` (of `len` characters, not terminated) consists
+ * of exactly, else 0. Shared by the lexer, cp_unquote() and the f-string pass
+ * so that the three agree on what a prefix is. */
+int cp_string_prefix_len(const char *word, size_t len)
+{
+    if (len < 1 || len > 2)
+        return 0;
+    if (!strchr("rRfF", word[0]) || (len == 2 && !strchr("rRfF", word[1])))
+        return 0;
+    if (len == 2 && tolower((unsigned char) word[0]) == tolower((unsigned char) word[1]))
+        return 0;
+    return (int) len;
+}
+
+/* The prefix at the END of the word read so far, if the word ends in one:
+ * the whole word (`r`, `rf`), or a prefix after `=`, `(` or `,` -- so that
+ * `set t=r'...'` and `title=r"..."` carry one. 0 otherwise. */
+static int cp_string_prefix_tail(const char *word, size_t len)
+{
+    size_t k;
+    for (k = 1; k <= 2 && k <= len; k++) {
+        const char *start = word + len - k;
+        if (cp_string_prefix_len(start, k) > 0
+            && (start == word || start[-1] == '=' || start[-1] == '(' || start[-1] == ','))
+            return (int) k;
+    }
+    return 0;
+}
+
 wordlist *
 cp_lexer(char *string)
 {
@@ -229,6 +260,23 @@ nloop:
         /* if ' read until next ' is hit, will form a new word,
            but without the ' */
         case '\'':
+            /* Enhancement-553: r'...', f'...', rf'...' -- the word so far is
+               exactly a string prefix. The literal is turned into the
+               double-quoted form, quotes kept, so that cp_unquote() and the
+               f-string pass see one spelling; a backslash is kept verbatim. */
+            if (cp_string_prefix_tail(buf.s, (size_t) buf.i) > 0) {
+                push(&buf, '"');
+                while ((c = cp_readchar(&string, cp_inp_cur)) != '\'')
+                {
+                    if ((c == '\n') || (c == EOF) || (c == ESCAPE))
+                        goto gotchar;
+                    push(&buf, c);
+                    push(&linebuf, c);
+                }
+                push(&buf, '"');
+                push(&linebuf, '\'');
+                break;
+            }
             while ((c = cp_readchar(&string, cp_inp_cur)) != '\'')
             {
                 if ((c == '\n') || (c == EOF) || (c == ESCAPE))
@@ -245,19 +293,25 @@ nloop:
         case '"':
         case '`':
             d = c;
-            push(&buf, d);
-            while ((c = cp_readchar(&string, cp_inp_cur)) != d)
             {
-                if ((c == '\n') || (c == EOF) || (c == ESCAPE))
-                    goto gotchar;
-                if (c == '\\') {
-                    push(&linebuf, c);
-                    c = cp_readchar(&string, cp_inp_cur);
-                    push(&buf, c);
-                    push(&linebuf, c);
-                } else {
-                    push(&buf, c);
-                    push(&linebuf, c);
+                /* Enhancement-553: inside a prefixed string (r"..", f"..) a
+                   backslash is kept as written, so that \{ and \} can reach the
+                   f-string pass and a raw string is raw */
+                const int raw = (d == '"' && cp_string_prefix_tail(buf.s, (size_t) buf.i) > 0);
+                push(&buf, d);
+                while ((c = cp_readchar(&string, cp_inp_cur)) != d)
+                {
+                    if ((c == '\n') || (c == EOF) || (c == ESCAPE))
+                        goto gotchar;
+                    if (c == '\\' && !raw) {
+                        push(&linebuf, c);
+                        c = cp_readchar(&string, cp_inp_cur);
+                        push(&buf, c);
+                        push(&linebuf, c);
+                    } else {
+                        push(&buf, c);
+                        push(&linebuf, c);
+                    }
                 }
             }
             push(&buf, d);

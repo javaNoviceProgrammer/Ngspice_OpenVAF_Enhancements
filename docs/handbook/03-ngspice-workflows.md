@@ -358,6 +358,7 @@ highsigma 2000 -scale 3 -inflate vth0 -inflate @nmod[u0] \
           -analysis op -metric v(out) -min 0.9
 ```
 
+
 ## 3.7 Statistical modeling inside the device
 
 Monte Carlo can also live in the Verilog-A source itself: `$rdist_normal`
@@ -433,3 +434,38 @@ without XSPICE) is unaffected.
 - For convergence work: `$limit` genuinely engages iteration limiting,
   nodesets (`electrical n = 5.0;`) seed the solver, and `$discontinuity` /
   `$bound_step` steer the transient integrator ([§2.6](02-verilog-a-language.md#26-analog-operators-filters-integrators-delays)).
+
+## 3.10 Raw strings and f-strings in control scripts
+
+A deck is folded to lower case as it is read, and the fold reaches the text a
+control script hands to a command — `set t="ABC"` stores `abc`, a plot title
+comes out in lower case — while a few commands (`echo`, `shell`, `load`, …) are
+exempt; the same reading pass drops the spaces around an `=` inside a quoted
+string. Two string forms, after Python's, give a script control over its own
+text (E-553; [`examples/rawfstring_examples/`](../../examples/rawfstring_examples/)):
+
+| form | meaning |
+|---|---|
+| `r"…"` / `r'…'` | a **raw string**: copied through the deck reader as written — case and spaces kept (also `R`) |
+| `f"…"` / `f'…'` | an **f-string**: every `{expression}` in it is evaluated with the control-language evaluator when the command runs and replaced by its text; `{expr:.3f}`, `{expr:.4g}`, `{expr:e}`, `{expr:d}` format it; a scalar prints with `%g`, a vector as its elements separated by spaces, a complex value as `re,im`; `\{` and `\}` are literal braces |
+| `rf"…"` / `fr"…"` | both |
+
+```spice
+set title=r"RC Low-Pass, Corner Case"
+echo f"yield {100*montecarlo_yield:.2f} %, corner {mean(fc):.4g} Hz"
+pyplot fig v(out) title rf"RC low-pass, Vmax = {vecmax(v(out)):.3f} V"
+foreach x f"{2*n}" f"{3*n}"
+  ...
+end
+```
+
+The prefix counts only at the start of a token (`set t=r"…"` has one, a device
+called `r` or a variable called `f` does not). An `{expression}` that resolves
+to nothing, an unbalanced brace, or a format that is not one is an error naming
+the string, and the command does not run — an empty substitution would be a
+silent zero. `$variables` are substituted before the braces are evaluated, so
+`{$&v * 2}` works. `{{ }}` is not an escape here: it belongs to the netlist's
+`.for` construct ([E-474](../../enhancements_doc/Enhancement-474.md)). Interactive
+input was never folded; there the prefixes are simply accepted. As a side
+effect of the same work, `pyplot` keeps the case of its `title`/`xlabel`/`ylabel`
+tokens the way `plot` and `gnuplot` always did.

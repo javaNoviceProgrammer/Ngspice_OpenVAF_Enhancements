@@ -265,6 +265,13 @@ A parametric (x–y) plot uses `vs`:
 pyplot iv i(v1) vs v(a) title "I-V curve"
 ```
 
+The text after `title`, `xlabel` and `ylabel` keeps its case (E-553; before that the
+deck reader folded it, `"Magnitude"` printed as `magnitude`, while `plot` and `gnuplot`
+had always been exempt). A **raw string** keeps its spaces too, `title r"Vout = f(t)"`,
+and an **f-string** puts a computed value into the text,
+`title rf"RC low-pass, Vmax = {vecmax(v(out)):.3f} V"` (handbook
+[§3.10](../../handbook/03-ngspice-workflows.md#310-raw-strings-and-f-strings-in-control-scripts)).
+
 `ylimit 1e-3 1 ylog` is applied (E-548; before that a `ylimit` under `ylog` was dropped
 silently). A non-positive limit under a log axis is refused by the command itself,
 `Error: Y values must be > 0 for log scale`, before anything is written.

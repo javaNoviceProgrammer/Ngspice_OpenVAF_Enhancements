@@ -40,6 +40,20 @@ cp_unquote(const char *p_src)
         len_dst = len_src - 2;
         ++p_src; /* step past first quote */
     }
+    /* Enhancement-553: a prefixed literal, r"..." / f"..." / rf"..." -- the
+     * prefix has done its work (the case kept through the deck's folding, the
+     * braces evaluated) by the time a command unquotes its argument */
+    else if (len_src >= 3 && p_src[len_src - 1] == '"') {
+        const char *q = strchr(p_src, '"');
+        const int k = q ? cp_string_prefix_len(p_src, (size_t) (q - p_src)) : 0;
+        if (k > 0 && q == p_src + k) {
+            len_dst = len_src - (size_t) k - 2;
+            p_src += k + 1;
+        }
+        else {
+            len_dst = len_src;
+        }
+    }
     else { /* not enclosed in quotes */
         len_dst = len_src;
     }
