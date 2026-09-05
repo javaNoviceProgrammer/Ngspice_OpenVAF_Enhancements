@@ -30,7 +30,7 @@ singular matrix at run time.
 
 | # | finding | severity |
 |---|---|---|
-| [F1](#f1--a-system-function-in-a-parameter-default-or-range-crashes-the-compiler) | `parameter real t0 = $temperature;` (also `$vt`, `$abstime`, `$port_connected`, in a default, a range bound, an array default, an instance-typed or integer parameter) panics at `mir_llvm/src/builder.rs:143`, *attempted to read undefined value*; `$mfactor` and `$random` in the same place are accepted silently and evaluate to 1 and to one fixed number | **high** — crash on a one-line model |
+| [F1](#f1--a-system-function-in-a-parameter-default-or-range-crashes-the-compiler) | `parameter real t0 = $temperature;` (also `$vt`, `$abstime`, `$port_connected`, in a default, a range bound, an array default, an instance-typed or integer parameter) panics at `mir_llvm/src/builder.rs:143`, *attempted to read undefined value*; `$mfactor` and `$random` in the same place are accepted silently and evaluate to 1 and to one fixed number | **high** — crash on a one-line model. **Fixed** (refused in constants, with the rule named) |
 | [F2](#f2--a-model-parameters-range-or-default-that-references-an-instance-parameter-is-evaluated-with-that-parameters-default) | `parameter real l = 1e-6 from (0:w]` with `w` instance-typed: an instance with `w=0.5u` runs with `l/w = 2`; `parameter real l = 2*w` reads 2e-6 whatever the instance's `w` | medium — silent wrong value or unchecked range |
 | [F3](#f3--an-internal-node-nothing-can-contribute-to-compiles-silently-and-is-singular-at-run-time) | a node used only as a probe, contributed only under `if (0)`, or only inside a genvar loop of zero iterations: no diagnostic, *singular matrix: check node n1#x* at run time | medium-low — silent compile, failed run |
 | [F4](#f4--a-string-parameters-default-outside-its-own-range-is-not-diagnosed-and-runs) | `parameter string mode = "cubic" from {"lin","quad"}` compiles without a word (a real gets L027) and runs with `"cubic"`; only a card value is refused | low-medium — the range is not a range for defaults |
@@ -92,6 +92,23 @@ The last two are the same gap without the crash: a non-constant default is
 accepted and evaluated to something that is neither an error nor the value
 the author could have meant. Crash log saved beside this document's probe
 decks (`hunt4/crash_temperature_default.log`).
+
+**Resolved.** A parameter's default and range bodies are validated in the
+constant context, where `analysis()` was already refused but these were not,
+so they reached codegen of the setup functions with no value to read. The
+validator now refuses the simulation-state functions (`$temperature`, `$vt`,
+`$abstime`, `$realtime`, `$port_connected`), the hierarchical parameters
+(`$mfactor`, `$hflip`, …, which are not builtins and needed their own arm)
+and every random draw in a constant, each with the rule and a way out: *system
+function '$temperature' is not allowed in constants — a parameter default or
+range must be a constant expression (LRM 3.4); the simulator state this reads
+… does not exist when defaults are resolved — keep the parameter constant and
+compute the value from it in the analog block, or in `analog initial`*; a
+draw additionally points at `(* std *)` with `.option osdimc`. Every row of
+the table above now ends in that diagnostic, `$param_given` and `$simparam`
+keep their behaviour, the same functions stay legal in the analog block, the
+corpus compiles as before (48 of 49, EPFL-HEMT unchanged), and a UI test
+(`test_data/ui/const_sysfun.va`) pins all ten forms.
 
 ## F2 — a model parameter's range or default that references an instance parameter is evaluated with that parameter's default
 

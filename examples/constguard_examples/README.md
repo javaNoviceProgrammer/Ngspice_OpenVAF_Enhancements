@@ -4,7 +4,8 @@
 python3 verify_constguard.py
 ```
 
-57 checks, both solvers. 28/57 against the pre-fix compiler.
+75 checks, both solvers. 28/57 of the original set against the pre-fix compiler;
+the last eighteen (Enhancement-544) crash the compiler it fixed.
 
 ## The shape
 
@@ -98,3 +99,19 @@ and withdrawn on reading the code:
 | `0.0 * NaN → 0` | Enhancement-337 keeps that fold deliberately. [29] |
 | a real literal that underflows | `1e-324 → 0` is what IEEE 754 defines. [31] |
 | a `parameter` DEFAULT | the model card may replace it, so the declared value is not what the model runs with — the same rule under which a default is not checked against its own range. [30] |
+
+## Enhancement-544 — simulation state in a constant
+
+`parameter real t0 = $temperature;` crashed the compiler (mir_llvm
+builder.rs: "attempted to read undefined value"). A parameter default or
+range is validated in the constant context, where `analysis()` was already
+refused but the simulation-state functions and the random draws were not, so
+they reached codegen of the setup functions with nothing to read; `$mfactor`
+— a hierarchical parameter with its own lowering — folded to a placeholder 1
+instead, and `$random` to one fixed number shared by every instance. The
+eighteen checks pin twelve refused forms (`$temperature`, `$vt`, `$abstime`,
+`$port_connected`, `$mfactor`, `$random`, `$rdist_normal`; in a default, a
+range bound, an array default, an instance-typed default, an expression),
+the two help notes, and four controls: `$param_given` and `$simparam` stay
+legal in a default, the same functions compile and read live values in the
+analog block, and `analysis()` keeps its own message.

@@ -1,0 +1,99 @@
+error: system function '$temperature' is not allowed in constants
+   --> /const_sysfun.va:12:25
+   |
+12 |     parameter real t0 = $temperature;
+   |                         ^^^^^^^^^^^^ not allowed here
+   |
+   = help: a parameter default or range must be a constant expression (LRM 3.4); the simulator state this reads (temperature, time, port connectivity, the instance multiplier) does not exist when defaults are resolved
+   = help: keep the parameter constant and compute the value from it in the analog block, or in `analog initial`, where the function is available
+
+error: system function '$vt' is not allowed in constants
+   --> /const_sysfun.va:13:25
+   |
+13 |     parameter real v0 = $vt;
+   |                         ^^^ not allowed here
+   |
+   = help: a parameter default or range must be a constant expression (LRM 3.4); the simulator state this reads (temperature, time, port connectivity, the instance multiplier) does not exist when defaults are resolved
+   = help: keep the parameter constant and compute the value from it in the analog block, or in `analog initial`, where the function is available
+
+error: system function '$abstime' is not allowed in constants
+   --> /const_sysfun.va:14:25
+   |
+14 |     parameter real a0 = $abstime;
+   |                         ^^^^^^^^ not allowed here
+   |
+   = help: a parameter default or range must be a constant expression (LRM 3.4); the simulator state this reads (temperature, time, port connectivity, the instance multiplier) does not exist when defaults are resolved
+   = help: keep the parameter constant and compute the value from it in the analog block, or in `analog initial`, where the function is available
+
+error: system function '$temperature' is not allowed in constants
+   --> /const_sysfun.va:15:37
+   |
+15 |     parameter real r0 = 1.0 from [0:$temperature];
+   |                                     ^^^^^^^^^^^^ not allowed here
+   |
+   = help: a parameter default or range must be a constant expression (LRM 3.4); the simulator state this reads (temperature, time, port connectivity, the instance multiplier) does not exist when defaults are resolved
+   = help: keep the parameter constant and compute the value from it in the analog block, or in `analog initial`, where the function is available
+
+error: system function '$temperature' is not allowed in constants
+   --> /const_sysfun.va:16:32
+   |
+16 |     parameter real c0[0:1] = '{$temperature, 1.0};
+   |                                ^^^^^^^^^^^^ not allowed here
+   |
+   = help: a parameter default or range must be a constant expression (LRM 3.4); the simulator state this reads (temperature, time, port connectivity, the instance multiplier) does not exist when defaults are resolved
+   = help: keep the parameter constant and compute the value from it in the analog block, or in `analog initial`, where the function is available
+
+error: system function '$temperature' is not allowed in constants
+   --> /const_sysfun.va:17:47
+   |
+17 |     (* type="instance" *) parameter real i0 = $temperature;
+   |                                               ^^^^^^^^^^^^ not allowed here
+   |
+   = help: a parameter default or range must be a constant expression (LRM 3.4); the simulator state this reads (temperature, time, port connectivity, the instance multiplier) does not exist when defaults are resolved
+   = help: keep the parameter constant and compute the value from it in the analog block, or in `analog initial`, where the function is available
+
+error: system function '$port_connected' is not allowed in constants
+   --> /const_sysfun.va:18:28
+   |
+18 |     parameter integer k0 = $port_connected(p);
+   |                            ^^^^^^^^^^^^^^^^^^ not allowed here
+   |
+   = help: a parameter default or range must be a constant expression (LRM 3.4); the simulator state this reads (temperature, time, port connectivity, the instance multiplier) does not exist when defaults are resolved
+   = help: keep the parameter constant and compute the value from it in the analog block, or in `analog initial`, where the function is available
+
+error: system function '$mfactor' is not allowed in constants
+   --> /const_sysfun.va:19:25
+   |
+19 |     parameter real m0 = $mfactor;
+   |                         ^^^^^^^^ not allowed here
+   |
+   = help: a parameter default or range must be a constant expression (LRM 3.4); the simulator state this reads (temperature, time, port connectivity, the instance multiplier) does not exist when defaults are resolved
+   = help: keep the parameter constant and compute the value from it in the analog block, or in `analog initial`, where the function is available
+
+error: random draw '$random' is not allowed in constants
+   --> /const_sysfun.va:20:25
+   |
+20 |     parameter real x0 = $random;
+   |                         ^^^^^^^ not allowed here
+   |
+   = help: a parameter default or range must be a constant expression (LRM 3.4); a draw is not one, and would have been ONE fixed number shared by every instance
+   = help: for a statistical parameter declare (* std=<sigma> *) or (* std_rel=<fraction> *) on it and sample with `.option osdimc`; for a per-instance draw call it in the analog block
+
+error: random draw '$rdist_normal' is not allowed in constants
+   --> /const_sysfun.va:22:25
+   |
+22 |     parameter real d0 = $rdist_normal(sd, 0.0, 1.0);
+   |                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^ not allowed here
+   |
+   = help: a parameter default or range must be a constant expression (LRM 3.4); a draw is not one, and would have been ONE fixed number shared by every instance
+   = help: for a statistical parameter declare (* std=<sigma> *) or (* std_rel=<fraction> *) on it and sample with `.option osdimc`; for a per-instance draw call it in the analog block
+
+warning[L015]: call to $simparam in a constant is evaluated before the simulation
+   --> /const_sysfun.va:23:25
+   |
+23 |     parameter real ok = $simparam("gmin", 1e-12);
+   |                         ^^^^^^^^^^^^^^^^^^^^^^^^ call to $simparam in a constant
+   |
+   = help: the value of parameters like "gmin" or "sourceScaleFactor" may vary between iterations
+   = variant_const_simparam is set to warn by default
+

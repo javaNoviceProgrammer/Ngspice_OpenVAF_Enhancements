@@ -863,6 +863,27 @@ impl Diagnostic for BodyValidationDiagnosticWrapped<'_> {
                         "analysis function '{}' is not allowed in constants",
                         name
                     )),
+                    // Enhancement-544 (compiler hunt F1)
+                    IllegalCtxAccessKind::SimStateFun { name, is_rng } => {
+                        let what = if *is_rng { "random draw" } else { "system function" };
+                        let notes = if *is_rng {
+                            vec![
+                                "help: a parameter default or range must be a constant expression (LRM 3.4); a draw is not one, and would have been ONE fixed number shared by every instance"
+                                    .to_owned(),
+                                "help: for a statistical parameter declare (* std=<sigma> *) or (* std_rel=<fraction> *) on it and sample with `.option osdimc`; for a per-instance draw call it in the analog block"
+                                    .to_owned(),
+                            ]
+                        } else {
+                            vec![
+                                "help: a parameter default or range must be a constant expression (LRM 3.4); the simulator state this reads (temperature, time, port connectivity, the instance multiplier) does not exist when defaults are resolved"
+                                    .to_owned(),
+                                "help: keep the parameter constant and compute the value from it in the analog block, or in `analog initial`, where the function is available"
+                                    .to_owned(),
+                            ]
+                        };
+                        res.with_message(format!("{} '{}' is not allowed in constants", what, name))
+                            .with_notes(notes)
+                    }
                     IllegalCtxAccessKind::Var(var) => {
                         let name = var.lookup(self.db.upcast()).name(self.db.upcast());
                         let def = var.lookup(self.db.upcast()).ast_ptr(self.db.upcast()).range();

@@ -1,0 +1,30 @@
+// Enhancement-544 (compiler hunt F1): simulation-state system functions and
+// random draws inside constants -- parameter defaults, range bounds, array
+// defaults, an instance-typed parameter -- used to reach codegen and panic
+// ($temperature, $vt, $abstime, $port_connected) or fold to a wrong value
+// ($mfactor read 1, $random read one fixed number). Each is now refused
+// where analysis() already was. The same functions stay legal in the analog
+// block, which the last lines pin.
+`include "disciplines.vams"
+module const_sysfun(p, n);
+    inout p, n;
+    electrical p, n;
+    parameter real t0 = $temperature;
+    parameter real v0 = $vt;
+    parameter real a0 = $abstime;
+    parameter real r0 = 1.0 from [0:$temperature];
+    parameter real c0[0:1] = '{$temperature, 1.0};
+    (* type="instance" *) parameter real i0 = $temperature;
+    parameter integer k0 = $port_connected(p);
+    parameter real m0 = $mfactor;
+    parameter real x0 = $random;
+    parameter integer sd = 1;
+    parameter real d0 = $rdist_normal(sd, 0.0, 1.0);
+    parameter real ok = $simparam("gmin", 1e-12);
+    real t, m;
+    analog begin
+        t = $temperature + $vt + $abstime + $mfactor;
+        m = $random;
+        I(p, n) <+ (t + m) * 0.0 + V(p, n) * 1e-3;
+    end
+endmodule

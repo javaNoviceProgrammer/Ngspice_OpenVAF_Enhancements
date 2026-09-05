@@ -491,6 +491,8 @@ pub enum TyRequirement {
 
 This is how the checker enforces that `V(p, n)`'s arguments must be **nodes**, that the `if` in `if (c > 0)` gets a **condition**, and that `R` used in a division is a numeric **value**. Type mismatches (a string where a real is required, a branch used as a number, calling a function with the wrong arity) turn into user‑facing diagnostics. Implicit conversions the LRM allows — e.g. an `integer` used where a `real` is expected — are inserted here as explicit casts so later stages never have to guess.
 
+A parameter's default and range bounds are bodies of their own, validated in the *constant* context (`BodyCtx::Const` in `hir_ty/src/validation/body.rs`): a variable reference, `analysis()`, an analog operator or nature access there is an error. Since Enhancement-544 the simulation-state functions — `$temperature`, `$vt`, `$abstime`, `$realtime`, `$port_connected` (`BuiltIn::is_sim_state_fun`), the hierarchical `$mfactor`/`$hflip`/… (a `ResolvedFun::Param`, not a `BuiltIn`) — and every random draw (`BuiltIn::is_rng`) are refused there too: none of them has a value when the setup functions resolve defaults, and letting them through reached LLVM codegen with an undefined value and crashed the compiler (compiler hunt F1). `$simparam` keeps its evaluated-before-the-simulation warning (L015) and `$param_given` stays legal.
+
 The checker also does *language‑rule validation* that isn't strictly about types: you can't contribute to a branch whose nodes are all ground; an `analog` event control must be well‑formed; a discipline's domain must be consistent. These live in `hir_ty/src/validation/`.
 
 ### 6.5 What the HIR gives the back end

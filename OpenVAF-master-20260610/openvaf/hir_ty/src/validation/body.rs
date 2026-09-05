@@ -82,6 +82,10 @@ pub enum IllegalCtxAccessKind {
     /// are -- "analog operator 'white_noise'" would be wrong twice over.
     SmallSignalSourceInLoop { name: Name },
     AnalysisFun { name: Name },
+    /// Enhancement-544 (compiler hunt F1): a system function that reads
+    /// simulation state, or a random draw, inside a constant -- a parameter
+    /// default, range bound or array default. See `BuiltIn::is_sim_state_fun`.
+    SimStateFun { name: Name, is_rng: bool },
     Var(VarId),
 }
 
@@ -1870,6 +1874,24 @@ impl ExprValidator<'_, '_> {
                         self.validate_nature_access(*nature, expr, args);
                         return;
                     }
+                    // Enhancement-544 (compiler hunt F1): the hierarchical system
+                    // parameters (`$mfactor`, `$hflip`, ...) are not builtins but
+                    // `ParamSysFun`s with their own lowering, so they passed the
+                    // builtin arm above untouched. In a constant -- a parameter
+                    // default or range -- `$mfactor` read a placeholder 1 whatever
+                    // the instance's `m`. Refused here, beside `$temperature`.
+                    Some(ResolvedFun::Param(param)) => {
+                        if self.parent.ctx == BodyCtx::Const {
+                            self.report_illegal_access(
+                                IllegalCtxAccessKind::SimStateFun {
+                                    name: Name::new_inline(param.sysfun_text()),
+                                    is_rng: false,
+                                },
+                                expr,
+                            );
+                        }
+                        return;
+                    }
                     _ => (),
                 }
             }
@@ -2198,6 +2220,25 @@ impl ExprValidator<'_, '_> {
                     },
                     expr,
                 ),
+
+            // Enhancement-544 (compiler hunt F1): `parameter real t0 = $temperature;`
+            // crashed the compiler. A parameter default or range is a constant
+            // (LRM 3.4); `analysis()` in one was already refused above, but the
+            // simulation-state functions and the random draws were not, so
+            // they reached codegen of the setup functions, where nothing defines
+            // them -- `$temperature`, `$vt`, `$abstime`, `$port_connected`
+            // panicked on an undefined value, `$mfactor` read a placeholder 1,
+            // and `$random` folded to one fixed number for every instance.
+            // Only the CONSTANT context is closed; all of them stay legal in
+            // the analog block, where the right values exist.
+            _ if (call.is_sim_state_fun() || call.is_rng()) && self.parent.ctx == BodyCtx::Const => {
+                if let Some(name) = name.as_ref().and_then(|p| p.as_ident()) {
+                    self.report_illegal_access(
+                        IllegalCtxAccessKind::SimStateFun { name, is_rng: call.is_rng() },
+                        expr,
+                    )
+                }
+            }
             _ => (),
         }
 

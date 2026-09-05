@@ -300,6 +300,33 @@ impl BuiltIn {
             _ => false,
         }
     }
+    /// Enhancement-544 (compiler hunt F1): the system functions that read
+    /// SIMULATION STATE -- the circuit temperature, the thermal voltage, the
+    /// time, a port's connectivity, the instance's hierarchical multiplier and
+    /// flips. None of them exists when a parameter default or range is
+    /// resolved: a parameter body is evaluated in the model/instance setup, on
+    /// no live circuit. In the constant context they used to fall through
+    /// validation into codegen, where `$temperature`, `$vt`, `$abstime` and
+    /// `$port_connected` had no value to read and the compiler PANICKED
+    /// (mir_llvm builder.rs: "attempted to read undefined value"). The
+    /// hierarchical system parameters (`$mfactor`, `$hflip`, ...) are not
+    /// `BuiltIn`s but `ParamSysFun`s with their own lowering, and are refused
+    /// in constants by the validator's own arm for them; `$simparam` is
+    /// deliberately not here:
+    /// it has its own evaluated-before-the-simulation warning (L015) and a
+    /// use in defaults (`$simparam("gmin", 1e-12)`) that models rely on.
+    #[allow(clippy::match_like_matches_macro)]
+    pub fn is_sim_state_fun(self) -> bool {
+        matches!(
+            self,
+            BuiltIn::temperature
+                | BuiltIn::vt
+                | BuiltIn::abstime
+                | BuiltIn::realtime
+                | BuiltIn::port_connected
+        )
+    }
+
     #[allow(clippy::match_like_matches_macro)]
     pub fn is_analysis_var(self) -> bool {
         match self {
