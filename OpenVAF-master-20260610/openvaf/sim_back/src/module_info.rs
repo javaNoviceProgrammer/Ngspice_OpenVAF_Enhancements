@@ -253,31 +253,86 @@ impl ModuleInfo {
                             add_diagnostic(attr.clone(), &SigmaConflict { attr });
                         }
 
+                        // Enhancement-554: `dist` names gauss (the default),
+                        // uniform, lognormal (alias lnorm: the Gaussian
+                        // coordinate is multiplicative, value = nominal *
+                        // exp(s z), with `std_rel` the sigma of the logarithm
+                        // and an absolute `std` converted at the nominal) or
+                        // tgauss (a Gaussian confined to `trunc` sigmas, 3 by
+                        // default). `trunc=<sigmas>` composes with gauss and
+                        // lognormal; a uniform is bounded already.
                         let dist_attr = param.get_attr(db, &ast, "dist");
-                        let uniform = dist_attr.as_ref().map_or(false, |attr| {
-                            let lit = attr.val().and_then(|e| e.as_str_literal());
-                            match lit.as_deref() {
-                                Some("gauss") | Some("gaussian") | Some("normal") => false,
-                                Some("uniform") => true,
-                                Some(found) => {
-                                    add_diagnostic(
-                                        attr.clone(),
-                                        &UnknownDist {
-                                            expr: attr.val().unwrap(),
-                                            found: found.to_owned(),
-                                        },
-                                    );
-                                    false
+                        let (uniform, lognormal, trunc_default) =
+                            dist_attr.as_ref().map_or((false, false, 0.0), |attr| {
+                                let lit = attr.val().and_then(|e| e.as_str_literal());
+                                match lit.as_deref() {
+                                    Some("gauss") | Some("gaussian") | Some("normal") => {
+                                        (false, false, 0.0)
+                                    }
+                                    Some("uniform") => (true, false, 0.0),
+                                    Some("lognormal") | Some("lnorm") | Some("lognorm") => {
+                                        (false, true, 0.0)
+                                    }
+                                    Some("tgauss") | Some("truncgauss") | Some("truncated") => {
+                                        (false, false, 3.0)
+                                    }
+                                    Some(found) => {
+                                        add_diagnostic(
+                                            attr.clone(),
+                                            &UnknownDist {
+                                                expr: attr.val().unwrap(),
+                                                found: found.to_owned(),
+                                            },
+                                        );
+                                        (false, false, 0.0)
+                                    }
+                                    None => {
+                                        add_diagnostic(
+                                            attr.clone(),
+                                            &IllegalAttr { attr: attr.clone() },
+                                        );
+                                        (false, false, 0.0)
+                                    }
                                 }
-                                None => {
-                                    add_diagnostic(
-                                        attr.clone(),
-                                        &IllegalAttr { attr: attr.clone() },
-                                    );
-                                    false
+                            });
+
+                        let trunc_attr = param.get_attr(db, &ast, "trunc");
+                        let trunc = match &trunc_attr {
+                            Some(attr) => {
+                                let expr = attr.val();
+                                let val = expr
+                                    .as_ref()
+                                    .and_then(|e| e.as_constexprval())
+                                    .and_then(|v| v.as_real())
+                                    .or_else(|| {
+                                        expr.as_ref()
+                                            .and_then(|e| e.as_str_literal())
+                                            .and_then(|lit| lit.trim().parse::<f64>().ok())
+                                            .filter(|v| v.is_finite())
+                                    });
+                                match val {
+                                    Some(v) if v > 0.0 && v.is_finite() => {
+                                        if uniform {
+                                            add_diagnostic(
+                                                attr.clone(),
+                                                &TruncIgnored { attr: attr.clone() },
+                                            );
+                                            0.0
+                                        } else {
+                                            v
+                                        }
+                                    }
+                                    _ => {
+                                        add_diagnostic(
+                                            attr.clone(),
+                                            &IllegalTruncAttr { attr: attr.clone() },
+                                        );
+                                        trunc_default
+                                    }
                                 }
                             }
-                        });
+                            None => trunc_default,
+                        };
 
                         let (sigma, rel) = match (std, std_rel) {
                             // both given is diagnosed above; the absolute one wins
@@ -316,12 +371,29 @@ impl ModuleInfo {
                                         );
                                         None
                                     }
-                                    None => Some(ParamStat { std: s, rel, uniform }),
+                                    None => Some(ParamStat {
+                                        std: s,
+                                        rel,
+                                        uniform,
+                                        lognormal,
+                                        trunc,
+                                    }),
                                 }
                             }
                             _ => {
-                                if let (None, Some(attr)) = (sigma, dist_attr) {
-                                    add_diagnostic(attr.clone(), &DistWithoutSigma { attr });
+                                if sigma.is_none() {
+                                    if let Some(attr) = dist_attr {
+                                        add_diagnostic(
+                                            attr.clone(),
+                                            &DistWithoutSigma { attr, name: "dist" },
+                                        );
+                                    }
+                                    if let Some(attr) = trunc_attr {
+                                        add_diagnostic(
+                                            attr.clone(),
+                                            &DistWithoutSigma { attr, name: "trunc" },
+                                        );
+                                    }
                                 }
                                 None
                             }
@@ -679,6 +751,7 @@ impl Diagnostic for SigmaIgnored {
 /// `(* dist=... *)` without any sigma: the distribution of nothing.
 struct DistWithoutSigma {
     attr: ast::Attr,
+    name: &'static str,
 }
 
 impl Diagnostic for DistWithoutSigma {
@@ -687,10 +760,10 @@ impl Diagnostic for DistWithoutSigma {
             .parse(root_file)
             .to_file_span(self.attr.syntax().text_range(), &db.sourcemap(root_file));
         Report::warning()
-            .with_message(
-                "'dist' attribute has no effect without a 'std' or 'std_rel' attribute"
-                    .to_owned(),
-            )
+            .with_message(format!(
+                "'{}' attribute has no effect without a 'std' or 'std_rel' attribute",
+                self.name
+            ))
             .with_labels(vec![Label {
                 style: LabelStyle::Primary,
                 file_id: file,
@@ -726,6 +799,57 @@ impl Diagnostic for StatOnNonParam {
     }
 }
 
+/// Enhancement-554: `(* trunc=... *)` that is not a positive real literal.
+struct IllegalTruncAttr {
+    attr: ast::Attr,
+}
+
+impl Diagnostic for IllegalTruncAttr {
+    fn build_report(&self, root_file: FileId, db: &dyn BaseDB) -> Report {
+        let FileSpan { range, file } = db
+            .parse(root_file)
+            .to_file_span(self.attr.syntax().text_range(), &db.sourcemap(root_file));
+        Report::error()
+            .with_message(
+                "illegal expression supplied to 'trunc' attribute; expected a positive real \
+                 literal, the truncation in sigmas (a quoted number such as \"3.0\" is also \
+                 accepted)"
+                    .to_owned(),
+            )
+            .with_labels(vec![Label {
+                style: LabelStyle::Primary,
+                file_id: file,
+                range: range.into(),
+                message: "expected a positive real literal".to_owned(),
+            }])
+    }
+}
+
+/// Enhancement-554: `(* trunc=... *)` beside `dist="uniform"`.
+struct TruncIgnored {
+    attr: ast::Attr,
+}
+
+impl Diagnostic for TruncIgnored {
+    fn build_report(&self, root_file: FileId, db: &dyn BaseDB) -> Report {
+        let FileSpan { range, file } = db
+            .parse(root_file)
+            .to_file_span(self.attr.syntax().text_range(), &db.sourcemap(root_file));
+        Report::warning()
+            .with_message(
+                "'trunc' attribute has no effect on a uniform distribution (a uniform is \
+                 bounded already)"
+                    .to_owned(),
+            )
+            .with_labels(vec![Label {
+                style: LabelStyle::Primary,
+                file_id: file,
+                range: range.into(),
+                message: "ignored".to_owned(),
+            }])
+    }
+}
+
 /// `(* dist="..." *)` naming a distribution the draw machinery does not have.
 struct UnknownDist {
     expr: Expr,
@@ -740,7 +864,8 @@ impl Diagnostic for UnknownDist {
         );
         Report::warning()
             .with_message(format!(
-                "unknown distribution \"{}\"; expected \"gauss\" or \"uniform\" (\"gauss\" is used)",
+                "unknown distribution \"{}\"; expected \"gauss\", \"uniform\", \"lognormal\" \
+                 or \"tgauss\" (\"gauss\" is used)",
                 self.found
             ))
             .with_labels(vec![Label {
@@ -800,11 +925,18 @@ pub struct ParamInfo {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ParamStat {
     /// standard deviation (gauss) or half-width (uniform); a fraction of the
-    /// resolved nominal when `rel` is set
+    /// resolved nominal when `rel` is set. For a lognormal, the sigma of the
+    /// logarithm when `rel` is set, else an absolute sigma converted at the
+    /// nominal (Enhancement-554).
     pub std: f64,
     pub rel: bool,
     /// false = gauss (the default)
     pub uniform: bool,
+    /// Enhancement-554: value = nominal * exp(s z)
+    pub lognormal: bool,
+    /// Enhancement-554: the Gaussian coordinate is confined to |z| <= trunc
+    /// sigmas (rejection with a deterministic sub-key); 0 = untruncated
+    pub trunc: f64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

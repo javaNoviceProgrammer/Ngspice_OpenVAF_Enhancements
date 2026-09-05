@@ -624,6 +624,11 @@ extern OsdiObjectFile load_object_file(const char *input) {
   sym = GET_SYM(handle, "OSDI_STAT_PARAM_INFOS");
   const void *stat_param_infos_base = sym;
 
+  /* Optional (Enhancement-554): the truncation of each statistical parameter,
+   * one double per INFOS entry; absent from an object with no truncation */
+  sym = GET_SYM(handle, "OSDI_STAT_PARAM_TRUNCS");
+  const double *stat_param_truncs_base = (const double *)sym;
+
   /* Nature / discipline / attribute tables. Every one is optional: a model
    * that declares no custom nature exports none, and an older .osdi exports
    * none either -- both simply fall back to the circuit-wide tolerances. */
@@ -797,8 +802,23 @@ extern OsdiObjectFile load_object_file(const char *input) {
     if (stat_param_counts) {
       n_stat_params = stat_param_counts[i];
       if (n_stat_params > 0 && stat_param_infos_base) {
-        stat_params_ptr = (const char *)stat_param_infos_base +
+        /* Enhancement-554: the 16-byte INFOS records and the optional TRUNCS
+         * array are merged into the in-memory OsdiStatParam records */
+        const char *rec = (const char *)stat_param_infos_base +
                           stat_param_info_offset * stat_param_info_size;
+        OsdiStatParam *merged = TMALLOC(OsdiStatParam, n_stat_params);
+        for (uint32_t s = 0; s < n_stat_params; s++) {
+          const OsdiStatParamInfo *in =
+              (const OsdiStatParamInfo *)(rec + s * stat_param_info_size);
+          merged[s].param_id = in->param_id;
+          merged[s].dist = in->dist;
+          merged[s].std = in->std;
+          merged[s].trunc =
+              stat_param_truncs_base
+                  ? stat_param_truncs_base[stat_param_info_offset + s]
+                  : 0.0;
+        }
+        stat_params_ptr = merged;
         stat_param_info_offset += n_stat_params;
       }
     }

@@ -18,7 +18,7 @@ use llvm_sys::LLVMValue;
 use mir::{ValueDef, F_ZERO};
 use mir_llvm::CodegenCx;
 use sim_back::dae::{MatrixEntry, NoiseSourceKind, ResidualNatureKind};
-use sim_back::SimUnknownKind;
+use sim_back::{ParamStat, SimUnknownKind};
 use smol_str::SmolStr;
 use stdx::iter::zip;
 
@@ -219,17 +219,25 @@ impl<'ll> OsdiCompilationUnit<'_, '_, 'll> {
         inst_params.chain(model_params).chain(opvars).collect()
     }
 
-    /// The `(* std= / std_rel= / dist= *)` statistics declared on parameters,
-    /// as `(param_id, dist_flags, sigma)` triples for the
-    /// `OSDI_STAT_PARAM_INFOS` side-table (`.option osdimc` Monte-Carlo).
+    /// The `(* std= / std_rel= / dist= / trunc= *)` statistics declared on
+    /// parameters, as `(param_id, dist_flags, sigma, trunc)` for the
+    /// `OSDI_STAT_PARAM_INFOS` side-table (`.option osdimc` Monte-Carlo) and,
+    /// Enhancement-554, the `OSDI_STAT_PARAM_TRUNCS` array beside it (one
+    /// double per entry, 0 = untruncated; emitted only when some entry is).
     ///
     /// The ids MUST mirror `param_opvar()`'s chained ordering exactly --
     /// instance params (builtins included) first, then model params with the
     /// same `is_instance` filter -- because the simulator uses them with the
     /// descriptor's ordinary `access()` setter. Opvars carry no statistics.
-    pub fn stat_params(&self) -> Vec<(u32, u32, f64)> {
+    pub fn stat_params(&self) -> Vec<(u32, u32, f64, f64)> {
         const DIST_UNIFORM: u32 = 1;
         const DIST_REL: u32 = 2;
+        const DIST_LOGNORMAL: u32 = 4; // Enhancement-554
+        let flags_of = |stat: &ParamStat| {
+            u32::from(stat.uniform) * DIST_UNIFORM
+                + u32::from(stat.rel) * DIST_REL
+                + u32::from(stat.lognormal) * DIST_LOGNORMAL
+        };
         let OsdiCompilationUnit { inst_data, model_data, module, .. } = self;
 
         let mut res = Vec::new();
@@ -237,9 +245,7 @@ impl<'ll> OsdiCompilationUnit<'_, '_, 'll> {
         for param in inst_data.params.keys() {
             if let OsdiInstanceParam::User(param) = param {
                 if let Some(stat) = &module.info.params[param].stat {
-                    let flags = u32::from(stat.uniform) * DIST_UNIFORM
-                        + u32::from(stat.rel) * DIST_REL;
-                    res.push((id, flags, stat.std));
+                    res.push((id, flags_of(stat), stat.std, stat.trunc));
                 }
             }
             id += 1;
@@ -250,9 +256,7 @@ impl<'ll> OsdiCompilationUnit<'_, '_, 'll> {
                 continue;
             }
             if let Some(stat) = &param_info.stat {
-                let flags =
-                    u32::from(stat.uniform) * DIST_UNIFORM + u32::from(stat.rel) * DIST_REL;
-                res.push((id, flags, stat.std));
+                res.push((id, flags_of(stat), stat.std, stat.trunc));
             }
             id += 1;
         }

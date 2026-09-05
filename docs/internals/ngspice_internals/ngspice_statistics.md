@@ -334,7 +334,11 @@ Its dimensions are the netlist's Gaussian `.params` **and, under
 `.option osdimc`, every Gaussian `(* std *)` parameter of every OSDI model card
 and instance** (MC hunt F3, 2026-09-04): the banner says how many of each, in
 that order in `u`, and holds a uniform `(* dist="uniform" *)` parameter at its
-nominal, since a bounded uniform has no Gaussian coordinate. Before that the
+nominal, since a bounded uniform has no Gaussian coordinate. A lognormal
+`(* dist="lognormal" *)` parameter takes its coordinate in the log domain, and a
+truncated one (`(* trunc=n *)`) is clamped at ±n: a boundary that needs more
+than n sigmas of that parameter is unreachable, which is the truth of the
+declared distribution ([E-554](../../../enhancements_doc/Enhancement-554.md)). Before that the
 model-declared statistics were frozen at one draw for the whole search, so a
 deck whose variability was entirely model-declared was refused, and one small
 netlist dimension beside them produced a wildly wrong distance.

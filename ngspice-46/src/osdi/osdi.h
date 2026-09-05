@@ -199,12 +199,28 @@ typedef struct OsdiParamOpvar {
  * (openvaf/osdi/src/lib.rs) exactly: 16 bytes. */
 #define OSDI_DIST_UNIFORM 1u /* bit 0: 0 = gauss, 1 = uniform (std = half-width) */
 #define OSDI_DIST_REL 2u     /* bit 1: std is a fraction of |nominal| */
+/* bit 2 (Enhancement-554): lognormal, value = nominal * exp(s z) -- std is the
+ * sigma of the logarithm under OSDI_DIST_REL, else an absolute sigma converted
+ * at the nominal (s = std / |nominal|) */
+#define OSDI_DIST_LOGNORMAL 4u
 
 typedef struct OsdiStatParamInfo {
   uint32_t param_id;
   uint32_t dist;
   double std;
 }OsdiStatParamInfo;
+
+/* Enhancement-554: the in-memory record the registry builds per descriptor
+ * from OSDI_STAT_PARAM_INFOS and the optional OSDI_STAT_PARAM_TRUNCS array
+ * (one double per entry in INFOS order: the truncation of the Gaussian
+ * coordinate in sigmas, |z| <= trunc; 0 = untruncated; an object without the
+ * symbol is read as untruncated). */
+typedef struct OsdiStatParam {
+  uint32_t param_id;
+  uint32_t dist;
+  double std;
+  double trunc;
+}OsdiStatParam;
 
 /* Enhancement-364: noise-source kinds, mirrored from the compiler-side header
  * openvaf/osdi/header/osdi_0_4.h. The field `noise_source_type` was already in

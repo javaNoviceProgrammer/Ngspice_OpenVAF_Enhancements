@@ -232,6 +232,8 @@ simulator then handles the whole loop
 (* dist="uniform", std=2e-4 *)  parameter real g  = 1e-3;   // std = half-width
 (* std_rel=0.05 *)              parameter real k  = 2.0;    // σ = 5 % of nominal
 (* type="instance", std=10.0 *) parameter real dr = 0.0;    // per-device mismatch
+(* dist="lognormal", std_rel=0.3 *) parameter real is = 1e-15 from (0:inf); // never crosses zero
+(* std=25.0, trunc=2.0 *)       parameter real rs = 1000.0;  // a Gaussian confined to ±2σ
 ```
 
 ```spice
@@ -245,8 +247,21 @@ end
 .endc
 ```
 
-Each run writes nominal + draw through the ordinary parameter setter — no
-`reset`, no netlist re-expansion, no `gauss()` expressions in the deck. The
+A draw that violates the parameter's `from` range fails that trial with the
+device's own range error (the range is checked in the compiled setup, with
+that trial's values of every parameter it reads), and the loop commands drop
+and count the trial — so a wide gauss on a `(0:inf)` parameter loses samples
+at the bound. Two shapes cannot violate it (E-554): a **lognormal**
+(`dist="lognormal"`, alias `lnorm`) draws `nominal·exp(s·z)`, with `std_rel`
+the sigma of the logarithm (about the relative sigma for small values) and an
+absolute `std` converted at the nominal; a **truncation**, `trunc=n` sigmas,
+confines the Gaussian coordinate by deterministic rejection (a draw inside the
+window is exactly the draw the untruncated parameter would have made), and
+`dist="tgauss"` is gauss with `trunc=3`. Both inflate under `highsigma -scale`
+with the matching importance weight, and take a `wcd` walk coordinate, clamped
+at the truncation. Each run writes nominal + draw through the ordinary
+parameter setter — no `reset`, no netlist re-expansion, no `gauss()`
+expressions in the deck. The
 **first run after sourcing is the nominal baseline** (defaults of unset
 parameters are only knowable after one setup pass); draws begin with the
 second run. A **model** parameter is one draw per model card per trial

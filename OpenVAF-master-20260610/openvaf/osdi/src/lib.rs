@@ -333,6 +333,8 @@ pub fn compile<'a>(
             cx.ty_struct("OsdiStatParamInfo", &[cx.ty_int(), cx.ty_int(), cx.ty_double()]);
         let mut stat_param_counts: Vec<u32> = Vec::new();
         let mut stat_param_infos_ll: Vec<&llvm_sys::LLVMValue> = Vec::new();
+        let mut stat_param_truncs_ll: Vec<&llvm_sys::LLVMValue> = Vec::new(); // E-554
+        let mut any_trunc = false;
 
         let descriptors: Vec<_> = osdi_modules
             .iter()
@@ -437,7 +439,7 @@ pub fn compile<'a>(
                 // Collect declared parameter statistics for this module
                 let stats = cguint.stat_params();
                 stat_param_counts.push(stats.len() as u32);
-                for (param_id, dist, std) in stats {
+                for (param_id, dist, std, trunc) in stats {
                     stat_param_infos_ll.push(cx.const_struct(
                         stat_param_info_ty,
                         &[
@@ -446,6 +448,10 @@ pub fn compile<'a>(
                             cx.const_real(std),
                         ],
                     ));
+                    stat_param_truncs_ll.push(cx.const_real(trunc));
+                    if trunc > 0.0 {
+                        any_trunc = true;
+                    }
                 }
 
                 descriptor.to_ll_val(&cx, &tys)
@@ -545,6 +551,20 @@ pub fn compile<'a>(
                     true,
                     false,
                 );
+                // Enhancement-554: the truncation of each entry, in sigmas,
+                // in INFOS order. Only an object with a truncated parameter
+                // carries the symbol; a simulator that does not know it draws
+                // the untruncated distribution, an object without it is read
+                // as untruncated.
+                if any_trunc {
+                    cx.export_array(
+                        "OSDI_STAT_PARAM_TRUNCS",
+                        cx.ty_double(),
+                        &stat_param_truncs_ll,
+                        true,
+                        false,
+                    );
+                }
             }
         }
 

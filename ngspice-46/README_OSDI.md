@@ -62,11 +62,18 @@ The `compile_linux.sh` file enables these flags by default.
 
 A Verilog-A parameter compiled with statistics attributes —
 `(* std=<sigma> *)` (absolute), `(* std_rel=<fraction> *)` (relative to the
-nominal), optionally `(* dist="gauss"|"uniform" *)` (gauss default; for
-uniform the value is the half-width) — carries its variability in the
-`.osdi` object itself, through the `OSDI_STAT_PARAM_{COUNTS,INFOS}`
-side-table (the same mechanism as the absdelay tables, so the descriptor
-ABI is unchanged and objects without statistics simply lack the symbols).
+nominal), optionally `(* dist="gauss"|"uniform"|"lognormal"|"tgauss" *)`
+(gauss default; for uniform the value is the half-width; a lognormal, alias
+`lnorm`, draws `nominal·exp(s·z)` with `std_rel` the sigma of the logarithm
+and an absolute `std` converted at the nominal; `tgauss` is gauss with
+`trunc=3`) and `(* trunc=<sigmas> *)` (the Gaussian coordinate confined to
+±trunc by deterministic rejection; no effect on a uniform) — carries its
+variability in the `.osdi` object itself, through the
+`OSDI_STAT_PARAM_{COUNTS,INFOS}` side-table and, for a truncation, the
+optional `OSDI_STAT_PARAM_TRUNCS` array beside it (the same mechanism as the
+absdelay tables, so the descriptor ABI is unchanged and objects without
+statistics simply lack the symbols; an object without a truncation lacks
+the TRUNCS symbol and a simulator that does not know it draws untruncated).
 
 With `.option osdimc` (alias `automc`) set, every run-class command starts
 a fresh trial: each statistical parameter is written nominal + draw through

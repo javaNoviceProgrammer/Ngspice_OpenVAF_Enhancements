@@ -1600,7 +1600,15 @@ int OSDIbindCSCComplex(GENmodel *inModel, CKTcircuit *ckt) {
  *   - A draw that violates the parameter's Verilog-A range is NOT filtered
  *     here (the descriptor does not export ranges): it fails that run with
  *     the device's own located range error, exactly as the same `alter`
- *     would. Size sigmas accordingly.
+ *     would. Size sigmas accordingly -- or, Enhancement-554, declare the
+ *     shape that cannot violate it: `dist="lognormal"` (alias lnorm; value =
+ *     nominal * exp(s z), never crossing zero, std_rel the sigma of the
+ *     logarithm, an absolute std converted at the nominal) or a truncation,
+ *     `trunc=<sigmas>` (`dist="tgauss"` is gauss with trunc 3), which
+ *     confines the Gaussian coordinate by deterministic rejection; both
+ *     take a `highsigma -scale` inflation and carry the matching
+ *     importance weight, and both take a `wcd` walk coordinate (clamped at
+ *     the truncation).
  */
 
 typedef struct OsdiMcNominal {
@@ -1693,14 +1701,16 @@ static uint32_t osdimc_seed_extra;
  * the caller can say so. Nothing here is random, so the trial counter's
  * "baseline never draws" gate does not apply while a walk is set. */
 static bool osdimc_walk_on;
+static int osdimc_walk_clamped; /* E-554: coordinates held at a truncation
+                                   since the last OSDImcWalk() */
 static double *osdimc_walk_z;      /* a copy of the caller's coordinates */
 static int osdimc_walk_n, osdimc_walk_cap;
 static bool osdimc_walk_active(void) { return osdimc_walk_on; }
-static double osdimc_walk_value(const OsdiStatParamInfo *info, double nominal,
+static double osdimc_walk_value(const OsdiStatParam *info, double nominal,
                                 int *k, double *z_out);
 static void osdimc_say_applied(const char *owner, const char *param,
                                double val, double nominal,
-                               const OsdiStatParamInfo *info, double z);
+                               const OsdiStatParam *info, double z);
 static void osdimc_walk_count(CKTcircuit *ckt, int upto, int *ngauss,
                               int *nunif);
 
@@ -2013,21 +2023,67 @@ static double osdimc_n01(uint64_t key) {
   return sqrt(-2.0 * log(u1)) * cos(2.0 * M_PI * u2);
 }
 
-static double osdimc_delta(uint64_t key, uint32_t dist, double std,
-                           double nominal, double scale) {
-  double sigma = (dist & OSDI_DIST_REL) ? std * fabs(nominal) : std;
-  if (dist & OSDI_DIST_UNIFORM) {
+/* Enhancement-554: the standard-normal deviate of a draw confined to
+ * |z| <= t sigmas (t <= 0: unconfined). The first attempt is the plain key's
+ * deviate, so declaring a truncation changes only the draws that would have
+ * exceeded it; a rejected attempt is redrawn from a sub-key of the same trial
+ * (deterministic, no RNG state advances), and after 64 rejections -- not
+ * reachable for any truncation a user would type -- the deviate is clamped.
+ * Shared by the draw and the importance-weight walker, so the two can never
+ * disagree about which value was drawn. */
+static double osdimc_z(uint64_t key, double t) {
+  double z = osdimc_n01(key);
+  if (t > 0.0 && fabs(z) > t) {
+    int a;
+    for (a = 1; a <= 64 && fabs(z) > t; a++)
+      z = osdimc_n01(osdimc_mix(key + 0x9E3779B97F4A7C15ull * (uint64_t)a));
+    if (fabs(z) > t)
+      z = copysign(t, z);
+  }
+  return z;
+}
+
+/* The scale of the Gaussian coordinate: for a gauss the sigma in the
+ * parameter's unit (std_rel is a fraction of |nominal|); for a lognormal
+ * (E-554) the sigma of the LOGARITHM -- std_rel as declared, an absolute std
+ * converted at the nominal; a zero nominal has no scale and never moves. */
+static double osdimc_sigma(const OsdiStatParam *info, double nominal) {
+  if (info->dist & OSDI_DIST_LOGNORMAL) {
+    if (info->dist & OSDI_DIST_REL)
+      return info->std;
+    return nominal != 0.0 ? info->std / fabs(nominal) : 0.0;
+  }
+  return (info->dist & OSDI_DIST_REL) ? info->std * fabs(nominal) : info->std;
+}
+
+/* The drawn VALUE of one parameter for this key (E-554: was osdimc_delta;
+ * a lognormal is multiplicative, so the nominal is part of the draw). */
+static double osdimc_value(uint64_t key, const OsdiStatParam *info,
+                           double nominal, double scale, double *z_out) {
+  double sigma = osdimc_sigma(info, nominal);
+  if (info->dist & OSDI_DIST_UNIFORM) {
     /* E-536 fix (hunt bug 7): SCALE does NOT inflate uniforms, matching the
      * netlist SSS policy exactly ("uniform .params are bounded, so SSS does
      * not inflate them -- they carry weight 1", randnumb.c). An inflated
      * uniform can land where the TRUE density is zero, which no finite
      * importance weight represents. std is the HALF-WIDTH. */
     double u1 = osdimc_u01(osdimc_mix(key ^ 1));
-    return sigma * (2.0 * u1 - 1.0);
+    if (z_out)
+      *z_out = 0.0;
+    return nominal + sigma * (2.0 * u1 - 1.0);
   }
-  /* Enhancement-535: highsigma inflation (gauss only); E-538: `scale` is
-   * this parameter's own factor, 1.0 when `-inflate` left it out of scope. */
-  return sigma * scale * osdimc_n01(key);
+  /* Enhancement-535: highsigma inflation (gauss, and E-554 lognormal, whose
+   * coordinate is a gauss in the log domain); E-538: `scale` is this
+   * parameter's own factor, 1.0 when `-inflate` left it out of scope.
+   * E-554: a truncation bounds the VALUE -- nominal +- trunc sigma, or its
+   * log-domain equivalent -- so under inflation the deviate is confined to
+   * trunc/scale. */
+  double z = osdimc_z(key, info->trunc > 0.0 ? info->trunc / scale : 0.0);
+  if (z_out)
+    *z_out = z;
+  if (info->dist & OSDI_DIST_LOGNORMAL)
+    return nominal * exp(sigma * scale * z);
+  return nominal + sigma * scale * z;
 }
 
 /* Capture the nominal of every statistical parameter that does not have one
@@ -2038,7 +2094,7 @@ static double osdimc_delta(uint64_t key, uint32_t dist, double std,
  * later trial has already written are never mistaken for nominals. */
 static void osdimc_capture(const OsdiRegistryEntry *entry, GENmodel *inModel) {
   const OsdiDescriptor *descr = entry->descriptor;
-  const OsdiStatParamInfo *infos = entry->stat_param_infos;
+  const OsdiStatParam *infos = entry->stat_param_infos;
 
   if (entry->num_stat_params == 0 || !infos || !osdimc_enabled()) {
     return;
@@ -2204,7 +2260,7 @@ void OSDImcNewRun(CKTcircuit *ckt) {
         }
         OsdiRegistryEntry *entry = osdi_reg_entry_model(ckt->CKThead[type]);
         const OsdiDescriptor *descr = entry->descriptor;
-        const OsdiStatParamInfo *infos = entry->stat_param_infos;
+        const OsdiStatParam *infos = entry->stat_param_infos;
         if (entry->num_stat_params == 0 || !infos) {
           continue;
         }
@@ -2310,7 +2366,7 @@ static void osdimc_apply_type(CKTcircuit *ckt, int type, int seed,
   {
     OsdiRegistryEntry *entry = osdi_reg_entry_model(ckt->CKThead[type]);
     const OsdiDescriptor *descr = entry->descriptor;
-    const OsdiStatParamInfo *infos = entry->stat_param_infos;
+    const OsdiStatParam *infos = entry->stat_param_infos;
     if (entry->num_stat_params == 0 || !infos) {
       return;
     }
@@ -2347,9 +2403,8 @@ static void osdimc_apply_type(CKTcircuit *ckt, int type, int seed,
                                          descr->param_opvar[id].name[0]);
             if (sc != 1.0)
               osdimc_scope_hits++;
-            val = e->nominal + osdimc_delta(osdimc_mix(kmodel ^ id),
-                                            infos[s].dist, infos[s].std,
-                                            e->nominal, sc);
+            val = osdimc_value(osdimc_mix(kmodel ^ id), &infos[s], e->nominal,
+                               sc, &z);
           }
           if (!osdimc_draw_ok(descr, id, val))
             val = e->nominal;
@@ -2378,9 +2433,8 @@ static void osdimc_apply_type(CKTcircuit *ckt, int type, int seed,
                                            descr->param_opvar[id].name[0]);
               if (sc != 1.0)
                 osdimc_scope_hits++;
-              val = e->nominal + osdimc_delta(osdimc_mix(kinst ^ id),
-                                              infos[s].dist, infos[s].std,
-                                              e->nominal, sc);
+              val = osdimc_value(osdimc_mix(kinst ^ id), &infos[s], e->nominal,
+                                 sc, &z);
             }
             if (!osdimc_draw_ok(descr, id, val))
               val = e->nominal;
@@ -2401,32 +2455,50 @@ static void osdimc_apply_type(CKTcircuit *ckt, int type, int seed,
 /* MC hunt F3: the walk value of one parameter. A Gaussian one takes the next
  * coordinate (0 -- the nominal -- beyond the supplied vector) and advances
  * the index; a uniform one has no Gaussian coordinate and is held. */
-static double osdimc_walk_value(const OsdiStatParamInfo *info, double nominal,
+static double osdimc_walk_value(const OsdiStatParam *info, double nominal,
                                 int *k, double *z_out) {
   if (info->dist & OSDI_DIST_UNIFORM) {
     *z_out = 0.0;
     return nominal;
   }
-  double sigma = (info->dist & OSDI_DIST_REL) ? info->std * fabs(nominal)
-                                              : info->std;
+  double sigma = osdimc_sigma(info, nominal);
   double z = (*k < osdimc_walk_n) ? osdimc_walk_z[*k] : 0.0;
   (*k)++;
+  /* E-554: a truncated parameter cannot leave its window, so the walk is
+   * clamped there (the coordinate reported is the clamped one) */
+  if (info->trunc > 0.0 && fabs(z) > info->trunc) {
+    z = copysign(info->trunc, z);
+    osdimc_walk_clamped++;
+  }
   *z_out = z;
+  if (info->dist & OSDI_DIST_LOGNORMAL)
+    return nominal * exp(sigma * z);
   return nominal + sigma * z;
+}
+
+/* E-554: what the verbose lines say about a non-default distribution */
+static void osdimc_dist_note(const OsdiStatParam *info, char *buf, size_t n) {
+  const char *ln = (info->dist & OSDI_DIST_LOGNORMAL) ? ", lognormal" : "";
+  if (info->trunc > 0.0)
+    snprintf(buf, n, "%s, trunc %g", ln, info->trunc);
+  else
+    snprintf(buf, n, "%s", ln);
 }
 
 static void osdimc_say_applied(const char *owner, const char *param,
                                double val, double nominal,
-                               const OsdiStatParamInfo *info, double z) {
+                               const OsdiStatParam *info, double z) {
+  char note[64];
+  osdimc_dist_note(info, note, sizeof note);
   if (!osdimc_walk_on)
-    printf("osdimc: trial %lu: %s:%s = %g (nominal %g)\n", osdimc_trial, owner,
-           param, val, nominal);
+    printf("osdimc: trial %lu: %s:%s = %g (nominal %g%s)\n", osdimc_trial,
+           owner, param, val, nominal, note);
   else if (info->dist & OSDI_DIST_UNIFORM)
     printf("osdimc: walk: %s:%s = %g (nominal %g, uniform: held)\n", owner,
            param, val, nominal);
   else
-    printf("osdimc: walk: %s:%s = %g (nominal %g, z = %+g)\n", owner, param,
-           val, nominal, z);
+    printf("osdimc: walk: %s:%s = %g (nominal %g, z = %+g%s)\n", owner, param,
+           val, nominal, z, note);
 }
 
 /* MC hunt F3: count, in the applier's enumeration order, the statistical
@@ -2445,7 +2517,7 @@ static void osdimc_walk_count(CKTcircuit *ckt, int upto, int *ngauss,
       continue;
     OsdiRegistryEntry *entry = osdi_reg_entry_model(ckt->CKThead[type]);
     const OsdiDescriptor *descr = entry->descriptor;
-    const OsdiStatParamInfo *infos = entry->stat_param_infos;
+    const OsdiStatParam *infos = entry->stat_param_infos;
     if (entry->num_stat_params == 0 || !infos)
       continue;
     for (GENmodel *gen_model = ckt->CKThead[type]; gen_model;
@@ -2473,6 +2545,7 @@ static void osdimc_walk_count(CKTcircuit *ckt, int upto, int *ngauss,
 }
 
 void OSDImcWalk(const double *z, int n) {
+  osdimc_walk_clamped = 0;
   if (!z || n <= 0) {
     osdimc_walk_on = false;
     osdimc_walk_n = 0;
@@ -2494,6 +2567,10 @@ int OSDImcWalkNdim(void) {
   osdimc_walk_count(osdimc_ckt, DEVmaxnum, &g, &u);
   return g;
 }
+
+/* E-554: how many walk coordinates the last application held at a `trunc`
+ * truncation -- wcd's "zero gradient" has a different meaning then. */
+int OSDImcWalkClamped(void) { return osdimc_walk_clamped; }
 
 int OSDImcWalkNuniform(void) {
   int g, u;
@@ -2523,6 +2600,27 @@ int OSDImcWalkNuniform(void) {
  * Uniform draws are not inflated (see osdimc_delta) and contribute 0;
  * pinned entries were not drawn and contribute 0. Returns 0 whenever no
  * inflation is active, so callers can apply exp() unconditionally. */
+/* E-554: the per-dimension log likelihood ratio of one inflated draw. With
+ * a truncation both densities are confined to the same value window, nominal
+ * +- t sigma: the nominal one to |z| <= t, the inflated one to |n| <= t/sc,
+ * and their normalisers erf(t/sqrt2) and erf(t/(sc sqrt2)) join the ratio,
+ *
+ *   log[ phi(sc n)/Z_t / (phi(n)/(sc Z_{t/sc})) ]
+ *     = log(sc) - n^2 (sc^2 - 1)/2 + log Z_{t/sc} - log Z_t .
+ *
+ * A lognormal is a gauss in the log domain, so the same ratio applies to
+ * its coordinate. The deviate is the one the applier drew (osdimc_z, same
+ * key, same confinement). */
+static double osdimc_log_lr(uint64_t key, const OsdiStatParam *info,
+                            double sc) {
+  double t = info->trunc;
+  double n = osdimc_z(key, t > 0.0 ? t / sc : 0.0);
+  double lr = log(sc) - 0.5 * n * n * (sc * sc - 1.0);
+  if (t > 0.0)
+    lr += log(erf(t / (sc * M_SQRT2))) - log(erf(t / M_SQRT2));
+  return lr;
+}
+
 double OSDImcSampleLogLR(CKTcircuit *ckt) {
   double logw = 0.0;
   int seed = 1;
@@ -2539,7 +2637,7 @@ double OSDImcSampleLogLR(CKTcircuit *ckt) {
       continue;
     OsdiRegistryEntry *entry = osdi_reg_entry_model(ckt->CKThead[type]);
     const OsdiDescriptor *descr = entry->descriptor;
-    const OsdiStatParamInfo *infos = entry->stat_param_infos;
+    const OsdiStatParam *infos = entry->stat_param_infos;
     if (entry->num_stat_params == 0 || !infos)
       continue;
 
@@ -2566,8 +2664,7 @@ double OSDImcSampleLogLR(CKTcircuit *ckt) {
                                        descr->param_opvar[id].name[0]);
           if (sc == 1.0)
             continue;
-          double n = osdimc_n01(osdimc_mix(kmodel ^ id));
-          logw += log(sc) - 0.5 * n * n * (sc * sc - 1.0);
+          logw += osdimc_log_lr(osdimc_mix(kmodel ^ id), &infos[s], sc);
         } else {
           for (GENinstance *gen_inst = gen_model->GENinstances; gen_inst;
                gen_inst = gen_inst->GENnextInstance) {
@@ -2581,8 +2678,7 @@ double OSDImcSampleLogLR(CKTcircuit *ckt) {
               continue;                      /* E-538: not inflated, weight 1 */
             uint64_t kinst =
                 osdimc_mix(kbase ^ osdimc_hash_str((char *)gen_inst->GENname));
-            double n = osdimc_n01(osdimc_mix(kinst ^ id));
-            logw += log(sc) - 0.5 * n * n * (sc * sc - 1.0);
+            logw += osdimc_log_lr(osdimc_mix(kinst ^ id), &infos[s], sc);
           }
         }
       }

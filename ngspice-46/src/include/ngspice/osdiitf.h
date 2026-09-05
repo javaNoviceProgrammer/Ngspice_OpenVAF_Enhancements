@@ -52,7 +52,8 @@ typedef struct OsdiRegistryEntry {
    * Each entry names a parameter the Verilog-A declared with `(* std= *)` /
    * `(* std_rel= *)` and the simulator varies per Monte-Carlo run. */
   uint32_t num_stat_params;
-  const void *stat_param_infos;  /* points into the loaded .osdi's OSDI_STAT_PARAM_INFOS */
+  const void *stat_param_infos;  /* OsdiStatParam records built by the registry from the
+                                    .osdi's OSDI_STAT_PARAM_INFOS (+ TRUNCS, E-554) */
 
   /* Nature / discipline / attribute tables (OSDI_NATURES, OSDI_DISCIPLINES,
    * OSDI_ATTRIBUTES), filled at .osdi load time. The compiler has always
@@ -254,6 +255,7 @@ extern double OSDImcSampleLogLR(CKTcircuit *ckt);
 extern void OSDImcWalk(const double *z, int n);
 extern int  OSDImcWalkNdim(void);
 extern int  OSDImcWalkNuniform(void);
+extern int  OSDImcWalkClamped(void);   /* E-554 */
 /* 2026-09-04 hunt, F1: Verilog-A modules whose name is one of ngspice's own
  * (a built-in device's name, or a `.model` type keyword). They are registered
  * but SHADOWED: a `.model` card of that type resolves to the built-in, and

@@ -4,7 +4,7 @@ use hir_lower::{CurrentKind, HirInterner, ImplicitEquation, ParamKind};
 use lasso::Rodeo;
 use mir::Function;
 use mir_opt::{simplify_cfg, sparse_conditional_constant_propagation};
-pub use module_info::{collect_modules, ModuleInfo};
+pub use module_info::{collect_modules, ModuleInfo, ParamStat};
 use stdx::impl_debug_display;
 
 use crate::context::{Context, OptimiziationStage};

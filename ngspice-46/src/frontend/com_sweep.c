@@ -5428,8 +5428,22 @@ void com_wcd(wordlist *wl)
         }
 
         if (gn2 <= 0.0) {
-            fprintf(cp_err, "wcd: the metric does not respond to any statistical "
-                            "parameter (zero gradient) -- cannot locate an MPFP\n");
+            /* E-554: a model-declared parameter with a `trunc` truncation is
+             * held at its window's edge, so a boundary beyond it flattens the
+             * metric -- that is the declared distribution's truth, not an
+             * unresponsive metric. */
+            int nclamped = OSDImcActive() ? OSDImcWalkClamped() : 0;
+            if (nclamped > 0)
+                fprintf(cp_err, "wcd: the walk is held at the `trunc` truncation of %d "
+                                "model-declared parameter%s and the metric no longer "
+                                "moves: the spec boundary lies beyond the declared "
+                                "window, so the declared distribution cannot reach it "
+                                "-- no worst-case distance is reported (widen `trunc` "
+                                "to search further)\n",
+                        nclamped, nclamped == 1 ? "" : "s");
+            else
+                fprintf(cp_err, "wcd: the metric does not respond to any statistical "
+                                "parameter (zero gradient) -- cannot locate an MPFP\n");
             outp_loop_end();          /* Enhancement-477 */
             ft_optimizing = save_optimizing;
             mc_wcd_off();
