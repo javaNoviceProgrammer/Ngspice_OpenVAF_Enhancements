@@ -68,7 +68,12 @@ def script(base):
 
 
 def data(base):
+    """Enhancement-549: the table as a 2-D array, whichever format was written."""
     import numpy as np
+    q = os.path.join(HERE, base + ".npy")
+    if os.path.isfile(q):
+        d = np.load(q)
+        return np.stack([d[n] for n in d.dtype.names], axis=1)
     p = os.path.join(HERE, base + ".data")
     return np.loadtxt(p) if os.path.isfile(p) else None
 
@@ -225,7 +230,7 @@ check("301: no cursor of any kind in a hardcopy",
 # tidy the generated artifacts (NOT this script or the README)
 import glob
 KEEP = {"verify_pyplotmore.py", "README.md"}
-for pat in ("*.cir", "*.py", "*.data", "*.png"):
+for pat in ("*.cir", "*.py", "*.data", "*.npy", "*.png"):
     for g in glob.glob(os.path.join(HERE, pat)):
         if os.path.basename(g) in KEEP:
             continue

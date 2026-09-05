@@ -110,7 +110,7 @@ for cmd, lbl in [("pyplot -hist v(out)",        "[pyplot] `-hist` as first arg")
     check(f"{lbl} does not crash", not _is_crash(rc, out) and "SURVIVED" in out, f"rc={rc}")
 
 # the -hist-first form now generates a real histogram (plt.hist), not a line plot
-for f in ("pyplot.py", "pyplot.data"):
+for f in ("pyplot.py", "pyplot.data", "pyplot.npy"):
     p = os.path.join(HERE, f)
     if os.path.exists(p):
         os.remove(p)
@@ -123,7 +123,8 @@ check("[pyplot] `-hist` first arg now renders a histogram (hist(), not plot())",
 out, rc = run_pipe(PRE + "pyplot v(out) -hist\nprint \"OK2\"\nquit\n")
 check("[pyplot] `-hist` as trailing arg still works", not _is_crash(rc, out) and "OK2" in out)
 
-for f in ("_pp.cir", "pyplot.py", "pyplot.data", "pyplot.png"):
+for f in ("_pp.cir", "pyplot.py", "pyplot.data", "pyplot.npy", "pyplot.png",
+          "contour.py", "contour.data", "contour.npy", "contour.png"):
     p = os.path.join(HERE, f)
     if os.path.exists(p):
         os.remove(p)

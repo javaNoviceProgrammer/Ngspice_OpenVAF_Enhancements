@@ -53,6 +53,11 @@ com_pyplot(wordlist *wl)
        list, dispatched to plotit's contour device. */
     bool is_hist = FALSE;
     bool is_contour = FALSE;
+    /* Enhancement-549: `pyplot -export [name] <sigs>` writes the data table
+       (`.npy`, or `.data` under `set pyplot_export=ascii`) and no plot. It goes
+       through plotit like the other markers, so `vs`, expressions and
+       plot-qualified names all work. It takes plain signals only. */
+    bool is_export = FALSE;
     bool is_smith = FALSE;
     bool is_fft = FALSE;    /* Enhancement-297: `-fft` magnitude spectrum */
     /* Enhancement-298: complex-aware AC views. */
@@ -61,6 +66,13 @@ com_pyplot(wordlist *wl)
     if (!wl)
         return;
 
+    {
+        wordlist *w;
+        for (w = wl; w; w = w->wl_next)
+            if (w->wl_word && eq(w->wl_word, "-export"))
+                is_export = TRUE;
+    }
+
     /* E-208: detect the -eye marker anywhere in the argument list; the tokens
        after it belong to the `eye` command. A single bare token before -eye is
        taken as the output base name (`pyplot myeye -eye v(rx) -ui 0.5n`). */
@@ -68,6 +80,12 @@ com_pyplot(wordlist *wl)
         wordlist *w, *marker = NULL;
         for (w = wl; w; w = w->wl_next)
             if (w->wl_word && eq(w->wl_word, "-eye")) { marker = w; break; }
+        if (marker && is_export) {
+            fprintf(cp_err, "Error: pyplot -export takes plain signals; it cannot be "
+                    "combined with -eye (the eye's own table is written beside its "
+                    "plot).\n");
+            return;
+        }
         if (marker) {
             is_eye = TRUE;
             strcpy(defname, "eye");
@@ -99,6 +117,14 @@ com_pyplot(wordlist *wl)
             else if (w->wl_word && eq(w->wl_word, "-bode"))    { is_bode = TRUE;    found = TRUE; }
             else if (w->wl_word && eq(w->wl_word, "-nyquist")) { is_nyquist = TRUE; found = TRUE; }
             else if (w->wl_word && eq(w->wl_word, "-polar"))   { is_polar = TRUE;   found = TRUE; }
+            else if (w->wl_word && eq(w->wl_word, "-export"))  { found = TRUE; }
+        }
+        if (is_export && (is_hist || is_contour || is_smith || is_fft || is_bode
+                          || is_nyquist || is_polar)) {
+            fprintf(cp_err, "Error: pyplot -export takes plain signals; it cannot be "
+                    "combined with -hist, -contour, -smith, -fft, -bode, -nyquist or "
+                    "-polar (each of those writes its own table beside its plot).\n");
+            return;
         }
         if (found) {
             wordlist *tail = NULL;
@@ -106,7 +132,7 @@ com_pyplot(wordlist *wl)
                 if (w->wl_word && (eq(w->wl_word, "-hist") || eq(w->wl_word, "-contour")
                                    || eq(w->wl_word, "-smith") || eq(w->wl_word, "-fft")
                                    || eq(w->wl_word, "-bode") || eq(w->wl_word, "-nyquist")
-                                   || eq(w->wl_word, "-polar")))
+                                   || eq(w->wl_word, "-polar") || eq(w->wl_word, "-export")))
                     continue;                         /* drop the marker word */
                 wordlist *nw = TMALLOC(wordlist, 1);
                 nw->wl_word = copy(w->wl_word ? w->wl_word : "");
@@ -129,8 +155,13 @@ com_pyplot(wordlist *wl)
             strcpy(defname, "nyquist");
         if (is_polar)
             strcpy(defname, "polar");
-        if (!wl)                                      /* marker with no signals */
+        if (is_export)
+            strcpy(defname, "export");
+        if (!wl) {                                    /* marker with no signals */
+            if (is_export)
+                fprintf(cp_err, "Usage: pyplot -export [name] <signal> ...\n");
             goto done;
+        }
     }
 
     /* The first word is an output file name only if it is not itself a plot
@@ -152,7 +183,7 @@ com_pyplot(wordlist *wl)
                             is_eye ? "eye" : is_contour ? "contour"
                             : is_smith ? "smith" : is_fft ? "fft"
                             : is_bode ? "bode" : is_nyquist ? "nyquist"
-                            : is_polar ? "polar" : "pyplot",
+                            : is_polar ? "polar" : is_export ? "export" : "pyplot",
                             autoseq + 1);
         autoseq++;
         fname = defname;
@@ -195,7 +226,7 @@ com_pyplot(wordlist *wl)
                   is_contour ? "pyplotcontour" : is_hist ? "pyplothist"
                   : is_smith ? "pyplotsmith" : is_fft ? "pyplotfft"
                   : is_bode ? "pyplotbode" : is_nyquist ? "pyplotnyquist"
-                  : is_polar ? "pyplotpolar" : "pyplot");
+                  : is_polar ? "pyplotpolar" : is_export ? "pyplotexport" : "pyplot");
 
 done:
     if (tempf)

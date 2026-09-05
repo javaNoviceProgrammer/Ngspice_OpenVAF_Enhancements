@@ -57,6 +57,21 @@ def is_png(path):
     return sig == b"\x89PNG\r\n\x1a\n"
 
 
+def load_table(base):
+    """Enhancement-549: the data table as rows of %.17g strings, whichever
+    format ngspice wrote -- `<base>.npy` (structured, the default) or the
+    `<base>.data` text (header line skipped)."""
+    npy = os.path.join(HERE, base + ".npy")
+    if os.path.isfile(npy):
+        import numpy as np
+        d = np.load(npy)
+        return [["%.17g" % float(d[n][i]) for n in d.dtype.names] for i in range(d.shape[0])]
+    data = os.path.join(HERE, base + ".data")
+    if not os.path.isfile(data):
+        return []
+    return [ln.split() for ln in open(data) if ln.split() and not ln.startswith("#")]
+
+
 def path(name):
     return os.path.join(HERE, name)
 
@@ -81,7 +96,7 @@ check("smith_demo.py draws the Smith grid (unit circle + const-R/X) and both vec
       and "_xarc" in py and "s_1_1" in py and "s_2_2" in py)
 
 # 4: the plotted data equals the S-parameters exactly (vi=0 rows vs wrdata'd S_1_1)
-data = [ln.split() for ln in open(path("smith_demo.data")) if ln.split()]
+data = load_table("smith_demo")
 plotted = [(float(t[1]), float(t[2])) for t in data if len(t) >= 3 and t[0] == "0"]
 s11 = []
 for ln in open(path("s11.dat")):

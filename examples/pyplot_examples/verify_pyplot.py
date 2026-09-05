@@ -48,6 +48,18 @@ Enhancement-548 (the script and its data):
            labelled with its type, one combined legend, distinct colours
   [E-548d] the generated script runs from any directory: its data and image are
            found next to the script itself
+
+Enhancement-549 (the data table: .npy by default, `set pyplot_export`, `-export`):
+  [E-549a] the default table is `<name>.npy`, a structured numpy array with one
+           field per column (`time`, `v(out)`, `time_2`, `v(in)`), exact doubles,
+           and the script loads it and renders
+  [E-549b] `set pyplot_export=ascii` writes `<name>.data` with a `# name ...`
+           header line and 17-digit numbers, and the script loads that instead
+  [E-549c] `pyplot -export sig v(out) i(v1)` writes sig.npy and no script, and
+           says so; `vs` names the x column after the vector plotted against
+  [E-549d] `-export` refuses the other markers, and says what to do instead
+  [E-549e] the -contour, -smith and -bode tables carry their own field names
+  [E-549f] an unknown pyplot_export value is said and falls back to .npy
 """
 import os
 import random
@@ -74,7 +86,7 @@ def is_png(path):
         sig = f.read(8)
     return sig == b"\x89PNG\r\n\x1a\n"
 
-for stale in ("rc.png", "rc.py", "rc.data", "acmag.png", "acmag.py", "acmag.data"):
+for stale in ("rc.png", "rc.py", "rc.data", "rc.npy", "acmag.png", "acmag.py", "acmag.data", "acmag.npy"):
     p = os.path.join(HERE, stale)
     if os.path.exists(p):
         os.remove(p)
@@ -104,8 +116,8 @@ r = subprocess.run([NGSPICE, "-b", "tran.sp"], capture_output=True, text=True, c
 log = r.stdout + r.stderr
 check("transient runs and pyplot reports writing the PNG", "wrote rc.png" in log,
       log.strip()[-160:])
-check("pyplot wrote rc.py, rc.data and rc.png",
-      all(os.path.isfile(os.path.join(HERE, f)) for f in ("rc.py", "rc.data", "rc.png")))
+check("pyplot wrote rc.py, rc.npy and rc.png",
+      all(os.path.isfile(os.path.join(HERE, f)) for f in ("rc.py", "rc.npy", "rc.png")))
 check("rc.png is a valid PNG image", is_png(os.path.join(HERE, "rc.png")))
 py = open(os.path.join(HERE, "rc.py")).read() if os.path.isfile(os.path.join(HERE, "rc.py")) else ""
 check("rc.py uses matplotlib and plots both vectors",
@@ -179,7 +191,7 @@ check("pyplot with no file name defaults to 'pyplot.png'",
 
 # ---- Enhancement-183a: distinct default names for successive no-name plots ----
 for f_ in ("pyplot.py", "pyplot.data", "pyplot.png",
-           "pyplot-2.py", "pyplot-2.data", "pyplot-2.png"):
+           "pyplot-2.py", "pyplot-2.data", "pyplot-2.npy", "pyplot-2.png"):
     try:
         os.remove(os.path.join(HERE, f_))
     except OSError:
@@ -227,7 +239,7 @@ pydir = open(os.path.join(HERE, "dir.py")).read() if os.path.isfile(os.path.join
 check("E-183b: artifacts land next to the .cir (abs deck path, run from parent)",
       is_png(os.path.join(HERE, "dir.png"))
       and not os.path.exists(os.path.join(parent, "dir.png"))
-      and "'dir.data'" in pydir and "_here" in pydir)   # E-548: resolved against the script
+      and "'dir.npy'" in pydir and "_here" in pydir)   # E-548: resolved against the script
 
 # ---- Enhancement-183c: pyplot_linewidth ----
 lwdeck = twodeck.replace(
@@ -256,7 +268,7 @@ check("E-183d: set pyplot_backend=Agg -> matplotlib.use('agg') in the script",
 # bandwidth-limiting RC channel (tau ~ 0.5 UI) so the eye is clearly open but
 # ISI-shaped -- no OSDI model needed for the rendering path.
 for f_ in ("eyefig.py", "eyefig.data", "eyefig.png",
-           "eye.py", "eye.data", "eye.png", "eye.sp"):
+           "eye.py", "eye.data", "eye.npy", "eye.png", "eye.sp"):
     try:
         os.remove(os.path.join(HERE, f_))
     except OSError:
@@ -412,9 +424,10 @@ deck = os.path.join(HERE, "e548.sp")
 with open(deck, "w") as f:
     f.write(E548)
 log = run_deck(deck, HERE)
-rows = [l.split() for l in open(os.path.join(HERE, "prec.data")) if l.strip()] \
-    if os.path.isfile(os.path.join(HERE, "prec.data")) else []
-xs = [float(r[0]) for r in rows]; ys = [float(r[1]) for r in rows]
+import numpy as np
+prec = np.load(os.path.join(HERE, "prec.npy")) if os.path.isfile(os.path.join(HERE, "prec.npy")) else None
+rows = prec if prec is not None else []
+xs = list(prec["t2"]) if prec is not None else []; ys = list(prec["v(in)"]) if prec is not None else []
 check("E-548a: every x of a 1 s-offset, 1 ns-step axis is distinct, and a 1 uV ripple on 1 V survives",
       len(rows) > 10 and len(set(xs)) == len(xs) and 1.5e-6 < (max(ys) - min(ys)) < 2.5e-6,
       f"{len(rows)} rows, {len(set(xs))} distinct x, ripple {max(ys) - min(ys) if ys else None}")
@@ -441,31 +454,117 @@ with tempfile.TemporaryDirectory() as far:
           r.returncode == 0 and is_png(os.path.join(HERE, "mixed.png"))
           and not os.path.exists(os.path.join(far, "mixed.png")),
           (r.stderr or r.stdout).strip()[-200:])
-for f in ("e548.sp", "prec.py", "prec.data", "prec.png", "ylo.py", "ylo.data", "ylo.png",
-          "ybad.py", "ybad.data", "ybad.png", "xlo.py", "xlo.data", "xlo.png",
-          "mixed.py", "mixed.data", "mixed.png"):
+for f in ("e548.sp", "prec.py", "prec.data", "prec.npy", "prec.png", "ylo.py", "ylo.data", "ylo.npy", "ylo.png",
+          "ybad.py", "ybad.data", "ybad.npy", "ybad.png", "xlo.py", "xlo.data", "xlo.npy", "xlo.png",
+          "mixed.py", "mixed.data", "mixed.npy", "mixed.png"):
     p = os.path.join(HERE, f)
     if os.path.exists(p):
         os.remove(p)
 
+# ---- Enhancement-549: the data table, .npy by default; pyplot_export; -export ----
+E549 = """* pyplot table probe (Enhancement-549)
+V1 in 0 dc 0 sin(0 1 1k)
+R1 in out 1k
+C1 out 0 159.155n
+.tran 10u 3m
+.control
+run
+set pyplot_terminal=png
+set pyplot_backend=Agg
+pyplot npyplot v(out) v(in)
+set pyplot_export=ascii
+pyplot txtplot v(out) v(in)
+unset pyplot_export
+pyplot -export sig v(out) i(v1)
+pyplot -export iv i(v1) vs v(out)
+pyplot -export -hist v(out)
+set pyplot_export=parquet
+pyplot -export odd v(out)
+unset pyplot_export
+let xs = vector(9)
+let ys = floor(xs/3)
+let xx = xs - 3*ys
+let zz = xx*xx + ys*ys
+pyplot cont -contour zz xx ys
+ac dec 10 10 1e6
+pyplot sm -smith v(out)
+pyplot bo -bode v(out)
+.endc
+.end
+"""
+deck = os.path.join(HERE, "e549.sp")
+with open(deck, "w") as f:
+    f.write(E549)
+log = run_deck(deck, HERE)
+def npy(base):
+    q = os.path.join(HERE, base + ".npy")
+    return np.load(q) if os.path.isfile(q) else None
+def npy_layout_ok(path, rows, cols):
+    """numpy format 1.0 as written from C: magic, version 1.0, a little-endian
+    u16 header length, the data starting on a 64-byte boundary, rows*cols doubles."""
+    with open(path, "rb") as f:
+        pre = f.read(10)
+    hlen = int.from_bytes(pre[8:10], "little")
+    return (pre[:6] == b"\x93NUMPY" and pre[6:8] == b"\x01\x00" and (10 + hlen) % 64 == 0
+            and os.path.getsize(path) == 10 + hlen + rows * cols * 8)
+a = npy("npyplot")
+pynpy = open(os.path.join(HERE, "npyplot.py")).read() if os.path.isfile(os.path.join(HERE, "npyplot.py")) else ""
+check("E-549a: the default table is <name>.npy, structured (time, v(out), time_2, v(in)), exact, and the script renders",
+      a is not None and a.dtype.names == ("time", "v(out)", "time_2", "v(in)")
+      and a.shape[0] > 100 and float(a["time"][1]) == float(a["time_2"][1])
+      and not os.path.exists(os.path.join(HERE, "npyplot.data"))
+      and "np.load(" in pynpy and "np.stack(" in pynpy and is_png(os.path.join(HERE, "npyplot.png")),
+      f"names={a.dtype.names if a is not None else None}")
+txt = os.path.join(HERE, "txtplot.data")
+head = open(txt).readline().strip() if os.path.isfile(txt) else ""
+pytxt = open(os.path.join(HERE, "txtplot.py")).read() if os.path.isfile(os.path.join(HERE, "txtplot.py")) else ""
+check("E-549b: pyplot_export=ascii writes <name>.data with a '# time v(out) time_2 v(in)' header, and the script loads it",
+      head == "# time v(out) time_2 v(in)" and not os.path.exists(os.path.join(HERE, "txtplot.npy"))
+      and "np.loadtxt(" in pytxt and is_png(os.path.join(HERE, "txtplot.png")), head)
+sig = npy("sig"); iv = npy("iv")
+check("E-549c: `pyplot -export sig v(out) i(v1)` writes sig.npy, no script, and says so; `vs` names the x column",
+      sig is not None and sig.dtype.names == ("time", "v(out)", "time_2", "i(v1)")
+      and not os.path.exists(os.path.join(HERE, "sig.py")) and "pyplot: exported" in log
+      and "sig.npy" in log and iv is not None and iv.dtype.names == ("v(out)", "i(v1)")
+      and npy_layout_ok(os.path.join(HERE, "sig.npy"), sig.shape[0], 4),
+      f"sig={sig.dtype.names if sig is not None else None} iv={iv.dtype.names if iv is not None else None}")
+check("E-549d: -export with -hist is refused with the reason",
+      "-export takes plain signals" in log and not os.path.exists(os.path.join(HERE, "export.npy")),
+      log.strip()[-200:])
+co = npy("cont"); smt = npy("sm"); bo = npy("bo")
+check("E-549e: the -contour, -smith and -bode tables carry their own field names",
+      co is not None and co.dtype.names == ("xx", "ys", "zz") and co.shape[0] == 9
+      and smt is not None and smt.dtype.names == ("vec", "re", "im")
+      and bo is not None and bo.dtype.names == ("vec", "frequency", "re", "im"),
+      f"cont={co.dtype.names if co is not None else None} sm={smt.dtype.names if smt is not None else None} bo={bo.dtype.names if bo is not None else None}")
+check("E-549f: an unknown pyplot_export value is said and falls back to .npy",
+      "pyplot_export=parquet is neither" in log and npy("odd") is not None, log.strip()[-200:])
+for base in ("npyplot", "txtplot", "sig", "iv", "odd", "cont", "sm", "bo", "export"):
+    for ext in (".py", ".data", ".npy", ".png"):
+        q = os.path.join(HERE, base + ext)
+        if os.path.exists(q):
+            os.remove(q)
+if os.path.exists(deck):
+    os.remove(deck)
+
 for d in e547_dirs:
     shutil.rmtree(d, ignore_errors=True)
-for f in ("badpy.sh", "status.sp", "status.py", "status.data", "status.png",
-          "status2.py", "status2.data", "status2.png",
-          "status3.py", "status3.data", "status3.png"):
+for f in ("badpy.sh", "status.sp", "status.py", "status.data", "status.npy", "status.png",
+          "status2.py", "status2.data", "status2.npy", "status2.png",
+          "status3.py", "status3.data", "status3.npy", "status3.png"):
     p = os.path.join(HERE, f)
     if os.path.exists(p):
         os.remove(p)
 
 for f in ("two.sp", "dir.sp", "lw.sp", "be.sp",
-          "pyplot-2.py", "pyplot-2.data", "pyplot-2.png",
-          "dir.py", "dir.data", "dir.png", "lw.py", "lw.data", "lw.png",
-          "be.py", "be.data", "be.png",
-          "tran.sp", "ac.sp", "nofn.sp", "rc.py", "rc.data", "rc.png",
-          "acmag.py", "acmag.data", "acmag.png",
-          "eye.sp", "eyefig.py", "eyefig.data", "eyefig.png",
-          "eye.py", "eye.data", "eye.png",
-          "pyplot.py", "pyplot.data", "pyplot.png", "rcload.osdi"):
+          "pyplot-2.py", "pyplot-2.data", "pyplot-2.npy", "pyplot-2.png",
+          "dir.py", "dir.data", "dir.npy", "dir.png", "lw.py", "lw.data", "lw.npy", "lw.png",
+          "be.py", "be.data", "be.npy", "be.png",
+          "tran.sp", "ac.sp", "nofn.sp", "rc.py", "rc.data", "rc.npy", "rc.png",
+          "acmag.py", "acmag.data", "acmag.npy", "acmag.png",
+          "eye.sp", "eyefig.py", "eyefig.data", "eyefig.npy", "eyefig.png",
+          "eye.py", "eye.data", "eye.npy", "eye.png",
+          "pyplot.py", "pyplot.data", "pyplot.npy", "pyplot.png", "rcload.osdi"):
     p = os.path.join(HERE, f)
     if os.path.exists(p):
         os.remove(p)

@@ -1264,7 +1264,7 @@ bool plotit(wordlist *wl, const char *hcopy, const char *devname)
     }
 
     if (devname && (eq(devname, "pyplot") || eq(devname, "pyplothist")
-                    || eq(devname, "pyplotfft"))) {
+                    || eq(devname, "pyplotfft") || eq(devname, "pyplotexport"))) {
         /* Enhancement-94: interface to matplotlib.
          * Enhancement-182: pass axis limits only when the USER asked for them
          * (`xl`/`xlimit`, `yl`/`ylimit` -- the static xlim/ylim hold those);
@@ -1282,7 +1282,8 @@ bool plotit(wordlist *wl, const char *hcopy, const char *devname)
                   ylabel ? ylabel : ft_typabbrev(y_type),
                   gtype, ptype, vecs,
                   eq(devname, "pyplothist") ? PYMODE_HIST
-                  : eq(devname, "pyplotfft") ? PYMODE_FFT : PYMODE_LINE);
+                  : eq(devname, "pyplotfft") ? PYMODE_FFT
+                  : eq(devname, "pyplotexport") ? PYMODE_EXPORT : PYMODE_LINE);
         rtn = TRUE;
         goto quit;
     }

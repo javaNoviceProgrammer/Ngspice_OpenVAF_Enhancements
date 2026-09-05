@@ -57,4 +57,19 @@ directory ngspice ran in, so re-running it elsewhere failed with
 `NAME.data not found`; it now resolves its data table and its image against
 its own location.
 
-Run: `python3 verify_pyplot.py` (29 checks, both solvers).
+**Enhancement-549 — the data table is `.npy`, and `-export` writes just that.**
+The table every `pyplot` writes beside its script is now numpy's own array
+file, `<name>.npy`: a *structured* array with one named field per column
+(`time`, `v(out)`, `time_2`, `v(in)`), exact doubles, a fraction of the text
+size, loaded in milliseconds — `np.load('sig.npy')['v(out)']` is the signal
+and `pandas.DataFrame(np.load(...))` a table. `set pyplot_export=ascii`
+restores the whitespace `.data` text, now with a `# name ...` header line and
+17-digit numbers; the generated script loads whichever was written. And
+`pyplot -export [name] v(out) i(v1)` writes the table and nothing else (no
+script, no Python), with the same expressions, `vs` and plot-qualified names a
+plot takes; it refuses the other markers, whose tables are written beside
+their plots anyway. The written header follows numpy's format 1.0 exactly
+(magic, version, little-endian length, 64-byte-aligned dict, raw doubles in
+the host's byte order declared in the dtype).
+
+Run: `python3 verify_pyplot.py` (35 checks, both solvers).

@@ -51,10 +51,23 @@ def run(deck, base):
     subprocess.run([NGSPICE, "-b", deck], cwd=HERE,
                    capture_output=True, text=True, timeout=180)
     py = os.path.join(HERE, f"{base}.py")
-    data = os.path.join(HERE, f"{base}.data")
     pytext = open(py).read() if os.path.exists(py) else ""
-    rows = [ln.split() for ln in open(data)] if os.path.exists(data) else []
+    rows = load_table(base)
     return pytext, rows
+
+def load_table(base):
+    """Enhancement-549: the data table as rows of %.17g strings, whichever
+    format ngspice wrote -- `<base>.npy` (structured, the default) or the
+    `<base>.data` text (header line skipped)."""
+    npy = os.path.join(HERE, base + ".npy")
+    if os.path.isfile(npy):
+        import numpy as np
+        d = np.load(npy)
+        return [["%.17g" % float(d[n][i]) for n in d.dtype.names] for i in range(d.shape[0])]
+    data = os.path.join(HERE, base + ".data")
+    if not os.path.isfile(data):
+        return []
+    return [ln.split() for ln in open(data) if ln.split() and not ln.startswith("#")]
 
 
 def valid_png(base):

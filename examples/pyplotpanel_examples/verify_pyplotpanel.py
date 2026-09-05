@@ -42,7 +42,7 @@ def pyfile(name):
 
 ARTIFACTS = []
 for base in ("base", "p1", "p2", "sty"):
-    for ext in (".py", ".data", ".png"):
+    for ext in (".py", ".data", ".npy", ".png"):
         ARTIFACTS.append(base + ext)
 for a in ARTIFACTS + ["deck.sp"]:
     p = os.path.join(HERE, a)

@@ -19,6 +19,7 @@ pyplot [file] -fft     <vec> [vec ...]
 pyplot [file] -bode    <vec> [vec ...]
 pyplot [file] -nyquist <vec> [vec ...]
 pyplot [file] -polar   <vec> [vec ...]
+pyplot [file] -export  <vec> [vec ...]      $ the data table only, no plot
 ```
 
 Everything below was checked against the shipped implementation
@@ -572,17 +573,49 @@ portable. `mplcursors` must be importable by the interpreter named by `pyplot_py
 
 ### 12.3 The data is already exported
 
-Every `pyplot` writes `<name>.data` (the plotted columns) next to `<name>.py`. That file
-*is* the export — load it anywhere:
+Every `pyplot` writes its data table next to `<name>.py`, and that file *is* the export.
+By default it is **`<name>.npy`**, numpy's own array format (E-549): a *structured* array
+with one named field per column — the scale and the value of each plotted expression, a
+repeated name numbered `_2`, `_3` — holding exact doubles:
 
 ```python
 import numpy as np
-d = np.loadtxt("compare.data")
+d = np.load("compare.npy")
+d.dtype.names            # ('time', 'tran1.v(out)', 'time_2', 'tran2.v(out)')
+t, v = d['time'], d['tran1.v(out)']
+
+import pandas as pd
+pd.DataFrame(d)          # a table with those column names
 ```
 
-The numbers carry 17 significant digits, so every double round-trips exactly (E-548; the
-six digits written before collapsed a time axis offset to 1 s with nanosecond steps to a
-single x value, and a microvolt ripple on a volt to a handful of levels).
+It is a fraction of the text size and loads in milliseconds: a million-point, four-trace
+table measured 64 MB against 107 MB of text and 7 ms against 420 ms.
+
+`set pyplot_export=ascii` writes the whitespace table `<name>.data` instead, with a header
+line naming the columns (`# time v(out) time_2 v(in)`, which `np.loadtxt` skips) and 17
+significant digits per number, so every double round-trips exactly (E-548). `bin` — also
+`npy`, `binary` — restores the default; an unknown value is reported and treated as `bin`.
+The generated script loads whichever was written.
+
+### 12.4 Just the data — `-export`
+
+`pyplot -export [name] <expr> ...` writes the table and nothing else: no script, no
+Python, no plot. It takes the same expressions, `vs` and plot-qualified names as a plot:
+
+```
+pyplot -export sig v(out) i(v1)          $ sig.npy: time, v(out), time_2, i(v1)
+pyplot -export iv i(v1) vs v(out)        $ iv.npy:  v(out), i(v1)
+set pyplot_export=ascii
+pyplot -export sig v(out)                $ sig.data
+```
+
+and reports `pyplot: exported sig.npy (301 rows, 4 columns)`. The name is optional, as
+for a plot (the default stem is `export`). `-export` takes plain signals: combined with
+`-hist`, `-contour`, `-smith`, `-fft`, `-bode`, `-nyquist`, `-polar` or `-eye` it is
+refused, since each of those writes its own table beside its plot anyway — a
+`-contour` table has the fields `x`, `y`, `z` named after the vectors, `-smith` has
+`vec`, `re`, `im`, the AC views `vec`, `frequency`, `re`, `im`, an eye `eye_t`,
+`eye_wave`.
 
 ---
 
@@ -592,8 +625,9 @@ For base name `NAME`, `pyplot` produces:
 
 | File | Contents |
 |---|---|
-| `NAME.py` | a standalone matplotlib script |
-| `NAME.data` | the plotted data, one column per vector |
+| `NAME.py` | a standalone matplotlib script (not with `-export`) |
+| `NAME.npy` | the plotted data, a structured numpy array, one named field per column (default) |
+| `NAME.data` | the same as a whitespace table with a `#` header line, under `set pyplot_export=ascii` |
 | `NAME.png` / `.svg` / `.pdf` | the image, when `pyplot_terminal` is set |
 
 `NAME.py` is *self-contained*: it can be edited and re-run outside ngspice, which is the
@@ -687,6 +721,7 @@ unset pyplot_style
 | `pyplot [f] -bode <vecs>` | magnitude(dB)/phase(deg) vs log-f |
 | `pyplot [f] -nyquist <vecs>` | imag vs real |
 | `pyplot [f] -polar <vecs>` | magnitude at phase (polar) |
+| `pyplot [f] -export <vecs>` | the data table only, no plot |
 
 **Variables**
 
@@ -717,6 +752,7 @@ unset pyplot_style
 | `pyplot_contour_cmap` | string | `-contour` |
 | `pyplot_contour_lines` | boolean | `-contour` |
 | `pyplot_status` | integer, **read** by the deck | set by every `pyplot`: the exit status of a hardcopy (E-547) |
+| `pyplot_export` | `bin` / `ascii` | the data table's format: `.npy` (default) or the `.data` text (E-549) |
 
 ---
 

@@ -9,7 +9,9 @@
    (HIST, Enhancement-217) or a magnitude spectrum (FFT) -- all three share the
    figure/style/backend/subplot scaffolding, so they select on a mode rather than
    duplicating it. */
-enum py_mode { PYMODE_LINE = 0, PYMODE_HIST = 1, PYMODE_FFT = 2 };
+enum py_mode { PYMODE_LINE = 0, PYMODE_HIST = 1, PYMODE_FFT = 2,
+               /* Enhancement-549: write the data table and nothing else */
+               PYMODE_EXPORT = 3 };
 
 void ft_pyplot(double *xlims, double *ylims,
         double xdel, double ydel,

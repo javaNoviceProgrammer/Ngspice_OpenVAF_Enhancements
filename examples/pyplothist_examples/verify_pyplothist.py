@@ -55,7 +55,7 @@ def histogram(vals, lo, hi, nbins):
 
 
 def main():
-    for f in ("pyplothist.py", "pyplothist.data", "pyplothist.png"):
+    for f in ("pyplothist.py", "pyplothist.data", "pyplothist.npy", "pyplothist.png"):
         p = os.path.join(HERE, f)
         if os.path.exists(p):
             os.remove(p)
@@ -73,7 +73,16 @@ def main():
     check("histogram panels do not share the x-axis", "sharex=False" in pytext)
 
     print("[2] the full signal length is histogrammed (not truncated to the scale)")
-    rows = [ln.split() for ln in open(data)] if os.path.exists(data) else []
+    # Enhancement-549: the table is `.npy` (structured) by default, `.data` text
+    # under `set pyplot_export=ascii`; read whichever was written as rows of strings
+    npy = os.path.join(HERE, "pyplothist.npy")
+    if os.path.exists(npy):
+        import numpy as np
+        d = np.load(npy)
+        rows = [["%.17g" % float(d[n][i]) for n in d.dtype.names] for i in range(d.shape[0])]
+    else:
+        rows = [ln.split() for ln in open(data) if ln.split() and not ln.startswith("#")] \
+            if os.path.exists(data) else []
     check("data table has all N samples", len(rows) == N, f"{len(rows)} rows, want {N}")
     if len(rows) != N:
         print("\nSOME FAILED")

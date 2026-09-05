@@ -504,7 +504,7 @@ write out.raw v(out)           ; binary rawfile (reload with `load`)
 | Command | Purpose |
 |---|---|
 | `plot` | the built-in plotter: `plot expr … [vs expr] [xl lo hi] [yl lo hi] [xlog] [ylog]` |
-| `pyplot` | render/export via **matplotlib** (`-eye`, `-hist`, `-contour` variants); PNG when a file is named; a hardcopy's exit status is published as `pyplot_status` and a failure names the image not written (E-547) |
+| `pyplot` | render/export via **matplotlib** (`-eye`, `-hist`, `-contour` variants); PNG when a file is named; a hardcopy's exit status is published as `pyplot_status` and a failure names the image not written (E-547); the data table is `<name>.npy`, a structured numpy array, or `.data` text under `set pyplot_export=ascii`, and `pyplot -export <sigs>` writes just that (E-549) |
 | `gnuplot` | render/export via gnuplot |
 | `hardcopy` | write a PostScript/SVG hardcopy of a plot |
 | `asciiplot` | plot as ASCII art in the terminal |

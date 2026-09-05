@@ -439,6 +439,7 @@ examples/opamp741_examples/results/
 # Enhancement-98 pyplotpanel: verify-run scratch files (generated plots/scripts)
 examples/pyplotpanel_examples/*.png
 examples/pyplotpanel_examples/*.data
+examples/pyplotpanel_examples/*.npy
 examples/pyplotpanel_examples/deck.sp
 examples/pyplotpanel_examples/base.py
 examples/pyplotpanel_examples/p1.py
@@ -448,6 +449,7 @@ examples/pyplotpanel_examples/sty.py
 # Enhancement-94 pyplot: verify-run scratch files (generated plots/scripts)
 examples/pyplot_examples/*.osdi
 examples/pyplot_examples/*.data
+examples/pyplot_examples/*.npy
 examples/pyplot_examples/tran.sp
 examples/pyplot_examples/ac.sp
 examples/pyplot_examples/rc.*
@@ -461,6 +463,7 @@ examples/baregenerate_examples/*.sp
 
 # Enhancement-99 pyplotexport: verify-run scratch files (generated plots/scripts)
 examples/pyplotexport_examples/*.data
+examples/pyplotexport_examples/*.npy
 examples/pyplotexport_examples/deck.sp
 examples/pyplotexport_examples/expsvg.py
 examples/pyplotexport_examples/expsvg.svg
@@ -472,22 +475,27 @@ examples/pyplotexport_examples/exppng.png
 # Enhancement-217 pyplothist: verify-run scratch files (generated histogram plot/script/data)
 examples/pyplothist_examples/pyplothist.py
 examples/pyplothist_examples/pyplothist.data
+examples/pyplothist_examples/pyplothist.npy
 examples/pyplothist_examples/pyplothist.png
 
 # Enhancement-218 pyplotcontour: verify-run scratch files (generated contour plot/script/data)
 examples/pyplotcontour_examples/pyplotcontour.py
 examples/pyplotcontour_examples/pyplotcontour.data
+examples/pyplotcontour_examples/pyplotcontour.npy
 examples/pyplotcontour_examples/pyplotcontour.png
 examples/pyplotcontour_examples/bridge.py
 examples/pyplotcontour_examples/bridge.data
+examples/pyplotcontour_examples/bridge.npy
 examples/pyplotcontour_examples/bridge.png
 
 # Enhancement-254 pyplotsmith: verify-run scratch files (generated Smith plot/script/data)
 examples/pyplotsmith_examples/smith_demo.py
 examples/pyplotsmith_examples/smith_demo.data
+examples/pyplotsmith_examples/smith_demo.npy
 examples/pyplotsmith_examples/smith_demo.png
 examples/pyplotsmith_examples/smith_match.py
 examples/pyplotsmith_examples/smith_match.data
+examples/pyplotsmith_examples/smith_match.npy
 examples/pyplotsmith_examples/smith_match.png
 examples/pyplotsmith_examples/s11.dat
 
@@ -605,6 +613,7 @@ examples/checkpoint_examples/*.dat
 # mid-run `git add` can never track them (as an E-300 commit accidentally did).
 examples/pyplotmore_examples/*.cir
 examples/pyplotmore_examples/*.data
+examples/pyplotmore_examples/*.npy
 examples/pyplotmore_examples/*.png
 examples/pyplotmore_examples/*.py
 !examples/pyplotmore_examples/verify_pyplotmore.py
