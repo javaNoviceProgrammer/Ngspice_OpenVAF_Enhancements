@@ -237,6 +237,8 @@ refused with a pointer to `-expr`.
 … one per invocation, with `sample` (1 … N) as its scale, and named in
 `$montecarlo_plot`. With no `-spec` at all there is no yield: the command just
 runs the analysis N times and keeps what you asked for.
+A name is refused when the record plot already owns it — its scale `sample`, or a
+result such as `montecarlo_n` (E-557) — and when two `-expr` share it.
 
 ```spice
 .param rr = agauss(1000, 100, 3)

@@ -11,6 +11,7 @@
 #include "ngspice/bool.h"
 #include "ngspice/wordlist.h"
 #include "ngspice/fteext.h"
+#include "ngspice/cpextern.h" /* Enhancement-557: cp_vset */
 
 #include "plotting/plotit.h"
 #include "plotting/pyplot.h" /* ft_pyplot_eye() */
@@ -28,6 +29,18 @@ com_pyplot(wordlist *wl)
     char *fname = NULL;
     char *fullname = NULL;
     char *fname_unq = NULL;   /* Enhancement-556 (hunt F5): the name, unquoted */
+
+    /* Enhancement-557 (hunt F6): `pyplot_status` is published by EVERY pyplot,
+       as E-547 promised -- a refusal before the backend runs (a usage error,
+       plotit's own `X values must be > 0 for log scale`), a table or script
+       that could not be opened, and a successful `-export` all left the
+       variable unset, so the deck's `if $pyplot_status ne 0` died on exactly
+       the failures it was written to catch. A failure is assumed here, and
+       every path that succeeds says so. */
+    {
+        int st = 1;
+        cp_vset("pyplot_status", CP_NUM, &st);
+    }
     wordlist *wl_owned = NULL;     /* E-217/E-218: filtered copy we (not the caller) own */
     char defname[64] = "pyplot";
     bool tempf = FALSE;

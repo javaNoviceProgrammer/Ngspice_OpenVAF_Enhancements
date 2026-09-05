@@ -721,7 +721,10 @@ end
 ```
 
 An interactive window is launched in the background, where nothing can be waited for;
-`pyplot_status` is 0 for a launch that started, and on POSIX the background shell prints
+`pyplot_status` is 0 for a launch that started and for a successful `-export`, 1 for
+a `pyplot` refused before Python ran (a usage error, `xlog` with a zero limit, a file
+that could not be opened — the variable exists after every `pyplot`, E-557), and on
+POSIX the background shell prints
 `pyplot: the viewer exited with status N` if the viewer later fails.
 
 ---
@@ -810,9 +813,9 @@ unset pyplot_style
 | `pyplot_contour_levels` | integer | `-contour` |
 | `pyplot_contour_cmap` | string | `-contour` |
 | `pyplot_contour_lines` | boolean | `-contour` |
-| `pyplot_status` | integer, **read** by the deck | set by every `pyplot`: the exit status of a hardcopy (E-547) |
+| `pyplot_status` | integer, **read** by the deck | set by every `pyplot`: the exit status of a hardcopy (E-547); 0 after a successful `-export`, 1 for anything refused before Python ran — a usage error, a log axis with a non-positive limit, a table or script that could not be opened (E-557) |
 | `pyplot_export` | `bin` / `ascii` | the data table's format: `.npy` (default) or the `.data` text (E-549) |
-| `pyplot_decimate` | `auto` / `off` / integer | line plots: draw a long trace as its per-pixel envelope (E-550) |
+| `pyplot_decimate` | `auto` / `off` / integer ≥ 2 | line plots: draw a long trace as its per-pixel envelope (E-550); a number below 2 is not a bin count and is said so, like a non-number (E-557) |
 | `pyplot_eng` | `off` | plain tick numbers instead of engineering ones (E-551) |
 
 ---

@@ -385,6 +385,29 @@ check("E-556a: a quoted export name with a space lands where it says",
 check("E-556b: a quoted hardcopy name with a space renders there, status 0",
       is_png(os.path.join(HERE, "with space", "img.png")) and status_of(log) == 0, log.strip()[-160:])
 
+# Enhancement-557 (hunt F6, F8): pyplot_status on every path; a bin count below 2
+sdeck = os.path.join(HERE, "status2.sp")
+with open(sdeck, "w") as f:
+    f.write(statusdeck.format(
+        extra="pyplot -export exp2 v(in)\necho pyplot_status_export=$pyplot_status\n"
+              "pyplot bad v(in) xlog xlimit 0 1m\necho pyplot_status_bad=$pyplot_status\n"
+              "pyplot nodir/x v(in)\necho pyplot_status_nodir=$pyplot_status\n"
+              "set pyplot_decimate=1",
+        name="dec1"))
+log = run_deck(sdeck, HERE)
+def st_of(tag):
+    m = re.search(r"pyplot_status_%s=(-?\d+)" % tag, log)
+    return int(m.group(1)) if m else None
+check("E-557a: a successful -export publishes pyplot_status=0",
+      st_of("export") == 0 and os.path.isfile(os.path.join(HERE, "exp2.npy")), log.strip()[-160:])
+check("E-557b: a refused plot (xlog with a zero limit) publishes pyplot_status=1",
+      st_of("bad") == 1 and "must be > 0 for log scale" in log, log.strip()[-160:])
+check("E-557c: a table that cannot be opened publishes pyplot_status=1",
+      st_of("nodir") == 1 and "nodir/x" in log, log.strip()[-160:])
+check("E-557d: pyplot_decimate=1 is said not to be a bin count and the plot renders",
+      "pyplot_decimate=1 is not a bin count" in log and status_of(log) == 0
+      and is_png(os.path.join(HERE, "dec1.png")), log.strip()[-200:])
+
 badpy = os.path.join(HERE, "badpy.sh")
 with open(badpy, "w") as f:
     f.write("#!/bin/sh\necho 'ModuleNotFoundError: No module named matplotlib' >&2\nexit 3\n")
@@ -791,7 +814,8 @@ for f in ("two.sp", "dir.sp", "lw.sp", "be.sp",
           "acmag.py", "acmag.data", "acmag.npy", "acmag.png",
           "eye.sp", "eyefig.py", "eyefig.data", "eyefig.npy", "eyefig.png",
           "eye.py", "eye.data", "eye.npy", "eye.png",
-          "pyplot.py", "pyplot.data", "pyplot.npy", "pyplot.png", "rcload.osdi", "quoted.sp"):
+          "pyplot.py", "pyplot.data", "pyplot.npy", "pyplot.png", "rcload.osdi", "quoted.sp",
+          "status2.sp", "exp2.npy", "dec1.py", "dec1.npy", "dec1.png"):
     p = os.path.join(HERE, f)
     if os.path.exists(p):
         os.remove(p)

@@ -36,11 +36,12 @@ Checks (both solvers):
   [13] F2: osdimc draws of the bound parameter fail the trials that move it past l
   [14] F2: E-546 path -- a model parameter defaulted against an instance-read bound is judged per instance
   [15] F2: a constant default outside its own constant range still runs (E-56), with lint L027 at compile time
-  [16] an object compiled without the entry point still loads and draws
+  [16] an object compiled without the entry point (a pre-E-555 compiler from git) still loads and draws
 """
 
 import atexit
 import os
+import platform
 import re
 import subprocess
 import sys
@@ -55,7 +56,26 @@ check_both_solvers(__file__)
 
 ROOT = os.path.dirname(os.path.dirname(HERE))
 BSIM4 = os.path.join(ROOT, "VA_TEST", "VA-Models-main", "code", "bsim4", "vacode", "bsim4.va")
-PREBUILT = os.path.join(ROOT, "bin", "macos", "apple-silicon", "openvaf-r")
+# A compiler from BEFORE this enhancement, for the old-object case: the prebuilt
+# binary committed at the E-554 release, taken from the repository's history
+# (the CI republishes bin/ after every push, so the working tree's copy is
+# current and cannot play the old one). macOS on Apple silicon only.
+OLD_REF = "Enhancement-554_osdidist"
+OLD_BIN = "bin/macos/apple-silicon/openvaf-r"
+
+
+def old_compiler():
+    if sys.platform != "darwin" or platform.machine() != "arm64":
+        return None
+    dst = os.path.join(HERE, "_pg_oldvaf")
+    r = subprocess.run(["git", "-C", ROOT, "show", f"{OLD_REF}:{OLD_BIN}"],
+                       capture_output=True, timeout=120)
+    if r.returncode != 0 or len(r.stdout) < 1000000:
+        return None
+    with open(dst, "wb") as f:
+        f.write(r.stdout)
+    os.chmod(dst, 0o755)
+    return dst
 
 
 def _cleanup():
@@ -248,16 +268,17 @@ check("[15] F2: a constant default outside its own constant range still runs (E-
       out.strip()[-120:])
 
 # ------------------------------------------------------- old object ---
-if os.path.isfile(PREBUILT):
+PREBUILT = old_compiler()
+if PREBUILT:
     rc, log, OLD = compile_va("vold", '(* std=25.0 *) parameter real r = 1000.0;', compiler=PREBUILT)
     out = run(gated_deck("o1", "set osdimc\nset mcseed=5\nrepeat 3\n  op\n  print @mm[r]\nend",
                          model="vold", obj="vold"), "o1")
     vals = seq(out, "@mm[r]")
-    check("[16] an object compiled without the entry point still loads and draws",
+    check("[16] an object compiled without the entry point (a pre-E-555 compiler from git) still loads and draws",
           rc == 0 and "OSDI_PARAM_GIVEN_FNS" not in subprocess.run(["nm", OLD], capture_output=True, text=True).stdout
           and len(vals) == 3 and vals[0] == 1000.0 and vals[1] != 1000.0 and "not drawn" not in out, f"r={vals}")
 else:
-    check("[16] (prebuilt compiler not found; skipped)", True)
+    check("[16] (no pre-E-555 compiler for this platform; skipped)", True)
 
 print(f"\n{passed}/{checks} checks passed")
 sys.exit(0 if passed == checks else 1)

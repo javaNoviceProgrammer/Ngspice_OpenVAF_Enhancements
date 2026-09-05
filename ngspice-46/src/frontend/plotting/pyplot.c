@@ -689,8 +689,9 @@ void ft_pyplot(double *xlims, double *ylims,
         char decvar[BSIZE_SP];
         int n;
         if (cp_getvar("pyplot_decimate", CP_NUM, &n, 0)) {
-            if (n < 2)
-                decimate = FALSE;
+            if (n < 2)   /* Enhancement-557 (hunt F8): said, like a non-number */
+                fprintf(cp_err, "Warning: pyplot_decimate=%d is not a bin count (2 or "
+                        "more), off or auto; decimating automatically.\n", n);
             else
                 decbins = n;
         } else if (cp_getvar("pyplot_decimate", CP_STRING, decvar, sizeof decvar)) {
@@ -838,8 +839,10 @@ void ft_pyplot(double *xlims, double *ylims,
     /* Enhancement-549: `pyplot -export` -- the table was the point; no script,
        no Python. */
     if (mode == PYMODE_EXPORT) {
+        int st = 0;          /* Enhancement-557: the export succeeded */
         fprintf(cp_out, "pyplot: exported %s (%d rows, %d columns)\n",
                 filename_data, datarows, 2 * numVecs);
+        cp_vset("pyplot_status", CP_NUM, &st);
 #ifdef SHARED_MODULE
         setlocale(LC_NUMERIC, llocale);
 #endif

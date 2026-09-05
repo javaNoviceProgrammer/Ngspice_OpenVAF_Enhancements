@@ -4573,6 +4573,22 @@ void com_montecarlo(wordlist *wl)
                     fprintf(cp_err, "montecarlo: two -expr named '%s'\n", exprname[nexpr]);
                     return;
                 }
+            /* Enhancement-557 (hunt F7): the record plot's own vectors -- its
+             * scale `sample` and the result values -- shadowed a record of the
+             * same name (`print sample` read 1..N and the record was
+             * unreachable); refuse the name instead. */
+            {
+                size_t r;
+                int taken = eq(exprname[nexpr], "sample");
+                for (r = 0; !taken && r < sizeof hs_names_montecarlo / sizeof hs_names_montecarlo[0]; r++)
+                    taken = eq(exprname[nexpr], hs_names_montecarlo[r]);
+                if (taken) {
+                    fprintf(cp_err, "montecarlo: -expr name '%s' is the record plot's own "
+                                    "vector (its scale `sample`, or a result such as "
+                                    "montecarlo_n); choose another name\n", exprname[nexpr]);
+                    return;
+                }
+            }
             nexpr++;
             wl = wl->wl_next;
         } else {

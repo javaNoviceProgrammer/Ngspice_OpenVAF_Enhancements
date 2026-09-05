@@ -29,6 +29,7 @@ Checks (both solvers):
   [11] an expression that never varies is noted
   [12] a waveform whose point count differs between samples is refused, the
        scalar beside it still recorded
+  [14] E-557: an -expr named like the plot's own vector (sample, montecarlo_n) is refused
   [13] the old form is unchanged: a limited -spec alone reports the yield and
        creates no plot
 """
@@ -180,6 +181,14 @@ check("[13] the old form is unchanged: a limited -spec alone reports the yield a
       "yield  : 100.000%" in out and "yield=1" in out and "plot=montecarlo" not in out
       and "recorded into plot" not in out,
       out.strip()[-200:])
+
+# Enhancement-557 (hunt F7): a name the record plot already owns
+rc, out = run(DECK, "montecarlo 4 -seed 3 -analysis op -expr sample=@r1[resistance]\necho after3", "resname")
+rc2, out2 = run(DECK, "montecarlo 4 -seed 3 -analysis op -expr montecarlo_n=v(out)\necho after4", "resname2")
+check("[14] E-557: an -expr named like the plot's own vector (sample, montecarlo_n) is refused, nothing recorded",
+      "-expr name 'sample' is the record plot's own vector" in out and "recorded into plot" not in out
+      and "after3" in out and "-expr name 'montecarlo_n' is the record plot's own vector" in out2
+      and "recorded into plot" not in out2 and "after4" in out2, (out + out2).strip()[-200:])
 
 print(f"\n{passed}/{checks} checks passed")
 sys.exit(0 if passed == checks else 1)

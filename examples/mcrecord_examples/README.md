@@ -4,7 +4,7 @@
 python3 verify_mcrecord.py
 ```
 
-13 checks, both solvers.
+14 checks, both solvers.
 
 ## The need
 
