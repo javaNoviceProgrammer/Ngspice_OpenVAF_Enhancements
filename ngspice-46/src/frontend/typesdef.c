@@ -155,6 +155,9 @@ static struct plotab plotabs[NUMPLOTTYPES] = {
      * every name in the tree that reaches plot_alloc(). */
     { "sweepwave", "sweepwave", FALSE, FALSE },
     { "sweep", "sweep", FALSE, FALSE },
+    /* Enhancement-552: the plot `montecarlo -expr` records into (montecarlo1,
+     * montecarlo2, ...). No earlier pattern is a substring of the name. */
+    { "montecarlo", "montecarlo", FALSE, FALSE },
     /* Enhancement-487: "hbosc" contains "hb" -- without this entry the autonomous
      * oscillator spectrum was abbreviated `hb1`, indistinguishable from a driven
      * `hb` run in the same session. It must precede { "hb", "hb" }. */

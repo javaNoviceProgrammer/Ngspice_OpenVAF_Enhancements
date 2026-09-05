@@ -214,17 +214,64 @@ sample).
 ## 6. Yield — `montecarlo`
 
 `montecarlo` packages the whole flow: run the samples, apply the pass/fail specs,
-report the yield with a confidence interval.
+report the yield with a confidence interval — or, since E-552, simply record a
+value per sample for later.
 
 ```
-montecarlo <N> [-lhs] [-seed <s>] [-analysis <cmd>]
-           (-spec <metric> [-max <hi>] [-min <lo>])...
+montecarlo <N> [-lhs] [-warm] [-seed <s>] [-analysis <cmd>]
+           (-spec <metric> -max <hi>|-min <lo>)...
+           (-expr [name=]<expression>)...
 ```
 
 A sample **passes** only if *every* spec's metric is within its `-max`/`-min`
 limits. It reports the yield with a **Wilson 95% confidence interval** and a
 per-spec violation count, and leaves `montecarlo_yield`, `montecarlo_npass`,
 `montecarlo_n` for scripting. `-lhs` gives a much lower-variance yield estimate.
+A `-spec` is a judgement, so it needs a limit; one without `-max`/`-min` is
+refused with a pointer to `-expr`.
+
+### 6.1 Recording without judging — `-expr`
+
+`-expr [name=]<expression>` evaluates the expression after every sample and
+**records** it, unjudged, into a plot of its own — `montecarlo1`, `montecarlo2`,
+… one per invocation, with `sample` (1 … N) as its scale, and named in
+`$montecarlo_plot`. With no `-spec` at all there is no yield: the command just
+runs the analysis N times and keeps what you asked for.
+
+```spice
+.param rr = agauss(1000, 100, 3)
+V1 in 0 dc 1 ac 1
+R1 in out {rr}
+R2 out 0 1k
+.control
+  montecarlo 200 -seed 3 -analysis op -expr vo=v(out) -expr r=@r1[resistance]
+  print mean(vo) stddev(vo)              ; montecarlo1 is now current
+  pyplot -hist vo
+
+  montecarlo 50 -analysis "dc v1 0 1 0.01" -expr vo=v(out)
+  plot vo                                ; 50 curves, one per sample
+  print montecarlo1.vo[3]                ; an earlier run is still there
+.endc
+```
+
+What each `-expr` becomes:
+
+| the expression is | recorded as |
+|---|---|
+| a scalar per sample (`v(out)` after `op`, `vecmax(...)`, a device parameter) | an N-long vector on the `sample` scale |
+| a waveform per sample (`v(out)` after a `dc`/`ac`/`tran` sweep, L points) | an N × L two-dimensional vector with the analysis scale (`v-sweep`, `frequency`, `time`) copied beside it — `plot` draws it as a family of N curves, `vo[k]` is sample k |
+
+A complex value (an `ac` output) is recorded as its magnitude. A sample that
+failed to simulate leaves `nan` in its row. A waveform whose point count differs
+between samples — an adaptive `tran` can do that — is not recorded and the
+command says so; reduce it to a scalar, or `linearize` it inside the
+`-analysis` command. An expression that gives the same value in every sample is
+noted, since it means nothing the deck draws reaches it. The name must be a
+plain identifier (`montecarlo1.<name>` has to be spellable); without one the
+vectors are `expr1`, `expr2`, …
+
+`-spec` and `-expr` combine: a yield run with `-expr` also records its values,
+so a yield and the distribution behind it come from the same samples.
 
 ```spice
 * a matched divider, +/-4% ratio spec

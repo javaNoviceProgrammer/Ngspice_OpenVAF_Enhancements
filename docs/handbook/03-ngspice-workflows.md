@@ -212,6 +212,16 @@ devices); ngspice's `sunif(0)` is uniform on **[−1, 1]**, not [0, 1]; and
 `wrdata` cannot export control-created vectors (parse `print` output
 instead — see [§4.5](04-limitations-and-gotchas.md#45-ngspice-control-language-traps)).
 
+**The packaged command, with or without a yield.** `montecarlo N -analysis <cmd>
+-spec <metric> -max/-min …` runs N samples and reports a yield with a
+confidence interval (see the [statistics guide](../internals/ngspice_internals/ngspice_statistics.md)).
+Since E-552 it also serves the plainer need — run the analysis N times and keep
+a value from each: `-expr [name=]<expression>` records the expression per sample
+into a plot of its own, `montecarlo1`, `montecarlo2`, … (`$montecarlo_plot`),
+with `sample` as its scale; a scalar becomes an N-long vector, a sweep's
+waveform an N × L family that `plot` draws as N curves. No `-spec`, no yield;
+a `-spec` without a limit is refused with a pointer to `-expr`.
+
 **Automatic MC from the model's own statistics — `.option osdimc`.** A
 Verilog-A parameter can *declare* its variability with attributes, and the
 simulator then handles the whole loop

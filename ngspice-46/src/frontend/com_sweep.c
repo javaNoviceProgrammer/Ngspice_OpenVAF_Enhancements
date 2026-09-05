@@ -187,6 +187,35 @@ static double sw_eval_expr_ok(const char *expr, int *ok)
     return f;
 }
 
+/* Enhancement-552: evaluate `expr` on the current plot and hand back a PRIVATE
+ * copy of the whole result -- real; a complex value is reduced to its
+ * magnitude, as sw_eval_expr_ok() does for its last element -- with `v_scale`
+ * left pointing at the evaluator's scale (the analysis plot's, e.g. `time`),
+ * which the caller must read before the plot is replaced. NULL if the
+ * expression resolves to nothing. */
+static struct dvec *sw_eval_expr_copy(const char *expr)
+{
+    struct pnode *pn = ft_getpnames_from_string(expr, TRUE);
+    struct dvec *out = NULL;
+    if (!pn)
+        return NULL;
+    {
+        struct dvec *v = ft_evaluate(pn);
+        if (v && v->v_length >= 1) {
+            int i;
+            out = dvec_alloc(copy("mc_expr"), v->v_type, VF_REAL, v->v_length, NULL);
+            for (i = 0; i < v->v_length; i++)
+                out->v_realdata[i] = isreal(v) ? v->v_realdata[i]
+                    : hypot(v->v_compdata[i].cx_real, v->v_compdata[i].cx_imag);
+            out->v_scale = v->v_scale;
+        }
+        if (!pn->pn_value && v)
+            vec_free(v);
+    }
+    free_pnode(pn);
+    return out;
+}
+
 /* Enhancement-189: linear interpolation of (x[],y[]) at xq, flat outside the
  * data range; x[] is assumed monotonic increasing. Used to resample per-point
  * waveforms onto a common scale for the `-overlay` family plot. */
@@ -3985,7 +4014,8 @@ static const char *const hs_names_wcd[] = {
 };
 static const char *const hs_names_montecarlo[] = {
     "montecarlo_yield", "montecarlo_npass", "montecarlo_n",
-    "montecarlo_nvalid", "montecarlo_nfailed", "montecarlo_seed"
+    "montecarlo_nvalid", "montecarlo_nfailed", "montecarlo_seed",
+    "montecarlo_plot"          /* Enhancement-552: the plot the -expr values went to */
 };
 
 void com_highsigma(wordlist *wl)
@@ -4387,11 +4417,38 @@ void com_montecarlo(wordlist *wl)
     long specfail[MC_MAXSPEC];
     int save_optimizing = ft_optimizing;
     int s;
+    /* Enhancement-552: `-expr [name=]<expression>` -- recorded per sample into a
+     * `montecarlo<n>` plot, judged against nothing. A scalar per sample becomes
+     * an N-long vector on the `sample` scale; a whole waveform per sample (a
+     * `dc`/`ac` sweep's output) becomes an N x L two-dimensional vector with
+     * the analysis scale copied beside it, which `plot` draws as a family. A
+     * yield needs a -spec WITH a limit; a run may have either, or both. */
+    int nexpr = 0;
+    char exprname[MC_MAXSPEC][64];
+    char exprtext[MC_MAXSPEC][256];
+    double *exprdata[MC_MAXSPEC];       /* nsamp (scalar) or nsamp*len (waveform) */
+    int exprlen[MC_MAXSPEC];            /* 0 until first resolved; L points per sample */
+    int exprtype[MC_MAXSPEC];
+    int exprragged[MC_MAXSPEC];         /* a sample whose length differed */
+    int exprragged_len[MC_MAXSPEC];
+    int exprragged_at[MC_MAXSPEC];
+    struct dvec *exprscale[MC_MAXSPEC]; /* a private copy of the waveform's scale */
+    double *exprfirst[MC_MAXSPEC];      /* first sample's values, for the "same value" note */
+    int exprvaried[MC_MAXSPEC];
+    int e;
 
     if (wl == NULL || wl->wl_word == NULL) {
         fprintf(cp_err, "Usage: montecarlo <N> [-lhs] [-warm] [-seed <s>] [-analysis <cmd>] "
-                        "(-spec <metric> [-max <hi>] [-min <lo>])...\n");
+                        "(-spec <metric> [-max <hi>] [-min <lo>])... "
+                        "(-expr [name=]<expression>)...\n"
+                        "       a -spec with a -max/-min limit is judged for the yield; "
+                        "an -expr is recorded per sample into a montecarlo<n> plot\n");
         return;
+    }
+    for (e = 0; e < MC_MAXSPEC; e++) {
+        exprdata[e] = NULL; exprlen[e] = 0; exprtype[e] = SV_NOTYPE;
+        exprragged[e] = 0; exprragged_len[e] = 0; exprragged_at[e] = 0;
+        exprscale[e] = NULL; exprfirst[e] = NULL; exprvaried[e] = 0;
     }
     /* Enhancement-478: atoi() read `2e2` as 2, so a 200-sample run drew 2 and
      * still printed a yield. `1e6` became 1 and was caught only by luck. */
@@ -4471,19 +4528,63 @@ void com_montecarlo(wordlist *wl)
             wl = wl->wl_next;
             if (!sw_boundarg(wl->wl_word, "montecarlo", "-min", &lo[nspec - 1])) return;   /* E-501 */
             hasmin[nspec - 1] = 1; wl = wl->wl_next;
+        } else if (eq(w, "-expr")) {
+            /* Enhancement-552: `-expr [name=]<expression>`. The name must be a
+             * plain identifier so that `montecarlo1.<name>` can be spelled; a
+             * leading `ident=` is a name only if the identifier is well-formed
+             * (`x=v(out)>0.5` has one, `v(a)==1` has none). */
+            char *tok, *eqp = NULL;
+            if (nexpr >= MC_MAXSPEC) { fprintf(cp_err, "montecarlo: too many -expr (max %d)\n", MC_MAXSPEC); return; }
+            if (!wl->wl_next) { fprintf(cp_err, "montecarlo: -expr needs an expression\n"); return; }
+            wl = wl->wl_next;
+            tok = cp_unquote(wl->wl_word);
+            if ((isalpha((unsigned char) tok[0]) || tok[0] == '_')) {
+                char *q = tok;
+                while (isalnum((unsigned char) *q) || *q == '_')
+                    q++;
+                if (*q == '=' && q[1] != '=' && q > tok)
+                    eqp = q;
+            }
+            if (eqp) {
+                size_t nl = (size_t) (eqp - tok);
+                if (nl >= sizeof(exprname[nexpr])) nl = sizeof(exprname[nexpr]) - 1;
+                memcpy(exprname[nexpr], tok, nl);
+                exprname[nexpr][nl] = '\0';
+                strncpy(exprtext[nexpr], eqp + 1, sizeof(exprtext[nexpr]) - 1);
+            } else {
+                (void) snprintf(exprname[nexpr], sizeof(exprname[nexpr]), "expr%d", nexpr + 1);
+                strncpy(exprtext[nexpr], tok, sizeof(exprtext[nexpr]) - 1);
+            }
+            exprtext[nexpr][sizeof(exprtext[nexpr]) - 1] = '\0';
+            tfree(tok);
+            if (!exprtext[nexpr][0]) { fprintf(cp_err, "montecarlo: -expr '%s' has no expression after the '='\n", exprname[nexpr]); return; }
+            for (e = 0; e < nexpr; e++)
+                if (eq(exprname[e], exprname[nexpr])) {
+                    fprintf(cp_err, "montecarlo: two -expr named '%s'\n", exprname[nexpr]);
+                    return;
+                }
+            nexpr++;
+            wl = wl->wl_next;
         } else {
             fprintf(cp_err, "montecarlo: unexpected token '%s'\n", w);
             return;
         }
     }
 
-    if (nspec == 0) {
-        fprintf(cp_err, "montecarlo: at least one '-spec <metric> (-max/-min)' is required\n");
+    /* Enhancement-552: a yield is a judgement, so it needs a spec WITH a limit;
+     * a value to keep without judging it is an -expr. Nothing to judge and
+     * nothing to record is a run for no result, and is refused as such. */
+    if (nspec == 0 && nexpr == 0) {
+        fprintf(cp_err, "montecarlo: nothing to do -- give '-spec <metric> -max <hi>|-min <lo>' "
+                        "for a yield, and/or '-expr [name=]<expression>' to record a value "
+                        "per sample into a montecarlo<n> plot\n");
         return;
     }
     for (s = 0; s < nspec; s++)
         if (!hasmax[s] && !hasmin[s]) {
-            fprintf(cp_err, "montecarlo: spec '%s' has no -max/-min limit\n", metric[s]);
+            fprintf(cp_err, "montecarlo: spec '%s' has no -max/-min limit -- a spec is judged "
+                            "for the yield; to record an expression without judging it, "
+                            "use '-expr %s'\n", metric[s], metric[s]);
             return;
         }
     /* 2026-09-04 MC hunt, F5: an upper limit below the lower one is
@@ -4502,9 +4603,18 @@ void com_montecarlo(wordlist *wl)
         return;
     }
 
-    fprintf(cp_out, "montecarlo: %d %s samples, analysis '%s', %d spec%s, seed %u%s\n",
-            nsamp, uselhs ? "Latin-Hypercube" : "random", analysis,
-            nspec, nspec == 1 ? "" : "s", seed, seed_given ? "" : " (default)");
+    if (nspec > 0)
+        fprintf(cp_out, "montecarlo: %d %s samples, analysis '%s', %d spec%s, seed %u%s\n",
+                nsamp, uselhs ? "Latin-Hypercube" : "random", analysis,
+                nspec, nspec == 1 ? "" : "s", seed, seed_given ? "" : " (default)");
+    else
+        fprintf(cp_out, "montecarlo: %d %s samples, analysis '%s', no yield (no -spec), "
+                        "seed %u%s\n",
+                nsamp, uselhs ? "Latin-Hypercube" : "random", analysis,
+                seed, seed_given ? "" : " (default)");
+    if (nexpr > 0)
+        fprintf(cp_out, "montecarlo: recording %d expression%s per sample\n",
+                nexpr, nexpr == 1 ? "" : "s");
     sw_seed_note("montecarlo", seed_given);   /* MC hunt F2 */
 
     if (uselhs) {
@@ -4599,6 +4709,8 @@ void com_montecarlo(wordlist *wl)
      * run has measured nothing; it is refused, and the first sample is enough
      * to know (the expression is the same for every sample). */
     int unresolved_spec = -1, unresolved_sample = 0;
+    int unresolved_expr = -1;        /* Enhancement-552 */
+    const int nsamp_req = nsamp;     /* the buffers are sized for the request */
     outp_loop_begin("montecarlo", "sample", nsamp, sw_loopbar_mode());  /* Enhancement-477 */
 
     for (int i = 0; i < nsamp; i++) {
@@ -4661,6 +4773,62 @@ void com_montecarlo(wordlist *wl)
         if (unresolved_spec >= 0)
             break;
         if (pass) npass++;
+        /* Enhancement-552: record every -expr for this sample */
+        for (e = 0; e < nexpr; e++) {
+            struct dvec *v = sw_eval_expr_copy(exprtext[e]);
+            int len, k;
+            if (!v) {
+                if (exprlen[e] == 0 && !exprdata[e]) {   /* never resolved yet */
+                    unresolved_expr = e;
+                    unresolved_sample = i + 1;
+                }
+                continue;
+            }
+            len = v->v_length;
+            if (exprlen[e] == 0) {
+                /* first resolution sizes the record: NaN until written */
+                exprlen[e] = len;
+                exprtype[e] = v->v_type;
+                exprdata[e] = TMALLOC(double, (size_t) nsamp_req * (size_t) len);
+                for (k = 0; k < nsamp_req * len; k++)
+                    exprdata[e][k] = NAN;
+                exprfirst[e] = TMALLOC(double, (size_t) len);
+                memcpy(exprfirst[e], v->v_realdata, sizeof(double) * (size_t) len);
+                /* the waveform's scale: a plot vector usually carries none of
+                 * its own and relies on the plot's default (`time`, `v-sweep`,
+                 * `frequency`), which is the analysis plot's at this point */
+                struct dvec *sc0 = v->v_scale ? v->v_scale
+                                              : (plot_cur ? plot_cur->pl_scale : NULL);
+                if (len > 1 && sc0 && sc0->v_length == len) {
+                    struct dvec *sc = sc0;
+                    exprscale[e] = dvec_alloc(copy(sc->v_name), sc->v_type,
+                                              VF_REAL, len, NULL);
+                    for (k = 0; k < len; k++)
+                        exprscale[e]->v_realdata[k] = isreal(sc) ? sc->v_realdata[k]
+                            : hypot(sc->v_compdata[k].cx_real, sc->v_compdata[k].cx_imag);
+                }
+            }
+            if (len != exprlen[e]) {
+                if (!exprragged[e]) {
+                    exprragged[e] = 1;
+                    exprragged_len[e] = len;
+                    exprragged_at[e] = i + 1;
+                }
+            } else {
+                memcpy(exprdata[e] + (size_t) i * (size_t) len, v->v_realdata,
+                       sizeof(double) * (size_t) len);
+                if (!exprvaried[e])
+                    for (k = 0; k < len; k++)
+                        if (v->v_realdata[k] != exprfirst[e][k]) {
+                            exprvaried[e] = 1;
+                            break;
+                        }
+            }
+            v->v_scale = NULL;          /* borrowed, not ours to free */
+            vec_free(v);
+        }
+        if (unresolved_expr >= 0)
+            break;
     }
     if (usewarm)
         CKTsetWarmStart(0);
@@ -4688,13 +4856,114 @@ void com_montecarlo(wordlist *wl)
                         "to nothing would have scored 0 against its limits.\n",
                 unresolved_spec + 1, metric[unresolved_spec], unresolved_sample,
                 analysis);
-        return;
+        goto mc_free_exprs;
+    }
+    if (unresolved_expr >= 0) {
+        fprintf(cp_err, "montecarlo: -expr %s (%s) did not resolve to a value on "
+                        "sample %d -- it names no vector this analysis produces "
+                        "(check the spelling, and that it exists in the '%s' plot). "
+                        "Nothing is recorded.\n",
+                exprname[unresolved_expr], exprtext[unresolved_expr],
+                unresolved_sample, analysis);
+        goto mc_free_exprs;
+    }
+
+    /* Enhancement-552: the recorded expressions go into a plot of their own,
+     * `montecarlo<n>`, one per invocation, with `sample` (1..N) as its scale. A
+     * scalar per sample is an N-long vector on that scale; a waveform per
+     * sample (L points, the same L every sample) is an N x L two-dimensional
+     * vector whose scale is a copy of the analysis scale, which `plot` draws
+     * as a family of N curves. A sample that never solved is NaN. */
+    if (nexpr > 0) {
+        struct plot *pl = plot_alloc("montecarlo");
+        struct dvec *sc;
+        int nrec = 0;
+        pl->pl_name = copy("Monte Carlo");
+        pl->pl_title = copy(analysis);
+        plot_new(pl);
+        plot_setcur(pl->pl_typename);
+        sc = dvec_alloc(copy("sample"), SV_NOTYPE, (short) (VF_REAL | VF_PERMANENT),
+                        nsamp, NULL);
+        for (int i = 0; i < nsamp; i++)
+            sc->v_realdata[i] = (double) (i + 1);
+        vec_new(sc);                                 /* first permanent -> scale */
+        for (e = 0; e < nexpr; e++) {
+            struct dvec *v;
+            int len = exprlen[e];
+            if (!exprdata[e])
+                continue;
+            if (exprragged[e]) {
+                fprintf(cp_err, "montecarlo: -expr %s (%s) is not recorded -- it has %d "
+                                "points on sample 1 but %d on sample %d, and a waveform "
+                                "recorded per sample must have the same points in every "
+                                "sample. Reduce it to a scalar (vecmax, mean, ...), or "
+                                "use a fixed-step analysis, or `linearize` it in the "
+                                "-analysis command.\n",
+                        exprname[e], exprtext[e], len, exprragged_len[e], exprragged_at[e]);
+                continue;
+            }
+            if (len == 1) {
+                v = dvec_alloc(copy(exprname[e]), exprtype[e],
+                               (short) (VF_REAL | VF_PERMANENT), nsamp, NULL);
+                memcpy(v->v_realdata, exprdata[e], sizeof(double) * (size_t) nsamp);
+                vec_new(v);
+            } else {
+                struct dvec *xs = NULL;
+                if (exprscale[e]) {
+                    /* one copy of a scale per name: a second waveform on `time`
+                     * shares the copy the first one brought */
+                    struct dvec *d;
+                    for (d = pl->pl_dvecs; d; d = d->v_next)
+                        if (eq(d->v_name, exprscale[e]->v_name) && d->v_length == len) {
+                            xs = d;
+                            break;
+                        }
+                    if (!xs) {
+                        xs = dvec_alloc(copy(exprscale[e]->v_name), exprscale[e]->v_type,
+                                        (short) (VF_REAL | VF_PERMANENT), len, NULL);
+                        memcpy(xs->v_realdata, exprscale[e]->v_realdata,
+                               sizeof(double) * (size_t) len);
+                        vec_new(xs);
+                    }
+                }
+                v = dvec_alloc(copy(exprname[e]), exprtype[e],
+                               (short) (VF_REAL | VF_PERMANENT), nsamp * len, NULL);
+                memcpy(v->v_realdata, exprdata[e], sizeof(double) * (size_t) nsamp * (size_t) len);
+                v->v_numdims = 2;
+                v->v_dims[0] = nsamp;
+                v->v_dims[1] = len;
+                if (xs)
+                    v->v_scale = xs;
+                vec_new(v);
+            }
+            nrec++;
+            if (!exprvaried[e] && nsamp - nfailed > 1)
+                fprintf(cp_out, "  NOTE   : -expr %s gave the SAME value in every sample; "
+                                "nothing this deck draws reaches it\n", exprname[e]);
+        }
+        fprintf(cp_out, "montecarlo: %d expression%s over %d sample%s recorded into plot "
+                        "'%s' (now current)%s\n",
+                nrec, nrec == 1 ? "" : "s", nsamp, nsamp == 1 ? "" : "s", pl->pl_typename,
+                nfailed ? " -- a sample that failed to simulate is nan" : "");
+        cp_vset("montecarlo_plot", CP_STRING, pl->pl_typename);
     }
 
     /* Enhancement-438: the yield is over the samples that actually produced a
      * solution. Quoting a percentage of the requested count when some never ran
      * states more than was measured. */
     long nvalid = (long) nsamp - nfailed;
+    if (nspec == 0) {
+        /* Enhancement-552: a record-only run judges nothing; the counts still
+         * describe what ran */
+        if (nfailed)
+            fprintf(cp_out, "  NOTE   : %ld of %d sample%s failed to simulate\n",
+                    nfailed, nsamp, nfailed == 1 ? "" : "s");
+        hs_set_result("montecarlo_nfailed", (double) nfailed);
+        hs_set_result("montecarlo_nvalid", (double) (nvalid > 0 ? nvalid : 0));
+        hs_set_result("montecarlo_n", (double) nsamp);
+        hs_set_result("montecarlo_seed", (double) seed);
+        goto mc_free_exprs;
+    }
     if (nvalid <= 0) {
         fprintf(cp_out, "\n  yield  : not available -- all %d sample%s failed to "
                         "simulate\n", nsamp, nsamp == 1 ? "" : "s");
@@ -4703,8 +4972,8 @@ void com_montecarlo(wordlist *wl)
         hs_set_result("montecarlo_nfailed", (double) nfailed);
         hs_set_result("montecarlo_nvalid", 0.0);
         hs_set_result("montecarlo_n", (double) nsamp);
-    hs_set_result("montecarlo_seed", (double) seed);   /* MC hunt F2 */
-        return;
+        hs_set_result("montecarlo_seed", (double) seed);   /* MC hunt F2 */
+        goto mc_free_exprs;
     }
 
     /* yield and a Wilson 95% score interval for the pass proportion */
@@ -4742,6 +5011,13 @@ void com_montecarlo(wordlist *wl)
     hs_set_result("montecarlo_nvalid", (double) nvalid);
     hs_set_result("montecarlo_n", (double) nsamp);
     hs_set_result("montecarlo_seed", (double) seed);   /* MC hunt F2 */
+
+mc_free_exprs:                                   /* Enhancement-552 */
+    for (e = 0; e < nexpr; e++) {
+        if (exprdata[e]) tfree(exprdata[e]);
+        if (exprfirst[e]) tfree(exprfirst[e]);
+        if (exprscale[e]) vec_free(exprscale[e]);
+    }
 }
 
 

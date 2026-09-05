@@ -591,7 +591,7 @@ montecarlo 500 -analysis ac -spec 'vdb(out)' -min -3.5 -max -2.5
 
 | Command | Purpose |
 |---|---|
-| `montecarlo` | packaged yield: N samples, per-spec pass/fail, yield + 95% CI |
+| `montecarlo` | packaged yield: N samples, per-spec pass/fail, yield + 95% CI; `-expr [name=]<expression>` records a value per sample, unjudged, into a `montecarlo<n>` plot (a scalar as an N-long vector, a waveform as an N × L family) with no yield unless a limited `-spec` is given (E-552) |
 | `mcsample` | Latin-Hypercube sampling of the `.param` random draws (lower variance) |
 | `highsigma` | rare-event / high-sigma failure probability by scaled-sigma importance sampling |
 | `mccorr` | register a correlation matrix; draw with `mvnorm()` in `.param` |
