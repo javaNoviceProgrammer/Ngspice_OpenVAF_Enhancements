@@ -48,6 +48,25 @@ impl CmpOps {
 // Instance parameter value in instance setup is read from instance, if not available there then it is read from model
 // Storing the default values is performed in setup.rs at MIR->IR translation.
 impl HirInterner {
+    /// Emits the resolution of every parameter in `params`: the given value,
+    /// range-checked, or the default expression.
+    ///
+    /// Enhancement-546: a range that reads an instance parameter is judged per
+    /// instance, wherever the parameter itself lives.
+    ///
+    /// `unchecked` names the parameters whose given value is NOT range-checked
+    /// here. The model setup passes the parameters whose bounds read an
+    /// instance parameter: at model level those bounds hold the card-level
+    /// value -- the declared default unless the card gave one -- so the check
+    /// would judge the card's value against a neighbour no instance need have
+    /// (`parameter real l from (0:w]` with an instance `w`).
+    ///
+    /// `check_only` names MODEL parameters that are range-checked here and
+    /// nothing else: the instance setup passes the same parameters. Their
+    /// value is the card's, resolved by the model setup and read from the
+    /// model; only the judgement moves, to where the instance's values exist.
+    /// An instance parameter with such bounds needs neither list on the
+    /// instance side -- it is resolved and checked there like any other.
     pub fn insert_param_init(
         &mut self,
         db: &CompilationDB,
@@ -56,6 +75,8 @@ impl HirInterner {
         build_min_max: bool,
         build_stores: bool,
         params: &[Parameter],
+        unchecked: &[Parameter],
+        check_only: &[Parameter],
     ) {
         let mut default_vals = if build_stores { vec![GRAVESTONE; params.len()] } else { vec![] };
 
@@ -86,7 +107,7 @@ impl HirInterner {
             let (then_src, else_src) = ctx.make_cond(param_given, |ctx, param_given| {
                 if param_given {
                     // Builds the if block for the case when param is given
-                    if build_stores {
+                    if build_stores && !unchecked.contains(&param) {
                         let exit = ctx.create_block();
                         let mut ctx = BodyLoweringCtx { ctx, body: body.borrow(), path: "" };
                         ctx.check_param(
@@ -294,6 +315,49 @@ impl HirInterner {
                 exit,
             );
             ctx.ctx.switch_to_block(exit);
+        }
+
+        // Enhancement-546: the range checks alone, for the model parameters
+        // whose bounds read an instance parameter (see `check_only` above).
+        // Emitted after the parameters of `params` so that a bound reading one
+        // of them sees its resolved value, before the swap below restores the
+        // raw parameter slots. A default is not judged (Enhancement-56), so an
+        // ungiven parameter has nothing to check.
+        if build_stores {
+            for param in check_only.iter().copied() {
+                let param_val = ctx.use_param(ParamKind::Param(param));
+                let param_given = ctx.use_param(ParamKind::ParamGiven { param });
+                let body = param.init(db);
+                let bounds = param.bounds(db);
+                let ops = CmpOps::from_ty(&param.ty(db));
+                let invalid =
+                    ctx.dec_callback(CallBackKind::ParamInfo(ParamInfoKind::Invalid, param));
+                ctx.make_cond(param_given, |ctx, param_given| {
+                    if param_given {
+                        let exit = ctx.create_block();
+                        let mut ctx = BodyLoweringCtx { ctx, body: body.borrow(), path: "" };
+                        ctx.check_param(
+                            param_val,
+                            &bounds,
+                            &[],
+                            ConstraintKind::From,
+                            ops,
+                            invalid,
+                            exit,
+                        );
+                        ctx.check_param(
+                            param_val,
+                            &bounds,
+                            &[],
+                            ConstraintKind::Exclude,
+                            ops,
+                            invalid,
+                            exit,
+                        );
+                        ctx.ctx.switch_to_block(exit);
+                    }
+                });
+            }
         }
         ctx.ensured_sealed();
         ctx.func.func.layout.append_inst_to_bb(term, ctx.current_block());

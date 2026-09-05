@@ -110,7 +110,7 @@ keep their behaviour, the same functions stay legal in the analog block, the
 corpus compiles as before (48 of 49, EPFL-HEMT unchanged), and a UI test
 (`test_data/ui/const_sysfun.va`) pins all ten forms.
 
-## F2 — a model parameter's range or default that references an instance parameter is evaluated with that parameter's default
+## F2 — a model parameter's range or default that references an instance parameter is evaluated with that parameter's default — **Fixed**
 
 ```verilog
 (* type="instance" *) parameter real w = 1e-6 from (0:inf);
@@ -132,6 +132,36 @@ instance; a model parameter that depends on one is checked once, against a
 value no instance need have. Either a per-instance evaluation of such
 parameters or a diagnostic (*a model parameter's range/default depends on an
 instance parameter*) would close it.
+
+**Resolved (E-546).** The two dependences mean different things and get
+different treatments, in module collection
+(`sim_back::module_info::promote_instance_dependent`). A **default** that
+reads an instance parameter gives the parameter a value per instance, so the
+parameter is promoted to instance level — the instance setup resolves it with
+that instance's values, transitively (through other promoted parameters, user
+functions a default calls, function-local parameters), with `$param_given(p)`
+counting as a read of `p` — and the new `instance_dependent_parameter` lint
+(L028, warn) names the promotion, except for an untyped `localparam`, where
+nothing settable changes. A promoted parameter stays settable on the `.model`
+card as the default for the card's instances. A **range** that reads an
+instance parameter does not change what the parameter is: the stock CMC models
+are full of that shape (BSIM6/BSIMBULK/BSIMIMG `XGL from (-inf:L*LMLT+XL)`,
+BSIMBULK `LH from (0:L)`, HiSIM2 `LP from [0:L]`, HiSIMHV `RDRDL1/2`, HiSIMSOTB
+`PARL1/2` — twelve parameters in ten models), so promoting it would have
+rewritten their parameter tables for a check. Such a parameter keeps its level;
+the model setup skips its given-value range check and the instance setup judges
+it with the instance's values — while resolving it, for an instance parameter;
+as a check alone, for a model parameter (`check_only` in
+`HirInterner::insert_param_init`, with the model-parameter error id routed
+through `setup_instance`). The hunt's deck now refuses `n2` (l = 1e-6 above
+its w = 0.5e-6) and runs `n1`; a card `l = 3e-6` runs for an instance at
+w = 5e-6 and is refused for one that inherits the default. Sim_back unit test
+`instance_dependent_parameters`; `examples/instdep_examples/` (20 checks,
+both solvers). The 40 bundled industry models compile; exactly one carries the
+default shape, and it is a real instance of this finding in a stock model:
+BSIMCMG declares `LSP` a model parameter (`MPRoz`) with the default
+`0.2 * (L + XL)`, so every instance that did not give `LSP` ran with the
+default `L` folded in — it is now resolved per instance, and L028 says so.
 
 ## F3 — an internal node nothing can contribute to compiles silently, and is singular at run time
 

@@ -300,7 +300,7 @@ impl BuiltIn {
             _ => false,
         }
     }
-    /// Enhancement-544 (compiler hunt F1): the system functions that read
+    /// Enhancement-545 (compiler hunt F1): the system functions that read
     /// SIMULATION STATE -- the circuit temperature, the thermal voltage, the
     /// time, a port's connectivity, the instance's hierarchical multiplier and
     /// flips. None of them exists when a parameter default or range is

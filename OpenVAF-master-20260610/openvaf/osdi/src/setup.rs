@@ -455,9 +455,21 @@ impl<'ll> OsdiCompilationUnit<'_, '_, 'll> {
         for (call_id, call) in intern.callbacks.iter_enumerated() {
             let cb = match call {
                 CallBackKind::ParamInfo(ParamInfoKind::Invalid, param) => {
-                    if let Some(id) =
-                        inst_data.params.get_index_of(&OsdiInstanceParam::User(*param))
-                    {
+                    // Enhancement-546: a MODEL parameter whose bounds read an
+                    // instance parameter is range-checked here, not in
+                    // `setup_model`; its error id follows the descriptor's
+                    // table order -- model parameters after every instance
+                    // parameter -- as `setup_model` numbers them.
+                    let id = inst_data
+                        .params
+                        .get_index_of(&OsdiInstanceParam::User(*param))
+                        .or_else(|| {
+                            model_data
+                                .params
+                                .get_index_of(param)
+                                .map(|i| i + inst_data.params.len())
+                        });
+                    if let Some(id) = id {
                         let err_param = cx.const_unsigned_int(id as u32);
                         CallbackFun::Prebuilt(BuiltCallbackFun {
                             fun_ty: invalid_param_err.0,

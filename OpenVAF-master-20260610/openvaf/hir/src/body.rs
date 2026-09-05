@@ -422,6 +422,58 @@ impl<'a> BodyRef<'a> {
         Some((elems, d.dims.clone(), d.indices.clone()))
     }
 
+    /// Enhancement-546: the module parameters read and the user functions called
+    /// inside the expression trees rooted at `roots` -- every expression of the
+    /// body when `roots` is `None`, which is what a function body needs.
+    ///
+    /// These are the dependency edges of a parameter's default and range
+    /// (`sim_back::module_info` follows them to find the parameters that read an
+    /// instance parameter). It works from the INFERENCE result rather than
+    /// [`Self::get_expr`] so that it is total and complete: a parameter-typed path
+    /// (which is also what `$param_given(p)` receives), a whole array parameter
+    /// handed to a filter (`array_param_refs`) and a dynamically indexed element
+    /// (`dynamic_param_index_refs`) all count as reads. Function-local parameters
+    /// (LRM 4.7.1) are returned like any other; the caller decides what a read of
+    /// one means.
+    pub fn param_reads_and_calls(
+        &self,
+        roots: Option<&[ExprId]>,
+    ) -> (Vec<Parameter>, Vec<Function>) {
+        let mut params = Vec::new();
+        let mut funcs = Vec::new();
+        let mut visit = |expr: ExprId| {
+            if let Some(Ty::Param(_, id)) = self.infere.expr_types.get(expr) {
+                params.push(Parameter { id: *id });
+            }
+            if let Some(ids) = self.infere.array_param_refs.get(&expr) {
+                params.extend(ids.iter().map(|&id| Parameter { id }));
+            }
+            if let Some(dyn_index) = self.infere.dynamic_param_index_refs.get(&expr) {
+                params.extend(dyn_index.elems.iter().map(|&id| Parameter { id }));
+            }
+            if let Some(inference::ResolvedFun::User { func, .. }) =
+                self.infere.resolved_calls.get(&expr)
+            {
+                funcs.push(Function { id: *func });
+            }
+        };
+        match roots {
+            None => {
+                for (i, _) in self.body.exprs.iter().enumerate() {
+                    visit(ExprId::from(i));
+                }
+            }
+            Some(roots) => {
+                let mut stack: Vec<ExprId> = roots.to_vec();
+                while let Some(expr) = stack.pop() {
+                    visit(expr);
+                    self.body.exprs[expr].walk_child_exprs(|child| stack.push(child));
+                }
+            }
+        }
+        (params, funcs)
+    }
+
     fn resolve_path(&self, expr: ExprId) -> Ref {
         match self.infere.expr_types[expr] {
             Ty::Var(_, id) => Ref::Variable(Variable { id }),

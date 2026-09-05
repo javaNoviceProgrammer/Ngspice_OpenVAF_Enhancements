@@ -350,7 +350,7 @@ for label, body in OK:
           (re.search(r"error: (.*)", out).group(1)[:52] if rc and re.search(r"error: (.*)", out) else ""))
 
 # ---------------------------------------------------------------------------
-# Enhancement-544 (compiler hunt F1): simulation state in a constant
+# Enhancement-545 (compiler hunt F1): simulation state in a constant
 #
 # `parameter real t0 = $temperature;` crashed the compiler outright: a
 # parameter default or range is validated in the constant context, where
@@ -362,11 +362,11 @@ for label, body in OK:
 # Each is now refused where analysis() is, with the rule named; the same
 # functions stay legal in the analog block.
 # ---------------------------------------------------------------------------
-print("\nEnhancement-544: simulation state and random draws in a constant are refused, not crashed")
+print("\nEnhancement-545: simulation state and random draws in a constant are refused, not crashed")
 
 def const_case(label, decl, want):
     src = H + "module m(a,b); inout a,b; electrical a,b;\n" + decl + "\nanalog I(a,b) <+ V(a,b)/1e3;\nendmodule\n"
-    rc, out, _ = compile_va(src, "e544_" + re.sub(r"\W", "", label)[:14])
+    rc, out, _ = compile_va(src, "e545_" + re.sub(r"\W", "", label)[:14])
     msg = re.search(r"error: (.*)", out)
     check(label, not crashed(rc, out) and rc != 0 and want in out,
           f"{'CRASH' if crashed(rc, out) else (msg.group(1)[:70] if msg else 'accepted')}")
@@ -387,27 +387,27 @@ for label, decl, want in (
 ):
     const_case(label, decl, want)
 
-rc, out, _ = compile_va(H + "module m(a,b); inout a,b; electrical a,b;\nparameter real t0 = $temperature;\nanalog I(a,b) <+ V(a,b)/1e3;\nendmodule\n", "e544_notes")
+rc, out, _ = compile_va(H + "module m(a,b); inout a,b; electrical a,b;\nparameter real t0 = $temperature;\nanalog I(a,b) <+ V(a,b)/1e3;\nendmodule\n", "e545_notes")
 check("the refusal names the rule and the way out",
       "constant expression (LRM 3.4)" in out and "analog initial" in out, out.count("help:"))
-rc, out, _ = compile_va(H + "module m(a,b); inout a,b; electrical a,b;\nparameter real x0 = $random;\nanalog I(a,b) <+ V(a,b)/1e3;\nendmodule\n", "e544_rndnotes")
+rc, out, _ = compile_va(H + "module m(a,b); inout a,b; electrical a,b;\nparameter real x0 = $random;\nanalog I(a,b) <+ V(a,b)/1e3;\nendmodule\n", "e545_rndnotes")
 check("a draw's refusal points at (* std *) and .option osdimc", "std=<sigma>" in out and "osdimc" in out, out.count("help:"))
 
 # controls: what must keep working
-rc, out, _ = compile_va(H + "module m(a,b); inout a,b; electrical a,b;\nparameter real r = 1.0; parameter real g = $param_given(r) ? 2.0 : 1.0;\nparameter real gm = $simparam(\"gmin\", 1e-12);\nanalog I(a,b) <+ (g + gm)*V(a,b)/1e3;\nendmodule\n", "e544_ok")
+rc, out, _ = compile_va(H + "module m(a,b); inout a,b; electrical a,b;\nparameter real r = 1.0; parameter real g = $param_given(r) ? 2.0 : 1.0;\nparameter real gm = $simparam(\"gmin\", 1e-12);\nanalog I(a,b) <+ (g + gm)*V(a,b)/1e3;\nendmodule\n", "e545_ok")
 check("$param_given and $simparam in a default stay legal ($simparam keeps its L015 warning)",
       rc == 0 and "L015" in out and "not allowed in constants" not in out,
       f"rc={rc} L015={'L015' in out}")
-rc, out, osdi = compile_va(H + "module m(a,b); inout a,b; electrical a,b;\n(* desc=\"t\" *) real t; (* desc=\"mf\" *) real mf; (* desc=\"rn\" *) real rn;\nanalog begin t = $temperature + $vt + $abstime + $port_connected(a); mf = $mfactor; rn = $random*0.0; I(a,b) <+ (t*0.0 + mf*0.0 + rn) + V(a,b)/1e3; end\nendmodule\n", "e544_analog")
+rc, out, osdi = compile_va(H + "module m(a,b); inout a,b; electrical a,b;\n(* desc=\"t\" *) real t; (* desc=\"mf\" *) real mf; (* desc=\"rn\" *) real rn;\nanalog begin t = $temperature + $vt + $abstime + $port_connected(a); mf = $mfactor; rn = $random*0.0; I(a,b) <+ (t*0.0 + mf*0.0 + rn) + V(a,b)/1e3; end\nendmodule\n", "e545_analog")
 check("the same functions in the analog block still compile", rc == 0 and "not allowed" not in out, f"rc={rc}")
 if osdi:
-    rc2, out2 = sim(osdi, "v1 1 0 dc 1\nn1 1 0 mm m=3\n.model mm m", "op\nprint @n1[t]\nprint @n1[mf]", "e544_run")
+    rc2, out2 = sim(osdi, "v1 1 0 dc 1\nn1 1 0 mm m=3\n.model mm m", "op\nprint @n1[t]\nprint @n1[mf]", "e545_run")
     check("... and read the live values there (temperature 300.15, $mfactor 3)",
           val(out2, "@n1[t]") is not None and abs(val(out2, "@n1[t]") - (300.15 + 0.025852 + 0 + 1)) < 1e-3 and val(out2, "@n1[mf]") == 3.0,
           f"t={val(out2, '@n1[t]')} mf={val(out2, '@n1[mf]')}")
 else:
     check("... and read the live values there (temperature 300.15, $mfactor 3)", False, "no .osdi")
-rc, out, _ = compile_va(H + "module m(a,b); inout a,b; electrical a,b;\nparameter integer a0 = analysis(\"dc\");\nanalog I(a,b) <+ a0*V(a,b)/1e3;\nendmodule\n", "e544_analysis")
+rc, out, _ = compile_va(H + "module m(a,b); inout a,b; electrical a,b;\nparameter integer a0 = analysis(\"dc\");\nanalog I(a,b) <+ a0*V(a,b)/1e3;\nendmodule\n", "e545_analysis")
 check("analysis() in a default keeps its own message", rc != 0 and "analysis function 'analysis' is not allowed in constants" in out)
 
 print(f"\n=== {passed}/{checks} checks passed ===")

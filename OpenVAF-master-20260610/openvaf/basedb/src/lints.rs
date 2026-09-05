@@ -206,5 +206,14 @@ pub mod builtin {
         // (a deliberately out-of-range default forcing the netlist to set the
         // parameter) is real, and such a model is fine whenever the netlist obliges.
         pub const param_default_out_of_range = LintData{default_lvl: Warn, documentation_id: 27};
+        // Enhancement-546 (compiler hunt F2): a parameter whose default or range
+        // reads an instance parameter. A model parameter is set up once per model
+        // card, where no instance's value exists, so such a parameter is promoted
+        // to instance level (sim_back::module_info) and this lint says so. Warn,
+        // not deny: the promotion IS the parameter's only meaning and the model is
+        // correct with it; the lint exists so the classification never changes
+        // silently, and an untyped `localparam` -- where nothing settable changes
+        // -- is promoted without a word.
+        pub const instance_dependent_parameter = LintData{default_lvl: Warn, documentation_id: 28};
     }
 }

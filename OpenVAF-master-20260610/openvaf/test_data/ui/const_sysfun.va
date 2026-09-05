@@ -1,4 +1,4 @@
-// Enhancement-544 (compiler hunt F1): simulation-state system functions and
+// Enhancement-545 (compiler hunt F1): simulation-state system functions and
 // random draws inside constants -- parameter defaults, range bounds, array
 // defaults, an instance-typed parameter -- used to reach codegen and panic
 // ($temperature, $vt, $abstime, $port_connected) or fold to a wrong value

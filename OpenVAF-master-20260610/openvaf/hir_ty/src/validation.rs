@@ -863,7 +863,7 @@ impl Diagnostic for BodyValidationDiagnosticWrapped<'_> {
                         "analysis function '{}' is not allowed in constants",
                         name
                     )),
-                    // Enhancement-544 (compiler hunt F1)
+                    // Enhancement-545 (compiler hunt F1)
                     IllegalCtxAccessKind::SimStateFun { name, is_rng } => {
                         let what = if *is_rng { "random draw" } else { "system function" };
                         let notes = if *is_rng {

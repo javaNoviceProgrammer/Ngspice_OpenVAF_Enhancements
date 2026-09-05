@@ -2,16 +2,17 @@ use std::hash::BuildHasherDefault;
 
 use ahash::AHashSet;
 use hir::diagnostics::{BaseDB, ConsoleSink, Diagnostic, FileId, Label, LabelStyle, Report};
+use hir::lints::{builtin::instance_dependent_parameter, Lint, LintSrc};
 use hir::{
-    CompilationDB, CompilationUnit, DiagnosticSink, Module, ParamSysFun, Parameter,
-    ResolvedAliasParameter, ScopeDef, Type, Variable,
+    Body, CompilationDB, CompilationUnit, DiagnosticSink, ExprId, Function, Module, ParamSysFun,
+    Parameter, ResolvedAliasParameter, ScopeDef, Type, Variable,
 };
 use indexmap::IndexMap;
 use rustc_hash::FxHasher;
 use smol_str::SmolStr;
 use syntax::ast::{self, Expr};
 use syntax::sourcemap::FileSpan;
-use syntax::AstNode;
+use syntax::{AstNode, TextRange};
 
 use crate::diagnostics::ProbeOnlyBranchShort;
 
@@ -70,6 +71,10 @@ impl ModuleInfo {
         let ast = cu.ast(db);
 
         check_probe_only_branch_shorts(db, cu, module, sink);
+
+        // Enhancement-546: the parameters the author classified `(* type="model" *)`
+        // in so many words -- a promotion of one of those is worth its own wording.
+        let mut explicit_model: AHashSet<Parameter> = AHashSet::new();
 
         let mut resolved_attrs = AHashSet::new();
         let mut declarations = module.rec_declarations(db);
@@ -183,7 +188,11 @@ impl ModuleInfo {
                     });
                     let is_instance = match type_.as_deref() {
                         Some("instance") => true,
-                        Some("model") | None => false,
+                        Some("model") => {
+                            explicit_model.insert(param);
+                            false
+                        }
+                        None => false,
                         Some(found) => {
                             let attr = type_attr.unwrap();
                             add_diagnostic(
@@ -329,6 +338,7 @@ impl ModuleInfo {
                             description: desc,
                             group,
                             is_instance,
+                            instance_bounds: false,
                             stat,
                         },
                     );
@@ -352,7 +362,215 @@ impl ModuleInfo {
             }
         }
 
+        promote_instance_dependent(db, cu, &mut params, &explicit_model, sink);
+
         ModuleInfo { module, params, op_vars, sys_fun_alias }
+    }
+}
+
+/// Enhancement-546 (compiler hunt F2): a parameter whose default reads an
+/// instance parameter is itself per instance, and a range that reads one is
+/// judged per instance.
+///
+/// The model/instance split (`(* type="instance" *)`) is an OpenVAF convention
+/// the LRM does not have: in the language every parameter belongs to the
+/// instance, and a "model" parameter is one the compiler may resolve ONCE per
+/// model card because nothing in it varies between the card's instances.
+/// `parameter real l = 2*w` with an instance `w` breaks that premise, and the
+/// back end did not notice: `setup_model` resolved `l` with the card-level `w`
+/// -- the declared default unless the card gave one -- stored the result in the
+/// model, and every instance read it; `l/w` came out 2.0 for an instance at
+/// `w = 0.5e-6`. A range `from (0:w]` was judged the same way, once, against a
+/// `w` no instance need have: an `l` above the instance's `w` ran while a card
+/// value above the DEFAULT `w` was refused.
+///
+/// Two tiers, because the two dependences mean different things:
+///
+/// * A DEFAULT that reads an instance parameter gives the parameter a value
+///   per instance. It is promoted to instance level here, where the whole
+///   back end -- instance storage, the per-instance resolution and range check
+///   in `setup_instance`, the OSDI parameter table -- follows `is_instance`.
+///   The dependency is transitive: through other promoted parameters, through
+///   the user functions a default calls (and those call), and through
+///   function-local parameters whose defaults are inlined at every use;
+///   `$param_given(p)` counts as reading `p`. A promoted parameter stays
+///   settable on the `.model` card, like any instance parameter, as the default
+///   for the card's instances. The `instance_dependent_parameter` lint names
+///   every promotion except that of an untyped `localparam`, where per-instance
+///   resolution is the only meaning the declaration could have and nothing
+///   settable changes.
+///
+/// * BOUNDS that read an instance parameter (declared or promoted) do not
+///   change what the parameter is: its value is still the card's. The stock
+///   CMC models are full of this shape -- BSIM6's `XGL from (-inf:L*LMLT+XL)`,
+///   HiSIM2's `LP from [0:L]` -- and promoting them would rewrite the parameter
+///   tables of ten industry models for a range check. Such a parameter keeps
+///   its level and is marked `instance_bounds`: the model setup skips its
+///   given-value range check, and the instance setup judges it with the
+///   instance's values -- as part of resolving it, for an instance parameter;
+///   as a check alone, for a model parameter (`check_only` in
+///   `HirInterner::insert_param_init`). Nothing is said: the classification is
+///   unchanged and the judgement lands where the language puts it.
+fn promote_instance_dependent(
+    db: &CompilationDB,
+    cu: CompilationUnit,
+    params: &mut IndexMap<Parameter, ParamInfo, BuildHasherDefault<FxHasher>>,
+    explicit_model: &AHashSet<Parameter>,
+    sink: &mut ConsoleSink,
+) {
+    // The module-level parameters each parameter's default and bounds read.
+    let deps: Vec<(Vec<Parameter>, Vec<Parameter>)> = params
+        .keys()
+        .map(|&param| {
+            let default = module_param_reads(db, param, &[param.default(db)]);
+            let bounds = module_param_reads(db, param, &param.bound_exprs(db));
+            (default, bounds)
+        })
+        .collect();
+
+    // To a fixpoint: a parameter whose default reads an instance parameter --
+    // declared, or promoted by an earlier pass -- is one itself. `via`
+    // remembers the read that decided it, for the diagnostic.
+    let mut via: Vec<Option<Parameter>> = vec![None; params.len()];
+    loop {
+        let mut changed = false;
+        for i in 0..params.len() {
+            if params[i].is_instance {
+                continue;
+            }
+            let hit = deps[i]
+                .0
+                .iter()
+                .find(|dep| params.get(*dep).map_or(false, |info| info.is_instance));
+            if let Some(&dep) = hit {
+                params[i].is_instance = true;
+                via[i] = Some(dep);
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+
+    // With the instance set final: the bounds that read one of them.
+    for i in 0..params.len() {
+        let bounds_read_instance =
+            deps[i].1.iter().any(|dep| params.get(dep).map_or(false, |info| info.is_instance));
+        params[i].instance_bounds = bounds_read_instance;
+    }
+
+    for (i, (param, info)) in params.iter().enumerate() {
+        let Some(dep) = via[i] else { continue };
+        let explicit = explicit_model.contains(param);
+        let is_local = param.is_local(db);
+        if is_local && !explicit {
+            continue;
+        }
+        let diag = InstanceDependentParam {
+            name: info.name.clone(),
+            via: params.get(&dep).map_or_else(|| dep.name(db).into(), |info| info.name.clone()),
+            explicit_model: explicit,
+            is_local,
+            range: param.text_range(db),
+            lint_src: param.lint_src(db),
+        };
+        sink.add_diagnostic(&diag, cu.root_file(), db);
+    }
+}
+
+/// Enhancement-546: the module-level parameters that the expression trees
+/// `roots` of `param`'s init body read -- directly, through the user functions
+/// they call (and those call), and through the function-local parameters (LRM
+/// 4.7.1) any of that reads, whose own defaults are inlined at every use.
+fn module_param_reads(db: &CompilationDB, param: Parameter, roots: &[ExprId]) -> Vec<Parameter> {
+    let mut reads: Vec<Parameter> = Vec::new();
+    let mut seen_funcs: AHashSet<Function> = AHashSet::new();
+    let mut seen_local: AHashSet<Parameter> = AHashSet::new();
+    let mut work: Vec<(Body, Option<Vec<ExprId>>)> = vec![(param.init(db), Some(roots.to_vec()))];
+    while let Some((body, roots)) = work.pop() {
+        let (read, called) = body.borrow().param_reads_and_calls(roots.as_deref());
+        for read in read {
+            if read.is_function_local(db) {
+                if seen_local.insert(read) {
+                    work.push((read.init(db), Some(vec![read.default(db)])));
+                }
+            } else if !reads.contains(&read) {
+                reads.push(read);
+            }
+        }
+        for func in called {
+            if seen_funcs.insert(func) {
+                work.push((func.body(db), None));
+            }
+        }
+    }
+    reads
+}
+
+/// Enhancement-546 (compiler hunt F2): a parameter promoted to instance level
+/// because its default reads an instance parameter.
+struct InstanceDependentParam {
+    name: SmolStr,
+    via: SmolStr,
+    explicit_model: bool,
+    is_local: bool,
+    range: TextRange,
+    lint_src: LintSrc,
+}
+
+impl Diagnostic for InstanceDependentParam {
+    fn lint(&self, _root_file: FileId, _db: &dyn BaseDB) -> Option<(Lint, LintSrc)> {
+        Some((instance_dependent_parameter, self.lint_src))
+    }
+
+    fn build_report(&self, root_file: FileId, db: &dyn BaseDB) -> Report {
+        let FileSpan { range, file } =
+            db.parse(root_file).to_file_span(self.range, &db.sourcemap(root_file));
+        let kind = if self.is_local { "localparam" } else { "parameter" };
+        let message = if self.explicit_model {
+            format!(
+                "{kind} '{}' is declared (* type=\"model\" *) but depends on instance \
+                 parameter '{}'; it is treated as an instance parameter",
+                self.name, self.via
+            )
+        } else {
+            format!(
+                "{kind} '{}' depends on instance parameter '{}' and is treated as an \
+                 instance parameter",
+                self.name, self.via
+            )
+        };
+        let help = if self.is_local {
+            "help: nothing settable changes for a localparam; \
+             `(* openvaf_allow=\"instance_dependent_parameter\" *)` on the declaration \
+             accepts the promotion silently"
+        } else {
+            "help: declare it `(* type=\"instance\" *)` to state the intent -- it stays \
+             settable on the .model card as the default for the card's instances -- or \
+             `(* openvaf_allow=\"instance_dependent_parameter\" *)` to accept the \
+             promotion silently"
+        };
+        Report::warning()
+            .with_message(message)
+            .with_labels(vec![Label {
+                style: LabelStyle::Primary,
+                file_id: file,
+                range: range.into(),
+                message: format!(
+                    "its default is resolved per instance, with that instance's '{}'",
+                    self.via
+                ),
+            }])
+            .with_notes(vec![
+                "a model parameter is resolved once per model card, where no instance's \
+                 value exists yet; a default that reads an instance parameter has a value \
+                 per instance, so the compiler resolves it in the instance setup, with that \
+                 instance's values (a range that reads one is judged per instance either \
+                 way, without moving the parameter)"
+                    .to_owned(),
+                help.to_owned(),
+            ])
     }
 }
 
@@ -568,6 +786,12 @@ pub struct ParamInfo {
     pub description: String,
     pub group: String,
     pub is_instance: bool,
+    /// Enhancement-546: the `from`/`exclude` bounds read an instance parameter
+    /// (declared or promoted). The model setup skips this parameter's
+    /// given-value range check and the instance setup judges it with the
+    /// instance's values -- while resolving it, for an instance parameter; as
+    /// a check alone, for a model parameter, which keeps its level.
+    pub instance_bounds: bool,
     /// `(* std= / std_rel= / dist= *)` statistics for `.option osdimc`
     pub stat: Option<ParamStat>,
 }

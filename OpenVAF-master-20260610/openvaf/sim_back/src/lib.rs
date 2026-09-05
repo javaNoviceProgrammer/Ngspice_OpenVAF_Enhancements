@@ -253,10 +253,36 @@ impl<'a> CompiledModule<'a> {
             .iter()
             .filter_map(|(param, info)| info.is_instance.then_some(*param))
             .collect();
-        // Add initialization of instance parameters
-        init.intern.insert_param_init(db, &mut init.func, literals, false, true, &inst_params);
+        // Add initialization of instance parameters. Enhancement-546: a MODEL
+        // parameter whose bounds read an instance parameter is range-checked
+        // here as well, with the instance's values, and nowhere else (see
+        // `HirInterner::insert_param_init`).
+        let instance_bounds: Vec<_> = module
+            .params
+            .iter()
+            .filter_map(|(param, info)| info.instance_bounds.then_some(*param))
+            .collect();
+        let checked_per_instance: Vec<_> = instance_bounds
+            .iter()
+            .copied()
+            .filter(|param| !module.params[param].is_instance)
+            .collect();
+        init.intern.insert_param_init(
+            db,
+            &mut init.func,
+            literals,
+            false,
+            true,
+            &inst_params,
+            &[],
+            &checked_per_instance,
+        );
 
-        // Model setup MIR
+        // Model setup MIR. Every parameter is resolved here with the model
+        // card's values, instance parameters included (their card-level value
+        // is the default for the card's instances). Enhancement-546: a
+        // parameter whose bounds read an instance parameter is not
+        // range-checked at this level -- the instance setup judges it.
         let mut model_param_setup = Function::default();
         let model_params: Vec<_> = module.params.keys().copied().collect();
         let mut model_param_intern = HirInterner::default();
@@ -267,6 +293,8 @@ impl<'a> CompiledModule<'a> {
             false,
             true,
             &model_params,
+            &instance_bounds,
+            &[],
         );
         cx.cfg.compute(&model_param_setup);
         simplify_cfg(&mut model_param_setup, &mut cx.cfg);

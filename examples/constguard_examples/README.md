@@ -5,7 +5,7 @@ python3 verify_constguard.py
 ```
 
 75 checks, both solvers. 28/57 of the original set against the pre-fix compiler;
-the last eighteen (Enhancement-544) crash the compiler it fixed.
+the last eighteen (Enhancement-545) crash the compiler it fixed.
 
 ## The shape
 
@@ -100,7 +100,7 @@ and withdrawn on reading the code:
 | a real literal that underflows | `1e-324 → 0` is what IEEE 754 defines. [31] |
 | a `parameter` DEFAULT | the model card may replace it, so the declared value is not what the model runs with — the same rule under which a default is not checked against its own range. [30] |
 
-## Enhancement-544 — simulation state in a constant
+## Enhancement-545 — simulation state in a constant
 
 `parameter real t0 = $temperature;` crashed the compiler (mir_llvm
 builder.rs: "attempted to read undefined value"). A parameter default or

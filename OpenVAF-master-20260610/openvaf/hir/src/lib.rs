@@ -36,6 +36,7 @@ pub use rec_declarations::RecDeclarations;
 use salsa::InternKey;
 use smol_str::SmolStr;
 use syntax::ast;
+use syntax::TextRange;
 pub use syntax::name::Name;
 
 pub use crate::attributes::AstCache;
@@ -535,8 +536,38 @@ impl Parameter {
         db.param_exprs(self.id).bounds
     }
 
+    /// Enhancement-546: every expression a `from`/`exclude` constraint of this
+    /// parameter is made of -- the bound values and range ends -- as roots into
+    /// [`Self::init`]'s body. Together with [`Self::default`] these are the
+    /// trees [`BodyRef::param_reads_and_calls`] walks to learn what the
+    /// parameter depends on.
+    pub fn bound_exprs(self, db: &CompilationDB) -> Vec<ExprId> {
+        self.bounds(db)
+            .iter()
+            .flat_map(|bound| match bound.val {
+                ConstraintValue::Value(val) => vec![val],
+                ConstraintValue::Range(range) => vec![range.start, range.end],
+            })
+            .collect()
+    }
+
     pub fn init(self, db: &CompilationDB) -> Body {
         Body::new(self.id.into(), db)
+    }
+
+    /// Enhancement-546: the lint anchor of the declaration, so an
+    /// `(* openvaf_allow="..." *)` written on it (or on an enclosing scope) is
+    /// honoured by a diagnostic about the parameter.
+    pub fn lint_src(self, db: &CompilationDB) -> lints::LintSrc {
+        lints::LintSrc::item(self.id.lookup(db).ast_id(db).erased())
+    }
+
+    /// Enhancement-546: the source range of the declaration itself -- the
+    /// `name = default from (..)` item, not the whole `parameter` statement.
+    pub fn text_range(self, db: &CompilationDB) -> TextRange {
+        let loc = self.id.lookup(db);
+        let ast_id = loc.ast_id(db).erased();
+        db.ast_id_map(loc.scope.root_file).get_syntax(ast_id).range()
     }
 
     pub fn ty(self, db: &CompilationDB) -> Type {

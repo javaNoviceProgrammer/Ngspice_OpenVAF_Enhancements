@@ -82,7 +82,7 @@ pub enum IllegalCtxAccessKind {
     /// are -- "analog operator 'white_noise'" would be wrong twice over.
     SmallSignalSourceInLoop { name: Name },
     AnalysisFun { name: Name },
-    /// Enhancement-544 (compiler hunt F1): a system function that reads
+    /// Enhancement-545 (compiler hunt F1): a system function that reads
     /// simulation state, or a random draw, inside a constant -- a parameter
     /// default, range bound or array default. See `BuiltIn::is_sim_state_fun`.
     SimStateFun { name: Name, is_rng: bool },
@@ -1874,7 +1874,7 @@ impl ExprValidator<'_, '_> {
                         self.validate_nature_access(*nature, expr, args);
                         return;
                     }
-                    // Enhancement-544 (compiler hunt F1): the hierarchical system
+                    // Enhancement-545 (compiler hunt F1): the hierarchical system
                     // parameters (`$mfactor`, `$hflip`, ...) are not builtins but
                     // `ParamSysFun`s with their own lowering, so they passed the
                     // builtin arm above untouched. In a constant -- a parameter
@@ -2221,7 +2221,7 @@ impl ExprValidator<'_, '_> {
                     expr,
                 ),
 
-            // Enhancement-544 (compiler hunt F1): `parameter real t0 = $temperature;`
+            // Enhancement-545 (compiler hunt F1): `parameter real t0 = $temperature;`
             // crashed the compiler. A parameter default or range is a constant
             // (LRM 3.4); `analysis()` in one was already refused above, but the
             // simulation-state functions and the random draws were not, so
