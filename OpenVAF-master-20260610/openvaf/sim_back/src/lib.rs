@@ -267,6 +267,14 @@ impl<'a> CompiledModule<'a> {
             .copied()
             .filter(|param| !module.params[param].is_instance)
             .collect();
+        // Enhancement-558: the range texts the OSDI export emits as string
+        // constants must be in the literal table first
+        for info in module.params.values() {
+            if !info.range_text.is_empty() {
+                literals.get_or_intern(&info.range_text);
+            }
+        }
+
         // Enhancement-555: a default whose bounds read another parameter is
         // judged too (the bound may have moved); the E-546 model parameters
         // judged here always have such bounds.

@@ -37,6 +37,8 @@ Checks (both solvers):
   [14] F2: E-546 path -- a model parameter defaulted against an instance-read bound is judged per instance
   [15] F2: a constant default outside its own constant range still runs (E-56), with lint L027 at compile time
   [16] an object compiled without the entry point (a pre-E-555 compiler from git) still loads and draws
+  [17] E-558: .save of a model card's parameter records it per point; an unknown one warns
+  [18] E-558: the out-of-bounds message says the declared range and the value of the parameter that moved it
 """
 
 import atexit
@@ -242,14 +244,14 @@ F2 = "pg {tag}\nV1 a 0 1\nN1 a 0 mm\n.model mm {model}\n.control\npre_osdi _pg_v
 out = run(F2.format(tag="f1", model="vdep", body="op\naltermod mm lmin=1.5\nop\necho after"), "f1")
 out2 = run(F2.format(tag="f1b", model="vdep l=1.2", body="op\naltermod mm lmin=1.5\nop\necho after"), "f1b")
 check("[11] F2: altermod of the bound parameter refuses the defaulted l; given l is refused as before",
-      out.count("Parameter l of 'mm' is out of bounds (value 1.2)") == 1 and "after" in out
-      and out2.count("Parameter l of 'mm' is out of bounds (value 1.2)") == 1, (out + out2).strip()[-200:])
+      out.count("Parameter l of 'mm' is out of bounds (value 1.2;") == 1 and "after" in out
+      and out2.count("Parameter l of 'mm' is out of bounds (value 1.2;") == 1, (out + out2).strip()[-200:])
 out = run(F2.format(tag="f2", model="vdep", body="dc @mm[lmin] 0.5 2.0 0.5\nprint @mm[lmin] i(v1)\necho after"), "f2")
 rows = re.findall(r"^\d+\s+(\S+)\s+", out, re.M)
 check("[12] F2: a dc sweep of the bound parameter stops at the first point that moves the bound past l",
-      "out of bounds (value 1.2)" in out and "after" in out and len(rows) <= 2, out.strip()[-200:])
+      "out of bounds (value 1.2;" in out and "after" in out and len(rows) <= 2, out.strip()[-200:])
 out = run(F2.format(tag="f3", model="vdep", body="set osdimc\nset mcseed=11\nrepeat 8\n  op\nend\necho after"), "f3")
-nfail = out.count("out of bounds (value 1.2)")
+nfail = out.count("out of bounds (value 1.2;")
 check("[13] F2: osdimc draws of the bound parameter fail the trials that move it past l",
       nfail >= 2 and "FAILED during setup" in out and "after" in out, f"{nfail} trials refused")
 rc, log, _ = compile_va("vinst", '(* type="instance" *) parameter real w = 1.0 from (0:inf);\n'
@@ -258,7 +260,7 @@ assert rc == 0, log
 out = run("pg f4\nV1 a 0 1\nN1 a 0 mm w=1\n.model mm vinst\n.control\npre_osdi _pg_vinst.osdi\nop\necho after\n.endc\n.end\n", "f4")
 out2 = run("pg f4b\nV1 a 0 1\nN1 a 0 mm w=3\n.model mm vinst\n.control\npre_osdi _pg_vinst.osdi\nop\nprint i(v1)\n.endc\n.end\n", "f4b")
 check("[14] F2: E-546 path -- a model parameter defaulted against an instance-read bound is judged per instance",
-      "Parameter l of 'n1' is out of bounds (value 2)" in out and "after" in out
+      "Parameter l of 'n1' is out of bounds (value 2;" in out and "after" in out
       and abs(seq(out2, "i(v1)")[0] + 1.5e-3) < 1e-9, (out + out2).strip()[-160:])
 rc, log, _ = compile_va("vbad", 'parameter real x = 0.0 from (0:inf);\nparameter real r = 1000.0;',
                         "analog I(a,b) <+ V(a,b)/r + V(a,b)*x;")
@@ -279,6 +281,17 @@ if PREBUILT:
           and len(vals) == 3 and vals[0] == 1000.0 and vals[1] != 1000.0 and "not drawn" not in out, f"r={vals}")
 else:
     check("[16] (no pre-E-555 compiler for this platform; skipped)", True)
+
+# ------------------------------------------------------ E-558: F11, F9 ---
+out = run("pg s1\nV1 a 0 1\nN1 a 0 mm\n.model mm vpg r=1000\n.save @mm[r] @n1[reff] v(a) @mm[nosuch]\n.control\n"
+          "pre_osdi _pg_vpg.osdi\ntran 1u 3u\nprint @mm[r][0] @mm[r][2] @n1[reff][1]\n.endc\n.end\n", "s1")
+check("[17] E-558: .save of a model card's parameter records it per point; an unknown one warns",
+      seq(out, "@mm[r][0]") == [1000.0] and seq(out, "@mm[r][2]") == [1000.0] and seq(out, "@n1[reff][1]") == [1000.0]
+      and "no such device" not in out and "save '@mm[nosuch]'" in out and "has no parameter 'nosuch'" in out,
+      out.strip()[-240:])
+out = run(F2.format(tag="s2", model="vdep", body="op\naltermod mm lmin=1.5\nop\necho after"), "s2")
+check("[18] E-558: the out-of-bounds message says the declared range and the value of the parameter that moved it",
+      "Parameter l of 'mm' is out of bounds (value 1.2; range from [lmin:inf), lmin = 1.5)!" in out, out.strip()[-200:])
 
 print(f"\n{passed}/{checks} checks passed")
 sys.exit(0 if passed == checks else 1)

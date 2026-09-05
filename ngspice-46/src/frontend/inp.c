@@ -9,6 +9,7 @@ Author: 1985 Wayne A. Christopher
  */
 
 #include "ngspice/ngspice.h"
+#include <errno.h>
 #include <sys/stat.h>   /* Enhancement-485: S_ISREG */
 
 #include "ngspice/cktdefs.h"
@@ -2632,6 +2633,26 @@ doedit(char *filename)
 }
 
 
+/* Enhancement-558 (hunt F10): say why a file could not be sourced. The
+ * errno perror() reported was whatever the last call left -- "Inappropriate
+ * ioctl for device" for a file that simply does not exist, because the
+ * search through `sourcepath` and the terminal checks in between had moved
+ * on. Probe the name once more and report THAT errno. */
+static void inp_source_open_error(const char *name)
+{
+    FILE *probe;
+    int e;
+    errno = 0;
+    probe = fopen(name, "r");
+    e = errno;
+    if (probe) {
+        fclose(probe);
+        fprintf(cp_err, "%s: cannot be read as a deck\n", name);
+        return;
+    }
+    fprintf(cp_err, "%s: %s\n", name, e ? strerror(e) : "cannot open");
+}
+
 void
 com_source(wordlist *wl)
 {
@@ -2648,6 +2669,20 @@ com_source(wordlist *wl)
 
     inter = cp_interactive;
     cp_interactive = FALSE;
+
+    /* Enhancement-558 (hunt F10): a quoted file name -- the spelling for a
+     * path with a space, and what an f-string with whitespace yields -- kept
+     * its quotes and named a file that does not exist. Unquote every name. */
+    {
+        wordlist *qw;
+        for (qw = wl; qw; qw = qw->wl_next) {
+            if (qw->wl_word) {
+                char *u = cp_unquote(qw->wl_word);
+                tfree(qw->wl_word);
+                qw->wl_word = u;
+            }
+        }
+    }
 
     firstfile = wl->wl_word;
 
@@ -2671,7 +2706,7 @@ com_source(wordlist *wl)
         while (wl) {
             if ((tp = inp_pathopen(wl->wl_word, "r")) == NULL) {
                 fprintf(cp_err, "Command 'source' failed:\n");
-                perror(wl->wl_word);
+                inp_source_open_error(wl->wl_word);
                 fprintf(cp_err, "    Simulation interrupted due to error!\n\n");
                 fclose(fp);
                 cp_interactive = TRUE;
@@ -2719,7 +2754,7 @@ com_source(wordlist *wl)
 
     if (fp == NULL) {
         fprintf(cp_err, "Command 'source' failed:\n");
-        perror(wl->wl_word);
+        inp_source_open_error(wl->wl_word);
         fprintf(cp_err, "    Simulation interrupted due to error!\n\n");
         cp_interactive = TRUE;
         /* If we cannot source the file, stop all further command execution */

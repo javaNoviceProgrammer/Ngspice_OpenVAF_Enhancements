@@ -337,6 +337,9 @@ pub fn compile<'a>(
         let mut stat_param_infos_ll: Vec<&llvm_sys::LLVMValue> = Vec::new();
         let mut stat_param_truncs_ll: Vec<&llvm_sys::LLVMValue> = Vec::new(); // E-554
         let mut param_given_fns_ll: Vec<&llvm_sys::LLVMValue> = Vec::new(); // E-555
+        let mut param_range_counts: Vec<u32> = Vec::new(); // E-558
+        let mut param_ranges_ll: Vec<&llvm_sys::LLVMValue> = Vec::new();
+        let mut any_range = false;
         let mut any_trunc = false;
 
         let descriptors: Vec<_> = osdi_modules
@@ -442,6 +445,20 @@ pub fn compile<'a>(
                 // Enhancement-555: the given-flag entry point of this module
                 param_given_fns_ll.push(cguint.param_given_function_prototype());
 
+                // Enhancement-558: the declared range of every parameter, as text
+                let ranges = cguint.param_ranges();
+                param_range_counts.push(ranges.len() as u32);
+                for text in &ranges {
+                    // a parameter without a range is a NULL entry (an empty
+                    // constant string is not a thing the codegen makes)
+                    if text.is_empty() {
+                        param_ranges_ll.push(cx.const_null_ptr());
+                    } else {
+                        any_range = true;
+                        param_ranges_ll.push(cx.const_str_uninterned(text));
+                    }
+                }
+
                 // Collect declared parameter statistics for this module
                 let stats = cguint.stat_params();
                 stat_param_counts.push(stats.len() as u32);
@@ -467,6 +484,15 @@ pub fn compile<'a>(
         cx.export_array("OSDI_DESCRIPTORS", tys.osdi_descriptor, &descriptors, true, false);
         // Enhancement-555: one given-flag entry point per descriptor, in order
         cx.export_array("OSDI_PARAM_GIVEN_FNS", cx.ty_ptr(), &param_given_fns_ll, true, false);
+        // Enhancement-558: the declared ranges, one C string per parameter in
+        // param_opvar order, counted per descriptor; only when some module
+        // declares a range at all
+        if any_range {
+            let counts_ll: Vec<_> =
+                param_range_counts.iter().map(|&n| cx.const_unsigned_int(n)).collect();
+            cx.export_array("OSDI_PARAM_RANGE_COUNTS", cx.ty_int(), &counts_ll, true, false);
+            cx.export_array("OSDI_PARAM_RANGES", cx.ty_ptr(), &param_ranges_ll, true, false);
+        }
         cx.export_val(
             "OSDI_NUM_DESCRIPTORS",
             cx.ty_int(),

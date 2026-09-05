@@ -55,6 +55,12 @@ deliberately not exposed (clean "no such parameter" error). String opvars
 display via `show` but cannot become vectors (vectors are numeric).
 Pinned in [`examples/opvar_examples/`](../../examples/opvar_examples/).
 
+A model card's parameter can be saved per point as well as printed:
+`.save @mm[s]` (or `save @mm[s]` in the control block) records it alongside the
+node vectors, and a name the model does not have is warned about at `save`
+time (E-558; before that a model-card name was refused as *no such device*
+while `print @mm[s]` read it).
+
 ## 3.3 Parameter access, `alter`, and sweeps
 
 Parameters are readable and writable from the control language:
@@ -497,4 +503,7 @@ silent zero. `$variables` are substituted before the braces are evaluated, so
 `.for` construct ([E-474](../../enhancements_doc/Enhancement-474.md)). Interactive
 input was never folded; there the prefixes are simply accepted. As a side
 effect of the same work, `pyplot` keeps the case of its `title`/`xlabel`/`ylabel`
-tokens the way `plot` and `gnuplot` always did.
+tokens the way `plot` and `gnuplot` always did. A quoted file name — the
+spelling for a path with a space, and what an f-string with whitespace yields —
+is unquoted by `wrdata`, `write`, `source` and `pyplot` (E-556, E-558); before
+that the quotes went into the file name.

@@ -4,7 +4,7 @@
 python3 verify_paramgiven.py
 ```
 
-16 checks, both solvers; compiles its own models, the bundled BSIM4 among
+18 checks, both solvers; compiles its own models, the bundled BSIM4 among
 them, with `openvaf-r` (and one with a compiler from before this enhancement,
 taken from the repository's history at the E-554 release, for the old-object
 case; macOS on Apple silicon only, skipped elsewhere).

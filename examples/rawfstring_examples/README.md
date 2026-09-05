@@ -4,7 +4,7 @@
 python3 verify_rawfstring.py
 ```
 
-18 checks, both solvers.
+19 checks, both solvers.
 
 ## The need
 

@@ -633,6 +633,13 @@ extern OsdiObjectFile load_object_file(const char *input) {
   sym = GET_SYM(handle, "OSDI_PARAM_GIVEN_FNS");
   const void *const *param_given_fns = (const void *const *)sym;
 
+  /* Optional (Enhancement-558): the declared range of every parameter as text */
+  sym = GET_SYM(handle, "OSDI_PARAM_RANGE_COUNTS");
+  const uint32_t *param_range_counts = (const uint32_t *)sym;
+  sym = GET_SYM(handle, "OSDI_PARAM_RANGES");
+  const char *const *param_ranges_base = (const char *const *)sym;
+  uint32_t param_range_offset = 0;
+
   /* Nature / discipline / attribute tables. Every one is optional: a model
    * that declares no custom nature exports none, and an older .osdi exports
    * none either -- both simply fall back to the circuit-wide tolerances. */
@@ -827,6 +834,15 @@ extern OsdiObjectFile load_object_file(const char *input) {
       }
     }
 
+    /* Enhancement-558: this descriptor's slice of the range texts */
+    const char *const *param_ranges_ptr = NULL;
+    if (param_range_counts && param_ranges_base) {
+      uint32_t n = param_range_counts[i];
+      if (n == descr->num_params)
+        param_ranges_ptr = param_ranges_base + param_range_offset;
+      param_range_offset += n;
+    }
+
     size_t inst_off = calc_osdi_instance_data_off(descr);
     size_t noise_off = calc_osdi_noise_off(descr);
     int lim_kind = OSDI_LIM_NONE;
@@ -882,6 +898,7 @@ extern OsdiObjectFile load_object_file(const char *input) {
         .num_stat_params = n_stat_params,
         .stat_param_infos = stat_params_ptr,
         .param_given_fn = param_given_fns ? param_given_fns[i] : NULL, /* E-555 */
+        .param_ranges = param_ranges_ptr,                               /* E-558 */
 
         .num_natures = n_natures,
         .natures = natures_base,

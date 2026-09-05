@@ -34,6 +34,68 @@ static void osdimc_report_setup_failure(void);
 static bool osdimc_armed_now(void);
 static bool osdimc_enabled(void);
 
+/* Enhancement-558: `; range <text>, <p> = <v>...` for an out-of-bounds message
+ * -- the declared range as the source spells it (an object without the
+ * OSDI_PARAM_RANGES symbol gives nothing) and the current value of every
+ * scalar real parameter the text names, read where the failing parameter
+ * lives. */
+static void osdi_range_note(const OsdiDescriptor *descr, void *inst, void *model,
+                            uint32_t id, char *buf, size_t n) {
+  const OsdiRegistryEntry *entry;
+  const char *text;
+  size_t len;
+  buf[0] = '\0';
+  entry = NULL;
+  for (int t = 0; t < DEVmaxnum && !entry; t++) {
+    if (!osdi_devtype_is_osdi(t) || !ft_sim->devices[t])
+      continue;
+    const OsdiRegistryEntry *e = (const OsdiRegistryEntry *)ft_sim->devices[t]->registry_entry;
+    if (e && e->descriptor == descr)
+      entry = e;
+  }
+  if (!entry || !entry->param_ranges || id >= descr->num_params)
+    return;
+  text = entry->param_ranges[id];
+  if (!text || !*text)
+    return;
+  snprintf(buf, n, "; range %s", text);
+  len = strlen(buf);
+  /* every identifier in the text that is a parameter: its current value */
+  for (const char *p = text; *p;) {
+    if (isalpha_c(*p) || *p == '_' || *p == '$') {
+      const char *q = p + 1;
+      while (isalnum_c(*q) || *q == '_' || *q == '$')
+        q++;
+      for (uint32_t k = 0; k < descr->num_params && len < n; k++) {
+        const OsdiParamOpvar *po = &descr->param_opvar[k];
+        bool hit = false;
+        for (uint32_t a = 0; a <= po->num_alias && !hit; a++)
+          hit = po->name[a] && strlen(po->name[a]) == (size_t)(q - p) &&
+                cieqn(po->name[a], p, (size_t)(q - p));
+        if (!hit || (po->flags & PARA_TY_MASK) != PARA_TY_REAL || po->len != 0)
+          continue;
+        void *src = NULL;
+        if (k < descr->num_instance_params) {
+          if (inst)
+            src = descr->access(inst, model, k, ACCESS_FLAG_READ | ACCESS_FLAG_INSTANCE);
+        } else if (model) {
+          src = descr->access(NULL, model, k, ACCESS_FLAG_READ);
+        }
+        if (src) {
+          double v;
+          memcpy(&v, src, sizeof(double));
+          snprintf(buf + len, n - len, ", %s = %g", po->name[0], v);
+          len = strlen(buf);
+        }
+        break;
+      }
+      p = q;
+    } else {
+      p++;
+    }
+  }
+}
+
 static int handle_init_info(OsdiInitInfo info, const OsdiDescriptor *descr,
                             const OsdiNgspiceHandle *handle, void *inst,
                             void *model) {
@@ -72,14 +134,22 @@ static int handle_init_info(OsdiInitInfo info, const OsdiDescriptor *descr,
       } else if (model) {
         src = descr->access(NULL, model, id, ACCESS_FLAG_READ);
       }
+      /* Enhancement-558 (hunt F9): say the declared range too, and the current
+       * value of every parameter it reads -- `Parameter l of 'mm' is out of
+       * bounds (value 1.2)` named the parameter that did NOT move, while
+       * `lmin`, altered to 1.5, was the whole story. */
+      char range[512];
+      osdi_range_note(descr, inst, model, id, range, sizeof range);
       if (scalar_real && src) {
         double v;
         memcpy(&v, src, sizeof(double));
-        printf("Parameter %s of '%s' is out of bounds (value %g)!\n", param,
-               handle && handle->name ? (char *)handle->name : descr->name, v);
+        printf("Parameter %s of '%s' is out of bounds (value %g%s)!\n", param,
+               handle && handle->name ? (char *)handle->name : descr->name, v,
+               range);
       } else {
-        printf("Parameter %s of '%s' is out of bounds!\n", param,
-               handle && handle->name ? (char *)handle->name : descr->name);
+        printf("Parameter %s of '%s' is out of bounds%s!\n", param,
+               handle && handle->name ? (char *)handle->name : descr->name,
+               range);
       }
       /* bug-hunt F5: in an osdimc loop a failed trial leaves the PREVIOUS
        * run's plot current -- say so in-band, once per trial. */

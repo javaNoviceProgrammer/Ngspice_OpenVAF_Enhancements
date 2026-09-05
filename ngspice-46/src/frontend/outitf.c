@@ -902,6 +902,22 @@ beginPlot(JOB *analysisPtr, CKTcircuit *circuitPtr, char *cktName, char *analNam
                      * `print` and `meas` both resolve. The netlist `.save` form
                      * reported the same case correctly, so the two spellings of
                      * one request disagreed. */
+                    /* Enhancement-558 (hunt F11): `@mm[s]` names a MODEL card's
+                     * parameter -- which `print` and `-expr` read -- and was
+                     * refused here as "no such device". A model that has the
+                     * parameter is accepted; getSpecial() reads it per point. */
+                    if (err == E_NODEV && ft_sim->findModel &&
+                            ft_sim->findModel(circuitPtr, namebuf)) {
+                        char *mname = namebuf;
+                        struct variable *mv =
+                            if_getparam(circuitPtr, &mname, parambuf, 0, 1);
+                        if (mv) {
+                            free_struct_variable(mv);
+                            err = OK;
+                        } else {
+                            err = E_BADPARM;
+                        }
+                    }
                     if (err == E_NODEV)
                         fprintf(cp_err,
                                 "Warning: save '%s': no such device, so this "
@@ -1990,6 +2006,29 @@ getSpecial(dataDesc *desc, runDesc *run, IFvalue *val)
            (e.g. OSDI event counters) are recorded as reals downstream */
         desc->type &= (IF_REAL | IF_COMPLEX | IF_INTEGER);   /* mask out other bits */
         return TRUE;
+    }
+
+    /* Enhancement-558 (hunt F11): a model card's parameter, `@mm[s]` */
+    if (desc->specName && desc->specParamName && run->circuit && ft_sim &&
+            ft_sim->findModel && ft_sim->findModel(run->circuit, desc->specName)) {
+        char *mname = desc->specName;
+        vv = if_getparam(run->circuit, &mname, desc->specParamName,
+                         desc->specIndex, 1);
+        if (vv) {
+            bool ok = TRUE;
+            desc->type = IF_REAL;
+            if (vv->va_type == CP_REAL)
+                val->rValue = vv->va_real;
+            else if (vv->va_type == CP_NUM)
+                val->rValue = vv->va_num;
+            else if (vv->va_type == CP_BOOL)
+                val->rValue = (vv->va_bool ? 1.0 : 0.0);
+            else
+                ok = FALSE;
+            free_struct_variable(vv);
+            if (ok)
+                return TRUE;
+        }
     }
 
     if ((vv = if_getstat(run->circuit, &desc->name[1])) != NULL) {

@@ -16,7 +16,7 @@ use basedb::diagnostics::ConsoleSink;
 pub use basedb::diagnostics::DiagnosticSink;
 pub use basedb::lints;
 use basedb::{BaseDB, FileId};
-pub use hir_def::body::{ConstraintValue, ParamConstraint};
+pub use hir_def::body::{ConstraintKind, ConstraintValue, ParamConstraint};
 use hir_def::db::HirDefDB;
 pub use hir_def::expr::{CaseCond, CaseKind, CaseMask};
 pub use hir_def::nameres::diagnostics::PathResolveError;
@@ -36,6 +36,7 @@ pub use rec_declarations::RecDeclarations;
 use salsa::InternKey;
 use smol_str::SmolStr;
 use syntax::ast;
+use syntax::AstNode;
 use syntax::TextRange;
 pub use syntax::name::Name;
 
@@ -568,6 +569,48 @@ impl Parameter {
         let loc = self.id.lookup(db);
         let ast_id = loc.ast_id(db).erased();
         db.ast_id_map(loc.scope.root_file).get_syntax(ast_id).range()
+    }
+
+    /// Enhancement-558 (hunt F9): the parameter's range as the source spells
+    /// it -- `from [lmin:inf) exclude 0` -- for a simulator's out-of-bounds
+    /// message, which otherwise names only the parameter and its value. Empty
+    /// when the parameter declares no range.
+    pub fn bounds_source(self, db: &CompilationDB) -> String {
+        let bounds = self.bounds(db);
+        if bounds.is_empty() {
+            return String::new();
+        }
+        let loc = self.id.lookup(db);
+        let root = db.parse(loc.scope.root_file).syntax_node();
+        let sm = db.body_source_map(DefWithBodyId::ParamId(self.id));
+        let text = |expr: ExprId| -> String {
+            sm.expr_map_back
+                .get(expr)
+                .and_then(|ptr| ptr.as_ref())
+                .map(|ptr| ptr.to_node(&root).syntax().text().to_string())
+                .unwrap_or_else(|| "?".to_owned())
+        };
+        let mut out = String::new();
+        for bound in bounds.iter() {
+            if !out.is_empty() {
+                out.push(' ');
+            }
+            out.push_str(match bound.kind {
+                ConstraintKind::From => "from ",
+                ConstraintKind::Exclude => "exclude ",
+            });
+            match bound.val {
+                ConstraintValue::Value(expr) => out.push_str(&text(expr)),
+                ConstraintValue::Range(range) => {
+                    out.push(if range.start_inclusive { '[' } else { '(' });
+                    out.push_str(&text(range.start));
+                    out.push(':');
+                    out.push_str(&text(range.end));
+                    out.push(if range.end_inclusive { ']' } else { ')' });
+                }
+            }
+        }
+        out
     }
 
     pub fn ty(self, db: &CompilationDB) -> Type {

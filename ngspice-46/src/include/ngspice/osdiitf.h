@@ -55,6 +55,9 @@ typedef struct OsdiRegistryEntry {
   const void *stat_param_infos;  /* OsdiStatParam records built by the registry from the
                                     .osdi's OSDI_STAT_PARAM_INFOS (+ TRUNCS, E-554) */
   const void *param_given_fn;    /* E-555: this descriptor's OsdiParamGivenFn, or NULL */
+  const char *const *param_ranges; /* E-558: the declared range of each parameter as
+                                      text, param_opvar order, "" for none; NULL in an
+                                      object without the symbol */
 
   /* Nature / discipline / attribute tables (OSDI_NATURES, OSDI_DISCIPLINES,
    * OSDI_ATTRIBUTES), filled at .osdi load time. The compiler has always

@@ -451,6 +451,11 @@ com_write(wordlist *wl)
     struct plot *tpl, newplot;
 
     if (wl) {
+        /* Enhancement-558 (hunt F10): `write "w2.raw"` made a file called
+         * "w2.raw", quotes included; the name is unquoted like `source`'s. */
+        char *u = cp_unquote(wl->wl_word);
+        tfree(wl->wl_word);
+        wl->wl_word = u;
         file = wl->wl_word;
         wl = wl->wl_next;
     } else {

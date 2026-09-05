@@ -414,6 +414,7 @@ impl ModuleInfo {
                             given_tested: false,
                             dynamic_bounds: false,
                             stat,
+                            range_text: param.bounds_source(db),
                         },
                     );
                 }
@@ -967,6 +968,9 @@ pub struct ParamInfo {
     pub dynamic_bounds: bool,
     /// `(* std= / std_rel= / dist= *)` statistics for `.option osdimc`
     pub stat: Option<ParamStat>,
+    /// Enhancement-558: the declared range as the source spells it, for the
+    /// simulator's out-of-bounds message; empty without a range
+    pub range_text: String,
 }
 
 /// Declared statistics of a parameter, exported through the OSDI

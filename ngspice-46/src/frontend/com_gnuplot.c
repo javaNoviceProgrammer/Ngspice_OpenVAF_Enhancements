@@ -70,6 +70,12 @@ com_write_simple(wordlist *wl)
     }
 
     if (wl) {
+        /* Enhancement-558 (hunt F10): a quoted name -- the spelling for a
+         * path with a space -- was written into the file name, quotes and all
+         * (`wrdata "o3.txt"` made a file called "o3.txt", quotes included). */
+        char *u = cp_unquote(wl->wl_word);
+        tfree(wl->wl_word);
+        wl->wl_word = u;
         fname = wl->wl_word;
         wl = wl->wl_next;
     }

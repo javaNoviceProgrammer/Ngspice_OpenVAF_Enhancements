@@ -43,6 +43,7 @@ Checks (both solvers):
   [16] E-556: the result is plain text (quoted only when it has whitespace): a numeric option, an if condition, a setplot name take it
   [17] E-556: a file name from an f-string has no quotes (wrdata, write, pyplot -export)
   [18] E-556: a raw string after `name=` keeps its braces
+  [19] E-558: a plain quoted file name is unquoted by wrdata, write and source; a missing file says so
 """
 import os
 import re
@@ -211,6 +212,17 @@ check("[17] E-556: a file name from an f-string has no quotes (wrdata, write, py
 body, all_ = run('''set v=r"{1+1}"
 echo r"$v"''', "rawaftereq")
 check("[18] E-556: a raw string after `name=` keeps its braces", "{1+1}" in body, body.strip()[-80:])
+
+with open(os.path.join(WORK, "sub deck.cir"), "w") as f:
+    f.write("* sub\nv9 a 0 1\nr9 a 0 1k\n.control\necho sub-deck-ok\n.endc\n.end\n")
+body, all_ = run('''wrdata "q 1.txt" v(out)
+write "q 2.raw" v(out)
+source "sub deck.cir"
+source nosuch.cir''', "quotednames")
+check("[19] E-558: a plain quoted file name is unquoted by wrdata, write and source; a missing file says so",
+      os.path.isfile(os.path.join(WORK, "q 1.txt")) and os.path.isfile(os.path.join(WORK, "q 2.raw"))
+      and not os.path.exists(os.path.join(WORK, '"q 1.txt"')) and "sub-deck-ok" in all_
+      and "nosuch.cir: No such file or directory" in all_, all_.strip()[-200:])
 
 print(f"\n{passed}/{checks} checks passed")
 shutil.rmtree(WORK, ignore_errors=True)

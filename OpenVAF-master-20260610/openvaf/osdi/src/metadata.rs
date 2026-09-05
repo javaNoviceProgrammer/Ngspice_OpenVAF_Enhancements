@@ -229,6 +229,27 @@ impl<'ll> OsdiCompilationUnit<'_, '_, 'll> {
     /// instance params (builtins included) first, then model params with the
     /// same `is_instance` filter -- because the simulator uses them with the
     /// descriptor's ordinary `access()` setter. Opvars carry no statistics.
+    /// Enhancement-558: the declared range of every parameter, in
+    /// `param_opvar()` order (an empty string for a builtin or a parameter
+    /// without a range), for the `OSDI_PARAM_RANGES` side-table.
+    pub fn param_ranges(&self) -> Vec<String> {
+        let OsdiCompilationUnit { inst_data, model_data, module, .. } = self;
+        let mut res = Vec::new();
+        for param in inst_data.params.keys() {
+            res.push(match param {
+                OsdiInstanceParam::User(param) => module.info.params[param].range_text.clone(),
+                OsdiInstanceParam::Builtin(_) => String::new(),
+            });
+        }
+        for param in model_data.params.keys() {
+            if module.info.params[param].is_instance {
+                continue;
+            }
+            res.push(module.info.params[param].range_text.clone());
+        }
+        res
+    }
+
     pub fn stat_params(&self) -> Vec<(u32, u32, f64, f64)> {
         const DIST_UNIFORM: u32 = 1;
         const DIST_REL: u32 = 2;

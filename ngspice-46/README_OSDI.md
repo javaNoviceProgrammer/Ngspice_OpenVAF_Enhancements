@@ -96,8 +96,10 @@ the ordinary parameter setter — **no `reset`, no netlist re-expansion, no
   shift the distribution); turning the option off restores every drawn
   parameter to nominal on the next run; a non-finite draw (sigma too large)
   is refused with a named warning; a failed trial is flagged in-band and
-  its range error names the model and value; `.option osdimc_verbose`
-  prints every draw;
+  its range error names the model, the value and (E-558) the declared
+  range with the current value of every parameter it reads —
+  `Parameter l of 'mm' is out of bounds (value 1.2; range from [lmin:inf),
+  lmin = 1.5)`; `.option osdimc_verbose` prints every draw;
 * a draw violating the parameter's Verilog-A `from` range fails that run
   with the device's own range error, exactly as the same `alter` would —
   the descriptor does not export ranges, so size sigmas accordingly;
