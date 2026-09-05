@@ -596,6 +596,38 @@ void ft_pyplot(double *xlims, double *ylims,
     if (plottype == PLOT_POINT)
         markers = TRUE;
 
+    /* Enhancement-550: `set pyplot_decimate=auto|off|<N>`. A trace with more
+       samples than the axis has pixel columns is drawn as its min/max ENVELOPE
+       per column -- the same picture, since a column can only show its extremes
+       -- computed in the generated script (`_envelope`). matplotlib drawing four
+       million points to a 640-pixel canvas took 4.8 s of a 5.2 s run; the
+       envelope draws in milliseconds. Unset or `auto`: decimate when a trace
+       has more than twice the axis width in samples; `off`: every sample; a
+       number: that many bins, whatever the width. Plain lines only -- a point
+       plot shows its points and a step plot its steps -- and never a `vs` plot
+       whose x runs backwards. An interactive window re-decimates from the full
+       data on every zoom, pan and resize, so zooming in reveals the detail. */
+    bool decimate = TRUE;
+    int decbins = 0;
+    {
+        char decvar[BSIZE_SP];
+        int n;
+        if (cp_getvar("pyplot_decimate", CP_NUM, &n, 0)) {
+            if (n < 2)
+                decimate = FALSE;
+            else
+                decbins = n;
+        } else if (cp_getvar("pyplot_decimate", CP_STRING, decvar, sizeof decvar)) {
+            if (cieq(decvar, "off") || cieq(decvar, "none") || cieq(decvar, "false"))
+                decimate = FALSE;
+            else if (!(cieq(decvar, "on") || cieq(decvar, "auto") || cieq(decvar, "true")))
+                fprintf(cp_err, "Warning: pyplot_decimate=%s is not off, auto or a bin "
+                        "count; decimating automatically.\n", decvar);
+        }
+    }
+    if (hist || fft)
+        decimate = FALSE;
+
     /* Enhancement-217: `pyplot -hist ...` renders each signal's VALUE distribution
        as a histogram. `set pyplot_hist_bins=<N>` sets the bin count (default the
        matplotlib 'auto' rule); `set pyplot_hist_density` normalizes to a density. */
@@ -771,6 +803,57 @@ void ft_pyplot(double *xlims, double *ylims,
         fprintf(file, "fig, axes = plt.subplots(%d, 1, sharex=%s, squeeze=False)\n",
                 nrows, sharex);
 
+    /* Enhancement-550: the envelope machinery (see `decimate` above). */
+    if (decimate) {
+        fprintf(file, "def _envelope(x, y, npix):\n");
+        fprintf(file, "    n = x.size\n");
+        fprintf(file, "    if npix < 2 or n <= 2 * npix or np.any(np.diff(x) < 0):\n");
+        fprintf(file, "        return x, y\n");
+        fprintf(file, "    edges = np.linspace(x[0], x[-1], npix + 1)\n");
+        fprintf(file, "    cuts = np.searchsorted(x, edges[1:-1])\n");
+        fprintf(file, "    starts = np.concatenate(([0], cuts)); ends = np.concatenate((cuts, [n]))\n");
+        fprintf(file, "    keep = []\n");
+        fprintf(file, "    for a, b in zip(starts, ends):\n");
+        fprintf(file, "        if b > a:\n");
+        fprintf(file, "            seg = y[a:b]\n");
+        fprintf(file, "            i = a + int(seg.argmin()); j = a + int(seg.argmax())\n");
+        fprintf(file, "            keep.append(min(i, j)); keep.append(max(i, j))\n");
+        fprintf(file, "    k = np.array(keep)\n");
+        fprintf(file, "    return x[k], y[k]\n");
+        fprintf(file, "_ndec = [0, 0]\n");
+        fprintf(file, "def _dec(x, y, npix):\n");
+        fprintf(file, "    m = ~np.isnan(x) & ~np.isnan(y)\n");
+        fprintf(file, "    x = x[m]; y = y[m]\n");
+        fprintf(file, "    xs, ys = _envelope(x, y, npix)\n");
+        fprintf(file, "    if xs.size < x.size:\n");
+        fprintf(file, "        _ndec[0] = max(_ndec[0], int(x.size)); _ndec[1] = int(xs.size)\n");
+        fprintf(file, "    return xs, ys, x, y\n");
+        if (decbins > 0)
+            fprintf(file, "_npix0 = %d\n", decbins);
+        else if (hardcopy)
+            fprintf(file, "_npix0 = max(2, int(fig.get_figwidth() * %d))\n", dpi);
+        else
+            fprintf(file, "_npix0 = max(2, int(fig.get_figwidth() * fig.dpi))\n");
+        if (!hardcopy) {
+            fprintf(file, "_full = {}\n");
+            fprintf(file, "def _reg(ln, x, y):\n");
+            fprintf(file, "    _full[ln] = (x, y)\n");
+            fprintf(file, "def _redec(ax):\n");
+            fprintf(file, "    lo, hi = ax.get_xlim()\n");
+            if (decbins > 0)
+                fprintf(file, "    npix = %d\n", decbins);
+            else
+                fprintf(file, "    npix = max(2, int(ax.bbox.width))\n");
+            fprintf(file, "    for ln, (x, y) in _full.items():\n");
+            fprintf(file, "        if ln.axes is not ax:\n");
+            fprintf(file, "            continue\n");
+            fprintf(file, "        a = max(0, int(np.searchsorted(x, lo)) - 1)\n");
+            fprintf(file, "        b = min(x.size, int(np.searchsorted(x, hi, side='right')) + 1)\n");
+            fprintf(file, "        xs, ys = _envelope(x[a:b], y[a:b], npix)\n");
+            fprintf(file, "        ln.set_data(xs, ys)\n");
+        }
+    }
+
     /* Enhancement-297: the FFT window (numpy) chosen by pyplot_fft_window. */
     const char *winexpr = "np.hanning(_N)";
     if (fft) {
@@ -845,20 +928,21 @@ void ft_pyplot(double *xlims, double *ylims,
             continue;
         }
         /* Enhancement-548: the axis this trace is drawn on (see `mixed`). */
+        char axexpr[32];
         if (row_type[row] == SV_NOTYPE)
             row_type[row] = (int) v->v_type;
         if (mixed && (int) v->v_type != row_type[row]) {
             const char *abbrev = ft_typabbrev((int) v->v_type);
             if (!twin_label[row])
                 twin_label[row] = abbrev ? abbrev : "";
-            fprintf(file, "_twin(%d).", row);
+            (void) snprintf(axexpr, sizeof axexpr, "_twin(%d)", row);
         } else
-            fprintf(file, "axes[%d, 0].", row);
+            (void) snprintf(axexpr, sizeof axexpr, "axes[%d, 0]", row);
         if (hist) {
             /* Enhancement-217: the VALUE column (col+1), NaN-filtered so vectors
                of unequal length (padded with NaN in the data table) histogram
                cleanly. Overlaid histograms on one axis get alpha transparency. */
-            fprintf(file, "hist(d[:, %d][~np.isnan(d[:, %d])], ", col + 1, col + 1);
+            fprintf(file, "%s.hist(d[:, %d][~np.isnan(d[:, %d])], ", axexpr, col + 1, col + 1);
             if (histbins > 0)
                 fprintf(file, "bins=%d, ", histbins);
             else
@@ -869,26 +953,59 @@ void ft_pyplot(double *xlims, double *ylims,
                (signals-per-panel = nper, or all numVecs on a single axis). */
             if (((nper > 0) ? nper : numVecs) > 1)
                 fprintf(file, "alpha=0.6, ");    /* overlaid: see through */
-        } else if (boxes)
-            fprintf(file, "step(d[:, %d], d[:, %d], where='mid', %s", col, col + 1, lwarg);
-        else if (markers)
-            fprintf(file, "plot(d[:, %d], d[:, %d], marker='.', linestyle='None', ",
-                    col, col + 1);
-        else if (linemarkers) {
-            /* Enhancement-296: line + a cycling marker shape, so overlaid traces
-               are distinguishable without colour. */
-            static const char *mk[] = { "o", "s", "^", "D", "v", "*", "P", "X" };
-            fprintf(file, "plot(d[:, %d], d[:, %d], marker='%s', markevery=0.1, %s",
-                    col, col + 1, mk[i % 8], lwarg);
-        } else
-            fprintf(file, "plot(d[:, %d], d[:, %d], %s", col, col + 1, lwarg);
-        if (mixed)
-            fprintf(file, "color='C%d', ", i % 10);
+        } else {
+            /* Enhancement-550: the trace's samples -- its envelope, when there
+               are more than the axis can show and it is a plain line; the full
+               data is kept beside a window's line so a zoom can re-decimate. */
+            const bool dec_this = decimate && !markers && !boxes;
+            if (dec_this)
+                fprintf(file, "_x, _y, _fx, _fy = _dec(d[:, %d], d[:, %d], _npix0)\n",
+                        col, col + 1);
+            else
+                fprintf(file, "_x, _y = d[:, %d], d[:, %d]\n", col, col + 1);
+            fprintf(file, "_ln, = %s.", axexpr);
+            if (boxes)
+                fprintf(file, "step(_x, _y, where='mid', %s", lwarg);
+            else if (markers)
+                fprintf(file, "plot(_x, _y, marker='.', linestyle='None', ");
+            else if (linemarkers) {
+                /* Enhancement-296: line + a cycling marker shape, so overlaid traces
+                   are distinguishable without colour. */
+                static const char *mk[] = { "o", "s", "^", "D", "v", "*", "P", "X" };
+                fprintf(file, "plot(_x, _y, marker='%s', markevery=0.1, %s",
+                        mk[i % 8], lwarg);
+            } else
+                fprintf(file, "plot(_x, _y, %s", lwarg);
+            if (mixed)
+                fprintf(file, "color='C%d', ", i % 10);
+            fprintf(file, "label=");
+            quote_python_string(file, v->v_name ? v->v_name : "");
+            fprintf(file, ")\n");
+            if (dec_this && !hardcopy)
+                fprintf(file, "_reg(_ln, _fx, _fy)\n");
+            col += 2;
+            i++;
+            continue;
+        }
         fprintf(file, "label=");
         quote_python_string(file, v->v_name ? v->v_name : "");
         fprintf(file, ")\n");
         col += 2;
         i++;
+    }
+
+    /* Enhancement-550: say when a trace was drawn as its envelope, and hook a
+       window's zoom, pan and resize to re-decimate from the full data. */
+    if (decimate) {
+        fprintf(file, "if _ndec[0]:\n");
+        fprintf(file, "    print('pyplot: %%d samples per trace drawn as a %%d-point envelope "
+                      "(set pyplot_decimate=off for every sample)' %% (_ndec[0], _ndec[1]))\n");
+        if (!hardcopy) {
+            fprintf(file, "for _a in fig.axes:\n");
+            fprintf(file, "    _a.callbacks.connect('xlim_changed', _redec)\n");
+            fprintf(file, "fig.canvas.mpl_connect('resize_event', "
+                          "lambda _e: [_redec(_a) for _a in fig.axes])\n");
+        }
     }
 
     /* Per-axis cosmetics applied to every panel; the x-label goes on the

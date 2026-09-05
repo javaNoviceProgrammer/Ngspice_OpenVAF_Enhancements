@@ -171,6 +171,7 @@ them to return to the default.
 | `pyplot_dpi` | image resolution for a hardcopy | `100` |
 | `pyplot_transparent` | transparent figure background for a hardcopy | opaque |
 | `pyplot_cursor` | hover crosshair in an interactive window | off |
+| `pyplot_decimate` | `auto` / `off` / `<N>` — draw a long trace as its per-pixel envelope (§12.5) | `auto` |
 | `pyplot_mplcursors` | use the `mplcursors` backend for that cursor | off |
 
 **† `pointstyle` is not a pyplot variable.** It is a *stock ngspice* setting, read by the
@@ -617,6 +618,32 @@ refused, since each of those writes its own table beside its plot anyway — a
 `vec`, `re`, `im`, the AC views `vec`, `frequency`, `re`, `im`, an eye `eye_t`,
 `eye_wave`.
 
+
+### 12.5 Big plots — the envelope
+
+A pixel column can only show its extremes, so a trace with more samples than the axis has
+columns is drawn as its **min/max envelope** per column (E-550): the same picture, drawn in
+milliseconds — matplotlib took 4.8 s of a 5.2 s run to draw four million points onto a
+640-pixel canvas. The envelope keeps each column's actual extreme samples in time order,
+bins by x (adaptive time steps are handled), skips NaN padding, and leaves point plots
+(`pointstyle=markers`), step plots and a `vs` plot whose x runs backwards alone.
+
+An interactive window **re-decimates on every zoom, pan and resize** from the full data,
+so zooming in reveals the detail; a hardcopy decimates once at its dpi. The script says
+what it did:
+
+```
+pyplot: 200001 samples per trace drawn as a 1280-point envelope (set pyplot_decimate=off for every sample)
+```
+
+| `set pyplot_decimate=` | Effect |
+|---|---|
+| *(unset)* / `auto` | decimate when a trace has more than twice the axis width in samples |
+| `off` | every sample, as before |
+| `<N>` (an integer ≥ 2) | N bins, whatever the width |
+
+The exported table (§12.3) always holds every sample; only the drawing is decimated.
+
 ---
 
 ## 13. What gets written
@@ -753,6 +780,7 @@ unset pyplot_style
 | `pyplot_contour_lines` | boolean | `-contour` |
 | `pyplot_status` | integer, **read** by the deck | set by every `pyplot`: the exit status of a hardcopy (E-547) |
 | `pyplot_export` | `bin` / `ascii` | the data table's format: `.npy` (default) or the `.data` text (E-549) |
+| `pyplot_decimate` | `auto` / `off` / integer | line plots: draw a long trace as its per-pixel envelope (E-550) |
 
 ---
 

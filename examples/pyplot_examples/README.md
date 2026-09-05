@@ -72,4 +72,16 @@ their plots anyway. The written header follows numpy's format 1.0 exactly
 (magic, version, little-endian length, 64-byte-aligned dict, raw doubles in
 the host's byte order declared in the dtype).
 
-Run: `python3 verify_pyplot.py` (35 checks, both solvers).
+**Enhancement-550 — long traces are drawn as their envelope.** A pixel column
+can only show its extremes, so a trace with more samples than the axis has
+columns is drawn as its min/max envelope per column: the same picture, and
+matplotlib draws it in milliseconds where four million points took 4.8 s of
+a 5.2 s run. The envelope keeps the actual extreme samples of each column in
+time order, bins by x (so adaptive time steps are handled), skips NaN
+padding, and leaves point plots, step plots and a `vs` plot whose x runs
+backwards alone. An interactive window re-decimates from the full data on
+every zoom, pan and resize, so zooming in reveals the detail; a hardcopy
+decimates once at its dpi. `set pyplot_decimate=off` draws every sample; an
+integer fixes the bin count; the script says when it decimated.
+
+Run: `python3 verify_pyplot.py` (40 checks, both solvers).

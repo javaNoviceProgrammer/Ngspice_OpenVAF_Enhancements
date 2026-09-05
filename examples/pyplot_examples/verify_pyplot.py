@@ -60,6 +60,17 @@ Enhancement-549 (the data table: .npy by default, `set pyplot_export`, `-export`
   [E-549d] `-export` refuses the other markers, and says what to do instead
   [E-549e] the -contour, -smith and -bode tables carry their own field names
   [E-549f] an unknown pyplot_export value is said and falls back to .npy
+
+Enhancement-550 (envelope decimation of long traces):
+  [E-550a] a 200k-sample trace on a hardcopy is drawn as its min/max envelope:
+           at most two points per pixel column, the same extremes per column
+           as the full data, the script says so, the PNG renders
+  [E-550b] `set pyplot_decimate=off` draws every sample
+  [E-550c] `set pyplot_decimate=500` uses 500 bins whatever the width
+  [E-550d] a window re-decimates on zoom: setting the x-limits to a slice
+           replaces the line's data with that slice's envelope, in detail
+  [E-550e] a point plot (`set pointstyle=markers`) and a `vs` plot whose x runs
+           backwards are left whole
 """
 import os
 import random
@@ -540,6 +551,114 @@ check("E-549e: the -contour, -smith and -bode tables carry their own field names
 check("E-549f: an unknown pyplot_export value is said and falls back to .npy",
       "pyplot_export=parquet is neither" in log and npy("odd") is not None, log.strip()[-200:])
 for base in ("npyplot", "txtplot", "sig", "iv", "odd", "cont", "sm", "bo", "export"):
+    for ext in (".py", ".data", ".npy", ".png"):
+        q = os.path.join(HERE, base + ext)
+        if os.path.exists(q):
+            os.remove(q)
+if os.path.exists(deck):
+    os.remove(deck)
+
+# ---- Enhancement-550: envelope decimation ----
+E550 = """* pyplot decimation probe (Enhancement-550)
+V1 in 0 dc 0 sin(0 1 1k)
+R1 in out 1k
+C1 out 0 159.155n
+.tran 10n 2m
+.control
+run
+set pyplot_terminal=png
+set pyplot_backend=Agg
+pyplot dec v(out)
+set pyplot_decimate=off
+pyplot nodec v(out)
+set pyplot_decimate=500
+pyplot dec500 v(out)
+unset pyplot_decimate
+set pointstyle=markers
+pyplot pts v(out)
+unset pointstyle
+pyplot xy v(in) vs v(out)
+unset pyplot_terminal
+pyplot win v(out)
+.endc
+.end
+"""
+deck = os.path.join(HERE, "e550.sp")
+with open(deck, "w") as f:
+    f.write(E550)
+log = run_deck(deck, HERE)
+
+def exec_script(base):
+    """Run the generated script in-process under Agg (plt.show() is a no-op
+    there) and hand back its namespace, with `axes` and `d` in it."""
+    import matplotlib
+    matplotlib.use("Agg")
+    ns = {"__file__": os.path.join(HERE, base + ".py"), "__name__": "__pyplot__"}
+    src = open(ns["__file__"]).read() if os.path.isfile(ns["__file__"]) else ""
+    if not src:
+        return None
+    try:
+        exec(compile(src, ns["__file__"], "exec"), ns)
+    except Exception as e:  # noqa: BLE001
+        print("    script failed:", e)
+        return None
+    return ns
+
+def envelope_matches(ns):
+    """The drawn line has at most 2 points per bin and the same min/max per bin as the full data."""
+    ln = ns["axes"][0, 0].lines[0]
+    xs, ys = ln.get_xdata(), ln.get_ydata()
+    full = ns["d"]
+    fx, fy = full[:, 0], full[:, 1]
+    npix = int(ns["_npix0"])
+    if xs.size > 2 * npix or xs.size >= fx.size:
+        return False, f"{xs.size} points drawn of {fx.size}, {npix} bins"
+    edges = np.linspace(fx[0], fx[-1], npix + 1)
+    fb = np.clip(np.searchsorted(edges, fx, side="right") - 1, 0, npix - 1)
+    db = np.clip(np.searchsorted(edges, xs, side="right") - 1, 0, npix - 1)
+    for b in range(0, npix, max(1, npix // 50)):
+        fm, dm = fb == b, db == b
+        if fm.any() and dm.any():
+            if abs(fy[fm].min() - ys[dm].min()) > 1e-12 or abs(fy[fm].max() - ys[dm].max()) > 1e-12:
+                return False, f"bin {b}: full [{fy[fm].min()}, {fy[fm].max()}] drawn [{ys[dm].min()}, {ys[dm].max()}]"
+    return True, f"{xs.size} points drawn of {fx.size}, {npix} bins"
+
+ns = exec_script("dec")
+ok, why = envelope_matches(ns) if ns else (False, "no script")
+check("E-550a: a 200k-sample hardcopy trace is its envelope: <= 2 points per pixel column, the same extremes, and it says so",
+      ns is not None and ok and "drawn as a" in log and "-point envelope" in log
+      and is_png(os.path.join(HERE, "dec.png")), why)
+ns = exec_script("nodec")
+check("E-550b: pyplot_decimate=off draws every sample",
+      ns is not None and "_envelope" not in open(os.path.join(HERE, "nodec.py")).read()
+      and ns["axes"][0, 0].lines[0].get_xdata().size == ns["d"].shape[0],
+      f"{ns['axes'][0, 0].lines[0].get_xdata().size if ns else None} points")
+ns = exec_script("dec500")
+check("E-550c: pyplot_decimate=500 draws at most 1000 points",
+      ns is not None and ns["_npix0"] == 500 and 2 <= ns["axes"][0, 0].lines[0].get_xdata().size <= 1000,
+      f"{ns['axes'][0, 0].lines[0].get_xdata().size if ns else None} points")
+ns = exec_script("win")
+if ns:
+    ln = ns["axes"][0, 0].lines[0]
+    n0 = ln.get_xdata().size
+    ns["axes"][0, 0].set_xlim(0.5e-3, 0.51e-3)        # a 10 us slice of the 2 ms run
+    x1 = ln.get_xdata()
+    inside = x1.size > 50 and x1.min() >= 0.49e-3 and x1.max() <= 0.52e-3
+    full_in_slice = ((ns["d"][:, 0] >= 0.5e-3) & (ns["d"][:, 0] <= 0.51e-3)).sum()
+    check("E-550d: a window re-decimates on zoom: the line becomes the visible slice, in detail",
+          "xlim_changed" in open(os.path.join(HERE, "win.py")).read() and inside
+          and x1.size >= min(full_in_slice, 2 * int(ns["axes"][0, 0].bbox.width)) - 4,
+          f"{n0} points before, {x1.size} after, {full_in_slice} samples in the slice")
+else:
+    check("E-550d: (skipped: the window script did not run)", False)
+ns_p = exec_script("pts"); ns_xy = exec_script("xy")
+check("E-550e: a point plot and a backwards-x `vs` plot keep every sample",
+      ns_p is not None and ns_p["axes"][0, 0].lines[0].get_xdata().size == ns_p["d"].shape[0]
+      and ns_xy is not None and ns_xy["axes"][0, 0].lines[0].get_xdata().size == ns_xy["d"].shape[0],
+      "")
+import matplotlib.pyplot as _plt
+_plt.close("all")
+for base in ("dec", "nodec", "dec500", "pts", "xy", "win"):
     for ext in (".py", ".data", ".npy", ".png"):
         q = os.path.join(HERE, base + ext)
         if os.path.exists(q):
