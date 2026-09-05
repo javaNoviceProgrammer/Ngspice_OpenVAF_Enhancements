@@ -71,6 +71,19 @@ Enhancement-550 (envelope decimation of long traces):
            replaces the line's data with that slice's envelope, in detail
   [E-550e] a point plot (`set pointstyle=markers`) and a `vs` plot whose x runs
            backwards are left whole
+
+Enhancement-551 (engineering ticks, typed labels, a clean title):
+  [E-551a] the default labels read `time [s]` / `voltage [V]`, and the ticks
+           read `500 µs` / `-500 mV` (an EngFormatter keyed on the vector type)
+  [E-551b] a mixed plot labels `voltage [V]` left and `current [A]` right, with
+           `µA`-style ticks on the twin
+  [E-551c] a label the user gave is kept verbatim; the ticks still carry the unit
+  [E-551d] `set pyplot_eng=off` keeps plain tick numbers, and the typed labels
+  [E-551e] a `db(v(out))` trace has plain dB ticks and `10 kHz`-style ones on
+           the log frequency axis
+  [E-551f] the deck's `* ` comment marker is dropped from the default title;
+           a `title` the user gave is untouched
+  [E-551g] `-fft` and `-hist` label their axes `Frequency [Hz]` / `voltage [V]`
 """
 import os
 import random
@@ -452,9 +465,9 @@ check("...E-548b: a non-positive limit under a log axis is refused by the comman
       and "X values must be > 0 for log scale" in log and not xlo,
       log.strip()[-300:])
 mixed = open(os.path.join(HERE, "mixed.py")).read() if os.path.isfile(os.path.join(HERE, "mixed.py")) else ""
-check("E-548c: a voltage and a current get two y scales, labelled 'V' and 'A', one legend, explicit colours",
-      "twinx()" in mixed and "_twin(0).plot(" in mixed and "set_ylabel('V')" in mixed
-      and "_twin(0).set_ylabel('A')" in mixed and "_l1 + _l2" in mixed
+check("E-548c: a voltage and a current get two y scales, labelled by type, one legend, explicit colours",
+      "twinx()" in mixed and "_twin(0).plot(" in mixed and "set_ylabel('voltage [V]')" in mixed
+      and "_twin(0).set_ylabel('current [A]')" in mixed and "_l1 + _l2" in mixed
       and "color='C0'" in mixed and "color='C1'" in mixed
       and is_png(os.path.join(HERE, "mixed.png")), mixed[-400:])
 with tempfile.TemporaryDirectory() as far:
@@ -659,6 +672,89 @@ check("E-550e: a point plot and a backwards-x `vs` plot keep every sample",
 import matplotlib.pyplot as _plt
 _plt.close("all")
 for base in ("dec", "nodec", "dec500", "pts", "xy", "win"):
+    for ext in (".py", ".data", ".npy", ".png"):
+        q = os.path.join(HERE, base + ext)
+        if os.path.exists(q):
+            os.remove(q)
+if os.path.exists(deck):
+    os.remove(deck)
+
+# ---- Enhancement-551: engineering ticks, typed labels, a clean title ----
+E551 = """* eng probe deck
+V1 in 0 dc 0 ac 1 sin(0 1 1k)
+R1 in out 1k
+C1 out 0 159.155n
+.tran 10u 3m
+.control
+run
+set pyplot_terminal=png
+set pyplot_backend=Agg
+pyplot eng v(out)
+pyplot mix v(out) i(v1)
+pyplot lab v(out) xlabel "my x" ylabel "my y" title "my title"
+set pyplot_eng=off
+pyplot raw v(out)
+unset pyplot_eng
+pyplot fft -fft v(out)
+let vo = v(out)
+pyplot hst -hist vo
+ac dec 10 10 1e6
+pyplot dbp db(v(out)) xlog
+.endc
+.end
+"""
+deck = os.path.join(HERE, "e551.sp")
+with open(deck, "w") as f:
+    f.write(E551)
+log = run_deck(deck, HERE)
+
+def ticks(ax, which):
+    """The tick label texts after a draw (formatters run at draw time)."""
+    ax.figure.canvas.draw()
+    labels = ax.get_xticklabels() if which == "x" else ax.get_yticklabels()
+    return [t.get_text() for t in labels if t.get_text()]
+
+ns = exec_script("eng")
+py = open(os.path.join(HERE, "eng.py")).read() if os.path.isfile(os.path.join(HERE, "eng.py")) else ""
+xt = ticks(ns["axes"][0, 0], "x") if ns else []; yt = ticks(ns["axes"][0, 0], "y") if ns else []
+check("E-551a: labels `time [s]` / `voltage [V]`, ticks like `500 µs` and `-500 mV`",
+      "set_xlabel('time [s]')" in py and "set_ylabel('voltage [V]')" in py
+      and any("ms" in t for t in xt) and any("mV" in t for t in yt), f"x={xt[:4]} y={yt[:4]}")
+ns = exec_script("mix")
+py = open(os.path.join(HERE, "mix.py")).read() if os.path.isfile(os.path.join(HERE, "mix.py")) else ""
+tw = list(ns["_tw"].values())[0] if ns and ns.get("_tw") else None
+rt = ticks(tw, "y") if tw is not None else []
+check("E-551b: a mixed plot reads `voltage [V]` left, `current [A]` right, with µA ticks on the twin",
+      "set_ylabel('voltage [V]')" in py and "_twin(0).set_ylabel('current [A]')" in py
+      and any("µA" in t or "mA" in t for t in rt), f"right={rt[:4]}")
+ns = exec_script("lab")
+py = open(os.path.join(HERE, "lab.py")).read() if os.path.isfile(os.path.join(HERE, "lab.py")) else ""
+xt = ticks(ns["axes"][0, 0], "x") if ns else []
+check("E-551c: the user's xlabel/ylabel/title are kept verbatim, the ticks still carry the unit",
+      "set_xlabel('my x')" in py and "set_ylabel('my y')" in py and "suptitle('my title')" in py
+      and any("ms" in t for t in xt), f"x={xt[:4]}")
+ns = exec_script("raw")
+py = open(os.path.join(HERE, "raw.py")).read() if os.path.isfile(os.path.join(HERE, "raw.py")) else ""
+xt = ticks(ns["axes"][0, 0], "x") if ns else []
+check("E-551d: pyplot_eng=off keeps plain tick numbers and the typed labels",
+      "EngFormatter(unit=" not in py and "set_xlabel('time [s]')" in py
+      and xt and not any("ms" in t for t in xt), f"x={xt[:4]}")
+ns = exec_script("dbp")
+py = open(os.path.join(HERE, "dbp.py")).read() if os.path.isfile(os.path.join(HERE, "dbp.py")) else ""
+xt = ticks(ns["axes"][0, 0], "x") if ns else []; yt = ticks(ns["axes"][0, 0], "y") if ns else []
+check("E-551e: db(v(out)) has `decibel [dB]` with plain ticks, and `10 kHz`-style ticks on the log frequency axis",
+      "set_ylabel('decibel [dB]')" in py and "set_xlabel('frequency [Hz]')" in py
+      and any("kHz" in t for t in xt) and not any("dB" in t for t in yt), f"x={xt[:5]} y={yt[:3]}")
+check("E-551f: the deck's `* ` is dropped from the default title; a given title is untouched",
+      "suptitle('eng probe deck')" in open(os.path.join(HERE, "eng.py")).read()
+      and "suptitle('my title')" in open(os.path.join(HERE, "lab.py")).read())
+pf = open(os.path.join(HERE, "fft.py")).read() if os.path.isfile(os.path.join(HERE, "fft.py")) else ""
+ph = open(os.path.join(HERE, "hst.py")).read() if os.path.isfile(os.path.join(HERE, "hst.py")) else ""
+check("E-551g: -fft labels `Frequency [Hz]` / `Magnitude [V]` with Hz ticks; -hist labels `voltage [V]` with V ticks",
+      "set_xlabel('Frequency [Hz]')" in pf and "set_ylabel('Magnitude [V]')" in pf and "EngFormatter(unit='Hz')" in pf
+      and "set_xlabel('voltage [V]')" in ph and "EngFormatter(unit='V')" in ph)
+_plt.close("all")
+for base in ("eng", "mix", "lab", "raw", "fft", "hst", "dbp"):
     for ext in (".py", ".data", ".npy", ".png"):
         q = os.path.join(HERE, base + ext)
         if os.path.exists(q):

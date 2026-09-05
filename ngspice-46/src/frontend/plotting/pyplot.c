@@ -296,6 +296,82 @@ emit_axis_limits(FILE *file, char axis, const double *lims, bool log)
 }
 
 
+/* Enhancement-551: the unit an EngFormatter may put an SI prefix on, for a
+   vector type -- `500 \u00b5s`, `1 ms`, `-500 mV`, `10 kHz`, `1 k\u03a9`. A prefix on
+   dB, rad, Celsius or a noise density means nothing, so those stay plain. */
+static const char *
+eng_unit_for(int type)
+{
+    switch (type) {
+    case SV_TIME:        return "s";
+    case SV_FREQUENCY:   return "Hz";
+    case SV_VOLTAGE:     return "V";
+    case SV_CURRENT:     return "A";
+    case SV_POWER:       return "W";
+    case SV_CAPACITANCE: return "F";
+    case SV_CHARGE:      return "C";
+    case SV_RES:
+    case SV_IMPEDANCE:   return "\xce\xa9";          /* Ohm sign, UTF-8 */
+    case SV_ADMITTANCE:  return "S";
+    default:             return NULL;
+    }
+}
+
+
+/* Enhancement-551: the default label of an axis carrying a vector type --
+   `time [s]`, `voltage [V]`, `decibel [dB]` -- where a bare `s` or `V` used to
+   stand. NULL for an untyped vector. The caller frees it. */
+static char *
+axis_label_for(int type)
+{
+    const char *name = ft_typenames(type);
+    const char *unit = eng_unit_for(type);
+    if (!name || type == SV_NOTYPE)
+        return NULL;
+    if (!unit)
+        unit = ft_typabbrev(type);
+    if (unit && *unit)
+        return tprintf("%s [%s]", name, unit);
+    return copy(name);
+}
+
+
+/* Enhancement-551: `<axis>.set_major_formatter(EngFormatter(unit='..'))` for
+   a unit, nothing for none. `axis` is e.g. "    _ax.xaxis". */
+static void
+emit_eng_formatter(FILE *file, const char *axis, const char *unit)
+{
+    if (!unit)
+        return;
+    fprintf(file, "%s.set_major_formatter(EngFormatter(unit=", axis);
+    quote_python_string(file, unit);
+    fprintf(file, "))\n");
+}
+
+
+/* Enhancement-551: the figure title as it should read. The default title is
+   the circuit's title line, which most decks begin with the comment marker
+   (`* rc lowpass`); the marker and the blanks after it are dropped when the
+   title IS that default, and a title the user gave on the command is kept
+   verbatim. The caller frees the result. */
+static char *
+title_text(const char *title, const struct plot *pl)
+{
+    char *text = cp_unquote(title);
+    if (pl && pl->pl_title && eq(title, pl->pl_title)) {
+        char *p = text;
+        while (*p == '*' || *p == ' ' || *p == '\t')
+            p++;
+        if (p != text) {
+            char *stripped = copy(p);
+            tfree(text);
+            text = stripped;
+        }
+    }
+    return text;
+}
+
+
 /* Enhancement-547: `s` as ONE argument for the shell that runs the script.
    POSIX: single-quoted, an embedded quote spelled '\''. Windows (cmd.exe):
    double-quoted -- a double quote cannot appear in a Windows path. */
@@ -628,6 +704,16 @@ void ft_pyplot(double *xlims, double *ylims,
     if (hist || fft)
         decimate = FALSE;
 
+    /* Enhancement-551: `set pyplot_eng=off` keeps matplotlib's plain tick
+       numbers (`0.0005`) instead of engineering ones (`500 \u00b5s`). */
+    bool eng = TRUE;
+    {
+        char engvar[BSIZE_SP];
+        if (cp_getvar("pyplot_eng", CP_STRING, engvar, sizeof engvar)
+            && (cieq(engvar, "off") || cieq(engvar, "none") || cieq(engvar, "false")))
+            eng = FALSE;
+    }
+
     /* Enhancement-217: `pyplot -hist ...` renders each signal's VALUE distribution
        as a histogram. `set pyplot_hist_bins=<N>` sets the bin count (default the
        matplotlib 'auto' rule); `set pyplot_hist_density` normalizes to a density. */
@@ -781,6 +867,7 @@ void ft_pyplot(double *xlims, double *ylims,
         fprintf(file, "matplotlib.use('Agg')\n");
     }
     fprintf(file, "import matplotlib.pyplot as plt\n");
+    fprintf(file, "from matplotlib.ticker import EngFormatter\n");
     /* Enhancement-98: apply a matplotlib style sheet if requested (ignore an
        unknown name rather than aborting the plot). */
     if (have_style) {
@@ -879,10 +966,10 @@ void ft_pyplot(double *xlims, double *ylims,
             if (v->v_type != vecs->v_type)
                 mixed = TRUE;
     int row_type[PY_MAXVECTORS];        /* the type owning each panel's left axis */
-    const char *twin_label[PY_MAXVECTORS];
+    int twin_type[PY_MAXVECTORS];       /* the type on the panel's twin axis, if any */
     for (i = 0; i < PY_MAXVECTORS; i++) {
         row_type[i] = SV_NOTYPE;
-        twin_label[i] = NULL;
+        twin_type[i] = SV_NOTYPE;
     }
     if (mixed) {
         fprintf(file, "_tw = {}\n");
@@ -932,9 +1019,8 @@ void ft_pyplot(double *xlims, double *ylims,
         if (row_type[row] == SV_NOTYPE)
             row_type[row] = (int) v->v_type;
         if (mixed && (int) v->v_type != row_type[row]) {
-            const char *abbrev = ft_typabbrev((int) v->v_type);
-            if (!twin_label[row])
-                twin_label[row] = abbrev ? abbrev : "";
+            if (twin_type[row] == SV_NOTYPE)
+                twin_type[row] = (int) v->v_type;
             (void) snprintf(axexpr, sizeof axexpr, "_twin(%d)", row);
         } else
             (void) snprintf(axexpr, sizeof axexpr, "axes[%d, 0]", row);
@@ -1010,16 +1096,36 @@ void ft_pyplot(double *xlims, double *ylims,
 
     /* Per-axis cosmetics applied to every panel; the x-label goes on the
        bottom panel only, the title becomes the figure suptitle. */
+    /* Enhancement-551: the types behind the two axes -- the scale's for x, the
+       (single) value type for y -- give the tick units and the default labels.
+       A label plotit passed is the bare unit abbreviation unless the user gave
+       one; the abbreviation is replaced by `time [s]` / `voltage [V]`, the
+       user's text is kept. */
+    const int xtype = vecs->v_scale ? (int) vecs->v_scale->v_type : SV_NOTYPE;
+    const int ytype = mixed ? SV_NOTYPE : (int) vecs->v_type;
+    const char *xunit = eng && !hist && !fft ? eng_unit_for(xtype) : NULL;
+    const char *yunit = eng && !hist && !fft ? eng_unit_for(ytype) : NULL;
+    const char *vunit = eng ? eng_unit_for((int) vecs->v_type) : NULL;   /* the value's */
+    char *xdefault = axis_label_for(xtype);
+    char *ydefault = axis_label_for((int) vecs->v_type);
+    const char *xabbrev = ft_typabbrev(xtype);
+    const char *yabbrev = ft_typabbrev((int) vecs->v_type);
+    const bool xlabel_is_default = xlabel && xabbrev && eq(xlabel, xabbrev);
+    const bool ylabel_is_default = ylabel && yabbrev && eq(ylabel, yabbrev);
+
     fprintf(file, "for _ax in axes[:, 0]:\n");
     /* Enhancement-217: for a histogram the y-axis is the count (or density); for a
        line plot it is the signal type passed in as `ylabel`. */
     if (fft) {
-        fprintf(file, "    _ax.set_ylabel('%s')\n",
-                fftdb ? "Magnitude [dB]" : "Magnitude");
+        if (fftdb || !vunit)
+            fprintf(file, "    _ax.set_ylabel('%s')\n",
+                    fftdb ? "Magnitude [dB]" : "Magnitude");
+        else
+            fprintf(file, "    _ax.set_ylabel('Magnitude [%s]')\n", vunit);
     } else if (hist) {
         fprintf(file, "    _ax.set_ylabel('%s')\n", histdensity ? "density" : "count");
     } else if (ylabel) {
-        text = cp_unquote(ylabel);
+        text = (ylabel_is_default && ydefault) ? copy(ydefault) : cp_unquote(ylabel);
         fprintf(file, "    _ax.set_ylabel(");
         quote_python_string(file, text);
         fprintf(file, ")\n");
@@ -1029,6 +1135,12 @@ void ft_pyplot(double *xlims, double *ylims,
         fprintf(file, "    _ax.set_xscale('log')\n");
     if (ylog)
         fprintf(file, "    _ax.set_yscale('log')\n");
+    /* Enhancement-551: the tick formatters go AFTER the scale -- set_xscale('log')
+       installs matplotlib's own log formatter and would undo them. */
+    emit_eng_formatter(file, "    _ax.xaxis",
+                       fft ? (eng ? "Hz" : NULL) : hist ? vunit : xunit);
+    emit_eng_formatter(file, "    _ax.yaxis",
+                       fft ? ((fftdb || !vunit) ? NULL : vunit) : hist ? NULL : yunit);
     /* Enhancement-296: `pyplot_grid` overrides the default (grid follows axis type). */
     if (have_grid) {
         if (cieq(gridvar, "off") || cieq(gridvar, "none") || cieq(gridvar, "false"))
@@ -1075,17 +1187,28 @@ void ft_pyplot(double *xlims, double *ylims,
     if (mixed) {
         int r;
         for (r = 0; r < nrows; r++) {
-            const char *left = ft_typabbrev(row_type[r]);
-            if (left && *left) {
+            char *left = axis_label_for(row_type[r]);
+            char *right = axis_label_for(twin_type[r]);
+            char axis[48];
+            if (left) {
                 fprintf(file, "axes[%d, 0].set_ylabel(", r);
                 quote_python_string(file, left);
                 fprintf(file, ")\n");
+                tfree(left);
             }
-            if (twin_label[r] && *twin_label[r]) {
-                fprintf(file, "_twin(%d).set_ylabel(", r);
-                quote_python_string(file, twin_label[r]);
-                fprintf(file, ")\n");
+            (void) snprintf(axis, sizeof axis, "axes[%d, 0].yaxis", r);
+            emit_eng_formatter(file, axis, eng ? eng_unit_for(row_type[r]) : NULL);
+            if (twin_type[r] != SV_NOTYPE) {
+                if (right) {
+                    fprintf(file, "_twin(%d).set_ylabel(", r);
+                    quote_python_string(file, right);
+                    fprintf(file, ")\n");
+                }
+                (void) snprintf(axis, sizeof axis, "_twin(%d).yaxis", r);
+                emit_eng_formatter(file, axis, eng ? eng_unit_for(twin_type[r]) : NULL);
             }
+            if (right)
+                tfree(right);
         }
         if (!(have_legend && (cieq(legendvar, "off") || cieq(legendvar, "none")
                               || cieq(legendvar, "false")))) {
@@ -1107,22 +1230,26 @@ void ft_pyplot(double *xlims, double *ylims,
         fprintf(file, "axes[-1, 0].set_xlabel('Frequency [Hz]')\n");
     } else {
         if (hist && ylabel) {
-            text = cp_unquote(ylabel);
+            text = (ylabel_is_default && ydefault) ? copy(ydefault) : cp_unquote(ylabel);
             fprintf(file, "    _ax.set_xlabel(");
             quote_python_string(file, text);
             fprintf(file, ")\n");
             tfree(text);
         }
         if (!hist && xlabel) {
-            text = cp_unquote(xlabel);
+            text = (xlabel_is_default && xdefault) ? copy(xdefault) : cp_unquote(xlabel);
             fprintf(file, "axes[-1, 0].set_xlabel(");
             quote_python_string(file, text);
             fprintf(file, ")\n");
             tfree(text);
         }
     }
+    if (xdefault)
+        tfree(xdefault);
+    if (ydefault)
+        tfree(ydefault);
     if (title) {
-        text = cp_unquote(title);
+        text = title_text(title, vecs->v_plot);
         fprintf(file, "fig.suptitle(");
         quote_python_string(file, text);
         fprintf(file, ")\n");
@@ -1334,6 +1461,15 @@ ft_pyplot_contour(const char *filename, const char *title, struct dvec *vecs)
     fprintf(file, "cb.set_label(");
     quote_python_string(file, z->v_name ? z->v_name : "z");
     fprintf(file, ")\n");
+    /* Enhancement-551: engineering ticks wherever an axis carries an SI unit */
+    fprintf(file, "from matplotlib.ticker import EngFormatter\n");
+    emit_eng_formatter(file, "ax.xaxis", eng_unit_for((int) x->v_type));
+    emit_eng_formatter(file, "ax.yaxis", eng_unit_for((int) y->v_type));
+    if (eng_unit_for((int) z->v_type)) {
+        fprintf(file, "cb.formatter = EngFormatter(unit=");
+        quote_python_string(file, eng_unit_for((int) z->v_type));
+        fprintf(file, "); cb.update_ticks()\n");
+    }
     fprintf(file, "ax.set_xlabel(");
     quote_python_string(file, x->v_name ? x->v_name : "x");
     fprintf(file, ")\n");
@@ -1341,7 +1477,7 @@ ft_pyplot_contour(const char *filename, const char *title, struct dvec *vecs)
     quote_python_string(file, y->v_name ? y->v_name : "y");
     fprintf(file, ")\n");
     if (title) {
-        char *text = cp_unquote(title);
+        char *text = title_text(title, vecs->v_plot);
         fprintf(file, "ax.set_title(");
         quote_python_string(file, text);
         fprintf(file, ")\n");
@@ -1519,7 +1655,7 @@ ft_pyplot_smith(const char *filename, const char *title, struct dvec *vecs)
     fprintf(file, "ax.set_xlim(-1.08, 1.08); ax.set_ylim(-1.08, 1.08)\n");
     fprintf(file, "if any(names):\n    ax.legend(loc='upper right', fontsize=8, framealpha=0.8)\n");
     if (title) {
-        char *text = cp_unquote(title);
+        char *text = title_text(title, vecs->v_plot);
         fprintf(file, "ax.set_title(");
         quote_python_string(file, text);
         fprintf(file, ")\n");
@@ -1687,6 +1823,9 @@ ft_pyplot_ac(const char *filename, const char *title, struct dvec *vecs, int ac_
                       "    ax[0].plot(f, 20*np.log10(np.maximum(np.abs(z), 1e-30)), label=lbl)\n"
                       "    ax[1].plot(f, np.degrees(np.unwrap(np.angle(z))))\n");
         fprintf(file, "for a in ax:\n    a.set_xscale('log'); a.grid(True, which='both')\n");
+        /* Enhancement-551: `10 Hz ... 1 MHz` along the shared frequency axis */
+        fprintf(file, "from matplotlib.ticker import EngFormatter\n");
+        fprintf(file, "ax[1].xaxis.set_major_formatter(EngFormatter(unit='Hz'))\n");
         fprintf(file, "ax[0].set_ylabel('Magnitude [dB]')\n");
         fprintf(file, "ax[1].set_ylabel('Phase [deg]')\n");
         fprintf(file, "ax[1].set_xlabel('Frequency [Hz]')\n");
@@ -1723,7 +1862,7 @@ ft_pyplot_ac(const char *filename, const char *title, struct dvec *vecs, int ac_
     }
 
     if (title) {
-        char *text = cp_unquote(title);
+        char *text = title_text(title, vecs->v_plot);
         fprintf(file, "fig.suptitle(");
         quote_python_string(file, text);
         fprintf(file, ")\n");
@@ -1917,6 +2056,9 @@ ft_pyplot_eye(const char *filename, const char *expr)
     fprintf(file, "            color='%s', fontsize=9, ha='center', va='top')\n", wcol);
     fprintf(file, "ax.set_xlim(0.0, 2.0*ui)\n");
     fprintf(file, "ax.set_xlabel('time within 2 UI  (s)')\n");
+    /* Enhancement-551: `200 ps ... 1 ns` along the folded time axis */
+    fprintf(file, "from matplotlib.ticker import EngFormatter\n");
+    fprintf(file, "ax.xaxis.set_major_formatter(EngFormatter(unit='s'))\n");
     fprintf(file, "ax.set_ylabel(");
     quote_python_string(file, expr && *expr ? expr : "signal");
     fprintf(file, ")\n");

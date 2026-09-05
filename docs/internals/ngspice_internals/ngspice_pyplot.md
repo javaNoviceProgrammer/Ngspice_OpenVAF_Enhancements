@@ -172,6 +172,7 @@ them to return to the default.
 | `pyplot_transparent` | transparent figure background for a hardcopy | opaque |
 | `pyplot_cursor` | hover crosshair in an interactive window | off |
 | `pyplot_decimate` | `auto` / `off` / `<N>` — draw a long trace as its per-pixel envelope (§12.5) | `auto` |
+| `pyplot_eng` | `off` — plain tick numbers instead of `500 µs` / `−500 mV` (§5.2) | on |
 | `pyplot_mplcursors` | use the `mplcursors` backend for that cursor | off |
 
 **† `pointstyle` is not a pyplot variable.** It is a *stock ngspice* setting, read by the
@@ -282,6 +283,26 @@ pyplot vi v(out) i(v1)        $ volts on the left, amps on the right
 An explicit `ylimit`, `ylog` and the reference lines apply to the left axis. With
 `pyplot_subplots` the rule holds per panel. Before E-548 a mixed list shared one unlabelled
 axis, so the milliamp trace lay flat along the bottom of the volt scale.
+
+### 5.2 Engineering ticks and typed labels
+
+Every axis is formatted with matplotlib's `EngFormatter` in the unit of the vector type it
+carries, and labelled with the type's name and unit (E-551):
+
+| axis carries | ticks read | default label |
+|---|---|---|
+| time | `500 µs`, `1 ms` | `time [s]` |
+| voltage / current | `−500 mV`, `2 µA` | `voltage [V]` / `current [A]` |
+| frequency (log or linear) | `10 Hz`, `1 kHz`, `1 MHz` | `frequency [Hz]` |
+| resistance / impedance | `1 kΩ` | `impedance [Ω]` |
+| decibel, phase, Celsius, a noise density | plain numbers | `decibel [dB]`, `phase [rad]`, … |
+
+A label the user gives (`xlabel "my x"`) is kept verbatim, with the ticks still in the
+unit; `set pyplot_eng=off` keeps matplotlib's plain numbers (`0.0005`) and the typed
+labels. The default title drops the deck's leading `* ` comment marker (`* rc lowpass` →
+`rc lowpass`); a `title` given on the command is untouched. The same ticks go on the
+Bode frequency axis, the eye's folded time axis, a contour's axes and colour bar, and
+a histogram's value axis.
 
 ---
 
@@ -781,6 +802,7 @@ unset pyplot_style
 | `pyplot_status` | integer, **read** by the deck | set by every `pyplot`: the exit status of a hardcopy (E-547) |
 | `pyplot_export` | `bin` / `ascii` | the data table's format: `.npy` (default) or the `.data` text (E-549) |
 | `pyplot_decimate` | `auto` / `off` / integer | line plots: draw a long trace as its per-pixel envelope (E-550) |
+| `pyplot_eng` | `off` | plain tick numbers instead of engineering ones (E-551) |
 
 ---
 

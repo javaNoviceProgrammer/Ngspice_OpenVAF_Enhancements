@@ -84,4 +84,14 @@ every zoom, pan and resize, so zooming in reveals the detail; a hardcopy
 decimates once at its dpi. `set pyplot_decimate=off` draws every sample; an
 integer fixes the bin count; the script says when it decimated.
 
-Run: `python3 verify_pyplot.py` (40 checks, both solvers).
+**Enhancement-551 — engineering ticks, typed labels, a clean title.** The
+default figure used to show `0.0005, 0.0010` on an axis labelled `s`. Each
+axis is now formatted by matplotlib's `EngFormatter` with the unit of the
+vector type it carries (`500 µs`, `1 ms`, `−500 mV`, `10 kHz`, `1 kΩ`; dB,
+rad, Celsius and the noise densities stay plain), the default labels read
+`time [s]`, `voltage [V]`, `frequency [Hz]`, and the default title drops the
+deck's `* ` comment marker. A label or title the user gives is kept
+verbatim; `set pyplot_eng=off` keeps plain tick numbers. The same ticks go on
+the Bode frequency axis, the eye's time axis and the contour axes.
+
+Run: `python3 verify_pyplot.py` (47 checks, both solvers).
